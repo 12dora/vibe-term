@@ -284,11 +284,11 @@ export const I18N_RESOURCES = {
       "remoteAccess": {
         "title": "Remote access",
         "wizardTitle": "Setup",
-        "description": "Expose this machine over Cloudflare Tunnel, without a public IP or port forwarding.",
-        "remoteNodeNotice": "Remote access can only be configured on the machine you are connected to.",
-        "loginRequired": "Sign in to this machine to configure remote access.",
-        "loadFailed": "Unable to load remote access status.",
-        "unsupported": "Cloudflare Tunnel is not supported on this platform ({{platform}}).",
+        "description": "Publish this machine's tmex on the internet through Cloudflare Tunnel — no public IP and no port forwarding.",
+        "remoteNodeNotice": "Remote access is configured on the machine your browser connects to directly. Switch to that machine and open this page there.",
+        "loginRequired": "Sign in to this machine before configuring remote access.",
+        "loadFailed": "Couldn't load the remote access status. Make sure the tmex gateway is still running, then reload the page.",
+        "unsupported": "No cloudflared build is available for this platform ({{platform}}), so Cloudflare Tunnel can't be used here.",
         "modeLabel": "Mode",
         "publicUrl": "Public URL",
         "restartsLabel": "Restarts",
@@ -298,16 +298,16 @@ export const I18N_RESOURCES = {
           "stopped": "Stopped",
           "starting": "Starting",
           "running": "Running",
-          "error": "Error"
+          "error": "Failed"
         },
         "mode": {
           "quick": {
             "title": "Quick tunnel",
-            "description": "No account required. The URL changes on every start. Best for testing."
+            "description": "No Cloudflare account needed. Each start issues a new temporary URL — good for demos and troubleshooting."
           },
           "named": {
             "title": "Named tunnel",
-            "description": "Requires a Cloudflare account and a hosted domain. The URL stays fixed."
+            "description": "Uses a domain you host on Cloudflare. The URL stays fixed and works with access control."
           }
         },
         "actions": {
@@ -325,18 +325,18 @@ export const I18N_RESOURCES = {
           "release": "Release"
         },
         "check": {
-          "reachable": "Reachable",
-          "unreachable": "Unreachable",
-          "running": "Checking…"
+          "reachable": "The public URL is reachable.",
+          "unreachable": "The public URL is unreachable.",
+          "running": "Checking the public URL…"
         },
         "log": {
-          "title": "Log",
+          "title": "cloudflared log",
           "empty": "No output yet."
         },
         "steps": {
           "install": {
             "title": "Install cloudflared",
-            "description": "tmex downloads cloudflared into its own data directory and leaves the system untouched.",
+            "description": "tmex downloads cloudflared into its own data directory and leaves any system install alone.",
             "version": "Version",
             "path": "Path",
             "source": "Source",
@@ -344,29 +344,29 @@ export const I18N_RESOURCES = {
               "managed": "Managed by tmex",
               "system": "Found on PATH"
             },
-            "skipped": "cloudflared is provided by the system service; no installation needed."
+            "skipped": "cloudflared comes from the system service, so tmex doesn't need its own copy."
           },
           "mode": {
             "title": "Choose a mode",
-            "description": "Remove the existing tunnel first if you need to switch modes later.",
+            "description": "To switch modes later, remove the current tunnel above first.",
             "pending": "Choose a mode to continue."
           },
           "tunnel": {
             "title": "Create the tunnel",
-            "description": "Complete the setup here after choosing a mode."
+            "description": "Finish setting it up here once you've picked a mode."
           },
           "quick": {
             "title": "Quick tunnel",
-            "description": "Starting the tunnel issues a temporary trycloudflare.com URL that expires on stop.",
-            "started": "Quick tunnel is running."
+            "description": "On start, Cloudflare issues a temporary trycloudflare.com URL that stops working when the tunnel stops.",
+            "started": "The quick tunnel is running. Its public URL is below."
           },
           "named": {
             "title": "Named tunnel",
-            "description": "Uses a domain you already host on Cloudflare, so the URL stays fixed.",
+            "description": "Uses a domain you already host on Cloudflare, so the public URL never changes.",
             "login": {
-              "description": "Authorize a domain on the page that opens, then return here.",
-              "waiting": "Waiting for authorization on Cloudflare",
-              "done": "Signed in to Cloudflare."
+              "description": "Pick the domain to authorize on the Cloudflare page that opens, then come back here — tmex continues on its own.",
+              "waiting": "Waiting for you to finish authorizing on Cloudflare",
+              "done": "Cloudflare authorization complete."
             },
             "hostname": "Hostname",
             "hostnamePlaceholder": "tmex.example.com",
@@ -374,25 +374,25 @@ export const I18N_RESOURCES = {
             "hostnameInvalid": "Enter a lowercase hostname such as tmex.example.com.",
             "tunnelName": "Tunnel name",
             "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "Optional; tmex generates one when left empty. Lowercase letters, digits, hyphens and underscores only.",
-            "hubHint": "On a Hub, set the Hub public URL to this hostname.",
-            "hubHintLink": "Open node settings",
+            "tunnelNameHint": "Optional — tmex generates one if you leave it empty. Lowercase letters, digits, hyphens and underscores only.",
+            "hubHint": "This machine is a Hub: set the Hub's public URL to this hostname so other nodes can connect through the tunnel.",
+            "hubHintLink": "Open multi-node settings",
             "tunnelId": "Tunnel ID",
             "configured": "The named tunnel has been created.",
-            "changeHint": "To use a different hostname or tunnel, remove the current tunnel above first.",
+            "changeHint": "To use a different hostname or tunnel, remove the current one above first.",
             "tunnelNameInvalid": "The tunnel name must start with a lowercase letter or digit and may contain only lowercase letters, digits, hyphens and underscores, up to 63 characters."
           },
           "proxy": {
             "title": "Reverse proxy trust",
-            "description": "The tunnel replaces the client address and protocol, so tmex needs matching trust settings.",
+            "description": "The tunnel rewrites the client address and protocol on every request, so tmex needs matching trust settings.",
             "trustProxy": "Trust reverse proxy headers",
-            "trustProxyHint": "Turn this on only if tmex can be reached through this tunnel alone.",
+            "trustProxyHint": "Turn this on only if the tunnel is the only way to reach tmex.",
             "autoStart": "Start with tmex",
-            "autoStartHint": "Bring the tunnel up when the gateway starts.",
-            "restartRequired": "Saved. Restart to apply.",
+            "autoStartHint": "Bring the tunnel up whenever the gateway starts.",
+            "restartRequired": "Saved. Restart tmex to apply.",
             "restartNow": "Restart now",
-            "restarting": "Restarting",
-            "restartTimeout": "Restart timed out. Restart tmex manually.",
+            "restarting": "Restarting tmex",
+            "restartTimeout": "Timed out waiting for the restart. Restart tmex manually, then reload this page.",
             "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Anyone who can bypass the tunnel and reach the local listening port directly could forge them, so restrict access to that port.",
             "trustProxyEffective": "In effect now",
             "trustProxyState": {
@@ -402,15 +402,15 @@ export const I18N_RESOURCES = {
           },
           "login": {
             "title": "Sign in to Cloudflare",
-            "description": "Authorize tmex to create tunnels and DNS records in your Cloudflare account.",
-            "skipped": "The tunnel is managed by a system service; signing in to Cloudflare from tmex is not required."
+            "description": "Authorize tmex to create tunnels and DNS records in your Cloudflare account. The certificate stays on this machine.",
+            "skipped": "The tunnel is run by a system service, so there's nothing to sign in to from tmex."
           },
           "hostname": {
             "title": "Hostname",
             "description": "The fixed public address of the tunnel.",
             "confirm": "Use this hostname",
             "edit": "Edit",
-            "pending": "Sign in to Cloudflare first."
+            "pending": "Finish the Cloudflare authorization first."
           },
           "access": {
             "title": "Access control (Cloudflare Access)",
@@ -418,7 +418,7 @@ export const I18N_RESOURCES = {
           },
           "create": {
             "title": "Create and start",
-            "description": "Create the tunnel in Cloudflare, add the DNS record and start it.",
+            "description": "Create the tunnel in Cloudflare, add the DNS record, and start it.",
             "pending": "Confirm the hostname first.",
             "adopted": "The existing system tunnel has been adopted."
           }
@@ -427,89 +427,91 @@ export const I18N_RESOURCES = {
           "download": "Downloading",
           "extract": "Extracting",
           "verify": "Verifying",
-          "create_tunnel": "Creating tunnel",
+          "create_tunnel": "Creating the tunnel",
           "route_dns": "Configuring DNS",
           "start": "Starting",
-          "create": "Creating tunnel",
-          "wait_cert": "Waiting for authorization",
+          "create": "Creating the tunnel",
+          "wait_cert": "Waiting for Cloudflare authorization",
           "login": "Signing in to Cloudflare",
           "cancelled": "Cancelled",
           "check": "Checking connectivity",
           "ok": "Done",
-          "create_app": "Creating Access application",
-          "policy": "Applying access policy",
-          "delete_app": "Deleting Access application",
-          "sync": "Syncing Access application"
+          "create_app": "Creating the Access application",
+          "policy": "Applying the access policy",
+          "delete_app": "Deleting the Access application",
+          "sync": "Syncing the Access application"
         },
         "errors": {
-          "unsupported_platform": "Cloudflare Tunnel is not supported on this platform.",
-          "binary_missing": "cloudflared was not found. Install it first.",
-          "download_failed": "Failed to download cloudflared. Check the network and retry.",
-          "not_logged_in": "Not signed in to Cloudflare. Complete the authorization first.",
-          "login_timeout": "Authorization timed out. Start the sign-in again.",
-          "invalid_hostname": "The hostname is not valid.",
-          "tunnel_exists": "A tunnel with this name already exists. Choose another name.",
-          "dns_route_failed": "Failed to configure the DNS record. Confirm the domain is hosted on Cloudflare.",
-          "process_failed": "cloudflared failed to start. See the log for details.",
-          "busy": "Another operation is in progress.",
-          "not_configured": "Remote access is not configured.",
-          "invalid_request": "Invalid request.",
+          "unsupported_platform": "No cloudflared build is available for this platform, so Cloudflare Tunnel can't be used here.",
+          "binary_missing": "cloudflared wasn't found. Install it in the \"Install cloudflared\" step first.",
+          "download_failed": "Downloading cloudflared failed. Check that this machine can reach github.com, then try again.",
+          "not_logged_in": "Cloudflare authorization isn't complete. Go back to \"Sign in to Cloudflare\" and finish it.",
+          "login_timeout": "The Cloudflare authorization timed out. Start the sign-in again and pick a domain on the page that opens.",
+          "invalid_hostname": "That hostname isn't valid. Use a lowercase name such as tmex.example.com.",
+          "tunnel_exists": "A tunnel with this name already exists in Cloudflare. Pick another name, or delete the existing one in Cloudflare.",
+          "dns_route_failed": "Adding the DNS record in Cloudflare failed. Confirm the domain is hosted in the same Cloudflare account and no conflicting record exists.",
+          "process_failed": "cloudflared didn't start. Expand the cloudflared log below, check the last lines, then try again.",
+          "busy": "The previous operation hasn't finished yet. Try again in a moment.",
+          "not_configured": "Remote access isn't configured yet. Pick a mode in the setup below.",
+          "invalid_request": "The request was rejected as invalid; this page may be out of date. Reload and try again.",
           "unknown": "Operation failed: {{message}}",
-          "auth_required": "Enable sign-in on this machine before exposing it publicly.",
-          "access_api_failed": "Cloudflare API call failed: {{message}}",
-          "exposure_ack_required": "This exposes tmex to the public internet. Confirm that you understand the risk first."
+          "auth_required": "Sign-in isn't enabled on this machine. Enable it before going public, or anyone could walk straight into tmex.",
+          "access_api_failed": "The Cloudflare API call failed: {{message}}. Check the API token's permissions and the account ID, then try again.",
+          "exposure_ack_required": "This exposes tmex to the public internet. Confirm the risk first."
         },
         "authRequired": {
-          "notice": "Enable sign-in on this machine before exposing it publicly.",
+          "notice": "Sign-in isn't enabled on this machine. Enable it before going public, or anyone could walk straight into tmex.",
           "link": "Open multi-node settings"
         },
         "confirmRemove": {
           "title": "Remove the named tunnel?",
-          "description": "This stops the tunnel, deletes the credentials stored on this machine and deletes the tunnel in Cloudflare.",
-          "irreversible": "The tunnel in Cloudflare cannot be restored and the public address stops working immediately.",
+          "description": "The tunnel stops, the credentials stored on this machine are deleted, and the tunnel itself is deleted in Cloudflare.",
+          "irreversible": "The tunnel in Cloudflare can't be restored, and the current public URL stops working immediately.",
           "confirm": "Remove tunnel",
           "cancel": "Cancel"
         },
         "accessState": {
-          "notConfigured": "Access not configured",
-          "notEnforced": "Access configured, not enforced",
-          "protected": "Access protected",
-          "hostnameMismatch": "Access configured (hostname mismatch)"
+          "notConfigured": "No Access app",
+          "unknown": "Access unknown",
+          "dashboardCovered": "Access managed in dashboard",
+          "notEnforced": "Access not enforced",
+          "protected": "Access enforced",
+          "hostnameMismatch": "Access hostname mismatch"
         },
-        "externallyManaged": "Managed by system service",
-        "externallyManagedNotice": "This tunnel is run by a system service; tmex does not start or stop it. Release it first to let tmex manage the tunnel.",
+        "externallyManaged": "Run by a system service",
+        "externallyManagedNotice": "A system service runs this tunnel. tmex only reports its state and never starts or stops it. Release it first to hand the tunnel back to tmex.",
         "exposure": {
-          "warning": "No access protection is in effect: the tunnel URL is a public entry point, so anyone can reach tmex. Enable sign-in (mesh), or configure and enforce Cloudflare Access for this hostname.",
-          "warningShort": "No access protection is in effect: the tunnel URL is public, so anyone can reach tmex.",
+          "warning": "Nothing is protecting this machine right now: the tunnel URL is a public entrance, and anyone who has it can use tmex. Enable sign-in (multi-node), or configure Cloudflare Access for this hostname and turn on token verification.",
+          "warningShort": "Nothing is protecting this machine right now: anyone with the tunnel URL can use tmex.",
           "acknowledge": "I understand the risk and want to expose tmex publicly",
-          "ackRequired": "This exposes tmex to the public internet. Tick the box to confirm.",
-          "enableLogin": "Enable sign-in (mesh)",
-          "dropWarning": "This removes the last access protection. The tunnel keeps running, and anyone will be able to reach tmex."
+          "ackRequired": "This exposes tmex to the public internet. Tick the box above to confirm.",
+          "enableLogin": "Enable sign-in (multi-node)",
+          "dropWarning": "This removes the last thing protecting the machine: the tunnel keeps running, and anyone will be able to use tmex."
         },
         "access": {
           "tag": {
             "recommended": "Recommended",
             "optional": "Optional"
           },
-          "lastError": "Cloudflare Access: {{message}}",
+          "lastError": "The last Cloudflare Access operation failed: {{message}}",
           "credentials": {
             "title": "Cloudflare credentials",
             "apiToken": "API token",
-            "apiTokenHint": "Cloudflare API token with permissions: Access: Apps and Policies (Edit) and Access: Organizations, Identity Providers, and Groups (Read).",
+            "apiTokenHint": "A Cloudflare API token with Access: Apps and Policies (Edit) and Access: Organizations, Identity Providers, and Groups (Read). It is stored only on this machine.",
             "accountId": "Account ID",
-            "accountIdHint": "The Account ID of that account in the Cloudflare dashboard.",
+            "accountIdHint": "The Account ID shown in the Cloudflare dashboard sidebar.",
             "save": "Save",
-            "saved": "Credentials saved.",
+            "saved": "Credentials saved. You can now create or sync an Access application.",
             "clear": "Clear",
             "teamDomain": "Team domain"
           },
           "rules": {
             "title": "Allowed users",
-            "description": "Visitors matching any rule pass Cloudflare Access. At least one rule is required.",
+            "description": "A visitor matching any single rule passes Cloudflare Access. At least one rule is required.",
             "add": "Add rule",
             "remove": "Remove rule",
             "apply": "Apply to Cloudflare",
-            "needHostname": "No hostname yet: an Access application is bound to a hostname, so create or adopt a named tunnel first.",
+            "needHostname": "No hostname yet. An Access application is bound to a hostname, so create or adopt a named tunnel first.",
             "kind": {
               "email": "Email",
               "email_domain": "Email domain"
@@ -525,20 +527,27 @@ export const I18N_RESOURCES = {
           },
           "sync": {
             "action": "Sync from Cloudflare",
-            "hint": "Credentials are saved but no Access application is recorded locally. If you already created one for {{hostname}} in the Cloudflare dashboard, sync first to avoid creating a duplicate."
+            "hint": "Credentials are saved, but tmex has no Access application on record. If you already created one for {{hostname}} in the Cloudflare dashboard, sync it in first so you don't end up with a duplicate."
+          },
+          "probe": {
+            "unknown": "Can't check Cloudflare Access for {{hostname}}: no usable Cloudflare credentials, or the lookup failed. This does not mean Access is unconfigured. Save an API token and account ID below and tmex will check again.",
+            "covered": "Read-only check: an Access application in the Cloudflare dashboard already covers {{hostname}}. tmex doesn't manage it and the gateway won't verify the tokens it issues — use \"Sync from Cloudflare\" to bring it under tmex.",
+            "absent": "Read-only check: no Access application in Cloudflare covers {{hostname}}. Add the allowed users below and apply to create one.",
+            "teamDomain": "Team domain: {{teamDomain}}",
+            "needCredentials": "To manage it from tmex and verify tokens at the gateway, save a Cloudflare API token and account ID below first."
           },
           "app": {
-            "title": "Access application",
+            "title": "Access application (managed by tmex)",
             "appId": "Application ID",
             "aud": "AUD",
             "hostname": "Covered hostname",
             "rules": "Rules",
             "noRules": "None",
             "enforce": "Verify Access tokens at the gateway",
-            "enforceHint": "Validate Cf-Access-Jwt-Assertion on tunnel requests and reject the ones that fail.",
-            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that bypass Access will not be rejected by this machine.",
+            "enforceHint": "Validate Cf-Access-Jwt-Assertion on requests arriving through the tunnel and reject the ones that fail.",
+            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that reach the tunnel around Access won't be stopped by this machine.",
             "remove": "Remove Access application",
-            "hostnameMismatch": "This application covers a different hostname than the current tunnel, so token verification has no effect."
+            "hostnameMismatch": "This application covers a different hostname than the current tunnel, so token verification has no effect. Apply the rules again to bind it to the current hostname."
           },
           "confirmRemove": {
             "title": "Remove the Access application?",
@@ -549,8 +558,8 @@ export const I18N_RESOURCES = {
         },
         "external": {
           "title": "Existing Cloudflare Tunnel detected",
-          "description": "This machine already runs a tunnel that tmex does not manage. Adopt it, or let tmex create a new one.",
-          "source": "Source",
+          "description": "This machine already runs a tunnel that tmex doesn't manage. Adopt it, or ignore it and let tmex create its own.",
+          "source": "Detected from",
           "sourceValue": {
             "launchd": "launchd service",
             "systemd": "systemd service",
@@ -563,10 +572,17 @@ export const I18N_RESOURCES = {
             "on": "Running",
             "off": "Not running"
           },
-          "noHostname": "Its configuration has no hostname pointing at this tmex, so it cannot be adopted.",
-          "chooseHostname": "Choose a hostname",
-          "adopt": "Use this tunnel",
-          "dismiss": "Let tmex create a new tunnel"
+          "accessLabel": "Cloudflare Access",
+          "accessValue": {
+            "covered": "An application covers this hostname (dashboard)",
+            "absent": "No application covers this hostname",
+            "unknown": "Can't check — no usable credentials"
+          },
+          "noHostname": "Its configuration has no hostname pointing at this tmex (127.0.0.1:{{port}}), so it can't be adopted. Check its ingress rules, or let tmex create its own tunnel.",
+          "chooseHostname": "Choose the hostname to adopt",
+          "adopt": "Adopt this tunnel",
+          "adoptHint": "Adopting records this hostname as tmex's public address and shows the tunnel's state and access control here. The tunnel process keeps running under the system service — tmex never starts, stops, or rewrites its configuration. You can release it at any time; the system service is unaffected.",
+          "dismiss": "Ignore and let tmex create a new tunnel"
         }
       },
       "deviceManagement": {
@@ -2244,11 +2260,11 @@ export const I18N_RESOURCES = {
       "remoteAccess": {
         "title": "远程访问",
         "wizardTitle": "配置向导",
-        "description": "通过 Cloudflare Tunnel 把本机的 tmex 暴露到公网，无需公网 IP 或端口映射。",
-        "remoteNodeNotice": "远程访问只能在当前连接的机器上配置。",
-        "loginRequired": "请先登录本机后再配置远程访问。",
-        "loadFailed": "无法读取远程访问状态。",
-        "unsupported": "当前系统（{{platform}}）不支持 Cloudflare Tunnel。",
+        "description": "通过 Cloudflare Tunnel 把这台机器上的 tmex 发布到公网，不需要公网 IP，也不用在路由器上映射端口。",
+        "remoteNodeNotice": "远程访问只能在浏览器直连的那台机器上配置。请先切换到那台机器，再打开本页。",
+        "loginRequired": "请先登录这台机器，再配置远程访问。",
+        "loadFailed": "读取远程访问状态失败。请确认 tmex 网关仍在运行，然后刷新页面重试。",
+        "unsupported": "当前系统（{{platform}}）没有可用的 cloudflared 构建，无法使用 Cloudflare Tunnel。",
         "modeLabel": "方式",
         "publicUrl": "公网地址",
         "restartsLabel": "重启次数",
@@ -2258,16 +2274,16 @@ export const I18N_RESOURCES = {
           "stopped": "已停止",
           "starting": "启动中",
           "running": "运行中",
-          "error": "错误"
+          "error": "异常"
         },
         "mode": {
           "quick": {
             "title": "临时隧道",
-            "description": "无需账号，地址随每次启动变化，适合测试。"
+            "description": "不需要 Cloudflare 账号，每次启动分配一个新的临时地址，适合演示与排查。"
           },
           "named": {
             "title": "命名隧道",
-            "description": "需要 Cloudflare 账号与已托管的域名，地址固定。"
+            "description": "使用你托管在 Cloudflare 的域名，地址固定，可配合访问控制长期使用。"
           }
         },
         "actions": {
@@ -2285,74 +2301,74 @@ export const I18N_RESOURCES = {
           "release": "取消接管"
         },
         "check": {
-          "reachable": "可访问",
-          "unreachable": "不可达",
-          "running": "正在检查…"
+          "reachable": "公网地址可以访问。",
+          "unreachable": "公网地址不可达。",
+          "running": "正在检查公网地址…"
         },
         "log": {
-          "title": "日志",
+          "title": "cloudflared 日志",
           "empty": "暂无输出。"
         },
         "steps": {
           "install": {
             "title": "安装 cloudflared",
-            "description": "tmex 会把 cloudflared 下载到自己的数据目录，不改动系统。",
+            "description": "tmex 把 cloudflared 下载到自己的数据目录，不改动系统里已有的安装。",
             "version": "版本",
             "path": "路径",
             "source": "来源",
             "sourceValue": {
               "managed": "由 tmex 管理",
-              "system": "系统已安装"
+              "system": "系统已安装（PATH）"
             },
-            "skipped": "cloudflared 由系统服务提供，无需 tmex 安装。"
+            "skipped": "cloudflared 由系统服务提供，tmex 无需再装一份。"
           },
           "mode": {
             "title": "选择方式",
-            "description": "建立隧道后如需更换方式，先移除现有隧道。",
-            "pending": "请先选择一种方式。"
+            "description": "隧道建好后如需换方式，先在上方移除当前隧道。",
+            "pending": "先选择一种方式。"
           },
           "tunnel": {
             "title": "建立隧道",
-            "description": "选择方式后在这里完成建立。"
+            "description": "选好方式后在这里完成建立。"
           },
           "quick": {
             "title": "临时隧道",
-            "description": "启动后生成一个 trycloudflare.com 的临时地址，停止即失效。",
-            "started": "临时隧道已启动。"
+            "description": "启动后 Cloudflare 分配一个 trycloudflare.com 的临时地址，停止即失效。",
+            "started": "临时隧道已启动，公网地址如下。"
           },
           "named": {
             "title": "命名隧道",
-            "description": "使用已托管在 Cloudflare 的域名，地址固定。",
+            "description": "使用已托管在 Cloudflare 的域名，公网地址固定不变。",
             "login": {
-              "description": "在打开的授权页面中选择域名并授权，完成后回到本页。",
-              "waiting": "等待在 Cloudflare 完成授权",
-              "done": "已登录 Cloudflare。"
+              "description": "在弹出的 Cloudflare 页面里选择要授权的域名，完成后回到本页，tmex 会自动继续。",
+              "waiting": "正在等待 Cloudflare 授权完成",
+              "done": "已完成 Cloudflare 授权。"
             },
             "hostname": "主机名",
             "hostnamePlaceholder": "tmex.example.com",
-            "hostnameHint": "填写已托管在 Cloudflare 的域名下的子域。",
+            "hostnameHint": "填写一个已托管在 Cloudflare 的域名下的子域。",
             "hostnameInvalid": "主机名格式不正确，请填写形如 tmex.example.com 的小写域名。",
             "tunnelName": "隧道名称",
             "tunnelNamePlaceholder": "tmex",
             "tunnelNameHint": "可留空，留空时由 tmex 生成。只能使用小写字母、数字、连字符与下划线。",
-            "hubHint": "作为 Hub 时，请将 Hub 公开地址设为此主机名。",
+            "hubHint": "这台机器是 Hub：把 Hub 的公开地址设为该主机名，其他节点才能经隧道接入。",
             "hubHintLink": "前往多节点互联设置",
             "tunnelId": "隧道 ID",
             "configured": "命名隧道已创建。",
-            "changeHint": "如需更换主机名或隧道，请先在上方移除现有隧道。",
+            "changeHint": "要更换主机名或隧道，请先在上方移除当前隧道。",
             "tunnelNameInvalid": "隧道名称需以小写字母或数字开头，只能包含小写字母、数字、连字符与下划线，最长 63 个字符。"
           },
           "proxy": {
             "title": "反向代理信任",
-            "description": "隧道会替换客户端地址与协议，需要相应调整 tmex 的信任设置。",
+            "description": "隧道会替换请求里的客户端地址与协议，tmex 需要相应调整信任设置。",
             "trustProxy": "信任反向代理头",
             "trustProxyHint": "仅当 tmex 只能经由该隧道访问时才开启。",
             "autoStart": "随 tmex 启动",
             "autoStartHint": "网关启动时自动拉起隧道。",
-            "restartRequired": "配置已保存，重启后生效。",
+            "restartRequired": "设置已保存，重启 tmex 后生效。",
             "restartNow": "立即重启",
-            "restarting": "正在重启",
-            "restartTimeout": "重启超时，请手动重启 tmex。",
+            "restarting": "正在重启 tmex",
+            "restartTimeout": "等待重启超时。请手动重启 tmex 后刷新页面。",
             "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。能绕过隧道直连本机监听端口的人可以伪造这两个请求头，因此请限制该端口的外部访问。",
             "trustProxyEffective": "当前生效",
             "trustProxyState": {
@@ -2362,7 +2378,7 @@ export const I18N_RESOURCES = {
           },
           "login": {
             "title": "登录 Cloudflare",
-            "description": "授权 tmex 在你的 Cloudflare 账号下创建隧道与 DNS 记录。",
+            "description": "授权 tmex 用你的 Cloudflare 账号创建隧道与 DNS 记录。授权凭证只保存在这台机器上。",
             "skipped": "隧道由系统服务托管，无需在 tmex 内登录 Cloudflare。"
           },
           "hostname": {
@@ -2370,106 +2386,108 @@ export const I18N_RESOURCES = {
             "description": "隧道对外使用的固定地址。",
             "confirm": "使用此主机名",
             "edit": "修改",
-            "pending": "请先完成 Cloudflare 登录。"
+            "pending": "请先完成 Cloudflare 授权。"
           },
           "access": {
             "title": "访问控制（Cloudflare Access）",
-            "description": "在 Cloudflare 边缘按邮箱放行访问者，未通过的请求到不了本机。"
+            "description": "在 Cloudflare 边缘按邮箱放行访问者，未通过的请求到不了这台机器。"
           },
           "create": {
             "title": "创建并启动",
-            "description": "在 Cloudflare 创建隧道、配置 DNS 记录并启动。",
+            "description": "在 Cloudflare 创建隧道、写入 DNS 记录并启动。",
             "pending": "请先确认主机名。",
             "adopted": "已接管系统中已有的隧道。"
           }
         },
         "jobStep": {
-          "download": "下载",
-          "extract": "解压",
-          "verify": "校验",
-          "create_tunnel": "创建隧道",
-          "route_dns": "配置 DNS",
-          "start": "启动",
-          "create": "创建隧道",
-          "wait_cert": "等待授权",
-          "login": "登录 Cloudflare",
+          "download": "正在下载",
+          "extract": "正在解压",
+          "verify": "正在校验",
+          "create_tunnel": "正在创建隧道",
+          "route_dns": "正在配置 DNS",
+          "start": "正在启动",
+          "create": "正在创建隧道",
+          "wait_cert": "正在等待 Cloudflare 授权",
+          "login": "正在登录 Cloudflare",
           "cancelled": "已取消",
-          "check": "检查连通性",
+          "check": "正在检查连通性",
           "ok": "完成",
-          "create_app": "创建 Access 应用",
-          "policy": "配置访问策略",
-          "delete_app": "删除 Access 应用",
-          "sync": "同步 Access 应用"
+          "create_app": "正在创建 Access 应用",
+          "policy": "正在应用访问策略",
+          "delete_app": "正在删除 Access 应用",
+          "sync": "正在同步 Access 应用"
         },
         "errors": {
-          "unsupported_platform": "当前系统不支持 Cloudflare Tunnel。",
-          "binary_missing": "未找到 cloudflared，请先完成安装。",
-          "download_failed": "下载 cloudflared 失败，请检查网络后重试。",
-          "not_logged_in": "尚未登录 Cloudflare，请先完成授权。",
-          "login_timeout": "授权超时，请重新发起登录。",
-          "invalid_hostname": "主机名格式不正确。",
-          "tunnel_exists": "同名隧道已存在，请更换名称。",
-          "dns_route_failed": "配置 DNS 记录失败，请确认该域名已托管在 Cloudflare。",
-          "process_failed": "cloudflared 进程启动失败，详见日志。",
-          "busy": "另一项操作正在进行。",
-          "not_configured": "尚未配置远程访问。",
-          "invalid_request": "请求无效。",
+          "unsupported_platform": "当前系统没有可用的 cloudflared 构建，无法使用 Cloudflare Tunnel。",
+          "binary_missing": "找不到 cloudflared。请先在「安装 cloudflared」一步完成安装。",
+          "download_failed": "下载 cloudflared 失败。请检查这台机器的网络是否能访问 github.com，然后重试。",
+          "not_logged_in": "尚未完成 Cloudflare 授权。请回到「登录 Cloudflare」一步完成授权。",
+          "login_timeout": "Cloudflare 授权超时。请重新发起登录，并在打开的页面里选择域名完成授权。",
+          "invalid_hostname": "主机名格式不正确，请填写形如 tmex.example.com 的小写域名。",
+          "tunnel_exists": "Cloudflare 上已有同名隧道。请换一个隧道名称，或先在 Cloudflare 删除它。",
+          "dns_route_failed": "在 Cloudflare 添加 DNS 记录失败。请确认该域名托管在同一个 Cloudflare 账号下，且没有同名记录冲突。",
+          "process_failed": "cloudflared 没能正常启动。请展开下方的 cloudflared 日志查看最后几行输出，处理后重试。",
+          "busy": "上一项操作还没结束，请稍候再试。",
+          "not_configured": "还没有配置远程访问，请先在下方向导里选择一种方式。",
+          "invalid_request": "请求无效，页面数据可能已过期。请刷新页面后重试。",
           "unknown": "操作失败：{{message}}",
-          "auth_required": "请先为本机启用登录，再开放公网访问。",
-          "access_api_failed": "Cloudflare API 调用失败：{{message}}",
-          "exposure_ack_required": "该操作会把 tmex 开放到公网，请先确认已了解风险。"
+          "auth_required": "这台机器还没有启用登录。开放公网访问前请先启用登录，否则任何人都能直接进入 tmex。",
+          "access_api_failed": "调用 Cloudflare API 失败：{{message}}。请确认 API 令牌的权限与账户 ID 无误后重试。",
+          "exposure_ack_required": "该操作会把 tmex 开放到公网，请先勾选风险确认。"
         },
         "authRequired": {
-          "notice": "请先为本机启用登录，再开放公网访问。",
+          "notice": "这台机器还没有启用登录。开放公网访问前请先启用登录，否则任何人都能直接进入 tmex。",
           "link": "前往多节点互联设置"
         },
         "confirmRemove": {
           "title": "移除命名隧道？",
-          "description": "这会停止隧道、删除本机保存的凭证，并在 Cloudflare 上删除该隧道。",
-          "irreversible": "Cloudflare 上的隧道无法恢复，公网地址会立即失效。",
+          "description": "隧道会被停止，本机保存的凭证会被删除，Cloudflare 上的这条隧道也会一并删除。",
+          "irreversible": "Cloudflare 上的隧道无法恢复，当前公网地址会立即失效。",
           "confirm": "移除隧道",
           "cancel": "取消"
         },
         "accessState": {
-          "notConfigured": "Access 未配置",
-          "notEnforced": "Access 已配置但未强制",
-          "protected": "Access 已保护",
-          "hostnameMismatch": "Access 已配置（主机名不匹配）"
+          "notConfigured": "未配置 Access",
+          "unknown": "Access 无法检测",
+          "dashboardCovered": "Access 由控制台管理",
+          "notEnforced": "Access 未强制校验",
+          "protected": "Access 已生效",
+          "hostnameMismatch": "Access 主机名不匹配"
         },
         "externallyManaged": "由系统服务托管",
-        "externallyManagedNotice": "该隧道由系统服务运行，tmex 不会启动或停止它。要交回 tmex 管理，请先取消接管。",
+        "externallyManagedNotice": "这条隧道由系统服务运行，tmex 只显示它的状态，不会启动或停止它。要交回 tmex 管理，请先取消接管。",
         "exposure": {
-          "warning": "当前没有生效的访问保护：隧道地址是公网入口，任何人都可以访问 tmex。建议启用登录（多节点互联），或为该主机名配置并强制 Cloudflare Access。",
-          "warningShort": "当前没有生效的访问保护：隧道地址是公网入口，任何人都可以访问 tmex。",
-          "acknowledge": "我了解风险，仍要开放公网访问",
-          "ackRequired": "该操作会把 tmex 开放到公网，请先勾选确认。",
+          "warning": "当前没有任何访问保护：隧道地址就是公网入口，任何人拿到它都能直接使用 tmex。请启用登录（多节点互联），或为该主机名配置 Cloudflare Access 并开启令牌校验。",
+          "warningShort": "当前没有任何访问保护：拿到隧道地址的人都能直接使用 tmex。",
+          "acknowledge": "我已了解风险，仍要开放公网访问",
+          "ackRequired": "该操作会把 tmex 开放到公网，请先勾选上面的确认。",
           "enableLogin": "启用登录（多节点互联）",
-          "dropWarning": "这会移除最后一道访问保护：隧道仍在运行，之后任何人都可以访问 tmex。"
+          "dropWarning": "这会移除最后一道访问保护：隧道仍在运行，之后任何人都能直接使用 tmex。"
         },
         "access": {
           "tag": {
             "recommended": "推荐",
             "optional": "可选"
           },
-          "lastError": "Cloudflare Access：{{message}}",
+          "lastError": "上次 Cloudflare Access 操作失败：{{message}}",
           "credentials": {
             "title": "Cloudflare 凭证",
             "apiToken": "API 令牌",
-            "apiTokenHint": "需要 Cloudflare API 令牌，权限：Access: Apps and Policies（编辑）与 Access: Organizations, Identity Providers, and Groups（读取）。",
+            "apiTokenHint": "需要一个 Cloudflare API 令牌，权限为 Access: Apps and Policies（编辑）与 Access: Organizations, Identity Providers, and Groups（读取）。令牌只保存在这台机器上。",
             "accountId": "账户 ID",
-            "accountIdHint": "Cloudflare 控制台中该账号的 Account ID。",
+            "accountIdHint": "Cloudflare 控制台侧栏里的 Account ID。",
             "save": "保存",
-            "saved": "凭证已保存。",
+            "saved": "凭证已保存，现在可以创建或同步 Access 应用。",
             "clear": "清除",
             "teamDomain": "团队域"
           },
           "rules": {
             "title": "允许访问的用户",
-            "description": "匹配任意一条规则的访问者可以通过 Cloudflare Access，至少需要一条。",
+            "description": "访问者匹配任意一条规则即可通过 Cloudflare Access，至少需要一条。",
             "add": "添加规则",
             "remove": "删除规则",
             "apply": "应用到 Cloudflare",
-            "needHostname": "尚无主机名：Access 应用需要绑定主机名，请先创建或接管命名隧道。",
+            "needHostname": "还没有主机名。Access 应用必须绑定主机名，请先创建或接管一条命名隧道。",
             "kind": {
               "email": "邮箱",
               "email_domain": "邮箱域"
@@ -2485,32 +2503,39 @@ export const I18N_RESOURCES = {
           },
           "sync": {
             "action": "从 Cloudflare 同步",
-            "hint": "凭证已保存，但本机没有 Access 应用记录。若已在 Cloudflare 控制台为 {{hostname}} 建过应用，请先同步，避免重复创建。"
+            "hint": "凭证已保存，但 tmex 这边没有 Access 应用记录。如果你已在 Cloudflare 控制台为 {{hostname}} 建过应用，请先同步把它接入 tmex，避免重复创建。"
+          },
+          "probe": {
+            "unknown": "无法检测 {{hostname}} 的 Cloudflare Access 状态：当前没有可用的 Cloudflare 凭证，或查询 API 失败。这不代表未配置。保存下方的 API 令牌与账户 ID 后会自动重新检测。",
+            "covered": "只读检测：Cloudflare 控制台上已有一个 Access 应用覆盖 {{hostname}}。该应用不由 tmex 管理，网关也不会校验它签发的令牌；点「从 Cloudflare 同步」可以把它接入 tmex。",
+            "absent": "只读检测：Cloudflare 上没有覆盖 {{hostname}} 的 Access 应用。在下方填写允许访问的用户并应用，即可创建一个。",
+            "teamDomain": "团队域：{{teamDomain}}",
+            "needCredentials": "要交给 tmex 托管并在网关校验令牌，请先在下方保存 Cloudflare API 令牌与账户 ID。"
           },
           "app": {
-            "title": "Access 应用",
+            "title": "Access 应用（由 tmex 托管）",
             "appId": "应用 ID",
             "aud": "AUD",
             "hostname": "覆盖主机名",
             "rules": "规则",
             "noRules": "无",
             "enforce": "网关校验 Access 令牌",
-            "enforceHint": "对来自隧道的请求校验 Cf-Access-Jwt-Assertion，未通过直接拒绝。",
-            "enforceOff": "已关闭令牌校验。Cloudflare 仍会在边缘拦截未授权访问，但绕过 Access 直连隧道的请求不会被本机拦下。",
+            "enforceHint": "对经隧道进来的请求校验 Cf-Access-Jwt-Assertion，未通过直接拒绝。",
+            "enforceOff": "已关闭令牌校验。Cloudflare 仍会在边缘拦截未授权访问，但绕过 Access 直接打到隧道的请求，这台机器不会再拦。",
             "remove": "移除 Access 应用",
-            "hostnameMismatch": "该应用覆盖的主机名与当前隧道不一致，令牌校验不会生效。"
+            "hostnameMismatch": "该应用覆盖的主机名与当前隧道不一致，令牌校验不会生效。请重新应用规则，把它绑到当前主机名。"
           },
           "confirmRemove": {
             "title": "移除 Access 应用？",
-            "description": "这会在 Cloudflare 上删除该应用与策略，该主机名将不再受 Access 保护。",
+            "description": "这会在 Cloudflare 上删除该应用及其策略，该主机名将不再受 Access 保护。",
             "confirm": "移除应用",
             "cancel": "取消"
           }
         },
         "external": {
-          "title": "检测到系统中已有的 Cloudflare Tunnel",
-          "description": "这台机器上已有一条不由 tmex 管理的隧道。可以直接接管它，也可以让 tmex 另建一条。",
-          "source": "来源",
+          "title": "检测到系统里已有的 Cloudflare Tunnel",
+          "description": "这台机器上已经跑着一条不由 tmex 管理的隧道。可以让 tmex 接管它，也可以忽略并另建一条。",
+          "source": "检测来源",
           "sourceValue": {
             "launchd": "launchd 服务",
             "systemd": "systemd 服务",
@@ -2523,10 +2548,17 @@ export const I18N_RESOURCES = {
             "on": "运行中",
             "off": "未运行"
           },
-          "noHostname": "该隧道的配置里没有指向本机 tmex 的主机名，无法接管。",
-          "chooseHostname": "选择主机名",
-          "adopt": "使用此隧道",
-          "dismiss": "改为由 tmex 创建新隧道"
+          "accessLabel": "Cloudflare Access",
+          "accessValue": {
+            "covered": "已有应用覆盖该主机名（控制台）",
+            "absent": "未检测到覆盖该主机名的应用",
+            "unknown": "无法检测（缺少可用凭证）"
+          },
+          "noHostname": "这条隧道的配置里没有指向本机 tmex（127.0.0.1:{{port}}）的主机名，因此无法接管。请检查它的 ingress 配置，或让 tmex 另建一条隧道。",
+          "chooseHostname": "选择要接管的主机名",
+          "adopt": "接管这条隧道",
+          "adoptHint": "接管后，tmex 把该主机名记为自己的公网地址，并在这里显示隧道状态与访问控制。隧道进程仍由系统服务运行——tmex 不会启动、停止或改写它的配置。随时可以取消接管，系统服务不受影响。",
+          "dismiss": "忽略，由 tmex 新建隧道"
         }
       },
       "deviceManagement": {
@@ -4203,11 +4235,11 @@ export const I18N_RESOURCES = {
       "remoteAccess": {
         "title": "リモートアクセス",
         "wizardTitle": "セットアップ",
-        "description": "Cloudflare Tunnel でこのマシンを公開します。グローバル IP やポート開放は不要です。",
-        "remoteNodeNotice": "リモートアクセスは現在接続しているマシンでのみ設定できます。",
-        "loginRequired": "リモートアクセスを設定するには、このマシンにログインしてください。",
-        "loadFailed": "リモートアクセスの状態を取得できません。",
-        "unsupported": "このプラットフォーム（{{platform}}）は Cloudflare Tunnel に対応していません。",
+        "description": "Cloudflare Tunnel を使って、このマシンの tmex をインターネットに公開します。グローバル IP もポート開放も不要です。",
+        "remoteNodeNotice": "リモートアクセスは、ブラウザが直接接続しているマシンでのみ設定できます。対象のマシンに切り替えてから、このページを開いてください。",
+        "loginRequired": "リモートアクセスを設定する前に、このマシンにログインしてください。",
+        "loadFailed": "リモートアクセスの状態を取得できませんでした。tmex ゲートウェイが稼働しているか確認し、ページを再読み込みしてください。",
+        "unsupported": "このプラットフォーム（{{platform}}）向けの cloudflared がないため、Cloudflare Tunnel は利用できません。",
         "modeLabel": "方式",
         "publicUrl": "公開アドレス",
         "restartsLabel": "再起動回数",
@@ -4217,16 +4249,16 @@ export const I18N_RESOURCES = {
           "stopped": "停止中",
           "starting": "起動中",
           "running": "稼働中",
-          "error": "エラー"
+          "error": "異常"
         },
         "mode": {
           "quick": {
             "title": "一時トンネル",
-            "description": "アカウント不要。起動のたびにアドレスが変わります。検証向けです。"
+            "description": "Cloudflare アカウント不要。起動のたびに新しい一時アドレスが発行されます。デモや切り分け向けです。"
           },
           "named": {
             "title": "名前付きトンネル",
-            "description": "Cloudflare アカウントと管理中のドメインが必要です。アドレスは固定されます。"
+            "description": "Cloudflare で管理しているドメインを使います。アドレスは固定で、アクセス制御と併用できます。"
           }
         },
         "actions": {
@@ -4244,48 +4276,48 @@ export const I18N_RESOURCES = {
           "release": "引き継ぎを解除"
         },
         "check": {
-          "reachable": "到達可能",
-          "unreachable": "到達不可",
-          "running": "確認中…"
+          "reachable": "公開アドレスに到達できました。",
+          "unreachable": "公開アドレスに到達できません。",
+          "running": "公開アドレスを確認しています…"
         },
         "log": {
-          "title": "ログ",
+          "title": "cloudflared のログ",
           "empty": "出力はありません。"
         },
         "steps": {
           "install": {
             "title": "cloudflared のインストール",
-            "description": "tmex は cloudflared を自身のデータディレクトリに配置し、システムは変更しません。",
+            "description": "tmex は cloudflared を自身のデータディレクトリに配置します。システムに導入済みのものには手を加えません。",
             "version": "バージョン",
             "path": "パス",
             "source": "取得元",
             "sourceValue": {
               "managed": "tmex が管理",
-              "system": "システムに導入済み"
+              "system": "システムに導入済み（PATH）"
             },
-            "skipped": "cloudflared はシステムサービスが提供しているため、インストールは不要です。"
+            "skipped": "cloudflared はシステムサービスが提供しているため、tmex 側でのインストールは不要です。"
           },
           "mode": {
             "title": "方式の選択",
-            "description": "方式を変更する場合は、既存のトンネルを先に削除してください。",
+            "description": "方式を変更する場合は、先に上で現在のトンネルを削除してください。",
             "pending": "方式を選択してください。"
           },
           "tunnel": {
             "title": "トンネルの作成",
-            "description": "方式を選択したあと、ここで作成します。"
+            "description": "方式を選んだあと、ここで作成を完了します。"
           },
           "quick": {
             "title": "一時トンネル",
-            "description": "起動すると trycloudflare.com の一時アドレスが発行され、停止すると無効になります。",
-            "started": "一時トンネルが稼働しています。"
+            "description": "開始すると Cloudflare が trycloudflare.com の一時アドレスを発行します。停止すると無効になります。",
+            "started": "一時トンネルが稼働しています。公開アドレスは次のとおりです。"
           },
           "named": {
             "title": "名前付きトンネル",
-            "description": "Cloudflare で管理中のドメインを使うため、アドレスは固定されます。",
+            "description": "Cloudflare で管理中のドメインを使うため、公開アドレスは変わりません。",
             "login": {
-              "description": "開いた認可ページでドメインを承認し、このページに戻ってください。",
-              "waiting": "Cloudflare での認可を待機しています",
-              "done": "Cloudflare にログイン済みです。"
+              "description": "開いた Cloudflare のページで認可するドメインを選び、このページに戻ってください。以降は tmex が自動で続行します。",
+              "waiting": "Cloudflare での認可の完了を待っています",
+              "done": "Cloudflare の認可が完了しました。"
             },
             "hostname": "ホスト名",
             "hostnamePlaceholder": "tmex.example.com",
@@ -4294,8 +4326,8 @@ export const I18N_RESOURCES = {
             "tunnelName": "トンネル名",
             "tunnelNamePlaceholder": "tmex",
             "tunnelNameHint": "空欄可。空欄の場合は tmex が生成します。使用できるのは小文字・数字・ハイフン・アンダースコアのみです。",
-            "hubHint": "Hub として運用する場合は、Hub の公開アドレスをこのホスト名に設定してください。",
-            "hubHintLink": "ノード設定を開く",
+            "hubHint": "このマシンは Hub です。Hub の公開アドレスをこのホスト名に設定すると、他のノードがトンネル経由で接続できます。",
+            "hubHintLink": "マルチノード設定を開く",
             "tunnelId": "トンネル ID",
             "configured": "名前付きトンネルを作成しました。",
             "changeHint": "ホスト名やトンネルを変更するには、先に上で現在のトンネルを削除してください。",
@@ -4303,15 +4335,15 @@ export const I18N_RESOURCES = {
           },
           "proxy": {
             "title": "リバースプロキシの信頼",
-            "description": "トンネルはクライアントアドレスとプロトコルを置き換えるため、信頼設定の調整が必要です。",
+            "description": "トンネルはリクエストのクライアントアドレスとプロトコルを置き換えるため、tmex 側の信頼設定を合わせる必要があります。",
             "trustProxy": "リバースプロキシヘッダーを信頼する",
             "trustProxyHint": "tmex にこのトンネル経由でしか到達できない場合のみ有効にしてください。",
             "autoStart": "tmex と同時に起動",
-            "autoStartHint": "ゲートウェイ起動時にトンネルを自動で立ち上げます。",
-            "restartRequired": "保存しました。再起動後に有効になります。",
+            "autoStartHint": "ゲートウェイの起動時にトンネルを自動で立ち上げます。",
+            "restartRequired": "保存しました。tmex を再起動すると有効になります。",
             "restartNow": "今すぐ再起動",
-            "restarting": "再起動中",
-            "restartTimeout": "再起動がタイムアウトしました。tmex を手動で再起動してください。",
+            "restarting": "tmex を再起動しています",
+            "restartTimeout": "再起動の待機がタイムアウトしました。tmex を手動で再起動し、ページを再読み込みしてください。",
             "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。トンネルを迂回してローカルの待ち受けポートに直接到達できる相手はこれらを偽装できるため、そのポートへのアクセスを制限してください。",
             "trustProxyEffective": "現在の適用値",
             "trustProxyState": {
@@ -4320,105 +4352,107 @@ export const I18N_RESOURCES = {
             }
           },
           "login": {
-            "title": "Cloudflare にサインイン",
-            "description": "Cloudflare アカウントでトンネルと DNS レコードを作成する権限を tmex に付与します。",
-            "skipped": "トンネルはシステムサービス管理のため、tmex 内での Cloudflare サインインは不要です。"
+            "title": "Cloudflare にログイン",
+            "description": "Cloudflare アカウントでトンネルと DNS レコードを作成する権限を tmex に付与します。証明書はこのマシン内に保存されます。",
+            "skipped": "トンネルはシステムサービスが実行しているため、tmex 内でのログインは不要です。"
           },
           "hostname": {
             "title": "ホスト名",
             "description": "トンネルの固定公開アドレスです。",
             "confirm": "このホスト名を使う",
             "edit": "変更",
-            "pending": "先に Cloudflare にサインインしてください。"
+            "pending": "先に Cloudflare の認可を完了してください。"
           },
           "access": {
             "title": "アクセス制御（Cloudflare Access）",
-            "description": "Cloudflare のエッジでメールアドレスにより許可します。拒否されたリクエストはこの端末に届きません。"
+            "description": "Cloudflare のエッジでメールアドレスにより許可します。拒否されたリクエストはこのマシンに届きません。"
           },
           "create": {
             "title": "作成して起動",
-            "description": "Cloudflare でトンネルを作成し、DNS レコードを設定して起動します。",
+            "description": "Cloudflare でトンネルを作成し、DNS レコードを追加して起動します。",
             "pending": "先にホスト名を確定してください。",
             "adopted": "システム上の既存トンネルを引き継ぎました。"
           }
         },
         "jobStep": {
-          "download": "ダウンロード",
-          "extract": "展開",
-          "verify": "検証",
-          "create_tunnel": "トンネル作成",
-          "route_dns": "DNS 設定",
-          "start": "起動",
+          "download": "ダウンロード中",
+          "extract": "展開中",
+          "verify": "検証中",
+          "create_tunnel": "トンネルを作成中",
+          "route_dns": "DNS を設定中",
+          "start": "起動中",
           "create": "トンネルを作成中",
-          "wait_cert": "承認を待機中",
+          "wait_cert": "Cloudflare の認可を待機中",
           "login": "Cloudflare にログイン中",
           "cancelled": "キャンセル済み",
-          "check": "接続確認",
+          "check": "接続を確認中",
           "ok": "完了",
-          "create_app": "Access アプリケーションを作成",
-          "policy": "アクセスポリシーを適用",
-          "delete_app": "Access アプリケーションを削除",
-          "sync": "Access アプリケーションを同期"
+          "create_app": "Access アプリケーションを作成中",
+          "policy": "アクセスポリシーを適用中",
+          "delete_app": "Access アプリケーションを削除中",
+          "sync": "Access アプリケーションを同期中"
         },
         "errors": {
-          "unsupported_platform": "このプラットフォームは Cloudflare Tunnel に対応していません。",
-          "binary_missing": "cloudflared が見つかりません。先にインストールしてください。",
-          "download_failed": "cloudflared のダウンロードに失敗しました。ネットワークを確認して再試行してください。",
-          "not_logged_in": "Cloudflare にログインしていません。先に認可を完了してください。",
-          "login_timeout": "認可がタイムアウトしました。ログインをやり直してください。",
-          "invalid_hostname": "ホスト名の形式が正しくありません。",
-          "tunnel_exists": "同名のトンネルが既に存在します。別の名前を指定してください。",
-          "dns_route_failed": "DNS レコードの設定に失敗しました。ドメインが Cloudflare で管理されているか確認してください。",
-          "process_failed": "cloudflared の起動に失敗しました。ログを確認してください。",
-          "busy": "別の操作が進行中です。",
-          "not_configured": "リモートアクセスは未設定です。",
-          "invalid_request": "リクエストが不正です。",
+          "unsupported_platform": "このプラットフォーム向けの cloudflared がないため、Cloudflare Tunnel は利用できません。",
+          "binary_missing": "cloudflared が見つかりません。「cloudflared のインストール」で先にインストールしてください。",
+          "download_failed": "cloudflared のダウンロードに失敗しました。このマシンから github.com に到達できるか確認して、再試行してください。",
+          "not_logged_in": "Cloudflare の認可が完了していません。「Cloudflare にログイン」に戻って認可を済ませてください。",
+          "login_timeout": "Cloudflare の認可がタイムアウトしました。ログインをやり直し、開いたページでドメインを選択してください。",
+          "invalid_hostname": "ホスト名の形式が正しくありません。tmex.example.com のような小文字のホスト名を入力してください。",
+          "tunnel_exists": "同名のトンネルが Cloudflare に既に存在します。別の名前を指定するか、Cloudflare 側で削除してください。",
+          "dns_route_failed": "Cloudflare への DNS レコード追加に失敗しました。同じ Cloudflare アカウントでドメインが管理されているか、既存レコードと競合していないか確認してください。",
+          "process_failed": "cloudflared が起動できませんでした。下の cloudflared ログを開き、末尾の出力を確認してから再試行してください。",
+          "busy": "前の操作がまだ完了していません。少し待ってから再試行してください。",
+          "not_configured": "リモートアクセスは未設定です。下のセットアップで方式を選んでください。",
+          "invalid_request": "リクエストが不正として拒否されました。ページの内容が古い可能性があります。再読み込みしてから操作してください。",
           "unknown": "操作に失敗しました：{{message}}",
-          "auth_required": "公開する前に、このマシンでサインインを有効にしてください。",
-          "access_api_failed": "Cloudflare API の呼び出しに失敗しました：{{message}}",
-          "exposure_ack_required": "この操作は tmex をインターネットに公開します。先にリスクの確認が必要です。"
+          "auth_required": "このマシンではログインが有効になっていません。公開する前に有効化しないと、誰でも tmex に入れてしまいます。",
+          "access_api_failed": "Cloudflare API の呼び出しに失敗しました：{{message}}。API トークンの権限とアカウント ID を確認して再試行してください。",
+          "exposure_ack_required": "この操作は tmex をインターネットに公開します。先にリスクを確認してください。"
         },
         "authRequired": {
-          "notice": "公開する前に、このマシンでサインインを有効にしてください。",
+          "notice": "このマシンではログインが有効になっていません。公開する前に有効化しないと、誰でも tmex に入れてしまいます。",
           "link": "マルチノード設定を開く"
         },
         "confirmRemove": {
           "title": "名前付きトンネルを削除しますか？",
           "description": "トンネルを停止し、このマシンに保存された資格情報を削除し、Cloudflare 上のトンネルも削除します。",
-          "irreversible": "Cloudflare 上のトンネルは復元できず、公開アドレスは直ちに使えなくなります。",
+          "irreversible": "Cloudflare 上のトンネルは復元できず、現在の公開アドレスは直ちに使えなくなります。",
           "confirm": "トンネルを削除",
           "cancel": "キャンセル"
         },
         "accessState": {
-          "notConfigured": "Access 未設定",
-          "notEnforced": "Access 設定済み・未強制",
-          "protected": "Access で保護",
-          "hostnameMismatch": "Access 設定済み（ホスト名不一致）"
+          "notConfigured": "Access アプリなし",
+          "unknown": "Access 検出不可",
+          "dashboardCovered": "Access はダッシュボード管理",
+          "notEnforced": "Access 未強制",
+          "protected": "Access 有効",
+          "hostnameMismatch": "Access ホスト名不一致"
         },
-        "externallyManaged": "システムサービス管理",
-        "externallyManagedNotice": "このトンネルはシステムサービスが実行しており、tmex は起動・停止を行いません。tmex で管理するには先に引き継ぎを解除してください。",
+        "externallyManaged": "システムサービスが実行",
+        "externallyManagedNotice": "このトンネルはシステムサービスが実行しており、tmex は状態を表示するだけで起動・停止は行いません。tmex で管理するには、先に引き継ぎを解除してください。",
         "exposure": {
-          "warning": "有効なアクセス保護がありません。トンネルの URL は誰でも到達できる公開エントリです。サインイン（マルチノード）を有効にするか、このホスト名に対して Cloudflare Access を設定して強制してください。",
-          "warningShort": "有効なアクセス保護がありません。トンネルの URL は公開されており、誰でも tmex にアクセスできます。",
+          "warning": "現在、アクセス保護がありません。トンネルの URL は公開の入口であり、URL を知っている人は誰でも tmex を使えます。ログイン（マルチノード）を有効にするか、このホスト名に Cloudflare Access を設定してトークン検証を有効にしてください。",
+          "warningShort": "現在、アクセス保護がありません。トンネルの URL を知っている人は誰でも tmex を使えます。",
           "acknowledge": "リスクを理解した上でインターネットに公開する",
-          "ackRequired": "この操作は tmex をインターネットに公開します。チェックを入れて確認してください。",
-          "enableLogin": "サインインを有効にする（マルチノード）",
-          "dropWarning": "最後のアクセス保護が解除されます。トンネルは動作したままとなり、誰でも tmex にアクセスできるようになります。"
+          "ackRequired": "この操作は tmex をインターネットに公開します。上のチェックを入れて確認してください。",
+          "enableLogin": "ログインを有効にする（マルチノード）",
+          "dropWarning": "最後のアクセス保護が外れます。トンネルは動作したままで、以降は誰でも tmex を使えるようになります。"
         },
         "access": {
           "tag": {
             "recommended": "推奨",
             "optional": "任意"
           },
-          "lastError": "Cloudflare Access：{{message}}",
+          "lastError": "前回の Cloudflare Access 操作に失敗しました：{{message}}",
           "credentials": {
             "title": "Cloudflare 認証情報",
             "apiToken": "API トークン",
-            "apiTokenHint": "Cloudflare API トークンが必要です。権限：Access: Apps and Policies（編集）と Access: Organizations, Identity Providers, and Groups（読み取り）。",
+            "apiTokenHint": "Access: Apps and Policies（編集）と Access: Organizations, Identity Providers, and Groups（読み取り）の権限を持つ Cloudflare API トークンが必要です。トークンはこのマシンにのみ保存されます。",
             "accountId": "アカウント ID",
-            "accountIdHint": "Cloudflare ダッシュボードに表示される Account ID です。",
+            "accountIdHint": "Cloudflare ダッシュボードのサイドバーに表示される Account ID です。",
             "save": "保存",
-            "saved": "認証情報を保存しました。",
+            "saved": "認証情報を保存しました。Access アプリケーションの作成・同期ができます。",
             "clear": "削除",
             "teamDomain": "チームドメイン"
           },
@@ -4428,7 +4462,7 @@ export const I18N_RESOURCES = {
             "add": "ルールを追加",
             "remove": "ルールを削除",
             "apply": "Cloudflare に適用",
-            "needHostname": "ホスト名がありません。Access アプリケーションはホスト名に紐づくため、先に名前付きトンネルを作成または引き継いでください。",
+            "needHostname": "ホスト名がまだありません。Access アプリケーションはホスト名に紐づくため、先に名前付きトンネルを作成または引き継いでください。",
             "kind": {
               "email": "メールアドレス",
               "email_domain": "メールドメイン"
@@ -4444,10 +4478,17 @@ export const I18N_RESOURCES = {
           },
           "sync": {
             "action": "Cloudflare から同期",
-            "hint": "認証情報は保存済みですが、ローカルに Access アプリケーションの記録がありません。{{hostname}} 用のアプリケーションを Cloudflare ダッシュボードで作成済みの場合は、重複作成を避けるため先に同期してください。"
+            "hint": "認証情報は保存済みですが、tmex 側に Access アプリケーションの記録がありません。{{hostname}} 用のアプリケーションを Cloudflare ダッシュボードで作成済みの場合は、重複作成を避けるため先に同期してください。"
+          },
+          "probe": {
+            "unknown": "{{hostname}} の Cloudflare Access 状態を確認できません。利用できる Cloudflare 認証情報がないか、照会に失敗しました。未設定という意味ではありません。下で API トークンとアカウント ID を保存すると、自動的に再確認します。",
+            "covered": "読み取り専用の検出結果：Cloudflare ダッシュボード上に {{hostname}} を対象とする Access アプリケーションが既にあります。これは tmex の管理外で、ゲートウェイはそのトークンを検証しません。「Cloudflare から同期」で tmex の管理下に取り込めます。",
+            "absent": "読み取り専用の検出結果：{{hostname}} を対象とする Access アプリケーションは Cloudflare にありません。下で許可するユーザーを指定して適用すると作成できます。",
+            "teamDomain": "チームドメイン：{{teamDomain}}",
+            "needCredentials": "tmex の管理下に置き、ゲートウェイでトークンを検証するには、まず下で Cloudflare の API トークンとアカウント ID を保存してください。"
           },
           "app": {
-            "title": "Access アプリケーション",
+            "title": "Access アプリケーション（tmex が管理）",
             "appId": "アプリケーション ID",
             "aud": "AUD",
             "hostname": "対象ホスト名",
@@ -4455,9 +4496,9 @@ export const I18N_RESOURCES = {
             "noRules": "なし",
             "enforce": "ゲートウェイで Access トークンを検証",
             "enforceHint": "トンネル経由のリクエストで Cf-Access-Jwt-Assertion を検証し、通らないものを拒否します。",
-            "enforceOff": "トークン検証は無効です。Cloudflare のエッジでは引き続き未認可のアクセスを遮断しますが、Access を迂回したリクエストはこの端末では拒否されません。",
+            "enforceOff": "トークン検証は無効です。Cloudflare のエッジでは引き続き未認可のアクセスを遮断しますが、Access を迂回してトンネルに届いたリクエストはこのマシンでは拒否されません。",
             "remove": "Access アプリケーションを削除",
-            "hostnameMismatch": "このアプリケーションが対象とするホスト名は現在のトンネルと異なるため、トークン検証は有効になりません。"
+            "hostnameMismatch": "このアプリケーションの対象ホスト名が現在のトンネルと異なるため、トークン検証は有効になりません。ルールを適用し直して、現在のホスト名に紐づけてください。"
           },
           "confirmRemove": {
             "title": "Access アプリケーションを削除しますか？",
@@ -4468,7 +4509,7 @@ export const I18N_RESOURCES = {
         },
         "external": {
           "title": "システム上の Cloudflare Tunnel を検出しました",
-          "description": "この端末には tmex が管理していないトンネルが既に存在します。引き継ぐか、tmex で新たに作成できます。",
+          "description": "このマシンでは tmex の管理外のトンネルが既に稼働しています。tmex に引き継がせることも、無視して別途作成することもできます。",
           "source": "検出元",
           "sourceValue": {
             "launchd": "launchd サービス",
@@ -4482,10 +4523,17 @@ export const I18N_RESOURCES = {
             "on": "実行中",
             "off": "停止中"
           },
-          "noHostname": "この端末の tmex を指すホスト名が設定に見つからないため、引き継げません。",
-          "chooseHostname": "ホスト名を選択",
-          "adopt": "このトンネルを使う",
-          "dismiss": "tmex で新しいトンネルを作成"
+          "accessLabel": "Cloudflare Access",
+          "accessValue": {
+            "covered": "このホスト名を対象とするアプリあり（ダッシュボード）",
+            "absent": "このホスト名を対象とするアプリは未検出",
+            "unknown": "検出不可（利用できる認証情報がありません）"
+          },
+          "noHostname": "このトンネルの設定に、このマシンの tmex（127.0.0.1:{{port}}）を指すホスト名が見つからないため、引き継げません。ingress の設定を確認するか、tmex で別のトンネルを作成してください。",
+          "chooseHostname": "引き継ぐホスト名を選択",
+          "adopt": "このトンネルを引き継ぐ",
+          "adoptHint": "引き継ぐと、tmex はこのホスト名を自身の公開アドレスとして記録し、トンネルの状態とアクセス制御をここに表示します。トンネル自体はシステムサービスが実行したままで、tmex が起動・停止したり設定を書き換えたりすることはありません。引き継ぎはいつでも解除でき、システムサービスには影響しません。",
+          "dismiss": "無視して tmex で新規作成"
         }
       },
       "deviceManagement": {

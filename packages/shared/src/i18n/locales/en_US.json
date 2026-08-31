@@ -278,11 +278,11 @@
       "remoteAccess": {
         "title": "Remote access",
         "wizardTitle": "Setup",
-        "description": "Expose this machine over Cloudflare Tunnel, without a public IP or port forwarding.",
-        "remoteNodeNotice": "Remote access can only be configured on the machine you are connected to.",
-        "loginRequired": "Sign in to this machine to configure remote access.",
-        "loadFailed": "Unable to load remote access status.",
-        "unsupported": "Cloudflare Tunnel is not supported on this platform ({{platform}}).",
+        "description": "Publish this machine's tmex on the internet through Cloudflare Tunnel — no public IP and no port forwarding.",
+        "remoteNodeNotice": "Remote access is configured on the machine your browser connects to directly. Switch to that machine and open this page there.",
+        "loginRequired": "Sign in to this machine before configuring remote access.",
+        "loadFailed": "Couldn't load the remote access status. Make sure the tmex gateway is still running, then reload the page.",
+        "unsupported": "No cloudflared build is available for this platform ({{platform}}), so Cloudflare Tunnel can't be used here.",
         "modeLabel": "Mode",
         "publicUrl": "Public URL",
         "restartsLabel": "Restarts",
@@ -292,16 +292,16 @@
           "stopped": "Stopped",
           "starting": "Starting",
           "running": "Running",
-          "error": "Error"
+          "error": "Failed"
         },
         "mode": {
           "quick": {
             "title": "Quick tunnel",
-            "description": "No account required. The URL changes on every start. Best for testing."
+            "description": "No Cloudflare account needed. Each start issues a new temporary URL — good for demos and troubleshooting."
           },
           "named": {
             "title": "Named tunnel",
-            "description": "Requires a Cloudflare account and a hosted domain. The URL stays fixed."
+            "description": "Uses a domain you host on Cloudflare. The URL stays fixed and works with access control."
           }
         },
         "actions": {
@@ -319,18 +319,18 @@
           "release": "Release"
         },
         "check": {
-          "reachable": "Reachable",
-          "unreachable": "Unreachable",
-          "running": "Checking…"
+          "reachable": "The public URL is reachable.",
+          "unreachable": "The public URL is unreachable.",
+          "running": "Checking the public URL…"
         },
         "log": {
-          "title": "Log",
+          "title": "cloudflared log",
           "empty": "No output yet."
         },
         "steps": {
           "install": {
             "title": "Install cloudflared",
-            "description": "tmex downloads cloudflared into its own data directory and leaves the system untouched.",
+            "description": "tmex downloads cloudflared into its own data directory and leaves any system install alone.",
             "version": "Version",
             "path": "Path",
             "source": "Source",
@@ -338,29 +338,29 @@
               "managed": "Managed by tmex",
               "system": "Found on PATH"
             },
-            "skipped": "cloudflared is provided by the system service; no installation needed."
+            "skipped": "cloudflared comes from the system service, so tmex doesn't need its own copy."
           },
           "mode": {
             "title": "Choose a mode",
-            "description": "Remove the existing tunnel first if you need to switch modes later.",
+            "description": "To switch modes later, remove the current tunnel above first.",
             "pending": "Choose a mode to continue."
           },
           "tunnel": {
             "title": "Create the tunnel",
-            "description": "Complete the setup here after choosing a mode."
+            "description": "Finish setting it up here once you've picked a mode."
           },
           "quick": {
             "title": "Quick tunnel",
-            "description": "Starting the tunnel issues a temporary trycloudflare.com URL that expires on stop.",
-            "started": "Quick tunnel is running."
+            "description": "On start, Cloudflare issues a temporary trycloudflare.com URL that stops working when the tunnel stops.",
+            "started": "The quick tunnel is running. Its public URL is below."
           },
           "named": {
             "title": "Named tunnel",
-            "description": "Uses a domain you already host on Cloudflare, so the URL stays fixed.",
+            "description": "Uses a domain you already host on Cloudflare, so the public URL never changes.",
             "login": {
-              "description": "Authorize a domain on the page that opens, then return here.",
-              "waiting": "Waiting for authorization on Cloudflare",
-              "done": "Signed in to Cloudflare."
+              "description": "Pick the domain to authorize on the Cloudflare page that opens, then come back here — tmex continues on its own.",
+              "waiting": "Waiting for you to finish authorizing on Cloudflare",
+              "done": "Cloudflare authorization complete."
             },
             "hostname": "Hostname",
             "hostnamePlaceholder": "tmex.example.com",
@@ -368,25 +368,25 @@
             "hostnameInvalid": "Enter a lowercase hostname such as tmex.example.com.",
             "tunnelName": "Tunnel name",
             "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "Optional; tmex generates one when left empty. Lowercase letters, digits, hyphens and underscores only.",
-            "hubHint": "On a Hub, set the Hub public URL to this hostname.",
-            "hubHintLink": "Open node settings",
+            "tunnelNameHint": "Optional — tmex generates one if you leave it empty. Lowercase letters, digits, hyphens and underscores only.",
+            "hubHint": "This machine is a Hub: set the Hub's public URL to this hostname so other nodes can connect through the tunnel.",
+            "hubHintLink": "Open multi-node settings",
             "tunnelId": "Tunnel ID",
             "configured": "The named tunnel has been created.",
-            "changeHint": "To use a different hostname or tunnel, remove the current tunnel above first.",
+            "changeHint": "To use a different hostname or tunnel, remove the current one above first.",
             "tunnelNameInvalid": "The tunnel name must start with a lowercase letter or digit and may contain only lowercase letters, digits, hyphens and underscores, up to 63 characters."
           },
           "proxy": {
             "title": "Reverse proxy trust",
-            "description": "The tunnel replaces the client address and protocol, so tmex needs matching trust settings.",
+            "description": "The tunnel rewrites the client address and protocol on every request, so tmex needs matching trust settings.",
             "trustProxy": "Trust reverse proxy headers",
-            "trustProxyHint": "Turn this on only if tmex can be reached through this tunnel alone.",
+            "trustProxyHint": "Turn this on only if the tunnel is the only way to reach tmex.",
             "autoStart": "Start with tmex",
-            "autoStartHint": "Bring the tunnel up when the gateway starts.",
-            "restartRequired": "Saved. Restart to apply.",
+            "autoStartHint": "Bring the tunnel up whenever the gateway starts.",
+            "restartRequired": "Saved. Restart tmex to apply.",
             "restartNow": "Restart now",
-            "restarting": "Restarting",
-            "restartTimeout": "Restart timed out. Restart tmex manually.",
+            "restarting": "Restarting tmex",
+            "restartTimeout": "Timed out waiting for the restart. Restart tmex manually, then reload this page.",
             "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Anyone who can bypass the tunnel and reach the local listening port directly could forge them, so restrict access to that port.",
             "trustProxyEffective": "In effect now",
             "trustProxyState": {
@@ -396,15 +396,15 @@
           },
           "login": {
             "title": "Sign in to Cloudflare",
-            "description": "Authorize tmex to create tunnels and DNS records in your Cloudflare account.",
-            "skipped": "The tunnel is managed by a system service; signing in to Cloudflare from tmex is not required."
+            "description": "Authorize tmex to create tunnels and DNS records in your Cloudflare account. The certificate stays on this machine.",
+            "skipped": "The tunnel is run by a system service, so there's nothing to sign in to from tmex."
           },
           "hostname": {
             "title": "Hostname",
             "description": "The fixed public address of the tunnel.",
             "confirm": "Use this hostname",
             "edit": "Edit",
-            "pending": "Sign in to Cloudflare first."
+            "pending": "Finish the Cloudflare authorization first."
           },
           "access": {
             "title": "Access control (Cloudflare Access)",
@@ -412,7 +412,7 @@
           },
           "create": {
             "title": "Create and start",
-            "description": "Create the tunnel in Cloudflare, add the DNS record and start it.",
+            "description": "Create the tunnel in Cloudflare, add the DNS record, and start it.",
             "pending": "Confirm the hostname first.",
             "adopted": "The existing system tunnel has been adopted."
           }
@@ -421,89 +421,91 @@
           "download": "Downloading",
           "extract": "Extracting",
           "verify": "Verifying",
-          "create_tunnel": "Creating tunnel",
+          "create_tunnel": "Creating the tunnel",
           "route_dns": "Configuring DNS",
           "start": "Starting",
-          "create": "Creating tunnel",
-          "wait_cert": "Waiting for authorization",
+          "create": "Creating the tunnel",
+          "wait_cert": "Waiting for Cloudflare authorization",
           "login": "Signing in to Cloudflare",
           "cancelled": "Cancelled",
           "check": "Checking connectivity",
           "ok": "Done",
-          "create_app": "Creating Access application",
-          "policy": "Applying access policy",
-          "delete_app": "Deleting Access application",
-          "sync": "Syncing Access application"
+          "create_app": "Creating the Access application",
+          "policy": "Applying the access policy",
+          "delete_app": "Deleting the Access application",
+          "sync": "Syncing the Access application"
         },
         "errors": {
-          "unsupported_platform": "Cloudflare Tunnel is not supported on this platform.",
-          "binary_missing": "cloudflared was not found. Install it first.",
-          "download_failed": "Failed to download cloudflared. Check the network and retry.",
-          "not_logged_in": "Not signed in to Cloudflare. Complete the authorization first.",
-          "login_timeout": "Authorization timed out. Start the sign-in again.",
-          "invalid_hostname": "The hostname is not valid.",
-          "tunnel_exists": "A tunnel with this name already exists. Choose another name.",
-          "dns_route_failed": "Failed to configure the DNS record. Confirm the domain is hosted on Cloudflare.",
-          "process_failed": "cloudflared failed to start. See the log for details.",
-          "busy": "Another operation is in progress.",
-          "not_configured": "Remote access is not configured.",
-          "invalid_request": "Invalid request.",
+          "unsupported_platform": "No cloudflared build is available for this platform, so Cloudflare Tunnel can't be used here.",
+          "binary_missing": "cloudflared wasn't found. Install it in the \"Install cloudflared\" step first.",
+          "download_failed": "Downloading cloudflared failed. Check that this machine can reach github.com, then try again.",
+          "not_logged_in": "Cloudflare authorization isn't complete. Go back to \"Sign in to Cloudflare\" and finish it.",
+          "login_timeout": "The Cloudflare authorization timed out. Start the sign-in again and pick a domain on the page that opens.",
+          "invalid_hostname": "That hostname isn't valid. Use a lowercase name such as tmex.example.com.",
+          "tunnel_exists": "A tunnel with this name already exists in Cloudflare. Pick another name, or delete the existing one in Cloudflare.",
+          "dns_route_failed": "Adding the DNS record in Cloudflare failed. Confirm the domain is hosted in the same Cloudflare account and no conflicting record exists.",
+          "process_failed": "cloudflared didn't start. Expand the cloudflared log below, check the last lines, then try again.",
+          "busy": "The previous operation hasn't finished yet. Try again in a moment.",
+          "not_configured": "Remote access isn't configured yet. Pick a mode in the setup below.",
+          "invalid_request": "The request was rejected as invalid; this page may be out of date. Reload and try again.",
           "unknown": "Operation failed: {{message}}",
-          "auth_required": "Enable sign-in on this machine before exposing it publicly.",
-          "access_api_failed": "Cloudflare API call failed: {{message}}",
-          "exposure_ack_required": "This exposes tmex to the public internet. Confirm that you understand the risk first."
+          "auth_required": "Sign-in isn't enabled on this machine. Enable it before going public, or anyone could walk straight into tmex.",
+          "access_api_failed": "The Cloudflare API call failed: {{message}}. Check the API token's permissions and the account ID, then try again.",
+          "exposure_ack_required": "This exposes tmex to the public internet. Confirm the risk first."
         },
         "authRequired": {
-          "notice": "Enable sign-in on this machine before exposing it publicly.",
+          "notice": "Sign-in isn't enabled on this machine. Enable it before going public, or anyone could walk straight into tmex.",
           "link": "Open multi-node settings"
         },
         "confirmRemove": {
           "title": "Remove the named tunnel?",
-          "description": "This stops the tunnel, deletes the credentials stored on this machine and deletes the tunnel in Cloudflare.",
-          "irreversible": "The tunnel in Cloudflare cannot be restored and the public address stops working immediately.",
+          "description": "The tunnel stops, the credentials stored on this machine are deleted, and the tunnel itself is deleted in Cloudflare.",
+          "irreversible": "The tunnel in Cloudflare can't be restored, and the current public URL stops working immediately.",
           "confirm": "Remove tunnel",
           "cancel": "Cancel"
         },
         "accessState": {
-          "notConfigured": "Access not configured",
-          "notEnforced": "Access configured, not enforced",
-          "protected": "Access protected",
-          "hostnameMismatch": "Access configured (hostname mismatch)"
+          "notConfigured": "No Access app",
+          "unknown": "Access unknown",
+          "dashboardCovered": "Access managed in dashboard",
+          "notEnforced": "Access not enforced",
+          "protected": "Access enforced",
+          "hostnameMismatch": "Access hostname mismatch"
         },
-        "externallyManaged": "Managed by system service",
-        "externallyManagedNotice": "This tunnel is run by a system service; tmex does not start or stop it. Release it first to let tmex manage the tunnel.",
+        "externallyManaged": "Run by a system service",
+        "externallyManagedNotice": "A system service runs this tunnel. tmex only reports its state and never starts or stops it. Release it first to hand the tunnel back to tmex.",
         "exposure": {
-          "warning": "No access protection is in effect: the tunnel URL is a public entry point, so anyone can reach tmex. Enable sign-in (mesh), or configure and enforce Cloudflare Access for this hostname.",
-          "warningShort": "No access protection is in effect: the tunnel URL is public, so anyone can reach tmex.",
+          "warning": "Nothing is protecting this machine right now: the tunnel URL is a public entrance, and anyone who has it can use tmex. Enable sign-in (multi-node), or configure Cloudflare Access for this hostname and turn on token verification.",
+          "warningShort": "Nothing is protecting this machine right now: anyone with the tunnel URL can use tmex.",
           "acknowledge": "I understand the risk and want to expose tmex publicly",
-          "ackRequired": "This exposes tmex to the public internet. Tick the box to confirm.",
-          "enableLogin": "Enable sign-in (mesh)",
-          "dropWarning": "This removes the last access protection. The tunnel keeps running, and anyone will be able to reach tmex."
+          "ackRequired": "This exposes tmex to the public internet. Tick the box above to confirm.",
+          "enableLogin": "Enable sign-in (multi-node)",
+          "dropWarning": "This removes the last thing protecting the machine: the tunnel keeps running, and anyone will be able to use tmex."
         },
         "access": {
           "tag": {
             "recommended": "Recommended",
             "optional": "Optional"
           },
-          "lastError": "Cloudflare Access: {{message}}",
+          "lastError": "The last Cloudflare Access operation failed: {{message}}",
           "credentials": {
             "title": "Cloudflare credentials",
             "apiToken": "API token",
-            "apiTokenHint": "Cloudflare API token with permissions: Access: Apps and Policies (Edit) and Access: Organizations, Identity Providers, and Groups (Read).",
+            "apiTokenHint": "A Cloudflare API token with Access: Apps and Policies (Edit) and Access: Organizations, Identity Providers, and Groups (Read). It is stored only on this machine.",
             "accountId": "Account ID",
-            "accountIdHint": "The Account ID of that account in the Cloudflare dashboard.",
+            "accountIdHint": "The Account ID shown in the Cloudflare dashboard sidebar.",
             "save": "Save",
-            "saved": "Credentials saved.",
+            "saved": "Credentials saved. You can now create or sync an Access application.",
             "clear": "Clear",
             "teamDomain": "Team domain"
           },
           "rules": {
             "title": "Allowed users",
-            "description": "Visitors matching any rule pass Cloudflare Access. At least one rule is required.",
+            "description": "A visitor matching any single rule passes Cloudflare Access. At least one rule is required.",
             "add": "Add rule",
             "remove": "Remove rule",
             "apply": "Apply to Cloudflare",
-            "needHostname": "No hostname yet: an Access application is bound to a hostname, so create or adopt a named tunnel first.",
+            "needHostname": "No hostname yet. An Access application is bound to a hostname, so create or adopt a named tunnel first.",
             "kind": {
               "email": "Email",
               "email_domain": "Email domain"
@@ -519,20 +521,27 @@
           },
           "sync": {
             "action": "Sync from Cloudflare",
-            "hint": "Credentials are saved but no Access application is recorded locally. If you already created one for {{hostname}} in the Cloudflare dashboard, sync first to avoid creating a duplicate."
+            "hint": "Credentials are saved, but tmex has no Access application on record. If you already created one for {{hostname}} in the Cloudflare dashboard, sync it in first so you don't end up with a duplicate."
+          },
+          "probe": {
+            "unknown": "Can't check Cloudflare Access for {{hostname}}: no usable Cloudflare credentials, or the lookup failed. This does not mean Access is unconfigured. Save an API token and account ID below and tmex will check again.",
+            "covered": "Read-only check: an Access application in the Cloudflare dashboard already covers {{hostname}}. tmex doesn't manage it and the gateway won't verify the tokens it issues — use \"Sync from Cloudflare\" to bring it under tmex.",
+            "absent": "Read-only check: no Access application in Cloudflare covers {{hostname}}. Add the allowed users below and apply to create one.",
+            "teamDomain": "Team domain: {{teamDomain}}",
+            "needCredentials": "To manage it from tmex and verify tokens at the gateway, save a Cloudflare API token and account ID below first."
           },
           "app": {
-            "title": "Access application",
+            "title": "Access application (managed by tmex)",
             "appId": "Application ID",
             "aud": "AUD",
             "hostname": "Covered hostname",
             "rules": "Rules",
             "noRules": "None",
             "enforce": "Verify Access tokens at the gateway",
-            "enforceHint": "Validate Cf-Access-Jwt-Assertion on tunnel requests and reject the ones that fail.",
-            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that bypass Access will not be rejected by this machine.",
+            "enforceHint": "Validate Cf-Access-Jwt-Assertion on requests arriving through the tunnel and reject the ones that fail.",
+            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that reach the tunnel around Access won't be stopped by this machine.",
             "remove": "Remove Access application",
-            "hostnameMismatch": "This application covers a different hostname than the current tunnel, so token verification has no effect."
+            "hostnameMismatch": "This application covers a different hostname than the current tunnel, so token verification has no effect. Apply the rules again to bind it to the current hostname."
           },
           "confirmRemove": {
             "title": "Remove the Access application?",
@@ -543,8 +552,8 @@
         },
         "external": {
           "title": "Existing Cloudflare Tunnel detected",
-          "description": "This machine already runs a tunnel that tmex does not manage. Adopt it, or let tmex create a new one.",
-          "source": "Source",
+          "description": "This machine already runs a tunnel that tmex doesn't manage. Adopt it, or ignore it and let tmex create its own.",
+          "source": "Detected from",
           "sourceValue": {
             "launchd": "launchd service",
             "systemd": "systemd service",
@@ -557,10 +566,17 @@
             "on": "Running",
             "off": "Not running"
           },
-          "noHostname": "Its configuration has no hostname pointing at this tmex, so it cannot be adopted.",
-          "chooseHostname": "Choose a hostname",
-          "adopt": "Use this tunnel",
-          "dismiss": "Let tmex create a new tunnel"
+          "accessLabel": "Cloudflare Access",
+          "accessValue": {
+            "covered": "An application covers this hostname (dashboard)",
+            "absent": "No application covers this hostname",
+            "unknown": "Can't check — no usable credentials"
+          },
+          "noHostname": "Its configuration has no hostname pointing at this tmex (127.0.0.1:{{port}}), so it can't be adopted. Check its ingress rules, or let tmex create its own tunnel.",
+          "chooseHostname": "Choose the hostname to adopt",
+          "adopt": "Adopt this tunnel",
+          "adoptHint": "Adopting records this hostname as tmex's public address and shows the tunnel's state and access control here. The tunnel process keeps running under the system service — tmex never starts, stops, or rewrites its configuration. You can release it at any time; the system service is unaffected.",
+          "dismiss": "Ignore and let tmex create a new tunnel"
         }
       },
       "deviceManagement": {

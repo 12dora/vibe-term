@@ -278,11 +278,11 @@
       "remoteAccess": {
         "title": "远程访问",
         "wizardTitle": "配置向导",
-        "description": "通过 Cloudflare Tunnel 把本机的 tmex 暴露到公网，无需公网 IP 或端口映射。",
-        "remoteNodeNotice": "远程访问只能在当前连接的机器上配置。",
-        "loginRequired": "请先登录本机后再配置远程访问。",
-        "loadFailed": "无法读取远程访问状态。",
-        "unsupported": "当前系统（{{platform}}）不支持 Cloudflare Tunnel。",
+        "description": "通过 Cloudflare Tunnel 把这台机器上的 tmex 发布到公网，不需要公网 IP，也不用在路由器上映射端口。",
+        "remoteNodeNotice": "远程访问只能在浏览器直连的那台机器上配置。请先切换到那台机器，再打开本页。",
+        "loginRequired": "请先登录这台机器，再配置远程访问。",
+        "loadFailed": "读取远程访问状态失败。请确认 tmex 网关仍在运行，然后刷新页面重试。",
+        "unsupported": "当前系统（{{platform}}）没有可用的 cloudflared 构建，无法使用 Cloudflare Tunnel。",
         "modeLabel": "方式",
         "publicUrl": "公网地址",
         "restartsLabel": "重启次数",
@@ -292,16 +292,16 @@
           "stopped": "已停止",
           "starting": "启动中",
           "running": "运行中",
-          "error": "错误"
+          "error": "异常"
         },
         "mode": {
           "quick": {
             "title": "临时隧道",
-            "description": "无需账号，地址随每次启动变化，适合测试。"
+            "description": "不需要 Cloudflare 账号，每次启动分配一个新的临时地址，适合演示与排查。"
           },
           "named": {
             "title": "命名隧道",
-            "description": "需要 Cloudflare 账号与已托管的域名，地址固定。"
+            "description": "使用你托管在 Cloudflare 的域名，地址固定，可配合访问控制长期使用。"
           }
         },
         "actions": {
@@ -319,74 +319,74 @@
           "release": "取消接管"
         },
         "check": {
-          "reachable": "可访问",
-          "unreachable": "不可达",
-          "running": "正在检查…"
+          "reachable": "公网地址可以访问。",
+          "unreachable": "公网地址不可达。",
+          "running": "正在检查公网地址…"
         },
         "log": {
-          "title": "日志",
+          "title": "cloudflared 日志",
           "empty": "暂无输出。"
         },
         "steps": {
           "install": {
             "title": "安装 cloudflared",
-            "description": "tmex 会把 cloudflared 下载到自己的数据目录，不改动系统。",
+            "description": "tmex 把 cloudflared 下载到自己的数据目录，不改动系统里已有的安装。",
             "version": "版本",
             "path": "路径",
             "source": "来源",
             "sourceValue": {
               "managed": "由 tmex 管理",
-              "system": "系统已安装"
+              "system": "系统已安装（PATH）"
             },
-            "skipped": "cloudflared 由系统服务提供，无需 tmex 安装。"
+            "skipped": "cloudflared 由系统服务提供，tmex 无需再装一份。"
           },
           "mode": {
             "title": "选择方式",
-            "description": "建立隧道后如需更换方式，先移除现有隧道。",
-            "pending": "请先选择一种方式。"
+            "description": "隧道建好后如需换方式，先在上方移除当前隧道。",
+            "pending": "先选择一种方式。"
           },
           "tunnel": {
             "title": "建立隧道",
-            "description": "选择方式后在这里完成建立。"
+            "description": "选好方式后在这里完成建立。"
           },
           "quick": {
             "title": "临时隧道",
-            "description": "启动后生成一个 trycloudflare.com 的临时地址，停止即失效。",
-            "started": "临时隧道已启动。"
+            "description": "启动后 Cloudflare 分配一个 trycloudflare.com 的临时地址，停止即失效。",
+            "started": "临时隧道已启动，公网地址如下。"
           },
           "named": {
             "title": "命名隧道",
-            "description": "使用已托管在 Cloudflare 的域名，地址固定。",
+            "description": "使用已托管在 Cloudflare 的域名，公网地址固定不变。",
             "login": {
-              "description": "在打开的授权页面中选择域名并授权，完成后回到本页。",
-              "waiting": "等待在 Cloudflare 完成授权",
-              "done": "已登录 Cloudflare。"
+              "description": "在弹出的 Cloudflare 页面里选择要授权的域名，完成后回到本页，tmex 会自动继续。",
+              "waiting": "正在等待 Cloudflare 授权完成",
+              "done": "已完成 Cloudflare 授权。"
             },
             "hostname": "主机名",
             "hostnamePlaceholder": "tmex.example.com",
-            "hostnameHint": "填写已托管在 Cloudflare 的域名下的子域。",
+            "hostnameHint": "填写一个已托管在 Cloudflare 的域名下的子域。",
             "hostnameInvalid": "主机名格式不正确，请填写形如 tmex.example.com 的小写域名。",
             "tunnelName": "隧道名称",
             "tunnelNamePlaceholder": "tmex",
             "tunnelNameHint": "可留空，留空时由 tmex 生成。只能使用小写字母、数字、连字符与下划线。",
-            "hubHint": "作为 Hub 时，请将 Hub 公开地址设为此主机名。",
+            "hubHint": "这台机器是 Hub：把 Hub 的公开地址设为该主机名，其他节点才能经隧道接入。",
             "hubHintLink": "前往多节点互联设置",
             "tunnelId": "隧道 ID",
             "configured": "命名隧道已创建。",
-            "changeHint": "如需更换主机名或隧道，请先在上方移除现有隧道。",
+            "changeHint": "要更换主机名或隧道，请先在上方移除当前隧道。",
             "tunnelNameInvalid": "隧道名称需以小写字母或数字开头，只能包含小写字母、数字、连字符与下划线，最长 63 个字符。"
           },
           "proxy": {
             "title": "反向代理信任",
-            "description": "隧道会替换客户端地址与协议，需要相应调整 tmex 的信任设置。",
+            "description": "隧道会替换请求里的客户端地址与协议，tmex 需要相应调整信任设置。",
             "trustProxy": "信任反向代理头",
             "trustProxyHint": "仅当 tmex 只能经由该隧道访问时才开启。",
             "autoStart": "随 tmex 启动",
             "autoStartHint": "网关启动时自动拉起隧道。",
-            "restartRequired": "配置已保存，重启后生效。",
+            "restartRequired": "设置已保存，重启 tmex 后生效。",
             "restartNow": "立即重启",
-            "restarting": "正在重启",
-            "restartTimeout": "重启超时，请手动重启 tmex。",
+            "restarting": "正在重启 tmex",
+            "restartTimeout": "等待重启超时。请手动重启 tmex 后刷新页面。",
             "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。能绕过隧道直连本机监听端口的人可以伪造这两个请求头，因此请限制该端口的外部访问。",
             "trustProxyEffective": "当前生效",
             "trustProxyState": {
@@ -396,7 +396,7 @@
           },
           "login": {
             "title": "登录 Cloudflare",
-            "description": "授权 tmex 在你的 Cloudflare 账号下创建隧道与 DNS 记录。",
+            "description": "授权 tmex 用你的 Cloudflare 账号创建隧道与 DNS 记录。授权凭证只保存在这台机器上。",
             "skipped": "隧道由系统服务托管，无需在 tmex 内登录 Cloudflare。"
           },
           "hostname": {
@@ -404,106 +404,108 @@
             "description": "隧道对外使用的固定地址。",
             "confirm": "使用此主机名",
             "edit": "修改",
-            "pending": "请先完成 Cloudflare 登录。"
+            "pending": "请先完成 Cloudflare 授权。"
           },
           "access": {
             "title": "访问控制（Cloudflare Access）",
-            "description": "在 Cloudflare 边缘按邮箱放行访问者，未通过的请求到不了本机。"
+            "description": "在 Cloudflare 边缘按邮箱放行访问者，未通过的请求到不了这台机器。"
           },
           "create": {
             "title": "创建并启动",
-            "description": "在 Cloudflare 创建隧道、配置 DNS 记录并启动。",
+            "description": "在 Cloudflare 创建隧道、写入 DNS 记录并启动。",
             "pending": "请先确认主机名。",
             "adopted": "已接管系统中已有的隧道。"
           }
         },
         "jobStep": {
-          "download": "下载",
-          "extract": "解压",
-          "verify": "校验",
-          "create_tunnel": "创建隧道",
-          "route_dns": "配置 DNS",
-          "start": "启动",
-          "create": "创建隧道",
-          "wait_cert": "等待授权",
-          "login": "登录 Cloudflare",
+          "download": "正在下载",
+          "extract": "正在解压",
+          "verify": "正在校验",
+          "create_tunnel": "正在创建隧道",
+          "route_dns": "正在配置 DNS",
+          "start": "正在启动",
+          "create": "正在创建隧道",
+          "wait_cert": "正在等待 Cloudflare 授权",
+          "login": "正在登录 Cloudflare",
           "cancelled": "已取消",
-          "check": "检查连通性",
+          "check": "正在检查连通性",
           "ok": "完成",
-          "create_app": "创建 Access 应用",
-          "policy": "配置访问策略",
-          "delete_app": "删除 Access 应用",
-          "sync": "同步 Access 应用"
+          "create_app": "正在创建 Access 应用",
+          "policy": "正在应用访问策略",
+          "delete_app": "正在删除 Access 应用",
+          "sync": "正在同步 Access 应用"
         },
         "errors": {
-          "unsupported_platform": "当前系统不支持 Cloudflare Tunnel。",
-          "binary_missing": "未找到 cloudflared，请先完成安装。",
-          "download_failed": "下载 cloudflared 失败，请检查网络后重试。",
-          "not_logged_in": "尚未登录 Cloudflare，请先完成授权。",
-          "login_timeout": "授权超时，请重新发起登录。",
-          "invalid_hostname": "主机名格式不正确。",
-          "tunnel_exists": "同名隧道已存在，请更换名称。",
-          "dns_route_failed": "配置 DNS 记录失败，请确认该域名已托管在 Cloudflare。",
-          "process_failed": "cloudflared 进程启动失败，详见日志。",
-          "busy": "另一项操作正在进行。",
-          "not_configured": "尚未配置远程访问。",
-          "invalid_request": "请求无效。",
+          "unsupported_platform": "当前系统没有可用的 cloudflared 构建，无法使用 Cloudflare Tunnel。",
+          "binary_missing": "找不到 cloudflared。请先在「安装 cloudflared」一步完成安装。",
+          "download_failed": "下载 cloudflared 失败。请检查这台机器的网络是否能访问 github.com，然后重试。",
+          "not_logged_in": "尚未完成 Cloudflare 授权。请回到「登录 Cloudflare」一步完成授权。",
+          "login_timeout": "Cloudflare 授权超时。请重新发起登录，并在打开的页面里选择域名完成授权。",
+          "invalid_hostname": "主机名格式不正确，请填写形如 tmex.example.com 的小写域名。",
+          "tunnel_exists": "Cloudflare 上已有同名隧道。请换一个隧道名称，或先在 Cloudflare 删除它。",
+          "dns_route_failed": "在 Cloudflare 添加 DNS 记录失败。请确认该域名托管在同一个 Cloudflare 账号下，且没有同名记录冲突。",
+          "process_failed": "cloudflared 没能正常启动。请展开下方的 cloudflared 日志查看最后几行输出，处理后重试。",
+          "busy": "上一项操作还没结束，请稍候再试。",
+          "not_configured": "还没有配置远程访问，请先在下方向导里选择一种方式。",
+          "invalid_request": "请求无效，页面数据可能已过期。请刷新页面后重试。",
           "unknown": "操作失败：{{message}}",
-          "auth_required": "请先为本机启用登录，再开放公网访问。",
-          "access_api_failed": "Cloudflare API 调用失败：{{message}}",
-          "exposure_ack_required": "该操作会把 tmex 开放到公网，请先确认已了解风险。"
+          "auth_required": "这台机器还没有启用登录。开放公网访问前请先启用登录，否则任何人都能直接进入 tmex。",
+          "access_api_failed": "调用 Cloudflare API 失败：{{message}}。请确认 API 令牌的权限与账户 ID 无误后重试。",
+          "exposure_ack_required": "该操作会把 tmex 开放到公网，请先勾选风险确认。"
         },
         "authRequired": {
-          "notice": "请先为本机启用登录，再开放公网访问。",
+          "notice": "这台机器还没有启用登录。开放公网访问前请先启用登录，否则任何人都能直接进入 tmex。",
           "link": "前往多节点互联设置"
         },
         "confirmRemove": {
           "title": "移除命名隧道？",
-          "description": "这会停止隧道、删除本机保存的凭证，并在 Cloudflare 上删除该隧道。",
-          "irreversible": "Cloudflare 上的隧道无法恢复，公网地址会立即失效。",
+          "description": "隧道会被停止，本机保存的凭证会被删除，Cloudflare 上的这条隧道也会一并删除。",
+          "irreversible": "Cloudflare 上的隧道无法恢复，当前公网地址会立即失效。",
           "confirm": "移除隧道",
           "cancel": "取消"
         },
         "accessState": {
-          "notConfigured": "Access 未配置",
-          "notEnforced": "Access 已配置但未强制",
-          "protected": "Access 已保护",
-          "hostnameMismatch": "Access 已配置（主机名不匹配）"
+          "notConfigured": "未配置 Access",
+          "unknown": "Access 无法检测",
+          "dashboardCovered": "Access 由控制台管理",
+          "notEnforced": "Access 未强制校验",
+          "protected": "Access 已生效",
+          "hostnameMismatch": "Access 主机名不匹配"
         },
         "externallyManaged": "由系统服务托管",
-        "externallyManagedNotice": "该隧道由系统服务运行，tmex 不会启动或停止它。要交回 tmex 管理，请先取消接管。",
+        "externallyManagedNotice": "这条隧道由系统服务运行，tmex 只显示它的状态，不会启动或停止它。要交回 tmex 管理，请先取消接管。",
         "exposure": {
-          "warning": "当前没有生效的访问保护：隧道地址是公网入口，任何人都可以访问 tmex。建议启用登录（多节点互联），或为该主机名配置并强制 Cloudflare Access。",
-          "warningShort": "当前没有生效的访问保护：隧道地址是公网入口，任何人都可以访问 tmex。",
-          "acknowledge": "我了解风险，仍要开放公网访问",
-          "ackRequired": "该操作会把 tmex 开放到公网，请先勾选确认。",
+          "warning": "当前没有任何访问保护：隧道地址就是公网入口，任何人拿到它都能直接使用 tmex。请启用登录（多节点互联），或为该主机名配置 Cloudflare Access 并开启令牌校验。",
+          "warningShort": "当前没有任何访问保护：拿到隧道地址的人都能直接使用 tmex。",
+          "acknowledge": "我已了解风险，仍要开放公网访问",
+          "ackRequired": "该操作会把 tmex 开放到公网，请先勾选上面的确认。",
           "enableLogin": "启用登录（多节点互联）",
-          "dropWarning": "这会移除最后一道访问保护：隧道仍在运行，之后任何人都可以访问 tmex。"
+          "dropWarning": "这会移除最后一道访问保护：隧道仍在运行，之后任何人都能直接使用 tmex。"
         },
         "access": {
           "tag": {
             "recommended": "推荐",
             "optional": "可选"
           },
-          "lastError": "Cloudflare Access：{{message}}",
+          "lastError": "上次 Cloudflare Access 操作失败：{{message}}",
           "credentials": {
             "title": "Cloudflare 凭证",
             "apiToken": "API 令牌",
-            "apiTokenHint": "需要 Cloudflare API 令牌，权限：Access: Apps and Policies（编辑）与 Access: Organizations, Identity Providers, and Groups（读取）。",
+            "apiTokenHint": "需要一个 Cloudflare API 令牌，权限为 Access: Apps and Policies（编辑）与 Access: Organizations, Identity Providers, and Groups（读取）。令牌只保存在这台机器上。",
             "accountId": "账户 ID",
-            "accountIdHint": "Cloudflare 控制台中该账号的 Account ID。",
+            "accountIdHint": "Cloudflare 控制台侧栏里的 Account ID。",
             "save": "保存",
-            "saved": "凭证已保存。",
+            "saved": "凭证已保存，现在可以创建或同步 Access 应用。",
             "clear": "清除",
             "teamDomain": "团队域"
           },
           "rules": {
             "title": "允许访问的用户",
-            "description": "匹配任意一条规则的访问者可以通过 Cloudflare Access，至少需要一条。",
+            "description": "访问者匹配任意一条规则即可通过 Cloudflare Access，至少需要一条。",
             "add": "添加规则",
             "remove": "删除规则",
             "apply": "应用到 Cloudflare",
-            "needHostname": "尚无主机名：Access 应用需要绑定主机名，请先创建或接管命名隧道。",
+            "needHostname": "还没有主机名。Access 应用必须绑定主机名，请先创建或接管一条命名隧道。",
             "kind": {
               "email": "邮箱",
               "email_domain": "邮箱域"
@@ -519,32 +521,39 @@
           },
           "sync": {
             "action": "从 Cloudflare 同步",
-            "hint": "凭证已保存，但本机没有 Access 应用记录。若已在 Cloudflare 控制台为 {{hostname}} 建过应用，请先同步，避免重复创建。"
+            "hint": "凭证已保存，但 tmex 这边没有 Access 应用记录。如果你已在 Cloudflare 控制台为 {{hostname}} 建过应用，请先同步把它接入 tmex，避免重复创建。"
+          },
+          "probe": {
+            "unknown": "无法检测 {{hostname}} 的 Cloudflare Access 状态：当前没有可用的 Cloudflare 凭证，或查询 API 失败。这不代表未配置。保存下方的 API 令牌与账户 ID 后会自动重新检测。",
+            "covered": "只读检测：Cloudflare 控制台上已有一个 Access 应用覆盖 {{hostname}}。该应用不由 tmex 管理，网关也不会校验它签发的令牌；点「从 Cloudflare 同步」可以把它接入 tmex。",
+            "absent": "只读检测：Cloudflare 上没有覆盖 {{hostname}} 的 Access 应用。在下方填写允许访问的用户并应用，即可创建一个。",
+            "teamDomain": "团队域：{{teamDomain}}",
+            "needCredentials": "要交给 tmex 托管并在网关校验令牌，请先在下方保存 Cloudflare API 令牌与账户 ID。"
           },
           "app": {
-            "title": "Access 应用",
+            "title": "Access 应用（由 tmex 托管）",
             "appId": "应用 ID",
             "aud": "AUD",
             "hostname": "覆盖主机名",
             "rules": "规则",
             "noRules": "无",
             "enforce": "网关校验 Access 令牌",
-            "enforceHint": "对来自隧道的请求校验 Cf-Access-Jwt-Assertion，未通过直接拒绝。",
-            "enforceOff": "已关闭令牌校验。Cloudflare 仍会在边缘拦截未授权访问，但绕过 Access 直连隧道的请求不会被本机拦下。",
+            "enforceHint": "对经隧道进来的请求校验 Cf-Access-Jwt-Assertion，未通过直接拒绝。",
+            "enforceOff": "已关闭令牌校验。Cloudflare 仍会在边缘拦截未授权访问，但绕过 Access 直接打到隧道的请求，这台机器不会再拦。",
             "remove": "移除 Access 应用",
-            "hostnameMismatch": "该应用覆盖的主机名与当前隧道不一致，令牌校验不会生效。"
+            "hostnameMismatch": "该应用覆盖的主机名与当前隧道不一致，令牌校验不会生效。请重新应用规则，把它绑到当前主机名。"
           },
           "confirmRemove": {
             "title": "移除 Access 应用？",
-            "description": "这会在 Cloudflare 上删除该应用与策略，该主机名将不再受 Access 保护。",
+            "description": "这会在 Cloudflare 上删除该应用及其策略，该主机名将不再受 Access 保护。",
             "confirm": "移除应用",
             "cancel": "取消"
           }
         },
         "external": {
-          "title": "检测到系统中已有的 Cloudflare Tunnel",
-          "description": "这台机器上已有一条不由 tmex 管理的隧道。可以直接接管它，也可以让 tmex 另建一条。",
-          "source": "来源",
+          "title": "检测到系统里已有的 Cloudflare Tunnel",
+          "description": "这台机器上已经跑着一条不由 tmex 管理的隧道。可以让 tmex 接管它，也可以忽略并另建一条。",
+          "source": "检测来源",
           "sourceValue": {
             "launchd": "launchd 服务",
             "systemd": "systemd 服务",
@@ -557,10 +566,17 @@
             "on": "运行中",
             "off": "未运行"
           },
-          "noHostname": "该隧道的配置里没有指向本机 tmex 的主机名，无法接管。",
-          "chooseHostname": "选择主机名",
-          "adopt": "使用此隧道",
-          "dismiss": "改为由 tmex 创建新隧道"
+          "accessLabel": "Cloudflare Access",
+          "accessValue": {
+            "covered": "已有应用覆盖该主机名（控制台）",
+            "absent": "未检测到覆盖该主机名的应用",
+            "unknown": "无法检测（缺少可用凭证）"
+          },
+          "noHostname": "这条隧道的配置里没有指向本机 tmex（127.0.0.1:{{port}}）的主机名，因此无法接管。请检查它的 ingress 配置，或让 tmex 另建一条隧道。",
+          "chooseHostname": "选择要接管的主机名",
+          "adopt": "接管这条隧道",
+          "adoptHint": "接管后，tmex 把该主机名记为自己的公网地址，并在这里显示隧道状态与访问控制。隧道进程仍由系统服务运行——tmex 不会启动、停止或改写它的配置。随时可以取消接管，系统服务不受影响。",
+          "dismiss": "忽略，由 tmex 新建隧道"
         }
       },
       "deviceManagement": {

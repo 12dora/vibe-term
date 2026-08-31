@@ -28,6 +28,7 @@ import {
   canApplyAccess,
   canSyncAccess,
   configureAccessRequest,
+  externalAccessState,
   ruleDraftError,
   ruleDraftsFrom,
   shouldOfferAccessSync,
@@ -61,6 +62,8 @@ export function AccessStep({
         </SetupNotice>
       )}
 
+      {!access.configured && <ExternalAccessNotice status={status} />}
+
       {access.hasCredentials ? (
         <SavedCredentials status={status} actions={actions} />
       ) : (
@@ -81,6 +84,39 @@ export function AccessStep({
         <AccessAppStatus status={status} actions={actions} exposure={exposure} />
       )}
     </div>
+  );
+}
+
+/**
+ * 只读探测：Cloudflare 控制台上有没有覆盖这个主机名的 Access 应用。
+ * 它与 `access.configured`（tmex 托管、网关校验 JWT）是两回事，措辞上必须分清；
+ * 「查不了」（无凭证 / API 失败）也不能说成「未配置」。
+ */
+function ExternalAccessNotice({ status }: { status: TunnelStatusResponse }) {
+  const { t } = useTranslation();
+  const hostname = accessSyncHostname(status);
+  const state = externalAccessState(status);
+  const teamDomain = status.external.externalAccess?.teamDomain;
+  if (hostname === null) return null;
+
+  return (
+    <SetupNotice
+      tone={state === 'unknown' ? 'warning' : 'info'}
+      testId={`remote-access-access-probe-${state}`}
+    >
+      <p>{t(`settings.remoteAccess.access.probe.${state}`, { hostname })}</p>
+      {state === 'covered' && teamDomain && (
+        <p data-testid="remote-access-access-probe-team">
+          {t('settings.remoteAccess.access.probe.teamDomain', { teamDomain })}
+        </p>
+      )}
+      {/* 探测可能用的是 cloudflared 的 cert.pem，未必存过凭证：同步 / 应用按钮此时还不在页面上。 */}
+      {state !== 'unknown' && !status.access.hasCredentials && (
+        <p data-testid="remote-access-access-probe-need-credentials">
+          {t('settings.remoteAccess.access.probe.needCredentials')}
+        </p>
+      )}
+    </SetupNotice>
   );
 }
 

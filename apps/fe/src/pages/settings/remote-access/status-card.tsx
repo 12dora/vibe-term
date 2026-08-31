@@ -40,6 +40,9 @@ const PILL_VARIANT = {
 
 const ACCESS_PILL_VARIANT = {
   notConfigured: 'outline',
+  // 「查不了」与「查过了没有」在语义上都不是保护，但要让用户看出差别：前者用中性底色。
+  unknown: 'secondary',
+  dashboardCovered: 'secondary',
   notEnforced: 'secondary',
   hostnameMismatch: 'secondary',
   protected: 'default',

@@ -10,6 +10,7 @@ import { Loader2, PlugZap } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SetupNotice } from '../nodes/setup/form-parts';
+import { externalAccessState } from './access-model';
 import { DetailRow } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
 
@@ -28,7 +29,6 @@ export function ExternalTunnelCard({
   const external = status.external;
   const [hostname, setHostname] = useState(external.hostnames[0] ?? '');
   const target = external.hostnames.includes(hostname) ? hostname : (external.hostnames[0] ?? '');
-  const source = external.source;
 
   return (
     <section
@@ -42,43 +42,11 @@ export function ExternalTunnelCard({
         </p>
       </div>
 
-      <div className="space-y-0.5">
-        {source && (
-          <DetailRow
-            label={t('settings.remoteAccess.external.source')}
-            testId="remote-access-external-source"
-          >
-            {KNOWN_SOURCES.has(source)
-              ? t(`settings.remoteAccess.external.sourceValue.${source}`)
-              : source}
-          </DetailRow>
-        )}
-        {external.tunnelName && (
-          <DetailRow label={t('settings.remoteAccess.steps.named.tunnelName')}>
-            <span className="font-mono">{external.tunnelName}</span>
-          </DetailRow>
-        )}
-        {external.tunnelId && (
-          <DetailRow label={t('settings.remoteAccess.steps.named.tunnelId')}>
-            <span className="font-mono">{external.tunnelId}</span>
-          </DetailRow>
-        )}
-        {external.configPath && (
-          <DetailRow label={t('settings.remoteAccess.external.configPath')}>
-            <span className="font-mono">{external.configPath}</span>
-          </DetailRow>
-        )}
-        <DetailRow
-          label={t('settings.remoteAccess.external.running')}
-          testId="remote-access-external-running"
-        >
-          {t(`settings.remoteAccess.external.runningValue.${external.running ? 'on' : 'off'}`)}
-        </DetailRow>
-      </div>
+      <ExternalDetails status={status} />
 
       {external.hostnames.length === 0 ? (
         <SetupNotice tone="warning" testId="remote-access-external-no-hostname">
-          {t('settings.remoteAccess.external.noHostname')}
+          {t('settings.remoteAccess.external.noHostname', { port: status.config.originPort })}
         </SetupNotice>
       ) : external.hostnames.length === 1 ? (
         <DetailRow
@@ -111,6 +79,10 @@ export function ExternalTunnelCard({
         </div>
       )}
 
+      <p className="text-xs text-muted-foreground" data-testid="remote-access-external-adopt-hint">
+        {t('settings.remoteAccess.external.adoptHint')}
+      </p>
+
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
@@ -137,5 +109,64 @@ export function ExternalTunnelCard({
         </Button>
       </div>
     </section>
+  );
+}
+
+/** 探测到的事实：来源、隧道标识、运行状态，以及 Cloudflare Access 的只读探测结果。 */
+function ExternalDetails({ status }: { status: TunnelStatusResponse }) {
+  const { t } = useTranslation();
+  const external = status.external;
+  const source = external.source;
+  const accessState = externalAccessState(status);
+  const teamDomain = external.externalAccess?.teamDomain;
+
+  return (
+    <div className="space-y-0.5">
+      {source && (
+        <DetailRow
+          label={t('settings.remoteAccess.external.source')}
+          testId="remote-access-external-source"
+        >
+          {KNOWN_SOURCES.has(source)
+            ? t(`settings.remoteAccess.external.sourceValue.${source}`)
+            : source}
+        </DetailRow>
+      )}
+      {external.tunnelName && (
+        <DetailRow label={t('settings.remoteAccess.steps.named.tunnelName')}>
+          <span className="font-mono">{external.tunnelName}</span>
+        </DetailRow>
+      )}
+      {external.tunnelId && (
+        <DetailRow label={t('settings.remoteAccess.steps.named.tunnelId')}>
+          <span className="font-mono">{external.tunnelId}</span>
+        </DetailRow>
+      )}
+      {external.configPath && (
+        <DetailRow label={t('settings.remoteAccess.external.configPath')}>
+          <span className="font-mono">{external.configPath}</span>
+        </DetailRow>
+      )}
+      <DetailRow
+        label={t('settings.remoteAccess.external.running')}
+        testId="remote-access-external-running"
+      >
+        {t(`settings.remoteAccess.external.runningValue.${external.running ? 'on' : 'off'}`)}
+      </DetailRow>
+      <DetailRow
+        label={t('settings.remoteAccess.external.accessLabel')}
+        testId="remote-access-external-access"
+      >
+        {t(`settings.remoteAccess.external.accessValue.${accessState}`)}
+      </DetailRow>
+      {teamDomain && (
+        <DetailRow
+          label={t('settings.remoteAccess.access.credentials.teamDomain')}
+          testId="remote-access-external-team-domain"
+        >
+          <span className="font-mono">{teamDomain}</span>
+        </DetailRow>
+      )}
+    </div>
   );
 }

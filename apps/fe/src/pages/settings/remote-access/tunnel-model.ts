@@ -8,6 +8,7 @@ import type {
   TunnelMode,
   TunnelStatusResponse,
 } from '@tmex/shared';
+import { externalAccessState } from './access-model';
 
 export type TunnelPill = 'notConfigured' | 'stopped' | 'starting' | 'running' | 'error';
 
@@ -43,13 +44,33 @@ export function accessEffective(status: TunnelStatusResponse): boolean {
   );
 }
 
-/** Access 徽标：未配置 / 已配置但网关不校验令牌 / 已配置但绑的是别的主机名 / 校验已生效。 */
-export type AccessPill = 'notConfigured' | 'notEnforced' | 'hostnameMismatch' | 'protected';
+/**
+ * Access 徽标。前三档是 tmex 托管的应用（`access.configured`）：不校验令牌 / 绑了别的主机名 / 校验已生效。
+ * 后两档来自只读探测，只在 tmex 没有托管应用时出现：
+ * `dashboardCovered` = Cloudflare 控制台上已有应用覆盖这个主机名（tmex 不校验令牌）；
+ * `unknown` = 有主机名但查不了（没有可用凭证或 API 失败），与「查过了，确实没有」必须区分。
+ */
+export type AccessPill =
+  | 'notConfigured'
+  | 'unknown'
+  | 'dashboardCovered'
+  | 'notEnforced'
+  | 'hostnameMismatch'
+  | 'protected';
+
+/** 有主机名才谈得上「有没有被 Access 覆盖」：什么都没配时「未配置」就是准确的。 */
+function hasCoverableHostname(status: TunnelStatusResponse): boolean {
+  return status.config.hostname !== null || status.external.hostnames.length > 0;
+}
 
 export function accessPill(status: TunnelStatusResponse): AccessPill {
-  if (!status.access.configured) return 'notConfigured';
-  if (!status.access.enforceJwt) return 'notEnforced';
-  return accessEffective(status) ? 'protected' : 'hostnameMismatch';
+  if (status.access.configured) {
+    if (!status.access.enforceJwt) return 'notEnforced';
+    return accessEffective(status) ? 'protected' : 'hostnameMismatch';
+  }
+  const probed = externalAccessState(status);
+  if (probed === 'covered') return 'dashboardCovered';
+  return probed === 'unknown' && hasCoverableHostname(status) ? 'unknown' : 'notConfigured';
 }
 
 /** 隧道正在对外提供服务：接管来的隧道以探测结果为准。 */

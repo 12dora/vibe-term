@@ -360,6 +360,73 @@ describe('Access 徽标', () => {
   });
 });
 
+describe('Access 只读探测', () => {
+  const probe = (
+    over: Partial<NonNullable<TunnelStatusResponse['external']['externalAccess']>> = {}
+  ) => ({ checked: true, hostnameMatch: false, appId: null, aud: null, teamDomain: null, ...over });
+
+  const withProbe = (
+    externalAccess: TunnelStatusResponse['external']['externalAccess'] | undefined
+  ) =>
+    configured('named', 'running', {
+      external: { ...tunnel().external, externalAccess },
+    });
+
+  test('控制台已覆盖：徽标与说明都不能说成 tmex 托管', () => {
+    status = withProbe(
+      probe({ hostnameMatch: true, appId: 'app-1', teamDomain: 'team.cloudflareaccess.com' })
+    );
+    const html = render();
+    expect(html).toContain('settings.remoteAccess.accessState.dashboardCovered');
+    expect(html).toContain('data-testid="remote-access-access-probe-covered"');
+    expect(html).toContain('data-testid="remote-access-access-probe-team"');
+  });
+
+  test('查不了时不显示「未配置」', () => {
+    status = withProbe(probe({ checked: false }));
+    const html = render();
+    expect(html).toContain('settings.remoteAccess.accessState.unknown');
+    expect(html).toContain('data-testid="remote-access-access-probe-unknown"');
+    expect(html).not.toContain('settings.remoteAccess.accessState.notConfigured');
+  });
+
+  test('查过了确实没有，才是「未配置」', () => {
+    status = withProbe(probe());
+    const html = render();
+    expect(html).toContain('settings.remoteAccess.accessState.notConfigured');
+    expect(html).toContain('data-testid="remote-access-access-probe-absent"');
+  });
+
+  test('探测到了但凭证没存过时，补一句「先保存凭证」——同步 / 应用按钮此刻还不在页面上', () => {
+    status = withProbe(probe({ hostnameMatch: true }));
+    expect(render()).toContain('data-testid="remote-access-access-probe-need-credentials"');
+
+    const base = tunnel();
+    status = configured('named', 'running', {
+      access: { ...base.access, hasCredentials: true },
+      external: { ...base.external, externalAccess: probe({ hostnameMatch: true }) },
+    });
+    expect(render()).not.toContain('data-testid="remote-access-access-probe-need-credentials"');
+  });
+
+  test('tmex 已托管应用时不再渲染只读探测提示', () => {
+    const base = tunnel();
+    status = configured('named', 'running', {
+      access: {
+        ...base.access,
+        configured: true,
+        enforceJwt: true,
+        hostname: 'tmex.example.com',
+        effective: true,
+      },
+      external: { ...base.external, externalAccess: probe({ hostnameMatch: true }) },
+    });
+    const html = render();
+    expect(html).toContain('settings.remoteAccess.accessState.protected');
+    expect(html).not.toContain('data-testid="remote-access-access-probe-');
+  });
+});
+
 describe('系统隧道接管', () => {
   const detected = (overrides: Partial<TunnelStatusResponse['external']> = {}) => ({
     ...tunnel().external,
@@ -398,6 +465,31 @@ describe('系统隧道接管', () => {
     const html = render();
     expect(html).toContain('data-testid="remote-access-external-no-hostname"');
     expect(isDisabled(html, 'remote-access-external-adopt')).toBe(true);
+  });
+
+  test('接管卡带上 Access 只读探测结果与接管说明', () => {
+    status = tunnel({
+      external: detected({
+        externalAccess: {
+          checked: true,
+          hostnameMatch: true,
+          appId: 'app-1',
+          aud: 'aud-1',
+          teamDomain: 'team.cloudflareaccess.com',
+        },
+      }),
+    });
+    const html = render();
+    expect(html).toContain('settings.remoteAccess.external.accessValue.covered');
+    expect(html).toContain('team.cloudflareaccess.com');
+    expect(html).toContain('data-testid="remote-access-external-adopt-hint"');
+  });
+
+  test('没有可用凭证时接管卡写「无法检测」', () => {
+    status = tunnel({ external: detected() });
+    const html = render();
+    expect(html).toContain('settings.remoteAccess.external.accessValue.unknown');
+    expect(html).not.toContain('settings.remoteAccess.external.accessValue.absent');
   });
 
   test('已经配置过隧道时不再打扰', () => {

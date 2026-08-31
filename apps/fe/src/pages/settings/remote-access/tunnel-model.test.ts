@@ -274,6 +274,53 @@ describe('accessPill', () => {
     );
     expect(accessPill(withAccess())).toBe('protected');
   });
+
+  test('tmex 没托管应用时用只读探测：控制台已覆盖 / 查不了 / 查过了没有', () => {
+    const named = (
+      externalAccess: TunnelStatusResponse['external']['externalAccess'] | undefined
+    ): TunnelStatusResponse => {
+      const base = status();
+      return {
+        ...base,
+        config: { ...base.config, mode: 'named', hostname: 'tmex.example.com' },
+        external: { ...base.external, externalAccess },
+      };
+    };
+    const probe = (
+      over: Partial<NonNullable<TunnelStatusResponse['external']['externalAccess']>>
+    ) => ({
+      checked: true,
+      hostnameMatch: false,
+      appId: null,
+      aud: null,
+      teamDomain: null,
+      ...over,
+    });
+
+    expect(accessPill(named(probe({ hostnameMatch: true, appId: 'app-1' })))).toBe(
+      'dashboardCovered'
+    );
+    expect(accessPill(named(probe({ checked: false })))).toBe('unknown');
+    // 旧后端不下发探测结果：同样是「查不了」，不能说成未配置。
+    expect(accessPill(named(undefined))).toBe('unknown');
+    expect(accessPill(named(probe({})))).toBe('notConfigured');
+    // 连主机名都没有时没什么可查的，「未配置」才是准确的说法。
+    expect(accessPill(status())).toBe('notConfigured');
+  });
+
+  test('tmex 已托管的应用优先于只读探测', () => {
+    const covered = {
+      checked: true,
+      hostnameMatch: true,
+      appId: 'app-1',
+      aud: 'aud-1',
+      teamDomain: 'team.cloudflareaccess.com',
+    };
+    const base = withAccess();
+    expect(accessPill({ ...base, external: { ...base.external, externalAccess: covered } })).toBe(
+      'protected'
+    );
+  });
 });
 
 describe('wouldDropLastProtection', () => {

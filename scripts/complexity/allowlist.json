@@ -202,7 +202,7 @@
     "reason": "外部 cloudflared 检测/评分一体（S1 判定）"
   },
   "apps/gateway/src/tunnel/manager.ts": {
-    "fileLines": 1186,
+    "fileLines": 1189,
     "reason": "动作状态机与响应契约内聚（S1 判定）"
   },
   "apps/gateway/src/tunnel/manager.ts:handleAction": {
