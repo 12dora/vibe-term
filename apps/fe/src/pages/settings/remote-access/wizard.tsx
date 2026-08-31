@@ -1,7 +1,7 @@
-// 远程访问向导。步骤序列随方式变化：
-//   命名隧道 安装 → 方式 → 登录 → 主机名 → 访问控制 → 创建并启动 → 反向代理信任
-//   临时隧道 安装 → 方式 → 启动 → 反向代理信任
-//   直接连接 方式 → 访问保护（不建隧道，也就不需要 cloudflared 与反向代理信任两步）
+// 远程访问向导。第 1 步先选连接方式（Cloudflare Tunnel / 直接连接），之后按分支展开：
+//   命名隧道 连接方式 → 安装 → 隧道类型 → 登录 → 主机名 → 访问控制 → 创建并启动 → 反向代理信任
+//   临时隧道 连接方式 → 安装 → 隧道类型 → 启动 → 反向代理信任
+//   直接连接 连接方式 → 访问保护（不建隧道，也就不需要 cloudflared 与反向代理信任两步）
 
 import type { LocalAuthStatus, TunnelStatusResponse } from '@tmex/shared';
 import { Button } from '@tmex/ui/button';
@@ -21,10 +21,12 @@ import { CreateStep, HostnameStep, LoginStep, type NamedDraft } from './named-st
 import { DetailRow, JobProgress, WizardStepCard } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
 import {
+  type ConnectionPath,
   type WizardMode,
   type WizardStepId,
   describeTunnelError,
   effectiveMode,
+  effectivePath,
   isAuthRequiredError,
   trustProxyRestartRequired,
   wizardStepState,
@@ -34,6 +36,8 @@ import {
 export interface TunnelWizardProps {
   status: TunnelStatusResponse;
   actions: TunnelActions;
+  chosenPath: ConnectionPath | null;
+  onChoosePath: (path: ConnectionPath) => void;
   chosenMode: WizardMode | null;
   onChooseMode: (mode: WizardMode) => void;
   draft: NamedDraft;
@@ -48,6 +52,8 @@ export interface TunnelWizardProps {
 export function TunnelWizard({
   status,
   actions,
+  chosenPath,
+  onChoosePath,
   chosenMode,
   onChooseMode,
   draft,
@@ -60,7 +66,7 @@ export function TunnelWizard({
   const { t } = useTranslation();
   const [externalDismissed, setExternalDismissed] = useState(false);
 
-  const ctx = { status, chosenMode, hostnameConfirmed: draft.confirmed, localAuth };
+  const ctx = { status, chosenPath, chosenMode, hostnameConfirmed: draft.confirmed, localAuth };
   const steps = wizardSteps(ctx);
   const authRequired = isAuthRequiredError(status, actions.error);
   const showExternal =
@@ -111,6 +117,8 @@ export function TunnelWizard({
               draft={draft}
               isHub={isHub}
               exposure={exposure}
+              chosenPath={chosenPath}
+              onChoosePath={onChoosePath}
               chosenMode={chosenMode}
               onChooseMode={onChooseMode}
               onRestarted={onRestarted}
@@ -163,6 +171,8 @@ function StepContent({
   draft,
   isHub,
   exposure,
+  chosenPath,
+  onChoosePath,
   chosenMode,
   onChooseMode,
   onRestarted,
@@ -175,6 +185,8 @@ function StepContent({
   draft: NamedDraft;
   isHub: boolean;
   exposure: ExposureState;
+  chosenPath: ConnectionPath | null;
+  onChoosePath: (path: ConnectionPath) => void;
   chosenMode: WizardMode | null;
   onChooseMode: (mode: WizardMode) => void;
   onRestarted: () => void;
@@ -182,16 +194,25 @@ function StepContent({
   onLocalAuth: (next: LocalAuthStatus) => void;
 }) {
   const { t } = useTranslation();
+  const locked = status.config.mode !== 'off';
   switch (step) {
+    case 'path':
+      return (
+        <PathChooser
+          selected={effectivePath(status, chosenPath)}
+          locked={locked}
+          disabled={actions.busy}
+          onSelect={onChoosePath}
+        />
+      );
     case 'install':
       return <InstallStep status={status} actions={actions} />;
     case 'mode':
-      // 选方式只是本地选择，装不装 cloudflared 由后面的安装步把关；
-      // 「直接连接」压根不需要它，按二进制状态锁死整块会让这条路径不可达。
+      // 选隧道类型只是本地选择，装不装 cloudflared 由安装步把关，这里不按二进制状态锁死。
       return (
         <ModeChooser
           selected={effectiveMode(status, chosenMode)}
-          locked={status.config.mode !== 'off'}
+          locked={locked}
           disabled={actions.busy}
           onSelect={onChooseMode}
         />
@@ -314,42 +335,37 @@ function InstallStep({
   );
 }
 
-function ModeChooser({
+function PathChooser({
   selected,
   locked,
   disabled,
   onSelect,
 }: {
-  selected: WizardMode;
-  /** 已经建过隧道：换方式必须先「移除」，这里只展示当前方式。 */
+  selected: ConnectionPath | null;
+  /** 已经建过隧道：要改走直接连接必须先「移除」，这里只展示当前路径。 */
   locked: boolean;
   disabled: boolean;
-  onSelect: (mode: WizardMode) => void;
+  onSelect: (path: ConnectionPath) => void;
 }) {
   const { t } = useTranslation();
   return (
     <div
-      className="grid gap-3 sm:grid-cols-3"
+      className="grid gap-3 sm:grid-cols-2"
       role="radiogroup"
-      aria-label={t('settings.remoteAccess.steps.mode.title')}
-      data-testid="remote-access-mode-chooser"
+      aria-label={t('settings.remoteAccess.steps.path.title')}
+      data-testid="remote-access-path-chooser"
     >
-      <ModeCard
-        mode="quick"
-        icon={<Zap className="size-4" />}
-        selected={selected === 'quick'}
-        disabled={disabled || locked}
-        onSelect={onSelect}
-      />
-      <ModeCard
-        mode="named"
+      <ChoiceCard
+        group="path"
+        value="tunnel"
         icon={<Cloud className="size-4" />}
-        selected={selected === 'named'}
+        selected={selected === 'tunnel'}
         disabled={disabled || locked}
         onSelect={onSelect}
       />
-      <ModeCard
-        mode="direct"
+      <ChoiceCard
+        group="path"
+        value="direct"
         icon={<Server className="size-4" />}
         selected={selected === 'direct'}
         disabled={disabled || locked}
@@ -359,23 +375,66 @@ function ModeChooser({
   );
 }
 
-function ModeCard({
-  mode,
-  icon,
+function ModeChooser({
   selected,
+  locked,
   disabled,
   onSelect,
 }: {
-  mode: Exclude<WizardMode, 'off'>;
-  icon: ReactNode;
-  selected: boolean;
+  selected: WizardMode;
+  /** 已经建过隧道：换类型必须先「移除」，这里只展示当前类型。 */
+  locked: boolean;
   disabled: boolean;
   onSelect: (mode: WizardMode) => void;
 }) {
   const { t } = useTranslation();
   return (
+    <div
+      className="grid gap-3 sm:grid-cols-2"
+      role="radiogroup"
+      aria-label={t('settings.remoteAccess.steps.mode.title')}
+      data-testid="remote-access-mode-chooser"
+    >
+      <ChoiceCard
+        group="mode"
+        value="quick"
+        icon={<Zap className="size-4" />}
+        selected={selected === 'quick'}
+        disabled={disabled || locked}
+        onSelect={onSelect}
+      />
+      <ChoiceCard
+        group="mode"
+        value="named"
+        icon={<Cloud className="size-4" />}
+        selected={selected === 'named'}
+        disabled={disabled || locked}
+        onSelect={onSelect}
+      />
+    </div>
+  );
+}
+
+/** 连接方式与隧道类型两组单选卡共用：`group` 同时决定 testid、单选组名与文案键前缀。 */
+function ChoiceCard<T extends string>({
+  group,
+  value,
+  icon,
+  selected,
+  disabled,
+  onSelect,
+}: {
+  group: 'path' | 'mode';
+  value: T;
+  icon: ReactNode;
+  selected: boolean;
+  disabled: boolean;
+  onSelect: (value: T) => void;
+}) {
+  const { t } = useTranslation();
+  return (
     <label
-      data-testid={`remote-access-mode-${mode}`}
+      data-testid={`remote-access-${group}-${value}`}
       data-selected={selected ? 'true' : 'false'}
       className={`flex cursor-pointer flex-col gap-1.5 rounded-xl p-3 text-left ring-1 transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
         selected ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10 hover:bg-muted/50'
@@ -383,19 +442,19 @@ function ModeCard({
     >
       <input
         type="radio"
-        name="remote-access-mode"
-        data-testid={`remote-access-mode-${mode}-input`}
+        name={`remote-access-${group}`}
+        data-testid={`remote-access-${group}-${value}-input`}
         className="sr-only"
         checked={selected}
         disabled={disabled}
-        onChange={() => onSelect(mode)}
+        onChange={() => onSelect(value)}
       />
       <span className="flex items-center gap-2 text-sm font-medium">
         {icon}
-        {t(`settings.remoteAccess.mode.${mode}.title`)}
+        {t(`settings.remoteAccess.${group}.${value}.title`)}
       </span>
       <span className="text-xs text-muted-foreground">
-        {t(`settings.remoteAccess.mode.${mode}.description`)}
+        {t(`settings.remoteAccess.${group}.${value}.description`)}
       </span>
     </label>
   );

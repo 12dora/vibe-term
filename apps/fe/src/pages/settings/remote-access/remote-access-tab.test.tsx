@@ -1,5 +1,5 @@
 // 「远程访问」标签的静态渲染：远端路由拦截、加载 / 未登录 / 失败分支、状态与 Access 徽标矩阵、
-// 向导步进（临时隧道与命名隧道两条路径）、暴露警示与确认、Cloudflare Access 区块、系统隧道接管。
+// 连接方式分叉（Cloudflare Tunnel / 直接连接）、向导步进、暴露警示与确认、Cloudflare Access 区块、系统隧道接管。
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 HttpsSection / SettingsPage 测试同一套做法）。
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
@@ -58,6 +58,7 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { RemoteAccessTab } = await import('./remote-access-tab');
+const { TunnelStatusCard } = await import('./status-card');
 const { TunnelWizard } = await import('./wizard');
 
 const SELF_ID = 'a'.repeat(32);
@@ -231,7 +232,7 @@ describe('路由与加载分支', () => {
 
 describe('状态徽标与操作按钮', () => {
   test('未配置：徽标为未配置，且不出现启停 / 移除按钮', () => {
-    const html = render();
+    const html = renderStatusCard();
     expect(html).toContain('settings.remoteAccess.state.notConfigured');
     expect(html).not.toContain('data-testid="remote-access-start"');
     expect(html).not.toContain('data-testid="remote-access-remove"');
@@ -329,7 +330,7 @@ describe('状态徽标与操作按钮', () => {
 
 describe('Access 徽标', () => {
   test('未配置 / 已配置但未强制 / 主机名不匹配 / 已保护四态', () => {
-    expect(render()).toContain('settings.remoteAccess.accessState.notConfigured');
+    expect(renderStatusCard()).toContain('settings.remoteAccess.accessState.notConfigured');
 
     status = configured('named', 'running', {
       access: { ...tunnel().access, configured: true, enforceJwt: false },
@@ -454,7 +455,7 @@ describe('系统隧道接管', () => {
     expect(html).toContain('data-testid="remote-access-external-dismiss"');
     // 接管卡排在第 1 步之前。
     expect(html.indexOf('data-testid="remote-access-external"')).toBeLessThan(
-      html.indexOf('data-testid="remote-access-step-install"')
+      html.indexOf('data-testid="remote-access-step-path"')
     );
   });
 
@@ -529,9 +530,9 @@ describe('系统隧道接管', () => {
 });
 
 describe('暴露警示与确认', () => {
-  test('未受保护时方式步骤上方给出警示与确认勾选，并链到多节点设置', () => {
+  test('未受保护时隧道类型步上方给出警示与确认勾选，并链到多节点设置', () => {
     status = tunnel({ loginEnforced: false, exposureProtected: false });
-    const html = render();
+    const html = renderWizard('off');
     expect(html).toContain('data-testid="remote-access-exposure"');
     expect(html).toContain('settings.remoteAccess.exposure.warning');
     expect(html).toContain('data-testid="remote-access-exposure-ack"');
@@ -543,7 +544,7 @@ describe('暴露警示与确认', () => {
 
   test('未受保护不禁用临时隧道选项，也不禁用启动按钮', () => {
     status = tunnel({ loginEnforced: false, exposureProtected: false });
-    const html = render();
+    const html = renderWizard('off');
     expect(isDisabled(html, 'remote-access-mode-quick-input')).toBe(false);
 
     status = configured('quick', 'stopped', { loginEnforced: false, exposureProtected: false });
@@ -593,7 +594,7 @@ describe('错误码映射', () => {
       ...IDLE_ACTIONS,
       error: { code: 'busy', message: 'another action is running' },
     };
-    const html = render();
+    const html = renderStatusCard();
     expect(html).toContain('data-testid="remote-access-error"');
     expect(html).toContain('settings.remoteAccess.errors.busy');
   });
@@ -603,19 +604,59 @@ describe('错误码映射', () => {
       ...IDLE_ACTIONS,
       error: { code: 'access_api_failed', message: 'token lacks permission' },
     };
-    expect(render()).toContain('settings.remoteAccess.errors.access_api_failed');
+    expect(renderStatusCard()).toContain('settings.remoteAccess.errors.access_api_failed');
   });
 
   test('未知错误码退回带原始 message 的兜底文案', () => {
     actionState = { ...IDLE_ACTIONS, error: { code: 'unknown', message: 'network down' } };
-    expect(render()).toContain('settings.remoteAccess.errors.unknown');
+    expect(renderStatusCard()).toContain('settings.remoteAccess.errors.unknown');
+  });
+});
+
+describe('连接方式', () => {
+  test('初始只给两张连接方式卡：没有安装步，也没有隧道状态卡', () => {
+    const html = render();
+    expect(stepOrder(html)).toEqual(['path']);
+    expect(html).toContain('data-testid="remote-access-path-chooser"');
+    expect(html).toContain('data-testid="remote-access-path-tunnel"');
+    expect(html).toContain('data-testid="remote-access-path-direct"');
+    expect(html).toContain('settings.remoteAccess.path.tunnel.description');
+    expect(html).not.toContain('data-testid="remote-access-step-install"');
+    expect(html).not.toContain('data-testid="remote-access-status"');
+    expect(stepStateOf(html, 'remote-access-step-path')).toBe('current');
+  });
+
+  test('选中 Cloudflare Tunnel 后才展开安装与隧道类型两步', () => {
+    const html = renderWizard('off');
+    expect(stepOrder(html)).toEqual(['path', 'install', 'mode', 'tunnel', 'proxy']);
+    expect(stepStateOf(html, 'remote-access-step-path')).toBe('done');
+    expect(html).toContain('data-testid="remote-access-mode-chooser"');
+  });
+
+  test('选中直接连接后只剩访问保护一步，且不出现隧道状态卡', () => {
+    const html = renderWizard('direct');
+    expect(stepOrder(html)).toEqual(['path', 'direct']);
+    expect(html).not.toContain('data-testid="remote-access-status"');
+    expect(html).not.toContain('data-testid="remote-access-step-proxy"');
+  });
+
+  test('已建好隧道时连接方式锁死在隧道：两张卡都禁用，状态卡照常渲染', () => {
+    status = configured('named', 'running');
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-status"');
+    expect(isDisabled(html, 'remote-access-path-tunnel-input')).toBe(true);
+    expect(isDisabled(html, 'remote-access-path-direct-input')).toBe(true);
+    expect(/data-testid="remote-access-path-tunnel"[^>]*data-selected="true"/.test(html)).toBe(
+      true
+    );
   });
 });
 
 describe('向导步进', () => {
-  test('命名隧道的步骤顺序：安装 → 方式 → 登录 → 主机名 → 访问控制 → 创建 → 反向代理', () => {
+  test('命名隧道的步骤顺序：连接方式 → 安装 → 隧道类型 → 登录 → 主机名 → 访问控制 → 创建 → 反向代理', () => {
     status = tunnel({ auth: { loggedIn: true, loginUrl: null } });
     expect(stepOrder(renderWizard('named'))).toEqual([
+      'path',
       'install',
       'mode',
       'login',
@@ -627,7 +668,7 @@ describe('向导步进', () => {
   });
 
   test('临时隧道没有登录 / 主机名 / 访问控制三步', () => {
-    expect(stepOrder(renderWizard('quick'))).toEqual(['install', 'mode', 'quick', 'proxy']);
+    expect(stepOrder(renderWizard('quick'))).toEqual(['path', 'install', 'mode', 'quick', 'proxy']);
   });
 
   test('访问控制步带「推荐」（未启用登录）或「可选」（已启用登录）标签', () => {
@@ -638,9 +679,9 @@ describe('向导步进', () => {
     expect(renderWizard('named')).toContain('settings.remoteAccess.access.tag.optional');
   });
 
-  test('未安装 cloudflared 时停在第 1 步并给安装按钮', () => {
+  test('未安装 cloudflared 时停在安装步并给安装按钮', () => {
     status = tunnel({ binary: { installed: false, version: null, path: null, source: null } });
-    const html = render();
+    const html = renderWizard('off');
     expect(stepStateOf(html, 'remote-access-step-install')).toBe('current');
     expect(stepStateOf(html, 'remote-access-step-mode')).toBe('todo');
     expect(html).toContain('data-testid="remote-access-install"');
@@ -652,7 +693,7 @@ describe('向导步进', () => {
       platform: 'freebsd-x64',
       binary: { installed: false, version: null, path: null, source: null },
     });
-    const html = render();
+    const html = renderWizard('off');
     expect(html).toContain('data-testid="remote-access-unsupported"');
     expect(html).not.toContain('data-testid="remote-access-install"');
   });
@@ -662,7 +703,7 @@ describe('向导步进', () => {
       binary: { installed: false, version: null, path: null, source: null },
       job: job({ kind: 'install', state: 'running', step: 'download' }),
     });
-    const html = render();
+    const html = renderWizard('off');
     expect(html).toContain('data-testid="remote-access-install-progress"');
     expect(html).toContain('settings.remoteAccess.jobStep.download');
   });
@@ -676,20 +717,21 @@ describe('向导步进', () => {
         error: { code: 'download_failed', message: 'timeout' },
       }),
     });
-    expect(render()).toContain('settings.remoteAccess.errors.download_failed');
+    expect(renderWizard('off')).toContain('settings.remoteAccess.errors.download_failed');
   });
 
-  test('装好后停在第 2 步：两张方式卡都在，第 3 步等待选择', () => {
-    const html = render();
+  test('装好后停在隧道类型步：两张类型卡都在（没有直接连接卡），下一步等待选择', () => {
+    const html = renderWizard('off');
     expect(stepStateOf(html, 'remote-access-step-install')).toBe('done');
     expect(stepStateOf(html, 'remote-access-step-mode')).toBe('current');
     expect(html).toContain('data-testid="remote-access-mode-quick"');
     expect(html).toContain('data-testid="remote-access-mode-named"');
+    expect(html).not.toContain('data-testid="remote-access-mode-direct"');
     expect(html).toContain('data-testid="remote-access-step-tunnel-idle"');
     expect(html).toContain('data-testid="remote-access-binary"');
   });
 
-  test('已建好隧道时方式卡锁定，向导停在反向代理步', () => {
+  test('已建好隧道时类型卡锁定，向导停在反向代理步', () => {
     status = configured('named', 'running');
     const html = render();
     expect(stepStateOf(html, 'remote-access-step-create')).toBe('done');
@@ -888,24 +930,23 @@ describe('直接连接', () => {
     ...overrides,
   });
 
-  test('方式步给出第三张卡，且不因为没装 cloudflared 就锁死', () => {
+  test('直接连接是顶层选项，且不因为没装 cloudflared 就锁死', () => {
     status = tunnel({ binary: { installed: false, version: null, path: null, source: null } });
     const html = render();
-    expect(html).toContain('data-testid="remote-access-mode-direct"');
-    expect(html).toContain('settings.remoteAccess.mode.direct.description');
-    expect(isDisabled(html, 'remote-access-mode-direct-input')).toBe(false);
+    expect(html).toContain('data-testid="remote-access-path-direct"');
+    expect(html).toContain('settings.remoteAccess.path.direct.description');
+    expect(isDisabled(html, 'remote-access-path-direct-input')).toBe(false);
   });
 
-  test('已建隧道时第三张卡同样锁定：换方式要先移除隧道', () => {
+  test('已建隧道时直接连接卡锁定：换路径要先移除隧道', () => {
     status = configured('named', 'running');
-    expect(isDisabled(render(), 'remote-access-mode-direct-input')).toBe(true);
+    expect(isDisabled(render(), 'remote-access-path-direct-input')).toBe(true);
   });
 
-  test('选中后只剩方式与访问保护两步', () => {
-    expect(stepOrder(renderWizard('direct', { localAuth: localAuth() }))).toEqual([
-      'mode',
-      'direct',
-    ]);
+  test('选中后只剩连接方式与访问保护两步，安装步不出现', () => {
+    const html = renderWizard('direct', { localAuth: localAuth() });
+    expect(stepOrder(html)).toEqual(['path', 'direct']);
+    expect(html).not.toContain('data-testid="remote-access-step-install"');
   });
 
   test('hub / node 角色：已由节点登录保护，不再劝启用本机登录', () => {
@@ -1270,17 +1311,17 @@ describe('未启用登录时的兼容提醒', () => {
 describe('日志', () => {
   test('有输出时渲染日志框，无输出时给空提示', () => {
     status = tunnel({ log: ['2026-08-30 INF Registered tunnel connection'] });
-    const html = render();
+    const html = renderStatusCard();
     expect(html).toContain('data-testid="remote-access-log-box"');
     expect(html).toContain('Registered tunnel connection');
 
     status = tunnel();
-    expect(render()).toContain('data-testid="remote-access-log-empty"');
+    expect(renderStatusCard()).toContain('data-testid="remote-access-log-empty"');
   });
 
   test('只渲染末尾 200 行', () => {
     status = tunnel({ log: Array.from({ length: 260 }, (_, i) => `line ${i}`) });
-    const html = render();
+    const html = renderStatusCard();
     expect(html).not.toContain('line 59');
     expect(html).toContain('line 60');
     expect(html).toContain('line 259');
@@ -1311,8 +1352,9 @@ function exposureState(overrides: Partial<ExposureState> = {}): ExposureState {
 }
 
 /**
- * 方式与主机名草稿都由标签层的 `useState` 驱动，静态渲染点不了控件——命名隧道的子步骤
+ * 连接方式、隧道类型与主机名草稿都由标签层的 `useState` 驱动，静态渲染点不了控件——子步骤
  * 直接渲染 `TunnelWizard` 并把它们传进去；`RemoteAccessTab` 只负责把 state 接上这些入参。
+ * `'off'` 表示「选了 Cloudflare Tunnel，但还没选类型」。
  */
 function renderWizard(
   mode: TunnelMode | 'direct',
@@ -1332,7 +1374,9 @@ function renderWizard(
       <TunnelWizard
         status={current}
         actions={{ ...snapshot, run: () => undefined, clearError: () => undefined }}
-        chosenMode={mode}
+        chosenPath={mode === 'direct' ? 'direct' : 'tunnel'}
+        onChoosePath={() => undefined}
+        chosenMode={mode === 'direct' || mode === 'off' ? null : mode}
         onChooseMode={() => undefined}
         draft={options.draft ?? namedDraft()}
         isHub={options.isHub ?? false}
@@ -1340,6 +1384,21 @@ function renderWizard(
         onRestarted={() => undefined}
         localAuth={options.localAuth ?? null}
         onLocalAuth={() => undefined}
+      />
+    </MemoryRouter>
+  );
+}
+
+/** 状态卡只在选了隧道路径或已建过隧道时挂在标签上；未配置态的断言直接渲染卡片本体。 */
+function renderStatusCard(): string {
+  const current = status;
+  if (!current) throw new Error('status fixture is required');
+  return renderToStaticMarkup(
+    <MemoryRouter initialEntries={['/settings']}>
+      <TunnelStatusCard
+        status={current}
+        actions={{ ...actionState, run: () => undefined, clearError: () => undefined }}
+        exposure={exposureState()}
       />
     </MemoryRouter>
   );

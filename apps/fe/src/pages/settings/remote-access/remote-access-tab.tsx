@@ -1,4 +1,4 @@
-// 设置页「远程访问」标签：用 Cloudflare Tunnel 把本机的 tmex 暴露到公网。
+// 设置页「远程访问」标签：把本机的 tmex 开放到外网，走 Cloudflare Tunnel 或直接连接两条路径之一。
 //
 // `/api/tunnel/*` 与 TLS / LocalApi 一样只作用于浏览器直连的那台机器：它要落盘二进制、写 env、
 // 起常驻进程，经 `/n/<id>` 转发过去只会改到入口机自己。因此浏览远端 node 时整块不渲染，只给提示。
@@ -17,7 +17,13 @@ import type { ExposureState } from './exposure';
 import type { NamedDraft } from './named-step';
 import { TunnelStatusCard } from './status-card';
 import { type TunnelActions, useTunnelActions } from './tunnel-actions';
-import { type WizardMode, isExposureAckError, withExposureAck } from './tunnel-model';
+import {
+  type ConnectionPath,
+  type WizardMode,
+  effectivePath,
+  isExposureAckError,
+  withExposureAck,
+} from './tunnel-model';
 import { useTunnelStatus } from './use-tunnel-status';
 import { TunnelWizard } from './wizard';
 
@@ -47,6 +53,7 @@ function SelfRemoteAccess() {
   const { t } = useTranslation();
   const tunnel = useTunnelStatus();
   const { mode } = useSharedAuthMode();
+  const [chosenPath, setChosenPath] = useState<ConnectionPath | null>(null);
   const [chosenMode, setChosenMode] = useState<WizardMode | null>(null);
   // 开关本机登录后接口会带回最新状态：就地覆盖，`/api/auth/mode` 的共享快照是进程级缓存，拉不动。
   const [localAuthOverride, setLocalAuthOverride] = useState<LocalAuthStatus | null>(null);
@@ -127,12 +134,17 @@ function SelfRemoteAccess() {
     run: (req) => rawActions.run(withExposureAck(req, acknowledged)),
   };
 
+  // 状态卡讲的全是隧道：还没选或选了「直接连接」时它只会让人以为直连也要先建隧道。
+  const showStatus = effectivePath(status, chosenPath) === 'tunnel';
+
   return (
     <div className="flex w-full flex-col gap-4" data-testid="settings-remote-access-tab">
-      <TunnelStatusCard status={status} actions={actions} exposure={exposure} />
+      {showStatus && <TunnelStatusCard status={status} actions={actions} exposure={exposure} />}
       <TunnelWizard
         status={status}
         actions={actions}
+        chosenPath={chosenPath}
+        onChoosePath={setChosenPath}
         chosenMode={chosenMode}
         onChooseMode={setChosenMode}
         draft={draft}

@@ -90,6 +90,7 @@ export function wouldDropLastProtection(status: TunnelStatusResponse): boolean {
 }
 
 export type WizardStepId =
+  | 'path'
   | 'install'
   | 'mode'
   | 'login'
@@ -102,14 +103,19 @@ export type WizardStepId =
   | 'proxy';
 
 /**
- * 向导的展示路径：服务端的 `TunnelMode` 之外多一条纯前端的 `direct`（自行暴露，不建任何隧道）。
- * 选中 `direct` 不会发出任何隧道动作，也永远不会写进 `status.config.mode`。
+ * 顶层连接方式：Cloudflare Tunnel 与「直接连接」是并列的两条路径，后者完全不碰 cloudflared。
+ * 纯前端概念，永远不会写进 `status.config.mode`。
  */
-export type WizardMode = TunnelMode | 'direct';
+export type ConnectionPath = 'tunnel' | 'direct';
+
+/** 隧道分支里的子方式（临时 / 命名），与服务端 `TunnelMode` 同构。 */
+export type WizardMode = TunnelMode;
 
 export interface WizardContext {
   status: TunnelStatusResponse;
-  /** 本地选择的方式（尚未落库） */
+  /** 本地选择的连接方式；`null` = 还没选。 */
+  chosenPath: ConnectionPath | null;
+  /** 隧道分支里本地选择的子方式（尚未落库） */
   chosenMode: WizardMode | null;
   /** 主机名步骤已在本地确认——契约里没有单独保存主机名的动作，只能由向导自己记。 */
   hostnameConfirmed: boolean;
@@ -118,6 +124,7 @@ export interface WizardContext {
 }
 
 const NAMED_STEPS: WizardStepId[] = [
+  'path',
   'install',
   'mode',
   'login',
@@ -126,23 +133,38 @@ const NAMED_STEPS: WizardStepId[] = [
   'create',
   'proxy',
 ];
-const QUICK_STEPS: WizardStepId[] = ['install', 'mode', 'quick', 'proxy'];
+const QUICK_STEPS: WizardStepId[] = ['path', 'install', 'mode', 'quick', 'proxy'];
+const TUNNEL_STEPS: WizardStepId[] = ['path', 'install', 'mode', 'tunnel', 'proxy'];
 /** 直接连接不装 cloudflared、不建隧道，也就没有安装与反向代理两步。 */
-const DIRECT_STEPS: WizardStepId[] = ['mode', 'direct'];
-const UNDECIDED_STEPS: WizardStepId[] = ['install', 'mode', 'tunnel', 'proxy'];
+const DIRECT_STEPS: WizardStepId[] = ['path', 'direct'];
+/** 还没选连接方式：只给顶层的两张卡，不要摆出一串与直接连接无关的隧道步骤。 */
+const PATH_ONLY_STEPS: WizardStepId[] = ['path'];
 
-/** 步骤序列随方式变化：临时隧道没有登录 / 主机名 / 访问控制，直接连接只剩访问保护。 */
+/** 步骤序列先随连接方式分叉，隧道分支内再随子方式变化。 */
 export function wizardSteps(ctx: WizardContext): WizardStepId[] {
+  const path = effectivePath(ctx.status, ctx.chosenPath);
+  if (path === null) return PATH_ONLY_STEPS;
+  if (path === 'direct') return DIRECT_STEPS;
   const mode = effectiveMode(ctx.status, ctx.chosenMode);
   if (mode === 'named') return NAMED_STEPS;
   if (mode === 'quick') return QUICK_STEPS;
-  if (mode === 'direct') return DIRECT_STEPS;
-  return UNDECIDED_STEPS;
+  return TUNNEL_STEPS;
 }
 
 /**
- * 步骤 3 展示哪条路径：已配置隧道时以服务端为准（此时 `direct` 这条本地选择自动让位），
- * 否则用本地选择。
+ * 已经建过隧道（含接管来的）时连接方式由服务端锁死：要走直接连接必须先移除隧道。
+ * 否则用本地选择，没选过就是 `null`。
+ */
+export function effectivePath(
+  status: TunnelStatusResponse,
+  chosenPath: ConnectionPath | null
+): ConnectionPath | null {
+  if (status.config.mode !== 'off') return 'tunnel';
+  return chosenPath;
+}
+
+/**
+ * 隧道分支里展示哪种子方式：已配置隧道时以服务端为准，否则用本地选择。
  */
 export function effectiveMode(
   status: TunnelStatusResponse,
@@ -164,22 +186,24 @@ function tunnelReady(status: TunnelStatusResponse): boolean {
  */
 export function wizardStepState(step: WizardStepId, ctx: WizardContext): StepState {
   const { status, hostnameConfirmed } = ctx;
+  const path = effectivePath(status, ctx.chosenPath);
   const mode = effectiveMode(status, ctx.chosenMode);
   const ready = tunnelReady(status);
   const created = status.config.mode === 'named';
 
   switch (step) {
+    case 'path':
+      return path === null ? 'current' : 'done';
     case 'install':
       return ready ? 'done' : 'current';
     case 'mode':
       return modeStepState(mode, ready);
     case 'direct':
-      return mode === 'direct' ? directStepState(ctx.localAuth) : 'todo';
+      return path === 'direct' ? directStepState(ctx.localAuth) : 'todo';
     case 'tunnel':
       return 'todo';
     case 'quick':
-      if (!ready || mode !== 'quick') return 'todo';
-      return status.config.mode === 'quick' ? 'done' : 'current';
+      return quickStepState(status, mode, ready);
     case 'login':
       if (!ready || mode !== 'named') return 'todo';
       return status.auth.loggedIn || created ? 'done' : 'current';
@@ -196,11 +220,16 @@ export function wizardStepState(step: WizardStepId, ctx: WizardContext): StepSta
   }
 }
 
-/** 「直接连接」与 cloudflared 无关：没装二进制也能选，方式步照样算完成。 */
+/** 隧道类型步：cloudflared 没就位时还轮不到它，选定之后就打勾。 */
 function modeStepState(mode: WizardMode, ready: boolean): StepState {
-  if (mode === 'direct') return 'done';
   if (!ready) return 'todo';
   return mode === 'off' ? 'current' : 'done';
+}
+
+/** 临时隧道那一步：只在隧道分支且选了临时隧道时活跃，落库即打勾。 */
+function quickStepState(status: TunnelStatusResponse, mode: WizardMode, ready: boolean): StepState {
+  if (!ready || mode !== 'quick') return 'todo';
+  return status.config.mode === 'quick' ? 'done' : 'current';
 }
 
 /** 查到确实有登录门才算这一步做完；`localAuth` 缺失（旧后端）时停在当前步等用户确认。 */

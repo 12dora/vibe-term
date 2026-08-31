@@ -10,6 +10,7 @@ import {
   accessPill,
   describeTunnelError,
   effectiveMode,
+  effectivePath,
   isAuthRequiredError,
   isExposingAction,
   isExposureAckError,
@@ -119,21 +120,45 @@ describe('tunnelPill', () => {
   });
 });
 
-describe('wizardSteps / effectiveMode', () => {
-  test('命名隧道七步：访问控制排在主机名之后、创建之前', () => {
-    expect(
-      wizardSteps({ status: status(), chosenMode: 'named', hostnameConfirmed: false })
-    ).toEqual(['install', 'mode', 'login', 'hostname', 'access', 'create', 'proxy']);
+describe('wizardSteps / effectivePath / effectiveMode', () => {
+  const ctx = (chosenPath: 'tunnel' | 'direct' | null, chosenMode: 'named' | 'quick' | null) => ({
+    status: status(),
+    chosenPath,
+    chosenMode,
+    hostnameConfirmed: false,
+  });
+
+  test('还没选连接方式时只有顶层的一步', () => {
+    expect(wizardSteps(ctx(null, null))).toEqual(['path']);
+    expect(wizardSteps(ctx(null, 'named'))).toEqual(['path']);
+  });
+
+  test('命名隧道八步：访问控制排在主机名之后、创建之前', () => {
+    expect(wizardSteps(ctx('tunnel', 'named'))).toEqual([
+      'path',
+      'install',
+      'mode',
+      'login',
+      'hostname',
+      'access',
+      'create',
+      'proxy',
+    ]);
   });
 
   test('临时隧道没有登录 / 主机名 / 访问控制', () => {
-    expect(
-      wizardSteps({ status: status(), chosenMode: 'quick', hostnameConfirmed: false })
-    ).toEqual(['install', 'mode', 'quick', 'proxy']);
+    expect(wizardSteps(ctx('tunnel', 'quick'))).toEqual([
+      'path',
+      'install',
+      'mode',
+      'quick',
+      'proxy',
+    ]);
   });
 
-  test('还没选方式时第 3 步只是占位', () => {
-    expect(wizardSteps({ status: status(), chosenMode: null, hostnameConfirmed: false })).toEqual([
+  test('选了隧道但还没选类型时第 4 步只是占位', () => {
+    expect(wizardSteps(ctx('tunnel', null))).toEqual([
+      'path',
       'install',
       'mode',
       'tunnel',
@@ -141,15 +166,23 @@ describe('wizardSteps / effectiveMode', () => {
     ]);
   });
 
-  test('已经建好隧道后方式以服务端为准', () => {
+  test('已经建好隧道后连接方式与类型都以服务端为准', () => {
     const s = status({ config: { ...status().config, mode: 'named', hostname: 'a.example.com' } });
+    expect(effectivePath(s, 'direct')).toBe('tunnel');
     expect(effectiveMode(s, 'quick')).toBe('named');
-    expect(wizardSteps({ status: s, chosenMode: 'quick', hostnameConfirmed: false })).toContain(
-      'access'
-    );
+    expect(
+      wizardSteps({
+        status: s,
+        chosenPath: 'direct',
+        chosenMode: 'quick',
+        hostnameConfirmed: false,
+      })
+    ).toContain('access');
   });
 
-  test('未配置时方式取本地选择', () => {
+  test('未配置时连接方式与类型都取本地选择', () => {
+    expect(effectivePath(status(), null)).toBeNull();
+    expect(effectivePath(status(), 'direct')).toBe('direct');
     expect(effectiveMode(status(), 'quick')).toBe('quick');
     expect(effectiveMode(status(), null)).toBe('off');
   });
@@ -160,7 +193,19 @@ describe('wizardStepState', () => {
     s: TunnelStatusResponse,
     chosenMode: 'named' | 'quick' | null,
     hostnameConfirmed = false
-  ) => ({ status: s, chosenMode, hostnameConfirmed });
+  ) => ({ status: s, chosenPath: 'tunnel' as const, chosenMode, hostnameConfirmed });
+
+  test('选好连接方式后第 1 步打勾，没选时停在第 1 步', () => {
+    expect(wizardStepState('path', ctx(status(), null))).toBe('done');
+    expect(
+      wizardStepState('path', {
+        status: status(),
+        chosenPath: null,
+        chosenMode: null,
+        hostnameConfirmed: false,
+      })
+    ).toBe('current');
+  });
 
   test('没装 cloudflared 时停在安装步', () => {
     const s = status({ binary: { installed: false, version: null, path: null, source: null } });
@@ -235,24 +280,29 @@ describe('直接连接路径', () => {
     auth?: LocalAuthStatus
   ): Parameters<typeof wizardStepState>[1] => ({
     status: s,
-    chosenMode: 'direct',
+    chosenPath: 'direct',
+    chosenMode: null,
     hostnameConfirmed: false,
     localAuth: auth ?? null,
   });
 
-  test('只有方式与访问保护两步：不建隧道就不需要安装与反向代理', () => {
+  test('只有连接方式与访问保护两步：不建隧道就不需要安装与反向代理', () => {
     expect(
-      wizardSteps({ status: status(), chosenMode: 'direct', hostnameConfirmed: false })
-    ).toEqual(['mode', 'direct']);
+      wizardSteps({
+        status: status(),
+        chosenPath: 'direct',
+        chosenMode: null,
+        hostnameConfirmed: false,
+      })
+    ).toEqual(['path', 'direct']);
   });
 
-  test('没装 cloudflared 也走得通：方式步直接算完成', () => {
+  test('没装 cloudflared 也走得通：连接方式步照样打勾', () => {
     const s = status({ binary: notInstalled });
-    expect(wizardSteps({ status: s, chosenMode: 'direct', hostnameConfirmed: false })).toEqual([
-      'mode',
-      'direct',
-    ]);
-    expect(wizardStepState('mode', ctx(s))).toBe('done');
+    expect(
+      wizardSteps({ status: s, chosenPath: 'direct', chosenMode: null, hostnameConfirmed: false })
+    ).toEqual(['path', 'direct']);
+    expect(wizardStepState('path', ctx(s))).toBe('done');
   });
 
   test('访问保护步：查到门才打勾', () => {
@@ -270,21 +320,23 @@ describe('直接连接路径', () => {
     expect(wizardStepState('direct', ctx(status()))).toBe('current');
   });
 
-  test('别的路径里访问保护步既不出现，也不会抢当前步', () => {
-    const quick = { status: status(), chosenMode: 'quick' as const, hostnameConfirmed: false };
+  test('隧道路径里访问保护步既不出现，也不会抢当前步', () => {
+    const quick = {
+      status: status(),
+      chosenPath: 'tunnel' as const,
+      chosenMode: 'quick' as const,
+      hostnameConfirmed: false,
+    };
     expect(wizardSteps(quick)).not.toContain('direct');
     expect(wizardStepState('direct', quick)).toBe('todo');
   });
 
-  test('服务端已建隧道时本地的 direct 选择让位给服务端方式', () => {
+  test('服务端已建隧道时本地的 direct 选择让位给隧道路径', () => {
     const s = status({ config: { ...status().config, mode: 'quick' } });
-    expect(effectiveMode(s, 'direct')).toBe('quick');
-    expect(wizardSteps({ status: s, chosenMode: 'direct', hostnameConfirmed: false })).toEqual([
-      'install',
-      'mode',
-      'quick',
-      'proxy',
-    ]);
+    expect(effectivePath(s, 'direct')).toBe('tunnel');
+    expect(
+      wizardSteps({ status: s, chosenPath: 'direct', chosenMode: null, hostnameConfirmed: false })
+    ).toEqual(['path', 'install', 'mode', 'quick', 'proxy']);
   });
 });
 
