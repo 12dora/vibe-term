@@ -122,6 +122,11 @@ export interface TunnelExternalStatus {
    * 可选以保持旧客户端/夹具的线兼容。
    */
   externalAccess?: TunnelExternalAccessProbe;
+  /**
+   * 后台探测进行中，当前字段可能是缓存或尚未探测的占位。
+   * 仅在刷新进行中时出现。
+   */
+  probing?: boolean;
 }
 
 /** 外部隧道上的 Cloudflare Access 只读探测结果（不写入本地 access 库）。 */

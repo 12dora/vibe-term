@@ -2,26 +2,25 @@ import { describe, expect, test } from 'bun:test';
 import {
   EMPTY_EXTERNAL,
   ExternalTunnelDetector,
-  hostnamesFromLog,
   parseArgv,
-  parseCloudflaredConfigYml,
+  parseCloudflaredYml,
+  parseCommandLine,
+  parseIngressFromLog,
   parsePlistProgramArguments,
-  parseProcessList,
-  parseTunnelToken,
+  parsePsOutput,
+  parseTokenFileMeta,
   serviceHitsOrigin,
   toExternalStatus,
 } from './external-detect';
 
 describe('external tunnel parsing', () => {
   test('parses token-file / logfile flags and token payload without exposing the secret', () => {
-    const parsed = parseProcessList(
+    const procs = parsePsOutput(
       '42 /opt/homebrew/bin/cloudflared tunnel --logfile /tmp/cf.log run --token-file /tmp/token\n'
     );
-    expect(parsed[0]).toMatchObject({
-      pid: '42',
-      tokenFile: '/tmp/token',
-    });
-    const payload = parseTunnelToken(
+    expect(procs[0]?.pid).toBe(42);
+    expect(parseCommandLine(procs[0]?.command ?? '').tokenFile).toBe('/tmp/token');
+    const payload = parseTokenFileMeta(
       Buffer.from(JSON.stringify({ a: 'acct', t: 'tun-id', s: 'super-secret' })).toString('base64')
     );
     expect(payload).toEqual({ accountId: 'acct', tunnelId: 'tun-id' });
@@ -29,7 +28,7 @@ describe('external tunnel parsing', () => {
   });
 
   test('parses config.yml ingress and keeps hostnames whose service hits originPort', () => {
-    const yml = parseCloudflaredConfigYml(`
+    const yml = parseCloudflaredYml(`
 tunnel: 550e8400-e29b-41d4-a716-446655440000
 credentials-file: /tmp/cred.json
 ingress:
@@ -39,10 +38,12 @@ ingress:
     service: http://127.0.0.1:80
   - service: http_status:404
 `);
-    expect(yml.tunnel).toBe('550e8400-e29b-41d4-a716-446655440000');
-    expect(yml.credentialsFile).toBe('/tmp/cred.json');
+    expect(yml?.tunnelId).toBe('550e8400-e29b-41d4-a716-446655440000');
+    expect(yml?.credentialsFile).toBe('/tmp/cred.json');
     expect(
-      yml.ingress.filter((row) => serviceHitsOrigin(row.service, 19883)).map((r) => r.hostname)
+      (yml?.ingress ?? [])
+        .filter((row) => serviceHitsOrigin(row.service, 19883))
+        .map((r) => r.hostname)
     ).toEqual(['tmex.example.com']);
   });
 
@@ -62,7 +63,7 @@ ingress:
 </dict></plist>`);
     expect(args[0]).toContain('cloudflared');
     expect(args).toContain('--token-file');
-    const hosts = hostnamesFromLog(
+    const hosts = parseIngressFromLog(
       'noise\n{"ingress":[{"hostname":"old.example","service":"http://127.0.0.1:1"}]}\nfinal {"ingress":[{"hostname":"tmex.example.com","service":"http://127.0.0.1:19883"}]}\n',
       19883
     );
@@ -393,15 +394,15 @@ describe('token-tunnel log + Access probe', () => {
   test('parses escaped config JSON string from token-tunnel logs', () => {
     const line = escapedConfigLogLine('tmex.example.org', 9883);
     expect(line).toContain('\\"ingress\\"');
-    expect(hostnamesFromLog(line, 9883)).toEqual(['tmex.example.org']);
-    expect(hostnamesFromLog(line, 19883)).toEqual([]);
+    expect(parseIngressFromLog(line, 9883)).toEqual(['tmex.example.org']);
+    expect(parseIngressFromLog(line, 19883)).toEqual([]);
   });
 
   test('prefers the last escaped ingress in a tailed multi-MB log', () => {
     const prefix = `${'noise\n'.repeat(20_000)}${'x'.repeat(200_000)}\n`;
     const old = escapedConfigLogLine('old.example.com', 19883);
     const latest = escapedConfigLogLine('tmex.example.org', 19883);
-    expect(hostnamesFromLog(`${prefix}${old}\n${latest}\n`, 19883)).toEqual(['tmex.example.org']);
+    expect(parseIngressFromLog(`${prefix}${old}\n${latest}\n`, 19883)).toEqual(['tmex.example.org']);
   });
 
   test('detector uses escaped log ingress when token tunnel has no config.yml', async () => {
@@ -667,6 +668,167 @@ describe('外部 Access 探测的凭证来源区分', () => {
     });
     const found = await d.detect();
     expect(found.externalAccess?.checked).toBe(true);
+    expect(found.externalAccess?.hostnameMatch).toBe(false);
+  });
+});
+
+describe('external detector stale-while-revalidate', () => {
+  test('serves stale cache and coalesces concurrent refreshes into one run', async () => {
+    let scans = 0;
+    let now = 1_000;
+    const gate = Promise.withResolvers<void>();
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => now,
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => {
+        scans += 1;
+        if (scans > 1) await gate.promise;
+        return '';
+      },
+      readFile: async () => null,
+      listDir: async () => [],
+    });
+    await d.detect();
+    expect(scans).toBe(1);
+    now += 40_000;
+    const [a, b] = await Promise.all([d.detect(), d.detect()]);
+    expect(a.detected).toBe(false);
+    expect(b.detected).toBe(false);
+    expect(a.probing).toBe(true);
+    expect(b.probing).toBe(true);
+    expect(scans).toBe(2);
+    gate.resolve();
+    await Bun.sleep(20);
+  });
+
+  test('first detect returns placeholder after wait cap then later call sees result', async () => {
+    const gate = Promise.withResolvers<void>();
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      firstWaitMs: 20,
+      sleep: (ms) => Bun.sleep(ms),
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => {
+        await gate.promise;
+        return '7 /usr/bin/cloudflared tunnel run --token-file /tmp/token\n';
+      },
+      readFile: async (path) => {
+        if (path === '/tmp/token') {
+          return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
+        }
+        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        return null;
+      },
+      listDir: async () => [],
+    });
+    const first = await d.detect();
+    expect(first.detected).toBe(false);
+    expect(first.probing).toBe(true);
+    gate.resolve();
+    await Bun.sleep(20);
+    const second = await d.detect();
+    expect(second.detected).toBe(true);
+    expect(second.hostnames).toEqual(['tmex.example.com']);
+    expect(second.probing).toBeUndefined();
+  });
+
+  test('force detect awaits a fresh run even when cache is warm', async () => {
+    let scans = 0;
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => {
+        scans += 1;
+        return '';
+      },
+      readFile: async () => null,
+      listDir: async () => [],
+    });
+    await d.detect();
+    await d.detect();
+    expect(scans).toBe(1);
+    await d.detect({ force: true });
+    expect(scans).toBe(2);
+  });
+
+  test('Access probe timeout degrades to unknown, not not-covered', async () => {
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => '7 /usr/bin/cloudflared tunnel run --token-file /tmp/token\n',
+      readFile: async (path) => {
+        if (path === '/tmp/token') {
+          return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
+        }
+        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        return null;
+      },
+      listDir: async () => [],
+      getCredentials: async () => ({
+        accountId: 'acct',
+        apiToken: 'tok',
+        source: 'store' as const,
+      }),
+      accessClient: {
+        getTunnelIngress: async () => [],
+        listApps: async () => {
+          const err = new Error('The operation was aborted due to timeout');
+          err.name = 'TimeoutError';
+          throw err;
+        },
+      },
+    });
+    const found = await d.detect();
+    expect(found.externalAccess).toEqual({
+      checked: false,
+      hostnameMatch: false,
+      appId: null,
+      aud: null,
+      teamDomain: null,
+    });
+  });
+
+  test('Access probe truncated app list without match is unknown, not not-covered', async () => {
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => '7 /usr/bin/cloudflared tunnel run --token-file /tmp/token\n',
+      readFile: async (path) => {
+        if (path === '/tmp/token') {
+          return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
+        }
+        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        return null;
+      },
+      listDir: async () => [],
+      getCredentials: async () => ({
+        accountId: 'acct',
+        apiToken: 'tok',
+        source: 'store' as const,
+      }),
+      accessClient: {
+        getTunnelIngress: async () => [],
+        listApps: async () =>
+          Object.assign(
+            [{ id: 'other', aud: 'aud-x', name: 'other', domain: 'other.example.com' }],
+            {
+              truncated: true,
+            }
+          ),
+      },
+    });
+    const found = await d.detect();
+    expect(found.externalAccess?.checked).toBe(false);
     expect(found.externalAccess?.hostnameMatch).toBe(false);
   });
 });

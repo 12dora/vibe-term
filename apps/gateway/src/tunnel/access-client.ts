@@ -14,6 +14,8 @@ import { redactSecrets } from './redact';
 const CF_API = 'https://api.cloudflare.com/client/v4';
 const SESSION_DURATION = '24h';
 const AUTHORIZING_DECISIONS = new Set(['allow', 'bypass', 'service_auth']);
+export const CF_REQUEST_TIMEOUT_MS = 3_000;
+export const CF_LIST_APPS_DEADLINE_MS = 6_000;
 
 export const ACCESS_TOKEN_PERMISSIONS =
   'Access: Apps and Policies — Edit and Access: Organizations, Identity Providers, and Groups — Read';
@@ -23,6 +25,14 @@ export type CloudflareApp = {
   aud: string;
   name: string;
   domain: string;
+};
+
+/** listApps 触及总时限时带 truncated；无匹配不得当成「未覆盖」。 */
+export type CloudflareAppList = CloudflareApp[] & { truncated?: boolean };
+
+export type CloudflareAccessClientOptions = {
+  requestTimeoutMs?: number;
+  listAppsDeadlineMs?: number;
 };
 
 export type CloudflarePolicy = {
@@ -67,7 +77,10 @@ function policyLabel(policy: CloudflarePolicy): string {
 }
 
 export class CloudflareAccessClient {
-  constructor(private readonly fetchImpl: TunnelFetch = fetch) {}
+  constructor(
+    private readonly fetchImpl: TunnelFetch = fetch,
+    private readonly timeouts: CloudflareAccessClientOptions = {}
+  ) {}
 
   async getOrganization(accountId: string, apiToken: string): Promise<{ teamDomain: string }> {
     let result: Record<string, unknown>;
@@ -154,34 +167,34 @@ export class CloudflareAccessClient {
     );
   }
 
-  async listApps(accountId: string, apiToken: string): Promise<CloudflareApp[]> {
-    const apps: CloudflareApp[] = [];
+  async listApps(accountId: string, apiToken: string): Promise<CloudflareAppList> {
+    const apps: CloudflareAppList = [];
+    const deadlineAt = Date.now() + (this.timeouts.listAppsDeadlineMs ?? CF_LIST_APPS_DEADLINE_MS);
     let page = 1;
     for (;;) {
-      const { result, result_info } = await this.requestEnvelope<unknown[]>(
-        'GET',
-        `/accounts/${encodeURIComponent(accountId)}/access/apps?page=${page}&per_page=100`,
-        apiToken
-      );
-      const batch = Array.isArray(result) ? result : [];
-      for (const item of batch) {
-        try {
-          apps.push(this.parseApp(asRecord(item) ?? {}));
-        } catch {
-          // skip malformed
-        }
-      }
-      const total = result_info?.total_count;
-      const totalPages = result_info?.total_pages;
-      if (typeof totalPages === 'number') {
-        if (page >= totalPages) break;
-      } else if (typeof total === 'number') {
-        if (apps.length >= total) break;
-      } else if (batch.length < 100) {
+      if (Date.now() >= deadlineAt) {
+        apps.truncated = true;
         break;
       }
-      page += 1;
-      if (page > 50) break;
+      try {
+        const { result, result_info } = await this.requestEnvelope<unknown[]>(
+          'GET',
+          `/accounts/${encodeURIComponent(accountId)}/access/apps?page=${page}&per_page=100`,
+          apiToken,
+          undefined,
+          { deadlineAt }
+        );
+        const batchLen = this.pushAppBatch(apps, result);
+        if (appsPageComplete(page, batchLen, apps.length, result_info)) break;
+        page += 1;
+        if (page > 50) break;
+      } catch (error) {
+        if (apps.length > 0 && isAbortLike(error)) {
+          apps.truncated = true;
+          return apps;
+        }
+        throw error;
+      }
     }
     return apps;
   }
@@ -428,6 +441,24 @@ export class CloudflareAccessClient {
     };
   }
 
+  private pushAppBatch(apps: CloudflareAppList, result: unknown): number {
+    const batch = Array.isArray(result) ? result : [];
+    for (const item of batch) {
+      try {
+        apps.push(this.parseApp(asRecord(item) ?? {}));
+      } catch {
+        // skip malformed
+      }
+    }
+    return batch.length;
+  }
+
+  private requestSignal(deadlineAt?: number): AbortSignal {
+    const budget = this.timeouts.requestTimeoutMs ?? CF_REQUEST_TIMEOUT_MS;
+    const remaining = deadlineAt === undefined ? budget : deadlineAt - Date.now();
+    return AbortSignal.timeout(Math.max(1, Math.min(budget, remaining)));
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -444,7 +475,7 @@ export class CloudflareAccessClient {
     path: string,
     apiToken: string,
     body?: unknown,
-    opts?: { notFoundOk?: boolean }
+    opts?: { notFoundOk?: boolean; deadlineAt?: number }
   ): Promise<CfEnvelope<T>> {
     let res: Response;
     try {
@@ -455,6 +486,7 @@ export class CloudflareAccessClient {
           'Content-Type': 'application/json',
         },
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal: this.requestSignal(opts?.deadlineAt),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -478,6 +510,27 @@ export class CloudflareAccessClient {
     }
     return envelope;
   }
+}
+
+function appsPageComplete(
+  page: number,
+  batchLen: number,
+  appsLen: number,
+  info: CfEnvelope<unknown>['result_info']
+): boolean {
+  const totalPages = info?.total_pages;
+  if (typeof totalPages === 'number') return page >= totalPages;
+  const total = info?.total_count;
+  if (typeof total === 'number') return appsLen >= total;
+  return batchLen < 100;
+}
+
+function isAbortLike(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const name = 'name' in error ? String(error.name) : '';
+  if (name === 'AbortError' || name === 'TimeoutError') return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /aborted|timeout/i.test(message);
 }
 
 function rulesMatch(got: TunnelAccessPolicyRule[], want: TunnelAccessPolicyRule[]): boolean {

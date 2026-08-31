@@ -45,6 +45,14 @@ import {
   standaloneClosedModeFields,
 } from '../db/local-auth-settings';
 import {
+  AuthModeCache,
+  findPrimaryUser,
+  invalidateAuthModeCache,
+  isPasskeyAvailable,
+  loadAuthModeTls,
+  withAuthModeInvalidation,
+} from './auth-mode-cache';
+import {
   type HubTlsInfoProvider,
   type KeyLogHubAck,
   type KeyLogPublisher,
@@ -67,6 +75,7 @@ import {
 } from './session-middleware';
 
 export type { KeyLogHubAck };
+export { findPrimaryUser, invalidateAuthModeCache, isPasskeyAvailable };
 
 export type AuthKeyLogPublisher = KeyLogPublisher;
 
@@ -128,6 +137,7 @@ export class AuthRoutes {
   private readonly verifyPasskey: VerifyDelegationPasskey;
   private tlsInfoProvider: HubTlsInfoProvider | undefined;
   private localAuth: LocalAuthStoreLike;
+  private readonly modeCache = new AuthModeCache();
 
   constructor(private readonly deps: AuthRoutesDeps) {
     this.localAuth = deps.localAuth ?? new LocalAuthStore();
@@ -144,10 +154,12 @@ export class AuthRoutes {
 
   setTlsInfo(provider: HubTlsInfoProvider | undefined): void {
     this.tlsInfoProvider = provider;
+    invalidateAuthModeCache();
   }
 
   setLocalAuthStore(store: LocalAuthStoreLike): void {
     this.localAuth = store;
+    invalidateAuthModeCache();
   }
 
   isLocalAuthEffective(): boolean {
@@ -172,8 +184,10 @@ export class AuthRoutes {
       'GET /api/auth/keylog/head': () => session((_r, uid) => this.handleKeyLogHead(uid)),
       'GET /api/auth/passkeys': () => session((r, uid) => this.handlePasskeys(r, uid)),
       'POST /api/auth/keylog': () => session((r, uid) => this.handleKeyLog(r, uid)),
-      'POST /api/auth/local': () => handleLocalAuthToggle(req, this.localAuthCtx()),
-      'POST /api/auth/local/bootstrap': () => handleLocalAuthBootstrap(req, this.localAuthCtx()),
+      'POST /api/auth/local': () =>
+        withAuthModeInvalidation(() => handleLocalAuthToggle(req, this.localAuthCtx())),
+      'POST /api/auth/local/bootstrap': () =>
+        withAuthModeInvalidation(() => handleLocalAuthBootstrap(req, this.localAuthCtx())),
     };
     const run = routes[`${req.method} ${path}`];
     if (run) return run();
@@ -183,22 +197,30 @@ export class AuthRoutes {
 
   private async handleMode(req: Request): Promise<Response> {
     const origin = requestOrigin(req);
-    const tls = (await this.tlsInfoProvider?.()) ?? { caFingerprint: null, caPem: null };
-    const localAuth = localAuthPayload(this.localAuthCtx());
+    const snapshot = await this.modeCache.get(this.now(), async () => {
+      const tls = await loadAuthModeTls(this.tlsInfoProvider);
+      const localAuth = localAuthPayload(this.localAuthCtx());
+      const closed = isStandaloneRoles(this.deps.roles) && !localAuth.effective;
+      return {
+        tls,
+        localAuth,
+        user: closed ? null : findPrimaryUser(this.deps.userStore, this.deps.primaryUserId),
+        hub: closed ? { nodeId: null, publicUrl: null } : this.resolveHub(),
+        closed,
+      };
+    });
     const shared = {
       nodeId: this.deps.nodeId,
       passkeyAvailable: isPasskeyAvailable(origin),
-      caFingerprint: tls.caFingerprint,
-      localAuth,
+      caFingerprint: snapshot.tls.caFingerprint,
+      localAuth: snapshot.localAuth,
     };
-    const closed = isStandaloneRoles(this.deps.roles) && !localAuth.effective;
-    if (closed) {
+    if (snapshot.closed) {
       return jsonBody({ ...shared, ...standaloneClosedModeFields() });
     }
-    const user = findPrimaryUser(this.deps.userStore, this.deps.primaryUserId);
     return jsonBody({
       ...shared,
-      ...meshAuthModeUserFields(user, origin, this.deps.userStore, this.resolveHub()),
+      ...meshAuthModeUserFields(snapshot.user, origin, this.deps.userStore, snapshot.hub),
     });
   }
 
@@ -633,6 +655,7 @@ export class AuthRoutes {
     hubAck?: boolean,
     hubError?: string
   ): Response {
+    invalidateAuthModeCache();
     if (!hubSync) {
       return jsonBody({
         ok: true,
@@ -797,22 +820,6 @@ export function resolveUser(store: UserStore, uid: string): UserRecord | null {
   return store.getById(uid) ?? store.getByUsername(uid);
 }
 
-export function findPrimaryUser(store: UserStore, primaryUserId?: string): UserRecord | null {
-  if (primaryUserId) {
-    const direct = store.getById(primaryUserId) ?? store.getByUsername(primaryUserId);
-    if (direct) return direct;
-  }
-  for (const cert of store.listCerts()) {
-    const user = store.getById(cert.userId);
-    if (user) return user;
-  }
-  for (const node of store.listNodes()) {
-    const user = store.getById(node.userId);
-    if (user) return user;
-  }
-  return store.listUsers()[0] ?? null;
-}
-
 export function requestOrigin(req: Request): string {
   return req.headers.get('origin') ?? publicRequestUrl(req).origin;
 }
@@ -822,19 +829,6 @@ export function rpIdFromOrigin(origin: string): string {
     return new URL(origin).hostname;
   } catch {
     return 'localhost';
-  }
-}
-
-export function isPasskeyAvailable(origin: string): boolean {
-  try {
-    const url = new URL(origin);
-    const host = url.hostname.toLowerCase();
-    const secure = url.protocol === 'https:' || host === 'localhost' || host.endsWith('.localhost');
-    const ip = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(':');
-    const domainOrLocalhost = host === 'localhost' || host.endsWith('.localhost') || !ip;
-    return secure && domainOrLocalhost;
-  } catch {
-    return false;
   }
 }
 

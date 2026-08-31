@@ -172,6 +172,57 @@ describe('GET /api/local/status', () => {
     ).toBeNull();
   });
 
+  test('getLocalStatus and tlsStatus overlap instead of waiting on each other', async () => {
+    let releaseLocal!: () => void;
+    const localStarted = new Promise<void>((resolve) => {
+      releaseLocal = resolve;
+    });
+    let releaseTls!: () => void;
+    const tlsStarted = new Promise<void>((resolve) => {
+      releaseTls = resolve;
+    });
+    const hung = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('status and tlsStatus did not overlap')), 1000);
+    });
+    const handled = handleLocalRequest(
+      new Request('http://127.0.0.1/api/local/status'),
+      deps({
+        readNativeManifest: async () => {
+          releaseLocal();
+          await tlsStarted;
+          return null;
+        },
+        tlsStatus: async () => {
+          releaseTls();
+          await localStarted;
+          return { mode: 'none', listenerRunning: false, tlsPort: 9443 };
+        },
+      })
+    );
+    const res = await Promise.race([handled, hung]);
+    const { status, body } = await jsonOf(res);
+    expect(status).toBe(200);
+    expect((body as { tls: { mode: string } }).tls.mode).toBe('none');
+  });
+
+  test('tlsStatus rejection still maps to direct_failed', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/status'),
+        deps({
+          tlsStatus: async () => {
+            throw new Error('tls boom');
+          },
+        })
+      )
+    );
+    expect(status).toBe(500);
+    expect((body as { error: { code: string; message: string } }).error).toEqual({
+      code: 'direct_failed',
+      message: 'tls boom',
+    });
+  });
+
   test('standalone 把鉴权交给 authenticate：拒绝则 401，放行则 200', async () => {
     const denied = await jsonOf(
       await handleLocalRequest(

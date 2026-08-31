@@ -1174,4 +1174,33 @@ describe('TunnelManager', () => {
     expect(status.config.hostname).toBe('tmex.example.org');
     expect(status.external.hostnames).toEqual(['tmex.example.org']);
   });
+
+  test('start warms external detection without throwing on unsupported platform', async () => {
+    const ctx = await setup({ platform: 'win32', arch: 'x64' });
+    dirs.push(ctx.dir);
+    await expect(ctx.manager.start()).resolves.toBeUndefined();
+    expect(ctx.manager.status().supported).toBe(false);
+  });
+
+  test('start does not await a slow external detection', async () => {
+    let finished = false;
+    const ctx = await setup({
+      externalDetectDeps: {
+        listProcesses: async () => {
+          await Bun.sleep(200);
+          finished = true;
+          return '';
+        },
+        readFile: async () => null,
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    const t0 = Date.now();
+    await ctx.manager.start();
+    expect(Date.now() - t0).toBeLessThan(150);
+    expect(finished).toBe(false);
+  });
 });

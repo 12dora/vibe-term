@@ -70,8 +70,10 @@ export async function handleLocalRequest(
       return jsonErr('method_not_allowed', 'GET required', 405);
     }
     try {
-      const status: LocalStatus = await getLocalStatus(deps);
-      const tls = await deps.tlsStatus();
+      const [status, tls]: [LocalStatus, LocalTlsStatus] = await Promise.all([
+        getLocalStatus(deps),
+        deps.tlsStatus(),
+      ]);
       return jsonOk({
         ...status,
         tls: {

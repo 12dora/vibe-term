@@ -2,6 +2,7 @@ import { isIP } from 'node:net';
 import type { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import type {
   AcmeChallengeType,
+  TlsConfigPatch,
   TlsConfigPublic,
   TlsMode,
 } from '../../../../apps/gateway/src/tls/types';
@@ -30,6 +31,7 @@ import { TlsApiError } from './errors';
 import type { HttpsListenerConfig, HttpsListenerState } from './https-listener';
 
 const SELF_SIGNED_DAYS = 398;
+const TLS_STATUS_CACHE_TTL_MS = 10_000;
 const HOSTNAME_RE =
   /^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -130,6 +132,8 @@ export class TlsService {
   private epoch = 0;
   private abortController = new AbortController();
   private acmeInFlight: Promise<void> | null = null;
+  private statusCache: { value: TlsStatus; expiresAt: number; generation: number } | null = null;
+  private statusGeneration = 0;
   private readonly mutex = new SerialQueue();
   private readonly scheduler: RenewalScheduler;
   private readonly now: () => number;
@@ -168,7 +172,10 @@ export class TlsService {
 
   async load(): Promise<TlsConfigPublic> {
     const fromEnv = await readTrustProxy(this.opts.envPath);
-    if (fromEnv !== null) this.trustProxy = fromEnv;
+    if (fromEnv !== null) {
+      if (fromEnv !== this.trustProxy) this.invalidateStatusCache();
+      this.trustProxy = fromEnv;
+    }
     return this.opts.store.get();
   }
 
@@ -195,6 +202,19 @@ export class TlsService {
   }
 
   async status(): Promise<TlsStatus> {
+    const now = this.now();
+    if (this.statusCache && now < this.statusCache.expiresAt) {
+      return this.statusCache.value;
+    }
+    const generation = this.statusGeneration;
+    const value = await this.computeStatus();
+    if (generation === this.statusGeneration) {
+      this.statusCache = { value, expiresAt: now + TLS_STATUS_CACHE_TTL_MS, generation };
+    }
+    return value;
+  }
+
+  private async computeStatus(): Promise<TlsStatus> {
     const row = await this.opts.store.get();
     let certificate: TlsStatus['certificate'] = null;
     if (row.certPem) {
@@ -236,6 +256,16 @@ export class TlsService {
     };
   }
 
+  private invalidateStatusCache(): void {
+    this.statusGeneration += 1;
+    this.statusCache = null;
+  }
+
+  private upsert(partial: TlsConfigPatch): Promise<TlsConfigPublic> {
+    this.invalidateStatusCache();
+    return this.opts.store.upsert(partial);
+  }
+
   async caPem(): Promise<string | null> {
     const row = await this.opts.store.get();
     return row.mode === 'selfsigned' && row.caCertPem ? row.caCertPem : null;
@@ -255,7 +285,7 @@ export class TlsService {
         await this.reissueSelfSigned(row.sans);
         return this.status();
       }
-      await this.opts.store.upsert({
+      await this.upsert({
         acmeStatus: 'pending',
         acmeLastError: null,
         acmeNextRenewAt: this.now() + RENEWAL_BACKOFF_MIN_MS,
@@ -270,6 +300,7 @@ export class TlsService {
   }
 
   stop(): void {
+    this.invalidateStatusCache();
     this.invalidateActiveWork();
     this.scheduler.stop();
   }
@@ -299,7 +330,7 @@ export class TlsService {
 
     if (input.mode === 'selfsigned') {
       const sans = validateSans(input.sans);
-      await this.opts.store.upsert({
+      await this.upsert({
         mode: 'selfsigned',
         sans,
         tlsPort: validatePort(input.tlsPort),
@@ -324,7 +355,7 @@ export class TlsService {
       );
     }
     const directoryUrl = acmeDirectoryUrl(Boolean(input.staging));
-    await this.opts.store.upsert({
+    await this.upsert({
       mode: 'acme',
       tlsPort: validatePort(input.tlsPort),
       bindHost: validateBindHost(input.bindHost),
@@ -346,7 +377,7 @@ export class TlsService {
   }
 
   private async stopTls(mode: 'none' | 'external'): Promise<void> {
-    await this.opts.store.upsert({ mode });
+    await this.upsert({ mode });
     this.scheduler.stop();
     await this.opts.listener.apply(null);
   }
@@ -417,7 +448,7 @@ export class TlsService {
     ) {
       await this.runIfJob(epoch, tuple, async () => {
         await this.applyListenerOrFail();
-        await this.opts.store.upsert({
+        await this.upsert({
           acmeStatus: 'ok',
           acmeLastError: null,
           acmeLastAttemptAt: this.now(),
@@ -429,7 +460,7 @@ export class TlsService {
     }
 
     await this.runIfJob(epoch, tuple, async () => {
-      await this.opts.store.upsert({
+      await this.upsert({
         acmeStatus: 'pending',
         acmeLastAttemptAt: this.now(),
         acmeLastError: null,
@@ -464,7 +495,7 @@ export class TlsService {
       epoch,
       tuple,
       async () => {
-        await this.opts.store.upsert({
+        await this.upsert({
           certPem: material.certPem,
           keyPem: material.keyPem,
           certNotBefore: material.notBefore,
@@ -519,7 +550,7 @@ export class TlsService {
   }
 
   private async persistAcmeFailure(message: string): Promise<void> {
-    await this.opts.store.upsert({
+    await this.upsert({
       acmeStatus: 'error',
       acmeLastError: message,
       acmeLastAttemptAt: this.now(),
@@ -531,7 +562,7 @@ export class TlsService {
     const ca = await this.ensureCa();
     const leaf = await issueLeaf({ ca, sans, days: SELF_SIGNED_DAYS, now: this.now() });
     const parsed = parseCertificate(leaf.certPem);
-    await this.opts.store.upsert({
+    await this.upsert({
       certPem: `${leaf.certPem.trim()}\n${ca.certPem.trim()}\n`,
       keyPem: leaf.keyPem,
       certNotBefore: parsed.notBefore,
@@ -553,11 +584,12 @@ export class TlsService {
       );
     }
     const ca = await createCa({ name: 'tmex local CA', now: this.now() });
-    await this.opts.store.upsert({ caCertPem: ca.certPem, caKeyPem: ca.keyPem });
+    await this.upsert({ caCertPem: ca.certPem, caKeyPem: ca.keyPem });
     return ca;
   }
 
   private async applyListener(): Promise<void> {
+    this.invalidateStatusCache();
     const row = await this.opts.store.get();
     const secrets = await this.opts.store.getPrivateMaterial();
     if (!row.certPem || !secrets.keyPem) return this.opts.listener.apply(null);

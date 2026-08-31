@@ -743,6 +743,136 @@ describe('auth-routes', () => {
     }
   });
 
+  test('GET /api/auth/mode reuses TLS derivation within TTL', async () => {
+    const mesh = await bootMesh();
+    try {
+      let tlsCalls = 0;
+      const fingerprint = 'ab'.repeat(32);
+      mesh.runtime.auth.setTlsInfo(() => {
+        tlsCalls += 1;
+        return { caFingerprint: fingerprint, caPem: 'pem' };
+      });
+      const first = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      const second = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(((await first.json()) as { caFingerprint: string }).caFingerprint).toBe(fingerprint);
+      expect(((await second.json()) as { caFingerprint: string }).caFingerprint).toBe(fingerprint);
+      expect(tlsCalls).toBe(1);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/auth/mode invalidates cached derivation after local-auth bootstrap', async () => {
+    const mesh = await bootMesh({
+      roles: { hub: false, node: false },
+      skipUserBootstrap: true,
+    });
+    try {
+      const store = new MemoryLocalAuthStore();
+      mesh.runtime.auth.setLocalAuthStore(store);
+      let tlsCalls = 0;
+      mesh.runtime.auth.setTlsInfo(() => {
+        tlsCalls += 1;
+        return { caFingerprint: null, caPem: null };
+      });
+      const before = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      const beforeAgain = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      const beforeBody = (await before.json()) as { mode: string; uid: string | null };
+      expect(beforeBody.mode).toBe('none');
+      expect(beforeBody.uid).toBeNull();
+      expect(((await beforeAgain.json()) as { mode: string }).mode).toBe('none');
+      expect(tlsCalls).toBe(1);
+
+      const boot = await call(mesh.runtime, 'http://localhost/api/auth/local/bootstrap', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'owner', password: 'tmex-test' }),
+        clientIp: '127.0.0.1',
+      });
+      expect(boot.status).toBe(200);
+      const enable = await call(mesh.runtime, 'http://localhost/api/auth/local', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+        clientIp: '127.0.0.1',
+      });
+      expect(enable.status).toBe(200);
+
+      const after = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      const afterBody = (await after.json()) as {
+        mode: string;
+        uid: string | null;
+        username: string;
+      };
+      expect(afterBody.mode).toBe('mesh');
+      expect(afterBody.username).toBe('owner');
+      expect(afterBody.uid).toBeTruthy();
+      expect(tlsCalls).toBe(2);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/auth/mode keeps per-origin passkey fields off the shared cache', async () => {
+    const mesh = await bootMesh();
+    try {
+      let tlsCalls = 0;
+      mesh.runtime.auth.setTlsInfo(() => {
+        tlsCalls += 1;
+        return { caFingerprint: 'cd'.repeat(32), caPem: 'pem' };
+      });
+      insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: 'http://localhost:19663',
+        rpId: 'localhost',
+        fill: 3,
+      });
+      const local = await call(mesh.runtime, 'http://localhost/api/auth/mode', {
+        headers: { origin: 'http://localhost:19663' },
+      });
+      const remote = await call(mesh.runtime, 'http://192.168.1.8/api/auth/mode', {
+        headers: { origin: 'http://192.168.1.8' },
+      });
+      const localBody = (await local.json()) as {
+        passkeysForThisOrigin: boolean;
+        passkeyAvailable: boolean;
+      };
+      const remoteBody = (await remote.json()) as {
+        passkeysForThisOrigin: boolean;
+        passkeyAvailable: boolean;
+      };
+      expect(localBody.passkeysForThisOrigin).toBe(true);
+      expect(localBody.passkeyAvailable).toBe(true);
+      expect(remoteBody.passkeysForThisOrigin).toBe(false);
+      expect(remoteBody.passkeyAvailable).toBe(false);
+      expect(tlsCalls).toBe(1);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/auth/mode derivation expires after TTL using injectable now', async () => {
+    let now = 1_000;
+    const mesh = await bootMesh({ now: () => now });
+    try {
+      let tlsCalls = 0;
+      mesh.runtime.auth.setTlsInfo(() => {
+        tlsCalls += 1;
+        return { caFingerprint: 'ef'.repeat(32), caPem: 'pem' };
+      });
+      await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      now += 4_999;
+      await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      expect(tlsCalls).toBe(1);
+      now += 2;
+      await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      expect(tlsCalls).toBe(2);
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/auth/keylog/head and /api/auth/passkeys require session', async () => {
     const mesh = await bootMesh();
     try {

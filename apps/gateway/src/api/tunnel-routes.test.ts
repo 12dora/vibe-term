@@ -273,4 +273,44 @@ describe('tunnel routes', () => {
     if (!localRes) throw new Error('no route');
     expect((await localRes).status).toBe(200);
   });
+
+  test('GET /api/tunnel/status returns a probing placeholder when first detect exceeds the wait cap', async () => {
+    const gate = Promise.withResolvers<void>();
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    const manager = new TunnelManager({
+      tunnelDir: ctx.dir,
+      homeDir: ctx.homeDir,
+      originPort: 19883,
+      platform: 'linux',
+      arch: 'x64',
+      store: new MemoryTunnelConfigStore(),
+      which: () => '/usr/bin/cloudflared',
+      sleep: (ms) => Bun.sleep(Math.min(ms, 5)),
+      loginEnforced: () => true,
+      registerAccessGuard: false,
+      externalDetectDeps: {
+        firstWaitMs: 20,
+        sleep: (ms) => Bun.sleep(ms),
+        listProcesses: async () => {
+          await gate.promise;
+          return '';
+        },
+        readFile: async () => null,
+        listDir: async () => [],
+        homedir: () => ctx.homeDir,
+        platform: 'linux',
+      },
+    });
+    managers.push(manager);
+    const routes = createTunnelRoutes(manager);
+    const t0 = Date.now();
+    const res = await dispatch(routes, 'GET', '/api/tunnel/status');
+    expect(Date.now() - t0).toBeLessThan(150);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as TunnelStatusResponse;
+    expect(body.external.detected).toBe(false);
+    expect(body.external.probing).toBe(true);
+    gate.resolve();
+  });
 });

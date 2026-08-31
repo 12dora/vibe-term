@@ -77,9 +77,12 @@ export type ExternalDetectDeps = {
   getCredentials?: () => Promise<{ accountId: string; apiToken: string } | null>;
   configuredHostnames?: string[] | (() => string[]);
   warn?: (message: string) => void;
+  firstWaitMs?: number;
+  sleep?: (ms: number) => Promise<void>;
 };
 
 const CACHE_MS = 30_000;
+const FIRST_WAIT_MS = 1_500;
 const MAX_LOG_SCAN_BYTES = 256 * 1024;
 
 export function defaultListProcesses(): ExternalProcess[] {
@@ -543,13 +546,13 @@ async function probeExternalAccess(opts: {
   if (!creds) return { ...EMPTY_EXTERNAL_ACCESS };
   try {
     const apps = await opts.accessApi.listApps(creds.accountId, creds.apiToken);
-    // 实测：cert.pem 的 ARGO 令牌对 Zero Trust 权限不足时，apps 接口不报 403 而是静默返回
-    // 空列表（同凭证访问 organizations 会 403）。空结果无法证伪「dashboard 已配置」，
-    // 只有 accessStore 里用户提供的 Access 令牌的空列表才可信。
+    const truncated = (apps as { truncated?: boolean }).truncated === true;
+    // cert 回退令牌空列表无法证伪 dashboard 配置；分页截断同样不能当成「未覆盖」。
     if (apps.length === 0 && creds.source === 'cert') {
       return { ...EMPTY_EXTERNAL_ACCESS };
     }
     const match = apps.find((app) => opts.hostnames.some((h) => appMatchesHostname(app.domain, h)));
+    if (!match && truncated) return { ...EMPTY_EXTERNAL_ACCESS };
     let teamDomain: string | null = null;
     if (opts.accessApi.getOrganization) {
       try {
@@ -823,6 +826,7 @@ export function toExternalStatus(detected: DetectedTunnel): TunnelExternalStatus
     hasOriginCert: detected.hasOriginCert,
     running: detected.running,
     externalAccess: { ...(detected.externalAccess ?? EMPTY_EXTERNAL_ACCESS) },
+    ...(detected.probing ? { probing: true } : {}),
   };
 }
 
@@ -832,6 +836,7 @@ function normalizeProcesses(raw: ExternalProcess[] | string): ExternalProcess[] 
 
 export class ExternalTunnelDetector {
   private localCache: { at: number; value: ExternalDetection } | null = null;
+  private inFlight: Promise<ExternalDetection> | null = null;
 
   constructor(private readonly deps: ExternalDetectDeps) {}
 
@@ -839,55 +844,42 @@ export class ExternalTunnelDetector {
     this.localCache = null;
   }
 
-  async detect(): Promise<ExternalDetection> {
+  async detect(opts?: { force?: boolean }): Promise<ExternalDetection> {
     const now = this.deps.now ?? Date.now;
-    if (this.localCache && now() - this.localCache.at < CACHE_MS) {
-      return this.localCache.value;
-    }
-    const detected = await detectUncached(this.deps);
-    const value: ExternalDetection = { ...detected, tokenAccountId: detected.accountId };
-    this.localCache = { at: now(), value };
-    return value;
+    const cached = this.localCache;
+    if (!opts?.force && cached && now() - cached.at < CACHE_MS) return this.withProbe(cached.value);
+    const pending = this.refresh();
+    if (opts?.force) return pending;
+    if (cached) return this.withProbe(cached.value);
+    const cap = this.deps.firstWaitMs ?? FIRST_WAIT_MS;
+    const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    await Promise.race([pending, sleep(cap)]);
+    return this.localCache?.value ?? { ...EMPTY_EXTERNAL, probing: true };
+  }
+
+  private withProbe(value: ExternalDetection): ExternalDetection {
+    return this.inFlight ? { ...value, probing: true } : value;
+  }
+
+  private refresh(): Promise<ExternalDetection> {
+    if (this.inFlight) return this.inFlight;
+    const now = this.deps.now ?? Date.now;
+    this.inFlight = detectUncached(this.deps)
+      .then((detected) => {
+        const value: ExternalDetection = { ...detected, tokenAccountId: detected.accountId };
+        this.localCache = { at: now(), value };
+        return value;
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.deps.warn?.(`external tunnel detection failed: ${message}`);
+        const value = this.localCache?.value ?? { ...EMPTY_EXTERNAL };
+        this.localCache = { at: now(), value };
+        return value;
+      })
+      .finally(() => {
+        this.inFlight = null;
+      });
+    return this.inFlight;
   }
 }
-
-export function parseProcessList(raw: string): Array<{
-  pid: string;
-  command: string;
-  tokenFile: string | null;
-  configPath: string | null;
-  runName: string | null;
-  running: boolean;
-}> {
-  return parsePsOutput(raw)
-    .filter((p) => isCloudflaredTunnelCommand(p.command))
-    .map((p) => {
-      const parsed = parseCommandLine(p.command);
-      return {
-        pid: String(p.pid),
-        command: p.command,
-        tokenFile: parsed.tokenFile,
-        configPath: parsed.configPath,
-        runName: parsed.tunnelName ?? parsed.tunnelId,
-        running: true,
-      };
-    });
-}
-
-export function parseCloudflaredConfigYml(text: string): {
-  tunnel: string | null;
-  credentialsFile: string | null;
-  ingress: Array<{ hostname: string | null; service: string }>;
-} {
-  const parsed = parseCloudflaredYml(text);
-  return {
-    tunnel: parsed?.tunnelId ?? parsed?.tunnelName ?? null,
-    credentialsFile: parsed?.credentialsFile ?? null,
-    ingress: (parsed?.ingress ?? [])
-      .filter((row) => row.service)
-      .map((row) => ({ hostname: row.hostname, service: row.service as string })),
-  };
-}
-
-export const parseTunnelToken = parseTokenFileMeta;
-export const hostnamesFromLog = parseIngressFromLog;

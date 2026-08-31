@@ -70,6 +70,7 @@ function dummyMaterial(overrides: Partial<AcmeIssuedMaterial> = {}): AcmeIssuedM
 async function setup(overrides?: {
   envPath?: string;
   issueAcme?: (input: unknown) => Promise<AcmeIssuedMaterial>;
+  now?: () => number;
 }) {
   const { db, close } = createMigratedAuthDb();
   const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-'));
@@ -88,6 +89,7 @@ async function setup(overrides?: {
     setTimeoutFn: () => 1,
     clearTimeoutFn: () => {},
     issueAcme: overrides?.issueAcme ?? (async () => dummyMaterial()),
+    now: overrides?.now,
   });
   return {
     service,
@@ -491,5 +493,84 @@ describe('TlsService', () => {
     });
     expect(status.caFingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(status.caFingerprint).not.toBe(oldFingerprint);
+  });
+
+  test('status reuses the projection within TTL', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    const originalGet = ctx.store.get.bind(ctx.store);
+    let gets = 0;
+    ctx.store.get = async () => {
+      gets += 1;
+      return originalGet();
+    };
+    const first = await ctx.service.status();
+    const second = await ctx.service.status();
+    expect(gets).toBe(1);
+    expect(second).toEqual(first);
+  });
+
+  test('status cache is per service instance', async () => {
+    const a = await setup();
+    const b = await setup();
+    cleanups.push(a.close, b.close);
+    const wrap = (store: TlsConfigStore) => {
+      const originalGet = store.get.bind(store);
+      let gets = 0;
+      store.get = async () => {
+        gets += 1;
+        return originalGet();
+      };
+      return () => gets;
+    };
+    const aGets = wrap(a.store);
+    const bGets = wrap(b.store);
+    await a.service.status();
+    await a.service.status();
+    await b.service.status();
+    expect(aGets()).toBe(1);
+    expect(bGets()).toBe(1);
+  });
+
+  test('status cache is invalidated by applyMode', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    const originalGet = ctx.store.get.bind(ctx.store);
+    let gets = 0;
+    ctx.store.get = async () => {
+      gets += 1;
+      return originalGet();
+    };
+    await ctx.service.status();
+    expect(gets).toBe(1);
+    await ctx.service.applyMode({
+      mode: 'selfsigned',
+      sans: ['localhost'],
+      tlsPort: 9443,
+      bindHost: '127.0.0.1',
+    });
+    expect(gets).toBeGreaterThan(1);
+    const afterApply = gets;
+    await ctx.service.status();
+    expect(gets).toBe(afterApply);
+  });
+
+  test('status cache expires after TTL using injectable now', async () => {
+    let now = 1_000;
+    const ctx = await setup({ now: () => now });
+    cleanups.push(ctx.close);
+    const originalGet = ctx.store.get.bind(ctx.store);
+    let gets = 0;
+    ctx.store.get = async () => {
+      gets += 1;
+      return originalGet();
+    };
+    await ctx.service.status();
+    now += 9_999;
+    await ctx.service.status();
+    expect(gets).toBe(1);
+    now += 2;
+    await ctx.service.status();
+    expect(gets).toBe(2);
   });
 });

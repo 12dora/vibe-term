@@ -9,6 +9,16 @@ function jsonRes(body: unknown, status = 200): Response {
   });
 }
 
+function hangUntilAbort(signal: AbortSignal | null | undefined): Promise<Response> {
+  return new Promise((_, reject) => {
+    signal?.addEventListener('abort', () => {
+      const err = new Error('The operation was aborted due to timeout');
+      err.name = 'TimeoutError';
+      reject(err);
+    });
+  });
+}
+
 describe('CloudflareAccessClient', () => {
   test('looks up organization auth_domain', async () => {
     const urls: string[] = [];
@@ -246,6 +256,54 @@ describe('CloudflareAccessClient', () => {
       id: 'tid',
       name: 'tmex-ext',
     });
+  });
+
+  test('passes AbortSignal.timeout on every Cloudflare request', async () => {
+    let signal: AbortSignal | undefined;
+    const client = new CloudflareAccessClient(async (_input, init) => {
+      signal = init?.signal ?? undefined;
+      return jsonRes({ success: true, result: { auth_domain: 'team.cloudflareaccess.com' } });
+    });
+    await client.getOrganization('acc1', 'tok');
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+  });
+
+  test('aborts a hung Cloudflare request at the per-request budget', async () => {
+    const client = new CloudflareAccessClient(
+      async (_input, init) => hangUntilAbort(init?.signal),
+      { requestTimeoutMs: 20 }
+    );
+    try {
+      await client.getOrganization('acc1', 'tok');
+      throw new Error('expected failure');
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe('access_api_failed');
+      expect((error as Error).message).toMatch(/aborted|timeout/i);
+    }
+  });
+
+  test('listApps stops at the total deadline and marks the result truncated', async () => {
+    const pages: string[] = [];
+    const client = new CloudflareAccessClient(
+      async (input, init): Promise<Response> => {
+        const url = String(input);
+        pages.push(url);
+        if (/[?&]page=1(?:&|$)/.test(url)) {
+          return jsonRes({
+            success: true,
+            result: [{ id: 'app-a', aud: 'aud-a', domain: 'a.example.com', name: 'a' }],
+            result_info: { page: 1, per_page: 100, total_count: 200, total_pages: 2 },
+          });
+        }
+        return hangUntilAbort(init?.signal);
+      },
+      { requestTimeoutMs: 5_000, listAppsDeadlineMs: 15 }
+    );
+    const apps = await client.listApps('acc1', 'tok');
+    expect(apps.map((a) => a.id)).toEqual(['app-a']);
+    expect(apps.truncated).toBe(true);
+    expect(pages.some((u) => u.includes('page=2'))).toBe(true);
   });
 });
 

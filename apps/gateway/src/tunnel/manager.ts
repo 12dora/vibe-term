@@ -260,7 +260,7 @@ export class TunnelManager {
       await this.probeVersion();
     }
     const persisted = this.store.get();
-    await this.refreshExternal();
+    void this.refreshExternal().catch((e) => this.warn(`[tunnel] external warmup failed: ${e}`));
     if (persisted.autoStart && persisted.mode !== 'off') {
       if (persisted.externallyManaged) {
         // 系统服务托管，不拉起子进程
@@ -575,9 +575,9 @@ export class TunnelManager {
     }
   }
 
-  async refreshExternal(): Promise<void> {
+  async refreshExternal(opts?: { force?: boolean }): Promise<void> {
     try {
-      this.lastExternal = await this.externalDetector.detect();
+      this.lastExternal = await this.externalDetector.detect(opts);
     } catch {
       this.lastExternal = { ...EMPTY_EXTERNAL };
     }
@@ -1078,7 +1078,7 @@ export class TunnelManager {
     if (!apiToken || !accountId) {
       throw new TunnelError('not_configured', 'Cloudflare Access credentials are not saved');
     }
-    await this.refreshExternal();
+    await this.refreshExternal({ force: true });
     const hostname = this.resolveAccessHostname(hostnameRaw, true);
     try {
       const apps = await this.accessClient.listApps(accountId, apiToken);
@@ -1113,7 +1113,7 @@ export class TunnelManager {
       throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
     }
     this.externalDetector.invalidate();
-    await this.refreshExternal();
+    await this.refreshExternal({ force: true });
     if (!this.lastExternal.hostnames.includes(hostname)) {
       throw new TunnelError('invalid_request', 'hostname is not in the detected external tunnel');
     }
