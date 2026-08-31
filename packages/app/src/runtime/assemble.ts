@@ -1,9 +1,14 @@
 import { resolve } from 'node:path';
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
+import { ChallengeStore } from '../../../../apps/gateway/src/auth/challenge-store';
+import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import type { NodeSessionStore } from '../../../../apps/gateway/src/auth/node-session-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
-import { readLocalAuthEffective } from '../../../../apps/gateway/src/db/local-auth-settings';
+import {
+  LocalAuthStore,
+  readLocalAuthEffective,
+} from '../../../../apps/gateway/src/db/local-auth-settings';
 import type { HubRuntime, HubServerWebSocket } from '../../../../apps/gateway/src/hub';
 import {
   MESH_FORWARD_WS_KIND,
@@ -17,6 +22,7 @@ import {
   isMeshRewritten,
   setMeshRequestContext,
 } from '../../../../apps/gateway/src/mesh/mesh-deps';
+import { MeshHttpRuntime } from '../../../../apps/gateway/src/mesh/mesh-http';
 import {
   type CreateMeshRuntimeOptions,
   type MeshRuntime,
@@ -38,7 +44,7 @@ import { disableDirect, enableDirect } from '../commands/direct';
 import { performHubJoin } from '../commands/hub';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
-import { createAuthContextFromDb } from '../lib/local-auth';
+import { type LocalAuthContext, createAuthContextFromDb } from '../lib/local-auth';
 import { loadNodeDatachannel } from '../lib/native-datachannel';
 import { detectCurrentNativePin } from '../lib/native-manifest';
 import { type TmexRoles, parseTmexRoles } from '../lib/roles';
@@ -164,26 +170,37 @@ async function tryStop(run: () => unknown, label?: string): Promise<void> {
   }
 }
 
+type HttpAuthSurface = {
+  nodeId: string;
+  localUiGuard(req: Request): Response | null;
+  guardGatewayWebSocket(req: Request, server: Bun.Server<unknown>): Response | null | undefined;
+  handleRequest(
+    req: Request,
+    server: Bun.Server<unknown>
+  ): ReturnType<MeshRuntime['handleRequest']>;
+};
+
+type GatewayWsAuth = Pick<MeshRuntime, 'websocket' | 'touchSocket'> & {
+  registerGatewaySession?: MeshRuntime['registerGatewaySession'];
+  unregisterGatewaySession?: MeshRuntime['unregisterGatewaySession'];
+};
+
 async function meshHttp(
-  mesh: MeshRuntime | null,
+  surface: HttpAuthSurface | null,
   req: Request,
   server: Bun.Server<unknown>
 ): Promise<HttpResult> {
+  if (!surface) return null;
   const path = new URL(req.url).pathname;
-  if (!mesh) {
-    return path === '/api/auth/mode' && req.method === 'GET'
-      ? Response.json({ mode: 'none' })
-      : null;
-  }
   if (path.startsWith('/api/')) {
-    const blocked = mesh.localUiGuard(req);
+    const blocked = surface.localUiGuard(req);
     if (blocked) return blocked;
   }
-  if (path === '/ws' || path === '/n/self/ws' || path === `/n/${mesh.nodeId}/ws`) {
-    const wsGuard = mesh.guardGatewayWebSocket(req, server);
+  if (path === '/ws' || path === '/n/self/ws' || path === `/n/${surface.nodeId}/ws`) {
+    const wsGuard = surface.guardGatewayWebSocket(req, server);
     if (wsGuard !== null) return wsGuard ?? undefined;
   }
-  const meshResp = await mesh.handleRequest(req, server);
+  const meshResp = await surface.handleRequest(req, server);
   if (isMeshRewritten(meshResp) || meshResp == null) return meshResp;
   const next =
     path === '/healthz' && req.method === 'GET' ? await attachStartedAt(meshResp) : meshResp;
@@ -192,13 +209,13 @@ async function meshHttp(
 
 async function gatewayHttp(
   gateway: GatewayRuntime,
-  mesh: MeshRuntime | null,
+  renewSession: boolean,
   req: Request,
   server: Bun.Server<unknown>
 ): Promise<HttpResult> {
   const gatewayResp = await gateway.handleRequest(req, server);
   if (gatewayResp instanceof Response)
-    return mesh ? applyLocalRenewal(req, gatewayResp) : gatewayResp;
+    return renewSession ? applyLocalRenewal(req, gatewayResp) : gatewayResp;
   if (gatewayResp === undefined && new URL(req.url).pathname === '/ws') return undefined;
   return null;
 }
@@ -228,7 +245,7 @@ function createHttpDispatch(handlers: HttpHandler[]): AssembledTmex['fetch'] {
 
 function routeWebsocket(
   gateway: GatewayRuntime,
-  mesh: MeshRuntime | null,
+  mesh: GatewayWsAuth | null,
   hub: HubRuntime | null
 ): GatewayRuntime['websocket'] {
   const gw = gateway.websocket;
@@ -370,6 +387,119 @@ function buildTlsLifecycle(
   };
 }
 
+function wsAuthFrom(http: MeshHttpRuntime | null): GatewayWsAuth | null {
+  if (!http) return null;
+  return {
+    websocket: {
+      open: (ws) => http.handleWebSocket.open(ws),
+      message: (ws, message) => http.handleWebSocket.message(ws, message),
+      drain() {},
+      close: (ws, code, reason) => http.handleWebSocket.close(ws, code, reason),
+    },
+    touchSocket: (ws) => http.touchSocket(ws),
+  };
+}
+
+async function standaloneNodeKeys(identityStore: LocalAuthContext['identityStore']) {
+  try {
+    return await ensureNodeIdentity(identityStore);
+  } catch {
+    return { nodeIdHex: '00'.repeat(16), edPublicKey: new Uint8Array(32) };
+  }
+}
+
+async function createStandaloneAuthHttp(input: {
+  roles: TmexRoles;
+  gateway: GatewayRuntime;
+  auth: LocalAuthContext;
+  localAuthEffective?: () => boolean;
+  tlsSlot: { service?: TlsService };
+}): Promise<MeshHttpRuntime> {
+  const keys = await standaloneNodeKeys(input.auth.identityStore);
+  const runtime = new MeshHttpRuntime({
+    roles: input.roles,
+    nodeId: keys.nodeIdHex,
+    nodePk: keys.edPublicKey,
+    userStore: input.auth.userStore,
+    keyLogService: input.auth.userKeys,
+    challengeStore: new ChallengeStore(),
+    nodeSessionStore: input.auth.nodeSessionStore,
+    publisher: { publish() {} },
+    authSurfaceOnly: true,
+    trustProxy: gatewayConfig.trustProxy,
+    localAuth: new LocalAuthStore(input.gateway.db),
+    localAuthEffective: input.localAuthEffective,
+  });
+  runtime.auth.setTlsInfo(async () => ({
+    caFingerprint: input.tlsSlot.service
+      ? (await input.tlsSlot.service.status()).caFingerprint
+      : null,
+    caPem: (await input.tlsSlot.service?.caPem()) ?? null,
+  }));
+  return runtime;
+}
+
+async function createNodeMesh(input: {
+  roles: TmexRoles;
+  gateway: GatewayRuntime;
+  createMesh: (opts: CreateMeshRuntimeOptions) => Promise<MeshRuntime>;
+  hub?: HubRuntime;
+  loadNative?: LoadNative;
+  nativeDir?: string;
+  tlsSlot: { service?: TlsService };
+}): Promise<MeshRuntime> {
+  const nativeDir = input.nativeDir ?? process.env.TMEX_NATIVE_DIR ?? '';
+  return input.createMesh({
+    db: input.gateway.db,
+    gateway: input.gateway,
+    config: {
+      roles: input.roles,
+      hubUrl: gatewayConfig.hubUrl,
+      hubPublicUrl: gatewayConfig.hubPublicUrl,
+      peerPort: gatewayConfig.peerPort,
+      stunServers: gatewayConfig.stunServers,
+      turnUrl: gatewayConfig.turnUrl,
+      turnUsername: gatewayConfig.turnUsername,
+      turnCredential: gatewayConfig.turnCredential,
+      bindHost: process.env.TMEX_BIND_HOST || '127.0.0.1',
+      peerBindHost: gatewayConfig.peerBindHost,
+    },
+    hub: input.hub,
+    loadNative:
+      input.loadNative ??
+      (async () =>
+        process.env.TMEX_DIRECT_ENABLED === 'false' || !nativeDir
+          ? null
+          : loadNodeDatachannel({ nativeDir })),
+    userId: (await new NodeIdentityStore(input.gateway.db).load())?.userId ?? undefined,
+    tlsInfo: async () => ({
+      caFingerprint: input.tlsSlot.service
+        ? (await input.tlsSlot.service.status()).caFingerprint
+        : null,
+      caPem: (await input.tlsSlot.service?.caPem()) ?? null,
+    }),
+  });
+}
+
+function resolveLocalAuthEffective(
+  injected: (() => boolean) | undefined,
+  authHttp: MeshHttpRuntime | null
+): () => boolean {
+  if (injected) return injected;
+  if (!authHttp) return readLocalAuthEffective;
+  return safeAssembleLocalAuth(authHttp);
+}
+
+function safeAssembleLocalAuth(authHttp: MeshHttpRuntime): () => boolean {
+  return () => {
+    try {
+      return authHttp.auth.isLocalAuthEffective();
+    } catch {
+      return false;
+    }
+  };
+}
+
 export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<AssembledTmex> {
   const roles = opts.roles ?? parseTmexRoles(process.env.TMEX_ROLES);
   const staticRoot = opts.staticRoot ?? defaultStaticRoot();
@@ -378,41 +508,6 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
   const serveFrontend = opts.serveFrontend ?? defaultServeFrontend;
   const gateway = await createGateway();
   const tlsSlot: { service?: TlsService } = {};
-
-  let mesh: MeshRuntime | null = null;
-  if (roles.node) {
-    const nativeDir = opts.nativeDir ?? process.env.TMEX_NATIVE_DIR ?? '';
-    mesh = await createMesh({
-      db: gateway.db,
-      gateway,
-      config: {
-        roles,
-        hubUrl: gatewayConfig.hubUrl,
-        hubPublicUrl: gatewayConfig.hubPublicUrl,
-        peerPort: gatewayConfig.peerPort,
-        stunServers: gatewayConfig.stunServers,
-        turnUrl: gatewayConfig.turnUrl,
-        turnUsername: gatewayConfig.turnUsername,
-        turnCredential: gatewayConfig.turnCredential,
-        bindHost: process.env.TMEX_BIND_HOST || '127.0.0.1',
-        peerBindHost: gatewayConfig.peerBindHost,
-      },
-      hub: opts.hub,
-      loadNative:
-        opts.loadNative ??
-        (async () =>
-          process.env.TMEX_DIRECT_ENABLED === 'false' || !nativeDir
-            ? null
-            : loadNodeDatachannel({ nativeDir })),
-      userId: (await new NodeIdentityStore(gateway.db).load())?.userId ?? undefined,
-      tlsInfo: async () => ({
-        caFingerprint: tlsSlot.service ? (await tlsSlot.service.status()).caFingerprint : null,
-        caPem: (await tlsSlot.service?.caPem()) ?? null,
-      }),
-    });
-  }
-
-  const hub = mesh?.hub ?? opts.hub ?? null;
   const auth = await createAuthContextFromDb(gateway.db, {
     installDir: resolveGatewayInstallDir(),
     envPath: resolveSetupEnvPath(),
@@ -422,6 +517,31 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       TMEX_HUB_PUBLIC_URL: process.env.TMEX_HUB_PUBLIC_URL ?? '',
     },
   });
+
+  let mesh: MeshRuntime | null = null;
+  let authHttp: MeshHttpRuntime | null = null;
+  if (roles.node) {
+    mesh = await createNodeMesh({
+      roles,
+      gateway,
+      createMesh,
+      hub: opts.hub,
+      loadNative: opts.loadNative,
+      nativeDir: opts.nativeDir,
+      tlsSlot,
+    });
+  } else {
+    authHttp = await createStandaloneAuthHttp({
+      roles,
+      gateway,
+      auth,
+      localAuthEffective: opts.localAuthEffective,
+      tlsSlot,
+    });
+  }
+
+  const hub = mesh?.hub ?? opts.hub ?? null;
+  const localAuthEffective = resolveLocalAuthEffective(opts.localAuthEffective, authHttp);
 
   let processShutdown: (() => Promise<void>) | null = null;
   let restartRequested = false;
@@ -456,11 +576,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       await tryStop(() => hub?.stop());
     },
     startedAt: PROCESS_STARTED_AT,
-    authenticate: createRouteAuthenticate(
-      roles,
-      auth.nodeSessionStore,
-      opts.localAuthEffective ?? readLocalAuthEffective
-    ),
+    authenticate: createRouteAuthenticate(roles, auth.nodeSessionStore, localAuthEffective),
     tlsStatus: async () => {
       if (!tlsSlot.service) throw new Error('tls service is not initialized');
       const status = await tlsSlot.service.status();
@@ -472,6 +588,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     },
   };
 
+  const authSurface = mesh ?? authHttp;
   let tlsHandler: (req: Request) => Promise<Response | null> = async () => null;
   const fetch = createHttpDispatch([
     (req) => tlsHandler(req),
@@ -479,11 +596,11 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     (req) => handleSetupRequest(req, routeDeps),
     (req, server) =>
       hub ? hub.handleRequest(req, server).then((r) => (r instanceof Response ? r : null)) : null,
-    (req, server) => meshHttp(mesh, req, server),
-    (req, server) => gatewayHttp(gateway, mesh, req, server),
+    (req, server) => meshHttp(authSurface, req, server),
+    (req, server) => gatewayHttp(gateway, Boolean(authSurface), req, server),
     (req) => serveFrontend(req, staticRoot),
   ]);
-  const websocket = routeWebsocket(gateway, mesh, hub);
+  const websocket = routeWebsocket(gateway, mesh ?? wsAuthFrom(authHttp), hub);
   const tlsLife = buildTlsLifecycle(fetch, websocket, gateway.db, routeDeps, tlsSlot);
   tlsHandler = tlsLife.tlsHandler;
 
@@ -505,6 +622,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       stopPromise ??= (async () => {
         await tryStop(() => gateway.stopAgentSessions?.(), 'agent-supervisor');
         await tryStop(() => mesh?.stop(), 'mesh');
+        await tryStop(() => authHttp?.stop(), 'auth');
         await tryStop(() => hub?.stop(), 'hub');
         await tryStop(() => gateway.stop(), 'gateway');
       })();

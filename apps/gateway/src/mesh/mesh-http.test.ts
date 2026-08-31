@@ -10,6 +10,7 @@ import {
   WS_SESSION_VERIFY_MS,
   setMeshRequestContext,
 } from './mesh-deps';
+import { MeshHttpRuntime } from './mesh-http';
 import { X_TMEX_MESH_PEER } from './peer-request-marker';
 
 const LOGIN_PUBLIC = [
@@ -408,6 +409,38 @@ describe('mesh-http 整站门 × localAuth', () => {
         mesh.runtime.guardGatewayWebSocket(new Request('http://localhost/ws'), server)
       ).toBeUndefined();
       expect(dataOf()?.kind).toBe(MESH_REJECT_4401_KIND);
+    } finally {
+      mesh.close();
+    }
+  });
+});
+
+describe('mesh-http authSurfaceOnly', () => {
+  test('不挂 /api/mesh，且构造不需要 peers/streams', async () => {
+    const mesh = await bootMesh({ roles: { hub: false, node: false }, skipUserBootstrap: true });
+    try {
+      const runtime = new MeshHttpRuntime({
+        roles: { hub: false, node: false },
+        nodeId: 'aa'.repeat(16),
+        nodePk: Uint8Array.from({ length: 32 }, () => 9),
+        userStore: mesh.userStore,
+        keyLogService: mesh.keyLogService,
+        challengeStore: mesh.challengeStore,
+        nodeSessionStore: mesh.nodeSessionStore,
+        publisher: { publish() {} },
+        authSurfaceOnly: true,
+      });
+      const nodes = await runtime.handleRequest(
+        new Request('http://localhost/api/mesh/nodes'),
+        dummyServer
+      );
+      expect(nodes).toBeNull();
+      const mode = asResponse(
+        await runtime.handleRequest(new Request('http://localhost/api/auth/mode'), dummyServer)
+      );
+      expect(mode.status).toBe(200);
+      expect(((await mode.json()) as { mode: string }).mode).toBe('none');
+      runtime.stop();
     } finally {
       mesh.close();
     }

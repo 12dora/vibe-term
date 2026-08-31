@@ -3,6 +3,7 @@ import type { ChallengeStore } from '../auth/challenge-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
+import type { LocalAuthStoreLike } from '../db/local-auth-settings';
 import { type AuthKeyLogPublisher, AuthRoutes, isAuthPublicPath } from './auth-routes';
 import { Forwarder, rewriteSelf, takePendingForwardStream } from './forwarder';
 import {
@@ -45,8 +46,8 @@ export type MeshHttpRuntimeOptions = {
   keyLogService: UserKeyService;
   challengeStore: ChallengeStore;
   nodeSessionStore: NodeSessionStore;
-  peers: PeerLinkProvider;
-  streams: StreamOpener;
+  peers?: PeerLinkProvider;
+  streams?: StreamOpener;
   publisher: AuthKeyLogPublisher;
   rtc?: MeshRtcDeps;
   now?: () => number;
@@ -59,9 +60,28 @@ export type MeshHttpRuntimeOptions = {
   selfName?: () => string | null;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   streamLog?: (line: string) => void;
+  /** 只挂鉴权面：不转发、不暴露 /api/mesh。缺 peers 时默认启用。 */
+  authSurfaceOnly?: boolean;
+  localAuth?: LocalAuthStoreLike;
+  localAuthEffective?: () => boolean;
 };
 
 const STATIC_PREFIXES = ['/assets/', '/static/', '/favicon', '/manifest'];
+
+const INERT_PEERS: PeerLinkProvider = {
+  getLink: async (nodeId) => {
+    throw new Error(`auth-surface has no peer link for ${nodeId}`);
+  },
+  listReach: () => new Map(),
+  onNodeEvent: () => () => {},
+};
+
+const INERT_STREAMS: StreamOpener = {
+  openHttpStream: async () => new Response(null, { status: 503 }),
+  openWsStream: async () => {
+    throw new Error('auth-surface has no streams');
+  },
+};
 
 type RegisteredSocket = {
   ws: MeshServerWebSocket;
@@ -70,31 +90,46 @@ type RegisteredSocket = {
   lastVerifyAt: number;
 };
 
+function safeLocalAuthEffective(read: () => boolean): () => boolean {
+  return () => {
+    try {
+      return read();
+    } catch {
+      return false;
+    }
+  };
+}
+
 export class MeshHttpRuntime {
   readonly auth: AuthRoutes;
   readonly mesh: MeshRoutes;
   readonly forwarder: Forwarder;
+  readonly nodeId: string;
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly roles: MeshRoles;
-  private readonly nodeId: string;
   private readonly sockets = new Set<RegisteredSocket>();
   private readonly now: () => number;
+  private readonly authSurfaceOnly: boolean;
 
   constructor(opts: MeshHttpRuntimeOptions) {
     this.roles = opts.roles;
     this.nodeId = opts.nodeId;
     this.now = opts.now ?? (() => Date.now());
+    this.authSurfaceOnly = opts.authSurfaceOnly === true || opts.peers == null;
+    const peers = opts.peers ?? INERT_PEERS;
+    const streams = opts.streams ?? INERT_STREAMS;
     this.sessionDeps = {
       roles: opts.roles,
       nodeSessionStore: opts.nodeSessionStore,
       now: this.now,
       trustProxy: opts.trustProxy,
-      localAuthEffective: () => this.auth.isLocalAuthEffective(),
+      localAuthEffective:
+        opts.localAuthEffective ?? safeLocalAuthEffective(() => this.auth.isLocalAuthEffective()),
     };
     this.forwarder = new Forwarder({
       nodeId: opts.nodeId,
-      peers: opts.peers,
-      streams: opts.streams,
+      peers,
+      streams,
       sleep: opts.sleep,
       log: opts.streamLog,
     });
@@ -104,7 +139,7 @@ export class MeshHttpRuntime {
       nodePk: opts.nodePk,
       userStore: opts.userStore,
       nodeSessionStore: opts.nodeSessionStore,
-      peers: opts.peers,
+      peers,
       rtcFingerprint: opts.rtc?.fingerprint,
       rtcSignals: opts.rtc?.signals,
       rtcConfig: opts.rtc?.config,
@@ -127,9 +162,12 @@ export class MeshHttpRuntime {
       now: this.now,
       primaryUserId: opts.primaryUserId,
       hubPublicUrl: opts.hubPublicUrl,
-      listPublicNodes: () => this.mesh.publicNodes(),
+      listPublicNodes: this.authSurfaceOnly
+        ? () => [{ id: opts.nodeId, name: 'self', online: true }]
+        : () => this.mesh.publicNodes(),
       onLogout: (userId) => this.closeSocketsForUser(userId),
       onKeyLogEffects: (userId, effects) => this.applyKeyLogEffects(userId, effects),
+      localAuth: opts.localAuth,
     });
   }
 
@@ -144,6 +182,9 @@ export class MeshHttpRuntime {
 
   async handleRequest(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult> {
     const safeReq = isPeerInboundRequest(req) ? req : stripMeshPeerMarkerFromRequest(req);
+    if (this.authSurfaceOnly) {
+      return this.finalizeHandle(safeReq, await this.dispatchLocal(safeReq, server));
+    }
     const path = new URL(safeReq.url).pathname;
     if (isMeshInternalPath(path)) {
       return handleMeshInternalTmuxRequest(safeReq);
@@ -362,6 +403,7 @@ export class MeshHttpRuntime {
     }
     const authRes = await this.auth.handle(req);
     if (authRes) return authRes;
+    if (this.authSurfaceOnly) return null;
     const meshRes = await this.mesh.handle(req, server);
     if (meshRes !== null) return meshRes;
     return null;

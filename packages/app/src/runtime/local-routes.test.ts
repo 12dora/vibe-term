@@ -171,6 +171,26 @@ describe('GET /api/local/status', () => {
       await handleLocalRequest(new Request('http://127.0.0.1/api/devices'), deps())
     ).toBeNull();
   });
+
+  test('standalone 把鉴权交给 authenticate：拒绝则 401，放行则 200', async () => {
+    const denied = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/status'),
+        deps({ authenticate: failAuth })
+      )
+    );
+    expect(denied.status).toBe(401);
+    expect(denied.body).toEqual({ error: { code: 'UNAUTHORIZED', message: 'login required' } });
+
+    const allowed = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/status'),
+        deps({ authenticate: okAuth })
+      )
+    );
+    expect(allowed.status).toBe(200);
+    expect((allowed.body as { role: string }).role).toBe('standalone');
+  });
 });
 
 describe('POST /api/local/direct', () => {
@@ -395,6 +415,21 @@ describe('POST /api/local/direct', () => {
       code: 'direct_failed',
       message: 'integrity mismatch',
     });
+  });
+
+  test('standalone POST 同样走 authenticate', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/direct', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'remove' }),
+        }),
+        deps({ authenticate: failAuth })
+      )
+    );
+    expect(status).toBe(401);
+    expect((body as { error: { code: string } }).error.code).toBe('UNAUTHORIZED');
   });
 
   test('mesh 401 applies to POST as well', async () => {

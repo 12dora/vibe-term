@@ -60,11 +60,9 @@ export async function handleLocalRequest(
   }
   if (path !== '/api/local/status' && path !== '/api/local/direct') return null;
 
-  if (!isStandaloneRoles(deps.roles)) {
-    const auth = deps.authenticate(req);
-    if (!auth.ok) {
-      return jsonErr('UNAUTHORIZED', 'login required', 401);
-    }
+  const auth = deps.authenticate(req);
+  if (!auth.ok) {
+    return jsonErr('UNAUTHORIZED', 'login required', 401);
   }
 
   if (path === '/api/local/status') {

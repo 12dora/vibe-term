@@ -3,7 +3,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
-import { MESH_GATEWAY_WS_KIND } from '../../../../apps/gateway/src/mesh/mesh-deps';
+import {
+  MESH_GATEWAY_WS_KIND,
+  MESH_REJECT_4401_KIND,
+} from '../../../../apps/gateway/src/mesh/mesh-deps';
 import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
@@ -17,6 +20,17 @@ import {
   generateAccessTestKey,
   signAccessJwt,
 } from '../../../../apps/gateway/src/tunnel/access-jwt';
+import {
+  buildLogin,
+  createDelegation,
+  decodeBase64url,
+  encodeBase64url,
+  encodeDelegation,
+  encodeLogin,
+  generateEd25519KeyPair,
+  signLogin,
+} from '../../../shared/src/auth';
+import { deriveRootKey } from '../lib/password';
 import { createCa, issueLeaf, parseCertificate } from '../tls/cert-authority';
 import {
   SHUTDOWN_TIMEOUT_MS,
@@ -291,39 +305,68 @@ describe('assembleTmex role matrix', () => {
 
   test('standalone does not construct mesh and /api/auth/mode returns {mode:none}', async () => {
     process.env.TMEX_ROLES = 'standalone';
+    const { db, close } = createMigratedAuthDb();
     let meshBuilt = 0;
-    const gateway = fakeGateway({
-      handleRequest(req) {
-        const path = new URL(req.url).pathname;
-        if (path.startsWith('/api/') || path === '/healthz') {
-          return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
-        }
-        return undefined;
-      },
-    });
-    const assembled = await assembleTmex({
-      createGatewayRuntime: async () => gateway,
-      createMeshRuntime: async () => {
-        meshBuilt += 1;
-        throw new Error('standalone must not construct mesh');
-      },
-      serveFrontend: async () => new Response('spa'),
-    });
+    try {
+      const gateway = fakeGateway({
+        db,
+        handleRequest(req) {
+          const path = new URL(req.url).pathname;
+          if (path.startsWith('/api/') || path === '/healthz') {
+            return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+          }
+          return undefined;
+        },
+      });
+      const assembled = await assembleTmex({
+        createGatewayRuntime: async () => gateway,
+        createMeshRuntime: async () => {
+          meshBuilt += 1;
+          throw new Error('standalone must not construct mesh');
+        },
+        serveFrontend: async () => new Response('spa'),
+      });
 
-    expect(meshBuilt).toBe(0);
-    expect(assembled.mesh).toBeNull();
-    expect(assembled.hub).toBeNull();
+      expect(meshBuilt).toBe(0);
+      expect(assembled.mesh).toBeNull();
+      expect(assembled.hub).toBeNull();
 
-    const mode = await assembled.fetch(new Request('http://127.0.0.1/api/auth/mode'), dummyServer);
-    expect(mode).toBeInstanceOf(Response);
-    expect(mode?.status).toBe(200);
-    expect(await mode?.json()).toEqual({ mode: 'none' });
+      const mode = await assembled.fetch(
+        new Request('http://127.0.0.1/api/auth/mode'),
+        dummyServer
+      );
+      expect(mode).toBeInstanceOf(Response);
+      expect(mode?.status).toBe(200);
+      const modeBody = (await mode?.json()) as {
+        mode: string;
+        uid: string | null;
+        localAuth?: {
+          supported: boolean;
+          enabled: boolean;
+          effective: boolean;
+          credentialsPresent: boolean;
+        };
+      };
+      expect(modeBody.mode).toBe('none');
+      expect(modeBody.uid).toBeNull();
+      expect(modeBody.localAuth).toEqual({
+        supported: true,
+        enabled: false,
+        effective: false,
+        credentialsPresent: false,
+      });
 
-    const devices = await assembled.fetch(new Request('http://127.0.0.1/api/devices'), dummyServer);
-    expect(devices?.status).toBe(404);
+      const devices = await assembled.fetch(
+        new Request('http://127.0.0.1/api/devices'),
+        dummyServer
+      );
+      expect(devices?.status).toBe(404);
 
-    const login = await assembled.fetch(new Request('http://127.0.0.1/login'), dummyServer);
-    expect(await login?.text()).toBe('spa');
+      const login = await assembled.fetch(new Request('http://127.0.0.1/login'), dummyServer);
+      expect(await login?.text()).toBe('spa');
+    } finally {
+      close();
+    }
   });
 
   test('node role fetch order is mesh localUiGuard → mesh handleRequest → gateway → spa', async () => {
@@ -963,6 +1006,275 @@ describe('assembleTmex role matrix', () => {
     const body = (await res?.json()) as { status: string; startedAt: number };
     expect(body.status).toBe('ok');
     expect(typeof body.startedAt).toBe('number');
+  });
+
+  test('standalone localAuth 生效时 /api/local/status 与 /api/devices 要求会话', async () => {
+    process.env.TMEX_ROLES = 'standalone';
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const assembled = await assembleTmex({
+        roles: { hub: false, node: false },
+        localAuthEffective: () => true,
+        createGatewayRuntime: async () =>
+          fakeGateway({
+            db,
+            handleRequest(req) {
+              const path = new URL(req.url).pathname;
+              if (path.startsWith('/api/') || path === '/healthz') {
+                return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+              }
+              return undefined;
+            },
+          }),
+        createMeshRuntime: async () => {
+          throw new Error('no mesh');
+        },
+        serveFrontend: async () => new Response('spa'),
+      });
+      const status = await assembled.fetch(
+        new Request('http://127.0.0.1/api/local/status'),
+        dummyServer
+      );
+      expect(status?.status).toBe(401);
+      const devices = await assembled.fetch(
+        new Request('http://127.0.0.1/api/devices'),
+        dummyServer
+      );
+      expect(devices?.status).toBe(401);
+      const login = await assembled.fetch(new Request('http://127.0.0.1/login'), dummyServer);
+      expect(await login?.text()).toBe('spa');
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('assembleTmex standalone auth surface', () => {
+  const originalRoles = process.env.TMEX_ROLES;
+  afterEach(() => {
+    if (originalRoles === undefined) process.env.TMEX_ROLES = undefined;
+    else process.env.TMEX_ROLES = originalRoles;
+  });
+
+  async function assembleStandalone(db: GatewayRuntime['db']) {
+    process.env.TMEX_ROLES = 'standalone';
+    return assembleTmex({
+      roles: { hub: false, node: false },
+      createGatewayRuntime: async () =>
+        fakeGateway({
+          db,
+          handleRequest(req) {
+            const path = new URL(req.url).pathname;
+            if (path.startsWith('/api/') || path === '/healthz') {
+              return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+            }
+            return undefined;
+          },
+        }),
+      createMeshRuntime: async () => {
+        throw new Error('standalone must not construct mesh');
+      },
+      serveFrontend: async () => new Response('spa'),
+    });
+  }
+
+  async function json(assembled: Awaited<ReturnType<typeof assembleTmex>>, req: Request) {
+    const res = await assembled.fetch(req, dummyServer);
+    if (!res) throw new Error(`no response for ${req.url}`);
+    return { res, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  async function loginWithPassword(
+    assembled: Awaited<ReturnType<typeof assembleTmex>>,
+    uid: string,
+    password: string,
+    kdf: { salt: string; memory_kib: number; iterations: number; parallelism: number },
+    nodeId: string
+  ): Promise<string> {
+    const rootKey = await deriveRootKey(password, {
+      salt: decodeBase64url(kdf.salt),
+      memory_kib: kdf.memory_kib,
+      iterations: kdf.iterations,
+      parallelism: kdf.parallelism,
+    });
+    const challenge = await json(
+      assembled,
+      new Request('http://127.0.0.1/api/auth/challenge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ uid }),
+      })
+    );
+    expect(challenge.res.status).toBe(200);
+    const challengeId = challenge.body.challenge_id as string;
+    const nonce = decodeBase64url(challenge.body.nonce as string);
+    const targetPk = decodeBase64url(challenge.body.nodePk as string);
+    const sess = generateEd25519KeyPair();
+    const del = createDelegation(rootKey, { uid, sessPk: sess.publicKey, now: Date.now() });
+    const login = buildLogin({
+      challengeId,
+      nonce,
+      target: nodeId,
+      targetPk,
+      uid,
+      entry: 'self',
+    });
+    const logged = await assembled.fetch(
+      new Request('http://127.0.0.1/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          login: encodeBase64url(encodeLogin(login)),
+          sig: encodeBase64url(signLogin(sess.secretKey, login)),
+          delegation: encodeBase64url(encodeDelegation(del.delegation)),
+          delegation_sig: encodeBase64url(del.sig),
+        }),
+      }),
+      dummyServer
+    );
+    expect(logged?.status).toBe(200);
+    const cookie = logged?.headers.get('set-cookie') ?? '';
+    const sid = cookie.match(/tmex_s_self=([^;]*)/)?.[1];
+    if (!sid) throw new Error('login did not set cookie');
+    return sid;
+  }
+
+  test('bootstrap → enable → login 整站门；关闭后恢复开放', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const assembled = await assembleStandalone(db);
+      expect(assembled.mesh).toBeNull();
+
+      const openMode = await json(assembled, new Request('http://127.0.0.1/api/auth/mode'));
+      expect(openMode.body.mode).toBe('none');
+      expect(openMode.body.localAuth).toEqual({
+        supported: true,
+        enabled: false,
+        effective: false,
+        credentialsPresent: false,
+      });
+      const openDevices = await assembled.fetch(
+        new Request('http://127.0.0.1/api/devices'),
+        dummyServer
+      );
+      expect(openDevices?.status).toBe(404);
+      const openLocal = await json(assembled, new Request('http://127.0.0.1/api/local/status'));
+      expect(openLocal.res.status).toBe(200);
+      const openWs = await assembled.fetch(new Request('http://127.0.0.1/ws'), dummyServer);
+      expect(openWs).toBeUndefined();
+
+      const boot = await json(
+        assembled,
+        new Request('http://127.0.0.1/api/auth/local/bootstrap', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ username: 'owner', password: 'tmex-test-pass' }),
+        })
+      );
+      expect(boot.res.status).toBe(200);
+
+      const enabled = await json(
+        assembled,
+        new Request('http://127.0.0.1/api/auth/local', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: true }),
+        })
+      );
+      expect(enabled.res.status).toBe(200);
+      expect((enabled.body.localAuth as { effective: boolean }).effective).toBe(true);
+
+      const gatedDevices = await json(assembled, new Request('http://127.0.0.1/api/devices'));
+      expect(gatedDevices.res.status).toBe(401);
+      const gatedLocal = await json(assembled, new Request('http://127.0.0.1/api/local/status'));
+      expect(gatedLocal.res.status).toBe(401);
+      const gatedWs = await json(assembled, new Request('http://127.0.0.1/ws'));
+      expect(gatedWs.res.status).toBe(401);
+      const stillLogin = await assembled.fetch(new Request('http://127.0.0.1/login'), dummyServer);
+      expect(await stillLogin?.text()).toBe('spa');
+
+      const mode = await json(assembled, new Request('http://127.0.0.1/api/auth/mode'));
+      expect(mode.body.mode).toBe('mesh');
+      const uid = mode.body.uid as string;
+      const nodeId = mode.body.nodeId as string;
+      const kdf = mode.body.kdfParams as {
+        salt: string;
+        memory_kib: number;
+        iterations: number;
+        parallelism: number;
+      };
+      const sid = await loginWithPassword(assembled, uid, 'tmex-test-pass', kdf, nodeId);
+      const cookie = { headers: { cookie: `tmex_s_self=${sid}` } };
+
+      const authedDevices = await assembled.fetch(
+        new Request('http://127.0.0.1/api/devices', cookie),
+        dummyServer
+      );
+      expect(authedDevices?.status).toBe(404);
+      const authedLocal = await json(
+        assembled,
+        new Request('http://127.0.0.1/api/local/status', cookie)
+      );
+      expect(authedLocal.res.status).toBe(200);
+
+      const disable = await json(
+        assembled,
+        new Request('http://127.0.0.1/api/auth/local', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', cookie: `tmex_s_self=${sid}` },
+          body: JSON.stringify({ enabled: false }),
+        })
+      );
+      expect(disable.res.status).toBe(200);
+      const restored = await json(assembled, new Request('http://127.0.0.1/api/devices'));
+      expect(restored.res.status).toBe(404);
+      const restoredLocal = await json(assembled, new Request('http://127.0.0.1/api/local/status'));
+      expect(restoredLocal.res.status).toBe(200);
+    } finally {
+      close();
+    }
+  });
+
+  test('standalone 生效时未登录 WS upgrade 走 4401；auth-only 不挂 /api/mesh', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const assembled = await assembleStandalone(db);
+      await json(
+        assembled,
+        new Request('http://127.0.0.1/api/auth/local/bootstrap', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ username: 'owner', password: 'tmex-test-pass' }),
+        })
+      );
+      await json(
+        assembled,
+        new Request('http://127.0.0.1/api/auth/local', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: true }),
+        })
+      );
+
+      let upgradeData: { kind?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          upgradeData = opts?.data as typeof upgradeData;
+          return true;
+        },
+      } as unknown as Bun.Server<unknown>;
+      const ws = await assembled.fetch(new Request('http://127.0.0.1/ws'), server);
+      expect(ws).toBeUndefined();
+      expect(upgradeData?.kind).toBe(MESH_REJECT_4401_KIND);
+
+      const meshNodes = await assembled.fetch(
+        new Request('http://127.0.0.1/api/mesh/nodes'),
+        dummyServer
+      );
+      expect(meshNodes?.status).toBe(401);
+    } finally {
+      close();
+    }
   });
 });
 
