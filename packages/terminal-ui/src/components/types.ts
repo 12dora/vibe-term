@@ -18,8 +18,9 @@ export interface TerminalProps {
   /**
    * report（默认）：容器尺寸变化上报 onResize/onSync（单 pane 整窗语义）。
    * follow：分屏模式，尺寸由 tmux layout 经外部 resize() 设定，不测量不上报。
+   * local：保活池里的隐藏实例，照常测量并对齐本地行列，但不上报（避免多实例互抢整窗尺寸）。
    */
-  sizingMode?: 'report' | 'follow';
+  sizingMode?: 'report' | 'follow' | 'local';
   /** direct 模式挂载时是否自动聚焦（默认 true）；分屏非焦点 pane 传 false 防互抢 */
   autoFocus?: boolean;
   onData?: (data: string) => void;
@@ -32,8 +33,11 @@ export interface TerminalProps {
   children?: ReactNode;
   /** 该 pane 是否为焦点（分屏下控制滚动条可见性） */
   focused?: boolean;
-  /** 宿主按需准备字体/WASM 等非首屏资源；缺省由 Terminal 自行加载选中字体。 */
-  prepareResources?: () => Promise<void>;
+  /**
+   * 宿主按需准备字体/WASM 等非首屏资源；缺省由 Terminal 自行加载选中字体。
+   * 无事可做时返回 undefined（而不是 Promise.resolve()），启动路径据此完全同步。
+   */
+  prepareResources?: () => Promise<void> | void;
 }
 
 export interface TerminalRef {

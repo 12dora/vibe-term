@@ -147,6 +147,9 @@ function createHarness(options: HarnessOptions = {}) {
 
   const selection = {
     maybeReselectCurrentPane: (deviceId: string) => record('reselect', deviceId),
+    handleDeviceStreamInterrupted: (deviceId: string) => record('streamInterrupted', deviceId),
+    observeSelectHistory: (deviceId: string) => record('observeHistory', deviceId),
+    observeSelectLiveResume: (deviceId: string) => record('observeLiveResume', deviceId),
     handleSnapshotPaneRemoval: (deviceId: string, previous: StateSnapshotPayload | undefined) =>
       record('snapshotPaneRemoval', deviceId, previous),
   } as unknown as TmuxSelectionActions;
@@ -246,11 +249,39 @@ describe('tmux transport event router', () => {
 
     harness.route({ type: 'device-disconnected', deviceId: 'device-a' });
 
-    expect(harness.namesOf('cleanup').map((call) => call.args[0])).toEqual(['device-a']);
+    // 选择机的 cleanup 现在归 handleDeviceStreamInterrupted 一处做（断开与重连中共用）
+    expect(harness.namesOf('streamInterrupted').map((call) => call.args[0])).toEqual(['device-a']);
     expect(harness.namesOf('cleanupDevicePaneState').map((call) => call.args[0])).toEqual([
       'device-a',
     ]);
     expect(harness.getState().deviceConnected['device-a']).toBe(false);
+  });
+
+  test('an auto-reconnect notice is treated as a device stream interruption', () => {
+    const harness = createHarness();
+
+    harness.route({
+      type: 'device-event',
+      event: {
+        type: 'error',
+        deviceId: 'device-a',
+        errorType: 'reconnecting',
+        message: 'reconnecting',
+      },
+    } as unknown as GatewayTransportEvent);
+
+    expect(harness.namesOf('streamInterrupted').map((call) => call.args[0])).toEqual(['device-a']);
+  });
+
+  test('a device-event disconnect is treated as a device stream interruption', () => {
+    const harness = createHarness();
+
+    harness.route({
+      type: 'device-event',
+      event: { type: 'disconnected', deviceId: 'device-a' },
+    } as unknown as GatewayTransportEvent);
+
+    expect(harness.namesOf('streamInterrupted').map((call) => call.args[0])).toEqual(['device-a']);
   });
 
   test('device error event records error state and toasts once per error type', () => {

@@ -424,4 +424,69 @@ describe('TerminalSurfaceLifecycle recovery', () => {
 
     expect(harness.events).toEqual(['stage:recovery_started:target-0', 'request:paneScreen']);
   });
+
+  test('resources already loaded (void return) build the surface without awaiting', () => {
+    const events: string[] = [];
+    const lifecycle = new TerminalSurfaceLifecycle<FakeTarget>({
+      loadResources: () => {
+        events.push('resources:load');
+      },
+      createSurface: () => {
+        events.push('surface:create');
+        return {
+          initialize: () => {
+            events.push('surface:initialize');
+            return new Promise<FakeTarget>(() => {});
+          },
+          dispose: () => {},
+          getVisibleTarget: () => null,
+        };
+      },
+      getSurface: () => null,
+      setSurface: () => {},
+      bindTarget: () => {},
+      setBootState: () => {},
+      reportStage: (stage) => events.push(`stage:${stage}`),
+      startDiagnosticSamples: () => () => {},
+      supportsAtomicScreen: () => true,
+      requestPaneScreen: () => {},
+      onSnapshotCommitted: () => {},
+    });
+
+    void lifecycle.boot();
+
+    // 没有一次 await：boot 调用返回时渲染面已经在建了
+    expect(events).toEqual([
+      'stage:mount',
+      'resources:load',
+      'stage:fonts_ready',
+      'surface:create',
+      'surface:initialize',
+    ]);
+  });
+
+  test('a synchronous resource failure still lands on the resource error state', () => {
+    const states: TerminalBootState[] = [];
+    const lifecycle = new TerminalSurfaceLifecycle<FakeTarget>({
+      loadResources: () => {
+        throw new Error('boom');
+      },
+      createSurface: () => {
+        throw new Error('should not create a surface');
+      },
+      getSurface: () => null,
+      setSurface: () => {},
+      bindTarget: () => {},
+      setBootState: (state) => states.push(state),
+      reportStage: () => {},
+      startDiagnosticSamples: () => () => {},
+      supportsAtomicScreen: () => true,
+      requestPaneScreen: () => {},
+      onSnapshotCommitted: () => {},
+    });
+
+    void lifecycle.boot();
+
+    expect(states.at(-1)).toEqual({ status: 'error', message: 'boom' });
+  });
 });

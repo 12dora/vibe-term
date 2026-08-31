@@ -64,7 +64,7 @@ export interface SplitPaneViewProps {
   theme: TerminalTheme;
   inputMode: 'direct' | 'editor';
   deviceConnected: boolean;
-  prepareResources?: () => Promise<void>;
+  prepareResources?: () => Promise<void> | void;
   registerTerminal: (paneId: string, ref: TerminalRef | null) => void;
   onUserSelectPane: (windowId: string, paneId: string) => void;
   /** 关闭 pane 交给宿主：关掉 URL 点名的 pane 需要先回落路由再发命令 */

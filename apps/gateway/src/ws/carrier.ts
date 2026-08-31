@@ -8,6 +8,7 @@ export interface Carrier {
   onDrain(cb: () => void): void;
   close(code: number, reason: string): void;
   terminate(): void;
+  hasPendingWrites?(): boolean;
 }
 
 export class BunSocketCarrier implements Carrier {

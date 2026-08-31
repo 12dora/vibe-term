@@ -1,11 +1,23 @@
 // 选择面：当前设备的选中 window/pane、待重试的选择事务与最近上报的终端尺寸。
 
 import type { StateSnapshotPayload } from '@tmex/shared';
-import { type SelectFailureReason, generateSelectToken } from '@tmex/ws-client';
+import type { SelectFailureReason } from '@tmex/ws-client';
+import { createPaneStreamGaps } from './pane-stream-gaps';
+import { createReselectRetry } from './reselect-retry';
 import type { RuntimeCore } from './runtime';
+import { dispatchSelectPane, normalizeTerminalSize } from './select-pane-dispatch';
+import { observeSelectHistory, observeSelectLiveResume } from './select-transaction-observers';
 import type { TmuxStoreAccess } from './tmux-state';
 
 const RESELECT_RETRY_DELAY_MS = 250;
+
+export function snapshotPaneIds(snapshot: StateSnapshotPayload | undefined): Set<string> {
+  const ids = new Set<string>();
+  for (const window of snapshot?.session?.windows ?? []) {
+    for (const pane of window.panes) ids.add(pane.id);
+  }
+  return ids;
+}
 
 export function snapshotHasPane(
   snapshot: StateSnapshotPayload | undefined,
@@ -16,17 +28,14 @@ export function snapshotHasPane(
   );
 }
 
-export function normalizeTerminalSize(
-  cols: number | undefined,
-  rows: number | undefined
-): { cols: number; rows: number } | null {
-  if (typeof cols !== 'number' || typeof rows !== 'number') {
-    return null;
-  }
+export { normalizeTerminalSize };
 
-  const safeCols = Math.max(2, Math.floor(cols));
-  const safeRows = Math.max(2, Math.floor(rows));
-  return { cols: safeCols, rows: safeRows };
+export interface SelectPaneOptions {
+  /**
+   * 目标 pane 的终端仍挂载并订阅中（前端保活池），缓冲即最新：
+   * 只让 tmux 切焦点，不要 history、也不 reset 终端。
+   */
+  warm?: boolean;
 }
 
 export interface TmuxSelectionActions {
@@ -34,7 +43,8 @@ export interface TmuxSelectionActions {
     deviceId: string,
     windowId: string,
     paneId: string,
-    size?: { cols?: number; rows?: number }
+    size?: { cols?: number; rows?: number },
+    options?: SelectPaneOptions
   ): void;
   selectWindow(deviceId: string, windowId: string): void;
   focusPane(deviceId: string, windowId: string, paneId: string): void;
@@ -53,6 +63,16 @@ export interface TmuxSelectionActions {
   ): void;
   /** 记录最近一次上报的终端尺寸，供后续 select-pane 复用 */
   recordTerminalSize(deviceId: string, cols: number, rows: number): void;
+  /**
+   * 设备流整体中断（断开 / 自动重连中）：作废在途选择事务与重试，
+   * 并把该设备已知的所有 pane 记为有缺口——中断期间谁都可能漏字节，
+   * 恢复后必须各自走一次落定的冷 select 才重新具备 warm 资格。
+   */
+  handleDeviceStreamInterrupted(deviceId: string): void;
+  /** 观察到某 token 的 history 会被真正写进终端（router 在派发 HISTORY 前调用） */
+  observeSelectHistory(deviceId: string, selectToken: Uint8Array): void;
+  /** 观察到某 token 的事务干净地恢复 live（router 在派发 LIVE_RESUME 前调用） */
+  observeSelectLiveResume(deviceId: string, selectToken: Uint8Array): void;
   dispose(): void;
 }
 
@@ -61,15 +81,24 @@ export function createTmuxSelectionActions(
   access: TmuxStoreAccess
 ): TmuxSelectionActions {
   const lastReportedTerminalSizes = new Map<string, { cols: number; rows: number; at: number }>();
-  const selectRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const gaps = createPaneStreamGaps();
+  const retry = createReselectRetry(RESELECT_RETRY_DELAY_MS, (deviceId) => {
+    if (access.getState().deviceConnected[deviceId] === false) return;
+    maybeReselectCurrentPane(deviceId);
+  });
 
-  function cancelReselect(deviceId: string): void {
-    const timer = selectRetryTimers.get(deviceId);
-    if (timer === undefined) return;
-    clearTimeout(timer);
-    selectRetryTimers.delete(deviceId);
-  }
+  const dispatchDeps = {
+    core,
+    gaps,
+    inFlightPaneId: (deviceId: string) =>
+      core.transport.capabilities.atomicScreen
+        ? null
+        : (core.selectMachine().getTransaction(deviceId)?.paneId ?? null),
+    fallbackSize: (deviceId: string) => lastReportedTerminalSizes.get(deviceId) ?? null,
+  };
 
+  // 重连、以及 select 失败后的重来：这个 pane 的终端都没拿到过权威 history，
+  // 一律按缺口处理，由紧接着的冷 select 补洞（只有落定才清缺口）。
   function maybeReselectCurrentPane(deviceId: string): void {
     const current = access.getState().selectedPanes[deviceId];
     if (!current) return;
@@ -78,45 +107,24 @@ export function createTmuxSelectionActions(
       return;
     }
 
+    gaps.markGapped(deviceId, current.paneId);
     access.getState().selectPane(deviceId, current.windowId, current.paneId);
   }
 
   return {
-    selectPane(deviceId, windowId, paneId, size) {
+    selectPane(deviceId, windowId, paneId, size, options) {
       if (!deviceId || !windowId || !paneId) return;
 
       access.setState((prev) => ({
         selectedPanes: { ...prev.selectedPanes, [deviceId]: { windowId, paneId } },
       }));
 
-      const selectToken = generateSelectToken();
-      const wantHistory = true;
-
-      if (!core.transport.capabilities.atomicScreen) {
-        core.selectMachine().dispatch({
-          type: 'SELECT_START',
-          deviceId,
-          windowId,
-          paneId,
-          selectToken,
-          wantHistory,
-        });
-      }
-
-      const normalizedSize =
-        normalizeTerminalSize(size?.cols, size?.rows) ??
-        lastReportedTerminalSizes.get(deviceId) ??
-        null;
-
-      core.transport.send({
-        type: 'select-pane',
+      dispatchSelectPane(dispatchDeps, {
         deviceId,
         windowId,
         paneId,
-        selectToken,
-        wantHistory,
-        cols: normalizedSize?.cols,
-        rows: normalizedSize?.rows,
+        size,
+        warm: options?.warm === true,
       });
     },
 
@@ -136,29 +144,25 @@ export function createTmuxSelectionActions(
     maybeReselectCurrentPane,
 
     handleSelectFailed(deviceId, reason) {
-      if (reason === 'rejected' || selectRetryTimers.has(deviceId)) {
-        return;
-      }
-      const timer = setTimeout(() => {
-        selectRetryTimers.delete(deviceId);
-        if (access.getState().deviceConnected[deviceId] === false) {
-          return;
-        }
-        maybeReselectCurrentPane(deviceId);
-      }, RESELECT_RETRY_DELAY_MS);
-      selectRetryTimers.set(deviceId, timer);
+      // 补洞的 select 没跑完：缺口留着，等下一次成功的冷 select
+      gaps.abortRepair(deviceId);
+      if (reason === 'rejected') return;
+      retry.schedule(deviceId);
     },
 
-    cancelReselect,
+    cancelReselect: retry.cancel,
 
     handleSnapshotPaneRemoval(deviceId, previousSnapshot) {
+      gaps.retainLivePanes(deviceId, snapshotPaneIds(access.getState().snapshots[deviceId]));
+
       const current = access.getState().selectedPanes[deviceId];
       if (!current) return;
       // 旧快照里也没有它 ≠ 已关闭：可能是刚建好/深链的 pane，快照还没追上
       if (!snapshotHasPane(previousSnapshot, current.paneId)) return;
       if (snapshotHasPane(access.getState().snapshots[deviceId], current.paneId)) return;
 
-      cancelReselect(deviceId);
+      retry.cancel(deviceId);
+      gaps.markGapped(deviceId, current.paneId);
       core.selectMachine().abandonPane(deviceId, current.paneId);
       access.setState((prev) => {
         const selected = prev.selectedPanes[deviceId];
@@ -169,6 +173,21 @@ export function createTmuxSelectionActions(
       });
     },
 
+    handleDeviceStreamInterrupted(deviceId) {
+      retry.cancel(deviceId);
+      core.selectMachine().cleanup(deviceId);
+      gaps.resetDevice(deviceId);
+      gaps.markDeviceGapped(deviceId, snapshotPaneIds(access.getState().snapshots[deviceId]));
+    },
+
+    observeSelectHistory(deviceId, selectToken) {
+      observeSelectHistory(core.selectMachine(), gaps, deviceId, selectToken);
+    },
+
+    observeSelectLiveResume(deviceId, selectToken) {
+      observeSelectLiveResume(core.selectMachine(), gaps, deviceId, selectToken);
+    },
+
     recordTerminalSize(deviceId, cols, rows) {
       const normalizedSize = normalizeTerminalSize(cols, rows);
       if (!normalizedSize) return;
@@ -176,10 +195,8 @@ export function createTmuxSelectionActions(
     },
 
     dispose() {
-      for (const timer of selectRetryTimers.values()) {
-        clearTimeout(timer);
-      }
-      selectRetryTimers.clear();
+      retry.dispose();
+      gaps.clear();
     },
   };
 }

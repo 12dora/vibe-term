@@ -43,7 +43,9 @@ export interface TmuxState {
     deviceId: string,
     windowId: string,
     paneId: string,
-    size?: { cols?: number; rows?: number }
+    size?: { cols?: number; rows?: number },
+    /** warm：目标终端仍挂载且订阅中，只切 tmux 焦点，不拉 history、不 reset */
+    options?: { warm?: boolean }
   ) => void;
   selectWindow: (deviceId: string, windowId: string) => void;
   sendInput: (deviceId: string, paneId: string, data: string, isComposing?: boolean) => void;

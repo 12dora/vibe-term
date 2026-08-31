@@ -33,7 +33,8 @@ export interface TerminalSurfaceLifecycleDeps<
   Target extends TerminalSurfaceTarget,
   Surface extends TerminalSurfaceHandle<Target> = TerminalSurfaceHandle<Target>,
 > {
-  loadResources(): Promise<void>;
+  /** 返回 void 表示资源已就绪（同步路径），调用方据此免去一次 await */
+  loadResources(): Promise<void> | void;
   createSurface(context: TerminalSurfaceCreationContext<Target>): Surface;
   getSurface(): Surface | null;
   setSurface(surface: Surface | null): void;
@@ -98,7 +99,8 @@ export class TerminalSurfaceLifecycle<
     this.deps.setBootState({ status: 'loading' });
     this.deps.reportStage('mount', null);
 
-    if (!(await this.loadResources())) return;
+    const resources = this.loadResources();
+    if (resources !== true && !(await resources)) return;
     if (this.cancelled) return;
     this.deps.reportStage('fonts_ready', null);
 
@@ -125,17 +127,26 @@ export class TerminalSurfaceLifecycle<
     this.deps.bindTarget(null);
   }
 
-  private async loadResources(): Promise<boolean> {
+  private loadResources(): boolean | Promise<boolean> {
+    let pending: Promise<void> | void;
     try {
-      await this.deps.loadResources();
-      return true;
+      pending = this.deps.loadResources();
     } catch (error) {
-      this.deps.reportStage('font_load_failed', null);
-      if (!this.cancelled) {
-        this.deps.setBootState(bootErrorState(error, TERMINAL_RESOURCE_ERROR_MESSAGE));
-      }
-      return false;
+      return this.failResources(error);
     }
+    if (!pending) return true;
+    return pending.then(
+      () => true,
+      (error: unknown) => this.failResources(error)
+    );
+  }
+
+  private failResources(error: unknown): false {
+    this.deps.reportStage('font_load_failed', null);
+    if (!this.cancelled) {
+      this.deps.setBootState(bootErrorState(error, TERMINAL_RESOURCE_ERROR_MESSAGE));
+    }
+    return false;
   }
 
   private handleRecoveryRequired(reason: GatewayRebaseReason): void {

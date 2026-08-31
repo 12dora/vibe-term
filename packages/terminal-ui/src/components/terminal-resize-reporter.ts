@@ -2,7 +2,7 @@ import type { TerminalSizeSnapshot, TimedTerminalSizeSnapshot } from '../utils/r
 import { type TerminalCellSize, computeContainerSize } from './terminalMetrics';
 
 export type TerminalResizeKind = 'resize' | 'sync';
-export type TerminalSizingMode = 'report' | 'follow';
+export type TerminalSizingMode = 'report' | 'follow' | 'local';
 
 /** 上报前的准入条件快照，随渲染变化 */
 export interface TerminalResizeGate {
@@ -34,6 +34,11 @@ export interface TerminalResizeHandlers {
 }
 
 export interface TerminalResizeReporterDeps {
+  /**
+   * 准入条件在**执行时**取，不在排队时捕获：防抖任务排队后 sizingMode 可能已经
+   * 从 report 翻成 local（保活实例被切到后台），用旧闸门跑就会替隐藏实例上报尺寸。
+   */
+  getGate: () => TerminalResizeGate;
   getTerminal: () => ResizeMeasurableTerminal | null;
   getProposer: () => ResizeDimensionProposer | null;
   getContainerRect: () => { width: number; height: number } | null;
@@ -55,6 +60,7 @@ export interface ResizeReportGuardInput {
 
 /**
  * follow 模式下 pane 的 cols/rows 由 tmux layout 决定，容器像素测量不可作为尺寸来源；
+ * local 模式（保活池里的隐藏实例）照常测量并对齐本地行列，只是不上报，见 emit 前的短路；
  * sync 即使在 isSelectionInvalid 时也放行——尺寸同步是基础功能，只有用户输入受限。
  */
 export function shouldAttemptResizeReport({
@@ -81,12 +87,17 @@ export function shouldAttemptResizeReport({
 
 export interface TerminalResizeReportRequest {
   kind: TerminalResizeKind;
-  gate: TerminalResizeGate;
+  /** 缺省取 deps.getGate()（生产路径）；显式传入仅用于测试单点判定 */
+  gate?: TerminalResizeGate;
   force?: boolean;
 }
 
 export class TerminalResizeReporter {
   readonly lastReportedSize: MutableBox<TerminalSizeSnapshot | null> = { current: null };
+  /** 最近一次 measure 读到的容器像素尺寸，供 ResizeObserver 首次投递去重 */
+  readonly lastMeasuredRect: MutableBox<{ width: number; height: number } | null> = {
+    current: null,
+  };
   readonly pendingLocalSize: MutableBox<TimedTerminalSizeSnapshot | null> = { current: null };
   readonly suppressLocalResizeUntil: MutableBox<number> = { current: 0 };
 
@@ -108,6 +119,7 @@ export class TerminalResizeReporter {
       return null;
     }
 
+    this.lastMeasuredRect.current = rect;
     return computeContainerSize({
       rect,
       cell: terminal._core?._renderService?.dimensions?.css?.cell,
@@ -115,7 +127,11 @@ export class TerminalResizeReporter {
     });
   }
 
-  report({ kind, gate, force = false }: TerminalResizeReportRequest): boolean {
+  report({
+    kind,
+    gate = this.deps.getGate(),
+    force = false,
+  }: TerminalResizeReportRequest): boolean {
     const now = this.now();
     const allowed = shouldAttemptResizeReport({
       gate,
@@ -140,6 +156,10 @@ export class TerminalResizeReporter {
 
     const { cols, rows } = measured;
     applyTerminalSize(terminal, cols, rows);
+
+    if (gate.sizingMode === 'local') {
+      return true;
+    }
 
     const last = this.lastReportedSize.current;
     if (!force && last && last.cols === cols && last.rows === rows) {

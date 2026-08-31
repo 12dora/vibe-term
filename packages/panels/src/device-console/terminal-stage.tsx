@@ -1,18 +1,44 @@
 // 终端显示区：按连接与 pane 选择状态在「主动断开 / 失效提示 / 分屏 / 单屏 / 占位」间切换，
 // 并叠加重连指示与快照解析中的遮罩。DOM 结构被 e2e 依赖，改动需同步 apps/fe/tests。
+//
+// 单屏分支不是「一个 pane 一个 Terminal」，而是保活池（见 ./terminal-keep-alive）：
+// 最近看过的 N 个 pane 同时挂载在同一个盒子里，只有路由点名的那个可见，
+// 其余 visibility:hidden 继续吃 live 输出，切回时即时呈现。
 
 import type { TerminalShortcutItem, TerminalThemeColors, TmuxPane, TmuxWindow } from '@tmex/shared';
+import { useTmuxStore } from '@tmex/stores/react';
 import {
   SplitTerminalArea,
   Terminal as TerminalComponent,
   type TerminalRef,
 } from '@tmex/terminal-ui';
 import { Loader2, SearchX } from 'lucide-react';
-import type { ReactNode, RefObject } from 'react';
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { DeviceStatusBadge } from '../device-status-badge';
+import {
+  type KeepAlivePool,
+  applyKeepAliveStreamState,
+  createKeepAlivePool,
+  keepAlivePaneIds,
+  keepAlivePaneKey,
+  publishKeepAlivePool,
+  retainKeepAlivePane,
+  retainLiveKeepAlivePanes,
+  unpublishKeepAlivePool,
+} from './terminal-keep-alive';
 import { TerminalShortcutsSlot } from './terminal-shortcuts-slot';
 import type { DevicePaneSelection } from './use-device-pane-selection';
+
+const noopResize = (): void => {};
 
 function CenteredNotice({ children }: { children: ReactNode }) {
   return (
@@ -100,6 +126,189 @@ function ResolvingOverlay() {
   );
 }
 
+/**
+ * 可见实例的 TerminalRef 转接到控制台共用的 terminalRef。
+ * 每个 pane 的回调引用恒定，避免 React 每次渲染 detach/attach。
+ */
+function usePaneTerminalBinder(
+  terminalRef: RefObject<TerminalRef | null>,
+  visiblePaneId: string,
+  paneIds: readonly string[]
+): (paneId: string) => (ref: TerminalRef | null) => void {
+  const instances = useRef(new Map<string, TerminalRef | null>());
+  const binders = useRef(new Map<string, (ref: TerminalRef | null) => void>());
+  const visibleRef = useRef(visiblePaneId);
+  visibleRef.current = visiblePaneId;
+
+  const paneIdsKey = paneIds.join(',');
+  useEffect(() => {
+    const live = new Set(paneIdsKey ? paneIdsKey.split(',') : []);
+    for (const paneId of binders.current.keys()) {
+      if (!live.has(paneId)) {
+        binders.current.delete(paneId);
+        instances.current.delete(paneId);
+      }
+    }
+  }, [paneIdsKey]);
+
+  useEffect(() => {
+    terminalRef.current = instances.current.get(visiblePaneId) ?? null;
+  }, [visiblePaneId, terminalRef]);
+
+  return useCallback(
+    (paneId: string) => {
+      const existing = binders.current.get(paneId);
+      if (existing) return existing;
+      const binder = (ref: TerminalRef | null): void => {
+        if (ref) instances.current.set(paneId, ref);
+        else instances.current.delete(paneId);
+        if (visibleRef.current === paneId) terminalRef.current = ref;
+      };
+      binders.current.set(paneId, binder);
+      return binder;
+    },
+    [terminalRef]
+  );
+}
+
+/**
+ * 池归本组件实例所有，只在提交阶段把快照发布出去：
+ * useLayoutEffect 早于父组件的 select 派发（passive effect），同一次提交里读到的
+ * 就是这一帧的 warm 判定；cleanup 按 owner 撤销，StrictMode 的
+ * 「setup → cleanup → setup」结束时仍然是发布态。
+ */
+function useOwnedKeepAlivePool(
+  deviceId: string,
+  paneId: string,
+  streamInterrupted: boolean,
+  livePaneIds: ReadonlySet<string> | null
+): KeepAlivePool {
+  const ownerRef = useRef<symbol | null>(null);
+  if (ownerRef.current === null) ownerRef.current = Symbol('keep-alive-pool');
+  const owner = ownerRef.current;
+
+  const poolRef = useRef<KeepAlivePool>(createKeepAlivePool());
+  poolRef.current = applyKeepAliveStreamState(poolRef.current, streamInterrupted);
+  if (livePaneIds) {
+    poolRef.current = retainLiveKeepAlivePanes(poolRef.current, livePaneIds);
+  }
+  poolRef.current = retainKeepAlivePane(poolRef.current, deviceId, paneId);
+
+  useLayoutEffect(() => {
+    publishKeepAlivePool(owner, poolRef.current);
+    return () => unpublishKeepAlivePool(owner);
+  });
+
+  return poolRef.current;
+}
+
+/** 快照里该设备当前存在的 pane：保活池据此卸载已被删除的隐藏实例 */
+function useDeviceLivePaneIds(deviceId: string): ReadonlySet<string> | null {
+  const snapshot = useTmuxStore((state) => state.snapshots[deviceId]);
+  return useMemo(() => {
+    if (!snapshot?.session) return null;
+    const ids = new Set<string>();
+    for (const window of snapshot.session.windows) {
+      for (const pane of window.panes) ids.add(pane.id);
+    }
+    return ids;
+  }, [snapshot]);
+}
+
+/** 保活槽：全部实例共用同一个盒子，隐藏的那些留布局但不可见、不吃事件、不参与无障碍树 */
+export function KeepAlivePaneSlot({
+  paneId,
+  visible,
+  children,
+}: {
+  paneId: string;
+  visible: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className="absolute inset-0 flex"
+      data-testid="terminal-keep-alive-pane"
+      data-pane-id={paneId}
+      data-visible={visible || undefined}
+      aria-hidden={visible ? undefined : true}
+      style={visible ? undefined : { visibility: 'hidden', pointerEvents: 'none' }}
+    >
+      {children}
+    </div>
+  );
+}
+
+interface KeepAliveStackProps extends TerminalStageProps {
+  resolvedPaneId: string;
+  shortcutsSlot: ReactNode;
+}
+
+function KeepAliveTerminalStack(props: KeepAliveStackProps) {
+  const {
+    deviceId,
+    resolvedPaneId,
+    selection,
+    deviceConnected,
+    isReconnecting,
+    inputMode,
+    terminalTheme,
+    terminalContainerRef,
+    terminalRef,
+    prepareResources,
+    shortcutsSlot,
+  } = props;
+
+  // 断线/重连中：隐藏实例的 live 流已经断了，只留可见实例，并取消它的 warm 资格。
+  // 自动重连只置 deviceReconnecting、deviceConnected 仍为 true，所以两个都要看。
+  const livePaneIds = useDeviceLivePaneIds(deviceId);
+  const pool = useOwnedKeepAlivePool(
+    deviceId,
+    resolvedPaneId,
+    !deviceConnected || isReconnecting,
+    livePaneIds
+  );
+  const paneIds = keepAlivePaneIds(pool);
+
+  const bindTerminal = usePaneTerminalBinder(terminalRef, resolvedPaneId, paneIds);
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col" data-virtual-keyboard-avoid>
+      <div ref={terminalContainerRef} className="relative min-h-0 flex-1">
+        {paneIds.map((paneId) => {
+          const visible = paneId === resolvedPaneId;
+          return (
+            <KeepAlivePaneSlot
+              key={keepAlivePaneKey(pool, paneId)}
+              paneId={paneId}
+              visible={visible}
+            >
+              <TerminalComponent
+                ref={bindTerminal(paneId)}
+                deviceId={deviceId}
+                paneId={paneId}
+                theme={terminalTheme}
+                inputMode={inputMode}
+                deviceConnected={deviceConnected}
+                isSelectionInvalid={visible ? selection.isSelectionInvalid : false}
+                // 隐藏实例只跟随容器尺寸对齐本地行列，不上报——否则多实例互抢整窗尺寸
+                sizingMode={visible ? 'report' : 'local'}
+                autoFocus={visible}
+                focused={visible}
+                prepareResources={prepareResources}
+                onResize={visible ? selection.handleResize : noopResize}
+                onSync={visible ? selection.handleSync : noopResize}
+                onResizeSettled={visible ? selection.handleResizeSettled : undefined}
+              />
+            </KeepAlivePaneSlot>
+          );
+        })}
+      </div>
+      {shortcutsSlot}
+    </div>
+  );
+}
+
 export interface TerminalStageProps {
   deviceId: string;
   windowId?: string;
@@ -119,7 +328,7 @@ export interface TerminalStageProps {
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   terminalRef: RefObject<TerminalRef | null>;
   bindFocusedTerminalRef: (ref: TerminalRef | null) => void;
-  prepareResources: () => Promise<void>;
+  prepareResources: () => Promise<void> | void;
   onActivateShortcut: (item: TerminalShortcutItem) => void;
 }
 
@@ -136,7 +345,6 @@ function StageContent(props: TerminalStageProps) {
     inputMode,
     terminalTheme,
     terminalContainerRef,
-    terminalRef,
     bindFocusedTerminalRef,
     prepareResources,
     onActivateShortcut,
@@ -206,28 +414,11 @@ function StageContent(props: TerminalStageProps) {
   }
 
   return (
-    <div
-      ref={terminalContainerRef}
-      className="flex-1 h-full min-h-0 w-full"
-      data-virtual-keyboard-avoid
-    >
-      <TerminalComponent
-        key={`${deviceId}:${resolvedPaneId}`}
-        ref={terminalRef}
-        deviceId={deviceId}
-        paneId={resolvedPaneId}
-        theme={terminalTheme}
-        inputMode={inputMode}
-        deviceConnected={deviceConnected}
-        isSelectionInvalid={isSelectionInvalid}
-        prepareResources={prepareResources}
-        onResize={selection.handleResize}
-        onSync={selection.handleSync}
-        onResizeSettled={selection.handleResizeSettled}
-      >
-        {shortcutsSlot}
-      </TerminalComponent>
-    </div>
+    <KeepAliveTerminalStack
+      {...props}
+      resolvedPaneId={resolvedPaneId}
+      shortcutsSlot={shortcutsSlot}
+    />
   );
 }
 

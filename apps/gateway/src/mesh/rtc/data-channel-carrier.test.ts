@@ -34,9 +34,11 @@ describe('DataChannelCarrier', () => {
       drained += 1;
     });
     a.buffered = DC_HIGH_WATER_BYTES + 1;
+    expect(carrier.hasPendingWrites()).toBe(true);
     expect(carrier.send(new Uint8Array([1]))).toBe('backpressure');
     expect(a.sent).toHaveLength(0);
     a.buffered = 10;
+    expect(carrier.hasPendingWrites()).toBe(false);
     a.emitLow();
     expect(drained).toBe(1);
     b.close();
@@ -68,9 +70,37 @@ describe('DataChannelCarrier', () => {
     expect(left.send(large)).toBe('sent');
     expect(a.sent).toHaveLength(1);
     expect(got).toEqual([]);
+    expect(left.hasPendingWrites()).toBe(true);
     expect(left.send(new Uint8Array([1]))).toBe('backpressure');
     a.emitLow();
     expect(got).toEqual([large]);
+    expect(left.hasPendingWrites()).toBe(false);
+  });
+
+  test('70 KiB frame returns sent with remainder flushed on drain', () => {
+    const [a, b] = pairDataChannels();
+    const left = new DataChannelCarrier(a);
+    const right = new DataChannelCarrier(b);
+    const got: Uint8Array[] = [];
+    let drained = 0;
+    right.onMessage((bytes) => {
+      got.push(bytes);
+    });
+    left.onDrain(() => {
+      drained += 1;
+    });
+    a.succeedsBeforeBlock = 1;
+    const frame = new Uint8Array(70 * 1024).fill(7);
+    expect(left.send(frame)).toBe('sent');
+    expect(a.sent).toHaveLength(1);
+    expect(got).toEqual([]);
+    expect(drained).toBe(0);
+    expect(left.hasPendingWrites()).toBe(true);
+    a.emitLow();
+    expect(got).toEqual([frame]);
+    expect(drained).toBe(1);
+    expect(left.hasPendingWrites()).toBe(false);
+    expect(left.send(new Uint8Array([1]))).toBe('sent');
   });
 
   test('closes the carrier when the channel fails mid-frame', () => {

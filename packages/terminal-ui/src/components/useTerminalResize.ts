@@ -1,10 +1,11 @@
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import type { FitAddon } from 'ghostty-terminal';
-import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
+import { type RefObject, useCallback, useEffect, useRef } from 'react';
 import {
   type TerminalResizeGate,
   type TerminalResizeKind,
   TerminalResizeReporter,
+  type TerminalSizingMode,
 } from './terminal-resize-reporter';
 import {
   RafCoalescer,
@@ -26,8 +27,9 @@ interface UseTerminalResizeOptions {
    * report（默认）：容器尺寸变化测量后上报 onResize/onSync（单 pane 整窗语义）。
    * follow：分屏模式，pane 尺寸由 tmux layout 决定，本地只对齐不上报，
    * 避免多个 pane 实例互相抢整窗尺寸。
+   * local：保活池里的隐藏实例，测量并对齐本地行列但不上报。
    */
-  sizingMode?: 'report' | 'follow';
+  sizingMode?: TerminalSizingMode;
   onResize: (cols: number, rows: number) => void;
   onSync: (cols: number, rows: number) => void;
   /**
@@ -65,26 +67,28 @@ function useConstant<T>(create: () => T): T {
   return ref.current;
 }
 
-/** 把随渲染变化的回调镜像进 ref，供调度器的异步回调读取最新值，避免依赖环 */
+/**
+ * 把随渲染变化的回调镜像进 ref，供调度器的异步回调读取最新值。
+ * 必须在渲染期同步写入：放进 passive effect 的话，「渲染完成 → effect 执行」这段窗口里
+ * 触发的防抖任务会拿到上一帧的回调（保活切换时即隐藏实例的 no-op 与可见实例的真回调错位）。
+ */
 function useResizeCallbacksRef(callbacks: ResizeCallbacks): RefObject<ResizeCallbacks> {
   const { onResize, onSync, onResizeSettled, getContainerRect } = callbacks;
   const ref = useRef<ResizeCallbacks>({ onResize, onSync, onResizeSettled, getContainerRect });
-
-  useEffect(() => {
-    ref.current = { onResize, onSync, onResizeSettled, getContainerRect };
-  }, [onResize, onSync, onResizeSettled, getContainerRect]);
-
+  ref.current = { onResize, onSync, onResizeSettled, getContainerRect };
   return ref;
 }
 
 function useResizeReporter(
   callbacksRef: RefObject<ResizeCallbacks>,
+  gateRef: RefObject<TerminalResizeGate>,
   terminalRef: RefObject<CompatibleTerminalLike | null>,
   fitAddonRef: RefObject<FitAddon | null>
 ): TerminalResizeReporter {
   return useConstant(
     () =>
       new TerminalResizeReporter({
+        getGate: () => gateRef.current,
         getTerminal: () => terminalRef.current,
         getProposer: () => fitAddonRef.current,
         getContainerRect: () => callbacksRef.current.getContainerRect?.() ?? null,
@@ -95,12 +99,11 @@ function useResizeReporter(
 
 function useResizeActions(
   reporter: TerminalResizeReporter,
-  scheduler: TerminalResizeScheduler,
-  gate: TerminalResizeGate
+  scheduler: TerminalResizeScheduler
 ): ResizeActions {
   const reportSize = useCallback(
-    (kind: TerminalResizeKind, force: boolean) => reporter.report({ kind, force, gate }),
-    [reporter, gate]
+    (kind: TerminalResizeKind, force: boolean) => reporter.report({ kind, force }),
+    [reporter]
   );
 
   const scheduleResize = useCallback<ScheduleResize>(
@@ -261,14 +264,19 @@ export function useTerminalResize({
     onResizeSettled,
     getContainerRect,
   });
-  const reporter = useResizeReporter(callbacksRef, terminalRef, fitAddonRef);
-  const scheduler = useConstant(() => new TerminalResizeScheduler(browserResizeSchedulerTimers));
 
-  const gate = useMemo<TerminalResizeGate>(
-    () => ({ deviceId, paneId, deviceConnected, isSelectionInvalid, sizingMode }),
-    [deviceId, paneId, deviceConnected, isSelectionInvalid, sizingMode]
-  );
-  const actions = useResizeActions(reporter, scheduler, gate);
+  const gateRef = useRef<TerminalResizeGate>({
+    deviceId,
+    paneId,
+    deviceConnected,
+    isSelectionInvalid,
+    sizingMode,
+  });
+  gateRef.current = { deviceId, paneId, deviceConnected, isSelectionInvalid, sizingMode };
+
+  const reporter = useResizeReporter(callbacksRef, gateRef, terminalRef, fitAddonRef);
+  const scheduler = useConstant(() => new TerminalResizeScheduler(browserResizeSchedulerTimers));
+  const actions = useResizeActions(reporter, scheduler);
 
   useResizeLifecycle({
     scheduler,
@@ -284,6 +292,7 @@ export function useTerminalResize({
     ...actions,
     ...handles,
     lastReportedSize: reporter.lastReportedSize,
+    lastMeasuredRect: reporter.lastMeasuredRect,
     pendingLocalSize: reporter.pendingLocalSize,
     suppressLocalResizeUntil: reporter.suppressLocalResizeUntil,
   };

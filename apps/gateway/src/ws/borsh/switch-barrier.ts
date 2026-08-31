@@ -9,13 +9,12 @@ import {
   encodeSwitchAck,
   encodeTermHistory,
   encodeTermOutput,
-  sendToClient,
 } from './codec-borsh';
 import { sessionStateStore } from './session-state';
 
 const SWITCH_ACK_TIMEOUT_MS = 1500;
 const HISTORY_TIMEOUT_MS = 1500;
-const LIVE_RESUME_DELAY_MS = 450;
+const PENDING_WRITES_POLL_MS = 25;
 
 export interface SwitchBarrierContext {
   deviceId: string;
@@ -39,6 +38,8 @@ type PendingTransaction = {
   callbacks: SwitchBarrierCallbacks;
   timers: ReturnType<typeof setTimeout>[];
 };
+
+type LiveResumeAttempt = 'skipped' | 'waiting' | 'dispatched';
 
 export class SwitchBarrier {
   private pendingTransactions = new Map<GatewaySession, Map<string, PendingTransaction>>();
@@ -76,10 +77,18 @@ export class SwitchBarrier {
     }
   }
 
-  private sendOnSession(session: GatewaySession, data: Uint8Array | Uint8Array[]): boolean {
+  private sendOnSession(
+    session: GatewaySession,
+    data: Uint8Array | Uint8Array[]
+  ): 'sent' | 'backpressured' | 'dropped' {
     const borshState = session.borshState;
-    if (!borshState) return false;
-    return sendToClient(session.activeCarrier, data, borshState.maxFrameBytes);
+    if (!borshState) return 'dropped';
+    const frames = Array.isArray(data) ? data : [data];
+    return gatewayWebSocketSendGuard.sendFramesStatus(
+      session.activeCarrier,
+      frames as readonly BufferSource[],
+      borshState.maxFrameBytes
+    );
   }
 
   /**
@@ -155,9 +164,9 @@ export class SwitchBarrier {
       seq
     );
 
-    if (!this.sendOnSession(session, ackData)) {
+    if (this.sendOnSession(session, ackData) !== 'sent') {
       gatewayWebSocketSendGuard.markStreamGap(session.activeCarrier);
-      this.completeTransaction(session, deviceId);
+      this.failTransaction(session, deviceId);
       return;
     }
 
@@ -167,16 +176,13 @@ export class SwitchBarrier {
           this.handleTimeout(session, deviceId, 'history', context.selectToken);
         }, HISTORY_TIMEOUT_MS)
       );
-    } else {
-      const expectedToken = context.selectToken;
-      pending.timers.push(
-        setTimeout(() => {
-          this.sendLiveResume(session, deviceId, expectedToken);
-        }, LIVE_RESUME_DELAY_MS)
-      );
     }
 
     pending.callbacks.onAckSent?.();
+
+    if (!context.wantHistory) {
+      this.sendLiveResume(session, deviceId, context.selectToken);
+    }
   }
 
   /**
@@ -225,26 +231,75 @@ export class SwitchBarrier {
       borshState.maxFrameBytes
     );
 
-    if (!this.sendOnSession(session, historyMessages)) {
+    const historyStatus = this.sendOnSession(session, historyMessages);
+    if (historyStatus !== 'sent') {
       gatewayWebSocketSendGuard.markStreamGap(session.activeCarrier);
-      this.completeTransaction(session, deviceId);
+      this.dispatchLiveResume(session, deviceId, context.selectToken);
       return;
     }
 
     pending.callbacks.onHistorySent?.();
-
-    const expectedToken = context.selectToken;
-    pending.timers.push(
-      setTimeout(() => {
-        this.sendLiveResume(session, deviceId, expectedToken);
-      }, LIVE_RESUME_DELAY_MS)
-    );
+    this.sendLiveResume(session, deviceId, context.selectToken);
   }
 
   /**
    * 发送 LIVE_RESUME
    */
-  sendLiveResume(session: GatewaySession, deviceId: string, expectedToken?: Uint8Array): void {
+  sendLiveResume(
+    session: GatewaySession,
+    deviceId: string,
+    expectedToken?: Uint8Array
+  ): LiveResumeAttempt {
+    const pending = this.getPending(session, deviceId);
+    if (!pending) return 'skipped';
+    const selectState = sessionStateStore.getOrCreateSelectTransaction(session, deviceId)?.state;
+    if (selectState !== 'ACKED' && selectState !== 'HISTORY_APPLIED') {
+      return 'skipped';
+    }
+
+    const { context } = pending;
+    if (expectedToken && !this.tokensEqual(context.selectToken, expectedToken)) {
+      return 'skipped';
+    }
+    if (!session.borshState) return 'skipped';
+    if (session.closed) return 'skipped';
+
+    if (session.activeCarrier.hasPendingWrites?.()) {
+      this.schedulePendingWritesWait(session, deviceId, pending, context.selectToken);
+      return 'waiting';
+    }
+
+    this.dispatchLiveResume(session, deviceId, expectedToken);
+    return 'dispatched';
+  }
+
+  private schedulePendingWritesWait(
+    session: GatewaySession,
+    deviceId: string,
+    capturedPending: PendingTransaction,
+    capturedToken: Uint8Array
+  ): void {
+    const deadline = Date.now() + HISTORY_TIMEOUT_MS;
+    const tick = () => {
+      if (this.getPending(session, deviceId) !== capturedPending) return;
+      if (!this.tokensEqual(capturedPending.context.selectToken, capturedToken)) return;
+      if (session.closed) return;
+
+      const overdue = Date.now() >= deadline;
+      if (!overdue && session.activeCarrier.hasPendingWrites?.()) {
+        capturedPending.timers.push(setTimeout(tick, PENDING_WRITES_POLL_MS));
+        return;
+      }
+      this.dispatchLiveResume(session, deviceId, capturedToken);
+    };
+    capturedPending.timers.push(setTimeout(tick, PENDING_WRITES_POLL_MS));
+  }
+
+  private dispatchLiveResume(
+    session: GatewaySession,
+    deviceId: string,
+    expectedToken?: Uint8Array
+  ): void {
     const pending = this.getPending(session, deviceId);
     if (!pending) return;
     const selectState = sessionStateStore.getOrCreateSelectTransaction(session, deviceId)?.state;
@@ -258,17 +313,7 @@ export class SwitchBarrier {
     }
     const borshState = session.borshState;
     if (!borshState) return;
-
-    for (const timer of pending.timers) {
-      clearTimeout(timer);
-    }
-    pending.timers = [];
-
-    if (!sessionStateStore.transitionSelectState(session, deviceId, 'LIVE')) {
-      return;
-    }
-
-    const bufferedOutput = sessionStateStore.stopOutputBuffering(session, deviceId);
+    if (session.closed) return;
 
     const seq = borshState.seqGen();
     const liveResumeData = encodeLiveResume(
@@ -280,11 +325,24 @@ export class SwitchBarrier {
       seq
     );
 
-    if (!this.sendOnSession(session, liveResumeData)) {
+    const resumeStatus = this.sendOnSession(session, liveResumeData);
+
+    for (const timer of pending.timers) {
+      clearTimeout(timer);
+    }
+    pending.timers = [];
+
+    if (resumeStatus !== 'sent') {
       gatewayWebSocketSendGuard.markStreamGap(session.activeCarrier);
-      this.completeTransaction(session, deviceId);
+      this.failTransaction(session, deviceId);
       return;
     }
+
+    if (!sessionStateStore.transitionSelectState(session, deviceId, 'LIVE')) {
+      return;
+    }
+
+    const bufferedOutput = sessionStateStore.stopOutputBuffering(session, deviceId);
 
     for (const data of bufferedOutput) {
       const outputSeq = borshState.seqGen();
@@ -297,7 +355,7 @@ export class SwitchBarrier {
         },
         outputSeq
       );
-      if (!this.sendOnSession(session, outputData)) {
+      if (this.sendOnSession(session, outputData) !== 'sent') {
         gatewayWebSocketSendGuard.markStreamGap(session.activeCarrier);
         break;
       }
@@ -354,8 +412,10 @@ export class SwitchBarrier {
     console.warn(`[switch-barrier] Transaction timeout at stage: ${stage} for ${deviceId}`);
 
     if (stage === 'history') {
-      this.sendLiveResume(session, deviceId, expectedToken);
-      sessionStateStore.stopOutputBuffering(session, deviceId);
+      const attempt = this.sendLiveResume(session, deviceId, expectedToken);
+      if (attempt !== 'waiting') {
+        sessionStateStore.stopOutputBuffering(session, deviceId);
+      }
       pending.callbacks.onTimeout?.(stage);
       return;
     }
@@ -379,6 +439,23 @@ export class SwitchBarrier {
     sessionStateStore.stopOutputBuffering(session, deviceId);
 
     this.cleanupTransaction(session, deviceId);
+  }
+
+  private failTransaction(session: GatewaySession, deviceId: string): void {
+    const pending = this.getPending(session, deviceId);
+    if (pending) {
+      for (const timer of pending.timers) {
+        clearTimeout(timer);
+      }
+      pending.timers = [];
+    }
+
+    const state = sessionStateStore.getOrCreateSelectTransaction(session, deviceId)?.state;
+    if (state === 'ACKED' || state === 'HISTORY_APPLIED' || state === 'SELECTING') {
+      sessionStateStore.transitionSelectState(session, deviceId, 'SELECT_FAILED');
+    }
+    sessionStateStore.stopOutputBuffering(session, deviceId);
+    this.completeTransaction(session, deviceId);
   }
 
   private completeTransaction(session: GatewaySession, deviceId: string): void {

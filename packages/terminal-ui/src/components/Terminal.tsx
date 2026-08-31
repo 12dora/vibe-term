@@ -1,14 +1,15 @@
 import { FitAddon, TERMINAL_ENGINE } from 'ghostty-terminal';
 import { Loader2 } from 'lucide-react';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { forwardRef, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SelectionToolbar } from './SelectionToolbar';
+import { useContainerResizeObserver } from './hooks/useContainerResizeObserver';
 import { usePaneSinkRegistration } from './hooks/usePaneSinkRegistration';
 import { useTerminalBootSurface } from './hooks/useTerminalBootSurface';
 import { useTerminalClipboard } from './hooks/useTerminalClipboard';
 import { useTerminalFileLinks } from './hooks/useTerminalFileLinks';
+import { useTerminalHandle } from './hooks/useTerminalHandle';
 import { useTerminalInput } from './hooks/useTerminalInput';
-import { computeContainerSize } from './terminalMetrics';
 import { resolveTerminalThemeProp } from './theme';
 import type { TerminalProps, TerminalRef } from './types';
 import { useMobileTouch } from './useMobileTouch';
@@ -44,6 +45,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
 
     const {
       pendingLocalSize,
+      lastMeasuredRect,
       scheduleResize,
       runPostSelectResize,
       setFitAddon,
@@ -128,27 +130,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       };
     }, [instance, runPostSelectResize, setFitAddon, setTerminal]);
 
-    useEffect(() => {
-      const el = containerRef.current;
-      if (!el) return;
-      let rafId: number | null = null;
-      const ro = new ResizeObserver(() => {
-        if (rafId !== null) {
-          cancelAnimationFrame(rafId);
-        }
-        rafId = requestAnimationFrame(() => {
-          rafId = null;
-          scheduleResize('resize');
-        });
-      });
-      ro.observe(el);
-      return () => {
-        ro.disconnect();
-        if (rafId !== null) {
-          cancelAnimationFrame(rafId);
-        }
-      };
-    }, [scheduleResize]);
+    const scheduleContainerResize = useCallback(() => scheduleResize('resize'), [scheduleResize]);
+    useContainerResizeObserver(containerRef, lastMeasuredRect, scheduleContainerResize);
 
     useTerminalFileLinks({ deviceId, paneId, instance, onOpenFile });
 
@@ -156,58 +139,18 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       instance,
     });
 
-    useImperativeHandle(
+    useTerminalHandle({
       ref,
-      () => ({
-        write: (data) => instance?.write(data),
-        reset: () => {
-          instance?.reset();
-          const target = surfaceRef.current?.getVisibleTarget();
-          if (target) target.liveOutputEndedWithCR = false;
-        },
-        scrollToBottom: () => instance?.scrollToBottom(),
-        resize: (cols, rows) => {
-          authoritativeSizeRef.current = { cols, rows };
-          instance?.resize(cols, rows);
-        },
-        getTerminal: () => instance ?? null,
-        getSize: () => {
-          if (!instance) return null;
-          return { cols: Math.max(2, instance.cols), rows: Math.max(2, instance.rows) };
-        },
-        runPostSelectResize: () => runPostSelectResize(),
-        scheduleResize: (kind, options) => scheduleResize(kind, options),
-        calculateSizeFromContainer: () => {
-          const container = containerRef.current;
-          const term = instance;
-          const fitAddon = fitAddonRef.current;
-          if (!container || !term) return null;
-
-          const rect = container.getBoundingClientRect();
-          return computeContainerSize({
-            rect: { width: rect.width, height: rect.height },
-            cell: term._core?._renderService?.dimensions?.css?.cell,
-            proposeDimensions: fitAddon ? () => fitAddon.proposeDimensions() : null,
-          });
-        },
-        getPendingLocalSize: () => pendingLocalSize.current,
-        clearPendingLocalSize,
-        getCellSize: () => {
-          const cell = instance?._core?._renderService?.dimensions?.css?.cell;
-          if (!cell?.width || !cell?.height) return null;
-          return { width: cell.width, height: cell.height };
-        },
-      }),
-      [
-        authoritativeSizeRef,
-        clearPendingLocalSize,
-        instance,
-        pendingLocalSize,
-        runPostSelectResize,
-        scheduleResize,
-        surfaceRef,
-      ]
-    );
+      instance,
+      containerRef,
+      fitAddonRef,
+      surfaceRef,
+      authoritativeSizeRef,
+      pendingLocalSize,
+      clearPendingLocalSize,
+      runPostSelectResize,
+      scheduleResize,
+    });
 
     return (
       <div

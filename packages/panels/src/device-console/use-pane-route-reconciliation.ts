@@ -5,9 +5,10 @@ import type { TmuxWindow } from '@tmex/shared';
 import { useTmuxStore } from '@tmex/stores/react';
 import { useEffect, useRef } from 'react';
 import { resolveSelectDispatch } from './pane-selection-rules';
-import { resolveDeviceDefaultSelection, resolveRouteTarget } from './selection-recovery';
+import { isWarmSelectTarget } from './terminal-keep-alive';
 import type { PaneSelectionDispatch } from './use-pane-selection-dispatch';
 import type { PaneSelectionRefs } from './use-pane-selection-state';
+import { useRouteTargetRecovery } from './use-route-target-recovery';
 
 export function usePaneRouteReconciliation({
   deviceId,
@@ -37,56 +38,19 @@ export function usePaneRouteReconciliation({
   const focusPane = useTmuxStore((state) => state.focusPane);
   const selectPane = useTmuxStore((state) => state.selectPane);
 
-  const { autoSelectedRef, lastDispatchedSelectRef, lastFullSelectWindowRef } = refs;
-  const { getSelectSize, navigateToDeviceList, navigateToPane, recordSelectRequest } = dispatch;
+  const { lastDispatchedSelectRef, lastFullSelectWindowRef } = refs;
+  const { getSelectSize, recordSelectRequest } = dispatch;
 
-  // 外部变更与侧边栏导航共用：路由点名的 window/pane 与快照对账
-  useEffect(() => {
-    if (!deviceId) return;
-    if (!deviceConnected) return;
-    if (!windowId) return;
-    // 快照尚未到达时不导航（loading 态）
-    if (!windows) return;
-
-    const action = resolveRouteTarget({
-      windows,
-      routeWindowId: windowId,
-      routePaneId: resolvedPaneId,
-      settledMissing: isSelectionSettledMissing,
-    });
-    if (action.kind === 'leave-device') {
-      navigateToDeviceList();
-      return;
-    }
-    if (action.kind === 'navigate') {
-      navigateToPane(deviceId, action.windowId, action.paneId);
-    }
-  }, [
+  useRouteTargetRecovery({
     deviceId,
-    deviceConnected,
-    isSelectionSettledMissing,
-    windows,
     windowId,
     resolvedPaneId,
-    navigateToDeviceList,
-    navigateToPane,
-  ]);
-
-  // 仅首次进入设备时自动选中
-  useEffect(() => {
-    if (!deviceId) return;
-    if (!deviceConnected) return;
-    if (!windows || windows.length === 0) return;
-    // window-only 路由由上面的对账 effect 处理
-    if (windowId) return;
-    if (autoSelectedRef.current) return;
-
-    const target = resolveDeviceDefaultSelection({ windows });
-    if (!target) return;
-
-    autoSelectedRef.current = true;
-    navigateToPane(deviceId, target.windowId, target.paneId);
-  }, [autoSelectedRef, deviceConnected, deviceId, navigateToPane, windowId, windows]);
+    windows,
+    deviceConnected,
+    isSelectionSettledMissing,
+    refs,
+    dispatch,
+  });
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: 路由身份变化必须重置仅由 ref 持有的派发守卫
   useEffect(() => {
@@ -129,8 +93,18 @@ export function usePaneRouteReconciliation({
       return;
     }
 
-    selectPane(deviceId, windowId, resolvedPaneId, getSelectSize(windowId, resolvedPaneId));
-    lastFullSelectWindowRef.current = action.fullSelectWindowKey;
+    // 目标已在保活池里（终端还挂着、订阅没断）：只切 tmux 焦点，不重放 history
+    const warm = isWarmSelectTarget(deviceId, resolvedPaneId);
+    selectPane(
+      deviceId,
+      windowId,
+      resolvedPaneId,
+      getSelectSize(windowId, resolvedPaneId),
+      warm ? { warm: true } : undefined
+    );
+    if (!warm) {
+      lastFullSelectWindowRef.current = action.fullSelectWindowKey;
+    }
   }, [
     deviceConnected,
     deviceId,

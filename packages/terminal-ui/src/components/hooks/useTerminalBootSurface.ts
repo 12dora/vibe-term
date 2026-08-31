@@ -1,6 +1,6 @@
 import type { TerminalThemeColors } from '@tmex/shared';
 import { useRuntime, useUIStore } from '@tmex/stores/react';
-import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
+import { resolveFontStack } from '@tmex/theme';
 import {
   type CompatibleTerminalLike,
   TERMINAL_ENGINE,
@@ -16,6 +16,7 @@ import {
   scheduleTerminalDiagnosticSamples,
   useTerminalDiagnosticsReporter,
 } from '../terminal-diagnostics';
+import type { TerminalSizingMode } from '../terminal-resize-reporter';
 import {
   type TerminalController,
   type TerminalRenderTarget,
@@ -25,6 +26,7 @@ import {
 import { terminalStreamDiagnostic } from '../terminalBootDiagnostics';
 import { applyTerminalTheme } from '../theme';
 import type { TerminalProps } from '../types';
+import { loadTerminalResources } from './terminal-fonts-cache';
 import { activateRenderTarget, createTerminalRenderTarget } from './terminal-render-target';
 import {
   type TerminalBootState,
@@ -42,7 +44,7 @@ export interface UseTerminalBootSurfaceOptions {
   deviceId: string;
   paneId: string;
   inputMode: TerminalProps['inputMode'];
-  sizingMode: 'report' | 'follow';
+  sizingMode: TerminalSizingMode;
   autoFocus: boolean;
   terminalTheme: TerminalThemeColors;
   prepareResources: TerminalProps['prepareResources'];
@@ -72,12 +74,27 @@ function terminalE2eGlobals(): TerminalE2eGlobals {
   return globalThis as unknown as TerminalE2eGlobals;
 }
 
+// 探针必须跟着可见（focused）实例走：保活池里同一页挂着多个终端，选区文本探针又是
+// 整页唯一的全局，只更新终端指针而不同步选区，切换后读到的会是上一个 pane 的旧选区。
 function setE2eTerminalProbe(terminal: CompatibleTerminalLike): void {
   const g = terminalE2eGlobals();
   g.__tmexE2eXterm = terminal;
   g.__tmexE2eTerminal = terminal;
   g.__tmexE2eTerminalEngine = TERMINAL_ENGINE;
   g.__tmexE2eTerminalRenderer = terminal.getRendererKind?.() ?? null;
+  g.__tmexE2eTerminalSelectionText = terminal.hasSelection?.()
+    ? (terminal.getSelection?.() ?? null)
+    : null;
+}
+
+/** 可见实例尚未就绪（启动中 / 启动失败）：不能让探针停在别的 pane 上 */
+function clearE2eTerminalProbes(): void {
+  const g = terminalE2eGlobals();
+  g.__tmexE2eXterm = null;
+  g.__tmexE2eTerminal = null;
+  g.__tmexE2eTerminalEngine = null;
+  g.__tmexE2eTerminalRenderer = null;
+  g.__tmexE2eTerminalSelectionText = null;
 }
 
 function clearE2eTerminalProbe(terminal: CompatibleTerminalLike | null): void {
@@ -101,7 +118,7 @@ interface BootRefs {
   generationHost: RefObject<HTMLDivElement | null>;
   surface: RefObject<TerminalSurface<TerminalRenderTarget> | null>;
   authoritativeSize: RefObject<{ cols: number; rows: number } | null>;
-  sizingMode: RefObject<'report' | 'follow'>;
+  sizingMode: RefObject<TerminalSizingMode>;
   runPostSelectResize: RefObject<() => void>;
   deviceId: RefObject<string>;
   paneId: RefObject<string>;
@@ -220,10 +237,7 @@ function createLifecycleDeps(
   const stream = diagnosticStream(ctx);
   const report = createStageReporter(ctx, stream);
   return {
-    loadResources: async () => {
-      await ctx.prepareResources?.();
-      await loadTerminalFonts(ctx.fontId, ctx.fontSize);
-    },
+    loadResources: () => loadTerminalResources(ctx.prepareResources, ctx.fontId, ctx.fontSize),
     createSurface: (context) => buildSurface(ctx, report, context),
     getSurface: () => ctx.refs.surface.current,
     setSurface: (surface) => {
@@ -308,13 +322,15 @@ export function useTerminalBootSurface(
     return () => lifecycle.cancel();
   }, [fontId, fontSize, lineHeight, prepareResources, refs, reporter, retryNonce, runtime]);
 
-  // e2e 桥指向焦点实例（分屏多实例下 autoFocus 即焦点性；单 pane 恒 true）
+  // e2e 桥指向焦点实例（分屏/保活多实例下 autoFocus 即焦点性；单实例恒 true）
   useEffect(() => {
-    if (!instance || !autoFocus) {
+    if (!autoFocus) return;
+    if (!instance || bootState.status !== 'ready') {
+      clearE2eTerminalProbes();
       return;
     }
     setE2eTerminalProbe(instance);
-  }, [instance, autoFocus]);
+  }, [instance, autoFocus, bootState.status]);
 
   // 预设切换在运行期改的是色板对象引用：命中这里给活着的实例增量下发，不重建终端
   useEffect(() => {

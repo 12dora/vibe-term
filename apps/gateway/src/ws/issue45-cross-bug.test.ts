@@ -142,9 +142,7 @@ describe('issue45 cross-bug: bug 2 (transaction pane routing) x normal pane swit
     const newSent = ws.sent.slice(sentBefore);
     const kinds = newSent.map(envelopeKind).filter((k) => k !== null) as number[];
     expect(kinds).toContain(wsBorsh.KIND_TERM_HISTORY);
-    expect(sessionStateStore.getOrCreateSelectTransaction(ws, 'device-a')?.state).toBe(
-      'HISTORY_APPLIED'
-    );
+    expect(sessionStateStore.getOrCreateSelectTransaction(ws, 'device-a')?.state).toBe('STABLE');
   });
 
   test('multiple clients with concurrent ACKED transactions on different panes do not cross-route', () => {
@@ -179,12 +177,10 @@ describe('issue45 cross-bug: bug 2 (transaction pane routing) x normal pane swit
       expect(kindsA).toContain(wsBorsh.KIND_TERM_HISTORY);
       expect(kindsB).not.toContain(wsBorsh.KIND_TERM_HISTORY);
 
-      expect(sessionStateStore.getOrCreateSelectTransaction(ws, 'device-a')?.state).toBe(
-        'HISTORY_APPLIED'
-      );
+      expect(sessionStateStore.getOrCreateSelectTransaction(ws, 'device-a')?.state).toBe('STABLE');
       expect(sessionStateStore.getOrCreateSelectTransaction(wsB, 'device-a')?.state).toBe('ACKED');
 
-      // 紧接着 P1 history 到达：只能投递给 B，A 的事务已 HISTORY_APPLIED（getTransactionPaneId
+      // 紧接着 P1 history 到达：只能投递给 B，A 的事务已 STABLE（getTransactionPaneId
       // 返回 null），不会误投。
       const sentBeforeA2 = ws.sent.length;
       const sentBeforeB2 = wsB.sent.length;
@@ -196,13 +192,11 @@ describe('issue45 cross-bug: bug 2 (transaction pane routing) x normal pane swit
       const kindsA2 = newSentA2.map(envelopeKind).filter((k) => k !== null) as number[];
       const kindsB2 = newSentB2.map(envelopeKind).filter((k) => k !== null) as number[];
 
-      // A 事务已 HISTORY_APPLIED（非 ACKED）→ getTransactionPaneId 返回 null → 走后续分支：
+      // A 事务已 STABLE（非 ACKED）→ getTransactionPaneId 返回 null → 走后续分支：
       // selectedPanes[%3] !== %1 → 不投递（无 pendingHistoryFetches）。
       expect(kindsA2).not.toContain(wsBorsh.KIND_TERM_HISTORY);
       expect(kindsB2).toContain(wsBorsh.KIND_TERM_HISTORY);
-      expect(sessionStateStore.getOrCreateSelectTransaction(wsB, 'device-a')?.state).toBe(
-        'HISTORY_APPLIED'
-      );
+      expect(sessionStateStore.getOrCreateSelectTransaction(wsB, 'device-a')?.state).toBe('STABLE');
     } finally {
       switchBarrier.cleanupClient(wsB);
       sessionStateStore.delete(wsB);

@@ -1,6 +1,11 @@
 // gateway transport 事件路由：按事件类型分发到独立 handler，替代单个大 switch。
 
-import { type DeferredClipboardWriter, createDeferredClipboardWriter, wsBorsh } from '@tmex/shared';
+import {
+  type DeferredClipboardWriter,
+  type EventDevicePayload,
+  createDeferredClipboardWriter,
+  wsBorsh,
+} from '@tmex/shared';
 import type { GatewayTransportEvent } from '@tmex/ws-client';
 import type { PaneSubscriptionManager } from './pane-subscriptions';
 import {
@@ -60,6 +65,12 @@ function disposeClipboardWriter(ctx: TmuxEventRouterContext): void {
   writer.dispose();
 }
 
+// 自动重连（error/reconnecting）与断开一样都会让 pane 的字节流出现缺口
+function isDeviceStreamInterruption(event: EventDevicePayload): boolean {
+  if (event.type === 'disconnected') return true;
+  return event.type === 'error' && event.errorType === 'reconnecting';
+}
+
 const handlers: TmuxEventHandlers = {
   'connection-state': (event, ctx) => {
     ctx.setState((prev) => ({
@@ -91,7 +102,7 @@ const handlers: TmuxEventHandlers = {
   },
 
   'device-disconnected': (event, ctx) => {
-    ctx.core.selectMachine().cleanup(event.deviceId);
+    ctx.selection.handleDeviceStreamInterrupted(event.deviceId);
     ctx.core.paneSinks.cleanupDevicePaneState(event.deviceId);
     ctx.setState((prev) => ({
       deviceConnected: { ...prev.deviceConnected, [event.deviceId]: false },
@@ -99,6 +110,11 @@ const handlers: TmuxEventHandlers = {
   },
 
   'device-event': (event, ctx) => {
+    // 自动重连只置 deviceReconnecting（deviceConnected 仍为 true），但流确实断了：
+    // 与断开同等对待，否则重连后旧事务还挂着，maybeReselectCurrentPane 会直接早退
+    if (isDeviceStreamInterruption(event.event)) {
+      ctx.selection.handleDeviceStreamInterrupted(event.event.deviceId);
+    }
     handleDeviceEvent(ctx, event.event);
     if (event.event.type === 'reconnected') {
       ctx.sendWindowStyleForCurrentTheme(event.event.deviceId);
@@ -151,6 +167,7 @@ const handlers: TmuxEventHandlers = {
       event.modes
     );
     if (routed) return;
+    ctx.selection.observeSelectHistory(event.deviceId, event.selectToken);
     ctx.core.selectMachine().dispatch({
       type: 'HISTORY',
       deviceId: event.deviceId,
@@ -162,6 +179,7 @@ const handlers: TmuxEventHandlers = {
   },
 
   'live-resume': (event, ctx) => {
+    ctx.selection.observeSelectLiveResume(event.deviceId, event.selectToken);
     ctx.core.selectMachine().dispatch({
       type: 'LIVE_RESUME',
       deviceId: event.deviceId,

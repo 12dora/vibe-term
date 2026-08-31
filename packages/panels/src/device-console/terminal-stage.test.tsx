@@ -1,4 +1,5 @@
-// 终端显示区的分支：快照确认 pane 已关闭时既不挂 Terminal 也不显示「连接中」遮罩。
+// 终端显示区的分支：快照确认 pane 已关闭时既不挂 Terminal 也不显示「连接中」遮罩，
+// 以及单屏保活池的可见/隐藏结构。
 // bun test 无 DOM，用 react-dom/server 静态渲染断言首帧结构（与 device-row.test.tsx 同一套做法）。
 
 import { describe, expect, test } from 'bun:test';
@@ -13,7 +14,7 @@ import { createRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';
 import { MemoryRouter } from 'react-router';
-import { TerminalStage } from './terminal-stage';
+import { KeepAlivePaneSlot, TerminalStage } from './terminal-stage';
 import type { DevicePaneSelection } from './use-device-pane-selection';
 
 installWindowStorage();
@@ -39,6 +40,15 @@ const window1: TmuxWindow = {
   panes: [pane('%1')],
 };
 
+const splitWindow: TmuxWindow = {
+  id: '@1',
+  name: 'shell',
+  index: 0,
+  active: true,
+  layout: 'abcd,80x24,0,0[80x12,0,0,1,80x11,0,13,2]',
+  panes: [pane('%1'), pane('%2')],
+};
+
 function selection(overrides: Partial<DevicePaneSelection> = {}): DevicePaneSelection {
   return {
     isWindowMissing: false,
@@ -61,6 +71,8 @@ let storageSeq = 0;
 function renderStage(options: {
   selectedPane?: TmuxPane;
   selection: DevicePaneSelection;
+  resolvedPaneId?: string;
+  selectedWindow?: TmuxWindow;
 }): string {
   const runtime = createAppRuntime({
     nodeId: 'self',
@@ -74,8 +86,8 @@ function renderStage(options: {
             <TerminalStage
               deviceId="dev-1"
               windowId="@1"
-              resolvedPaneId="%1"
-              selectedWindow={window1}
+              resolvedPaneId={options.resolvedPaneId ?? '%1'}
+              selectedWindow={options.selectedWindow ?? window1}
               selectedPane={options.selectedPane}
               selection={options.selection}
               deviceConnected
@@ -119,5 +131,53 @@ describe('TerminalStage', () => {
       selection: selection({ isPaneMissing: true, isSelectionInvalid: true }),
     });
     expect(html).toContain('terminal-selection-invalid');
+  });
+
+  test('mounts a single keep-alive slot for the first pane of a device', () => {
+    const html = renderStage({ selectedPane: pane('%1'), selection: selection() });
+    expect(html.match(/data-testid="terminal-keep-alive-pane"/g)).toHaveLength(1);
+    expect(html).toContain('data-pane-id="%1"');
+    expect(html).toContain('data-visible="true"');
+    expect(html).not.toContain('visibility:hidden');
+  });
+
+  test('the split view renders no keep-alive slots', () => {
+    const html = renderStage({
+      selectedPane: pane('%1'),
+      selection: selection({ isSplitView: true }),
+      selectedWindow: splitWindow,
+    });
+    expect(html).toContain('split-terminal-area');
+    expect(html).not.toContain('terminal-keep-alive-pane');
+  });
+});
+
+// 池归组件实例所有，SSR 只渲染一帧拿不到多 pane 的树；槽位本身单独断言，
+// 多 pane 的池演进由 terminal-keep-alive.test.ts 覆盖。
+describe('KeepAlivePaneSlot', () => {
+  test('the visible slot is interactive and exposed to accessibility', () => {
+    const html = renderToStaticMarkup(
+      <KeepAlivePaneSlot paneId="%1" visible>
+        <span>pane</span>
+      </KeepAlivePaneSlot>
+    );
+    expect(html).toContain('data-pane-id="%1"');
+    expect(html).toContain('data-visible="true"');
+    expect(html).not.toContain('visibility:hidden');
+    expect(html).not.toContain('aria-hidden');
+  });
+
+  test('the hidden slot keeps its layout box but is inert', () => {
+    const html = renderToStaticMarkup(
+      <KeepAlivePaneSlot paneId="%2" visible={false}>
+        <span>pane</span>
+      </KeepAlivePaneSlot>
+    );
+    // absolute inset-0：与可见槽同一个盒子，隐藏实例的 cols/rows 才不会漂移
+    expect(html).toContain('absolute inset-0');
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain('visibility:hidden');
+    expect(html).toContain('pointer-events:none');
+    expect(html).not.toContain('data-visible');
   });
 });

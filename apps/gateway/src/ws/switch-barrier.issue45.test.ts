@@ -124,8 +124,6 @@ describe('issue-45 bug 2: broadcastTerminalHistory routes barrier history by tra
     const kinds = newSent.map(envelopeKind).filter((k) => k !== null) as number[];
     expect(kinds).toContain(wsBorsh.KIND_TERM_HISTORY);
 
-    expect(sessionStateStore.getOrCreateSelectTransaction(ws, 'device-a')?.state).toBe(
-      'HISTORY_APPLIED'
-    );
+    expect(sessionStateStore.getOrCreateSelectTransaction(ws, 'device-a')?.state).toBe('STABLE');
   });
 });

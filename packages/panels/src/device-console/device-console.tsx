@@ -37,6 +37,7 @@ export interface DeviceConsoleProps {
    *  返回完整 document.title；卸载时以 formatBrowserTitle(null) 复原。
    *  缺省沿用 buildBrowserTitle（`[siteName]label`）与 siteName 复原。 */
   formatBrowserTitle?: (label: string | null) => string;
+  /** 未提供时 prepareResources 返回 undefined，Terminal 启动路径据此免掉一次 await */
   prepareTerminalResources?: (fontId: string, fontSize: number) => Promise<void>;
   /** 宿主连接管理；未传时不显示主动断开占位 */
   connection?: DeviceConnectionAdapter;
@@ -94,7 +95,7 @@ export function DeviceConsole({
   );
 
   const prepareResources = useCallback(
-    () => prepareTerminalResources?.(terminalFontId, terminalFontSize) ?? Promise.resolve(),
+    () => prepareTerminalResources?.(terminalFontId, terminalFontSize),
     [prepareTerminalResources, terminalFontId, terminalFontSize]
   );
 

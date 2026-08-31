@@ -126,6 +126,10 @@ export class DataChannelCarrier implements Carrier {
     return 'sent';
   }
 
+  hasPendingWrites(): boolean {
+    return this.remainder !== null || this.bufferedAmount() > DC_HIGH_WATER_BYTES;
+  }
+
   bufferedAmount(): number {
     try {
       return this.channel.bufferedAmount();

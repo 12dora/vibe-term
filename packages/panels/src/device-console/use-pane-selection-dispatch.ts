@@ -9,15 +9,9 @@ import type { PaneSelection, TerminalRef, TerminalSizeSnapshot } from '@tmex/ter
 import { type RefObject, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { resolveCloseFallback } from './close-pane-fallback';
-import {
-  appendRecentSelectRequest,
-  resolveSnapshotSelectSize,
-  resolveSplitSelectSize,
-} from './pane-selection-rules';
+import { isRetainedPane } from './terminal-keep-alive';
 import type { PaneSelectionRefs } from './use-pane-selection-state';
-
-const RECENT_SELECT_REQUEST_TTL_MS = 2000;
-const RECENT_SELECT_REQUEST_LIMIT = 8;
+import { useSelectRequest } from './use-select-request';
 
 export interface PaneSelectionDispatch {
   navigateToPane: (deviceId: string, windowId: string, paneId: string) => void;
@@ -68,7 +62,7 @@ export function usePaneSelectionDispatch({
   const selectPane = useTmuxStore((state) => state.selectPane);
   const closePane = useTmuxStore((state) => state.closePane);
 
-  const { isMobileRef, isSplitViewRef, recentSelectRequestsRef, userInitiatedSelectionRef } = refs;
+  const { isSplitViewRef, userInitiatedSelectionRef } = refs;
 
   // URL 点名的 pane：每次渲染同步成入参，并在导航时立刻更新。
   // 同一次点击里可能已经先发生过一次 navigate（焦点跟随），此时入参还停在上一帧的值，
@@ -93,47 +87,12 @@ export function usePaneSelectionDispatch({
     navigate(hostAppPath(runtime.host, '/devices'), { replace: true });
   }, [navigate, runtime.host]);
 
-  const getSelectSize = useCallback(
-    (targetWindowId?: string, targetPaneId?: string) => {
-      const terminal = terminalRef.current;
-
-      if (isSplitViewRef.current) {
-        return resolveSplitSelectSize(
-          terminalContainerRef.current?.getBoundingClientRect(),
-          terminal?.getCellSize()
-        );
-      }
-
-      // 移动端不携带 select 尺寸：整窗尺寸由 stacked layout（多 pane）或
-      // Terminal ResizeObserver 的 sync 路径（单 pane）异步驱动，
-      // select 只负责切焦点 + 拉 history，不主动 resize
-      if (isMobileRef.current) return undefined;
-
-      const terminalSize =
-        terminal?.calculateSizeFromContainer() ?? terminal?.getSize() ?? undefined;
-      if (terminalSize) {
-        return terminalSize;
-      }
-
-      return resolveSnapshotSelectSize({
-        windows,
-        windowId: targetWindowId,
-        paneId: targetPaneId,
-      });
-    },
-    [isMobileRef, isSplitViewRef, terminalContainerRef, terminalRef, windows]
-  );
-
-  const recordSelectRequest = useCallback(
-    (targetWindowId: string, targetPaneId: string) => {
-      recentSelectRequestsRef.current = appendRecentSelectRequest(
-        recentSelectRequestsRef.current,
-        { windowId: targetWindowId, paneId: targetPaneId, at: Date.now() },
-        { ttlMs: RECENT_SELECT_REQUEST_TTL_MS, limit: RECENT_SELECT_REQUEST_LIMIT }
-      );
-    },
-    [recentSelectRequestsRef]
-  );
+  const { getSelectSize, recordSelectRequest } = useSelectRequest({
+    windows,
+    terminalRef,
+    terminalContainerRef,
+    refs,
+  });
 
   // 跟随一个新的 active 目标：下发 select（分屏内同 window 除外，交给 select effect 走
   // 轻量 FOCUS_PANE）并把路由改写过去。
@@ -144,7 +103,14 @@ export function usePaneSelectionDispatch({
       if (!splitSameWindow) {
         const size = getSelectSize(target.windowId, target.paneId);
         recordSelectRequest(target.windowId, target.paneId);
-        selectPane(targetDeviceId, target.windowId, target.paneId, size);
+        const warm = isRetainedPane(targetDeviceId, target.paneId);
+        selectPane(
+          targetDeviceId,
+          target.windowId,
+          target.paneId,
+          size,
+          warm ? { warm: true } : undefined
+        );
       }
       navigateToPane(targetDeviceId, target.windowId, target.paneId);
     },

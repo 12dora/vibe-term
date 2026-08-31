@@ -39,7 +39,7 @@ export interface SplitTerminalAreaProps {
   /** window 级尺寸上报（resize-window 语义），复用单 pane 的 KIND_TERM_RESIZE 通道 */
   onWindowResize: (cols: number, rows: number) => void;
   onWindowResizeSettled?: (cols: number, rows: number) => void;
-  prepareResources?: () => Promise<void>;
+  prepareResources?: () => Promise<void> | void;
 }
 
 export function SplitTerminalArea({

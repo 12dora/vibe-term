@@ -5,6 +5,7 @@ import {
   TerminalResizeReporter,
   shouldAttemptResizeReport,
 } from './terminal-resize-reporter';
+import { TerminalResizeScheduler } from './terminal-resize-scheduler';
 
 interface FakeTerminal {
   cols: number;
@@ -47,17 +48,46 @@ interface Harness {
   events: Array<{ kind: string; cols: number; rows: number }>;
   setRect: (rect: { width: number; height: number } | null) => void;
   setNow: (value: number) => void;
+  setGate: (gate: TerminalResizeGate) => void;
+}
+
+function createManualTimers() {
+  const tasks: Array<() => void> = [];
+  return {
+    timers: {
+      setTimeout: (handler: () => void) => {
+        tasks.push(handler);
+        return tasks.length;
+      },
+      clearTimeout: () => {},
+      requestAnimationFrame: (handler: () => void) => {
+        tasks.push(handler);
+        return tasks.length;
+      },
+      cancelAnimationFrame: () => {},
+    },
+    runAll(): void {
+      while (tasks.length > 0) {
+        const run = tasks.shift();
+        run?.();
+      }
+    },
+  };
 }
 
 function createHarness(options: { proposer?: ResizeDimensionProposer | null } = {}): Harness {
   const terminal = createTerminal();
   const events: Array<{ kind: string; cols: number; rows: number }> = [];
-  const state = { rect: { width: 800, height: 480 } as { width: number; height: number } | null };
+  const state = {
+    rect: { width: 800, height: 480 } as { width: number; height: number } | null,
+    gate: GATE as TerminalResizeGate,
+  };
   const clock = { now: 1_000 };
   const proposer =
     options.proposer === undefined ? { proposeDimensions: () => null } : options.proposer;
 
   const reporter = new TerminalResizeReporter({
+    getGate: () => state.gate,
     getTerminal: () => terminal,
     getProposer: () => proposer,
     getContainerRect: () => state.rect,
@@ -78,6 +108,9 @@ function createHarness(options: { proposer?: ResizeDimensionProposer | null } = 
     },
     setNow: (value) => {
       clock.now = value;
+    },
+    setGate: (gate) => {
+      state.gate = gate;
     },
   };
 }
@@ -253,5 +286,61 @@ describe('TerminalResizeReporter.report', () => {
     expect(harness.reporter.report({ kind: 'resize', gate: GATE })).toBe(false);
     expect(harness.events).toEqual([]);
     expect(harness.reporter.report({ kind: 'resize', force: true, gate: GATE })).toBe(true);
+  });
+
+  test('local 模式对齐本地行列但不上报、不记账', () => {
+    const harness = createHarness();
+    const gate = { ...GATE, sizingMode: 'local' } as const;
+    harness.setRect({ width: 900, height: 500 });
+
+    expect(harness.reporter.report({ kind: 'sync', gate })).toBe(true);
+    expect(harness.terminal.resizes).toEqual([{ cols: 90, rows: 25 }]);
+    expect(harness.events).toEqual([]);
+    expect(harness.reporter.lastReportedSize.current).toBeNull();
+    expect(harness.reporter.pendingLocalSize.current).toBeNull();
+  });
+
+  test('measure 记录容器像素尺寸供 ResizeObserver 首帧去重', () => {
+    const harness = createHarness();
+    expect(harness.reporter.lastMeasuredRect.current).toBeNull();
+
+    harness.reporter.report({ kind: 'resize', gate: GATE });
+    expect(harness.reporter.lastMeasuredRect.current).toEqual({ width: 800, height: 480 });
+  });
+
+  test('闸门在执行时取：排队后切成 local 的任务不再上报', () => {
+    const harness = createHarness();
+    const timers = createManualTimers();
+    const scheduler = new TerminalResizeScheduler(timers.timers, { debounceMs: 150 });
+
+    harness.setRect({ width: 900, height: 500 });
+    harness.setGate({ ...GATE, sizingMode: 'report' });
+    scheduler.schedule(() => harness.reporter.report({ kind: 'resize' }));
+
+    // 任务还在防抖队列里，实例已经被切到后台（保活池的隐藏实例）
+    harness.setGate({ ...GATE, sizingMode: 'local' });
+    timers.runAll();
+
+    expect(harness.events).toEqual([]);
+    // 本地行列仍然对齐，只是不上报
+    expect(harness.terminal.resizes).toEqual([{ cols: 90, rows: 25 }]);
+  });
+
+  test('排队时是 local、执行时已切回 report 则照常上报', () => {
+    const harness = createHarness();
+    const timers = createManualTimers();
+    const scheduler = new TerminalResizeScheduler(timers.timers, { debounceMs: 150 });
+
+    harness.setRect({ width: 900, height: 500 });
+    harness.setGate({ ...GATE, sizingMode: 'local' });
+    scheduler.schedule(() => harness.reporter.report({ kind: 'resize' }));
+
+    harness.setGate({ ...GATE, sizingMode: 'report' });
+    timers.runAll();
+
+    expect(harness.events).toEqual([
+      { kind: 'resize', cols: 90, rows: 25 },
+      { kind: 'settled', cols: 90, rows: 25 },
+    ]);
   });
 });

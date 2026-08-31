@@ -323,6 +323,7 @@ function createPipeline(): PipelineHarness {
   };
 
   const reporter = new TerminalResizeReporter({
+    getGate: () => GATE,
     getTerminal: () => terminal,
     getProposer: () => ({ proposeDimensions: () => null }),
     getContainerRect: () => state.rect,

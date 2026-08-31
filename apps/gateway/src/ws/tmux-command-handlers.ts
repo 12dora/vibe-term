@@ -126,14 +126,27 @@ export function handleTmuxSelect(
   host.syncLegacyPaneObservers(session, deviceId);
   host.refreshSnapshotPolling(deviceId);
   switchBarrier.sendSwitchAck(session, deviceId);
+  applyTmuxSelection(entry.runtime, windowId, paneId, {
+    wantHistory: data.wantHistory,
+    cols: data.cols ?? null,
+    rows: data.rows ?? null,
+  });
+}
 
-  const cols = data.cols ?? null;
-  const rows = data.rows ?? null;
-  if (cols !== null && rows !== null) {
-    entry.runtime.selectPaneWithSize(windowId, paneId, cols, rows);
-  } else {
-    entry.runtime.selectPane(windowId, paneId);
+function applyTmuxSelection(
+  runtime: DeviceConnectionEntry['runtime'],
+  windowId: string,
+  paneId: string,
+  opts: { wantHistory: boolean; cols: number | null; rows: number | null }
+): void {
+  const sized = opts.cols !== null && opts.rows !== null;
+  if (!opts.wantHistory) {
+    runtime.focusPane(windowId, paneId);
+    if (sized) runtime.resizePane(paneId, opts.cols as number, opts.rows as number);
+    return;
   }
+  if (sized) runtime.selectPaneWithSize(windowId, paneId, opts.cols as number, opts.rows as number);
+  else runtime.selectPane(windowId, paneId);
 }
 
 export function handleTmuxSelectWindow(
