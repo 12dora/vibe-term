@@ -25,6 +25,7 @@ import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserKeyService } from '../auth/user-key-service';
 import { UserStore } from '../auth/user-store';
+import { MemoryLocalAuthStore } from '../db/local-auth-settings';
 import type { AuthKeyLogPublisher } from './auth-routes';
 import {
   type MeshRtcDeps,
@@ -197,13 +198,21 @@ export async function bootMesh(options?: {
   selfName?: () => string | null;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   streamLog?: (line: string) => void;
+  skipUserBootstrap?: boolean;
 }) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
   const keyLogStore = new KeyLogStore(db);
   const nodeSessionStore = new NodeSessionStore(db);
   const keyLogService = new UserKeyService({ db, userStore, keyLogStore, nodeSessionStore });
-  const boot = await keyLogService.bootstrapUser({ username: 'alice', password: PASSWORD });
+  const boot = options?.skipUserBootstrap
+    ? ({
+        userId: '',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 0,
+        rootKey: { publicKey: new Uint8Array(32), secretKey: new Uint8Array(64) },
+      } as unknown as Awaited<ReturnType<UserKeyService['bootstrapUser']>>)
+    : await keyLogService.bootstrapUser({ username: 'alice', password: PASSWORD });
   const challengeStore = new ChallengeStore({ now: options?.now });
   const peers = options?.peers ?? new FakePeers();
   const streams = options?.streams ?? new FakeStreams();
@@ -225,7 +234,7 @@ export async function bootMesh(options?: {
     },
     rtc: options?.rtc,
     now: options?.now,
-    primaryUserId: boot.userId,
+    primaryUserId: boot.userId || undefined,
     selfStatus: options?.selfStatus,
     listedNames: options?.listedNames,
     selfName: options?.selfName,
@@ -459,10 +468,186 @@ describe('auth-routes', () => {
     const standalone = await bootMesh({ roles: { hub: false, node: false } });
     try {
       const res = await call(standalone.runtime, 'http://localhost/api/auth/mode');
-      const body = (await res.json()) as { mode: string };
+      const body = (await res.json()) as { mode: string; localAuth?: { supported: boolean } };
       expect(body.mode).toBe('none');
+      expect(body.localAuth?.supported).toBe(true);
     } finally {
       standalone.close();
+    }
+  });
+
+  test('GET /api/auth/mode standalone+effective 返回 mesh 载荷与 localAuth', async () => {
+    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    try {
+      const store = new MemoryLocalAuthStore();
+      store.setEnabled(true);
+      mesh.runtime.auth.setLocalAuthStore(store);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/mode', {
+        headers: { origin: 'http://localhost:19663' },
+      });
+      const body = (await res.json()) as {
+        mode: string;
+        nodeId: string;
+        uid: string;
+        username: string;
+        localAuth: {
+          supported: boolean;
+          enabled: boolean;
+          effective: boolean;
+          credentialsPresent: boolean;
+        };
+      };
+      expect(body.mode).toBe('mesh');
+      expect(body.nodeId).toBe(NODE_ID);
+      expect(body.username).toBe('alice');
+      expect(body.uid).toBe(mesh.boot.userId);
+      expect(body.localAuth).toEqual({
+        supported: true,
+        enabled: true,
+        effective: true,
+        credentialsPresent: true,
+      });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/auth/mode node 角色 localAuth.supported=false', async () => {
+    const mesh = await bootMesh();
+    try {
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      const body = (await res.json()) as {
+        mode: string;
+        localAuth: { supported: boolean; effective: boolean };
+      };
+      expect(body.mode).toBe('mesh');
+      expect(body.localAuth.supported).toBe(false);
+      expect(body.localAuth.effective).toBe(false);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST /api/auth/local 无凭证拒绝开启；bootstrap 后可开；公网拒绝', async () => {
+    const mesh = await bootMesh({
+      roles: { hub: false, node: false },
+      skipUserBootstrap: true,
+    });
+    try {
+      const store = new MemoryLocalAuthStore();
+      mesh.runtime.auth.setLocalAuthStore(store);
+      const enable = await call(mesh.runtime, 'http://localhost/api/auth/local', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+        clientIp: '127.0.0.1',
+      });
+      expect(enable.status).toBe(409);
+      expect((await enable.json()).code).toBe('CREDENTIALS_REQUIRED');
+
+      const remoteBoot = await call(mesh.runtime, 'http://localhost/api/auth/local/bootstrap', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'owner', password: 'tmex-test' }),
+        clientIp: '8.8.8.8',
+      });
+      expect(remoteBoot.status).toBe(403);
+      expect((await remoteBoot.json()).code).toBe('LOCAL_ONLY');
+
+      const boot = await call(mesh.runtime, 'http://localhost/api/auth/local/bootstrap', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'owner', password: 'tmex-test' }),
+        clientIp: '127.0.0.1',
+      });
+      expect(boot.status).toBe(200);
+      const bootBody = (await boot.json()) as {
+        localAuth: {
+          supported: boolean;
+          credentialsPresent: boolean;
+          effective: boolean;
+          enabled: boolean;
+        };
+      };
+      expect(bootBody.localAuth).toEqual({
+        supported: true,
+        enabled: false,
+        effective: false,
+        credentialsPresent: true,
+      });
+
+      const remoteEnable = await call(mesh.runtime, 'http://localhost/api/auth/local', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+        clientIp: '8.8.8.8',
+      });
+      expect(remoteEnable.status).toBe(403);
+
+      const ok = await call(mesh.runtime, 'http://localhost/api/auth/local', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+        clientIp: '127.0.0.1',
+      });
+      expect(ok.status).toBe(200);
+      const enabled = (await ok.json()) as {
+        localAuth: { effective: boolean; enabled: boolean };
+      };
+      expect(enabled.localAuth.enabled).toBe(true);
+      expect(enabled.localAuth.effective).toBe(true);
+
+      const again = await call(mesh.runtime, 'http://localhost/api/auth/local/bootstrap', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'eve', password: 'tmex-test' }),
+        clientIp: '127.0.0.1',
+      });
+      expect(again.status).toBe(409);
+      expect((await again.json()).code).toBe('LOCAL_AUTH_ENABLED');
+
+      const mode = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      const modeBody = (await mode.json()) as { mode: string; uid: string };
+      expect(modeBody.mode).toBe('mesh');
+      expect(modeBody.uid).toBeTruthy();
+      const { sid } = await challengeAndLogin(mesh.runtime, {
+        userId: modeBody.uid,
+        rootKey: (
+          await mesh.keyLogService.bootstrapUser({ username: 'owner', password: 'tmex-test' })
+        ).rootKey,
+      });
+      expect(sid).toBeTruthy();
+      const disable = await call(mesh.runtime, 'http://localhost/api/auth/local', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({ enabled: false }),
+        clientIp: '8.8.8.8',
+      });
+      expect(disable.status).toBe(200);
+      expect(
+        ((await disable.json()) as { localAuth: { effective: boolean } }).localAuth.effective
+      ).toBe(false);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST /api/auth/local node 角色 404', async () => {
+    const mesh = await bootMesh();
+    try {
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/local', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+        clientIp: '127.0.0.1',
+      });
+      expect(res.status).toBe(404);
+      expect((await res.json()).code).toBe('not_standalone');
+    } finally {
+      mesh.close();
     }
   });
 

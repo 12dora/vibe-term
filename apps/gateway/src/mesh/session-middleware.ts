@@ -29,18 +29,25 @@ export type SessionMiddlewareDeps = {
   nodeSessionStore: NodeSessionStore;
   now?: () => number;
   trustProxy?: boolean;
+  /** standalone 下本机登录门是否已生效；缺省视为未生效（保持历史短路）。 */
+  localAuthEffective?: () => boolean;
 };
 
 export type AuthedHandler = (req: Request, auth: AuthenticateOk) => Promise<Response> | Response;
+
+function standaloneOpenBypass(deps: SessionMiddlewareDeps): AuthenticateOk | null {
+  if (!isStandaloneRoles(deps.roles)) return null;
+  if (deps.localAuthEffective?.()) return null;
+  return { ok: true, userId: null, session: null, sid: null };
+}
 
 export function authenticateRequest(
   req: Request,
   deps: SessionMiddlewareDeps,
   viaOverride?: string
 ): AuthenticateResult {
-  if (isStandaloneRoles(deps.roles)) {
-    return { ok: true, userId: null, session: null, sid: null };
-  }
+  const bypass = standaloneOpenBypass(deps);
+  if (bypass) return bypass;
   const dispatch = requestDispatchContext.get(req);
   const ctx = getMeshRequestContext(req);
   const via = viaOverride ?? dispatch?.viaNodeId ?? ctx.via ?? MESH_VIA_SELF;

@@ -16,6 +16,7 @@ import type {
 import { PROCESS_STARTED_AT } from '../api/system-routes';
 import { config, originUrlFromBindHost } from '../config';
 import { getDb as getOrmDb } from '../db/client';
+import { defaultLoginEnforced } from '../db/local-auth-settings';
 import { CloudflareAccessClient, type TunnelFetch, sanitizeAccessMessage } from './access-client';
 import { setAccessGuardSource, setAccessJwtVerifier } from './access-guard';
 import { AccessJwtVerifier } from './access-jwt';
@@ -60,7 +61,6 @@ import {
 } from './provider';
 import { type Spawner, bunSpawner, consumeLines } from './spawn';
 import { TunnelSupervisor } from './supervisor';
-
 type PatchHostEnv = (trustProxy: boolean) => Promise<void>;
 type ReadHostEnv = () => Promise<boolean | null>;
 
@@ -198,7 +198,7 @@ export class TunnelManager {
     this.configuredTrustProxy = opts.configuredTrustProxy ?? this.trustProxy;
     this.restartRequired = this.configuredTrustProxy !== this.trustProxy;
     this.probeVersionOnStart = opts.probeVersionOnStart ?? false;
-    this.loginEnforcedFn = opts.loginEnforced ?? (() => config.roles.hub || config.roles.node);
+    this.loginEnforcedFn = opts.loginEnforced ?? (() => defaultLoginEnforced());
     this.hasMeshRole = opts.hasMeshRole ?? (config.roles.hub || config.roles.node);
     this.warn = opts.warn ?? ((message) => console.warn(message));
     this.accessStore =

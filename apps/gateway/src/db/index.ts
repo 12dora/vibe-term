@@ -34,6 +34,14 @@ export {
 } from './device-folders';
 
 export { getGatewayKv, setGatewayKv } from './kv';
+export {
+  LocalAuthStore,
+  MemoryLocalAuthStore,
+  buildLocalAuthStatus,
+  defaultLoginEnforced,
+  readLocalAuthEffective,
+} from './local-auth-settings';
+export type { LocalAuthStoreLike } from './local-auth-settings';
 
 export {
   ensureSiteSettingsInitialized,

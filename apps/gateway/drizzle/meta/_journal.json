@@ -218,6 +218,13 @@
       "when": 1788098400000,
       "tag": "0030_tunnel_access_bypass",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1788141745570,
+      "tag": "0031_luxuriant_colossus",
+      "breakpoints": true
     }
   ]
 }

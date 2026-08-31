@@ -31,6 +31,12 @@ const MIGRATIONS = [
   '0023_acme_account_directory.sql',
   '0024_narrow_tomas.sql',
   '0025_flat_device_groups.sql',
+  '0026_acoustic_roughhouse.sql',
+  '0027_tunnel_config.sql',
+  '0028_magical_doctor_doom.sql',
+  '0029_tunnel_access.sql',
+  '0030_tunnel_access_bypass.sql',
+  '0031_luxuriant_colossus.sql',
 ] as const;
 
 export interface MaterializedMigrations {

@@ -31,8 +31,19 @@ import {
   verifyRegistration,
 } from '../auth/passkey';
 import type { UserKeyService } from '../auth/user-key-service';
-import { kdfParamsFromJson } from '../auth/user-key-service';
 import type { UserKeyRecord, UserRecord, UserStore } from '../auth/user-store';
+import {
+  handleLocalAuthBootstrap,
+  handleLocalAuthToggle,
+  isLocalAuthEffective,
+  localAuthPayload,
+  meshAuthModeUserFields,
+} from '../db/local-auth-http';
+import {
+  LocalAuthStore,
+  type LocalAuthStoreLike,
+  standaloneClosedModeFields,
+} from '../db/local-auth-settings';
 import {
   type HubTlsInfoProvider,
   type KeyLogHubAck,
@@ -82,6 +93,7 @@ export type AuthRoutesDeps = {
   onLogout?: (userId: string) => void;
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
   tlsInfo?: HubTlsInfoProvider;
+  localAuth?: LocalAuthStoreLike;
 };
 
 export class AuthRoutes {
@@ -89,12 +101,15 @@ export class AuthRoutes {
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly verifyPasskey: VerifyDelegationPasskey;
   private tlsInfoProvider: HubTlsInfoProvider | undefined;
+  private localAuth: LocalAuthStoreLike;
 
   constructor(private readonly deps: AuthRoutesDeps) {
+    this.localAuth = deps.localAuth ?? new LocalAuthStore();
     this.sessionDeps = {
       roles: deps.roles,
       nodeSessionStore: deps.nodeSessionStore,
       now: deps.now,
+      localAuthEffective: () => isLocalAuthEffective(this.localAuthCtx()),
     };
     this.verifyPasskey =
       deps.verifyDelegationPasskey ?? makeVerifyDelegationPasskey(deps.userStore);
@@ -103,6 +118,10 @@ export class AuthRoutes {
 
   setTlsInfo(provider: HubTlsInfoProvider | undefined): void {
     this.tlsInfoProvider = provider;
+  }
+
+  setLocalAuthStore(store: LocalAuthStoreLike): void {
+    this.localAuth = store;
   }
 
   async handle(req: Request): Promise<Response | null> {
@@ -123,6 +142,8 @@ export class AuthRoutes {
       'GET /api/auth/keylog/head': () => session((_r, uid) => this.handleKeyLogHead(uid)),
       'GET /api/auth/passkeys': () => session((r, uid) => this.handlePasskeys(r, uid)),
       'POST /api/auth/keylog': () => session((r, uid) => this.handleKeyLog(r, uid)),
+      'POST /api/auth/local': () => handleLocalAuthToggle(req, this.localAuthCtx()),
+      'POST /api/auth/local/bootstrap': () => handleLocalAuthBootstrap(req, this.localAuthCtx()),
     };
     const run = routes[`${req.method} ${path}`];
     if (run) return run();
@@ -133,43 +154,32 @@ export class AuthRoutes {
   private async handleMode(req: Request): Promise<Response> {
     const origin = requestOrigin(req);
     const tls = (await this.tlsInfoProvider?.()) ?? { caFingerprint: null, caPem: null };
+    const localAuth = localAuthPayload(this.localAuthCtx());
     const shared = {
       nodeId: this.deps.nodeId,
       passkeyAvailable: isPasskeyAvailable(origin),
       caFingerprint: tls.caFingerprint,
+      localAuth,
     };
-    if (isStandaloneRoles(this.deps.roles)) {
-      return jsonBody({
-        ...shared,
-        mode: 'none',
-        uid: null,
-        username: null,
-        kdfParams: null,
-        passkeysForThisOrigin: false,
-        totpEnabled: false,
-        rootEpoch: null,
-        rootPublicKey: null,
-        hubNodeId: null,
-        hubPublicUrl: null,
-      });
+    const closed = isStandaloneRoles(this.deps.roles) && !localAuth.effective;
+    if (closed) {
+      return jsonBody({ ...shared, ...standaloneClosedModeFields() });
     }
     const user = findPrimaryUser(this.deps.userStore, this.deps.primaryUserId);
-    const hub = this.resolveHub();
     return jsonBody({
       ...shared,
-      mode: 'mesh',
-      uid: user?.id ?? null,
-      username: user?.username ?? null,
-      kdfParams: user ? publicKdfParams(user.kdfParamsJson) : null,
-      passkeysForThisOrigin: user
-        ? this.deps.userStore.listKeysByUser(user.id).some((k) => k.origin === origin)
-        : false,
-      totpEnabled: user?.totpRecordSeq != null,
-      rootEpoch: user?.rootEpoch ?? null,
-      rootPublicKey: user ? encodeBase64url(user.rootPublicKey) : null,
-      hubNodeId: hub.nodeId,
-      hubPublicUrl: hub.publicUrl,
+      ...meshAuthModeUserFields(user, origin, this.deps.userStore, this.resolveHub()),
     });
+  }
+
+  private localAuthCtx() {
+    return {
+      roles: this.deps.roles,
+      userStore: this.deps.userStore,
+      keyLogService: this.deps.keyLogService,
+      localAuth: this.localAuth,
+      sessionDeps: this.sessionDeps,
+    };
   }
 
   private handlePublicNodes(): Response {
@@ -770,7 +780,7 @@ export function findPrimaryUser(store: UserStore, primaryUserId?: string): UserR
     const user = store.getById(node.userId);
     if (user) return user;
   }
-  return null;
+  return store.listUsers()[0] ?? null;
 }
 
 export function requestOrigin(req: Request): string {
@@ -801,21 +811,6 @@ export function isPasskeyAvailable(origin: string): boolean {
 function seqToJson(seq: bigint | number): number | string {
   const value = typeof seq === 'bigint' ? seq : BigInt(seq);
   return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value.toString();
-}
-
-function publicKdfParams(jsonStr: string): {
-  salt: string;
-  memory_kib: number;
-  iterations: number;
-  parallelism: number;
-} {
-  const params = kdfParamsFromJson(jsonStr);
-  return {
-    salt: encodeBase64url(params.salt),
-    memory_kib: params.memory_kib,
-    iterations: params.iterations,
-    parallelism: params.parallelism,
-  };
 }
 
 function credentialIdBytes(id: string | null): Uint8Array | null {

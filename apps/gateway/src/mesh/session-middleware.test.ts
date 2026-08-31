@@ -28,6 +28,71 @@ describe('session-middleware', () => {
     }
   });
 
+  test('standalone + localAuthEffective 无 cookie → 拒绝', async () => {
+    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    try {
+      const req = new Request('http://localhost/api/devices');
+      const auth = authenticateRequest(req, {
+        roles: { hub: false, node: false },
+        nodeSessionStore: mesh.nodeSessionStore,
+        localAuthEffective: () => true,
+      });
+      expect(auth.ok).toBe(false);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('standalone + enabled 但未生效仍短路', async () => {
+    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    try {
+      const req = new Request('http://localhost/api/devices');
+      const auth = authenticateRequest(req, {
+        roles: { hub: false, node: false },
+        nodeSessionStore: mesh.nodeSessionStore,
+        localAuthEffective: () => false,
+      });
+      expect(auth.ok).toBe(true);
+      if (auth.ok) expect(auth.userId).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('standalone + effective 校验 cookie 会话', async () => {
+    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const req = new Request('http://localhost/api/devices', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const auth = authenticateRequest(req, {
+        roles: { hub: false, node: false },
+        nodeSessionStore: mesh.nodeSessionStore,
+        localAuthEffective: () => true,
+      });
+      expect(auth.ok).toBe(true);
+      if (auth.ok) expect(auth.userId).toBe(mesh.boot.userId);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('node 角色不因 localAuthEffective=false 而短路', async () => {
+    const mesh = await bootMesh({ roles: { hub: false, node: true } });
+    try {
+      const req = new Request('http://localhost/api/devices');
+      const auth = authenticateRequest(req, {
+        roles: { hub: false, node: true },
+        nodeSessionStore: mesh.nodeSessionStore,
+        localAuthEffective: () => false,
+      });
+      expect(auth.ok).toBe(false);
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('local cookie session + renewal header after throttle window', async () => {
     let now = Date.now();
     const mesh = await bootMesh({ now: () => now });

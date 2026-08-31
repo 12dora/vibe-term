@@ -489,6 +489,15 @@ describe('TunnelManager', () => {
     expect(status.loginEnforced).toBe(true);
   });
 
+  test('loginEnforcedFn 每次 status 都 live 读取，不是构造快照', async () => {
+    let effective = false;
+    const ctx = await setup({ loginEnforced: () => effective });
+    dirs.push(ctx.dir);
+    expect(ctx.manager.status().loginEnforced).toBe(false);
+    effective = true;
+    expect(ctx.manager.status().loginEnforced).toBe(true);
+  });
+
   test('configure_access creates app, replaces policy, and enables JWT', async () => {
     let allowPolicy: Record<string, unknown> | null = null;
     const ctx = await setup({

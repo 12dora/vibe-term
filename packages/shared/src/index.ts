@@ -70,6 +70,7 @@ export * from './contracts/agent';
 export * from './contracts/watch';
 export * from './contracts/files';
 export * from './contracts/device-folders';
+export * from './contracts/local-auth';
 export * from './device-folders';
 
 // ==================== 运行时模块再导出 ====================

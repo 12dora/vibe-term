@@ -734,6 +734,16 @@ export const tunnelConfig = sqliteTable(
   ]
 );
 
+export const localAuthSettings = sqliteTable(
+  'local_auth_settings',
+  {
+    id: text('id').primaryKey(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [check('local_auth_settings_singleton_check', sql`${table.id} = 'default'`)]
+);
+
 export const tunnelAccess = sqliteTable(
   'tunnel_access',
   {
@@ -766,3 +776,4 @@ export type TlsConfigRow = typeof tlsConfig.$inferSelect;
 export type HubTrustRow = typeof hubTrust.$inferSelect;
 export type TunnelConfigRow = typeof tunnelConfig.$inferSelect;
 export type TunnelAccessRow = typeof tunnelAccess.$inferSelect;
+export type LocalAuthSettingsRow = typeof localAuthSettings.$inferSelect;
