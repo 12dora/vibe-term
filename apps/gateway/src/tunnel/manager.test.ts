@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { CloudflareAccessClient } from './access-client';
 import { MemoryTunnelAccessStore } from './access-store';
 import { MemoryTunnelConfigStore } from './config-store';
 import { FakeSpawner, argsInclude } from './fake-spawn';
@@ -28,6 +30,7 @@ async function waitState(manager: TunnelManager, state: string, timeoutMs = 2_00
 
 async function setup(overrides: ConstructorParameters<typeof TunnelManager>[0] = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'tmex-tun-'));
+  const homeDir = await mkdtemp(join(tmpdir(), 'tmex-tun-home-'));
   const spawner = new FakeSpawner();
   spawner.on((s) => argsInclude(s, '--version'), {
     stdout: 'cloudflared version 2025.8.1 (built 2025-08-01T00:00:00Z)\n',
@@ -35,6 +38,7 @@ async function setup(overrides: ConstructorParameters<typeof TunnelManager>[0] =
   const store = new MemoryTunnelConfigStore();
   const manager = new TunnelManager({
     tunnelDir: dir,
+    homeDir,
     originPort: 19883,
     platform: 'linux',
     arch: 'arm64',
@@ -57,12 +61,13 @@ async function setup(overrides: ConstructorParameters<typeof TunnelManager>[0] =
       listProcesses: async () => '',
       readFile: async () => null,
       listDir: async () => [],
-      homedir: () => '/no-home',
+      homedir: () => homeDir,
       platform: 'linux',
     },
     ...overrides,
   });
-  return { dir, spawner, store, manager };
+  dirs.push(homeDir);
+  return { dir, homeDir, spawner, store, manager };
 }
 
 const dirs: string[] = [];
@@ -990,5 +995,174 @@ describe('TunnelManager', () => {
     });
     expect(okEnforce.httpStatus).toBe(200);
     expect(ctx.manager.status().access.enforceJwt).toBe(false);
+  });
+
+  test('login succeeds when cert appears at default ~/.cloudflared/cert.pem and copies it', async () => {
+    const ctx = await setup({ loginTimeoutMs: 2_000 });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, 'login'), {
+      hold: true,
+      stdout: 'https://dash.cloudflare.com/argotunnel\n',
+    });
+    await mkdir(join(ctx.homeDir, '.cloudflared'), { recursive: true });
+    await ctx.manager.handleAction({ action: 'login' });
+    const start = Date.now();
+    while (Date.now() - start < 1_000 && !ctx.manager.status().auth.loginUrl) {
+      await Bun.sleep(5);
+    }
+    await writeFile(join(ctx.homeDir, '.cloudflared', 'cert.pem'), 'DEFAULT-CERT', 'utf8');
+    ctx.spawner.lastHandle()?.exit(0);
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('done');
+    expect(ctx.manager.status().auth.loggedIn).toBe(true);
+    expect(await readFile(join(ctx.dir, 'cert.pem'), 'utf8')).toBe('DEFAULT-CERT');
+    expect(await readFile(join(ctx.homeDir, '.cloudflared', 'cert.pem'), 'utf8')).toBe(
+      'DEFAULT-CERT'
+    );
+    expect((await stat(join(ctx.dir, 'cert.pem'))).mode & 0o777).toBe(0o600);
+  });
+
+  test('create copies a pre-existing default cert into tunnelDir', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    await mkdir(join(ctx.homeDir, '.cloudflared'), { recursive: true });
+    await writeFile(join(ctx.homeDir, '.cloudflared', 'cert.pem'), 'DEFAULT-CERT', 'utf8');
+    expect(existsSync(join(ctx.dir, 'cert.pem'))).toBe(false);
+    expect(ctx.manager.status().auth.loggedIn).toBe(true);
+    ctx.spawner.once((s) => argsInclude(s, 'create'), {
+      stdout: 'Created tunnel tmex-remote with id 550e8400-e29b-41d4-a716-446655440000\n',
+    });
+    ctx.spawner.on((s) => argsInclude(s, 'dns'), { stdout: 'ok\n' });
+    ctx.spawner.on((s) => argsInclude(s, 'run'), {
+      hold: true,
+      stdout: 'Registered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'create', hostname: 'remote.example.com' });
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('done');
+    expect(await readFile(join(ctx.dir, 'cert.pem'), 'utf8')).toBe('DEFAULT-CERT');
+    expect(existsSync(join(ctx.homeDir, '.cloudflared', 'cert.pem'))).toBe(true);
+  });
+
+  test('detection credentials prefer accessStore over cert.pem and never persist the cert token', async () => {
+    const ingressCalls: Array<{ accountId: string; token: string }> = [];
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({ apiToken: 'store-tok', accountId: 'store-acct' });
+    const ctx = await setup({
+      accessStore,
+      accessClient: {
+        getTunnelIngress: async (accountId: string, apiToken: string) => {
+          ingressCalls.push({ accountId, token: apiToken });
+          return [{ hostname: 'from-store.example.com', service: 'http://127.0.0.1:19883' }];
+        },
+        getTunnel: async () => ({ id: 'tid', name: 'named' }),
+        listApps: async () => [],
+      } as unknown as CloudflareAccessClient,
+      externalDetectDeps: {
+        listProcesses: async () => '7 cloudflared tunnel run --token-file /tmp/token\n',
+        readFile: async (path) => {
+          if (path === '/tmp/token') {
+            return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
+          }
+          return null;
+        },
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    await mkdir(join(ctx.homeDir, '.cloudflared'), { recursive: true });
+    const pem = `-----BEGIN ARGO TUNNEL TOKEN-----\n${Buffer.from(
+      JSON.stringify({ zoneID: 'z', accountID: 'cert-acct', apiToken: 'cert-tok' })
+    ).toString('base64')}\n-----END ARGO TUNNEL TOKEN-----\n`;
+    await writeFile(join(ctx.homeDir, '.cloudflared', 'cert.pem'), pem, 'utf8');
+    await ctx.manager.refreshExternal();
+    expect(ctx.manager.status().external.hostnames).toEqual(['from-store.example.com']);
+    expect(ingressCalls).toEqual([{ accountId: 'acct', token: 'store-tok' }]);
+    expect(JSON.stringify(ctx.manager.status())).not.toContain('store-tok');
+    expect(JSON.stringify(ctx.manager.status())).not.toContain('cert-tok');
+  });
+
+  test('cert.pem ARGO token is a read-only fallback when accessStore is empty', async () => {
+    const ingressCalls: Array<{ accountId: string; token: string }> = [];
+    const ctx = await setup({
+      accessClient: {
+        getTunnelIngress: async (accountId: string, apiToken: string) => {
+          ingressCalls.push({ accountId, token: apiToken });
+          return [{ hostname: 'from-cert.example.com', service: 'http://127.0.0.1:19883' }];
+        },
+        getTunnel: async () => ({ id: 'tid', name: 'named' }),
+        listApps: async () => [],
+      } as unknown as CloudflareAccessClient,
+      externalDetectDeps: {
+        listProcesses: async () => '7 cloudflared tunnel run --token-file /tmp/token\n',
+        readFile: async (path) => {
+          if (path === '/tmp/token') {
+            return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
+          }
+          return null;
+        },
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    await mkdir(join(ctx.homeDir, '.cloudflared'), { recursive: true });
+    const pem = `-----BEGIN ARGO TUNNEL TOKEN-----\n${Buffer.from(
+      JSON.stringify({ zoneID: 'z', accountID: 'cert-acct', apiToken: 'cert-tok' })
+    ).toString('base64')}\n-----END ARGO TUNNEL TOKEN-----\n`;
+    await writeFile(join(ctx.homeDir, '.cloudflared', 'cert.pem'), pem, 'utf8');
+    await ctx.manager.refreshExternal();
+    expect(ctx.manager.status().external.hostnames).toEqual(['from-cert.example.com']);
+    expect(ingressCalls).toEqual([{ accountId: 'acct', token: 'cert-tok' }]);
+    expect(ctx.manager.status().access.hasCredentials).toBe(false);
+  });
+
+  test('adopt_external accepts a token-mode tunnel discovered via escaped log + sibling hostname', async () => {
+    const inner = JSON.stringify({
+      ingress: [
+        { hostname: 'tmex.example.org', originRequest: {}, service: 'http://127.0.0.1:19883' },
+        { service: 'http_status:404' },
+      ],
+      'warp-routing': { enabled: false },
+    });
+    const escapedLog = JSON.stringify({
+      level: 'info',
+      version: 1,
+      config: inner,
+      time: '2026-08-31T00:00:00Z',
+      message: 'Updated to new configuration',
+    });
+    const ctx = await setup({
+      loginEnforced: () => false,
+      externalDetectDeps: {
+        listProcesses: async () =>
+          '1 cloudflared tunnel --logfile /tmp/cf.log --token-file /tmp/tmex-cf/token run\n',
+        readFile: async (path) => {
+          if (path === '/tmp/tmex-cf/token') {
+            return Buffer.from(JSON.stringify({ a: 'a', t: 'tid', s: 's' })).toString('base64');
+          }
+          if (path === '/tmp/tmex-cf/hostname') return 'tmex.example.org\n';
+          if (path === '/tmp/tmex-cf/tunnel-id') return 'tid\n';
+          if (path === '/tmp/cf.log') return `${escapedLog}\n`;
+          return null;
+        },
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    const adopt = await ctx.manager.handleAction({
+      action: 'adopt_external',
+      hostname: 'tmex.example.org',
+    });
+    expect(adopt.httpStatus).toBe(200);
+    const status = ctx.manager.status();
+    expect(status.config.externallyManaged).toBe(true);
+    expect(status.config.hostname).toBe('tmex.example.org');
+    expect(status.external.hostnames).toEqual(['tmex.example.org']);
   });
 });

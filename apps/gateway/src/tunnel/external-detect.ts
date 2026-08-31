@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { TunnelExternalStatus } from '@tmex/shared';
+import type { TunnelExternalAccessProbe, TunnelExternalStatus } from '@tmex/shared';
+import { normalizeTunnelHostname } from './hostname';
 
 export type ExternalProcess = { pid: number; command: string };
 
@@ -13,6 +14,14 @@ export type DetectedTunnel = TunnelExternalStatus & {
 };
 
 export type ExternalDetection = DetectedTunnel & { tokenAccountId: string | null };
+
+export const EMPTY_EXTERNAL_ACCESS: TunnelExternalAccessProbe = {
+  checked: false,
+  hostnameMatch: false,
+  appId: null,
+  aud: null,
+  teamDomain: null,
+};
 
 export const EMPTY_EXTERNAL: ExternalDetection = {
   detected: false,
@@ -28,6 +37,14 @@ export const EMPTY_EXTERNAL: ExternalDetection = {
   logFile: null,
   accountId: null,
   tokenAccountId: null,
+  externalAccess: { ...EMPTY_EXTERNAL_ACCESS },
+};
+
+export type ExternalAccessApp = {
+  id: string;
+  aud: string;
+  domain: string;
+  name?: string;
 };
 
 export type ExternalAccessApi = {
@@ -41,6 +58,8 @@ export type ExternalAccessApi = {
     apiToken: string,
     tunnelId: string
   ) => Promise<{ id: string; name: string | null }>;
+  listApps?: (accountId: string, apiToken: string) => Promise<ExternalAccessApp[]>;
+  getOrganization?: (accountId: string, apiToken: string) => Promise<{ teamDomain: string }>;
 };
 
 export type ExternalDetectDeps = {
@@ -56,9 +75,12 @@ export type ExternalDetectDeps = {
   accessClient?: ExternalAccessApi | null;
   getApiCredentials?: () => Promise<{ accountId: string; apiToken: string } | null>;
   getCredentials?: () => Promise<{ accountId: string; apiToken: string } | null>;
+  configuredHostnames?: string[] | (() => string[]);
+  warn?: (message: string) => void;
 };
 
 const CACHE_MS = 30_000;
+const MAX_LOG_SCAN_BYTES = 256 * 1024;
 
 export function defaultListProcesses(): ExternalProcess[] {
   try {
@@ -105,54 +127,82 @@ async function detectUncached(deps: ExternalDetectDeps): Promise<DetectedTunnel>
   const processes = normalizeProcesses(rawProcesses);
   const cloudflaredHome = join(home, '.cloudflared');
   const hasOriginCert = Boolean(await readFile(join(cloudflaredHome, 'cert.pem')));
-  const defaultConfigPath = join(cloudflaredHome, 'config.yml');
+  const collected = await collectCandidates({
+    home,
+    cloudflaredHome,
+    processes,
+    readFile,
+    listDir,
+  });
+  const accessApi = deps.accessApi ?? deps.accessClient ?? null;
+  const getApiCredentials = deps.getApiCredentials ?? deps.getCredentials;
+  const enriched: Array<DetectedTunnel & { score: number }> = [];
+  for (const cand of mergeCandidates(collected)) {
+    enriched.push(
+      await enrichCandidate(cand, {
+        originPort: deps.originPort,
+        readFile,
+        hasOriginCert,
+        accessApi,
+        getApiCredentials,
+      })
+    );
+  }
+  enriched.sort((a, b) => b.score - a.score);
+  return attachAccessProbe(enriched[0], deps, hasOriginCert, accessApi, getApiCredentials);
+}
 
-  type LocalCandidate = Candidate;
-
-  const collected: LocalCandidate[] = [];
-  for (const proc of processes.filter((p) => isCloudflaredTunnelCommand(p.command))) {
+async function collectCandidates(opts: {
+  home: string;
+  cloudflaredHome: string;
+  processes: ExternalProcess[];
+  readFile: (path: string) => Promise<string | null>;
+  listDir: (path: string) => Promise<string[]>;
+}): Promise<Candidate[]> {
+  const collected: Candidate[] = [];
+  for (const proc of opts.processes.filter((p) => isCloudflaredTunnelCommand(p.command))) {
     collected.push({ source: 'process', parsed: parseCommandLine(proc.command), pid: proc.pid });
   }
-  for (const unit of await findLaunchdUnits(home, listDir, readFile)) {
+  for (const unit of await findLaunchdUnits(opts.home, opts.listDir, opts.readFile)) {
     collected.push({ source: 'launchd', parsed: unit, pid: null });
   }
-  for (const unit of await findSystemdUnits(home, listDir, readFile)) {
+  for (const unit of await findSystemdUnits(opts.home, opts.listDir, opts.readFile)) {
     collected.push({ source: 'systemd', parsed: unit, pid: null });
   }
-  const defaultYmlText = await readFile(defaultConfigPath);
-  if (defaultYmlText) {
-    const parsedYml = parseCloudflaredYml(defaultYmlText);
-    collected.push({
-      source: 'config',
-      parsed: {
-        tokenFile: null,
-        logFile: null,
-        configPath: defaultConfigPath,
-        tunnelId: parsedYml?.tunnelId ?? null,
-        tunnelName: parsedYml?.tunnelName ?? null,
-      },
-      pid: null,
-    });
-  }
+  const defaultConfigPath = join(opts.cloudflaredHome, 'config.yml');
+  const defaultYmlText = await opts.readFile(defaultConfigPath);
+  if (!defaultYmlText) return collected;
+  const parsedYml = parseCloudflaredYml(defaultYmlText);
+  collected.push({
+    source: 'config',
+    parsed: {
+      tokenFile: null,
+      logFile: null,
+      configPath: defaultConfigPath,
+      tunnelId: parsedYml?.tunnelId ?? null,
+      tunnelName: parsedYml?.tunnelName ?? null,
+    },
+    pid: null,
+  });
+  return collected;
+}
 
-  const merged = mergeCandidates(collected);
-  const enriched: Array<DetectedTunnel & { score: number }> = [];
-  for (const cand of merged) {
-    const item = await enrichCandidate(cand, {
-      originPort: deps.originPort,
-      readFile,
-      hasOriginCert,
-      accessApi: deps.accessApi ?? deps.accessClient ?? null,
-      getApiCredentials: deps.getApiCredentials ?? deps.getCredentials,
-    });
-    enriched.push(item);
-  }
-
-  enriched.sort((a, b) => b.score - a.score);
-  const best = enriched[0];
-  if (!best) {
-    return { ...EMPTY_EXTERNAL, hasOriginCert };
-  }
+async function attachAccessProbe(
+  best: (DetectedTunnel & { score: number }) | undefined,
+  deps: ExternalDetectDeps,
+  hasOriginCert: boolean,
+  accessApi: ExternalAccessApi | null,
+  getApiCredentials?: () => Promise<{ accountId: string; apiToken: string } | null>
+): Promise<DetectedTunnel> {
+  const extraHosts = resolveConfiguredHostnames(deps.configuredHostnames);
+  const probeHosts = uniqueHostnames([...(best?.hostnames ?? []), ...extraHosts]);
+  const externalAccess = await probeExternalAccess({
+    hostnames: probeHosts,
+    accessApi,
+    getApiCredentials,
+    warn: deps.warn,
+  });
+  if (!best) return { ...EMPTY_EXTERNAL, hasOriginCert, externalAccess };
   return {
     detected: best.detected,
     source: best.source,
@@ -166,6 +216,7 @@ async function detectUncached(deps: ExternalDetectDeps): Promise<DetectedTunnel>
     tokenFile: best.tokenFile,
     logFile: best.logFile,
     accountId: best.accountId,
+    externalAccess,
   };
 }
 
@@ -223,17 +274,9 @@ async function enrichCandidate(
     }
   }
 
-  if (tokenFile) {
-    const tokenMeta = parseTokenFileMeta(await opts.readFile(tokenFile));
-    if (tokenMeta) {
-      tunnelId = tunnelId ?? tokenMeta.tunnelId;
-      accountId = tokenMeta.accountId;
-    }
-    if (!tunnelId) {
-      const idSibling = (await opts.readFile(join(dirnameOf(tokenFile), 'tunnel-id')))?.trim();
-      if (idSibling && looksLikeId(idSibling)) tunnelId = idSibling;
-    }
-  }
+  const fromToken = await readTokenSiblings(tokenFile, opts.readFile, tunnelId, accountId);
+  tunnelId = fromToken.tunnelId;
+  accountId = fromToken.accountId;
 
   if (!tunnelName && tunnelId) {
     const fromApi = await lookupTunnelName({
@@ -255,6 +298,7 @@ async function enrichCandidate(
     readFile: opts.readFile,
     accessApi: opts.accessApi,
     getApiCredentials: opts.getApiCredentials,
+    siblingHostname: fromToken.siblingHostname,
   });
 
   const running = cand.pid != null;
@@ -407,30 +451,130 @@ export function parseTokenFileMeta(
   return { accountId: rec.a, tunnelId: rec.t };
 }
 
-export function parseIngressFromLog(text: string, originPort: number): string[] {
+async function readTokenSiblings(
+  tokenFile: string | null,
+  readFile: (path: string) => Promise<string | null>,
+  tunnelId: string | null,
+  accountId: string | null
+): Promise<{ tunnelId: string | null; accountId: string | null; siblingHostname: string | null }> {
+  if (!tokenFile) return { tunnelId, accountId, siblingHostname: null };
+  let nextId = tunnelId;
+  let nextAccount = accountId;
+  const tokenMeta = parseTokenFileMeta(await readFile(tokenFile));
+  if (tokenMeta) {
+    nextId = nextId ?? tokenMeta.tunnelId;
+    nextAccount = tokenMeta.accountId;
+  }
+  const dir = dirnameOf(tokenFile);
+  if (!nextId) {
+    const idSibling = (await readFile(join(dir, 'tunnel-id')))?.trim();
+    if (idSibling && looksLikeId(idSibling)) nextId = idSibling;
+  }
+  const siblingHostname = normalizeTunnelHostname((await readFile(join(dir, 'hostname'))) ?? '');
+  return { tunnelId: nextId, accountId: nextAccount, siblingHostname };
+}
+
+function hostnamesFromIngressItems(ingress: unknown, originPort: number): string[] {
+  if (!Array.isArray(ingress)) return [];
   const hostnames: string[] = [];
-  const lines = text.split('\n');
+  for (const item of ingress) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as { hostname?: unknown; service?: unknown };
+    if (
+      typeof rec.hostname === 'string' &&
+      serviceHitsOrigin(String(rec.service ?? ''), originPort)
+    ) {
+      hostnames.push(rec.hostname.toLowerCase());
+    }
+  }
+  return uniqueHostnames(hostnames);
+}
+
+function ingressFromEscapedConfigLine(line: string, originPort: number): string[] {
+  if (!line.includes('"config"')) return [];
+  try {
+    const rec = JSON.parse(line) as unknown;
+    if (!rec || typeof rec !== 'object') return [];
+    const config = (rec as { config?: unknown }).config;
+    if (typeof config !== 'string') return [];
+    const inner = JSON.parse(config) as unknown;
+    if (!inner || typeof inner !== 'object') return [];
+    return hostnamesFromIngressItems((inner as { ingress?: unknown }).ingress, originPort);
+  } catch {
+    return [];
+  }
+}
+
+function ingressFromRawLine(line: string, originPort: number): string[] {
+  const match = line.match(/"ingress"\s*:\s*(\[[^\]]*\])/);
+  if (!match?.[1]) return [];
+  try {
+    return hostnamesFromIngressItems(JSON.parse(match[1]), originPort);
+  } catch {
+    return [];
+  }
+}
+
+function resolveConfiguredHostnames(value: ExternalDetectDeps['configuredHostnames']): string[] {
+  const raw = typeof value === 'function' ? value() : (value ?? []);
+  return uniqueHostnames(raw);
+}
+
+function appMatchesHostname(domain: string, hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  const d = domain.trim().toLowerCase();
+  if (d === host) return true;
+  const slash = d.indexOf('/');
+  return slash > 0 && d.slice(0, slash) === host;
+}
+
+async function probeExternalAccess(opts: {
+  hostnames: string[];
+  accessApi: ExternalAccessApi | null;
+  getApiCredentials?: () => Promise<{ accountId: string; apiToken: string } | null>;
+  warn?: (message: string) => void;
+}): Promise<TunnelExternalAccessProbe> {
+  if (!opts.accessApi?.listApps || !opts.getApiCredentials) return { ...EMPTY_EXTERNAL_ACCESS };
+  const creds = await opts.getApiCredentials();
+  if (!creds) return { ...EMPTY_EXTERNAL_ACCESS };
+  try {
+    const apps = await opts.accessApi.listApps(creds.accountId, creds.apiToken);
+    const match = apps.find((app) => opts.hostnames.some((h) => appMatchesHostname(app.domain, h)));
+    let teamDomain: string | null = null;
+    if (opts.accessApi.getOrganization) {
+      try {
+        teamDomain = (await opts.accessApi.getOrganization(creds.accountId, creds.apiToken))
+          .teamDomain;
+      } catch {
+        // teamDomain 为附加信息，失败不影响 checked
+      }
+    }
+    return {
+      checked: true,
+      hostnameMatch: Boolean(match),
+      appId: match?.id ?? null,
+      aud: match?.aud ?? null,
+      teamDomain,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    opts.warn?.(`external Access probe failed: ${message}`);
+    return { ...EMPTY_EXTERNAL_ACCESS };
+  }
+}
+
+export function parseIngressFromLog(text: string, originPort: number): string[] {
+  const slice = text.length > MAX_LOG_SCAN_BYTES ? text.slice(-MAX_LOG_SCAN_BYTES) : text;
+  const lines = slice.split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] ?? '';
-    const match = line.match(/"ingress"\s*:\s*(\[[^\]]*\])/);
-    if (!match?.[1]) continue;
-    try {
-      const ingress = JSON.parse(match[1]) as unknown;
-      if (!Array.isArray(ingress)) continue;
-      for (const item of ingress) {
-        if (!item || typeof item !== 'object') continue;
-        const rec = item as { hostname?: unknown; service?: unknown };
-        if (
-          typeof rec.hostname === 'string' &&
-          serviceHitsOrigin(String(rec.service ?? ''), originPort)
-        ) {
-          hostnames.push(rec.hostname.toLowerCase());
-        }
-      }
-      if (hostnames.length) return uniqueHostnames(hostnames);
-    } catch {}
+    if (!line.includes('ingress')) continue;
+    const fromEscaped = ingressFromEscapedConfigLine(line, originPort);
+    if (fromEscaped.length) return fromEscaped;
+    const fromRaw = ingressFromRawLine(line, originPort);
+    if (fromRaw.length) return fromRaw;
   }
-  return hostnames;
+  return [];
 }
 
 async function resolveHostnames(opts: {
@@ -443,6 +587,7 @@ async function resolveHostnames(opts: {
   readFile: (path: string) => Promise<string | null>;
   accessApi: ExternalAccessApi | null;
   getApiCredentials?: () => Promise<{ accountId: string; apiToken: string } | null>;
+  siblingHostname?: string | null;
 }): Promise<string[]> {
   const fromYml = opts.yml
     ? opts.yml.ingress
@@ -474,6 +619,7 @@ async function resolveHostnames(opts: {
     const fromLog = parseIngressFromLog((await opts.readFile(opts.logFile)) ?? '', opts.originPort);
     if (fromLog.length) return fromLog;
   }
+  if (opts.siblingHostname) return [opts.siblingHostname];
   return [];
 }
 
@@ -666,6 +812,7 @@ export function toExternalStatus(detected: DetectedTunnel): TunnelExternalStatus
     hostnames: [...detected.hostnames],
     hasOriginCert: detected.hasOriginCert,
     running: detected.running,
+    externalAccess: { ...(detected.externalAccess ?? EMPTY_EXTERNAL_ACCESS) },
   };
 }
 

@@ -12,6 +12,7 @@ import { createTunnelRoutes } from './tunnel-routes';
 
 async function setup() {
   const dir = await mkdtemp(join(tmpdir(), 'tmex-tun-rt-'));
+  const homeDir = await mkdtemp(join(tmpdir(), 'tmex-tun-rt-home-'));
   const spawner = new FakeSpawner();
   spawner.on((s) => argsInclude(s, '--version'), {
     stdout: 'cloudflared version 2025.8.1\n',
@@ -22,6 +23,7 @@ async function setup() {
   });
   const manager = new TunnelManager({
     tunnelDir: dir,
+    homeDir,
     originPort: 19883,
     platform: 'linux',
     arch: 'x64',
@@ -42,12 +44,13 @@ async function setup() {
       listProcesses: async () => '',
       readFile: async () => null,
       listDir: async () => [],
-      homedir: () => '/no-home',
+      homedir: () => homeDir,
       platform: 'linux',
     },
   });
   managers.push(manager);
-  return { dir, manager, routes: createTunnelRoutes(manager) };
+  dirs.push(homeDir);
+  return { dir, homeDir, manager, routes: createTunnelRoutes(manager) };
 }
 
 const dirs: string[] = [];
@@ -119,7 +122,16 @@ describe('tunnel routes', () => {
       enforceJwt: false,
       rules: [],
     });
-    expect(body.external).toMatchObject({ detected: false });
+    expect(body.external).toMatchObject({
+      detected: false,
+      externalAccess: {
+        checked: false,
+        hostnameMatch: false,
+        appId: null,
+        aud: null,
+        teamDomain: null,
+      },
+    });
     expect(body.config.externallyManaged).toBe(false);
     expect(Array.isArray(body.log)).toBe(true);
   });

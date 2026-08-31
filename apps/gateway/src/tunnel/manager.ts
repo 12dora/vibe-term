@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import type {
   TunnelAccessStatus,
   TunnelActionRequest,
@@ -42,6 +43,12 @@ import {
 } from './external-detect';
 import { defaultTunnelName, normalizeTunnelHostname, normalizeTunnelName } from './hostname';
 import { LogRingBuffer } from './log-buffer';
+import { writeNamedConfigYml } from './named-config';
+import {
+  ensureManagedOriginCert,
+  isOriginCertPresent,
+  readArgoCertCredentials,
+} from './origin-cert';
 import { isTunnelPlatformSupported, tunnelPlatformLabel } from './platform';
 import {
   CloudflaredProvider,
@@ -59,6 +66,7 @@ type ReadHostEnv = () => Promise<boolean | null>;
 
 export type TunnelManagerOptions = {
   tunnelDir?: string;
+  homeDir?: string;
   originPort?: number;
   originUrl?: string;
   platform?: NodeJS.Platform;
@@ -104,32 +112,6 @@ const EXPOSURE_ACK_MESSAGE =
   'This instance has no sign-in and no Cloudflare Access protection; confirm public exposure explicitly';
 const EXTERNAL_MANAGED_MESSAGE = 'managed by the system service';
 
-function yamlQuote(value: string): string {
-  if (/[:#\n]|^\s|\s$/.test(value)) {
-    return JSON.stringify(value);
-  }
-  return value;
-}
-
-function writeNamedConfigYml(opts: {
-  tunnelId: string;
-  credentialsPath: string;
-  certPath: string;
-  hostname: string;
-  originUrl: string;
-}): string {
-  return [
-    `tunnel: ${opts.tunnelId}`,
-    `credentials-file: ${yamlQuote(opts.credentialsPath)}`,
-    `origincert: ${yamlQuote(opts.certPath)}`,
-    'ingress:',
-    `  - hostname: ${opts.hostname}`,
-    `    service: ${opts.originUrl}`,
-    '  - service: http_status:404',
-    '',
-  ].join('\n');
-}
-
 function isAccessProtectedHealthResponse(res: Response): boolean {
   const location = res.headers.get('location') ?? '';
   if (
@@ -148,6 +130,7 @@ function isAccessProtectedHealthResponse(res: Response): boolean {
 
 export class TunnelManager {
   private readonly tunnelDir: string;
+  private readonly homeDir: string;
   private readonly originPort: number;
   private readonly originUrl: string;
   private readonly platform: NodeJS.Platform;
@@ -194,6 +177,7 @@ export class TunnelManager {
 
   constructor(opts: TunnelManagerOptions = {}) {
     this.tunnelDir = opts.tunnelDir ?? config.tunnelDir;
+    this.homeDir = opts.homeDir ?? homedir();
     this.originPort = opts.originPort ?? config.port;
     this.originUrl = opts.originUrl ?? originUrlFromBindHost(config.bindHost, this.originPort);
     this.platform = opts.platform ?? process.platform;
@@ -228,14 +212,15 @@ export class TunnelManager {
         originPort: this.originPort,
         now: this.now,
         platform: this.platform,
-        getCredentials: async () => {
-          const apiToken = await this.accessStore.getApiToken();
-          const accountId = this.accessStore.get().accountId;
-          if (!apiToken || !accountId) return null;
-          return { accountId, apiToken };
-        },
         accessClient: this.accessClient,
+        warn: (message) => this.warn(message),
+        configuredHostnames: () => {
+          const hostname = this.safePersisted().hostname;
+          return hostname ? [hostname] : [];
+        },
         ...opts.externalDetectDeps,
+        getCredentials:
+          opts.externalDetectDeps?.getCredentials ?? (() => this.detectionCredentials()),
       });
     if (opts.registerAccessGuard !== false) {
       setAccessGuardSource(() => this.accessGuardState());
@@ -301,7 +286,7 @@ export class TunnelManager {
   status(): TunnelStatusResponse {
     this.refreshBinaryPresence();
     const persisted = this.safePersisted();
-    const loggedIn = existsSync(originCertPath(this.tunnelDir));
+    const loggedIn = isOriginCertPresent(this.tunnelDir, this.homeDir);
     const access = this.accessStatus();
     const external = toExternalStatus(this.lastExternal);
     const loginEnforced = this.loginEnforcedFn();
@@ -633,9 +618,19 @@ export class TunnelManager {
   }
 
   private requireLogin(): void {
-    if (!existsSync(originCertPath(this.tunnelDir))) {
+    if (!ensureManagedOriginCert(this.tunnelDir, this.homeDir)) {
       throw new TunnelError('not_logged_in', 'cloudflared is not logged in');
     }
+  }
+
+  /** 探测专用：accessStore 优先，否则只读解析 ~/.cloudflared/cert.pem，永不落库。 */
+  private async detectionCredentials(): Promise<{ accountId: string; apiToken: string } | null> {
+    const apiToken = await this.accessStore.getApiToken();
+    const accountId = this.accessStore.get().accountId;
+    if (apiToken && accountId) return { accountId, apiToken };
+    const fromCert = readArgoCertCredentials(this.homeDir);
+    if (!fromCert) return null;
+    return { accountId: fromCert.accountId, apiToken: fromCert.apiToken };
   }
 
   private refreshBinaryPresence(): void {
@@ -697,8 +692,7 @@ export class TunnelManager {
     this.requireSupported();
     const bin = this.requireBinary();
     await mkdir(this.tunnelDir, { recursive: true });
-    const cert = originCertPath(this.tunnelDir);
-    if (existsSync(cert)) {
+    if (ensureManagedOriginCert(this.tunnelDir, this.homeDir)) {
       step('wait_cert');
       return;
     }
@@ -719,7 +713,7 @@ export class TunnelManager {
         step('cancelled');
         return;
       }
-      if (existsSync(cert)) {
+      if (ensureManagedOriginCert(this.tunnelDir, this.homeDir)) {
         step('wait_cert');
         handle.kill('SIGTERM');
         await handle.exited.catch(() => {});
@@ -734,7 +728,12 @@ export class TunnelManager {
         step('cancelled');
         return;
       }
-      if (exited !== null && !existsSync(cert)) {
+      if (exited !== null) {
+        if (ensureManagedOriginCert(this.tunnelDir, this.homeDir)) {
+          step('wait_cert');
+          this.loginHandle = null;
+          return;
+        }
         throw new TunnelError('process_failed', `cloudflared login exited with code ${exited}`);
       }
     }

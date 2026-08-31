@@ -116,6 +116,21 @@ export interface TunnelExternalStatus {
   /** ~/.cloudflared/cert.pem 存在 */
   hasOriginCert: boolean;
   running: boolean;
+  /**
+   * 只读探测：Cloudflare Access 是否已覆盖探测到的/已配置主机名。
+   * `checked: false` = 无法检测（无凭证或 API 失败）；与「已检测且未配置」区分。
+   * 可选以保持旧客户端/夹具的线兼容。
+   */
+  externalAccess?: TunnelExternalAccessProbe;
+}
+
+/** 外部隧道上的 Cloudflare Access 只读探测结果（不写入本地 access 库）。 */
+export interface TunnelExternalAccessProbe {
+  checked: boolean;
+  hostnameMatch: boolean;
+  appId: string | null;
+  aud: string | null;
+  teamDomain: string | null;
 }
 
 export interface TunnelProcessStatus {
