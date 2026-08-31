@@ -149,17 +149,30 @@
           "entry": {
             "title": "Set up a public entry",
             "description": "Open Settings → Remote access: Cloudflare Tunnel (named tunnel) gives you a fixed HTTPS address; Direct connection requires a fixed HTTPS entry you provide yourself.",
-            "link": "Open remote access settings"
+            "link": "Open remote access settings",
+            "status": {
+              "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})",
+              "quick": "This is a temporary tunnel ({{url}}). Its address changes, so it is not suitable as a relay address — use a named tunnel or a direct connection instead.",
+              "hubUrl": "Public address already available: {{url}}"
+            }
           },
           "hub": {
             "title": "Make it the relay",
             "description": "Open Settings → Multi-node Mesh, choose \"Make this machine the Hub\", enter the address from the previous step as the Hub public URL, create the first account and restart.",
             "warning": "The Hub public URL cannot be changed afterwards. Decide on the final domain first.",
-            "link": "Open multi-node mesh settings"
+            "link": "Open multi-node mesh settings",
+            "status": {
+              "self": "This machine is already the Hub. Public address: {{url}}",
+              "node": "This machine has already joined another relay ({{url}}), so it cannot be a relay itself.",
+              "mismatch": "The Hub public URL does not match the current tunnel hostname; other machines may fail to connect."
+            },
+            "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL."
           },
           "invite": {
             "title": "Connect other machines",
-            "description": "After installing tmex on other machines, follow \"Join an existing relay\" using a join token generated on this machine."
+            "description": "After installing tmex on other machines, follow \"Join an existing relay\" using a join token generated on this machine.",
+            "ready": "After installing tmex on another machine, switch to \"Join an existing relay\" to generate a join token here.",
+            "gotoJoin": "Generate a join token"
           }
         }
       }

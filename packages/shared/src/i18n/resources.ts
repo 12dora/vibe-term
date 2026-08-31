@@ -155,17 +155,30 @@ export const I18N_RESOURCES = {
           "entry": {
             "title": "Set up a public entry",
             "description": "Open Settings → Remote access: Cloudflare Tunnel (named tunnel) gives you a fixed HTTPS address; Direct connection requires a fixed HTTPS entry you provide yourself.",
-            "link": "Open remote access settings"
+            "link": "Open remote access settings",
+            "status": {
+              "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})",
+              "quick": "This is a temporary tunnel ({{url}}). Its address changes, so it is not suitable as a relay address — use a named tunnel or a direct connection instead.",
+              "hubUrl": "Public address already available: {{url}}"
+            }
           },
           "hub": {
             "title": "Make it the relay",
             "description": "Open Settings → Multi-node Mesh, choose \"Make this machine the Hub\", enter the address from the previous step as the Hub public URL, create the first account and restart.",
             "warning": "The Hub public URL cannot be changed afterwards. Decide on the final domain first.",
-            "link": "Open multi-node mesh settings"
+            "link": "Open multi-node mesh settings",
+            "status": {
+              "self": "This machine is already the Hub. Public address: {{url}}",
+              "node": "This machine has already joined another relay ({{url}}), so it cannot be a relay itself.",
+              "mismatch": "The Hub public URL does not match the current tunnel hostname; other machines may fail to connect."
+            },
+            "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL."
           },
           "invite": {
             "title": "Connect other machines",
-            "description": "After installing tmex on other machines, follow \"Join an existing relay\" using a join token generated on this machine."
+            "description": "After installing tmex on other machines, follow \"Join an existing relay\" using a join token generated on this machine.",
+            "ready": "After installing tmex on another machine, switch to \"Join an existing relay\" to generate a join token here.",
+            "gotoJoin": "Generate a join token"
           }
         }
       }
@@ -2316,17 +2329,30 @@ export const I18N_RESOURCES = {
           "entry": {
             "title": "配置公网入口",
             "description": "打开「设置 → 远程访问」：选择 Cloudflare Tunnel（命名隧道）可直接获得固定 HTTPS 地址；选择直接连接则需自行准备固定的 HTTPS 入口。",
-            "link": "前往远程访问设置"
+            "link": "前往远程访问设置",
+            "status": {
+              "named": "已配置 Cloudflare Tunnel：{{url}}（{{state}}）",
+              "quick": "当前是临时隧道 {{url}}，地址会变化，不适合作为中继地址；请改用命名隧道或直接连接。",
+              "hubUrl": "已有公开地址：{{url}}"
+            }
           },
           "hub": {
             "title": "设为中继",
             "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」，将上一步的地址填入「Hub 公开地址」，创建首个账号并重启。",
             "warning": "Hub 公开地址设定后不可修改，请先确定最终域名。",
-            "link": "前往多节点互联设置"
+            "link": "前往多节点互联设置",
+            "status": {
+              "self": "本机已是 Hub，公开地址：{{url}}",
+              "node": "本机已作为节点加入其他中继（{{url}}），不能再作为中继。",
+              "mismatch": "Hub 公开地址与当前隧道主机名不一致，其他机器可能无法接入。"
+            },
+            "hintUseEntry": "把上一步的地址 {{url}} 填入「Hub 公开地址」。"
           },
           "invite": {
             "title": "接入其他机器",
-            "description": "在其他机器上安装 tmex 后，按「加入已有中继」的步骤，用本机生成的加入码接入。"
+            "description": "在其他机器上安装 tmex 后，按「加入已有中继」的步骤，用本机生成的加入码接入。",
+            "ready": "其他机器安装 tmex 后，切到「加入已有中继」在此生成加入码即可。",
+            "gotoJoin": "去生成加入码"
           }
         }
       }
@@ -4476,17 +4502,30 @@ export const I18N_RESOURCES = {
           "entry": {
             "title": "公開エントリを用意",
             "description": "「設定 → リモートアクセス」を開きます。Cloudflare Tunnel（名前付きトンネル）なら固定の HTTPS アドレスが得られ、直接接続なら固定の HTTPS 入口を自分で用意する必要があります。",
-            "link": "リモートアクセス設定を開く"
+            "link": "リモートアクセス設定を開く",
+            "status": {
+              "named": "Cloudflare Tunnel を設定済みです：{{url}}（{{state}}）",
+              "quick": "現在は一時トンネル {{url}} です。アドレスが変わるため中継アドレスには使えません。名前付きトンネルまたは直接接続に変更してください。",
+              "hubUrl": "公開アドレスがあります：{{url}}"
+            }
           },
           "hub": {
             "title": "中継に設定",
             "description": "「設定 → マルチノード連携」を開き、「このマシンをハブにする」を選択します。前の手順のアドレスを「ハブの公開アドレス」に入力し、最初のアカウントを作成して再起動します。",
             "warning": "ハブの公開アドレスは設定後に変更できません。最終的なドメインを先に確定してください。",
-            "link": "マルチノード連携設定を開く"
+            "link": "マルチノード連携設定を開く",
+            "status": {
+              "self": "本機はすでにハブです。公開アドレス：{{url}}",
+              "node": "本機はすでに他の中継（{{url}}）にノードとして参加しているため、中継にはできません。",
+              "mismatch": "ハブの公開アドレスが現在のトンネルのホスト名と一致しません。他のマシンが接続できない可能性があります。"
+            },
+            "hintUseEntry": "前の手順のアドレス {{url}} を「ハブの公開アドレス」に入力します。"
           },
           "invite": {
             "title": "他のマシンを接続",
-            "description": "他のマシンに tmex をインストールしたら、「既存の中継に参加」の手順に従い、本機で作成した参加コードで接続します。"
+            "description": "他のマシンに tmex をインストールしたら、「既存の中継に参加」の手順に従い、本機で作成した参加コードで接続します。",
+            "ready": "他のマシンに tmex をインストールしたら、「既存の中継に参加」に切り替えてここで参加コードを作成します。",
+            "gotoJoin": "参加コードを作成"
           }
         }
       }

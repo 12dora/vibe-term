@@ -2,13 +2,18 @@
 // 分支步骤接着前两步继续编号，读起来是一条连续的流程。
 
 import { joinCommand } from '@/node/enrollment';
+import { useSharedAuthMode } from '@/node/mesh-nodes';
+import { TUNNEL_STATUS_QUERY_KEY, fetchSelfTunnelStatus } from '@/pages/settings/status-queries';
+import { useQuery } from '@tanstack/react-query';
 import { INSTALL_COMMAND } from '@tmex/shared';
+import { Button } from '@tmex/ui/button';
 import { Tabs, TabsContent } from '@tmex/ui/tabs';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CommandBlock } from './command-block';
-import { GuideLink, GuideStep } from './guide-step';
+import { GuideLink, GuideNote, GuideStep } from './guide-step';
 import { GuideTabList } from './guide-tabs';
+import { type EntryStatus, type HubStatus, entryStatus, hubStatus } from './host-status';
 import { joinCommandPreview } from './join-command-preview';
 import { JoinConfirmStatus, JoinTokenFields, useJoinEnrollment } from './join-token';
 
@@ -84,43 +89,142 @@ export function JoinSteps() {
   );
 }
 
-export function HostSteps() {
+/** 三步各自的现状：隧道状态给公网入口，`/api/auth/mode` 给中继角色。两路都没到就按「什么都没配」渲染静态文案。 */
+function useHostStatus(): { entry: EntryStatus; hub: HubStatus } {
+  const { mode } = useSharedAuthMode();
+  const tunnel = useQuery({
+    queryKey: TUNNEL_STATUS_QUERY_KEY,
+    queryFn: fetchSelfTunnelStatus,
+    staleTime: 10_000,
+    retry: false,
+  });
+  const entry = entryStatus(tunnel.data, mode?.mode === 'mesh' ? mode.hubPublicUrl : null);
+  return { entry, hub: hubStatus(mode, entry) };
+}
+
+function HostEntryStep({ entry }: { entry: EntryStatus }) {
   const { t } = useTranslation();
-  const prefix = 'connectDevices.computer.host';
-  return (
-    <>
+  const prefix = 'connectDevices.computer.host.entry';
+  const link = (
+    <GuideLink to="/settings?tab=remoteAccess" testId="connect-host-entry-link">
+      {t(`${prefix}.link`)}
+    </GuideLink>
+  );
+  if (entry.kind === 'none') {
+    return (
       <GuideStep
         index={BRANCH_STEP_OFFSET}
         testId="connect-step-host-entry"
-        title={t(`${prefix}.entry.title`)}
-        description={t(`${prefix}.entry.description`)}
+        title={t(`${prefix}.title`)}
+        description={t(`${prefix}.description`)}
       >
-        <GuideLink to="/settings?tab=remoteAccess" testId="connect-host-entry-link">
-          {t(`${prefix}.entry.link`)}
-        </GuideLink>
+        {link}
       </GuideStep>
+    );
+  }
+  const running = t(`settings.remoteAccess.state.${entry.running ? 'running' : 'stopped'}`);
+  return (
+    <GuideStep
+      index={BRANCH_STEP_OFFSET}
+      state="done"
+      testId="connect-step-host-entry"
+      title={t(`${prefix}.title`)}
+    >
+      <GuideNote testId="connect-host-entry-status">
+        {entry.kind === 'hubUrl'
+          ? t(`${prefix}.status.hubUrl`, { url: entry.url })
+          : t(`${prefix}.status.named`, { url: entry.url, state: running })}
+      </GuideNote>
+      {entry.kind === 'quick' && (
+        <GuideNote tone="warning" testId="connect-host-entry-quick">
+          {t(`${prefix}.status.quick`, { url: entry.url })}
+        </GuideNote>
+      )}
+      {link}
+    </GuideStep>
+  );
+}
+
+function HostHubStep({ entry, hub }: { entry: EntryStatus; hub: HubStatus }) {
+  const { t } = useTranslation();
+  const prefix = 'connectDevices.computer.host.hub';
+  const link = (
+    <GuideLink to="/settings?tab=nodes" testId="connect-host-hub-link">
+      {t(`${prefix}.link`)}
+    </GuideLink>
+  );
+  const url = hub.url ?? t('common.unknown');
+  if (hub.role !== 'standalone') {
+    return (
       <GuideStep
         index={BRANCH_STEP_OFFSET + 1}
+        state={hub.role === 'self' ? 'done' : 'todo'}
         testId="connect-step-host-hub"
-        title={t(`${prefix}.hub.title`)}
-        description={t(`${prefix}.hub.description`)}
+        title={t(`${prefix}.title`)}
       >
-        <p
-          className="rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
-          data-testid="connect-host-hub-warning"
-        >
-          {t(`${prefix}.hub.warning`)}
-        </p>
-        <GuideLink to="/settings?tab=nodes" testId="connect-host-hub-link">
-          {t(`${prefix}.hub.link`)}
-        </GuideLink>
+        <GuideNote testId="connect-host-hub-status">
+          {t(`${prefix}.status.${hub.role}`, { url })}
+        </GuideNote>
+        {hub.mismatch && (
+          <GuideNote tone="warning" testId="connect-host-hub-mismatch">
+            {t(`${prefix}.status.mismatch`)}
+          </GuideNote>
+        )}
+        {hub.role === 'self' && link}
       </GuideStep>
-      <GuideStep
-        index={BRANCH_STEP_OFFSET + 2}
-        testId="connect-step-host-invite"
-        title={t(`${prefix}.invite.title`)}
-        description={t(`${prefix}.invite.description`)}
-      />
+    );
+  }
+  return (
+    <GuideStep
+      index={BRANCH_STEP_OFFSET + 1}
+      testId="connect-step-host-hub"
+      title={t(`${prefix}.title`)}
+      description={t(`${prefix}.description`)}
+    >
+      {entry.hostname && (
+        <GuideNote testId="connect-host-hub-hint">
+          {t(`${prefix}.hintUseEntry`, { url: entry.url })}
+        </GuideNote>
+      )}
+      <GuideNote tone="warning" testId="connect-host-hub-warning">
+        {t(`${prefix}.warning`)}
+      </GuideNote>
+      {link}
+    </GuideStep>
+  );
+}
+
+function HostInviteStep({ isHub, onSwitchToJoin }: { isHub: boolean; onSwitchToJoin: () => void }) {
+  const { t } = useTranslation();
+  const prefix = 'connectDevices.computer.host.invite';
+  return (
+    <GuideStep
+      index={BRANCH_STEP_OFFSET + 2}
+      testId="connect-step-host-invite"
+      title={t(`${prefix}.title`)}
+      description={t(isHub ? `${prefix}.ready` : `${prefix}.description`)}
+    >
+      {isHub && (
+        <Button
+          size="xs"
+          variant="outline"
+          data-testid="connect-host-goto-join"
+          onClick={onSwitchToJoin}
+        >
+          {t(`${prefix}.gotoJoin`)}
+        </Button>
+      )}
+    </GuideStep>
+  );
+}
+
+export function HostSteps({ onSwitchToJoin }: { onSwitchToJoin: () => void }) {
+  const { entry, hub } = useHostStatus();
+  return (
+    <>
+      <HostEntryStep entry={entry} />
+      <HostHubStep entry={entry} hub={hub} />
+      <HostInviteStep isHub={hub.role === 'self'} onSwitchToJoin={onSwitchToJoin} />
     </>
   );
 }
@@ -169,7 +273,7 @@ export function ComputerGuide() {
             <JoinSteps />
           </TabsContent>
           <TabsContent value="host" className="space-y-2">
-            <HostSteps />
+            <HostSteps onSwitchToJoin={() => setMode('join')} />
           </TabsContent>
         </Tabs>
       </div>

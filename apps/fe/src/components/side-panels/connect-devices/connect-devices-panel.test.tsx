@@ -133,15 +133,51 @@ describe('ComputerGuide', () => {
     expect(html).not.toContain('data-testid="connect-step-host-entry"');
   });
 
-  test('「本机作为中继」分支给出三步、公开地址不可改的警示与两个设置入口', () => {
-    const html = render(<HostSteps />);
+  test('「本机作为中继」分支：什么都没配时给出三步静态文案与两个设置入口', () => {
+    const html = render(<HostSteps onSwitchToJoin={() => undefined} />);
     for (const step of ['entry', 'hub', 'invite']) {
       expect(html).toContain(`data-testid="connect-step-host-${step}"`);
     }
     expect(html).toContain('data-testid="connect-host-hub-warning"');
     expect(html).toContain('connectDevices.computer.host.hub.warning');
+    expect(html).toContain('connectDevices.computer.host.entry.description');
+    expect(html).toContain('connectDevices.computer.host.invite.description');
     expect(html).toContain('href="/settings?tab=remoteAccess"');
     expect(html).toContain('href="/settings?tab=nodes"');
+    // 隧道状态与 auth mode 都没到：三步一律停在待办，不闪任何「已完成」。
+    expect(html.split('data-step-state="todo"').length - 1).toBe(3);
+    expect(html).not.toContain('data-step-state="done"');
+    expect(html).not.toContain('data-testid="connect-host-goto-join"');
+  });
+
+  test('本机已是 Hub：入口与中继两步打勾，给出公开地址并可直接去生成加入码', () => {
+    setMeshNodesStateForTest({
+      mode: { ...MESH_MODE, hubNodeId: ENTRY },
+      modeLoaded: true,
+      entryNodeId: ENTRY,
+    });
+    const html = render(<HostSteps onSwitchToJoin={() => undefined} />);
+    expect(html).toContain('data-step-state="done"');
+    expect(html.split('data-step-state="done"').length - 1).toBe(2);
+    // 没有隧道但已有 Hub 公开地址（直接连接）：入口这步按已配置算。
+    expect(html).toContain('data-testid="connect-host-entry-status"');
+    expect(html).toContain('connectDevices.computer.host.entry.status.hubUrl');
+    expect(html).toContain('data-testid="connect-host-hub-status"');
+    expect(html).toContain('connectDevices.computer.host.hub.status.self');
+    expect(html).not.toContain('data-testid="connect-host-hub-warning"');
+    expect(html).not.toContain('connectDevices.computer.host.hub.description');
+    expect(html).toContain('data-testid="connect-host-goto-join"');
+    expect(html).toContain('connectDevices.computer.host.invite.ready');
+  });
+
+  test('本机只是节点：中继这步说明不能再当中继，且不给多节点互联入口', () => {
+    setMeshNodesStateForTest({ mode: MESH_MODE, modeLoaded: true, entryNodeId: ENTRY });
+    const html = render(<HostSteps onSwitchToJoin={() => undefined} />);
+    expect(html).toContain('connectDevices.computer.host.hub.status.node');
+    expect(html).not.toContain('data-testid="connect-host-hub-link"');
+    expect(html).not.toContain('data-testid="connect-host-hub-warning"');
+    expect(html).not.toContain('data-testid="connect-host-goto-join"');
+    expect(html).toContain('connectDevices.computer.host.invite.description');
   });
 });
 
