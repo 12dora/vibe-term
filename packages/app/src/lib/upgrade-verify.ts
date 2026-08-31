@@ -56,7 +56,7 @@ export function assertReleaseIntegrity(
     return;
   }
 
-  if (sums.unpublished || (sums.missing && !sums.hex)) {
+  if (sums.unpublished === true) {
     if (!opts.allowUnverified) {
       throw new Error(t('upgrade.integrityUnverifiedDenied', { version }));
     }

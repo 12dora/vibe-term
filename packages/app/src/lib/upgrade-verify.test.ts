@@ -74,6 +74,17 @@ describe('assertReleaseIntegrity', () => {
     ).toThrow(/SHA256SUMS|list/);
   });
 
+  test('200 without a matching entry fails even with --allow-unverified', () => {
+    expect(() =>
+      assertReleaseIntegrity(
+        '1.1.0',
+        bytes,
+        { hex: null, missing: true, unpublished: false },
+        { allowUnverified: true }
+      )
+    ).toThrow(/does not list|SHA256SUMS/);
+  });
+
   test('digest mismatch fails', () => {
     expect(() =>
       assertReleaseIntegrity('1.1.4', bytes, {

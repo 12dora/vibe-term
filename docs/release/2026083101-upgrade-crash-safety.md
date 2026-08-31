@@ -67,6 +67,11 @@ shim（`~/.local/bin/tmex`、`~/.bun/bin/tmex`）指向 `<installDir>/current/cl
 - 预启动禁用 mesh/uplink：候选进程设 `TMEX_ROLES=standalone`（不连 Hub、不开 peer 口）。`/healthz` 现带 `version`（构建期 `TMEX_MONOREPO_VERSION`）。mesh 节点未登录时的精简 `/healthz` 由 runtime `attachStartedAt` 补上 `version`。
 - Web 触发的升级把 stage 放在 `<installDir>/staging/<txn>`，并传 `--txn` 给 CLI；清理交给 journal。
 
+## 已知限制
+
+- **preflight 仍会执行 import-time 模块初始化。** `TMEX_RUNTIME_MODE=preflight` 会跳过 Telegram/微信、push、agent、watch、tunnel 外部进程、TLS、mesh 和远程 session restore 等显式启动链，但 `runtime.ts` 静态导入的 `transfer-session` 仍会在 import 时启动 GC interval；`tunnelManager` 构造函数也会打开拷贝后的候选库并注册全局 access guard。也就是说：外部服务不会被显式拉起，但模块级副作用（定时器、打开拷贝库）仍然发生。
+- **预发布版本在 1.1.4 校验门槛上比较不一致。** CLI 与 `install.sh` 只比较数字段，会把 `1.1.4-beta` 视为已达门槛；Web 入口对 prerelease 做字典序比较，会把它判为低于 `1.1.4`。当前从不发布预发布版本，且 Web 对缺校验一律 fail-closed，因此不会形成绕过；三入口的错误语义仍不统一。
+
 ## 验收要点
 
 - 任意阶段 `kill -9` CLI 后，`tmex upgrade --repair` 能回到可启动的旧版或提交新版。

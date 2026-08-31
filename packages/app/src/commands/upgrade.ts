@@ -121,7 +121,7 @@ export async function delegateUpgrade(
       allowUnverified,
       fileName: releaseTarballName(version),
     });
-    if (sums.unpublished || (sums.missing && !sums.hex)) {
+    if (sums.unpublished === true) {
       log(t('upgrade.integrityUnverified'));
     }
 
@@ -188,7 +188,12 @@ export function assertKnownUpgradeFlags(parsed: ParsedArgs): void {
   }
 }
 
-export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
+export type RunUpgradeDeps = {
+  repair?: typeof repairUpgrade;
+  apply?: typeof applyUpgrade;
+};
+
+export async function runUpgrade(parsed: ParsedArgs, deps: RunUpgradeDeps = {}): Promise<void> {
   assertKnownUpgradeFlags(parsed);
   if (parsed.flags.help) {
     console.log(UPGRADE_USAGE);
@@ -222,6 +227,8 @@ export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
       repairOnly: flags.repairOnly,
       keepBackup: flags.keepBackup,
       allowMissingNative: flags.allowMissingNative,
+      repair: deps.repair,
+      apply: deps.apply,
     });
   });
 
@@ -253,14 +260,18 @@ async function runLockedUpgrade(opts: {
   repairOnly: boolean;
   keepBackup: boolean;
   allowMissingNative: boolean;
+  repair?: typeof repairUpgrade;
+  apply?: typeof applyUpgrade;
 }): Promise<void> {
   const service = createServiceControl({
     installDir: opts.installDir,
     meta: opts.meta,
     noServiceFlag: asBoolean(opts.parsed.flags['no-service']) ?? false,
   });
+  const repair = opts.repair ?? repairUpgrade;
+  const apply = opts.apply ?? applyUpgrade;
   const activeTxnId = asString(opts.parsed.flags.txn) ?? null;
-  const action = await repairUpgrade(opts.installDir, opts.bunPath, { service, activeTxnId });
+  const action = await repair(opts.installDir, opts.bunPath, { service, activeTxnId });
   if (opts.repairOnly) {
     console.log(`[tmex] ${t('upgrade.repairDone', { action })}`);
     return;
@@ -276,7 +287,7 @@ async function runLockedUpgrade(opts: {
     await mergeMissingEnvFileKeys(opts.installLayout.envPath, hubEnvDefaults());
   }
 
-  await applyUpgrade(
+  await apply(
     {
       installDir: opts.installDir,
       toVersion,

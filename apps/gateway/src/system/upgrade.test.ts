@@ -10,6 +10,7 @@ import type { InstallInfo } from './install-info';
 import {
   UpgradeController,
   assertExtractedCliPackage,
+  cmdlineOwnsInstallRuntime,
   releaseSha256SumsUrl,
   resolveUpgradeInstallDir,
   sha256Hex,
@@ -378,6 +379,44 @@ describe('UpgradeController detached spawn', () => {
     expect(() => process.kill(sleeper.pid as number, 0)).not.toThrow();
   });
 
+  test('refuses none-mode pid whose cmdline is vim with this install server.js', async () => {
+    const dir = tempDir('tmex-upg-none-vim-');
+    mkdirSync(join(dir, 'current', 'runtime'), { recursive: true });
+    writeFileSync(join(dir, 'current', 'runtime', 'server.js'), 'export {}\n');
+    writeFileSync(
+      join(dir, 'install-meta.json'),
+      `${JSON.stringify({ cliVersion: '1.1.3', serviceMode: 'none' })}\n`
+    );
+    const sleeper = spawnSleepChild();
+    writeFileSync(join(dir, 'tmex.pid'), `${sleeper.pid}\n`);
+    const vimCmd = `vim ${join(dir, 'current', 'runtime', 'server.js')}`;
+    const spawned: string[][] = [];
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    const controller = new UpgradeController({
+      getInstallInfo: () => ({
+        installedViaCli: true,
+        deployment: 'none',
+        installDir: dir,
+        serviceName: 'tmex',
+        cliVersion: '1.1.3',
+        bunPath: '/usr/bin/bun',
+      }),
+      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      processCommandLine: () => vimCmd,
+      spawn: (_cmd, args) => {
+        spawned.push([...args]);
+        return child as unknown as ChildProcess;
+      },
+    });
+    expect(controller.start('1.2.3')).toBe(true);
+    await settle();
+    expect(controller.status().state).toBe('idle');
+    expect(controller.status().error).toMatch(/not the tmex runtime|does not belong|ownership/i);
+    expect(spawned).toEqual([]);
+    expect(() => process.kill(sleeper.pid as number, 0)).not.toThrow();
+  });
+
   test('passes --no-service when persisted mode is none and pid cmdline matches this install', async () => {
     const dir = tempDir('tmex-upg-none-pid-');
     writeFileSync(
@@ -483,5 +522,17 @@ describe('stageGithubRelease checksums', () => {
     await expect(stageGithubRelease(tempDir('tmex-upg-sums-noentry-'), version)).rejects.toThrow(
       /does not list|missing an entry/
     );
+  });
+});
+
+describe('cmdlineOwnsInstallRuntime', () => {
+  test('requires bun/node and an argv token equal to the runtime path', () => {
+    const dir = '/tmp/tmex-install-own';
+    const serverJs = join(dir, 'current', 'runtime', 'server.js');
+    expect(cmdlineOwnsInstallRuntime(`bun ${serverJs}`, dir)).toBe(true);
+    expect(cmdlineOwnsInstallRuntime(`/opt/homebrew/bin/node ${serverJs}`, dir)).toBe(true);
+    expect(cmdlineOwnsInstallRuntime(`vim ${serverJs}`, dir)).toBe(false);
+    expect(cmdlineOwnsInstallRuntime(`tail -f ${serverJs}`, dir)).toBe(false);
+    expect(cmdlineOwnsInstallRuntime(`bun ${serverJs}.bak`, dir)).toBe(false);
   });
 });

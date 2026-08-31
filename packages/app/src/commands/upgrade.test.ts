@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseTarballName, releaseTarballUrl } from '../../../shared/src/release/source';
+import { parseArgs } from '../lib/args';
 import { sha256Hex } from '../lib/artifacts-manifest';
 import { pathExists } from '../lib/fs-utils';
 import { packNpmTarball } from '../lib/native-tarball';
@@ -10,7 +11,7 @@ import { runCommand } from '../lib/process';
 import { releaseSha256SumsUrl } from '../lib/release-fetch';
 import { readJournal } from '../lib/upgrade-state';
 import { readCurrentVersion } from '../lib/upgrade-switch';
-import { delegateUpgrade, reenableDirectAfterUpgrade } from './upgrade';
+import { delegateUpgrade, reenableDirectAfterUpgrade, runUpgrade } from './upgrade';
 
 const tempDirs: string[] = [];
 
@@ -257,6 +258,65 @@ describe('upgrade flag unification', () => {
     const applyParsed = parseArgs(['upgrade', '--apply-current-package', ...argv]);
     expect(() => assertKnownFlags(applyParsed)).not.toThrow();
     expect(() => assertKnownUpgradeFlags(applyParsed)).not.toThrow();
+  });
+
+  test('runUpgrade apply-current-package threads parsed --txn into repairUpgrade', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-run-'));
+    tempDirs.push(installDir);
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      `${JSON.stringify(
+        {
+          serviceName: 'tmex',
+          platform: process.platform,
+          autostart: false,
+          installDir,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cliVersion: '1.0.0',
+          bunPath: process.execPath,
+          serviceMode: 'none',
+        },
+        null,
+        2
+      )}\n`
+    );
+    const extract = join(installDir, 'staging', 'live-txn', 'extract', 'package');
+    await mkdir(join(extract, 'bin'), { recursive: true });
+    await mkdir(join(extract, 'dist', 'runtime'), { recursive: true });
+    await mkdir(join(extract, 'resources', 'fe-dist'), { recursive: true });
+    await mkdir(join(extract, 'resources', 'gateway-drizzle'), { recursive: true });
+    await writeFile(join(extract, 'package.json'), '{"name":"tmex-cli","version":"2.0.0"}\n');
+    await writeFile(join(extract, 'bin', 'tmex.js'), 'export {}\n');
+    await writeFile(join(extract, 'dist', 'cli-node.js'), 'export {}\n');
+    await writeFile(join(extract, 'dist', 'runtime', 'server.js'), 'export {}\n');
+    await writeFile(join(extract, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
+    await writeFile(join(extract, 'resources', 'gateway-drizzle', '0000.sql'), '--\n');
+    const parsed = parseArgs([
+      'upgrade',
+      '--apply-current-package',
+      '--install-dir',
+      installDir,
+      '--txn',
+      'live-txn',
+      '--version',
+      '2.0.0',
+      '--no-service',
+      '--bun-path',
+      process.execPath,
+    ]);
+    let repairTxn: string | null | undefined;
+    let applyTxn: string | undefined;
+    await runUpgrade(parsed, {
+      repair: async (_installDir, _bunPath, opts) => {
+        repairTxn = opts?.activeTxnId ?? null;
+        return 'none';
+      },
+      apply: async (opts) => {
+        applyTxn = opts.txnId;
+      },
+    });
+    expect(repairTxn).toBe('live-txn');
+    expect(applyTxn).toBe('live-txn');
   });
 
   test('download extract then extracted CLI repair+apply commits and later cleans staging', async () => {

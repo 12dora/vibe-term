@@ -56,6 +56,7 @@ function runInstallPolicy(opts: {
   sumsCode: string;
   sumsBody?: string;
   args?: string[];
+  prepare?: (ctx: { root: string; payloadHex: string }) => { sumsBody: string };
 }): {
   status: number;
   stdout: string;
@@ -71,7 +72,9 @@ function runInstallPolicy(opts: {
   writeFileSync(tgzSrc, `fake-tarball-${opts.version}\n`);
   const hex = sha256Hex(readFileSync(tgzSrc));
   const sumsFile = join(root, 'SHA256SUMS.body');
+  const prepared = opts.prepare?.({ root, payloadHex: hex });
   const sumsBody =
+    prepared?.sumsBody ??
     opts.sumsBody ??
     (opts.sumsCode === '200' ? `${hex}  tmex-cli-${opts.version}.tgz\n` : 'not published\n');
   writeFileSync(sumsFile, sumsBody);
@@ -269,6 +272,33 @@ HDR
     expect(result.status).toBe(0);
     expect(result.stdout.trim().split('\n')).toEqual(['missing', 'ok', 'error']);
   });
+
+  test('tmex_sha256sums_hex_for accepts exact filename and rejects path-qualified entries', () => {
+    const root = mkdtempSync(join(tmpdir(), 'tmex-sums-hex-'));
+    sandboxDirs.push(root);
+    const sums = join(root, 'SHA256SUMS');
+    const hex = 'a'.repeat(64);
+    writeFileSync(
+      sums,
+      [
+        `${hex}  /tmp/tmex-cli-1.1.4.tgz`,
+        `${'b'.repeat(64)}  ../tmex-cli-1.1.4.tgz`,
+        `${'c'.repeat(64)}  tmex-cli-1.1.4.tgz`,
+        '',
+      ].join('\n')
+    );
+    const exact = sourceEval(`tmex_sha256sums_hex_for ${JSON.stringify(sums)} tmex-cli-1.1.4.tgz`);
+    expect(exact.status).toBe(0);
+    expect(exact.stdout.trim()).toBe('c'.repeat(64));
+
+    writeFileSync(sums, `${hex}  /tmp/tmex-cli-1.1.4.tgz\n`);
+    const abs = sourceEval(`tmex_sha256sums_hex_for ${JSON.stringify(sums)} tmex-cli-1.1.4.tgz`);
+    expect(abs.status).not.toBe(0);
+
+    writeFileSync(sums, `${hex}  ../tmex-cli-1.1.4.tgz\n`);
+    const rel = sourceEval(`tmex_sha256sums_hex_for ${JSON.stringify(sums)} tmex-cli-1.1.4.tgz`);
+    expect(rel.status).not.toBe(0);
+  });
 });
 
 describe('install.sh download checksum policy', () => {
@@ -339,5 +369,36 @@ describe('install.sh download checksum policy', () => {
     expect(result.tarCalled).toBe(true);
     expect(result.initArgs.length).toBeGreaterThan(0);
     expect(result.initArgs.some((line) => line.includes('tmex.js'))).toBe(true);
+  });
+
+  test('HTTP 200 with an absolute-path manifest line is rejected', () => {
+    const result = runInstallPolicy({
+      version: '1.1.4',
+      sumsCode: '200',
+      prepare: ({ root }) => {
+        const decoy = join(root, 'evil', 'tmex-cli-1.1.4.tgz');
+        mkdirSync(join(root, 'evil'));
+        writeFileSync(decoy, 'decoy-not-the-download\n');
+        return { sumsBody: `${sha256Hex(readFileSync(decoy))}  ${decoy}\n` };
+      },
+    });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/does not list|missing an entry/i);
+    expect(result.tarCalled).toBe(false);
+  });
+
+  test('HTTP 200 with a ../ path-qualified manifest line is rejected', () => {
+    const result = runInstallPolicy({
+      version: '1.1.4',
+      sumsCode: '200',
+      prepare: ({ root }) => {
+        const decoy = join(root, 'tmex-cli-1.1.4.tgz');
+        writeFileSync(decoy, 'decoy-parent-file\n');
+        return { sumsBody: `${sha256Hex(readFileSync(decoy))}  ../tmex-cli-1.1.4.tgz\n` };
+      },
+    });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/does not list|missing an entry/i);
+    expect(result.tarCalled).toBe(false);
   });
 });

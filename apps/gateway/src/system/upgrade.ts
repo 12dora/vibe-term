@@ -37,11 +37,14 @@ export type UpgradeSpawnFn = (
 
 export type ProcessCommandLineFn = (pid: number) => string | null;
 
+export type ProcessStartIdentityFn = (pid: number) => string | null;
+
 export type UpgradeControllerDeps = {
   spawn?: UpgradeSpawnFn;
   getInstallInfo?: () => InstallInfo;
   stageRelease?: (stageDir: string, version: string) => Promise<string>;
   processCommandLine?: ProcessCommandLineFn;
+  processStartIdentity?: ProcessStartIdentityFn;
 };
 
 /**
@@ -58,6 +61,38 @@ export type UpgradeControllerDeps = {
  * 依赖服务 unit 的 KillMode=process / AbandonProcessGroup=true，使 detached 子进程
  * 在服务进程被停止时存活，完成自升级。
  */
+
+function readNoneModePidRecord(installDir: string): PidFileRecord | null {
+  try {
+    return parsePidFileRecord(readFileSync(join(installDir, 'tmex.pid'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function pidIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function identityMatches(
+  pid: number,
+  expected: string,
+  readIdentity: ProcessStartIdentityFn
+): boolean | null {
+  try {
+    const live = readIdentity(pid);
+    if (live === null) return null;
+    return live === expected;
+  } catch {
+    return null;
+  }
+}
+
 export class UpgradeController {
   private state: UpgradeState = 'idle';
   private targetVersion: string | null = null;
@@ -145,26 +180,23 @@ export class UpgradeController {
   }
 
   private assertNoneModePidOwnership(installDir: string): void {
-    const pidPath = join(installDir, 'tmex.pid');
-    let pid: number | null = null;
-    try {
-      pid = parsePidFileContents(readFileSync(pidPath, 'utf8'));
-    } catch {
-      pid = null;
-    }
-    let alive = false;
-    if (pid !== null) {
-      try {
-        process.kill(pid, 0);
-        alive = true;
-      } catch (error) {
-        alive = (error as NodeJS.ErrnoException).code === 'EPERM';
-      }
-    }
-    if (!alive || pid === null) {
+    const record = readNoneModePidRecord(installDir);
+    const pid = record?.pid ?? null;
+    if (!record || pid === null || !pidIsAlive(pid)) {
       throw new Error(
         'This install is not managed by a service (serviceMode=none) and has no live pid file. Stop the running process, then retry.'
       );
+    }
+    if (record.identity) {
+      const owned = identityMatches(
+        pid,
+        record.identity,
+        this.deps.processStartIdentity ?? processStartIdentity
+      );
+      if (owned === true) return;
+      if (owned === false) {
+        throw new Error(`PID ${pid} is not the tmex runtime for this install (${installDir}).`);
+      }
     }
     const readCmd = this.deps.processCommandLine ?? processCommandLine;
     let cmdline: string | null = null;
@@ -335,6 +367,29 @@ export function processCommandLine(pid: number): string | null {
   }
 }
 
+export function processStartIdentity(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (process.platform === 'linux' && existsSync(`/proc/${pid}/stat`)) {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const close = stat.lastIndexOf(')');
+      const rest = stat.slice(close + 2).split(' ');
+      return rest[19] ?? null;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      timeout: 2_000,
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
 function resolvedPathOrSelf(path: string): string | null {
   try {
     return realpathSync(path);
@@ -355,10 +410,19 @@ export function cmdlineOwnsInstallRuntime(cmdline: string, installDir: string): 
       join(resolvedInstall, 'runtime', 'server.js')
     );
   }
-  for (const needle of needles) {
-    if (cmdline.includes(needle)) return true;
+  for (const needle of [...needles]) {
     const resolved = resolvedPathOrSelf(needle);
-    if (resolved && resolved !== needle && cmdline.includes(resolved)) return true;
+    if (resolved && resolved !== needle) needles.push(resolved);
+  }
+  const tokens = cmdline.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  const exe = basename(tokens[0] ?? '');
+  if (exe !== 'bun' && exe !== 'node') return false;
+  const needleSet = new Set(needles);
+  for (const token of tokens.slice(1)) {
+    if (needleSet.has(token)) return true;
+    const resolved = resolvedPathOrSelf(token);
+    if (resolved && needleSet.has(resolved)) return true;
   }
   return false;
 }
@@ -369,20 +433,33 @@ function asPositiveInt(value: unknown): number | null {
   return null;
 }
 
-export function parsePidFileContents(raw: string): number | null {
+export type PidFileRecord = { pid: number; identity?: string | null };
+
+export function parsePidFileRecord(raw: string): PidFileRecord | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   const direct = asPositiveInt(trimmed);
-  if (direct !== null) return direct;
+  if (direct !== null) return { pid: direct };
   try {
     const parsed: unknown = JSON.parse(trimmed);
     if (parsed && typeof parsed === 'object' && 'pid' in parsed) {
-      return asPositiveInt((parsed as { pid: unknown }).pid);
+      const pid = asPositiveInt((parsed as { pid: unknown }).pid);
+      if (pid === null) return null;
+      const identity = (parsed as { identity?: unknown }).identity;
+      return {
+        pid,
+        identity: typeof identity === 'string' ? identity : null,
+      };
     }
-    return asPositiveInt(parsed);
+    const pid = asPositiveInt(parsed);
+    return pid !== null ? { pid } : null;
   } catch {
     return null;
   }
+}
+
+export function parsePidFileContents(raw: string): number | null {
+  return parsePidFileRecord(raw)?.pid ?? null;
 }
 
 export function assertReleaseIntegrity(

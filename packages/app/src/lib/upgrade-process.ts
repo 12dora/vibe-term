@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { t } from '../i18n';
 import { writeTextAtomic } from './fs-utils';
 import { isPidAlive, processStartIdentity } from './upgrade-lock';
@@ -65,23 +65,83 @@ export function processCommandLine(pid: number): string | null {
   }
 }
 
-export async function killPidAndWait(pid: number, timeoutMs: number): Promise<void> {
-  if (!isPidAlive(pid)) return;
-  try {
-    process.kill(pid, 'SIGTERM');
-  } catch {
-    return;
-  }
-  try {
-    await waitForPidExit(pid, Math.min(timeoutMs, 10_000));
-  } catch {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      return;
+export type KillPidProbes = {
+  isAlive?: (pid: number) => boolean;
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
+  assertOwned?: () => void;
+  waitExit?: (pid: number, timeoutMs: number) => Promise<void>;
+};
+
+export async function killPidAndWait(
+  pid: number,
+  timeoutMs: number,
+  probes: KillPidProbes = {}
+): Promise<void> {
+  const isAlive = probes.isAlive ?? isPidAlive;
+  const kill =
+    probes.kill ??
+    ((target: number, signal: NodeJS.Signals) => {
+      process.kill(target, signal);
+    });
+  const waitExit = probes.waitExit ?? waitForPidExit;
+  const assertOwned = probes.assertOwned;
+
+  const trySignal = (signal: NodeJS.Signals): 'gone' | 'signaled' => {
+    if (!isAlive(pid)) return 'gone';
+    if (assertOwned) {
+      try {
+        assertOwned();
+      } catch (error) {
+        if (!isAlive(pid)) return 'gone';
+        throw error;
+      }
     }
-    await waitForPidExit(pid, timeoutMs);
+    if (!isAlive(pid)) return 'gone';
+    try {
+      kill(pid, signal);
+    } catch {
+      return 'gone';
+    }
+    return 'signaled';
+  };
+
+  if (trySignal('SIGTERM') === 'gone') return;
+  try {
+    await waitExit(pid, Math.min(timeoutMs, 10_000));
+  } catch {
+    if (trySignal('SIGKILL') === 'gone') return;
+    await waitExit(pid, timeoutMs);
   }
+}
+
+export function cmdlineOwnsRuntime(
+  cmdline: string | null | undefined,
+  runtimePaths: string[]
+): boolean {
+  if (!cmdline) return false;
+  const tokens = cmdline.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  const exe = basename(tokens[0] ?? '');
+  if (exe !== 'bun' && exe !== 'node') return false;
+  const needles = new Set<string>();
+  for (const path of runtimePaths) {
+    if (!path) continue;
+    needles.add(path);
+    try {
+      needles.add(realpathSync(path));
+    } catch {
+      // path may not exist yet (legacy layout before convert)
+    }
+  }
+  for (const token of tokens.slice(1)) {
+    if (needles.has(token)) return true;
+    try {
+      if (needles.has(realpathSync(token))) return true;
+    } catch {
+      // token is not a resolvable path
+    }
+  }
+  return false;
 }
 
 export function commandLineContains(pid: number, needle: string): boolean {
@@ -164,11 +224,12 @@ export function assertOwnedInstallProcess(opts: {
     if (live !== null && live !== opts.expectedIdentity) {
       throw new Error(t('upgrade.pidNotOwned', { pid: String(pid), installDir }));
     }
+    if (live !== null && live === opts.expectedIdentity) {
+      return;
+    }
   }
   const cmd = opts.commandLine === undefined ? processCommandLine(pid) : opts.commandLine;
-  const needles = ownedRuntimePaths(installDir);
-  const ok = Boolean(cmd && needles.some((needle) => needle && cmd.includes(needle)));
-  if (!ok) {
+  if (!cmdlineOwnsRuntime(cmd, ownedRuntimePaths(installDir))) {
     throw new Error(t('upgrade.pidNotOwned', { pid: String(pid), installDir }));
   }
 }
@@ -217,7 +278,15 @@ export function createDirectProcessControl(opts: {
     async stop() {
       const record = assertOwnedLive();
       if (record && isPidAlive(record.pid)) {
-        await killPidAndWait(record.pid, STOP_TIMEOUT_MS);
+        await killPidAndWait(record.pid, STOP_TIMEOUT_MS, {
+          assertOwned: () => {
+            assertOwnedInstallProcess({
+              pid: record.pid,
+              installDir: opts.installDir,
+              expectedIdentity: record.identity,
+            });
+          },
+        });
       }
       if (record && isPidAlive(record.pid)) {
         throw new Error(t('upgrade.serviceDidNotStop', { timeout: STOP_TIMEOUT_MS }));

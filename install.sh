@@ -29,6 +29,25 @@ tmex_classify_checksum_http() {
   esac
 }
 
+# Print the hex for a filename field that is EXACTLY $2 (no directories, no *).
+# Rejects path-qualified entries such as /tmp/foo.tgz or ../foo.tgz.
+tmex_sha256sums_hex_for() {
+  local sums_file="$1"
+  local want="$2"
+  awk -v want="$want" '
+    $1 ~ /^[a-fA-F0-9]{64}$/ {
+      name = $2
+      sub(/^\*/, "", name)
+      if (name == want) {
+        print tolower($1)
+        found = 1
+        exit 0
+      }
+    }
+    END { if (!found) exit 1 }
+  ' "$sums_file"
+}
+
 tmex_is_semver() {
   printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
 }
@@ -274,19 +293,23 @@ tmex_install() {
   elif [ "$sums_class" != "ok" ]; then
     echo "tmex install: failed to fetch SHA256SUMS (HTTP ${sums_code})" >&2
     exit 1
-  elif ! grep -Eq "tmex-cli-${version}\\.tgz$" "$sums_file"; then
-    echo "tmex install: SHA256SUMS does not list tmex-cli-${version}.tgz" >&2
-    exit 1
-  elif ! (
-    cd "$TMEX_INSTALL_TMP"
-    if command -v shasum >/dev/null 2>&1; then
-      grep -E "tmex-cli-${version}\\.tgz$" SHA256SUMS | shasum -a 256 -c -
-    else
-      grep -E "tmex-cli-${version}\\.tgz$" SHA256SUMS | sha256sum -c -
+  else
+    local expected_hex actual_hex
+    if ! expected_hex="$(tmex_sha256sums_hex_for "$sums_file" "tmex-cli-${version}.tgz")"; then
+      echo "tmex install: SHA256SUMS does not list tmex-cli-${version}.tgz" >&2
+      exit 1
     fi
-  ); then
-    echo "tmex install: Release tarball sha256 mismatch for tmex-cli-${version}.tgz" >&2
-    exit 1
+    if command -v shasum >/dev/null 2>&1; then
+      actual_hex="$(shasum -a 256 "$tgz" | awk '{print $1}')"
+    else
+      actual_hex="$(sha256sum "$tgz" | awk '{print $1}')"
+    fi
+    expected_hex="$(printf '%s' "$expected_hex" | tr 'A-F' 'a-f')"
+    actual_hex="$(printf '%s' "$actual_hex" | tr 'A-F' 'a-f')"
+    if [ "$actual_hex" != "$expected_hex" ]; then
+      echo "tmex install: Release tarball sha256 mismatch for tmex-cli-${version}.tgz" >&2
+      exit 1
+    fi
   fi
 
   tar -xzf "$tgz" -C "$TMEX_INSTALL_TMP"

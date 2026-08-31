@@ -176,7 +176,14 @@ const defaultCandidateRunner: CandidateRunner = async ({ bunPath, serverJs, env 
     logTail: () => tail.join('\n'),
     async stop() {
       if (child.pid && isPidAlive(child.pid)) {
-        await killPidAndWait(child.pid, 8_000);
+        const ownedPid = child.pid;
+        await killPidAndWait(ownedPid, 8_000, {
+          assertOwned: () => {
+            if (!commandLineContains(ownedPid, serverJs)) {
+              throw new Error(t('upgrade.pidNotOwned', { pid: String(ownedPid), installDir: '' }));
+            }
+          },
+        });
       }
     },
   };
@@ -372,12 +379,15 @@ async function killRecordedCandidate(installDir: string, journal: UpgradeJournal
   const pid = journal.candidatePid;
   if (!pid) return;
   const serverJs = join(versionDirPath(installDir, journal.toVersion), 'runtime', 'server.js');
-  if (isPidAlive(pid) && commandLineContains(pid, serverJs)) {
-    await killPidAndWait(pid, 15_000);
+  const owned = () => commandLineContains(pid, serverJs);
+  if (isPidAlive(pid) && owned()) {
+    await killPidAndWait(pid, 15_000, {
+      assertOwned: () => {
+        if (!owned()) throw new Error(t('upgrade.pidNotOwned', { pid: String(pid), installDir }));
+      },
+    });
   }
-  if (isPidAlive(pid) && commandLineContains(pid, serverJs)) {
-    await waitForPidExit(pid, 5_000);
-  }
+  if (isPidAlive(pid) && owned()) await waitForPidExit(pid, 5_000);
 }
 
 async function verifyOldServiceRunning(
