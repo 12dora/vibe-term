@@ -1,3 +1,21 @@
+# 1.1.2
+
+_2026-08-31_
+
+## English
+
+### Features
+
+- "Connect More Devices" → Mobile device: step 1 now lists reachable addresses in order — public entry (named/quick tunnel, Hub public URL), LAN addresses (new `GET /api/system/addresses`), then the current non-loopback origin — and warns when the gateway only listens on 127.0.0.1.
+- "Connect More Devices" → Server or computer → Join an existing relay: step 4 generates the join token in place (node name + button; explains when this machine is not part of a mesh or has no trusted Hub URL); step 5 shows the real `tmex hub join` command bound to that token and name, with a live placeholder preview before generation. Token creation is now one shared hook with the node-management page.
+
+## 中文
+
+### 新功能
+
+- 「接入更多设备 → 移动设备」第 1 步改为按可达性列出地址：公网入口（命名/临时隧道、Hub 公开地址）→ 局域网地址（新增 `GET /api/system/addresses`）→ 非回环当前地址；网关只监听 127.0.0.1 时给出提示。
+- 「接入更多设备 → 服务器或电脑 → 加入已有中继」第 4 步就地生成加入码（节点名称 + 按钮；本机未加入 mesh 或无可信 Hub 地址时给出说明），第 5 步显示与加入码、节点名称联动的真实 `tmex hub join` 命令，未生成前按真实形状给占位预览。加入码生成逻辑与节点管理页共用同一 hook。
+
 # 1.1.1
 
 _2026-08-31_
