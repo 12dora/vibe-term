@@ -1,13 +1,15 @@
-import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { releaseTarballName, wsBorsh } from '@tmex/shared';
 import {
   DOMAIN_CERTIFICATE,
   encodeBase64url,
   encodeCertificate,
   hexToBytes,
 } from '@tmex/shared/auth';
+import type { LinkSession } from '@tmex/shared/link';
 import {
   FakePeers,
+  FakeStreams,
   NODE_ID,
   NODE_PK,
   asResponse,
@@ -890,6 +892,570 @@ describe('mesh-routes', () => {
       const browserFrame = encodeRtcSignal(wsBorsh.RTC_SIGNAL_FROM_BROWSER);
       mesh.runtime.handleWebSocket.message(ws, browserFrame);
       expect(sent).toEqual([{ from: 'browser', owner: { uid: mesh.boot.userId, sid } }]);
+    } finally {
+      mesh.close();
+    }
+  });
+});
+
+const originalFetch = globalThis.fetch;
+const UPGRADE_PEER = 'ee'.repeat(16);
+const dummyLink = {} as LinkSession;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+class RecordingStreams extends FakeStreams {
+  readonly opens: Array<{
+    method: string;
+    path: string;
+    auth: string | null;
+    body: string | null;
+  }> = [];
+  responses: Response[] = [];
+  openErrors: Array<Error | null> = [];
+
+  async openHttpStream(
+    _link: LinkSession,
+    open: {
+      method: string;
+      path: string;
+      query: string;
+      headers: Record<string, string>;
+      origin: string;
+      auth: string | null;
+    },
+    body: ReadableStream<Uint8Array> | null,
+    _signal: AbortSignal
+  ): Promise<Response> {
+    let text: string | null = null;
+    if (body) {
+      text = await new Response(body).text();
+    }
+    this.opens.push({ method: open.method, path: open.path, auth: open.auth, body: text });
+    const err = this.openErrors.shift();
+    if (err) throw err;
+    const queued = this.responses.shift();
+    if (queued) return queued;
+    return this.nextResponse;
+  }
+}
+
+function mockGithubLatest(
+  version: string,
+  opts?: {
+    tarball?: boolean;
+    changelog?: string | null;
+    publishedAt?: string | null;
+    status?: number;
+  }
+): void {
+  globalThis.fetch = (async (_input: RequestInfo | URL) => {
+    if (opts?.status && opts.status !== 200) {
+      return new Response('unavailable', { status: opts.status });
+    }
+    return new Response(
+      JSON.stringify({
+        tag_name: `v${version}`,
+        published_at: opts?.publishedAt ?? '2026-08-30T00:00:00.000Z',
+        body: opts?.changelog === undefined ? 'notes' : opts.changelog,
+        assets: opts?.tarball === false ? [] : [{ name: releaseTarballName(version) }],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  }) as typeof fetch;
+}
+
+function enrollPeer(
+  mesh: Awaited<ReturnType<typeof bootMesh>>,
+  nodeId: string,
+  revokedLogSeq?: number
+): void {
+  mesh.userStore.upsertCert({
+    nodeId,
+    userId: mesh.boot.userId,
+    admitRecordSeq: 2,
+    certificateBytes: encodeCertificate({
+      domain: DOMAIN_CERTIFICATE,
+      uid: mesh.boot.userId,
+      node_id: hexToBytes(nodeId),
+      ed_pk: new Uint8Array(32).fill(4),
+      x25519_pk: new Uint8Array(32).fill(5),
+      enroll_pk: new Uint8Array(32).fill(6),
+      issued_at: 1n,
+    }),
+    certSig: new Uint8Array(64),
+    authorizationBytes: new Uint8Array(8),
+    authorizationSig: new Uint8Array(64),
+    ...(revokedLogSeq != null ? { revokedLogSeq } : {}),
+  });
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+describe('mesh upgrade routes', () => {
+  test('GET /api/mesh/upgrade/latest requires a local session', async () => {
+    const mesh = await bootMesh();
+    try {
+      const res = await call(mesh.runtime, 'http://localhost/api/mesh/upgrade/latest');
+      expect(res.status).toBe(401);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/upgrade/latest returns latestVersion without hasUpdate', async () => {
+    mockGithubLatest('9.9.9', { changelog: '## 9.9.9', publishedAt: '2026-08-30T00:00:00.000Z' });
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, 'http://localhost/api/mesh/upgrade/latest', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toEqual({
+        latestVersion: '9.9.9',
+        changelog: '## 9.9.9',
+        publishedAt: '2026-08-30T00:00:00.000Z',
+      });
+      expect(body.hasUpdate).toBeUndefined();
+      expect(body.currentVersion).toBeUndefined();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/upgrade/latest maps GitHub failure to RELEASE_UNAVAILABLE', async () => {
+    mockGithubLatest('9.9.9', { status: 502 });
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, 'http://localhost/api/mesh/upgrade/latest', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ code: 'RELEASE_UNAVAILABLE' });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/upgrade/latest maps missing tarball to RELEASE_UNAVAILABLE', async () => {
+    mockGithubLatest('9.9.9', { tarball: false });
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, 'http://localhost/api/mesh/upgrade/latest', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ code: 'RELEASE_UNAVAILABLE' });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote upgrade forwards POST /api/system/upgrade with the resolved version', async () => {
+    mockGithubLatest('9.9.9');
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    peers.transport.set(UPGRADE_PEER, 'dc');
+    const streams = new RecordingStreams();
+    streams.responses.push(
+      jsonResponse({
+        baseVersion: '1.0.0',
+        version: '1.0.0',
+        canSelfUpdate: true,
+      }),
+      jsonResponse({
+        state: 'downloading',
+        targetVersion: '9.9.9',
+        error: null,
+        startedAt: '2026-08-30T00:00:00.000Z',
+      })
+    );
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        state: 'downloading',
+        targetVersion: '9.9.9',
+        error: null,
+        startedAt: '2026-08-30T00:00:00.000Z',
+      });
+      expect(streams.opens).toHaveLength(2);
+      expect(streams.opens[0]).toMatchObject({
+        method: 'GET',
+        path: '/api/system/info',
+        auth: 'remote-sid',
+      });
+      expect(streams.opens[1]).toMatchObject({
+        method: 'POST',
+        path: '/api/system/upgrade',
+        auth: 'remote-sid',
+        body: JSON.stringify({ version: '9.9.9' }),
+      });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote upgrade without a target session → NODE_LOGIN_REQUIRED and does not open a stream', async () => {
+    mockGithubLatest('9.9.9');
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}` },
+        }
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ code: 'NODE_LOGIN_REQUIRED', nodeId: UPGRADE_PEER });
+      expect(streams.opens).toEqual([]);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote upgrade when the peer is unreachable → NODE_UNREACHABLE', async () => {
+    mockGithubLatest('9.9.9');
+    const peers = new FakePeers();
+    const streams = new RecordingStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ code: 'NODE_UNREACHABLE', nodeId: UPGRADE_PEER });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote upgrade maps target 409 to UPGRADE_IN_PROGRESS', async () => {
+    mockGithubLatest('9.9.9');
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(
+      jsonResponse({ baseVersion: '1.0.0', canSelfUpdate: true }),
+      jsonResponse(
+        {
+          state: 'executing',
+          targetVersion: '9.9.9',
+          error: 'busy',
+          startedAt: '2026-08-30T00:00:00.000Z',
+        },
+        409
+      )
+    );
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { code: string; nodeId: string; state: string };
+      expect(body.code).toBe('UPGRADE_IN_PROGRESS');
+      expect(body.nodeId).toBe(UPGRADE_PEER);
+      expect(body.state).toBe('executing');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote upgrade maps target 404 to UPGRADE_UNSUPPORTED', async () => {
+    mockGithubLatest('9.9.9');
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(new Response('not found', { status: 404 }));
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ code: 'UPGRADE_UNSUPPORTED', nodeId: UPGRADE_PEER });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote upgrade maps target 403 to UPGRADE_NOT_ALLOWED', async () => {
+    mockGithubLatest('9.9.9');
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(
+      jsonResponse({ baseVersion: '1.0.0', canSelfUpdate: true }),
+      jsonResponse({ error: 'forbidden' }, 403)
+    );
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'UPGRADE_NOT_ALLOWED', nodeId: UPGRADE_PEER });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote upgrade when target is already at latest → UPGRADE_ALREADY_LATEST and no POST', async () => {
+    mockGithubLatest('1.2.3');
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(jsonResponse({ baseVersion: '1.2.3', canSelfUpdate: true }));
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        code: 'UPGRADE_ALREADY_LATEST',
+        nodeId: UPGRADE_PEER,
+        version: '1.2.3',
+      });
+      expect(streams.opens.map((o) => o.method)).toEqual(['GET']);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote upgrade does not retry the POST after a stream error', async () => {
+    mockGithubLatest('9.9.9');
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(jsonResponse({ baseVersion: '1.0.0', canSelfUpdate: true }));
+    streams.openErrors.push(null, new Error('link died after POST open'));
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ code: 'NODE_UNREACHABLE', nodeId: UPGRADE_PEER });
+      expect(streams.opens.map((o) => o.method)).toEqual(['GET', 'POST']);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote upgrade works over relay transport', async () => {
+    mockGithubLatest('9.9.9');
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    peers.transport.set(UPGRADE_PEER, 'relay');
+    peers.reach.set(UPGRADE_PEER, 'relay');
+    const streams = new RecordingStreams();
+    streams.responses.push(
+      jsonResponse({ baseVersion: '1.0.0', canSelfUpdate: true }),
+      jsonResponse({
+        state: 'downloading',
+        targetVersion: '9.9.9',
+        error: null,
+        startedAt: '2026-08-30T00:00:00.000Z',
+      })
+    );
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(200);
+      expect(streams.opens[1]?.path).toBe('/api/system/upgrade');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST upgrade of a revoked node is not found', async () => {
+    mockGithubLatest('9.9.9');
+    const mesh = await bootMesh();
+    try {
+      enrollPeer(mesh, REVOKED_ID, 9);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${REVOKED_ID}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${REVOKED_ID}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(404);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET remote upgrade status forwards GET /api/system/upgrade', async () => {
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(
+      jsonResponse({
+        state: 'idle',
+        targetVersion: null,
+        error: null,
+        startedAt: null,
+      })
+    );
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        state: 'idle',
+        targetVersion: null,
+        error: null,
+        startedAt: null,
+      });
+      expect(streams.opens).toEqual([
+        { method: 'GET', path: '/api/system/upgrade', auth: 'remote-sid', body: null },
+      ]);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET local upgrade status returns the local controller status', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, `http://localhost/api/mesh/nodes/${NODE_ID}/upgrade`, {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        state: 'idle',
+        targetVersion: null,
+        error: null,
+        startedAt: null,
+      });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET remote upgrade status without a target session → NODE_LOGIN_REQUIRED', async () => {
+    const mesh = await bootMesh();
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          headers: { cookie: `tmex_s_self=${sid}` },
+        }
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ code: 'NODE_LOGIN_REQUIRED', nodeId: UPGRADE_PEER });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST local upgrade when canSelfUpdate is false → UPGRADE_NOT_ALLOWED', async () => {
+    mockGithubLatest('99.0.0');
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, `http://localhost/api/mesh/nodes/${NODE_ID}/upgrade`, {
+        method: 'POST',
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'UPGRADE_NOT_ALLOWED', nodeId: NODE_ID });
     } finally {
       mesh.close();
     }

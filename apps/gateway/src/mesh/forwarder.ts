@@ -250,6 +250,70 @@ export class Forwarder {
     }
   }
 
+  async forwardAuthorizedHttp(
+    req: Request,
+    input: { nodeId: string; method: string; path: string; query?: string; body?: unknown },
+    signal?: AbortSignal
+  ): Promise<Response> {
+    const auth =
+      parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(input.nodeId)) ?? null;
+    if (!auth) {
+      return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId: input.nodeId });
+    }
+    const abort = signal ?? req.signal;
+    const method = input.method.toUpperCase();
+    const retryable = IDEMPOTENT_HTTP.has(method);
+    const origin = req.headers.get('origin') ?? new URL(req.url).origin;
+    const headers: Record<string, string> = {};
+    let body: ReadableStream<Uint8Array> | null = null;
+    if (!retryable) {
+      const payload =
+        typeof input.body === 'string' ? input.body : JSON.stringify(input.body ?? {});
+      headers['content-type'] = 'application/json';
+      const bytes = new TextEncoder().encode(payload);
+      body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      });
+    }
+    const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (abort.aborted) break;
+      if (attempt > 0) {
+        try {
+          await this.sleep(STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 200, abort);
+        } catch {
+          break;
+        }
+      }
+      try {
+        const link = await this.deps.peers.getLink(input.nodeId);
+        return await this.adaptResponse(
+          req,
+          await this.deps.streams.openHttpStream(
+            link,
+            {
+              method,
+              path: input.path,
+              query: input.query ?? '',
+              headers,
+              origin,
+              auth,
+            },
+            body,
+            abort
+          ),
+          input.nodeId
+        );
+      } catch {
+        if (!retryable) break;
+      }
+    }
+    return jsonError('NODE_UNREACHABLE', 503, { nodeId: input.nodeId });
+  }
+
   private bindStream(
     pump: ForwardPump,
     stream: OpenedWsStream,

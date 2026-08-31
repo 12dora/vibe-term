@@ -65,8 +65,8 @@ async function handleUpdateCheckOpen(): Promise<Response> {
 }
 
 async function handleUpgradeStatusOpen(): Promise<Response> {
-  const { upgradeController } = await import('../system/upgrade');
-  return json(upgradeController.status());
+  const { readLocalUpgradeStatus } = await import('../system/upgrade-service');
+  return json(await readLocalUpgradeStatus());
 }
 
 export const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
@@ -88,16 +88,13 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
     return json({ error: t('apiError.upgradeVersionRequired') }, 400);
   }
 
-  const info = getSystemInfo();
-  if (!info.canSelfUpdate) {
+  const { startLocalUpgradeAttempt } = await import('../system/upgrade-service');
+  const result = await startLocalUpgradeAttempt(version);
+  if (!result.ok && result.code === 'UPGRADE_NOT_ALLOWED') {
     return json({ error: t('apiError.upgradeNotAllowed') }, 403);
   }
-
-  const { upgradeController } = await import('../system/upgrade');
-  const started = upgradeController.start(version);
-  if (!started) {
-    return json({ ...upgradeController.status(), error: t('apiError.upgradeInProgress') }, 409);
+  if (!result.ok) {
+    return json({ ...result.status, error: t('apiError.upgradeInProgress') }, 409);
   }
-
-  return json(upgradeController.status());
+  return json(result.status);
 }
