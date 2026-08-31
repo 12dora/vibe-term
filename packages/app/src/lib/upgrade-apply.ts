@@ -472,7 +472,11 @@ async function repairVerifyOrRollback(
   const url = await liveHealthUrl(installDir);
   try {
     if (!url) throw new Error(t('upgrade.healthFailed', { status: 'missing-env' }));
-    await service.start().catch(() => null);
+    // 服务仍在运行时绝不能再 start()：第二个 run.sh 会覆盖 tmex.pid 后因端口占用退出，
+    // 留下指向死 pid 的记录，使后续 stop/repair 误判「未运行」而在活进程持库时动 DB。
+    if (!(await service.isRunning())) {
+      await service.start().catch(() => null);
+    }
     await healthCheck({
       url,
       expectedVersion: journal.toVersion,

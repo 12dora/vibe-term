@@ -180,6 +180,30 @@ describe('repairUpgrade journal recovery', () => {
     expect(await readCurrentVersion(installDir)).toBe('2.0.0');
   });
 
+  test('started repair never restarts a service that is already running', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.0');
+    const pkg = await writePackage(join(installDir, '_pkg2b'), '2.0.0');
+    const { deployPackageToVersionDir } = await import('./upgrade-apply');
+    await deployPackageToVersionDir(pkg, installDir, '2.0.0');
+    await switchCurrent(installDir, '2.0.0');
+    await writeJournal(installDir, {
+      txnId: 'txn-3b',
+      phase: 'started',
+      fromVersion: '1.0.0',
+      toVersion: '2.0.0',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:00:01.000Z',
+    });
+    const service = fakeService();
+    await repairUpgrade(installDir, '/usr/bin/bun', {
+      service,
+      healthCheck: async () => undefined,
+    });
+    expect(service.starts).toBe(0);
+    expect((await readJournal(installDir))?.phase).toBe('committed');
+  });
+
   test('started rolls back when health check fails', async () => {
     const installDir = await scratch();
     await seedInstall(installDir, '1.0.0');
