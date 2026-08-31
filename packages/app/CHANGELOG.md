@@ -1,3 +1,29 @@
+# 1.1.3
+
+_2026-08-31_
+
+## English
+
+### Features
+
+- "Connect More Devices" → Join an existing relay: step 6 now confirms the join in place (waiting → Confirm join → joined). Certificate watching and `admit-node` signing moved into one host-level engine shared with the node-management page: a single poll loop, one key-log write mutex, and pending re-validation before signing, so two open UIs can never fork the key log. The join-token label reads "Join token (valid for N minutes)".
+- "Connect More Devices" → Use this machine as the relay: steps 3–5 now reflect the machine's actual configuration (named/adopted tunnel with hostname and running state, temporary tunnel warning, Hub public URL; whether this machine already is the Hub or has joined another one) and offer a one-click switch to token generation when it is the Hub.
+
+### Fixes
+
+- Step-3 copy of the join branch fits on one line.
+
+## 中文
+
+### 新功能
+
+- 「接入更多设备 → 加入已有中继」第 6 步就地确认加入（等待 → 确认加入 → 已加入）。证书监听与 `admit-node` 签名提升为宿主级单例引擎并与节点管理页共用：一条轮询、一把 key-log 写锁、签前重校验 pending，两处 UI 同时打开也不会分叉 key-log。加入码标签改为「加入码（有效期 N 分钟）」。
+- 「接入更多设备 → 本机作为中继」第 3–5 步按本机实际配置渲染（命名/接管隧道主机名与运行态、临时隧道警示、Hub 公开地址；本机是否已是 Hub 或已加入他处），本机为 Hub 时一键切到生成加入码。
+
+### 修复
+
+- 加入分支第 3 步文案压到一行。
+
 # 1.1.2
 
 _2026-08-31_
