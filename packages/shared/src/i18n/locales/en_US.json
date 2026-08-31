@@ -2008,6 +2008,28 @@
         "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
         "selfBlocked": "You cannot remove the node you are signed in to."
       },
+      "upgrade": {
+        "action": "Upgrade",
+        "hint": "Upgrade to {{version}}",
+        "latestPending": "the latest version",
+        "confirmSelf": "Upgrade this machine to {{version}}? The service restarts and access drops briefly.",
+        "confirmRemote": "Upgrade node “{{name}}” to {{version}}? The node restarts and its sessions drop.",
+        "started": "Upgrade to {{version}} started",
+        "stateDownloading": "Downloading",
+        "stateExecuting": "Installing",
+        "stateRestarting": "Restarting",
+        "done": "“{{name}}” upgraded to {{version}}",
+        "failed": "Upgrade failed: {{error}}",
+        "alreadyLatest": "“{{name}}” is already on the latest version.",
+        "offline": "The node is offline and cannot be upgraded.",
+        "loginRequired": "Sign in to this node first.",
+        "unreachable": "The node cannot be reached.",
+        "inProgress": "An upgrade is already running on this node.",
+        "notAllowed": "This node does not support in-app updates.",
+        "unsupported": "This node is too old for remote upgrades.",
+        "releaseUnavailable": "The latest version could not be resolved.",
+        "timeout": "The result is unconfirmed. Refresh the node list and check the version."
+      },
       "badge": {
         "direct": "Direct",
         "reachRow": "Reach",

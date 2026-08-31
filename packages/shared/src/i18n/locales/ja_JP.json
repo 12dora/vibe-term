@@ -2008,6 +2008,28 @@
         "hubFailed": "ハブが確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
         "selfBlocked": "現在使用中のノードは削除できません。"
       },
+      "upgrade": {
+        "action": "アップグレード",
+        "hint": "{{version}} にアップグレード",
+        "latestPending": "最新バージョン",
+        "confirmSelf": "このマシンを {{version}} にアップグレードしますか？サービスが再起動し、接続が一時的に切れます。",
+        "confirmRemote": "ノード「{{name}}」を {{version}} にアップグレードしますか？ノードが再起動し、セッションは切断されます。",
+        "started": "{{version}} へのアップグレードを開始しました",
+        "stateDownloading": "ダウンロード中",
+        "stateExecuting": "適用中",
+        "stateRestarting": "再起動中",
+        "done": "「{{name}}」を {{version}} にアップグレードしました",
+        "failed": "アップグレードに失敗しました：{{error}}",
+        "alreadyLatest": "「{{name}}」はすでに最新バージョンです。",
+        "offline": "ノードがオフラインのためアップグレードできません。",
+        "loginRequired": "先にこのノードにログインしてください。",
+        "unreachable": "ノードに接続できません。",
+        "inProgress": "このノードではアップグレードが実行中です。",
+        "notAllowed": "このノードはアプリ内更新に対応していません。",
+        "unsupported": "このノードはバージョンが古く、リモートアップグレードに対応していません。",
+        "releaseUnavailable": "最新バージョンを取得できません。",
+        "timeout": "結果を確認できませんでした。ノード一覧を更新してバージョンをご確認ください。"
+      },
       "badge": {
         "direct": "ダイレクト",
         "reachRow": "到達経路",

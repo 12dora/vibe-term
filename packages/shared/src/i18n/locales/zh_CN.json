@@ -2008,6 +2008,28 @@
         "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
         "selfBlocked": "不能移除当前正在使用的节点。"
       },
+      "upgrade": {
+        "action": "升级",
+        "hint": "升级到 {{version}}",
+        "latestPending": "最新版本",
+        "confirmSelf": "升级本机到 {{version}}？服务会重启，当前访问随之中断，稍候即可恢复。",
+        "confirmRemote": "升级节点「{{name}}」到 {{version}}？该节点会重启，其上的会话随之中断。",
+        "started": "已开始升级到 {{version}}",
+        "stateDownloading": "下载中",
+        "stateExecuting": "执行中",
+        "stateRestarting": "重启中",
+        "done": "「{{name}}」已升级到 {{version}}",
+        "failed": "升级失败：{{error}}",
+        "alreadyLatest": "「{{name}}」已是最新版本。",
+        "offline": "节点离线，无法升级。",
+        "loginRequired": "须先登录该节点。",
+        "unreachable": "无法连接到该节点。",
+        "inProgress": "该节点正在升级。",
+        "notAllowed": "该节点不支持程序内更新。",
+        "unsupported": "该节点版本过旧，不支持远程升级。",
+        "releaseUnavailable": "无法获取最新版本。",
+        "timeout": "升级结果未确认，请刷新节点列表核对版本。"
+      },
       "badge": {
         "direct": "直连",
         "reachRow": "到达路径",

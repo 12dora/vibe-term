@@ -17,6 +17,7 @@ const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } 
   '@/node/enrollment-engine'
 );
 const { resolveHubPublicUrl } = await import('./enrollment-section');
+const { isUpgradeBusy, upgradeErrorText, upgradePhaseText } = await import('./use-node-upgrade');
 const { rootKeyFromSeed } = await import('@tmex/shared/auth');
 
 const MODE: AuthModeResponse = {
@@ -42,6 +43,18 @@ function meshNode(overrides: Partial<MeshNode> & { id: string }): MeshNode {
     loggedIn: false,
     ...overrides,
   };
+}
+
+/**
+ * 取出某个 testid 所在 `<button>` 的开标签。
+ * 不能用 `data-testid="x"[^>]*disabled` 这类正则：按钮 class 里就有 `disabled:pointer-events-none`，
+ * 任何按钮都会「匹配成功」。禁用与否只认 React 渲染出的 `disabled=""` 属性。
+ */
+function buttonTag(html: string, testId: string): string {
+  const at = html.indexOf(`data-testid="${testId}"`);
+  expect(at).toBeGreaterThan(-1);
+  const open = html.lastIndexOf('<button', at);
+  return html.slice(open, html.indexOf('>', at) + 1);
 }
 
 function render(mode: AuthModeResponse): string {
@@ -122,10 +135,105 @@ describe('NodesManagement', () => {
     );
   });
 
+  test('升级按钮不跟 hub 在线绑定：hub 离线时本机与已登录的在线远端仍可升级', () => {
+    setMeshNodesStateForTest({
+      entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+      nodes: [
+        meshNode({ id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e', name: 'entry', loggedIn: true }),
+        meshNode({
+          id: '0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d',
+          name: 'studio',
+          online: true,
+          loggedIn: true,
+        }),
+      ],
+    });
+    const html = render(MODE);
+    // hub 离线（提示已渲染），rename / revoke 被禁用，但升级按钮照常可用
+    expect(html).toContain('data-testid="nodes-hub-offline"');
+    expect(buttonTag(html, 'nodes-rename-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d')).toContain(
+      'disabled=""'
+    );
+    expect(buttonTag(html, 'node-upgrade-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e')).not.toContain(
+      'disabled=""'
+    );
+    expect(buttonTag(html, 'node-upgrade-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d')).not.toContain(
+      'disabled=""'
+    );
+    // 每行都是静止态
+    expect(html).toContain('data-upgrade-phase="idle"');
+  });
+
+  test('未登录的远端与离线节点：升级按钮禁用', () => {
+    setMeshNodesStateForTest({
+      entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+      nodes: [
+        meshNode({ id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e', name: 'entry', loggedIn: true }),
+        meshNode({
+          id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+          name: 'studio',
+          online: true,
+          loggedIn: false,
+        }),
+        meshNode({
+          id: '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b',
+          name: 'laptop',
+          online: false,
+          loggedIn: true,
+        }),
+      ],
+    });
+    const html = render(MODE);
+    // 未登录的在线远端：提示先登录
+    const notLoggedIn = buttonTag(html, 'node-upgrade-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c');
+    expect(notLoggedIn).toContain('disabled=""');
+    expect(notLoggedIn).toContain('title="nodes.upgrade.loginRequired"');
+    // 离线节点：无论登录与否都不可升级
+    const offline = buttonTag(html, 'node-upgrade-0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b');
+    expect(offline).toContain('disabled=""');
+    expect(offline).toContain('title="nodes.upgrade.offline"');
+  });
+
   test('缺 uid / kdfParams 时不渲染任何管理动作', () => {
     const html = render({ ...MODE, uid: null, kdfParams: null });
     expect(html).not.toContain('data-testid="nodes-table"');
     expect(html).not.toContain('data-testid="nodes-add"');
+  });
+});
+
+describe('节点升级派生逻辑', () => {
+  const t = (key: string) => key;
+
+  test('只有进行中的阶段算忙：done / failed 都要能再次点击', () => {
+    expect(isUpgradeBusy('idle')).toBe(false);
+    expect(isUpgradeBusy('pending')).toBe(true);
+    expect(isUpgradeBusy('downloading')).toBe(true);
+    expect(isUpgradeBusy('executing')).toBe(true);
+    expect(isUpgradeBusy('restarting')).toBe(true);
+    expect(isUpgradeBusy('done')).toBe(false);
+    expect(isUpgradeBusy('failed')).toBe(false);
+  });
+
+  test('阶段文案：pending 与 restarting 都按「重启中」提示，静止阶段没有文案', () => {
+    expect(upgradePhaseText(t, 'downloading')).toBe('nodes.upgrade.stateDownloading');
+    expect(upgradePhaseText(t, 'executing')).toBe('nodes.upgrade.stateExecuting');
+    expect(upgradePhaseText(t, 'pending')).toBe('nodes.upgrade.stateRestarting');
+    expect(upgradePhaseText(t, 'restarting')).toBe('nodes.upgrade.stateRestarting');
+    expect(upgradePhaseText(t, 'idle')).toBeNull();
+    expect(upgradePhaseText(t, 'done')).toBeNull();
+    expect(upgradePhaseText(t, 'failed')).toBeNull();
+  });
+
+  test('错误码映射到本地文案，未知码原样展示', () => {
+    expect(upgradeErrorText(t, 'NODE_LOGIN_REQUIRED')).toBe('nodes.upgrade.loginRequired');
+    expect(upgradeErrorText(t, 'NODE_UNREACHABLE')).toBe('nodes.upgrade.unreachable');
+    expect(upgradeErrorText(t, 'UPGRADE_NOT_ALLOWED')).toBe('nodes.upgrade.notAllowed');
+    expect(upgradeErrorText(t, 'UPGRADE_IN_PROGRESS')).toBe('nodes.upgrade.inProgress');
+    expect(upgradeErrorText(t, 'UPGRADE_UNSUPPORTED')).toBe('nodes.upgrade.unsupported');
+    expect(upgradeErrorText(t, 'RELEASE_UNAVAILABLE')).toBe('nodes.upgrade.releaseUnavailable');
+    // 「已是最新」不是失败，不进错误表；未知码保持可诊断
+    expect(upgradeErrorText(t, 'UPGRADE_ALREADY_LATEST')).toBe('UPGRADE_ALREADY_LATEST');
+    expect(upgradeErrorText(t, 'BOOM')).toBe('BOOM');
   });
 });
 
