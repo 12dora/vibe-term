@@ -106,16 +106,8 @@ export class MeshRoutes {
     if (path === '/api/mesh/upgrade/latest' && req.method === 'GET') {
       return requireSession(this.sessionDeps, () => this.handleUpgradeLatest())(req);
     }
-    const upgradeNode = path.match(/^\/api\/mesh\/nodes\/([^/]+)\/upgrade$/);
-    if (upgradeNode) {
-      const nodeId = decodeURIComponent(upgradeNode[1] ?? '');
-      if (req.method === 'POST') {
-        return requireSession(this.sessionDeps, (r) => this.handleUpgradeStart(r, nodeId))(req);
-      }
-      if (req.method === 'GET') {
-        return requireSession(this.sessionDeps, (r) => this.handleUpgradeStatus(r, nodeId))(req);
-      }
-    }
+    const upgradeRoute = this.matchUpgradeNodeRoute(req, path);
+    if (upgradeRoute) return upgradeRoute;
     if (path === '/api/mesh/rtc-config' && req.method === 'GET') {
       return requireSession(this.sessionDeps, () => this.handleRtcConfig())(req);
     }
@@ -179,6 +171,19 @@ export class MeshRoutes {
 
   private handleNodes(req: Request): Response {
     return jsonBody({ nodes: this.collectNodes(req) });
+  }
+
+  private matchUpgradeNodeRoute(req: Request, path: string): Promise<Response> | undefined {
+    const match = path.match(/^\/api\/mesh\/nodes\/([^/]+)\/upgrade$/);
+    if (!match) return undefined;
+    const nodeId = decodeURIComponent(match[1] ?? '');
+    if (req.method === 'POST') {
+      return requireSession(this.sessionDeps, (r) => this.handleUpgradeStart(r, nodeId))(req);
+    }
+    if (req.method === 'GET') {
+      return requireSession(this.sessionDeps, (r) => this.handleUpgradeStatus(r, nodeId))(req);
+    }
+    return undefined;
   }
 
   private handleUpgradeLatest(): Promise<Response> {

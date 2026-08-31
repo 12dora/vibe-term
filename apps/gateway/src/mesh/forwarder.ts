@@ -27,6 +27,7 @@ import {
   parseSetSessionHeader,
   setMeshRequestContext,
 } from './mesh-deps';
+import { buildJsonStreamBody } from './json-stream-body';
 import { isHttps, jsonError } from './session-middleware';
 import { StreamReplayState } from './stream-replay-state';
 
@@ -263,21 +264,8 @@ export class Forwarder {
     const abort = signal ?? req.signal;
     const method = input.method.toUpperCase();
     const retryable = IDEMPOTENT_HTTP.has(method);
-    const origin = req.headers.get('origin') ?? new URL(req.url).origin;
     const headers: Record<string, string> = {};
-    let body: ReadableStream<Uint8Array> | null = null;
-    if (!retryable) {
-      const payload =
-        typeof input.body === 'string' ? input.body : JSON.stringify(input.body ?? {});
-      headers['content-type'] = 'application/json';
-      const bytes = new TextEncoder().encode(payload);
-      body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(bytes);
-          controller.close();
-        },
-      });
-    }
+    const body = retryable ? null : buildJsonStreamBody(input.body, headers);
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (abort.aborted) break;
@@ -289,29 +277,44 @@ export class Forwarder {
         }
       }
       try {
-        const link = await this.deps.peers.getLink(input.nodeId);
-        return await this.adaptResponse(
-          req,
-          await this.deps.streams.openHttpStream(
-            link,
-            {
-              method,
-              path: input.path,
-              query: input.query ?? '',
-              headers,
-              origin,
-              auth,
-            },
-            body,
-            abort
-          ),
-          input.nodeId
-        );
+        return await this.openAuthorizedAttempt(req, input, { method, headers, auth, body, abort });
       } catch {
         if (!retryable) break;
       }
     }
     return jsonError('NODE_UNREACHABLE', 503, { nodeId: input.nodeId });
+  }
+
+  private async openAuthorizedAttempt(
+    req: Request,
+    input: { nodeId: string; path: string; query?: string },
+    opts: {
+      method: string;
+      headers: Record<string, string>;
+      auth: string;
+      body: ReadableStream<Uint8Array> | null;
+      abort: AbortSignal;
+    }
+  ): Promise<Response> {
+    const origin = req.headers.get('origin') ?? new URL(req.url).origin;
+    const link = await this.deps.peers.getLink(input.nodeId);
+    return await this.adaptResponse(
+      req,
+      await this.deps.streams.openHttpStream(
+        link,
+        {
+          method: opts.method,
+          path: input.path,
+          query: input.query ?? '',
+          headers: opts.headers,
+          origin,
+          auth: opts.auth,
+        },
+        opts.body,
+        opts.abort
+      ),
+      input.nodeId
+    );
   }
 
   private bindStream(
