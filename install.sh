@@ -242,7 +242,7 @@ tmex_install() {
   local -a init_args
   init_args=("$@")
   if [ ! -t 0 ]; then
-    if exec 3</dev/tty 2>/dev/null; then
+    if { exec 3</dev/tty; } 2>/dev/null; then
       echo "tmex install: stdin is not a TTY; attaching /dev/tty for prompts"
       tmex_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" <&3
       exec 3<&-
