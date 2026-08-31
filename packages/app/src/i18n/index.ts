@@ -112,6 +112,8 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'cli.shim.pathHint':
       '{{binDir}} is not on PATH. Add it so the tmex command is available: export PATH="{{binDir}}:$PATH"',
     'cli.shim.ready': 'CLI command: tmex ({{shimPath}})',
+    'cli.shim.skipForeign':
+      'Skipped replacing {{path}} (existing file is not a tmex-managed shim).',
 
     'uninstall.prompt.removeService': 'Uninstall system service',
     'uninstall.prompt.removeProgram': 'Remove program files (runtime/resources/cli/run.sh/meta)',
@@ -250,6 +252,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'cli.shim.pathHint':
       '{{binDir}} 不在 PATH 中。加入后即可使用 tmex 命令：export PATH="{{binDir}}:$PATH"',
     'cli.shim.ready': 'CLI 命令：tmex（{{shimPath}}）',
+    'cli.shim.skipForeign': '已跳过替换 {{path}}（现有文件不是 tmex 托管的 shim）。',
 
     'uninstall.prompt.removeService': '是否卸载系统服务',
     'uninstall.prompt.removeProgram': '是否删除程序文件（runtime/resources/cli/run.sh/meta）',

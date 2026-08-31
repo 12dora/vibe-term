@@ -51,6 +51,19 @@ describe('resolveReleaseVersion', () => {
     expect(calls).toEqual([]);
   });
 
+  test('rejects explicit versions that are not strict semver', async () => {
+    await expect(resolveReleaseVersion('../etc/passwd')).rejects.toThrow(
+      t('errors.version.invalid', { input: '../etc/passwd' })
+    );
+    await expect(resolveReleaseVersion('1.2')).rejects.toThrow(
+      t('errors.version.invalid', { input: '1.2' })
+    );
+    await expect(resolveReleaseVersion('1.2.3+build')).rejects.toThrow(
+      t('errors.version.invalid', { input: '1.2.3+build' })
+    );
+    await expect(resolveReleaseVersion('v1.2.3-beta.1')).resolves.toBe('1.2.3-beta.1');
+  });
+
   test('fetches latest when requested version is latest or empty', async () => {
     const version = await resolveReleaseVersion('latest', async (url) => {
       expect(String(url)).toBe(RELEASE_API_LATEST_URL);

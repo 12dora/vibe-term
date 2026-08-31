@@ -74,7 +74,7 @@ export type DelegateUpgradeDeps = {
 
 function passthroughUpgradeFlags(parsed: ParsedArgs): string[] {
   const args: string[] = [];
-  const passthrough = ['install-dir', 'service-name', 'yes', 'lang'];
+  const passthrough = ['install-dir', 'service-name', 'yes', 'lang', 'bun-path'];
   for (const key of passthrough) {
     const value = parsed.flags[key];
     if (value === undefined) continue;
@@ -117,6 +117,7 @@ export async function delegateUpgrade(
     const args = [cliJs, 'upgrade', '--apply-current-package', ...passthroughUpgradeFlags(parsed)];
     const result = await run(execPath, args, { stdio: 'inherit' });
     if (result.code !== 0) {
+      process.exitCode = result.code;
       throw new Error(t('upgrade.delegateFailed', { code: result.code }));
     }
   } finally {
@@ -218,6 +219,9 @@ export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
     console.log(`- ${t('upgrade.summary.targetVersion')}: ${targetVersion}`);
     console.log(`- ${t('upgrade.summary.installDir')}: ${installDir}`);
     console.log(`- ${t('cli.shim.ready', { shimPath: shim.shimPath })}`);
+    if (shim.skipWarning) {
+      console.log(`- ${shim.skipWarning}`);
+    }
     if (shim.pathHint) {
       console.log(`- ${shim.pathHint}`);
     }

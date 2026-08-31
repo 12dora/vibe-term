@@ -45,4 +45,13 @@ describe('i18n', () => {
     expect(zh).toContain('PATH');
     expect(zh).not.toContain('你');
   });
+
+  test('skipForeign exists in both languages and zh-CN avoids 你', () => {
+    setLang('en');
+    expect(t('cli.shim.skipForeign', { path: '/tmp/tmex' })).toContain('/tmp/tmex');
+    setLang('zh-CN');
+    const zh = t('cli.shim.skipForeign', { path: '/tmp/tmex' });
+    expect(zh).toContain('/tmp/tmex');
+    expect(zh).not.toContain('你');
+  });
 });

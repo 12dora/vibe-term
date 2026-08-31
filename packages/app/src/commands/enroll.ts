@@ -21,6 +21,7 @@ import {
   loginWithRootKey,
   postEnrollment,
 } from '../lib/hub-client';
+import { quotePosixShellArg } from '../lib/install';
 import { type LocalAuthContext, openInstallAuth } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { promptPassword } from '../lib/prompt';
@@ -114,6 +115,11 @@ function mailboxKey(enrollPk: Uint8Array): string {
 
 export function noteRedeemedCertificate(enrollPk: Uint8Array, candidate: AdmitCandidate): void {
   redeemMailbox.set(mailboxKey(enrollPk), candidate);
+}
+
+function quoteJoinArg(value: string): string {
+  if (/^[A-Za-z0-9._:/@%+=-]+$/.test(value)) return value;
+  return quotePosixShellArg(value);
 }
 
 function hubJoinUrl(ctx: LocalAuthContext, io?: EnrollIo): string {
@@ -483,7 +489,7 @@ export async function runEnroll(
       user.keyLogHeadHash,
       caFingerprint
     );
-    const joinCommand = `tmex hub join ${hubJoinUrl(ctx, io)} --token ${token}`;
+    const joinCommand = `tmex hub join ${quoteJoinArg(hubJoinUrl(ctx, io))} --token ${quoteJoinArg(token)}`;
     log(io, `join token: ${token}`);
     log(io, joinCommand);
     if (io.wait === false) {

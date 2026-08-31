@@ -64,12 +64,13 @@ async function handleUpgradeStatusOpen(): Promise<Response> {
   return json(upgradeController.status());
 }
 
-async function handleStartUpgradeOpen(req: Request): Promise<Response> {
-  const info = getSystemInfo();
-  if (!info.canSelfUpdate) {
-    return json({ error: t('apiError.upgradeNotAllowed') }, 403);
-  }
+export const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
+export function isReleaseVersion(value: string): boolean {
+  return RELEASE_VERSION_PATTERN.test(value);
+}
+
+async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   let version = '';
   try {
     const body = (await req.json()) as StartUpgradeRequest;
@@ -78,8 +79,13 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
     version = '';
   }
 
-  if (!version) {
+  if (!version || !isReleaseVersion(version)) {
     return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+  }
+
+  const info = getSystemInfo();
+  if (!info.canSelfUpdate) {
+    return json({ error: t('apiError.upgradeNotAllowed') }, 403);
   }
 
   const { upgradeController } = await import('../system/upgrade');

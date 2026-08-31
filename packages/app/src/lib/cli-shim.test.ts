@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setLang, t } from '../i18n';
@@ -101,7 +101,9 @@ describe('installTmexShim', () => {
     const shim = await readFile(result.shimPath, 'utf8');
     expect(shim.startsWith('#!/usr/bin/env bash')).toBe(true);
     expect(shim).toContain(TMEX_SHIM_MARKER);
+    expect(shim).toContain(`# tmex-install-dir: ${installDir}`);
     expect(shim).toContain('command -v node');
+    expect(shim).toMatch(/-ge 20/);
     expect(shim).toContain(join(installLayout.cliDir, 'bin', 'tmex.js'));
     expect(shim).toContain(bunPath);
 
@@ -159,6 +161,135 @@ describe('installTmexShim', () => {
     expect(result.pathHint).toContain('PATH');
     expect(result.pathHint).not.toContain('你');
   });
+
+  test('does not warn about PATH when the bun bin symlink directory is on PATH', async () => {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), 'tmex-shim-path-bun-'));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    const bunBinDir = join(root, 'bun-bin');
+    await mkdir(bunBinDir, { recursive: true });
+    const installLayout = createInstallLayout(join(root, 'install'));
+    await deployCliPackage(packageLayout, installLayout);
+
+    const result = await installTmexShim({
+      installLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir,
+      pathEnv: `${bunBinDir}:/usr/bin`,
+    });
+
+    expect(result.bunLinkPath).toBe(join(bunBinDir, 'tmex'));
+    expect(result.pathHint).toBeNull();
+  });
+
+  test('leaves a foreign file at ~/.local/bin/tmex untouched', async () => {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), 'tmex-shim-foreign-file-'));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    await mkdir(localBinDir, { recursive: true });
+    const shimPath = join(localBinDir, 'tmex');
+    await writeFile(shimPath, '#!/bin/sh\necho foreign-file\n', { mode: 0o755 });
+    const installLayout = createInstallLayout(join(root, 'install'));
+    await deployCliPackage(packageLayout, installLayout);
+
+    const result = await installTmexShim({
+      installLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir: join(root, 'missing-bun-bin'),
+      pathEnv: localBinDir,
+    });
+
+    expect(await readFile(shimPath, 'utf8')).toBe('#!/bin/sh\necho foreign-file\n');
+    expect(result.skipWarning).toBe(t('cli.shim.skipForeign', { path: shimPath }));
+  });
+
+  test('leaves a foreign symlink at ~/.local/bin/tmex untouched', async () => {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), 'tmex-shim-foreign-link-'));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    await mkdir(localBinDir, { recursive: true });
+    const target = join(root, 'other-tmex');
+    await writeFile(target, '#!/bin/sh\necho other-bin\n', { mode: 0o755 });
+    const shimPath = join(localBinDir, 'tmex');
+    await symlink(target, shimPath);
+    const installLayout = createInstallLayout(join(root, 'install'));
+    await deployCliPackage(packageLayout, installLayout);
+
+    const result = await installTmexShim({
+      installLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir: join(root, 'missing-bun-bin'),
+      pathEnv: localBinDir,
+    });
+
+    expect(await readlink(shimPath)).toBe(target);
+    expect(await readFile(target, 'utf8')).toContain('echo other-bin');
+    expect(result.skipWarning).toBe(t('cli.shim.skipForeign', { path: shimPath }));
+  });
+
+  test('replaces a managed shim and records the install dir', async () => {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), 'tmex-shim-replace-'));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    const firstLayout = createInstallLayout(join(root, 'install-a'));
+    const secondLayout = createInstallLayout(join(root, 'install-b'));
+    await deployCliPackage(packageLayout, firstLayout);
+    await deployCliPackage(packageLayout, secondLayout);
+
+    await installTmexShim({
+      installLayout: firstLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir: join(root, 'missing-bun-bin'),
+      pathEnv: localBinDir,
+    });
+    const result = await installTmexShim({
+      installLayout: secondLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir: join(root, 'missing-bun-bin'),
+      pathEnv: localBinDir,
+    });
+
+    const shim = await readFile(result.shimPath, 'utf8');
+    expect(shim).toContain(TMEX_SHIM_MARKER);
+    expect(shim).toContain(`# tmex-install-dir: ${secondLayout.installDir}`);
+    expect(shim).not.toContain(`# tmex-install-dir: ${firstLayout.installDir}`);
+    expect(result.skipWarning).toBeNull();
+  });
+
+  test('does not replace a foreign ~/.bun/bin/tmex symlink', async () => {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), 'tmex-shim-bun-foreign-'));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    const bunBinDir = join(root, 'bun-bin');
+    await mkdir(bunBinDir, { recursive: true });
+    const other = join(root, 'other-bun-tmex');
+    await writeFile(other, '#!/bin/sh\necho bun-foreign\n', { mode: 0o755 });
+    await symlink(other, join(bunBinDir, 'tmex'));
+    const installLayout = createInstallLayout(join(root, 'install'));
+    await deployCliPackage(packageLayout, installLayout);
+
+    const result = await installTmexShim({
+      installLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir,
+      pathEnv: `${localBinDir}:${bunBinDir}`,
+    });
+
+    expect(result.bunLinkPath).toBeNull();
+    expect(await readlink(join(bunBinDir, 'tmex'))).toBe(other);
+    expect(result.skipWarning).toBe(t('cli.shim.skipForeign', { path: join(bunBinDir, 'tmex') }));
+  });
 });
 
 describe('removeTmexShims', () => {
@@ -186,5 +317,42 @@ describe('removeTmexShims', () => {
     await expect(stat(join(localBinDir, 'tmex'))).rejects.toThrow();
     await expect(stat(join(bunBinDir, 'tmex'))).rejects.toThrow();
     expect(await readFile(foreign, 'utf8')).toContain('echo hi');
+  });
+
+  test('uninstall ignores a managed shim recorded for another install dir', async () => {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), 'tmex-shim-rm-other-'));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    const bunBinDir = join(root, 'bun-bin');
+    await mkdir(bunBinDir, { recursive: true });
+    const installLayout = createInstallLayout(join(root, 'install-keep'));
+    await deployCliPackage(packageLayout, installLayout);
+    await installTmexShim({
+      installLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir,
+      pathEnv: localBinDir,
+    });
+
+    await removeTmexShims({
+      localBinDir,
+      bunBinDir,
+      installDir: join(root, 'install-other'),
+    });
+
+    const shim = await readFile(join(localBinDir, 'tmex'), 'utf8');
+    expect(shim).toContain(TMEX_SHIM_MARKER);
+    expect(shim).toContain(`# tmex-install-dir: ${installLayout.installDir}`);
+    expect(await readlink(join(bunBinDir, 'tmex'))).toBe(join(localBinDir, 'tmex'));
+
+    await removeTmexShims({
+      localBinDir,
+      bunBinDir,
+      installDir: installLayout.installDir,
+    });
+    await expect(stat(join(localBinDir, 'tmex'))).rejects.toThrow();
+    await expect(stat(join(bunBinDir, 'tmex'))).rejects.toThrow();
   });
 });

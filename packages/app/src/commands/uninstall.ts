@@ -59,7 +59,7 @@ export async function runUninstall(parsed: ParsedArgs): Promise<void> {
     await removeIfExists(installLayout.cliDir);
     await removeIfExists(installLayout.runScriptPath);
     await removeIfExists(installLayout.metaPath);
-    await removeTmexShims();
+    await removeTmexShims({ installDir });
   }
 
   if (removeEnv) {

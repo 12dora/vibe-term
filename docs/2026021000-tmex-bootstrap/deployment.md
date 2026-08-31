@@ -1,6 +1,6 @@
 # tmex 部署指南
 
-生产安装走 npm 包 `tmex-cli`（launchd / systemd 用户服务 + SQLite），不要再用仓库里的 Docker Compose 或手写 JWT。多机 mesh、登录、passkey / TOTP、直连与排障见 [hub / node 运维指南](../hub/2026082800-hub-node-operations.md)。
+生产安装走 GitHub Releases 的 `tmex-cli` 包（launchd / systemd 用户服务 + SQLite），不要再用仓库里的 Docker Compose 或手写 JWT。多机 mesh、登录、passkey / TOTP、直连与排障见 [hub / node 运维指南](../hub/2026082800-hub-node-operations.md)。
 
 历史上本文中的 `JWT_SECRET`、`TMEX_ADMIN_PASSWORD`、OIDC、以及「用 `.env` 密码登录」均已删除：standalone 无应用层登录；加入 hub 后的身份是用户自持根钥，而不是网关签发的 JWT。
 
@@ -15,13 +15,13 @@
 ## 生产安装（tmex-cli）
 
 ```bash
-npx tmex-cli@latest init
+curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
 ```
 
 默认角色 `standalone`（单机、无登录页）。要做公网入口：
 
 ```bash
-npx tmex-cli@latest init --role hub,node
+tmex init --role hub,node
 ```
 
 随后 `hub user add`、`enroll`、各机 `hub join` 的完整步骤在运维指南。
@@ -39,7 +39,7 @@ npx tmex-cli@latest init --role hub,node
 非交互示例：
 
 ```bash
-npx tmex-cli@latest init --role standalone --no-interactive \
+tmex init --role standalone --no-interactive \
   --install-dir "$HOME/.local/share/tmex" \
   --host 127.0.0.1 --port 9883 \
   --db-path "$HOME/.local/share/tmex/data/tmex.db" \
@@ -81,14 +81,14 @@ curl -sS http://127.0.0.1:9883/healthz
 终端：
 
 ```bash
-npx tmex-cli@version upgrade
+tmex upgrade
 ```
 
-`version` 换成目标版本或 `latest`。升级会停服务、部署新 runtime、只向 `app.env` **追加缺失键**、按需重下 native addon，再拉起服务。携带服务定义修复的那一次升级，其自身的 stop 仍按旧 kill 策略执行，可能掉一次 tmux。
+或指定版本：`tmex upgrade --version 1.1.0`（也可 `TMEX_VERSION=1.1.0` 再跑 `install.sh`）。升级会停服务、部署新 runtime、只向 `app.env` **追加缺失键**、按需重下 native addon，再拉起服务。携带服务定义修复的那一次升级，其自身的 stop 仍按旧 kill 策略执行，可能掉一次 tmux。
 
 CLI 安装且 `canSelfUpdate` 时，设置页「版本与更新」可在程序内升级。发版流程见 [CLI 发布](../release/2026041300-cli-release-process.md) 与 [自更新](../update/2026061406-self-update.md)。
 
-卸载：`npx tmex-cli uninstall`；`--purge` 删除数据。
+卸载：`tmex uninstall`；`--purge` 删除数据。
 
 ## SSH 设备配置
 
@@ -162,7 +162,7 @@ mesh 角色下无 cookie 的 `/ws` 会以 **4401** 关闭并跳登录页，这�
 
 ### tmux 不可用
 
-`tmux -V` 应 ≥ 3.0。服务 PATH 由 `run.sh` 补全；仍找不到时看 `install-meta.json` 的 bun / 依赖检测，或跑 `npx tmex-cli doctor`。
+`tmux -V` 应 ≥ 3.0。服务 PATH 由 `run.sh` 补全；仍找不到时看 `install-meta.json` 的 bun / 依赖检测，或跑 `tmex doctor`。
 
 登录、节点不可达、密钥日志分叉、直连降级等见运维指南，不要在本机生产目录里用手工改库的方式「修复」mesh 状态。
 

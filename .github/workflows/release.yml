@@ -79,6 +79,7 @@ jobs:
             NOTES_ARGS=(--notes-file packages/app/CHANGELOG.md)
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "tmex-cli ${VERSION}" "${NOTES_ARGS[@]}"
             gh release upload "$TAG" "$TGZ" "$SUMS" --clobber
           else
             gh release create "$TAG" "$TGZ" "$SUMS" --title "tmex-cli ${VERSION}" "${NOTES_ARGS[@]}"

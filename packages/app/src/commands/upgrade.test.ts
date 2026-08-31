@@ -49,20 +49,24 @@ describe('delegateUpgrade', () => {
     });
     const spawned: Array<{ command: string; args: string[] }> = [];
 
-    await delegateUpgrade({ command: 'upgrade', positionals: [], flags: { lang: 'en' } }, '1.1.0', {
-      fetch: async (url) => {
-        expect(String(url)).toBe(releaseTarballUrl('1.1.0'));
-        return new Response(tarball, { status: 200 });
-      },
-      runCommand: async (command, args, options) => {
-        spawned.push({ command, args });
-        if (command === 'tar') {
-          return runCommand(command, args, options);
-        }
-        return { code: 0, stdout: '', stderr: '' };
-      },
-      execPath: '/usr/local/bin/node',
-    });
+    await delegateUpgrade(
+      { command: 'upgrade', positionals: [], flags: { lang: 'en', 'bun-path': '/custom/bun' } },
+      '1.1.0',
+      {
+        fetch: async (url) => {
+          expect(String(url)).toBe(releaseTarballUrl('1.1.0'));
+          return new Response(tarball, { status: 200 });
+        },
+        runCommand: async (command, args, options) => {
+          spawned.push({ command, args });
+          if (command === 'tar') {
+            return runCommand(command, args, options);
+          }
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        execPath: '/usr/local/bin/node',
+      }
+    );
 
     const extract = spawned.find((call) => call.command === 'tar');
     expect(extract).toBeDefined();
@@ -74,23 +78,32 @@ describe('delegateUpgrade', () => {
     expect(apply?.args.slice(1, 3)).toEqual(['upgrade', '--apply-current-package']);
     expect(apply?.args).toContain('--lang');
     expect(apply?.args).toContain('en');
+    expect(apply?.args).toContain('--bun-path');
+    expect(apply?.args).toContain('/custom/bun');
     expect(spawned.some((call) => call.command === 'npx')).toBe(false);
   });
 
   test('propagates the extracted CLI exit code', async () => {
+    const previous = process.exitCode;
+    process.exitCode = undefined;
     const tarball = packNpmTarball({
       'package/bin/tmex.js': 'export {}\n',
     });
-    await expect(
-      delegateUpgrade({ command: 'upgrade', positionals: [], flags: {} }, '1.1.0', {
-        fetch: async () => new Response(tarball, { status: 200 }),
-        runCommand: async (command, args, options) => {
-          if (command === 'tar') return runCommand(command, args, options);
-          return { code: 7, stdout: '', stderr: '' };
-        },
-        execPath: '/usr/bin/node',
-      })
-    ).rejects.toThrow(/7/);
+    try {
+      await expect(
+        delegateUpgrade({ command: 'upgrade', positionals: [], flags: {} }, '1.1.0', {
+          fetch: async () => new Response(tarball, { status: 200 }),
+          runCommand: async (command, args, options) => {
+            if (command === 'tar') return runCommand(command, args, options);
+            return { code: 7, stdout: '', stderr: '' };
+          },
+          execPath: '/usr/bin/node',
+        })
+      ).rejects.toThrow(/7/);
+      expect(process.exitCode).toBe(7);
+    } finally {
+      process.exitCode = previous ?? 0;
+    }
   });
 
   test('does not spawn npx on 404', async () => {

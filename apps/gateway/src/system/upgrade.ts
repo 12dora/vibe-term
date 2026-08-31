@@ -1,13 +1,25 @@
-import { spawn } from 'node:child_process';
-import { closeSync, existsSync, openSync } from 'node:fs';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { closeSync, existsSync, openSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { UpgradeState, UpgradeStatus } from '@tmex/shared';
 import { releaseTarballName, releaseTarballUrl } from '@tmex/shared';
-import { getInstallInfo } from './install-info';
+import { type InstallInfo, getInstallInfo } from './install-info';
 
 const TARBALL_FETCH_TIMEOUT_MS = 120_000;
+
+export type UpgradeSpawnFn = (
+  command: string,
+  args: readonly string[],
+  options: Parameters<typeof spawn>[2]
+) => ChildProcess;
+
+export type UpgradeControllerDeps = {
+  spawn?: UpgradeSpawnFn;
+  getInstallInfo?: () => InstallInfo;
+  stageRelease?: (stageDir: string, version: string) => Promise<string>;
+};
 
 /**
  * 全局唯一升级状态机：idle / downloading / executing。
@@ -23,11 +35,13 @@ const TARBALL_FETCH_TIMEOUT_MS = 120_000;
  * 依赖服务 unit 的 KillMode=process / AbandonProcessGroup=true，使 detached 子进程
  * 在服务进程被停止时存活，完成自升级。
  */
-class UpgradeController {
+export class UpgradeController {
   private state: UpgradeState = 'idle';
   private targetVersion: string | null = null;
   private error: string | null = null;
   private startedAt: string | null = null;
+
+  constructor(private readonly deps: UpgradeControllerDeps = {}) {}
 
   status(): UpgradeStatus {
     return {
@@ -54,7 +68,7 @@ class UpgradeController {
   }
 
   private async run(version: string): Promise<void> {
-    const install = getInstallInfo();
+    const install = (this.deps.getInstallInfo ?? getInstallInfo)();
     const installDir = install.installDir;
     let stageDir: string | null = null;
 
@@ -64,14 +78,10 @@ class UpgradeController {
       }
 
       stageDir = await mkdtemp(join(tmpdir(), 'tmex-upg-'));
-
-      // 校验下载产物：detached 子进程无法回报错误，缺二进制时趁本进程仍存活报错回 idle。
-      const binPath = await stageGithubRelease(stageDir, version);
-
-      // 阶段 2：执行（detached，脱离服务进程组）。此后服务会被重启，本进程随之退出，
-      // 临时目录交由系统 tmp 回收，不在此清理（清理会与子进程读包竞争）。
+      const stageRelease = this.deps.stageRelease ?? stageGithubRelease;
+      const binPath = await stageRelease(stageDir, version);
+      await this.spawnUpgrade(binPath, installDir, version);
       this.state = 'executing';
-      this.spawnUpgrade(binPath, installDir, version);
     } catch (err) {
       this.error = err instanceof Error ? err.message : String(err);
       this.state = 'idle';
@@ -80,8 +90,7 @@ class UpgradeController {
     }
   }
 
-  private spawnUpgrade(binPath: string, installDir: string, version: string): void {
-    // 升级日志单独落盘，便于回滚等失败场景排查（detached 子进程的输出不会进服务日志）。
+  private spawnUpgrade(binPath: string, installDir: string, version: string): Promise<void> {
     let logFd: number | null = null;
     try {
       logFd = openSync(join(installDir, 'upgrade.log'), 'a');
@@ -89,7 +98,8 @@ class UpgradeController {
       logFd = null;
     }
 
-    const child = spawn(
+    const spawnFn = this.deps.spawn ?? spawn;
+    const child = spawnFn(
       process.execPath,
       [
         binPath,
@@ -99,7 +109,6 @@ class UpgradeController {
         installDir,
         '--version',
         version,
-        // gateway 运行于 bun，process.execPath 即正确 bun：显式传给 cli，免其重新探测。
         '--bun-path',
         process.execPath,
       ],
@@ -110,8 +119,72 @@ class UpgradeController {
         stdio: logFd !== null ? ['ignore', logFd, logFd] : 'ignore',
       }
     );
-    child.unref();
-    if (logFd !== null) closeSync(logFd);
+
+    return waitForSpawnAndDetach(child, () => {
+      if (logFd !== null) {
+        closeSync(logFd);
+        logFd = null;
+      }
+    });
+  }
+}
+
+export function waitForSpawnAndDetach(child: ChildProcess, onSettled?: () => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      onSettled?.();
+      fn();
+    };
+    child.once('error', (err) => {
+      finish(() => reject(err instanceof Error ? err : new Error(String(err))));
+    });
+    child.once('spawn', () => {
+      finish(() => {
+        child.unref();
+        resolve();
+      });
+    });
+  });
+}
+
+function hasBinEntry(bin: unknown): boolean {
+  if (typeof bin === 'string' && bin.length > 0) return true;
+  if (typeof bin !== 'object' || bin === null) return false;
+  return Object.keys(bin as Record<string, unknown>).length > 0;
+}
+
+/** 解压后的 npm pack 布局必须能通过 resolvePackageLayout 的路径检查。 */
+export function assertExtractedCliPackage(packageRoot: string): void {
+  const pkgPath = join(packageRoot, 'package.json');
+  if (!existsSync(pkgPath)) {
+    throw new Error(`extracted package.json not found at ${pkgPath}`);
+  }
+  let parsed: { name?: unknown; bin?: unknown };
+  try {
+    parsed = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: unknown; bin?: unknown };
+  } catch {
+    throw new Error(`extracted package.json is invalid at ${pkgPath}`);
+  }
+  if (parsed.name !== 'tmex-cli') {
+    throw new Error(`extracted package name is ${String(parsed.name)}, expected tmex-cli`);
+  }
+  if (!hasBinEntry(parsed.bin)) {
+    throw new Error('extracted package.json is missing a bin entry');
+  }
+
+  const required = [
+    join(packageRoot, 'dist', 'cli-node.js'),
+    join(packageRoot, 'dist', 'runtime', 'server.js'),
+    join(packageRoot, 'resources', 'fe-dist'),
+    join(packageRoot, 'resources', 'gateway-drizzle'),
+  ];
+  for (const path of required) {
+    if (!existsSync(path)) {
+      throw new Error(`extracted package is missing ${path}`);
+    }
   }
 }
 
@@ -124,10 +197,12 @@ export async function stageGithubRelease(stageDir: string, version: string): Pro
   await downloadReleaseTarball(releaseTarballUrl(version), tarballPath);
   await extractTarball(tarballPath, stageDir);
 
-  const binPath = join(stageDir, 'package', 'bin', 'tmex.js');
+  const packageRoot = join(stageDir, 'package');
+  const binPath = join(packageRoot, 'bin', 'tmex.js');
   if (!existsSync(binPath)) {
     throw new Error(`downloaded tmex-cli binary not found at ${binPath}`);
   }
+  assertExtractedCliPackage(packageRoot);
   return binPath;
 }
 

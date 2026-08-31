@@ -9,6 +9,15 @@ const GITHUB_HEADERS = {
 
 export type ReleaseFetch = (url: string | URL, init?: RequestInit) => Promise<Response>;
 
+export const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+
+export function assertReleaseVersion(version: string): string {
+  if (!RELEASE_VERSION_PATTERN.test(version)) {
+    throw new Error(t('errors.version.invalid', { input: version }));
+  }
+  return version;
+}
+
 export function versionFromTagName(tagName: string): string {
   return tagName.trim().replace(/^v/i, '');
 }
@@ -61,7 +70,7 @@ export async function resolveReleaseVersion(
 ): Promise<string> {
   const trimmed = requested.trim();
   if (trimmed && trimmed !== 'latest') {
-    return versionFromTagName(trimmed);
+    return assertReleaseVersion(versionFromTagName(trimmed));
   }
   const response = await githubFetch(RELEASE_API_LATEST_URL, fetchFn, 'latest');
   const body = await response.text();

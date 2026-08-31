@@ -8,7 +8,7 @@
 - `packages/app/dist/runtime/server.js`：Bun 运行时入口，内部会打包 gateway 运行时代码。
 - `packages/app/resources/fe-dist`：前端静态资源。
 - `packages/app/resources/gateway-drizzle`：gateway 数据库迁移文件。
-- `packages/app/CHANGELOG.md`：**仅含当前版本**的更新日志，随包发布；程序内自更新会从 CDN 拉取目标版本的该文件展示（见下文「版本注入与自更新」）。
+- `packages/app/CHANGELOG.md`：**仅含当前版本**的更新日志，随 GitHub Release 发布；程序内自更新会读取目标版本的 release body / changelog 展示（见下文「版本注入与自更新」）。
 
 因此，发布前不能只关注 `packages/app` 本身，必须确保根工作区内依赖发布包的产物全部重新生成。
 
@@ -35,7 +35,7 @@ bun run build:tmex
 这一步是发布门槛，不能用 `bun run --filter tmex-cli build` 替代，原因如下：
 
 - 它不会主动执行 `packages/shared` 的 `build:i18n`。
-- 它只会在 `apps/fe/dist/index.html` 不存在时才触发前端构建；如果 `dist` 已存在但过期，会直接复制旧产物进入 npm 包。
+- 它只会在 `apps/fe/dist/index.html` 不存在时才触发前端构建；如果 `dist` 已存在但过期，会直接复制旧产物进入发行包。
 
 ## 标准流程
 
@@ -91,54 +91,29 @@ npm pack --dry-run --workspace tmex-cli
 
 如果本次发布包含 `apps/gateway`、`apps/fe`、`packages/shared` 的行为变更，应额外执行受影响模块的测试或构建验证。
 
-### 4. 登录 npm
+### 4. 打 tag 并推送
 
-先检查是否已登录：
+发版走 GitHub Actions：推送 `v<version>` tag（或手动 `workflow_dispatch` 指定 tag）后，`.github/workflows/release.yml` 会 `npm pack`、计算 SHA256，并创建/更新 GitHub Release（资产 `tmex-cli-<version>.tgz` 与 `SHA256SUMS`）。已有同名 release 时会先 `gh release edit` 对齐标题与 notes，再 `--clobber` 上传资产。
 
 ```bash
-npm whoami
+git tag "v<newVersion>"
+git push origin "v<newVersion>"
 ```
 
-如果未登录：
+不要 `npm publish`。`packages/app` 为 private，发行渠道只有本仓库 GitHub Releases。
+
+### 5. 发布后验证
 
 ```bash
-npm login
+gh release view "v<version>"
+curl -fsSIL "https://github.com/12dora/tmex-enhanced/releases/download/v<version>/tmex-cli-<version>.tgz"
 ```
 
-说明：
-
-- `npm login` 可能会跳转浏览器完成授权。
-- 如果账户启用了 2FA，需要在登录或发布过程中输入一次性验证码。
-
-### 5. 发布稳定版
-
-稳定版发布到 `latest`：
+安装验证：
 
 ```bash
-cd packages/app
-npm publish --access public --tag latest
-```
-
-### 6. 发布预发布版
-
-如果版本号包含 `-alpha`、`-beta`、`-rc` 等后缀，建议发布到 `next`：
-
-```bash
-cd packages/app
-npm publish --access public --tag next
-```
-
-### 7. 发布后验证
-
-```bash
-npm view tmex-cli version
-npx --yes tmex-cli@<version> --lang en help
-```
-
-必要时再补一条安装验证：
-
-```bash
-npx --yes tmex-cli@<version> doctor --lang en
+TMEX_VERSION=<version> curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
+tmex doctor --lang en
 ```
 
 ## 版本注入与自更新
@@ -146,8 +121,8 @@ npx --yes tmex-cli@<version> doctor --lang en
 「monorepo 版本」= 发布的 `tmex-cli` 版本（`packages/app/package.json.version`），是前后端唯一真相源。
 
 - **构建期注入**：`build:runtime`（`packages/app/scripts/build-runtime.ts`）读该版本，经 `bun build --define TMEX_MONOREPO_VERSION="x.y.z"` 烧进 bundle；前端 `vite.config.ts` 同样 `define __MONOREPO_VERSION__`。运行时 `apps/gateway/src/system/version.ts` 用 `typeof` 守卫读取，dev 回退读仓库 `package.json`。**所以发版顺序必须是「先 `release:tmex` bump，再 `build`」**。
-- **CHANGELOG 随包发布**：`packages/app/CHANGELOG.md` 已在 `files` 中，每个发布版只含该版本日志。程序内「检查更新」时 gateway 从 `https://cdn.jsdelivr.net/npm/tmex-cli@<latest>/CHANGELOG.md` 拉取展示（拉不到则回退「版本号 + 发布时间」，如历史无 changelog 的版本）。
-- **程序内自更新**：设置页「版本与更新」触发后，gateway 以 `bun add`（无视缓存）下载目标版本，再 detached 执行 `tmex upgrade --apply-current-package` 完成停服务 → 部署 → 重启。仅 `production` + CLI 安装可用。详见 [自更新与版本展示](../update/2026061406-self-update.md) 与 [发版与 changelog 流程](2026061406-release-changelog-flow.md)。
+- **CHANGELOG 随 Release 发布**：`packages/app/CHANGELOG.md` 已在 `files` 中，每个发布版只含该版本日志，并由 workflow 写入 GitHub Release notes。
+- **程序内自更新**：设置页「版本与更新」触发后，gateway 从 GitHub Releases 下载目标版本 tarball，再 detached 执行 `tmex upgrade --apply-current-package` 完成停服务 → 部署 → 重启。仅 `production` + CLI 安装可用。详见 [自更新与版本展示](../update/2026061406-self-update.md) 与 [发版与 changelog 流程](2026061406-release-changelog-flow.md)。
 
 ## 常见错误
 
@@ -166,13 +141,13 @@ npx --yes tmex-cli@<version> doctor --lang en
 
 - 容易忽略根工作区的前端、共享代码和资源生成步骤。
 
-结论：构建统一在仓库根目录执行；发布命令再切到 `packages/app`。
+结论：构建统一在仓库根目录执行；发布由 tag 触发 GitHub Actions。
 
 ### 未检查 `npm pack --dry-run`
 
 风险：
 
-- 可能把不完整的 tarball 发到 npm，例如缺少 `dist/runtime` 或 `resources/fe-dist`。
+- 可能把不完整的 tarball 发到 GitHub Releases，例如缺少 `dist/runtime` 或 `resources/fe-dist`。
 
 结论：发版前必须看一次 dry-run 结果。
 
@@ -189,13 +164,8 @@ npm pack --dry-run --workspace tmex-cli   # 确认含 dist/resources/CHANGELOG.m
 
 # 提交发版（仓库历史惯例：直接在主分支提交）
 git commit -am "chore(release): tmex-cli <newVersion>"
-
-# 登录
-npm whoami || npm login
-
-# 发布
-cd packages/app
-npm publish --access public --tag latest
+git tag "v<newVersion>"
+git push origin HEAD "v<newVersion>"
 ```
 
-> 也可用根脚本 `bun run publish:tmex`（= `bun run build && npm publish`）一步发布，但它**不含** `release:tmex` 与提交步骤，需自行先 bump+commit。
+> 推送 tag 后由 GitHub Actions 打包并上传 Release，无需 `npm publish`。

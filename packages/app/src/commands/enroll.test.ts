@@ -84,10 +84,40 @@ describe('enroll', () => {
     });
     expect(result.token).toHaveLength(JOIN_TOKEN_CHARS);
     expect(result.joinCommand).toContain('tmex hub join');
+    expect(result.joinCommand).toContain(
+      `tmex hub join https://hub.example --token ${result.token}`
+    );
     expect(result.admitted).toBe(true);
     const user = auth.userStore.getByUsername('frank');
     if (!user) throw new Error('missing frank');
     expect(auth.userStore.listCertsByUser(user.id).length).toBe(2);
+  });
+
+  test('quotes join URL and token when they contain shell metacharacters', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'hub,node',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'frank', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    const result = await runEnroll(parsed, {
+      auth,
+      password: 'enroll-pass-word',
+      wait: false,
+      joinUrl: 'https://hub.example/join?x=1&y=2',
+      log: () => undefined,
+    });
+    expect(result.joinCommand).toContain("'https://hub.example/join?x=1&y=2'");
+    expect(result.joinCommand).toContain('--token');
+    expect(result.joinCommand.startsWith('tmex hub join ')).toBe(true);
   });
 
   test('hub enroll with selfsigned TLS appends CA fingerprint to the join token', async () => {

@@ -10,13 +10,31 @@ TMEX_RELEASE_REPO='12dora/tmex-enhanced'
 TMEX_MIN_BUN_VERSION='1.3.0'
 
 tmex_parse_tag_name() {
-  printf '%s' "$1" | tr -d '\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+  printf '%s' "$1" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
 }
 
 tmex_version_from_tag() {
   local tag="$1"
   tag="${tag#v}"
   tag="${tag#V}"
+  printf '%s' "$tag"
+}
+
+tmex_is_semver() {
+  printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+}
+
+tmex_tag_from_location_headers() {
+  local headers="$1"
+  local location
+  location="$(printf '%s' "$headers" | grep -i '^location:' | head -n 1 | tr -d '\r')"
+  location="${location#*:}"
+  location="${location#"${location%%[![:space:]]*}"}"
+  location="${location%"${location##*[![:space:]]}"}"
+  [ -n "$location" ] || return 1
+  location="${location%/}"
+  local tag="${location##*/}"
+  [ -n "$tag" ] || return 1
   printf '%s' "$tag"
 }
 
@@ -41,6 +59,28 @@ tmex_version_ge() {
     fi
   done
   return 0
+}
+
+tmex_node_version_ok() {
+  local ver="${1:-}"
+  local major="${ver#v}"
+  major="${major%%.*}"
+  case "$major" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$major" -ge 20 ]
+}
+
+tmex_dir_on_path() {
+  local needle="${1%/}"
+  local IFS=:
+  local entry
+  for entry in ${PATH:-}; do
+    if [ "${entry%/}" = "$needle" ]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 tmex_need_cmd() {
@@ -97,30 +137,43 @@ tmex_github_json() {
     "$url"
 }
 
+tmex_tag_from_latest_redirect() {
+  local headers
+  headers="$(curl -sI -H 'User-Agent: tmex-install' "https://github.com/${TMEX_RELEASE_REPO}/releases/latest")" || return 1
+  tmex_tag_from_location_headers "$headers"
+}
+
 tmex_resolve_version() {
   if [ -n "${TMEX_VERSION:-}" ]; then
-    tmex_version_from_tag "$TMEX_VERSION"
+    local pinned
+    pinned="$(tmex_version_from_tag "$TMEX_VERSION")"
+    if ! tmex_is_semver "$pinned"; then
+      echo "tmex install: invalid TMEX_VERSION: ${TMEX_VERSION}" >&2
+      exit 1
+    fi
+    printf '%s' "$pinned"
     return 0
   fi
-  local json tag version
-  json="$(tmex_github_json "https://api.github.com/repos/${TMEX_RELEASE_REPO}/releases/latest")" || {
-    echo "tmex install: failed to query GitHub Releases" >&2
-    exit 1
-  }
-  tag="$(tmex_parse_tag_name "$json")"
+  local tag version
+  tag="$(tmex_tag_from_latest_redirect 2>/dev/null || true)"
+  if [ -z "$tag" ]; then
+    local json
+    json="$(tmex_github_json "https://api.github.com/repos/${TMEX_RELEASE_REPO}/releases/latest")" || {
+      echo "tmex install: failed to query GitHub Releases" >&2
+      exit 1
+    }
+    tag="$(tmex_parse_tag_name "$json")"
+  fi
   version="$(tmex_version_from_tag "$tag")"
   if [ -z "$version" ]; then
-    echo "tmex install: latest release JSON is missing tag_name" >&2
+    echo "tmex install: latest release is missing a tag" >&2
     exit 1
   fi
   printf '%s' "$version"
 }
 
 tmex_print_latest() {
-  local json tag
-  json="$(tmex_github_json "https://api.github.com/repos/${TMEX_RELEASE_REPO}/releases/latest")"
-  tag="$(tmex_parse_tag_name "$json")"
-  tmex_version_from_tag "$tag"
+  tmex_resolve_version
   printf '\n'
 }
 
@@ -128,7 +181,7 @@ tmex_run_init() {
   local pkg_dir="$1"
   shift
   local cli_js="${pkg_dir}/bin/tmex.js"
-  if command -v node >/dev/null 2>&1; then
+  if command -v node >/dev/null 2>&1 && tmex_node_version_ok "$(node --version 2>/dev/null || true)"; then
     node "$cli_js" init "$@"
   else
     bun "$cli_js" init "$@"
@@ -142,6 +195,19 @@ tmex_cleanup_tmp() {
     rm -rf "$TMEX_INSTALL_TMP"
     TMEX_INSTALL_TMP=
   fi
+}
+
+tmex_print_path_hint() {
+  local local_bin="${HOME}/.local/bin"
+  local bun_bin="${HOME}/.bun/bin"
+  if tmex_dir_on_path "$local_bin"; then
+    return 0
+  fi
+  if { [ -L "${bun_bin}/tmex" ] || [ -f "${bun_bin}/tmex" ]; } && tmex_dir_on_path "$bun_bin"; then
+    return 0
+  fi
+  echo "If 'tmex' is not found, add ~/.local/bin to PATH:"
+  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 }
 
 tmex_install() {
@@ -176,9 +242,10 @@ tmex_install() {
   local -a init_args
   init_args=("$@")
   if [ ! -t 0 ]; then
-    if [ -r /dev/tty ]; then
+    if exec 3</dev/tty 2>/dev/null; then
       echo "tmex install: stdin is not a TTY; attaching /dev/tty for prompts"
-      tmex_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" </dev/tty
+      tmex_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" <&3
+      exec 3<&-
     else
       echo "tmex install: no TTY; passing --no-interactive"
       tmex_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" --no-interactive
@@ -189,8 +256,7 @@ tmex_install() {
 
   echo
   echo "tmex install: done. The tmex command is installed to ~/.local/bin/tmex"
-  echo "If 'tmex' is not found, add ~/.local/bin to PATH:"
-  echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  tmex_print_path_hint
 }
 
 # When sourced (unit tests), functions stay defined and main does not run.
