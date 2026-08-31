@@ -1,14 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import type { NetworkInterfaceInfo } from 'node:os';
 import { collectLanAddresses, getAccessAddresses, isLoopbackBindHost } from './access-addresses';
 
-const iface = (address: string, family: 'IPv4' | 'IPv6' = 'IPv4', internal = false) => ({
-  address,
-  family,
-  internal,
-  netmask: '',
-  mac: '',
-  cidr: null,
-});
+const iface = (
+  address: string,
+  family: 'IPv4' | 'IPv6' = 'IPv4',
+  internal = false
+): NetworkInterfaceInfo =>
+  ({ address, family, internal, netmask: '', mac: '', cidr: null }) as NetworkInterfaceInfo;
 
 describe('access-addresses', () => {
   test('回环监听地址识别（含 IPv6 与方括号）', () => {
