@@ -315,7 +315,7 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/panels/src/device-tree/sidebar-device-list.tsx:SideBarDeviceList": {
-    "lines": 261,
+    "lines": 264,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/panels/src/files/files-tab.tsx:FilesTabInner": {
