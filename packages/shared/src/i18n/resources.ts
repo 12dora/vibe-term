@@ -127,11 +127,12 @@ export const I18N_RESOURCES = {
         "join": {
           "hub": {
             "title": "Prepare the relay server",
-            "description": "The relay (Hub) needs a machine with a public HTTPS address. If there is none yet, set one up on that machine following \"Use this machine as the relay\"."
+            "description": "The relay (Hub) needs a public HTTPS address; if none exists, set one up via \"Use this machine as the relay\"."
           },
           "token": {
             "title": "Generate a join token",
             "description": "In the relay's tmex open Settings → Multi-node Mesh → Node management, click Add → Generate join token, then copy the join command. The token is valid for 10 minutes.",
+            "label": "Join token (valid for {{minutes}} minutes)",
             "link": "Open multi-node mesh settings",
             "meshDescription": "Generate a join token here, then copy the command in the next step. The token is valid for 10 minutes.",
             "unavailable": "This machine is not part of a multi-node mesh, so a join token cannot be generated here."
@@ -145,7 +146,9 @@ export const I18N_RESOURCES = {
           },
           "confirm": {
             "title": "Confirm the join",
-            "description": "Back on the relay's Node management page, click Confirm join. The new machine appears in the device list after it restarts."
+            "description": "Back on the relay's Node management page, click Confirm join. The new machine appears in the device list after it restarts.",
+            "meshDescription": "Once the new machine runs the command, confirm the join here. It appears in the device list after it restarts.",
+            "done": "The new machine has joined; it appears in the device list after it restarts."
           }
         },
         "host": {
@@ -2285,11 +2288,12 @@ export const I18N_RESOURCES = {
         "join": {
           "hub": {
             "title": "准备中继服务器",
-            "description": "中继（Hub）需要一台有公网 HTTPS 地址的机器。若还没有，请先在该机器上按「本机作为中继」完成配置。"
+            "description": "中继（Hub）需有公网 HTTPS 地址；没有则先按「本机作为中继」配置一台。"
           },
           "token": {
             "title": "生成加入码",
             "description": "在中继的 tmex 中打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」，复制加入命令。加入码 10 分钟内有效。",
+            "label": "加入码（有效期 {{minutes}} 分钟）",
             "link": "前往多节点互联设置",
             "meshDescription": "在此生成加入码并复制下一步的命令。加入码 10 分钟内有效。",
             "unavailable": "本机未加入多节点互联，无法在此生成加入码。"
@@ -2303,7 +2307,9 @@ export const I18N_RESOURCES = {
           },
           "confirm": {
             "title": "确认加入",
-            "description": "回到中继的节点管理页，点「确认加入」。新机器重启后即出现在设备列表。"
+            "description": "回到中继的节点管理页，点「确认加入」。新机器重启后即出现在设备列表。",
+            "meshDescription": "新机器执行命令后在此确认加入，重启后即出现在设备列表。",
+            "done": "新机器已加入，重启后出现在设备列表。"
           }
         },
         "host": {
@@ -4442,11 +4448,12 @@ export const I18N_RESOURCES = {
         "join": {
           "hub": {
             "title": "中継サーバーを準備",
-            "description": "中継（Hub）には公開 HTTPS アドレスを持つマシンが必要です。まだない場合は、そのマシンで「本機を中継にする」の手順を先に実施してください。"
+            "description": "中継（Hub）には公開 HTTPS アドレスが必要です。無い場合は「このマシンを中継にする」で用意してください。"
           },
           "token": {
             "title": "参加コードを作成",
             "description": "中継側の tmex で「設定 → マルチノード連携 → ノード管理」を開き、「追加」→「参加コードを作成」をクリックして参加コマンドをコピーします。参加コードの有効期限は 10 分です。",
+            "label": "参加コード（有効期限 {{minutes}} 分）",
             "link": "マルチノード連携設定を開く",
             "meshDescription": "ここで参加コードを作成し、次の手順のコマンドをコピーします。参加コードの有効期限は 10 分です。",
             "unavailable": "本機はマルチノード連携に参加していないため、ここでは参加コードを作成できません。"
@@ -4460,7 +4467,9 @@ export const I18N_RESOURCES = {
           },
           "confirm": {
             "title": "参加を承認",
-            "description": "中継側のノード管理ページに戻り、「承認」をクリックします。新しいマシンは再起動後にデバイス一覧に表示されます。"
+            "description": "中継側のノード管理ページに戻り、「承認」をクリックします。新しいマシンは再起動後にデバイス一覧に表示されます。",
+            "meshDescription": "新しいマシンでコマンドを実行したら、ここで参加を承認します。再起動後にデバイス一覧に表示されます。",
+            "done": "新しいマシンが参加しました。再起動後にデバイス一覧に表示されます。"
           }
         },
         "host": {

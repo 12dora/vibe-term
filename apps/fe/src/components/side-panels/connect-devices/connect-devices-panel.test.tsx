@@ -25,6 +25,9 @@ const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@
 const ConnectDevicesPanel = (await import('./connect-devices-panel')).default;
 const { MobilePlatformSteps } = await import('./mobile-guide');
 const { ComputerGuide, HostSteps } = await import('./computer-guide');
+const { JoinConfirmStatus, joinTokenTtlMinutes } = await import('./join-token');
+const { getEnrollmentEngineState, resetEnrollmentEngineForTest, setEnrollmentEngineStateForTest } =
+  await import('@/node/enrollment-engine');
 const { joinCommandPreview } = await import('./join-command-preview');
 
 const ORIGIN = 'http://localhost:9663';
@@ -47,6 +50,7 @@ const MESH_MODE: AuthModeResponse = {
 
 afterEach(() => {
   resetMeshNodesStateForTest();
+  resetEnrollmentEngineForTest();
 });
 
 function render(node: React.ReactNode): string {
@@ -222,5 +226,76 @@ describe('joinCommandPreview', () => {
         namePlaceholder: '<n>',
       })
     ).toBe("tmex hub join 'https://tmex.example.com' --token <t> --name a");
+  });
+});
+
+describe('JoinSteps 步骤 6「确认加入」', () => {
+  const PENDING = {
+    hubEnrollmentId: 'e-1',
+    enrollPk: 'pk',
+    authorizationBytes: 'a',
+    authorizationSig: 's',
+    exp: 1_700_000_600_000,
+    name: 'studio',
+    createdAt: 1_700_000_000_000,
+  };
+
+  function confirmStatus(patch: Parameters<typeof setEnrollmentEngineStateForTest>[0]): string {
+    setEnrollmentEngineStateForTest(patch);
+    const enrollment = {
+      meshEnabled: true,
+      hubOnline: true,
+      pending: PENDING,
+      engine: getEnrollmentEngineState(),
+    } as unknown as Parameters<typeof JoinConfirmStatus>[0]['enrollment'];
+    return render(<JoinConfirmStatus enrollment={enrollment} />);
+  }
+
+  test('等待中：只有「等待新节点加入」，没有确认按钮', () => {
+    const html = confirmStatus({});
+    expect(html).toContain('data-testid="connect-join-pending"');
+    expect(html).toContain('nodes.enrollment.pending');
+    expect(html).not.toContain('data-testid="connect-join-confirm"');
+  });
+
+  test('证书已到（passkey 用户签不了）：给出「确认加入」按钮', () => {
+    const html = confirmStatus({ certificateReadyIds: ['e-1'] });
+    expect(html).toContain('data-testid="connect-join-confirm"');
+    expect(html).toContain('nodes.enrollment.confirmPending');
+  });
+
+  test('hub 未确认：文案与按钮都换成重试', () => {
+    const html = confirmStatus({ hubUnconfirmedIds: ['e-1'] });
+    expect(html).toContain('nodes.enrollment.hubNotConfirmed');
+    expect(html).toContain('nodes.enrollment.retryHub');
+  });
+
+  test('已加入：只剩「已加入」提示', () => {
+    const html = confirmStatus({ admittedIds: ['e-1'] });
+    expect(html).toContain('data-testid="connect-join-admitted"');
+    expect(html).toContain('connectDevices.computer.join.confirm.done');
+    expect(html).not.toContain('data-testid="connect-join-confirm"');
+  });
+
+  test('证书判定失败：给出与设置页同一条错误文案', () => {
+    const html = confirmStatus({ invalidById: { 'e-1': 'nodes.enrollment.badCertSig' } });
+    expect(html).toContain('data-testid="connect-join-invalid"');
+    expect(html).toContain('nodes.enrollment.badCertSig');
+  });
+
+  test('本次会话还没有 pending 时什么都不渲染', () => {
+    const enrollment = {
+      pending: null,
+      engine: getEnrollmentEngineState(),
+    } as unknown as Parameters<typeof JoinConfirmStatus>[0]['enrollment'];
+    const html = render(<JoinConfirmStatus enrollment={enrollment} />);
+    expect(html).not.toContain('data-testid="connect-join-pending"');
+    expect(html).not.toContain('data-testid="connect-join-admitted"');
+  });
+
+  test('加入码有效期由 pending 自身反推，不写死', () => {
+    expect(joinTokenTtlMinutes(PENDING)).toBe(10);
+    expect(joinTokenTtlMinutes({ ...PENDING, exp: PENDING.createdAt + 90_000 })).toBe(2);
+    expect(joinTokenTtlMinutes({ ...PENDING, exp: PENDING.createdAt })).toBe(1);
   });
 });

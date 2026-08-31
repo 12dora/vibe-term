@@ -10,7 +10,7 @@ import { CommandBlock } from './command-block';
 import { GuideLink, GuideStep } from './guide-step';
 import { GuideTabList } from './guide-tabs';
 import { joinCommandPreview } from './join-command-preview';
-import { JoinTokenFields, useJoinEnrollment } from './join-token';
+import { JoinConfirmStatus, JoinTokenFields, useJoinEnrollment } from './join-token';
 
 type Mode = 'join' | 'host';
 
@@ -66,12 +66,17 @@ export function JoinSteps() {
         index={BRANCH_STEP_OFFSET + 3}
         testId="connect-step-join-confirm"
         title={t(`${prefix}.confirm.title`)}
-        description={t(`${prefix}.confirm.description`)}
+        description={t(
+          enrollment.meshEnabled
+            ? `${prefix}.confirm.meshDescription`
+            : `${prefix}.confirm.description`
+        )}
       >
-        {create.created && (
-          <p className="text-xs text-muted-foreground" data-testid="connect-join-pending">
-            {t('nodes.enrollment.pending')}
-          </p>
+        <JoinConfirmStatus enrollment={enrollment} />
+        {enrollment.meshEnabled && (
+          <GuideLink to="/settings?tab=nodes" testId="connect-join-manage-link">
+            {t(`${prefix}.token.link`)}
+          </GuideLink>
         )}
       </GuideStep>
       {enrollment.dialog}

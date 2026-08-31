@@ -35,10 +35,6 @@
     "lines": 158,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
-  "apps/fe/src/pages/settings/nodes/management/use-admit-action.ts:useAdmitAction": {
-    "lines": 173,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
-  },
   "apps/fe/src/pages/settings/nodes/membership/use-leave-mesh.ts:useLeaveMesh": {
     "lines": 184,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"

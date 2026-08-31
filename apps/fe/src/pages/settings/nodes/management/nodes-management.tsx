@@ -7,14 +7,13 @@
 // 加入码表单、待确认列表与节点表——不再有第二层外框。
 
 import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/credential-prompt';
+import { listPendingEnrollments, subscribePendingEnrollments } from '@/node/enrollment';
 import {
-  listPendingEnrollments,
-  nextPendingExpiry,
-  prunePendingEnrollments,
-  removePendingEnrollment,
-  subscribePendingEnrollments,
-} from '@/node/enrollment';
-import { useEnrollmentWatch } from '@/node/enrollment-watch';
+  cancelPending,
+  confirmManually,
+  useEnrollmentEngine,
+  useEnrollmentEngineState,
+} from '@/node/enrollment-engine';
 import { mergeNodes, setEntryNodeId, useHubNode, useMeshNodes } from '@/node/mesh-nodes';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
@@ -26,7 +25,6 @@ import { useTranslation } from 'react-i18next';
 import { EnrollmentSection } from './enrollment-section';
 import { NodesTable } from './nodes-table';
 import { PLACEHOLDER_KDF, type ResolvedMode } from './types';
-import { useAdmitAction } from './use-admit-action';
 
 export interface NodesManagementProps {
   mode: AuthModeResponse;
@@ -73,35 +71,11 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
     hub.refresh();
   }, [hub, refreshNodes]);
 
-  const [expiredIds, setExpiredIds] = useState<string[]>([]);
-  const [cancelledIds, setCancelledIds] = useState<string[]>([]);
   const [enrollOpen, setEnrollOpen] = useState(false);
-  // 取消只删本地 pending（hub 侧记录会自然过期）；同时把 id 记入 cleared，join 串立刻消失
-  const cancelPending = useCallback((pending: { hubEnrollmentId: string }) => {
-    removePendingEnrollment(pending.hubEnrollmentId);
-    setCancelledIds((prev) => [...prev, pending.hubEnrollmentId]);
-  }, []);
-  const admit = useAdmitAction({ api, mode, hubApi: hub.hubApi, prompt, onDone: refreshAll });
-
-  useEnrollmentWatch({
-    pendings,
-    hubApi: hub.hubApi,
-    onOutcome: (outcome) => void admit.handleOutcome(outcome),
-  });
-
-  // 过期清理必须是**定时**的：页面一直开着时，十分钟前建的 pending 不能继续留在
-  // 内存与 sessionStorage 里，对应的 join 串也不能继续留在 DOM（见 F4-3 评审 Major）。
-  useEffect(() => {
-    const sweep = () => {
-      const removed = prunePendingEnrollments(Date.now());
-      if (removed.length > 0) setExpiredIds(removed.map((row) => row.hubEnrollmentId));
-    };
-    sweep();
-    const next = nextPendingExpiry(pendings);
-    if (next === null) return;
-    const timer = setTimeout(sweep, Math.max(0, next - Date.now()) + 1);
-    return () => clearTimeout(timer);
-  }, [pendings]);
+  // 监听回路、admit 流水线与过期清理都在宿主级单例引擎里：侧滑面板同时开着时也只有一份，
+  // 同一张证书绝不会被签成两条 `admit-node`（见 `enrollment-engine.ts` 顶部）。
+  useEnrollmentEngine({ api, mode, hubApi: hub.hubApi, prompt, onDone: refreshAll, t });
+  const engine = useEnrollmentEngineState();
 
   if (!mode) {
     return (
@@ -169,11 +143,11 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           open={enrollOpen}
           prompt={prompt}
           pendings={pendings}
-          onConfirm={(pending) => void admit.confirmManually(pending)}
+          onConfirm={(pending) => void confirmManually(pending)}
           onCancel={cancelPending}
-          busyPendingId={admit.busyPendingId}
-          hubUnconfirmedIds={admit.hubUnconfirmedIds}
-          clearedIds={[...expiredIds, ...cancelledIds, ...admit.admittedIds]}
+          busyPendingId={engine.busyPendingId}
+          hubUnconfirmedIds={engine.hubUnconfirmedIds}
+          clearedIds={engine.clearedIds}
         />
 
         <NodesTable

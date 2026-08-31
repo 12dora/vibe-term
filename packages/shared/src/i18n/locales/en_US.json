@@ -121,11 +121,12 @@
         "join": {
           "hub": {
             "title": "Prepare the relay server",
-            "description": "The relay (Hub) needs a machine with a public HTTPS address. If there is none yet, set one up on that machine following \"Use this machine as the relay\"."
+            "description": "The relay (Hub) needs a public HTTPS address; if none exists, set one up via \"Use this machine as the relay\"."
           },
           "token": {
             "title": "Generate a join token",
             "description": "In the relay's tmex open Settings → Multi-node Mesh → Node management, click Add → Generate join token, then copy the join command. The token is valid for 10 minutes.",
+            "label": "Join token (valid for {{minutes}} minutes)",
             "link": "Open multi-node mesh settings",
             "meshDescription": "Generate a join token here, then copy the command in the next step. The token is valid for 10 minutes.",
             "unavailable": "This machine is not part of a multi-node mesh, so a join token cannot be generated here."
@@ -139,7 +140,9 @@
           },
           "confirm": {
             "title": "Confirm the join",
-            "description": "Back on the relay's Node management page, click Confirm join. The new machine appears in the device list after it restarts."
+            "description": "Back on the relay's Node management page, click Confirm join. The new machine appears in the device list after it restarts.",
+            "meshDescription": "Once the new machine runs the command, confirm the join here. It appears in the device list after it restarts.",
+            "done": "The new machine has joined; it appears in the device list after it restarts."
           }
         },
         "host": {

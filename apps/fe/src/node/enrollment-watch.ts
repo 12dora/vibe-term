@@ -7,12 +7,12 @@
 //      页面刚打开、WS 断线或推送丢失时由它兜底。
 //
 // 两条路径的证书都必须过 `enroll_pk` 匹配 + `cert_sig` 验签 + pending 未过期三关。
+//
+// 本文件只留**纯判定**：驱动这两条路径的唯一回路在 `enrollment-engine.ts`（宿主级单例）。
 
-import { useEffect, useRef } from 'react';
 import type { CertificateCandidate, PendingEnrollment } from './enrollment';
 import { findPendingForCertificate } from './enrollment';
 import type { HubApi } from './hub-api';
-import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
 
 export const ENROLLMENT_POLL_INTERVAL_MS = 5000;
 
@@ -83,81 +83,4 @@ export async function collectRedeemedCertificates(
     })
   );
   return rows.filter((row): row is CertificateCandidate => row !== null);
-}
-
-export interface EnrollmentWatchOptions {
-  pendings: PendingEnrollment[];
-  hubApi: HubApi | null;
-  enabled?: boolean;
-  intervalMs?: number;
-  now?: () => number;
-  /** 覆盖轮询来源（测试注入）。 */
-  collect?: () => Promise<CertificateCandidate[]>;
-  /** 覆盖推送来源（测试注入）；缺省用宿主共享的 `/mesh/ws`。 */
-  events?: MeshEventSource;
-  onOutcome: (outcome: CertificateOutcome) => void;
-}
-
-/**
- * pending 存在期间订阅推送 + 轮询证书。
- *
- * 轮询查的是**本次 enrollment 的 id**，返回的证书必定属于自己，因此与推送一样，
- * `unknown` 结果是真正的异常信号（收到不属于任何 pending 的证书），照常上报。
- */
-export function useEnrollmentWatch(options: EnrollmentWatchOptions): void {
-  const { pendings, hubApi, onOutcome } = options;
-  const enabled = (options.enabled ?? true) && pendings.length > 0;
-  const intervalMs = options.intervalMs ?? ENROLLMENT_POLL_INTERVAL_MS;
-  const nowFn = options.now ?? Date.now;
-  const collect = options.collect;
-  const events = options.events;
-
-  const stateRef = useRef({ pendings, hubApi, onOutcome, nowFn, collect });
-  stateRef.current = { pendings, hubApi, onOutcome, nowFn, collect };
-
-  // 推送：hub → entry → `/mesh/ws`。
-  useEffect(() => {
-    if (!enabled) return;
-    const source = events ?? sharedMeshEvents();
-    source.start();
-    return source.onEnrollRedeemed((event) => {
-      const { pendings: rows, onOutcome: emit, nowFn: now } = stateRef.current;
-      emit(
-        offerCertificate(rows, { certificate: event.certificate, certSig: event.certSig }, now())
-      );
-    });
-  }, [enabled, events]);
-
-  // 轮询兜底。
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-
-    const tick = async () => {
-      const {
-        pendings: rows,
-        hubApi: hub,
-        onOutcome: emit,
-        nowFn: now,
-        collect: custom,
-      } = stateRef.current;
-      if (rows.length === 0) return;
-      let candidates: CertificateCandidate[] = [];
-      try {
-        if (custom) candidates = await custom();
-        else if (hub) candidates = await collectRedeemedCertificates(hub, rows);
-      } catch {
-        return;
-      }
-      if (cancelled) return;
-      for (const outcome of outcomesForCandidates(rows, candidates, now())) emit(outcome);
-    };
-
-    void tick();
-    const timer = setInterval(() => void tick(), intervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [enabled, intervalMs]);
 }

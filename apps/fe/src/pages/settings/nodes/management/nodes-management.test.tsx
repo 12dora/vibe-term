@@ -13,7 +13,9 @@ const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
 const { NodesManagement } = await import('./nodes-management');
-const { canAutoSignAdmit, invalidCertificateKey } = await import('./use-admit-action');
+const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } = await import(
+  '@/node/enrollment-engine'
+);
 const { resolveHubPublicUrl } = await import('./enrollment-section');
 const { rootKeyFromSeed } = await import('@tmex/shared/auth');
 
@@ -51,6 +53,7 @@ function render(mode: AuthModeResponse): string {
 }
 
 beforeEach(() => {
+  resetEnrollmentEngineForTest();
   resetMeshNodesStateForTest();
   setPendingStorage({
     getItem: () => null,
