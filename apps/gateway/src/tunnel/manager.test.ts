@@ -1006,6 +1006,158 @@ describe('TunnelManager', () => {
     expect(ctx.manager.status().access.enforceJwt).toBe(false);
   });
 
+  test('externally managed last-protection ack requires a fresh running detect', async () => {
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({
+      accountId: 'acc',
+      apiToken: 'tok',
+      teamDomain: 'team.cloudflareaccess.com',
+      appId: 'app',
+      aud: 'aud',
+      hostname: 'ok.example.com',
+      rules: [{ kind: 'email', value: 'a@example.com' }],
+      enforceJwt: true,
+    });
+    const ctx = await setup({
+      loginEnforced: () => false,
+      accessStore,
+      ackDetectMs: 80,
+      fetchImpl: async () => new Response(null, { status: 404 }),
+      externalDetectDeps: {
+        listProcesses: async () => '9 cloudflared tunnel run --token-file /tmp/token\n',
+        readFile: async (path) =>
+          path === '/tmp/token'
+            ? Buffer.from(JSON.stringify({ a: 'a', t: 'tid', s: 's' })).toString('base64')
+            : path === '/tmp/hostname'
+              ? 'ok.example.com\n'
+              : null,
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({
+      mode: 'named',
+      hostname: 'ok.example.com',
+      tunnelId: 'tid',
+      externallyManaged: true,
+    });
+    const enforce = await ctx.manager.handleAction({
+      action: 'set_access_enforce',
+      enforceJwt: false,
+    });
+    expect(enforce.httpStatus).toBe(409);
+    expect('error' in enforce.payload && enforce.payload.error.code).toBe('exposure_ack_required');
+  });
+
+  test('externally managed last-protection ack is waived after fresh stopped detect', async () => {
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({
+      accountId: 'acc',
+      apiToken: 'tok',
+      teamDomain: 'team.cloudflareaccess.com',
+      appId: 'app',
+      aud: 'aud',
+      hostname: 'ok.example.com',
+      rules: [{ kind: 'email', value: 'a@example.com' }],
+      enforceJwt: true,
+    });
+    const ctx = await setup({
+      loginEnforced: () => false,
+      accessStore,
+      ackDetectMs: 80,
+      fetchImpl: async () => new Response(null, { status: 404 }),
+      externalDetectDeps: {
+        listProcesses: async () => '',
+        readFile: async () => null,
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({
+      mode: 'named',
+      hostname: 'ok.example.com',
+      tunnelId: 'tid',
+      externallyManaged: true,
+    });
+    const enforce = await ctx.manager.handleAction({
+      action: 'set_access_enforce',
+      enforceJwt: false,
+    });
+    expect(enforce.httpStatus).toBe(200);
+    expect(ctx.manager.status().access.enforceJwt).toBe(false);
+  });
+
+  test('externally managed last-protection ack is required when fresh detect times out', async () => {
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({
+      accountId: 'acc',
+      apiToken: 'tok',
+      teamDomain: 'team.cloudflareaccess.com',
+      appId: 'app',
+      aud: 'aud',
+      hostname: 'ok.example.com',
+      rules: [{ kind: 'email', value: 'a@example.com' }],
+      enforceJwt: true,
+    });
+    const ctx = await setup({
+      loginEnforced: () => false,
+      accessStore,
+      ackDetectMs: 40,
+      fetchImpl: async () => new Response(null, { status: 404 }),
+      externalDetectDeps: {
+        listProcesses: () => new Promise(() => {}),
+        readFile: async () => null,
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({
+      mode: 'named',
+      hostname: 'ok.example.com',
+      tunnelId: 'tid',
+      externallyManaged: true,
+    });
+    const enforce = await ctx.manager.handleAction({
+      action: 'set_access_enforce',
+      enforceJwt: false,
+    });
+    expect(enforce.httpStatus).toBe(409);
+    expect('error' in enforce.payload && enforce.payload.error.code).toBe('exposure_ack_required');
+  });
+
+  test('sync_access aborts when the Access app list is truncated', async () => {
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({
+      accountId: 'acc',
+      apiToken: 'tok',
+      teamDomain: 'team.cloudflareaccess.com',
+    });
+    const ctx = await setup({
+      accessStore,
+      accessClient: {
+        listApps: async () =>
+          Object.assign([{ id: 'a', aud: 'b', name: 'x', domain: 'other.example.com' }], {
+            truncated: true,
+          }),
+        findAppForHostname: () => null,
+        findBypassApps: () => [],
+      } as unknown as CloudflareAccessClient,
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({ mode: 'named', hostname: 'remote.example.com' });
+    const queued = await ctx.manager.handleAction({ action: 'sync_access' });
+    expect(queued.httpStatus).toBe(202);
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('error');
+    expect(job?.error?.message).toMatch(/incomplete/i);
+  });
+
   test('login succeeds when cert appears at default ~/.cloudflared/cert.pem and copies it', async () => {
     const ctx = await setup({ loginTimeoutMs: 2_000 });
     dirs.push(ctx.dir);

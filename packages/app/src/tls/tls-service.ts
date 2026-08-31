@@ -102,6 +102,7 @@ export type TlsServiceOptions = {
   scheduleBackground?: (work: () => Promise<void>) => void;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (id: unknown) => void;
+  onStatusChange?: () => void;
 };
 
 type AcmeJobTuple = { domain: string; challenge: AcmeChallengeType | null; staging: boolean };
@@ -134,6 +135,7 @@ export class TlsService {
   private acmeInFlight: Promise<void> | null = null;
   private statusCache: { value: TlsStatus; expiresAt: number; generation: number } | null = null;
   private statusGeneration = 0;
+  private mutations = 0;
   private readonly mutex = new SerialQueue();
   private readonly scheduler: RenewalScheduler;
   private readonly now: () => number;
@@ -173,8 +175,13 @@ export class TlsService {
   async load(): Promise<TlsConfigPublic> {
     const fromEnv = await readTrustProxy(this.opts.envPath);
     if (fromEnv !== null) {
-      if (fromEnv !== this.trustProxy) this.invalidateStatusCache();
-      this.trustProxy = fromEnv;
+      if (fromEnv !== this.trustProxy) {
+        this.beginMutation();
+        this.trustProxy = fromEnv;
+        this.endMutation();
+      } else {
+        this.trustProxy = fromEnv;
+      }
     }
     return this.opts.store.get();
   }
@@ -185,7 +192,7 @@ export class TlsService {
       const row = await this.opts.store.get();
       await (row.mode === 'selfsigned' || row.mode === 'acme'
         ? this.applyListener()
-        : this.opts.listener.apply(null));
+        : this.withMutation(() => this.opts.listener.apply(null)));
       if (row.mode !== 'acme') return;
       this.scheduler.start();
       const due = row.acmeNextRenewAt !== null && this.now() >= row.acmeNextRenewAt;
@@ -203,12 +210,12 @@ export class TlsService {
 
   async status(): Promise<TlsStatus> {
     const now = this.now();
-    if (this.statusCache && now < this.statusCache.expiresAt) {
+    if (this.mutations === 0 && this.statusCache && now < this.statusCache.expiresAt) {
       return this.statusCache.value;
     }
     const generation = this.statusGeneration;
     const value = await this.computeStatus();
-    if (generation === this.statusGeneration) {
+    if (this.mutations === 0 && generation === this.statusGeneration) {
       this.statusCache = { value, expiresAt: now + TLS_STATUS_CACHE_TTL_MS, generation };
     }
     return value;
@@ -261,9 +268,28 @@ export class TlsService {
     this.statusCache = null;
   }
 
-  private upsert(partial: TlsConfigPatch): Promise<TlsConfigPublic> {
+  private beginMutation(): void {
+    this.mutations += 1;
     this.invalidateStatusCache();
-    return this.opts.store.upsert(partial);
+  }
+
+  private endMutation(): void {
+    this.mutations = Math.max(0, this.mutations - 1);
+    this.invalidateStatusCache();
+    this.opts.onStatusChange?.();
+  }
+
+  private async withMutation<T>(fn: () => Promise<T>): Promise<T> {
+    this.beginMutation();
+    try {
+      return await fn();
+    } finally {
+      this.endMutation();
+    }
+  }
+
+  private upsert(partial: TlsConfigPatch): Promise<TlsConfigPublic> {
+    return this.withMutation(() => this.opts.store.upsert(partial));
   }
 
   async caPem(): Promise<string | null> {
@@ -300,23 +326,26 @@ export class TlsService {
   }
 
   stop(): void {
-    this.invalidateStatusCache();
+    this.beginMutation();
     this.invalidateActiveWork();
     this.scheduler.stop();
+    this.endMutation();
   }
 
   private async applyModeLocked(input: ApplyModeInput): Promise<TlsStatus> {
     if (input.mode === 'external') {
       try {
-        await withEnvLock(async () => {
-          await writeTrustProxy(this.opts.envPath, input.trustProxy);
+        await this.withMutation(async () => {
+          await withEnvLock(async () => {
+            await writeTrustProxy(this.opts.envPath, input.trustProxy);
+          });
+          this.trustProxy = input.trustProxy;
         });
       } catch (error) {
         throw new TlsApiError('tls_failed', 500, errMsg(error));
       }
       this.invalidateActiveWork();
       await this.stopTls('external');
-      this.trustProxy = input.trustProxy;
       this.restartRequired = true;
       return this.status();
     }
@@ -379,7 +408,7 @@ export class TlsService {
   private async stopTls(mode: 'none' | 'external'): Promise<void> {
     await this.upsert({ mode });
     this.scheduler.stop();
-    await this.opts.listener.apply(null);
+    await this.withMutation(() => this.opts.listener.apply(null));
   }
 
   private async reissueSelfSigned(sans: string[]): Promise<void> {
@@ -589,16 +618,20 @@ export class TlsService {
   }
 
   private async applyListener(): Promise<void> {
-    this.invalidateStatusCache();
     const row = await this.opts.store.get();
     const secrets = await this.opts.store.getPrivateMaterial();
-    if (!row.certPem || !secrets.keyPem) return this.opts.listener.apply(null);
-    await this.opts.listener.apply({
-      port: row.tlsPort,
-      host: row.bindHost,
-      certPem: row.certPem,
-      keyPem: secrets.keyPem,
-    });
+    if (!row.certPem || !secrets.keyPem) {
+      await this.withMutation(() => this.opts.listener.apply(null));
+      return;
+    }
+    await this.withMutation(() =>
+      this.opts.listener.apply({
+        port: row.tlsPort,
+        host: row.bindHost,
+        certPem: row.certPem,
+        keyPem: secrets.keyPem,
+      })
+    );
   }
 
   private throwIfBindFailed(): void {

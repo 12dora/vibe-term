@@ -23,6 +23,7 @@ export type AuthStores = {
   userStore: UserStore;
   keyLogStore: KeyLogStore;
   nodeSessionStore: NodeSessionStore;
+  onChange?: () => void;
 };
 
 export type AppliedKeyLogStep = {
@@ -56,13 +57,15 @@ export function createTxStores(
   tx: unknown,
   userStore: UserStore,
   keyLogStore: KeyLogStore,
-  nodeSessionStore: NodeSessionStore
+  nodeSessionStore: NodeSessionStore,
+  onChange?: () => void
 ): AuthStores {
   const db = tx as AuthDb;
   return {
     userStore: new (userStore.constructor as typeof UserStore)(db),
     keyLogStore: new (keyLogStore.constructor as typeof KeyLogStore)(db),
     nodeSessionStore: new (nodeSessionStore.constructor as typeof NodeSessionStore)(db),
+    onChange,
   };
 }
 
@@ -104,7 +107,8 @@ export function persistApplied(
   stores: AuthStores,
   userId: string,
   step: AppliedKeyLogStep,
-  now: number
+  now: number,
+  onChange?: () => void
 ): void {
   const { userStore, keyLogStore, nodeSessionStore } = stores;
   const { record, input, hash, effects, next } = step;
@@ -189,4 +193,5 @@ export function persistApplied(
       nodeSessionStore.revokeVia(nodeIdToHex(effect.nodeId), now);
     } else if (effect.type === 'clearPeerCache') userStore.deleteAllPeers();
   }
+  (onChange ?? stores.onChange)?.();
 }

@@ -305,4 +305,19 @@ describe('user-key-persistence', () => {
       close();
     }
   });
+
+  test('persistApplied invokes onChange after a successful apply', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const stores = openStores(db);
+      seedUser(stores.userStore);
+      let n = 0;
+      persistApplied(stores, 'user-1', makeStep('user-1', 'set-totp'), 2_000, () => {
+        n += 1;
+      });
+      expect(n).toBe(1);
+    } finally {
+      close();
+    }
+  });
 });

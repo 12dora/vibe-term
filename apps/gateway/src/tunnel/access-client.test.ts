@@ -222,6 +222,7 @@ describe('CloudflareAccessClient', () => {
     });
     const apps = await client.listApps('acc1', 'tok');
     expect(apps.map((a) => a.id)).toEqual(['app-a', 'app-b']);
+    expect(apps.truncated).toBe(false);
     expect(client.findAppForHostname(apps, 'tmex.example.com')?.id).toBe('app-b');
     expect(pages.some((u) => u.includes('page=2'))).toBe(true);
   });
@@ -304,6 +305,93 @@ describe('CloudflareAccessClient', () => {
     expect(apps.map((a) => a.id)).toEqual(['app-a']);
     expect(apps.truncated).toBe(true);
     expect(pages.some((u) => u.includes('page=2'))).toBe(true);
+  });
+
+  test('listApps treats wrapped TimeoutError as truncation', async () => {
+    let page = 0;
+    const client = new CloudflareAccessClient(async () => {
+      page += 1;
+      if (page === 1) {
+        return jsonRes({
+          success: true,
+          result: [{ id: 'app-a', aud: 'aud-a', domain: 'a.example.com', name: 'a' }],
+          result_info: { page: 1, per_page: 100, total_count: 200, total_pages: 2 },
+        });
+      }
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    });
+    const apps = await client.listApps('acc1', 'tok');
+    expect(apps.map((a) => a.id)).toEqual(['app-a']);
+    expect(apps.truncated).toBe(true);
+  });
+
+  test('listApps marks the 50-page cap as truncated', async () => {
+    let pageCount = 0;
+    const client = new CloudflareAccessClient(async () => {
+      pageCount += 1;
+      return jsonRes({
+        success: true,
+        result: [
+          { id: `app-${pageCount}`, aud: 'aud', domain: `${pageCount}.example.com`, name: 'x' },
+        ],
+        result_info: { page: pageCount, per_page: 100, total_count: 5100, total_pages: 51 },
+      });
+    });
+    const apps = await client.listApps('acc1', 'tok');
+    expect(apps.truncated).toBe(true);
+    expect(pageCount).toBe(50);
+    expect(apps).toHaveLength(50);
+  });
+
+  test('upsertBypassApps refuses a truncated app list', async () => {
+    const client = new CloudflareAccessClient(
+      async (input, init): Promise<Response> => {
+        const url = String(input);
+        if (url.includes('/access/apps?')) {
+          if (/[?&]page=1(?:&|$)/.test(url)) {
+            return jsonRes({
+              success: true,
+              result: [{ id: 'app-a', aud: 'aud-a', domain: 'a.example.com', name: 'a' }],
+              result_info: { page: 1, per_page: 100, total_count: 200, total_pages: 2 },
+            });
+          }
+          return hangUntilAbort(init?.signal);
+        }
+        return jsonRes({ success: false, errors: [{ message: url }] }, 400);
+      },
+      { requestTimeoutMs: 5_000, listAppsDeadlineMs: 15 }
+    );
+    try {
+      await client.upsertBypassApps('acc1', 'tok', 'tmex.example.com', []);
+      throw new Error('expected failure');
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe('access_api_failed');
+      expect((error as Error).message).toMatch(/incomplete/i);
+    }
+  });
+
+  test('mutations use a longer timeout budget than reads', async () => {
+    const client = new CloudflareAccessClient(
+      async (_input, init) => hangUntilAbort(init?.signal),
+      {
+        requestTimeoutMs: 20,
+        mutationTimeoutMs: 80,
+      }
+    );
+    const readStarted = Date.now();
+    try {
+      await client.getOrganization('acc1', 'tok');
+      throw new Error('expected failure');
+    } catch {
+      expect(Date.now() - readStarted).toBeLessThan(60);
+    }
+    const writeStarted = Date.now();
+    try {
+      await client.createApp('acc1', 'tok', 'tmex.example.com');
+      throw new Error('expected failure');
+    } catch {
+      expect(Date.now() - writeStarted).toBeGreaterThan(50);
+    }
   });
 });
 

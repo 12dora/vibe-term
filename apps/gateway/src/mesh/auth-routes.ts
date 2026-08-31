@@ -47,7 +47,6 @@ import {
 import {
   AuthModeCache,
   findPrimaryUser,
-  invalidateAuthModeCache,
   isPasskeyAvailable,
   loadAuthModeTls,
   withAuthModeInvalidation,
@@ -75,7 +74,7 @@ import {
 } from './session-middleware';
 
 export type { KeyLogHubAck };
-export { findPrimaryUser, invalidateAuthModeCache, isPasskeyAvailable };
+export { findPrimaryUser, isPasskeyAvailable };
 
 export type AuthKeyLogPublisher = KeyLogPublisher;
 
@@ -154,14 +153,17 @@ export class AuthRoutes {
 
   setTlsInfo(provider: HubTlsInfoProvider | undefined): void {
     this.tlsInfoProvider = provider;
-    invalidateAuthModeCache();
+    this.invalidateAuthModeCache();
   }
 
   setLocalAuthStore(store: LocalAuthStoreLike): void {
     this.localAuth = store;
-    invalidateAuthModeCache();
+    this.invalidateAuthModeCache();
   }
 
+  invalidateAuthModeCache(): void {
+    this.modeCache.invalidate();
+  }
   isLocalAuthEffective(): boolean {
     return isLocalAuthEffective(this.localAuthCtx());
   }
@@ -185,9 +187,13 @@ export class AuthRoutes {
       'GET /api/auth/passkeys': () => session((r, uid) => this.handlePasskeys(r, uid)),
       'POST /api/auth/keylog': () => session((r, uid) => this.handleKeyLog(r, uid)),
       'POST /api/auth/local': () =>
-        withAuthModeInvalidation(() => handleLocalAuthToggle(req, this.localAuthCtx())),
+        withAuthModeInvalidation(this.modeCache, () =>
+          handleLocalAuthToggle(req, this.localAuthCtx())
+        ),
       'POST /api/auth/local/bootstrap': () =>
-        withAuthModeInvalidation(() => handleLocalAuthBootstrap(req, this.localAuthCtx())),
+        withAuthModeInvalidation(this.modeCache, () =>
+          handleLocalAuthBootstrap(req, this.localAuthCtx())
+        ),
     };
     const run = routes[`${req.method} ${path}`];
     if (run) return run();
@@ -655,7 +661,7 @@ export class AuthRoutes {
     hubAck?: boolean,
     hubError?: string
   ): Response {
-    invalidateAuthModeCache();
+    this.invalidateAuthModeCache();
     if (!hubSync) {
       return jsonBody({
         ok: true,

@@ -15,6 +15,7 @@ const CF_API = 'https://api.cloudflare.com/client/v4';
 const SESSION_DURATION = '24h';
 const AUTHORIZING_DECISIONS = new Set(['allow', 'bypass', 'service_auth']);
 export const CF_REQUEST_TIMEOUT_MS = 3_000;
+export const CF_MUTATION_TIMEOUT_MS = 15_000;
 export const CF_LIST_APPS_DEADLINE_MS = 6_000;
 
 export const ACCESS_TOKEN_PERMISSIONS =
@@ -27,11 +28,12 @@ export type CloudflareApp = {
   domain: string;
 };
 
-/** listApps 触及总时限时带 truncated；无匹配不得当成「未覆盖」。 */
-export type CloudflareAppList = CloudflareApp[] & { truncated?: boolean };
+/** listApps 始终带 truncated；无匹配不得当成「未覆盖」。 */
+export type CloudflareAppList = CloudflareApp[] & { truncated: boolean };
 
 export type CloudflareAccessClientOptions = {
   requestTimeoutMs?: number;
+  mutationTimeoutMs?: number;
   listAppsDeadlineMs?: number;
 };
 
@@ -168,7 +170,7 @@ export class CloudflareAccessClient {
   }
 
   async listApps(accountId: string, apiToken: string): Promise<CloudflareAppList> {
-    const apps: CloudflareAppList = [];
+    const apps: CloudflareAppList = Object.assign([], { truncated: false });
     const deadlineAt = Date.now() + (this.timeouts.listAppsDeadlineMs ?? CF_LIST_APPS_DEADLINE_MS);
     let page = 1;
     for (;;) {
@@ -187,7 +189,10 @@ export class CloudflareAccessClient {
         const batchLen = this.pushAppBatch(apps, result);
         if (appsPageComplete(page, batchLen, apps.length, result_info)) break;
         page += 1;
-        if (page > 50) break;
+        if (page > 50) {
+          apps.truncated = true;
+          break;
+        }
       } catch (error) {
         if (apps.length > 0 && isAbortLike(error)) {
           apps.truncated = true;
@@ -320,6 +325,12 @@ export class CloudflareAccessClient {
     existingIds: string[]
   ): Promise<string[]> {
     const apps = await this.listApps(accountId, apiToken);
+    if (apps.truncated) {
+      throw new TunnelError(
+        'access_api_failed',
+        'Cloudflare Access application list is incomplete'
+      );
+    }
     const ids: string[] = [];
     for (let i = 0; i < ACCESS_BYPASS_PATH_PREFIXES.length; i++) {
       const prefix = ACCESS_BYPASS_PATH_PREFIXES[i] ?? '/hub/';
@@ -453,8 +464,12 @@ export class CloudflareAccessClient {
     return batch.length;
   }
 
-  private requestSignal(deadlineAt?: number): AbortSignal {
-    const budget = this.timeouts.requestTimeoutMs ?? CF_REQUEST_TIMEOUT_MS;
+  private requestSignal(deadlineAt?: number, method?: string): AbortSignal {
+    const mutation = method === 'POST' || method === 'PUT' || method === 'DELETE';
+    // 超时 POST 可能已在远端提交；完整对账不在本轮范围，仅拆读写预算。
+    const budget = mutation
+      ? (this.timeouts.mutationTimeoutMs ?? CF_MUTATION_TIMEOUT_MS)
+      : (this.timeouts.requestTimeoutMs ?? CF_REQUEST_TIMEOUT_MS);
     const remaining = deadlineAt === undefined ? budget : deadlineAt - Date.now();
     return AbortSignal.timeout(Math.max(1, Math.min(budget, remaining)));
   }
@@ -486,11 +501,13 @@ export class CloudflareAccessClient {
           'Content-Type': 'application/json',
         },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: this.requestSignal(opts?.deadlineAt),
+        signal: this.requestSignal(opts?.deadlineAt, method),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new TunnelError('access_api_failed', sanitizeAccessMessage(message));
+      const wrapped = new TunnelError('access_api_failed', sanitizeAccessMessage(message));
+      if (isAbortLike(error)) Object.assign(wrapped, { abortLike: true });
+      throw wrapped;
     }
     if (res.status === 404 && opts?.notFoundOk) {
       return { success: true, result: undefined as T };
@@ -525,12 +542,26 @@ function appsPageComplete(
   return batchLen < 100;
 }
 
+function nestedAbort(value: unknown, parent: unknown): boolean {
+  return value !== undefined && value !== parent && isAbortLike(value);
+}
+
 function isAbortLike(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
-  const name = 'name' in error ? String(error.name) : '';
-  if (name === 'AbortError' || name === 'TimeoutError') return true;
+  const rec = error as {
+    abortLike?: boolean;
+    name?: string;
+    reason?: unknown;
+    cause?: unknown;
+    signal?: AbortSignal;
+  };
+  if (rec.abortLike) return true;
+  if (rec.name === 'AbortError' || rec.name === 'TimeoutError') return true;
+  if (nestedAbort(rec.reason, error) || nestedAbort(rec.cause, error)) return true;
+  if (rec.signal?.aborted) return true;
+  if (nestedAbort(rec.signal?.reason, error)) return true;
   const message = error instanceof Error ? error.message : String(error);
-  return /aborted|timeout/i.test(message);
+  return /aborted|timed?\s*out|timeout/i.test(message);
 }
 
 function rulesMatch(got: TunnelAccessPolicyRule[], want: TunnelAccessPolicyRule[]): boolean {

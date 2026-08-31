@@ -764,6 +764,35 @@ describe('auth-routes', () => {
     }
   });
 
+  test('GET /api/auth/mode cache generation is per AuthRoutes instance', async () => {
+    const a = await bootMesh();
+    const b = await bootMesh();
+    try {
+      let aCalls = 0;
+      let bCalls = 0;
+      a.runtime.auth.setTlsInfo(() => {
+        aCalls += 1;
+        return { caFingerprint: 'aa'.repeat(32), caPem: 'a' };
+      });
+      b.runtime.auth.setTlsInfo(() => {
+        bCalls += 1;
+        return { caFingerprint: 'bb'.repeat(32), caPem: 'b' };
+      });
+      await call(a.runtime, 'http://localhost/api/auth/mode');
+      await call(b.runtime, 'http://localhost/api/auth/mode');
+      expect(aCalls).toBe(1);
+      expect(bCalls).toBe(1);
+      a.runtime.auth.invalidateAuthModeCache();
+      await call(a.runtime, 'http://localhost/api/auth/mode');
+      await call(b.runtime, 'http://localhost/api/auth/mode');
+      expect(aCalls).toBe(2);
+      expect(bCalls).toBe(1);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
   test('GET /api/auth/mode invalidates cached derivation after local-auth bootstrap', async () => {
     const mesh = await bootMesh({
       roles: { hub: false, node: false },

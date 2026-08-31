@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { TunnelExternalAccessProbe, TunnelExternalStatus } from '@tmex/shared';
@@ -84,17 +84,19 @@ export type ExternalDetectDeps = {
 const CACHE_MS = 30_000;
 const FIRST_WAIT_MS = 1_500;
 const MAX_LOG_SCAN_BYTES = 256 * 1024;
-
-export function defaultListProcesses(): ExternalProcess[] {
+export async function defaultListProcesses(): Promise<ExternalProcess[]> {
+  const proc = Bun.spawn(['ps', '-axo', 'pid=,command='], { stdout: 'pipe', stderr: 'pipe' });
+  const timer = setTimeout(() => proc.kill(), 2_000);
   try {
-    const proc = Bun.spawnSync(['ps', '-axo', 'pid=,command='], { stdout: 'pipe', stderr: 'pipe' });
-    const text = new TextDecoder().decode(proc.stdout);
+    const text = await new Response(proc.stdout).text();
+    await proc.exited;
     return parsePsOutput(text);
   } catch {
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
-
 export function parsePsOutput(text: string): ExternalProcess[] {
   const out: ExternalProcess[] = [];
   for (const line of text.split('\n')) {
@@ -798,18 +800,16 @@ function dirnameOf(path: string): string {
   const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
   return i >= 0 ? path.slice(0, i) : '.';
 }
-
-function defaultReadFile(path: string): string | null {
+async function defaultReadFile(path: string): Promise<string | null> {
   try {
-    return readFileSync(path, 'utf8');
+    return await readFile(path, 'utf8');
   } catch {
     return null;
   }
 }
-
-function defaultListDir(path: string): string[] {
+async function defaultListDir(path: string): Promise<string[]> {
   try {
-    return readdirSync(path);
+    return await readdir(path);
   } catch {
     return [];
   }
@@ -836,50 +836,64 @@ function normalizeProcesses(raw: ExternalProcess[] | string): ExternalProcess[] 
 
 export class ExternalTunnelDetector {
   private localCache: { at: number; value: ExternalDetection } | null = null;
-  private inFlight: Promise<ExternalDetection> | null = null;
+  private lastAttemptAt = 0;
+  private epoch = 0;
+  private inFlight: { epoch: number; promise: Promise<ExternalDetection> } | null = null;
 
   constructor(private readonly deps: ExternalDetectDeps) {}
-
   invalidate(): void {
+    this.epoch += 1;
     this.localCache = null;
+    this.lastAttemptAt = 0;
   }
-
   async detect(opts?: { force?: boolean }): Promise<ExternalDetection> {
-    const now = this.deps.now ?? Date.now;
+    if (opts?.force) {
+      this.epoch += 1;
+      this.localCache = null;
+      return this.refresh(this.epoch, true);
+    }
+    const now = (this.deps.now ?? Date.now)();
     const cached = this.localCache;
-    if (!opts?.force && cached && now() - cached.at < CACHE_MS) return this.withProbe(cached.value);
-    const pending = this.refresh();
-    if (opts?.force) return pending;
-    if (cached) return this.withProbe(cached.value);
+    if (cached && now - cached.at < CACHE_MS)
+      return this.inFlight ? { ...cached.value, probing: true } : cached.value;
+    if (this.lastAttemptAt > 0 && now - this.lastAttemptAt < 10_000 && !this.inFlight)
+      return cached ? cached.value : { ...EMPTY_EXTERNAL, probing: true };
+    const pending = this.refresh(this.epoch, false);
+    if (cached) return this.inFlight ? { ...cached.value, probing: true } : cached.value;
     const cap = this.deps.firstWaitMs ?? FIRST_WAIT_MS;
     const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     await Promise.race([pending, sleep(cap)]);
     return this.localCache?.value ?? { ...EMPTY_EXTERNAL, probing: true };
   }
 
-  private withProbe(value: ExternalDetection): ExternalDetection {
-    return this.inFlight ? { ...value, probing: true } : value;
+  private refresh(epoch: number, force: boolean): Promise<ExternalDetection> {
+    if (this.inFlight?.epoch === epoch) return this.inFlight.promise;
+    const promise = this.runScan(epoch, force);
+    this.inFlight = { epoch, promise };
+    return promise;
   }
 
-  private refresh(): Promise<ExternalDetection> {
-    if (this.inFlight) return this.inFlight;
+  private async runScan(epoch: number, force: boolean): Promise<ExternalDetection> {
     const now = this.deps.now ?? Date.now;
-    this.inFlight = detectUncached(this.deps)
-      .then((detected) => {
-        const value: ExternalDetection = { ...detected, tokenAccountId: detected.accountId };
-        this.localCache = { at: now(), value };
-        return value;
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.deps.warn?.(`external tunnel detection failed: ${message}`);
-        const value = this.localCache?.value ?? { ...EMPTY_EXTERNAL };
-        this.localCache = { at: now(), value };
-        return value;
-      })
-      .finally(() => {
-        this.inFlight = null;
-      });
-    return this.inFlight;
+    try {
+      const detected = await detectUncached(this.deps);
+      const value: ExternalDetection = { ...detected, tokenAccountId: detected.accountId };
+      if (epoch !== this.epoch)
+        return force ? this.refresh(this.epoch, true) : (this.localCache?.value ?? value);
+      this.localCache = { at: now(), value };
+      this.lastAttemptAt = now();
+      return value;
+    } catch (error) {
+      this.lastAttemptAt = now();
+      if (force) {
+        if (epoch !== this.epoch) return this.refresh(this.epoch, true);
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      this.deps.warn?.(`external tunnel detection failed: ${message}`);
+      return this.localCache?.value ?? { ...EMPTY_EXTERNAL, probing: true };
+    } finally {
+      if (this.inFlight?.epoch === epoch) this.inFlight = null;
+    }
   }
 }

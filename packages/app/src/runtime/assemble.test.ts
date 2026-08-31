@@ -113,6 +113,7 @@ function fakeMesh(overrides?: Partial<MeshRuntime> & { hub?: HubRuntime | null }
     },
     start: async () => {},
     stop: async () => {},
+    invalidateAuthModeCache() {},
     ...overrides,
   } as MeshRuntime;
 }

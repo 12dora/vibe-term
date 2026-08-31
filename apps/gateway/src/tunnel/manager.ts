@@ -95,8 +95,8 @@ export type TunnelManagerOptions = {
   externalDetect?: ExternalTunnelDetector;
   externalDetectDeps?: Partial<ExternalDetectDeps>;
   registerAccessGuard?: boolean;
-  /** hub 或 node 角色时 configure_access 会创建 /hub/ 与 /api/hub/ bypass 应用 */
   hasMeshRole?: boolean;
+  ackDetectMs?: number;
 };
 
 type BinaryCache = {
@@ -155,6 +155,7 @@ export class TunnelManager {
   private readonly jwtVerifier: AccessJwtVerifier;
   private readonly externalDetector: ExternalTunnelDetector;
   private readonly hasMeshRole: boolean;
+  private readonly ackDetectMs: number;
   private lastExternal: ExternalDetection = { ...EMPTY_EXTERNAL };
   private loginEnforcedFn: () => boolean;
   private trustProxy: boolean;
@@ -200,6 +201,7 @@ export class TunnelManager {
     this.probeVersionOnStart = opts.probeVersionOnStart ?? false;
     this.loginEnforcedFn = opts.loginEnforced ?? (() => defaultLoginEnforced());
     this.hasMeshRole = opts.hasMeshRole ?? (config.roles.hub || config.roles.node);
+    this.ackDetectMs = opts.ackDetectMs ?? 3_000;
     this.warn = opts.warn ?? ((message) => console.warn(message));
     this.accessStore =
       opts.accessStore ??
@@ -242,12 +244,10 @@ export class TunnelManager {
   setPatchHostEnv(fn: PatchHostEnv | null): void {
     this.patchHostEnv = fn;
   }
-
   setReadHostEnv(fn: ReadHostEnv | null): void {
     this.readHostEnv = fn;
     void this.refreshConfiguredTrustProxy();
   }
-
   setLoginEnforced(fn: () => boolean): void {
     this.loginEnforcedFn = fn;
   }
@@ -261,10 +261,8 @@ export class TunnelManager {
     }
     const persisted = this.store.get();
     void this.refreshExternal().catch((e) => this.warn(`[tunnel] external warmup failed: ${e}`));
-    if (persisted.autoStart && persisted.mode !== 'off') {
-      if (persisted.externallyManaged) {
-        // 系统服务托管，不拉起子进程
-      } else if (!this.isExposureProtected() && !persisted.exposureAcknowledgedAt) {
+    if (persisted.autoStart && persisted.mode !== 'off' && !persisted.externallyManaged) {
+      if (!this.isExposureProtected() && !persisted.exposureAcknowledgedAt) {
         this.warn(`[tunnel] auto-start skipped: ${EXPOSURE_ACK_MESSAGE}`);
       } else {
         try {
@@ -436,7 +434,6 @@ export class TunnelManager {
     const status = this.status();
     return { httpStatus, payload: { status, job: status.job } };
   }
-
   private async enqueueJob(
     kind: TunnelJobKind,
     run: (step: (name: string) => void) => Promise<void>
@@ -458,7 +455,6 @@ export class TunnelManager {
     void this.executeJob(job, run);
     return this.ok(202);
   }
-
   private async executeJob(
     job: TunnelJobStatus,
     run: (step: (name: string) => void) => Promise<void>
@@ -487,7 +483,6 @@ export class TunnelManager {
       throw new TunnelError('invalid_request', EXTERNAL_MANAGED_MESSAGE, 409);
     }
   }
-
   private async requireExposureAck(acknowledgeExposure: boolean | undefined): Promise<void> {
     if (this.isExposureProtected()) return;
     if (acknowledgeExposure === true) {
@@ -496,7 +491,6 @@ export class TunnelManager {
     }
     throw new TunnelError('exposure_ack_required', EXPOSURE_ACK_MESSAGE);
   }
-
   private isExposureProtected(
     persisted = this.safePersisted(),
     access = this.accessStatus(),
@@ -504,19 +498,25 @@ export class TunnelManager {
   ): boolean {
     return loginEnforced || access.effective;
   }
-
-  private isTunnelRunning(persisted = this.safePersisted()): boolean {
-    return persisted.externallyManaged
-      ? this.lastExternal.running
-      : this.supervisor.state === 'running';
-  }
-
   private async requireLastProtectionAck(acknowledgeExposure: boolean | undefined): Promise<void> {
     if (this.loginEnforcedFn()) return;
-    if (!this.isTunnelRunning()) return;
     if (acknowledgeExposure === true) {
       this.store.save({ exposureAcknowledgedAt: new Date(this.now()).toISOString() });
       return;
+    }
+    const persisted = this.safePersisted();
+    if (!persisted.externallyManaged && this.supervisor.state !== 'running') return;
+    if (persisted.externallyManaged) {
+      try {
+        const raced = await Promise.race([
+          this.externalDetector.detect({ force: true }),
+          Bun.sleep(this.ackDetectMs).then(() => null),
+        ]);
+        if (raced && !raced.probing && !raced.running) {
+          this.lastExternal = raced;
+          return;
+        }
+      } catch {}
     }
     throw new TunnelError('exposure_ack_required', EXPOSURE_ACK_MESSAGE);
   }
@@ -578,17 +578,16 @@ export class TunnelManager {
   async refreshExternal(opts?: { force?: boolean }): Promise<void> {
     try {
       this.lastExternal = await this.externalDetector.detect(opts);
-    } catch {
+    } catch (error) {
+      if (opts?.force) throw error;
       this.lastExternal = { ...EMPTY_EXTERNAL };
     }
   }
-
   private requireModeOff(): void {
     if (this.store.get().mode !== 'off') {
       throw new TunnelError('tunnel_exists', 'A tunnel is already configured; remove it first');
     }
   }
-
   private assertCreateName(hostnameRaw: string, tunnelNameRaw: string | undefined): void {
     if (!normalizeTunnelHostname(hostnameRaw)) {
       throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
@@ -599,7 +598,6 @@ export class TunnelManager {
       }
     }
   }
-
   private requireSupported(): void {
     if (!isTunnelPlatformSupported(this.platform, this.arch)) {
       throw new TunnelError(
@@ -1082,6 +1080,8 @@ export class TunnelManager {
     const hostname = this.resolveAccessHostname(hostnameRaw, true);
     try {
       const apps = await this.accessClient.listApps(accountId, apiToken);
+      if (apps.truncated)
+        throw new TunnelError('access_api_failed', 'Access app list is incomplete');
       const app = this.accessClient.findAppForHostname(apps, hostname);
       if (!app) {
         await this.accessStore.save({

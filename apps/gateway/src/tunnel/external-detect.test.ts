@@ -831,4 +831,116 @@ describe('external detector stale-while-revalidate', () => {
     expect(found.externalAccess?.checked).toBe(false);
     expect(found.externalAccess?.hostnameMatch).toBe(false);
   });
+
+  test('first-call wait cap returns while a slow async scan is still running', async () => {
+    const started = Date.now();
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      firstWaitMs: 40,
+      sleep: (ms) => Bun.sleep(ms),
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => {
+        await Bun.sleep(400);
+        return '';
+      },
+      readFile: async () => null,
+      listDir: async () => [],
+    });
+    const first = await d.detect();
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(first.probing).toBe(true);
+    expect(first.detected).toBe(false);
+  });
+
+  test('stale in-flight scan cannot overwrite a newer epoch', async () => {
+    let scans = 0;
+    const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      firstWaitMs: 15,
+      sleep: (ms) => Bun.sleep(ms),
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => {
+        const n = scans++;
+        await gates[n]?.promise;
+        return n === 0
+          ? '1 /usr/bin/cloudflared tunnel run --token-file /tmp/old\n'
+          : '2 /usr/bin/cloudflared tunnel run --token-file /tmp/new\n';
+      },
+      readFile: async (path) => {
+        if (path === '/tmp/old') {
+          return Buffer.from(JSON.stringify({ a: 'a', t: 'old-id', s: 's' })).toString('base64');
+        }
+        if (path === '/tmp/new') {
+          return Buffer.from(JSON.stringify({ a: 'a', t: 'new-id', s: 's' })).toString('base64');
+        }
+        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        return null;
+      },
+      listDir: async () => [],
+    });
+    const first = d.detect();
+    await Bun.sleep(30);
+    const forced = d.detect({ force: true });
+    gates[1]?.resolve();
+    const fresh = await forced;
+    expect(fresh.tokenAccountId).toBe('a');
+    gates[0]?.resolve();
+    await first;
+    const afterStale = await d.detect();
+    expect(afterStale.pid).toBe(2);
+  });
+
+  test('force detect propagates scan failure instead of caching empty success', async () => {
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => {
+        throw new Error('ps exploded');
+      },
+      readFile: async () => null,
+      listDir: async () => [],
+    });
+    await expect(d.detect({ force: true })).rejects.toThrow('ps exploded');
+    const next = await d.detect();
+    expect(next.probing).toBe(true);
+    expect(next.detected).toBe(false);
+  });
+
+  test('failed refresh keeps last success timestamp and backs off retries', async () => {
+    let now = 1_000;
+    let scans = 0;
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => now,
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => {
+        scans += 1;
+        if (scans === 1) return '';
+        throw new Error('refresh failed');
+      },
+      readFile: async () => null,
+      listDir: async () => [],
+    });
+    await d.detect();
+    expect(scans).toBe(1);
+    now += 40_000;
+    const afterTtl = await d.detect();
+    expect(afterTtl.detected).toBe(false);
+    await Bun.sleep(20);
+    expect(scans).toBe(2);
+    now += 5_000;
+    await d.detect();
+    expect(scans).toBe(2);
+    now += 6_000;
+    await d.detect();
+    expect(scans).toBe(3);
+  });
 });

@@ -279,6 +279,7 @@ export type MeshRuntime = {
   registerGatewaySession(entry: RegisterGatewaySessionInput): RegisterGatewaySessionResult;
   unregisterGatewaySession(sidOrSession: string | GatewaySession): void;
   handleRequest(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult>;
+  invalidateAuthModeCache(): void;
   localUiGuard(req: Request): Response | null;
   guardGatewayWebSocket(req: Request, server: MeshUpgradeServer): Response | null | undefined;
   rewriteSelf(req: Request): Request | null;
@@ -591,7 +592,11 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
   });
   const peerHolder = { manager: null } as { manager: PeerManager | null };
-  const notifyKeyLogHead = () => peerHolder.manager?.notifyKeyLogHeadChanged();
+  const httpHolder = { runtime: null } as { runtime: MeshHttpRuntime | null };
+  const notifyKeyLogHead = () => {
+    peerHolder.manager?.notifyKeyLogHeadChanged();
+    httpHolder.runtime?.auth.invalidateAuthModeCache();
+  };
   keyLogService.apply = attachKeyLogHeadNotify(
     keyLogService.apply.bind(keyLogService),
     notifyKeyLogHead
@@ -609,14 +614,11 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     hubGeneration: 0,
   };
   const emitNodeEvent = (event: NodeEventPayload) => {
-    if (event.status === 'offline' || event.status === 'revoked') {
-      notifyNodeOffline(event.nodeId);
-    }
-    for (const cb of nodeEvents) {
+    if (event.status === 'offline' || event.status === 'revoked') notifyNodeOffline(event.nodeId);
+    for (const cb of nodeEvents)
       try {
         cb(event);
       } catch {}
-    }
   };
   const emitListNodeEvent = (event: NodeEventProjection) => {
     if (!nodeEventDedupe.shouldEmitList(event)) return;
@@ -680,7 +682,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     peerHolder,
     innerSignalsHolder: { router: null } as { router: MeshRtcSignalRouter | null },
     startBrowserAcceptHolder: { fn() {} } as { fn: (rtcSession: string) => void },
-    httpHolder: { runtime: null } as { runtime: MeshHttpRuntime | null },
+    httpHolder,
     interfacesFn: opts.networkInterfaces ?? os.networkInterfaces,
     loadNative: (opts.loadNative ?? (async () => null)) as LoadNative,
   };
@@ -1224,7 +1226,6 @@ function wireMeshHttp(
   });
   return http;
 }
-
 function assembleMeshRuntime(
   d: MeshDeps,
   w: ReturnType<typeof wireMeshEventsAndSessions>,
@@ -1256,6 +1257,7 @@ function assembleMeshRuntime(
       state.lastNodeList = value;
     },
     handleRequest: http.handleRequest.bind(http),
+    invalidateAuthModeCache: () => http.auth.invalidateAuthModeCache(),
     localUiGuard: http.localUiGuard.bind(http),
     guardGatewayWebSocket: http.guardGatewayWebSocket.bind(http),
     rewriteSelf: http.rewriteSelf.bind(http),
@@ -1332,8 +1334,6 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   const http = wireMeshHttp(deps, wired);
   return assembleMeshRuntime(deps, wired, http);
 }
-
-// Hub 显示名回落：优先设置页保存的站点名称，其次 app.env 的 TMEX_SITE_NAME。
 function resolveSiteName(): string {
   try {
     const saved = getSiteSettings().siteName?.trim();

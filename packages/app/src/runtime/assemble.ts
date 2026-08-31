@@ -333,7 +333,8 @@ function buildTlsLifecycle(
   websocket: GatewayRuntime['websocket'],
   db: GatewayRuntime['db'],
   routeDeps: LocalRouteDeps,
-  tlsSlot: { service?: TlsService }
+  tlsSlot: { service?: TlsService },
+  onStatusChange?: () => void
 ) {
   const httpsListener = new HttpsListener({
     fetch,
@@ -346,6 +347,7 @@ function buildTlsLifecycle(
     challenge: new AcmeHttp01Challenge(),
     envPath: resolveSetupEnvPath(),
     trustProxy: gatewayConfig.trustProxy,
+    onStatusChange,
   });
   tlsSlot.service = tls;
   tunnelManager.setPatchHostEnv(async (trustProxy) => {
@@ -579,12 +581,8 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     authenticate: createRouteAuthenticate(roles, auth.nodeSessionStore, localAuthEffective),
     tlsStatus: async () => {
       if (!tlsSlot.service) throw new Error('tls service is not initialized');
-      const status = await tlsSlot.service.status();
-      return {
-        mode: status.mode,
-        listenerRunning: status.listener.running,
-        tlsPort: status.tlsPort,
-      };
+      const { mode, listener, tlsPort } = await tlsSlot.service.status();
+      return { mode, listenerRunning: listener.running, tlsPort };
     },
   };
 
@@ -601,7 +599,10 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     (req) => serveFrontend(req, staticRoot),
   ]);
   const websocket = routeWebsocket(gateway, mesh ?? wsAuthFrom(authHttp), hub);
-  const tlsLife = buildTlsLifecycle(fetch, websocket, gateway.db, routeDeps, tlsSlot);
+  const tlsLife = buildTlsLifecycle(fetch, websocket, gateway.db, routeDeps, tlsSlot, () => {
+    authHttp?.auth.invalidateAuthModeCache();
+    mesh?.invalidateAuthModeCache();
+  });
   tlsHandler = tlsLife.tlsHandler;
 
   let stopPromise: Promise<void> | null = null;

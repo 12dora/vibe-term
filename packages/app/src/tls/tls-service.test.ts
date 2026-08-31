@@ -71,6 +71,7 @@ async function setup(overrides?: {
   envPath?: string;
   issueAcme?: (input: unknown) => Promise<AcmeIssuedMaterial>;
   now?: () => number;
+  onStatusChange?: () => void;
 }) {
   const { db, close } = createMigratedAuthDb();
   const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-'));
@@ -90,6 +91,7 @@ async function setup(overrides?: {
     clearTimeoutFn: () => {},
     issueAcme: overrides?.issueAcme ?? (async () => dummyMaterial()),
     now: overrides?.now,
+    onStatusChange: overrides?.onStatusChange,
   });
   return {
     service,
@@ -572,5 +574,47 @@ describe('TlsService', () => {
     now += 2;
     await ctx.service.status();
     expect(gets).toBe(2);
+  });
+
+  test('status during an in-flight mutation is not cached', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    const gate = deferred<void>();
+    let entered!: () => void;
+    const enteredP = new Promise<void>((r) => {
+      entered = r;
+    });
+    const originalUpsert = ctx.store.upsert.bind(ctx.store);
+    ctx.store.upsert = async (partial) => {
+      entered();
+      await gate.promise;
+      return originalUpsert(partial);
+    };
+    const originalGet = ctx.store.get.bind(ctx.store);
+    let gets = 0;
+    ctx.store.get = async () => {
+      gets += 1;
+      return originalGet();
+    };
+    const applyP = ctx.service.applyMode({ mode: 'none' });
+    await enteredP;
+    await ctx.service.status();
+    await ctx.service.status();
+    expect(gets).toBeGreaterThanOrEqual(2);
+    gate.resolve();
+    await applyP;
+  });
+
+  test('onStatusChange runs after a mutation completes', async () => {
+    let n = 0;
+    const ctx = await setup({
+      onStatusChange: () => {
+        n += 1;
+      },
+    });
+    cleanups.push(ctx.close);
+    expect(n).toBe(0);
+    await ctx.service.applyMode({ mode: 'none' });
+    expect(n).toBeGreaterThan(0);
   });
 });

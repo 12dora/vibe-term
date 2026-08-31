@@ -18,30 +18,30 @@ type CacheEntry = {
   generation: number;
 };
 
-let generation = 0;
-
-export function invalidateAuthModeCache(): void {
-  generation += 1;
-}
-
 export async function withAuthModeInvalidation(
+  cache: AuthModeCache,
   run: () => Response | Promise<Response>
 ): Promise<Response> {
   const res = await run();
-  if (res.ok) invalidateAuthModeCache();
+  if (res.ok) cache.invalidate();
   return res;
 }
 
 export class AuthModeCache {
+  private generation = 0;
   private entry: CacheEntry | null = null;
 
+  invalidate(): void {
+    this.generation += 1;
+  }
+
   async get(now: number, load: () => Promise<AuthModeSnapshot>): Promise<AuthModeSnapshot> {
-    if (this.entry && this.entry.generation === generation && now < this.entry.expiresAt) {
+    if (this.entry && this.entry.generation === this.generation && now < this.entry.expiresAt) {
       return this.entry.snapshot;
     }
-    const gen = generation;
+    const gen = this.generation;
     const snapshot = await load();
-    if (gen === generation) {
+    if (gen === this.generation) {
       this.entry = {
         snapshot,
         expiresAt: now + AUTH_MODE_CACHE_TTL_MS,
