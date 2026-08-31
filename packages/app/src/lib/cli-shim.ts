@@ -169,8 +169,14 @@ async function installBunLink(
   if (!(await canReplaceManagedPath(linkPath))) {
     return { path: null, skipped: t('cli.shim.skipForeign', { path: linkPath }) };
   }
-  await rm(linkPath, { force: true });
-  await symlink(shimPath, linkPath);
+  const tmp = `${linkPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await symlink(shimPath, tmp);
+    await rename(tmp, linkPath);
+  } catch (error) {
+    await rm(tmp, { force: true }).catch(() => null);
+    throw error;
+  }
   return { path: linkPath, skipped: null };
 }
 
@@ -180,7 +186,7 @@ export async function installTmexShim(
   const localBinDir = options.localBinDir ?? defaultLocalBinDir();
   const bunBinDir = options.bunBinDir ?? defaultBunBinDir();
   const pathEnv = options.pathEnv ?? process.env.PATH ?? '';
-  const cliJsPath = join(options.installLayout.cliDir, 'bin', 'tmex.js');
+  const cliJsPath = join(options.installLayout.installDir, 'current', 'cli', 'bin', 'tmex.js');
   const installDir = options.installLayout.installDir;
 
   await ensureDir(localBinDir);

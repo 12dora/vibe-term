@@ -29,6 +29,7 @@ import {
 } from '../lib/install';
 import {
   createInstallLayout,
+  createVersionLayout,
   resolveInstallDir,
   resolvePackageLayout,
 } from '../lib/install-layout';
@@ -37,6 +38,9 @@ import { promptConfirm, promptText } from '../lib/prompt';
 import { DEFAULT_PEER_PORT, DEFAULT_STUN_SERVERS, parseTmexRoleName } from '../lib/roles';
 import { installService, serviceHint } from '../lib/service';
 import { checkTmuxVersion } from '../lib/tmux';
+import { repairUpgrade, withUpgradeLock } from '../lib/upgrade-apply';
+import { readJournal } from '../lib/upgrade-state';
+import { switchCurrent } from '../lib/upgrade-switch';
 import { asBoolean, asString, assertNonEmpty, parsePort } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
 import type { InitConfig, InstallMeta, ParsedArgs } from '../types';
@@ -156,16 +160,7 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
   );
   let hubPublicUrl = asString(flags['hub-public-url']) || '';
   if (role === 'hub,node') {
-    if (ni && !hubPublicUrl) {
-      throw new Error('init --role hub,node requires --hub-public-url in non-interactive mode');
-    }
-    if (!ni) {
-      hubPublicUrl = await promptText(
-        { nonInteractive: false },
-        'Hub public URL (TMEX_HUB_PUBLIC_URL)',
-        hubPublicUrl
-      );
-    }
+    hubPublicUrl = await resolveHubPublicUrl(ni, hubPublicUrl);
   }
   return {
     installDir,
@@ -183,7 +178,22 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
     peerPort,
     hubPublicUrl,
     stunServers: asString(flags['stun-servers']) || DEFAULT_STUN_SERVERS,
+    noService: asBoolean(flags['no-service']) ?? false,
   };
+}
+
+async function resolveHubPublicUrl(nonInteractive: boolean, current: string): Promise<string> {
+  if (nonInteractive) {
+    if (!current) {
+      throw new Error('init --role hub,node requires --hub-public-url in non-interactive mode');
+    }
+    return current;
+  }
+  return await promptText(
+    { nonInteractive: false },
+    'Hub public URL (TMEX_HUB_PUBLIC_URL)',
+    current
+  );
 }
 
 async function handleDepFailure(
@@ -212,14 +222,10 @@ async function handleDepFailure(
   throw new Error(`${errorMessage}\n${t('deps.install.hint', { command: hint })}`);
 }
 
-export async function runInit(parsed: ParsedArgs): Promise<void> {
-  const manager = await detectServiceManager();
-  if (manager === 'none') {
-    throw new Error(t('init.error.noServiceManager', { platform: process.platform }));
-  }
-
-  const config = await buildInitConfig(parsed);
-
+async function checkInitDependencies(
+  config: InitConfig,
+  parsed: ParsedArgs
+): Promise<{ path: string; version?: string; ok: boolean; reason?: string }> {
   if (!config.skipDepCheck) {
     const tmux = await checkTmuxVersion();
     if (!tmux.ok) {
@@ -241,9 +247,64 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
       if (!bunRetry.ok || !bunRetry.path) {
         throw new Error(bunRetry.reason || t('bun.checkFailed'));
       }
-      Object.assign(bun, bunRetry);
-    } else {
-      throw new Error(reason);
+      return bunRetry;
+    }
+    throw new Error(reason);
+  }
+  return bun;
+}
+
+async function startInstalledRuntime(config: InitConfig, runScriptPath: string): Promise<void> {
+  if (!config.noService) {
+    await installService({
+      serviceName: config.serviceName,
+      installDir: config.installDir,
+      runScriptPath,
+      autostart: config.autostart,
+    });
+    return;
+  }
+  const { createDirectProcessControl, pidFilePath } = await import('../lib/upgrade-apply');
+  await createDirectProcessControl({
+    runScriptPath,
+    pidPath: pidFilePath(config.installDir),
+    installDir: config.installDir,
+  }).start();
+}
+
+function printInitSummary(
+  config: InitConfig,
+  bun: { path: string; version?: string },
+  serviceHintText: string,
+  shim: { shimPath: string; pathHint: string | null }
+): void {
+  console.log(`[tmex] ${t('init.done')}`);
+  console.log(`- ${t('init.summary.installDir')}: ${config.installDir}`);
+  console.log(`- ${t('init.summary.serviceName')}: ${config.serviceName}`);
+  console.log(`- ${t('init.summary.bun')}: ${bun.version} (${bun.path})`);
+  console.log(
+    `- ${t('init.summary.autostart')}: ${config.autostart ? t('init.summary.autostart.on') : t('init.summary.autostart.off')}`
+  );
+  console.log(`- ${t('init.summary.serviceHint')}: ${serviceHintText}`);
+  console.log(`- ${t('cli.shim.ready', { shimPath: shim.shimPath })}`);
+  if (shim.pathHint) {
+    console.log(`- ${shim.pathHint}`);
+  }
+}
+
+export async function runInit(parsed: ParsedArgs): Promise<void> {
+  const config = await buildInitConfig(parsed);
+  const manager = await detectServiceManager();
+  if (manager === 'none' && !config.noService) {
+    throw new Error(t('init.error.noServiceManager', { platform: process.platform }));
+  }
+
+  const bun = await checkInitDependencies(config, parsed);
+
+  if (!config.force) {
+    const journal = await readJournal(config.installDir);
+    if (journal) {
+      await withUpgradeLock(config.installDir, () => repairUpgrade(config.installDir, bun.path));
     }
   }
 
@@ -264,12 +325,15 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   }
 
   const packageLayout = await resolvePackageLayout(import.meta.url);
-  const installLayout = createInstallLayout(config.installDir);
+  const cliVersion = await readPackageVersion(packageLayout.packageRoot);
 
   await ensureInstallDir(config.installDir, config.force);
   await ensureDir(dirname(config.databasePath));
 
-  await deployRuntimeFiles(packageLayout, installLayout);
+  const versionLayout = createVersionLayout(config.installDir, cliVersion);
+  await deployRuntimeFiles(packageLayout, versionLayout);
+  await switchCurrent(config.installDir, cliVersion);
+  const installLayout = createInstallLayout(config.installDir);
   const shim = await deployCliAndShim(packageLayout, installLayout, bun.path);
   await enableDirectAfterInit(config);
 
@@ -287,15 +351,8 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   });
   await writeEnvFile(installLayout.envPath, envValues);
   await writeRunScript(installLayout, bun.path);
+  await startInstalledRuntime(config, installLayout.runScriptPath);
 
-  await installService({
-    serviceName: config.serviceName,
-    installDir: config.installDir,
-    runScriptPath: installLayout.runScriptPath,
-    autostart: config.autostart,
-  });
-
-  const cliVersion = await readPackageVersion(packageLayout.packageRoot);
   const meta: InstallMeta = {
     serviceName: config.serviceName,
     platform: process.platform,
@@ -304,19 +361,9 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
     updatedAt: new Date().toISOString(),
     cliVersion,
     bunPath: bun.path,
+    serviceMode: config.noService ? 'none' : 'managed',
   };
   await writeInstallMeta(installLayout, meta);
 
-  console.log(`[tmex] ${t('init.done')}`);
-  console.log(`- ${t('init.summary.installDir')}: ${config.installDir}`);
-  console.log(`- ${t('init.summary.serviceName')}: ${config.serviceName}`);
-  console.log(`- ${t('init.summary.bun')}: ${bun.version} (${bun.path})`);
-  console.log(
-    `- ${t('init.summary.autostart')}: ${config.autostart ? t('init.summary.autostart.on') : t('init.summary.autostart.off')}`
-  );
-  console.log(`- ${t('init.summary.serviceHint')}: ${await serviceHint(config.serviceName)}`);
-  console.log(`- ${t('cli.shim.ready', { shimPath: shim.shimPath })}`);
-  if (shim.pathHint) {
-    console.log(`- ${shim.pathHint}`);
-  }
+  printInitSummary(config, bun, await serviceHint(config.serviceName), shim);
 }

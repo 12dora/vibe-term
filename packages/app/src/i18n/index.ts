@@ -7,6 +7,7 @@ type Vars = Record<string, string | number | boolean | undefined>;
 const MESSAGES: Record<CliLang, Record<string, string>> = {
   en: {
     'cli.error.unknownCommand': 'Unknown command: {{command}}',
+    'cli.error.unknownFlag': 'Unknown flag: --{{flag}}',
 
     'common.cancelled': 'Cancelled by user.',
     'common.done': 'Done.',
@@ -108,6 +109,35 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.assetMissing':
       'Extracted release is missing package/bin/tmex.js for version {{version}}.',
     'upgrade.extractFailed': 'Failed to extract the release tarball (exit {{code}}).',
+    'upgrade.lockHeld':
+      'Another upgrade is already running (pid {{pid}}). If that process is dead, retry; lock: {{path}}.',
+    'upgrade.legacyMissingVersion':
+      'install-meta.json is missing cliVersion ({{path}}). Cannot convert the legacy install layout.',
+    'upgrade.healthVersionMismatch':
+      'Health check version mismatch: expected {{expected}}, got {{actual}}.',
+    'upgrade.integrityUnverified':
+      'Release SHA256SUMS is missing; tarball integrity is unverified.',
+    'upgrade.integrityMismatch': 'Release tarball sha256 mismatch for {{file}}.',
+    'upgrade.repairDone': 'Upgrade repair finished ({{action}}).',
+    'upgrade.rolledBack': 'Upgrade rolled back to {{version}}: {{error}}',
+    'upgrade.preflightFailed': 'Preflight of {{version}} failed: {{error}}',
+    'upgrade.serviceDidNotStop': 'Service did not stop within {{timeout}}ms.',
+    'upgrade.healthStaleStartedAt':
+      'Health check startedAt {{actual}} is not newer than restart at {{expected}}.',
+    'upgrade.nativeRequired':
+      'Native Direct addon is installed on {{fromVersion}} but could not be installed into {{toVersion}}: {{error}}',
+    'upgrade.noPidOwnership':
+      'This install is not managed by a service (serviceMode=none) and has no live pid file. Stop the running process, then retry.',
+    'upgrade.repairStartFailed': 'Repair could not start {{version}}: {{error}}',
+    'upgrade.alreadyCurrent': 'Already running {{version}}; nothing to upgrade.',
+    'upgrade.checksumHttpFailed': 'Failed to fetch SHA256SUMS: {{detail}}',
+    'upgrade.integrityRequired':
+      'Release {{version}} requires SHA256SUMS (HTTP 200, matching digest). Refusing to continue.',
+    'upgrade.integrityUnverifiedDenied':
+      'Release {{version}} has no SHA256SUMS. Re-run with --allow-unverified to proceed.',
+    'upgrade.integrityMissingEntry': 'SHA256SUMS does not list {{file}}.',
+    'upgrade.pidNotOwned': 'PID {{pid}} is not the tmex runtime for this install ({{installDir}}).',
+    'upgrade.healthTlsListenerDown': 'TLS listener is not running (mode {{mode}}).',
 
     'cli.shim.pathHint':
       '{{binDir}} is not on PATH. Add it so the tmex command is available: export PATH="{{binDir}}:$PATH"',
@@ -152,6 +182,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
   },
   'zh-CN': {
     'cli.error.unknownCommand': '未知命令：{{command}}',
+    'cli.error.unknownFlag': '未知参数：--{{flag}}',
 
     'common.cancelled': '已取消。',
     'common.done': '完成。',
@@ -248,6 +279,33 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.latestLookupFailed': 'GitHub latest-release 响应缺少 tag_name。',
     'upgrade.assetMissing': '版本 {{version}} 的解压结果缺少 package/bin/tmex.js。',
     'upgrade.extractFailed': '解压发行包失败（退出码 {{code}}）。',
+    'upgrade.lockHeld':
+      '另有升级正在进行（pid {{pid}}）。若该进程已退出，请重试；锁文件：{{path}}。',
+    'upgrade.legacyMissingVersion':
+      'install-meta.json 缺少 cliVersion（{{path}}），无法转换旧版安装布局。',
+    'upgrade.healthVersionMismatch': '健康检查版本不符：期望 {{expected}}，实际 {{actual}}。',
+    'upgrade.integrityUnverified': '发行包缺少 SHA256SUMS，未校验完整性。',
+    'upgrade.integrityMismatch': '发行包 sha256 与 SHA256SUMS 不符：{{file}}。',
+    'upgrade.repairDone': '升级修复完成（{{action}}）。',
+    'upgrade.rolledBack': '已回滚到 {{version}}：{{error}}',
+    'upgrade.preflightFailed': '预启动 {{version}} 失败：{{error}}',
+    'upgrade.serviceDidNotStop': '服务未在 {{timeout}}ms 内退出。',
+    'upgrade.healthStaleStartedAt':
+      '健康检查 startedAt {{actual}} 不晚于本次重启时间 {{expected}}。',
+    'upgrade.nativeRequired':
+      '{{fromVersion}} 已安装 Direct 原生插件，但未能装入 {{toVersion}}：{{error}}',
+    'upgrade.noPidOwnership':
+      '本机安装未托管服务（serviceMode=none），且没有存活的 pid 文件。请先停止正在运行的进程，再重试。',
+    'upgrade.repairStartFailed': '修复未能启动 {{version}}：{{error}}',
+    'upgrade.alreadyCurrent': '当前已是 {{version}}，无需升级。',
+    'upgrade.checksumHttpFailed': '获取 SHA256SUMS 失败：{{detail}}',
+    'upgrade.integrityRequired':
+      '版本 {{version}} 必须提供 SHA256SUMS（HTTP 200 且摘要匹配），拒绝继续。',
+    'upgrade.integrityUnverifiedDenied':
+      '版本 {{version}} 缺少 SHA256SUMS。若需跳过校验，请显式传入 --allow-unverified。',
+    'upgrade.integrityMissingEntry': 'SHA256SUMS 中没有 {{file}}。',
+    'upgrade.pidNotOwned': 'PID {{pid}} 不属于此安装目录的 tmex 运行时（{{installDir}}）。',
+    'upgrade.healthTlsListenerDown': 'TLS 监听未运行（mode {{mode}}）。',
 
     'cli.shim.pathHint':
       '{{binDir}} 不在 PATH 中。加入后即可使用 tmex 命令：export PATH="{{binDir}}:$PATH"',

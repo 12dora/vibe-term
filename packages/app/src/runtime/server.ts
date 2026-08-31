@@ -1,5 +1,6 @@
 import './bootstrap-env';
 import { resolve } from 'node:path';
+import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
 import { getDisplayVersion } from '../../../../apps/gateway/src/system/version';
 import { t } from '../i18n';
@@ -9,6 +10,7 @@ import {
   installShutdownHandlers,
   meshShutdownNeeded,
 } from './assemble';
+import { handlePreflightHttp, readRuntimeMode } from './mode';
 
 function resolveStaticRoot(): string {
   if (process.env.TMEX_FE_DIST_DIR) {
@@ -23,8 +25,19 @@ async function main(): Promise<void> {
   const host = process.env.TMEX_BIND_HOST || '127.0.0.1';
   const port = Number(process.env.GATEWAY_PORT || '9883');
   const staticRoot = resolveStaticRoot();
+  const runtimeMode = readRuntimeMode();
 
-  const assembled = await assembleTmex({ staticRoot });
+  const assembled = await assembleTmex({ staticRoot, runtimeMode });
+
+  if (runtimeMode === 'preflight') {
+    Bun.serve({
+      hostname: host,
+      port,
+      fetch: (req) => handlePreflightHttp(req, getDisplayVersion(), PROCESS_STARTED_AT),
+    });
+    console.log(`[tmex] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
+    return;
+  }
 
   const server = Bun.serve({
     hostname: host,

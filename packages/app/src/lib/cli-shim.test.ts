@@ -11,6 +11,7 @@ import {
   isDirOnPath,
   removeTmexShims,
 } from './cli-shim';
+import { pathExists } from './fs-utils';
 import { createInstallLayout } from './install-layout';
 import type { PackageLayout } from './install-layout';
 
@@ -104,7 +105,7 @@ describe('installTmexShim', () => {
     expect(shim).toContain(`# tmex-install-dir: ${installDir}`);
     expect(shim).toContain('command -v node');
     expect(shim).toMatch(/-ge 20/);
-    expect(shim).toContain(join(installLayout.cliDir, 'bin', 'tmex.js'));
+    expect(shim).toContain(join(installDir, 'current', 'cli', 'bin', 'tmex.js'));
     expect(shim).toContain(bunPath);
 
     const mode = (await stat(result.shimPath)).mode;
@@ -289,6 +290,39 @@ describe('installTmexShim', () => {
     expect(result.bunLinkPath).toBeNull();
     expect(await readlink(join(bunBinDir, 'tmex'))).toBe(other);
     expect(result.skipWarning).toBe(t('cli.shim.skipForeign', { path: join(bunBinDir, 'tmex') }));
+  });
+
+  test('replacing ~/.bun/bin/tmex never unlinks the target before rename', async () => {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), 'tmex-shim-bun-atomic-'));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    const bunBinDir = join(root, 'bun-bin');
+    await mkdir(bunBinDir, { recursive: true });
+    const installLayout = createInstallLayout(join(root, 'install'));
+    await deployCliPackage(packageLayout, installLayout);
+    await installTmexShim({
+      installLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir,
+      pathEnv: `${localBinDir}:${bunBinDir}`,
+    });
+    const linkPath = join(bunBinDir, 'tmex');
+    expect(await pathExists(linkPath)).toBe(true);
+    const previous = await readlink(linkPath);
+
+    const tmp = `${linkPath}.${process.pid}.${Date.now()}.tmp`;
+    await symlink(join(localBinDir, 'tmex'), tmp);
+    expect(await pathExists(linkPath)).toBe(true);
+    expect(await readlink(linkPath)).toBe(previous);
+
+    const { rename } = await import('node:fs/promises');
+    await rename(tmp, linkPath);
+    expect(await pathExists(linkPath)).toBe(true);
+
+    const source = await readFile(new URL('./cli-shim.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/await rm\(linkPath/);
   });
 });
 

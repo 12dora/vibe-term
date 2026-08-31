@@ -3,7 +3,7 @@ import { runInit } from './commands/init';
 import { runUninstall } from './commands/uninstall';
 import { runUpgrade } from './commands/upgrade';
 import { type CliLang, normalizeLang, setLang, t } from './i18n';
-import { parseArgs, resolveNestedCommand } from './lib/args';
+import { assertKnownFlags, parseArgs, resolveNestedCommand } from './lib/args';
 import { AUTH_COMMANDS, resolveAuthSpawnPlan, spawnAuthCli } from './lib/auth-spawn';
 import type { ParsedArgs } from './types';
 
@@ -94,5 +94,10 @@ export async function main(): Promise<void> {
     process.env.TMEX_CLI_LANG;
   const lang = normalizeLang(requestedLang);
   setLang(lang);
+  if (parsed.flags.help === true) {
+    printHelp();
+    return;
+  }
+  assertKnownFlags(parsed);
   await dispatchCli(parsed, lang, { argv });
 }

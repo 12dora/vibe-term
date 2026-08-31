@@ -37,6 +37,9 @@ interface GatewayRuntimeOptions {
   initializeSiteSettings?: boolean;
   migrationsFolder?: string;
   systemApiHandler?: SystemApiHandler;
+  mode?: 'normal' | 'preflight';
+  runMigrationsFn?: (folder?: string) => void;
+  liveStart?: () => Promise<void>;
 }
 
 export interface GatewayRuntime {
@@ -63,6 +66,55 @@ export interface GatewayRuntime {
   stop: () => Promise<void>;
 }
 
+function noopWebsocket(): GatewayRuntime['websocket'] {
+  return {
+    backpressureLimit: GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
+    closeOnBackpressureLimit: true,
+    open() {},
+    message() {},
+    drain() {},
+    close() {},
+    closeSession() {},
+  };
+}
+
+async function startLiveGatewayServices(): Promise<void> {
+  await telegramService.refresh();
+  await weixinService.refresh();
+  await pushSupervisor.start();
+  await agentSupervisor.start();
+  await watchService.start();
+  await tunnelManager.start();
+  try {
+    const settings = getSiteSettings();
+    await telegramService.sendGatewayOnlineMessage(settings.siteName);
+    await weixinService.sendGatewayOnlineMessage(settings.siteName);
+  } catch (err) {
+    console.error('[gateway] failed to push startup message:', err);
+  }
+}
+
+function createPreflightGatewayRuntime(options: GatewayRuntimeOptions): GatewayRuntime {
+  const wsServer = new WebSocketServer();
+  const db = getOrmDb();
+  return {
+    port: config.port,
+    db,
+    wsServer,
+    handleRequest() {
+      return undefined;
+    },
+    async dispatchHttp() {
+      return json({ error: t('apiError.notFound') }, 404);
+    },
+    websocket: noopWebsocket(),
+    onRestartRequested() {},
+    restoreRemoteAgentSessions() {},
+    stopAgentSessions: async () => undefined,
+    async stop() {},
+  };
+}
+
 export async function createGatewayRuntime(
   options: GatewayRuntimeOptions = {}
 ): Promise<GatewayRuntime> {
@@ -72,9 +124,17 @@ export async function createGatewayRuntime(
     migrationsFolder,
     systemApiHandler,
   } = options;
+  const mode =
+    options.mode ?? (process.env.TMEX_RUNTIME_MODE === 'preflight' ? 'preflight' : 'normal');
+  const applyMigrations = options.runMigrationsFn ?? runMigrations;
+  const liveStart = options.liveStart ?? startLiveGatewayServices;
 
   if (runMigrationsOnStart) {
-    runMigrations(migrationsFolder);
+    applyMigrations(migrationsFolder);
+  }
+
+  if (mode === 'preflight') {
+    return createPreflightGatewayRuntime(options);
   }
 
   if (initializeSiteSettings) {
@@ -120,20 +180,7 @@ export async function createGatewayRuntime(
     renamePane: (deviceId, paneId, name) => wsServer.renamePane(deviceId, paneId, name),
     getCustomNames: (deviceId) => wsServer.getCustomNames(deviceId),
   });
-  await telegramService.refresh();
-  await weixinService.refresh();
-  await pushSupervisor.start();
-  await agentSupervisor.start();
-  await watchService.start();
-  await tunnelManager.start();
-
-  try {
-    const settings = getSiteSettings();
-    await telegramService.sendGatewayOnlineMessage(settings.siteName);
-    await weixinService.sendGatewayOnlineMessage(settings.siteName);
-  } catch (err) {
-    console.error('[gateway] failed to push startup message:', err);
-  }
+  await liveStart();
 
   return {
     port: config.port,

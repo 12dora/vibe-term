@@ -72,9 +72,13 @@ describe('writeRunScript', () => {
     expect(script).toContain('export PATH="${HOME}/.bun/bin:${PATH:-}"');
     expect(script).toContain('export TMEX_FE_DIST_DIR=');
     expect(script).toContain('export TMEX_MIGRATIONS_DIR=');
-    expect(script).toContain(`export TMEX_NATIVE_DIR=${posixQuote(installLayout.nativeDir)}`);
+    expect(script).toContain('export TMEX_INSTALL_DIR=');
+    expect(script).toContain('printf \'%s\\n\' "$$" > "$SCRIPT_DIR/tmex.pid"');
     expect(script).toContain(
-      `exec ${posixQuote('/usr/bin/bun')} ${posixQuote(installLayout.runtimeServerPath)}`
+      `export TMEX_NATIVE_DIR=${posixQuote(join(installDir, 'current', 'native'))}`
+    );
+    expect(script).toContain(
+      `exec ${posixQuote('/usr/bin/bun')} ${posixQuote(join(installDir, 'current', 'runtime', 'server.js'))}`
     );
     expect(script).not.toContain('BASH_SOURCE');
   });
@@ -95,16 +99,22 @@ describe('writeRunScript', () => {
     const script = await readFile(installLayout.runScriptPath, 'utf8');
 
     expect(script).toContain(`done < ${posixQuote(installLayout.envPath)}`);
-    expect(script).toContain(`export TMEX_FE_DIST_DIR=${posixQuote(installLayout.feDir)}`);
-    expect(script).toContain(`export TMEX_MIGRATIONS_DIR=${posixQuote(installLayout.drizzleDir)}`);
-    expect(script).toContain(`export TMEX_NATIVE_DIR=${posixQuote(installLayout.nativeDir)}`);
     expect(script).toContain(
-      `exec ${posixQuote(bunPath)} ${posixQuote(installLayout.runtimeServerPath)}`
+      `export TMEX_FE_DIST_DIR=${posixQuote(join(installDir, 'current', 'resources', 'fe-dist'))}`
+    );
+    expect(script).toContain(
+      `export TMEX_MIGRATIONS_DIR=${posixQuote(join(installDir, 'current', 'resources', 'gateway-drizzle'))}`
+    );
+    expect(script).toContain(
+      `export TMEX_NATIVE_DIR=${posixQuote(join(installDir, 'current', 'native'))}`
+    );
+    expect(script).toContain(
+      `exec ${posixQuote(bunPath)} ${posixQuote(join(installDir, 'current', 'runtime', 'server.js'))}`
     );
     expect(script).toContain(`export PATH=${posixQuote(dirname(bunPath))}:`);
 
     expect(script).not.toContain(`"${installLayout.envPath}"`);
-    expect(script).not.toContain(`"${installLayout.feDir}"`);
+    expect(script).not.toContain(`"${join(installDir, 'current', 'resources', 'fe-dist')}"`);
     expect(script).not.toContain(`"${bunPath}"`);
 
     const syntax = spawnSync('bash', ['-n', installLayout.runScriptPath], { encoding: 'utf8' });
@@ -118,6 +128,6 @@ describe('writeRunScript', () => {
     const ran = spawnSync('bash', [probePath], { encoding: 'utf8' });
     expect(ran.status).toBe(0);
     expect(ran.stderr).toBe('');
-    expect(ran.stdout).toBe(`${bunPath}\0${installLayout.runtimeServerPath}`);
+    expect(ran.stdout).toBe(`${bunPath}\0${join(installDir, 'current', 'runtime', 'server.js')}`);
   });
 });
