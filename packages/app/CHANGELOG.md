@@ -1,3 +1,21 @@
+# 1.1.1
+
+_2026-08-31_
+
+## English
+
+### Fixes
+
+- "Connect More Devices" panel: tab content rendered beside the tab list instead of below it (the shared Tabs root never applied its horizontal layout). Fixed in `@tmex/ui`.
+- Sidebar footer: the "Connect Devices" / "Manage Devices" labels are centered.
+
+## 中文
+
+### 修复
+
+- 「接入更多设备」面板内容与标签并排错乱（共享 Tabs 根的横向布局从未生效），已在 `@tmex/ui` 修复。
+- 侧栏底部「接入设备」/「管理设备」文字居中。
+
 # 1.1.0
 
 _2026-08-31_
