@@ -33,7 +33,7 @@ export function SelectionToolbar({
     >
       <button
         type="button"
-        className="flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-accent-foreground motion-reduce:transition-none"
+        className="flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-accent-foreground motion-reduce:transition-none"
         onMouseDown={preventFocusSteal}
         onClick={onCopy}
         data-testid="terminal-selection-copy"
@@ -44,7 +44,7 @@ export function SelectionToolbar({
       {canPaste && (
         <button
           type="button"
-          className="flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-accent-foreground motion-reduce:transition-none"
+          className="flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-accent-foreground motion-reduce:transition-none"
           onMouseDown={preventFocusSteal}
           onClick={onPaste}
           data-testid="terminal-selection-paste"
