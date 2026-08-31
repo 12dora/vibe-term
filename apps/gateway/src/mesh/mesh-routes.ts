@@ -57,6 +57,10 @@ export type MeshRoutesDeps = {
   selfStatus?: () => UplinkStatus;
   listedNames?: () => ReadonlyArray<{ id: string; name: string }>;
   selfName?: () => string | null;
+  forwardAuthorizedHttp?: (
+    req: Request,
+    input: { nodeId: string; method: string; path: string; query?: string; body?: unknown }
+  ) => Promise<Response>;
 };
 
 const STATUS_TO_U8: Record<string, number> = {
@@ -99,6 +103,11 @@ export class MeshRoutes {
     if (path === '/api/mesh/nodes' && req.method === 'GET') {
       return requireSession(this.sessionDeps, (r) => this.handleNodes(r))(req);
     }
+    if (path === '/api/mesh/upgrade/latest' && req.method === 'GET') {
+      return requireSession(this.sessionDeps, () => this.handleUpgradeLatest())(req);
+    }
+    const upgradeRoute = this.matchUpgradeNodeRoute(req, path);
+    if (upgradeRoute) return upgradeRoute;
     if (path === '/api/mesh/rtc-config' && req.method === 'GET') {
       return requireSession(this.sessionDeps, () => this.handleRtcConfig())(req);
     }
@@ -162,6 +171,59 @@ export class MeshRoutes {
 
   private handleNodes(req: Request): Response {
     return jsonBody({ nodes: this.collectNodes(req) });
+  }
+
+  private matchUpgradeNodeRoute(req: Request, path: string): Promise<Response> | undefined {
+    const match = path.match(/^\/api\/mesh\/nodes\/([^/]+)\/upgrade$/);
+    if (!match) return undefined;
+    const nodeId = decodeURIComponent(match[1] ?? '');
+    if (req.method === 'POST') {
+      return requireSession(this.sessionDeps, (r) => this.handleUpgradeStart(r, nodeId))(req);
+    }
+    if (req.method === 'GET') {
+      return requireSession(this.sessionDeps, (r) => this.handleUpgradeStatus(r, nodeId))(req);
+    }
+    return undefined;
+  }
+
+  private handleUpgradeLatest(): Promise<Response> {
+    return import('../system/upgrade-service').then((mod) => mod.handleMeshUpgradeLatest());
+  }
+
+  private async handleUpgradeStart(req: Request, nodeId: string): Promise<Response> {
+    const { handleMeshNodeUpgradeStart } = await import('../system/upgrade-service');
+    return handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId: this.deps.nodeId,
+      userStore: this.deps.userStore,
+      forward: {
+        forwardAuthorizedHttp: (r, input) => this.forwardAuthorized(r, input),
+      },
+    });
+  }
+
+  private async handleUpgradeStatus(req: Request, nodeId: string): Promise<Response> {
+    const { handleMeshNodeUpgradeStatus } = await import('../system/upgrade-service');
+    return handleMeshNodeUpgradeStatus({
+      req,
+      nodeId,
+      localNodeId: this.deps.nodeId,
+      userStore: this.deps.userStore,
+      forward: {
+        forwardAuthorizedHttp: (r, input) => this.forwardAuthorized(r, input),
+      },
+    });
+  }
+
+  private forwardAuthorized(
+    req: Request,
+    input: { nodeId: string; method: string; path: string; query?: string; body?: unknown }
+  ): Promise<Response> {
+    if (!this.deps.forwardAuthorizedHttp) {
+      return Promise.resolve(jsonError('NODE_UNREACHABLE', 503, { nodeId: input.nodeId }));
+    }
+    return this.deps.forwardAuthorizedHttp(req, input);
   }
 
   forwardEnrollRedeemed(msg: {

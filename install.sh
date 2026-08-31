@@ -3,6 +3,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
 #   bash install.sh [init flags...]
+#   bash install.sh --allow-unverified [init flags...]  # checksum skip, versions < 1.1.4 only
 # Env:
 #   TMEX_VERSION  pin a release (with or without leading v)
 
@@ -18,6 +19,33 @@ tmex_version_from_tag() {
   tag="${tag#v}"
   tag="${tag#V}"
   printf '%s' "$tag"
+}
+
+tmex_classify_checksum_http() {
+  case "$1" in
+    404) printf '%s' 'missing' ;;
+    200) printf '%s' 'ok' ;;
+    *) printf '%s' 'error' ;;
+  esac
+}
+
+# Print the hex for a filename field that is EXACTLY $2 (no directories, no *).
+# Rejects path-qualified entries such as /tmp/foo.tgz or ../foo.tgz.
+tmex_sha256sums_hex_for() {
+  local sums_file="$1"
+  local want="$2"
+  awk -v want="$want" '
+    $1 ~ /^[a-fA-F0-9]{64}$/ {
+      name = $2
+      sub(/^\*/, "", name)
+      if (name == want) {
+        print tolower($1)
+        found = 1
+        exit 0
+      }
+    }
+    END { if (!found) exit 1 }
+  ' "$sums_file"
 }
 
 tmex_is_semver() {
@@ -213,6 +241,17 @@ tmex_print_path_hint() {
 tmex_install() {
   set -euo pipefail
 
+  local allow_unverified=0
+  local -a init_args=()
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = "--allow-unverified" ]; then
+      allow_unverified=1
+    else
+      init_args+=("$arg")
+    fi
+  done
+
   tmex_need_cmd curl
   tmex_need_cmd tar
   tmex_detect_os
@@ -232,6 +271,47 @@ tmex_install() {
     exit 1
   fi
 
+  local sums_url="https://github.com/${TMEX_RELEASE_REPO}/releases/download/v${version}/SHA256SUMS"
+  local sums_file="${TMEX_INSTALL_TMP}/SHA256SUMS"
+  local sums_code
+  sums_code="$(curl -sS -L -o "$sums_file" -w '%{http_code}' -H 'User-Agent: tmex-install' "$sums_url")" || {
+    echo "tmex install: failed to fetch SHA256SUMS (network error)" >&2
+    exit 1
+  }
+  local sums_class
+  sums_class="$(tmex_classify_checksum_http "$sums_code")"
+  if [ "$sums_class" = "missing" ]; then
+    if tmex_version_ge "$version" "1.1.4"; then
+      echo "tmex install: Release ${version} requires SHA256SUMS (HTTP 200, matching digest). Refusing to continue." >&2
+      exit 1
+    fi
+    if [ "$allow_unverified" -ne 1 ]; then
+      echo "tmex install: Release ${version} has no SHA256SUMS. Re-run with --allow-unverified to proceed." >&2
+      exit 1
+    fi
+    echo "tmex install: SHA256SUMS not found; tarball integrity is unverified"
+  elif [ "$sums_class" != "ok" ]; then
+    echo "tmex install: failed to fetch SHA256SUMS (HTTP ${sums_code})" >&2
+    exit 1
+  else
+    local expected_hex actual_hex
+    if ! expected_hex="$(tmex_sha256sums_hex_for "$sums_file" "tmex-cli-${version}.tgz")"; then
+      echo "tmex install: SHA256SUMS does not list tmex-cli-${version}.tgz" >&2
+      exit 1
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+      actual_hex="$(shasum -a 256 "$tgz" | awk '{print $1}')"
+    else
+      actual_hex="$(sha256sum "$tgz" | awk '{print $1}')"
+    fi
+    expected_hex="$(printf '%s' "$expected_hex" | tr 'A-F' 'a-f')"
+    actual_hex="$(printf '%s' "$actual_hex" | tr 'A-F' 'a-f')"
+    if [ "$actual_hex" != "$expected_hex" ]; then
+      echo "tmex install: Release tarball sha256 mismatch for tmex-cli-${version}.tgz" >&2
+      exit 1
+    fi
+  fi
+
   tar -xzf "$tgz" -C "$TMEX_INSTALL_TMP"
   local pkg_dir="${TMEX_INSTALL_TMP}/package"
   if [ ! -f "${pkg_dir}/bin/tmex.js" ]; then
@@ -239,8 +319,6 @@ tmex_install() {
     exit 1
   fi
 
-  local -a init_args
-  init_args=("$@")
   if [ ! -t 0 ]; then
     if { exec 3</dev/tty; } 2>/dev/null; then
       echo "tmex install: stdin is not a TTY; attaching /dev/tty for prompts"

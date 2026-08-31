@@ -16,6 +16,22 @@ interface GithubRelease {
   assets?: GithubReleaseAsset[];
 }
 
+export type LatestGithubRelease = {
+  latestVersion: string | null;
+  changelog: string | null;
+  publishedAt: string | null;
+  hasTarball: boolean;
+};
+
+export class ReleaseUnavailableError extends Error {
+  readonly code = 'RELEASE_UNAVAILABLE' as const;
+
+  constructor(message = 'RELEASE_UNAVAILABLE') {
+    super(message);
+    this.name = 'ReleaseUnavailableError';
+  }
+}
+
 /**
  * 查询本仓库 GitHub Releases 最新版（不再走 npm registry）。
  * changelog 取 release body（markdown）；空则 null。缺少对应 tarball 资产时
@@ -23,7 +39,24 @@ interface GithubRelease {
  */
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
   const current = getBaseVersion();
+  const release = await fetchLatestGithubRelease();
+  const hasUpdate =
+    release.latestVersion !== null &&
+    release.hasTarball &&
+    current !== 'unknown' &&
+    compareVersions(release.latestVersion, current) > 0;
 
+  return {
+    currentVersion: current,
+    latestVersion: release.latestVersion,
+    hasUpdate,
+    changelog: release.changelog,
+    publishedAt: release.publishedAt,
+  };
+}
+
+/** 解析 GitHub latest Release；不与本机版本比较（远程升级不能用入口节点 hasUpdate）。 */
+export async function fetchLatestGithubRelease(): Promise<LatestGithubRelease> {
   const res = await fetch(RELEASE_API_LATEST_URL, {
     cache: 'no-store',
     headers: {
@@ -44,15 +77,29 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     latest !== null &&
     Array.isArray(release.assets) &&
     release.assets.some((asset) => asset.name === releaseTarballName(latest));
-  const hasUpdate =
-    latest !== null && hasTarball && current !== 'unknown' && compareVersions(latest, current) > 0;
 
   return {
-    currentVersion: current,
     latestVersion: latest,
-    hasUpdate,
     changelog,
     publishedAt,
+    hasTarball,
+  };
+}
+
+/** 远程/本机升级用：必须有具体版本且存在 tmex-cli tarball。 */
+export async function requireLatestUpgradeRelease(): Promise<{
+  latestVersion: string;
+  changelog: string | null;
+  publishedAt: string | null;
+}> {
+  const release = await fetchLatestGithubRelease();
+  if (!release.latestVersion || !release.hasTarball) {
+    throw new ReleaseUnavailableError('latest release tarball is unavailable');
+  }
+  return {
+    latestVersion: release.latestVersion,
+    changelog: release.changelog,
+    publishedAt: release.publishedAt,
   };
 }
 

@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next';
 import { EnrollmentSection } from './enrollment-section';
 import { NodesTable } from './nodes-table';
 import { PLACEHOLDER_KDF, type ResolvedMode } from './types';
+import { useNodeUpgrade } from './use-node-upgrade';
 
 export interface NodesManagementProps {
   mode: AuthModeResponse;
@@ -69,6 +70,9 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
     refreshNodes();
     hub.refresh();
   }, [hub, refreshNodes]);
+
+  // 升级状态机独立于 enrollment / rename / revoke：它走入口 → 目标的 peer link，hub 离线也能用。
+  const upgrade = useNodeUpgrade(refreshAll);
 
   const [enrollOpen, setEnrollOpen] = useState(false);
   // 监听回路、admit 流水线与过期清理都在宿主级单例引擎里：侧滑面板同时开着时也只有一份，
@@ -164,6 +168,7 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           api={api}
           prompt={prompt}
           onChanged={refreshAll}
+          upgrade={upgrade}
         />
 
         {prompt.dialog}

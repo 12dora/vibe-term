@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { defaultInstallDir } from '../constants';
 import { sha256Hex } from '../lib/artifacts-manifest';
 import { ensureDir, pathExists } from '../lib/fs-utils';
-import { createInstallLayout, resolveInstallDir } from '../lib/install-layout';
+import { type InstallLayout, createInstallLayout, resolveInstallDir } from '../lib/install-layout';
 import { writeJsonFile } from '../lib/json-file';
 import {
   type InstalledNativeManifest,
@@ -24,6 +24,7 @@ import type { ParsedArgs } from '../types';
 
 export interface EnableDirectOptions {
   installDir: string;
+  layout?: InstallLayout;
   pin?: NativePin | null;
   platform?: NodeJS.Platform | string;
   arch?: string;
@@ -172,9 +173,14 @@ export async function promoteNativeDirectory(
   }
 }
 
+function layoutForDirect(options: EnableDirectOptions): InstallLayout {
+  if (options.layout) return options.layout;
+  return createInstallLayout(options.installDir);
+}
+
 export async function enableDirect(options: EnableDirectOptions): Promise<DirectEnableResult> {
   const log = (message: string) => logLine(options.log, message);
-  const layout = createInstallLayout(options.installDir);
+  const layout = layoutForDirect(options);
   const signal = options.signal;
   const pin =
     options.pin === undefined
@@ -224,10 +230,8 @@ export async function enableDirect(options: EnableDirectOptions): Promise<Direct
     }
 
     throwIfAborted(signal);
-    stagingDir = join(
-      options.installDir,
-      `native.tmp-${process.pid}-${randomBytes(6).toString('hex')}`
-    );
+    const versionRoot = dirname(layout.nativeDir);
+    stagingDir = join(versionRoot, `native.tmp-${process.pid}-${randomBytes(6).toString('hex')}`);
     await ensureDir(stagingDir);
     await writeFile(nativeAddonPath(stagingDir), addon);
     const manifest: InstalledNativeManifest = {
@@ -239,7 +243,7 @@ export async function enableDirect(options: EnableDirectOptions): Promise<Direct
     await writeJsonFile(nativeManifestPath(stagingDir), manifest);
 
     throwIfAborted(signal);
-    const backupDir = join(options.installDir, `native.bak-${process.pid}`);
+    const backupDir = join(dirname(layout.nativeDir), `native.bak-${process.pid}`);
     await promoteNativeDirectory(stagingDir, layout.nativeDir, backupDir);
     stagingDir = null;
 
@@ -273,7 +277,7 @@ export async function disableDirect(options: DisableDirectOptions): Promise<void
 export async function reenableDirectIfNeeded(
   options: EnableDirectOptions
 ): Promise<DirectEnableResult> {
-  const layout = createInstallLayout(options.installDir);
+  const layout = options.layout ?? createInstallLayout(options.installDir);
   const addon = nativeAddonPath(layout.nativeDir);
   const hasAddon = await pathExists(addon);
   const installed = await readInstalledNativeManifest(layout.nativeDir);

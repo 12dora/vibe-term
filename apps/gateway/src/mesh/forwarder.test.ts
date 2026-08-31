@@ -14,6 +14,7 @@ import {
 } from './auth-routes.test';
 import {
   DEFAULT_PENDING_FORWARD_STREAM_TTL_MS,
+  Forwarder,
   expirePendingForwardStream,
   getSelfRewrite,
   pendingForwardStreamCount,
@@ -1148,6 +1149,88 @@ describe('forwarder', () => {
     } finally {
       mesh.close();
     }
+  });
+});
+
+describe('forwardAuthorizedHttp', () => {
+  test('GET retries a transient open failure; POST does not retry', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    let opens = 0;
+    const orig = streams.openHttpStream.bind(streams);
+    streams.openHttpStream = async (link, open, body, signal) => {
+      opens += 1;
+      if (opens === 1) throw new Error('transient');
+      return orig(link, open, body, signal);
+    };
+    streams.nextResponse = new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams,
+      sleep: async () => {},
+    });
+    const cookie = `tmex_s_${OTHER}=remote-sid`;
+    const getRes = await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', { headers: { cookie } }),
+      { nodeId: OTHER, method: 'GET', path: '/api/system/upgrade' }
+    );
+    expect(getRes.status).toBe(200);
+    expect(opens).toBe(2);
+
+    opens = 0;
+    streams.openHttpStream = async () => {
+      opens += 1;
+      throw new Error('post failed');
+    };
+    const postRes = await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+        method: 'POST',
+        headers: { cookie },
+      }),
+      { nodeId: OTHER, method: 'POST', path: '/api/system/upgrade', body: { version: '9.9.9' } }
+    );
+    expect(postRes.status).toBe(503);
+    expect(await postRes.json()).toEqual({ code: 'NODE_UNREACHABLE', nodeId: OTHER });
+    expect(opens).toBe(1);
+  });
+
+  test('sends the stored target-node session as stream auth', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponse = new Response(JSON.stringify({ state: 'idle' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams });
+    await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+        headers: { cookie: `tmex_s_${OTHER}=sess-from-cookie` },
+      }),
+      { nodeId: OTHER, method: 'GET', path: '/api/system/upgrade' }
+    );
+    expect(streams.lastOpen?.auth).toBe('sess-from-cookie');
+    expect(streams.lastOpen?.path).toBe('/api/system/upgrade');
+    expect(streams.lastOpen?.method).toBe('GET');
+  });
+
+  test('missing target session → NODE_LOGIN_REQUIRED without opening a stream', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams });
+    const res = await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade'),
+      { nodeId: OTHER, method: 'GET', path: '/api/system/upgrade' }
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ code: 'NODE_LOGIN_REQUIRED', nodeId: OTHER });
+    expect(streams.lastOpen).toBeNull();
   });
 });
 

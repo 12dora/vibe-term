@@ -22,6 +22,7 @@ export interface InitConfig {
   hubPublicUrl: string;
   peerPort: number;
   stunServers: string;
+  noService: boolean;
 }
 
 export type CheckLevel = 'pass' | 'warn' | 'fail';
@@ -35,6 +36,8 @@ export interface DoctorCheck {
   fixable?: boolean;
 }
 
+export type ServiceMode = 'managed' | 'none';
+
 export interface InstallMeta {
   serviceName: string;
   platform: NodeJS.Platform;
@@ -43,4 +46,5 @@ export interface InstallMeta {
   updatedAt: string;
   cliVersion: string;
   bunPath?: string;
+  serviceMode?: ServiceMode;
 }

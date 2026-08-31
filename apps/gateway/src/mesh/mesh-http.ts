@@ -149,6 +149,7 @@ export class MeshHttpRuntime {
       selfStatus: opts.selfStatus,
       listedNames: opts.listedNames,
       selfName: opts.selfName,
+      forwardAuthorizedHttp: (req, input) => this.forwarder.forwardAuthorizedHttp(req, input),
     });
     this.auth = new AuthRoutes({
       roles: opts.roles,

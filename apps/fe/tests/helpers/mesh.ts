@@ -237,8 +237,10 @@ interface XtermHandle {
 export async function signInToNodeFromDevicesPage(page: Page, nodeId: string): Promise<void> {
   await page.locator('a[href="/devices"]').first().click();
   await expect(page.getByTestId('devices-page')).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId(`devices-node-login-${nodeId}`)).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId(`node-login-${nodeId}`).click();
+  // node-login-<id> 同时出现在设备页与侧栏 Files 分节，必须按设备页容器收窄避免 strict mode 冲突
+  const deviceLogin = page.getByTestId(`devices-node-login-${nodeId}`);
+  await expect(deviceLogin).toBeVisible({ timeout: 30_000 });
+  await deviceLogin.getByTestId(`node-login-${nodeId}`).click();
   await expect(page.getByTestId(`devices-node-login-${nodeId}`)).toHaveCount(0, {
     timeout: 30_000,
   });

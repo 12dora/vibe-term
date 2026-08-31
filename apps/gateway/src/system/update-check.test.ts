@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { RELEASE_API_LATEST_URL, releaseTarballName } from '@tmex/shared';
-import { checkForUpdate } from './update-check';
+import {
+  checkForUpdate,
+  fetchLatestGithubRelease,
+  requireLatestUpgradeRelease,
+} from './update-check';
 import { getBaseVersion } from './version';
 
 const originalFetch = globalThis.fetch;
@@ -138,5 +142,71 @@ describe('checkForUpdate', () => {
   test('HTTP 404 throws a clear GitHub Releases error', async () => {
     mockGithub(404, '{"message":"Not Found"}');
     await expect(checkForUpdate()).rejects.toThrow(/GitHub Releases API HTTP 404/i);
+  });
+});
+
+describe('fetchLatestGithubRelease', () => {
+  test('returns latestVersion, changelog, publishedAt and hasTarball without comparing the local node', async () => {
+    mockGithub(200, {
+      tag_name: 'v2.3.4',
+      published_at: '2026-08-30T00:00:00.000Z',
+      body: '## 2.3.4',
+      assets: [{ name: releaseTarballName('2.3.4') }],
+    });
+
+    const result = await fetchLatestGithubRelease();
+    expect(result).toEqual({
+      latestVersion: '2.3.4',
+      changelog: '## 2.3.4',
+      publishedAt: '2026-08-30T00:00:00.000Z',
+      hasTarball: true,
+    });
+    expect('hasUpdate' in result).toBe(false);
+  });
+
+  test('missing tarball asset → hasTarball false but latestVersion still present', async () => {
+    mockGithub(200, {
+      tag_name: 'v2.3.4',
+      published_at: '2026-08-30T00:00:00.000Z',
+      body: 'notes',
+      assets: [{ name: 'source.tar.gz' }],
+    });
+
+    const result = await fetchLatestGithubRelease();
+    expect(result.latestVersion).toBe('2.3.4');
+    expect(result.hasTarball).toBe(false);
+  });
+});
+
+describe('requireLatestUpgradeRelease', () => {
+  test('returns concrete version when tarball asset exists', async () => {
+    mockGithub(200, {
+      tag_name: 'v2.3.4',
+      published_at: '2026-08-30T00:00:00.000Z',
+      body: 'notes',
+      assets: [{ name: releaseTarballName('2.3.4') }],
+    });
+
+    await expect(requireLatestUpgradeRelease()).resolves.toEqual({
+      latestVersion: '2.3.4',
+      changelog: 'notes',
+      publishedAt: '2026-08-30T00:00:00.000Z',
+    });
+  });
+
+  test('throws when the matching tarball asset is missing', async () => {
+    mockGithub(200, {
+      tag_name: 'v2.3.4',
+      published_at: '2026-08-30T00:00:00.000Z',
+      body: 'notes',
+      assets: [],
+    });
+
+    await expect(requireLatestUpgradeRelease()).rejects.toThrow(/RELEASE_UNAVAILABLE|tarball/i);
+  });
+
+  test('throws when GitHub Releases is unavailable', async () => {
+    mockGithub(502, '{"message":"bad gateway"}');
+    await expect(requireLatestUpgradeRelease()).rejects.toThrow(/GitHub Releases API HTTP 502/i);
   });
 });

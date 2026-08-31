@@ -32,9 +32,9 @@ const WriteModeControls = memo(function WriteModeControls({
 }: Omit<ComposerControls, 'modelProviderId' | 'modelId' | 'onModelChange'>) {
   const { t } = useTranslation();
   return (
-    <div className="flex shrink-0 items-center gap-3">
-      <div className="flex items-center gap-1.5">
-        <span className="text-muted-foreground text-xs">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="text-muted-foreground truncate text-xs">
           {writeMode === 'auto' ? t('agent.writeMode.auto') : t('agent.writeMode.confirm')}
         </span>
         <Switch
@@ -47,8 +47,11 @@ const WriteModeControls = memo(function WriteModeControls({
         />
       </div>
       {hasActiveSession && (
-        <div className="flex items-center gap-1.5">
-          <span className="text-muted-foreground text-xs" title={t('agent.controlChars.hint')}>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span
+            className="text-muted-foreground truncate text-xs"
+            title={t('agent.controlChars.hint')}
+          >
             {t('agent.controlChars.label')}
           </span>
           <Switch
@@ -127,17 +130,17 @@ const ChatInput = memo(function ChatInput({
         className="max-h-40 min-h-[4.5rem] w-full resize-none border-transparent bg-transparent p-3 text-[13px] shadow-none focus-visible:border-transparent focus-visible:ring-0 disabled:bg-transparent dark:bg-transparent dark:disabled:bg-transparent"
         rows={3}
       />
-      <div className="flex min-w-0 flex-wrap items-center gap-2 px-2.5 pb-2.5">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <WriteModeControls {...controls} />
-          <div className="min-w-0 flex-1">
-            <ModelPicker
-              providerId={controls.modelProviderId}
-              modelId={controls.modelId}
-              onChange={controls.onModelChange}
-              disabled={running}
-            />
-          </div>
+      {/* 控件与操作按钮是同级 flex item：窄侧栏放不下时按 basis 换行下沉，
+          而不是让不可收缩的控件溢出去盖住发送/停止按钮 */}
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 px-2.5 pb-2.5">
+        <WriteModeControls {...controls} />
+        <div className="min-w-0 flex-1 basis-32">
+          <ModelPicker
+            providerId={controls.modelProviderId}
+            modelId={controls.modelId}
+            onChange={controls.onModelChange}
+            disabled={running}
+          />
         </div>
         {running ? (
           <div className="ml-auto flex shrink-0 items-center gap-1.5">

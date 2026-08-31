@@ -1,4 +1,8 @@
+import { t } from '../i18n';
 import type { ParsedArgs } from '../types';
+import { UPGRADE_FLAGS } from './upgrade-flags';
+
+export { UPGRADE_FLAGS, UPGRADE_PASSTHROUGH_FLAGS, UPGRADE_USAGE } from './upgrade-flags';
 
 export type NestedCommandName =
   | 'init'
@@ -31,12 +35,22 @@ export function parseArgs(argv: string[]): ParsedArgs {
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
 
+    if (token === '-h') {
+      flags.help = true;
+      continue;
+    }
+
     if (!token.startsWith('--')) {
       if (command === null) {
         command = token;
       } else {
         positionals.push(token);
       }
+      continue;
+    }
+
+    if (token === '--help') {
+      flags.help = true;
       continue;
     }
 
@@ -142,4 +156,67 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
   }
 
   return { name: 'unknown', rest: parsed.positionals, raw: command };
+}
+
+const GLOBAL_FLAGS = new Set(['lang', 'help', 'h', 'bun-path']);
+
+const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
+  help: GLOBAL_FLAGS,
+  unknown: GLOBAL_FLAGS,
+  init: new Set([
+    ...GLOBAL_FLAGS,
+    'install-dir',
+    'host',
+    'port',
+    'db-path',
+    'autostart',
+    'service-name',
+    'force',
+    'no-interactive',
+    'install-deps',
+    'skip-dep-check',
+    'role',
+    'hub-url',
+    'hub-public-url',
+    'peer-port',
+    'stun-servers',
+    'no-service',
+  ]),
+  doctor: new Set([
+    ...GLOBAL_FLAGS,
+    'install-dir',
+    'json',
+    'fix',
+    'service-name',
+    'no-interactive',
+  ]),
+  upgrade: UPGRADE_FLAGS,
+  uninstall: new Set([...GLOBAL_FLAGS, 'install-dir', 'yes', 'purge', 'service-name']),
+  direct: new Set([...GLOBAL_FLAGS, 'install-dir']),
+  enroll: new Set([...GLOBAL_FLAGS, 'install-dir', 'ttl', 'service-name']),
+  'hub.join': new Set([
+    ...GLOBAL_FLAGS,
+    'install-dir',
+    'token',
+    'name',
+    'insecure-local',
+    'no-restart',
+    'service-name',
+  ]),
+  'hub.leave': new Set([...GLOBAL_FLAGS, 'install-dir', 'no-restart', 'service-name']),
+  'hub.user.add': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+  'hub.user.passwd': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+  'hub.user.totp': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+  'hub.user.reset': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+  'mesh.reset-root': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+};
+
+export function assertKnownFlags(parsed: ParsedArgs): void {
+  const nested = resolveNestedCommand(parsed);
+  const allowed = COMMAND_FLAGS[nested.name] ?? GLOBAL_FLAGS;
+  for (const key of Object.keys(parsed.flags)) {
+    if (!allowed.has(key)) {
+      throw new Error(t('cli.error.unknownFlag', { flag: key }));
+    }
+  }
 }

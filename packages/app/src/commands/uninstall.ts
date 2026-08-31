@@ -57,6 +57,12 @@ export async function runUninstall(parsed: ParsedArgs): Promise<void> {
     await removeIfExists(installLayout.runtimeDir);
     await removeIfExists(installLayout.resourcesDir);
     await removeIfExists(installLayout.cliDir);
+    await removeIfExists(installLayout.versionsDir);
+    await removeIfExists(installLayout.currentLink);
+    await removeIfExists(installLayout.stagingDir);
+    await removeIfExists(installLayout.backupsDir);
+    await removeIfExists(installLayout.journalPath);
+    await removeIfExists(installLayout.lockPath);
     await removeIfExists(installLayout.runScriptPath);
     await removeIfExists(installLayout.metaPath);
     await removeTmexShims({ installDir });

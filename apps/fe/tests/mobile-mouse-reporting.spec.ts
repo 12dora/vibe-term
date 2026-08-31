@@ -5,7 +5,8 @@ import { type APIRequestContext, type Page, expect, test } from '@playwright/tes
 import { ensureCleanSession, tmux } from './helpers/tmux';
 
 // 移动端触摸 → 鼠标上报（plan-01 项目 3）：TUI 开鼠标上报时
-// tap=点击（press+release 同 cell）、单指拖=按住 motion、双指竖划=滚轮 64/65。
+// tap=点击（press+release 同 cell）、单指拖=滚动（滚轮 64/65）、双指竖划=滚轮 64/65。
+// TUI 的 press+motion+release 拖拽保留给桌面原生鼠标，触摸单指移动不再升级为 drag。
 // 断言通道 = python TUI 把收到的 stdin 原样写日志（端到端字节流）。
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
@@ -202,11 +203,11 @@ test('mobile: tap sends press+release on the same cell when reporting is on', as
   }
 });
 
-test('mobile: single-finger drag streams motion events when reporting is on', async ({
+test('mobile: single-finger drag sends wheel events (not drag motion) when reporting is on', async ({
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mdrag-${Date.now()}`;
+  const sessionName = `tmex-e2e-mscroll-${Date.now()}`;
   const logPath = `/tmp/${sessionName}.log`;
   const { deviceId } = await setupTuiPage(page, request, sessionName, logPath);
 
@@ -229,11 +230,13 @@ test('mobile: single-finger drag streams motion events when reporting is on', as
     );
 
     await expect
-      .poll(() => [...readLog(logPath).matchAll(SGR_MOTION_RE)].length, { timeout: 10_000 })
+      .poll(() => [...readLog(logPath).matchAll(SGR_WHEEL_RE)].length, { timeout: 10_000 })
       .toBeGreaterThan(0);
     const raw = readLog(logPath);
-    expect([...raw.matchAll(SGR_PRESS_RE)].length).toBe(1);
-    expect([...raw.matchAll(SGR_RELEASE_RE)].length).toBe(1);
+    // 单指移动走滚动路径，不得产生 TUI 拖拽的 press/motion/release
+    expect([...raw.matchAll(SGR_MOTION_RE)].length).toBe(0);
+    expect([...raw.matchAll(SGR_PRESS_RE)].length).toBe(0);
+    expect([...raw.matchAll(SGR_RELEASE_RE)].length).toBe(0);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

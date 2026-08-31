@@ -1,15 +1,17 @@
-// 节点表：成员集 + 心跳合并后的一行一 node，重命名 / 吊销动作。
-// hub 不可达时全部管理动作禁用。
+// 节点表：成员集 + 心跳合并后的一行一 node，重命名 / 吊销 / 升级动作。
+// hub 不可达时重命名与吊销禁用——它们走 hub 控制面；升级只依赖入口 → 目标的 peer link，
+// 因此**不**跟 hub 在线绑定，只看目标是否在线、是否已登录。
 // 表格本体铺在「节点管理」卡片里，只留一层浅边框做横向滚动容器。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
-import { Pencil, ShieldAlert } from 'lucide-react';
+import { Download, Loader2, Pencil, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { NodeActionDeps } from './types';
 import { useNodeRowActions } from './use-node-row-actions';
+import { isUpgradeBusy, upgradePhaseText } from './use-node-upgrade';
 
 export function NodesTable({ rows, ...deps }: { rows: NodeRow[] } & NodeActionDeps) {
   const { t } = useTranslation();
@@ -131,10 +133,55 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
             <ShieldAlert />
             {t('nodes.actions.revoke')}
           </Button>
+          <UpgradeButton row={row} upgrade={deps.upgrade} />
         </div>
       </Td>
     </tr>
   );
+}
+
+/**
+ * 升级按钮：目标离线或（远端）未登录时禁用并说明原因；进行中显示阶段文案并锁住。
+ * 本机同样可以升级——它会重启本机网关，当前访问随之中断，确认框里已经写明。
+ */
+function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps['upgrade'] }) {
+  const { t } = useTranslation();
+  const entry = upgrade.entryOf(row.id);
+  const busy = isUpgradeBusy(entry.phase);
+  const blocked = upgradeBlockedHint(row, t);
+  const version = entry.targetVersion ?? upgrade.latest?.latestVersion ?? null;
+  const phaseText = upgradePhaseText(t, entry.phase);
+
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant="outline"
+      disabled={busy || blocked !== null}
+      title={blocked ?? upgradeTitle(entry.error, version, t)}
+      onClick={() => upgrade.start(row)}
+      data-testid={`node-upgrade-${row.id}`}
+      data-upgrade-phase={entry.phase}
+    >
+      {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Download />}
+      {phaseText ?? t('nodes.upgrade.action')}
+    </Button>
+  );
+}
+
+function upgradeBlockedHint(row: NodeRow, t: (key: string) => string): string | null {
+  if (!row.online) return t('nodes.upgrade.offline');
+  if (!row.isSelf && !row.loggedIn) return t('nodes.upgrade.loginRequired');
+  return null;
+}
+
+function upgradeTitle(
+  error: string | null,
+  version: string | null,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string | undefined {
+  if (error) return error;
+  return version ? t('nodes.upgrade.hint', { version }) : undefined;
 }
 
 function Th({ children }: { children: React.ReactNode }) {

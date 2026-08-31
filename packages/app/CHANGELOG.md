@@ -1,3 +1,37 @@
+# 1.1.6
+
+_2026-09-01_
+
+## English
+
+### Features
+
+- Settings → Node management: each node row gains an "Upgrade" action that upgrades that node (remote mesh nodes and this machine alike) to the latest release over the existing peer link. Progress survives the target's restart; success is confirmed by reading the node's version back, and a lost response is treated as "unconfirmed" instead of a false failure. Works even when the hub is offline, as long as the node is reachable.
+- Crash-safe self-upgrade (BIOS-style): new versions land in `versions/<v>` and are boot-tested before an atomic `current` switch; a journal plus `tmex upgrade --repair` completes or rolls back interrupted upgrades after a crash or power loss at any point. Includes DB snapshot/rollback, a side-effect-free preflight runtime (no agents, notifications, tunnels or TLS during the boot test), process-ownership checks before any signal is sent, offline reuse of the native addon, and compatibility with 1.0.2/1.1.3 layouts. Rehearsed end-to-end under launchd (macOS) and systemd (Linux).
+- Release integrity is now fail-closed: upgrades to 1.1.4+ require a matching `SHA256SUMS` entry (a missing manifest aborts); older targets need an explicit `--allow-unverified`.
+
+### Fixes
+
+- Sidebar: the bottom "Connect/Manage Devices" buttons sit flush with the outer frame's bottom edge and the tab switcher aligns with the terminal's top edge, giving the terminal list more room.
+- Manage Devices: dragging a card only displaces its neighbors when it gets close (iOS-style proximity), instead of from across the page.
+- Selection toolbar no longer blocks starting a new selection in the rows it covers — pressing anywhere on the terminal dismisses it and begins the new selection in the same gesture.
+- Agent panel: the composer's write-mode switches could overflow and cover the send button in narrow panels; controls now wrap and truncate instead.
+
+## 中文
+
+### 新功能
+
+- 设置-节点管理：每个节点新增「升级」操作，经现有 peer 链路把该节点（远端节点与本机均可）升级到最新版本。进度跨目标重启存活，成功以回读节点版本确认，响应丢失记为「结果未确认」而非误报失败；Hub 离线但节点可达时同样可用。
+- 崩溃安全自升级（BIOS 式）：新版本先落在 `versions/<v>` 并预启动验证，通过后原子切换 `current`；journal + `tmex upgrade --repair` 可在任意时点断电/被杀后续完或回滚。含数据库快照/回滚、零副作用 preflight 运行时（预启动期间不跑 agent/通知/tunnel/TLS）、发信号前的进程归属校验、native 插件离线复用，以及 1.0.2/1.1.3 旧布局兼容。已在 launchd（macOS）与 systemd（Linux）双服务模式下完整演练。
+- 发行完整性改为 fail-closed：升级到 1.1.4 及以上必须匹配 `SHA256SUMS`（清单缺失即中止）；更旧目标需显式 `--allow-unverified`。
+
+### 修复
+
+- 侧栏：底部「接入/管理设备」按钮组下缘与外层黑框齐平，顶部 tab 切换器与终端上缘对齐，终端列表显示空间更大。
+- 管理设备：拖动卡片只在靠近时触发相邻卡片避让（iOS 式邻近判定），不再隔得很远就开始移位。
+- 选择工具条不再挡住其覆盖行的新选择——在终端任意处按下即收起工具条并在同一手势里开始新选择。
+- Agent 面板：窄面板下写入模式开关可能溢出遮住发送按钮；控件改为换行与截断。
+
 # 1.1.5
 
 _2026-09-01_

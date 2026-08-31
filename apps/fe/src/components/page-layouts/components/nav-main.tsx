@@ -53,8 +53,9 @@ export function NavMain({ items }: { items: NavMainItem[] }) {
   const { pathname } = useLocation();
 
   return (
-    <SidebarGroup>
-      {/* 底部两个入口并排；折叠成图标条时没有并排的宽度，改回竖排。 */}
+    <SidebarGroup className="px-2 py-0">
+      {/* 底部两个入口并排；折叠成图标条时没有并排的宽度，改回竖排。
+          gap-1 在并排态是左右间距，不占垂直空间，保持不动。 */}
       <SidebarMenu className="flex-row gap-1 group-data-[collapsible=icon]:flex-col">
         {items.map((item) => {
           const active =
@@ -69,10 +70,11 @@ export function NavMain({ items }: { items: NavMainItem[] }) {
             >
               <SidebarMenuButton
                 isActive={active}
+                size="sm"
                 tooltip={t(item.title)}
                 aria-label={t(item.title)}
                 // 两个入口并排时只有半宽，字号收一档才放得下英文标签。
-                className="justify-center gap-1.5 px-1.5 text-xs"
+                className="justify-center gap-1.5 px-1.5 py-1 text-xs"
                 data-testid={item.testId}
                 render={<NavLink to={item.url} state={item.linkState} />}
               >

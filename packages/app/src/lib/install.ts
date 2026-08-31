@@ -4,8 +4,8 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { formatHttpEndpoint } from '../../../shared/src/network';
 import type { InstallMeta } from '../types';
-import { copyDirectory, ensureDir, pathExists, writeText } from './fs-utils';
-import type { InstallLayout, PackageLayout } from './install-layout';
+import { copyDirectory, ensureDir, pathExists, readText, writeTextAtomic } from './fs-utils';
+import { type InstallLayout, type PackageLayout, currentRuntimePaths } from './install-layout';
 import { writeJsonFile } from './json-file';
 import { DEFAULT_PEER_PORT, DEFAULT_STUN_SERVERS, type TmexRoleName } from './roles';
 
@@ -91,9 +91,7 @@ export function quotePosixShellArg(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-export async function writeRunScript(installLayout: InstallLayout, bunPath: string): Promise<void> {
-  // 服务由 launchd/systemd 拉起时 PATH 极简，run.sh 显式补全。${HOME}/.bun/bin 由下方条件块
-  // 动态补（故 extraPathDirs 排除它以免重复）；其余补 bun 实际目录 + homebrew/linuxbrew 兜底。
+export function buildRunScriptContent(installDir: string, bunPath: string): string {
   const homeBunBin = join(homedir(), '.bun', 'bin');
   const bunDir = isAbsolute(bunPath) ? dirname(bunPath) : '';
   const extraPathDirs = [
@@ -106,6 +104,8 @@ export async function writeRunScript(installLayout: InstallLayout, bunPath: stri
     extraPathDirs.length > 0
       ? `export PATH=${extraPathDirs.map(quotePosixShellArg).join(':')}:"\${PATH:-}"`
       : 'export PATH="${PATH:-}"';
+  const current = currentRuntimePaths(installDir);
+  const envPath = join(installDir, 'app.env');
   const lines = [
     '#!/usr/bin/env bash',
     'set -euo pipefail',
@@ -116,23 +116,33 @@ export async function writeRunScript(installLayout: InstallLayout, bunPath: stri
     '  [[ "$line" =~ ^[[:space:]]*$ ]] && continue',
     '  [[ "$line" =~ ^[[:space:]]*# ]] && continue',
     '  export "$line"',
-    `done < ${quotePosixShellArg(installLayout.envPath)}`,
+    `done < ${quotePosixShellArg(envPath)}`,
     '',
     'if [[ -n "${HOME:-}" ]] && [[ -d "${HOME}/.bun/bin" ]]; then',
     '  export PATH="${HOME}/.bun/bin:${PATH:-}"',
     'fi',
     pathExport,
     '',
-    `export TMEX_FE_DIST_DIR=${quotePosixShellArg(installLayout.feDir)}`,
-    `export TMEX_MIGRATIONS_DIR=${quotePosixShellArg(installLayout.drizzleDir)}`,
-    `export TMEX_NATIVE_DIR=${quotePosixShellArg(installLayout.nativeDir)}`,
+    `export TMEX_INSTALL_DIR=${quotePosixShellArg(installDir)}`,
+    `export TMEX_FE_DIST_DIR=${quotePosixShellArg(current.feDir)}`,
+    `export TMEX_MIGRATIONS_DIR=${quotePosixShellArg(current.drizzleDir)}`,
+    `export TMEX_NATIVE_DIR=${quotePosixShellArg(current.nativeDir)}`,
     '',
-    `exec ${quotePosixShellArg(bunPath)} ${quotePosixShellArg(installLayout.runtimeServerPath)}`,
+    'printf \'%s\\n\' "$$" > "$SCRIPT_DIR/tmex.pid"',
+    `exec ${quotePosixShellArg(bunPath)} ${quotePosixShellArg(current.runtimeServerPath)}`,
     '',
   ];
-  const script = lines.join('\n');
+  return lines.join('\n');
+}
 
-  await writeText(installLayout.runScriptPath, script, 0o755);
+export async function writeRunScript(installLayout: InstallLayout, bunPath: string): Promise<void> {
+  const script = buildRunScriptContent(installLayout.installDir, bunPath);
+  const existing = await readText(installLayout.runScriptPath).catch(() => null);
+  if (existing === script) {
+    await chmod(installLayout.runScriptPath, 0o755).catch(() => null);
+    return;
+  }
+  await writeTextAtomic(installLayout.runScriptPath, script, 0o755);
   await chmod(installLayout.runScriptPath, 0o755);
 }
 

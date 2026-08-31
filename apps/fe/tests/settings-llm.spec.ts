@@ -22,6 +22,12 @@ interface MockProvider {
   updatedAt: string;
 }
 
+interface MockSearchProvider {
+  id: string;
+  label: string;
+  isConfigured: boolean;
+}
+
 interface MockSettings {
   searchProvider: string;
   hasTavilyApiKey: boolean;
@@ -53,6 +59,12 @@ test('settings: llm providers crud, defaults, search provider keys', async ({ pa
     defaultModelId: null,
     updatedAt: new Date().toISOString(),
   };
+
+  // GET /api/llm/settings 的契约含 searchProviders；缺了它选择器只剩 none，Tavily 永远不出现
+  const searchProviders: MockSearchProvider[] = [
+    { id: 'tavily', label: 'Tavily', isConfigured: false },
+    { id: 'brave', label: 'Brave', isConfigured: false },
+  ];
 
   // LLM endpoints call real upstream APIs (model fetching). Mock to keep e2e deterministic.
   await page.route('**/api/llm/providers**', async (route) => {
@@ -169,7 +181,7 @@ test('settings: llm providers crud, defaults, search provider keys', async ({ pa
     const req = route.request();
 
     if (req.method() === 'GET') {
-      await route.fulfill({ status: 200, json: { settings } });
+      await route.fulfill({ status: 200, json: { settings, searchProviders } });
       return;
     }
 
@@ -192,7 +204,9 @@ test('settings: llm providers crud, defaults, search provider keys', async ({ pa
         settings.hasBraveApiKey = body.braveApiKey.length > 0;
       }
       settings.updatedAt = new Date().toISOString();
-      await route.fulfill({ status: 200, json: { settings } });
+      searchProviders[0].isConfigured = settings.hasTavilyApiKey;
+      searchProviders[1].isConfigured = settings.hasBraveApiKey;
+      await route.fulfill({ status: 200, json: { settings, searchProviders } });
       return;
     }
 

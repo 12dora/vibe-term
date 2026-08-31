@@ -10,6 +10,7 @@ import { useTerminalClipboard } from './hooks/useTerminalClipboard';
 import { useTerminalFileLinks } from './hooks/useTerminalFileLinks';
 import { useTerminalHandle } from './hooks/useTerminalHandle';
 import { useTerminalInput } from './hooks/useTerminalInput';
+import { shouldDismissSelectionOnPointerDown } from './selection-dismiss';
 import { resolveTerminalThemeProp } from './theme';
 import type { TerminalProps, TerminalRef } from './types';
 import { useMobileTouch } from './useMobileTouch';
@@ -139,6 +140,22 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       instance,
     });
 
+    const handlePointerDownCapture = useCallback(
+      (event: React.PointerEvent<HTMLDivElement>) => {
+        if (
+          shouldDismissSelectionOnPointerDown({
+            hasSelection,
+            pointerType: event.pointerType,
+            button: event.button,
+            target: event.target,
+          })
+        ) {
+          dismissSelection();
+        }
+      },
+      [hasSelection, dismissSelection]
+    );
+
     useTerminalHandle({
       ref,
       instance,
@@ -158,7 +175,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         style={{ backgroundColor: terminalTheme.background }}
         data-terminal-engine={TERMINAL_ENGINE}
       >
-        <div ref={containerRef} className="relative min-h-0 w-full flex-1">
+        <div
+          ref={containerRef}
+          className="relative min-h-0 w-full flex-1"
+          onPointerDownCapture={handlePointerDownCapture}
+        >
           <div
             ref={generationHostRef}
             className={`absolute inset-0 ${bootState.status === 'ready' ? '' : 'invisible'}`}

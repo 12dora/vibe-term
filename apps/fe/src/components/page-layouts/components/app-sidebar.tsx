@@ -174,10 +174,12 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar variant="inset" {...props}>
       <div className="h-[var(--tmex-safe-area-top)]" />
-      <SidebarHeader className="gap-5 pt-3 pb-0">
+      <SidebarHeader className="gap-4 pt-3 pb-0">
         <SidebarTitle />
+        {/* 上移 5px（gap 20→16 再 -1px）：让 TabsList 里可见的 active 药丸上沿与右侧
+            终端卡片的可见上沿齐平——药丸比 TabsList 外框低 border 1px + p-1 4px。 */}
         <Tabs
-          className="mb-2.5"
+          className="-mt-px mb-2.5"
           value={sidebarTab}
           onValueChange={(value) => setSidebarTab(value as typeof sidebarTab)}
         >
@@ -239,7 +241,9 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
           </Reveal>
         )}
       </SidebarContent>
-      <SidebarFooter>
+      {/* 垂直 padding 清零、gap 交给 NavMain：桌面端按钮组下缘与侧栏（即右侧外框）
+          下缘齐平；横向仍是 footer px-2 + group px-2，按钮左右位置不变。 */}
+      <SidebarFooter className="gap-0 px-2 pt-1.5 pb-0">
         <NavMain items={footerItems} />
         <div className="h-[var(--tmex-safe-area-bottom)]" />
       </SidebarFooter>

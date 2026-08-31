@@ -69,6 +69,30 @@ export interface RestartGatewayResponse {
   message: string;
 }
 
+/** 节点管理页「升级到最新」的稳定错误码 */
+export type MeshUpgradeErrorCode =
+  | 'NODE_LOGIN_REQUIRED'
+  | 'NODE_UNREACHABLE'
+  | 'UPGRADE_NOT_ALLOWED'
+  | 'UPGRADE_IN_PROGRESS'
+  | 'UPGRADE_ALREADY_LATEST'
+  | 'UPGRADE_UNSUPPORTED'
+  | 'RELEASE_UNAVAILABLE'
+  | 'NOT_FOUND';
+
+/** `GET /api/mesh/upgrade/latest`：具体可安装版本，不含入口节点 hasUpdate */
+export interface MeshUpgradeLatest {
+  latestVersion: string;
+  changelog: string | null;
+  publishedAt: string | null;
+}
+
+export interface MeshUpgradeError {
+  code: MeshUpgradeErrorCode;
+  nodeId?: string;
+  version?: string;
+}
+
 /** 本机可被其他设备访问的地址线索（`GET /api/system/addresses`），供「接入更多设备」面板拼地址 */
 export interface AccessAddressesResponse {
   /** 网关监听地址（app.env `TMEX_BIND_HOST`） */
