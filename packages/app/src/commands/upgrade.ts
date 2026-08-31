@@ -186,7 +186,36 @@ function printUpgradeDone(
   console.log(`- healthz: ${formatHttpEndpoint(host, port, '/healthz')}`);
 }
 
+const UPGRADE_FLAGS = new Set([
+  'apply-current-package',
+  'version',
+  'install-dir',
+  'service-name',
+  'yes',
+  'lang',
+  'bun-path',
+  'help',
+  'repair',
+  'keep-backup',
+  'allow-missing-native',
+]);
+
+const UPGRADE_USAGE =
+  'Usage: tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--yes] [--lang <code>] [--repair] [--keep-backup] [--allow-missing-native]';
+
+function assertKnownUpgradeFlags(parsed: ParsedArgs): void {
+  const unknown = Object.keys(parsed.flags).filter((key) => !UPGRADE_FLAGS.has(key));
+  if (unknown.length > 0) {
+    throw new Error(`Unknown option(s): ${unknown.map((key) => `--${key}`).join(', ')}\n${UPGRADE_USAGE}`);
+  }
+}
+
 export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
+  assertKnownUpgradeFlags(parsed);
+  if (parsed.flags.help) {
+    console.log(UPGRADE_USAGE);
+    return;
+  }
   const flags = parseUpgradeRunFlags(parsed);
   if (!flags.applyCurrent && !flags.repairOnly) {
     await delegateUpgrade(parsed, flags.targetVersion);

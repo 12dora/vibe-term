@@ -1,3 +1,19 @@
+# 1.1.5
+
+_2026-09-01_
+
+## English
+
+### Fixes
+
+- Switching terminals could leave the previous pane covering the new one until a page reload (hidden keep-alive slots used `visibility: hidden`, which the terminal mount re-enables on a descendant; slots now hide with `opacity` + `z-index`).
+
+## 中文
+
+### 修复
+
+- 切换终端后右侧可能仍显示旧终端、刷新才恢复（保活槽的 `visibility: hidden` 会被终端挂载点在后代上反选；改用 `opacity` + `z-index` 隐藏）。
+
 # 1.1.4
 
 _2026-08-31_
@@ -18,7 +34,9 @@ _2026-08-31_
 
 ### Fixes
 
+- Terminal cursor no longer flickers between two cells while a TUI redraws at high frequency (the cursor layer now waits for the output to settle before moving).
 - Removed the terminal toolbar "jump to latest" button (the keyboard-shortcut action remains).
+- `tmex upgrade` rejects unknown options (and `--help` prints usage) instead of silently running an upgrade against the default install directory.
 
 ## 中文
 
@@ -36,7 +54,9 @@ _2026-08-31_
 
 ### 修复
 
+- TUI 高频刷新时终端光标不再在两格之间狂闪（光标层等输出静默后再落笔）。
 - 删除终端工具栏的「回到底部」按钮（快捷键动作保留）。
+- `tmex upgrade` 拒绝未知参数（`--help` 打印用法），不再静默对默认安装目录执行升级。
 
 # 1.1.3
 

@@ -11,7 +11,13 @@
 // 让按文档序取终端的探针（e2e 的 `.xterm canvas`）拿到的仍是可见实例。
 // visibleIsWarm 记录「本次切换发生前目标是否已在池中」，供 select 下发决定 wantHistory。
 
-export const KEEP_ALIVE_LIMIT = 3;
+/**
+ * 应急开关：置 false 后保活池退化为「只挂当前路由 pane」——每次切换都重建终端、
+ * 走冷 select，即 1.1.4 之前的行为。改这一行即可，其余逻辑不动。
+ */
+export const KEEP_ALIVE_ENABLED = true;
+
+export const KEEP_ALIVE_LIMIT = KEEP_ALIVE_ENABLED ? 3 : 1;
 
 export interface KeepAlivePool {
   deviceId: string | null;

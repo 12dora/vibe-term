@@ -138,7 +138,7 @@ describe('TerminalStage', () => {
     expect(html.match(/data-testid="terminal-keep-alive-pane"/g)).toHaveLength(1);
     expect(html).toContain('data-pane-id="%1"');
     expect(html).toContain('data-visible="true"');
-    expect(html).not.toContain('visibility:hidden');
+    expect(html).not.toContain('opacity:0');
   });
 
   test('the split view renders no keep-alive slots', () => {
@@ -163,7 +163,10 @@ describe('KeepAlivePaneSlot', () => {
     );
     expect(html).toContain('data-pane-id="%1"');
     expect(html).toContain('data-visible="true"');
-    expect(html).not.toContain('visibility:hidden');
+    expect(html).not.toContain('opacity:0');
+    // 可见槽恒在最上层：后代（ghostty mount）会显式写 visibility/pointer-events，
+    // 祖先用 visibility/pointer-events 藏不住，只能靠 opacity + z-index
+    expect(html).toContain('z-index:1');
     expect(html).not.toContain('aria-hidden');
   });
 
@@ -176,8 +179,12 @@ describe('KeepAlivePaneSlot', () => {
     // absolute inset-0：与可见槽同一个盒子，隐藏实例的 cols/rows 才不会漂移
     expect(html).toContain('absolute inset-0');
     expect(html).toContain('aria-hidden="true"');
-    expect(html).toContain('visibility:hidden');
+    // 不能用 visibility:hidden——ghostty mount 在 activateRenderTarget() 里显式
+    // 写 visibility:visible，后代会反选祖先的 hidden（1.1.4 线上「切 tab 终端不刷新」根因）
+    expect(html).not.toContain('visibility:hidden');
+    expect(html).toContain('opacity:0');
     expect(html).toContain('pointer-events:none');
+    expect(html).toContain('z-index:0');
     expect(html).not.toContain('data-visible');
   });
 });
