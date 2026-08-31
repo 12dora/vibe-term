@@ -52,6 +52,18 @@ describe('ConnectDevicesPanel', () => {
     expect(html).toContain('connectDevices.mobile.ios.open.title');
   });
 
+  test('一级 / 二级都是真的 tab 组件：tablist + tab + tabpanel，未选中的页不挂载', () => {
+    const html = render(<ConnectDevicesPanel />);
+    expect(html.split('role="tablist"').length - 1).toBe(2);
+    expect(html.split('role="tab"').length - 1).toBe(4);
+    // 两层各一个当前面板：移动设备页、iOS 平台页。
+    expect(html.split('role="tabpanel"').length - 1).toBe(2);
+    expect(html).toContain('aria-selected="true"');
+    // 未选中的分支不进 DOM。
+    expect(html).not.toContain('data-testid="connect-step-install"');
+    expect(html).not.toContain('data-testid="connect-step-android-add"');
+  });
+
   test('移动设备页给出远程访问入口，链接不带 panel 参数（跳转即关面板）', () => {
     const html = render(<ConnectDevicesPanel />);
     expect(html).toContain('href="/settings?tab=remoteAccess"');
@@ -82,6 +94,10 @@ describe('ComputerGuide', () => {
     expect(html).toContain('data-testid="command-block-join"');
     expect(html).toContain('connectDevices.computer.join.run.example');
     expect(html).toContain('href="/settings?tab=nodes"');
+    // 「选择接入方式」的按钮在卡片里、分支面板在卡片外，但同属一个 Tabs 根。
+    expect(html.split('role="tablist"').length - 1).toBe(1);
+    expect(html.split('role="tabpanel"').length - 1).toBe(1);
+    expect(html).not.toContain('data-testid="connect-step-host-entry"');
   });
 
   test('「本机作为中继」分支给出三步、公开地址不可改的警示与两个设置入口', () => {

@@ -2,11 +2,12 @@
 // 分支步骤接着前两步继续编号，读起来是一条连续的流程。
 
 import { INSTALL_COMMAND } from '@tmex/shared';
+import { Tabs, TabsContent } from '@tmex/ui/tabs';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CommandBlock } from './command-block';
 import { GuideLink, GuideStep } from './guide-step';
-import { GuideTabs } from './guide-tabs';
+import { GuideTabList } from './guide-tabs';
 
 type Mode = 'join' | 'host';
 
@@ -119,22 +120,29 @@ export function ComputerGuide() {
           </p>
           <CommandBlock value={PATH_COMMAND} testId="path" />
         </GuideStep>
-        <GuideStep
-          index={2}
-          testId="connect-step-mode"
-          title={t('connectDevices.computer.mode.title')}
-        >
-          <GuideTabs
-            value={mode}
-            onValueChange={setMode}
-            options={MODES.map((value) => ({
-              value,
-              label: t(`connectDevices.computer.mode.${value}`),
-              testId: `connect-mode-${value}`,
-            }))}
-          />
-        </GuideStep>
-        {mode === 'join' ? <JoinSteps /> : <HostSteps />}
+        {/* Tabs 根同时罩住「选择接入方式」这一步与它下面的分支步骤：
+            按钮在卡片里、面板在卡片外，靠同一个根拿到 tab / tabpanel 关联。 */}
+        <Tabs className="gap-2" value={mode} onValueChange={(next) => setMode(next as Mode)}>
+          <GuideStep
+            index={2}
+            testId="connect-step-mode"
+            title={t('connectDevices.computer.mode.title')}
+          >
+            <GuideTabList
+              options={MODES.map((value) => ({
+                value,
+                label: t(`connectDevices.computer.mode.${value}`),
+                testId: `connect-mode-${value}`,
+              }))}
+            />
+          </GuideStep>
+          <TabsContent value="join" className="space-y-2">
+            <JoinSteps />
+          </TabsContent>
+          <TabsContent value="host" className="space-y-2">
+            <HostSteps />
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

@@ -1,10 +1,11 @@
 // 「移动设备（仅控制）」页：iOS / Android 两套三步指引，第一步给出本机当前地址。
 
+import { Tabs, TabsContent } from '@tmex/ui/tabs';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CommandBlock } from './command-block';
 import { GuideLink, GuideStep } from './guide-step';
-import { GuideTabs } from './guide-tabs';
+import { GuideTabList } from './guide-tabs';
 
 type Platform = 'ios' | 'android';
 
@@ -49,16 +50,20 @@ export function MobileGuide() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">{t('connectDevices.mobile.intro')}</p>
-      <GuideTabs
-        value={platform}
-        onValueChange={setPlatform}
-        options={PLATFORMS.map((value) => ({
-          value,
-          label: t(`connectDevices.mobile.platform.${value}`),
-          testId: `connect-platform-${value}`,
-        }))}
-      />
-      <MobilePlatformSteps platform={platform} />
+      <Tabs value={platform} onValueChange={(next) => setPlatform(next as Platform)}>
+        <GuideTabList
+          options={PLATFORMS.map((value) => ({
+            value,
+            label: t(`connectDevices.mobile.platform.${value}`),
+            testId: `connect-platform-${value}`,
+          }))}
+        />
+        {PLATFORMS.map((value) => (
+          <TabsContent key={value} value={value}>
+            <MobilePlatformSteps platform={value} />
+          </TabsContent>
+        ))}
+      </Tabs>
       <p className="text-xs text-muted-foreground">
         {t('connectDevices.mobile.remoteHint')}{' '}
         <GuideLink to="/settings?tab=remoteAccess" testId="connect-mobile-remote-link">
