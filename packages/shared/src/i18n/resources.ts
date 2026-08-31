@@ -47,8 +47,8 @@ export const I18N_RESOURCES = {
     },
     "nav": {
       "manageDevices": "Manage Devices",
-      "connectDevices": "Connect more devices",
-      "connectDevicesShort": "Connect devices",
+      "connectDevices": "Connect More Devices",
+      "connectDevicesShort": "Connect Devices",
       "settings": "Settings",
       "sidebarExpand": "Expand Sidebar",
       "sidebarCollapse": "Collapse Sidebar",
