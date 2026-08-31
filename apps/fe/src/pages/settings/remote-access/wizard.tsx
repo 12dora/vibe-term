@@ -436,7 +436,7 @@ function ChoiceCard<T extends string>({
     <label
       data-testid={`remote-access-${group}-${value}`}
       data-selected={selected ? 'true' : 'false'}
-      className={`flex cursor-pointer flex-col gap-1.5 rounded-xl p-3 text-left ring-1 transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
+      className={`flex cursor-pointer flex-col gap-1.5 rounded-xl p-3 text-left ring-1 has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
         selected ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10 hover:bg-muted/50'
       } ${disabled ? 'pointer-events-none opacity-60' : ''}`}
     >

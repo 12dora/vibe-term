@@ -39,6 +39,7 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
   const footerItems: NavMainItem[] = [
     {
       title: 'nav.connectDevices',
+      shortTitle: 'nav.connectDevicesShort',
       url: hrefFor('connect'),
       icon: CirclePlus,
       testId: 'sidebar-connect-devices',

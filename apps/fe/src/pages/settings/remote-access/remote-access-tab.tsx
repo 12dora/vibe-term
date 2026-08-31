@@ -10,7 +10,7 @@ import type { AuthModeResponse } from '@tmex/api-client/auth/index';
 import type { LocalAuthStatus } from '@tmex/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SetupNotice } from '../nodes/setup/form-parts';
 import type { ExposureState } from './exposure';
@@ -61,6 +61,22 @@ function SelfRemoteAccess() {
   const [hostname, setHostnameValue] = useState('');
   const [tunnelName, setTunnelNameValue] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+
+  // 隧道被移除（配置回到 off）后，本地选择与草稿都不再成立：整套向导状态归零，重新从连接方式选起。
+  const configuredMode = tunnel.status?.config.mode ?? null;
+  const previousModeRef = useRef(configuredMode);
+  useEffect(() => {
+    const previous = previousModeRef.current;
+    previousModeRef.current = configuredMode;
+    if (previous !== null && previous !== 'off' && configuredMode === 'off') {
+      setChosenPath(null);
+      setChosenMode(null);
+      setHostnameValue('');
+      setTunnelNameValue('');
+      setConfirmed(false);
+      setAcknowledged(false);
+    }
+  }, [configuredMode]);
 
   const { setStatus, refresh } = tunnel;
   const rawActions = useTunnelActions(tunnel.status, { onStatus: setStatus, onRefresh: refresh });

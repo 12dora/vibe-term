@@ -97,7 +97,7 @@ export function AddDeviceMenu({ targets }: { targets: AddDeviceTarget[] }) {
       >
         <Plus className="h-4 w-4" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-44">
+      <DropdownMenuContent align="end" className="min-w-56">
         <AddDeviceMenuList
           targets={targets}
           label={t('device.addTo.label')}

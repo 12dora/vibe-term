@@ -35,6 +35,8 @@ export function isPathActive(pathname: string, url: string): boolean {
 
 export interface NavMainItem {
   title: string;
+  /** 底部并排放不下完整标题时用的短标签；气泡与 aria-label 仍用完整标题。 */
+  shortTitle?: string;
   url: string;
   icon: LucideIcon;
   /** 面板入口这类只带查询串的目标（`?panel=…`）走这里带上 history state 与测试锚点。 */
@@ -69,11 +71,13 @@ export function NavMain({ items }: { items: NavMainItem[] }) {
                 isActive={active}
                 tooltip={t(item.title)}
                 aria-label={t(item.title)}
+                // 两个入口并排时只有半宽，字号收一档才放得下英文标签。
+                className="gap-1.5 px-1.5 text-xs"
                 data-testid={item.testId}
                 render={<NavLink to={item.url} state={item.linkState} />}
               >
                 <item.icon />
-                <span>{t(item.title)}</span>
+                <span>{t(item.shortTitle ?? item.title)}</span>
               </SidebarMenuButton>
               {item.items?.length ? (
                 <>
