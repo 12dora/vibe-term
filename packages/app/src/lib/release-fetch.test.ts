@@ -10,7 +10,9 @@ import {
 import { t } from '../i18n';
 import {
   downloadReleaseTarball,
+  fetchReleaseSha256Sums,
   parseLatestReleaseVersion,
+  releaseSha256SumsUrl,
   resolveReleaseVersion,
   versionFromTagName,
 } from './release-fetch';
@@ -84,6 +86,40 @@ describe('resolveReleaseVersion', () => {
         throw new Error('getaddrinfo ENOTFOUND');
       })
     ).rejects.toThrow(/GitHub|网络|getaddrinfo/i);
+  });
+});
+
+describe('fetchReleaseSha256Sums', () => {
+  test('returns missing on 404', async () => {
+    const result = await fetchReleaseSha256Sums('1.1.0', 'tmex-cli-1.1.0.tgz', async (url) => {
+      expect(String(url)).toBe(releaseSha256SumsUrl('1.1.0'));
+      return jsonResponse(404, 'nope');
+    });
+    expect(result.missing).toBe(true);
+    expect(result.hex).toBeNull();
+  });
+
+  test('parses the matching tarball line', async () => {
+    const hex = 'a'.repeat(64);
+    const result = await fetchReleaseSha256Sums('1.1.0', 'tmex-cli-1.1.0.tgz', async () =>
+      jsonResponse(200, `${hex}  tmex-cli-1.1.0.tgz\n`)
+    );
+    expect(result.missing).toBe(false);
+    expect(result.hex).toBe(hex);
+  });
+
+  test('aborts on network errors instead of treating them as missing', async () => {
+    await expect(
+      fetchReleaseSha256Sums('1.1.0', 'tmex-cli-1.1.0.tgz', async () => {
+        throw new Error('getaddrinfo ENOTFOUND');
+      })
+    ).rejects.toThrow(/SHA256SUMS|ENOTFOUND|checksum/i);
+  });
+
+  test('aborts on non-2xx other than 404', async () => {
+    await expect(
+      fetchReleaseSha256Sums('1.1.0', 'tmex-cli-1.1.0.tgz', async () => jsonResponse(500, 'nope'))
+    ).rejects.toThrow(/HTTP 500/);
   });
 });
 

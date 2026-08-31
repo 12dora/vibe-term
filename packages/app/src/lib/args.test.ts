@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { cliHelpText } from '../cli/help';
-import { parseArgs, resolveNestedCommand } from './args';
+import { assertKnownFlags, parseArgs, resolveNestedCommand } from './args';
 
 describe('parseArgs', () => {
   test('parses command, flags and positionals', () => {
@@ -95,6 +95,30 @@ describe('resolveNestedCommand', () => {
     expect(resolveNestedCommand(parseArgs(['upgrade'])).name).toBe('upgrade');
     expect(resolveNestedCommand(parseArgs(['uninstall'])).name).toBe('uninstall');
     expect(resolveNestedCommand(parseArgs(['--help'])).name).toBe('help');
+  });
+
+  test('treats --help and -h as help flags even after a command', () => {
+    const parsed = parseArgs(['upgrade', '--help']);
+    expect(parsed.command).toBe('upgrade');
+    expect(parsed.flags.help).toBe(true);
+    const short = parseArgs(['upgrade', '-h']);
+    expect(short.flags.help).toBe(true);
+  });
+});
+
+describe('assertKnownFlags', () => {
+  test('rejects unknown upgrade flags instead of ignoring them', () => {
+    expect(() => assertKnownFlags(parseArgs(['upgrade', '--not-a-real-flag']))).toThrow(
+      /Unknown flag|未知参数/
+    );
+  });
+
+  test('accepts documented upgrade flags', () => {
+    expect(() =>
+      assertKnownFlags(
+        parseArgs(['upgrade', '--apply-current-package', '--no-service', '--install-dir', '/tmp'])
+      )
+    ).not.toThrow();
   });
 });
 

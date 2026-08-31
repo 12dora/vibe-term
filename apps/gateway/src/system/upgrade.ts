@@ -1,13 +1,30 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync, readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import type { UpgradeState, UpgradeStatus } from '@tmex/shared';
 import { releaseTarballName, releaseTarballUrl } from '@tmex/shared';
 import { type InstallInfo, getInstallInfo } from './install-info';
 
 const TARBALL_FETCH_TIMEOUT_MS = 120_000;
+
+function createTxnId(): string {
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+/** Prefer TMEX_INSTALL_DIR (run.sh) so a current/resources/fe-dist layout still resolves. */
+export function resolveUpgradeInstallDir(install: InstallInfo): string | null {
+  const fromEnv = process.env.TMEX_INSTALL_DIR;
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  const dir = install.installDir;
+  if (!dir) return null;
+  if (existsSync(join(dir, 'install-meta.json'))) return dir;
+  if (basename(dir) === 'current' && existsSync(join(dirname(dir), 'install-meta.json'))) {
+    return dirname(dir);
+  }
+  return dir;
+}
 
 export type UpgradeSpawnFn = (
   command: string,
@@ -69,7 +86,7 @@ export class UpgradeController {
 
   private async run(version: string): Promise<void> {
     const install = (this.deps.getInstallInfo ?? getInstallInfo)();
-    const installDir = install.installDir;
+    const installDir = resolveUpgradeInstallDir(install);
     let stageDir: string | null = null;
 
     try {
@@ -77,11 +94,18 @@ export class UpgradeController {
         throw new Error('install directory could not be resolved');
       }
 
-      stageDir = await mkdtemp(join(tmpdir(), 'tmex-upg-'));
+      const txnId = createTxnId();
+      stageDir = join(installDir, 'staging', txnId);
+      await mkdir(stageDir, { recursive: true });
       const stageRelease = this.deps.stageRelease ?? stageGithubRelease;
       const binPath = await stageRelease(stageDir, version);
-      await this.spawnUpgrade(binPath, installDir, version);
+      await this.spawnUpgrade(binPath, installDir, version, txnId);
       this.state = 'executing';
+      if (this.pendingEarlyExit) {
+        this.error = this.pendingEarlyExit;
+        this.state = 'idle';
+        this.pendingEarlyExit = null;
+      }
     } catch (err) {
       this.error = err instanceof Error ? err.message : String(err);
       this.state = 'idle';
@@ -90,7 +114,62 @@ export class UpgradeController {
     }
   }
 
-  private spawnUpgrade(binPath: string, installDir: string, version: string): Promise<void> {
+  private spawnedChild: ChildProcess | null = null;
+  private pendingEarlyExit: string | null = null;
+
+  private onChildExit(code: number | null, signal: NodeJS.Signals | null): void {
+    const message = `upgrade process exited early (code ${code ?? signal})`;
+    if (this.state === 'executing') {
+      this.error = message;
+      this.state = 'idle';
+      return;
+    }
+    this.pendingEarlyExit = message;
+  }
+
+  private readPersistedServiceMode(installDir: string): 'managed' | 'none' {
+    try {
+      const parsed = JSON.parse(readFileSync(join(installDir, 'install-meta.json'), 'utf8')) as {
+        serviceMode?: unknown;
+      };
+      return parsed.serviceMode === 'none' ? 'none' : 'managed';
+    } catch {
+      return 'managed';
+    }
+  }
+
+  private assertNoneModePidOwnership(installDir: string): void {
+    const pidPath = join(installDir, 'tmex.pid');
+    let pid: number | null = null;
+    try {
+      const raw = readFileSync(pidPath, 'utf8').trim();
+      const parsed = Number(raw);
+      pid = Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+    } catch {
+      pid = null;
+    }
+    let alive = false;
+    if (pid !== null) {
+      try {
+        process.kill(pid, 0);
+        alive = true;
+      } catch (error) {
+        alive = (error as NodeJS.ErrnoException).code === 'EPERM';
+      }
+    }
+    if (!alive) {
+      throw new Error(
+        'This install is not managed by a service (serviceMode=none) and has no live pid file. Stop the running process, then retry.'
+      );
+    }
+  }
+
+  private spawnUpgrade(
+    binPath: string,
+    installDir: string,
+    version: string,
+    txnId: string
+  ): Promise<void> {
     let logFd: number | null = null;
     try {
       logFd = openSync(join(installDir, 'upgrade.log'), 'a');
@@ -98,27 +177,34 @@ export class UpgradeController {
       logFd = null;
     }
 
+    const mode = this.readPersistedServiceMode(installDir);
+    if (mode === 'none') {
+      this.assertNoneModePidOwnership(installDir);
+    }
+
     const spawnFn = this.deps.spawn ?? spawn;
-    const child = spawnFn(
+    const args = [
+      binPath,
+      'upgrade',
+      '--apply-current-package',
+      '--install-dir',
+      installDir,
+      '--version',
+      version,
+      '--txn',
+      txnId,
+      '--bun-path',
       process.execPath,
-      [
-        binPath,
-        'upgrade',
-        '--apply-current-package',
-        '--install-dir',
-        installDir,
-        '--version',
-        version,
-        '--bun-path',
-        process.execPath,
-      ],
-      {
-        cwd: installDir,
-        env: process.env,
-        detached: true,
-        stdio: logFd !== null ? ['ignore', logFd, logFd] : 'ignore',
-      }
-    );
+    ];
+    if (mode === 'none') args.push('--no-service');
+    const child = spawnFn(process.execPath, args, {
+      cwd: installDir,
+      env: process.env,
+      detached: true,
+      stdio: logFd !== null ? ['ignore', logFd, logFd] : 'ignore',
+    });
+    this.spawnedChild = child;
+    child.once('exit', (code, signal) => this.onChildExit(code, signal));
 
     return waitForSpawnAndDetach(child, () => {
       if (logFd !== null) {
@@ -188,6 +274,52 @@ export function assertExtractedCliPackage(packageRoot: string): void {
   }
 }
 
+const SUM_LINE = /^([a-fA-F0-9]{64})\s+\*?(\S+)\s*$/;
+
+export function parseSha256Sums(text: string, fileName: string): string | null {
+  const want = basename(fileName);
+  for (const raw of text.split(/\r?\n/)) {
+    const match = raw.trim().match(SUM_LINE);
+    if (!match) continue;
+    if (basename(match[2]) === want) return match[1].toLowerCase();
+  }
+  return null;
+}
+
+export function sha256Hex(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+export function releaseSha256SumsUrl(version: string): string {
+  return releaseTarballUrl(version).replace(releaseTarballName(version), 'SHA256SUMS');
+}
+
+export async function fetchReleaseSha256Sums(
+  version: string,
+  fileName: string,
+  fetchFn: typeof fetch = fetch
+): Promise<{ hex: string | null; missing: boolean }> {
+  let response: Response;
+  try {
+    response = await fetchFn(releaseSha256SumsUrl(version), {
+      redirect: 'follow',
+      cache: 'no-store',
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`SHA256SUMS network error: ${detail}`);
+  }
+  if (response.status === 404) return { hex: null, missing: true };
+  if (!response.ok) {
+    throw new Error(`SHA256SUMS HTTP ${response.status}`);
+  }
+  const hex = parseSha256Sums(await response.text(), fileName || releaseTarballName(version));
+  if (!hex) {
+    throw new Error(`SHA256SUMS is missing an entry for ${fileName}`);
+  }
+  return { hex, missing: false };
+}
+
 /**
  * 下载 GitHub Release tarball 并解压到 stageDir（npm pack 布局：package/）。
  * 返回 CLI 入口路径 `<stageDir>/package/bin/tmex.js`。
@@ -195,6 +327,11 @@ export function assertExtractedCliPackage(packageRoot: string): void {
 export async function stageGithubRelease(stageDir: string, version: string): Promise<string> {
   const tarballPath = join(stageDir, releaseTarballName(version));
   await downloadReleaseTarball(releaseTarballUrl(version), tarballPath);
+  const bytes = readFileSync(tarballPath);
+  const sums = await fetchReleaseSha256Sums(version, releaseTarballName(version));
+  if (!sums.missing && sums.hex && sha256Hex(bytes) !== sums.hex) {
+    throw new Error(`SHA256 mismatch for ${releaseTarballName(version)}`);
+  }
   await extractTarball(tarballPath, stageDir);
 
   const packageRoot = join(stageDir, 'package');

@@ -1,25 +1,18 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { formatHttpEndpoint, rewriteWildcardBindHost } from '../../../shared/src/network';
 import { releaseTarballName } from '../../../shared/src/release/source';
 import { defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
-import { deployCliAndShim } from '../lib/cli-shim';
 import { getInstallHint } from '../lib/dep-install';
 import { mergeMissingEnvFileKeys, readEnvFile } from '../lib/env-file';
 import { ensureDir, pathExists } from '../lib/fs-utils';
+import { hubEnvDefaults } from '../lib/install';
 import {
-  backupInstallArtifacts,
-  deployRuntimeFiles,
-  hubEnvDefaults,
-  restoreInstallArtifacts,
-  writeInstallMeta,
-  writeRunScript,
-} from '../lib/install';
-import {
+  type InstallLayout,
   createInstallLayout,
+  packageLayoutFromRoot,
   resolveInstallDir,
   resolvePackageLayout,
 } from '../lib/install-layout';
@@ -28,9 +21,18 @@ import { type RunCommandResult, runCommand } from '../lib/process';
 import {
   type ReleaseFetch,
   downloadReleaseTarball,
+  fetchReleaseSha256Sums,
   resolveReleaseVersion,
 } from '../lib/release-fetch';
-import { installService, stopService } from '../lib/service';
+import {
+  applyUpgrade,
+  createServiceControl,
+  createTxnId,
+  repairUpgrade,
+  resolveServiceMode,
+  withUpgradeLock,
+} from '../lib/upgrade-apply';
+import { verifyTarballSha256 } from '../lib/upgrade-verify';
 import { asBoolean, asString } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
 import type { InstallMeta, ParsedArgs } from '../types';
@@ -70,13 +72,29 @@ export type DelegateUpgradeDeps = {
     options?: { cwd?: string; stdio?: 'inherit' | 'pipe' }
   ) => Promise<RunCommandResult>;
   execPath?: string;
+  log?: (message: string) => void;
 };
 
-function passthroughUpgradeFlags(parsed: ParsedArgs): string[] {
+function passthroughUpgradeFlags(
+  parsed: ParsedArgs,
+  extra: Record<string, string | boolean>
+): string[] {
   const args: string[] = [];
-  const passthrough = ['install-dir', 'service-name', 'yes', 'lang', 'bun-path'];
+  const merged = { ...parsed.flags, ...extra };
+  const passthrough = [
+    'install-dir',
+    'service-name',
+    'yes',
+    'lang',
+    'bun-path',
+    'keep-backup',
+    'no-service',
+    'txn',
+    'version',
+    'allow-missing-native',
+  ];
   for (const key of passthrough) {
-    const value = parsed.flags[key];
+    const value = merged[key];
     if (value === undefined) continue;
     if (value === true) {
       args.push(`--${key}`);
@@ -95,71 +113,83 @@ export async function delegateUpgrade(
   const fetchFn = deps.fetch ?? fetch;
   const run = deps.runCommand ?? runCommand;
   const execPath = deps.execPath ?? process.execPath;
+  const log = deps.log ?? ((message: string) => console.log(`[tmex] ${message}`));
   const version = await resolveReleaseVersion(targetVersion, fetchFn);
-  const workDir = await mkdtemp(join(tmpdir(), 'tmex-cli-upgrade-'));
+  const installDir = resolveInstallDir(
+    asString(parsed.flags['install-dir']) || defaultInstallDir(process.platform)
+  );
+  const txnId = createTxnId();
+  const stagingDir = join(installDir, 'staging', txnId);
+  await ensureDir(stagingDir);
 
   try {
-    const tarballPath = join(workDir, releaseTarballName(version));
+    const tarballPath = join(stagingDir, releaseTarballName(version));
     await downloadReleaseTarball(version, tarballPath, fetchFn);
+    const bytes = await readFile(tarballPath);
+    const sums = await fetchReleaseSha256Sums(version, releaseTarballName(version), fetchFn);
+    if (sums.missing || !sums.hex) {
+      log(t('upgrade.integrityUnverified'));
+    } else if (!verifyTarballSha256(bytes, sums.hex)) {
+      throw new Error(t('upgrade.integrityMismatch', { file: releaseTarballName(version) }));
+    }
 
-    const extractDir = join(workDir, 'extract');
+    const extractDir = join(stagingDir, 'extract');
     await ensureDir(extractDir);
     const tarResult = await run('tar', ['-xzf', tarballPath, '-C', extractDir]);
     if (tarResult.code !== 0) {
       throw new Error(t('upgrade.extractFailed', { code: tarResult.code }));
     }
 
-    const cliJs = join(extractDir, 'package', 'bin', 'tmex.js');
+    const packageRoot = join(extractDir, 'package');
+    const cliJs = join(packageRoot, 'bin', 'tmex.js');
     if (!(await pathExists(cliJs))) {
       throw new Error(t('upgrade.assetMissing', { version }));
     }
 
-    const args = [cliJs, 'upgrade', '--apply-current-package', ...passthroughUpgradeFlags(parsed)];
+    const args = [
+      cliJs,
+      'upgrade',
+      '--apply-current-package',
+      ...passthroughUpgradeFlags(parsed, { txn: txnId, version }),
+    ];
     const result = await run(execPath, args, { stdio: 'inherit' });
     if (result.code !== 0) {
       process.exitCode = result.code;
       throw new Error(t('upgrade.delegateFailed', { code: result.code }));
     }
-  } finally {
-    await rm(workDir, { recursive: true, force: true }).catch(() => null);
+  } catch (error) {
+    await rm(stagingDir, { recursive: true, force: true }).catch(() => null);
+    throw error;
   }
 }
 
-async function verifyHealth(installLayout: ReturnType<typeof createInstallLayout>): Promise<void> {
-  if (!(await pathExists(installLayout.envPath))) {
-    return;
-  }
+function parseUpgradeRunFlags(parsed: ParsedArgs) {
+  return {
+    applyCurrent: asBoolean(parsed.flags['apply-current-package']) === true,
+    repairOnly: asBoolean(parsed.flags.repair) === true,
+    targetVersion: asString(parsed.flags.version) || 'latest',
+    keepBackup: asBoolean(parsed.flags['keep-backup']) === true,
+    allowMissingNative: asBoolean(parsed.flags['allow-missing-native']) === true,
+  };
+}
 
-  const env = await readEnvFile(installLayout.envPath).catch(() => ({}));
-  const port = String(env.GATEWAY_PORT || '9883');
+function printUpgradeDone(
+  installDir: string,
+  targetVersion: string,
+  env: Record<string, string>
+): void {
   const host = rewriteWildcardBindHost(String(env.TMEX_BIND_HOST || '127.0.0.1'));
-  const url = formatHttpEndpoint(host, port, '/healthz');
-  const startedAt = Date.now();
-  let lastError: Error | null = null;
-
-  while (Date.now() - startedAt < 30_000) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(4_000) });
-      if (response.ok) {
-        return;
-      }
-      lastError = new Error(t('upgrade.healthFailed', { status: response.status }));
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-
-  throw lastError || new Error(t('upgrade.healthFailed', { status: 'timeout' }));
+  const port = String(env.GATEWAY_PORT || '9883');
+  console.log(`[tmex] ${t('upgrade.done')}`);
+  console.log(`- ${t('upgrade.summary.targetVersion')}: ${targetVersion}`);
+  console.log(`- ${t('upgrade.summary.installDir')}: ${installDir}`);
+  console.log(`- healthz: ${formatHttpEndpoint(host, port, '/healthz')}`);
 }
 
 export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
-  const applyCurrent = asBoolean(parsed.flags['apply-current-package']) ?? false;
-  const targetVersion = asString(parsed.flags.version) || 'latest';
-
-  if (!applyCurrent) {
-    await delegateUpgrade(parsed, targetVersion);
+  const flags = parseUpgradeRunFlags(parsed);
+  if (!flags.applyCurrent && !flags.repairOnly) {
+    await delegateUpgrade(parsed, flags.targetVersion);
     return;
   }
 
@@ -173,70 +203,94 @@ export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
   }
 
   const meta = await readJsonFile<InstallMeta>(installLayout.metaPath);
-  const explicitBunPath = readExplicitBunPath(parsed.flags);
+  const bunPath = await requireUpgradeBun(parsed, meta);
+
+  await withUpgradeLock(installDir, async () => {
+    await runLockedUpgrade({
+      parsed,
+      installDir,
+      installLayout,
+      meta,
+      bunPath,
+      repairOnly: flags.repairOnly,
+      keepBackup: flags.keepBackup,
+      allowMissingNative: flags.allowMissingNative,
+    });
+  });
+
+  if (flags.repairOnly) return;
+
+  const env = (await pathExists(installLayout.envPath))
+    ? await readEnvFile(installLayout.envPath).catch(() => ({}) as Record<string, string>)
+    : {};
+  printUpgradeDone(installDir, flags.targetVersion, env);
+}
+
+async function requireUpgradeBun(parsed: ParsedArgs, meta: InstallMeta): Promise<string> {
   const bun = await checkBunVersion(undefined, {
-    explicitPath: explicitBunPath,
+    explicitPath: readExplicitBunPath(parsed.flags),
     metaBunPath: meta.bunPath,
   });
-  if (!bun.ok || !bun.path) {
-    const hint = getInstallHint('bun');
-    const reason = bun.reason || t('bun.checkFailed');
-    throw new Error(`${reason}\n${t('deps.install.hint', { command: hint })}`);
+  if (bun.ok && bun.path) return bun.path;
+  const hint = getInstallHint('bun');
+  const reason = bun.reason || t('bun.checkFailed');
+  throw new Error(`${reason}\n${t('deps.install.hint', { command: hint })}`);
+}
+
+async function runLockedUpgrade(opts: {
+  parsed: ParsedArgs;
+  installDir: string;
+  installLayout: InstallLayout;
+  meta: InstallMeta;
+  bunPath: string;
+  repairOnly: boolean;
+  keepBackup: boolean;
+  allowMissingNative: boolean;
+}): Promise<void> {
+  const service = createServiceControl({
+    installDir: opts.installDir,
+    meta: opts.meta,
+    noServiceFlag: asBoolean(opts.parsed.flags['no-service']) ?? false,
+  });
+  const action = await repairUpgrade(opts.installDir, opts.bunPath, { service });
+  if (opts.repairOnly) {
+    console.log(`[tmex] ${t('upgrade.repairDone', { action })}`);
+    return;
   }
 
-  const packageLayout = await resolvePackageLayout(import.meta.url);
+  const packageLayout = asString(opts.parsed.flags.txn)
+    ? await packageLayoutFromStaged(opts.installDir, asString(opts.parsed.flags.txn) as string)
+    : await resolvePackageLayout(import.meta.url);
+  const cliVersion = await readPackageVersion(packageLayout.packageRoot);
+  const toVersion = asString(opts.parsed.flags.version) || cliVersion;
 
-  const backupDir = await mkdtemp(join(tmpdir(), 'tmex-upgrade-'));
-
-  try {
-    await stopService(meta.serviceName, installDir);
-    await backupInstallArtifacts(installLayout, backupDir);
-
-    await deployRuntimeFiles(packageLayout, installLayout);
-    const shim = await deployCliAndShim(packageLayout, installLayout, bun.path);
-    await reenableDirectAfterUpgrade(installDir);
-    if (await pathExists(installLayout.envPath)) {
-      await mergeMissingEnvFileKeys(installLayout.envPath, hubEnvDefaults());
-    }
-    await writeRunScript(installLayout, bun.path);
-
-    const cliVersion = await readPackageVersion(packageLayout.packageRoot);
-    meta.updatedAt = new Date().toISOString();
-    meta.cliVersion = cliVersion;
-    meta.bunPath = bun.path;
-    await writeInstallMeta(installLayout, meta);
-
-    await installService({
-      serviceName: meta.serviceName,
-      runScriptPath: installLayout.runScriptPath,
-      installDir,
-      autostart: meta.autostart,
-    });
-
-    await verifyHealth(installLayout);
-
-    console.log(`[tmex] ${t('upgrade.done')}`);
-    console.log(`- ${t('upgrade.summary.targetVersion')}: ${targetVersion}`);
-    console.log(`- ${t('upgrade.summary.installDir')}: ${installDir}`);
-    console.log(`- ${t('cli.shim.ready', { shimPath: shim.shimPath })}`);
-    if (shim.skipWarning) {
-      console.log(`- ${shim.skipWarning}`);
-    }
-    if (shim.pathHint) {
-      console.log(`- ${shim.pathHint}`);
-    }
-  } catch (error) {
-    console.error(`[tmex] ${t('upgrade.failedRollingBack')}`);
-    await restoreInstallArtifacts(installLayout, backupDir);
-    await installService({
-      serviceName: meta.serviceName,
-      runScriptPath: installLayout.runScriptPath,
-      installDir,
-      autostart: meta.autostart,
-    }).catch(() => null);
-
-    throw error;
-  } finally {
-    await rm(backupDir, { recursive: true, force: true }).catch(() => null);
+  if (await pathExists(opts.installLayout.envPath)) {
+    await mergeMissingEnvFileKeys(opts.installLayout.envPath, hubEnvDefaults());
   }
+
+  await applyUpgrade(
+    {
+      installDir: opts.installDir,
+      toVersion,
+      packageLayout,
+      bunPath: opts.bunPath,
+      keepBackup: opts.keepBackup,
+      noService:
+        resolveServiceMode(opts.meta, asBoolean(opts.parsed.flags['no-service']) ?? false) ===
+        'none',
+      allowMissingNative: opts.allowMissingNative,
+      txnId: asString(opts.parsed.flags.txn),
+      serviceName: opts.meta.serviceName,
+      autostart: opts.meta.autostart,
+    },
+    { service }
+  );
+}
+
+async function packageLayoutFromStaged(installDir: string, txnId: string) {
+  const extract = join(installDir, 'staging', txnId, 'extract', 'package');
+  if (await pathExists(join(extract, 'package.json'))) {
+    return await packageLayoutFromRoot(extract);
+  }
+  return await resolvePackageLayout(import.meta.url);
 }

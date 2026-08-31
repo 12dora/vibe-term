@@ -1,6 +1,12 @@
-import { writeFile } from 'node:fs/promises';
-import { RELEASE_API_LATEST_URL, releaseTarballUrl } from '../../../shared/src/release/source';
+import {
+  RELEASE_API_LATEST_URL,
+  RELEASE_REPO_URL,
+  releaseTag,
+  releaseTarballName,
+  releaseTarballUrl,
+} from '../../../shared/src/release/source';
 import { t } from '../i18n';
+import { writeBytesAtomic } from './fs-utils';
 
 const GITHUB_HEADERS = {
   Accept: 'application/vnd.github+json',
@@ -84,5 +90,33 @@ export async function downloadReleaseTarball(
 ): Promise<void> {
   const response = await githubFetch(releaseTarballUrl(version), fetchFn, version);
   const buf = Buffer.from(await response.arrayBuffer());
-  await writeFile(destFile, buf);
+  await writeBytesAtomic(destFile, buf);
+}
+
+export function releaseSha256SumsUrl(version: string): string {
+  return `${RELEASE_REPO_URL}/releases/download/${releaseTag(version)}/SHA256SUMS`;
+}
+
+export async function fetchReleaseSha256Sums(
+  version: string,
+  fileName: string,
+  fetchFn: ReleaseFetch = fetch
+): Promise<{ hex: string | null; missing: boolean }> {
+  let response: Response;
+  try {
+    response = await fetchFn(releaseSha256SumsUrl(version), {
+      headers: GITHUB_HEADERS,
+      redirect: 'follow',
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(t('upgrade.checksumHttpFailed', { detail }));
+  }
+  if (response.status === 404) return { hex: null, missing: true };
+  if (!response.ok) {
+    throw new Error(t('upgrade.checksumHttpFailed', { detail: `HTTP ${response.status}` }));
+  }
+  const { parseSha256Sums } = await import('./upgrade-verify');
+  const hex = parseSha256Sums(await response.text(), fileName || releaseTarballName(version));
+  return { hex, missing: hex === null };
 }

@@ -106,11 +106,11 @@ HDR
     expect(result.stdout.trim().split('\n')).toEqual(['1.1.0', '1.1.0']);
   });
 
-  test('tmex_version_ge compares dotted versions', () => {
-    const ge = sourceEval(
-      'tmex_version_ge 1.3.0 1.3.0 && tmex_version_ge 1.3.1 1.3.0 && ! tmex_version_ge 1.2.9 1.3.0 && echo ok'
+  test('tmex_classify_checksum_http only treats 404 as unpublished', () => {
+    const result = sourceEval(
+      'tmex_classify_checksum_http 404; printf "\\n"; tmex_classify_checksum_http 200; printf "\\n"; tmex_classify_checksum_http 500'
     );
-    expect(ge.status).toBe(0);
-    expect(ge.stdout.trim()).toBe('ok');
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim().split('\n')).toEqual(['missing', 'ok', 'error']);
   });
 });

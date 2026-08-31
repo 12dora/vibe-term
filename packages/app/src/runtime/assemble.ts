@@ -35,6 +35,7 @@ import {
 } from '../../../../apps/gateway/src/mesh/session-middleware';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
+import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import { guardEntryAccess } from '../../../../apps/gateway/src/tunnel/access-guard';
 import { tunnelManager } from '../../../../apps/gateway/src/tunnel/manager';
@@ -154,6 +155,7 @@ async function attachStartedAt(resp: Response): Promise<Response> {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return passthrough();
     const next = body as Record<string, unknown>;
     if (typeof next.startedAt !== 'number') next.startedAt = PROCESS_STARTED_AT;
+    if (typeof next.version !== 'string' || !next.version) next.version = getBaseVersion();
     const headers = new Headers(resp.headers);
     headers.set('content-type', 'application/json');
     return new Response(JSON.stringify(next), { status: resp.status, headers });

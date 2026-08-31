@@ -20,6 +20,14 @@ tmex_version_from_tag() {
   printf '%s' "$tag"
 }
 
+tmex_classify_checksum_http() {
+  case "$1" in
+    404) printf '%s' 'missing' ;;
+    200) printf '%s' 'ok' ;;
+    *) printf '%s' 'error' ;;
+  esac
+}
+
 tmex_is_semver() {
   printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
 }
@@ -229,6 +237,30 @@ tmex_install() {
 
   if ! curl -fsSL -o "$tgz" -H 'User-Agent: tmex-install' "$tarball_url"; then
     echo "tmex install: failed to download ${tarball_url} (version not found or network error)" >&2
+    exit 1
+  fi
+
+  local sums_url="https://github.com/${TMEX_RELEASE_REPO}/releases/download/v${version}/SHA256SUMS"
+  local sums_file="${TMEX_INSTALL_TMP}/SHA256SUMS"
+  local sums_code
+  sums_code="$(curl -sS -L -o "$sums_file" -w '%{http_code}' -H 'User-Agent: tmex-install' "$sums_url")" || {
+    echo "tmex install: failed to fetch SHA256SUMS (network error)" >&2
+    exit 1
+  }
+  if [ "$(tmex_classify_checksum_http "$sums_code")" = "missing" ]; then
+    echo "tmex install: SHA256SUMS not found; tarball integrity is unverified"
+  elif [ "$(tmex_classify_checksum_http "$sums_code")" != "ok" ]; then
+    echo "tmex install: failed to fetch SHA256SUMS (HTTP ${sums_code})" >&2
+    exit 1
+  elif ! (
+    cd "$TMEX_INSTALL_TMP"
+    if command -v shasum >/dev/null 2>&1; then
+      grep -E "tmex-cli-${version}\\.tgz$" SHA256SUMS | shasum -a 256 -c -
+    else
+      grep -E "tmex-cli-${version}\\.tgz$" SHA256SUMS | sha256sum -c -
+    fi
+  ); then
+    echo "tmex install: SHA256 mismatch for ${tarball_url}" >&2
     exit 1
   fi
 

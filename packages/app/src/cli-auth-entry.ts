@@ -70,6 +70,12 @@ export async function main(): Promise<void> {
     process.env.TMEX_CLI_LANG;
   const lang = normalizeLang(requestedLang);
   setLang(lang);
+  if (parsed.flags.help === true) {
+    console.log(t('cli.help'));
+    return;
+  }
+  const { assertKnownFlags } = await import('./lib/args');
+  assertKnownFlags(parsed);
   await dispatchAuthCli(parsed, lang);
 }
 
