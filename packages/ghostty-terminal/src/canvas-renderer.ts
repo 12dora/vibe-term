@@ -1,3 +1,4 @@
+import { CursorLayer } from './cursor-layer';
 import type {
   GhosttyCellDimensions,
   GhosttyColorRgb,
@@ -26,6 +27,11 @@ type CanvasRendererFrame = {
   // 或 terminal 显式请求全画（forceFullRepaint）：两种情形都必须忽略 dirty='clean'
   // 早退、强制按 'full' 重画所有行，否则屏幕空白（issue #45 bug 3）。
   forceFull?: boolean;
+  // 本帧的光标状态是否「落定」。false = 这一帧是被输出字节触发的，可能落在应用一次
+  // 整屏重绘的中途，此刻的光标位置只是笔尖所在（刚写完的那个字符后面那一格），不是
+  // 应用这一帧的最终落点。此时只把光标状态挂起，等 commitCursor() 在输出静默的那一帧
+  // 落笔。缺省（undefined）视为已落定，保持非输出触发路径（主题/尺寸/滚动）的原语义。
+  cursorSettled?: boolean;
 };
 
 type CanvasRendererDebugState = {
@@ -39,20 +45,6 @@ type LinkUnderlineSegment = {
   row: number;
   startCol: number;
   endCol: number;
-};
-
-type CursorCell = {
-  x: number;
-  y: number;
-  style: GhosttyRenderSnapshotMeta['cursor']['style'];
-  blinking: boolean;
-};
-
-type DeviceRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 };
 
 function colorKey(color: GhosttyColorRgb): number {
@@ -195,9 +187,6 @@ export class CanvasRenderer {
   private dpr = 1;
   private cols = 0;
   private rows = 0;
-  private lastCursor: CursorCell | null = null;
-  private lastCursorRect: DeviceRect | null = null;
-  private lastCursorColor = '';
   private frameCount = 0;
   private lastDrawnRows: number[] = [];
   private readonly colorCache = new Map<number, string>();
@@ -207,8 +196,7 @@ export class CanvasRenderer {
   private lastFrame: CanvasRendererFrame | null = null;
   private drawnSelectionRects: GhosttySelectionRect[] = [];
   private drawnSelectionColor = '';
-  private cursorBlinkVisible = true;
-  private cursorBlinkTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly cursorLayer: CursorLayer;
 
   constructor(options: CanvasRendererOptions) {
     this.theme = options.theme;
@@ -242,6 +230,7 @@ export class CanvasRenderer {
     this.linkContext = ensureContext(this.linkCanvas);
     this.selectionContext = ensureContext(this.selectionCanvas);
     this.cursorContext = ensureContext(this.cursorCanvas);
+    this.cursorLayer = new CursorLayer(this.cursorCanvas, this.cursorContext);
   }
 
   setTheme(theme: GhosttyTheme): void {
@@ -266,7 +255,7 @@ export class CanvasRenderer {
     const effectiveDirty = wiped || frame.forceFull === true ? 'full' : frame.meta.dirty;
 
     if (effectiveDirty === 'clean') {
-      this.drawCursor(frame.meta, wiped);
+      this.updateCursor(frame, wiped);
       return;
     }
 
@@ -303,7 +292,13 @@ export class CanvasRenderer {
       this.lastDrawnRows.push(row.y);
     }
 
-    this.drawCursor(frame.meta, wiped);
+    this.updateCursor(frame, wiped);
+  }
+
+  // 把上一帧挂起的光标状态落笔。由渲染协调器在「距上一次输出已过一帧、流已静默」
+  // 时调用：此刻 WASM 里的光标就是应用这一帧的最终落点。
+  commitCursor(): void {
+    this.noteVacatedRow(this.cursorLayer.commit());
   }
 
   getDebugState(): CanvasRendererDebugState {
@@ -321,30 +316,9 @@ export class CanvasRenderer {
     this.cursorCanvas.remove();
     this.colorCache.clear();
     this.fontVariants = [null, null, null, null];
-    this.lastCursor = null;
-    this.lastCursorRect = null;
     this.drawnSelectionRects = [];
     this.lastFrame = null;
-    this.stopCursorBlink();
-  }
-
-  private startCursorBlink(): void {
-    if (this.cursorBlinkTimer) {
-      return;
-    }
-    this.cursorBlinkTimer = setInterval(() => {
-      this.cursorBlinkVisible = !this.cursorBlinkVisible;
-      this.cursorCanvas.style.opacity = this.cursorBlinkVisible ? '1' : '0';
-    }, 1000);
-  }
-
-  private stopCursorBlink(): void {
-    if (this.cursorBlinkTimer) {
-      clearInterval(this.cursorBlinkTimer);
-      this.cursorBlinkTimer = null;
-    }
-    this.cursorBlinkVisible = true;
-    this.cursorCanvas.style.opacity = '1';
+    this.cursorLayer.dispose();
   }
 
   // 返回 true 表示触发了 canvas.width/height 赋值（HTML5 标准会 wipe 已绘位图），
@@ -375,6 +349,7 @@ export class CanvasRenderer {
     this.deviceCellWidth = deviceCellWidth;
     this.deviceCellHeight = deviceCellHeight;
     this.deviceFontSize = this.fontSize * dpr;
+    this.cursorLayer.setMetrics(deviceCellWidth, deviceCellHeight, dpr);
     this.fontVariants = [null, null, null, null];
     // 量真实字体度量（含升/降部的字形盒），把字形盒整体在 cell 内垂直居中。
     // baseline 用 alphabetic：盒高 ≤ cell 时 [topGap, topGap+ascent+descent] ⊆ [0, cellH]，
@@ -468,7 +443,14 @@ export class CanvasRenderer {
   drawSelectionOnly(rects: GhosttySelectionRect[], color: string): void {
     const frame = this.lastFrame;
     if (frame && this.layoutStale()) {
-      this.render({ ...frame, selectionRects: rects, selectionColor: color, forceFull: true });
+      // 网格已换算，挂起的光标状态也按新几何立刻落笔，否则光标停在旧网格的坐标上。
+      this.render({
+        ...frame,
+        selectionRects: rects,
+        selectionColor: color,
+        forceFull: true,
+        cursorSettled: true,
+      });
       return;
     }
 
@@ -698,143 +680,20 @@ export class CanvasRenderer {
     if (quadrants & 0b1000) fill(midX, midY, width, height);
   }
 
-  // 光标层同样独立：只擦上一次画过的那一格（画布被 resize 清空时才整层擦），
-  // 且位置/形状/闪烁/颜色都未变时整帧跳过。
-  private clearCursorLayer(wiped: boolean): void {
-    if (wiped || !this.lastCursorRect) {
-      this.cursorContext.clearRect(0, 0, this.cursorCanvas.width, this.cursorCanvas.height);
-      return;
-    }
-
-    const rect = this.lastCursorRect;
-    this.cursorContext.clearRect(rect.x, rect.y, rect.width, rect.height);
-  }
-
-  private drawCursor(meta: GhosttyRenderSnapshotMeta, wiped: boolean): void {
-    const cursor = meta.cursor;
-    if (!cursor.visible || cursor.x === null || cursor.y === null) {
-      this.hideCursor(wiped);
-      return;
-    }
-
-    // 光标色仍取自 ghostty render state（colors.cursor 缺省时回落到 colors.foreground），
-    // 不读 this.theme——主题切换由 WASM 侧 setTerminalTheme 反映到 render state。
-    const cssColor = this.toCss(meta.colors.cursor ?? meta.colors.foreground);
-    const width = cursor.wideTail ? this.deviceCellWidth * 2 : this.deviceCellWidth;
-    if (!wiped && this.cursorAlreadyDrawn(cursor, cssColor, width)) {
-      return;
-    }
-
-    this.clearCursorLayer(wiped);
-
-    const x = cursor.x * this.deviceCellWidth;
-    const y = cursor.y * this.deviceCellHeight;
-    this.paintCursorShape(cursor.style, x, y, width, cssColor);
-
-    if (cursor.blinking) {
-      this.startCursorBlink();
-    } else {
-      this.stopCursorBlink();
-    }
-
-    this.commitCursorState(cursor.x, cursor.y, cursor.style, cursor.blinking, width, cssColor);
-  }
-
-  private hideCursor(wiped: boolean): void {
-    if (this.lastCursor || wiped) {
-      this.clearCursorLayer(wiped);
-    }
-    this.lastCursor = null;
-    this.lastCursorRect = null;
-    this.stopCursorBlink();
-  }
-
-  // 位置 / 形状 / 闪烁 / 颜色 / 宽度全部与上次落笔一致时整帧跳过。
-  private cursorAlreadyDrawn(
-    cursor: GhosttyRenderSnapshotMeta['cursor'],
-    cssColor: string,
-    width: number
-  ): boolean {
-    const previous = this.lastCursor;
-    return (
-      previous !== null &&
-      previous.x === cursor.x &&
-      previous.y === cursor.y &&
-      previous.style === cursor.style &&
-      previous.blinking === cursor.blinking &&
-      this.lastCursorColor === cssColor &&
-      this.lastCursorRect !== null &&
-      this.lastCursorRect.width === width
+  // 光标层的每帧入口：解析光标色后交给 CursorLayer（落定语义见该模块注释）。
+  // 光标色取自 ghostty render state（colors.cursor 缺省时回落到 colors.foreground），
+  // 不读 this.theme——主题切换由 WASM 侧 setTerminalTheme 反映到 render state。
+  private updateCursor(frame: CanvasRendererFrame, wiped: boolean): void {
+    const cssColor = this.toCss(frame.meta.colors.cursor ?? frame.meta.colors.foreground);
+    this.noteVacatedRow(
+      this.cursorLayer.update(frame.meta.cursor, cssColor, wiped, frame.cursorSettled !== false)
     );
   }
 
-  private paintCursorShape(
-    style: GhosttyRenderSnapshotMeta['cursor']['style'],
-    x: number,
-    y: number,
-    width: number,
-    cssColor: string
-  ): void {
-    const height = this.deviceCellHeight;
-    const thickness = Math.max(1, Math.round(this.dpr));
-    const lineThickness = 2 * thickness;
-    const context = this.cursorContext;
-
-    context.fillStyle = cssColor;
-    context.strokeStyle = cssColor;
-    context.globalAlpha = 0.7;
-    if (style === 'bar') {
-      context.fillRect(x, y, lineThickness, height);
-    } else if (style === 'underline') {
-      context.fillRect(
-        x,
-        y + height - lineThickness,
-        Math.max(width - thickness, thickness),
-        lineThickness
-      );
-    } else if (style === 'block-hollow') {
-      // 描边沿 cell 内缘走：奇数线宽偏移半物理像素，避免 1px 边框被抗锯齿糊成 2px。
-      context.lineWidth = thickness;
-      context.strokeRect(
-        x + thickness / 2,
-        y + thickness / 2,
-        Math.max(width - thickness, thickness),
-        Math.max(height - thickness, thickness)
-      );
-    } else {
-      context.fillRect(x, y, width, height);
-    }
-    context.globalAlpha = 1;
-  }
-
-  // 记录本次落笔状态；光标离开的旧行要计入 lastDrawnRows，供调试/测试观察重绘范围。
-  private commitCursorState(
-    cursorX: number,
-    cursorY: number,
-    style: CursorCell['style'],
-    blinking: boolean,
-    width: number,
-    cssColor: string
-  ): void {
-    const previous = this.lastCursor;
-
-    this.lastCursor = { x: cursorX, y: cursorY, style, blinking };
-    this.lastCursorRect = {
-      x: cursorX * this.deviceCellWidth,
-      y: cursorY * this.deviceCellHeight,
-      width,
-      height: this.deviceCellHeight,
-    };
-    this.lastCursorColor = cssColor;
-
-    if (
-      previous &&
-      (previous.x !== cursorX ||
-        previous.y !== cursorY ||
-        previous.style !== style ||
-        previous.blinking !== blinking)
-    ) {
-      this.lastDrawnRows.push(previous.y);
+  // 光标离开的旧行要计入 lastDrawnRows，供调试/测试观察重绘范围。
+  private noteVacatedRow(row: number | null): void {
+    if (row !== null) {
+      this.lastDrawnRows.push(row);
     }
   }
 

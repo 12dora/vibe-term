@@ -31,6 +31,10 @@ import type {
 // 链接下划线重算节流：只扫可见区，且相邻两次重算至少间隔此值（trailing 保证终态正确）。
 const LINK_OVERLAY_THROTTLE_MS = 150;
 const LINK_MATCH_CACHE_LIMIT = 300;
+// 光标落定的兜底上限：应用若持续不停地写（流永不静默），最多把光标压这么久就按当刻
+// 状态落笔，保证它不会长期停在过期位置。正常 TUI（10–30Hz）每帧之间都有几十毫秒静默，
+// 走的是静默落定路径，这个上限不会触发。
+const CURSOR_SETTLE_MAX_MS = 250;
 
 // 一帧渲染产出的、宿主需要同步的外部状态。
 export type RenderSnapshot = {
@@ -70,6 +74,11 @@ export class TerminalRenderCoordinator {
     this.renderNow();
   });
   private selectionFrame: number | null = null;
+  // 自上一帧渲染以来是否有应用输出写入：有则这一帧可能落在应用整屏重绘的中途，
+  // 光标状态不落笔（见 scheduleFromOutput / CanvasRendererFrame.cursorSettled）。
+  private outputSinceRender = false;
+  private cursorSettleFrame: number | null = null;
+  private cursorDeferredSince = 0;
   private linkOverlayDrawnOffset = -1;
   private viewportOffset = 0;
   private viewportRows = DEFAULT_ROWS;
@@ -109,6 +118,15 @@ export class TerminalRenderCoordinator {
     this.loop.schedule();
   }
 
+  // 由应用输出（write）触发的渲染。与 schedule() 的唯一区别是标记「这一帧可能是中间态」：
+  // 一次整屏重绘的字节常分多个 write 到达（websocket / tmux %output 的分片），rAF 到点
+  // 就画会把笔尖当刻所在当成光标落点，于是光标在「刚写完的字符后面那一格」与应用真正的
+  // 落点之间按输出频率来回跳（用户看到的疯狂闪烁）。
+  scheduleFromOutput(): void {
+    this.outputSinceRender = true;
+    this.loop.schedule();
+  }
+
   // 选区拖拽专用：本帧只有选区矩形变了，复用上一次全渲染留下的 renderedRows / lineCache
   // 重画选区层，不碰 WASM，也不重扫任何 cell；每帧最多一次。
   scheduleSelectionRepaint(): void {
@@ -135,12 +153,16 @@ export class TerminalRenderCoordinator {
   // canvas 位图可能已被清空，但内核未必同步报 dirty='full'（issue #45 bug 3）。
   forceFullRepaint(): void {
     this.loop.requestFullRepaint();
+    // 显式的「立刻把真实状态画出来」请求（DOM 重插入、tab 切回、history 注入）：
+    // 光标也必须按当刻状态落笔，不能继续挂起。
+    this.outputSinceRender = false;
     this.renderNow();
   }
 
   cancelPending(): void {
     this.loop.cancelPending();
     this.cancelSelectionRepaint();
+    this.cancelCursorSettle();
   }
 
   setTheme(theme: GhosttyTheme): void {
@@ -240,6 +262,7 @@ export class TerminalRenderCoordinator {
 
     const selectionRects = this.host.selectionRects(this.viewportOffset, this.viewportRows);
     const selectionText = this.host.selectionText();
+    const cursorSettled = this.consumeCursorSettled();
 
     renderer.render({
       meta,
@@ -248,7 +271,12 @@ export class TerminalRenderCoordinator {
       selectionRects,
       selectionColor: this.host.selectionColor(),
       forceFull,
+      cursorSettled,
     });
+
+    if (!cursorSettled) {
+      this.scheduleCursorSettle();
+    }
 
     this.host.onSnapshot({
       cols: Math.max(2, meta.cols),
@@ -266,8 +294,60 @@ export class TerminalRenderCoordinator {
     this.scheduleLinkOverlayUpdate();
   }
 
+  // 这一帧的光标状态是否可信：非输出触发的帧（主题/尺寸/滚动/强制全画）恒可信；
+  // 输出触发的帧只有在被压过头（CURSOR_SETTLE_MAX_MS）时才兜底放行。
+  private consumeCursorSettled(): boolean {
+    const fromOutput = this.outputSinceRender;
+    this.outputSinceRender = false;
+    if (!fromOutput) {
+      this.cursorDeferredSince = 0;
+      return true;
+    }
+
+    const now = Date.now();
+    if (this.cursorDeferredSince === 0) {
+      this.cursorDeferredSince = now;
+      return false;
+    }
+
+    if (now - this.cursorDeferredSince < CURSOR_SETTLE_MAX_MS) {
+      return false;
+    }
+
+    this.cursorDeferredSince = 0;
+    return true;
+  }
+
+  // 下一帧若仍无新输出，说明应用这一帧写完了，把挂起的光标状态落笔；
+  // 有新输出则什么都不做——那次 write 已经排了新的渲染帧，落定判定重新来过。
+  private scheduleCursorSettle(): void {
+    if (this.cursorSettleFrame !== null) {
+      return;
+    }
+
+    this.cursorSettleFrame = requestAnimationFrame(() => {
+      this.cursorSettleFrame = null;
+      if (this.outputSinceRender) {
+        return;
+      }
+
+      this.cursorDeferredSince = 0;
+      this.renderer?.commitCursor();
+    });
+  }
+
+  private cancelCursorSettle(): void {
+    if (this.cursorSettleFrame === null) {
+      return;
+    }
+
+    cancelAnimationFrame(this.cursorSettleFrame);
+    this.cursorSettleFrame = null;
+  }
+
   dispose(): void {
     this.cancelSelectionRepaint();
+    this.cancelCursorSettle();
     this.renderer?.dispose();
     this.renderer = null;
     this.lineCache.clear();

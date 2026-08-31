@@ -343,13 +343,13 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       if (this.syncOutputFallbackTimer === null) {
         this.syncOutputFallbackTimer = setTimeout(() => {
           this.syncOutputFallbackTimer = null;
-          this.renderCoordinator.schedule();
+          this.renderCoordinator.scheduleFromOutput();
         }, SYNCHRONIZED_OUTPUT_FALLBACK_MS);
       }
       return;
     }
     this.cancelSynchronizedOutputFallback();
-    this.renderCoordinator.schedule();
+    this.renderCoordinator.scheduleFromOutput();
   }
 
   clearMouseTrackingModes(): void {
