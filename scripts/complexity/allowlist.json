@@ -11,10 +11,6 @@
     "lines": 218,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
-  "apps/fe/src/pages/SettingsPage.tsx:SettingsPage": {
-    "lines": 124,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
-  },
   "apps/fe/src/pages/devices/use-device-folders.ts:useDeviceFolders": {
     "lines": 198,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
@@ -63,10 +59,6 @@
     "lines": 143,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
-  "apps/fe/src/pages/settings/remote-access/external-card.tsx:ExternalTunnelCard": {
-    "lines": 124,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
-  },
   "apps/fe/src/pages/settings/remote-access/named-step.tsx:HostnameStep": {
     "lines": 137,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
@@ -95,6 +87,10 @@
   "apps/gateway/src/api/tunnel-routes.ts:parseAction": {
     "cc": 40,
     "reason": "动作级请求校验穷举，表驱动会掩盖必填字段"
+  },
+  "apps/gateway/src/mesh/auth-routes.ts": {
+    "fileLines": 924,
+    "reason": "auth 协议路由内聚体：本机登录三段（BM/BP）合入后越过 900，拆分只搬行（BQ 评估）"
   },
   "apps/gateway/src/hub/uplink-server.ts": {
     "fileLines": 1207,
@@ -194,7 +190,7 @@
     "reason": "安全门顺序校验（S1 判定）"
   },
   "apps/gateway/src/tunnel/external-detect.ts:enrichCandidate": {
-    "cc": 25,
+    "cc": 19,
     "reason": "外部 cloudflared 检测/评分一体（S1 判定）"
   },
   "apps/gateway/src/tunnel/external-detect.ts:parseCloudflaredYml": {
@@ -246,8 +242,7 @@
     "reason": "平台回退链（S2 判定）"
   },
   "packages/app/src/runtime/assemble.ts:assembleTmex": {
-    "cc": 17,
-    "lines": 150,
+    "lines": 136,
     "reason": "应用装配根（S2 判定）"
   },
   "packages/ghostty-terminal/src/ghostty-wasm.ts": {
