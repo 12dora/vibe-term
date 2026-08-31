@@ -176,7 +176,10 @@ export function SideBarDeviceList({
       // 收起只影响树的可见性，不断开连接
       if (!expanded) return;
       if (connection) {
-        connection.connect(deviceId);
+        // 已连接时展开只是看树，不重走连接流程（connect 会先置 pending，表现为无谓的"重连接"）
+        if (!connection.isConnected(deviceId)) {
+          connection.connect(deviceId);
+        }
       } else {
         ensureDeviceSubscribed(deviceId);
       }
