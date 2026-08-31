@@ -9,6 +9,7 @@ export {
   fetchFileList,
   fetchFileRoots,
   fetchFileStat,
+  reorderFileRoots,
   updateFileRoot,
 } from './file-resources';
 export { uploadFileChunked } from './upload-transfer';

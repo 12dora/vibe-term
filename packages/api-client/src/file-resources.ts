@@ -49,6 +49,20 @@ export async function updateFileRoot(
   return (await res.json()) as FileRootResponse;
 }
 
+/** 侧栏拖拽排序：整份顺序一次提交，未列出的目录项保持相对顺序排在后面。 */
+export async function reorderFileRoots(
+  rootIds: string[],
+  client: ApiClient = defaultApiClient
+): Promise<ListFileRootsResponse> {
+  const res = await client.fetch('/api/files/roots/order', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rootIds }),
+  });
+  if (!res.ok) throw await parseError(res);
+  return (await res.json()) as ListFileRootsResponse;
+}
+
 export async function deleteFileRoot(
   id: string,
   client: ApiClient = defaultApiClient

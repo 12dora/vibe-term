@@ -1,55 +1,30 @@
-import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { FileEntryDto, FileRootDto, SystemInfo } from '@tmex/shared';
-import { Loader2, RotateCw, TriangleAlert } from 'lucide-react';
-import { memo, useEffect, useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { matchPath, useLocation, useNavigate } from 'react-router';
+// 文件侧栏的外壳：标题 + 刷新 + 可滚动区。
+//
+// 单 node 宿主直接渲染当前运行时的文件树；多 node 宿主把每个 node 的分节
+// （`FilesNodeSection`，各自套自己的运行时）作为 `sections` 传进来，外壳只管头部与滚动。
 
-import { fetchDevices, fetchFileRoots, fetchLlmProviders } from '@tmex/api-client';
-import { decodeFileRef, fileRoute, hostAppPath } from '@tmex/stores';
-import { useFileTreeStore, useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
+import { useIsFetching, useQueryClient } from '@tanstack/react-query';
+import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
-import { ContextMenu, ContextMenuTrigger } from '@tmex/ui/context-menu';
 import { ScrollArea } from '@tmex/ui/scroll-area';
-import { SidebarGroup, useSidebar } from '@tmex/ui/sidebar';
-import { DirectoryNodeView } from './directory-node-view';
-import { fileIconColor, fileIconFor } from './file-icon';
-import { FileNodeMenuContent, useFileNodeActions } from './file-node-actions';
-import { NodeError } from './node-menu';
-import { selectVisibleFileRoots } from './root-visibility';
-import { useDirectoryListing } from './use-directory-listing';
-import { hasExternalFiles, useDirectoryUpload } from './use-directory-upload';
-import { useRsyncMissingToast } from './use-rsync-missing-toast';
+import { SidebarGroup } from '@tmex/ui/sidebar';
+import { RotateCw } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 
-const DEFAULT_TRANSFER_MAX_BYTES = 2 * 1024 * 1024 * 1024;
-
-const INDENT_STEP = 12;
-
-// 单个目录一次最多渲染多少行：后端每目录上限 2000，全量挂载会造出上千个带右键菜单的组件
-const DISPLAY_CAP = 500;
-
-function useSelectedFilePath(): { rootId: string; path: string } | null {
-  const location = useLocation();
-  const { host } = useRuntime();
-  return useMemo(() => {
-    const match = matchPath(hostAppPath(host, '/file/:ref'), location.pathname);
-    if (!match?.params.ref) return null;
-    return decodeFileRef(match.params.ref);
-  }, [location.pathname, host]);
-}
-
-interface TreeContext {
-  llmConfigured: boolean;
-  localDeviceId: string | null;
-  transferMaxBytes: number;
-}
+import { FilesNodeRoots } from './files-node-roots';
+import { hasExternalFiles } from './use-directory-upload';
 
 export interface FilesTabProps {
   /** 不渲染头部行（标题 + 刷新按钮）；宿主连续渲染多个实例时避免重复头部。 */
   hideHeader?: boolean;
   /** 该 runtime 所属 node 已离线：只留一行提示，不发请求也不显示陈旧目录。 */
   nodeOffline?: boolean;
+  /** 多 node 聚合：宿主渲染好的各 node 分节；未传即渲染当前运行时的单节文件树。 */
+  sections?: ReactNode;
+  /** 聚合视图的刷新（每个 node 一份缓存，只能由宿主逐个失效）；未传即失效当前 QueryClient。 */
+  onRefresh?: () => void;
 }
 
 // 外壳门：runtime.features.filesUi 关断、或所属 node 离线时都不渲染文件树，
@@ -73,66 +48,18 @@ export function FilesTab(props: FilesTabProps = {}) {
   return <FilesTabInner {...props} />;
 }
 
-function FilesTabInner({ hideHeader }: FilesTabProps) {
+function FilesTabInner({ hideHeader, sections, onRefresh }: FilesTabProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { apiClient, nodeId } = useRuntime();
   const isFetching = useIsFetching({ queryKey: ['files'] });
-  const pruneStaleRoots = useFileTreeStore((s) => s.pruneStaleRoots);
 
-  const rootsQuery = useQuery({
-    queryKey: ['files', 'roots'],
-    queryFn: () => fetchFileRoots(apiClient),
-    refetchOnWindowFocus: true,
-  });
-  const devicesQuery = useQuery({
-    queryKey: ['devices'],
-    queryFn: () => fetchDevices(apiClient),
-  });
-  const providersQuery = useQuery({
-    queryKey: ['llm-providers'],
-    queryFn: () => fetchLlmProviders(undefined, apiClient),
-    throwOnError: false,
-  });
-  const systemInfoQuery = useQuery({
-    queryKey: ['system', 'info'],
-    queryFn: async () => {
-      const res = await apiClient.fetch('/api/system/info');
-      if (!res.ok) throw new Error('system');
-      return (await res.json()) as SystemInfo;
-    },
-    throwOnError: false,
-  });
-
-  const filesVisibility = useUIStore((state) => state.sidebarFilesVisibility);
-  const deviceConnected = useTmuxStore((state) => state.deviceConnected);
-  const roots = useMemo(
-    () =>
-      selectVisibleFileRoots({
-        roots: rootsQuery.data?.roots ?? [],
-        runtimeNodeId: nodeId,
-        visibility: filesVisibility,
-        deviceConnected,
-      }),
-    [rootsQuery.data, nodeId, filesVisibility, deviceConnected]
-  );
-
-  // 加载后清理陈旧的持久化展开键（根/设备已不存在）
-  useEffect(() => {
-    if (rootsQuery.data) pruneStaleRoots(rootsQuery.data.roots.map((r) => r.id));
-  }, [rootsQuery.data, pruneStaleRoots]);
-
-  // 每次渲染都新建 ctx 会让整棵树的 memo 失效
-  const ctx = useMemo<TreeContext>(
-    () => ({
-      llmConfigured: (providersQuery.data?.providers ?? []).length > 0,
-      localDeviceId: devicesQuery.data?.devices.find((d) => d.type === 'local')?.id ?? null,
-      transferMaxBytes: systemInfoQuery.data?.transferMaxBytes ?? DEFAULT_TRANSFER_MAX_BYTES,
-    }),
-    [providersQuery.data, devicesQuery.data, systemInfoQuery.data]
-  );
-
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: ['files'] });
+  const refresh = () => {
+    if (onRefresh) {
+      onRefresh();
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: ['files'] });
+  };
 
   return (
     <SidebarGroup className="flex min-h-0 flex-1 flex-col pt-0" data-testid="files-tab">
@@ -163,233 +90,9 @@ function FilesTabInner({ hideHeader }: FilesTabProps) {
           }}
           className="space-y-0.5 pr-1 pb-2 select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
         >
-          {roots.map((root) => (
-            <DirNode
-              key={root.id}
-              root={root}
-              rootId={root.id}
-              path={root.path}
-              depth={0}
-              isRoot
-              ctx={ctx}
-            />
-          ))}
-          {rootsQuery.isLoading && (
-            <div className="px-2 py-3 text-center text-xs text-muted-foreground">
-              {t('common.loading')}
-            </div>
-          )}
-          {/* 加载失败与「没有可访问目录」是两种状态：失败时给重试，不能显示成空态 */}
-          {rootsQuery.isError && (
-            <div
-              data-testid="files-roots-error"
-              className="flex flex-col items-center gap-2 px-3 py-6 text-center"
-            >
-              <span className="flex items-center gap-1.5 text-xs text-destructive/80">
-                <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
-                {t('files.error.unknown')}
-              </span>
-              <Button
-                variant="outline"
-                size="xs"
-                data-testid="files-roots-retry"
-                onClick={() => void rootsQuery.refetch()}
-              >
-                {t('common.retry')}
-              </Button>
-            </div>
-          )}
-          {!rootsQuery.isLoading && !rootsQuery.isError && roots.length === 0 && (
-            <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-              {t('files.noRoots')}
-            </div>
-          )}
+          {sections ?? <FilesNodeRoots />}
         </div>
       </ScrollArea>
     </SidebarGroup>
   );
 }
-
-// 递归的目录节点：把数据（列表 + 轮询）、上传、rsync 提示三块副作用交给对应 hooks，
-// 自身只负责组合与递归渲染子节点。
-const DirNode = memo(function DirNode({
-  root,
-  rootId,
-  path,
-  depth,
-  isRoot,
-  ctx,
-}: {
-  root: FileRootDto;
-  rootId: string;
-  path: string;
-  depth: number;
-  isRoot: boolean;
-  ctx: TreeContext;
-}) {
-  const { t } = useTranslation();
-  const { nodeKey, expanded, toggle, query, errCode } = useDirectoryListing(rootId, path);
-  const upload = useDirectoryUpload(rootId, path, ctx.transferMaxBytes);
-
-  useRsyncMissingToast({
-    root,
-    nodeKey,
-    errCode,
-    llmConfigured: ctx.llmConfigured,
-    localDeviceId: ctx.localDeviceId,
-  });
-
-  const [showAll, setShowAll] = useState(false);
-
-  const indent = depth * INDENT_STEP + 4;
-  const childIndent = indent + 18;
-  const entries = query.data?.entries;
-  // 选中的文件落在上限之外时把上限撑到它，否则路由直达的那一行根本不会挂载
-  const selected = useSelectedFilePath();
-  const cap =
-    entries && entries.length > DISPLAY_CAP && selected?.rootId === rootId
-      ? Math.max(DISPLAY_CAP, entries.findIndex((entry) => entry.path === selected.path) + 1)
-      : DISPLAY_CAP;
-  const hidden = !showAll && entries ? Math.max(entries.length - cap, 0) : 0;
-  const visible = hidden > 0 && entries ? entries.slice(0, cap) : entries;
-
-  return (
-    <DirectoryNodeView
-      root={root}
-      rootId={rootId}
-      path={path}
-      indent={indent}
-      isRoot={isRoot}
-      expanded={expanded}
-      dragActive={upload.dragActive}
-      onToggle={toggle}
-      dropZoneProps={upload.dropZoneProps}
-      fileInputRef={upload.fileInputRef}
-      onPickFiles={upload.openFilePicker}
-      onFileInputChange={upload.handleFileInputChange}
-    >
-      {(query.isLoading || (query.isFetching && !query.data)) && (
-        <div
-          style={{ paddingLeft: childIndent }}
-          className="flex items-center gap-1.5 py-1 text-[11px] text-muted-foreground"
-        >
-          <Loader2 className="h-3 w-3 animate-spin" />
-          {t('common.loading')}
-        </div>
-      )}
-      {query.isError && (
-        <NodeError code={errCode} indent={childIndent} onRetry={() => void query.refetch()} />
-      )}
-      {visible?.map((entry) =>
-        entry.type === 'dir' ? (
-          <DirNode
-            key={entry.path}
-            root={root}
-            rootId={rootId}
-            path={entry.path}
-            depth={depth + 1}
-            isRoot={false}
-            ctx={ctx}
-          />
-        ) : (
-          <FileLeaf key={entry.path} entry={entry} root={root} depth={depth + 1} />
-        )
-      )}
-      {hidden > 0 && (
-        <button
-          type="button"
-          data-testid={`file-show-more-${rootId}-${path}`}
-          onClick={() => setShowAll(true)}
-          style={{ paddingLeft: childIndent }}
-          className="flex w-full min-w-0 items-center rounded-md py-1 pr-2 text-left text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-        >
-          {t('files.showMore', { count: hidden })}
-        </button>
-      )}
-      {query.data && query.data.entries.length === 0 && (
-        <div
-          style={{ paddingLeft: childIndent }}
-          className="py-1 text-[11px] text-muted-foreground/70"
-        >
-          {t('files.emptyDir')}
-        </div>
-      )}
-      {query.data?.truncated && (
-        <div
-          style={{ paddingLeft: childIndent }}
-          className="py-1 text-[11px] text-muted-foreground/70"
-        >
-          {t('files.truncated')}
-        </div>
-      )}
-    </DirectoryNodeView>
-  );
-});
-
-const FileLeaf = memo(function FileLeaf({
-  entry,
-  root,
-  depth,
-}: { entry: FileEntryDto; root: FileRootDto; depth: number }) {
-  const { t } = useTranslation();
-  const navigate = useNavigate();
-  const runtime = useRuntime();
-  const { isMobile, setOpenMobile } = useSidebar();
-  const selected = useSelectedFilePath();
-  const rootId = root.id;
-  const isSelected = selected?.rootId === rootId && selected?.path === entry.path;
-  const Icon = fileIconFor(entry);
-  const indent = depth * INDENT_STEP + 4 + 18;
-  const { download, dragHandlers } = useFileNodeActions(rootId, entry);
-
-  const open = () => {
-    navigate(hostAppPath(runtime.host, fileRoute(rootId, entry.path)));
-    if (isMobile) setOpenMobile(false);
-  };
-
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger
-        render={
-          <button
-            type="button"
-            draggable
-            onClick={open}
-            {...dragHandlers}
-            data-testid={`file-item-${rootId}-${entry.path}`}
-            title={entry.name}
-            style={{ paddingLeft: indent }}
-            className={cn(
-              'flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 pr-2 text-left transition-colors data-[pressed]:bg-sidebar-accent [@media(any-pointer:coarse)]:py-1.5',
-              isSelected
-                ? 'bg-primary/10 text-primary'
-                : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-foreground'
-            )}
-          >
-            <Icon
-              className={cn(
-                'h-4 w-4 shrink-0',
-                isSelected ? 'text-primary' : fileIconColor(entry.category)
-              )}
-            />
-            <span className="min-w-0 flex-1 truncate text-xs">{entry.name}</span>
-            {entry.isSymlink && (
-              <span
-                className="shrink-0 text-[9px] text-muted-foreground/60"
-                title={t('files.symlink')}
-              >
-                ↗
-              </span>
-            )}
-          </button>
-        }
-      />
-      <FileNodeMenuContent
-        root={root}
-        entry={entry}
-        onOpen={open}
-        onDownload={() => void download()}
-      />
-    </ContextMenu>
-  );
-});

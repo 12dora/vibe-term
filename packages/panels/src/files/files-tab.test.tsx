@@ -6,6 +6,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { FileEntryDto, FileRootDto } from '@tmex/shared';
 import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { ReactNode } from 'react';
 
 installWindowStorage();
 
@@ -59,7 +60,9 @@ const SSH_ROOT: FileRootDto = {
 
 let storageSeq = 0;
 
-function renderFilesTab(options: { roots?: FileRootDto[]; nodeOffline?: boolean } = {}): string {
+function renderFilesTab(
+  options: { roots?: FileRootDto[]; nodeOffline?: boolean; sections?: ReactNode } = {}
+): string {
   const runtime = createAppRuntime({ storagePrefix: `files-tab-test-${storageSeq++}:` });
   const queryClient = new QueryClient();
   if (options.roots) {
@@ -71,7 +74,7 @@ function renderFilesTab(options: { roots?: FileRootDto[]; nodeOffline?: boolean 
         <QueryClientProvider client={queryClient}>
           <RuntimeProvider runtime={runtime}>
             <SidebarProvider>
-              <FilesTab nodeOffline={options.nodeOffline} />
+              <FilesTab nodeOffline={options.nodeOffline} sections={options.sections} />
             </SidebarProvider>
           </RuntimeProvider>
         </QueryClientProvider>
@@ -99,6 +102,19 @@ describe('FilesTab 的根目录过滤', () => {
     const html = renderFilesTab({ roots: [{ ...LOCAL_ROOT, enabled: false }] });
     expect(html).not.toContain('/srv/local');
     expect(html).toContain('没有可访问的目录');
+  });
+});
+
+describe('FilesTab 的多 node 聚合', () => {
+  test('传了 sections 就只渲染宿主给的分节，不再渲染当前运行时的单节文件树', () => {
+    const html = renderFilesTab({
+      roots: [LOCAL_ROOT],
+      sections: <div data-testid="stub-sections">分节</div>,
+    });
+    expect(html).toContain('data-testid="stub-sections"');
+    expect(html).not.toContain('/srv/local');
+    // 头部（标题 + 刷新）仍归外壳
+    expect(html).toContain('data-testid="files-refresh"');
   });
 });
 

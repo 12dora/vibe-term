@@ -1,4 +1,10 @@
 export { FilesTab, type FilesTabProps } from './files-tab';
+export {
+  FilesNodeSection,
+  type FilesNodeInfo,
+  type FilesNodeSectionProps,
+  type FilesNodeSortable,
+} from './files-node-section';
 export { startTransferToast } from './transfer-toast';
 export type { TransferDirection, TransferToast, TransferToastPath } from './transfer-toast';
 export {

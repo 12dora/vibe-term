@@ -6,6 +6,7 @@ import {
   deleteFileRoot,
   getFileRootById,
   getFileRoots,
+  reorderFileRoots,
   updateFileRoot,
 } from '../db/file-roots';
 import { t } from '../i18n';
@@ -34,8 +35,35 @@ function toRootDto(root: FileRootRecord): FileRootDto {
   };
 }
 
+function listRootDtos(): FileRootDto[] {
+  return getFileRoots().map(toRootDto);
+}
+
 function handleListRoots(): Response {
-  return json({ roots: getFileRoots().map(toRootDto) });
+  return json({ roots: listRootDtos() });
+}
+
+function parseRootIds(raw: unknown): string[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const id of raw) {
+    if (typeof id !== 'string' || id.length === 0) return null;
+    if (seen.has(id)) return null;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+async function handleReorderRoots(req: Request): Promise<Response> {
+  const body = await readJsonObjectBody(req);
+  if (!body) return json({ error: t('apiError.invalidRequest') }, 400);
+  const ids = parseRootIds(body.rootIds);
+  if (!ids) return json({ error: t('apiError.invalidRequest') }, 400);
+  if (!reorderFileRoots(ids)) return json({ error: t('apiError.invalidRequest') }, 400);
+  broadcastSettingsUpdate('file-roots');
+  return json({ roots: listRootDtos() });
 }
 
 async function handleCreateRoot(req: Request): Promise<Response> {
@@ -109,6 +137,11 @@ function handleDeleteRoot(id: string): Response {
 export const fileRootRoutes: ApiRoute[] = [
   route({ method: 'GET', path: '/api/files/roots', handler: () => handleListRoots() }),
   route({ method: 'POST', path: '/api/files/roots', handler: (req) => handleCreateRoot(req) }),
+  route({
+    method: 'PUT',
+    path: '/api/files/roots/order',
+    handler: (req) => handleReorderRoots(req),
+  }),
   route({
     method: 'PATCH',
     path: '/api/files/roots/:id',

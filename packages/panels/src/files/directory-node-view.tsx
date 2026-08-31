@@ -9,13 +9,23 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@tmex/ui/context-menu';
-import { ChevronRight, ChevronsUpDown, Upload } from 'lucide-react';
+import { ChevronRight, ChevronsUpDown, GripVertical, Upload } from 'lucide-react';
 import type { ChangeEvent, ReactNode, RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { SortableRow } from '../device-tree/device-tree-dnd';
 import { fileIconColor, fileIconFor } from './file-icon';
 import { nodeBasename } from './file-tree-logic';
 import { CommonNodeMenuItems, DeviceBadge, NodeMenuHeader } from './node-menu';
 import type { DropZoneProps } from './use-directory-upload';
+
+/**
+ * 根行的拖拽接线（分节内的根目录排序）。手柄单独成钮而不是整行兼任：整行兼任会吞掉
+ * 键盘的 Enter/Space（KeyboardSensor 拿去起拖），根目录就再也展不开了。
+ */
+export interface DirectoryDragHandle {
+  sortable: SortableRow;
+  label: string;
+}
 
 export interface DirectoryNodeViewProps {
   root: FileRootDto;
@@ -30,6 +40,8 @@ export interface DirectoryNodeViewProps {
   fileInputRef: RefObject<HTMLInputElement | null>;
   onPickFiles: () => void;
   onFileInputChange: (e: ChangeEvent<HTMLInputElement>) => void;
+  /** 仅根行传：整节（根行 + 子树）作为一个可排序项。 */
+  drag?: DirectoryDragHandle;
   children: ReactNode;
 }
 
@@ -46,13 +58,32 @@ export function DirectoryNodeView({
   fileInputRef,
   onPickFiles,
   onFileInputChange,
+  drag,
   children,
 }: DirectoryNodeViewProps) {
   const { t } = useTranslation();
   const Icon = fileIconFor({ category: 'directory', name: root.name, type: 'dir' }, { expanded });
 
+  // 手柄占的是整节左侧的落槽（`pl-3.5` + 绝对定位），不进根行的缩进链——
+  // 否则根行会比它自己的子目录还靠右。
   return (
-    <div>
+    <div
+      ref={drag?.sortable.setNodeRef}
+      style={drag?.sortable.style}
+      className={cn(drag && 'relative pl-3.5', drag?.sortable.isDragging && 'opacity-60')}
+    >
+      {drag && (
+        <button
+          type="button"
+          ref={drag.sortable.setDragHandleRef}
+          {...drag.sortable.dragHandleProps}
+          aria-label={drag.label}
+          onClick={(e) => e.stopPropagation()}
+          className="absolute left-0 top-0 flex h-6 w-3.5 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground/50 hover:text-muted-foreground [@media(any-pointer:coarse)]:h-7"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+      )}
       <ContextMenu>
         <ContextMenuTrigger
           render={

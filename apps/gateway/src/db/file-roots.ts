@@ -81,3 +81,30 @@ export function deleteFileRoot(id: string): boolean {
   orm.delete(fileRoots).where(eq(fileRoots.id, id)).run();
   return true;
 }
+
+export function reorderFileRoots(orderedIds: string[]): boolean {
+  const orm = getOrmDb();
+  return orm.transaction((tx) => {
+    const all = tx
+      .select()
+      .from(fileRoots)
+      .orderBy(asc(fileRoots.sortOrder), asc(fileRoots.path))
+      .all();
+    const byId = new Map(all.map((row) => [row.id, row]));
+    const listed: FileRootRecord[] = [];
+    const listedIds = new Set<string>();
+    for (const id of orderedIds) {
+      if (listedIds.has(id)) continue;
+      const row = byId.get(id);
+      if (!row) continue;
+      listedIds.add(id);
+      listed.push(row);
+    }
+    if (listed.length === 0) return false;
+    const unlisted = all.filter((row) => !listedIds.has(row.id));
+    [...listed, ...unlisted].forEach((row, index) => {
+      tx.update(fileRoots).set({ sortOrder: index }).where(eq(fileRoots.id, row.id)).run();
+    });
+    return true;
+  });
+}
