@@ -3,10 +3,15 @@
 // 直接对内容组件的元素树做结构断言，并用 SSR 证明这条约束本身成立。
 
 import { describe, expect, test } from 'bun:test';
-import { DropdownMenuGroup, DropdownMenuLabel } from '@tmex/ui/dropdown-menu';
+import {
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '@tmex/ui/dropdown-menu';
 import { Children, type ReactElement, type ReactNode, isValidElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { AddDeviceMenuList } from './add-device-menu';
+import { Link } from 'react-router';
+import { ADD_REMOTE_NODE_PATH, AddDeviceMenuList } from './add-device-menu';
 import type { AddDeviceTarget } from './add-device-targets';
 
 const TARGETS: AddDeviceTarget[] = [
@@ -14,13 +19,20 @@ const TARGETS: AddDeviceTarget[] = [
   { runtimeNodeId: 'node-b', name: 'b', isSelf: false, open: () => {} },
 ];
 
-function renderList(): ReactElement {
+function renderList(targets: AddDeviceTarget[] = TARGETS): ReactElement {
   return AddDeviceMenuList({
-    targets: TARGETS,
+    targets,
     label: 'Add to',
     selfLabel: 'this node',
+    remoteNodeLabel: 'Add remote node',
+    remoteNodeHref: ADD_REMOTE_NODE_PATH,
     itemTitle: (target) => `add to ${target.name}`,
   }) as ReactElement;
+}
+
+function topLevel(targets?: AddDeviceTarget[]): ReactElement[] {
+  const root = renderList(targets) as ReactElement<{ children?: ReactNode }>;
+  return Children.toArray(root.props.children) as ReactElement[];
 }
 
 /** 遍历元素树，收集每个 `type === needle` 节点的祖先 type 列表。 */
@@ -42,9 +54,31 @@ describe('AddDeviceMenuList', () => {
     expect(labels[0]).toContain(DropdownMenuGroup);
   });
 
+  test('remote-node entry comes first, separated from the node group', () => {
+    const [remote, separator, group] = topLevel();
+    const remoteProps = remote.props as {
+      'data-testid'?: string;
+      render?: ReactElement<{ to?: string }>;
+    };
+    expect(remoteProps['data-testid']).toBe('devices-add-remote-node');
+    expect(remoteProps.render?.type).toBe(Link);
+    expect(remoteProps.render?.props.to).toBe('/settings?tab=nodes');
+    expect(separator.type).toBe(DropdownMenuSeparator);
+    expect(group.type).toBe(DropdownMenuGroup);
+  });
+
+  test('remote-node entry stays available with a single target', () => {
+    const [remote, , group] = topLevel([TARGETS[0]]);
+    expect((remote.props as { 'data-testid'?: string })['data-testid']).toBe(
+      'devices-add-remote-node'
+    );
+    const children = Children.toArray((group.props as { children?: ReactNode }).children);
+    expect(children).toHaveLength(2);
+  });
+
   test('renders one item per target', () => {
-    const group = renderList() as ReactElement<{ children?: ReactNode }>;
-    const children = Children.toArray(group.props.children);
+    const [, , group] = topLevel();
+    const children = Children.toArray((group.props as { children?: ReactNode }).children);
     expect(children).toHaveLength(1 + TARGETS.length);
   });
 });

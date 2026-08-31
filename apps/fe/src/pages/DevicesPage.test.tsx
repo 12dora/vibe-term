@@ -401,18 +401,18 @@ describe('PageActions（全页唯一的 +）', () => {
     expect(resetTag).toContain('disabled=""');
   });
 
-  test('只有一个 ready node 时是直接打开该节点对话框的单按钮', () => {
+  test('只有一个 ready node 时也是下拉菜单（「添加远程节点」始终可达）', () => {
     registerAddDeviceTarget(target({ runtimeNodeId: 'self', name: 'entry', isSelf: true }));
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <PageActions />
       </MemoryRouter>
     );
-    expect(html).toContain('data-testid="device-actions"');
-    expect(html).toContain('data-callback="true"');
+    expect(html).toContain('data-testid="devices-add"');
+    expect(html).not.toContain('data-testid="device-actions"');
   });
 
-  test('多个 ready node 时换成下拉菜单，触发器仍是 devices-add', () => {
+  test('多个 ready node 时同样是下拉菜单，触发器仍是 devices-add', () => {
     registerAddDeviceTarget(target({ runtimeNodeId: 'self', name: 'entry', isSelf: true }));
     registerAddDeviceTarget(target({ runtimeNodeId: REMOTE_ID, name: 'studio' }));
     const html = renderToStaticMarkup(

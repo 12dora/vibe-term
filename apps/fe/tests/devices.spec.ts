@@ -7,6 +7,7 @@ test('devices: SSH Config field only appears for configRef auth mode (ui)', asyn
   await expect(page.getByTestId('devices-page')).toBeVisible();
 
   await page.getByTestId('devices-add').click();
+  await page.getByTestId('devices-add-to-self').click();
   await expect(page.getByTestId('device-dialog')).toBeVisible();
 
   // 切换到 SSH 远程设备类型（默认认证方式落到 agent，非 configRef）
@@ -36,6 +37,7 @@ test('devices: create/edit/delete local device (ui)', async ({ page }) => {
   await expect(page.getByTestId('devices-page')).toBeVisible();
 
   await page.getByTestId('devices-add').click();
+  await page.getByTestId('devices-add-to-self').click();
   await expect(page.getByTestId('device-dialog')).toBeVisible();
 
   await page.getByTestId('device-name-input').fill(initialName);

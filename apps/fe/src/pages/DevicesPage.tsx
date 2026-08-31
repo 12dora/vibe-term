@@ -161,8 +161,9 @@ function ResetLayoutButton({ onConfirm, disabled }: { onConfirm: () => void; dis
 // Page actions component
 //
 // 「新建分组」「恢复默认布局」由页面主体登记入口（两棵子树，见 devices/page-commands.ts），
-// 没挂载就不显示。全页唯一的「+」：多个 ready 节点先选目标，单个直接开该节点的对话框；
-// 一个都没登记（standalone / 单面板）时退回派发全局事件，与旧行为一致。
+// 没挂载就不显示。全页唯一的「+」：只要登记过 ready 节点就恒定展开下拉（「添加远程节点」
+// 与各节点目标都在里面，单节点也不再走快捷路径）；一个都没登记（standalone / 单面板）时
+// 退回派发全局事件，与旧行为一致。
 export function PageActions() {
   const { t } = useTranslation();
   const targets = useAddDeviceTargets();
@@ -186,11 +187,7 @@ export function PageActions() {
           </IconTooltip>
         </>
       )}
-      {targets.length > 1 ? (
-        <AddDeviceMenu targets={targets} />
-      ) : (
-        <DeviceManagementActions onAddDevice={targets[0]?.open} />
-      )}
+      {targets.length > 0 ? <AddDeviceMenu targets={targets} /> : <DeviceManagementActions />}
     </div>
   );
 }
