@@ -88,6 +88,21 @@ export function createFourPaneSession(sessionName: string): {
   return { paneIds, windowId };
 }
 
+// window 整体网格尺寸：多 pane 场景下 tmex 保证的是 window 贴合视口，
+// 单个 pane 的占比由 tmux layout 决定，不在产品保证范围内。
+export function getWindowSize(target: string): { cols: number; rows: number } {
+  const [colsRaw, rowsRaw] = tmux(
+    `display-message -p -t ${target} '#{window_width}\t#{window_height}'`
+  )
+    .split('\t')
+    .map((value) => value.trim());
+
+  return {
+    cols: Number.parseInt(colsRaw ?? '0', 10),
+    rows: Number.parseInt(rowsRaw ?? '0', 10),
+  };
+}
+
 export function getPaneSize(paneId: string): { cols: number; rows: number } {
   const [colsRaw, rowsRaw] = tmux(`display-message -p -t ${paneId} '#{pane_width}\t#{pane_height}'`)
     .split('\t')
