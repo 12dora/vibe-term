@@ -127,7 +127,7 @@ export const I18N_RESOURCES = {
         "join": {
           "hub": {
             "title": "Prepare the relay server",
-            "description": "The relay (Hub) needs a public HTTPS address; if none exists, set one up via \"Use this machine as the relay\"."
+            "description": "Relay (Hub) needs a public HTTPS address; if none, set one up via \"Use this machine as the relay\"."
           },
           "token": {
             "title": "Generate a join token",
