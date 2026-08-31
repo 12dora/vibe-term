@@ -28,7 +28,7 @@ export function EnrollmentSection({
   pendings,
   onConfirm,
   onCancel,
-  busyPendingId,
+  busyIds,
   hubUnconfirmedIds,
   clearedIds,
 }: {
@@ -43,7 +43,8 @@ export function EnrollmentSection({
   onConfirm: (pending: PendingEnrollment) => void;
   /** 取消一条待确认记录（误点「添加」的回退路径）：仅删本地 pending，hub 侧记录会自然过期。 */
   onCancel: (pending: PendingEnrollment) => void;
-  busyPendingId: string | null;
+  /** 正在跑 admit 的 pending id：确认与取消都要禁用——取消一条 append 未定的记录会丢字节。 */
+  busyIds: string[];
   hubUnconfirmedIds: string[];
   /** 已 admit / 已过期的 pending id：对应的 join 串必须立刻从 DOM 里消失。 */
   clearedIds: string[];
@@ -111,6 +112,7 @@ export function EnrollmentSection({
           {pendings.map((pending) => {
             const id = pending.hubEnrollmentId;
             const unconfirmed = hubUnconfirmedIds.includes(id);
+            const busy = busyIds.includes(id);
             return (
               <li
                 key={id}
@@ -129,11 +131,11 @@ export function EnrollmentSection({
                   <Button
                     type="button"
                     size="xs"
-                    disabled={busyPendingId === id}
+                    disabled={busy}
                     onClick={() => onConfirm(pending)}
                     data-testid={`nodes-pending-confirm-${id}`}
                   >
-                    {busyPendingId === id ? <Loader2 className="animate-spin" /> : <Check />}
+                    {busy ? <Loader2 className="animate-spin" /> : <Check />}
                     {unconfirmed
                       ? t('nodes.enrollment.retryHub')
                       : t('nodes.enrollment.confirmPending')}
@@ -142,7 +144,7 @@ export function EnrollmentSection({
                     type="button"
                     variant="ghost"
                     size="xs"
-                    disabled={busyPendingId === id}
+                    disabled={busy}
                     onClick={() => onCancel(pending)}
                     data-testid={`nodes-pending-cancel-${id}`}
                   >

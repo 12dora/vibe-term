@@ -25,7 +25,9 @@ const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@
 const ConnectDevicesPanel = (await import('./connect-devices-panel')).default;
 const { MobilePlatformSteps } = await import('./mobile-guide');
 const { ComputerGuide, HostSteps } = await import('./computer-guide');
-const { JoinConfirmStatus, joinTokenTtlMinutes } = await import('./join-token');
+const { ADMITTED_SESSION_TTL_MS, JoinConfirmStatus, isSessionValid, joinTokenTtlMinutes } =
+  await import('./join-token');
+type JoinSession = Parameters<typeof isSessionValid>[0];
 const { getEnrollmentEngineState, resetEnrollmentEngineForTest, setEnrollmentEngineStateForTest } =
   await import('@/node/enrollment-engine');
 const { joinCommandPreview } = await import('./join-command-preview');
@@ -276,9 +278,21 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     createdAt: 1_700_000_000_000,
   };
 
+  const SESSION: JoinSession = {
+    id: 'e-1',
+    enrollPk: 'pk',
+    createdAt: PENDING.createdAt,
+    exp: PENDING.exp,
+    uid: 'user-1',
+    hubNodeId: HUB_NODE,
+    admitted: false,
+    admittedAt: null,
+    nodeId: null,
+  };
+
   function confirmStatus(
     patch: Parameters<typeof setEnrollmentEngineStateForTest>[0],
-    session: { id: string; admitted: boolean } = { id: 'e-1', admitted: false }
+    session: JoinSession = SESSION
   ): string {
     setEnrollmentEngineStateForTest(patch);
     const enrollment = {
@@ -324,7 +338,7 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
   });
 
   test('刷新后引擎投影没了，会话里的「已加入」标记仍然显示', () => {
-    const html = confirmStatus({}, { id: 'e-1', admitted: true });
+    const html = confirmStatus({}, { ...SESSION, admitted: true, admittedAt: PENDING.createdAt });
     expect(html).toContain('data-testid="connect-join-admitted"');
     expect(html).not.toContain('data-testid="connect-join-confirm"');
   });
@@ -344,5 +358,83 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     expect(joinTokenTtlMinutes(PENDING)).toBe(10);
     expect(joinTokenTtlMinutes({ ...PENDING, exp: PENDING.createdAt + 90_000 })).toBe(2);
     expect(joinTokenTtlMinutes({ ...PENDING, exp: PENDING.createdAt })).toBe(1);
+  });
+});
+
+describe('isSessionValid', () => {
+  const NOW = 1_700_000_100_000;
+  const SESSION: JoinSession = {
+    id: 'e-1',
+    enrollPk: 'pk',
+    createdAt: 1_700_000_000_000,
+    exp: 1_700_000_600_000,
+    uid: 'user-1',
+    hubNodeId: HUB_NODE,
+    admitted: false,
+    admittedAt: null,
+    nodeId: null,
+  };
+  const PENDING = {
+    hubEnrollmentId: 'e-1',
+    enrollPk: 'pk',
+    authorizationBytes: 'a',
+    authorizationSig: 's',
+    exp: 1_700_000_600_000,
+    name: null,
+    createdAt: 1_700_000_000_000,
+  };
+  const IDENTITY = { ready: true, uid: 'user-1', hubNodeId: HUB_NODE, nodeIds: null };
+
+  function check(
+    session: JoinSession,
+    over: Partial<Parameters<typeof isSessionValid>[1]> = {}
+  ): boolean {
+    return isSessionValid(session, {
+      identity: IDENTITY,
+      pendings: [PENDING],
+      admittedByEngine: false,
+      now: NOW,
+      ...over,
+    });
+  }
+
+  test('未加入：id + enrollPk + createdAt 三样都要对上权威 pending', () => {
+    expect(check(SESSION)).toBe(true);
+    expect(check({ ...SESSION, enrollPk: 'other' })).toBe(false);
+    expect(check({ ...SESSION, createdAt: 1 })).toBe(false);
+    expect(check(SESSION, { pendings: [] })).toBe(false);
+  });
+
+  test('换了账号或换了 hub：这条会话一律作废', () => {
+    expect(check({ ...SESSION, uid: 'user-2' })).toBe(false);
+    expect(check({ ...SESSION, hubNodeId: 'other-hub' })).toBe(false);
+    expect(check({ ...SESSION, uid: null })).toBe(false);
+  });
+
+  test('已加入的标记 24 小时后过期', () => {
+    const admitted = { ...SESSION, admitted: true, admittedAt: NOW - 60_000 };
+    expect(check(admitted, { pendings: [] })).toBe(true);
+    expect(
+      check({ ...admitted, admittedAt: NOW - ADMITTED_SESSION_TTL_MS - 1 }, { pendings: [] })
+    ).toBe(false);
+  });
+
+  test('成员集拿得到时顺带对账：节点已经不在 mesh 里就不再说「已加入」', () => {
+    const admitted = { ...SESSION, admitted: true, admittedAt: NOW, nodeId: 'node-a' };
+    expect(
+      check(admitted, {
+        pendings: [],
+        identity: { ...IDENTITY, nodeIds: ['node-a', 'node-b'] },
+      })
+    ).toBe(true);
+    expect(check(admitted, { pendings: [], identity: { ...IDENTITY, nodeIds: ['node-b'] } })).toBe(
+      false
+    );
+    // 列表还没加载出来（null）时不做判断，只按时效。
+    expect(check(admitted, { pendings: [] })).toBe(true);
+  });
+
+  test('引擎刚刚 admit、pending 已被删：会话立刻按已加入处理', () => {
+    expect(check(SESSION, { pendings: [], admittedByEngine: true })).toBe(true);
   });
 });

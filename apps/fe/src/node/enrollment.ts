@@ -86,8 +86,15 @@ function storage(): PendingStorage | null {
 let cache: PendingEnrollment[] | null = null;
 const listeners = new Set<() => void>();
 
+/** 一个订阅者抛异常不能把后面的订阅者和调用方一起带走（与引擎的 `notify()` 同一条规则）。 */
 function notify(): void {
-  for (const listener of listeners) listener();
+  for (const listener of [...listeners]) {
+    try {
+      listener();
+    } catch {
+      // 订阅者自己的渲染错误由 React 的错误边界处理，store 只保证状态一致。
+    }
+  }
 }
 
 /** 可以落盘的字段——公开投影**只**由它们组成，多出来的一律丢掉。 */
@@ -312,7 +319,13 @@ let unconfirmedIds: string[] = [];
 
 function notifyUnconfirmed(): void {
   unconfirmedIds = [...unconfirmedRecords.keys()];
-  for (const listener of unconfirmedListeners) listener();
+  for (const listener of [...unconfirmedListeners]) {
+    try {
+      listener();
+    } catch {
+      // 同上：一个订阅者抛异常不该让「记录已暂存」这件事对其余订阅者失效。
+    }
+  }
 }
 
 export function subscribeUnconfirmedRecords(listener: () => void): () => void {

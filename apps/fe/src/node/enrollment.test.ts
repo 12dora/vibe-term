@@ -64,6 +64,7 @@ import {
   requireRootPublicKey,
   setPendingStorage,
   submitAdmitRecord,
+  subscribePendingEnrollments,
   subscribeUnconfirmedRecords,
   unconfirmedRecord,
 } from './enrollment';
@@ -1067,5 +1068,49 @@ describe('submitAdmitRecord', () => {
     forgetUnconfirmedRecord('e-5');
     expect(ticks).toBe(2);
     stop();
+  });
+});
+
+describe('订阅者隔离', () => {
+  test('一个 pending 订阅者抛异常，不影响其余订阅者，也不牵连写入方', async () => {
+    const seen: string[] = [];
+    const offBad = subscribePendingEnrollments(() => {
+      seen.push('bad');
+      throw new Error('boom');
+    });
+    const offGood = subscribePendingEnrollments(() => {
+      seen.push('good');
+    });
+    const { pending } = await makeEnrollment();
+
+    expect(() => addPendingEnrollment(pending)).not.toThrow();
+    expect(seen).toEqual(['bad', 'good']);
+    expect(listPendingEnrollments()).toHaveLength(1);
+    offBad();
+    offGood();
+  });
+
+  test('未确认记录的订阅者同样互不牵连', async () => {
+    clearUnconfirmedRecords();
+    const seen: string[] = [];
+    const offBad = subscribeUnconfirmedRecords(() => {
+      seen.push('bad');
+      throw new Error('boom');
+    });
+    const offGood = subscribeUnconfirmedRecords(() => {
+      seen.push('good');
+    });
+    const api = {
+      appendKeyLog: () => Promise.resolve({ ok: false as const, code: 'HUB_TIMEOUT' }),
+    };
+
+    expect(await submitAdmitRecord(api, 'e-notify', { bytes: 'a', sig: 'b' })).toEqual({
+      kind: 'unconfirmed',
+    });
+    expect(seen).toEqual(['bad', 'good']);
+    expect(listUnconfirmedRecordIds()).toEqual(['e-notify']);
+    offBad();
+    offGood();
+    clearUnconfirmedRecords();
   });
 });

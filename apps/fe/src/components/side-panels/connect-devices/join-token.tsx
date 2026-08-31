@@ -12,10 +12,17 @@ import {
 } from '@/node/enrollment';
 import {
   type EnrollmentEngineState,
+  admittedNodeIdFor,
   useEnrollmentEngine,
   useEnrollmentEngineState,
 } from '@/node/enrollment-engine';
-import { refreshMeshNodes, useHubNode, useSharedAuthMode } from '@/node/mesh-nodes';
+import {
+  getMeshNodesState,
+  refreshMeshNodes,
+  subscribeMeshNodes,
+  useHubNode,
+  useSharedAuthMode,
+} from '@/node/mesh-nodes';
 import { PLACEHOLDER_KDF, type ResolvedMode } from '@/pages/settings/nodes/management/types';
 import {
   type CreateEnrollmentState,
@@ -26,7 +33,14 @@ import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { Check, Loader2, ShieldCheck } from 'lucide-react';
-import { type ReactElement, useEffect, useState, useSyncExternalStore } from 'react';
+import {
+  type ReactElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { CommandBlock } from './command-block';
 import { GuideLink } from './guide-step';
@@ -38,16 +52,34 @@ const NO_MESH_NODES: MeshNode[] = [];
 const refreshAfterAdmit = () => void refreshMeshNodes();
 
 /**
- * 本次面板会话跟踪的那条 enrollment（**只有 id 与是否已加入，绝不含加入码或私钥**）。
+ * 本次面板会话跟踪的那条 enrollment。**全是公开数据，绝不含加入码或私钥**。
  *
  * 落 sessionStorage：面板关掉再开、或整页刷新后，步骤 6 仍要停在正确的状态——
  * pending 本身活在 `enrollment.ts` 的 store 里，丢的只是「哪条是本次会话建的」这层关联，
  * 而「已加入」在 pending 被删之后只剩这个标记能证明（见 R4 #8）。
+ *
+ * 光存 id 不够：恢复回来的会话必须能证明自己讲的是**同一条 enrollment、同一套身份**，
+ * 否则一个 id 相同的新 enrollment、甚至换了账号之后，都会认领这条陈旧的「已加入」
+ * （见 R5「恢复的面板会话缺少绑定」）。因此还带 `enrollPk`/`createdAt`（对拍 pending）、
+ * `uid`/`hubNodeId`（对拍当前身份）与 `admittedAt`（标记 24 小时后自然过期）。
  */
 export interface JoinSession {
   id: string;
+  /** base64url 的一次性注册公钥：pending 的唯一身份，公开数据。 */
+  enrollPk: string;
+  createdAt: number;
+  exp: number;
+  uid: string | null;
+  hubNodeId: string | null;
   admitted: boolean;
+  /** 打上「已加入」标记的时刻；未加入为 `null`。 */
+  admittedAt: number | null;
+  /** admit 那张证书里的新节点 id；重发路径拿不到证书，为 `null`。 */
+  nodeId: string | null;
 }
+
+/** 「已加入」标记的最长寿命：过了就当作过期信息丢掉，别永远赖在步骤 6 上。 */
+export const ADMITTED_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 const SESSION_STORAGE_KEY = 'tmex.connectDevices.joinSession';
 
@@ -62,10 +94,25 @@ function readJoinSession(): JoinSession | null {
     if (!parsed || typeof parsed !== 'object') return null;
     const row = parsed as Record<string, unknown>;
     if (typeof row.id !== 'string' || !row.id) return null;
-    return { id: row.id, admitted: row.admitted === true };
+    if (typeof row.enrollPk !== 'string' || !row.enrollPk) return null;
+    return {
+      id: row.id,
+      enrollPk: row.enrollPk,
+      createdAt: numberOr(row.createdAt, 0),
+      exp: numberOr(row.exp, 0),
+      uid: typeof row.uid === 'string' ? row.uid : null,
+      hubNodeId: typeof row.hubNodeId === 'string' ? row.hubNodeId : null,
+      admitted: row.admitted === true,
+      admittedAt: typeof row.admittedAt === 'number' ? row.admittedAt : null,
+      nodeId: typeof row.nodeId === 'string' ? row.nodeId : null,
+    };
   } catch {
     return null;
   }
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function writeJoinSession(session: JoinSession | null): JoinSession | null {
@@ -100,48 +147,125 @@ export interface JoinEnrollment {
   dialog: ReactElement | null;
 }
 
-/** 本次会话那条 enrollment 是否已经走完：过期、取消，或刷新回来时它早已不在 pending store 里。 */
-function isSessionGone(
-  id: string,
-  engine: EnrollmentEngineState,
-  pendings: PendingEnrollment[]
+/** 当前这套身份：会话必须与它对得上才作数。 */
+export interface JoinSessionIdentity {
+  /** `/api/auth/mode` 已经拿到：还没拿到时**什么都不判**，否则刷新瞬间会把会话误清掉。 */
+  ready: boolean;
+  uid: string | null;
+  hubNodeId: string | null;
+  /** mesh 成员集里的 node id；`null` 表示列表还没加载出来，此时不做成员对账。 */
+  nodeIds: string[] | null;
+}
+
+/** 「已加入」标记还算不算数：24 小时内，且（拿得到成员集时）那个节点还在 mesh 里。 */
+function isAdmittedMarkerFresh(
+  session: JoinSession,
+  identity: JoinSessionIdentity,
+  now: number
 ): boolean {
-  if (engine.expiredIds.includes(id) || engine.cancelledIds.includes(id)) return true;
-  return !pendings.some((row) => row.hubEnrollmentId === id);
+  if (session.admittedAt !== null && now - session.admittedAt > ADMITTED_SESSION_TTL_MS) {
+    return false;
+  }
+  // 节点已被吊销 / 退出 mesh：步骤 6 不该继续说「已加入」。
+  if (session.nodeId && identity.nodeIds) return identity.nodeIds.includes(session.nodeId);
+  return true;
 }
 
 /**
- * 跟踪本次面板会话那条 enrollment：创建时记下、admit 后打上标记、终态时清掉，
+ * 恢复出来的会话是否还该继续显示。
+ *
+ * 未加入的那条必须在权威 pending store 里找得到**同一条**（id + `enrollPk` + `createdAt`）；
+ * 已加入的那条只剩标记可查，于是靠身份绑定 + 24 小时时效 + 成员集对账兜底。
+ */
+export function isSessionValid(
+  session: JoinSession,
+  input: {
+    identity: JoinSessionIdentity;
+    pendings: PendingEnrollment[];
+    admittedByEngine: boolean;
+    now: number;
+  }
+): boolean {
+  if (session.uid !== input.identity.uid || session.hubNodeId !== input.identity.hubNodeId) {
+    return false;
+  }
+  if (session.admitted || input.admittedByEngine) {
+    return isAdmittedMarkerFresh(session, input.identity, input.now);
+  }
+  return input.pendings.some(
+    (row) =>
+      row.hubEnrollmentId === session.id &&
+      row.enrollPk === session.enrollPk &&
+      row.createdAt === session.createdAt
+  );
+}
+
+function startSession(pending: PendingEnrollment, identity: JoinSessionIdentity): JoinSession {
+  return {
+    id: pending.hubEnrollmentId,
+    enrollPk: pending.enrollPk,
+    createdAt: pending.createdAt,
+    exp: pending.exp,
+    uid: identity.uid,
+    hubNodeId: identity.hubNodeId,
+    admitted: false,
+    admittedAt: null,
+    nodeId: null,
+  };
+}
+
+/**
+ * 跟踪本次面板会话那条 enrollment：创建时记下、admit 后打上标记、失效时清掉，
  * 整个过程同步落 sessionStorage，刷新 / 重开面板后步骤 6 仍停在正确的状态。
  */
-function useJoinSession(createdId: string | null, engine: EnrollmentEngineState) {
+function useJoinSession(
+  created: PendingEnrollment | null,
+  engine: EnrollmentEngineState,
+  identity: JoinSessionIdentity
+): JoinSession | null {
   const pendings = useSyncExternalStore(
     subscribePendingEnrollments,
     listPendingEnrollments,
     listPendingEnrollments
   );
   const [session, setSession] = useState<JoinSession | null>(readJoinSession);
+  // 每条新建的 enrollment 只开一次会话：身份刷新（成员集变化）不该把已经清掉的会话复活。
+  const startedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (createdId) setSession(writeJoinSession({ id: createdId, admitted: false }));
-  }, [createdId]);
+    if (!created || startedRef.current === created.hubEnrollmentId) return;
+    startedRef.current = created.hubEnrollmentId;
+    setSession(writeJoinSession(startSession(created, identity)));
+  }, [created, identity]);
 
-  const id = session?.id ?? null;
-  const admitted = id !== null && (session?.admitted === true || engine.admittedIds.includes(id));
-  const gone = id !== null && !admitted && isSessionGone(id, engine, pendings);
+  const admittedByEngine = session !== null && engine.admittedIds.includes(session.id);
+  const valid =
+    identity.ready &&
+    session !== null &&
+    isSessionValid(session, { identity, pendings, admittedByEngine, now: Date.now() });
   useEffect(() => {
-    if (id === null) return;
-    if (gone) setSession(writeJoinSession(null));
-    else if (admitted) {
-      setSession((row) => (row?.admitted ? row : writeJoinSession({ id, admitted: true })));
+    if (!session || !identity.ready) return;
+    if (!valid) {
+      setSession(writeJoinSession(null));
+      return;
     }
-  }, [id, gone, admitted]);
+    if (admittedByEngine && !session.admitted) {
+      setSession(
+        writeJoinSession({
+          ...session,
+          admitted: true,
+          admittedAt: Date.now(),
+          nodeId: admittedNodeIdFor(session.id),
+        })
+      );
+    }
+  }, [session, valid, admittedByEngine, identity.ready]);
 
-  return gone ? null : session;
+  return valid ? session : null;
 }
 
 export function useJoinEnrollment(): JoinEnrollment {
   const api = defaultAuthApi;
-  const { mode: rawMode, meshEnabled } = useSharedAuthMode(api);
+  const { mode: rawMode, loaded: modeLoaded, meshEnabled } = useSharedAuthMode(api);
   const hub = useHubNode(NO_MESH_NODES, {
     enabled: meshEnabled,
     hubNodeId: rawMode?.hubNodeId ?? null,
@@ -185,7 +309,18 @@ export function useJoinEnrollment(): JoinEnrollment {
     clearedIds: engine.clearedIds,
   });
 
-  const session = useJoinSession(create.created?.pending.hubEnrollmentId ?? null, engine);
+  const meshState = useSyncExternalStore(subscribeMeshNodes, getMeshNodesState, getMeshNodesState);
+  // 只读共享 store 的快照，不额外拉一次 `/api/mesh/nodes`：拿不到就退回纯时效判定。
+  const identity = useMemo<JoinSessionIdentity>(
+    () => ({
+      ready: modeLoaded && rawMode !== null,
+      uid: rawMode?.uid ?? null,
+      hubNodeId: rawMode?.hubNodeId ?? null,
+      nodeIds: meshState.loadedAt === null ? null : meshState.nodes.map((node) => node.id),
+    }),
+    [modeLoaded, rawMode, meshState.loadedAt, meshState.nodes]
+  );
+  const session = useJoinSession(create.created?.pending ?? null, engine, identity);
 
   return {
     meshEnabled,
@@ -303,7 +438,7 @@ export function JoinConfirmStatus({ enrollment }: { enrollment: JoinEnrollment }
   }
 
   const unconfirmed = engine.hubUnconfirmedIds.includes(id);
-  const busy = engine.busyPendingId === id;
+  const busy = engine.busyIds.includes(id);
   // hub 未确认时手上还留着一份可重发的记录，同样要给按钮。
   const confirmable = unconfirmed || engine.certificateReadyIds.includes(id);
   return (

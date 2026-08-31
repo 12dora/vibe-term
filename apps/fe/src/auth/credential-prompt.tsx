@@ -82,6 +82,16 @@ export function leaseSigner(signer: RecordSigner): () => void {
 }
 
 /**
+ * 放弃全部租约簿记（页面级重置 / 测试）：欠着的清零动作**立刻补上**，
+ * 否则一份被推迟清零的根钥 seed 会随着租约表一起被遗忘，永远留在堆里（见 R5 #9）。
+ */
+export function resetSignerLeasesForTest(): void {
+  leases.clear();
+  for (const signer of deferredWipes) wipeSigner(signer);
+  deferredWipes.clear();
+}
+
+/**
  * 记住刚做完的密码 / passkey 交互，5 分钟内自动复用。
  * 到期由定时器主动清零，而不是等下一次 `takeRememberedSigner()`——否则根私钥副本会一直留在堆里。
  */

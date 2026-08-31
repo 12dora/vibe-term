@@ -15,6 +15,7 @@ import {
   isRetryableCredentialError,
   leaseSigner,
   rememberSigner,
+  resetSignerLeasesForTest,
   runWithChoice,
   signerFromChoice,
   takeRememberedSigner,
@@ -271,5 +272,19 @@ describe('复用窗口的归属与租约', () => {
     expect(rootKey.seed.every((byte) => byte === 0)).toBe(true);
     // 重复释放不该再动别的东西。
     release();
+  });
+
+  test('重置租约簿记时，把欠着的那次清零一并补上', () => {
+    const owner = Symbol('owner');
+    const rootKey = rootKeyFromSeed(new Uint8Array(32).fill(0x34));
+    const signer = { kind: 'root', rootKey } as const;
+    rememberSigner(signer, NOW, owner);
+    // 租约还挂着就被重置：簿记直接丢掉的话，这份 seed 就永远留在堆里了。
+    leaseSigner(signer);
+    forgetSigner(owner);
+    expect(rootKey.seed.every((byte) => byte === 0)).toBe(false);
+
+    resetSignerLeasesForTest();
+    expect(rootKey.seed.every((byte) => byte === 0)).toBe(true);
   });
 });

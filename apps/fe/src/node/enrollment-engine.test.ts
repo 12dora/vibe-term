@@ -20,8 +20,10 @@ const {
   rootKeyFromSeed,
 } = await import('@tmex/shared/auth');
 const { forgetSigner, rememberSigner } = await import('@/auth/credential-prompt');
+const { headFromResponse } = await import('@/auth/key-log-actions');
 const {
   addPendingEnrollment,
+  buildRevokeNodeRecord,
   clearPendingEnrollments,
   clearUnconfirmedRecords,
   listPendingEnrollments,
@@ -37,6 +39,7 @@ const {
   getEnrollmentEngineState,
   registerAdmitContext,
   resetEnrollmentEngineForTest,
+  withKeyLogLock,
 } = await import('./enrollment-engine');
 const { offerCertificate } = await import('./enrollment-watch');
 
@@ -105,13 +108,14 @@ interface PromptSpy {
   requests: number;
 }
 
-function promptSpy(signer: unknown = null): PromptSpy {
+function promptSpy(signer: unknown = null, delayRounds = 0): PromptSpy {
   const spy: PromptSpy = {
     requests: 0,
     prompt: {
-      request: () => {
+      request: async () => {
         spy.requests += 1;
-        return Promise.resolve(signer);
+        for (let i = 0; i < delayRounds; i += 1) await flush();
+        return signer;
       },
       withSigner: () => Promise.resolve(null),
       forget: () => undefined,
@@ -608,6 +612,264 @@ describe('过期清理', () => {
   });
 });
 
+describe('事务期间取消', () => {
+  /** append 停在半空的 api：`settleAppend` 决定这一次到底算成功还是断线。 */
+  function pendingAppendApi(): {
+    api: AuthApi;
+    appended: { bytes: string; sig: string }[];
+    settleAppend: (result: { ok: true; hubAck: true } | Error) => void;
+  } {
+    const appended: { bytes: string; sig: string }[] = [];
+    let finish: ((result: { ok: true; hubAck: true } | Error) => void) | null = null;
+    return {
+      appended,
+      settleAppend: (result) => finish?.(result),
+      api: {
+        keyLogHead: () =>
+          Promise.resolve({ seq: 5, hash: encodeBase64url(new Uint8Array(32).fill(7)) }),
+        appendKeyLog: (body: { bytes: string; sig: string }) => {
+          appended.push(body);
+          return new Promise((resolve, reject) => {
+            finish = (result) => (result instanceof Error ? reject(result) : resolve(result));
+          });
+        },
+      } as unknown as AuthApi,
+    };
+  }
+
+  test('append 在飞时按取消：先记意向，hub 确认之后按「已加入」收场', async () => {
+    const { pending, candidate } = await fixture('e-cancel-ok');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = pendingAppendApi();
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext(context(spy.api));
+    push(candidate);
+    await settle();
+    expect(spy.appended).toHaveLength(1);
+    expect(getEnrollmentEngineState().busyIds).toEqual(['e-cancel-ok']);
+
+    cancelPending(pending);
+    // 处置还没明朗：pending 与那份已签字节一个都不能丢。
+    expect(listPendingEnrollments()).toHaveLength(1);
+    expect(unconfirmedRecord('e-cancel-ok')).not.toBeNull();
+
+    spy.settleAppend({ ok: true, hubAck: true });
+    await settle();
+    expect(getEnrollmentEngineState().admittedIds).toEqual(['e-cancel-ok']);
+    expect(getEnrollmentEngineState().cancelledIds).toEqual([]);
+    expect(getEnrollmentEngineState().busyIds).toEqual([]);
+    expect(unconfirmedRecord('e-cancel-ok')).toBeNull();
+    ctx.release();
+  });
+
+  test('append 在飞时按取消，请求随后抛异常：字节与 pending 都留着等重发', async () => {
+    const { pending, candidate } = await fixture('e-cancel-throw');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = pendingAppendApi();
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext(context(spy.api));
+    push(candidate);
+    await settle();
+    cancelPending(pending);
+    spy.settleAppend(new Error('network down'));
+    await settle();
+
+    // 结果未知：删掉就再也送不进 hub 了，取消意向只能作废。
+    expect(unconfirmedRecord('e-cancel-throw')).toEqual(spy.appended[0]);
+    expect(listPendingEnrollments()).toHaveLength(1);
+    expect(getEnrollmentEngineState().cancelledIds).toEqual([]);
+    expect(getEnrollmentEngineState().hubUnconfirmedIds).toEqual(['e-cancel-throw']);
+    expect(getEnrollmentEngineState().busyIds).toEqual([]);
+
+    // 重发路径照常接得上：同一份字节，不重新签。
+    const resend = apiSpy({ ok: true, hubAck: true });
+    const retry = registerAdmitContext(context(resend.api));
+    await retry.confirmManually('e-cancel-throw');
+    expect(resend.appended).toEqual([spy.appended[0]]);
+    retry.release();
+    ctx.release();
+  });
+
+  test('事务在飞但什么都没送出去：取消在事务收尾时照常兑现', async () => {
+    const { pending } = await fixture('e-cancel-idle');
+    addPendingEnrollment(pending);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const prompt = promptSpy({ kind: 'root', rootKey });
+    const hubApi = {
+      getEnrollment: async () => {
+        for (let i = 0; i < 4; i += 1) await flush();
+        return { status: 'pending' };
+      },
+    } as unknown as AdmitContext['hubApi'];
+    const ctx = registerAdmitContext({ ...context(spy.api, prompt.prompt), hubApi });
+
+    const confirming = ctx.confirmManually('e-cancel-idle');
+    await flush();
+    await flush();
+    // 已进临界区，卡在 hub 查询上：这时候的取消同样只能先记意向。
+    expect(getEnrollmentEngineState().busyIds).toEqual(['e-cancel-idle']);
+    cancelPending(pending);
+    expect(listPendingEnrollments()).toHaveLength(1);
+
+    await confirming;
+    await settle();
+    expect(listPendingEnrollments()).toHaveLength(0);
+    expect(getEnrollmentEngineState().cancelledIds).toEqual(['e-cancel-idle']);
+    expect(spy.appended).toHaveLength(0);
+    ctx.release();
+  });
+});
+
+describe('操作上下文快照', () => {
+  test('手动确认只查发起槽位快照里的 hub 通道', async () => {
+    const { pending, candidate } = await fixture('e-hub-snap');
+    addPendingEnrollment(pending);
+    const calls: string[] = [];
+    const hubOfPage = {
+      getEnrollment: () => {
+        calls.push('page');
+        return Promise.resolve({
+          status: 'redeemed',
+          enroll_pk: pending.enrollPk,
+          certificate: candidate.certificate,
+          cert_sig: candidate.certSig,
+        });
+      },
+    } as unknown as AdmitContext['hubApi'];
+    const hubOfPanel = {
+      getEnrollment: () => {
+        calls.push('panel');
+        return Promise.resolve({ status: 'pending' });
+      },
+    } as unknown as AdmitContext['hubApi'];
+
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const prompt = promptSpy({ kind: 'root', rootKey });
+    const page = registerAdmitContext({
+      ...context(spy.api, prompt.prompt),
+      hubApi: hubOfPage,
+    });
+    // 后注册的面板带着另一个 hub 通道：旧实现会让它抢走这次查询。
+    const panel = registerAdmitContext({ ...context(spy.api), hubApi: hubOfPanel });
+
+    await page.confirmManually('e-hub-snap');
+    await settle();
+
+    expect(calls).toEqual(['page']);
+    expect(spy.appended).toHaveLength(1);
+    panel.release();
+    page.release();
+  });
+
+  test('凭据交互期间槽位换了 hub：这次确认整条作废', async () => {
+    const { pending } = await fixture('e-regen');
+    addPendingEnrollment(pending);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const prompt = promptSpy({ kind: 'root', rootKey }, 3);
+    const base = context(spy.api, prompt.prompt);
+    const ctx = registerAdmitContext(base);
+
+    const confirming = ctx.confirmManually('e-regen');
+    await flush();
+    ctx.update({
+      ...base,
+      hubApi: {
+        getEnrollment: () => Promise.resolve({ status: 'pending' }),
+      } as unknown as AdmitContext['hubApi'],
+    });
+    await confirming;
+    await settle();
+
+    expect(prompt.requests).toBe(1);
+    expect(spy.appended).toHaveLength(0);
+    expect(listPendingEnrollments()).toHaveLength(1);
+    ctx.release();
+  });
+
+  test('重置之后回来的旧操作不再往新状态上写', async () => {
+    const { pending, candidate } = await fixture('e-generation');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    let finish: (result: { ok: true; hubAck: true }) => void = () => undefined;
+    const flight = new Promise<{ ok: true; hubAck: true }>((resolve) => {
+      finish = resolve;
+    });
+    let appendCalls = 0;
+    const api = {
+      keyLogHead: () =>
+        Promise.resolve({ seq: 5, hash: encodeBase64url(new Uint8Array(32).fill(7)) }),
+      appendKeyLog: () => {
+        appendCalls += 1;
+        return flight;
+      },
+    } as unknown as AuthApi;
+
+    addPendingEnrollment(pending);
+    registerAdmitContext(context(api));
+    push(candidate);
+    await settle();
+    expect(appendCalls).toBe(1);
+
+    // 请求还在飞的时候重置：回来的结果属于上一代，一个字段都不该落到新状态上。
+    resetEnrollmentEngineForTest();
+    finish({ ok: true, hubAck: true });
+    await settle();
+
+    expect(getEnrollmentEngineState().admittedIds).toEqual([]);
+    expect(getEnrollmentEngineState().busyIds).toEqual([]);
+  });
+});
+
+describe('与吊销共用一条写锁', () => {
+  test('吊销与 admit 交叠时串行执行，各自签在前一条之后的头上', async () => {
+    const { pending, candidate } = await fixture('e-revoke-race');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const order: string[] = [];
+    const appended: { bytes: string; sig: string }[] = [];
+    const api = {
+      keyLogHead: async () => {
+        order.push('head');
+        await flush();
+        return { seq: 5 + appended.length, hash: encodeBase64url(new Uint8Array(32).fill(7)) };
+      },
+      appendKeyLog: (body: { bytes: string; sig: string }) => {
+        order.push('append');
+        appended.push(body);
+        return Promise.resolve({ ok: true as const, hubAck: true });
+      },
+    } as unknown as AuthApi;
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext(context(api));
+    // 与 `use-node-row-actions.ts` 的吊销同构：凭据对话框在锁外，锁里只有 head → 签名 → append。
+    const revoking = withKeyLogLock(async () => {
+      const head = headFromResponse(await api.keyLogHead());
+      const record = await buildRevokeNodeRecord({
+        head,
+        rootEpoch: 1,
+        uid: UID,
+        nodeIdHex: '0a'.repeat(16),
+        reason: 'lost',
+        signer: { kind: 'root', rootKey },
+      });
+      return api.appendKeyLog({
+        bytes: encodeBase64url(record.bytes),
+        sig: encodeBase64url(record.sig),
+      });
+    });
+    push(candidate);
+    await revoking;
+    await settle(12);
+
+    expect(order).toEqual(['head', 'append', 'head', 'append']);
+    expect(recordSeq(appended[0])).toBe(6n);
+    expect(recordSeq(appended[1])).toBe(7n);
+    expect(getEnrollmentEngineState().admittedIds).toEqual(['e-revoke-race']);
+    ctx.release();
+  });
+});
+
 describe('resetEnrollmentEngineForTest', () => {
   test('撤掉回路与上下文，并把协作 store 一起归零', async () => {
     const { pending } = await fixture('e-11');
@@ -628,6 +890,7 @@ describe('resetEnrollmentEngineForTest', () => {
     });
     expect(getEnrollmentEngineState()).toEqual({
       busyPendingId: null,
+      busyIds: [],
       admittedIds: [],
       expiredIds: [],
       cancelledIds: [],

@@ -2,6 +2,7 @@
 
 import { headFromResponse } from '@/auth/key-log-actions';
 import { buildRevokeNodeRecord, classifyKeyLogFailure } from '@/node/enrollment';
+import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import { encodeBase64url } from '@tmex/shared/auth';
@@ -43,6 +44,11 @@ export function useNodeRowActions(
    *
    * 凭据走 `withSigner`（**不**进 5 分钟复用窗口）：吊销是破坏性动作，每次都要用户当场确认；
    * 根钥路径签完立刻清零 seed。
+   *
+   * `keyLogHead → 签名 → append` 整段进引擎那条 key log 写锁：head 是全局的，
+   * 一条吊销与一条 admit 并行读到同一个头就会造出两条同 seq 的记录，hub 只收得下一条，
+   * 另一条永久 `seq_gap`（见 R5 #1）。等用户操作的凭据对话框必须留在锁**外**，
+   * 否则用户发一会儿呆就把所有 admit 卡住了。
    */
   const revoke = useCallback(async () => {
     const confirmed = globalThis.confirm?.(t('nodes.revoke.confirmText', { name: row.name }));
@@ -51,22 +57,23 @@ export function useNodeRowActions(
     setBusy(true);
     try {
       const rootEpoch = requireRootEpoch(mode);
-      const head = headFromResponse(await api.keyLogHead());
       const result = await prompt.withSigner(
-        async (signer) => {
-          const record = await buildRevokeNodeRecord({
-            head,
-            rootEpoch,
-            uid: mode.uid,
-            nodeIdHex: row.id,
-            reason,
-            signer,
-          });
-          return api.appendKeyLog(
-            { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
-            { hubSync: true }
-          );
-        },
+        (signer) =>
+          withKeyLogLock(async () => {
+            const head = headFromResponse(await api.keyLogHead());
+            const record = await buildRevokeNodeRecord({
+              head,
+              rootEpoch,
+              uid: mode.uid,
+              nodeIdHex: row.id,
+              reason,
+              signer,
+            });
+            return api.appendKeyLog(
+              { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
+              { hubSync: true }
+            );
+          }),
         { purpose: 'revoke' }
       );
       if (!result) return;

@@ -151,7 +151,7 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           pendings={pendings}
           onConfirm={(pending) => void confirmManually(pending.hubEnrollmentId)}
           onCancel={cancelPending}
-          busyPendingId={engine.busyPendingId}
+          busyIds={engine.busyIds}
           hubUnconfirmedIds={engine.hubUnconfirmedIds}
           clearedIds={engine.clearedIds}
         />
