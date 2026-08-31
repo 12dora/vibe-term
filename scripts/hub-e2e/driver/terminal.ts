@@ -16,6 +16,7 @@ function buildDeviceConnect(deviceId: string): { kind: number; payload: Uint8Arr
 
 function buildTmuxSelect(params: {
   deviceId: string;
+  windowId: string;
   paneId: string;
   selectToken: Uint8Array;
   wantHistory: boolean;
@@ -26,7 +27,7 @@ function buildTmuxSelect(params: {
     kind: wsBorsh.KIND_TMUX_SELECT,
     payload: wsBorsh.encodePayload(wsBorsh.schema.TmuxSelectSchema, {
       deviceId: params.deviceId,
-      windowId: null,
+      windowId: params.windowId,
       paneId: params.paneId,
       selectToken: params.selectToken,
       wantHistory: params.wantHistory,
@@ -98,6 +99,7 @@ let opened = false;
 let helloOk = false;
 let connected = false;
 let snapshotPane: string | null = null;
+let snapshotWindow: string | null = null;
 
 function send(kind: number, payload: Uint8Array): void {
   const frame = wsBorsh.encodeEnvelope(kind, payload, seq);
@@ -160,10 +162,16 @@ ws.onmessage = (ev) => {
   if (envelope.kind === wsBorsh.KIND_STATE_SNAPSHOT) {
     try {
       const snap = wsBorsh.decodePayload(wsBorsh.schema.StateSnapshotSchema, envelope.payload) as {
-        session?: { windows?: Array<{ panes?: Array<{ id: string }> }> } | null;
+        session?: { windows?: Array<{ id: string; panes?: Array<{ id: string }> }> } | null;
       };
-      snapshotPane = snap.session?.windows?.[0]?.panes?.[0]?.id ?? null;
-      process.stderr.write(`snapshot pane=${snapshotPane ?? 'null'}\n`);
+      const windows = snap.session?.windows ?? [];
+      const windowWithPane =
+        windows.find((window) => (window.panes?.length ?? 0) > 0) ?? windows[0] ?? null;
+      snapshotWindow = windowWithPane?.id ?? null;
+      snapshotPane = windowWithPane?.panes?.[0]?.id ?? null;
+      process.stderr.write(
+        `snapshot window=${snapshotWindow ?? 'null'} pane=${snapshotPane ?? 'null'}\n`
+      );
     } catch (err) {
       process.stderr.write(`snapshot decode failed: ${String(err)}\n`);
     }
@@ -212,15 +220,20 @@ const sub = wsBorsh.encodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, {
 });
 send(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES, sub);
 
-const select = buildTmuxSelect({
-  deviceId,
-  paneId: activePane,
-  selectToken: generateSelectToken(),
-  wantHistory: true,
-  cols: 120,
-  rows: 32,
-});
-send(select.kind, select.payload);
+if (snapshotWindow) {
+  const select = buildTmuxSelect({
+    deviceId,
+    windowId: snapshotWindow,
+    paneId: activePane,
+    selectToken: generateSelectToken(),
+    wantHistory: true,
+    cols: 120,
+    rows: 32,
+  });
+  send(select.kind, select.payload);
+} else {
+  process.stderr.write('no snapshot window; skipping TMUX_SELECT\n');
+}
 await sleep(800);
 
 if (readyFile) {
