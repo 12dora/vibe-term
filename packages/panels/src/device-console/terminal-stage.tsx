@@ -215,7 +215,18 @@ function useDeviceLivePaneIds(deviceId: string): ReadonlySet<string> | null {
   }, [snapshot]);
 }
 
-/** 保活槽：全部实例共用同一个盒子，隐藏的那些留布局但不可见、不吃事件、不参与无障碍树 */
+/**
+ * 保活槽：全部实例共用同一个盒子（absolute inset-0），隐藏的那些留布局但不可见、不吃事件。
+ *
+ * 隐藏**不能**用 visibility：CSS 允许后代用 `visibility: visible` 反选祖先的 hidden，
+ * 而每个终端的 ghostty mount 正是在 activateRenderTarget() 里显式写死
+ * `style.visibility = 'visible'`（离屏建代→激活的既有机制）。槽按 MRU 排序、路由 pane 恒为
+ * 第一个兄弟节点（画在最底层），于是被 visibility 反选回来的旧 pane 会整个盖在它上面——
+ * 表现就是「切了 tab，右边还是旧终端」。pointer-events 同理会被 mount 的 auto 反选。
+ *
+ * 因此改用 opacity（合成阶段生效，后代无法反选）+ z-index（可见槽恒在最上层，
+ * 顺带拿下命中测试），两者都不依赖继承。
+ */
 export function KeepAlivePaneSlot({
   paneId,
   visible,
@@ -232,7 +243,7 @@ export function KeepAlivePaneSlot({
       data-pane-id={paneId}
       data-visible={visible || undefined}
       aria-hidden={visible ? undefined : true}
-      style={visible ? undefined : { visibility: 'hidden', pointerEvents: 'none' }}
+      style={visible ? { zIndex: 1 } : { opacity: 0, pointerEvents: 'none', zIndex: 0 }}
     >
       {children}
     </div>
