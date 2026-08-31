@@ -62,21 +62,14 @@ function SelfRemoteAccess() {
   const [tunnelName, setTunnelNameValue] = useState('');
   const [confirmed, setConfirmed] = useState(false);
 
-  // 隧道被移除（配置回到 off）后，本地选择与草稿都不再成立：整套向导状态归零，重新从连接方式选起。
-  const configuredMode = tunnel.status?.config.mode ?? null;
-  const previousModeRef = useRef(configuredMode);
-  useEffect(() => {
-    const previous = previousModeRef.current;
-    previousModeRef.current = configuredMode;
-    if (previous !== null && previous !== 'off' && configuredMode === 'off') {
-      setChosenPath(null);
-      setChosenMode(null);
-      setHostnameValue('');
-      setTunnelNameValue('');
-      setConfirmed(false);
-      setAcknowledged(false);
-    }
-  }, [configuredMode]);
+  useResetOnTunnelRemoved(tunnel.status?.config.mode ?? null, () => {
+    setChosenPath(null);
+    setChosenMode(null);
+    setHostnameValue('');
+    setTunnelNameValue('');
+    setConfirmed(false);
+    setAcknowledged(false);
+  });
 
   const { setStatus, refresh } = tunnel;
   const rawActions = useTunnelActions(tunnel.status, { onStatus: setStatus, onRefresh: refresh });
@@ -172,6 +165,18 @@ function SelfRemoteAccess() {
       />
     </div>
   );
+}
+
+/** 隧道被移除（配置回到 off）后，本地选择与草稿都不再成立：整套向导状态归零，重新从连接方式选起。 */
+function useResetOnTunnelRemoved(configuredMode: string | null, reset: () => void): void {
+  const previousModeRef = useRef(configuredMode);
+  const resetRef = useRef(reset);
+  resetRef.current = reset;
+  useEffect(() => {
+    const previous = previousModeRef.current;
+    previousModeRef.current = configuredMode;
+    if (previous !== null && previous !== 'off' && configuredMode === 'off') resetRef.current();
+  }, [configuredMode]);
 }
 
 /** 本机即 hub：`/api/auth/mode` 下发的 `hubNodeId` 与自身 nodeId 相同。 */
