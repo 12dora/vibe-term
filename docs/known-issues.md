@@ -9,7 +9,7 @@
 - **解决方向**：参考 `local-external-connection.integration.test.ts` 的 `-L` 临时 socket 模式，起带 control-mode 流的真实会话跑 run_command。
 - **详情**：`docs/agent/2026061303-run-command-headless-ghostty.md`。
 
-## KI-3：fe e2e 固定失败基线（8 例）
+## KI-3：fe e2e 固定失败基线
 
 `cd apps/fe && bun run test:e2e` 在 main 上稳定失败以下用例，**属于测试自身缺陷，不是产品回归**；判断分支是否引入回归时须与本清单逐条对照，而不是看失败数是否为 0。
 
@@ -17,9 +17,9 @@
 | --- | --- |
 | `mobile-settings.spec.ts:5` | 选择器 `settings-enable-browser-bell-toast`、`settings-tab-devices` 已过期，移动视口下等不到元素 |
 | `mobile-terminal-interactions.spec.ts:79/140/221/303` | 等 `editor-shortcut-*` testid 超时；ShortcutsBar 现传 `idPrefix="terminal-shortcut"`，且 ui store 默认 `inputMode='direct'`，干净 localStorage 下首屏无该 testid |
-| `settings-llm.spec.ts:42` | 搜索 provider 下拉弹层未出现，`Tavily` 选项 click 超时，疑组件交互时序 |
 | `terminal-mouse-recovery.spec.ts:384` | focus 恢复重绘断言不稳 |
-| `ws-borsh-theme-resize.spec.ts:39` | rapid theme toggle × resize 压力用例，cols/rows 漂移超阈值 |
+| `agent-session.spec.ts:538`（provider unreachable） | 偶发（repeat-each 3 中 1 失败）：发送成功、后端已报错，但截图停在 Terminals tab，错误横幅不在屏上 |
 
-- **解决方向**：前三项修测试选择器/时序；后两项属压力类，需先在低负载 CI 上建稳定基线。
+- **解决方向**：前两项修测试选择器/时序；后两项偶发类，先在低负载下建稳定复现再定位。
+- 2026-09-01（round10）已修并移出本清单：`sidebar-resize:40`（testid 过期）、`mobile-mouse-reporting:205`（单指语义已改为滚轮）、`settings-llm:42`（mock 缺 `searchProviders`）、`agent-session:404`（composer 控件溢出遮挡 Send，产品修复）、`ws-borsh-theme-resize:39`（基线取样过早，spec 改稳定基线+窗口总量断言）。
 - **另注**：全量顺序跑（workers=1，约 10 分钟）时 `terminal-render-regressions`、`theme-propagation`、`mobile-mouse-reporting`、`terminal-mouse-drag-recovery`、`ws-borsh-switch-barrier` 会随机抖动，低负载单跑通过率高；本机全量 e2e 不能作为回归判定的唯一依据。
