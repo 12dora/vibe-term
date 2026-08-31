@@ -1034,6 +1034,28 @@ describe('submitAdmitRecord', () => {
     expect(unconfirmedRecord('e-4')).toBeNull();
   });
 
+  test('请求抛异常（结果未知）：已签字节必须留住，重试只能重发它', async () => {
+    const api = {
+      appendKeyLog(_body: { bytes: string; sig: string }, opts?: { hubSync?: boolean }) {
+        expect(opts?.hubSync).toBe(true);
+        return Promise.reject(new Error('connection reset'));
+      },
+    };
+    await expect(submitAdmitRecord(api, 'e-throw', RECORD)).rejects.toThrow('connection reset');
+    // 服务端到底落没落库无从判断：唯一安全的重试就是原样重发这份字节。
+    expect(unconfirmedRecord('e-throw')).toEqual(RECORD);
+    expect(admitPlan('e-throw', true)).toBe('resend');
+  });
+
+  test('终态拒绝（签名坏等）不留记录：重发重签都没用', async () => {
+    const api = fakeApi([{ ok: false, code: 'BAD_SIGNATURE' }]);
+    expect(await submitAdmitRecord(api, 'e-6', RECORD)).toEqual({
+      kind: 'error',
+      code: 'BAD_SIGNATURE',
+    });
+    expect(unconfirmedRecord('e-6')).toBeNull();
+  });
+
   test('订阅者能看到未确认集合的变化（页面据此显示「重试」）', async () => {
     let ticks = 0;
     const stop = subscribeUnconfirmedRecords(() => {

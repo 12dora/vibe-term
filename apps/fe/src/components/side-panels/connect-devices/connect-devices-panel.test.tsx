@@ -240,13 +240,17 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     createdAt: 1_700_000_000_000,
   };
 
-  function confirmStatus(patch: Parameters<typeof setEnrollmentEngineStateForTest>[0]): string {
+  function confirmStatus(
+    patch: Parameters<typeof setEnrollmentEngineStateForTest>[0],
+    session: { id: string; admitted: boolean } = { id: 'e-1', admitted: false }
+  ): string {
     setEnrollmentEngineStateForTest(patch);
     const enrollment = {
       meshEnabled: true,
       hubOnline: true,
-      pending: PENDING,
+      session,
       engine: getEnrollmentEngineState(),
+      confirmManually: () => undefined,
     } as unknown as Parameters<typeof JoinConfirmStatus>[0]['enrollment'];
     return render(<JoinConfirmStatus enrollment={enrollment} />);
   }
@@ -283,10 +287,17 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     expect(html).toContain('nodes.enrollment.badCertSig');
   });
 
-  test('本次会话还没有 pending 时什么都不渲染', () => {
+  test('刷新后引擎投影没了，会话里的「已加入」标记仍然显示', () => {
+    const html = confirmStatus({}, { id: 'e-1', admitted: true });
+    expect(html).toContain('data-testid="connect-join-admitted"');
+    expect(html).not.toContain('data-testid="connect-join-confirm"');
+  });
+
+  test('本次会话还没有 enrollment 时什么都不渲染', () => {
     const enrollment = {
-      pending: null,
+      session: null,
       engine: getEnrollmentEngineState(),
+      confirmManually: () => undefined,
     } as unknown as Parameters<typeof JoinConfirmStatus>[0]['enrollment'];
     const html = render(<JoinConfirmStatus enrollment={enrollment} />);
     expect(html).not.toContain('data-testid="connect-join-pending"');

@@ -10,7 +10,6 @@ import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/cr
 import { listPendingEnrollments, subscribePendingEnrollments } from '@/node/enrollment';
 import {
   cancelPending,
-  confirmManually,
   useEnrollmentEngine,
   useEnrollmentEngineState,
 } from '@/node/enrollment-engine';
@@ -74,7 +73,14 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   const [enrollOpen, setEnrollOpen] = useState(false);
   // 监听回路、admit 流水线与过期清理都在宿主级单例引擎里：侧滑面板同时开着时也只有一份，
   // 同一张证书绝不会被签成两条 `admit-node`（见 `enrollment-engine.ts` 顶部）。
-  useEnrollmentEngine({ api, mode, hubApi: hub.hubApi, prompt, onDone: refreshAll, t });
+  const { confirmManually } = useEnrollmentEngine({
+    api,
+    mode,
+    hubApi: hub.hubApi,
+    prompt,
+    onDone: refreshAll,
+    t,
+  });
   const engine = useEnrollmentEngineState();
 
   if (!mode) {
@@ -143,7 +149,7 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           open={enrollOpen}
           prompt={prompt}
           pendings={pendings}
-          onConfirm={(pending) => void confirmManually(pending)}
+          onConfirm={(pending) => void confirmManually(pending.hubEnrollmentId)}
           onCancel={cancelPending}
           busyPendingId={engine.busyPendingId}
           hubUnconfirmedIds={engine.hubUnconfirmedIds}

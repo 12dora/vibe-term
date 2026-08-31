@@ -14,7 +14,7 @@ import { bytesEqual, decodeBase64url } from '@tmex/shared/auth';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { Fingerprint, KeyRound, Loader2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   passkeysForOrigin,
@@ -30,8 +30,16 @@ export const SIGNER_REUSE_WINDOW_MS = 5 * 60 * 1000;
 // 5 分钟凭据复用（仅内存）
 // ---------------------------------------------------------------------------
 
-let rememberedSigner: { signer: RecordSigner; until: number } | null = null;
+/** 复用窗口的归属令牌：谁存的谁才能清（多个对话框实例同时挂着时的唯一判据）。 */
+export type SignerOwner = symbol;
+
+let rememberedSigner: { signer: RecordSigner; until: number; owner: SignerOwner | null } | null =
+  null;
 let rememberedTimer: ReturnType<typeof setTimeout> | null = null;
+/** 正在被使用（签一条记录）的签名者：租约期内不清零，`leases` 记引用计数。 */
+const leases = new Map<RecordSigner, number>();
+/** 租约期内被要求清零的签名者：等租约还清再动手。 */
+const deferredWipes = new Set<RecordSigner>();
 
 /** 根钥签名者的 seed 是根私钥：丢引用不够，必须显式清零。 */
 export function wipeSigner(signer: RecordSigner | null | undefined): void {
@@ -45,16 +53,41 @@ function dropRemembered(): void {
   }
   const previous = rememberedSigner;
   rememberedSigner = null;
-  wipeSigner(previous?.signer);
+  if (!previous) return;
+  // 有人正拿它签记录：现在清零会让签名用到半截的根钥，推迟到租约释放。
+  if (leases.has(previous.signer)) deferredWipes.add(previous.signer);
+  else wipeSigner(previous.signer);
+}
+
+/**
+ * 占住一个签名者，直到记录构造完成。
+ *
+ * 复用窗口是模块级的，任何一个对话框实例卸载都会调 `forgetSigner()`；没有租约时，
+ * 那次清零会把引擎正在用的根钥 seed 抹成 0，签出来的记录直接作废（见 R4 #5）。
+ */
+export function leaseSigner(signer: RecordSigner): () => void {
+  leases.set(signer, (leases.get(signer) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const rest = (leases.get(signer) ?? 1) - 1;
+    if (rest > 0) {
+      leases.set(signer, rest);
+      return;
+    }
+    leases.delete(signer);
+    if (deferredWipes.delete(signer)) wipeSigner(signer);
+  };
 }
 
 /**
  * 记住刚做完的密码 / passkey 交互，5 分钟内自动复用。
  * 到期由定时器主动清零，而不是等下一次 `takeRememberedSigner()`——否则根私钥副本会一直留在堆里。
  */
-export function rememberSigner(signer: RecordSigner, now: number): void {
+export function rememberSigner(signer: RecordSigner, now: number, owner?: SignerOwner): void {
   dropRemembered();
-  rememberedSigner = { signer, until: now + SIGNER_REUSE_WINDOW_MS };
+  rememberedSigner = { signer, until: now + SIGNER_REUSE_WINDOW_MS, owner: owner ?? null };
   rememberedTimer = setTimeout(() => {
     rememberedTimer = null;
     dropRemembered();
@@ -72,8 +105,14 @@ export function takeRememberedSigner(now: number): RecordSigner | null {
   return rememberedSigner.signer;
 }
 
-/** 复用窗口结束（用完 / 页面卸载 / 换用户）：立刻清零。 */
-export function forgetSigner(): void {
+/**
+ * 复用窗口结束（用完 / 页面卸载 / 换用户）：立刻清零。
+ *
+ * 带 `owner` 时**只清自己存进去的那个**：设置页与侧滑面板各挂一个对话框实例，
+ * 任一实例卸载都不该抹掉另一实例刚做完的认证（见 R4 #5）。
+ */
+export function forgetSigner(owner?: SignerOwner): void {
+  if (owner && rememberedSigner?.owner !== owner) return;
   dropRemembered();
 }
 
@@ -373,11 +412,32 @@ interface PendingPrompt {
   reject: (error: unknown) => void;
 }
 
+/** 本实例的归属令牌：只清自己存进复用窗口的那个签名者。 */
+function usePromptOwner(): SignerOwner {
+  const ref = useRef<SignerOwner | null>(null);
+  if (ref.current === null) ref.current = Symbol('credential-prompt');
+  return ref.current;
+}
+
+/** 卸载：挂着的请求当取消处理，**本实例存的**根钥立刻清零（别人存的不碰）。 */
+function usePromptTeardown(pendingRef: RefObject<PendingPrompt | null>, owner: SignerOwner): void {
+  useEffect(
+    () => () => {
+      pendingRef.current?.resolve(null);
+      pendingRef.current = null;
+      forgetSigner(owner);
+    },
+    [pendingRef, owner]
+  );
+}
+
 export function useCredentialPrompt(config: CredentialPromptConfig): CredentialPromptHandle {
   const [open, setOpen] = useState<CredentialPurpose | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pendingRef = useRef<PendingPrompt | null>(null);
+  const owner = usePromptOwner();
+  usePromptTeardown(pendingRef, owner);
 
   const { kdfParams, rootPublicKey, passkeys, passkeyAvailable, origin } = config;
   const usable = useMemo(
@@ -445,11 +505,11 @@ export function useCredentialPrompt(config: CredentialPromptConfig): CredentialP
       return ask(options.purpose ?? 'admit', async (choice) => {
         const signer = await signerFromChoice(choice, kdfParams, rootPublicKey);
         // 交给复用窗口托管：它负责到期 / 显式清零，调用方不必再管根钥 seed。
-        rememberSigner(signer, Date.now());
+        rememberSigner(signer, Date.now(), owner);
         return signer;
       });
     },
-    [ask, kdfParams, rootPublicKey]
+    [ask, kdfParams, rootPublicKey, owner]
   );
 
   const withSigner = useCallback(
@@ -463,20 +523,12 @@ export function useCredentialPrompt(config: CredentialPromptConfig): CredentialP
     [ask, kdfParams, rootPublicKey]
   );
 
-  useEffect(
-    () => () => {
-      // 组件卸载：挂着的请求当取消处理，复用窗口里的根钥立刻清零。
-      pendingRef.current?.resolve(null);
-      pendingRef.current = null;
-      forgetSigner();
-    },
-    []
-  );
+  const forget = useCallback(() => forgetSigner(owner), [owner]);
 
   return {
     request: request as CredentialPromptHandle['request'],
     withSigner: withSigner as CredentialPromptHandle['withSigner'],
-    forget: forgetSigner,
+    forget,
     passkeys: usable,
     dialog: open ? (
       <CredentialPromptDialog

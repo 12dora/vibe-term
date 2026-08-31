@@ -11,9 +11,13 @@ import {
   WrongPasswordError,
   credentialErrorText,
   decodeRootPublicKey,
+  forgetSigner,
   isRetryableCredentialError,
+  leaseSigner,
+  rememberSigner,
   runWithChoice,
   signerFromChoice,
+  takeRememberedSigner,
   usablePasskeys,
 } from './credential-prompt';
 
@@ -221,5 +225,51 @@ describe('错误分类与根公钥解码', () => {
     expect(decodeRootPublicKey(undefined)).toBeNull();
     expect(decodeRootPublicKey(encodeBase64url(new Uint8Array(16)))).toBeNull();
     expect(decodeRootPublicKey('@@@')).toBeNull();
+  });
+});
+
+describe('复用窗口的归属与租约', () => {
+  const NOW = 1_700_000_000_000;
+
+  test('只有存进去的那个实例能清掉它：别的对话框卸载不影响', () => {
+    const mine = Symbol('mine');
+    const other = Symbol('other');
+    const rootKey = rootKeyFromSeed(new Uint8Array(32).fill(0x31));
+    rememberSigner({ kind: 'root', rootKey }, NOW, mine);
+
+    // 另一个对话框实例卸载：不是它存的，一个字节都不许动。
+    forgetSigner(other);
+    expect(takeRememberedSigner(NOW)).not.toBeNull();
+    expect(rootKey.seed.every((byte) => byte === 0)).toBe(false);
+
+    forgetSigner(mine);
+    expect(takeRememberedSigner(NOW)).toBeNull();
+    expect(rootKey.seed.every((byte) => byte === 0)).toBe(true);
+  });
+
+  test('不带归属的清理照旧无条件生效（页面级重置 / 测试）', () => {
+    const rootKey = rootKeyFromSeed(new Uint8Array(32).fill(0x32));
+    rememberSigner({ kind: 'root', rootKey }, NOW, Symbol('owner'));
+    forgetSigner();
+    expect(takeRememberedSigner(NOW)).toBeNull();
+    expect(rootKey.seed.every((byte) => byte === 0)).toBe(true);
+  });
+
+  test('租约期内不清零：签名做完释放租约才抹掉', () => {
+    const owner = Symbol('owner');
+    const rootKey = rootKeyFromSeed(new Uint8Array(32).fill(0x33));
+    const signer = { kind: 'root', rootKey } as const;
+    rememberSigner(signer, NOW, owner);
+
+    const release = leaseSigner(signer);
+    forgetSigner(owner);
+    // 复用窗口已经交出去了，但正在签的这份根钥还不能动。
+    expect(takeRememberedSigner(NOW)).toBeNull();
+    expect(rootKey.seed.every((byte) => byte === 0)).toBe(false);
+
+    release();
+    expect(rootKey.seed.every((byte) => byte === 0)).toBe(true);
+    // 重复释放不该再动别的东西。
+    release();
   });
 });

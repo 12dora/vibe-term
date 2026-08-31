@@ -331,6 +331,14 @@ export function unconfirmedRecord(pendingId: string): SignedRecord | null {
   return unconfirmedRecords.get(pendingId) ?? null;
 }
 
+/** 暂存一条已签好的记录，等待明确的处置结果。同一份字节重复暂存不再通知订阅者。 */
+function rememberUnconfirmedRecord(pendingId: string, record: SignedRecord): void {
+  const previous = unconfirmedRecords.get(pendingId);
+  if (previous && previous.bytes === record.bytes && previous.sig === record.sig) return;
+  unconfirmedRecords.set(pendingId, record);
+  notifyUnconfirmed();
+}
+
 export function forgetUnconfirmedRecord(pendingId: string): void {
   if (unconfirmedRecords.delete(pendingId)) notifyUnconfirmed();
 }
@@ -358,6 +366,11 @@ export function admitPlan(pendingId: string, canSign: boolean): 'resend' | 'sign
  *
  * 重试路径拿的就是这里存下的对象（`unconfirmedRecord()`），字节完全相同——重试**绝不**重新
  * 取 head、重新签名。
+ *
+ * **先暂存再发送**：请求抛异常（连接断开、超时、响应畸形）时，服务端到底落没落库是未知的，
+ * 只有原样重发这份字节才安全；若等响应回来才暂存，异常路径下记录就丢了，下一次推送 / 轮询
+ * 会按新 head 再签一条，hub 缺了中间那条便永久 `seq_gap`（见 R4 #3）。
+ * 因此只有拿到**明确**的处置（已确认 / 作废 / 终态拒绝）才丢弃暂存。
  */
 export async function submitAdmitRecord(
   api: {
@@ -369,14 +382,10 @@ export async function submitAdmitRecord(
   pendingId: string,
   record: SignedRecord
 ): Promise<AdmitDisposition> {
+  rememberUnconfirmedRecord(pendingId, record);
   const disposition = admitDisposition(await api.appendKeyLog(record, { hubSync: true }));
-  if (disposition.kind === 'unconfirmed') {
-    unconfirmedRecords.set(pendingId, record);
-    notifyUnconfirmed();
-  } else {
-    // 确认成功、或这条字节已经作废：都不该再留着让用户重发。
-    forgetUnconfirmedRecord(pendingId);
-  }
+  // 确认成功、或这条字节已经作废：都不该再留着让用户重发。
+  if (disposition.kind !== 'unconfirmed') forgetUnconfirmedRecord(pendingId);
   return disposition;
 }
 
