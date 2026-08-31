@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 
+import { SETTINGS_STALE_MS } from './settings-query';
 import { TelegramBotFormModal } from './telegram-bot-form-modal';
 import { TelegramBotRow } from './telegram-bot-row';
 
@@ -28,6 +29,7 @@ export function TelegramBotsTab() {
       }
       return (await res.json()) as ListTelegramBotsResponse;
     },
+    staleTime: SETTINGS_STALE_MS,
   });
 
   const bots = botsQuery.data?.bots ?? [];

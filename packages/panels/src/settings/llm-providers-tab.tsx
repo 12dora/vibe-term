@@ -14,6 +14,7 @@ import { fetchAgentLlmSettings, fetchLlmProviders, parseApiError } from '@tmex/a
 import { useRuntime } from '@tmex/stores/react';
 import { LlmProviderFormModal } from './llm-provider-form-modal';
 import { LlmProviderRow } from './llm-provider-row';
+import { SETTINGS_STALE_MS } from './settings-query';
 
 export function LlmProvidersTab() {
   const { t } = useTranslation();
@@ -25,6 +26,7 @@ export function LlmProvidersTab() {
   const providersQuery = useQuery({
     queryKey: ['llm-providers'],
     queryFn: () => fetchLlmProviders(t('settings.llm.loadFailed'), apiClient),
+    staleTime: SETTINGS_STALE_MS,
   });
 
   const providers = providersQuery.data?.providers ?? [];
@@ -94,6 +96,7 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
   const settingsQuery = useQuery({
     queryKey: ['llm-settings'],
     queryFn: () => fetchAgentLlmSettings(t('settings.llm.settingsLoadFailed'), apiClient),
+    staleTime: SETTINGS_STALE_MS,
   });
 
   const serverDefaultProviderId = settingsQuery.data?.settings.defaultProviderId ?? null;
@@ -119,9 +122,7 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('settings.llm.settingsSaveFailed')));
-      }
+      if (!res.ok) throw new Error(await parseApiError(res, t('settings.llm.settingsSaveFailed')));
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['llm-settings'] });

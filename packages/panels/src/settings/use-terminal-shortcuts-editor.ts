@@ -25,6 +25,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { SETTINGS_STALE_MS } from './settings-query';
 
 export interface ShortcutDraftSnapshot {
   items: TerminalShortcutItem[];
@@ -312,6 +313,7 @@ export function useTerminalShortcutsEditor({
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: shortcutsQueryKey,
     queryFn: () => (loadShortcuts ? loadShortcuts() : fetchTerminalShortcuts(apiClient)),
+    staleTime: SETTINGS_STALE_MS,
   });
 
   const { items, setItems, useIcons, setUseIcons, baseline, dirty, adopt } = useShortcutDraft(data);

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import i18n from '../../i18n';
+import { SETTINGS_STALE_MS } from './data-prefetch';
 import {
   type LanguagePreviewController,
   type SiteSettingsDraft,
@@ -63,6 +64,8 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
     enabled,
     // 窗口重新聚焦的静默重拉会用服务端值覆盖未保存的草稿，表单页只在挂载时拉一次
     refetchOnWindowFocus: false,
+    // 站点设置只在这个表单里改；切到别的标签再切回来（默认 5 秒就过期）不必再问一遍
+    staleTime: SETTINGS_STALE_MS,
     // 经 site store 取数：它不吃缓存（数据照样新鲜），但与侧栏的引导请求并发时共享同一次 GET
     queryFn: () => ensureFreshSettings(),
   });

@@ -3,7 +3,7 @@ import { parseApiError } from '@tmex/api-client';
 import type { WeixinAccountWithStats } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { AlertTriangle, Pencil, QrCode, Send, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
@@ -11,7 +11,43 @@ import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 
-import { WeixinAccountLoginModal } from './weixin-account-login-modal';
+// 扫码登录弹层带着 qrcode.react，而绑定是低频动作：切成独立 chunk，
+// 通知设置那一页的首屏不必为它买单。
+const WeixinAccountLoginModal = lazy(() =>
+  import('./weixin-account-login-modal').then((m) => ({ default: m.WeixinAccountLoginModal }))
+);
+
+/**
+ * 首次点开才挂载登录弹层；之后即使关掉也留着，卸载会掐掉 Dialog 自己的关闭动画。
+ */
+function WeixinLoginModalMount({
+  open,
+  onOpenChange,
+  accountId,
+  accountName,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  accountId: string;
+  accountName: string;
+}) {
+  const [mounted, setMounted] = useState(open);
+  useEffect(() => {
+    if (open) setMounted(true);
+  }, [open]);
+
+  if (!mounted) return null;
+  return (
+    <Suspense fallback={null}>
+      <WeixinAccountLoginModal
+        open={open}
+        onOpenChange={onOpenChange}
+        accountId={accountId}
+        accountName={accountName}
+      />
+    </Suspense>
+  );
+}
 
 interface WeixinAccountRowProps {
   account: WeixinAccountWithStats;
@@ -187,7 +223,7 @@ export function WeixinAccountRow({ account, onEdit }: WeixinAccountRowProps) {
         </Button>
       </div>
 
-      <WeixinAccountLoginModal
+      <WeixinLoginModalMount
         open={showLogin}
         onOpenChange={setShowLogin}
         accountId={account.id}

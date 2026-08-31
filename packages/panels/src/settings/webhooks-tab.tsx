@@ -13,6 +13,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Switch } from '@tmex/ui/switch';
 
+import { SETTINGS_STALE_MS } from './settings-query';
+
 export const WEBHOOK_EVENT_OPTIONS: EventType[] = [
   'terminal_bell',
   'terminal_notification',
@@ -49,11 +51,10 @@ export function WebhooksTab() {
     queryKey: ['webhooks'],
     queryFn: async () => {
       const res = await apiClient.fetch('/api/webhooks');
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('webhook.loadFailed')));
-      }
+      if (!res.ok) throw new Error(await parseApiError(res, t('webhook.loadFailed')));
       return (await res.json()) as WebhooksResponse;
     },
+    staleTime: SETTINGS_STALE_MS,
   });
 
   const createWebhookMutation = useMutation({

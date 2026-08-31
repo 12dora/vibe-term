@@ -17,6 +17,7 @@ import {
   useFileRootsQuery,
 } from './file-root-query';
 import { FileRootRow } from './file-root-row';
+import { SETTINGS_STALE_MS } from './settings-query';
 
 export type {
   FileRootDeviceGroup,
@@ -94,6 +95,8 @@ function FilesSettingsTabInner({
     queryFn: () => fetchDevices(apiClient),
     throwOnError: false,
     enabled: !deviceGroups,
+    // 只喂新增/编辑弹窗的设备下拉，不必跟着实时状态走
+    staleTime: SETTINGS_STALE_MS,
   });
 
   const entries = filterFileRootEntries(rootsQuery.data ?? [], lockedDeviceId);

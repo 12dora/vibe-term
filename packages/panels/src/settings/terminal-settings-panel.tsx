@@ -1,14 +1,20 @@
 import type { KeyboardBehaviorMode } from '@tmex/stores';
 import { useUIStore } from '@tmex/stores/react';
-import { TerminalPreview } from '@tmex/terminal-ui';
 import { FONT_MANIFEST, getFontEntry } from '@tmex/theme';
 import { cn } from '@tmex/ui';
 import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import { Skeleton } from '@tmex/ui/skeleton';
 import { Check } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { TerminalShortcutsEditor } from './TerminalShortcutsEditor';
+
+// 预览要拉起 Ghostty 的 WASM 与终端字体，是这个面板最重的一块，却和上手就要改的
+// 字号/行高/字体/快捷键毫无依赖关系：切成独立 chunk，控件先出来，预览随后补上。
+const TerminalPreview = lazy(() =>
+  import('@tmex/terminal-ui').then((m) => ({ default: m.TerminalPreview }))
+);
 
 const FONT_SIZE_MIN = 8;
 const FONT_SIZE_MAX = 28;
@@ -37,6 +43,31 @@ const KEYBOARD_MODE_ITEMS = [
   labelKey: string;
   descKey: string;
 }>;
+
+function TerminalPreviewSection() {
+  const { t } = useTranslation();
+  const fontSize = useUIStore((state) => state.terminalFontSize);
+  const lineHeight = useUIStore((state) => state.terminalLineHeight);
+  // 占位高度与 TerminalPreview 自己的算法一致（约 12 行），预览挂上来时版式不跳。
+  const heightPx = Math.ceil(fontSize * lineHeight * 12);
+
+  return (
+    <div className="space-y-2">
+      <span className="block text-sm font-medium">{t('settings.terminal.preview')}</span>
+      <Suspense
+        fallback={
+          <Skeleton
+            className="w-full border"
+            style={{ height: `${heightPx}px` }}
+            data-testid="terminal-preview-placeholder"
+          />
+        }
+      >
+        <TerminalPreview />
+      </Suspense>
+    </div>
+  );
+}
 
 /**
  * 终端设置面板（设置页 Tab 与终端页右上角 Sheet 复用同一组件）。
@@ -76,12 +107,7 @@ export function TerminalSettingsPanel({
     <div className="space-y-6">
       <p className="text-muted-foreground text-sm">{t('settings.terminal.description')}</p>
 
-      {showPreview && (
-        <div className="space-y-2">
-          <span className="block text-sm font-medium">{t('settings.terminal.preview')}</span>
-          <TerminalPreview />
-        </div>
-      )}
+      {showPreview && <TerminalPreviewSection />}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">

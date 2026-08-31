@@ -6,10 +6,12 @@
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import { TunnelApiError, fetchTunnelStatus } from '@tmex/api-client/local/tunnel-api';
 import type { TunnelStatusResponse } from '@tmex/shared';
+import { TUNNEL_STATUS_QUERY_KEY } from '../status-queries';
 import { useProtectedStatusQuery } from '../use-protected-status-query';
 import { tunnelPollInterval } from './tunnel-model';
 
-export const TUNNEL_STATUS_QUERY_KEY = ['tunnel-status'] as const;
+// 查询键与悬停预取共用一份定义（见 status-queries.ts），键抄错就会写进两份缓存。
+export { TUNNEL_STATUS_QUERY_KEY };
 
 export interface TunnelStatusState {
   status: TunnelStatusResponse | null;

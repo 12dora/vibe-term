@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 
+import { SETTINGS_STALE_MS } from './settings-query';
 import { WeixinAccountFormModal } from './weixin-account-form-modal';
 import { WeixinAccountRow } from './weixin-account-row';
 
@@ -30,6 +31,7 @@ export function WeixinAccountsTab() {
       }
       return (await res.json()) as ListWeixinAccountsResponse;
     },
+    staleTime: SETTINGS_STALE_MS,
   });
 
   const accounts = accountsQuery.data?.accounts ?? [];

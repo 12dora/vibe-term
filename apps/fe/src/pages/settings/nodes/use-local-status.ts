@@ -5,9 +5,11 @@
 
 import { type LocalApi, LocalApiError, defaultLocalApi } from '@tmex/api-client/local/local-api';
 import type { LocalStatusResponse } from '@tmex/api-client/local/types';
+import { LOCAL_STATUS_QUERY_KEY } from '../status-queries';
 import { useProtectedStatusQuery } from '../use-protected-status-query';
 
-export const LOCAL_STATUS_QUERY_KEY = ['local-status'] as const;
+// 查询键与悬停预取共用一份定义（见 status-queries.ts），键抄错就会写进两份缓存。
+export { LOCAL_STATUS_QUERY_KEY };
 
 export interface LocalStatusState {
   status: LocalStatusResponse | null;

@@ -22,6 +22,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
+import { SETTINGS_STALE_MS } from './settings-query';
+
 export function SearchTab() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -37,6 +39,7 @@ export function SearchTab() {
   const settingsQuery = useQuery({
     queryKey: ['llm-settings'],
     queryFn: () => fetchAgentLlmSettings(t('settings.search.loadFailed'), apiClient),
+    staleTime: SETTINGS_STALE_MS,
   });
 
   const settings = settingsQuery.data?.settings;
@@ -63,9 +66,7 @@ export function SearchTab() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('settings.search.saveFailed')));
-      }
+      if (!res.ok) throw new Error(await parseApiError(res, t('settings.search.saveFailed')));
     },
     onSuccess: async () => {
       setTavilyApiKey('');

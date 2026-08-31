@@ -4,15 +4,20 @@
 import { describe, expect, test } from 'bun:test';
 import type { QueryClient } from '@tanstack/react-query';
 import type { ApiClient } from '@tmex/api-client';
-import { PREFETCHABLE_TABS, prefetchTabData, tabPrefetchSpecs } from './data-prefetch';
+import {
+  PREFETCHABLE_TABS,
+  SETTINGS_STALE_MS,
+  prefetchTabData,
+  tabPrefetchSpecs,
+} from './data-prefetch';
 
 const apiClient = { fetch: async () => new Response('{}') } as unknown as ApiClient;
 
 function fakeQueryClient() {
-  const calls: { queryKey: readonly unknown[] }[] = [];
+  const calls: { queryKey: readonly unknown[]; staleTime?: number }[] = [];
   const client = {
-    prefetchQuery: (options: { queryKey: readonly unknown[] }) => {
-      calls.push({ queryKey: options.queryKey });
+    prefetchQuery: (options: { queryKey: readonly unknown[]; staleTime?: number }) => {
+      calls.push({ queryKey: options.queryKey, staleTime: options.staleTime });
       return Promise.resolve();
     },
   } as unknown as QueryClient;
@@ -38,6 +43,29 @@ describe('tabPrefetchSpecs', () => {
   test('终端标签预取快捷键设置', () => {
     const specs = tabPrefetchSpecs('terminal', apiClient);
     expect(specs.map((s) => s.queryKey)).toEqual([['terminal-shortcuts']]);
+  });
+
+  test('远程访问标签预取隧道状态（首屏被它整块挡住）', () => {
+    const specs = tabPrefetchSpecs('remoteAccess', apiClient);
+    expect(specs.map((s) => s.queryKey)).toEqual([['tunnel-status']]);
+  });
+
+  test('节点标签预取本机运行态与 TLS 状态', () => {
+    const specs = tabPrefetchSpecs('nodes', apiClient);
+    expect(specs.map((s) => s.queryKey)).toEqual([['local-status'], ['tls-status']]);
+  });
+
+  test('设置类数据给长 staleTime，实时状态不给（走默认值，各自还带轮询）', () => {
+    for (const tab of ['ai', 'terminal']) {
+      for (const spec of tabPrefetchSpecs(tab, apiClient)) {
+        expect(spec.staleTime).toBe(SETTINGS_STALE_MS);
+      }
+    }
+    for (const tab of ['nodes', 'remoteAccess']) {
+      for (const spec of tabPrefetchSpecs(tab, apiClient)) {
+        expect(spec.staleTime).toBeUndefined();
+      }
+    }
   });
 
   test('其余标签没有可安全预取的查询（queryFn 在各自的 lazy chunk 里）', () => {
@@ -69,10 +97,19 @@ describe('prefetchTabData', () => {
     expect(calls).toHaveLength(1);
   });
 
+  test('状态标签的两条查询都交给 prefetchQuery（实时数据不带 staleTime）', () => {
+    const { client, calls } = fakeQueryClient();
+    prefetchTabData(client, 'nodes', apiClient, new Set());
+    expect(calls).toEqual([
+      { queryKey: ['local-status'], staleTime: undefined },
+      { queryKey: ['tls-status'], staleTime: undefined },
+    ]);
+  });
+
   test('没有 spec 的标签既不发请求，也不占用去重名额', () => {
     const { client, calls } = fakeQueryClient();
     const done = new Set<string>();
-    prefetchTabData(client, 'nodes', apiClient, done);
+    prefetchTabData(client, 'general', apiClient, done);
     expect(calls).toHaveLength(0);
     expect(done.size).toBe(0);
   });

@@ -5,6 +5,7 @@
 
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { Reveal } from '@tmex/ui/motion';
+import { Skeleton } from '@tmex/ui/skeleton';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { HttpsSection } from './https/https-section';
@@ -34,13 +35,9 @@ export function NodesTab() {
     if (wizardPath) wizardRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   }, [wizardPath]);
 
-  if (!loaded) {
-    return (
-      <div className="flex items-center justify-center p-8 text-muted-foreground">
-        <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-      </div>
-    );
-  }
+  // `/api/auth/mode` 要读 TLS 与证书，慢起来是几百毫秒起步：先按真实版式摆骨架，
+  // 别让整页空着转圈。模式相关的区块一律等模式落定再挂（见下方 standalone 分支）。
+  if (!loaded) return <NodesTabSkeleton />;
 
   return (
     <div className="flex w-full flex-col gap-4" data-testid="settings-nodes-tab">
@@ -96,6 +93,17 @@ export function NodesTab() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function NodesTabSkeleton() {
+  return (
+    <div className="flex w-full flex-col gap-4" data-testid="settings-nodes-tab-skeleton">
+      {/* 三块的高度按本机区块 / HTTPS / 节点管理的实际版式取整，切换过去不至于跳一大截 */}
+      <Skeleton className="h-44 w-full" />
+      <Skeleton className="h-28 w-full" />
+      <Skeleton className="h-56 w-full" />
     </div>
   );
 }

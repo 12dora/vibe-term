@@ -22,6 +22,7 @@ import {
   updateFileRoot,
 } from '@tmex/api-client';
 import { useRuntime } from '@tmex/stores/react';
+import { SETTINGS_STALE_MS } from './settings-query';
 
 export const SETTINGS_FILE_ROOTS_QUERY_KEY = ['files', 'settings', 'roots'] as const;
 const FILE_ROOTS_INVALIDATE_KEY = ['files'] as const;
@@ -111,6 +112,7 @@ export function useFileRootsQuery(deviceGroups?: FileRootDeviceGroup[]) {
   return useQuery({
     queryKey: SETTINGS_FILE_ROOTS_QUERY_KEY,
     queryFn: () => fetchFileRootEntries(collectFileRootClients(deviceGroups, apiClient)),
+    staleTime: SETTINGS_STALE_MS,
   });
 }
 

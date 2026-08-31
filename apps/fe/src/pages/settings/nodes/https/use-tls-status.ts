@@ -5,10 +5,12 @@
 
 import { type TlsApi, TlsApiError, defaultTlsApi } from '@tmex/api-client/local/tls-api';
 import type { TlsStatusResponse } from '@tmex/api-client/local/tls-types';
+import { TLS_STATUS_QUERY_KEY } from '../../status-queries';
 import { useProtectedStatusQuery } from '../../use-protected-status-query';
 import { acmePollInterval } from './tls-form';
 
-export const TLS_STATUS_QUERY_KEY = ['tls-status'] as const;
+// 查询键与悬停预取共用一份定义（见 status-queries.ts），键抄错就会写进两份缓存。
+export { TLS_STATUS_QUERY_KEY };
 export { ACME_POLL_INTERVAL_MS } from './tls-form';
 
 export interface TlsStatusState {

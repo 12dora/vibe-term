@@ -7,8 +7,7 @@ import type {
 } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { Loader2, QrCode, RefreshCw } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
@@ -21,6 +20,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@tmex/ui/dialog';
+
+// qrcode.react 只在真正出二维码那一刻才用得上，却占了通知设置整块 chunk 的一大截：
+// 切成独立 chunk，等登录起来拿到二维码地址再下载。
+const QRCodeSVG = lazy(() => import('qrcode.react').then((m) => ({ default: m.QRCodeSVG })));
+
+function LoginQrCode({ value, testId }: { value: string; testId: string }) {
+  return (
+    <Suspense fallback={<Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />}>
+      <QRCodeSVG value={value} size={208} marginSize={3} data-testid={testId} />
+    </Suspense>
+  );
+}
 
 const POLL_INTERVAL_MS = 1500;
 
@@ -248,12 +259,7 @@ export function WeixinAccountLoginModal({
           <div className="flex h-56 w-56 items-center justify-center rounded-lg border border-border bg-white">
             {isStarting && <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />}
             {!isStarting && qrcodeUrl && (
-              <QRCodeSVG
-                value={qrcodeUrl}
-                size={208}
-                marginSize={3}
-                data-testid={`weixin-account-login-qrcode-${accountId}`}
-              />
+              <LoginQrCode value={qrcodeUrl} testId={`weixin-account-login-qrcode-${accountId}`} />
             )}
             {!isStarting && !qrcodeUrl && <QrCode className="h-10 w-10 text-muted-foreground" />}
           </div>

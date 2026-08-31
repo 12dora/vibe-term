@@ -234,3 +234,21 @@ describe('待确认记录的取消按钮', () => {
     expect(html).toContain('data-testid="nodes-pending-cancel-enr-cancel-1"');
   });
 });
+
+describe('NodesTab 模式未落定', () => {
+  test('先按版式摆骨架，模式相关区块一概不挂', () => {
+    localStatus = status({ role: 'hub,node' });
+    resetMeshNodesStateForTest();
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <NodesTab />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="settings-nodes-tab-skeleton"');
+    expect(html).not.toContain('data-testid="settings-nodes-tab"');
+    expect(html).not.toContain('data-testid="local-machine-card"');
+    expect(html).not.toContain('data-testid="https-section"');
+    expect(html).not.toContain('data-testid="hub-setup-wizard"');
+    expect(html).not.toContain('data-testid="nodes-table"');
+  });
+});
