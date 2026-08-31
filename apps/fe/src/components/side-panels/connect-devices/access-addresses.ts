@@ -51,10 +51,9 @@ export function buildAccessAddresses(input: AccessAddressInput): AccessAddress[]
 
   push('public', tunnelPublicUrl(input.tunnel));
   push('public', input.hubPublicUrl);
-  if (input.addresses && !input.addresses.loopbackOnly) {
-    for (const ip of input.addresses.lanAddresses) {
-      push('lan', `http://${ip}:${input.addresses.port}`);
-    }
+  const addresses = input.addresses;
+  if (addresses && !addresses.loopbackOnly && Array.isArray(addresses.lanAddresses)) {
+    for (const ip of addresses.lanAddresses) push('lan', `http://${ip}:${addresses.port}`);
   }
   if (input.origin && !isLoopbackOrigin(input.origin)) push('current', input.origin);
   if (out.length === 0 && input.origin) push('current', input.origin);
