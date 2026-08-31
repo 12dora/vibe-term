@@ -5,12 +5,15 @@ import { type VariantProps, cva } from 'class-variance-authority';
 
 import { cn } from '../utils';
 
+// Base UI 根节点输出的是 `data-orientation="horizontal|vertical"`，Tailwind 的 `data-horizontal:`
+// 只匹配布尔属性 `[data-horizontal]`，永远不生效：横向 Tabs 里一旦放进内容面板就会排成一行。
 function Tabs({ className, orientation = 'horizontal', ...props }: TabsPrimitive.Root.Props) {
   return (
     <TabsPrimitive.Root
       data-slot="tabs"
       data-orientation={orientation}
-      className={cn('gap-2 group/tabs flex data-horizontal:flex-col', className)}
+      orientation={orientation}
+      className={cn('gap-2 group/tabs flex data-[orientation=horizontal]:flex-col', className)}
       {...props}
     />
   );

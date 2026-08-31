@@ -72,7 +72,7 @@ export function NavMain({ items }: { items: NavMainItem[] }) {
                 tooltip={t(item.title)}
                 aria-label={t(item.title)}
                 // 两个入口并排时只有半宽，字号收一档才放得下英文标签。
-                className="gap-1.5 px-1.5 text-xs"
+                className="justify-center gap-1.5 px-1.5 text-xs"
                 data-testid={item.testId}
                 render={<NavLink to={item.url} state={item.linkState} />}
               >
