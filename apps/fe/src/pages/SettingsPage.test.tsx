@@ -27,7 +27,11 @@ mock.module('./settings/notification-settings-tab', () => ({
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { default: SettingsPage, settingsTabFromParam } = await import('./SettingsPage');
+const {
+  default: SettingsPage,
+  settingsTabFromParam,
+  chunkPreloadOrder,
+} = await import('./SettingsPage');
 
 const TAB_IDS = [
   'general',
@@ -117,5 +121,22 @@ describe('settingsTabFromParam', () => {
     expect(settingsTabFromParam('')).toBe('general');
     expect(settingsTabFromParam('bogus')).toBe('general');
     expect(settingsTabFromParam('NODES')).toBe('general');
+  });
+});
+
+// 空闲预热的排队顺序（调度本身在 settings/chunk-preload.test.ts 里覆盖）。
+describe('chunkPreloadOrder', () => {
+  test('排除当前标签，其余按标签定义顺序各出现一次', () => {
+    for (const tab of TAB_IDS) {
+      const order = chunkPreloadOrder(tab as ReturnType<typeof settingsTabFromParam>);
+      expect(order).toHaveLength(TAB_IDS.length - 1);
+      expect(new Set(order).size).toBe(order.length);
+    }
+  });
+
+  test('不同标签排出的顺序确实不同（当前标签被摘掉）', () => {
+    const fromGeneral = chunkPreloadOrder('general');
+    const fromNodes = chunkPreloadOrder('nodes');
+    expect(fromGeneral[0]).not.toBe(fromNodes[0]);
   });
 });

@@ -10,14 +10,16 @@ import {
   Settings as SettingsIcon,
   Sparkles,
 } from 'lucide-react';
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
 import { lazyChunk } from '@/lazy-chunk';
+import { useRouteNodeId } from '@/node/node-runtime-boundary';
+import { nodeQueryClient } from '@/node/node-runtimes';
 import { parseApiError } from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
+import { useOptionalRuntime, useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import {
   AlertDialog,
@@ -32,28 +34,37 @@ import {
 import { Button } from '@tmex/ui/button';
 import { Reveal } from '@tmex/ui/motion';
 import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/tabs';
+import {
+  type ChunkPreloadTarget,
+  preloadChunk,
+  startIdleChunkPreload,
+} from './settings/chunk-preload';
+import { prefetchTabData } from './settings/data-prefetch';
 import { useSiteSettingsForm } from './settings/use-site-settings-form';
 
 // 每个标签页独立成块：进设置页只下载当前标签的代码，切换过一次后 React.lazy 缓存模块，之后切换是同步的。
-const GeneralSettingsTab = lazyChunk(() =>
-  import('./settings/general-settings-tab').then((m) => m.GeneralSettingsTab)
-);
-const DevicesAndFilesTab = lazyChunk(() =>
-  import('./settings/devices-and-files-tab').then((m) => m.DevicesAndFilesTab)
-);
-const NodesTab = lazyChunk(() => import('./settings/nodes/nodes-tab').then((m) => m.NodesTab));
-const NotificationSettingsTab = lazyChunk(() =>
-  import('./settings/notification-settings-tab').then((m) => m.NotificationSettingsTab)
-);
-const AISettingsTab = lazyChunk(() =>
-  import('./settings/ai-settings-tab').then((m) => m.AISettingsTab)
-);
-const TerminalSettingsTab = lazyChunk(() =>
-  import('@tmex/panels/settings/terminal').then((m) => m.TerminalSettingsTab)
-);
-const RemoteAccessTab = lazyChunk(() =>
-  import('./settings/remote-access/remote-access-tab').then((m) => m.RemoteAccessTab)
-);
+// loader 单独命名是为了让预热（chunk-preload）复用同一个函数引用——绝不能改成静态 import，
+// 那样七个标签的代码会全部回到入口 chunk 里。
+const loadGeneralSettingsTab = () =>
+  import('./settings/general-settings-tab').then((m) => m.GeneralSettingsTab);
+const loadDevicesAndFilesTab = () =>
+  import('./settings/devices-and-files-tab').then((m) => m.DevicesAndFilesTab);
+const loadNodesTab = () => import('./settings/nodes/nodes-tab').then((m) => m.NodesTab);
+const loadNotificationSettingsTab = () =>
+  import('./settings/notification-settings-tab').then((m) => m.NotificationSettingsTab);
+const loadAISettingsTab = () => import('./settings/ai-settings-tab').then((m) => m.AISettingsTab);
+const loadTerminalSettingsTab = () =>
+  import('@tmex/panels/settings/terminal').then((m) => m.TerminalSettingsTab);
+const loadRemoteAccessTab = () =>
+  import('./settings/remote-access/remote-access-tab').then((m) => m.RemoteAccessTab);
+
+const GeneralSettingsTab = lazyChunk(loadGeneralSettingsTab);
+const DevicesAndFilesTab = lazyChunk(loadDevicesAndFilesTab);
+const NodesTab = lazyChunk(loadNodesTab);
+const NotificationSettingsTab = lazyChunk(loadNotificationSettingsTab);
+const AISettingsTab = lazyChunk(loadAISettingsTab);
+const TerminalSettingsTab = lazyChunk(loadTerminalSettingsTab);
+const RemoteAccessTab = lazyChunk(loadRemoteAccessTab);
 
 export type SettingsTab =
   | 'general'
@@ -74,11 +85,41 @@ const SETTINGS_TABS: SettingsTab[] = [
   'remoteAccess',
 ];
 
+const TAB_CHUNK_LOADERS: Record<SettingsTab, ChunkPreloadTarget> = {
+  general: loadGeneralSettingsTab,
+  devicesAndFiles: loadDevicesAndFilesTab,
+  nodes: loadNodesTab,
+  notifications: loadNotificationSettingsTab,
+  ai: loadAISettingsTab,
+  terminal: loadTerminalSettingsTab,
+  remoteAccess: loadRemoteAccessTab,
+};
+
+/** 预热顺序：当前标签自己在加载，排除掉；其余按标签栏顺序逐个排队。 */
+export function chunkPreloadOrder(activeTab: SettingsTab): ChunkPreloadTarget[] {
+  return SETTINGS_TABS.filter((tab) => tab !== activeTab).map((tab) => TAB_CHUNK_LOADERS[tab]);
+}
+
 /** 用 `SiteSettingsForm` 的标签；其余标签下不必拉 `/api/settings/site`。 */
 const TABS_USING_SITE_SETTINGS: ReadonlySet<SettingsTab> = new Set<SettingsTab>([
   'general',
   'notifications',
 ]);
+
+// 标签栏的展示顺序与 SETTINGS_TABS（预热顺序）无关：这里按使用频率排，图标与 i18n key 一并定死。
+const SETTINGS_TAB_BAR = [
+  { value: 'general', labelKey: 'settings.tabGroup.general', icon: SettingsIcon },
+  { value: 'terminal', labelKey: 'settings.tabGroup.terminal', icon: Monitor },
+  { value: 'remoteAccess', labelKey: 'settings.tabGroup.remoteAccess', icon: Globe },
+  { value: 'devicesAndFiles', labelKey: 'settings.tabGroup.devicesAndFiles', icon: Server },
+  { value: 'nodes', labelKey: 'settings.tabGroup.nodes', icon: Network },
+  { value: 'notifications', labelKey: 'settings.tabGroup.notifications', icon: Bell },
+  { value: 'ai', labelKey: 'settings.tabGroup.ai', icon: Sparkles },
+] as const satisfies readonly {
+  value: SettingsTab;
+  labelKey: string;
+  icon: typeof SettingsIcon;
+}[];
 
 function isSettingsTab(value: string | null): value is SettingsTab {
   return value !== null && (SETTINGS_TABS as string[]).includes(value);
@@ -99,6 +140,22 @@ export default function SettingsPage() {
   const activeTab = settingsTabFromParam(searchParams.get('tab'));
   // 表单常挂在页级（切标签不丢未保存的草稿），但只有真正用它的两个标签才去拉站点设置。
   const form = useSiteSettingsForm({ enabled: TABS_USING_SITE_SETTINGS.has(activeTab) });
+  // 一次性：挂载时按当时的标签算出预热顺序，之后切标签不重排（已发起的 chunk 不会重发）。
+  const [preloadOrder] = useState(() => chunkPreloadOrder(activeTab));
+  useEffect(() => startIdleChunkPreload(preloadOrder), [preloadOrder]);
+
+  // 数据预取要落到这条路由 node 自己的 QueryClient 上（每个 node 一份），
+  // 与 NodeRuntimeBoundary 里那个 provider 取的是同一个实例。
+  const routeNodeId = useRouteNodeId();
+  const runtime = useOptionalRuntime();
+  // 每次进设置页各标签只预取一次：鼠标扫过标签栏不该把请求发好几遍。
+  const prefetchedTabs = useRef<Set<string>>(new Set());
+
+  const warmTab = (tab: SettingsTab) => {
+    preloadChunk(TAB_CHUNK_LOADERS[tab]);
+    if (!runtime) return;
+    prefetchTabData(nodeQueryClient(routeNodeId), tab, runtime.apiClient, prefetchedTabs.current);
+  };
 
   const selectTab = (value: SettingsTab) => {
     setSearchParams(
@@ -110,56 +167,6 @@ export default function SettingsPage() {
     );
   };
 
-  const tabItems: {
-    value: SettingsTab;
-    label: string;
-    icon: typeof SettingsIcon;
-    testId: string;
-  }[] = [
-    {
-      value: 'general',
-      label: t('settings.tabGroup.general'),
-      icon: SettingsIcon,
-      testId: 'settings-tab-general',
-    },
-    {
-      value: 'terminal',
-      label: t('settings.tabGroup.terminal'),
-      icon: Monitor,
-      testId: 'settings-tab-terminal',
-    },
-    {
-      value: 'remoteAccess',
-      label: t('settings.tabGroup.remoteAccess'),
-      icon: Globe,
-      testId: 'settings-tab-remoteAccess',
-    },
-    {
-      value: 'devicesAndFiles',
-      label: t('settings.tabGroup.devicesAndFiles'),
-      icon: Server,
-      testId: 'settings-tab-devicesAndFiles',
-    },
-    {
-      value: 'nodes',
-      label: t('settings.tabGroup.nodes'),
-      icon: Network,
-      testId: 'settings-tab-nodes',
-    },
-    {
-      value: 'notifications',
-      label: t('settings.tabGroup.notifications'),
-      icon: Bell,
-      testId: 'settings-tab-notifications',
-    },
-    {
-      value: 'ai',
-      label: t('settings.tabGroup.ai'),
-      icon: Sparkles,
-      testId: 'settings-tab-ai',
-    },
-  ];
-
   return (
     <div
       className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-3 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:gap-6 sm:p-5"
@@ -167,17 +174,20 @@ export default function SettingsPage() {
     >
       <Tabs value={activeTab} onValueChange={(value) => selectTab(value as SettingsTab)}>
         <TabsList className="w-full gap-1 !justify-start overflow-x-auto rounded-xl border border-border/60 p-1.5 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {tabItems.map((item) => {
+          {SETTINGS_TAB_BAR.map((item) => {
             const Icon = item.icon;
             return (
               <TabsTrigger
                 key={item.value}
                 value={item.value}
-                data-testid={item.testId}
+                data-testid={`settings-tab-${item.value}`}
+                // 悬停/触摸即预热：比空闲队列更早，指针到点下之间那点时间足够把 chunk 和数据都拉回来。
+                onPointerEnter={() => warmTab(item.value)}
+                onTouchStart={() => warmTab(item.value)}
                 className={cn(pillTabTriggerClassName, 'min-w-max gap-2 px-3.5')}
               >
                 <Icon />
-                {item.label}
+                {t(item.labelKey)}
               </TabsTrigger>
             );
           })}
