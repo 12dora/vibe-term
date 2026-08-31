@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { canonicalHubUrl, encodeBase64url } from '@tmex/shared/auth';
+import { canonicalHubUrl, encodeBase64url, hubHostFromUrl } from '@tmex/shared/auth';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { filesBulkHooks } from '../api/files';
@@ -38,7 +38,6 @@ import {
   type MeshUpgradeServer,
   type NodeEventPayload,
   type OpenedWsStream,
-  type PeerLinkProvider,
   type RtcFingerprintProvider,
   type RtcSignalMessage,
   type StreamOpener,
@@ -962,6 +961,8 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkClient, ensureDc: EnsureDcF
     scheduler: d.scheduler,
     rtc,
     linkFactory: opts.linkFactory,
+    interfacesFn: d.interfacesFn,
+    hubHost: hubHostFromUrl(hubEndpointUrl(config)),
     onGatewaySession: (session, auth) => sessions.register({ ...auth, session }).ok,
     onGatewaySessionClose: (session) => {
       const entry = sessions.getBySession(session);
@@ -1126,12 +1127,10 @@ function createRtcBrowserWiring(
   };
   return { fingerprint, signals };
 }
-
 function wireMeshEventsAndSessions(d: MeshDeps) {
   const { uplink, ensureDc } = createUplinkWiring(d);
   const peerManager = createPeerWiring(d, uplink, ensureDc);
-  const { fingerprint, signals } = createRtcBrowserWiring(d, uplink, peerManager, ensureDc);
-  return { uplink, peerManager, fingerprint, signals };
+  return { uplink, peerManager, ...createRtcBrowserWiring(d, uplink, peerManager, ensureDc) };
 }
 
 function wireMeshHttp(
@@ -1140,11 +1139,12 @@ function wireMeshHttp(
 ): MeshHttpRuntime {
   const { config, identity, userStore, state } = d;
   const { uplink, peerManager, fingerprint, signals } = w;
-  const peers: PeerLinkProvider = {
-    getLink: (nodeId) => peerManager.getLink(nodeId),
+  const peers = {
+    getLink: (nodeId: string) => peerManager.getLink(nodeId),
     listReach: () => peerManager.listReach(),
-    transportOf: (nodeId) => peerManager.transportOf(nodeId),
-    rttOf: (nodeId) => peerManager.rttOf(nodeId),
+    transportOf: (nodeId: string) => peerManager.transportOf(nodeId),
+    rttOf: (nodeId: string) => peerManager.rttOf(nodeId),
+    linkDetailOf: (nodeId: string) => peerManager.linkDetailOf(nodeId),
     listHubOnline: () => {
       const ids = new Set<string>();
       if (!state.hubPresenceLive || uplink.state !== 'online' || !state.lastNodeList) return ids;
@@ -1153,7 +1153,7 @@ function wireMeshHttp(
       }
       return ids;
     },
-    onNodeEvent: (cb) => {
+    onNodeEvent: (cb: (event: NodeEventPayload) => void) => {
       d.nodeEvents.add(cb);
       return () => {
         d.nodeEvents.delete(cb);

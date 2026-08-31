@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  type RankableIfaceAddr,
   addressFromIceCandidate,
   classifyPeerReach,
   classifyRemoteAddress,
   hostFromWsUrl,
   isPeerReachable,
   parseIpv6Words,
+  rankPeerEndpoints,
   rttChangedMaterially,
 } from './address-class';
 
@@ -154,5 +156,84 @@ describe('hostFromWsUrl and addressFromIceCandidate', () => {
       '2001:db8::1'
     );
     expect(addressFromIceCandidate('')).toBeNull();
+  });
+});
+
+describe('rankPeerEndpoints', () => {
+  const lan: RankableIfaceAddr = {
+    address: '10.77.88.10',
+    netmask: '255.255.255.0',
+    family: 'IPv4',
+    internal: false,
+    cidr: '10.77.88.10/24',
+  };
+  const loopback: RankableIfaceAddr = {
+    address: '127.0.0.1',
+    netmask: '255.0.0.0',
+    family: 'IPv4',
+    internal: true,
+    cidr: '127.0.0.1/8',
+  };
+  const v6ula: RankableIfaceAddr = {
+    address: 'fd12:3456:789a::10',
+    netmask: 'ffff:ffff:ffff:ffff::',
+    family: 'IPv6',
+    internal: false,
+    cidr: 'fd12:3456:789a::10/64',
+  };
+
+  test('orders same-subnet before other private before public, IPv4 before IPv6', () => {
+    const ranked = rankPeerEndpoints(
+      [
+        'ws://4.2.2.1:39001/peer',
+        'ws://172.17.0.1:39001/peer',
+        'ws://[2001:db8::1]:39001/peer',
+        'ws://[fd00::9]:39001/peer',
+        'ws://10.77.88.3:39001/peer',
+      ],
+      { en0: [lan], lo0: [loopback] }
+    );
+    expect(ranked).toEqual([
+      'ws://10.77.88.3:39001/peer',
+      'ws://172.17.0.1:39001/peer',
+      'ws://[fd00::9]:39001/peer',
+      'ws://4.2.2.1:39001/peer',
+      'ws://[2001:db8::1]:39001/peer',
+    ]);
+  });
+
+  test('ignores internal interfaces when deciding same-subnet', () => {
+    const ranked = rankPeerEndpoints(['ws://127.0.0.1:39001/peer', 'ws://10.77.88.3:39001/peer'], {
+      en0: [lan],
+      lo0: [loopback],
+    });
+    expect(ranked).toEqual(['ws://10.77.88.3:39001/peer', 'ws://127.0.0.1:39001/peer']);
+  });
+
+  test('ranks IPv6 same-subnet ahead of other private v4', () => {
+    const ranked = rankPeerEndpoints(
+      ['ws://192.168.1.9:39001/peer', 'ws://[fd12:3456:789a::3]:39001/peer'],
+      { en0: [lan], utun: [v6ula] }
+    );
+    expect(ranked).toEqual(['ws://[fd12:3456:789a::3]:39001/peer', 'ws://192.168.1.9:39001/peer']);
+  });
+
+  test('is deterministic and preserves relative order within the same tier and family', () => {
+    const urls = [
+      'ws://172.16.0.2:39001/peer',
+      'ws://172.16.0.1:39001/peer',
+      'ws://10.0.0.2:39001/peer',
+    ];
+    const ifaces = { en0: [lan] };
+    expect(rankPeerEndpoints(urls, ifaces)).toEqual(urls);
+    expect(rankPeerEndpoints(urls, ifaces)).toEqual(rankPeerEndpoints([...urls], ifaces));
+  });
+
+  test('treats unparsable hosts as public and keeps them last among IPv4', () => {
+    expect(
+      rankPeerEndpoints(['ws://hub.example.com:39001/peer', 'ws://10.0.0.1:39001/peer'], {
+        en0: [lan],
+      })
+    ).toEqual(['ws://10.0.0.1:39001/peer', 'ws://hub.example.com:39001/peer']);
   });
 });

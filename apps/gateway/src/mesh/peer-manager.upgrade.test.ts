@@ -542,8 +542,7 @@ describe('PeerManager upgrade review fixes', () => {
     echoQuiesceCaps(relayB);
     expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
     managerA.notifyPeerEndpointsChanged(peer.nodeId);
-    await waitUntil(() => tried.length > 0, 2_000);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitUntil(() => tried.length >= 16, 6_000);
     expect(tried).not.toContain(long);
     expect(tried.length).toBeLessThanOrEqual(16);
     expect(tried.length).toBe(16);

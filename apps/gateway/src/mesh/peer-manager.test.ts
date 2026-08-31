@@ -6,6 +6,7 @@ import { UserStore } from '../auth/user-store';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
 import {
   KEY_LOG_STATUS_DEBOUNCE_MS,
+  PEER_CONNECT_TIMEOUT_MS,
   PEER_DC_UPGRADE_RETRY_DELAYS_MS,
   PEER_DC_UPGRADE_RETRY_TAIL_MS,
   PEER_RETIRE_MAX_MS,
@@ -17,10 +18,11 @@ import {
   PEER_RTC_WAKE_VERIFY_WINDOW_MS,
   PEER_UPGRADE_BACKOFF_CAP_MS,
   PEER_UPGRADE_COOLDOWN_MS,
+  PEER_WS_DIAL_STAGGER_MS,
   PeerManager,
   winningDialInitiator,
 } from './peer-manager';
-import { handshakeRelay } from './peer-protocol';
+import { handshakeRelay, handshakeWsDirect } from './peer-protocol';
 import type { RtcPeerManager } from './rtc';
 import { encodeRtcWakeSdp, peerRtcSession } from './rtc/ice';
 import type { RtcLivenessOptions } from './rtc/rtc-peer-manager';
@@ -39,6 +41,37 @@ import {
   type UplinkStatus,
 } from './types';
 import { UplinkClient } from './uplink-client';
+
+function keysMatchInitiator(
+  live: { sendKey: Uint8Array; recvKey: Uint8Array } | null,
+  initiator: { sendKey?: Uint8Array; recvKey?: Uint8Array }
+): boolean {
+  return (
+    live != null &&
+    initiator.sendKey != null &&
+    initiator.recvKey != null &&
+    Buffer.from(live.sendKey).equals(Buffer.from(initiator.recvKey)) &&
+    Buffer.from(live.recvKey).equals(Buffer.from(initiator.sendKey))
+  );
+}
+
+async function openInitiatorWs(
+  url: string,
+  identity: { nodeId: string; edSecretKey: Uint8Array },
+  store: UserStore
+) {
+  const ws = new WebSocket(url);
+  await new Promise<void>((resolve, reject) => {
+    ws.addEventListener('open', () => resolve(), { once: true });
+    ws.addEventListener('error', () => reject(new Error('ws-error')), { once: true });
+  });
+  return handshakeWsDirect({
+    socket: ws,
+    role: 'initiator',
+    identity,
+    userStore: store,
+  });
+}
 
 function dummyApplier(): KeyLogApplier {
   return {
@@ -500,9 +533,11 @@ describe('PeerManager', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     await manager.stop();
     await expect(pending).rejects.toBeInstanceOf(NodeUnreachableError);
-    release?.(fakeSocketPair()[0]);
+    const [late] = fakeSocketPair();
+    release?.(late);
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(manager.listReach().get(peer.nodeId)).toBeNull();
+    expect(late.closed).toBe(true);
   });
 
   test('simultaneous dial keeps the initiator with the lexicographically smaller nodeId', () => {
@@ -1095,7 +1130,7 @@ describe('PeerManager', () => {
     store.upsertPeer({
       nodeId: peer.nodeId,
       name: 'peer',
-      endpointsJson: JSON.stringify(['ws://127.0.0.1:39001/peer']),
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer']),
       inventoryJson: '{}',
       directCapable: false,
       lastSeenAt: Date.now(),
@@ -3038,6 +3073,565 @@ describe('PeerManager', () => {
     manager.refreshAdvertisedStatus();
     await Bun.sleep(20);
     expect(statuses.filter((row) => row.t === 'node.status')).toHaveLength(1);
+  });
+
+  test('ws-secure races ranked endpoints: hanging first loses to a later success', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      hostname: '127.0.0.1',
+      startServer: true,
+      idleMs: 60_000,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    await managerA.start();
+    const goodPort = managerA.listenPort;
+    expect(goodPort).toBeGreaterThan(0);
+    let hangAccepted = 0;
+    let hangClosed = 0;
+    const hangServer = Bun.listen({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open() {
+          hangAccepted += 1;
+        },
+        data() {},
+        close() {
+          hangClosed += 1;
+        },
+        error() {},
+      },
+    });
+    fixtures.push({ close: () => hangServer.stop(true) });
+    store.upsertPeer({
+      nodeId: self.nodeId,
+      name: 'self',
+      endpointsJson: JSON.stringify([
+        `ws://127.0.0.1:${hangServer.port}/peer`,
+        `ws://127.0.0.1:${goodPort}/peer`,
+      ]),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const managerB = new PeerManager({
+      identity: peer,
+      userStore: store,
+      uplink: dummyUplink(peer, store),
+      peerPort: 0,
+      hostname: '127.0.0.1',
+      startServer: false,
+      idleMs: 60_000,
+      hubHost: 'hub.example.com',
+    });
+    fixtures.push({ close, stop: () => managerB.stop() });
+    const t0 = performance.now();
+    const link = await managerB.getLink(self.nodeId);
+    const elapsed = performance.now() - t0;
+    expect(link).toBeTruthy();
+    expect(managerB.transportOf(self.nodeId)).toBe('ws-secure');
+    expect(elapsed).toBeLessThan(PEER_CONNECT_TIMEOUT_MS);
+    expect(elapsed).toBeLessThan(PEER_WS_DIAL_STAGGER_MS + 1_200);
+    await waitUntil(() => hangClosed >= hangAccepted && hangAccepted >= 1, 2_000);
+    expect(hangAccepted).toBeGreaterThanOrEqual(1);
+    expect(hangClosed).toBeGreaterThanOrEqual(hangAccepted);
+    const detail = managerB.linkDetailOf(self.nodeId);
+    expect(detail.directFailure).toBeNull();
+    expect(detail.peerAddress).toBe('127.0.0.1');
+    expect(detail.linkSinceAt).toBeGreaterThan(0);
+    expect(detail.endpoints).toEqual([]);
+  });
+
+  test('all ws-secure endpoints failing still falls back to relay', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer', 'ws://127.0.0.1:2/peer']),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const [outerA, outerB] = createInMemoryLinkPair();
+    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      outerB.onStream(resolve)
+    );
+    const uplink = dummyUplink(self, store, async () => {
+      const stream = await outerA.openStream(
+        new TextEncoder().encode(JSON.stringify({ to: peer.nodeId, from: self.nodeId }))
+      );
+      return stream;
+    });
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink,
+      peerPort: 0,
+      startServer: false,
+      connectTimeoutMs: 200,
+      hubHost: 'hub.example.com',
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const acceptP = incoming.then((stream) =>
+      handshakeRelay({
+        stream,
+        role: 'acceptor',
+        identity: peer,
+        userStore: store,
+      })
+    );
+    const [link] = await Promise.all([manager.getLink(peer.nodeId), acceptP]);
+    expect(manager.listReach().get(peer.nodeId)).toBe('relay');
+    const detail = manager.linkDetailOf(peer.nodeId);
+    expect(detail.peerAddress).toBe('hub.example.com');
+    expect(detail.linkSinceAt).toBeGreaterThan(0);
+    expect(detail.directFailure?.dc).toBe('direct_capable=false');
+    expect(detail.directFailure?.ws).toMatch(/127\.0\.0\.1:[12]/);
+    expect(detail.endpoints).toEqual([]);
+    link.close();
+  });
+
+  test('stop during a ws-secure race aborts every in-flight attempt', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    let hangAccepted = 0;
+    let hangClosed = 0;
+    const hangServer = Bun.listen({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open() {
+          hangAccepted += 1;
+        },
+        data() {},
+        close() {
+          hangClosed += 1;
+        },
+        error() {},
+      },
+    });
+    fixtures.push({ close: () => hangServer.stop(true) });
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify([
+        `ws://127.0.0.1:${hangServer.port}/peer`,
+        `ws://127.0.0.1:${hangServer.port}/peer`,
+      ]),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const pending = manager.getLink(peer.nodeId);
+    await waitUntil(() => hangAccepted >= 1, 2_000);
+    await manager.stop();
+    await expect(pending).rejects.toBeInstanceOf(NodeUnreachableError);
+    await waitUntil(() => hangClosed >= hangAccepted, 2_000);
+    expect(hangClosed).toBeGreaterThanOrEqual(hangAccepted);
+  });
+
+  test('same-turn ws-secure handshakes track and key only the race winner', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer', 'ws://127.0.0.1:2/peer']),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const resolvers: Array<(ws: ReturnType<typeof fakeSocketPair>[0]) => void> = [];
+    const clients: Array<ReturnType<typeof fakeSocketPair>[0]> = [];
+    const acceptors: Array<{
+      sendKey?: Uint8Array;
+      recvKey?: Uint8Array;
+    }> = [];
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler: new ImmediateScheduler(),
+      wsFactory: () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const pending = manager.getLink(peer.nodeId);
+    await waitUntil(() => resolvers.length >= 2, 2_000);
+    for (const resolve of resolvers) {
+      const [client, server] = fakeSocketPair();
+      clients.push(client);
+      void handshakeWsDirect({
+        socket: server,
+        role: 'acceptor',
+        identity: peer,
+        userStore: store,
+      }).then((row) => {
+        acceptors.push({ sendKey: row.sendKey, recvKey: row.recvKey });
+      });
+      resolve(client);
+    }
+    const link = await pending;
+    expect(manager.getLive(peer.nodeId)).toBe(link);
+    const keys = manager.sessionKeysOf(peer.nodeId);
+    expect(keys).not.toBeNull();
+    await waitUntil(() => acceptors.length >= 2, 2_000);
+    const matched = acceptors.filter(
+      (row) =>
+        keys &&
+        row.sendKey &&
+        row.recvKey &&
+        Buffer.from(keys.sendKey).equals(Buffer.from(row.recvKey)) &&
+        Buffer.from(keys.recvKey).equals(Buffer.from(row.sendKey))
+    );
+    expect(matched).toHaveLength(1);
+    expect(clients.filter((socket) => !socket.closed)).toHaveLength(1);
+    expect(await Promise.race([link.closed.then(() => 'closed'), Promise.resolve('open')])).toBe(
+      'open'
+    );
+  });
+
+  test('ws-secure winner abort closes a losing factory socket that resolves late', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer', 'ws://127.0.0.1:2/peer']),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let resolveLate: ((ws: ReturnType<typeof fakeSocketPair>[0]) => void) | undefined;
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler: new ImmediateScheduler(),
+      wsFactory: (url) => {
+        if (url.includes(':1/')) {
+          return new Promise((resolve) => {
+            resolveLate = resolve;
+          });
+        }
+        const [client, server] = fakeSocketPair();
+        void handshakeWsDirect({
+          socket: server,
+          role: 'acceptor',
+          identity: peer,
+          userStore: store,
+        });
+        return client;
+      },
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const link = await manager.getLink(peer.nodeId);
+    expect(link).toBeTruthy();
+    const [late] = fakeSocketPair();
+    resolveLate?.(late);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(late.closed).toBe(true);
+    expect(manager.getLive(peer.nodeId)).toBe(link);
+  });
+
+  test('stop() during a ws-secure race closes a factory socket that resolves after abort', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer', 'ws://127.0.0.1:2/peer']),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const resolvers: Array<(ws: ReturnType<typeof fakeSocketPair>[0]) => void> = [];
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler: new ImmediateScheduler(),
+      wsFactory: () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const pending = manager.getLink(peer.nodeId);
+    await waitUntil(() => resolvers.length >= 1, 2_000);
+    await manager.stop();
+    await expect(pending).rejects.toBeInstanceOf(NodeUnreachableError);
+    const lateSockets = resolvers.map((resolve) => {
+      const [ws] = fakeSocketPair();
+      resolve(ws);
+      return ws;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(lateSockets.every((socket) => socket.closed)).toBe(true);
+    expect(manager.listReach().get(peer.nodeId)).toBeNull();
+  });
+
+  test('stop after electing a ws-secure winner closes the untracked session', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer', 'ws://127.0.0.1:2/peer']),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const inner = new ImmediateScheduler();
+    const stopRef = { run: () => {} };
+    let winnerClient: ReturnType<typeof fakeSocketPair>[0] | undefined;
+    const scheduler: MeshScheduler = {
+      now: () => inner.now(),
+      interval: (fn, ms) => inner.interval(fn, ms),
+      sleep(_ms, signal) {
+        if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('aborted'));
+        return new Promise((_resolve, reject) => {
+          const onAbort = () => {
+            void stopRef.run();
+            reject(signal?.reason ?? new Error('aborted'));
+          };
+          signal?.addEventListener('abort', onAbort, { once: true });
+        });
+      },
+    };
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      wsFactory: (url) => {
+        const [client, server] = fakeSocketPair();
+        if (url.includes(':1/')) winnerClient = client;
+        void handshakeWsDirect({
+          socket: server,
+          role: 'acceptor',
+          identity: peer,
+          userStore: store,
+        });
+        return client;
+      },
+    });
+    stopRef.run = () => {
+      void manager.stop();
+    };
+    fixtures.push({ close, stop: () => manager.stop() });
+    const pending = manager.getLink(peer.nodeId);
+    await expect(pending).rejects.toBeInstanceOf(NodeUnreachableError);
+    expect(winnerClient?.closed).toBe(true);
+    expect(manager.getLive(peer.nodeId)).toBeNull();
+    expect(manager.listReach().get(peer.nodeId)).toBeNull();
+  });
+
+  test('acceptor parks a second inbound and restores its keys when promoted', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const acceptor = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      hostname: '127.0.0.1',
+      startServer: true,
+      idleMs: 60_000,
+    });
+    fixtures.push({ close, stop: () => acceptor.stop() });
+    await acceptor.start();
+    const port = acceptor.listenPort;
+    expect(port).toBeGreaterThan(0);
+    const url = `ws://127.0.0.1:${port}/peer`;
+    const first = await openInitiatorWs(url, peer, store);
+    await waitUntil(() => acceptor.getLive(peer.nodeId) != null, 2_000);
+    expect(keysMatchInitiator(acceptor.sessionKeysOf(peer.nodeId), first)).toBe(true);
+    const second = await openInitiatorWs(url, peer, store);
+    await waitUntil(() => second.session != null, 2_000);
+    expect(keysMatchInitiator(acceptor.sessionKeysOf(peer.nodeId), first)).toBe(true);
+    expect(keysMatchInitiator(acceptor.sessionKeysOf(peer.nodeId), second)).toBe(false);
+    first.session.close('drop-live');
+    await waitUntil(() => keysMatchInitiator(acceptor.sessionKeysOf(peer.nodeId), second), 2_000);
+    expect(keysMatchInitiator(acceptor.sessionKeysOf(peer.nodeId), second)).toBe(true);
+    expect(acceptor.getLive(peer.nodeId)).not.toBeNull();
+  });
+
+  test('linkDetailOf does not read peer records for endpoints', () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer']),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const orig = store.getPeer.bind(store);
+    let gets = 0;
+    store.getPeer = ((nodeId: string) => {
+      gets += 1;
+      return orig(nodeId);
+    }) as UserStore['getPeer'];
+    const detail = manager.linkDetailOf(peer.nodeId);
+    expect(gets).toBe(0);
+    expect(detail.endpoints).toEqual([]);
+    expect(detail.peerAddress).toBeNull();
+    expect(detail.directFailure).toBeNull();
+  });
+
+  test('upgrade failure after an existing relay records only this attempt', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer']),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const [outerA, outerB] = createInMemoryLinkPair();
+    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      outerB.onStream(resolve)
+    );
+    const uplink = dummyUplink(self, store, async () => {
+      const stream = await outerA.openStream(
+        new TextEncoder().encode(JSON.stringify({ to: peer.nodeId, from: self.nodeId }))
+      );
+      return stream;
+    });
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink,
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      connectTimeoutMs: 80,
+      wsFactory: () => {
+        throw new Error('refused');
+      },
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const acceptP = incoming.then(async (stream) => {
+      const result = await handshakeRelay({
+        stream,
+        role: 'acceptor',
+        identity: peer,
+        userStore: store,
+      });
+      echoQuiesceCaps(result.session);
+      return result;
+    });
+    await Promise.all([manager.getLink(peer.nodeId), acceptP]);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+    const first = manager.linkDetailOf(peer.nodeId);
+    expect(first.directFailure?.dc).toBe('direct_capable=false');
+    expect(first.directFailure?.ws).toMatch(/127\.0\.0\.1:1/);
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:2/peer']),
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 2,
+    });
+    scheduler.nowMs += PEER_UPGRADE_COOLDOWN_MS;
+    manager.notifyPeerEndpointsChanged(peer.nodeId);
+    await waitUntil(
+      () => manager.linkDetailOf(peer.nodeId).directFailure?.dc === 'datachannel unavailable',
+      2_000
+    );
+    const second = manager.linkDetailOf(peer.nodeId);
+    expect(second.directFailure?.dc).toBe('datachannel unavailable');
+    expect(second.directFailure?.ws).toMatch(/127\.0\.0\.1:2/);
+    expect(second.directFailure?.at).toBeGreaterThanOrEqual(first.directFailure?.at ?? 0);
+    expect(manager.transportOf(peer.nodeId)).toBe('relay');
   });
 });
 

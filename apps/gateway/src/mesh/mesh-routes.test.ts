@@ -168,6 +168,82 @@ describe('mesh-routes', () => {
     }
   });
 
+  test('GET /api/mesh/nodes returns peerAddress, linkSinceAt, endpoints and directFailure', async () => {
+    const peers = new FakePeers();
+    peers.reach.set(PEER_ID, 'relay');
+    peers.transport.set(PEER_ID, 'relay');
+    peers.rtt.set(PEER_ID, 38);
+    const details = {
+      peerAddress: 'hub.example.com',
+      linkSinceAt: 1_700_000_000_000,
+      endpoints: ['ws://10.77.88.3:39001/peer', 'ws://172.17.0.1:39001/peer'],
+      directFailure: {
+        at: 1_700_000_000_100,
+        ws: 'timeout ws://10.77.88.3:39001/peer',
+        dc: 'datachannel unavailable',
+      },
+    };
+    (
+      peers as FakePeers & {
+        linkDetailOf: (id: string) => typeof details | null;
+      }
+    ).linkDetailOf = (id) => (id === PEER_ID ? details : null);
+    const mesh = await bootMesh({ peers });
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(PEER_ID),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      mesh.userStore.upsertPeer({
+        nodeId: PEER_ID,
+        name: 'studio',
+        endpointsJson: JSON.stringify(details.endpoints),
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{
+          id: string;
+          peerAddress?: string | null;
+          linkSinceAt?: number | null;
+          endpoints?: string[];
+          directFailure?: { at: number; ws?: string | null; dc?: string | null } | null;
+        }>;
+      };
+      const peer = body.nodes.find((n) => n.id === PEER_ID);
+      expect(peer?.peerAddress).toBe('hub.example.com');
+      expect(peer?.linkSinceAt).toBe(1_700_000_000_000);
+      expect(peer?.endpoints).toEqual(details.endpoints);
+      expect(peer?.directFailure).toEqual(details.directFailure);
+      const self = body.nodes.find((n) => n.id === NODE_ID);
+      expect(self?.peerAddress).toBeNull();
+      expect(self?.linkSinceAt).toBeNull();
+      expect(self?.endpoints).toEqual([]);
+      expect(self?.directFailure).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/mesh/nodes uses nodes registry names when peer_cache is empty', async () => {
     const mesh = await bootMesh({ roles: { hub: true, node: true } });
     try {

@@ -110,6 +110,140 @@ function isLanIpv6(host: string): boolean {
   return false;
 }
 
+export type RankableIfaceAddr = {
+  address: string;
+  netmask?: string;
+  family?: string | number;
+  internal?: boolean;
+  cidr?: string | null;
+};
+
+const TIER_SAME_SUBNET = 0;
+const TIER_PRIVATE = 1;
+const TIER_PUBLIC = 2;
+const FAMILY_V4 = 0;
+const FAMILY_V6 = 1;
+const FAMILY_OTHER = 2;
+
+/**
+ * 直连候选排序：同网段（相对本机非 internal 网卡）> 其他私网 > 公网；
+ * 同一档内 IPv4 先于 IPv6。稳定：同档同族保持输入相对顺序。
+ */
+export function rankPeerEndpoints(
+  endpoints: string[],
+  interfaces: Record<string, RankableIfaceAddr[] | undefined>
+): string[] {
+  const locals = collectLocalNets(interfaces);
+  return endpoints
+    .map((url, index) => {
+      const host = hostFromWsUrl(url);
+      const mapped = host ? unwrapIpv4Mapped(host) : null;
+      const v4 = mapped ? parseIpv4(mapped) : host ? parseIpv4(host) : null;
+      const v6 = !v4 && host ? parseIpv6Words(host) : null;
+      const family = v4 ? FAMILY_V4 : v6 ? FAMILY_V6 : FAMILY_OTHER;
+      const same = v4
+        ? locals.v4.some((net) => ipv4SameSubnet(v4, net.addr, net.prefix))
+        : v6
+          ? locals.v6.some((net) => ipv6PrefixEqual(v6, net.addr, net.prefix))
+          : false;
+      const privateAddr = classifyRemoteAddress(host) === 'lan';
+      const tier = same ? TIER_SAME_SUBNET : privateAddr ? TIER_PRIVATE : TIER_PUBLIC;
+      return { url, index, tier, family };
+    })
+    .sort((a, b) => a.tier - b.tier || a.family - b.family || a.index - b.index)
+    .map((row) => row.url);
+}
+
+function collectLocalNets(interfaces: Record<string, RankableIfaceAddr[] | undefined>): {
+  v4: Array<{ addr: [number, number, number, number]; prefix: number }>;
+  v6: Array<{ addr: number[]; prefix: number }>;
+} {
+  const v4: Array<{ addr: [number, number, number, number]; prefix: number }> = [];
+  const v6: Array<{ addr: number[]; prefix: number }> = [];
+  for (const addrs of Object.values(interfaces)) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (addr.internal) continue;
+      const family = addr.family as string | number | undefined;
+      const isV4 = family === 'IPv4' || family === 4;
+      const isV6 = family === 'IPv6' || family === 6;
+      if (isV4) {
+        const parsed = parseIpv4(addr.address);
+        const prefix = ipv4PrefixLen(addr);
+        if (parsed && prefix != null) v4.push({ addr: parsed, prefix });
+      } else if (isV6) {
+        const parsed = parseIpv6Words(addr.address);
+        const prefix = ipv6PrefixLen(addr);
+        if (parsed && prefix != null) v6.push({ addr: parsed, prefix });
+      }
+    }
+  }
+  return { v4, v6 };
+}
+
+function ipv4PrefixLen(addr: RankableIfaceAddr): number | null {
+  const fromCidr = prefixFromCidr(addr.cidr);
+  if (fromCidr != null && fromCidr >= 0 && fromCidr <= 32) return fromCidr;
+  if (!addr.netmask) return null;
+  const o = parseIpv4(addr.netmask);
+  if (!o) return null;
+  const n = ((o[0] << 24) | (o[1] << 16) | (o[2] << 8) | o[3]) >>> 0;
+  let bits = 0;
+  let seenZero = false;
+  for (let i = 31; i >= 0; i--) {
+    if ((n >>> i) & 1) {
+      if (seenZero) return null;
+      bits += 1;
+    } else {
+      seenZero = true;
+    }
+  }
+  return bits;
+}
+
+function ipv6PrefixLen(addr: RankableIfaceAddr): number | null {
+  const fromCidr = prefixFromCidr(addr.cidr);
+  if (fromCidr != null && fromCidr >= 0 && fromCidr <= 128) return fromCidr;
+  return null;
+}
+
+function prefixFromCidr(cidr: string | null | undefined): number | null {
+  if (!cidr) return null;
+  const slash = cidr.lastIndexOf('/');
+  if (slash < 0) return null;
+  const n = Number(cidr.slice(slash + 1));
+  return Number.isInteger(n) ? n : null;
+}
+
+function ipv4SameSubnet(
+  peer: [number, number, number, number],
+  local: [number, number, number, number],
+  prefix: number
+): boolean {
+  return ipv4Network(peer, prefix) === ipv4Network(local, prefix);
+}
+
+function ipv4Network(addr: [number, number, number, number], prefix: number): number {
+  const ip = ((addr[0] << 24) | (addr[1] << 16) | (addr[2] << 8) | addr[3]) >>> 0;
+  if (prefix <= 0) return 0;
+  if (prefix >= 32) return ip;
+  const mask = (0xffffffff << (32 - prefix)) >>> 0;
+  return (ip & mask) >>> 0;
+}
+
+function ipv6PrefixEqual(a: number[], b: number[], prefixLen: number): boolean {
+  if (prefixLen <= 0) return true;
+  const bits = Math.min(prefixLen, 128);
+  const full = Math.floor(bits / 16);
+  for (let i = 0; i < full; i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return false;
+  }
+  const rem = bits % 16;
+  if (rem === 0) return true;
+  const mask = (0xffff << (16 - rem)) & 0xffff;
+  return ((a[full] ?? 0) & mask) === ((b[full] ?? 0) & mask);
+}
+
 function parseIpv4(host: string): [number, number, number, number] | null {
   const parts = host.split('.');
   if (parts.length !== 4) return null;

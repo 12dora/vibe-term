@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { decodeBase64url, decodeCertificate, encodeBase64url } from '@tmex/shared/auth';
 import {
   LinkMux,
@@ -11,9 +12,11 @@ import type { UserStore } from '../auth/user-store';
 import type { WebSocketServer } from '../ws';
 import {
   RTT_EVENT_MIN_INTERVAL_MS,
+  type RankableIfaceAddr,
   addressFromIceCandidate,
   classifyPeerReach,
   hostFromWsUrl,
+  rankPeerEndpoints,
   rttChangedMaterially,
 } from './address-class';
 import {
@@ -26,8 +29,18 @@ import {
 } from './ctl';
 import { jsonText } from './json-text';
 import type { RtcSignalMessage } from './mesh-deps';
+import {
+  type DirectAttemptRecord,
+  clearedDirectAttempt,
+  directFailureView,
+  emptyDirectAttempt,
+  hasDirectFailure,
+  noteDcOutcome,
+  noteWsOutcome,
+} from './peer-direct-attempt';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
 import { PeerServer } from './peer-server';
+import { abortable, dialWsSecureCandidate, raceWsSecureEndpoints } from './peer-ws-race';
 import type { RtcPeerManager } from './rtc';
 import {
   RTC_WAKE_DOMAIN,
@@ -57,6 +70,7 @@ import type { UplinkClient } from './uplink-client';
 
 export const PEER_IDLE_MS = 5 * 60 * 1000;
 export const PEER_CONNECT_TIMEOUT_MS = 3_000;
+export const PEER_WS_DIAL_STAGGER_MS = 250;
 export const PEER_PING_INTERVAL_MS = 15_000;
 export const PEER_MISSED_PONG_LIMIT = 3;
 export const PEER_MAX_CONCURRENT_STREAMS = 256;
@@ -113,6 +127,8 @@ export type PeerManagerOptions = {
   maxConcurrentStreams?: number;
   rtc?: RtcPeerManager;
   linkFactory?: PeerLinkFactory;
+  interfacesFn?: () => Record<string, RankableIfaceAddr[] | undefined>;
+  hubHost?: string | null;
   onGatewaySession?: (
     session: import('../ws/gateway-session').GatewaySession,
     auth: { sid: string; uid: string; via: string; cid?: string }
@@ -163,6 +179,7 @@ type LivePeer = {
   pingSentAt: number | null;
   lastRttEmitAt: number;
   lastEmittedRttMs: number | null;
+  linkSinceAt: number;
 };
 
 type UpgradeGate = {
@@ -198,6 +215,13 @@ type LiveWaiter = {
   resolve: (session: LinkSession) => void;
 };
 
+export type PeerLinkDetail = {
+  peerAddress: string | null;
+  linkSinceAt: number | null;
+  endpoints: string[];
+  directFailure: { at: number; ws?: string | null; dc?: string | null } | null;
+};
+
 type ParkedInbound = {
   session: LinkSession;
   transport: PeerTransportKind;
@@ -208,79 +232,12 @@ type ParkedInbound = {
   remoteAddress: string | null;
 };
 
-function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerSocketAdapter {
-  return (
-    typeof (value as ServerSocketAdapter).onDrain === 'function' &&
-    typeof (value as ServerSocketAdapter).onMessage === 'function'
-  );
-}
-
 function quiet(fn: () => void): void {
   try {
     fn();
   } catch {
     // ignore
   }
-}
-
-function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) {
-    return Promise.reject(signal.reason ?? new Error('aborted'));
-  }
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      reject(signal.reason ?? new Error('aborted'));
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(value);
-      },
-      (err) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(err);
-      }
-    );
-  });
-}
-
-function waitSocketOpen(
-  ws: WebSocketTransportInput,
-  timeoutMs: number,
-  signal?: AbortSignal
-): Promise<void> {
-  if (isServerSocketAdapter(ws)) return Promise.resolve();
-  const socket = ws as WebSocket;
-  if (socket.readyState === 1) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (err?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      if (err) reject(err);
-      else resolve();
-    };
-    const onAbort = () => {
-      quiet(() => socket.close(1000, 'stopped'));
-      finish(new Error('aborted'));
-    };
-    const timer = setTimeout(() => {
-      quiet(() => socket.close(1000, 'connect-timeout'));
-      finish(new Error('connect-timeout'));
-    }, timeoutMs);
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-    signal?.addEventListener('abort', onAbort, { once: true });
-    socket.addEventListener('open', () => finish(), { once: true });
-    socket.addEventListener('close', (ev) => finish(new Error(ev.reason || 'ws-closed')), {
-      once: true,
-    });
-  });
 }
 
 export class PeerManager {
@@ -302,6 +259,10 @@ export class PeerManager {
   private readonly live = new Map<string, LivePeer>();
   private readonly parked = new Map<string, ParkedInbound>();
   private readonly parkedSessions = new WeakSet<LinkSession>();
+  private readonly sessionKeys = new WeakMap<
+    LinkSession,
+    { sendKey: Uint8Array; recvKey: Uint8Array }
+  >();
   private readonly retiring = new Map<string, Set<LivePeer>>();
   private readonly pending = new Map<string, Promise<LinkSession>>();
   private readonly upgrading = new Map<string, Promise<LinkSession>>();
@@ -336,7 +297,10 @@ export class PeerManager {
   private readonly rtcWakeNonces = new Map<string, Map<string, number>>();
   private readonly dcUpgradeRetry = new Map<string, DcUpgradeRetry>();
   private readonly lostDirect = new Set<string>();
+  private readonly lastDirectAttempt = new Map<string, DirectAttemptRecord>();
   private readonly transportWaiters = new Map<string, TransportWaiter[]>();
+  private readonly interfacesFn: () => Record<string, RankableIfaceAddr[] | undefined>;
+  private readonly hubHost: string | null;
   private upgradeInflight = 0;
   private linkInfoHold = 0;
   private readonly upgradeWaiters: Array<() => void> = [];
@@ -376,6 +340,8 @@ export class PeerManager {
     this.onBrowserSignal = opts.onBrowserSignal ?? null;
     this.ensureDcSession = opts.ensureDcSession ?? null;
     this.onLinkInfo = opts.onLinkInfo ?? null;
+    this.interfacesFn = opts.interfacesFn ?? (() => os.networkInterfaces());
+    this.hubHost = opts.hubHost ?? null;
     this.uplink.setOnRelayStream((stream, from) => {
       void this.acceptRelay(stream, from);
     });
@@ -462,6 +428,16 @@ export class PeerManager {
 
   rttOf(nodeId: string): number | null {
     return this.live.get(nodeId)?.rttMs ?? null;
+  }
+
+  linkDetailOf(nodeId: string): PeerLinkDetail {
+    const live = this.live.get(nodeId);
+    return {
+      peerAddress: live?.transport === 'relay' ? this.hubHost : (live?.remoteAddress ?? null),
+      linkSinceAt: live?.linkSinceAt ?? null,
+      endpoints: [],
+      directFailure: directFailureView(this.lastDirectAttempt.get(nodeId)),
+    };
   }
 
   async waitForTransport(
@@ -601,6 +577,7 @@ export class PeerManager {
     this.rtcWakeNonces.delete(nodeId.toLowerCase());
     this.cancelDcUpgradeRetry(nodeId);
     this.lostDirect.delete(nodeId);
+    this.lastDirectAttempt.delete(nodeId);
     this.upgrading.delete(nodeId);
     this.liveWaiters.delete(nodeId);
     this.failTransportWaiters(nodeId);
@@ -648,12 +625,9 @@ export class PeerManager {
     return out;
   }
 
-  private rememberKeys(peerNodeId: string, sendKey?: Uint8Array, recvKey?: Uint8Array): void {
+  private rememberKeys(session: LinkSession, sendKey?: Uint8Array, recvKey?: Uint8Array): void {
     if (!sendKey || !recvKey) return;
-    const live = this.live.get(peerNodeId);
-    if (!live) return;
-    live.sendKey = sendKey;
-    live.recvKey = recvKey;
+    this.sessionKeys.set(session, { sendKey, recvKey });
   }
 
   private stale(gen: number): boolean {
@@ -836,15 +810,12 @@ export class PeerManager {
 
   private hasWsSecureCandidate(nodeId: string): boolean {
     if (this.linkFactory) return true;
-    const cached = this.userStore.listPeers().find((row) => row.nodeId === nodeId);
+    const cached = this.userStore.getPeer(nodeId);
     return cached ? parseEndpoints(cached.endpointsJson, this.server?.port).length > 0 : false;
   }
 
   private shouldTryDc(nodeId: string): boolean {
-    if (!this.rtc?.available) return false;
-    const peer = this.userStore.listPeers().find((row) => row.nodeId === nodeId);
-    if (peer && peer.directCapable === false) return false;
-    return true;
+    return this.rtc?.available === true && this.userStore.getPeer(nodeId)?.directCapable !== false;
   }
 
   private handleIncomingRtcWake(fromNodeId: string, msg: RtcSignalMessage): void {
@@ -1308,6 +1279,7 @@ export class PeerManager {
     const floor = existingLive ? PEER_TRANSPORT_RANK[existingLive.transport] : 0;
     const skipDcFirst = !existingLive && this.lostDirect.has(nodeId);
     let dcError: unknown = null;
+    const attempt = emptyDirectAttempt(this.scheduler.now());
     const above = (kind: PeerTransportKind) => PEER_TRANSPORT_RANK[kind] > floor;
     const tryDc = async (): Promise<LinkSession | null> => {
       if (!above('dc') || !this.shouldTryDc(nodeId)) return null;
@@ -1328,7 +1300,7 @@ export class PeerManager {
     if (!skipDcFirst) attempts.push({ run: tryDc });
     if (above('ws-secure')) {
       attempts.push({
-        run: () => this.dialWsSecure(nodeId, gen, signal),
+        run: () => this.dialWsSecure(nodeId, gen, signal, attempt),
         fallback: 'ws-secure',
       });
     }
@@ -1346,9 +1318,13 @@ export class PeerManager {
         });
       }
       const got = await step.run();
-      if (got) return got;
+      if (got) {
+        this.finishDirectAttempt(nodeId, attempt, got, dcError);
+        return got;
+      }
       if (!step.skipStop) this.throwIfStopped(nodeId, gen);
     }
+    this.finishDirectAttempt(nodeId, attempt, null, dcError);
     if (dcError != null || (above('dc') && this.shouldTryDc(nodeId))) {
       rtcLog('dial failed', {
         peer: nodeId,
@@ -1373,6 +1349,7 @@ export class PeerManager {
         result.session.close('peer-id-mismatch');
         throw new NodeUnreachableError(nodeId, 'relay peer id mismatch');
       }
+      this.rememberKeys(result.session, result.sendKey, result.recvKey);
       const kept = this.track(
         result.session,
         result.peerNodeId,
@@ -1381,7 +1358,6 @@ export class PeerManager {
         gen
       );
       if (!kept) throw new NodeUnreachableError(nodeId, 'simultaneous-dial');
-      this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
       return kept;
     } catch (err) {
       if (err instanceof NodeUnreachableError) throw err;
@@ -1392,7 +1368,8 @@ export class PeerManager {
   private async dialWsSecure(
     nodeId: string,
     gen: number,
-    signal: AbortSignal
+    signal: AbortSignal,
+    attempt: DirectAttemptRecord
   ): Promise<LinkSession | null> {
     if (this.linkFactory) {
       try {
@@ -1417,60 +1394,49 @@ export class PeerManager {
         this.throwIfStopped(nodeId, gen, err);
       }
     }
-    const cached = this.userStore.listPeers().find((row) => row.nodeId === nodeId);
-    const endpoints = cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : [];
-    for (const url of endpoints) {
-      this.throwIfStopped(nodeId, gen);
-      try {
-        return await this.dialDirect(url, nodeId, gen, signal);
-      } catch (err) {
-        if (this.stale(gen)) throw err;
-      }
-    }
-    return null;
-  }
-
-  private async dialDirect(
-    url: string,
-    expectedId: string,
-    gen: number,
-    signal: AbortSignal
-  ): Promise<LinkSession> {
-    const ws = await abortable(Promise.resolve(this.wsFactory(url)), signal);
-    await waitSocketOpen(ws, this.connectTimeoutMs, signal);
-    if (this.stale(gen)) {
-      quiet(() => {
-        if (isServerSocketAdapter(ws)) ws.close(1000, 'stopped');
-        else (ws as WebSocket).close(1000, 'stopped');
-      });
-      throw new Error('stopped');
-    }
-    const result = await handshakeWsDirect({
-      socket: ws,
-      role: 'initiator',
-      identity: this.identity,
-      userStore: this.userStore,
+    const cached = this.userStore.getPeer(nodeId);
+    const endpoints = rankPeerEndpoints(
+      cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : [],
+      this.interfacesFn()
+    );
+    if (endpoints.length === 0) return null;
+    const raced = await raceWsSecureEndpoints({
+      urls: endpoints,
+      gen,
+      signal,
+      stale: (g) => this.stale(g),
+      sleep: (ms, sig) => this.scheduler.sleep(ms, sig),
+      staggerMs: PEER_WS_DIAL_STAGGER_MS,
+      dial: (url, combined) =>
+        dialWsSecureCandidate({
+          url,
+          expectedId: nodeId,
+          gen,
+          signal: combined,
+          stale: (g) => this.stale(g),
+          connectTimeoutMs: this.connectTimeoutMs,
+          factory: this.wsFactory,
+          identity: this.identity,
+          userStore: this.userStore,
+        }),
     });
-    if (result.peerNodeId !== expectedId) {
-      result.session.close('peer-id-mismatch');
-      throw new Error('peer-id-mismatch');
-    }
+    if (raced.lastReason) noteWsOutcome(attempt, raced.lastReason, endpoints);
     if (this.stale(gen)) {
-      result.session.close('stopped');
-      throw new Error('stopped');
+      quiet(() => raced.winner?.session.close('stopped'));
+      this.throwIfStopped(nodeId, gen);
     }
-    const kept = this.track(
-      result.session,
-      result.peerNodeId,
+    const winner = raced.winner;
+    if (!winner) return null;
+    this.rememberKeys(winner.session, winner.sendKey, winner.recvKey);
+    return this.track(
+      winner.session,
+      winner.peerNodeId,
       'ws-secure',
       this.identity.nodeId,
       gen,
       false,
-      hostFromWsUrl(url)
+      hostFromWsUrl(winner.url)
     );
-    if (!kept) throw new Error('simultaneous-dial');
-    this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
-    return kept;
   }
 
   private async acceptDirect(
@@ -1489,6 +1455,7 @@ export class PeerManager {
         quiet(() => result.session.close('stopped'));
         return;
       }
+      this.rememberKeys(result.session, result.sendKey, result.recvKey);
       this.track(
         result.session,
         result.peerNodeId,
@@ -1498,7 +1465,6 @@ export class PeerManager {
         false,
         remoteAddress
       );
-      this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
       quiet(() => socket.close(1000, 'handshake-failed'));
     }
@@ -1517,8 +1483,8 @@ export class PeerManager {
         quiet(() => result.session.close('stopped'));
         return;
       }
+      this.rememberKeys(result.session, result.sendKey, result.recvKey);
       this.track(result.session, result.peerNodeId, 'relay', from || result.peerNodeId, gen);
-      this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
       quiet(() => stream.reset('handshake-failed'));
     }
@@ -1578,6 +1544,7 @@ export class PeerManager {
     quiesceCapable: boolean,
     remoteAddress: string | null
   ): LinkSession {
+    const keys = this.sessionKeys.get(session);
     const live: LivePeer = {
       session,
       peerNodeId,
@@ -1598,6 +1565,8 @@ export class PeerManager {
       finishRetired: false,
       lastAdvertisedStatusJson: '',
       unsubRtc: null,
+      sendKey: keys?.sendKey,
+      recvKey: keys?.recvKey,
       quiesceCapable,
       helloReplied: false,
       probeSent: false,
@@ -1606,8 +1575,12 @@ export class PeerManager {
       pingSentAt: null,
       lastRttEmitAt: 0,
       lastEmittedRttMs: null,
+      linkSinceAt: this.scheduler.now(),
     };
     this.live.set(peerNodeId, live);
+    if (transport === 'dc' || transport === 'ws-secure') {
+      this.clearDirectFailure(peerNodeId);
+    }
     this.bindSession(live);
     if (!live.quiesceCapable) this.sendLinkHello(live);
     this.armIdle(live);
@@ -2245,6 +2218,33 @@ export class PeerManager {
       live.retiring = false;
       this.finishRetire(live, reason);
     }
+  }
+
+  private finishDirectAttempt(
+    nodeId: string,
+    attempt: DirectAttemptRecord,
+    session: LinkSession | null,
+    dcError: unknown
+  ): void {
+    const live = this.live.get(nodeId);
+    if (session && live && live.transport !== 'relay') return;
+    if (attempt.dc == null) noteDcOutcome(attempt, this.dcFailureReason(nodeId, dcError));
+    if (hasDirectFailure(attempt))
+      this.lastDirectAttempt.set(nodeId, { ...attempt, at: this.scheduler.now() });
+  }
+
+  private clearDirectFailure(nodeId: string): void {
+    const prev = this.lastDirectAttempt.get(nodeId);
+    if (prev) this.lastDirectAttempt.set(nodeId, clearedDirectAttempt(prev));
+  }
+
+  private dcFailureReason(nodeId: string, dcError: unknown): string | null {
+    const peer = this.userStore.getPeer(nodeId);
+    if (peer && peer.directCapable === false) return 'direct_capable=false';
+    if (!this.rtc?.available) return 'datachannel unavailable';
+    if (dcError instanceof Error) return dcError.message;
+    if (dcError != null) return String(dcError);
+    return null;
   }
 }
 

@@ -10,6 +10,13 @@ type Meta = {
   version?: string | null;
 };
 
+export type MeshNodeLinkDetail = {
+  peerAddress: string | null;
+  linkSinceAt: number | null;
+  endpoints: string[];
+  directFailure: { at: number; ws?: string | null; dc?: string | null } | null;
+};
+
 export type MeshNodeDto = {
   id: string;
   name: string;
@@ -23,6 +30,10 @@ export type MeshNodeDto = {
   inventory: unknown;
   loggedIn: boolean;
   isHub: boolean;
+  peerAddress?: string | null;
+  linkSinceAt?: number | null;
+  endpoints?: string[];
+  directFailure?: { at: number; ws?: string | null; dc?: string | null } | null;
 };
 
 export function parseJson(raw: string | null | undefined, fallback: unknown): unknown {
@@ -83,6 +94,60 @@ export function pickMeshNodeName(input: {
   );
 }
 
+function publicKeyForMeshNode(
+  id: string,
+  selfId: string,
+  selfPk: Uint8Array,
+  certById: Map<string, { certificateBytes: Uint8Array }>
+): Uint8Array | null {
+  if (id === selfId) return selfPk;
+  const cert = certById.get(id);
+  if (!cert) return null;
+  try {
+    return decodeCertificate(cert.certificateBytes).ed_pk;
+  } catch {
+    return null;
+  }
+}
+
+function selfStatusOverlay(
+  isSelf: boolean,
+  self: { inventory?: unknown; direct_capable: boolean; version?: string } | undefined
+): Meta | null {
+  if (!isSelf || !self) return null;
+  return {
+    inventory: self.inventory,
+    directCapable: self.direct_capable,
+    version: self.version || undefined,
+  };
+}
+
+function meshLinkFields(
+  isSelf: boolean,
+  detail: MeshNodeLinkDetail | null | undefined,
+  storedEndpoints: string[]
+): Pick<MeshNodeDto, 'peerAddress' | 'linkSinceAt' | 'endpoints' | 'directFailure'> {
+  if (isSelf) {
+    return { peerAddress: null, linkSinceAt: null, endpoints: [], directFailure: null };
+  }
+  return {
+    peerAddress: detail?.peerAddress ?? null,
+    linkSinceAt: detail?.linkSinceAt ?? null,
+    endpoints: storedEndpoints,
+    directFailure: detail?.directFailure ?? null,
+  };
+}
+
+function meshPathFields(
+  isSelf: boolean,
+  id: string,
+  transportOf?: (id: string) => 'ws-secure' | 'relay' | 'dc' | null,
+  rttOf?: (id: string) => number | null
+): { transport: 'ws-secure' | 'relay' | 'dc' | null; rttMs: number | null } {
+  if (isSelf) return { transport: null, rttMs: null };
+  return { transport: transportOf?.(id) ?? null, rttMs: rttOf?.(id) ?? null };
+}
+
 export function projectMeshListNode(
   id: string,
   selfId: string,
@@ -91,30 +156,26 @@ export function projectMeshListNode(
   reach: Map<string, 'lan' | 'wan' | 'relay' | null>,
   hubOnline: ReadonlySet<string>,
   certById: Map<string, { certificateBytes: Uint8Array }>,
-  peerById: Map<string, { inventoryJson?: string | null; directCapable?: boolean }>,
+  peerById: Map<
+    string,
+    { inventoryJson?: string | null; directCapable?: boolean; endpointsJson?: string | null }
+  >,
   listedById: Map<string, string>,
   registryById: Map<string, string>,
   selfName: string | null,
   self: { inventory?: unknown; direct_capable: boolean; version?: string } | undefined,
   hubNodeId: string | null,
   transportOf?: (id: string) => 'ws-secure' | 'relay' | 'dc' | null,
-  rttOf?: (id: string) => number | null
+  rttOf?: (id: string) => number | null,
+  linkDetailOf?: (id: string) => MeshNodeLinkDetail | null
 ): MeshNodeDto | null {
-  const isSelf = id === selfId;
-  const cert = certById.get(id);
-  let publicKey: Uint8Array | null = isSelf ? selfPk : null;
-  if (!isSelf) {
-    if (!cert) return null;
-    try {
-      publicKey = decodeCertificate(cert.certificateBytes).ed_pk;
-    } catch {
-      return null;
-    }
-  }
-  const peer = peerById.get(id);
+  const publicKey = publicKeyForMeshNode(id, selfId, selfPk, certById);
   if (!publicKey) return null;
+  const isSelf = id === selfId;
+  const peer = peerById.get(id);
   const r = reach.get(id) ?? null;
   const inv = parseJson(peer?.inventoryJson, peer?.inventoryJson ?? null);
+  const detail = isSelf ? null : (linkDetailOf?.(id) ?? null);
   const core = projectNode(
     id,
     pickMeshNodeName({
@@ -130,26 +191,28 @@ export function projectMeshListNode(
       directCapable: peer?.directCapable ?? false,
       version: versionFromInventory(inv),
     },
-    isSelf && self
-      ? {
-          inventory: self.inventory,
-          directCapable: self.direct_capable,
-          version: self.version || undefined,
-        }
-      : null
+    selfStatusOverlay(isSelf, self)
   );
+  const path = meshPathFields(isSelf, id, transportOf, rttOf);
   return {
     id,
     name: core.name,
     publicKey: encodeBase64url(publicKey),
     online: core.online,
     reach: r,
-    transport: isSelf ? null : (transportOf?.(id) ?? null),
-    rttMs: isSelf ? null : (rttOf?.(id) ?? null),
+    transport: path.transport,
+    rttMs: path.rttMs,
     version: core.version || versionFromInventory(core.inventory),
     direct_capable: core.direct_capable,
     inventory: core.inventory,
     loggedIn: cookies.has(nodeSessionCookieName(isSelf ? MESH_VIA_SELF : id)),
     isHub: hubNodeId === id,
+    ...meshLinkFields(isSelf, detail, endpointsFromJson(peer?.endpointsJson)),
   };
+}
+
+function endpointsFromJson(raw: string | null | undefined): string[] {
+  const parsed = parseJson(raw, []);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((item): item is string => typeof item === 'string');
 }

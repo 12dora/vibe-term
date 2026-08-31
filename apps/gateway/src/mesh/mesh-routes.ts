@@ -22,7 +22,11 @@ import {
   X_TMEX_CONNECTION,
   getMeshRequestContext,
 } from './mesh-deps';
-import { type MeshNodeDto, projectMeshListNode } from './node-list-projection';
+import {
+  type MeshNodeDto,
+  type MeshNodeLinkDetail,
+  projectMeshListNode,
+} from './node-list-projection';
 import {
   type AuthenticateOk,
   type SessionMiddlewareDeps,
@@ -41,7 +45,9 @@ export type MeshRoutesDeps = {
   nodePk: Uint8Array;
   userStore: UserStore;
   nodeSessionStore: NodeSessionStore;
-  peers: PeerLinkProvider;
+  peers: PeerLinkProvider & {
+    linkDetailOf?(nodeId: string): MeshNodeLinkDetail | null;
+  };
   rtcFingerprint?: RtcFingerprintProvider;
   rtcSignals?: RtcSignalRouter;
   rtcConfig?: RtcConfigProvider;
@@ -223,7 +229,8 @@ export class MeshRoutes {
           self,
           hubNodeId,
           (nid) => this.deps.peers.transportOf?.(nid) ?? null,
-          (nid) => this.deps.peers.rttOf?.(nid) ?? null
+          (nid) => this.deps.peers.rttOf?.(nid) ?? null,
+          (nid) => this.deps.peers.linkDetailOf?.(nid) ?? null
         )
       )
       .filter((n) => n != null);
