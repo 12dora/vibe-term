@@ -413,7 +413,7 @@ export const I18N_RESOURCES = {
             "pending": "Finish the Cloudflare authorization first."
           },
           "access": {
-            "title": "Access control (Cloudflare Access)",
+            "title": "Access",
             "description": "Allow visitors by email at the Cloudflare edge; rejected requests never reach this machine."
           },
           "create": {
@@ -2260,7 +2260,7 @@ export const I18N_RESOURCES = {
       "remoteAccess": {
         "title": "远程访问",
         "wizardTitle": "配置向导",
-        "description": "通过 Cloudflare Tunnel 把这台机器上的 tmex 发布到公网，不需要公网 IP，也不用在路由器上映射端口。",
+        "description": "通过 Cloudflare Tunnel 把这台机器上的 tmex 发布到公网，无需公网 IP 或端口映射。",
         "remoteNodeNotice": "远程访问只能在浏览器直连的那台机器上配置。请先切换到那台机器，再打开本页。",
         "loginRequired": "请先登录这台机器，再配置远程访问。",
         "loadFailed": "读取远程访问状态失败。请确认 tmex 网关仍在运行，然后刷新页面重试。",
@@ -2389,7 +2389,7 @@ export const I18N_RESOURCES = {
             "pending": "请先完成 Cloudflare 授权。"
           },
           "access": {
-            "title": "访问控制（Cloudflare Access）",
+            "title": "访问控制（Access）",
             "description": "在 Cloudflare 边缘按邮箱放行访问者，未通过的请求到不了这台机器。"
           },
           "create": {
@@ -4364,7 +4364,7 @@ export const I18N_RESOURCES = {
             "pending": "先に Cloudflare の認可を完了してください。"
           },
           "access": {
-            "title": "アクセス制御（Cloudflare Access）",
+            "title": "アクセス制御（Access）",
             "description": "Cloudflare のエッジでメールアドレスにより許可します。拒否されたリクエストはこのマシンに届きません。"
           },
           "create": {

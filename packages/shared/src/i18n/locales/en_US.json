@@ -407,7 +407,7 @@
             "pending": "Finish the Cloudflare authorization first."
           },
           "access": {
-            "title": "Access control (Cloudflare Access)",
+            "title": "Access",
             "description": "Allow visitors by email at the Cloudflare edge; rejected requests never reach this machine."
           },
           "create": {

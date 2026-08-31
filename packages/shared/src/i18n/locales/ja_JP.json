@@ -407,7 +407,7 @@
             "pending": "先に Cloudflare の認可を完了してください。"
           },
           "access": {
-            "title": "アクセス制御（Cloudflare Access）",
+            "title": "アクセス制御（Access）",
             "description": "Cloudflare のエッジでメールアドレスにより許可します。拒否されたリクエストはこのマシンに届きません。"
           },
           "create": {
