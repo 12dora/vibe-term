@@ -101,6 +101,33 @@ export function nodeIdFromPath(path: string): string {
 
 type ErrorBody = { code?: unknown; nodeId?: unknown };
 
+const warnedForeignNodeIds = new Set<string>();
+
+/**
+ * 决定 NODE_LOGIN_REQUIRED 该记到哪个 node 上。
+ *
+ * 路径带 `/n/:id` 时以路径为准：hub 转发的 401 可能把 hub 自己的 nodeId 写进 body
+ * （实测 `/n/<A>/api/rtc/authorize` 回 `{nodeId: <hub>}`），认 body 会把「需要登录」
+ * 记到无关的 node 行上，进而拆掉那棵 runtime 子树。
+ * 路径不带前缀时才信 body：那是 entry 本地端点代某个 node 作答（如升级服务的转发调用）。
+ */
+function resolveNodeLoginTarget(bodyNodeId: unknown, path: string): string {
+  const urlNodeId = nodeIdFromPath(path);
+  const claimed = typeof bodyNodeId === 'string' ? bodyNodeId : null;
+  if (urlNodeId === SELF_NODE_ID) return claimed ?? SELF_NODE_ID;
+  if (claimed && claimed !== urlNodeId) warnForeignNodeId(claimed, urlNodeId, path);
+  return urlNodeId;
+}
+
+function warnForeignNodeId(claimed: string, urlNodeId: string, path: string): void {
+  const pair = `${urlNodeId}<-${claimed}`;
+  if (warnedForeignNodeIds.has(pair)) return;
+  warnedForeignNodeIds.add(pair);
+  console.warn(
+    `[session-interceptor] NODE_LOGIN_REQUIRED body nodeId ${claimed} does not match path node ${urlNodeId} (${path}); using the path node`
+  );
+}
+
 /**
  * 处理一次 401 响应。导出以便测试与 WS 4401 关闭码复用（WS 侧没有 Response，
  * 直接调 `handleNodeLoginRequired` / `handleGlobalUnauthorized`）。
@@ -114,8 +141,7 @@ export async function handleUnauthorized(res: Response, path: string): Promise<v
     body = {};
   }
   if (body.code === NODE_LOGIN_REQUIRED) {
-    const nodeId = typeof body.nodeId === 'string' ? body.nodeId : nodeIdFromPath(path);
-    emit({ nodeId, scope: 'node', path });
+    emit({ nodeId: resolveNodeLoginTarget(body.nodeId, path), scope: 'node', path });
     return;
   }
   const nodeId = nodeIdFromPath(path);
