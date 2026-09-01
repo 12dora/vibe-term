@@ -26,6 +26,7 @@ export const HTTP_FAILOVER_MAX_ATTEMPTS = 4;
 export const STREAM_QUEUE_MAX_FRAMES = 256;
 export const STREAM_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
 export const STREAM_QUEUE_OVERFLOW_REASON = 'forward-queue-overflow';
+export const MESH_WS_BACKPRESSURE_LIMIT_BYTES = 1_048_576;
 
 export const MESH_WS_KIND = 'mesh-event';
 export const MESH_FORWARD_WS_KIND = 'mesh-forward-ws';
@@ -275,6 +276,7 @@ export type MeshServerWebSocket = {
   readyState?: number;
   send(data: Uint8Array | ArrayBuffer | ArrayBufferView | string): number | undefined;
   close(code?: number, reason?: string): void;
+  getBufferedAmount?(): number;
 };
 
 export function parseSetSessionHeader(value: string): { sid: string; maxAgeSec: number } | null {

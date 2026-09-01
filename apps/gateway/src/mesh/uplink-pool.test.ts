@@ -28,6 +28,7 @@ import {
   mergeUplinkCandidates,
   parseSingleCaCertificate,
   recordsFromNodeList,
+  redactUrl,
   sameHubUrl,
   spkiFingerprintFromPem,
 } from './uplink-pool';
@@ -60,6 +61,18 @@ dNZ6oH3CoG9L0B/3uEMo9hSUzpam7+l6/5Ar25yzx5fMyiDxUpTVdSE2WIOK0cBP
 AHUwHwYDVR0jBBgwFoAU2KZVtCMikJHT2kNktemlZ5MJzTAwCgYIKoZIzj0EAwID
 SQAwRgIhAPsGRvByfJSuRGKWp38ahUIFUnjw/hjBpz3vhYfxzyUoAiEAzCb/a+gc
 dFY2r3AWRAnKtpOstYUq4ef+2DGeszC8j4k=
+-----END CERTIFICATE-----`;
+
+const TEST_CA_NO_KEYCERTSIGN_PEM = `-----BEGIN CERTIFICATE-----
+MIIBnDCCAUGgAwIBAgIUT8FY+W5hug6nG5vueMwXaDshVRkwCgYIKoZIzj0EAwIw
+GzEZMBcGA1UEAwwQTm9LZXlDZXJ0U2lnbiBDQTAeFw0yNjA5MDExNDI0MjlaFw0z
+NjA4MjkxNDI0MjlaMBsxGTAXBgNVBAMMEE5vS2V5Q2VydFNpZ24gQ0EwWTATBgcq
+hkjOPQIBBggqhkjOPQMBBwNCAAQcItg/y6rTlmK2LBi9wmymzf3VY/cFmbHWthsN
+NvkJyibdpK1z42aUuCAkyIYSxSJ8ptzgWkhUBBo/wWENvgifo2MwYTAdBgNVHQ4E
+FgQU0nBKs235Pe9UYsE2dM9Cryc50AIwHwYDVR0jBBgwFoAU0nBKs235Pe9UYsE2
+dM9Cryc50AIwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCB4AwCgYIKoZI
+zj0EAwIDSQAwRgIhAI9VqjBY1tl4Z2KDLSw+UwjoUyZq661vR7SB82sW+tk5AiEA
+1UwXwTgvvf5XSWFcFGOm79IWF8xB3qCwSCMOOMtcOfo=
 -----END CERTIFICATE-----`;
 
 function dummyApplier(): KeyLogApplier {
@@ -345,16 +358,8 @@ class FakeUplink {
 }
 
 describe('mergeUplinkCandidates', () => {
-  test('keeps stored order and appends unmatched seeds with priority 1000+index', () => {
+  test('globally sorts active (epoch desc, priority asc), then standby, then unknown-mode seeds', () => {
     const stored = [
-      {
-        hubNodeId: ID.b,
-        publicUrl: 'https://active.example',
-        mode: 'active' as const,
-        writerEpoch: 3,
-        priority: 10,
-        caFingerprint: null,
-      },
       {
         hubNodeId: ID.c,
         publicUrl: 'https://standby.example',
@@ -362,6 +367,14 @@ describe('mergeUplinkCandidates', () => {
         writerEpoch: 1,
         priority: 20,
         caFingerprint: 'ab'.repeat(32),
+      },
+      {
+        hubNodeId: ID.b,
+        publicUrl: 'https://active.example',
+        mode: 'active' as const,
+        writerEpoch: 3,
+        priority: 10,
+        caFingerprint: null,
       },
     ];
     const merged = mergeUplinkCandidates(stored, [
@@ -371,18 +384,56 @@ describe('mergeUplinkCandidates', () => {
     ]);
     expect(merged.map((row) => row.publicUrl)).toEqual([
       'https://active.example',
-      'https://standby.example',
       'https://seed-a.example',
       'https://seed-b.example',
+      'https://standby.example',
     ]);
-    expect(merged[2]).toMatchObject({
+    expect(merged[1]).toMatchObject({
       hubNodeId: null,
       mode: 'active',
       writerEpoch: 0,
       priority: UPLINK_SEED_PRIORITY_BASE,
     });
-    expect(merged[3]?.priority).toBe(UPLINK_SEED_PRIORITY_BASE + 1);
+    expect(merged[2]?.priority).toBe(UPLINK_SEED_PRIORITY_BASE + 1);
     expect(sameHubUrl('HTTPS://Active.Example:443/', 'https://active.example')).toBe(true);
+  });
+
+  test('fresh standby own row plus TMEX_HUB_URL seed ranks the seed active above own standby', () => {
+    const own = {
+      hubNodeId: ID.a,
+      publicUrl: 'https://self.example',
+      mode: 'standby' as const,
+      writerEpoch: 1,
+      priority: 20,
+      caFingerprint: null,
+    };
+    const merged = mergeUplinkCandidates([own], ['https://hub.example']);
+    expect(merged.map((row) => row.publicUrl)).toEqual([
+      'https://hub.example',
+      'https://self.example',
+    ]);
+    expect(merged[0]).toMatchObject({
+      hubNodeId: null,
+      mode: 'active',
+      writerEpoch: 0,
+      priority: UPLINK_SEED_PRIORITY_BASE,
+    });
+    expect(merged[1]).toMatchObject({
+      hubNodeId: ID.a,
+      mode: 'standby',
+      writerEpoch: 1,
+      priority: 20,
+    });
+  });
+});
+
+describe('redactUrl', () => {
+  test('prints origin only and strips userinfo, query and fragment', () => {
+    expect(redactUrl('https://user:secret@hub.example:8443/path?q=1#frag')).toBe(
+      'https://hub.example:8443'
+    );
+    expect(redactUrl('http://hub.example/foo')).toBe('http://hub.example');
+    expect(redactUrl('https://hub.example:443/')).toBe('https://hub.example');
   });
 });
 
@@ -678,6 +729,74 @@ describe('UplinkPool', () => {
     await waitMicro();
     expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
     expect(created.filter((row) => row.hubUrl === 'https://a.example').length).toBeGreaterThan(1);
+  });
+
+  test('fresh standby with own stored row plus hub seed dials the seed first and self only as fallback', async () => {
+    const selfUrl = 'https://self.example';
+    const seedUrl = 'https://hub.example';
+    const stored = [
+      {
+        hubNodeId: ID.a,
+        publicUrl: selfUrl,
+        mode: 'standby' as const,
+        writerEpoch: 1,
+        priority: 20,
+        caFingerprint: null,
+      },
+    ];
+    const { pool, created } = boot({
+      urls: [selfUrl, seedUrl],
+      candidates: () => mergeUplinkCandidates(stored, [seedUrl]),
+      isLocalCandidate: (cand) => cand.publicUrl === selfUrl,
+      connectLocal: async (client) => {
+        await (client as unknown as FakeUplink).connectWithLink();
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(created[0]?.hubUrl).toBe(seedUrl);
+    expect(created[0]?.transport).toBe('ws');
+    expect(pool.attachedHub()?.publicUrl).toBe(seedUrl);
+    expect(created.some((row) => row.hubUrl === selfUrl)).toBe(false);
+  });
+
+  test('attached to self standby still probes when a higher-ranked seed exists', async () => {
+    const scheduler = new ManualScheduler();
+    const selfUrl = 'https://self.example';
+    const seedUrl = 'https://hub.example';
+    const stored = [
+      {
+        hubNodeId: ID.a,
+        publicUrl: selfUrl,
+        mode: 'standby' as const,
+        writerEpoch: 1,
+        priority: 20,
+        caFingerprint: null,
+      },
+    ];
+    let seedHealthy = true;
+    const { pool, created } = boot({
+      urls: [selfUrl, seedUrl],
+      behavior: { [seedUrl]: { failTimes: 3 } },
+      scheduler,
+      candidates: () => mergeUplinkCandidates(stored, [seedUrl]),
+      isLocalCandidate: (cand) => cand.publicUrl === selfUrl,
+      connectLocal: async (client) => {
+        await (client as unknown as FakeUplink).connectWithLink();
+      },
+      probe: async (url) => url === seedUrl && seedHealthy,
+    });
+    pool.start();
+    await waitMicro();
+    expect(created[0]?.hubUrl).toBe(seedUrl);
+    expect(pool.attachedHub()?.publicUrl).toBe(selfUrl);
+    expect(created.find((row) => row.hubUrl === selfUrl)?.transport).toBe('memory');
+    const probeHandle = scheduler.intervals.find((row) => !row.cleared);
+    expect(probeHandle).toBeTruthy();
+    seedHealthy = true;
+    await scheduler.advance(probeHandle?.ms ?? 60_000);
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe(seedUrl);
   });
 
   test('dual-role standby dials the remote active over WS, falls back to in-memory self, then probes back', async () => {
@@ -1027,6 +1146,9 @@ describe('UplinkPool', () => {
     );
     expect(() => parseSingleCaCertificate(`${TEST_CA_PEM}\n${TEST_LEAF_PEM}`)).toThrow();
     expect(() => parseSingleCaCertificate(TEST_LEAF_PEM)).toThrow();
+    expect(() => parseSingleCaCertificate(TEST_CA_NO_KEYCERTSIGN_PEM)).toThrow(
+      'ca_no_key_cert_sign'
+    );
     expect(isCaFingerprintHex('ab'.repeat(32))).toBe(true);
     expect(isCaFingerprintHex('ab'.repeat(31))).toBe(false);
     expect(isCaFingerprintHex('zz'.repeat(32))).toBe(false);
@@ -1364,6 +1486,72 @@ describe('UplinkPool', () => {
       expect(
         lines.some((row) => row.includes('[uplink] switch-back → hub=https://a.example'))
       ).toBe(true);
+    } finally {
+      console.info = originalInfo;
+    }
+  });
+
+  test('candidate logs print origin only without userinfo query or fragment', async () => {
+    const lines: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const dirty = 'https://user:secret@hub.example:8443/uplink?token=abc#frag';
+      const { pool } = boot({
+        urls: [dirty],
+        behavior: { [dirty]: { failTimes: 3 } },
+        candidates: () => [
+          {
+            hubNodeId: ID.b,
+            publicUrl: dirty,
+            mode: 'active',
+            writerEpoch: 3,
+            priority: 10,
+            caFingerprint: null,
+          },
+        ],
+      });
+      pool.start();
+      await waitMicro();
+      expect(lines.some((row) => row.includes('secret') || row.includes('token=abc'))).toBe(false);
+      expect(
+        lines.some((row) =>
+          row.includes('[uplink] try hub=https://hub.example:8443 mode=active epoch=3')
+        )
+      ).toBe(true);
+      expect(
+        lines.some((row) =>
+          row.includes('[uplink] candidate failed hub=https://hub.example:8443 err=connect-failed')
+        )
+      ).toBe(true);
+    } finally {
+      console.info = originalInfo;
+    }
+  });
+
+  test('ten consecutive identical failures log at most two uplink lines', async () => {
+    const lines: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const scheduler = new ManualScheduler();
+      const { pool } = boot({
+        urls: ['https://a.example'],
+        behavior: { 'https://a.example': { failTimes: 99 } },
+        scheduler,
+      });
+      pool.start();
+      await waitMicro();
+      for (let i = 0; i < 10; i += 1) {
+        await scheduler.advance(2_000);
+        await waitMicro();
+      }
+      const uplink = lines.filter((row) => row.includes('[uplink]') && row.includes('a.example'));
+      expect(uplink.length).toBeLessThanOrEqual(2);
     } finally {
       console.info = originalInfo;
     }

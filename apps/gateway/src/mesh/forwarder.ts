@@ -92,6 +92,9 @@ type ForwardPump = {
   streamAlive: boolean;
   inflight: OpenedWsStream | null;
   queueBytes: number;
+  browserPaused: boolean;
+  inboundHold: Uint8Array[];
+  inboundHoldBytes: number;
 };
 
 const pendingMeta = new WeakMap<OpenedWsStream, ForwardMeta>();
@@ -171,6 +174,13 @@ export class Forwarder {
     this.sendToStream(pump, pump.stream, bytes);
   }
 
+  handleForwardSocketDrain(ws: MeshServerWebSocket): void {
+    const pump = this.pumps.get(ws);
+    if (!pump || pump.browserClosed) return;
+    pump.browserPaused = false;
+    this.flushInbound(pump);
+  }
+
   handleForwardSocketClose(ws: MeshServerWebSocket, code?: number, reason?: string): void {
     const pump = this.pumps.get(ws);
     this.pumps.delete(ws);
@@ -211,6 +221,9 @@ export class Forwarder {
       streamAlive: true,
       inflight: null,
       queueBytes: 0,
+      browserPaused: false,
+      inboundHold: [],
+      inboundHoldBytes: 0,
     };
     this.pumps.set(ws, pump);
     this.bindStream(pump, stream, meta?.transport ?? null);
@@ -387,10 +400,37 @@ export class Forwarder {
       if (deviceId && pump.replay.connectedForwarded.has(deviceId)) return;
       if (deviceId) pump.replay.connectedForwarded.add(deviceId);
     }
+    this.sendToBrowser(pump, bytes);
+  }
+
+  private sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void {
+    if (pump.browserClosed) return;
+    if (pump.browserPaused) {
+      if (!holdInbound(pump, bytes)) this.failPump(pump, STREAM_QUEUE_OVERFLOW_REASON);
+      return;
+    }
+    let result: number | undefined;
     try {
-      pump.ws.send(bytes);
+      result = pump.ws.send(bytes);
     } catch {
       pump.stream?.close();
+      return;
+    }
+    if (result === 0) {
+      this.closeBrowser(pump, { code: 1011, reason: 'forward-ws-closed' });
+      return;
+    }
+    if (result === -1) {
+      pump.browserPaused = true;
+    }
+  }
+
+  private flushInbound(pump: ForwardPump): void {
+    while (!pump.browserPaused && !pump.browserClosed && pump.inboundHold.length > 0) {
+      const next = pump.inboundHold.shift();
+      if (!next) break;
+      pump.inboundHoldBytes = Math.max(0, pump.inboundHoldBytes - next.byteLength);
+      this.sendToBrowser(pump, next);
     }
   }
 
@@ -756,6 +796,18 @@ export function expirePendingForwardStream(token: string, stream: OpenedWsStream
 
 function pumpDead(pump: ForwardPump, signal: AbortSignal): boolean {
   return pump.browserClosed || signal.aborted;
+}
+
+function holdInbound(pump: ForwardPump, bytes: Uint8Array): boolean {
+  if (
+    pump.inboundHold.length >= STREAM_QUEUE_MAX_FRAMES ||
+    pump.inboundHoldBytes + bytes.byteLength > STREAM_QUEUE_MAX_BYTES
+  ) {
+    return false;
+  }
+  pump.inboundHold.push(bytes.slice());
+  pump.inboundHoldBytes += bytes.byteLength;
+  return true;
 }
 
 function enqueueFrame(pump: ForwardPump, bytes: Uint8Array): boolean {

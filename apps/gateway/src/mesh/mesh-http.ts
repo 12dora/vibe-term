@@ -1,4 +1,5 @@
 import type { KeyLogEffect } from '@tmex/shared/auth';
+import type { HubMode } from '@tmex/shared/uplink';
 import type { ChallengeStore } from '../auth/challenge-store';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
@@ -57,6 +58,7 @@ export type MeshHttpRuntimeOptions = {
   hubPublicUrl?: string | null;
   hubStore?: MeshHubStore;
   attachedHub?: () => AttachedHub | null;
+  hubMode?: () => HubMode | null;
   hubCandidates?: () => Array<string | UplinkCandidate>;
   trustProxy?: boolean;
   connectionLookup?: ConnectionLookup;
@@ -173,6 +175,7 @@ export class MeshHttpRuntime {
       hubPublicUrl: opts.hubPublicUrl,
       hubStore: opts.hubStore,
       attachedHub: opts.attachedHub,
+      hubMode: opts.hubMode,
       listPublicNodes: this.authSurfaceOnly
         ? () => [{ id: opts.nodeId, name: 'self', online: true }]
         : () => this.mesh.publicNodes(),
@@ -356,6 +359,11 @@ export class MeshHttpRuntime {
       }
       if (ws.data?.kind === MESH_FORWARD_WS_KIND) {
         this.forwarder.handleForwardSocketMessage(ws, message);
+      }
+    },
+    drain: (ws: MeshServerWebSocket): void => {
+      if (ws.data?.kind === MESH_FORWARD_WS_KIND) {
+        this.forwarder.handleForwardSocketDrain(ws);
       }
     },
     close: (ws: MeshServerWebSocket, code?: number, reason?: string): void => {

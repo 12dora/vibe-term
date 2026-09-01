@@ -94,6 +94,21 @@ export type UplinkPoolOptions = {
   probeTimeoutMs?: number;
 };
 
+export function redactUrl(raw: string): string {
+  try {
+    return new URL(raw).origin;
+  } catch {
+    const stripped = raw
+      .replace(/[?#].*$/, '')
+      .replace(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/?#]*@/, '$1');
+    try {
+      return new URL(stripped).origin;
+    } catch {
+      return stripped.replace(/\/+$/, '') || raw;
+    }
+  }
+}
+
 export function normalizeHubEndpointUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return trimmed;
@@ -121,10 +136,55 @@ export function isCaFingerprintHex(value: string): boolean {
   return /^[0-9a-f]{64}$/i.test(value.trim());
 }
 
+const KEY_USAGE_OID = Buffer.from([0x06, 0x03, 0x55, 0x1d, 0x0f]);
+const KEY_USAGE_NAMES = [
+  'digitalSignature',
+  'nonRepudiation',
+  'keyEncipherment',
+  'dataEncipherment',
+  'keyAgreement',
+  'keyCertSign',
+  'cRLSign',
+  'encipherOnly',
+  'decipherOnly',
+] as const;
+
+function parseKeyUsageFromRaw(raw: ArrayBuffer | Uint8Array): string[] | undefined {
+  const buf = Buffer.from(raw instanceof ArrayBuffer ? new Uint8Array(raw) : raw);
+  const idx = buf.indexOf(KEY_USAGE_OID);
+  if (idx < 0) return undefined;
+  let i = idx + KEY_USAGE_OID.length;
+  if (buf[i] === 0x01 && buf[i + 1] === 0x01) i += 3;
+  if (buf[i] !== 0x04) return undefined;
+  const octLen = buf[i + 1];
+  if (octLen == null || octLen > 127) return undefined;
+  i += 2;
+  if (buf[i] !== 0x03) return undefined;
+  const bitStrLen = buf[i + 1];
+  const unused = buf[i + 2];
+  if (bitStrLen == null || unused == null || bitStrLen < 2) return undefined;
+  const value = buf.subarray(i + 3, i + 2 + bitStrLen);
+  const totalBits = value.length * 8 - unused;
+  const out: string[] = [];
+  for (let b = 0; b < totalBits && b < KEY_USAGE_NAMES.length; b += 1) {
+    const byte = value[b >> 3] ?? 0;
+    const bit = 7 - (b & 7);
+    if ((byte & (1 << bit)) !== 0) out.push(KEY_USAGE_NAMES[b]);
+  }
+  return out;
+}
+
+function certificateKeyUsage(cert: X509Certificate): string[] | undefined {
+  if (cert.keyUsage && cert.keyUsage.length > 0) return [...cert.keyUsage];
+  return parseKeyUsageFromRaw(cert.raw);
+}
+
 export function parseSingleCaCertificate(pem: string): X509Certificate {
   const matches = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
   if (matches.length !== 1) throw new Error('ca_pem_count');
   const cert = new X509Certificate(matches[0]);
+  const usages = certificateKeyUsage(cert);
+  if (usages && !usages.includes('keyCertSign')) throw new Error('ca_no_key_cert_sign');
   if (cert.ca !== true) throw new Error('ca_not_ca');
   return cert;
 }
@@ -178,7 +238,22 @@ export function mergeUplinkCandidates(
     });
     seedIndex += 1;
   }
+  out.sort(compareUplinkCandidates);
   return out;
+}
+
+function modeRank(mode: HubMode | string): number {
+  if (mode === 'active') return 0;
+  if (mode === 'standby') return 1;
+  return 2;
+}
+
+function compareUplinkCandidates(a: UplinkCandidate, b: UplinkCandidate): number {
+  const rank = modeRank(a.mode) - modeRank(b.mode);
+  if (rank !== 0) return rank;
+  if (a.mode === 'active' && a.writerEpoch !== b.writerEpoch) return b.writerEpoch - a.writerEpoch;
+  if (a.priority !== b.priority) return a.priority - b.priority;
+  return 0;
 }
 
 export function recordsFromNodeList(list: UplinkNodeList): Array<Omit<MeshHubRecord, 'updatedAt'>> {
@@ -337,7 +412,10 @@ export class UplinkPool {
     string,
     { lastError: string | null; lastAttemptAt: number | null }
   >();
-  private readonly failLogAt = new Map<string, { msg: string; at: number }>();
+  private readonly candLogAt = new Map<
+    string,
+    { index: number; error: string | null; transport: string; at: number }
+  >();
   private wrapSleepAbort: AbortController | null = null;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private readonly attachedListeners: Array<(hub: AttachedHub) => void> = [];
@@ -526,9 +604,9 @@ export class UplinkPool {
     const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, publicUrl));
     const transport = this.isLocalTransport(target) ? 'memory' : 'ws';
     this.noteAttempt(target);
-    this.logInfo(
-      `[uplink] try hub=${target.publicUrl} mode=${target.mode} epoch=${target.writerEpoch} idx=${idx + 1}/${cands.length} transport=${transport}`
-    );
+    this.logCandidateEvent(target, idx, transport, this.lastErrorOf(target), 'try', {
+      total: cands.length,
+    });
     const token = this.beginSwitch();
     const client = this.spawn(target);
     this.pending = client;
@@ -543,7 +621,7 @@ export class UplinkPool {
     } catch (err) {
       const msg = errMessage(err);
       this.noteFailure(target, msg);
-      this.logCandidateFailed(target.publicUrl, msg, 1);
+      this.logCandidateFailed(target, msg, 1, idx, transport);
       this.logMissingCaPin(target, err);
       if (this.pending === client) this.pending = null;
       await client.stop();
@@ -567,7 +645,10 @@ export class UplinkPool {
         session = await this.tryCandidate(cand, signal, i, cands.length);
         if (session) break;
         const next = cands[i + 1];
-        if (next) this.logInfo(`[uplink] failover → hub=${next.publicUrl}`);
+        if (next) {
+          const nextTransport = this.isLocalTransport(next) ? 'memory' : 'ws';
+          this.logCandidateEvent(next, i + 1, nextTransport, this.lastErrorOf(next), 'failover');
+        }
       }
       if (signal.aborted) return;
       if (session) {
@@ -642,9 +723,7 @@ export class UplinkPool {
     this.pending = client;
     const transport = this.isLocalTransport(cand) ? 'memory' : 'ws';
     this.noteAttempt(cand);
-    this.logInfo(
-      `[uplink] try hub=${cand.publicUrl} mode=${cand.mode} epoch=${cand.writerEpoch} idx=${index + 1}/${total} transport=${transport}`
-    );
+    this.logCandidateEvent(cand, index, transport, this.lastErrorOf(cand), 'try', { total });
     let failures = 0;
     try {
       while (failures < this.failLimit && !combined.aborted) {
@@ -666,7 +745,7 @@ export class UplinkPool {
           const msg = errMessage(err);
           this.lastConnectError = { reason: msg, at: this.scheduler.now() };
           this.noteFailure(cand, msg);
-          this.logCandidateFailed(cand.publicUrl, msg, failures);
+          this.logCandidateFailed(cand, msg, failures, index, transport);
           this.logMissingCaPin(cand, err);
           if (combined.aborted || failures >= this.failLimit) break;
         }
@@ -838,7 +917,9 @@ export class UplinkPool {
       if (!this.opts.fingerprintPem) parseSingleCaCertificate(pem);
       const fingerprint = (this.opts.fingerprintPem ?? spkiFingerprintFromPem)(pem).toLowerCase();
       if (fingerprint !== advertised) {
-        this.logInfo(`[uplink] ca bootstrap failed url=${publicUrl} err=fingerprint_mismatch`);
+        this.logInfo(
+          `[uplink] ca bootstrap failed url=${redactUrl(publicUrl)} err=fingerprint_mismatch`
+        );
         return;
       }
       this.opts.hubTrust.put({
@@ -846,10 +927,12 @@ export class UplinkPool {
         caPem: pem,
         fingerprint,
       });
-      this.logInfo(`[uplink] ca pin stored url=${publicUrl} fp=${fingerprint}`);
+      this.logInfo(`[uplink] ca pin stored url=${redactUrl(publicUrl)} fp=${fingerprint}`);
       this.wakeWrapSleep();
     } catch (err) {
-      this.logInfo(`[uplink] ca bootstrap failed url=${publicUrl} err=${errMessage(err)}`);
+      this.logInfo(
+        `[uplink] ca bootstrap failed url=${redactUrl(publicUrl)} err=${errMessage(err)}`
+      );
     }
   }
 
@@ -948,13 +1031,14 @@ export class UplinkPool {
         const tlsCa = pin?.caPem ? [pin.caPem] : null;
         const ok = await probe(pref.publicUrl, tlsCa, this.probeTimeoutMs);
         if (!ok) {
-          this.logInfo(`[uplink] probe fail hub=${pref.publicUrl}`);
+          this.logInfo(`[uplink] probe fail hub=${redactUrl(pref.publicUrl)}`);
           continue;
         }
-        this.logInfo(`[uplink] probe ok hub=${pref.publicUrl}`);
+        this.logInfo(`[uplink] probe ok hub=${redactUrl(pref.publicUrl)}`);
         try {
           await this.switchTo(pref.publicUrl);
-          this.logInfo(`[uplink] switch-back → hub=${pref.publicUrl}`);
+          const transport = this.isLocalTransport(pref) ? 'memory' : 'ws';
+          this.logCandidateEvent(pref, i, transport, this.lastErrorOf(pref), 'switch-back');
         } catch {
           /* keep current attachment */
         }
@@ -982,13 +1066,60 @@ export class UplinkPool {
     });
   }
 
-  private logCandidateFailed(url: string, msg: string, fails: number): void {
-    const key = normalizeHubEndpointUrl(url);
+  private lastErrorOf(cand: UplinkCandidate): string | null {
+    return this.diagByUrl.get(normalizeHubEndpointUrl(cand.publicUrl))?.lastError ?? null;
+  }
+
+  private logCandidateFailed(
+    cand: UplinkCandidate,
+    msg: string,
+    fails: number,
+    index: number,
+    transport: string
+  ): void {
+    this.logCandidateEvent(cand, index, transport, msg, 'failed', { fails });
+  }
+
+  private logCandidateEvent(
+    cand: UplinkCandidate,
+    index: number,
+    transport: string,
+    error: string | null,
+    kind: 'try' | 'failover' | 'switch-back' | 'failed',
+    extra?: { fails?: number; total?: number }
+  ): void {
+    const origin = redactUrl(cand.publicUrl);
+    const key = `${normalizeHubEndpointUrl(cand.publicUrl)}\0${kind}`;
     const now = this.scheduler.now();
-    const prev = this.failLogAt.get(key);
-    if (prev && prev.msg === msg && now - prev.at < UPLINK_POOL_FAIL_LOG_INTERVAL_MS) return;
-    this.failLogAt.set(key, { msg, at: now });
-    this.logInfo(`[uplink] candidate failed hub=${url} err=${msg} fails=${fails}`);
+    const stateError = kind === 'failed' ? error : null;
+    const prev = this.candLogAt.get(key);
+    if (
+      prev &&
+      prev.index === index &&
+      prev.error === stateError &&
+      prev.transport === transport &&
+      now - prev.at < UPLINK_POOL_FAIL_LOG_INTERVAL_MS
+    ) {
+      return;
+    }
+    this.candLogAt.set(key, { index, error: stateError, transport, at: now });
+    if (kind === 'try') {
+      this.logInfo(
+        `[uplink] try hub=${origin} mode=${cand.mode} epoch=${cand.writerEpoch} idx=${index + 1}/${extra?.total ?? this.candidates().length} transport=${transport}`
+      );
+      return;
+    }
+    if (kind === 'failover') {
+      this.logInfo(`[uplink] failover → hub=${origin}`);
+      return;
+    }
+    if (kind === 'switch-back') {
+      this.logInfo(`[uplink] switch-back → hub=${origin}`);
+      return;
+    }
+    this.logInfo(
+      `[uplink] candidate failed hub=${origin} err=${error ?? ''} fails=${extra?.fails ?? 1}`
+    );
   }
 
   private logMissingCaPin(cand: UplinkCandidate, err: unknown): void {
@@ -996,7 +1127,9 @@ export class UplinkPool {
     if (this.opts.hubTrust.get(cand.publicUrl)) return;
     const advertised = cand.caFingerprint?.trim() ?? '';
     if (advertised && isCaFingerprintHex(advertised)) return;
-    this.logInfo(`[uplink] no CA pin for ${cand.publicUrl} and no advertised fingerprint`);
+    this.logInfo(
+      `[uplink] no CA pin for ${redactUrl(cand.publicUrl)} and no advertised fingerprint`
+    );
   }
 
   private wakeWrapSleep(): void {

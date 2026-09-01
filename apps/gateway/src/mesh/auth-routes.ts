@@ -18,7 +18,7 @@ import {
   verifyTotpCode,
 } from '@tmex/shared/auth';
 import type { KeyLogEffect, VerifyDelegationPasskey } from '@tmex/shared/auth';
-import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
+import { HUB_NOT_WRITER, type HubMode } from '@tmex/shared/uplink';
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 import type { ChallengeStore } from '../auth/challenge-store';
@@ -102,6 +102,7 @@ export type AuthRoutesDeps = {
   hubPublicUrl?: string | null;
   hubStore?: MeshHubStore;
   attachedHub?: () => AttachedHub | null;
+  hubMode?: () => HubMode | null;
   listPublicNodes?: () => PublicAuthNode[];
   onLogout?: (userId: string) => void;
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
@@ -686,22 +687,26 @@ export class AuthRoutes {
   }
 
   private refuseIfAttachedNotWriter(): Response | null {
+    if (this.deps.roles.hub && this.deps.hubMode?.() === 'standby') {
+      return this.hubNotWriterResponse();
+    }
     const attached = this.deps.attachedHub?.();
     if (!attached) return null;
     const rows = this.deps.hubStore?.list() ?? [];
     const writerId = pickWriterHub(rows);
-    if (!writerId) {
-      return jsonError(HUB_NOT_WRITER, 409, {
-        writerHubId: null,
-        writerPublicUrl: null,
-        writerEpoch: null,
-      });
-    }
+    if (!writerId) return this.hubNotWriterResponse();
     const writer = this.deps.hubStore?.get(writerId);
     const attachedIsWriter =
       (attached.hubNodeId != null && attached.hubNodeId === writerId) ||
       Boolean(writer && sameHubUrl(attached.publicUrl, writer.publicUrl));
     if (attachedIsWriter) return null;
+    return this.hubNotWriterResponse();
+  }
+
+  private hubNotWriterResponse(): Response {
+    const rows = this.deps.hubStore?.list() ?? [];
+    const writerId = pickWriterHub(rows);
+    const writer = writerId ? this.deps.hubStore?.get(writerId) : undefined;
     return jsonError(HUB_NOT_WRITER, 409, {
       writerHubId: writerId,
       writerPublicUrl: writer?.publicUrl ?? null,

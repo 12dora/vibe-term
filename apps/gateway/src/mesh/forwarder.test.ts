@@ -271,6 +271,62 @@ describe('forwarder', () => {
     }
   });
 
+  test('MESH_FORWARD_WS pauses remote→browser pump on send -1 until drain and closes on 0', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      let data: { kind?: string; token?: string; auth?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws`, {
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        }),
+        server
+      );
+      const sent: Uint8Array[] = [];
+      const closed: Array<{ code?: number; reason?: string }> = [];
+      let sendResult = 2;
+      const ws = {
+        data: data ?? { kind: MESH_FORWARD_WS_KIND },
+        send(frame: Uint8Array) {
+          sent.push(frame.slice());
+          return sendResult;
+        },
+        close(code?: number, reason?: string) {
+          closed.push({ code, reason });
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      streams.lastWs?.pushFromRemote(new Uint8Array([1]));
+      expect(sent).toEqual([new Uint8Array([1])]);
+
+      sendResult = -1;
+      streams.lastWs?.pushFromRemote(new Uint8Array([2]));
+      expect(sent).toEqual([new Uint8Array([1]), new Uint8Array([2])]);
+      streams.lastWs?.pushFromRemote(new Uint8Array([3]));
+      expect(sent).toHaveLength(2);
+
+      sendResult = 2;
+      mesh.runtime.handleWebSocket.drain(ws);
+      expect(sent[2]).toEqual(new Uint8Array([3]));
+
+      sendResult = 0;
+      streams.lastWs?.pushFromRemote(new Uint8Array([4]));
+      expect(closed.some((row) => row.code === 1011 && row.reason === 'forward-ws-closed')).toBe(
+        true
+      );
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('/n/:id/ws?cid= passes the client nonce through openWsStream', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
@@ -1780,8 +1836,8 @@ async function openForwardWs(
   let browserClosed: { code?: number; reason?: string } | undefined;
   const ws = {
     data: data ?? { kind: MESH_FORWARD_WS_KIND },
-    send() {
-      return 0;
+    send(frame: Uint8Array) {
+      return frame.byteLength || 1;
     },
     close(code?: number, reason?: string) {
       browserClosed = { code, reason };

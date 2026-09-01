@@ -18,6 +18,7 @@ import {
   totpCode,
 } from '@tmex/shared/auth';
 import type { LinkSession } from '@tmex/shared/link';
+import type { HubMode } from '@tmex/shared/uplink';
 import { ChallengeStore } from '../auth/challenge-store';
 import { KeyLogStore } from '../auth/key-log-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';
@@ -201,6 +202,7 @@ export async function bootMesh(options?: {
   streamLog?: (line: string) => void;
   skipUserBootstrap?: boolean;
   attachedHub?: () => import('./uplink-pool').AttachedHub | null;
+  hubMode?: () => HubMode | null;
 }) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
@@ -240,6 +242,7 @@ export async function bootMesh(options?: {
     primaryUserId: boot.userId || undefined,
     hubStore,
     attachedHub: options?.attachedHub,
+    hubMode: options?.hubMode,
     selfStatus: options?.selfStatus,
     listedNames: options?.listedNames,
     selfName: options?.selfName,
@@ -1794,6 +1797,187 @@ describe('auth-routes', () => {
       });
       expect(res.status).toBe(200);
       expect(mesh.published).toHaveLength(1);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('dual-role standby refuses local key-log append when attached hub is null', async () => {
+    const writerId = 'bb'.repeat(16);
+    const mesh = await bootMesh({
+      roles: { hub: true, node: true },
+      attachedHub: () => null,
+      hubMode: () => 'standby',
+    });
+    try {
+      mesh.hubStore.replaceAll(
+        [
+          {
+            hubNodeId: writerId,
+            publicUrl: 'https://writer.example',
+            name: 'writer',
+            mode: 'active',
+            priority: 10,
+            writerEpoch: 4,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+        ],
+        1
+      );
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const before = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        code: 'HUB_NOT_WRITER',
+        writerHubId: writerId,
+        writerPublicUrl: 'https://writer.example',
+        writerEpoch: 4,
+      });
+      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(before.head.seq);
+      expect(mesh.published).toHaveLength(0);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('dual-role active writer applies local key-log append when attached hub is null', async () => {
+    const mesh = await bootMesh({
+      roles: { hub: true, node: true },
+      attachedHub: () => null,
+      hubMode: () => 'active',
+    });
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(mesh.published).toHaveLength(1);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('plain node unknown attach does not return HUB_NOT_WRITER', async () => {
+    const mesh = await bootMesh({
+      roles: { hub: false, node: true },
+      attachedHub: () => null,
+      hubMode: () => 'standby',
+    });
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const before = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      const body = (await res.json()) as { code?: string };
+      expect(body.code).not.toBe('HUB_NOT_WRITER');
+      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(before.head.seq);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('standalone unknown attach is not gated as HUB_NOT_WRITER', async () => {
+    const mesh = await bootMesh({
+      roles: { hub: false, node: false },
+      attachedHub: () => null,
+      hubMode: () => 'standby',
+    });
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const before = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      const body = (await res.json()) as { code?: string };
+      expect(body.code).not.toBe('HUB_NOT_WRITER');
     } finally {
       mesh.close();
     }

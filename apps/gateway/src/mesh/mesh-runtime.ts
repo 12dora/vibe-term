@@ -575,16 +575,17 @@ function hubSeedUrls(config: MeshRuntimeConfig): string[] {
 
 export function hubRoleAdvertisement(
   config: MeshRuntimeConfig,
-  caFingerprint: string | null
+  caFingerprint: string | null,
+  liveHub?: { mode(): HubMode; writerEpoch(): number } | null
 ): HubAdvertisement | undefined {
   if (!config.roles.hub) return undefined;
   const publicUrl = config.hubPublicUrl ?? config.hubUrl;
   if (!publicUrl) return undefined;
   return {
     publicUrl,
-    mode: config.hubMode ?? gatewayConfig.hubMode,
+    mode: liveHub?.mode() ?? config.hubMode ?? gatewayConfig.hubMode,
     priority: config.hubPriority ?? gatewayConfig.hubPriority,
-    writerEpoch: config.hubWriterEpoch ?? gatewayConfig.hubWriterEpoch,
+    writerEpoch: liveHub?.writerEpoch() ?? config.hubWriterEpoch ?? gatewayConfig.hubWriterEpoch,
     caFingerprint,
   };
 }
@@ -724,6 +725,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
           };
         },
         tlsInfo: opts.tlsInfo,
+        hubTrust: new HubTrustStore(db),
       }))
     : (opts.hub ?? null);
   return {
@@ -850,7 +852,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
         stores.peerHolder.manager?.listenPort ?? stores.config.peerPort,
         stores.interfacesFn()
       ),
-      hub: hubRoleAdvertisement(stores.config, stores.state.caFingerprint),
+      hub: hubRoleAdvertisement(stores.config, stores.state.caFingerprint, stores.hub),
     };
   };
   return { ...stores, ...bindings, scheduler, statusProvider, refreshTls };
@@ -1316,6 +1318,7 @@ function wireMeshHttp(
     hubPublicUrl: hubEndpointUrl(config),
     hubStore: d.hubStore,
     attachedHub: () => w.uplink.attachedHub(),
+    hubMode: () => d.hub?.mode() ?? null,
     hubCandidates: () => w.uplink.candidates(),
     trustProxy: gatewayConfig.trustProxy,
     connectionLookup: (input) =>
@@ -1388,7 +1391,7 @@ function assembleMeshRuntime(
     websocket: {
       open: (ws) => http.handleWebSocket.open(ws),
       message: (ws, message) => http.handleWebSocket.message(ws, message),
-      drain() {},
+      drain: (ws) => http.handleWebSocket.drain(ws),
       close: (ws, code, reason) => http.handleWebSocket.close(ws, code, reason),
     },
     onNodeEvent(cb) {

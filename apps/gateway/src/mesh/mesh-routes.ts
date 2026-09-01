@@ -11,6 +11,7 @@ import {
   type ConnectionLookup,
   MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
+  MESH_WS_BACKPRESSURE_LIMIT_BYTES,
   MESH_WS_KIND,
   type MeshRoles,
   type MeshServerWebSocket,
@@ -93,6 +94,7 @@ function serializeHubCandidate(entry: string | UplinkCandidate): {
 export class MeshRoutes {
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly meshSockets = new Set<MeshServerWebSocket>();
+  private readonly backpressureWarned = new WeakSet<MeshServerWebSocket>();
   private readonly unsubPeer: () => void;
   private unsubSignals: (() => void) | null = null;
   private seq = 0;
@@ -300,11 +302,7 @@ export class MeshRoutes {
     );
     for (const ws of this.meshSockets) {
       if (ws.data.sid !== msg.entrySid) continue;
-      try {
-        ws.send(frame);
-      } catch {
-        this.meshSockets.delete(ws);
-      }
+      this.sendToMeshClient(ws, frame);
     }
   }
 
@@ -457,11 +455,33 @@ export class MeshRoutes {
 
   private broadcast(frame: Uint8Array): void {
     for (const ws of this.meshSockets) {
-      try {
-        ws.send(frame);
-      } catch {
+      this.sendToMeshClient(ws, frame);
+    }
+  }
+
+  private sendToMeshClient(ws: MeshServerWebSocket, frame: Uint8Array): void {
+    const buffered = ws.getBufferedAmount?.() ?? 0;
+    if (buffered > MESH_WS_BACKPRESSURE_LIMIT_BYTES) {
+      if (!this.backpressureWarned.has(ws)) {
+        this.backpressureWarned.add(ws);
+        console.warn(
+          `[mesh] skip /mesh/ws client buffered=${buffered} over ${MESH_WS_BACKPRESSURE_LIMIT_BYTES}`
+        );
+      }
+      return;
+    }
+    try {
+      const sent = ws.send(frame);
+      if (sent === 0) {
+        try {
+          ws.close(1011, 'mesh-ws-closed');
+        } catch {
+          /* ignore */
+        }
         this.meshSockets.delete(ws);
       }
+    } catch {
+      this.meshSockets.delete(ws);
     }
   }
 }

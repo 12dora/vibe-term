@@ -26,6 +26,7 @@ import {
 } from './auth-routes.test';
 import {
   MESH_REJECT_4401_KIND,
+  MESH_WS_BACKPRESSURE_LIMIT_BYTES,
   MESH_WS_KIND,
   type MeshServerWebSocket,
   WS_CLOSE_LOGIN_REQUIRED,
@@ -1030,6 +1031,56 @@ describe('mesh-routes', () => {
       expect(logout.status).toBe(200);
       expect(loggedOut).toBe(WS_CLOSE_LOGIN_REQUIRED);
     } finally {
+      mesh.close();
+    }
+  });
+
+  test('/mesh/ws broadcast skips a client over 1MiB buffered and closes on send 0', async () => {
+    const peers = new FakePeers();
+    const mesh = await bootMesh({ peers });
+    const warns: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map(String).join(' '));
+    };
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const frames: Uint8Array[] = [];
+      const closed: Array<{ code?: number; reason?: string }> = [];
+      let buffered = 0;
+      let sendResult: number | undefined = 8;
+      const ws = {
+        data: { kind: MESH_WS_KIND, sid, uid: mesh.boot.userId },
+        getBufferedAmount() {
+          return buffered;
+        },
+        send(d: Uint8Array) {
+          frames.push(d);
+          return sendResult;
+        },
+        close(code?: number, reason?: string) {
+          closed.push({ code, reason });
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+
+      buffered = MESH_WS_BACKPRESSURE_LIMIT_BYTES + 1;
+      peers.emit({ nodeId: PEER_ID, status: 'online', reach: 'wan' });
+      expect(frames).toHaveLength(0);
+      expect(warns.filter((row) => row.includes('buffered')).length).toBe(1);
+      peers.emit({ nodeId: PEER_ID, status: 'offline', reach: 'wan' });
+      expect(frames).toHaveLength(0);
+      expect(warns.filter((row) => row.includes('buffered')).length).toBe(1);
+
+      buffered = 0;
+      peers.emit({ nodeId: PEER_ID, status: 'online', reach: 'lan' });
+      expect(frames).toHaveLength(1);
+
+      sendResult = 0;
+      peers.emit({ nodeId: PEER_ID, status: 'offline', reach: 'lan' });
+      expect(closed.some((row) => row.code === 1011 && row.reason === 'mesh-ws-closed')).toBe(true);
+    } finally {
+      console.warn = originalWarn;
       mesh.close();
     }
   });
