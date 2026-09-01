@@ -387,4 +387,88 @@ describe('UserStore', () => {
       close();
     }
   });
+
+  test('enrollment token replication: 幂等、tombstone、不把 used_at 从有改回 null', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      const pk = Uint8Array.from({ length: 32 }, () => 41);
+      const token = {
+        id: 'tok-repl',
+        userId: 'user-1',
+        enrollPublicKey: pk,
+        authorizationJson: '{"a":1}',
+        authorizationSig: AUTH_SIG,
+        expiresAt: 9_000,
+        usedAt: null as number | null,
+        nodeId: null as string | null,
+      };
+      expect(
+        store.applyEnrollmentTokenReplication({
+          op: 'upsert',
+          revision: { epoch: 1, seq: 1 },
+          token,
+        })
+      ).toBe('applied');
+      expect(store.getEnrollmentTokenById('tok-repl')?.usedAt).toBeNull();
+      expect(
+        store.applyEnrollmentTokenReplication({
+          op: 'upsert',
+          revision: { epoch: 1, seq: 1 },
+          token,
+        })
+      ).toBe('applied');
+      expect(
+        store.applyEnrollmentTokenReplication({
+          op: 'upsert',
+          revision: { epoch: 1, seq: 2 },
+          token: { ...token, usedAt: 50, nodeId: 'node-a', authorizationJson: '{"a":2}' },
+        })
+      ).toBe('applied');
+      expect(store.getEnrollmentTokenById('tok-repl')?.usedAt).toBe(50);
+      expect(store.getEnrollmentTokenById('tok-repl')?.nodeId).toBe('node-a');
+      expect(
+        store.applyEnrollmentTokenReplication({
+          op: 'upsert',
+          revision: { epoch: 1, seq: 3 },
+          token: { ...token, usedAt: null, nodeId: null, authorizationJson: '{"a":3}' },
+        })
+      ).toBe('applied');
+      const kept = store.getEnrollmentTokenById('tok-repl');
+      expect(kept?.usedAt).toBe(50);
+      expect(kept?.nodeId).toBe('node-a');
+      expect(kept?.authorizationJson).toBe('{"a":3}');
+      expect(
+        store.applyEnrollmentTokenReplication({
+          op: 'upsert',
+          revision: { epoch: 1, seq: 2 },
+          token: { ...token, authorizationJson: '{"stale":true}' },
+        })
+      ).toBe('ignored');
+      expect(store.getEnrollmentTokenById('tok-repl')?.authorizationJson).toBe('{"a":3}');
+      expect(
+        store.applyEnrollmentTokenReplication({
+          op: 'tombstone',
+          revision: { epoch: 1, seq: 4 },
+          id: 'tok-repl',
+        })
+      ).toBe('applied');
+      expect(store.getEnrollmentTokenById('tok-repl')).toBeNull();
+      expect(
+        store.applyEnrollmentTokenReplication({
+          op: 'upsert',
+          revision: { epoch: 1, seq: 4 },
+          token,
+        })
+      ).toBe('ignored');
+      expect(store.getEnrollmentTokenById('tok-repl')).toBeNull();
+      const r1 = store.nextEnrollmentTokenRevision(2);
+      const r2 = store.nextEnrollmentTokenRevision(2);
+      expect(r1).toEqual({ epoch: 2, seq: 1 });
+      expect(r2).toEqual({ epoch: 2, seq: 2 });
+    } finally {
+      close();
+    }
+  });
 });

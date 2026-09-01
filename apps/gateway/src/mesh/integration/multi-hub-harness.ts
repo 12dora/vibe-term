@@ -82,6 +82,7 @@ export class HubRouter {
   readonly hubs = new Map<string, HubRuntime>();
   readonly down = new Set<string>();
   readonly live: LiveUplink[] = [];
+  readonly cookies = new Map<string, string>();
   statusFrames = 0;
 
   register(publicUrl: string, hub: HubRuntime): void {
@@ -153,6 +154,18 @@ export class HubRouter {
     };
     this.live.push(live);
     return nodeSock;
+  };
+
+  fetch: import('../../hub/hub-peer-poller').HubPeerFetch = async (url, init) => {
+    const parsed = new URL(url);
+    const publicUrl = normalizePublicUrl(`${parsed.protocol}//${parsed.host}`);
+    if (this.down.has(publicUrl)) throw new Error(`hub-down:${publicUrl}`);
+    const hub = this.hubs.get(publicUrl);
+    if (!hub) throw new Error(`no-hub:${publicUrl}`);
+    const headers = new Headers(init?.headers);
+    const cookie = this.cookies.get(publicUrl);
+    if (cookie) headers.set('cookie', cookie);
+    return callHub(hub, url, { ...init, headers });
   };
 }
 
@@ -437,6 +450,7 @@ type EnrollOpts = {
   patchHubRoleEnv?: (patch: Record<string, string>) => Promise<void>;
   scheduleHubRoleRestart?: (delayMs: number) => void;
   roleEnv?: Record<string, string>;
+  hubFetch?: import('../../hub/hub-peer-poller').HubPeerFetch;
 };
 
 export type PendingHarnessNode = {
@@ -458,6 +472,7 @@ export async function bootHubA(
     patchHubRoleEnv?: (patch: Record<string, string>) => Promise<void>;
     scheduleHubRoleRestart?: (delayMs: number) => void;
     roleEnv?: Record<string, string>;
+    hubFetch?: import('../../hub/hub-peer-poller').HubPeerFetch;
   }
 ): Promise<{
   node: HarnessNode;
@@ -509,12 +524,15 @@ export async function bootHubA(
     scheduler: new FastScheduler(),
     patchHubRoleEnv: extra?.patchHubRoleEnv ?? role.patchHubRoleEnv,
     scheduleHubRoleRestart: extra?.scheduleHubRoleRestart ?? role.scheduleHubRoleRestart,
+    hubFetch: extra?.hubFetch ?? router.fetch,
   });
   const unsubscribe = wireReplication(mesh);
   if (!mesh.hub) throw new Error('hub A missing HubRuntime');
   router.register(HUB_A_URL, mesh.hub);
   await mesh.start();
   await waitOnline(mesh);
+  const aSid = await loginSelf(mesh, boot);
+  router.cookies.set(HUB_A_URL, selfCookie(aSid));
   return {
     node: {
       mesh,
@@ -671,6 +689,7 @@ export async function enrollAndStart(
     scheduler: opts.scheduler ?? new FastScheduler(),
     patchHubRoleEnv: opts.patchHubRoleEnv ?? role?.patchHubRoleEnv,
     scheduleHubRoleRestart: opts.scheduleHubRoleRestart ?? role?.scheduleHubRoleRestart,
+    hubFetch: opts.hubFetch,
   });
   const unsubscribe = opts.roles.hub ? wireReplication(mesh) : undefined;
   await mesh.start();
@@ -716,6 +735,7 @@ export async function bootAbcdTopology(): Promise<MultiHubTopology> {
     wsFactory: router.factory,
     pending: bPending,
     label: 'b',
+    hubFetch: router.fetch,
   });
   if (!b.mesh.hub) throw new Error('hub B missing HubRuntime');
   router.register(HUB_B_URL, b.mesh.hub);

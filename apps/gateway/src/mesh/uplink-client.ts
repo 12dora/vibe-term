@@ -71,6 +71,7 @@ export type UplinkClientOptions = {
   onNodeList?: (list: UplinkNodeList) => void;
   onRtcSignal?: (msg: UplinkRtcSignal) => void;
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
+  onHubTokens?: (msg: Extract<UplinkCtlMessage, { t: 'hub.tokens' }>) => void;
   onKeyLogFork?: (event: KeyLogForkEvent) => void;
   wsFactory?: UplinkWsFactory;
   tlsCa?: string[] | null;
@@ -157,6 +158,7 @@ export class UplinkClient {
   private readonly onNodeListCb?: (list: UplinkNodeList) => void;
   private readonly onRtcSignalCb?: (msg: UplinkRtcSignal) => void;
   private readonly onEnrollRedeemedCb?: (msg: UplinkEnrollRedeemed) => void;
+  private readonly onHubTokensCb?: (msg: Extract<UplinkCtlMessage, { t: 'hub.tokens' }>) => void;
   private readonly wsFactory: UplinkWsFactory;
   private readonly scheduler: MeshScheduler;
   private readonly pingIntervalMs: number;
@@ -197,6 +199,7 @@ export class UplinkClient {
     this.onNodeListCb = opts.onNodeList;
     this.onRtcSignalCb = opts.onRtcSignal;
     this.onEnrollRedeemedCb = opts.onEnrollRedeemed;
+    this.onHubTokensCb = opts.onHubTokens;
     this.wsFactory = opts.wsFactory ?? defaultWsFactory(opts.tlsCa);
     this.scheduler = opts.scheduler ?? defaultScheduler();
     this.pingIntervalMs = opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS;
@@ -552,6 +555,7 @@ export class UplinkClient {
     else if (msg.t === 'key.log.ack') this.keyLog.handleKeyLogAck(msg);
     else if (msg.t === 'rtc.signal') this.onRtcSignalCb?.(msg);
     else if (msg.t === 'enroll.redeemed') this.onEnrollRedeemedCb?.(msg);
+    else if (msg.t === 'hub.tokens') this.onHubTokensCb?.(msg);
   }
 
   private acceptChallenge(nonceB64: string): void {
@@ -647,6 +651,10 @@ export class UplinkClient {
     generation?: number
   ) {
     return this.keyLog.appendAndAck(record, timeoutMs, generation);
+  }
+
+  requestCatchUpNow(): void {
+    this.keyLog.requestCatchUpNow();
   }
 
   private startHeartbeat(link: LinkSession, generation: number): void {

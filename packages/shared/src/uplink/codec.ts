@@ -16,6 +16,7 @@ export const UPLINK_CTL_TYPES = [
   'key.log.ack',
   'rtc.signal',
   'enroll.redeemed',
+  'hub.tokens',
 ] as const;
 
 export type UplinkCtlType = (typeof UPLINK_CTL_TYPES)[number];
@@ -35,6 +36,9 @@ export const UPLINK_CTL_MAX_HUBS = 16;
 export const UPLINK_CTL_MAX_HUB_URL_LEN = 512;
 export const UPLINK_CTL_MAX_CERT_BYTES = 2048;
 export const UPLINK_CTL_MAX_U64 = 18446744073709551615n;
+export const MIN_HUB_TOKENS_VERSION = '1.1.13';
+export const TMEX_FORWARDED_BY_HEADER = 'X-Tmex-Forwarded-By';
+export const UPLINK_CTL_MAX_TOKEN_JSON_LEN = 16 * 1024;
 export const KEY_LOG_PAGE_DEFAULT_LIMIT = 256;
 export const KEY_LOG_PAGE_MAX_LIMIT = 256;
 export const KEY_LOG_PAGE_MAX_BYTES = 1024 * 1024;
@@ -243,6 +247,95 @@ function parseHubAdvertisement(value: unknown): HubAdvertisement {
   return adv;
 }
 
+export function compareTokenRevision(a: HubTokensRevision, b: HubTokensRevision): number {
+  if (a.epoch !== b.epoch) return a.epoch > b.epoch ? 1 : -1;
+  if (a.seq !== b.seq) return a.seq > b.seq ? 1 : -1;
+  return 0;
+}
+
+function parseHubTokensRevision(value: unknown): HubTokensRevision {
+  if (!isRecord(value)) throw new Error('hub.tokens revision must be an object');
+  return {
+    epoch: mNonNegInt(value.epoch, 'revision.epoch'),
+    seq: mNonNegInt(value.seq, 'revision.seq'),
+  };
+}
+
+function parseHubTokenRow(value: unknown, label: string): HubTokenRow {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  const json = mStr(value.authorization_json, `${label}.authorization_json`);
+  if (json.length > UPLINK_CTL_MAX_TOKEN_JSON_LEN) {
+    throw new Error(`${label}.authorization_json too long`);
+  }
+  const enrollPk = mB64(value.enroll_public_key, `${label}.enroll_public_key`, 32);
+  const authSig = mB64(value.authorization_sig, `${label}.authorization_sig`, 64);
+  const usedAt = value.used_at;
+  if (
+    usedAt !== null &&
+    usedAt !== undefined &&
+    (typeof usedAt !== 'number' || !Number.isInteger(usedAt))
+  ) {
+    throw new Error(`${label}.used_at must be an integer or null`);
+  }
+  const nodeId = value.node_id;
+  if (nodeId !== null && nodeId !== undefined && typeof nodeId !== 'string') {
+    throw new Error(`${label}.node_id must be a string or null`);
+  }
+  return {
+    id: mStr(value.id, `${label}.id`),
+    user_id: mStr(value.user_id, `${label}.user_id`),
+    enroll_public_key: encodeBase64url(enrollPk),
+    authorization_json: json,
+    authorization_sig: encodeBase64url(authSig),
+    expires_at: mNonNegInt(value.expires_at, `${label}.expires_at`),
+    used_at: usedAt === undefined ? null : (usedAt as number | null),
+    node_id: nodeId === undefined ? null : (nodeId as string | null),
+  };
+}
+
+function parseHubTokensMessage(parsed: Record<string, unknown>): HubTokensMessage {
+  const op = mStr(parsed.op, 'op');
+  if (op !== 'upsert' && op !== 'tombstone') {
+    throw new Error('hub.tokens op must be upsert|tombstone');
+  }
+  const msg: HubTokensMessage = {
+    t: 'hub.tokens',
+    op,
+    revision: parseHubTokensRevision(parsed.revision),
+  };
+  const id = mOptStr(parsed.id, 'id');
+  if (id) msg.id = id;
+  if (parsed.ack !== undefined && parsed.ack !== null) {
+    msg.ack = mBool(parsed.ack, 'ack');
+  }
+  if (parsed.tokens !== undefined && parsed.tokens !== null) {
+    if (!Array.isArray(parsed.tokens)) throw new Error('hub.tokens tokens must be an array');
+    if (parsed.tokens.length > UPLINK_CTL_MAX_ARRAY_LEN) {
+      throw new Error('hub.tokens tokens too many');
+    }
+    msg.tokens = parsed.tokens.map((row, i) => parseHubTokenRow(row, `tokens[${i}]`));
+  }
+  return msg;
+}
+
+function encodeHubTokensMessage(msg: HubTokensMessage, legacy: boolean): Uint8Array {
+  if (legacy) return encodeJsonBytes({ t: 'hub.tokens' });
+  parseHubTokensRevision(msg.revision);
+  if (msg.op !== 'upsert' && msg.op !== 'tombstone') {
+    throw new Error('hub.tokens op must be upsert|tombstone');
+  }
+  return encodeJsonBytes({
+    t: 'hub.tokens',
+    op: msg.op,
+    revision: msg.revision,
+    ...(msg.id ? { id: msg.id } : {}),
+    ...(msg.ack !== undefined ? { ack: msg.ack } : {}),
+    ...(msg.tokens
+      ? { tokens: msg.tokens.map((row, i) => parseHubTokenRow(row, `tokens[${i}]`)) }
+      : {}),
+  });
+}
+
 function applyNodeListExtras<
   T extends { hubs?: HubEndpointInfo[]; writerHubId?: string; writerEpoch?: number },
 >(target: T, parsed: Record<string, unknown>): T {
@@ -358,7 +451,8 @@ export type MeshUplinkCtlMessage =
   | { t: 'key.log.append'; bytes: Uint8Array; sig: Uint8Array; id?: string }
   | MeshUplinkKeyLogAck
   | MeshUplinkRtcSignal
-  | MeshUplinkEnrollRedeemed;
+  | MeshUplinkEnrollRedeemed
+  | HubTokensMessage;
 
 function parseMeshNode(value: unknown): MeshNodeInfo {
   if (!isRecord(value)) throw new Error('node.list node must be an object');
@@ -399,9 +493,11 @@ export function decodeMeshUplinkCtl(
   if (parsed.t === 'key.log.res' && bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
     const resId = mOptStr(parsed.id, 'id');
     if (!resId || resId !== opts?.pendingKeyLogId) throw new Error('ctl too large');
-  } else if (parsed.t !== 'key.log.res') {
+  } else if (parsed.t !== 'key.log.res' && parsed.t !== 'hub.tokens') {
     if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) throw new Error('ctl too large');
     assertCtlBounds(parsed, 0);
+  } else if (parsed.t === 'hub.tokens') {
+    if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) throw new Error('ctl too large');
   }
   if (!TYPE_SET.has(parsed.t)) throw new Error(`unknown uplink ctl t: ${parsed.t}`);
   switch (parsed.t as UplinkCtlType) {
@@ -550,6 +646,8 @@ export function decodeMeshUplinkCtl(
       if (entrySid) msg.entrySid = entrySid;
       return msg;
     }
+    case 'hub.tokens':
+      return parseHubTokensMessage(parsed);
   }
 }
 
@@ -644,6 +742,8 @@ export function encodeMeshUplinkCtl(
         node_id: msg.nodeId,
         ...(msg.entrySid ? { entry_sid: msg.entrySid } : {}),
       });
+    case 'hub.tokens':
+      return encodeHubTokensMessage(msg, legacy);
   }
 }
 
@@ -723,6 +823,26 @@ export type EnrollRedeemedMessage = {
   entry_sid?: string;
   already_admitted?: boolean;
 };
+export type HubTokensOp = 'upsert' | 'tombstone';
+export type HubTokensRevision = { epoch: number; seq: number };
+export type HubTokenRow = {
+  id: string;
+  user_id: string;
+  enroll_public_key: string;
+  authorization_json: string;
+  authorization_sig: string;
+  expires_at: number;
+  used_at: number | null;
+  node_id: string | null;
+};
+export type HubTokensMessage = {
+  t: 'hub.tokens';
+  op: HubTokensOp;
+  revision: HubTokensRevision;
+  id?: string;
+  tokens?: HubTokenRow[];
+  ack?: boolean;
+};
 export type HubUplinkCtlMessage =
   | AuthChallengeMessage
   | AuthResponseMessage
@@ -736,7 +856,8 @@ export type HubUplinkCtlMessage =
   | KeyLogAppendMessage
   | KeyLogAckMessage
   | RtcSignalMessage
-  | EnrollRedeemedMessage;
+  | EnrollRedeemedMessage
+  | HubTokensMessage;
 
 function hStr(obj: Record<string, unknown>, key: string): string {
   const value = obj[key];
@@ -855,7 +976,7 @@ function decodeHubInner(
   if (parsedT === 'key.log.res' && !opts?.allowKeyLogRes) {
     throw new UplinkCtlError('unexpected key.log.res');
   }
-  if (parsedT !== 'key.log.res') assertCtlBounds(parsed, 0);
+  if (parsedT !== 'key.log.res' && parsedT !== 'hub.tokens') assertCtlBounds(parsed, 0);
   if (!isRecord(parsed)) throw new UplinkCtlError('invalid ctl');
   const t = parsed.t;
   if (typeof t !== 'string' || !TYPE_SET.has(t))
@@ -985,6 +1106,12 @@ function decodeHubInner(
       }
       return msg;
     }
+    case 'hub.tokens':
+      try {
+        return parseHubTokensMessage(parsed);
+      } catch (err) {
+        throw new UplinkCtlError(err instanceof Error ? err.message : 'invalid hub.tokens');
+      }
   }
   throw new UplinkCtlError(`unknown t: ${t}`);
 }
@@ -1008,6 +1135,9 @@ export function encodeHubUplinkCtl(
     if (msg.t === 'node.status') {
       const { hub: _hub, ...rest } = msg;
       return encodeJsonBytes(rest);
+    }
+    if (msg.t === 'hub.tokens') {
+      return encodeJsonBytes({ t: 'hub.tokens' });
     }
   }
   if (msg.t === 'node.list') {

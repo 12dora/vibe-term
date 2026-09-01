@@ -178,6 +178,17 @@ export interface CreateEnrollmentTokenInput {
   expiresAt: number;
 }
 
+export type EnrollmentTokenRevision = { epoch: number; seq: number };
+
+export type ApplyEnrollmentTokenReplicationInput = {
+  op: 'upsert' | 'tombstone';
+  revision: EnrollmentTokenRevision;
+  token?: EnrollmentTokenRecord;
+  id?: string;
+};
+
+export type ApplyEnrollmentTokenReplicationResult = 'applied' | 'ignored';
+
 export const HUB_META_PEER_ID = 'hub';
 
 export class UserStore {
@@ -648,6 +659,141 @@ export class UserStore {
       .returning({ id: enrollmentTokens.id })
       .all().length;
   }
+
+  listEnrollmentTokens(): EnrollmentTokenRecord[] {
+    return this.db.select().from(enrollmentTokens).all().map(toEnrollment);
+  }
+
+  nextEnrollmentTokenRevision(epoch: number): EnrollmentTokenRevision {
+    this.ensureTokenReplSchema();
+    const sqlite = sqliteOf(this.db);
+    const meta = sqlite
+      .query('SELECT epoch, seq FROM enrollment_token_repl_meta WHERE id = 1')
+      .get() as { epoch: number; seq: number } | null;
+    let nextEpoch = epoch;
+    let nextSeq = 1;
+    if (meta) {
+      if (epoch > meta.epoch) {
+        nextEpoch = epoch;
+        nextSeq = 1;
+      } else {
+        nextEpoch = meta.epoch;
+        nextSeq = meta.seq + 1;
+      }
+    }
+    sqlite.run(
+      'INSERT INTO enrollment_token_repl_meta (id, epoch, seq) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET epoch = excluded.epoch, seq = excluded.seq',
+      [nextEpoch, nextSeq]
+    );
+    return { epoch: nextEpoch, seq: nextSeq };
+  }
+
+  getEnrollmentTokenRevision(id: string): EnrollmentTokenRevision | null {
+    this.ensureTokenReplSchema();
+    const row = sqliteOf(this.db)
+      .query('SELECT epoch, seq FROM enrollment_token_repl WHERE id = ?')
+      .get(id) as { epoch: number; seq: number } | null;
+    return row ? { epoch: row.epoch, seq: row.seq } : null;
+  }
+
+  applyEnrollmentTokenReplication(
+    input: ApplyEnrollmentTokenReplicationInput
+  ): ApplyEnrollmentTokenReplicationResult {
+    this.ensureTokenReplSchema();
+    const id = input.token?.id ?? input.id;
+    if (!id) return 'ignored';
+    const sqlite = sqliteOf(this.db);
+    const existing = sqlite
+      .query('SELECT epoch, seq, tombstoned FROM enrollment_token_repl WHERE id = ?')
+      .get(id) as { epoch: number; seq: number; tombstoned: number } | null;
+    if (existing && compareRepl(input.revision, existing) < 0) return 'ignored';
+    if (existing && compareRepl(input.revision, existing) === 0 && existing.tombstoned === 1) {
+      return 'ignored';
+    }
+    if (input.op === 'tombstone') {
+      this.db.delete(enrollmentTokens).where(eq(enrollmentTokens.id, id)).run();
+      sqlite.run(
+        'INSERT INTO enrollment_token_repl (id, epoch, seq, tombstoned) VALUES (?, ?, ?, 1) ON CONFLICT(id) DO UPDATE SET epoch = excluded.epoch, seq = excluded.seq, tombstoned = 1',
+        [id, input.revision.epoch, input.revision.seq]
+      );
+      return 'applied';
+    }
+    const token = input.token;
+    if (!token) return 'ignored';
+    const current = this.getEnrollmentTokenById(id);
+    const usedAt =
+      current?.usedAt != null && token.usedAt == null ? current.usedAt : (token.usedAt ?? null);
+    const nodeId =
+      current?.usedAt != null && token.usedAt == null ? current.nodeId : (token.nodeId ?? null);
+    if (current) {
+      this.db
+        .update(enrollmentTokens)
+        .set({
+          userId: token.userId,
+          enrollPublicKey: toBuffer(token.enrollPublicKey),
+          authorizationJson: token.authorizationJson,
+          authorizationSig: toBuffer(token.authorizationSig),
+          expiresAt: token.expiresAt,
+          usedAt,
+          nodeId,
+        })
+        .where(eq(enrollmentTokens.id, id))
+        .run();
+    } else {
+      this.db
+        .insert(enrollmentTokens)
+        .values({
+          id: token.id,
+          userId: token.userId,
+          enrollPublicKey: toBuffer(token.enrollPublicKey),
+          authorizationJson: token.authorizationJson,
+          authorizationSig: toBuffer(token.authorizationSig),
+          expiresAt: token.expiresAt,
+          usedAt,
+          nodeId,
+        })
+        .run();
+    }
+    sqlite.run(
+      'INSERT INTO enrollment_token_repl (id, epoch, seq, tombstoned) VALUES (?, ?, ?, 0) ON CONFLICT(id) DO UPDATE SET epoch = excluded.epoch, seq = excluded.seq, tombstoned = 0',
+      [id, input.revision.epoch, input.revision.seq]
+    );
+    return 'applied';
+  }
+
+  private ensureTokenReplSchema(): void {
+    const sqlite = sqliteOf(this.db);
+    sqlite.run(`
+      CREATE TABLE IF NOT EXISTS enrollment_token_repl (
+        id TEXT PRIMARY KEY,
+        epoch INTEGER NOT NULL,
+        seq INTEGER NOT NULL,
+        tombstoned INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    sqlite.run(`
+      CREATE TABLE IF NOT EXISTS enrollment_token_repl_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        epoch INTEGER NOT NULL,
+        seq INTEGER NOT NULL
+      )
+    `);
+  }
+}
+
+function compareRepl(
+  incoming: EnrollmentTokenRevision,
+  stored: { epoch: number; seq: number }
+): number {
+  if (incoming.epoch !== stored.epoch) return incoming.epoch > stored.epoch ? 1 : -1;
+  if (incoming.seq !== stored.seq) return incoming.seq > stored.seq ? 1 : -1;
+  return 0;
+}
+
+function sqliteOf(db: AuthDb): import('bun:sqlite').Database {
+  const client = (db as AuthDb & { $client?: import('bun:sqlite').Database }).$client;
+  if (!client) throw new Error('auth db missing sqlite client');
+  return client;
 }
 
 function toUser(row: typeof users.$inferSelect): UserRecord {

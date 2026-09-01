@@ -60,6 +60,7 @@ function makeServer(
     keyLogReqIdleTtlMs?: number;
     config?: Partial<HubRuntimeConfig>;
     meshHubs?: MeshHubStore;
+    forwardAppend?: ConstructorParameters<typeof UplinkServer>[0]['forwardAppend'];
   }
 ) {
   const registry = new NodeRegistry();
@@ -75,6 +76,7 @@ function makeServer(
       ...extras?.config,
     },
     meshHubs: extras?.meshHubs,
+    forwardAppend: extras?.forwardAppend,
     heartbeatIntervalMs: extras?.heartbeatIntervalMs ?? 60_000,
     heartbeatMissLimit: extras?.heartbeatMissLimit ?? 3,
     authTimeoutMs: extras?.authTimeoutMs ?? 60_000,
@@ -2403,6 +2405,72 @@ describe('UplinkServer multi-hub', () => {
       const res = await takeUntil(node.inbox, 'key.log.res');
       expect(res.t).toBe('key.log.res');
       if (res.t === 'key.log.res') expect(res.records.length).toBeGreaterThan(0);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('standby 把 key.log.append 转到 writer uplink 并回传 ack', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const writerId = 'bb'.repeat(16);
+      const meshHubs = new MeshHubStore(db);
+      meshHubs.upsert(
+        {
+          hubNodeId: writerId,
+          publicUrl: 'https://writer.example',
+          name: 'writer',
+          mode: 'active',
+          priority: 50,
+          writerEpoch: 5,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
+      const forwarded: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        meshHubs,
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 1,
+          hubNodeId: SELF_HUB,
+          nodeId: SELF_HUB,
+          authorizedHubIds: [writerId],
+        },
+        forwardAppend: async (record) => {
+          forwarded.push(record);
+          return { ok: true, seq: 9n };
+        },
+      });
+      const node = await authNode(server, userStore, user.id);
+      const next = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'clear-totp',
+        encodeClearTotpPayload()
+      );
+      sendCtl(node.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(next.bytes),
+        sig: encodeBase64url(next.sig),
+        id: 'fwd-1',
+      });
+      const ack = await takeUntil(node.inbox, 'key.log.ack');
+      expect(ack.t).toBe('key.log.ack');
+      if (ack.t === 'key.log.ack') {
+        expect(ack.ok).toBe(true);
+        expect(ack.id).toBe('fwd-1');
+        expect(ack.seq).toBe(9);
+      }
+      expect(forwarded).toHaveLength(1);
       server.stop();
     } finally {
       close();

@@ -46,14 +46,14 @@
                                TMEX_HUB_MODE=standby
                                https://hub-b.example
                                只读：node.list / key log catch-up
-                               拒写：enroll / redeem / rename / revoke
+                               写者可达时转发 enroll / redeem / rename / revoke / keylog
 ```
 
 要点：
 
 - standby 不是「另一个独立 mesh」，而是同一用户根钥下的只读副本；
 - standby 自己也是 node，uplink 连的是当前写者（`TMEX_HUB_URL` 仍指向原主，作种子）；其它 hub 地址从 `node.list.hubs` 学习；
-- 浏览器与 CLI 的写入仍应打到写者。standby 返回 `HUB_NOT_WRITER` 并带上写者地址。
+- 浏览器与 CLI 的写入仍应打到写者。standby 在写者可达时转发这些写入；不可达时返回 `HUB_NOT_WRITER` 并带上写者地址。
 
 ## 数据同步机制
 
@@ -62,9 +62,9 @@
 | `user_key_log` / `node_certs` | 既有 uplink catch-up | 签名链，standby 作为 node 拉齐即可。允许应用「已经由写者接受」的后续记录 |
 | 节点注册表 `nodes` | `node.list` 投影 | `HubRuntime.applyReplicatedNodeList`：只 upsert **本地已有未吊销证书** 的 node；列表里没有的标离线，不删除；忽略来源是自己的 list |
 | hub 集合 `mesh_hubs` | `node.list.hubs` | `MeshHubStore.replaceAll`；缺 `hubs[]` 时由旧版单数 `hub` 合成一行 |
-| enrollment token | **不复制** | 第一阶段 standby 不能 redeem；token 仍只存在于写者 |
+| enrollment token | **best-effort `hub.tokens`** | 写者在已授权 hub uplink 鉴权后发快照，创建 / redeem / 过期时发增量。standby 按 `(id, revision)` 幂等应用，且不会把 `used_at` 从有改回 null。redeem / 创建仍只在写者上执行；提升后沿用既有 `used_at IS NULL` 原子消费。只发给 advertised version ≥ 1.1.13 的已授权 hub。 |
 
-不把 enrollment token 当普通行复制：一次性 `used_at` 条件无法在两台机器上安全 LWW。
+`POST /api/hub/enrollments` 成功响应带 `replicatedTo: string[]`（2 s 内 ack 的 hub id；空数组表示尚未复制）。写者在复制 ACK 前崩溃时，该 token 不保证存在于 standby。
 
 ## 故障切换与切回
 
@@ -91,7 +91,9 @@
 
 ## 写入围栏
 
-standby 对下列请求返回 HTTP 409，body 为：
+写者可达时，standby **转发**下列写入到当前写者的 `publicUrl`（HTTPS，与 uplink / peer poller 相同的 per-URL CA pin，超时 10 s），原样返回写者的 status 与 body，并加上响应头 `X-Tmex-Forwarded-By: <standbyHubId>`。转发携带调用方收到的凭证（cookie / 请求体），不另签发。已带 `X-Tmex-Forwarded-By` 的请求不再转发（环路守卫）。
+
+写者未知或不可达时，仍返回 HTTP 409：
 
 ```json
 {
@@ -102,7 +104,9 @@ standby 对下列请求返回 HTTP 409，body 为：
 }
 ```
 
-覆盖：`POST /api/hub/enrollments`、`POST /api/hub/enrollments/redeem`、`POST /api/hub/nodes/:id/rename`、`POST /api/hub/nodes/:id/revoke`，以及会在本机发起 **新的** key log 追加的 ctl。只读（节点列表、enrollment 查询、uplink 鉴权、`node.list`、relay、RTC 信令、key log 拉取）在 standby 上仍可用。
+覆盖：`POST /api/hub/enrollments`、`POST /api/hub/enrollments/redeem`、`POST /api/hub/nodes/:id/rename`、`POST /api/hub/nodes/:id/revoke`，以及 `POST /api/auth/keylog?hub=sync` 的 hub 追加。挂在 standby 上的 node 发来的 uplink `key.log.append` 经 standby 自己的写者 uplink 转发，并把 ack/error 回传；无活的写者 uplink 时仍是 `HUB_NOT_WRITER`。转发成功后 standby 立即触发 key-log catch-up，不等下一轮 `node.list`。
+
+只读（节点列表、enrollment 查询、uplink 鉴权、`node.list`、relay、RTC 信令、key log 拉取）在 standby 上仍可用。
 
 **epoch 围栏：** 本机 `mode=active` 时，若收到**已授权**的另一台 `mode=active` 且 `writerEpoch` **更大** 的广告，立即日志 `[hub] fenced: higher writerEpoch=… from hub=…`，`setMode('standby')`，把本机在 `mesh_hubs` 的行写成 standby。**不会自动 promote。**
 
@@ -306,7 +310,7 @@ tmex hub list
 - [ ] `tmex hub allow` / `disallow` 校验 32 位 hex、去重保序、非 `hub,node` 拒绝、`--no-restart` 不重启。
 - [ ] 主 hub 的 `node.list` 含 `hubs[]`；各 node `tmex hub list` 能看到主与备，写者打 `*`，`AUTH` 列对 self / 已 allow 的为 yes。
 - [ ] 停主 hub 后，node 在阈值内切到 standby；`GET /api/mesh/hubs` 的 `attached` 指向备机。
-- [ ] 备机 enroll / redeem / rename / revoke 返回 409 `HUB_NOT_WRITER`，带写者 URL（standby 已自动授权主 hub 时 `writerHubId` 非 null）。
+- [ ] 写者可达时，备机 enroll / redeem / rename / revoke 转发到写者并成功；写者不可达时仍 409 `HUB_NOT_WRITER`，带写者 URL。
 - [ ] 主 hub 停机后 node 日志出现对备用 hub 的 `[uplink] try` / `candidate failed`（而不只是 `offline reason=stopped`）；`GET /api/mesh/hubs.candidates[].lastError` 能看到失败原因。
 - [ ] 主 hub 按「先 demote 再启动」恢复后，node 切回主；跳过 demote 会看到 fence 或 split-brain 日志。
 - [ ] `tmex hub promote --yes` 把 epoch 提到 `max(env, db)+1`；无 `--yes` 且非 TTY 拒绝。
@@ -316,7 +320,7 @@ tmex hub list
 
 1. 没有自动选主。主挂了只靠 node 侧有序 failover；要把 standby 变成写者必须人工 `promote`。
 2. 两台 active 且 epoch 相同不会自动决出胜负，只打脑裂告警。
-3. enrollment token 不复制，standby 不能发 join 串、不能 redeem。
+3. enrollment token 是 best-effort 复制：只发给 ≥ 1.1.13 的已授权 hub；写者在 ACK 前崩溃则 standby 可能没有该 token。redeem 仍只在当前写者上执行。
 4. 注册表复制只覆盖「本地已有未吊销证书」的 node，不会凭空插入未知 id。
 5. 不做 hub 间 relay：挂在 standby 上的 node 只能跟同样挂在这台 standby 上的节点互相 relay。
 6. 浏览器仍走当前入口；不会按 RTT 选 hub。

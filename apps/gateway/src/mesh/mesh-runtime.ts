@@ -2,6 +2,7 @@ import os from 'node:os';
 import { canonicalHubUrl, encodeBase64url } from '@tmex/shared/auth';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
 import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
+import type { HubTokensMessage } from '@tmex/shared/uplink';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { filesBulkHooks } from '../api/files';
 import {
@@ -24,6 +25,7 @@ import { getSiteSettings } from '../db/site-settings';
 import { HubRuntime, type HubTurnConfig } from '../hub';
 import { applyKeyLogHubRuntime } from '../hub/hub-authorization';
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
+import type { HubPeerFetch } from '../hub/hub-peer-poller';
 import type { HubTlsInfoProvider } from '../hub/hub-runtime';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
@@ -62,7 +64,7 @@ import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
 import { authenticateRequest } from './session-middleware';
 import { openHttpStream, openWsStream } from './stream-targets';
 import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
-import type { UplinkWsFactory } from './uplink-client';
+import { UplinkClient, type UplinkWsFactory } from './uplink-client';
 import {
   type AttachedHub,
   UplinkPool,
@@ -117,6 +119,7 @@ export type CreateMeshRuntimeOptions = {
   patchHubRoleEnv?: (patch: Record<string, string>) => Promise<void>;
   /** 由 packages/app assemble 注入：延迟调用 RuntimeController.requestRestart。 */
   scheduleHubRoleRestart?: (delayMs: number) => void;
+  hubFetch?: HubPeerFetch;
 };
 
 export const CONNECTION_ID_BYTES = 32;
@@ -731,6 +734,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
         },
         tlsInfo: opts.tlsInfo,
         hubTrust: new HubTrustStore(db),
+        hubFetch: opts.hubFetch,
         patchHostEnv: opts.patchHubRoleEnv,
         scheduleRestart: opts.scheduleHubRoleRestart,
         hubRoleInstalled: config.roles.hub,
@@ -1010,6 +1014,13 @@ function createUplinkWiring(d: MeshDeps) {
       uplinkHub.attachLocalNode(hubLink);
       await online;
     },
+    createClient: (clientOpts) =>
+      new UplinkClient({
+        ...clientOpts,
+        onHubTokens: (msg: HubTokensMessage) => {
+          d.hub?.receiveHubTokens(msg);
+        },
+      }),
     onEnrollRedeemed: (msg) => {
       d.httpHolder.runtime?.mesh.forwardEnrollRedeemed({
         enrollPk: msg.enroll_pk,
@@ -1040,6 +1051,32 @@ function createUplinkWiring(d: MeshDeps) {
         } catch {}
       }
     },
+  });
+  hub?.bindWriterBridge({
+    appendAndAck: async (record) => {
+      const attached = uplink.attachedHub();
+      if (uplink.state !== 'online' || attached?.mode !== 'active') return null;
+      try {
+        return await uplink.appendAndAck(record);
+      } catch {
+        return null;
+      }
+    },
+    requestCatchUp: () => {
+      try {
+        uplink.liveClient()?.requestCatchUpNow();
+      } catch {
+        /* offline */
+      }
+    },
+    sendCtl: (msg) => {
+      try {
+        uplink.sendCtl(msg);
+      } catch {
+        /* offline */
+      }
+    },
+    isLive: () => uplink.state === 'online' && uplink.attachedHub()?.mode === 'active',
   });
   return { uplink, ensureDc };
 }
@@ -1340,6 +1377,7 @@ function wireMeshHttp(
       d.sessions.lookup(input.sid, input.via, input.connectionId, input.cid),
   });
   http.auth.setTlsInfo(d.opts.tlsInfo);
+  http.auth.setWriterForward((req) => d.hub?.forwardWrite(req) ?? Promise.resolve(null));
   d.httpHolder.runtime = http;
   setMeshAgentBridge({
     lookupNode(nodeId) {

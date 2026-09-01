@@ -179,6 +179,26 @@ export class UplinkKeyLogSync {
       });
   }
 
+  requestCatchUpNow(): void {
+    const list = this.latestList;
+    if (!list || !this.host.isAuthenticated()) return;
+    const generation = this.host.generation();
+    const epoch = ++this.listEpoch;
+    const userId = this.host.userId();
+    this.catchUpChain = this.catchUpChain
+      .then(() => {
+        if (generation !== this.host.generation()) return;
+        return this.trackTask(
+          this.catchUpTasks,
+          generation,
+          this.catchUpFromList(list, epoch, generation, userId)
+        );
+      })
+      .catch((err) => {
+        this.warnCatchUp?.(err);
+      });
+  }
+
   private finishNodeList(epoch: number, generation: number): void {
     if (epoch !== this.listEpoch || generation !== this.host.generation()) return;
     const list = this.latestList;

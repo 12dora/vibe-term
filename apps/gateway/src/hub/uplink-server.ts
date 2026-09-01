@@ -33,6 +33,13 @@ import {
   isAuthorizedHub as mergeAuthorizedHub,
   resolveMeshUserId,
 } from './hub-authorization';
+import {
+  HUB_TOKENS_ACK_WAIT_MS,
+  applyHubTokensMessage,
+  hubTokensAck,
+  peerSupportsHubTokens,
+  snapshotHubTokensMessage,
+} from './hub-tokens';
 import { trimKeyLogPageToByteLimit } from './key-log-page';
 import { patchNode } from './node-persistence';
 import type { NodeRegistry } from './node-registry';
@@ -47,6 +54,7 @@ import {
   type HubRuntimeConfig,
 } from './types';
 import {
+  type HubTokensMessage,
   KEY_LOG_PAGE_DEFAULT_LIMIT,
   KEY_LOG_PAGE_MAX_LIMIT,
   type NodeListMessage,
@@ -111,6 +119,12 @@ export type UplinkServerOptions = {
   meshHubs?: MeshHubStore;
   onModeChange?: () => void;
   onNewAuthorizedHub?: (hubNodeId: string) => void;
+  forwardAppend?: (record: { bytes: Uint8Array; sig: Uint8Array }) => Promise<{
+    ok: boolean;
+    seq?: bigint | number;
+    error?: string;
+  } | null>;
+  onForwardedWrite?: () => void;
 };
 
 type PendingAuth = {
@@ -185,6 +199,13 @@ export class UplinkServer {
   private readonly lastUnauthorizedHubAdLog = new Map<string, number>();
   private readonly onModeChange?: () => void;
   private readonly onNewAuthorizedHub?: (hubNodeId: string) => void;
+  private readonly forwardAppend?: UplinkServerOptions['forwardAppend'];
+  private readonly onForwardedWrite?: () => void;
+  private readonly tokenAckWaiters = new Map<
+    string,
+    { acked: Set<string>; pending: Set<string> }
+  >();
+  private readonly tokenSnapshots = new Set<string>();
   private readonly now: () => number;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeatMissLimit: number;
@@ -234,6 +255,8 @@ export class UplinkServer {
     this.currentMode = this.effectiveStartMode(configMode);
     this.onModeChange = opts.onModeChange;
     this.onNewAuthorizedHub = opts.onNewAuthorizedHub;
+    this.forwardAppend = opts.forwardAppend;
+    this.onForwardedWrite = opts.onForwardedWrite;
     this.now = opts.now ?? Date.now;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS;
     this.heartbeatMissLimit = opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT;
@@ -424,6 +447,78 @@ export class UplinkServer {
     if (!entry?.authenticated) return false;
     this.send(entry.link, msg);
     return true;
+  }
+
+  async replicateEnrollmentTokens(
+    msg: HubTokensMessage,
+    waitMs = HUB_TOKENS_ACK_WAIT_MS
+  ): Promise<string[]> {
+    if (!this.isWriter()) return [];
+    const targets = this.tokenReplicationTargets();
+    if (targets.length === 0) return [];
+    const id = msg.id ?? crypto.randomUUID();
+    const framed: HubTokensMessage = { ...msg, id };
+    const pending = new Set(targets.map((row) => row.nodeId));
+    this.tokenAckWaiters.set(id, { acked: new Set(), pending });
+    for (const row of targets) {
+      this.send(row.link, framed);
+    }
+    if (waitMs <= 0) return [];
+    const deadline = this.now() + waitMs;
+    while (this.now() < deadline) {
+      const waiter = this.tokenAckWaiters.get(id);
+      if (!waiter || waiter.pending.size === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const waiter = this.tokenAckWaiters.get(id);
+    this.tokenAckWaiters.delete(id);
+    return waiter ? [...waiter.acked] : [];
+  }
+
+  private tokenReplicationTargets(): Array<{ nodeId: string; link: LinkSession }> {
+    const out: Array<{ nodeId: string; link: LinkSession }> = [];
+    for (const entry of this.registry.listAuthenticated()) {
+      if (entry.nodeId === this.hubNodeId()) continue;
+      if (!this.isAuthorizedHub(entry.nodeId, entry.userId)) continue;
+      if (
+        !peerSupportsHubTokens(entry.meta.version ?? this.userStore.getNode(entry.nodeId)?.version)
+      ) {
+        continue;
+      }
+      out.push({ nodeId: entry.nodeId, link: entry.link });
+    }
+    return out;
+  }
+
+  private sendTokenSnapshot(live: LiveConnection): void {
+    const version =
+      this.registry.get(live.nodeId)?.meta.version ?? this.userStore.getNode(live.nodeId)?.version;
+    if (!peerSupportsHubTokens(version)) return;
+    if (!this.isAuthorizedHub(live.nodeId, live.userId)) return;
+    const revision = this.userStore.nextEnrollmentTokenRevision(this.hubWriterEpoch);
+    const id = crypto.randomUUID();
+    this.send(live.link, snapshotHubTokensMessage(this.userStore, revision, id));
+  }
+
+  private handleHubTokens(live: LiveConnection, msg: HubTokensMessage): void {
+    if (!this.isAuthorizedHub(live.nodeId, live.userId)) {
+      console.warn(`[hub] hub.tokens rejected from unauthorized node=${live.nodeId}`);
+      return;
+    }
+    if (msg.ack) {
+      const waiter = msg.id ? this.tokenAckWaiters.get(msg.id) : undefined;
+      if (waiter) {
+        waiter.acked.add(live.nodeId);
+        waiter.pending.delete(live.nodeId);
+      }
+      return;
+    }
+    if (this.isWriter()) {
+      console.warn(`[hub] hub.tokens upsert/tombstone ignored on writer from node=${live.nodeId}`);
+      return;
+    }
+    applyHubTokensMessage(this.userStore, msg);
+    if (msg.id) this.send(live.link, hubTokensAck(msg));
   }
 
   async broadcastNodeList(userId: string): Promise<'sent' | 'unchanged' | 'failed'> {
@@ -669,6 +764,9 @@ export class UplinkServer {
       case 'rtc.signal':
         this.handleRtcSignal(live, msg);
         return;
+      case 'hub.tokens':
+        this.handleHubTokens(live, msg);
+        return;
       case 'key.log.res':
         link.close('protocol_error');
         return;
@@ -804,6 +902,13 @@ export class UplinkServer {
         now
       );
       if (msg.hub) this.applyAuthorizedHubAdvertisement(live.nodeId, msg.hub, 'uplink');
+      if (this.isWriter() && this.isAuthorizedHub(live.nodeId, live.userId)) {
+        const snapKey = `${live.nodeId}:${live.generation}`;
+        if (!this.tokenSnapshots.has(snapKey)) {
+          this.tokenSnapshots.add(snapKey);
+          this.sendTokenSnapshot(live);
+        }
+      }
       await this.broadcastNodeList(live.userId);
     } catch {
       if (!this.stopped) throw new Error('node_status_failed');
@@ -948,6 +1053,28 @@ export class UplinkServer {
           live.userId,
           this.replayedAppendSuccess(bytes, sig, replayed.seq)
         );
+        return;
+      }
+      const forwarded = this.forwardAppend ? await this.forwardAppend({ bytes, sig }) : null;
+      if (forwarded) {
+        if (id) {
+          if (forwarded.ok) {
+            this.send(live.link, {
+              t: 'key.log.ack',
+              id,
+              ok: true,
+              seq: seqToWire(forwarded.seq ?? 0),
+            });
+          } else {
+            this.send(live.link, {
+              t: 'key.log.ack',
+              id,
+              ok: false,
+              error: forwarded.error ?? 'error',
+            });
+          }
+        }
+        if (forwarded.ok) this.onForwardedWrite?.();
         return;
       }
       if (id) {

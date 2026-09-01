@@ -4,12 +4,14 @@ import {
   MIN_HUB_AUTH_RECORD_VERSION,
   buildAdmitHubPayload,
   buildRetireHubPayload,
+  createEnrollment,
+  createNodeCertificate,
   encodeBase64url,
   encodeClearTotpPayload,
   encodeRevokeNodePayload,
   hexToBytes,
 } from '@tmex/shared/auth';
-import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
+import { HUB_NOT_WRITER, TMEX_FORWARDED_BY_HEADER } from '@tmex/shared/uplink';
 import { signUserRecord } from '../../hub/hub-test-helpers';
 import {
   FAKE_NODE_ID,
@@ -34,7 +36,6 @@ import {
   loginRemote,
   loginSelf,
   meshHubsOf,
-  notWriterBody,
   reconstructHubRuntime,
   selfCookie,
   sidFromResponse,
@@ -143,60 +144,65 @@ describe('multi-hub in-process integration', () => {
     expect(b.userStore.getNode(c.mesh.nodeId)?.name).toBe('node-c');
   });
 
-  test('standby write fencing: POST enroll/rename/revoke via B is 409 HUB_NOT_WRITER; GET nodes is 200', async () => {
-    const { a, b, c, boot: user, aKeys } = await boot();
+  test('enroll through standby B while A is writer: request is forwarded and node can join', async () => {
+    const { a, b, c, boot: user } = await boot();
     const sid = await loginSelf(c.mesh, user);
     const cookie = selfCookie(sid);
     const remote = await loginRemote(c.mesh, b.mesh, user, cookie);
     expect(remote.status).toBe(200);
     const bSid = sidFromResponse(remote, b.mesh.nodeId);
     const jar = jarFor(sid, b.mesh.nodeId, bSid);
-    const expected = notWriterBody(a.mesh.nodeId, HUB_A_URL, 1);
 
+    const now = Date.now();
+    const enrollment = await createEnrollment(user.rootKey, {
+      uid: user.userId,
+      rootEpoch: user.rootEpoch,
+      now,
+      ttlMs: 60_000,
+    });
     const enroll = await callMesh(c.mesh, `http://entry/n/${b.mesh.nodeId}/api/hub/enrollments`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       cookie: jar,
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        enroll_pk: encodeBase64url(enrollment.enrollPk),
+        authorization: encodeBase64url(enrollment.authorizationBytes),
+        authorization_sig: encodeBase64url(enrollment.authorizationSig),
+        exp: now + 60_000,
+      }),
     });
-    expect(enroll.status).toBe(409);
-    expect(await enroll.json()).toEqual(expected);
+    expect(enroll.status).toBe(201);
+    expect(enroll.headers.get(TMEX_FORWARDED_BY_HEADER)).toBe(b.mesh.nodeId);
+    const created = (await enroll.json()) as { id: string };
+    expect(a.userStore.getEnrollmentTokenById(created.id)).not.toBeNull();
 
-    const rename = await callMesh(
+    const pending = await createPendingNode();
+    const cert = createNodeCertificate(enrollment.enrollSk, {
+      uid: user.userId,
+      edPk: pending.identity.edPublicKey,
+      x25519Pk: pending.identity.x25519PublicKey,
+      enrollPk: enrollment.enrollPk,
+      now,
+      nodeId: pending.identity.nodeId,
+    });
+    const redeemed = await callMesh(
       c.mesh,
-      `http://entry/n/${b.mesh.nodeId}/api/hub/nodes/${c.mesh.nodeId}/rename`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        cookie: jar,
-        body: JSON.stringify({ name: 'nope' }),
-      }
-    );
-    expect(rename.status).toBe(409);
-    expect(await rename.json()).toEqual(expected);
-
-    const rec = signUserRecord(
-      aKeys,
-      user.userId,
-      user.rootKey,
-      'revoke-node',
-      encodeRevokeNodePayload({ node_id: c.mesh.identity.nodeId, reason: 'lost' })
-    );
-    const revoke = await callMesh(
-      c.mesh,
-      `http://entry/n/${b.mesh.nodeId}/api/hub/nodes/${c.mesh.nodeId}/revoke`,
+      `http://entry/n/${b.mesh.nodeId}/api/hub/enrollments/redeem`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         cookie: jar,
         body: JSON.stringify({
-          bytes: encodeBase64url(rec.bytes),
-          sig: encodeBase64url(rec.sig),
+          certificate: encodeBase64url(cert.certificateBytes),
+          cert_sig: encodeBase64url(cert.certSig),
+          name: 'via-b',
+          version: '1.1.13',
         }),
       }
     );
-    expect(revoke.status).toBe(409);
-    expect(await revoke.json()).toEqual(expected);
+    expect(redeemed.status).toBe(200);
+    expect(a.userStore.getNode(pending.identity.nodeIdHex)?.name).toBe('via-b');
+    pending.close();
 
     const listed = await callMesh(c.mesh, `http://entry/n/${b.mesh.nodeId}/api/hub/nodes`, {
       cookie: jar,
@@ -204,6 +210,72 @@ describe('multi-hub in-process integration', () => {
     expect(listed.status).toBe(200);
     const body = (await listed.json()) as { nodes: Array<{ id: string }> };
     expect(body.nodes.some((n) => n.id === c.mesh.nodeId)).toBe(true);
+  });
+
+  test('token created on A survives A crash: B promoted via role API can redeem', async () => {
+    const topo = await boot();
+    const { a, b, boot: user, router } = topo;
+    a.mesh.hub?.registry.updateMeta(b.mesh.nodeId, { version: '1.1.13' }, Date.now());
+    const aSid = await loginSelf(a.mesh, user);
+    const now = Date.now();
+    const enrollment = await createEnrollment(user.rootKey, {
+      uid: user.userId,
+      rootEpoch: user.rootEpoch,
+      now,
+      ttlMs: 60_000,
+    });
+    const created = await callHub(a.mesh.hub!, 'http://hub/api/hub/enrollments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cookie: selfCookie(aSid),
+      body: JSON.stringify({
+        enroll_pk: encodeBase64url(enrollment.enrollPk),
+        authorization: encodeBase64url(enrollment.authorizationBytes),
+        authorization_sig: encodeBase64url(enrollment.authorizationSig),
+        exp: now + 60_000,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const tokenId = ((await created.json()) as { id: string }).id;
+    await waitUntil(() => b.userStore.getEnrollmentTokenById(tokenId) != null, 4_000);
+
+    router.takeDown(HUB_A_URL);
+    const bSid = await loginSelf(b.mesh, user);
+    const promote = await callHub(b.mesh.hub!, 'http://hub/api/hub/role', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cookie: selfCookie(bSid),
+      body: JSON.stringify({
+        mode: 'active',
+        writerEpoch: 2,
+        operationId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      }),
+    });
+    expect(promote.status).toBe(202);
+    expect(b.mesh.hub?.mode()).toBe('active');
+
+    const pending = await createPendingNode();
+    const cert = createNodeCertificate(enrollment.enrollSk, {
+      uid: user.userId,
+      edPk: pending.identity.edPublicKey,
+      x25519Pk: pending.identity.x25519PublicKey,
+      enrollPk: enrollment.enrollPk,
+      now,
+      nodeId: pending.identity.nodeId,
+    });
+    const redeemed = await callHub(b.mesh.hub!, 'http://hub/api/hub/enrollments/redeem', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        certificate: encodeBase64url(cert.certificateBytes),
+        cert_sig: encodeBase64url(cert.certSig),
+        name: 'after-promote',
+        version: '1.1.13',
+      }),
+    });
+    expect(redeemed.status).toBe(200);
+    expect(b.userStore.getNode(pending.identity.nodeIdHex)?.name).toBe('after-promote');
+    pending.close();
   });
 
   test('failover: taking A down makes C and D re-attach to B; relay C→D still works', async () => {
@@ -316,13 +388,17 @@ describe('multi-hub in-process integration', () => {
         cookie: selfCookie(sid),
         body: JSON.stringify({}),
       });
-      expect(enroll.status).toBe(409);
-      expect(await enroll.json()).toEqual({
-        code: HUB_NOT_WRITER,
-        writerHubId: e.mesh.nodeId,
-        writerPublicUrl: HUB_E_URL,
-        writerEpoch: 2,
-      });
+      expect(enroll.status).not.toBe(201);
+      if (enroll.status === 409) {
+        expect(await enroll.json()).toEqual({
+          code: HUB_NOT_WRITER,
+          writerHubId: e.mesh.nodeId,
+          writerPublicUrl: HUB_E_URL,
+          writerEpoch: 2,
+        });
+      } else {
+        expect(enroll.headers.get(TMEX_FORWARDED_BY_HEADER)).toBe(aBoot.node.mesh.nodeId);
+      }
     } finally {
       errorSpy.mockRestore();
     }

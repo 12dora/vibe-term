@@ -223,6 +223,34 @@ describe('UplinkKeyLogSync', () => {
     }
   });
 
+  test('requestCatchUpNow reuses last node.list without waiting for a new one', async () => {
+    const hash = new Uint8Array(32).fill(3);
+    const { host, emitted } = makeHost();
+    let heads = 0;
+    const sync = new UplinkKeyLogSync({
+      host,
+      applier: {
+        async head() {
+          heads += 1;
+          return { seq: 1n, hash };
+        },
+        async applyMany() {
+          return { applied: 0 };
+        },
+      },
+      scheduler: new ImmediateScheduler(),
+      timeoutMs: 5_000,
+      retryLimit: 1,
+    });
+    sync.reset('init');
+    sync.ingestNodeList(nodeList({ key_log_head: { seq: 1n, hash } }));
+    await waitUntil(() => emitted.length === 1);
+    const afterList = heads;
+    sync.requestCatchUpNow();
+    await waitUntil(() => heads > afterList);
+    expect(heads).toBeGreaterThan(afterList);
+  });
+
   test('reset rejects pending append acks as offline', async () => {
     const { host, sent } = makeHost();
     const sync = new UplinkKeyLogSync({

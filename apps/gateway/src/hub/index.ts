@@ -4,6 +4,7 @@ export {
   type HubRuntimeOptions,
   type HubServerWebSocket,
   type HubUpgradeServer,
+  type HubWriterBridge,
 } from './hub-runtime';
 export {
   HUB_ROLE_RESTART_DELAY_MS,

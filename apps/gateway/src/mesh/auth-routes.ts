@@ -109,6 +109,7 @@ export type AuthRoutesDeps = {
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
   tlsInfo?: HubTlsInfoProvider;
   localAuth?: LocalAuthStoreLike;
+  forwardWriterWrite?: (req: Request) => Promise<Response | null>;
 };
 
 /** 与 node 相同的登录前公开面；role 无关。 */
@@ -144,6 +145,7 @@ export class AuthRoutes {
   private tlsInfoProvider: HubTlsInfoProvider | undefined;
   private localAuth: LocalAuthStoreLike;
   private readonly modeCache = new AuthModeCache();
+  private forwardWriterWrite: ((req: Request) => Promise<Response | null>) | null = null;
 
   constructor(private readonly deps: AuthRoutesDeps) {
     this.localAuth = deps.localAuth ?? new LocalAuthStore();
@@ -156,6 +158,11 @@ export class AuthRoutes {
     this.verifyPasskey =
       deps.verifyDelegationPasskey ?? makeVerifyDelegationPasskey(deps.userStore);
     this.tlsInfoProvider = deps.tlsInfo;
+    this.forwardWriterWrite = deps.forwardWriterWrite ?? null;
+  }
+
+  setWriterForward(fn: ((req: Request) => Promise<Response | null>) | null): void {
+    this.forwardWriterWrite = fn;
   }
 
   setTlsInfo(provider: HubTlsInfoProvider | undefined): void {
@@ -475,6 +482,11 @@ export class AuthRoutes {
 
   private async handleKeyLog(req: Request, userId: string | null): Promise<Response> {
     if (!userId) return jsonError('UNAUTHORIZED', 401);
+    if (this.deps.roles.hub && this.deps.hubMode?.() === 'standby') {
+      const forwarded = await this.forwardWriterWrite?.(req);
+      if (forwarded) return forwarded;
+      return this.hubNotWriterResponse();
+    }
     const body = await readJsonObjectBody(req);
     const fields = body && requiredStrings(body, ['bytes', 'sig']);
     if (!fields) return jsonError('MALFORMED', 400);

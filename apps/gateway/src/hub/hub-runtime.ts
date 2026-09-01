@@ -12,7 +12,7 @@ import {
   verifyNodeCertificate,
 } from '@tmex/shared/auth';
 import { type LinkSession, type ServerSocketAdapter, WebSocketLink } from '@tmex/shared/link';
-import type { HubMode } from '@tmex/shared/uplink';
+import type { HubMode, HubTokensMessage } from '@tmex/shared/uplink';
 import { json, readJsonObjectBody } from '../api/http';
 import { matchPath } from '../api/route';
 import { decodeB64url, requireB64url, validationError } from '../api/route-input';
@@ -33,6 +33,12 @@ import {
   handlePostHubRole,
   reconcileHubRoleOnStart,
 } from './hub-role-routes';
+import {
+  HUB_TOKENS_ACK_WAIT_MS,
+  applyHubTokensMessage,
+  hubTokensAck,
+  upsertHubTokensMessage,
+} from './hub-tokens';
 import { detachEnrollmentTokensFromNode, patchNode } from './node-persistence';
 import { NodeRegistry } from './node-registry';
 import { encodeRedeemPopMessage } from './redeem-pop';
@@ -49,6 +55,7 @@ import {
   type HubUplinkSocketData,
 } from './types';
 import { type RegisterRtcSessionInput, UplinkServer } from './uplink-server';
+import { forwardWriteToWriter, notWriterResponse, requestAlreadyForwarded } from './writer-forward';
 
 export type HubUpgradeServer = {
   upgrade(req: Request, options?: { data?: unknown }): boolean;
@@ -82,9 +89,21 @@ export type HubRuntimeOptions = {
   meshHubs?: MeshHubStore;
   hubTrust?: HubTrustStore;
   fetchPeerStatus?: HubPeerFetch;
+  hubFetch?: HubPeerFetch;
   patchHostEnv?: PatchHubRoleEnv | null;
   scheduleRestart?: ScheduleHubRoleRestart;
   hubRoleInstalled?: boolean;
+};
+
+export type HubWriterBridge = {
+  appendAndAck(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<{
+    ok: boolean;
+    seq?: bigint | number;
+    error?: string;
+  } | null>;
+  requestCatchUp(): void;
+  sendCtl(msg: HubTokensMessage): void;
+  isLive(): boolean;
 };
 
 type StoredEnrollmentPayload = {
@@ -162,6 +181,9 @@ export class HubRuntime {
   private readonly patchHostEnv: PatchHubRoleEnv | null;
   private readonly scheduleRestart: ScheduleHubRoleRestart | undefined;
   private readonly hubRoleInstalled: boolean;
+  private readonly hubTrust: HubTrustStore | undefined;
+  private readonly hubFetch: HubPeerFetch | undefined;
+  private writerBridge: HubWriterBridge | null = null;
 
   constructor(opts: HubRuntimeOptions) {
     this.db = opts.db;
@@ -176,6 +198,8 @@ export class HubRuntime {
     this.scheduleRestart = opts.scheduleRestart;
     this.hubRoleInstalled = opts.hubRoleInstalled ?? true;
     this.registry = new NodeRegistry();
+    this.hubTrust = opts.hubTrust;
+    this.hubFetch = opts.hubFetch ?? opts.fetchPeerStatus;
     this.uplink = new UplinkServer({
       db: opts.db,
       userStore: opts.userStore,
@@ -198,6 +222,16 @@ export class HubRuntime {
       onNewAuthorizedHub: () => {
         void this.peerPoller.pollNow();
       },
+      forwardAppend: async (record) => {
+        const bridge = this.writerBridge;
+        if (!bridge?.isLive()) return null;
+        try {
+          return await bridge.appendAndAck(record);
+        } catch {
+          return null;
+        }
+      },
+      onForwardedWrite: () => this.writerBridge?.requestCatchUp(),
     });
     this.peerPoller = new HubPeerPoller({
       meshHubs: this.meshHubs,
@@ -295,6 +329,46 @@ export class HubRuntime {
     return this.uplink.isWriter() ? null : json(this.uplink.notWriterError(), 409);
   }
 
+  bindWriterBridge(bridge: HubWriterBridge | null): void {
+    this.writerBridge = bridge;
+  }
+
+  receiveHubTokens(msg: HubTokensMessage): void {
+    if (msg.ack) return;
+    applyHubTokensMessage(this.userStore, msg);
+    if (msg.id) {
+      try {
+        this.writerBridge?.sendCtl(hubTokensAck(msg));
+      } catch {
+        /* offline */
+      }
+    }
+  }
+
+  async forwardWrite(req: Request): Promise<Response | null> {
+    const err = this.uplink.notWriterError();
+    const forwarded = await forwardWriteToWriter(req, {
+      selfHubId: this.uplink.hubNodeId() ?? this.config.hubNodeId ?? this.config.nodeId ?? '',
+      target: {
+        writerHubId: err.writerHubId,
+        writerPublicUrl: err.writerPublicUrl,
+        writerEpoch: err.writerEpoch,
+      },
+      hubTrust: this.hubTrust,
+      fetch: this.hubFetch,
+    });
+    if (forwarded) this.writerBridge?.requestCatchUp();
+    return forwarded;
+  }
+
+  private async requireWriterOrForward(req: Request): Promise<Response | null> {
+    if (this.uplink.isWriter()) return null;
+    if (requestAlreadyForwarded(req)) return notWriterResponse(this.uplink.notWriterError());
+    const forwarded = await this.forwardWrite(req);
+    if (forwarded) return forwarded;
+    return json(this.uplink.notWriterError(), 409);
+  }
+
   private handleHubStatus(): Response {
     const snap = this.uplink.ownHubSnapshot();
     if (!snap) return json({ error: 'hub_unconfigured' }, 503);
@@ -353,28 +427,31 @@ export class HubRuntime {
       hit('/api/hub/role', 'POST', () =>
         this.withAuth(req, () => handlePostHubRole(req, this.roleContext()))
       ) ??
-      hit('/api/hub/enrollments/redeem', 'POST', () => {
-        const blocked = this.requireWriter();
+      hit('/api/hub/enrollments/redeem', 'POST', async () => {
+        const blocked = await this.requireWriterOrForward(req);
         return blocked ?? this.handleRedeem(req);
       }) ??
       hit('/api/hub/enrollments', 'POST', () =>
-        this.withAuth(req, (a) => this.requireWriter() ?? this.handleCreateEnrollment(req, a))
+        this.withAuth(req, async (a) => {
+          const blocked = await this.requireWriterOrForward(req);
+          return blocked ?? this.handleCreateEnrollment(req, a);
+        })
       ) ??
       hit('/api/hub/enrollments/:id', 'GET', (p) =>
         this.withAuth(req, (a) => this.handleGetEnrollment(decodeURIComponent(p.id), a))
       ) ??
       hit('/api/hub/nodes', 'GET', () => this.withAuth(req, (a) => this.handleListNodes(a))) ??
       hit('/api/hub/nodes/:id/rename', 'POST', (p) =>
-        this.withAuth(
-          req,
-          (a) => this.requireWriter() ?? this.handleRename(req, decodeURIComponent(p.id), a)
-        )
+        this.withAuth(req, async (a) => {
+          const blocked = await this.requireWriterOrForward(req);
+          return blocked ?? this.handleRename(req, decodeURIComponent(p.id), a);
+        })
       ) ??
       hit('/api/hub/nodes/:id/revoke', 'POST', (p) =>
-        this.withAuth(
-          req,
-          (a) => this.requireWriter() ?? this.handleRevoke(req, decodeURIComponent(p.id), a)
-        )
+        this.withAuth(req, async (a) => {
+          const blocked = await this.requireWriterOrForward(req);
+          return blocked ?? this.handleRevoke(req, decodeURIComponent(p.id), a);
+        })
       ) ??
       json({ error: 'not_found' }, 404)
     );
@@ -567,6 +644,7 @@ export class HubRuntime {
       authorizationSig,
       expiresAt,
     });
+    const replicatedTo = await this.publishEnrollmentToken(token);
     const tls = (await this.tlsInfo?.()) ?? { caFingerprint: null, caPem: null };
     return json(
       {
@@ -576,8 +654,20 @@ export class HubRuntime {
         public_url: this.config.publicUrl,
         ca_fingerprint: tls.caFingerprint,
         ca_cert_pem: tls.caPem,
+        replicatedTo,
       },
       201
+    );
+  }
+
+  private async publishEnrollmentToken(
+    token: ReturnType<UserStore['createEnrollmentToken']>
+  ): Promise<string[]> {
+    const revision = this.userStore.nextEnrollmentTokenRevision(this.uplink.writerEpoch());
+    this.userStore.applyEnrollmentTokenReplication({ op: 'upsert', revision, token });
+    return this.uplink.replicateEnrollmentTokens(
+      upsertHubTokensMessage(token, revision, crypto.randomUUID()),
+      HUB_TOKENS_ACK_WAIT_MS
     );
   }
 
@@ -670,6 +760,8 @@ export class HubRuntime {
       });
     }
     if (replacedExisting) await this.uplink.broadcastNodeList(token.userId);
+    const consumed = this.userStore.getEnrollmentTokenById(token.id);
+    if (consumed) void this.publishEnrollmentToken(consumed);
     if (replayUserId) alreadyAdmitted = this.userStore.getCert(hexId)?.revokedLogSeq === null;
     if (alreadyAdmitted) console.info(`[hub] already admitted node=${hexId}`);
     return this.redeemSuccessPayload(replayUserId ?? token.userId, alreadyAdmitted);

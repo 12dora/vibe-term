@@ -21,6 +21,7 @@ export {
   type AuthOkMessage,
   type AuthResponseMessage,
   type EnrollRedeemedMessage,
+  type HubTokensMessage,
   type KeyLogAppendMessage,
   type KeyLogRecordWire,
   type KeyLogReqMessage,

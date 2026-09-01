@@ -5,7 +5,9 @@ import {
   type HubAdvertisement,
   type HubEndpointInfo,
   type HubNotWriterError,
+  type HubTokensMessage,
   KEY_LOG_PAGE_MAX_BYTES,
+  MIN_HUB_TOKENS_VERSION,
   type MeshUplinkNodeList,
   type NodeListMessage,
   type NodeStatusMessage,
@@ -14,6 +16,7 @@ import {
   assertCtlBounds,
   b64urlToBytes,
   bytesToB64url,
+  compareTokenRevision,
   decodeHubUplinkCtl,
   decodeMeshUplinkCtl,
   encodeHubUplinkCtl,
@@ -354,5 +357,91 @@ describe('multi-hub wire contract', () => {
       writerEpoch: null,
     };
     expect(empty.writerEpoch).toBeNull();
+  });
+});
+
+describe('hub.tokens codec', () => {
+  const enrollPk = encodeBase64url(randomBytes(32));
+  const authSig = encodeBase64url(randomBytes(64));
+  const row = {
+    id: 'tok-1',
+    user_id: 'user-1',
+    enroll_public_key: enrollPk,
+    authorization_json: '{"authorization_b64":"x"}',
+    authorization_sig: authSig,
+    expires_at: 9_000,
+    used_at: null as number | null,
+    node_id: null as string | null,
+  };
+  const msg: HubTokensMessage = {
+    t: 'hub.tokens',
+    op: 'upsert',
+    revision: { epoch: 2, seq: 7 },
+    id: 'corr-1',
+    tokens: [row],
+  };
+
+  test('mesh/hub 往返', () => {
+    const mesh = decodeMeshUplinkCtl(encodeMeshUplinkCtl(msg));
+    expect(mesh).toEqual(msg);
+    const hub = decodeHubUplinkCtl(encodeHubUplinkCtl(msg));
+    expect(hub).toEqual(msg);
+    const tomb: HubTokensMessage = {
+      t: 'hub.tokens',
+      op: 'tombstone',
+      revision: { epoch: 2, seq: 8 },
+      id: 'corr-2',
+      tokens: [{ ...row, id: 'tok-1' }],
+    };
+    expect(decodeHubUplinkCtl(encodeHubUplinkCtl(tomb))).toEqual(tomb);
+    const ack: HubTokensMessage = {
+      t: 'hub.tokens',
+      op: 'upsert',
+      revision: { epoch: 2, seq: 7 },
+      id: 'corr-1',
+      ack: true,
+    };
+    expect(decodeMeshUplinkCtl(encodeMeshUplinkCtl(ack))).toEqual(ack);
+  });
+
+  test('legacy:true 剥掉 payload，旧 TYPE_SET 视为 unknown', () => {
+    const stripped = JSON.parse(
+      new TextDecoder().decode(encodeMeshUplinkCtl(msg, { legacy: true }))
+    );
+    expect(stripped).toEqual({ t: 'hub.tokens' });
+    const hubStripped = JSON.parse(
+      new TextDecoder().decode(encodeHubUplinkCtl(msg, { legacy: true }))
+    );
+    expect(hubStripped).toEqual({ t: 'hub.tokens' });
+    const oldTypes = new Set([
+      'auth.challenge',
+      'auth.response',
+      'auth.ok',
+      'ping',
+      'pong',
+      'node.status',
+      'node.list',
+      'key.log.req',
+      'key.log.res',
+      'key.log.append',
+      'key.log.ack',
+      'rtc.signal',
+      'enroll.redeemed',
+    ]);
+    expect(oldTypes.has('hub.tokens')).toBe(false);
+    expect(MIN_HUB_TOKENS_VERSION).toBe('1.1.13');
+  });
+
+  test('revision 比较与非法 op', () => {
+    expect(compareTokenRevision({ epoch: 2, seq: 1 }, { epoch: 1, seq: 99 })).toBe(1);
+    expect(compareTokenRevision({ epoch: 1, seq: 2 }, { epoch: 1, seq: 2 })).toBe(0);
+    expect(compareTokenRevision({ epoch: 1, seq: 1 }, { epoch: 1, seq: 2 })).toBe(-1);
+    expect(() =>
+      decodeMeshUplinkCtl(
+        new TextEncoder().encode(
+          JSON.stringify({ t: 'hub.tokens', op: 'merge', revision: { epoch: 1, seq: 1 } })
+        )
+      )
+    ).toThrow(/op/);
   });
 });
