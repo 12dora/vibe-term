@@ -191,6 +191,49 @@ describe('WebSocketLink', () => {
     a.close();
   });
 
+  it('pauses before the server socket would exceed the 1 MiB backpressure limit', async () => {
+    const [wsA, wsB] = serverSocketPair();
+    let buffered = 0;
+    let dropped = 0;
+    wsA.sendImpl = (bytes) => {
+      if (buffered + bytes.byteLength > 1024 * 1024) {
+        dropped += 1;
+        return 0;
+      }
+      buffered += bytes.byteLength;
+      wsA.peer?.deliverIncoming(bytes);
+      const n = bytes.byteLength;
+      queueMicrotask(() => {
+        buffered = Math.max(0, buffered - n);
+        if (buffered === 0) wsA.emitDrain();
+      });
+      return n;
+    };
+    const a = new WebSocketLink(wsA, { role: 'initiator' });
+    const b = new WebSocketLink(wsB, { role: 'acceptor' });
+    const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
+    const out = await a.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    const reader = incoming.readable.getReader();
+    const consume = (async () => {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    })();
+    const chunk = new Uint8Array(64 * 1024).fill(9);
+    const pending: Promise<void>[] = [];
+    for (let i = 0; i < 24; i += 1) {
+      pending.push(out.write(chunk));
+    }
+    await Promise.all(pending);
+    expect(dropped).toBe(0);
+    await out.end();
+    await consume;
+    await incoming.end();
+    a.close();
+  });
+
   it('closes the LinkSession when the server socket send returns 0', async () => {
     const [wsA, wsB] = serverSocketPair();
     let sends = 0;

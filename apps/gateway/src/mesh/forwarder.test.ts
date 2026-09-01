@@ -1319,6 +1319,61 @@ describe('forwardAuthorizedHttp', () => {
     expect(captured[0]?.headers['content-type']).toBe('application/json');
     expect(captured[0]?.body).toBe(JSON.stringify({ version: '9.9.9' }));
   });
+
+  test('raw-body push failure logs bytes and includes the underlying error', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.openHttpStream = async (_link, _open, body) => {
+      const reader = body?.getReader();
+      if (reader) {
+        await reader.read();
+        await reader.cancel();
+      }
+      throw new Error('websocket send discarded');
+    };
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams });
+    try {
+      const raw = new Uint8Array(32).fill(4);
+      const res = await forwarder.forwardAuthorizedHttp(
+        new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+          method: 'PUT',
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        }),
+        {
+          nodeId: OTHER,
+          method: 'PUT',
+          path: '/api/system/upgrade/package',
+          rawBody: new ReadableStream({
+            start(controller) {
+              controller.enqueue(raw);
+              controller.close();
+            },
+          }),
+          headers: { 'content-type': 'application/octet-stream' },
+        }
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        code: 'NODE_UNREACHABLE',
+        nodeId: OTHER,
+        error: 'websocket send discarded',
+      });
+      expect(warnings.some((line) => line.includes('[mesh][forward] raw-body push aborted'))).toBe(
+        true
+      );
+      expect(warnings.some((line) => line.includes(`node=${OTHER}`))).toBe(true);
+      expect(warnings.some((line) => line.includes('bytes=32'))).toBe(true);
+      expect(warnings.some((line) => line.includes('err=websocket send discarded'))).toBe(true);
+    } finally {
+      console.warn = origWarn;
+    }
+  });
 });
 
 describe('forwardAuthorizedHttp multi-MiB raw body over in-memory link', () => {

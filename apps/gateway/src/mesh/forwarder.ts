@@ -274,8 +274,17 @@ export class Forwarder {
     const method = input.method.toUpperCase();
     const retryable = IDEMPOTENT_HTTP.has(method);
     const headers: Record<string, string> = { ...(input.headers ?? {}) };
-    const body = retryable ? null : (input.rawBody ?? buildJsonStreamBody(input.body, headers));
+    let uploaded = 0;
+    const rawBody = retryable ? null : (input.rawBody ?? null);
+    const body = retryable
+      ? null
+      : rawBody
+        ? countStreamBytes(rawBody, (n) => {
+            uploaded += n;
+          })
+        : buildJsonStreamBody(input.body, headers);
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+    let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (abort.aborted) break;
       if (attempt > 0) {
@@ -287,11 +296,22 @@ export class Forwarder {
       }
       try {
         return await this.openAuthorizedAttempt(req, input, { method, headers, auth, body, abort });
-      } catch {
+      } catch (err) {
+        lastError = err;
+        if (rawBody) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(
+            `[mesh][forward] raw-body push aborted node=${input.nodeId} bytes=${uploaded} err=${message}`
+          );
+        }
         if (!retryable) break;
       }
     }
-    return jsonError('NODE_UNREACHABLE', 503, { nodeId: input.nodeId });
+    const extra: Record<string, unknown> = { nodeId: input.nodeId };
+    if (rawBody && lastError !== undefined) {
+      extra.error = lastError instanceof Error ? lastError.message : String(lastError);
+    }
+    return jsonError('NODE_UNREACHABLE', 503, extra);
   }
 
   private async openAuthorizedAttempt(
@@ -896,6 +916,20 @@ async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+function countStreamBytes(
+  body: ReadableStream<Uint8Array>,
+  onBytes: (n: number) => void
+): ReadableStream<Uint8Array> {
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        onBytes(chunk.byteLength);
+        controller.enqueue(chunk);
+      },
+    })
+  );
 }
 
 function toBytes(message: unknown): Uint8Array | null {

@@ -22,6 +22,8 @@ const WS_OPEN = 1;
 const CLIENT_HIGH_WATER = 4 * 1024 * 1024;
 const CLIENT_LOW_WATER = 1 * 1024 * 1024;
 const CLIENT_POLL_MS = 16;
+/** Matches gateway `Bun.serve` `websocket.backpressureLimit` (`closeOnBackpressureLimit: true`). */
+export const SERVER_WS_BACKPRESSURE_LIMIT = 1024 * 1024;
 
 function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerSocketAdapter {
   return (
@@ -66,6 +68,7 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
   let closed = false;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let opened = hooks.isOpen();
+  let serverQueued = 0;
 
   const rejectQueue = (err: Error) => {
     for (const item of queue) item.reject(err);
@@ -76,6 +79,7 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
     if (closed) return;
     closed = true;
     paused = false;
+    serverQueued = 0;
     if (pollTimer !== null) {
       clearTimeout(pollTimer);
       pollTimer = null;
@@ -122,6 +126,14 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
       while (queue.length > 0 && !closed && opened && !paused) {
         const item = queue[0];
         if (!item) break;
+        if (
+          hooks.kind === 'server' &&
+          serverQueued > 0 &&
+          serverQueued + item.bytes.byteLength > SERVER_WS_BACKPRESSURE_LIMIT
+        ) {
+          paused = true;
+          break;
+        }
         let result: number | undefined;
         try {
           result = hooks.send(item.bytes);
@@ -139,7 +151,8 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
             fail('websocket send discarded');
             return;
           }
-          if (result === -1) {
+          serverQueued += item.bytes.byteLength;
+          if (result === -1 || serverQueued >= SERVER_WS_BACKPRESSURE_LIMIT) {
             paused = true;
           }
         } else if ((hooks.bufferedAmount?.() ?? 0) > CLIENT_HIGH_WATER) {
@@ -163,6 +176,7 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
   });
   hooks.onDrain?.(() => {
     if (closed) return;
+    serverQueued = 0;
     paused = false;
     pump();
   });

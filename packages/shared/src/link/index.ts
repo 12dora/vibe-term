@@ -22,6 +22,7 @@ export {
   websocketTransport,
   createClientWebSocketTransport,
   createServerSocketTransport,
+  SERVER_WS_BACKPRESSURE_LIMIT,
   type ServerSocketAdapter,
   type WebSocketTransportInput,
   type WebSocketLinkOptions,

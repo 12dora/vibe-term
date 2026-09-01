@@ -221,6 +221,33 @@ describe('RemoteUpgradeJob', () => {
     await waitForRemoteUpgradeJob(nodeId);
   });
 
+  test('push NODE_UNREACHABLE includes the underlying forwarder error', async () => {
+    const nodeId = 'dd'.repeat(16);
+    const path = tempFile(new Uint8Array([1, 2, 3]));
+    const started = startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp() {
+          return new Response(
+            JSON.stringify({
+              code: 'NODE_UNREACHABLE',
+              nodeId,
+              error: 'websocket send discarded',
+            }),
+            { status: 503, headers: { 'content-type': 'application/json' } }
+          );
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 3 }),
+    });
+    expect(started.ok).toBe(true);
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toBe('push failed: HTTP 503 NODE_UNREACHABLE websocket send discarded');
+  });
+
   test('a push that never responds fails with push timeout and frees the node', async () => {
     const nodeId = 'ee'.repeat(16);
     const path = tempFile(new Uint8Array([1]));
