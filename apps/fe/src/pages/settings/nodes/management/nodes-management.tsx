@@ -40,6 +40,12 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
     setEntryNodeId(entryNodeId);
   }, [entryNodeId]);
 
+  // 兜底轮询只有 5 分钟一拍，进管理页时 store 里的列表可能已经很旧（版本号、hub 标志、
+  // 登录态都只走 REST）：挂载先补一次，单飞会与常驻 owner 正在进行的那次合并。
+  useEffect(() => {
+    refreshNodes();
+  }, [refreshNodes]);
+
   const hub = useHubNode(nodes, { hubNodeId: rawMode.hubNodeId ?? null });
   const rows = useMemo(
     () => mergeNodes(nodes, hub.hubNodes, { entryNodeId, hubNodeId: hub.hubNodeId }),

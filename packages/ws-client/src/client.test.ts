@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import { BorshWebSocketClient, type WebSocketLike, defaultWsUrl } from './client';
+import {
+  BorshWebSocketClient,
+  DEFAULT_HEARTBEAT_INTERVAL_MS,
+  DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS,
+  DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS,
+  DEFAULT_PONG_TIMEOUT_MS,
+  type WebSocketLike,
+  defaultWsUrl,
+} from './client';
 import { createGatewayConnection } from './connection';
 
 /** 可手工驱动的假 transport，遵循 WHATWG 的 readyState 取值。 */
@@ -585,6 +593,141 @@ describe('visibilitychange', () => {
       client.disconnect();
     } finally {
       doc.restore();
+    }
+  });
+});
+
+describe('心跳节奏随可见性切换', () => {
+  test('默认常量：前台 5s/10s，后台 30s/60s', () => {
+    expect(DEFAULT_HEARTBEAT_INTERVAL_MS).toBe(5000);
+    expect(DEFAULT_PONG_TIMEOUT_MS).toBe(10_000);
+    expect(DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS).toBe(30_000);
+    expect(DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS).toBe(60_000);
+  });
+
+  test('转入后台：不补发 PING，并按缺省的 30s 慢节奏停止发包', async () => {
+    const doc = stubDocument();
+    try {
+      const socket = new FakeSocket();
+      const client = new BorshWebSocketClient({
+        url: 'ws://example.test/ws',
+        socketFactory: () => socket,
+        heartbeatIntervalMs: 5,
+        pongTimeoutMs: 10_000,
+      });
+
+      client.connect();
+      socket.open();
+      socket.deliver(helloS2CFrame());
+      await until(() => socket.sent.length >= 4);
+
+      doc.setVisibility('hidden');
+      const before = socket.sent.length;
+      doc.dispatch();
+      expect(socket.sent.length).toBe(before);
+
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(socket.sent.length).toBe(before);
+
+      client.disconnect();
+    } finally {
+      doc.restore();
+    }
+  });
+
+  test('后台 -> 前台：立即补发一次 PING 并恢复快节奏', async () => {
+    const doc = stubDocument();
+    try {
+      const socket = new FakeSocket();
+      const client = new BorshWebSocketClient({
+        url: 'ws://example.test/ws',
+        socketFactory: () => socket,
+        heartbeatIntervalMs: 5,
+        pongTimeoutMs: 10_000,
+        hiddenHeartbeatIntervalMs: 60_000,
+        hiddenHeartbeatTimeoutMs: 120_000,
+      });
+
+      client.connect();
+      socket.open();
+      socket.deliver(helloS2CFrame());
+
+      doc.setVisibility('hidden');
+      doc.dispatch();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const hiddenCount = socket.sent.length;
+
+      doc.setVisibility('visible');
+      doc.dispatch();
+      expect(socket.sent.length).toBe(hiddenCount + 1);
+
+      await until(() => socket.sent.length >= hiddenCount + 3);
+      client.disconnect();
+    } finally {
+      doc.restore();
+    }
+  });
+
+  test('后台自定义节奏下 PONG 超时仍关闭连接并走重连', async () => {
+    const doc = stubDocument();
+    try {
+      const socket = new FakeSocket();
+      const client = new BorshWebSocketClient({
+        url: 'ws://example.test/ws',
+        socketFactory: () => socket,
+        heartbeatIntervalMs: 60_000,
+        pongTimeoutMs: 60_000,
+        hiddenHeartbeatIntervalMs: 5,
+        hiddenHeartbeatTimeoutMs: 5,
+        reconnectDelayMs: 60_000,
+        maxReconnectAttempts: 5,
+      });
+
+      client.connect();
+      socket.open();
+      socket.deliver(helloS2CFrame());
+      expect(client.getState()).toBe('READY');
+
+      doc.setVisibility('hidden');
+      doc.dispatch();
+
+      await until(() => socket.closeCount >= 1);
+      socket.simulateClose();
+      expect(client.getState()).toBe('RECONNECT_BACKOFF');
+
+      client.disconnect();
+    } finally {
+      doc.restore();
+    }
+  });
+
+  test('无 document 的宿主保持快节奏', async () => {
+    const had = 'document' in globalThis;
+    const previous = Reflect.get(globalThis, 'document');
+    Reflect.deleteProperty(globalThis, 'document');
+    try {
+      const socket = new FakeSocket();
+      const client = new BorshWebSocketClient({
+        url: 'ws://example.test/ws',
+        socketFactory: () => socket,
+        heartbeatIntervalMs: 5,
+        pongTimeoutMs: 10_000,
+      });
+
+      client.connect();
+      socket.open();
+      socket.deliver(helloS2CFrame());
+
+      await until(() => socket.sent.length >= 5);
+      client.disconnect();
+    } finally {
+      if (had) {
+        Object.defineProperty(globalThis, 'document', {
+          value: previous,
+          configurable: true,
+          writable: true,
+        });
+      }
     }
   });
 });

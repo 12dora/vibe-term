@@ -1,9 +1,14 @@
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 // e2e 专用 tmux socket，与生产/开发默认 socket（/private/tmp/tmux-501/default）隔离，
 // 避免 e2e 的会话 create/destroy 影响本机常驻 tmex。必须与 playwright.config.ts 注入给
 // 被测 gateway 的 TMEX_TMUX_SOCKET 保持一致，否则 gateway 在默认 socket 上找不到会话。
 export const E2E_TMUX_SOCKET = 'tmex-e2e';
+
+// pane 的工作目录显式指定为 apps/fe：不传 -c 时 tmux 取客户端 cwd，跨 worktree / 跨次运行
+// 后可能已被删除，shell 里 `opencode .` 之类依赖 cwd 的命令会直接报错退出。
+const E2E_PANE_CWD = fileURLToPath(new URL('../..', import.meta.url));
 
 export function tmux(cmd: string): string {
   return execSync(`tmux -L ${E2E_TMUX_SOCKET} ${cmd}`, { encoding: 'utf8' }).trim();
@@ -19,8 +24,8 @@ export function ensureCleanSession(sessionName: string): void {
 
 export function createTwoPaneSession(sessionName: string): { paneIds: string[]; windowId: string } {
   ensureCleanSession(sessionName);
-  tmux(`new-session -d -s ${sessionName} "sh -lc 'echo PANE0_READY; exec sh'"`);
-  tmux(`split-window -h -t ${sessionName} "sh -lc 'echo PANE1_READY; exec sh'"`);
+  tmux(`new-session -d -s ${sessionName} -c ${E2E_PANE_CWD} "sh -lc 'echo PANE0_READY; exec sh'"`);
+  tmux(`split-window -h -t ${sessionName} -c ${E2E_PANE_CWD} "sh -lc 'echo PANE1_READY; exec sh'"`);
   tmux(`select-pane -t ${sessionName}.0`);
 
   const paneIds = tmux(`list-panes -t ${sessionName} -F '#{pane_id}'`)
@@ -38,7 +43,7 @@ export function createSinglePaneSession(sessionName: string): {
   windowId: string;
 } {
   ensureCleanSession(sessionName);
-  tmux(`new-session -d -s ${sessionName} "sh -lc 'echo PANE0_READY; exec sh'"`);
+  tmux(`new-session -d -s ${sessionName} -c ${E2E_PANE_CWD} "sh -lc 'echo PANE0_READY; exec sh'"`);
   const paneId = tmux(`display-message -p -t ${sessionName} '#{pane_id}'`);
   const windowId = tmux(`display-message -p -t ${sessionName}:0 '#{window_id}'`);
   return { paneId, windowId };
@@ -51,8 +56,8 @@ export function createTwoWindowSession(sessionName: string): {
   windowIds: string[];
 } {
   ensureCleanSession(sessionName);
-  tmux(`new-session -d -s ${sessionName} "sh -lc 'echo PANE0_READY; exec sh'"`);
-  tmux(`new-window -t ${sessionName} "sh -lc 'echo PANE1_READY; exec sh'"`);
+  tmux(`new-session -d -s ${sessionName} -c ${E2E_PANE_CWD} "sh -lc 'echo PANE0_READY; exec sh'"`);
+  tmux(`new-window -t ${sessionName} -c ${E2E_PANE_CWD} "sh -lc 'echo PANE1_READY; exec sh'"`);
   tmux(`select-window -t ${sessionName}:0`);
 
   const rows = tmux(`list-panes -s -t ${sessionName} -F '#{window_id} #{pane_id}'`)
@@ -73,10 +78,14 @@ export function createFourPaneSession(sessionName: string): {
   windowId: string;
 } {
   ensureCleanSession(sessionName);
-  tmux(`new-session -d -s ${sessionName} "sh -lc 'echo PANE0_READY; exec sh'"`);
-  tmux(`split-window -h -t ${sessionName} "sh -lc 'echo PANE1_READY; exec sh'"`);
-  tmux(`split-window -v -t ${sessionName}.0 "sh -lc 'echo PANE2_READY; exec sh'"`);
-  tmux(`split-window -v -t ${sessionName}.1 "sh -lc 'echo PANE3_READY; exec sh'"`);
+  tmux(`new-session -d -s ${sessionName} -c ${E2E_PANE_CWD} "sh -lc 'echo PANE0_READY; exec sh'"`);
+  tmux(`split-window -h -t ${sessionName} -c ${E2E_PANE_CWD} "sh -lc 'echo PANE1_READY; exec sh'"`);
+  tmux(
+    `split-window -v -t ${sessionName}.0 -c ${E2E_PANE_CWD} "sh -lc 'echo PANE2_READY; exec sh'"`
+  );
+  tmux(
+    `split-window -v -t ${sessionName}.1 -c ${E2E_PANE_CWD} "sh -lc 'echo PANE3_READY; exec sh'"`
+  );
   tmux(`select-pane -t ${sessionName}.0`);
 
   const paneIds = tmux(`list-panes -t ${sessionName} -F '#{pane_id}'`)

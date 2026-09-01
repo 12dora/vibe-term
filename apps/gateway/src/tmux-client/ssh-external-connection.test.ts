@@ -1088,10 +1088,9 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
     ) => { stdout: string; exitCode: number } | null;
   }) {
     const fakeClient = new FakeClient();
+    const overrideFn = options.overrides;
     setupCommandChannel(fakeClient, options.session, {
-      overrides: options.overrides
-        ? (payload) => options.overrides?.(payload, fakeClient)
-        : undefined,
+      overrides: overrideFn ? (payload) => overrideFn(payload, fakeClient) : undefined,
     });
     const events: EmittedEvent[] = [];
     const connection = new SshExternalTmuxConnection(

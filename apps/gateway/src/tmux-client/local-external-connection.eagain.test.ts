@@ -404,7 +404,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
   test('control-client argv contains -L <socket> when subscription enabled', async () => {
     setTmuxSocket('tmex-e2e');
     const session = 'tmex-socket-ctl';
-    let controlArgv: string[] | null = null;
+    const captured: { argv: string[] | null } = { argv: null };
 
     const connection = new LocalExternalTmuxConnection(
       {
@@ -422,7 +422,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
         getDevice: () => createDevice(session),
         run: createRunStub(session),
         spawnControlClient: (argv) => {
-          controlArgv = argv;
+          captured.argv = argv;
           // 抛错使 connect() 失败，避免真正驱动控制流；argv 已被捕获。
           throw new Error('stop after capturing control argv');
         },
@@ -430,7 +430,15 @@ describe('LocalExternalTmuxConnection socket injection', () => {
     );
 
     await expect(connection.connect()).rejects.toThrow();
-    expect(controlArgv).toEqual(['tmux', '-L', 'tmex-e2e', '-C', 'attach-session', '-t', session]);
+    expect(captured.argv).toEqual([
+      'tmux',
+      '-L',
+      'tmex-e2e',
+      '-C',
+      'attach-session',
+      '-t',
+      session,
+    ]);
   });
 
   test('omits -L from run argv when tmuxSocket is empty', async () => {
@@ -470,7 +478,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
   test('omits -L from control-client argv when tmuxSocket is empty', async () => {
     setTmuxSocket('');
     const session = 'tmex-socket-off-ctl';
-    let controlArgv: string[] | null = null;
+    const captured: { argv: string[] | null } = { argv: null };
 
     const connection = new LocalExternalTmuxConnection(
       {
@@ -488,14 +496,14 @@ describe('LocalExternalTmuxConnection socket injection', () => {
         getDevice: () => createDevice(session),
         run: createRunStub(session),
         spawnControlClient: (argv) => {
-          controlArgv = argv;
+          captured.argv = argv;
           throw new Error('stop after capturing control argv');
         },
       }
     );
 
     await expect(connection.connect()).rejects.toThrow();
-    expect(controlArgv).toEqual(['tmux', '-C', 'attach-session', '-t', session]);
+    expect(captured.argv).toEqual(['tmux', '-C', 'attach-session', '-t', session]);
   });
 });
 
@@ -545,13 +553,17 @@ describe('LocalExternalTmuxConnection EAGAIN handling', () => {
     const onUnhandled = () => {
       escaped = true;
     };
-    process.on('unhandledRejection', onUnhandled);
+    const processEvents = process as unknown as {
+      on(event: 'unhandledRejection', listener: NodeJS.UnhandledRejectionListener): void;
+      off(event: 'unhandledRejection', listener: NodeJS.UnhandledRejectionListener): void;
+    };
+    processEvents.on('unhandledRejection', onUnhandled);
     try {
       // public requestSnapshot：内部捕获瞬时 spawn 错误，不应抛出/不触发 onError/onClose
       connection.requestSnapshot();
       await Bun.sleep(200);
     } finally {
-      process.off('unhandledRejection', onUnhandled);
+      processEvents.off('unhandledRejection', onUnhandled);
     }
 
     expect(escaped).toBe(false);

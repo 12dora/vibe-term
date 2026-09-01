@@ -10,16 +10,44 @@ export interface HeartbeatControllerOptions {
   onPongTimeout: () => void;
 }
 
+export interface HeartbeatCadence {
+  intervalMs: number;
+  pongTimeoutMs: number;
+}
+
 export class HeartbeatController {
   private intervalTimer: ReturnType<typeof setInterval> | null = null;
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPingSentAt = 0;
+  private intervalMs: number;
+  private pongTimeoutMs: number;
 
-  constructor(private readonly options: HeartbeatControllerOptions) {}
+  constructor(private readonly options: HeartbeatControllerOptions) {
+    this.intervalMs = options.intervalMs;
+    this.pongTimeoutMs = options.pongTimeoutMs;
+  }
+
+  get cadence(): HeartbeatCadence {
+    return { intervalMs: this.intervalMs, pongTimeoutMs: this.pongTimeoutMs };
+  }
+
+  /**
+   * 运行时改节奏（如页面转入后台放慢心跳）。只重排间隔定时器，不补发 PING；
+   * 在途 PONG 超时保持原有截止时间，新的 pongTimeoutMs 从下一次 PING 起生效。
+   */
+  setCadence(intervalMs: number, pongTimeoutMs: number): void {
+    if (this.intervalMs === intervalMs && this.pongTimeoutMs === pongTimeoutMs) return;
+    this.intervalMs = intervalMs;
+    this.pongTimeoutMs = pongTimeoutMs;
+    if (this.intervalTimer) {
+      clearInterval(this.intervalTimer);
+      this.intervalTimer = setInterval(() => this.ping(), this.intervalMs);
+    }
+  }
 
   start(): void {
     this.stop();
-    this.intervalTimer = setInterval(() => this.ping(), this.options.intervalMs);
+    this.intervalTimer = setInterval(() => this.ping(), this.intervalMs);
   }
 
   /** 停止心跳，并解除尚未落地的 PONG 超时，避免跨连接误关新 socket。 */
@@ -43,7 +71,7 @@ export class HeartbeatController {
     this.pongTimer = setTimeout(() => {
       this.pongTimer = null;
       this.options.onPongTimeout();
-    }, this.options.pongTimeoutMs);
+    }, this.pongTimeoutMs);
   }
 
   /** 收到 PONG：解除超时并返回 RTT（无在途 PING 时返回 null）。 */

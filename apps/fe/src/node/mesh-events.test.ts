@@ -491,6 +491,27 @@ describe('MeshEventSource', () => {
     expect(jittered.retryDelay(10)).toBe(500);
   });
 
+  test('onStatusChange 在连上 / 断开 / 重连时各报一次（节点列表据此补拉）', () => {
+    const { source, sockets, timers } = harness();
+    const seen: boolean[] = [];
+    const off = source.onStatusChange(() => seen.push(source.connected));
+    source.start();
+    sockets[0].open();
+    expect(seen).toEqual([true]);
+
+    sockets[0].drop();
+    expect(seen).toEqual([true, false]);
+
+    timers.at(-1)?.fn();
+    sockets[1].open();
+    expect(seen).toEqual([true, false, true]);
+
+    off();
+    sockets[1].drop();
+    expect(seen).toHaveLength(3);
+    source.stop();
+  });
+
   test('stop 后不再重连', () => {
     const { source, sockets, timers } = harness();
     source.start();

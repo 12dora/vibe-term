@@ -44,6 +44,8 @@ interface RunningBot {
   id: string;
   token: string;
   bot: Bot;
+  // 与 gramio Updates 内部 offset 对齐：getUpdates 末条 update_id+1，无更新则保持原值
+  pollOffset: number;
 }
 
 export class TelegramService {
@@ -138,22 +140,27 @@ export class TelegramService {
         console.error(`[telegram] bot ${config.id} runtime error:`, error);
       });
 
+      const started: RunningBot = {
+        id: config.id,
+        token,
+        bot,
+        pollOffset: 0,
+      };
+      bot.onResponse('getUpdates', (context) => {
+        const lastUpdateId = context.response.at(-1)?.update_id;
+        if (typeof lastUpdateId === 'number') {
+          started.pollOffset = lastUpdateId + 1;
+        }
+      });
+
       await bot.start({
         longPolling: {
           timeout: 30,
         },
       });
 
-      this.runningBots.set(config.id, {
-        id: config.id,
-        token,
-        bot,
-      });
-
-      const offset = bot.updates.offset as number | undefined;
-      if (typeof offset === 'number') {
-        updateTelegramBot(config.id, { lastUpdateId: offset });
-      }
+      this.runningBots.set(config.id, started);
+      updateTelegramBot(config.id, { lastUpdateId: started.pollOffset });
 
       console.log(`[telegram] bot started: ${config.name} (${config.id})`);
     }
@@ -211,10 +218,7 @@ export class TelegramService {
       return;
     }
 
-    const offset = running.bot.updates.offset as number | undefined;
-    if (typeof offset === 'number') {
-      updateTelegramBot(botId, { lastUpdateId: offset });
-    }
+    updateTelegramBot(botId, { lastUpdateId: running.pollOffset });
   }
 
   private async stopBot(botId: string): Promise<void> {

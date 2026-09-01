@@ -8,7 +8,7 @@ import {
   CarrierSwitchBarrier,
   type DirectCarrierLike,
 } from './carrier-switch';
-import { HeartbeatController } from './heartbeat-controller';
+import { type HeartbeatCadence, HeartbeatController } from './heartbeat-controller';
 import {
   DEFAULT_MAX_PENDING_BYTES,
   DEFAULT_MAX_PENDING_FRAMES,
@@ -59,14 +59,23 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.slice().buffer as ArrayBuffer;
 }
 
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 5000;
+export const DEFAULT_PONG_TIMEOUT_MS = 10000;
+// 页面在后台时的慢节奏：30s/60s。网关自身不设 socket 空闲超时，上界由外部代理决定
+// （Cloudflare Tunnel 约 100s），30s 仍有充足余量，同时把后台唤醒次数降到 1/6。
+export const DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS = 30000;
+export const DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS = 60000;
+
 const DEFAULT_OPTIONS: BorshClientOptions = {
   clientImpl: 'tmex-fe',
   clientVersion: '0.1.0',
   maxFrameBytes: 1048576, // 1MB
   reconnectDelayMs: 1000,
   maxReconnectAttempts: 5,
-  heartbeatIntervalMs: 5000,
-  pongTimeoutMs: 10000,
+  heartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
+  pongTimeoutMs: DEFAULT_PONG_TIMEOUT_MS,
+  hiddenHeartbeatIntervalMs: DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS,
+  hiddenHeartbeatTimeoutMs: DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS,
 };
 
 const VISIBILITY_RECONNECT_THROTTLE_MS = 5000;
@@ -82,6 +91,10 @@ export interface BorshClientOptions {
   heartbeatIntervalMs: number;
   /** PING 之后等待 PONG 的上限，超时则关闭连接触发重连 */
   pongTimeoutMs?: number;
+  /** 页面隐藏时的心跳间隔；缺省 30000 */
+  hiddenHeartbeatIntervalMs?: number;
+  /** 页面隐藏时的 PONG 超时；缺省 60000 */
+  hiddenHeartbeatTimeoutMs?: number;
   /** WS 端点；缺省时连接当刻按 window.location 推导（defaultWsUrl） */
   url?: string;
   /** 自定义 transport 工厂；缺省为 `new WebSocket(url)` */
@@ -178,9 +191,10 @@ export class BorshWebSocketClient {
       },
     });
 
+    const cadence = this.resolveHeartbeatCadence();
     this.heartbeat = new HeartbeatController({
-      intervalMs: this.options.heartbeatIntervalMs,
-      pongTimeoutMs: this.options.pongTimeoutMs ?? DEFAULT_OPTIONS.pongTimeoutMs ?? 10000,
+      intervalMs: cadence.intervalMs,
+      pongTimeoutMs: cadence.pongTimeoutMs,
       sendPing: () => this.sendPingFrame(),
       onPongTimeout: () => this.ws?.close(),
     });
@@ -348,6 +362,7 @@ export class BorshWebSocketClient {
 
     this.setState('READY');
     this.hasConnectedOnce = true;
+    this.applyHeartbeatCadence();
     this.heartbeat.start();
     this.heartbeat.ping();
     this.reconnector.reset();
@@ -544,6 +559,26 @@ export class BorshWebSocketClient {
 
   // ========== 心跳 ==========
 
+  /** 无 document（非浏览器宿主）一律按前台快节奏，避免误判成后台。 */
+  private resolveHeartbeatCadence(): HeartbeatCadence {
+    const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    if (hidden) {
+      return {
+        intervalMs: this.options.hiddenHeartbeatIntervalMs ?? DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS,
+        pongTimeoutMs: this.options.hiddenHeartbeatTimeoutMs ?? DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS,
+      };
+    }
+    return {
+      intervalMs: this.options.heartbeatIntervalMs,
+      pongTimeoutMs: this.options.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS,
+    };
+  }
+
+  private applyHeartbeatCadence(): void {
+    const { intervalMs, pongTimeoutMs } = this.resolveHeartbeatCadence();
+    this.heartbeat.setCadence(intervalMs, pongTimeoutMs);
+  }
+
   private sendPingFrame(): boolean {
     if (!this.isReady()) return false;
 
@@ -581,6 +616,8 @@ export class BorshWebSocketClient {
     if (typeof document === 'undefined') return;
 
     const handler = () => {
+      // 转入后台只换节奏、不补发 PING；在途 PONG 沿用原截止时间。
+      this.applyHeartbeatCadence();
       if (document.visibilityState !== 'visible') return;
 
       this.heartbeat.clearPongTimeout();
