@@ -71,6 +71,7 @@ function createHost() {
       },
     },
     sendError() {},
+    sendEnvelope() {},
     syncLegacyPaneObservers() {},
     refreshSnapshotPolling() {},
   } as unknown as TmuxCommandHost;

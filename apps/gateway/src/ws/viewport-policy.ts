@@ -88,6 +88,24 @@ export function collectWindowClaims(
   return records;
 }
 
+export function reconcileViewportClaims(
+  claimants: Iterable<{ viewportClaims: Map<string, ViewportClaim> }>,
+  key: string,
+  windowId: string,
+  paneWindowId: (paneId: string) => string | null
+): string[] {
+  const moved = new Set<string>();
+  for (const session of claimants) {
+    const claim = session.viewportClaims.get(key);
+    if (!claim) continue;
+    const current = paneWindowId(claim.paneId);
+    if (current === windowId) continue;
+    session.viewportClaims.delete(key);
+    if (current) moved.add(current);
+  }
+  return [...moved];
+}
+
 export function applyWinnerGeometry(
   winner: ViewportWinner | null,
   lastApplied: { cols: number; rows: number } | undefined

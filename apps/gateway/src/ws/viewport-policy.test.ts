@@ -6,6 +6,7 @@ import {
   collectWindowClaims,
   notifyClaimants,
   parseViewportClaimKey,
+  reconcileViewportClaims,
   resolveWinner,
   takeViewportClaimKeys,
   viewportClaimKey,
@@ -170,6 +171,41 @@ describe('applyWinnerGeometry', () => {
       rows: 40,
       force: true,
     });
+  });
+});
+
+describe('reconcileViewportClaims', () => {
+  test('drops claims whose pane moved to another window and reports the new window', () => {
+    const key = viewportClaimKey('dev-a', '@1');
+    const session = sessionClaims('a', [
+      [key, { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 }],
+    ]);
+
+    const moved = reconcileViewportClaims([session], key, '@1', (paneId) =>
+      paneId === '%0' ? '@2' : null
+    );
+
+    expect(moved).toEqual(['@2']);
+    expect(session.viewportClaims.size).toBe(0);
+  });
+
+  test('drops claims whose pane no longer exists', () => {
+    const key = viewportClaimKey('dev-a', '@1');
+    const session = sessionClaims('a', [
+      [key, { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 }],
+    ]);
+
+    expect(reconcileViewportClaims([session], key, '@1', () => null)).toEqual([]);
+    expect(session.viewportClaims.size).toBe(0);
+  });
+
+  test('keeps claims whose pane still belongs to the window', () => {
+    const key = viewportClaimKey('dev-a', '@1');
+    const visible: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 };
+    const session = sessionClaims('a', [[key, visible]]);
+
+    expect(reconcileViewportClaims([session], key, '@1', () => '@1')).toEqual([]);
+    expect(session.viewportClaims.get(key)).toBe(visible);
   });
 });
 

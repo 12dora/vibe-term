@@ -975,7 +975,7 @@ describe('mesh phase-2 integration', () => {
       sessPk: sess.publicKey,
       now: Date.now(),
     });
-    const ch = await callMesh(a.mesh, 'http://a/api/auth/challenge', {
+    const ch = await callMesh(b.mesh, 'http://b/api/auth/challenge', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ uid: a.boot.userId }),
@@ -986,7 +986,7 @@ describe('mesh phase-2 integration', () => {
       challengeId: body.challenge_id,
       nonce: decodeBase64url(body.nonce),
       target: a.mesh.nodeId,
-      targetPk: decodeBase64url(body.nodePk),
+      targetPk: a.mesh.identity.edPublicKey,
       uid: a.boot.userId,
       entry: MESH_VIA_SELF,
     });
@@ -1001,16 +1001,18 @@ describe('mesh phase-2 integration', () => {
       }),
     });
     expect(forged.status).toBe(401);
-    expect(((await forged.json()) as { code?: string }).code).not.toBeUndefined();
+    expect(((await forged.json()) as { code?: string }).code).toBe('TARGET_MISMATCH');
   });
 
   test("SSO: A's session id as B's cookie is rejected by B", async () => {
     const a = await bootHubA();
     const b = await enrollNodeB(a);
+    const bSelfSid = await loginSelf(b.mesh, a.boot);
     const res = await callMesh(a.mesh, `http://entry/n/${b.mesh.nodeId}/api/devices`, {
-      cookie: `${b.cookie}; ${nodeSessionCookieName(b.mesh.nodeId)}=${b.sid}`,
+      cookie: `${b.cookie}; ${nodeSessionCookieName(b.mesh.nodeId)}=${bSelfSid}`,
     });
     expect(res.status).toBe(401);
+    expect(((await res.json()) as { error?: string }).error).toBe('via_mismatch');
   });
 
   test('SSO: delegation TTL other than DELEGATION_TTL_MS is rejected', async () => {

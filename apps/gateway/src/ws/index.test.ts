@@ -507,6 +507,7 @@ describe('WebSocketServer tmux select guards', () => {
         paneId: string;
         size?: { cols: number; rows: number };
       }>,
+      resizePaneCalls: [] as Array<[string, number, number]>,
       runtime: {
         requestSnapshot() {
           recorder.requestSnapshotCalls += 1;
@@ -519,6 +520,9 @@ describe('WebSocketServer tmux select guards', () => {
         },
         selectPaneWithSize(windowId: string, paneId: string, cols: number, rows: number) {
           recorder.selectPaneCalls.push({ windowId, paneId, size: { cols, rows } });
+        },
+        resizePane(paneId: string, cols: number, rows: number) {
+          recorder.resizePaneCalls.push([paneId, cols, rows]);
         },
       },
     };
@@ -641,12 +645,11 @@ describe('WebSocketServer tmux select guards', () => {
     });
     clearPolling(entry);
 
-    expect(recorder.selectPaneCalls).toEqual([
-      { windowId: '@1', paneId: '%1', size: { cols: 100, rows: 30 } },
-    ]);
+    expect(recorder.selectPaneCalls).toEqual([{ windowId: '@1', paneId: '%1' }]);
+    expect(recorder.resizePaneCalls).toEqual([['%1', 100, 30]]);
     expect(recorder.requestSnapshotCalls).toBe(0);
     expect(ws.data.borshState.selectedPanes['device-a']).toBe('%1');
-    expect(ws.sent).toHaveLength(1);
+    expect(ws.sent.length).toBeGreaterThanOrEqual(1);
   });
 
   test('flushes old pane output before starting a new select transaction', () => {

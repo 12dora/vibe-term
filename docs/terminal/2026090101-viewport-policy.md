@@ -21,7 +21,10 @@
 
 ## 边界
 
-- 单客户端：唯一 claimant 即 owner，resize 行为与改造前一致。
+- 单客户端：唯一 claimant 即 owner，resize 行为与改造前一致。是否 apply 以 snapshot 窗口几何为准（单 pane 用 pane 宽高，多 pane 用 layout）；snapshot 不可用时才回退 `lastAppliedViewport`。tmux 侧改布局后重复同一 `TERM_SYNC_SIZE` 仍会纠正。
 - 更大端隐藏或断线：次大可见端成为 owner 并被应用到 tmux。
 - 全员 hidden：不 resize。
 - 分屏拖拽（`TMUX_RESIZE_PANE` / stacked layout）不走本策略。
+- 带尺寸的 `TMUX_SELECT` 走同一 claim 路径：只 select，尺寸仅当该会话是该 window 的 winner 时才应用；follower 切 pane 不得改 PTY。snapshot 已偏离 winner 时纠正。
+- 同一 window 内 `paneId` 变化立即向该会话下发新 pane 的 `TERM_VIEWPORT_POLICY`（即使 winner / 几何未变）。
+- 解析 winner 时按 snapshot 重绑 `paneId`：pane 消失或已换 window 则丢弃该 claim 并重算相关 window；已关闭 window 的 `lastAppliedViewport` / `lastViewportWinnerId` 清掉。resize 只作用于策略的 `windowId`。
