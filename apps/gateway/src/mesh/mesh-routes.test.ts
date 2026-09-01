@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { releaseTarballName, wsBorsh } from '@tmex/shared';
 import {
   DOMAIN_CERTIFICATE,
@@ -7,6 +8,11 @@ import {
   hexToBytes,
 } from '@tmex/shared/auth';
 import type { LinkSession } from '@tmex/shared/link';
+import { resetReleaseDownloadForTests } from '../system/release-download';
+import {
+  resetRemoteUpgradeJobsForTests,
+  waitForRemoteUpgradeJob,
+} from '../system/remote-upgrade-job';
 import {
   FakePeers,
   FakeStreams,
@@ -20,6 +26,7 @@ import {
 } from './auth-routes.test';
 import {
   MESH_REJECT_4401_KIND,
+  MESH_WS_BACKPRESSURE_LIMIT_BYTES,
   MESH_WS_KIND,
   type MeshServerWebSocket,
   WS_CLOSE_LOGIN_REQUIRED,
@@ -566,6 +573,170 @@ describe('mesh-routes', () => {
     }
   });
 
+  test('GET /api/mesh/hubs requires a session and returns the persisted hub set', async () => {
+    const mesh = await bootMesh();
+    try {
+      const denied = await call(mesh.runtime, 'http://localhost/api/mesh/hubs');
+      expect(denied.status).toBe(401);
+      mesh.hubStore.replaceAll(
+        [
+          {
+            hubNodeId: NODE_ID,
+            publicUrl: 'https://writer.example',
+            name: 'writer',
+            mode: 'active',
+            priority: 10,
+            writerEpoch: 4,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: 9,
+          },
+          {
+            hubNodeId: PEER_ID,
+            publicUrl: 'https://standby.example',
+            name: 'standby',
+            mode: 'standby',
+            priority: 20,
+            writerEpoch: 1,
+            caFingerprint: null,
+            online: false,
+            lastSeenAt: null,
+          },
+        ],
+        1
+      );
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        hubs: Array<{ nodeId: string; mode: string; online: boolean }>;
+        writerHubId: string | null;
+        attached: { publicUrl: string } | null;
+        candidates: Array<{
+          publicUrl: string;
+          lastError: string | null;
+          lastAttemptAt: number | null;
+        }>;
+      };
+      expect(body.writerHubId).toBe(NODE_ID);
+      expect(body.hubs.map((h) => h.nodeId)).toEqual([NODE_ID, PEER_ID]);
+      expect(body.hubs.find((h) => h.nodeId === PEER_ID)?.mode).toBe('standby');
+      expect(body.attached).toBeNull();
+      expect(body.candidates).toEqual([
+        { publicUrl: 'https://writer.example', lastError: null, lastAttemptAt: null },
+        { publicUrl: 'https://standby.example', lastError: null, lastAttemptAt: null },
+      ]);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/hubs candidates include lastError and lastAttemptAt', async () => {
+    const mesh = await bootMesh();
+    try {
+      const routes = mesh.runtime.mesh as unknown as {
+        deps: { hubCandidates?: () => unknown };
+      };
+      routes.deps.hubCandidates = () => [
+        {
+          publicUrl: 'https://writer.example',
+          lastError: 'unable to verify the first certificate',
+          lastAttemptAt: 42,
+        },
+      ];
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        candidates: Array<{
+          publicUrl: string;
+          lastError: string | null;
+          lastAttemptAt: number | null;
+        }>;
+      };
+      expect(body.candidates).toEqual([
+        {
+          publicUrl: 'https://writer.example',
+          lastError: 'unable to verify the first certificate',
+          lastAttemptAt: 42,
+        },
+      ]);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/nodes marks every MeshHubStore id as isHub with hubMode', async () => {
+    const mesh = await bootMesh();
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(PEER_ID),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      mesh.hubStore.replaceAll(
+        [
+          {
+            hubNodeId: NODE_ID,
+            publicUrl: 'https://writer.example',
+            name: null,
+            mode: 'active',
+            priority: 10,
+            writerEpoch: 2,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+          {
+            hubNodeId: PEER_ID,
+            publicUrl: 'https://standby.example',
+            name: null,
+            mode: 'standby',
+            priority: 20,
+            writerEpoch: 1,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+        ],
+        1
+      );
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{ id: string; isHub: boolean; hubMode?: 'active' | 'standby' }>;
+      };
+      expect(body.nodes.find((n) => n.id === NODE_ID)).toMatchObject({
+        isHub: true,
+        hubMode: 'active',
+      });
+      expect(body.nodes.find((n) => n.id === PEER_ID)).toMatchObject({
+        isHub: true,
+        hubMode: 'standby',
+      });
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/mesh/rtc-config and POST /api/rtc/authorize', async () => {
     const mesh = await bootMesh({
       rtc: {
@@ -864,6 +1035,56 @@ describe('mesh-routes', () => {
     }
   });
 
+  test('/mesh/ws broadcast skips a client over 1MiB buffered and closes on send 0', async () => {
+    const peers = new FakePeers();
+    const mesh = await bootMesh({ peers });
+    const warns: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map(String).join(' '));
+    };
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const frames: Uint8Array[] = [];
+      const closed: Array<{ code?: number; reason?: string }> = [];
+      let buffered = 0;
+      let sendResult: number | undefined = 8;
+      const ws = {
+        data: { kind: MESH_WS_KIND, sid, uid: mesh.boot.userId },
+        getBufferedAmount() {
+          return buffered;
+        },
+        send(d: Uint8Array) {
+          frames.push(d);
+          return sendResult;
+        },
+        close(code?: number, reason?: string) {
+          closed.push({ code, reason });
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+
+      buffered = MESH_WS_BACKPRESSURE_LIMIT_BYTES + 1;
+      peers.emit({ nodeId: PEER_ID, status: 'online', reach: 'wan' });
+      expect(frames).toHaveLength(0);
+      expect(warns.filter((row) => row.includes('buffered')).length).toBe(1);
+      peers.emit({ nodeId: PEER_ID, status: 'offline', reach: 'wan' });
+      expect(frames).toHaveLength(0);
+      expect(warns.filter((row) => row.includes('buffered')).length).toBe(1);
+
+      buffered = 0;
+      peers.emit({ nodeId: PEER_ID, status: 'online', reach: 'lan' });
+      expect(frames).toHaveLength(1);
+
+      sendResult = 0;
+      peers.emit({ nodeId: PEER_ID, status: 'offline', reach: 'lan' });
+      expect(closed.some((row) => row.code === 1011 && row.reason === 'mesh-ws-closed')).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+      mesh.close();
+    }
+  });
+
   test('/mesh/ws RTC_SIGNAL from browsers is forced from=browser and node frames are ignored', async () => {
     const sent: Array<{ from: string; owner?: { uid: string; sid: string } }> = [];
     const mesh = await bootMesh({
@@ -899,11 +1120,16 @@ describe('mesh-routes', () => {
 });
 
 const originalFetch = globalThis.fetch;
+const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
 const UPGRADE_PEER = 'ee'.repeat(16);
 const dummyLink = {} as LinkSession;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  resetRemoteUpgradeJobsForTests();
+  resetReleaseDownloadForTests();
+  if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
+  else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;
 });
 
 class RecordingStreams extends FakeStreams {
@@ -912,6 +1138,7 @@ class RecordingStreams extends FakeStreams {
     path: string;
     auth: string | null;
     body: string | null;
+    query: string;
   }> = [];
   responses: Response[] = [];
   openErrors: Array<Error | null> = [];
@@ -933,7 +1160,13 @@ class RecordingStreams extends FakeStreams {
     if (body) {
       text = await new Response(body).text();
     }
-    this.opens.push({ method: open.method, path: open.path, auth: open.auth, body: text });
+    this.opens.push({
+      method: open.method,
+      path: open.path,
+      auth: open.auth,
+      body: text,
+      query: open.query,
+    });
     const err = this.openErrors.shift();
     if (err) throw err;
     const queued = this.responses.shift();
@@ -1159,7 +1392,7 @@ describe('mesh upgrade routes', () => {
         }
       );
       expect(res.status).toBe(503);
-      expect(await res.json()).toEqual({ code: 'NODE_UNREACHABLE', nodeId: UPGRADE_PEER });
+      expect(await res.json()).toMatchObject({ code: 'NODE_UNREACHABLE', nodeId: UPGRADE_PEER });
     } finally {
       mesh.close();
     }
@@ -1307,7 +1540,7 @@ describe('mesh upgrade routes', () => {
         }
       );
       expect(res.status).toBe(503);
-      expect(await res.json()).toEqual({ code: 'NODE_UNREACHABLE', nodeId: UPGRADE_PEER });
+      expect(await res.json()).toMatchObject({ code: 'NODE_UNREACHABLE', nodeId: UPGRADE_PEER });
       expect(streams.opens.map((o) => o.method)).toEqual(['GET', 'POST']);
     } finally {
       mesh.close();
@@ -1401,7 +1634,7 @@ describe('mesh upgrade routes', () => {
         startedAt: null,
       });
       expect(streams.opens).toEqual([
-        { method: 'GET', path: '/api/system/upgrade', auth: 'remote-sid', body: null },
+        { method: 'GET', path: '/api/system/upgrade', auth: 'remote-sid', body: null, query: '' },
       ]);
     } finally {
       mesh.close();
@@ -1473,6 +1706,75 @@ describe('mesh upgrade routes', () => {
       });
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ code: 'UPGRADE_NOT_ALLOWED', nodeId: NODE_ID });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote upgrade with staged-package capability returns immediately then PUTs and POSTs staged', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-mesh-rel-cache-'));
+    const tarball = new Uint8Array([1, 2, 3, 4, 5]);
+    const hex = createHash('sha256').update(tarball).digest('hex');
+    mockGithubLatest('9.9.9');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('api.github.com')) return latestFetch(input, init);
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${hex}  ${releaseTarballName('9.9.9')}\n`, { status: 200 });
+      }
+      return new Response(Buffer.from(tarball), { status: 200 });
+    }) as typeof fetch;
+
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(
+      jsonResponse({
+        baseVersion: '1.0.0',
+        canSelfUpdate: true,
+        upgradeCapabilities: ['staged-package'],
+      }),
+      jsonResponse({ version: '9.9.9', sha256: hex, bytes: tarball.byteLength }),
+      jsonResponse({
+        state: 'downloading',
+        targetVersion: '9.9.9',
+        error: null,
+        startedAt: '2026-09-01T00:00:00.000Z',
+      })
+    );
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { state: string; targetVersion: string };
+      expect(body.state).toBe('downloading');
+      expect(body.targetVersion).toBe('9.9.9');
+      expect(streams.opens.map((o) => `${o.method} ${o.path}`)).toEqual(['GET /api/system/info']);
+
+      await waitForRemoteUpgradeJob(UPGRADE_PEER);
+      expect(streams.opens.map((o) => `${o.method} ${o.path}`)).toEqual([
+        'GET /api/system/info',
+        'PUT /api/system/upgrade/package',
+        'POST /api/system/upgrade',
+      ]);
+      expect(streams.opens[1]?.query).toContain('version=9.9.9');
+      expect(streams.opens[1]?.query).toContain(`sha256=${hex}`);
+      expect(streams.opens[2]?.body).toBe(
+        JSON.stringify({ version: '9.9.9', source: 'staged', sha256: hex })
+      );
     } finally {
       mesh.close();
     }

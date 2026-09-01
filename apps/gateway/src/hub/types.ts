@@ -1,4 +1,5 @@
 import type { KeyLogEffect, KeyLogType } from '@tmex/shared/auth';
+import type { HubMode } from '@tmex/shared/uplink';
 
 export type HubKeyLogAppendSuccess = {
   ok: true;
@@ -40,6 +41,11 @@ export type HubRuntimeConfig = {
   turn?: HubTurnConfig;
   nodeId?: string;
   siteName?: string;
+  mode?: HubMode;
+  priority?: number;
+  writerEpoch?: number;
+  hubNodeId?: string;
+  authorizedHubIds?: string[];
 };
 
 export type HubAuthResult = {

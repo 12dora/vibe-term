@@ -2,11 +2,12 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 nodes-tab 测试同一套做法）。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
+import type { NodeRow } from '@/node/mesh-nodes';
+import type { AuthModeResponse, HubEndpointInfo, MeshNode } from '@tmex/api-client/auth/index';
 import type { UpgradeStatus } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { installWindowStorage } from '@tmex/stores/test-utils';
-import type { NodeUpgradeEntry } from './types';
+import type { NodeActionDeps, NodeUpgradeController, NodeUpgradeEntry } from './types';
 import type {
   UpgradeIo,
   UpgradePollOutcome,
@@ -19,12 +20,16 @@ installWindowStorage();
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
+const { resetMeshHubsStateForTest, setMeshHubsStateForTest } = await import('@/node/mesh-hubs');
+const { actionErrorText } = await import('./errors');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
-const { NodesManagement } = await import('./nodes-management');
+const { NodesManagement, UpgradeAllButton } = await import('./nodes-management');
 const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } = await import(
   '@/node/enrollment-engine'
 );
 const { resolveHubPublicUrl } = await import('./enrollment-section');
+const { NodesTable } = await import('./nodes-table');
+const { IDLE_UPGRADE_ENTRY, IDLE_UPGRADE_BATCH } = await import('./types');
 const { classifyPollFailure, isUpgradeBusy, runNodeUpgrade, upgradeErrorText, upgradePhaseText } =
   await import('./use-node-upgrade');
 const { rootKeyFromSeed } = await import('@tmex/shared/auth');
@@ -77,6 +82,7 @@ function render(mode: AuthModeResponse): string {
 beforeEach(() => {
   resetEnrollmentEngineForTest();
   resetMeshNodesStateForTest();
+  resetMeshHubsStateForTest();
   setPendingStorage({
     getItem: () => null,
     setItem: () => undefined,
@@ -207,6 +213,325 @@ describe('NodesManagement', () => {
     const html = render({ ...MODE, uid: null, kdfParams: null });
     expect(html).not.toContain('data-testid="nodes-table"');
     expect(html).not.toContain('data-testid="nodes-add"');
+  });
+
+  test('「全部升级」紧挨在「添加」左边；latest 未知时禁用', () => {
+    setMeshNodesStateForTest({
+      entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+      nodes: [meshNode({ id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e', name: 'entry', loggedIn: true })],
+    });
+    const html = render(MODE);
+    expect(html).toContain('data-testid="nodes-upgrade-all"');
+    expect(html.indexOf('data-testid="nodes-refresh"')).toBeLessThan(
+      html.indexOf('data-testid="nodes-upgrade-all"')
+    );
+    expect(html.indexOf('data-testid="nodes-upgrade-all"')).toBeLessThan(
+      html.indexOf('data-testid="nodes-add"')
+    );
+    // 静态渲染跑不了 effect，latest 拿不到：按钮禁用并说明原因
+    const tag = buttonTag(html, 'nodes-upgrade-all');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.releaseUnavailable"');
+  });
+});
+
+describe('Hub 集群展示与 standby 拒写', () => {
+  const HUB_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
+  const HUB_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
+  const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
+
+  function hubInfo(overrides: Partial<HubEndpointInfo> & { nodeId: string }): HubEndpointInfo {
+    return {
+      publicUrl: `https://${overrides.nodeId}.example`,
+      mode: 'active',
+      priority: 0,
+      writerEpoch: 1,
+      online: true,
+      ...overrides,
+    };
+  }
+
+  function withNodes(extra: MeshNode[] = []): void {
+    setMeshNodesStateForTest({
+      entryNodeId: ENTRY,
+      nodes: [meshNode({ id: ENTRY, name: 'entry', loggedIn: true }), ...extra],
+    });
+  }
+
+  test('只有一台 hub 时不渲染集群条，也没有备用 hub 提示', () => {
+    withNodes();
+    setMeshHubsStateForTest({
+      hubs: [hubInfo({ nodeId: HUB_A })],
+      writerHubId: HUB_A,
+      attached: {
+        hubNodeId: HUB_A,
+        publicUrl: `https://${HUB_A}.example`,
+        mode: 'active',
+        writerEpoch: 1,
+        since: 1,
+      },
+      loadedAt: 1,
+    });
+    const html = render(MODE);
+    expect(html).not.toContain('data-testid="nodes-hub-strip"');
+    expect(html).not.toContain('data-testid="nodes-hub-standby"');
+  });
+
+  test('两台 hub：一台一枚 chip，挂载的那枚与 writer 那枚各自标出', () => {
+    withNodes();
+    setMeshHubsStateForTest({
+      hubs: [
+        hubInfo({ nodeId: HUB_A, name: 'tokyo' }),
+        hubInfo({ nodeId: HUB_B, name: 'osaka', mode: 'standby', priority: 1, writerEpoch: 0 }),
+      ],
+      writerHubId: HUB_A,
+      attached: {
+        hubNodeId: HUB_B,
+        publicUrl: `https://${HUB_B}.example`,
+        mode: 'standby',
+        writerEpoch: 0,
+        since: 1,
+      },
+      loadedAt: 1,
+    });
+    const html = render(MODE);
+    expect(html).toContain('data-testid="nodes-hub-strip"');
+    const chipA = html.slice(html.indexOf(`data-testid="nodes-hub-chip-${HUB_A}"`));
+    expect(chipA.slice(0, 200)).toContain('data-hub-writer="true"');
+    expect(chipA.slice(0, 200)).toContain('data-hub-attached="false"');
+    const chipB = html.slice(html.indexOf(`data-testid="nodes-hub-chip-${HUB_B}"`));
+    expect(chipB.slice(0, 200)).toContain('data-hub-attached="true"');
+    expect(chipB.slice(0, 200)).toContain('data-hub-mode="standby"');
+    expect(html).toContain('tokyo');
+    expect(html).toContain('osaka');
+  });
+
+  test('挂在备用 hub 上：给出一行说明并禁用加入 / 重命名 / 移除，升级不受影响', () => {
+    withNodes([meshNode({ id: HUB_B, name: 'osaka', isHub: true, hubMode: 'standby' })]);
+    setMeshHubsStateForTest({
+      hubs: [hubInfo({ nodeId: HUB_A }), hubInfo({ nodeId: HUB_B, mode: 'standby' })],
+      writerHubId: HUB_A,
+      attached: {
+        hubNodeId: HUB_B,
+        publicUrl: `https://${HUB_B}.example`,
+        mode: 'standby',
+        writerEpoch: 0,
+        since: 1,
+      },
+      loadedAt: 1,
+    });
+    const html = render(MODE);
+    expect(html).toContain('data-testid="nodes-hub-standby"');
+    // 「hub 不可达」说的是同一件事，不再重复一遍
+    expect(html).not.toContain('data-testid="nodes-hub-offline"');
+    expect(buttonTag(html, 'nodes-add')).toContain('disabled=""');
+    expect(buttonTag(html, 'nodes-add')).toContain('title="nodes.hubs.standbyNotice"');
+    expect(buttonTag(html, `nodes-rename-${ENTRY}`)).toContain('title="nodes.hubs.standbyNotice"');
+    expect(buttonTag(html, `nodes-revoke-${HUB_B}`)).toContain('disabled=""');
+    expect(buttonTag(html, `node-upgrade-${ENTRY}`)).not.toContain('disabled=""');
+  });
+
+  test('表内 hub 徽标区分主 / 备；旧后端不下发 hubMode 时仍是「Hub」', () => {
+    withNodes([
+      meshNode({ id: HUB_A, name: 'tokyo', isHub: true, hubMode: 'active' }),
+      meshNode({ id: HUB_B, name: 'osaka', isHub: true, hubMode: 'standby' }),
+    ]);
+    const html = render(MODE);
+    expect(html).toContain(`data-testid="nodes-hub-tag-${HUB_A}" data-hub-mode="active"`);
+    expect(html).toContain(`data-testid="nodes-hub-tag-${HUB_B}" data-hub-mode="standby"`);
+    expect(html).toContain('nodes.hubs.active');
+    expect(html).toContain('nodes.hubs.standby');
+
+    withNodes([meshNode({ id: HUB_A, name: 'tokyo', isHub: true })]);
+    const legacy = render(MODE);
+    expect(legacy).toContain(`data-testid="nodes-hub-tag-${HUB_A}" data-hub-mode=""`);
+    expect(legacy).toContain('nodes.hub');
+  });
+});
+
+describe('actionErrorText 的 HUB_NOT_WRITER', () => {
+  const t = (key: string, options?: Record<string, unknown>) =>
+    options ? `${key}:${JSON.stringify(options)}` : key;
+
+  test('知道 writer 地址时把地址写进提示', () => {
+    const text = actionErrorText(t, { code: 'HUB_NOT_WRITER' }, { writerPublicUrl: 'https://w' });
+    expect(text).toBe('nodes.hubs.notWriter:{"url":"https://w"}');
+  });
+
+  test('不知道 writer 地址时退回不带地址的那句', () => {
+    expect(actionErrorText(t, { code: 'HUB_NOT_WRITER' })).toContain('auth.errors.HUB_NOT_WRITER');
+  });
+
+  test('其余带 code 的错误照旧走错误表', () => {
+    expect(actionErrorText(t, { code: 'MALFORMED' }, { writerPublicUrl: 'https://w' })).toContain(
+      'auth.errors.MALFORMED'
+    );
+  });
+});
+
+describe('节点表的升级按钮（注入升级控制器）', () => {
+  function nodeRow(overrides: Partial<NodeRow> & { id: string }): NodeRow {
+    return {
+      runtimeNodeId: overrides.id,
+      name: overrides.id,
+      publicKey: '',
+      fingerprint: 'ffffffffffffffff',
+      online: true,
+      reach: 'lan',
+      transport: null,
+      rttMs: null,
+      version: '1.1.9',
+      directCapable: false,
+      loggedIn: true,
+      inventory: null,
+      isSelf: false,
+      isHub: false,
+      lastSeenAt: null,
+      status: null,
+      certificate: null,
+      certSig: null,
+      ...overrides,
+    };
+  }
+
+  function controller(latestVersion: string | null): NodeUpgradeController {
+    return {
+      latest: latestVersion ? { latestVersion, changelog: null, publishedAt: null } : null,
+      entryOf: () => IDLE_UPGRADE_ENTRY,
+      start: () => undefined,
+      startAll: () => undefined,
+      batch: IDLE_UPGRADE_BATCH,
+      eligibleCount: () => 0,
+      anyRunning: false,
+    };
+  }
+
+  function renderTable(rows: NodeRow[], latestVersion: string | null): string {
+    const deps: NodeActionDeps = {
+      hubApi: null,
+      hubOnline: true,
+      hubWritable: true,
+      writerPublicUrl: null,
+      hubDetails: new Map(),
+      mode: {
+        ...MODE,
+        uid: 'user-1',
+        kdfParams: MODE.kdfParams as NonNullable<typeof MODE.kdfParams>,
+      },
+      api: {} as NodeActionDeps['api'],
+      prompt: { dialog: null } as unknown as NodeActionDeps['prompt'],
+      onChanged: () => undefined,
+      upgrade: controller(latestVersion),
+    };
+    return renderToStaticMarkup(
+      <MemoryRouter>
+        <NodesTable rows={rows} {...deps} />
+      </MemoryRouter>
+    );
+  }
+
+  test('已是最新版本：按钮禁用并说明原因', () => {
+    const html = renderTable(
+      [nodeRow({ id: 'aa', version: '1.2.0' }), nodeRow({ id: 'bb', version: '1.3.0' })],
+      '1.2.0'
+    );
+    for (const id of ['aa', 'bb']) {
+      const tag = buttonTag(html, `node-upgrade-${id}`);
+      expect(tag).toContain('disabled=""');
+      expect(tag).toContain('title="nodes.upgrade.atLatest"');
+    }
+  });
+
+  test('latest 未知或版本无法解析时保持可点：后端才是权威', () => {
+    const unknownLatest = renderTable([nodeRow({ id: 'aa', version: '1.2.0' })], null);
+    expect(buttonTag(unknownLatest, 'node-upgrade-aa')).not.toContain('disabled=""');
+    const devVersion = renderTable([nodeRow({ id: 'bb', version: '1.2.0_dev' })], '1.2.0');
+    expect(buttonTag(devVersion, 'node-upgrade-bb')).not.toContain('disabled=""');
+  });
+
+  test('版本低于远程升级门槛：禁用并提示在该机器上手动升级', () => {
+    const html = renderTable([nodeRow({ id: 'cc', version: '1.0.9' })], '1.2.0');
+    const tag = buttonTag(html, 'node-upgrade-cc');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.tooOld"');
+  });
+
+  test('可升级的节点照常可点', () => {
+    const html = renderTable([nodeRow({ id: 'dd', version: '1.1.9' })], '1.2.0');
+    expect(buttonTag(html, 'node-upgrade-dd')).not.toContain('disabled=""');
+  });
+
+  test('批量升级进行中：整列升级按钮锁住，避免同一节点被点两次', () => {
+    const deps: NodeActionDeps = {
+      hubApi: null,
+      hubOnline: true,
+      hubWritable: true,
+      writerPublicUrl: null,
+      hubDetails: new Map(),
+      mode: {
+        ...MODE,
+        uid: 'user-1',
+        kdfParams: MODE.kdfParams as NonNullable<typeof MODE.kdfParams>,
+      },
+      api: {} as NodeActionDeps['api'],
+      prompt: { dialog: null } as unknown as NodeActionDeps['prompt'],
+      onChanged: () => undefined,
+      upgrade: {
+        ...controller('1.2.0'),
+        batch: { running: true, total: 3, completed: 1 },
+      },
+    };
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <NodesTable rows={[nodeRow({ id: 'ee', version: '1.1.9' })]} {...deps} />
+      </MemoryRouter>
+    );
+    expect(buttonTag(html, 'node-upgrade-ee')).toContain('disabled=""');
+  });
+
+  function renderUpgradeAll(upgrade: NodeUpgradeController, rows: NodeRow[] = []): string {
+    return renderToStaticMarkup(
+      <MemoryRouter>
+        <UpgradeAllButton rows={rows} upgrade={upgrade} />
+      </MemoryRouter>
+    );
+  }
+
+  test('有可升级节点时「全部升级」可点', () => {
+    const html = renderUpgradeAll({ ...controller('1.2.0'), eligibleCount: () => 2 });
+    const tag = buttonTag(html, 'nodes-upgrade-all');
+    expect(tag).not.toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.allHint"');
+  });
+
+  test('已有行内升级在跑：「全部升级」立刻变灰并说明原因', () => {
+    const html = renderUpgradeAll({
+      ...controller('1.2.0'),
+      eligibleCount: () => 2,
+      anyRunning: true,
+    });
+    const tag = buttonTag(html, 'nodes-upgrade-all');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.allBusy"');
+  });
+
+  test('批量进行中：按钮变灰并显示进度，而不是「已有节点在升级」', () => {
+    const html = renderUpgradeAll({
+      ...controller('1.2.0'),
+      eligibleCount: () => 3,
+      anyRunning: true,
+      batch: { running: true, total: 3, completed: 2 },
+    });
+    const tag = buttonTag(html, 'nodes-upgrade-all');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.allHint"');
+    expect(html).toContain('nodes.upgrade.allProgress');
+  });
+
+  test('没有可升级节点：变灰并说明', () => {
+    const tag = buttonTag(renderUpgradeAll(controller('1.2.0')), 'nodes-upgrade-all');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.allNone"');
   });
 });
 

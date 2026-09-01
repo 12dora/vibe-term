@@ -2,7 +2,8 @@
 // 无 DOM 测试环境，渲染用 react-dom/server，交互行为直接驱动 `DirectMutationController`
 // （它就是为了脱离 DOM 可测才被拆成可订阅控制器的）。
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-hubs';
 import type { AuthModeResponse } from '@tmex/api-client/auth/index';
 import { LocalApiError } from '@tmex/api-client/local/local-api';
 import type {
@@ -55,6 +56,10 @@ function status(direct: Partial<LocalDirectStatus> = {}): LocalStatusResponse {
 const idleApi: DirectApi = {
   setDirect: () => Promise.reject(new Error('unexpected call')),
 };
+
+afterEach(() => {
+  resetMeshHubsStateForTest();
+});
 
 function render(local: LocalStatusResponse | null, mode: AuthModeResponse | null = null): string {
   return renderToStaticMarkup(
@@ -408,5 +413,45 @@ describe('LocalMachineCard 角色与 Hub 归属', () => {
     expect(render(meshStatus('node'), MESH_MODE)).not.toContain(
       'data-testid="membership-leave-dialog"'
     );
+  });
+});
+
+describe('LocalMachineCard 的本机 Hub 主 / 备身份', () => {
+  const HUB_MODE_ROW = 'data-testid="local-machine-hub-mode"';
+
+  test('hub 集合里认得出本机时显示主 / 备', () => {
+    setMeshHubsStateForTest({
+      hubs: [
+        {
+          nodeId: MESH_MODE.nodeId,
+          publicUrl: 'https://hub.example',
+          mode: 'standby',
+          priority: 1,
+          writerEpoch: 0,
+        },
+      ],
+      loadedAt: 1,
+    });
+    const html = render(meshStatus('hub,node'), MESH_MODE);
+    expect(html).toContain(HUB_MODE_ROW);
+    expect(html).toContain('nodes.hubs.standby');
+  });
+
+  test('集合里没有本机、或本机不是 hub 时整行不渲染', () => {
+    setMeshHubsStateForTest({
+      hubs: [
+        {
+          nodeId: '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f',
+          publicUrl: 'https://other.example',
+          mode: 'active',
+          priority: 0,
+          writerEpoch: 1,
+        },
+      ],
+      loadedAt: 1,
+    });
+    expect(render(meshStatus('hub,node'), MESH_MODE)).not.toContain(HUB_MODE_ROW);
+    resetMeshHubsStateForTest();
+    expect(render(meshStatus('node'), MESH_MODE)).not.toContain(HUB_MODE_ROW);
   });
 });

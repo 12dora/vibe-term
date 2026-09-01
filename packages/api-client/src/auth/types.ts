@@ -2,6 +2,11 @@
 // 所有二进制字段一律 base64url（无 padding）字符串，与 `@tmex/shared/auth` 的 encodeBase64url 对齐。
 
 import type { LocalAuthStatus } from '@tmex/shared';
+import type { HubEndpointInfo, HubMode } from '@tmex/shared/uplink';
+
+// hub 集合的契约类型来自 uplink codec（hub 广播 `node.list.hubs[]` 用的同一份），
+// 这里只做 type-only 转出：浏览器侧不会因此把 codec 打进 bundle。
+export type { HubEndpointInfo, HubMode };
 
 /** `GET /api/auth/mode` 的 kdf 参数投影（salt 为 base64url）。 */
 export interface AuthKdfParamsJson {
@@ -218,11 +223,40 @@ export interface MeshNode {
   loggedIn: boolean;
   /** 该 node 是否是 hub 机（来自 hub 下发的 `node.list`，node 侧持久化）。 */
   isHub?: boolean;
+  /** hub 机的主 / 备身份；非 hub 或旧后端不下发。 */
+  hubMode?: HubMode;
 }
 
 export interface MeshNodesResponse {
   nodes: MeshNode[];
 }
+
+/** `GET /api/mesh/hubs` 里本机 uplink 当前挂载的那台 hub；未连上时为 `null`。 */
+export interface MeshAttachedHub {
+  hubNodeId: string | null;
+  publicUrl: string;
+  mode: HubMode | null;
+  writerEpoch: number | null;
+  /** 这条 uplink 建立的时刻（epoch 毫秒）。 */
+  since: number;
+}
+
+/**
+ * `GET /api/mesh/hubs`（**需会话**）。
+ *
+ * `writerHubId` 是当前接受管理写入的那台 hub（`active` 中 writerEpoch 最高的一台）；
+ * 一台 active 都没有时为 `null`，此时任何 hub 都不收写入。
+ */
+export interface MeshHubsResponse {
+  hubs: HubEndpointInfo[];
+  attached: MeshAttachedHub | null;
+  writerHubId: string | null;
+  /** uplink 的候选地址顺序与最近一次失败原因（诊断用）。 */
+  candidates: Array<{ publicUrl: string; lastError: string | null; lastAttemptAt: number | null }>;
+}
+
+/** standby hub 拒绝管理写入的 409：`code` 之外还带 writer 的地址，UI 据此指路。 */
+export const HUB_NOT_WRITER = 'HUB_NOT_WRITER';
 
 /** `x-tmex-connection`：把请求绑到本标签页的那条 Gateway WS。 */
 export const X_TMEX_CONNECTION_HEADER = 'x-tmex-connection';

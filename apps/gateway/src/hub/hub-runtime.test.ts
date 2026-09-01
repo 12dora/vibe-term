@@ -19,6 +19,8 @@ import {
   signEd25519,
 } from '@tmex/shared/auth';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
+import { MeshHubStore } from '../auth/mesh-hub-store';
 import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { HubRuntime, type HubTlsInfoProvider } from './hub-runtime';
@@ -32,6 +34,7 @@ import {
   signUserRecord,
 } from './hub-test-helpers';
 import { encodeRedeemPopMessage } from './redeem-pop';
+import type { HubRuntimeConfig } from './types';
 import { HUB_UPLINK_PATH, HUB_UPLINK_WS_KIND } from './types';
 
 const dummyServer = { upgrade: () => true };
@@ -82,7 +85,11 @@ function redeemJson(
 async function startAuthedHub(
   db: ReturnType<typeof createMigratedAuthDb>['db'],
   now: () => number,
-  extra?: { tlsInfo?: HubTlsInfoProvider }
+  extra?: {
+    tlsInfo?: HubTlsInfoProvider;
+    config?: Partial<HubRuntimeConfig>;
+    meshHubs?: MeshHubStore;
+  }
 ) {
   const { userStore, keyLogSource, service } = createHubTestStack(db);
   const user = seedUser(userStore, { now: now() });
@@ -91,7 +98,8 @@ async function startAuthedHub(
     db,
     userStore,
     keyLogSource,
-    config: { publicUrl: 'https://hub.example', stun: ['stun:x'] },
+    config: { publicUrl: 'https://hub.example', stun: ['stun:x'], ...extra?.config },
+    meshHubs: extra?.meshHubs,
     authenticate: () => ({
       userId: user.id,
       entryNodeId: entry.nodeId,
@@ -1542,6 +1550,318 @@ describe('HubRuntime HTTP', () => {
       );
       expect(badPasskey?.status).toBe(400);
       hub.stop();
+    } finally {
+      close();
+    }
+  });
+});
+
+const WRITER_HUB = 'ab'.repeat(16);
+const STANDBY_HUB = 'cd'.repeat(16);
+
+const WRITER_ERROR_BODY = {
+  code: HUB_NOT_WRITER,
+  writerHubId: WRITER_HUB,
+  writerPublicUrl: 'https://writer.example',
+  writerEpoch: 5,
+};
+
+function seedWriterHub(db: ReturnType<typeof createMigratedAuthDb>['db']): MeshHubStore {
+  const meshHubs = new MeshHubStore(db);
+  meshHubs.upsert(
+    {
+      hubNodeId: WRITER_HUB,
+      publicUrl: 'https://writer.example',
+      name: 'writer',
+      mode: 'active',
+      priority: 50,
+      writerEpoch: 5,
+      caFingerprint: null,
+      online: true,
+      lastSeenAt: 1,
+    },
+    1
+  );
+  return meshHubs;
+}
+
+describe('HubRuntime multi-hub', () => {
+  test('mode()/setMode()/writerEpoch() 与默认 active', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const defaultHub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: { publicUrl: 'https://hub.example', stun: [] },
+        authenticate: () => null,
+      });
+      expect(defaultHub.mode()).toBe('active');
+      expect(defaultHub.writerEpoch()).toBe(1);
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: {
+          publicUrl: 'https://hub.example',
+          stun: [],
+          mode: 'active',
+          writerEpoch: 4,
+          priority: 80,
+          hubNodeId: STANDBY_HUB,
+        },
+        authenticate: () => null,
+      });
+      expect(hub.mode()).toBe('active');
+      expect(hub.writerEpoch()).toBe(4);
+      hub.setMode('standby');
+      expect(hub.mode()).toBe('standby');
+      expect(hub.meshHubs.get(STANDBY_HUB)?.mode).toBe('standby');
+      defaultHub.stop();
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('standby 四条写路由返回 409 HUB_NOT_WRITER；读路由仍 200', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const now = () => 4_000;
+      const meshHubs = seedWriterHub(db);
+      const { hub, user, entry, userStore, service } = await startAuthedHub(db, now, {
+        meshHubs,
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 1,
+          hubNodeId: STANDBY_HUB,
+          authorizedHubIds: [WRITER_HUB],
+        },
+      });
+      expect(hub.mode()).toBe('standby');
+
+      const enroll = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        dummyServer
+      );
+      expect(enroll?.status).toBe(409);
+      expect(await enroll?.json()).toEqual(WRITER_ERROR_BODY);
+
+      const redeem = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        dummyServer
+      );
+      expect(redeem?.status).toBe(409);
+      expect(await redeem?.json()).toEqual(WRITER_ERROR_BODY);
+
+      const rename = await hub.handleRequest(
+        new Request(`http://hub/api/hub/nodes/${entry.nodeId}/rename`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'nope' }),
+        }),
+        dummyServer
+      );
+      expect(rename?.status).toBe(409);
+      expect(await rename?.json()).toEqual(WRITER_ERROR_BODY);
+
+      const rec = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'revoke-node',
+        encodeRevokeNodePayload({ node_id: entry.nodeIdBytes, reason: 'lost' })
+      );
+      const revoke = await hub.handleRequest(
+        new Request(`http://hub/api/hub/nodes/${entry.nodeId}/revoke`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            bytes: encodeBase64url(rec.bytes),
+            sig: encodeBase64url(rec.sig),
+          }),
+        }),
+        dummyServer
+      );
+      expect(revoke?.status).toBe(409);
+      expect(await revoke?.json()).toEqual(WRITER_ERROR_BODY);
+      expect(userStore.getNode(entry.nodeId)?.status).toBe('enrolled');
+
+      const listed = await hub.handleRequest(new Request('http://hub/api/hub/nodes'), dummyServer);
+      expect(listed?.status).toBe(200);
+      const listedBody = (await listed?.json()) as { nodes: { id: string }[] };
+      expect(listedBody.nodes.some((n) => n.id === entry.nodeId)).toBe(true);
+
+      const token = userStore.createEnrollmentToken({
+        id: 'enroll-read',
+        userId: user.id,
+        enrollPublicKey: randomBytes(32),
+        authorizationJson: JSON.stringify({ authorization_b64: 'x', entry_node_id: entry.nodeId }),
+        authorizationSig: randomBytes(64),
+        expiresAt: now() + 10_000,
+      });
+      const got = await hub.handleRequest(
+        new Request(`http://hub/api/hub/enrollments/${token.id}`),
+        dummyServer
+      );
+      expect(got?.status).toBe(200);
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('standby 且未知 writer 时 409 字段为 null', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      seedUser(userStore);
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: {
+          publicUrl: 'https://standby.example',
+          stun: [],
+          mode: 'standby',
+          hubNodeId: STANDBY_HUB,
+          writerEpoch: 1,
+          priority: 200,
+        },
+        authenticate: () => ({ userId: 'user-1', entryNodeId: STANDBY_HUB }),
+      });
+      const enroll = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        dummyServer
+      );
+      expect(enroll?.status).toBe(409);
+      expect(await enroll?.json()).toEqual({
+        code: HUB_NOT_WRITER,
+        writerHubId: null,
+        writerPublicUrl: null,
+        writerEpoch: null,
+      });
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('active 但不是 writer（store 中有更高 epoch 的授权 active）拒绝写入', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const now = () => 4_000;
+      const { hub, entry } = await startAuthedHub(db, now, {
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'active',
+          priority: 100,
+          writerEpoch: 1,
+          hubNodeId: STANDBY_HUB,
+          authorizedHubIds: [WRITER_HUB],
+        },
+      });
+      expect(hub.mode()).toBe('active');
+      hub.meshHubs.upsert(
+        {
+          hubNodeId: WRITER_HUB,
+          publicUrl: 'https://writer.example',
+          name: 'writer',
+          mode: 'active',
+          priority: 50,
+          writerEpoch: 5,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
+      const enroll = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        dummyServer
+      );
+      expect(enroll?.status).toBe(409);
+      expect(await enroll?.json()).toEqual(WRITER_ERROR_BODY);
+
+      const redeem = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        dummyServer
+      );
+      expect(redeem?.status).toBe(409);
+
+      const rename = await hub.handleRequest(
+        new Request(`http://hub/api/hub/nodes/${entry.nodeId}/rename`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'nope' }),
+        }),
+        dummyServer
+      );
+      expect(rename?.status).toBe(409);
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('GET /api/hub/status', () => {
+  test('无需鉴权，返回 ownHubSnapshot 元数据', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      seedUser(userStore);
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: {
+          publicUrl: 'https://hub.example',
+          stun: [],
+          hubNodeId: STANDBY_HUB,
+          siteName: 'hub-site',
+          mode: 'active',
+          priority: 80,
+          writerEpoch: 3,
+        },
+        authenticate: () => null,
+        now: () => 12_345,
+      });
+      const res = await hub.handleRequest(new Request('http://hub/api/hub/status'), dummyServer);
+      expect(res?.status).toBe(200);
+      const body = (await res?.json()) as Record<string, unknown>;
+      expect(body.hubNodeId).toBe(STANDBY_HUB);
+      expect(body.publicUrl).toBe('https://hub.example');
+      expect(body.mode).toBe('active');
+      expect(body.priority).toBe(80);
+      expect(body.writerEpoch).toBe(3);
+      expect(body.name).toBe('hub-site');
+      expect(body).toHaveProperty('caFingerprint');
+      expect(body.now).toBe(12_345);
+      await hub.stop();
     } finally {
       close();
     }

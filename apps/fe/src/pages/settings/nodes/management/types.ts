@@ -1,7 +1,12 @@
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { HubApi } from '@/node/hub-api';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
+import type {
+  AuthApi,
+  AuthKdfParamsJson,
+  AuthModeResponse,
+  HubEndpointInfo,
+} from '@tmex/api-client/auth/index';
 
 /** 已确认带 uid / kdf 参数的 mesh 模式：管理动作都要签名，缺一不可。 */
 export type ResolvedMode = AuthModeResponse & { uid: string; kdfParams: AuthKdfParamsJson };
@@ -10,6 +15,16 @@ export type ResolvedMode = AuthModeResponse & { uid: string; kdfParams: AuthKdfP
 export interface NodeActionDeps {
   hubApi: HubApi | null;
   hubOnline: boolean;
+  /**
+   * 管理写入当前是否被 hub 接受。挂在 standby 上、或 writer hub 缺席 / 离线时为 `false`：
+   * 此时重命名 / 吊销 / 加入都会被 hub 以 `HUB_NOT_WRITER` 拒绝，不如先禁掉。
+   * hub 集合未知（旧入口、首屏未加载）时恒为 `true`，单 hub 用户没有任何变化。
+   */
+  hubWritable: boolean;
+  /** writer hub 的对外地址；拒写提示靠它指路。 */
+  writerPublicUrl: string | null;
+  /** hub 集合（按 nodeId 索引）：表内 hub 徽标的悬浮详情从这里取。 */
+  hubDetails: ReadonlyMap<string, HubEndpointInfo>;
   mode: ResolvedMode;
   api: AuthApi;
   prompt: CredentialPromptHandle;
@@ -46,12 +61,35 @@ export interface NodeUpgradeEntry {
   error: string | null;
 }
 
+/** 一次升级跑完的结论；批量升级据此统计成败。`cancelled` 既不算成功也不算失败。 */
+export type UpgradeRunOutcome = 'done' | 'failed' | 'timeout' | 'alreadyLatest' | 'cancelled';
+
+/** 批量升级的进度；`running` 为 `false` 时另外两个值无意义。 */
+export interface NodeUpgradeBatchState {
+  running: boolean;
+  total: number;
+  completed: number;
+}
+
 /** 升级状态机对外的只读视图 + 触发入口。 */
 export interface NodeUpgradeController {
   latest: NodeUpgradeLatest | null;
   entryOf: (nodeId: string) => NodeUpgradeEntry;
   start: (row: NodeRow) => void;
+  /** 批量升级：内部按「普通节点 → 远端 hub → 本机」排序，逐组推进。 */
+  startAll: (rows: NodeRow[]) => void;
+  batch: NodeUpgradeBatchState;
+  /** 当前 latest 下可批量升级的节点数；latest 未知时为 0。 */
+  eligibleCount: (rows: NodeRow[]) => number;
+  /** 有任何节点的升级在跑（行内或批量）：工具栏据此变灰，与 `startAll` 的同步互斥判定一致。 */
+  anyRunning: boolean;
 }
+
+export const IDLE_UPGRADE_BATCH: NodeUpgradeBatchState = {
+  running: false,
+  total: 0,
+  completed: 0,
+};
 
 export const IDLE_UPGRADE_ENTRY: NodeUpgradeEntry = {
   phase: 'idle',

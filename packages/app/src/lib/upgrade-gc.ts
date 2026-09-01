@@ -86,8 +86,10 @@ export async function sweepOrphanStaging(
   if (!(await pathExists(staging))) return;
   const current = await resolvedCurrentDir(installDir);
   const dataDir = resolve(join(installDir, 'data'));
+  const reserved = new Set(['staged', 'release-cache']);
   for (const name of await readdir(staging)) {
     if (keepTxnId && name === keepTxnId) continue;
+    if (reserved.has(name)) continue;
     const target = join(staging, name);
     const resolved = resolve(target);
     if (current && resolved === current) continue;

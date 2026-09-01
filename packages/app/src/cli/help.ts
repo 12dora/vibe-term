@@ -13,6 +13,12 @@ Usage:
   tmex hub user reset
   tmex hub join <https-url> --token <t> [--name <n>] [--insecure-local] [--no-restart]
   tmex hub leave [--no-restart]
+  tmex hub standby --public-url <https-url> [--priority <n>] [--insecure-local] [--no-restart]
+  tmex hub promote [--yes] [--no-restart]
+  tmex hub demote [--no-restart]
+  tmex hub list
+  tmex hub allow <nodeId> [<nodeId>...] [--no-restart]
+  tmex hub disallow <nodeId> [--no-restart]
   tmex mesh reset-root
   tmex enroll [--ttl 10m]
   tmex direct enable|disable
@@ -38,6 +44,12 @@ const HELP_ZH = `tmex CLI
   tmex hub user reset
   tmex hub join <https-url> --token <t> [--name <n>] [--insecure-local] [--no-restart]
   tmex hub leave [--no-restart]
+  tmex hub standby --public-url <https-url> [--priority <n>] [--insecure-local] [--no-restart]
+  tmex hub promote [--yes] [--no-restart]
+  tmex hub demote [--no-restart]
+  tmex hub list
+  tmex hub allow <nodeId> [<nodeId>...] [--no-restart]
+  tmex hub disallow <nodeId> [--no-restart]
   tmex mesh reset-root
   tmex enroll [--ttl 10m]
   tmex direct enable|disable

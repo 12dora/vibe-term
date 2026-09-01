@@ -12,12 +12,20 @@ import {
   verifyNodeCertificate,
 } from '@tmex/shared/auth';
 import { type LinkSession, type ServerSocketAdapter, WebSocketLink } from '@tmex/shared/link';
+import type { HubMode } from '@tmex/shared/uplink';
 import { json, readJsonObjectBody } from '../api/http';
 import { matchPath } from '../api/route';
 import { decodeB64url, requireB64url, validationError } from '../api/route-input';
+import type { HubTrustStore } from '../auth/hub-trust-store';
+import { MeshHubStore } from '../auth/mesh-hub-store';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthDb } from '../auth/types';
 import { type UserRecord, UserStore } from '../auth/user-store';
+import { type HubPeerFetch, HubPeerPoller } from './hub-peer-poller';
+import {
+  type UplinkNodeList,
+  applyReplicatedNodeList as replicateNodeList,
+} from './hub-replication';
 import { detachEnrollmentTokensFromNode, patchNode } from './node-persistence';
 import { NodeRegistry } from './node-registry';
 import { encodeRedeemPopMessage } from './redeem-pop';
@@ -43,6 +51,7 @@ export type HubServerWebSocket = {
   data: HubUplinkSocketData & { adapter?: BunServerWsAdapter };
   send(data: Uint8Array | ArrayBuffer | ArrayBufferView | string): number | undefined;
   close(code?: number, reason?: string): void;
+  getBufferedAmount?(): number;
 };
 
 export type HubTlsInfo = {
@@ -63,6 +72,9 @@ export type HubRuntimeOptions = {
   heartbeatMissLimit?: number;
   authTimeoutMs?: number;
   tlsInfo?: HubTlsInfoProvider;
+  meshHubs?: MeshHubStore;
+  hubTrust?: HubTrustStore;
+  fetchPeerStatus?: HubPeerFetch;
 };
 
 type StoredEnrollmentPayload = {
@@ -87,6 +99,10 @@ export class BunServerWsAdapter implements ServerSocketAdapter {
 
   close(code?: number, reason?: string): void {
     this.socket.close(code, reason);
+  }
+
+  bufferedAmount(): number {
+    return this.socket.getBufferedAmount?.() ?? 0;
   }
 
   onMessage(cb: (bytes: Uint8Array) => void): void {
@@ -130,6 +146,9 @@ export class HubRuntime {
   private readonly tlsInfo: HubTlsInfoProvider | undefined;
   readonly registry: NodeRegistry;
   readonly uplink: UplinkServer;
+  readonly meshHubs: MeshHubStore;
+  private readonly peerPoller: HubPeerPoller;
+  private readonly modeListeners = new Set<() => void>();
 
   constructor(opts: HubRuntimeOptions) {
     this.db = opts.db;
@@ -139,6 +158,7 @@ export class HubRuntime {
     this.now = opts.now ?? Date.now;
     this.config = opts.config;
     this.tlsInfo = opts.tlsInfo;
+    this.meshHubs = opts.meshHubs ?? new MeshHubStore(opts.db);
     this.registry = new NodeRegistry();
     this.uplink = new UplinkServer({
       db: opts.db,
@@ -146,10 +166,111 @@ export class HubRuntime {
       keyLogSource: opts.keyLogSource,
       registry: this.registry,
       config: opts.config,
+      meshHubs: this.meshHubs,
       now: this.now,
       heartbeatIntervalMs: opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS,
       heartbeatMissLimit: opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT,
       authTimeoutMs: opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS,
+      onModeChange: () => {
+        void this.peerPoller.pollNow();
+        for (const cb of this.modeListeners) {
+          try {
+            cb();
+          } catch {}
+        }
+      },
+      onNewAuthorizedHub: () => {
+        void this.peerPoller.pollNow();
+      },
+    });
+    this.peerPoller = new HubPeerPoller({
+      meshHubs: this.meshHubs,
+      selfHubId: () => this.uplink.hubNodeId(),
+      isAuthorized: (id) => this.uplink.isAuthorizedHub(id),
+      applyStatus: (hubNodeId, ad) =>
+        this.uplink.applyAuthorizedHubAdvertisement(hubNodeId, ad, 'peer-status'),
+      onChanged: () => this.uplink.broadcastAllNodeLists(),
+      now: this.now,
+      fetch: opts.fetchPeerStatus,
+      hubTrust: opts.hubTrust,
+    });
+    if (opts.hubTrust) this.peerPoller.start();
+  }
+
+  mode(): HubMode {
+    return this.uplink.mode();
+  }
+
+  setMode(mode: HubMode): void {
+    this.uplink.setMode(mode);
+  }
+
+  /** 模式变化（含被围栏自动降级）通知；节点侧据此立即重发 node.status 广告。 */
+  onModeChange(cb: () => void): () => void {
+    this.modeListeners.add(cb);
+    return () => {
+      this.modeListeners.delete(cb);
+    };
+  }
+
+  writerEpoch(): number {
+    return this.uplink.writerEpoch();
+  }
+
+  applyReplicatedNodeList(list: UplinkNodeList, meta: { hubNodeId: string | null }): void {
+    const ownId = this.uplink.hubNodeId();
+    if (ownId && meta.hubNodeId === ownId) return;
+    const before = new Set(
+      this.meshHubs
+        .list()
+        .filter((row) => this.uplink.isAuthorizedHub(row.hubNodeId))
+        .map((row) => row.hubNodeId)
+    );
+    replicateNodeList(
+      this.db,
+      this.userStore,
+      this.meshHubs,
+      list,
+      meta,
+      {
+        hubNodeId: ownId,
+        record: this.uplink.ownHubSnapshot(),
+        authorizedHubIds: this.config.authorizedHubIds,
+      },
+      this.now()
+    );
+    this.uplink.broadcastAllNodeLists();
+    const added = this.meshHubs
+      .list()
+      .some(
+        (row) =>
+          this.uplink.isAuthorizedHub(row.hubNodeId) &&
+          row.hubNodeId !== ownId &&
+          !before.has(row.hubNodeId)
+      );
+    if (added) void this.peerPoller.pollNow();
+  }
+
+  pollPeersNow(): Promise<void> {
+    return this.peerPoller.pollNow();
+  }
+
+  private requireWriter(): Response | null {
+    return this.uplink.isWriter() ? null : json(this.uplink.notWriterError(), 409);
+  }
+
+  private handleHubStatus(): Response {
+    const snap = this.uplink.ownHubSnapshot();
+    if (!snap) return json({ error: 'hub_unconfigured' }, 503);
+    return json({
+      hubNodeId: snap.hubNodeId,
+      publicUrl: snap.publicUrl,
+      mode: snap.mode,
+      priority: snap.priority,
+      writerEpoch: snap.writerEpoch,
+      ...(snap.name ? { name: snap.name } : {}),
+      caFingerprint: snap.caFingerprint,
+      now: this.now(),
     });
   }
 
@@ -162,6 +283,7 @@ export class HubRuntime {
   }
 
   async stop(): Promise<void> {
+    this.peerPoller.stop();
     await this.uplink.stop();
   }
 
@@ -188,19 +310,29 @@ export class HubRuntime {
       return fn(params);
     };
     return (
-      hit('/api/hub/enrollments/redeem', 'POST', () => this.handleRedeem(req)) ??
+      hit('/api/hub/status', 'GET', () => this.handleHubStatus()) ??
+      hit('/api/hub/enrollments/redeem', 'POST', () => {
+        const blocked = this.requireWriter();
+        return blocked ?? this.handleRedeem(req);
+      }) ??
       hit('/api/hub/enrollments', 'POST', () =>
-        this.withAuth(req, (a) => this.handleCreateEnrollment(req, a))
+        this.withAuth(req, (a) => this.requireWriter() ?? this.handleCreateEnrollment(req, a))
       ) ??
       hit('/api/hub/enrollments/:id', 'GET', (p) =>
         this.withAuth(req, (a) => this.handleGetEnrollment(decodeURIComponent(p.id), a))
       ) ??
       hit('/api/hub/nodes', 'GET', () => this.withAuth(req, (a) => this.handleListNodes(a))) ??
       hit('/api/hub/nodes/:id/rename', 'POST', (p) =>
-        this.withAuth(req, (a) => this.handleRename(req, decodeURIComponent(p.id), a))
+        this.withAuth(
+          req,
+          (a) => this.requireWriter() ?? this.handleRename(req, decodeURIComponent(p.id), a)
+        )
       ) ??
       hit('/api/hub/nodes/:id/revoke', 'POST', (p) =>
-        this.withAuth(req, (a) => this.handleRevoke(req, decodeURIComponent(p.id), a))
+        this.withAuth(
+          req,
+          (a) => this.requireWriter() ?? this.handleRevoke(req, decodeURIComponent(p.id), a)
+        )
       ) ??
       json({ error: 'not_found' }, 404)
     );

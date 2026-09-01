@@ -6,6 +6,7 @@ export type TlsRouteAuthorize = (req: Request) => Promise<Response | null>;
 export function createTlsRoutes(deps: {
   service: TlsService;
   authorize: TlsRouteAuthorize;
+  onApplied?: () => void | Promise<void>;
 }): (req: Request) => Promise<Response | null> {
   return async (req) => {
     const challenge = deps.service.handleChallenge(req);
@@ -43,10 +44,14 @@ export function createTlsRoutes(deps: {
         if (!body) {
           return errorJson('tls_failed', 400, 'request body must be a JSON object');
         }
-        return json(await deps.service.applyMode(parseApplyMode(body)));
+        const applied = await deps.service.applyMode(parseApplyMode(body));
+        await deps.onApplied?.();
+        return json(applied);
       }
       if (path === '/api/tls/renew' && req.method === 'POST') {
-        return json(await deps.service.renew());
+        const renewed = await deps.service.renew();
+        await deps.onApplied?.();
+        return json(renewed);
       }
       return errorJson('method_not_allowed', 405, 'method not allowed');
     } catch (error) {

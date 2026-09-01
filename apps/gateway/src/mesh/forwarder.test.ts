@@ -271,6 +271,62 @@ describe('forwarder', () => {
     }
   });
 
+  test('MESH_FORWARD_WS pauses remote→browser pump on send -1 until drain and closes on 0', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      let data: { kind?: string; token?: string; auth?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws`, {
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        }),
+        server
+      );
+      const sent: Uint8Array[] = [];
+      const closed: Array<{ code?: number; reason?: string }> = [];
+      let sendResult = 2;
+      const ws = {
+        data: data ?? { kind: MESH_FORWARD_WS_KIND },
+        send(frame: Uint8Array) {
+          sent.push(frame.slice());
+          return sendResult;
+        },
+        close(code?: number, reason?: string) {
+          closed.push({ code, reason });
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      streams.lastWs?.pushFromRemote(new Uint8Array([1]));
+      expect(sent).toEqual([new Uint8Array([1])]);
+
+      sendResult = -1;
+      streams.lastWs?.pushFromRemote(new Uint8Array([2]));
+      expect(sent).toEqual([new Uint8Array([1]), new Uint8Array([2])]);
+      streams.lastWs?.pushFromRemote(new Uint8Array([3]));
+      expect(sent).toHaveLength(2);
+
+      sendResult = 2;
+      mesh.runtime.handleWebSocket.drain(ws);
+      expect(sent[2]).toEqual(new Uint8Array([3]));
+
+      sendResult = 0;
+      streams.lastWs?.pushFromRemote(new Uint8Array([4]));
+      expect(closed.some((row) => row.code === 1011 && row.reason === 'forward-ws-closed')).toBe(
+        true
+      );
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('/n/:id/ws?cid= passes the client nonce through openWsStream', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
@@ -1232,6 +1288,316 @@ describe('forwardAuthorizedHttp', () => {
     expect(await res.json()).toEqual({ code: 'NODE_LOGIN_REQUIRED', nodeId: OTHER });
     expect(streams.lastOpen).toBeNull();
   });
+
+  test('rawBody wins over JSON body and forwards custom headers', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const captured: {
+      headers: Record<string, string>;
+      body: Uint8Array | null;
+      method: string;
+      path: string;
+      query: string;
+    }[] = [];
+    const streams = new FakeStreams();
+    streams.openHttpStream = async (_link, open, body) => {
+      const bytes = body ? new Uint8Array(await new Response(body).arrayBuffer()) : null;
+      captured.push({
+        headers: open.headers,
+        body: bytes,
+        method: open.method,
+        path: open.path,
+        query: open.query,
+      });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams });
+    const raw = new Uint8Array([0, 1, 2, 3, 4]);
+    const res = await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+        method: 'PUT',
+        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+      }),
+      {
+        nodeId: OTHER,
+        method: 'PUT',
+        path: '/api/system/upgrade/package',
+        query: `?version=1.2.3&sha256=${'ab'.repeat(32)}`,
+        body: { version: 'should-not-send' },
+        rawBody: new ReadableStream({
+          start(controller) {
+            controller.enqueue(raw);
+            controller.close();
+          },
+        }),
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-length': String(raw.byteLength),
+        },
+      }
+    );
+    expect(res.status).toBe(200);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.method).toBe('PUT');
+    expect(captured[0]?.path).toBe('/api/system/upgrade/package');
+    expect(captured[0]?.query).toBe(`?version=1.2.3&sha256=${'ab'.repeat(32)}`);
+    expect(captured[0]?.headers['content-type']).toBe('application/octet-stream');
+    expect(captured[0]?.headers['content-length']).toBe('5');
+    expect(captured[0]?.body).toEqual(raw);
+  });
+
+  test('JSON POST body path stays compatible when rawBody is omitted', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const captured: { headers: Record<string, string>; body: string | null }[] = [];
+    const streams = new FakeStreams();
+    streams.openHttpStream = async (_link, open, body) => {
+      captured.push({
+        headers: open.headers,
+        body: body ? await new Response(body).text() : null,
+      });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams });
+    await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+        method: 'POST',
+        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+      }),
+      { nodeId: OTHER, method: 'POST', path: '/api/system/upgrade', body: { version: '9.9.9' } }
+    );
+    expect(captured[0]?.headers['content-type']).toBe('application/json');
+    expect(captured[0]?.body).toBe(JSON.stringify({ version: '9.9.9' }));
+  });
+
+  test('raw-body push failure logs bytes and includes the underlying error', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.openHttpStream = async (_link, _open, body) => {
+      const reader = body?.getReader();
+      if (reader) {
+        await reader.read();
+        await reader.cancel();
+      }
+      throw new Error('websocket send discarded');
+    };
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams });
+    try {
+      const raw = new Uint8Array(32).fill(4);
+      const res = await forwarder.forwardAuthorizedHttp(
+        new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+          method: 'PUT',
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        }),
+        {
+          nodeId: OTHER,
+          method: 'PUT',
+          path: '/api/system/upgrade/package',
+          rawBody: new ReadableStream({
+            start(controller) {
+              controller.enqueue(raw);
+              controller.close();
+            },
+          }),
+          headers: { 'content-type': 'application/octet-stream' },
+        }
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        code: 'NODE_UNREACHABLE',
+        nodeId: OTHER,
+        error: 'websocket send discarded',
+      });
+      expect(warnings.some((line) => line.includes('[mesh][forward] raw-body push aborted'))).toBe(
+        true
+      );
+      expect(warnings.some((line) => line.includes(`node=${OTHER}`))).toBe(true);
+      expect(warnings.some((line) => line.includes('bytes=32'))).toBe(true);
+      expect(warnings.some((line) => line.includes('err=websocket send discarded'))).toBe(true);
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+});
+
+describe('forwardAuthorizedHttp multi-MiB raw body over in-memory link', () => {
+  test('streams a 3 MiB request body through link flow control', async () => {
+    const { createInMemoryLinkPair } = await import('@tmex/shared/link');
+    const { acceptHttpStream, openHttpStream } = await import('./stream-targets');
+    const [local, remote] = createInMemoryLinkPair();
+    let received = 0;
+    remote.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry',
+        sessionStore: {
+          verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+        } as never,
+        async dispatchHttp(req) {
+          const reader = req.body?.getReader();
+          if (!reader) return new Response('no-body', { status: 400 });
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            received += value?.byteLength ?? 0;
+          }
+          return new Response(JSON.stringify({ received }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        },
+      });
+    });
+    const peers = new FakePeers();
+    peers.links.set(OTHER, local);
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams: {
+        openHttpStream: (link, open, body, signal) => openHttpStream(link, open, body, signal),
+        openWsStream: async () => {
+          throw new Error('ws not used');
+        },
+      },
+    });
+    const total = 3 * 1024 * 1024;
+    const chunk = new Uint8Array(64 * 1024).fill(7);
+    let remaining = total;
+    const rawBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (remaining <= 0) {
+          controller.close();
+          return;
+        }
+        const n = Math.min(chunk.byteLength, remaining);
+        controller.enqueue(n === chunk.byteLength ? chunk : chunk.subarray(0, n));
+        remaining -= n;
+      },
+    });
+    const res = await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+        method: 'PUT',
+        headers: { cookie: `tmex_s_${OTHER}=remote-sid`, origin: 'http://localhost' },
+      }),
+      {
+        nodeId: OTHER,
+        method: 'PUT',
+        path: '/api/system/upgrade/package',
+        query: `?version=1.2.3&sha256=${'ab'.repeat(32)}`,
+        rawBody,
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-length': String(total),
+        },
+      }
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: total });
+    expect(received).toBe(total);
+  });
+
+  test('target 413 without cancelling the request body is visible to the entry, not 503', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { createInMemoryLinkPair } = await import('@tmex/shared/link');
+    const { acceptHttpStream, openHttpStream } = await import('./stream-targets');
+    const { UpgradeController } = await import('../system/upgrade');
+    const installDir = mkdtempSync(join(tmpdir(), 'tmex-fwd-413-'));
+    const controller = new UpgradeController({
+      getInstallInfo: () => ({
+        installedViaCli: true,
+        deployment: 'launchd',
+        installDir,
+        serviceName: 'tmex',
+        cliVersion: '1.0.0',
+        bunPath: '/usr/bin/bun',
+      }),
+      maxPackageBytes: 64 * 1024,
+    });
+    const [local, remote] = createInMemoryLinkPair();
+    remote.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry',
+        sessionStore: {
+          verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+        } as never,
+        async dispatchHttp(req) {
+          const url = new URL(req.url);
+          const version = url.searchParams.get('version') ?? '';
+          const sha256 = url.searchParams.get('sha256') ?? '';
+          const result = await controller.stagePackage(version, sha256, req.body);
+          if (!result.ok) {
+            return new Response(JSON.stringify({ code: result.code }), {
+              status: result.status,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return new Response(JSON.stringify(result), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        },
+      });
+    });
+    const peers = new FakePeers();
+    peers.links.set(OTHER, local);
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams: {
+        openHttpStream: (link, open, body, signal) => openHttpStream(link, open, body, signal),
+        openWsStream: async () => {
+          throw new Error('ws not used');
+        },
+      },
+    });
+    try {
+      const total = 256 * 1024;
+      const chunk = new Uint8Array(16 * 1024).fill(3);
+      let remaining = total;
+      const rawBody = new ReadableStream<Uint8Array>({
+        pull(ctl) {
+          if (remaining <= 0) {
+            ctl.close();
+            return;
+          }
+          const n = Math.min(chunk.byteLength, remaining);
+          ctl.enqueue(n === chunk.byteLength ? chunk : chunk.subarray(0, n));
+          remaining -= n;
+        },
+      });
+      const res = await forwarder.forwardAuthorizedHttp(
+        new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+          method: 'PUT',
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid`, origin: 'http://localhost' },
+        }),
+        {
+          nodeId: OTHER,
+          method: 'PUT',
+          path: '/api/system/upgrade/package',
+          query: `?version=1.2.3&sha256=${'ab'.repeat(32)}`,
+          rawBody,
+          headers: { 'content-type': 'application/octet-stream' },
+        }
+      );
+      expect(res.status).toBe(413);
+      expect(await res.json()).toEqual({ code: 'PACKAGE_TOO_LARGE' });
+    } finally {
+      rmSync(installDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function encodeHelloFrame(): Uint8Array {
@@ -1470,8 +1836,8 @@ async function openForwardWs(
   let browserClosed: { code?: number; reason?: string } | undefined;
   const ws = {
     data: data ?? { kind: MESH_FORWARD_WS_KIND },
-    send() {
-      return 0;
+    send(frame: Uint8Array) {
+      return frame.byteLength || 1;
     },
     close(code?: number, reason?: string) {
       browserClosed = { code, reason };

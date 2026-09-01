@@ -1,5 +1,7 @@
 import type { KeyLogEffect } from '@tmex/shared/auth';
+import type { HubMode } from '@tmex/shared/uplink';
 import type { ChallengeStore } from '../auth/challenge-store';
+import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
@@ -37,6 +39,7 @@ import {
   jsonError,
 } from './session-middleware';
 import type { UplinkStatus } from './types';
+import type { AttachedHub, UplinkCandidate } from './uplink-pool';
 
 export type MeshHttpRuntimeOptions = {
   roles: MeshRoles;
@@ -53,6 +56,10 @@ export type MeshHttpRuntimeOptions = {
   now?: () => number;
   primaryUserId?: string;
   hubPublicUrl?: string | null;
+  hubStore?: MeshHubStore;
+  attachedHub?: () => AttachedHub | null;
+  hubMode?: () => HubMode | null;
+  hubCandidates?: () => Array<string | UplinkCandidate>;
   trustProxy?: boolean;
   connectionLookup?: ConnectionLookup;
   selfStatus?: () => UplinkStatus;
@@ -149,6 +156,9 @@ export class MeshHttpRuntime {
       selfStatus: opts.selfStatus,
       listedNames: opts.listedNames,
       selfName: opts.selfName,
+      hubStore: opts.hubStore,
+      attachedHub: opts.attachedHub,
+      hubCandidates: opts.hubCandidates,
       forwardAuthorizedHttp: (req, input) => this.forwarder.forwardAuthorizedHttp(req, input),
     });
     this.auth = new AuthRoutes({
@@ -163,6 +173,9 @@ export class MeshHttpRuntime {
       now: this.now,
       primaryUserId: opts.primaryUserId,
       hubPublicUrl: opts.hubPublicUrl,
+      hubStore: opts.hubStore,
+      attachedHub: opts.attachedHub,
+      hubMode: opts.hubMode,
       listPublicNodes: this.authSurfaceOnly
         ? () => [{ id: opts.nodeId, name: 'self', online: true }]
         : () => this.mesh.publicNodes(),
@@ -346,6 +359,11 @@ export class MeshHttpRuntime {
       }
       if (ws.data?.kind === MESH_FORWARD_WS_KIND) {
         this.forwarder.handleForwardSocketMessage(ws, message);
+      }
+    },
+    drain: (ws: MeshServerWebSocket): void => {
+      if (ws.data?.kind === MESH_FORWARD_WS_KIND) {
+        this.forwarder.handleForwardSocketDrain(ws);
       }
     },
     close: (ws: MeshServerWebSocket, code?: number, reason?: string): void => {

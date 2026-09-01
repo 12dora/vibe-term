@@ -1,13 +1,23 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { ChildProcess } from 'node:child_process';
 import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseTarballName, releaseTarballUrl } from '@tmex/shared';
 import type { InstallInfo } from './install-info';
+import { resetReleaseDownloadForTests } from './release-download';
 import {
+  STAGED_PACKAGE_MAX_BYTES,
   UpgradeController,
   assertExtractedCliPackage,
   cmdlineOwnsInstallRuntime,
@@ -19,11 +29,19 @@ import {
 } from './upgrade';
 
 const originalFetch = globalThis.fetch;
+const originalCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
+const originalInstallDir = process.env.TMEX_INSTALL_DIR;
 const tempDirs: string[] = [];
 const liveChildren: ChildProcess[] = [];
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  resetReleaseDownloadForTests();
+  if (originalCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
+  else process.env.TMEX_RELEASE_CACHE_DIR = originalCacheDir;
+  if (originalInstallDir === undefined) delete process.env.TMEX_INSTALL_DIR;
+  else process.env.TMEX_INSTALL_DIR = originalInstallDir;
+  rmSync(join(tmpdir(), 'tmex-release-cache'), { recursive: true, force: true });
   for (const child of liveChildren.splice(0)) {
     try {
       child.kill('SIGKILL');
@@ -119,6 +137,10 @@ describe('resolveUpgradeInstallDir', () => {
 });
 
 describe('stageGithubRelease', () => {
+  beforeEach(() => {
+    process.env.TMEX_RELEASE_CACHE_DIR = tempDir('tmex-rel-cache-');
+  });
+
   test('downloads GitHub tarball, extracts npm-pack layout, returns package/bin/tmex.js', async () => {
     const version = '9.9.9';
     const bytes = packFakeCliTarball(version);
@@ -454,6 +476,10 @@ describe('UpgradeController detached spawn', () => {
 });
 
 describe('stageGithubRelease checksums', () => {
+  beforeEach(() => {
+    process.env.TMEX_RELEASE_CACHE_DIR = tempDir('tmex-rel-cache-');
+  });
+
   test('aborts when SHA256SUMS returns a non-404 HTTP error before extract', async () => {
     const version = '9.9.9';
     const bytes = packFakeCliTarball(version);
@@ -522,6 +548,330 @@ describe('stageGithubRelease checksums', () => {
     await expect(stageGithubRelease(tempDir('tmex-upg-sums-noentry-'), version)).rejects.toThrow(
       /does not list|missing an entry/
     );
+  });
+});
+
+describe('staged package', () => {
+  function makeInstall(): InstallInfo {
+    const dir = tempDir('tmex-upg-staged-');
+    return {
+      installedViaCli: true,
+      deployment: 'launchd',
+      installDir: dir,
+      serviceName: 'tmex',
+      cliVersion: '1.1.0',
+      bunPath: '/usr/bin/bun',
+    };
+  }
+
+  function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    });
+  }
+
+  async function settle(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  test('PUT happy path writes tarball, sidecar, and remembers the package', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    const result = await controller.stagePackage('1.2.3', hex, bytesStream(bytes));
+    expect(result).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      bytes: bytes.byteLength,
+    });
+    const stagedPath = join(
+      install.installDir as string,
+      'staging',
+      'staged',
+      'tmex-cli-1.2.3.tgz'
+    );
+    expect(existsSync(stagedPath)).toBe(true);
+    expect(readFileSync(stagedPath)).toEqual(Buffer.from(bytes));
+    const sidecar = JSON.parse(
+      readFileSync(
+        join(install.installDir as string, 'staging', 'staged', 'tmex-cli-1.2.3.json'),
+        'utf8'
+      )
+    ) as { version: string; sha256: string; bytes: number };
+    expect(sidecar.version).toBe('1.2.3');
+    expect(sidecar.sha256).toBe(hex);
+    expect(sidecar.bytes).toBe(bytes.byteLength);
+  });
+
+  test('PUT sha256 mismatch deletes the part file and returns PACKAGE_SHA256_MISMATCH', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const result = await controller.stagePackage('1.2.3', '0'.repeat(64), bytesStream(bytes));
+    expect(result).toEqual({ ok: false, status: 400, code: 'PACKAGE_SHA256_MISMATCH' });
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.tgz'))).toBe(false);
+    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.tgz.part'))).toBe(false);
+  });
+
+  test('PUT over the size cap returns 413 and does not keep the part', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      maxPackageBytes: 32,
+    });
+    const bytes = new Uint8Array(64).fill(7);
+    const result = await controller.stagePackage('1.2.3', sha256Hex(bytes), bytesStream(bytes));
+    expect(result).toEqual({ ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' });
+    expect(
+      existsSync(join(install.installDir as string, 'staging', 'staged', 'tmex-cli-1.2.3.tgz'))
+    ).toBe(false);
+    expect(
+      existsSync(join(install.installDir as string, 'staging', 'staged', 'tmex-cli-1.2.3.tgz.part'))
+    ).toBe(false);
+  });
+
+  test('PUT while an upgrade is in progress returns UPGRADE_IN_PROGRESS', async () => {
+    const install = makeInstall();
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      spawn: () => child as unknown as ChildProcess,
+    });
+    expect(controller.start('9.9.9')).toBe(true);
+    const bytes = new Uint8Array([1, 2, 3]);
+    const result = await controller.stagePackage('1.2.3', sha256Hex(bytes), bytesStream(bytes));
+    expect(result).toEqual({ ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' });
+    child.emit('spawn');
+    await settle();
+  });
+
+  test('POST staged extracts the staged tarball and continues to executing', async () => {
+    const install = makeInstall();
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      spawn: () => child as unknown as ChildProcess,
+    });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    const staged = await controller.stagePackage('1.2.3', hex, bytesStream(bytes));
+    expect(staged.ok).toBe(true);
+    const started = controller.tryStart('1.2.3', { source: 'staged', sha256: hex });
+    expect(started).toEqual({ ok: true });
+    expect(controller.status().state).toBe('downloading');
+    await settle();
+    child.emit('spawn');
+    await settle();
+    expect(controller.status().state).toBe('executing');
+  });
+
+  test('POST staged without a staged package returns PACKAGE_NOT_STAGED and stays idle', async () => {
+    const controller = new UpgradeController({ getInstallInfo: () => makeInstall() });
+    const started = controller.tryStart('1.2.3', { source: 'staged' });
+    expect(started).toEqual({ ok: false, code: 'PACKAGE_NOT_STAGED' });
+    expect(controller.status().state).toBe('idle');
+  });
+
+  test('a new controller reloads the sidecar after a simulated restart', async () => {
+    const install = makeInstall();
+    const first = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('2.0.0');
+    const hex = sha256Hex(bytes);
+    expect((await first.stagePackage('2.0.0', hex, bytesStream(bytes))).ok).toBe(true);
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    const second = new UpgradeController({
+      getInstallInfo: () => install,
+      spawn: () => child as unknown as ChildProcess,
+    });
+    const started = second.tryStart('2.0.0', { source: 'staged', sha256: hex });
+    expect(started.ok).toBe(true);
+    await settle();
+    child.emit('spawn');
+    await settle();
+  });
+
+  test('STAGED_PACKAGE_MAX_BYTES is 256 MiB', () => {
+    expect(STAGED_PACKAGE_MAX_BYTES).toBe(256 * 1024 * 1024);
+  });
+
+  test('PUT writes to a unique .part-<id> temp name', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controllerStream) {
+        await gate;
+        controllerStream.enqueue(bytes);
+        controllerStream.close();
+      },
+    });
+    const pending = controller.stagePackage('1.2.3', hex, body);
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    let partNames: string[] = [];
+    for (let i = 0; i < 50; i += 1) {
+      partNames = existsSync(stagedDir)
+        ? readdirSync(stagedDir).filter((name) => /\.part-[0-9a-f-]+$/i.test(name))
+        : [];
+      if (partNames.length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(partNames.length).toBeGreaterThan(0);
+    release();
+    expect((await pending).ok).toBe(true);
+  });
+
+  test('concurrent PUT and POST while a PUT is streaming are UPGRADE_IN_PROGRESS', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow = new ReadableStream<Uint8Array>({
+      async pull(stream) {
+        await gate;
+        stream.enqueue(bytes);
+        stream.close();
+      },
+    });
+    const first = controller.stagePackage('1.2.3', hex, slow);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const other = new Uint8Array([9, 9, 9]);
+    const second = await controller.stagePackage('2.0.0', sha256Hex(other), bytesStream(other));
+    expect(second).toEqual({ ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' });
+    expect(controller.tryStart('9.9.9')).toEqual({ ok: false, code: 'UPGRADE_IN_PROGRESS' });
+    expect(controller.tryStart('1.2.3', { source: 'staged', sha256: hex })).toEqual({
+      ok: false,
+      code: 'UPGRADE_IN_PROGRESS',
+    });
+    release();
+    expect((await first).ok).toBe(true);
+  });
+
+  test('POST staged atomically moves the tarball into the txn dir before extract', async () => {
+    const install = makeInstall();
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      spawn: () => child as unknown as ChildProcess,
+    });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    expect((await controller.stagePackage('1.2.3', hex, bytesStream(bytes))).ok).toBe(true);
+    const stagedPath = join(
+      install.installDir as string,
+      'staging',
+      'staged',
+      'tmex-cli-1.2.3.tgz'
+    );
+    expect(existsSync(stagedPath)).toBe(true);
+    expect(controller.tryStart('1.2.3', { source: 'staged', sha256: hex }).ok).toBe(true);
+    for (let i = 0; i < 50 && existsSync(stagedPath); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(existsSync(stagedPath)).toBe(false);
+    const stagingRoot = join(install.installDir as string, 'staging');
+    const txnDirs = readdirSync(stagingRoot).filter(
+      (name) => name !== 'staged' && name !== 'release-cache'
+    );
+    expect(txnDirs.length).toBeGreaterThan(0);
+    const moved = join(stagingRoot, txnDirs[0] as string, 'tmex-cli-1.2.3.tgz');
+    expect(existsSync(moved)).toBe(true);
+    child.emit('spawn');
+    await settle();
+  });
+
+  test('size cap does not cancel the request body before returning 413', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      maxPackageBytes: 32,
+    });
+    let cancelled = false;
+    const bytes = new Uint8Array(64).fill(7);
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(bytes);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const result = await controller.stagePackage('1.2.3', sha256Hex(bytes), body);
+    expect(result).toEqual({ ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' });
+    expect(cancelled).toBe(false);
+  });
+
+  test('rename/sidecar failure returns STAGE_FAILED and cleans part/final/sidecar', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    mkdirSync(stagedDir, { recursive: true });
+    mkdirSync(join(stagedDir, 'tmex-cli-1.2.3.json'));
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    const result = await controller.stagePackage('1.2.3', hex, bytesStream(bytes));
+    expect(result).toEqual({ ok: false, status: 500, code: 'STAGE_FAILED' });
+    const leftovers = existsSync(stagedDir)
+      ? readdirSync(stagedDir).filter((name) => name.includes('.part') || name.endsWith('.tgz'))
+      : [];
+    expect(leftovers).toEqual([]);
+  });
+
+  test('orphan tgz without sidecar is pruned by the count/TTL sweep', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      now: () => Date.parse('2026-09-01T00:00:00.000Z'),
+    });
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    mkdirSync(stagedDir, { recursive: true });
+    writeFileSync(join(stagedDir, 'tmex-cli-0.0.1.tgz'), 'orphan');
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    expect((await controller.stagePackage('1.2.3', hex, bytesStream(bytes))).ok).toBe(true);
+    expect(existsSync(join(stagedDir, 'tmex-cli-0.0.1.tgz'))).toBe(false);
+  });
+
+  test('local stageGithubRelease uses the shared staging/release-cache', async () => {
+    const install = makeInstall();
+    const version = '9.9.9';
+    const bytes = packFakeCliTarball(version);
+    stubGithubFetch(bytes, { status: 200, body: matchingSumsBody(bytes, version) });
+    const stageDir = join(install.installDir as string, 'staging', 'txn-local');
+    mkdirSync(stageDir, { recursive: true });
+    const previous = process.env.TMEX_INSTALL_DIR;
+    process.env.TMEX_INSTALL_DIR = install.installDir as string;
+    try {
+      await stageGithubRelease(stageDir, version);
+      expect(
+        existsSync(
+          join(install.installDir as string, 'staging', 'release-cache', `tmex-cli-${version}.tgz`)
+        )
+      ).toBe(true);
+      expect(existsSync(join(stageDir, '.release-cache'))).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.TMEX_INSTALL_DIR;
+      else process.env.TMEX_INSTALL_DIR = previous;
+    }
   });
 });
 

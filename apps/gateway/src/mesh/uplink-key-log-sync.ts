@@ -72,6 +72,8 @@ export class UplinkKeyLogSync {
   private keyLogResMissingIdWarned = false;
   private readonly pendingAcks = new Map<string, (ack: UplinkKeyLogAck) => void>();
   private keyLogForked = false;
+  private hubNotWriterLogged = false;
+  private skipPushForGeneration: number | null = null;
 
   constructor(opts: SyncOpts) {
     this.host = opts.host;
@@ -123,6 +125,8 @@ export class UplinkKeyLogSync {
     this.catchUpChain = Promise.resolve();
     this.listVersionWatermark = Number.NEGATIVE_INFINITY;
     this.keyLogResMissingIdWarned = false;
+    this.hubNotWriterLogged = false;
+    this.skipPushForGeneration = null;
     this.catchUpAbort = new AbortController();
   }
 
@@ -546,6 +550,7 @@ export class UplinkKeyLogSync {
 
   private async pushMissingToHub(ctx: CatchUpCtx, hubSeq: bigint): Promise<boolean> {
     if (!this.catchUpCurrent(ctx)) return false;
+    if (this.skipPushForGeneration === ctx.generation) return true;
     const listed = await this.awaitCatchUp(
       ctx,
       this.trackTask(
@@ -566,7 +571,19 @@ export class UplinkKeyLogSync {
         ctx.generation
       );
       if (!this.catchUpCurrent(ctx)) return false;
-      if (!ack.ok) return false;
+      if (!ack.ok) {
+        if (ack.error === 'HUB_NOT_WRITER') {
+          this.skipPushForGeneration = ctx.generation;
+          if (!this.hubNotWriterLogged) {
+            this.hubNotWriterLogged = true;
+            console.warn(
+              '[uplink] key-log append deferred: attached hub is not writer; will retry after hub change'
+            );
+          }
+          return true;
+        }
+        return false;
+      }
     }
     return true;
   }

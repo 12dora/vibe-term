@@ -30,6 +30,8 @@ export interface UseCreateEnrollmentInput {
   prompt: CredentialPromptHandle;
   /** 已 admit / 已过期 / 已取消的 pending id：对应的 join 串必须立刻消失。 */
   clearedIds?: string[];
+  /** writer hub 的对外地址；hub 以 `HUB_NOT_WRITER` 拒写时靠它指路。 */
+  writerPublicUrl?: string | null;
 }
 
 export interface CreateEnrollmentState {
@@ -45,7 +47,7 @@ export interface CreateEnrollmentState {
 }
 
 export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnrollmentState {
-  const { api, mode, hubApi, prompt } = input;
+  const { api, mode, hubApi, prompt, writerPublicUrl = null } = input;
   const clearedIds = input.clearedIds ?? NO_CLEARED_IDS;
   const { t } = useTranslation();
   const [name, setName] = useState('');
@@ -101,11 +103,11 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
       // 走到这里说明 enrollment 没建成（多半是 hub 请求失败）：复用窗口里的根钥没有任何
       // 后续动作会用到，立刻清零，不要等 5 分钟定时器（见 F4-fix 评审 Major「所有权式清零」）。
       prompt.forget();
-      setError(actionErrorText(t, err));
+      setError(actionErrorText(t, err, { writerPublicUrl }));
     } finally {
       setBusy(false);
     }
-  }, [api, hubApi, mode, name, prompt, t]);
+  }, [api, hubApi, mode, name, prompt, t, writerPublicUrl]);
 
   return {
     name,

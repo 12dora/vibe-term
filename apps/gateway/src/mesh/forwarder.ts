@@ -92,6 +92,9 @@ type ForwardPump = {
   streamAlive: boolean;
   inflight: OpenedWsStream | null;
   queueBytes: number;
+  browserPaused: boolean;
+  inboundHold: Uint8Array[];
+  inboundHoldBytes: number;
 };
 
 const pendingMeta = new WeakMap<OpenedWsStream, ForwardMeta>();
@@ -171,6 +174,13 @@ export class Forwarder {
     this.sendToStream(pump, pump.stream, bytes);
   }
 
+  handleForwardSocketDrain(ws: MeshServerWebSocket): void {
+    const pump = this.pumps.get(ws);
+    if (!pump || pump.browserClosed) return;
+    pump.browserPaused = false;
+    this.flushInbound(pump);
+  }
+
   handleForwardSocketClose(ws: MeshServerWebSocket, code?: number, reason?: string): void {
     const pump = this.pumps.get(ws);
     this.pumps.delete(ws);
@@ -211,6 +221,9 @@ export class Forwarder {
       streamAlive: true,
       inflight: null,
       queueBytes: 0,
+      browserPaused: false,
+      inboundHold: [],
+      inboundHoldBytes: 0,
     };
     this.pumps.set(ws, pump);
     this.bindStream(pump, stream, meta?.transport ?? null);
@@ -253,7 +266,16 @@ export class Forwarder {
 
   async forwardAuthorizedHttp(
     req: Request,
-    input: { nodeId: string; method: string; path: string; query?: string; body?: unknown },
+    input: {
+      nodeId: string;
+      method: string;
+      path: string;
+      query?: string;
+      body?: unknown;
+      rawBody?: ReadableStream<Uint8Array>;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
     signal?: AbortSignal
   ): Promise<Response> {
     const auth =
@@ -261,12 +283,21 @@ export class Forwarder {
     if (!auth) {
       return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId: input.nodeId });
     }
-    const abort = signal ?? req.signal;
+    const abort = input.signal ?? signal ?? req.signal;
     const method = input.method.toUpperCase();
     const retryable = IDEMPOTENT_HTTP.has(method);
-    const headers: Record<string, string> = {};
-    const body = retryable ? null : buildJsonStreamBody(input.body, headers);
+    const headers: Record<string, string> = { ...(input.headers ?? {}) };
+    let uploaded = 0;
+    const rawBody = retryable ? null : (input.rawBody ?? null);
+    const body = retryable
+      ? null
+      : rawBody
+        ? countStreamBytes(rawBody, (n) => {
+            uploaded += n;
+          })
+        : buildJsonStreamBody(input.body, headers);
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+    let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (abort.aborted) break;
       if (attempt > 0) {
@@ -278,11 +309,22 @@ export class Forwarder {
       }
       try {
         return await this.openAuthorizedAttempt(req, input, { method, headers, auth, body, abort });
-      } catch {
+      } catch (err) {
+        lastError = err;
+        if (rawBody) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(
+            `[mesh][forward] raw-body push aborted node=${input.nodeId} bytes=${uploaded} err=${message}`
+          );
+        }
         if (!retryable) break;
       }
     }
-    return jsonError('NODE_UNREACHABLE', 503, { nodeId: input.nodeId });
+    const extra: Record<string, unknown> = { nodeId: input.nodeId };
+    if (rawBody && lastError !== undefined) {
+      extra.error = lastError instanceof Error ? lastError.message : String(lastError);
+    }
+    return jsonError('NODE_UNREACHABLE', 503, extra);
   }
 
   private async openAuthorizedAttempt(
@@ -358,10 +400,37 @@ export class Forwarder {
       if (deviceId && pump.replay.connectedForwarded.has(deviceId)) return;
       if (deviceId) pump.replay.connectedForwarded.add(deviceId);
     }
+    this.sendToBrowser(pump, bytes);
+  }
+
+  private sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void {
+    if (pump.browserClosed) return;
+    if (pump.browserPaused) {
+      if (!holdInbound(pump, bytes)) this.failPump(pump, STREAM_QUEUE_OVERFLOW_REASON);
+      return;
+    }
+    let result: number | undefined;
     try {
-      pump.ws.send(bytes);
+      result = pump.ws.send(bytes);
     } catch {
       pump.stream?.close();
+      return;
+    }
+    if (result === 0) {
+      this.closeBrowser(pump, { code: 1011, reason: 'forward-ws-closed' });
+      return;
+    }
+    if (result === -1) {
+      pump.browserPaused = true;
+    }
+  }
+
+  private flushInbound(pump: ForwardPump): void {
+    while (!pump.browserPaused && !pump.browserClosed && pump.inboundHold.length > 0) {
+      const next = pump.inboundHold.shift();
+      if (!next) break;
+      pump.inboundHoldBytes = Math.max(0, pump.inboundHoldBytes - next.byteLength);
+      this.sendToBrowser(pump, next);
     }
   }
 
@@ -729,6 +798,18 @@ function pumpDead(pump: ForwardPump, signal: AbortSignal): boolean {
   return pump.browserClosed || signal.aborted;
 }
 
+function holdInbound(pump: ForwardPump, bytes: Uint8Array): boolean {
+  if (
+    pump.inboundHold.length >= STREAM_QUEUE_MAX_FRAMES ||
+    pump.inboundHoldBytes + bytes.byteLength > STREAM_QUEUE_MAX_BYTES
+  ) {
+    return false;
+  }
+  pump.inboundHold.push(bytes.slice());
+  pump.inboundHoldBytes += bytes.byteLength;
+  return true;
+}
+
 function enqueueFrame(pump: ForwardPump, bytes: Uint8Array): boolean {
   if (
     pump.queue.length >= STREAM_QUEUE_MAX_FRAMES ||
@@ -887,6 +968,20 @@ async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+function countStreamBytes(
+  body: ReadableStream<Uint8Array>,
+  onBytes: (n: number) => void
+): ReadableStream<Uint8Array> {
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        onBytes(chunk.byteLength);
+        controller.enqueue(chunk);
+      },
+    })
+  );
 }
 
 function toBytes(message: unknown): Uint8Array | null {

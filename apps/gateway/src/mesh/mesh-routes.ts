@@ -2,6 +2,8 @@ import { wsBorsh } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { readJsonObjectBody } from '../api/http';
 import { parseCookies } from '../auth/cookies';
+import type { MeshHubStore } from '../auth/mesh-hub-store';
+import { pickWriterHub } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { PublicAuthNode } from './auth-routes';
@@ -9,6 +11,7 @@ import {
   type ConnectionLookup,
   MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
+  MESH_WS_BACKPRESSURE_LIMIT_BYTES,
   MESH_WS_KIND,
   type MeshRoles,
   type MeshServerWebSocket,
@@ -36,6 +39,7 @@ import {
   requireSession,
 } from './session-middleware';
 import type { UplinkStatus } from './types';
+import type { AttachedHub, UplinkCandidate } from './uplink-pool';
 
 export type { MeshNodeDto };
 
@@ -57,6 +61,9 @@ export type MeshRoutesDeps = {
   selfStatus?: () => UplinkStatus;
   listedNames?: () => ReadonlyArray<{ id: string; name: string }>;
   selfName?: () => string | null;
+  hubStore?: MeshHubStore;
+  attachedHub?: () => AttachedHub | null;
+  hubCandidates?: () => Array<string | UplinkCandidate>;
   forwardAuthorizedHttp?: (
     req: Request,
     input: { nodeId: string; method: string; path: string; query?: string; body?: unknown }
@@ -69,9 +76,25 @@ const STATUS_TO_U8: Record<string, number> = {
   revoked: wsBorsh.NODE_EVENT_STATUS_REVOKED,
 };
 
+function serializeHubCandidate(entry: string | UplinkCandidate): {
+  publicUrl: string;
+  lastError: string | null;
+  lastAttemptAt: number | null;
+} {
+  if (typeof entry === 'string') {
+    return { publicUrl: entry, lastError: null, lastAttemptAt: null };
+  }
+  return {
+    publicUrl: entry.publicUrl,
+    lastError: entry.lastError ?? null,
+    lastAttemptAt: entry.lastAttemptAt ?? null,
+  };
+}
+
 export class MeshRoutes {
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly meshSockets = new Set<MeshServerWebSocket>();
+  private readonly backpressureWarned = new WeakSet<MeshServerWebSocket>();
   private readonly unsubPeer: () => void;
   private unsubSignals: (() => void) | null = null;
   private seq = 0;
@@ -102,6 +125,9 @@ export class MeshRoutes {
     const path = new URL(req.url).pathname;
     if (path === '/api/mesh/nodes' && req.method === 'GET') {
       return requireSession(this.sessionDeps, (r) => this.handleNodes(r))(req);
+    }
+    if (path === '/api/mesh/hubs' && req.method === 'GET') {
+      return requireSession(this.sessionDeps, () => this.handleHubs())(req);
     }
     if (path === '/api/mesh/upgrade/latest' && req.method === 'GET') {
       return requireSession(this.sessionDeps, () => this.handleUpgradeLatest())(req);
@@ -171,6 +197,30 @@ export class MeshRoutes {
 
   private handleNodes(req: Request): Response {
     return jsonBody({ nodes: this.collectNodes(req) });
+  }
+
+  private handleHubs(): Response {
+    const store = this.deps.hubStore;
+    const rows = store?.list() ?? [];
+    const writerHubId = pickWriterHub(rows);
+    const attached = this.deps.attachedHub?.() ?? null;
+    const rawCandidates = this.deps.hubCandidates?.() ?? rows.map((row) => row.publicUrl);
+    return jsonBody({
+      hubs: rows.map((row) => ({
+        nodeId: row.hubNodeId,
+        publicUrl: row.publicUrl,
+        ...(row.name ? { name: row.name } : {}),
+        mode: row.mode,
+        priority: row.priority,
+        writerEpoch: row.writerEpoch,
+        caFingerprint: row.caFingerprint,
+        online: row.online,
+        lastSeenAt: row.lastSeenAt,
+      })),
+      attached,
+      writerHubId,
+      candidates: rawCandidates.map(serializeHubCandidate),
+    });
   }
 
   private matchUpgradeNodeRoute(req: Request, path: string): Promise<Response> | undefined {
@@ -252,11 +302,7 @@ export class MeshRoutes {
     );
     for (const ws of this.meshSockets) {
       if (ws.data.sid !== msg.entrySid) continue;
-      try {
-        ws.send(frame);
-      } catch {
-        this.meshSockets.delete(ws);
-      }
+      this.sendToMeshClient(ws, frame);
     }
   }
 
@@ -271,9 +317,13 @@ export class MeshRoutes {
     const registryById = new Map(this.deps.userStore.listNodes().map((row) => [row.id, row.name]));
     const selfName = this.deps.selfName?.() ?? null;
     const self = this.deps.selfStatus?.();
+    const storedHubs = this.deps.hubStore?.list() ?? [];
+    const hubIds = new Set(storedHubs.map((row) => row.hubNodeId));
+    const hubModeById = new Map(storedHubs.map((row) => [row.hubNodeId, row.mode] as const));
     const hubNodeId = this.deps.roles.hub
       ? this.deps.nodeId
-      : (this.deps.userStore.getHubMeta()?.nodeId ?? null);
+      : (pickWriterHub(storedHubs) ?? this.deps.userStore.getHubMeta()?.nodeId ?? null);
+    if (hubNodeId) hubIds.add(hubNodeId);
     return [...new Set([this.deps.nodeId, ...certs.map((c) => c.nodeId)])]
       .map((id) =>
         projectMeshListNode(
@@ -292,7 +342,9 @@ export class MeshRoutes {
           hubNodeId,
           (nid) => this.deps.peers.transportOf?.(nid) ?? null,
           (nid) => this.deps.peers.rttOf?.(nid) ?? null,
-          (nid) => this.deps.peers.linkDetailOf?.(nid) ?? null
+          (nid) => this.deps.peers.linkDetailOf?.(nid) ?? null,
+          hubIds,
+          (nid) => hubModeById.get(nid)
         )
       )
       .filter((n) => n != null);
@@ -403,11 +455,33 @@ export class MeshRoutes {
 
   private broadcast(frame: Uint8Array): void {
     for (const ws of this.meshSockets) {
-      try {
-        ws.send(frame);
-      } catch {
+      this.sendToMeshClient(ws, frame);
+    }
+  }
+
+  private sendToMeshClient(ws: MeshServerWebSocket, frame: Uint8Array): void {
+    const buffered = ws.getBufferedAmount?.() ?? 0;
+    if (buffered > MESH_WS_BACKPRESSURE_LIMIT_BYTES) {
+      if (!this.backpressureWarned.has(ws)) {
+        this.backpressureWarned.add(ws);
+        console.warn(
+          `[mesh] skip /mesh/ws client buffered=${buffered} over ${MESH_WS_BACKPRESSURE_LIMIT_BYTES}`
+        );
+      }
+      return;
+    }
+    try {
+      const sent = ws.send(frame);
+      if (sent === 0) {
+        try {
+          ws.close(1011, 'mesh-ws-closed');
+        } catch {
+          /* ignore */
+        }
         this.meshSockets.delete(ws);
       }
+    } catch {
+      this.meshSockets.delete(ws);
     }
   }
 }

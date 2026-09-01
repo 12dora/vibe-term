@@ -1655,6 +1655,7 @@
         "ROOT_KEY_MISMATCH": "密码不正确。",
         "PASSKEY_ABORTED": "通行密钥授权已取消。",
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
+        "HUB_NOT_WRITER": "备用 Hub 不接受管理操作，请通过主 Hub 操作。",
         "wrongPassword": "密码不正确。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
@@ -1713,6 +1714,19 @@
       "hub": "Hub",
       "loggedIn": "已登录",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
+      "hubs": {
+        "title": "Hub 集群",
+        "active": "主 Hub",
+        "standby": "备 Hub",
+        "writer": "写入",
+        "attached": "当前入口挂载于此 Hub",
+        "online": "在线",
+        "offline": "离线",
+        "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
+        "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
+        "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
+        "machineRole": "Hub 角色"
+      },
       "machine": {
         "title": "本机",
         "role": "角色",
@@ -2027,10 +2041,21 @@
         "unreachable": "无法连接到该节点。",
         "nodeGone": "该节点已从网络中移除。",
         "inProgress": "该节点正在升级。",
-        "notAllowed": "该节点不支持程序内更新。",
-        "unsupported": "该节点版本过旧，不支持远程升级。",
+        "notAllowed": "该节点的安装方式无法自更新（无服务管理器或运行在容器中），须手动升级。",
+        "unsupported": "该节点版本过旧，不支持远程升级，请在该机器上执行 npx tmex-cli upgrade。",
         "releaseUnavailable": "无法获取最新版本。",
-        "timeout": "升级结果未确认，请刷新节点列表核对版本。"
+        "timeout": "升级结果未确认，请刷新节点列表核对版本。",
+        "atLatest": "已是最新版本。",
+        "tooOld": "该节点版本过旧（{{version}}），不支持远程升级，请在该机器上执行 npx tmex-cli upgrade。",
+        "upgradeAll": "全部升级",
+        "allHint": "升级 {{count}} 个节点到 {{version}}",
+        "allNone": "没有可升级的节点。",
+        "allBusy": "已有节点在升级，须等它完成后再全部升级。",
+        "allProgress": "升级中 {{completed}}/{{total}}",
+        "confirmAll": "升级 {{count}} 个节点到 {{version}}？节点会依次重启，其上的会话随之中断。",
+        "allDone": "全部升级完成：成功 {{success}}，失败 {{failed}}。",
+        "allDoneWithFailures": "全部升级完成：成功 {{success}}，失败 {{failed}}。失败：{{names}}。",
+        "listSeparator": "、"
       },
       "badge": {
         "direct": "直连",

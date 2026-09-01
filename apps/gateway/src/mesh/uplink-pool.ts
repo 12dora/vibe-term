@@ -1,0 +1,1219 @@
+import { X509Certificate, createHash } from 'node:crypto';
+import { canonicalHubUrl, hubHostFromUrl } from '@tmex/shared/auth';
+import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
+import type { HubTrustStore } from '../auth/hub-trust-store';
+import type { MeshHubRecord } from '../auth/mesh-hub-store';
+import { hubListToRecords } from '../auth/mesh-hub-store';
+import type { UserStore } from '../auth/user-store';
+import { backoffDelayMs, defaultScheduler } from './ctl';
+import type {
+  InboundRelayHandler,
+  KeyLogApplier,
+  KeyLogForkEvent,
+  MeshIdentity,
+  MeshScheduler,
+  UplinkState,
+  UplinkStatus,
+} from './types';
+import {
+  UPLINK_BACKOFF_MAX_MS,
+  UPLINK_BACKOFF_MIN_MS,
+  UplinkClient,
+  type UplinkClientOptions,
+  type UplinkWsFactory,
+  uplinkWebSocketTls,
+} from './uplink-client';
+import type {
+  UplinkCtlMessage,
+  UplinkEnrollRedeemed,
+  UplinkNodeList,
+  UplinkRtcSignal,
+} from './uplink-protocol';
+
+export const UPLINK_POOL_FAIL_LIMIT = 3;
+export const UPLINK_POOL_AUTH_DEADLINE_MS = 20_000;
+export const UPLINK_POOL_PROBE_INTERVAL_MS = 60_000;
+export const UPLINK_POOL_PROBE_TIMEOUT_MS = 5_000;
+export const UPLINK_POOL_PROBE_JITTER = 0.2;
+export const UPLINK_SEED_PRIORITY_BASE = 1_000;
+export const CA_BOOTSTRAP_TIMEOUT_MS = 5_000;
+export const CA_BOOTSTRAP_MAX_BYTES = 64 * 1024;
+export const UPLINK_POOL_FAIL_LOG_INTERVAL_MS = 60_000;
+
+export type UplinkCandidate = {
+  hubNodeId: string | null;
+  publicUrl: string;
+  mode: HubMode;
+  writerEpoch: number;
+  priority: number;
+  caFingerprint: string | null;
+  lastError?: string | null;
+  lastAttemptAt?: number | null;
+};
+
+export type AttachedHub = {
+  hubNodeId: string | null;
+  publicUrl: string;
+  mode: HubMode | null;
+  writerEpoch: number | null;
+  since: number;
+};
+
+export type UplinkPoolNodeListMeta = {
+  hubNodeId: string | null;
+  generation: number;
+};
+
+export type CreatePooledUplink = (opts: UplinkClientOptions) => UplinkClient;
+
+export type UplinkPoolOptions = {
+  identity: MeshIdentity;
+  userId: string | (() => string);
+  keyLogApplier: KeyLogApplier;
+  userStore: UserStore;
+  statusProvider: () => UplinkStatus & { hub?: HubAdvertisement };
+  candidates: () => UplinkCandidate[];
+  hubTrust: HubTrustStore;
+  wsFactory?: UplinkWsFactory;
+  scheduler?: MeshScheduler;
+  pingIntervalMs?: number;
+  createClient?: CreatePooledUplink;
+  probeHealthz?: (publicUrl: string, tlsCa: string[] | null, timeoutMs: number) => Promise<boolean>;
+  fetchCaPem?: (publicUrl: string) => Promise<string>;
+  fingerprintPem?: (pem: string) => string;
+  isLocalCandidate?: (cand: UplinkCandidate) => boolean;
+  connectLocal?: (client: UplinkClient, signal: AbortSignal) => Promise<void>;
+  probeJitter?: number;
+  onNodeList?: (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void;
+  onRtcSignal?: (msg: UplinkRtcSignal) => void;
+  onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
+  onKeyLogFork?: (event: KeyLogForkEvent) => void;
+  failLimit?: number;
+  authDeadlineMs?: number;
+  probeIntervalMs?: number;
+  probeTimeoutMs?: number;
+};
+
+export function redactUrl(raw: string): string {
+  try {
+    return new URL(raw).origin;
+  } catch {
+    const stripped = raw
+      .replace(/[?#].*$/, '')
+      .replace(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/?#]*@/, '$1');
+    try {
+      return new URL(stripped).origin;
+    } catch {
+      return stripped.replace(/\/+$/, '') || raw;
+    }
+  }
+}
+
+export function normalizeHubEndpointUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+  try {
+    return canonicalHubUrl(trimmed);
+  } catch {
+    return trimmed.replace(/\/+$/, '');
+  }
+}
+
+export function sameHubUrl(a: string, b: string): boolean {
+  return normalizeHubEndpointUrl(a) === normalizeHubEndpointUrl(b);
+}
+
+export function isSelfHubCandidate(
+  cand: Pick<UplinkCandidate, 'hubNodeId' | 'publicUrl'>,
+  self: { nodeId?: string | null; publicUrl?: string | null }
+): boolean {
+  if (self.nodeId && cand.hubNodeId && cand.hubNodeId === self.nodeId) return true;
+  if (self.publicUrl && sameHubUrl(cand.publicUrl, self.publicUrl)) return true;
+  return false;
+}
+
+export function isCaFingerprintHex(value: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(value.trim());
+}
+
+const KEY_USAGE_OID = Buffer.from([0x06, 0x03, 0x55, 0x1d, 0x0f]);
+const KEY_USAGE_NAMES = [
+  'digitalSignature',
+  'nonRepudiation',
+  'keyEncipherment',
+  'dataEncipherment',
+  'keyAgreement',
+  'keyCertSign',
+  'cRLSign',
+  'encipherOnly',
+  'decipherOnly',
+] as const;
+
+function parseKeyUsageFromRaw(raw: ArrayBuffer | Uint8Array): string[] | undefined {
+  const buf = Buffer.from(raw instanceof ArrayBuffer ? new Uint8Array(raw) : raw);
+  const idx = buf.indexOf(KEY_USAGE_OID);
+  if (idx < 0) return undefined;
+  let i = idx + KEY_USAGE_OID.length;
+  if (buf[i] === 0x01 && buf[i + 1] === 0x01) i += 3;
+  if (buf[i] !== 0x04) return undefined;
+  const octLen = buf[i + 1];
+  if (octLen == null || octLen > 127) return undefined;
+  i += 2;
+  if (buf[i] !== 0x03) return undefined;
+  const bitStrLen = buf[i + 1];
+  const unused = buf[i + 2];
+  if (bitStrLen == null || unused == null || bitStrLen < 2) return undefined;
+  const value = buf.subarray(i + 3, i + 2 + bitStrLen);
+  const totalBits = value.length * 8 - unused;
+  const out: string[] = [];
+  for (let b = 0; b < totalBits && b < KEY_USAGE_NAMES.length; b += 1) {
+    const byte = value[b >> 3] ?? 0;
+    const bit = 7 - (b & 7);
+    if ((byte & (1 << bit)) !== 0) out.push(KEY_USAGE_NAMES[b]);
+  }
+  return out;
+}
+
+function certificateKeyUsage(cert: X509Certificate): string[] | undefined {
+  if (cert.keyUsage && cert.keyUsage.length > 0) return [...cert.keyUsage];
+  return parseKeyUsageFromRaw(cert.raw);
+}
+
+export function parseSingleCaCertificate(pem: string): X509Certificate {
+  const matches = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+  if (matches.length !== 1) throw new Error('ca_pem_count');
+  const cert = new X509Certificate(matches[0]);
+  const usages = certificateKeyUsage(cert);
+  if (usages && !usages.includes('keyCertSign')) throw new Error('ca_no_key_cert_sign');
+  if (cert.ca !== true) throw new Error('ca_not_ca');
+  return cert;
+}
+
+export function jitteredIntervalMs(baseMs: number, jitter = UPLINK_POOL_PROBE_JITTER): number {
+  const ratio = Math.min(Math.max(jitter, 0), 1);
+  const delta = baseMs * ratio;
+  return Math.max(1, Math.floor(baseMs - delta + Math.random() * (2 * delta)));
+}
+
+export function mergeUplinkCandidates(
+  stored: Array<{
+    hubNodeId: string;
+    publicUrl: string;
+    mode: HubMode;
+    writerEpoch: number;
+    priority: number;
+    caFingerprint: string | null;
+  }>,
+  seeds: string[]
+): UplinkCandidate[] {
+  const seen = new Set<string>();
+  const out: UplinkCandidate[] = [];
+  for (const row of stored) {
+    const key = normalizeHubEndpointUrl(row.publicUrl);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      hubNodeId: row.hubNodeId,
+      publicUrl: row.publicUrl,
+      mode: row.mode,
+      writerEpoch: row.writerEpoch,
+      priority: row.priority,
+      caFingerprint: row.caFingerprint,
+    });
+  }
+  let seedIndex = 0;
+  for (const raw of seeds) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const key = normalizeHubEndpointUrl(trimmed);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      hubNodeId: null,
+      publicUrl: trimmed,
+      mode: 'active',
+      writerEpoch: 0,
+      priority: UPLINK_SEED_PRIORITY_BASE + seedIndex,
+      caFingerprint: null,
+    });
+    seedIndex += 1;
+  }
+  out.sort(compareUplinkCandidates);
+  return out;
+}
+
+function modeRank(mode: HubMode | string): number {
+  if (mode === 'active') return 0;
+  if (mode === 'standby') return 1;
+  return 2;
+}
+
+function compareUplinkCandidates(a: UplinkCandidate, b: UplinkCandidate): number {
+  const rank = modeRank(a.mode) - modeRank(b.mode);
+  if (rank !== 0) return rank;
+  if (a.mode === 'active' && a.writerEpoch !== b.writerEpoch) return b.writerEpoch - a.writerEpoch;
+  if (a.priority !== b.priority) return a.priority - b.priority;
+  return 0;
+}
+
+export function recordsFromNodeList(list: UplinkNodeList): Array<Omit<MeshHubRecord, 'updatedAt'>> {
+  if (list.hubs && list.hubs.length > 0) return hubListToRecords(list.hubs);
+  if (!list.hub) return [];
+  return [
+    {
+      hubNodeId: list.hub.nodeId,
+      publicUrl: list.hub.publicUrl,
+      name: list.hub.name ?? null,
+      mode: 'active',
+      priority: 100,
+      writerEpoch: list.writerEpoch ?? 1,
+      caFingerprint: null,
+      online: true,
+      lastSeenAt: null,
+    },
+  ];
+}
+
+export function spkiFingerprintFromPem(pem: string): string {
+  const match = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+  if (!match) throw new Error('PEM does not contain a certificate');
+  const cert = new X509Certificate(match[0]);
+  const spki = cert.publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
+  return createHash('sha256').update(spki).digest('hex');
+}
+
+export async function readResponseTextLimited(res: Response, maxBytes: number): Promise<string> {
+  const body = res.body;
+  if (!body) return '';
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
+      throw new Error('ca_too_large');
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(out);
+}
+
+export function joinHubPath(publicUrl: string, path: string): string {
+  return `${publicUrl.replace(/\/+$/, '')}${path}`;
+}
+
+export async function defaultProbeHealthz(
+  publicUrl: string,
+  tlsCa: string[] | null,
+  timeoutMs: number
+): Promise<boolean> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const init: RequestInit = { method: 'GET', signal: ac.signal, redirect: 'error' };
+    const tls = uplinkWebSocketTls(tlsCa);
+    if (tls) Object.assign(init, tls);
+    const res = await fetch(joinHubPath(publicUrl, '/healthz'), init);
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function defaultFetchCaPem(
+  publicUrl: string,
+  opts?: {
+    fetch?: (input: string, init?: RequestInit) => Promise<Response>;
+    timeoutMs?: number;
+    maxBytes?: number;
+  }
+): Promise<string> {
+  const timeoutMs = opts?.timeoutMs ?? CA_BOOTSTRAP_TIMEOUT_MS;
+  const maxBytes = opts?.maxBytes ?? CA_BOOTSTRAP_MAX_BYTES;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    const fail = () => reject(new Error('ca_timeout'));
+    if (ac.signal.aborted) fail();
+    else ac.signal.addEventListener('abort', fail, { once: true });
+  });
+  try {
+    const doFetch = opts?.fetch ?? fetch;
+    const res = await Promise.race([
+      doFetch(joinHubPath(publicUrl, '/api/tls/ca.crt'), {
+        redirect: 'error',
+        signal: ac.signal,
+        tls: { rejectUnauthorized: false },
+      } as RequestInit),
+      timedOut,
+    ]);
+    if (!res.ok) throw new Error('ca_unavailable');
+    return await Promise.race([readResponseTextLimited(res, maxBytes), timedOut]);
+  } finally {
+    clearTimeout(timer);
+    if (!ac.signal.aborted) ac.abort();
+  }
+}
+
+function fallbackCandidate(): UplinkCandidate {
+  return {
+    hubNodeId: null,
+    publicUrl: 'http://127.0.0.1',
+    mode: 'active',
+    writerEpoch: 0,
+    priority: UPLINK_SEED_PRIORITY_BASE,
+    caFingerprint: null,
+  };
+}
+
+export class UplinkPool {
+  readonly identity: MeshIdentity;
+  lastConnectError: { reason: string; at: number } | null = null;
+
+  private readonly userIdOf: () => string;
+  private readonly opts: UplinkPoolOptions;
+  private readonly scheduler: MeshScheduler;
+  private readonly createClient: CreatePooledUplink;
+  private readonly failLimit: number;
+  private readonly authDeadlineMs: number;
+  private readonly probeIntervalMs: number;
+  private readonly probeTimeoutMs: number;
+  private readonly probeJitter: number;
+
+  private live: UplinkClient | null = null;
+  private pending: UplinkClient | null = null;
+  private attached: AttachedHub | null = null;
+  private generation = 0;
+  private switchToken = 0;
+  private loop: Promise<void> | null = null;
+  private stopAbort: AbortController | null = null;
+  private probe: { clear: () => void } | null = null;
+  private probeInFlight = false;
+  private wrapAttempt = 0;
+  private relayHandler: InboundRelayHandler | null = null;
+  private readonly caBootstraps = new Map<string, Promise<void>>();
+  private readonly diagByUrl = new Map<
+    string,
+    { lastError: string | null; lastAttemptAt: number | null }
+  >();
+  private readonly candLogAt = new Map<
+    string,
+    { index: number; error: string | null; transport: string; at: number }
+  >();
+  private wrapSleepAbort: AbortController | null = null;
+  private readonly stateListeners: Array<(state: UplinkState) => void> = [];
+  private readonly attachedListeners: Array<(hub: AttachedHub) => void> = [];
+  private readonly detachedListeners: Array<() => void> = [];
+  private readonly nodeListListeners: Array<
+    (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void
+  > = [];
+  private liveStateOff: (() => void) | null = null;
+
+  constructor(opts: UplinkPoolOptions) {
+    this.opts = opts;
+    this.identity = opts.identity;
+    const uid = opts.userId;
+    this.userIdOf = typeof uid === 'function' ? uid : () => uid;
+    this.scheduler = opts.scheduler ?? defaultScheduler();
+    this.createClient = opts.createClient ?? ((clientOpts) => new UplinkClient(clientOpts));
+    this.failLimit = opts.failLimit ?? UPLINK_POOL_FAIL_LIMIT;
+    this.authDeadlineMs = opts.authDeadlineMs ?? UPLINK_POOL_AUTH_DEADLINE_MS;
+    this.probeIntervalMs = opts.probeIntervalMs ?? UPLINK_POOL_PROBE_INTERVAL_MS;
+    this.probeTimeoutMs = opts.probeTimeoutMs ?? UPLINK_POOL_PROBE_TIMEOUT_MS;
+    this.probeJitter = opts.probeJitter ?? UPLINK_POOL_PROBE_JITTER;
+  }
+
+  get userId(): string {
+    return this.live?.userId ?? this.pending?.userId ?? this.userIdOf();
+  }
+
+  get state(): UplinkState {
+    return this.live?.state ?? this.pending?.state ?? 'offline';
+  }
+
+  get link() {
+    return this.live?.link ?? this.pending?.link ?? null;
+  }
+
+  get lastKeyLogHead() {
+    return this.live?.lastKeyLogHead ?? this.pending?.lastKeyLogHead ?? null;
+  }
+
+  attachedHub(): AttachedHub | null {
+    return this.attached;
+  }
+
+  candidates(): UplinkCandidate[] {
+    const list = this.opts.candidates();
+    const base = list.length > 0 ? list : [fallbackCandidate()];
+    return base.map((row) => {
+      const diag = this.diagByUrl.get(normalizeHubEndpointUrl(row.publicUrl));
+      return {
+        ...row,
+        lastError: diag?.lastError ?? row.lastError ?? null,
+        lastAttemptAt: diag?.lastAttemptAt ?? row.lastAttemptAt ?? null,
+      };
+    });
+  }
+
+  currentGeneration(): number {
+    return this.generation;
+  }
+
+  liveClient(): UplinkClient | null {
+    return this.live;
+  }
+
+  onAttached(cb: (hub: AttachedHub) => void): () => void {
+    this.attachedListeners.push(cb);
+    return () => {
+      const idx = this.attachedListeners.indexOf(cb);
+      if (idx >= 0) this.attachedListeners.splice(idx, 1);
+    };
+  }
+
+  onDetached(cb: () => void): () => void {
+    this.detachedListeners.push(cb);
+    return () => {
+      const idx = this.detachedListeners.indexOf(cb);
+      if (idx >= 0) this.detachedListeners.splice(idx, 1);
+    };
+  }
+
+  onNodeList(cb: (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void): () => void {
+    this.nodeListListeners.push(cb);
+    return () => {
+      const idx = this.nodeListListeners.indexOf(cb);
+      if (idx >= 0) this.nodeListListeners.splice(idx, 1);
+    };
+  }
+
+  onStateChange(cb: (state: UplinkState) => void): () => void {
+    this.stateListeners.push(cb);
+    return () => {
+      const idx = this.stateListeners.indexOf(cb);
+      if (idx >= 0) this.stateListeners.splice(idx, 1);
+    };
+  }
+
+  setOnRelayStream(handler: InboundRelayHandler | null): void {
+    this.relayHandler = handler;
+    this.live?.setOnRelayStream(handler);
+  }
+
+  start(_connectOnce?: (signal: AbortSignal) => Promise<void>): void {
+    if (this.loop) return;
+    this.stopAbort = new AbortController();
+    this.loop = this.run(this.stopAbort.signal);
+  }
+
+  async connectWithLink(
+    link: Parameters<UplinkClient['connectWithLink']>[0],
+    signal?: AbortSignal
+  ): Promise<void> {
+    const client = this.requireLive();
+    await client.connectWithLink(link, signal);
+  }
+
+  async stop(): Promise<void> {
+    this.stopAbort?.abort();
+    this.stopAbort = null;
+    this.stopProbe();
+    const live = this.live;
+    const pending = this.pending;
+    this.live = null;
+    this.pending = null;
+    if (this.attached) {
+      this.attached = null;
+      this.emitDetached();
+    }
+    this.unbindLiveState();
+    const loop = this.loop;
+    this.loop = null;
+    await pending?.stop();
+    await live?.stop();
+    try {
+      if (loop) await loop;
+    } catch {
+      /* cancelled */
+    }
+    this.emitState('offline');
+  }
+
+  sendCtl(msg: UplinkCtlMessage): void {
+    this.requireLive().sendCtl(msg);
+  }
+
+  sendStatus(): void {
+    this.live?.sendStatus();
+  }
+
+  sendStatusIfChanged(): boolean {
+    return this.live?.sendStatusIfChanged() ?? false;
+  }
+
+  openRelay(toNodeId: string) {
+    return this.requireLive().openRelay(toNodeId);
+  }
+
+  queryHubHead() {
+    return this.requireLive().queryHubHead();
+  }
+
+  queryKeyLogAt(seq: bigint, timeoutMs?: number) {
+    return this.requireLive().queryKeyLogAt(seq, timeoutMs);
+  }
+
+  appendAndAck(
+    record: { bytes: Uint8Array; sig: Uint8Array },
+    timeoutMs?: number,
+    generation?: number
+  ) {
+    return this.requireLive().appendAndAck(record, timeoutMs, generation);
+  }
+
+  async switchTo(publicUrl: string): Promise<void> {
+    const target = this.candidates().find((row) => sameHubUrl(row.publicUrl, publicUrl));
+    if (!target) throw new Error(`unknown hub url: ${publicUrl}`);
+    if (
+      this.attached &&
+      sameHubUrl(this.attached.publicUrl, publicUrl) &&
+      this.live?.state === 'online'
+    ) {
+      return;
+    }
+    const signal = this.stopAbort?.signal;
+    if (!signal || signal.aborted) throw new Error('aborted');
+    const cands = this.candidates();
+    const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, publicUrl));
+    const transport = this.isLocalTransport(target) ? 'memory' : 'ws';
+    this.noteAttempt(target);
+    this.logCandidateEvent(target, idx, transport, this.lastErrorOf(target), 'try', {
+      total: cands.length,
+    });
+    const token = this.beginSwitch();
+    const client = this.spawn(target);
+    this.pending = client;
+    try {
+      await this.connectCandidate(client, target, signal);
+      if (!this.isSwitchCurrent(token)) {
+        if (this.pending === client) this.pending = null;
+        await client.stop();
+        return;
+      }
+      await this.promote(client, target, token);
+    } catch (err) {
+      const msg = errMessage(err);
+      this.noteFailure(target, msg);
+      this.logCandidateFailed(target, msg, 1, idx, transport);
+      this.logMissingCaPin(target, err);
+      if (this.pending === client) this.pending = null;
+      await client.stop();
+      throw err;
+    }
+  }
+
+  private requireLive(): UplinkClient {
+    const live = this.live;
+    if (!live) throw new Error('uplink is not online');
+    return live;
+  }
+
+  private async run(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      const cands = this.candidates();
+      let session = false;
+      for (let i = 0; i < cands.length; i += 1) {
+        const cand = cands[i];
+        if (!cand || signal.aborted) return;
+        session = await this.tryCandidate(cand, signal, i, cands.length);
+        if (session) break;
+        const next = cands[i + 1];
+        if (next) {
+          const nextTransport = this.isLocalTransport(next) ? 'memory' : 'ws';
+          this.logCandidateEvent(next, i + 1, nextTransport, this.lastErrorOf(next), 'failover');
+        }
+      }
+      if (signal.aborted) return;
+      if (session) {
+        this.wrapAttempt = 0;
+        try {
+          await this.scheduler.sleep(
+            backoffDelayMs(0, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS),
+            signal
+          );
+        } catch {
+          return;
+        }
+        continue;
+      }
+      const delay = backoffDelayMs(this.wrapAttempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
+      this.wrapAttempt += 1;
+      this.wrapSleepAbort = new AbortController();
+      const combined = anyAbort(signal, this.wrapSleepAbort.signal);
+      try {
+        await this.scheduler.sleep(delay, combined);
+      } catch {
+        if (signal.aborted) return;
+      } finally {
+        this.wrapSleepAbort = null;
+      }
+    }
+  }
+
+  private beginSwitch(): number {
+    this.switchToken += 1;
+    return this.switchToken;
+  }
+
+  private isSwitchCurrent(token: number): boolean {
+    return token === this.switchToken && !this.stopAbort?.signal.aborted;
+  }
+
+  private isLocalTransport(cand: UplinkCandidate): boolean {
+    return this.opts.isLocalCandidate?.(cand) === true && Boolean(this.opts.connectLocal);
+  }
+
+  private async connectCandidate(
+    client: UplinkClient,
+    cand: UplinkCandidate,
+    signal: AbortSignal
+  ): Promise<void> {
+    if (this.isLocalTransport(cand) && this.opts.connectLocal) {
+      await this.opts.connectLocal(client, signal);
+      return;
+    }
+    await client.attemptConnect(signal);
+  }
+
+  private async tryCandidate(
+    cand: UplinkCandidate,
+    signal: AbortSignal,
+    index = 0,
+    total = 1
+  ): Promise<boolean> {
+    const deadline = new AbortController();
+    const combined = anyAbort(signal, deadline.signal);
+    const deadlineStarted = this.scheduler.now();
+    const sleeper = this.scheduler.sleep(this.authDeadlineMs, deadline.signal).then(
+      () => {
+        if (this.scheduler.now() - deadlineStarted < this.authDeadlineMs) return;
+        if (!deadline.signal.aborted) deadline.abort();
+      },
+      () => {}
+    );
+    const token = this.beginSwitch();
+    const client = this.spawn(cand);
+    this.pending = client;
+    const transport = this.isLocalTransport(cand) ? 'memory' : 'ws';
+    this.noteAttempt(cand);
+    this.logCandidateEvent(cand, index, transport, this.lastErrorOf(cand), 'try', { total });
+    let failures = 0;
+    try {
+      while (failures < this.failLimit && !combined.aborted) {
+        try {
+          await this.connectCandidate(client, cand, combined);
+          if (!this.isSwitchCurrent(token)) {
+            if (this.live?.state === 'online') {
+              await this.waitActiveSession(this.live, signal);
+              return true;
+            }
+            return false;
+          }
+          deadline.abort();
+          await this.promote(client, cand, token);
+          await this.waitActiveSession(this.live ?? client, signal);
+          return true;
+        } catch (err) {
+          failures += 1;
+          const msg = errMessage(err);
+          this.lastConnectError = { reason: msg, at: this.scheduler.now() };
+          this.noteFailure(cand, msg);
+          this.logCandidateFailed(cand, msg, failures, index, transport);
+          this.logMissingCaPin(cand, err);
+          if (combined.aborted || failures >= this.failLimit) break;
+        }
+      }
+      return false;
+    } finally {
+      deadline.abort();
+      await sleeper.catch(() => {});
+      if (this.pending === client) this.pending = null;
+      if (this.live === client) {
+        this.clearLive(client);
+      }
+      if (this.live !== client) {
+        try {
+          await client.stop();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  private spawn(cand: UplinkCandidate): UplinkClient {
+    const pin = this.opts.hubTrust.get(cand.publicUrl);
+    const tlsCa = pin?.caPem ? [pin.caPem] : null;
+    const wsFactory = this.opts.wsFactory ?? defaultWsFactory(tlsCa);
+    const client = this.createClient({
+      hubUrl: cand.publicUrl,
+      identity: this.opts.identity,
+      userId: this.userIdOf,
+      keyLogApplier: this.opts.keyLogApplier,
+      userStore: this.opts.userStore,
+      statusProvider: this.opts.statusProvider,
+      wsFactory,
+      tlsCa,
+      scheduler: this.scheduler,
+      pingIntervalMs: this.opts.pingIntervalMs,
+      onNodeList: (list) => this.dispatchNodeList(client, list, cand.hubNodeId),
+      onRtcSignal: (msg) => {
+        if (this.live !== client) return;
+        this.opts.onRtcSignal?.(msg);
+      },
+      onEnrollRedeemed: (msg) => {
+        if (this.live !== client) return;
+        this.opts.onEnrollRedeemed?.(msg);
+      },
+      onKeyLogFork: (event) => {
+        if (this.live !== client) return;
+        this.opts.onKeyLogFork?.(event);
+      },
+    });
+    return client;
+  }
+
+  private async promote(client: UplinkClient, cand: UplinkCandidate, token: number): Promise<void> {
+    if (!this.isSwitchCurrent(token)) {
+      await client.stop();
+      return;
+    }
+    const old = this.live !== client ? this.live : null;
+    this.generation += 1;
+    this.pending = null;
+    this.live = client;
+    this.bindLiveState(client);
+    client.setOnRelayStream(this.relayHandler);
+    this.attached = {
+      hubNodeId: cand.hubNodeId,
+      publicUrl: cand.publicUrl,
+      mode: cand.mode,
+      writerEpoch: cand.writerEpoch,
+      since: this.scheduler.now(),
+    };
+    this.emitAttached(this.attached);
+    this.emitState(client.state);
+    client.sendStatusIfChanged();
+    this.syncProbe();
+    if (old) {
+      old.setOnRelayStream(null);
+      try {
+        await old.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  private dispatchNodeList(
+    client: UplinkClient,
+    list: UplinkNodeList,
+    hubNodeId: string | null
+  ): void {
+    if (this.live !== client) return;
+    this.opts.onNodeList?.(list, {
+      hubNodeId: this.attached?.hubNodeId ?? hubNodeId,
+      generation: this.generation,
+    });
+    this.refreshAttachedFromList(list);
+    this.refreshAttachedFromCandidates();
+    const meta = {
+      hubNodeId: this.attached?.hubNodeId ?? hubNodeId,
+      generation: this.generation,
+    };
+    for (const cb of this.nodeListListeners) {
+      try {
+        cb(list, meta);
+      } catch {
+        /* listener errors must not break the pool */
+      }
+    }
+    this.syncProbe();
+    void this.pinAdvertisedCas(list);
+    void this.pinCandidateFingerprints();
+  }
+
+  private refreshAttachedFromList(list: UplinkNodeList): void {
+    const attached = this.attached;
+    if (!attached) return;
+    const recs = recordsFromNodeList(list);
+    const match = recs.find((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+    if (!match) return;
+    attached.hubNodeId = match.hubNodeId;
+    attached.mode = match.mode;
+    attached.writerEpoch = match.writerEpoch;
+  }
+
+  private refreshAttachedFromCandidates(): void {
+    const attached = this.attached;
+    if (!attached) return;
+    const match = this.candidates().find((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+    if (!match) return;
+    attached.hubNodeId = match.hubNodeId;
+    attached.mode = match.mode;
+    attached.writerEpoch = match.writerEpoch;
+  }
+
+  private async pinAdvertisedCas(list: UplinkNodeList): Promise<void> {
+    const hubs = list.hubs ?? [];
+    await Promise.all(hubs.map((hub) => this.pinAdvertisedCa(hub)));
+  }
+
+  private pinAdvertisedCa(hub: {
+    publicUrl: string;
+    caFingerprint?: string | null;
+  }): Promise<void> {
+    const advertised = hub.caFingerprint?.trim().toLowerCase() ?? '';
+    if (!advertised || !isCaFingerprintHex(advertised)) return Promise.resolve();
+    if (this.opts.hubTrust.get(hub.publicUrl)) return Promise.resolve();
+    const key = normalizeHubEndpointUrl(hub.publicUrl);
+    const existing = this.caBootstraps.get(key);
+    if (existing) return existing;
+    const work = this.doPinAdvertisedCa(hub.publicUrl, advertised).finally(() => {
+      if (this.caBootstraps.get(key) === work) this.caBootstraps.delete(key);
+    });
+    this.caBootstraps.set(key, work);
+    return work;
+  }
+
+  private async pinCandidateFingerprints(): Promise<void> {
+    await Promise.all(
+      this.candidates().map((cand) =>
+        this.pinAdvertisedCa({ publicUrl: cand.publicUrl, caFingerprint: cand.caFingerprint })
+      )
+    );
+  }
+
+  private async doPinAdvertisedCa(publicUrl: string, advertised: string): Promise<void> {
+    try {
+      const pem = await (this.opts.fetchCaPem ?? defaultFetchCaPem)(publicUrl);
+      if (!this.opts.fingerprintPem) parseSingleCaCertificate(pem);
+      const fingerprint = (this.opts.fingerprintPem ?? spkiFingerprintFromPem)(pem).toLowerCase();
+      if (fingerprint !== advertised) {
+        this.logInfo(
+          `[uplink] ca bootstrap failed url=${redactUrl(publicUrl)} err=fingerprint_mismatch`
+        );
+        return;
+      }
+      this.opts.hubTrust.put({
+        hubUrl: publicUrl,
+        caPem: pem,
+        fingerprint,
+      });
+      this.logInfo(`[uplink] ca pin stored url=${redactUrl(publicUrl)} fp=${fingerprint}`);
+      this.wakeWrapSleep();
+    } catch (err) {
+      this.logInfo(
+        `[uplink] ca bootstrap failed url=${redactUrl(publicUrl)} err=${errMessage(err)}`
+      );
+    }
+  }
+
+  private async waitActiveSession(origin: UplinkClient, signal: AbortSignal): Promise<void> {
+    let current = origin;
+    while (this.live && !signal.aborted) {
+      current = this.live;
+      await this.waitWhileLive(current, signal);
+      if (this.live === current) break;
+    }
+  }
+
+  private async waitWhileLive(client: UplinkClient, signal: AbortSignal): Promise<void> {
+    if (this.live !== client || signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        off();
+        signal.removeEventListener('abort', finish);
+        resolve();
+      };
+      const off = client.onStateChange((state) => {
+        if (state === 'offline' || this.live !== client) finish();
+      });
+      if (signal.aborted || this.live !== client || client.state === 'offline') {
+        finish();
+        return;
+      }
+      signal.addEventListener('abort', finish, { once: true });
+      void client.waitUntilClosed(signal).then(finish);
+    });
+  }
+
+  private clearLive(client: UplinkClient): void {
+    if (this.live !== client) return;
+    this.live = null;
+    this.unbindLiveState();
+    this.stopProbe();
+    if (this.attached) {
+      this.attached = null;
+      this.emitDetached();
+    }
+    this.emitState('offline');
+  }
+
+  private bindLiveState(client: UplinkClient): void {
+    this.unbindLiveState();
+    this.liveStateOff = client.onStateChange((state) => {
+      if (this.live === client) this.emitState(state);
+    });
+  }
+
+  private unbindLiveState(): void {
+    this.liveStateOff?.();
+    this.liveStateOff = null;
+  }
+
+  private syncProbe(): void {
+    this.stopProbe();
+    const attached = this.attached;
+    if (!attached) return;
+    const idx = this.candidates().findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+    if (idx <= 0) return;
+    this.probe = this.scheduler.interval(
+      () => {
+        void this.probePreferred();
+      },
+      jitteredIntervalMs(this.probeIntervalMs, this.probeJitter)
+    );
+  }
+
+  private stopProbe(): void {
+    this.probe?.clear();
+    this.probe = null;
+  }
+
+  private async probePreferred(): Promise<void> {
+    if (this.probeInFlight) return;
+    this.probeInFlight = true;
+    try {
+      const attached = this.attached;
+      if (!attached) return;
+      const cands = this.candidates();
+      const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+      if (idx <= 0) {
+        this.stopProbe();
+        return;
+      }
+      const probe = this.opts.probeHealthz ?? defaultProbeHealthz;
+      for (let i = 0; i < idx; i += 1) {
+        const pref = cands[i];
+        if (!pref) continue;
+        const pin = this.opts.hubTrust.get(pref.publicUrl);
+        const tlsCa = pin?.caPem ? [pin.caPem] : null;
+        const ok = await probe(pref.publicUrl, tlsCa, this.probeTimeoutMs);
+        if (!ok) {
+          this.logInfo(`[uplink] probe fail hub=${redactUrl(pref.publicUrl)}`);
+          continue;
+        }
+        this.logInfo(`[uplink] probe ok hub=${redactUrl(pref.publicUrl)}`);
+        try {
+          await this.switchTo(pref.publicUrl);
+          const transport = this.isLocalTransport(pref) ? 'memory' : 'ws';
+          this.logCandidateEvent(pref, i, transport, this.lastErrorOf(pref), 'switch-back');
+        } catch {
+          /* keep current attachment */
+        }
+        return;
+      }
+    } finally {
+      this.probeInFlight = false;
+    }
+  }
+
+  private noteAttempt(cand: UplinkCandidate): void {
+    const key = normalizeHubEndpointUrl(cand.publicUrl);
+    const prev = this.diagByUrl.get(key);
+    this.diagByUrl.set(key, {
+      lastError: prev?.lastError ?? null,
+      lastAttemptAt: this.scheduler.now(),
+    });
+  }
+
+  private noteFailure(cand: UplinkCandidate, msg: string): void {
+    const key = normalizeHubEndpointUrl(cand.publicUrl);
+    this.diagByUrl.set(key, {
+      lastError: msg,
+      lastAttemptAt: this.scheduler.now(),
+    });
+  }
+
+  private lastErrorOf(cand: UplinkCandidate): string | null {
+    return this.diagByUrl.get(normalizeHubEndpointUrl(cand.publicUrl))?.lastError ?? null;
+  }
+
+  private logCandidateFailed(
+    cand: UplinkCandidate,
+    msg: string,
+    fails: number,
+    index: number,
+    transport: string
+  ): void {
+    this.logCandidateEvent(cand, index, transport, msg, 'failed', { fails });
+  }
+
+  private logCandidateEvent(
+    cand: UplinkCandidate,
+    index: number,
+    transport: string,
+    error: string | null,
+    kind: 'try' | 'failover' | 'switch-back' | 'failed',
+    extra?: { fails?: number; total?: number }
+  ): void {
+    const origin = redactUrl(cand.publicUrl);
+    const key = `${normalizeHubEndpointUrl(cand.publicUrl)}\0${kind}`;
+    const now = this.scheduler.now();
+    const stateError = kind === 'failed' ? error : null;
+    const prev = this.candLogAt.get(key);
+    if (
+      prev &&
+      prev.index === index &&
+      prev.error === stateError &&
+      prev.transport === transport &&
+      now - prev.at < UPLINK_POOL_FAIL_LOG_INTERVAL_MS
+    ) {
+      return;
+    }
+    this.candLogAt.set(key, { index, error: stateError, transport, at: now });
+    if (kind === 'try') {
+      this.logInfo(
+        `[uplink] try hub=${origin} mode=${cand.mode} epoch=${cand.writerEpoch} idx=${index + 1}/${extra?.total ?? this.candidates().length} transport=${transport}`
+      );
+      return;
+    }
+    if (kind === 'failover') {
+      this.logInfo(`[uplink] failover → hub=${origin}`);
+      return;
+    }
+    if (kind === 'switch-back') {
+      this.logInfo(`[uplink] switch-back → hub=${origin}`);
+      return;
+    }
+    this.logInfo(
+      `[uplink] candidate failed hub=${origin} err=${error ?? ''} fails=${extra?.fails ?? 1}`
+    );
+  }
+
+  private logMissingCaPin(cand: UplinkCandidate, err: unknown): void {
+    if (!isTlsCertificateError(err)) return;
+    if (this.opts.hubTrust.get(cand.publicUrl)) return;
+    const advertised = cand.caFingerprint?.trim() ?? '';
+    if (advertised && isCaFingerprintHex(advertised)) return;
+    this.logInfo(
+      `[uplink] no CA pin for ${redactUrl(cand.publicUrl)} and no advertised fingerprint`
+    );
+  }
+
+  private wakeWrapSleep(): void {
+    const wake = this.wrapSleepAbort;
+    if (!wake || wake.signal.aborted) return;
+    wake.abort();
+  }
+
+  private logInfo(line: string): void {
+    console.info(line);
+  }
+
+  private emitState(state: UplinkState): void {
+    for (const cb of this.stateListeners) {
+      try {
+        cb(state);
+      } catch {
+        /* listener errors must not break the pool */
+      }
+    }
+  }
+
+  private emitAttached(hub: AttachedHub): void {
+    for (const cb of this.attachedListeners) {
+      try {
+        cb(hub);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  private emitDetached(): void {
+    for (const cb of this.detachedListeners) {
+      try {
+        cb();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isTlsCertificateError(err: unknown): boolean {
+  const msg = errMessage(err).toLowerCase();
+  return /tls|certificate|cert_|unable to verify|self[- ]signed|untrusted|err_cert|ssl|hostname/.test(
+    msg
+  );
+}
+
+function defaultWsFactory(tlsCa: string[] | null): UplinkWsFactory {
+  return (url) => {
+    const tls = uplinkWebSocketTls(tlsCa);
+    return tls ? new WebSocket(url, tls as never) : new WebSocket(url);
+  };
+}
+
+function anyAbort(a: AbortSignal, b: AbortSignal): AbortSignal {
+  const out = new AbortController();
+  const abort = () => {
+    if (!out.signal.aborted) out.abort();
+  };
+  if (a.aborted || b.aborted) {
+    abort();
+    return out.signal;
+  }
+  a.addEventListener('abort', abort, { once: true });
+  b.addEventListener('abort', abort, { once: true });
+  return out.signal;
+}
+
+export function attachedHubHost(
+  attached: AttachedHub | null,
+  fallbackUrl?: string | null
+): string | null {
+  const url = attached?.publicUrl ?? fallbackUrl;
+  if (!url) return null;
+  try {
+    return hubHostFromUrl(url);
+  } catch {
+    return null;
+  }
+}

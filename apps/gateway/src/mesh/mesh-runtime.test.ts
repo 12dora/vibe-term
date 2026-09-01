@@ -18,6 +18,7 @@ import {
   selfSignedNodeCertificate,
 } from '../auth';
 import { HubTrustStore } from '../auth/hub-trust-store';
+import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';
 import type { GatewayRuntime } from '../runtime';
@@ -29,6 +30,7 @@ import {
   attachKeyLogHeadNotify,
   createKeyLogPublisher,
   createMeshRuntime,
+  hubRoleAdvertisement,
   isAdvertisablePeerAddress,
 } from './mesh-runtime';
 import {
@@ -1180,6 +1182,464 @@ describe('createMeshRuntime', () => {
     if (latest?.t !== 'node.status') throw new Error('expected node.status');
     expect(latest.endpoints).toEqual(
       expect.arrayContaining(['ws://10.0.0.8:39001/peer', 'ws://172.28.0.4:39001/peer'])
+    );
+  });
+
+  test('persists node.list hubs[] into MeshHubStore and keeps the hub sentinel', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const hubId = 'bb'.repeat(16);
+    const standbyId = 'cc'.repeat(16);
+    for (const nodeId of [hubId, standbyId]) {
+      userStore.upsertCert({
+        nodeId,
+        userId: 'user-1',
+        admitRecordSeq: 1,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: 'user-1',
+          node_id: hexToBytes(nodeId),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: randomBytes(64),
+        authorizationBytes: randomBytes(8),
+        authorizationSig: randomBytes(64),
+      });
+    }
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    const lists: unknown[] = [];
+    mesh.onNodeList((list, meta) => lists.push({ list, meta }));
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 2,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+        hub: { nodeId: hubId, publicUrl: 'https://writer.example', name: 'writer' },
+        hubs: [
+          {
+            nodeId: hubId,
+            publicUrl: 'https://writer.example',
+            name: 'writer',
+            mode: 'active',
+            priority: 10,
+            writerEpoch: 4,
+            online: true,
+          },
+          {
+            nodeId: standbyId,
+            publicUrl: 'https://standby.example',
+            name: 'standby',
+            mode: 'standby',
+            priority: 20,
+            writerEpoch: 1,
+            online: true,
+          },
+        ],
+        writerHubId: hubId,
+        writerEpoch: 4,
+      })
+    );
+    await waitUntil(() => mesh.lastNodeList !== null);
+    const store = new MeshHubStore(db);
+    expect(store.list().map((row) => row.hubNodeId)).toEqual([hubId, standbyId]);
+    expect(userStore.getHubMeta()?.nodeId).toBe(hubId);
+    expect(mesh.attachedHub()?.publicUrl).toBe('http://127.0.0.1:9');
+    expect(lists.length).toBeGreaterThan(0);
+  });
+
+  test('synthesizes MeshHubStore from a legacy hub field and prune keeps every hub id', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const hubId = 'bb'.repeat(16);
+    const standbyId = 'cc'.repeat(16);
+    const ghostId = 'dd'.repeat(16);
+    for (const nodeId of [hubId, standbyId]) {
+      userStore.upsertCert({
+        nodeId,
+        userId: 'user-1',
+        admitRecordSeq: 1,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: 'user-1',
+          node_id: hexToBytes(nodeId),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: randomBytes(64),
+        authorizationBytes: randomBytes(8),
+        authorizationSig: randomBytes(64),
+      });
+    }
+    for (const nodeId of [hubId, standbyId, ghostId]) {
+      userStore.upsertPeer({
+        nodeId,
+        name: nodeId.slice(0, 4),
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+      });
+    }
+    new MeshHubStore(db).replaceAll(
+      [
+        {
+          hubNodeId: hubId,
+          publicUrl: 'https://writer.example',
+          name: null,
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 1,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: null,
+        },
+        {
+          hubNodeId: standbyId,
+          publicUrl: 'https://standby.example',
+          name: null,
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: null,
+        },
+      ],
+      1
+    );
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 3,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+        hub: { nodeId: hubId, publicUrl: 'https://writer.example', name: 'writer' },
+        hubs: [
+          {
+            nodeId: hubId,
+            publicUrl: 'https://writer.example',
+            mode: 'active',
+            priority: 10,
+            writerEpoch: 4,
+          },
+          {
+            nodeId: standbyId,
+            publicUrl: 'https://standby.example',
+            mode: 'standby',
+            priority: 20,
+            writerEpoch: 1,
+          },
+        ],
+      })
+    );
+    await waitUntil(() => mesh.lastNodeList !== null);
+    const peers = userStore.listPeers().map((row) => row.nodeId);
+    expect(peers).toContain(hubId);
+    expect(peers).toContain(standbyId);
+    expect(peers).not.toContain(ghostId);
+
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 4,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+        hub: { nodeId: hubId, publicUrl: 'https://writer.example', name: 'writer' },
+        writerEpoch: 7,
+      })
+    );
+    await waitUntil(() => mesh.lastNodeList?.version === 4);
+    const store = new MeshHubStore(db);
+    expect(store.list()).toHaveLength(1);
+    expect(store.list()[0]).toMatchObject({
+      hubNodeId: hubId,
+      mode: 'active',
+      priority: 100,
+      writerEpoch: 7,
+    });
+  });
+
+  test('hub role advertises itself on node.status', async () => {
+    expect(
+      hubRoleAdvertisement(
+        {
+          roles: { hub: true, node: true },
+          hubUrl: 'http://127.0.0.1:9',
+          hubPublicUrl: 'https://hub.example',
+          hubMode: 'standby',
+          hubPriority: 40,
+          hubWriterEpoch: 3,
+          peerPort: 0,
+          stunServers: [],
+        },
+        'ab'.repeat(32)
+      )
+    ).toEqual({
+      publicUrl: 'https://hub.example',
+      mode: 'standby',
+      priority: 40,
+      writerEpoch: 3,
+      caFingerprint: 'ab'.repeat(32),
+    });
+    expect(
+      hubRoleAdvertisement(
+        {
+          roles: { hub: false, node: true },
+          hubUrl: 'http://127.0.0.1:9',
+          peerPort: 0,
+          stunServers: [],
+        },
+        'ab'.repeat(32)
+      )
+    ).toBeUndefined();
+    expect(
+      hubRoleAdvertisement(
+        {
+          roles: { hub: true, node: true },
+          hubUrl: 'http://127.0.0.1:9',
+          hubPublicUrl: 'https://hub.example',
+          hubMode: 'active',
+          hubPriority: 10,
+          hubWriterEpoch: 1,
+          peerPort: 0,
+          stunServers: [],
+        },
+        'ab'.repeat(32),
+        { mode: () => 'standby', writerEpoch: () => 9 }
+      )
+    ).toEqual({
+      publicUrl: 'https://hub.example',
+      mode: 'standby',
+      priority: 10,
+      writerEpoch: 9,
+      caFingerprint: 'ab'.repeat(32),
+    });
+
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: ReturnType<typeof decodeUplinkCtl>[] = [];
+    hub.ctl.onMessage((bytes) => {
+      received.push(decodeUplinkCtl(bytes));
+    });
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: true, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        hubPublicUrl: 'https://hub.example',
+        hubMode: 'standby',
+        hubPriority: 40,
+        hubWriterEpoch: 3,
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+      tlsInfo: () => ({ caFingerprint: 'ab'.repeat(32), caPem: 'pem' }),
+      uplinkHub: null,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    await waitUntil(() => received.some((msg) => msg.t === 'node.status'));
+    const status = received.find((msg) => msg.t === 'node.status');
+    expect(status && status.t === 'node.status' ? status.hub : undefined).toEqual({
+      publicUrl: 'https://hub.example',
+      mode: 'standby',
+      priority: 40,
+      writerEpoch: 3,
+      caFingerprint: 'ab'.repeat(32),
+    });
+  });
+
+  test('TLS fingerprint poll refreshes node.status hub advertisement', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: ReturnType<typeof decodeUplinkCtl>[] = [];
+    hub.ctl.onMessage((bytes) => {
+      received.push(decodeUplinkCtl(bytes));
+    });
+    const scheduler = new ImmediateScheduler();
+    let fp = 'aa'.repeat(32);
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: true, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        hubPublicUrl: 'https://hub.example',
+        hubMode: 'active',
+        hubPriority: 10,
+        hubWriterEpoch: 1,
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+      tlsInfo: () => ({ caFingerprint: fp, caPem: 'pem' }),
+      tlsPollIntervalMs: 1_000,
+      scheduler,
+      uplinkHub: null,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    await waitUntil(() => received.some((msg) => msg.t === 'node.status'));
+    fp = 'bb'.repeat(32);
+    scheduler.advance(1_000);
+    await waitUntil(() =>
+      received.some((msg) => msg.t === 'node.status' && msg.hub?.caFingerprint === 'bb'.repeat(32))
+    );
+  });
+
+  test('refreshTlsAndAdvertise sends a fingerprint that was null at construct', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: ReturnType<typeof decodeUplinkCtl>[] = [];
+    hub.ctl.onMessage((bytes) => {
+      received.push(decodeUplinkCtl(bytes));
+    });
+    let fp: string | null = null;
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: true, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        hubPublicUrl: 'https://hub.example',
+        hubMode: 'standby',
+        hubPriority: 40,
+        hubWriterEpoch: 3,
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+      tlsInfo: () => ({ caFingerprint: fp, caPem: fp ? 'pem' : null }),
+      uplinkHub: null,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    await waitUntil(() => received.some((msg) => msg.t === 'node.status'));
+    const first = received.find((msg) => msg.t === 'node.status');
+    expect(first && first.t === 'node.status' ? first.hub?.caFingerprint : undefined).toBeNull();
+    fp = 'bb'.repeat(32);
+    await mesh.refreshTlsAndAdvertise();
+    await waitUntil(() =>
+      received.some((msg) => msg.t === 'node.status' && msg.hub?.caFingerprint === 'bb'.repeat(32))
+    );
+  });
+
+  test('node.status hub advertisement follows live hub mode after setMode', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: ReturnType<typeof decodeUplinkCtl>[] = [];
+    hub.ctl.onMessage((bytes) => {
+      received.push(decodeUplinkCtl(bytes));
+    });
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: true, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        hubPublicUrl: 'https://hub.example',
+        hubMode: 'active',
+        hubPriority: 10,
+        hubWriterEpoch: 1,
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+      tlsInfo: () => ({ caFingerprint: 'ab'.repeat(32), caPem: 'pem' }),
+      uplinkHub: null,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    await waitUntil(() => received.some((msg) => msg.t === 'node.status'));
+    const first = received.find((msg) => msg.t === 'node.status');
+    expect(first && first.t === 'node.status' ? first.hub?.mode : undefined).toBe('active');
+    mesh.hub?.setMode('standby');
+    mesh.uplink.sendStatusIfChanged();
+    await waitUntil(() =>
+      received.some((msg) => msg.t === 'node.status' && msg.hub?.mode === 'standby')
     );
   });
 });

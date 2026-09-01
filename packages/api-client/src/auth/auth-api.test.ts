@@ -154,6 +154,49 @@ describe('AuthApi', () => {
     expect(nodes.map((n) => n.id)).toEqual(['a', 'b']);
     expect(calls[0].url).toBe('/api/mesh/nodes');
   });
+
+  test('listHubs 读 /api/mesh/hubs 并原样保留 attached / writerHubId', async () => {
+    const body = {
+      hubs: [
+        { nodeId: 'h1', publicUrl: 'https://h1', mode: 'active', priority: 0, writerEpoch: 2 },
+        { nodeId: 'h2', publicUrl: 'https://h2', mode: 'standby', priority: 1, writerEpoch: 0 },
+      ],
+      attached: {
+        hubNodeId: 'h2',
+        publicUrl: 'https://h2',
+        mode: 'standby',
+        writerEpoch: 0,
+        since: 7,
+      },
+      writerHubId: 'h1',
+      candidates: [
+        { publicUrl: 'https://h1', lastError: null, lastAttemptAt: null },
+        { publicUrl: 'https://h2', lastError: 'tls', lastAttemptAt: 1 },
+      ],
+    };
+    const { api, calls } = recorder([new Response(JSON.stringify(body), { status: 200 })]);
+    const out = await api.listHubs();
+    expect(calls[0].url).toBe('/api/mesh/hubs');
+    expect(out.hubs.map((h) => h.nodeId)).toEqual(['h1', 'h2']);
+    expect(out.attached?.mode).toBe('standby');
+    expect(out.writerHubId).toBe('h1');
+    expect(out.candidates.map((c) => c.publicUrl)).toEqual(['https://h1', 'https://h2']);
+  });
+
+  test('listHubs 对缺字段的响应补空集合，不抛', async () => {
+    const { api } = recorder([new Response('{}', { status: 200 })]);
+    expect(await api.listHubs()).toEqual({
+      hubs: [],
+      attached: null,
+      writerHubId: null,
+      candidates: [],
+    });
+  });
+
+  test('listHubs 非 2xx 抛错（旧入口没有这条路由）', async () => {
+    const { api } = recorder([new Response('{"error":"not_found"}', { status: 404 })]);
+    expect(api.listHubs()).rejects.toThrow();
+  });
 });
 
 describe('AuthApi.getConnection（F3-4）', () => {

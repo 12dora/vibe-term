@@ -2,11 +2,12 @@ import { describe, expect, it } from 'bun:test';
 import { FrameDecoder, encodeFrame, encodeFrameHeader, encodeWindowPayload } from './codec';
 import { createBytePipe, createInMemoryLinkPair } from './in-memory-link';
 import { LinkMux } from './mux';
-import { FrameOp } from './types';
+import { FLAG_HEAD, FrameOp } from './types';
 import {
   type ByteTransport,
   INITIAL_STREAM_WINDOW,
   type LinkStream,
+  MAX_DATA_SEND_PAYLOAD,
   MAX_FRAME_PAYLOAD,
   MAX_LINK_UNACKED,
 } from './types';
@@ -66,9 +67,74 @@ describe('link mux', () => {
 
     const reader = incoming.readable.getReader();
     const chunk = await reader.read();
-    expect(chunk.value?.bytes.byteLength).toBe(INITIAL_STREAM_WINDOW);
+    expect(chunk.value?.bytes.byteLength).toBe(MAX_DATA_SEND_PAYLOAD);
     await pending;
     expect(resolved).toBe(true);
+    a.close();
+  });
+
+  it('splits a 1 MiB DATA write into at least 4 frames and round-trips', async () => {
+    const [t1, t2] = createBytePipe();
+    const captured: Uint8Array[] = [];
+    t2.onData((bytes) => captured.push(bytes.slice()));
+    const a = new LinkMux(t1, { role: 'initiator' });
+    const b = new LinkMux(t2, { role: 'acceptor' });
+    const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
+    const out = await a.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    const payload = new Uint8Array(MAX_FRAME_PAYLOAD);
+    for (let i = 0; i < payload.byteLength; i++) payload[i] = i & 0xff;
+    await out.write(payload, { head: true });
+
+    const frames = new FrameDecoder().push(concatChunks(captured));
+    const data = frames.filter((frame) => frame.op === FrameOp.DATA && frame.streamId === out.id);
+    expect(data.length).toBeGreaterThanOrEqual(4);
+    expect(data.every((frame) => frame.payload.byteLength <= MAX_DATA_SEND_PAYLOAD)).toBe(true);
+    expect(data[0] && (data[0].flags & FLAG_HEAD) !== 0).toBe(true);
+    expect(data.slice(1).every((frame) => (frame.flags & FLAG_HEAD) === 0)).toBe(true);
+    expect(concatChunks(data.map((frame) => frame.payload))).toEqual(payload);
+
+    await out.end();
+    const received = await readAll(incoming);
+    expect(received).toEqual(payload);
+    a.close();
+  });
+
+  it('still honours the stream window when splitting DATA frames', async () => {
+    const window = 256 * 1024;
+    const [t1, t2] = createBytePipe();
+    const captured: Uint8Array[] = [];
+    t2.onData((bytes) => captured.push(bytes.slice()));
+    const a = new LinkMux(t1, { role: 'initiator', streamWindow: window });
+    const b = new LinkMux(t2, { role: 'acceptor', streamWindow: window });
+    const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
+    const out = await a.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    const payload = new Uint8Array(MAX_FRAME_PAYLOAD).fill(3);
+    let writeDone = false;
+    const writeP = out.write(payload).then(() => {
+      writeDone = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(writeDone).toBe(false);
+    const before = new FrameDecoder().push(concatChunks(captured));
+    const dataBefore = before.filter(
+      (frame) => frame.op === FrameOp.DATA && frame.streamId === out.id
+    );
+    expect(dataBefore).toHaveLength(1);
+    expect(dataBefore[0]?.payload.byteLength).toBe(window);
+
+    const reader = incoming.readable.getReader();
+    const consume = (async () => {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    })();
+    await writeP;
+    expect(writeDone).toBe(true);
+    await out.end();
+    await consume;
     a.close();
   });
 

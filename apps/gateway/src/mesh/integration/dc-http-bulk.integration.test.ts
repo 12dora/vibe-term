@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { FRAME_HEADER_SIZE, FrameOp, LinkMux, MAX_FRAME_PAYLOAD } from '@tmex/shared/link';
+import {
+  FRAME_HEADER_SIZE,
+  FrameOp,
+  LinkMux,
+  MAX_DATA_SEND_PAYLOAD,
+  MAX_FRAME_PAYLOAD,
+} from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import type { RtcSignalMessage } from '../mesh-deps';
@@ -580,9 +586,18 @@ describe('HTTP-style bulk over PeerManager DataChannel', () => {
     const reader = inn.readable.getReader();
     const payload = fillPattern(new Uint8Array(MAX_FRAME_PAYLOAD));
     await out.write(payload);
-    const chunk = await reader.read();
-    expect(chunk.value?.bytes.byteLength).toBe(MAX_FRAME_PAYLOAD);
-    expect(chunk.value?.bytes).toEqual(payload);
+    // 发送端按 ≤256 KiB 切帧（避免撑爆网关 1 MiB WS 背压上限），收端按到达顺序拼回整段。
+    const received = new Uint8Array(MAX_FRAME_PAYLOAD);
+    let offset = 0;
+    while (offset < MAX_FRAME_PAYLOAD) {
+      const chunk = await reader.read();
+      if (chunk.done || !chunk.value) break;
+      expect(chunk.value.bytes.byteLength).toBeLessThanOrEqual(MAX_DATA_SEND_PAYLOAD);
+      received.set(chunk.value.bytes, offset);
+      offset += chunk.value.bytes.byteLength;
+    }
+    expect(offset).toBe(MAX_FRAME_PAYLOAD);
+    expect(Buffer.from(received).equals(Buffer.from(payload))).toBe(true);
     expect(MAX_FRAME_PAYLOAD + FRAME_HEADER_SIZE).toBeGreaterThan(1024 * 1024);
     out.end();
     inn.end();

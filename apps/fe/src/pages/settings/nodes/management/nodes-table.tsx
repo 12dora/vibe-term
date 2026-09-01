@@ -9,9 +9,13 @@ import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { Download, Loader2, Pencil, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { hubDetailText, hubModeLabel } from './hub-strip';
 import type { NodeActionDeps } from './types';
+import { upgradeBlockReason } from './upgrade-batch';
 import { useNodeRowActions } from './use-node-row-actions';
 import { isUpgradeBusy, upgradePhaseText } from './use-node-upgrade';
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export function NodesTable({ rows, ...deps }: { rows: NodeRow[] } & NodeActionDeps) {
   const { t } = useTranslation();
@@ -60,7 +64,12 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
   const { t } = useTranslation();
   const { renaming, setRenaming, nameDraft, setNameDraft, busy, rename, revoke } =
     useNodeRowActions(row, deps);
-  const disabledHint = deps.hubOnline ? undefined : t('nodes.hubOffline');
+  const writable = deps.hubOnline && deps.hubWritable;
+  const disabledHint = deps.hubWritable
+    ? deps.hubOnline
+      ? undefined
+      : t('nodes.hubOffline')
+    : t('nodes.hubs.standbyNotice');
   const view = deriveNodeRow(row, t);
 
   return (
@@ -82,7 +91,7 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
           <span className="flex items-center gap-1.5">
             <span className="truncate font-medium">{row.name}</span>
             {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
-            {row.isHub && <Tag>{t('nodes.hub')}</Tag>}
+            {row.isHub && <HubTag row={row} hubDetails={deps.hubDetails} />}
           </span>
         )}
       </Td>
@@ -113,7 +122,7 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
             type="button"
             size="xs"
             variant="outline"
-            disabled={!deps.hubOnline || busy}
+            disabled={!writable || busy}
             title={disabledHint}
             onClick={() => setRenaming((value) => !value)}
             data-testid={`nodes-rename-${row.id}`}
@@ -125,7 +134,7 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
             type="button"
             size="xs"
             variant="destructive"
-            disabled={!deps.hubOnline || busy || row.isSelf}
+            disabled={!writable || busy || row.isSelf}
             title={row.isSelf ? t('nodes.revoke.selfBlocked') : disabledHint}
             onClick={() => void revoke()}
             data-testid={`nodes-revoke-${row.id}`}
@@ -141,14 +150,15 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
 }
 
 /**
- * 升级按钮：目标离线或（远端）未登录时禁用并说明原因；进行中显示阶段文案并锁住。
+ * 升级按钮：目标离线、（远端）未登录、版本过旧无法远程升级、已是最新时禁用并说明原因；
+ * 进行中显示阶段文案并锁住，批量升级期间整列一并锁住，避免同一节点被点两次。
  * 本机同样可以升级——它会重启本机网关，当前访问随之中断，确认框里已经写明。
  */
 function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps['upgrade'] }) {
   const { t } = useTranslation();
   const entry = upgrade.entryOf(row.id);
   const busy = isUpgradeBusy(entry.phase);
-  const blocked = upgradeBlockedHint(row, t);
+  const blocked = upgradeBlockedHint(row, upgrade.latest?.latestVersion ?? null, t);
   const version = entry.targetVersion ?? upgrade.latest?.latestVersion ?? null;
   const phaseText = upgradePhaseText(t, entry.phase);
 
@@ -157,7 +167,7 @@ function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps
       type="button"
       size="xs"
       variant="outline"
-      disabled={busy || blocked !== null}
+      disabled={busy || blocked !== null || upgrade.batch.running}
       title={blocked ?? upgradeTitle(entry.error, version, t)}
       onClick={() => upgrade.start(row)}
       data-testid={`node-upgrade-${row.id}`}
@@ -169,16 +179,21 @@ function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps
   );
 }
 
-function upgradeBlockedHint(row: NodeRow, t: (key: string) => string): string | null {
-  if (!row.online) return t('nodes.upgrade.offline');
-  if (!row.isSelf && !row.loggedIn) return t('nodes.upgrade.loginRequired');
-  return null;
+export function upgradeBlockedHint(
+  row: NodeRow,
+  latestVersion: string | null,
+  t: Translate
+): string | null {
+  const reason = upgradeBlockReason(row, latestVersion);
+  if (!reason) return null;
+  if (reason === 'tooOld') return t('nodes.upgrade.tooOld', { version: row.version ?? '' });
+  return t(`nodes.upgrade.${reason}`);
 }
 
 function upgradeTitle(
   error: string | null,
   version: string | null,
-  t: (key: string, options?: Record<string, unknown>) => string
+  t: Translate
 ): string | undefined {
   if (error) return error;
   return version ? t('nodes.upgrade.hint', { version }) : undefined;
@@ -192,10 +207,29 @@ function Td({ children }: { children: React.ReactNode }) {
   return <td className="whitespace-nowrap px-3 py-2 align-middle">{children}</td>;
 }
 
-function Tag({ children }: { children: React.ReactNode }) {
+function Tag({ children, title }: { children: React.ReactNode; title?: string }) {
   return (
-    <span className="rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
+    <span
+      className="rounded border border-border px-1 py-px text-[10px] text-muted-foreground"
+      title={title}
+    >
       {children}
     </span>
+  );
+}
+
+/**
+ * hub 徽标：多 hub 下区分主 / 备并把地址、优先级、纪元、在线态放进悬浮详情；
+ * 旧后端不下发 `hubMode` 时退回原来的「Hub」，单 hub 用户看不出差别。
+ */
+function HubTag({ row, hubDetails }: { row: NodeRow; hubDetails: NodeActionDeps['hubDetails'] }) {
+  const { t } = useTranslation();
+  const detail = hubDetails.get(row.id);
+  return (
+    <Tag title={detail ? hubDetailText(t, detail, false) : undefined}>
+      <span data-testid={`nodes-hub-tag-${row.id}`} data-hub-mode={row.hubMode ?? ''}>
+        {hubModeLabel(t, row.hubMode ?? null)}
+      </span>
+    </Tag>
   );
 }

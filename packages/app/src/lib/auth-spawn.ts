@@ -21,6 +21,12 @@ export const AUTH_COMMANDS = new Set([
   'hub.user.reset',
   'hub.join',
   'hub.leave',
+  'hub.standby',
+  'hub.promote',
+  'hub.demote',
+  'hub.list',
+  'hub.allow',
+  'hub.disallow',
   'mesh.reset-root',
   'enroll',
 ]);

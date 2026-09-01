@@ -22,6 +22,7 @@ export {
   websocketTransport,
   createClientWebSocketTransport,
   createServerSocketTransport,
+  SERVER_WS_BACKPRESSURE_LIMIT,
   type ServerSocketAdapter,
   type WebSocketTransportInput,
   type WebSocketLinkOptions,
@@ -50,6 +51,7 @@ export {
 export {
   FRAME_HEADER_SIZE,
   MAX_FRAME_PAYLOAD,
+  MAX_DATA_SEND_PAYLOAD,
   INITIAL_STREAM_WINDOW,
   MAX_LINK_UNACKED,
   CTL_STREAM_ID,

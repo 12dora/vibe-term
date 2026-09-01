@@ -243,7 +243,17 @@ describe('DataChannelLink', () => {
     const reader = inn.readable.getReader();
     const payload = new Uint8Array(1024 * 1024).fill(5);
     await out.write(payload);
-    expect((await reader.read()).value?.bytes).toEqual(payload);
+    // 发送端按 ≤256 KiB 切帧，收端拼回整段后比对。
+    let total = 0;
+    let allFives = true;
+    while (total < payload.byteLength) {
+      const chunk = await reader.read();
+      if (chunk.done || !chunk.value) break;
+      total += chunk.value.bytes.byteLength;
+      if (!chunk.value.bytes.every((v) => v === 5)) allFives = false;
+    }
+    expect(total).toBe(payload.byteLength);
+    expect(allFives).toBe(true);
     out.end();
     inn.end();
   });

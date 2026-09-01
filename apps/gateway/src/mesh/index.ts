@@ -80,6 +80,14 @@ export {
   type UplinkWsFactory,
 } from './uplink-client';
 export {
+  UplinkPool,
+  mergeUplinkCandidates,
+  recordsFromNodeList,
+  type AttachedHub,
+  type UplinkCandidate,
+  type UplinkPoolOptions,
+} from './uplink-pool';
+export {
   UPLINK_CTL_MAX_BYTES,
   UPLINK_CTL_MAX_CERT_BYTES,
   UPLINK_CTL_MAX_STRING_LEN,

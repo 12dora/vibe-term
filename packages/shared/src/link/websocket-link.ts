@@ -14,6 +14,8 @@ export interface ServerSocketAdapter {
   onMessage(cb: (bytes: Uint8Array) => void): void;
   onClose(cb: (reason?: string) => void): void;
   onDrain(cb: () => void): void;
+  /** 底层 socket 当前已缓冲未发出的字节数（Bun `getBufferedAmount()`）；缺省时只能靠 drain 事件恢复。 */
+  bufferedAmount?(): number;
 }
 
 export type WebSocketTransportInput = WebSocket | ServerSocketAdapter;
@@ -22,6 +24,8 @@ const WS_OPEN = 1;
 const CLIENT_HIGH_WATER = 4 * 1024 * 1024;
 const CLIENT_LOW_WATER = 1 * 1024 * 1024;
 const CLIENT_POLL_MS = 16;
+/** Matches gateway `Bun.serve` `websocket.backpressureLimit` (`closeOnBackpressureLimit: true`). */
+export const SERVER_WS_BACKPRESSURE_LIMIT = 1024 * 1024;
 
 function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerSocketAdapter {
   return (
@@ -66,6 +70,7 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
   let closed = false;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let opened = hooks.isOpen();
+  let serverQueued = 0;
 
   const rejectQueue = (err: Error) => {
     for (const item of queue) item.reject(err);
@@ -76,6 +81,7 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
     if (closed) return;
     closed = true;
     paused = false;
+    serverQueued = 0;
     if (pollTimer !== null) {
       clearTimeout(pollTimer);
       pollTimer = null;
@@ -115,6 +121,32 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
     }, CLIENT_POLL_MS);
   };
 
+  // 服务端主动暂停（还没让 Bun 见到背压）时不会有 drain 事件，必须自己轮询恢复：
+  // 有 bufferedAmount 就看真实缓冲，没有就按上一轮已排队量清零后重试（send 返回值仍是兜底）。
+  const scheduleServerPoll = () => {
+    if (pollTimer !== null || closed) return;
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      if (closed || !paused) return;
+      const buffered = hooks.bufferedAmount?.();
+      if (buffered === undefined) {
+        serverQueued = 0;
+        paused = false;
+        pump();
+        return;
+      }
+      if (buffered < SERVER_WS_BACKPRESSURE_LIMIT / 2) {
+        serverQueued = buffered;
+        paused = false;
+        pump();
+      } else {
+        scheduleServerPoll();
+      }
+    }, CLIENT_POLL_MS);
+  };
+
+  const serverBuffered = () => hooks.bufferedAmount?.() ?? serverQueued;
+
   const pump = () => {
     if (pumping || closed) return;
     pumping = true;
@@ -122,6 +154,14 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
       while (queue.length > 0 && !closed && opened && !paused) {
         const item = queue[0];
         if (!item) break;
+        if (hooks.kind === 'server') {
+          const buffered = serverBuffered();
+          if (buffered > 0 && buffered + item.bytes.byteLength > SERVER_WS_BACKPRESSURE_LIMIT) {
+            paused = true;
+            scheduleServerPoll();
+            break;
+          }
+        }
         let result: number | undefined;
         try {
           result = hooks.send(item.bytes);
@@ -139,8 +179,13 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
             fail('websocket send discarded');
             return;
           }
+          serverQueued += item.bytes.byteLength;
           if (result === -1) {
+            // Bun 已见到背压，drain 必然到来，不需要轮询抢先恢复。
             paused = true;
+          } else if (serverBuffered() >= SERVER_WS_BACKPRESSURE_LIMIT) {
+            paused = true;
+            scheduleServerPoll();
           }
         } else if ((hooks.bufferedAmount?.() ?? 0) > CLIENT_HIGH_WATER) {
           paused = true;
@@ -163,6 +208,11 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
   });
   hooks.onDrain?.(() => {
     if (closed) return;
+    if (pollTimer !== null) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    serverQueued = 0;
     paused = false;
     pump();
   });
@@ -232,6 +282,7 @@ export function createServerSocketTransport(adapter: ServerSocketAdapter): ByteT
     onMessage: (cb) => adapter.onMessage(cb),
     onClose: (cb) => adapter.onClose(cb),
     onDrain: (cb) => adapter.onDrain(cb),
+    ...(adapter.bufferedAmount ? { bufferedAmount: () => adapter.bufferedAmount?.() ?? 0 } : {}),
     isOpen: () => true,
   });
 }

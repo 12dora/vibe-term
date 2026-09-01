@@ -109,6 +109,56 @@ describe('createTlsRoutes', () => {
     await Promise.all(jobs);
   });
 
+  test('PUT /api/tls and POST /api/tls/renew call onApplied after success', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-applied-'));
+    const service = new TlsService({
+      store: new TlsConfigStore(db),
+      listener: new FakeListener(),
+      challenge: new AcmeHttp01Challenge(),
+      envPath: join(dir, 'app.env'),
+      scheduleBackground: () => {},
+      setTimeoutFn: () => 1,
+      clearTimeoutFn: () => {},
+    });
+    cleanups.push(async () => {
+      service.stop();
+      close();
+      await rm(dir, { recursive: true, force: true });
+    });
+    let applied = 0;
+    const handle = createTlsRoutes({
+      service,
+      authorize: async () => null,
+      onApplied: () => {
+        applied += 1;
+      },
+    });
+    const put = await handle(
+      new Request('http://127.0.0.1/api/tls', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'selfsigned',
+          sans: ['localhost'],
+          tlsPort: 9443,
+          bindHost: '127.0.0.1',
+        }),
+      })
+    );
+    expect(put?.status).toBe(200);
+    expect(applied).toBe(1);
+    const bad = await handle(
+      new Request('http://127.0.0.1/api/tls', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: 'selfsigned', sans: [] }),
+      })
+    );
+    expect(bad?.status).toBe(400);
+    expect(applied).toBe(1);
+  });
+
   test('maps validation errors to { error: { code, message } }', async () => {
     const { db, close } = createMigratedAuthDb();
     const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-routes-err-'));

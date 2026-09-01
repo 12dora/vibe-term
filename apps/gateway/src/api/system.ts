@@ -1,7 +1,10 @@
 import type { StartUpgradeRequest } from '@tmex/shared';
 import { t } from '../i18n';
+import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
+import { requestDispatchContext } from '../mesh/types';
 import { getAccessAddresses } from '../system/access-addresses';
 import { MANAGED_EXTERNALLY, getSystemInfo, isManagedExternally } from '../system/info-public';
+import { STAGED_PACKAGE_MAX_BYTES } from '../system/upgrade';
 import { json } from './http';
 
 // 构建期 define：managed compile 为 true，使自更新模块落入死分支并被剔除。
@@ -27,7 +30,7 @@ export function handleSystemApiRequest(
   path: string
 ): Response | Promise<Response> | undefined {
   if (path === '/api/system/info' && req.method === 'GET') {
-    return json(getSystemInfo());
+    return json({ ...getSystemInfo(), upgradeCapabilities: ['staged-package'] });
   }
 
   if (path === '/api/system/addresses' && req.method === 'GET') {
@@ -49,6 +52,11 @@ export function handleSystemApiRequest(
   if (path === '/api/system/upgrade' && req.method === 'POST') {
     if (managed) return managedExternallyResponse();
     return handleStartUpgradeOpen(req);
+  }
+
+  if (path === '/api/system/upgrade/package' && req.method === 'PUT') {
+    if (managed) return managedExternallyResponse();
+    return handleStagePackageOpen(req);
   }
 
   return undefined;
@@ -75,11 +83,32 @@ export function isReleaseVersion(value: string): boolean {
   return RELEASE_VERSION_PATTERN.test(value);
 }
 
+function requestIsStagedAuthenticated(req: Request): boolean {
+  const dispatch = requestDispatchContext.get(req);
+  if (dispatch) {
+    if (dispatch.viaNodeId !== MESH_VIA_SELF) return true;
+    if (dispatch.uid) return true;
+  }
+  const ctx = getMeshRequestContext(req);
+  return Boolean(ctx.sid && ctx.uid);
+}
+
+function stagedRequiresAuth(): Response {
+  return json({ code: 'UPGRADE_NOT_ALLOWED', reason: 'staged_requires_auth' }, 403);
+}
+
 async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   let version = '';
+  let source: 'release' | 'staged' = 'release';
+  let sha256: string | undefined;
   try {
     const body = (await req.json()) as StartUpgradeRequest;
     version = (body?.version ?? '').trim();
+    if (body?.source !== undefined && body.source !== 'staged' && body.source !== 'release') {
+      return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+    }
+    if (body?.source === 'staged' || body?.source === 'release') source = body.source;
+    if (typeof body?.sha256 === 'string' && body.sha256.trim()) sha256 = body.sha256.trim();
   } catch {
     version = '';
   }
@@ -88,13 +117,54 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
     return json({ error: t('apiError.upgradeVersionRequired') }, 400);
   }
 
+  if (source === 'staged' && !requestIsStagedAuthenticated(req)) {
+    return stagedRequiresAuth();
+  }
+
   const { startLocalUpgradeAttempt } = await import('../system/upgrade-service');
-  const result = await startLocalUpgradeAttempt(version);
+  const result = await startLocalUpgradeAttempt(version, { source, sha256 });
   if (!result.ok && result.code === 'UPGRADE_NOT_ALLOWED') {
     return json({ error: t('apiError.upgradeNotAllowed') }, 403);
+  }
+  if (!result.ok && result.code === 'PACKAGE_NOT_STAGED') {
+    return json({ code: 'PACKAGE_NOT_STAGED' }, 409);
   }
   if (!result.ok) {
     return json({ ...result.status, error: t('apiError.upgradeInProgress') }, 409);
   }
   return json(result.status);
+}
+
+const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
+
+async function handleStagePackageOpen(req: Request): Promise<Response> {
+  if (!requestIsStagedAuthenticated(req)) {
+    return stagedRequiresAuth();
+  }
+  const info = getSystemInfo();
+  if (!info.canSelfUpdate) {
+    return json({ error: t('apiError.upgradeNotAllowed') }, 403);
+  }
+  const url = new URL(req.url);
+  const version = (url.searchParams.get('version') ?? '').trim();
+  const sha256 = (url.searchParams.get('sha256') ?? '').trim();
+  if (!version || !isReleaseVersion(version) || !SHA256_HEX.test(sha256)) {
+    return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+  }
+  const contentLength = req.headers.get('content-length');
+  if (contentLength) {
+    const n = Number(contentLength);
+    if (Number.isFinite(n) && n > STAGED_PACKAGE_MAX_BYTES) {
+      return json({ code: 'PACKAGE_TOO_LARGE' }, 413);
+    }
+  }
+  const { upgradeController } = await import('../system/upgrade');
+  const result = await upgradeController.stagePackage(version, sha256, req.body);
+  if (!result.ok && result.code === 'UPGRADE_IN_PROGRESS') {
+    return json({ code: 'UPGRADE_IN_PROGRESS' }, 409);
+  }
+  if (!result.ok) {
+    return json({ code: result.code }, result.status);
+  }
+  return json({ version: result.version, sha256: result.sha256, bytes: result.bytes });
 }

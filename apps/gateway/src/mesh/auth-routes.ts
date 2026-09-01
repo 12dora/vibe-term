@@ -18,9 +18,11 @@ import {
   verifyTotpCode,
 } from '@tmex/shared/auth';
 import type { KeyLogEffect, VerifyDelegationPasskey } from '@tmex/shared/auth';
+import { HUB_NOT_WRITER, type HubMode } from '@tmex/shared/uplink';
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 import type { ChallengeStore } from '../auth/challenge-store';
+import { type MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import { NODE_SESSION_TTL_MS, type NodeSessionStore } from '../auth/node-session-store';
 import {
   createAuthenticationOptions,
@@ -72,6 +74,7 @@ import {
   publicRequestUrl,
   requireSession,
 } from './session-middleware';
+import { type AttachedHub, sameHubUrl } from './uplink-pool';
 
 export type { KeyLogHubAck };
 export { findPrimaryUser, isPasskeyAvailable };
@@ -97,6 +100,9 @@ export type AuthRoutesDeps = {
   verifyDelegationPasskey?: VerifyDelegationPasskey;
   primaryUserId?: string;
   hubPublicUrl?: string | null;
+  hubStore?: MeshHubStore;
+  attachedHub?: () => AttachedHub | null;
+  hubMode?: () => HubMode | null;
   listPublicNodes?: () => PublicAuthNode[];
   onLogout?: (userId: string) => void;
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
@@ -479,6 +485,8 @@ export class AuthRoutes {
     } catch {
       return jsonError('MALFORMED', 400);
     }
+    const blocked = this.refuseIfAttachedNotWriter();
+    if (blocked) return blocked;
     const hubSync = this.usesHubSync(req);
     if (hubSync) {
       return this.handleKeyLogHubSync(userId, bytes, sig);
@@ -678,7 +686,44 @@ export class AuthRoutes {
     });
   }
 
+  private refuseIfAttachedNotWriter(): Response | null {
+    if (this.deps.roles.hub && this.deps.hubMode?.() === 'standby') {
+      return this.hubNotWriterResponse();
+    }
+    const attached = this.deps.attachedHub?.();
+    if (!attached) return null;
+    const rows = this.deps.hubStore?.list() ?? [];
+    const writerId = pickWriterHub(rows);
+    if (!writerId) return this.hubNotWriterResponse();
+    const writer = this.deps.hubStore?.get(writerId);
+    const attachedIsWriter =
+      (attached.hubNodeId != null && attached.hubNodeId === writerId) ||
+      Boolean(writer && sameHubUrl(attached.publicUrl, writer.publicUrl));
+    if (attachedIsWriter) return null;
+    return this.hubNotWriterResponse();
+  }
+
+  private hubNotWriterResponse(): Response {
+    const rows = this.deps.hubStore?.list() ?? [];
+    const writerId = pickWriterHub(rows);
+    const writer = writerId ? this.deps.hubStore?.get(writerId) : undefined;
+    return jsonError(HUB_NOT_WRITER, 409, {
+      writerHubId: writerId,
+      writerPublicUrl: writer?.publicUrl ?? null,
+      writerEpoch: writer?.writerEpoch ?? null,
+    });
+  }
+
   private resolveHub(): { nodeId: string | null; publicUrl: string | null } {
+    const rows = this.deps.hubStore?.list() ?? [];
+    const writerId = pickWriterHub(rows);
+    if (writerId) {
+      const writer = this.deps.hubStore?.get(writerId);
+      return {
+        nodeId: writerId,
+        publicUrl: writer?.publicUrl ?? this.deps.hubPublicUrl ?? null,
+      };
+    }
     const meta = this.deps.userStore.getHubMeta();
     if (this.deps.roles.hub) {
       return {
