@@ -363,14 +363,6 @@ export function markLoggedIn(nodeId: string): boolean {
   return setLoggedIn(nodeId, true);
 }
 
-/**
- * 某台 node 的会话失效（转发回来的 401 `NODE_LOGIN_REQUIRED`）时就地标成未登录。
- * `loggedIn` 只走 REST，兜底轮询已经拉到 5 分钟，等它会让「登录此节点」迟迟不出现。
- */
-export function markLoggedOut(nodeId: string): boolean {
-  return setLoggedIn(nodeId, false);
-}
-
 export function setEntryNodeId(nodeId: string | null): void {
   if (state.entryNodeId === nodeId) return;
   setState({ entryNodeId: nodeId });
@@ -515,9 +507,11 @@ function startPolling(options: MeshPollingOptions): () => void {
   // 已经为之补拉过的陌生 node：REST 有可能压根不返回它（如公钥无效的 node 会被投影丢掉），
   // 它每次上下线都补拉一轮就成了新的定时器。每个兜底拍才放行一次重试。
   const unknownSeen = new Set<string>();
+  const authSeen = new Set<string>();
 
   const sweep = () => {
     unknownSeen.clear();
+    authSeen.clear();
     runRefresh();
   };
 
@@ -534,11 +528,15 @@ function startPolling(options: MeshPollingOptions): () => void {
     unknownSeen.add(event.nodeId);
     requestRefresh();
   });
+  // 节点级 401 只回源、**绝不就地翻 loggedIn**：转发路径（直连/中转切换、节点侧 via 校验）
+  // 会产生会话仍有效的 401，就地登出会抽掉整个节点子树再静默登回来，表现为设备卡片闪断。
+  // REST 按 cookie 判定登录态，真实过期时 cookie 已随会话到期消失，回源一次即可反映。
+  // 同一 node 每个兜底拍只放行一次（`authSeen` 随 `sweep` 清空），避免持续 401 变成新的定时器。
   const stopAuthRequired = authRequired((detail) => {
-    // 全局 401 由拦截器自己跳登录页，这里只处理单个 node 的会话失效。
     if (detail.scope !== 'node') return;
-    // 已经标成未登录的行不再回源：那台 node 上的请求会持续 401，每次都补拉就成了新的定时器。
-    if (!markLoggedOut(detail.nodeId)) return;
+    console.warn(`[mesh] node 401 node=${detail.nodeId} path=${detail.path}`);
+    if (authSeen.has(detail.nodeId)) return;
+    authSeen.add(detail.nodeId);
     requestRefresh();
   });
 
