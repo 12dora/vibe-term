@@ -184,7 +184,10 @@ export async function handleMeshNodeUpgradeCancel(opts: {
   }
 
   const jobCancel = await cancelRemoteUpgradeJob({ nodeId, req, forward });
-  if (jobCancel.handled) {
+  if (jobCancel.handled === 'unsupported') {
+    return jsonError('UPGRADE_CANCEL_UNSUPPORTED', 501, { nodeId });
+  }
+  if (jobCancel.handled === true) {
     return jsonBody({
       state: 'idle' as const,
       targetVersion: null,
@@ -342,6 +345,7 @@ async function startRemoteMeshUpgrade(
       version: latestVersion,
       req,
       forward,
+      upgradeCapabilities: readUpgradeCapabilities(info.upgradeCapabilities),
     });
     if (!started.ok) {
       return jsonError('UPGRADE_IN_PROGRESS', 409, { nodeId });
@@ -364,7 +368,12 @@ async function startRemoteMeshUpgrade(
 }
 
 function hasStagedPackageCapability(raw: unknown): boolean {
-  return Array.isArray(raw) && raw.includes('staged-package');
+  return readUpgradeCapabilities(raw).includes('staged-package');
+}
+
+function readUpgradeCapabilities(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is string => typeof item === 'string');
 }
 
 function readNodeSession(req: Request, nodeId: string): string | null {

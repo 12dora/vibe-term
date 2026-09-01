@@ -914,6 +914,281 @@ describe('handleMeshNodeUpgradeCancel', () => {
     expect(forwarded).toContain('DELETE /api/system/upgrade');
   });
 
+  test('cancel racing a slow staged POST forwards DELETE and returns 200 when the target is still downloading', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-post-200-'));
+    mockGithubLatest('9.9.9');
+    const payload = new Uint8Array([1, 2, 3]);
+    const { createHash } = await import('node:crypto');
+    const hex = createHash('sha256').update(payload).digest('hex');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${hex}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+      }
+      if (url.includes('tmex-cli-')) {
+        return new Response(payload, { status: 200 });
+      }
+      return latestFetch(input);
+    }) as typeof fetch;
+    const req = authedRequest(nodeId);
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const forwarded: string[] = [];
+    const forward = {
+      async forwardAuthorizedHttp(_req: Request, input: { method: string; path: string }) {
+        forwarded.push(`${input.method} ${input.path}`);
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (input.method === 'POST' && input.path === '/api/system/upgrade') {
+          await startGate;
+          return new Response(
+            JSON.stringify({
+              state: 'downloading',
+              targetVersion: '9.9.9',
+              error: null,
+              startedAt: '2026-09-01T00:00:00.000Z',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (input.method === 'DELETE' && input.path === '/api/system/upgrade') {
+          return new Response(
+            JSON.stringify({
+              state: 'idle',
+              targetVersion: null,
+              error: 'UPGRADE_CANCELLED',
+              startedAt: '2026-09-01T00:00:00.000Z',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      },
+    };
+    await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    for (let i = 0; i < 50 && !forwarded.includes('POST /api/system/upgrade'); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const cancelPromise = handleMeshNodeUpgradeCancel({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(forwarded).not.toContain('DELETE /api/system/upgrade');
+    releaseStart();
+    const cancelled = await cancelPromise;
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toMatchObject({
+      state: 'idle',
+      error: 'UPGRADE_CANCELLED',
+    });
+    expect(forwarded).toContain('DELETE /api/system/upgrade');
+  }, 8_000);
+
+  test('cancel racing a slow staged POST returns 409 when the target is executing', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-post-409-'));
+    mockGithubLatest('9.9.9');
+    const payload = new Uint8Array([1, 2, 3]);
+    const { createHash } = await import('node:crypto');
+    const hex = createHash('sha256').update(payload).digest('hex');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${hex}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+      }
+      if (url.includes('tmex-cli-')) {
+        return new Response(payload, { status: 200 });
+      }
+      return latestFetch(input);
+    }) as typeof fetch;
+    const req = authedRequest(nodeId);
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const forwarded: string[] = [];
+    const forward = {
+      async forwardAuthorizedHttp(_req: Request, input: { method: string; path: string }) {
+        forwarded.push(`${input.method} ${input.path}`);
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (input.method === 'POST' && input.path === '/api/system/upgrade') {
+          await startGate;
+          return new Response(
+            JSON.stringify({
+              state: 'downloading',
+              targetVersion: '9.9.9',
+              error: null,
+              startedAt: '2026-09-01T00:00:00.000Z',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (input.method === 'DELETE' && input.path === '/api/system/upgrade') {
+          return new Response(
+            JSON.stringify({
+              code: 'UPGRADE_NOT_CANCELLABLE',
+              state: 'executing',
+              targetVersion: '9.9.9',
+              error: null,
+              startedAt: '2026-09-01T00:00:00.000Z',
+            }),
+            { status: 409, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      },
+    };
+    await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    for (let i = 0; i < 50 && !forwarded.includes('POST /api/system/upgrade'); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const cancelPromise = handleMeshNodeUpgradeCancel({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseStart();
+    const cancelled = await cancelPromise;
+    expect(cancelled.status).toBe(409);
+    expect(await cancelled.json()).toMatchObject({
+      code: 'UPGRADE_NOT_CANCELLABLE',
+      state: 'executing',
+      nodeId,
+    });
+  }, 8_000);
+
+  test('cancel after push against a 1.1.11 target is 501 and the job keeps running', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-1111-'));
+    mockGithubLatest('9.9.9');
+    const payload = new Uint8Array([1, 2, 3]);
+    const { createHash } = await import('node:crypto');
+    const hex = createHash('sha256').update(payload).digest('hex');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${hex}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+      }
+      if (url.includes('tmex-cli-')) {
+        return new Response(payload, { status: 200 });
+      }
+      return latestFetch(input);
+    }) as typeof fetch;
+    const req = authedRequest(nodeId);
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const forwarded: string[] = [];
+    const forward = {
+      async forwardAuthorizedHttp(_req: Request, input: { method: string; path: string }) {
+        forwarded.push(`${input.method} ${input.path}`);
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (input.method === 'PUT' && input.path === '/api/system/upgrade/package') {
+          return new Response('{}', { status: 200 });
+        }
+        if (input.method === 'POST' && input.path === '/api/system/upgrade') {
+          await startGate;
+          return new Response('{}', { status: 200 });
+        }
+        return new Response('gone', { status: 404 });
+      },
+    };
+    await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    for (let i = 0; i < 50 && !forwarded.includes('POST /api/system/upgrade'); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const cancelled = await handleMeshNodeUpgradeCancel({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    expect(cancelled.status).toBe(501);
+    expect(await cancelled.json()).toEqual({
+      code: 'UPGRADE_CANCEL_UNSUPPORTED',
+      nodeId,
+    });
+    const status = await handleMeshNodeUpgradeStatus({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    expect(await status.json()).toMatchObject({
+      state: 'downloading',
+      targetVersion: '9.9.9',
+      error: null,
+    });
+    releaseStart();
+    await waitForRemoteUpgradeJob(nodeId);
+  }, 8_000);
+
   test('old target without DELETE maps 404 to 501 UPGRADE_CANCEL_UNSUPPORTED', async () => {
     const res = await handleMeshNodeUpgradeCancel({
       req: authedRequest(nodeId),

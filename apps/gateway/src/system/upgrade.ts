@@ -1,6 +1,14 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { chmod, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
@@ -144,6 +152,8 @@ export class UpgradeController {
   private readonly staged = new Map<string, StagedPackageRecord>();
   private stagedLoaded = false;
   private stagingInFlight = false;
+  private stagingVersion: string | null = null;
+  private stagingDone: Promise<void> = Promise.resolve();
   private abort: AbortController | null = null;
   private cancelRequested = false;
   private commitStarted = false;
@@ -174,6 +184,8 @@ export class UpgradeController {
     this.staged.clear();
     this.stagedLoaded = false;
     this.stagingInFlight = false;
+    this.stagingVersion = null;
+    this.stagingDone = Promise.resolve();
     this.abort?.abort();
     this.abort = null;
     this.cancelRequested = false;
@@ -232,6 +244,9 @@ export class UpgradeController {
   }
 
   async removeStagedPackage(version: string): Promise<{ ok: true } | { ok: false; status: 404 }> {
+    if (this.stagingVersion === version) {
+      await this.stagingDone;
+    }
     const install = (this.deps.getInstallInfo ?? getInstallInfo)();
     const installDir = resolveUpgradeInstallDir(install);
     if (!installDir) return { ok: false, status: 404 };
@@ -257,10 +272,17 @@ export class UpgradeController {
       return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
     }
     this.stagingInFlight = true;
+    this.stagingVersion = version;
+    let release!: () => void;
+    this.stagingDone = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     try {
       return await this.stagePackageLocked(version, sha256, body);
     } finally {
       this.stagingInFlight = false;
+      this.stagingVersion = null;
+      release();
     }
   }
 
@@ -396,7 +418,10 @@ export class UpgradeController {
         ) {
           continue;
         }
-        if (!existsSync(parsed.path)) continue;
+        if (!existsSync(parsed.path)) {
+          rmSync(join(stagedDir, name), { force: true });
+          continue;
+        }
         this.staged.set(parsed.version, {
           version: parsed.version,
           sha256: parsed.sha256.toLowerCase(),
@@ -459,6 +484,16 @@ export class UpgradeController {
       const path = join(stagedDir, name);
       if (name.includes('.part')) {
         await rm(path, { force: true, recursive: true }).catch(() => {});
+        continue;
+      }
+      if (name.endsWith('.json')) {
+        const version = name.startsWith('tmex-cli-')
+          ? name.slice('tmex-cli-'.length, -'.json'.length)
+          : '';
+        const tgz = version ? join(stagedDir, releaseTarballName(version)) : '';
+        if (!version || !existsSync(tgz) || !this.staged.has(version)) {
+          await rm(path, { force: true }).catch(() => {});
+        }
         continue;
       }
       if (name.endsWith('.tgz') && !keptPaths.has(path)) {
@@ -580,11 +615,11 @@ export class UpgradeController {
         const record = staged ?? this.lookupStaged(version, opts?.sha256);
         if (!record) throw new Error('PACKAGE_NOT_STAGED');
         const consumedPath = join(stageDir, releaseTarballName(version));
-        await rename(record.path, consumedPath);
         this.staged.delete(version);
         await rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
           force: true,
-        }).catch(() => {});
+        });
+        await rename(record.path, consumedPath);
         this.throwIfCancelled();
         const hashed = await sha256File(consumedPath);
         if (hashed.sha256 !== record.sha256) {

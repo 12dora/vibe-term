@@ -233,6 +233,127 @@ describe('downloadVerifiedRelease', () => {
     expect(existsSync(`${dest}.sha256`)).toBe(false);
   }, 5_000);
 
+  function stubSlowTarballFetch(tarball: Uint8Array, version: string): void {
+    const hex = sha256Hex(tarball);
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${hex}  ${releaseTarballName(version)}\n`, { status: 200 });
+      }
+      const signal = init?.signal;
+      let offset = 0;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (signal?.aborted) {
+            controller.error(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          if (offset >= tarball.byteLength) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(tarball.subarray(offset, offset + 1));
+          offset += 1;
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 15);
+            signal?.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as typeof fetch;
+  }
+
+  test('aborting the first of two shared callers does not fail the second', async () => {
+    const version = '4.4.4';
+    const tarball = new Uint8Array([9, 8, 7, 6, 5]);
+    stubSlowTarballFetch(tarball, version);
+    const cacheDir = tempDir('tmex-rel-share-first-');
+    const first = new AbortController();
+    const second = new AbortController();
+    const pendingFirst = downloadVerifiedRelease(version, { cacheDir, signal: first.signal });
+    const pendingSecond = downloadVerifiedRelease(version, { cacheDir, signal: second.signal });
+    const part = join(cacheDir, `${releaseTarballName(version)}.part`);
+    for (let i = 0; i < 50 && !existsSync(part); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    first.abort();
+    await expect(pendingFirst).rejects.toThrow();
+    const result = await pendingSecond;
+    expect(result.sha256).toBe(sha256Hex(tarball));
+    expect(existsSync(join(cacheDir, releaseTarballName(version)))).toBe(true);
+    expect(existsSync(part)).toBe(false);
+  }, 8_000);
+
+  test('aborting every shared caller aborts the fetch and removes the .part', async () => {
+    const version = '4.4.5';
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${'ab'.repeat(32)}  ${releaseTarballName(version)}\n`, {
+          status: 200,
+        });
+      }
+      const signal = init?.signal;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (signal?.aborted) {
+            controller.error(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          controller.enqueue(new Uint8Array(16 * 1024).fill(3));
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 15);
+            signal?.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as typeof fetch;
+    const cacheDir = tempDir('tmex-rel-share-all-');
+    const first = new AbortController();
+    const second = new AbortController();
+    const pendingFirst = downloadVerifiedRelease(version, { cacheDir, signal: first.signal });
+    const pendingSecond = downloadVerifiedRelease(version, { cacheDir, signal: second.signal });
+    const part = join(cacheDir, `${releaseTarballName(version)}.part`);
+    for (let i = 0; i < 50 && !existsSync(part); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(existsSync(part)).toBe(true);
+    const firstDone = pendingFirst.then(
+      () => {
+        throw new Error('first caller should have aborted');
+      },
+      (err: unknown) => err
+    );
+    const secondDone = pendingSecond.then(
+      () => {
+        throw new Error('second caller should have aborted');
+      },
+      (err: unknown) => err
+    );
+    first.abort();
+    second.abort();
+    expect(await firstDone).toBeInstanceOf(Error);
+    expect(await secondDone).toBeInstanceOf(Error);
+    expect(existsSync(part)).toBe(false);
+    expect(existsSync(join(cacheDir, releaseTarballName(version)))).toBe(false);
+  }, 8_000);
+
   test('sidecar write failure cleans part/final/sidecar and rejects', async () => {
     const version = '6.6.6';
     const tarball = new Uint8Array([4, 5, 6]);

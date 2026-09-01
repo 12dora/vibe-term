@@ -97,14 +97,14 @@ describe('POST /api/system/upgrade version validation', () => {
 });
 
 describe('GET /api/system/info upgradeCapabilities', () => {
-  test('includes staged-package', async () => {
+  test('includes staged-package and upgrade-cancel', async () => {
     const response = await handleSystemApiRequest(
       new Request('http://localhost/api/system/info'),
       '/api/system/info'
     );
     expect(response?.status).toBe(200);
     const body = (await response?.json()) as { upgradeCapabilities?: string[] };
-    expect(body.upgradeCapabilities).toEqual(['staged-package']);
+    expect(body.upgradeCapabilities).toEqual(['staged-package', 'upgrade-cancel']);
   });
 });
 

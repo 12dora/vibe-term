@@ -30,7 +30,7 @@ export function handleSystemApiRequest(
   path: string
 ): Response | Promise<Response> | undefined {
   if (path === '/api/system/info' && req.method === 'GET') {
-    return json({ ...getSystemInfo(), upgradeCapabilities: ['staged-package'] });
+    return json({ ...getSystemInfo(), upgradeCapabilities: ['staged-package', 'upgrade-cancel'] });
   }
 
   if (path === '/api/system/addresses' && req.method === 'GET') {

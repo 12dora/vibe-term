@@ -17,9 +17,34 @@ const SUM_LINE = /^([a-fA-F0-9]{64})\s+\*?(\S+)\s*$/;
 /** 覆盖 GitHub 仓库根 URL；缺省为当前发行源。路径布局保持 `/releases/download/v<ver>/...`。 */
 export const RELEASE_BASE_URL_ENV = 'TMEX_RELEASE_BASE_URL';
 
-const inflight = new Map<string, Promise<{ path: string; sha256: string; bytes: number }>>();
+type InflightWaiter = {
+  resolve: (value: DownloadedRelease) => void;
+  reject: (reason: unknown) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+};
+
+type InflightDownload = {
+  waiters: Set<InflightWaiter>;
+  ac: AbortController;
+  partPath: string;
+  key: string;
+};
+
+const inflight = new Map<string, InflightDownload>();
 
 export function resetReleaseDownloadForTests(): void {
+  for (const entry of inflight.values()) {
+    entry.ac.abort();
+    const err = abortError();
+    for (const waiter of entry.waiters) {
+      if (waiter.signal && waiter.onAbort) {
+        waiter.signal.removeEventListener('abort', waiter.onAbort);
+      }
+      waiter.reject(err);
+    }
+    entry.waiters.clear();
+  }
   inflight.clear();
 }
 
@@ -144,14 +169,88 @@ export async function downloadVerifiedRelease(
   version: string,
   opts: { cacheDir: string; fetchFn?: typeof fetch; signal?: AbortSignal }
 ): Promise<DownloadedRelease> {
+  throwIfAborted(opts.signal);
+  await mkdir(opts.cacheDir, { recursive: true, mode: 0o700 });
+  const dest = join(opts.cacheDir, releaseTarballName(version));
+  const sidecar = `${dest}.sha256`;
+  const cached = await readVerifiedCache(dest, sidecar);
+  if (cached) return cached;
+
   const key = `${opts.cacheDir}::${version}`;
-  const existing = inflight.get(key);
-  if (existing) return existing;
-  const pending = downloadVerifiedReleaseUncached(version, opts).finally(() => {
-    if (inflight.get(key) === pending) inflight.delete(key);
+  const partPath = `${dest}.part`;
+  return new Promise<DownloadedRelease>((resolve, reject) => {
+    const waiter: InflightWaiter = { resolve, reject, signal: opts.signal };
+    const onAbort = (): void => {
+      void abortWaiter(key, waiter, reject);
+    };
+    waiter.onAbort = onAbort;
+
+    let entry = inflight.get(key);
+    const created = !entry;
+    if (!entry) {
+      entry = { waiters: new Set(), ac: new AbortController(), partPath, key };
+      inflight.set(key, entry);
+    }
+
+    if (opts.signal?.aborted) {
+      if (created) inflight.delete(key);
+      reject(abortError());
+      return;
+    }
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
+    entry.waiters.add(waiter);
+
+    if (!created) return;
+    const owned = entry;
+    void downloadVerifiedReleaseUncached(version, { ...opts, signal: owned.ac.signal }).then(
+      (result) => {
+        if (inflight.get(key) === owned) inflight.delete(key);
+        settleInflight(owned, { ok: true, result });
+      },
+      (err) => {
+        if (inflight.get(key) === owned) inflight.delete(key);
+        settleInflight(owned, { ok: false, err });
+      }
+    );
   });
-  inflight.set(key, pending);
-  return pending;
+}
+
+async function abortWaiter(
+  key: string,
+  waiter: InflightWaiter,
+  reject: (reason: unknown) => void
+): Promise<void> {
+  const entry = inflight.get(key);
+  if (entry?.waiters.has(waiter)) {
+    entry.waiters.delete(waiter);
+    if (entry.waiters.size === 0) {
+      entry.ac.abort();
+      if (inflight.get(key) === entry) inflight.delete(key);
+      await rm(entry.partPath, { force: true }).catch(() => {});
+    }
+  }
+  reject(abortError());
+}
+
+function settleInflight(
+  entry: InflightDownload,
+  outcome: { ok: true; result: DownloadedRelease } | { ok: false; err: unknown }
+): void {
+  const waiters = [...entry.waiters];
+  entry.waiters.clear();
+  for (const waiter of waiters) {
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort);
+    }
+    if (outcome.ok) waiter.resolve(outcome.result);
+    else waiter.reject(outcome.err);
+  }
+}
+
+function abortError(): Error {
+  const err = new Error('UPGRADE_CANCELLED');
+  err.name = 'AbortError';
+  return err;
 }
 
 async function downloadVerifiedReleaseUncached(
@@ -226,9 +325,7 @@ function mergeAbortSignals(timeout: AbortSignal, user?: AbortSignal): AbortSigna
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
-  const err = new Error('UPGRADE_CANCELLED');
-  err.name = 'AbortError';
-  throw err;
+  throw abortError();
 }
 
 async function downloadTarballToFile(

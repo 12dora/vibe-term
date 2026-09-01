@@ -1,8 +1,6 @@
-import { createReadStream, existsSync, statSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { createReadStream, statSync } from 'node:fs';
 import { Readable } from 'node:stream';
-import { UPGRADE_CANCELLED, releaseTarballName } from '@tmex/shared';
+import { UPGRADE_CANCELLED } from '@tmex/shared';
 import { getInstallInfo } from './install-info';
 import { downloadVerifiedRelease, resolveReleaseCacheDir } from './release-download';
 import { resolveUpgradeInstallDir } from './upgrade';
@@ -43,12 +41,9 @@ type Job = {
   phase: 'download' | 'push' | 'start';
   pushed: boolean;
   fileStream: ReadableStream<Uint8Array> | null;
-};
-
-type InflightDownload = {
-  promise: Promise<DownloadedRelease>;
-  ac: AbortController;
-  refs: number;
+  pushPromise: Promise<Response> | null;
+  startPromise: Promise<Response> | null;
+  upgradeCapabilities: string[];
 };
 
 type RemoteUpgradeTimeouts = {
@@ -58,17 +53,12 @@ type RemoteUpgradeTimeouts = {
 };
 
 const jobs = new Map<string, Job>();
-const downloadInflight = new Map<string, InflightDownload>();
 
 export function resetRemoteUpgradeJobsForTests(): void {
   for (const job of jobs.values()) {
     job.abort.abort();
   }
   jobs.clear();
-  for (const inflight of downloadInflight.values()) {
-    inflight.ac.abort();
-  }
-  downloadInflight.clear();
 }
 
 export function getRemoteUpgradeJob(
@@ -112,6 +102,7 @@ export function startRemoteUpgradeJob(opts: {
   download?: (version: string, signal?: AbortSignal) => Promise<DownloadedRelease>;
   now?: () => number;
   timeouts?: Partial<RemoteUpgradeTimeouts>;
+  upgradeCapabilities?: readonly string[];
 }): RemoteUpgradeStartResult {
   const existing = jobs.get(opts.nodeId);
   if (existing?.state === 'running') return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
@@ -135,6 +126,9 @@ export function startRemoteUpgradeJob(opts: {
     phase: 'download',
     pushed: false,
     fileStream: null,
+    pushPromise: null,
+    startPromise: null,
+    upgradeCapabilities: [...(opts.upgradeCapabilities ?? ['staged-package', 'upgrade-cancel'])],
   };
   jobs.set(opts.nodeId, job);
 
@@ -149,40 +143,92 @@ export function startRemoteUpgradeJob(opts: {
   return { ok: true, snapshot: snapshotOf(job) };
 }
 
+export type RemoteUpgradeCancelResult =
+  | { handled: true; snapshot: RemoteUpgradeJobSnapshot }
+  | { handled: false }
+  | { handled: 'unsupported' };
+
 export async function cancelRemoteUpgradeJob(opts: {
   nodeId: string;
   req: Request;
   forward: AuthorizedUpgradeForward;
-}): Promise<{ handled: true; snapshot: RemoteUpgradeJobSnapshot } | { handled: false }> {
+}): Promise<RemoteUpgradeCancelResult> {
   const job = jobs.get(opts.nodeId);
   if (!job) return { handled: false };
   if (job.state === 'handed-off' || job.state === 'failed') return { handled: false };
   if (job.state === 'cancelled') return { handled: true, snapshot: snapshotOf(job) };
   if (job.state !== 'running') return { handled: false };
 
+  const canCancelTarget = supportsUpgradeCancel(job);
+
+  if (job.startPromise) {
+    if (!canCancelTarget) return { handled: 'unsupported' };
+    return finishStartCancel(job, opts.req, opts.forward);
+  }
+
+  if (job.pushed || job.phase === 'start') {
+    if (!canCancelTarget) return { handled: 'unsupported' };
+    job.abort.abort();
+    await job.fileStream?.cancel().catch(() => {});
+    job.fileStream = null;
+    await job.pushPromise?.then(
+      (res) => res.body?.cancel().catch(() => {}),
+      () => {}
+    );
+    await deleteStagedBestEffort(job, opts.req, opts.forward);
+    return { handled: true, snapshot: markCancelled(job) };
+  }
+
   job.abort.abort();
   await job.fileStream?.cancel().catch(() => {});
   job.fileStream = null;
-  if (job.phase === 'download') {
-    const inflight = downloadInflight.get(job.version);
-    if (!inflight || inflight.refs <= 0) {
-      if (inflight) await inflight.promise.catch(() => {});
-      await removeUnverifiedReleaseCache(job.version);
+
+  if (job.pushPromise) {
+    const pushed = await job.pushPromise.then(
+      (res) => res,
+      () => null
+    );
+    if (job.startPromise) {
+      if (!canCancelTarget) return { handled: 'unsupported' };
+      return finishStartCancel(job, opts.req, opts.forward);
     }
-  }
-  if (job.pushed) {
+    const landed = pushed != null && pushed.status >= 200 && pushed.status < 300;
+    if (landed) job.pushed = true;
+    if (landed && !canCancelTarget) return { handled: 'unsupported' };
     await deleteStagedBestEffort(job, opts.req, opts.forward);
+    return { handled: true, snapshot: markCancelled(job) };
   }
+
   return { handled: true, snapshot: markCancelled(job) };
 }
 
-async function removeUnverifiedReleaseCache(version: string): Promise<void> {
-  const cacheDir = resolveReleaseCacheDir(resolveUpgradeInstallDir(getInstallInfo()));
-  const dest = join(cacheDir, releaseTarballName(version));
-  await rm(`${dest}.part`, { force: true }).catch(() => {});
-  if (!existsSync(`${dest}.sha256`)) {
-    await rm(dest, { force: true }).catch(() => {});
+async function finishStartCancel(
+  job: Job,
+  req: Request,
+  forward: AuthorizedUpgradeForward
+): Promise<RemoteUpgradeCancelResult> {
+  const started = await job.startPromise?.then(
+    (res) => res,
+    () => null
+  );
+  if (job.state === 'handed-off') return { handled: false };
+  if (job.state === 'cancelled') return { handled: true, snapshot: snapshotOf(job) };
+  const accepted = started != null && started.status >= 200 && started.status < 300;
+  if (accepted) {
+    job.state = 'handed-off';
+    job.error = null;
+    return { handled: false };
   }
+  await deleteStagedBestEffort(job, req, forward);
+  return { handled: true, snapshot: markCancelled(job) };
+}
+
+function supportsUpgradeCancel(job: Job): boolean {
+  return job.upgradeCapabilities.includes('upgrade-cancel');
+}
+
+function isCancelled(job: Job): boolean {
+  return job.state === 'cancelled';
 }
 
 async function runJob(
@@ -197,19 +243,18 @@ async function runJob(
   job.phase = 'download';
   try {
     downloaded = await withTimeout(
-      Promise.race([
-        sharedDownload(job.version, download, job.abort.signal),
-        abortPromise(job.abort.signal),
-      ]),
+      download(job.version, job.abort.signal),
       timeouts.downloadMs,
       'download timeout'
     );
   } catch (err) {
+    if (isCancelled(job)) return snapshotOf(job);
     if (job.abort.signal.aborted) {
       return markCancelled(job, nowFn);
     }
     return fail(job, `download failed: ${err instanceof Error ? err.message : String(err)}`, nowFn);
   }
+  if (isCancelled(job)) return snapshotOf(job);
   if (job.abort.signal.aborted) {
     return markCancelled(job, nowFn);
   }
@@ -219,32 +264,31 @@ async function runJob(
   try {
     fileStream = fileReadableStream(downloaded.path);
     job.fileStream = fileStream;
-    const pushed = await withTimeout(
-      Promise.race([
-        forward.forwardAuthorizedHttp(req, {
-          nodeId: job.nodeId,
-          method: 'PUT',
-          path: '/api/system/upgrade/package',
-          query: `?version=${encodeURIComponent(job.version)}&sha256=${downloaded.sha256}`,
-          rawBody: fileStream,
-          headers: {
-            'content-type': 'application/octet-stream',
-            'content-length': String(downloaded.bytes),
-          },
-          signal: mergeAbortSignals(AbortSignal.timeout(timeouts.pushMs), job.abort.signal),
-        }),
-        abortPromise(job.abort.signal),
-      ]),
-      timeouts.pushMs,
-      'push timeout'
-    );
+    const pushReq = forward.forwardAuthorizedHttp(req, {
+      nodeId: job.nodeId,
+      method: 'PUT',
+      path: '/api/system/upgrade/package',
+      query: `?version=${encodeURIComponent(job.version)}&sha256=${downloaded.sha256}`,
+      rawBody: fileStream,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'content-length': String(downloaded.bytes),
+      },
+      signal: mergeAbortSignals(AbortSignal.timeout(timeouts.pushMs), job.abort.signal),
+    });
+    job.pushPromise = pushReq;
+    const pushed = await withTimeout(pushReq, timeouts.pushMs, 'push timeout');
     fileStream = null;
     job.fileStream = null;
-    if (job.abort.signal.aborted) {
+    if (isCancelled(job)) {
       await pushed.body?.cancel().catch(() => {});
-      return markCancelled(job, nowFn);
+      return snapshotOf(job);
     }
     if (pushed.status < 200 || pushed.status >= 300) {
+      if (job.abort.signal.aborted) {
+        await deleteStagedBestEffort(job, req, forward);
+        return markCancelled(job, nowFn);
+      }
       return fail(job, `push failed: ${await describeUpstream(pushed)}`, nowFn);
     }
     await pushed.body?.cancel().catch(() => {});
@@ -252,7 +296,9 @@ async function runJob(
   } catch (err) {
     await fileStream?.cancel().catch(() => {});
     job.fileStream = null;
+    if (isCancelled(job)) return snapshotOf(job);
     if (job.abort.signal.aborted) {
+      await deleteStagedBestEffort(job, req, forward);
       return markCancelled(job, nowFn);
     }
     const message = err instanceof Error ? err.message : String(err);
@@ -264,39 +310,33 @@ async function runJob(
   }
 
   job.phase = 'start';
+  if (isCancelled(job)) return snapshotOf(job);
   if (job.abort.signal.aborted) {
-    await deleteStagedBestEffort(job, req, forward);
-    return markCancelled(job, nowFn);
-  }
-  try {
-    const started = await withTimeout(
-      Promise.race([
-        forward.forwardAuthorizedHttp(req, {
-          nodeId: job.nodeId,
-          method: 'POST',
-          path: '/api/system/upgrade',
-          body: { version: job.version, source: 'staged', sha256: downloaded.sha256 },
-          signal: mergeAbortSignals(AbortSignal.timeout(timeouts.startMs), job.abort.signal),
-        }),
-        abortPromise(job.abort.signal),
-      ]),
-      timeouts.startMs,
-      'start timeout'
-    );
-    if (job.abort.signal.aborted) {
-      await started.body?.cancel().catch(() => {});
+    if (supportsUpgradeCancel(job)) {
       await deleteStagedBestEffort(job, req, forward);
       return markCancelled(job, nowFn);
+    }
+  }
+  try {
+    const startReq = forward.forwardAuthorizedHttp(req, {
+      nodeId: job.nodeId,
+      method: 'POST',
+      path: '/api/system/upgrade',
+      body: { version: job.version, source: 'staged', sha256: downloaded.sha256 },
+      signal: AbortSignal.timeout(timeouts.startMs),
+    });
+    job.startPromise = startReq;
+    const started = await withTimeout(startReq, timeouts.startMs, 'start timeout');
+    if (isCancelled(job)) {
+      await started.body?.cancel().catch(() => {});
+      return snapshotOf(job);
     }
     if (started.status < 200 || started.status >= 300) {
       return fail(job, `start failed: ${await describeUpstream(started)}`, nowFn);
     }
     await started.body?.cancel().catch(() => {});
   } catch (err) {
-    if (job.abort.signal.aborted) {
-      await deleteStagedBestEffort(job, req, forward);
-      return markCancelled(job, nowFn);
-    }
+    if (isCancelled(job)) return snapshotOf(job);
     const message = err instanceof Error ? err.message : String(err);
     return fail(
       job,
@@ -305,15 +345,14 @@ async function runJob(
     );
   }
 
-  if (job.abort.signal.aborted) {
-    return markCancelled(job, nowFn);
-  }
+  if (isCancelled(job)) return snapshotOf(job);
   job.state = 'handed-off';
   job.error = null;
   return snapshotOf(job);
 }
 
 function markCancelled(job: Job, nowFn: () => number = Date.now): RemoteUpgradeJobSnapshot {
+  if (job.state === 'handed-off') return snapshotOf(job);
   if (job.state !== 'cancelled') {
     job.state = 'cancelled';
     job.error = UPGRADE_CANCELLED;
@@ -323,7 +362,7 @@ function markCancelled(job: Job, nowFn: () => number = Date.now): RemoteUpgradeJ
 }
 
 function fail(job: Job, error: string, nowFn: () => number = Date.now): RemoteUpgradeJobSnapshot {
-  if (job.state === 'cancelled') return snapshotOf(job);
+  if (job.state === 'cancelled' || job.state === 'handed-off') return snapshotOf(job);
   job.state = 'failed';
   job.error = error;
   job.failedAt = new Date(nowFn()).toISOString();
@@ -343,6 +382,11 @@ async function deleteStagedBestEffort(
       query: `?version=${encodeURIComponent(job.version)}`,
     });
     await res.body?.cancel().catch(() => {});
+    if (res.status < 200 || res.status >= 300) {
+      console.warn(
+        `[mesh][upgrade] cancel staged package failed node=${job.nodeId} version=${job.version} status=${res.status}`
+      );
+    }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     console.warn(
@@ -359,21 +403,6 @@ function mergeAbortSignals(timeout: AbortSignal, user: AbortSignal): AbortSignal
   timeout.addEventListener('abort', onAbort, { once: true });
   user.addEventListener('abort', onAbort, { once: true });
   return ac.signal;
-}
-
-function abortPromise(signal: AbortSignal): Promise<never> {
-  return new Promise((_, reject) => {
-    const fail = (): void => {
-      const err = new Error(UPGRADE_CANCELLED);
-      err.name = 'AbortError';
-      reject(err);
-    };
-    if (signal.aborted) {
-      fail();
-      return;
-    }
-    signal.addEventListener('abort', fail, { once: true });
-  });
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -395,34 +424,6 @@ function snapshotOf(job: Job): RemoteUpgradeJobSnapshot {
     error: job.error,
     startedAt: job.startedAt,
   };
-}
-
-function sharedDownload(
-  version: string,
-  download: (version: string, signal?: AbortSignal) => Promise<DownloadedRelease>,
-  signal: AbortSignal
-): Promise<DownloadedRelease> {
-  let inflight = downloadInflight.get(version);
-  if (!inflight) {
-    const ac = new AbortController();
-    const created: InflightDownload = {
-      promise: download(version, ac.signal).finally(() => {
-        if (downloadInflight.get(version) === created) downloadInflight.delete(version);
-      }),
-      ac,
-      refs: 0,
-    };
-    inflight = created;
-    downloadInflight.set(version, created);
-  }
-  inflight.refs += 1;
-  const onAbort = (): void => {
-    inflight.refs -= 1;
-    if (inflight.refs <= 0) inflight.ac.abort();
-  };
-  if (signal.aborted) onAbort();
-  else signal.addEventListener('abort', onAbort, { once: true });
-  return inflight.promise;
 }
 
 async function defaultDownload(version: string, signal?: AbortSignal): Promise<DownloadedRelease> {

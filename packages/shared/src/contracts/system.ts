@@ -35,6 +35,7 @@ export interface SystemInfo {
   /**
    * 本节点支持的升级能力。旧节点无此字段。
    * `'staged-package'`：接受入口推送的 tarball（`PUT /api/system/upgrade/package`）并从暂存包升级。
+   * `'upgrade-cancel'`：支持 `DELETE /api/system/upgrade` 与 `DELETE /api/system/upgrade/package`。
    */
   upgradeCapabilities?: string[];
 }

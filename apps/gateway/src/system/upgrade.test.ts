@@ -901,6 +901,45 @@ describe('staged package', () => {
     const leftover = existsSync(stagedDir) ? readdirSync(stagedDir) : [];
     expect(leftover).toEqual([]);
   });
+
+  test('DELETE package waits for an in-flight PUT of the same version then removes what landed', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const body = new ReadableStream<Uint8Array>({
+      async pull(stream) {
+        await gate;
+        stream.enqueue(bytes);
+        stream.close();
+      },
+    });
+    const put = controller.stagePackage('1.2.3', hex, body);
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    for (let i = 0; i < 50; i += 1) {
+      const parts = existsSync(stagedDir)
+        ? readdirSync(stagedDir).filter((name) => name.includes('.part'))
+        : [];
+      if (parts.length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    let deleteSettled = false;
+    const del = controller.removeStagedPackage('1.2.3').then((result) => {
+      deleteSettled = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(deleteSettled).toBe(false);
+    release();
+    expect((await put).ok).toBe(true);
+    expect(await del).toEqual({ ok: true });
+    const leftover = existsSync(stagedDir) ? readdirSync(stagedDir) : [];
+    expect(leftover).toEqual([]);
+  });
 });
 
 describe('UpgradeController.cancel', () => {
@@ -1150,6 +1189,36 @@ describe('UpgradeController.cancel', () => {
     expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'))).toBe(false);
     expect(existsSync(join(cacheDir, 'tmex-cli-0.0.1.tgz'))).toBe(false);
     expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(true);
+    child.emit('spawn');
+    await settle();
+  });
+
+  test('orphan staged sidecar without a tarball is pruned on the next start', async () => {
+    const install = makeInstall();
+    const installDir = install.installDir as string;
+    const stagedDir = join(installDir, 'staging', 'staged');
+    mkdirSync(stagedDir, { recursive: true });
+    writeFileSync(
+      join(stagedDir, 'tmex-cli-1.2.3.json'),
+      `${JSON.stringify({
+        version: '1.2.3',
+        sha256: 'ab'.repeat(32),
+        path: join(stagedDir, 'tmex-cli-1.2.3.tgz'),
+        bytes: 12,
+        stagedAt: '2026-09-01T00:00:00.000Z',
+      })}\n`
+    );
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      spawn: () => child as unknown as ChildProcess,
+    });
+    expect(controller.start('8.8.8')).toBe(true);
+    await settle();
+    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.json'))).toBe(false);
+    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.tgz'))).toBe(false);
     child.emit('spawn');
     await settle();
   });
