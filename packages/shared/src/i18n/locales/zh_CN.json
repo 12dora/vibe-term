@@ -1746,6 +1746,53 @@
           "signed": "已签名",
           "env": "环境变量",
           "self": "本机"
+        },
+        "role": {
+          "promote": "设为主 Hub",
+          "demote": "设为备 Hub",
+          "stateSwitching": "切换中",
+          "confirmPromote": "设为主 Hub",
+          "confirmDemote": "设为备 Hub",
+          "confirmText": "「{{target}}」将接管写入，写入纪元升到 {{epoch}}。",
+          "confirmTextNoWriter": "「{{from}}」降为备 Hub，没有其它 Hub 可接管写入。",
+          "confirm": "切换",
+          "cancel": "取消",
+          "stepAdmit": "为「{{target}}」签发 Hub 授权（需验证凭据）。",
+          "stepDemote": "把「{{from}}」降为备 Hub。",
+          "stepPromote": "把「{{target}}」升为主 Hub（纪元 {{epoch}}），目标随后自动重启。",
+          "stepWait": "等待「{{target}}」重启并接管写入。",
+          "stepDemoteOnly": "把「{{from}}」降为备 Hub，目标随后自动重启。",
+          "warnFromUnreachable": "原主 Hub 不可达，将依靠更高纪元围栏它。",
+          "warnNoWriter": "之后将没有可写 Hub，加入、重命名、移除等管理操作都不可用。",
+          "started": "已开始切换 Hub 主备。",
+          "done": "「{{target}}」已成为主 Hub。",
+          "failed": "Hub 切换失败：{{error}}",
+          "forceTitle": "有节点版本过低",
+          "forceDescription": "强制继续后，这些节点将无法再同步 Hub 授权记录。",
+          "forceText": "以下节点版本低于 {{minVersion}}，须先升级：",
+          "forceAccept": "仍然继续（旧节点将无法再同步）",
+          "forceConfirm": "仍然继续",
+          "blocked": {
+            "unknownHub": "Hub 集合尚未加载，稍后重试。",
+            "unknownAuth": "入口版本过低，无法读取 Hub 授权来源。",
+            "offline": "该 Hub 离线，无法切换。",
+            "switching": "已有一次 Hub 切换在进行。",
+            "rowBusy": "该节点正在升级或卸载。",
+            "notWritable": "须先签发 Hub 授权，当前主 Hub 不接受写入。"
+          },
+          "errors": {
+            "HUB_NOT_HUB": "目标未启用 Hub 角色。",
+            "HUB_NOT_AUTHORIZED": "目标 Hub 未获授权。",
+            "HUB_EPOCH_STALE": "写入纪元已过期，请刷新后重试。",
+            "HUB_ROLE_BUSY": "目标已有一次角色切换在进行。",
+            "HUB_ROLE_UNSUPPORTED": "目标版本不支持远程切换，须先升级。",
+            "INVALID_REQUEST": "请求无效。",
+            "unknown": "原因未知。",
+            "unreachable": "目标 Hub 不可达。",
+            "authTimeout": "Hub 授权未在预期时间内生效。",
+            "restartTimeout": "目标重启超时，未能确认切换结果：{{error}}",
+            "writerTimeout": "未能确认新的主 Hub 已接管写入，请刷新核对。"
+          }
         }
       },
       "machine": {

@@ -35,6 +35,7 @@ import { CircleArrowUp, Ellipsis, Plus, RefreshCw, ShieldAlert, Trash2 } from 'l
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EnrollmentSection } from './enrollment-section';
+import { HubRoleDialog } from './hub-role-dialog';
 import { HubStrip } from './hub-strip';
 import { NodesTable } from './nodes-table';
 import {
@@ -46,6 +47,7 @@ import {
 } from './types';
 import { UninstallDialog } from './uninstall-dialog';
 import { isBatchEligible } from './upgrade-batch';
+import { useHubRoleSwitch } from './use-hub-role-switch';
 import { useBulkRevoke } from './use-node-row-actions';
 import { isUninstalling, useNodeUninstall } from './use-node-uninstall';
 import { useNodeUpgrade } from './use-node-upgrade';
@@ -118,6 +120,20 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
 
   const uninstall = useNodeUninstall(
     { api, mode, prompt, writerPublicUrl: hubs.writerPublicUrl, writable },
+    refreshAll
+  );
+  // 主备切换与卸载共用一套「行内长事务」的观感，但它只走 hub 自己的角色接口，
+  // 不经过 key log 之外的任何管理写入，因此单独一套状态。
+  const roleSwitch = useHubRoleSwitch(
+    {
+      hubs: hubs.hubs,
+      writerHubId: hubs.writerHubId,
+      rows,
+      api,
+      mode,
+      prompt,
+      hubWritable: !hubs.writesBlocked,
+    },
     refreshAll
   );
   const bulkRevoke = useBulkRevoke({
@@ -280,9 +296,11 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           upgrade={upgrade}
           selection={selection}
           uninstall={uninstall}
+          roleSwitch={roleSwitch}
         />
 
         <UninstallDialog uninstall={uninstall} />
+        <HubRoleDialog roleSwitch={roleSwitch} />
         {prompt.dialog}
       </CardContent>
     </Card>

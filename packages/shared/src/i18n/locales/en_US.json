@@ -1746,6 +1746,53 @@
           "signed": "Signed",
           "env": "Environment",
           "self": "This machine"
+        },
+        "role": {
+          "promote": "Set as Primary Hub",
+          "demote": "Set as Standby Hub",
+          "stateSwitching": "Switching",
+          "confirmPromote": "Set as Primary Hub",
+          "confirmDemote": "Set as Standby Hub",
+          "confirmText": "\"{{target}}\" will take over writes, with the writer epoch raised to {{epoch}}.",
+          "confirmTextNoWriter": "\"{{from}}\" becomes a standby hub, and no other hub can take over writes.",
+          "confirm": "Switch",
+          "cancel": "Cancel",
+          "stepAdmit": "Sign a hub authorization for \"{{target}}\" (credentials required).",
+          "stepDemote": "Demote \"{{from}}\" to a standby hub.",
+          "stepPromote": "Promote \"{{target}}\" to primary hub (epoch {{epoch}}); it restarts afterwards.",
+          "stepWait": "Wait for \"{{target}}\" to restart and take over writes.",
+          "stepDemoteOnly": "Demote \"{{from}}\" to a standby hub; it restarts afterwards.",
+          "warnFromUnreachable": "The current primary hub is unreachable and will be fenced by the higher epoch.",
+          "warnNoWriter": "No hub will accept writes afterwards; adding, renaming and removing nodes become unavailable.",
+          "started": "Hub role switch started.",
+          "done": "\"{{target}}\" is now the primary hub.",
+          "failed": "Hub role switch failed: {{error}}",
+          "forceTitle": "Some nodes are too old",
+          "forceDescription": "If you continue, these nodes can no longer sync hub authorization records.",
+          "forceText": "These nodes are older than {{minVersion}} and need an upgrade first:",
+          "forceAccept": "Continue anyway (old nodes stop syncing)",
+          "forceConfirm": "Continue Anyway",
+          "blocked": {
+            "unknownHub": "The hub list is not loaded yet. Try again shortly.",
+            "unknownAuth": "This entry is too old to read the hub authorization source.",
+            "offline": "This hub is offline and cannot be switched.",
+            "switching": "A hub role switch is already running.",
+            "rowBusy": "This node is upgrading or being uninstalled.",
+            "notWritable": "A hub authorization must be signed first, but the primary hub does not accept writes."
+          },
+          "errors": {
+            "HUB_NOT_HUB": "The target does not run the hub role.",
+            "HUB_NOT_AUTHORIZED": "The target hub is not authorized.",
+            "HUB_EPOCH_STALE": "The writer epoch is stale. Refresh and try again.",
+            "HUB_ROLE_BUSY": "The target already has a role switch running.",
+            "HUB_ROLE_UNSUPPORTED": "The target version does not support remote switching. Upgrade it first.",
+            "INVALID_REQUEST": "Invalid request.",
+            "unknown": "Reason unknown.",
+            "unreachable": "The target hub is unreachable.",
+            "authTimeout": "The hub authorization did not take effect in time.",
+            "restartTimeout": "The target did not restart in time, so the result is unconfirmed: {{error}}",
+            "writerTimeout": "Could not confirm the new primary hub took over writes. Refresh to check."
+          }
         }
       },
       "machine": {

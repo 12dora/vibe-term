@@ -1746,6 +1746,53 @@
           "signed": "署名済み",
           "env": "環境変数",
           "self": "本機"
+        },
+        "role": {
+          "promote": "メインハブにする",
+          "demote": "予備ハブにする",
+          "stateSwitching": "切り替え中",
+          "confirmPromote": "メインハブにする",
+          "confirmDemote": "予備ハブにする",
+          "confirmText": "「{{target}}」が書き込みを引き継ぎ、書き込みエポックは {{epoch}} になります。",
+          "confirmTextNoWriter": "「{{from}}」を予備ハブにします。書き込みを引き継げるハブはありません。",
+          "confirm": "切り替え",
+          "cancel": "キャンセル",
+          "stepAdmit": "「{{target}}」にハブ認可を発行します（認証情報が必要です）。",
+          "stepDemote": "「{{from}}」を予備ハブにします。",
+          "stepPromote": "「{{target}}」をメインハブにします（エポック {{epoch}}）。その後自動的に再起動します。",
+          "stepWait": "「{{target}}」の再起動と書き込みの引き継ぎを待ちます。",
+          "stepDemoteOnly": "「{{from}}」を予備ハブにします。その後自動的に再起動します。",
+          "warnFromUnreachable": "現在のメインハブに接続できないため、より高いエポックで隔離します。",
+          "warnNoWriter": "この後は書き込み可能なハブがなくなり、追加・名前変更・削除などの管理操作はできません。",
+          "started": "ハブの切り替えを開始しました。",
+          "done": "「{{target}}」がメインハブになりました。",
+          "failed": "ハブの切り替えに失敗しました：{{error}}",
+          "forceTitle": "バージョンが古いノードがあります",
+          "forceDescription": "続行すると、これらのノードはハブ認可レコードを同期できなくなります。",
+          "forceText": "以下のノードは {{minVersion}} より古いため、先にアップグレードが必要です：",
+          "forceAccept": "それでも続行する（古いノードは同期できなくなります）",
+          "forceConfirm": "続行する",
+          "blocked": {
+            "unknownHub": "ハブ一覧が未読み込みです。しばらくしてから再試行してください。",
+            "unknownAuth": "入口のバージョンが古く、ハブ認可の種別を読み取れません。",
+            "offline": "このハブはオフラインのため切り替えできません。",
+            "switching": "ハブの切り替えがすでに実行中です。",
+            "rowBusy": "このノードはアップグレードまたはアンインストール中です。",
+            "notWritable": "先にハブ認可の発行が必要ですが、メインハブが書き込みを受け付けません。"
+          },
+          "errors": {
+            "HUB_NOT_HUB": "対象はハブとして動作していません。",
+            "HUB_NOT_AUTHORIZED": "対象ハブは認可されていません。",
+            "HUB_EPOCH_STALE": "書き込みエポックが古くなっています。更新してから再試行してください。",
+            "HUB_ROLE_BUSY": "対象では役割の切り替えがすでに実行中です。",
+            "HUB_ROLE_UNSUPPORTED": "対象のバージョンはリモート切り替えに未対応です。先にアップグレードしてください。",
+            "INVALID_REQUEST": "リクエストが不正です。",
+            "unknown": "原因は不明です。",
+            "unreachable": "対象ハブに接続できません。",
+            "authTimeout": "ハブ認可が時間内に反映されませんでした。",
+            "restartTimeout": "対象の再起動がタイムアウトし、結果を確認できません：{{error}}",
+            "writerTimeout": "新しいメインハブが書き込みを引き継いだか確認できません。更新して確認してください。"
+          }
         }
       },
       "machine": {

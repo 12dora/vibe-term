@@ -14,6 +14,7 @@ import type { KeyLogHead } from '@tmex/shared/auth';
 import {
   JOIN_TOKEN_BYTES,
   JOIN_TOKEN_CHARS,
+  buildAdmitHubPayload,
   createEnrollment,
   decodeBase64url,
   decodeCertificate,
@@ -533,6 +534,48 @@ export function buildRevokeNodeRecord(input: RevokeInput): Promise<{
     uid: input.uid,
     type: 'revoke-node',
     payload: encodeRevokeNodePayload({ node_id: nodeId, reason: input.reason }),
+    signer: input.signer,
+  });
+}
+
+export interface AdmitHubInput {
+  head: KeyLogHead;
+  rootEpoch: number;
+  uid: string;
+  /** 32 位小写 hex（与 `node_certs.node_id` 一致）：这台 hub 机的 node id。 */
+  hubNodeIdHex: string;
+  /**
+   * hub 的对外地址。**不能省**：入口应用 `admit-hub` 时若既没有 payload 里的地址、
+   * 集合里也还没有这台 hub，它连不上任何东西，记录会被静默丢掉（见 `hub-authorization.ts`）。
+   */
+  publicUrl?: string | null;
+  /** 故障转移顺序，越小越先；不改动时传 `null` 沿用集合里的值。 */
+  priority?: number | null;
+  signer: RecordSigner;
+}
+
+/**
+ * 构造并签一条 `admit-hub`：hub 授权的**权威来源**，`TMEX_HUB_PEERS` 只是 bootstrap 回退。
+ * 与 `revoke-node` 走同一条 key log，因此同样要在写锁内读 head 再签（见 `revokeNodeRecord`）。
+ */
+export function buildAdmitHubRecord(input: AdmitHubInput): Promise<{
+  bytes: Uint8Array;
+  sig: Uint8Array;
+}> {
+  const hubNodeId = hexToBytes(input.hubNodeIdHex);
+  if (hubNodeId.length !== 16) {
+    return Promise.reject(new Error('hub node id must be 16 bytes'));
+  }
+  return buildSignedRecord({
+    head: input.head,
+    rootEpoch: input.rootEpoch,
+    uid: input.uid,
+    type: 'admit-hub',
+    payload: buildAdmitHubPayload({
+      hubNodeId,
+      publicUrl: input.publicUrl ?? null,
+      priority: input.priority ?? null,
+    }),
     signer: input.signer,
   });
 }

@@ -3,7 +3,12 @@
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { AuthModeResponse, HubEndpointInfo, MeshNode } from '@tmex/api-client/auth/index';
+import type {
+  AuthModeResponse,
+  HubEndpointInfo,
+  MeshHubEndpoint,
+  MeshNode,
+} from '@tmex/api-client/auth/index';
 import type { UpgradeStatus } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { installWindowStorage } from '@tmex/stores/test-utils';
@@ -15,6 +20,7 @@ import type {
   NodeUpgradeController,
   NodeUpgradeEntry,
 } from './types';
+import type { HubRoleSwitchController } from './use-hub-role-switch';
 import type {
   UpgradeIo,
   UpgradePollOutcome,
@@ -53,7 +59,9 @@ const {
   uninstallSummaryText,
 } = await import('./use-node-uninstall');
 const { UninstallDialogBody } = await import('./uninstall-dialog');
+const { HubRoleDialogBody, HubRoleForceBody } = await import('./hub-role-dialog');
 const { NodesTable } = await import('./nodes-table');
+const { hubRoleButtonState, planHubRoleSwitch } = await import('./use-hub-role-switch');
 const { IDLE_UPGRADE_ENTRY, IDLE_UPGRADE_BATCH } = await import('./types');
 const {
   classifyPollFailure,
@@ -491,11 +499,34 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     };
   }
 
+  function roleSwitchController(
+    overrides: Partial<HubRoleSwitchController> = {}
+  ): HubRoleSwitchController {
+    return {
+      switchingIds: new Set<string>(),
+      running: false,
+      plan: null,
+      force: null,
+      phase: null,
+      request: () => undefined,
+      confirm: () => undefined,
+      dismiss: () => undefined,
+      resolveForce: () => undefined,
+      stateOf: () => ({ intent: 'promote', plan: null, blocked: 'unknownHub' }),
+      ...overrides,
+    };
+  }
+
   function renderTable(
     rows: NodeRow[],
     latestVersion: string | null,
     overrides: Partial<NodeUpgradeController> = {},
-    extra: { selection?: NodeSelection; uninstall?: NodeUninstallController } = {}
+    extra: {
+      selection?: NodeSelection;
+      uninstall?: NodeUninstallController;
+      roleSwitch?: HubRoleSwitchController;
+      deps?: Partial<NodeActionDeps>;
+    } = {}
   ): string {
     const deps: NodeActionDeps = {
       hubApi: null,
@@ -512,6 +543,7 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       prompt: { dialog: null } as unknown as NodeActionDeps['prompt'],
       onChanged: () => undefined,
       upgrade: { ...controller(latestVersion), ...overrides },
+      ...extra.deps,
     };
     return renderToStaticMarkup(
       <MemoryRouter>
@@ -519,6 +551,7 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
           rows={rows}
           selection={extra.selection ?? selection()}
           uninstall={extra.uninstall ?? uninstallController()}
+          roleSwitch={extra.roleSwitch ?? roleSwitchController()}
           {...deps}
         />
       </MemoryRouter>
@@ -660,6 +693,168 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(header).toContain('data-all-selected="true"');
     expect(header).toContain('aria-label="nodes.selection.clearAll"');
     expect(elementTag(selected, 'nodes-select-ww')).toContain('data-checked');
+  });
+
+  // hub 徽标旁的「切换」按钮：按钮态全部由 `hubRoleButtonState` 算，这里只验渲染与禁用原因。
+  const HUB_X = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
+  const HUB_A = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
+
+  function hubEndpoint(overrides: Partial<MeshHubEndpoint> & { nodeId: string }): MeshHubEndpoint {
+    return {
+      publicUrl: `https://${overrides.nodeId}.example`,
+      mode: 'standby',
+      priority: 0,
+      writerEpoch: 3,
+      online: true,
+      authorization: 'signed',
+      ...overrides,
+    };
+  }
+
+  function renderHubRow(p: {
+    rows: NodeRow[];
+    hubs: MeshHubEndpoint[];
+    writerHubId: string | null;
+    hubWritable?: boolean;
+    switching?: boolean;
+    switchingIds?: ReadonlySet<string>;
+  }): string {
+    return renderTable(
+      p.rows,
+      '1.2.0',
+      {},
+      {
+        roleSwitch: roleSwitchController({
+          running: p.switching ?? false,
+          switchingIds: p.switchingIds ?? new Set<string>(),
+          stateOf: (row, rowBusy) =>
+            hubRoleButtonState({
+              row,
+              hubs: p.hubs,
+              writerHubId: p.writerHubId,
+              hubWritable: p.hubWritable ?? true,
+              switching: p.switching ?? false,
+              rowBusy,
+            }),
+        }),
+      }
+    );
+  }
+
+  test('备 Hub 一行：按钮写「设为主 Hub」且可点', () => {
+    const html = renderHubRow({
+      rows: [nodeRow({ id: HUB_X, isHub: true, hubMode: 'standby' })],
+      hubs: [hubEndpoint({ nodeId: HUB_X }), hubEndpoint({ nodeId: HUB_A, mode: 'active' })],
+      writerHubId: HUB_A,
+    });
+    const tag = buttonTag(html, `nodes-hub-role-${HUB_X}`);
+    expect(tag).toContain('data-role-intent="promote"');
+    expect(tag).not.toContain('disabled=""');
+    expect(tag).toContain('aria-label="nodes.hubs.role.promote"');
+  });
+
+  test('当前写者一行：按钮翻成「设为备 Hub」', () => {
+    const html = renderHubRow({
+      rows: [nodeRow({ id: HUB_A, isHub: true, hubMode: 'active' })],
+      hubs: [hubEndpoint({ nodeId: HUB_A, mode: 'active' }), hubEndpoint({ nodeId: HUB_X })],
+      writerHubId: HUB_A,
+    });
+    const tag = buttonTag(html, `nodes-hub-role-${HUB_A}`);
+    expect(tag).toContain('data-role-intent="demote"');
+    expect(tag).toContain('aria-label="nodes.hubs.role.demote"');
+    expect(tag).not.toContain('disabled=""');
+  });
+
+  test('旧后端不下发 authorization：按钮禁用并说明入口版本过低', () => {
+    const html = renderHubRow({
+      rows: [nodeRow({ id: HUB_X, isHub: true })],
+      hubs: [hubEndpoint({ nodeId: HUB_X, authorization: undefined })],
+      writerHubId: null,
+    });
+    const tag = buttonTag(html, `nodes-hub-role-${HUB_X}`);
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.hubs.role.blocked.unknownAuth"');
+  });
+
+  test('hub 集合里没有这一行：按钮禁用（集合还没拉到）', () => {
+    const html = renderHubRow({
+      rows: [nodeRow({ id: HUB_X, isHub: true })],
+      hubs: [],
+      writerHubId: null,
+    });
+    const tag = buttonTag(html, `nodes-hub-role-${HUB_X}`);
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.hubs.role.blocked.unknownHub"');
+  });
+
+  test('目标离线 / 已有切换在跑 / 这一行正在卸载：分别给出各自的禁用原因', () => {
+    const offline = renderHubRow({
+      rows: [nodeRow({ id: HUB_X, isHub: true, online: false })],
+      hubs: [hubEndpoint({ nodeId: HUB_X, online: false })],
+      writerHubId: null,
+    });
+    expect(buttonTag(offline, `nodes-hub-role-${HUB_X}`)).toContain(
+      'title="nodes.hubs.role.blocked.offline"'
+    );
+
+    const busy = renderHubRow({
+      rows: [nodeRow({ id: HUB_X, isHub: true })],
+      hubs: [hubEndpoint({ nodeId: HUB_X })],
+      writerHubId: null,
+      switching: true,
+      switchingIds: new Set([HUB_A]),
+    });
+    expect(buttonTag(busy, `nodes-hub-role-${HUB_X}`)).toContain(
+      'title="nodes.hubs.role.blocked.switching"'
+    );
+
+    const uninstalling = renderTable(
+      [nodeRow({ id: HUB_X, isHub: true })],
+      '1.2.0',
+      {},
+      {
+        uninstall: uninstallController({ scheduledIds: new Set([HUB_X]) }),
+        roleSwitch: roleSwitchController({
+          stateOf: (row, rowBusy) =>
+            hubRoleButtonState({
+              row,
+              hubs: [hubEndpoint({ nodeId: HUB_X })],
+              writerHubId: null,
+              hubWritable: true,
+              switching: false,
+              rowBusy,
+            }),
+        }),
+      }
+    );
+    expect(buttonTag(uninstalling, `nodes-hub-role-${HUB_X}`)).toContain(
+      'title="nodes.hubs.role.blocked.rowBusy"'
+    );
+  });
+
+  test('目标还没签名授权且主 Hub 不收写入：禁用并说明须先签授权', () => {
+    const html = renderHubRow({
+      rows: [nodeRow({ id: HUB_X, isHub: true })],
+      hubs: [hubEndpoint({ nodeId: HUB_X, authorization: 'env' })],
+      writerHubId: null,
+      hubWritable: false,
+    });
+    const tag = buttonTag(html, `nodes-hub-role-${HUB_X}`);
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.hubs.role.blocked.notWritable"');
+  });
+
+  test('切换中的行：状态列改显「切换中」，压过在线态', () => {
+    const html = renderHubRow({
+      rows: [nodeRow({ id: HUB_X, isHub: true, online: false })],
+      hubs: [hubEndpoint({ nodeId: HUB_X })],
+      writerHubId: null,
+      switching: true,
+      switchingIds: new Set([HUB_X]),
+    });
+    expect(html).toContain(`data-testid="nodes-role-switch-state-${HUB_X}"`);
+    expect(html).toContain('nodes.hubs.role.stateSwitching');
+    expect(html).not.toContain(`data-testid="nodes-status-${HUB_X}"`);
   });
 });
 
@@ -1528,5 +1723,111 @@ describe('远程卸载', () => {
     );
     expect(html).toContain('data-testid="nodes-uninstall-none"');
     expect(html).toContain('nodes.uninstall.noTargets');
+  });
+});
+
+describe('Hub 切换确认框正文', () => {
+  const HUB_X = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
+  const HUB_A = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
+
+  function hubEndpoint(overrides: Partial<MeshHubEndpoint> & { nodeId: string }): MeshHubEndpoint {
+    return {
+      publicUrl: `https://${overrides.nodeId}.example`,
+      mode: 'standby',
+      priority: 0,
+      writerEpoch: 3,
+      online: true,
+      authorization: 'signed',
+      ...overrides,
+    };
+  }
+
+  function hubRow(id: string, overrides: Partial<NodeRow> = {}): NodeRow {
+    return {
+      id,
+      runtimeNodeId: id,
+      name: id.slice(0, 4),
+      publicKey: '',
+      fingerprint: '',
+      online: true,
+      reach: null,
+      transport: null,
+      rttMs: null,
+      version: '1.1.13',
+      directCapable: false,
+      loggedIn: true,
+      inventory: null,
+      isSelf: false,
+      isHub: true,
+      lastSeenAt: null,
+      status: null,
+      certificate: null,
+      certSig: null,
+      ...overrides,
+    };
+  }
+
+  test('需要签授权 + 原主可达：四步齐全，没有警示行', () => {
+    const plan = planHubRoleSwitch({
+      row: hubRow(HUB_X),
+      hubs: [
+        hubEndpoint({ nodeId: HUB_X, authorization: 'env' }),
+        hubEndpoint({ nodeId: HUB_A, mode: 'active' }),
+      ],
+      writerHubId: HUB_A,
+    });
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <HubRoleDialogBody plan={plan as NonNullable<typeof plan>} />
+      </MemoryRouter>
+    );
+    for (const key of [
+      'nodes.hubs.role.stepAdmit',
+      'nodes.hubs.role.stepDemote',
+      'nodes.hubs.role.stepPromote',
+      'nodes.hubs.role.stepWait',
+    ]) {
+      expect(html).toContain(key);
+    }
+    expect(html).not.toContain('data-testid="nodes-hub-role-warning"');
+  });
+
+  test('原主不可达：少一步降备，多一行警示', () => {
+    const plan = planHubRoleSwitch({
+      row: hubRow(HUB_X),
+      hubs: [
+        hubEndpoint({ nodeId: HUB_X }),
+        hubEndpoint({ nodeId: HUB_A, mode: 'active', online: false }),
+      ],
+      writerHubId: HUB_A,
+    });
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <HubRoleDialogBody plan={plan as NonNullable<typeof plan>} />
+      </MemoryRouter>
+    );
+    expect(html).not.toContain('nodes.hubs.role.stepDemote');
+    expect(html).toContain('nodes.hubs.role.warnFromUnreachable');
+    expect(html).toContain('data-testid="nodes-hub-role-warning"');
+  });
+
+  test('旧节点挡住 admit-hub：列出名字与版本', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <HubRoleForceBody
+          force={{
+            minVersion: '1.1.13',
+            nodes: [
+              { id: 'aa', name: 'laptop', version: '1.1.9' },
+              { id: 'bb', name: 'studio', version: null },
+            ],
+          }}
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('nodes.hubs.role.forceText');
+    expect(html).toContain('data-testid="nodes-hub-role-old-aa"');
+    expect(html).toContain('laptop');
+    expect(html).toContain('studio');
   });
 });

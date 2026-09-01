@@ -4,8 +4,9 @@
 // node-session。因此这里一律走 entry 的 ApiClient（baseUrl 为空），由 entry 的 `/n/:id`
 // 转发器代到 hub 机；**不能**用当前路由 node 的 ApiClient，否则会变成 `/n/a/n/hub/...`。
 
-import { type ApiClient, defaultApiClient, resolveNodeUrl } from '@tmex/api-client';
+import { type ApiClient, SELF_NODE_ID, defaultApiClient, resolveNodeUrl } from '@tmex/api-client';
 import type { HubEnrollmentStatus } from '@tmex/api-client/auth/index';
+import type { HubRoleRequest, HubRoleTransition } from '@tmex/shared';
 
 /** `GET /n/<hub>/api/hub/nodes` 的单行（见 `apps/gateway/src/hub/hub-runtime.ts`）。 */
 export interface HubNodeRow {
@@ -60,6 +61,22 @@ async function readError(res: Response, fallback: string): Promise<HubApiError> 
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;
 
+/** 角色接口挂在目标 hub 机的 node 上，与 `HubApi` 实例自身绑定的那台无关。 */
+function rolePath(hubNodeId: string): string {
+  return resolveNodeUrl(hubNodeId, '/api/hub/role');
+}
+
+/**
+ * 目标版本没有这套接口时入口转发回 404 / 405（路由不存在 / 方法不允许），
+ * 一律折成 `HUB_ROLE_UNSUPPORTED`——对用户来说这两种都是「目标须先升级」。
+ */
+async function readRoleError(res: Response): Promise<HubApiError> {
+  if (res.status === 404 || res.status === 405) {
+    return new HubApiError('HUB_ROLE_UNSUPPORTED', res.status);
+  }
+  return readError(res, 'hub_role_failed');
+}
+
 export class HubApi {
   constructor(
     readonly hubNodeId: string,
@@ -96,6 +113,29 @@ export class HubApi {
     return (await res.json()) as HubEnrollmentStatus;
   }
 
+  /**
+   * `POST /n/<hub>/api/hub/role`：把目标 hub 切成主 / 备。目标由参数指定，**不是**入口挂载的
+   * 那一台——切换的常态就是「站在备 Hub 这一行，把它升成主」。
+   * 目标落库后自己重启，因此 202 之后它会有一段时间不可达，结论只能靠 `roleStatus` 回读。
+   */
+  async role(hubNodeId: string, req: HubRoleRequest): Promise<HubRoleTransition> {
+    const res = await this.client.fetch(rolePath(hubNodeId), {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) throw await readRoleError(res);
+    return (await res.json()) as HubRoleTransition;
+  }
+
+  /** `GET /n/<hub>/api/hub/role/status?operationId=`：回读一次过渡的当前阶段。 */
+  async roleStatus(hubNodeId: string, operationId: string): Promise<HubRoleTransition> {
+    const query = `?operationId=${encodeURIComponent(operationId)}`;
+    const res = await this.client.fetch(`${rolePath(hubNodeId)}/status${query}`);
+    if (!res.ok) throw await readRoleError(res);
+    return (await res.json()) as HubRoleTransition;
+  }
+
   async createEnrollment(body: {
     enroll_pk: string;
     authorization: string;
@@ -111,3 +151,9 @@ export class HubApi {
     return (await res.json()) as HubEnrollmentCreated;
   }
 }
+
+/**
+ * 不绑定具体 hub 的实例：`role` / `roleStatus` 的目标由参数给出，这里只借它的 ApiClient。
+ * `SELF_NODE_ID` 让 `path()` 退化成入口自身的旧路径，不会指向某台猜出来的 hub。
+ */
+export const defaultHubApi = new HubApi(SELF_NODE_ID);

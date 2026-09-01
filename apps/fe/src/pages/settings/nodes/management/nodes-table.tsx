@@ -9,6 +9,7 @@ import { Button } from '@tmex/ui/button';
 import { Checkbox } from '@tmex/ui/checkbox';
 import { Input } from '@tmex/ui/input';
 import {
+  ArrowLeftRight,
   Download,
   Loader2,
   Pencil,
@@ -22,6 +23,8 @@ import { useTranslation } from 'react-i18next';
 import { hubDetailText, hubModeLabel } from './hub-strip';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 import { upgradeBlockReason } from './upgrade-batch';
+import type { HubRoleSwitchController } from './use-hub-role-switch';
+import { hubRoleBlockedText } from './use-hub-role-switch';
 import { useNodeRowActions } from './use-node-row-actions';
 import { isUninstalling } from './use-node-uninstall';
 import { isUpgradeBusy, upgradePhaseText } from './use-node-upgrade';
@@ -32,9 +35,10 @@ export interface NodesTableProps extends NodeActionDeps {
   rows: NodeRow[];
   selection: NodeSelection;
   uninstall: NodeUninstallController;
+  roleSwitch: HubRoleSwitchController;
 }
 
-export function NodesTable({ rows, selection, uninstall, ...deps }: NodesTableProps) {
+export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: NodesTableProps) {
   const { t } = useTranslation();
   const allSelected =
     selection.selectableCount > 0 && selection.ids.size >= selection.selectableCount;
@@ -77,6 +81,7 @@ export function NodesTable({ rows, selection, uninstall, ...deps }: NodesTablePr
               row={row}
               selection={selection}
               uninstall={uninstall}
+              roleSwitch={roleSwitch}
               {...deps}
             />
           ))}
@@ -105,11 +110,13 @@ function NodeRowView({
   row,
   selection,
   uninstall,
+  roleSwitch,
   ...deps
 }: {
   row: NodeRow;
   selection: NodeSelection;
   uninstall: NodeUninstallController;
+  roleSwitch: HubRoleSwitchController;
 } & NodeActionDeps) {
   const { t } = useTranslation();
   const { renaming, setRenaming, nameDraft, setNameDraft, busy, rename, revoke } =
@@ -123,6 +130,7 @@ function NodeRowView({
     : t('nodes.hubs.standbyNotice');
   const view = deriveNodeRow(row, t);
   const selectable = !row.isSelf && !uninstalling;
+  const switching = roleSwitch.switchingIds.has(row.id);
 
   return (
     <tr className="border-b border-border/60 last:border-0" data-testid={`nodes-row-${row.id}`}>
@@ -153,12 +161,27 @@ function NodeRowView({
           <span className="flex items-center gap-1.5">
             <span className="truncate font-medium">{row.name}</span>
             {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
-            {row.isHub && <HubTag row={row} hubDetails={deps.hubDetails} />}
+            {row.isHub && (
+              <>
+                <HubTag row={row} hubDetails={deps.hubDetails} />
+                <HubRoleSwitchButton
+                  row={row}
+                  roleSwitch={roleSwitch}
+                  rowBusy={uninstalling || isUpgradeBusy(deps.upgrade.entryOf(row.id).phase)}
+                />
+              </>
+            )}
           </span>
         )}
       </Td>
       <Td>
-        <StatusCell row={row} uninstall={uninstall} uninstalling={uninstalling} view={view} />
+        <StatusCell
+          row={row}
+          uninstall={uninstall}
+          uninstalling={uninstalling}
+          switching={switching}
+          view={view}
+        />
       </Td>
       <Td>
         <span data-testid={`nodes-reach-${row.id}`}>{view.reachText}</span>
@@ -219,15 +242,31 @@ function StatusCell({
   row,
   uninstall,
   uninstalling,
+  switching,
   view,
 }: {
   row: NodeRow;
   uninstall: NodeUninstallController;
   uninstalling: boolean;
+  switching: boolean;
   view: { statusClass: string; statusText: string };
 }) {
   const { t } = useTranslation();
   const failed = row.operation?.kind === 'uninstall' && row.operation.phase === 'failed';
+
+  // 主备切换只活在这一个页面里（服务端不下发 `role-switch` 记录），因此这一档排在最前：
+  // 目标机重启期间它同时是「离线」，照原样显示只会让人以为切换把机器弄挂了。
+  if (switching) {
+    return (
+      <span
+        className="flex items-center gap-1 text-amber-600 dark:text-amber-400"
+        data-testid={`nodes-role-switch-state-${row.id}`}
+      >
+        <Loader2 className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />
+        {t('nodes.hubs.role.stateSwitching')}
+      </span>
+    );
+  }
 
   if (uninstalling) {
     return (
@@ -274,6 +313,40 @@ function StatusCell({
     <span data-testid={`nodes-status-${row.id}`} className={view.statusClass}>
       {view.statusText}
     </span>
+  );
+}
+
+/**
+ * Hub 主备切换：备 Hub 上写「设为主 Hub」，当前写者上写「设为备 Hub」。
+ * 离线、旧后端不下发授权来源、已有切换在跑、这一行正在升级 / 卸载、以及「须先签授权但 hub
+ * 不收写入」都禁用并把原因放进 title——这个按钮会重启目标机，绝不能让人在不确定的前提下点。
+ */
+function HubRoleSwitchButton({
+  row,
+  roleSwitch,
+  rowBusy,
+}: { row: NodeRow; roleSwitch: HubRoleSwitchController; rowBusy: boolean }) {
+  const { t } = useTranslation();
+  const state = roleSwitch.stateOf(row, rowBusy);
+  const label = t(
+    state.intent === 'promote' ? 'nodes.hubs.role.promote' : 'nodes.hubs.role.demote'
+  );
+  const title = state.blocked ? hubRoleBlockedText(t, state.blocked) : label;
+
+  return (
+    <Button
+      type="button"
+      size="icon-xs"
+      variant="ghost"
+      disabled={state.blocked !== null}
+      aria-label={label}
+      title={title}
+      onClick={() => roleSwitch.request(row)}
+      data-testid={`nodes-hub-role-${row.id}`}
+      data-role-intent={state.intent}
+    >
+      <ArrowLeftRight />
+    </Button>
   );
 }
 
