@@ -46,12 +46,33 @@ export interface NodeUpgradeEntry {
   error: string | null;
 }
 
+/** 一次升级跑完的结论；批量升级据此统计成败。`cancelled` 既不算成功也不算失败。 */
+export type UpgradeRunOutcome = 'done' | 'failed' | 'timeout' | 'alreadyLatest' | 'cancelled';
+
+/** 批量升级的进度；`running` 为 `false` 时另外两个值无意义。 */
+export interface NodeUpgradeBatchState {
+  running: boolean;
+  total: number;
+  completed: number;
+}
+
 /** 升级状态机对外的只读视图 + 触发入口。 */
 export interface NodeUpgradeController {
   latest: NodeUpgradeLatest | null;
   entryOf: (nodeId: string) => NodeUpgradeEntry;
   start: (row: NodeRow) => void;
+  /** 批量升级：内部按「普通节点 → 远端 hub → 本机」排序，逐组推进。 */
+  startAll: (rows: NodeRow[]) => void;
+  batch: NodeUpgradeBatchState;
+  /** 当前 latest 下可批量升级的节点数；latest 未知时为 0。 */
+  eligibleCount: (rows: NodeRow[]) => number;
 }
+
+export const IDLE_UPGRADE_BATCH: NodeUpgradeBatchState = {
+  running: false,
+  total: 0,
+  completed: 0,
+};
 
 export const IDLE_UPGRADE_ENTRY: NodeUpgradeEntry = {
   phase: 'idle',

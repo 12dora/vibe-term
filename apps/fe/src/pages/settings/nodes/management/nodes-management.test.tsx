@@ -2,11 +2,12 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 nodes-tab 测试同一套做法）。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
+import type { NodeRow } from '@/node/mesh-nodes';
 import type { AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
 import type { UpgradeStatus } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { installWindowStorage } from '@tmex/stores/test-utils';
-import type { NodeUpgradeEntry } from './types';
+import type { NodeActionDeps, NodeUpgradeController, NodeUpgradeEntry } from './types';
 import type {
   UpgradeIo,
   UpgradePollOutcome,
@@ -25,6 +26,8 @@ const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } 
   '@/node/enrollment-engine'
 );
 const { resolveHubPublicUrl } = await import('./enrollment-section');
+const { NodesTable } = await import('./nodes-table');
+const { IDLE_UPGRADE_ENTRY, IDLE_UPGRADE_BATCH } = await import('./types');
 const { classifyPollFailure, isUpgradeBusy, runNodeUpgrade, upgradeErrorText, upgradePhaseText } =
   await import('./use-node-upgrade');
 const { rootKeyFromSeed } = await import('@tmex/shared/auth');
@@ -207,6 +210,139 @@ describe('NodesManagement', () => {
     const html = render({ ...MODE, uid: null, kdfParams: null });
     expect(html).not.toContain('data-testid="nodes-table"');
     expect(html).not.toContain('data-testid="nodes-add"');
+  });
+
+  test('「全部升级」紧挨在「添加」左边；latest 未知时禁用', () => {
+    setMeshNodesStateForTest({
+      entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+      nodes: [meshNode({ id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e', name: 'entry', loggedIn: true })],
+    });
+    const html = render(MODE);
+    expect(html).toContain('data-testid="nodes-upgrade-all"');
+    expect(html.indexOf('data-testid="nodes-refresh"')).toBeLessThan(
+      html.indexOf('data-testid="nodes-upgrade-all"')
+    );
+    expect(html.indexOf('data-testid="nodes-upgrade-all"')).toBeLessThan(
+      html.indexOf('data-testid="nodes-add"')
+    );
+    // 静态渲染跑不了 effect，latest 拿不到：按钮禁用并说明原因
+    const tag = buttonTag(html, 'nodes-upgrade-all');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.releaseUnavailable"');
+  });
+});
+
+describe('节点表的升级按钮（注入升级控制器）', () => {
+  function nodeRow(overrides: Partial<NodeRow> & { id: string }): NodeRow {
+    return {
+      runtimeNodeId: overrides.id,
+      name: overrides.id,
+      publicKey: '',
+      fingerprint: 'ffffffffffffffff',
+      online: true,
+      reach: 'lan',
+      transport: null,
+      rttMs: null,
+      version: '1.1.9',
+      directCapable: false,
+      loggedIn: true,
+      inventory: null,
+      isSelf: false,
+      isHub: false,
+      lastSeenAt: null,
+      status: null,
+      certificate: null,
+      certSig: null,
+      ...overrides,
+    };
+  }
+
+  function controller(latestVersion: string | null): NodeUpgradeController {
+    return {
+      latest: latestVersion ? { latestVersion, changelog: null, publishedAt: null } : null,
+      entryOf: () => IDLE_UPGRADE_ENTRY,
+      start: () => undefined,
+      startAll: () => undefined,
+      batch: IDLE_UPGRADE_BATCH,
+      eligibleCount: () => 0,
+    };
+  }
+
+  function renderTable(rows: NodeRow[], latestVersion: string | null): string {
+    const deps: NodeActionDeps = {
+      hubApi: null,
+      hubOnline: true,
+      mode: {
+        ...MODE,
+        uid: 'user-1',
+        kdfParams: MODE.kdfParams as NonNullable<typeof MODE.kdfParams>,
+      },
+      api: {} as NodeActionDeps['api'],
+      prompt: { dialog: null } as unknown as NodeActionDeps['prompt'],
+      onChanged: () => undefined,
+      upgrade: controller(latestVersion),
+    };
+    return renderToStaticMarkup(
+      <MemoryRouter>
+        <NodesTable rows={rows} {...deps} />
+      </MemoryRouter>
+    );
+  }
+
+  test('已是最新版本：按钮禁用并说明原因', () => {
+    const html = renderTable(
+      [nodeRow({ id: 'aa', version: '1.2.0' }), nodeRow({ id: 'bb', version: '1.3.0' })],
+      '1.2.0'
+    );
+    for (const id of ['aa', 'bb']) {
+      const tag = buttonTag(html, `node-upgrade-${id}`);
+      expect(tag).toContain('disabled=""');
+      expect(tag).toContain('title="nodes.upgrade.atLatest"');
+    }
+  });
+
+  test('latest 未知或版本无法解析时保持可点：后端才是权威', () => {
+    const unknownLatest = renderTable([nodeRow({ id: 'aa', version: '1.2.0' })], null);
+    expect(buttonTag(unknownLatest, 'node-upgrade-aa')).not.toContain('disabled=""');
+    const devVersion = renderTable([nodeRow({ id: 'bb', version: '1.2.0_dev' })], '1.2.0');
+    expect(buttonTag(devVersion, 'node-upgrade-bb')).not.toContain('disabled=""');
+  });
+
+  test('版本低于远程升级门槛：禁用并提示在该机器上手动升级', () => {
+    const html = renderTable([nodeRow({ id: 'cc', version: '1.0.9' })], '1.2.0');
+    const tag = buttonTag(html, 'node-upgrade-cc');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.tooOld"');
+  });
+
+  test('可升级的节点照常可点', () => {
+    const html = renderTable([nodeRow({ id: 'dd', version: '1.1.9' })], '1.2.0');
+    expect(buttonTag(html, 'node-upgrade-dd')).not.toContain('disabled=""');
+  });
+
+  test('批量升级进行中：整列升级按钮锁住，避免同一节点被点两次', () => {
+    const deps: NodeActionDeps = {
+      hubApi: null,
+      hubOnline: true,
+      mode: {
+        ...MODE,
+        uid: 'user-1',
+        kdfParams: MODE.kdfParams as NonNullable<typeof MODE.kdfParams>,
+      },
+      api: {} as NodeActionDeps['api'],
+      prompt: { dialog: null } as unknown as NodeActionDeps['prompt'],
+      onChanged: () => undefined,
+      upgrade: {
+        ...controller('1.2.0'),
+        batch: { running: true, total: 3, completed: 1 },
+      },
+    };
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <NodesTable rows={[nodeRow({ id: 'ee', version: '1.1.9' })]} {...deps} />
+      </MemoryRouter>
+    );
+    expect(buttonTag(html, 'node-upgrade-ee')).toContain('disabled=""');
   });
 });
 

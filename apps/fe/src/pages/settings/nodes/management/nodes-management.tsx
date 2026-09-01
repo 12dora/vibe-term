@@ -13,17 +13,23 @@ import {
   useEnrollmentEngine,
   useEnrollmentEngineState,
 } from '@/node/enrollment-engine';
-import { mergeNodes, setEntryNodeId, useHubNode, useMeshNodes } from '@/node/mesh-nodes';
+import {
+  type NodeRow,
+  mergeNodes,
+  setEntryNodeId,
+  useHubNode,
+  useMeshNodes,
+} from '@/node/mesh-nodes';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Plus, RefreshCw, ShieldAlert } from 'lucide-react';
+import { CircleArrowUp, Loader2, Plus, RefreshCw, ShieldAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EnrollmentSection } from './enrollment-section';
 import { NodesTable } from './nodes-table';
-import { PLACEHOLDER_KDF, type ResolvedMode } from './types';
+import { type NodeUpgradeController, PLACEHOLDER_KDF, type ResolvedMode } from './types';
 import { useNodeUpgrade } from './use-node-upgrade';
 
 export interface NodesManagementProps {
@@ -126,6 +132,7 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
               }
             />
           </Button>
+          <UpgradeAllButton rows={rows} upgrade={upgrade} />
           <Button
             type="button"
             size="sm"
@@ -181,4 +188,52 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * 「全部升级」：latest 未知、批量正在跑、没有可升级节点时禁用。
+ * 顺序、并发与汇总提示都在 `useNodeUpgrade` 里，这里只负责按钮态与进度文案。
+ */
+function UpgradeAllButton({
+  rows,
+  upgrade,
+}: {
+  rows: NodeRow[];
+  upgrade: NodeUpgradeController;
+}) {
+  const { t } = useTranslation();
+  const latestVersion = upgrade.latest?.latestVersion ?? null;
+  const { running, completed, total } = upgrade.batch;
+  const count = upgrade.eligibleCount(rows);
+
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      disabled={!latestVersion || running || count === 0}
+      title={upgradeAllHint(t, latestVersion, count)}
+      onClick={() => upgrade.startAll(rows)}
+      data-testid="nodes-upgrade-all"
+    >
+      {running ? (
+        <Loader2 className="animate-spin motion-reduce:animate-none" />
+      ) : (
+        <CircleArrowUp />
+      )}
+      {running
+        ? t('nodes.upgrade.allProgress', { completed, total })
+        : t('nodes.upgrade.upgradeAll')}
+    </Button>
+  );
+}
+
+function upgradeAllHint(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  latestVersion: string | null,
+  count: number
+): string {
+  if (!latestVersion) return t('nodes.upgrade.releaseUnavailable');
+  if (count === 0) return t('nodes.upgrade.allNone');
+  return t('nodes.upgrade.allHint', { count, version: latestVersion });
 }

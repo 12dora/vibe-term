@@ -18,12 +18,23 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
+  IDLE_UPGRADE_BATCH,
   IDLE_UPGRADE_ENTRY,
+  type NodeUpgradeBatchState,
   type NodeUpgradeController,
   type NodeUpgradeEntry,
   type NodeUpgradeLatest,
   type NodeUpgradePhase,
+  type UpgradeRunOutcome,
 } from './types';
+import {
+  MIN_REMOTE_UPGRADE_VERSION,
+  type UpgradeBatchSummary,
+  eligibleUpgradeRows,
+  runUpgradeBatch,
+} from './upgrade-batch';
+
+export { MIN_REMOTE_UPGRADE_VERSION };
 
 const POLL_MS = 2000;
 /** 下载 + 解包 + 重启 + 版本回传的总预算。 */
@@ -338,12 +349,14 @@ function reportResult(p: UpgradeRunParams, version: string | null, result: Upgra
 }
 
 /** 一次升级的完整流程：POST → 轮询 → 结论。取消（组件卸载）后一律静默返回。 */
-export async function runNodeUpgrade(p: UpgradeRunParams): Promise<void> {
+export async function runNodeUpgrade(p: UpgradeRunParams): Promise<UpgradeRunOutcome> {
   p.patch({ phase: 'pending', targetVersion: p.targetVersion, error: null });
   const started = await p.io.start(p.row.id, p.signal);
-  if (started.kind === 'cancelled' || p.signal.aborted) return;
+  if (started.kind === 'cancelled' || p.signal.aborted) return 'cancelled';
   const status = reportStart(p, started);
-  if (!status && started.kind !== 'unconfirmed') return;
+  if (!status && started.kind !== 'unconfirmed') {
+    return started.kind === 'alreadyLatest' ? 'alreadyLatest' : 'failed';
+  }
   const version = status?.targetVersion ?? p.targetVersion;
   const result = await watchUpgrade({
     nodeId: p.row.id,
@@ -355,8 +368,68 @@ export async function runNodeUpgrade(p: UpgradeRunParams): Promise<void> {
     describeError: (code) => upgradeErrorText(p.t, code),
     phase: (phase) => p.patch({ phase }),
   });
-  if (result.kind === 'cancelled' || p.signal.aborted) return;
+  if (result.kind === 'cancelled' || p.signal.aborted) return 'cancelled';
   reportResult(p, version, result);
+  return result.kind;
+}
+
+/** 批量升级期间用它顶掉每节点 toast：进度仍然逐行落到表格上，只是不再刷屏。 */
+export const SILENT_UPGRADE_TOASTS: UpgradeToasts = {
+  success: () => undefined,
+  info: () => undefined,
+  warning: () => undefined,
+  error: () => undefined,
+};
+
+/** 批量结束后的唯一一条 toast；被取消时不提示（结论不完整）。 */
+export function reportBatchSummary(
+  t: Translate,
+  toasts: UpgradeToasts,
+  summary: UpgradeBatchSummary
+): void {
+  if (summary.cancelled) return;
+  const counts = { success: summary.succeeded, failed: summary.failed };
+  if (summary.failed === 0) {
+    toasts.success(t('nodes.upgrade.allDone', counts));
+    return;
+  }
+  const names = summary.failedNames.join(t('nodes.upgrade.listSeparator'));
+  toasts.warning(t('nodes.upgrade.allDoneWithFailures', { ...counts, names }));
+}
+
+export interface UpgradeBatchLaunch {
+  rows: NodeRow[];
+  latestVersion: string | null;
+  signal: AbortSignal;
+  t: Translate;
+  toasts: UpgradeToasts;
+  confirm: (message: string) => boolean;
+  runOne: (row: NodeRow, version: string, toasts: UpgradeToasts) => Promise<UpgradeRunOutcome>;
+  onStart: (total: number) => void;
+  onProgress: (completed: number) => void;
+}
+
+/**
+ * 「全部升级」的完整决策链：latest 已知 → 筛候选 → 一次确认 → 按序执行 → 一条汇总 toast。
+ * 没启动（latest 未知 / 没有候选 / 用户取消）返回 `null`，调用方据此不进入 running 态。
+ */
+export function launchUpgradeBatch(p: UpgradeBatchLaunch): Promise<UpgradeBatchSummary> | null {
+  const version = p.latestVersion;
+  if (!version) return null;
+  const targets = eligibleUpgradeRows(p.rows, version);
+  if (targets.length === 0) return null;
+  if (!p.confirm(p.t('nodes.upgrade.confirmAll', { count: targets.length, version }))) return null;
+  p.onStart(targets.length);
+  return runUpgradeBatch({
+    rows: targets,
+    signal: p.signal,
+    // 批量期间每节点的 toast 全部吞掉，只保留行内阶段与最后那条汇总。
+    run: (row) => p.runOne(row, version, SILENT_UPGRADE_TOASTS),
+    onProgress: p.onProgress,
+  }).then((summary) => {
+    reportBatchSummary(p.t, p.toasts, summary);
+    return summary;
+  });
 }
 
 function confirmText(t: Translate, row: NodeRow, version: string | null): string {
@@ -390,8 +463,10 @@ export function useNodeUpgrade(
   const { t } = useTranslation();
   const [latest, setLatest] = useState<NodeUpgradeLatest | null>(null);
   const [entries, setEntries] = useState<Record<string, NodeUpgradeEntry>>({});
+  const [batch, setBatch] = useState<NodeUpgradeBatchState>(IDLE_UPGRADE_BATCH);
   const abortRef = useRef<AbortController | null>(null);
   const runningRef = useRef<Set<string>>(new Set());
+  const batchRunningRef = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -414,27 +489,43 @@ export function useNodeUpgrade(
     };
   }, []);
 
-  const patch = useCallback((nodeId: string, entry: Partial<NodeUpgradeEntry>) => {
-    if (abortRef.current?.signal.aborted !== false) return;
-    setEntries((prev) => ({
-      ...prev,
-      [nodeId]: { ...(prev[nodeId] ?? IDLE_UPGRADE_ENTRY), ...entry },
-    }));
-  }, []);
+  /** 组件已卸载就不再改状态：升级流程比页面活得久，patch 到死组件上只会报 warning。 */
+  const alive = useCallback(() => abortRef.current?.signal.aborted === false, []);
+
+  const patch = useCallback(
+    (nodeId: string, entry: Partial<NodeUpgradeEntry>) => {
+      if (!alive()) return;
+      setEntries((prev) => ({
+        ...prev,
+        [nodeId]: { ...(prev[nodeId] ?? IDLE_UPGRADE_ENTRY), ...entry },
+      }));
+    },
+    [alive]
+  );
 
   const run = useCallback(
-    (row: NodeRow, targetVersion: string | null, signal: AbortSignal) =>
+    (row: NodeRow, targetVersion: string | null, signal: AbortSignal, toasts: UpgradeToasts) =>
       runNodeUpgrade({
         row,
         targetVersion,
         io,
         signal,
         t,
-        toasts: toast,
+        toasts,
         patch: (entry) => patch(row.id, entry),
         onChanged,
       }),
     [io, onChanged, patch, t]
+  );
+
+  /** 同一个节点只能有一次升级在跑：行内按钮与批量共用这把锁。 */
+  const runOnce = useCallback(
+    (row: NodeRow, version: string | null, signal: AbortSignal, toasts: UpgradeToasts) => {
+      if (runningRef.current.has(row.id)) return Promise.resolve<UpgradeRunOutcome>('cancelled');
+      runningRef.current.add(row.id);
+      return run(row, version, signal, toasts).finally(() => runningRef.current.delete(row.id));
+    },
+    [run]
   );
 
   const start = useCallback(
@@ -444,13 +535,46 @@ export function useNodeUpgrade(
       if (runningRef.current.has(row.id)) return;
       const version = latest?.latestVersion ?? null;
       if (!globalThis.confirm?.(confirmText(t, row, version))) return;
-      runningRef.current.add(row.id);
-      void run(row, version, signal).finally(() => runningRef.current.delete(row.id));
+      void runOnce(row, version, signal, toast);
     },
-    [latest, run, t]
+    [latest, runOnce, t]
+  );
+
+  const startAll = useCallback(
+    (rows: NodeRow[]) => {
+      const signal = abortRef.current?.signal;
+      if (!signal || signal.aborted || batchRunningRef.current) return;
+      const running = launchUpgradeBatch({
+        rows,
+        latestVersion: latest?.latestVersion ?? null,
+        signal,
+        t,
+        toasts: toast,
+        confirm: (message) => globalThis.confirm?.(message) === true,
+        runOne: (row, version, toasts) => runOnce(row, version, signal, toasts),
+        onStart: (total) => {
+          batchRunningRef.current = true;
+          setBatch({ running: true, total, completed: 0 });
+        },
+        onProgress: (completed) => {
+          if (alive()) setBatch((prev) => ({ ...prev, completed }));
+        },
+      });
+      if (!running) return;
+      void running.finally(() => {
+        batchRunningRef.current = false;
+        if (alive()) setBatch(IDLE_UPGRADE_BATCH);
+      });
+    },
+    [alive, latest, runOnce, t]
   );
 
   const entryOf = useCallback((nodeId: string) => entries[nodeId] ?? IDLE_UPGRADE_ENTRY, [entries]);
 
-  return { latest, entryOf, start };
+  const eligibleCount = useCallback(
+    (rows: NodeRow[]) => eligibleUpgradeRows(rows, latest?.latestVersion ?? null).length,
+    [latest]
+  );
+
+  return { latest, entryOf, start, startAll, batch, eligibleCount };
 }

@@ -2027,10 +2027,20 @@
         "unreachable": "无法连接到该节点。",
         "nodeGone": "该节点已从网络中移除。",
         "inProgress": "该节点正在升级。",
-        "notAllowed": "该节点不支持程序内更新。",
-        "unsupported": "该节点版本过旧，不支持远程升级。",
+        "notAllowed": "该节点的安装方式无法自更新（无服务管理器或运行在容器中），须手动升级。",
+        "unsupported": "该节点版本过旧，不支持远程升级，请在该机器上执行 npx tmex-cli upgrade。",
         "releaseUnavailable": "无法获取最新版本。",
-        "timeout": "升级结果未确认，请刷新节点列表核对版本。"
+        "timeout": "升级结果未确认，请刷新节点列表核对版本。",
+        "atLatest": "已是最新版本。",
+        "tooOld": "该节点版本过旧（{{version}}），不支持远程升级，请在该机器上执行 npx tmex-cli upgrade。",
+        "upgradeAll": "全部升级",
+        "allHint": "升级 {{count}} 个节点到 {{version}}",
+        "allNone": "没有可升级的节点。",
+        "allProgress": "升级中 {{completed}}/{{total}}",
+        "confirmAll": "升级 {{count}} 个节点到 {{version}}？节点会依次重启，其上的会话随之中断。",
+        "allDone": "全部升级完成：成功 {{success}}，失败 {{failed}}。",
+        "allDoneWithFailures": "全部升级完成：成功 {{success}}，失败 {{failed}}。失败：{{names}}。",
+        "listSeparator": "、"
       },
       "badge": {
         "direct": "直连",

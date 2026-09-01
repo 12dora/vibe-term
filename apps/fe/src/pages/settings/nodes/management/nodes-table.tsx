@@ -10,8 +10,11 @@ import { Input } from '@tmex/ui/input';
 import { Download, Loader2, Pencil, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { NodeActionDeps } from './types';
+import { upgradeBlockReason } from './upgrade-batch';
 import { useNodeRowActions } from './use-node-row-actions';
 import { isUpgradeBusy, upgradePhaseText } from './use-node-upgrade';
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export function NodesTable({ rows, ...deps }: { rows: NodeRow[] } & NodeActionDeps) {
   const { t } = useTranslation();
@@ -141,14 +144,15 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
 }
 
 /**
- * 升级按钮：目标离线或（远端）未登录时禁用并说明原因；进行中显示阶段文案并锁住。
+ * 升级按钮：目标离线、（远端）未登录、版本过旧无法远程升级、已是最新时禁用并说明原因；
+ * 进行中显示阶段文案并锁住，批量升级期间整列一并锁住，避免同一节点被点两次。
  * 本机同样可以升级——它会重启本机网关，当前访问随之中断，确认框里已经写明。
  */
 function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps['upgrade'] }) {
   const { t } = useTranslation();
   const entry = upgrade.entryOf(row.id);
   const busy = isUpgradeBusy(entry.phase);
-  const blocked = upgradeBlockedHint(row, t);
+  const blocked = upgradeBlockedHint(row, upgrade.latest?.latestVersion ?? null, t);
   const version = entry.targetVersion ?? upgrade.latest?.latestVersion ?? null;
   const phaseText = upgradePhaseText(t, entry.phase);
 
@@ -157,7 +161,7 @@ function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps
       type="button"
       size="xs"
       variant="outline"
-      disabled={busy || blocked !== null}
+      disabled={busy || blocked !== null || upgrade.batch.running}
       title={blocked ?? upgradeTitle(entry.error, version, t)}
       onClick={() => upgrade.start(row)}
       data-testid={`node-upgrade-${row.id}`}
@@ -169,16 +173,21 @@ function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps
   );
 }
 
-function upgradeBlockedHint(row: NodeRow, t: (key: string) => string): string | null {
-  if (!row.online) return t('nodes.upgrade.offline');
-  if (!row.isSelf && !row.loggedIn) return t('nodes.upgrade.loginRequired');
-  return null;
+export function upgradeBlockedHint(
+  row: NodeRow,
+  latestVersion: string | null,
+  t: Translate
+): string | null {
+  const reason = upgradeBlockReason(row, latestVersion);
+  if (!reason) return null;
+  if (reason === 'tooOld') return t('nodes.upgrade.tooOld', { version: row.version ?? '' });
+  return t(`nodes.upgrade.${reason}`);
 }
 
 function upgradeTitle(
   error: string | null,
   version: string | null,
-  t: (key: string, options?: Record<string, unknown>) => string
+  t: Translate
 ): string | undefined {
   if (error) return error;
   return version ? t('nodes.upgrade.hint', { version }) : undefined;
