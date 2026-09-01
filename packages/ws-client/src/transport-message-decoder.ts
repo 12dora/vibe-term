@@ -132,6 +132,22 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
     },
   ],
   [
+    wsBorsh.KIND_TERM_VIEWPORT_POLICY,
+    (payload, emit) => {
+      const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermViewportPolicySchema, payload);
+      emit({
+        type: 'terminal-viewport-policy',
+        kind: 'terminal-viewport-policy',
+        deviceId: decoded.deviceId,
+        windowId: decoded.windowId,
+        paneId: decoded.paneId,
+        owner: decoded.owner,
+        cols: decoded.cols,
+        rows: decoded.rows,
+      });
+    },
+  ],
+  [
     wsBorsh.KIND_CLIPBOARD_WRITE,
     (payload, emit) => {
       const decoded = wsBorsh.decodePayload(wsBorsh.schema.ClipboardWriteSchema, payload);

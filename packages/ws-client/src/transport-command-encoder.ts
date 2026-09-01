@@ -7,6 +7,7 @@ import {
   buildTermPaste,
   buildTermResize,
   buildTermSyncSize,
+  buildTermViewportMessage,
   buildTmuxApplyStackedLayout,
   buildTmuxBreakPane,
   buildTmuxClosePane,
@@ -48,6 +49,14 @@ const COMMAND_ENCODERS: CommandEncoders = {
     buildTermResize(command.deviceId, command.paneId, command.cols, command.rows),
   'terminal-sync-size': (command) =>
     buildTermSyncSize(command.deviceId, command.paneId, command.cols, command.rows),
+  'terminal-viewport': (command) =>
+    buildTermViewportMessage({
+      deviceId: command.deviceId,
+      paneId: command.paneId,
+      cols: command.cols,
+      rows: command.rows,
+      visible: command.visible,
+    }),
   'create-window': (command) => buildTmuxCreateWindow(command.deviceId, command.name, command.cwd),
   'close-window': (command) => buildTmuxCloseWindow(command.deviceId, command.windowId),
   'close-pane': (command) => buildTmuxClosePane(command.deviceId, command.paneId),

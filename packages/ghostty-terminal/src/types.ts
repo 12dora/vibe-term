@@ -41,6 +41,20 @@ export interface GhosttyCellDimensions {
   height: number;
 }
 
+/** 平移视口（follower 模式）的可滚状态。overflow* = 0 表示该轴不超尺寸。 */
+export interface GhosttyPanMetrics {
+  scrollLeft: number;
+  scrollTop: number;
+  overflowX: number;
+  overflowY: number;
+}
+
+/** panBy 真正落地的位移（已夹取到可滚范围内）。 */
+export interface GhosttyPanDelta {
+  deltaX: number;
+  deltaY: number;
+}
+
 export interface GhosttyViewportGesture {
   source: 'wheel' | 'touch';
   deltaX?: number;
@@ -194,6 +208,11 @@ export interface CompatibleTerminalLike {
     clientY: number;
   }) => boolean;
   noteTouchHandled?: () => void;
+  /** 打开/关闭平移视口（follower 模式）。关闭时 DOM 与样式回到裁剪语义。 */
+  setViewportPan?: (enabled: boolean) => void;
+  /** 平移视口的可滚状态；未启用/未挂载时返回 null。 */
+  panMetrics?: () => GhosttyPanMetrics | null;
+  panBy?: (deltaX: number, deltaY: number) => GhosttyPanDelta;
   exportModeSnapshot?: () => GhosttyTerminalModeSnapshot;
   restoreModeSnapshot?: (snapshot: GhosttyTerminalModeSnapshot) => void;
   clearMouseTrackingModes?: () => void;

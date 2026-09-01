@@ -6,6 +6,7 @@
 // 其余 visibility:hidden 继续吃 live 输出，切回时即时呈现。
 
 import type { TerminalShortcutItem, TerminalThemeColors, TmuxPane, TmuxWindow } from '@tmex/shared';
+import { selectPaneViewportOwner } from '@tmex/stores';
 import { useTmuxStore } from '@tmex/stores/react';
 import {
   SplitTerminalArea,
@@ -37,6 +38,7 @@ import {
 } from './terminal-keep-alive';
 import { TerminalShortcutsSlot } from './terminal-shortcuts-slot';
 import type { DevicePaneSelection } from './use-device-pane-selection';
+import { useViewportClaims } from './use-viewport-claims';
 
 const noopResize = (): void => {};
 
@@ -250,6 +252,33 @@ export function KeepAlivePaneSlot({
   );
 }
 
+/**
+ * 整窗尺寸归属：网关在多客户端间仲裁出 owner，非 owner 停止上报容器尺寸（follow），
+ * 本地留在权威 cols×rows 上平移。没收到过策略即默认 owner（单客户端行为不变）。
+ *
+ * follow 期间 reporter 完全不测量，翻回 owner 时必须强制补一次上报，
+ * 否则整窗会一直停在上一个 owner 的几何上。
+ */
+function usePaneViewportOwner(
+  deviceId: string,
+  paneId: string,
+  terminalRef: RefObject<TerminalRef | null>
+): boolean {
+  const owner = useTmuxStore((state) => selectPaneViewportOwner(state, deviceId, paneId));
+  // 按 pane 记账：切 pane 带来的 owner 变化不是 follower→owner 翻转，可见实例本就会自行上报
+  const previousRef = useRef({ key: `${deviceId}:${paneId}`, owner });
+
+  useEffect(() => {
+    const key = `${deviceId}:${paneId}`;
+    const previous = previousRef.current;
+    previousRef.current = { key, owner };
+    if (!owner || previous.owner || previous.key !== key) return;
+    terminalRef.current?.scheduleResize('sync', { immediate: true, force: true });
+  }, [deviceId, owner, paneId, terminalRef]);
+
+  return owner;
+}
+
 interface KeepAliveStackProps extends TerminalStageProps {
   resolvedPaneId: string;
   shortcutsSlot: ReactNode;
@@ -282,6 +311,21 @@ function KeepAliveTerminalStack(props: KeepAliveStackProps) {
   const paneIds = keepAlivePaneIds(pool);
 
   const bindTerminal = usePaneTerminalBinder(terminalRef, resolvedPaneId, paneIds);
+  const owner = usePaneViewportOwner(deviceId, resolvedPaneId, terminalRef);
+
+  // 声明用的几何必须是容器测量值：跟随者的终端实例停在权威（更大的）行列上，读实例会误报
+  const measureViewport = useCallback(
+    () => terminalRef.current?.calculateSizeFromContainer() ?? null,
+    [terminalRef]
+  );
+  const transportReady = useTmuxStore((state) => state.connectionState === 'READY');
+  useViewportClaims({
+    deviceId,
+    paneId: resolvedPaneId,
+    enabled: deviceConnected && transportReady,
+    containerRef: terminalContainerRef,
+    measure: measureViewport,
+  });
 
   return (
     <div className="flex h-full min-h-0 w-full flex-1 flex-col" data-virtual-keyboard-avoid>
@@ -302,8 +346,10 @@ function KeepAliveTerminalStack(props: KeepAliveStackProps) {
                 inputMode={inputMode}
                 deviceConnected={deviceConnected}
                 isSelectionInvalid={visible ? selection.isSelectionInvalid : false}
-                // 隐藏实例只跟随容器尺寸对齐本地行列，不上报——否则多实例互抢整窗尺寸
-                sizingMode={visible ? 'report' : 'local'}
+                // 隐藏实例只跟随容器尺寸对齐本地行列，不上报——否则多实例互抢整窗尺寸；
+                // 可见实例非 owner（别的客户端更大）时同样不上报，改为跟随权威尺寸本地平移
+                sizingMode={visible ? (owner ? 'report' : 'follow') : 'local'}
+                viewportPan={visible && !owner}
                 autoFocus={visible}
                 focused={visible}
                 prepareResources={prepareResources}

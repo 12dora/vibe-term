@@ -30,6 +30,11 @@ export interface DeviceConnectionRegistryHost {
   broadcastDeviceEvent(entry: DeviceConnectionEntry, payload: EventDevicePayload): void;
   releaseLegacyPaneObservers(session: GatewaySession, deviceId?: string): void;
   syncLegacyPaneObservers(session: GatewaySession, deviceId: string): void;
+  dropViewportClaims(
+    session: GatewaySession,
+    deviceId?: string,
+    options?: { recompute?: boolean }
+  ): void;
 }
 
 export class DeviceConnectionRegistry {
@@ -255,6 +260,7 @@ export class DeviceConnectionRegistry {
 
     delete session.borshState.selectedPanes[deviceId];
     delete session.borshState.subscribedPanes[deviceId];
+    this.host.dropViewportClaims?.(session, deviceId);
 
     const disconnectedPayload = wsBorsh.encodePayload(wsBorsh.schema.DeviceDisconnectedSchema, {
       deviceId,
@@ -370,6 +376,7 @@ export class DeviceConnectionRegistry {
     for (const client of entry.clients) {
       this.host.releaseLegacyPaneObservers?.(client, deviceId);
       delete client.borshState.selectedPanes[deviceId];
+      this.host.dropViewportClaims?.(client, deviceId, { recompute: false });
     }
     entry.clients.clear();
     entry.canonicalClients?.clear();

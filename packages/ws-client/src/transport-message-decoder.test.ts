@@ -100,6 +100,33 @@ describe('decodeGatewayTransportMessage', () => {
     expect(resume.events).toEqual([{ type: 'live-resume', deviceId: 'dev-1', selectToken: token }]);
   });
 
+  test('terminal-viewport-policy', () => {
+    const { handled, events } = collect(
+      wsBorsh.KIND_TERM_VIEWPORT_POLICY,
+      wsBorsh.encodePayload(wsBorsh.schema.TermViewportPolicySchema, {
+        deviceId: 'dev-1',
+        windowId: '@1',
+        paneId: '%2',
+        owner: false,
+        cols: 160,
+        rows: 48,
+      })
+    );
+    expect(handled).toBe(true);
+    expect(events).toEqual([
+      {
+        type: 'terminal-viewport-policy',
+        kind: 'terminal-viewport-policy',
+        deviceId: 'dev-1',
+        windowId: '@1',
+        paneId: '%2',
+        owner: false,
+        cols: 160,
+        rows: 48,
+      },
+    ]);
+  });
+
   test('clipboard-write', () => {
     const { events } = collect(
       wsBorsh.KIND_CLIPBOARD_WRITE,

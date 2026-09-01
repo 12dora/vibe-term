@@ -1,5 +1,6 @@
 import type { StateSnapshotPayload } from '@tmex/shared';
 import type { ConnectionState, GatewayHistoryCursor } from '@tmex/ws-client';
+import type { ViewportPolicyMap } from './viewport-policy';
 
 export type SnapshotMap = Record<string, StateSnapshotPayload | undefined>;
 
@@ -33,6 +34,8 @@ export interface TmuxState {
   selectedPanes: Record<string, { windowId: string; paneId: string } | undefined>;
   activePaneFromEvent: Record<string, { windowId: string; paneId: string } | undefined>;
   pendingCreateWindowAt: Record<string, number | undefined>;
+  /** 网关下发的整窗尺寸归属，键为 `deviceId:paneId`；缺省（无记录）即本客户端是 owner */
+  viewportPolicy: ViewportPolicyMap;
 
   ensureSocketConnected: () => void;
   connectDevice: (deviceId: string) => void;
@@ -51,6 +54,12 @@ export interface TmuxState {
   sendInput: (deviceId: string, paneId: string, data: string, isComposing?: boolean) => void;
   resizePane: (deviceId: string, paneId: string, cols: number, rows: number) => void;
   syncPaneSize: (deviceId: string, paneId: string, cols: number, rows: number) => void;
+  /** 视口声明：告诉网关本客户端在该 pane 上的可见状态与几何，供整窗尺寸仲裁 */
+  setPaneViewport: (
+    deviceId: string,
+    paneId: string,
+    viewport: { cols: number; rows: number; visible: boolean }
+  ) => void;
   paste: (deviceId: string, paneId: string, data: string) => void;
   createWindow: (deviceId: string, name?: string, cwd?: string) => void;
   clearPendingCreateWindow: (deviceId: string) => void;

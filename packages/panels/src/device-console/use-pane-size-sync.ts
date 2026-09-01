@@ -120,7 +120,9 @@ export function usePaneSizeSync({
     if (action.clearPendingLocalSize) terminal?.clearPendingLocalSize();
     if (!action.resize) return;
 
-    term.resize(action.cols, action.rows);
+    // 走 TerminalRef.resize 而不是实例的 resize：它同时记下权威尺寸，
+    // follow 模式下 convergeSnapshotSize() 才知道快照写完后该收敛到哪个行列
+    terminal?.resize(action.cols, action.rows);
     // 远端 resize 后本地 reflow 与 tmux reflow 不保证一致（差一行即让 TUI 的
     // 相对移动重绘永久错位），重拉 history 以 tmux 权威状态重建本地屏幕；
     // fetch gate 会缓冲期间的 live 输出保序

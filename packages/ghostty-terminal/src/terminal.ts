@@ -36,6 +36,8 @@ import type {
   CompatibleTerminalLike,
   GhosttyCellDimensions,
   GhosttyCursorViewportRect,
+  GhosttyPanDelta,
+  GhosttyPanMetrics,
   GhosttyRenderCursor,
   GhosttyRenderRow,
   GhosttyTerminalInitOptions,
@@ -226,6 +228,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
         theme: this.options.theme,
         fontFamily: this.options.fontFamily,
         fontSize: this.options.fontSize,
+        onSurfaceSize: (width, height) => this.dom.setContentSurfaceSize(width, height),
       })
     );
 
@@ -484,12 +487,68 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.input.mouse.suppressSyntheticUntil = Date.now() + SYNTHETIC_MOUSE_SUPPRESS_MS;
   }
 
+  // follower 模式：本地保留 PTY 的完整 cols×rows，超出容器的部分由平移视口承载。
+  setViewportPan(enabled: boolean): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.dom.setViewportPan(enabled);
+  }
+
+  panMetrics(): GhosttyPanMetrics | null {
+    return this.disposed ? null : this.dom.panMetrics();
+  }
+
+  panBy(deltaX: number, deltaY: number): GhosttyPanDelta {
+    if (this.disposed) {
+      return { deltaX: 0, deltaY: 0 };
+    }
+
+    return this.dom.panBy(deltaX, deltaY);
+  }
+
   handleViewportGesture(gesture: GhosttyViewportGesture): boolean {
     if (this.disposed) {
       return false;
     }
 
+    if (this.consumeGestureAsPanX(gesture)) {
+      return true;
+    }
+
     return this.input.handleViewportGesture(gesture);
+  }
+
+  // 桌面端：纵向滚轮仍是 scrollback（语义不变），横向滚轮 / Shift+滚轮平移 X。
+  // 上报模式下横向滚轮要编码成鼠标按钮 6/7，绝不能被平移截胡。
+  private consumeGestureAsPanX(gesture: GhosttyViewportGesture): boolean {
+    if (gesture.source !== 'wheel' || this.isMouseReporting()) {
+      return false;
+    }
+
+    const metrics = this.dom.panMetrics();
+    if (!metrics || metrics.overflowX <= 0) {
+      return false;
+    }
+
+    const deltaX = gesture.deltaX ?? 0;
+    const raw = deltaX !== 0 ? deltaX : gesture.shiftKey ? gesture.deltaY : 0;
+    if (raw === 0) {
+      return false;
+    }
+
+    return this.panBy(this.wheelDeltaToPixels(raw, gesture.deltaMode), 0).deltaX !== 0;
+  }
+
+  private wheelDeltaToPixels(delta: number, deltaMode: number | undefined): number {
+    if (deltaMode === 1) {
+      return delta * Math.max(1, this.dom.cell.width);
+    }
+    if (deltaMode === 2) {
+      return delta * Math.max(1, this.cols * Math.max(1, this.dom.cell.width));
+    }
+    return delta;
   }
 
   paste(data: string): void {

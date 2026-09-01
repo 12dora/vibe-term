@@ -172,14 +172,20 @@ export function createTmuxKindHandlers(
     ],
     [
       wsBorsh.KIND_TERM_RESIZE,
-      schemaHandler(wsBorsh.schema.TermResizeSchema, (_ws, decoded) => {
-        host.handleTermResize(decoded.deviceId, decoded.paneId, decoded.cols, decoded.rows);
+      schemaHandler(wsBorsh.schema.TermResizeSchema, (ws, decoded) => {
+        host.handleTermResize(ws, decoded.deviceId, decoded.paneId, decoded.cols, decoded.rows);
       }),
     ],
     [
       wsBorsh.KIND_TERM_SYNC_SIZE,
-      schemaHandler(wsBorsh.schema.TermSyncSizeSchema, (_ws, decoded) => {
-        host.handleTermResize(decoded.deviceId, decoded.paneId, decoded.cols, decoded.rows);
+      schemaHandler(wsBorsh.schema.TermSyncSizeSchema, (ws, decoded) => {
+        host.handleTermResize(ws, decoded.deviceId, decoded.paneId, decoded.cols, decoded.rows);
+      }),
+    ],
+    [
+      wsBorsh.KIND_TERM_VIEWPORT,
+      schemaHandler(wsBorsh.schema.TermViewportSchema, (ws, decoded) => {
+        host.handleTermViewport(ws, decoded);
       }),
     ],
   ];

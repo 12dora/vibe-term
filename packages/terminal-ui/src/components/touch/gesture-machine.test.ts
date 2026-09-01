@@ -69,16 +69,32 @@ function asTouchEvent(event: ReturnType<typeof touchEvent>): TouchEvent {
   return event as unknown as TouchEvent;
 }
 
+interface PanState {
+  scrollLeft: number;
+  scrollTop: number;
+  overflowX: number;
+  overflowY: number;
+}
+
 interface Harness {
   machine: MobileTouchGestureMachine;
   calls: string[];
   setReporting: (reporting: boolean) => void;
+  pan: PanState | null;
 }
 
-function createHarness(options: { reporting: boolean; pressSucceeds?: boolean }): Harness {
+function createHarness(options: {
+  reporting: boolean;
+  pressSucceeds?: boolean;
+  /** 省略 = 未开启平移视口（Terminal 的 viewportPan 为 false），终端不暴露 panMetrics/panBy */
+  pan?: Partial<PanState>;
+}): Harness {
   const calls: string[] = [];
   let reporting = options.reporting;
   const pressSucceeds = options.pressSucceeds ?? true;
+  const pan: PanState | null = options.pan
+    ? { scrollLeft: 0, scrollTop: 0, overflowX: 0, overflowY: 0, ...options.pan }
+    : null;
 
   const terminal: TerminalScroller = {
     scrollLines: (amount) => calls.push(`scrollLines(${amount})`),
@@ -109,6 +125,19 @@ function createHarness(options: { reporting: boolean; pressSucceeds?: boolean })
     _renderService: { dimensions: { css: { cell: { height: CELL_HEIGHT } } } },
   };
 
+  if (pan) {
+    terminal.panMetrics = () => ({ ...pan });
+    terminal.panBy = (deltaX, deltaY) => {
+      const nextLeft = Math.max(0, Math.min(pan.overflowX, pan.scrollLeft + deltaX));
+      const nextTop = Math.max(0, Math.min(pan.overflowY, pan.scrollTop + deltaY));
+      const applied = { deltaX: nextLeft - pan.scrollLeft, deltaY: nextTop - pan.scrollTop };
+      pan.scrollLeft = nextLeft;
+      pan.scrollTop = nextTop;
+      calls.push(`panBy(${applied.deltaX},${applied.deltaY})`);
+      return applied;
+    };
+  }
+
   const machine = new MobileTouchGestureMachine({
     container: new FakeElement() as unknown as Element,
     resolveTerminal: () => terminal,
@@ -118,6 +147,7 @@ function createHarness(options: { reporting: boolean; pressSucceeds?: boolean })
   return {
     machine,
     calls,
+    pan,
     setReporting: (next) => {
       reporting = next;
     },
@@ -375,5 +405,153 @@ describe('long-press selection', () => {
     jest.advanceTimersByTime(LONG_PRESS_SELECT_MS * 2);
     expect(calls).toEqual([]);
     expect(machine.currentState()).toBe('bypass');
+  });
+});
+
+// follower 的平移视口：单指手势按轴锁分流，纵向到边后按嵌套滚动语义回落 scrollback。
+describe('平移视口手势', () => {
+  test('横向拖动平移 X，不触发 scrollback', () => {
+    const { machine, calls, pan } = createHarness({
+      reporting: false,
+      pan: { overflowX: 200, overflowY: 100 },
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+
+    const move = touchEvent([touch(1, 60, 200)]);
+    machine.handleTouchMove(asTouchEvent(move));
+
+    expect(calls).toEqual(['panBy(40,0)']);
+    expect(pan?.scrollLeft).toBe(40);
+    expect(move.defaultPrevented).toBe(true);
+    expect(machine.currentState()).toBe('pan');
+  });
+
+  test('轴锁定在 X 后纵向抖动不会漏进 scrollback', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      pan: { overflowX: 200, overflowY: 100 },
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 60, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 40, 160)])));
+
+    expect(calls).toEqual(['panBy(40,0)', 'panBy(20,0)']);
+    expect(calls.some((call) => call.startsWith('viewportGesture'))).toBe(false);
+  });
+
+  test('纵向拖动在还有余量时平移 Y', () => {
+    const { machine, calls, pan } = createHarness({
+      reporting: false,
+      pan: { overflowX: 200, overflowY: 100 },
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+
+    const move = touchEvent([touch(1, 100, 160)]);
+    machine.handleTouchMove(asTouchEvent(move));
+
+    expect(calls).toEqual(['panBy(0,40)']);
+    expect(pan?.scrollTop).toBe(40);
+    expect(move.defaultPrevented).toBe(true);
+    expect(machine.currentState()).toBe('pan');
+  });
+
+  test('纵向到边后整段位移回落 scrollback', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      pan: { overflowX: 200, overflowY: 100, scrollTop: 100 },
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+
+    const move = touchEvent([touch(1, 100, 160)]);
+    machine.handleTouchMove(asTouchEvent(move));
+
+    expect(calls).toEqual(['viewportGesture(40,100,160)']);
+    expect(move.defaultPrevented).toBe(true);
+    expect(machine.currentState()).toBe('scroll');
+  });
+
+  test('纵向跨越边界时先平移剩余量、余下的才喂 scrollback', () => {
+    const { machine, calls, pan } = createHarness({
+      reporting: false,
+      pan: { overflowX: 200, overflowY: 100, scrollTop: 90 },
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 160)])));
+
+    // 位移 40px：10px 用完平移余量，剩 30px × 1.3 = 39px → 1 整行 scrollback
+    expect(calls).toEqual(['panBy(0,10)', 'viewportGesture(20,100,160)']);
+    expect(pan?.scrollTop).toBe(100);
+    expect(machine.currentState()).toBe('pan');
+  });
+
+  test('该轴不超尺寸时手势语义与未开平移完全一致', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      pan: { overflowX: 0, overflowY: 0 },
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+
+    const horizontal = touchEvent([touch(1, 60, 200)]);
+    machine.handleTouchMove(asTouchEvent(horizontal));
+    expect(calls).toEqual([]);
+    expect(horizontal.defaultPrevented).toBe(false);
+
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 60, 160)])));
+    expect(calls).toEqual(['viewportGesture(40,60,160)']);
+    expect(machine.currentState()).toBe('scroll');
+  });
+
+  test('未开启平移时终端不暴露 panBy，仍走原有 scrollback', () => {
+    const { machine, calls } = createHarness({ reporting: false });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 60, 160)])));
+
+    expect(calls).toEqual(['viewportGesture(40,60,160)']);
+    expect(machine.currentState()).toBe('scroll');
+  });
+
+  test('上报模式下平移不介入，滚轮上报语义不变', () => {
+    const { machine, calls, pan } = createHarness({
+      reporting: true,
+      pan: { overflowX: 200, overflowY: 100 },
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 60, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 60, 160)])));
+
+    expect(calls.some((call) => call.startsWith('panBy'))).toBe(false);
+    expect(calls).toEqual(['viewportGesture(40,60,160)']);
+    expect(pan?.scrollLeft).toBe(0);
+    expect(machine.currentState()).toBe('scroll');
+  });
+
+  test('轴锁阈值内的微小位移不定轴，也不平移', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      pan: { overflowX: 200, overflowY: 100 },
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 96, 197)])));
+
+    expect(calls).toEqual([]);
+    expect(machine.currentState()).toBe('scroll');
+  });
+
+  test('手势结束后轴锁复位，下一次手势可换轴', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      pan: { overflowX: 200, overflowY: 100 },
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 60, 200)])));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 60, 200)])));
+    expect(machine.currentState()).toBe('idle');
+
+    calls.length = 0;
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 160)])));
+
+    expect(calls).toEqual(['panBy(0,40)']);
   });
 });

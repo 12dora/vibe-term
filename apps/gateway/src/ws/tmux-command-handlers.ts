@@ -8,6 +8,12 @@ import { parseWindowLayoutSize } from './frame-utils';
 import type { GatewaySession } from './gateway-session';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import type { DeviceConnectionEntry, WebSocketServerDeps } from './types';
+import {
+  type ViewportClaimRecord,
+  resolveWinner,
+  takeViewportClaimKeys,
+  viewportClaimKey,
+} from './viewport-policy';
 
 export interface TmuxCommandHost {
   readonly connections: Map<string, DeviceConnectionEntry>;
@@ -24,6 +30,7 @@ export interface TmuxCommandHost {
     message: string,
     retryable: boolean
   ): void;
+  sendEnvelope(session: GatewaySession, kind: number, payload: Uint8Array): void;
   sendChunked(session: GatewaySession, kind: number, payload: Uint8Array): boolean;
   refreshSnapshotPolling(deviceId: string): void;
   broadcastSettingsUpdate(namespace: SettingsNamespace): void;
@@ -171,23 +178,23 @@ export function handleTermInput(
   entry.runtime.sendInput(paneId, data);
 }
 
-export function handleTermResize(
-  host: TmuxCommandHost,
-  deviceId: string,
+export function findWindowForPane(entry: DeviceConnectionEntry, paneId: string) {
+  return entry.lastSnapshot?.session?.windows?.find((w) => w.panes?.some((p) => p.id === paneId));
+}
+
+export function applyTermResizeToEntry(
+  entry: DeviceConnectionEntry,
   paneId: string,
   cols: number,
-  rows: number
+  rows: number,
+  options: { force?: boolean } = {}
 ): void {
-  const entry = host.connections.get(deviceId);
-  if (!entry) return;
-
-  const window = entry.lastSnapshot?.session?.windows?.find((w) =>
-    w.panes?.some((p) => p.id === paneId)
-  );
+  const window = findWindowForPane(entry, paneId);
+  const force = options.force === true;
 
   if (window?.panes && window.panes.length > 1) {
     const currentSize = parseWindowLayoutSize(window.layout);
-    if (currentSize && currentSize.cols === cols && currentSize.rows === rows) {
+    if (!force && currentSize && currentSize.cols === cols && currentSize.rows === rows) {
       return;
     }
     entry.runtime.resizeWindow(window.id, cols, rows);
@@ -195,11 +202,184 @@ export function handleTermResize(
   }
 
   const pane = window?.panes.find((p) => p.id === paneId);
-  if (pane && pane.width === cols && pane.height === rows) {
+  if (!force && pane && pane.width === cols && pane.height === rows) {
     return;
   }
 
   entry.runtime.resizePane(paneId, cols, rows);
+}
+
+export function handleTermResize(
+  host: TmuxCommandHost,
+  session: GatewaySession,
+  deviceId: string,
+  paneId: string,
+  cols: number,
+  rows: number
+): void {
+  recordViewportClaim(
+    host,
+    session,
+    {
+      deviceId,
+      paneId,
+      cols,
+      rows,
+      visible: true,
+    },
+    { applyUnknown: true }
+  );
+}
+
+export function handleTermViewport(
+  host: TmuxCommandHost,
+  session: GatewaySession,
+  decoded: {
+    deviceId: string;
+    paneId: string;
+    cols: number;
+    rows: number;
+    visible: boolean;
+  }
+): void {
+  recordViewportClaim(host, session, decoded, { applyUnknown: false });
+}
+
+function recordViewportClaim(
+  host: TmuxCommandHost,
+  session: GatewaySession,
+  data: {
+    deviceId: string;
+    paneId: string;
+    cols: number;
+    rows: number;
+    visible: boolean;
+  },
+  options: { applyUnknown: boolean }
+): void {
+  const entry = host.connections.get(data.deviceId);
+  if (!entry) return;
+
+  const window = findWindowForPane(entry, data.paneId);
+  if (!window) {
+    if (options.applyUnknown) {
+      applyTermResizeToEntry(entry, data.paneId, data.cols, data.rows);
+    }
+    return;
+  }
+
+  const key = viewportClaimKey(data.deviceId, window.id);
+  const isFirstClaim = !session.viewportClaims.has(key);
+  session.viewportClaims.set(key, {
+    paneId: data.paneId,
+    cols: data.cols,
+    rows: data.rows,
+    visible: data.visible,
+    at: Date.now(),
+  });
+  applyViewportPolicy(host, data.deviceId, window.id, {
+    extraSession: session,
+    notifyFirst: isFirstClaim ? session : undefined,
+  });
+}
+
+export function applyViewportPolicy(
+  host: TmuxCommandHost,
+  deviceId: string,
+  windowId: string,
+  options: { extraSession?: GatewaySession; notifyFirst?: GatewaySession } = {}
+): void {
+  const entry = host.connections.get(deviceId);
+  if (!entry) return;
+
+  const key = viewportClaimKey(deviceId, windowId);
+  const records: ViewportClaimRecord[] = [];
+  const claimants = new Set<GatewaySession>(entry.clients);
+  if (options.extraSession) claimants.add(options.extraSession);
+
+  for (const session of claimants) {
+    const claim = session.viewportClaims.get(key);
+    if (!claim) continue;
+    records.push({ sessionId: session.id, claim });
+  }
+
+  const winner = resolveWinner(records);
+  const lastApplied = entry.lastAppliedViewport?.get(windowId);
+  const previousWinnerId = entry.lastViewportWinnerId?.get(windowId) ?? null;
+  const nextWinnerId = winner?.sessionId ?? null;
+  const winnerChanged = previousWinnerId !== nextWinnerId;
+  let geometryChanged = false;
+
+  if (winner) {
+    const sameGeometry =
+      lastApplied != null &&
+      lastApplied.cols === winner.claim.cols &&
+      lastApplied.rows === winner.claim.rows;
+    if (!sameGeometry) {
+      applyTermResizeToEntry(entry, winner.claim.paneId, winner.claim.cols, winner.claim.rows, {
+        force: lastApplied != null,
+      });
+      if (!entry.lastAppliedViewport) entry.lastAppliedViewport = new Map();
+      entry.lastAppliedViewport.set(windowId, {
+        cols: winner.claim.cols,
+        rows: winner.claim.rows,
+      });
+      geometryChanged = true;
+    }
+  }
+
+  if (!entry.lastViewportWinnerId) entry.lastViewportWinnerId = new Map();
+  entry.lastViewportWinnerId.set(windowId, nextWinnerId);
+
+  const applied = winner ? { cols: winner.claim.cols, rows: winner.claim.rows } : lastApplied;
+  if (!applied) return;
+
+  const shouldBroadcast = winnerChanged || geometryChanged;
+  for (const session of claimants) {
+    const claim = session.viewportClaims.get(key);
+    if (!claim) continue;
+    if (!shouldBroadcast && session !== options.notifyFirst) continue;
+    sendViewportPolicy(host, session, {
+      deviceId,
+      windowId,
+      paneId: claim.paneId,
+      owner: winner?.sessionId === session.id,
+      cols: applied.cols,
+      rows: applied.rows,
+    });
+  }
+}
+
+function sendViewportPolicy(
+  host: TmuxCommandHost,
+  session: GatewaySession,
+  payload: {
+    deviceId: string;
+    windowId: string;
+    paneId: string;
+    owner: boolean;
+    cols: number;
+    rows: number;
+  }
+): void {
+  const bytes = wsBorsh.encodePayload(wsBorsh.schema.TermViewportPolicySchema, payload);
+  host.sendEnvelope(session, wsBorsh.KIND_TERM_VIEWPORT_POLICY, bytes);
+}
+
+export function dropViewportClaims(
+  host: TmuxCommandHost,
+  session: GatewaySession,
+  deviceId?: string,
+  options: { recompute?: boolean } = {}
+): void {
+  const affected = takeViewportClaimKeys(session.viewportClaims, deviceId);
+  if (options.recompute === false) return;
+  const seen = new Set<string>();
+  for (const item of affected) {
+    if (seen.has(item.key)) continue;
+    seen.add(item.key);
+    applyViewportPolicy(host, item.deviceId, item.windowId);
+  }
 }
 
 export function handleTermPaste(

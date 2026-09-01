@@ -10,6 +10,7 @@ import { createTmuxEventRouter } from './tmux-event-router';
 import { createTmuxSelectionActions, normalizeTerminalSize } from './tmux-selection-actions';
 import type { DeviceError, TmuxState } from './tmux-state';
 import type { UIStore } from './ui';
+import { clearViewportPolicyForDevice } from './viewport-policy';
 
 export type { DeviceInitialErrorInput, TmuxState } from './tmux-state';
 
@@ -156,6 +157,7 @@ export function createTmuxStore(
       selectedPanes: {},
       activePaneFromEvent: {},
       pendingCreateWindowAt: {},
+      viewportPolicy: {},
 
       ensureSocketConnected() {
         setupTransportHandlers();
@@ -188,6 +190,7 @@ export function createTmuxStore(
             connectedDevices: nextConnected,
             deviceConnected: { ...prev.deviceConnected, [deviceId]: false },
             deviceReconnecting: { ...prev.deviceReconnecting, [deviceId]: undefined },
+            viewportPolicy: clearViewportPolicyForDevice(prev.viewportPolicy, deviceId),
           };
         });
 
@@ -242,6 +245,20 @@ export function createTmuxStore(
         if (!deviceId || !paneId) return;
         selection.recordTerminalSize(deviceId, cols, rows);
         core.transport.send({ type: 'terminal-sync-size', deviceId, paneId, cols, rows });
+      },
+
+      setPaneViewport(deviceId, paneId, viewport) {
+        if (!deviceId || !paneId) return;
+        const normalized = normalizeTerminalSize(viewport.cols, viewport.rows);
+        if (!normalized) return;
+        core.transport.send({
+          type: 'terminal-viewport',
+          deviceId,
+          paneId,
+          cols: normalized.cols,
+          rows: normalized.rows,
+          visible: viewport.visible,
+        });
       },
 
       paste(deviceId, paneId, data) {

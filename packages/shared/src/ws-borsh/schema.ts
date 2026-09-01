@@ -232,6 +232,25 @@ export const TermResizeSchema = b.struct({
 
 export const TermSyncSizeSchema = TermResizeSchema;
 
+// C2S：客户端上报当前 pane 视口几何与可见性（声明式 claim）
+export const TermViewportSchema = b.struct({
+  deviceId: b.string(),
+  paneId: b.string(),
+  cols: b.u16(),
+  rows: b.u16(),
+  visible: b.bool(),
+});
+
+// S2C：该 window 的视口策略（owner=本端几何被采用；follower 跟权威尺寸）
+export const TermViewportPolicySchema = b.struct({
+  deviceId: b.string(),
+  windowId: b.string(),
+  paneId: b.string(),
+  owner: b.bool(),
+  cols: b.u16(),
+  rows: b.u16(),
+});
+
 export const TermOutputSchema = b.struct({
   deviceId: b.string(),
   paneId: b.string(),

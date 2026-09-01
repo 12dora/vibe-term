@@ -132,10 +132,12 @@ export const EnvelopeSchema = b.struct({
 |---:|---|---|---|
 | 0x0301 | TERM_INPUT | C2S | 终端输入（bytes） |
 | 0x0302 | TERM_PASTE | C2S | 粘贴（分块发送） |
-| 0x0303 | TERM_RESIZE | C2S | resize（本地视口为源） |
+| 0x0303 | TERM_RESIZE | C2S | resize（本地视口为源；同时记为可见 viewport claim） |
 | 0x0304 | TERM_SYNC_SIZE | C2S | 同步尺寸（语义同 TERM_RESIZE，便于区分来源） |
 | 0x0305 | TERM_OUTPUT | S2C | 终端输出（raw bytes） |
 | 0x0306 | TERM_HISTORY | S2C | 历史输出（与 selectToken 绑定） |
+| 0x0308 | TERM_VIEWPORT | C2S | 客户端视口 claim（几何 + 可见性） |
+| 0x0309 | TERM_VIEWPORT_POLICY | S2C | window 尺寸策略（owner / 权威 cols×rows） |
 
 ### 切换屏障（0x0400-0x04FF）
 
@@ -441,6 +443,33 @@ PaneWire：
 - `paneId: string`
 - `cols: u16`
 - `rows: u16`
+
+网关将二者视为该 pane 所在 window 上的 `visible=true` claim（兼容从不发送 `TERM_VIEWPORT` 的客户端）。
+
+### TERM_VIEWPORT（0x0308）
+
+字段：
+
+- `deviceId: string`
+- `paneId: string`
+- `cols: u16`
+- `rows: u16`
+- `visible: bool`
+
+客户端在 pane 表面成为当前可见面、或 `document.visibilitychange → visible` 时发 `visible=true`；隐藏 / 卸载时发 `visible=false`（cols/rows 可为上次测量值）。未知 pane 的 claim 被忽略。
+
+### TERM_VIEWPORT_POLICY（0x0309）
+
+字段：
+
+- `deviceId: string`
+- `windowId: string`
+- `paneId: string`（收件方自己 claim 的 pane，便于按 pane 索引）
+- `owner: bool`
+- `cols: u16`
+- `rows: u16`
+
+`owner=true`：本端几何被采用，应继续上报 resize。`owner=false`：跟随权威 `cols×rows`，停止上报容器尺寸。在 winner / 已应用几何变化时发给该 window 上所有 claimant；会话对该 window 的首次 claim 后立即单发一次。
 
 ### TERM_OUTPUT（0x0305）
 

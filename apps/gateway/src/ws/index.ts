@@ -444,6 +444,7 @@ export class WebSocketServer
       this.refreshSnapshotPolling(deviceId);
       this.registry.scheduleConnectionEntryRelease(deviceId, entry);
     }
+    this.dropViewportClaims(session);
   }
 
   updateDefaultWorkingDir(deviceId: string, dir: string | undefined): void {
@@ -723,8 +724,29 @@ export class WebSocketServer
     tmuxCommands.handleTermInput(this, deviceId, paneId, data);
   }
 
-  handleTermResize(deviceId: string, paneId: string, cols: number, rows: number): void {
-    tmuxCommands.handleTermResize(this, deviceId, paneId, cols, rows);
+  handleTermResize(
+    session: GatewaySession,
+    deviceId: string,
+    paneId: string,
+    cols: number,
+    rows: number
+  ): void {
+    tmuxCommands.handleTermResize(this, session, deviceId, paneId, cols, rows);
+  }
+
+  handleTermViewport(
+    session: GatewaySession,
+    decoded: wsBorsh.b.infer<typeof wsBorsh.schema.TermViewportSchema>
+  ): void {
+    tmuxCommands.handleTermViewport(this, session, decoded);
+  }
+
+  dropViewportClaims(
+    session: GatewaySession,
+    deviceId?: string,
+    options: { recompute?: boolean } = {}
+  ): void {
+    tmuxCommands.dropViewportClaims(this, session, deviceId, options);
   }
 
   handleTermPaste(deviceId: string, paneId: string, data: string): void {

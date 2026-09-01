@@ -2677,3 +2677,289 @@ describe('GhosttyTerminalController 模式查询缓存', () => {
     terminal.dispose();
   });
 });
+
+// follower（他人拥有 PTY 尺寸）时的平移视口：本地保留权威 cols×rows 完整绘制，
+// .xterm-viewport 兼任平移视口、.xterm-screen 兼任内容表面；关闭时 DOM 与以往一致。
+describe('GhosttyTerminalController 平移视口', () => {
+  let dom: FakeDom | null = null;
+  let importVersion = 12000;
+
+  afterEach(() => {
+    dom?.restore();
+    dom = null;
+    mock.restore();
+  });
+
+  // render-state mock 恒报 80×24；容器 300×200 → cell 9×16 时内容表面 720×384，两轴都超尺寸。
+  const CONTAINER_WIDTH = 300;
+  const CONTAINER_HEIGHT = 200;
+  const CONTENT_WIDTH = 720;
+  const CONTENT_HEIGHT = 384;
+
+  async function openTerminal(bindings: FakeBindings): Promise<{
+    terminal: any;
+    root: FakeElement;
+    viewport: FakeElement;
+    screen: FakeElement;
+  }> {
+    importVersion += 1;
+    const { createTerminalController } = await loadControllerModule(bindings, importVersion);
+    const terminal = await createTerminalController({
+      theme: TEST_THEME,
+      fontFamily: 'monospace',
+      fontSize: 13,
+      scrollback: 1000,
+    });
+    const activeDom = dom as FakeDom;
+    const container = activeDom.document.createElement('div');
+    container.setBoundingClientRect({ width: CONTAINER_WIDTH, height: CONTAINER_HEIGHT });
+    activeDom.document.body.appendChild(container);
+    terminal.open(container as unknown as HTMLElement);
+    await activeDom.flushAnimationFrames();
+
+    const root = terminal.element as unknown as FakeElement;
+    return {
+      terminal,
+      root,
+      viewport: findElementByClass(root, 'xterm-viewport') as FakeElement,
+      screen: findElementByClass(root, 'xterm-screen') as FakeElement,
+    };
+  }
+
+  // fake DOM 没有布局：按真实布局规则把内容表面的 CSS 尺寸喂成平移视口的可滚尺寸。
+  function syncPanLayout(viewport: FakeElement, screen: FakeElement): void {
+    viewport.clientWidth = CONTAINER_WIDTH;
+    viewport.clientHeight = CONTAINER_HEIGHT;
+    viewport.scrollWidth = Math.max(CONTAINER_WIDTH, Number.parseFloat(screen.style.width) || 0);
+    viewport.scrollHeight = Math.max(CONTAINER_HEIGHT, Number.parseFloat(screen.style.height) || 0);
+  }
+
+  test('关闭时 DOM 与样式与以往完全一致', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal, viewport, screen } = await openTerminal(bindings);
+
+    expect(viewport.style.overflow).toBe('hidden');
+    expect(viewport.style.touchAction).toBeUndefined();
+    expect(viewport.dataset.panViewport).toBeUndefined();
+    expect(screen.style.width).toBe('100%');
+    expect(screen.style.height).toBe('100%');
+    expect(terminal.panMetrics()).toBeNull();
+    expect(terminal.panBy(50, 50)).toEqual({ deltaX: 0, deltaY: 0 });
+    terminal.dispose();
+  });
+
+  test('打开后内容表面等于 cols×cellW / rows×cellH，且平移视口两轴可滚', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal, viewport, screen } = await openTerminal(bindings);
+
+    terminal.setViewportPan(true);
+    syncPanLayout(viewport, screen);
+
+    expect(viewport.style.overflow).toBe('auto');
+    expect(viewport.style.overscrollBehavior).toBe('contain');
+    expect(viewport.dataset.panViewport).toBe('true');
+    expect(screen.style.width).toBe(`${CONTENT_WIDTH}px`);
+    expect(screen.style.height).toBe(`${CONTENT_HEIGHT}px`);
+    expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
+    expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+    expect(terminal.panMetrics()).toEqual({
+      scrollLeft: 0,
+      scrollTop: 0,
+      overflowX: CONTENT_WIDTH - CONTAINER_WIDTH,
+      overflowY: CONTENT_HEIGHT - CONTAINER_HEIGHT,
+    });
+    terminal.dispose();
+  });
+
+  test('内容表面放得下时不产生任何可滚溢出', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal, viewport, screen } = await openTerminal(bindings);
+
+    terminal.setViewportPan(true);
+    // 容器反过来比内容大：scrollWidth/Height 与 client 相等，即无滚动条
+    viewport.clientWidth = CONTENT_WIDTH + 40;
+    viewport.clientHeight = CONTENT_HEIGHT + 40;
+    viewport.scrollWidth = Math.max(viewport.clientWidth, Number.parseFloat(screen.style.width));
+    viewport.scrollHeight = Math.max(viewport.clientHeight, Number.parseFloat(screen.style.height));
+
+    expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth);
+    expect(viewport.scrollHeight).toBeLessThanOrEqual(viewport.clientHeight);
+    expect(terminal.panMetrics()).toEqual({
+      scrollLeft: 0,
+      scrollTop: 0,
+      overflowX: 0,
+      overflowY: 0,
+    });
+    terminal.dispose();
+  });
+
+  test('panBy 夹取到可滚范围内并回报真正落地的位移', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal, viewport, screen } = await openTerminal(bindings);
+
+    terminal.setViewportPan(true);
+    syncPanLayout(viewport, screen);
+
+    expect(terminal.panBy(120, 60)).toEqual({ deltaX: 120, deltaY: 60 });
+    expect(viewport.scrollLeft).toBe(120);
+    expect(viewport.scrollTop).toBe(60);
+
+    // 越界：只落地剩余的可滚量
+    expect(terminal.panBy(10_000, 10_000)).toEqual({
+      deltaX: CONTENT_WIDTH - CONTAINER_WIDTH - 120,
+      deltaY: CONTENT_HEIGHT - CONTAINER_HEIGHT - 60,
+    });
+    expect(terminal.panBy(50, 50)).toEqual({ deltaX: 0, deltaY: 0 });
+    terminal.dispose();
+  });
+
+  test('平移后像素→cell 换算基于内容表面而不是容器', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal, root, viewport, screen } = await openTerminal(bindings);
+
+    terminal.setViewportPan(true);
+    syncPanLayout(viewport, screen);
+    terminal.panBy(40, 32);
+
+    // 真实布局下内容表面随滚动偏移左/上移，容器（.xterm）不动
+    root.setBoundingClientRect({
+      width: CONTAINER_WIDTH,
+      height: CONTAINER_HEIGHT,
+      left: 0,
+      top: 0,
+    });
+    screen.setBoundingClientRect({
+      width: CONTENT_WIDTH,
+      height: CONTENT_HEIGHT,
+      left: -viewport.scrollLeft,
+      top: -viewport.scrollTop,
+    });
+
+    bindings.setTerminalMode(1, 1000, true);
+    terminal.clearSelection();
+    bindings.mouseEventCalls.length = 0;
+    expect(terminal.sendTouchMouseEvent({ action: 'press', clientX: 50, clientY: 48 })).toBeTrue();
+
+    const call = bindings.mouseEventCalls.at(-1);
+    // 用容器 rect 会得到 (50,48)，用内容表面 rect 才是 (90,80)
+    expect(call.x).toBe(90);
+    expect(call.y).toBe(80);
+    expect(Math.floor(call.x / call.cellWidth)).toBe(10);
+    expect(Math.floor(call.y / call.cellHeight)).toBe(5);
+    expect(call.screenWidth).toBe(CONTENT_WIDTH);
+    expect(call.screenHeight).toBe(CONTENT_HEIGHT);
+    terminal.dispose();
+  });
+
+  test('关闭平移会归零滚动偏移并恢复裁剪语义', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal, viewport, screen } = await openTerminal(bindings);
+
+    terminal.setViewportPan(true);
+    syncPanLayout(viewport, screen);
+    terminal.panBy(100, 50);
+    expect(viewport.scrollLeft).toBe(100);
+
+    terminal.setViewportPan(false);
+
+    expect(viewport.style.overflow).toBe('hidden');
+    expect(viewport.dataset.panViewport).toBe('');
+    expect(viewport.scrollLeft).toBe(0);
+    expect(viewport.scrollTop).toBe(0);
+    expect(screen.style.width).toBe('100%');
+    expect(screen.style.height).toBe('100%');
+    expect(terminal.panMetrics()).toBeNull();
+    terminal.dispose();
+  });
+
+  test('横向滚轮平移 X，纵向滚轮仍走 scrollback', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal, root, viewport, screen } = await openTerminal(bindings);
+
+    terminal.setViewportPan(true);
+    syncPanLayout(viewport, screen);
+
+    expect(
+      terminal.handleViewportGesture({
+        source: 'wheel',
+        deltaX: 60,
+        deltaY: 0,
+        deltaMode: 0,
+        clientX: 10,
+        clientY: 10,
+      })
+    ).toBeTrue();
+    expect(viewport.scrollLeft).toBe(60);
+    expect(bindings.scrollDeltaCalls.length).toBe(0);
+
+    // Shift+纵向滚轮同样平移 X（浏览器不换轴时的形态）
+    expect(
+      terminal.handleViewportGesture({
+        source: 'wheel',
+        deltaX: 0,
+        deltaY: 40,
+        deltaMode: 0,
+        clientX: 10,
+        clientY: 10,
+        shiftKey: true,
+      })
+    ).toBeTrue();
+    expect(viewport.scrollLeft).toBe(100);
+    expect(bindings.scrollDeltaCalls.length).toBe(0);
+
+    // 裸纵向滚轮：仍是本地 scrollback，一格都不平移
+    expect(
+      terminal.handleViewportGesture({
+        source: 'wheel',
+        deltaX: 0,
+        deltaY: 64,
+        deltaMode: 0,
+        clientX: 10,
+        clientY: 10,
+      })
+    ).toBeTrue();
+    expect(viewport.scrollTop).toBe(0);
+    expect(bindings.scrollDeltaCalls.length).toBeGreaterThan(0);
+    expect(root).toBeDefined();
+    terminal.dispose();
+  });
+
+  test('上报模式下横向滚轮仍编码成鼠标按钮，不被平移截胡', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal, viewport, screen } = await openTerminal(bindings);
+
+    terminal.setViewportPan(true);
+    syncPanLayout(viewport, screen);
+    screen.setBoundingClientRect({
+      width: CONTENT_WIDTH,
+      height: CONTENT_HEIGHT,
+      left: 0,
+      top: 0,
+    });
+    bindings.setTerminalMode(1, 1000, true);
+    bindings.mouseEventCalls.length = 0;
+
+    expect(
+      terminal.handleViewportGesture({
+        source: 'wheel',
+        deltaX: 60,
+        deltaY: 0,
+        deltaMode: 0,
+        clientX: 10,
+        clientY: 10,
+      })
+    ).toBeTrue();
+
+    expect(viewport.scrollLeft).toBe(0);
+    expect(bindings.mouseEventCalls.length).toBeGreaterThan(0);
+    terminal.dispose();
+  });
+});

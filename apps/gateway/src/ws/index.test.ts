@@ -1541,7 +1541,7 @@ describe('WebSocketServer resize × theme dedup', () => {
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
-    server.handleTermResize('device-a', '%0', 80, 24);
+    server.handleTermResize(createGatewaySession(), 'device-a', '%0', 80, 24);
 
     expect(recorder.resizePaneCalls).toEqual([]);
   });
@@ -1551,7 +1551,7 @@ describe('WebSocketServer resize × theme dedup', () => {
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
-    server.handleTermResize('device-a', '%0', 100, 30);
+    server.handleTermResize(createGatewaySession(), 'device-a', '%0', 100, 30);
 
     expect(recorder.resizePaneCalls).toEqual([['%0', 100, 30]]);
   });
@@ -1582,8 +1582,9 @@ describe('WebSocketServer resize × theme dedup', () => {
       },
     ]);
 
-    server.handleTermResize('device-a', '%0', 120, 30);
-    server.handleTermResize('device-a', '%1', 120, 30);
+    const session = createGatewaySession();
+    server.handleTermResize(session, 'device-a', '%0', 120, 30);
+    server.handleTermResize(session, 'device-a', '%1', 120, 30);
 
     expect(recorder.resizePaneCalls).toEqual([['%1', 120, 30]]);
   });
@@ -1605,10 +1606,11 @@ describe('WebSocketServer resize × theme dedup', () => {
       },
     ]);
 
-    server.handleTermResize('device-a', '%0', 120, 30);
+    const session = createGatewaySession();
+    server.handleTermResize(session, 'device-a', '%0', 120, 30);
     expect(recorder.resizeWindowCalls).toEqual([]);
 
-    server.handleTermResize('device-a', '%0', 100, 40);
+    server.handleTermResize(session, 'device-a', '%0', 100, 40);
     expect(recorder.resizeWindowCalls).toEqual([['@1', 100, 40]]);
     expect(recorder.resizePaneCalls).toEqual([]);
   });
@@ -1618,7 +1620,7 @@ describe('WebSocketServer resize × theme dedup', () => {
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
-    server.handleTermResize('device-a', '%9', 80, 24);
+    server.handleTermResize(createGatewaySession(), 'device-a', '%9', 80, 24);
 
     expect(recorder.resizePaneCalls).toEqual([['%9', 80, 24]]);
   });

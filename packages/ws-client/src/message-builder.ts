@@ -205,6 +205,23 @@ export function buildTermSyncSize(
   return { kind: wsBorsh.KIND_TERM_SYNC_SIZE, payload };
 }
 
+export function buildTermViewportMessage(params: {
+  deviceId: string;
+  paneId: string;
+  cols: number;
+  rows: number;
+  visible: boolean;
+}): { kind: number; payload: Uint8Array } {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.TermViewportSchema, {
+    deviceId: params.deviceId,
+    paneId: params.paneId,
+    cols: params.cols,
+    rows: params.rows,
+    visible: params.visible,
+  });
+  return { kind: wsBorsh.KIND_TERM_VIEWPORT, payload };
+}
+
 // ========== 分屏（split screen） ==========
 
 export function buildTmuxSubscribePanes(

@@ -22,6 +22,8 @@ export interface DeviceConnectionEntry {
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   canonicalClients?: Set<GatewaySession>;
   idleReleaseTimer?: ReturnType<typeof setTimeout> | null;
+  lastAppliedViewport?: Map<string, { cols: number; rows: number }>;
+  lastViewportWinnerId?: Map<string, string | null>;
 }
 
 export interface WebSocketServerDeps {

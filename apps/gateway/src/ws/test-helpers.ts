@@ -55,6 +55,7 @@ export function createFakeCarrier(options: CreateFakeCarrierOptions = {}): FakeC
 }
 
 export interface CreateGatewaySessionOptions {
+  id?: string;
   session?: boolean;
   send?: CreateFakeCarrierOptions['send'];
   terminate?: CreateFakeCarrierOptions['terminate'];
@@ -75,7 +76,7 @@ export type BorshTestWs = GatewaySession & {
 
 export function createGatewaySession(options: CreateGatewaySessionOptions = {}): BorshTestWs {
   const carrier = (options.carrier as FakeCarrier | undefined) ?? createFakeCarrier(options);
-  const session = new GatewaySession({ primary: carrier });
+  const session = new GatewaySession({ id: options.id, primary: carrier });
   const data = {
     borshState: session.borshState,
     session,
