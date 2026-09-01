@@ -1,4 +1,4 @@
-# 1.1.9
+# 1.1.10
 
 _2026-09-01_
 
@@ -6,7 +6,8 @@ _2026-09-01_
 
 ### Fixes
 
-- Remote mesh nodes no longer flicker offline: on 1.1.8 a node could briefly lose its device cards, show "Sign in to this node" and disconnect its terminals about once a second before recovering by itself, which also drove up latency to LAN nodes. The cause was 1.1.8 treating any forwarded 401 from a node as an expired sign-in; sign-in state is now decided only by the node list again. If you are on 1.1.8, upgrade as soon as possible. 1.1.8's other improvements (paused output for terminals hidden longer than a minute, slower heartbeat while the app is hidden, event-driven node list refresh) are unchanged.
+- Mixed-version meshes: the browser no longer sends the multi-client viewport frame to nodes older than 1.1.7, which used to log `gateway transport error: Unknown kind: 776` on every switch to a pane on such a node. Multi-client window sizing still requires the node itself to be on 1.1.7 or newer.
+- A sign-in-required error returned through a relay hop is now attributed to the node you actually addressed, never to the relaying node; this closes the last path by which an unrelated node could have been shown as signed out (the 1.1.8 flicker was already stopped in 1.1.9).
 
 ---
 
@@ -14,4 +15,5 @@ _2026-09-01_
 
 ### 修复
 
-- 远端 mesh 节点不再反复闪断：在 1.1.8 上，节点的设备卡片会每隔约一秒短暂消失、显示「登录此节点」、终端断开后又自行恢复，并把局域网节点的延迟拉高。原因是 1.1.8 把节点转发回来的任何 401 都当作登录过期处理；现在登录态重新只由节点列表决定。如果你正在使用 1.1.8，请尽快升级。1.1.8 的其它改进（切走超过一分钟的终端暂停接收输出、应用隐藏时放慢心跳、节点列表事件驱动刷新）保持不变。
+- 混合版本 mesh：浏览器不再向 1.1.7 之前的旧节点发送多客户端视口帧，此前每次切到旧节点的 pane 都会在控制台打出 `gateway transport error: Unknown kind: 776`。多客户端窗口尺寸功能仍需节点本身 ≥ 1.1.7。
+- 经中转返回的「需要登录」错误现在只记到你实际访问的节点上，不会记到中转节点头上；这堵住了「无关节点被显示为未登录」的最后一条路径（1.1.8 的闪断已在 1.1.9 止住）。
