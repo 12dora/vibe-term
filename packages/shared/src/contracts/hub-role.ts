@@ -13,7 +13,10 @@ export type HubRoleTransitionPhase =
 
 export interface HubRoleRequest {
   mode: HubRoleMode;
-  /** `active` 必填：须大于所有已知 writerEpoch；`standby` 忽略（epoch 只增不减） */
+  /**
+   * `active` 可省略：目标自行分配 `max(已知 writerEpoch)+1`（推荐，避免调用方视野不全）。
+   * 显式传入时须大于目标已知的所有 writerEpoch，否则 `HUB_EPOCH_STALE`。`standby` 忽略。
+   */
   writerEpoch?: number;
   /** 幂等键：同一 operationId 重复 POST 返回既有过渡记录 */
   operationId: string;
