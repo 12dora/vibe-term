@@ -66,6 +66,7 @@ const AUTHORIZATION_KEYS: Record<HubAuthorizationKind, string> = {
   signed: 'nodes.hubs.authorization.signed',
   env: 'nodes.hubs.authorization.env',
   self: 'nodes.hubs.authorization.self',
+  none: 'nodes.hubs.authorization.none',
 };
 
 /** 入口凭什么认这台 hub（签名授权 / 环境变量 / 本机）；旧后端不下发时不出这一行。 */

@@ -1745,7 +1745,8 @@
           "label": "Authorization: {{value}}",
           "signed": "Signed",
           "env": "Environment",
-          "self": "This machine"
+          "self": "This machine",
+          "none": "Not Authorized"
         },
         "role": {
           "promote": "Set as Primary Hub",

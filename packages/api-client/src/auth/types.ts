@@ -249,7 +249,7 @@ export interface MeshAttachedHub {
  * 入口是凭什么认这台 hub 的：`signed` = 用户签名授权，`env` = 部署时写进 env 的 peer，
  * `self` = 本机自己就是这台 hub。旧后端不下发。
  */
-export type HubAuthorizationKind = 'signed' | 'env' | 'self';
+export type HubAuthorizationKind = 'signed' | 'env' | 'self' | 'none';
 
 /**
  * `GET /api/mesh/hubs` 里的一台 hub：uplink 契约的 `HubEndpointInfo` 再叠一个只有 REST 才有的

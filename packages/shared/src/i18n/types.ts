@@ -1593,6 +1593,7 @@ export type TranslationKey =
   | 'nodes.hubs.authorization.signed'
   | 'nodes.hubs.authorization.env'
   | 'nodes.hubs.authorization.self'
+  | 'nodes.hubs.authorization.none'
   | 'nodes.hubs.role'
   | 'nodes.hubs.role.promote'
   | 'nodes.hubs.role.demote'

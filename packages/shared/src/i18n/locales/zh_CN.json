@@ -1745,7 +1745,8 @@
           "label": "授权：{{value}}",
           "signed": "已签名",
           "env": "环境变量",
-          "self": "本机"
+          "self": "本机",
+          "none": "未授权"
         },
         "role": {
           "promote": "设为主 Hub",

@@ -1751,7 +1751,8 @@ export const I18N_RESOURCES = {
           "label": "Authorization: {{value}}",
           "signed": "Signed",
           "env": "Environment",
-          "self": "This machine"
+          "self": "This machine",
+          "none": "Not Authorized"
         },
         "role": {
           "promote": "Set as Primary Hub",
@@ -4132,7 +4133,8 @@ export const I18N_RESOURCES = {
           "label": "授权：{{value}}",
           "signed": "已签名",
           "env": "环境变量",
-          "self": "本机"
+          "self": "本机",
+          "none": "未授权"
         },
         "role": {
           "promote": "设为主 Hub",
@@ -6507,7 +6509,8 @@ export const I18N_RESOURCES = {
           "label": "認可：{{value}}",
           "signed": "署名済み",
           "env": "環境変数",
-          "self": "本機"
+          "self": "本機",
+          "none": "未承認"
         },
         "role": {
           "promote": "メインハブにする",

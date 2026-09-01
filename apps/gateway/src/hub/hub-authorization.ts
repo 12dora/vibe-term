@@ -14,7 +14,7 @@ import type { UserStore } from '../auth/user-store';
 
 export type HubAuthorizationSource = 'signed-active' | 'signed-retired' | 'env' | 'self' | 'none';
 export type HubAuthListColumn = 'signed' | 'env' | 'self' | 'no';
-export type HubHttpAuthorization = 'signed' | 'env' | 'self';
+export type HubHttpAuthorization = 'signed' | 'env' | 'self' | 'none';
 
 export type SignedHubAuthorization = { status: 'active' | 'retired' };
 
@@ -97,13 +97,12 @@ export function hubAuthListColumn(source: HubAuthorizationSource): HubAuthListCo
   return 'no';
 }
 
-export function hubHttpAuthorization(
-  source: HubAuthorizationSource
-): HubHttpAuthorization | undefined {
+export function hubHttpAuthorization(source: HubAuthorizationSource): HubHttpAuthorization {
   if (source === 'signed-active') return 'signed';
   if (source === 'env') return 'env';
   if (source === 'self') return 'self';
-  return undefined;
+  // 未授权（含 signed-retired）：显式 'none'，让前端能把「需先签授权」与「旧入口没有该字段」区分开。
+  return 'none';
 }
 
 export function lookupSignedHubAuthorization(

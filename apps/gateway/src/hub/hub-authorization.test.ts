@@ -109,7 +109,7 @@ describe('resolveHubAuthorization merge', () => {
     expect(hubAuthListColumn('self')).toBe('self');
     expect(hubAuthListColumn('none')).toBe('no');
     expect(hubHttpAuthorization('signed-active')).toBe('signed');
-    expect(hubHttpAuthorization('none')).toBeUndefined();
+    expect(hubHttpAuthorization('none')).toBe('none');
   });
 });
 
