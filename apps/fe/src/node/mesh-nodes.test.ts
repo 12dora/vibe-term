@@ -650,7 +650,7 @@ describe('acquireMeshNodesPolling', () => {
     release();
   });
 
-  test('单个 node 的 401 就地标未登录并补拉；全局 401 不管', () => {
+  test('单个 node 的 401 只回源、不就地翻 loggedIn；同一 node 每拍一次；全局 401 不管', () => {
     const { state, options, authRequired } = pollingHarness();
     setMeshNodesStateForTest({
       loadedAt: state.now,
@@ -660,11 +660,12 @@ describe('acquireMeshNodesPolling', () => {
     const release = acquireMeshNodesPolling(options);
     expect(state.refreshes).toBe(1);
 
+    // 转发路径会产生会话仍有效的 401，登录态只能由 REST 决定，这里不能抽掉节点子树
     authRequired.emit({ nodeId: 'remote', scope: 'node', path: '/n/remote/api/x' });
-    expect(getMeshNodesState().nodes.find((row) => row.id === 'remote')?.loggedIn).toBe(false);
+    expect(getMeshNodesState().nodes.find((row) => row.id === 'remote')?.loggedIn).toBe(true);
     expect(state.refreshes).toBe(2);
 
-    // 已经是未登录的行不再回源：那台 node 上的请求会持续 401
+    // 同一 node 持续 401 不再回源
     authRequired.emit({ nodeId: 'remote', scope: 'node', path: '/n/remote/api/y' });
     expect(state.refreshes).toBe(2);
 
@@ -673,10 +674,15 @@ describe('acquireMeshNodesPolling', () => {
     expect(getMeshNodesState().nodes.find((row) => row.id === 'entry')?.loggedIn).toBe(true);
     expect(state.refreshes).toBe(2);
 
-    // `self` 解析成 entry 自身的 nodeId
+    // 另一台 node 的首次 401 仍会回源
     authRequired.emit({ nodeId: 'self', scope: 'node', path: '/api/x' });
-    expect(getMeshNodesState().nodes.find((row) => row.id === 'entry')?.loggedIn).toBe(false);
     expect(state.refreshes).toBe(3);
+
+    // 兜底拍清空去重集合，之后同一 node 的 401 可再次回源
+    state.tick?.();
+    expect(state.refreshes).toBe(4);
+    authRequired.emit({ nodeId: 'remote', scope: 'node', path: '/n/remote/api/z' });
+    expect(state.refreshes).toBe(5);
 
     expect(authRequired.listeners).toBe(1);
     release();
