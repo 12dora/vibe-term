@@ -17,7 +17,7 @@
 
 import { type NodeRow, getMeshNodesState, refreshMeshNodes } from '@/node/mesh-nodes';
 import { defaultApiClient } from '@tmex/api-client';
-import type { UpgradeStatus } from '@tmex/shared';
+import { UPGRADE_CANCELLED, type UpgradeStatus } from '@tmex/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -49,7 +49,7 @@ const START_GRACE_MS = 30_000;
 export const RESTORE_CONCURRENCY = 3;
 
 /** 后端取消升级后留在 idle 状态上的标记；FE 必须按「已取消」而不是失败处理。 */
-export const UPGRADE_CANCELLED_ERROR = 'UPGRADE_CANCELLED';
+export const UPGRADE_CANCELLED_ERROR: string = UPGRADE_CANCELLED;
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
