@@ -20,6 +20,8 @@ export type NestedCommandName =
   | 'hub.promote'
   | 'hub.demote'
   | 'hub.list'
+  | 'hub.allow'
+  | 'hub.disallow'
   | 'mesh.reset-root'
   | 'enroll'
   | 'direct'
@@ -141,6 +143,20 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
         raw: command,
       };
     }
+    if (head === 'allow') {
+      return {
+        name: 'hub.allow',
+        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
+        raw: command,
+      };
+    }
+    if (head === 'disallow') {
+      return {
+        name: 'hub.disallow',
+        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
+        raw: command,
+      };
+    }
     if (head === 'join') {
       return {
         name: 'hub.join',
@@ -255,6 +271,8 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   ]),
   'hub.demote': new Set([...GLOBAL_FLAGS, 'install-dir', 'no-restart', 'service-name']),
   'hub.list': new Set([...GLOBAL_FLAGS, 'install-dir']),
+  'hub.allow': new Set([...GLOBAL_FLAGS, 'install-dir', 'no-restart', 'service-name']),
+  'hub.disallow': new Set([...GLOBAL_FLAGS, 'install-dir', 'no-restart', 'service-name']),
   'hub.user.add': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
   'hub.user.passwd': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
   'hub.user.totp': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),

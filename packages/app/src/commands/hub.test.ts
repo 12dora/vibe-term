@@ -19,7 +19,10 @@ import { parseArgs } from '../lib/args';
 import { readEnvFile, stringifyEnv } from '../lib/env-file';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import {
+  HUB_MANUAL_RESTART_HINT,
+  runHubAllow,
   runHubDemote,
+  runHubDisallow,
   runHubList,
   runHubPromote,
   runHubStandby,
@@ -486,5 +489,187 @@ describe('hub standby/promote/demote/list', () => {
     expect(text).toContain('writer.example');
     expect(text).toContain('standby');
     expect(text).toMatch(/\*/);
+  });
+
+  test('standby prints local node id and the active-hub allow command', async () => {
+    const { auth } = await openEnvAuth('node');
+    await seedJoinedIdentity(auth);
+    const identity = await auth.identityStore.load();
+    if (!identity) throw new Error('missing identity');
+    const logs: string[] = [];
+    const result = await runHubStandby(
+      parseArgs(['hub', 'standby', '--public-url', 'https://standby.example']),
+      {
+        auth,
+        log: (message) => logs.push(message),
+        skipRestart: true,
+      }
+    );
+    expect(result.nodeId).toBe(identity.nodeId);
+    const text = logs.join('\n');
+    expect(text).toContain(identity.nodeId);
+    expect(text).toContain(`tmex hub allow ${identity.nodeId}`);
+    expect(text).toMatch(/ignore|忽略/i);
+  });
+
+  test('promote warns when TMEX_HUB_PEERS is empty and reminds the old writer', async () => {
+    const { auth } = await openEnvAuth('hub,node', { TMEX_HUB_MODE: 'standby' });
+    await seedJoinedIdentity(auth);
+    const identity = await auth.identityStore.load();
+    if (!identity) throw new Error('missing identity');
+    const logs: string[] = [];
+    await runHubPromote(parseArgs(['hub', 'promote', '--yes']), {
+      auth,
+      log: (message) => logs.push(message),
+      skipRestart: true,
+    });
+    const text = logs.join('\n');
+    expect(text).toMatch(/TMEX_HUB_PEERS/);
+    expect(text).toMatch(/empty|空/i);
+    expect(text).toContain(`tmex hub allow ${identity.nodeId}`);
+  });
+
+  test('list marks authorized for self and TMEX_HUB_PEERS, not others', async () => {
+    const { auth } = await openEnvAuth('hub,node', {
+      TMEX_HUB_PEERS: 'ab'.repeat(16),
+    });
+    await seedJoinedIdentity(auth);
+    const identity = await auth.identityStore.load();
+    if (!identity) throw new Error('missing identity');
+    insertMeshHub(auth, {
+      hubNodeId: identity.nodeId,
+      publicUrl: 'https://self.example',
+      name: 'self',
+      mode: 'standby',
+      priority: 200,
+      writerEpoch: 1,
+    });
+    insertMeshHub(auth, {
+      hubNodeId: 'ab'.repeat(16),
+      publicUrl: 'https://peer.example',
+      name: 'peer',
+      mode: 'active',
+      priority: 100,
+      writerEpoch: 4,
+    });
+    insertMeshHub(auth, {
+      hubNodeId: 'cd'.repeat(16),
+      publicUrl: 'https://other.example',
+      name: 'other',
+      mode: 'standby',
+      priority: 300,
+      writerEpoch: 1,
+    });
+    const logs: string[] = [];
+    const listed = await runHubList(parseArgs(['hub', 'list']), {
+      auth,
+      log: (message) => logs.push(message),
+    });
+    expect(listed.hubs.find((row) => row.hubNodeId === identity.nodeId)?.authorized).toBe(true);
+    expect(listed.hubs.find((row) => row.hubNodeId === 'ab'.repeat(16))?.authorized).toBe(true);
+    expect(listed.hubs.find((row) => row.hubNodeId === 'cd'.repeat(16))?.authorized).toBe(false);
+    const text = logs.join('\n');
+    expect(text).toMatch(/AUTH|authorized/i);
+    expect(text).toContain('yes');
+    expect(text).toContain('no');
+  });
+});
+
+describe('hub allow/disallow', () => {
+  test('allow validates 32-hex, de-dups keeping order, writes TMEX_HUB_PEERS, and restarts', async () => {
+    const first = 'aa'.repeat(16);
+    const second = 'bb'.repeat(16);
+    const third = 'cc'.repeat(16);
+    const { auth, envPath } = await openEnvAuth('hub,node', {
+      TMEX_HUB_PEERS: `${second},${first}`,
+    });
+    let restarted = 0;
+    const logs: string[] = [];
+    const result = await runHubAllow(
+      parseArgs(['hub', 'allow']),
+      [first.toUpperCase(), third, third, second],
+      {
+        auth,
+        log: (message) => logs.push(message),
+        restart: async () => {
+          restarted += 1;
+        },
+      }
+    );
+    expect(result.peers).toEqual([second, first, third]);
+    expect(restarted).toBe(1);
+    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(`${second},${first},${third}`);
+    const text = logs.join('\n');
+    expect(text).toContain(second);
+    expect(text).toContain(first);
+    expect(text).toContain(third);
+  });
+
+  test('allow refuses invalid node ids and does not write env', async () => {
+    const { auth, envPath } = await openEnvAuth('hub,node');
+    await expect(
+      runHubAllow(parseArgs(['hub', 'allow']), ['not-a-node-id'], {
+        auth,
+        log: () => undefined,
+        skipRestart: true,
+      })
+    ).rejects.toThrow(/32|hex|node id/i);
+    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBeUndefined();
+  });
+
+  test('allow refuses a node-only install', async () => {
+    const { auth, envPath } = await openEnvAuth('node');
+    await expect(
+      runHubAllow(parseArgs(['hub', 'allow']), ['aa'.repeat(16)], {
+        auth,
+        log: () => undefined,
+        skipRestart: true,
+      })
+    ).rejects.toThrow(/hub,node/);
+    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBeUndefined();
+  });
+
+  test('allow --no-restart skips restart', async () => {
+    const { auth, envPath } = await openEnvAuth('hub,node');
+    let restarted = 0;
+    const logs: string[] = [];
+    await runHubAllow(parseArgs(['hub', 'allow', '--no-restart']), ['dd'.repeat(16)], {
+      auth,
+      log: (message) => logs.push(message),
+      restart: async () => {
+        restarted += 1;
+      },
+    });
+    expect(restarted).toBe(0);
+    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe('dd'.repeat(16));
+    expect(logs.join('\n')).toContain(HUB_MANUAL_RESTART_HINT);
+  });
+
+  test('disallow removes the id, prints the list, and refuses non-hub', async () => {
+    const keep = 'aa'.repeat(16);
+    const drop = 'bb'.repeat(16);
+    const { auth, envPath } = await openEnvAuth('hub,node', {
+      TMEX_HUB_PEERS: `${keep},${drop}`,
+    });
+    const logs: string[] = [];
+    const result = await runHubDisallow(parseArgs(['hub', 'disallow']), drop, {
+      auth,
+      log: (message) => logs.push(message),
+      skipRestart: true,
+    });
+    expect(result.peers).toEqual([keep]);
+    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(keep);
+    expect(logs.join('\n')).toContain(keep);
+    expect(logs.join('\n')).not.toContain(drop);
+
+    const nodeOnly = await openEnvAuth('node', { TMEX_HUB_PEERS: keep });
+    await expect(
+      runHubDisallow(parseArgs(['hub', 'disallow']), keep, {
+        auth: nodeOnly.auth,
+        log: () => undefined,
+        skipRestart: true,
+      })
+    ).rejects.toThrow(/hub,node/);
+    expect((await readEnvFile(nodeOnly.envPath)).TMEX_HUB_PEERS).toBe(keep);
   });
 });

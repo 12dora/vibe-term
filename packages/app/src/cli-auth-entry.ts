@@ -62,6 +62,16 @@ export async function dispatchAuthCli(parsed: ParsedArgs, lang: CliLang): Promis
       await runHubList(parsed);
       return;
     }
+    case 'hub.allow': {
+      const { runHubAllow } = await import('./commands/hub');
+      await runHubAllow(parsed, nested.rest);
+      return;
+    }
+    case 'hub.disallow': {
+      const { runHubDisallow } = await import('./commands/hub');
+      await runHubDisallow(parsed, nested.rest[0] ?? '');
+      return;
+    }
     case 'mesh.reset-root': {
       const { runMeshResetRoot } = await import('./commands/mesh');
       await runMeshResetRoot(parsed);

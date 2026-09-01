@@ -103,13 +103,38 @@ standby 对下列请求返回 HTTP 409，body 为：
 
 覆盖：`POST /api/hub/enrollments`、`POST /api/hub/enrollments/redeem`、`POST /api/hub/nodes/:id/rename`、`POST /api/hub/nodes/:id/revoke`，以及会在本机发起 **新的** key log 追加的 ctl。只读（节点列表、enrollment 查询、uplink 鉴权、`node.list`、relay、RTC 信令、key log 拉取）在 standby 上仍可用。
 
-**epoch 围栏：** 本机 `mode=active` 时，若收到另一台 `mode=active` 且 `writerEpoch` **更大** 的广告，立即日志 `[hub] fenced: higher writerEpoch=… from hub=…`，`setMode('standby')`，更新自己在 `mesh_hubs` 的行并重播。**不会自动 promote。**
+**epoch 围栏：** 本机 `mode=active` 时，若收到**已授权**的另一台 `mode=active` 且 `writerEpoch` **更大** 的广告，立即日志 `[hub] fenced: higher writerEpoch=… from hub=…`，`setMode('standby')`，把本机在 `mesh_hubs` 的行写成 standby。**不会自动 promote。**
+
+围栏必须跨重启存活：被 fence 的 hub 下次启动会读 `mesh_hubs` 里更高 epoch 的已授权 active，仍以 standby 起来（日志 `[hub] starting fenced: …`），即使 `app.env` 里 `TMEX_HUB_MODE=active` 也一样。要重新当写者，必须显式 `tmex hub promote`。
 
 **脑裂告警：** 两台 active 的 epoch **相等** 时，每 60 s 打一条 `split-brain` 警告，两边继续服务。必须人工 `demote` 其中一台。
+
+## 授权 allowlist（为何必须有）
+
+威胁模型是「任意一点失陷只影响该点」（见 [架构 §2 / §5](./2026082700-hub-node-architecture.md)）。普通 node 的 uplink 证书只证明「这台机器已加入 mesh」，**不**证明它可以当 hub。
+
+若 writer 无条件接受 `node.status.hub` 广告，失陷的普通节点可以自报 `mode=active` 和极大 `writerEpoch`，把真写者 fence 成 standby，并把全网 uplink 引到攻击者。这会把「只能影响本机」升级成控制面接管。
+
+因此第一阶段用本机 env `TMEX_HUB_PEERS`（逗号分隔的 **其它** 已授权 hub 的 32 位 hex node id）做 allowlist：
+
+- 未在名单中、也不是 self 的广告一律丢弃，不进 `mesh_hubs`、不参与 `pickWriterHub`、不触发 fencing、不广播其 CA 指纹；
+- standby 必须先被当前 active 执行 `tmex hub allow <nodeId>`，才会出现在 `hubs[]` 里。
+
+这是运维层的短期控制。第二阶段应把授权做成用户签名的 key-log 记录（例如 `admit-hub`），随链复制、可吊销，而不是各 hub 各自改 env。
 
 ## 操作手册
 
 命令都跑在**目标机器本机**，要求已 `tmex init`。`hub join` 行为不变（只写一个种子 `TMEX_HUB_URL`）；其它 hub 靠 `node.list` 学习，不必改 join。
+
+### 两步启用 standby（必须先 allow）
+
+standby 自己改角色还不够：当前 active **不会**把未授权的 hub 广告写入 `hubs[]`。顺序是：
+
+1. 在已加入的 **node** 上执行 `tmex hub standby --public-url https://hub-b.example`。命令结束时打印本机 32 位 hex node id，以及要在 active 上跑的命令：`tmex hub allow <thisNodeId>`。在这一步完成前，active 会忽略该 standby。
+2. 在 **当前 active hub** 上执行打印出来的 `tmex hub allow <nodeId>`（写入 `TMEX_HUB_PEERS` 并重启，除非 `--no-restart`）。
+3. 之后 `tmex hub list` / `node.list.hubs[]` 才会出现这台 standby。`AUTH` 列为 `yes` 表示该 id 在本机 `TMEX_HUB_PEERS` 中，或就是 self。
+
+反过来：新写者 `promote` 之后，**旧写者**也必须 `tmex hub allow <新写者 nodeId>`，否则旧写者不会承认它，也无法被它 fence。
 
 ### 把已加入的 node 变成 standby
 
@@ -136,6 +161,20 @@ tmex hub standby --public-url https://hub-b.example [--priority 200]
 
 `--priority` 越小越优先（同为 standby 时）。建议备机用 `200`，主用 `100`（active 缺省）。
 
+### 管理授权名单（allow / disallow）
+
+仅 `hub,node` 安装可用。
+
+```bash
+tmex hub allow <nodeId> [<nodeId>...]
+tmex hub disallow <nodeId>
+```
+
+- node id 必须是 32 位十六进制（大小写不敏感，写入时小写）；非法值拒绝，不改 env；
+- `allow` 追加到 `TMEX_HUB_PEERS`，去重且保持原有顺序；
+- `disallow` 从名单删除；
+- 两者都打印变更后的名单，并重启服务（`--no-restart` 除外）。
+
 ### 提升写者（promote）
 
 ```bash
@@ -146,7 +185,8 @@ tmex hub promote --yes
 - 设 `TMEX_HUB_MODE=active`；
 - `TMEX_HUB_WRITER_EPOCH = max(当前 env, max(mesh_hubs.writer_epoch)) + 1`；本地库不可读时退化为 `env + 1`（env 缺省按 1）；
 - **一定**打印红字警告：原写者必须先 `demote` 或停机，否则脑裂；
-- 必须 `--yes`，或在 TTY 交互确认。非 TTY 不加 `--yes` 会拒绝。
+- 必须 `--yes`，或在 TTY 交互确认。非 TTY 不加 `--yes` 会拒绝；
+- 提醒原写者执行 `tmex hub allow <本机 nodeId>`。若本机 `TMEX_HUB_PEERS` 为空，额外警告：本机未授权任何对端，旧写者无法 fencing 本机（可以接受），但旧写者仍须把本机加入它的名单。
 
 ### 降为备援（demote）
 
@@ -162,7 +202,7 @@ tmex hub demote
 tmex hub list
 ```
 
-读本机 `mesh_hubs`：短 node id、name、mode、priority、writerEpoch、publicUrl、online、lastSeen。写者行以 `*` 标记（规则与运行时 `pickWriterHub` 相同）。表空表示还没从 `node.list` 学到集合（旧 hub 或尚未 uplink）。
+读本机 `mesh_hubs`：短 node id、name、mode、priority、writerEpoch、authorized、publicUrl、online、lastSeen。写者行以 `*` 标记（规则与运行时 `pickWriterHub` 相同）。`AUTH=yes` 当且仅当该 id 在本机 `TMEX_HUB_PEERS` 中，或就是本机 self。表空表示还没从 `node.list` 学到集合（旧 hub、尚未 uplink，或对端尚未被 allow）。
 
 ### 主 hub 恢复：先 demote，再启动
 
@@ -172,8 +212,8 @@ tmex hub list
 
 1. 确认新主已经 `promote` 且 node 已切过去（`tmex hub list` / `GET /api/mesh/hubs`）；
 2. 在**旧主**上 `tmex hub demote`（或停机并手改 `TMEX_HUB_MODE=standby`）；
-3. 再启动旧主。它会以 standby 身份 uplink 到新写者，复制注册表，并出现在 `hubs[]` 里；
-4. 若要把写者切回旧主：旧主 `tmex hub promote --yes`，新主随后会被更高 epoch fence 成 standby。仍建议先把现写者 demote，再 promote 旧主。
+3. 新主若尚未 `tmex hub allow <旧主 nodeId>`，先补上；再启动旧主。它会以 standby 身份 uplink 到新写者、复制注册表，并出现在 `hubs[]` 里；
+4. 若要把写者切回旧主：旧主 `tmex hub promote --yes`，且新主必须已 allow 旧主（否则无法 fence）。仍建议先把现写者 demote，再 promote 旧主。
 
 ## 环境变量
 
@@ -183,10 +223,11 @@ tmex hub list
 | `TMEX_HUB_PRIORITY` | active `100` / standby `200` | 同 mode 下越小越优先，整数 ≥ 0 |
 | `TMEX_HUB_WRITER_EPOCH` | `1` | 写者世代，整数 ≥ 1，只增不减 |
 | `TMEX_HUB_URLS` | 空 | 逗号分隔的备用种子，接在 `TMEX_HUB_URL` 后按字面去重 |
+| `TMEX_HUB_PEERS` | 空 | 逗号分隔的 **其它** 已授权 hub 的 32 位 hex node id。空名单 = 只信任 self。由 `tmex hub allow` / `disallow` 维护 |
 | `TMEX_HUB_PUBLIC_URL` | 空 | 本机 hub 对外 HTTPS 基址 |
 | `TMEX_HUB_URL` | 空 | 种子主 hub。`hub join` 写入；standby **不要改掉** |
 
-`init` / `upgrade` 不会写入 mode / priority / epoch / URLS。由 CLI 或手改 `app.env` 后重启。
+`init` / `upgrade` 不会写入 mode / priority / epoch / URLS / PEERS。由 CLI 或手改 `app.env` 后重启。
 
 启动日志（hub 角色）：
 
@@ -203,9 +244,11 @@ tmex hub list
 
 ## 验收清单
 
-- [ ] 已加入的 node 上 `tmex hub standby --public-url https://…` 后角色为 `hub,node`、mode=`standby`，`TMEX_HUB_URL` 未改，服务重启。
+- [ ] 已加入的 node 上 `tmex hub standby --public-url https://…` 后角色为 `hub,node`、mode=`standby`，`TMEX_HUB_URL` 未改，服务重启；输出含本机 node id 与 `tmex hub allow <id>`。
 - [ ] 未加入 / 已是 active hub 的机器执行 standby 被拒绝。
-- [ ] 主 hub 的 `node.list` 含 `hubs[]`；各 node `tmex hub list` 能看到主与备，写者打 `*`。
+- [ ] 未 `allow` 前，active 的 `hubs[]` 不含该 standby；active 执行 `tmex hub allow <id>` 后才出现。
+- [ ] `tmex hub allow` / `disallow` 校验 32 位 hex、去重保序、非 `hub,node` 拒绝、`--no-restart` 不重启。
+- [ ] 主 hub 的 `node.list` 含 `hubs[]`；各 node `tmex hub list` 能看到主与备，写者打 `*`，`AUTH` 列对 self / 已 allow 的为 yes。
 - [ ] 停主 hub 后，node 在阈值内切到 standby；`GET /api/mesh/hubs` 的 `attached` 指向备机。
 - [ ] 备机 enroll / redeem / rename / revoke 返回 409 `HUB_NOT_WRITER`，带写者 URL。
 - [ ] 主 hub 按「先 demote 再启动」恢复后，node 切回主；跳过 demote 会看到 fence 或 split-brain 日志。
@@ -222,3 +265,5 @@ tmex hub list
 6. 浏览器仍走当前入口；不会按 RTT 选 hub。
 7. 混合版本下，旧节点看不到 `hubs[]`，只会连 `TMEX_HUB_URL` 那一个种子。
 8. `promote` 的 epoch 以**本机** env 与 `mesh_hubs` 为准。若本机表是旧快照，可能算出偏小的 epoch；以实际跑起来后的 fence 日志为准，必要时再 promote 一次。
+9. 被 fence 的 hub 重启后仍是 standby，直到显式 `promote`。不要指望改回 `TMEX_HUB_MODE=active` 再启动就能夺回写者。
+10. `TMEX_HUB_PEERS` 是各 hub 本机 env，不会随 `node.list` 复制。第二阶段应改为用户签名的 `admit-hub` key-log 记录。

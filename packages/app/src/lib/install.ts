@@ -25,6 +25,21 @@ export interface AppEnvInput {
   stunServers?: string;
 }
 
+const HUB_PEER_ID_RE = /^[0-9a-f]{32}$/;
+
+export function parseHubPeerIds(raw: string | undefined): string[] {
+  if (!raw?.trim()) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of raw.split(',')) {
+    const id = part.trim().toLowerCase();
+    if (!id || !HUB_PEER_ID_RE.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 export function applyHubModeEnvKeys(
   env: Record<string, string>,
   patch: {
@@ -33,6 +48,7 @@ export function applyHubModeEnvKeys(
     publicUrl?: string;
     priority?: number | string;
     writerEpoch?: number | string;
+    hubPeers?: string | readonly string[];
   }
 ): Record<string, string> {
   const next = { ...env };
@@ -41,6 +57,9 @@ export function applyHubModeEnvKeys(
   if (patch.publicUrl !== undefined) next.TMEX_HUB_PUBLIC_URL = patch.publicUrl;
   if (patch.priority !== undefined) next.TMEX_HUB_PRIORITY = String(patch.priority);
   if (patch.writerEpoch !== undefined) next.TMEX_HUB_WRITER_EPOCH = String(patch.writerEpoch);
+  if (patch.hubPeers !== undefined) {
+    next.TMEX_HUB_PEERS = Array.isArray(patch.hubPeers) ? patch.hubPeers.join(',') : patch.hubPeers;
+  }
   return next;
 }
 

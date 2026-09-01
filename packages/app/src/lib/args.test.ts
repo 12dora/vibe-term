@@ -112,6 +112,20 @@ describe('resolveNestedCommand', () => {
     expect(resolveNestedCommand(parseArgs(['hub', 'list'])).name).toBe('hub.list');
   });
 
+  test('resolves hub allow/disallow node ids', () => {
+    const allow = parseArgs(['hub', 'allow', 'aa'.repeat(16), 'bb'.repeat(16), '--no-restart']);
+    const allowNested = resolveNestedCommand(allow);
+    expect(allowNested.name).toBe('hub.allow');
+    expect(allowNested.rest).toEqual(['aa'.repeat(16), 'bb'.repeat(16)]);
+    expect(allow.flags['no-restart']).toBe(true);
+
+    const disallow = parseArgs(['hub', 'disallow', 'cc'.repeat(16), '--no-restart']);
+    const disallowNested = resolveNestedCommand(disallow);
+    expect(disallowNested.name).toBe('hub.disallow');
+    expect(disallowNested.rest).toEqual(['cc'.repeat(16)]);
+    expect(disallow.flags['no-restart']).toBe(true);
+  });
+
   test('resolves init --role hub,node', () => {
     const parsed = parseArgs(['init', '--role', 'hub,node']);
     expect(resolveNestedCommand(parsed).name).toBe('init');
@@ -165,7 +179,18 @@ describe('assertKnownFlags', () => {
     expect(() =>
       assertKnownFlags(parseArgs(['hub', 'list', '--install-dir', '/tmp']))
     ).not.toThrow();
+    expect(() =>
+      assertKnownFlags(
+        parseArgs(['hub', 'allow', 'aa'.repeat(16), '--no-restart', '--install-dir', '/tmp'])
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertKnownFlags(parseArgs(['hub', 'disallow', 'aa'.repeat(16), '--no-restart']))
+    ).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['hub', 'standby', '--not-a-real-flag']))).toThrow(
+      /Unknown flag|未知参数/
+    );
+    expect(() => assertKnownFlags(parseArgs(['hub', 'allow', '--not-a-real-flag']))).toThrow(
       /Unknown flag|未知参数/
     );
   });
@@ -207,6 +232,8 @@ describe('cli help', () => {
     expect(help).toContain('tmex hub promote');
     expect(help).toContain('tmex hub demote');
     expect(help).toContain('tmex hub list');
+    expect(help).toContain('tmex hub allow');
+    expect(help).toContain('tmex hub disallow');
     expect(help).toContain('--no-restart');
     expect(help).toContain('tmex mesh reset-root');
     expect(help).toContain('tmex enroll');

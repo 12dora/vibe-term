@@ -36,7 +36,7 @@ import {
   isNetworkFetchError,
   redeemEnrollment,
 } from '../lib/hub-client';
-import { applyHubModeEnvKeys } from '../lib/install';
+import { applyHubModeEnvKeys, parseHubPeerIds } from '../lib/install';
 import { createInstallLayout } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
 import { type LocalAuthContext, loadInstallEnv, openInstallAuth } from '../lib/local-auth';
@@ -80,6 +80,7 @@ export type HubListRow = {
   online: boolean;
   lastSeenAt: number | null;
   writer: boolean;
+  authorized: boolean;
 };
 
 export const HUB_MANUAL_RESTART_HINT =
@@ -904,6 +905,30 @@ function parseEnvWriterEpoch(raw: string | undefined): number {
   return Number.isInteger(value) && value >= 1 ? value : 1;
 }
 
+function normalizeHubPeerId(raw: string, missingKey: string, invalidKey: string): string {
+  const id = raw.trim().toLowerCase();
+  if (!id) throw new Error(t(missingKey));
+  if (!/^[0-9a-f]{32}$/.test(id)) {
+    throw new Error(t(invalidKey, { nodeId: raw }));
+  }
+  return id;
+}
+
+function mergeHubPeerIds(existing: string[], added: string[]): string[] {
+  const seen = new Set(existing);
+  const out = [...existing];
+  for (const id of added) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+function formatPeerList(peers: string[]): string {
+  return peers.length > 0 ? peers.join(',') : t('hub.peers.empty');
+}
+
 async function loadCommandEnv(ctx: LocalAuthContext): Promise<Record<string, string>> {
   if (ctx.envPath) {
     try {
@@ -945,7 +970,10 @@ export function pickWriterHubId(
   return actives[0]?.hubNodeId ?? null;
 }
 
-function readMeshHubRows(ctx: LocalAuthContext): HubListRow[] {
+function readMeshHubRows(
+  ctx: LocalAuthContext,
+  opts: { peerIds: ReadonlySet<string>; selfId: string | null }
+): HubListRow[] {
   const rows = ctx.db.select().from(meshHubs).all() as Array<{
     hubNodeId: string;
     publicUrl: string;
@@ -957,17 +985,22 @@ function readMeshHubRows(ctx: LocalAuthContext): HubListRow[] {
     lastSeenAt: number | null;
   }>;
   const writerHubId = pickWriterHubId(rows);
-  return rows.map((row) => ({
-    hubNodeId: row.hubNodeId,
-    name: row.name,
-    mode: row.mode === 'standby' ? 'standby' : 'active',
-    priority: row.priority,
-    writerEpoch: row.writerEpoch,
-    publicUrl: row.publicUrl,
-    online: Boolean(row.online),
-    lastSeenAt: row.lastSeenAt,
-    writer: row.hubNodeId === writerHubId,
-  }));
+  const selfId = opts.selfId?.toLowerCase() ?? null;
+  return rows.map((row) => {
+    const id = row.hubNodeId.toLowerCase();
+    return {
+      hubNodeId: row.hubNodeId,
+      name: row.name,
+      mode: row.mode === 'standby' ? 'standby' : 'active',
+      priority: row.priority,
+      writerEpoch: row.writerEpoch,
+      publicUrl: row.publicUrl,
+      online: Boolean(row.online),
+      lastSeenAt: row.lastSeenAt,
+      writer: row.hubNodeId === writerHubId,
+      authorized: id === selfId || opts.peerIds.has(id),
+    };
+  });
 }
 
 function maxMeshHubWriterEpoch(ctx: LocalAuthContext): number | null {
@@ -1011,6 +1044,7 @@ function formatHubList(rows: HubListRow[]): string[] {
         pad(row.mode, 8),
         pad(String(row.priority), 4),
         pad(String(row.writerEpoch), 6),
+        pad(row.authorized ? 'yes' : 'no', 5),
         pad(row.online ? 'yes' : 'no', 7),
         pad(formatLastSeen(row.lastSeenAt), 21),
         row.publicUrl,
@@ -1037,7 +1071,7 @@ async function confirmPromote(parsed: ParsedArgs, io: HubIo | undefined): Promis
 export async function runHubStandby(
   parsed: ParsedArgs,
   io: HubIo = {}
-): Promise<{ publicUrl: string; priority: number }> {
+): Promise<{ publicUrl: string; priority: number; nodeId: string }> {
   const publicUrlRaw = asString(parsed.flags['public-url']);
   if (!publicUrlRaw) {
     throw new Error(t('hub.standby.missingPublicUrl'));
@@ -1078,7 +1112,9 @@ export async function runHubStandby(
       await maybeRestart(parsed, io, ctx.installDir);
     }
     log(io, t('hub.standby.done', { priority, url: publicUrl }));
-    return { publicUrl, priority };
+    log(io, t('hub.standby.nodeId', { nodeId: identity.nodeId }));
+    log(io, t('hub.standby.allowHint', { nodeId: identity.nodeId }));
+    return { publicUrl, priority, nodeId: identity.nodeId };
   });
 }
 
@@ -1093,6 +1129,13 @@ export async function runHubPromote(
     }
     log(io, ansiRed(t('hub.promote.warning')));
     await confirmPromote(parsed, io);
+    const identity = await ctx.identityStore.load();
+    const nodeId = identity?.nodeId ?? '';
+    const peers = parseHubPeerIds(env.TMEX_HUB_PEERS);
+    if (peers.length === 0) {
+      log(io, ansiRed(t('hub.promote.emptyPeers', { nodeId })));
+    }
+    log(io, t('hub.promote.allowReminder', { nodeId }));
     const envEpoch = parseEnvWriterEpoch(env.TMEX_HUB_WRITER_EPOCH);
     const dbMax = maxMeshHubWriterEpoch(ctx);
     const writerEpoch = dbMax == null ? envEpoch + 1 : Math.max(envEpoch, dbMax) + 1;
@@ -1124,9 +1167,15 @@ export async function runHubList(
   io: HubIo = {}
 ): Promise<{ hubs: HubListRow[]; writerHubId: string | null }> {
   return await withAuth(parsed, io, async (ctx) => {
+    const env = await loadCommandEnv(ctx);
+    const identity = await ctx.identityStore.load();
+    const peerIds = new Set(parseHubPeerIds(env.TMEX_HUB_PEERS));
     let hubs: HubListRow[] = [];
     try {
-      hubs = readMeshHubRows(ctx);
+      hubs = readMeshHubRows(ctx, {
+        peerIds,
+        selfId: identity?.nodeId ?? null,
+      });
     } catch {
       hubs = [];
     }
@@ -1139,6 +1188,57 @@ export async function runHubList(
       log(io, line);
     }
     return { hubs, writerHubId };
+  });
+}
+
+export async function runHubAllow(
+  parsed: ParsedArgs,
+  nodeIds: string[],
+  io: HubIo = {}
+): Promise<{ peers: string[] }> {
+  if (nodeIds.length === 0) {
+    throw new Error(t('hub.allow.missingNodeId'));
+  }
+  const added = nodeIds.map((id) =>
+    normalizeHubPeerId(id, 'hub.allow.missingNodeId', 'hub.allow.invalidNodeId')
+  );
+  return await withAuth(parsed, io, async (ctx) => {
+    const env = await loadCommandEnv(ctx);
+    if (!isHubNodeInstall(env)) {
+      throw new Error(t('hub.allow.notHub'));
+    }
+    const peers = mergeHubPeerIds(parseHubPeerIds(env.TMEX_HUB_PEERS), added);
+    await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { hubPeers: peers }));
+    if (ctx.installDir) {
+      await maybeRestart(parsed, io, ctx.installDir);
+    }
+    log(io, t('hub.allow.done', { peers: formatPeerList(peers) }));
+    return { peers };
+  });
+}
+
+export async function runHubDisallow(
+  parsed: ParsedArgs,
+  nodeId: string,
+  io: HubIo = {}
+): Promise<{ peers: string[] }> {
+  const drop = normalizeHubPeerId(
+    nodeId,
+    'hub.disallow.missingNodeId',
+    'hub.disallow.invalidNodeId'
+  );
+  return await withAuth(parsed, io, async (ctx) => {
+    const env = await loadCommandEnv(ctx);
+    if (!isHubNodeInstall(env)) {
+      throw new Error(t('hub.disallow.notHub'));
+    }
+    const peers = parseHubPeerIds(env.TMEX_HUB_PEERS).filter((id) => id !== drop);
+    await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { hubPeers: peers }));
+    if (ctx.installDir) {
+      await maybeRestart(parsed, io, ctx.installDir);
+    }
+    log(io, t('hub.disallow.done', { peers: formatPeerList(peers) }));
+    return { peers };
   });
 }
 
