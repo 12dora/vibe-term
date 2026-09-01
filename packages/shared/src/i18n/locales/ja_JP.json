@@ -1753,13 +1753,13 @@
           "stateSwitching": "切り替え中",
           "confirmPromote": "メインハブにする",
           "confirmDemote": "予備ハブにする",
-          "confirmText": "「{{target}}」が書き込みを引き継ぎ、書き込みエポックは {{epoch}} になります。",
+          "confirmText": "「{{target}}」が書き込みを引き継ぎます。切り替え中は管理操作を一時的に利用できません。",
           "confirmTextNoWriter": "「{{from}}」を予備ハブにします。書き込みを引き継げるハブはありません。",
           "confirm": "切り替え",
           "cancel": "キャンセル",
           "stepAdmit": "「{{target}}」にハブ認可を発行します（認証情報が必要です）。",
           "stepDemote": "「{{from}}」を予備ハブにします。",
-          "stepPromote": "「{{target}}」をメインハブにします（エポック {{epoch}}）。その後自動的に再起動します。",
+          "stepPromote": "「{{target}}」をメインハブにします。その後自動的に再起動します。",
           "stepWait": "「{{target}}」の再起動と書き込みの引き継ぎを待ちます。",
           "stepDemoteOnly": "「{{from}}」を予備ハブにします。その後自動的に再起動します。",
           "warnFromUnreachable": "現在のメインハブに接続できないため、より高いエポックで隔離します。",
@@ -1772,6 +1772,14 @@
           "forceText": "以下のノードは {{minVersion}} より古いため、先にアップグレードが必要です：",
           "forceAccept": "それでも続行する（古いノードは同期できなくなります）",
           "forceConfirm": "続行する",
+          "recovery": {
+            "title": "書き込み可能なハブがありません",
+            "description": "元のメインハブは予備になり、新しいメインハブは起動できませんでした。次の操作を選んでください。",
+            "noWriter": "「{{from}}」は予備ハブになり、「{{target}}」はメインハブになれませんでした。",
+            "retry": "対象の昇格を再試行",
+            "rollback": "ロールバック：元のメインハブを再び昇格",
+            "dismiss": "後で対応"
+          },
           "blocked": {
             "unknownHub": "ハブ一覧が未読み込みです。しばらくしてから再試行してください。",
             "unknownAuth": "入口のバージョンが古く、ハブ認可の種別を読み取れません。",
@@ -1790,6 +1798,7 @@
             "unknown": "原因は不明です。",
             "unreachable": "対象ハブに接続できません。",
             "authTimeout": "ハブ認可が時間内に反映されませんでした。",
+            "resumeAdmit": "ハブ認可の発行が完了していません。切り替えをやり直してください。",
             "restartTimeout": "対象の再起動がタイムアウトし、結果を確認できません：{{error}}",
             "writerTimeout": "新しいメインハブが書き込みを引き継いだか確認できません。更新して確認してください。"
           }

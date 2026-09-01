@@ -1759,13 +1759,13 @@ export const I18N_RESOURCES = {
           "stateSwitching": "Switching",
           "confirmPromote": "Set as Primary Hub",
           "confirmDemote": "Set as Standby Hub",
-          "confirmText": "\"{{target}}\" will take over writes, with the writer epoch raised to {{epoch}}.",
+          "confirmText": "\"{{target}}\" takes over writes; management is briefly unavailable during the switch.",
           "confirmTextNoWriter": "\"{{from}}\" becomes a standby hub, and no other hub can take over writes.",
           "confirm": "Switch",
           "cancel": "Cancel",
           "stepAdmit": "Sign a hub authorization for \"{{target}}\" (credentials required).",
           "stepDemote": "Demote \"{{from}}\" to a standby hub.",
-          "stepPromote": "Promote \"{{target}}\" to primary hub (epoch {{epoch}}); it restarts afterwards.",
+          "stepPromote": "Promote \"{{target}}\" to primary hub; it restarts afterwards.",
           "stepWait": "Wait for \"{{target}}\" to restart and take over writes.",
           "stepDemoteOnly": "Demote \"{{from}}\" to a standby hub; it restarts afterwards.",
           "warnFromUnreachable": "The current primary hub is unreachable and will be fenced by the higher epoch.",
@@ -1778,6 +1778,14 @@ export const I18N_RESOURCES = {
           "forceText": "These nodes are older than {{minVersion}} and need an upgrade first:",
           "forceAccept": "Continue anyway (old nodes stop syncing)",
           "forceConfirm": "Continue Anyway",
+          "recovery": {
+            "title": "No Hub Accepts Writes",
+            "description": "The old primary hub is already a standby and the new one did not come up. Choose what to do next.",
+            "noWriter": "\"{{from}}\" is now a standby hub, and \"{{target}}\" could not be promoted.",
+            "retry": "Retry Promoting Target",
+            "rollback": "Roll Back: Promote Old Primary Again",
+            "dismiss": "Handle Later"
+          },
           "blocked": {
             "unknownHub": "The hub list is not loaded yet. Try again shortly.",
             "unknownAuth": "This entry is too old to read the hub authorization source.",
@@ -1796,6 +1804,7 @@ export const I18N_RESOURCES = {
             "unknown": "Reason unknown.",
             "unreachable": "The target hub is unreachable.",
             "authTimeout": "The hub authorization did not take effect in time.",
+            "resumeAdmit": "The hub authorization was never signed. Start the switch again.",
             "restartTimeout": "The target did not restart in time, so the result is unconfirmed: {{error}}",
             "writerTimeout": "Could not confirm the new primary hub took over writes. Refresh to check."
           }
@@ -4131,13 +4140,13 @@ export const I18N_RESOURCES = {
           "stateSwitching": "切换中",
           "confirmPromote": "设为主 Hub",
           "confirmDemote": "设为备 Hub",
-          "confirmText": "「{{target}}」将接管写入，写入纪元升到 {{epoch}}。",
+          "confirmText": "「{{target}}」将接管写入，切换期间管理操作短暂不可用。",
           "confirmTextNoWriter": "「{{from}}」降为备 Hub，没有其它 Hub 可接管写入。",
           "confirm": "切换",
           "cancel": "取消",
           "stepAdmit": "为「{{target}}」签发 Hub 授权（需验证凭据）。",
           "stepDemote": "把「{{from}}」降为备 Hub。",
-          "stepPromote": "把「{{target}}」升为主 Hub（纪元 {{epoch}}），目标随后自动重启。",
+          "stepPromote": "把「{{target}}」升为主 Hub，目标随后自动重启。",
           "stepWait": "等待「{{target}}」重启并接管写入。",
           "stepDemoteOnly": "把「{{from}}」降为备 Hub，目标随后自动重启。",
           "warnFromUnreachable": "原主 Hub 不可达，将依靠更高纪元围栏它。",
@@ -4150,6 +4159,14 @@ export const I18N_RESOURCES = {
           "forceText": "以下节点版本低于 {{minVersion}}，须先升级：",
           "forceAccept": "仍然继续（旧节点将无法再同步）",
           "forceConfirm": "仍然继续",
+          "recovery": {
+            "title": "当前没有可写 Hub",
+            "description": "原主 Hub 已降为备，新主 Hub 未能升起，须选择下一步。",
+            "noWriter": "「{{from}}」已降为备 Hub，「{{target}}」未能升为主 Hub。",
+            "retry": "重试升级目标",
+            "rollback": "回滚：重新升级原主 Hub",
+            "dismiss": "稍后处理"
+          },
           "blocked": {
             "unknownHub": "Hub 集合尚未加载，稍后重试。",
             "unknownAuth": "入口版本过低，无法读取 Hub 授权来源。",
@@ -4168,6 +4185,7 @@ export const I18N_RESOURCES = {
             "unknown": "原因未知。",
             "unreachable": "目标 Hub 不可达。",
             "authTimeout": "Hub 授权未在预期时间内生效。",
+            "resumeAdmit": "Hub 授权尚未签发完成，请重新发起切换。",
             "restartTimeout": "目标重启超时，未能确认切换结果：{{error}}",
             "writerTimeout": "未能确认新的主 Hub 已接管写入，请刷新核对。"
           }
@@ -6497,13 +6515,13 @@ export const I18N_RESOURCES = {
           "stateSwitching": "切り替え中",
           "confirmPromote": "メインハブにする",
           "confirmDemote": "予備ハブにする",
-          "confirmText": "「{{target}}」が書き込みを引き継ぎ、書き込みエポックは {{epoch}} になります。",
+          "confirmText": "「{{target}}」が書き込みを引き継ぎます。切り替え中は管理操作を一時的に利用できません。",
           "confirmTextNoWriter": "「{{from}}」を予備ハブにします。書き込みを引き継げるハブはありません。",
           "confirm": "切り替え",
           "cancel": "キャンセル",
           "stepAdmit": "「{{target}}」にハブ認可を発行します（認証情報が必要です）。",
           "stepDemote": "「{{from}}」を予備ハブにします。",
-          "stepPromote": "「{{target}}」をメインハブにします（エポック {{epoch}}）。その後自動的に再起動します。",
+          "stepPromote": "「{{target}}」をメインハブにします。その後自動的に再起動します。",
           "stepWait": "「{{target}}」の再起動と書き込みの引き継ぎを待ちます。",
           "stepDemoteOnly": "「{{from}}」を予備ハブにします。その後自動的に再起動します。",
           "warnFromUnreachable": "現在のメインハブに接続できないため、より高いエポックで隔離します。",
@@ -6516,6 +6534,14 @@ export const I18N_RESOURCES = {
           "forceText": "以下のノードは {{minVersion}} より古いため、先にアップグレードが必要です：",
           "forceAccept": "それでも続行する（古いノードは同期できなくなります）",
           "forceConfirm": "続行する",
+          "recovery": {
+            "title": "書き込み可能なハブがありません",
+            "description": "元のメインハブは予備になり、新しいメインハブは起動できませんでした。次の操作を選んでください。",
+            "noWriter": "「{{from}}」は予備ハブになり、「{{target}}」はメインハブになれませんでした。",
+            "retry": "対象の昇格を再試行",
+            "rollback": "ロールバック：元のメインハブを再び昇格",
+            "dismiss": "後で対応"
+          },
           "blocked": {
             "unknownHub": "ハブ一覧が未読み込みです。しばらくしてから再試行してください。",
             "unknownAuth": "入口のバージョンが古く、ハブ認可の種別を読み取れません。",
@@ -6534,6 +6560,7 @@ export const I18N_RESOURCES = {
             "unknown": "原因は不明です。",
             "unreachable": "対象ハブに接続できません。",
             "authTimeout": "ハブ認可が時間内に反映されませんでした。",
+            "resumeAdmit": "ハブ認可の発行が完了していません。切り替えをやり直してください。",
             "restartTimeout": "対象の再起動がタイムアウトし、結果を確認できません：{{error}}",
             "writerTimeout": "新しいメインハブが書き込みを引き継いだか確認できません。更新して確認してください。"
           }

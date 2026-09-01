@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
 import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
+import type { HubRoleRequest } from '@tmex/shared';
 import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@tmex/shared/auth';
 import { createMemoryStorage } from '@tmex/stores/test-utils';
 import {
@@ -14,18 +15,24 @@ import {
   HUB_ROLE_WRITER_TIMEOUT_MS,
   type HubRoleIo,
   type HubRoleOutcome,
+  type HubRoleResumePhase,
   type HubRoleSwitchPlan,
+  type HubRoleSwitchRecord,
   admitHubWithForce,
   awaitHubRoleSwitch,
   clearHubRoleSwitch,
   hubRoleBlockReason,
   hubRoleButtonState,
   hubRoleSteps,
+  hubRoleSwitchPersist,
   hubRoleWarnings,
   loadHubRoleSwitch,
-  nextWriterEpoch,
   pickSuccessorHub,
   planHubRoleSwitch,
+  promoteHub,
+  randomOperationId,
+  randomUuidV4,
+  resumeHubRoleSwitch,
   runHubRoleSwitch,
   saveHubRoleSwitch,
   submitAdmitHubRecord,
@@ -81,17 +88,7 @@ function row(id: string, overrides: Partial<NodeRow> = {}): NodeRow {
 // ---------------------------------------------------------------------------
 
 describe('planHubRoleSwitch', () => {
-  test('纪元取集合最大值 + 1；空集合从 1 起', () => {
-    expect(nextWriterEpoch([])).toBe(1);
-    expect(
-      nextWriterEpoch([
-        hub({ nodeId: HUB_X, writerEpoch: 2 }),
-        hub({ nodeId: HUB_A, writerEpoch: 7 }),
-      ])
-    ).toBe(8);
-  });
-
-  test('备 Hub 一行：升它自己，原主是当前 writer，纪元 +1', () => {
+  test('备 Hub 一行：升它自己，原主是当前 writer', () => {
     const plan = planHubRoleSwitch({
       row: row(HUB_X),
       hubs: [hub({ nodeId: HUB_X }), hub({ nodeId: HUB_A, mode: 'active', writerEpoch: 5 })],
@@ -103,7 +100,6 @@ describe('planHubRoleSwitch', () => {
     expect(plan?.needsAdmit).toBe(false);
     expect(plan?.fromUnreachable).toBe(false);
     expect(plan?.leavesNoWriter).toBe(false);
-    expect(plan?.newEpoch).toBe(6);
   });
 
   test('目标不是签名授权时须先签一条 admit-hub', () => {
@@ -343,6 +339,8 @@ interface FakeIoOptions {
 
 interface FakeIo extends HubRoleIo {
   calls: Array<{ hubNodeId: string; mode: string; writerEpoch?: number; operationId: string }>;
+  /** 原样留一份请求体：验证「升主不带 writerEpoch」要看键在不在，不能看值。 */
+  requests: HubRoleRequest[];
   admits: boolean[];
   clock: { value: number };
 }
@@ -350,10 +348,12 @@ interface FakeIo extends HubRoleIo {
 function fakeIo(options: FakeIoOptions = {}): FakeIo {
   const clock = { value: 1_000 };
   const calls: FakeIo['calls'] = [];
+  const requests: HubRoleRequest[] = [];
   const admits: boolean[] = [];
   let index = 0;
   const io: FakeIo = {
     calls,
+    requests,
     admits,
     clock,
     async appendAdmitHub(_record, force) {
@@ -361,6 +361,7 @@ function fakeIo(options: FakeIoOptions = {}): FakeIo {
       return options.admit ?? { kind: 'ok' };
     },
     async role(hubNodeId, req) {
+      requests.push(req);
       calls.push({
         hubNodeId,
         mode: req.mode,
@@ -398,10 +399,20 @@ function promotePlan(overrides: Partial<HubRoleSwitchPlan> = {}): HubRoleSwitchP
 
 const NEVER_ADMIT = () => Promise.reject(new Error('admit should not be called'));
 
+/** 记下每一次续跑记录的 phase，用来验证「改动请求发出去之前先落盘」。 */
+function persistSpy(): {
+  phases: HubRoleResumePhase[];
+  persist: (phase: HubRoleResumePhase) => void;
+} {
+  const phases: HubRoleResumePhase[] = [];
+  return { phases, persist: (phase) => phases.push(phase) };
+}
+
 describe('runHubRoleSwitch', () => {
   test('目标已签名授权：跳过 admit，先降原主再升目标，最后确认 writer 换人', async () => {
     const io = fakeIo();
     const phases: string[] = [];
+    const saved = persistSpy();
     const outcome = await runHubRoleSwitch({
       plan: promotePlan(),
       operationId: 'op-1',
@@ -409,18 +420,81 @@ describe('runHubRoleSwitch', () => {
       signal: new AbortController().signal,
       admit: NEVER_ADMIT,
       phase: (phase) => phases.push(phase),
+      persist: saved.persist,
       t,
     });
     expect(outcome).toEqual({ kind: 'done' });
     expect(io.admits).toEqual([]);
     expect(io.calls).toEqual([
       { hubNodeId: HUB_A, mode: 'standby', writerEpoch: undefined, operationId: 'op-1' },
-      { hubNodeId: HUB_X, mode: 'active', writerEpoch: 6, operationId: 'op-1' },
+      { hubNodeId: HUB_X, mode: 'active', writerEpoch: undefined, operationId: 'op-1' },
     ]);
     expect(phases).toEqual(['demoting', 'promoting', 'restarting', 'awaitingWriter']);
+    // 每一个改动请求之前都先落一次盘，最后一档是「只剩回读」。
+    expect(saved.phases).toEqual(['demote', 'promote', 'wait']);
   });
 
-  test('需要签授权：先 admit，等 /api/mesh/hubs 出现 signed 再往下走', async () => {
+  test('升主请求不带 writerEpoch：纪元由目标自己分配', async () => {
+    const io = fakeIo();
+    await runHubRoleSwitch({
+      plan: promotePlan(),
+      operationId: 'op-epoch',
+      io,
+      signal: new AbortController().signal,
+      admit: NEVER_ADMIT,
+      phase: () => undefined,
+      t,
+    });
+    const promote = io.requests.find((req) => req.mode === 'active');
+    expect(promote).toBeDefined();
+    expect(Object.keys(promote as object)).toEqual(['mode', 'operationId']);
+  });
+
+  test('目标仍回 HUB_EPOCH_STALE：原样重发一次让它重新取号', async () => {
+    let actives = 0;
+    const io = fakeIo({
+      role: (_id, mode) => {
+        if (mode !== 'active') return { kind: 'ok', phase: 'accepted', error: null };
+        actives += 1;
+        return actives === 1
+          ? { kind: 'failed', code: 'HUB_EPOCH_STALE' }
+          : { kind: 'ok', phase: 'accepted', error: null };
+      },
+    });
+    const outcome = await runHubRoleSwitch({
+      plan: promotePlan(),
+      operationId: 'op-stale',
+      io,
+      signal: new AbortController().signal,
+      admit: NEVER_ADMIT,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({ kind: 'done' });
+    expect(actives).toBe(2);
+  });
+
+  test('重发后还是 stale：报出去，不再无限重试', async () => {
+    const io = fakeIo({
+      role: (_id, mode) =>
+        mode === 'active'
+          ? { kind: 'failed', code: 'HUB_EPOCH_STALE' }
+          : { kind: 'ok', phase: 'accepted', error: null },
+    });
+    const outcome = await runHubRoleSwitch({
+      plan: promotePlan(),
+      operationId: 'op-stale2',
+      io,
+      signal: new AbortController().signal,
+      admit: NEVER_ADMIT,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome.kind).toBe('recover');
+    expect(io.calls.filter((call) => call.mode === 'active')).toHaveLength(2);
+  });
+
+  test('需要签授权：先落盘 admit，再 admit，等 /api/mesh/hubs 出现 signed 才往下走', async () => {
     let hubCalls = 0;
     const io = fakeIo({
       hubs: () => {
@@ -434,6 +508,7 @@ describe('runHubRoleSwitch', () => {
     });
     const admitted: string[] = [];
     const phases: string[] = [];
+    const saved = persistSpy();
     const outcome = await runHubRoleSwitch({
       plan: promotePlan({ needsAdmit: true }),
       operationId: 'op-2',
@@ -444,11 +519,13 @@ describe('runHubRoleSwitch', () => {
         return { kind: 'ok' };
       },
       phase: (phase) => phases.push(phase),
+      persist: saved.persist,
       t,
     });
     expect(outcome).toEqual({ kind: 'done' });
     expect(admitted).toEqual([HUB_X]);
     expect(phases.slice(0, 2)).toEqual(['admitting', 'awaitingAuth']);
+    expect(saved.phases).toEqual(['admit', 'demote', 'promote', 'wait']);
     expect(hubCalls).toBeGreaterThanOrEqual(2);
   });
 
@@ -522,11 +599,11 @@ describe('runHubRoleSwitch', () => {
     expect(io.calls).toHaveLength(1);
   });
 
-  test('升主被拒：错误码走文案表', async () => {
+  test('原主已降备而升主被拒：给出恢复上下文，不只弹一条 toast', async () => {
     const io = fakeIo({
       role: (_id, mode) =>
         mode === 'active'
-          ? { kind: 'failed', code: 'HUB_EPOCH_STALE' }
+          ? { kind: 'failed', code: 'HUB_NOT_AUTHORIZED' }
           : { kind: 'ok', phase: 'accepted', error: null },
     });
     const outcome = await runHubRoleSwitch({
@@ -539,38 +616,53 @@ describe('runHubRoleSwitch', () => {
       t,
     });
     expect(outcome).toEqual({
-      kind: 'failed',
+      kind: 'recover',
+      targetHubId: HUB_X,
+      fromHubId: HUB_A,
       message: t('nodes.hubs.role.failed', {
-        error: 'nodes.hubs.role.errors.HUB_EPOCH_STALE',
+        error: 'nodes.hubs.role.errors.HUB_NOT_AUTHORIZED',
       }),
     });
   });
 
-  test('受理后落一条续跑记录', async () => {
-    const io = fakeIo();
-    let saved = 0;
-    await runHubRoleSwitch({
+  test('目标回读自报 failed：同样走恢复，集群此刻没有 writer', async () => {
+    const io = fakeIo({ statuses: [{ kind: 'ok', phase: 'failed', error: 'HUB_NOT_HUB' }] });
+    const outcome = await runHubRoleSwitch({
       plan: promotePlan(),
-      operationId: 'op-8',
+      operationId: 'op-7b',
       io,
       signal: new AbortController().signal,
       admit: NEVER_ADMIT,
       phase: () => undefined,
-      onAccepted: () => {
-        saved += 1;
-      },
       t,
     });
-    expect(saved).toBe(1);
+    expect(outcome.kind).toBe('recover');
   });
 
-  test('只降备、无人接管：一条 standby 就收尾', async () => {
+  test('原主不可达时升主被拒：普通失败，没有可回滚的原主', async () => {
+    const io = fakeIo({
+      role: () => ({ kind: 'failed', code: 'HUB_NOT_AUTHORIZED' }),
+    });
+    const outcome = await runHubRoleSwitch({
+      plan: promotePlan({ fromUnreachable: true }),
+      operationId: 'op-7c',
+      io,
+      signal: new AbortController().signal,
+      admit: NEVER_ADMIT,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome.kind).toBe('failed');
+  });
+
+  test('只降备、无人接管：一条 standby 就收尾，落盘也只有 demote', async () => {
     const plan = planHubRoleSwitch({
       row: row(HUB_A),
       hubs: [hub({ nodeId: HUB_A, mode: 'active' })],
       writerHubId: HUB_A,
     }) as HubRoleSwitchPlan;
     const io = fakeIo();
+    const saved = persistSpy();
     const outcome = await runHubRoleSwitch({
       plan,
       operationId: 'op-9',
@@ -578,12 +670,55 @@ describe('runHubRoleSwitch', () => {
       signal: new AbortController().signal,
       admit: NEVER_ADMIT,
       phase: () => undefined,
+      persist: saved.persist,
       t,
     });
     expect(outcome).toEqual({ kind: 'done' });
     expect(io.calls).toEqual([
       { hubNodeId: HUB_A, mode: 'standby', writerEpoch: undefined, operationId: 'op-9' },
     ]);
+    expect(saved.phases).toEqual(['demote']);
+  });
+});
+
+describe('promoteHub（恢复对话框里的两个按钮走的就是它）', () => {
+  test('重试目标失败：恢复上下文原样带回，用户还能再选一次', async () => {
+    const io = fakeIo({ role: () => ({ kind: 'failed', code: 'HUB_ROLE_BUSY' }) });
+    const outcome = await promoteHub({
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+      operationId: 'op-retry',
+      targetHubId: HUB_X,
+      recover: { targetHubId: HUB_X, fromHubId: HUB_A },
+    });
+    expect(outcome).toEqual({
+      kind: 'recover',
+      targetHubId: HUB_X,
+      fromHubId: HUB_A,
+      message: t('nodes.hubs.role.failed', { error: 'nodes.hubs.role.errors.HUB_ROLE_BUSY' }),
+    });
+  });
+
+  test('回滚：升的是原主，成功后按原主确认 writer 换人', async () => {
+    const io = fakeIo({ hubs: () => ({ hubs: [], writerHubId: HUB_A }) });
+    const saved = persistSpy();
+    const outcome = await promoteHub({
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      persist: saved.persist,
+      t,
+      operationId: 'op-rollback',
+      targetHubId: HUB_A,
+      recover: { targetHubId: HUB_X, fromHubId: HUB_A },
+    });
+    expect(outcome).toEqual({ kind: 'done' });
+    expect(io.calls).toEqual([
+      { hubNodeId: HUB_A, mode: 'active', writerEpoch: undefined, operationId: 'op-rollback' },
+    ]);
+    expect(saved.phases).toEqual(['promote', 'wait']);
   });
 });
 
@@ -706,26 +841,45 @@ describe('续跑记录', () => {
     savedDescriptor.clear();
   });
 
+  function record(overrides: Partial<HubRoleSwitchRecord> = {}): HubRoleSwitchRecord {
+    return {
+      operationId: 'op-1',
+      targetHubId: HUB_X,
+      fromHubId: HUB_A,
+      intent: 'switch',
+      phase: 'wait',
+      startedAt: 1000,
+      ...overrides,
+    };
+  }
+
   test('写入后能读回；清除后为空', () => {
-    saveHubRoleSwitch({
-      operationId: 'op-1',
-      targetHubId: HUB_X,
-      fromHubId: HUB_A,
-      startedAt: 1000,
-    });
+    saveHubRoleSwitch(record());
     expect(globalThis.sessionStorage.getItem(HUB_ROLE_SWITCH_KEY)).toContain('op-1');
-    expect(loadHubRoleSwitch(2000)).toEqual({
-      operationId: 'op-1',
-      targetHubId: HUB_X,
-      fromHubId: HUB_A,
-      startedAt: 1000,
-    });
+    expect(loadHubRoleSwitch(2000)).toEqual(record());
     clearHubRoleSwitch();
     expect(loadHubRoleSwitch(2000)).toBeNull();
   });
 
+  test('每一步都往同一条记录上更新 phase，其余字段不变', () => {
+    const persist = hubRoleSwitchPersist({
+      operationId: 'op-p',
+      targetHubId: HUB_X,
+      fromHubId: HUB_A,
+      intent: 'switch',
+      startedAt: 1000,
+    });
+    persist('admit');
+    expect(loadHubRoleSwitch(1000)?.phase).toBe('admit');
+    persist('promote');
+    const saved = loadHubRoleSwitch(1000);
+    expect(saved?.phase).toBe('promote');
+    expect(saved?.operationId).toBe('op-p');
+    expect(saved?.fromHubId).toBe(HUB_A);
+  });
+
   test('过期的记录连同存储一并丢掉', () => {
-    saveHubRoleSwitch({ operationId: 'op-2', targetHubId: HUB_X, fromHubId: null, startedAt: 0 });
+    saveHubRoleSwitch(record({ operationId: 'op-2', fromHubId: null, startedAt: 0 }));
     expect(loadHubRoleSwitch(HUB_ROLE_SWITCH_TTL_MS + 1)).toBeNull();
     expect(globalThis.sessionStorage.getItem(HUB_ROLE_SWITCH_KEY)).toBeNull();
   });
@@ -737,29 +891,38 @@ describe('续跑记录', () => {
     }
   });
 
-  test('没有 sessionStorage（隐私模式）时读写都不抛', () => {
-    installSession(null);
-    expect(() =>
-      saveHubRoleSwitch({ operationId: 'op-3', targetHubId: HUB_X, fromHubId: null, startedAt: 1 })
-    ).not.toThrow();
-    expect(loadHubRoleSwitch(1)).toBeNull();
+  test('认不出的 phase / intent 退到最保守的一档：只回读，不重发', () => {
+    globalThis.sessionStorage.setItem(
+      HUB_ROLE_SWITCH_KEY,
+      JSON.stringify({ operationId: 'op-x', targetHubId: HUB_X, startedAt: 1000, phase: 'junk' })
+    );
+    const loaded = loadHubRoleSwitch(1000);
+    expect(loaded?.phase).toBe('wait');
+    expect(loaded?.intent).toBe('switch');
+    expect(loaded?.fromHubId).toBeNull();
   });
 
-  test('刷新后接上第 4 步：只轮询目标，不重发任何 role 请求', async () => {
-    saveHubRoleSwitch({
-      operationId: 'op-4',
-      targetHubId: HUB_X,
-      fromHubId: HUB_A,
-      startedAt: 1000,
-    });
-    const record = loadHubRoleSwitch(2000);
-    expect(record).not.toBeNull();
+  test('没有 sessionStorage（隐私模式）时读写都不抛', () => {
+    installSession(null);
+    expect(() => saveHubRoleSwitch(record({ fromHubId: null }))).not.toThrow();
+    expect(loadHubRoleSwitch(1)).toBeNull();
+  });
+});
+
+describe('resumeHubRoleSwitch', () => {
+  test('phase=wait：只回读第 4 步，不重发任何 role 请求', async () => {
     const io = fakeIo({
       statuses: [{ kind: 'unreachable' }, { kind: 'ok', phase: 'complete', error: null }],
     });
-    const outcome = await awaitHubRoleSwitch({
-      targetHubId: (record as NonNullable<typeof record>).targetHubId,
-      operationId: (record as NonNullable<typeof record>).operationId,
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-4',
+        targetHubId: HUB_X,
+        fromHubId: HUB_A,
+        intent: 'switch',
+        phase: 'wait',
+        startedAt: 1000,
+      },
       io,
       signal: new AbortController().signal,
       phase: () => undefined,
@@ -767,5 +930,215 @@ describe('续跑记录', () => {
     });
     expect(outcome).toEqual({ kind: 'done' });
     expect(io.calls).toEqual([]);
+  });
+
+  test('phase=wait 且目标自报 failed：原主已降备，走恢复而不是干失败', async () => {
+    const io = fakeIo({ statuses: [{ kind: 'ok', phase: 'failed', error: 'HUB_NOT_HUB' }] });
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-4b',
+        targetHubId: HUB_X,
+        fromHubId: HUB_A,
+        intent: 'switch',
+        phase: 'wait',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome.kind).toBe('recover');
+  });
+
+  test('phase=demote 且原主还在写：重发降备（同一个 operationId），再升目标', async () => {
+    const io = fakeIo({ hubs: () => ({ hubs: [], writerHubId: HUB_A }) });
+    const saved = persistSpy();
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-5',
+        targetHubId: HUB_X,
+        fromHubId: HUB_A,
+        intent: 'switch',
+        phase: 'demote',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      persist: saved.persist,
+      t,
+    });
+    // hubs() 一直回 HUB_A：升主后等不到 writer 换人，结论是「未确认」而不是谎报成功。
+    expect(outcome.kind).toBe('unconfirmed');
+    expect(io.calls.map((call) => [call.hubNodeId, call.mode, call.operationId])).toEqual([
+      [HUB_A, 'standby', 'op-5'],
+      [HUB_X, 'active', 'op-5'],
+    ]);
+    expect(saved.phases).toEqual(['demote', 'promote', 'wait']);
+  });
+
+  test('phase=promote 且原主已是备：跳过降备，直接重发升主', async () => {
+    let hubCalls = 0;
+    const io = fakeIo({
+      hubs: () => {
+        hubCalls += 1;
+        return { hubs: [], writerHubId: hubCalls === 1 ? null : HUB_X };
+      },
+    });
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-6',
+        targetHubId: HUB_X,
+        fromHubId: HUB_A,
+        intent: 'switch',
+        phase: 'promote',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({ kind: 'done' });
+    expect(io.calls.map((call) => call.mode)).toEqual(['active']);
+  });
+
+  test('phase=promote 但 writer 已经是目标：刷新前那一段其实跑完了', async () => {
+    const io = fakeIo({ hubs: () => ({ hubs: [], writerHubId: HUB_X }) });
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-7',
+        targetHubId: HUB_X,
+        fromHubId: HUB_A,
+        intent: 'switch',
+        phase: 'promote',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({ kind: 'done' });
+    expect(io.calls).toEqual([]);
+  });
+
+  test('phase=admit 且授权已签成：接着降备升主', async () => {
+    let hubCalls = 0;
+    const io = fakeIo({
+      hubs: () => {
+        hubCalls += 1;
+        return {
+          hubs: [hub({ nodeId: HUB_X, authorization: 'signed' })],
+          writerHubId: hubCalls === 1 ? HUB_A : HUB_X,
+        };
+      },
+    });
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-8',
+        targetHubId: HUB_X,
+        fromHubId: HUB_A,
+        intent: 'switch',
+        phase: 'admit',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({ kind: 'done' });
+    expect(io.calls.map((call) => call.mode)).toEqual(['standby', 'active']);
+  });
+
+  test('phase=admit 但授权还没签成：收摊，重签要用户凭据不能替他按下去', async () => {
+    const io = fakeIo({
+      hubs: () => ({
+        hubs: [hub({ nodeId: HUB_X, authorization: 'env' })],
+        writerHubId: HUB_A,
+      }),
+    });
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-9',
+        targetHubId: HUB_X,
+        fromHubId: HUB_A,
+        intent: 'switch',
+        phase: 'admit',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({
+      kind: 'failed',
+      message: 'nodes.hubs.role.errors.resumeAdmit',
+    });
+    expect(io.calls).toEqual([]);
+  });
+
+  test('只降备那一路：重发一次幂等的 standby 就收尾，绝不升主', async () => {
+    const io = fakeIo();
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-10',
+        targetHubId: HUB_A,
+        fromHubId: null,
+        intent: 'demoteOnly',
+        phase: 'demote',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({ kind: 'done' });
+    expect(io.calls.map((call) => call.mode)).toEqual(['standby']);
+  });
+});
+
+describe('operationId', () => {
+  const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  test('手搓的 v4 合法：版本位与变体位都补上，后端正则收得下', () => {
+    for (let i = 0; i < 64; i += 1) expect(randomUuidV4()).toMatch(UUID_V4);
+    expect(new Set(Array.from({ length: 32 }, () => randomUuidV4())).size).toBe(32);
+  });
+
+  test('非安全上下文没有 randomUUID：退到手搓的 v4，仍然合法', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    // 只留 getRandomValues：这正是 http:// 局域网入口下的样子。
+    Object.defineProperty(globalThis, 'crypto', {
+      value: { getRandomValues: (bytes: Uint8Array) => bytes.fill(7) },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      expect(randomOperationId()).toMatch(UUID_V4);
+      expect(randomUuidV4()).toBe('07070707-0707-4707-8707-070707070707');
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'crypto', descriptor);
+      else Reflect.deleteProperty(globalThis, 'crypto');
+    }
+  });
+
+  test('连 getRandomValues 都没有时也不抛，照样出一个合法 UUID', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    Object.defineProperty(globalThis, 'crypto', {
+      value: {},
+      configurable: true,
+      writable: true,
+    });
+    try {
+      expect(randomOperationId()).toMatch(UUID_V4);
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'crypto', descriptor);
+      else Reflect.deleteProperty(globalThis, 'crypto');
+    }
   });
 });

@@ -1753,13 +1753,13 @@
           "stateSwitching": "切换中",
           "confirmPromote": "设为主 Hub",
           "confirmDemote": "设为备 Hub",
-          "confirmText": "「{{target}}」将接管写入，写入纪元升到 {{epoch}}。",
+          "confirmText": "「{{target}}」将接管写入，切换期间管理操作短暂不可用。",
           "confirmTextNoWriter": "「{{from}}」降为备 Hub，没有其它 Hub 可接管写入。",
           "confirm": "切换",
           "cancel": "取消",
           "stepAdmit": "为「{{target}}」签发 Hub 授权（需验证凭据）。",
           "stepDemote": "把「{{from}}」降为备 Hub。",
-          "stepPromote": "把「{{target}}」升为主 Hub（纪元 {{epoch}}），目标随后自动重启。",
+          "stepPromote": "把「{{target}}」升为主 Hub，目标随后自动重启。",
           "stepWait": "等待「{{target}}」重启并接管写入。",
           "stepDemoteOnly": "把「{{from}}」降为备 Hub，目标随后自动重启。",
           "warnFromUnreachable": "原主 Hub 不可达，将依靠更高纪元围栏它。",
@@ -1772,6 +1772,14 @@
           "forceText": "以下节点版本低于 {{minVersion}}，须先升级：",
           "forceAccept": "仍然继续（旧节点将无法再同步）",
           "forceConfirm": "仍然继续",
+          "recovery": {
+            "title": "当前没有可写 Hub",
+            "description": "原主 Hub 已降为备，新主 Hub 未能升起，须选择下一步。",
+            "noWriter": "「{{from}}」已降为备 Hub，「{{target}}」未能升为主 Hub。",
+            "retry": "重试升级目标",
+            "rollback": "回滚：重新升级原主 Hub",
+            "dismiss": "稍后处理"
+          },
           "blocked": {
             "unknownHub": "Hub 集合尚未加载，稍后重试。",
             "unknownAuth": "入口版本过低，无法读取 Hub 授权来源。",
@@ -1790,6 +1798,7 @@
             "unknown": "原因未知。",
             "unreachable": "目标 Hub 不可达。",
             "authTimeout": "Hub 授权未在预期时间内生效。",
+            "resumeAdmit": "Hub 授权尚未签发完成，请重新发起切换。",
             "restartTimeout": "目标重启超时，未能确认切换结果：{{error}}",
             "writerTimeout": "未能确认新的主 Hub 已接管写入，请刷新核对。"
           }

@@ -59,7 +59,9 @@ const {
   uninstallSummaryText,
 } = await import('./use-node-uninstall');
 const { UninstallDialogBody } = await import('./uninstall-dialog');
-const { HubRoleDialogBody, HubRoleForceBody } = await import('./hub-role-dialog');
+const { HubRoleDialogBody, HubRoleForceBody, HubRoleRecoveryBody } = await import(
+  './hub-role-dialog'
+);
 const { NodesTable } = await import('./nodes-table');
 const { hubRoleButtonState, planHubRoleSwitch } = await import('./use-hub-role-switch');
 const { IDLE_UPGRADE_ENTRY, IDLE_UPGRADE_BATCH } = await import('./types');
@@ -507,11 +509,13 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       running: false,
       plan: null,
       force: null,
+      recovery: null,
       phase: null,
       request: () => undefined,
       confirm: () => undefined,
       dismiss: () => undefined,
       resolveForce: () => undefined,
+      resolveRecovery: () => undefined,
       stateOf: () => ({ intent: 'promote', plan: null, blocked: 'unknownHub' }),
       ...overrides,
     };
@@ -1829,5 +1833,24 @@ describe('Hub 切换确认框正文', () => {
     expect(html).toContain('data-testid="nodes-hub-role-old-aa"');
     expect(html).toContain('laptop');
     expect(html).toContain('studio');
+  });
+
+  test('升主失败的恢复框：写明没有可写 Hub，并带上后端给的原因', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <HubRoleRecoveryBody
+          recovery={{
+            message: 'nodes.hubs.role.failed',
+            targetHubId: HUB_X,
+            targetName: 'studio',
+            fromHubId: HUB_A,
+            fromName: 'laptop',
+          }}
+        />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="nodes-hub-role-recovery-body"');
+    expect(html).toContain('nodes.hubs.role.recovery.noWriter');
+    expect(html).toContain('nodes.hubs.role.failed');
   });
 });
