@@ -6,7 +6,11 @@ export function handleManagedSystemApiRequest(req: Request, path: string): Respo
     return json(getSystemInfo());
   }
 
-  if (path === '/api/system/update-check' || path === '/api/system/upgrade') {
+  if (
+    path === '/api/system/update-check' ||
+    path === '/api/system/upgrade' ||
+    path === '/api/system/upgrade/package'
+  ) {
     return json(
       {
         error: MANAGED_EXTERNALLY,

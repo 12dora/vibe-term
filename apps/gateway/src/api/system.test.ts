@@ -1,5 +1,22 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+import type { SystemInfo } from '@tmex/shared';
+import * as infoPublic from '../system/info-public';
+import { upgradeController } from '../system/upgrade';
 import { handleSystemApiRequest, isReleaseVersion } from './system';
+
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
 
 describe('isReleaseVersion', () => {
   test('accepts strict semver with optional prerelease', () => {
@@ -45,5 +62,105 @@ describe('POST /api/system/upgrade version validation', () => {
     expect(response?.status).toBe(400);
     const payload = (await response?.json()) as { error?: string };
     expect(payload.error).toBeTruthy();
+  });
+});
+
+describe('GET /api/system/info upgradeCapabilities', () => {
+  test('includes staged-package', async () => {
+    const response = await handleSystemApiRequest(
+      new Request('http://localhost/api/system/info'),
+      '/api/system/info'
+    );
+    expect(response?.status).toBe(200);
+    const body = (await response?.json()) as { upgradeCapabilities?: string[] };
+    expect(body.upgradeCapabilities).toEqual(['staged-package']);
+  });
+});
+
+describe('PUT /api/system/upgrade/package', () => {
+  afterEach(() => {
+    upgradeController.resetForTests();
+  });
+
+  test('rejects invalid version and sha256 with 400', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue({
+      version: '1.0.0',
+      baseVersion: '1.0.0',
+      isProd: true,
+      installedViaCli: true,
+      deployment: 'launchd',
+      canSelfUpdate: true,
+      serviceName: 'tmex',
+      transferMaxBytes: 1,
+    } satisfies SystemInfo);
+    try {
+      const bytes = new Uint8Array([1, 2, 3]);
+      const hex = sha256Hex(bytes);
+      for (const url of [
+        'http://localhost/api/system/upgrade/package',
+        `http://localhost/api/system/upgrade/package?version=latest&sha256=${hex}`,
+        `http://localhost/api/system/upgrade/package?version=1.2.3&sha256=${'z'.repeat(64)}`,
+        'http://localhost/api/system/upgrade/package?version=1.2.3&sha256=abcd',
+      ]) {
+        const response = await handleSystemApiRequest(
+          new Request(url, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/octet-stream' },
+            body: bytesStream(bytes),
+          }),
+          '/api/system/upgrade/package'
+        );
+        expect(response?.status).toBe(400);
+      }
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('refuses when canSelfUpdate is false', async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const hex = sha256Hex(bytes);
+    const response = await handleSystemApiRequest(
+      new Request(`http://localhost/api/system/upgrade/package?version=1.2.3&sha256=${hex}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: bytesStream(bytes),
+      }),
+      '/api/system/upgrade/package'
+    );
+    expect(response?.status).toBe(403);
+  });
+});
+
+describe('POST /api/system/upgrade source=staged', () => {
+  afterEach(() => {
+    upgradeController.resetForTests();
+  });
+
+  test('returns 409 PACKAGE_NOT_STAGED when no package is staged', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue({
+      version: '1.0.0',
+      baseVersion: '1.0.0',
+      isProd: true,
+      installedViaCli: true,
+      deployment: 'launchd',
+      canSelfUpdate: true,
+      serviceName: 'tmex',
+      transferMaxBytes: 1,
+    } satisfies SystemInfo);
+    try {
+      const response = await handleSystemApiRequest(
+        new Request('http://localhost/api/system/upgrade', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ version: '9.9.9', source: 'staged' }),
+        }),
+        '/api/system/upgrade'
+      );
+      expect(response?.status).toBe(409);
+      expect(await response?.json()).toEqual({ code: 'PACKAGE_NOT_STAGED' });
+    } finally {
+      infoSpy.mockRestore();
+    }
   });
 });

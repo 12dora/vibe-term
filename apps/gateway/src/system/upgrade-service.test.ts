@@ -3,9 +3,12 @@ import { releaseTarballName } from '@tmex/shared';
 import type { SystemInfo } from '@tmex/shared';
 import type { UserStore } from '../auth/user-store';
 import * as infoPublic from './info-public';
+import { resetReleaseDownloadForTests } from './release-download';
+import { resetRemoteUpgradeJobsForTests, waitForRemoteUpgradeJob } from './remote-upgrade-job';
 import { upgradeController } from './upgrade';
 import {
   handleMeshNodeUpgradeStart,
+  handleMeshNodeUpgradeStatus,
   isAlreadyAtOrAboveLatest,
   mapForwardedUpgradeResponse,
 } from './upgrade-service';
@@ -14,6 +17,8 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  resetRemoteUpgradeJobsForTests();
+  resetReleaseDownloadForTests();
 });
 
 describe('isAlreadyAtOrAboveLatest', () => {
@@ -286,6 +291,275 @@ describe('handleMeshNodeUpgradeStart remote info fail-closed', () => {
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ code: 'NODE_UNREACHABLE', nodeId });
     expect(calls).toEqual(['GET /api/system/info']);
+  });
+});
+
+describe('handleMeshNodeUpgradeStart staged-package job', () => {
+  const localNodeId = 'cd'.repeat(16);
+  const nodeId = 'ab'.repeat(16);
+
+  test('capability present returns downloading immediately and does not POST release', async () => {
+    mockGithubLatest('9.9.9');
+    const calls: string[] = [];
+    const res = await handleMeshNodeUpgradeStart({
+      req: authedRequest(nodeId),
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          calls.push(`${input.method} ${input.path}`);
+          if (input.path === '/api/system/info') {
+            return new Response(
+              JSON.stringify({
+                baseVersion: '1.0.0',
+                canSelfUpdate: true,
+                upgradeCapabilities: ['staged-package'],
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            );
+          }
+          return new Response(JSON.stringify({ code: 'not-reached' }), { status: 500 });
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { state: string; targetVersion: string; error: null };
+    expect(body.state).toBe('downloading');
+    expect(body.targetVersion).toBe('9.9.9');
+    expect(body.error).toBeNull();
+    expect(calls).toEqual(['GET /api/system/info']);
+  });
+
+  test('legacy target without the capability still POSTs {version} and waits', async () => {
+    mockGithubLatest('9.9.9');
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const res = await handleMeshNodeUpgradeStart({
+      req: authedRequest(nodeId),
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          calls.push({ method: input.method, path: input.path, body: input.body });
+          if (input.path === '/api/system/info') {
+            return new Response(JSON.stringify({ baseVersion: '1.0.0', canSelfUpdate: true }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return new Response(
+            JSON.stringify({
+              state: 'downloading',
+              targetVersion: '9.9.9',
+              error: null,
+              startedAt: '2026-08-30T00:00:00.000Z',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([
+      { method: 'GET', path: '/api/system/info', body: undefined },
+      { method: 'POST', path: '/api/system/upgrade', body: { version: '9.9.9' } },
+    ]);
+  });
+});
+
+describe('handleMeshNodeUpgradeStatus job overlay', () => {
+  const localNodeId = 'cd'.repeat(16);
+  const nodeId = 'ab'.repeat(16);
+
+  test('running job is reported as downloading without forwarding', async () => {
+    let releaseDownload!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseDownload = resolve;
+    });
+    mockGithubLatest('9.9.9');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('api.github.com')) return latestFetch(input, init);
+      await gate;
+      return new Response('nope', { status: 500 });
+    }) as typeof fetch;
+    const forwarded: string[] = [];
+    const req = authedRequest(nodeId);
+    const forward = {
+      async forwardAuthorizedHttp(_req: Request, input: { method: string; path: string }) {
+        forwarded.push(`${input.method} ${input.path}`);
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      },
+    };
+    await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    const status = await handleMeshNodeUpgradeStatus({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    expect(status.status).toBe(200);
+    const body = (await status.json()) as { state: string; targetVersion: string; error: null };
+    expect(body.state).toBe('downloading');
+    expect(body.targetVersion).toBe('9.9.9');
+    expect(forwarded.filter((c) => c === 'GET /api/system/upgrade')).toEqual([]);
+    releaseDownload();
+    await waitForRemoteUpgradeJob(nodeId).catch(() => {});
+  });
+
+  test('failed job is reported as idle with the step error and does not forward', async () => {
+    mockGithubLatest('8.8.8');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('api.github.com')) return latestFetch(input, init);
+      return new Response('nope', { status: 403 });
+    }) as typeof fetch;
+    const forwarded: string[] = [];
+    const req = authedRequest(nodeId);
+    const forward = {
+      async forwardAuthorizedHttp(_req: Request, input: { method: string; path: string }) {
+        forwarded.push(`${input.method} ${input.path}`);
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      },
+    };
+    await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    await waitForRemoteUpgradeJob(nodeId);
+    const status = await handleMeshNodeUpgradeStatus({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    expect(status.status).toBe(200);
+    const body = (await status.json()) as {
+      state: string;
+      targetVersion: null;
+      error: string;
+    };
+    expect(body.state).toBe('idle');
+    expect(body.targetVersion).toBeNull();
+    expect(body.error).toMatch(/download failed/i);
+    expect(forwarded.filter((c) => c === 'GET /api/system/upgrade')).toEqual([]);
+  });
+
+  test('handed-off job is dropped and status is forwarded', async () => {
+    mockGithubLatest('9.9.9');
+    const req = authedRequest(nodeId);
+    const forward = {
+      async forwardAuthorizedHttp(
+        _req: Request,
+        input: { method: string; path: string; body?: unknown }
+      ) {
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (input.path === '/api/system/upgrade/package' || input.method === 'PUT') {
+          return new Response('{}', { status: 200 });
+        }
+        if (input.method === 'POST' && input.path === '/api/system/upgrade') {
+          return new Response(
+            JSON.stringify({
+              state: 'downloading',
+              targetVersion: '9.9.9',
+              error: null,
+              startedAt: '2026-09-01T00:00:00.000Z',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            state: 'executing',
+            targetVersion: '9.9.9',
+            error: null,
+            startedAt: '2026-09-01T00:00:00.000Z',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      },
+    };
+    // The job will try to download from GitHub; stub tarball + sums so it can finish.
+    const payload = new Uint8Array([1, 2, 3]);
+    const { createHash } = await import('node:crypto');
+    const hex = createHash('sha256').update(payload).digest('hex');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${hex}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+      }
+      if (url.includes('tmex-cli-')) {
+        return new Response(payload, { status: 200 });
+      }
+      return latestFetch(input);
+    }) as typeof fetch;
+
+    await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    await waitForRemoteUpgradeJob(nodeId);
+    const status = await handleMeshNodeUpgradeStatus({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    expect(status.status).toBe(200);
+    expect(await status.json()).toEqual({
+      state: 'executing',
+      targetVersion: '9.9.9',
+      error: null,
+      startedAt: '2026-09-01T00:00:00.000Z',
+    });
   });
 });
 

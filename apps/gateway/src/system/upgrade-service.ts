@@ -4,6 +4,11 @@ import type { UserStore } from '../auth/user-store';
 import { MESH_VIA_SELF } from '../mesh/mesh-deps';
 import { jsonBody, jsonError } from '../mesh/session-middleware';
 import { getSystemInfo } from './info-public';
+import {
+  consumeHandedOffJob,
+  getRemoteUpgradeJob,
+  startRemoteUpgradeJob,
+} from './remote-upgrade-job';
 import { compareVersions } from './semver';
 import { requireLatestUpgradeRelease } from './update-check';
 
@@ -11,11 +16,18 @@ const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 const REMOTE_UPGRADE_JSON_MAX_BYTES = 64 * 1024;
 const UPGRADE_STATES = new Set<UpgradeState>(['idle', 'downloading', 'executing']);
 
+export type AuthorizedUpgradeForwardInput = {
+  nodeId: string;
+  method: string;
+  path: string;
+  query?: string;
+  body?: unknown;
+  rawBody?: ReadableStream<Uint8Array>;
+  headers?: Record<string, string>;
+};
+
 export type AuthorizedUpgradeForward = {
-  forwardAuthorizedHttp: (
-    req: Request,
-    input: { nodeId: string; method: string; path: string; body?: unknown }
-  ) => Promise<Response>;
+  forwardAuthorizedHttp: (req: Request, input: AuthorizedUpgradeForwardInput) => Promise<Response>;
 };
 
 export function isLocalUpgradeNode(localNodeId: string, nodeId: string): boolean {
@@ -107,6 +119,24 @@ export async function handleMeshNodeUpgradeStatus(opts: {
   if (!readNodeSession(req, nodeId)) {
     return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId });
   }
+  consumeHandedOffJob(nodeId);
+  const job = getRemoteUpgradeJob(nodeId);
+  if (job?.state === 'running') {
+    return jsonBody({
+      state: 'downloading' as const,
+      targetVersion: job.targetVersion,
+      error: null,
+      startedAt: job.startedAt,
+    });
+  }
+  if (job?.state === 'failed') {
+    return jsonBody({
+      state: 'idle' as const,
+      targetVersion: null,
+      error: job.error,
+      startedAt: job.startedAt,
+    });
+  }
   const upstream = await forward.forwardAuthorizedHttp(req, {
     nodeId,
     method: 'GET',
@@ -121,10 +151,15 @@ export async function readLocalUpgradeStatus(): Promise<UpgradeStatus> {
 }
 
 export async function startLocalUpgradeAttempt(
-  version: string
+  version: string,
+  opts?: { source?: 'release' | 'staged'; sha256?: string }
 ): Promise<
   | { ok: true; status: UpgradeStatus }
-  | { ok: false; code: 'UPGRADE_NOT_ALLOWED' | 'UPGRADE_IN_PROGRESS'; status: UpgradeStatus }
+  | {
+      ok: false;
+      code: 'UPGRADE_NOT_ALLOWED' | 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED';
+      status: UpgradeStatus;
+    }
 > {
   const info = getSystemInfo();
   if (!info.canSelfUpdate) {
@@ -135,10 +170,10 @@ export async function startLocalUpgradeAttempt(
     };
   }
   const { upgradeController } = await import('./upgrade');
-  const started = upgradeController.start(version);
+  const started = upgradeController.tryStart(version, opts);
   const status = upgradeController.status();
-  if (!started) {
-    return { ok: false, code: 'UPGRADE_IN_PROGRESS', status };
+  if (!started.ok) {
+    return { ok: false, code: started.code, status };
   }
   return { ok: true, status };
 }
@@ -220,6 +255,24 @@ async function startRemoteMeshUpgrade(
     });
   }
 
+  if (hasStagedPackageCapability(info.upgradeCapabilities)) {
+    const started = startRemoteUpgradeJob({
+      nodeId,
+      version: latestVersion,
+      req,
+      forward,
+    });
+    if (!started.ok) {
+      return jsonError('UPGRADE_IN_PROGRESS', 409, { nodeId });
+    }
+    return jsonBody({
+      state: 'downloading',
+      targetVersion: latestVersion,
+      error: null,
+      startedAt: started.snapshot.startedAt,
+    });
+  }
+
   const started = await forward.forwardAuthorizedHttp(req, {
     nodeId,
     method: 'POST',
@@ -227,6 +280,10 @@ async function startRemoteMeshUpgrade(
     body: { version: latestVersion },
   });
   return mapForwardedUpgradeResponse(nodeId, started);
+}
+
+function hasStagedPackageCapability(raw: unknown): boolean {
+  return Array.isArray(raw) && raw.includes('staged-package');
 }
 
 function readNodeSession(req: Request, nodeId: string): string | null {

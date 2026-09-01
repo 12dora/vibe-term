@@ -32,6 +32,11 @@ export interface SystemInfo {
   managementMode?: 'none' | 'app' | 'companion-cli';
   /** 更新权归属（可选）；managed 时为 app|companion */
   updateOwner?: 'self' | 'app' | 'companion';
+  /**
+   * 本节点支持的升级能力。旧节点无此字段。
+   * `'staged-package'`：接受入口推送的 tarball（`PUT /api/system/upgrade/package`）并从暂存包升级。
+   */
+  upgradeCapabilities?: string[];
 }
 
 /** 检查更新结果 */
@@ -62,6 +67,17 @@ export interface UpgradeStatus {
 /** 触发升级请求体 */
 export interface StartUpgradeRequest {
   version: string;
+  /** 缺省 `'release'`：目标自行从 GitHub Releases 下载。`'staged'`：使用已推送的暂存包。 */
+  source?: 'release' | 'staged';
+  /** `source='staged'` 时可选，须与暂存包 sha256 一致 */
+  sha256?: string;
+}
+
+/** `PUT /api/system/upgrade/package` 成功响应 */
+export interface StagedUpgradePackageResponse {
+  version: string;
+  sha256: string;
+  bytes: number;
 }
 
 export interface RestartGatewayResponse {

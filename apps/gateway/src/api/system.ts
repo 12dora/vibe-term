@@ -27,7 +27,7 @@ export function handleSystemApiRequest(
   path: string
 ): Response | Promise<Response> | undefined {
   if (path === '/api/system/info' && req.method === 'GET') {
-    return json(getSystemInfo());
+    return json({ ...getSystemInfo(), upgradeCapabilities: ['staged-package'] });
   }
 
   if (path === '/api/system/addresses' && req.method === 'GET') {
@@ -49,6 +49,11 @@ export function handleSystemApiRequest(
   if (path === '/api/system/upgrade' && req.method === 'POST') {
     if (managed) return managedExternallyResponse();
     return handleStartUpgradeOpen(req);
+  }
+
+  if (path === '/api/system/upgrade/package' && req.method === 'PUT') {
+    if (managed) return managedExternallyResponse();
+    return handleStagePackageOpen(req);
   }
 
   return undefined;
@@ -77,9 +82,13 @@ export function isReleaseVersion(value: string): boolean {
 
 async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   let version = '';
+  let source: 'release' | 'staged' = 'release';
+  let sha256: string | undefined;
   try {
     const body = (await req.json()) as StartUpgradeRequest;
     version = (body?.version ?? '').trim();
+    if (body?.source === 'staged' || body?.source === 'release') source = body.source;
+    if (typeof body?.sha256 === 'string' && body.sha256.trim()) sha256 = body.sha256.trim();
   } catch {
     version = '';
   }
@@ -89,12 +98,39 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   }
 
   const { startLocalUpgradeAttempt } = await import('../system/upgrade-service');
-  const result = await startLocalUpgradeAttempt(version);
+  const result = await startLocalUpgradeAttempt(version, { source, sha256 });
   if (!result.ok && result.code === 'UPGRADE_NOT_ALLOWED') {
     return json({ error: t('apiError.upgradeNotAllowed') }, 403);
+  }
+  if (!result.ok && result.code === 'PACKAGE_NOT_STAGED') {
+    return json({ code: 'PACKAGE_NOT_STAGED' }, 409);
   }
   if (!result.ok) {
     return json({ ...result.status, error: t('apiError.upgradeInProgress') }, 409);
   }
   return json(result.status);
+}
+
+const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
+
+async function handleStagePackageOpen(req: Request): Promise<Response> {
+  const info = getSystemInfo();
+  if (!info.canSelfUpdate) {
+    return json({ error: t('apiError.upgradeNotAllowed') }, 403);
+  }
+  const url = new URL(req.url);
+  const version = (url.searchParams.get('version') ?? '').trim();
+  const sha256 = (url.searchParams.get('sha256') ?? '').trim();
+  if (!version || !isReleaseVersion(version) || !SHA256_HEX.test(sha256)) {
+    return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+  }
+  const { upgradeController } = await import('../system/upgrade');
+  const result = await upgradeController.stagePackage(version, sha256, req.body);
+  if (!result.ok && result.code === 'UPGRADE_IN_PROGRESS') {
+    return json({ code: 'UPGRADE_IN_PROGRESS' }, 409);
+  }
+  if (!result.ok) {
+    return json({ code: result.code }, result.status);
+  }
+  return json({ version: result.version, sha256: result.sha256, bytes: result.bytes });
 }

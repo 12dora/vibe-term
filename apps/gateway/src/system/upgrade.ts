@@ -1,16 +1,24 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync, realpathSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { closeSync, existsSync, openSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { chmod, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { UpgradeState, UpgradeStatus } from '@tmex/shared';
-import { releaseTarballName, releaseTarballUrl } from '@tmex/shared';
+import { releaseTarballName } from '@tmex/shared';
 import { type InstallInfo, getInstallInfo } from './install-info';
-import { compareVersions } from './semver';
+import { downloadVerifiedRelease, sha256Hex } from './release-download';
 
-const CHECKSUMS_REQUIRED_SINCE = '1.1.4';
+export {
+  assertReleaseIntegrity,
+  fetchReleaseSha256Sums,
+  parseSha256Sums,
+  releaseSha256SumsUrl,
+  sha256Hex,
+} from './release-download';
 
-const TARBALL_FETCH_TIMEOUT_MS = 120_000;
+export const STAGED_PACKAGE_MAX_BYTES = 256 * 1024 * 1024;
+const STAGED_PACKAGE_TTL_MS = 24 * 60 * 60 * 1000;
+const STAGED_PACKAGE_MAX_COUNT = 2;
 
 function createTxnId(): string {
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
@@ -45,7 +53,33 @@ export type UpgradeControllerDeps = {
   stageRelease?: (stageDir: string, version: string) => Promise<string>;
   processCommandLine?: ProcessCommandLineFn;
   processStartIdentity?: ProcessStartIdentityFn;
+  maxPackageBytes?: number;
+  now?: () => number;
 };
+
+export type UpgradeStartOpts = {
+  source?: 'release' | 'staged';
+  sha256?: string;
+};
+
+export type UpgradeStartResult =
+  | { ok: true }
+  | { ok: false; code: 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED' };
+
+export type StagedPackageRecord = {
+  version: string;
+  sha256: string;
+  path: string;
+  bytes: number;
+  stagedAt: string;
+};
+
+export type StagePackageResult =
+  | { ok: true; version: string; sha256: string; bytes: number }
+  | { ok: false; status: 400; code: 'PACKAGE_SHA256_MISMATCH' | 'BAD_REQUEST' }
+  | { ok: false; status: 409; code: 'UPGRADE_IN_PROGRESS' }
+  | { ok: false; status: 413; code: 'PACKAGE_TOO_LARGE' }
+  | { ok: false; status: 500; code: 'STAGE_FAILED' };
 
 /**
  * 全局唯一升级状态机：idle / downloading / executing。
@@ -98,6 +132,8 @@ export class UpgradeController {
   private targetVersion: string | null = null;
   private error: string | null = null;
   private startedAt: string | null = null;
+  private readonly staged = new Map<string, StagedPackageRecord>();
+  private stagedLoaded = false;
 
   constructor(private readonly deps: UpgradeControllerDeps = {}) {}
 
@@ -114,18 +150,215 @@ export class UpgradeController {
     return this.state !== 'idle';
   }
 
+  resetForTests(): void {
+    this.state = 'idle';
+    this.targetVersion = null;
+    this.error = null;
+    this.startedAt = null;
+    this.pendingEarlyExit = null;
+    this.staged.clear();
+    this.stagedLoaded = false;
+  }
+
   /** 进入升级流程；返回 false 表示已忙（并发触发）。下载/执行异步进行，不阻塞调用方。 */
-  start(version: string): boolean {
-    if (this.isBusy()) return false;
+  start(version: string, opts?: UpgradeStartOpts): boolean {
+    return this.tryStart(version, opts).ok;
+  }
+
+  tryStart(version: string, opts?: UpgradeStartOpts): UpgradeStartResult {
+    if (this.isBusy()) return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
+    const source = opts?.source ?? 'release';
+    if (source === 'staged') {
+      const staged = this.requireStaged(version, opts?.sha256);
+      if (!staged) return { ok: false, code: 'PACKAGE_NOT_STAGED' };
+    }
     this.state = 'downloading';
     this.targetVersion = version;
     this.error = null;
     this.startedAt = new Date().toISOString();
-    void this.run(version);
-    return true;
+    void this.run(version, opts);
+    return { ok: true };
   }
 
-  private async run(version: string): Promise<void> {
+  async stagePackage(
+    version: string,
+    sha256: string,
+    body: ReadableStream<Uint8Array> | null
+  ): Promise<StagePackageResult> {
+    if (this.isBusy()) return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
+    const expected = sha256.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(expected)) {
+      return { ok: false, status: 400, code: 'BAD_REQUEST' };
+    }
+    const install = (this.deps.getInstallInfo ?? getInstallInfo)();
+    const installDir = resolveUpgradeInstallDir(install);
+    if (!installDir) {
+      return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    }
+    if (!body) return { ok: false, status: 400, code: 'BAD_REQUEST' };
+
+    const stagedDir = join(installDir, 'staging', 'staged');
+    await mkdir(stagedDir, { recursive: true, mode: 0o700 });
+    const finalPath = join(stagedDir, releaseTarballName(version));
+    const partPath = `${finalPath}.part`;
+    const sidecarPath = join(stagedDir, `tmex-cli-${version}.json`);
+    const maxBytes = this.deps.maxPackageBytes ?? STAGED_PACKAGE_MAX_BYTES;
+    const hash = createHash('sha256');
+    let bytes = 0;
+    const reader = body.getReader();
+    let fh: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      fh = await open(partPath, 'w', 0o600);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        bytes += value.byteLength;
+        if (bytes > maxBytes) {
+          await reader.cancel().catch(() => {});
+          await fh.close().catch(() => {});
+          fh = null;
+          await rm(partPath, { force: true });
+          return { ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' };
+        }
+        hash.update(value);
+        await fh.write(value);
+      }
+      await fh.close();
+      fh = null;
+    } catch {
+      await fh?.close().catch(() => {});
+      fh = null;
+      await rm(partPath, { force: true }).catch(() => {});
+      return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    }
+
+    const digest = hash.digest('hex');
+    if (digest !== expected) {
+      await rm(partPath, { force: true }).catch(() => {});
+      return { ok: false, status: 400, code: 'PACKAGE_SHA256_MISMATCH' };
+    }
+
+    await rm(finalPath, { force: true }).catch(() => {});
+    await rename(partPath, finalPath);
+    await chmod(finalPath, 0o600).catch(() => {});
+    const record: StagedPackageRecord = {
+      version,
+      sha256: digest,
+      path: finalPath,
+      bytes,
+      stagedAt: new Date((this.deps.now ?? Date.now)()).toISOString(),
+    };
+    await writeFile(sidecarPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    this.loadStagedFromDisk(installDir);
+    this.staged.set(version, record);
+    await this.pruneStaged(installDir, version);
+    return { ok: true, version, sha256: digest, bytes };
+  }
+
+  private requireStaged(version: string, sha256?: string): StagedPackageRecord | null {
+    const install = (this.deps.getInstallInfo ?? getInstallInfo)();
+    const installDir = resolveUpgradeInstallDir(install);
+    if (!installDir) return null;
+    this.loadStagedFromDisk(installDir);
+    this.dropExpiredStaged(installDir);
+    const record = this.staged.get(version);
+    if (!record) return null;
+    if (!existsSync(record.path)) {
+      this.staged.delete(version);
+      return null;
+    }
+    const expected = sha256?.trim().toLowerCase();
+    if (expected && expected !== record.sha256) return null;
+    try {
+      const bytes = new Uint8Array(readFileSync(record.path));
+      if (sha256Hex(bytes) !== record.sha256) {
+        this.staged.delete(version);
+        return null;
+      }
+      if (expected && sha256Hex(bytes) !== expected) return null;
+    } catch {
+      this.staged.delete(version);
+      return null;
+    }
+    return record;
+  }
+
+  private loadStagedFromDisk(installDir: string): void {
+    if (this.stagedLoaded) return;
+    this.stagedLoaded = true;
+    const stagedDir = join(installDir, 'staging', 'staged');
+    if (!existsSync(stagedDir)) return;
+    let names: string[] = [];
+    try {
+      names = readdirSync(stagedDir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      try {
+        const parsed = JSON.parse(
+          readFileSync(join(stagedDir, name), 'utf8')
+        ) as Partial<StagedPackageRecord>;
+        if (
+          typeof parsed.version !== 'string' ||
+          typeof parsed.sha256 !== 'string' ||
+          typeof parsed.path !== 'string' ||
+          typeof parsed.bytes !== 'number' ||
+          typeof parsed.stagedAt !== 'string'
+        ) {
+          continue;
+        }
+        if (!existsSync(parsed.path)) continue;
+        this.staged.set(parsed.version, {
+          version: parsed.version,
+          sha256: parsed.sha256.toLowerCase(),
+          path: parsed.path,
+          bytes: parsed.bytes,
+          stagedAt: parsed.stagedAt,
+        });
+      } catch {
+        // skip corrupt sidecar
+      }
+    }
+  }
+
+  private dropExpiredStaged(installDir: string): void {
+    const now = (this.deps.now ?? Date.now)();
+    for (const [version, record] of this.staged) {
+      const at = Date.parse(record.stagedAt);
+      if (!Number.isFinite(at) || now - at > STAGED_PACKAGE_TTL_MS) {
+        this.staged.delete(version);
+        void rm(record.path, { force: true }).catch(() => {});
+        void rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
+          force: true,
+        }).catch(() => {});
+      }
+    }
+  }
+
+  private async pruneStaged(installDir: string, keepVersion: string): Promise<void> {
+    this.dropExpiredStaged(installDir);
+    const records = [...this.staged.values()].sort(
+      (a, b) => Date.parse(b.stagedAt) - Date.parse(a.stagedAt)
+    );
+    const keep = new Set<string>([keepVersion]);
+    for (const record of records) {
+      if (keep.size >= STAGED_PACKAGE_MAX_COUNT) break;
+      keep.add(record.version);
+    }
+    for (const [version, record] of this.staged) {
+      if (keep.has(version)) continue;
+      this.staged.delete(version);
+      await rm(record.path, { force: true }).catch(() => {});
+      await rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
+        force: true,
+      }).catch(() => {});
+    }
+  }
+
+  private async run(version: string, opts?: UpgradeStartOpts): Promise<void> {
     const install = (this.deps.getInstallInfo ?? getInstallInfo)();
     const installDir = resolveUpgradeInstallDir(install);
     let stageDir: string | null = null;
@@ -137,9 +370,17 @@ export class UpgradeController {
 
       const txnId = createTxnId();
       stageDir = join(installDir, 'staging', txnId);
-      await mkdir(stageDir, { recursive: true });
-      const stageRelease = this.deps.stageRelease ?? stageGithubRelease;
-      const binPath = await stageRelease(stageDir, version);
+      await mkdir(stageDir, { recursive: true, mode: 0o700 });
+      const source = opts?.source ?? 'release';
+      let binPath: string;
+      if (source === 'staged') {
+        const staged = this.requireStaged(version, opts?.sha256);
+        if (!staged) throw new Error('PACKAGE_NOT_STAGED');
+        binPath = await extractCliTarball(staged.path, stageDir);
+      } else {
+        const stageRelease = this.deps.stageRelease ?? stageGithubRelease;
+        binPath = await stageRelease(stageDir, version);
+      }
       await this.spawnUpgrade(binPath, installDir, version, txnId);
       this.state = 'executing';
       if (this.pendingEarlyExit) {
@@ -328,22 +569,6 @@ export function assertExtractedCliPackage(packageRoot: string): void {
   }
 }
 
-const SUM_LINE = /^([a-fA-F0-9]{64})\s+\*?(\S+)\s*$/;
-
-export function parseSha256Sums(text: string, fileName: string): string | null {
-  const want = basename(fileName);
-  for (const raw of text.split(/\r?\n/)) {
-    const match = raw.trim().match(SUM_LINE);
-    if (!match) continue;
-    if (basename(match[2]) === want) return match[1].toLowerCase();
-  }
-  return null;
-}
-
-export function sha256Hex(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
-}
-
 export function processCommandLine(pid: number): string | null {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   if (process.platform === 'linux') {
@@ -462,66 +687,19 @@ export function parsePidFileContents(raw: string): number | null {
   return parsePidFileRecord(raw)?.pid ?? null;
 }
 
-export function assertReleaseIntegrity(
-  version: string,
-  bytes: Uint8Array,
-  sums: { hex: string | null; missing: boolean }
-): void {
-  if (sums.missing || !sums.hex) {
-    if (compareVersions(version, CHECKSUMS_REQUIRED_SINCE) >= 0) {
-      throw new Error(
-        `Release ${version} requires SHA256SUMS (HTTP 200, matching digest). Refusing to continue.`
-      );
-    }
-    throw new Error('Release SHA256SUMS is missing; tarball integrity is unverified.');
-  }
-  if (sha256Hex(bytes) !== sums.hex) {
-    throw new Error(`Release tarball sha256 mismatch for ${releaseTarballName(version)}.`);
-  }
-}
-
-export function releaseSha256SumsUrl(version: string): string {
-  return releaseTarballUrl(version).replace(releaseTarballName(version), 'SHA256SUMS');
-}
-
-export async function fetchReleaseSha256Sums(
-  version: string,
-  fileName: string,
-  fetchFn: typeof fetch = fetch
-): Promise<{ hex: string | null; missing: boolean }> {
-  let response: Response;
-  try {
-    response = await fetchFn(releaseSha256SumsUrl(version), {
-      redirect: 'follow',
-      cache: 'no-store',
-    });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`SHA256SUMS network error: ${detail}`);
-  }
-  if (response.status === 404) return { hex: null, missing: true };
-  if (!response.ok) {
-    throw new Error(`SHA256SUMS HTTP ${response.status}`);
-  }
-  const hex = parseSha256Sums(await response.text(), fileName || releaseTarballName(version));
-  if (!hex) {
-    throw new Error(`SHA256SUMS does not list ${fileName}`);
-  }
-  return { hex, missing: false };
-}
-
 /**
  * 下载 GitHub Release tarball 并解压到 stageDir（npm pack 布局：package/）。
  * 返回 CLI 入口路径 `<stageDir>/package/bin/tmex.js`。
  */
 export async function stageGithubRelease(stageDir: string, version: string): Promise<string> {
-  const tarballPath = join(stageDir, releaseTarballName(version));
-  await downloadReleaseTarball(releaseTarballUrl(version), tarballPath);
-  const bytes = readFileSync(tarballPath);
-  const sums = await fetchReleaseSha256Sums(version, releaseTarballName(version));
-  assertReleaseIntegrity(version, bytes, sums);
-  await extractTarball(tarballPath, stageDir);
+  const cached = await downloadVerifiedRelease(version, {
+    cacheDir: join(stageDir, '.release-cache'),
+  });
+  return extractCliTarball(cached.path, stageDir);
+}
 
+export async function extractCliTarball(tarballPath: string, stageDir: string): Promise<string> {
+  await extractTarball(tarballPath, stageDir);
   const packageRoot = join(stageDir, 'package');
   const binPath = join(packageRoot, 'bin', 'tmex.js');
   if (!existsSync(binPath)) {
@@ -529,18 +707,6 @@ export async function stageGithubRelease(stageDir: string, version: string): Pro
   }
   assertExtractedCliPackage(packageRoot);
   return binPath;
-}
-
-async function downloadReleaseTarball(url: string, destPath: string): Promise<void> {
-  const res = await fetch(url, {
-    cache: 'no-store',
-    redirect: 'follow',
-    signal: AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    throw new Error(`GitHub release tarball HTTP ${res.status}`);
-  }
-  await writeFile(destPath, new Uint8Array(await res.arrayBuffer()));
 }
 
 function extractTarball(tarballPath: string, stageDir: string): Promise<void> {

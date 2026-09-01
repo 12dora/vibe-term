@@ -253,7 +253,15 @@ export class Forwarder {
 
   async forwardAuthorizedHttp(
     req: Request,
-    input: { nodeId: string; method: string; path: string; query?: string; body?: unknown },
+    input: {
+      nodeId: string;
+      method: string;
+      path: string;
+      query?: string;
+      body?: unknown;
+      rawBody?: ReadableStream<Uint8Array>;
+      headers?: Record<string, string>;
+    },
     signal?: AbortSignal
   ): Promise<Response> {
     const auth =
@@ -264,8 +272,8 @@ export class Forwarder {
     const abort = signal ?? req.signal;
     const method = input.method.toUpperCase();
     const retryable = IDEMPOTENT_HTTP.has(method);
-    const headers: Record<string, string> = {};
-    const body = retryable ? null : buildJsonStreamBody(input.body, headers);
+    const headers: Record<string, string> = { ...(input.headers ?? {}) };
+    const body = retryable ? null : (input.rawBody ?? buildJsonStreamBody(input.body, headers));
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (abort.aborted) break;
