@@ -21,7 +21,7 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
-const { NodesManagement } = await import('./nodes-management');
+const { NodesManagement, UpgradeAllButton } = await import('./nodes-management');
 const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } = await import(
   '@/node/enrollment-engine'
 );
@@ -265,6 +265,7 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       startAll: () => undefined,
       batch: IDLE_UPGRADE_BATCH,
       eligibleCount: () => 0,
+      anyRunning: false,
     };
   }
 
@@ -343,6 +344,51 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       </MemoryRouter>
     );
     expect(buttonTag(html, 'node-upgrade-ee')).toContain('disabled=""');
+  });
+
+  function renderUpgradeAll(upgrade: NodeUpgradeController, rows: NodeRow[] = []): string {
+    return renderToStaticMarkup(
+      <MemoryRouter>
+        <UpgradeAllButton rows={rows} upgrade={upgrade} />
+      </MemoryRouter>
+    );
+  }
+
+  test('有可升级节点时「全部升级」可点', () => {
+    const html = renderUpgradeAll({ ...controller('1.2.0'), eligibleCount: () => 2 });
+    const tag = buttonTag(html, 'nodes-upgrade-all');
+    expect(tag).not.toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.allHint"');
+  });
+
+  test('已有行内升级在跑：「全部升级」立刻变灰并说明原因', () => {
+    const html = renderUpgradeAll({
+      ...controller('1.2.0'),
+      eligibleCount: () => 2,
+      anyRunning: true,
+    });
+    const tag = buttonTag(html, 'nodes-upgrade-all');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.allBusy"');
+  });
+
+  test('批量进行中：按钮变灰并显示进度，而不是「已有节点在升级」', () => {
+    const html = renderUpgradeAll({
+      ...controller('1.2.0'),
+      eligibleCount: () => 3,
+      anyRunning: true,
+      batch: { running: true, total: 3, completed: 2 },
+    });
+    const tag = buttonTag(html, 'nodes-upgrade-all');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.allHint"');
+    expect(html).toContain('nodes.upgrade.allProgress');
+  });
+
+  test('没有可升级节点：变灰并说明', () => {
+    const tag = buttonTag(renderUpgradeAll(controller('1.2.0')), 'nodes-upgrade-all');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.allNone"');
   });
 });
 

@@ -1849,6 +1849,7 @@ export type TranslationKey =
   | 'nodes.upgrade.allHint_one'
   | 'nodes.upgrade.allHint_other'
   | 'nodes.upgrade.allNone'
+  | 'nodes.upgrade.allBusy'
   | 'nodes.upgrade.allProgress'
   | 'nodes.upgrade.confirmAll_one'
   | 'nodes.upgrade.confirmAll_other'

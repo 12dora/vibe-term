@@ -2036,6 +2036,7 @@
         "upgradeAll": "全部升级",
         "allHint": "升级 {{count}} 个节点到 {{version}}",
         "allNone": "没有可升级的节点。",
+        "allBusy": "已有节点在升级，须等它完成后再全部升级。",
         "allProgress": "升级中 {{completed}}/{{total}}",
         "confirmAll": "升级 {{count}} 个节点到 {{version}}？节点会依次重启，其上的会话随之中断。",
         "allDone": "全部升级完成：成功 {{success}}，失败 {{failed}}。",

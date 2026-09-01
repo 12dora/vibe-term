@@ -18,6 +18,7 @@ import {
 import {
   SILENT_UPGRADE_TOASTS,
   type UpgradeToasts,
+  launchRowUpgrade,
   launchUpgradeBatch,
   reportBatchSummary,
 } from './use-node-upgrade';
@@ -296,6 +297,37 @@ describe('runUpgradeBatch', () => {
     expect(started).toEqual(['a']);
     expect(summary.cancelled).toBe(true);
   });
+
+  test('单个节点抛异常只算它自己失败：同组其余节点跑完，hub / self 照常接上', async () => {
+    const controller = new AbortController();
+    const started: string[] = [];
+    const progress: number[] = [];
+    const summary = await runUpgradeBatch({
+      rows: [
+        row({ id: 'self', name: 'self', isSelf: true }),
+        row({ id: 'hub', name: 'hub', isHub: true }),
+        row({ id: 'boom', name: 'boom' }),
+        row({ id: 'a', name: 'a' }),
+      ],
+      signal: controller.signal,
+      concurrency: 1,
+      run: async (node) => {
+        started.push(node.name);
+        if (node.name === 'boom') throw new Error('network down');
+        return 'done';
+      },
+      onProgress: (completed) => progress.push(completed),
+    });
+    expect(started).toEqual(['boom', 'a', 'hub', 'self']);
+    expect(summary).toEqual({
+      succeeded: 3,
+      failed: 1,
+      failedNames: ['boom'],
+      cancelled: false,
+    });
+    // 进度不会因为异常断档，四台机器都记了账
+    expect(progress).toEqual([1, 2, 3, 4]);
+  });
 });
 
 describe('reportBatchSummary', () => {
@@ -354,6 +386,7 @@ describe('launchUpgradeBatch', () => {
     const running = launchUpgradeBatch({
       rows,
       latestVersion: '1.2.0',
+      rowRunning: false,
       signal: controller.signal,
       t,
       toasts: rec.toasts,
@@ -400,6 +433,66 @@ describe('launchUpgradeBatch', () => {
     const none = launch({ rows: [row({ id: 'latest', name: 'latest', version: '1.2.0' })] });
     expect(none.running).toBeNull();
     expect(none.confirms).toEqual([]);
+  });
+
+  test('已有行内升级在跑：不启动、不弹确认框，只给一条 info', () => {
+    const run = launch({ rowRunning: true });
+    expect(run.running).toBeNull();
+    expect(run.confirms).toEqual([]);
+    expect(run.starts).toEqual([]);
+    expect(run.seen).toEqual([]);
+    expect(run.rec.log).toEqual([['info', 'nodes.upgrade.allBusy']]);
+  });
+});
+
+describe('launchRowUpgrade', () => {
+  function launch(overrides: Partial<Parameters<typeof launchRowUpgrade>[0]> = {}) {
+    const confirms: string[] = [];
+    const seen: string[] = [];
+    const started = launchRowUpgrade({
+      row: row({ id: 'hub', name: 'hub', isHub: true, version: '1.1.9' }),
+      latestVersion: '1.2.0',
+      batchRunning: false,
+      nodeRunning: false,
+      t,
+      confirm: (message) => {
+        confirms.push(message);
+        return true;
+      },
+      runOne: async (node) => {
+        seen.push(node.name);
+        return 'done';
+      },
+      ...overrides,
+    });
+    return { confirms, seen, started };
+  }
+
+  test('正常路径：确认后跑起来', async () => {
+    const run = launch();
+    expect(run.confirms).toHaveLength(1);
+    expect(run.confirms[0]).toContain('nodes.upgrade.confirmRemote');
+    expect(await run.started).toBe('done');
+    expect(run.seen).toEqual(['hub']);
+  });
+
+  test('批量正在推进：行内升级不受理，连确认框都不弹', () => {
+    const run = launch({ batchRunning: true });
+    expect(run.started).toBeNull();
+    expect(run.confirms).toEqual([]);
+    expect(run.seen).toEqual([]);
+  });
+
+  test('同一节点已有升级在跑：不重复触发', () => {
+    const run = launch({ nodeRunning: true });
+    expect(run.started).toBeNull();
+    expect(run.confirms).toEqual([]);
+  });
+
+  test('用户取消确认框：不跑', () => {
+    const run = launch({ confirm: () => false });
+    expect(run.started).toBeNull();
+    expect(run.seen).toEqual([]);
   });
 });
 

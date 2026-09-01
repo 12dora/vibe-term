@@ -2036,6 +2036,7 @@
         "upgradeAll": "すべてアップグレード",
         "allHint": "{{count}} 個のノードを {{version}} にアップグレード",
         "allNone": "アップグレードできるノードはありません。",
+        "allBusy": "アップグレードが実行中です。完了してからすべてアップグレードしてください。",
         "allProgress": "アップグレード中 {{completed}}/{{total}}",
         "confirmAll": "{{count}} 個のノードを {{version}} にアップグレードしますか？ノードが順に再起動し、セッションは切断されます。",
         "allDone": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。",

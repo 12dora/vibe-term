@@ -2037,6 +2037,7 @@
         "allHint_one": "Upgrade {{count}} node to {{version}}",
         "allHint_other": "Upgrade {{count}} nodes to {{version}}",
         "allNone": "No node needs an upgrade.",
+        "allBusy": "An upgrade is already running. Wait for it to finish before upgrading all.",
         "allProgress": "Upgrading {{completed}}/{{total}}",
         "confirmAll_one": "Upgrade {{count}} node to {{version}}? The node restarts and its sessions drop.",
         "confirmAll_other": "Upgrade {{count}} nodes to {{version}}? The nodes restart one by one and their sessions drop.",

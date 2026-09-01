@@ -104,12 +104,22 @@ async function runGroup(
     while (!p.signal.aborted) {
       const row = group[next++];
       if (!row) return;
-      tally(summary, row, await p.run(row));
+      tally(summary, row, await settleOne(p, row));
       progress.completed += 1;
       p.onProgress(progress.completed);
     }
   };
-  await Promise.all(Array.from({ length: limit }, worker));
+  // allSettled：任何一条 worker 意外抛出都不能中断兄弟 worker，更不能让下一组提前开跑。
+  await Promise.allSettled(Array.from({ length: limit }, worker));
+}
+
+/** 单节点的异常边界：一台机器抛错只算它自己失败，绝不带塌整批。 */
+async function settleOne(p: UpgradeBatchParams, row: NodeRow): Promise<UpgradeRunOutcome> {
+  try {
+    return await p.run(row);
+  } catch {
+    return 'failed';
+  }
 }
 
 export async function runUpgradeBatch(p: UpgradeBatchParams): Promise<UpgradeBatchSummary> {

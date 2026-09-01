@@ -191,16 +191,13 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
 }
 
 /**
- * 「全部升级」：latest 未知、批量正在跑、没有可升级节点时禁用。
+ * 「全部升级」：latest 未知、批量正在跑、已有行内升级在跑、没有可升级节点时禁用。
  * 顺序、并发与汇总提示都在 `useNodeUpgrade` 里，这里只负责按钮态与进度文案。
  */
-function UpgradeAllButton({
+export function UpgradeAllButton({
   rows,
   upgrade,
-}: {
-  rows: NodeRow[];
-  upgrade: NodeUpgradeController;
-}) {
+}: { rows: NodeRow[]; upgrade: NodeUpgradeController }) {
   const { t } = useTranslation();
   const latestVersion = upgrade.latest?.latestVersion ?? null;
   const { running, completed, total } = upgrade.batch;
@@ -211,8 +208,8 @@ function UpgradeAllButton({
       type="button"
       size="sm"
       variant="outline"
-      disabled={!latestVersion || running || count === 0}
-      title={upgradeAllHint(t, latestVersion, count)}
+      disabled={!latestVersion || running || upgrade.anyRunning || count === 0}
+      title={upgradeAllHint(t, latestVersion, count, upgrade.anyRunning && !running)}
       onClick={() => upgrade.startAll(rows)}
       data-testid="nodes-upgrade-all"
     >
@@ -231,8 +228,10 @@ function UpgradeAllButton({
 function upgradeAllHint(
   t: (key: string, options?: Record<string, unknown>) => string,
   latestVersion: string | null,
-  count: number
+  count: number,
+  rowBusy: boolean
 ): string {
+  if (rowBusy) return t('nodes.upgrade.allBusy');
   if (!latestVersion) return t('nodes.upgrade.releaseUnavailable');
   if (count === 0) return t('nodes.upgrade.allNone');
   return t('nodes.upgrade.allHint', { count, version: latestVersion });

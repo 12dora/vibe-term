@@ -66,6 +66,8 @@ export interface NodeUpgradeController {
   batch: NodeUpgradeBatchState;
   /** 当前 latest 下可批量升级的节点数；latest 未知时为 0。 */
   eligibleCount: (rows: NodeRow[]) => number;
+  /** 有任何节点的升级在跑（行内或批量）：工具栏据此变灰，与 `startAll` 的同步互斥判定一致。 */
+  anyRunning: boolean;
 }
 
 export const IDLE_UPGRADE_BATCH: NodeUpgradeBatchState = {

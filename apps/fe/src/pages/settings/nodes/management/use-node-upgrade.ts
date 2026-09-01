@@ -400,6 +400,8 @@ export function reportBatchSummary(
 export interface UpgradeBatchLaunch {
   rows: NodeRow[];
   latestVersion: string | null;
+  /** 已有行内升级在跑：批量必须让路，否则它会把那台机器当成「跳过」并打乱 hub → self 的次序。 */
+  rowRunning: boolean;
   signal: AbortSignal;
   t: Translate;
   toasts: UpgradeToasts;
@@ -410,10 +412,14 @@ export interface UpgradeBatchLaunch {
 }
 
 /**
- * 「全部升级」的完整决策链：latest 已知 → 筛候选 → 一次确认 → 按序执行 → 一条汇总 toast。
- * 没启动（latest 未知 / 没有候选 / 用户取消）返回 `null`，调用方据此不进入 running 态。
+ * 「全部升级」的完整决策链：无行内任务 → latest 已知 → 筛候选 → 一次确认 → 按序执行 → 一条汇总 toast。
+ * 没启动（有行内任务 / latest 未知 / 没有候选 / 用户取消）返回 `null`，调用方据此不进入 running 态。
  */
 export function launchUpgradeBatch(p: UpgradeBatchLaunch): Promise<UpgradeBatchSummary> | null {
+  if (p.rowRunning) {
+    p.toasts.info(p.t('nodes.upgrade.allBusy'));
+    return null;
+  }
   const version = p.latestVersion;
   if (!version) return null;
   const targets = eligibleUpgradeRows(p.rows, version);
@@ -437,6 +443,25 @@ function confirmText(t: Translate, row: NodeRow, version: string | null): string
   return row.isSelf
     ? t('nodes.upgrade.confirmSelf', { version: target })
     : t('nodes.upgrade.confirmRemote', { name: row.name, version: target });
+}
+
+export interface UpgradeRowLaunch {
+  row: NodeRow;
+  latestVersion: string | null;
+  /** 批量正在推进：行内按钮不受理，否则同一台机器会被两条流程抢。 */
+  batchRunning: boolean;
+  /** 这一行自己已经有一次升级在跑。 */
+  nodeRunning: boolean;
+  t: Translate;
+  confirm: (message: string) => boolean;
+  runOne: (row: NodeRow, version: string | null) => Promise<UpgradeRunOutcome>;
+}
+
+/** 行内「升级」的准入与确认；没启动返回 `null`。与 `launchUpgradeBatch` 互斥。 */
+export function launchRowUpgrade(p: UpgradeRowLaunch): Promise<UpgradeRunOutcome> | null {
+  if (p.batchRunning || p.nodeRunning) return null;
+  if (!p.confirm(confirmText(p.t, p.row, p.latestVersion))) return null;
+  return p.runOne(p.row, p.latestVersion);
 }
 
 export function upgradeErrorText(t: Translate, code: string): string {
@@ -464,6 +489,8 @@ export function useNodeUpgrade(
   const [latest, setLatest] = useState<NodeUpgradeLatest | null>(null);
   const [entries, setEntries] = useState<Record<string, NodeUpgradeEntry>>({});
   const [batch, setBatch] = useState<NodeUpgradeBatchState>(IDLE_UPGRADE_BATCH);
+  // ref 负责同一 tick 内的同步互斥判定，state 负责让工具栏按钮跟着变灰——两者必须一起改。
+  const [runningCount, setRunningCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const runningRef = useRef<Set<string>>(new Set());
   const batchRunningRef = useRef(false);
@@ -523,19 +550,28 @@ export function useNodeUpgrade(
     (row: NodeRow, version: string | null, signal: AbortSignal, toasts: UpgradeToasts) => {
       if (runningRef.current.has(row.id)) return Promise.resolve<UpgradeRunOutcome>('cancelled');
       runningRef.current.add(row.id);
-      return run(row, version, signal, toasts).finally(() => runningRef.current.delete(row.id));
+      if (alive()) setRunningCount(runningRef.current.size);
+      return run(row, version, signal, toasts).finally(() => {
+        runningRef.current.delete(row.id);
+        if (alive()) setRunningCount(runningRef.current.size);
+      });
     },
-    [run]
+    [alive, run]
   );
 
   const start = useCallback(
     (row: NodeRow) => {
       const signal = abortRef.current?.signal;
       if (!signal || signal.aborted) return;
-      if (runningRef.current.has(row.id)) return;
-      const version = latest?.latestVersion ?? null;
-      if (!globalThis.confirm?.(confirmText(t, row, version))) return;
-      void runOnce(row, version, signal, toast);
+      void launchRowUpgrade({
+        row,
+        latestVersion: latest?.latestVersion ?? null,
+        batchRunning: batchRunningRef.current,
+        nodeRunning: runningRef.current.has(row.id),
+        t,
+        confirm: (message) => globalThis.confirm?.(message) === true,
+        runOne: (target, version) => runOnce(target, version, signal, toast),
+      });
     },
     [latest, runOnce, t]
   );
@@ -547,6 +583,7 @@ export function useNodeUpgrade(
       const running = launchUpgradeBatch({
         rows,
         latestVersion: latest?.latestVersion ?? null,
+        rowRunning: runningRef.current.size > 0,
         signal,
         t,
         toasts: toast,
@@ -576,5 +613,5 @@ export function useNodeUpgrade(
     [latest]
   );
 
-  return { latest, entryOf, start, startAll, batch, eligibleCount };
+  return { latest, entryOf, start, startAll, batch, eligibleCount, anyRunning: runningCount > 0 };
 }
