@@ -24,7 +24,12 @@ export function applyReplicatedNodeList(
   meshHubs: MeshHubStore,
   list: UplinkNodeList,
   meta: ReplicatedNodeListMeta,
-  self: { hubNodeId: string | undefined; record: OwnHubRow | null; authorizedHubIds?: string[] },
+  self: {
+    hubNodeId: string | undefined;
+    record: OwnHubRow | null;
+    authorizedHubIds?: string[];
+    isAuthorizedHub?: (id: string) => boolean;
+  },
   now: number
 ): void {
   const ownId = self.hubNodeId;
@@ -47,27 +52,31 @@ export function applyReplicatedNodeList(
     });
   }
 
-  const allowed = new Set<string>();
-  if (ownId) allowed.add(ownId.toLowerCase());
+  const envAllowed = new Set<string>();
+  if (ownId) envAllowed.add(ownId.toLowerCase());
   for (const id of self.authorizedHubIds ?? []) {
     const value = id.trim().toLowerCase();
-    if (value) allowed.add(value);
+    if (value) envAllowed.add(value);
   }
-  if (meta.hubNodeId) allowed.add(meta.hubNodeId.toLowerCase());
+  const allowed = (id: string): boolean => {
+    const key = id.toLowerCase();
+    if (self.isAuthorizedHub) return self.isAuthorizedHub(key);
+    return envAllowed.has(key);
+  };
   const incoming = list.hubs
-    ? hubListToRecords(list.hubs).filter((row) => allowed.has(row.hubNodeId.toLowerCase()))
+    ? hubListToRecords(list.hubs).filter((row) => allowed(row.hubNodeId))
     : legacyIncomingHubs(list, allowed);
   const byId = new Map(incoming.map((row) => [row.hubNodeId, row]));
-  if (ownId && self.record) {
+  if (ownId && self.record && allowed(ownId)) {
     byId.set(ownId, { ...self.record, online: true });
   }
   meshHubs.replaceAll([...byId.values()], now);
 }
 
-function legacyIncomingHubs(list: UplinkNodeList, allowed: Set<string>): OwnHubRow[] {
+function legacyIncomingHubs(list: UplinkNodeList, allowed: (id: string) => boolean): OwnHubRow[] {
   if (!list.hub) return [];
   const hubNodeId = list.hub.nodeId;
-  if (!allowed.has(hubNodeId.toLowerCase())) return [];
+  if (!allowed(hubNodeId)) return [];
   return [
     {
       hubNodeId,

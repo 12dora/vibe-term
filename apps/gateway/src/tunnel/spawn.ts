@@ -1,3 +1,5 @@
+import { createServer } from 'node:net';
+
 export type SpawnSpec = {
   command: string;
   args: string[];
@@ -11,9 +13,33 @@ export type SpawnHandle = {
   stderr: ReadableStream<Uint8Array> | null;
   exited: Promise<number>;
   kill: (signal?: NodeJS.Signals) => void;
+  metricsAddr?: string | null;
 };
 
 export type Spawner = (spec: SpawnSpec) => SpawnHandle;
+
+export type PickPort = () => Promise<number>;
+
+export function pickFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.unref();
+    const onError = (error: Error): void => {
+      server.close();
+      reject(error);
+    };
+    server.once('error', onError);
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      server.close((err) => {
+        server.removeListener('error', onError);
+        if (err) reject(err);
+        else resolve(port);
+      });
+    });
+  });
+}
 
 function envRecord(env?: Record<string, string>): Record<string, string> | undefined {
   if (!env) return undefined;

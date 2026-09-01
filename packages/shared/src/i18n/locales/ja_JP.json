@@ -416,7 +416,16 @@
           "stopped": "停止中",
           "starting": "起動中",
           "running": "稼働中",
+          "degraded": "接続なし",
           "error": "異常"
+        },
+        "degradedNotice": "トンネルのプロセスは稼働中ですが、エッジ接続がなく、公開アドレスに到達できません。",
+        "connector": {
+          "label": "コネクタ",
+          "connected": "エッジ接続 {{n}} 本",
+          "noConnections": "エッジ接続なし",
+          "unknown": "探測できません（metrics エンドポイントに到達できません）",
+          "unprobed": "未探測"
         },
         "mode": {
           "quick": {
@@ -508,13 +517,16 @@
           "release": "引き継ぎを解除"
         },
         "check": {
-          "reachable": "公開アドレスに到達できました。",
+          "reachable": "公開アドレス経由で本機に到達できました。",
+          "accessProtected": "公開アドレスは Cloudflare Access で保護されており、コネクタはオンラインです。",
+          "accessProtectedUnverified": "公開アドレスは Cloudflare Access で保護されています。コネクタを探測できず、本機への到達は確認できません。",
           "unreachable": "公開アドレスに到達できません。",
           "running": "公開アドレスを確認しています…"
         },
         "log": {
           "title": "cloudflared のログ",
-          "empty": "出力はありません。"
+          "empty": "出力はありません。",
+          "emptyExternal": "外部の cloudflared はログファイルを出力していません（起動引数に --logfile がありません）。"
         },
         "steps": {
           "path": {
@@ -642,6 +654,7 @@
           "tunnel_exists": "同名のトンネルが Cloudflare に既に存在します。別の名前を指定するか、既存のトンネルを削除してください。",
           "dns_route_failed": "DNS レコードの追加に失敗しました。同じ Cloudflare アカウントでドメインが管理されているか、既存レコードと競合していないか確認してください。",
           "process_failed": "cloudflared が起動できませんでした。cloudflared ログを開いて原因を確認してください。",
+          "connector_down": "コネクタにエッジ接続がありません：{{message}}",
           "busy": "前の操作がまだ完了していません。少し待ってから再試行してください。",
           "not_configured": "リモートアクセスは未設定です。下のセットアップで接続方法を選んでください。",
           "invalid_request": "リクエストが不正として拒否されました。ページの内容が古い可能性があります。再読み込みしてから操作してください。",
@@ -1710,7 +1723,7 @@
         "title": "ノード管理"
       },
       "empty": "ノードがありません",
-      "self": "現在のノード",
+      "self": "現在",
       "hub": "ハブ",
       "loggedIn": "サインイン済み",
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
@@ -1725,7 +1738,74 @@
         "detail": "{{url}}｜優先度 {{priority}}｜エポック {{epoch}}｜{{state}}",
         "standbyNotice": "メインハブに接続できないため予備ハブを使用中です。追加・名前変更・削除などの管理操作はできません。",
         "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
-        "machineRole": "ハブの役割"
+        "machineRole": "ハブの役割",
+        "lastAttempt": "最終試行：{{time}}",
+        "lastError": "最終エラー：{{error}}",
+        "authorization": {
+          "label": "認可：{{value}}",
+          "signed": "署名済み",
+          "env": "環境変数",
+          "self": "本機",
+          "none": "未承認"
+        },
+        "role": {
+          "promote": "メインハブにする",
+          "demote": "予備ハブにする",
+          "stateSwitching": "切り替え中",
+          "confirmPromote": "メインハブにする",
+          "confirmDemote": "予備ハブにする",
+          "confirmText": "「{{target}}」が書き込みを引き継ぎます。切り替え中は管理操作を一時的に利用できません。",
+          "confirmTextNoWriter": "「{{from}}」を予備ハブにします。書き込みを引き継げるハブはありません。",
+          "confirm": "切り替え",
+          "cancel": "キャンセル",
+          "stepAdmit": "「{{target}}」にハブ認可を発行します（認証情報が必要です）。",
+          "stepDemote": "「{{from}}」を予備ハブにします。",
+          "stepPromote": "「{{target}}」をメインハブにします。その後自動的に再起動します。",
+          "stepWait": "「{{target}}」の再起動と書き込みの引き継ぎを待ちます。",
+          "stepDemoteOnly": "「{{from}}」を予備ハブにします。その後自動的に再起動します。",
+          "warnFromUnreachable": "現在のメインハブに接続できないため、より高いエポックで隔離します。",
+          "warnNoWriter": "この後は書き込み可能なハブがなくなり、追加・名前変更・削除などの管理操作はできません。",
+          "started": "ハブの切り替えを開始しました。",
+          "done": "「{{target}}」がメインハブになりました。",
+          "failed": "ハブの切り替えに失敗しました：{{error}}",
+          "forceTitle": "バージョンが古いノードがあります",
+          "forceDescription": "続行すると、これらのノードはハブ認可レコードを同期できなくなります。",
+          "forceText": "以下のノードは {{minVersion}} より古いため、先にアップグレードが必要です：",
+          "forceAccept": "それでも続行する（古いノードは同期できなくなります）",
+          "forceConfirm": "続行する",
+          "recovery": {
+            "title": "書き込み可能なハブがありません",
+            "description": "元のメインハブは予備になり、新しいメインハブの引き継ぎは未確認です。次の操作を選んでください。",
+            "noWriter": "「{{from}}」は予備ハブになり、「{{target}}」の書き込み引き継ぎは未確認です。",
+            "retry": "対象の昇格を再試行",
+            "rollback": "ロールバック：元のメインハブを再び昇格",
+            "dismiss": "後で対応"
+          },
+          "blocked": {
+            "unknownHub": "ハブ一覧が未読み込みです。しばらくしてから再試行してください。",
+            "unknownAuth": "入口のバージョンが古く、ハブ認可の種別を読み取れません。",
+            "offline": "このハブはオフラインのため切り替えできません。",
+            "switching": "ハブの切り替えがすでに実行中です。",
+            "rowBusy": "このノードはアップグレードまたはアンインストール中です。",
+            "notWritable": "先にハブ認可の発行が必要ですが、メインハブが書き込みを受け付けません。"
+          },
+          "errors": {
+            "HUB_NOT_HUB": "対象はハブとして動作していません。",
+            "HUB_NOT_AUTHORIZED": "対象ハブは認可されていません。",
+            "HUB_EPOCH_STALE": "書き込みエポックが古くなっています。更新してから再試行してください。",
+            "HUB_ROLE_BUSY": "対象では役割の切り替えがすでに実行中です。",
+            "HUB_ROLE_UNSUPPORTED": "対象のバージョンはリモート切り替えに未対応です。先にアップグレードしてください。",
+            "INVALID_REQUEST": "リクエストが不正です。",
+            "unknown": "原因は不明です。",
+            "unreachable": "対象ハブに接続できません。",
+            "authTimeout": "ハブ認可が時間内に反映されませんでした。",
+            "resumeAdmit": "ハブ認可の発行が完了していません。切り替えをやり直してください。",
+            "restartTimeout": "対象の再起動がタイムアウトし、結果を確認できません：{{error}}",
+            "writerTimeout": "新しいメインハブが書き込みを引き継いだか確認できません。更新して確認してください。",
+            "hubsUnreachable": "ハブ一覧を取得できません。入口に一時的に接続できません。",
+            "unexpected": "切り替えが中断しました。更新して確認してください。"
+          }
+        }
       },
       "machine": {
         "title": "このマシン",
@@ -1992,6 +2072,54 @@
         "copy": "コピー",
         "copied": "コピーしました"
       },
+      "selection": {
+        "more": "その他",
+        "selectAll": "すべて選択",
+        "clearAll": "選択を解除",
+        "selfBlocked": "本機は選択できません。",
+        "none": "先にノードを選択してください。",
+        "busy": "ノードを削除中です。完了までお待ちください。",
+        "upgrade": "アップグレード（{{count}}）",
+        "upgradeWithSelf": "アップグレード（{{count}}、本機を含む）",
+        "upgradeSelfNotice": "本機は最後にアップグレードされ、サービス再起動でこのページは一時的に切断されます。",
+        "revoke": "ノードを削除",
+        "uninstall": "tmex をアンインストール"
+      },
+      "uninstall": {
+        "confirmTitle": "tmex をアンインストール",
+        "confirmText": "ノード上の tmex のサービス、プログラム、データを削除し、その後マルチノード接続から除外します。この操作は取り消せません。",
+        "targets": "アンインストール対象（{{count}}）",
+        "skipped": "スキップ（{{count}}）",
+        "noTargets": "選択したノードはいずれもリモートでアンインストールできません。",
+        "confirm": "アンインストール",
+        "cancel": "キャンセル",
+        "skip": {
+          "self": "本機",
+          "offline": "オフライン",
+          "loginRequired": "未ログイン",
+          "tooOld": "バージョンが 1.1.13 未満",
+          "uninstalling": "アンインストール中"
+        },
+        "stateRunning": "アンインストール中",
+        "stateFailed": "アンインストール失敗",
+        "clear": "アンインストール記録を消去",
+        "clearFailed": "アンインストール記録を消去できませんでした。もう一度お試しください。",
+        "busy": "このノードはアンインストール中です。",
+        "running": "アンインストール中です。完了までお待ちください。",
+        "revokeFailed": "アンインストールしましたが、マルチノード接続から除外できませんでした",
+        "summary": "{{count}} 個のノードをアンインストールしました",
+        "summaryFailed": "{{count}} 個をアンインストール、{{failed}} 個が失敗しました（{{names}}）",
+        "summaryAborted": "Hub が利用できないため、残り {{remaining}} 台を中止しました（{{count}} 台はアンインストール済み）。",
+        "errors": {
+          "loginRequired": "先にそのノードにログインしてください。",
+          "unreachable": "そのノードに接続できません。",
+          "notAllowed": "そのノードは tmex インストーラーで導入されていないため、リモートでアンインストールできません。",
+          "unsupported": "そのノードのバージョンはリモートアンインストールに対応していません。",
+          "selfBlocked": "本機はアンインストールできません。",
+          "upgradeInProgress": "そのノードはアップグレード中です。しばらくしてからお試しください。",
+          "nodeGone": "そのノードは一覧にありません。"
+        }
+      },
       "enrollment": {
         "nameLabel": "ノード名（任意）",
         "create": "参加コードを作成",
@@ -2020,7 +2148,10 @@
         "reasonPrompt": "理由（任意）",
         "done": "削除しました",
         "hubFailed": "ハブが確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
-        "selfBlocked": "現在使用中のノードは削除できません。"
+        "selfBlocked": "現在使用中のノードは削除できません。",
+        "bulkConfirm": "{{count}} 個のノード（{{names}}）を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
+        "bulkDone": "{{count}} 個のノードを削除しました",
+        "bulkFailed": "{{count}} 個を削除、{{failed}} 個が失敗しました（{{names}}）"
       },
       "upgrade": {
         "action": "アップグレード",
@@ -2064,7 +2195,9 @@
         "cancelUnsupported": "このノードのバージョンはアップグレードの中断に対応していません。",
         "cancelNotRunning": "このノードで実行中のアップグレードはありません。",
         "cancelFailed": "アップグレードを中止できませんでした：{{error}}",
-        "restoring": "アップグレード状態を同期中…"
+        "restoring": "アップグレード状態を同期中…",
+        "allResumed": "前回の一括アップグレードを再開しました。",
+        "allOtherTab": "別のタブで一括アップグレードが実行中です。"
       },
       "badge": {
         "direct": "ダイレクト",

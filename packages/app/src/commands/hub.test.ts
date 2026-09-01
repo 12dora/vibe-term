@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import { meshHubs } from '../../../../apps/gateway/src/db/schema';
+import { HubRoleTransitionStore } from '../../../../apps/gateway/src/hub/hub-role-transitions';
 import {
   bytesEqual,
   decodeKeyLogRecord,
@@ -20,6 +21,7 @@ import { readEnvFile, stringifyEnv } from '../lib/env-file';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import {
   HUB_MANUAL_RESTART_HINT,
+  HUB_SIGNED_AUTH_PRECEDENCE_NOTE,
   runHubAllow,
   runHubDemote,
   runHubDisallow,
@@ -645,13 +647,46 @@ describe('hub standby/promote/demote/list', () => {
       auth,
       log: (message) => logs.push(message),
     });
-    expect(listed.hubs.find((row) => row.hubNodeId === identity.nodeId)?.authorized).toBe(true);
-    expect(listed.hubs.find((row) => row.hubNodeId === 'ab'.repeat(16))?.authorized).toBe(true);
-    expect(listed.hubs.find((row) => row.hubNodeId === 'cd'.repeat(16))?.authorized).toBe(false);
+    expect(listed.hubs.find((row) => row.hubNodeId === identity.nodeId)?.authorization).toBe(
+      'self'
+    );
+    expect(listed.hubs.find((row) => row.hubNodeId === 'ab'.repeat(16))?.authorization).toBe('env');
+    expect(listed.hubs.find((row) => row.hubNodeId === 'cd'.repeat(16))?.authorization).toBe('no');
     const text = logs.join('\n');
     expect(text).toMatch(/AUTH|authorized/i);
-    expect(text).toContain('yes');
+    expect(text).toContain('self');
+    expect(text).toContain('env');
     expect(text).toContain('no');
+  });
+
+  test('promote/demote persist hub_role_transitions; list prints latest phase', async () => {
+    const { auth } = await openEnvAuth('hub,node', { TMEX_HUB_MODE: 'standby' });
+    await seedJoinedIdentity(auth);
+    await runHubPromote(parseArgs(['hub', 'promote', '--yes']), {
+      auth,
+      log: () => undefined,
+      skipRestart: true,
+    });
+    const afterPromote = new HubRoleTransitionStore(auth.db).latest();
+    expect(afterPromote?.mode).toBe('active');
+    expect(afterPromote?.phase).toBe('restarting');
+    expect(afterPromote?.writerEpoch).toBeGreaterThanOrEqual(2);
+
+    await runHubDemote(parseArgs(['hub', 'demote']), {
+      auth,
+      log: () => undefined,
+      skipRestart: true,
+    });
+    const afterDemote = new HubRoleTransitionStore(auth.db).latest();
+    expect(afterDemote?.mode).toBe('standby');
+    expect(afterDemote?.phase).toBe('restarting');
+
+    const logs: string[] = [];
+    await runHubList(parseArgs(['hub', 'list']), {
+      auth,
+      log: (message) => logs.push(message),
+    });
+    expect(logs.join('\n')).toContain(`role-transition restarting ${afterDemote?.operationId}`);
   });
 });
 
@@ -683,6 +718,7 @@ describe('hub allow/disallow', () => {
     expect(text).toContain(second);
     expect(text).toContain(first);
     expect(text).toContain(third);
+    expect(text).toContain(HUB_SIGNED_AUTH_PRECEDENCE_NOTE);
   });
 
   test('allow refuses invalid node ids and does not write env', async () => {

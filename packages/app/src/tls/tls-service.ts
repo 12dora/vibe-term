@@ -136,6 +136,7 @@ export class TlsService {
   private statusCache: { value: TlsStatus; expiresAt: number; generation: number } | null = null;
   private statusGeneration = 0;
   private mutations = 0;
+  private listenerAppliedOk = false;
   private readonly mutex = new SerialQueue();
   private readonly scheduler: RenewalScheduler;
   private readonly now: () => number;
@@ -192,7 +193,7 @@ export class TlsService {
       const row = await this.opts.store.get();
       await (row.mode === 'selfsigned' || row.mode === 'acme'
         ? this.applyListener()
-        : this.withMutation(() => this.opts.listener.apply(null)));
+        : this.withListenerApply(() => this.opts.listener.apply(null)));
       if (row.mode !== 'acme') return;
       this.scheduler.start();
       const due = row.acmeNextRenewAt !== null && this.now() >= row.acmeNextRenewAt;
@@ -276,13 +277,26 @@ export class TlsService {
   private endMutation(): void {
     this.mutations = Math.max(0, this.mutations - 1);
     this.invalidateStatusCache();
-    this.opts.onStatusChange?.();
+    if (this.mutations === 0 && this.listenerAppliedOk) {
+      this.listenerAppliedOk = false;
+      this.opts.onStatusChange?.();
+    }
   }
 
   private async withMutation<T>(fn: () => Promise<T>): Promise<T> {
     this.beginMutation();
     try {
       return await fn();
+    } finally {
+      this.endMutation();
+    }
+  }
+
+  private async withListenerApply(fn: () => Promise<void>): Promise<void> {
+    this.beginMutation();
+    try {
+      await fn();
+      if (!this.opts.listener.state().error) this.listenerAppliedOk = true;
     } finally {
       this.endMutation();
     }
@@ -408,7 +422,7 @@ export class TlsService {
   private async stopTls(mode: 'none' | 'external'): Promise<void> {
     await this.upsert({ mode });
     this.scheduler.stop();
-    await this.withMutation(() => this.opts.listener.apply(null));
+    await this.withListenerApply(() => this.opts.listener.apply(null));
   }
 
   private async reissueSelfSigned(sans: string[]): Promise<void> {
@@ -621,10 +635,10 @@ export class TlsService {
     const row = await this.opts.store.get();
     const secrets = await this.opts.store.getPrivateMaterial();
     if (!row.certPem || !secrets.keyPem) {
-      await this.withMutation(() => this.opts.listener.apply(null));
+      await this.withListenerApply(() => this.opts.listener.apply(null));
       return;
     }
-    await this.withMutation(() =>
+    await this.withListenerApply(() =>
       this.opts.listener.apply({
         port: row.tlsPort,
         host: row.bindHost,

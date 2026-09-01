@@ -348,6 +348,30 @@ describe('mergeNodes', () => {
     expect(rows[0].rttMs).toBeNull();
   });
 
+  test('operation 原样带出；旧后端不下发时为 null', () => {
+    const rows = mergeNodes(
+      [
+        node({
+          id: 'a',
+          operation: {
+            kind: 'uninstall',
+            phase: 'uninstalling',
+            startedAt: 1,
+            updatedAt: 2,
+            error: null,
+          },
+        }),
+        node({ id: 'b' }),
+      ],
+      null,
+      { entryNodeId: null, hubNodeId: null }
+    );
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get('a')?.operation?.kind).toBe('uninstall');
+    expect(byId.get('a')?.operation?.phase).toBe('uninstalling');
+    expect(byId.get('b')?.operation).toBeNull();
+  });
+
   test('hub 列表里多出来的 node 不会凭空出现在表里', () => {
     const rows = mergeNodes(meshNodes, [...hubNodes, { ...hubNodes[0], id: 'ghost' }], {
       entryNodeId: 'entry',

@@ -723,6 +723,13 @@ describe('auth-routes', () => {
         ],
         1
       );
+      mesh.userStore.upsertHubAuthorization({
+        userId: mesh.boot.userId,
+        hubNodeId: 'cc'.repeat(16),
+        status: 'active',
+        admitSeq: 1,
+        updatedSeq: 1,
+      });
       const res = await call(mesh.runtime, 'http://localhost/api/auth/mode');
       const body = (await res.json()) as { hubNodeId: string; hubPublicUrl: string };
       expect(body.hubNodeId).toBe('cc'.repeat(16));
@@ -1725,6 +1732,13 @@ describe('auth-routes', () => {
         ],
         1
       );
+      mesh.userStore.upsertHubAuthorization({
+        userId: mesh.boot.userId,
+        hubNodeId: writerId,
+        status: 'active',
+        admitSeq: 1,
+        updatedSeq: 1,
+      });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
         '@tmex/shared/auth'
@@ -1826,6 +1840,13 @@ describe('auth-routes', () => {
         ],
         1
       );
+      mesh.userStore.upsertHubAuthorization({
+        userId: mesh.boot.userId,
+        hubNodeId: writerId,
+        status: 'active',
+        admitSeq: 1,
+        updatedSeq: 1,
+      });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
         '@tmex/shared/auth'

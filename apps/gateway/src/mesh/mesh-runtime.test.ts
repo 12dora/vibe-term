@@ -1598,6 +1598,14 @@ describe('createMeshRuntime', () => {
     await waitUntil(() =>
       received.some((msg) => msg.t === 'node.status' && msg.hub?.caFingerprint === 'bb'.repeat(32))
     );
+    expect(mesh.hub?.uplink.ownHubSnapshot()?.caFingerprint).toBe('bb'.repeat(32));
+    const status = await mesh.hub?.handleRequest(new Request('http://hub/api/hub/status'), {
+      upgrade: () => false,
+    });
+    expect(status?.status).toBe(200);
+    expect(((await status?.json()) as { caFingerprint?: string }).caFingerprint).toBe(
+      'bb'.repeat(32)
+    );
   });
 
   test('node.status hub advertisement follows live hub mode after setMode', async () => {

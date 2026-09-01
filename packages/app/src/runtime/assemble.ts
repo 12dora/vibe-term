@@ -9,6 +9,7 @@ import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-ident
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import type { NodeSessionStore } from '../../../../apps/gateway/src/auth/node-session-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
+import { runtimeController } from '../../../../apps/gateway/src/control/runtime';
 import {
   LocalAuthStore,
   readLocalAuthEffective,
@@ -336,6 +337,18 @@ function routeWebsocket(
   };
 }
 
+async function advertisedTlsInfo(
+  service: TlsService | undefined
+): Promise<{ caFingerprint: string | null; caPem: string | null }> {
+  if (!service) return { caFingerprint: null, caPem: null };
+  const status = await service.status();
+  if (!status.listener.running) return { caFingerprint: null, caPem: null };
+  return {
+    caFingerprint: status.caFingerprint,
+    caPem: (await service.caPem()) ?? null,
+  };
+}
+
 function buildTlsLifecycle(
   fetch: AssembledTmex['fetch'],
   websocket: GatewayRuntime['websocket'],
@@ -444,12 +457,7 @@ async function createStandaloneAuthHttp(input: {
     localAuth: new LocalAuthStore(input.gateway.db),
     localAuthEffective: input.localAuthEffective,
   });
-  runtime.auth.setTlsInfo(async () => ({
-    caFingerprint: input.tlsSlot.service
-      ? (await input.tlsSlot.service.status()).caFingerprint
-      : null,
-    caPem: (await input.tlsSlot.service?.caPem()) ?? null,
-  }));
+  runtime.auth.setTlsInfo(() => advertisedTlsInfo(input.tlsSlot.service));
   return runtime;
 }
 
@@ -507,12 +515,24 @@ async function createNodeMesh(input: {
           ? null
           : loadNodeDatachannel({ nativeDir })),
     userId: identity?.userId ?? undefined,
-    tlsInfo: async () => ({
-      caFingerprint: input.tlsSlot.service
-        ? (await input.tlsSlot.service.status()).caFingerprint
-        : null,
-      caPem: (await input.tlsSlot.service?.caPem()) ?? null,
-    }),
+    tlsInfo: () => advertisedTlsInfo(input.tlsSlot.service),
+    patchHubRoleEnv: async (patch) => {
+      const envPath = resolveSetupEnvPath();
+      await withEnvLock(async () => {
+        let existing: Record<string, string> = {};
+        try {
+          existing = await readEnvFile(envPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        await writeEnvFile(envPath, { ...existing, ...patch });
+      });
+    },
+    scheduleHubRoleRestart: (delayMs) => {
+      setTimeout(() => {
+        void runtimeController.requestRestart();
+      }, delayMs);
+    },
   };
   return input.createMesh(opts);
 }
@@ -715,14 +735,27 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     (req) => serveFrontend(req, staticRoot),
   ]);
   const websocket = routeWebsocket(gateway, mesh ?? wsAuthFrom(authHttp), hub);
-  const refreshMeshTls = () => {
+  const invalidateTlsCaches = () => {
     authHttp?.auth.invalidateAuthModeCache();
     mesh?.invalidateAuthModeCache();
-    void mesh?.refreshTlsAndAdvertise();
+  };
+  const refreshMeshTls = () => {
+    invalidateTlsCaches();
+    void (async () => {
+      try {
+        const tls = await advertisedTlsInfo(tlsSlot.service);
+        if (hub && typeof hub.updateSelfCaFingerprint === 'function') {
+          hub.updateSelfCaFingerprint(tls.caFingerprint);
+        }
+      } catch {
+        /* fake db in unit tests has no tls_config table */
+      }
+      await mesh?.refreshTlsAndAdvertise();
+    })();
   };
   const tlsLife = buildTlsLifecycle(fetch, websocket, gateway.db, routeDeps, tlsSlot, {
     onStatusChange: refreshMeshTls,
-    onTlsApplied: refreshMeshTls,
+    onTlsApplied: invalidateTlsCaches,
   });
   tlsHandler = tlsLife.tlsHandler;
   void mesh?.refreshTlsAndAdvertise();

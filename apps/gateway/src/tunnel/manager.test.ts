@@ -255,7 +255,11 @@ describe('TunnelManager', () => {
   test('check compares healthz startedAt via injected fetch', async () => {
     const ctx = await setup({
       fetchImpl: (async (input: RequestInfo | URL) => {
-        expect(String(input)).toBe('https://lucky-cloud-9.trycloudflare.com/healthz');
+        const url = String(input);
+        if (url.includes('/ready')) {
+          return Response.json({ readyConnections: 4, connectorId: 'c1' });
+        }
+        expect(url).toBe('https://lucky-cloud-9.trycloudflare.com/healthz');
         return Response.json({ startedAt: 111 });
       }) as typeof fetch,
     });
@@ -376,7 +380,51 @@ describe('TunnelManager', () => {
     expect(job?.state).toBe('error');
     expect(job?.error?.code).toBeTruthy();
     expect(job?.error?.message).toBeTruthy();
+    expect(job?.error?.message).toMatch(/health check HTTP 503/);
     expect(job?.step).not.toBe('check');
+  });
+
+  test('edge HTTP failure includes known connector connection count', async () => {
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          return Response.json({ readyConnections: 0, connectorId: 'c' }, { status: 503 });
+        }
+        return new Response('error code: 530', { status: 530 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://lucky-cloud-9.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    await ctx.manager.handleAction({ action: 'check' });
+    const down = await waitJob(ctx.manager);
+    expect(down?.error?.code).toBe('connector_down');
+
+    const ctx2 = await setup({
+      pickPort: async () => 41234,
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          return Response.json({ readyConnections: 4, connectorId: 'c' });
+        }
+        return new Response('error code: 530', { status: 530 });
+      },
+    });
+    dirs.push(ctx2.dir);
+    ctx2.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://lucky-cloud-9.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx2.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx2.manager);
+    await ctx2.manager.handleAction({ action: 'check' });
+    const failed = await waitJob(ctx2.manager);
+    expect(failed?.state).toBe('error');
+    expect(failed?.error?.message).toBe('health check HTTP 530 (connector: 4 edge connections)');
   });
 
   test('clears publicUrl on quick start/stop and does not leak named hostnames', async () => {
@@ -912,7 +960,7 @@ describe('TunnelManager', () => {
     expect(status.exposureProtected).toBe(false);
   });
 
-  test('check treats Access login redirect as access_protected', async () => {
+  test('check treats Access login redirect without connector metrics as access_protected_unverified', async () => {
     const ctx = await setup({
       fetchImpl: async () =>
         new Response(null, {
@@ -930,7 +978,7 @@ describe('TunnelManager', () => {
     await ctx.manager.handleAction({ action: 'check' });
     const job = await waitJob(ctx.manager);
     expect(job?.state).toBe('done');
-    expect(job?.step).toBe('access_protected');
+    expect(job?.step).toBe('access_protected_unverified');
   });
 
   test('remove_access keeps local state when DELETE is not 404', async () => {
@@ -986,6 +1034,54 @@ describe('TunnelManager', () => {
     await ctx.manager.handleAction({ action: 'start' });
     await waitJob(ctx.manager);
     expect(ctx.manager.status().process.state).toBe('running');
+
+    const enforce = await ctx.manager.handleAction({
+      action: 'set_access_enforce',
+      enforceJwt: false,
+    });
+    expect(enforce.httpStatus).toBe(409);
+    expect('error' in enforce.payload && enforce.payload.error.code).toBe('exposure_ack_required');
+
+    const removed = await ctx.manager.handleAction({ action: 'remove_access' });
+    expect(removed.httpStatus).toBe(409);
+
+    const okEnforce = await ctx.manager.handleAction({
+      action: 'set_access_enforce',
+      enforceJwt: false,
+      acknowledgeExposure: true,
+    });
+    expect(okEnforce.httpStatus).toBe(200);
+    expect(ctx.manager.status().access.enforceJwt).toBe(false);
+  });
+
+  test('remove_access and set_access_enforce(false) require ack when tunnel is degraded', async () => {
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({
+      accountId: 'acc',
+      apiToken: 'tok',
+      teamDomain: 'team.cloudflareaccess.com',
+      appId: 'app',
+      aud: 'aud',
+      hostname: 'ok.example.com',
+      rules: [{ kind: 'email', value: 'a@example.com' }],
+      enforceJwt: true,
+    });
+    const ctx = await setup({
+      loginEnforced: () => false,
+      accessStore,
+      fetchImpl: async () => new Response(null, { status: 404 }),
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({ mode: 'named', hostname: 'ok.example.com', tunnelId: 'tid', tunnelName: 'n' });
+    ctx.spawner.on((s) => argsInclude(s, 'run'), {
+      hold: true,
+      stdout: 'Registered tunnel connection connIndex=0\n',
+    });
+    await ctx.manager.handleAction({ action: 'start' });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().process.state).toBe('running');
+    ctx.spawner.lastHandle()?.writeStdout('Unregistered tunnel connection connIndex=0\n');
+    await waitState(ctx.manager, 'degraded');
 
     const enforce = await ctx.manager.handleAction({
       action: 'set_access_enforce',
@@ -1354,5 +1450,288 @@ describe('TunnelManager', () => {
     await ctx.manager.start();
     expect(Date.now() - t0).toBeLessThan(150);
     expect(finished).toBe(false);
+  });
+
+  test('spawns cloudflared with --metrics from pickPort', async () => {
+    const ctx = await setup({ pickPort: async () => 41234 });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://metrics-cloud.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    const call = ctx.spawner.calls.find((c) => argsInclude(c, '--url'));
+    expect(call?.args).toContain('--metrics');
+    expect(call?.args).toContain('127.0.0.1:41234');
+  });
+
+  test('status is degraded when the connector reports zero edge connections', async () => {
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          return Response.json(
+            { status: 503, readyConnections: 0, connectorId: 'dead' },
+            { status: 503 }
+          );
+        }
+        return Response.json({ startedAt: 111 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://lucky-cloud-9.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    await waitState(ctx.manager, 'degraded');
+    const status = ctx.manager.status();
+    expect(status.process.state).toBe('degraded');
+    expect(status.process.publicUrl).toBe('https://lucky-cloud-9.trycloudflare.com');
+    expect(status.connector.reachable).toBe(true);
+    expect(status.connector.readyConnections).toBe(0);
+    await ctx.manager.stop();
+  });
+
+  test('check job fails connector_down for external Access 302 with zero edge connections', async () => {
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          return Response.json(
+            { status: 503, readyConnections: 0, connectorId: 'dead' },
+            { status: 503 }
+          );
+        }
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'https://acme.cloudflareaccess.com/cdn-cgi/access/login' },
+        });
+      },
+      externalDetectDeps: {
+        listProcesses: async () =>
+          '42 cloudflared tunnel --metrics 127.0.0.1:41234 --logfile /tmp/missing.log run --token-file /tmp/token\n',
+        readFile: async (path) => {
+          if (path === '/tmp/token') {
+            return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
+          }
+          if (path === '/tmp/hostname') return 'remote.example.com\n';
+          return null;
+        },
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    const adopt = await ctx.manager.handleAction({
+      action: 'adopt_external',
+      hostname: 'remote.example.com',
+    });
+    expect(adopt.httpStatus).toBe(200);
+    expect(ctx.manager.status().process.state).toBe('degraded');
+    await ctx.manager.handleAction({ action: 'check' });
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('error');
+    expect(job?.error?.code).toBe('connector_down');
+    expect(job?.step).toBe('connector_down');
+  });
+
+  test('check job is access_protected when Access 302 and connector has connections', async () => {
+    const ctx = await setup({
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          return Response.json({ status: 200, readyConnections: 4, connectorId: 'ok' });
+        }
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'https://acme.cloudflareaccess.com/cdn-cgi/access/login' },
+        });
+      },
+      externalDetectDeps: {
+        listProcesses: async () =>
+          '42 cloudflared tunnel --metrics 127.0.0.1:41234 run --token-file /tmp/token\n',
+        readFile: async (path) => {
+          if (path === '/tmp/token') {
+            return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
+          }
+          if (path === '/tmp/hostname') return 'remote.example.com\n';
+          return null;
+        },
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    await ctx.manager.handleAction({
+      action: 'adopt_external',
+      hostname: 'remote.example.com',
+    });
+    await ctx.manager.handleAction({ action: 'check' });
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('done');
+    expect(job?.step).toBe('access_protected');
+    expect(ctx.manager.status().process.state).toBe('running');
+  });
+
+  test('check job is access_protected_unverified when Access 302 and metrics are missing', async () => {
+    const ctx = await setup({
+      fetchImpl: async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://acme.cloudflareaccess.com/cdn-cgi/access/login' },
+        }),
+      externalDetectDeps: {
+        listProcesses: async () => '42 cloudflared tunnel run --token-file /tmp/token\n',
+        readFile: async (path) => {
+          if (path === '/tmp/token') {
+            return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
+          }
+          if (path === '/tmp/hostname') return 'remote.example.com\n';
+          return null;
+        },
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    await ctx.manager.handleAction({
+      action: 'adopt_external',
+      hostname: 'remote.example.com',
+    });
+    await ctx.manager.handleAction({ action: 'check' });
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('done');
+    expect(job?.step).toBe('access_protected_unverified');
+  });
+
+  test('status.log tails the external --logfile and redacts secrets', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    const logPath = join(ctx.dir, 'cloudflared.log');
+    const tokenPath = join(ctx.dir, 'token');
+    const secret = 'c'.repeat(32);
+    await writeFile(
+      tokenPath,
+      Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64')
+    );
+    await writeFile(
+      logPath,
+      `INF hello\nERR TLS handshake ${secret}\nINF Registered tunnel connection connIndex=0\n`,
+      'utf8'
+    );
+    const withLog = await setup({
+      now: (() => {
+        let t = 1_000;
+        return () => t++;
+      })(),
+      externalDetectDeps: {
+        listProcesses: async () =>
+          `42 cloudflared tunnel --logfile ${logPath} run --token-file ${tokenPath}\n`,
+        readFile: async (path) => {
+          if (path === tokenPath) return await readFile(tokenPath, 'utf8');
+          if (path === join(ctx.dir, 'hostname')) return 'remote.example.com\n';
+          if (path === logPath) return await readFile(logPath, 'utf8');
+          return null;
+        },
+        listDir: async () => [],
+        homedir: () => ctx.dir,
+        platform: 'linux',
+      },
+    });
+    dirs.push(withLog.dir);
+    await withLog.manager.handleAction({
+      action: 'adopt_external',
+      hostname: 'remote.example.com',
+    });
+    const log = withLog.manager.status().log.join('\n');
+    expect(log).toContain('Registered tunnel connection');
+    expect(log).toContain('***');
+    expect(log).not.toContain(secret);
+  });
+
+  test('polls the connector while the tunnel is up using injected sleep', async () => {
+    const sleeps: number[] = [];
+    const readyAt: number[] = [];
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      connectorPollMs: 30_000,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        await Bun.sleep(1);
+      },
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          readyAt.push(Date.now());
+          return Response.json({ readyConnections: 4, connectorId: 'c' });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://poll-cloud.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    const start = Date.now();
+    while (Date.now() - start < 1_000 && readyAt.length < 2) {
+      await Bun.sleep(5);
+    }
+    expect(sleeps).toContain(30_000);
+    expect(readyAt.length).toBeGreaterThanOrEqual(2);
+    await ctx.manager.stop();
+  });
+
+  test('slow connector probe resolving after stop does not overwrite EMPTY_CONNECTOR', async () => {
+    const hanging = Promise.withResolvers<void>();
+    let hangReady = false;
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          if (hangReady) await hanging.promise;
+          return Response.json({ readyConnections: 4, connectorId: 'stale' });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://stale-cloud.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().connector.connectorId).toBe('stale');
+
+    hangReady = true;
+    const slow = ctx.manager.probeAndStoreConnector();
+    await Bun.sleep(20);
+    await ctx.manager.handleAction({ action: 'stop' });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().connector).toEqual({
+      reachable: null,
+      metricsAddr: null,
+      readyConnections: null,
+      connectorId: null,
+      checkedAt: null,
+      lastError: null,
+    });
+    hanging.resolve();
+    await slow;
+    expect(ctx.manager.status().connector).toEqual({
+      reachable: null,
+      metricsAddr: null,
+      readyConnections: null,
+      connectorId: null,
+      checkedAt: null,
+      lastError: null,
+    });
   });
 });

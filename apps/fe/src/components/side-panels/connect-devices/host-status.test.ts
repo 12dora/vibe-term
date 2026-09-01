@@ -31,6 +31,14 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       lastError: null,
       restarts: 0,
     },
+    connector: {
+      reachable: null,
+      metricsAddr: null,
+      readyConnections: null,
+      connectorId: null,
+      checkedAt: null,
+      lastError: null,
+    },
     access: {
       hasCredentials: false,
       accountId: null,
@@ -96,6 +104,7 @@ describe('entryStatus', () => {
       kind: 'named',
       url: 'https://tmex.example.com',
       running: true,
+      degraded: false,
       hostname: 'tmex.example.com',
     });
   });
@@ -119,6 +128,7 @@ describe('entryStatus', () => {
       kind: 'named',
       url: 'https://tmex.example.com',
       running: true,
+      degraded: false,
       hostname: 'tmex.example.com',
     });
     const adoptedDown = status({
@@ -127,6 +137,82 @@ describe('entryStatus', () => {
       external: { ...status().external, detected: true, running: false, source: 'launchd' },
     });
     expect(entryStatus(adoptedDown, null).running).toBe(false);
+  });
+
+  test('进程在跑但连接器零连接：不算可达，单独标 degraded', () => {
+    const zero = status({
+      config: { ...named().config },
+      process: { ...status().process, state: 'running' },
+      connector: {
+        reachable: true,
+        metricsAddr: '127.0.0.1:20241',
+        readyConnections: 0,
+        connectorId: 'c-1',
+        checkedAt: '2026-09-02T00:00:00.000Z',
+        lastError: 'failed to connect to edge',
+      },
+    });
+    expect(entryStatus(zero, null).running).toBe(false);
+    expect(entryStatus(zero, null).degraded).toBe(true);
+  });
+
+  test('metrics 端点探不到（reachable=false）不算断线：后端仍报 running 就是 running', () => {
+    const unprobed = status({
+      config: { ...named().config },
+      process: { ...status().process, state: 'running' },
+      connector: {
+        reachable: false,
+        metricsAddr: '127.0.0.1:20241',
+        readyConnections: null,
+        connectorId: null,
+        checkedAt: '2026-09-02T00:00:00.000Z',
+        lastError: null,
+      },
+    });
+    expect(entryStatus(unprobed, null).degraded).toBe(false);
+    expect(entryStatus(unprobed, null).running).toBe(true);
+  });
+
+  test('后端直接给 degraded 态时同样不算可达', () => {
+    const degraded = status({
+      config: { ...named().config },
+      process: { ...status().process, state: 'degraded' },
+    });
+    expect(entryStatus(degraded, null).running).toBe(false);
+    expect(entryStatus(degraded, null).degraded).toBe(true);
+  });
+
+  test('接管来的隧道：进程在跑但零连接照样 degraded', () => {
+    const adopted = status({
+      config: { ...named().config, externallyManaged: true },
+      external: { ...status().external, detected: true, running: true, source: 'launchd' },
+      connector: {
+        reachable: true,
+        metricsAddr: '127.0.0.1:20241',
+        readyConnections: 0,
+        connectorId: 'c-1',
+        checkedAt: '2026-09-02T00:00:00.000Z',
+        lastError: null,
+      },
+    });
+    expect(entryStatus(adopted, null).running).toBe(false);
+    expect(entryStatus(adopted, null).degraded).toBe(true);
+  });
+
+  test('已停止不叫 degraded：连接器探测结果不改变结论', () => {
+    const stopped = status({
+      config: { ...named().config },
+      connector: {
+        reachable: true,
+        metricsAddr: null,
+        readyConnections: 0,
+        connectorId: null,
+        checkedAt: '2026-09-02T00:00:00.000Z',
+        lastError: null,
+      },
+    });
+    expect(entryStatus(stopped, null).degraded).toBe(false);
+    expect(entryStatus(stopped, null).running).toBe(false);
   });
 
   test('临时隧道：地址取进程给的 trycloudflare 地址，没有主机名可比对', () => {
@@ -142,6 +228,7 @@ describe('entryStatus', () => {
       kind: 'quick',
       url: 'https://odd-name.trycloudflare.com',
       running: true,
+      degraded: false,
       hostname: null,
     });
   });
@@ -157,6 +244,7 @@ describe('entryStatus', () => {
       kind: 'hubUrl',
       url: 'https://hub.example.com',
       running: false,
+      degraded: false,
       hostname: null,
     });
   });

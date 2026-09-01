@@ -1,12 +1,52 @@
 export {
   BunServerWsAdapter,
   HubRuntime,
+  type HubCtlSource,
   type HubRuntimeOptions,
   type HubServerWebSocket,
   type HubUpgradeServer,
+  type HubWriterBridge,
 } from './hub-runtime';
+export {
+  HUB_ROLE_RESTART_DELAY_MS,
+  executeHubRoleTransition,
+  handleGetHubRoleStatus,
+  handlePostHubRole,
+  knownMaxWriterEpoch,
+  type PatchHubRoleEnv,
+  type ScheduleHubRoleRestart,
+} from './hub-role-routes';
+export {
+  HubRoleTransitionStore,
+  envMatchesRoleTransition,
+  isHubRoleInFlight,
+  reconcileHubRoleTransition,
+} from './hub-role-transitions';
 export { createHubKeyLogSource } from './hub-key-log-source';
+export {
+  applyKeyLogHubRuntime,
+  envPeerSet,
+  filterAuthorizedHubRecords,
+  filterNotRetiredHubRecords,
+  hubAuthListColumn,
+  hubHttpAuthorization,
+  inspectHubAuthRecordCompat,
+  isAuthorizedHub,
+  isSignedRetiredHub,
+  lookupSignedHubAuthorization,
+  resolveHubAuthorization,
+  resolveMeshUserId,
+  type HubAuthListColumn,
+  type HubAuthorizationSource,
+  type HubHttpAuthorization,
+} from './hub-authorization';
 export { NodeRegistry, type NodeRegistryMeta, type RegisteredNode } from './node-registry';
+export {
+  ATTACHMENT_KEEPALIVE_MS,
+  ATTACHMENT_MAX_ENTRIES,
+  ATTACHMENT_TTL_MS,
+  AttachmentRouter,
+} from './attachment-router';
 export { applyReplicatedNodeList, type UplinkNodeList } from './hub-replication';
 export {
   HUB_PEER_POLL_FAIL_LIMIT,

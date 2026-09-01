@@ -31,6 +31,7 @@ export type MeshNodeDto = {
   loggedIn: boolean;
   isHub: boolean;
   hubMode?: 'active' | 'standby';
+  attachedHubId?: string;
   peerAddress?: string | null;
   linkSinceAt?: number | null;
   endpoints?: string[];
@@ -57,7 +58,8 @@ export function projectNode(
   name: string,
   online: boolean,
   stored: Meta,
-  live?: Meta | null
+  live?: Meta | null,
+  attachedHubId?: string | null
 ) {
   return {
     id,
@@ -67,6 +69,7 @@ export function projectNode(
     inventory: live?.inventory ?? stored.inventory ?? null,
     direct_capable: live?.directCapable ?? stored.directCapable ?? false,
     version: live?.version ?? stored.version ?? null,
+    ...(attachedHubId ? { attachedHubId } : {}),
   };
 }
 
@@ -170,7 +173,8 @@ export function projectMeshListNode(
   rttOf?: (id: string) => number | null,
   linkDetailOf?: (id: string) => MeshNodeLinkDetail | null,
   hubIds?: ReadonlySet<string>,
-  hubModeOf?: (id: string) => 'active' | 'standby' | undefined
+  hubModeOf?: (id: string) => 'active' | 'standby' | undefined,
+  attachedHubIdOf?: (id: string) => string | null | undefined
 ): MeshNodeDto | null {
   const publicKey = publicKeyForMeshNode(id, selfId, selfPk, certById);
   if (!publicKey) return null;
@@ -211,6 +215,7 @@ export function projectMeshListNode(
     loggedIn: cookies.has(nodeSessionCookieName(isSelf ? MESH_VIA_SELF : id)),
     isHub: hubIds ? hubIds.has(id) : hubNodeId === id,
     ...(hubModeOf?.(id) ? { hubMode: hubModeOf(id) } : {}),
+    ...(attachedHubIdOf?.(id) ? { attachedHubId: attachedHubIdOf(id) ?? undefined } : {}),
     ...meshLinkFields(isSelf, detail, endpointsFromJson(peer?.endpointsJson)),
   };
 }

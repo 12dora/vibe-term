@@ -21,9 +21,11 @@ import { CopyButton } from '../nodes/copy-feedback';
 import { SetupNotice } from '../nodes/setup/form-parts';
 import { type ExposureState, ExposureWarning } from './exposure';
 import { DetailRow } from './step-shell';
-import type { TunnelActions } from './tunnel-actions';
+import type { TunnelActions, TunnelCheckResult } from './tunnel-actions';
 import {
   accessPill,
+  checkNotice,
+  connectorState,
   describeTunnelError,
   isExposureAckError,
   logTail,
@@ -35,6 +37,7 @@ const PILL_VARIANT = {
   stopped: 'outline',
   starting: 'secondary',
   running: 'default',
+  degraded: 'destructive',
   error: 'destructive',
 } as const;
 
@@ -62,7 +65,10 @@ export function TunnelStatusCard({
   const access = accessPill(status);
   const configured = status.config.mode !== 'off';
   const adopted = status.config.externallyManaged;
-  const stoppable = status.process.state === 'running' || status.process.state === 'starting';
+  const stoppable =
+    status.process.state === 'running' ||
+    status.process.state === 'starting' ||
+    status.process.state === 'degraded';
   const { busy, pending } = actions;
   // 命名隧道的移除会连 Cloudflare 上的隧道一起删掉，不可撤销，必须二次确认。
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -108,6 +114,8 @@ export function TunnelStatusCard({
           </SetupNotice>
         )}
 
+        {pill === 'degraded' && <DegradedNotice status={status} />}
+
         {configured && (
           <div className="space-y-0.5 rounded-lg bg-muted/40 p-3">
             <DetailRow label={t('settings.remoteAccess.modeLabel')} testId="remote-access-mode">
@@ -136,6 +144,7 @@ export function TunnelStatusCard({
                 </span>
               </DetailRow>
             )}
+            <ConnectorRow status={status} />
             {status.process.restarts > 0 && (
               <DetailRow
                 label={t('settings.remoteAccess.restartsLabel')}
@@ -190,7 +199,7 @@ export function TunnelStatusCard({
                 {t('settings.remoteAccess.actions.stop')}
               </Button>
             )}
-            {(adopted || status.process.state === 'running') && (
+            {(adopted || pill === 'running' || pill === 'degraded') && (
               <Button
                 type="button"
                 size="sm"
@@ -237,21 +246,9 @@ export function TunnelStatusCard({
           </SetupNotice>
         )}
 
-        {actions.check && (
-          <SetupNotice
-            tone={actions.check.ok ? 'success' : 'error'}
-            testId={actions.check.ok ? 'remote-access-check-ok' : 'remote-access-check-failed'}
-          >
-            <p>
-              {actions.check.ok
-                ? t('settings.remoteAccess.check.reachable')
-                : t('settings.remoteAccess.check.unreachable')}
-            </p>
-            {actions.check.message && <p className="break-all">{actions.check.message}</p>}
-          </SetupNotice>
-        )}
+        {actions.check && <CheckResultNotice check={actions.check} />}
 
-        <TunnelLog log={status.log} />
+        <TunnelLog log={status.log} externallyManaged={adopted} />
       </CardContent>
       <ConfirmRemoveDialog
         open={confirmRemove}
@@ -262,6 +259,60 @@ export function TunnelStatusCard({
         }}
       />
     </Card>
+  );
+}
+
+/**
+ * 进程在跑但没有边缘连接：公网地址此时是断的。进程与连接器各自的最近一条错误都值钱，
+ * 拼在第二行给用户一个直接的排查线索。
+ */
+function DegradedNotice({ status }: { status: TunnelStatusResponse }) {
+  const { t } = useTranslation();
+  const detail = status.process.lastError ?? status.connector?.lastError ?? null;
+  return (
+    <SetupNotice tone="warning" testId="remote-access-degraded">
+      <p>{t('settings.remoteAccess.degradedNotice')}</p>
+      {detail && <p className="break-all">{detail}</p>}
+    </SetupNotice>
+  );
+}
+
+const CONNECTOR_CLASS = {
+  connected: '',
+  noConnections: 'text-destructive',
+  unknown: 'text-muted-foreground',
+  unprobed: 'text-muted-foreground',
+} as const;
+
+/** 连接器一行：边缘连接数是「公网地址还通不通」最直接的证据，metrics 地址塞进 title 不占版面。 */
+function ConnectorRow({ status }: { status: TunnelStatusResponse }) {
+  const { t } = useTranslation();
+  const state = connectorState(status);
+  const connector = status.connector;
+  const text =
+    state === 'connected'
+      ? t('settings.remoteAccess.connector.connected', {
+          n: connector?.readyConnections ?? 0,
+        })
+      : t(`settings.remoteAccess.connector.${state}`);
+  return (
+    <DetailRow label={t('settings.remoteAccess.connector.label')} testId="remote-access-connector">
+      <span className={CONNECTOR_CLASS[state]} title={connector?.metricsAddr ?? undefined}>
+        {text}
+      </span>
+    </DetailRow>
+  );
+}
+
+/** 检查结论：成功 / 警示 / 失败三种语气由 `checkNotice` 决定，这里只负责渲染。 */
+function CheckResultNotice({ check }: { check: TunnelCheckResult }) {
+  const { t } = useTranslation();
+  const notice = checkNotice(check);
+  return (
+    <SetupNotice tone={notice.tone} testId={notice.testId}>
+      <p>{notice.message === null ? t(notice.key) : t(notice.key, { message: notice.message })}</p>
+      {notice.detail && <p className="break-all">{notice.detail}</p>}
+    </SetupNotice>
   );
 }
 
@@ -315,7 +366,13 @@ function ConfirmRemoveDialog({
  * 日志用 `<details>` 而不是受控折叠：内容始终在 DOM 里，展开时不必重挂，
  * 也让静态渲染的用例能直接断言到行内容。
  */
-function TunnelLog({ log }: { log: string[] }) {
+function TunnelLog({
+  log,
+  externallyManaged,
+}: {
+  log: string[];
+  externallyManaged: boolean;
+}) {
   const { t } = useTranslation();
   const lines = logTail(log);
   const lineCount = lines.length;
@@ -334,7 +391,8 @@ function TunnelLog({ log }: { log: string[] }) {
       </summary>
       {lineCount === 0 ? (
         <p className="mt-2 text-xs text-muted-foreground" data-testid="remote-access-log-empty">
-          {t('settings.remoteAccess.log.empty')}
+          {/* 外部 cloudflared 的输出只有 --logfile 才拿得到，空日志多半是启动参数没带它。 */}
+          {t(`settings.remoteAccess.log.${externallyManaged ? 'emptyExternal' : 'empty'}`)}
         </p>
       ) : (
         <pre

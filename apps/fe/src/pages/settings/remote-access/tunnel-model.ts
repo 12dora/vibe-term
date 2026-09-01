@@ -5,14 +5,50 @@ import { TunnelApiError } from '@tmex/api-client/local/tunnel-api';
 import type {
   LocalAuthStatus,
   TunnelActionRequest,
+  TunnelConnectorStatus,
   TunnelErrorCode,
   TunnelMode,
   TunnelStatusResponse,
 } from '@tmex/shared';
 import { externalAccessState } from './access-model';
 import { directProtected } from './direct-model';
+import type { TunnelCheckResult } from './tunnel-actions';
 
-export type TunnelPill = 'notConfigured' | 'stopped' | 'starting' | 'running' | 'error';
+export type TunnelPill =
+  | 'notConfigured'
+  | 'stopped'
+  | 'starting'
+  | 'running'
+  | 'degraded'
+  | 'error';
+
+/** 连接器（cloudflared 本地 metrics `/ready`）的四态。 */
+export type ConnectorState = 'connected' | 'noConnections' | 'unknown' | 'unprobed';
+
+/** 旧后端没有 `connector` 字段：按「未探测」处理，不能因此判定为无连接。 */
+export function connectorState(status: TunnelStatusResponse): ConnectorState {
+  const connector: TunnelConnectorStatus | undefined = status.connector;
+  if (!connector) return 'unprobed';
+  if (connector.reachable === null) return connector.checkedAt === null ? 'unprobed' : 'unknown';
+  // 探不到 metrics 端点只说明本机读不到这份指标，边缘连接可能好好的：一律「无法探测」。
+  if (!connector.reachable) return 'unknown';
+  return (connector.readyConnections ?? 0) > 0 ? 'connected' : 'noConnections';
+}
+
+/** 进程 / 系统服务还活着（`degraded` 也算活着，只是没有边缘连接）。 */
+function tunnelAlive(status: TunnelStatusResponse): boolean {
+  if (status.config.externallyManaged) return status.external.running;
+  return status.process.state === 'running' || status.process.state === 'degraded';
+}
+
+/**
+ * 进程活着但没有任何边缘连接——公网地址此时不可达。后端的 `process.state` 是首要依据；
+ * 外部托管的 cloudflared 那边只有「进程在不在」，只能靠连接器探测兜底。
+ */
+export function tunnelDegraded(status: TunnelStatusResponse): boolean {
+  if (!tunnelAlive(status)) return false;
+  return status.process.state === 'degraded' || connectorState(status) === 'noConnections';
+}
 
 /**
  * 进程报错优先于「未配置」：`remove` 之后若上一次失败仍留在 `process.lastError` 上，
@@ -21,9 +57,9 @@ export type TunnelPill = 'notConfigured' | 'stopped' | 'starting' | 'running' | 
 export function tunnelPill(status: TunnelStatusResponse): TunnelPill {
   if (status.process.state === 'error') return 'error';
   if (status.config.mode === 'off') return 'notConfigured';
+  if (tunnelAlive(status)) return tunnelDegraded(status) ? 'degraded' : 'running';
   // 接管来的隧道由系统服务跑，tmex 侧没有进程，运行态以探测结果为准。
-  if (status.config.externallyManaged) return status.external.running ? 'running' : 'stopped';
-  if (status.process.state === 'running') return 'running';
+  if (status.config.externallyManaged) return 'stopped';
   if (status.process.state === 'starting') return 'starting';
   return 'stopped';
 }
@@ -75,10 +111,13 @@ export function accessPill(status: TunnelStatusResponse): AccessPill {
   return probed === 'unknown' && hasCoverableHostname(status) ? 'unknown' : 'notConfigured';
 }
 
-/** 隧道正在对外提供服务：接管来的隧道以探测结果为准。 */
+/**
+ * 隧道正在对外提供服务：接管来的隧道以探测结果为准。
+ * `degraded` 同样算在跑——进程还在，边缘连接随时可能恢复，拿掉最后一道保护一样危险。
+ */
 export function isTunnelRunning(status: TunnelStatusResponse): boolean {
   const pill = tunnelPill(status);
-  return pill === 'running' || pill === 'starting';
+  return pill === 'running' || pill === 'starting' || pill === 'degraded';
 }
 
 /**
@@ -296,6 +335,7 @@ const ERROR_CODES = new Set<TunnelErrorCode>([
   'access_api_failed',
   'exposure_ack_required',
   'process_failed',
+  'connector_down',
   'busy',
   'not_configured',
   'invalid_request',
@@ -303,7 +343,7 @@ const ERROR_CODES = new Set<TunnelErrorCode>([
 ]);
 
 /** 带 `{{message}}` 插值的错误文案：服务端的原始描述比通用句子更有用。 */
-const ERROR_CODES_WITH_MESSAGE = new Set<TunnelErrorCode>(['access_api_failed']);
+const ERROR_CODES_WITH_MESSAGE = new Set<TunnelErrorCode>(['access_api_failed', 'connector_down']);
 
 export function tunnelErrorKey(code: string): string | null {
   return ERROR_CODES.has(code as TunnelErrorCode) ? `${ERROR_PREFIX}${code}` : null;
@@ -329,6 +369,61 @@ export function describeTunnelError(t: Translate, error: TunnelError): string {
   if (!key) return t(`${ERROR_PREFIX}unknown`, { message: error.message });
   if (ERROR_CODES_WITH_MESSAGE.has(error.code)) return t(key, { message: error.message });
   return t(key);
+}
+
+export interface CheckNotice {
+  tone: 'success' | 'warning' | 'error';
+  testId: string;
+  /** 主文案的键；`message` 非空时按 `{{message}}` 插值。 */
+  key: string;
+  message: string | null;
+  /** 另起一行原样展示的服务端描述。 */
+  detail: string | null;
+}
+
+const CHECK_PREFIX = 'settings.remoteAccess.check.';
+
+/**
+ * 检查结论的呈现。成功也分三档：边缘与本机都验过（`ok`）、被 Access 拦在边缘但连接器在线
+ * （`access_protected`），以及被拦下且连接器探不到——后者证明不了本机可达，必须降成警示，
+ * 否则又回到「检查通过但隧道其实是断的」那个坑。
+ */
+export function checkNotice(check: TunnelCheckResult): CheckNotice {
+  if (!check.ok) {
+    if (check.code === 'connector_down') {
+      return {
+        tone: 'error',
+        testId: 'remote-access-check-failed',
+        key: `${ERROR_PREFIX}connector_down`,
+        message: check.message ?? '',
+        detail: null,
+      };
+    }
+    return {
+      tone: 'error',
+      testId: 'remote-access-check-failed',
+      key: `${CHECK_PREFIX}unreachable`,
+      message: null,
+      detail: check.message,
+    };
+  }
+  if (check.step === 'access_protected_unverified') {
+    return {
+      tone: 'warning',
+      testId: 'remote-access-check-warning',
+      key: `${CHECK_PREFIX}accessProtectedUnverified`,
+      message: null,
+      detail: check.message,
+    };
+  }
+  const key = check.step === 'access_protected' ? 'accessProtected' : 'reachable';
+  return {
+    tone: 'success',
+    testId: 'remote-access-check-ok',
+    key: `${CHECK_PREFIX}${key}`,
+    message: null,
+    detail: check.message,
+  };
 }
 
 /**

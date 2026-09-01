@@ -25,7 +25,7 @@ import {
 } from '../../auth';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import type { AuthDb } from '../../auth/types';
-import { HubRuntime, createHubKeyLogSource } from '../../hub';
+import { HubRuntime, createHubKeyLogSource, patchNode } from '../../hub';
 import type { GatewayRuntime } from '../../runtime';
 import type { WebSocketServer } from '../../ws';
 import { MESH_VIA_SELF, setMeshRequestContext } from '../mesh-deps';
@@ -82,6 +82,7 @@ export class HubRouter {
   readonly hubs = new Map<string, HubRuntime>();
   readonly down = new Set<string>();
   readonly live: LiveUplink[] = [];
+  readonly cookies = new Map<string, string>();
   statusFrames = 0;
 
   register(publicUrl: string, hub: HubRuntime): void {
@@ -154,6 +155,18 @@ export class HubRouter {
     this.live.push(live);
     return nodeSock;
   };
+
+  fetch: import('../../hub/hub-peer-poller').HubPeerFetch = async (url, init) => {
+    const parsed = new URL(url);
+    const publicUrl = normalizePublicUrl(`${parsed.protocol}//${parsed.host}`);
+    if (this.down.has(publicUrl)) throw new Error(`hub-down:${publicUrl}`);
+    const hub = this.hubs.get(publicUrl);
+    if (!hub) throw new Error(`no-hub:${publicUrl}`);
+    const headers = new Headers(init?.headers);
+    const cookie = this.cookies.get(publicUrl);
+    if (cookie) headers.set('cookie', cookie);
+    return callHub(hub, url, { ...init, headers });
+  };
 }
 
 export type HarnessNode = {
@@ -162,7 +175,33 @@ export type HarnessNode = {
   close: () => void;
   userStore: UserStore;
   unsubscribe?: () => void;
+  roleEnv?: Record<string, string>;
+  roleRestarts?: number[];
 };
+
+export function memoryHubRoleHooks(initial?: Record<string, string>): {
+  env: Record<string, string>;
+  restarts: number[];
+  patchHubRoleEnv: (patch: Record<string, string>) => Promise<void>;
+  scheduleHubRoleRestart: (delayMs: number) => void;
+} {
+  const env = {
+    TMEX_HUB_MODE: 'active',
+    TMEX_HUB_WRITER_EPOCH: '1',
+    ...initial,
+  };
+  const restarts: number[] = [];
+  return {
+    env,
+    restarts,
+    patchHubRoleEnv: async (patch) => {
+      Object.assign(env, patch);
+    },
+    scheduleHubRoleRestart: (delayMs) => {
+      restarts.push(delayMs);
+    },
+  };
+}
 
 export type MultiHubTopology = {
   router: HubRouter;
@@ -403,11 +442,17 @@ type EnrollOpts = {
   hubPriority?: number;
   hubWriterEpoch?: number;
   hubPeers?: string[];
+  hubAutoPromote?: boolean;
+  hubAutoPromoteTimeoutMs?: number;
   uplinkHub?: HubRuntime | null;
   wsFactory?: UplinkWsFactory;
   scheduler?: MeshScheduler;
   label: string;
   pending?: PendingHarnessNode;
+  patchHubRoleEnv?: (patch: Record<string, string>) => Promise<void>;
+  scheduleHubRoleRestart?: (delayMs: number) => void;
+  roleEnv?: Record<string, string>;
+  hubFetch?: import('../../hub/hub-peer-poller').HubPeerFetch;
 };
 
 export type PendingHarnessNode = {
@@ -424,7 +469,15 @@ export async function createPendingNode(): Promise<PendingHarnessNode> {
 
 export async function bootHubA(
   router: HubRouter,
-  extra?: { hubPeers?: string[] }
+  extra?: {
+    hubPeers?: string[];
+    patchHubRoleEnv?: (patch: Record<string, string>) => Promise<void>;
+    scheduleHubRoleRestart?: (delayMs: number) => void;
+    roleEnv?: Record<string, string>;
+    hubFetch?: import('../../hub/hub-peer-poller').HubPeerFetch;
+    hubAutoPromote?: boolean;
+    hubAutoPromoteTimeoutMs?: number;
+  }
 ): Promise<{
   node: HarnessNode;
   boot: BootUser;
@@ -448,6 +501,11 @@ export async function bootHubA(
     password: PASSWORD,
     identity,
   });
+  const role = memoryHubRoleHooks({
+    TMEX_HUB_MODE: 'active',
+    TMEX_HUB_WRITER_EPOCH: '1',
+    ...extra?.roleEnv,
+  });
   const mesh = await createMeshRuntime({
     db,
     gateway: fakeGateway(db, 'a'),
@@ -460,6 +518,8 @@ export async function bootHubA(
       hubPriority: 100,
       hubWriterEpoch: 1,
       hubPeers: extra?.hubPeers,
+      hubAutoPromote: extra?.hubAutoPromote,
+      hubAutoPromoteTimeoutMs: extra?.hubAutoPromoteTimeoutMs,
       peerPort: 0,
       stunServers: [],
     },
@@ -468,14 +528,27 @@ export async function bootHubA(
     networkInterfaces: () => ({}),
     loadNative: async () => null,
     scheduler: new FastScheduler(),
+    patchHubRoleEnv: extra?.patchHubRoleEnv ?? role.patchHubRoleEnv,
+    scheduleHubRoleRestart: extra?.scheduleHubRoleRestart ?? role.scheduleHubRoleRestart,
+    hubFetch: extra?.hubFetch ?? router.fetch,
   });
   const unsubscribe = wireReplication(mesh);
   if (!mesh.hub) throw new Error('hub A missing HubRuntime');
   router.register(HUB_A_URL, mesh.hub);
   await mesh.start();
   await waitOnline(mesh);
+  const aSid = await loginSelf(mesh, boot);
+  router.cookies.set(HUB_A_URL, selfCookie(aSid));
   return {
-    node: { mesh, db, close, userStore, unsubscribe },
+    node: {
+      mesh,
+      db,
+      close,
+      userStore,
+      unsubscribe,
+      roleEnv: role.env,
+      roleRestarts: role.restarts,
+    },
     boot,
     keys,
     keyLog,
@@ -589,6 +662,13 @@ export async function enrollAndStart(
     );
   }
 
+  const role = opts.roles.hub
+    ? memoryHubRoleHooks({
+        TMEX_HUB_MODE: opts.hubMode ?? 'standby',
+        TMEX_HUB_WRITER_EPOCH: String(opts.hubWriterEpoch ?? 1),
+        ...opts.roleEnv,
+      })
+    : null;
   const mesh = await createMeshRuntime({
     db,
     gateway: fakeGateway(db, opts.label),
@@ -602,6 +682,8 @@ export async function enrollAndStart(
       hubPriority: opts.hubPriority,
       hubWriterEpoch: opts.hubWriterEpoch,
       hubPeers: opts.hubPeers,
+      hubAutoPromote: opts.hubAutoPromote,
+      hubAutoPromoteTimeoutMs: opts.hubAutoPromoteTimeoutMs,
       peerPort: 0,
       stunServers: [],
     },
@@ -613,6 +695,9 @@ export async function enrollAndStart(
     networkInterfaces: () => ({}),
     loadNative: async () => null,
     scheduler: opts.scheduler ?? new FastScheduler(),
+    patchHubRoleEnv: opts.patchHubRoleEnv ?? role?.patchHubRoleEnv,
+    scheduleHubRoleRestart: opts.scheduleHubRoleRestart ?? role?.scheduleHubRoleRestart,
+    hubFetch: opts.hubFetch,
   });
   const unsubscribe = opts.roles.hub ? wireReplication(mesh) : undefined;
   await mesh.start();
@@ -624,7 +709,15 @@ export async function enrollAndStart(
       await waitOnline(mesh);
     }
   }
-  return { mesh, db, close, userStore, unsubscribe };
+  return {
+    mesh,
+    db,
+    close,
+    userStore,
+    unsubscribe,
+    roleEnv: role?.env,
+    roleRestarts: role?.restarts,
+  };
 }
 
 export async function bootAbcdTopology(): Promise<MultiHubTopology> {
@@ -650,6 +743,7 @@ export async function bootAbcdTopology(): Promise<MultiHubTopology> {
     wsFactory: router.factory,
     pending: bPending,
     label: 'b',
+    hubFetch: router.fetch,
   });
   if (!b.mesh.hub) throw new Error('hub B missing HubRuntime');
   router.register(HUB_B_URL, b.mesh.hub);
@@ -743,6 +837,15 @@ export function attachedHubId(mesh: MeshRuntime): string | null {
   return mesh.attachedHub()?.hubNodeId ?? null;
 }
 
+export function stampNodeVersions(db: AuthDb, version: string, except?: ReadonlySet<string>): void {
+  const store = new UserStore(db);
+  for (const node of store.listNodes()) {
+    if (node.status === 'revoked') continue;
+    if (except?.has(node.id)) continue;
+    patchNode(db, node.id, { version });
+  }
+}
+
 export function reconstructHubRuntime(
   node: HarnessNode,
   opts: {
@@ -754,6 +857,7 @@ export function reconstructHubRuntime(
     writerEpoch?: number;
     publicUrl?: string;
     priority?: number;
+    fetchPeerStatus?: import('../../hub/hub-peer-poller').HubPeerFetch;
   }
 ): HubRuntime {
   return new HubRuntime({
@@ -776,6 +880,7 @@ export function reconstructHubRuntime(
       entryNodeId: node.mesh.nodeId,
       sid: 'reconstructed',
     }),
+    fetchPeerStatus: opts.fetchPeerStatus,
   });
 }
 
@@ -791,6 +896,7 @@ export async function getMeshHubs(mesh: MeshRuntime, cookie: string) {
       mode: string;
       writerEpoch: number;
       online?: boolean;
+      authorization?: 'signed' | 'env' | 'self';
     }>;
     attached: {
       hubNodeId: string | null;
@@ -809,8 +915,46 @@ export async function getMeshNodes(mesh: MeshRuntime, cookie: string) {
     throw new Error(`GET /api/mesh/nodes ${res.status}: ${await res.text()}`);
   }
   return (await res.json()) as {
-    nodes: Array<{ id: string; isHub?: boolean; hubMode?: string; name?: string }>;
+    nodes: Array<{
+      id: string;
+      isHub?: boolean;
+      hubMode?: string;
+      name?: string;
+      attachedHubId?: string;
+      online?: boolean;
+    }>;
   };
+}
+
+export function stampHubCtlVersions(topo: {
+  a: HarnessNode;
+  b: HarnessNode;
+}): void {
+  const now = Date.now();
+  topo.a.mesh.hub?.registry.updateMeta(topo.b.mesh.nodeId, { version: '1.1.13' }, now);
+  topo.b.mesh.hub?.registry.updateMeta(topo.a.mesh.nodeId, { version: '1.1.13' }, now);
+  stampNodeVersions(topo.a.db, '1.1.13');
+  stampNodeVersions(topo.b.db, '1.1.13');
+}
+
+export async function attachSplitAbcd(topo: MultiHubTopology): Promise<void> {
+  stampHubCtlVersions(topo);
+  await topo.d.mesh.uplink.switchTo(HUB_B_URL);
+  await waitUntil(
+    () => attachedUrl(topo.c.mesh) === HUB_A_URL && attachedUrl(topo.d.mesh) === HUB_B_URL,
+    8_000
+  );
+  stampHubCtlVersions(topo);
+  topo.a.mesh.hub?.uplink.publishLocalAttachments();
+  topo.b.mesh.hub?.onWriterUplinkOnline();
+  await waitUntil(() => {
+    stampHubCtlVersions(topo);
+    const dOnB = topo.b.mesh.hub?.registry.get(topo.d.mesh.nodeId)?.authenticated === true;
+    const cOnA = topo.a.mesh.hub?.registry.get(topo.c.mesh.nodeId)?.authenticated === true;
+    const dRoute = topo.a.mesh.hub?.uplink.attachments.attachedHubId(topo.d.mesh.nodeId);
+    const cRoute = topo.b.mesh.hub?.uplink.attachments.attachedHubId(topo.c.mesh.nodeId);
+    return dOnB && cOnA && dRoute === topo.b.mesh.nodeId && cRoute === topo.a.mesh.nodeId;
+  }, 8_000);
 }
 
 export function craftNodeList(

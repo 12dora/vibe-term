@@ -35,6 +35,8 @@ export const KeyLogType = {
   'admit-node': 'admit-node',
   'revoke-node': 'revoke-node',
   'reset-root': 'reset-root',
+  'admit-hub': 'admit-hub',
+  'retire-hub': 'retire-hub',
 } as const;
 export type KeyLogType = (typeof KeyLogType)[keyof typeof KeyLogType];
 
@@ -203,6 +205,18 @@ export const RevokeNodePayloadSchema = b.struct({
 });
 export type RevokeNodePayload = b.infer<typeof RevokeNodePayloadSchema>;
 
+export const AdmitHubPayloadSchema = b.struct({
+  hub_node_id: b.bytes(16),
+  public_url: b.option(b.string()),
+  priority: b.option(b.u32()),
+});
+export type AdmitHubPayload = b.infer<typeof AdmitHubPayloadSchema>;
+
+export const RetireHubPayloadSchema = b.struct({
+  hub_node_id: b.bytes(16),
+});
+export type RetireHubPayload = b.infer<typeof RetireHubPayloadSchema>;
+
 function assertDomain(actual: string, expected: string): void {
   if (actual !== expected) {
     throw new Error(`domain mismatch: expected ${expected}, got ${actual}`);
@@ -339,6 +353,36 @@ export function encodeRevokeNodePayload(value: RevokeNodePayload): Uint8Array {
 }
 export function decodeRevokeNodePayload(bytes: Uint8Array): RevokeNodePayload {
   return RevokeNodePayloadSchema.deserialize(bytes);
+}
+
+export function encodeAdmitHubPayload(value: AdmitHubPayload): Uint8Array {
+  return AdmitHubPayloadSchema.serialize(value);
+}
+export function decodeAdmitHubPayload(bytes: Uint8Array): AdmitHubPayload {
+  return AdmitHubPayloadSchema.deserialize(bytes);
+}
+
+export function encodeRetireHubPayload(value: RetireHubPayload): Uint8Array {
+  return RetireHubPayloadSchema.serialize(value);
+}
+export function decodeRetireHubPayload(bytes: Uint8Array): RetireHubPayload {
+  return RetireHubPayloadSchema.deserialize(bytes);
+}
+
+export function buildAdmitHubPayload(input: {
+  hubNodeId: Uint8Array;
+  publicUrl?: string | null;
+  priority?: number | null;
+}): Uint8Array {
+  return encodeAdmitHubPayload({
+    hub_node_id: input.hubNodeId,
+    public_url: input.publicUrl ?? null,
+    priority: input.priority ?? null,
+  });
+}
+
+export function buildRetireHubPayload(input: { hubNodeId: Uint8Array }): Uint8Array {
+  return encodeRetireHubPayload({ hub_node_id: input.hubNodeId });
 }
 
 export function encodeKdfParams(value: KdfParams): Uint8Array {

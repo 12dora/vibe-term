@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS,
   originUrlFromBindHost,
+  parseHubAutoPromote,
+  parseHubAutoPromoteTimeoutMs,
   parsePeerBindHost,
   parsePeerPort,
   parseStunServers,
   parseTmexRoles,
+  parseUplinkPreferNearest,
   resolveTmuxBin,
 } from './config';
 
@@ -408,5 +412,37 @@ describe('config.originUrl', () => {
     expect(v4.originUrl).toBe('http://127.0.0.1:19883');
     const v6 = await loadConfigWith({ TMEX_BIND_HOST: '::', GATEWAY_PORT: '9443' });
     expect(v6.originUrl).toBe('http://[::1]:9443');
+  });
+});
+
+describe('hub auto-promote and nearest-uplink env', () => {
+  test('auto-promote defaults off and accepts 1/true/yes/on', () => {
+    expect(parseHubAutoPromote(undefined)).toBe(false);
+    expect(parseHubAutoPromote('')).toBe(false);
+    expect(parseHubAutoPromote('0')).toBe(false);
+    expect(parseHubAutoPromote('1')).toBe(true);
+    expect(parseHubAutoPromote('true')).toBe(true);
+    expect(parseHubAutoPromote('YES')).toBe(true);
+    expect(parseHubAutoPromote('on')).toBe(true);
+  });
+
+  test('auto-promote timeout defaults to 10 minutes', () => {
+    expect(parseHubAutoPromoteTimeoutMs(undefined)).toBe(HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS);
+    expect(parseHubAutoPromoteTimeoutMs('')).toBe(600_000);
+    expect(parseHubAutoPromoteTimeoutMs('1000')).toBe(1_000);
+    expect(() => parseHubAutoPromoteTimeoutMs('0')).toThrow('TMEX_HUB_AUTO_PROMOTE_TIMEOUT_MS');
+    expect(() => parseHubAutoPromoteTimeoutMs('-1')).toThrow('TMEX_HUB_AUTO_PROMOTE_TIMEOUT_MS');
+    expect(() => parseHubAutoPromoteTimeoutMs('1.5')).toThrow('TMEX_HUB_AUTO_PROMOTE_TIMEOUT_MS');
+  });
+
+  test('prefer-nearest is auto when unset and can be forced off or on', () => {
+    expect(parseUplinkPreferNearest(undefined)).toBeNull();
+    expect(parseUplinkPreferNearest('')).toBeNull();
+    expect(parseUplinkPreferNearest('0')).toBe(false);
+    expect(parseUplinkPreferNearest('off')).toBe(false);
+    expect(parseUplinkPreferNearest('false')).toBe(false);
+    expect(parseUplinkPreferNearest('1')).toBe(true);
+    expect(parseUplinkPreferNearest('on')).toBe(true);
+    expect(() => parseUplinkPreferNearest('maybe')).toThrow('TMEX_UPLINK_PREFER_NEAREST');
   });
 });

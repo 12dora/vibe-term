@@ -1,6 +1,12 @@
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { TunnelError } from './errors';
-import { type SpawnHandle, type Spawner, collectOutput } from './spawn';
+import {
+  type PickPort,
+  type SpawnHandle,
+  type Spawner,
+  collectOutput,
+  pickFreePort,
+} from './spawn';
 
 export const VERSION_RE = /cloudflared version (\S+)/i;
 export const LOGIN_URL_RE = /https:\/\/[^\s]+/g;
@@ -35,7 +41,7 @@ export function parseQuickUrl(output: string): string | null {
 }
 
 export function isRegisteredLine(line: string): boolean {
-  return REGISTERED_RE.test(line);
+  return REGISTERED_RE.test(line) && !/Unregistered tunnel connection/i.test(line);
 }
 
 export type TunnelListEntry = { id: string; name: string };
@@ -103,7 +109,8 @@ function tunnelBaseArgs(originCert: string): string[] {
 export class CloudflaredProvider {
   constructor(
     private readonly spawner: Spawner,
-    private readonly tunnelDir: string
+    private readonly tunnelDir: string,
+    private readonly pickPort: PickPort = pickFreePort
   ) {}
 
   spawn(command: string, args: string[], env?: Record<string, string>): SpawnHandle {
@@ -190,16 +197,41 @@ export class CloudflaredProvider {
     await collectOutput(handle);
   }
 
-  spawnNamedRun(bin: string, configPath: string): SpawnHandle {
+  async spawnNamedRun(bin: string, configPath: string): Promise<SpawnHandle> {
     const cert = originCertPath(this.tunnelDir);
-    return this.spawn(
+    const metrics = await this.metricsArgs();
+    const handle = this.spawn(
       bin,
-      [...tunnelBaseArgs(cert), '--config', configPath, 'run'],
+      [...tunnelBaseArgs(cert), ...metrics.args, '--config', configPath, 'run'],
       tunnelEnv(cert)
     );
+    handle.metricsAddr = metrics.addr;
+    return handle;
   }
 
-  spawnQuickRun(bin: string, originUrl: string): SpawnHandle {
-    return this.spawn(bin, ['tunnel', '--no-autoupdate', '--url', originUrl]);
+  async spawnQuickRun(bin: string, originUrl: string): Promise<SpawnHandle> {
+    const metrics = await this.metricsArgs();
+    const handle = this.spawn(bin, [
+      'tunnel',
+      '--no-autoupdate',
+      ...metrics.args,
+      '--url',
+      originUrl,
+    ]);
+    handle.metricsAddr = metrics.addr;
+    return handle;
+  }
+
+  private async metricsArgs(): Promise<{ args: string[]; addr: string | null }> {
+    try {
+      const port = await this.pickPort();
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+        return { args: [], addr: null };
+      }
+      const addr = `127.0.0.1:${port}`;
+      return { args: ['--metrics', addr], addr };
+    } catch {
+      return { args: [], addr: null };
+    }
   }
 }

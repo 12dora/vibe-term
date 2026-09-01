@@ -31,6 +31,7 @@ function hub(overrides: Partial<HubEndpointInfo> & { nodeId: string }): HubEndpo
 function snapshot(patch: Partial<MeshHubsState>): MeshHubsState {
   return {
     hubs: [],
+    candidates: [],
     attached: null,
     writerHubId: null,
     loading: false,
@@ -153,7 +154,10 @@ describe('refreshMeshHubs', () => {
         since: 3,
       },
       writerHubId: 'h1',
-      candidates: [],
+      candidates: [
+        { publicUrl: 'https://h1.example', lastError: null, lastAttemptAt: 1 },
+        { publicUrl: 'https://h2.example/', lastError: 'ECONNREFUSED', lastAttemptAt: 2 },
+      ],
     });
     setMeshHubsStateForTest({ error: 'stale' });
     await refreshMeshHubs(api);
@@ -164,6 +168,17 @@ describe('refreshMeshHubs', () => {
     expect(state.error).toBeNull();
     expect(state.loading).toBe(false);
     expect(state.loadedAt).not.toBeNull();
+    // uplink 候选诊断不再被丢掉：hub chip 的警告图标与悬浮详情全靠它
+    expect(state.candidates.map((row) => row.lastError)).toEqual([null, 'ECONNREFUSED']);
+  });
+
+  test('旧后端不下发 candidates 时落成空数组', async () => {
+    const { api } = fakeApi({ hubs: [], attached: null, writerHubId: null, candidates: [] });
+    setMeshHubsStateForTest({
+      candidates: [{ publicUrl: 'https://old.example', lastError: 'x', lastAttemptAt: 1 }],
+    });
+    await refreshMeshHubs(api);
+    expect(getMeshHubsState().candidates).toEqual([]);
   });
 
   test('并发调用合并成一次请求', async () => {

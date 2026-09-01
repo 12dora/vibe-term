@@ -6,6 +6,15 @@ import type { MeshHubStore } from '../auth/mesh-hub-store';
 import { pickWriterHub } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
+import { config as gatewayConfig } from '../config';
+import {
+  envPeerSet,
+  filterNotRetiredHubRecords,
+  hubHttpAuthorization,
+  lookupSignedHubAuthorization,
+  resolveHubAuthorization,
+  resolveMeshUserId,
+} from '../hub/hub-authorization';
 import type { PublicAuthNode } from './auth-routes';
 import {
   type ConnectionLookup,
@@ -30,6 +39,13 @@ import {
   type MeshNodeLinkDetail,
   projectMeshListNode,
 } from './node-list-projection';
+import {
+  handleMeshNodeUninstall,
+  handleNodeOperationDelete,
+  handleNodeOperationGet,
+  readNodeOperation,
+  sweepStaleNodeOperations,
+} from './node-operations';
 import {
   type AuthenticateOk,
   type SessionMiddlewareDeps,
@@ -63,7 +79,9 @@ export type MeshRoutesDeps = {
   selfName?: () => string | null;
   hubStore?: MeshHubStore;
   attachedHub?: () => AttachedHub | null;
+  attachedHubIdOf?: (nodeId: string) => string | null | undefined;
   hubCandidates?: () => Array<string | UplinkCandidate>;
+  hubPeers?: string[];
   forwardAuthorizedHttp?: (
     req: Request,
     input: { nodeId: string; method: string; path: string; query?: string; body?: unknown }
@@ -80,14 +98,18 @@ function serializeHubCandidate(entry: string | UplinkCandidate): {
   publicUrl: string;
   lastError: string | null;
   lastAttemptAt: number | null;
+  rttMs: number | null;
+  rttAt: number | null;
 } {
   if (typeof entry === 'string') {
-    return { publicUrl: entry, lastError: null, lastAttemptAt: null };
+    return { publicUrl: entry, lastError: null, lastAttemptAt: null, rttMs: null, rttAt: null };
   }
   return {
     publicUrl: entry.publicUrl,
     lastError: entry.lastError ?? null,
     lastAttemptAt: entry.lastAttemptAt ?? null,
+    rttMs: entry.rttMs ?? null,
+    rttAt: entry.rttAt ?? null,
   };
 }
 
@@ -134,6 +156,10 @@ export class MeshRoutes {
     }
     const upgradeRoute = this.matchUpgradeNodeRoute(req, path);
     if (upgradeRoute) return upgradeRoute;
+    const uninstallRoute = this.matchUninstallNodeRoute(req, path);
+    if (uninstallRoute) return uninstallRoute;
+    const operationRoute = this.matchNodeOperationRoute(req, path);
+    if (operationRoute) return operationRoute;
     if (path === '/api/mesh/rtc-config' && req.method === 'GET') {
       return requireSession(this.sessionDeps, () => this.handleRtcConfig())(req);
     }
@@ -196,27 +222,51 @@ export class MeshRoutes {
   }
 
   private handleNodes(req: Request): Response {
-    return jsonBody({ nodes: this.collectNodes(req) });
+    const nodes = this.collectNodes(req);
+    const listed = new Set(nodes.map((n) => n.id));
+    sweepStaleNodeOperations(listed);
+    return jsonBody({
+      nodes: nodes.map((n) => ({
+        ...n,
+        operation: readNodeOperation(n.id),
+      })),
+    });
   }
 
   private handleHubs(): Response {
     const store = this.deps.hubStore;
     const rows = store?.list() ?? [];
-    const writerHubId = pickWriterHub(rows);
+    const envPeers = envPeerSet(this.deps.hubPeers ?? gatewayConfig.hubPeers);
+    const usableRows = filterNotRetiredHubRecords(rows, {
+      userStore: this.deps.userStore,
+      selfId: this.deps.nodeId,
+    });
+    const writerHubId = pickWriterHub(usableRows);
     const attached = this.deps.attachedHub?.() ?? null;
-    const rawCandidates = this.deps.hubCandidates?.() ?? rows.map((row) => row.publicUrl);
+    const rawCandidates = this.deps.hubCandidates?.() ?? usableRows.map((row) => row.publicUrl);
+    const uid = resolveMeshUserId(this.deps.userStore, { nodeId: this.deps.nodeId });
     return jsonBody({
-      hubs: rows.map((row) => ({
-        nodeId: row.hubNodeId,
-        publicUrl: row.publicUrl,
-        ...(row.name ? { name: row.name } : {}),
-        mode: row.mode,
-        priority: row.priority,
-        writerEpoch: row.writerEpoch,
-        caFingerprint: row.caFingerprint,
-        online: row.online,
-        lastSeenAt: row.lastSeenAt,
-      })),
+      hubs: rows.map((row) => {
+        const source = resolveHubAuthorization({
+          hubNodeId: row.hubNodeId,
+          selfId: this.deps.nodeId,
+          envPeers,
+          signed: lookupSignedHubAuthorization(this.deps.userStore, uid, row.hubNodeId),
+        });
+        const authorization = hubHttpAuthorization(source);
+        return {
+          nodeId: row.hubNodeId,
+          publicUrl: row.publicUrl,
+          ...(row.name ? { name: row.name } : {}),
+          mode: row.mode,
+          priority: row.priority,
+          writerEpoch: row.writerEpoch,
+          caFingerprint: row.caFingerprint,
+          online: row.online,
+          lastSeenAt: row.lastSeenAt,
+          ...(authorization ? { authorization } : {}),
+        };
+      }),
       attached,
       writerHubId,
       candidates: rawCandidates.map(serializeHubCandidate),
@@ -282,6 +332,46 @@ export class MeshRoutes {
     });
   }
 
+  private matchUninstallNodeRoute(req: Request, path: string): Promise<Response> | undefined {
+    const match = path.match(/^\/api\/mesh\/nodes\/([^/]+)\/uninstall$/);
+    if (!match) return undefined;
+    const nodeId = decodeURIComponent(match[1] ?? '');
+    if (req.method === 'POST') {
+      return requireSession(this.sessionDeps, (r) => this.handleUninstallStart(r, nodeId))(req);
+    }
+    return undefined;
+  }
+
+  private matchNodeOperationRoute(req: Request, path: string): Promise<Response> | undefined {
+    const match = path.match(/^\/api\/mesh\/nodes\/([^/]+)\/operation$/);
+    if (!match) return undefined;
+    const nodeId = decodeURIComponent(match[1] ?? '');
+    if (req.method === 'GET') {
+      return requireSession(this.sessionDeps, () => handleNodeOperationGet(nodeId))(req);
+    }
+    if (req.method === 'DELETE') {
+      return requireSession(this.sessionDeps, () => handleNodeOperationDelete(nodeId))(req);
+    }
+    return undefined;
+  }
+
+  private handleUninstallStart(req: Request, nodeId: string): Promise<Response> {
+    const auth = authenticateRequest(req, this.sessionDeps);
+    if (!auth.ok || !auth.userId) {
+      return Promise.resolve(jsonError('UNAUTHORIZED', 401));
+    }
+    return handleMeshNodeUninstall({
+      req,
+      nodeId,
+      localNodeId: this.deps.nodeId,
+      userStore: this.deps.userStore,
+      now: this.deps.now,
+      forward: {
+        forwardAuthorizedHttp: (r, input) => this.forwardAuthorized(r, input),
+      },
+    });
+  }
+
   private forwardAuthorized(
     req: Request,
     input: { nodeId: string; method: string; path: string; query?: string; body?: unknown }
@@ -334,11 +424,15 @@ export class MeshRoutes {
     const selfName = this.deps.selfName?.() ?? null;
     const self = this.deps.selfStatus?.();
     const storedHubs = this.deps.hubStore?.list() ?? [];
-    const hubIds = new Set(storedHubs.map((row) => row.hubNodeId));
-    const hubModeById = new Map(storedHubs.map((row) => [row.hubNodeId, row.mode] as const));
+    const usableHubs = filterNotRetiredHubRecords(storedHubs, {
+      userStore: this.deps.userStore,
+      selfId: this.deps.nodeId,
+    });
+    const hubIds = new Set(usableHubs.map((row) => row.hubNodeId));
+    const hubModeById = new Map(usableHubs.map((row) => [row.hubNodeId, row.mode] as const));
     const hubNodeId = this.deps.roles.hub
       ? this.deps.nodeId
-      : (pickWriterHub(storedHubs) ?? this.deps.userStore.getHubMeta()?.nodeId ?? null);
+      : (pickWriterHub(usableHubs) ?? this.deps.userStore.getHubMeta()?.nodeId ?? null);
     if (hubNodeId) hubIds.add(hubNodeId);
     return [...new Set([this.deps.nodeId, ...certs.map((c) => c.nodeId)])]
       .map((id) =>
@@ -360,7 +454,8 @@ export class MeshRoutes {
           (nid) => this.deps.peers.rttOf?.(nid) ?? null,
           (nid) => this.deps.peers.linkDetailOf?.(nid) ?? null,
           hubIds,
-          (nid) => hubModeById.get(nid)
+          (nid) => hubModeById.get(nid),
+          (nid) => this.deps.attachedHubIdOf?.(nid)
         )
       )
       .filter((n) => n != null);

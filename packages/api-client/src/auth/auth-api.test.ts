@@ -158,7 +158,14 @@ describe('AuthApi', () => {
   test('listHubs 读 /api/mesh/hubs 并原样保留 attached / writerHubId', async () => {
     const body = {
       hubs: [
-        { nodeId: 'h1', publicUrl: 'https://h1', mode: 'active', priority: 0, writerEpoch: 2 },
+        {
+          nodeId: 'h1',
+          publicUrl: 'https://h1',
+          mode: 'active',
+          priority: 0,
+          writerEpoch: 2,
+          authorization: 'signed',
+        },
         { nodeId: 'h2', publicUrl: 'https://h2', mode: 'standby', priority: 1, writerEpoch: 0 },
       ],
       attached: {
@@ -170,7 +177,7 @@ describe('AuthApi', () => {
       },
       writerHubId: 'h1',
       candidates: [
-        { publicUrl: 'https://h1', lastError: null, lastAttemptAt: null },
+        { publicUrl: 'https://h1', lastError: null, lastAttemptAt: null, rttMs: 12, rttAt: 99 },
         { publicUrl: 'https://h2', lastError: 'tls', lastAttemptAt: 1 },
       ],
     };
@@ -181,6 +188,12 @@ describe('AuthApi', () => {
     expect(out.attached?.mode).toBe('standby');
     expect(out.writerHubId).toBe('h1');
     expect(out.candidates.map((c) => c.publicUrl)).toEqual(['https://h1', 'https://h2']);
+    expect(out.candidates[0]).toMatchObject({ rttMs: 12, rttAt: 99 });
+    expect(out.candidates[1]?.rttMs).toBeUndefined();
+    expect(out.candidates[1]?.rttAt).toBeUndefined();
+    // 授权来源原样带出；旧后端不下发时保持 undefined
+    expect(out.hubs[0]?.authorization).toBe('signed');
+    expect(out.hubs[1]?.authorization).toBeUndefined();
   });
 
   test('listHubs 对缺字段的响应补空集合，不抛', async () => {

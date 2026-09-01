@@ -1,5 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import {
+  KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
+  buildAdmitHubPayload,
   buildKeyLogRecord,
   computeRecordHash,
   decodeBase64url,
@@ -23,6 +25,7 @@ import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { UserStore } from '../auth/user-store';
 import { nodes } from '../db/schema';
+import { ATTACHMENT_TTL_MS } from './attachment-router';
 import {
   type CtlInbox,
   autoPong,
@@ -60,6 +63,10 @@ function makeServer(
     keyLogReqIdleTtlMs?: number;
     config?: Partial<HubRuntimeConfig>;
     meshHubs?: MeshHubStore;
+    forwardAppend?: ConstructorParameters<typeof UplinkServer>[0]['forwardAppend'];
+    openHubStream?: ConstructorParameters<typeof UplinkServer>[0]['openHubStream'];
+    onWriteForward?: ConstructorParameters<typeof UplinkServer>[0]['onWriteForward'];
+    attachmentKeepaliveMs?: number;
   }
 ) {
   const registry = new NodeRegistry();
@@ -75,6 +82,10 @@ function makeServer(
       ...extras?.config,
     },
     meshHubs: extras?.meshHubs,
+    forwardAppend: extras?.forwardAppend,
+    openHubStream: extras?.openHubStream,
+    onWriteForward: extras?.onWriteForward,
+    attachmentKeepaliveMs: extras?.attachmentKeepaliveMs ?? 0,
     heartbeatIntervalMs: extras?.heartbeatIntervalMs ?? 60_000,
     heartbeatMissLimit: extras?.heartbeatMissLimit ?? 3,
     authTimeoutMs: extras?.authTimeoutMs ?? 60_000,
@@ -1059,6 +1070,59 @@ describe('UplinkServer', () => {
       );
       expect((await fakeRow.closed).reason).toBe('rst');
 
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('未授权 hub.attachments 被丢弃；跨 hub relay 打开 hub-relay', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const hubB = 'bb'.repeat(16);
+      const opened: Array<{ hubId: string; payload: Record<string, unknown> }> = [];
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: { nodeId: 'aa'.repeat(16), hubNodeId: 'aa'.repeat(16), authorizedHubIds: [hubB] },
+        openHubStream: async (hubId, payload) => {
+          opened.push({
+            hubId,
+            payload: JSON.parse(new TextDecoder().decode(payload)) as Record<string, unknown>,
+          });
+          const [left, right] = createInMemoryLinkPair();
+          right.onStream(() => {});
+          return left.openStream(payload);
+        },
+      });
+      const a = await authNode(server, userStore, user.id, { name: 'c' });
+      const stray = await authNode(server, userStore, user.id, { name: 'stray' });
+      sendCtl(stray.nodeLink, {
+        t: 'hub.attachments',
+        revision: 1,
+        full: true,
+        entries: [{ nodeId: 'dd'.repeat(16), attached: true, hubId: hubB }],
+      });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(server.attachments.lookup('dd'.repeat(16))).toBeUndefined();
+
+      const target = seedAdmittedNode(userStore, user.id, { name: 'd' });
+      server.ingestHubAttachments(hubB, {
+        t: 'hub.attachments',
+        revision: 1,
+        full: true,
+        entries: [{ nodeId: target.nodeId, attached: true, hubId: hubB }],
+      });
+      expect(server.attachments.attachedHubId(target.nodeId)).toBe(hubB);
+
+      const ghost = await a.nodeLink.openStream(
+        new TextEncoder().encode(JSON.stringify({ to: target.nodeId }))
+      );
+      await new Promise((r) => setTimeout(r, 50));
+      expect(opened.some((row) => row.hubId === hubB && row.payload.kind === 'hub-relay')).toBe(
+        true
+      );
+      ghost.reset('done');
       server.stop();
     } finally {
       close();
@@ -2403,6 +2467,413 @@ describe('UplinkServer multi-hub', () => {
       const res = await takeUntil(node.inbox, 'key.log.res');
       expect(res.t).toBe('key.log.res');
       if (res.t === 'key.log.res') expect(res.records.length).toBeGreaterThan(0);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('standby 把 key.log.append 转到 writer uplink 并回传 ack', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const writerId = 'bb'.repeat(16);
+      const meshHubs = new MeshHubStore(db);
+      meshHubs.upsert(
+        {
+          hubNodeId: writerId,
+          publicUrl: 'https://writer.example',
+          name: 'writer',
+          mode: 'active',
+          priority: 50,
+          writerEpoch: 5,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
+      const forwarded: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        meshHubs,
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 1,
+          hubNodeId: SELF_HUB,
+          nodeId: SELF_HUB,
+          authorizedHubIds: [writerId],
+        },
+        forwardAppend: async (record) => {
+          forwarded.push(record);
+          return { ok: true, seq: 9n };
+        },
+      });
+      const node = await authNode(server, userStore, user.id);
+      const next = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'clear-totp',
+        encodeClearTotpPayload()
+      );
+      sendCtl(node.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(next.bytes),
+        sig: encodeBase64url(next.sig),
+        id: 'fwd-1',
+      });
+      const ack = await takeUntil(node.inbox, 'key.log.ack');
+      expect(ack.t).toBe('key.log.ack');
+      if (ack.t === 'key.log.ack') {
+        expect(ack.ok).toBe(true);
+        expect(ack.id).toBe('fwd-1');
+        expect(ack.seq).toBe(9);
+      }
+      expect(forwarded).toHaveLength(1);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('old-node-present 时 key.log.append 无 force 拒绝，force 则放行', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const old = seedAdmittedNode(userStore, user.id, { name: 'old-node' });
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: { publicUrl: 'https://hub.example', nodeId: SELF_HUB, hubNodeId: SELF_HUB },
+      });
+      const node = await authNode(server, userStore, user.id);
+      const rec = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'admit-hub',
+        buildAdmitHubPayload({ hubNodeId: old.nodeIdBytes, publicUrl: 'https://x.example' })
+      );
+      sendCtl(node.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+        id: 'no-force',
+      });
+      const refused = await takeUntil(node.inbox, 'key.log.ack');
+      expect(refused).toMatchObject({ t: 'key.log.ack', id: 'no-force', ok: false });
+      if (refused.t === 'key.log.ack') expect(refused.error).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+
+      const warns: string[] = [];
+      const orig = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warns.push(args.map(String).join(' '));
+      };
+      try {
+        sendCtl(node.nodeLink, {
+          t: 'key.log.append',
+          bytes: encodeBase64url(rec.bytes),
+          sig: encodeBase64url(rec.sig),
+          id: 'with-force',
+          force: true,
+        });
+        const ok = await takeUntil(node.inbox, 'key.log.ack');
+        expect(ok).toMatchObject({ t: 'key.log.ack', id: 'with-force', ok: true });
+        expect(warns.some((line) => line.includes('forcing key-log append'))).toBe(true);
+      } finally {
+        console.warn = orig;
+      }
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('非当前写者的 hub.tokens upsert 丢弃', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const writerId = 'bb'.repeat(16);
+      const meshHubs = new MeshHubStore(db);
+      meshHubs.upsert(
+        {
+          hubNodeId: writerId,
+          publicUrl: 'https://writer.example',
+          name: 'writer',
+          mode: 'active',
+          priority: 50,
+          writerEpoch: 5,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        meshHubs,
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 1,
+          hubNodeId: SELF_HUB,
+          nodeId: SELF_HUB,
+          authorizedHubIds: [writerId],
+        },
+      });
+      const node = await authNode(server, userStore, user.id);
+      userStore.upsertHubAuthorization({
+        userId: user.id,
+        hubNodeId: node.nodeId,
+        status: 'active',
+        admitSeq: 1,
+        updatedSeq: 1,
+      });
+      const warns: string[] = [];
+      const orig = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warns.push(args.map(String).join(' '));
+      };
+      try {
+        sendCtl(node.nodeLink, {
+          t: 'hub.tokens',
+          op: 'upsert',
+          revision: { epoch: 1, seq: 1 },
+          id: 'tok-bad',
+          tokens: [],
+        });
+        await new Promise((r) => setTimeout(r, 30));
+        expect(warns.some((line) => line.includes('not current writer'))).toBe(true);
+        expect(userStore.listEnrollmentTokens()).toHaveLength(0);
+      } finally {
+        console.warn = orig;
+      }
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('UplinkServer G7 hardening', () => {
+  test('已降备的 ex-writer 拒绝 hub.write-forward 并回 HUB_NOT_WRITER', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const peer = seedAdmittedNode(userStore, user.id, { name: 'standby' });
+      let executed = 0;
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'standby',
+          writerEpoch: 1,
+          hubNodeId: SELF_HUB,
+          nodeId: SELF_HUB,
+          authorizedHubIds: [peer.nodeId],
+        },
+        onWriteForward: async () => {
+          executed += 1;
+          return { t: 'hub.write-forward', id: 'x', ack: true, status: 200 };
+        },
+      });
+      const node = await authNode(server, userStore, user.id, { node: peer });
+      sendCtl(node.nodeLink, {
+        t: 'hub.write-forward',
+        id: 'fwd-fence',
+        method: 'POST',
+        path: '/api/hub/enrollments',
+        body: '{}',
+        writerHubId: SELF_HUB,
+        writerEpoch: 1,
+      });
+      const ack = await takeUntil(node.inbox, 'hub.write-forward');
+      expect(ack).toMatchObject({
+        t: 'hub.write-forward',
+        id: 'fwd-fence',
+        ack: true,
+        status: 409,
+      });
+      if (ack.t === 'hub.write-forward') {
+        expect(JSON.parse(ack.body ?? '{}')).toMatchObject({ code: HUB_NOT_WRITER });
+      }
+      expect(executed).toBe(0);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('同 id 同 digest 重放 ACK，不二次执行', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const peer = seedAdmittedNode(userStore, user.id, { name: 'standby' });
+      let executed = 0;
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'active',
+          writerEpoch: 3,
+          hubNodeId: SELF_HUB,
+          nodeId: SELF_HUB,
+          authorizedHubIds: [peer.nodeId],
+        },
+        onWriteForward: async (_from, msg) => {
+          executed += 1;
+          return {
+            t: 'hub.write-forward',
+            id: msg.id,
+            ack: true,
+            status: 201,
+            body: '{"ok":true}',
+          };
+        },
+      });
+      const node = await authNode(server, userStore, user.id, { node: peer });
+      const req = {
+        t: 'hub.write-forward' as const,
+        id: 'idem-1',
+        method: 'POST',
+        path: '/api/hub/enrollments',
+        body: '{"n":1}',
+        writerHubId: SELF_HUB,
+        writerEpoch: 3,
+      };
+      sendCtl(node.nodeLink, req);
+      const first = await takeUntil(node.inbox, 'hub.write-forward');
+      expect(first).toMatchObject({ id: 'idem-1', ack: true, status: 201 });
+      sendCtl(node.nodeLink, req);
+      const second = await takeUntil(node.inbox, 'hub.write-forward');
+      expect(second).toMatchObject({ id: 'idem-1', ack: true, status: 201, body: '{"ok":true}' });
+      expect(executed).toBe(1);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('跨 hub 附着路由计入 node.list online；过期后翻回 offline', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const remote = seedAdmittedNode(userStore, user.id, { name: 'remote' });
+      const hubB = 'bb'.repeat(16);
+      let now = 1_000;
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        now: () => now,
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'active',
+          hubNodeId: SELF_HUB,
+          nodeId: SELF_HUB,
+          authorizedHubIds: [hubB],
+        },
+      });
+      const viewer = await authNode(server, userStore, user.id);
+      server.ingestHubAttachments(hubB, {
+        t: 'hub.attachments',
+        revision: 1,
+        full: true,
+        entries: [{ nodeId: remote.nodeId, attached: true, hubId: hubB }],
+      });
+      const listed = await takeUntil(viewer.inbox, 'node.list');
+      expect(listed.t).toBe('node.list');
+      if (listed.t === 'node.list') {
+        const row = listed.nodes.find((n) => n.id === remote.nodeId);
+        expect(row?.online).toBe(true);
+        expect(row?.attachedHubId).toBe(hubB);
+      }
+      now = 1_000 + ATTACHMENT_TTL_MS + 1;
+      await server.broadcastNodeList(user.id);
+      const expired = await takeUntil(viewer.inbox, 'node.list');
+      if (expired.t === 'node.list') {
+        expect(expired.nodes.find((n) => n.id === remote.nodeId)?.online).toBe(false);
+      }
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('分页 attachments 在 final 前不落地，final 后原子应用', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const remote = seedAdmittedNode(userStore, user.id, { name: 'remote' });
+      const hubB = 'bb'.repeat(16);
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'active',
+          hubNodeId: SELF_HUB,
+          nodeId: SELF_HUB,
+          authorizedHubIds: [hubB],
+        },
+      });
+      server.ingestHubAttachments(hubB, {
+        t: 'hub.attachments',
+        revision: 2,
+        snapshotId: 's1',
+        page: 0,
+        final: false,
+        full: true,
+        entries: [{ nodeId: remote.nodeId, attached: true, hubId: hubB }],
+      });
+      expect(server.attachments.lookup(remote.nodeId)).toBeUndefined();
+      server.ingestHubAttachments(hubB, {
+        t: 'hub.attachments',
+        revision: 2,
+        snapshotId: 's1',
+        page: 0,
+        final: true,
+        full: true,
+        entries: [{ nodeId: remote.nodeId, attached: true, hubId: hubB }],
+      });
+      expect(server.attachments.attachedHubId(remote.nodeId)).toBe(hubB);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('心跳 pong 刷新远端路由，安静节点撑过 TTL', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const remote = seedAdmittedNode(userStore, user.id, { name: 'remote' });
+      const peer = seedAdmittedNode(userStore, user.id, { name: 'hub-b' });
+      let now = 1_000;
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        now: () => now,
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'active',
+          hubNodeId: SELF_HUB,
+          nodeId: SELF_HUB,
+          authorizedHubIds: [peer.nodeId],
+        },
+      });
+      const node = await authNode(server, userStore, user.id, { node: peer });
+      server.ingestHubAttachments(peer.nodeId, {
+        t: 'hub.attachments',
+        revision: 1,
+        full: true,
+        entries: [{ nodeId: remote.nodeId, attached: true, hubId: peer.nodeId }],
+      });
+      expect(server.attachments.attachedHubId(remote.nodeId)).toBe(peer.nodeId);
+      const attachedAt = server.attachments.lookup(remote.nodeId)?.lastSeen ?? now;
+      now = attachedAt + 50;
+      sendCtl(node.nodeLink, { t: 'pong' });
+      await waitFor(() => (server.attachments.lookup(remote.nodeId)?.lastSeen ?? 0) === now);
+      expect(server.attachments.lookup(remote.nodeId)?.lastSeen).toBe(now);
       server.stop();
     } finally {
       close();

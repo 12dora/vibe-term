@@ -10,18 +10,40 @@ export type EntryKind = 'named' | 'quick' | 'hubUrl' | 'none';
 export interface EntryStatus {
   kind: EntryKind;
   url: string | null;
-  /** 隧道是否在跑；`named` / `quick` 才有意义。 */
+  /** 隧道是否在跑并且真的可达；`named` / `quick` 才有意义。 */
   running: boolean;
+  /** 进程在跑但没有边缘连接：地址此时不可达，与「已停止」也要分开说。 */
+  degraded: boolean;
   /** 命名隧道的主机名，用来和 Hub 公开地址比对。 */
   hostname: string | null;
 }
 
-const NO_ENTRY: EntryStatus = { kind: 'none', url: null, running: false, hostname: null };
+const NO_ENTRY: EntryStatus = {
+  kind: 'none',
+  url: null,
+  running: false,
+  degraded: false,
+  hostname: null,
+};
 
-/** 接管来的隧道由系统服务跑，运行态只能看探测结果（与 `tunnelPill` 同一条判据）。 */
-function tunnelRunning(tunnel: TunnelStatusResponse): boolean {
+/** 接管来的隧道由系统服务跑，进程存活只能看探测结果（与 `tunnelPill` 同一条判据）。 */
+function tunnelAlive(tunnel: TunnelStatusResponse): boolean {
   if (tunnel.config?.externallyManaged) return tunnel.external?.running === true;
-  return tunnel.process?.state === 'running';
+  const state = tunnel.process?.state;
+  return state === 'running' || state === 'degraded';
+}
+
+/**
+ * 进程活着但连接器没有边缘连接。外部托管的 cloudflared 只探得到「进程在不在」，
+ * 所以这里同时认后端给的 `degraded` 与连接器探测结果。
+ * 探不到 metrics 端点（`reachable` 非 `true`）只说明读不到这份指标，不能据此宣告断线。
+ */
+function tunnelDegraded(tunnel: TunnelStatusResponse): boolean {
+  if (!tunnelAlive(tunnel)) return false;
+  if (tunnel.process?.state === 'degraded') return true;
+  const connector = tunnel.connector;
+  if (connector?.reachable !== true) return false;
+  return (connector.readyConnections ?? 0) === 0;
 }
 
 /**
@@ -33,18 +55,22 @@ export function entryStatus(
   hubPublicUrl: string | null | undefined
 ): EntryStatus {
   const config = tunnel?.config;
-  const running = tunnel ? tunnelRunning(tunnel) : false;
+  const degraded = tunnel ? tunnelDegraded(tunnel) : false;
+  const running = tunnel ? tunnelAlive(tunnel) && !degraded : false;
   if (config?.mode === 'named' && config.hostname) {
     return {
       kind: 'named',
       url: `https://${config.hostname}`,
       running,
+      degraded,
       hostname: config.hostname,
     };
   }
   const quickUrl = config?.mode === 'quick' ? (tunnel?.process?.publicUrl ?? null) : null;
-  if (quickUrl) return { kind: 'quick', url: quickUrl, running, hostname: null };
-  if (hubPublicUrl) return { kind: 'hubUrl', url: hubPublicUrl, running: false, hostname: null };
+  if (quickUrl) return { kind: 'quick', url: quickUrl, running, degraded, hostname: null };
+  if (hubPublicUrl) {
+    return { kind: 'hubUrl', url: hubPublicUrl, running: false, degraded: false, hostname: null };
+  }
   return NO_ENTRY;
 }
 

@@ -58,6 +58,7 @@ export type MeshHttpRuntimeOptions = {
   hubPublicUrl?: string | null;
   hubStore?: MeshHubStore;
   attachedHub?: () => AttachedHub | null;
+  attachedHubIdOf?: (nodeId: string) => string | null | undefined;
   hubMode?: () => HubMode | null;
   hubCandidates?: () => Array<string | UplinkCandidate>;
   trustProxy?: boolean;
@@ -158,6 +159,7 @@ export class MeshHttpRuntime {
       selfName: opts.selfName,
       hubStore: opts.hubStore,
       attachedHub: opts.attachedHub,
+      attachedHubIdOf: opts.attachedHubIdOf,
       hubCandidates: opts.hubCandidates,
       forwardAuthorizedHttp: (req, input) => this.forwarder.forwardAuthorizedHttp(req, input),
     });

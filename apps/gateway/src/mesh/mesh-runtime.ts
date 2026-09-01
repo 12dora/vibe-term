@@ -22,7 +22,15 @@ import { HUB_META_PEER_ID } from '../auth/user-store';
 import { type TmexRoles, config as gatewayConfig } from '../config';
 import { getSiteSettings } from '../db/site-settings';
 import { HubRuntime, type HubTurnConfig } from '../hub';
+import {
+  applyKeyLogHubRuntime,
+  envPeerSet,
+  isAuthorizedHub,
+  lookupSignedHubAuthorization,
+  resolveMeshUserId,
+} from '../hub/hub-authorization';
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
+import type { HubPeerFetch } from '../hub/hub-peer-poller';
 import type { HubTlsInfoProvider } from '../hub/hub-runtime';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
@@ -69,6 +77,7 @@ import {
   isSelfHubCandidate,
   mergeUplinkCandidates,
   recordsFromNodeList,
+  sameHubUrl,
 } from './uplink-pool';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
 
@@ -81,6 +90,9 @@ export type MeshRuntimeConfig = {
   hubPriority?: number;
   hubWriterEpoch?: number;
   hubPeers?: string[];
+  hubAutoPromote?: boolean;
+  hubAutoPromoteTimeoutMs?: number;
+  uplinkPreferNearest?: boolean | null;
   peerPort: number;
   stunServers: string[];
   turnUrl?: string | null;
@@ -112,6 +124,11 @@ export type CreateMeshRuntimeOptions = {
   meshHubStore?: MeshHubStore;
   /** TLS 指纹轮询间隔；默认 10 分钟。TLS 服务无变更回调时用轮询刷新 node.status.hub.caFingerprint。 */
   tlsPollIntervalMs?: number;
+  /** 由 packages/app assemble 注入：把 TMEX_HUB_MODE / TMEX_HUB_WRITER_EPOCH 写进 app.env。 */
+  patchHubRoleEnv?: (patch: Record<string, string>) => Promise<void>;
+  /** 由 packages/app assemble 注入：延迟调用 RuntimeController.requestRestart。 */
+  scheduleHubRoleRestart?: (delayMs: number) => void;
+  hubFetch?: HubPeerFetch;
 };
 
 export const CONNECTION_ID_BYTES = 32;
@@ -450,10 +467,11 @@ export function attachKeyLogHeadNotify(
 }
 
 export type KeyLogUplinkPort = {
-  sendCtl(msg: { t: 'key.log.append'; bytes: Uint8Array; sig: Uint8Array }): void;
+  sendCtl(msg: { t: 'key.log.append'; bytes: Uint8Array; sig: Uint8Array; force?: boolean }): void;
   appendAndAck(record: {
     bytes: Uint8Array;
     sig: Uint8Array;
+    force?: boolean;
   }): Promise<{ ok: boolean; seq?: bigint | number; error?: string }>;
   queryHubHead(): Promise<{ seq: bigint | number; hash: Uint8Array } | null>;
   queryKeyLogAt(seq: bigint): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null>;
@@ -466,13 +484,20 @@ export function createKeyLogPublisher(
   return {
     publish(record) {
       try {
-        uplink.sendCtl({ t: 'key.log.append', bytes: record.bytes, sig: record.sig });
+        const force = (record as { force?: boolean }).force === true;
+        uplink.sendCtl({
+          t: 'key.log.append',
+          bytes: record.bytes,
+          sig: record.sig,
+          ...(force ? { force: true } : {}),
+        });
       } catch {}
       notifyHead();
     },
     async publishAndAck(record) {
       // hub ACK 时本地 head 尚未更新；status 刷新挂在 apply 成功路径，避免读到旧 head
-      const ack = await uplink.appendAndAck(record);
+      const force = (record as { force?: boolean }).force === true;
+      const ack = await uplink.appendAndAck({ ...record, force });
       if (ack.ok) return { ok: true, seq: ack.seq ?? 0n };
       return { ok: false, error: ack.error ?? 'hub_error' };
     },
@@ -571,6 +596,44 @@ function hubSeedUrls(config: MeshRuntimeConfig): string[] {
   for (const url of config.hubUrls ?? []) add(url);
   if (out.length === 0) add(hubEndpointUrl(config));
   return out;
+}
+
+function meshAuthorizedHub(d: MeshDeps, hubNodeId: string): boolean {
+  const uid = resolveMeshUserId(d.userStore, {
+    nodeId: d.identity.nodeIdHex,
+    explicit: d.userIdOf(),
+  });
+  return isAuthorizedHub({
+    hubNodeId,
+    selfId: d.identity.nodeIdHex,
+    envPeers: envPeerSet(d.config.hubPeers ?? gatewayConfig.hubPeers),
+    signed: lookupSignedHubAuthorization(d.userStore, uid, hubNodeId),
+  });
+}
+
+function meshHubNotRetired(d: MeshDeps, hubNodeId: string): boolean {
+  const uid = resolveMeshUserId(d.userStore, {
+    nodeId: d.identity.nodeIdHex,
+    explicit: d.userIdOf(),
+  });
+  return lookupSignedHubAuthorization(d.userStore, uid, hubNodeId)?.status !== 'retired';
+}
+
+function retiredHubSeedUrls(d: MeshDeps): string[] {
+  const uid = resolveMeshUserId(d.userStore, {
+    nodeId: d.identity.nodeIdHex,
+    explicit: d.userIdOf(),
+  });
+  const urls: string[] = [];
+  if (uid) {
+    for (const row of d.userStore.listHubAuthorizationsByUser(uid)) {
+      if (row.status === 'retired' && row.publicUrl) urls.push(row.publicUrl);
+    }
+  }
+  for (const row of d.hubStore.list()) {
+    if (!meshAuthorizedHub(d, row.hubNodeId)) urls.push(row.publicUrl);
+  }
+  return urls;
 }
 
 export function hubRoleAdvertisement(
@@ -726,8 +789,22 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
         },
         tlsInfo: opts.tlsInfo,
         hubTrust: new HubTrustStore(db),
+        hubFetch: opts.hubFetch,
+        patchHostEnv: opts.patchHubRoleEnv,
+        scheduleRestart: opts.scheduleHubRoleRestart,
+        hubRoleInstalled: config.roles.hub,
+        autoPromote: config.hubAutoPromote ?? gatewayConfig.hubAutoPromote,
+        autoPromoteTimeoutMs:
+          config.hubAutoPromoteTimeoutMs ?? gatewayConfig.hubAutoPromoteTimeoutMs,
       }))
     : (opts.hub ?? null);
+  keyLogService.onApplied = (_userId, step) => {
+    applyKeyLogHubRuntime(hubStore, step.record, {
+      selfId: identity.nodeIdHex,
+      now: Date.now(),
+      onRetireSelf: () => hub?.setMode('standby'),
+    });
+  };
   return {
     opts,
     db,
@@ -868,8 +945,18 @@ function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: Rej
   if (!state.hubPresenceLive) state.hubGeneration += 1;
   state.hubPresenceLive = true;
   state.lastRtc = { stun: list.rtc.stun, turn: list.rtc.turn ?? null };
-  const recs = recordsFromNodeList(list);
-  if (recs.length > 0) d.hubStore.replaceAll(recs, d.scheduler.now());
+  const sourceId = list.writerHubId ?? list.hub?.nodeId ?? null;
+  if (sourceId && !meshHubNotRetired(d, sourceId)) {
+    d.hubStore.remove(sourceId);
+  } else {
+    const recs = recordsFromNodeList(list).filter((row) => meshHubNotRetired(d, row.hubNodeId));
+    if (recs.length > 0) d.hubStore.replaceAll(recs, d.scheduler.now());
+  }
+  if (d.userIdOf()) {
+    for (const row of d.hubStore.list()) {
+      if (!meshHubNotRetired(d, row.hubNodeId)) d.hubStore.remove(row.hubNodeId);
+    }
+  }
   const reach = d.peerHolder.manager?.listReach() ?? new Map();
   const hubIds = new Set([
     ...listedHubNodeIds(list),
@@ -980,11 +1067,22 @@ function createUplinkWiring(d: MeshDeps) {
     keyLogApplier: d.applier,
     userStore,
     statusProvider: d.statusProvider,
-    candidates: () => mergeUplinkCandidates(d.hubStore.orderedEndpoints(), hubSeedUrls(config)),
+    candidates: () => {
+      const endpoints = d.hubStore.orderedEndpoints({
+        include: (id) => meshHubNotRetired(d, id),
+      });
+      const blocked = retiredHubSeedUrls(d);
+      const seeds = hubSeedUrls(config).filter(
+        (url) => !blocked.some((retired) => sameHubUrl(retired, url))
+      );
+      return mergeUplinkCandidates(endpoints, seeds);
+    },
     hubTrust,
     wsFactory: opts.wsFactory,
     scheduler: d.scheduler,
     pingIntervalMs: opts.pingIntervalMs,
+    preferNearest: config.uplinkPreferNearest ?? gatewayConfig.uplinkPreferNearest,
+    localRoles: config.roles,
     isLocalCandidate: (cand) =>
       Boolean(uplinkHub) &&
       isSelfHubCandidate(cand, { nodeId: identity.nodeIdHex, publicUrl: ownHubUrl }),
@@ -994,6 +1092,21 @@ function createUplinkWiring(d: MeshDeps) {
       const online = client.connectWithLink(nodeLink, signal);
       uplinkHub.attachLocalNode(hubLink);
       await online;
+    },
+    onHubTokens: (msg, source) => {
+      d.hub?.receiveHubTokens(msg, source);
+    },
+    onHubAttachments: (msg, source) => {
+      d.hub?.receiveHubAttachments(msg, source);
+    },
+    onHubForward: (msg, source) => {
+      d.hub?.receiveHubForward(msg, source);
+    },
+    onHubWriteForward: (msg, source) => {
+      d.hub?.receiveHubWriteForward(msg, source);
+    },
+    onHubRelayStream: (stream, source) => {
+      d.hub?.receiveHubRelay(stream, source);
     },
     onEnrollRedeemed: (msg) => {
       d.httpHolder.runtime?.mesh.forwardEnrollRedeemed({
@@ -1025,6 +1138,41 @@ function createUplinkWiring(d: MeshDeps) {
         } catch {}
       }
     },
+  });
+  hub?.bindWriterBridge({
+    appendAndAck: async (record) => {
+      const attached = uplink.attachedHub();
+      if (uplink.state !== 'online' || attached?.mode !== 'active') return null;
+      try {
+        return await uplink.appendAndAck(record);
+      } catch {
+        return null;
+      }
+    },
+    requestCatchUp: () => {
+      try {
+        uplink.liveClient()?.requestCatchUpNow();
+      } catch {
+        /* offline */
+      }
+    },
+    sendCtl: (msg) => {
+      try {
+        uplink.sendCtl(msg);
+      } catch {
+        /* offline */
+      }
+    },
+    openStream: async (payload) => {
+      const link = uplink.liveClient()?.link;
+      if (!link || uplink.state !== 'online') throw new Error('uplink-offline');
+      return link.openStream(payload);
+    },
+    isLive: () => uplink.state === 'online' && uplink.attachedHub()?.mode === 'active',
+  });
+  uplink.onStateChange((state) => {
+    if (state === 'online') d.hub?.onWriterUplinkOnline();
+    else d.hub?.onWriterUplinkOffline();
   });
   return { uplink, ensureDc };
 }
@@ -1318,6 +1466,11 @@ function wireMeshHttp(
     hubPublicUrl: hubEndpointUrl(config),
     hubStore: d.hubStore,
     attachedHub: () => w.uplink.attachedHub(),
+    attachedHubIdOf: (id) => {
+      if (d.hub) return d.hub.uplink.attachments.attachedHubId(id) ?? null;
+      const listed = state.lastNodeList?.nodes.find((node) => node.id === id);
+      return listed?.attachedHubId ?? null;
+    },
     hubMode: () => d.hub?.mode() ?? null,
     hubCandidates: () => w.uplink.candidates(),
     trustProxy: gatewayConfig.trustProxy,
@@ -1325,6 +1478,7 @@ function wireMeshHttp(
       d.sessions.lookup(input.sid, input.via, input.connectionId, input.cid),
   });
   http.auth.setTlsInfo(d.opts.tlsInfo);
+  http.auth.setWriterForward((req, uid) => d.hub?.forwardWrite(req, uid) ?? Promise.resolve(null));
   d.httpHolder.runtime = http;
   setMeshAgentBridge({
     lookupNode(nodeId) {
@@ -1348,10 +1502,18 @@ function assembleMeshRuntime(
   const { uplink, peerManager } = w;
   let stopPromise: Promise<void> | null = null;
   let tlsPoll: { clear: () => void } | null = null;
-  const refreshTlsAndAdvertise = async () => {
-    const prev = d.state.caFingerprint;
-    await d.refreshTls();
-    if (d.state.caFingerprint !== prev) uplink.sendStatusIfChanged();
+  let tlsRefreshInFlight: Promise<void> | null = null;
+  const refreshTlsAndAdvertise = () => {
+    if (tlsRefreshInFlight) return tlsRefreshInFlight;
+    tlsRefreshInFlight = (async () => {
+      const prev = d.state.caFingerprint;
+      await d.refreshTls();
+      hub?.updateSelfCaFingerprint(d.state.caFingerprint);
+      if (d.state.caFingerprint !== prev) uplink.sendStatusIfChanged();
+    })().finally(() => {
+      tlsRefreshInFlight = null;
+    });
+    return tlsRefreshInFlight;
   };
   const unsubscribeHubMode = hub?.onModeChange(() => uplink.sendStatusIfChanged()) ?? null;
   return {

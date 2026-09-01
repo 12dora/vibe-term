@@ -122,7 +122,8 @@ function HostEntryStep({ entry }: { entry: EntryStatus }) {
       </GuideStep>
     );
   }
-  const running = t(`settings.remoteAccess.state.${entry.running ? 'running' : 'stopped'}`);
+  const state = entry.degraded ? 'degraded' : entry.running ? 'running' : 'stopped';
+  const running = t(`settings.remoteAccess.state.${state}`);
   return (
     <GuideStep
       index={BRANCH_STEP_OFFSET}

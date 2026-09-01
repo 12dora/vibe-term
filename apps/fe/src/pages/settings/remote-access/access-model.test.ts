@@ -41,6 +41,14 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       lastError: null,
       restarts: 0,
     },
+    connector: {
+      reachable: null,
+      metricsAddr: null,
+      readyConnections: null,
+      connectorId: null,
+      checkedAt: null,
+      lastError: null,
+    },
     access: {
       hasCredentials: false,
       accountId: null,

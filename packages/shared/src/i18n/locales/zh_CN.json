@@ -416,7 +416,16 @@
           "stopped": "已停止",
           "starting": "启动中",
           "running": "运行中",
+          "degraded": "无连接",
           "error": "异常"
+        },
+        "degradedNotice": "隧道进程运行中，但无边缘连接，公网地址当前不可达。",
+        "connector": {
+          "label": "连接器",
+          "connected": "{{n}} 条边缘连接",
+          "noConnections": "无边缘连接",
+          "unknown": "无法探测（metrics 端点不可达）",
+          "unprobed": "未探测"
         },
         "mode": {
           "quick": {
@@ -508,13 +517,16 @@
           "release": "取消接管"
         },
         "check": {
-          "reachable": "公网地址可以访问。",
+          "reachable": "本机经公网地址可达。",
+          "accessProtected": "公网地址受 Cloudflare Access 保护，连接器在线。",
+          "accessProtectedUnverified": "公网地址受 Cloudflare Access 保护；未探测到连接器，无法确认本机可达。",
           "unreachable": "公网地址不可达。",
           "running": "正在检查公网地址…"
         },
         "log": {
           "title": "cloudflared 日志",
-          "empty": "暂无输出。"
+          "empty": "暂无输出。",
+          "emptyExternal": "外部 cloudflared 未提供日志文件（启动参数无 --logfile）。"
         },
         "steps": {
           "path": {
@@ -642,6 +654,7 @@
           "tunnel_exists": "Cloudflare 上已有同名隧道。请换一个名称，或先删除已有隧道。",
           "dns_route_failed": "添加 DNS 记录失败。请确认该域名托管在同一个 Cloudflare 账号下，且没有同名记录冲突。",
           "process_failed": "cloudflared 未能正常启动。请展开 cloudflared 日志查看具体原因。",
+          "connector_down": "连接器无边缘连接：{{message}}",
           "busy": "上一项操作还未结束，请稍候再试。",
           "not_configured": "还未配置远程访问，请先在下方向导里选择一种方式。",
           "invalid_request": "请求无效，页面数据可能已过期。请刷新页面后重试。",
@@ -1710,7 +1723,7 @@
         "title": "节点管理"
       },
       "empty": "暂无节点",
-      "self": "当前节点",
+      "self": "当前",
       "hub": "Hub",
       "loggedIn": "已登录",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
@@ -1725,7 +1738,74 @@
         "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
         "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
         "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
-        "machineRole": "Hub 角色"
+        "machineRole": "Hub 角色",
+        "lastAttempt": "最近尝试：{{time}}",
+        "lastError": "最近错误：{{error}}",
+        "authorization": {
+          "label": "授权：{{value}}",
+          "signed": "已签名",
+          "env": "环境变量",
+          "self": "本机",
+          "none": "未授权"
+        },
+        "role": {
+          "promote": "设为主 Hub",
+          "demote": "设为备 Hub",
+          "stateSwitching": "切换中",
+          "confirmPromote": "设为主 Hub",
+          "confirmDemote": "设为备 Hub",
+          "confirmText": "「{{target}}」将接管写入，切换期间管理操作短暂不可用。",
+          "confirmTextNoWriter": "「{{from}}」降为备 Hub，没有其它 Hub 可接管写入。",
+          "confirm": "切换",
+          "cancel": "取消",
+          "stepAdmit": "为「{{target}}」签发 Hub 授权（需验证凭据）。",
+          "stepDemote": "把「{{from}}」降为备 Hub。",
+          "stepPromote": "把「{{target}}」升为主 Hub，目标随后自动重启。",
+          "stepWait": "等待「{{target}}」重启并接管写入。",
+          "stepDemoteOnly": "把「{{from}}」降为备 Hub，目标随后自动重启。",
+          "warnFromUnreachable": "原主 Hub 不可达，将依靠更高纪元围栏它。",
+          "warnNoWriter": "之后将没有可写 Hub，加入、重命名、移除等管理操作都不可用。",
+          "started": "已开始切换 Hub 主备。",
+          "done": "「{{target}}」已成为主 Hub。",
+          "failed": "Hub 切换失败：{{error}}",
+          "forceTitle": "有节点版本过低",
+          "forceDescription": "强制继续后，这些节点将无法再同步 Hub 授权记录。",
+          "forceText": "以下节点版本低于 {{minVersion}}，须先升级：",
+          "forceAccept": "仍然继续（旧节点将无法再同步）",
+          "forceConfirm": "仍然继续",
+          "recovery": {
+            "title": "当前没有可写 Hub",
+            "description": "原主 Hub 已降为备，新主 Hub 未确认接管，须选择下一步。",
+            "noWriter": "「{{from}}」已降为备 Hub，「{{target}}」未确认接管写入。",
+            "retry": "重试升级目标",
+            "rollback": "回滚：重新升级原主 Hub",
+            "dismiss": "稍后处理"
+          },
+          "blocked": {
+            "unknownHub": "Hub 集合尚未加载，稍后重试。",
+            "unknownAuth": "入口版本过低，无法读取 Hub 授权来源。",
+            "offline": "该 Hub 离线，无法切换。",
+            "switching": "已有一次 Hub 切换在进行。",
+            "rowBusy": "该节点正在升级或卸载。",
+            "notWritable": "须先签发 Hub 授权，当前主 Hub 不接受写入。"
+          },
+          "errors": {
+            "HUB_NOT_HUB": "目标未启用 Hub 角色。",
+            "HUB_NOT_AUTHORIZED": "目标 Hub 未获授权。",
+            "HUB_EPOCH_STALE": "写入纪元已过期，请刷新后重试。",
+            "HUB_ROLE_BUSY": "目标已有一次角色切换在进行。",
+            "HUB_ROLE_UNSUPPORTED": "目标版本不支持远程切换，须先升级。",
+            "INVALID_REQUEST": "请求无效。",
+            "unknown": "原因未知。",
+            "unreachable": "目标 Hub 不可达。",
+            "authTimeout": "Hub 授权未在预期时间内生效。",
+            "resumeAdmit": "Hub 授权尚未签发完成，请重新发起切换。",
+            "restartTimeout": "目标重启超时，未能确认切换结果：{{error}}",
+            "writerTimeout": "未能确认新的主 Hub 已接管写入，请刷新核对。",
+            "hubsUnreachable": "读不到 Hub 列表，入口暂时不可达。",
+            "unexpected": "切换中断，请刷新核对。"
+          }
+        }
       },
       "machine": {
         "title": "本机",
@@ -1992,6 +2072,54 @@
         "copy": "复制",
         "copied": "已复制"
       },
+      "selection": {
+        "more": "更多",
+        "selectAll": "全选",
+        "clearAll": "全不选",
+        "selfBlocked": "本机不可选。",
+        "none": "须先勾选节点。",
+        "busy": "正在移除节点，请稍候。",
+        "upgrade": "升级（{{count}}）",
+        "upgradeWithSelf": "升级（{{count}}，含本机）",
+        "upgradeSelfNotice": "本机排在最后升级，届时服务重启、当前页面短暂断开。",
+        "revoke": "移除节点",
+        "uninstall": "卸载 tmex"
+      },
+      "uninstall": {
+        "confirmTitle": "卸载 tmex",
+        "confirmText": "将删除节点上的 tmex 服务、程序与数据，随后把它从多节点互联中移除。此操作不可撤销。",
+        "targets": "将卸载（{{count}}）",
+        "skipped": "跳过（{{count}}）",
+        "noTargets": "所选节点都无法远程卸载。",
+        "confirm": "卸载",
+        "cancel": "取消",
+        "skip": {
+          "self": "本机",
+          "offline": "离线",
+          "loginRequired": "未登录",
+          "tooOld": "版本低于 1.1.13",
+          "uninstalling": "正在卸载"
+        },
+        "stateRunning": "卸载中",
+        "stateFailed": "卸载失败",
+        "clear": "清除卸载记录",
+        "clearFailed": "清除卸载记录失败，请重试。",
+        "busy": "该节点正在卸载。",
+        "running": "正在卸载，请稍候。",
+        "revokeFailed": "已卸载，但未能从多节点互联中移除",
+        "summary": "已卸载 {{count}} 个节点",
+        "summaryFailed": "已卸载 {{count}} 个，{{failed}} 个失败（{{names}}）",
+        "summaryAborted": "Hub 不可用，已停止卸载剩余 {{remaining}} 个节点（已卸载 {{count}} 个）。",
+        "errors": {
+          "loginRequired": "须先登录该节点。",
+          "unreachable": "连不上该节点。",
+          "notAllowed": "该节点不是由 tmex 安装器部署的，无法远程卸载。",
+          "unsupported": "该节点版本过旧，不支持远程卸载。",
+          "selfBlocked": "不能卸载本机。",
+          "upgradeInProgress": "该节点正在升级，请稍后再试。",
+          "nodeGone": "该节点已不在列表中。"
+        }
+      },
       "enrollment": {
         "nameLabel": "节点名称（可选）",
         "create": "生成加入码",
@@ -2020,7 +2148,10 @@
         "reasonPrompt": "移除原因（可选）",
         "done": "已移除",
         "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
-        "selfBlocked": "不能移除当前正在使用的节点。"
+        "selfBlocked": "不能移除当前正在使用的节点。",
+        "bulkConfirm": "移除 {{count}} 个节点（{{names}}）？它们将立即失去访问权限，须重新添加。",
+        "bulkDone": "已移除 {{count}} 个节点",
+        "bulkFailed": "已移除 {{count}} 个，{{failed}} 个失败（{{names}}）"
       },
       "upgrade": {
         "action": "升级",
@@ -2064,7 +2195,9 @@
         "cancelUnsupported": "该节点版本不支持中断升级。",
         "cancelNotRunning": "该节点没有正在进行的升级。",
         "cancelFailed": "停止升级失败：{{error}}",
-        "restoring": "正在同步升级状态…"
+        "restoring": "正在同步升级状态…",
+        "allResumed": "已续接上次的批量升级。",
+        "allOtherTab": "另一个标签页正在批量升级。"
       },
       "badge": {
         "direct": "直连",

@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { SystemInfo } from '@tmex/shared';
 import { requestDispatchContext } from '../mesh/types';
 import * as infoPublic from '../system/info-public';
+import { uninstallController } from '../system/uninstall';
 import { STAGED_PACKAGE_MAX_BYTES, upgradeController } from '../system/upgrade';
 import { handleSystemApiRequest, isReleaseVersion } from './system';
 
@@ -97,14 +103,14 @@ describe('POST /api/system/upgrade version validation', () => {
 });
 
 describe('GET /api/system/info upgradeCapabilities', () => {
-  test('includes staged-package and upgrade-cancel', async () => {
+  test('includes staged-package, upgrade-cancel and uninstall', async () => {
     const response = await handleSystemApiRequest(
       new Request('http://localhost/api/system/info'),
       '/api/system/info'
     );
     expect(response?.status).toBe(200);
     const body = (await response?.json()) as { upgradeCapabilities?: string[] };
-    expect(body.upgradeCapabilities).toEqual(['staged-package', 'upgrade-cancel']);
+    expect(body.upgradeCapabilities).toEqual(['staged-package', 'upgrade-cancel', 'uninstall']);
   });
 });
 
@@ -435,6 +441,126 @@ describe('DELETE /api/system/upgrade/package', () => {
       if (prevInstall === undefined) delete process.env.TMEX_INSTALL_DIR;
       else process.env.TMEX_INSTALL_DIR = prevInstall;
       rmSync(installDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('POST/GET /api/system/uninstall', () => {
+  afterEach(() => {
+    uninstallController.resetForTests();
+  });
+
+  test('GET and POST without a user session are 401', async () => {
+    const getRes = await handleSystemApiRequest(
+      new Request('http://localhost/api/system/uninstall'),
+      '/api/system/uninstall'
+    );
+    expect(getRes?.status).toBe(401);
+    expect(await getRes?.json()).toEqual({ code: 'UNAUTHORIZED' });
+    const postRes = await handleSystemApiRequest(
+      new Request('http://localhost/api/system/uninstall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'full' }),
+      }),
+      '/api/system/uninstall'
+    );
+    expect(postRes?.status).toBe(401);
+    expect(await postRes?.json()).toEqual({ code: 'UNAUTHORIZED' });
+  });
+
+  test('GET returns idle status', async () => {
+    const response = await handleSystemApiRequest(
+      withMeshAuth(new Request('http://localhost/api/system/uninstall')),
+      '/api/system/uninstall'
+    );
+    expect(response?.status).toBe(200);
+    expect(await response?.json()).toEqual({
+      state: 'idle',
+      startedAt: null,
+      error: null,
+    });
+  });
+
+  test('rejects mode other than full with 400', async () => {
+    const response = await handleSystemApiRequest(
+      withMeshAuth(
+        new Request('http://localhost/api/system/uninstall', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'partial' }),
+        })
+      ),
+      '/api/system/uninstall'
+    );
+    expect(response?.status).toBe(400);
+  });
+
+  test('POST schedules uninstall through the injected spawner', async () => {
+    const installDir = mkdtempSync(join(tmpdir(), 'tmex-sys-uninst-'));
+    const copyRoot = mkdtempSync(join(tmpdir(), 'tmex-sys-uninst-tmp-'));
+    try {
+      const versionDir = join(installDir, 'versions', '1.2.3');
+      mkdirSync(join(versionDir, 'cli', 'bin'), { recursive: true });
+      writeFileSync(join(versionDir, 'cli', 'bin', 'tmex.js'), '#!/usr/bin/env node\n');
+      symlinkSync(versionDir, join(installDir, 'current'));
+      const spawned: string[][] = [];
+      uninstallController.setDepsForTests({
+        getInstallInfo: () => ({
+          installedViaCli: true,
+          deployment: 'launchd',
+          installDir,
+          serviceName: 'tmex',
+          cliVersion: '1.2.3',
+          bunPath: process.execPath,
+        }),
+        tmpdir: () => copyRoot,
+        randomId: () => 'feedface',
+        spawn: (_cmd, args) => {
+          spawned.push([...args]);
+          const child = new EventEmitter() as EventEmitter & { unref: () => void };
+          child.unref = () => undefined;
+          queueMicrotask(() => child.emit('spawn'));
+          return child as unknown as ChildProcess;
+        },
+      });
+      const infoLines: string[] = [];
+      const originalInfo = console.info;
+      console.info = (...args: unknown[]) => {
+        infoLines.push(args.map(String).join(' '));
+      };
+      let response: Response | Promise<Response> | undefined;
+      try {
+        response = await handleSystemApiRequest(
+          withMeshAuth(
+            new Request('http://localhost/api/system/uninstall', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ mode: 'full' }),
+            })
+          ),
+          '/api/system/uninstall'
+        );
+      } finally {
+        console.info = originalInfo;
+      }
+      expect(response?.status).toBe(202);
+      expect(spawned[0]?.slice(1, 4)).toEqual(['uninstall', '--yes', '--purge']);
+      expect(
+        infoLines.some((line) =>
+          line.includes('[system] uninstall requested via=entry-node user=user-1')
+        )
+      ).toBe(true);
+      const status = await handleSystemApiRequest(
+        withMeshAuth(new Request('http://localhost/api/system/uninstall')),
+        '/api/system/uninstall'
+      );
+      expect(status?.status).toBe(200);
+      const body = (await status?.json()) as { state: string };
+      expect(body.state).toBe('scheduled');
+    } finally {
+      rmSync(installDir, { recursive: true, force: true });
+      rmSync(copyRoot, { recursive: true, force: true });
     }
   });
 });

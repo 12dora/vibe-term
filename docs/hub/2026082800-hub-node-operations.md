@@ -166,6 +166,20 @@ hub 不可达（`mode.hubNodeId` / `isHub` 学不到）：顶栏提示，新增 
 
 侧边栏：在线已登录懒建该 node 运行时；在线未登录只显示「登录此节点」，不建连接；离线灰显缓存的设备名。
 
+## 远程卸载
+
+入口「设置 → 多节点互联 → 节点管理」可对已登录的远程节点执行「卸载 tmex」。入口不能卸载自己（`UNINSTALL_SELF_BLOCKED`）。
+
+流程：
+
+1. 入口 `POST /api/mesh/nodes/:id/uninstall` 要求本机会话、目标已在该入口登录（否则 `NODE_LOGIN_REQUIRED`）且 peer 可达（否则 `NODE_UNREACHABLE`），再经 peer link 转发 `POST /api/system/uninstall`，body 为 `{ mode: "full" }`。
+2. 目标必须是 CLI 安装（`installedViaCli` 且 `deployment` 为 `launchd` / `systemd`）。容器、手动部署或 managed 构建返回 409 `UNINSTALL_NOT_ALLOWED`；正在升级返回 409 `UPGRADE_IN_PROGRESS`。旧版本没有该接口（404/405）→ 501 `UNINSTALL_UNSUPPORTED`。`GET /api/system/info` 的 `upgradeCapabilities` 含 `uninstall`，入口用来区分旧目标。
+3. 目标把 `current/cli`（解析 `current` 符号链接到 `versions/<v>`）整目录拷到 `tmpdir/tmex-uninstall-<id>/`，再 detached 拉起 `tmex uninstall --yes --purge --install-dir <installDir> --delay-ms 1500`，立刻 202 `{ state: "scheduled" }`。`--delay-ms` 让 202 先刷出再停服务。随后卸载器停 launchd/systemd 用户服务、删安装目录（`versions/`、`current`、`staging`、`backups`、`app.env`、`data/` 含 SQLite `-wal`/`-shm`）、带 tmex 标记的 shim（`~/.local/bin/tmex`、`~/.bun/bin/tmex`），并尽量删掉这份临时拷贝。不会碰安装目录、unit/plist 和已标记 shim 以外的路径。
+4. 入口把长事务记在 `gateway_kv` 键 `mesh.node-op.<nodeId>`（`MeshNodeOperation`）：`requested`（转发前）→ `uninstalling`（目标 202）→ `failed`（带 `error`）。`GET /api/mesh/nodes` 每行带 `operation`（无则 `null`），页面刷新仍显示卸载中。记录自 `updatedAt` 起 TTL 30 分钟；节点从列表消失（吊销 / 移除）时在列表投影里惰性清除；也可 `DELETE /api/mesh/nodes/:id/operation`。`GET /api/mesh/nodes/:id/operation` 返回该记录或 404。
+5. 前端随后走既有签名 `revoke-node` 从 hub 去掉该节点。卸载不代替吊销。
+
+本机手动卸载仍用 `tmex uninstall [--yes] [--purge] [--delay-ms <n>]`。
+
 ## 账号安全：passkey 与 TOTP
 
 页面 `/account/security`（登录页底部也有入口）。standalone 整页不渲染。持久变更（改密、TOTP、增删 passkey、admit / revoke）都要根钥或 passkey 当场签一条 `user_key_log` 记录，浏览器临时钥 `sk_sess` 签不了这些记录。
@@ -224,6 +238,12 @@ Cloudflare Tunnel / Access 可放在 hub 或任一 node 前面。推荐：
    - passkey 的 origin / `passkeyAvailable` 按 `http://127.0.0.1` 计算，公网域名下无法注册或登录。
 
 该开关只作用于本机 UI 的 origin 计算，**不会**把转发来的 `X-Forwarded-*` 当成客户端 IP。
+
+### 连接器健康
+
+cloudflared 进程存活不等于边缘连通。本机代理 / TUN 抖动时进程常驻，日志里会出现 `TLS handshake with edge error` / `Unable to establish connection with Cloudflare edge`，公网地址随之不可达。
+
+权威信号是连接器本地 metrics：`GET http://127.0.0.1:<port>/ready`（`--metrics`、启动日志 `Starting metrics server on 127.0.0.1:20241/metrics`，缺省扫描 `20241–20245`）。`readyConnections === 0` 时状态为 `degraded`，连通性检查返回 `connector_down`（HTTP 503），即使 hostname 被 Cloudflare Access 302 拦截也不能当成成功。Access 拦截且连接器已验证有连接 → `access_protected`；找不到 metrics → `access_protected_unverified`。外部托管的 cloudflared 会读 `--logfile` 尾部（脱敏）填 `status.log`。`GET /api/tunnel/status` 对连接器探测最多等待约 800ms，过期则后台刷新。
 
 ## hub 离线
 

@@ -231,6 +231,9 @@ function isCancelled(job: Job): boolean {
   return job.state === 'cancelled';
 }
 
+type PhaseEnd = { done: true; snapshot: RemoteUpgradeJobSnapshot };
+type PhaseContinue<T> = { done: false; value: T };
+
 async function runJob(
   job: Job,
   req: Request,
@@ -239,26 +242,55 @@ async function runJob(
   timeouts: RemoteUpgradeTimeouts,
   nowFn: () => number
 ): Promise<RemoteUpgradeJobSnapshot> {
-  let downloaded: DownloadedRelease;
+  const downloaded = await runDownloadPhase(job, download, timeouts, nowFn);
+  if (downloaded.done) return downloaded.snapshot;
+  const pushed = await runPushPhase(job, req, forward, downloaded.value, timeouts, nowFn);
+  if (pushed.done) return pushed.snapshot;
+  return (await runStartPhase(job, req, forward, downloaded.value, timeouts, nowFn)).snapshot;
+}
+
+async function runDownloadPhase(
+  job: Job,
+  download: (version: string, signal?: AbortSignal) => Promise<DownloadedRelease>,
+  timeouts: RemoteUpgradeTimeouts,
+  nowFn: () => number
+): Promise<PhaseContinue<DownloadedRelease> | PhaseEnd> {
   job.phase = 'download';
   try {
-    downloaded = await withTimeout(
+    const downloaded = await withTimeout(
       download(job.version, job.abort.signal),
       timeouts.downloadMs,
       'download timeout'
     );
-  } catch (err) {
-    if (isCancelled(job)) return snapshotOf(job);
+    if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
     if (job.abort.signal.aborted) {
-      return markCancelled(job, nowFn);
+      return { done: true, snapshot: markCancelled(job, nowFn) };
     }
-    return fail(job, `download failed: ${err instanceof Error ? err.message : String(err)}`, nowFn);
+    return { done: false, value: downloaded };
+  } catch (err) {
+    if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
+    if (job.abort.signal.aborted) {
+      return { done: true, snapshot: markCancelled(job, nowFn) };
+    }
+    return {
+      done: true,
+      snapshot: fail(
+        job,
+        `download failed: ${err instanceof Error ? err.message : String(err)}`,
+        nowFn
+      ),
+    };
   }
-  if (isCancelled(job)) return snapshotOf(job);
-  if (job.abort.signal.aborted) {
-    return markCancelled(job, nowFn);
-  }
+}
 
+async function runPushPhase(
+  job: Job,
+  req: Request,
+  forward: AuthorizedUpgradeForward,
+  downloaded: DownloadedRelease,
+  timeouts: RemoteUpgradeTimeouts,
+  nowFn: () => number
+): Promise<PhaseEnd | { done: false }> {
   let fileStream: ReadableStream<Uint8Array> | null = null;
   job.phase = 'push';
   try {
@@ -282,39 +314,55 @@ async function runJob(
     job.fileStream = null;
     if (isCancelled(job)) {
       await pushed.body?.cancel().catch(() => {});
-      return snapshotOf(job);
+      return { done: true, snapshot: snapshotOf(job) };
     }
     if (pushed.status < 200 || pushed.status >= 300) {
       if (job.abort.signal.aborted) {
         await deleteStagedBestEffort(job, req, forward);
-        return markCancelled(job, nowFn);
+        return { done: true, snapshot: markCancelled(job, nowFn) };
       }
-      return fail(job, `push failed: ${await describeUpstream(pushed)}`, nowFn);
+      return {
+        done: true,
+        snapshot: fail(job, `push failed: ${await describeUpstream(pushed)}`, nowFn),
+      };
     }
     await pushed.body?.cancel().catch(() => {});
     job.pushed = true;
+    return { done: false };
   } catch (err) {
     await fileStream?.cancel().catch(() => {});
     job.fileStream = null;
-    if (isCancelled(job)) return snapshotOf(job);
+    if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
     if (job.abort.signal.aborted) {
       await deleteStagedBestEffort(job, req, forward);
-      return markCancelled(job, nowFn);
+      return { done: true, snapshot: markCancelled(job, nowFn) };
     }
     const message = err instanceof Error ? err.message : String(err);
-    return fail(
-      job,
-      `push failed: ${message.includes('push timeout') ? 'push timeout' : message}`,
-      nowFn
-    );
+    return {
+      done: true,
+      snapshot: fail(
+        job,
+        `push failed: ${message.includes('push timeout') ? 'push timeout' : message}`,
+        nowFn
+      ),
+    };
   }
+}
 
+async function runStartPhase(
+  job: Job,
+  req: Request,
+  forward: AuthorizedUpgradeForward,
+  downloaded: DownloadedRelease,
+  timeouts: RemoteUpgradeTimeouts,
+  nowFn: () => number
+): Promise<PhaseEnd> {
   job.phase = 'start';
-  if (isCancelled(job)) return snapshotOf(job);
+  if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
   if (job.abort.signal.aborted) {
     if (supportsUpgradeCancel(job)) {
       await deleteStagedBestEffort(job, req, forward);
-      return markCancelled(job, nowFn);
+      return { done: true, snapshot: markCancelled(job, nowFn) };
     }
   }
   try {
@@ -329,26 +377,32 @@ async function runJob(
     const started = await withTimeout(startReq, timeouts.startMs, 'start timeout');
     if (isCancelled(job)) {
       await started.body?.cancel().catch(() => {});
-      return snapshotOf(job);
+      return { done: true, snapshot: snapshotOf(job) };
     }
     if (started.status < 200 || started.status >= 300) {
-      return fail(job, `start failed: ${await describeUpstream(started)}`, nowFn);
+      return {
+        done: true,
+        snapshot: fail(job, `start failed: ${await describeUpstream(started)}`, nowFn),
+      };
     }
     await started.body?.cancel().catch(() => {});
   } catch (err) {
-    if (isCancelled(job)) return snapshotOf(job);
+    if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
     const message = err instanceof Error ? err.message : String(err);
-    return fail(
-      job,
-      `start failed: ${message.includes('start timeout') ? 'start timeout' : message}`,
-      nowFn
-    );
+    return {
+      done: true,
+      snapshot: fail(
+        job,
+        `start failed: ${message.includes('start timeout') ? 'start timeout' : message}`,
+        nowFn
+      ),
+    };
   }
 
-  if (isCancelled(job)) return snapshotOf(job);
+  if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
   job.state = 'handed-off';
   job.error = null;
-  return snapshotOf(job);
+  return { done: true, snapshot: snapshotOf(job) };
 }
 
 function markCancelled(job: Job, nowFn: () => number = Date.now): RemoteUpgradeJobSnapshot {

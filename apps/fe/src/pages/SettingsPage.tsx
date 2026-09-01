@@ -110,8 +110,8 @@ const TABS_USING_SITE_SETTINGS: ReadonlySet<SettingsTab> = new Set<SettingsTab>(
 const SETTINGS_TAB_BAR = [
   { value: 'general', labelKey: 'settings.tabGroup.general', icon: SettingsIcon },
   { value: 'terminal', labelKey: 'settings.tabGroup.terminal', icon: Monitor },
-  { value: 'remoteAccess', labelKey: 'settings.tabGroup.remoteAccess', icon: Globe },
   { value: 'devicesAndFiles', labelKey: 'settings.tabGroup.devicesAndFiles', icon: Server },
+  { value: 'remoteAccess', labelKey: 'settings.tabGroup.remoteAccess', icon: Globe },
   { value: 'nodes', labelKey: 'settings.tabGroup.nodes', icon: Network },
   { value: 'notifications', labelKey: 'settings.tabGroup.notifications', icon: Bell },
   { value: 'ai', labelKey: 'settings.tabGroup.ai', icon: Sparkles },

@@ -12,7 +12,7 @@ import {
   WebSocketLink,
   type WebSocketTransportInput,
 } from '@tmex/shared/link';
-import type { HubAdvertisement } from '@tmex/shared/uplink';
+import type { HubAdvertisement, HubWriteForwardMessage } from '@tmex/shared/uplink';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler, jsonStable } from './ctl';
 import { jsonText } from './json-text';
@@ -71,6 +71,11 @@ export type UplinkClientOptions = {
   onNodeList?: (list: UplinkNodeList) => void;
   onRtcSignal?: (msg: UplinkRtcSignal) => void;
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
+  onHubTokens?: (msg: Extract<UplinkCtlMessage, { t: 'hub.tokens' }>) => void;
+  onHubAttachments?: (msg: Extract<UplinkCtlMessage, { t: 'hub.attachments' }>) => void;
+  onHubForward?: (msg: Extract<UplinkCtlMessage, { t: 'hub.forward' }>) => void;
+  onHubWriteForward?: (msg: HubWriteForwardMessage) => void;
+  onHubRelayStream?: (stream: LinkStream) => void;
   onKeyLogFork?: (event: KeyLogForkEvent) => void;
   wsFactory?: UplinkWsFactory;
   tlsCa?: string[] | null;
@@ -157,6 +162,13 @@ export class UplinkClient {
   private readonly onNodeListCb?: (list: UplinkNodeList) => void;
   private readonly onRtcSignalCb?: (msg: UplinkRtcSignal) => void;
   private readonly onEnrollRedeemedCb?: (msg: UplinkEnrollRedeemed) => void;
+  private readonly onHubTokensCb?: (msg: Extract<UplinkCtlMessage, { t: 'hub.tokens' }>) => void;
+  private readonly onHubAttachmentsCb?: (
+    msg: Extract<UplinkCtlMessage, { t: 'hub.attachments' }>
+  ) => void;
+  private readonly onHubForwardCb?: (msg: Extract<UplinkCtlMessage, { t: 'hub.forward' }>) => void;
+  private readonly onHubWriteForwardCb?: (msg: HubWriteForwardMessage) => void;
+  private readonly onHubRelayStreamCb?: (stream: LinkStream) => void;
   private readonly wsFactory: UplinkWsFactory;
   private readonly scheduler: MeshScheduler;
   private readonly pingIntervalMs: number;
@@ -197,6 +209,11 @@ export class UplinkClient {
     this.onNodeListCb = opts.onNodeList;
     this.onRtcSignalCb = opts.onRtcSignal;
     this.onEnrollRedeemedCb = opts.onEnrollRedeemed;
+    this.onHubTokensCb = opts.onHubTokens;
+    this.onHubAttachmentsCb = opts.onHubAttachments;
+    this.onHubForwardCb = opts.onHubForward;
+    this.onHubWriteForwardCb = opts.onHubWriteForward;
+    this.onHubRelayStreamCb = opts.onHubRelayStream;
     this.wsFactory = opts.wsFactory ?? defaultWsFactory(opts.tlsCa);
     this.scheduler = opts.scheduler ?? defaultScheduler();
     this.pingIntervalMs = opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS;
@@ -485,6 +502,10 @@ export class UplinkClient {
         return;
       }
       const open = parseOpenPayload(stream.openPayload);
+      if (open?.kind === 'hub-relay') {
+        this.onHubRelayStreamCb?.(stream);
+        return;
+      }
       const from = typeof open?.from === 'string' ? open.from : '';
       if (open?.to === this.identity.nodeId && from) this.relayHandler?.(stream, from);
     });
@@ -552,6 +573,10 @@ export class UplinkClient {
     else if (msg.t === 'key.log.ack') this.keyLog.handleKeyLogAck(msg);
     else if (msg.t === 'rtc.signal') this.onRtcSignalCb?.(msg);
     else if (msg.t === 'enroll.redeemed') this.onEnrollRedeemedCb?.(msg);
+    else if (msg.t === 'hub.tokens') this.onHubTokensCb?.(msg);
+    else if (msg.t === 'hub.attachments') this.onHubAttachmentsCb?.(msg);
+    else if (msg.t === 'hub.forward') this.onHubForwardCb?.(msg);
+    else if (msg.t === 'hub.write-forward') this.onHubWriteForwardCb?.(msg);
   }
 
   private acceptChallenge(nonceB64: string): void {
@@ -642,11 +667,15 @@ export class UplinkClient {
   }
 
   async appendAndAck(
-    record: { bytes: Uint8Array; sig: Uint8Array },
+    record: { bytes: Uint8Array; sig: Uint8Array; force?: boolean },
     timeoutMs = UPLINK_KEY_LOG_ACK_TIMEOUT_MS,
     generation?: number
   ) {
     return this.keyLog.appendAndAck(record, timeoutMs, generation);
+  }
+
+  requestCatchUpNow(): void {
+    this.keyLog.requestCatchUpNow();
   }
 
   private startHeartbeat(link: LinkSession, generation: number): void {

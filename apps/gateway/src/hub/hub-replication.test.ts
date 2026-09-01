@@ -53,6 +53,7 @@ function makeHub(db: ReturnType<typeof createMigratedAuthDb>['db'], now = 9_000)
       writerEpoch: 1,
       hubNodeId: SELF,
       nodeId: SELF,
+      authorizedHubIds: [WRITER],
     },
     authenticate: () => ({ userId: user.id, entryNodeId: SELF }),
     now: () => now,
@@ -357,7 +358,7 @@ describe('HubRuntime.applyReplicatedNodeList', () => {
     }
   });
 
-  test('legacy source hub 即使不在 authorizedHubIds 也保留', () => {
+  test('legacy source hub 不在 authorizedHubIds 且无签名授权则不保留', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const authorized = 'ee'.repeat(16);
@@ -392,11 +393,7 @@ describe('HubRuntime.applyReplicatedNodeList', () => {
         },
         { hubNodeId: WRITER }
       );
-      expect(hub.meshHubs.get(WRITER)).toMatchObject({
-        mode: 'active',
-        publicUrl: 'https://writer.example',
-        writerEpoch: 4,
-      });
+      expect(hub.meshHubs.get(WRITER)).toBeNull();
       expect(hub.meshHubs.get(SELF)?.mode).toBe('standby');
       expect(hub.meshHubs.get(authorized)).toBeNull();
       hub.stop();
@@ -429,7 +426,7 @@ describe('HubRuntime.applyReplicatedNodeList', () => {
     }
   });
 
-  test('复制 hubs[] 只保留 authorized ∪ self ∪ source', () => {
+  test('复制 hubs[] 只保留当前已授权 hub（含 self，不含未授权 source）', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const stranger = 'dd'.repeat(16);
@@ -464,10 +461,70 @@ describe('HubRuntime.applyReplicatedNodeList', () => {
         ),
         { hubNodeId: WRITER }
       );
-      expect(hub.meshHubs.get(WRITER)?.publicUrl).toBe('https://writer.example');
+      expect(hub.meshHubs.get(WRITER)).toBeNull();
       expect(hub.meshHubs.get(authorized)?.publicUrl).toBe('https://peer.example');
       expect(hub.meshHubs.get(stranger)).toBeNull();
       expect(hub.meshHubs.get(SELF)?.mode).toBe('standby');
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('signed-retired 的 source 即使匹配 seed/env 也不能写回 mesh_hubs', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore, { now: 9_000 });
+      userStore.upsertHubAuthorization({
+        userId: user.id,
+        hubNodeId: WRITER,
+        status: 'retired',
+        publicUrl: 'https://writer.example',
+        admitSeq: 1,
+        retireSeq: 2,
+        updatedSeq: 2,
+      });
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: {
+          publicUrl: 'https://standby.example',
+          stun: [],
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 1,
+          hubNodeId: SELF,
+          nodeId: SELF,
+          authorizedHubIds: [WRITER],
+        },
+        authenticate: () => ({ userId: user.id, entryNodeId: SELF }),
+        now: () => 9_000,
+      });
+      hub.meshHubs.replaceAll(
+        [
+          {
+            hubNodeId: WRITER,
+            publicUrl: 'https://writer.example',
+            name: 'writer',
+            mode: 'active',
+            priority: 100,
+            writerEpoch: 9,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+        ],
+        9_000
+      );
+      hub.applyReplicatedNodeList(
+        listOf([], [endpoint(WRITER, { publicUrl: 'https://writer.example', writerEpoch: 99 })]),
+        { hubNodeId: WRITER }
+      );
+      expect(hub.meshHubs.get(WRITER)).toBeNull();
+      expect(hub.meshHubs.get(SELF)?.mode).toBe('standby');
+      expect(hub.uplink.isAuthorizedHub(WRITER)).toBe(false);
       hub.stop();
     } finally {
       close();

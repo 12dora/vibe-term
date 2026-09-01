@@ -25,13 +25,31 @@ import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-cli
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { CircleArrowUp, Loader2, Plus, RefreshCw, ShieldAlert } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@tmex/ui/dropdown-menu';
+import { CircleArrowUp, Ellipsis, Plus, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EnrollmentSection } from './enrollment-section';
+import { HubRoleDialog } from './hub-role-dialog';
 import { HubStrip } from './hub-strip';
 import { NodesTable } from './nodes-table';
-import { type NodeUpgradeController, PLACEHOLDER_KDF, type ResolvedMode } from './types';
+import {
+  type NodeSelection,
+  type NodeUninstallController,
+  type NodeUpgradeController,
+  PLACEHOLDER_KDF,
+  type ResolvedMode,
+} from './types';
+import { UninstallDialog } from './uninstall-dialog';
+import { isBatchEligible } from './upgrade-batch';
+import { useHubRoleSwitch } from './use-hub-role-switch';
+import { useBulkRevoke } from './use-node-row-actions';
+import { isUninstalling, useNodeUninstall } from './use-node-uninstall';
 import { useNodeUpgrade } from './use-node-upgrade';
 
 export interface NodesManagementProps {
@@ -94,6 +112,61 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   // 传 rows 是为了刷新后能按行回读升级状态——状态只活在 React 里，页面一刷新就得重新问一遍。
   const upgrade = useNodeUpgrade(rows, refreshAll);
 
+  // 挂在 standby 上（或一台 writer 都没有）时，管理写入会被 hub 以 `HUB_NOT_WRITER` 拒绝：
+  // 先禁掉动作并给一行说明，比让用户点完再吃一条报错强。升级不走 hub 控制面，保持可用。
+  // 主 hub 掉线时「hub 不可达」与这一条说的是同一件事，只留更具体的那一条。
+  const writable = hub.online && !hubs.writesBlocked;
+  const blockedHint = hubs.writesBlocked ? t('nodes.hubs.standbyNotice') : t('nodes.hubOffline');
+
+  const uninstall = useNodeUninstall(
+    { api, mode, prompt, writerPublicUrl: hubs.writerPublicUrl, writable },
+    refreshAll
+  );
+  // 主备切换与卸载共用一套「行内长事务」的观感，但它只走 hub 自己的角色接口，
+  // 不经过 key log 之外的任何管理写入，因此单独一套状态。
+  const roleSwitch = useHubRoleSwitch(
+    {
+      hubs: hubs.hubs,
+      writerHubId: hubs.writerHubId,
+      rows,
+      api,
+      mode,
+      prompt,
+      hubWritable: !hubs.writesBlocked,
+    },
+    refreshAll
+  );
+  const bulkRevoke = useBulkRevoke({
+    api,
+    mode,
+    prompt,
+    writerPublicUrl: hubs.writerPublicUrl,
+    onChanged: refreshAll,
+  });
+
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const selectable = useMemo(
+    () => selectableRows(rows, uninstall.scheduledIds),
+    [rows, uninstall.scheduledIds]
+  );
+  // 行消失（被移除 / 卸载中）后勾选态要跟着掉，否则批量动作会打到已经不在表里的 id 上。
+  useEffect(() => {
+    setSelectedIds((previous) => pruneSelection(previous, selectable));
+  }, [selectable]);
+  const selection: NodeSelection = useMemo(
+    () => ({
+      ids: selectedIds,
+      selectableCount: selectable.length,
+      toggle: (nodeId) => setSelectedIds((previous) => toggleSelection(previous, nodeId)),
+      toggleAll: () => setSelectedIds((previous) => toggleAllSelection(previous, selectable)),
+    }),
+    [selectable, selectedIds]
+  );
+  const selectedRows = useMemo(
+    () => rows.filter((row) => selectedIds.has(row.id)),
+    [rows, selectedIds]
+  );
+
   const [enrollOpen, setEnrollOpen] = useState(false);
   // 监听回路、admit 流水线与过期清理都在宿主级单例引擎里：侧滑面板同时开着时也只有一份，
   // 同一张证书绝不会被签成两条 `admit-node`（见 `enrollment-engine.ts` 顶部）。
@@ -106,12 +179,6 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
     t,
   });
   const engine = useEnrollmentEngineState();
-
-  // 挂在 standby 上（或一台 writer 都没有）时，管理写入会被 hub 以 `HUB_NOT_WRITER` 拒绝：
-  // 先禁掉动作并给一行说明，比让用户点完再吃一条报错强。升级不走 hub 控制面，保持可用。
-  // 主 hub 掉线时「hub 不可达」与这一条说的是同一件事，只留更具体的那一条。
-  const writable = hub.online && !hubs.writesBlocked;
-  const blockedHint = hubs.writesBlocked ? t('nodes.hubs.standbyNotice') : t('nodes.hubOffline');
 
   if (!mode) {
     return (
@@ -146,7 +213,16 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
               }
             />
           </Button>
-          <UpgradeAllButton rows={rows} upgrade={upgrade} />
+          <BulkActionsMenu
+            rows={selectedRows}
+            selfRow={rows.find((row) => row.isSelf) ?? null}
+            upgrade={upgrade}
+            uninstall={uninstall}
+            revoking={bulkRevoke.busy}
+            onRevoke={() => void bulkRevoke.revokeRows(selectedRows)}
+            writable={writable}
+            blockedHint={blockedHint}
+          />
           <Button
             type="button"
             size="sm"
@@ -166,6 +242,7 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           hubs={hubs.hubs}
           attachedHubId={hubs.attached?.hubNodeId ?? null}
           writerHubId={hubs.writerHubId}
+          candidates={hubs.candidates}
         />
 
         {!hub.online && !hubs.writesBlocked && (
@@ -217,61 +294,274 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           prompt={prompt}
           onChanged={refreshAll}
           upgrade={upgrade}
+          selection={selection}
+          uninstall={uninstall}
+          roleSwitch={roleSwitch}
         />
 
+        <UninstallDialog uninstall={uninstall} />
+        <HubRoleDialog roleSwitch={roleSwitch} />
         {prompt.dialog}
       </CardContent>
     </Card>
   );
 }
 
-/**
- * 「全部升级」：latest 未知、正在回读升级状态、批量正在跑、已有行内升级在跑、
- * 没有可升级节点时禁用。顺序、并发与汇总提示都在 `useNodeUpgrade` 里，这里只负责按钮态与进度文案。
- */
-export function UpgradeAllButton({
-  rows,
-  upgrade,
-}: { rows: NodeRow[]; upgrade: NodeUpgradeController }) {
-  const { t } = useTranslation();
-  const latestVersion = upgrade.latest?.latestVersion ?? null;
-  const { running, completed, total } = upgrade.batch;
-  const count = upgrade.eligibleCount(rows);
+// ---------------------------------------------------------------------------
+// 多选
+// ---------------------------------------------------------------------------
 
+/** 可勾选的行：入口自身不能选（它自己既不能被移除也不能被卸载），正在卸载的行也锁住。 */
+export function selectableRows(rows: NodeRow[], scheduledIds: ReadonlySet<string>): NodeRow[] {
+  return rows.filter((row) => !row.isSelf && !isUninstalling(row, scheduledIds));
+}
+
+export function toggleSelection(ids: ReadonlySet<string>, nodeId: string): ReadonlySet<string> {
+  const next = new Set(ids);
+  if (!next.delete(nodeId)) next.add(nodeId);
+  return next;
+}
+
+/** 全选 / 全不选合成一个动作：没全选就全选，已全选就清空。 */
+export function toggleAllSelection(
+  ids: ReadonlySet<string>,
+  selectable: NodeRow[]
+): ReadonlySet<string> {
+  const all = selectable.every((row) => ids.has(row.id));
+  return all ? new Set<string>() : new Set(selectable.map((row) => row.id));
+}
+
+/** 摘掉已经不可选的 id；没有变化时返回原引用，避免白白重渲染。 */
+export function pruneSelection(
+  ids: ReadonlySet<string>,
+  selectable: NodeRow[]
+): ReadonlySet<string> {
+  const alive = new Set(selectable.map((row) => row.id));
+  const next = new Set([...ids].filter((id) => alive.has(id)));
+  return next.size === ids.size ? ids : next;
+}
+
+// ---------------------------------------------------------------------------
+// 卡头「更多」
+// ---------------------------------------------------------------------------
+
+export interface BulkItemState {
+  disabled: boolean;
+  /** 禁用原因；可点时为 `undefined`。 */
+  title?: string;
+}
+
+export interface BulkMenuInput {
+  selectedCount: number;
+  /** 这次批量真能升级的台数（含被追加进来的本机）。 */
+  eligibleUpgradeCount: number;
+  /** 本机会跟着这一批一起升级：升到最后一步时当前页面会断一下。 */
+  selfIncluded: boolean;
+  latestKnown: boolean;
+  /** 已有升级在跑（行内或批量）。 */
+  upgradeBusy: boolean;
+  /** 刷新后正在回读各节点升级状态。 */
+  restoring: boolean;
+  /** hub 当前接受管理写入。 */
+  writable: boolean;
+  blockedHint: string;
+  uninstallRunning: boolean;
+  revoking: boolean;
+}
+
+/**
+ * 三个菜单项的可点性与禁用原因。共同的前置条件是「选中了东西」与「没有别的批量在跑」，
+ * 各自再叠自己的条件：升级看 latest 与可升级台数，移除与卸载都要 hub 收得下写入。
+ */
+export function bulkMenuStates(
+  input: BulkMenuInput,
+  t: (key: string, options?: Record<string, unknown>) => string
+): { upgrade: BulkItemState; revoke: BulkItemState; uninstall: BulkItemState } {
+  const empty: BulkItemState = { disabled: true, title: t('nodes.selection.none') };
+  const busyHint = input.uninstallRunning
+    ? t('nodes.uninstall.running')
+    : input.revoking
+      ? t('nodes.selection.busy')
+      : input.restoring
+        ? t('nodes.upgrade.restoring')
+        : t('nodes.upgrade.allBusy');
+  const busy: BulkItemState = { disabled: true, title: busyHint };
+  const anyBusy = input.upgradeBusy || input.restoring || input.uninstallRunning || input.revoking;
+
+  const upgrade = (): BulkItemState => {
+    if (input.selectedCount === 0) return empty;
+    if (anyBusy) return busy;
+    if (!input.latestKnown) return { disabled: true, title: t('nodes.upgrade.releaseUnavailable') };
+    if (input.eligibleUpgradeCount === 0)
+      return { disabled: true, title: t('nodes.upgrade.allNone') };
+    if (!input.selfIncluded) return { disabled: false };
+    return { disabled: false, title: t('nodes.selection.upgradeSelfNotice') };
+  };
+
+  const revoke = (): BulkItemState => {
+    if (input.selectedCount === 0) return empty;
+    if (!input.writable) return { disabled: true, title: input.blockedHint };
+    if (anyBusy) return busy;
+    return { disabled: false };
+  };
+
+  const uninstall = (): BulkItemState => {
+    if (input.selectedCount === 0) return empty;
+    // 卸载以一次签名 `revoke-node` 收尾：hub 不收写入时机器会被删干净，证书却撤不掉。
+    if (!input.writable) return { disabled: true, title: input.blockedHint };
+    if (anyBusy) return busy;
+    return { disabled: false };
+  };
+
+  return { upgrade: upgrade(), revoke: revoke(), uninstall: uninstall() };
+}
+
+export interface BulkActionsMenuListProps {
+  states: ReturnType<typeof bulkMenuStates>;
+  labels: { upgrade: string; revoke: string; uninstall: string };
+  onUpgrade: () => void;
+  onRevoke: () => void;
+  onUninstall: () => void;
+}
+
+/**
+ * 下拉内容。单独导出且不自带 hook：Base UI 的菜单走 portal，静态渲染什么都不输出，
+ * 单测只能直接对元素树做断言（与 `AddDeviceMenuList` 同一套做法）。
+ */
+export function BulkActionsMenuList({
+  states,
+  labels,
+  onUpgrade,
+  onRevoke,
+  onUninstall,
+}: BulkActionsMenuListProps) {
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="outline"
-      disabled={!latestVersion || running || upgrade.anyRunning || upgrade.restoring || count === 0}
-      title={upgradeAllHint(t, {
-        latestVersion,
-        count,
-        restoring: upgrade.restoring,
-        rowBusy: upgrade.anyRunning && !running,
-      })}
-      onClick={() => upgrade.startAll(rows)}
-      data-testid="nodes-upgrade-all"
-    >
-      {running ? (
-        <Loader2 className="animate-spin motion-reduce:animate-none" />
-      ) : (
-        <CircleArrowUp />
-      )}
-      {running
-        ? t('nodes.upgrade.allProgress', { completed, total })
-        : t('nodes.upgrade.upgradeAll')}
-    </Button>
+    <>
+      <DropdownMenuItem
+        disabled={states.upgrade.disabled}
+        title={states.upgrade.title}
+        onClick={onUpgrade}
+        data-testid="nodes-bulk-upgrade"
+      >
+        <CircleArrowUp className="size-4" />
+        {labels.upgrade}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        disabled={states.revoke.disabled}
+        title={states.revoke.title}
+        onClick={onRevoke}
+        data-testid="nodes-bulk-revoke"
+      >
+        <ShieldAlert className="size-4" />
+        {labels.revoke}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        variant="destructive"
+        disabled={states.uninstall.disabled}
+        title={states.uninstall.title}
+        onClick={onUninstall}
+        data-testid="nodes-bulk-uninstall"
+      >
+        <Trash2 className="size-4" />
+        {labels.uninstall}
+      </DropdownMenuItem>
+    </>
   );
 }
 
-function upgradeAllHint(
-  t: (key: string, options?: Record<string, unknown>) => string,
-  state: { latestVersion: string | null; count: number; restoring: boolean; rowBusy: boolean }
-): string {
-  if (state.restoring) return t('nodes.upgrade.restoring');
-  if (state.rowBusy) return t('nodes.upgrade.allBusy');
-  if (!state.latestVersion) return t('nodes.upgrade.releaseUnavailable');
-  if (state.count === 0) return t('nodes.upgrade.allNone');
-  return t('nodes.upgrade.allHint', { count: state.count, version: state.latestVersion });
+/**
+ * 批量升级的实际目标：勾选的行**再加上本机**。本机那一行不可勾选（移除 / 卸载都轮不到它），
+ * 但升级必须带得上它——持久化的「普通节点 → hub → 本机」次序与入口重启后的续跑，只有本机
+ * 真的进了批量才走得到。一个都没勾时不追加：菜单仍然停在「须先勾选节点」。
+ */
+export function bulkUpgradeTargets(
+  selected: NodeRow[],
+  selfRow: NodeRow | null,
+  latestVersion: string | null
+): { rows: NodeRow[]; selfIncluded: boolean } {
+  if (selected.length === 0 || !selfRow) return { rows: selected, selfIncluded: false };
+  // 用批量自己的那把尺子（`upgradeBlockReason` 为空 + 版本可解析且低于 latest）：
+  // 换一把更松的只会让标签写着「含本机」而 `launchUpgradeBatch` 转头把它筛掉。
+  if (!isBatchEligible(selfRow, latestVersion)) return { rows: selected, selfIncluded: false };
+  return { rows: [...selected, selfRow], selfIncluded: true };
+}
+
+/**
+ * 「更多」：对**选中的行**批量升级 / 移除 / 卸载。没有单独的「全部升级」了——
+ * 全选再走这个菜单即可，两个入口做同一件事只会让人猜它们有什么区别。
+ * 升级是唯一会自动带上本机的动作，标签里写明「含本机」。
+ */
+export function BulkActionsMenu({
+  rows,
+  selfRow,
+  upgrade,
+  uninstall,
+  revoking,
+  onRevoke,
+  writable,
+  blockedHint,
+}: {
+  rows: NodeRow[];
+  selfRow: NodeRow | null;
+  upgrade: NodeUpgradeController;
+  uninstall: NodeUninstallController;
+  revoking: boolean;
+  onRevoke: () => void;
+  writable: boolean;
+  blockedHint: string;
+}) {
+  const { t } = useTranslation();
+  const latestVersion = upgrade.latest?.latestVersion ?? null;
+  const targets = bulkUpgradeTargets(rows, selfRow, latestVersion);
+  const upgradeCount = upgrade.eligibleCount(targets.rows);
+  const states = bulkMenuStates(
+    {
+      selectedCount: rows.length,
+      eligibleUpgradeCount: upgradeCount,
+      selfIncluded: targets.selfIncluded,
+      latestKnown: Boolean(latestVersion),
+      upgradeBusy: upgrade.anyRunning || upgrade.batch.running,
+      restoring: upgrade.restoring,
+      writable,
+      blockedHint,
+      uninstallRunning: uninstall.running,
+      revoking,
+    },
+    t
+  );
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t('nodes.selection.more')}
+            title={t('nodes.selection.more')}
+            data-testid="nodes-bulk-menu"
+          />
+        }
+      >
+        <Ellipsis />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-44">
+        <BulkActionsMenuList
+          states={states}
+          labels={{
+            upgrade: t(
+              targets.selfIncluded ? 'nodes.selection.upgradeWithSelf' : 'nodes.selection.upgrade',
+              { count: upgradeCount }
+            ),
+            revoke: t('nodes.selection.revoke'),
+            uninstall: t('nodes.selection.uninstall'),
+          }}
+          onUpgrade={() => upgrade.startAll(targets.rows)}
+          onRevoke={onRevoke}
+          onUninstall={() => uninstall.request(rows)}
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }

@@ -416,7 +416,16 @@
           "stopped": "Stopped",
           "starting": "Starting",
           "running": "Running",
+          "degraded": "No Edge Connections",
           "error": "Failed"
+        },
+        "degradedNotice": "The tunnel process is running but has no edge connections; the public URL is unreachable.",
+        "connector": {
+          "label": "Connector",
+          "connected": "Edge connections: {{n}}",
+          "noConnections": "No edge connections",
+          "unknown": "Cannot probe (metrics endpoint unreachable)",
+          "unprobed": "Not probed"
         },
         "mode": {
           "quick": {
@@ -508,13 +517,16 @@
           "release": "Release"
         },
         "check": {
-          "reachable": "The public URL is reachable.",
+          "reachable": "This machine is reachable through the public URL.",
+          "accessProtected": "The public URL is protected by Cloudflare Access; the connector is online.",
+          "accessProtectedUnverified": "The public URL is protected by Cloudflare Access; the connector could not be probed, so reachability is unconfirmed.",
           "unreachable": "The public URL is unreachable.",
           "running": "Checking the public URL…"
         },
         "log": {
           "title": "cloudflared log",
-          "empty": "No output yet."
+          "empty": "No output yet.",
+          "emptyExternal": "The external cloudflared writes no log file (no --logfile in its startup arguments)."
         },
         "steps": {
           "path": {
@@ -642,6 +654,7 @@
           "tunnel_exists": "A tunnel with this name already exists in Cloudflare. Pick another name, or delete the existing one.",
           "dns_route_failed": "Adding the DNS record failed. Confirm the domain is hosted in the same Cloudflare account and no conflicting record exists.",
           "process_failed": "cloudflared didn't start. Expand the cloudflared log to see why.",
+          "connector_down": "The connector has no edge connections: {{message}}",
           "busy": "The previous operation hasn't finished yet. Try again in a moment.",
           "not_configured": "Remote access isn't configured yet. Pick a method in the setup below.",
           "invalid_request": "The request was rejected as invalid; this page may be out of date. Reload and try again.",
@@ -1710,7 +1723,7 @@
         "title": "Node management"
       },
       "empty": "No nodes yet",
-      "self": "This node",
+      "self": "Current",
       "hub": "Hub",
       "loggedIn": "Signed in",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
@@ -1725,7 +1738,74 @@
         "detail": "{{url}} | priority {{priority}} | epoch {{epoch}} | {{state}}",
         "standbyNotice": "The primary hub is unreachable, running on a standby hub. Adding, renaming and removing nodes are unavailable.",
         "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
-        "machineRole": "Hub Role"
+        "machineRole": "Hub Role",
+        "lastAttempt": "Last attempt: {{time}}",
+        "lastError": "Last error: {{error}}",
+        "authorization": {
+          "label": "Authorization: {{value}}",
+          "signed": "Signed",
+          "env": "Environment",
+          "self": "This machine",
+          "none": "Not Authorized"
+        },
+        "role": {
+          "promote": "Set as Primary Hub",
+          "demote": "Set as Standby Hub",
+          "stateSwitching": "Switching",
+          "confirmPromote": "Set as Primary Hub",
+          "confirmDemote": "Set as Standby Hub",
+          "confirmText": "\"{{target}}\" takes over writes; management is briefly unavailable during the switch.",
+          "confirmTextNoWriter": "\"{{from}}\" becomes a standby hub, and no other hub can take over writes.",
+          "confirm": "Switch",
+          "cancel": "Cancel",
+          "stepAdmit": "Sign a hub authorization for \"{{target}}\" (credentials required).",
+          "stepDemote": "Demote \"{{from}}\" to a standby hub.",
+          "stepPromote": "Promote \"{{target}}\" to primary hub; it restarts afterwards.",
+          "stepWait": "Wait for \"{{target}}\" to restart and take over writes.",
+          "stepDemoteOnly": "Demote \"{{from}}\" to a standby hub; it restarts afterwards.",
+          "warnFromUnreachable": "The current primary hub is unreachable and will be fenced by the higher epoch.",
+          "warnNoWriter": "No hub will accept writes afterwards; adding, renaming and removing nodes become unavailable.",
+          "started": "Hub role switch started.",
+          "done": "\"{{target}}\" is now the primary hub.",
+          "failed": "Hub role switch failed: {{error}}",
+          "forceTitle": "Some nodes are too old",
+          "forceDescription": "If you continue, these nodes can no longer sync hub authorization records.",
+          "forceText": "These nodes are older than {{minVersion}} and need an upgrade first:",
+          "forceAccept": "Continue anyway (old nodes stop syncing)",
+          "forceConfirm": "Continue Anyway",
+          "recovery": {
+            "title": "No Hub Accepts Writes",
+            "description": "The old primary hub is already a standby and the new one has not confirmed the takeover. Choose what to do next.",
+            "noWriter": "\"{{from}}\" is now a standby hub, and \"{{target}}\" has not confirmed it took over writes.",
+            "retry": "Retry Promoting Target",
+            "rollback": "Roll Back: Promote Old Primary Again",
+            "dismiss": "Handle Later"
+          },
+          "blocked": {
+            "unknownHub": "The hub list is not loaded yet. Try again shortly.",
+            "unknownAuth": "This entry is too old to read the hub authorization source.",
+            "offline": "This hub is offline and cannot be switched.",
+            "switching": "A hub role switch is already running.",
+            "rowBusy": "This node is upgrading or being uninstalled.",
+            "notWritable": "A hub authorization must be signed first, but the primary hub does not accept writes."
+          },
+          "errors": {
+            "HUB_NOT_HUB": "The target does not run the hub role.",
+            "HUB_NOT_AUTHORIZED": "The target hub is not authorized.",
+            "HUB_EPOCH_STALE": "The writer epoch is stale. Refresh and try again.",
+            "HUB_ROLE_BUSY": "The target already has a role switch running.",
+            "HUB_ROLE_UNSUPPORTED": "The target version does not support remote switching. Upgrade it first.",
+            "INVALID_REQUEST": "Invalid request.",
+            "unknown": "Reason unknown.",
+            "unreachable": "The target hub is unreachable.",
+            "authTimeout": "The hub authorization did not take effect in time.",
+            "resumeAdmit": "The hub authorization was never signed. Start the switch again.",
+            "restartTimeout": "The target did not restart in time, so the result is unconfirmed: {{error}}",
+            "writerTimeout": "Could not confirm the new primary hub took over writes. Refresh to check.",
+            "hubsUnreachable": "Could not read the hub list. The entry is temporarily unreachable.",
+            "unexpected": "The switch was interrupted. Refresh to check."
+          }
+        }
       },
       "machine": {
         "title": "This machine",
@@ -1992,6 +2072,55 @@
         "copy": "Copy",
         "copied": "Copied"
       },
+      "selection": {
+        "more": "More",
+        "selectAll": "Select All",
+        "clearAll": "Clear Selection",
+        "selfBlocked": "This machine cannot be selected.",
+        "none": "Select nodes first.",
+        "busy": "Removing nodes. Wait for it to finish.",
+        "upgrade": "Upgrade ({{count}})",
+        "upgradeWithSelf": "Upgrade ({{count}}, incl. this machine)",
+        "upgradeSelfNotice": "This machine is upgraded last; the service restarts and this page drops briefly.",
+        "revoke": "Remove Nodes",
+        "uninstall": "Uninstall tmex"
+      },
+      "uninstall": {
+        "confirmTitle": "Uninstall tmex",
+        "confirmText": "The tmex service, program and data on the node are deleted, then the node is removed from the mesh. This cannot be undone.",
+        "targets": "Will be uninstalled ({{count}})",
+        "skipped": "Skipped ({{count}})",
+        "noTargets": "None of the selected nodes can be uninstalled remotely.",
+        "confirm": "Uninstall",
+        "cancel": "Cancel",
+        "skip": {
+          "self": "This machine",
+          "offline": "Offline",
+          "loginRequired": "Not signed in",
+          "tooOld": "Version below 1.1.13",
+          "uninstalling": "Uninstalling"
+        },
+        "stateRunning": "Uninstalling",
+        "stateFailed": "Uninstall failed",
+        "clear": "Clear uninstall record",
+        "clearFailed": "The uninstall record could not be cleared. Try again.",
+        "busy": "This node is being uninstalled.",
+        "running": "Uninstalling. Wait for it to finish.",
+        "revokeFailed": "Uninstalled, but could not be removed from the mesh",
+        "summary_one": "{{count}} node uninstalled",
+        "summary_other": "{{count}} nodes uninstalled",
+        "summaryFailed": "{{count}} uninstalled, {{failed}} failed ({{names}})",
+        "summaryAborted": "Hub unavailable. Stopped with {{remaining}} node(s) left ({{count}} uninstalled).",
+        "errors": {
+          "loginRequired": "Sign in to that node first.",
+          "unreachable": "That node cannot be reached.",
+          "notAllowed": "That node was not deployed by the tmex installer and cannot be uninstalled remotely.",
+          "unsupported": "That node runs a version without remote uninstall.",
+          "selfBlocked": "This machine cannot be uninstalled.",
+          "upgradeInProgress": "That node is upgrading. Try again later.",
+          "nodeGone": "That node is no longer in the list."
+        }
+      },
       "enrollment": {
         "nameLabel": "Node name (optional)",
         "create": "Create join code",
@@ -2020,7 +2149,12 @@
         "reasonPrompt": "Reason (optional)",
         "done": "Node removed",
         "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
-        "selfBlocked": "You cannot remove the node you are signed in to."
+        "selfBlocked": "You cannot remove the node you are signed in to.",
+        "bulkConfirm_one": "Remove {{count}} node ({{names}})? It loses access immediately and has to be added again from scratch.",
+        "bulkConfirm_other": "Remove {{count}} nodes ({{names}})? They lose access immediately and have to be added again from scratch.",
+        "bulkDone_one": "{{count}} node removed",
+        "bulkDone_other": "{{count}} nodes removed",
+        "bulkFailed": "{{count}} removed, {{failed}} failed ({{names}})"
       },
       "upgrade": {
         "action": "Upgrade",
@@ -2066,7 +2200,9 @@
         "cancelUnsupported": "This node's version cannot interrupt an upgrade.",
         "cancelNotRunning": "No upgrade is running on this node.",
         "cancelFailed": "Could not stop the upgrade: {{error}}",
-        "restoring": "Syncing upgrade status…"
+        "restoring": "Syncing upgrade status…",
+        "allResumed": "Resumed the previous batch upgrade.",
+        "allOtherTab": "Another tab is running a batch upgrade."
       },
       "badge": {
         "direct": "Direct",

@@ -2,6 +2,14 @@ import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import { enrollmentTokens, meshHubs, nodes } from '../../../../apps/gateway/src/db/schema';
+import {
+  envPeerSet,
+  hubAuthListColumn,
+  lookupSignedHubAuthorization,
+  resolveHubAuthorization,
+  resolveMeshUserId,
+} from '../../../../apps/gateway/src/hub/hub-authorization';
+import { HubRoleTransitionStore } from '../../../../apps/gateway/src/hub/hub-role-transitions';
 import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/hub/redeem-pop';
 import {
   bytesEqual,
@@ -81,7 +89,11 @@ export type HubListRow = {
   lastSeenAt: number | null;
   writer: boolean;
   authorized: boolean;
+  authorization: 'signed' | 'env' | 'self' | 'no';
 };
+
+export const HUB_SIGNED_AUTH_PRECEDENCE_NOTE =
+  'signed admit-hub/retire-hub takes precedence over TMEX_HUB_PEERS; manage signed authorization from the UI';
 
 export const HUB_MANUAL_RESTART_HINT =
   'skipped service restart; restart tmex manually to apply the change';
@@ -1013,8 +1025,16 @@ function readMeshHubRows(
   }>;
   const writerHubId = pickWriterHubId(rows);
   const selfId = opts.selfId?.toLowerCase() ?? null;
+  const uid = resolveMeshUserId(ctx.userStore, { nodeId: selfId });
+  const envPeers = envPeerSet(opts.peerIds);
   return rows.map((row) => {
-    const id = row.hubNodeId.toLowerCase();
+    const source = resolveHubAuthorization({
+      hubNodeId: row.hubNodeId,
+      selfId,
+      envPeers,
+      signed: lookupSignedHubAuthorization(ctx.userStore, uid, row.hubNodeId),
+    });
+    const authorization = hubAuthListColumn(source);
     return {
       hubNodeId: row.hubNodeId,
       name: row.name,
@@ -1025,9 +1045,34 @@ function readMeshHubRows(
       online: Boolean(row.online),
       lastSeenAt: row.lastSeenAt,
       writer: row.hubNodeId === writerHubId,
-      authorized: id === selfId || opts.peerIds.has(id),
+      authorized: authorization !== 'no',
+      authorization,
     };
   });
+}
+
+async function recordCliRoleTransition(
+  ctx: LocalAuthContext,
+  input: { mode: 'active' | 'standby'; writerEpoch: number | null }
+): Promise<void> {
+  try {
+    const identity = await ctx.identityStore.load();
+    const targetHubId = identity?.nodeId?.trim().toLowerCase() ?? '';
+    if (!targetHubId) return;
+    const now = Date.now();
+    new HubRoleTransitionStore(ctx.db).insert({
+      operationId: crypto.randomUUID(),
+      targetHubId,
+      mode: input.mode,
+      writerEpoch: input.writerEpoch,
+      phase: 'restarting',
+      error: null,
+      startedAt: now,
+      updatedAt: now,
+    });
+  } catch {
+    /* 旧库或无表时不挡 CLI */
+  }
 }
 
 function maxMeshHubWriterEpoch(ctx: LocalAuthContext): number | null {
@@ -1071,7 +1116,7 @@ function formatHubList(rows: HubListRow[]): string[] {
         pad(row.mode, 8),
         pad(String(row.priority), 4),
         pad(String(row.writerEpoch), 6),
-        pad(row.authorized ? 'yes' : 'no', 5),
+        pad(row.authorization, 6),
         pad(row.online ? 'yes' : 'no', 7),
         pad(formatLastSeen(row.lastSeenAt), 21),
         row.publicUrl,
@@ -1180,6 +1225,7 @@ export async function runHubPromote(
     const dbMax = maxMeshHubWriterEpoch(ctx);
     const writerEpoch = dbMax == null ? envEpoch + 1 : Math.max(envEpoch, dbMax) + 1;
     await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { mode: 'active', writerEpoch }));
+    await recordCliRoleTransition(ctx, { mode: 'active', writerEpoch });
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
     }
@@ -1197,6 +1243,10 @@ export async function runHubDemote(parsed: ParsedArgs, io: HubIo = {}): Promise<
     }
     const peers = parseHubPeerIds(env.TMEX_HUB_PEERS);
     await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { mode: 'standby' }));
+    await recordCliRoleTransition(ctx, {
+      mode: 'standby',
+      writerEpoch: parseEnvWriterEpoch(env.TMEX_HUB_WRITER_EPOCH),
+    });
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
     }
@@ -1225,10 +1275,18 @@ export async function runHubList(
     const writerHubId = pickWriterHubId(hubs);
     if (hubs.length === 0) {
       log(io, t('hub.list.empty'));
-      return { hubs, writerHubId };
+    } else {
+      for (const line of formatHubList(hubs)) {
+        log(io, line);
+      }
     }
-    for (const line of formatHubList(hubs)) {
-      log(io, line);
+    try {
+      const latest = new HubRoleTransitionStore(ctx.db).latest();
+      if (latest) {
+        log(io, `role-transition ${latest.phase} ${latest.operationId}`);
+      }
+    } catch {
+      /* ignore */
     }
     return { hubs, writerHubId };
   });
@@ -1256,6 +1314,7 @@ export async function runHubAllow(
       await maybeRestart(parsed, io, ctx.installDir);
     }
     log(io, t('hub.allow.done', { peers: formatPeerList(peers) }));
+    log(io, HUB_SIGNED_AUTH_PRECEDENCE_NOTE);
     return { peers };
   });
 }
@@ -1281,6 +1340,7 @@ export async function runHubDisallow(
       await maybeRestart(parsed, io, ctx.installDir);
     }
     log(io, t('hub.disallow.done', { peers: formatPeerList(peers) }));
+    log(io, HUB_SIGNED_AUTH_PRECEDENCE_NOTE);
     return { peers };
   });
 }

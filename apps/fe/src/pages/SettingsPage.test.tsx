@@ -36,8 +36,8 @@ const {
 const TAB_IDS = [
   'general',
   'terminal',
-  'remoteAccess',
   'devicesAndFiles',
+  'remoteAccess',
   'nodes',
   'notifications',
   'ai',
@@ -59,13 +59,13 @@ async function renderResolved(entry = '/settings'): Promise<string> {
 }
 
 describe('SettingsPage 标签栏', () => {
-  test('七个标签都在，「节点」排在设备与文件与通知之间', () => {
+  test('七个标签都在，「节点」排在远程访问与通知之间', () => {
     const html = render();
     for (const tab of TAB_IDS) {
       expect(html).toContain(`data-testid="settings-tab-${tab}"`);
     }
     expect(html.indexOf('settings-tab-nodes')).toBeGreaterThan(
-      html.indexOf('settings-tab-devicesAndFiles')
+      html.indexOf('settings-tab-remoteAccess')
     );
     expect(html.indexOf('settings-tab-nodes')).toBeLessThan(
       html.indexOf('settings-tab-notifications')
@@ -73,12 +73,12 @@ describe('SettingsPage 标签栏', () => {
     expect(html).toContain('settings.tabGroup.nodes');
   });
 
-  test('「远程访问」紧挨在「终端」右侧', () => {
+  test('「设备与文件」紧挨在「终端」右侧，「远程访问」在其后', () => {
     const html = render();
-    expect(html.indexOf('settings-tab-remoteAccess')).toBeGreaterThan(
+    expect(html.indexOf('settings-tab-devicesAndFiles')).toBeGreaterThan(
       html.indexOf('settings-tab-terminal')
     );
-    expect(html.indexOf('settings-tab-remoteAccess')).toBeLessThan(
+    expect(html.indexOf('settings-tab-remoteAccess')).toBeGreaterThan(
       html.indexOf('settings-tab-devicesAndFiles')
     );
     expect(html).toContain('settings.tabGroup.remoteAccess');

@@ -11,6 +11,7 @@ export type DetectedTunnel = TunnelExternalStatus & {
   tokenFile: string | null;
   logFile: string | null;
   accountId: string | null;
+  metricsAddr: string | null;
 };
 
 export type ExternalDetection = DetectedTunnel & { tokenAccountId: string | null };
@@ -36,6 +37,7 @@ export const EMPTY_EXTERNAL: ExternalDetection = {
   tokenFile: null,
   logFile: null,
   accountId: null,
+  metricsAddr: null,
   tokenAccountId: null,
   externalAccess: { ...EMPTY_EXTERNAL_ACCESS },
 };
@@ -183,6 +185,7 @@ async function collectCandidates(opts: {
     parsed: {
       tokenFile: null,
       logFile: null,
+      metricsAddr: parsedYml?.metricsAddr ?? null,
       configPath: defaultConfigPath,
       tunnelId: parsedYml?.tunnelId ?? null,
       tunnelName: parsedYml?.tunnelName ?? null,
@@ -221,6 +224,7 @@ async function attachAccessProbe(
     tokenFile: best.tokenFile,
     logFile: best.logFile,
     accountId: best.accountId,
+    metricsAddr: best.metricsAddr,
     externalAccess,
   };
 }
@@ -268,6 +272,7 @@ async function enrichCandidate(
   let accountId: string | null = null;
   const tokenFile = cand.parsed.tokenFile;
   const logFile = cand.parsed.logFile;
+  let metricsAddr = cand.parsed.metricsAddr;
   const configPath = cand.parsed.configPath;
   let yml: ReturnType<typeof parseCloudflaredYml> = null;
   if (configPath) {
@@ -276,6 +281,7 @@ async function enrichCandidate(
     if (yml) {
       tunnelId = tunnelId ?? yml.tunnelId;
       tunnelName = tunnelName ?? yml.tunnelName;
+      metricsAddr = metricsAddr ?? yml.metricsAddr;
     }
   }
 
@@ -327,6 +333,7 @@ async function enrichCandidate(
     tokenFile,
     logFile,
     accountId,
+    metricsAddr,
     score,
   };
 }
@@ -338,6 +345,7 @@ export function isCloudflaredTunnelCommand(command: string): boolean {
 export type ParsedArgs = {
   tokenFile: string | null;
   logFile: string | null;
+  metricsAddr: string | null;
   configPath: string | null;
   tunnelId: string | null;
   tunnelName: string | null;
@@ -348,6 +356,7 @@ const FLAGS_WITH_VALUE = new Set([
   '--token',
   '--logfile',
   '--log-file',
+  '--metrics',
   '--config',
   '--origincert',
   '--credentials-file',
@@ -356,6 +365,7 @@ const FLAGS_WITH_VALUE = new Set([
 export function parseArgv(tokens: string[]): ParsedArgs {
   const tokenFile = flagValue(tokens, '--token-file');
   const logFile = flagValue(tokens, '--logfile') ?? flagValue(tokens, '--log-file');
+  const metricsAddr = flagValue(tokens, '--metrics');
   const configPath = flagValue(tokens, '--config');
   let tunnelId: string | null = null;
   let tunnelName: string | null = null;
@@ -375,7 +385,7 @@ export function parseArgv(tokens: string[]): ParsedArgs {
       break;
     }
   }
-  return { tokenFile, logFile, configPath, tunnelId, tunnelName };
+  return { tokenFile, logFile, metricsAddr, configPath, tunnelId, tunnelName };
 }
 
 export function parseCommandLine(command: string): ParsedArgs {
@@ -386,11 +396,13 @@ export function parseCloudflaredYml(text: string): {
   tunnelId: string | null;
   tunnelName: string | null;
   credentialsFile: string | null;
+  metricsAddr: string | null;
   ingress: Array<{ hostname: string | null; service: string | null }>;
 } | null {
   if (!text.trim()) return null;
   let tunnelRaw: string | null = null;
   let credentialsFile: string | null = null;
+  let metricsAddr: string | null = null;
   const ingress: Array<{ hostname: string | null; service: string | null }> = [];
   let inIngress = false;
   let current: { hostname: string | null; service: string | null } | null = null;
@@ -407,6 +419,11 @@ export function parseCloudflaredYml(text: string): {
     const credMatch = trimmed.match(/^credentials-file:\s*(.+)$/);
     if (credMatch) {
       credentialsFile = unquote(credMatch[1] ?? '');
+      continue;
+    }
+    const metricsMatch = trimmed.match(/^metrics:\s*(.+)$/);
+    if (metricsMatch && !inIngress) {
+      metricsAddr = unquote(metricsMatch[1] ?? '') || null;
       continue;
     }
     if (/^ingress:\s*$/.test(trimmed)) {
@@ -427,7 +444,7 @@ export function parseCloudflaredYml(text: string): {
   if (current) ingress.push(current);
   const tunnelId = tunnelRaw && looksLikeId(tunnelRaw) ? tunnelRaw : null;
   const tunnelName = tunnelRaw && !looksLikeId(tunnelRaw) ? tunnelRaw : null;
-  return { tunnelId, tunnelName, credentialsFile, ingress };
+  return { tunnelId, tunnelName, credentialsFile, metricsAddr, ingress };
 }
 
 export function serviceHitsOrigin(service: string | null | undefined, originPort: number): boolean {
@@ -717,6 +734,7 @@ function mergeParsed(primary: ParsedArgs, extra: ParsedArgs | null): ParsedArgs 
   return {
     tokenFile: primary.tokenFile ?? extra.tokenFile,
     logFile: primary.logFile ?? extra.logFile,
+    metricsAddr: primary.metricsAddr ?? extra.metricsAddr,
     configPath: primary.configPath ?? extra.configPath,
     tunnelId: primary.tunnelId ?? extra.tunnelId,
     tunnelName: primary.tunnelName ?? extra.tunnelName,

@@ -1,5 +1,13 @@
 import { and, eq, gt, isNull, lte } from 'drizzle-orm';
-import { enrollmentTokens, nodeCerts, nodes, peerCache, userKeys, users } from '../db/schema';
+import {
+  enrollmentTokens,
+  nodeCerts,
+  nodes,
+  peerCache,
+  userHubAuthorizations,
+  userKeys,
+  users,
+} from '../db/schema';
 import { toBuffer, toBytes } from './binary';
 import type { AuthDb, NodeStatus } from './types';
 
@@ -78,6 +86,30 @@ export interface UpsertNodeCertInput {
   revokedLogSeq?: number | null;
 }
 
+export type HubAuthorizationStatus = 'active' | 'retired';
+
+export interface HubAuthorizationRecord {
+  userId: string;
+  hubNodeId: string;
+  status: HubAuthorizationStatus;
+  publicUrl: string | null;
+  priority: number | null;
+  admitSeq: number;
+  retireSeq: number | null;
+  updatedSeq: number;
+}
+
+export interface UpsertHubAuthorizationInput {
+  userId: string;
+  hubNodeId: string;
+  status: HubAuthorizationStatus;
+  publicUrl?: string | null;
+  priority?: number | null;
+  admitSeq: number;
+  retireSeq?: number | null;
+  updatedSeq: number;
+}
+
 export interface PeerCacheRecord {
   nodeId: string;
   name: string;
@@ -145,6 +177,17 @@ export interface CreateEnrollmentTokenInput {
   authorizationSig: Uint8Array;
   expiresAt: number;
 }
+
+export type EnrollmentTokenRevision = { epoch: number; seq: number };
+
+export type ApplyEnrollmentTokenReplicationInput = {
+  op: 'upsert' | 'tombstone';
+  revision: EnrollmentTokenRevision;
+  token?: EnrollmentTokenRecord;
+  id?: string;
+};
+
+export type ApplyEnrollmentTokenReplicationResult = 'applied' | 'ignored';
 
 export const HUB_META_PEER_ID = 'hub';
 
@@ -308,6 +351,60 @@ export class UserStore {
 
   deleteCertsByUser(userId: string): void {
     this.db.delete(nodeCerts).where(eq(nodeCerts.userId, userId)).run();
+  }
+
+  listHubAuthorizationsByUser(userId: string): HubAuthorizationRecord[] {
+    return this.db
+      .select()
+      .from(userHubAuthorizations)
+      .where(eq(userHubAuthorizations.userId, userId))
+      .all()
+      .map(toHubAuthorization);
+  }
+
+  getHubAuthorization(userId: string, hubNodeId: string): HubAuthorizationRecord | null {
+    const row = this.db
+      .select()
+      .from(userHubAuthorizations)
+      .where(
+        and(
+          eq(userHubAuthorizations.userId, userId),
+          eq(userHubAuthorizations.hubNodeId, hubNodeId)
+        )
+      )
+      .get();
+    return row ? toHubAuthorization(row) : null;
+  }
+
+  upsertHubAuthorization(input: UpsertHubAuthorizationInput): void {
+    this.db
+      .insert(userHubAuthorizations)
+      .values({
+        userId: input.userId,
+        hubNodeId: input.hubNodeId,
+        status: input.status,
+        publicUrl: input.publicUrl ?? null,
+        priority: input.priority ?? null,
+        admitSeq: input.admitSeq,
+        retireSeq: input.retireSeq ?? null,
+        updatedSeq: input.updatedSeq,
+      })
+      .onConflictDoUpdate({
+        target: [userHubAuthorizations.userId, userHubAuthorizations.hubNodeId],
+        set: {
+          status: input.status,
+          publicUrl: input.publicUrl ?? null,
+          priority: input.priority ?? null,
+          admitSeq: input.admitSeq,
+          retireSeq: input.retireSeq ?? null,
+          updatedSeq: input.updatedSeq,
+        },
+      })
+      .run();
+  }
+
+  deleteHubAuthorizationsByUser(userId: string): void {
+    this.db.delete(userHubAuthorizations).where(eq(userHubAuthorizations.userId, userId)).run();
   }
 
   deleteAllPeers(): void {
@@ -562,6 +659,146 @@ export class UserStore {
       .returning({ id: enrollmentTokens.id })
       .all().length;
   }
+
+  listEnrollmentTokens(userId?: string): EnrollmentTokenRecord[] {
+    const rows = this.db.select().from(enrollmentTokens).all().map(toEnrollment);
+    return userId ? rows.filter((row) => row.userId === userId) : rows;
+  }
+
+  nextEnrollmentTokenRevision(epoch: number): EnrollmentTokenRevision {
+    this.ensureTokenReplSchema();
+    const sqlite = sqliteOf(this.db);
+    const meta = sqlite
+      .query('SELECT epoch, seq FROM enrollment_token_repl_meta WHERE id = 1')
+      .get() as { epoch: number; seq: number } | null;
+    let nextEpoch = epoch;
+    let nextSeq = 1;
+    if (meta) {
+      if (epoch > meta.epoch) {
+        nextEpoch = epoch;
+        nextSeq = 1;
+      } else {
+        nextEpoch = meta.epoch;
+        nextSeq = meta.seq + 1;
+      }
+    }
+    sqlite.run(
+      'INSERT INTO enrollment_token_repl_meta (id, epoch, seq) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET epoch = excluded.epoch, seq = excluded.seq',
+      [nextEpoch, nextSeq]
+    );
+    return { epoch: nextEpoch, seq: nextSeq };
+  }
+
+  getEnrollmentTokenRevision(id: string): EnrollmentTokenRevision | null {
+    this.ensureTokenReplSchema();
+    const row = sqliteOf(this.db)
+      .query('SELECT epoch, seq FROM enrollment_token_repl WHERE id = ?')
+      .get(id) as { epoch: number; seq: number } | null;
+    return row ? { epoch: row.epoch, seq: row.seq } : null;
+  }
+
+  applyEnrollmentTokenReplication(
+    input: ApplyEnrollmentTokenReplicationInput
+  ): ApplyEnrollmentTokenReplicationResult {
+    this.ensureTokenReplSchema();
+    const id = input.token?.id ?? input.id;
+    if (!id) return 'ignored';
+    const sqlite = sqliteOf(this.db);
+    const existing = sqlite
+      .query('SELECT epoch, seq, tombstoned FROM enrollment_token_repl WHERE id = ?')
+      .get(id) as { epoch: number; seq: number; tombstoned: number } | null;
+    if (existing && compareRepl(input.revision, existing) < 0) return 'ignored';
+    if (existing && compareRepl(input.revision, existing) === 0 && existing.tombstoned === 1) {
+      return 'ignored';
+    }
+    if (input.op === 'tombstone') {
+      this.db.delete(enrollmentTokens).where(eq(enrollmentTokens.id, id)).run();
+      sqlite.run(
+        'INSERT INTO enrollment_token_repl (id, epoch, seq, tombstoned) VALUES (?, ?, ?, 1) ON CONFLICT(id) DO UPDATE SET epoch = excluded.epoch, seq = excluded.seq, tombstoned = 1',
+        [id, input.revision.epoch, input.revision.seq]
+      );
+      return 'applied';
+    }
+    const token = input.token;
+    if (!token) return 'ignored';
+    token.authorizationJson = mergeEnrollmentJsonPreservingLocalSecrets(
+      this.getEnrollmentTokenById(id)?.authorizationJson,
+      stripEnrollmentReplicationSecrets(token.authorizationJson)
+    );
+    const current = this.getEnrollmentTokenById(id);
+    const usedAt =
+      current?.usedAt != null && token.usedAt == null ? current.usedAt : (token.usedAt ?? null);
+    const nodeId =
+      current?.usedAt != null && token.usedAt == null ? current.nodeId : (token.nodeId ?? null);
+    if (current) {
+      this.db
+        .update(enrollmentTokens)
+        .set({
+          userId: token.userId,
+          enrollPublicKey: toBuffer(token.enrollPublicKey),
+          authorizationJson: token.authorizationJson,
+          authorizationSig: toBuffer(token.authorizationSig),
+          expiresAt: token.expiresAt,
+          usedAt,
+          nodeId,
+        })
+        .where(eq(enrollmentTokens.id, id))
+        .run();
+    } else {
+      this.db
+        .insert(enrollmentTokens)
+        .values({
+          id: token.id,
+          userId: token.userId,
+          enrollPublicKey: toBuffer(token.enrollPublicKey),
+          authorizationJson: token.authorizationJson,
+          authorizationSig: toBuffer(token.authorizationSig),
+          expiresAt: token.expiresAt,
+          usedAt,
+          nodeId,
+        })
+        .run();
+    }
+    sqlite.run(
+      'INSERT INTO enrollment_token_repl (id, epoch, seq, tombstoned) VALUES (?, ?, ?, 0) ON CONFLICT(id) DO UPDATE SET epoch = excluded.epoch, seq = excluded.seq, tombstoned = 0',
+      [id, input.revision.epoch, input.revision.seq]
+    );
+    return 'applied';
+  }
+
+  private ensureTokenReplSchema(): void {
+    const sqlite = sqliteOf(this.db);
+    sqlite.run(`
+      CREATE TABLE IF NOT EXISTS enrollment_token_repl (
+        id TEXT PRIMARY KEY,
+        epoch INTEGER NOT NULL,
+        seq INTEGER NOT NULL,
+        tombstoned INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    sqlite.run(`
+      CREATE TABLE IF NOT EXISTS enrollment_token_repl_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        epoch INTEGER NOT NULL,
+        seq INTEGER NOT NULL
+      )
+    `);
+  }
+}
+
+function compareRepl(
+  incoming: EnrollmentTokenRevision,
+  stored: { epoch: number; seq: number }
+): number {
+  if (incoming.epoch !== stored.epoch) return incoming.epoch > stored.epoch ? 1 : -1;
+  if (incoming.seq !== stored.seq) return incoming.seq > stored.seq ? 1 : -1;
+  return 0;
+}
+
+function sqliteOf(db: AuthDb): import('bun:sqlite').Database {
+  const client = (db as AuthDb & { $client?: import('bun:sqlite').Database }).$client;
+  if (!client) throw new Error('auth db missing sqlite client');
+  return client;
 }
 
 function toUser(row: typeof users.$inferSelect): UserRecord {
@@ -608,6 +845,21 @@ function toNodeCert(row: typeof nodeCerts.$inferSelect): NodeCertRecord {
   };
 }
 
+function toHubAuthorization(
+  row: typeof userHubAuthorizations.$inferSelect
+): HubAuthorizationRecord {
+  return {
+    userId: row.userId,
+    hubNodeId: row.hubNodeId,
+    status: row.status === 'retired' ? 'retired' : 'active',
+    publicUrl: row.publicUrl,
+    priority: row.priority,
+    admitSeq: row.admitSeq,
+    retireSeq: row.retireSeq,
+    updatedSeq: row.updatedSeq,
+  };
+}
+
 function toPeer(row: typeof peerCache.$inferSelect): PeerCacheRecord {
   return {
     nodeId: row.nodeId,
@@ -634,6 +886,63 @@ function toNode(row: typeof nodes.$inferSelect): NodeRecord {
     endpointsJson: row.endpointsJson,
     createdAt: row.createdAt,
   };
+}
+
+const REPLICATION_SECRET_KEYS = new Set([
+  'entry_sid',
+  'sid',
+  'callback',
+  'callback_url',
+  'session',
+  'session_id',
+]);
+
+function mergeEnrollmentJsonPreservingLocalSecrets(
+  currentJson: string | undefined,
+  incomingStripped: string
+): string {
+  if (!currentJson) return incomingStripped;
+  try {
+    const current: unknown = JSON.parse(currentJson);
+    const incoming: unknown = JSON.parse(incomingStripped);
+    if (
+      !current ||
+      typeof current !== 'object' ||
+      Array.isArray(current) ||
+      !incoming ||
+      typeof incoming !== 'object' ||
+      Array.isArray(incoming)
+    ) {
+      return incomingStripped;
+    }
+    const out = { ...(incoming as Record<string, unknown>) };
+    const cur = current as Record<string, unknown>;
+    if (typeof cur.entry_sid === 'string' && out.entry_sid === undefined) {
+      out.entry_sid = cur.entry_sid;
+    }
+    return JSON.stringify(out);
+  } catch {
+    return incomingStripped;
+  }
+}
+
+export function stripEnrollmentReplicationSecrets(authorizationJson: string): string {
+  try {
+    const parsed: unknown = JSON.parse(authorizationJson);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '{}';
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const lower = key.toLowerCase();
+      if (REPLICATION_SECRET_KEYS.has(lower)) continue;
+      if (lower.includes('sid') || lower.includes('callback') || lower.includes('session')) {
+        continue;
+      }
+      out[key] = value;
+    }
+    return JSON.stringify(out);
+  } catch {
+    return '{}';
+  }
 }
 
 function toEnrollment(row: typeof enrollmentTokens.$inferSelect): EnrollmentTokenRecord {

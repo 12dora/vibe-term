@@ -3,11 +3,13 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { originUrlFromBindHost, resolveTunnelDir } from '../config';
-import { TunnelError } from './errors';
+import { TunnelError, tunnelHttpStatus } from './errors';
+import { FakeSpawner } from './fake-spawn';
 import { defaultTunnelName, normalizeTunnelHostname, normalizeTunnelName } from './hostname';
 import { LogRingBuffer } from './log-buffer';
 import { cloudflaredDownloadSpec, isTunnelPlatformSupported } from './platform';
 import {
+  CloudflaredProvider,
   credentialsPathFor,
   parseCreateOutput,
   parseLoginUrl,
@@ -68,6 +70,47 @@ describe('redactSecrets', () => {
     const other = 'open https://example.com/login?token=secret-value now';
     expect(redactSecrets(other)).not.toContain('secret-value');
     expect(redactSecrets(other)).toContain('token=***');
+  });
+
+  test('masks URL userinfo and every query-parameter value', () => {
+    expect(redactSecrets('redis://admin:s3cr3tP@ss@10.0.0.5:6379/db')).toBe(
+      'redis://***@10.0.0.5:6379/db'
+    );
+    expect(redactSecrets('https://user:pass@example.com/path?foo=bar&id=1')).toBe(
+      'https://***@example.com/path?foo=***&id=***'
+    );
+  });
+
+  test('masks short tokens, base64url, Bearer/Basic, and secret key=value pairs', () => {
+    expect(redactSecrets('token=abc password=hunter2 api_key=k jwt=short')).toBe(
+      'token=*** password=*** api_key=*** jwt=***'
+    );
+    const b64url = `eyJhbGciOiJIUzI1NiJ9.${'ab-_CD'.repeat(6)}`;
+    expect(redactSecrets(`Authorization: Bearer ${b64url}`)).toContain('Bearer ***');
+    expect(redactSecrets(`Authorization: Bearer ${b64url}`)).not.toContain(b64url);
+    expect(redactSecrets('Authorization: Basic dXNlcjpwYXNz')).toBe('Authorization: Basic ***');
+    expect(redactSecrets('cookie=sid123 session=abc credential=x')).toBe(
+      'cookie=*** session=*** credential=***'
+    );
+  });
+
+  test('masks JSON-format and text-format cloudflared secret lines', () => {
+    const jsonLine =
+      '{"level":"error","token":"shorttok","password":"hunter2","error":"token=abc"}';
+    const jsonOut = redactSecrets(jsonLine);
+    expect(jsonOut).not.toContain('shorttok');
+    expect(jsonOut).not.toContain('hunter2');
+    expect(jsonOut).not.toContain('token=abc');
+    expect(jsonOut).toContain('"token":"***"');
+    expect(jsonOut).toContain('"password":"***"');
+    expect(jsonOut).toContain('token=***');
+    const textLine =
+      '2026-09-02T12:00:01Z ERR Unable to establish connection token=abc api-key=xyz';
+    const textOut = redactSecrets(textLine);
+    expect(textOut).not.toContain('token=abc');
+    expect(textOut).not.toContain('xyz');
+    expect(textOut).toContain('token=***');
+    expect(textOut).toContain('api-key=***');
   });
 });
 
@@ -155,6 +198,35 @@ describe('originUrlFromBindHost', () => {
     expect(originUrlFromBindHost('::1', 8080)).toBe('http://[::1]:8080');
     expect(originUrlFromBindHost('192.168.1.10', 9663)).toBe('http://192.168.1.10:9663');
     expect(originUrlFromBindHost('2001:db8::1', 9663)).toBe('http://[2001:db8::1]:9663');
+  });
+});
+
+describe('tunnelHttpStatus', () => {
+  test('maps connector_down to 503', () => {
+    expect(tunnelHttpStatus('connector_down')).toBe(503);
+  });
+});
+
+describe('CloudflaredProvider metrics flag', () => {
+  test('injects --metrics from pickPort on named and quick spawn', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-tun-metrics-'));
+    const spawner = new FakeSpawner();
+    const provider = new CloudflaredProvider(spawner.spawn, dir, async () => 4242);
+    const quick = await provider.spawnQuickRun('/usr/bin/cloudflared', 'http://127.0.0.1:19883');
+    expect(quick.metricsAddr).toBe('127.0.0.1:4242');
+    expect(spawner.calls[0]?.args).toEqual([
+      'tunnel',
+      '--no-autoupdate',
+      '--metrics',
+      '127.0.0.1:4242',
+      '--url',
+      'http://127.0.0.1:19883',
+    ]);
+    const named = await provider.spawnNamedRun('/usr/bin/cloudflared', join(dir, 'config.yml'));
+    expect(named.metricsAddr).toBe('127.0.0.1:4242');
+    expect(spawner.calls[1]?.args).toContain('--metrics');
+    expect(spawner.calls[1]?.args).toContain('127.0.0.1:4242');
+    expect(spawner.calls[1]?.args).toContain('run');
   });
 });
 

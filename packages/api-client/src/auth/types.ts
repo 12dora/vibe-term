@@ -1,7 +1,7 @@
 // mesh 身份鉴权相关的 REST 报文类型（设计见 docs/hub/2026082700-hub-node-architecture.md §2 / §4）。
 // 所有二进制字段一律 base64url（无 padding）字符串，与 `@tmex/shared/auth` 的 encodeBase64url 对齐。
 
-import type { LocalAuthStatus } from '@tmex/shared';
+import type { LocalAuthStatus, MeshNodeOperation } from '@tmex/shared';
 import type { HubEndpointInfo, HubMode } from '@tmex/shared/uplink';
 
 // hub 集合的契约类型来自 uplink codec（hub 广播 `node.list.hubs[]` 用的同一份），
@@ -225,6 +225,10 @@ export interface MeshNode {
   isHub?: boolean;
   /** hub 机的主 / 备身份；非 hub 或旧后端不下发。 */
   hubMode?: HubMode;
+  /** 该 node 当前挂载的 hub；旧后端不下发。 */
+  attachedHubId?: string;
+  /** 入口记录的进行中长事务（卸载 / 主备切换）；无则缺省或 null。 */
+  operation?: MeshNodeOperation | null;
 }
 
 export interface MeshNodesResponse {
@@ -242,17 +246,35 @@ export interface MeshAttachedHub {
 }
 
 /**
+ * 入口是凭什么认这台 hub 的：`signed` = 用户签名授权，`env` = 部署时写进 env 的 peer，
+ * `self` = 本机自己就是这台 hub。旧后端不下发。
+ */
+export type HubAuthorizationKind = 'signed' | 'env' | 'self' | 'none';
+
+/**
+ * `GET /api/mesh/hubs` 里的一台 hub：uplink 契约的 `HubEndpointInfo` 再叠一个只有 REST 才有的
+ * `authorization`——它是入口本地的授权来源，不在 hub 之间广播，故不进 `HubEndpointInfo` 本体。
+ */
+export type MeshHubEndpoint = HubEndpointInfo & { authorization?: HubAuthorizationKind };
+
+/**
  * `GET /api/mesh/hubs`（**需会话**）。
  *
  * `writerHubId` 是当前接受管理写入的那台 hub（`active` 中 writerEpoch 最高的一台）；
  * 一台 active 都没有时为 `null`，此时任何 hub 都不收写入。
  */
 export interface MeshHubsResponse {
-  hubs: HubEndpointInfo[];
+  hubs: MeshHubEndpoint[];
   attached: MeshAttachedHub | null;
   writerHubId: string | null;
   /** uplink 的候选地址顺序与最近一次失败原因（诊断用）。 */
-  candidates: Array<{ publicUrl: string; lastError: string | null; lastAttemptAt: number | null }>;
+  candidates: Array<{
+    publicUrl: string;
+    lastError: string | null;
+    lastAttemptAt: number | null;
+    rttMs?: number | null;
+    rttAt?: number | null;
+  }>;
 }
 
 /** standby hub 拒绝管理写入的 409：`code` 之外还带 writer 的地址，UI 据此指路。 */

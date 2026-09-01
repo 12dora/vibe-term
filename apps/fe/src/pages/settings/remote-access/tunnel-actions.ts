@@ -11,6 +11,7 @@ import { runTunnelAction } from '@tmex/api-client/local/tunnel-api';
 import type {
   TunnelActionRequest,
   TunnelActionResponse,
+  TunnelErrorCode,
   TunnelJobStatus,
   TunnelStatusResponse,
 } from '@tmex/shared';
@@ -22,6 +23,9 @@ export type TunnelActionName = TunnelActionRequest['action'];
 export interface TunnelCheckResult {
   ok: boolean;
   message: string | null;
+  /** job 的最后一步：`ok` / `access_protected` / `access_protected_unverified`。 */
+  step: string | null;
+  code: TunnelErrorCode | null;
 }
 
 export interface TunnelActionState {
@@ -115,9 +119,14 @@ export function checkResultOf(
 ): TunnelCheckResult | null {
   if (!checkJobId || !job || job.id !== checkJobId || job.state === 'running') return null;
   if (job.state === 'error') {
-    return { ok: false, message: job.error ? job.error.message || job.error.code : null };
+    return {
+      ok: false,
+      message: job.error ? job.error.message || job.error.code : null,
+      step: job.step,
+      code: job.error?.code ?? null,
+    };
   }
-  return { ok: true, message: null };
+  return { ok: true, message: null, step: job.step, code: null };
 }
 
 /**

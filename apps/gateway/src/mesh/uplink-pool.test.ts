@@ -23,9 +23,12 @@ import {
   type UplinkCandidate,
   UplinkPool,
   defaultFetchCaPem,
+  hubSupportsNearestAttach,
   isCaFingerprintHex,
+  isRttSwitchWorth,
   isSelfHubCandidate,
   mergeUplinkCandidates,
+  orderCandidatesByNearest,
   parseSingleCaCertificate,
   recordsFromNodeList,
   redactUrl,
@@ -509,6 +512,14 @@ describe('UplinkPool', () => {
     onNodeList?: (list: UplinkNodeList) => void;
     onKeyLogFork?: (event: KeyLogForkEvent) => void;
     probeJitter?: number;
+    enablePeriodicRttProbe?: boolean;
+    rttProbeIntervalMs?: number;
+    failbackDebounceMs?: number;
+    preferNearest?: boolean | null;
+    localRoles?: { hub?: boolean; node?: boolean };
+    rttSwitchDwellMs?: number;
+    versions?: Record<string, string>;
+    onHubTokens?: (msg: import('@tmex/shared/uplink').HubTokensMessage) => void;
   }) {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
@@ -538,6 +549,7 @@ describe('UplinkPool', () => {
             writerEpoch: index === 0 ? 3 : 1,
             priority: 10 + index,
             caFingerprint: null,
+            version: input.versions?.[publicUrl] ?? '1.1.13',
           }))),
       hubTrust,
       scheduler,
@@ -546,6 +558,17 @@ describe('UplinkPool', () => {
       probeIntervalMs: 60_000,
       probeTimeoutMs: 5_000,
       probeJitter: input.probeJitter ?? 0,
+      enablePeriodicRttProbe: input.enablePeriodicRttProbe,
+      rttProbeIntervalMs: input.rttProbeIntervalMs,
+      failbackDebounceMs: input.failbackDebounceMs,
+      preferNearest: input.preferNearest,
+      localRoles: input.localRoles,
+      rttSwitchDwellMs: input.rttSwitchDwellMs,
+      onHubTokens: input.onHubTokens
+        ? (msg) => {
+            input.onHubTokens?.(msg);
+          }
+        : undefined,
       probeHealthz: async (url) => (input.probe ? input.probe(url) : false),
       fetchCaPem: input.fetchCaPem,
       fingerprintPem: input.fingerprintPem,
@@ -924,14 +947,12 @@ describe('UplinkPool', () => {
         },
       ],
     });
-    await waitMicro();
     expect(pool.attachedHub()).toMatchObject({
       publicUrl: 'https://a.example',
       hubNodeId: ID.b,
       mode: 'standby',
       writerEpoch: 1,
     });
-    await scheduler.advance(60_000);
     await waitMicro();
     expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
   });
@@ -1531,6 +1552,571 @@ describe('UplinkPool', () => {
     }
   });
 
+  test('node.list writer flipping online triggers an immediate failback probe', async () => {
+    const scheduler = new ManualScheduler();
+    let aHealthy = false;
+    const probed: string[] = [];
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { failTimes: 3 } },
+      scheduler,
+      probe: async (url) => {
+        probed.push(url);
+        return url === 'https://a.example' && aHealthy;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(probed).toEqual([]);
+
+    const live = created.find((row) => row.hubUrl === 'https://b.example');
+    live?.emitStaleList(
+      hubStatusList([
+        {
+          nodeId: ID.b,
+          publicUrl: 'https://a.example',
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 3,
+          online: false,
+        },
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          online: true,
+        },
+      ])
+    );
+    await waitMicro();
+    expect(probed).toEqual(['https://a.example']);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+
+    live?.emitStaleList(
+      hubStatusList([
+        {
+          nodeId: ID.b,
+          publicUrl: 'https://a.example',
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 3,
+          online: false,
+        },
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          online: true,
+        },
+      ])
+    );
+    await waitMicro();
+    expect(probed).toEqual(['https://a.example']);
+
+    await scheduler.advance(5_000);
+    aHealthy = true;
+    live?.emitStaleList(
+      hubStatusList([
+        {
+          nodeId: ID.b,
+          publicUrl: 'https://a.example',
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 3,
+          online: true,
+        },
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          online: true,
+        },
+      ])
+    );
+    await waitMicro();
+    expect(probed.length).toBeGreaterThanOrEqual(2);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(scheduler.intervals.filter((row) => !row.cleared && row.ms >= 50_000).length).toBe(0);
+  });
+
+  test('node.list failback probes are debounced to 5s and coalesced while in flight', async () => {
+    const scheduler = new ManualScheduler();
+    let probeStarted = 0;
+    let releaseProbe: () => void = () => {};
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { failTimes: 3 } },
+      scheduler,
+      probe: async () => {
+        probeStarted += 1;
+        await new Promise<void>((resolve) => {
+          releaseProbe = resolve;
+        });
+        return false;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    const live = created.find((row) => row.hubUrl === 'https://b.example');
+    const offlineWriter = hubStatusList([
+      {
+        nodeId: ID.b,
+        publicUrl: 'https://a.example',
+        mode: 'active',
+        priority: 10,
+        writerEpoch: 3,
+        online: false,
+      },
+      {
+        nodeId: ID.c,
+        publicUrl: 'https://b.example',
+        mode: 'standby',
+        priority: 20,
+        writerEpoch: 1,
+        online: true,
+      },
+    ]);
+    live?.emitStaleList(offlineWriter);
+    await waitMicro();
+    expect(probeStarted).toBe(1);
+
+    live?.emitStaleList(
+      hubStatusList([
+        {
+          nodeId: ID.b,
+          publicUrl: 'https://a.example',
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 4,
+          online: true,
+        },
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          online: true,
+        },
+      ])
+    );
+    await waitMicro();
+    expect(probeStarted).toBe(1);
+
+    releaseProbe();
+    await waitMicro();
+    expect(probeStarted).toBe(1);
+
+    await scheduler.advance(5_000);
+    await waitMicro();
+    expect(probeStarted).toBe(2);
+  });
+
+  test('node.list does not probe when hub view is unchanged', async () => {
+    const scheduler = new ManualScheduler();
+    const probed: string[] = [];
+    const lines: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const { pool, created } = boot({
+        urls: ['https://a.example', 'https://b.example'],
+        behavior: { 'https://a.example': { failTimes: 3 } },
+        scheduler,
+        probe: async (url) => {
+          probed.push(url);
+          return false;
+        },
+      });
+      pool.start();
+      await waitMicro();
+      const live = created.find((row) => row.hubUrl === 'https://b.example');
+      const list = hubStatusList([
+        {
+          nodeId: ID.b,
+          publicUrl: 'https://a.example',
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 3,
+          online: false,
+        },
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          online: true,
+        },
+      ]);
+      live?.emitStaleList(list);
+      await waitMicro();
+      expect(probed).toEqual(['https://a.example']);
+      const triggers = () =>
+        lines.filter((row) => row.includes('[uplink] failback probe triggered by node.list'));
+      expect(triggers().length).toBe(1);
+
+      live?.emitStaleList(list);
+      await waitMicro();
+      expect(probed).toEqual(['https://a.example']);
+      expect(triggers().length).toBe(1);
+      expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    } finally {
+      console.info = originalInfo;
+    }
+  });
+
+  test('healthz probes record per-URL rttMs and rttAt on the candidate snapshot', async () => {
+    const scheduler = new ManualScheduler();
+    let aHealthy = false;
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { failTimes: 3 } },
+      scheduler,
+      probe: async (url) => url === 'https://a.example' && aHealthy,
+    });
+    pool.start();
+    await waitMicro();
+    const live = created.find((row) => row.hubUrl === 'https://b.example');
+    aHealthy = true;
+    live?.emitStaleList(
+      hubStatusList([
+        {
+          nodeId: ID.b,
+          publicUrl: 'https://a.example',
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 3,
+          online: true,
+        },
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          online: true,
+        },
+      ])
+    );
+    await waitMicro();
+    const a = pool.candidates().find((row) => row.publicUrl === 'https://a.example');
+    expect(a?.rttMs).toEqual(expect.any(Number));
+    expect(a?.rttMs ?? -1).toBeGreaterThanOrEqual(0);
+    expect(a?.rttAt).toBe(scheduler.nowMs);
+  });
+
+  test('healthz probes record rtt only on success and clear it on failure', async () => {
+    const scheduler = new ManualScheduler();
+    let healthy = true;
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 300_000,
+      probe: async () => healthy,
+    });
+    pool.start();
+    await waitMicro();
+    await scheduler.advance(300_000);
+    await waitMicro();
+    expect(
+      pool
+        .candidates()
+        .every((row) => typeof row.rttMs === 'number' && row.rttAt === scheduler.nowMs)
+    ).toBe(true);
+    healthy = false;
+    await scheduler.advance(300_000);
+    await waitMicro();
+    expect(pool.candidates().every((row) => row.rttMs === null && row.rttAt === null)).toBe(true);
+  });
+
+  test('periodic RTT probe runs every 5 minutes when enabled and there are 2+ candidates', async () => {
+    const scheduler = new ManualScheduler();
+    const probed: string[] = [];
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 300_000,
+      probe: async (url) => {
+        probed.push(url);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(probed).toEqual([]);
+    const rttHandle = scheduler.intervals.find((row) => !row.cleared && row.ms === 300_000);
+    expect(rttHandle).toBeTruthy();
+    await scheduler.advance(300_000);
+    await waitMicro();
+    expect(probed.sort()).toEqual(['https://a.example', 'https://b.example']);
+    const snap = pool.candidates();
+    expect(
+      snap.every((row) => typeof row.rttMs === 'number' && row.rttAt === scheduler.nowMs)
+    ).toBe(true);
+  });
+
+  test('periodic RTT probe is skipped in tests unless enabled', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(scheduler.intervals.filter((row) => !row.cleared)).toEqual([]);
+  });
+
+  test('nearest ordering uses EWMA samples and keeps epoch/priority without them', () => {
+    const writer: UplinkCandidate = {
+      hubNodeId: ID.b,
+      publicUrl: 'https://a.example',
+      mode: 'active',
+      writerEpoch: 3,
+      priority: 10,
+      caFingerprint: null,
+      version: '1.1.13',
+    };
+    const standby: UplinkCandidate = {
+      hubNodeId: ID.c,
+      publicUrl: 'https://b.example',
+      mode: 'standby',
+      writerEpoch: 1,
+      priority: 20,
+      caFingerprint: null,
+      version: '1.1.13',
+    };
+    const rtts = new Map<string, { ewma: number; samples: number }>();
+    const orderedWithout = orderCandidatesByNearest([writer, standby], {
+      rttOf: (url) => rtts.get(url) ?? null,
+      writerHubId: ID.b,
+      versionOf: (cand) => cand.version,
+    });
+    expect(orderedWithout.map((row) => row.publicUrl)).toEqual([
+      'https://a.example',
+      'https://b.example',
+    ]);
+    rtts.set('https://a.example', { ewma: 80, samples: 2 });
+    rtts.set('https://b.example', { ewma: 20, samples: 2 });
+    const ordered = orderCandidatesByNearest([writer, standby], {
+      rttOf: (url) => rtts.get(url) ?? null,
+      writerHubId: ID.b,
+      versionOf: (cand) => cand.version,
+    });
+    expect(ordered.map((row) => row.publicUrl)).toEqual(['https://b.example', 'https://a.example']);
+    rtts.set('https://b.example', { ewma: 20, samples: 1 });
+    const notEnough = orderCandidatesByNearest([writer, standby], {
+      rttOf: (url) => rtts.get(url) ?? null,
+      writerHubId: ID.b,
+      versionOf: (cand) => cand.version,
+    });
+    expect(notEnough.map((row) => row.publicUrl)).toEqual([
+      'https://a.example',
+      'https://b.example',
+    ]);
+  });
+
+  test('legacy hubs below 1.1.13 are never ordered over the writer', () => {
+    const writer: UplinkCandidate = {
+      hubNodeId: ID.b,
+      publicUrl: 'https://a.example',
+      mode: 'active',
+      writerEpoch: 3,
+      priority: 10,
+      caFingerprint: null,
+      version: '1.1.13',
+    };
+    const legacy: UplinkCandidate = {
+      hubNodeId: ID.c,
+      publicUrl: 'https://b.example',
+      mode: 'standby',
+      writerEpoch: 1,
+      priority: 20,
+      caFingerprint: null,
+      version: '1.1.12',
+    };
+    const rtts = new Map([
+      ['https://a.example', { ewma: 80, samples: 2 }],
+      ['https://b.example', { ewma: 5, samples: 2 }],
+    ]);
+    const ordered = orderCandidatesByNearest([writer, legacy], {
+      rttOf: (url) => rtts.get(url) ?? null,
+      writerHubId: ID.b,
+      versionOf: (cand) => cand.version,
+    });
+    expect(ordered[0]?.publicUrl).toBe('https://a.example');
+    expect(hubSupportsNearestAttach('1.1.12')).toBe(false);
+    expect(hubSupportsNearestAttach('1.1.13')).toBe(true);
+  });
+
+  test('RTT hysteresis requires 30% and 15ms improvement', () => {
+    expect(isRttSwitchWorth(100, 80)).toBe(false);
+    expect(isRttSwitchWorth(100, 70)).toBe(true);
+    expect(isRttSwitchWorth(20, 6)).toBe(false);
+    expect(isRttSwitchWorth(20, 5)).toBe(true);
+  });
+
+  test('prefer-nearest switches to a faster hub after two samples', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: true,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      rttSwitchDwellMs: 60_000,
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? 40 : 5);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+  });
+
+  test('prefer-nearest dwell blocks a second RTT-motivated switch', async () => {
+    const scheduler = new ManualScheduler();
+    let aDelay = 50;
+    let bDelay = 5;
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: true,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      rttSwitchDwellMs: 60_000,
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? aDelay : bDelay);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    aDelay = 5;
+    bDelay = 50;
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+  });
+
+  test('legacy standby is not chosen over the writer even with better RTT', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: true,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      versions: { 'https://a.example': '1.1.13', 'https://b.example': '1.1.12' },
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? 40 : 5);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+  });
+
+  test('hub 角色禁用 RTT 切换，保持写者控制面上行', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: true,
+      localRoles: { hub: true, node: true },
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? 40 : 5);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+  });
+
+  test('被替换 uplink 上迟到的 hub.tokens 丢弃', async () => {
+    const received: unknown[] = [];
+    const scheduler = new ManualScheduler();
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: false,
+      onHubTokens: (msg) => {
+        received.push(msg);
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(created.length).toBeGreaterThan(0);
+    const first = created[0];
+    await pool.switchTo('https://b.example');
+    first?.opts.onHubTokens?.({
+      t: 'hub.tokens',
+      op: 'upsert',
+      revision: { epoch: 1, seq: 1 },
+      tokens: [],
+    });
+    expect(received).toEqual([]);
+  });
+
+  test('forced-off prefer-nearest keeps epoch/priority attach', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: false,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? 40 : 5);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+  });
+
   test('ten consecutive identical failures log at most two uplink lines', async () => {
     const lines: string[] = [];
     const originalInfo = console.info;
@@ -1557,6 +2143,37 @@ describe('UplinkPool', () => {
     }
   });
 });
+
+function hubStatusList(
+  hubs: Array<{
+    nodeId: string;
+    publicUrl: string;
+    mode: HubMode;
+    priority: number;
+    writerEpoch: number;
+    online?: boolean;
+  }>
+): UplinkNodeList {
+  const writer = hubs.find((row) => row.mode === 'active') ?? hubs[0];
+  return {
+    t: 'node.list',
+    version: 2,
+    key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+    rtc: { stun: [], turn: null },
+    nodes: [],
+    hub: writer ? { nodeId: writer.nodeId, publicUrl: writer.publicUrl } : undefined,
+    writerHubId: writer?.nodeId,
+    writerEpoch: writer?.writerEpoch,
+    hubs: hubs.map((row) => ({
+      nodeId: row.nodeId,
+      publicUrl: row.publicUrl,
+      mode: row.mode,
+      priority: row.priority,
+      writerEpoch: row.writerEpoch,
+      online: row.online,
+    })),
+  };
+}
 
 async function waitMicro(): Promise<void> {
   for (let i = 0; i < 8; i += 1) await Promise.resolve();

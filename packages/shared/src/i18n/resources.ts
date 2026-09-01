@@ -422,7 +422,16 @@ export const I18N_RESOURCES = {
           "stopped": "Stopped",
           "starting": "Starting",
           "running": "Running",
+          "degraded": "No Edge Connections",
           "error": "Failed"
+        },
+        "degradedNotice": "The tunnel process is running but has no edge connections; the public URL is unreachable.",
+        "connector": {
+          "label": "Connector",
+          "connected": "Edge connections: {{n}}",
+          "noConnections": "No edge connections",
+          "unknown": "Cannot probe (metrics endpoint unreachable)",
+          "unprobed": "Not probed"
         },
         "mode": {
           "quick": {
@@ -514,13 +523,16 @@ export const I18N_RESOURCES = {
           "release": "Release"
         },
         "check": {
-          "reachable": "The public URL is reachable.",
+          "reachable": "This machine is reachable through the public URL.",
+          "accessProtected": "The public URL is protected by Cloudflare Access; the connector is online.",
+          "accessProtectedUnverified": "The public URL is protected by Cloudflare Access; the connector could not be probed, so reachability is unconfirmed.",
           "unreachable": "The public URL is unreachable.",
           "running": "Checking the public URL…"
         },
         "log": {
           "title": "cloudflared log",
-          "empty": "No output yet."
+          "empty": "No output yet.",
+          "emptyExternal": "The external cloudflared writes no log file (no --logfile in its startup arguments)."
         },
         "steps": {
           "path": {
@@ -648,6 +660,7 @@ export const I18N_RESOURCES = {
           "tunnel_exists": "A tunnel with this name already exists in Cloudflare. Pick another name, or delete the existing one.",
           "dns_route_failed": "Adding the DNS record failed. Confirm the domain is hosted in the same Cloudflare account and no conflicting record exists.",
           "process_failed": "cloudflared didn't start. Expand the cloudflared log to see why.",
+          "connector_down": "The connector has no edge connections: {{message}}",
           "busy": "The previous operation hasn't finished yet. Try again in a moment.",
           "not_configured": "Remote access isn't configured yet. Pick a method in the setup below.",
           "invalid_request": "The request was rejected as invalid; this page may be out of date. Reload and try again.",
@@ -1716,7 +1729,7 @@ export const I18N_RESOURCES = {
         "title": "Node management"
       },
       "empty": "No nodes yet",
-      "self": "This node",
+      "self": "Current",
       "hub": "Hub",
       "loggedIn": "Signed in",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
@@ -1731,7 +1744,74 @@ export const I18N_RESOURCES = {
         "detail": "{{url}} | priority {{priority}} | epoch {{epoch}} | {{state}}",
         "standbyNotice": "The primary hub is unreachable, running on a standby hub. Adding, renaming and removing nodes are unavailable.",
         "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
-        "machineRole": "Hub Role"
+        "machineRole": "Hub Role",
+        "lastAttempt": "Last attempt: {{time}}",
+        "lastError": "Last error: {{error}}",
+        "authorization": {
+          "label": "Authorization: {{value}}",
+          "signed": "Signed",
+          "env": "Environment",
+          "self": "This machine",
+          "none": "Not Authorized"
+        },
+        "role": {
+          "promote": "Set as Primary Hub",
+          "demote": "Set as Standby Hub",
+          "stateSwitching": "Switching",
+          "confirmPromote": "Set as Primary Hub",
+          "confirmDemote": "Set as Standby Hub",
+          "confirmText": "\"{{target}}\" takes over writes; management is briefly unavailable during the switch.",
+          "confirmTextNoWriter": "\"{{from}}\" becomes a standby hub, and no other hub can take over writes.",
+          "confirm": "Switch",
+          "cancel": "Cancel",
+          "stepAdmit": "Sign a hub authorization for \"{{target}}\" (credentials required).",
+          "stepDemote": "Demote \"{{from}}\" to a standby hub.",
+          "stepPromote": "Promote \"{{target}}\" to primary hub; it restarts afterwards.",
+          "stepWait": "Wait for \"{{target}}\" to restart and take over writes.",
+          "stepDemoteOnly": "Demote \"{{from}}\" to a standby hub; it restarts afterwards.",
+          "warnFromUnreachable": "The current primary hub is unreachable and will be fenced by the higher epoch.",
+          "warnNoWriter": "No hub will accept writes afterwards; adding, renaming and removing nodes become unavailable.",
+          "started": "Hub role switch started.",
+          "done": "\"{{target}}\" is now the primary hub.",
+          "failed": "Hub role switch failed: {{error}}",
+          "forceTitle": "Some nodes are too old",
+          "forceDescription": "If you continue, these nodes can no longer sync hub authorization records.",
+          "forceText": "These nodes are older than {{minVersion}} and need an upgrade first:",
+          "forceAccept": "Continue anyway (old nodes stop syncing)",
+          "forceConfirm": "Continue Anyway",
+          "recovery": {
+            "title": "No Hub Accepts Writes",
+            "description": "The old primary hub is already a standby and the new one has not confirmed the takeover. Choose what to do next.",
+            "noWriter": "\"{{from}}\" is now a standby hub, and \"{{target}}\" has not confirmed it took over writes.",
+            "retry": "Retry Promoting Target",
+            "rollback": "Roll Back: Promote Old Primary Again",
+            "dismiss": "Handle Later"
+          },
+          "blocked": {
+            "unknownHub": "The hub list is not loaded yet. Try again shortly.",
+            "unknownAuth": "This entry is too old to read the hub authorization source.",
+            "offline": "This hub is offline and cannot be switched.",
+            "switching": "A hub role switch is already running.",
+            "rowBusy": "This node is upgrading or being uninstalled.",
+            "notWritable": "A hub authorization must be signed first, but the primary hub does not accept writes."
+          },
+          "errors": {
+            "HUB_NOT_HUB": "The target does not run the hub role.",
+            "HUB_NOT_AUTHORIZED": "The target hub is not authorized.",
+            "HUB_EPOCH_STALE": "The writer epoch is stale. Refresh and try again.",
+            "HUB_ROLE_BUSY": "The target already has a role switch running.",
+            "HUB_ROLE_UNSUPPORTED": "The target version does not support remote switching. Upgrade it first.",
+            "INVALID_REQUEST": "Invalid request.",
+            "unknown": "Reason unknown.",
+            "unreachable": "The target hub is unreachable.",
+            "authTimeout": "The hub authorization did not take effect in time.",
+            "resumeAdmit": "The hub authorization was never signed. Start the switch again.",
+            "restartTimeout": "The target did not restart in time, so the result is unconfirmed: {{error}}",
+            "writerTimeout": "Could not confirm the new primary hub took over writes. Refresh to check.",
+            "hubsUnreachable": "Could not read the hub list. The entry is temporarily unreachable.",
+            "unexpected": "The switch was interrupted. Refresh to check."
+          }
+        }
       },
       "machine": {
         "title": "This machine",
@@ -1998,6 +2078,55 @@ export const I18N_RESOURCES = {
         "copy": "Copy",
         "copied": "Copied"
       },
+      "selection": {
+        "more": "More",
+        "selectAll": "Select All",
+        "clearAll": "Clear Selection",
+        "selfBlocked": "This machine cannot be selected.",
+        "none": "Select nodes first.",
+        "busy": "Removing nodes. Wait for it to finish.",
+        "upgrade": "Upgrade ({{count}})",
+        "upgradeWithSelf": "Upgrade ({{count}}, incl. this machine)",
+        "upgradeSelfNotice": "This machine is upgraded last; the service restarts and this page drops briefly.",
+        "revoke": "Remove Nodes",
+        "uninstall": "Uninstall tmex"
+      },
+      "uninstall": {
+        "confirmTitle": "Uninstall tmex",
+        "confirmText": "The tmex service, program and data on the node are deleted, then the node is removed from the mesh. This cannot be undone.",
+        "targets": "Will be uninstalled ({{count}})",
+        "skipped": "Skipped ({{count}})",
+        "noTargets": "None of the selected nodes can be uninstalled remotely.",
+        "confirm": "Uninstall",
+        "cancel": "Cancel",
+        "skip": {
+          "self": "This machine",
+          "offline": "Offline",
+          "loginRequired": "Not signed in",
+          "tooOld": "Version below 1.1.13",
+          "uninstalling": "Uninstalling"
+        },
+        "stateRunning": "Uninstalling",
+        "stateFailed": "Uninstall failed",
+        "clear": "Clear uninstall record",
+        "clearFailed": "The uninstall record could not be cleared. Try again.",
+        "busy": "This node is being uninstalled.",
+        "running": "Uninstalling. Wait for it to finish.",
+        "revokeFailed": "Uninstalled, but could not be removed from the mesh",
+        "summary_one": "{{count}} node uninstalled",
+        "summary_other": "{{count}} nodes uninstalled",
+        "summaryFailed": "{{count}} uninstalled, {{failed}} failed ({{names}})",
+        "summaryAborted": "Hub unavailable. Stopped with {{remaining}} node(s) left ({{count}} uninstalled).",
+        "errors": {
+          "loginRequired": "Sign in to that node first.",
+          "unreachable": "That node cannot be reached.",
+          "notAllowed": "That node was not deployed by the tmex installer and cannot be uninstalled remotely.",
+          "unsupported": "That node runs a version without remote uninstall.",
+          "selfBlocked": "This machine cannot be uninstalled.",
+          "upgradeInProgress": "That node is upgrading. Try again later.",
+          "nodeGone": "That node is no longer in the list."
+        }
+      },
       "enrollment": {
         "nameLabel": "Node name (optional)",
         "create": "Create join code",
@@ -2026,7 +2155,12 @@ export const I18N_RESOURCES = {
         "reasonPrompt": "Reason (optional)",
         "done": "Node removed",
         "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
-        "selfBlocked": "You cannot remove the node you are signed in to."
+        "selfBlocked": "You cannot remove the node you are signed in to.",
+        "bulkConfirm_one": "Remove {{count}} node ({{names}})? It loses access immediately and has to be added again from scratch.",
+        "bulkConfirm_other": "Remove {{count}} nodes ({{names}})? They lose access immediately and have to be added again from scratch.",
+        "bulkDone_one": "{{count}} node removed",
+        "bulkDone_other": "{{count}} nodes removed",
+        "bulkFailed": "{{count}} removed, {{failed}} failed ({{names}})"
       },
       "upgrade": {
         "action": "Upgrade",
@@ -2072,7 +2206,9 @@ export const I18N_RESOURCES = {
         "cancelUnsupported": "This node's version cannot interrupt an upgrade.",
         "cancelNotRunning": "No upgrade is running on this node.",
         "cancelFailed": "Could not stop the upgrade: {{error}}",
-        "restoring": "Syncing upgrade status…"
+        "restoring": "Syncing upgrade status…",
+        "allResumed": "Resumed the previous batch upgrade.",
+        "allOtherTab": "Another tab is running a batch upgrade."
       },
       "badge": {
         "direct": "Direct",
@@ -2670,7 +2806,16 @@ export const I18N_RESOURCES = {
           "stopped": "已停止",
           "starting": "启动中",
           "running": "运行中",
+          "degraded": "无连接",
           "error": "异常"
+        },
+        "degradedNotice": "隧道进程运行中，但无边缘连接，公网地址当前不可达。",
+        "connector": {
+          "label": "连接器",
+          "connected": "{{n}} 条边缘连接",
+          "noConnections": "无边缘连接",
+          "unknown": "无法探测（metrics 端点不可达）",
+          "unprobed": "未探测"
         },
         "mode": {
           "quick": {
@@ -2762,13 +2907,16 @@ export const I18N_RESOURCES = {
           "release": "取消接管"
         },
         "check": {
-          "reachable": "公网地址可以访问。",
+          "reachable": "本机经公网地址可达。",
+          "accessProtected": "公网地址受 Cloudflare Access 保护，连接器在线。",
+          "accessProtectedUnverified": "公网地址受 Cloudflare Access 保护；未探测到连接器，无法确认本机可达。",
           "unreachable": "公网地址不可达。",
           "running": "正在检查公网地址…"
         },
         "log": {
           "title": "cloudflared 日志",
-          "empty": "暂无输出。"
+          "empty": "暂无输出。",
+          "emptyExternal": "外部 cloudflared 未提供日志文件（启动参数无 --logfile）。"
         },
         "steps": {
           "path": {
@@ -2896,6 +3044,7 @@ export const I18N_RESOURCES = {
           "tunnel_exists": "Cloudflare 上已有同名隧道。请换一个名称，或先删除已有隧道。",
           "dns_route_failed": "添加 DNS 记录失败。请确认该域名托管在同一个 Cloudflare 账号下，且没有同名记录冲突。",
           "process_failed": "cloudflared 未能正常启动。请展开 cloudflared 日志查看具体原因。",
+          "connector_down": "连接器无边缘连接：{{message}}",
           "busy": "上一项操作还未结束，请稍候再试。",
           "not_configured": "还未配置远程访问，请先在下方向导里选择一种方式。",
           "invalid_request": "请求无效，页面数据可能已过期。请刷新页面后重试。",
@@ -3964,7 +4113,7 @@ export const I18N_RESOURCES = {
         "title": "节点管理"
       },
       "empty": "暂无节点",
-      "self": "当前节点",
+      "self": "当前",
       "hub": "Hub",
       "loggedIn": "已登录",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
@@ -3979,7 +4128,74 @@ export const I18N_RESOURCES = {
         "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
         "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
         "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
-        "machineRole": "Hub 角色"
+        "machineRole": "Hub 角色",
+        "lastAttempt": "最近尝试：{{time}}",
+        "lastError": "最近错误：{{error}}",
+        "authorization": {
+          "label": "授权：{{value}}",
+          "signed": "已签名",
+          "env": "环境变量",
+          "self": "本机",
+          "none": "未授权"
+        },
+        "role": {
+          "promote": "设为主 Hub",
+          "demote": "设为备 Hub",
+          "stateSwitching": "切换中",
+          "confirmPromote": "设为主 Hub",
+          "confirmDemote": "设为备 Hub",
+          "confirmText": "「{{target}}」将接管写入，切换期间管理操作短暂不可用。",
+          "confirmTextNoWriter": "「{{from}}」降为备 Hub，没有其它 Hub 可接管写入。",
+          "confirm": "切换",
+          "cancel": "取消",
+          "stepAdmit": "为「{{target}}」签发 Hub 授权（需验证凭据）。",
+          "stepDemote": "把「{{from}}」降为备 Hub。",
+          "stepPromote": "把「{{target}}」升为主 Hub，目标随后自动重启。",
+          "stepWait": "等待「{{target}}」重启并接管写入。",
+          "stepDemoteOnly": "把「{{from}}」降为备 Hub，目标随后自动重启。",
+          "warnFromUnreachable": "原主 Hub 不可达，将依靠更高纪元围栏它。",
+          "warnNoWriter": "之后将没有可写 Hub，加入、重命名、移除等管理操作都不可用。",
+          "started": "已开始切换 Hub 主备。",
+          "done": "「{{target}}」已成为主 Hub。",
+          "failed": "Hub 切换失败：{{error}}",
+          "forceTitle": "有节点版本过低",
+          "forceDescription": "强制继续后，这些节点将无法再同步 Hub 授权记录。",
+          "forceText": "以下节点版本低于 {{minVersion}}，须先升级：",
+          "forceAccept": "仍然继续（旧节点将无法再同步）",
+          "forceConfirm": "仍然继续",
+          "recovery": {
+            "title": "当前没有可写 Hub",
+            "description": "原主 Hub 已降为备，新主 Hub 未确认接管，须选择下一步。",
+            "noWriter": "「{{from}}」已降为备 Hub，「{{target}}」未确认接管写入。",
+            "retry": "重试升级目标",
+            "rollback": "回滚：重新升级原主 Hub",
+            "dismiss": "稍后处理"
+          },
+          "blocked": {
+            "unknownHub": "Hub 集合尚未加载，稍后重试。",
+            "unknownAuth": "入口版本过低，无法读取 Hub 授权来源。",
+            "offline": "该 Hub 离线，无法切换。",
+            "switching": "已有一次 Hub 切换在进行。",
+            "rowBusy": "该节点正在升级或卸载。",
+            "notWritable": "须先签发 Hub 授权，当前主 Hub 不接受写入。"
+          },
+          "errors": {
+            "HUB_NOT_HUB": "目标未启用 Hub 角色。",
+            "HUB_NOT_AUTHORIZED": "目标 Hub 未获授权。",
+            "HUB_EPOCH_STALE": "写入纪元已过期，请刷新后重试。",
+            "HUB_ROLE_BUSY": "目标已有一次角色切换在进行。",
+            "HUB_ROLE_UNSUPPORTED": "目标版本不支持远程切换，须先升级。",
+            "INVALID_REQUEST": "请求无效。",
+            "unknown": "原因未知。",
+            "unreachable": "目标 Hub 不可达。",
+            "authTimeout": "Hub 授权未在预期时间内生效。",
+            "resumeAdmit": "Hub 授权尚未签发完成，请重新发起切换。",
+            "restartTimeout": "目标重启超时，未能确认切换结果：{{error}}",
+            "writerTimeout": "未能确认新的主 Hub 已接管写入，请刷新核对。",
+            "hubsUnreachable": "读不到 Hub 列表，入口暂时不可达。",
+            "unexpected": "切换中断，请刷新核对。"
+          }
+        }
       },
       "machine": {
         "title": "本机",
@@ -4246,6 +4462,54 @@ export const I18N_RESOURCES = {
         "copy": "复制",
         "copied": "已复制"
       },
+      "selection": {
+        "more": "更多",
+        "selectAll": "全选",
+        "clearAll": "全不选",
+        "selfBlocked": "本机不可选。",
+        "none": "须先勾选节点。",
+        "busy": "正在移除节点，请稍候。",
+        "upgrade": "升级（{{count}}）",
+        "upgradeWithSelf": "升级（{{count}}，含本机）",
+        "upgradeSelfNotice": "本机排在最后升级，届时服务重启、当前页面短暂断开。",
+        "revoke": "移除节点",
+        "uninstall": "卸载 tmex"
+      },
+      "uninstall": {
+        "confirmTitle": "卸载 tmex",
+        "confirmText": "将删除节点上的 tmex 服务、程序与数据，随后把它从多节点互联中移除。此操作不可撤销。",
+        "targets": "将卸载（{{count}}）",
+        "skipped": "跳过（{{count}}）",
+        "noTargets": "所选节点都无法远程卸载。",
+        "confirm": "卸载",
+        "cancel": "取消",
+        "skip": {
+          "self": "本机",
+          "offline": "离线",
+          "loginRequired": "未登录",
+          "tooOld": "版本低于 1.1.13",
+          "uninstalling": "正在卸载"
+        },
+        "stateRunning": "卸载中",
+        "stateFailed": "卸载失败",
+        "clear": "清除卸载记录",
+        "clearFailed": "清除卸载记录失败，请重试。",
+        "busy": "该节点正在卸载。",
+        "running": "正在卸载，请稍候。",
+        "revokeFailed": "已卸载，但未能从多节点互联中移除",
+        "summary": "已卸载 {{count}} 个节点",
+        "summaryFailed": "已卸载 {{count}} 个，{{failed}} 个失败（{{names}}）",
+        "summaryAborted": "Hub 不可用，已停止卸载剩余 {{remaining}} 个节点（已卸载 {{count}} 个）。",
+        "errors": {
+          "loginRequired": "须先登录该节点。",
+          "unreachable": "连不上该节点。",
+          "notAllowed": "该节点不是由 tmex 安装器部署的，无法远程卸载。",
+          "unsupported": "该节点版本过旧，不支持远程卸载。",
+          "selfBlocked": "不能卸载本机。",
+          "upgradeInProgress": "该节点正在升级，请稍后再试。",
+          "nodeGone": "该节点已不在列表中。"
+        }
+      },
       "enrollment": {
         "nameLabel": "节点名称（可选）",
         "create": "生成加入码",
@@ -4274,7 +4538,10 @@ export const I18N_RESOURCES = {
         "reasonPrompt": "移除原因（可选）",
         "done": "已移除",
         "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
-        "selfBlocked": "不能移除当前正在使用的节点。"
+        "selfBlocked": "不能移除当前正在使用的节点。",
+        "bulkConfirm": "移除 {{count}} 个节点（{{names}}）？它们将立即失去访问权限，须重新添加。",
+        "bulkDone": "已移除 {{count}} 个节点",
+        "bulkFailed": "已移除 {{count}} 个，{{failed}} 个失败（{{names}}）"
       },
       "upgrade": {
         "action": "升级",
@@ -4318,7 +4585,9 @@ export const I18N_RESOURCES = {
         "cancelUnsupported": "该节点版本不支持中断升级。",
         "cancelNotRunning": "该节点没有正在进行的升级。",
         "cancelFailed": "停止升级失败：{{error}}",
-        "restoring": "正在同步升级状态…"
+        "restoring": "正在同步升级状态…",
+        "allResumed": "已续接上次的批量升级。",
+        "allOtherTab": "另一个标签页正在批量升级。"
       },
       "badge": {
         "direct": "直连",
@@ -4915,7 +5184,16 @@ export const I18N_RESOURCES = {
           "stopped": "停止中",
           "starting": "起動中",
           "running": "稼働中",
+          "degraded": "接続なし",
           "error": "異常"
+        },
+        "degradedNotice": "トンネルのプロセスは稼働中ですが、エッジ接続がなく、公開アドレスに到達できません。",
+        "connector": {
+          "label": "コネクタ",
+          "connected": "エッジ接続 {{n}} 本",
+          "noConnections": "エッジ接続なし",
+          "unknown": "探測できません（metrics エンドポイントに到達できません）",
+          "unprobed": "未探測"
         },
         "mode": {
           "quick": {
@@ -5007,13 +5285,16 @@ export const I18N_RESOURCES = {
           "release": "引き継ぎを解除"
         },
         "check": {
-          "reachable": "公開アドレスに到達できました。",
+          "reachable": "公開アドレス経由で本機に到達できました。",
+          "accessProtected": "公開アドレスは Cloudflare Access で保護されており、コネクタはオンラインです。",
+          "accessProtectedUnverified": "公開アドレスは Cloudflare Access で保護されています。コネクタを探測できず、本機への到達は確認できません。",
           "unreachable": "公開アドレスに到達できません。",
           "running": "公開アドレスを確認しています…"
         },
         "log": {
           "title": "cloudflared のログ",
-          "empty": "出力はありません。"
+          "empty": "出力はありません。",
+          "emptyExternal": "外部の cloudflared はログファイルを出力していません（起動引数に --logfile がありません）。"
         },
         "steps": {
           "path": {
@@ -5141,6 +5422,7 @@ export const I18N_RESOURCES = {
           "tunnel_exists": "同名のトンネルが Cloudflare に既に存在します。別の名前を指定するか、既存のトンネルを削除してください。",
           "dns_route_failed": "DNS レコードの追加に失敗しました。同じ Cloudflare アカウントでドメインが管理されているか、既存レコードと競合していないか確認してください。",
           "process_failed": "cloudflared が起動できませんでした。cloudflared ログを開いて原因を確認してください。",
+          "connector_down": "コネクタにエッジ接続がありません：{{message}}",
           "busy": "前の操作がまだ完了していません。少し待ってから再試行してください。",
           "not_configured": "リモートアクセスは未設定です。下のセットアップで接続方法を選んでください。",
           "invalid_request": "リクエストが不正として拒否されました。ページの内容が古い可能性があります。再読み込みしてから操作してください。",
@@ -6209,7 +6491,7 @@ export const I18N_RESOURCES = {
         "title": "ノード管理"
       },
       "empty": "ノードがありません",
-      "self": "現在のノード",
+      "self": "現在",
       "hub": "ハブ",
       "loggedIn": "サインイン済み",
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
@@ -6224,7 +6506,74 @@ export const I18N_RESOURCES = {
         "detail": "{{url}}｜優先度 {{priority}}｜エポック {{epoch}}｜{{state}}",
         "standbyNotice": "メインハブに接続できないため予備ハブを使用中です。追加・名前変更・削除などの管理操作はできません。",
         "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
-        "machineRole": "ハブの役割"
+        "machineRole": "ハブの役割",
+        "lastAttempt": "最終試行：{{time}}",
+        "lastError": "最終エラー：{{error}}",
+        "authorization": {
+          "label": "認可：{{value}}",
+          "signed": "署名済み",
+          "env": "環境変数",
+          "self": "本機",
+          "none": "未承認"
+        },
+        "role": {
+          "promote": "メインハブにする",
+          "demote": "予備ハブにする",
+          "stateSwitching": "切り替え中",
+          "confirmPromote": "メインハブにする",
+          "confirmDemote": "予備ハブにする",
+          "confirmText": "「{{target}}」が書き込みを引き継ぎます。切り替え中は管理操作を一時的に利用できません。",
+          "confirmTextNoWriter": "「{{from}}」を予備ハブにします。書き込みを引き継げるハブはありません。",
+          "confirm": "切り替え",
+          "cancel": "キャンセル",
+          "stepAdmit": "「{{target}}」にハブ認可を発行します（認証情報が必要です）。",
+          "stepDemote": "「{{from}}」を予備ハブにします。",
+          "stepPromote": "「{{target}}」をメインハブにします。その後自動的に再起動します。",
+          "stepWait": "「{{target}}」の再起動と書き込みの引き継ぎを待ちます。",
+          "stepDemoteOnly": "「{{from}}」を予備ハブにします。その後自動的に再起動します。",
+          "warnFromUnreachable": "現在のメインハブに接続できないため、より高いエポックで隔離します。",
+          "warnNoWriter": "この後は書き込み可能なハブがなくなり、追加・名前変更・削除などの管理操作はできません。",
+          "started": "ハブの切り替えを開始しました。",
+          "done": "「{{target}}」がメインハブになりました。",
+          "failed": "ハブの切り替えに失敗しました：{{error}}",
+          "forceTitle": "バージョンが古いノードがあります",
+          "forceDescription": "続行すると、これらのノードはハブ認可レコードを同期できなくなります。",
+          "forceText": "以下のノードは {{minVersion}} より古いため、先にアップグレードが必要です：",
+          "forceAccept": "それでも続行する（古いノードは同期できなくなります）",
+          "forceConfirm": "続行する",
+          "recovery": {
+            "title": "書き込み可能なハブがありません",
+            "description": "元のメインハブは予備になり、新しいメインハブの引き継ぎは未確認です。次の操作を選んでください。",
+            "noWriter": "「{{from}}」は予備ハブになり、「{{target}}」の書き込み引き継ぎは未確認です。",
+            "retry": "対象の昇格を再試行",
+            "rollback": "ロールバック：元のメインハブを再び昇格",
+            "dismiss": "後で対応"
+          },
+          "blocked": {
+            "unknownHub": "ハブ一覧が未読み込みです。しばらくしてから再試行してください。",
+            "unknownAuth": "入口のバージョンが古く、ハブ認可の種別を読み取れません。",
+            "offline": "このハブはオフラインのため切り替えできません。",
+            "switching": "ハブの切り替えがすでに実行中です。",
+            "rowBusy": "このノードはアップグレードまたはアンインストール中です。",
+            "notWritable": "先にハブ認可の発行が必要ですが、メインハブが書き込みを受け付けません。"
+          },
+          "errors": {
+            "HUB_NOT_HUB": "対象はハブとして動作していません。",
+            "HUB_NOT_AUTHORIZED": "対象ハブは認可されていません。",
+            "HUB_EPOCH_STALE": "書き込みエポックが古くなっています。更新してから再試行してください。",
+            "HUB_ROLE_BUSY": "対象では役割の切り替えがすでに実行中です。",
+            "HUB_ROLE_UNSUPPORTED": "対象のバージョンはリモート切り替えに未対応です。先にアップグレードしてください。",
+            "INVALID_REQUEST": "リクエストが不正です。",
+            "unknown": "原因は不明です。",
+            "unreachable": "対象ハブに接続できません。",
+            "authTimeout": "ハブ認可が時間内に反映されませんでした。",
+            "resumeAdmit": "ハブ認可の発行が完了していません。切り替えをやり直してください。",
+            "restartTimeout": "対象の再起動がタイムアウトし、結果を確認できません：{{error}}",
+            "writerTimeout": "新しいメインハブが書き込みを引き継いだか確認できません。更新して確認してください。",
+            "hubsUnreachable": "ハブ一覧を取得できません。入口に一時的に接続できません。",
+            "unexpected": "切り替えが中断しました。更新して確認してください。"
+          }
+        }
       },
       "machine": {
         "title": "このマシン",
@@ -6491,6 +6840,54 @@ export const I18N_RESOURCES = {
         "copy": "コピー",
         "copied": "コピーしました"
       },
+      "selection": {
+        "more": "その他",
+        "selectAll": "すべて選択",
+        "clearAll": "選択を解除",
+        "selfBlocked": "本機は選択できません。",
+        "none": "先にノードを選択してください。",
+        "busy": "ノードを削除中です。完了までお待ちください。",
+        "upgrade": "アップグレード（{{count}}）",
+        "upgradeWithSelf": "アップグレード（{{count}}、本機を含む）",
+        "upgradeSelfNotice": "本機は最後にアップグレードされ、サービス再起動でこのページは一時的に切断されます。",
+        "revoke": "ノードを削除",
+        "uninstall": "tmex をアンインストール"
+      },
+      "uninstall": {
+        "confirmTitle": "tmex をアンインストール",
+        "confirmText": "ノード上の tmex のサービス、プログラム、データを削除し、その後マルチノード接続から除外します。この操作は取り消せません。",
+        "targets": "アンインストール対象（{{count}}）",
+        "skipped": "スキップ（{{count}}）",
+        "noTargets": "選択したノードはいずれもリモートでアンインストールできません。",
+        "confirm": "アンインストール",
+        "cancel": "キャンセル",
+        "skip": {
+          "self": "本機",
+          "offline": "オフライン",
+          "loginRequired": "未ログイン",
+          "tooOld": "バージョンが 1.1.13 未満",
+          "uninstalling": "アンインストール中"
+        },
+        "stateRunning": "アンインストール中",
+        "stateFailed": "アンインストール失敗",
+        "clear": "アンインストール記録を消去",
+        "clearFailed": "アンインストール記録を消去できませんでした。もう一度お試しください。",
+        "busy": "このノードはアンインストール中です。",
+        "running": "アンインストール中です。完了までお待ちください。",
+        "revokeFailed": "アンインストールしましたが、マルチノード接続から除外できませんでした",
+        "summary": "{{count}} 個のノードをアンインストールしました",
+        "summaryFailed": "{{count}} 個をアンインストール、{{failed}} 個が失敗しました（{{names}}）",
+        "summaryAborted": "Hub が利用できないため、残り {{remaining}} 台を中止しました（{{count}} 台はアンインストール済み）。",
+        "errors": {
+          "loginRequired": "先にそのノードにログインしてください。",
+          "unreachable": "そのノードに接続できません。",
+          "notAllowed": "そのノードは tmex インストーラーで導入されていないため、リモートでアンインストールできません。",
+          "unsupported": "そのノードのバージョンはリモートアンインストールに対応していません。",
+          "selfBlocked": "本機はアンインストールできません。",
+          "upgradeInProgress": "そのノードはアップグレード中です。しばらくしてからお試しください。",
+          "nodeGone": "そのノードは一覧にありません。"
+        }
+      },
       "enrollment": {
         "nameLabel": "ノード名（任意）",
         "create": "参加コードを作成",
@@ -6519,7 +6916,10 @@ export const I18N_RESOURCES = {
         "reasonPrompt": "理由（任意）",
         "done": "削除しました",
         "hubFailed": "ハブが確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
-        "selfBlocked": "現在使用中のノードは削除できません。"
+        "selfBlocked": "現在使用中のノードは削除できません。",
+        "bulkConfirm": "{{count}} 個のノード（{{names}}）を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
+        "bulkDone": "{{count}} 個のノードを削除しました",
+        "bulkFailed": "{{count}} 個を削除、{{failed}} 個が失敗しました（{{names}}）"
       },
       "upgrade": {
         "action": "アップグレード",
@@ -6563,7 +6963,9 @@ export const I18N_RESOURCES = {
         "cancelUnsupported": "このノードのバージョンはアップグレードの中断に対応していません。",
         "cancelNotRunning": "このノードで実行中のアップグレードはありません。",
         "cancelFailed": "アップグレードを中止できませんでした：{{error}}",
-        "restoring": "アップグレード状態を同期中…"
+        "restoring": "アップグレード状態を同期中…",
+        "allResumed": "前回の一括アップグレードを再開しました。",
+        "allOtherTab": "別のタブで一括アップグレードが実行中です。"
       },
       "badge": {
         "direct": "ダイレクト",

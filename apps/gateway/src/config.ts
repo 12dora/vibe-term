@@ -205,6 +205,36 @@ export function parseHubPeers(raw: string | undefined): string[] {
   return peers;
 }
 
+export function parseHubAutoPromote(raw: string | undefined): boolean {
+  if (raw === undefined || raw.trim() === '') return false;
+  const value = raw.trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+export const HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS = 600_000;
+
+export function parseHubAutoPromoteTimeoutMs(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS;
+  const value = raw.trim();
+  if (!/^\d+$/.test(value)) {
+    throw new Error('TMEX_HUB_AUTO_PROMOTE_TIMEOUT_MS must be an integer >= 1');
+  }
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error('TMEX_HUB_AUTO_PROMOTE_TIMEOUT_MS must be an integer >= 1');
+  }
+  return n;
+}
+
+/** `null` = auto: on when more than one authorized hub is known. */
+export function parseUplinkPreferNearest(raw: string | undefined): boolean | null {
+  if (raw === undefined || raw.trim() === '') return null;
+  const value = raw.trim().toLowerCase();
+  if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
+  if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
+  throw new Error('TMEX_UPLINK_PREFER_NEAREST must be 0 | 1 | true | false | yes | no | on | off');
+}
+
 /** cloudflared 数据目录：显式 `TMEX_TUNNEL_DIR`，否则 sqlite 旁的 `tunnel/`。 */
 export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.TMEX_TUNNEL_DIR?.trim();
@@ -276,6 +306,11 @@ export const config = {
   hubWriterEpoch: parseHubWriterEpoch(process.env.TMEX_HUB_WRITER_EPOCH),
   hubUrls: parseHubUrls(hubUrl, process.env.TMEX_HUB_URLS),
   hubPeers: parseHubPeers(process.env.TMEX_HUB_PEERS),
+  hubAutoPromote: parseHubAutoPromote(process.env.TMEX_HUB_AUTO_PROMOTE),
+  hubAutoPromoteTimeoutMs: parseHubAutoPromoteTimeoutMs(
+    process.env.TMEX_HUB_AUTO_PROMOTE_TIMEOUT_MS
+  ),
+  uplinkPreferNearest: parseUplinkPreferNearest(process.env.TMEX_UPLINK_PREFER_NEAREST),
   peerPort: parsePeerPort(process.env.TMEX_PEER_PORT),
   stunServers: parseStunServers(process.env.TMEX_STUN_SERVERS),
   peerBindHost: parsePeerBindHost(process.env.TMEX_PEER_BIND_HOST),

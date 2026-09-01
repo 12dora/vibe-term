@@ -7,10 +7,13 @@ import {
   DOMAIN_LOGIN,
   DOMAIN_PEER,
   DelegationSchema,
+  buildAdmitHubPayload,
+  buildRetireHubPayload,
   bytesEqual,
   bytesToHex,
   concatBytes,
   decodeAddPasskeyPayload,
+  decodeAdmitHubPayload,
   decodeAdmitNodePayload,
   decodeAuthorization,
   decodeBase64url,
@@ -23,11 +26,13 @@ import {
   decodePeerTranscript,
   decodeRemovePasskeyPayload,
   decodeResetRootPayload,
+  decodeRetireHubPayload,
   decodeRevokeNodePayload,
   decodeRotateRootPayload,
   decodeSetTotpPayload,
   decodeTotpAad,
   encodeAddPasskeyPayload,
+  encodeAdmitHubPayload,
   encodeAdmitNodePayload,
   encodeAuthorization,
   encodeBase64url,
@@ -40,6 +45,7 @@ import {
   encodePeerTranscript,
   encodeRemovePasskeyPayload,
   encodeResetRootPayload,
+  encodeRetireHubPayload,
   encodeRevokeNodePayload,
   encodeRotateRootPayload,
   encodeSetTotpPayload,
@@ -171,6 +177,8 @@ describe('keyLogRecord schema', () => {
       'admit-node',
       'revoke-node',
       'reset-root',
+      'admit-hub',
+      'retire-hub',
     ] as const;
     for (let i = 0; i < types.length; i++) {
       const bytes = encodeKeyLogRecord({ ...value, type: types[i] });
@@ -348,6 +356,34 @@ describe('key-log payload schemas', () => {
       encodeRevokeNodePayload({ node_id: fill(16, 9), reason: 'lost' })
     );
     expect(revoke.reason).toBe('lost');
+  });
+
+  it('admit-hub / retire-hub round-trip optional fields', () => {
+    const full = decodeAdmitHubPayload(
+      encodeAdmitHubPayload({
+        hub_node_id: fill(16, 0xab),
+        public_url: 'https://hub.example',
+        priority: 200,
+      })
+    );
+    expect(bytesEqual(full.hub_node_id, fill(16, 0xab))).toBe(true);
+    expect(full.public_url).toBe('https://hub.example');
+    expect(full.priority).toBe(200);
+
+    const empty = decodeAdmitHubPayload(
+      buildAdmitHubPayload({ hubNodeId: fill(16, 1), publicUrl: null, priority: null })
+    );
+    expect(empty.public_url).toBeNull();
+    expect(empty.priority).toBeNull();
+
+    const retired = decodeRetireHubPayload(buildRetireHubPayload({ hubNodeId: fill(16, 0xcd) }));
+    expect(bytesEqual(retired.hub_node_id, fill(16, 0xcd))).toBe(true);
+    expect(
+      bytesEqual(
+        retired.hub_node_id,
+        decodeRetireHubPayload(encodeRetireHubPayload({ hub_node_id: fill(16, 0xcd) })).hub_node_id
+      )
+    ).toBe(true);
   });
 });
 
