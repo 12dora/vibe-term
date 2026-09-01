@@ -9,9 +9,11 @@ import type { GatewaySession } from './gateway-session';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import type { DeviceConnectionEntry, WebSocketServerDeps } from './types';
 import {
+  type ViewportWinner,
   applyWinnerGeometry,
   collectWindowClaims,
   notifyClaimants,
+  rebindAllViewportClaims,
   reconcileViewportClaims,
   resolveWinner,
   takeViewportClaimKeys,
@@ -136,25 +138,57 @@ export function handleTmuxSelect(
   host.syncLegacyPaneObservers(session, deviceId);
   host.refreshSnapshotPolling(deviceId);
   switchBarrier.sendSwitchAck(session, deviceId);
-  applyTmuxSelection(entry.runtime, windowId, paneId, {
-    wantHistory: data.wantHistory,
-    cols: null,
-    rows: null,
-  });
-  if (data.cols != null && data.rows != null) {
-    recordViewportClaim(
+  dispatchTmuxSelection(host, session, entry, deviceId, windowId, paneId, data);
+}
+
+function dispatchTmuxSelection(
+  host: TmuxCommandHost,
+  session: GatewaySession,
+  entry: DeviceConnectionEntry,
+  deviceId: string,
+  windowId: string,
+  paneId: string,
+  data: { wantHistory: boolean; cols: number | null; rows: number | null }
+): void {
+  const requested =
+    data.cols != null && data.rows != null ? { cols: data.cols, rows: data.rows } : null;
+  let selectSize = requested;
+  if (requested) {
+    const live = liveWindowGeometry(entry, windowId) ?? entry.lastAppliedViewport?.get(windowId);
+    const winner = recordViewportClaim(
       host,
       session,
       {
         deviceId,
         paneId,
-        cols: data.cols,
-        rows: data.rows,
+        cols: requested.cols,
+        rows: requested.rows,
         visible: true,
       },
-      { applyUnknown: false }
+      { applyUnknown: false, skipResize: data.wantHistory }
     );
+    selectSize = resolveSizedSelectSize(session.id, winner, requested, data.wantHistory, live);
   }
+  applyTmuxSelection(entry.runtime, windowId, paneId, {
+    wantHistory: data.wantHistory,
+    cols: selectSize?.cols ?? null,
+    rows: selectSize?.rows ?? null,
+  });
+}
+
+function resolveSizedSelectSize(
+  sessionId: string,
+  winner: ViewportWinner | null,
+  requested: { cols: number; rows: number },
+  wantHistory: boolean,
+  live: { cols: number; rows: number } | undefined
+): { cols: number; rows: number } | null {
+  if (!wantHistory) return null;
+  if (winner?.sessionId === sessionId) return requested;
+  if (!winner || (live?.cols === winner.claim.cols && live?.rows === winner.claim.rows)) {
+    return null;
+  }
+  return { cols: winner.claim.cols, rows: winner.claim.rows };
 }
 
 function applyTmuxSelection(
@@ -343,17 +377,17 @@ function recordViewportClaim(
     rows: number;
     visible: boolean;
   },
-  options: { applyUnknown: boolean }
-): void {
+  options: { applyUnknown: boolean; skipResize?: boolean }
+): ViewportWinner | null {
   const entry = host.connections.get(data.deviceId);
-  if (!entry) return;
+  if (!entry) return null;
 
   const window = findWindowForPane(entry, data.paneId);
   if (!window) {
     if (options.applyUnknown) {
       applyTermResizeToEntry(entry, data.paneId, data.cols, data.rows);
     }
-    return;
+    return null;
   }
 
   const key = viewportClaimKey(data.deviceId, window.id);
@@ -366,9 +400,10 @@ function recordViewportClaim(
     visible: data.visible,
     at: Date.now(),
   });
-  applyViewportPolicy(host, data.deviceId, window.id, {
+  return applyViewportPolicy(host, data.deviceId, window.id, {
     extraSession: session,
     notifyFirst,
+    skipResize: options.skipResize,
   });
 }
 
@@ -376,6 +411,7 @@ type ViewportPolicyOptions = {
   extraSession?: GatewaySession;
   notifyFirst?: GatewaySession;
   seen?: Set<string>;
+  skipResize?: boolean;
 };
 
 export function applyViewportPolicy(
@@ -383,13 +419,13 @@ export function applyViewportPolicy(
   deviceId: string,
   windowId: string,
   options: ViewportPolicyOptions = {}
-): void {
+): ViewportWinner | null {
   const entry = host.connections.get(deviceId);
-  if (!entry) return;
+  if (!entry) return null;
 
   const key = viewportClaimKey(deviceId, windowId);
   const seen = options.seen ?? new Set<string>();
-  if (seen.has(key)) return;
+  if (seen.has(key)) return null;
   seen.add(key);
 
   const claimants = collectPolicyClaimants(entry, options.extraSession);
@@ -400,13 +436,38 @@ export function applyViewportPolicy(
     (paneId) => findWindowForPane(entry, paneId)?.id ?? null
   );
   pruneMissingWindowViewportState(entry);
-  applyResolvedViewportPolicy(host, entry, deviceId, windowId, key, claimants, options);
+  const winner = applyResolvedViewportPolicy(
+    host,
+    entry,
+    deviceId,
+    windowId,
+    key,
+    claimants,
+    options
+  );
 
   for (const movedId of moved) {
     applyViewportPolicy(host, deviceId, movedId, {
       extraSession: options.extraSession,
       seen,
     });
+  }
+  return winner;
+}
+
+export function reconcileDeviceViewportSnapshot(host: TmuxCommandHost, deviceId: string): void {
+  const entry = host.connections.get(deviceId);
+  if (!entry) return;
+  const claimants = collectPolicyClaimants(entry);
+  const affected = rebindAllViewportClaims(
+    claimants,
+    deviceId,
+    (paneId) => findWindowForPane(entry, paneId)?.id ?? null
+  );
+  pruneMissingWindowViewportState(entry);
+  const seen = new Set<string>();
+  for (const windowId of affected) {
+    applyViewportPolicy(host, deviceId, windowId, { seen });
   }
 }
 
@@ -418,17 +479,21 @@ function applyResolvedViewportPolicy(
   key: string,
   claimants: Set<GatewaySession>,
   options: ViewportPolicyOptions
-): void {
+): ViewportWinner | null {
   const winner = resolveWinner(collectWindowClaims(claimants, key));
+  const windowAlive = entry.lastSnapshot?.session?.windows.some((window) => window.id === windowId);
+  if (!windowAlive) return winner;
   const lastApplied = entry.lastAppliedViewport?.get(windowId);
   const previousWinnerId = entry.lastViewportWinnerId?.get(windowId) ?? null;
   const nextWinnerId = winner?.sessionId ?? null;
   const geometry = applyWinnerGeometry(winner, liveWindowGeometry(entry, windowId) ?? lastApplied);
   if (geometry) {
-    applyTermResizeToEntry(entry, geometry.paneId, geometry.cols, geometry.rows, {
-      force: geometry.force,
-      windowId,
-    });
+    if (!options.skipResize) {
+      applyTermResizeToEntry(entry, geometry.paneId, geometry.cols, geometry.rows, {
+        force: geometry.force,
+        windowId,
+      });
+    }
     if (!entry.lastAppliedViewport) entry.lastAppliedViewport = new Map();
     entry.lastAppliedViewport.set(windowId, { cols: geometry.cols, rows: geometry.rows });
     syncSnapshotGeometry(entry, windowId, geometry.cols, geometry.rows);
@@ -438,7 +503,7 @@ function applyResolvedViewportPolicy(
   entry.lastViewportWinnerId.set(windowId, nextWinnerId);
 
   const applied = winner ? { cols: winner.claim.cols, rows: winner.claim.rows } : lastApplied;
-  if (!applied) return;
+  if (!applied) return winner;
 
   notifyClaimants(
     claimants,
@@ -456,6 +521,7 @@ function applyResolvedViewportPolicy(
       });
     }
   );
+  return winner;
 }
 
 function sendViewportPolicy(

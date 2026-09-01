@@ -165,4 +165,32 @@ describe('handleTmuxSelect wantHistory', () => {
     switchBarrier.cleanupClient(ws);
     sessionStateStore.delete(ws);
   });
+
+  test('wantHistory:true 带尺寸时走 selectPaneWithSize，不拆成无序 select+resize', () => {
+    const ws = createGatewaySession({ session: true });
+    const fixture = createHost();
+    setupConnectionEntry(
+      { connections: fixture.connections },
+      { ws, runtime: fixture.runtime, lastSnapshot: makeSnapshot() }
+    );
+
+    handleTmuxSelect(fixture.host, ws, {
+      deviceId: 'device-a',
+      windowId: '@1',
+      paneId: '%1',
+      selectToken: new Uint8Array(16).fill(6),
+      wantHistory: true,
+      cols: 100,
+      rows: 30,
+    });
+
+    expect(fixture.selectPaneWithSizeCalls).toEqual([
+      { windowId: '@1', paneId: '%1', cols: 100, rows: 30 },
+    ]);
+    expect(fixture.selectPaneCalls).toEqual([]);
+    expect(fixture.resizePaneCalls).toEqual([]);
+    expect(fixture.focusPaneCalls).toEqual([]);
+    switchBarrier.cleanupClient(ws);
+    sessionStateStore.delete(ws);
+  });
 });

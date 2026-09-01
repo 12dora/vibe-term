@@ -25,6 +25,6 @@
 - 更大端隐藏或断线：次大可见端成为 owner 并被应用到 tmux。
 - 全员 hidden：不 resize。
 - 分屏拖拽（`TMUX_RESIZE_PANE` / stacked layout）不走本策略。
-- 带尺寸的 `TMUX_SELECT` 走同一 claim 路径：只 select，尺寸仅当该会话是该 window 的 winner 时才应用；follower 切 pane 不得改 PTY。snapshot 已偏离 winner 时纠正。
+- 带尺寸的 `TMUX_SELECT` 先记录 claim 并解析该 window 的 winner，再分发：owner 的 `wantHistory` 冷选择走既有 `selectPaneWithSize`（先 resize 再 capture），与改造前单客户端字节级一致，即使 snapshot / `lastAppliedViewport` 已等于请求几何（tmux 漂移或重连后）也仍走该有序路径。follower 走无尺寸 `selectPane`；若窗口实时几何与 winner 不同，则按 winner 几何走同一有序路径，使 history 在权威尺寸下捕获，不得把 PTY 改成 follower 尺寸。`wantHistory:false` 仍 `focusPane`，尺寸只经策略 apply。
 - 同一 window 内 `paneId` 变化立即向该会话下发新 pane 的 `TERM_VIEWPORT_POLICY`（即使 winner / 几何未变）。
-- 解析 winner 时按 snapshot 重绑 `paneId`：pane 消失或已换 window 则丢弃该 claim 并重算相关 window；已关闭 window 的 `lastAppliedViewport` / `lastViewportWinnerId` 清掉。resize 只作用于策略的 `windowId`。
+- 快照安装（非每帧输出）时对该设备条目上所有会话的全部 claim 重绑：pane 消失则丢弃，pane 换 window 则改 key，并重算/apply/通知源与目标 window；已关闭 window 的 `lastAppliedViewport` / `lastViewportWinnerId` 清掉。resize 只作用于策略的 `windowId`。

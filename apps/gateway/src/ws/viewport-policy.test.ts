@@ -6,6 +6,7 @@ import {
   collectWindowClaims,
   notifyClaimants,
   parseViewportClaimKey,
+  rebindAllViewportClaims,
   reconcileViewportClaims,
   resolveWinner,
   takeViewportClaimKeys,
@@ -175,18 +176,18 @@ describe('applyWinnerGeometry', () => {
 });
 
 describe('reconcileViewportClaims', () => {
-  test('drops claims whose pane moved to another window and reports the new window', () => {
+  test('re-keys claims whose pane moved to another window and reports the new window', () => {
     const key = viewportClaimKey('dev-a', '@1');
-    const session = sessionClaims('a', [
-      [key, { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 }],
-    ]);
+    const claim: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 };
+    const session = sessionClaims('a', [[key, claim]]);
 
     const moved = reconcileViewportClaims([session], key, '@1', (paneId) =>
       paneId === '%0' ? '@2' : null
     );
 
     expect(moved).toEqual(['@2']);
-    expect(session.viewportClaims.size).toBe(0);
+    expect(session.viewportClaims.has(key)).toBe(false);
+    expect(session.viewportClaims.get(viewportClaimKey('dev-a', '@2'))).toBe(claim);
   });
 
   test('drops claims whose pane no longer exists', () => {
@@ -206,6 +207,33 @@ describe('reconcileViewportClaims', () => {
 
     expect(reconcileViewportClaims([session], key, '@1', () => '@1')).toEqual([]);
     expect(session.viewportClaims.get(key)).toBe(visible);
+  });
+});
+
+describe('rebindAllViewportClaims', () => {
+  test('re-keys moved panes, drops missing panes, and reports source and destination windows', () => {
+    const moved: ViewportClaim = { paneId: '%0', cols: 160, rows: 48, visible: true, at: 1 };
+    const gone: ViewportClaim = { paneId: '%9', cols: 80, rows: 24, visible: true, at: 1 };
+    const stay: ViewportClaim = { paneId: '%2', cols: 80, rows: 24, visible: true, at: 1 };
+    const session = sessionClaims('a', [
+      [viewportClaimKey('dev-a', '@1'), moved],
+      [viewportClaimKey('dev-a', '@3'), gone],
+      [viewportClaimKey('dev-a', '@4'), stay],
+      [viewportClaimKey('dev-b', '@1'), gone],
+    ]);
+
+    const affected = rebindAllViewportClaims([session], 'dev-a', (paneId) => {
+      if (paneId === '%0') return '@2';
+      if (paneId === '%2') return '@4';
+      return null;
+    });
+
+    expect(new Set(affected)).toEqual(new Set(['@1', '@2', '@3']));
+    expect(session.viewportClaims.get(viewportClaimKey('dev-a', '@2'))).toBe(moved);
+    expect(session.viewportClaims.has(viewportClaimKey('dev-a', '@1'))).toBe(false);
+    expect(session.viewportClaims.has(viewportClaimKey('dev-a', '@3'))).toBe(false);
+    expect(session.viewportClaims.get(viewportClaimKey('dev-a', '@4'))).toBe(stay);
+    expect(session.viewportClaims.get(viewportClaimKey('dev-b', '@1'))).toBe(gone);
   });
 });
 

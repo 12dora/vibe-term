@@ -645,8 +645,10 @@ describe('WebSocketServer tmux select guards', () => {
     });
     clearPolling(entry);
 
-    expect(recorder.selectPaneCalls).toEqual([{ windowId: '@1', paneId: '%1' }]);
-    expect(recorder.resizePaneCalls).toEqual([['%1', 100, 30]]);
+    expect(recorder.selectPaneCalls).toEqual([
+      { windowId: '@1', paneId: '%1', size: { cols: 100, rows: 30 } },
+    ]);
+    expect(recorder.resizePaneCalls).toEqual([]);
     expect(recorder.requestSnapshotCalls).toBe(0);
     expect(ws.data.borshState.selectedPanes['device-a']).toBe('%1');
     expect(ws.sent.length).toBeGreaterThanOrEqual(1);

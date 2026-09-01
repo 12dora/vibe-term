@@ -94,6 +94,7 @@ export function reconcileViewportClaims(
   windowId: string,
   paneWindowId: (paneId: string) => string | null
 ): string[] {
+  const { deviceId } = parseViewportClaimKey(key);
   const moved = new Set<string>();
   for (const session of claimants) {
     const claim = session.viewportClaims.get(key);
@@ -101,9 +102,33 @@ export function reconcileViewportClaims(
     const current = paneWindowId(claim.paneId);
     if (current === windowId) continue;
     session.viewportClaims.delete(key);
-    if (current) moved.add(current);
+    if (!current) continue;
+    session.viewportClaims.set(viewportClaimKey(deviceId, current), claim);
+    moved.add(current);
   }
   return [...moved];
+}
+
+export function rebindAllViewportClaims(
+  claimants: Iterable<{ viewportClaims: Map<string, ViewportClaim> }>,
+  deviceId: string,
+  paneWindowId: (paneId: string) => string | null
+): string[] {
+  const affected = new Set<string>();
+  for (const session of claimants) {
+    for (const [key, claim] of [...session.viewportClaims]) {
+      const parsed = parseViewportClaimKey(key);
+      if (parsed.deviceId !== deviceId) continue;
+      const current = paneWindowId(claim.paneId);
+      if (current === parsed.windowId) continue;
+      session.viewportClaims.delete(key);
+      affected.add(parsed.windowId);
+      if (!current) continue;
+      session.viewportClaims.set(viewportClaimKey(deviceId, current), claim);
+      affected.add(current);
+    }
+  }
+  return [...affected];
 }
 
 export function applyWinnerGeometry(

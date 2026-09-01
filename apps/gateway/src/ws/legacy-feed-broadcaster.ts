@@ -28,6 +28,7 @@ export interface LegacyFeedHost {
   sendChunked(session: GatewaySession, kind: number, payload: Uint8Array): boolean;
   encodeSnapshotWithOverlays(payload: StateSnapshotPayload): Uint8Array;
   reportTerminalOutputMetricsIfDue(): void;
+  onStateSnapshotInstalled(deviceId: string): void;
 }
 
 export function clientWantsPaneOutput(
@@ -188,6 +189,7 @@ export class LegacyFeedBroadcaster {
     if (!entry) return;
 
     entry.lastSnapshot = payload;
+    this.host.onStateSnapshotInstalled(deviceId);
     this.sendSnapshotToClients(entry, payload);
   }
 

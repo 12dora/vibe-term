@@ -5,7 +5,6 @@ import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { WebSocketServer } from './index';
 import { createGatewaySession, setupConnectionEntry } from './test-helpers';
-import { applyViewportPolicy } from './tmux-command-handlers';
 
 function decodePolicies(session: ReturnType<typeof createGatewaySession>) {
   return session.sent.flatMap((bytes) => {
@@ -21,6 +20,7 @@ function lastPolicy(session: ReturnType<typeof createGatewaySession>) {
 
 function createResizeRecorder() {
   const recorder = {
+    ops: [] as string[],
     resizeWindowCalls: [] as Array<[string, number, number]>,
     resizePaneCalls: [] as Array<[string, number, number]>,
     selectPaneCalls: [] as Array<{ windowId: string; paneId: string }>,
@@ -34,18 +34,26 @@ function createResizeRecorder() {
     runtime: {
       resizeWindow(windowId: string, cols: number, rows: number) {
         recorder.resizeWindowCalls.push([windowId, cols, rows]);
+        recorder.ops.push(`resizeWindow:${windowId}:${cols}x${rows}`);
       },
       resizePane(paneId: string, cols: number, rows: number) {
         recorder.resizePaneCalls.push([paneId, cols, rows]);
+        recorder.ops.push(`resizePane:${paneId}:${cols}x${rows}`);
       },
       selectPane(windowId: string, paneId: string) {
         recorder.selectPaneCalls.push({ windowId, paneId });
+        recorder.ops.push(`selectPane:${windowId}:${paneId}`);
+        recorder.ops.push('capture');
       },
       selectPaneWithSize(windowId: string, paneId: string, cols: number, rows: number) {
         recorder.selectPaneWithSizeCalls.push({ windowId, paneId, cols, rows });
+        recorder.ops.push(`resize:${cols}x${rows}`);
+        recorder.ops.push(`selectPane:${windowId}:${paneId}`);
+        recorder.ops.push('capture');
       },
       focusPane(windowId: string, paneId: string) {
         recorder.focusPaneCalls.push({ windowId, paneId });
+        recorder.ops.push(`focusPane:${windowId}:${paneId}`);
       },
       requestSnapshot() {},
     },
@@ -75,7 +83,15 @@ function snapshot(
 }
 
 function setupTwoClients(options: { paneCount?: number; session?: boolean } = {}) {
-  const server = new WebSocketServer();
+  const server = new WebSocketServer({
+    deps: {
+      loadDeviceTreeOrder: (deviceId: string) => ({
+        deviceId,
+        windows: [],
+        panes: {},
+      }),
+    },
+  });
   const recorder = createResizeRecorder();
   const large = createGatewaySession({ id: 'sess-large', session: options.session });
   const small = createGatewaySession({ id: 'sess-small', session: options.session });
@@ -103,6 +119,33 @@ function cleanupSelectSessions(...sessions: Array<ReturnType<typeof createGatewa
     switchBarrier.cleanupClient(session);
     sessionStateStore.delete(session);
   }
+}
+
+function sizedSelect(
+  paneId: string,
+  cols: number,
+  rows: number,
+  token: number,
+  wantHistory = true
+) {
+  return {
+    deviceId: 'device-a',
+    windowId: '@1',
+    paneId,
+    selectToken: new Uint8Array(16).fill(token),
+    wantHistory,
+    cols,
+    rows,
+  };
+}
+
+function expectResizeBeforeCapture(ops: string[], size: string): void {
+  const resizeAt = ops.indexOf(`resize:${size}`);
+  const captureAt = ops.indexOf('capture');
+  expect(resizeAt).toBeGreaterThanOrEqual(0);
+  expect(captureAt).toBeGreaterThan(resizeAt);
+  expect(ops.slice(0, captureAt).some((op) => op.startsWith('resizePane:'))).toBe(false);
+  expect(ops.slice(0, captureAt).some((op) => op.startsWith('resizeWindow:'))).toBe(false);
 }
 
 describe('viewport claims', () => {
@@ -303,29 +346,171 @@ describe('viewport claims', () => {
     });
   });
 
-  test('claim keyed to a window is dropped after its pane moves; the new window is not resized', () => {
-    const { server, recorder, large, entry } = setupTwoClients();
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
-    expect(recorder.resizePaneCalls).toEqual([['%0', 160, 48]]);
-    recorder.resizePaneCalls.length = 0;
-    recorder.resizeWindowCalls.length = 0;
-    entry.lastAppliedViewport?.delete('@1');
+  test('owning sized cold select resizes before history capture', () => {
+    const { server, recorder, large } = setupTwoClients({ session: true });
+    recorder.ops.length = 0;
 
-    entry.lastSnapshot = snapshot([
-      {
-        id: '@2',
-        name: 'w2',
-        index: 0,
-        active: true,
-        panes: [pane('%0', '@2', 0, 80, 24)],
-      },
+    server.handleTmuxSelect(large, sizedSelect('%0', 100, 30, 7));
+
+    expect(recorder.selectPaneWithSizeCalls).toEqual([
+      { windowId: '@1', paneId: '%0', cols: 100, rows: 30 },
     ]);
+    expect(recorder.selectPaneCalls).toEqual([]);
+    expectResizeBeforeCapture(recorder.ops, '100x30');
+    cleanupSelectSessions(large);
+  });
 
-    applyViewportPolicy(server, 'device-a', '@1');
+  test('owning sized cold select still resizes when cached geometry already matches (tmux drifted)', () => {
+    const { server, recorder, large, entry } = setupTwoClients({ session: true });
+    server.handleTermResize(large, 'device-a', '%0', 100, 30);
+    const livePane = entry.lastSnapshot?.session?.windows[0]?.panes[0];
+    expect(livePane).toMatchObject({ width: 100, height: 30 });
+    recorder.ops.length = 0;
+    recorder.selectPaneWithSizeCalls.length = 0;
+    recorder.resizePaneCalls.length = 0;
+
+    server.handleTmuxSelect(large, sizedSelect('%0', 100, 30, 8));
+
+    expect(recorder.selectPaneWithSizeCalls).toEqual([
+      { windowId: '@1', paneId: '%0', cols: 100, rows: 30 },
+    ]);
+    expectResizeBeforeCapture(recorder.ops, '100x30');
+    cleanupSelectSessions(large);
+  });
+
+  test('owning sized cold select after reconnect still uses ordered selectPaneWithSize', () => {
+    const { server, recorder, large, entry } = setupTwoClients({ session: true });
+    server.handleTermResize(large, 'device-a', '%0', 100, 30);
+    server.handleDeviceDisconnect(large, 'device-a');
+    entry.clients.add(large);
+    recorder.ops.length = 0;
+    recorder.selectPaneWithSizeCalls.length = 0;
+    recorder.resizePaneCalls.length = 0;
+
+    server.handleTmuxSelect(large, sizedSelect('%0', 100, 30, 9));
+
+    expect(recorder.selectPaneWithSizeCalls).toEqual([
+      { windowId: '@1', paneId: '%0', cols: 100, rows: 30 },
+    ]);
+    expect(recorder.selectPaneCalls).toEqual([]);
+    expectResizeBeforeCapture(recorder.ops, '100x30');
+    cleanupSelectSessions(large);
+  });
+
+  test('follower sized select does not resize to follower size; history is captured at owner size', () => {
+    const { server, recorder, large, small, entry } = setupTwoClients({
+      paneCount: 2,
+      session: true,
+    });
+    server.handleTermResize(large, 'device-a', '%0', 160, 48);
+    server.handleTermResize(small, 'device-a', '%0', 80, 24);
+    const live = entry.lastSnapshot?.session?.windows[0]?.panes[0];
+    if (live) {
+      live.width = 160;
+      live.height = 48;
+    }
+    recorder.ops.length = 0;
+    recorder.resizeWindowCalls.length = 0;
+    recorder.resizePaneCalls.length = 0;
+    recorder.selectPaneWithSizeCalls.length = 0;
+    recorder.selectPaneCalls.length = 0;
+
+    server.handleTmuxSelect(small, {
+      ...sizedSelect('%1', 80, 24, 10),
+      windowId: '@1',
+    });
 
     expect(recorder.resizePaneCalls).toEqual([]);
     expect(recorder.resizeWindowCalls).toEqual([]);
+    expect(recorder.selectPaneWithSizeCalls).toEqual([]);
+    expect(recorder.selectPaneCalls).toEqual([{ windowId: '@1', paneId: '%1' }]);
+    expect(recorder.ops).toEqual(['selectPane:@1:%1', 'capture']);
+
+    const drifted = entry.lastSnapshot?.session?.windows[0];
+    expect(drifted).toBeDefined();
+    if (!drifted) return;
+    drifted.layout = '0000,40x12,0,0,0';
+    recorder.ops.length = 0;
+    recorder.selectPaneCalls.length = 0;
+    recorder.selectPaneWithSizeCalls.length = 0;
+
+    server.handleTmuxSelect(small, {
+      ...sizedSelect('%1', 80, 24, 11),
+      windowId: '@1',
+    });
+
+    expect(recorder.selectPaneWithSizeCalls).toEqual([
+      { windowId: '@1', paneId: '%1', cols: 160, rows: 48 },
+    ]);
+    expect(recorder.ops.some((op) => op.includes('80x24'))).toBe(false);
+    expectResizeBeforeCapture(recorder.ops, '160x48');
+    cleanupSelectSessions(large, small);
+  });
+
+  test('snapshot install re-keys a moved pane claim and arbitrates the destination window', () => {
+    const { server, recorder, large, entry } = setupTwoClients();
+    server.handleTermResize(large, 'device-a', '%0', 160, 48);
+    expect(large.viewportClaims.has('device-a/@1')).toBe(true);
+    recorder.resizePaneCalls.length = 0;
+    recorder.resizeWindowCalls.length = 0;
+    large.sent.length = 0;
+
+    server.broadcastStateSnapshot(
+      'device-a',
+      snapshot([
+        {
+          id: '@2',
+          name: 'w2',
+          index: 0,
+          active: true,
+          panes: [pane('%0', '@2', 0, 80, 24)],
+        },
+      ])
+    );
+
     expect(large.viewportClaims.has('device-a/@1')).toBe(false);
+    expect(large.viewportClaims.get('device-a/@2')).toMatchObject({
+      paneId: '%0',
+      cols: 160,
+      rows: 48,
+      visible: true,
+    });
     expect(entry.lastAppliedViewport?.has('@1')).toBe(false);
+    expect(entry.lastViewportWinnerId?.has('@1')).toBe(false);
+    expect(recorder.resizePaneCalls).toEqual([['%0', 160, 48]]);
+    expect(lastPolicy(large)).toMatchObject({
+      deviceId: 'device-a',
+      windowId: '@2',
+      paneId: '%0',
+      owner: true,
+      cols: 160,
+      rows: 48,
+    });
+  });
+
+  test('snapshot install drops claims for a closed window and prunes applied state', () => {
+    const { server, recorder, large, entry } = setupTwoClients();
+    server.handleTermResize(large, 'device-a', '%0', 160, 48);
+    recorder.resizePaneCalls.length = 0;
+    recorder.resizeWindowCalls.length = 0;
+
+    server.broadcastStateSnapshot(
+      'device-a',
+      snapshot([
+        {
+          id: '@9',
+          name: 'other',
+          index: 0,
+          active: true,
+          panes: [pane('%8', '@9', 0, 80, 24)],
+        },
+      ])
+    );
+
+    expect(large.viewportClaims.size).toBe(0);
+    expect(entry.lastAppliedViewport?.has('@1')).toBe(false);
+    expect(entry.lastViewportWinnerId?.has('@1')).toBe(false);
+    expect(recorder.resizePaneCalls).toEqual([]);
+    expect(recorder.resizeWindowCalls).toEqual([]);
   });
 });

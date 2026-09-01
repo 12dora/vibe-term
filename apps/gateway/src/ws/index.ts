@@ -862,6 +862,10 @@ export class WebSocketServer
     return this.feed.extendTmuxEvent(deviceId, event);
   }
 
+  onStateSnapshotInstalled(deviceId: string): void {
+    tmuxCommands.reconcileDeviceViewportSnapshot(this, deviceId);
+  }
+
   broadcastStateSnapshot(deviceId: string, payload: StateSnapshotPayload): void {
     this.feed.broadcastStateSnapshot(deviceId, payload);
   }
