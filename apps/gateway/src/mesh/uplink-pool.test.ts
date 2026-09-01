@@ -1798,6 +1798,31 @@ describe('UplinkPool', () => {
     expect(a?.rttAt).toBe(scheduler.nowMs);
   });
 
+  test('healthz probes record rtt only on success and clear it on failure', async () => {
+    const scheduler = new ManualScheduler();
+    let healthy = true;
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 300_000,
+      probe: async () => healthy,
+    });
+    pool.start();
+    await waitMicro();
+    await scheduler.advance(300_000);
+    await waitMicro();
+    expect(
+      pool
+        .candidates()
+        .every((row) => typeof row.rttMs === 'number' && row.rttAt === scheduler.nowMs)
+    ).toBe(true);
+    healthy = false;
+    await scheduler.advance(300_000);
+    await waitMicro();
+    expect(pool.candidates().every((row) => row.rttMs === null && row.rttAt === null)).toBe(true);
+  });
+
   test('periodic RTT probe runs every 5 minutes when enabled and there are 2+ candidates', async () => {
     const scheduler = new ManualScheduler();
     const probed: string[] = [];

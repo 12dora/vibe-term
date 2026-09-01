@@ -96,14 +96,18 @@ function serializeHubCandidate(entry: string | UplinkCandidate): {
   publicUrl: string;
   lastError: string | null;
   lastAttemptAt: number | null;
+  rttMs: number | null;
+  rttAt: number | null;
 } {
   if (typeof entry === 'string') {
-    return { publicUrl: entry, lastError: null, lastAttemptAt: null };
+    return { publicUrl: entry, lastError: null, lastAttemptAt: null, rttMs: null, rttAt: null };
   }
   return {
     publicUrl: entry.publicUrl,
     lastError: entry.lastError ?? null,
     lastAttemptAt: entry.lastAttemptAt ?? null,
+    rttMs: entry.rttMs ?? null,
+    rttAt: entry.rttAt ?? null,
   };
 }
 
@@ -346,6 +350,10 @@ export class MeshRoutes {
   }
 
   private handleUninstallStart(req: Request, nodeId: string): Promise<Response> {
+    const auth = authenticateRequest(req, this.sessionDeps);
+    if (!auth.ok || !auth.userId) {
+      return Promise.resolve(jsonError('UNAUTHORIZED', 401));
+    }
     return handleMeshNodeUninstall({
       req,
       nodeId,

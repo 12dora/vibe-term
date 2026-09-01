@@ -4,8 +4,9 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { requestDispatchContext } from '../mesh/types';
 import type { InstallInfo } from './install-info';
-import { uninstallController } from './uninstall';
+import { startLocalUninstall, uninstallController } from './uninstall';
 
 const tempDirs: string[] = [];
 
@@ -172,5 +173,49 @@ describe('UninstallController', () => {
     expect(second.status).toBe(202);
     expect(await second.json()).toEqual(firstBody);
     expect(spawns).toBe(1);
+  });
+
+  test('startLocalUninstall rejects requests without a user session', async () => {
+    const res = await startLocalUninstall(
+      new Request('http://localhost/api/system/uninstall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'full' }),
+      })
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ code: 'UNAUTHORIZED' });
+  });
+
+  test('startLocalUninstall logs via and user then schedules when authenticated', async () => {
+    const installDir = tempDir('tmex-uninst-auth-');
+    writeCliInstall(installDir);
+    const copyRoot = tempDir('tmex-uninst-auth-tmp-');
+    uninstallController.setDepsForTests({
+      getInstallInfo: () => cliInstallInfo(installDir),
+      tmpdir: () => copyRoot,
+      randomId: () => 'auth1',
+      spawn: () => fakeChild(),
+    });
+    const req = new Request('http://localhost/api/system/uninstall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'full' }),
+    });
+    requestDispatchContext.set(req, { uid: 'user-9', viaNodeId: 'self' });
+    const lines: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const res = await startLocalUninstall(req);
+      expect(res.status).toBe(202);
+    } finally {
+      console.info = originalInfo;
+    }
+    expect(
+      lines.some((line) => line.includes('[system] uninstall requested via=self user=user-9'))
+    ).toBe(true);
   });
 });

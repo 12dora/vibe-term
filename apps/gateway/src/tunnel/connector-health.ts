@@ -48,6 +48,7 @@ export function parseMetricsAddrFromLog(lines: readonly string[]): string | null
 export function discoverMetricsAddr(opts: {
   spawnedAddr?: string | null;
   argvAddr?: string | null;
+  configAddr?: string | null;
   logLines?: readonly string[];
   includeDefaults?: boolean;
 }): string[] {
@@ -55,6 +56,8 @@ export function discoverMetricsAddr(opts: {
   if (spawned) return [spawned];
   const argv = normalizeMetricsAddr(opts.argvAddr);
   if (argv) return [argv];
+  const fromConfig = normalizeMetricsAddr(opts.configAddr);
+  if (fromConfig) return [fromConfig];
   const fromLog = parseMetricsAddrFromLog(opts.logLines ?? []);
   if (fromLog) return [fromLog];
   if (opts.includeDefaults === false) return [];
@@ -158,12 +161,29 @@ export async function probeConnector(
     return connectorResult({ reachable: null, metricsAddr: null }, opts?.now);
   }
 
-  for (const candidate of normalized) {
+  if (!scanning) {
+    const candidate = normalized[0] ?? '';
     const result = await probeOne(candidate, fetchImpl, timeoutMs);
     if (result !== 'no-answer') return { ...result, checkedAt: isoNow(opts?.now) };
-    if (!scanning) {
-      return connectorResult({ reachable: false, metricsAddr: candidate }, opts?.now);
-    }
+    return connectorResult({ reachable: false, metricsAddr: candidate }, opts?.now);
+  }
+
+  const hits: TunnelConnectorStatus[] = [];
+  for (const candidate of normalized) {
+    const result = await probeOne(candidate, fetchImpl, timeoutMs);
+    if (result !== 'no-answer') hits.push({ ...result, checkedAt: isoNow(opts?.now) });
+  }
+  const unique = hits[0];
+  if (hits.length === 1 && unique) return unique;
+  if (hits.length > 1) {
+    return connectorResult(
+      {
+        reachable: null,
+        metricsAddr: null,
+        lastError: 'multiple cloudflared metrics endpoints answered; cannot attribute',
+      },
+      opts?.now
+    );
   }
   return connectorResult({ reachable: null, metricsAddr: null }, opts?.now);
 }

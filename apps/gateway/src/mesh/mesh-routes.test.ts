@@ -620,6 +620,8 @@ describe('mesh-routes', () => {
           publicUrl: string;
           lastError: string | null;
           lastAttemptAt: number | null;
+          rttMs: number | null;
+          rttAt: number | null;
         }>;
       };
       expect(body.writerHubId).toBe(NODE_ID);
@@ -627,8 +629,20 @@ describe('mesh-routes', () => {
       expect(body.hubs.find((h) => h.nodeId === PEER_ID)?.mode).toBe('standby');
       expect(body.attached).toBeNull();
       expect(body.candidates).toEqual([
-        { publicUrl: 'https://writer.example', lastError: null, lastAttemptAt: null },
-        { publicUrl: 'https://standby.example', lastError: null, lastAttemptAt: null },
+        {
+          publicUrl: 'https://writer.example',
+          lastError: null,
+          lastAttemptAt: null,
+          rttMs: null,
+          rttAt: null,
+        },
+        {
+          publicUrl: 'https://standby.example',
+          lastError: null,
+          lastAttemptAt: null,
+          rttMs: null,
+          rttAt: null,
+        },
       ]);
     } finally {
       mesh.close();
@@ -646,6 +660,8 @@ describe('mesh-routes', () => {
           publicUrl: 'https://writer.example',
           lastError: 'unable to verify the first certificate',
           lastAttemptAt: 42,
+          rttMs: 17,
+          rttAt: 99,
         },
       ];
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
@@ -658,6 +674,8 @@ describe('mesh-routes', () => {
           publicUrl: string;
           lastError: string | null;
           lastAttemptAt: number | null;
+          rttMs: number | null;
+          rttAt: number | null;
         }>;
       };
       expect(body.candidates).toEqual([
@@ -665,6 +683,8 @@ describe('mesh-routes', () => {
           publicUrl: 'https://writer.example',
           lastError: 'unable to verify the first certificate',
           lastAttemptAt: 42,
+          rttMs: 17,
+          rttAt: 99,
         },
       ]);
     } finally {
@@ -2006,6 +2026,21 @@ describe('mesh uninstall routes', () => {
 
   beforeAll(() => {
     runMigrations();
+  });
+
+  test('POST uninstall without a user session is UNAUTHORIZED', async () => {
+    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    try {
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
+        { method: 'POST', body: JSON.stringify({ mode: 'full' }) }
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toMatchObject({ code: 'UNAUTHORIZED' });
+    } finally {
+      mesh.close();
+    }
   });
 
   test('POST uninstall of self is UNINSTALL_SELF_BLOCKED', async () => {

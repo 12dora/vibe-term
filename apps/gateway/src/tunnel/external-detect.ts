@@ -185,7 +185,7 @@ async function collectCandidates(opts: {
     parsed: {
       tokenFile: null,
       logFile: null,
-      metricsAddr: null,
+      metricsAddr: parsedYml?.metricsAddr ?? null,
       configPath: defaultConfigPath,
       tunnelId: parsedYml?.tunnelId ?? null,
       tunnelName: parsedYml?.tunnelName ?? null,
@@ -272,7 +272,7 @@ async function enrichCandidate(
   let accountId: string | null = null;
   const tokenFile = cand.parsed.tokenFile;
   const logFile = cand.parsed.logFile;
-  const metricsAddr = cand.parsed.metricsAddr;
+  let metricsAddr = cand.parsed.metricsAddr;
   const configPath = cand.parsed.configPath;
   let yml: ReturnType<typeof parseCloudflaredYml> = null;
   if (configPath) {
@@ -281,6 +281,7 @@ async function enrichCandidate(
     if (yml) {
       tunnelId = tunnelId ?? yml.tunnelId;
       tunnelName = tunnelName ?? yml.tunnelName;
+      metricsAddr = metricsAddr ?? yml.metricsAddr;
     }
   }
 
@@ -395,11 +396,13 @@ export function parseCloudflaredYml(text: string): {
   tunnelId: string | null;
   tunnelName: string | null;
   credentialsFile: string | null;
+  metricsAddr: string | null;
   ingress: Array<{ hostname: string | null; service: string | null }>;
 } | null {
   if (!text.trim()) return null;
   let tunnelRaw: string | null = null;
   let credentialsFile: string | null = null;
+  let metricsAddr: string | null = null;
   const ingress: Array<{ hostname: string | null; service: string | null }> = [];
   let inIngress = false;
   let current: { hostname: string | null; service: string | null } | null = null;
@@ -416,6 +419,11 @@ export function parseCloudflaredYml(text: string): {
     const credMatch = trimmed.match(/^credentials-file:\s*(.+)$/);
     if (credMatch) {
       credentialsFile = unquote(credMatch[1] ?? '');
+      continue;
+    }
+    const metricsMatch = trimmed.match(/^metrics:\s*(.+)$/);
+    if (metricsMatch && !inIngress) {
+      metricsAddr = unquote(metricsMatch[1] ?? '') || null;
       continue;
     }
     if (/^ingress:\s*$/.test(trimmed)) {
@@ -436,7 +444,7 @@ export function parseCloudflaredYml(text: string): {
   if (current) ingress.push(current);
   const tunnelId = tunnelRaw && looksLikeId(tunnelRaw) ? tunnelRaw : null;
   const tunnelName = tunnelRaw && !looksLikeId(tunnelRaw) ? tunnelRaw : null;
-  return { tunnelId, tunnelName, credentialsFile, ingress };
+  return { tunnelId, tunnelName, credentialsFile, metricsAddr, ingress };
 }
 
 export function serviceHitsOrigin(service: string | null | undefined, originPort: number): boolean {

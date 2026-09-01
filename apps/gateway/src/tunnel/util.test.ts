@@ -71,6 +71,47 @@ describe('redactSecrets', () => {
     expect(redactSecrets(other)).not.toContain('secret-value');
     expect(redactSecrets(other)).toContain('token=***');
   });
+
+  test('masks URL userinfo and every query-parameter value', () => {
+    expect(redactSecrets('redis://admin:s3cr3tP@ss@10.0.0.5:6379/db')).toBe(
+      'redis://***@10.0.0.5:6379/db'
+    );
+    expect(redactSecrets('https://user:pass@example.com/path?foo=bar&id=1')).toBe(
+      'https://***@example.com/path?foo=***&id=***'
+    );
+  });
+
+  test('masks short tokens, base64url, Bearer/Basic, and secret key=value pairs', () => {
+    expect(redactSecrets('token=abc password=hunter2 api_key=k jwt=short')).toBe(
+      'token=*** password=*** api_key=*** jwt=***'
+    );
+    const b64url = `eyJhbGciOiJIUzI1NiJ9.${'ab-_CD'.repeat(6)}`;
+    expect(redactSecrets(`Authorization: Bearer ${b64url}`)).toContain('Bearer ***');
+    expect(redactSecrets(`Authorization: Bearer ${b64url}`)).not.toContain(b64url);
+    expect(redactSecrets('Authorization: Basic dXNlcjpwYXNz')).toBe('Authorization: Basic ***');
+    expect(redactSecrets('cookie=sid123 session=abc credential=x')).toBe(
+      'cookie=*** session=*** credential=***'
+    );
+  });
+
+  test('masks JSON-format and text-format cloudflared secret lines', () => {
+    const jsonLine =
+      '{"level":"error","token":"shorttok","password":"hunter2","error":"token=abc"}';
+    const jsonOut = redactSecrets(jsonLine);
+    expect(jsonOut).not.toContain('shorttok');
+    expect(jsonOut).not.toContain('hunter2');
+    expect(jsonOut).not.toContain('token=abc');
+    expect(jsonOut).toContain('"token":"***"');
+    expect(jsonOut).toContain('"password":"***"');
+    expect(jsonOut).toContain('token=***');
+    const textLine =
+      '2026-09-02T12:00:01Z ERR Unable to establish connection token=abc api-key=xyz';
+    const textOut = redactSecrets(textLine);
+    expect(textOut).not.toContain('token=abc');
+    expect(textOut).not.toContain('xyz');
+    expect(textOut).toContain('token=***');
+    expect(textOut).toContain('api-key=***');
+  });
 });
 
 describe('LogRingBuffer', () => {

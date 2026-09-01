@@ -450,9 +450,28 @@ describe('POST/GET /api/system/uninstall', () => {
     uninstallController.resetForTests();
   });
 
+  test('GET and POST without a user session are 401', async () => {
+    const getRes = await handleSystemApiRequest(
+      new Request('http://localhost/api/system/uninstall'),
+      '/api/system/uninstall'
+    );
+    expect(getRes?.status).toBe(401);
+    expect(await getRes?.json()).toEqual({ code: 'UNAUTHORIZED' });
+    const postRes = await handleSystemApiRequest(
+      new Request('http://localhost/api/system/uninstall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'full' }),
+      }),
+      '/api/system/uninstall'
+    );
+    expect(postRes?.status).toBe(401);
+    expect(await postRes?.json()).toEqual({ code: 'UNAUTHORIZED' });
+  });
+
   test('GET returns idle status', async () => {
     const response = await handleSystemApiRequest(
-      new Request('http://localhost/api/system/uninstall'),
+      withMeshAuth(new Request('http://localhost/api/system/uninstall')),
       '/api/system/uninstall'
     );
     expect(response?.status).toBe(200);
@@ -465,11 +484,13 @@ describe('POST/GET /api/system/uninstall', () => {
 
   test('rejects mode other than full with 400', async () => {
     const response = await handleSystemApiRequest(
-      new Request('http://localhost/api/system/uninstall', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'partial' }),
-      }),
+      withMeshAuth(
+        new Request('http://localhost/api/system/uninstall', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'partial' }),
+        })
+      ),
       '/api/system/uninstall'
     );
     expect(response?.status).toBe(400);
@@ -503,18 +524,35 @@ describe('POST/GET /api/system/uninstall', () => {
           return child as unknown as ChildProcess;
         },
       });
-      const response = await handleSystemApiRequest(
-        new Request('http://localhost/api/system/uninstall', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode: 'full' }),
-        }),
-        '/api/system/uninstall'
-      );
+      const infoLines: string[] = [];
+      const originalInfo = console.info;
+      console.info = (...args: unknown[]) => {
+        infoLines.push(args.map(String).join(' '));
+      };
+      let response: Response | Promise<Response> | undefined;
+      try {
+        response = await handleSystemApiRequest(
+          withMeshAuth(
+            new Request('http://localhost/api/system/uninstall', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ mode: 'full' }),
+            })
+          ),
+          '/api/system/uninstall'
+        );
+      } finally {
+        console.info = originalInfo;
+      }
       expect(response?.status).toBe(202);
       expect(spawned[0]?.slice(1, 4)).toEqual(['uninstall', '--yes', '--purge']);
+      expect(
+        infoLines.some((line) =>
+          line.includes('[system] uninstall requested via=entry-node user=user-1')
+        )
+      ).toBe(true);
       const status = await handleSystemApiRequest(
-        new Request('http://localhost/api/system/uninstall'),
+        withMeshAuth(new Request('http://localhost/api/system/uninstall')),
         '/api/system/uninstall'
       );
       expect(status?.status).toBe(200);

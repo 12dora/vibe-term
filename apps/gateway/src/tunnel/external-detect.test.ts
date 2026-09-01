@@ -53,6 +53,7 @@ describe('external tunnel parsing', () => {
     const yml = parseCloudflaredYml(`
 tunnel: 550e8400-e29b-41d4-a716-446655440000
 credentials-file: /tmp/cred.json
+metrics: 127.0.0.1:20301
 ingress:
   - hostname: tmex.example.com
     service: http://127.0.0.1:19883
@@ -62,6 +63,7 @@ ingress:
 `);
     expect(yml?.tunnelId).toBe('550e8400-e29b-41d4-a716-446655440000');
     expect(yml?.credentialsFile).toBe('/tmp/cred.json');
+    expect(yml?.metricsAddr).toBe('127.0.0.1:20301');
     expect(
       (yml?.ingress ?? [])
         .filter((row) => serviceHitsOrigin(row.service, 19883))
@@ -228,6 +230,31 @@ ingress:
     expect(found.configPath).toBe('/custom/cf.yml');
     expect(found.hostnames).toEqual(['custom.example.com']);
     expect(found.running).toBe(true);
+  });
+
+  test('reads metrics from --config YAML when argv has no --metrics', async () => {
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      homedir: () => '/home/me',
+      platform: 'linux',
+      listProcesses: async () => '11 /usr/bin/cloudflared tunnel --config /custom/cf.yml run\n',
+      readFile: async (path) => {
+        if (path === '/custom/cf.yml') {
+          return `tunnel: 550e8400-e29b-41d4-a716-446655440000
+metrics: 127.0.0.1:20399
+ingress:
+  - hostname: custom.example.com
+    service: http://127.0.0.1:19883
+`;
+        }
+        return null;
+      },
+      listDir: async () => [],
+    });
+    const found = await d.detect();
+    expect(found.metricsAddr).toBe('127.0.0.1:20399');
+    expect(found.configPath).toBe('/custom/cf.yml');
   });
 
   test('does not mark a candidate running based on an unrelated cloudflared process', async () => {

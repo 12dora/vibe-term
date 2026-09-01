@@ -43,14 +43,23 @@ describe('discoverMetricsAddr', () => {
     ).toEqual(['127.0.0.1:41111']);
   });
 
-  test('falls back to argv --metrics then log then the default range', () => {
+  test('falls back to argv --metrics then config then log then the default range', () => {
     expect(
       discoverMetricsAddr({
         spawnedAddr: null,
         argvAddr: '127.0.0.1:19999',
+        configAddr: '127.0.0.1:18888',
         logLines: [JSON_METRICS],
       })
     ).toEqual(['127.0.0.1:19999']);
+    expect(
+      discoverMetricsAddr({
+        spawnedAddr: null,
+        argvAddr: null,
+        configAddr: '127.0.0.1:18888',
+        logLines: [JSON_METRICS],
+      })
+    ).toEqual(['127.0.0.1:18888']);
     expect(
       discoverMetricsAddr({
         spawnedAddr: null,
@@ -119,7 +128,7 @@ describe('probeConnector', () => {
     expect(result.metricsAddr).toBe('127.0.0.1:20241');
   });
 
-  test('scanning uses the first addr that answers and null when none do', async () => {
+  test('scanning uses the unique addr that answers and null when none do', async () => {
     const tried: string[] = [];
     const hit = await probeConnector(
       ['127.0.0.1:20241', '127.0.0.1:20242', '127.0.0.1:20243'],
@@ -132,7 +141,11 @@ describe('probeConnector', () => {
         throw new Error('connection refused');
       }
     );
-    expect(tried).toEqual(['http://127.0.0.1:20241/ready', 'http://127.0.0.1:20242/ready']);
+    expect(tried).toEqual([
+      'http://127.0.0.1:20241/ready',
+      'http://127.0.0.1:20242/ready',
+      'http://127.0.0.1:20243/ready',
+    ]);
     expect(hit.reachable).toBe(true);
     expect(hit.metricsAddr).toBe('127.0.0.1:20242');
     expect(hit.readyConnections).toBe(2);
@@ -144,6 +157,26 @@ describe('probeConnector', () => {
     expect(miss.metricsAddr).toBeNull();
     expect(miss.readyConnections).toBeNull();
     expect(miss.connectorId).toBeNull();
+  });
+
+  test('scanning returns unreachable-unknown when more than one /ready answers', async () => {
+    const result = await probeConnector(
+      ['127.0.0.1:20241', '127.0.0.1:20242', '127.0.0.1:20243'],
+      async (input) => {
+        const url = String(input);
+        if (url.includes('20241') || url.includes('20243')) {
+          return Response.json({ readyConnections: 1, connectorId: url });
+        }
+        throw new Error('connection refused');
+      }
+    );
+    expect(result.reachable).toBeNull();
+    expect(result.metricsAddr).toBeNull();
+    expect(result.readyConnections).toBeNull();
+    expect(result.connectorId).toBeNull();
+    expect(result.lastError).toBe(
+      'multiple cloudflared metrics endpoints answered; cannot attribute'
+    );
   });
 });
 
@@ -175,6 +208,17 @@ describe('extractLastError', () => {
   test('returns null when no error line exists', () => {
     expect(extractLastError(['INF Starting metrics server on 127.0.0.1:20241/metrics'])).toBeNull();
     expect(extractLastError([])).toBeNull();
+  });
+
+  test('redacts short tokens in JSON and text error lines', () => {
+    expect(
+      extractLastError([
+        '{"level":"error","error":"password=hunter2 token=abc","message":"edge failed"}',
+      ])
+    ).toBe('password=*** token=***');
+    expect(
+      extractLastError(['2026-09-02T12:00:01Z ERR handshake failed api_key=xyz Bearer abc.def'])
+    ).toBe('handshake failed api_key=*** Bearer ***');
   });
 });
 

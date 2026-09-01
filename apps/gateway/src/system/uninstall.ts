@@ -5,6 +5,8 @@ import { tmpdir as osTmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { StartUninstallRequest, UninstallStatus, UpgradeState } from '@tmex/shared';
 import { json } from '../api/http';
+import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
+import { requestDispatchContext } from '../mesh/types';
 import { isManagedExternally } from './info-public';
 import { type InstallInfo, getInstallInfo } from './install-info';
 import { upgradeController, waitForSpawnAndDetach } from './upgrade';
@@ -157,7 +159,25 @@ export class UninstallController {
 
 export const uninstallController = new UninstallController();
 
+export function requireUninstallAuth(req: Request): { via: string; uid: string } | null {
+  const dispatch = requestDispatchContext.get(req);
+  const ctx = getMeshRequestContext(req);
+  const via = dispatch?.viaNodeId ?? ctx.via ?? MESH_VIA_SELF;
+  if (dispatch) {
+    if (dispatch.viaNodeId !== MESH_VIA_SELF) {
+      return { via, uid: dispatch.uid ?? ctx.uid ?? '-' };
+    }
+    if (dispatch.uid) return { via, uid: dispatch.uid };
+  }
+  if (ctx.sid && ctx.uid) return { via, uid: ctx.uid };
+  return null;
+}
+
 export async function startLocalUninstall(req: Request): Promise<Response> {
+  const actor = requireUninstallAuth(req);
+  if (!actor) {
+    return json({ code: 'UNAUTHORIZED' }, 401);
+  }
   let mode: unknown = 'full';
   try {
     const body = (await req.json()) as StartUninstallRequest;
@@ -170,6 +190,7 @@ export async function startLocalUninstall(req: Request): Promise<Response> {
   if (mode !== 'full') {
     return json({ error: 'mode must be full' }, 400);
   }
+  console.info(`[system] uninstall requested via=${actor.via} user=${actor.uid}`);
   return uninstallController.start();
 }
 

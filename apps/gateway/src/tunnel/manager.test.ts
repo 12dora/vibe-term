@@ -1054,6 +1054,54 @@ describe('TunnelManager', () => {
     expect(ctx.manager.status().access.enforceJwt).toBe(false);
   });
 
+  test('remove_access and set_access_enforce(false) require ack when tunnel is degraded', async () => {
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({
+      accountId: 'acc',
+      apiToken: 'tok',
+      teamDomain: 'team.cloudflareaccess.com',
+      appId: 'app',
+      aud: 'aud',
+      hostname: 'ok.example.com',
+      rules: [{ kind: 'email', value: 'a@example.com' }],
+      enforceJwt: true,
+    });
+    const ctx = await setup({
+      loginEnforced: () => false,
+      accessStore,
+      fetchImpl: async () => new Response(null, { status: 404 }),
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({ mode: 'named', hostname: 'ok.example.com', tunnelId: 'tid', tunnelName: 'n' });
+    ctx.spawner.on((s) => argsInclude(s, 'run'), {
+      hold: true,
+      stdout: 'Registered tunnel connection connIndex=0\n',
+    });
+    await ctx.manager.handleAction({ action: 'start' });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().process.state).toBe('running');
+    ctx.spawner.lastHandle()?.writeStdout('Unregistered tunnel connection connIndex=0\n');
+    await waitState(ctx.manager, 'degraded');
+
+    const enforce = await ctx.manager.handleAction({
+      action: 'set_access_enforce',
+      enforceJwt: false,
+    });
+    expect(enforce.httpStatus).toBe(409);
+    expect('error' in enforce.payload && enforce.payload.error.code).toBe('exposure_ack_required');
+
+    const removed = await ctx.manager.handleAction({ action: 'remove_access' });
+    expect(removed.httpStatus).toBe(409);
+
+    const okEnforce = await ctx.manager.handleAction({
+      action: 'set_access_enforce',
+      enforceJwt: false,
+      acknowledgeExposure: true,
+    });
+    expect(okEnforce.httpStatus).toBe(200);
+    expect(ctx.manager.status().access.enforceJwt).toBe(false);
+  });
+
   test('externally managed last-protection ack requires a fresh running detect', async () => {
     const accessStore = new MemoryTunnelAccessStore();
     await accessStore.save({
@@ -1638,5 +1686,52 @@ describe('TunnelManager', () => {
     expect(sleeps).toContain(30_000);
     expect(readyAt.length).toBeGreaterThanOrEqual(2);
     await ctx.manager.stop();
+  });
+
+  test('slow connector probe resolving after stop does not overwrite EMPTY_CONNECTOR', async () => {
+    const hanging = Promise.withResolvers<void>();
+    let hangReady = false;
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          if (hangReady) await hanging.promise;
+          return Response.json({ readyConnections: 4, connectorId: 'stale' });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://stale-cloud.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().connector.connectorId).toBe('stale');
+
+    hangReady = true;
+    const slow = ctx.manager.probeAndStoreConnector();
+    await Bun.sleep(20);
+    await ctx.manager.handleAction({ action: 'stop' });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().connector).toEqual({
+      reachable: null,
+      metricsAddr: null,
+      readyConnections: null,
+      connectorId: null,
+      checkedAt: null,
+      lastError: null,
+    });
+    hanging.resolve();
+    await slow;
+    expect(ctx.manager.status().connector).toEqual({
+      reachable: null,
+      metricsAddr: null,
+      readyConnections: null,
+      connectorId: null,
+      checkedAt: null,
+      lastError: null,
+    });
   });
 });

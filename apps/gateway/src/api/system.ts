@@ -73,10 +73,13 @@ export function handleSystemApiRequest(
   }
 
   if (path === '/api/system/uninstall' && req.method === 'GET') {
-    return handleUninstallStatusOpen();
+    return handleUninstallStatusOpen(req);
   }
 
   if (path === '/api/system/uninstall' && req.method === 'POST') {
+    if (!requestIsStagedAuthenticated(req)) {
+      return json({ code: 'UNAUTHORIZED' }, 401);
+    }
     if (managed) {
       return json({ code: 'UNINSTALL_NOT_ALLOWED', reason: 'managed' }, 409);
     }
@@ -228,7 +231,10 @@ async function handleStartUninstallOpen(req: Request): Promise<Response> {
   return startLocalUninstall(req);
 }
 
-async function handleUninstallStatusOpen(): Promise<Response> {
-  const { readLocalUninstallStatus } = await import('../system/uninstall');
+async function handleUninstallStatusOpen(req: Request): Promise<Response> {
+  const { readLocalUninstallStatus, requireUninstallAuth } = await import('../system/uninstall');
+  if (!requireUninstallAuth(req)) {
+    return json({ code: 'UNAUTHORIZED' }, 401);
+  }
   return json(readLocalUninstallStatus());
 }

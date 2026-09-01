@@ -1251,7 +1251,11 @@ export class UplinkPool {
     } catch {
       ok = false;
     }
-    this.noteRtt(publicUrl, Math.max(0, Math.round(performance.now() - started)));
+    if (ok) {
+      this.noteRtt(publicUrl, Math.max(0, Math.round(performance.now() - started)));
+    } else {
+      this.patchDiag(publicUrl, { rttMs: null, rttAt: null });
+    }
     return ok;
   }
 

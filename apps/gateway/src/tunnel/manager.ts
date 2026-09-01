@@ -68,6 +68,7 @@ import {
   originCertPath,
   parseLoginUrl,
 } from './provider';
+import { redactSecrets } from './redact';
 import { type PickPort, type Spawner, bunSpawner, consumeLines, pickFreePort } from './spawn';
 import { TunnelSupervisor } from './supervisor';
 type PatchHostEnv = (trustProxy: boolean) => Promise<void>;
@@ -301,9 +302,8 @@ export class TunnelManager {
   async stop(): Promise<void> {
     this.loginHandle?.kill();
     this.loginHandle = null;
-    this.stopConnectorPoll();
+    this.resetConnector();
     await this.supervisor.stop();
-    this.lastConnector = { ...EMPTY_CONNECTOR };
   }
 
   status(): TunnelStatusResponse {
@@ -316,7 +316,7 @@ export class TunnelManager {
     const exposureProtected = this.isExposureProtected(persisted, access, loginEnforced);
     const processAlive = persisted.externallyManaged
       ? this.lastExternal.running
-      : this.supervisor.state === 'running' || this.supervisor.state === 'degraded';
+      : this.processUp(this.supervisor.state);
     const publicUrl = persisted.externallyManaged
       ? persisted.hostname
         ? `https://${persisted.hostname}`
@@ -551,7 +551,7 @@ export class TunnelManager {
       return;
     }
     const persisted = this.safePersisted();
-    if (!persisted.externallyManaged && this.supervisor.state !== 'running') return;
+    if (!persisted.externallyManaged && !this.processUp(this.supervisor.state)) return;
     if (persisted.externallyManaged) {
       try {
         const raced = await Promise.race([
@@ -871,9 +871,8 @@ export class TunnelManager {
 
   private async jobStop(step: (name: string) => void): Promise<void> {
     step('stop');
-    this.stopConnectorPoll();
+    this.resetConnector();
     await this.supervisor.stop();
-    this.lastConnector = { ...EMPTY_CONNECTOR };
   }
 
   // 取消接管：只清本地配置，不停系统服务、不动 Cloudflare 上的隧道。
@@ -892,9 +891,8 @@ export class TunnelManager {
 
   private async jobRemove(step: (name: string) => void): Promise<void> {
     step('stop');
-    this.stopConnectorPoll();
+    this.resetConnector();
     await this.supervisor.stop();
-    this.lastConnector = { ...EMPTY_CONNECTOR };
     const persisted = this.store.get();
     await rm(configYmlPath(this.tunnelDir), { force: true }).catch(() => {});
     if (persisted.tunnelName) {
@@ -1210,9 +1208,10 @@ export class TunnelManager {
       throw new TunnelError('not_configured', 'tunnel is not configured');
     }
     const bin = this.requireBinary();
+    this.resetConnector();
     if (
       this.supervisor.runningEnabled ||
-      this.supervisor.state === 'running' ||
+      this.processUp(this.supervisor.state) ||
       this.supervisor.state === 'starting'
     ) {
       await this.supervisor.stop();
@@ -1284,11 +1283,7 @@ export class TunnelManager {
   private shouldProbeConnector(): boolean {
     const persisted = this.safePersisted();
     if (persisted.externallyManaged) return this.lastExternal.running;
-    return (
-      this.supervisor.state === 'running' ||
-      this.supervisor.state === 'degraded' ||
-      this.supervisor.state === 'starting'
-    );
+    return this.processUp(this.supervisor.state) || this.supervisor.state === 'starting';
   }
 
   private isConnectorStale(): boolean {
@@ -1303,6 +1298,12 @@ export class TunnelManager {
   private stopConnectorPoll(): void {
     this.connectorPollGen += 1;
     this.connectorPolling = false;
+  }
+
+  private resetConnector(): void {
+    this.stopConnectorPoll();
+    this.connectorProbeInFlight = null;
+    this.lastConnector = { ...EMPTY_CONNECTOR };
   }
 
   private syncConnectorPoll(): void {
@@ -1356,11 +1357,23 @@ export class TunnelManager {
   }
 
   private async runConnectorProbe(): Promise<TunnelConnectorStatus> {
+    const gen = this.connectorPollGen;
+    const pid = this.supervisor.pid;
+    const startedAt = this.supervisor.startedAt;
+    const commit = (next: TunnelConnectorStatus): TunnelConnectorStatus => {
+      if (gen !== this.connectorPollGen) return this.lastConnector;
+      if (pid !== this.supervisor.pid || startedAt !== this.supervisor.startedAt) {
+        return this.lastConnector;
+      }
+      this.lastConnector = next;
+      return next;
+    };
     try {
       const logLines = await this.connectorLogLines();
       const addrs = discoverMetricsAddr({
         spawnedAddr: this.supervisor.metricsAddr,
         argvAddr: this.lastExternal.metricsAddr,
+        configAddr: this.lastExternal.metricsAddr,
         logLines,
         includeDefaults: this.scanDefaultMetrics,
       });
@@ -1368,20 +1381,21 @@ export class TunnelManager {
         timeoutMs: 1_500,
         now: this.now,
       });
-      this.lastConnector = {
+      const lastError = probed.lastError ?? extractLastError(logLines);
+      return commit({
         ...probed,
-        lastError: extractLastError(logLines),
+        lastError: lastError ? redactSecrets(lastError) : null,
         checkedAt: new Date(this.now()).toISOString(),
-      };
+      });
     } catch {
       const logLines = await this.connectorLogLines().catch(() => [] as string[]);
-      this.lastConnector = {
+      const lastError = extractLastError(logLines);
+      return commit({
         ...EMPTY_CONNECTOR,
-        lastError: extractLastError(logLines),
+        lastError: lastError ? redactSecrets(lastError) : null,
         checkedAt: new Date(this.now()).toISOString(),
-      };
+      });
     }
-    return this.lastConnector;
   }
 
   private async waitUntilRunning(): Promise<void> {
