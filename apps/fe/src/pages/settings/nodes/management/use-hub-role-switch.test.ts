@@ -9,20 +9,25 @@ import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@tmex/shared/auth';
 import { createMemoryStorage } from '@tmex/stores/test-utils';
 import {
   type AdmitHubOutcome,
+  HUB_ROLE_HUBS_TIMEOUT_MS,
   HUB_ROLE_RESTART_BUDGET_MS,
   HUB_ROLE_SWITCH_KEY,
   HUB_ROLE_SWITCH_TTL_MS,
   HUB_ROLE_WRITER_TIMEOUT_MS,
   type HubRoleIo,
   type HubRoleOutcome,
+  type HubRoleRecoverContext,
   type HubRoleResumePhase,
+  type HubRoleRunOutcome,
   type HubRoleSwitchPlan,
   type HubRoleSwitchRecord,
   admitHubWithForce,
   awaitHubRoleSwitch,
   clearHubRoleSwitch,
+  guardHubRoleRun,
   hubRoleBlockReason,
   hubRoleButtonState,
+  hubRoleSettlement,
   hubRoleSteps,
   hubRoleSwitchPersist,
   hubRoleWarnings,
@@ -625,6 +630,70 @@ describe('runHubRoleSwitch', () => {
     });
   });
 
+  test('原主已降备而 writer 迟迟不换人：未确认也进恢复，不能只留一条会消失的 toast', async () => {
+    // 升主受理了，但入口的 writerHubId 一直没换人：目标可能压根没收到，集群此刻没有 writer。
+    const io = fakeIo({ hubs: () => ({ hubs: [], writerHubId: HUB_A }) });
+    const outcome = await runHubRoleSwitch({
+      plan: promotePlan(),
+      operationId: 'op-7d',
+      io,
+      signal: new AbortController().signal,
+      admit: NEVER_ADMIT,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({
+      kind: 'recover',
+      targetHubId: HUB_X,
+      fromHubId: HUB_A,
+      message: 'nodes.hubs.role.errors.writerTimeout',
+    });
+  });
+
+  test('原主不可达时的未确认：没有可回滚的原主，仍旧只是「未确认」', async () => {
+    const io = fakeIo({ hubs: () => ({ hubs: [], writerHubId: HUB_A }) });
+    const outcome = await runHubRoleSwitch({
+      plan: promotePlan({ fromUnreachable: true }),
+      operationId: 'op-7e',
+      io,
+      signal: new AbortController().signal,
+      admit: NEVER_ADMIT,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({
+      kind: 'unconfirmed',
+      message: 'nodes.hubs.role.errors.writerTimeout',
+    });
+  });
+
+  test('降原主一落地就交回恢复上下文：后面再抛异常也知道该弹恢复框', async () => {
+    const contexts: HubRoleRecoverContext[] = [];
+    const io = fakeIo({
+      hubs: () => {
+        throw new Error('entry down');
+      },
+    });
+    const outcome = await guardHubRoleRun({
+      run: () =>
+        runHubRoleSwitch({
+          plan: promotePlan(),
+          operationId: 'op-7f',
+          io,
+          signal: new AbortController().signal,
+          admit: NEVER_ADMIT,
+          phase: () => undefined,
+          t,
+          onRecoverContext: (context) => contexts.push(context),
+        }),
+      recover: () => contexts.at(-1) ?? null,
+      t,
+    });
+    expect(contexts).toEqual([{ targetHubId: HUB_X, fromHubId: HUB_A }]);
+    // hubs() 一直抛：轮询把它当成读不到，预算耗尽后按未确认收口，再因上下文转成恢复。
+    expect(outcome.kind).toBe('recover');
+  });
+
   test('目标回读自报 failed：同样走恢复，集群此刻没有 writer', async () => {
     const io = fakeIo({ statuses: [{ kind: 'ok', phase: 'failed', error: 'HUB_NOT_HUB' }] });
     const outcome = await runHubRoleSwitch({
@@ -794,6 +863,49 @@ describe('awaitHubRoleSwitch', () => {
     expect(io.clock.value).toBeGreaterThanOrEqual(1000 + HUB_ROLE_WRITER_TIMEOUT_MS);
   });
 
+  test('入口在切换途中抛异常：按「这一拍没读到」重试，起来后照样确认换人', async () => {
+    let hubCalls = 0;
+    const io = fakeIo({
+      hubs: () => {
+        hubCalls += 1;
+        // 前两拍入口自己也在断连；第三拍才读到 writer 换成了目标。
+        if (hubCalls <= 2) throw new Error('entry unreachable');
+        return { hubs: [], writerHubId: HUB_X };
+      },
+    });
+    const outcome = await awaitHubRoleSwitch({
+      targetHubId: HUB_X,
+      operationId: 'op-f',
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({ kind: 'done' });
+    expect(hubCalls).toBe(3);
+  });
+
+  test('入口一直抛异常：预算内重试完仍按「未确认」收口，不是未处理的 rejection', async () => {
+    const io = fakeIo({
+      hubs: () => {
+        throw new Error('entry unreachable');
+      },
+    });
+    const outcome = await awaitHubRoleSwitch({
+      targetHubId: HUB_X,
+      operationId: 'op-g',
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({
+      kind: 'unconfirmed',
+      message: 'nodes.hubs.role.errors.writerTimeout',
+    });
+    expect(io.clock.value).toBeGreaterThanOrEqual(1000 + HUB_ROLE_WRITER_TIMEOUT_MS);
+  });
+
   test('组件卸载：立刻收摊，不再轮询', async () => {
     const controller = new AbortController();
     controller.abort();
@@ -808,6 +920,100 @@ describe('awaitHubRoleSwitch', () => {
         t,
       })
     ).toEqual({ kind: 'cancelled' });
+  });
+});
+
+describe('guardHubRoleRun', () => {
+  test('跑通时原样带出结论', async () => {
+    expect(
+      await guardHubRoleRun({
+        run: async () => ({ kind: 'done' }) as HubRoleRunOutcome,
+        recover: () => null,
+        t,
+      })
+    ).toEqual({ kind: 'done' });
+  });
+
+  test('意外异常收敛成失败，不冒成未处理的 rejection', async () => {
+    expect(
+      await guardHubRoleRun({
+        run: () => Promise.reject(new Error('boom')),
+        recover: () => null,
+        t,
+      })
+    ).toEqual({
+      kind: 'failed',
+      message: t('nodes.hubs.role.failed', { error: 'nodes.hubs.role.errors.unexpected' }),
+    });
+  });
+
+  test('已经进入没有 writer 的窗口：异常也进恢复框', async () => {
+    expect(
+      await guardHubRoleRun({
+        run: () => Promise.reject(new Error('boom')),
+        recover: () => ({ targetHubId: HUB_X, fromHubId: HUB_A }),
+        t,
+      })
+    ).toEqual({
+      kind: 'recover',
+      targetHubId: HUB_X,
+      fromHubId: HUB_A,
+      message: t('nodes.hubs.role.failed', { error: 'nodes.hubs.role.errors.unexpected' }),
+    });
+  });
+});
+
+describe('hubRoleSettlement', () => {
+  const nameOf = (nodeId: string) => nodeId.slice(0, 4);
+  const settle = (outcome: HubRoleRunOutcome) =>
+    hubRoleSettlement({ outcome, targetName: 'x', nameOf, t });
+
+  test('恢复：留着对话框与续跑记录，切换未结束', () => {
+    const next = settle({
+      kind: 'recover',
+      message: 'boom',
+      targetHubId: HUB_X,
+      fromHubId: HUB_A,
+    });
+    expect(next.recovery).toEqual({
+      message: 'boom',
+      targetHubId: HUB_X,
+      targetName: '0a0a',
+      fromHubId: HUB_A,
+      fromName: '0b0b',
+    });
+    expect(next.running).toBe(true);
+    expect(next.clearRecord).toBe(false);
+    expect(next.toast).toBeNull();
+  });
+
+  test('失败：一条错误 toast，清记录，running 落回 false', () => {
+    const next = settle({ kind: 'failed', message: 'boom' });
+    expect(next).toEqual({
+      recovery: null,
+      running: false,
+      clearRecord: true,
+      toast: { level: 'error', message: 'boom' },
+      refresh: true,
+    });
+  });
+
+  test('没有恢复上下文的未确认：一条警告 toast，记录照清', () => {
+    const next = settle({ kind: 'unconfirmed', message: 'later' });
+    expect(next.toast).toEqual({ level: 'warning', message: 'later' });
+    expect(next.clearRecord).toBe(true);
+    expect(next.running).toBe(false);
+  });
+
+  test('成功：报出目标名字；取消：什么都不弹也不刷新', () => {
+    expect(settle({ kind: 'done' }).toast).toEqual({
+      level: 'success',
+      message: t('nodes.hubs.role.done', { target: 'x' }),
+    });
+    const cancelled = settle({ kind: 'cancelled' });
+    expect(cancelled.toast).toBeNull();
+    expect(cancelled.refresh).toBe(false);
+    expect(cancelled.clearRecord).toBe(true);
   });
 });
 
@@ -969,8 +1175,9 @@ describe('resumeHubRoleSwitch', () => {
       persist: saved.persist,
       t,
     });
-    // hubs() 一直回 HUB_A：升主后等不到 writer 换人，结论是「未确认」而不是谎报成功。
-    expect(outcome.kind).toBe('unconfirmed');
+    // hubs() 一直回 HUB_A：升主后等不到 writer 换人。原主已按这条记录降过备，因此不是一条
+    // toast 了事，而是进恢复框让用户选重试还是回滚。
+    expect(outcome.kind).toBe('recover');
     expect(io.calls.map((call) => [call.hubNodeId, call.mode, call.operationId])).toEqual([
       [HUB_A, 'standby', 'op-5'],
       [HUB_X, 'active', 'op-5'],
@@ -1078,6 +1285,101 @@ describe('resumeHubRoleSwitch', () => {
       kind: 'failed',
       message: 'nodes.hubs.role.errors.resumeAdmit',
     });
+    expect(io.calls).toEqual([]);
+  });
+
+  test('phase=wait 且回读超时：原主已降备，未确认同样进恢复框', async () => {
+    const io = fakeIo({ statuses: [{ kind: 'unreachable' }] });
+    const contexts: HubRoleRecoverContext[] = [];
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-4c',
+        targetHubId: HUB_X,
+        fromHubId: HUB_A,
+        intent: 'switch',
+        phase: 'wait',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+      onRecoverContext: (context) => contexts.push(context),
+    });
+    expect(outcome.kind).toBe('recover');
+    expect(contexts).toEqual([{ targetHubId: HUB_X, fromHubId: HUB_A }]);
+  });
+
+  test('phase=wait 且没有原主：未确认就是未确认，没有可回滚的对象', async () => {
+    const io = fakeIo({ statuses: [{ kind: 'unreachable' }] });
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-4d',
+        targetHubId: HUB_X,
+        fromHubId: null,
+        intent: 'switch',
+        phase: 'wait',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome.kind).toBe('unconfirmed');
+  });
+
+  test('续跑时读不到 hub 集合：不盲发升主，交给恢复框', async () => {
+    const io = fakeIo({
+      hubs: () => {
+        throw new Error('entry unreachable');
+      },
+    });
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-11',
+        targetHubId: HUB_X,
+        fromHubId: HUB_A,
+        intent: 'switch',
+        phase: 'promote',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome).toEqual({
+      kind: 'recover',
+      targetHubId: HUB_X,
+      fromHubId: HUB_A,
+      message: t('nodes.hubs.role.failed', { error: 'nodes.hubs.role.errors.hubsUnreachable' }),
+    });
+    expect(io.calls).toEqual([]);
+    expect(io.clock.value).toBeGreaterThanOrEqual(1000 + HUB_ROLE_HUBS_TIMEOUT_MS);
+  });
+
+  test('续跑时读不到 hub 集合且没有原主：报未确认，同样不发任何请求', async () => {
+    const io = fakeIo({
+      hubs: () => {
+        throw new Error('entry unreachable');
+      },
+    });
+    const outcome = await resumeHubRoleSwitch({
+      record: {
+        operationId: 'op-12',
+        targetHubId: HUB_X,
+        fromHubId: null,
+        intent: 'switch',
+        phase: 'promote',
+        startedAt: 1000,
+      },
+      io,
+      signal: new AbortController().signal,
+      phase: () => undefined,
+      t,
+    });
+    expect(outcome.kind).toBe('unconfirmed');
     expect(io.calls).toEqual([]);
   });
 

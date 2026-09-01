@@ -1775,8 +1775,8 @@
           "forceConfirm": "Continue Anyway",
           "recovery": {
             "title": "No Hub Accepts Writes",
-            "description": "The old primary hub is already a standby and the new one did not come up. Choose what to do next.",
-            "noWriter": "\"{{from}}\" is now a standby hub, and \"{{target}}\" could not be promoted.",
+            "description": "The old primary hub is already a standby and the new one has not confirmed the takeover. Choose what to do next.",
+            "noWriter": "\"{{from}}\" is now a standby hub, and \"{{target}}\" has not confirmed it took over writes.",
             "retry": "Retry Promoting Target",
             "rollback": "Roll Back: Promote Old Primary Again",
             "dismiss": "Handle Later"
@@ -1801,7 +1801,9 @@
             "authTimeout": "The hub authorization did not take effect in time.",
             "resumeAdmit": "The hub authorization was never signed. Start the switch again.",
             "restartTimeout": "The target did not restart in time, so the result is unconfirmed: {{error}}",
-            "writerTimeout": "Could not confirm the new primary hub took over writes. Refresh to check."
+            "writerTimeout": "Could not confirm the new primary hub took over writes. Refresh to check.",
+            "hubsUnreachable": "Could not read the hub list. The entry is temporarily unreachable.",
+            "unexpected": "The switch was interrupted. Refresh to check."
           }
         }
       },

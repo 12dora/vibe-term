@@ -1646,6 +1646,8 @@ export type TranslationKey =
   | 'nodes.hubs.role.errors.resumeAdmit'
   | 'nodes.hubs.role.errors.restartTimeout'
   | 'nodes.hubs.role.errors.writerTimeout'
+  | 'nodes.hubs.role.errors.hubsUnreachable'
+  | 'nodes.hubs.role.errors.unexpected'
   | 'nodes.machine'
   | 'nodes.machine.title'
   | 'nodes.machine.role'

@@ -16,8 +16,9 @@
 // 「降原主」和「升目标」之间有一个集群没有 writer 的窗口，切换又跨越目标的一次重启，用户很可能
 // 在中途刷新页面：**任何一个改动请求发出去之前**先把 `{operationId, targetHubId, fromHubId,
 // intent, phase}` 落 sessionStorage，刷新后按 phase 接着跑（含重发那条幂等的升主请求）。
-// 升主真的失败时不只弹一条 toast——那会让集群悄悄停在没有 writer 的状态——而是留一个不会自动
-// 消失的恢复对话框，让用户重试目标或回滚回原主。
+// 原主已降备之后，升主失败、超时未确认、途中抛异常都不只弹一条 toast——那会让集群悄悄停在
+// 没有 writer 的状态——而是留一个不会自动消失的恢复对话框，让用户重试目标或回滚回原主，
+// 续跑记录也一并留着，直到用户选出结果。
 // 记录只在这一个标签页里，换标签页看不到：它不是锁，只是「刷新即丢」的补丁。
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
@@ -54,6 +55,8 @@ export const HUB_ROLE_RESTART_BUDGET_MS = 90_000;
 export const HUB_ROLE_AUTH_TIMEOUT_MS = 20_000;
 /** 等 `writerHubId` 换成目标的上限；目标重启完成后这一步通常只要一两拍。 */
 export const HUB_ROLE_WRITER_TIMEOUT_MS = 60_000;
+/** 续跑前读一次 `/api/mesh/hubs` 的重试上限：入口在切换期间可能短暂断连，但不能无限等。 */
+export const HUB_ROLE_HUBS_TIMEOUT_MS = 20_000;
 
 export const HUB_ROLE_SWITCH_KEY = 'tmex.nodes.hub-role-switch';
 /** 超过这个时长的记录一律作废：目标早该起来了，接着轮询只会对着一份陈旧的 operationId。 */
@@ -371,6 +374,11 @@ function hubRoleFailedText(t: Translate, code: string): string {
   return t('nodes.hubs.role.failed', { error: hubRoleErrorText(t, code) });
 }
 
+/** 前端自己判定的失败（入口读不到、切换途中抛异常）：后端没有对应错误码，直接取本地文案。 */
+function hubRoleLocalFailedText(t: Translate, key: 'hubsUnreachable' | 'unexpected'): string {
+  return t('nodes.hubs.role.failed', { error: t(`nodes.hubs.role.errors.${key}`) });
+}
+
 const BLOCK_KEYS: Record<HubRoleBlockReason, string> = {
   unknownHub: 'nodes.hubs.role.blocked.unknownHub',
   unknownAuth: 'nodes.hubs.role.blocked.unknownAuth',
@@ -436,6 +444,30 @@ export type HubRoleRunOutcome =
   /** 原主已降备而目标没升起来：集群此刻没有 writer，必须让用户当场选下一步。 */
   | ({ kind: 'recover'; message: string } & HubRoleRecoverContext);
 
+/** 一段切换拿到的接缝：`onRecoverContext` 在进入「原主已降备」的窗口时被调用。 */
+export interface HubRoleRunContext {
+  signal: AbortSignal;
+  onRecoverContext: (context: HubRoleRecoverContext) => void;
+}
+
+/**
+ * 兜住整段切换：网络异常、依赖抛错都不能变成未处理的 rejection，更不能把页面永远留在
+ * `running=true`。已经进入没有 writer 的窗口时（`recover()` 有值）同样进恢复框，不是一条 toast。
+ */
+export async function guardHubRoleRun(p: {
+  run: () => Promise<HubRoleRunOutcome>;
+  recover: () => HubRoleRecoverContext | null;
+  t: Translate;
+}): Promise<HubRoleRunOutcome> {
+  try {
+    return await p.run();
+  } catch {
+    const message = hubRoleLocalFailedText(p.t, 'unexpected');
+    const context = p.recover();
+    return context ? { kind: 'recover', message, ...context } : { kind: 'failed', message };
+  }
+}
+
 /** 走完签名 + 提交 + 必要时的强制重试；用户在任何一步取消都返回 `cancelled`。 */
 export type AdmitHubStep = (target: HubRef) => Promise<AdmitHubOutcome | { kind: 'cancelled' }>;
 
@@ -461,6 +493,32 @@ export interface HubRoleTailParams {
   signal: AbortSignal;
   phase: (phase: HubRoleSwitchPhase) => void;
   t: Translate;
+}
+
+/**
+ * 读一次 `/api/mesh/hubs`。切换途中入口本身也可能短暂不可达，抛出来的异常不是结论：
+ * 一律当成「这一拍没读到」，何时收手交给各自的预算，绝不让它变成未处理的 rejection。
+ */
+async function readHubs(io: HubRoleIo): Promise<HubsSnapshot | null> {
+  try {
+    return await io.hubs();
+  } catch {
+    return null;
+  }
+}
+
+/** 只读一次不够的地方（续跑要先看 `writerHubId` 才知道从哪一档接着跑）：在预算内重试。 */
+async function readHubsWithin(p: {
+  io: HubRoleIo;
+  signal: AbortSignal;
+}): Promise<HubsSnapshot | null> {
+  const deadline = p.io.now() + HUB_ROLE_HUBS_TIMEOUT_MS;
+  while (true) {
+    const snapshot = await readHubs(p.io);
+    if (snapshot) return snapshot;
+    if (p.signal.aborted || p.io.now() >= deadline) return null;
+    if (!(await p.io.wait(HUB_ROLE_POLL_MS, p.signal))) return null;
+  }
 }
 
 /**
@@ -511,8 +569,8 @@ export async function awaitHubRoleSwitch(p: HubRoleTailParams): Promise<HubRoleR
   const deadline = p.io.now() + HUB_ROLE_WRITER_TIMEOUT_MS;
   while (true) {
     if (p.signal.aborted) return { kind: 'cancelled' };
-    const snapshot = await p.io.hubs();
-    if (snapshot.writerHubId === p.targetHubId) return { kind: 'done' };
+    const snapshot = await readHubs(p.io);
+    if (snapshot?.writerHubId === p.targetHubId) return { kind: 'done' };
     if (p.io.now() >= deadline) {
       return { kind: 'unconfirmed', message: p.t('nodes.hubs.role.errors.writerTimeout') };
     }
@@ -530,6 +588,8 @@ interface HubRoleStepBase {
   persist?: HubRolePersist;
   t: Translate;
   operationId: string;
+  /** 一进入「原主已降备」的窗口就交回恢复上下文：之后即便抛异常也知道该弹恢复框。 */
+  onRecoverContext?: (context: HubRoleRecoverContext) => void;
 }
 
 /** 只降备、无人接管：没有第 3、4 步可走，POST 一落地就算完。 */
@@ -556,6 +616,7 @@ async function demoteOnly(p: HubRoleStepBase & { hubNodeId: string }): Promise<H
 export async function promoteHub(
   p: HubRoleStepBase & { targetHubId: string; recover: HubRoleRecoverContext | null }
 ): Promise<HubRoleRunOutcome> {
+  if (p.recover) p.onRecoverContext?.(p.recover);
   p.persist?.('promote');
   p.phase('promoting');
   const req: HubRoleRequest = { mode: 'active', operationId: p.operationId };
@@ -577,7 +638,9 @@ export async function promoteHub(
     phase: p.phase,
     t: p.t,
   });
-  if (tail.kind === 'failed' && p.recover) {
+  // `unconfirmed` 在这里与 `failed` 同等对待：原主已经降备，而目标既没确认受理也没接管写入，
+  // 集群此刻很可能一个 writer 都没有——一条会自己消失的 toast 顶不住，必须让用户当场选。
+  if ((tail.kind === 'failed' || tail.kind === 'unconfirmed') && p.recover) {
     return { kind: 'recover', message: tail.message, ...p.recover };
   }
   return tail;
@@ -620,6 +683,7 @@ export interface HubRoleRunParams {
   /** 每一步开打之前落一次记录，刷新后据此续跑。 */
   persist?: HubRolePersist;
   t: Translate;
+  onRecoverContext?: (context: HubRoleRecoverContext) => void;
 }
 
 async function waitForSignedAuthorization(
@@ -629,8 +693,8 @@ async function waitForSignedAuthorization(
   const deadline = p.io.now() + HUB_ROLE_AUTH_TIMEOUT_MS;
   while (true) {
     if (p.signal.aborted) return { kind: 'cancelled' };
-    const snapshot = await p.io.hubs();
-    const hub = snapshot.hubs.find((row) => row.nodeId === hubNodeId);
+    const snapshot = await readHubs(p.io);
+    const hub = snapshot?.hubs.find((row) => row.nodeId === hubNodeId);
     if (hub?.authorization === 'signed') return null;
     if (p.io.now() >= deadline) {
       return { kind: 'failed', message: p.t('nodes.hubs.role.errors.authTimeout') };
@@ -766,6 +830,7 @@ export interface HubRoleResumeParams {
   phase: (phase: HubRoleSwitchPhase) => void;
   persist?: HubRolePersist;
   t: Translate;
+  onRecoverContext?: (context: HubRoleRecoverContext) => void;
 }
 
 /**
@@ -784,13 +849,19 @@ export async function resumeHubRoleSwitch(p: HubRoleResumeParams): Promise<HubRo
     persist: p.persist,
     t: p.t,
     operationId: record.operationId,
+    onRecoverContext: p.onRecoverContext,
   };
+  const recover: HubRoleRecoverContext | null = record.fromHubId
+    ? { targetHubId: record.targetHubId, fromHubId: record.fromHubId }
+    : null;
 
   if (record.intent === 'demoteOnly') {
     return demoteOnly({ ...base, hubNodeId: record.targetHubId });
   }
 
   if (record.phase === 'wait') {
+    // 刷新前升主已经发出去了：原主多半已降备，这一段的失败与超时都得进恢复框。
+    if (recover) p.onRecoverContext?.(recover);
     const tail = await awaitHubRoleSwitch({
       targetHubId: record.targetHubId,
       operationId: record.operationId,
@@ -799,19 +870,19 @@ export async function resumeHubRoleSwitch(p: HubRoleResumeParams): Promise<HubRo
       phase: p.phase,
       t: p.t,
     });
-    if (tail.kind === 'failed' && record.fromHubId) {
-      return {
-        kind: 'recover',
-        message: tail.message,
-        targetHubId: record.targetHubId,
-        fromHubId: record.fromHubId,
-      };
+    if ((tail.kind === 'failed' || tail.kind === 'unconfirmed') && recover) {
+      return { kind: 'recover', message: tail.message, ...recover };
     }
     return tail;
   }
 
-  const snapshot = await p.io.hubs();
+  const snapshot = await readHubsWithin({ io: p.io, signal: p.signal });
   if (p.signal.aborted) return { kind: 'cancelled' };
+  if (!snapshot) {
+    // 读不到 hub 集合就不知道降备落没落地，更不能盲发一条升主：交给用户在恢复框里选。
+    const message = hubRoleLocalFailedText(p.t, 'hubsUnreachable');
+    return recover ? { kind: 'recover', message, ...recover } : { kind: 'unconfirmed', message };
+  }
   // 目标已经接管：刷新前那一段其实已经跑完了。
   if (snapshot.writerHubId === record.targetHubId) return { kind: 'done' };
 
@@ -880,6 +951,60 @@ export interface HubRoleRecoveryPrompt extends HubRoleRecoverContext {
 
 export type HubRoleRecoveryChoice = 'retry' | 'rollback' | 'dismiss';
 
+/** 一段切换结束后该把界面摆成什么样；抽出来是为了不必渲染组件就能验证收尾规则。 */
+export interface HubRoleSettlement {
+  /** 恢复对话框；`null` = 这一轮到此为止。 */
+  recovery: HubRoleRecoveryPrompt | null;
+  /** 仍算「切换中」：恢复框摆着的时候按钮继续禁用。 */
+  running: boolean;
+  /** 清掉续跑记录；恢复框还在就必须留着，刷新后仍能接着跑。 */
+  clearRecord: boolean;
+  toast: { level: 'success' | 'warning' | 'error'; message: string } | null;
+  /** 让外部重新拉一次节点表。 */
+  refresh: boolean;
+}
+
+export function hubRoleSettlement(p: {
+  outcome: HubRoleRunOutcome;
+  targetName: string;
+  nameOf: (nodeId: string) => string;
+  t: Translate;
+}): HubRoleSettlement {
+  const outcome = p.outcome;
+  if (outcome.kind === 'recover') {
+    // 集群此刻没有 writer：toast 会自己消失，这里必须留一个用户不点就不走的对话框。
+    // 记录也留着，刷新后还能从 `promote` 那一档接着跑。
+    return {
+      recovery: {
+        message: outcome.message,
+        targetHubId: outcome.targetHubId,
+        targetName: p.nameOf(outcome.targetHubId),
+        fromHubId: outcome.fromHubId,
+        fromName: p.nameOf(outcome.fromHubId),
+      },
+      running: true,
+      clearRecord: false,
+      toast: null,
+      refresh: false,
+    };
+  }
+  let toast: HubRoleSettlement['toast'] = null;
+  if (outcome.kind === 'done') {
+    toast = { level: 'success', message: p.t('nodes.hubs.role.done', { target: p.targetName }) };
+  } else if (outcome.kind === 'unconfirmed') {
+    toast = { level: 'warning', message: outcome.message };
+  } else if (outcome.kind === 'failed') {
+    toast = { level: 'error', message: outcome.message };
+  }
+  return {
+    recovery: null,
+    running: false,
+    clearRecord: true,
+    toast,
+    refresh: outcome.kind !== 'cancelled',
+  };
+}
+
 export interface HubRoleSwitchDeps {
   hubs: MeshHubEndpoint[];
   writerHubId: string | null;
@@ -909,6 +1034,12 @@ export interface HubRoleSwitchController {
   resolveForce: (accepted: boolean) => void;
   resolveRecovery: (choice: HubRoleRecoveryChoice) => void;
   stateOf: (row: NodeRow, rowBusy: boolean) => HubRoleButtonState;
+}
+
+function showHubRoleToast(entry: NonNullable<HubRoleSettlement['toast']>): void {
+  if (entry.level === 'success') toast.success(entry.message);
+  else if (entry.level === 'warning') toast.warning(entry.message);
+  else toast.error(entry.message);
 }
 
 export interface UseHubRoleSwitchOptions {
@@ -945,29 +1076,16 @@ export function useHubRoleSwitch(
 
   const settle = useCallback((outcome: HubRoleRunOutcome, targetName: string) => {
     const cur = latest.current;
-    if (outcome.kind === 'recover') {
-      // 集群此刻没有 writer：toast 会自己消失，这里必须留一个用户不点就不走的对话框。
-      // 记录也留着，刷新后还能从 `promote` 那一档接着跑。
-      setRecovery({
-        message: outcome.message,
-        targetHubId: outcome.targetHubId,
-        targetName: cur.nameOf(outcome.targetHubId),
-        fromHubId: outcome.fromHubId,
-        fromName: cur.nameOf(outcome.fromHubId),
-      });
-      setPhase(null);
-      return;
-    }
-    if (outcome.kind === 'done') {
-      toast.success(cur.t('nodes.hubs.role.done', { target: targetName }));
-    } else if (outcome.kind === 'unconfirmed') toast.warning(outcome.message);
-    else if (outcome.kind === 'failed') toast.error(outcome.message);
-    clearHubRoleSwitch();
-    setSwitchingIds(new Set<string>());
-    setRecovery(null);
+    const next = hubRoleSettlement({ outcome, targetName, nameOf: cur.nameOf, t: cur.t });
+    if (next.toast) showHubRoleToast(next.toast);
+    if (next.clearRecord) clearHubRoleSwitch();
+    setRecovery(next.recovery);
     setPhase(null);
-    setRunning(false);
-    if (outcome.kind !== 'cancelled') cur.onChanged();
+    if (!next.running) {
+      setSwitchingIds(new Set<string>());
+      setRunning(false);
+    }
+    if (next.refresh) cur.onChanged();
   }, []);
 
   /** 起一段切换：换掉上一段（若还在跑），并把「切换中」的行标出来。 */
@@ -975,7 +1093,7 @@ export function useHubRoleSwitch(
     (
       ids: Iterable<string>,
       targetName: string,
-      task: (signal: AbortSignal) => Promise<HubRoleRunOutcome>
+      task: (context: HubRoleRunContext) => Promise<HubRoleRunOutcome>
     ) => {
       runRef.current?.abort();
       const controller = new AbortController();
@@ -983,8 +1101,20 @@ export function useHubRoleSwitch(
       setRecovery(null);
       setRunning(true);
       setSwitchingIds(new Set(ids));
+      // 恢复上下文由 task 途中交回来：抛异常时才知道该弹恢复框还是一条 toast。
+      const recovered: { context: HubRoleRecoverContext | null } = { context: null };
       void (async () => {
-        const outcome = await task(controller.signal);
+        const outcome = await guardHubRoleRun({
+          run: () =>
+            task({
+              signal: controller.signal,
+              onRecoverContext: (context) => {
+                recovered.context = context;
+              },
+            }),
+          recover: () => recovered.context,
+          t: latest.current.t,
+        });
         if (controller.signal.aborted) return;
         settle(outcome, targetName);
       })();
@@ -1000,7 +1130,7 @@ export function useHubRoleSwitch(
       drive(
         record.fromHubId ? [record.targetHubId, record.fromHubId] : [record.targetHubId],
         cur.nameOf(record.targetHubId),
-        (signal) =>
+        ({ signal, onRecoverContext }) =>
           resumeHubRoleSwitch({
             record,
             io: cur.io,
@@ -1008,6 +1138,7 @@ export function useHubRoleSwitch(
             phase: setPhase,
             persist: hubRoleSwitchPersist(record),
             t: cur.t,
+            onRecoverContext,
           })
       );
     }
@@ -1060,7 +1191,7 @@ export function useHubRoleSwitch(
         ...(plan.from ? [plan.from.nodeId] : []),
       ],
       targetName,
-      (signal) =>
+      ({ signal, onRecoverContext }) =>
         runHubRoleSwitch({
           plan,
           operationId,
@@ -1069,6 +1200,7 @@ export function useHubRoleSwitch(
           phase: setPhase,
           persist,
           t,
+          onRecoverContext,
           admit: (hub) =>
             admitHubSigned({ api, mode, prompt, io, target: hub, setForce, forceResolve }),
         })
@@ -1102,7 +1234,7 @@ export function useHubRoleSwitch(
       drive(
         [current.targetHubId, current.fromHubId],
         rollback ? current.fromName : current.targetName,
-        (signal) =>
+        ({ signal, onRecoverContext }) =>
           promoteHub({
             io,
             signal,
@@ -1112,6 +1244,7 @@ export function useHubRoleSwitch(
             operationId,
             targetHubId,
             recover: { targetHubId: current.targetHubId, fromHubId: current.fromHubId },
+            onRecoverContext,
           })
       );
     },

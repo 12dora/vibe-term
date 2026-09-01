@@ -1781,8 +1781,8 @@ export const I18N_RESOURCES = {
           "forceConfirm": "Continue Anyway",
           "recovery": {
             "title": "No Hub Accepts Writes",
-            "description": "The old primary hub is already a standby and the new one did not come up. Choose what to do next.",
-            "noWriter": "\"{{from}}\" is now a standby hub, and \"{{target}}\" could not be promoted.",
+            "description": "The old primary hub is already a standby and the new one has not confirmed the takeover. Choose what to do next.",
+            "noWriter": "\"{{from}}\" is now a standby hub, and \"{{target}}\" has not confirmed it took over writes.",
             "retry": "Retry Promoting Target",
             "rollback": "Roll Back: Promote Old Primary Again",
             "dismiss": "Handle Later"
@@ -1807,7 +1807,9 @@ export const I18N_RESOURCES = {
             "authTimeout": "The hub authorization did not take effect in time.",
             "resumeAdmit": "The hub authorization was never signed. Start the switch again.",
             "restartTimeout": "The target did not restart in time, so the result is unconfirmed: {{error}}",
-            "writerTimeout": "Could not confirm the new primary hub took over writes. Refresh to check."
+            "writerTimeout": "Could not confirm the new primary hub took over writes. Refresh to check.",
+            "hubsUnreachable": "Could not read the hub list. The entry is temporarily unreachable.",
+            "unexpected": "The switch was interrupted. Refresh to check."
           }
         }
       },
@@ -4163,8 +4165,8 @@ export const I18N_RESOURCES = {
           "forceConfirm": "仍然继续",
           "recovery": {
             "title": "当前没有可写 Hub",
-            "description": "原主 Hub 已降为备，新主 Hub 未能升起，须选择下一步。",
-            "noWriter": "「{{from}}」已降为备 Hub，「{{target}}」未能升为主 Hub。",
+            "description": "原主 Hub 已降为备，新主 Hub 未确认接管，须选择下一步。",
+            "noWriter": "「{{from}}」已降为备 Hub，「{{target}}」未确认接管写入。",
             "retry": "重试升级目标",
             "rollback": "回滚：重新升级原主 Hub",
             "dismiss": "稍后处理"
@@ -4189,7 +4191,9 @@ export const I18N_RESOURCES = {
             "authTimeout": "Hub 授权未在预期时间内生效。",
             "resumeAdmit": "Hub 授权尚未签发完成，请重新发起切换。",
             "restartTimeout": "目标重启超时，未能确认切换结果：{{error}}",
-            "writerTimeout": "未能确认新的主 Hub 已接管写入，请刷新核对。"
+            "writerTimeout": "未能确认新的主 Hub 已接管写入，请刷新核对。",
+            "hubsUnreachable": "读不到 Hub 列表，入口暂时不可达。",
+            "unexpected": "切换中断，请刷新核对。"
           }
         }
       },
@@ -6539,8 +6543,8 @@ export const I18N_RESOURCES = {
           "forceConfirm": "続行する",
           "recovery": {
             "title": "書き込み可能なハブがありません",
-            "description": "元のメインハブは予備になり、新しいメインハブは起動できませんでした。次の操作を選んでください。",
-            "noWriter": "「{{from}}」は予備ハブになり、「{{target}}」はメインハブになれませんでした。",
+            "description": "元のメインハブは予備になり、新しいメインハブの引き継ぎは未確認です。次の操作を選んでください。",
+            "noWriter": "「{{from}}」は予備ハブになり、「{{target}}」の書き込み引き継ぎは未確認です。",
             "retry": "対象の昇格を再試行",
             "rollback": "ロールバック：元のメインハブを再び昇格",
             "dismiss": "後で対応"
@@ -6565,7 +6569,9 @@ export const I18N_RESOURCES = {
             "authTimeout": "ハブ認可が時間内に反映されませんでした。",
             "resumeAdmit": "ハブ認可の発行が完了していません。切り替えをやり直してください。",
             "restartTimeout": "対象の再起動がタイムアウトし、結果を確認できません：{{error}}",
-            "writerTimeout": "新しいメインハブが書き込みを引き継いだか確認できません。更新して確認してください。"
+            "writerTimeout": "新しいメインハブが書き込みを引き継いだか確認できません。更新して確認してください。",
+            "hubsUnreachable": "ハブ一覧を取得できません。入口に一時的に接続できません。",
+            "unexpected": "切り替えが中断しました。更新して確認してください。"
           }
         }
       },
