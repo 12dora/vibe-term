@@ -319,6 +319,9 @@ export function resolveAgentAuth(
         key,
       })
     );
+    if (agent === undefined) {
+      throw new Error('SSH_AUTH_SOCK 未设置，无法使用 SSH Agent 认证');
+    }
     const authHandler: [AgentAuthMethod, ...PublicKeyAuthMethod[]] = [
       {
         type: 'agent',

@@ -90,7 +90,7 @@ describe('managed endpoint publication', () => {
   });
 
   test('consumes one-time endpoint environment before the runtime starts', () => {
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       TMEX_MANAGED_ENDPOINT_PATH: join(tmpdir(), 'ready.json'),
       TMEX_MANAGED_ENDPOINT_NONCE: 'launch-nonce',
       UNRELATED: 'preserved',

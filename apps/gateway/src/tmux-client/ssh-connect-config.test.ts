@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Device } from '@tmex/shared';
+import type { AgentAuthMethod, PublicKeyAuthMethod } from 'ssh2';
 
 import { resolveSshConnectConfig } from './ssh-connect-config';
 
@@ -153,7 +154,7 @@ describe('resolveSshConnectConfig', () => {
       agent: '/tmp/test-agent.sock',
     });
     expect(config.privateKey).toBeUndefined();
-    expect(config.authHandler).toEqual([
+    const expectedAuthHandler: Array<AgentAuthMethod | PublicKeyAuthMethod> = [
       {
         type: 'agent',
         username: 'root',
@@ -164,7 +165,8 @@ describe('resolveSshConnectConfig', () => {
         username: 'root',
         key: 'PRIVATE_KEY_CONTENT',
       },
-    ]);
+    ];
+    expect(config.authHandler).toEqual(expectedAuthHandler);
   });
 
   test('non-configRef mode ignores stale sshConfigRef and never resolves host via ssh -G', async () => {
@@ -259,7 +261,7 @@ describe('resolveSshConnectConfig', () => {
       },
     });
 
-    expect(config.authHandler).toEqual([
+    const expectedAuthHandler: Array<AgentAuthMethod | PublicKeyAuthMethod> = [
       {
         type: 'agent',
         username: 'root',
@@ -275,7 +277,8 @@ describe('resolveSshConnectConfig', () => {
         username: 'root',
         key: 'ED25519_PRIVATE_KEY_CONTENT',
       },
-    ]);
+    ];
+    expect(config.authHandler).toEqual(expectedAuthHandler);
   });
 
   function baseDevice(overrides: Partial<Device> & Pick<Device, 'id' | 'authMode'>): Device {

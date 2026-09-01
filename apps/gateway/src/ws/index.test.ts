@@ -219,7 +219,11 @@ describe('WebSocketServer malformed Borsh payload', () => {
     const onUnhandled = (reason: unknown) => {
       unhandled.push(reason);
     };
-    process.on('unhandledRejection', onUnhandled);
+    const processEvents = process as unknown as {
+      on(event: 'unhandledRejection', listener: NodeJS.UnhandledRejectionListener): void;
+      off(event: 'unhandledRejection', listener: NodeJS.UnhandledRejectionListener): void;
+    };
+    processEvents.on('unhandledRejection', onUnhandled);
 
     const frame = wsBorsh.encodeEnvelope(
       wsBorsh.KIND_DEVICE_CONNECT,
@@ -228,7 +232,7 @@ describe('WebSocketServer malformed Borsh payload', () => {
     );
     server.handleMessage(ws, Buffer.from(frame));
     await flushAsync();
-    process.off('unhandledRejection', onUnhandled);
+    processEvents.off('unhandledRejection', onUnhandled);
 
     expect(unhandled).toEqual([]);
     expect(ws.sent.length).toBe(1);

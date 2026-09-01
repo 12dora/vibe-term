@@ -1,6 +1,10 @@
 import type { AuthMode } from '@tmex/shared';
 
-type EnvLike = Partial<Record<'SSH_AUTH_SOCK' | 'USER' | 'LOGNAME', string | undefined>>;
+type EnvLike = {
+  SSH_AUTH_SOCK?: string | undefined;
+  USER?: string | undefined;
+  LOGNAME?: string | undefined;
+};
 
 function normalizeEnvValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -10,7 +14,7 @@ function normalizeEnvValue(value: string | undefined): string | undefined {
 export function resolveSshUsername(
   configuredUsername: string | undefined,
   authMode: AuthMode,
-  env: EnvLike = process.env
+  env: EnvLike | NodeJS.ProcessEnv = process.env
 ): string {
   const explicitUsername = normalizeEnvValue(configuredUsername);
   if (explicitUsername) {
@@ -29,7 +33,7 @@ export function resolveSshUsername(
 
 export function resolveSshAgentSocket(
   authMode: AuthMode,
-  env: EnvLike = process.env
+  env: EnvLike | NodeJS.ProcessEnv = process.env
 ): string | undefined {
   if (authMode !== 'agent' && authMode !== 'auto') {
     return undefined;

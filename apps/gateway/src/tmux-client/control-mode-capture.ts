@@ -110,7 +110,9 @@ function parseNonNegativeInteger(value: string | undefined): number | null {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
-function parsePaneFrameInfo(block: ControlModeBlock): Omit<AtomicPaneCapture, 'text'> {
+function parsePaneFrameInfo(
+  block: ControlModeBlock
+): Omit<AtomicPaneCapture, 'text' | 'historyText'> {
   const info = block.lines[0]?.split('|');
   const cols = parseNonNegativeInteger(info?.[0]);
   const rows = parseNonNegativeInteger(info?.[1]);

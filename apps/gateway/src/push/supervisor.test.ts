@@ -1,7 +1,30 @@
 import { describe, expect, test } from 'bun:test';
 import type { Device, SiteSettings, StateSnapshotPayload } from '@tmex/shared';
-import type { DeviceSessionRuntimeListener } from '../tmux-client/device-session-runtime';
+import type {
+  DeviceSessionRuntime,
+  DeviceSessionRuntimeListener,
+} from '../tmux-client/device-session-runtime';
 import { PushSupervisor } from './supervisor';
+
+function mockRuntime(
+  overrides: Partial<
+    Pick<
+      DeviceSessionRuntime,
+      'subscribe' | 'connect' | 'requestSnapshot' | 'disconnect' | 'sessionClosedEmitted'
+    >
+  > = {}
+): DeviceSessionRuntime {
+  return {
+    async connect() {},
+    subscribe() {
+      return () => {};
+    },
+    requestSnapshot() {},
+    disconnect() {},
+    sessionClosedEmitted: false,
+    ...overrides,
+  } as DeviceSessionRuntime;
+}
 
 const now = '2026-02-11T00:00:00.000Z';
 
@@ -51,16 +74,11 @@ describe('PushSupervisor', () => {
         acquireRuntime: async (deviceId) => {
           acquireCalls.push(deviceId);
 
-          return {
-            async connect() {},
-            subscribe() {
-              return () => {};
-            },
+          return mockRuntime({
             requestSnapshot() {
               snapshotCalls.push(deviceId);
             },
-            disconnect() {},
-          } as any;
+          });
         },
         releaseRuntime: async () => {},
       },
@@ -83,15 +101,7 @@ describe('PushSupervisor', () => {
         listDevices: () => devices,
         getDevice: (deviceId) => devices.find((item) => item.id === deviceId) ?? null,
         getSettings: () => createSettings(),
-        acquireRuntime: async () =>
-          ({
-            async connect() {},
-            subscribe() {
-              return () => {};
-            },
-            requestSnapshot() {},
-            disconnect() {},
-          }) as any,
+        acquireRuntime: async () => mockRuntime(),
         releaseRuntime: async (deviceId) => {
           released.push(deviceId);
         },
@@ -108,7 +118,7 @@ describe('PushSupervisor', () => {
   test('bell event should notify with resolved pane context', async () => {
     const device = createDevice('d1');
     const notifications: Array<{ paneId?: string; windowId?: string; paneUrl?: string }> = [];
-    let listener: DeviceSessionRuntimeListener | null = null;
+    const attached: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
 
     const supervisor = new PushSupervisor({
       deps: {
@@ -116,17 +126,14 @@ describe('PushSupervisor', () => {
         getDevice: () => device,
         getSettings: () => createSettings(),
         acquireRuntime: async () =>
-          ({
-            subscribe(next: DeviceSessionRuntimeListener) {
-              listener = next;
+          mockRuntime({
+            subscribe(next) {
+              attached.listener = next;
               return () => {
-                listener = null;
+                attached.listener = null;
               };
             },
-            async connect() {},
-            requestSnapshot() {},
-            disconnect() {},
-          }) as any,
+          }),
         releaseRuntime: async () => {},
         async notifyBell(context) {
           notifications.push({
@@ -166,8 +173,8 @@ describe('PushSupervisor', () => {
       },
     };
 
-    listener?.onSnapshot?.(snapshot);
-    listener?.onEvent?.({ type: 'bell', data: { paneId: '%1' } });
+    attached.listener?.onSnapshot?.(snapshot);
+    attached.listener?.onEvent?.({ type: 'bell', data: { paneId: '%1' } });
 
     expect(notifications).toEqual([
       {
@@ -190,7 +197,7 @@ describe('PushSupervisor', () => {
       title?: string;
       body: string;
     }> = [];
-    let listener: DeviceSessionRuntimeListener | null = null;
+    const attached: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
 
     const supervisor = new PushSupervisor({
       deps: {
@@ -198,17 +205,14 @@ describe('PushSupervisor', () => {
         getDevice: () => device,
         getSettings: () => createSettings(),
         acquireRuntime: async () =>
-          ({
-            subscribe(next: DeviceSessionRuntimeListener) {
-              listener = next;
+          mockRuntime({
+            subscribe(next) {
+              attached.listener = next;
               return () => {
-                listener = null;
+                attached.listener = null;
               };
             },
-            async connect() {},
-            requestSnapshot() {},
-            disconnect() {},
-          }) as any,
+          }),
         releaseRuntime: async () => {},
         async notifyNotification(context) {
           notifications.push({
@@ -251,8 +255,8 @@ describe('PushSupervisor', () => {
       },
     };
 
-    listener?.onSnapshot?.(snapshot);
-    listener?.onEvent?.({
+    attached.listener?.onSnapshot?.(snapshot);
+    attached.listener?.onEvent?.({
       type: 'notification',
       data: {
         paneId: '%1',
@@ -285,7 +289,7 @@ describe('PushSupervisor', () => {
     'close with sessionClosedEmitted=%p bridges %p',
     async (sessionClosedEmitted, expectedEvents) => {
       const device = createDevice(`close-${String(sessionClosedEmitted)}`);
-      let listener: DeviceSessionRuntimeListener | null = null;
+      const attached: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
       const events: string[] = [];
       const { connectionAlertNotifier } = await import('./connection-alerts');
       connectionAlertNotifier.setEventEmitter((eventType) => {
@@ -302,25 +306,22 @@ describe('PushSupervisor', () => {
           getDevice: () => device,
           getSettings: () => createSettings(),
           acquireRuntime: async () =>
-            ({
+            mockRuntime({
               sessionClosedEmitted,
-              subscribe(next: DeviceSessionRuntimeListener) {
-                listener = next;
+              subscribe(next) {
+                attached.listener = next;
                 return () => {
-                  listener = null;
+                  attached.listener = null;
                 };
               },
-              async connect() {},
-              requestSnapshot() {},
-              disconnect() {},
-            }) as any,
+            }),
           releaseRuntime: async () => {},
         },
       });
 
       try {
         await supervisor.start();
-        listener?.onClose?.();
+        attached.listener?.onClose?.();
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(events).toEqual(expectedEvents);
       } finally {

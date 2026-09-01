@@ -1643,13 +1643,17 @@ describe('LocalExternalTmuxConnection', () => {
     const onUnhandled = (reason: unknown) => {
       unhandled.push(reason);
     };
-    process.on('unhandledRejection', onUnhandled);
+    const processEvents = process as unknown as {
+      on(event: 'unhandledRejection', listener: NodeJS.UnhandledRejectionListener): void;
+      off(event: 'unhandledRejection', listener: NodeJS.UnhandledRejectionListener): void;
+    };
+    processEvents.on('unhandledRejection', onUnhandled);
     try {
       connection.requestSnapshot();
       await waitFor(() => (errors.length > 0 ? true : null));
       await Bun.sleep(20);
     } finally {
-      process.off('unhandledRejection', onUnhandled);
+      processEvents.off('unhandledRejection', onUnhandled);
     }
 
     expect(unhandled).toEqual([]);
@@ -1888,10 +1892,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     const stale =
       '%1|@1|0|1|80|24|0|0|1|first pane|vim|/home/user\n%2|@1|1|0|80|24|0|0|1|bash|node|/home/user\n';
     let paneListCalls = 0;
-    let releaseStale: (() => void) | null = null;
-    const staleGate = new Promise<void>((resolve) => {
-      releaseStale = resolve;
-    });
+    const staleGate = Promise.withResolvers<void>();
     const baseRun = createRunStub(session);
     const events: EmittedEvent[] = [];
     const connection = new LocalExternalTmuxConnection(
@@ -1919,7 +1920,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
               return ok(stale); // connect 首帧：两个 pane
             }
             if (paneListCalls === 2) {
-              await staleGate; // 请求 A：挂起直到手动放行，届时返回过期数据（%1 仍在）
+              await staleGate.promise; // 请求 A：挂起直到手动放行，届时返回过期数据（%1 仍在）
               return ok(stale);
             }
             return ok(fresh); // 请求 B 与后续帧：%1 已关闭
@@ -1942,7 +1943,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     expect(paneListCalls).toBe(2);
     expect(events).toHaveLength(0);
 
-    releaseStale?.();
+    staleGate.resolve();
     await waitFor(() => (events.length > 0 ? true : null));
 
     expect(paneListCalls).toBe(3);
