@@ -1,9 +1,18 @@
+/** 上一次真正发给该会话的策略：再来任何声明时若与之不同就重发，丢一条也能靠下一次声明补回。 */
+export interface ViewportSentPolicy {
+  paneId: string;
+  owner: boolean;
+  cols: number;
+  rows: number;
+}
+
 export interface ViewportClaim {
   paneId: string;
   cols: number;
   rows: number;
   visible: boolean;
   at: number;
+  sentPolicy?: ViewportSentPolicy;
 }
 
 export interface ViewportClaimRecord {
@@ -156,12 +165,22 @@ export function notifyClaimants<
   key: string,
   shouldBroadcast: boolean,
   notifyFirst: T | undefined,
+  policyFor: (session: T, claim: ViewportClaim) => Omit<ViewportSentPolicy, 'paneId'>,
   send: (session: T, claim: ViewportClaim) => void
 ): void {
   for (const session of claimants) {
     const claim = session.viewportClaims.get(key);
     if (!claim) continue;
-    if (!shouldBroadcast && session !== notifyFirst) continue;
+    const next = { ...policyFor(session, claim), paneId: claim.paneId };
+    const prev = claim.sentPolicy;
+    const changed =
+      !prev ||
+      prev.paneId !== next.paneId ||
+      prev.owner !== next.owner ||
+      prev.cols !== next.cols ||
+      prev.rows !== next.rows;
+    if (!shouldBroadcast && session !== notifyFirst && !changed) continue;
+    claim.sentPolicy = next;
     send(session, claim);
   }
 }

@@ -241,19 +241,81 @@ describe('notifyClaimants', () => {
   test('sends to every claimant on broadcast, otherwise only notifyFirst', () => {
     const key = viewportClaimKey('dev-a', '@1');
     const claim: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 };
-    const first = sessionClaims('a', [[key, claim]]);
-    const second = sessionClaims('b', [[key, claim]]);
+    const first = sessionClaims('a', [[key, { ...claim }]]);
+    const second = sessionClaims('b', [[key, { ...claim }]]);
     const sent: string[] = [];
 
-    notifyClaimants([first, second], key, true, first, (session) => {
+    const policyFor = (session: { id: string }) => ({
+      owner: session.id === 'a',
+      cols: 80,
+      rows: 24,
+    });
+    notifyClaimants([first, second], key, true, first, policyFor, (session) => {
       sent.push(session.id);
     });
     expect(sent).toEqual(['a', 'b']);
 
     sent.length = 0;
-    notifyClaimants([first, second], key, false, first, (session) => {
+    notifyClaimants([first, second], key, false, first, policyFor, (session) => {
       sent.push(session.id);
     });
     expect(sent).toEqual(['a']);
+  });
+
+  test('resends whenever the policy differs from what the session last received', () => {
+    const key = viewportClaimKey('dev-a', '@1');
+    const claim: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 };
+    const follower = sessionClaims('b', [[key, claim]]);
+    const sent: string[] = [];
+    const send = (session: { id: string }) => {
+      sent.push(session.id);
+    };
+
+    // 从未发过：即使不广播、也不是 notifyFirst，也要补发一次
+    notifyClaimants(
+      [follower],
+      key,
+      false,
+      undefined,
+      () => ({ owner: false, cols: 160, rows: 48 }),
+      send
+    );
+    expect(sent).toEqual(['b']);
+
+    // 内容没变：不重复发
+    sent.length = 0;
+    notifyClaimants(
+      [follower],
+      key,
+      false,
+      undefined,
+      () => ({ owner: false, cols: 160, rows: 48 }),
+      send
+    );
+    expect(sent).toEqual([]);
+
+    // owner 变了：重发
+    notifyClaimants(
+      [follower],
+      key,
+      false,
+      undefined,
+      () => ({ owner: true, cols: 160, rows: 48 }),
+      send
+    );
+    expect(sent).toEqual(['b']);
+
+    // 同窗换 pane（声明换了 paneId 但沿用 sentPolicy）：重发
+    sent.length = 0;
+    follower.viewportClaims.set(key, { ...claim, paneId: '%1', sentPolicy: claim.sentPolicy });
+    notifyClaimants(
+      [follower],
+      key,
+      false,
+      undefined,
+      () => ({ owner: true, cols: 160, rows: 48 }),
+      send
+    );
+    expect(sent).toEqual(['b']);
   });
 });

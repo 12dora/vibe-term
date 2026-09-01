@@ -399,6 +399,7 @@ function recordViewportClaim(
     rows: data.rows,
     visible: data.visible,
     at: Date.now(),
+    sentPolicy: previous?.sentPolicy,
   });
   return applyViewportPolicy(host, data.deviceId, window.id, {
     extraSession: session,
@@ -510,6 +511,11 @@ function applyResolvedViewportPolicy(
     key,
     previousWinnerId !== nextWinnerId || geometry != null,
     options.notifyFirst,
+    (session) => ({
+      owner: winner?.sessionId === session.id,
+      cols: applied.cols,
+      rows: applied.rows,
+    }),
     (session, claim) => {
       sendViewportPolicy(host, session, {
         deviceId,
