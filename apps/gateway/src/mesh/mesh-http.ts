@@ -172,6 +172,7 @@ export class MeshHttpRuntime {
       primaryUserId: opts.primaryUserId,
       hubPublicUrl: opts.hubPublicUrl,
       hubStore: opts.hubStore,
+      attachedHub: opts.attachedHub,
       listPublicNodes: this.authSurfaceOnly
         ? () => [{ id: opts.nodeId, name: 'self', online: true }]
         : () => this.mesh.publicNodes(),

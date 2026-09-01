@@ -34,7 +34,10 @@ export const UPLINK_POOL_FAIL_LIMIT = 3;
 export const UPLINK_POOL_AUTH_DEADLINE_MS = 20_000;
 export const UPLINK_POOL_PROBE_INTERVAL_MS = 60_000;
 export const UPLINK_POOL_PROBE_TIMEOUT_MS = 5_000;
+export const UPLINK_POOL_PROBE_JITTER = 0.2;
 export const UPLINK_SEED_PRIORITY_BASE = 1_000;
+export const CA_BOOTSTRAP_TIMEOUT_MS = 5_000;
+export const CA_BOOTSTRAP_MAX_BYTES = 64 * 1024;
 
 export type UplinkCandidate = {
   hubNodeId: string | null;
@@ -75,6 +78,9 @@ export type UplinkPoolOptions = {
   probeHealthz?: (publicUrl: string, tlsCa: string[] | null, timeoutMs: number) => Promise<boolean>;
   fetchCaPem?: (publicUrl: string) => Promise<string>;
   fingerprintPem?: (pem: string) => string;
+  isLocalCandidate?: (cand: UplinkCandidate) => boolean;
+  connectLocal?: (client: UplinkClient, signal: AbortSignal) => Promise<void>;
+  probeJitter?: number;
   onNodeList?: (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void;
   onRtcSignal?: (msg: UplinkRtcSignal) => void;
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
@@ -97,6 +103,33 @@ export function normalizeHubEndpointUrl(raw: string): string {
 
 export function sameHubUrl(a: string, b: string): boolean {
   return normalizeHubEndpointUrl(a) === normalizeHubEndpointUrl(b);
+}
+
+export function isSelfHubCandidate(
+  cand: Pick<UplinkCandidate, 'hubNodeId' | 'publicUrl'>,
+  self: { nodeId?: string | null; publicUrl?: string | null }
+): boolean {
+  if (self.nodeId && cand.hubNodeId && cand.hubNodeId === self.nodeId) return true;
+  if (self.publicUrl && sameHubUrl(cand.publicUrl, self.publicUrl)) return true;
+  return false;
+}
+
+export function isCaFingerprintHex(value: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(value.trim());
+}
+
+export function parseSingleCaCertificate(pem: string): X509Certificate {
+  const matches = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+  if (matches.length !== 1) throw new Error('ca_pem_count');
+  const cert = new X509Certificate(matches[0]);
+  if (cert.ca !== true) throw new Error('ca_not_ca');
+  return cert;
+}
+
+export function jitteredIntervalMs(baseMs: number, jitter = UPLINK_POOL_PROBE_JITTER): number {
+  const ratio = Math.min(Math.max(jitter, 0), 1);
+  const delta = baseMs * ratio;
+  return Math.max(1, Math.floor(baseMs - delta + Math.random() * (2 * delta)));
 }
 
 export function mergeUplinkCandidates(
@@ -171,6 +204,36 @@ export function spkiFingerprintFromPem(pem: string): string {
   return createHash('sha256').update(spki).digest('hex');
 }
 
+export async function readResponseTextLimited(res: Response, maxBytes: number): Promise<string> {
+  const body = res.body;
+  if (!body) return '';
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
+      throw new Error('ca_too_large');
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(out);
+}
+
 export function joinHubPath(publicUrl: string, path: string): string {
   return `${publicUrl.replace(/\/+$/, '')}${path}`;
 }
@@ -195,13 +258,39 @@ export async function defaultProbeHealthz(
   }
 }
 
-export async function defaultFetchCaPem(publicUrl: string): Promise<string> {
-  const res = await fetch(joinHubPath(publicUrl, '/api/tls/ca.crt'), {
-    redirect: 'error',
-    tls: { rejectUnauthorized: false },
-  } as RequestInit);
-  if (!res.ok) throw new Error('ca_unavailable');
-  return res.text();
+export async function defaultFetchCaPem(
+  publicUrl: string,
+  opts?: {
+    fetch?: (input: string, init?: RequestInit) => Promise<Response>;
+    timeoutMs?: number;
+    maxBytes?: number;
+  }
+): Promise<string> {
+  const timeoutMs = opts?.timeoutMs ?? CA_BOOTSTRAP_TIMEOUT_MS;
+  const maxBytes = opts?.maxBytes ?? CA_BOOTSTRAP_MAX_BYTES;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    const fail = () => reject(new Error('ca_timeout'));
+    if (ac.signal.aborted) fail();
+    else ac.signal.addEventListener('abort', fail, { once: true });
+  });
+  try {
+    const doFetch = opts?.fetch ?? fetch;
+    const res = await Promise.race([
+      doFetch(joinHubPath(publicUrl, '/api/tls/ca.crt'), {
+        redirect: 'error',
+        signal: ac.signal,
+        tls: { rejectUnauthorized: false },
+      } as RequestInit),
+      timedOut,
+    ]);
+    if (!res.ok) throw new Error('ca_unavailable');
+    return await Promise.race([readResponseTextLimited(res, maxBytes), timedOut]);
+  } finally {
+    clearTimeout(timer);
+    if (!ac.signal.aborted) ac.abort();
+  }
 }
 
 function fallbackCandidate(): UplinkCandidate {
@@ -227,16 +316,20 @@ export class UplinkPool {
   private readonly authDeadlineMs: number;
   private readonly probeIntervalMs: number;
   private readonly probeTimeoutMs: number;
+  private readonly probeJitter: number;
 
   private live: UplinkClient | null = null;
   private pending: UplinkClient | null = null;
   private attached: AttachedHub | null = null;
   private generation = 0;
+  private switchToken = 0;
   private loop: Promise<void> | null = null;
   private stopAbort: AbortController | null = null;
   private probe: { clear: () => void } | null = null;
+  private probeInFlight = false;
   private wrapAttempt = 0;
   private relayHandler: InboundRelayHandler | null = null;
+  private readonly caBootstraps = new Map<string, Promise<void>>();
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private readonly attachedListeners: Array<(hub: AttachedHub) => void> = [];
   private readonly detachedListeners: Array<() => void> = [];
@@ -256,6 +349,7 @@ export class UplinkPool {
     this.authDeadlineMs = opts.authDeadlineMs ?? UPLINK_POOL_AUTH_DEADLINE_MS;
     this.probeIntervalMs = opts.probeIntervalMs ?? UPLINK_POOL_PROBE_INTERVAL_MS;
     this.probeTimeoutMs = opts.probeTimeoutMs ?? UPLINK_POOL_PROBE_TIMEOUT_MS;
+    this.probeJitter = opts.probeJitter ?? UPLINK_POOL_PROBE_JITTER;
   }
 
   get userId(): string {
@@ -326,22 +420,11 @@ export class UplinkPool {
   setOnRelayStream(handler: InboundRelayHandler | null): void {
     this.relayHandler = handler;
     this.live?.setOnRelayStream(handler);
-    this.pending?.setOnRelayStream(handler);
   }
 
-  start(connectOnce?: (signal: AbortSignal) => Promise<void>): void {
+  start(_connectOnce?: (signal: AbortSignal) => Promise<void>): void {
     if (this.loop) return;
     this.stopAbort = new AbortController();
-    if (connectOnce) {
-      const first = this.candidates()[0] ?? fallbackCandidate();
-      const client = this.spawn(first);
-      this.live = client;
-      this.bindLiveState(client);
-      client.start(connectOnce);
-      this.watchCustomOnline(client, first);
-      this.loop = this.waitStop(this.stopAbort.signal);
-      return;
-    }
     this.loop = this.run(this.stopAbort.signal);
   }
 
@@ -422,11 +505,17 @@ export class UplinkPool {
     }
     const signal = this.stopAbort?.signal;
     if (!signal || signal.aborted) throw new Error('aborted');
+    const token = this.beginSwitch();
     const client = this.spawn(target);
     this.pending = client;
     try {
-      await client.attemptConnect(signal);
-      await this.promote(client, target);
+      await this.connectCandidate(client, target, signal);
+      if (!this.isSwitchCurrent(token)) {
+        if (this.pending === client) this.pending = null;
+        await client.stop();
+        return;
+      }
+      await this.promote(client, target, token);
     } catch (err) {
       if (this.pending === client) this.pending = null;
       await client.stop();
@@ -472,6 +561,28 @@ export class UplinkPool {
     }
   }
 
+  private beginSwitch(): number {
+    this.switchToken += 1;
+    return this.switchToken;
+  }
+
+  private isSwitchCurrent(token: number): boolean {
+    return token === this.switchToken && !this.stopAbort?.signal.aborted;
+  }
+
+  private async connectCandidate(
+    client: UplinkClient,
+    cand: UplinkCandidate,
+    signal: AbortSignal
+  ): Promise<void> {
+    const local = this.opts.isLocalCandidate?.(cand) === true && Boolean(this.opts.connectLocal);
+    if (local && this.opts.connectLocal) {
+      await this.opts.connectLocal(client, signal);
+      return;
+    }
+    await client.attemptConnect(signal);
+  }
+
   private async tryCandidate(cand: UplinkCandidate, signal: AbortSignal): Promise<boolean> {
     const deadline = new AbortController();
     const combined = anyAbort(signal, deadline.signal);
@@ -483,16 +594,24 @@ export class UplinkPool {
       },
       () => {}
     );
+    const token = this.beginSwitch();
     const client = this.spawn(cand);
     this.pending = client;
     let failures = 0;
     try {
       while (failures < this.failLimit && !combined.aborted) {
         try {
-          await client.attemptConnect(combined);
+          await this.connectCandidate(client, cand, combined);
+          if (!this.isSwitchCurrent(token)) {
+            if (this.live?.state === 'online') {
+              await this.waitActiveSession(this.live, signal);
+              return true;
+            }
+            return false;
+          }
           deadline.abort();
-          await this.promote(client, cand);
-          await this.waitActiveSession(client, signal);
+          await this.promote(client, cand, token);
+          await this.waitActiveSession(this.live ?? client, signal);
           return true;
         } catch {
           failures += 1;
@@ -508,10 +627,12 @@ export class UplinkPool {
       if (this.live === client) {
         this.clearLive(client);
       }
-      try {
-        await client.stop();
-      } catch {
-        /* ignore */
+      if (this.live !== client) {
+        try {
+          await client.stop();
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
@@ -540,13 +661,19 @@ export class UplinkPool {
         if (this.live !== client) return;
         this.opts.onEnrollRedeemed?.(msg);
       },
-      onKeyLogFork: this.opts.onKeyLogFork,
+      onKeyLogFork: (event) => {
+        if (this.live !== client) return;
+        this.opts.onKeyLogFork?.(event);
+      },
     });
-    client.setOnRelayStream(this.relayHandler);
     return client;
   }
 
-  private async promote(client: UplinkClient, cand: UplinkCandidate): Promise<void> {
+  private async promote(client: UplinkClient, cand: UplinkCandidate, token: number): Promise<void> {
+    if (!this.isSwitchCurrent(token)) {
+      await client.stop();
+      return;
+    }
     const old = this.live !== client ? this.live : null;
     this.generation += 1;
     this.pending = null;
@@ -562,7 +689,7 @@ export class UplinkPool {
     };
     this.emitAttached(this.attached);
     this.emitState(client.state);
-    client.sendStatus();
+    client.sendStatusIfChanged();
     this.syncProbe();
     if (old) {
       old.setOnRelayStream(null);
@@ -580,11 +707,16 @@ export class UplinkPool {
     hubNodeId: string | null
   ): void {
     if (this.live !== client) return;
+    this.opts.onNodeList?.(list, {
+      hubNodeId: this.attached?.hubNodeId ?? hubNodeId,
+      generation: this.generation,
+    });
+    this.refreshAttachedFromList(list);
+    this.refreshAttachedFromCandidates();
     const meta = {
-      hubNodeId: list.hub?.nodeId ?? hubNodeId,
+      hubNodeId: this.attached?.hubNodeId ?? hubNodeId,
       generation: this.generation,
     };
-    this.opts.onNodeList?.(list, meta);
     for (const cb of this.nodeListListeners) {
       try {
         cb(list, meta);
@@ -592,27 +724,66 @@ export class UplinkPool {
         /* listener errors must not break the pool */
       }
     }
+    this.syncProbe();
     void this.pinAdvertisedCas(list);
+  }
+
+  private refreshAttachedFromList(list: UplinkNodeList): void {
+    const attached = this.attached;
+    if (!attached) return;
+    const recs = recordsFromNodeList(list);
+    const match = recs.find((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+    if (!match) return;
+    attached.hubNodeId = match.hubNodeId;
+    attached.mode = match.mode;
+    attached.writerEpoch = match.writerEpoch;
+  }
+
+  private refreshAttachedFromCandidates(): void {
+    const attached = this.attached;
+    if (!attached) return;
+    const match = this.candidates().find((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+    if (!match) return;
+    attached.hubNodeId = match.hubNodeId;
+    attached.mode = match.mode;
+    attached.writerEpoch = match.writerEpoch;
   }
 
   private async pinAdvertisedCas(list: UplinkNodeList): Promise<void> {
     const hubs = list.hubs ?? [];
-    for (const hub of hubs) {
-      const advertised = hub.caFingerprint?.trim().toLowerCase();
-      if (!advertised) continue;
-      if (this.opts.hubTrust.get(hub.publicUrl)) continue;
-      try {
-        const pem = await (this.opts.fetchCaPem ?? defaultFetchCaPem)(hub.publicUrl);
-        const fingerprint = (this.opts.fingerprintPem ?? spkiFingerprintFromPem)(pem).toLowerCase();
-        if (fingerprint !== advertised) continue;
-        this.opts.hubTrust.put({
-          hubUrl: hub.publicUrl,
-          caPem: pem,
-          fingerprint,
-        });
-      } catch {
-        /* pin is best-effort; next node.list retries */
-      }
+    await Promise.all(hubs.map((hub) => this.pinAdvertisedCa(hub)));
+  }
+
+  private pinAdvertisedCa(hub: {
+    publicUrl: string;
+    caFingerprint?: string | null;
+  }): Promise<void> {
+    const advertised = hub.caFingerprint?.trim().toLowerCase() ?? '';
+    if (!advertised || !isCaFingerprintHex(advertised)) return Promise.resolve();
+    if (this.opts.hubTrust.get(hub.publicUrl)) return Promise.resolve();
+    const key = normalizeHubEndpointUrl(hub.publicUrl);
+    const existing = this.caBootstraps.get(key);
+    if (existing) return existing;
+    const work = this.doPinAdvertisedCa(hub.publicUrl, advertised).finally(() => {
+      if (this.caBootstraps.get(key) === work) this.caBootstraps.delete(key);
+    });
+    this.caBootstraps.set(key, work);
+    return work;
+  }
+
+  private async doPinAdvertisedCa(publicUrl: string, advertised: string): Promise<void> {
+    try {
+      const pem = await (this.opts.fetchCaPem ?? defaultFetchCaPem)(publicUrl);
+      if (!this.opts.fingerprintPem) parseSingleCaCertificate(pem);
+      const fingerprint = (this.opts.fingerprintPem ?? spkiFingerprintFromPem)(pem).toLowerCase();
+      if (fingerprint !== advertised) return;
+      this.opts.hubTrust.put({
+        hubUrl: publicUrl,
+        caPem: pem,
+        fingerprint,
+      });
+    } catch {
+      /* pin is best-effort; next node.list retries */
     }
   }
 
@@ -660,25 +831,6 @@ export class UplinkPool {
     this.emitState('offline');
   }
 
-  private watchCustomOnline(client: UplinkClient, cand: UplinkCandidate): void {
-    client.onStateChange((state) => {
-      if (state === 'online' && this.live === client) {
-        this.generation += 1;
-        this.attached = {
-          hubNodeId: cand.hubNodeId,
-          publicUrl: cand.publicUrl,
-          mode: cand.mode,
-          writerEpoch: cand.writerEpoch,
-          since: this.scheduler.now(),
-        };
-        this.emitAttached(this.attached);
-      } else if (state === 'offline' && this.live === client && this.attached) {
-        this.attached = null;
-        this.emitDetached();
-      }
-    });
-  }
-
   private bindLiveState(client: UplinkClient): void {
     this.unbindLiveState();
     this.liveStateOff = client.onStateChange((state) => {
@@ -697,9 +849,12 @@ export class UplinkPool {
     if (!attached) return;
     const idx = this.candidates().findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
     if (idx <= 0) return;
-    this.probe = this.scheduler.interval(() => {
-      void this.probePreferred();
-    }, this.probeIntervalMs);
+    this.probe = this.scheduler.interval(
+      () => {
+        void this.probePreferred();
+      },
+      jitteredIntervalMs(this.probeIntervalMs, this.probeJitter)
+    );
   }
 
   private stopProbe(): void {
@@ -708,28 +863,34 @@ export class UplinkPool {
   }
 
   private async probePreferred(): Promise<void> {
-    const attached = this.attached;
-    if (!attached) return;
-    const cands = this.candidates();
-    const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
-    if (idx <= 0) {
-      this.stopProbe();
-      return;
-    }
-    const probe = this.opts.probeHealthz ?? defaultProbeHealthz;
-    for (let i = 0; i < idx; i += 1) {
-      const pref = cands[i];
-      if (!pref) continue;
-      const pin = this.opts.hubTrust.get(pref.publicUrl);
-      const tlsCa = pin?.caPem ? [pin.caPem] : null;
-      const ok = await probe(pref.publicUrl, tlsCa, this.probeTimeoutMs);
-      if (!ok) continue;
-      try {
-        await this.switchTo(pref.publicUrl);
-      } catch {
-        /* keep current attachment */
+    if (this.probeInFlight) return;
+    this.probeInFlight = true;
+    try {
+      const attached = this.attached;
+      if (!attached) return;
+      const cands = this.candidates();
+      const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+      if (idx <= 0) {
+        this.stopProbe();
+        return;
       }
-      return;
+      const probe = this.opts.probeHealthz ?? defaultProbeHealthz;
+      for (let i = 0; i < idx; i += 1) {
+        const pref = cands[i];
+        if (!pref) continue;
+        const pin = this.opts.hubTrust.get(pref.publicUrl);
+        const tlsCa = pin?.caPem ? [pin.caPem] : null;
+        const ok = await probe(pref.publicUrl, tlsCa, this.probeTimeoutMs);
+        if (!ok) continue;
+        try {
+          await this.switchTo(pref.publicUrl);
+        } catch {
+          /* keep current attachment */
+        }
+        return;
+      }
+    } finally {
+      this.probeInFlight = false;
     }
   }
 
@@ -761,14 +922,6 @@ export class UplinkPool {
         /* ignore */
       }
     }
-  }
-
-  private async waitStop(signal: AbortSignal): Promise<void> {
-    if (signal.aborted) return;
-    await new Promise<void>((resolve) => {
-      const onAbort = () => resolve();
-      signal.addEventListener('abort', onAbort, { once: true });
-    });
   }
 }
 

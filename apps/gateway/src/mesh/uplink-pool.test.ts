@@ -4,17 +4,32 @@ import { HubTrustStore } from '../auth/hub-trust-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { seedUser } from './test-support';
-import type { KeyLogApplier, MeshIdentity, MeshScheduler, UplinkState } from './types';
+import type {
+  InboundRelayHandler,
+  KeyLogApplier,
+  KeyLogForkEvent,
+  MeshIdentity,
+  MeshScheduler,
+  UplinkState,
+} from './types';
 import type { UplinkClient, UplinkClientOptions } from './uplink-client';
 import {
+  CA_BOOTSTRAP_MAX_BYTES,
+  CA_BOOTSTRAP_TIMEOUT_MS,
   UPLINK_POOL_AUTH_DEADLINE_MS,
   UPLINK_POOL_FAIL_LIMIT,
+  UPLINK_POOL_PROBE_JITTER,
   UPLINK_SEED_PRIORITY_BASE,
   type UplinkCandidate,
   UplinkPool,
+  defaultFetchCaPem,
+  isCaFingerprintHex,
+  isSelfHubCandidate,
   mergeUplinkCandidates,
+  parseSingleCaCertificate,
   recordsFromNodeList,
   sameHubUrl,
+  spkiFingerprintFromPem,
 } from './uplink-pool';
 import type { UplinkNodeList } from './uplink-protocol';
 
@@ -23,6 +38,29 @@ const ID = {
   b: 'bb'.repeat(16),
   c: 'cc'.repeat(16),
 };
+
+const TEST_CA_PEM = `-----BEGIN CERTIFICATE-----
+MIIBiTCCAS+gAwIBAgIUfcjUcjvqps+j66WfMK5nTB66IH0wCgYIKoZIzj0EAwIw
+EjEQMA4GA1UEAwwHVGVzdCBDQTAeFw0yNjA5MDExMjQyMjVaFw0yNzA5MDExMjQy
+MjVaMBIxEDAOBgNVBAMMB1Rlc3QgQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC
+AARW79kGjEFW4+Ueb2FviAO2IBOJdD2lWN6VopKfvyneN4Lut5OF/fMlSx5kKT9f
+95QVrN1GPSkKnj52IdkENXPmo2MwYTAdBgNVHQ4EFgQU2KZVtCMikJHT2kNkteml
+Z5MJzTAwHwYDVR0jBBgwFoAU2KZVtCMikJHT2kNktemlZ5MJzTAwDwYDVR0TAQH/
+BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAQYwCgYIKoZIzj0EAwIDSAAwRQIhAJD13Sun
+1WG27lzbwfxd5b6+xw+yDPORYStFfSEmgr6gAiAdpUqdYmGGVAEZXKxNP7FnGg6J
+2fAjmnqZT1C+bcCDYg==
+-----END CERTIFICATE-----`;
+
+const TEST_LEAF_PEM = `-----BEGIN CERTIFICATE-----
+MIIBZjCCAQugAwIBAgIUN7ce5vb8y1fkTeruYZraeDcsW/AwCgYIKoZIzj0EAwIw
+EjEQMA4GA1UEAwwHVGVzdCBDQTAeFw0yNjA5MDExMjQyMjVaFw0yNjEwMDExMjQy
+MjVaMA8xDTALBgNVBAMMBGxlYWYwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAS8
+dNZ6oH3CoG9L0B/3uEMo9hSUzpam7+l6/5Ar25yzx5fMyiDxUpTVdSE2WIOK0cBP
+1lQ9lPIXf/3EWxD//lDko0IwQDAdBgNVHQ4EFgQU+ymFVu6zJO165XlRhKu6947W
+AHUwHwYDVR0jBBgwFoAU2KZVtCMikJHT2kNktemlZ5MJzTAwCgYIKoZIzj0EAwID
+SQAwRgIhAPsGRvByfJSuRGKWp38ahUIFUnjw/hjBpz3vhYfxzyUoAiEAzCb/a+gc
+dFY2r3AWRAnKtpOstYUq4ef+2DGeszC8j4k=
+-----END CERTIFICATE-----`;
 
 function dummyApplier(): KeyLogApplier {
   return {
@@ -110,7 +148,11 @@ class ManualScheduler implements MeshScheduler {
   }
 }
 
-type FakeBehavior = { failTimes?: number; hang?: boolean };
+type FakeBehavior = {
+  failTimes?: number;
+  hang?: boolean;
+  gate?: { wait: () => Promise<void> };
+};
 
 class FakeUplink {
   state: UplinkState = 'offline';
@@ -119,11 +161,14 @@ class FakeUplink {
   userId: string;
   identity: MeshIdentity;
   tlsCa: string[] | null;
+  transport: 'ws' | 'memory' | null = null;
   connectCalls = 0;
   statusSends = 0;
+  statusIfChangedCalls = 0;
   stopped = false;
   failTimes: number;
   hang: boolean;
+  relayHandler: InboundRelayHandler | null = null;
   private readonly sharedFail: FakeBehavior;
   lastConnectError: { reason: string; at: number } | null = null;
   lastKeyLogHead = null;
@@ -151,14 +196,39 @@ class FakeUplink {
     };
   }
 
-  setOnRelayStream(): void {}
+  setOnRelayStream(handler: InboundRelayHandler | null): void {
+    this.relayHandler = handler;
+  }
 
   start(): void {}
 
+  emitRelay(fromNodeId = ID.c): void {
+    this.relayHandler?.({} as never, fromNodeId);
+  }
+
+  emitFork(event?: Partial<KeyLogForkEvent>): void {
+    this.opts.onKeyLogFork?.({
+      userId: this.userId,
+      local: { seq: 1n, hash: new Uint8Array(32) },
+      remote: { seq: 1n, hash: new Uint8Array(32).fill(1) },
+      ...event,
+    });
+  }
+
   async attemptConnect(signal?: AbortSignal): Promise<void> {
+    this.transport = 'ws';
+    await this.connectInner(signal);
+  }
+
+  async connectWithLink(): Promise<void> {
+    this.transport = 'memory';
+    await this.connectInner();
+  }
+
+  private async connectInner(signal?: AbortSignal): Promise<void> {
     this.connectCalls += 1;
     this.setState('connecting');
-    if (this.hang) {
+    if (this.hang || this.sharedFail.hang) {
       await new Promise<void>((_resolve, reject) => {
         this.hangReject = reject;
         const onAbort = () => {
@@ -171,6 +241,19 @@ class FakeUplink {
         }
         signal?.addEventListener('abort', onAbort, { once: true });
       });
+    }
+    if (this.sharedFail.gate) {
+      const aborted = new Promise<void>((_resolve, reject) => {
+        const onAbort = () => {
+          reject(signal?.reason instanceof Error ? signal.reason : new Error('aborted'));
+        };
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+      await Promise.race([this.sharedFail.gate.wait(), aborted]);
     }
     if ((this.sharedFail.failTimes ?? 0) > 0) {
       this.sharedFail.failTimes = (this.sharedFail.failTimes ?? 0) - 1;
@@ -236,6 +319,7 @@ class FakeUplink {
     this.statusSends += 1;
   }
   sendStatusIfChanged(): boolean {
+    this.statusIfChangedCalls += 1;
     this.sendStatus();
     return true;
   }
@@ -251,7 +335,6 @@ class FakeUplink {
   async appendAndAck() {
     return { ok: false as const, error: 'offline' };
   }
-  async connectWithLink(): Promise<void> {}
 
   private setState(state: UplinkState): void {
     if (this.state === state) return;
@@ -368,6 +451,12 @@ describe('UplinkPool', () => {
     probe?: (url: string) => Promise<boolean>;
     fetchCaPem?: (url: string) => Promise<string>;
     fingerprintPem?: (pem: string) => string;
+    candidates?: () => UplinkCandidate[];
+    isLocalCandidate?: (cand: UplinkCandidate) => boolean;
+    connectLocal?: (client: UplinkClient, signal: AbortSignal) => Promise<void>;
+    onNodeList?: (list: UplinkNodeList) => void;
+    onKeyLogFork?: (event: KeyLogForkEvent) => void;
+    probeJitter?: number;
   }) {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
@@ -387,24 +476,35 @@ describe('UplinkPool', () => {
         inventory: {},
         endpoints: [],
       }),
-      candidates: () =>
-        input.urls.map((publicUrl, index) => ({
-          hubNodeId: index === 0 ? ID.b : index === 1 ? ID.c : null,
-          publicUrl,
-          mode: (index === 0 ? 'active' : 'standby') as HubMode,
-          writerEpoch: index === 0 ? 3 : 1,
-          priority: 10 + index,
-          caFingerprint: null,
-        })),
+      candidates:
+        input.candidates ??
+        (() =>
+          input.urls.map((publicUrl, index) => ({
+            hubNodeId: index === 0 ? ID.b : index === 1 ? ID.c : null,
+            publicUrl,
+            mode: (index === 0 ? 'active' : 'standby') as HubMode,
+            writerEpoch: index === 0 ? 3 : 1,
+            priority: 10 + index,
+            caFingerprint: null,
+          }))),
       hubTrust,
       scheduler,
       failLimit: UPLINK_POOL_FAIL_LIMIT,
       authDeadlineMs: UPLINK_POOL_AUTH_DEADLINE_MS,
       probeIntervalMs: 60_000,
       probeTimeoutMs: 5_000,
+      probeJitter: input.probeJitter ?? 0,
       probeHealthz: async (url) => (input.probe ? input.probe(url) : false),
       fetchCaPem: input.fetchCaPem,
       fingerprintPem: input.fingerprintPem,
+      isLocalCandidate: input.isLocalCandidate,
+      connectLocal: input.connectLocal,
+      onNodeList: input.onNodeList
+        ? (list) => {
+            input.onNodeList?.(list);
+          }
+        : undefined,
+      onKeyLogFork: input.onKeyLogFork,
       createClient: ((opts: UplinkClientOptions) => {
         const fake = new FakeUplink(opts, input.behavior?.[opts.hubUrl] ?? {});
         created.push(fake);
@@ -577,6 +677,429 @@ describe('UplinkPool', () => {
     await waitMicro();
     expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
     expect(created.filter((row) => row.hubUrl === 'https://a.example').length).toBeGreaterThan(1);
+  });
+
+  test('dual-role standby dials the remote active over WS, falls back to in-memory self, then probes back', async () => {
+    const scheduler = new ManualScheduler();
+    const selfUrl = 'https://self.example';
+    const activeUrl = 'https://a.example';
+    const aBehavior: FakeBehavior = {};
+    const behavior: Record<string, FakeBehavior> = { [activeUrl]: aBehavior };
+    let activeHealthy = true;
+    const { pool, created } = boot({
+      urls: [activeUrl, selfUrl],
+      behavior,
+      scheduler,
+      candidates: () => [
+        {
+          hubNodeId: ID.b,
+          publicUrl: activeUrl,
+          mode: 'active',
+          writerEpoch: 3,
+          priority: 10,
+          caFingerprint: null,
+        },
+        {
+          hubNodeId: ID.a,
+          publicUrl: selfUrl,
+          mode: 'standby',
+          writerEpoch: 1,
+          priority: 20,
+          caFingerprint: null,
+        },
+      ],
+      isLocalCandidate: (cand) => cand.publicUrl === selfUrl,
+      connectLocal: async (client) => {
+        await (client as unknown as FakeUplink).connectWithLink();
+      },
+      probe: async (url) => url === activeUrl && activeHealthy,
+    });
+    pool.start();
+    await waitMicro();
+    expect(created[0]?.hubUrl).toBe(activeUrl);
+    expect(created[0]?.transport).toBe('ws');
+    expect(pool.attachedHub()?.publicUrl).toBe(activeUrl);
+
+    aBehavior.failTimes = 99;
+    created[0]?.drop();
+    for (let i = 0; i < 16 && pool.attachedHub()?.publicUrl !== selfUrl; i += 1) {
+      await scheduler.advance(1_000);
+      await waitMicro();
+    }
+    const selfClient = created.find((row) => row.hubUrl === selfUrl);
+    expect(selfClient?.transport).toBe('memory');
+    expect(pool.attachedHub()?.publicUrl).toBe(selfUrl);
+
+    aBehavior.failTimes = 0;
+    activeHealthy = true;
+    const probeHandle = scheduler.intervals.find((row) => !row.cleared);
+    expect(probeHandle).toBeTruthy();
+    await scheduler.advance(probeHandle?.ms ?? 60_000);
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe(activeUrl);
+    expect(created.filter((row) => row.hubUrl === activeUrl).at(-1)?.transport).toBe('ws');
+  });
+
+  test('live node.list refreshes attached hubNodeId/mode/epoch and starts probe when attached is no longer preferred', async () => {
+    const scheduler = new ManualScheduler();
+    let rows: UplinkCandidate[] = [
+      {
+        hubNodeId: null,
+        publicUrl: 'https://a.example',
+        mode: 'active',
+        writerEpoch: 1,
+        priority: 10,
+        caFingerprint: null,
+      },
+      {
+        hubNodeId: ID.c,
+        publicUrl: 'https://b.example',
+        mode: 'standby',
+        writerEpoch: 1,
+        priority: 20,
+        caFingerprint: null,
+      },
+    ];
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      candidates: () => rows,
+      probe: async (url) => url === 'https://b.example',
+      onNodeList: (list) => {
+        rows = recordsFromNodeList(list).map((row) => ({
+          hubNodeId: row.hubNodeId,
+          publicUrl: row.publicUrl,
+          mode: row.mode,
+          writerEpoch: row.writerEpoch,
+          priority: row.priority,
+          caFingerprint: row.caFingerprint,
+        }));
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.hubNodeId).toBeNull();
+
+    created[0]?.emitStaleList({
+      t: 'node.list',
+      version: 2,
+      key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+      rtc: { stun: [], turn: null },
+      nodes: [],
+      hub: { nodeId: ID.b, publicUrl: 'https://b.example' },
+      hubs: [
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 4,
+        },
+        {
+          nodeId: ID.b,
+          publicUrl: 'https://a.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+        },
+      ],
+    });
+    await waitMicro();
+    expect(pool.attachedHub()).toMatchObject({
+      publicUrl: 'https://a.example',
+      hubNodeId: ID.b,
+      mode: 'standby',
+      writerEpoch: 1,
+    });
+    await scheduler.advance(60_000);
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+  });
+
+  test('onNodeList meta.hubNodeId is the authenticated attached hub, not list.hub (writer)', async () => {
+    const metas: Array<{ hubNodeId: string | null; generation: number }> = [];
+    const { pool, created } = boot({
+      urls: ['https://standby.example'],
+      candidates: () => [
+        {
+          hubNodeId: ID.c,
+          publicUrl: 'https://standby.example',
+          mode: 'standby',
+          writerEpoch: 1,
+          priority: 20,
+          caFingerprint: null,
+        },
+      ],
+    });
+    pool.onNodeList((_list, meta) => {
+      metas.push(meta);
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.hubNodeId).toBe(ID.c);
+    created[0]?.emitStaleList({
+      t: 'node.list',
+      version: 2,
+      key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+      rtc: { stun: [], turn: null },
+      nodes: [],
+      hub: { nodeId: ID.b, publicUrl: 'https://writer.example' },
+      hubs: [
+        {
+          nodeId: ID.b,
+          publicUrl: 'https://writer.example',
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 3,
+        },
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://standby.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+        },
+      ],
+    });
+    await waitMicro();
+    expect(metas.length).toBeGreaterThan(0);
+    expect(metas.every((row) => row.hubNodeId === ID.c)).toBe(true);
+  });
+
+  test('older switchTo must not promote over a newer live link', async () => {
+    let releaseA: () => void = () => {};
+    const gateA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const behavior: Record<string, FakeBehavior> = {
+      'https://a.example': { failTimes: 3 },
+      'https://c.example': {},
+    };
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example', 'https://c.example'],
+      behavior,
+      candidates: () => [
+        {
+          hubNodeId: ID.b,
+          publicUrl: 'https://a.example',
+          mode: 'active',
+          writerEpoch: 3,
+          priority: 10,
+          caFingerprint: null,
+        },
+        {
+          hubNodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          writerEpoch: 1,
+          priority: 20,
+          caFingerprint: null,
+        },
+        {
+          hubNodeId: 'dd'.repeat(16),
+          publicUrl: 'https://c.example',
+          mode: 'standby',
+          writerEpoch: 1,
+          priority: 30,
+          caFingerprint: null,
+        },
+      ],
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    behavior['https://a.example'] = { gate: { wait: () => gateA } };
+    const first = pool.switchTo('https://a.example');
+    await waitMicro();
+    const second = pool.switchTo('https://c.example');
+    await second;
+    expect(pool.attachedHub()?.publicUrl).toBe('https://c.example');
+    releaseA();
+    await first.catch(() => {});
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://c.example');
+    expect(created.filter((row) => row.hubUrl === 'https://c.example').at(-1)?.stopped).toBe(false);
+  });
+
+  test('overlapping probe ticks are in-flight-guarded and the period is jittered ±20%', async () => {
+    const scheduler = new ManualScheduler();
+    let probeStarted = 0;
+    let releaseProbe: () => void = () => {};
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { failTimes: 3 } },
+      scheduler,
+      probeJitter: UPLINK_POOL_PROBE_JITTER,
+      probe: async () => {
+        probeStarted += 1;
+        await new Promise<void>((resolve) => {
+          releaseProbe = resolve;
+        });
+        return false;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    const intervalMs = scheduler.intervals.find((row) => !row.cleared)?.ms ?? 0;
+    expect(intervalMs).toBeGreaterThanOrEqual(Math.floor(60_000 * 0.8));
+    expect(intervalMs).toBeLessThanOrEqual(Math.ceil(60_000 * 1.2));
+    await scheduler.advance(intervalMs);
+    await waitMicro();
+    expect(probeStarted).toBe(1);
+    await scheduler.advance(intervalMs);
+    await waitMicro();
+    expect(probeStarted).toBe(1);
+    releaseProbe();
+    await waitMicro();
+    await scheduler.advance(intervalMs);
+    await waitMicro();
+    expect(probeStarted).toBe(2);
+  });
+
+  test('pending client cannot inject relay or key-log fork events', async () => {
+    const scheduler = new ManualScheduler();
+    const forks: KeyLogForkEvent[] = [];
+    const relays: string[] = [];
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { hang: true } },
+      scheduler,
+      onKeyLogFork: (event) => forks.push(event),
+    });
+    pool.setOnRelayStream((_stream, from) => {
+      relays.push(from);
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()).toBeNull();
+    expect(created[0]?.hubUrl).toBe('https://a.example');
+    created[0]?.emitRelay(ID.c);
+    created[0]?.emitFork();
+    expect(relays).toEqual([]);
+    expect(forks).toEqual([]);
+  });
+
+  test('promote uses sendStatusIfChanged instead of a forced sendStatus', async () => {
+    const { pool, created } = boot({ urls: ['https://a.example'] });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(created[0]?.statusIfChangedCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  test('isSelfHubCandidate matches own node id or normalized public URL', () => {
+    expect(
+      isSelfHubCandidate(
+        {
+          hubNodeId: ID.a,
+          publicUrl: 'https://hub.example',
+        },
+        { nodeId: ID.a, publicUrl: 'https://other.example' }
+      )
+    ).toBe(true);
+    expect(
+      isSelfHubCandidate(
+        {
+          hubNodeId: ID.b,
+          publicUrl: 'HTTPS://Hub.Example:443/',
+        },
+        { nodeId: ID.a, publicUrl: 'https://hub.example' }
+      )
+    ).toBe(true);
+    expect(
+      isSelfHubCandidate(
+        {
+          hubNodeId: ID.b,
+          publicUrl: 'https://remote.example',
+        },
+        { nodeId: ID.a, publicUrl: 'https://hub.example' }
+      )
+    ).toBe(false);
+  });
+
+  test('accepts exactly one CA certificate and rejects two PEMs / non-CA / bad fingerprint', () => {
+    const ca = parseSingleCaCertificate(TEST_CA_PEM);
+    expect(ca.ca).toBe(true);
+    expect(spkiFingerprintFromPem(TEST_CA_PEM)).toBe(
+      '0f47afc79f7ccd374c52146fc47c9e30896b899a119966fcefc3c912014c76bd'
+    );
+    expect(() => parseSingleCaCertificate(`${TEST_CA_PEM}\n${TEST_LEAF_PEM}`)).toThrow();
+    expect(() => parseSingleCaCertificate(TEST_LEAF_PEM)).toThrow();
+    expect(isCaFingerprintHex('ab'.repeat(32))).toBe(true);
+    expect(isCaFingerprintHex('ab'.repeat(31))).toBe(false);
+    expect(isCaFingerprintHex('zz'.repeat(32))).toBe(false);
+  });
+
+  test('oversized body, two PEMs, non-CA cert and hanging fetch are rejected and nothing is pinned', async () => {
+    const fp = '0f47afc79f7ccd374c52146fc47c9e30896b899a119966fcefc3c912014c76bd';
+    const fetches: string[] = [];
+    const { pool, created, hubTrust } = boot({
+      urls: ['https://a.example'],
+      fetchCaPem: async (publicUrl) => {
+        fetches.push(publicUrl);
+        if (publicUrl === 'https://oversized.example') {
+          return defaultFetchCaPem(publicUrl, {
+            fetch: async () => new Response('x'.repeat(CA_BOOTSTRAP_MAX_BYTES + 1)),
+            timeoutMs: 30,
+          });
+        }
+        if (publicUrl === 'https://two-pem.example') {
+          return defaultFetchCaPem(publicUrl, {
+            fetch: async () => new Response(`${TEST_CA_PEM}\n${TEST_LEAF_PEM}`),
+            timeoutMs: 30,
+          });
+        }
+        if (publicUrl === 'https://leaf.example') {
+          return defaultFetchCaPem(publicUrl, {
+            fetch: async () => new Response(TEST_LEAF_PEM),
+            timeoutMs: 30,
+          });
+        }
+        if (publicUrl === 'https://hang.example') {
+          return defaultFetchCaPem(publicUrl, {
+            fetch: () => new Promise<Response>(() => {}),
+            timeoutMs: 30,
+          });
+        }
+        throw new Error(`unexpected fetch ${publicUrl}`);
+      },
+    });
+    pool.start();
+    await waitMicro();
+    const live = created[0];
+    const emit = (url: string, fingerprint: string, version: number) => {
+      live?.emitStaleList({
+        t: 'node.list',
+        version,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+        hubs: [
+          {
+            nodeId: ID.c,
+            publicUrl: url,
+            mode: 'standby',
+            priority: 20,
+            writerEpoch: 1,
+            caFingerprint: fingerprint,
+          },
+        ],
+      });
+    };
+    emit('https://oversized.example', fp, 2);
+    emit('https://two-pem.example', fp, 3);
+    emit('https://leaf.example', spkiFingerprintFromPem(TEST_LEAF_PEM), 4);
+    emit('https://hang.example', fp, 5);
+    emit('https://badfp.example', 'not-a-fingerprint', 6);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(hubTrust.get('https://oversized.example')).toBeNull();
+    expect(hubTrust.get('https://two-pem.example')).toBeNull();
+    expect(hubTrust.get('https://leaf.example')).toBeNull();
+    expect(hubTrust.get('https://hang.example')).toBeNull();
+    expect(hubTrust.get('https://badfp.example')).toBeNull();
+    expect(fetches).not.toContain('https://badfp.example');
+    expect(CA_BOOTSTRAP_TIMEOUT_MS).toBe(5_000);
   });
 });
 

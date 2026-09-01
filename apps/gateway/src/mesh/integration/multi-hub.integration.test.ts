@@ -16,6 +16,7 @@ import {
   callHub,
   callMesh,
   craftNodeList,
+  createPendingNode,
   enrollAndStart,
   getMeshHubs,
   getMeshNodes,
@@ -91,7 +92,7 @@ describe('multi-hub in-process integration', () => {
     expect(bNode?.hubMode).toBe('standby');
   });
 
-  test.skip('G2: first seed attach leaves attached.hubNodeId null even after node.list names the hub', async () => {
+  test('G2: first seed attach fills attached.hubNodeId from node.list', async () => {
     const { a, c, boot: user } = await boot();
     const sid = await loginSelf(c.mesh, user);
     const hubs = await getMeshHubs(c.mesh, selfCookie(sid));
@@ -249,18 +250,24 @@ describe('multi-hub in-process integration', () => {
   });
 
   test('epoch fencing: higher-epoch active E demotes A; equal epoch only warns', async () => {
-    const { a, boot: user, aKeys, aKeyLog, router } = await boot();
+    const router = new HubRouter();
+    const ePending = await createPendingNode();
+    const aBoot = await bootHubA(router, { hubPeers: [ePending.identity.nodeIdHex] });
+    fixtures.push({
+      stop: async () => {
+        aBoot.node.unsubscribe?.();
+        await aBoot.node.mesh.stop();
+        await aBoot.node.mesh.hub?.stop();
+        aBoot.node.close();
+      },
+    });
     const errors: string[] = [];
-    const warns: string[] = [];
     const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
       errors.push(String(args[0]));
     });
-    const warnSpy = spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
-      warns.push(String(args[0]));
-    });
     try {
       const e = await enrollAndStart(
-        { mesh: a.mesh, boot: user, keys: aKeys, keyLog: aKeyLog },
+        { mesh: aBoot.node.mesh, boot: aBoot.boot, keys: aBoot.keys, keyLog: aBoot.keyLog },
         {
           name: 'node-e',
           version: 'ver-e',
@@ -270,7 +277,8 @@ describe('multi-hub in-process integration', () => {
           hubMode: 'active',
           hubPriority: 50,
           hubWriterEpoch: 2,
-          uplinkHub: a.mesh.hub,
+          wsFactory: router.factory,
+          pending: ePending,
           label: 'e',
         }
       );
@@ -283,14 +291,14 @@ describe('multi-hub in-process integration', () => {
         },
       });
       if (e.mesh.hub) router.register(HUB_E_URL, e.mesh.hub);
-      await waitUntil(() => a.mesh.hub?.mode() === 'standby', 8_000);
+      await waitUntil(() => aBoot.node.mesh.hub?.mode() === 'standby', 8_000);
       expect(
         errors.some((line) => line.includes('[hub] fenced:') && line.includes('writerEpoch=2'))
       ).toBe(true);
-      expect(a.mesh.hub?.mode()).toBe('standby');
+      expect(aBoot.node.mesh.hub?.mode()).toBe('standby');
 
-      const sid = await loginSelf(a.mesh, user);
-      const enroll = await callHub(a.mesh.hub!, 'http://hub/api/hub/enrollments', {
+      const sid = await loginSelf(aBoot.node.mesh, aBoot.boot);
+      const enroll = await callHub(aBoot.node.mesh.hub!, 'http://hub/api/hub/enrollments', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         cookie: selfCookie(sid),
@@ -305,19 +313,28 @@ describe('multi-hub in-process integration', () => {
       });
     } finally {
       errorSpy.mockRestore();
-      warnSpy.mockRestore();
     }
   });
 
   test('epoch fencing: equal-epoch active only warns; A stays active', async () => {
-    const { a, boot: user, aKeys, aKeyLog } = await boot();
+    const router = new HubRouter();
+    const twinPending = await createPendingNode();
+    const aBoot = await bootHubA(router, { hubPeers: [twinPending.identity.nodeIdHex] });
+    fixtures.push({
+      stop: async () => {
+        aBoot.node.unsubscribe?.();
+        await aBoot.node.mesh.stop();
+        await aBoot.node.mesh.hub?.stop();
+        aBoot.node.close();
+      },
+    });
     const warns: string[] = [];
     const warnSpy = spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
       warns.push(String(args[0]));
     });
     try {
       const twin = await enrollAndStart(
-        { mesh: a.mesh, boot: user, keys: aKeys, keyLog: aKeyLog },
+        { mesh: aBoot.node.mesh, boot: aBoot.boot, keys: aBoot.keys, keyLog: aBoot.keyLog },
         {
           name: 'node-twin',
           version: 'ver-twin',
@@ -327,7 +344,8 @@ describe('multi-hub in-process integration', () => {
           hubMode: 'active',
           hubPriority: 80,
           hubWriterEpoch: 1,
-          uplinkHub: a.mesh.hub,
+          wsFactory: router.factory,
+          pending: twinPending,
           label: 'twin',
         }
       );
@@ -346,7 +364,7 @@ describe('multi-hub in-process integration', () => {
           ),
         8_000
       );
-      expect(a.mesh.hub?.mode()).toBe('active');
+      expect(aBoot.node.mesh.hub?.mode()).toBe('active');
     } finally {
       warnSpy.mockRestore();
     }

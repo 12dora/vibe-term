@@ -167,6 +167,62 @@ describe('UplinkKeyLogSync', () => {
     expect(emitted).toHaveLength(1);
   });
 
+  test('HUB_NOT_WRITER append ack is non-fatal: keeps local records and does not tear down', async () => {
+    const warnings: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      const localHash = new Uint8Array(32).fill(9);
+      const rec = { seq: 2n, bytes: randomBytes(8), sig: randomBytes(64) };
+      const { host, sent, torn, emitted } = makeHost();
+      const sync = new UplinkKeyLogSync({
+        host,
+        applier: {
+          async head() {
+            return { seq: 2n, hash: localHash };
+          },
+          async applyMany() {
+            return { applied: 0 };
+          },
+          async list() {
+            return [rec];
+          },
+        },
+        scheduler: new ImmediateScheduler(),
+        timeoutMs: 5_000,
+        retryLimit: 3,
+      });
+      sync.reset('init');
+      sync.ingestNodeList(
+        nodeList({
+          key_log_head: { seq: 1n, hash: new Uint8Array(32).fill(1) },
+        })
+      );
+      await waitUntil(() => sent.length === 1);
+      const append = decodeUplinkCtl(sent[0] ?? new Uint8Array());
+      expect(append.t).toBe('key.log.append');
+      if (append.t === 'key.log.append' && append.id) {
+        sync.handleKeyLogAck({
+          t: 'key.log.ack',
+          id: append.id,
+          ok: false,
+          error: 'HUB_NOT_WRITER',
+        });
+      }
+      await waitUntil(() => emitted.length === 1);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(torn).toEqual([]);
+      expect(sent).toHaveLength(1);
+      expect(
+        warnings.some((row) => row.includes('HUB_NOT_WRITER') || row.includes('not writer'))
+      ).toBe(true);
+    } finally {
+      console.warn = orig;
+    }
+  });
+
   test('reset rejects pending append acks as offline', async () => {
     const { host, sent } = makeHost();
     const sync = new UplinkKeyLogSync({

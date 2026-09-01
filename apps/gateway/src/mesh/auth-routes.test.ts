@@ -200,6 +200,7 @@ export async function bootMesh(options?: {
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   streamLog?: (line: string) => void;
   skipUserBootstrap?: boolean;
+  attachedHub?: () => import('./uplink-pool').AttachedHub | null;
 }) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
@@ -238,6 +239,7 @@ export async function bootMesh(options?: {
     now: options?.now,
     primaryUserId: boot.userId || undefined,
     hubStore,
+    attachedHub: options?.attachedHub,
     selfStatus: options?.selfStatus,
     listedNames: options?.listedNames,
     selfName: options?.selfName,
@@ -1674,6 +1676,124 @@ describe('auth-routes', () => {
       });
       expect(forkRes.status).toBe(409);
       expect((await forkRes.json()).code).toBe('KEY_LOG_FORK');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST /api/auth/keylog returns 409 HUB_NOT_WRITER before local apply when attached hub is not writer', async () => {
+    const writerId = 'bb'.repeat(16);
+    const standbyId = 'cc'.repeat(16);
+    const mesh = await bootMesh({
+      roles: { hub: true, node: true },
+      attachedHub: () => ({
+        hubNodeId: standbyId,
+        publicUrl: 'https://standby.example',
+        mode: 'standby',
+        writerEpoch: 1,
+        since: 1,
+      }),
+    });
+    try {
+      mesh.hubStore.replaceAll(
+        [
+          {
+            hubNodeId: writerId,
+            publicUrl: 'https://writer.example',
+            name: 'writer',
+            mode: 'active',
+            priority: 10,
+            writerEpoch: 4,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+          {
+            hubNodeId: standbyId,
+            publicUrl: 'https://standby.example',
+            name: 'standby',
+            mode: 'standby',
+            priority: 20,
+            writerEpoch: 1,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+        ],
+        1
+      );
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const before = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        code: 'HUB_NOT_WRITER',
+        writerHubId: writerId,
+        writerPublicUrl: 'https://writer.example',
+        writerEpoch: 4,
+      });
+      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(before.head.seq);
+      expect(mesh.published).toHaveLength(0);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST /api/auth/keylog still applies locally when attached hub is unknown', async () => {
+    const mesh = await bootMesh({
+      roles: { hub: true, node: true },
+      attachedHub: () => null,
+    });
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(mesh.published).toHaveLength(1);
     } finally {
       mesh.close();
     }

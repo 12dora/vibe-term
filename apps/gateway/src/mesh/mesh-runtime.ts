@@ -66,6 +66,7 @@ import {
   type AttachedHub,
   UplinkPool,
   attachedHubHost,
+  isSelfHubCandidate,
   mergeUplinkCandidates,
   recordsFromNodeList,
 } from './uplink-pool';
@@ -79,6 +80,7 @@ export type MeshRuntimeConfig = {
   hubMode?: HubMode;
   hubPriority?: number;
   hubWriterEpoch?: number;
+  hubPeers?: string[];
   peerPort: number;
   stunServers: string[];
   turnUrl?: string | null;
@@ -108,9 +110,12 @@ export type CreateMeshRuntimeOptions = {
   tlsInfo?: HubTlsInfoProvider;
   /** 进程级共享的 hub 集合存储；双角色时 hub 侧与节点侧必须用同一实例。 */
   meshHubStore?: MeshHubStore;
+  /** TLS 指纹轮询间隔；默认 10 分钟。TLS 服务无变更回调时用轮询刷新 node.status.hub.caFingerprint。 */
+  tlsPollIntervalMs?: number;
 };
 
 export const CONNECTION_ID_BYTES = 32;
+export const TLS_STATUS_POLL_MS = 10 * 60 * 1000;
 
 export function generateConnectionId(): string {
   return encodeBase64url(crypto.getRandomValues(new Uint8Array(CONNECTION_ID_BYTES)));
@@ -704,6 +709,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
           mode: config.hubMode ?? gatewayConfig.hubMode,
           priority: config.hubPriority ?? gatewayConfig.hubPriority,
           writerEpoch: config.hubWriterEpoch ?? gatewayConfig.hubWriterEpoch,
+          authorizedHubIds: config.hubPeers ?? gatewayConfig.hubPeers,
         },
         meshHubs: hubStore,
         authenticate: (req) => {
@@ -963,6 +969,8 @@ function createUplinkWiring(d: MeshDeps) {
       hub?.uplink.ensureDcSession(d.userIdOf(), identity.nodeIdHex, peerNodeId);
     }
   };
+  const uplinkHub = opts.uplinkHub !== undefined ? opts.uplinkHub : hub;
+  const ownHubUrl = config.hubPublicUrl ?? hubEndpointUrl(config);
   const uplink = new UplinkPool({
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
     userId: d.userIdOf,
@@ -974,6 +982,16 @@ function createUplinkWiring(d: MeshDeps) {
     wsFactory: opts.wsFactory,
     scheduler: d.scheduler,
     pingIntervalMs: opts.pingIntervalMs,
+    isLocalCandidate: (cand) =>
+      Boolean(uplinkHub) &&
+      isSelfHubCandidate(cand, { nodeId: identity.nodeIdHex, publicUrl: ownHubUrl }),
+    connectLocal: async (client, signal) => {
+      if (!uplinkHub) throw new Error('no local hub');
+      const [nodeLink, hubLink] = createInMemoryLinkPair();
+      const online = client.connectWithLink(nodeLink, signal);
+      uplinkHub.attachLocalNode(hubLink);
+      await online;
+    },
     onEnrollRedeemed: (msg) => {
       d.httpHolder.runtime?.mesh.forwardEnrollRedeemed({
         enrollPk: msg.enroll_pk,
@@ -1324,8 +1342,13 @@ function assembleMeshRuntime(
 ): MeshRuntime {
   const { opts, config, identity, hub, sessions, userStore, rtc, bulk, state } = d;
   const { uplink, peerManager } = w;
-  const uplinkHub = opts.uplinkHub !== undefined ? opts.uplinkHub : hub;
   let stopPromise: Promise<void> | null = null;
+  let tlsPoll: { clear: () => void } | null = null;
+  const refreshTlsAndAdvertise = async () => {
+    const prev = d.state.caFingerprint;
+    await d.refreshTls();
+    if (d.state.caFingerprint !== prev) uplink.sendStatusIfChanged();
+  };
   return {
     nodeId: identity.nodeIdHex,
     identity,
@@ -1395,21 +1418,19 @@ function assembleMeshRuntime(
         }
       }
       await peerManager.start();
-      if (uplinkHub) {
-        const target = uplinkHub;
-        uplink.start(async (signal) => {
-          const [nodeLink, hubLink] = createInMemoryLinkPair();
-          const online = uplink.connectWithLink(nodeLink, signal);
-          target.attachLocalNode(hubLink);
-          await online;
-        });
-      } else {
-        uplink.start();
+      uplink.start();
+      if (opts.tlsInfo) {
+        const intervalMs = opts.tlsPollIntervalMs ?? TLS_STATUS_POLL_MS;
+        tlsPoll = d.scheduler.interval(() => {
+          void refreshTlsAndAdvertise();
+        }, intervalMs);
       }
     },
     async stop() {
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {
+        tlsPoll?.clear();
+        tlsPoll = null;
         d.nodeEventDedupe.clear();
         setMeshAgentBridge(null);
         await stopQuietly([

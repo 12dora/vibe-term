@@ -1488,6 +1488,51 @@ describe('createMeshRuntime', () => {
       caFingerprint: 'ab'.repeat(32),
     });
   });
+
+  test('TLS fingerprint poll refreshes node.status hub advertisement', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: ReturnType<typeof decodeUplinkCtl>[] = [];
+    hub.ctl.onMessage((bytes) => {
+      received.push(decodeUplinkCtl(bytes));
+    });
+    const scheduler = new ImmediateScheduler();
+    let fp = 'aa'.repeat(32);
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: true, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        hubPublicUrl: 'https://hub.example',
+        hubMode: 'active',
+        hubPriority: 10,
+        hubWriterEpoch: 1,
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+      tlsInfo: () => ({ caFingerprint: fp, caPem: 'pem' }),
+      tlsPollIntervalMs: 1_000,
+      scheduler,
+      uplinkHub: null,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    await waitUntil(() => received.some((msg) => msg.t === 'node.status'));
+    fp = 'bb'.repeat(32);
+    scheduler.advance(1_000);
+    await waitUntil(() =>
+      received.some((msg) => msg.t === 'node.status' && msg.hub?.caFingerprint === 'bb'.repeat(32))
+    );
+  });
 });
 
 describe('SessionRegistry', () => {

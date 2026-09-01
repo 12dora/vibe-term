@@ -18,6 +18,7 @@ import {
   verifyTotpCode,
 } from '@tmex/shared/auth';
 import type { KeyLogEffect, VerifyDelegationPasskey } from '@tmex/shared/auth';
+import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 import type { ChallengeStore } from '../auth/challenge-store';
@@ -73,6 +74,7 @@ import {
   publicRequestUrl,
   requireSession,
 } from './session-middleware';
+import { type AttachedHub, sameHubUrl } from './uplink-pool';
 
 export type { KeyLogHubAck };
 export { findPrimaryUser, isPasskeyAvailable };
@@ -99,6 +101,7 @@ export type AuthRoutesDeps = {
   primaryUserId?: string;
   hubPublicUrl?: string | null;
   hubStore?: MeshHubStore;
+  attachedHub?: () => AttachedHub | null;
   listPublicNodes?: () => PublicAuthNode[];
   onLogout?: (userId: string) => void;
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
@@ -481,6 +484,8 @@ export class AuthRoutes {
     } catch {
       return jsonError('MALFORMED', 400);
     }
+    const blocked = this.refuseIfAttachedNotWriter();
+    if (blocked) return blocked;
     const hubSync = this.usesHubSync(req);
     if (hubSync) {
       return this.handleKeyLogHubSync(userId, bytes, sig);
@@ -677,6 +682,30 @@ export class AuthRoutes {
       hash: encodeBase64url(hash),
       hubAck: hubAck === true,
       ...(hubError ? { hubError } : {}),
+    });
+  }
+
+  private refuseIfAttachedNotWriter(): Response | null {
+    const attached = this.deps.attachedHub?.();
+    if (!attached) return null;
+    const rows = this.deps.hubStore?.list() ?? [];
+    const writerId = pickWriterHub(rows);
+    if (!writerId) {
+      return jsonError(HUB_NOT_WRITER, 409, {
+        writerHubId: null,
+        writerPublicUrl: null,
+        writerEpoch: null,
+      });
+    }
+    const writer = this.deps.hubStore?.get(writerId);
+    const attachedIsWriter =
+      (attached.hubNodeId != null && attached.hubNodeId === writerId) ||
+      Boolean(writer && sameHubUrl(attached.publicUrl, writer.publicUrl));
+    if (attachedIsWriter) return null;
+    return jsonError(HUB_NOT_WRITER, 409, {
+      writerHubId: writerId,
+      writerPublicUrl: writer?.publicUrl ?? null,
+      writerEpoch: writer?.writerEpoch ?? null,
     });
   }
 

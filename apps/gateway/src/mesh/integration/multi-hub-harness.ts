@@ -398,13 +398,30 @@ type EnrollOpts = {
   hubMode?: 'active' | 'standby';
   hubPriority?: number;
   hubWriterEpoch?: number;
+  hubPeers?: string[];
   uplinkHub?: HubRuntime | null;
   wsFactory?: UplinkWsFactory;
   scheduler?: MeshScheduler;
   label: string;
+  pending?: PendingHarnessNode;
 };
 
-export async function bootHubA(router: HubRouter): Promise<{
+export type PendingHarnessNode = {
+  db: AuthDb;
+  close: () => void;
+  identity: Awaited<ReturnType<typeof ensureNodeIdentity>>;
+};
+
+export async function createPendingNode(): Promise<PendingHarnessNode> {
+  const { db, close } = createMigratedAuthDb();
+  const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+  return { db, close, identity };
+}
+
+export async function bootHubA(
+  router: HubRouter,
+  extra?: { hubPeers?: string[] }
+): Promise<{
   node: HarnessNode;
   boot: BootUser;
   keys: UserKeyService;
@@ -438,6 +455,7 @@ export async function bootHubA(router: HubRouter): Promise<{
       hubMode: 'active',
       hubPriority: 100,
       hubWriterEpoch: 1,
+      hubPeers: extra?.hubPeers,
       peerPort: 0,
       stunServers: [],
     },
@@ -469,8 +487,8 @@ export async function enrollAndStart(
   },
   opts: EnrollOpts
 ): Promise<HarnessNode> {
-  const { db, close } = createMigratedAuthDb();
-  const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+  const pending = opts.pending ?? (await createPendingNode());
+  const { db, close, identity } = pending;
   const now = Date.now();
   const enrollment = await createEnrollment(parent.boot.rootKey, {
     uid: parent.boot.userId,
@@ -579,6 +597,7 @@ export async function enrollAndStart(
       hubMode: opts.hubMode,
       hubPriority: opts.hubPriority,
       hubWriterEpoch: opts.hubWriterEpoch,
+      hubPeers: opts.hubPeers,
       peerPort: 0,
       stunServers: [],
     },
@@ -599,7 +618,8 @@ export async function enrollAndStart(
 
 export async function bootAbcdTopology(): Promise<MultiHubTopology> {
   const router = new HubRouter();
-  const aBoot = await bootHubA(router);
+  const bPending = await createPendingNode();
+  const aBoot = await bootHubA(router, { hubPeers: [bPending.identity.nodeIdHex] });
   const parent = {
     mesh: aBoot.node.mesh,
     boot: aBoot.boot,
@@ -615,7 +635,9 @@ export async function bootAbcdTopology(): Promise<MultiHubTopology> {
     hubMode: 'standby',
     hubPriority: 200,
     hubWriterEpoch: 1,
-    uplinkHub: aBoot.node.mesh.hub,
+    hubPeers: [aBoot.node.mesh.nodeId],
+    wsFactory: router.factory,
+    pending: bPending,
     label: 'b',
   });
   if (!b.mesh.hub) throw new Error('hub B missing HubRuntime');
