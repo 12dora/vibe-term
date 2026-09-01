@@ -349,6 +349,12 @@ export interface UseMeshNodesOptions {
   events?: MeshEventSource;
   /** 轮询间隔；0 表示只在挂载时拉一次（事件流负责后续更新）。 */
   pollIntervalMs?: number;
+  /**
+   * 轮询的所有者。**只有常驻的 `MeshNodesResident` 传 true**：这份列表是宿主级单例，
+   * 每多一个消费方装一个定时器就多一轮 `/api/mesh/nodes`。其余消费方只订阅 store，
+   * 首屏若还没有任何数据才补拉一次（单飞会与 owner 的首拉合并）。
+   */
+  owner?: boolean;
 }
 
 export interface UseMeshNodesResult extends MeshNodesState {
@@ -357,8 +363,98 @@ export interface UseMeshNodesResult extends MeshNodesState {
 
 const DEFAULT_POLL_MS = 30_000;
 
+export interface MeshPollingOptions {
+  api?: AuthApi;
+  intervalMs?: number;
+  /** 定时器（测试注入）：返回取消函数。 */
+  schedule?: (fn: () => void, ms: number) => () => void;
+  /** 页面可见性（测试注入）。 */
+  visibility?: { hidden: () => boolean; subscribe: (listener: () => void) => () => void };
+  refresh?: (api: AuthApi) => void;
+  now?: () => number;
+}
+
+/** 取不到 document（SSR / 单测）时一律按「可见」处理。 */
+function browserVisibility(): NonNullable<MeshPollingOptions['visibility']> {
+  return {
+    hidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',
+    subscribe: (listener) => {
+      if (typeof document === 'undefined') return () => undefined;
+      document.addEventListener('visibilitychange', listener);
+      return () => document.removeEventListener('visibilitychange', listener);
+    },
+  };
+}
+
+let polling: { refs: number; stop: () => void } | null = null;
+
+/**
+ * 轮询回路本体：
+ *  - 页面隐藏期间跳过这一拍——手机上锁屏 / 切去别的 app 时不该再唤醒射频；
+ *  - 重新可见时若距上次成功刷新已超过一个间隔，立刻补一次，不必等下一拍。
+ */
+function startPolling(options: MeshPollingOptions): () => void {
+  const api = options.api ?? defaultAuthApi;
+  const intervalMs = options.intervalMs ?? DEFAULT_POLL_MS;
+  const refresh = options.refresh ?? ((target: AuthApi) => void refreshMeshNodes(target));
+  const now = options.now ?? Date.now;
+  const visibility = options.visibility ?? browserVisibility();
+  const schedule =
+    options.schedule ??
+    ((fn, ms) => {
+      const timer = setInterval(fn, ms);
+      return () => clearInterval(timer);
+    });
+
+  refresh(api);
+  if (intervalMs <= 0) return () => undefined;
+
+  const cancelTimer = schedule(() => {
+    if (!visibility.hidden()) refresh(api);
+  }, intervalMs);
+  const unsubscribe = visibility.subscribe(() => {
+    if (visibility.hidden()) return;
+    const { loadedAt } = getMeshNodesState();
+    if (loadedAt === null || now() - loadedAt >= intervalMs) refresh(api);
+  });
+  return () => {
+    cancelTimer();
+    unsubscribe();
+  };
+}
+
+/**
+ * 取用宿主级**唯一**的轮询回路，返回归还函数（幂等）。
+ *
+ * 定时器只有一份：`useMeshNodes({ owner: true })` 之外的消费方都不该取用它，但即便将来
+ * 多接了一处，引用计数也保证不会出现第二个 `/api/mesh/nodes` 定时器。首个取用方的 options
+ * 决定这一轮回路的接线，后来者只加引用计数。
+ */
+export function acquireMeshNodesPolling(options: MeshPollingOptions = {}): () => void {
+  if (polling) polling.refs += 1;
+  else polling = { refs: 1, stop: startPolling(options) };
+
+  let released = false;
+  return () => {
+    if (released || !polling) return;
+    released = true;
+    polling.refs -= 1;
+    if (polling.refs > 0) return;
+    polling.stop();
+    polling = null;
+  };
+}
+
+function useMeshNodesPoller(api: AuthApi, active: boolean, intervalMs: number): void {
+  useEffect(() => {
+    if (!active) return;
+    return acquireMeshNodesPolling({ api, intervalMs });
+  }, [api, active, intervalMs]);
+}
+
 export function useMeshNodes(options: UseMeshNodesOptions = {}): UseMeshNodesResult {
   const enabled = options.enabled ?? true;
+  const owner = options.owner ?? false;
   const api = options.api ?? defaultAuthApi;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_MS;
   const snapshot = useSyncExternalStore(subscribeMeshNodes, getMeshNodesState, getMeshNodesState);
@@ -368,13 +464,14 @@ export function useMeshNodes(options: UseMeshNodesOptions = {}): UseMeshNodesRes
     void refreshMeshNodes(api);
   }, [api, enabled]);
 
+  useMeshNodesPoller(api, enabled && owner, pollIntervalMs);
+
+  // 非 owner 只订阅 store。唯一的例外是「一份数据都还没有」：常驻 owner 不在场时
+  // （单测、或 standalone→mesh 刚切过来的一瞬）总得有人把首份列表拉回来。
+  const listUnknown = enabled && !owner && snapshot.loadedAt === null && snapshot.error === null;
   useEffect(() => {
-    if (!enabled) return;
-    void refreshMeshNodes(api);
-    if (pollIntervalMs <= 0) return;
-    const timer = setInterval(() => void refreshMeshNodes(api), pollIntervalMs);
-    return () => clearInterval(timer);
-  }, [api, enabled, pollIntervalMs]);
+    if (listUnknown) void refreshMeshNodes(api);
+  }, [api, listUnknown]);
 
   useEffect(() => {
     if (!enabled) return;

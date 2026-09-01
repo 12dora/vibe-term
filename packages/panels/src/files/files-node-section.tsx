@@ -41,6 +41,12 @@ export interface FilesNodeSectionProps {
   drag?: FilesNodeSortable;
   /** 在线但未登录时代替文件树的一行；登录入口在宿主侧（`@/auth`）。 */
   renderLogin?: (node: FilesNodeInfo) => ReactNode;
+  /**
+   * 受控折叠态。宿主用它决定挂不挂该 node 的运行时（折叠 = 不建连接、不发请求），
+   * 所以展开态不能只留在分节内部；不传即分节自管（缺省展开）。
+   */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 function badgeOf(node: FilesNodeInfo): NodeBadgeInfo {
@@ -56,14 +62,23 @@ function FilesNodeSectionShell({
   node,
   drag,
   busy = false,
+  controlledExpanded,
+  onExpandedChange,
   children,
 }: {
   node: FilesNodeInfo;
   drag?: FilesNodeSortable;
   busy?: boolean;
+  controlledExpanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
   children: ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [ownExpanded, setOwnExpanded] = useState(true);
+  const expanded = controlledExpanded ?? ownExpanded;
+  const setExpanded = (next: boolean) => {
+    setOwnExpanded(next);
+    onExpandedChange?.(next);
+  };
 
   return (
     <div
@@ -75,7 +90,7 @@ function FilesNodeSectionShell({
       <div className="flex items-center gap-1 px-1">
         <button
           type="button"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded}
           data-testid={`files-node-toggle-${node.runtimeNodeId}`}
           className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-0.5 text-left hover:bg-sidebar-accent"
@@ -115,25 +130,52 @@ function FilesNodeSectionShell({
  * 用户没开过开关的节点只会堆成一屏空标题。目录列表回来之前同样不渲染，避免头闪一下又消失；
  * 加载失败要出头，错误提示与重试按钮挂在里面。
  */
-function FilesNodeRootsSection({ node, drag }: { node: FilesNodeInfo; drag?: FilesNodeSortable }) {
+function FilesNodeRootsSection({
+  node,
+  drag,
+  expanded,
+  onExpandedChange,
+}: {
+  node: FilesNodeInfo;
+  drag?: FilesNodeSortable;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+}) {
   const fetching = useIsFetching({ queryKey: ['files'] });
   const { rootsQuery, roots } = useVisibleFileRoots();
 
   if (!rootsQuery.isError && (!rootsQuery.isSuccess || roots.length === 0)) return null;
 
   return (
-    <FilesNodeSectionShell node={node} drag={drag} busy={fetching > 0}>
+    <FilesNodeSectionShell
+      node={node}
+      drag={drag}
+      busy={fetching > 0}
+      controlledExpanded={expanded}
+      onExpandedChange={onExpandedChange}
+    >
       <FilesNodeRoots />
     </FilesNodeSectionShell>
   );
 }
 
-export function FilesNodeSection({ node, drag, renderLogin }: FilesNodeSectionProps) {
+export function FilesNodeSection({
+  node,
+  drag,
+  renderLogin,
+  expanded,
+  onExpandedChange,
+}: FilesNodeSectionProps) {
   const { t } = useTranslation();
 
   if (!node.online) {
     return (
-      <FilesNodeSectionShell node={node} drag={drag}>
+      <FilesNodeSectionShell
+        node={node}
+        drag={drag}
+        controlledExpanded={expanded}
+        onExpandedChange={onExpandedChange}
+      >
         <div
           data-testid={`files-node-offline-${node.runtimeNodeId}`}
           className="px-2 py-1.5 text-[11px] text-muted-foreground/60"
@@ -146,7 +188,12 @@ export function FilesNodeSection({ node, drag, renderLogin }: FilesNodeSectionPr
 
   if (!node.loggedIn) {
     return (
-      <FilesNodeSectionShell node={node} drag={drag}>
+      <FilesNodeSectionShell
+        node={node}
+        drag={drag}
+        controlledExpanded={expanded}
+        onExpandedChange={onExpandedChange}
+      >
         <div
           data-testid={`files-node-login-${node.runtimeNodeId}`}
           className="flex flex-col gap-1 px-2 pb-1"
@@ -158,5 +205,27 @@ export function FilesNodeSection({ node, drag, renderLogin }: FilesNodeSectionPr
     );
   }
 
-  return <FilesNodeRootsSection node={node} drag={drag} />;
+  // 宿主折叠了这一节：它没挂该 node 的运行时，文件树的查询（roots / 目录）在这里一律不能跑
+  // ——上下文里只有 entry 的 QueryClient，跑起来读到的会是别人的目录。
+  if (expanded === false) {
+    return (
+      <FilesNodeSectionShell
+        node={node}
+        drag={drag}
+        controlledExpanded={false}
+        onExpandedChange={onExpandedChange}
+      >
+        {null}
+      </FilesNodeSectionShell>
+    );
+  }
+
+  return (
+    <FilesNodeRootsSection
+      node={node}
+      drag={drag}
+      expanded={expanded}
+      onExpandedChange={onExpandedChange}
+    />
+  );
 }

@@ -289,6 +289,57 @@ describe('sidebar node order', () => {
   });
 });
 
+// 展开态决定宿主挂不挂该 node 的运行时，所以必须按浏览器持久化；缺键交给各栏的缺省。
+describe('sidebar node expansion', () => {
+  beforeEach(() => {
+    storage.clear();
+  });
+
+  test('defaults to an empty map (no explicit choice yet)', () => {
+    expect(createStore().getState().sidebarNodeExpansion).toEqual({});
+  });
+
+  test('persists explicit toggles per tab and node across store instances', () => {
+    const prefix = `ui-sidebar-node-expansion-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
+
+    store.getState().setSidebarNodeExpansion('panes:node-a', true);
+    store.getState().setSidebarNodeExpansion('files:node-a', false);
+    expect(store.getState().sidebarNodeExpansion).toEqual({
+      'panes:node-a': true,
+      'files:node-a': false,
+    });
+
+    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+      state?: { sidebarNodeExpansion?: Record<string, boolean> };
+    };
+    expect(persisted.state?.sidebarNodeExpansion).toEqual({
+      'panes:node-a': true,
+      'files:node-a': false,
+    });
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().sidebarNodeExpansion).toEqual({
+      'panes:node-a': true,
+      'files:node-a': false,
+    });
+  });
+
+  test('normalizes invalid persisted expansion entries', () => {
+    const prefix = `ui-sidebar-node-expansion-invalid-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}tmex-ui`,
+      JSON.stringify({
+        state: { sidebarNodeExpansion: { 'panes:node-a': 'nope', 'panes:node-b': true } },
+        version: 0,
+      })
+    );
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().sidebarNodeExpansion).toEqual({
+      'panes:node-b': true,
+    });
+  });
+});
+
 describe('sidebar collapse state', () => {
   beforeEach(() => {
     storage.clear();

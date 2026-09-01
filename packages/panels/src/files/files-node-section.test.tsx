@@ -150,6 +150,34 @@ describe('FilesNodeSection 的分节头', () => {
     expect(html).toContain('data-testid="files-node-toggle-node-app"');
     expect(html).toContain('aria-label="拖动以调整目录顺序"');
   });
+
+  /**
+   * 受控折叠：宿主收起分节时会把该 node 的运行时一起摘掉，分节里一条查询都不能挂
+   * ——上下文里只剩 entry 的 QueryClient，挂上去读到的会是别人的目录。
+   */
+  test('受控折叠时只留分节头，不挂 roots 查询', () => {
+    const runtime = createAppRuntime({ storagePrefix: `files-node-section-${storageSeq++}:` });
+    const queryClient = new QueryClient();
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <I18nextProvider i18n={i18n}>
+          <QueryClientProvider client={queryClient}>
+            <RuntimeProvider runtime={runtime}>
+              <SidebarProvider>
+                <FilesNodeSection node={REMOTE_NODE} expanded={false} />
+              </SidebarProvider>
+            </RuntimeProvider>
+          </QueryClientProvider>
+        </I18nextProvider>
+      </MemoryRouter>
+    );
+    runtime.dispose();
+
+    expect(html).toContain('data-testid="files-node-section-node-app"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('data-testid="file-dir-r-remote-/srv/app"');
+    expect(queryClient.getQueryCache().find({ queryKey: ['files', 'roots'] })).toBeUndefined();
+  });
 });
 
 function countingRuntime(): { runtime: ReturnType<typeof createAppRuntime>; calls: () => number } {
