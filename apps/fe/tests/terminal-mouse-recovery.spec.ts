@@ -102,11 +102,15 @@ function launchVimWithMouse(paneId: string): void {
   tmux(`send-keys -t ${paneId} C-m`);
 }
 
+// opencode 的自动更新检查会弹「Update Available」并拖慢进入 alt-screen，外部插件加载同理；
+// 测试只关心 TUI 进入 alt-screen 后的渲染，统一禁用并放宽等待。
+const OPENCODE_ALT_SCREEN_TIMEOUT_MS = 40_000;
+
 function launchOpencode(paneId: string): void {
   tmux(`send-keys -t ${paneId} C-c`);
-  tmux(`send-keys -t ${paneId} -l 'clear'`);
+  tmux(`send-keys -t ${paneId} -l 'export OPENCODE_DISABLE_AUTOUPDATE=1; clear'`);
   tmux(`send-keys -t ${paneId} C-m`);
-  tmux(`send-keys -t ${paneId} -l 'opencode .'`);
+  tmux(`send-keys -t ${paneId} -l 'opencode --pure .'`);
   tmux(`send-keys -t ${paneId} C-m`);
 }
 
@@ -320,7 +324,7 @@ test('desktop: opencode refresh should not render pre-launch normal screen', asy
 
   await expect
     .poll(() => tmux(`display-message -p -t ${targetPaneId} '#{alternate_on}'`), {
-      timeout: 20_000,
+      timeout: OPENCODE_ALT_SCREEN_TIMEOUT_MS,
     })
     .toBe('1');
 
@@ -338,14 +342,14 @@ test('desktop: opencode refresh should not render pre-launch normal screen', asy
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
-      .not.toContain('sh-3.2$ opencode .');
+      .not.toContain('sh-3.2$ opencode');
 
     await page.reload();
 
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
-      .not.toContain('sh-3.2$ opencode .');
+      .not.toContain('sh-3.2$ opencode');
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
@@ -366,7 +370,7 @@ test('desktop: opencode pane round-trip should not render pre-launch normal scre
 
   await expect
     .poll(() => tmux(`display-message -p -t ${targetPaneId} '#{alternate_on}'`), {
-      timeout: 20_000,
+      timeout: OPENCODE_ALT_SCREEN_TIMEOUT_MS,
     })
     .toBe('1');
 
@@ -385,7 +389,7 @@ test('desktop: opencode pane round-trip should not render pre-launch normal scre
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
-      .not.toContain('sh-3.2$ opencode .');
+      .not.toContain('sh-3.2$ opencode');
 
     await page.goto(shellPath);
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
@@ -397,7 +401,7 @@ test('desktop: opencode pane round-trip should not render pre-launch normal scre
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
-      .not.toContain('sh-3.2$ opencode .');
+      .not.toContain('sh-3.2$ opencode');
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
@@ -416,7 +420,7 @@ test('desktop: focus restore repaints a cleared terminal canvas even when termin
 
   await expect
     .poll(() => tmux(`display-message -p -t ${targetPaneId} '#{alternate_on}'`), {
-      timeout: 20_000,
+      timeout: OPENCODE_ALT_SCREEN_TIMEOUT_MS,
     })
     .toBe('1');
 
