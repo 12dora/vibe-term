@@ -2,7 +2,7 @@
 // 以及宿主级唯一那条轮询回路（单例引用计数 + 后台暂停）。
 
 import { describe, expect, test } from 'bun:test';
-import type { AuthApi, MeshNode } from '@tmex/api-client/auth/index';
+import type { AuthApi, AuthRequiredDetail, MeshNode } from '@tmex/api-client/auth/index';
 import { wsBorsh } from '@tmex/shared';
 import { bytesToHex, encodeBase64url, sha256 } from '@tmex/shared/auth';
 import type { HubNodeRow } from './hub-api';
@@ -12,10 +12,13 @@ import {
   MESH_NODES_STALE_MS,
   type MeshEventSubscriber,
   acquireMeshNodesPolling,
+  ensureFreshMeshNodes,
   findHubNodeId,
+  getMeshNodesState,
   mergeNodes,
   patchNodesWithEvent,
   publicKeyFingerprint,
+  refreshMeshNodes,
   resetMeshNodesStateForTest,
   setMeshNodesStateForTest,
   sortNodes,
@@ -422,6 +425,7 @@ function fakeEvents() {
 /** 一条被完全接管的轮询回路：定时器、可见性、时钟、刷新动作都由用例驱动。 */
 function pollingHarness(overrides: { throttleMs?: number } = {}) {
   const events = fakeEvents();
+  const authListeners = new Set<(detail: AuthRequiredDetail) => void>();
   const state = {
     refreshes: 0,
     scheduled: 0,
@@ -436,6 +440,12 @@ function pollingHarness(overrides: { throttleMs?: number } = {}) {
     // 兜底间隔不显式传，用例据此断言默认值就是 5 分钟
     throttleMs: overrides.throttleMs ?? 0,
     events: events.source,
+    authRequired: (listener: (detail: AuthRequiredDetail) => void) => {
+      authListeners.add(listener);
+      return () => {
+        authListeners.delete(listener);
+      };
+    },
     refresh: (_api: AuthApi) => {
       state.refreshes += 1;
     },
@@ -465,7 +475,15 @@ function pollingHarness(overrides: { throttleMs?: number } = {}) {
     },
     now: () => state.now,
   };
-  return { state, options, events };
+  const authRequired = {
+    get listeners(): number {
+      return authListeners.size;
+    },
+    emit(detail: AuthRequiredDetail) {
+      for (const listener of [...authListeners]) listener(detail);
+    },
+  };
+  return { state, options, events, authRequired };
 }
 
 const onlineEvent = (nodeId: string): NodeEventPayload => ({
@@ -632,6 +650,40 @@ describe('acquireMeshNodesPolling', () => {
     release();
   });
 
+  test('单个 node 的 401 就地标未登录并补拉；全局 401 不管', () => {
+    const { state, options, authRequired } = pollingHarness();
+    setMeshNodesStateForTest({
+      loadedAt: state.now,
+      entryNodeId: 'entry',
+      nodes: [node({ id: 'entry', loggedIn: true }), node({ id: 'remote', loggedIn: true })],
+    });
+    const release = acquireMeshNodesPolling(options);
+    expect(state.refreshes).toBe(1);
+
+    authRequired.emit({ nodeId: 'remote', scope: 'node', path: '/n/remote/api/x' });
+    expect(getMeshNodesState().nodes.find((row) => row.id === 'remote')?.loggedIn).toBe(false);
+    expect(state.refreshes).toBe(2);
+
+    // 已经是未登录的行不再回源：那台 node 上的请求会持续 401
+    authRequired.emit({ nodeId: 'remote', scope: 'node', path: '/n/remote/api/y' });
+    expect(state.refreshes).toBe(2);
+
+    // 全局 401 由拦截器跳登录页，这里既不改行也不补拉
+    authRequired.emit({ nodeId: 'self', scope: 'global', path: '/api/x' });
+    expect(getMeshNodesState().nodes.find((row) => row.id === 'entry')?.loggedIn).toBe(true);
+    expect(state.refreshes).toBe(2);
+
+    // `self` 解析成 entry 自身的 nodeId
+    authRequired.emit({ nodeId: 'self', scope: 'node', path: '/api/x' });
+    expect(getMeshNodesState().nodes.find((row) => row.id === 'entry')?.loggedIn).toBe(false);
+    expect(state.refreshes).toBe(3);
+
+    expect(authRequired.listeners).toBe(1);
+    release();
+    expect(authRequired.listeners).toBe(0);
+    resetMeshNodesStateForTest();
+  });
+
   test('一串事件在节流窗口内只换来一次补拉', () => {
     const { state, options, events } = pollingHarness({ throttleMs: 2_000 });
     setMeshNodesStateForTest({ loadedAt: state.now, nodes: [node({ id: 'known' })] });
@@ -654,6 +706,83 @@ describe('acquireMeshNodesPolling', () => {
     expect(state.refreshes).toBe(3);
 
     release();
+    resetMeshNodesStateForTest();
+  });
+});
+
+/** 一个可由用例决定何时落地的 `listNodes`。 */
+function deferredApi() {
+  const pending: ((rows: MeshNode[]) => void)[] = [];
+  const api = {
+    listNodes: () =>
+      new Promise<MeshNode[]>((resolve) => {
+        pending.push(resolve);
+      }),
+  } as unknown as AuthApi;
+  return { api, pending };
+}
+
+describe('ensureFreshMeshNodes', () => {
+  test('在途期间触发：等在飞的那次落地后再发一次真实请求，重复触发只合并成一次', async () => {
+    resetMeshNodesStateForTest();
+    const { api, pending } = deferredApi();
+
+    const first = refreshMeshNodes(api);
+    expect(pending).toHaveLength(1);
+
+    // 在途期间的两次触发不能复用这次请求：它可能早于变化就发出去了
+    ensureFreshMeshNodes(api);
+    ensureFreshMeshNodes(api);
+    expect(pending).toHaveLength(1);
+
+    pending[0]([node({ id: 'a' })]);
+    await first;
+    // 尾随的那一次在第一次落地后补发，且只有一次
+    expect(pending).toHaveLength(2);
+
+    pending[1]([node({ id: 'a' }), node({ id: 'b' })]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(getMeshNodesState().nodes.map((row) => row.id)).toEqual(['a', 'b']);
+    // 尾随请求自己不再排下一次
+    expect(pending).toHaveLength(2);
+    resetMeshNodesStateForTest();
+  });
+
+  test('没有在途请求时立刻发一次', async () => {
+    resetMeshNodesStateForTest();
+    const { api, pending } = deferredApi();
+
+    ensureFreshMeshNodes(api);
+    expect(pending).toHaveLength(1);
+    pending[0]([node({ id: 'a' })]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(pending).toHaveLength(1);
+    resetMeshNodesStateForTest();
+  });
+
+  test('在途请求失败时尾随的那次照发（不能因为一次网络错误就卡住成员集）', async () => {
+    resetMeshNodesStateForTest();
+    const pending: (() => void)[] = [];
+    let calls = 0;
+    const api = {
+      listNodes: () => {
+        calls += 1;
+        return new Promise<MeshNode[]>((_resolve, reject) => {
+          pending.push(() => reject(new Error('boom')));
+        });
+      },
+    } as unknown as AuthApi;
+
+    const first = refreshMeshNodes(api);
+    ensureFreshMeshNodes(api);
+    pending[0]();
+    await first;
+    expect(calls).toBe(2);
+    pending[1]();
+    await Promise.resolve();
+    await Promise.resolve();
     resetMeshNodesStateForTest();
   });
 });

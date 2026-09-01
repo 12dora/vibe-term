@@ -10,11 +10,12 @@ import { SELF_NODE_ID } from '@tmex/api-client';
 import type {
   AuthApi,
   AuthModeResponse,
+  AuthRequiredDetail,
   MeshNode,
   MeshNodeReach,
   MeshNodeTransport,
 } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
+import { defaultAuthApi, onAuthRequired } from '@tmex/api-client/auth/index';
 import { bytesToHex, decodeBase64url, sha256 } from '@tmex/shared/auth';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { HubApi, type HubNodeRow } from './hub-api';
@@ -250,6 +251,7 @@ export function resetMeshNodesStateForTest(): void {
   state = EMPTY_STATE;
   modePromise = null;
   inFlight = null;
+  trailingRequested = false;
   for (const listener of listeners) listener();
 }
 
@@ -297,6 +299,7 @@ export function applyMeshNodeEvent(event: NodeEventPayload): void {
 }
 
 let inFlight: Promise<void> | null = null;
+let trailingRequested = false;
 
 export async function refreshMeshNodes(api: AuthApi = defaultAuthApi): Promise<void> {
   // 退出 mesh 期间本机会话已被清空，再拉 `/api/mesh/nodes` 只会稳定拿 401：
@@ -312,25 +315,60 @@ export async function refreshMeshNodes(api: AuthApi = defaultAuthApi): Promise<v
       setState({ loading: false, error: err instanceof Error ? err.message : String(err) });
     } finally {
       inFlight = null;
+      if (trailingRequested) {
+        trailingRequested = false;
+        void refreshMeshNodes(api);
+      }
     }
   })();
   return inFlight;
 }
 
 /**
+ * 「一定要拿到比现在更新的一份列表」。
+ *
+ * 与 `refreshMeshNodes` 的区别只在**在途**那一刻：后者会直接复用在飞的请求，而事件驱动的
+ * 补拉不能这么做——事件说明数据刚变了，在飞的那次请求可能早于变化就发出去了，复用它只会
+ * 拿回一份仍然缺新成员的旧响应。这里改成排一次尾随请求，等在飞的落地后再发一次；
+ * 期间重复触发只合并成同一次尾随。
+ */
+export function ensureFreshMeshNodes(api: AuthApi = defaultAuthApi): void {
+  if (isAuthTransitionActive()) return;
+  if (inFlight) {
+    trailingRequested = true;
+    return;
+  }
+  void refreshMeshNodes(api);
+}
+
+/** 返回列表是否真的被改动过（调用方据此决定要不要回源）。 */
+function setLoggedIn(nodeId: string, loggedIn: boolean): boolean {
+  const target = nodeId === SELF_NODE_ID ? state.entryNodeId : nodeId;
+  if (!target) return false;
+  let changed = false;
+  const next = state.nodes.map((node) => {
+    if (node.id !== target || node.loggedIn === loggedIn) return node;
+    changed = true;
+    return { ...node, loggedIn };
+  });
+  if (changed) setState({ nodes: next });
+  return changed;
+}
+
+/**
  * 某台 node 登录成功后就地把它标成已登录，不必等下一次 `/api/mesh/nodes` 轮询。
  * `self` 按 entry 自身的 nodeId 解析；列表里没有这一行时什么都不做。
  */
-export function markLoggedIn(nodeId: string): void {
-  const target = nodeId === SELF_NODE_ID ? state.entryNodeId : nodeId;
-  if (!target) return;
-  let changed = false;
-  const next = state.nodes.map((node) => {
-    if (node.id !== target || node.loggedIn) return node;
-    changed = true;
-    return { ...node, loggedIn: true };
-  });
-  if (changed) setState({ nodes: next });
+export function markLoggedIn(nodeId: string): boolean {
+  return setLoggedIn(nodeId, true);
+}
+
+/**
+ * 某台 node 的会话失效（转发回来的 401 `NODE_LOGIN_REQUIRED`）时就地标成未登录。
+ * `loggedIn` 只走 REST，兜底轮询已经拉到 5 分钟，等它会让「登录此节点」迟迟不出现。
+ */
+export function markLoggedOut(nodeId: string): boolean {
+  return setLoggedIn(nodeId, false);
 }
 
 export function setEntryNodeId(nodeId: string | null): void {
@@ -399,6 +437,8 @@ export interface MeshPollingOptions {
   visibility?: { hidden: () => boolean; subscribe: (listener: () => void) => () => void };
   /** 事件源（测试注入）；缺省用宿主级共享的那一份。 */
   events?: MeshEventSubscriber;
+  /** 401 `NODE_LOGIN_REQUIRED` 的订阅入口（测试注入）；缺省用 api-client 的拦截器事件。 */
+  authRequired?: (listener: (detail: AuthRequiredDetail) => void) => () => void;
   refresh?: (api: AuthApi) => void;
   now?: () => number;
 }
@@ -422,19 +462,22 @@ let polling: { refs: number; stop: () => void } | null = null;
  *  - 页面隐藏期间跳过这一拍——手机上锁屏 / 切去别的 app 时不该再唤醒射频；
  *  - 重新可见时若距上次成功刷新已超过 `staleMs`，立刻补一次，不必等下一拍；
  *  - `/mesh/ws` 连上（含重连）后补一次：断流期间的事件已经错过了；
- *  - 收到列表里没有的 node 的事件时补一次：事件只改已知行，新成员得靠 REST 才进得来。
+ *  - 收到列表里没有的 node 的事件时补一次：事件只改已知行，新成员得靠 REST 才进得来；
+ *  - 某台 node 的会话失效（401 `NODE_LOGIN_REQUIRED`）时就地标未登录并补一次。
  *
- * 后三条都走同一个节流窗口，一串事件最多换来一次 REST。
+ * 后四条都走同一个节流窗口，一串事件最多换来一次 REST。所有刷新都经 `ensureFreshMeshNodes`：
+ * 在途的那次请求可能早于变化发出，直接复用它会拿回一份仍然过时的响应。
  */
 function startPolling(options: MeshPollingOptions): () => void {
   const api = options.api ?? defaultAuthApi;
   const intervalMs = options.intervalMs ?? MESH_NODES_POLL_MS;
   const staleMs = options.staleMs ?? MESH_NODES_STALE_MS;
   const throttleMs = options.throttleMs ?? MESH_NODES_REFRESH_THROTTLE_MS;
-  const refresh = options.refresh ?? ((target: AuthApi) => void refreshMeshNodes(target));
+  const refresh = options.refresh ?? ensureFreshMeshNodes;
   const now = options.now ?? Date.now;
   const visibility = options.visibility ?? browserVisibility();
   const events = options.events ?? sharedMeshEvents();
+  const authRequired = options.authRequired ?? onAuthRequired;
   const schedule =
     options.schedule ??
     ((fn, ms) => {
@@ -491,12 +534,20 @@ function startPolling(options: MeshPollingOptions): () => void {
     unknownSeen.add(event.nodeId);
     requestRefresh();
   });
+  const stopAuthRequired = authRequired((detail) => {
+    // 全局 401 由拦截器自己跳登录页，这里只处理单个 node 的会话失效。
+    if (detail.scope !== 'node') return;
+    // 已经标成未登录的行不再回源：那台 node 上的请求会持续 401，每次都补拉就成了新的定时器。
+    if (!markLoggedOut(detail.nodeId)) return;
+    requestRefresh();
+  });
 
   runRefresh();
 
   const stopEventHooks = () => {
     stopStatus();
     stopEvents();
+    stopAuthRequired();
     cancelPending?.();
     cancelPending = null;
   };
