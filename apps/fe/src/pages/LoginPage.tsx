@@ -66,6 +66,13 @@ interface LoginFormProps {
 
 type Phase = 'idle' | 'deriving' | 'signingIn' | 'done';
 
+// `login.uid` / `delegation.uid` / k_totp 的 HKDF info 用的都是 **user id**，
+// 输入框里的是用户名——只有在与 mode 返回的用户名一致时才能安全地换成 uid。
+function resolveLoginUid(mode: AuthModeResponse, username: string): string {
+  if (mode.uid && (!mode.username || username === mode.username)) return mode.uid;
+  return username;
+}
+
 function LoginForm({ mode, api }: LoginFormProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -84,12 +91,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
 
   const canUsePasskey = mode.passkeyAvailable && mode.passkeysForThisOrigin;
 
-  // `login.uid` / `delegation.uid` / k_totp 的 HKDF info 用的都是 **user id**，
-  // 输入框里的是用户名——只有在与 mode 返回的用户名一致时才能安全地换成 uid。
-  const resolveUid = useCallback((): string => {
-    if (mode.uid && (!mode.username || username === mode.username)) return mode.uid;
-    return username;
-  }, [mode.uid, mode.username, username]);
+  const resolveUid = useCallback(() => resolveLoginUid(mode, username), [mode, username]);
 
   useEffect(() => {
     if (phase === 'done') {
