@@ -16,6 +16,10 @@ export type NestedCommandName =
   | 'hub.user.reset'
   | 'hub.join'
   | 'hub.leave'
+  | 'hub.standby'
+  | 'hub.promote'
+  | 'hub.demote'
+  | 'hub.list'
   | 'mesh.reset-root'
   | 'enroll'
   | 'direct'
@@ -106,6 +110,34 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
       return {
         name: 'hub.leave',
         rest: second ? ([second, third, ...tail].filter(Boolean) as string[]) : tail,
+        raw: command,
+      };
+    }
+    if (head === 'standby') {
+      return {
+        name: 'hub.standby',
+        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
+        raw: command,
+      };
+    }
+    if (head === 'promote') {
+      return {
+        name: 'hub.promote',
+        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
+        raw: command,
+      };
+    }
+    if (head === 'demote') {
+      return {
+        name: 'hub.demote',
+        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
+        raw: command,
+      };
+    }
+    if (head === 'list') {
+      return {
+        name: 'hub.list',
+        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
         raw: command,
       };
     }
@@ -204,6 +236,25 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'service-name',
   ]),
   'hub.leave': new Set([...GLOBAL_FLAGS, 'install-dir', 'no-restart', 'service-name']),
+  'hub.standby': new Set([
+    ...GLOBAL_FLAGS,
+    'install-dir',
+    'public-url',
+    'priority',
+    'insecure-local',
+    'no-restart',
+    'service-name',
+  ]),
+  'hub.promote': new Set([
+    ...GLOBAL_FLAGS,
+    'install-dir',
+    'yes',
+    'no-restart',
+    'no-interactive',
+    'service-name',
+  ]),
+  'hub.demote': new Set([...GLOBAL_FLAGS, 'install-dir', 'no-restart', 'service-name']),
+  'hub.list': new Set([...GLOBAL_FLAGS, 'install-dir']),
   'hub.user.add': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
   'hub.user.passwd': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
   'hub.user.totp': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),

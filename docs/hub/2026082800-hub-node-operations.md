@@ -18,6 +18,8 @@
 
 关停（仅 mesh 角色装 SIGINT/SIGTERM）：peer links → uplink → hub → gateway，预算 20 s。standalone 不装信号处理器。
 
+同一 mesh 需要第二台公网入口时，把已加入的 node 配成 **standby hub**（`hub,node` + `TMEX_HUB_MODE=standby`），由人工 `promote` / `demote` 切换写者。第一阶段是主/备、单写者、有序 failover，不是自动选主。操作、围栏与切回顺序见 [多 hub 主/备](./2026090104-multi-hub-standby.md)。
+
 生产 HTTP 默认绑定 `127.0.0.1:9883`（`init` 写入 `TMEX_BIND_HOST` / `GATEWAY_PORT`）。peer 口与 HTTP 口分离。
 
 ## 环境变量
@@ -280,6 +282,8 @@ tmex hub user reset
 | enroll 一直「待确认」 | 证书未到本会话，或 passkey 路径需手动确认，或 hubAck 未到 | 等 join 完成再点确认；查 hub 是否在线；根钥路径才自动 admit |
 | 登录页没有 passkey | `passkeyAvailable=false` 或本 origin 无凭证 | 用域名 HTTPS（加 `TMEX_TRUST_PROXY`）；先在本入口注册 |
 | TOTP 登录 `TOTP_INVALID` | epoch 与派生盐不一致，或验证码过期 | 确认用的是当前 epoch 的密码；改密后须重设 TOTP |
+| HTTP 409 `HUB_NOT_WRITER` | 打到了 standby hub 的写接口（enroll / redeem / rename / revoke） | 改打 body 里的 `writerPublicUrl`。要把这台变成写者，先让原主 `tmex hub demote`，再 `tmex hub promote --yes`。见 [多 hub 主/备](./2026090104-multi-hub-standby.md) |
+| 两台 hub 同时 `mode=active` | epoch 围栏未生效或旧主恢复时没先 demote | 立即把其中一台 `demote` 或停机。日志会有 `split-brain` 或 `fenced: higher writerEpoch`。切回顺序见 [多 hub 主/备](./2026090104-multi-hub-standby.md) |
 
 限速：每个 node 对同一 `uid` 或 IP 每分钟 10 次登录，超出 429。转发登录的限速桶目前是 `peer:<entryNodeId>`，不是浏览器真实 IP。
 
@@ -306,6 +310,7 @@ tmex hub user reset
 ## 参考
 
 - [架构设计 v3.2](./2026082700-hub-node-architecture.md)
+- [多 hub 主/备（第一阶段）](./2026090104-multi-hub-standby.md)
 - [部署指南（安装 / 服务 / SSH 设备）](../2026021000-tmex-bootstrap/deployment.md)
 - [自更新](../update/2026061406-self-update.md)
 - [服务进程与 tmux 存活](../service/2026061400-process-survival.md)

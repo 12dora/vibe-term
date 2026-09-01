@@ -1,7 +1,7 @@
 import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
-import { enrollmentTokens, nodes } from '../../../../apps/gateway/src/db/schema';
+import { enrollmentTokens, meshHubs, nodes } from '../../../../apps/gateway/src/db/schema';
 import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/hub/redeem-pop';
 import {
   bytesEqual,
@@ -36,12 +36,14 @@ import {
   isNetworkFetchError,
   redeemEnrollment,
 } from '../lib/hub-client';
+import { applyHubModeEnvKeys } from '../lib/install';
 import { createInstallLayout } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
 import { type LocalAuthContext, loadInstallEnv, openInstallAuth } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { parseAndValidateCaPem, readBoundedResponseText } from '../lib/pem';
 import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
+import { isInteractiveStdin, promptConfirm } from '../lib/prompt';
 import { DEFAULT_PEER_PORT, type TmexRoles, parseTmexRoles, roleNameFromFlags } from '../lib/roles';
 import { restartService, startService, stopService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
@@ -65,6 +67,19 @@ export type HubIo = {
   nodeEnv?: string;
   totpCode?: string;
   serviceManager?: ServiceManagerKind;
+  confirm?: () => boolean | Promise<boolean>;
+};
+
+export type HubListRow = {
+  hubNodeId: string;
+  name: string | null;
+  mode: 'active' | 'standby';
+  priority: number;
+  writerEpoch: number;
+  publicUrl: string;
+  online: boolean;
+  lastSeenAt: number | null;
+  writer: boolean;
 };
 
 export const HUB_MANUAL_RESTART_HINT =
@@ -857,6 +872,274 @@ async function rolesForLeave(ctx: LocalAuthContext): Promise<TmexRoles> {
     }
   }
   return parseTmexRoles(process.env.TMEX_ROLES ?? ctx.env.TMEX_ROLES);
+}
+
+function ansiRed(message: string): string {
+  return `\u001b[31m${message}\u001b[0m`;
+}
+
+function envHubMode(env: Record<string, string>): 'active' | 'standby' {
+  return env.TMEX_HUB_MODE?.trim() === 'standby' ? 'standby' : 'active';
+}
+
+function isHubNodeInstall(env: Record<string, string>): boolean {
+  const roles = parseTmexRoles(env.TMEX_ROLES);
+  return roles.hub && roles.node;
+}
+
+function parsePriorityFlag(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return 200;
+  if (!/^\d+$/.test(raw.trim())) {
+    throw new Error(t('hub.standby.invalidPriority'));
+  }
+  const value = Number(raw.trim());
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(t('hub.standby.invalidPriority'));
+  }
+  return value;
+}
+
+function parseEnvWriterEpoch(raw: string | undefined): number {
+  const value = Number.parseInt((raw ?? '').trim(), 10);
+  return Number.isInteger(value) && value >= 1 ? value : 1;
+}
+
+async function loadCommandEnv(ctx: LocalAuthContext): Promise<Record<string, string>> {
+  if (ctx.envPath) {
+    try {
+      return await readEnvFile(ctx.envPath);
+    } catch {
+      // fall through to in-memory env
+    }
+  }
+  return { ...ctx.env };
+}
+
+async function patchInstallEnv(
+  ctx: LocalAuthContext,
+  patch: Record<string, string>
+): Promise<void> {
+  if (!ctx.envPath) {
+    Object.assign(ctx.env, patch);
+    Object.assign(process.env, patch);
+    return;
+  }
+  await withEnvLock(async () => {
+    const env = await readEnvFile(ctx.envPath);
+    await writeEnvFile(ctx.envPath, { ...env, ...patch });
+  });
+}
+
+export function pickWriterHubId(
+  hubs: Array<{ hubNodeId: string; mode: string; writerEpoch: number; priority: number }>
+): string | null {
+  const actives = hubs.filter((hub) => hub.mode === 'active');
+  if (actives.length === 0) return null;
+  actives.sort((left, right) => {
+    if (left.writerEpoch !== right.writerEpoch) return right.writerEpoch - left.writerEpoch;
+    if (left.priority !== right.priority) return left.priority - right.priority;
+    if (left.hubNodeId < right.hubNodeId) return -1;
+    if (left.hubNodeId > right.hubNodeId) return 1;
+    return 0;
+  });
+  return actives[0]?.hubNodeId ?? null;
+}
+
+function readMeshHubRows(ctx: LocalAuthContext): HubListRow[] {
+  const rows = ctx.db.select().from(meshHubs).all() as Array<{
+    hubNodeId: string;
+    publicUrl: string;
+    name: string | null;
+    mode: string;
+    priority: number;
+    writerEpoch: number;
+    online: boolean;
+    lastSeenAt: number | null;
+  }>;
+  const writerHubId = pickWriterHubId(rows);
+  return rows.map((row) => ({
+    hubNodeId: row.hubNodeId,
+    name: row.name,
+    mode: row.mode === 'standby' ? 'standby' : 'active',
+    priority: row.priority,
+    writerEpoch: row.writerEpoch,
+    publicUrl: row.publicUrl,
+    online: Boolean(row.online),
+    lastSeenAt: row.lastSeenAt,
+    writer: row.hubNodeId === writerHubId,
+  }));
+}
+
+function maxMeshHubWriterEpoch(ctx: LocalAuthContext): number | null {
+  try {
+    const rows = ctx.db
+      .select({ writerEpoch: meshHubs.writerEpoch })
+      .from(meshHubs)
+      .all() as Array<{
+      writerEpoch: number;
+    }>;
+    if (!rows.length) return 0;
+    return rows.reduce((max, row) => Math.max(max, row.writerEpoch ?? 0), 0);
+  } catch {
+    return null;
+  }
+}
+
+function pad(value: string, width: number): string {
+  if (value.length >= width) return value;
+  return value + ' '.repeat(width - value.length);
+}
+
+function formatLastSeen(value: number | null): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return '-';
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return '-';
+  }
+}
+
+function formatHubList(rows: HubListRow[]): string[] {
+  const lines = [t('hub.list.header')];
+  for (const row of rows) {
+    const short = row.hubNodeId.slice(0, 8);
+    const mark = row.writer ? '*' : ' ';
+    lines.push(
+      [
+        `${mark}${pad(short, 10)}`,
+        pad(row.name ?? '-', 15),
+        pad(row.mode, 8),
+        pad(String(row.priority), 4),
+        pad(String(row.writerEpoch), 6),
+        pad(row.online ? 'yes' : 'no', 7),
+        pad(formatLastSeen(row.lastSeenAt), 21),
+        row.publicUrl,
+      ].join(' ')
+    );
+  }
+  return lines;
+}
+
+async function confirmPromote(parsed: ParsedArgs, io: HubIo | undefined): Promise<void> {
+  if (parsed.flags.yes === true) return;
+  if (io?.confirm) {
+    const ok = await io.confirm();
+    if (!ok) throw new Error(t('common.cancelled'));
+    return;
+  }
+  if (!isInteractiveStdin() || parsed.flags['no-interactive'] === true) {
+    throw new Error(t('hub.promote.needConfirm'));
+  }
+  const ok = await promptConfirm({ nonInteractive: false }, t('hub.promote.warning'), false);
+  if (!ok) throw new Error(t('common.cancelled'));
+}
+
+export async function runHubStandby(
+  parsed: ParsedArgs,
+  io: HubIo = {}
+): Promise<{ publicUrl: string; priority: number }> {
+  const publicUrlRaw = asString(parsed.flags['public-url']);
+  if (!publicUrlRaw) {
+    throw new Error(t('hub.standby.missingPublicUrl'));
+  }
+  const priority = parsePriorityFlag(asString(parsed.flags.priority));
+  const insecureLocal = parsed.flags['insecure-local'] === true || io.insecureLocal === true;
+  let publicUrl: string;
+  try {
+    publicUrl = canonicalHubUrl(
+      assertHubJoinUrl(publicUrlRaw, insecureLocal, io.nodeEnv ?? process.env.NODE_ENV).toString()
+    );
+  } catch (error) {
+    throw new Error(joinErrorMessage(error, t('hub.standby.missingPublicUrl')));
+  }
+
+  return await withAuth(parsed, io, async (ctx) => {
+    const identity = await ctx.identityStore.load();
+    if (!identity) {
+      throw new Error(t('hub.standby.notJoined'));
+    }
+    const env = await loadCommandEnv(ctx);
+    if (isHubNodeInstall(env) && envHubMode(env) === 'active') {
+      throw new Error(t('hub.standby.alreadyActive'));
+    }
+    if (!env.TMEX_HUB_URL?.trim()) {
+      throw new Error(t('hub.standby.missingHubUrl'));
+    }
+    await patchInstallEnv(
+      ctx,
+      applyHubModeEnvKeys(env, {
+        roles: 'hub,node',
+        mode: 'standby',
+        publicUrl,
+        priority,
+      })
+    );
+    if (ctx.installDir) {
+      await maybeRestart(parsed, io, ctx.installDir);
+    }
+    log(io, t('hub.standby.done', { priority, url: publicUrl }));
+    return { publicUrl, priority };
+  });
+}
+
+export async function runHubPromote(
+  parsed: ParsedArgs,
+  io: HubIo = {}
+): Promise<{ writerEpoch: number }> {
+  return await withAuth(parsed, io, async (ctx) => {
+    const env = await loadCommandEnv(ctx);
+    if (!isHubNodeInstall(env)) {
+      throw new Error(t('hub.promote.notHub'));
+    }
+    log(io, ansiRed(t('hub.promote.warning')));
+    await confirmPromote(parsed, io);
+    const envEpoch = parseEnvWriterEpoch(env.TMEX_HUB_WRITER_EPOCH);
+    const dbMax = maxMeshHubWriterEpoch(ctx);
+    const writerEpoch = dbMax == null ? envEpoch + 1 : Math.max(envEpoch, dbMax) + 1;
+    await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { mode: 'active', writerEpoch }));
+    if (ctx.installDir) {
+      await maybeRestart(parsed, io, ctx.installDir);
+    }
+    log(io, t('hub.promote.done', { epoch: writerEpoch }));
+    return { writerEpoch };
+  });
+}
+
+export async function runHubDemote(parsed: ParsedArgs, io: HubIo = {}): Promise<void> {
+  await withAuth(parsed, io, async (ctx) => {
+    const env = await loadCommandEnv(ctx);
+    if (!isHubNodeInstall(env)) {
+      throw new Error(t('hub.demote.notHub'));
+    }
+    await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { mode: 'standby' }));
+    if (ctx.installDir) {
+      await maybeRestart(parsed, io, ctx.installDir);
+    }
+    log(io, t('hub.demote.done'));
+  });
+}
+
+export async function runHubList(
+  parsed: ParsedArgs,
+  io: HubIo = {}
+): Promise<{ hubs: HubListRow[]; writerHubId: string | null }> {
+  return await withAuth(parsed, io, async (ctx) => {
+    let hubs: HubListRow[] = [];
+    try {
+      hubs = readMeshHubRows(ctx);
+    } catch {
+      hubs = [];
+    }
+    const writerHubId = pickWriterHubId(hubs);
+    if (hubs.length === 0) {
+      log(io, t('hub.list.empty'));
+      return { hubs, writerHubId };
+    }
+    for (const line of formatHubList(hubs)) {
+      log(io, line);
+    }
+    return { hubs, writerHubId };
+  });
 }
 
 export { nodes, enrollmentTokens };

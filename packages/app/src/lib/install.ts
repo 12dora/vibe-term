@@ -25,6 +25,25 @@ export interface AppEnvInput {
   stunServers?: string;
 }
 
+export function applyHubModeEnvKeys(
+  env: Record<string, string>,
+  patch: {
+    roles?: string;
+    mode?: string;
+    publicUrl?: string;
+    priority?: number | string;
+    writerEpoch?: number | string;
+  }
+): Record<string, string> {
+  const next = { ...env };
+  if (patch.roles !== undefined) next.TMEX_ROLES = patch.roles;
+  if (patch.mode !== undefined) next.TMEX_HUB_MODE = patch.mode;
+  if (patch.publicUrl !== undefined) next.TMEX_HUB_PUBLIC_URL = patch.publicUrl;
+  if (patch.priority !== undefined) next.TMEX_HUB_PRIORITY = String(patch.priority);
+  if (patch.writerEpoch !== undefined) next.TMEX_HUB_WRITER_EPOCH = String(patch.writerEpoch);
+  return next;
+}
+
 export function hubEnvDefaults(input?: {
   role?: TmexRoleName;
   hubUrl?: string;

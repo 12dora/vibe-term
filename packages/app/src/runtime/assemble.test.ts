@@ -1481,3 +1481,103 @@ describe('assembleTmex preflight', () => {
     await assembled.stop();
   });
 });
+
+describe('assembleTmex multi-hub wiring', () => {
+  test('passes a shared MeshHubStore and hub config into createMeshRuntime', async () => {
+    const { MeshHubStore } = await import('../../../../apps/gateway/src/auth/mesh-hub-store');
+    const { config } = await import('../../../../apps/gateway/src/config');
+    let seen: {
+      meshHubStore?: unknown;
+      hubMode?: unknown;
+      hubPriority?: unknown;
+      hubWriterEpoch?: unknown;
+      hubNodeId?: unknown;
+    } = {};
+    const hub = fakeHub();
+    await assembleTmex({
+      roles: { hub: true, node: true },
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async (opts) => {
+        const extra = opts as typeof opts & {
+          meshHubStore?: unknown;
+          meshHubs?: unknown;
+          config: typeof opts.config & {
+            hubMode?: unknown;
+            hubPriority?: unknown;
+            hubWriterEpoch?: unknown;
+            hubNodeId?: unknown;
+          };
+        };
+        seen = {
+          meshHubStore: extra.meshHubStore,
+          hubMode: extra.config.hubMode,
+          hubPriority: extra.config.hubPriority,
+          hubWriterEpoch: extra.config.hubWriterEpoch,
+          hubNodeId: extra.config.hubNodeId,
+        };
+        expect(extra.meshHubs).toBe(extra.meshHubStore);
+        return fakeMesh({ hub });
+      },
+    });
+    expect(seen.meshHubStore).toBeInstanceOf(MeshHubStore);
+    expect(seen.hubMode).toBe(config.hubMode);
+    expect(seen.hubPriority).toBe(config.hubPriority);
+    expect(seen.hubWriterEpoch).toBe(config.hubWriterEpoch);
+  });
+
+  test('wires mesh onNodeList to hub applyReplicatedNodeList and unsubscribes on stop', async () => {
+    const applied: Array<{ list: unknown; meta: unknown }> = [];
+    let unsubscribed = 0;
+    let subscribed = 0;
+    const hub = fakeHub({
+      applyReplicatedNodeList(list: unknown, meta: unknown) {
+        applied.push({ list, meta });
+      },
+    } as Partial<HubRuntime>);
+    const list = { t: 'node.list', version: 1, nodes: [] };
+    const meta = { hubNodeId: 'aa'.repeat(16), generation: 3 };
+    const mesh = fakeMesh({
+      hub,
+      onNodeList(cb: (nextList: unknown, nextMeta: unknown) => void) {
+        subscribed += 1;
+        cb(list, meta);
+        return () => {
+          unsubscribed += 1;
+        };
+      },
+    } as Partial<MeshRuntime> & { hub: HubRuntime });
+    const assembled = await assembleTmex({
+      roles: { hub: true, node: true },
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async () => mesh,
+    });
+    expect(subscribed).toBe(1);
+    expect(applied).toEqual([{ list, meta }]);
+    await assembled.stop();
+    expect(unsubscribed).toBe(1);
+    await assembled.stop();
+    expect(unsubscribed).toBe(1);
+  });
+
+  test('logs [hub] mode/priority/writerEpoch/publicUrl at startup', async () => {
+    const { config } = await import('../../../../apps/gateway/src/config');
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      await assembleTmex({
+        roles: { hub: true, node: true },
+        createGatewayRuntime: async () => fakeGateway(),
+        createMeshRuntime: async () => fakeMesh({ hub: fakeHub() }),
+      });
+    } finally {
+      console.log = originalLog;
+    }
+    const line = lines.find((item) => item.startsWith('[hub] mode='));
+    expect(line).toBe(
+      `[hub] mode=${config.hubMode} priority=${config.hubPriority} writerEpoch=${config.hubWriterEpoch} publicUrl=${config.hubPublicUrl ?? ''}`
+    );
+  });
+});

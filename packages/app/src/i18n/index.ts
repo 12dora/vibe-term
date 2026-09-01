@@ -179,6 +179,25 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
 
     'hub.join.replacedStale':
       'Replaced local account "{{username}}" from a previous hub; key log, passkeys, TOTP, sessions, and old node certs were wiped.',
+
+    'hub.standby.missingPublicUrl': 'hub standby requires --public-url',
+    'hub.standby.notJoined': 'this node is not joined (no node_identity); run tmex hub join first',
+    'hub.standby.alreadyActive': 'this install is already an active hub; run tmex hub demote first',
+    'hub.standby.missingHubUrl':
+      'TMEX_HUB_URL is empty; a standby hub still uplinks to the current primary',
+    'hub.standby.invalidPriority': 'invalid --priority: must be a non-negative integer',
+    'hub.standby.done': 'standby hub enabled (priority={{priority}}, publicUrl={{url}})',
+    'hub.promote.notHub': 'hub promote requires a hub,node install',
+    'hub.promote.needConfirm':
+      'promoting the writer risks split-brain; pass --yes or confirm interactively',
+    'hub.promote.warning':
+      'WARNING: demote or stop the previous writer before this node starts, or the mesh will split-brain.',
+    'hub.promote.done': 'promoted to active hub (writerEpoch={{epoch}})',
+    'hub.demote.notHub': 'hub demote requires a hub,node install',
+    'hub.demote.done': 'demoted to standby hub',
+    'hub.list.empty': 'mesh_hubs is empty (no hub set learned from node.list yet)',
+    'hub.list.header':
+      'NODE       NAME            MODE     PRI  EPOCH  ONLINE  LAST SEEN             PUBLIC URL',
   },
   'zh-CN': {
     'cli.error.unknownCommand': '未知命令：{{command}}',
@@ -344,6 +363,24 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
 
     'hub.join.replacedStale':
       '已替换本机账号「{{username}}」的旧 hub 状态；密钥日志、通行密钥、TOTP、会话与旧节点证书已清除。',
+
+    'hub.standby.missingPublicUrl': 'hub standby 需要 --public-url',
+    'hub.standby.notJoined': '本机尚未加入 mesh（缺少 node_identity）。请先执行 tmex hub join。',
+    'hub.standby.alreadyActive': '本机已是 active hub。请先执行 tmex hub demote，再设为 standby。',
+    'hub.standby.missingHubUrl':
+      '缺少 TMEX_HUB_URL（当前主 hub 地址）。standby 仍需以 node 身份连上主 hub。',
+    'hub.standby.invalidPriority': '--priority 必须是 ≥ 0 的整数',
+    'hub.standby.done': '已将本机设为 standby hub（priority={{priority}}，publicUrl={{url}}）',
+    'hub.promote.notHub': 'hub promote 仅适用于 hub,node 安装',
+    'hub.promote.needConfirm': '提升写者有脑裂风险。请加 --yes 确认，或在交互终端确认。',
+    'hub.promote.warning':
+      '警告：提升写者前必须先将原主 hub demote 或停机，否则会出现脑裂（split-brain）。',
+    'hub.promote.done': '已提升为 active hub（writerEpoch={{epoch}}）',
+    'hub.demote.notHub': 'hub demote 仅适用于 hub,node 安装',
+    'hub.demote.done': '已降为 standby hub',
+    'hub.list.empty': '本地 mesh_hubs 为空（尚未从 node.list 学到其它 hub）',
+    'hub.list.header':
+      'NODE       NAME            MODE     PRI  EPOCH  ONLINE  LAST SEEN             PUBLIC URL',
   },
 };
 

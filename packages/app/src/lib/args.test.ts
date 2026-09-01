@@ -84,6 +84,34 @@ describe('resolveNestedCommand', () => {
     expect(direct.rest).toEqual(['enable']);
   });
 
+  test('resolves hub standby/promote/demote/list', () => {
+    const standby = parseArgs([
+      'hub',
+      'standby',
+      '--public-url',
+      'https://standby.example',
+      '--priority',
+      '50',
+      '--insecure-local',
+      '--no-restart',
+    ]);
+    expect(resolveNestedCommand(standby).name).toBe('hub.standby');
+    expect(standby.flags['public-url']).toBe('https://standby.example');
+    expect(standby.flags.priority).toBe('50');
+    expect(standby.flags['insecure-local']).toBe(true);
+    expect(standby.flags['no-restart']).toBe(true);
+
+    const promote = parseArgs(['hub', 'promote', '--yes', '--no-restart']);
+    expect(resolveNestedCommand(promote).name).toBe('hub.promote');
+    expect(promote.flags.yes).toBe(true);
+    expect(promote.flags['no-restart']).toBe(true);
+
+    expect(resolveNestedCommand(parseArgs(['hub', 'demote', '--no-restart'])).name).toBe(
+      'hub.demote'
+    );
+    expect(resolveNestedCommand(parseArgs(['hub', 'list'])).name).toBe('hub.list');
+  });
+
   test('resolves init --role hub,node', () => {
     const parsed = parseArgs(['init', '--role', 'hub,node']);
     expect(resolveNestedCommand(parsed).name).toBe('init');
@@ -109,6 +137,35 @@ describe('resolveNestedCommand', () => {
 describe('assertKnownFlags', () => {
   test('rejects unknown upgrade flags instead of ignoring them', () => {
     expect(() => assertKnownFlags(parseArgs(['upgrade', '--not-a-real-flag']))).toThrow(
+      /Unknown flag|未知参数/
+    );
+  });
+
+  test('accepts hub standby/promote flags and rejects unknown ones', () => {
+    expect(() =>
+      assertKnownFlags(
+        parseArgs([
+          'hub',
+          'standby',
+          '--public-url',
+          'https://standby.example',
+          '--priority',
+          '200',
+          '--insecure-local',
+          '--no-restart',
+          '--install-dir',
+          '/tmp',
+        ])
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertKnownFlags(parseArgs(['hub', 'promote', '--yes', '--no-restart']))
+    ).not.toThrow();
+    expect(() => assertKnownFlags(parseArgs(['hub', 'demote', '--no-restart']))).not.toThrow();
+    expect(() =>
+      assertKnownFlags(parseArgs(['hub', 'list', '--install-dir', '/tmp']))
+    ).not.toThrow();
+    expect(() => assertKnownFlags(parseArgs(['hub', 'standby', '--not-a-real-flag']))).toThrow(
       /Unknown flag|未知参数/
     );
   });
@@ -146,6 +203,10 @@ describe('cli help', () => {
     expect(help).toContain('tmex doctor');
     expect(help).toContain('tmex hub user add <username>');
     expect(help).toContain('tmex hub join');
+    expect(help).toContain('tmex hub standby --public-url');
+    expect(help).toContain('tmex hub promote');
+    expect(help).toContain('tmex hub demote');
+    expect(help).toContain('tmex hub list');
     expect(help).toContain('--no-restart');
     expect(help).toContain('tmex mesh reset-root');
     expect(help).toContain('tmex enroll');
