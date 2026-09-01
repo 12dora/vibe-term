@@ -3,7 +3,9 @@ import { encodeBase64url, randomBytes } from '../auth/encoding';
 import {
   HUB_NOT_WRITER,
   type HubAdvertisement,
+  type HubAttachmentsMessage,
   type HubEndpointInfo,
+  type HubForwardMessage,
   type HubNotWriterError,
   type HubTokensMessage,
   KEY_LOG_PAGE_MAX_BYTES,
@@ -443,5 +445,161 @@ describe('hub.tokens codec', () => {
         )
       )
     ).toThrow(/op/);
+  });
+});
+
+describe('hub.attachments / hub.forward / attachedHubId codec', () => {
+  const NODE_C = 'cc'.repeat(16);
+  const attachments: HubAttachmentsMessage = {
+    t: 'hub.attachments',
+    revision: 4,
+    full: true,
+    entries: [
+      { nodeId: NODE_C, attached: true, hubId: HUB_B },
+      { nodeId: HUB_A, attached: false },
+    ],
+  };
+  const forward: HubForwardMessage = {
+    t: 'hub.forward',
+    kind: 'rtc.signal',
+    originHubId: HUB_A,
+    returnHubId: HUB_A,
+    visitedHubIds: [HUB_A],
+    signal: {
+      rtcSession: 'sess-1',
+      from: 'browser',
+      to: NODE_C,
+      sdp: 'offer',
+    },
+  };
+
+  test('hub.attachments mesh/hub 往返', () => {
+    expect(decodeMeshUplinkCtl(encodeMeshUplinkCtl(attachments))).toEqual(attachments);
+    expect(decodeHubUplinkCtl(encodeHubUplinkCtl(attachments))).toEqual(attachments);
+    const delta: HubAttachmentsMessage = {
+      t: 'hub.attachments',
+      revision: 5,
+      entries: [{ nodeId: NODE_C, attached: false }],
+    };
+    expect(decodeHubUplinkCtl(encodeHubUplinkCtl(delta))).toEqual(delta);
+  });
+
+  test('hub.forward mesh/hub 往返', () => {
+    expect(decodeMeshUplinkCtl(encodeMeshUplinkCtl(forward))).toEqual(forward);
+    expect(decodeHubUplinkCtl(encodeHubUplinkCtl(forward))).toEqual(forward);
+  });
+
+  test('legacy:true 剥掉 payload，旧 TYPE_SET 视为 unknown', () => {
+    expect(
+      JSON.parse(new TextDecoder().decode(encodeMeshUplinkCtl(attachments, { legacy: true })))
+    ).toEqual({
+      t: 'hub.attachments',
+    });
+    expect(
+      JSON.parse(new TextDecoder().decode(encodeHubUplinkCtl(forward, { legacy: true })))
+    ).toEqual({
+      t: 'hub.forward',
+    });
+    const oldTypes = new Set([
+      'auth.challenge',
+      'auth.response',
+      'auth.ok',
+      'ping',
+      'pong',
+      'node.status',
+      'node.list',
+      'key.log.req',
+      'key.log.res',
+      'key.log.append',
+      'key.log.ack',
+      'rtc.signal',
+      'enroll.redeemed',
+      'hub.tokens',
+    ]);
+    expect(oldTypes.has('hub.attachments')).toBe(false);
+    expect(oldTypes.has('hub.forward')).toBe(false);
+  });
+
+  test('node.list attachedHubId 往返，legacy 剥离', () => {
+    const mesh = meshList({
+      nodes: [
+        {
+          id: NODE_C,
+          name: 'c',
+          online: true,
+          endpoints: [],
+          inventory: {},
+          direct_capable: false,
+          version: '1.1.13',
+          attachedHubId: HUB_B,
+        },
+      ],
+    });
+    const round = decodeMeshUplinkCtl(encodeMeshUplinkCtl(mesh)) as MeshUplinkNodeList;
+    expect(round.nodes[0]?.attachedHubId).toBe(HUB_B);
+    const hubRound = decodeHubUplinkCtl(
+      encodeHubUplinkCtl(
+        hubList({
+          nodes: [
+            {
+              id: NODE_C,
+              name: 'c',
+              online: true,
+              endpoints: [],
+              inventory: {},
+              direct_capable: false,
+              version: '1.1.13',
+              attachedHubId: HUB_B,
+            },
+          ],
+        })
+      )
+    ) as NodeListMessage;
+    expect(hubRound.nodes[0]?.attachedHubId).toBe(HUB_B);
+
+    const legacyJson = JSON.parse(
+      new TextDecoder().decode(encodeMeshUplinkCtl(mesh, { legacy: true }))
+    ) as { nodes: Array<{ attachedHubId?: string }> };
+    expect(legacyJson.nodes[0]?.attachedHubId).toBeUndefined();
+    const hubLegacy = JSON.parse(
+      new TextDecoder().decode(
+        encodeHubUplinkCtl(
+          hubList({
+            nodes: [
+              {
+                id: NODE_C,
+                name: 'c',
+                online: true,
+                endpoints: [],
+                inventory: {},
+                direct_capable: false,
+                version: '1.1.13',
+                attachedHubId: HUB_B,
+              },
+            ],
+          }),
+          { legacy: true }
+        )
+      )
+    ) as { nodes: Array<{ attachedHubId?: string }> };
+    expect(hubLegacy.nodes[0]?.attachedHubId).toBeUndefined();
+  });
+
+  test('拒绝过多 attachments 与非法 hub.forward kind', () => {
+    const tooMany = {
+      t: 'hub.attachments',
+      revision: 1,
+      entries: Array.from({ length: 4097 }, () => ({ nodeId: NODE_C, attached: true })),
+    };
+    expect(() => decodeMeshUplinkCtl(new TextEncoder().encode(JSON.stringify(tooMany)))).toThrow(
+      /too large|entries/
+    );
+    expect(() =>
+      decodeMeshUplinkCtl(
+        new TextEncoder().encode(
+          JSON.stringify({ ...forward, kind: 'key.log.append', t: 'hub.forward' })
+        )
+      )
+    ).toThrow(/kind/);
   });
 });

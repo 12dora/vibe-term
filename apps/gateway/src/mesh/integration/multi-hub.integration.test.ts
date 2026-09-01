@@ -13,6 +13,7 @@ import {
 } from '@tmex/shared/auth';
 import { HUB_NOT_WRITER, TMEX_FORWARDED_BY_HEADER } from '@tmex/shared/uplink';
 import { signUserRecord } from '../../hub/hub-test-helpers';
+import { decodeUplinkCtl } from '../uplink-protocol';
 import {
   FAKE_NODE_ID,
   HUB_A_URL,
@@ -20,6 +21,7 @@ import {
   HUB_E_URL,
   HubRouter,
   type MultiHubTopology,
+  attachSplitAbcd,
   attachedHubId,
   attachedUrl,
   bootAbcdTopology,
@@ -929,6 +931,84 @@ describe('multi-hub in-process integration', () => {
       )
     ).toBe(true);
   }, 20_000);
+
+  test('G5: C on A and D on B can HTTP-relay both ways, rtc.signal round-trip, A down rebuilds route', async () => {
+    const topo = await boot();
+    const { a, b, c, d, router, boot: user } = topo;
+    await attachSplitAbcd(topo);
+    expect(attachedHubId(c.mesh)).toBe(a.mesh.nodeId);
+    expect(attachedHubId(d.mesh)).toBe(b.mesh.nodeId);
+
+    const cSid = await loginSelf(c.mesh, user);
+    const nodes = await getMeshNodes(c.mesh, selfCookie(cSid));
+    expect(nodes.nodes.find((n) => n.id === d.mesh.nodeId)?.attachedHubId).toBe(b.mesh.nodeId);
+
+    const remote = await loginRemote(c.mesh, d.mesh, user, selfCookie(cSid));
+    expect(remote.status).toBe(200);
+    const dSid = sidFromResponse(remote, d.mesh.nodeId);
+    const info = await callMesh(c.mesh, `http://entry/n/${d.mesh.nodeId}/api/system/info`, {
+      cookie: jarFor(cSid, d.mesh.nodeId, dSid),
+    });
+    expect(info.status).toBe(200);
+    expect(((await info.json()) as { node?: string }).node).toBe('d');
+
+    const dLogin = await loginSelf(d.mesh, user);
+    const back = await loginRemote(d.mesh, c.mesh, user, selfCookie(dLogin));
+    expect(back.status).toBe(200);
+    const cRemoteSid = sidFromResponse(back, c.mesh.nodeId);
+    const infoC = await callMesh(d.mesh, `http://entry/n/${c.mesh.nodeId}/api/system/info`, {
+      cookie: jarFor(dLogin, c.mesh.nodeId, cRemoteSid),
+    });
+    expect(infoC.status).toBe(200);
+
+    const rtcSession = a.mesh.hub?.registerRtcSession({
+      userId: user.userId,
+      browserSessionId: 'g5',
+      fromNodeId: c.mesh.nodeId,
+      toNodeId: d.mesh.nodeId,
+    });
+    expect(rtcSession).toBeTruthy();
+    const dSignals: string[] = [];
+    const cSignals: string[] = [];
+    d.mesh.uplink.liveClient()?.link?.ctl.onMessage((bytes) => {
+      try {
+        const msg = decodeUplinkCtl(bytes);
+        if (msg.t === 'rtc.signal' && msg.sdp) dSignals.push(msg.sdp);
+      } catch {
+        /* ignore */
+      }
+    });
+    c.mesh.uplink.liveClient()?.link?.ctl.onMessage((bytes) => {
+      try {
+        const msg = decodeUplinkCtl(bytes);
+        if (msg.t === 'rtc.signal' && msg.sdp) cSignals.push(msg.sdp);
+      } catch {
+        /* ignore */
+      }
+    });
+    c.mesh.uplink.sendCtl({
+      t: 'rtc.signal',
+      rtcSession: rtcSession!,
+      from: 'browser',
+      to: d.mesh.nodeId,
+      sdp: 'g5-offer',
+    });
+    await waitUntil(() => dSignals.includes('g5-offer'), 8_000);
+    d.mesh.uplink.sendCtl({
+      t: 'rtc.signal',
+      rtcSession: rtcSession!,
+      from: 'node',
+      to: c.mesh.nodeId,
+      sdp: 'g5-answer',
+    });
+    await waitUntil(() => cSignals.includes('g5-answer'), 8_000);
+
+    router.takeDown(HUB_A_URL);
+    await waitUntil(() => attachedUrl(c.mesh) === HUB_B_URL, 8_000);
+    await waitUntil(() => b.mesh.hub?.registry.get(c.mesh.nodeId)?.authenticated === true, 8_000);
+    const after = await loginRemote(c.mesh, d.mesh, user, selfCookie(cSid));
+    expect(after.status).toBe(200);
+  }, 30_000);
 });
 
 describe('multi-hub harness smoke (isolated A)', () => {

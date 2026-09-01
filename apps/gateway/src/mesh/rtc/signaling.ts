@@ -2,6 +2,42 @@ import type { RtcSignalMessage, RtcSignalOwner, RtcSignalRouter } from '../mesh-
 
 export const RTC_LOCAL_INBOX_MAX_SESSIONS = 32;
 export const RTC_LOCAL_INBOX_MAX_MESSAGES = 16;
+export const RTC_HUB_ROUTE_TTL_MS = 10 * 60 * 1000;
+
+export class RtcHubRouteTable {
+  private readonly routes = new Map<string, { hubId: string; expiresAt: number }>();
+  private readonly now: () => number;
+  private readonly ttlMs: number;
+
+  constructor(opts?: { now?: () => number; ttlMs?: number }) {
+    this.now = opts?.now ?? Date.now;
+    this.ttlMs = opts?.ttlMs ?? RTC_HUB_ROUTE_TTL_MS;
+  }
+
+  remember(rtcSession: string, hubId: string): void {
+    const id = rtcSession.trim();
+    const hub = hubId.trim().toLowerCase();
+    if (!id || !hub) return;
+    this.sweep();
+    this.routes.set(id, { hubId: hub, expiresAt: this.now() + this.ttlMs });
+  }
+
+  lookup(rtcSession: string): string | undefined {
+    this.sweep();
+    return this.routes.get(rtcSession)?.hubId;
+  }
+
+  drop(rtcSession: string): void {
+    this.routes.delete(rtcSession);
+  }
+
+  sweep(): void {
+    const now = this.now();
+    for (const [id, row] of this.routes) {
+      if (row.expiresAt <= now) this.routes.delete(id);
+    }
+  }
+}
 
 export type RtcSessionOwner = {
   browserSessionId: string;

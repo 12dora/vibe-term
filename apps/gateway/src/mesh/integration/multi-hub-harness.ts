@@ -905,8 +905,45 @@ export async function getMeshNodes(mesh: MeshRuntime, cookie: string) {
     throw new Error(`GET /api/mesh/nodes ${res.status}: ${await res.text()}`);
   }
   return (await res.json()) as {
-    nodes: Array<{ id: string; isHub?: boolean; hubMode?: string; name?: string }>;
+    nodes: Array<{
+      id: string;
+      isHub?: boolean;
+      hubMode?: string;
+      name?: string;
+      attachedHubId?: string;
+    }>;
   };
+}
+
+export function stampHubCtlVersions(topo: {
+  a: HarnessNode;
+  b: HarnessNode;
+}): void {
+  const now = Date.now();
+  topo.a.mesh.hub?.registry.updateMeta(topo.b.mesh.nodeId, { version: '1.1.13' }, now);
+  topo.b.mesh.hub?.registry.updateMeta(topo.a.mesh.nodeId, { version: '1.1.13' }, now);
+  stampNodeVersions(topo.a.db, '1.1.13');
+  stampNodeVersions(topo.b.db, '1.1.13');
+}
+
+export async function attachSplitAbcd(topo: MultiHubTopology): Promise<void> {
+  stampHubCtlVersions(topo);
+  await topo.d.mesh.uplink.switchTo(HUB_B_URL);
+  await waitUntil(
+    () => attachedUrl(topo.c.mesh) === HUB_A_URL && attachedUrl(topo.d.mesh) === HUB_B_URL,
+    8_000
+  );
+  stampHubCtlVersions(topo);
+  topo.a.mesh.hub?.uplink.publishLocalAttachments();
+  topo.b.mesh.hub?.onWriterUplinkOnline();
+  await waitUntil(() => {
+    stampHubCtlVersions(topo);
+    const dOnB = topo.b.mesh.hub?.registry.get(topo.d.mesh.nodeId)?.authenticated === true;
+    const cOnA = topo.a.mesh.hub?.registry.get(topo.c.mesh.nodeId)?.authenticated === true;
+    const dRoute = topo.a.mesh.hub?.uplink.attachments.attachedHubId(topo.d.mesh.nodeId);
+    const cRoute = topo.b.mesh.hub?.uplink.attachments.attachedHubId(topo.c.mesh.nodeId);
+    return dOnB && cOnA && dRoute === topo.b.mesh.nodeId && cRoute === topo.a.mesh.nodeId;
+  }, 8_000);
 }
 
 export function craftNodeList(

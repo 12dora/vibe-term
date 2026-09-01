@@ -17,6 +17,8 @@ export const UPLINK_CTL_TYPES = [
   'rtc.signal',
   'enroll.redeemed',
   'hub.tokens',
+  'hub.attachments',
+  'hub.forward',
 ] as const;
 
 export type UplinkCtlType = (typeof UPLINK_CTL_TYPES)[number];
@@ -37,8 +39,15 @@ export const UPLINK_CTL_MAX_HUB_URL_LEN = 512;
 export const UPLINK_CTL_MAX_CERT_BYTES = 2048;
 export const UPLINK_CTL_MAX_U64 = 18446744073709551615n;
 export const MIN_HUB_TOKENS_VERSION = '1.1.13';
+export const UPLINK_CTL_MAX_ATTACHMENT_ENTRIES = 4096;
 export const TMEX_FORWARDED_BY_HEADER = 'X-Tmex-Forwarded-By';
 export const UPLINK_CTL_MAX_TOKEN_JSON_LEN = 16 * 1024;
+
+function skipsCtlBounds(t: unknown): boolean {
+  return (
+    t === 'key.log.res' || t === 'hub.tokens' || t === 'hub.attachments' || t === 'hub.forward'
+  );
+}
 export const KEY_LOG_PAGE_DEFAULT_LIMIT = 256;
 export const KEY_LOG_PAGE_MAX_LIMIT = 256;
 export const KEY_LOG_PAGE_MAX_BYTES = 1024 * 1024;
@@ -336,6 +345,88 @@ function encodeHubTokensMessage(msg: HubTokensMessage, legacy: boolean): Uint8Ar
   });
 }
 
+function parseAttachmentEntry(value: unknown, label: string): HubAttachmentsEntry {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  const entry: HubAttachmentsEntry = {
+    nodeId: mNodeId(value.nodeId, `${label}.nodeId`),
+    attached: mBool(value.attached, `${label}.attached`),
+  };
+  if (value.hubId !== undefined && value.hubId !== null) {
+    entry.hubId = mNodeId(value.hubId, `${label}.hubId`);
+  }
+  return entry;
+}
+
+function parseHubAttachmentsMessage(parsed: Record<string, unknown>): HubAttachmentsMessage {
+  if (!Array.isArray(parsed.entries)) throw new Error('hub.attachments entries must be an array');
+  if (parsed.entries.length > UPLINK_CTL_MAX_ATTACHMENT_ENTRIES) {
+    throw new Error('hub.attachments entries too many');
+  }
+  const msg: HubAttachmentsMessage = {
+    t: 'hub.attachments',
+    revision: mNonNegInt(parsed.revision, 'revision'),
+    entries: parsed.entries.map((row, i) => parseAttachmentEntry(row, `entries[${i}]`)),
+  };
+  if (parsed.full !== undefined && parsed.full !== null) {
+    msg.full = mBool(parsed.full, 'full');
+  }
+  return msg;
+}
+
+function encodeHubAttachmentsMessage(msg: HubAttachmentsMessage, legacy: boolean): Uint8Array {
+  if (legacy) return encodeJsonBytes({ t: 'hub.attachments' });
+  return encodeJsonBytes(parseHubAttachmentsMessage({ ...msg, t: 'hub.attachments' }));
+}
+
+function parseForwardedRtcSignal(value: unknown): HubForwardRtcSignal {
+  if (!isRecord(value)) throw new Error('hub.forward signal must be an object');
+  const from = mStr(value.from, 'signal.from');
+  if (from !== 'browser' && from !== 'node') {
+    throw new Error('hub.forward signal.from must be browser|node');
+  }
+  const signal: HubForwardRtcSignal = {
+    rtcSession: mStr(value.rtcSession, 'signal.rtcSession'),
+    from,
+    to: mStr(value.to, 'signal.to'),
+  };
+  const sdp = mOptStr(value.sdp, 'signal.sdp');
+  if (sdp !== undefined) signal.sdp = sdp;
+  const candidate = mOptStr(value.candidate, 'signal.candidate');
+  if (candidate !== undefined) signal.candidate = candidate;
+  return signal;
+}
+
+function parseHubForwardMessage(parsed: Record<string, unknown>): HubForwardMessage {
+  const kind = mStr(parsed.kind, 'kind');
+  if (kind !== 'rtc.signal') throw new Error('hub.forward kind must be rtc.signal');
+  if (!Array.isArray(parsed.visitedHubIds)) {
+    throw new Error('hub.forward visitedHubIds must be an array');
+  }
+  if (parsed.visitedHubIds.length > UPLINK_CTL_MAX_HUBS) {
+    throw new Error('hub.forward visitedHubIds too many');
+  }
+  return {
+    t: 'hub.forward',
+    kind: 'rtc.signal',
+    originHubId: mNodeId(parsed.originHubId, 'originHubId'),
+    returnHubId: mNodeId(parsed.returnHubId, 'returnHubId'),
+    visitedHubIds: parsed.visitedHubIds.map((id, i) => mNodeId(id, `visitedHubIds[${i}]`)),
+    signal: parseForwardedRtcSignal(parsed.signal),
+  };
+}
+
+function encodeHubForwardMessage(msg: HubForwardMessage, legacy: boolean): Uint8Array {
+  if (legacy) return encodeJsonBytes({ t: 'hub.forward' });
+  return encodeJsonBytes(parseHubForwardMessage({ ...msg, t: 'hub.forward' }));
+}
+
+function stripAttachedHubId<T extends { attachedHubId?: string }>(
+  node: T
+): Omit<T, 'attachedHubId'> {
+  const { attachedHubId: _id, ...rest } = node;
+  return rest;
+}
+
 function applyNodeListExtras<
   T extends { hubs?: HubEndpointInfo[]; writerHubId?: string; writerEpoch?: number },
 >(target: T, parsed: Record<string, unknown>): T {
@@ -357,6 +448,7 @@ type MeshNodeInfo = {
   inventory: unknown;
   direct_capable: boolean;
   version: string | null;
+  attachedHubId?: string;
 };
 
 type MeshHubInfo = { nodeId: string; publicUrl: string; name?: string };
@@ -452,11 +544,13 @@ export type MeshUplinkCtlMessage =
   | MeshUplinkKeyLogAck
   | MeshUplinkRtcSignal
   | MeshUplinkEnrollRedeemed
-  | HubTokensMessage;
+  | HubTokensMessage
+  | HubAttachmentsMessage
+  | HubForwardMessage;
 
 function parseMeshNode(value: unknown): MeshNodeInfo {
   if (!isRecord(value)) throw new Error('node.list node must be an object');
-  return {
+  const node: MeshNodeInfo = {
     id: mStr(value.id, 'nodes[].id'),
     name: mStr(value.name, 'nodes[].name'),
     online: mBool(value.online, 'nodes[].online'),
@@ -465,6 +559,10 @@ function parseMeshNode(value: unknown): MeshNodeInfo {
     direct_capable: mBool(value.direct_capable, 'nodes[].direct_capable'),
     version: mOptStr(value.version, 'nodes[].version') ?? null,
   };
+  if (value.attachedHubId !== undefined && value.attachedHubId !== null) {
+    node.attachedHubId = mNodeId(value.attachedHubId, 'nodes[].attachedHubId');
+  }
+  return node;
 }
 
 function parseMeshHub(value: unknown): MeshHubInfo {
@@ -493,10 +591,10 @@ export function decodeMeshUplinkCtl(
   if (parsed.t === 'key.log.res' && bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
     const resId = mOptStr(parsed.id, 'id');
     if (!resId || resId !== opts?.pendingKeyLogId) throw new Error('ctl too large');
-  } else if (parsed.t !== 'key.log.res' && parsed.t !== 'hub.tokens') {
+  } else if (!skipsCtlBounds(parsed.t)) {
     if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) throw new Error('ctl too large');
     assertCtlBounds(parsed, 0);
-  } else if (parsed.t === 'hub.tokens') {
+  } else if (skipsCtlBounds(parsed.t) && parsed.t !== 'key.log.res') {
     if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) throw new Error('ctl too large');
   }
   if (!TYPE_SET.has(parsed.t)) throw new Error(`unknown uplink ctl t: ${parsed.t}`);
@@ -648,6 +746,10 @@ export function decodeMeshUplinkCtl(
     }
     case 'hub.tokens':
       return parseHubTokensMessage(parsed);
+    case 'hub.attachments':
+      return parseHubAttachmentsMessage(parsed);
+    case 'hub.forward':
+      return parseHubForwardMessage(parsed);
   }
 }
 
@@ -683,7 +785,7 @@ export function encodeMeshUplinkCtl(
           hash: encodeBase64url(msg.key_log_head.hash),
         },
         rtc: msg.rtc,
-        nodes: msg.nodes,
+        nodes: legacy ? msg.nodes.map(stripAttachedHubId) : msg.nodes,
         ...(msg.hub ? { hub: msg.hub } : {}),
         ...(!legacy && msg.hubs ? { hubs: msg.hubs } : {}),
         ...(!legacy && msg.writerHubId ? { writerHubId: msg.writerHubId } : {}),
@@ -744,6 +846,10 @@ export function encodeMeshUplinkCtl(
       });
     case 'hub.tokens':
       return encodeHubTokensMessage(msg, legacy);
+    case 'hub.attachments':
+      return encodeHubAttachmentsMessage(msg, legacy);
+    case 'hub.forward':
+      return encodeHubForwardMessage(msg, legacy);
   }
 }
 
@@ -769,6 +875,7 @@ export type NodeListEntry = {
   inventory: unknown;
   direct_capable: boolean;
   version: string | null;
+  attachedHubId?: string;
 };
 type NodeListHubInfo = { nodeId: string; publicUrl: string; name?: string };
 export type NodeListMessage = {
@@ -843,6 +950,32 @@ export type HubTokensMessage = {
   tokens?: HubTokenRow[];
   ack?: boolean;
 };
+export type HubAttachmentsEntry = {
+  nodeId: string;
+  attached: boolean;
+  hubId?: string;
+};
+export type HubAttachmentsMessage = {
+  t: 'hub.attachments';
+  revision: number;
+  entries: HubAttachmentsEntry[];
+  full?: boolean;
+};
+export type HubForwardRtcSignal = {
+  rtcSession: string;
+  from: RtcSignalFrom;
+  to: string;
+  sdp?: string;
+  candidate?: string;
+};
+export type HubForwardMessage = {
+  t: 'hub.forward';
+  kind: 'rtc.signal';
+  originHubId: string;
+  returnHubId: string;
+  visitedHubIds: string[];
+  signal: HubForwardRtcSignal;
+};
 export type HubUplinkCtlMessage =
   | AuthChallengeMessage
   | AuthResponseMessage
@@ -857,7 +990,9 @@ export type HubUplinkCtlMessage =
   | KeyLogAckMessage
   | RtcSignalMessage
   | EnrollRedeemedMessage
-  | HubTokensMessage;
+  | HubTokensMessage
+  | HubAttachmentsMessage
+  | HubForwardMessage;
 
 function hStr(obj: Record<string, unknown>, key: string): string {
   const value = obj[key];
@@ -936,7 +1071,7 @@ function decodeHubNodeList(obj: Record<string, unknown>): NodeListMessage {
       if (version !== null && version !== undefined && typeof version !== 'string') {
         throw new UplinkCtlError('invalid node.version');
       }
-      return {
+      const entry: NodeListEntry = {
         id: hNe(value, 'id'),
         name: hStr(value, 'name'),
         online: hBool(value, 'online'),
@@ -945,6 +1080,10 @@ function decodeHubNodeList(obj: Record<string, unknown>): NodeListMessage {
         direct_capable: hBool(value, 'direct_capable'),
         version: typeof version === 'string' ? version : null,
       };
+      if (value.attachedHubId !== undefined && value.attachedHubId !== null) {
+        entry.attachedHubId = hNodeId(value, 'attachedHubId');
+      }
+      return entry;
     }),
   };
   if (obj.hub !== undefined && obj.hub !== null) {
@@ -976,7 +1115,7 @@ function decodeHubInner(
   if (parsedT === 'key.log.res' && !opts?.allowKeyLogRes) {
     throw new UplinkCtlError('unexpected key.log.res');
   }
-  if (parsedT !== 'key.log.res' && parsedT !== 'hub.tokens') assertCtlBounds(parsed, 0);
+  if (!skipsCtlBounds(parsedT)) assertCtlBounds(parsed, 0);
   if (!isRecord(parsed)) throw new UplinkCtlError('invalid ctl');
   const t = parsed.t;
   if (typeof t !== 'string' || !TYPE_SET.has(t))
@@ -1112,6 +1251,18 @@ function decodeHubInner(
       } catch (err) {
         throw new UplinkCtlError(err instanceof Error ? err.message : 'invalid hub.tokens');
       }
+    case 'hub.attachments':
+      try {
+        return parseHubAttachmentsMessage(parsed);
+      } catch (err) {
+        throw new UplinkCtlError(err instanceof Error ? err.message : 'invalid hub.attachments');
+      }
+    case 'hub.forward':
+      try {
+        return parseHubForwardMessage(parsed);
+      } catch (err) {
+        throw new UplinkCtlError(err instanceof Error ? err.message : 'invalid hub.forward');
+      }
   }
   throw new UplinkCtlError(`unknown t: ${t}`);
 }
@@ -1130,7 +1281,7 @@ export function encodeHubUplinkCtl(
   if (opts?.legacy === true) {
     if (msg.t === 'node.list') {
       const { hubs: _hubs, writerHubId: _id, writerEpoch: _epoch, ...rest } = msg;
-      return encodeJsonBytes(rest);
+      return encodeJsonBytes({ ...rest, nodes: rest.nodes.map(stripAttachedHubId) });
     }
     if (msg.t === 'node.status') {
       const { hub: _hub, ...rest } = msg;
@@ -1138,6 +1289,12 @@ export function encodeHubUplinkCtl(
     }
     if (msg.t === 'hub.tokens') {
       return encodeJsonBytes({ t: 'hub.tokens' });
+    }
+    if (msg.t === 'hub.attachments') {
+      return encodeJsonBytes({ t: 'hub.attachments' });
+    }
+    if (msg.t === 'hub.forward') {
+      return encodeJsonBytes({ t: 'hub.forward' });
     }
   }
   if (msg.t === 'node.list') {

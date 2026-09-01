@@ -25,35 +25,35 @@
 
 - 自动选主（没有 quorum、没有 lease）；
 - 多 primary 同时写入；
-- hub 之间互相 relay（node 故障切换后都应挂到同一写者）；
 - 浏览器按 RTT 选最近 hub。
 
-这些属于后续阶段。
+这些属于后续阶段。挂在不同 hub 上的 node 现在可以通过写者 uplink 做跨 hub relay（见下）。
 
 ## 拓扑
 
 ```text
-                    写者（active, epoch=N）
+                    写者 A（active, epoch=N）
                     TMEX_HUB_MODE=active
                  https://hub-a.example
                     /        |        \
                    /         |         \
-            node-1         node-2      node-s
+            node-C        node-2      hub-B（同时也是 node）
                                          |
-                                         | 本机同时跑 hub 角色
+                                         | 已认证 standby→writer uplink
                                          v
-                               备援（standby, priority=200）
+                               备援 B（standby, priority=200）
                                TMEX_HUB_MODE=standby
                                https://hub-b.example
-                               只读：node.list / key log catch-up
-                               写者可达时转发 enroll / redeem / rename / revoke / keylog
+                               本地附着 node-D
+                               C↔D 经 A↔B 的 hub-relay 转发
 ```
 
 要点：
 
 - standby 不是「另一个独立 mesh」，而是同一用户根钥下的只读副本；
 - standby 自己也是 node，uplink 连的是当前写者（`TMEX_HUB_URL` 仍指向原主，作种子）；其它 hub 地址从 `node.list.hubs` 学习；
-- 浏览器与 CLI 的写入仍应打到写者。standby 在写者可达时转发这些写入；不可达时返回 `HUB_NOT_WRITER` 并带上写者地址。
+- 浏览器与 CLI 的写入仍应打到写者。standby 在写者可达时转发这些写入；不可达时返回 `HUB_NOT_WRITER` 并带上写者地址；
+- 两 hub 网格不另开链路：standby 的 writer uplink 同时承载复制、`hub.attachments` / `hub.forward` 和 `hub-relay` 流。
 
 ## 数据同步机制
 
@@ -63,6 +63,26 @@
 | 节点注册表 `nodes` | `node.list` 投影 | `HubRuntime.applyReplicatedNodeList`：只 upsert **本地已有未吊销证书** 的 node；列表里没有的标离线，不删除；忽略来源是自己的 list |
 | hub 集合 `mesh_hubs` | `node.list.hubs` | `MeshHubStore.replaceAll`；缺 `hubs[]` 时由旧版单数 `hub` 合成一行 |
 | enrollment token | **best-effort `hub.tokens`** | 写者在已授权 hub uplink 鉴权后发快照，创建 / redeem / 过期时发增量。standby 按 `(id, revision)` 幂等应用，且不会把 `used_at` 从有改回 null。redeem / 创建仍只在写者上执行；提升后沿用既有 `used_at IS NULL` 原子消费。只发给 advertised version ≥ 1.1.13 的已授权 hub。 |
+| 附着路由 | 内存 `AttachmentRouter` + `hub.attachments` | 见「跨 hub relay」。不落库。 |
+
+## 跨 hub relay
+
+挂在不同 hub 上的 node 通过已认证的 standby→writer uplink 互达，不新增独立 hub TCP/WS。
+
+**路由表：** 每台 hub 保存内存映射 `nodeId → { hubId, version, lastSeen }`。本地附着来自本进程 `NodeRegistry`；standby 在（重新）鉴权后向写者发送全量本地集合，attach/detach 发增量。写者合并后把 union 再广播给所有 advertised version ≥ 1.1.13 的已授权 hub。条目 5 分钟无刷新过期；表容量 4096；单帧 64 KiB。未授权对端的 `hub.attachments` 丢弃。节点重新挂到别处时，更高 `lastSeen` 覆盖。某 hub 的 uplink 断开后，指向它的条目删除，进行中的跨 hub 流 RST（不迁移）。
+
+**控制帧（hub-only，追加在 `UPLINK_CTL_TYPES` 末尾）：**
+
+- `hub.attachments { revision, entries: [{ nodeId, attached, hubId? }], full? }`：standby→写者报本地集合；写者→各 hub 广播 union（带 `hubId`）。
+- `hub.forward { kind: 'rtc.signal', originHubId, returnHubId, visitedHubIds, signal }`：跨 hub 封装 `rtc.signal`。目标 hub 注入本地信令；回程走 `returnHubId`。session→hub 映射 TTL 10 分钟。
+
+**数据面：** 本地 `onIncomingStream` 找不到目标但路由表给出 hub `H` 时，在本 hub 与 `H` 的已认证 uplink 上打开 `hub-relay` 流（OPEN `{ kind, to, from, originHubId, visitedHubIds, hop }`），双向 pump。对端校验 `isAuthorizedHub(origin)`、`hop ≤ 2`、`visitedHubIds` 无重复、目标本地且同用户、源证书未吊销后，再泵进本地目标，形状与同 hub relay 相同。Hub 只转发端到端加密的 relay payload，不终止 node↔node handshake。
+
+**环路守卫：** `visitedHubIds` 不得重复；`hop ≤ 2`（两 hub 拓扑足够，第三台经写者中转最多两跳）。不把客户端提供的 `attachedHubId` 当授权依据。
+
+**投影：** 写者把路由表投影到 `node.list.nodes[].attachedHubId`（旧节点 legacy 剥离）。`GET /api/mesh/nodes` 的 `MeshNode.attachedHubId?` 同源。
+
+**故障切换：** 节点改挂后由新 hub 的 delta 覆盖。旧 writer 恢复后仍受 epoch fencing，不会把过期 route 重新当成写者。正在传输的跨 hub stream 不随 failover 迁移，调用方重新 dial。
 
 `POST /api/hub/enrollments` 成功响应带 `replicatedTo: string[]`（2 s 内 ack 的 hub id；空数组表示尚未复制）。写者在复制 ACK 前崩溃时，该 token 不保证存在于 standby。
 
@@ -106,7 +126,7 @@
 
 覆盖：`POST /api/hub/enrollments`、`POST /api/hub/enrollments/redeem`、`POST /api/hub/nodes/:id/rename`、`POST /api/hub/nodes/:id/revoke`，以及 `POST /api/auth/keylog?hub=sync` 的 hub 追加。挂在 standby 上的 node 发来的 uplink `key.log.append` 经 standby 自己的写者 uplink 转发，并把 ack/error 回传；无活的写者 uplink 时仍是 `HUB_NOT_WRITER`。转发成功后 standby 立即触发 key-log catch-up，不等下一轮 `node.list`。
 
-只读（节点列表、enrollment 查询、uplink 鉴权、`node.list`、relay、RTC 信令、key log 拉取）在 standby 上仍可用。
+只读（节点列表、enrollment 查询、uplink 鉴权、`node.list`、本 hub 与跨 hub relay、RTC 信令、key log 拉取）在 standby 上仍可用。
 
 **epoch 围栏：** 本机 `mode=active` 时，若收到**已授权**的另一台 `mode=active` 且 `writerEpoch` **更大** 的广告，立即日志 `[hub] fenced: higher writerEpoch=… from hub=…`，`setMode('standby')`，把本机在 `mesh_hubs` 的行写成 standby。**不会自动 promote。**
 

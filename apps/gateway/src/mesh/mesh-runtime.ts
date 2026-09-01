@@ -1,8 +1,13 @@
 import os from 'node:os';
 import { canonicalHubUrl, encodeBase64url } from '@tmex/shared/auth';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
-import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
-import type { HubTokensMessage } from '@tmex/shared/uplink';
+import type {
+  HubAdvertisement,
+  HubAttachmentsMessage,
+  HubForwardMessage,
+  HubMode,
+  HubTokensMessage,
+} from '@tmex/shared/uplink';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { filesBulkHooks } from '../api/files';
 import {
@@ -1020,6 +1025,15 @@ function createUplinkWiring(d: MeshDeps) {
         onHubTokens: (msg: HubTokensMessage) => {
           d.hub?.receiveHubTokens(msg);
         },
+        onHubAttachments: (msg: HubAttachmentsMessage) => {
+          d.hub?.receiveHubAttachments(msg);
+        },
+        onHubForward: (msg: HubForwardMessage) => {
+          d.hub?.receiveHubForward(msg);
+        },
+        onHubRelayStream: (stream) => {
+          d.hub?.receiveHubRelay(stream);
+        },
       }),
     onEnrollRedeemed: (msg) => {
       d.httpHolder.runtime?.mesh.forwardEnrollRedeemed({
@@ -1076,7 +1090,16 @@ function createUplinkWiring(d: MeshDeps) {
         /* offline */
       }
     },
+    openStream: async (payload) => {
+      const link = uplink.liveClient()?.link;
+      if (!link || uplink.state !== 'online') throw new Error('uplink-offline');
+      return link.openStream(payload);
+    },
     isLive: () => uplink.state === 'online' && uplink.attachedHub()?.mode === 'active',
+  });
+  uplink.onStateChange((state) => {
+    if (state === 'online') d.hub?.onWriterUplinkOnline();
+    else d.hub?.onWriterUplinkOffline();
   });
   return { uplink, ensureDc };
 }
@@ -1370,6 +1393,11 @@ function wireMeshHttp(
     hubPublicUrl: hubEndpointUrl(config),
     hubStore: d.hubStore,
     attachedHub: () => w.uplink.attachedHub(),
+    attachedHubIdOf: (id) => {
+      if (d.hub) return d.hub.uplink.attachments.attachedHubId(id) ?? null;
+      const listed = state.lastNodeList?.nodes.find((node) => node.id === id);
+      return listed?.attachedHubId ?? null;
+    },
     hubMode: () => d.hub?.mode() ?? null,
     hubCandidates: () => w.uplink.candidates(),
     trustProxy: gatewayConfig.trustProxy,

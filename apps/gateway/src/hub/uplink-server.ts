@@ -16,7 +16,9 @@ import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import {
   HUB_NOT_WRITER,
   type HubAdvertisement,
+  type HubAttachmentsMessage,
   type HubEndpointInfo,
+  type HubForwardMessage,
   type HubMode,
   type HubNotWriterError,
   UPLINK_CTL_MAX_HUBS,
@@ -25,7 +27,9 @@ import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import { parseJson, projectNode, upsertById } from '../mesh/node-list-projection';
+import { RtcHubRouteTable } from '../mesh/rtc/signaling';
 import { pumpLink } from '../mesh/stream-pump';
+import { AttachmentRouter } from './attachment-router';
 import {
   applyKeyLogHubRuntime,
   inspectHubAuthRecordCompat,
@@ -33,6 +37,14 @@ import {
   isAuthorizedHub as mergeAuthorizedHub,
   resolveMeshUserId,
 } from './hub-authorization';
+import {
+  HUB_RELAY_KIND,
+  type HubRelayOpen,
+  encodeHubRelayOpen,
+  nextHubRelayHop,
+  parseHubRelayOpen,
+  validateHubRelay,
+} from './hub-relay';
 import {
   HUB_TOKENS_ACK_WAIT_MS,
   applyHubTokensMessage,
@@ -125,6 +137,8 @@ export type UplinkServerOptions = {
     error?: string;
   } | null>;
   onForwardedWrite?: () => void;
+  openHubStream?: (hubId: string, payload: Uint8Array) => Promise<LinkStream | null>;
+  forwardHubCtl?: (msg: HubAttachmentsMessage | HubForwardMessage) => void;
 };
 
 type PendingAuth = {
@@ -201,6 +215,15 @@ export class UplinkServer {
   private readonly onNewAuthorizedHub?: (hubNodeId: string) => void;
   private readonly forwardAppend?: UplinkServerOptions['forwardAppend'];
   private readonly onForwardedWrite?: () => void;
+  private readonly openHubStream?: (
+    hubId: string,
+    payload: Uint8Array
+  ) => Promise<LinkStream | null>;
+  private readonly forwardHubCtl?: (msg: HubAttachmentsMessage | HubForwardMessage) => void;
+  readonly attachments: AttachmentRouter;
+  private readonly rtcHubRoutes: RtcHubRouteTable;
+  private attachmentRevision = 0;
+  private readonly crossHubStreams = new Map<string, Set<LinkStream>>();
   private readonly tokenAckWaiters = new Map<
     string,
     { acked: Set<string>; pending: Set<string> }
@@ -257,7 +280,14 @@ export class UplinkServer {
     this.onNewAuthorizedHub = opts.onNewAuthorizedHub;
     this.forwardAppend = opts.forwardAppend;
     this.onForwardedWrite = opts.onForwardedWrite;
+    this.openHubStream = opts.openHubStream;
+    this.forwardHubCtl = opts.forwardHubCtl;
     this.now = opts.now ?? Date.now;
+    this.attachments = new AttachmentRouter({
+      selfHubId: () => this.hubNodeId(),
+      now: this.now,
+    });
+    this.rtcHubRoutes = new RtcHubRouteTable({ now: this.now });
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS;
     this.heartbeatMissLimit = opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT;
     this.authTimeoutMs = opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS;
@@ -521,6 +551,312 @@ export class UplinkServer {
     if (msg.id) this.send(live.link, hubTokensAck(msg));
   }
 
+  publishLocalAttachments(): void {
+    const self = this.hubNodeId();
+    if (!self) return;
+    this.attachments.expire();
+    for (const entry of this.registry.listAuthenticated()) {
+      if (entry.nodeId === self) continue;
+      this.attachments.attachLocal(entry.nodeId);
+    }
+    this.emitAttachments(
+      this.registry
+        .listAuthenticated()
+        .filter((entry) => entry.nodeId !== self)
+        .map((entry) => ({ nodeId: entry.nodeId, attached: true })),
+      true
+    );
+  }
+
+  ingestHubAttachments(fromHubId: string, msg: HubAttachmentsMessage): void {
+    if (!this.isAuthorizedHub(fromHubId)) {
+      console.warn(`[hub] hub.attachments rejected from unauthorized node=${fromHubId}`);
+      return;
+    }
+    const result = this.attachments.applyFromHub(fromHubId, msg.entries, {
+      revision: msg.revision,
+      full: msg.full,
+    });
+    if (result !== 'applied') return;
+    if (this.isWriter()) this.broadcastAttachmentUnion();
+    this.broadcastAllNodeLists();
+  }
+
+  ingestHubForward(fromHubId: string, msg: HubForwardMessage): void {
+    if (!this.isAuthorizedHub(fromHubId) || !this.isAuthorizedHub(msg.originHubId)) {
+      console.warn(`[hub] hub.forward rejected from unauthorized node=${fromHubId}`);
+      return;
+    }
+    this.dispatchHubForward(fromHubId, msg);
+  }
+
+  ingestHubRelay(fromHubId: string, stream: LinkStream): void {
+    const open = parseHubRelayOpen(stream.openPayload);
+    if (!open) {
+      stream.reset('invalid-relay');
+      return;
+    }
+    void this.acceptHubRelay(fromHubId, stream, open);
+  }
+
+  resetCrossHubRelays(hubId?: string): void {
+    const ids = hubId ? [hubId] : [...this.crossHubStreams.keys()];
+    for (const id of ids) {
+      const set = this.crossHubStreams.get(id);
+      this.crossHubStreams.delete(id);
+      if (!set) continue;
+      for (const stream of set) {
+        try {
+          stream.reset('hub-down');
+        } catch {
+          /* already closed */
+        }
+      }
+    }
+  }
+
+  private handleHubAttachments(live: LiveConnection, msg: HubAttachmentsMessage): void {
+    this.ingestHubAttachments(live.nodeId, msg);
+  }
+
+  private handleHubForward(live: LiveConnection, msg: HubForwardMessage): void {
+    this.ingestHubForward(live.nodeId, msg);
+  }
+
+  private emitAttachments(entries: HubAttachmentsMessage['entries'], full = false): void {
+    const msg: HubAttachmentsMessage = {
+      t: 'hub.attachments',
+      revision: ++this.attachmentRevision,
+      entries,
+      ...(full ? { full: true } : {}),
+    };
+    if (this.isWriter()) {
+      this.broadcastHubCtl(msg);
+      return;
+    }
+    this.forwardHubCtl?.(msg);
+  }
+
+  private broadcastAttachmentUnion(): void {
+    if (!this.isWriter()) return;
+    this.attachments.expire();
+    this.emitAttachments(this.attachments.snapshotEntries(), true);
+  }
+
+  private broadcastHubCtl(msg: HubAttachmentsMessage | HubForwardMessage): void {
+    for (const row of this.hubCtlTargets()) {
+      this.send(row.link, msg);
+    }
+  }
+
+  private hubCtlTargets(): Array<{ nodeId: string; link: LinkSession }> {
+    return this.tokenReplicationTargets();
+  }
+
+  private noteLocalAttach(nodeId: string): void {
+    const self = this.hubNodeId();
+    if (!self || nodeId === self) return;
+    this.attachments.attachLocal(nodeId);
+    if (this.isWriter()) this.broadcastAttachmentUnion();
+    else this.emitAttachments([{ nodeId, attached: true }]);
+  }
+
+  private noteLocalDetach(nodeId: string, dropAsHub: boolean): void {
+    this.attachments.detachLocal(nodeId);
+    if (dropAsHub) {
+      this.attachments.dropHub(nodeId);
+      this.resetCrossHubRelays(nodeId);
+    }
+    if (this.isWriter()) this.broadcastAttachmentUnion();
+    else this.emitAttachments([{ nodeId, attached: false }]);
+  }
+
+  private dispatchHubForward(fromHubId: string, msg: HubForwardMessage): void {
+    const self = this.hubNodeId();
+    if (!self) return;
+    if (msg.visitedHubIds.includes(self)) return;
+    if (msg.visitedHubIds.length > 2) return;
+    this.rtcHubRoutes.remember(msg.signal.rtcSession, msg.returnHubId);
+    const inner: RtcSignalMessage = {
+      t: 'rtc.signal',
+      rtcSession: msg.signal.rtcSession,
+      from: msg.signal.from,
+      to: msg.signal.to,
+      ...(msg.signal.sdp !== undefined ? { sdp: msg.signal.sdp } : {}),
+      ...(msg.signal.candidate !== undefined ? { candidate: msg.signal.candidate } : {}),
+    };
+    const target = this.registry.get(inner.to);
+    if (target?.authenticated) {
+      this.send(target.link, inner);
+      return;
+    }
+    const dest = this.attachments.attachedHubId(inner.to);
+    if (!dest || dest === self || dest === fromHubId) return;
+    if (msg.visitedHubIds.length >= 2) return;
+    if (!this.isAuthorizedHub(dest)) return;
+    this.sendHubForward(dest, {
+      ...msg,
+      visitedHubIds: [...msg.visitedHubIds, self],
+    });
+  }
+
+  private sendHubForward(destHubId: string, msg: HubForwardMessage): void {
+    if (this.isWriter()) {
+      const entry = this.registry.get(destHubId);
+      if (
+        entry?.authenticated &&
+        this.isAuthorizedHub(destHubId, entry.userId) &&
+        peerSupportsHubTokens(entry.meta.version ?? this.userStore.getNode(destHubId)?.version)
+      ) {
+        this.send(entry.link, msg);
+      }
+      return;
+    }
+    this.forwardHubCtl?.(msg);
+  }
+
+  private forwardRtcAcrossHubs(live: LiveConnection, msg: RtcSignalMessage): void {
+    const self = this.hubNodeId();
+    if (!self) return;
+    const dest = this.rtcHubRoutes.lookup(msg.rtcSession) ?? this.attachments.attachedHubId(msg.to);
+    if (!dest || dest === self) return;
+    if (!this.isAuthorizedHub(dest, live.userId)) return;
+    this.sendHubForward(dest, {
+      t: 'hub.forward',
+      kind: 'rtc.signal',
+      originHubId: self,
+      returnHubId: self,
+      visitedHubIds: [self],
+      signal: {
+        rtcSession: msg.rtcSession,
+        from: msg.from,
+        to: msg.to,
+        ...(msg.sdp !== undefined ? { sdp: msg.sdp } : {}),
+        ...(msg.candidate !== undefined ? { candidate: msg.candidate } : {}),
+      },
+    });
+  }
+
+  private async acceptHubRelay(
+    fromHubId: string,
+    stream: LinkStream,
+    open: HubRelayOpen
+  ): Promise<void> {
+    const targetCert = this.userStore.getCert(open.to);
+    const sourceCert = this.userStore.getCert(open.from);
+    const targetEntry = this.registry.get(open.to);
+    const sameUser = Boolean(
+      targetCert &&
+        sourceCert &&
+        targetCert.userId === sourceCert.userId &&
+        this.userStore.getCert(fromHubId)?.userId === targetCert.userId
+    );
+    const verdict = validateHubRelay({
+      to: open.to,
+      from: open.from,
+      originHubId: open.originHubId,
+      visitedHubIds: open.visitedHubIds,
+      hop: open.hop,
+      peerHubId: fromHubId,
+      isAuthorizedHub: (id) => this.isAuthorizedHub(id),
+      targetLocal: Boolean(targetEntry?.authenticated),
+      sameUser,
+      sourceRevoked: !sourceCert || sourceCert.revokedLogSeq !== null,
+      targetKnown: targetCert != null && targetCert.revokedLogSeq === null,
+    });
+    if (verdict.ok) {
+      await this.pumpToLocalNode(stream, open.to, open.from);
+      return;
+    }
+    if (
+      verdict.reason === 'offline' &&
+      sameUser &&
+      targetCert &&
+      targetCert.revokedLogSeq === null
+    ) {
+      await this.forwardHubRelay(stream, open);
+      return;
+    }
+    stream.reset(verdict.reason);
+  }
+
+  private async forwardHubRelay(stream: LinkStream, open: HubRelayOpen): Promise<void> {
+    const self = this.hubNodeId();
+    if (!self) {
+      stream.reset('offline');
+      return;
+    }
+    const next = nextHubRelayHop(open, self);
+    if (!next.ok) {
+      stream.reset(next.reason);
+      return;
+    }
+    const dest = this.attachments.attachedHubId(open.to);
+    if (!dest || dest === self) {
+      stream.reset('offline');
+      return;
+    }
+    await this.openAndPumpHubRelay(stream, dest, next.open);
+  }
+
+  private async pumpToLocalNode(stream: LinkStream, to: string, from: string): Promise<void> {
+    const targetEntry = this.registry.get(to);
+    if (!targetEntry?.authenticated) {
+      stream.reset('offline');
+      return;
+    }
+    const outboundPayload = textEncoder.encode(JSON.stringify({ to, from }));
+    let outbound: LinkStream;
+    try {
+      outbound = await targetEntry.link.openStream(outboundPayload);
+    } catch {
+      stream.reset('open-failed');
+      return;
+    }
+    pumpRelay(stream, outbound);
+  }
+
+  private async openAndPumpHubRelay(
+    stream: LinkStream,
+    destHubId: string,
+    open: HubRelayOpen
+  ): Promise<void> {
+    if (!this.openHubStream) {
+      stream.reset('offline');
+      return;
+    }
+    let outbound: LinkStream;
+    try {
+      const opened = await this.openHubStream(destHubId, encodeHubRelayOpen(open));
+      if (!opened) {
+        stream.reset('offline');
+        return;
+      }
+      outbound = opened;
+    } catch {
+      stream.reset('open-failed');
+      return;
+    }
+    this.trackCrossHub(destHubId, stream, outbound);
+    pumpRelay(stream, outbound);
+  }
+
+  private trackCrossHub(hubId: string, a: LinkStream, b: LinkStream): void {
+    let set = this.crossHubStreams.get(hubId);
+    if (!set) {
+      set = new Set();
+      this.crossHubStreams.set(hubId, set);
+    }
+    set.add(a);
+    set.add(b);
+    const untrack = (): void => {
+      set?.delete(a);
+      set?.delete(b);
+    };
+    a.onAbort(untrack);
+    b.onAbort(untrack);
+  }
+
   async broadcastNodeList(userId: string): Promise<'sent' | 'unchanged' | 'failed'> {
     if (this.stopped) return 'failed';
     this.nodeListLatestGen.set(userId, (this.nodeListLatestGen.get(userId) ?? 0) + 1);
@@ -631,6 +967,7 @@ export class UplinkServer {
     this.accepted.clear();
     this.authTimers.clear();
     this.rtcSessions.clear();
+    this.resetCrossHubRelays();
     this.lastNodeListFp.clear();
     this.lastNodeListSent.clear();
     this.keyLogReqLimiter.clear();
@@ -767,6 +1104,12 @@ export class UplinkServer {
       case 'hub.tokens':
         this.handleHubTokens(live, msg);
         return;
+      case 'hub.attachments':
+        this.handleHubAttachments(live, msg);
+        return;
+      case 'hub.forward':
+        this.handleHubForward(live, msg);
+        return;
       case 'key.log.res':
         link.close('protocol_error');
         return;
@@ -846,6 +1189,7 @@ export class UplinkServer {
     };
     this.live.set(link, live);
     this.startHeartbeat(live);
+    this.noteLocalAttach(nodeId);
     this.send(link, { t: 'auth.ok' });
     if ((await this.broadcastNodeList(userId)) === 'unchanged') {
       const cached = this.lastNodeListSent.get(userId);
@@ -901,6 +1245,7 @@ export class UplinkServer {
         },
         now
       );
+      this.attachments.refreshLocal(live.nodeId);
       if (msg.hub) this.applyAuthorizedHubAdvertisement(live.nodeId, msg.hub, 'uplink');
       if (this.isWriter() && this.isAuthorizedHub(live.nodeId, live.userId)) {
         const snapKey = `${live.nodeId}:${live.generation}`;
@@ -1184,22 +1529,28 @@ export class UplinkServer {
       return;
     }
     const reg = this.rtcSessions.get(msg.rtcSession);
-    if (!reg) return;
-    if (reg.userId !== live.userId) return;
-    if (!this.rtcNodesOwnedBy(reg.userId, reg.fromNodeId, reg.toNodeId)) {
-      this.rtcSessions.delete(msg.rtcSession);
+    if (reg) {
+      if (reg.userId !== live.userId) return;
+      if (!this.rtcNodesOwnedBy(reg.userId, reg.fromNodeId, reg.toNodeId)) {
+        this.rtcSessions.delete(msg.rtcSession);
+        return;
+      }
+      if (msg.from === 'browser') {
+        if (live.nodeId !== reg.fromNodeId || msg.to !== reg.toNodeId) return;
+      } else if (msg.from === 'node') {
+        if (live.nodeId !== reg.toNodeId || msg.to !== reg.fromNodeId) return;
+      } else {
+        return;
+      }
+      const target = this.registry.get(msg.to);
+      if (target?.authenticated && target.userId === reg.userId) {
+        this.send(target.link, msg);
+        return;
+      }
+      this.forwardRtcAcrossHubs(live, msg);
       return;
     }
-    if (msg.from === 'browser') {
-      if (live.nodeId !== reg.fromNodeId || msg.to !== reg.toNodeId) return;
-    } else if (msg.from === 'node') {
-      if (live.nodeId !== reg.toNodeId || msg.to !== reg.fromNodeId) return;
-    } else {
-      return;
-    }
-    const target = this.registry.get(msg.to);
-    if (!target?.authenticated || target.userId !== reg.userId) return;
-    this.send(target.link, msg);
+    this.forwardRtcAcrossHubs(live, msg);
   }
 
   private forwardDcSignal(
@@ -1214,8 +1565,11 @@ export class UplinkServer {
     if (msg.from !== 'node') return;
     this.ensureDcSession(live.userId, dc.a, dc.b);
     const target = this.registry.get(msg.to);
-    if (!target?.authenticated || target.userId !== live.userId) return;
-    this.send(target.link, msg);
+    if (target?.authenticated && target.userId === live.userId) {
+      this.send(target.link, msg);
+      return;
+    }
+    this.forwardRtcAcrossHubs(live, msg);
   }
 
   private async onIncomingStream(link: LinkSession, stream: LinkStream): Promise<void> {
@@ -1226,6 +1580,11 @@ export class UplinkServer {
     }
     if (!this.assertLiveCert(live)) {
       stream.reset('revoked');
+      return;
+    }
+    const hubOpen = parseHubRelayOpen(stream.openPayload);
+    if (hubOpen) {
+      await this.acceptHubRelay(live.nodeId, stream, hubOpen);
       return;
     }
     const open = parseRelayOpen(stream.openPayload);
@@ -1243,19 +1602,34 @@ export class UplinkServer {
       return;
     }
     const targetEntry = this.registry.get(open.to);
-    if (!targetEntry?.authenticated) {
+    if (targetEntry?.authenticated) {
+      const outboundPayload = textEncoder.encode(
+        JSON.stringify({ ...open.raw, from: live.nodeId })
+      );
+      let outbound: LinkStream;
+      try {
+        outbound = await targetEntry.link.openStream(outboundPayload);
+      } catch {
+        stream.reset('open-failed');
+        return;
+      }
+      pumpRelay(stream, outbound);
+      return;
+    }
+    const self = this.hubNodeId();
+    const dest = this.attachments.attachedHubId(open.to);
+    if (!self || !dest || dest === self) {
       stream.reset('offline');
       return;
     }
-    const outboundPayload = textEncoder.encode(JSON.stringify({ ...open.raw, from: live.nodeId }));
-    let outbound: LinkStream;
-    try {
-      outbound = await targetEntry.link.openStream(outboundPayload);
-    } catch {
-      stream.reset('open-failed');
-      return;
-    }
-    pumpRelay(stream, outbound);
+    await this.openAndPumpHubRelay(stream, dest, {
+      kind: HUB_RELAY_KIND,
+      to: open.to,
+      from: live.nodeId,
+      originHubId: self,
+      visitedHubIds: [self],
+      hop: 1,
+    });
   }
 
   private startHeartbeat(live: LiveConnection): void {
@@ -1278,6 +1652,7 @@ export class UplinkServer {
       return;
     }
     live.awaitingPong = true;
+    this.attachments.refreshLocal(live.nodeId);
     this.send(live.link, { t: 'ping' });
   }
 
@@ -1317,8 +1692,10 @@ export class UplinkServer {
     if (!live) return;
     this.clearHeartbeat(live);
     this.dropRtcForNode(live.nodeId);
+    const dropAsHub = this.isAuthorizedHub(live.nodeId, live.userId);
     const removed = this.registry.remove(live.nodeId, live.generation);
     if (!removed || this.stopped) return;
+    this.noteLocalDetach(live.nodeId, dropAsHub);
     const now = this.now();
     patchNode(this.db, live.nodeId, { lastSeenAt: now });
     const ownId = this.hubNodeId();
@@ -1406,7 +1783,8 @@ export class UplinkServer {
             directCapable: n.directCapable,
             version: n.version ?? '',
           },
-          live?.meta
+          live?.meta,
+          this.attachments.attachedHubId(n.id)
         );
       });
     const hubNodeId = this.hubNodeId() ?? this.config.nodeId ?? this.userStore.getHubMeta()?.nodeId;
@@ -1431,7 +1809,8 @@ export class UplinkServer {
             directCapable: existing?.direct_capable ?? false,
             version: existing?.version ?? '',
           },
-          online.get(hubNodeId)?.meta
+          online.get(hubNodeId)?.meta,
+          this.attachments.attachedHubId(hubNodeId) ?? hubNodeId
         )
       );
     }

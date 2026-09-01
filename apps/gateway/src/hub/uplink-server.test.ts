@@ -61,6 +61,7 @@ function makeServer(
     config?: Partial<HubRuntimeConfig>;
     meshHubs?: MeshHubStore;
     forwardAppend?: ConstructorParameters<typeof UplinkServer>[0]['forwardAppend'];
+    openHubStream?: ConstructorParameters<typeof UplinkServer>[0]['openHubStream'];
   }
 ) {
   const registry = new NodeRegistry();
@@ -77,6 +78,7 @@ function makeServer(
     },
     meshHubs: extras?.meshHubs,
     forwardAppend: extras?.forwardAppend,
+    openHubStream: extras?.openHubStream,
     heartbeatIntervalMs: extras?.heartbeatIntervalMs ?? 60_000,
     heartbeatMissLimit: extras?.heartbeatMissLimit ?? 3,
     authTimeoutMs: extras?.authTimeoutMs ?? 60_000,
@@ -1061,6 +1063,59 @@ describe('UplinkServer', () => {
       );
       expect((await fakeRow.closed).reason).toBe('rst');
 
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('未授权 hub.attachments 被丢弃；跨 hub relay 打开 hub-relay', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const hubB = 'bb'.repeat(16);
+      const opened: Array<{ hubId: string; payload: Record<string, unknown> }> = [];
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: { nodeId: 'aa'.repeat(16), hubNodeId: 'aa'.repeat(16), authorizedHubIds: [hubB] },
+        openHubStream: async (hubId, payload) => {
+          opened.push({
+            hubId,
+            payload: JSON.parse(new TextDecoder().decode(payload)) as Record<string, unknown>,
+          });
+          const [left, right] = createInMemoryLinkPair();
+          right.onStream(() => {});
+          return left.openStream(payload);
+        },
+      });
+      const a = await authNode(server, userStore, user.id, { name: 'c' });
+      const stray = await authNode(server, userStore, user.id, { name: 'stray' });
+      sendCtl(stray.nodeLink, {
+        t: 'hub.attachments',
+        revision: 1,
+        full: true,
+        entries: [{ nodeId: 'dd'.repeat(16), attached: true, hubId: hubB }],
+      });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(server.attachments.lookup('dd'.repeat(16))).toBeUndefined();
+
+      const target = seedAdmittedNode(userStore, user.id, { name: 'd' });
+      server.ingestHubAttachments(hubB, {
+        t: 'hub.attachments',
+        revision: 1,
+        full: true,
+        entries: [{ nodeId: target.nodeId, attached: true, hubId: hubB }],
+      });
+      expect(server.attachments.attachedHubId(target.nodeId)).toBe(hubB);
+
+      const ghost = await a.nodeLink.openStream(
+        new TextEncoder().encode(JSON.stringify({ to: target.nodeId }))
+      );
+      await new Promise((r) => setTimeout(r, 50));
+      expect(opened.some((row) => row.hubId === hubB && row.payload.kind === 'hub-relay')).toBe(
+        true
+      );
+      ghost.reset('done');
       server.stop();
     } finally {
       close();

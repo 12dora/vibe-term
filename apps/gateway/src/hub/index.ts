@@ -35,6 +35,11 @@ export {
   type HubHttpAuthorization,
 } from './hub-authorization';
 export { NodeRegistry, type NodeRegistryMeta, type RegisteredNode } from './node-registry';
+export {
+  ATTACHMENT_MAX_ENTRIES,
+  ATTACHMENT_TTL_MS,
+  AttachmentRouter,
+} from './attachment-router';
 export { applyReplicatedNodeList, type UplinkNodeList } from './hub-replication';
 export {
   HUB_PEER_POLL_FAIL_LIMIT,

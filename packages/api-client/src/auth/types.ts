@@ -225,6 +225,8 @@ export interface MeshNode {
   isHub?: boolean;
   /** hub 机的主 / 备身份；非 hub 或旧后端不下发。 */
   hubMode?: HubMode;
+  /** 该 node 当前挂载的 hub；旧后端不下发。 */
+  attachedHubId?: string;
   /** 入口记录的进行中长事务（卸载 / 主备切换）；无则缺省或 null。 */
   operation?: MeshNodeOperation | null;
 }

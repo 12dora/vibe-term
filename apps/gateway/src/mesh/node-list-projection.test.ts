@@ -38,6 +38,9 @@ describe('node-list-projection', () => {
       direct_capable: true,
       version: '2',
     });
+    expect(projectNode('n1', 'box', true, { version: '1' }, null, 'aa'.repeat(16))).toMatchObject({
+      attachedHubId: 'aa'.repeat(16),
+    });
   });
 
   test('upsertById overwrites an existing hub row in place', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { RtcSignalMessage } from '../mesh-deps';
-import { MeshRtcSignalRouter } from './signaling';
+import { MeshRtcSignalRouter, RTC_HUB_ROUTE_TTL_MS, RtcHubRouteTable } from './signaling';
 
 describe('MeshRtcSignalRouter', () => {
   test('forwards browser signals to the registered target node', () => {
@@ -149,5 +149,18 @@ describe('MeshRtcSignalRouter', () => {
     expect(delivered).toEqual([]);
     router.deliverLocal({ rtcSession: 'ok', from: 'node', to: 'aa', sdp: 'good' }, 'entry');
     expect(delivered).toEqual(['good']);
+  });
+});
+
+describe('RtcHubRouteTable', () => {
+  test('记录 / 查找 / 10 分钟 TTL 过期', () => {
+    let now = 1_000;
+    const table = new RtcHubRouteTable({ now: () => now });
+    table.remember('sess', 'AA'.repeat(16));
+    expect(table.lookup('sess')).toBe('aa'.repeat(16));
+    now = 1_000 + RTC_HUB_ROUTE_TTL_MS - 1;
+    expect(table.lookup('sess')).toBe('aa'.repeat(16));
+    now = 1_000 + RTC_HUB_ROUTE_TTL_MS + 1;
+    expect(table.lookup('sess')).toBeUndefined();
   });
 });

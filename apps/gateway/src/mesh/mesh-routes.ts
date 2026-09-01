@@ -78,6 +78,7 @@ export type MeshRoutesDeps = {
   selfName?: () => string | null;
   hubStore?: MeshHubStore;
   attachedHub?: () => AttachedHub | null;
+  attachedHubIdOf?: (nodeId: string) => string | null | undefined;
   hubCandidates?: () => Array<string | UplinkCandidate>;
   hubPeers?: string[];
   forwardAuthorizedHttp?: (
@@ -444,7 +445,8 @@ export class MeshRoutes {
           (nid) => this.deps.peers.rttOf?.(nid) ?? null,
           (nid) => this.deps.peers.linkDetailOf?.(nid) ?? null,
           hubIds,
-          (nid) => hubModeById.get(nid)
+          (nid) => hubModeById.get(nid),
+          (nid) => this.deps.attachedHubIdOf?.(nid)
         )
       )
       .filter((n) => n != null);

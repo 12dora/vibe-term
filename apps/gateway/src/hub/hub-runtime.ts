@@ -11,13 +11,23 @@ import {
   verifyEd25519,
   verifyNodeCertificate,
 } from '@tmex/shared/auth';
-import { type LinkSession, type ServerSocketAdapter, WebSocketLink } from '@tmex/shared/link';
-import type { HubMode, HubTokensMessage } from '@tmex/shared/uplink';
+import {
+  type LinkSession,
+  type LinkStream,
+  type ServerSocketAdapter,
+  WebSocketLink,
+} from '@tmex/shared/link';
+import type {
+  HubAttachmentsMessage,
+  HubForwardMessage,
+  HubMode,
+  HubTokensMessage,
+} from '@tmex/shared/uplink';
 import { json, readJsonObjectBody } from '../api/http';
 import { matchPath } from '../api/route';
 import { decodeB64url, requireB64url, validationError } from '../api/route-input';
 import type { HubTrustStore } from '../auth/hub-trust-store';
-import { MeshHubStore } from '../auth/mesh-hub-store';
+import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthDb } from '../auth/types';
 import { type UserRecord, UserStore } from '../auth/user-store';
@@ -102,7 +112,8 @@ export type HubWriterBridge = {
     error?: string;
   } | null>;
   requestCatchUp(): void;
-  sendCtl(msg: HubTokensMessage): void;
+  sendCtl(msg: HubTokensMessage | HubAttachmentsMessage | HubForwardMessage): void;
+  openStream(openPayload: Uint8Array): Promise<LinkStream>;
   isLive(): boolean;
 };
 
@@ -232,6 +243,14 @@ export class HubRuntime {
         }
       },
       onForwardedWrite: () => this.writerBridge?.requestCatchUp(),
+      openHubStream: (hubId, payload) => this.openHubStream(hubId, payload),
+      forwardHubCtl: (msg) => {
+        try {
+          this.writerBridge?.sendCtl(msg);
+        } catch {
+          /* offline */
+        }
+      },
     });
     this.peerPoller = new HubPeerPoller({
       meshHubs: this.meshHubs,
@@ -342,6 +361,69 @@ export class HubRuntime {
       } catch {
         /* offline */
       }
+    }
+  }
+
+  receiveHubAttachments(msg: HubAttachmentsMessage): void {
+    const from = this.writerPeerId();
+    if (!from) return;
+    this.uplink.ingestHubAttachments(from, msg);
+  }
+
+  receiveHubForward(msg: HubForwardMessage): void {
+    const from = this.writerPeerId();
+    if (!from) return;
+    this.uplink.ingestHubForward(from, msg);
+  }
+
+  receiveHubRelay(stream: LinkStream): void {
+    const from = this.writerPeerId();
+    if (!from) {
+      stream.reset('unauthenticated');
+      return;
+    }
+    this.uplink.ingestHubRelay(from, stream);
+  }
+
+  onWriterUplinkOnline(): void {
+    this.uplink.publishLocalAttachments();
+  }
+
+  onWriterUplinkOffline(): void {
+    const writer = this.writerPeerId();
+    if (writer && writer !== this.uplink.hubNodeId()) {
+      this.uplink.attachments.dropHub(writer);
+      this.uplink.resetCrossHubRelays(writer);
+    }
+  }
+
+  private writerPeerId(): string | null {
+    return (
+      pickWriterHub(
+        this.meshHubs.list().filter((row) => this.uplink.isAuthorizedHub(row.hubNodeId))
+      ) ??
+      this.uplink.hubNodeId() ??
+      null
+    );
+  }
+
+  private async openHubStream(hubId: string, payload: Uint8Array): Promise<LinkStream | null> {
+    const own = this.uplink.hubNodeId();
+    if (own && hubId === own) return null;
+    const local = this.registry.get(hubId);
+    if (local?.authenticated && this.uplink.isAuthorizedHub(hubId, local.userId)) {
+      try {
+        return await local.link.openStream(payload);
+      } catch {
+        return null;
+      }
+    }
+    const bridge = this.writerBridge;
+    if (!bridge?.isLive()) return null;
+    try {
+      return await bridge.openStream(payload);
+    } catch {
+      return null;
     }
   }
 
