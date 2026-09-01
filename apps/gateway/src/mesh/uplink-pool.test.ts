@@ -516,8 +516,10 @@ describe('UplinkPool', () => {
     rttProbeIntervalMs?: number;
     failbackDebounceMs?: number;
     preferNearest?: boolean | null;
+    localRoles?: { hub?: boolean; node?: boolean };
     rttSwitchDwellMs?: number;
     versions?: Record<string, string>;
+    onHubTokens?: (msg: import('@tmex/shared/uplink').HubTokensMessage) => void;
   }) {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
@@ -560,7 +562,13 @@ describe('UplinkPool', () => {
       rttProbeIntervalMs: input.rttProbeIntervalMs,
       failbackDebounceMs: input.failbackDebounceMs,
       preferNearest: input.preferNearest,
+      localRoles: input.localRoles,
       rttSwitchDwellMs: input.rttSwitchDwellMs,
+      onHubTokens: input.onHubTokens
+        ? (msg) => {
+            input.onHubTokens?.(msg);
+          }
+        : undefined,
       probeHealthz: async (url) => (input.probe ? input.probe(url) : false),
       fetchCaPem: input.fetchCaPem,
       fingerprintPem: input.fingerprintPem,
@@ -2037,6 +2045,54 @@ describe('UplinkPool', () => {
     await scheduler.advance(1_000);
     await Bun.sleep(120);
     expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+  });
+
+  test('hub 角色禁用 RTT 切换，保持写者控制面上行', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: true,
+      localRoles: { hub: true, node: true },
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? 40 : 5);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+  });
+
+  test('被替换 uplink 上迟到的 hub.tokens 丢弃', async () => {
+    const received: unknown[] = [];
+    const scheduler = new ManualScheduler();
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: false,
+      onHubTokens: (msg) => {
+        received.push(msg);
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(created.length).toBeGreaterThan(0);
+    const first = created[0];
+    await pool.switchTo('https://b.example');
+    first?.opts.onHubTokens?.({
+      t: 'hub.tokens',
+      op: 'upsert',
+      revision: { epoch: 1, seq: 1 },
+      tokens: [],
+    });
+    expect(received).toEqual([]);
   });
 
   test('forced-off prefer-nearest keeps epoch/priority attach', async () => {

@@ -30,7 +30,8 @@ import type { UserStore } from '../auth/user-store';
 import { parseJson, projectNode, upsertById } from '../mesh/node-list-projection';
 import { RtcHubRouteTable } from '../mesh/rtc/signaling';
 import { pumpLink } from '../mesh/stream-pump';
-import { AttachmentRouter } from './attachment-router';
+import { ATTACHMENT_KEEPALIVE_MS, AttachmentRouter } from './attachment-router';
+import { AttachmentSnapshotAssembler, paginateHubAttachments } from './hub-attachments';
 import {
   applyKeyLogHubRuntime,
   inspectHubAuthRecordCompat,
@@ -88,6 +89,13 @@ import {
   KeyLogReqLimiter,
   WindowedLogBudget,
 } from './uplink-rate-limit';
+import {
+  WRITE_FORWARD_OVERSIZED_ERROR,
+  WriteForwardIdempotencyCache,
+  assertWriteForwardEncodedSize,
+  chunkWriteForwardAck,
+  writeForwardDigest,
+} from './writer-forward';
 
 export {
   HUB_KEY_LOG_REQ_BURST,
@@ -127,6 +135,7 @@ export type UplinkServerOptions = {
   heartbeatIntervalMs?: number;
   heartbeatMissLimit?: number;
   authTimeoutMs?: number;
+  attachmentKeepaliveMs?: number;
   rtcMaxSessions?: number;
   keyLogReqStateMax?: number;
   keyLogReqIdleTtlMs?: number;
@@ -233,6 +242,10 @@ export class UplinkServer {
   readonly attachments: AttachmentRouter;
   private readonly rtcHubRoutes: RtcHubRouteTable;
   private attachmentRevision = 0;
+  private readonly attachmentAssembler = new AttachmentSnapshotAssembler();
+  private readonly writeForwardCache = new WriteForwardIdempotencyCache();
+  private attachmentKeepalive: ReturnType<typeof setInterval> | null = null;
+  private readonly attachmentKeepaliveMs: number;
   private readonly crossHubStreams = new Map<string, Set<LinkStream>>();
   private readonly tokenAckWaiters = new Map<
     string,
@@ -299,6 +312,10 @@ export class UplinkServer {
       now: this.now,
     });
     this.rtcHubRoutes = new RtcHubRouteTable({ now: this.now });
+    this.attachmentKeepaliveMs =
+      opts.attachmentKeepaliveMs === undefined
+        ? ATTACHMENT_KEEPALIVE_MS
+        : opts.attachmentKeepaliveMs;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS;
     this.heartbeatMissLimit = opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT;
     this.authTimeoutMs = opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS;
@@ -323,6 +340,7 @@ export class UplinkServer {
       });
     }
     this.upsertSelfHub();
+    this.startAttachmentKeepalive();
   }
 
   mode(): HubMode {
@@ -601,23 +619,76 @@ export class UplinkServer {
       console.warn(`[hub] hub.write-forward rejected from unauthorized node=${live.nodeId}`);
       return;
     }
+    if (!msg.id) return;
+    const ownId = this.hubNodeId();
+    const epoch = this.writerEpoch();
+    const writerMismatch =
+      !this.isWriter() ||
+      (msg.writerHubId !== undefined && ownId !== undefined && msg.writerHubId !== ownId) ||
+      (msg.writerEpoch !== undefined && msg.writerEpoch !== epoch);
+    if (writerMismatch) {
+      this.sendWriteForwardAck(live.link, {
+        t: 'hub.write-forward',
+        id: msg.id,
+        ack: true,
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(this.notWriterError()),
+      });
+      return;
+    }
+    try {
+      assertWriteForwardEncodedSize(msg);
+    } catch {
+      this.sendWriteForwardAck(live.link, {
+        t: 'hub.write-forward',
+        id: msg.id,
+        ack: true,
+        status: 413,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ error: WRITE_FORWARD_OVERSIZED_ERROR }),
+      });
+      return;
+    }
+    const digest = writeForwardDigest(msg);
+    const cached = this.writeForwardCache.get(live.nodeId, msg.id);
+    if (cached) {
+      if (cached.digest === digest) {
+        this.sendWriteForwardAck(live.link, cached.ack);
+        return;
+      }
+      this.sendWriteForwardAck(live.link, {
+        t: 'hub.write-forward',
+        id: msg.id,
+        ack: true,
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ error: 'idempotency_conflict' }),
+      });
+      return;
+    }
     if (!this.onWriteForward) return;
     try {
       const ack = await this.onWriteForward(live.nodeId, msg);
-      if (msg.id) this.send(live.link, ack);
+      this.writeForwardCache.set(live.nodeId, msg.id, digest, ack);
+      this.sendWriteForwardAck(live.link, ack);
     } catch (err) {
       console.warn(
         `[hub] hub.write-forward failed from=${live.nodeId}: ${err instanceof Error ? err.message : String(err)}`
       );
-      if (msg.id) {
-        this.send(live.link, {
-          t: 'hub.write-forward',
-          id: msg.id,
-          ack: true,
-          status: 500,
-          body: JSON.stringify({ error: 'forward_failed' }),
-        });
-      }
+      this.sendWriteForwardAck(live.link, {
+        t: 'hub.write-forward',
+        id: msg.id,
+        ack: true,
+        status: 500,
+        body: JSON.stringify({ error: 'forward_failed' }),
+      });
+    }
+  }
+
+  private sendWriteForwardAck(link: LinkSession, ack: HubWriteForwardMessage): void {
+    for (const part of chunkWriteForwardAck(ack)) {
+      this.send(link, part);
     }
   }
 
@@ -643,9 +714,11 @@ export class UplinkServer {
       console.warn(`[hub] hub.attachments rejected from unauthorized node=${fromHubId}`);
       return;
     }
-    const result = this.attachments.applyFromHub(fromHubId, msg.entries, {
-      revision: msg.revision,
-      full: msg.full,
+    const assembled = this.attachmentAssembler.push(fromHubId, msg);
+    if (!assembled) return;
+    const result = this.attachments.applyFromHub(fromHubId, assembled.entries, {
+      revision: assembled.revision,
+      full: assembled.full,
     });
     if (result !== 'applied') return;
     if (this.isWriter()) this.broadcastAttachmentUnion();
@@ -694,17 +767,17 @@ export class UplinkServer {
   }
 
   private emitAttachments(entries: HubAttachmentsMessage['entries'], full = false): void {
-    const msg: HubAttachmentsMessage = {
-      t: 'hub.attachments',
-      revision: ++this.attachmentRevision,
-      entries,
-      ...(full ? { full: true } : {}),
-    };
+    const revision = ++this.attachmentRevision;
+    const pages = paginateHubAttachments(entries, {
+      revision,
+      snapshotId: crypto.randomUUID(),
+      full,
+    });
     if (this.isWriter()) {
-      this.broadcastHubCtl(msg);
+      for (const msg of pages) this.broadcastHubCtl(msg);
       return;
     }
-    this.forwardHubCtl?.(msg);
+    for (const msg of pages) this.forwardHubCtl?.(msg);
   }
 
   private broadcastAttachmentUnion(): void {
@@ -920,11 +993,16 @@ export class UplinkServer {
     set.add(a);
     set.add(b);
     const untrack = (): void => {
-      set?.delete(a);
-      set?.delete(b);
+      const current = this.crossHubStreams.get(hubId);
+      if (!current) return;
+      current.delete(a);
+      current.delete(b);
+      if (current.size === 0) this.crossHubStreams.delete(hubId);
     };
     a.onAbort(untrack);
     b.onAbort(untrack);
+    void a.closed.then(untrack);
+    void b.closed.then(untrack);
   }
 
   async broadcastNodeList(userId: string): Promise<'sent' | 'unchanged' | 'failed'> {
@@ -1025,6 +1103,7 @@ export class UplinkServer {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.clearAttachmentKeepalive();
     const links = [...this.accepted];
     for (const live of this.live.values()) {
       this.clearHeartbeat(live);
@@ -1157,6 +1236,9 @@ export class UplinkServer {
         if (live.awaitingPong) {
           live.awaitingPong = false;
           live.misses = 0;
+        }
+        if (this.isAuthorizedHub(live.nodeId, live.userId)) {
+          this.attachments.refreshHub(live.nodeId);
         }
         return;
       case 'node.status':
@@ -1721,6 +1803,21 @@ export class UplinkServer {
     }, this.heartbeatIntervalMs);
   }
 
+  private startAttachmentKeepalive(): void {
+    this.clearAttachmentKeepalive();
+    if (this.attachmentKeepaliveMs <= 0) return;
+    this.attachmentKeepalive = setInterval(() => {
+      if (this.stopped) return;
+      this.publishLocalAttachments();
+    }, this.attachmentKeepaliveMs);
+  }
+
+  private clearAttachmentKeepalive(): void {
+    if (this.attachmentKeepalive === null) return;
+    clearInterval(this.attachmentKeepalive);
+    this.attachmentKeepalive = null;
+  }
+
   private beat(live: LiveConnection): void {
     if (this.live.get(live.link) !== live) {
       this.clearHeartbeat(live);
@@ -1847,6 +1944,7 @@ export class UplinkServer {
   private async buildNodeList(userId: string): Promise<NodeListMessage> {
     const version = Math.max(1, this.listVersion);
     const head = await this.keyLogSource.head(userId);
+    this.attachments.expire();
     const online = new Map(
       this.registry.listForBroadcast(userId).map((n) => [n.nodeId, n] as const)
     );
@@ -1855,10 +1953,11 @@ export class UplinkServer {
       .filter((n) => n.userId === userId && n.status === 'enrolled')
       .map((n) => {
         const live = online.get(n.id);
+        const attached = this.attachments.attachedHubId(n.id);
         return projectNode(
           n.id,
           n.name,
-          Boolean(live),
+          Boolean(live) || Boolean(attached),
           {
             endpoints: parseJson(n.endpointsJson, []),
             inventory: parseJson(n.inventoryJson, {}),
@@ -1866,7 +1965,7 @@ export class UplinkServer {
             version: n.version ?? '',
           },
           live?.meta,
-          this.attachments.attachedHubId(n.id)
+          attached
         );
       });
     const hubNodeId = this.hubNodeId() ?? this.config.nodeId ?? this.userStore.getHubMeta()?.nodeId;

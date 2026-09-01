@@ -68,11 +68,11 @@
 
 挂在不同 hub 上的 node 通过已认证的 standby→writer uplink 互达，不新增独立 hub TCP/WS。
 
-**路由表：** 每台 hub 保存内存映射 `nodeId → { hubId, version, lastSeen }`。本地附着来自本进程 `NodeRegistry`；standby 在（重新）鉴权后向写者发送全量本地集合，attach/detach 发增量。写者合并后把 union 再广播给所有 advertised version ≥ 1.1.13 的已授权 hub。条目 5 分钟无刷新过期；表容量 4096；单帧 64 KiB。未授权对端的 `hub.attachments` 丢弃。节点重新挂到别处时，更高 `lastSeen` 覆盖。某 hub 的 uplink 断开后，指向它的条目删除，进行中的跨 hub 流 RST（不迁移）。
+**路由表：** 每台 hub 保存内存映射 `nodeId → { hubId, version, lastSeen }`。本地附着来自本进程 `NodeRegistry`；standby 在（重新）鉴权后向写者发送全量本地集合，attach/detach 发增量。写者合并后把 union 再广播给所有 advertised version ≥ 1.1.13 的已授权 hub。条目 5 分钟无刷新过期；每 2 分钟重发本机全量，且对端 hub uplink 心跳会刷新该 hub 名下全部路由，避免安静但仍在线的远端节点过期。表容量 4096；单帧 ≤48 KiB，全量/union 按 `{snapshotId, page, final}` 分页，接收端在 final 页原子应用。未授权对端的 `hub.attachments` 丢弃。节点重新挂到别处时，更高 `lastSeen` 覆盖。某 hub 的 uplink 断开后，指向它的条目删除，进行中的跨 hub 流 RST（不迁移）。`node.list` 的 `online` 为本机 registry **或** 仍有效的附着路由。
 
 **控制帧（hub-only，追加在 `UPLINK_CTL_TYPES` 末尾）：**
 
-- `hub.attachments { revision, entries: [{ nodeId, attached, hubId? }], full? }`：standby→写者报本地集合；写者→各 hub 广播 union（带 `hubId`）。
+- `hub.attachments { revision, entries: [{ nodeId, attached, hubId? }], full?, snapshotId?, page?, final? }`：standby→写者报本地集合；写者→各 hub 广播 union（带 `hubId`）。分页快照在 `final` 页一次性应用。
 - `hub.forward { kind: 'rtc.signal', originHubId, returnHubId, visitedHubIds, signal }`：跨 hub 封装 `rtc.signal`。目标 hub 注入本地信令；回程走 `returnHubId`。session→hub 映射 TTL 10 分钟。
 
 **数据面：** 本地 `onIncomingStream` 找不到目标但路由表给出 hub `H` 时，在本 hub 与 `H` 的已认证 uplink 上打开 `hub-relay` 流（OPEN `{ kind, to, from, originHubId, visitedHubIds, hop }`），双向 pump。对端校验 `isAuthorizedHub(origin)`、`hop ≤ 2`、`visitedHubIds` 无重复、目标本地且同用户、源证书未吊销后，再泵进本地目标，形状与同 hub relay 相同。Hub 只转发端到端加密的 relay payload，不终止 node↔node handshake。
@@ -97,6 +97,8 @@
 
 **按 RTT 挂载（仅节点 uplink）：** `TMEX_UPLINK_PREFER_NEAREST` 默认在已知已授权 hub 多于一台时开启，可设 `0`/`off` 强制关闭。对 `/healthz` 的周期探测做 EWMA；至少 2 个样本后，健康且 advertised version ≥ 1.1.13 的已授权 hub 按平滑 RTT 排序。切换还要同时满足：新候选比当前快 ≥30% 且 ≥15 ms；两次 RTT 动机切换间隔 ≥10 分钟（make-before-break，generation 守卫不变）。没有足够 RTT 样本时 failover 仍走上面的 epoch/priority。不支持转发/relay 的旧版 hub 不会排到写者前面。写者始终是最后兜底。浏览器 `/mesh/ws` 与相对 URL 仍走当前页面 origin，不随节点挂载切换。
 
+本机角色含 `hub` 时 **禁止** RTT 切换 uplink：standby 的写者 uplink 是控制面（复制、`hub.attachments` / `hub.forward` / `hub.write-forward` / `hub-relay`），必须始终挂在当前写者上。RTT 选近只作用于纯 node 进程。
+
 **切走（failover）：**
 
 - 当前候选连续 3 次连接/鉴权失败，或 20 s 内未进入已认证状态，则试下一个；
@@ -108,11 +110,11 @@
 - 收到 `node.list` 且更优先 hub 由 offline/unknown 变为 online、`writerHubId`/`writerEpoch` 变化、或当前挂载已不是最优候选时，立即再探一次（5 s 内合并重复触发；探测仍须 `/healthz` 成功、CA pin 与 generation 守卫后才 `switchTo`）；60 s 定时器仍作兜底；
 - 探测成功后 **make-before-break**：先打开新 uplink，等它鉴权成功再关旧链路，然后重发 `node.status`。
 
-**generation 守卫：** 每条 uplink 有世代号。被替换的链路上迟到的 `node.list` / `key.log` / `rtc.signal` 直接丢弃，并取消该链路的 key-log catch-up，避免旧主的过期快照盖住新主。
+**generation 守卫：** 每条 uplink 有世代号。被替换的链路上迟到的 `node.list` / `key.log` / `rtc.signal` / `hub.tokens` / `hub.attachments` / `hub.forward` / write-forward ACK / relay 回调直接丢弃，并取消该链路的 key-log catch-up，避免旧主的过期快照盖住新主。handler 使用实际发送该帧的 `{hubNodeId, generation}`，writer-only 帧再核对来源与 epoch。
 
 ## 写入围栏
 
-写者可达且 advertised version ≥ 1.1.13 时，standby 把下列写入经**已认证 hub↔hub uplink** 发成控制帧 `hub.write-forward { id, method, path, headers（仅 content-type 与 X-Tmex-Force-Keylog）, body, uid? }`，写者执行后回 ack（status / body）。响应加 `X-Tmex-Forwarded-By: <standbyHubId>`。帧里**不带** `cookie` / `authorization`。已带该响应头的请求不再转发（环路守卫）。无活的写者 uplink 或对端版本不够时，仍 409 `HUB_NOT_WRITER`。
+写者可达且 advertised version ≥ 1.1.13 时，standby 把下列写入经**已认证 hub↔hub uplink** 发成控制帧 `hub.write-forward { id, method, path, headers（仅 content-type 与 X-Tmex-Force-Keylog）, body, uid?, writerHubId?, writerEpoch? }`，写者执行前校验 `isWriter()`、本机 ID 与当前 epoch，不匹配则 409 `HUB_NOT_WRITER` ack。执行后回 ack（status / body）；超 48 KiB 的 ACK 按 `{id, part, final, bytes}` 分片，standby 重组。请求体发送前做尺寸检查，超限返回 413 `payload_too_large`。写者按 `(fromHubId, id)` 做有界幂等缓存：同摘要重放原 ACK，不同摘要拒绝。响应加 `X-Tmex-Forwarded-By: <standbyHubId>`。帧里**不带** `cookie` / `authorization`。已带该响应头的请求不再转发（环路守卫）。无活的写者 uplink 或对端版本不够时，仍 409 `HUB_NOT_WRITER`。
 
 写者把请求归到转发 hub：enrollment create 的用户签名、redeem 的 enroll-key 证书、revoke / keylog 的签名记录均自认证。**rename** 额外带 `uid`：standby 断言「该用户已在本机通过会话认证」，写者接受该 uid **仅因为发送方是已授权 hub**（不复验 standby 侧会话）。失陷的已授权 standby 可以冒用其已认证用户做 rename。
 
@@ -157,7 +159,7 @@
 
 - 本机是所有已授权 standby 里 priority 最低者（相同则 node id 更小）；
 - 已授权 hub **恰好 2 台**时，不做 quorum（只靠开关 + 长超时）。两 hub 分区时无法区分「写者挂了」和「链路断了」，这是文档化的脑裂风险，恢复靠更高 epoch 围栏；
-- **≥3 台**时，其它已授权 hub（不含 self、不含写者）里，新鲜（≤2× 探测间隔）的 `writerView` 必须有严格多数报告写者不可达。过期 view 不计入。
+- **≥3 台**时，其它已授权 hub（不含 self、不含写者）里，新鲜（≤2× 探测间隔，以**本机收到该票的时间**为准，不用对端 `observedAt`）且 `writerView.writerEpoch` 与当前写者 epoch 一致的票，必须有严格多数报告写者不可达。过期或 epoch 不匹配的 view 不计入。写者不可达计时按 `(writerHubId, writerEpoch)` 跟踪，epoch 变化即清零。
 
 Promote 复用 `POST /api/hub/role` 的过渡：写 `TMEX_HUB_MODE=active` 与 `TMEX_HUB_WRITER_EPOCH=max(已知)+1`，`operationId=auto-<ts>`，然后重启。日志 `[hub] auto-promote: …`。旧写者回来后被更高 epoch fence。
 

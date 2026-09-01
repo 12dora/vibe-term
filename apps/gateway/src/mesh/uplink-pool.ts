@@ -1,6 +1,14 @@
 import { X509Certificate, createHash } from 'node:crypto';
 import { canonicalHubUrl, hubHostFromUrl } from '@tmex/shared/auth';
-import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
+import type { LinkStream } from '@tmex/shared/link';
+import type {
+  HubAdvertisement,
+  HubAttachmentsMessage,
+  HubForwardMessage,
+  HubMode,
+  HubTokensMessage,
+  HubWriteForwardMessage,
+} from '@tmex/shared/uplink';
 import type { HubTrustStore } from '../auth/hub-trust-store';
 import type { MeshHubRecord } from '../auth/mesh-hub-store';
 import { hubListToRecords, pickWriterHub } from '../auth/mesh-hub-store';
@@ -75,6 +83,11 @@ export type UplinkPoolNodeListMeta = {
   generation: number;
 };
 
+export type UplinkPoolCtlSource = {
+  hubNodeId: string;
+  generation: number;
+};
+
 export type CreatePooledUplink = (opts: UplinkClientOptions) => UplinkClient;
 
 export type UplinkPoolOptions = {
@@ -100,11 +113,17 @@ export type UplinkPoolOptions = {
   enablePeriodicRttProbe?: boolean;
   /** `null` = auto (on when >1 authorized hub is known). `false` forces off. */
   preferNearest?: boolean | null;
+  localRoles?: { hub?: boolean; node?: boolean };
   rttSwitchDwellMs?: number;
   onNodeList?: (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void;
   onRtcSignal?: (msg: UplinkRtcSignal) => void;
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
   onKeyLogFork?: (event: KeyLogForkEvent) => void;
+  onHubTokens?: (msg: HubTokensMessage, source: UplinkPoolCtlSource) => void;
+  onHubAttachments?: (msg: HubAttachmentsMessage, source: UplinkPoolCtlSource) => void;
+  onHubForward?: (msg: HubForwardMessage, source: UplinkPoolCtlSource) => void;
+  onHubWriteForward?: (msg: HubWriteForwardMessage, source: UplinkPoolCtlSource) => void;
+  onHubRelayStream?: (stream: LinkStream, source: UplinkPoolCtlSource) => void;
   failLimit?: number;
   authDeadlineMs?: number;
   probeIntervalMs?: number;
@@ -907,6 +926,15 @@ export class UplinkPool {
     const pin = this.opts.hubTrust.get(cand.publicUrl);
     const tlsCa = pin?.caPem ? [pin.caPem] : null;
     const wsFactory = this.opts.wsFactory ?? defaultWsFactory(tlsCa);
+    const slot: { client: UplinkClient | null } = { client: null };
+    const sourceOf = (): UplinkPoolCtlSource => ({
+      hubNodeId: this.attached?.hubNodeId ?? cand.hubNodeId ?? '',
+      generation: this.generation,
+    });
+    const ifLive = <T>(fn: (source: UplinkPoolCtlSource) => T): T | undefined => {
+      if (!slot.client || this.live !== slot.client) return undefined;
+      return fn(sourceOf());
+    };
     const client = this.createClient({
       hubUrl: cand.publicUrl,
       identity: this.opts.identity,
@@ -931,7 +959,27 @@ export class UplinkPool {
         if (this.live !== client) return;
         this.opts.onKeyLogFork?.(event);
       },
+      onHubTokens: (msg) => {
+        ifLive((source) => this.opts.onHubTokens?.(msg, source));
+      },
+      onHubAttachments: (msg) => {
+        ifLive((source) => this.opts.onHubAttachments?.(msg, source));
+      },
+      onHubForward: (msg) => {
+        ifLive((source) => this.opts.onHubForward?.(msg, source));
+      },
+      onHubWriteForward: (msg) => {
+        ifLive((source) => this.opts.onHubWriteForward?.(msg, source));
+      },
+      onHubRelayStream: (stream) => {
+        if (!slot.client || this.live !== slot.client) {
+          stream.reset('stale');
+          return;
+        }
+        this.opts.onHubRelayStream?.(stream, sourceOf());
+      },
     });
+    slot.client = client;
     return client;
   }
 
@@ -1191,6 +1239,7 @@ export class UplinkPool {
   }
 
   private preferNearestActive(cands?: UplinkCandidate[]): boolean {
+    if (this.opts.localRoles?.hub) return false;
     if (this.preferNearestSetting === false) return false;
     const list = cands ?? this.opts.candidates();
     return list.filter((row) => row.hubNodeId).length > 1;

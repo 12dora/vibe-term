@@ -3,15 +3,23 @@ import type { RtcSignalMessage, RtcSignalOwner, RtcSignalRouter } from '../mesh-
 export const RTC_LOCAL_INBOX_MAX_SESSIONS = 32;
 export const RTC_LOCAL_INBOX_MAX_MESSAGES = 16;
 export const RTC_HUB_ROUTE_TTL_MS = 10 * 60 * 1000;
+export const RTC_HUB_ROUTE_MAX_ENTRIES = 1024;
 
 export class RtcHubRouteTable {
   private readonly routes = new Map<string, { hubId: string; expiresAt: number }>();
   private readonly now: () => number;
   private readonly ttlMs: number;
+  private readonly maxEntries: number;
 
-  constructor(opts?: { now?: () => number; ttlMs?: number }) {
+  constructor(opts?: { now?: () => number; ttlMs?: number; maxEntries?: number }) {
     this.now = opts?.now ?? Date.now;
     this.ttlMs = opts?.ttlMs ?? RTC_HUB_ROUTE_TTL_MS;
+    this.maxEntries = opts?.maxEntries ?? RTC_HUB_ROUTE_MAX_ENTRIES;
+  }
+
+  get size(): number {
+    this.sweep();
+    return this.routes.size;
   }
 
   remember(rtcSession: string, hubId: string): void {
@@ -19,12 +27,22 @@ export class RtcHubRouteTable {
     const hub = hubId.trim().toLowerCase();
     if (!id || !hub) return;
     this.sweep();
+    this.routes.delete(id);
     this.routes.set(id, { hubId: hub, expiresAt: this.now() + this.ttlMs });
+    while (this.routes.size > this.maxEntries) {
+      const oldest = this.routes.keys().next().value;
+      if (oldest === undefined) break;
+      this.routes.delete(oldest);
+    }
   }
 
   lookup(rtcSession: string): string | undefined {
     this.sweep();
-    return this.routes.get(rtcSession)?.hubId;
+    const row = this.routes.get(rtcSession);
+    if (!row) return undefined;
+    this.routes.delete(rtcSession);
+    this.routes.set(rtcSession, row);
+    return row.hubId;
   }
 
   drop(rtcSession: string): void {

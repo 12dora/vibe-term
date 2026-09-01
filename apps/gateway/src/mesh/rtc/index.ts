@@ -107,6 +107,7 @@ export {
 } from './rtc-peer-manager';
 export {
   MeshRtcSignalRouter,
+  RTC_HUB_ROUTE_MAX_ENTRIES,
   RTC_HUB_ROUTE_TTL_MS,
   RTC_LOCAL_INBOX_MAX_MESSAGES,
   RTC_LOCAL_INBOX_MAX_SESSIONS,

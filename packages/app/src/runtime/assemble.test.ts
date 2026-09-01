@@ -267,6 +267,24 @@ describe('assembleTmex role matrix', () => {
     expect(refresh).toBeGreaterThanOrEqual(1);
   });
 
+  test('tlsInfo withholds CA fingerprint while the HTTPS listener is not running', async () => {
+    let tlsInfo:
+      | (() => Promise<{ caFingerprint: string | null; caPem: string | null }>)
+      | undefined;
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async (opts) => {
+        tlsInfo = opts.tlsInfo;
+        return fakeMesh();
+      },
+    });
+    const afterAssign = await tlsInfo?.();
+    expect(afterAssign?.caFingerprint).toBeNull();
+    expect((await assembled.tls.status()).listener.running).toBe(false);
+    await assembled.stop();
+  });
+
   test('registers gateway WS with cid from the upgrade query, not a client connectionId', async () => {
     const registered: Array<{ cid?: string; sid: string; uid: string; via: string }> = [];
     const mesh = fakeMesh({

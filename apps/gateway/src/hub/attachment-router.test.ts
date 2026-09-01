@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { ATTACHMENT_MAX_ENTRIES, ATTACHMENT_TTL_MS, AttachmentRouter } from './attachment-router';
+import {
+  ATTACHMENT_KEEPALIVE_MS,
+  ATTACHMENT_MAX_ENTRIES,
+  ATTACHMENT_TTL_MS,
+  AttachmentRouter,
+} from './attachment-router';
+import { AttachmentSnapshotAssembler, paginateHubAttachments } from './hub-attachments';
 
 const HUB_A = 'aa'.repeat(16);
 const HUB_B = 'bb'.repeat(16);
@@ -105,5 +111,43 @@ describe('AttachmentRouter', () => {
     expect(router.applyFromHub(HUB_B, entries, { revision: 1 })).toBe('applied');
     expect(router.size()).toBe(ATTACHMENT_MAX_ENTRIES);
     expect(router.attachedHubId(NODE_C)).toBe(HUB_A);
+  });
+
+  test('refreshHub 把安静但仍在线的远端路由撑过 TTL', () => {
+    let now = 1_000;
+    const router = new AttachmentRouter({ selfHubId: () => HUB_A, now: () => now });
+    router.applyFromHub(HUB_B, [{ nodeId: NODE_D, attached: true }], { revision: 1 });
+    now = 1_000 + ATTACHMENT_TTL_MS - 1;
+    expect(router.refreshHub(HUB_B)).toBe(1);
+    now = 1_000 + ATTACHMENT_TTL_MS + ATTACHMENT_KEEPALIVE_MS;
+    expect(router.expire()).toEqual([]);
+    expect(router.attachedHubId(NODE_D)).toBe(HUB_B);
+    expect(ATTACHMENT_KEEPALIVE_MS).toBeLessThan(ATTACHMENT_TTL_MS);
+  });
+
+  test('分页 snapshot 在 final 页原子应用', () => {
+    const entries = [
+      { nodeId: NODE_C, attached: true, hubId: HUB_A },
+      { nodeId: NODE_D, attached: true, hubId: HUB_B },
+    ];
+    const pages = paginateHubAttachments(entries, {
+      revision: 3,
+      snapshotId: 'snap-z',
+      full: true,
+    });
+    expect(pages.at(-1)?.final).toBe(true);
+    const assembler = new AttachmentSnapshotAssembler();
+    expect(assembler.push(HUB_A, { ...pages[0]!, final: false, page: 0 })).toBeNull();
+    const assembled = assembler.push(HUB_A, {
+      t: 'hub.attachments',
+      revision: 3,
+      snapshotId: 'snap-z',
+      page: 0,
+      final: true,
+      full: true,
+      entries,
+    });
+    expect(assembled?.entries).toHaveLength(2);
+    expect(assembled?.final).toBe(true);
   });
 });

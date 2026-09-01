@@ -3,12 +3,17 @@ import { HUB_NOT_WRITER, type HubWriteForwardMessage } from '@tmex/shared/uplink
 import {
   WRITER_FORWARD_HEADER,
   WRITER_FORWARD_TIMEOUT_MS,
+  WRITE_FORWARD_OVERSIZED_ERROR,
+  WriteForwardAckAssembler,
+  WriteForwardIdempotencyCache,
   ackToHttpResponse,
   buildWriteForwardRequest,
+  chunkWriteForwardAck,
   collectWriteForwardHeaders,
   forwardWriteToWriter,
   notWriterResponse,
   requestAlreadyForwarded,
+  writeForwardDigest,
 } from './writer-forward';
 
 const SELF = 'aa'.repeat(16);
@@ -205,5 +210,95 @@ describe('writer-forward', () => {
     expect(res.headers.get('content-type')).toBe('text/plain');
     expect(res.headers.get(WRITER_FORWARD_HEADER)).toBe(SELF);
     expect(await res.text()).toBe('ok');
+  });
+
+  test('请求带上 writerHubId/writerEpoch；超限 body 返回 413 且不 send', async () => {
+    const req = new Request('http://standby/api/hub/enrollments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'x' }),
+    });
+    const sent: HubWriteForwardMessage[] = [];
+    await forwardWriteToWriter(req, {
+      selfHubId: SELF,
+      target: target(),
+      isLive: () => true,
+      send: (msg) => {
+        sent.push(msg);
+      },
+      waitAck: async (id) => ({
+        t: 'hub.write-forward',
+        id,
+        ack: true,
+        status: 200,
+        body: '{}',
+      }),
+    });
+    expect(sent[0]?.writerHubId).toBe(WRITER);
+    expect(sent[0]?.writerEpoch).toBe(4);
+
+    let sendCount = 0;
+    const huge = new Request('http://standby/api/hub/enrollments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'x'.repeat(80 * 1024),
+    });
+    const oversized = await forwardWriteToWriter(huge, {
+      selfHubId: SELF,
+      target: target(),
+      isLive: () => true,
+      send: () => {
+        sendCount += 1;
+      },
+      waitAck: async () => null,
+    });
+    expect(oversized?.status).toBe(413);
+    expect(await oversized?.json()).toEqual({ error: WRITE_FORWARD_OVERSIZED_ERROR });
+    expect(sendCount).toBe(0);
+  });
+
+  test('超大 ACK 分片后重组得到完整 body', () => {
+    const body = JSON.stringify({ log: 'k'.repeat(60 * 1024), certs: ['a', 'b'] });
+    const ack: HubWriteForwardMessage = {
+      t: 'hub.write-forward',
+      id: 'big',
+      ack: true,
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body,
+    };
+    const parts = chunkWriteForwardAck(ack);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.at(-1)?.final).toBe(true);
+    const assembler = new WriteForwardAckAssembler();
+    let done: HubWriteForwardMessage | null = null;
+    for (const part of parts) {
+      done = assembler.push(part);
+    }
+    expect(done?.body).toBe(body);
+    expect(done?.status).toBe(200);
+  });
+
+  test('幂等缓存：同 digest 重放，不同 digest 冲突', () => {
+    const cache = new WriteForwardIdempotencyCache(2);
+    const ack: HubWriteForwardMessage = {
+      t: 'hub.write-forward',
+      id: 'id-1',
+      ack: true,
+      status: 201,
+      body: '{"ok":true}',
+    };
+    const msg: HubWriteForwardMessage = {
+      t: 'hub.write-forward',
+      id: 'id-1',
+      method: 'POST',
+      path: '/api/hub/enrollments',
+      body: '{"a":1}',
+    };
+    const digest = writeForwardDigest(msg);
+    cache.set(SELF, 'id-1', digest, ack);
+    expect(cache.get(SELF, 'id-1')?.digest).toBe(digest);
+    const other: HubWriteForwardMessage = { ...msg, body: '{"a":2}' };
+    expect(writeForwardDigest(other)).not.toBe(digest);
   });
 });

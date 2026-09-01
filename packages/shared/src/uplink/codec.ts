@@ -40,7 +40,9 @@ export const UPLINK_CTL_MAX_HUB_URL_LEN = 512;
 export const UPLINK_CTL_MAX_CERT_BYTES = 2048;
 export const UPLINK_CTL_MAX_U64 = 18446744073709551615n;
 export const MIN_HUB_TOKENS_VERSION = '1.1.13';
-export const UPLINK_CTL_MAX_ATTACHMENT_ENTRIES = 4096;
+export const UPLINK_CTL_MAX_ATTACHMENT_ENTRIES = 256;
+export const HUB_ATTACHMENTS_FRAME_MAX_BYTES = 48 * 1024;
+export const HUB_WRITE_FORWARD_FRAME_MAX_BYTES = 48 * 1024;
 export const TMEX_FORWARDED_BY_HEADER = 'X-Tmex-Forwarded-By';
 export const UPLINK_CTL_MAX_TOKEN_JSON_LEN = 16 * 1024;
 
@@ -379,6 +381,14 @@ function parseHubAttachmentsMessage(parsed: Record<string, unknown>): HubAttachm
   if (parsed.full !== undefined && parsed.full !== null) {
     msg.full = mBool(parsed.full, 'full');
   }
+  const snapshotId = mOptStr(parsed.snapshotId, 'snapshotId');
+  if (snapshotId) msg.snapshotId = snapshotId;
+  if (parsed.page !== undefined && parsed.page !== null) {
+    msg.page = mNonNegInt(parsed.page, 'page');
+  }
+  if (parsed.final !== undefined && parsed.final !== null) {
+    msg.final = mBool(parsed.final, 'final');
+  }
   return msg;
 }
 
@@ -449,6 +459,12 @@ function parseWriteForwardHeaders(value: unknown): HubWriteForwardHeaders | unde
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
+function parseWriteForwardStatus(value: unknown): number {
+  const status = mNonNegInt(value, 'status');
+  if (status < 100 || status > 599) throw new Error('hub.write-forward status out of range');
+  return status;
+}
+
 function parseHubWriteForwardMessage(parsed: Record<string, unknown>): HubWriteForwardMessage {
   const id = mStr(parsed.id, 'id');
   const ack =
@@ -456,9 +472,32 @@ function parseHubWriteForwardMessage(parsed: Record<string, unknown>): HubWriteF
   const headers = parseWriteForwardHeaders(parsed.headers);
   const body = mOptStr(parsed.body, 'body');
   if (ack === true) {
-    const status = mNonNegInt(parsed.status, 'status');
-    if (status < 100 || status > 599) throw new Error('hub.write-forward status out of range');
-    const msg: HubWriteForwardMessage = { t: 'hub.write-forward', id, ack: true, status };
+    if (parsed.part !== undefined && parsed.part !== null) {
+      const part = mNonNegInt(parsed.part, 'part');
+      const final =
+        parsed.final === undefined || parsed.final === null ? false : mBool(parsed.final, 'final');
+      const bytes = mStr(parsed.bytes, 'bytes');
+      const msg: HubWriteForwardMessage = {
+        t: 'hub.write-forward',
+        id,
+        ack: true,
+        part,
+        final,
+        bytes,
+      };
+      if (parsed.status !== undefined && parsed.status !== null) {
+        msg.status = parseWriteForwardStatus(parsed.status);
+      }
+      if (headers) msg.headers = headers;
+      if (body !== undefined) msg.body = body;
+      return msg;
+    }
+    const msg: HubWriteForwardMessage = {
+      t: 'hub.write-forward',
+      id,
+      ack: true,
+      status: parseWriteForwardStatus(parsed.status),
+    };
     if (headers) msg.headers = headers;
     if (body !== undefined) msg.body = body;
     return msg;
@@ -473,6 +512,12 @@ function parseHubWriteForwardMessage(parsed: Record<string, unknown>): HubWriteF
   if (body !== undefined) msg.body = body;
   const uid = mOptStr(parsed.uid, 'uid');
   if (uid) msg.uid = uid;
+  if (parsed.writerHubId !== undefined && parsed.writerHubId !== null) {
+    msg.writerHubId = mNodeId(parsed.writerHubId, 'writerHubId');
+  }
+  if (parsed.writerEpoch !== undefined && parsed.writerEpoch !== null) {
+    msg.writerEpoch = mNonNegInt(parsed.writerEpoch, 'writerEpoch');
+  }
   return msg;
 }
 
@@ -1037,6 +1082,9 @@ export type HubAttachmentsMessage = {
   revision: number;
   entries: HubAttachmentsEntry[];
   full?: boolean;
+  snapshotId?: string;
+  page?: number;
+  final?: boolean;
 };
 export type HubForwardRtcSignal = {
   rtcSession: string;
@@ -1067,6 +1115,11 @@ export type HubWriteForwardMessage = {
   body?: string;
   uid?: string;
   status?: number;
+  writerHubId?: string;
+  writerEpoch?: number;
+  part?: number;
+  final?: boolean;
+  bytes?: string;
 };
 export type HubUplinkCtlMessage =
   | AuthChallengeMessage

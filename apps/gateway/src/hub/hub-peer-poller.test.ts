@@ -351,6 +351,7 @@ describe('shouldAutoPromote', () => {
       selfId: self,
       selfMode: 'standby' as const,
       writerId: writer,
+      writerEpoch: 1,
       writerUnreachableSince: 0,
       now: 600_000,
       timeoutMs: 600_000,
@@ -361,7 +362,16 @@ describe('shouldAutoPromote', () => {
       shouldAutoPromote({
         ...base,
         peerWriterViews: new Map([
-          [other, { hubNodeId: writer, writerEpoch: 1, reachable: false, observedAt: 600_000 }],
+          [
+            other,
+            {
+              hubNodeId: writer,
+              writerEpoch: 1,
+              reachable: false,
+              observedAt: 1,
+              receivedAt: 600_000,
+            },
+          ],
         ]),
       })
     ).toBe(true);
@@ -370,7 +380,16 @@ describe('shouldAutoPromote', () => {
       shouldAutoPromote({
         ...base,
         peerWriterViews: new Map([
-          [other, { hubNodeId: writer, writerEpoch: 1, reachable: true, observedAt: 600_000 }],
+          [
+            other,
+            {
+              hubNodeId: writer,
+              writerEpoch: 1,
+              reachable: true,
+              observedAt: 1,
+              receivedAt: 600_000,
+            },
+          ],
         ]),
       })
     ).toBe(false);
@@ -388,6 +407,7 @@ describe('shouldAutoPromote', () => {
       selfId: self,
       selfMode: 'standby' as const,
       writerId: writer,
+      writerEpoch: 1,
       writerUnreachableSince: 0,
       now: 600_000,
       timeoutMs: 600_000,
@@ -398,7 +418,8 @@ describe('shouldAutoPromote', () => {
       hubNodeId: writer,
       writerEpoch: 1,
       reachable: false,
-      observedAt: 600_000,
+      observedAt: 1,
+      receivedAt: 600_000,
     };
     expect(
       shouldAutoPromote({
@@ -424,6 +445,7 @@ describe('shouldAutoPromote', () => {
         selfId: self,
         selfMode: 'standby',
         writerId: writer,
+        writerEpoch: 1,
         writerUnreachableSince: 0,
         now: 600_000,
         timeoutMs: 600_000,
@@ -444,6 +466,7 @@ describe('shouldAutoPromote', () => {
         selfId: self,
         selfMode: 'standby',
         writerId: writer,
+        writerEpoch: 1,
         writerUnreachableSince: 0,
         now: 600_000,
         timeoutMs: 600_000,
@@ -453,7 +476,16 @@ describe('shouldAutoPromote', () => {
           { id: self, mode: 'standby', priority: 200 },
         ]),
         peerWriterViews: new Map([
-          [other, { hubNodeId: writer, writerEpoch: 1, reachable: false, observedAt: 600_000 }],
+          [
+            other,
+            {
+              hubNodeId: writer,
+              writerEpoch: 1,
+              reachable: false,
+              observedAt: 1,
+              receivedAt: 600_000,
+            },
+          ],
         ]),
         pollIntervalMs: 60_000,
       })
@@ -467,6 +499,7 @@ describe('shouldAutoPromote', () => {
         selfId: self,
         selfMode: 'standby',
         writerId: writer,
+        writerEpoch: 1,
         writerUnreachableSince: 0,
         now: 600_000,
         timeoutMs: 600_000,
@@ -476,11 +509,74 @@ describe('shouldAutoPromote', () => {
           { id: other, mode: 'standby', priority: 200 },
         ]),
         peerWriterViews: new Map([
-          [other, { hubNodeId: writer, writerEpoch: 1, reachable: false, observedAt: 1 }],
+          [
+            other,
+            {
+              hubNodeId: writer,
+              writerEpoch: 1,
+              reachable: false,
+              observedAt: 600_000,
+              receivedAt: 1,
+            },
+          ],
         ]),
         pollIntervalMs: 60_000,
       })
     ).toBe(false);
+  });
+
+  test('mismatched writerEpoch votes do not count; peer clock observedAt is ignored', () => {
+    const authorized = hubs([
+      { id: writer, mode: 'active', priority: 100 },
+      { id: self, mode: 'standby', priority: 200 },
+      { id: other, mode: 'standby', priority: 200 },
+    ]);
+    const base = {
+      enabled: true,
+      selfId: self,
+      selfMode: 'standby' as const,
+      writerId: writer,
+      writerEpoch: 4,
+      writerUnreachableSince: 0,
+      now: 600_000,
+      timeoutMs: 600_000,
+      authorized,
+      pollIntervalMs: 60_000,
+    };
+    expect(
+      shouldAutoPromote({
+        ...base,
+        peerWriterViews: new Map([
+          [
+            other,
+            {
+              hubNodeId: writer,
+              writerEpoch: 3,
+              reachable: false,
+              observedAt: 600_000,
+              receivedAt: 600_000,
+            },
+          ],
+        ]),
+      })
+    ).toBe(false);
+    expect(
+      shouldAutoPromote({
+        ...base,
+        peerWriterViews: new Map([
+          [
+            other,
+            {
+              hubNodeId: writer,
+              writerEpoch: 4,
+              reachable: false,
+              observedAt: 1,
+              receivedAt: 600_000,
+            },
+          ],
+        ]),
+      })
+    ).toBe(true);
   });
 
   test('timeout not elapsed or a success reset blocks promote', () => {
@@ -494,6 +590,7 @@ describe('shouldAutoPromote', () => {
         selfId: self,
         selfMode: 'standby',
         writerId: writer,
+        writerEpoch: 1,
         writerUnreachableSince: 500_000,
         now: 600_000,
         timeoutMs: 600_000,
@@ -508,6 +605,7 @@ describe('shouldAutoPromote', () => {
         selfId: self,
         selfMode: 'standby',
         writerId: writer,
+        writerEpoch: 1,
         writerUnreachableSince: null,
         now: 600_000,
         timeoutMs: 600_000,

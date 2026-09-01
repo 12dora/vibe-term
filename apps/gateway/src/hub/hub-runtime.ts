@@ -74,6 +74,7 @@ import {
 import { type RegisterRtcSessionInput, UplinkServer } from './uplink-server';
 import {
   WRITER_FORWARD_TIMEOUT_MS,
+  WriteForwardAckAssembler,
   forwardWriteToWriter,
   notWriterResponse,
   requestAlreadyForwarded,
@@ -117,6 +118,11 @@ export type HubRuntimeOptions = {
   hubRoleInstalled?: boolean;
   autoPromote?: boolean;
   autoPromoteTimeoutMs?: number;
+};
+
+export type HubCtlSource = {
+  hubNodeId: string;
+  generation: number;
 };
 
 export type HubWriterBridge = {
@@ -215,6 +221,7 @@ export class HubRuntime {
     string,
     { resolve: (msg: HubWriteForwardMessage | null) => void; timer: ReturnType<typeof setTimeout> }
   >();
+  private readonly writeForwardAcks = new WriteForwardAckAssembler();
 
   constructor(opts: HubRuntimeOptions) {
     this.db = opts.db;
@@ -382,9 +389,9 @@ export class HubRuntime {
     this.writerBridge = bridge;
   }
 
-  receiveHubTokens(msg: HubTokensMessage): void {
+  receiveHubTokens(msg: HubTokensMessage, source?: HubCtlSource): void {
     if (msg.ack) return;
-    const from = this.writerPeerId();
+    const from = source?.hubNodeId;
     const writer = pickWriterHub(
       this.meshHubs.list().filter((row) => this.uplink.isAuthorizedHub(row.hubNodeId))
     );
@@ -414,20 +421,27 @@ export class HubRuntime {
     }
   }
 
-  receiveHubAttachments(msg: HubAttachmentsMessage): void {
-    const from = this.writerPeerId();
+  receiveHubAttachments(msg: HubAttachmentsMessage, source?: HubCtlSource): void {
+    const from = source?.hubNodeId;
     if (!from) return;
+    const writer = pickWriterHub(
+      this.meshHubs.list().filter((row) => this.uplink.isAuthorizedHub(row.hubNodeId))
+    );
+    if (writer && from !== writer) {
+      console.warn(`[hub] hub.attachments dropped: source=${from} writer=${writer}`);
+      return;
+    }
     this.uplink.ingestHubAttachments(from, msg);
   }
 
-  receiveHubForward(msg: HubForwardMessage): void {
-    const from = this.writerPeerId();
+  receiveHubForward(msg: HubForwardMessage, source?: HubCtlSource): void {
+    const from = source?.hubNodeId;
     if (!from) return;
     this.uplink.ingestHubForward(from, msg);
   }
 
-  receiveHubRelay(stream: LinkStream): void {
-    const from = this.writerPeerId();
+  receiveHubRelay(stream: LinkStream, source?: HubCtlSource): void {
+    const from = source?.hubNodeId;
     if (!from) {
       stream.reset('unauthenticated');
       return;
@@ -501,6 +515,7 @@ export class HubRuntime {
         new Promise((resolve) => {
           const timer = setTimeout(() => {
             this.writeForwardWaiters.delete(id);
+            this.writeForwardAcks.drop(id);
             resolve(null);
           }, WRITER_FORWARD_TIMEOUT_MS);
           this.writeForwardWaiters.set(id, { resolve, timer });
@@ -510,13 +525,15 @@ export class HubRuntime {
     return forwarded;
   }
 
-  receiveHubWriteForward(msg: HubWriteForwardMessage): void {
+  receiveHubWriteForward(msg: HubWriteForwardMessage, _source?: HubCtlSource): void {
     if (!msg.ack || !msg.id) return;
-    const waiter = this.writeForwardWaiters.get(msg.id);
+    const assembled = this.writeForwardAcks.push(msg);
+    if (!assembled) return;
+    const waiter = this.writeForwardWaiters.get(assembled.id);
     if (!waiter) return;
-    this.writeForwardWaiters.delete(msg.id);
+    this.writeForwardWaiters.delete(assembled.id);
     clearTimeout(waiter.timer);
-    waiter.resolve(msg);
+    waiter.resolve(assembled);
   }
 
   async executeForwardedWrite(

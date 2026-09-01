@@ -24,6 +24,7 @@ export type HubWriterView = {
   writerEpoch: number;
   reachable: boolean;
   observedAt: number;
+  receivedAt?: number;
 };
 
 export type HubPeerStatusBody = {
@@ -85,6 +86,7 @@ export function shouldAutoPromote(input: {
   selfId: string;
   selfMode: HubMode;
   writerId: string | null;
+  writerEpoch: number | null;
   writerUnreachableSince: number | null;
   now: number;
   timeoutMs: number;
@@ -110,7 +112,9 @@ export function shouldAutoPromote(input: {
     const view = input.peerWriterViews.get(hub.hubNodeId);
     if (!view || view.reachable) return false;
     if (view.hubNodeId !== input.writerId) return false;
-    return input.now - view.observedAt <= freshnessMs;
+    if (input.writerEpoch == null || view.writerEpoch !== input.writerEpoch) return false;
+    if (view.receivedAt == null) return false;
+    return input.now - view.receivedAt <= freshnessMs;
   });
   return unreachableVotes.length > others.length / 2;
 }
@@ -147,6 +151,7 @@ export class HubPeerPoller {
   private writerView: HubWriterView | null = null;
   private writerUnreachableSince: number | null = null;
   private trackedWriterId: string | null = null;
+  private trackedWriterEpoch: number | null = null;
   private autoPromoteInFlight = false;
   private startTimer: ReturnType<typeof setTimeout> | null = null;
   private intervalTimer: ReturnType<typeof setTimeout> | null = null;
@@ -318,7 +323,9 @@ export class HubPeerPoller {
       } catch {
         return false;
       }
-      if (body.writerView) this.peerWriterViews.set(row.hubNodeId, body.writerView);
+      if (body.writerView) {
+        this.peerWriterViews.set(row.hubNodeId, { ...body.writerView, receivedAt: this.now() });
+      }
       this.noteWriterProbe(row.hubNodeId, true, body.writerEpoch);
       return true;
     } catch (err) {
@@ -367,21 +374,38 @@ export class HubPeerPoller {
     return pickWriterHub(recs);
   }
 
+  private currentWriterEpoch(writerId: string | null): number | null {
+    if (!writerId) return null;
+    return this.meshHubs.get(writerId)?.writerEpoch ?? null;
+  }
+
   private noteWriterProbe(hubNodeId: string, reachable: boolean, writerEpoch: number): void {
     const writerId = this.currentWriterId();
     if (!writerId || hubNodeId !== writerId) return;
-    if (this.trackedWriterId !== writerId) {
+    const epoch = this.currentWriterEpoch(writerId) ?? writerEpoch;
+    if (this.trackedWriterId !== writerId || this.trackedWriterEpoch !== epoch) {
       this.trackedWriterId = writerId;
+      this.trackedWriterEpoch = epoch;
       this.writerUnreachableSince = null;
     }
     const now = this.now();
     if (reachable) {
       this.writerUnreachableSince = null;
-      this.writerView = { hubNodeId: writerId, writerEpoch, reachable: true, observedAt: now };
+      this.writerView = {
+        hubNodeId: writerId,
+        writerEpoch: epoch,
+        reachable: true,
+        observedAt: now,
+      };
       return;
     }
     if (this.writerUnreachableSince == null) this.writerUnreachableSince = now;
-    this.writerView = { hubNodeId: writerId, writerEpoch, reachable: false, observedAt: now };
+    this.writerView = {
+      hubNodeId: writerId,
+      writerEpoch: epoch,
+      reachable: false,
+      observedAt: now,
+    };
   }
 
   private authorizedForPromote(): AutoPromoteHub[] {
@@ -408,11 +432,13 @@ export class HubPeerPoller {
     if (this.autoPromoteInFlight || !this.autoPromote || !this.onAutoPromote) return;
     const self = this.selfHubId()?.toLowerCase();
     if (!self) return;
+    const writerId = this.currentWriterId();
     const ok = shouldAutoPromote({
       enabled: true,
       selfId: self,
       selfMode: this.selfMode?.() ?? 'standby',
-      writerId: this.currentWriterId(),
+      writerId,
+      writerEpoch: this.currentWriterEpoch(writerId),
       writerUnreachableSince: this.writerUnreachableSince,
       now: this.now(),
       timeoutMs: this.autoPromoteTimeoutMs,

@@ -1,5 +1,6 @@
 export const HUB_RELAY_KIND = 'hub-relay';
 export const HUB_RELAY_MAX_HOP = 2;
+export const HUB_RELAY_OPEN_MAX_BYTES = 8 * 1024;
 
 const NODE_ID_HEX = /^[0-9a-f]{32}$/i;
 const textEncoder = new TextEncoder();
@@ -46,15 +47,16 @@ export function encodeHubRelayOpen(open: HubRelayOpen): Uint8Array {
 }
 
 export function parseHubRelayOpen(payload: Uint8Array): HubRelayOpen | null {
+  if (payload.byteLength > HUB_RELAY_OPEN_MAX_BYTES) return null;
   try {
     const parsed: unknown = JSON.parse(textDecoder.decode(payload));
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const obj = parsed as Record<string, unknown>;
     if (obj.kind !== HUB_RELAY_KIND) return null;
     if (!isNodeId(obj.to) || !isNodeId(obj.from) || !isNodeId(obj.originHubId)) return null;
-    if (!Array.isArray(obj.visitedHubIds) || obj.visitedHubIds.some((id) => !isNodeId(id))) {
-      return null;
-    }
+    if (!Array.isArray(obj.visitedHubIds)) return null;
+    if (obj.visitedHubIds.length > HUB_RELAY_MAX_HOP) return null;
+    if (obj.visitedHubIds.some((id) => !isNodeId(id))) return null;
     if (typeof obj.hop !== 'number' || !Number.isInteger(obj.hop) || obj.hop < 1) return null;
     return {
       kind: HUB_RELAY_KIND,

@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { RtcSignalMessage } from '../mesh-deps';
-import { MeshRtcSignalRouter, RTC_HUB_ROUTE_TTL_MS, RtcHubRouteTable } from './signaling';
+import {
+  MeshRtcSignalRouter,
+  RTC_HUB_ROUTE_MAX_ENTRIES,
+  RTC_HUB_ROUTE_TTL_MS,
+  RtcHubRouteTable,
+} from './signaling';
 
 describe('MeshRtcSignalRouter', () => {
   test('forwards browser signals to the registered target node', () => {
@@ -162,5 +167,16 @@ describe('RtcHubRouteTable', () => {
     expect(table.lookup('sess')).toBe('aa'.repeat(16));
     now = 1_000 + RTC_HUB_ROUTE_TTL_MS + 1;
     expect(table.lookup('sess')).toBeUndefined();
+  });
+
+  test('条目上限 LRU 驱逐最旧', () => {
+    const table = new RtcHubRouteTable({ maxEntries: 2 });
+    table.remember('a', 'aa'.repeat(16));
+    table.remember('b', 'bb'.repeat(16));
+    table.remember('c', 'cc'.repeat(16));
+    expect(table.size).toBe(2);
+    expect(table.lookup('a')).toBeUndefined();
+    expect(table.lookup('b')).toBe('bb'.repeat(16));
+    expect(RTC_HUB_ROUTE_MAX_ENTRIES).toBe(1024);
   });
 });

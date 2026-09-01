@@ -1,14 +1,7 @@
 import os from 'node:os';
 import { canonicalHubUrl, encodeBase64url } from '@tmex/shared/auth';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
-import type {
-  HubAdvertisement,
-  HubAttachmentsMessage,
-  HubForwardMessage,
-  HubMode,
-  HubTokensMessage,
-  HubWriteForwardMessage,
-} from '@tmex/shared/uplink';
+import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { filesBulkHooks } from '../api/files';
 import {
@@ -76,7 +69,7 @@ import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
 import { authenticateRequest } from './session-middleware';
 import { openHttpStream, openWsStream } from './stream-targets';
 import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
-import { UplinkClient, type UplinkWsFactory } from './uplink-client';
+import type { UplinkWsFactory } from './uplink-client';
 import {
   type AttachedHub,
   UplinkPool,
@@ -1089,6 +1082,7 @@ function createUplinkWiring(d: MeshDeps) {
     scheduler: d.scheduler,
     pingIntervalMs: opts.pingIntervalMs,
     preferNearest: config.uplinkPreferNearest ?? gatewayConfig.uplinkPreferNearest,
+    localRoles: config.roles,
     isLocalCandidate: (cand) =>
       Boolean(uplinkHub) &&
       isSelfHubCandidate(cand, { nodeId: identity.nodeIdHex, publicUrl: ownHubUrl }),
@@ -1099,25 +1093,21 @@ function createUplinkWiring(d: MeshDeps) {
       uplinkHub.attachLocalNode(hubLink);
       await online;
     },
-    createClient: (clientOpts) =>
-      new UplinkClient({
-        ...clientOpts,
-        onHubTokens: (msg: HubTokensMessage) => {
-          d.hub?.receiveHubTokens(msg);
-        },
-        onHubAttachments: (msg: HubAttachmentsMessage) => {
-          d.hub?.receiveHubAttachments(msg);
-        },
-        onHubForward: (msg: HubForwardMessage) => {
-          d.hub?.receiveHubForward(msg);
-        },
-        onHubWriteForward: (msg: HubWriteForwardMessage) => {
-          d.hub?.receiveHubWriteForward(msg);
-        },
-        onHubRelayStream: (stream) => {
-          d.hub?.receiveHubRelay(stream);
-        },
-      }),
+    onHubTokens: (msg, source) => {
+      d.hub?.receiveHubTokens(msg, source);
+    },
+    onHubAttachments: (msg, source) => {
+      d.hub?.receiveHubAttachments(msg, source);
+    },
+    onHubForward: (msg, source) => {
+      d.hub?.receiveHubForward(msg, source);
+    },
+    onHubWriteForward: (msg, source) => {
+      d.hub?.receiveHubWriteForward(msg, source);
+    },
+    onHubRelayStream: (stream, source) => {
+      d.hub?.receiveHubRelay(stream, source);
+    },
     onEnrollRedeemed: (msg) => {
       d.httpHolder.runtime?.mesh.forwardEnrollRedeemed({
         enrollPk: msg.enroll_pk,

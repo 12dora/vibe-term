@@ -1027,6 +1027,7 @@ describe('multi-hub in-process integration', () => {
     const cSid = await loginSelf(c.mesh, user);
     const nodes = await getMeshNodes(c.mesh, selfCookie(cSid));
     expect(nodes.nodes.find((n) => n.id === d.mesh.nodeId)?.attachedHubId).toBe(b.mesh.nodeId);
+    expect(nodes.nodes.find((n) => n.id === d.mesh.nodeId)?.online).toBe(true);
 
     const remote = await loginRemote(c.mesh, d.mesh, user, selfCookie(cSid));
     expect(remote.status).toBe(200);

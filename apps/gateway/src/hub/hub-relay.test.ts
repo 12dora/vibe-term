@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   HUB_RELAY_KIND,
   HUB_RELAY_MAX_HOP,
+  HUB_RELAY_OPEN_MAX_BYTES,
   type HubRelayOpen,
   encodeHubRelayOpen,
   parseHubRelayOpen,
@@ -30,6 +31,24 @@ describe('hub-relay open payload', () => {
   test('普通 relay OPEN 不是 hub-relay', () => {
     expect(
       parseHubRelayOpen(new TextEncoder().encode(JSON.stringify({ to: NODE_D, from: NODE_C })))
+    ).toBeNull();
+  });
+
+  test('OPEN 超过 8KiB 或 visited 超 hop 在 JSON 解析前/映射前拒绝', () => {
+    expect(parseHubRelayOpen(new Uint8Array(HUB_RELAY_OPEN_MAX_BYTES + 1))).toBeNull();
+    expect(
+      parseHubRelayOpen(
+        new TextEncoder().encode(
+          JSON.stringify({
+            kind: HUB_RELAY_KIND,
+            to: NODE_D,
+            from: NODE_C,
+            originHubId: HUB_A,
+            visitedHubIds: [HUB_A, HUB_B, HUB_C],
+            hop: 1,
+          })
+        )
+      )
     ).toBeNull();
   });
 });

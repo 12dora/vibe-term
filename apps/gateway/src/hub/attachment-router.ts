@@ -1,4 +1,5 @@
 export const ATTACHMENT_TTL_MS = 5 * 60 * 1000;
+export const ATTACHMENT_KEEPALIVE_MS = 2 * 60 * 1000;
 export const ATTACHMENT_MAX_ENTRIES = 4096;
 
 const NODE_ID_HEX = /^[0-9a-f]{32}$/i;
@@ -105,6 +106,19 @@ export class AttachmentRouter {
     if (!prev || !self || prev.hubId !== self) return;
     prev.lastSeen = this.now();
     prev.local = true;
+  }
+
+  refreshHub(hubId: string): number {
+    const id = normId(hubId);
+    if (!isNodeId(id)) return 0;
+    const now = this.now();
+    let n = 0;
+    for (const entry of this.routes.values()) {
+      if (entry.hubId !== id) continue;
+      entry.lastSeen = now;
+      n += 1;
+    }
+    return n;
   }
 
   applyFromHub(

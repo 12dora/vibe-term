@@ -921,6 +921,7 @@ export async function getMeshNodes(mesh: MeshRuntime, cookie: string) {
       hubMode?: string;
       name?: string;
       attachedHubId?: string;
+      online?: boolean;
     }>;
   };
 }

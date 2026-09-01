@@ -1,6 +1,7 @@
 export {
   BunServerWsAdapter,
   HubRuntime,
+  type HubCtlSource,
   type HubRuntimeOptions,
   type HubServerWebSocket,
   type HubUpgradeServer,
@@ -41,6 +42,7 @@ export {
 } from './hub-authorization';
 export { NodeRegistry, type NodeRegistryMeta, type RegisteredNode } from './node-registry';
 export {
+  ATTACHMENT_KEEPALIVE_MS,
   ATTACHMENT_MAX_ENTRIES,
   ATTACHMENT_TTL_MS,
   AttachmentRouter,

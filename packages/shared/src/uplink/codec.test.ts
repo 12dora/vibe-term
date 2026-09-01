@@ -14,6 +14,7 @@ import {
   type MeshUplinkNodeList,
   type NodeListMessage,
   type NodeStatusMessage,
+  UPLINK_CTL_MAX_ATTACHMENT_ENTRIES,
   UPLINK_CTL_MAX_BYTES,
   UplinkCtlError,
   assertCtlBounds,
@@ -485,6 +486,35 @@ describe('hub.attachments / hub.forward / attachedHubId codec', () => {
     expect(decodeHubUplinkCtl(encodeHubUplinkCtl(delta))).toEqual(delta);
   });
 
+  test('hub.attachments 分页字段往返，单帧条目上限收紧', () => {
+    const page: HubAttachmentsMessage = {
+      t: 'hub.attachments',
+      revision: 9,
+      full: true,
+      snapshotId: 'snap-1',
+      page: 0,
+      final: false,
+      entries: [{ nodeId: NODE_C, attached: true, hubId: HUB_B }],
+    };
+    expect(decodeMeshUplinkCtl(encodeMeshUplinkCtl(page))).toEqual(page);
+    expect(decodeHubUplinkCtl(encodeHubUplinkCtl(page))).toEqual(page);
+    expect(UPLINK_CTL_MAX_ATTACHMENT_ENTRIES).toBe(256);
+    expect(() =>
+      decodeHubUplinkCtl(
+        new TextEncoder().encode(
+          JSON.stringify({
+            t: 'hub.attachments',
+            revision: 1,
+            entries: Array.from({ length: UPLINK_CTL_MAX_ATTACHMENT_ENTRIES + 1 }, (_, i) => ({
+              nodeId: i.toString(16).padStart(32, '0'),
+              attached: true,
+            })),
+          })
+        )
+      )
+    ).toThrow(/too many/);
+  });
+
   test('hub.forward mesh/hub 往返', () => {
     expect(decodeMeshUplinkCtl(encodeMeshUplinkCtl(forward))).toEqual(forward);
     expect(decodeHubUplinkCtl(encodeHubUplinkCtl(forward))).toEqual(forward);
@@ -572,6 +602,46 @@ describe('hub.attachments / hub.forward / attachedHubId codec', () => {
         headers: { 'content-type': 'application/json', 'x-tmex-force-keylog': '1' },
         body: '{}',
       });
+    });
+
+    test('hub.write-forward 请求携带 writerHubId/writerEpoch，legacy 剥离', () => {
+      const req: HubWriteForwardMessage = {
+        t: 'hub.write-forward',
+        id: 'fwd-w',
+        method: 'POST',
+        path: '/api/hub/enrollments',
+        body: '{}',
+        writerHubId: HUB_A,
+        writerEpoch: 7,
+      };
+      expect(decodeMeshUplinkCtl(encodeMeshUplinkCtl(req))).toEqual(req);
+      expect(decodeHubUplinkCtl(encodeHubUplinkCtl(req))).toEqual(req);
+      expect(
+        JSON.parse(new TextDecoder().decode(encodeMeshUplinkCtl(req, { legacy: true })))
+      ).toEqual({ t: 'hub.write-forward' });
+    });
+
+    test('hub.write-forward 分片 ACK 往返', () => {
+      const part: HubWriteForwardMessage = {
+        t: 'hub.write-forward',
+        id: 'fwd-c',
+        ack: true,
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        part: 0,
+        final: false,
+        bytes: '{"ok":true,',
+      };
+      const last: HubWriteForwardMessage = {
+        t: 'hub.write-forward',
+        id: 'fwd-c',
+        ack: true,
+        part: 1,
+        final: true,
+        bytes: '"n":1}',
+      };
+      expect(decodeMeshUplinkCtl(encodeMeshUplinkCtl(part))).toEqual(part);
+      expect(decodeHubUplinkCtl(encodeHubUplinkCtl(last))).toEqual(last);
     });
 
     test('key.log.append force 往返，legacy 剥离', () => {
