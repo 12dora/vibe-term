@@ -53,6 +53,9 @@ export interface UpdateCheckResult {
   publishedAt: string | null;
 }
 
+/** 用户取消下载阶段的升级；FE 按此精确字符串识别 */
+export const UPGRADE_CANCELLED = 'UPGRADE_CANCELLED';
+
 /** 升级状态（轮询） */
 export interface UpgradeStatus {
   state: UpgradeState;
@@ -93,6 +96,9 @@ export type MeshUpgradeErrorCode =
   | 'UPGRADE_IN_PROGRESS'
   | 'UPGRADE_ALREADY_LATEST'
   | 'UPGRADE_UNSUPPORTED'
+  | 'UPGRADE_CANCEL_UNSUPPORTED'
+  | 'UPGRADE_NOT_CANCELLABLE'
+  | 'UPGRADE_NOT_RUNNING'
   | 'RELEASE_UNAVAILABLE'
   | 'NOT_FOUND';
 

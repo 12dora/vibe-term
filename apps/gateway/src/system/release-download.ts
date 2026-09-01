@@ -109,14 +109,15 @@ export function assertReleaseIntegrity(
 export async function fetchReleaseSha256Sums(
   version: string,
   fileName: string,
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  signal?: AbortSignal
 ): Promise<{ hex: string | null; missing: boolean }> {
   let response: Response;
   try {
     response = await fetchFn(resolveReleaseSha256SumsUrl(version), {
       redirect: 'follow',
       cache: 'no-store',
-      signal: AbortSignal.timeout(SHA256SUMS_FETCH_TIMEOUT_MS),
+      signal: mergeAbortSignals(AbortSignal.timeout(SHA256SUMS_FETCH_TIMEOUT_MS), signal),
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -141,7 +142,7 @@ export type DownloadedRelease = {
 
 export async function downloadVerifiedRelease(
   version: string,
-  opts: { cacheDir: string; fetchFn?: typeof fetch }
+  opts: { cacheDir: string; fetchFn?: typeof fetch; signal?: AbortSignal }
 ): Promise<DownloadedRelease> {
   const key = `${opts.cacheDir}::${version}`;
   const existing = inflight.get(key);
@@ -155,7 +156,7 @@ export async function downloadVerifiedRelease(
 
 async function downloadVerifiedReleaseUncached(
   version: string,
-  opts: { cacheDir: string; fetchFn?: typeof fetch }
+  opts: { cacheDir: string; fetchFn?: typeof fetch; signal?: AbortSignal }
 ): Promise<DownloadedRelease> {
   await mkdir(opts.cacheDir, { recursive: true, mode: 0o700 });
   const fileName = releaseTarballName(version);
@@ -169,8 +170,15 @@ async function downloadVerifiedReleaseUncached(
   await rm(part, { force: true }).catch(() => {});
   let downloaded: { sha256: string; bytes: number };
   try {
-    downloaded = await downloadTarballToFile(resolveReleaseTarballUrl(version), part, fetchFn);
-    const sums = await fetchReleaseSha256Sums(version, fileName, fetchFn);
+    throwIfAborted(opts.signal);
+    downloaded = await downloadTarballToFile(
+      resolveReleaseTarballUrl(version),
+      part,
+      fetchFn,
+      opts.signal
+    );
+    throwIfAborted(opts.signal);
+    const sums = await fetchReleaseSha256Sums(version, fileName, fetchFn, opts.signal);
     assertReleaseSha256(version, downloaded.sha256, sums);
   } catch (err) {
     await rm(part, { force: true }).catch(() => {});
@@ -178,8 +186,10 @@ async function downloadVerifiedReleaseUncached(
   }
   let renamed = false;
   try {
+    throwIfAborted(opts.signal);
     await rename(part, dest);
     renamed = true;
+    throwIfAborted(opts.signal);
     await writeFile(sidecar, `${downloaded.sha256}\n`, { mode: 0o600 });
   } catch (err) {
     await rm(part, { force: true }).catch(() => {});
@@ -203,19 +213,40 @@ async function readVerifiedCache(dest: string, sidecar: string): Promise<Downloa
   }
 }
 
+function mergeAbortSignals(timeout: AbortSignal, user?: AbortSignal): AbortSignal {
+  if (!user) return timeout;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([timeout, user]);
+  if (user.aborted) return user;
+  const ac = new AbortController();
+  const onAbort = (): void => ac.abort();
+  timeout.addEventListener('abort', onAbort, { once: true });
+  user.addEventListener('abort', onAbort, { once: true });
+  return ac.signal;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const err = new Error('UPGRADE_CANCELLED');
+  err.name = 'AbortError';
+  throw err;
+}
+
 async function downloadTarballToFile(
   url: string,
   destPath: string,
-  fetchFn: typeof fetch
+  fetchFn: typeof fetch,
+  signal?: AbortSignal
 ): Promise<{ sha256: string; bytes: number }> {
+  const combined = mergeAbortSignals(AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS), signal);
   const res = await fetchFn(url, {
     cache: 'no-store',
     redirect: 'follow',
-    signal: AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS),
+    signal: combined,
   });
   if (!res.ok) {
     throw new Error(`GitHub release tarball HTTP ${res.status}`);
   }
+  throwIfAborted(signal);
   const hash = createHash('sha256');
   let bytes = 0;
   const hasher = new Transform({
@@ -226,14 +257,24 @@ async function downloadTarballToFile(
     },
   });
   const ws = createWriteStream(destPath, { mode: 0o600 });
+  const src = res.body
+    ? Readable.fromWeb(res.body as unknown as NodeWebReadableStream)
+    : Readable.from([Buffer.from(await res.arrayBuffer())]);
+  const onAbort = (): void => {
+    src.destroy();
+    hasher.destroy();
+    ws.destroy();
+    void res.body?.cancel().catch(() => {});
+  };
+  combined.addEventListener('abort', onAbort, { once: true });
   try {
-    const src = res.body
-      ? Readable.fromWeb(res.body as unknown as NodeWebReadableStream)
-      : Readable.from([Buffer.from(await res.arrayBuffer())]);
     await pipeline(src, hasher, ws);
   } catch (err) {
     ws.destroy();
+    src.destroy();
     throw err;
+  } finally {
+    combined.removeEventListener('abort', onAbort);
   }
   return { sha256: hash.digest('hex'), bytes };
 }

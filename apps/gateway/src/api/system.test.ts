@@ -275,3 +275,166 @@ describe('POST /api/system/upgrade source=staged', () => {
     expect(body.reason).not.toBe('staged_requires_auth');
   });
 });
+
+describe('DELETE /api/system/upgrade', () => {
+  afterEach(() => {
+    upgradeController.resetForTests();
+  });
+
+  test('idle cancel is 409 UPGRADE_NOT_RUNNING with the idle status', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const response = await handleSystemApiRequest(
+        new Request('http://localhost/api/system/upgrade', { method: 'DELETE' }),
+        '/api/system/upgrade'
+      );
+      expect(response?.status).toBe(409);
+      expect(await response?.json()).toEqual({
+        code: 'UPGRADE_NOT_RUNNING',
+        state: 'idle',
+        targetVersion: null,
+        error: null,
+        startedAt: null,
+      });
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('successful cancel is 200 idle with error UPGRADE_CANCELLED', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    const cancelSpy = spyOn(upgradeController, 'cancel').mockResolvedValue({
+      ok: true,
+      status: {
+        state: 'idle',
+        targetVersion: null,
+        error: 'UPGRADE_CANCELLED',
+        startedAt: '2026-09-01T00:00:00.000Z',
+      },
+    });
+    try {
+      const response = await handleSystemApiRequest(
+        new Request('http://localhost/api/system/upgrade', { method: 'DELETE' }),
+        '/api/system/upgrade'
+      );
+      expect(response?.status).toBe(200);
+      expect(await response?.json()).toEqual({
+        state: 'idle',
+        targetVersion: null,
+        error: 'UPGRADE_CANCELLED',
+        startedAt: '2026-09-01T00:00:00.000Z',
+      });
+    } finally {
+      cancelSpy.mockRestore();
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('executing cancel is 409 UPGRADE_NOT_CANCELLABLE', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    const cancelSpy = spyOn(upgradeController, 'cancel').mockResolvedValue({
+      ok: false,
+      code: 'UPGRADE_NOT_CANCELLABLE',
+      status: {
+        state: 'executing',
+        targetVersion: '9.9.9',
+        error: null,
+        startedAt: '2026-09-01T00:00:00.000Z',
+      },
+    });
+    try {
+      const response = await handleSystemApiRequest(
+        new Request('http://localhost/api/system/upgrade', { method: 'DELETE' }),
+        '/api/system/upgrade'
+      );
+      expect(response?.status).toBe(409);
+      expect(await response?.json()).toEqual({
+        code: 'UPGRADE_NOT_CANCELLABLE',
+        state: 'executing',
+        targetVersion: '9.9.9',
+        error: null,
+        startedAt: '2026-09-01T00:00:00.000Z',
+      });
+    } finally {
+      cancelSpy.mockRestore();
+      infoSpy.mockRestore();
+    }
+  });
+});
+
+describe('DELETE /api/system/upgrade/package', () => {
+  afterEach(() => {
+    upgradeController.resetForTests();
+  });
+
+  test('open-mode DELETE package is 403 staged_requires_auth', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const response = await handleSystemApiRequest(
+        new Request('http://localhost/api/system/upgrade/package?version=1.2.3', {
+          method: 'DELETE',
+        }),
+        '/api/system/upgrade/package'
+      );
+      expect(response?.status).toBe(403);
+      expect(await response?.json()).toEqual({
+        code: 'UPGRADE_NOT_ALLOWED',
+        reason: 'staged_requires_auth',
+      });
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('returns 404 when no package is staged for that version', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const response = await handleSystemApiRequest(
+        withMeshAuth(
+          new Request('http://localhost/api/system/upgrade/package?version=1.2.3', {
+            method: 'DELETE',
+          })
+        ),
+        '/api/system/upgrade/package'
+      );
+      expect(response?.status).toBe(404);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('removes the staged tarball and sidecar', async () => {
+    const { mkdtempSync, existsSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const installDir = mkdtempSync(join(tmpdir(), 'tmex-del-pkg-'));
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    const prevInstall = process.env.TMEX_INSTALL_DIR;
+    process.env.TMEX_INSTALL_DIR = installDir;
+    try {
+      const bytes = new Uint8Array([1, 2, 3, 4]);
+      const hex = sha256Hex(bytes);
+      const staged = await upgradeController.stagePackage('1.2.3', hex, bytesStream(bytes));
+      expect(staged.ok).toBe(true);
+      const tgz = join(installDir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz');
+      const sidecar = join(installDir, 'staging', 'staged', 'tmex-cli-1.2.3.json');
+      expect(existsSync(tgz)).toBe(true);
+      const response = await handleSystemApiRequest(
+        withMeshAuth(
+          new Request('http://localhost/api/system/upgrade/package?version=1.2.3', {
+            method: 'DELETE',
+          })
+        ),
+        '/api/system/upgrade/package'
+      );
+      expect(response?.status).toBe(200);
+      expect(existsSync(tgz)).toBe(false);
+      expect(existsSync(sidecar)).toBe(false);
+    } finally {
+      infoSpy.mockRestore();
+      if (prevInstall === undefined) delete process.env.TMEX_INSTALL_DIR;
+      else process.env.TMEX_INSTALL_DIR = prevInstall;
+      rmSync(installDir, { recursive: true, force: true });
+    }
+  });
+});

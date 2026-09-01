@@ -1,10 +1,11 @@
-import type { UpgradeState, UpgradeStatus } from '@tmex/shared';
+import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
 import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import type { UserStore } from '../auth/user-store';
 import { MESH_VIA_SELF } from '../mesh/mesh-deps';
 import { jsonBody, jsonError } from '../mesh/session-middleware';
 import { getSystemInfo } from './info-public';
 import {
+  cancelRemoteUpgradeJob,
   consumeHandedOffJob,
   getRemoteUpgradeJob,
   hasRunningRemoteUpgradeJob,
@@ -143,12 +144,61 @@ export async function handleMeshNodeUpgradeStatus(opts: {
       startedAt: job.startedAt,
     });
   }
+  if (job?.state === 'cancelled') {
+    return jsonBody({
+      state: 'idle' as const,
+      targetVersion: null,
+      error: UPGRADE_CANCELLED,
+      startedAt: job.startedAt,
+    });
+  }
   const upstream = await forward.forwardAuthorizedHttp(req, {
     nodeId,
     method: 'GET',
     path: '/api/system/upgrade',
   });
   return mapForwardedUpgradeResponse(nodeId, upstream);
+}
+
+export async function handleMeshNodeUpgradeCancel(opts: {
+  req: Request;
+  nodeId: string;
+  localNodeId: string;
+  userStore: UserStore;
+  forward: AuthorizedUpgradeForward;
+}): Promise<Response> {
+  const { req, nodeId, localNodeId, userStore, forward } = opts;
+  if (!isEnrolledUpgradeableNode(localNodeId, userStore, nodeId)) {
+    return jsonError('NOT_FOUND', 404, { nodeId });
+  }
+  const local = isLocalUpgradeNode(localNodeId, nodeId);
+  const resolvedId = local ? localNodeId : nodeId;
+  if (local) {
+    const { upgradeController } = await import('./upgrade');
+    const result = await upgradeController.cancel();
+    if (result.ok) return jsonBody(result.status);
+    return jsonError(result.code, 409, { ...result.status, nodeId: resolvedId });
+  }
+  if (!readNodeSession(req, nodeId)) {
+    return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId });
+  }
+
+  const jobCancel = await cancelRemoteUpgradeJob({ nodeId, req, forward });
+  if (jobCancel.handled) {
+    return jsonBody({
+      state: 'idle' as const,
+      targetVersion: null,
+      error: UPGRADE_CANCELLED,
+      startedAt: jobCancel.snapshot.startedAt,
+    });
+  }
+
+  const upstream = await forward.forwardAuthorizedHttp(req, {
+    nodeId,
+    method: 'DELETE',
+    path: '/api/system/upgrade',
+  });
+  return mapForwardedUpgradeCancelResponse(nodeId, upstream);
 }
 
 export async function readLocalUpgradeStatus(): Promise<UpgradeStatus> {
@@ -182,6 +232,31 @@ export async function startLocalUpgradeAttempt(
     return { ok: false, code: started.code, status };
   }
   return { ok: true, status };
+}
+
+async function mapForwardedUpgradeCancelResponse(
+  nodeId: string,
+  upstream: Response
+): Promise<Response> {
+  if (upstream.status === 404) {
+    discardUpstreamBody(upstream);
+    return jsonError('UPGRADE_CANCEL_UNSUPPORTED', 501, { nodeId });
+  }
+  if (upstream.status === 403) {
+    discardUpstreamBody(upstream);
+    return jsonError('UPGRADE_NOT_ALLOWED', 403, { nodeId });
+  }
+  if (upstream.status === 409) {
+    const parsed = await readBoundedJsonObject(upstream);
+    const extra = parsed.ok ? pickUpgradeStatusFields(parsed.value) : {};
+    const rawCode = parsed.ok ? parsed.value.code : null;
+    const code =
+      rawCode === 'UPGRADE_NOT_CANCELLABLE' || rawCode === 'UPGRADE_NOT_RUNNING'
+        ? rawCode
+        : 'UPGRADE_NOT_CANCELLABLE';
+    return jsonError(code, 409, { ...extra, nodeId });
+  }
+  return upstream;
 }
 
 export async function mapForwardedUpgradeResponse(

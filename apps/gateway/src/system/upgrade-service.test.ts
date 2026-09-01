@@ -7,6 +7,7 @@ import { resetReleaseDownloadForTests } from './release-download';
 import { resetRemoteUpgradeJobsForTests, waitForRemoteUpgradeJob } from './remote-upgrade-job';
 import { upgradeController } from './upgrade';
 import {
+  handleMeshNodeUpgradeCancel,
   handleMeshNodeUpgradeStart,
   handleMeshNodeUpgradeStatus,
   isAlreadyAtOrAboveLatest,
@@ -619,6 +620,330 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
       error: null,
       startedAt: '2026-09-01T00:00:00.000Z',
     });
+  });
+});
+
+describe('handleMeshNodeUpgradeCancel', () => {
+  const localNodeId = 'cd'.repeat(16);
+  const nodeId = 'ab'.repeat(16);
+
+  test('unknown node is 404 NOT_FOUND', async () => {
+    const res = await handleMeshNodeUpgradeCancel({
+      req: authedRequest(nodeId),
+      nodeId,
+      localNodeId,
+      userStore: stubUserStore(),
+      forward: neverForward(),
+    });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: 'NOT_FOUND', nodeId });
+  });
+
+  test('remote without a node session is 401 NODE_LOGIN_REQUIRED', async () => {
+    const res = await handleMeshNodeUpgradeCancel({
+      req: new Request('http://localhost/upgrade', { method: 'DELETE' }),
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward: neverForward(),
+    });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ code: 'NODE_LOGIN_REQUIRED', nodeId });
+  });
+
+  test('local downloading cancel is 200 idle UPGRADE_CANCELLED', async () => {
+    const cancelSpy = spyOn(upgradeController, 'cancel').mockResolvedValue({
+      ok: true,
+      status: {
+        state: 'idle',
+        targetVersion: null,
+        error: 'UPGRADE_CANCELLED',
+        startedAt: '2026-09-01T00:00:00.000Z',
+      },
+    });
+    try {
+      const res = await handleMeshNodeUpgradeCancel({
+        req: new Request('http://localhost/upgrade', { method: 'DELETE' }),
+        nodeId: localNodeId,
+        localNodeId,
+        userStore: stubUserStore(),
+        forward: neverForward(),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        state: 'idle',
+        targetVersion: null,
+        error: 'UPGRADE_CANCELLED',
+        startedAt: '2026-09-01T00:00:00.000Z',
+      });
+    } finally {
+      cancelSpy.mockRestore();
+    }
+  });
+
+  test('local executing cancel is 409 UPGRADE_NOT_CANCELLABLE', async () => {
+    const cancelSpy = spyOn(upgradeController, 'cancel').mockResolvedValue({
+      ok: false,
+      code: 'UPGRADE_NOT_CANCELLABLE',
+      status: {
+        state: 'executing',
+        targetVersion: '9.9.9',
+        error: null,
+        startedAt: '2026-09-01T00:00:00.000Z',
+      },
+    });
+    try {
+      const res = await handleMeshNodeUpgradeCancel({
+        req: new Request('http://localhost/upgrade', { method: 'DELETE' }),
+        nodeId: localNodeId,
+        localNodeId,
+        userStore: stubUserStore(),
+        forward: neverForward(),
+      });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        code: 'UPGRADE_NOT_CANCELLABLE',
+        state: 'executing',
+        nodeId: localNodeId,
+      });
+    } finally {
+      cancelSpy.mockRestore();
+    }
+  });
+
+  test('active entry-side job cancel is 200 overlay and GET reports UPGRADE_CANCELLED', async () => {
+    let releaseDownload!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseDownload = resolve;
+    });
+    mockGithubLatest('9.9.9');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('api.github.com')) return latestFetch(input, init);
+      await gate;
+      return new Response('nope', { status: 500 });
+    }) as typeof fetch;
+    const req = authedRequest(nodeId);
+    const forwarded: string[] = [];
+    const forward = {
+      async forwardAuthorizedHttp(_req: Request, input: { method: string; path: string }) {
+        forwarded.push(`${input.method} ${input.path}`);
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      },
+    };
+    await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    const cancelled = await handleMeshNodeUpgradeCancel({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toMatchObject({
+      state: 'idle',
+      targetVersion: null,
+      error: 'UPGRADE_CANCELLED',
+    });
+    const status = await handleMeshNodeUpgradeStatus({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    expect(await status.json()).toMatchObject({
+      state: 'idle',
+      error: 'UPGRADE_CANCELLED',
+    });
+    expect(forwarded.filter((c) => c === 'DELETE /api/system/upgrade')).toEqual([]);
+    releaseDownload();
+    await waitForRemoteUpgradeJob(nodeId).catch(() => {});
+  });
+
+  test('a subsequent POST after job cancel is allowed', async () => {
+    let releaseDownload!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseDownload = resolve;
+    });
+    mockGithubLatest('9.9.9');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('api.github.com')) return latestFetch(input, init);
+      await gate;
+      return new Response('nope', { status: 500 });
+    }) as typeof fetch;
+    const req = authedRequest(nodeId);
+    const forward = {
+      async forwardAuthorizedHttp(_req: Request, input: { method: string; path: string }) {
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      },
+    };
+    expect(
+      (
+        await handleMeshNodeUpgradeStart({
+          req,
+          nodeId,
+          localNodeId,
+          userStore: enrolledStore(nodeId),
+          forward,
+        })
+      ).status
+    ).toBe(200);
+    expect(
+      (
+        await handleMeshNodeUpgradeCancel({
+          req,
+          nodeId,
+          localNodeId,
+          userStore: enrolledStore(nodeId),
+          forward,
+        })
+      ).status
+    ).toBe(200);
+    const again = await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    expect(again.status).toBe(200);
+    releaseDownload();
+    await waitForRemoteUpgradeJob(nodeId).catch(() => {});
+  });
+
+  test('handed-off job cancel is forwarded as DELETE /api/system/upgrade', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-cancel-cache-'));
+    mockGithubLatest('9.9.9');
+    const payload = new Uint8Array([1, 2, 3]);
+    const { createHash } = await import('node:crypto');
+    const hex = createHash('sha256').update(payload).digest('hex');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${hex}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+      }
+      if (url.includes('tmex-cli-')) {
+        return new Response(payload, { status: 200 });
+      }
+      return latestFetch(input);
+    }) as typeof fetch;
+    const req = authedRequest(nodeId);
+    const forwarded: string[] = [];
+    const forward = {
+      async forwardAuthorizedHttp(_req: Request, input: { method: string; path: string }) {
+        forwarded.push(`${input.method} ${input.path}`);
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (input.method === 'DELETE' && input.path === '/api/system/upgrade') {
+          return new Response(
+            JSON.stringify({
+              code: 'UPGRADE_NOT_CANCELLABLE',
+              state: 'executing',
+              targetVersion: '9.9.9',
+              error: null,
+              startedAt: '2026-09-01T00:00:00.000Z',
+            }),
+            { status: 409, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      },
+    };
+    await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    await waitForRemoteUpgradeJob(nodeId);
+    const cancelled = await handleMeshNodeUpgradeCancel({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    expect(cancelled.status).toBe(409);
+    expect(await cancelled.json()).toMatchObject({
+      code: 'UPGRADE_NOT_CANCELLABLE',
+      nodeId,
+    });
+    expect(forwarded).toContain('DELETE /api/system/upgrade');
+  });
+
+  test('old target without DELETE maps 404 to 501 UPGRADE_CANCEL_UNSUPPORTED', async () => {
+    const res = await handleMeshNodeUpgradeCancel({
+      req: authedRequest(nodeId),
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward: {
+        async forwardAuthorizedHttp() {
+          return new Response('gone', { status: 404 });
+        },
+      },
+    });
+    expect(res.status).toBe(501);
+    expect(await res.json()).toEqual({ code: 'UPGRADE_CANCEL_UNSUPPORTED', nodeId });
+  });
+
+  test('forwarded 403 is UPGRADE_NOT_ALLOWED', async () => {
+    const res = await handleMeshNodeUpgradeCancel({
+      req: authedRequest(nodeId),
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward: {
+        async forwardAuthorizedHttp() {
+          return new Response('no', { status: 403 });
+        },
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: 'UPGRADE_NOT_ALLOWED', nodeId });
   });
 });
 

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  cancelRemoteUpgradeJob,
   getRemoteUpgradeJob,
   resetRemoteUpgradeJobsForTests,
   startRemoteUpgradeJob,
@@ -11,9 +12,12 @@ import {
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 
 const tempDirs: string[] = [];
+const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
 
 afterEach(() => {
   resetRemoteUpgradeJobsForTests();
+  if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
+  else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -314,5 +318,204 @@ describe('RemoteUpgradeJob', () => {
     expect(getRemoteUpgradeJob(nodeId, now)?.state).toBe('failed');
     now += 10 * 60 * 1000;
     expect(getRemoteUpgradeJob(nodeId, now)).toBeNull();
+  });
+
+  test('cancel aborts an in-flight push, cancels the file stream, and marks cancelled', async () => {
+    const nodeId = 'aa'.repeat(16);
+    const path = tempFile(new Uint8Array([1, 2, 3, 4]));
+    let pushSignal: AbortSignal | undefined;
+    let fileCancelled = false;
+    const started = startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'PUT') {
+            pushSignal = input.signal;
+            if (input.rawBody) {
+              const orig = input.rawBody.cancel.bind(input.rawBody);
+              input.rawBody.cancel = async (reason?: unknown) => {
+                fileCancelled = true;
+                return orig(reason);
+              };
+            }
+            await new Promise(() => {});
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 4 }),
+    });
+    expect(started.ok).toBe(true);
+    for (let i = 0; i < 50 && !pushSignal; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(pushSignal).toBeTruthy();
+    const cancelled = await cancelRemoteUpgradeJob({
+      nodeId,
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp() {
+          return new Response('{}', { status: 200 });
+        },
+      },
+    });
+    expect(cancelled.handled).toBe(true);
+    if (!cancelled.handled) throw new Error('expected handled');
+    expect(cancelled.snapshot.state).toBe('cancelled');
+    expect(cancelled.snapshot.error).toBe('UPGRADE_CANCELLED');
+    expect(pushSignal?.aborted).toBe(true);
+    expect(fileCancelled).toBe(true);
+    expect(getRemoteUpgradeJob(nodeId)?.state).toBe('cancelled');
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('cancelled');
+  }, 8_000);
+
+  test('cancel during download removes the cache .part and never leaves a tarball without sidecar', async () => {
+    const nodeId = 'bb'.repeat(16);
+    const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-cancel-dl-'));
+    tempDirs.push(cacheDir);
+    process.env.TMEX_RELEASE_CACHE_DIR = cacheDir;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${'ab'.repeat(32)}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+      }
+      const signal = init?.signal;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (signal?.aborted) {
+            controller.error(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          controller.enqueue(new Uint8Array(16 * 1024).fill(2));
+          await new Promise<void>((resolve) => {
+            if (!signal) {
+              resolve();
+              return;
+            }
+            const timer = setTimeout(resolve, 15);
+            signal.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as typeof fetch;
+    try {
+      const started = startRemoteUpgradeJob({
+        nodeId,
+        version: '9.9.9',
+        req: authed(nodeId),
+        forward: {
+          async forwardAuthorizedHttp() {
+            throw new Error('should not push');
+          },
+        },
+      });
+      expect(started.ok).toBe(true);
+      const part = join(cacheDir, 'tmex-cli-9.9.9.tgz.part');
+      for (let i = 0; i < 50 && !existsSync(part); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const cancelled = await cancelRemoteUpgradeJob({
+        nodeId,
+        req: authed(nodeId),
+        forward: {
+          async forwardAuthorizedHttp() {
+            return new Response('{}', { status: 200 });
+          },
+        },
+      });
+      expect(cancelled.handled).toBe(true);
+      await waitForRemoteUpgradeJob(nodeId);
+      expect(existsSync(part)).toBe(false);
+      expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(false);
+      expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'))).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }, 8_000);
+
+  test('cancel after push but before start DELETEs the staged package on the target', async () => {
+    const nodeId = 'cc'.repeat(16);
+    const path = tempFile(new Uint8Array([9, 9, 9]));
+    let releaseStart!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const calls: string[] = [];
+    const forward: AuthorizedUpgradeForward = {
+      async forwardAuthorizedHttp(_req, input) {
+        calls.push(`${input.method} ${input.path}`);
+        if (input.method === 'PUT') {
+          return new Response('{}', { status: 200 });
+        }
+        if (input.method === 'POST') {
+          await gate;
+          return new Response('{}', { status: 200 });
+        }
+        if (input.method === 'DELETE') {
+          expect(input.path).toBe('/api/system/upgrade/package');
+          expect(input.query).toContain('version=9.9.9');
+          return new Response('{}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    };
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward,
+      download: async () => ({ path, sha256: 'ee'.repeat(32), bytes: 3 }),
+    });
+    for (let i = 0; i < 50 && !calls.includes('POST /api/system/upgrade'); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const cancelled = await cancelRemoteUpgradeJob({
+      nodeId,
+      req: authed(nodeId),
+      forward,
+    });
+    expect(cancelled.handled).toBe(true);
+    expect(calls).toContain('DELETE /api/system/upgrade/package');
+    releaseStart();
+    await waitForRemoteUpgradeJob(nodeId);
+  });
+
+  test('cancel of a handed-off job is not handled by the entry job', async () => {
+    const nodeId = 'dd'.repeat(16);
+    const path = tempFile(new Uint8Array([1]));
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp() {
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'ff'.repeat(32), bytes: 1 }),
+    });
+    await waitForRemoteUpgradeJob(nodeId);
+    const cancelled = await cancelRemoteUpgradeJob({
+      nodeId,
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp() {
+          throw new Error('should not be called by job cancel');
+        },
+      },
+    });
+    expect(cancelled.handled).toBe(false);
   });
 });

@@ -181,6 +181,58 @@ describe('downloadVerifiedRelease', () => {
     }
   });
 
+  test('aborting an in-flight download removes the .part and does not leave a tarball without sidecar', async () => {
+    const version = '5.5.5';
+    const ac = new AbortController();
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${'ab'.repeat(32)}  ${releaseTarballName(version)}\n`, {
+          status: 200,
+        });
+      }
+      const signal = init?.signal;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (signal?.aborted) {
+            controller.error(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          controller.enqueue(new Uint8Array(16 * 1024).fill(1));
+          await new Promise<void>((resolve) => {
+            if (!signal) {
+              resolve();
+              return;
+            }
+            const timer = setTimeout(resolve, 15);
+            signal.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as typeof fetch;
+    const cacheDir = tempDir('tmex-rel-abort-');
+    const pending = downloadVerifiedRelease(version, { cacheDir, signal: ac.signal });
+    const part = join(cacheDir, `${releaseTarballName(version)}.part`);
+    const dest = join(cacheDir, releaseTarballName(version));
+    for (let i = 0; i < 50; i += 1) {
+      if (existsSync(part) || existsSync(dest)) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    ac.abort();
+    await expect(pending).rejects.toThrow();
+    expect(existsSync(part)).toBe(false);
+    expect(existsSync(dest)).toBe(false);
+    expect(existsSync(`${dest}.sha256`)).toBe(false);
+  }, 5_000);
+
   test('sidecar write failure cleans part/final/sidecar and rejects', async () => {
     const version = '6.6.6';
     const tarball = new Uint8Array([4, 5, 6]);

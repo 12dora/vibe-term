@@ -13,7 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { releaseTarballName, releaseTarballUrl } from '@tmex/shared';
+import { UPGRADE_CANCELLED, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
 import type { InstallInfo } from './install-info';
 import { resetReleaseDownloadForTests } from './release-download';
 import {
@@ -873,6 +873,349 @@ describe('staged package', () => {
       else process.env.TMEX_INSTALL_DIR = previous;
     }
   });
+
+  test('aborted PUT body deletes the unique .part and leaves staging/staged empty', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    let streamCtl!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) {
+        streamCtl = stream;
+        stream.enqueue(bytes.subarray(0, 32));
+      },
+    });
+    const pending = controller.stagePackage('1.2.3', hex, body);
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    for (let i = 0; i < 50; i += 1) {
+      const parts = existsSync(stagedDir)
+        ? readdirSync(stagedDir).filter((name) => name.includes('.part'))
+        : [];
+      if (parts.length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    streamCtl.error(new Error('aborted'));
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    const leftover = existsSync(stagedDir) ? readdirSync(stagedDir) : [];
+    expect(leftover).toEqual([]);
+  });
+});
+
+describe('UpgradeController.cancel', () => {
+  function makeInstall(): InstallInfo {
+    const dir = tempDir('tmex-upg-cancel-');
+    return {
+      installedViaCli: true,
+      deployment: 'launchd',
+      installDir: dir,
+      serviceName: 'tmex',
+      cliVersion: '1.1.0',
+      bunPath: '/usr/bin/bun',
+    };
+  }
+
+  function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    });
+  }
+
+  async function settle(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  function stagingEntries(installDir: string): string[] {
+    const root = join(installDir, 'staging');
+    if (!existsSync(root)) return [];
+    return readdirSync(root).filter((name) => name !== 'staged' && name !== 'release-cache');
+  }
+
+  test('idle cancel is UPGRADE_NOT_RUNNING', async () => {
+    const controller = new UpgradeController({ getInstallInfo: () => makeInstall() });
+    const result = await controller.cancel();
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.code).toBe('UPGRADE_NOT_RUNNING');
+    expect(result.status).toEqual({
+      state: 'idle',
+      targetVersion: null,
+      error: null,
+      startedAt: null,
+    });
+  });
+
+  test('executing cancel is UPGRADE_NOT_CANCELLABLE and does not stop the child', async () => {
+    const child = new EventEmitter() as EventEmitter & { unref: () => void; killed: boolean };
+    child.unref = () => undefined;
+    child.killed = false;
+    const controller = new UpgradeController({
+      getInstallInfo: () => makeInstall(),
+      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      spawn: () => child as unknown as ChildProcess,
+    });
+    expect(controller.start('1.2.3')).toBe(true);
+    await settle();
+    child.emit('spawn');
+    await settle();
+    expect(controller.status().state).toBe('executing');
+    const result = await controller.cancel();
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.code).toBe('UPGRADE_NOT_CANCELLABLE');
+    expect(result.status.state).toBe('executing');
+    expect(result.status.targetVersion).toBe('1.2.3');
+    expect(controller.status().state).toBe('executing');
+  });
+
+  test('downloading cancel aborts the fetch, removes the txn dir and unverified cache, and reports UPGRADE_CANCELLED', async () => {
+    const install = makeInstall();
+    const installDir = install.installDir as string;
+    const cacheDir = join(installDir, 'staging', 'release-cache');
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'), 'partial');
+    writeFileSync(join(cacheDir, 'tmex-cli-1.2.3.tgz'), 'unverified');
+    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'), 'keep');
+    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'), `${'ab'.repeat(32)}\n`);
+    let seenSignal: AbortSignal | undefined;
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      stageRelease: async (stageDir, _version, signal): Promise<string> => {
+        seenSignal = signal;
+        writeFileSync(join(stageDir, 'tmex-cli-1.2.3.tgz.part'), 'partial-txn');
+        mkdirSync(join(stageDir, 'package'), { recursive: true });
+        await new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+          });
+        });
+        throw new Error('unreachable');
+      },
+    });
+    expect(controller.start('1.2.3')).toBe(true);
+    expect(controller.status().state).toBe('downloading');
+    await settle();
+    const result = await controller.cancel();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.status).toMatchObject({
+      state: 'idle',
+      targetVersion: null,
+      error: UPGRADE_CANCELLED,
+    });
+    expect(result.status.error).toBe('UPGRADE_CANCELLED');
+    expect(seenSignal?.aborted).toBe(true);
+    expect(stagingEntries(installDir)).toEqual([]);
+    expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(true);
+    expect(controller.status().error).toBe(UPGRADE_CANCELLED);
+  }, 5_000);
+
+  test('a second cancel after success is UPGRADE_NOT_RUNNING and stays cleaned', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      stageRelease: async (_stageDir, _version, signal): Promise<string> => {
+        await new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+          });
+        });
+        throw new Error('unreachable');
+      },
+    });
+    expect(controller.start('1.2.3')).toBe(true);
+    expect((await controller.cancel()).ok).toBe(true);
+    const again = await controller.cancel();
+    expect(again.ok).toBe(false);
+    if (again.ok) throw new Error('expected failure');
+    expect(again.code).toBe('UPGRADE_NOT_RUNNING');
+    expect(again.status.error).toBe(UPGRADE_CANCELLED);
+    expect(stagingEntries(install.installDir as string)).toEqual([]);
+  });
+
+  test('staged-source cancel while still downloading removes the txn dir (consumed tarball included)', async () => {
+    const install = makeInstall();
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      spawn: () => child as unknown as ChildProcess,
+      extractPackage: async (_tarballPath, _stageDir, signal): Promise<string> => {
+        await new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+          });
+        });
+        throw new Error('unreachable');
+      },
+    });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    expect((await controller.stagePackage('1.2.3', hex, bytesStream(bytes))).ok).toBe(true);
+    const stagedPath = join(
+      install.installDir as string,
+      'staging',
+      'staged',
+      'tmex-cli-1.2.3.tgz'
+    );
+    expect(controller.tryStart('1.2.3', { source: 'staged', sha256: hex }).ok).toBe(true);
+    for (let i = 0; i < 50 && existsSync(stagedPath); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(existsSync(stagedPath)).toBe(false);
+    expect(controller.status().state).toBe('downloading');
+    const result = await controller.cancel();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.status.error).toBe(UPGRADE_CANCELLED);
+    expect(stagingEntries(install.installDir as string)).toEqual([]);
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    const leftover = existsSync(stagedDir) ? readdirSync(stagedDir) : [];
+    expect(leftover).toEqual([]);
+  });
+
+  test('cancel racing a finishing download is either full cleanup or uncancelled executing', async () => {
+    const install = makeInstall();
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      stageRelease: async (stageDir) => {
+        writeFileSync(join(stageDir, 'partial.tgz'), 'x');
+        await gate;
+        return '/tmp/pkg/bin/tmex.js';
+      },
+      spawn: () => {
+        queueMicrotask(() => child.emit('spawn'));
+        return child as unknown as ChildProcess;
+      },
+    });
+    expect(controller.start('1.2.3')).toBe(true);
+    await settle();
+    const cancelPromise = controller.cancel();
+    finish();
+    const result = await cancelPromise;
+    const status = controller.status();
+    if (result.ok) {
+      expect(status.state).toBe('idle');
+      expect(status.error).toBe(UPGRADE_CANCELLED);
+      expect(status.targetVersion).toBeNull();
+      expect(stagingEntries(install.installDir as string)).toEqual([]);
+    } else {
+      expect(result.code).toBe('UPGRADE_NOT_CANCELLABLE');
+      for (let i = 0; i < 50 && controller.status().state !== 'executing'; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(controller.status().state).toBe('executing');
+      expect(controller.status().error).not.toBe(UPGRADE_CANCELLED);
+    }
+  });
+
+  test('orphan .part and txn leftovers from a crashed cancel are pruned on the next start', async () => {
+    const install = makeInstall();
+    const installDir = install.installDir as string;
+    const stagedDir = join(installDir, 'staging', 'staged');
+    mkdirSync(stagedDir, { recursive: true });
+    writeFileSync(join(stagedDir, 'tmex-cli-1.2.3.tgz.part-deadbeef'), 'partial');
+    const txnDir = join(installDir, 'staging', 'dead-txn');
+    mkdirSync(txnDir, { recursive: true });
+    writeFileSync(join(txnDir, 'tmex-cli-1.2.3.tgz.part'), 'x');
+    const cacheDir = join(installDir, 'staging', 'release-cache');
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'), 'x');
+    writeFileSync(join(cacheDir, 'tmex-cli-0.0.1.tgz'), 'orphan-final');
+    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'), 'keep');
+    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'), `${'cd'.repeat(32)}\n`);
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      spawn: () => child as unknown as ChildProcess,
+    });
+    expect(controller.start('8.8.8')).toBe(true);
+    await settle();
+    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.tgz.part-deadbeef'))).toBe(false);
+    expect(existsSync(txnDir)).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-0.0.1.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(true);
+    child.emit('spawn');
+    await settle();
+  });
+
+  test('aborted PUT over an in-memory link leaves staging/staged empty', async () => {
+    const { createInMemoryLinkPair } = await import('@tmex/shared/link');
+    const { acceptHttpStream, openHttpStream } = await import('../mesh/stream-targets');
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const [local, remote] = createInMemoryLinkPair();
+    remote.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry',
+        sessionStore: {
+          verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+        } as never,
+        async dispatchHttp(req) {
+          const url = new URL(req.url);
+          const version = url.searchParams.get('version') ?? '';
+          const sha256 = url.searchParams.get('sha256') ?? '';
+          const result = await controller.stagePackage(version, sha256, req.body);
+          if (!result.ok) {
+            return new Response(JSON.stringify({ code: result.code }), {
+              status: result.status,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return new Response(JSON.stringify(result), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        },
+      });
+    });
+    const ac = new AbortController();
+    const chunk = new Uint8Array(16 * 1024).fill(7);
+    const rawBody = new ReadableStream<Uint8Array>({
+      pull(ctl) {
+        ctl.enqueue(chunk);
+      },
+      cancel() {
+        ac.abort();
+      },
+    });
+    const pending = openHttpStream(
+      local,
+      {
+        method: 'PUT',
+        path: '/api/system/upgrade/package',
+        query: `?version=1.2.3&sha256=${'ab'.repeat(32)}`,
+        headers: { 'content-type': 'application/octet-stream' },
+        origin: 'http://localhost',
+        auth: 'remote-sid',
+      },
+      rawBody,
+      ac.signal
+    );
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    ac.abort();
+    await rawBody.cancel().catch(() => {});
+    await pending.catch(() => {});
+    await settle();
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    const leftover = existsSync(stagedDir) ? readdirSync(stagedDir) : [];
+    expect(leftover).toEqual([]);
+  }, 8_000);
 });
 
 describe('cmdlineOwnsInstallRuntime', () => {

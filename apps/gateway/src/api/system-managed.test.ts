@@ -5,7 +5,9 @@ describe('managed system API', () => {
   for (const [method, path] of [
     ['GET', '/api/system/update-check'],
     ['POST', '/api/system/upgrade'],
+    ['DELETE', '/api/system/upgrade'],
     ['PUT', '/api/system/upgrade/package'],
+    ['DELETE', '/api/system/upgrade/package'],
   ] as const) {
     test(`${method} ${path} 始终拒绝进程内自更新`, async () => {
       const response = handleManagedSystemApiRequest(
