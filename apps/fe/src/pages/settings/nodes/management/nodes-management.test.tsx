@@ -7,7 +7,14 @@ import type { AuthModeResponse, HubEndpointInfo, MeshNode } from '@tmex/api-clie
 import type { UpgradeStatus } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { installWindowStorage } from '@tmex/stores/test-utils';
-import type { NodeActionDeps, NodeUpgradeController, NodeUpgradeEntry } from './types';
+import { Children, type ReactElement, type ReactNode } from 'react';
+import type {
+  NodeActionDeps,
+  NodeSelection,
+  NodeUninstallController,
+  NodeUpgradeController,
+  NodeUpgradeEntry,
+} from './types';
 import type {
   UpgradeIo,
   UpgradePollOutcome,
@@ -23,11 +30,28 @@ const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@
 const { resetMeshHubsStateForTest, setMeshHubsStateForTest } = await import('@/node/mesh-hubs');
 const { actionErrorText } = await import('./errors');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
-const { NodesManagement, UpgradeAllButton } = await import('./nodes-management');
+const {
+  BulkActionsMenuList,
+  NodesManagement,
+  bulkMenuStates,
+  pruneSelection,
+  selectableRows,
+  toggleAllSelection,
+  toggleSelection,
+} = await import('./nodes-management');
 const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } = await import(
   '@/node/enrollment-engine'
 );
 const { resolveHubPublicUrl } = await import('./enrollment-section');
+const {
+  createUninstallIo,
+  isUninstalling,
+  planUninstall,
+  runUninstallBatch,
+  uninstallErrorText,
+  uninstallSummaryText,
+} = await import('./use-node-uninstall');
+const { UninstallDialogBody } = await import('./uninstall-dialog');
 const { NodesTable } = await import('./nodes-table');
 const { IDLE_UPGRADE_ENTRY, IDLE_UPGRADE_BATCH } = await import('./types');
 const {
@@ -75,6 +99,13 @@ function buttonTag(html: string, testId: string): string {
   expect(at).toBeGreaterThan(-1);
   const open = html.lastIndexOf('<button', at);
   return html.slice(open, html.indexOf('>', at) + 1);
+}
+
+/** 任意元素的开标签（勾选框是 span，不能用 `buttonTag`）。 */
+function elementTag(html: string, testId: string): string {
+  const at = html.indexOf(`data-testid="${testId}"`);
+  expect(at).toBeGreaterThan(-1);
+  return html.slice(html.lastIndexOf('<', at), html.indexOf('>', at) + 1);
 }
 
 function render(mode: AuthModeResponse): string {
@@ -221,23 +252,41 @@ describe('NodesManagement', () => {
     expect(html).not.toContain('data-testid="nodes-add"');
   });
 
-  test('「全部升级」紧挨在「添加」左边；latest 未知时禁用', () => {
+  test('「更多」紧挨在「添加」左边，且没有单独的「全部升级」', () => {
     setMeshNodesStateForTest({
       entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
       nodes: [meshNode({ id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e', name: 'entry', loggedIn: true })],
     });
     const html = render(MODE);
-    expect(html).toContain('data-testid="nodes-upgrade-all"');
+    expect(html).toContain('data-testid="nodes-bulk-menu"');
+    expect(html).not.toContain('data-testid="nodes-upgrade-all"');
     expect(html.indexOf('data-testid="nodes-refresh"')).toBeLessThan(
-      html.indexOf('data-testid="nodes-upgrade-all"')
+      html.indexOf('data-testid="nodes-bulk-menu"')
     );
-    expect(html.indexOf('data-testid="nodes-upgrade-all"')).toBeLessThan(
+    expect(html.indexOf('data-testid="nodes-bulk-menu"')).toBeLessThan(
       html.indexOf('data-testid="nodes-add"')
     );
-    // 静态渲染跑不了 effect，latest 拿不到：按钮禁用并说明原因
-    const tag = buttonTag(html, 'nodes-upgrade-all');
-    expect(tag).toContain('disabled=""');
-    expect(tag).toContain('title="nodes.upgrade.releaseUnavailable"');
+  });
+
+  test('每行一个勾选框；入口自身那一行禁用', () => {
+    setMeshNodesStateForTest({
+      entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+      nodes: [
+        meshNode({ id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e', name: 'entry', loggedIn: true }),
+        meshNode({ id: '0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d', name: 'studio', loggedIn: true }),
+      ],
+    });
+    const html = render(MODE);
+    expect(elementTag(html, 'nodes-select-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e')).toContain(
+      'aria-disabled="true"'
+    );
+    expect(elementTag(html, 'nodes-select-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d')).not.toContain(
+      'aria-disabled'
+    );
+    // 表头只有一个全选 / 全不选按钮
+    const header = elementTag(html, 'nodes-select-all');
+    expect(header).toContain('data-all-selected="false"');
+    expect(header).toContain('aria-label="nodes.selection.selectAll"');
   });
 });
 
@@ -415,10 +464,37 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     };
   }
 
+  function selection(overrides: Partial<NodeSelection> = {}): NodeSelection {
+    return {
+      ids: new Set<string>(),
+      selectableCount: 0,
+      toggle: () => undefined,
+      toggleAll: () => undefined,
+      ...overrides,
+    };
+  }
+
+  function uninstallController(
+    overrides: Partial<NodeUninstallController> = {}
+  ): NodeUninstallController {
+    return {
+      plan: null,
+      running: false,
+      scheduledIds: new Set<string>(),
+      clearingIds: new Set<string>(),
+      request: () => undefined,
+      confirm: () => undefined,
+      dismiss: () => undefined,
+      clear: () => undefined,
+      ...overrides,
+    };
+  }
+
   function renderTable(
     rows: NodeRow[],
     latestVersion: string | null,
-    overrides: Partial<NodeUpgradeController> = {}
+    overrides: Partial<NodeUpgradeController> = {},
+    extra: { selection?: NodeSelection; uninstall?: NodeUninstallController } = {}
   ): string {
     const deps: NodeActionDeps = {
       hubApi: null,
@@ -438,7 +514,12 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     };
     return renderToStaticMarkup(
       <MemoryRouter>
-        <NodesTable rows={rows} {...deps} />
+        <NodesTable
+          rows={rows}
+          selection={extra.selection ?? selection()}
+          uninstall={extra.uninstall ?? uninstallController()}
+          {...deps}
+        />
       </MemoryRouter>
     );
   }
@@ -528,60 +609,216 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(buttonTag(html, 'node-upgrade-hh')).not.toContain('disabled=""');
   });
 
-  function renderUpgradeAll(upgrade: NodeUpgradeController, rows: NodeRow[] = []): string {
-    return renderToStaticMarkup(
-      <MemoryRouter>
-        <UpgradeAllButton rows={rows} upgrade={upgrade} />
-      </MemoryRouter>
+  test('正在卸载的行：状态列改显「卸载中」，重命名与升级锁住，移除仍可点', () => {
+    const html = renderTable(
+      [nodeRow({ id: 'uu', version: '1.1.9' })],
+      '1.2.0',
+      {},
+      {
+        uninstall: uninstallController({ scheduledIds: new Set(['uu']) }),
+      }
     );
+    expect(html).toContain('data-testid="nodes-uninstall-state-uu"');
+    expect(html).toContain('nodes.uninstall.stateRunning');
+    expect(html).not.toContain('data-testid="nodes-status-uu"');
+    expect(buttonTag(html, 'nodes-rename-uu')).toContain('disabled=""');
+    expect(buttonTag(html, 'node-upgrade-uu')).toContain('title="nodes.uninstall.busy"');
+    // 卸载受理后证书还挂着：移除按钮必须留着
+    expect(buttonTag(html, 'nodes-revoke-uu')).not.toContain('disabled=""');
+    // 这一行也不能再被勾选
+    expect(elementTag(html, 'nodes-select-uu')).toContain('aria-disabled="true"');
+  });
+
+  test('卸载失败的行：显示「卸载失败」并带清除按钮，错误进 title', () => {
+    const row = nodeRow({ id: 'vv' });
+    row.operation = {
+      kind: 'uninstall',
+      phase: 'failed',
+      startedAt: 1,
+      updatedAt: 2,
+      error: 'exit 1',
+    };
+    const html = renderTable([row], '1.2.0');
+    expect(html).toContain('nodes.uninstall.stateFailed');
+    expect(elementTag(html, 'nodes-uninstall-state-vv')).toContain('title="exit 1"');
+    expect(html).toContain('data-testid="nodes-uninstall-clear-vv"');
+    // 失败的行可以重新勾选（还能再卸一次）
+    expect(elementTag(html, 'nodes-select-vv')).not.toContain('aria-disabled');
+  });
+
+  test('表头按钮在全选后翻成「全不选」', () => {
+    const selected = renderTable(
+      [nodeRow({ id: 'ww' })],
+      '1.2.0',
+      {},
+      {
+        selection: selection({ ids: new Set(['ww']), selectableCount: 1 }),
+      }
+    );
+    const header = elementTag(selected, 'nodes-select-all');
+    expect(header).toContain('data-all-selected="true"');
+    expect(header).toContain('aria-label="nodes.selection.clearAll"');
+    expect(elementTag(selected, 'nodes-select-ww')).toContain('data-checked');
+  });
+});
+
+describe('多选的纯逻辑', () => {
+  function row(id: string, overrides: Partial<NodeRow> = {}): NodeRow {
+    return {
+      id,
+      runtimeNodeId: id,
+      name: id,
+      publicKey: '',
+      fingerprint: '',
+      online: true,
+      reach: 'lan',
+      transport: null,
+      rttMs: null,
+      version: '1.1.13',
+      directCapable: false,
+      loggedIn: true,
+      inventory: null,
+      isSelf: false,
+      isHub: false,
+      lastSeenAt: null,
+      status: null,
+      certificate: null,
+      certSig: null,
+      operation: null,
+      ...overrides,
+    };
   }
 
-  test('有可升级节点时「全部升级」可点', () => {
-    const html = renderUpgradeAll({ ...controller('1.2.0'), eligibleCount: () => 2 });
-    const tag = buttonTag(html, 'nodes-upgrade-all');
-    expect(tag).not.toContain('disabled=""');
-    expect(tag).toContain('title="nodes.upgrade.allHint"');
+  test('入口自身与正在卸载的行不可勾选', () => {
+    const rows = [
+      row('self', { isSelf: true }),
+      row('a'),
+      row('b', {
+        operation: {
+          kind: 'uninstall',
+          phase: 'uninstalling',
+          startedAt: 1,
+          updatedAt: 1,
+          error: null,
+        },
+      }),
+      row('c'),
+    ];
+    expect(selectableRows(rows, new Set()).map((item) => item.id)).toEqual(['a', 'c']);
+    // 乐观标记同样算「正在卸载」
+    expect(selectableRows(rows, new Set(['c'])).map((item) => item.id)).toEqual(['a']);
   });
 
-  test('已有行内升级在跑：「全部升级」立刻变灰并说明原因', () => {
-    const html = renderUpgradeAll({
-      ...controller('1.2.0'),
-      eligibleCount: () => 2,
-      anyRunning: true,
-    });
-    const tag = buttonTag(html, 'nodes-upgrade-all');
-    expect(tag).toContain('disabled=""');
-    expect(tag).toContain('title="nodes.upgrade.allBusy"');
+  test('toggle 在选中与未选中之间来回', () => {
+    const once = toggleSelection(new Set<string>(), 'a');
+    expect([...once]).toEqual(['a']);
+    expect([...toggleSelection(once, 'a')]).toEqual([]);
   });
 
-  test('批量进行中：按钮变灰并显示进度，而不是「已有节点在升级」', () => {
-    const html = renderUpgradeAll({
-      ...controller('1.2.0'),
-      eligibleCount: () => 3,
-      anyRunning: true,
-      batch: { running: true, total: 3, completed: 2 },
-    });
-    const tag = buttonTag(html, 'nodes-upgrade-all');
-    expect(tag).toContain('disabled=""');
-    expect(tag).toContain('title="nodes.upgrade.allHint"');
-    expect(html).toContain('nodes.upgrade.allProgress');
+  test('表头那一个按钮：没全选就全选，已全选就清空', () => {
+    const rows = [row('a'), row('b')];
+    const all = toggleAllSelection(new Set(['a']), rows);
+    expect([...all].sort()).toEqual(['a', 'b']);
+    expect([...toggleAllSelection(all, rows)]).toEqual([]);
   });
 
-  test('没有可升级节点：变灰并说明', () => {
-    const tag = buttonTag(renderUpgradeAll(controller('1.2.0')), 'nodes-upgrade-all');
-    expect(tag).toContain('disabled=""');
-    expect(tag).toContain('title="nodes.upgrade.allNone"');
+  test('行消失后勾选态跟着掉；没变化时返回原引用', () => {
+    const ids = new Set(['a', 'gone']);
+    expect([...pruneSelection(ids, [row('a')])]).toEqual(['a']);
+    const stable = new Set(['a']);
+    expect(pruneSelection(stable, [row('a')])).toBe(stable);
+  });
+});
+
+describe('「更多」菜单的可点性', () => {
+  const t = (key: string, options?: Record<string, unknown>) =>
+    options ? `${key}:${JSON.stringify(options)}` : key;
+
+  const base = {
+    selectedCount: 2,
+    eligibleUpgradeCount: 2,
+    latestKnown: true,
+    upgradeBusy: false,
+    restoring: false,
+    writable: true,
+    blockedHint: 'nodes.hubOffline',
+    uninstallRunning: false,
+    revoking: false,
+  };
+
+  test('选中了节点、hub 收写入、没有别的批量在跑：三项都可点', () => {
+    const states = bulkMenuStates(base, t);
+    expect(states.upgrade.disabled).toBe(false);
+    expect(states.revoke.disabled).toBe(false);
+    expect(states.uninstall.disabled).toBe(false);
   });
 
-  test('刷新后正在同步升级状态：「全部升级」先变灰，别让用户点进半截状态', () => {
-    const html = renderUpgradeAll({
-      ...controller('1.2.0'),
-      eligibleCount: () => 2,
-      restoring: true,
-    });
-    const tag = buttonTag(html, 'nodes-upgrade-all');
-    expect(tag).toContain('disabled=""');
-    expect(tag).toContain('title="nodes.upgrade.restoring"');
+  test('一个都没勾：三项都禁用并说明', () => {
+    const states = bulkMenuStates({ ...base, selectedCount: 0 }, t);
+    for (const item of [states.upgrade, states.revoke, states.uninstall]) {
+      expect(item.disabled).toBe(true);
+      expect(item.title).toBe('nodes.selection.none');
+    }
+  });
+
+  test('hub 不收写入：只有「移除节点」禁用', () => {
+    const states = bulkMenuStates({ ...base, writable: false }, t);
+    expect(states.revoke.disabled).toBe(true);
+    expect(states.revoke.title).toBe('nodes.hubOffline');
+    expect(states.upgrade.disabled).toBe(false);
+    expect(states.uninstall.disabled).toBe(false);
+  });
+
+  test('latest 未知 / 没有可升级的：只有「升级」禁用', () => {
+    expect(bulkMenuStates({ ...base, latestKnown: false }, t).upgrade.title).toBe(
+      'nodes.upgrade.releaseUnavailable'
+    );
+    expect(bulkMenuStates({ ...base, eligibleUpgradeCount: 0 }, t).upgrade.title).toBe(
+      'nodes.upgrade.allNone'
+    );
+    expect(bulkMenuStates({ ...base, eligibleUpgradeCount: 0 }, t).uninstall.disabled).toBe(false);
+  });
+
+  test('批量 / 卸载 / 移除在跑：三项一并禁用，原因各自不同', () => {
+    expect(bulkMenuStates({ ...base, upgradeBusy: true }, t).uninstall.title).toBe(
+      'nodes.upgrade.allBusy'
+    );
+    expect(bulkMenuStates({ ...base, restoring: true }, t).upgrade.title).toBe(
+      'nodes.upgrade.restoring'
+    );
+    expect(bulkMenuStates({ ...base, uninstallRunning: true }, t).revoke.title).toBe(
+      'nodes.uninstall.running'
+    );
+    expect(bulkMenuStates({ ...base, revoking: true }, t).upgrade.title).toBe(
+      'nodes.selection.busy'
+    );
+  });
+
+  // 菜单内容走 portal，SSR 什么都不输出：直接对元素树断言（同 AddDeviceMenuList）。
+  test('三个菜单项：升级带选中数量，禁用原因进 title', () => {
+    const list = BulkActionsMenuList({
+      states: bulkMenuStates({ ...base, selectedCount: 0 }, t),
+      labels: { upgrade: '升级（3）', revoke: '移除节点', uninstall: '卸载 tmex' },
+      onUpgrade: () => undefined,
+      onRevoke: () => undefined,
+      onUninstall: () => undefined,
+    }) as ReactElement<{ children?: ReactNode }>;
+    const items = Children.toArray(list.props.children) as ReactElement<{
+      'data-testid'?: string;
+      disabled?: boolean;
+      title?: string;
+      children?: ReactNode;
+    }>[];
+    expect(items.map((item) => item.props['data-testid'])).toEqual([
+      'nodes-bulk-upgrade',
+      'nodes-bulk-revoke',
+      'nodes-bulk-uninstall',
+    ]);
+    for (const item of items) {
+      expect(item.props.disabled).toBe(true);
+      expect(item.props.title).toBe('nodes.selection.none');
+    }
+    expect(JSON.stringify(items[0].props.children)).toContain('升级（3）');
   });
 });
 
@@ -1025,5 +1262,184 @@ describe('resolveHubPublicUrl', () => {
   test('两处都没有时返回 null——绝不退化成入口 origin', () => {
     expect(resolveHubPublicUrl(null, {})).toBeNull();
     expect(resolveHubPublicUrl({ hubPublicUrl: null }, { hubPublicUrl: null })).toBeNull();
+  });
+});
+
+describe('远程卸载', () => {
+  const t = (key: string, options?: Record<string, unknown>) =>
+    options ? `${key}:${JSON.stringify(options)}` : key;
+
+  function row(id: string, overrides: Partial<NodeRow> = {}): NodeRow {
+    return {
+      id,
+      runtimeNodeId: id,
+      name: id,
+      publicKey: '',
+      fingerprint: '',
+      online: true,
+      reach: 'lan',
+      transport: null,
+      rttMs: null,
+      version: '1.1.13',
+      directCapable: false,
+      loggedIn: true,
+      inventory: null,
+      isSelf: false,
+      isHub: false,
+      lastSeenAt: null,
+      status: null,
+      certificate: null,
+      certSig: null,
+      operation: null,
+      ...overrides,
+    };
+  }
+
+  test('分拣：本机 / 离线 / 未登录 / 版本过旧 / 正在卸载都进跳过清单', () => {
+    const plan = planUninstall([
+      row('ok'),
+      row('self', { isSelf: true }),
+      row('off', { online: false }),
+      row('anon', { loggedIn: false }),
+      row('old', { version: '1.1.12' }),
+      row('busy', {
+        operation: {
+          kind: 'uninstall',
+          phase: 'requested',
+          startedAt: 1,
+          updatedAt: 1,
+          error: null,
+        },
+      }),
+    ]);
+    expect(plan.targets.map((item) => item.id)).toEqual(['ok']);
+    expect(plan.skipped.map((item) => [item.row.id, item.reason])).toEqual([
+      ['self', 'self'],
+      ['off', 'offline'],
+      ['anon', 'loginRequired'],
+      ['old', 'tooOld'],
+      ['busy', 'uninstalling'],
+    ]);
+  });
+
+  test('版本无法解析时不拦：由后端裁决', () => {
+    expect(planUninstall([row('dev', { version: '1.1.12_dev' })]).targets).toHaveLength(1);
+    expect(planUninstall([row('unknown', { version: null })]).targets).toHaveLength(1);
+  });
+
+  test('乐观标记与服务端记录都算「正在卸载」；failed 不算', () => {
+    expect(isUninstalling(row('a'), new Set(['a']))).toBe(true);
+    const failed = row('b', {
+      operation: { kind: 'uninstall', phase: 'failed', startedAt: 1, updatedAt: 2, error: 'x' },
+    });
+    expect(isUninstalling(failed, new Set())).toBe(false);
+  });
+
+  test('POST 202 算受理；错误码原样带出；网络异常按不可达', async () => {
+    const calls: Array<{ path: string; method?: string }> = [];
+    const io = createUninstallIo(async (path, init) => {
+      calls.push({ path, method: init?.method });
+      if (path.includes('/bad/')) {
+        return new Response(JSON.stringify({ code: 'UNINSTALL_NOT_ALLOWED' }), { status: 409 });
+      }
+      if (path.includes('/boom/')) throw new Error('offline');
+      return new Response(JSON.stringify({ state: 'scheduled' }), { status: 202 });
+    });
+    expect(await io.start('good')).toEqual({ kind: 'scheduled' });
+    expect(await io.start('bad')).toEqual({ kind: 'failed', code: 'UNINSTALL_NOT_ALLOWED' });
+    expect(await io.start('boom')).toEqual({ kind: 'failed', code: 'NODE_UNREACHABLE' });
+    expect(calls[0]).toEqual({ path: '/api/mesh/nodes/good/uninstall', method: 'POST' });
+  });
+
+  test('清除失败记录走 DELETE /operation', async () => {
+    const calls: Array<{ path: string; method?: string }> = [];
+    const io = createUninstallIo(async (path, init) => {
+      calls.push({ path, method: init?.method });
+      return new Response(null, { status: 204 });
+    });
+    expect(await io.clearOperation('n1')).toBe(true);
+    expect(calls[0]).toEqual({ path: '/api/mesh/nodes/n1/operation', method: 'DELETE' });
+  });
+
+  test('逐台：受理后才吊销，POST 失败的那台跳过吊销且不打乐观标记', async () => {
+    const started: string[] = [];
+    const revoked: string[] = [];
+    const scheduled: string[] = [];
+    const failures: string[] = [];
+    const io = {
+      start: async (nodeId: string) => {
+        started.push(nodeId);
+        return nodeId === 'b'
+          ? ({ kind: 'failed', code: 'NODE_UNREACHABLE' } as const)
+          : ({ kind: 'scheduled' } as const);
+      },
+      clearOperation: async () => true,
+    };
+    const summary = await runUninstallBatch({
+      targets: [row('a'), row('b'), row('c')],
+      io,
+      t,
+      onScheduled: (nodeId) => scheduled.push(nodeId),
+      onFailed: (name) => failures.push(name),
+      revoke: async (target) => {
+        revoked.push(target.id);
+        return target.id !== 'c';
+      },
+    });
+    expect(started).toEqual(['a', 'b', 'c']);
+    expect(revoked).toEqual(['a', 'c']);
+    expect(scheduled).toEqual(['a', 'c']);
+    expect(summary.scheduled).toBe(2);
+    expect(summary.revoked).toBe(1);
+    // b 是 POST 失败，c 是卸下去了但没能从 mesh 里摘掉——两条原因不同
+    expect(summary.failed.map((item) => item.name)).toEqual(['b', 'c']);
+    expect(summary.failed[0].message).toBe('nodes.uninstall.errors.unreachable');
+    expect(summary.failed[1].message).toBe('nodes.uninstall.revokeFailed');
+    // 中途失败当场报一次，不必等整批跑完
+    expect(failures).toEqual(['b', 'c']);
+  });
+
+  test('稳定错误码走文案表，未知码原样显示', () => {
+    expect(uninstallErrorText(t, 'UNINSTALL_UNSUPPORTED')).toBe(
+      'nodes.uninstall.errors.unsupported'
+    );
+    expect(uninstallErrorText(t, 'WAT')).toBe('WAT');
+  });
+
+  test('汇总提示：全成功报成功，有失败带上名字', () => {
+    expect(uninstallSummaryText(t, { scheduled: 2, revoked: 2, failed: [] })).toEqual({
+      level: 'success',
+      text: 'nodes.uninstall.summary:{"count":2}',
+    });
+    const failed = uninstallSummaryText(t, {
+      scheduled: 1,
+      revoked: 1,
+      failed: [{ name: 'studio', message: 'x' }],
+    });
+    expect(failed.level).toBe('error');
+    expect(failed.text).toContain('studio');
+  });
+
+  test('确认框正文：列出将卸载的名字与跳过的原因', () => {
+    const plan = planUninstall([row('keep'), row('self', { isSelf: true })]);
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <UninstallDialogBody plan={plan} />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="nodes-uninstall-target-keep"');
+    expect(html).toContain('data-testid="nodes-uninstall-skip-self"');
+    expect(html).toContain('nodes.uninstall.skip.self');
+    expect(html).not.toContain('data-testid="nodes-uninstall-none"');
+  });
+
+  test('一台都卸不了时正文直接说明', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <UninstallDialogBody plan={planUninstall([row('self', { isSelf: true })])} />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="nodes-uninstall-none"');
+    expect(html).toContain('nodes.uninstall.noTargets');
   });
 });

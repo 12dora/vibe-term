@@ -17,6 +17,7 @@ import type {
   MeshNodeTransport,
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi, onAuthRequired } from '@tmex/api-client/auth/index';
+import type { MeshNodeOperation } from '@tmex/shared';
 import { bytesToHex, decodeBase64url, sha256 } from '@tmex/shared/auth';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { HubApi, type HubNodeRow } from './hub-api';
@@ -134,6 +135,11 @@ export interface NodeRow {
   status: string | null;
   certificate: string | null;
   certSig: string | null;
+  /**
+   * 入口记录的进行中长事务（远程卸载 / 主备切换）；`mergeNodes` 恒填，缺省为 `null`。
+   * 声明成可选是为了不逼着每个手写 `NodeRow` 的测试夹具补这一项。
+   */
+  operation?: MeshNodeOperation | null;
 }
 
 function reachOf(reach: string | null | undefined): MeshNodeReach {
@@ -183,6 +189,7 @@ export function mergeNodes(
       status: hub?.status ?? null,
       certificate: hub?.certificate ?? null,
       certSig: hub?.cert_sig ?? null,
+      operation: node.operation ?? null,
     };
   });
 }

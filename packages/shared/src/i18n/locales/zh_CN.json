@@ -1723,7 +1723,7 @@
         "title": "节点管理"
       },
       "empty": "暂无节点",
-      "self": "当前节点",
+      "self": "当前",
       "hub": "Hub",
       "loggedIn": "已登录",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
@@ -1738,7 +1738,9 @@
         "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
         "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
         "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
-        "machineRole": "Hub 角色"
+        "machineRole": "Hub 角色",
+        "lastAttempt": "最近尝试：{{time}}",
+        "lastError": "最近错误：{{error}}"
       },
       "machine": {
         "title": "本机",
@@ -2005,6 +2007,51 @@
         "copy": "复制",
         "copied": "已复制"
       },
+      "selection": {
+        "more": "更多",
+        "selectAll": "全选",
+        "clearAll": "全不选",
+        "selfBlocked": "本机不可选。",
+        "none": "须先勾选节点。",
+        "busy": "正在移除节点，请稍候。",
+        "upgrade": "升级（{{count}}）",
+        "revoke": "移除节点",
+        "uninstall": "卸载 tmex"
+      },
+      "uninstall": {
+        "confirmTitle": "卸载 tmex",
+        "confirmText": "将删除节点上的 tmex 服务、程序与数据，随后把它从多节点互联中移除。此操作不可撤销。",
+        "targets": "将卸载（{{count}}）",
+        "skipped": "跳过（{{count}}）",
+        "noTargets": "所选节点都无法远程卸载。",
+        "confirm": "卸载",
+        "cancel": "取消",
+        "skip": {
+          "self": "本机",
+          "offline": "离线",
+          "loginRequired": "未登录",
+          "tooOld": "版本低于 1.1.13",
+          "uninstalling": "正在卸载"
+        },
+        "stateRunning": "卸载中",
+        "stateFailed": "卸载失败",
+        "clear": "清除卸载记录",
+        "clearFailed": "清除卸载记录失败，请重试。",
+        "busy": "该节点正在卸载。",
+        "running": "正在卸载，请稍候。",
+        "revokeFailed": "已卸载，但未能从多节点互联中移除",
+        "summary": "已卸载 {{count}} 个节点",
+        "summaryFailed": "已卸载 {{count}} 个，{{failed}} 个失败（{{names}}）",
+        "errors": {
+          "loginRequired": "须先登录该节点。",
+          "unreachable": "连不上该节点。",
+          "notAllowed": "该节点不是由 tmex 安装器部署的，无法远程卸载。",
+          "unsupported": "该节点版本过旧，不支持远程卸载。",
+          "selfBlocked": "不能卸载本机。",
+          "upgradeInProgress": "该节点正在升级，请稍后再试。",
+          "nodeGone": "该节点已不在列表中。"
+        }
+      },
       "enrollment": {
         "nameLabel": "节点名称（可选）",
         "create": "生成加入码",
@@ -2033,7 +2080,10 @@
         "reasonPrompt": "移除原因（可选）",
         "done": "已移除",
         "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
-        "selfBlocked": "不能移除当前正在使用的节点。"
+        "selfBlocked": "不能移除当前正在使用的节点。",
+        "bulkConfirm": "移除 {{count}} 个节点（{{names}}）？它们将立即失去访问权限，须重新添加。",
+        "bulkDone": "已移除 {{count}} 个节点",
+        "bulkFailed": "已移除 {{count}} 个，{{failed}} 个失败（{{names}}）"
       },
       "upgrade": {
         "action": "升级",
@@ -2077,7 +2127,8 @@
         "cancelUnsupported": "该节点版本不支持中断升级。",
         "cancelNotRunning": "该节点没有正在进行的升级。",
         "cancelFailed": "停止升级失败：{{error}}",
-        "restoring": "正在同步升级状态…"
+        "restoring": "正在同步升级状态…",
+        "allResumed": "已续接上次的批量升级。"
       },
       "badge": {
         "direct": "直连",

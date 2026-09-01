@@ -6,24 +6,59 @@
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { Button } from '@tmex/ui/button';
+import { Checkbox } from '@tmex/ui/checkbox';
 import { Input } from '@tmex/ui/input';
-import { Download, Loader2, Pencil, ShieldAlert, Square } from 'lucide-react';
+import {
+  Download,
+  Loader2,
+  Pencil,
+  ShieldAlert,
+  Square,
+  SquareCheckBig,
+  SquareMinus,
+  X,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { hubDetailText, hubModeLabel } from './hub-strip';
-import type { NodeActionDeps } from './types';
+import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 import { upgradeBlockReason } from './upgrade-batch';
 import { useNodeRowActions } from './use-node-row-actions';
+import { isUninstalling } from './use-node-uninstall';
 import { isUpgradeBusy, upgradePhaseText } from './use-node-upgrade';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
-export function NodesTable({ rows, ...deps }: { rows: NodeRow[] } & NodeActionDeps) {
+export interface NodesTableProps extends NodeActionDeps {
+  rows: NodeRow[];
+  selection: NodeSelection;
+  uninstall: NodeUninstallController;
+}
+
+export function NodesTable({ rows, selection, uninstall, ...deps }: NodesTableProps) {
   const { t } = useTranslation();
+  const allSelected =
+    selection.selectableCount > 0 && selection.ids.size >= selection.selectableCount;
+  const toggleLabel = t(allSelected ? 'nodes.selection.clearAll' : 'nodes.selection.selectAll');
   return (
     <section className="overflow-x-auto rounded-lg border border-border/60">
-      <table className="w-full min-w-[52rem] text-xs" data-testid="nodes-table">
+      <table className="w-full min-w-[54rem] text-xs" data-testid="nodes-table">
         <thead className="text-muted-foreground">
           <tr className="border-b border-border">
+            <th className="w-8 px-2 py-2 text-left font-medium">
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                disabled={selection.selectableCount === 0}
+                aria-label={toggleLabel}
+                title={toggleLabel}
+                onClick={selection.toggleAll}
+                data-testid="nodes-select-all"
+                data-all-selected={allSelected ? 'true' : 'false'}
+              >
+                {allSelected ? <SquareMinus /> : <SquareCheckBig />}
+              </Button>
+            </th>
             <Th>{t('nodes.columns.name')}</Th>
             <Th>{t('nodes.columns.status')}</Th>
             <Th>{t('nodes.columns.reach')}</Th>
@@ -37,11 +72,17 @@ export function NodesTable({ rows, ...deps }: { rows: NodeRow[] } & NodeActionDe
         </thead>
         <tbody>
           {rows.map((row) => (
-            <NodeRowView key={row.id} row={row} {...deps} />
+            <NodeRowView
+              key={row.id}
+              row={row}
+              selection={selection}
+              uninstall={uninstall}
+              {...deps}
+            />
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={9} className="tmex-fade px-3 py-6 text-center text-muted-foreground">
+              <td colSpan={10} className="tmex-fade px-3 py-6 text-center text-muted-foreground">
                 {t('nodes.empty')}
               </td>
             </tr>
@@ -60,10 +101,20 @@ function deriveNodeRow(row: NodeRow, t: (key: string) => string) {
   };
 }
 
-function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
+function NodeRowView({
+  row,
+  selection,
+  uninstall,
+  ...deps
+}: {
+  row: NodeRow;
+  selection: NodeSelection;
+  uninstall: NodeUninstallController;
+} & NodeActionDeps) {
   const { t } = useTranslation();
   const { renaming, setRenaming, nameDraft, setNameDraft, busy, rename, revoke } =
     useNodeRowActions(row, deps);
+  const uninstalling = isUninstalling(row, uninstall.scheduledIds);
   const writable = deps.hubOnline && deps.hubWritable;
   const disabledHint = deps.hubWritable
     ? deps.hubOnline
@@ -71,9 +122,20 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
       : t('nodes.hubOffline')
     : t('nodes.hubs.standbyNotice');
   const view = deriveNodeRow(row, t);
+  const selectable = !row.isSelf && !uninstalling;
 
   return (
     <tr className="border-b border-border/60 last:border-0" data-testid={`nodes-row-${row.id}`}>
+      <td className="px-2 py-2 align-middle">
+        <Checkbox
+          checked={selection.ids.has(row.id)}
+          disabled={!selectable}
+          aria-label={row.name}
+          title={row.isSelf ? t('nodes.selection.selfBlocked') : undefined}
+          onCheckedChange={() => selection.toggle(row.id)}
+          data-testid={`nodes-select-${row.id}`}
+        />
+      </td>
       <Td>
         {renaming ? (
           <div className="flex items-center gap-1">
@@ -96,9 +158,7 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
         )}
       </Td>
       <Td>
-        <span data-testid={`nodes-status-${row.id}`} className={view.statusClass}>
-          {view.statusText}
-        </span>
+        <StatusCell row={row} uninstall={uninstall} uninstalling={uninstalling} view={view} />
       </Td>
       <Td>
         <span data-testid={`nodes-reach-${row.id}`}>{view.reachText}</span>
@@ -122,14 +182,15 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
             type="button"
             size="xs"
             variant="outline"
-            disabled={!writable || busy}
-            title={disabledHint}
+            disabled={!writable || busy || uninstalling}
+            title={uninstalling ? t('nodes.uninstall.busy') : disabledHint}
             onClick={() => setRenaming((value) => !value)}
             data-testid={`nodes-rename-${row.id}`}
           >
             <Pencil />
             {t('nodes.actions.rename')}
           </Button>
+          {/* 卸载受理后目标随即离线，证书还挂着：这个按钮必须留着，用户刷新后能补上吊销。 */}
           <Button
             type="button"
             size="xs"
@@ -142,11 +203,77 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
             <ShieldAlert />
             {t('nodes.actions.revoke')}
           </Button>
-          <UpgradeButton row={row} upgrade={deps.upgrade} />
+          <UpgradeButton row={row} upgrade={deps.upgrade} blocked={uninstalling} />
           <UpgradeCancelButton row={row} upgrade={deps.upgrade} />
         </div>
       </Td>
     </tr>
+  );
+}
+
+/**
+ * 状态列：正常显示在线态；这一行正在远程卸载时改显「卸载中」，失败则显「卸载失败」并把
+ * 原因放进 title，旁边留一个清除按钮——记录只活在入口这边，卸载失败后总得有办法抹掉它。
+ */
+function StatusCell({
+  row,
+  uninstall,
+  uninstalling,
+  view,
+}: {
+  row: NodeRow;
+  uninstall: NodeUninstallController;
+  uninstalling: boolean;
+  view: { statusClass: string; statusText: string };
+}) {
+  const { t } = useTranslation();
+  const failed = row.operation?.kind === 'uninstall' && row.operation.phase === 'failed';
+
+  if (uninstalling) {
+    return (
+      <span
+        className="flex items-center gap-1 text-amber-600 dark:text-amber-400"
+        data-testid={`nodes-uninstall-state-${row.id}`}
+        data-uninstall-phase={row.operation?.phase ?? 'requested'}
+      >
+        <Loader2 className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />
+        {t('nodes.uninstall.stateRunning')}
+      </span>
+    );
+  }
+
+  if (failed) {
+    const clearLabel = t('nodes.uninstall.clear');
+    return (
+      <span className="flex items-center gap-1">
+        <span
+          className="text-destructive"
+          title={row.operation?.error ?? undefined}
+          data-testid={`nodes-uninstall-state-${row.id}`}
+          data-uninstall-phase="failed"
+        >
+          {t('nodes.uninstall.stateFailed')}
+        </span>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          disabled={uninstall.clearingIds.has(row.id)}
+          aria-label={clearLabel}
+          title={clearLabel}
+          onClick={() => uninstall.clear(row)}
+          data-testid={`nodes-uninstall-clear-${row.id}`}
+        >
+          <X />
+        </Button>
+      </span>
+    );
+  }
+
+  return (
+    <span data-testid={`nodes-status-${row.id}`} className={view.statusClass}>
+      {view.statusText}
+    </span>
   );
 }
 
@@ -157,12 +284,18 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
  * `UPGRADE_IN_PROGRESS`，还会把随后接手的 watcher 挤掉。
  * 本机同样可以升级——它会重启本机网关，当前访问随之中断，确认框里已经写明。
  */
-function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps['upgrade'] }) {
+function UpgradeButton({
+  row,
+  upgrade,
+  blocked: uninstalling,
+}: { row: NodeRow; upgrade: NodeActionDeps['upgrade']; blocked: boolean }) {
   const { t } = useTranslation();
   const entry = upgrade.entryOf(row.id);
   const busy = isUpgradeBusy(entry.phase);
   const restoring = upgrade.restoringIds.has(row.id);
-  const blocked = upgradeBlockedHint(row, upgrade.latest?.latestVersion ?? null, t);
+  const blocked = uninstalling
+    ? t('nodes.uninstall.busy')
+    : upgradeBlockedHint(row, upgrade.latest?.latestVersion ?? null, t);
   const version = entry.targetVersion ?? upgrade.latest?.latestVersion ?? null;
   const phaseText = upgradePhaseText(t, entry.phase);
 

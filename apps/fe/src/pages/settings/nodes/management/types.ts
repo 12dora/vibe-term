@@ -116,3 +116,44 @@ export const PLACEHOLDER_KDF: AuthKdfParamsJson = {
   iterations: 0,
   parallelism: 0,
 };
+
+// ---------------------------------------------------------------------------
+// 多选与远程卸载（O1）
+// ---------------------------------------------------------------------------
+
+/** 表格多选：勾选态与三个入口，状态本体在 `nodes-management.tsx` 里。 */
+export interface NodeSelection {
+  ids: ReadonlySet<string>;
+  /** 可勾选的行数（排除入口自身与正在卸载的行）。 */
+  selectableCount: number;
+  toggle: (nodeId: string) => void;
+  /** 表头那一个按钮：未全选时全选，已全选时清空。 */
+  toggleAll: () => void;
+}
+
+/** 一台节点不能远程卸载的原因；`null` 表示可以卸。 */
+export type UninstallSkipReason = 'self' | 'offline' | 'loginRequired' | 'tooOld' | 'uninstalling';
+
+/** 卸载前的分拣结果：能卸的与被跳过的（附原因）。 */
+export interface UninstallPlan {
+  targets: NodeRow[];
+  skipped: Array<{ row: NodeRow; reason: UninstallSkipReason }>;
+}
+
+/** 远程卸载对外的只读视图 + 触发入口。 */
+export interface NodeUninstallController {
+  /** 当前待确认的分拣结果；没有待确认的卸载时为 `null`。 */
+  plan: UninstallPlan | null;
+  /** 确认后整批正在跑。 */
+  running: boolean;
+  /** 已受理卸载（乐观标记）的行：服务端记录要等下一次节点刷新才到。 */
+  scheduledIds: ReadonlySet<string>;
+  /** 正在清除失败记录的行。 */
+  clearingIds: ReadonlySet<string>;
+  /** 打开确认框。 */
+  request: (rows: NodeRow[]) => void;
+  confirm: () => void;
+  dismiss: () => void;
+  /** 清除一行的卸载失败记录（`DELETE /api/mesh/nodes/:id/operation`）。 */
+  clear: (row: NodeRow) => void;
+}

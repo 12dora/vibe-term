@@ -1723,7 +1723,7 @@
         "title": "ノード管理"
       },
       "empty": "ノードがありません",
-      "self": "現在のノード",
+      "self": "現在",
       "hub": "ハブ",
       "loggedIn": "サインイン済み",
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
@@ -1738,7 +1738,9 @@
         "detail": "{{url}}｜優先度 {{priority}}｜エポック {{epoch}}｜{{state}}",
         "standbyNotice": "メインハブに接続できないため予備ハブを使用中です。追加・名前変更・削除などの管理操作はできません。",
         "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
-        "machineRole": "ハブの役割"
+        "machineRole": "ハブの役割",
+        "lastAttempt": "最終試行：{{time}}",
+        "lastError": "最終エラー：{{error}}"
       },
       "machine": {
         "title": "このマシン",
@@ -2005,6 +2007,51 @@
         "copy": "コピー",
         "copied": "コピーしました"
       },
+      "selection": {
+        "more": "その他",
+        "selectAll": "すべて選択",
+        "clearAll": "選択を解除",
+        "selfBlocked": "本機は選択できません。",
+        "none": "先にノードを選択してください。",
+        "busy": "ノードを削除中です。完了までお待ちください。",
+        "upgrade": "アップグレード（{{count}}）",
+        "revoke": "ノードを削除",
+        "uninstall": "tmex をアンインストール"
+      },
+      "uninstall": {
+        "confirmTitle": "tmex をアンインストール",
+        "confirmText": "ノード上の tmex のサービス、プログラム、データを削除し、その後マルチノード接続から除外します。この操作は取り消せません。",
+        "targets": "アンインストール対象（{{count}}）",
+        "skipped": "スキップ（{{count}}）",
+        "noTargets": "選択したノードはいずれもリモートでアンインストールできません。",
+        "confirm": "アンインストール",
+        "cancel": "キャンセル",
+        "skip": {
+          "self": "本機",
+          "offline": "オフライン",
+          "loginRequired": "未ログイン",
+          "tooOld": "バージョンが 1.1.13 未満",
+          "uninstalling": "アンインストール中"
+        },
+        "stateRunning": "アンインストール中",
+        "stateFailed": "アンインストール失敗",
+        "clear": "アンインストール記録を消去",
+        "clearFailed": "アンインストール記録を消去できませんでした。もう一度お試しください。",
+        "busy": "このノードはアンインストール中です。",
+        "running": "アンインストール中です。完了までお待ちください。",
+        "revokeFailed": "アンインストールしましたが、マルチノード接続から除外できませんでした",
+        "summary": "{{count}} 個のノードをアンインストールしました",
+        "summaryFailed": "{{count}} 個をアンインストール、{{failed}} 個が失敗しました（{{names}}）",
+        "errors": {
+          "loginRequired": "先にそのノードにログインしてください。",
+          "unreachable": "そのノードに接続できません。",
+          "notAllowed": "そのノードは tmex インストーラーで導入されていないため、リモートでアンインストールできません。",
+          "unsupported": "そのノードのバージョンはリモートアンインストールに対応していません。",
+          "selfBlocked": "本機はアンインストールできません。",
+          "upgradeInProgress": "そのノードはアップグレード中です。しばらくしてからお試しください。",
+          "nodeGone": "そのノードは一覧にありません。"
+        }
+      },
       "enrollment": {
         "nameLabel": "ノード名（任意）",
         "create": "参加コードを作成",
@@ -2033,7 +2080,10 @@
         "reasonPrompt": "理由（任意）",
         "done": "削除しました",
         "hubFailed": "ハブが確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
-        "selfBlocked": "現在使用中のノードは削除できません。"
+        "selfBlocked": "現在使用中のノードは削除できません。",
+        "bulkConfirm": "{{count}} 個のノード（{{names}}）を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
+        "bulkDone": "{{count}} 個のノードを削除しました",
+        "bulkFailed": "{{count}} 個を削除、{{failed}} 個が失敗しました（{{names}}）"
       },
       "upgrade": {
         "action": "アップグレード",
@@ -2077,7 +2127,8 @@
         "cancelUnsupported": "このノードのバージョンはアップグレードの中断に対応していません。",
         "cancelNotRunning": "このノードで実行中のアップグレードはありません。",
         "cancelFailed": "アップグレードを中止できませんでした：{{error}}",
-        "restoring": "アップグレード状態を同期中…"
+        "restoring": "アップグレード状態を同期中…",
+        "allResumed": "前回の一括アップグレードを再開しました。"
       },
       "badge": {
         "direct": "ダイレクト",

@@ -1729,7 +1729,7 @@ export const I18N_RESOURCES = {
         "title": "Node management"
       },
       "empty": "No nodes yet",
-      "self": "This node",
+      "self": "Current",
       "hub": "Hub",
       "loggedIn": "Signed in",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
@@ -1744,7 +1744,9 @@ export const I18N_RESOURCES = {
         "detail": "{{url}} | priority {{priority}} | epoch {{epoch}} | {{state}}",
         "standbyNotice": "The primary hub is unreachable, running on a standby hub. Adding, renaming and removing nodes are unavailable.",
         "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
-        "machineRole": "Hub Role"
+        "machineRole": "Hub Role",
+        "lastAttempt": "Last attempt: {{time}}",
+        "lastError": "Last error: {{error}}"
       },
       "machine": {
         "title": "This machine",
@@ -2011,6 +2013,52 @@ export const I18N_RESOURCES = {
         "copy": "Copy",
         "copied": "Copied"
       },
+      "selection": {
+        "more": "More",
+        "selectAll": "Select All",
+        "clearAll": "Clear Selection",
+        "selfBlocked": "This machine cannot be selected.",
+        "none": "Select nodes first.",
+        "busy": "Removing nodes. Wait for it to finish.",
+        "upgrade": "Upgrade ({{count}})",
+        "revoke": "Remove Nodes",
+        "uninstall": "Uninstall tmex"
+      },
+      "uninstall": {
+        "confirmTitle": "Uninstall tmex",
+        "confirmText": "The tmex service, program and data on the node are deleted, then the node is removed from the mesh. This cannot be undone.",
+        "targets": "Will be uninstalled ({{count}})",
+        "skipped": "Skipped ({{count}})",
+        "noTargets": "None of the selected nodes can be uninstalled remotely.",
+        "confirm": "Uninstall",
+        "cancel": "Cancel",
+        "skip": {
+          "self": "This machine",
+          "offline": "Offline",
+          "loginRequired": "Not signed in",
+          "tooOld": "Version below 1.1.13",
+          "uninstalling": "Uninstalling"
+        },
+        "stateRunning": "Uninstalling",
+        "stateFailed": "Uninstall failed",
+        "clear": "Clear uninstall record",
+        "clearFailed": "The uninstall record could not be cleared. Try again.",
+        "busy": "This node is being uninstalled.",
+        "running": "Uninstalling. Wait for it to finish.",
+        "revokeFailed": "Uninstalled, but could not be removed from the mesh",
+        "summary_one": "{{count}} node uninstalled",
+        "summary_other": "{{count}} nodes uninstalled",
+        "summaryFailed": "{{count}} uninstalled, {{failed}} failed ({{names}})",
+        "errors": {
+          "loginRequired": "Sign in to that node first.",
+          "unreachable": "That node cannot be reached.",
+          "notAllowed": "That node was not deployed by the tmex installer and cannot be uninstalled remotely.",
+          "unsupported": "That node runs a version without remote uninstall.",
+          "selfBlocked": "This machine cannot be uninstalled.",
+          "upgradeInProgress": "That node is upgrading. Try again later.",
+          "nodeGone": "That node is no longer in the list."
+        }
+      },
       "enrollment": {
         "nameLabel": "Node name (optional)",
         "create": "Create join code",
@@ -2039,7 +2087,12 @@ export const I18N_RESOURCES = {
         "reasonPrompt": "Reason (optional)",
         "done": "Node removed",
         "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
-        "selfBlocked": "You cannot remove the node you are signed in to."
+        "selfBlocked": "You cannot remove the node you are signed in to.",
+        "bulkConfirm_one": "Remove {{count}} node ({{names}})? It loses access immediately and has to be added again from scratch.",
+        "bulkConfirm_other": "Remove {{count}} nodes ({{names}})? They lose access immediately and have to be added again from scratch.",
+        "bulkDone_one": "{{count}} node removed",
+        "bulkDone_other": "{{count}} nodes removed",
+        "bulkFailed": "{{count}} removed, {{failed}} failed ({{names}})"
       },
       "upgrade": {
         "action": "Upgrade",
@@ -2085,7 +2138,8 @@ export const I18N_RESOURCES = {
         "cancelUnsupported": "This node's version cannot interrupt an upgrade.",
         "cancelNotRunning": "No upgrade is running on this node.",
         "cancelFailed": "Could not stop the upgrade: {{error}}",
-        "restoring": "Syncing upgrade status…"
+        "restoring": "Syncing upgrade status…",
+        "allResumed": "Resumed the previous batch upgrade."
       },
       "badge": {
         "direct": "Direct",
@@ -3990,7 +4044,7 @@ export const I18N_RESOURCES = {
         "title": "节点管理"
       },
       "empty": "暂无节点",
-      "self": "当前节点",
+      "self": "当前",
       "hub": "Hub",
       "loggedIn": "已登录",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
@@ -4005,7 +4059,9 @@ export const I18N_RESOURCES = {
         "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
         "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
         "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
-        "machineRole": "Hub 角色"
+        "machineRole": "Hub 角色",
+        "lastAttempt": "最近尝试：{{time}}",
+        "lastError": "最近错误：{{error}}"
       },
       "machine": {
         "title": "本机",
@@ -4272,6 +4328,51 @@ export const I18N_RESOURCES = {
         "copy": "复制",
         "copied": "已复制"
       },
+      "selection": {
+        "more": "更多",
+        "selectAll": "全选",
+        "clearAll": "全不选",
+        "selfBlocked": "本机不可选。",
+        "none": "须先勾选节点。",
+        "busy": "正在移除节点，请稍候。",
+        "upgrade": "升级（{{count}}）",
+        "revoke": "移除节点",
+        "uninstall": "卸载 tmex"
+      },
+      "uninstall": {
+        "confirmTitle": "卸载 tmex",
+        "confirmText": "将删除节点上的 tmex 服务、程序与数据，随后把它从多节点互联中移除。此操作不可撤销。",
+        "targets": "将卸载（{{count}}）",
+        "skipped": "跳过（{{count}}）",
+        "noTargets": "所选节点都无法远程卸载。",
+        "confirm": "卸载",
+        "cancel": "取消",
+        "skip": {
+          "self": "本机",
+          "offline": "离线",
+          "loginRequired": "未登录",
+          "tooOld": "版本低于 1.1.13",
+          "uninstalling": "正在卸载"
+        },
+        "stateRunning": "卸载中",
+        "stateFailed": "卸载失败",
+        "clear": "清除卸载记录",
+        "clearFailed": "清除卸载记录失败，请重试。",
+        "busy": "该节点正在卸载。",
+        "running": "正在卸载，请稍候。",
+        "revokeFailed": "已卸载，但未能从多节点互联中移除",
+        "summary": "已卸载 {{count}} 个节点",
+        "summaryFailed": "已卸载 {{count}} 个，{{failed}} 个失败（{{names}}）",
+        "errors": {
+          "loginRequired": "须先登录该节点。",
+          "unreachable": "连不上该节点。",
+          "notAllowed": "该节点不是由 tmex 安装器部署的，无法远程卸载。",
+          "unsupported": "该节点版本过旧，不支持远程卸载。",
+          "selfBlocked": "不能卸载本机。",
+          "upgradeInProgress": "该节点正在升级，请稍后再试。",
+          "nodeGone": "该节点已不在列表中。"
+        }
+      },
       "enrollment": {
         "nameLabel": "节点名称（可选）",
         "create": "生成加入码",
@@ -4300,7 +4401,10 @@ export const I18N_RESOURCES = {
         "reasonPrompt": "移除原因（可选）",
         "done": "已移除",
         "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
-        "selfBlocked": "不能移除当前正在使用的节点。"
+        "selfBlocked": "不能移除当前正在使用的节点。",
+        "bulkConfirm": "移除 {{count}} 个节点（{{names}}）？它们将立即失去访问权限，须重新添加。",
+        "bulkDone": "已移除 {{count}} 个节点",
+        "bulkFailed": "已移除 {{count}} 个，{{failed}} 个失败（{{names}}）"
       },
       "upgrade": {
         "action": "升级",
@@ -4344,7 +4448,8 @@ export const I18N_RESOURCES = {
         "cancelUnsupported": "该节点版本不支持中断升级。",
         "cancelNotRunning": "该节点没有正在进行的升级。",
         "cancelFailed": "停止升级失败：{{error}}",
-        "restoring": "正在同步升级状态…"
+        "restoring": "正在同步升级状态…",
+        "allResumed": "已续接上次的批量升级。"
       },
       "badge": {
         "direct": "直连",
@@ -6248,7 +6353,7 @@ export const I18N_RESOURCES = {
         "title": "ノード管理"
       },
       "empty": "ノードがありません",
-      "self": "現在のノード",
+      "self": "現在",
       "hub": "ハブ",
       "loggedIn": "サインイン済み",
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
@@ -6263,7 +6368,9 @@ export const I18N_RESOURCES = {
         "detail": "{{url}}｜優先度 {{priority}}｜エポック {{epoch}}｜{{state}}",
         "standbyNotice": "メインハブに接続できないため予備ハブを使用中です。追加・名前変更・削除などの管理操作はできません。",
         "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
-        "machineRole": "ハブの役割"
+        "machineRole": "ハブの役割",
+        "lastAttempt": "最終試行：{{time}}",
+        "lastError": "最終エラー：{{error}}"
       },
       "machine": {
         "title": "このマシン",
@@ -6530,6 +6637,51 @@ export const I18N_RESOURCES = {
         "copy": "コピー",
         "copied": "コピーしました"
       },
+      "selection": {
+        "more": "その他",
+        "selectAll": "すべて選択",
+        "clearAll": "選択を解除",
+        "selfBlocked": "本機は選択できません。",
+        "none": "先にノードを選択してください。",
+        "busy": "ノードを削除中です。完了までお待ちください。",
+        "upgrade": "アップグレード（{{count}}）",
+        "revoke": "ノードを削除",
+        "uninstall": "tmex をアンインストール"
+      },
+      "uninstall": {
+        "confirmTitle": "tmex をアンインストール",
+        "confirmText": "ノード上の tmex のサービス、プログラム、データを削除し、その後マルチノード接続から除外します。この操作は取り消せません。",
+        "targets": "アンインストール対象（{{count}}）",
+        "skipped": "スキップ（{{count}}）",
+        "noTargets": "選択したノードはいずれもリモートでアンインストールできません。",
+        "confirm": "アンインストール",
+        "cancel": "キャンセル",
+        "skip": {
+          "self": "本機",
+          "offline": "オフライン",
+          "loginRequired": "未ログイン",
+          "tooOld": "バージョンが 1.1.13 未満",
+          "uninstalling": "アンインストール中"
+        },
+        "stateRunning": "アンインストール中",
+        "stateFailed": "アンインストール失敗",
+        "clear": "アンインストール記録を消去",
+        "clearFailed": "アンインストール記録を消去できませんでした。もう一度お試しください。",
+        "busy": "このノードはアンインストール中です。",
+        "running": "アンインストール中です。完了までお待ちください。",
+        "revokeFailed": "アンインストールしましたが、マルチノード接続から除外できませんでした",
+        "summary": "{{count}} 個のノードをアンインストールしました",
+        "summaryFailed": "{{count}} 個をアンインストール、{{failed}} 個が失敗しました（{{names}}）",
+        "errors": {
+          "loginRequired": "先にそのノードにログインしてください。",
+          "unreachable": "そのノードに接続できません。",
+          "notAllowed": "そのノードは tmex インストーラーで導入されていないため、リモートでアンインストールできません。",
+          "unsupported": "そのノードのバージョンはリモートアンインストールに対応していません。",
+          "selfBlocked": "本機はアンインストールできません。",
+          "upgradeInProgress": "そのノードはアップグレード中です。しばらくしてからお試しください。",
+          "nodeGone": "そのノードは一覧にありません。"
+        }
+      },
       "enrollment": {
         "nameLabel": "ノード名（任意）",
         "create": "参加コードを作成",
@@ -6558,7 +6710,10 @@ export const I18N_RESOURCES = {
         "reasonPrompt": "理由（任意）",
         "done": "削除しました",
         "hubFailed": "ハブが確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
-        "selfBlocked": "現在使用中のノードは削除できません。"
+        "selfBlocked": "現在使用中のノードは削除できません。",
+        "bulkConfirm": "{{count}} 個のノード（{{names}}）を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
+        "bulkDone": "{{count}} 個のノードを削除しました",
+        "bulkFailed": "{{count}} 個を削除、{{failed}} 個が失敗しました（{{names}}）"
       },
       "upgrade": {
         "action": "アップグレード",
@@ -6602,7 +6757,8 @@ export const I18N_RESOURCES = {
         "cancelUnsupported": "このノードのバージョンはアップグレードの中断に対応していません。",
         "cancelNotRunning": "このノードで実行中のアップグレードはありません。",
         "cancelFailed": "アップグレードを中止できませんでした：{{error}}",
-        "restoring": "アップグレード状態を同期中…"
+        "restoring": "アップグレード状態を同期中…",
+        "allResumed": "前回の一括アップグレードを再開しました。"
       },
       "badge": {
         "direct": "ダイレクト",

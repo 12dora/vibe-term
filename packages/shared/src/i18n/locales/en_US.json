@@ -1723,7 +1723,7 @@
         "title": "Node management"
       },
       "empty": "No nodes yet",
-      "self": "This node",
+      "self": "Current",
       "hub": "Hub",
       "loggedIn": "Signed in",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
@@ -1738,7 +1738,9 @@
         "detail": "{{url}} | priority {{priority}} | epoch {{epoch}} | {{state}}",
         "standbyNotice": "The primary hub is unreachable, running on a standby hub. Adding, renaming and removing nodes are unavailable.",
         "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
-        "machineRole": "Hub Role"
+        "machineRole": "Hub Role",
+        "lastAttempt": "Last attempt: {{time}}",
+        "lastError": "Last error: {{error}}"
       },
       "machine": {
         "title": "This machine",
@@ -2005,6 +2007,52 @@
         "copy": "Copy",
         "copied": "Copied"
       },
+      "selection": {
+        "more": "More",
+        "selectAll": "Select All",
+        "clearAll": "Clear Selection",
+        "selfBlocked": "This machine cannot be selected.",
+        "none": "Select nodes first.",
+        "busy": "Removing nodes. Wait for it to finish.",
+        "upgrade": "Upgrade ({{count}})",
+        "revoke": "Remove Nodes",
+        "uninstall": "Uninstall tmex"
+      },
+      "uninstall": {
+        "confirmTitle": "Uninstall tmex",
+        "confirmText": "The tmex service, program and data on the node are deleted, then the node is removed from the mesh. This cannot be undone.",
+        "targets": "Will be uninstalled ({{count}})",
+        "skipped": "Skipped ({{count}})",
+        "noTargets": "None of the selected nodes can be uninstalled remotely.",
+        "confirm": "Uninstall",
+        "cancel": "Cancel",
+        "skip": {
+          "self": "This machine",
+          "offline": "Offline",
+          "loginRequired": "Not signed in",
+          "tooOld": "Version below 1.1.13",
+          "uninstalling": "Uninstalling"
+        },
+        "stateRunning": "Uninstalling",
+        "stateFailed": "Uninstall failed",
+        "clear": "Clear uninstall record",
+        "clearFailed": "The uninstall record could not be cleared. Try again.",
+        "busy": "This node is being uninstalled.",
+        "running": "Uninstalling. Wait for it to finish.",
+        "revokeFailed": "Uninstalled, but could not be removed from the mesh",
+        "summary_one": "{{count}} node uninstalled",
+        "summary_other": "{{count}} nodes uninstalled",
+        "summaryFailed": "{{count}} uninstalled, {{failed}} failed ({{names}})",
+        "errors": {
+          "loginRequired": "Sign in to that node first.",
+          "unreachable": "That node cannot be reached.",
+          "notAllowed": "That node was not deployed by the tmex installer and cannot be uninstalled remotely.",
+          "unsupported": "That node runs a version without remote uninstall.",
+          "selfBlocked": "This machine cannot be uninstalled.",
+          "upgradeInProgress": "That node is upgrading. Try again later.",
+          "nodeGone": "That node is no longer in the list."
+        }
+      },
       "enrollment": {
         "nameLabel": "Node name (optional)",
         "create": "Create join code",
@@ -2033,7 +2081,12 @@
         "reasonPrompt": "Reason (optional)",
         "done": "Node removed",
         "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
-        "selfBlocked": "You cannot remove the node you are signed in to."
+        "selfBlocked": "You cannot remove the node you are signed in to.",
+        "bulkConfirm_one": "Remove {{count}} node ({{names}})? It loses access immediately and has to be added again from scratch.",
+        "bulkConfirm_other": "Remove {{count}} nodes ({{names}})? They lose access immediately and have to be added again from scratch.",
+        "bulkDone_one": "{{count}} node removed",
+        "bulkDone_other": "{{count}} nodes removed",
+        "bulkFailed": "{{count}} removed, {{failed}} failed ({{names}})"
       },
       "upgrade": {
         "action": "Upgrade",
@@ -2079,7 +2132,8 @@
         "cancelUnsupported": "This node's version cannot interrupt an upgrade.",
         "cancelNotRunning": "No upgrade is running on this node.",
         "cancelFailed": "Could not stop the upgrade: {{error}}",
-        "restoring": "Syncing upgrade status…"
+        "restoring": "Syncing upgrade status…",
+        "allResumed": "Resumed the previous batch upgrade."
       },
       "badge": {
         "direct": "Direct",

@@ -7,7 +7,12 @@
 // `/mesh/ws` 会推 NODE_EVENT，据此立刻补一次，不必等下一拍。
 
 import { isAuthTransitionActive } from '@/auth/auth-transition';
-import type { AuthApi, HubEndpointInfo, MeshAttachedHub } from '@tmex/api-client/auth/index';
+import type {
+  AuthApi,
+  HubEndpointInfo,
+  MeshAttachedHub,
+  MeshHubsResponse,
+} from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { sharedMeshEvents } from './mesh-events';
@@ -19,8 +24,13 @@ export const MESH_HUBS_POLL_MS = 30_000;
 /** 事件触发的补拉节流窗口：一串 hub 上下线事件最多换来一次 REST。 */
 export const MESH_HUBS_REFRESH_THROTTLE_MS = 2_000;
 
+/** uplink 的一个候选地址与它最近一次失败原因（诊断用）。 */
+export type MeshHubCandidate = MeshHubsResponse['candidates'][number];
+
 export interface MeshHubsState {
   hubs: HubEndpointInfo[];
+  /** uplink 候选地址的尝试记录；旧后端不下发时为空数组。 */
+  candidates: MeshHubCandidate[];
   /** 本机 uplink 当前挂载的那台 hub；未连上或旧后端为 `null`。 */
   attached: MeshAttachedHub | null;
   /** 当前接受管理写入的 hub（active 中 writerEpoch 最高的一台）；一台 active 都没有时为 `null`。 */
@@ -32,6 +42,7 @@ export interface MeshHubsState {
 
 const EMPTY_STATE: MeshHubsState = {
   hubs: [],
+  candidates: [],
   attached: null,
   writerHubId: null,
   loading: false,
@@ -119,6 +130,7 @@ export async function refreshMeshHubs(api: AuthApi = defaultAuthApi): Promise<vo
       const payload = await api.listHubs();
       setState({
         hubs: payload.hubs,
+        candidates: payload.candidates,
         attached: payload.attached,
         writerHubId: payload.writerHubId,
         loading: false,
