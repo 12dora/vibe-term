@@ -63,3 +63,41 @@ describe('resolvePaneSizeSyncPlan', () => {
     expect(plan).toMatchObject({ kind: 'apply', clearPendingLocalSize: true });
   });
 });
+
+describe('resolvePaneSizeSyncPlan follower', () => {
+  const base = {
+    now: 10_000,
+    isSplitView: false,
+    canInteractWithPane: true,
+    isLoading: false,
+    remotePane: { width: 152, height: 53 },
+    currentSize: { cols: 75, rows: 23 },
+    ttlMs: 2000,
+    hasPaneRoute: true,
+  };
+
+  it('owner waits for a fresh pending local size to settle', () => {
+    const plan = resolvePaneSizeSyncPlan({
+      ...base,
+      owner: true,
+      pendingLocalSize: { cols: 75, rows: 23, at: 9_500 },
+    });
+    expect(plan.kind).toBe('retry');
+  });
+
+  it('follower applies the remote size immediately and clears the stale pending size', () => {
+    const plan = resolvePaneSizeSyncPlan({
+      ...base,
+      owner: false,
+      pendingLocalSize: { cols: 75, rows: 23, at: 9_500 },
+    });
+    expect(plan).toEqual({
+      kind: 'apply',
+      cols: 152,
+      rows: 53,
+      clearPendingLocalSize: true,
+      resize: true,
+      rebuildHistory: true,
+    });
+  });
+});

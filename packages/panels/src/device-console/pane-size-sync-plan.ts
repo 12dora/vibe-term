@@ -22,9 +22,21 @@ export type PaneSizeSyncPlan =
     };
 
 export function resolvePaneSizeSyncPlan(
-  input: Parameters<typeof resolveRemotePaneSizeSync>[0] & { hasPaneRoute: boolean }
+  input: Parameters<typeof resolveRemotePaneSizeSync>[0] & {
+    hasPaneRoute: boolean;
+    /** false = 本客户端不是整窗 owner：本地上报永远不会被 tmux 回显，pending 不能挡住回灌 */
+    owner?: boolean;
+  }
 ): PaneSizeSyncPlan {
-  const action: RemotePaneSizeAction = resolveRemotePaneSizeSync(input);
+  const owner = input.owner ?? true;
+  const action: RemotePaneSizeAction = resolveRemotePaneSizeSync(
+    owner ? input : { ...input, pendingLocalSize: null }
+  );
   if (action.kind !== 'apply') return action;
-  return { ...action, rebuildHistory: action.resize && input.hasPaneRoute };
+  return {
+    ...action,
+    clearPendingLocalSize:
+      action.clearPendingLocalSize || (!owner && input.pendingLocalSize != null),
+    rebuildHistory: action.resize && input.hasPaneRoute,
+  };
 }

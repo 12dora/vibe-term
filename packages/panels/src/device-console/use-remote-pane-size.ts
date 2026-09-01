@@ -3,6 +3,7 @@
 // 它可能触发 fetchPaneHistory，提前会让 history 请求越过同一次提交里的 TMUX_SELECT。
 
 import type { TmuxPane } from '@tmex/shared';
+import { selectPaneViewportOwner } from '@tmex/stores';
 import { useTmuxStore } from '@tmex/stores/react';
 import type { TerminalRef } from '@tmex/terminal-ui';
 import { type RefObject, useEffect, useState } from 'react';
@@ -18,6 +19,7 @@ export function useRemotePaneSize({
   isSplitView,
   canInteractWithPane,
   terminalRef,
+  localReportRevision = 0,
 }: {
   deviceId?: string;
   resolvedPaneId?: string;
@@ -26,12 +28,17 @@ export function useRemotePaneSize({
   isSplitView: boolean;
   canInteractWithPane: boolean;
   terminalRef: RefObject<TerminalRef | null>;
+  /** 每次本地上报（resize/sync）+1：策略到得晚时，上报可能把本地行列拉回容器尺寸，需再回灌一次 */
+  localReportRevision?: number;
 }): void {
   const fetchPaneHistory = useTmuxStore((state) => state.fetchPaneHistory);
+  // follower 的本地上报永远不会被 tmux 回显：不必等 pending 过期，直接回灌权威尺寸
+  const owner = useTmuxStore((state) => selectPaneViewportOwner(state, deviceId, resolvedPaneId));
   const [retryRevision, setRetryRevision] = useState(0);
 
   useEffect(() => {
     void retryRevision;
+    void localReportRevision;
     // 分屏模式：pane 尺寸完全由 layout 驱动（SplitTerminalArea 内部 resize），不走回灌
     if (isSplitView) return;
     if (!canInteractWithPane || !selectedPane || isLoading) return;
@@ -48,6 +55,7 @@ export function useRemotePaneSize({
       remotePane: selectedPane,
       currentSize: { cols: term.cols, rows: term.rows },
       pendingLocalSize: terminal?.getPendingLocalSize() ?? null,
+      owner,
       ttlMs: REMOTE_PANE_SIZE_GUARD_TTL_MS,
       hasPaneRoute: Boolean(deviceId && resolvedPaneId),
     });
@@ -75,6 +83,8 @@ export function useRemotePaneSize({
     fetchPaneHistory,
     isLoading,
     isSplitView,
+    localReportRevision,
+    owner,
     resolvedPaneId,
     retryRevision,
     selectedPane,

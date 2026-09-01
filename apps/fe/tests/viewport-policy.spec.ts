@@ -94,10 +94,11 @@ test('viewport-policy: a smaller second client does not shrink the tmux window a
     // 小客户端 B 打开后整窗不得缩小；B 的模拟器跟随权威几何并进入平移视口
     await pageB.waitForTimeout(1_500);
     expect(getPaneSize(paneId)).toEqual(sizeA);
-    await expect.poll(() => matchState(pageB, paneId), { timeout: 20_000 }).toBe('match');
+    // 先确认 B 已知自己是 follower（平移视口打开），再看本地几何是否收敛到权威尺寸
     await expect
       .poll(async () => (await readPanState(pageB))?.enabled ?? null, { timeout: 10_000 })
       .toBe(true);
+    await expect.poll(() => matchState(pageB, paneId), { timeout: 20_000 }).toBe('match');
     const pan = (await readPanState(pageB))!;
     expect(pan.overflowX).toBeGreaterThan(0);
 

@@ -5,7 +5,7 @@
 import type { TmuxPane } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import type { TerminalRef } from '@tmex/terminal-ui';
-import { type RefObject, useCallback, useEffect } from 'react';
+import { type RefObject, useCallback, useEffect, useState } from 'react';
 import type { PaneSelectionRefs } from './use-pane-selection-state';
 import { useRemotePaneSize } from './use-remote-pane-size';
 
@@ -41,6 +41,7 @@ export function usePaneSizeSync({
   const runtime = useRuntime();
 
   const { hasWindowSnapshotRef, isMobileRef, stackedLayoutTargetRef } = refs;
+  const [localReportRevision, setLocalReportRevision] = useState(0);
 
   // 移动端多 pane window：终端上报的尺寸即「单屏适配尺寸」，改道拼接布局
   // （window 宽 = N*cols+(N-1)、even-horizontal，每 pane 恰好一屏），
@@ -61,6 +62,7 @@ export function usePaneSizeSync({
       }
       if (isMobileRef.current && !hasWindowSnapshotRef.current) return;
       runtime.stores.tmux.getState().resizePane(deviceId, resolvedPaneId, cols, rows);
+      setLocalReportRevision((revision) => revision + 1);
     },
     [deviceId, hasWindowSnapshotRef, isMobileRef, resolvedPaneId, runtime, stackedLayoutTargetRef]
   );
@@ -75,6 +77,7 @@ export function usePaneSizeSync({
       }
       if (isMobileRef.current && !hasWindowSnapshotRef.current) return;
       runtime.stores.tmux.getState().syncPaneSize(deviceId, resolvedPaneId, cols, rows);
+      setLocalReportRevision((revision) => revision + 1);
     },
     [deviceId, hasWindowSnapshotRef, isMobileRef, resolvedPaneId, runtime, stackedLayoutTargetRef]
   );
@@ -92,6 +95,7 @@ export function usePaneSizeSync({
     isSplitView,
     canInteractWithPane,
     terminalRef,
+    localReportRevision,
   });
 
   return { handleResize, handleSync, handleResizeSettled };
