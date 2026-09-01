@@ -1,5 +1,7 @@
 import { decodeBase64url, encodeBase64url } from '../auth/encoding';
 
+export { HUB_NOT_WRITER, type HubNotWriterError } from './errors';
+
 export const UPLINK_CTL_TYPES = [
   'auth.challenge',
   'auth.response',
@@ -29,6 +31,8 @@ export const UPLINK_CTL_MAX_DEPTH = 8;
 export const UPLINK_CTL_MAX_ARRAY_LEN = 1024;
 export const UPLINK_CTL_MAX_STRING_LEN = 4 * 1024;
 export const UPLINK_CTL_MAX_ENDPOINTS = 32;
+export const UPLINK_CTL_MAX_HUBS = 16;
+export const UPLINK_CTL_MAX_HUB_URL_LEN = 512;
 export const UPLINK_CTL_MAX_CERT_BYTES = 2048;
 export const UPLINK_CTL_MAX_U64 = 18446744073709551615n;
 export const KEY_LOG_PAGE_DEFAULT_LIMIT = 256;
@@ -159,6 +163,99 @@ function mNodeId(value: unknown, field: string): string {
   return id;
 }
 
+function mHubMode(value: unknown, field: string): HubMode {
+  if (value !== 'active' && value !== 'standby') {
+    throw new Error(`ctl field ${field} must be active|standby`);
+  }
+  return value;
+}
+
+function mNonNegInt(value: unknown, field: string): number {
+  const n = mNum(value, field);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`ctl field ${field} must be a non-negative integer`);
+  }
+  return n;
+}
+
+function mHttpUrl(value: unknown, field: string): string {
+  const raw = mStr(value, field);
+  if (raw.length > UPLINK_CTL_MAX_HUB_URL_LEN) {
+    throw new Error(`ctl field ${field} too long`);
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`ctl field ${field} must be an http(s) URL`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`ctl field ${field} must be an http(s) URL`);
+  }
+  return raw;
+}
+
+function mOptNullStr(value: unknown, field: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return mStr(value, field);
+}
+
+function parseHubEndpointInfo(value: unknown, label: string): HubEndpointInfo {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  const info: HubEndpointInfo = {
+    nodeId: mNodeId(value.nodeId, `${label}.nodeId`),
+    publicUrl: mHttpUrl(value.publicUrl, `${label}.publicUrl`),
+    mode: mHubMode(value.mode, `${label}.mode`),
+    priority: mNonNegInt(value.priority, `${label}.priority`),
+    writerEpoch: mNonNegInt(value.writerEpoch, `${label}.writerEpoch`),
+  };
+  const name = mOptStr(value.name, `${label}.name`);
+  if (name) info.name = name;
+  const caFingerprint = mOptNullStr(value.caFingerprint, `${label}.caFingerprint`);
+  if (caFingerprint !== undefined) info.caFingerprint = caFingerprint;
+  if (value.online !== undefined && value.online !== null) {
+    info.online = mBool(value.online, `${label}.online`);
+  }
+  if (value.lastSeenAt !== undefined) {
+    info.lastSeenAt =
+      value.lastSeenAt === null ? null : mNonNegInt(value.lastSeenAt, `${label}.lastSeenAt`);
+  }
+  return info;
+}
+
+function parseHubs(value: unknown): HubEndpointInfo[] {
+  if (!Array.isArray(value)) throw new Error('node.list hubs must be an array');
+  if (value.length > UPLINK_CTL_MAX_HUBS) throw new Error('node.list hubs too many');
+  return value.map((item, i) => parseHubEndpointInfo(item, `hubs[${i}]`));
+}
+
+function parseHubAdvertisement(value: unknown): HubAdvertisement {
+  if (!isRecord(value)) throw new Error('node.status hub must be an object');
+  const adv: HubAdvertisement = {
+    publicUrl: mHttpUrl(value.publicUrl, 'hub.publicUrl'),
+    mode: mHubMode(value.mode, 'hub.mode'),
+    priority: mNonNegInt(value.priority, 'hub.priority'),
+    writerEpoch: mNonNegInt(value.writerEpoch, 'hub.writerEpoch'),
+  };
+  const caFingerprint = mOptNullStr(value.caFingerprint, 'hub.caFingerprint');
+  if (caFingerprint !== undefined) adv.caFingerprint = caFingerprint;
+  return adv;
+}
+
+function applyNodeListExtras<
+  T extends { hubs?: HubEndpointInfo[]; writerHubId?: string; writerEpoch?: number },
+>(target: T, parsed: Record<string, unknown>): T {
+  if (parsed.hubs !== undefined && parsed.hubs !== null) target.hubs = parseHubs(parsed.hubs);
+  if (parsed.writerHubId !== undefined && parsed.writerHubId !== null) {
+    target.writerHubId = mNodeId(parsed.writerHubId, 'writerHubId');
+  }
+  if (parsed.writerEpoch !== undefined && parsed.writerEpoch !== null) {
+    target.writerEpoch = mNonNegInt(parsed.writerEpoch, 'writerEpoch');
+  }
+  return target;
+}
+
 type MeshNodeInfo = {
   id: string;
   name: string;
@@ -171,6 +268,31 @@ type MeshNodeInfo = {
 
 type MeshHubInfo = { nodeId: string; publicUrl: string; name?: string };
 
+export type HubMode = 'active' | 'standby';
+
+export interface HubEndpointInfo {
+  nodeId: string;
+  publicUrl: string;
+  name?: string;
+  mode: HubMode;
+  priority: number;
+  writerEpoch: number;
+  caFingerprint?: string | null;
+  online?: boolean;
+  lastSeenAt?: number | null;
+}
+
+/** A node that runs the hub role advertises itself in node.status. */
+export interface HubAdvertisement {
+  publicUrl: string;
+  mode: HubMode;
+  priority: number;
+  writerEpoch: number;
+  caFingerprint?: string | null;
+}
+
+export type EncodeUplinkCtlOptions = { legacy?: boolean };
+
 export type MeshUplinkNodeList = {
   t: 'node.list';
   version: number;
@@ -178,6 +300,9 @@ export type MeshUplinkNodeList = {
   rtc: { stun: string[]; turn: unknown };
   nodes: MeshNodeInfo[];
   hub?: MeshHubInfo;
+  hubs?: HubEndpointInfo[];
+  writerHubId?: string;
+  writerEpoch?: number;
 };
 
 export type MeshUplinkKeyLogRecord = { seq: bigint; bytes: Uint8Array; sig: Uint8Array };
@@ -218,6 +343,7 @@ export type MeshUplinkCtlMessage =
       direct_capable: boolean;
       inventory: unknown;
       endpoints: unknown;
+      hub?: HubAdvertisement;
     }
   | MeshUplinkNodeList
   | { t: 'key.log.req'; from_seq: bigint; id?: string; limit?: number }
@@ -293,8 +419,8 @@ export function decodeMeshUplinkCtl(
       return { t: 'ping' };
     case 'pong':
       return { t: 'pong' };
-    case 'node.status':
-      return {
+    case 'node.status': {
+      const status: Extract<MeshUplinkCtlMessage, { t: 'node.status' }> = {
         t: 'node.status',
         version: mStr(parsed.version, 'version'),
         tmux: mBool(parsed.tmux, 'tmux'),
@@ -302,6 +428,11 @@ export function decodeMeshUplinkCtl(
         inventory: parsed.inventory ?? {},
         endpoints: parsed.endpoints ?? [],
       };
+      if (parsed.hub !== undefined && parsed.hub !== null) {
+        status.hub = parseHubAdvertisement(parsed.hub);
+      }
+      return status;
+    }
     case 'node.list': {
       if (!isRecord(parsed.key_log_head))
         throw new Error('node.list key_log_head must be an object');
@@ -322,7 +453,7 @@ export function decodeMeshUplinkCtl(
         nodes: parsed.nodes.map(parseMeshNode),
       };
       if (parsed.hub !== undefined && parsed.hub !== null) list.hub = parseMeshHub(parsed.hub);
-      return list;
+      return applyNodeListExtras(list, parsed);
     }
     case 'key.log.req': {
       const req: Extract<MeshUplinkCtlMessage, { t: 'key.log.req' }> = {
@@ -422,16 +553,30 @@ export function decodeMeshUplinkCtl(
   }
 }
 
-export function encodeMeshUplinkCtl(msg: MeshUplinkCtlMessage): Uint8Array {
+export function encodeMeshUplinkCtl(
+  msg: MeshUplinkCtlMessage,
+  opts?: EncodeUplinkCtlOptions
+): Uint8Array {
+  const legacy = opts?.legacy === true;
   switch (msg.t) {
     case 'auth.challenge':
     case 'auth.response':
     case 'auth.ok':
     case 'ping':
     case 'pong':
-    case 'node.status':
       return encodeJsonBytes(msg);
-    case 'node.list':
+    case 'node.status': {
+      if (legacy) {
+        const { hub: _hub, ...rest } = msg;
+        return encodeJsonBytes(rest);
+      }
+      if (msg.hub) parseHubAdvertisement(msg.hub);
+      return encodeJsonBytes(msg);
+    }
+    case 'node.list': {
+      if (!legacy && msg.hubs) parseHubs(msg.hubs);
+      if (!legacy && msg.writerHubId) mNodeId(msg.writerHubId, 'writerHubId');
+      if (!legacy && msg.writerEpoch !== undefined) mNonNegInt(msg.writerEpoch, 'writerEpoch');
       return encodeJsonBytes({
         t: 'node.list',
         version: msg.version,
@@ -442,7 +587,11 @@ export function encodeMeshUplinkCtl(msg: MeshUplinkCtlMessage): Uint8Array {
         rtc: msg.rtc,
         nodes: msg.nodes,
         ...(msg.hub ? { hub: msg.hub } : {}),
+        ...(!legacy && msg.hubs ? { hubs: msg.hubs } : {}),
+        ...(!legacy && msg.writerHubId ? { writerHubId: msg.writerHubId } : {}),
+        ...(!legacy && msg.writerEpoch !== undefined ? { writerEpoch: msg.writerEpoch } : {}),
       });
+    }
     case 'key.log.req':
       return encodeJsonBytes({
         t: 'key.log.req',
@@ -510,6 +659,7 @@ export type NodeStatusMessage = {
   direct_capable: boolean;
   inventory: unknown;
   endpoints: unknown;
+  hub?: HubAdvertisement;
 };
 export type NodeListEntry = {
   id: string;
@@ -528,6 +678,9 @@ export type NodeListMessage = {
   rtc: { stun: string[]; turn: { url: string; username: string; credential: string } | null };
   nodes: NodeListEntry[];
   hub?: NodeListHubInfo;
+  hubs?: HubEndpointInfo[];
+  writerHubId?: string;
+  writerEpoch?: number;
 };
 export type KeyLogReqMessage = {
   t: 'key.log.req';
@@ -682,7 +835,7 @@ function decodeHubNodeList(obj: Record<string, unknown>): NodeListMessage {
     if (obj.hub.name !== undefined && obj.hub.name !== null) info.name = hNe(obj.hub, 'name');
     msg.hub = info;
   }
-  return msg;
+  return applyNodeListExtras(msg, obj);
 }
 
 function decodeHubInner(
@@ -725,8 +878,8 @@ function decodeHubInner(
       return { t: 'ping' };
     case 'pong':
       return { t: 'pong' };
-    case 'node.status':
-      return {
+    case 'node.status': {
+      const status: NodeStatusMessage = {
         t: 'node.status',
         version: hStr(parsed, 'version'),
         tmux: hBool(parsed, 'tmux'),
@@ -734,6 +887,11 @@ function decodeHubInner(
         inventory: parsed.inventory ?? null,
         endpoints: hEndpoints(parsed.endpoints),
       };
+      if (parsed.hub !== undefined && parsed.hub !== null) {
+        status.hub = parseHubAdvertisement(parsed.hub);
+      }
+      return status;
+    }
     case 'node.list':
       return decodeHubNodeList(parsed);
     case 'key.log.req': {
@@ -838,6 +996,26 @@ export function decodeHubUplinkCtl(
   return wrapHub(() => decodeHubInner(input, opts));
 }
 
-export function encodeHubUplinkCtl(msg: HubUplinkCtlMessage): Uint8Array {
+export function encodeHubUplinkCtl(
+  msg: HubUplinkCtlMessage,
+  opts?: EncodeUplinkCtlOptions
+): Uint8Array {
+  if (opts?.legacy === true) {
+    if (msg.t === 'node.list') {
+      const { hubs: _hubs, writerHubId: _id, writerEpoch: _epoch, ...rest } = msg;
+      return encodeJsonBytes(rest);
+    }
+    if (msg.t === 'node.status') {
+      const { hub: _hub, ...rest } = msg;
+      return encodeJsonBytes(rest);
+    }
+  }
+  if (msg.t === 'node.list') {
+    if (msg.hubs) parseHubs(msg.hubs);
+    if (msg.writerHubId) mNodeId(msg.writerHubId, 'writerHubId');
+    if (msg.writerEpoch !== undefined) mNonNegInt(msg.writerEpoch, 'writerEpoch');
+  } else if (msg.t === 'node.status' && msg.hub) {
+    parseHubAdvertisement(msg.hub);
+  }
   return encodeJsonBytes(msg);
 }

@@ -45,6 +45,10 @@
 | `TMEX_PEER_BIND_HOST` | 未设 | peer 口绑定。空 / 未设 → dual-stack `::` 与 `0.0.0.0`。不进 `config.ts`，mesh 直接读 env |
 | `TMEX_TURN_URL` / `TMEX_TURN_USERNAME` / `TMEX_TURN_CREDENTIAL` | 空 | 三者齐全才下发 TURN。`turns:` → TLS，`?transport=tcp` → TCP，其余 UDP |
 | `TMEX_TRUST_PROXY` | `false` | 仅 **本机 Bun socket（via=self）** 信任 `X-Forwarded-Proto` / `X-Forwarded-Host`，用于公网 origin、`Secure` cookie、passkey 可用性。转发请求永不信任。Cloudflare Tunnel 等反代场景必须设 `true` |
+| `TMEX_HUB_MODE` | `active`（hub 角色启用时） | hub 角色：`active` 或 `standby`。其它值启动失败 |
+| `TMEX_HUB_PRIORITY` | active `100` / standby `200` | 同 mode 下越小越优先，整数 ≥ 0 |
+| `TMEX_HUB_WRITER_EPOCH` | `1` | writer 世代，整数 ≥ 1，单调递增 |
+| `TMEX_HUB_URLS` | 空 | 逗号分隔的备用 hub 基址，接在 `TMEX_HUB_URL` 之后去重 |
 | `TMEX_NATIVE_DIR` | `run.sh` 导出 `<installDir>/native` | native addon 目录。未设则 loader 返回 `null`，`direct_capable=false`。不要指向本机生产安装目录去做开发验证 |
 | `RTC_LIVENESS_INTERVAL_MS` | `3000` | node↔node DataChannel 空闲时发 ping 的间隔。通道上有入站流量则重置，不给忙通道加 ping |
 | `RTC_LIVENESS_TIMEOUT_MS` | `10000` | 连续无任何入站（含 ping/pong 与业务帧）超过此时长则判定直连死亡，关闭 DC/PC 并回落 relay。须大于 `RTC_LIVENESS_INTERVAL_MS` |

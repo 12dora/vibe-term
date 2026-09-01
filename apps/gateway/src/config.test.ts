@@ -20,6 +20,10 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   roles: { hub: boolean; node: boolean };
   hubUrl: string | null;
   hubPublicUrl: string | null;
+  hubMode: 'active' | 'standby';
+  hubPriority: number;
+  hubWriterEpoch: number;
+  hubUrls: string[];
   peerPort: number;
   stunServers: string[];
   peerBindHost: string[];
@@ -49,6 +53,10 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         roles: { hub: boolean; node: boolean };
         hubUrl: string | null;
         hubPublicUrl: string | null;
+        hubMode: 'active' | 'standby';
+        hubPriority: number;
+        hubWriterEpoch: number;
+        hubUrls: string[];
         peerPort: number;
         stunServers: string[];
         peerBindHost: string[];
@@ -280,6 +288,74 @@ describe('config hub/node env', () => {
 
   test('rejects invalid TMEX_ROLES at config load', async () => {
     await expect(loadConfigWith({ TMEX_ROLES: 'hub' })).rejects.toThrow('TMEX_ROLES');
+  });
+
+  test('hubMode/priority/epoch 默认值：active=100/1，standby 默认 priority 200', async () => {
+    const unset = await loadConfigWith({
+      TMEX_ROLES: 'hub,node',
+      TMEX_HUB_MODE: undefined,
+      TMEX_HUB_PRIORITY: undefined,
+      TMEX_HUB_WRITER_EPOCH: undefined,
+      TMEX_HUB_URLS: undefined,
+    });
+    expect(unset.hubMode).toBe('active');
+    expect(unset.hubPriority).toBe(100);
+    expect(unset.hubWriterEpoch).toBe(1);
+    expect(unset.hubUrls).toEqual([]);
+
+    const standby = await loadConfigWith({
+      TMEX_ROLES: 'hub,node',
+      TMEX_HUB_MODE: 'standby',
+      TMEX_HUB_PRIORITY: undefined,
+    });
+    expect(standby.hubMode).toBe('standby');
+    expect(standby.hubPriority).toBe(200);
+
+    const custom = await loadConfigWith({
+      TMEX_HUB_MODE: 'standby',
+      TMEX_HUB_PRIORITY: '5',
+      TMEX_HUB_WRITER_EPOCH: '9',
+    });
+    expect(custom.hubMode).toBe('standby');
+    expect(custom.hubPriority).toBe(5);
+    expect(custom.hubWriterEpoch).toBe(9);
+  });
+
+  test('拒绝非法 TMEX_HUB_MODE / PRIORITY / WRITER_EPOCH', async () => {
+    await expect(loadConfigWith({ TMEX_HUB_MODE: 'primary' })).rejects.toThrow('TMEX_HUB_MODE');
+    await expect(loadConfigWith({ TMEX_HUB_PRIORITY: '-1' })).rejects.toThrow('TMEX_HUB_PRIORITY');
+    await expect(loadConfigWith({ TMEX_HUB_PRIORITY: '1.5' })).rejects.toThrow('TMEX_HUB_PRIORITY');
+    await expect(loadConfigWith({ TMEX_HUB_WRITER_EPOCH: '0' })).rejects.toThrow(
+      'TMEX_HUB_WRITER_EPOCH'
+    );
+    await expect(loadConfigWith({ TMEX_HUB_WRITER_EPOCH: 'abc' })).rejects.toThrow(
+      'TMEX_HUB_WRITER_EPOCH'
+    );
+  });
+
+  test('TMEX_HUB_URLS 接在 TMEX_HUB_URL 之后去重', async () => {
+    const onlySeed = await loadConfigWith({
+      TMEX_HUB_URL: 'https://hub.example',
+      TMEX_HUB_URLS: undefined,
+    });
+    expect(onlySeed.hubUrl).toBe('https://hub.example');
+    expect(onlySeed.hubUrls).toEqual(['https://hub.example']);
+
+    const merged = await loadConfigWith({
+      TMEX_HUB_URL: 'https://hub.example',
+      TMEX_HUB_URLS: 'https://standby.example, https://hub.example, https://other.example',
+    });
+    expect(merged.hubUrls).toEqual([
+      'https://hub.example',
+      'https://standby.example',
+      'https://other.example',
+    ]);
+
+    const urlsOnly = await loadConfigWith({
+      TMEX_HUB_URL: undefined,
+      TMEX_HUB_URLS: 'https://a.example,, https://b.example',
+    });
+    expect(urlsOnly.hubUrls).toEqual(['https://a.example', 'https://b.example']);
   });
 });
 

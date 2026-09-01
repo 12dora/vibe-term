@@ -715,6 +715,19 @@ export const hubTrust = sqliteTable('hub_trust', {
   createdAt: integer('created_at').notNull(),
 });
 
+export const meshHubs = sqliteTable('mesh_hubs', {
+  hubNodeId: text('hub_node_id').primaryKey(),
+  publicUrl: text('public_url').notNull(),
+  name: text('name'),
+  mode: text('mode').$type<'active' | 'standby'>().notNull(),
+  priority: integer('priority').notNull(),
+  writerEpoch: integer('writer_epoch').notNull(),
+  caFingerprint: text('ca_fingerprint'),
+  online: integer('online', { mode: 'boolean' }).notNull().default(false),
+  lastSeenAt: integer('last_seen_at'),
+  updatedAt: integer('updated_at').notNull(),
+});
+
 export const tunnelConfig = sqliteTable(
   'tunnel_config',
   {
@@ -774,6 +787,7 @@ export type NodeIdentityRow = typeof nodeIdentity.$inferSelect;
 export type PeerCacheRow = typeof peerCache.$inferSelect;
 export type TlsConfigRow = typeof tlsConfig.$inferSelect;
 export type HubTrustRow = typeof hubTrust.$inferSelect;
+export type MeshHubRow = typeof meshHubs.$inferSelect;
 export type TunnelConfigRow = typeof tunnelConfig.$inferSelect;
 export type TunnelAccessRow = typeof tunnelAccess.$inferSelect;
 export type LocalAuthSettingsRow = typeof localAuthSettings.$inferSelect;

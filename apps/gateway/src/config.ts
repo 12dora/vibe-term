@@ -1,6 +1,7 @@
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
 import { type TmexRoles, isTmexRoleName, rolesFromName } from '@tmex/shared';
+import type { HubMode } from '@tmex/shared/uplink';
 
 export type { TmexRoles };
 
@@ -136,6 +137,55 @@ function getOptionalEnv(key: string): string | null {
   return value ? value : null;
 }
 
+export function parseHubMode(raw: string | undefined): HubMode {
+  if (raw === undefined || raw.trim() === '') return 'active';
+  const value = raw.trim();
+  if (value === 'active' || value === 'standby') return value;
+  throw new Error('TMEX_HUB_MODE must be active | standby');
+}
+
+export function parseHubPriority(raw: string | undefined, mode: HubMode): number {
+  if (raw === undefined || raw.trim() === '') return mode === 'standby' ? 200 : 100;
+  const value = raw.trim();
+  if (!/^\d+$/.test(value)) {
+    throw new Error('TMEX_HUB_PRIORITY must be a non-negative integer');
+  }
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error('TMEX_HUB_PRIORITY must be a non-negative integer');
+  }
+  return n;
+}
+
+export function parseHubWriterEpoch(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return 1;
+  const value = raw.trim();
+  if (!/^\d+$/.test(value)) {
+    throw new Error('TMEX_HUB_WRITER_EPOCH must be an integer >= 1');
+  }
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error('TMEX_HUB_WRITER_EPOCH must be an integer >= 1');
+  }
+  return n;
+}
+
+export function parseHubUrls(seed: string | null, raw: string | undefined): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  const add = (item: string) => {
+    const value = item.trim();
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    urls.push(value);
+  };
+  if (seed) add(seed);
+  if (raw) {
+    for (const part of raw.split(',')) add(part);
+  }
+  return urls;
+}
+
 /** cloudflared 数据目录：显式 `TMEX_TUNNEL_DIR`，否则 sqlite 旁的 `tunnel/`。 */
 export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.TMEX_TUNNEL_DIR?.trim();
@@ -147,6 +197,9 @@ export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
   const dbPath = isAbsolute(dbUrl) ? dbUrl : resolve(dbUrl);
   return join(dirname(dbPath), 'tunnel');
 }
+
+const hubMode = parseHubMode(process.env.TMEX_HUB_MODE);
+const hubUrl = getOptionalEnv('TMEX_HUB_URL');
 
 export const config = {
   // 核心安全配置（生产环境建议配置，用于加密敏感字段）
@@ -197,8 +250,12 @@ export const config = {
   languageDefault: getEnv('TMEX_DEFAULT_LANGUAGE', 'en_US'),
 
   roles: parseTmexRoles(process.env.TMEX_ROLES),
-  hubUrl: getOptionalEnv('TMEX_HUB_URL'),
+  hubUrl,
   hubPublicUrl: getOptionalEnv('TMEX_HUB_PUBLIC_URL'),
+  hubMode,
+  hubPriority: parseHubPriority(process.env.TMEX_HUB_PRIORITY, hubMode),
+  hubWriterEpoch: parseHubWriterEpoch(process.env.TMEX_HUB_WRITER_EPOCH),
+  hubUrls: parseHubUrls(hubUrl, process.env.TMEX_HUB_URLS),
   peerPort: parsePeerPort(process.env.TMEX_PEER_PORT),
   stunServers: parseStunServers(process.env.TMEX_STUN_SERVERS),
   peerBindHost: parsePeerBindHost(process.env.TMEX_PEER_BIND_HOST),
