@@ -28,6 +28,11 @@ export interface TerminalProps {
   viewportPan?: boolean;
   /** direct 模式挂载时是否自动聚焦（默认 true）；分屏非焦点 pane 传 false 防互抢 */
   autoFocus?: boolean;
+  /**
+   * 是否把本 pane 计入 wire 订阅集合（默认 true）。置 false 只撤订阅贡献，
+   * sink 注册与终端实例都不受影响——保活池里久未露面的隐藏实例据此停止收流。
+   */
+  subscribe?: boolean;
   onData?: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
   onSync: (cols: number, rows: number) => void;

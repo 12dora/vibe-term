@@ -21,6 +21,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
 } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -28,9 +29,12 @@ import { DeviceStatusBadge } from '../device-status-badge';
 import {
   type KeepAlivePool,
   applyKeepAliveStreamState,
+  createKeepAliveColdScheduler,
   createKeepAlivePool,
+  isKeepAlivePaneCold,
   keepAlivePaneIds,
   keepAlivePaneKey,
+  markKeepAlivePaneCold,
   publishKeepAlivePool,
   retainKeepAlivePane,
   retainLiveKeepAlivePanes,
@@ -178,6 +182,9 @@ function usePaneTerminalBinder(
  * useLayoutEffect 早于父组件的 select 派发（passive effect），同一次提交里读到的
  * 就是这一帧的 warm 判定；cleanup 按 owner 撤销，StrictMode 的
  * 「setup → cleanup → setup」结束时仍然是发布态。
+ *
+ * 冷却计时同样挂在这里：隐藏满宽限期后把 pane 置冷并重渲染，
+ * 让它这一帧起不再进 wire 订阅集合；scheduler 在卸载时统一撤表。
  */
 function useOwnedKeepAlivePool(
   deviceId: string,
@@ -189,7 +196,18 @@ function useOwnedKeepAlivePool(
   if (ownerRef.current === null) ownerRef.current = Symbol('keep-alive-pool');
   const owner = ownerRef.current;
 
+  const [, bumpPoolRevision] = useReducer((revision: number) => revision + 1, 0);
   const poolRef = useRef<KeepAlivePool>(createKeepAlivePool());
+  const schedulerRef = useRef<ReturnType<typeof createKeepAliveColdScheduler> | null>(null);
+  if (schedulerRef.current === null) {
+    schedulerRef.current = createKeepAliveColdScheduler((coldPaneId) => {
+      const next = markKeepAlivePaneCold(poolRef.current, coldPaneId);
+      if (next === poolRef.current) return;
+      poolRef.current = next;
+      bumpPoolRevision();
+    });
+  }
+
   poolRef.current = applyKeepAliveStreamState(poolRef.current, streamInterrupted);
   if (livePaneIds) {
     poolRef.current = retainLiveKeepAlivePanes(poolRef.current, livePaneIds);
@@ -200,6 +218,16 @@ function useOwnedKeepAlivePool(
     publishKeepAlivePool(owner, poolRef.current);
     return () => unpublishKeepAlivePool(owner);
   });
+
+  // 无依赖数组：每次提交后按最新池对账定时器
+  useEffect(() => {
+    schedulerRef.current?.sync(poolRef.current);
+  });
+
+  useEffect(() => {
+    const scheduler = schedulerRef.current;
+    return () => scheduler?.dispose();
+  }, []);
 
   return poolRef.current;
 }
@@ -346,6 +374,9 @@ function KeepAliveTerminalStack(props: KeepAliveStackProps) {
                 inputMode={inputMode}
                 deviceConnected={deviceConnected}
                 isSelectionInvalid={visible ? selection.isSelectionInvalid : false}
+                // 隐藏满宽限期的实例退出 wire 订阅（sink 仍注册，所以不会在注册表里堆缓冲），
+                // 切回时由 warm 资格的丧失自动走冷 select 重放 history
+                subscribe={visible || !isKeepAlivePaneCold(pool, paneId)}
                 // 隐藏实例只跟随容器尺寸对齐本地行列，不上报——否则多实例互抢整窗尺寸；
                 // 可见实例非 owner（别的客户端更大）时同样不上报，改为跟随权威尺寸本地平移
                 sizingMode={visible ? (owner ? 'report' : 'follow') : 'local'}

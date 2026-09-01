@@ -29,6 +29,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       viewportPan = false,
       autoFocus = true,
       focused = true,
+      subscribe = true,
       onResize,
       onSync,
       onResizeSettled,
@@ -107,6 +108,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       surfaceRef,
       containerRef,
       runPostSelectResize,
+      subscribe,
     });
 
     useEffect(() => {

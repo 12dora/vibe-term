@@ -10,6 +10,10 @@
 // panes 按最近可见排序：可见实例恒为第一个，DOM 里也就排在最前，
 // 让按文档序取终端的探针（e2e 的 `.xterm canvas`）拿到的仍是可见实例。
 // visibleIsWarm 记录「本次切换发生前目标是否已在池中」，供 select 下发决定 wantHistory。
+//
+// 隐藏实例还有 warm → cold 两态（coldPanes）：隐藏满 grace 期后把它的 pane 从
+// wire 订阅集合里摘掉（Ghostty 实例与 sink 都还留着，所以 sink 注册表不会开始缓冲），
+// 手机上不再为看不见的 pane 收流、渲染。再次切回时它已不算 warm，走冷 select 重放 history。
 
 /**
  * 应急开关：置 false 后保活池退化为「只挂当前路由 pane」——每次切换都重建终端、
@@ -18,6 +22,9 @@
 export const KEEP_ALIVE_ENABLED = true;
 
 export const KEEP_ALIVE_LIMIT = KEEP_ALIVE_ENABLED ? 3 : 1;
+
+/** 隐藏实例保持订阅的宽限期：这段时间内切回是即时的 warm 切换 */
+export const KEEP_ALIVE_COLD_DELAY_MS = 60_000;
 
 export interface KeepAlivePool {
   deviceId: string | null;
@@ -35,6 +42,11 @@ export interface KeepAlivePool {
   incarnations: Readonly<Record<string, number>>;
   /** 当前是否处于流中断态（断线 / 重连中） */
   streamInterrupted: boolean;
+  /**
+   * 已过宽限期、退出 wire 订阅的隐藏 pane。恒为 panes 的子集，且**永远不含可见 pane**。
+   * 实例与 sink 仍挂着，只是不再进 set-pane-subscriptions。
+   */
+  coldPanes: readonly string[];
 }
 
 export function createKeepAlivePool(limit: number = KEEP_ALIVE_LIMIT): KeepAlivePool {
@@ -46,12 +58,16 @@ export function createKeepAlivePool(limit: number = KEEP_ALIVE_LIMIT): KeepAlive
     visibleIsWarm: false,
     incarnations: {},
     streamInterrupted: false,
+    coldPanes: [],
   };
 }
 
 /**
  * 把 paneId 置为可见 pane。目标已是可见 pane 时原样返回，
  * 因此可以在 render 期间调用而不受 StrictMode 双渲染影响。
+ *
+ * 目标若已置冷（订阅已撤），只算「实例还在」而不算 warm：必须冷 select 重放 history，
+ * 否则会缺掉退订期间的输出。置为可见的同时解除冷态，实例随即重新订阅。
  */
 export function retainKeepAlivePane(
   pool: KeepAlivePool,
@@ -63,12 +79,15 @@ export function retainKeepAlivePane(
     return base;
   }
 
+  const panes = [paneId, ...base.panes.filter((id) => id !== paneId)].slice(0, base.limit);
+  const retained = new Set(panes);
   return {
     ...base,
     deviceId,
-    panes: [paneId, ...base.panes.filter((id) => id !== paneId)].slice(0, base.limit),
+    panes,
+    coldPanes: base.coldPanes.filter((id) => id !== paneId && retained.has(id)),
     visiblePaneId: paneId,
-    visibleIsWarm: base.panes.includes(paneId),
+    visibleIsWarm: base.panes.includes(paneId) && !base.coldPanes.includes(paneId),
   };
 }
 
@@ -93,6 +112,7 @@ export function applyKeepAliveStreamState(
       ...pool,
       streamInterrupted: true,
       panes: pool.panes.slice(0, 1),
+      coldPanes: [],
       visibleIsWarm: false,
     };
   }
@@ -119,7 +139,84 @@ export function retainLiveKeepAlivePanes(
   return {
     ...pool,
     panes: pool.panes.filter((id) => !removed.includes(id)),
+    coldPanes: pool.coldPanes.filter((id) => !removed.includes(id)),
     incarnations,
+  };
+}
+
+/**
+ * 隐藏满宽限期：撤掉该 pane 的 wire 订阅贡献（实例与 sink 不动）。
+ * 可见 pane、已淘汰 pane、已置冷 pane 一律原样返回，可重复调用。
+ */
+export function markKeepAlivePaneCold(pool: KeepAlivePool, paneId: string): KeepAlivePool {
+  if (paneId === pool.visiblePaneId) return pool;
+  if (!pool.panes.includes(paneId)) return pool;
+  if (pool.coldPanes.includes(paneId)) return pool;
+  return { ...pool, coldPanes: [...pool.coldPanes, paneId] };
+}
+
+export function isKeepAlivePaneCold(pool: KeepAlivePool, paneId: string): boolean {
+  return pool.coldPanes.includes(paneId);
+}
+
+/** 当前该起冷计时的 pane：在池里、不可见、还没置冷 */
+export function keepAliveCoolingPaneIds(pool: KeepAlivePool): readonly string[] {
+  return pool.panes.filter((id) => id !== pool.visiblePaneId && !pool.coldPanes.includes(id));
+}
+
+// ---------- 冷却计时：隐藏满宽限期后置冷（terminal-stage 的 effect 驱动） ----------
+
+export interface KeepAliveColdScheduler {
+  /** 按当前池对账定时器：该冷却的起表，已可见 / 已置冷 / 已卸载的撤表。可在每次提交后调用 */
+  sync(pool: KeepAlivePool): void;
+  /** 卸载 / 设备断开：撤掉全部定时器 */
+  dispose(): void;
+}
+
+export function createKeepAliveColdScheduler(
+  onCold: (paneId: string) => void,
+  delayMs: number = KEEP_ALIVE_COLD_DELAY_MS
+): KeepAliveColdScheduler {
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  let deviceId: string | null = null;
+
+  function cancel(paneId: string): void {
+    const timer = timers.get(paneId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    timers.delete(paneId);
+  }
+
+  function cancelAll(): void {
+    for (const paneId of [...timers.keys()]) cancel(paneId);
+  }
+
+  return {
+    sync(pool) {
+      // 换设备后同名 pane 是另一个终端，旧计时不能续用
+      if (pool.deviceId !== deviceId) {
+        deviceId = pool.deviceId;
+        cancelAll();
+      }
+      const cooling = new Set(keepAliveCoolingPaneIds(pool));
+      for (const paneId of [...timers.keys()]) {
+        if (!cooling.has(paneId)) cancel(paneId);
+      }
+      for (const paneId of cooling) {
+        if (timers.has(paneId)) continue;
+        timers.set(
+          paneId,
+          setTimeout(() => {
+            timers.delete(paneId);
+            onCold(paneId);
+          }, delayMs)
+        );
+      }
+    },
+    dispose() {
+      cancelAll();
+      deviceId = null;
+    },
   };
 }
 

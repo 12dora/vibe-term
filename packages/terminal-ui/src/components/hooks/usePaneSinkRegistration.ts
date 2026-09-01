@@ -17,6 +17,8 @@ export interface UsePaneSinkRegistrationOptions {
   surfaceRef: RefObject<TerminalSurface<TerminalRenderTarget> | null>;
   containerRef: RefObject<HTMLDivElement | null>;
   runPostSelectResize: () => void;
+  /** 是否把本 pane 计入 wire 订阅集合（默认 true）；sink 注册与之无关，恒生效 */
+  subscribe?: boolean;
 }
 
 // legacy history 的几何权威是 tmux 快照里的 pane 尺寸（gateway 正是按这个尺寸
@@ -46,6 +48,7 @@ export function usePaneSinkRegistration({
   surfaceRef,
   containerRef,
   runPostSelectResize,
+  subscribe = true,
 }: UsePaneSinkRegistrationOptions): void {
   const runtime = useRuntime();
   const mountPane = useTmuxStore((state) => state.mountPane);
@@ -103,10 +106,12 @@ export function usePaneSinkRegistration({
     return runtime.paneSinks.registerPaneSink(deviceId, paneId, paneSink);
   }, [paneSink, deviceId, paneId, runtime]);
 
+  // sink 注册（上一个 effect）与订阅贡献分开：退订时 sink 仍在，
+  // 网关也不再发这个 pane 的输出，sink 注册表因此不会开始缓冲。
   useEffect(() => {
-    if (!deviceId || !paneId) return;
+    if (!subscribe || !deviceId || !paneId) return;
     return mountPane(deviceId, paneId);
-  }, [deviceId, mountPane, paneId]);
+  }, [deviceId, mountPane, paneId, subscribe]);
 
   useEffect(() => {
     if (
