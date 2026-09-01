@@ -16,10 +16,12 @@ import type { HubMode } from '@tmex/shared/uplink';
 import { json, readJsonObjectBody } from '../api/http';
 import { matchPath } from '../api/route';
 import { decodeB64url, requireB64url, validationError } from '../api/route-input';
+import type { HubTrustStore } from '../auth/hub-trust-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthDb } from '../auth/types';
 import { type UserRecord, UserStore } from '../auth/user-store';
+import { type HubPeerFetch, HubPeerPoller } from './hub-peer-poller';
 import {
   type UplinkNodeList,
   applyReplicatedNodeList as replicateNodeList,
@@ -71,6 +73,8 @@ export type HubRuntimeOptions = {
   authTimeoutMs?: number;
   tlsInfo?: HubTlsInfoProvider;
   meshHubs?: MeshHubStore;
+  hubTrust?: HubTrustStore;
+  fetchPeerStatus?: HubPeerFetch;
 };
 
 type StoredEnrollmentPayload = {
@@ -143,6 +147,7 @@ export class HubRuntime {
   readonly registry: NodeRegistry;
   readonly uplink: UplinkServer;
   readonly meshHubs: MeshHubStore;
+  private readonly peerPoller: HubPeerPoller;
 
   constructor(opts: HubRuntimeOptions) {
     this.db = opts.db;
@@ -165,7 +170,25 @@ export class HubRuntime {
       heartbeatIntervalMs: opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS,
       heartbeatMissLimit: opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT,
       authTimeoutMs: opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS,
+      onModeChange: () => {
+        void this.peerPoller.pollNow();
+      },
+      onNewAuthorizedHub: () => {
+        void this.peerPoller.pollNow();
+      },
     });
+    this.peerPoller = new HubPeerPoller({
+      meshHubs: this.meshHubs,
+      selfHubId: () => this.uplink.hubNodeId(),
+      isAuthorized: (id) => this.uplink.isAuthorizedHub(id),
+      applyStatus: (hubNodeId, ad) =>
+        this.uplink.applyAuthorizedHubAdvertisement(hubNodeId, ad, 'peer-status'),
+      onChanged: () => this.uplink.broadcastAllNodeLists(),
+      now: this.now,
+      fetch: opts.fetchPeerStatus,
+      hubTrust: opts.hubTrust,
+    });
+    if (opts.hubTrust) this.peerPoller.start();
   }
 
   mode(): HubMode {
@@ -183,6 +206,12 @@ export class HubRuntime {
   applyReplicatedNodeList(list: UplinkNodeList, meta: { hubNodeId: string | null }): void {
     const ownId = this.uplink.hubNodeId();
     if (ownId && meta.hubNodeId === ownId) return;
+    const before = new Set(
+      this.meshHubs
+        .list()
+        .filter((row) => this.uplink.isAuthorizedHub(row.hubNodeId))
+        .map((row) => row.hubNodeId)
+    );
     replicateNodeList(
       this.db,
       this.userStore,
@@ -197,10 +226,38 @@ export class HubRuntime {
       this.now()
     );
     this.uplink.broadcastAllNodeLists();
+    const added = this.meshHubs
+      .list()
+      .some(
+        (row) =>
+          this.uplink.isAuthorizedHub(row.hubNodeId) &&
+          row.hubNodeId !== ownId &&
+          !before.has(row.hubNodeId)
+      );
+    if (added) void this.peerPoller.pollNow();
+  }
+
+  pollPeersNow(): Promise<void> {
+    return this.peerPoller.pollNow();
   }
 
   private requireWriter(): Response | null {
     return this.uplink.isWriter() ? null : json(this.uplink.notWriterError(), 409);
+  }
+
+  private handleHubStatus(): Response {
+    const snap = this.uplink.ownHubSnapshot();
+    if (!snap) return json({ error: 'hub_unconfigured' }, 503);
+    return json({
+      hubNodeId: snap.hubNodeId,
+      publicUrl: snap.publicUrl,
+      mode: snap.mode,
+      priority: snap.priority,
+      writerEpoch: snap.writerEpoch,
+      ...(snap.name ? { name: snap.name } : {}),
+      caFingerprint: snap.caFingerprint,
+      now: this.now(),
+    });
   }
 
   attachLocalNode(link: LinkSession): void {
@@ -212,6 +269,7 @@ export class HubRuntime {
   }
 
   async stop(): Promise<void> {
+    this.peerPoller.stop();
     await this.uplink.stop();
   }
 
@@ -238,6 +296,7 @@ export class HubRuntime {
       return fn(params);
     };
     return (
+      hit('/api/hub/status', 'GET', () => this.handleHubStatus()) ??
       hit('/api/hub/enrollments/redeem', 'POST', () => {
         const blocked = this.requireWriter();
         return blocked ?? this.handleRedeem(req);

@@ -109,6 +109,16 @@ standby 对下列请求返回 HTTP 409，body 为：
 
 **脑裂告警：** 两台 active 的 epoch **相等** 时，每 60 s 打一条 `split-brain` 警告，两边继续服务。必须人工 `demote` 其中一台。
 
+## hub 间状态探测
+
+`node.status.hub` 广告只在 uplink 连上对端时发送。被 promote 的 standby 会把自己排到候选第一并 **in-memory 挂到自己**，于是不再向旧写者广告；旧写者带着旧 epoch 回来时同样没人告诉它已被取代。这两种情况都会永久脑裂。
+
+因此每台 hub 暴露公开接口 `GET /api/hub/status`（无需 session，与 `/healthz` 同级），返回 `ownHubSnapshot()` 的元数据：`hubNodeId`、`publicUrl`、`mode`、`priority`、`writerEpoch`、`name?`、`caFingerprint?`、`now`。这些字段本来就会出现在 `node.list.hubs[]` 里。
+
+启动 2 s 后，以及之后每 60 s（±20% 抖动），本机对 `mesh_hubs` 里 **已授权**（id ∈ `TMEX_HUB_PEERS`）且不是 self 的行拉取 `<publicUrl>/api/hub/status`（超时 5 s）。TLS 使用 `HubTrustStore` 的 per-URL CA pin（与 uplink 相同）；没有 pin 的 https 走系统 CA。返回的 32-hex `hubNodeId` 必须等于该行 id，否则丢弃并警告。通过校验后走与授权 `node.status.hub` 相同的 upsert / fencing / 脑裂告警路径（更高 epoch 的 active 会把本机降为 standby，日志 `[hub] fenced by peer status …`）。连续 3 次不可达则把该行标 `online: false`，不删行。`setMode`（promote/demote）以及新授权 hub 行出现时立刻再探一次。
+
+探测结果可信，当且仅当 URL 经 TLS 认证（pin 或系统 CA）**并且** hub id 在本机 allowlist 中。未授权的 URL / id 不能 fencing 本机。
+
 ## 授权 allowlist（为何必须有）
 
 威胁模型是「任意一点失陷只影响该点」（见 [架构 §2 / §5](./2026082700-hub-node-architecture.md)）。普通 node 的 uplink 证书只证明「这台机器已加入 mesh」，**不**证明它可以当 hub。

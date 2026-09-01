@@ -1828,6 +1828,46 @@ describe('HubRuntime multi-hub', () => {
   });
 });
 
+describe('GET /api/hub/status', () => {
+  test('无需鉴权，返回 ownHubSnapshot 元数据', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      seedUser(userStore);
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: {
+          publicUrl: 'https://hub.example',
+          stun: [],
+          hubNodeId: STANDBY_HUB,
+          siteName: 'hub-site',
+          mode: 'active',
+          priority: 80,
+          writerEpoch: 3,
+        },
+        authenticate: () => null,
+        now: () => 12_345,
+      });
+      const res = await hub.handleRequest(new Request('http://hub/api/hub/status'), dummyServer);
+      expect(res?.status).toBe(200);
+      const body = (await res?.json()) as Record<string, unknown>;
+      expect(body.hubNodeId).toBe(STANDBY_HUB);
+      expect(body.publicUrl).toBe('https://hub.example');
+      expect(body.mode).toBe('active');
+      expect(body.priority).toBe(80);
+      expect(body.writerEpoch).toBe(3);
+      expect(body.name).toBe('hub-site');
+      expect(body).toHaveProperty('caFingerprint');
+      expect(body.now).toBe(12_345);
+      await hub.stop();
+    } finally {
+      close();
+    }
+  });
+});
+
 async function createEs256Authenticator() {
   const keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
     'sign',
