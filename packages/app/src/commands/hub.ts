@@ -2,6 +2,13 @@ import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import { enrollmentTokens, meshHubs, nodes } from '../../../../apps/gateway/src/db/schema';
+import {
+  envPeerSet,
+  hubAuthListColumn,
+  lookupSignedHubAuthorization,
+  resolveHubAuthorization,
+  resolveMeshUserId,
+} from '../../../../apps/gateway/src/hub/hub-authorization';
 import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/hub/redeem-pop';
 import {
   bytesEqual,
@@ -81,7 +88,11 @@ export type HubListRow = {
   lastSeenAt: number | null;
   writer: boolean;
   authorized: boolean;
+  authorization: 'signed' | 'env' | 'self' | 'no';
 };
+
+export const HUB_SIGNED_AUTH_PRECEDENCE_NOTE =
+  'signed admit-hub/retire-hub takes precedence over TMEX_HUB_PEERS; manage signed authorization from the UI';
 
 export const HUB_MANUAL_RESTART_HINT =
   'skipped service restart; restart tmex manually to apply the change';
@@ -1013,8 +1024,16 @@ function readMeshHubRows(
   }>;
   const writerHubId = pickWriterHubId(rows);
   const selfId = opts.selfId?.toLowerCase() ?? null;
+  const uid = resolveMeshUserId(ctx.userStore, { nodeId: selfId });
+  const envPeers = envPeerSet(opts.peerIds);
   return rows.map((row) => {
-    const id = row.hubNodeId.toLowerCase();
+    const source = resolveHubAuthorization({
+      hubNodeId: row.hubNodeId,
+      selfId,
+      envPeers,
+      signed: lookupSignedHubAuthorization(ctx.userStore, uid, row.hubNodeId),
+    });
+    const authorization = hubAuthListColumn(source);
     return {
       hubNodeId: row.hubNodeId,
       name: row.name,
@@ -1025,7 +1044,8 @@ function readMeshHubRows(
       online: Boolean(row.online),
       lastSeenAt: row.lastSeenAt,
       writer: row.hubNodeId === writerHubId,
-      authorized: id === selfId || opts.peerIds.has(id),
+      authorized: authorization !== 'no',
+      authorization,
     };
   });
 }
@@ -1071,7 +1091,7 @@ function formatHubList(rows: HubListRow[]): string[] {
         pad(row.mode, 8),
         pad(String(row.priority), 4),
         pad(String(row.writerEpoch), 6),
-        pad(row.authorized ? 'yes' : 'no', 5),
+        pad(row.authorization, 6),
         pad(row.online ? 'yes' : 'no', 7),
         pad(formatLastSeen(row.lastSeenAt), 21),
         row.publicUrl,
@@ -1256,6 +1276,7 @@ export async function runHubAllow(
       await maybeRestart(parsed, io, ctx.installDir);
     }
     log(io, t('hub.allow.done', { peers: formatPeerList(peers) }));
+    log(io, HUB_SIGNED_AUTH_PRECEDENCE_NOTE);
     return { peers };
   });
 }
@@ -1281,6 +1302,7 @@ export async function runHubDisallow(
       await maybeRestart(parsed, io, ctx.installDir);
     }
     log(io, t('hub.disallow.done', { peers: formatPeerList(peers) }));
+    log(io, HUB_SIGNED_AUTH_PRECEDENCE_NOTE);
     return { peers };
   });
 }

@@ -232,6 +232,13 @@
       "when": 1788261339128,
       "tag": "0032_mesh_hubs",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1788348000000,
+      "tag": "0033_hub_authorizations",
+      "breakpoints": true
     }
   ]
 }

@@ -22,6 +22,7 @@ import { HUB_META_PEER_ID } from '../auth/user-store';
 import { type TmexRoles, config as gatewayConfig } from '../config';
 import { getSiteSettings } from '../db/site-settings';
 import { HubRuntime, type HubTurnConfig } from '../hub';
+import { applyKeyLogHubRuntime } from '../hub/hub-authorization';
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
 import type { HubTlsInfoProvider } from '../hub/hub-runtime';
 import type { GatewayRuntime } from '../runtime';
@@ -728,6 +729,13 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
         hubTrust: new HubTrustStore(db),
       }))
     : (opts.hub ?? null);
+  keyLogService.onApplied = (_userId, step) => {
+    applyKeyLogHubRuntime(hubStore, step.record, {
+      selfId: identity.nodeIdHex,
+      now: Date.now(),
+      onRetireSelf: () => hub?.setMode('standby'),
+    });
+  };
   return {
     opts,
     db,

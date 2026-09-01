@@ -1,10 +1,12 @@
 import type { KdfParams, KeyLogEffect, KeyLogRecord, UserKeyState } from '@tmex/shared/auth';
 import {
   decodeAddPasskeyPayload,
+  decodeAdmitHubPayload,
   decodeAdmitNodePayload,
   decodeBase64url,
   decodeCertificate,
   decodeRemovePasskeyPayload,
+  decodeRetireHubPayload,
   decodeRevokeNodePayload,
   encodeBase64url,
   nodeIdToHex,
@@ -99,6 +101,7 @@ export function wipeUserDerivedState(
   userStore.deleteKeysByUser(userId);
   nodeSessionStore.deleteAllForUser(userId);
   userStore.deleteCertsByUser(userId);
+  userStore.deleteHubAuthorizationsByUser(userId);
   userStore.deleteNodesByUser(userId);
   userStore.deleteEnrollmentTokensByUser(userId);
 }
@@ -136,7 +139,10 @@ export function persistApplied(
   if (record.type === 'rotate-root' || record.type === 'reset-root') {
     userStore.deleteKeysByUser(userId);
     userStore.setTotpRecordSeq(userId, null, now);
-    if (record.type === 'reset-root') userStore.deleteCertsByUser(userId);
+    if (record.type === 'reset-root') {
+      userStore.deleteCertsByUser(userId);
+      userStore.deleteHubAuthorizationsByUser(userId);
+    }
   }
   const byType: Partial<Record<KeyLogRecord['type'], () => void>> = {
     'set-totp': () => userStore.setTotpRecordSeq(userId, seq, now),
@@ -181,6 +187,49 @@ export function persistApplied(
       const hex = nodeIdToHex(decodeRevokeNodePayload(record.payload).node_id);
       userStore.markCertRevoked(hex, seq);
       userStore.deletePeer(hex);
+      const existing = userStore.getHubAuthorization(userId, hex);
+      if (existing) {
+        userStore.upsertHubAuthorization({
+          userId,
+          hubNodeId: hex,
+          status: 'retired',
+          publicUrl: existing.publicUrl,
+          priority: existing.priority,
+          admitSeq: existing.admitSeq,
+          retireSeq: seq,
+          updatedSeq: seq,
+        });
+      }
+    },
+    'admit-hub': () => {
+      const payload = decodeAdmitHubPayload(record.payload);
+      const hex = nodeIdToHex(payload.hub_node_id);
+      const existing = userStore.getHubAuthorization(userId, hex);
+      userStore.upsertHubAuthorization({
+        userId,
+        hubNodeId: hex,
+        status: 'active',
+        publicUrl: payload.public_url ?? existing?.publicUrl ?? null,
+        priority: payload.priority ?? existing?.priority ?? null,
+        admitSeq: seq,
+        retireSeq: null,
+        updatedSeq: seq,
+      });
+    },
+    'retire-hub': () => {
+      const hex = nodeIdToHex(decodeRetireHubPayload(record.payload).hub_node_id);
+      const existing = userStore.getHubAuthorization(userId, hex);
+      if (!existing) return;
+      userStore.upsertHubAuthorization({
+        userId,
+        hubNodeId: hex,
+        status: 'retired',
+        publicUrl: existing.publicUrl,
+        priority: existing.priority,
+        admitSeq: existing.admitSeq,
+        retireSeq: seq,
+        updatedSeq: seq,
+      });
     },
   };
   byType[record.type]?.();

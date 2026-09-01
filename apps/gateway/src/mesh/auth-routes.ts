@@ -46,6 +46,7 @@ import {
   type LocalAuthStoreLike,
   standaloneClosedModeFields,
 } from '../db/local-auth-settings';
+import { inspectHubAuthRecordCompat } from '../hub/hub-authorization';
 import { LoginFailureLimiter } from './auth-login-limiter';
 import {
   AuthModeCache,
@@ -487,6 +488,8 @@ export class AuthRoutes {
     }
     const blocked = this.refuseIfAttachedNotWriter();
     if (blocked) return blocked;
+    const compat = this.refuseUnsupportedHubAuthRecord(req, userId, bytes, sig);
+    if (compat) return compat;
     const hubSync = this.usesHubSync(req);
     if (hubSync) {
       return this.handleKeyLogHubSync(userId, bytes, sig);
@@ -683,6 +686,32 @@ export class AuthRoutes {
       hash: encodeBase64url(hash),
       hubAck: hubAck === true,
       ...(hubError ? { hubError } : {}),
+    });
+  }
+
+  private refuseUnsupportedHubAuthRecord(
+    req: Request,
+    userId: string,
+    bytes: Uint8Array,
+    sig: Uint8Array
+  ): Response | null {
+    if (this.identicalAppliedRecord(userId, bytes, sig)) {
+      return null;
+    }
+    const compat = inspectHubAuthRecordCompat(this.deps.userStore, bytes, userId);
+    if (compat.ok) return null;
+    const forced = req.headers.get('x-tmex-force-keylog') === '1';
+    if (forced) {
+      console.warn(
+        `[auth] forcing key-log append despite ${compat.code} minVersion=${compat.minVersion} nodes=${compat.nodes
+          .map((n) => n.id)
+          .join(',')}`
+      );
+      return null;
+    }
+    return jsonError(compat.code, 409, {
+      minVersion: compat.minVersion,
+      nodes: compat.nodes,
     });
   }
 

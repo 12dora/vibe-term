@@ -1,5 +1,6 @@
 import os from 'node:os';
 import {
+  KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   bytesEqual,
   computeRecordHash,
   decodeCertificate,
@@ -25,6 +26,13 @@ import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import { parseJson, projectNode, upsertById } from '../mesh/node-list-projection';
 import { pumpLink } from '../mesh/stream-pump';
+import {
+  applyKeyLogHubRuntime,
+  inspectHubAuthRecordCompat,
+  lookupSignedHubAuthorization,
+  isAuthorizedHub as mergeAuthorizedHub,
+  resolveMeshUserId,
+} from './hub-authorization';
 import { trimKeyLogPageToByteLimit } from './key-log-page';
 import { patchNode } from './node-persistence';
 import type { NodeRegistry } from './node-registry';
@@ -484,6 +492,13 @@ export class UplinkServer {
     if (result.record.type === 'rotate-root' || result.record.type === 'reset-root') {
       this.userStore.invalidateUnusedEnrollmentTokens(userId, this.now());
     }
+    if (
+      result.record.type === 'admit-hub' ||
+      result.record.type === 'retire-hub' ||
+      result.record.type === 'revoke-node'
+    ) {
+      this.applyHubAuthorizationRecord(userId, result.record);
+    }
     for (const effect of result.effects) {
       if (effect.type === 'revokeSessionsVia') {
         this.evictRevokedNode(nodeIdToHex(effect.nodeId));
@@ -939,6 +954,26 @@ export class UplinkServer {
       }
       return;
     }
+    const already = await this.identicalHeadRecord(live.userId, bytes, sig);
+    if (already) {
+      if (id) {
+        this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(already.seq) });
+      }
+      await this.runAppendEffects(live.userId, this.replayedAppendSuccess(bytes, sig, already.seq));
+      return;
+    }
+    const compat = inspectHubAuthRecordCompat(this.userStore, bytes, live.userId);
+    if (!compat.ok) {
+      if (id) {
+        this.send(live.link, {
+          t: 'key.log.ack',
+          id,
+          ok: false,
+          error: KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
+        });
+      }
+      return;
+    }
     const result = await this.keyLogSource.append(live.userId, { bytes, sig });
     if (result.ok) {
       if (id) {
@@ -1299,6 +1334,10 @@ export class UplinkServer {
   private upsertSelfHub(): void {
     const snapshot = this.ownHubSnapshot();
     if (!snapshot) return;
+    if (!this.isAuthorizedHub(snapshot.hubNodeId)) {
+      this.meshHubs.remove(snapshot.hubNodeId);
+      return;
+    }
     this.meshHubs.upsert(snapshot, this.now());
   }
 
@@ -1306,11 +1345,32 @@ export class UplinkServer {
     return this.meshHubs.list().filter((row) => this.isAuthorizedHub(row.hubNodeId));
   }
 
-  isAuthorizedHub(nodeId: string): boolean {
-    const id = nodeId.toLowerCase();
+  isAuthorizedHub(nodeId: string, userId?: string | null): boolean {
+    const uid = userId ?? this.meshUserId();
+    return mergeAuthorizedHub({
+      hubNodeId: nodeId,
+      selfId: this.hubNodeId(),
+      envPeers: this.authorizedHubIdSet,
+      signed: lookupSignedHubAuthorization(this.userStore, uid, nodeId),
+    });
+  }
+
+  meshUserId(): string | null {
+    return resolveMeshUserId(this.userStore, { nodeId: this.hubNodeId() ?? this.config.nodeId });
+  }
+
+  applyHubAuthorizationRecord(userId: string, record: { type: string; payload: Uint8Array }): void {
+    applyKeyLogHubRuntime(this.meshHubs, record, {
+      selfId: this.hubNodeId(),
+      now: this.now(),
+      onRetireSelf: () => this.setMode('standby'),
+    });
     const own = this.hubNodeId();
-    if (own && id === own) return true;
-    return this.authorizedHubIdSet.has(id);
+    if (own && !this.isAuthorizedHub(own, userId)) {
+      this.meshHubs.remove(own);
+      if (this.currentMode === 'active') this.setMode('standby');
+    }
+    this.broadcastAllNodeLists();
   }
 
   applyAuthorizedHubAdvertisement(

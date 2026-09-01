@@ -13,6 +13,7 @@ const HUB_TABLES = [
   'enrollment_tokens',
   'node_identity',
   'peer_cache',
+  'user_hub_authorizations',
 ] as const;
 
 const EXPECTED_INDEXES = [
@@ -24,6 +25,7 @@ const EXPECTED_INDEXES = [
   'peer_cache_node_id_unique',
   'node_sessions_sid_unique',
   'node_sessions_user_id_via_node_id_idx',
+  'user_hub_authorizations_user_id_hub_node_id_unique',
 ];
 
 describe('hub auth schema migration', () => {

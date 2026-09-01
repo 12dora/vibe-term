@@ -6,6 +6,20 @@ export {
   type HubUpgradeServer,
 } from './hub-runtime';
 export { createHubKeyLogSource } from './hub-key-log-source';
+export {
+  applyKeyLogHubRuntime,
+  envPeerSet,
+  hubAuthListColumn,
+  hubHttpAuthorization,
+  inspectHubAuthRecordCompat,
+  isAuthorizedHub,
+  lookupSignedHubAuthorization,
+  resolveHubAuthorization,
+  resolveMeshUserId,
+  type HubAuthListColumn,
+  type HubAuthorizationSource,
+  type HubHttpAuthorization,
+} from './hub-authorization';
 export { NodeRegistry, type NodeRegistryMeta, type RegisteredNode } from './node-registry';
 export { applyReplicatedNodeList, type UplinkNodeList } from './hub-replication';
 export {

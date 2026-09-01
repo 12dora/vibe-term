@@ -84,6 +84,7 @@
 **切回（failback）：**
 
 - 当前挂的不是最优先候选时，每 60 s 探测更优先 hub 的 `GET <publicUrl>/healthz`（按 URL 的 CA pin，超时 5 s）；
+- 收到 `node.list` 且更优先 hub 由 offline/unknown 变为 online、`writerHubId`/`writerEpoch` 变化、或当前挂载已不是最优候选时，立即再探一次（5 s 内合并重复触发；探测仍须 `/healthz` 成功、CA pin 与 generation 守卫后才 `switchTo`）；60 s 定时器仍作兜底；
 - 探测成功后 **make-before-break**：先打开新 uplink，等它鉴权成功再关旧链路，然后重发 `node.status`。
 
 **generation 守卫：** 每条 uplink 有世代号。被替换的链路上迟到的 `node.list` / `key.log` / `rtc.signal` 直接丢弃，并取消该链路的 key-log catch-up，避免旧主的过期快照盖住新主。
@@ -125,12 +126,21 @@ standby 对下列请求返回 HTTP 409，body 为：
 
 若 writer 无条件接受 `node.status.hub` 广告，失陷的普通节点可以自报 `mode=active` 和极大 `writerEpoch`，把真写者 fence 成 standby，并把全网 uplink 引到攻击者。这会把「只能影响本机」升级成控制面接管。
 
-因此第一阶段用本机 env `TMEX_HUB_PEERS`（逗号分隔的 **其它** 已授权 hub 的 32 位 hex node id）做 allowlist：
+权威来源是用户签名的 key-log 记录 `admit-hub` / `retire-hub`（root 或 passkey 签名，随严格链复制）。本机 env `TMEX_HUB_PEERS` 仍作 bootstrap / 回退。
 
-- 未在名单中、也不是 self 的广告一律丢弃，不进 `mesh_hubs`、不参与 `pickWriterHub`、不触发 fencing、不广播其 CA 指纹；
-- standby 必须先被当前 active 执行 `tmex hub allow <nodeId>`，才会出现在 `hubs[]` 里。
+合并规则（对指定 mesh 用户的派生状态）：
 
-这是运维层的短期控制。第二阶段应把授权做成用户签名的 key-log 记录（例如 `admit-hub`），随链复制、可吊销，而不是各 hub 各自改 env。
+- 已有 `admit-hub` 且未 `retire-hub`：授权（`signed`），与 env 无关；
+- 已 `retire-hub`：拒绝，**压过** `TMEX_HUB_PEERS` 和 self；
+- 无签名记录：回退到 `id == self || id ∈ TMEX_HUB_PEERS`。
+
+因此：
+
+- 未授权的广告一律丢弃，不进 `mesh_hubs`、不参与 `pickWriterHub`、不触发 fencing、不广播其 CA 指纹；
+- 新版本只需在 UI 提交 `admit-hub`，standby 即可出现在 `hubs[]`，不必每台机器手写 env；
+- `tmex hub allow` / `disallow` 仍改 env，但签名授权优先，且由 UI 管理。
+
+**兼容门：** 旧节点无法解码新记录类型，链回放会停在 `malformed_payload`。写者在追加 `admit-hub` / `retire-hub` 前，若 `nodes` 里任一未吊销节点的 last-reported version `< 1.1.13` 或为空/无法解析，则拒绝：HTTP 409 `{ code: KEYLOG_TYPE_UNSUPPORTED_BY_NODES, minVersion, nodes }`（uplink `key.log.append` 同样返回该 error code）。HTTP 可用 `X-Tmex-Force-Keylog: 1` 强制写入并打警告。
 
 ## 操作手册
 
@@ -145,7 +155,7 @@ standby 自己改角色还不够：当前 active **不会**把未授权的 hub �
    - **自动把当前主 hub 的 node id 写入本机 `TMEX_HUB_PEERS`**（来源：本地 `mesh_hubs` 的 active 行，找不到则退到 `peer_cache` 哨兵行 `node_id='hub'` 的 `inventory_json.nodeId`）。找不到时打印警告，须手动 `tmex hub allow`。
    - 打印本机 32 位 hex node id，以及要在 active 上跑的命令：`tmex hub allow <thisNodeId>`。
 2. 在 **当前 active hub** 上执行打印出来的 `tmex hub allow <nodeId>`（写入 `TMEX_HUB_PEERS` 并重启，除非 `--no-restart`）。**主 hub 不会自动授权备用 hub。**
-3. 之后 `tmex hub list` / `node.list.hubs[]` 才会出现这台 standby。`AUTH` 列为 `yes` 表示该 id 在本机 `TMEX_HUB_PEERS` 中，或就是 self。
+3. 之后 `tmex hub list` / `node.list.hubs[]` 才会出现这台 standby。`AUTH` 列为 `signed` / `env` / `self` / `no`：签名授权优先于 env。首选在 UI 提交 `admit-hub`，env 仅作 bootstrap。
 
 反过来：新写者 `promote` 之后，**旧写者**也必须 `tmex hub allow <新写者 nodeId>`，否则旧写者不会承认它，也无法被它 fence。`promote` / `demote` **不改** `TMEX_HUB_PEERS`，但会打印当前名单。
 
@@ -298,4 +308,4 @@ tmex hub list
 7. 混合版本下，旧节点看不到 `hubs[]`，只会连 `TMEX_HUB_URL` 那一个种子。
 8. `promote` 的 epoch 以**本机** env 与 `mesh_hubs` 为准。若本机表是旧快照，可能算出偏小的 epoch；以实际跑起来后的 fence 日志为准，必要时再 promote 一次。
 9. 被 fence 的 hub 重启后仍是 standby，直到显式 `promote`。不要指望改回 `TMEX_HUB_MODE=active` 再启动就能夺回写者。
-10. `TMEX_HUB_PEERS` 是各 hub 本机 env，不会随 `node.list` 复制。第二阶段应改为用户签名的 `admit-hub` key-log 记录。
+10. `TMEX_HUB_PEERS` 仍是各 hub 本机 env，不会随 `node.list` 复制；签名 `admit-hub` / `retire-hub` 才随 key-log 复制。旧节点未升级前写者会拒绝追加这两类记录（见上文兼容门）。

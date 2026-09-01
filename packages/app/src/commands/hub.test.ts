@@ -20,6 +20,7 @@ import { readEnvFile, stringifyEnv } from '../lib/env-file';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import {
   HUB_MANUAL_RESTART_HINT,
+  HUB_SIGNED_AUTH_PRECEDENCE_NOTE,
   runHubAllow,
   runHubDemote,
   runHubDisallow,
@@ -645,12 +646,15 @@ describe('hub standby/promote/demote/list', () => {
       auth,
       log: (message) => logs.push(message),
     });
-    expect(listed.hubs.find((row) => row.hubNodeId === identity.nodeId)?.authorized).toBe(true);
-    expect(listed.hubs.find((row) => row.hubNodeId === 'ab'.repeat(16))?.authorized).toBe(true);
-    expect(listed.hubs.find((row) => row.hubNodeId === 'cd'.repeat(16))?.authorized).toBe(false);
+    expect(listed.hubs.find((row) => row.hubNodeId === identity.nodeId)?.authorization).toBe(
+      'self'
+    );
+    expect(listed.hubs.find((row) => row.hubNodeId === 'ab'.repeat(16))?.authorization).toBe('env');
+    expect(listed.hubs.find((row) => row.hubNodeId === 'cd'.repeat(16))?.authorization).toBe('no');
     const text = logs.join('\n');
     expect(text).toMatch(/AUTH|authorized/i);
-    expect(text).toContain('yes');
+    expect(text).toContain('self');
+    expect(text).toContain('env');
     expect(text).toContain('no');
   });
 });
@@ -683,6 +687,7 @@ describe('hub allow/disallow', () => {
     expect(text).toContain(second);
     expect(text).toContain(first);
     expect(text).toContain(third);
+    expect(text).toContain(HUB_SIGNED_AUTH_PRECEDENCE_NOTE);
   });
 
   test('allow refuses invalid node ids and does not write env', async () => {

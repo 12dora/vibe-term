@@ -25,7 +25,7 @@ import {
 } from '../../auth';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import type { AuthDb } from '../../auth/types';
-import { HubRuntime, createHubKeyLogSource } from '../../hub';
+import { HubRuntime, createHubKeyLogSource, patchNode } from '../../hub';
 import type { GatewayRuntime } from '../../runtime';
 import type { WebSocketServer } from '../../ws';
 import { MESH_VIA_SELF, setMeshRequestContext } from '../mesh-deps';
@@ -743,6 +743,15 @@ export function attachedHubId(mesh: MeshRuntime): string | null {
   return mesh.attachedHub()?.hubNodeId ?? null;
 }
 
+export function stampNodeVersions(db: AuthDb, version: string, except?: ReadonlySet<string>): void {
+  const store = new UserStore(db);
+  for (const node of store.listNodes()) {
+    if (node.status === 'revoked') continue;
+    if (except?.has(node.id)) continue;
+    patchNode(db, node.id, { version });
+  }
+}
+
 export function reconstructHubRuntime(
   node: HarnessNode,
   opts: {
@@ -791,6 +800,7 @@ export async function getMeshHubs(mesh: MeshRuntime, cookie: string) {
       mode: string;
       writerEpoch: number;
       online?: boolean;
+      authorization?: 'signed' | 'env' | 'self';
     }>;
     attached: {
       hubNodeId: string | null;

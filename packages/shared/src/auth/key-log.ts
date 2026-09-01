@@ -11,11 +11,13 @@ import {
   bytesEqual,
   concatBytes,
   decodeAddPasskeyPayload,
+  decodeAdmitHubPayload,
   decodeAdmitNodePayload,
   decodeAuthorization,
   decodeCertificate,
   decodeKeyLogRecord,
   decodeRemovePasskeyPayload,
+  decodeRetireHubPayload,
   decodeRevokeNodePayload,
   decodeRotateRootPayload,
   decodeSetTotpPayload,
@@ -41,6 +43,15 @@ export type StoredNodeCert = {
   revoked: boolean;
 };
 
+export type HubAuthorizationStatus = 'active' | 'retired';
+
+export type StoredHubAuthorization = {
+  status: HubAuthorizationStatus;
+  publicUrl: string | null;
+  priority: number | null;
+  seq: bigint;
+};
+
 export type UserKeyState = {
   rootPublicKey: Uint8Array;
   rootEpoch: number;
@@ -48,8 +59,14 @@ export type UserKeyState = {
   passkeys: Map<string, PasskeyRecord>;
   totp: SetTotpPayload | null;
   nodeCerts: Map<string, StoredNodeCert>;
+  hubAuthorizations: Map<string, StoredHubAuthorization>;
   head: KeyLogHead;
 };
+
+/** 写入 `admit-hub` / `retire-hub` 前，所有未吊销节点须达到该版本，否则旧节点无法解码新记录。 */
+export const MIN_HUB_AUTH_RECORD_VERSION = '1.1.13';
+export const KEYLOG_TYPE_UNSUPPORTED_BY_NODES = 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES';
+export const HUB_AUTH_RECORD_TYPES = ['admit-hub', 'retire-hub'] as const;
 
 export type KeyLogEffect =
   | { type: 'revokeAllSessions' }
@@ -66,6 +83,8 @@ export const KEY_LOG_SIGNER_MATRIX: Record<KeyLogType, readonly KeyLogSigner[]> 
   'admit-node': ['root', 'passkey'],
   'revoke-node': ['root', 'passkey'],
   'reset-root': ['root'],
+  'admit-hub': ['root', 'passkey'],
+  'retire-hub': ['root', 'passkey'],
 };
 
 export type KeyLogSignedRecord = {
@@ -150,6 +169,7 @@ export function emptyUserKeyState(
     passkeys: new Map(),
     totp: null,
     nodeCerts: new Map(),
+    hubAuthorizations: new Map(),
     head: genesisHead(),
   };
 }
@@ -294,6 +314,7 @@ function cloneState(state: UserKeyState): UserKeyState {
     passkeys: new Map(state.passkeys),
     totp: state.totp,
     nodeCerts: new Map(state.nodeCerts),
+    hubAuthorizations: new Map(state.hubAuthorizations),
     head: { seq: state.head.seq, hash: new Uint8Array(state.head.hash) },
   };
 }
@@ -322,9 +343,58 @@ function applyRootChange(
   const effects: KeyLogEffect[] = [{ type: 'revokeAllSessions' }];
   if (clearNodeCerts) {
     state.nodeCerts = new Map();
+    state.hubAuthorizations = new Map();
     effects.push({ type: 'clearPeerCache' });
   }
   return { ok: true, state, effects };
+}
+
+function applyAdmitHub(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogResult {
+  let payload: ReturnType<typeof decodeAdmitHubPayload>;
+  try {
+    payload = decodeAdmitHubPayload(record.payload);
+  } catch {
+    return { ok: false, error: 'malformed_payload' };
+  }
+  const hex = nodeIdToHex(payload.hub_node_id);
+  const cert = state.nodeCerts.get(hex);
+  if (!cert || cert.revoked) {
+    return { ok: false, error: 'unknown_node' };
+  }
+  const existing = state.hubAuthorizations.get(hex);
+  state.hubAuthorizations.set(hex, {
+    status: 'active',
+    publicUrl: payload.public_url ?? existing?.publicUrl ?? null,
+    priority: payload.priority ?? existing?.priority ?? null,
+    seq: record.seq,
+  });
+  return { ok: true, state, effects: [] };
+}
+
+function applyRetireHub(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogResult {
+  let payload: ReturnType<typeof decodeRetireHubPayload>;
+  try {
+    payload = decodeRetireHubPayload(record.payload);
+  } catch {
+    return { ok: false, error: 'malformed_payload' };
+  }
+  const hex = nodeIdToHex(payload.hub_node_id);
+  const existing = state.hubAuthorizations.get(hex);
+  if (!existing) {
+    return { ok: false, error: 'unknown_node' };
+  }
+  state.hubAuthorizations.set(hex, {
+    ...existing,
+    status: 'retired',
+    seq: record.seq,
+  });
+  return { ok: true, state, effects: [] };
+}
+
+function retireHubIfAdmitted(state: UserKeyState, hex: string, seq: bigint): void {
+  const existing = state.hubAuthorizations.get(hex);
+  if (!existing) return;
+  state.hubAuthorizations.set(hex, { ...existing, status: 'retired', seq });
 }
 
 async function applyAdmitNode(
@@ -451,6 +521,7 @@ export async function applyKeyLogRecord(
           return { ok: false, error: 'unknown_node' };
         }
         next.nodeCerts.set(hex, { ...existing, revoked: true });
+        retireHubIfAdmitted(next, hex, record.seq);
         result = {
           ok: true,
           state: next,
@@ -458,6 +529,12 @@ export async function applyKeyLogRecord(
         };
         break;
       }
+      case 'admit-hub':
+        result = applyAdmitHub(next, record);
+        break;
+      case 'retire-hub':
+        result = applyRetireHub(next, record);
+        break;
       default:
         return { ok: false, error: 'malformed_payload' };
     }

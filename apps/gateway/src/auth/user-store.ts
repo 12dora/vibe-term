@@ -1,5 +1,13 @@
 import { and, eq, gt, isNull, lte } from 'drizzle-orm';
-import { enrollmentTokens, nodeCerts, nodes, peerCache, userKeys, users } from '../db/schema';
+import {
+  enrollmentTokens,
+  nodeCerts,
+  nodes,
+  peerCache,
+  userHubAuthorizations,
+  userKeys,
+  users,
+} from '../db/schema';
 import { toBuffer, toBytes } from './binary';
 import type { AuthDb, NodeStatus } from './types';
 
@@ -76,6 +84,30 @@ export interface UpsertNodeCertInput {
   authorizationBytes: Uint8Array;
   authorizationSig: Uint8Array;
   revokedLogSeq?: number | null;
+}
+
+export type HubAuthorizationStatus = 'active' | 'retired';
+
+export interface HubAuthorizationRecord {
+  userId: string;
+  hubNodeId: string;
+  status: HubAuthorizationStatus;
+  publicUrl: string | null;
+  priority: number | null;
+  admitSeq: number;
+  retireSeq: number | null;
+  updatedSeq: number;
+}
+
+export interface UpsertHubAuthorizationInput {
+  userId: string;
+  hubNodeId: string;
+  status: HubAuthorizationStatus;
+  publicUrl?: string | null;
+  priority?: number | null;
+  admitSeq: number;
+  retireSeq?: number | null;
+  updatedSeq: number;
 }
 
 export interface PeerCacheRecord {
@@ -308,6 +340,60 @@ export class UserStore {
 
   deleteCertsByUser(userId: string): void {
     this.db.delete(nodeCerts).where(eq(nodeCerts.userId, userId)).run();
+  }
+
+  listHubAuthorizationsByUser(userId: string): HubAuthorizationRecord[] {
+    return this.db
+      .select()
+      .from(userHubAuthorizations)
+      .where(eq(userHubAuthorizations.userId, userId))
+      .all()
+      .map(toHubAuthorization);
+  }
+
+  getHubAuthorization(userId: string, hubNodeId: string): HubAuthorizationRecord | null {
+    const row = this.db
+      .select()
+      .from(userHubAuthorizations)
+      .where(
+        and(
+          eq(userHubAuthorizations.userId, userId),
+          eq(userHubAuthorizations.hubNodeId, hubNodeId)
+        )
+      )
+      .get();
+    return row ? toHubAuthorization(row) : null;
+  }
+
+  upsertHubAuthorization(input: UpsertHubAuthorizationInput): void {
+    this.db
+      .insert(userHubAuthorizations)
+      .values({
+        userId: input.userId,
+        hubNodeId: input.hubNodeId,
+        status: input.status,
+        publicUrl: input.publicUrl ?? null,
+        priority: input.priority ?? null,
+        admitSeq: input.admitSeq,
+        retireSeq: input.retireSeq ?? null,
+        updatedSeq: input.updatedSeq,
+      })
+      .onConflictDoUpdate({
+        target: [userHubAuthorizations.userId, userHubAuthorizations.hubNodeId],
+        set: {
+          status: input.status,
+          publicUrl: input.publicUrl ?? null,
+          priority: input.priority ?? null,
+          admitSeq: input.admitSeq,
+          retireSeq: input.retireSeq ?? null,
+          updatedSeq: input.updatedSeq,
+        },
+      })
+      .run();
+  }
+
+  deleteHubAuthorizationsByUser(userId: string): void {
+    this.db.delete(userHubAuthorizations).where(eq(userHubAuthorizations.userId, userId)).run();
   }
 
   deleteAllPeers(): void {
@@ -605,6 +691,21 @@ function toNodeCert(row: typeof nodeCerts.$inferSelect): NodeCertRecord {
     authorizationBytes: toBytes(row.authorizationBytes),
     authorizationSig: toBytes(row.authorizationSig),
     revokedLogSeq: row.revokedLogSeq,
+  };
+}
+
+function toHubAuthorization(
+  row: typeof userHubAuthorizations.$inferSelect
+): HubAuthorizationRecord {
+  return {
+    userId: row.userId,
+    hubNodeId: row.hubNodeId,
+    status: row.status === 'retired' ? 'retired' : 'active',
+    publicUrl: row.publicUrl,
+    priority: row.priority,
+    admitSeq: row.admitSeq,
+    retireSeq: row.retireSeq,
+    updatedSeq: row.updatedSeq,
   };
 }
 

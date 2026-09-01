@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildAdmitHubPayload,
   buildKeyLogRecord,
+  buildRetireHubPayload,
   bytesEqual,
   computeRecordHash,
   encodeAdmitNodePayload,
@@ -230,6 +232,53 @@ describe('UserKeyService', () => {
       expect(
         nodeSessionStore.verify(viaSession.sid, { viaNodeId: nodeHex, now: Date.now() })
       ).toEqual({ ok: false, reason: 'revoked' });
+    } finally {
+      close();
+    }
+  });
+
+  test('admit-hub persists projection; retire-hub marks retired; revoke-node retires hub', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, userStore } = createService(db);
+      const boot = await service.bootstrapUser({ username: 'hubs', password: 'pw' });
+      const identityStore = new NodeIdentityStore(db);
+      const identity = await ensureNodeIdentity(identityStore, { hubUrl: 'https://hub.test' });
+      const admit = await selfSignedNodeCertificate(identity, boot.rootKey, {
+        uid: boot.userId,
+        rootEpoch: boot.rootEpoch,
+        now: Date.now(),
+      });
+      const admitted = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'admit-node',
+        payload: encodeAdmitNodePayload(admit),
+      });
+      expect(admitted.ok).toBe(true);
+      const hub = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'admit-hub',
+        payload: buildAdmitHubPayload({
+          hubNodeId: identity.nodeId,
+          publicUrl: 'https://standby.example',
+          priority: 200,
+        }),
+      });
+      expect(hub.ok).toBe(true);
+      const row = userStore.getHubAuthorization(boot.userId, identity.nodeIdHex);
+      expect(row?.status).toBe('active');
+      expect(row?.publicUrl).toBe('https://standby.example');
+      expect(row?.priority).toBe(200);
+      expect(
+        service.currentState(boot.userId).hubAuthorizations.get(identity.nodeIdHex)?.status
+      ).toBe('active');
+
+      const retiredOk = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'retire-hub',
+        payload: buildRetireHubPayload({ hubNodeId: identity.nodeId }),
+      });
+      expect(retiredOk.ok).toBe(true);
+      expect(userStore.getHubAuthorization(boot.userId, identity.nodeIdHex)?.status).toBe(
+        'retired'
+      );
     } finally {
       close();
     }

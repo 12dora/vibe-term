@@ -5,6 +5,7 @@ import type {
   KeyLogEffect,
   KeyLogType,
   RootKey,
+  StoredHubAuthorization,
   StoredNodeCert,
   UserKeyState,
   VerifyKeyLogError,
@@ -129,6 +130,7 @@ export type UserKeyServiceDeps = {
   keyLogStore: KeyLogStore;
   nodeSessionStore: NodeSessionStore;
   verifyPasskeyAssertion?: VerifyPasskeyAssertion;
+  onApplied?: (userId: string, step: AppliedKeyLogStep) => void;
 };
 
 const ZERO_HASH = new Uint8Array(32);
@@ -167,6 +169,7 @@ export class UserKeyService {
   private readonly keyLogStore: KeyLogStore;
   private readonly nodeSessionStore: NodeSessionStore;
   private readonly verifyPasskeyAssertion?: VerifyPasskeyAssertion;
+  onApplied?: (userId: string, step: AppliedKeyLogStep) => void;
 
   constructor(deps: UserKeyServiceDeps) {
     this.db = deps.db;
@@ -174,6 +177,7 @@ export class UserKeyService {
     this.keyLogStore = deps.keyLogStore;
     this.nodeSessionStore = deps.nodeSessionStore;
     this.verifyPasskeyAssertion = deps.verifyPasskeyAssertion;
+    this.onApplied = deps.onApplied;
   }
 
   currentState(userId: string): UserKeyState {
@@ -208,6 +212,15 @@ export class UserKeyService {
         }
       }
     }
+    const hubAuthorizations = new Map<string, StoredHubAuthorization>();
+    for (const row of this.userStore.listHubAuthorizationsByUser(userId)) {
+      hubAuthorizations.set(row.hubNodeId, {
+        status: row.status,
+        publicUrl: row.publicUrl,
+        priority: row.priority,
+        seq: BigInt(row.updatedSeq),
+      });
+    }
     const nodeCerts = new Map<string, StoredNodeCert>();
     for (const cert of this.userStore.listCertsByUser(userId)) {
       let nodeId: Uint8Array;
@@ -232,6 +245,7 @@ export class UserKeyService {
       passkeys,
       totp,
       nodeCerts,
+      hubAuthorizations,
       head: { seq: BigInt(user.keyLogHeadSeq), hash: user.keyLogHeadHash },
     };
   }
@@ -287,6 +301,7 @@ export class UserKeyService {
       }
       throw err;
     }
+    this.onApplied?.(userId, step);
     return {
       ok: true,
       seq: Number(step.record.seq),
@@ -328,6 +343,7 @@ export class UserKeyService {
     if (!last) {
       return { ok: true, applied: 0, seq: Number(casHead.seq), hash: casHead.hash };
     }
+    for (const step of steps) this.onApplied?.(userId, step);
     return {
       ok: true,
       applied: steps.length,

@@ -545,7 +545,7 @@ export const userKeyLog = sqliteTable(
     uniqueIndex('user_key_log_user_id_seq_unique').on(table.userId, table.seq),
     check(
       'user_key_log_type_check',
-      sql`${table.type} in ('add-passkey', 'remove-passkey', 'rotate-root', 'set-totp', 'clear-totp', 'admit-node', 'revoke-node', 'reset-root')`
+      sql`${table.type} in ('add-passkey', 'remove-passkey', 'rotate-root', 'set-totp', 'clear-totp', 'admit-node', 'revoke-node', 'reset-root', 'admit-hub', 'retire-hub')`
     ),
   ]
 );
@@ -727,6 +727,30 @@ export const meshHubs = sqliteTable('mesh_hubs', {
   lastSeenAt: integer('last_seen_at'),
   updatedAt: integer('updated_at').notNull(),
 });
+
+export const userHubAuthorizations = sqliteTable(
+  'user_hub_authorizations',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    hubNodeId: text('hub_node_id').notNull(),
+    status: text('status').$type<'active' | 'retired'>().notNull(),
+    publicUrl: text('public_url'),
+    priority: integer('priority'),
+    admitSeq: integer('admit_seq').notNull(),
+    retireSeq: integer('retire_seq'),
+    updatedSeq: integer('updated_seq').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.hubNodeId] }),
+    uniqueIndex('user_hub_authorizations_user_id_hub_node_id_unique').on(
+      table.userId,
+      table.hubNodeId
+    ),
+    check('user_hub_authorizations_status_check', sql`${table.status} in ('active', 'retired')`),
+  ]
+);
 
 export const tunnelConfig = sqliteTable(
   'tunnel_config',

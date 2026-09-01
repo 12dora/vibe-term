@@ -1,10 +1,12 @@
 import type { KeyLogHead, KeyLogType } from '@tmex/shared/auth';
 import {
   decodeAddPasskeyPayload,
+  decodeAdmitHubPayload,
   decodeAdmitNodePayload,
   decodeClearTotpPayload,
   decodeRemovePasskeyPayload,
   decodeResetRootPayload,
+  decodeRetireHubPayload,
   decodeRevokeNodePayload,
   decodeRotateRootPayload,
   decodeSetTotpPayload,
@@ -121,6 +123,10 @@ function decodePayload(type: string, payload: Uint8Array): unknown {
       return decodeAdmitNodePayload(payload);
     case 'revoke-node':
       return decodeRevokeNodePayload(payload);
+    case 'admit-hub':
+      return decodeAdmitHubPayload(payload);
+    case 'retire-hub':
+      return decodeRetireHubPayload(payload);
     default:
       return {};
   }

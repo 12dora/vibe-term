@@ -236,6 +236,7 @@ export class HubRuntime {
         hubNodeId: ownId,
         record: this.uplink.ownHubSnapshot(),
         authorizedHubIds: this.config.authorizedHubIds,
+        isAuthorizedHub: (id) => this.uplink.isAuthorizedHub(id),
       },
       this.now()
     );

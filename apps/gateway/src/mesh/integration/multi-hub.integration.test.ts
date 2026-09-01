@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import {
+  KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
+  MIN_HUB_AUTH_RECORD_VERSION,
+  buildAdmitHubPayload,
+  buildRetireHubPayload,
   encodeBase64url,
   encodeClearTotpPayload,
   encodeRevokeNodePayload,
+  hexToBytes,
 } from '@tmex/shared/auth';
 import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
 import { signUserRecord } from '../../hub/hub-test-helpers';
@@ -33,6 +38,7 @@ import {
   reconstructHubRuntime,
   selfCookie,
   sidFromResponse,
+  stampNodeVersions,
   waitUntil,
 } from './multi-hub-harness';
 
@@ -640,6 +646,134 @@ describe('multi-hub in-process integration', () => {
     });
     expect(ok.status).toBe(200);
     expect(c.mesh.userKeyService.currentState(user.userId).head.seq).toBeGreaterThan(before);
+  });
+
+  test('admit-hub record lists standby without env; retire drops it and fences self', async () => {
+    const router = new HubRouter();
+    const bPending = await createPendingNode();
+    const aBoot = await bootHubA(router);
+    fixtures.push({
+      stop: async () => {
+        aBoot.node.unsubscribe?.();
+        await aBoot.node.mesh.stop();
+        await aBoot.node.mesh.hub?.stop();
+        aBoot.node.close();
+      },
+    });
+    const parent = {
+      mesh: aBoot.node.mesh,
+      boot: aBoot.boot,
+      keys: aBoot.keys,
+      keyLog: aBoot.keyLog,
+    };
+    const b = await enrollAndStart(parent, {
+      name: 'node-b',
+      version: '1.1.13',
+      roles: { hub: true, node: true },
+      hubUrl: HUB_A_URL,
+      hubPublicUrl: HUB_B_URL,
+      hubMode: 'standby',
+      hubPriority: 200,
+      hubWriterEpoch: 1,
+      hubPeers: [aBoot.node.mesh.nodeId],
+      wsFactory: router.factory,
+      pending: bPending,
+      label: 'b',
+    });
+    fixtures.push({
+      stop: async () => {
+        b.unsubscribe?.();
+        await b.mesh.stop();
+        await b.mesh.hub?.stop();
+        b.close();
+      },
+    });
+    stampNodeVersions(aBoot.node.db, '1.1.13');
+    expect(meshHubsOf(aBoot.node.db).get(b.mesh.nodeId)).toBeNull();
+
+    const keys = aBoot.node.mesh.userKeyService;
+    const admitted = await keys.signAndApply(aBoot.boot.userId, aBoot.boot.rootKey, {
+      type: 'admit-hub',
+      payload: buildAdmitHubPayload({
+        hubNodeId: hexToBytes(b.mesh.nodeId),
+        publicUrl: HUB_B_URL,
+        priority: 200,
+      }),
+    });
+    expect(admitted.ok).toBe(true);
+    const listed = meshHubsOf(aBoot.node.db).get(b.mesh.nodeId);
+    expect(listed?.publicUrl).toBe(HUB_B_URL);
+    const sid = await loginSelf(aBoot.node.mesh, aBoot.boot);
+    const hubs = await getMeshHubs(aBoot.node.mesh, selfCookie(sid));
+    expect(hubs.hubs.find((row) => row.nodeId === b.mesh.nodeId)?.authorization).toBe('signed');
+
+    const retired = await keys.signAndApply(aBoot.boot.userId, aBoot.boot.rootKey, {
+      type: 'retire-hub',
+      payload: buildRetireHubPayload({ hubNodeId: hexToBytes(b.mesh.nodeId) }),
+    });
+    expect(retired.ok).toBe(true);
+    expect(meshHubsOf(aBoot.node.db).get(b.mesh.nodeId)).toBeNull();
+
+    const selfAdmit = await keys.signAndApply(aBoot.boot.userId, aBoot.boot.rootKey, {
+      type: 'admit-hub',
+      payload: buildAdmitHubPayload({
+        hubNodeId: hexToBytes(aBoot.node.mesh.nodeId),
+        publicUrl: HUB_A_URL,
+      }),
+    });
+    expect(selfAdmit.ok).toBe(true);
+    const selfRetire = await keys.signAndApply(aBoot.boot.userId, aBoot.boot.rootKey, {
+      type: 'retire-hub',
+      payload: buildRetireHubPayload({ hubNodeId: hexToBytes(aBoot.node.mesh.nodeId) }),
+    });
+    expect(selfRetire.ok).toBe(true);
+    expect(aBoot.node.mesh.hub?.mode()).toBe('standby');
+  });
+
+  test('writer refuses admit-hub while an old-version node is present', async () => {
+    const { a, c, boot: user } = await boot();
+    stampNodeVersions(a.db, '1.1.13', new Set([c.mesh.nodeId]));
+    const rec = signUserRecord(
+      a.mesh.userKeyService,
+      user.userId,
+      user.rootKey,
+      'admit-hub',
+      buildAdmitHubPayload({
+        hubNodeId: hexToBytes(c.mesh.nodeId),
+        publicUrl: 'https://c.example',
+      })
+    );
+    const sid = await loginSelf(a.mesh, user);
+    const cookie = selfCookie(sid);
+    const refused = await callMesh(a.mesh, 'http://entry/api/auth/keylog', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cookie,
+      body: JSON.stringify({
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+      }),
+    });
+    expect(refused.status).toBe(409);
+    const body = (await refused.json()) as {
+      code: string;
+      minVersion: string;
+      nodes: Array<{ id: string; version: string | null }>;
+    };
+    expect(body.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+    expect(body.minVersion).toBe(MIN_HUB_AUTH_RECORD_VERSION);
+    expect(body.nodes.some((n) => n.id === c.mesh.nodeId)).toBe(true);
+
+    const forced = await callMesh(a.mesh, 'http://entry/api/auth/keylog', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-Tmex-Force-Keylog': '1' },
+      cookie,
+      body: JSON.stringify({
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+      }),
+    });
+    expect(forced.status).toBe(200);
   });
 });
 
