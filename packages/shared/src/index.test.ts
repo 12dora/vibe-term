@@ -33,6 +33,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'TERMINAL_SHORTCUT_ACTIONS',
   'TERMINAL_THEME_DARK',
   'TERMINAL_THEME_LIGHT',
+  'UPGRADE_CANCELLED',
   'b',
   'basename',
   'collectLayoutLeaves',
