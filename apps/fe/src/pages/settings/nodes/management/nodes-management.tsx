@@ -91,7 +91,8 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   }, [hub, refreshHubs, refreshNodes]);
 
   // 升级状态机独立于 enrollment / rename / revoke：它走入口 → 目标的 peer link，hub 离线也能用。
-  const upgrade = useNodeUpgrade(refreshAll);
+  // 传 rows 是为了刷新后能按行回读升级状态——状态只活在 React 里，页面一刷新就得重新问一遍。
+  const upgrade = useNodeUpgrade(rows, refreshAll);
 
   const [enrollOpen, setEnrollOpen] = useState(false);
   // 监听回路、admit 流水线与过期清理都在宿主级单例引擎里：侧滑面板同时开着时也只有一份，
@@ -225,8 +226,8 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
 }
 
 /**
- * 「全部升级」：latest 未知、批量正在跑、已有行内升级在跑、没有可升级节点时禁用。
- * 顺序、并发与汇总提示都在 `useNodeUpgrade` 里，这里只负责按钮态与进度文案。
+ * 「全部升级」：latest 未知、正在回读升级状态、批量正在跑、已有行内升级在跑、
+ * 没有可升级节点时禁用。顺序、并发与汇总提示都在 `useNodeUpgrade` 里，这里只负责按钮态与进度文案。
  */
 export function UpgradeAllButton({
   rows,
@@ -242,8 +243,13 @@ export function UpgradeAllButton({
       type="button"
       size="sm"
       variant="outline"
-      disabled={!latestVersion || running || upgrade.anyRunning || count === 0}
-      title={upgradeAllHint(t, latestVersion, count, upgrade.anyRunning && !running)}
+      disabled={!latestVersion || running || upgrade.anyRunning || upgrade.restoring || count === 0}
+      title={upgradeAllHint(t, {
+        latestVersion,
+        count,
+        restoring: upgrade.restoring,
+        rowBusy: upgrade.anyRunning && !running,
+      })}
       onClick={() => upgrade.startAll(rows)}
       data-testid="nodes-upgrade-all"
     >
@@ -261,12 +267,11 @@ export function UpgradeAllButton({
 
 function upgradeAllHint(
   t: (key: string, options?: Record<string, unknown>) => string,
-  latestVersion: string | null,
-  count: number,
-  rowBusy: boolean
+  state: { latestVersion: string | null; count: number; restoring: boolean; rowBusy: boolean }
 ): string {
-  if (rowBusy) return t('nodes.upgrade.allBusy');
-  if (!latestVersion) return t('nodes.upgrade.releaseUnavailable');
-  if (count === 0) return t('nodes.upgrade.allNone');
-  return t('nodes.upgrade.allHint', { count, version: latestVersion });
+  if (state.restoring) return t('nodes.upgrade.restoring');
+  if (state.rowBusy) return t('nodes.upgrade.allBusy');
+  if (!state.latestVersion) return t('nodes.upgrade.releaseUnavailable');
+  if (state.count === 0) return t('nodes.upgrade.allNone');
+  return t('nodes.upgrade.allHint', { count: state.count, version: state.latestVersion });
 }

@@ -2055,7 +2055,15 @@
         "confirmAll": "升级 {{count}} 个节点到 {{version}}？节点会依次重启，其上的会话随之中断。",
         "allDone": "全部升级完成：成功 {{success}}，失败 {{failed}}。",
         "allDoneWithFailures": "全部升级完成：成功 {{success}}，失败 {{failed}}。失败：{{names}}。",
-        "listSeparator": "、"
+        "allDoneWithCancelled": "全部升级完成：成功 {{success}}，失败 {{failed}}，已取消 {{cancelled}}。",
+        "listSeparator": "、",
+        "cancel": "停止升级",
+        "cancelled": "已取消「{{name}}」的升级。",
+        "cancelNotAllowed": "正在安装，无法中断。",
+        "cancelUnsupported": "该节点版本不支持中断升级。",
+        "cancelNotRunning": "该节点没有正在进行的升级。",
+        "cancelFailed": "停止升级失败：{{error}}",
+        "restoring": "正在同步升级状态…"
       },
       "badge": {
         "direct": "直连",

@@ -7,7 +7,7 @@ import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
-import { Download, Loader2, Pencil, ShieldAlert } from 'lucide-react';
+import { Download, Loader2, Pencil, ShieldAlert, Square } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { hubDetailText, hubModeLabel } from './hub-strip';
 import type { NodeActionDeps } from './types';
@@ -143,6 +143,7 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
             {t('nodes.actions.revoke')}
           </Button>
           <UpgradeButton row={row} upgrade={deps.upgrade} />
+          <UpgradeCancelButton row={row} upgrade={deps.upgrade} />
         </div>
       </Td>
     </tr>
@@ -175,6 +176,36 @@ function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps
     >
       {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Download />}
       {phaseText ?? t('nodes.upgrade.action')}
+    </Button>
+  );
+}
+
+/**
+ * 「停止升级」：只在这一行有升级在跑时出现。下载阶段（含刚发出请求的 `pending`）可以打断；
+ * 进到安装 / 重启就只剩一个禁用的按钮说明原因——半路掐掉安装会留下一台装坏的机器。
+ */
+function UpgradeCancelButton({
+  row,
+  upgrade,
+}: { row: NodeRow; upgrade: NodeActionDeps['upgrade'] }) {
+  const { t } = useTranslation();
+  const { phase } = upgrade.entryOf(row.id);
+  if (!isUpgradeBusy(phase)) return null;
+  const interruptible = phase === 'pending' || phase === 'downloading';
+  const title = t(interruptible ? 'nodes.upgrade.cancel' : 'nodes.upgrade.cancelNotAllowed');
+
+  return (
+    <Button
+      type="button"
+      size="icon-xs"
+      variant="outline"
+      disabled={!interruptible}
+      title={title}
+      aria-label={title}
+      onClick={() => upgrade.cancel(row)}
+      data-testid={`node-upgrade-cancel-${row.id}`}
+    >
+      <Square />
     </Button>
   );
 }

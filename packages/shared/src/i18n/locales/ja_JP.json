@@ -2055,7 +2055,15 @@
         "confirmAll": "{{count}} 個のノードを {{version}} にアップグレードしますか？ノードが順に再起動し、セッションは切断されます。",
         "allDone": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。",
         "allDoneWithFailures": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。失敗：{{names}}。",
-        "listSeparator": "、"
+        "allDoneWithCancelled": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}、中止 {{cancelled}}。",
+        "listSeparator": "、",
+        "cancel": "アップグレードを中止",
+        "cancelled": "「{{name}}」のアップグレードを中止しました。",
+        "cancelNotAllowed": "適用中のため中断できません。",
+        "cancelUnsupported": "このノードのバージョンはアップグレードの中断に対応していません。",
+        "cancelNotRunning": "このノードで実行中のアップグレードはありません。",
+        "cancelFailed": "アップグレードを中止できませんでした：{{error}}",
+        "restoring": "アップグレード状態を同期中…"
       },
       "badge": {
         "direct": "ダイレクト",

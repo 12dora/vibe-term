@@ -78,11 +78,15 @@ export interface NodeUpgradeController {
   start: (row: NodeRow) => void;
   /** 批量升级：内部按「普通节点 → 远端 hub → 本机」排序，逐组推进。 */
   startAll: (rows: NodeRow[]) => void;
+  /** 中断这一行正在进行的升级；只有下载阶段能真正打断，安装阶段由后端拒绝。 */
+  cancel: (row: NodeRow) => void;
   batch: NodeUpgradeBatchState;
   /** 当前 latest 下可批量升级的节点数；latest 未知时为 0。 */
   eligibleCount: (rows: NodeRow[]) => number;
   /** 有任何节点的升级在跑（行内或批量）：工具栏据此变灰，与 `startAll` 的同步互斥判定一致。 */
   anyRunning: boolean;
+  /** 刷新后正在向各节点回读升级状态：此时还不知道谁在升级，批量入口先锁住。 */
+  restoring: boolean;
 }
 
 export const IDLE_UPGRADE_BATCH: NodeUpgradeBatchState = {

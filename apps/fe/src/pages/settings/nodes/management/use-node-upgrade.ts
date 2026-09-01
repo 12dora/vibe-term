@@ -9,7 +9,11 @@
 // POST 一律不重试：目标可能已经开始升级却来不及回包，重发会撞上 `UPGRADE_IN_PROGRESS`。
 // 同理，POST 的网络异常与 `NODE_UNREACHABLE` 都不是失败结论，只说明「结果未知」，要走轮询确认。
 //
-// 所有等待与请求都挂在同一个 `AbortSignal` 上：组件卸载即取消，取消后不再 toast / 刷新 / 轮询。
+// 状态只活在 React 里，刷新页面就没了，而升级还在目标机上跑：因此挂载时要按行回读
+// `GET /api/mesh/nodes/:id/upgrade`，非 idle 的行直接接上轮询（`resumeNodeUpgrade`）。
+//
+// 每一行一把 `AbortController`（`createNodeAbortRegistry`）：按「停止升级」只掐这一行的轮询，
+// 不波及同批的其他节点；组件卸载时一把全停，之后不再 toast / 刷新 / 轮询。
 
 import { type NodeRow, getMeshNodesState, refreshMeshNodes } from '@/node/mesh-nodes';
 import { defaultApiClient } from '@tmex/api-client';
@@ -41,6 +45,11 @@ const POLL_MS = 2000;
 const BUDGET_MS = 6 * 60_000;
 /** POST 之后目标迟迟不进入非 idle：判定没真正开始，不要空等满预算。 */
 const START_GRACE_MS = 30_000;
+/** 刷新后回读各节点升级状态的并发上限。 */
+export const RESTORE_CONCURRENCY = 3;
+
+/** 后端取消升级后留在 idle 状态上的标记；FE 必须按「已取消」而不是失败处理。 */
+export const UPGRADE_CANCELLED_ERROR = 'UPGRADE_CANCELLED';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -128,10 +137,17 @@ export type UpgradePollOutcome =
   | { kind: 'failed'; code: string }
   | { kind: 'cancelled' };
 
+/** `DELETE /api/mesh/nodes/:id/upgrade` 的两种结论；`httpStatus` 只用于诊断，判定一律看 `code`。 */
+export type UpgradeCancelOutcome =
+  | { kind: 'cancelled'; status: UpgradeStatus }
+  | { kind: 'failed'; code: string; httpStatus: number };
+
 /** 状态机与真实请求之间的接缝：单测注入假实现，不碰网络与计时器。 */
 export interface UpgradeIo {
   start(nodeId: string, signal: AbortSignal): Promise<UpgradeStartOutcome>;
+  /** 轮询与刷新后的状态回读共用同一个 GET。 */
   poll(nodeId: string, signal: AbortSignal): Promise<UpgradePollOutcome>;
+  cancel(nodeId: string, signal: AbortSignal): Promise<UpgradeCancelOutcome>;
   /** 刷新节点列表后回读目标版本；节点已不在列表返回 `undefined`。 */
   nodeVersion(nodeId: string): Promise<string | null | undefined>;
   wait(ms: number, signal: AbortSignal): Promise<boolean>;
@@ -192,6 +208,38 @@ async function requestUpgradeStatus(
   return { kind: 'failed', code };
 }
 
+async function requestUpgradeCancel(
+  nodeId: string,
+  signal: AbortSignal
+): Promise<UpgradeCancelOutcome> {
+  let res: Response;
+  try {
+    res = await defaultApiClient.fetch(`/api/mesh/nodes/${nodeId}/upgrade`, {
+      method: 'DELETE',
+      signal,
+    });
+  } catch {
+    return { kind: 'failed', code: 'NODE_UNREACHABLE', httpStatus: 0 };
+  }
+  if (res.ok) {
+    try {
+      return { kind: 'cancelled', status: (await res.json()) as UpgradeStatus };
+    } catch {
+      // 回包读不出来不影响结论：200 就是已取消。
+      return {
+        kind: 'cancelled',
+        status: {
+          state: 'idle',
+          targetVersion: null,
+          error: UPGRADE_CANCELLED_ERROR,
+          startedAt: null,
+        },
+      };
+    }
+  }
+  return { kind: 'failed', code: await readCode(res), httpStatus: res.status };
+}
+
 async function readNodeVersion(nodeId: string): Promise<string | null | undefined> {
   await refreshMeshNodes();
   const node = getMeshNodesState().nodes.find((item) => item.id === nodeId);
@@ -201,6 +249,7 @@ async function readNodeVersion(nodeId: string): Promise<string | null | undefine
 export const defaultUpgradeIo: UpgradeIo = {
   start: requestUpgradeStart,
   poll: requestUpgradeStatus,
+  cancel: requestUpgradeCancel,
   nodeVersion: readNodeVersion,
   wait: waitFor,
   now: () => Date.now(),
@@ -219,10 +268,12 @@ export interface UpgradeWatchContext {
   phase: (phase: NodeUpgradePhase) => void;
 }
 
+/** `stopped`：目标已被中断（`error === 'UPGRADE_CANCELLED'`），是良性结论，不能报失败。 */
 export type UpgradeWatchResult =
   | { kind: 'done' }
   | { kind: 'failed'; error: string }
   | { kind: 'timeout' }
+  | { kind: 'stopped' }
   | { kind: 'cancelled' };
 
 /**
@@ -244,6 +295,7 @@ async function settleIdle(
   elapsed: number
 ): Promise<UpgradeWatchResult | null> {
   // 状态不跨进程持久化：重启回来后 error 一定是空的，所以 idle 上还挂着 error 就是下载阶段失败。
+  if (status.error === UPGRADE_CANCELLED_ERROR) return { kind: 'stopped' };
   if (status.error) return { kind: 'failed', error: status.error };
   if (!sawActive) {
     // POST 结果未知：目标可能已经升完重启回来，版本对上就是成功。
@@ -338,6 +390,13 @@ function reportResult(p: UpgradeRunParams, version: string | null, result: Upgra
     p.onChanged();
     return;
   }
+  if (result.kind === 'stopped') {
+    // 别处（本页的停止按钮、另一个标签页）已经把这次升级掐了：回到静止态，不留失败痕迹。
+    p.patch({ phase: 'idle', targetVersion: null, error: null });
+    p.toasts.info(p.t('nodes.upgrade.cancelled', { name: p.row.name }));
+    p.onChanged();
+    return;
+  }
   if (result.kind === 'failed') {
     p.patch({ phase: 'failed', error: result.error });
     p.toasts.error(p.t('nodes.upgrade.failed', { error: result.error }));
@@ -346,6 +405,10 @@ function reportResult(p: UpgradeRunParams, version: string | null, result: Upgra
   p.patch({ phase: 'failed', error: p.t('nodes.upgrade.timeout') });
   p.toasts.warning(p.t('nodes.upgrade.timeout'));
   p.onChanged();
+}
+
+function outcomeOf(result: UpgradeWatchResult): UpgradeRunOutcome {
+  return result.kind === 'stopped' ? 'cancelled' : result.kind;
 }
 
 /** 一次升级的完整流程：POST → 轮询 → 结论。取消（组件卸载）后一律静默返回。 */
@@ -370,7 +433,34 @@ export async function runNodeUpgrade(p: UpgradeRunParams): Promise<UpgradeRunOut
   });
   if (result.kind === 'cancelled' || p.signal.aborted) return 'cancelled';
   reportResult(p, version, result);
-  return result.kind;
+  return outcomeOf(result);
+}
+
+export interface UpgradeResumeParams extends UpgradeRunParams {
+  /** 刷新时回读到的非 idle 状态。 */
+  status: UpgradeStatus;
+}
+
+/**
+ * 刷新页面后接上一次已经在跑的升级：先把回读到的阶段写回表格，再按「已见过非 idle」继续盯。
+ * 不重发 POST——目标正在升级，再来一次只会撞上 `UPGRADE_IN_PROGRESS`。
+ */
+export async function resumeNodeUpgrade(p: UpgradeResumeParams): Promise<UpgradeRunOutcome> {
+  const version = p.status.targetVersion ?? p.targetVersion;
+  p.patch({ phase: p.status.state, targetVersion: version, error: null });
+  const result = await watchUpgrade({
+    nodeId: p.row.id,
+    targetVersion: version,
+    sawActive: true,
+    unconfirmedStart: false,
+    io: p.io,
+    signal: p.signal,
+    describeError: (code) => upgradeErrorText(p.t, code),
+    phase: (phase) => p.patch({ phase }),
+  });
+  if (result.kind === 'cancelled' || p.signal.aborted) return 'cancelled';
+  reportResult(p, version, result);
+  return outcomeOf(result);
 }
 
 /** 批量升级期间用它顶掉每节点 toast：进度仍然逐行落到表格上，只是不再刷屏。 */
@@ -389,12 +479,135 @@ export function reportBatchSummary(
 ): void {
   if (summary.cancelled) return;
   const counts = { success: summary.succeeded, failed: summary.failed };
+  if (summary.cancelledCount > 0) {
+    // 有人中途按了停止：三个数一起报，失败节点名让位给「已取消」这一档。
+    const text = t('nodes.upgrade.allDoneWithCancelled', {
+      ...counts,
+      cancelled: summary.cancelledCount,
+    });
+    if (summary.failed === 0) toasts.info(text);
+    else toasts.warning(text);
+    return;
+  }
   if (summary.failed === 0) {
     toasts.success(t('nodes.upgrade.allDone', counts));
     return;
   }
   const names = summary.failedNames.join(t('nodes.upgrade.listSeparator'));
   toasts.warning(t('nodes.upgrade.allDoneWithFailures', { ...counts, names }));
+}
+
+/** 刷新后需要回读升级状态的行：在线，且是本机或已登录（否则 GET 只会吃一条 401）。 */
+export function restorableRows(rows: NodeRow[]): NodeRow[] {
+  return rows.filter((row) => row.online && (row.isSelf || row.loggedIn));
+}
+
+export interface UpgradeRestoreParams {
+  rows: NodeRow[];
+  io: UpgradeIo;
+  signal: AbortSignal;
+  concurrency?: number;
+  /** 本会话已经有升级在跑的行：跳过，别把自己的状态机覆盖一遍。 */
+  skip: (nodeId: string) => boolean;
+  /** 目标仍在升级：由调用方写回表格并接上轮询。 */
+  onActive: (row: NodeRow, status: UpgradeStatus) => void;
+}
+
+/**
+ * 刷新后按行回读 `GET /api/mesh/nodes/:id/upgrade`，把还在跑的升级交回调用方接管。
+ * idle 的行一律不复活：`UPGRADE_CANCELLED` 是良性结论，旧的失败也没必要在刷新后再报一次。
+ */
+export async function restoreUpgradeStates(p: UpgradeRestoreParams): Promise<void> {
+  const queue = restorableRows(p.rows);
+  let next = 0;
+  const limit = Math.min(p.concurrency ?? RESTORE_CONCURRENCY, queue.length);
+  const worker = async () => {
+    while (!p.signal.aborted) {
+      const row = queue[next++];
+      if (!row) return;
+      if (p.skip(row.id)) continue;
+      const outcome = await p.io.poll(row.id, p.signal);
+      if (p.signal.aborted || outcome.kind !== 'status') continue;
+      if (outcome.status.state === 'idle') continue;
+      p.onActive(row, outcome.status);
+    }
+  };
+  await Promise.allSettled(Array.from({ length: limit }, worker));
+}
+
+/** 「停止升级」被后端拒绝时的三种良性结论：说清原因即可，轮询照常继续。 */
+const CANCEL_REJECT_KEYS: Record<string, string> = {
+  UPGRADE_NOT_CANCELLABLE: 'nodes.upgrade.cancelNotAllowed',
+  UPGRADE_CANCEL_UNSUPPORTED: 'nodes.upgrade.cancelUnsupported',
+};
+
+export interface UpgradeCancelParams {
+  row: Pick<NodeRow, 'id' | 'name'>;
+  io: UpgradeIo;
+  signal: AbortSignal;
+  t: Translate;
+  toasts: UpgradeToasts;
+  patch: (entry: Partial<NodeUpgradeEntry>) => void;
+  /** 取消成功后立刻掐掉这一行的轮询，免得它把「回到 idle」再判一次。 */
+  stopWatch: () => void;
+  onChanged: () => void;
+}
+
+/** `DELETE /api/mesh/nodes/:id/upgrade`：成功即回到静止态，被拒绝时只说明原因、不动状态。 */
+export async function cancelNodeUpgrade(p: UpgradeCancelParams): Promise<'cancelled' | 'rejected'> {
+  const outcome = await p.io.cancel(p.row.id, p.signal);
+  if (p.signal.aborted) return 'rejected';
+  if (outcome.kind === 'cancelled') {
+    p.stopWatch();
+    p.patch({ phase: 'idle', targetVersion: null, error: null });
+    p.toasts.info(p.t('nodes.upgrade.cancelled', { name: p.row.name }));
+    p.onChanged();
+    return 'cancelled';
+  }
+  if (outcome.code === 'UPGRADE_NOT_RUNNING') {
+    p.toasts.info(p.t('nodes.upgrade.cancelNotRunning'));
+    return 'rejected';
+  }
+  const key = CANCEL_REJECT_KEYS[outcome.code];
+  if (key) p.toasts.warning(p.t(key));
+  else
+    p.toasts.error(
+      p.t('nodes.upgrade.cancelFailed', { error: upgradeErrorText(p.t, outcome.code) })
+    );
+  return 'rejected';
+}
+
+/** 每节点一把 `AbortController`：停一行不波及别的行，卸载时一把全停。 */
+export interface NodeAbortRegistry {
+  open(nodeId: string): AbortController;
+  stop(nodeId: string): void;
+  /** 归还自己那把；已经被下一次升级换掉时什么都不做。 */
+  release(nodeId: string, controller: AbortController): void;
+  stopAll(): void;
+}
+
+export function createNodeAbortRegistry(): NodeAbortRegistry {
+  const controllers = new Map<string, AbortController>();
+  return {
+    open(nodeId) {
+      const controller = new AbortController();
+      controllers.set(nodeId, controller);
+      return controller;
+    },
+    stop(nodeId) {
+      const controller = controllers.get(nodeId);
+      if (!controller) return;
+      controllers.delete(nodeId);
+      controller.abort();
+    },
+    release(nodeId, controller) {
+      if (controllers.get(nodeId) === controller) controllers.delete(nodeId);
+    },
+    stopAll() {
+      for (const controller of controllers.values()) controller.abort();
+      controllers.clear();
+    },
+  };
 }
 
 export interface UpgradeBatchLaunch {
@@ -482,6 +695,7 @@ export function isUpgradeBusy(phase: NodeUpgradePhase): boolean {
 }
 
 export function useNodeUpgrade(
+  rows: NodeRow[],
   onChanged: () => void,
   io: UpgradeIo = defaultUpgradeIo
 ): NodeUpgradeController {
@@ -491,15 +705,22 @@ export function useNodeUpgrade(
   const [batch, setBatch] = useState<NodeUpgradeBatchState>(IDLE_UPGRADE_BATCH);
   // ref 负责同一 tick 内的同步互斥判定，state 负责让工具栏按钮跟着变灰——两者必须一起改。
   const [runningCount, setRunningCount] = useState(0);
+  const [restoringCount, setRestoringCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const nodeAbortsRef = useRef<NodeAbortRegistry>(createNodeAbortRegistry());
   const runningRef = useRef<Set<string>>(new Set());
   const batchRunningRef = useRef(false);
+  /** 已经回读过状态的节点：列表每次刷新都会换引用，靠它保证只查新出现的行。 */
+  const restoredRef = useRef<Set<string>>(new Set());
+  const latestRef = useRef<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     abortRef.current = controller;
+    const nodeAborts = nodeAbortsRef.current;
     return () => {
       controller.abort();
+      nodeAborts.stopAll();
       if (abortRef.current === controller) abortRef.current = null;
     };
   }, []);
@@ -516,6 +737,10 @@ export function useNodeUpgrade(
     };
   }, []);
 
+  useEffect(() => {
+    latestRef.current = latest?.latestVersion ?? null;
+  }, [latest]);
+
   /** 组件已卸载就不再改状态：升级流程比页面活得久，patch 到死组件上只会报 warning。 */
   const alive = useCallback(() => abortRef.current?.signal.aborted === false, []);
 
@@ -530,34 +755,80 @@ export function useNodeUpgrade(
     [alive]
   );
 
-  const run = useCallback(
-    (row: NodeRow, targetVersion: string | null, signal: AbortSignal, toasts: UpgradeToasts) =>
-      runNodeUpgrade({
-        row,
-        targetVersion,
-        io,
-        signal,
-        t,
-        toasts,
-        patch: (entry) => patch(row.id, entry),
-        onChanged,
-      }),
-    [io, onChanged, patch, t]
-  );
-
-  /** 同一个节点只能有一次升级在跑：行内按钮与批量共用这把锁。 */
-  const runOnce = useCallback(
-    (row: NodeRow, version: string | null, signal: AbortSignal, toasts: UpgradeToasts) => {
+  /**
+   * 同一个节点只能有一次升级在跑：行内按钮、批量与刷新恢复共用这把锁，
+   * 并在这里给它领一把自己的 `AbortController`——「停止升级」只掐这一行。
+   */
+  const runExclusive = useCallback(
+    (row: NodeRow, runner: (signal: AbortSignal) => Promise<UpgradeRunOutcome>) => {
       if (runningRef.current.has(row.id)) return Promise.resolve<UpgradeRunOutcome>('cancelled');
+      const controller = nodeAbortsRef.current.open(row.id);
       runningRef.current.add(row.id);
       if (alive()) setRunningCount(runningRef.current.size);
-      return run(row, version, signal, toasts).finally(() => {
+      return runner(controller.signal).finally(() => {
         runningRef.current.delete(row.id);
+        nodeAbortsRef.current.release(row.id, controller);
         if (alive()) setRunningCount(runningRef.current.size);
       });
     },
-    [alive, run]
+    [alive]
   );
+
+  const runOnce = useCallback(
+    (row: NodeRow, version: string | null, toasts: UpgradeToasts) =>
+      runExclusive(row, (signal) =>
+        runNodeUpgrade({
+          row,
+          targetVersion: version,
+          io,
+          signal,
+          t,
+          toasts,
+          patch: (entry) => patch(row.id, entry),
+          onChanged,
+        })
+      ),
+    [io, onChanged, patch, runExclusive, t]
+  );
+
+  const resumeOnce = useCallback(
+    (row: NodeRow, status: UpgradeStatus) =>
+      runExclusive(row, (signal) =>
+        resumeNodeUpgrade({
+          row,
+          status,
+          targetVersion: latestRef.current,
+          io,
+          signal,
+          t,
+          toasts: toast,
+          patch: (entry) => patch(row.id, entry),
+          onChanged,
+        })
+      ),
+    [io, onChanged, patch, runExclusive, t]
+  );
+
+  // 刷新页面后升级还在目标机上跑：回读一遍状态，非 idle 的行直接接上轮询。
+  useEffect(() => {
+    const signal = abortRef.current?.signal;
+    if (!signal || signal.aborted) return;
+    const pending = restorableRows(rows).filter((row) => !restoredRef.current.has(row.id));
+    if (pending.length === 0) return;
+    for (const row of pending) restoredRef.current.add(row.id);
+    setRestoringCount((value) => value + 1);
+    void restoreUpgradeStates({
+      rows: pending,
+      io,
+      signal,
+      skip: (nodeId) => runningRef.current.has(nodeId),
+      onActive: (row, status) => {
+        void resumeOnce(row, status);
+      },
+    }).finally(() => {
+      if (alive()) setRestoringCount((value) => value - 1);
+    });
+  }, [alive, io, resumeOnce, rows]);
 
   const start = useCallback(
     (row: NodeRow) => {
@@ -570,10 +841,29 @@ export function useNodeUpgrade(
         nodeRunning: runningRef.current.has(row.id),
         t,
         confirm: (message) => globalThis.confirm?.(message) === true,
-        runOne: (target, version) => runOnce(target, version, signal, toast),
+        runOne: (target, version) => runOnce(target, version, toast),
       });
     },
     [latest, runOnce, t]
+  );
+
+  const cancel = useCallback(
+    (row: NodeRow) => {
+      const signal = abortRef.current?.signal;
+      if (!signal || signal.aborted) return;
+      void cancelNodeUpgrade({
+        row,
+        io,
+        // DELETE 走宿主级 signal：这一行的 controller 一取消成功就会被掐掉。
+        signal,
+        t,
+        toasts: toast,
+        patch: (entry) => patch(row.id, entry),
+        stopWatch: () => nodeAbortsRef.current.stop(row.id),
+        onChanged,
+      });
+    },
+    [io, onChanged, patch, t]
   );
 
   const startAll = useCallback(
@@ -588,7 +878,7 @@ export function useNodeUpgrade(
         t,
         toasts: toast,
         confirm: (message) => globalThis.confirm?.(message) === true,
-        runOne: (row, version, toasts) => runOnce(row, version, signal, toasts),
+        runOne: (row, version, toasts) => runOnce(row, version, toasts),
         onStart: (total) => {
           batchRunningRef.current = true;
           setBatch({ running: true, total, completed: 0 });
@@ -613,5 +903,15 @@ export function useNodeUpgrade(
     [latest]
   );
 
-  return { latest, entryOf, start, startAll, batch, eligibleCount, anyRunning: runningCount > 0 };
+  return {
+    latest,
+    entryOf,
+    start,
+    startAll,
+    cancel,
+    batch,
+    eligibleCount,
+    anyRunning: runningCount > 0,
+    restoring: restoringCount > 0,
+  };
 }

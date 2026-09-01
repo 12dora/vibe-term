@@ -2063,7 +2063,15 @@ export const I18N_RESOURCES = {
         "confirmAll_other": "Upgrade {{count}} nodes to {{version}}? The nodes restart one by one and their sessions drop.",
         "allDone": "All upgrades finished: {{success}} succeeded, {{failed}} failed.",
         "allDoneWithFailures": "All upgrades finished: {{success}} succeeded, {{failed}} failed. Failed: {{names}}.",
-        "listSeparator": ", "
+        "allDoneWithCancelled": "All upgrades finished: {{success}} succeeded, {{failed}} failed, {{cancelled}} cancelled.",
+        "listSeparator": ", ",
+        "cancel": "Stop Upgrade",
+        "cancelled": "Upgrade of “{{name}}” cancelled.",
+        "cancelNotAllowed": "Installing; it cannot be interrupted.",
+        "cancelUnsupported": "This node's version cannot interrupt an upgrade.",
+        "cancelNotRunning": "No upgrade is running on this node.",
+        "cancelFailed": "Could not stop the upgrade: {{error}}",
+        "restoring": "Syncing upgrade status…"
       },
       "badge": {
         "direct": "Direct",
@@ -4300,7 +4308,15 @@ export const I18N_RESOURCES = {
         "confirmAll": "升级 {{count}} 个节点到 {{version}}？节点会依次重启，其上的会话随之中断。",
         "allDone": "全部升级完成：成功 {{success}}，失败 {{failed}}。",
         "allDoneWithFailures": "全部升级完成：成功 {{success}}，失败 {{failed}}。失败：{{names}}。",
-        "listSeparator": "、"
+        "allDoneWithCancelled": "全部升级完成：成功 {{success}}，失败 {{failed}}，已取消 {{cancelled}}。",
+        "listSeparator": "、",
+        "cancel": "停止升级",
+        "cancelled": "已取消「{{name}}」的升级。",
+        "cancelNotAllowed": "正在安装，无法中断。",
+        "cancelUnsupported": "该节点版本不支持中断升级。",
+        "cancelNotRunning": "该节点没有正在进行的升级。",
+        "cancelFailed": "停止升级失败：{{error}}",
+        "restoring": "正在同步升级状态…"
       },
       "badge": {
         "direct": "直连",
@@ -6536,7 +6552,15 @@ export const I18N_RESOURCES = {
         "confirmAll": "{{count}} 個のノードを {{version}} にアップグレードしますか？ノードが順に再起動し、セッションは切断されます。",
         "allDone": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。",
         "allDoneWithFailures": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。失敗：{{names}}。",
-        "listSeparator": "、"
+        "allDoneWithCancelled": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}、中止 {{cancelled}}。",
+        "listSeparator": "、",
+        "cancel": "アップグレードを中止",
+        "cancelled": "「{{name}}」のアップグレードを中止しました。",
+        "cancelNotAllowed": "適用中のため中断できません。",
+        "cancelUnsupported": "このノードのバージョンはアップグレードの中断に対応していません。",
+        "cancelNotRunning": "このノードで実行中のアップグレードはありません。",
+        "cancelFailed": "アップグレードを中止できませんでした：{{error}}",
+        "restoring": "アップグレード状態を同期中…"
       },
       "badge": {
         "direct": "ダイレクト",

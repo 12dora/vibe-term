@@ -30,8 +30,14 @@ const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } 
 const { resolveHubPublicUrl } = await import('./enrollment-section');
 const { NodesTable } = await import('./nodes-table');
 const { IDLE_UPGRADE_ENTRY, IDLE_UPGRADE_BATCH } = await import('./types');
-const { classifyPollFailure, isUpgradeBusy, runNodeUpgrade, upgradeErrorText, upgradePhaseText } =
-  await import('./use-node-upgrade');
+const {
+  classifyPollFailure,
+  isUpgradeBusy,
+  resumeNodeUpgrade,
+  runNodeUpgrade,
+  upgradeErrorText,
+  upgradePhaseText,
+} = await import('./use-node-upgrade');
 const { rootKeyFromSeed } = await import('@tmex/shared/auth');
 
 const MODE: AuthModeResponse = {
@@ -400,13 +406,19 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       entryOf: () => IDLE_UPGRADE_ENTRY,
       start: () => undefined,
       startAll: () => undefined,
+      cancel: () => undefined,
       batch: IDLE_UPGRADE_BATCH,
       eligibleCount: () => 0,
       anyRunning: false,
+      restoring: false,
     };
   }
 
-  function renderTable(rows: NodeRow[], latestVersion: string | null): string {
+  function renderTable(
+    rows: NodeRow[],
+    latestVersion: string | null,
+    overrides: Partial<NodeUpgradeController> = {}
+  ): string {
     const deps: NodeActionDeps = {
       hubApi: null,
       hubOnline: true,
@@ -421,13 +433,17 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       api: {} as NodeActionDeps['api'],
       prompt: { dialog: null } as unknown as NodeActionDeps['prompt'],
       onChanged: () => undefined,
-      upgrade: controller(latestVersion),
+      upgrade: { ...controller(latestVersion), ...overrides },
     };
     return renderToStaticMarkup(
       <MemoryRouter>
         <NodesTable rows={rows} {...deps} />
       </MemoryRouter>
     );
+  }
+
+  function entryOf(phase: NodeUpgradeEntry['phase']): () => NodeUpgradeEntry {
+    return () => ({ phase, targetVersion: '1.2.0', error: null });
   }
 
   test('已是最新版本：按钮禁用并说明原因', () => {
@@ -462,31 +478,32 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
   });
 
   test('批量升级进行中：整列升级按钮锁住，避免同一节点被点两次', () => {
-    const deps: NodeActionDeps = {
-      hubApi: null,
-      hubOnline: true,
-      hubWritable: true,
-      writerPublicUrl: null,
-      hubDetails: new Map(),
-      mode: {
-        ...MODE,
-        uid: 'user-1',
-        kdfParams: MODE.kdfParams as NonNullable<typeof MODE.kdfParams>,
-      },
-      api: {} as NodeActionDeps['api'],
-      prompt: { dialog: null } as unknown as NodeActionDeps['prompt'],
-      onChanged: () => undefined,
-      upgrade: {
-        ...controller('1.2.0'),
-        batch: { running: true, total: 3, completed: 1 },
-      },
-    };
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <NodesTable rows={[nodeRow({ id: 'ee', version: '1.1.9' })]} {...deps} />
-      </MemoryRouter>
-    );
+    const html = renderTable([nodeRow({ id: 'ee', version: '1.1.9' })], '1.2.0', {
+      batch: { running: true, total: 3, completed: 1 },
+    });
     expect(buttonTag(html, 'node-upgrade-ee')).toContain('disabled=""');
+  });
+
+  test('静止的行没有「停止升级」按钮', () => {
+    for (const phase of ['idle', 'done', 'failed'] as const) {
+      const html = renderTable([nodeRow({ id: 'ff' })], '1.2.0', { entryOf: entryOf(phase) });
+      expect(html).not.toContain('data-testid="node-upgrade-cancel-ff"');
+    }
+  });
+
+  test('下载阶段可以停止；安装 / 重启阶段按钮在但禁用并说明原因', () => {
+    for (const phase of ['pending', 'downloading'] as const) {
+      const html = renderTable([nodeRow({ id: 'ff' })], '1.2.0', { entryOf: entryOf(phase) });
+      const tag = buttonTag(html, 'node-upgrade-cancel-ff');
+      expect(tag).not.toContain('disabled=""');
+      expect(tag).toContain('title="nodes.upgrade.cancel"');
+    }
+    for (const phase of ['executing', 'restarting'] as const) {
+      const html = renderTable([nodeRow({ id: 'ff' })], '1.2.0', { entryOf: entryOf(phase) });
+      const tag = buttonTag(html, 'node-upgrade-cancel-ff');
+      expect(tag).toContain('disabled=""');
+      expect(tag).toContain('title="nodes.upgrade.cancelNotAllowed"');
+    }
   });
 
   function renderUpgradeAll(upgrade: NodeUpgradeController, rows: NodeRow[] = []): string {
@@ -532,6 +549,17 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     const tag = buttonTag(renderUpgradeAll(controller('1.2.0')), 'nodes-upgrade-all');
     expect(tag).toContain('disabled=""');
     expect(tag).toContain('title="nodes.upgrade.allNone"');
+  });
+
+  test('刷新后正在同步升级状态：「全部升级」先变灰，别让用户点进半截状态', () => {
+    const html = renderUpgradeAll({
+      ...controller('1.2.0'),
+      eligibleCount: () => 2,
+      restoring: true,
+    });
+    const tag = buttonTag(html, 'nodes-upgrade-all');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.restoring"');
   });
 });
 
@@ -621,6 +649,7 @@ describe('节点升级状态机', () => {
     const pick = <T,>(list: T[], index: number): T => list[Math.min(index, list.length - 1)] as T;
     const io: UpgradeIo = {
       start: async () => opts.start,
+      cancel: async () => ({ kind: 'failed', code: 'UPGRADE_NOT_RUNNING', httpStatus: 409 }),
       poll: async () => {
         counts.polls += 1;
         opts.onPoll?.(counts.polls, controller);
@@ -807,6 +836,91 @@ describe('节点升级状态机', () => {
       onChanged: () => undefined,
     });
     expect(rec.log.at(-1)).toEqual(['success', 'nodes.upgrade.done']);
+  });
+
+  test('目标回到 idle 且带 UPGRADE_CANCELLED：按「已取消」收尾，绝不报失败', async () => {
+    const rec = recorder();
+    const patches: Array<Partial<NodeUpgradeEntry>> = [];
+    let changed = 0;
+    const fake = fakeIo({
+      start: { kind: 'started', status: idle({ state: 'downloading', targetVersion: '1.2.0' }) },
+      polls: [statusPoll(idle({ error: 'UPGRADE_CANCELLED' }))],
+    });
+    const outcome = await runNodeUpgrade({
+      row: ROW,
+      targetVersion: '1.2.0',
+      io: fake.io,
+      signal: fake.controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch: (entry) => patches.push(entry),
+      onChanged: () => {
+        changed += 1;
+      },
+    });
+    expect(outcome).toBe('cancelled');
+    expect(rec.log).toEqual([
+      ['success', 'nodes.upgrade.started'],
+      ['info', 'nodes.upgrade.cancelled'],
+    ]);
+    expect(patches.at(-1)).toEqual({ phase: 'idle', targetVersion: null, error: null });
+    expect(changed).toBe(1);
+  });
+
+  test('刷新后接上在跑的升级：状态先写回表格，再按「已见过非 idle」继续盯到成功', async () => {
+    const rec = recorder();
+    const patches: Array<Partial<NodeUpgradeEntry>> = [];
+    let changed = 0;
+    const fake = fakeIo({
+      start: { kind: 'cancelled' },
+      polls: [statusPoll(idle({ state: 'executing' })), statusPoll(idle())],
+      versions: ['1.2.0'],
+    });
+    const outcome = await resumeNodeUpgrade({
+      row: ROW,
+      status: idle({ state: 'downloading', targetVersion: '1.2.0' }),
+      targetVersion: null,
+      io: fake.io,
+      signal: fake.controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch: (entry) => patches.push(entry),
+      onChanged: () => {
+        changed += 1;
+      },
+    });
+    expect(outcome).toBe('done');
+    // 没有 POST：恢复不重发升级请求
+    expect(patches[0]).toEqual({ phase: 'downloading', targetVersion: '1.2.0', error: null });
+    expect(patches.map((entry) => entry.phase)).toEqual([
+      'downloading',
+      'executing',
+      'restarting',
+      'done',
+    ]);
+    expect(rec.log).toEqual([['success', 'nodes.upgrade.done']]);
+    expect(changed).toBe(1);
+  });
+
+  test('刷新后接上的升级同样吃「已取消」：一条 info，不报失败', async () => {
+    const rec = recorder();
+    const fake = fakeIo({
+      start: { kind: 'cancelled' },
+      polls: [statusPoll(idle({ error: 'UPGRADE_CANCELLED' }))],
+    });
+    const outcome = await resumeNodeUpgrade({
+      row: ROW,
+      status: idle({ state: 'downloading', targetVersion: '1.2.0' }),
+      targetVersion: null,
+      io: fake.io,
+      signal: fake.controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch: () => undefined,
+      onChanged: () => undefined,
+    });
+    expect(outcome).toBe('cancelled');
+    expect(rec.log).toEqual([['info', 'nodes.upgrade.cancelled']]);
   });
 
   test('POST 的确定性错误照旧立刻失败', async () => {
