@@ -15,8 +15,14 @@ import {
   type PendingOverflowInfo,
   PendingSendQueue,
 } from './pending-send-queue';
-import { type BorshMessage, type ChunkProgress, ProtocolDispatcher } from './protocol-dispatcher';
+import {
+  type BorshMessage,
+  type ChunkProgress,
+  type NegotiatedHello,
+  ProtocolDispatcher,
+} from './protocol-dispatcher';
 import { ReconnectController } from './reconnect-controller';
+import { serverSupportsTermViewport } from './server-features';
 
 // ========== 配置 ==========
 
@@ -166,6 +172,13 @@ export class BorshWebSocketClient {
   latencyMs: number | null = null;
   // 服务端 HELLO_S2C 协商的能力集（消费方按 featureset 判定；多实例宿主按连接读取）
   serverCapabilities: readonly string[] = [];
+  // 本连接协商到的服务端版本；未协商（含重连等待期）为 null，下一次 HELLO 重新推导
+  serverVersion: string | null = null;
+
+  /** 服务端是否认识 TERM_VIEWPORT（1.1.7 起）；未知版本按新版处理。 */
+  get supportsTermViewport(): boolean {
+    return serverSupportsTermViewport(this.serverVersion);
+  }
 
   constructor(options: Partial<BorshClientOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -177,7 +190,7 @@ export class BorshWebSocketClient {
     this.dispatcher = new ProtocolDispatcher({
       onMessage: (message) => this.dispatchMessage(message),
       onChunkProgress: (progress) => this.dispatchChunkProgress(progress),
-      onHello: (capabilities) => this.handleHelloNegotiated(capabilities),
+      onHello: (hello) => this.handleHelloNegotiated(hello),
       onHelloFailure: (error) => this.handleError(error),
       onPong: () => this.handlePong(),
     });
@@ -357,8 +370,9 @@ export class BorshWebSocketClient {
     }
   }
 
-  private handleHelloNegotiated(capabilities: readonly string[]): void {
-    this.serverCapabilities = capabilities;
+  private handleHelloNegotiated(hello: NegotiatedHello): void {
+    this.serverCapabilities = hello.capabilities;
+    this.serverVersion = hello.serverVersion;
 
     this.setState('READY');
     this.hasConnectedOnce = true;
@@ -383,6 +397,7 @@ export class BorshWebSocketClient {
   private handleClose(): void {
     this.heartbeat.stop();
     this.dispatcher.reset();
+    this.serverVersion = null;
     // primary 断开 = 会话整体结束，直连随之关闭（设计 §3 步骤 4）；
     // 重连后是全新会话，epoch 从 0 重来。
     this.barrier?.closeDirect();
@@ -414,6 +429,7 @@ export class BorshWebSocketClient {
   // ========== 发送消息 ==========
 
   private sendHello(): void {
+    this.serverVersion = null;
     const hello = {
       clientImpl: this.options.clientImpl,
       clientVersion: this.options.clientVersion,
@@ -439,6 +455,12 @@ export class BorshWebSocketClient {
    *   会丢掉**整段**已排队输入并在本未就绪周期内拒绝后续输入，避免只丢掉中间而发出残缺序列。
    */
   send(kind: number, payload: Uint8Array): ClientSendResult {
+    // 老网关不认识 TERM_VIEWPORT，发过去只会换回一条 ERROR_UNKNOWN_KIND；
+    // 版本未协商时先入队，就绪 flush 时再按当次 HELLO 判定一次。
+    if (kind === wsBorsh.KIND_TERM_VIEWPORT && !this.supportsTermViewport) {
+      return 'sent';
+    }
+
     if (!this.isReady()) {
       return this.enqueuePending(kind, payload);
     }

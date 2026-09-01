@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { ApiClient, clearResponseHooks } from '../client';
 import {
   type AuthRequiredDetail,
@@ -11,6 +11,8 @@ import {
 
 const NODE_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
 const NODE_C = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
+const NODE_D = '0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d';
+const HUB_NODE = 'ec42f364ec42f364ec42f364ec42f364';
 
 function setup() {
   const events: AuthRequiredDetail[] = [];
@@ -80,6 +82,60 @@ describe('session interceptor', () => {
     await flush();
 
     expect(events).toEqual([{ nodeId: NODE_B, scope: 'node', path: `/n/${NODE_B}/api/devices` }]);
+    expect(navigated).toEqual([]);
+  });
+
+  test('body 里的外来 nodeId（hub 自己）被忽略，事件记在路径上的 node', async () => {
+    const { events, navigated } = setup();
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const client = clientReturning(
+      () =>
+        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: HUB_NODE }), {
+          status: 401,
+        })
+    );
+    await client.fetch(`/n/${NODE_D}/api/rtc/authorize`);
+    await flush();
+
+    expect(events).toEqual([
+      { nodeId: NODE_D, scope: 'node', path: `/n/${NODE_D}/api/rtc/authorize` },
+    ]);
+    expect(navigated).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  test('node runtime 的 baseUrl 路径同样以路径 node 为准', async () => {
+    const { events } = setup();
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const client = clientReturning(
+      () =>
+        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: HUB_NODE }), {
+          status: 401,
+        }),
+      `/n/${NODE_C}`
+    );
+    await client.fetch('/api/rtc/authorize');
+    await flush();
+
+    expect(events).toEqual([
+      { nodeId: NODE_C, scope: 'node', path: `/n/${NODE_C}/api/rtc/authorize` },
+    ]);
+    warn.mockRestore();
+  });
+
+  test('非 node 路径的 NODE_LOGIN_REQUIRED 仍按 body 的 nodeId 归属', async () => {
+    const { events, navigated } = setup();
+    const client = clientReturning(
+      () =>
+        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: NODE_B }), {
+          status: 401,
+        })
+    );
+    await client.fetch('/api/system/upgrade/nodes');
+    await flush();
+
+    expect(events).toEqual([{ nodeId: NODE_B, scope: 'node', path: '/api/system/upgrade/nodes' }]);
     expect(navigated).toEqual([]);
   });
 

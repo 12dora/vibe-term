@@ -24,6 +24,11 @@ export {
 } from './client';
 
 export {
+  TERM_VIEWPORT_MIN_SERVER_VERSION,
+  serverSupportsTermViewport,
+} from './server-features';
+
+export {
   createGatewayConnection,
   type GatewayConnection,
   type GatewayConnectionOptions,
