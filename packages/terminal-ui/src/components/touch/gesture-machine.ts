@@ -98,10 +98,25 @@ export class MobileTouchGestureMachine {
     return findTouchById(touches, this.touchId) ?? touches.item(0);
   }
 
-  // 上报模式（alt-screen TUI）下本地滚动条无意义，右缘 36px 热区会变成 TUI 死区：
-  // 仅在直接命中滚动条元素时才 bypass
-  private bypasses(clientX: number, clientY: number, eventTarget: EventTarget | null): boolean {
+  // 平移视口是否正在生效：follower 开了 viewportPan，且内容表面至少有一轴超尺寸。
+  private panViewportActive(): boolean {
     if (this.reporting) {
+      return false;
+    }
+    const terminal = this.resolveTerminal();
+    if (!terminal || typeof terminal.panBy !== 'function') {
+      return false;
+    }
+    const metrics = terminal.panMetrics?.() ?? null;
+    return Boolean(metrics && (metrics.overflowX > 0 || metrics.overflowY > 0));
+  }
+
+  // 两种情况下右缘 36px 热区必须让位给自定义手势，仅在直接命中滚动条元素时才 bypass：
+  // - 上报模式（alt-screen TUI）：本地滚动条无意义，热区会变成 TUI 死区；
+  // - 平移视口生效时：视口上挂了 touch-action:none，交还原生等于一条既不平移也不
+  //   滚动的死带。
+  private bypasses(clientX: number, clientY: number, eventTarget: EventTarget | null): boolean {
+    if (this.reporting || this.panViewportActive()) {
       return hitsScrollbarElement(clientX, clientY, eventTarget, this.elementFromPoint);
     }
     return shouldBypassCustomScroll(

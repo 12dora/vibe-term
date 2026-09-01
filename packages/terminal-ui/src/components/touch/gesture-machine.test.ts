@@ -4,16 +4,38 @@ import { LONG_PRESS_SELECT_MS } from './touch-geometry';
 import type { TerminalScroller } from './types';
 
 // bun 没有 DOM 全局：scroll-bypass 里的 `instanceof Element/HTMLElement` 需要可解析的构造器。
+interface FakeRect {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
 class FakeElement {
-  constructor(private readonly selectors: string[] = []) {}
+  constructor(
+    private readonly selectors: string[] = [],
+    private readonly children: Record<string, FakeElement> = {},
+    private readonly rect: FakeRect = { left: 0, right: 0, top: 0, bottom: 0 }
+  ) {}
 
   closest(selector: string): FakeElement | null {
     return this.selectors.includes(selector) ? this : null;
   }
 
-  querySelector(_selector: string): FakeElement | null {
-    return null;
+  querySelector(selector: string): FakeElement | null {
+    return this.children[selector] ?? null;
   }
+
+  getBoundingClientRect(): FakeRect {
+    return this.rect;
+  }
+}
+
+// 右缘 36px 热区的容器：.xterm 占 0..200 × 0..400，x ≥ 164 落在热区内。
+function hotzoneContainer(): FakeElement {
+  return new FakeElement([], {
+    '.xterm': new FakeElement([], {}, { left: 0, right: 200, top: 0, bottom: 400 }),
+  });
 }
 
 const domGlobals = globalThis as unknown as { Element?: unknown; HTMLElement?: unknown };
@@ -48,14 +70,18 @@ function touch(identifier: number, clientX: number, clientY: number): FakeTouch 
   return { identifier, clientX, clientY };
 }
 
-function touchEvent(touches: FakeTouch[], changedTouches: FakeTouch[] = touches) {
+function touchEvent(
+  touches: FakeTouch[],
+  changedTouches: FakeTouch[] = touches,
+  target: unknown = null
+) {
   const event = {
     touches: { length: touches.length, item: (i: number) => touches[i] ?? null },
     changedTouches: {
       length: changedTouches.length,
       item: (i: number) => changedTouches[i] ?? null,
     },
-    target: null,
+    target,
     cancelable: true,
     defaultPrevented: false,
     preventDefault() {
@@ -88,6 +114,7 @@ function createHarness(options: {
   pressSucceeds?: boolean;
   /** 省略 = 未开启平移视口（Terminal 的 viewportPan 为 false），终端不暴露 panMetrics/panBy */
   pan?: Partial<PanState>;
+  container?: FakeElement;
 }): Harness {
   const calls: string[] = [];
   let reporting = options.reporting;
@@ -139,7 +166,7 @@ function createHarness(options: {
   }
 
   const machine = new MobileTouchGestureMachine({
-    container: new FakeElement() as unknown as Element,
+    container: (options.container ?? new FakeElement()) as unknown as Element,
     resolveTerminal: () => terminal,
     elementFromPoint: () => null,
   });
@@ -553,5 +580,59 @@ describe('平移视口手势', () => {
     machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 160)])));
 
     expect(calls).toEqual(['panBy(0,40)']);
+  });
+
+  // 平移视口上挂了 touch-action:none，右缘热区若还交还原生就是一条死带。
+  test('平移生效时右缘热区起手仍然平移，不交还原生', () => {
+    const { machine, calls, pan } = createHarness({
+      reporting: false,
+      pan: { overflowX: 200, overflowY: 100 },
+      container: hotzoneContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 190, 200)])));
+    expect(machine.currentState()).toBe('scroll');
+
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 190, 160)])));
+
+    expect(calls).toEqual(['panBy(0,40)']);
+    expect(pan?.scrollTop).toBe(40);
+    expect(machine.currentState()).toBe('pan');
+  });
+
+  test('未开启平移时右缘热区起手照旧交还原生', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      container: hotzoneContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 190, 200)])));
+    expect(machine.currentState()).toBe('bypass');
+
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 190, 160)])));
+    expect(calls).toEqual([]);
+    expect(machine.currentState()).toBe('bypass');
+  });
+
+  test('开了平移但两轴都不超尺寸时，右缘热区仍交还原生', () => {
+    const { machine } = createHarness({
+      reporting: false,
+      pan: { overflowX: 0, overflowY: 0 },
+      container: hotzoneContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 190, 200)])));
+
+    expect(machine.currentState()).toBe('bypass');
+  });
+
+  test('平移生效时真正命中滚动条元素仍交还原生', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      pan: { overflowX: 200, overflowY: 100 },
+      container: hotzoneContainer(),
+    });
+    const scrollbar = new FakeElement(['.scrollbar']);
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 190, 200)], undefined, scrollbar)));
+
+    expect(machine.currentState()).toBe('bypass');
+    expect(calls).toEqual([]);
   });
 });
