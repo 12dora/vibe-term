@@ -12,6 +12,7 @@ import {
   type LinkRole,
   type LinkSession,
   type LinkStream,
+  MAX_DATA_SEND_PAYLOAD,
   MAX_FRAME_PAYLOAD,
   MAX_LINK_UNACKED,
   type StreamChunk,
@@ -288,7 +289,12 @@ class MuxStream implements LinkStream {
       if (this.dead) throw this.deadError();
       await this.waitForSendCredit();
       if (this.dead) throw this.deadError();
-      const n = Math.min(bytes.byteLength - offset, this.sendWindow, this.mux.maxFramePayload);
+      const n = Math.min(
+        bytes.byteLength - offset,
+        this.sendWindow,
+        this.mux.maxFramePayload,
+        MAX_DATA_SEND_PAYLOAD
+      );
       if (n <= 0) continue;
       const slice = bytes.subarray(offset, offset + n);
       this.takeSendCredit(n);

@@ -47,7 +47,6 @@ export function applyReplicatedNodeList(
     });
   }
 
-  if (!list.hubs) return;
   const allowed = new Set<string>();
   if (ownId) allowed.add(ownId.toLowerCase());
   for (const id of self.authorizedHubIds ?? []) {
@@ -55,12 +54,31 @@ export function applyReplicatedNodeList(
     if (value) allowed.add(value);
   }
   if (meta.hubNodeId) allowed.add(meta.hubNodeId.toLowerCase());
-  const incoming = hubListToRecords(list.hubs).filter((row) =>
-    allowed.has(row.hubNodeId.toLowerCase())
-  );
+  const incoming = list.hubs
+    ? hubListToRecords(list.hubs).filter((row) => allowed.has(row.hubNodeId.toLowerCase()))
+    : legacyIncomingHubs(list, allowed);
   const byId = new Map(incoming.map((row) => [row.hubNodeId, row]));
   if (ownId && self.record) {
     byId.set(ownId, { ...self.record, online: true });
   }
   meshHubs.replaceAll([...byId.values()], now);
+}
+
+function legacyIncomingHubs(list: UplinkNodeList, allowed: Set<string>): OwnHubRow[] {
+  if (!list.hub) return [];
+  const hubNodeId = list.hub.nodeId;
+  if (!allowed.has(hubNodeId.toLowerCase())) return [];
+  return [
+    {
+      hubNodeId,
+      publicUrl: list.hub.publicUrl,
+      name: list.hub.name ?? null,
+      mode: 'active',
+      priority: 100,
+      writerEpoch: list.writerEpoch ?? 1,
+      caFingerprint: null,
+      online: true,
+      lastSeenAt: null,
+    },
+  ];
 }

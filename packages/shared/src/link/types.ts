@@ -1,5 +1,7 @@
 export const FRAME_HEADER_SIZE = 10;
 export const MAX_FRAME_PAYLOAD = 1024 * 1024;
+/** Sender-side DATA payload cap. Receivers still accept frames up to MAX_FRAME_PAYLOAD. */
+export const MAX_DATA_SEND_PAYLOAD = 256 * 1024;
 export const INITIAL_STREAM_WINDOW = 1024 * 1024;
 export const MAX_LINK_UNACKED = 32 * 1024 * 1024;
 export const CTL_STREAM_ID = 0;

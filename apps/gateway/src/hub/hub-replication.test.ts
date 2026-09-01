@@ -244,6 +244,191 @@ describe('HubRuntime.applyReplicatedNodeList', () => {
     }
   });
 
+  test('legacy node.list 在合成 active 行 replaceAll 后仍写回自身 standby', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { hub } = makeHub(db);
+      hub.meshHubs.replaceAll(
+        [
+          {
+            hubNodeId: WRITER,
+            publicUrl: 'https://writer.example',
+            name: 'writer',
+            mode: 'active',
+            priority: 100,
+            writerEpoch: 1,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+        ],
+        9_000
+      );
+      expect(hub.meshHubs.get(SELF)).toBeNull();
+      hub.applyReplicatedNodeList(
+        {
+          t: 'node.list',
+          version: 1,
+          key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+          rtc: { stun: [], turn: null },
+          nodes: [],
+          hub: { nodeId: WRITER, publicUrl: 'https://writer.example', name: 'writer' },
+          writerEpoch: 1,
+        },
+        { hubNodeId: WRITER }
+      );
+      expect(hub.meshHubs.get(WRITER)).toMatchObject({
+        mode: 'active',
+        publicUrl: 'https://writer.example',
+        writerEpoch: 1,
+        online: true,
+      });
+      expect(hub.meshHubs.get(SELF)).toMatchObject({
+        mode: 'standby',
+        priority: 200,
+        writerEpoch: 1,
+        publicUrl: 'https://standby.example',
+        online: true,
+      });
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('legacy 合成行仅在 authorized 或 source 时保留', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const stranger = 'dd'.repeat(16);
+      const authorized = 'ee'.repeat(16);
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore, { now: 9_000 });
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: {
+          publicUrl: 'https://standby.example',
+          stun: [],
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 1,
+          hubNodeId: SELF,
+          nodeId: SELF,
+          authorizedHubIds: [authorized],
+        },
+        authenticate: () => ({ userId: user.id, entryNodeId: SELF }),
+        now: () => 9_000,
+      });
+      hub.meshHubs.replaceAll(
+        [
+          {
+            hubNodeId: stranger,
+            publicUrl: 'https://evil.example',
+            name: 'evil',
+            mode: 'active',
+            priority: 100,
+            writerEpoch: 99,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+        ],
+        9_000
+      );
+      hub.applyReplicatedNodeList(
+        {
+          t: 'node.list',
+          version: 1,
+          key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+          rtc: { stun: [], turn: null },
+          nodes: [],
+          hub: { nodeId: stranger, publicUrl: 'https://evil.example', name: 'evil' },
+          writerEpoch: 99,
+        },
+        { hubNodeId: WRITER }
+      );
+      expect(hub.meshHubs.get(stranger)).toBeNull();
+      expect(hub.meshHubs.get(WRITER)).toBeNull();
+      expect(hub.meshHubs.get(SELF)?.mode).toBe('standby');
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('legacy source hub 即使不在 authorizedHubIds 也保留', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const authorized = 'ee'.repeat(16);
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore, { now: 9_000 });
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: {
+          publicUrl: 'https://standby.example',
+          stun: [],
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 1,
+          hubNodeId: SELF,
+          nodeId: SELF,
+          authorizedHubIds: [authorized],
+        },
+        authenticate: () => ({ userId: user.id, entryNodeId: SELF }),
+        now: () => 9_000,
+      });
+      hub.applyReplicatedNodeList(
+        {
+          t: 'node.list',
+          version: 1,
+          key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+          rtc: { stun: [], turn: null },
+          nodes: [],
+          hub: { nodeId: WRITER, publicUrl: 'https://writer.example' },
+          writerEpoch: 4,
+        },
+        { hubNodeId: WRITER }
+      );
+      expect(hub.meshHubs.get(WRITER)).toMatchObject({
+        mode: 'active',
+        publicUrl: 'https://writer.example',
+        writerEpoch: 4,
+      });
+      expect(hub.meshHubs.get(SELF)?.mode).toBe('standby');
+      expect(hub.meshHubs.get(authorized)).toBeNull();
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('source=self 的 legacy node.list 也被忽略', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { hub } = makeHub(db);
+      hub.applyReplicatedNodeList(
+        {
+          t: 'node.list',
+          version: 1,
+          key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+          rtc: { stun: [], turn: null },
+          nodes: [],
+          hub: { nodeId: WRITER, publicUrl: 'https://should-not-appear.example' },
+          writerEpoch: 9,
+        },
+        { hubNodeId: SELF }
+      );
+      expect(hub.meshHubs.get(WRITER)).toBeNull();
+      expect(hub.meshHubs.get(SELF)?.mode).toBe('standby');
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
   test('复制 hubs[] 只保留 authorized ∪ self ∪ source', () => {
     const { db, close } = createMigratedAuthDb();
     try {
