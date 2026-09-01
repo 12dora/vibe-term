@@ -2059,6 +2059,7 @@
         "listSeparator": "、",
         "cancel": "アップグレードを中止",
         "cancelled": "「{{name}}」のアップグレードを中止しました。",
+        "cancelling": "アップグレードを中止しています…",
         "cancelNotAllowed": "適用中のため中断できません。",
         "cancelUnsupported": "このノードのバージョンはアップグレードの中断に対応していません。",
         "cancelNotRunning": "このノードで実行中のアップグレードはありません。",

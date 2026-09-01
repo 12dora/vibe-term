@@ -59,6 +59,11 @@ export interface NodeUpgradeEntry {
   targetVersion: string | null;
   /** 已本地化的失败原因；非 `failed` 阶段为 `null`。 */
   error: string | null;
+  /**
+   * 「停止升级」已发出、结论还没回来（含 POST 在途时排队等补发的那一档）。与阶段无关：
+   * 停止按钮据此变灰转圈，双击不会发出第二条 DELETE。
+   */
+  cancelling: boolean;
 }
 
 /** 一次升级跑完的结论；批量升级据此统计成败。`cancelled` 既不算成功也不算失败。 */
@@ -87,6 +92,8 @@ export interface NodeUpgradeController {
   anyRunning: boolean;
   /** 刷新后正在向各节点回读升级状态：此时还不知道谁在升级，批量入口先锁住。 */
   restoring: boolean;
+  /** 回读还没收尾的行：这些行的升级按钮先锁住，避免与回读到的在途升级抢同一台机器。 */
+  restoringIds: ReadonlySet<string>;
 }
 
 export const IDLE_UPGRADE_BATCH: NodeUpgradeBatchState = {
@@ -99,6 +106,7 @@ export const IDLE_UPGRADE_ENTRY: NodeUpgradeEntry = {
   phase: 'idle',
   targetVersion: null,
   error: null,
+  cancelling: false,
 };
 
 /** 没有 uid / kdf 参数时不渲染管理动作；hook 不能条件调用，故给个不会被用到的占位。 */

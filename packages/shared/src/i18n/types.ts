@@ -1872,6 +1872,7 @@ export type TranslationKey =
   | 'nodes.upgrade.listSeparator'
   | 'nodes.upgrade.cancel'
   | 'nodes.upgrade.cancelled'
+  | 'nodes.upgrade.cancelling'
   | 'nodes.upgrade.cancelNotAllowed'
   | 'nodes.upgrade.cancelUnsupported'
   | 'nodes.upgrade.cancelNotRunning'

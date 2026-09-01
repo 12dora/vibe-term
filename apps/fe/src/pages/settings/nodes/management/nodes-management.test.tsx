@@ -411,6 +411,7 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       eligibleCount: () => 0,
       anyRunning: false,
       restoring: false,
+      restoringIds: new Set<string>(),
     };
   }
 
@@ -442,8 +443,8 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     );
   }
 
-  function entryOf(phase: NodeUpgradeEntry['phase']): () => NodeUpgradeEntry {
-    return () => ({ phase, targetVersion: '1.2.0', error: null });
+  function entryOf(phase: NodeUpgradeEntry['phase'], cancelling = false): () => NodeUpgradeEntry {
+    return () => ({ phase, targetVersion: '1.2.0', error: null, cancelling });
   }
 
   test('已是最新版本：按钮禁用并说明原因', () => {
@@ -504,6 +505,27 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       expect(tag).toContain('disabled=""');
       expect(tag).toContain('title="nodes.upgrade.cancelNotAllowed"');
     }
+  });
+
+  test('停止请求在途：按钮转圈并锁住，连点不会再发一次', () => {
+    const html = renderTable([nodeRow({ id: 'ff' })], '1.2.0', {
+      entryOf: entryOf('downloading', true),
+    });
+    const tag = buttonTag(html, 'node-upgrade-cancel-ff');
+    expect(tag).toContain('disabled=""');
+    expect(tag).toContain('title="nodes.upgrade.cancelling"');
+    expect(html).toContain('animate-spin');
+  });
+
+  test('这一行正在回读升级状态：行内「升级」先变灰并说明原因', () => {
+    const html = renderTable([nodeRow({ id: 'gg' }), nodeRow({ id: 'hh' })], '1.2.0', {
+      restoringIds: new Set(['gg']),
+    });
+    const restoring = buttonTag(html, 'node-upgrade-gg');
+    expect(restoring).toContain('disabled=""');
+    expect(restoring).toContain('title="nodes.upgrade.restoring"');
+    // 别的行不受影响
+    expect(buttonTag(html, 'node-upgrade-hh')).not.toContain('disabled=""');
   });
 
   function renderUpgradeAll(upgrade: NodeUpgradeController, rows: NodeRow[] = []): string {
