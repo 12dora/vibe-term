@@ -23,10 +23,13 @@ export { createHubKeyLogSource } from './hub-key-log-source';
 export {
   applyKeyLogHubRuntime,
   envPeerSet,
+  filterAuthorizedHubRecords,
+  filterNotRetiredHubRecords,
   hubAuthListColumn,
   hubHttpAuthorization,
   inspectHubAuthRecordCompat,
   isAuthorizedHub,
+  isSignedRetiredHub,
   lookupSignedHubAuthorization,
   resolveHubAuthorization,
   resolveMeshUserId,

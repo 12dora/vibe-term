@@ -24,6 +24,7 @@ export {
   type HubAttachmentsMessage,
   type HubForwardMessage,
   type HubTokensMessage,
+  type HubWriteForwardMessage,
   type KeyLogAppendMessage,
   type KeyLogRecordWire,
   type KeyLogReqMessage,

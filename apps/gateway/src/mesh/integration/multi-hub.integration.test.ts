@@ -41,6 +41,7 @@ import {
   reconstructHubRuntime,
   selfCookie,
   sidFromResponse,
+  stampHubCtlVersions,
   stampNodeVersions,
   waitUntil,
 } from './multi-hub-harness';
@@ -148,6 +149,7 @@ describe('multi-hub in-process integration', () => {
 
   test('enroll through standby B while A is writer: request is forwarded and node can join', async () => {
     const { a, b, c, boot: user } = await boot();
+    stampHubCtlVersions({ a, b });
     const sid = await loginSelf(c.mesh, user);
     const cookie = selfCookie(sid);
     const remote = await loginRemote(c.mesh, b.mesh, user, cookie);

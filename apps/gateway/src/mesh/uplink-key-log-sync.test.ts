@@ -271,6 +271,30 @@ describe('UplinkKeyLogSync', () => {
     expect(ack.error).toBe('offline');
   });
 
+  test('appendAndAck 把 force 编进 key.log.append', async () => {
+    const { host, sent } = makeHost();
+    const sync = new UplinkKeyLogSync({
+      host,
+      applier: dummyApplier({ seq: 0n, hash: new Uint8Array(32) }),
+      scheduler: new ImmediateScheduler(),
+      timeoutMs: 5_000,
+      retryLimit: 1,
+    });
+    sync.reset('init');
+    const pending = sync.appendAndAck(
+      { bytes: randomBytes(8), sig: randomBytes(64), force: true },
+      5_000
+    );
+    await waitUntil(() => sent.length === 1);
+    const append = decodeUplinkCtl(sent[0] ?? new Uint8Array());
+    expect(append).toMatchObject({ t: 'key.log.append', force: true });
+    if (append.t === 'key.log.append' && append.id) {
+      sync.handleKeyLogAck({ t: 'key.log.ack', id: append.id, ok: true, seq: 1n });
+    }
+    const ack = await pending;
+    expect(ack.ok).toBe(true);
+  });
+
   test('key.log.res missing id is dropped and warned once while a request is pending', async () => {
     const warnings: string[] = [];
     const orig = console.warn;

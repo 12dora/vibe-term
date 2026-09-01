@@ -9,6 +9,7 @@ import type { UserStore } from '../auth/user-store';
 import { config as gatewayConfig } from '../config';
 import {
   envPeerSet,
+  filterNotRetiredHubRecords,
   hubHttpAuthorization,
   lookupSignedHubAuthorization,
   resolveHubAuthorization,
@@ -235,11 +236,15 @@ export class MeshRoutes {
   private handleHubs(): Response {
     const store = this.deps.hubStore;
     const rows = store?.list() ?? [];
-    const writerHubId = pickWriterHub(rows);
-    const attached = this.deps.attachedHub?.() ?? null;
-    const rawCandidates = this.deps.hubCandidates?.() ?? rows.map((row) => row.publicUrl);
-    const uid = resolveMeshUserId(this.deps.userStore, { nodeId: this.deps.nodeId });
     const envPeers = envPeerSet(this.deps.hubPeers ?? gatewayConfig.hubPeers);
+    const usableRows = filterNotRetiredHubRecords(rows, {
+      userStore: this.deps.userStore,
+      selfId: this.deps.nodeId,
+    });
+    const writerHubId = pickWriterHub(usableRows);
+    const attached = this.deps.attachedHub?.() ?? null;
+    const rawCandidates = this.deps.hubCandidates?.() ?? usableRows.map((row) => row.publicUrl);
+    const uid = resolveMeshUserId(this.deps.userStore, { nodeId: this.deps.nodeId });
     return jsonBody({
       hubs: rows.map((row) => {
         const source = resolveHubAuthorization({
@@ -419,11 +424,15 @@ export class MeshRoutes {
     const selfName = this.deps.selfName?.() ?? null;
     const self = this.deps.selfStatus?.();
     const storedHubs = this.deps.hubStore?.list() ?? [];
-    const hubIds = new Set(storedHubs.map((row) => row.hubNodeId));
-    const hubModeById = new Map(storedHubs.map((row) => [row.hubNodeId, row.mode] as const));
+    const usableHubs = filterNotRetiredHubRecords(storedHubs, {
+      userStore: this.deps.userStore,
+      selfId: this.deps.nodeId,
+    });
+    const hubIds = new Set(usableHubs.map((row) => row.hubNodeId));
+    const hubModeById = new Map(usableHubs.map((row) => [row.hubNodeId, row.mode] as const));
     const hubNodeId = this.deps.roles.hub
       ? this.deps.nodeId
-      : (pickWriterHub(storedHubs) ?? this.deps.userStore.getHubMeta()?.nodeId ?? null);
+      : (pickWriterHub(usableHubs) ?? this.deps.userStore.getHubMeta()?.nodeId ?? null);
     if (hubNodeId) hubIds.add(hubNodeId);
     return [...new Set([this.deps.nodeId, ...certs.map((c) => c.nodeId)])]
       .map((id) =>

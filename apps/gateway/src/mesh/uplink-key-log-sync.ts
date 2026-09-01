@@ -530,7 +530,7 @@ export class UplinkKeyLogSync {
   }
 
   async appendAndAck(
-    record: { bytes: Uint8Array; sig: Uint8Array },
+    record: { bytes: Uint8Array; sig: Uint8Array; force?: boolean },
     timeoutMs = this.timeoutMs,
     generation?: number
   ): Promise<UplinkKeyLogAck> {
@@ -558,6 +558,7 @@ export class UplinkKeyLogSync {
             bytes: record.bytes,
             sig: record.sig,
             id,
+            ...(record.force === true ? { force: true } : {}),
           })
         );
       } catch {

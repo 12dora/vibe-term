@@ -660,8 +660,9 @@ export class UserStore {
       .all().length;
   }
 
-  listEnrollmentTokens(): EnrollmentTokenRecord[] {
-    return this.db.select().from(enrollmentTokens).all().map(toEnrollment);
+  listEnrollmentTokens(userId?: string): EnrollmentTokenRecord[] {
+    const rows = this.db.select().from(enrollmentTokens).all().map(toEnrollment);
+    return userId ? rows.filter((row) => row.userId === userId) : rows;
   }
 
   nextEnrollmentTokenRevision(epoch: number): EnrollmentTokenRevision {
@@ -720,6 +721,10 @@ export class UserStore {
     }
     const token = input.token;
     if (!token) return 'ignored';
+    token.authorizationJson = mergeEnrollmentJsonPreservingLocalSecrets(
+      this.getEnrollmentTokenById(id)?.authorizationJson,
+      stripEnrollmentReplicationSecrets(token.authorizationJson)
+    );
     const current = this.getEnrollmentTokenById(id);
     const usedAt =
       current?.usedAt != null && token.usedAt == null ? current.usedAt : (token.usedAt ?? null);
@@ -881,6 +886,63 @@ function toNode(row: typeof nodes.$inferSelect): NodeRecord {
     endpointsJson: row.endpointsJson,
     createdAt: row.createdAt,
   };
+}
+
+const REPLICATION_SECRET_KEYS = new Set([
+  'entry_sid',
+  'sid',
+  'callback',
+  'callback_url',
+  'session',
+  'session_id',
+]);
+
+function mergeEnrollmentJsonPreservingLocalSecrets(
+  currentJson: string | undefined,
+  incomingStripped: string
+): string {
+  if (!currentJson) return incomingStripped;
+  try {
+    const current: unknown = JSON.parse(currentJson);
+    const incoming: unknown = JSON.parse(incomingStripped);
+    if (
+      !current ||
+      typeof current !== 'object' ||
+      Array.isArray(current) ||
+      !incoming ||
+      typeof incoming !== 'object' ||
+      Array.isArray(incoming)
+    ) {
+      return incomingStripped;
+    }
+    const out = { ...(incoming as Record<string, unknown>) };
+    const cur = current as Record<string, unknown>;
+    if (typeof cur.entry_sid === 'string' && out.entry_sid === undefined) {
+      out.entry_sid = cur.entry_sid;
+    }
+    return JSON.stringify(out);
+  } catch {
+    return incomingStripped;
+  }
+}
+
+export function stripEnrollmentReplicationSecrets(authorizationJson: string): string {
+  try {
+    const parsed: unknown = JSON.parse(authorizationJson);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '{}';
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const lower = key.toLowerCase();
+      if (REPLICATION_SECRET_KEYS.has(lower)) continue;
+      if (lower.includes('sid') || lower.includes('callback') || lower.includes('session')) {
+        continue;
+      }
+      out[key] = value;
+    }
+    return JSON.stringify(out);
+  } catch {
+    return '{}';
+  }
 }
 
 function toEnrollment(row: typeof enrollmentTokens.$inferSelect): EnrollmentTokenRecord {

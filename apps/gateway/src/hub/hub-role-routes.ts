@@ -38,7 +38,7 @@ function errorJson(code: HubRoleError['code'], message: string, status: number):
 }
 
 function knownMaxWriterEpoch(ctx: HubRoleRouteContext): number {
-  let max = ctx.uplink.writerEpoch();
+  let max = Math.max(ctx.configWriterEpoch, ctx.uplink.writerEpoch());
   for (const row of ctx.meshHubs.list()) {
     if (row.writerEpoch > max) max = row.writerEpoch;
   }
@@ -99,17 +99,25 @@ export async function handlePostHubRole(req: Request, ctx: HubRoleRouteContext):
   let writerEpoch: number | null;
   if (mode === 'active') {
     const raw = body.writerEpoch;
-    if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) {
-      return errorJson('INVALID_REQUEST', 'writerEpoch must be a positive integer', 400);
-    }
-    if (raw <= knownMaxWriterEpoch(ctx)) {
-      return errorJson(
-        'HUB_EPOCH_STALE',
-        'writerEpoch must be greater than all known hub epochs',
-        409
+    if (raw === undefined || raw === null) {
+      const allocated = knownMaxWriterEpoch(ctx) + 1;
+      console.info(
+        `[hub] allocated writerEpoch=${allocated} (maxKnown=${allocated - 1}) for mode=active`
       );
+      writerEpoch = allocated;
+    } else {
+      if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) {
+        return errorJson('INVALID_REQUEST', 'writerEpoch must be a positive integer', 400);
+      }
+      if (raw <= knownMaxWriterEpoch(ctx)) {
+        return errorJson(
+          'HUB_EPOCH_STALE',
+          'writerEpoch must be greater than all known hub epochs',
+          409
+        );
+      }
+      writerEpoch = raw;
     }
-    writerEpoch = raw;
   } else {
     writerEpoch = ctx.uplink.writerEpoch();
   }

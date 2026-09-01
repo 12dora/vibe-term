@@ -1,5 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import {
+  KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
+  buildAdmitHubPayload,
   buildKeyLogRecord,
   computeRecordHash,
   decodeBase64url,
@@ -2526,6 +2528,124 @@ describe('UplinkServer multi-hub', () => {
         expect(ack.seq).toBe(9);
       }
       expect(forwarded).toHaveLength(1);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('old-node-present 时 key.log.append 无 force 拒绝，force 则放行', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const old = seedAdmittedNode(userStore, user.id, { name: 'old-node' });
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: { publicUrl: 'https://hub.example', nodeId: SELF_HUB, hubNodeId: SELF_HUB },
+      });
+      const node = await authNode(server, userStore, user.id);
+      const rec = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'admit-hub',
+        buildAdmitHubPayload({ hubNodeId: old.nodeIdBytes, publicUrl: 'https://x.example' })
+      );
+      sendCtl(node.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+        id: 'no-force',
+      });
+      const refused = await takeUntil(node.inbox, 'key.log.ack');
+      expect(refused).toMatchObject({ t: 'key.log.ack', id: 'no-force', ok: false });
+      if (refused.t === 'key.log.ack') expect(refused.error).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+
+      const warns: string[] = [];
+      const orig = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warns.push(args.map(String).join(' '));
+      };
+      try {
+        sendCtl(node.nodeLink, {
+          t: 'key.log.append',
+          bytes: encodeBase64url(rec.bytes),
+          sig: encodeBase64url(rec.sig),
+          id: 'with-force',
+          force: true,
+        });
+        const ok = await takeUntil(node.inbox, 'key.log.ack');
+        expect(ok).toMatchObject({ t: 'key.log.ack', id: 'with-force', ok: true });
+        expect(warns.some((line) => line.includes('forcing key-log append'))).toBe(true);
+      } finally {
+        console.warn = orig;
+      }
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('非当前写者的 hub.tokens upsert 丢弃', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const writerId = 'bb'.repeat(16);
+      const meshHubs = new MeshHubStore(db);
+      meshHubs.upsert(
+        {
+          hubNodeId: writerId,
+          publicUrl: 'https://writer.example',
+          name: 'writer',
+          mode: 'active',
+          priority: 50,
+          writerEpoch: 5,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        meshHubs,
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 1,
+          hubNodeId: SELF_HUB,
+          nodeId: SELF_HUB,
+          authorizedHubIds: [writerId],
+        },
+      });
+      const node = await authNode(server, userStore, user.id);
+      userStore.upsertHubAuthorization({
+        userId: user.id,
+        hubNodeId: node.nodeId,
+        status: 'active',
+        admitSeq: 1,
+        updatedSeq: 1,
+      });
+      const warns: string[] = [];
+      const orig = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warns.push(args.map(String).join(' '));
+      };
+      try {
+        sendCtl(node.nodeLink, {
+          t: 'hub.tokens',
+          op: 'upsert',
+          revision: { epoch: 1, seq: 1 },
+          id: 'tok-bad',
+          tokens: [],
+        });
+        await new Promise((r) => setTimeout(r, 30));
+        expect(warns.some((line) => line.includes('not current writer'))).toBe(true);
+        expect(userStore.listEnrollmentTokens()).toHaveLength(0);
+      } finally {
+        console.warn = orig;
+      }
       server.stop();
     } finally {
       close();

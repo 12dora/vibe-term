@@ -649,6 +649,58 @@ describe('mesh-routes', () => {
     }
   });
 
+  test('GET /api/mesh/hubs writer 忽略 signed-retired 的 hub', async () => {
+    const mesh = await bootMesh();
+    try {
+      const retired = PEER_ID;
+      mesh.hubStore.replaceAll(
+        [
+          {
+            hubNodeId: NODE_ID,
+            publicUrl: 'https://self.example',
+            name: 'self',
+            mode: 'standby',
+            priority: 10,
+            writerEpoch: 1,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: 1,
+          },
+          {
+            hubNodeId: retired,
+            publicUrl: 'https://retired.example',
+            name: 'retired',
+            mode: 'active',
+            priority: 1,
+            writerEpoch: 99,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: 1,
+          },
+        ],
+        1
+      );
+      mesh.userStore.upsertHubAuthorization({
+        userId: mesh.boot.userId,
+        hubNodeId: retired,
+        status: 'retired',
+        publicUrl: 'https://retired.example',
+        admitSeq: 1,
+        retireSeq: 2,
+        updatedSeq: 2,
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { writerHubId: string | null };
+      expect(body.writerHubId).not.toBe(retired);
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/mesh/hubs candidates include lastError and lastAttemptAt', async () => {
     const mesh = await bootMesh();
     try {

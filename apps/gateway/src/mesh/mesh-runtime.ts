@@ -7,6 +7,7 @@ import type {
   HubForwardMessage,
   HubMode,
   HubTokensMessage,
+  HubWriteForwardMessage,
 } from '@tmex/shared/uplink';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { filesBulkHooks } from '../api/files';
@@ -28,7 +29,13 @@ import { HUB_META_PEER_ID } from '../auth/user-store';
 import { type TmexRoles, config as gatewayConfig } from '../config';
 import { getSiteSettings } from '../db/site-settings';
 import { HubRuntime, type HubTurnConfig } from '../hub';
-import { applyKeyLogHubRuntime } from '../hub/hub-authorization';
+import {
+  applyKeyLogHubRuntime,
+  envPeerSet,
+  isAuthorizedHub,
+  lookupSignedHubAuthorization,
+  resolveMeshUserId,
+} from '../hub/hub-authorization';
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
 import type { HubPeerFetch } from '../hub/hub-peer-poller';
 import type { HubTlsInfoProvider } from '../hub/hub-runtime';
@@ -77,6 +84,7 @@ import {
   isSelfHubCandidate,
   mergeUplinkCandidates,
   recordsFromNodeList,
+  sameHubUrl,
 } from './uplink-pool';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
 
@@ -463,10 +471,11 @@ export function attachKeyLogHeadNotify(
 }
 
 export type KeyLogUplinkPort = {
-  sendCtl(msg: { t: 'key.log.append'; bytes: Uint8Array; sig: Uint8Array }): void;
+  sendCtl(msg: { t: 'key.log.append'; bytes: Uint8Array; sig: Uint8Array; force?: boolean }): void;
   appendAndAck(record: {
     bytes: Uint8Array;
     sig: Uint8Array;
+    force?: boolean;
   }): Promise<{ ok: boolean; seq?: bigint | number; error?: string }>;
   queryHubHead(): Promise<{ seq: bigint | number; hash: Uint8Array } | null>;
   queryKeyLogAt(seq: bigint): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null>;
@@ -479,13 +488,20 @@ export function createKeyLogPublisher(
   return {
     publish(record) {
       try {
-        uplink.sendCtl({ t: 'key.log.append', bytes: record.bytes, sig: record.sig });
+        const force = (record as { force?: boolean }).force === true;
+        uplink.sendCtl({
+          t: 'key.log.append',
+          bytes: record.bytes,
+          sig: record.sig,
+          ...(force ? { force: true } : {}),
+        });
       } catch {}
       notifyHead();
     },
     async publishAndAck(record) {
       // hub ACK 时本地 head 尚未更新；status 刷新挂在 apply 成功路径，避免读到旧 head
-      const ack = await uplink.appendAndAck(record);
+      const force = (record as { force?: boolean }).force === true;
+      const ack = await uplink.appendAndAck({ ...record, force });
       if (ack.ok) return { ok: true, seq: ack.seq ?? 0n };
       return { ok: false, error: ack.error ?? 'hub_error' };
     },
@@ -584,6 +600,44 @@ function hubSeedUrls(config: MeshRuntimeConfig): string[] {
   for (const url of config.hubUrls ?? []) add(url);
   if (out.length === 0) add(hubEndpointUrl(config));
   return out;
+}
+
+function meshAuthorizedHub(d: MeshDeps, hubNodeId: string): boolean {
+  const uid = resolveMeshUserId(d.userStore, {
+    nodeId: d.identity.nodeIdHex,
+    explicit: d.userIdOf(),
+  });
+  return isAuthorizedHub({
+    hubNodeId,
+    selfId: d.identity.nodeIdHex,
+    envPeers: envPeerSet(d.config.hubPeers ?? gatewayConfig.hubPeers),
+    signed: lookupSignedHubAuthorization(d.userStore, uid, hubNodeId),
+  });
+}
+
+function meshHubNotRetired(d: MeshDeps, hubNodeId: string): boolean {
+  const uid = resolveMeshUserId(d.userStore, {
+    nodeId: d.identity.nodeIdHex,
+    explicit: d.userIdOf(),
+  });
+  return lookupSignedHubAuthorization(d.userStore, uid, hubNodeId)?.status !== 'retired';
+}
+
+function retiredHubSeedUrls(d: MeshDeps): string[] {
+  const uid = resolveMeshUserId(d.userStore, {
+    nodeId: d.identity.nodeIdHex,
+    explicit: d.userIdOf(),
+  });
+  const urls: string[] = [];
+  if (uid) {
+    for (const row of d.userStore.listHubAuthorizationsByUser(uid)) {
+      if (row.status === 'retired' && row.publicUrl) urls.push(row.publicUrl);
+    }
+  }
+  for (const row of d.hubStore.list()) {
+    if (!meshAuthorizedHub(d, row.hubNodeId)) urls.push(row.publicUrl);
+  }
+  return urls;
 }
 
 export function hubRoleAdvertisement(
@@ -892,8 +946,18 @@ function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: Rej
   if (!state.hubPresenceLive) state.hubGeneration += 1;
   state.hubPresenceLive = true;
   state.lastRtc = { stun: list.rtc.stun, turn: list.rtc.turn ?? null };
-  const recs = recordsFromNodeList(list);
-  if (recs.length > 0) d.hubStore.replaceAll(recs, d.scheduler.now());
+  const sourceId = list.writerHubId ?? list.hub?.nodeId ?? null;
+  if (sourceId && !meshHubNotRetired(d, sourceId)) {
+    d.hubStore.remove(sourceId);
+  } else {
+    const recs = recordsFromNodeList(list).filter((row) => meshHubNotRetired(d, row.hubNodeId));
+    if (recs.length > 0) d.hubStore.replaceAll(recs, d.scheduler.now());
+  }
+  if (d.userIdOf()) {
+    for (const row of d.hubStore.list()) {
+      if (!meshHubNotRetired(d, row.hubNodeId)) d.hubStore.remove(row.hubNodeId);
+    }
+  }
   const reach = d.peerHolder.manager?.listReach() ?? new Map();
   const hubIds = new Set([
     ...listedHubNodeIds(list),
@@ -1004,7 +1068,16 @@ function createUplinkWiring(d: MeshDeps) {
     keyLogApplier: d.applier,
     userStore,
     statusProvider: d.statusProvider,
-    candidates: () => mergeUplinkCandidates(d.hubStore.orderedEndpoints(), hubSeedUrls(config)),
+    candidates: () => {
+      const endpoints = d.hubStore.orderedEndpoints({
+        include: (id) => meshHubNotRetired(d, id),
+      });
+      const blocked = retiredHubSeedUrls(d);
+      const seeds = hubSeedUrls(config).filter(
+        (url) => !blocked.some((retired) => sameHubUrl(retired, url))
+      );
+      return mergeUplinkCandidates(endpoints, seeds);
+    },
     hubTrust,
     wsFactory: opts.wsFactory,
     scheduler: d.scheduler,
@@ -1030,6 +1103,9 @@ function createUplinkWiring(d: MeshDeps) {
         },
         onHubForward: (msg: HubForwardMessage) => {
           d.hub?.receiveHubForward(msg);
+        },
+        onHubWriteForward: (msg: HubWriteForwardMessage) => {
+          d.hub?.receiveHubWriteForward(msg);
         },
         onHubRelayStream: (stream) => {
           d.hub?.receiveHubRelay(stream);
@@ -1405,7 +1481,7 @@ function wireMeshHttp(
       d.sessions.lookup(input.sid, input.via, input.connectionId, input.cid),
   });
   http.auth.setTlsInfo(d.opts.tlsInfo);
-  http.auth.setWriterForward((req) => d.hub?.forwardWrite(req) ?? Promise.resolve(null));
+  http.auth.setWriterForward((req, uid) => d.hub?.forwardWrite(req, uid) ?? Promise.resolve(null));
   d.httpHolder.runtime = http;
   setMeshAgentBridge({
     lookupNode(nodeId) {

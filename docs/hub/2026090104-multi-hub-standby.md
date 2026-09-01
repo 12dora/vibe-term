@@ -52,8 +52,8 @@
 
 - standby 不是「另一个独立 mesh」，而是同一用户根钥下的只读副本；
 - standby 自己也是 node，uplink 连的是当前写者（`TMEX_HUB_URL` 仍指向原主，作种子）；其它 hub 地址从 `node.list.hubs` 学习；
-- 浏览器与 CLI 的写入仍应打到写者。standby 在写者可达时转发这些写入；不可达时返回 `HUB_NOT_WRITER` 并带上写者地址；
-- 两 hub 网格不另开链路：standby 的 writer uplink 同时承载复制、`hub.attachments` / `hub.forward` 和 `hub-relay` 流。
+- 浏览器与 CLI 的写入仍应打到写者。standby 在写者可达时经已认证 hub uplink 转发这些写入；不可达时返回 `HUB_NOT_WRITER` 并带上写者地址；
+- 两 hub 网格不另开链路：standby 的 writer uplink 同时承载复制、写入转发、`hub.attachments` / `hub.forward` 和 `hub-relay` 流。
 
 ## 数据同步机制
 
@@ -62,7 +62,7 @@
 | `user_key_log` / `node_certs` | 既有 uplink catch-up | 签名链，standby 作为 node 拉齐即可。允许应用「已经由写者接受」的后续记录 |
 | 节点注册表 `nodes` | `node.list` 投影 | `HubRuntime.applyReplicatedNodeList`：只 upsert **本地已有未吊销证书** 的 node；列表里没有的标离线，不删除；忽略来源是自己的 list |
 | hub 集合 `mesh_hubs` | `node.list.hubs` | `MeshHubStore.replaceAll`；缺 `hubs[]` 时由旧版单数 `hub` 合成一行 |
-| enrollment token | **best-effort `hub.tokens`** | 写者在已授权 hub uplink 鉴权后发快照，创建 / redeem / 过期时发增量。standby 按 `(id, revision)` 幂等应用，且不会把 `used_at` 从有改回 null。redeem / 创建仍只在写者上执行；提升后沿用既有 `used_at IS NULL` 原子消费。只发给 advertised version ≥ 1.1.13 的已授权 hub。 |
+| enrollment token | **best-effort `hub.tokens`** | 写者在已授权 hub uplink 鉴权后发快照（按用户过滤、≤48 KiB 分页、`more` 标志），创建 / redeem / 过期时发增量。复制前剥掉 `entry_sid` 等会话元数据。非 ACK 只接受当前写者（`pickWriterHub` 且 `writerEpoch ≥` 本地已知最大值）。standby 按 `(id, revision)` 幂等应用，且不会把 `used_at` 从有改回 null。redeem / 创建仍只在写者上执行。只发给 advertised version ≥ 1.1.13 的已授权 hub。 |
 | 附着路由 | 内存 `AttachmentRouter` + `hub.attachments` | 见「跨 hub relay」。不落库。 |
 
 ## 跨 hub relay
@@ -111,7 +111,9 @@
 
 ## 写入围栏
 
-写者可达时，standby **转发**下列写入到当前写者的 `publicUrl`（HTTPS，与 uplink / peer poller 相同的 per-URL CA pin，超时 10 s），原样返回写者的 status 与 body，并加上响应头 `X-Tmex-Forwarded-By: <standbyHubId>`。转发携带调用方收到的凭证（cookie / 请求体），不另签发。已带 `X-Tmex-Forwarded-By` 的请求不再转发（环路守卫）。
+写者可达且 advertised version ≥ 1.1.13 时，standby 把下列写入经**已认证 hub↔hub uplink** 发成控制帧 `hub.write-forward { id, method, path, headers（仅 content-type 与 X-Tmex-Force-Keylog）, body, uid? }`，写者执行后回 ack（status / body）。响应加 `X-Tmex-Forwarded-By: <standbyHubId>`。帧里**不带** `cookie` / `authorization`。已带该响应头的请求不再转发（环路守卫）。无活的写者 uplink 或对端版本不够时，仍 409 `HUB_NOT_WRITER`。
+
+写者把请求归到转发 hub：enrollment create 的用户签名、redeem 的 enroll-key 证书、revoke / keylog 的签名记录均自认证。**rename** 额外带 `uid`：standby 断言「该用户已在本机通过会话认证」，写者接受该 uid **仅因为发送方是已授权 hub**（不复验 standby 侧会话）。失陷的已授权 standby 可以冒用其已认证用户做 rename。
 
 写者未知或不可达时，仍返回 HTTP 409：
 
@@ -348,3 +350,5 @@ tmex hub list
 8. `promote` 的 epoch 以**本机** env 与 `mesh_hubs` 为准。若本机表是旧快照，可能算出偏小的 epoch；以实际跑起来后的 fence 日志为准，必要时再 promote 一次。
 9. 被 fence 的 hub 重启后仍是 standby，直到显式 `promote`。不要指望改回 `TMEX_HUB_MODE=active` 再启动就能夺回写者。
 10. `TMEX_HUB_PEERS` 仍是各 hub 本机 env，不会随 `node.list` 复制；签名 `admit-hub` / `retire-hub` 才随 key-log 复制。旧节点未升级前写者会拒绝追加这两类记录（见上文兼容门）。
+11. **节点会话即目标机完全控制权**（升级 / 卸载 / 终端同模型）。远程破坏性操作不再叠加独立用户签名；攻陷一台已加入的 node 等于控制该机上的管理面。
+12. **被 admit 的 hub 获得围栏权**：`writerEpoch` 仍可自报，更高 epoch 的 active 广告即可 fence 其他 hub。这正是 hub 授权必须走用户签名 `admit-hub` / `retire-hub` 的原因。失陷的已授权 hub 影响范围是 hub 控制面（角色围栏、写入转发归因、token 复制），不是普通 node。

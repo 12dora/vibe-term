@@ -442,6 +442,27 @@ describe('UserStore', () => {
       expect(
         store.applyEnrollmentTokenReplication({
           op: 'upsert',
+          revision: { epoch: 1, seq: 5 },
+          token: {
+            ...token,
+            id: 'tok-secret',
+            enrollPublicKey: Uint8Array.from({ length: 32 }, () => 42),
+            authorizationJson: JSON.stringify({
+              authorization_b64: 'keep',
+              entry_sid: 'secret-sid',
+            }),
+          },
+        })
+      ).toBe('applied');
+      expect(store.getEnrollmentTokenById('tok-secret')?.authorizationJson).not.toContain(
+        'secret-sid'
+      );
+      expect(store.getEnrollmentTokenById('tok-secret')?.authorizationJson).toContain(
+        'authorization_b64'
+      );
+      expect(
+        store.applyEnrollmentTokenReplication({
+          op: 'upsert',
           revision: { epoch: 1, seq: 2 },
           token: { ...token, authorizationJson: '{"stale":true}' },
         })

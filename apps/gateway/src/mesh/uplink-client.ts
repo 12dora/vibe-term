@@ -12,7 +12,7 @@ import {
   WebSocketLink,
   type WebSocketTransportInput,
 } from '@tmex/shared/link';
-import type { HubAdvertisement } from '@tmex/shared/uplink';
+import type { HubAdvertisement, HubWriteForwardMessage } from '@tmex/shared/uplink';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler, jsonStable } from './ctl';
 import { jsonText } from './json-text';
@@ -74,6 +74,7 @@ export type UplinkClientOptions = {
   onHubTokens?: (msg: Extract<UplinkCtlMessage, { t: 'hub.tokens' }>) => void;
   onHubAttachments?: (msg: Extract<UplinkCtlMessage, { t: 'hub.attachments' }>) => void;
   onHubForward?: (msg: Extract<UplinkCtlMessage, { t: 'hub.forward' }>) => void;
+  onHubWriteForward?: (msg: HubWriteForwardMessage) => void;
   onHubRelayStream?: (stream: LinkStream) => void;
   onKeyLogFork?: (event: KeyLogForkEvent) => void;
   wsFactory?: UplinkWsFactory;
@@ -166,6 +167,7 @@ export class UplinkClient {
     msg: Extract<UplinkCtlMessage, { t: 'hub.attachments' }>
   ) => void;
   private readonly onHubForwardCb?: (msg: Extract<UplinkCtlMessage, { t: 'hub.forward' }>) => void;
+  private readonly onHubWriteForwardCb?: (msg: HubWriteForwardMessage) => void;
   private readonly onHubRelayStreamCb?: (stream: LinkStream) => void;
   private readonly wsFactory: UplinkWsFactory;
   private readonly scheduler: MeshScheduler;
@@ -210,6 +212,7 @@ export class UplinkClient {
     this.onHubTokensCb = opts.onHubTokens;
     this.onHubAttachmentsCb = opts.onHubAttachments;
     this.onHubForwardCb = opts.onHubForward;
+    this.onHubWriteForwardCb = opts.onHubWriteForward;
     this.onHubRelayStreamCb = opts.onHubRelayStream;
     this.wsFactory = opts.wsFactory ?? defaultWsFactory(opts.tlsCa);
     this.scheduler = opts.scheduler ?? defaultScheduler();
@@ -573,6 +576,7 @@ export class UplinkClient {
     else if (msg.t === 'hub.tokens') this.onHubTokensCb?.(msg);
     else if (msg.t === 'hub.attachments') this.onHubAttachmentsCb?.(msg);
     else if (msg.t === 'hub.forward') this.onHubForwardCb?.(msg);
+    else if (msg.t === 'hub.write-forward') this.onHubWriteForwardCb?.(msg);
   }
 
   private acceptChallenge(nonceB64: string): void {
@@ -663,7 +667,7 @@ export class UplinkClient {
   }
 
   async appendAndAck(
-    record: { bytes: Uint8Array; sig: Uint8Array },
+    record: { bytes: Uint8Array; sig: Uint8Array; force?: boolean },
     timeoutMs = UPLINK_KEY_LOG_ACK_TIMEOUT_MS,
     generation?: number
   ) {

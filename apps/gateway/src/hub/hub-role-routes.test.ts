@@ -196,15 +196,40 @@ describe('POST /api/hub/role', () => {
     }
   });
 
-  test('mode 非法或 active 缺 epoch 返回 400', async () => {
+  test('mode 非法或 active 的 epoch 非正整数返回 400', async () => {
     const { hub, close } = await openRoleHub();
     try {
       expect((await postRole(hub, { mode: 'primary', operationId: OP_A })).status).toBe(400);
-      const missing = await postRole(hub, { mode: 'active', operationId: OP_A });
-      expect(missing.status).toBe(400);
-      expect(missing.json).toMatchObject({ code: 'INVALID_REQUEST' });
       const frac = await postRole(hub, { mode: 'active', writerEpoch: 1.5, operationId: OP_A });
       expect(frac.status).toBe(400);
+    } finally {
+      await hub.stop();
+      close();
+    }
+  });
+
+  test('mode:active 省略 writerEpoch 时目标分配 max(env, own, mesh_hubs)+1', async () => {
+    const { hub, close, env, meshHubs, entry } = await openRoleHub({
+      writerEpoch: 3,
+      extraHubs: [{ hubNodeId: PEER, mode: 'active', writerEpoch: 7 }],
+    });
+    try {
+      const logs: string[] = [];
+      const orig = console.info;
+      console.info = (...args: unknown[]) => {
+        logs.push(args.map(String).join(' '));
+      };
+      try {
+        const res = await postRole(hub, { mode: 'active', operationId: OP_A });
+        expect(res.status).toBe(202);
+        expect(res.json).toMatchObject({ mode: 'active', writerEpoch: 8, phase: 'restarting' });
+        expect(env.TMEX_HUB_WRITER_EPOCH).toBe('8');
+        expect(hub.writerEpoch()).toBe(8);
+        expect(meshHubs.get(entry.nodeId)).toMatchObject({ mode: 'active', writerEpoch: 8 });
+        expect(logs.some((line) => line.includes('allocated writerEpoch=8'))).toBe(true);
+      } finally {
+        console.info = orig;
+      }
     } finally {
       await hub.stop();
       close();

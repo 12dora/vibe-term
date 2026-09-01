@@ -1,5 +1,6 @@
 import {
   bytesEqual,
+  computeRecordHash,
   decodeAuthorization,
   decodeBase64url,
   decodeCertificate,
@@ -22,6 +23,7 @@ import type {
   HubForwardMessage,
   HubMode,
   HubTokensMessage,
+  HubWriteForwardMessage,
 } from '@tmex/shared/uplink';
 import { json, readJsonObjectBody } from '../api/http';
 import { matchPath } from '../api/route';
@@ -31,6 +33,7 @@ import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthDb } from '../auth/types';
 import { type UserRecord, UserStore } from '../auth/user-store';
+import { inspectHubAuthRecordCompat } from './hub-authorization';
 import { type HubPeerFetch, HubPeerPoller } from './hub-peer-poller';
 import {
   type UplinkNodeList,
@@ -47,6 +50,7 @@ import {
   HUB_TOKENS_ACK_WAIT_MS,
   applyHubTokensMessage,
   hubTokensAck,
+  peerSupportsHubTokens,
   upsertHubTokensMessage,
 } from './hub-tokens';
 import { detachEnrollmentTokensFromNode, patchNode } from './node-persistence';
@@ -65,7 +69,12 @@ import {
   type HubUplinkSocketData,
 } from './types';
 import { type RegisterRtcSessionInput, UplinkServer } from './uplink-server';
-import { forwardWriteToWriter, notWriterResponse, requestAlreadyForwarded } from './writer-forward';
+import {
+  WRITER_FORWARD_TIMEOUT_MS,
+  forwardWriteToWriter,
+  notWriterResponse,
+  requestAlreadyForwarded,
+} from './writer-forward';
 
 export type HubUpgradeServer = {
   upgrade(req: Request, options?: { data?: unknown }): boolean;
@@ -106,13 +115,15 @@ export type HubRuntimeOptions = {
 };
 
 export type HubWriterBridge = {
-  appendAndAck(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<{
+  appendAndAck(record: { bytes: Uint8Array; sig: Uint8Array; force?: boolean }): Promise<{
     ok: boolean;
     seq?: bigint | number;
     error?: string;
   } | null>;
   requestCatchUp(): void;
-  sendCtl(msg: HubTokensMessage | HubAttachmentsMessage | HubForwardMessage): void;
+  sendCtl(
+    msg: HubTokensMessage | HubAttachmentsMessage | HubForwardMessage | HubWriteForwardMessage
+  ): void;
   openStream(openPayload: Uint8Array): Promise<LinkStream>;
   isLive(): boolean;
 };
@@ -195,6 +206,10 @@ export class HubRuntime {
   private readonly hubTrust: HubTrustStore | undefined;
   private readonly hubFetch: HubPeerFetch | undefined;
   private writerBridge: HubWriterBridge | null = null;
+  private readonly writeForwardWaiters = new Map<
+    string,
+    { resolve: (msg: HubWriteForwardMessage | null) => void; timer: ReturnType<typeof setTimeout> }
+  >();
 
   constructor(opts: HubRuntimeOptions) {
     this.db = opts.db;
@@ -242,6 +257,7 @@ export class HubRuntime {
           return null;
         }
       },
+      onWriteForward: (fromHubId, msg) => this.executeForwardedWrite(fromHubId, msg),
       onForwardedWrite: () => this.writerBridge?.requestCatchUp(),
       openHubStream: (hubId, payload) => this.openHubStream(hubId, payload),
       forwardHubCtl: (msg) => {
@@ -354,7 +370,27 @@ export class HubRuntime {
 
   receiveHubTokens(msg: HubTokensMessage): void {
     if (msg.ack) return;
-    applyHubTokensMessage(this.userStore, msg);
+    const from = this.writerPeerId();
+    const writer = pickWriterHub(
+      this.meshHubs.list().filter((row) => this.uplink.isAuthorizedHub(row.hubNodeId))
+    );
+    if (!from || from !== writer) {
+      console.warn(`[hub] hub.tokens dropped on standby: attached=${from} writer=${writer}`);
+      return;
+    }
+    const senderEpoch = this.meshHubs.get(from)?.writerEpoch ?? 0;
+    let localMax = this.uplink.writerEpoch();
+    for (const row of this.meshHubs.list()) {
+      if (row.writerEpoch > localMax) localMax = row.writerEpoch;
+    }
+    if (senderEpoch < localMax) {
+      console.warn(
+        `[hub] hub.tokens dropped: senderEpoch=${senderEpoch} < localMax=${localMax} from=${from}`
+      );
+      return;
+    }
+    const uid = this.uplink.meshUserId();
+    applyHubTokensMessage(this.userStore, msg, uid ?? undefined);
     if (msg.id) {
       try {
         this.writerBridge?.sendCtl(hubTokensAck(msg));
@@ -427,26 +463,175 @@ export class HubRuntime {
     }
   }
 
-  async forwardWrite(req: Request): Promise<Response | null> {
+  async forwardWrite(req: Request, uid?: string | null): Promise<Response | null> {
     const err = this.uplink.notWriterError();
+    const writerId = err.writerHubId;
+    const version = writerId
+      ? (this.registry.get(writerId)?.meta.version ?? this.userStore.getNode(writerId)?.version)
+      : null;
+    const live = Boolean(this.writerBridge?.isLive());
+    if (version && !peerSupportsHubTokens(version) && !live) return null;
     const forwarded = await forwardWriteToWriter(req, {
       selfHubId: this.uplink.hubNodeId() ?? this.config.hubNodeId ?? this.config.nodeId ?? '',
+      uid,
       target: {
         writerHubId: err.writerHubId,
         writerPublicUrl: err.writerPublicUrl,
         writerEpoch: err.writerEpoch,
       },
-      hubTrust: this.hubTrust,
-      fetch: this.hubFetch,
+      isLive: () => Boolean(this.writerBridge?.isLive()),
+      send: (msg) => {
+        this.writerBridge?.sendCtl(msg);
+      },
+      waitAck: (id) =>
+        new Promise((resolve) => {
+          const timer = setTimeout(() => {
+            this.writeForwardWaiters.delete(id);
+            resolve(null);
+          }, WRITER_FORWARD_TIMEOUT_MS);
+          this.writeForwardWaiters.set(id, { resolve, timer });
+        }),
     });
     if (forwarded) this.writerBridge?.requestCatchUp();
     return forwarded;
   }
 
-  private async requireWriterOrForward(req: Request): Promise<Response | null> {
+  receiveHubWriteForward(msg: HubWriteForwardMessage): void {
+    if (!msg.ack || !msg.id) return;
+    const waiter = this.writeForwardWaiters.get(msg.id);
+    if (!waiter) return;
+    this.writeForwardWaiters.delete(msg.id);
+    clearTimeout(waiter.timer);
+    waiter.resolve(msg);
+  }
+
+  async executeForwardedWrite(
+    fromHubId: string,
+    msg: HubWriteForwardMessage
+  ): Promise<HubWriteForwardMessage> {
+    const res = await this.dispatchForwardedWrite(fromHubId, msg);
+    const contentType = res.headers.get('content-type') ?? undefined;
+    const body = await res.text();
+    const ack: HubWriteForwardMessage = {
+      t: 'hub.write-forward',
+      id: msg.id,
+      ack: true,
+      status: res.status,
+    };
+    if (contentType) ack.headers = { 'content-type': contentType };
+    if (body) ack.body = body;
+    return ack;
+  }
+
+  /**
+   * 写者执行 standby 经已认证 hub uplink 转发的写入。
+   * 载荷自认证（enrollment 用户签名、redeem 证书、revoke/keylog 签名记录）。
+   * rename 的 uid 仅因发送方是已授权 hub 而被接受：standby 断言「该用户已在本机通过会话认证」。
+   */
+  private async dispatchForwardedWrite(
+    fromHubId: string,
+    msg: HubWriteForwardMessage
+  ): Promise<Response> {
+    const path = (msg.path ?? '/').split('?')[0] ?? '/';
+    const url = `http://hub${msg.path ?? '/'}`;
+    const headers = new Headers();
+    if (msg.headers?.['content-type']) headers.set('content-type', msg.headers['content-type']);
+    if (msg.headers?.['x-tmex-force-keylog']) {
+      headers.set('x-tmex-force-keylog', msg.headers['x-tmex-force-keylog']);
+    }
+    const req = new Request(url, {
+      method: msg.method ?? 'POST',
+      headers,
+      body: msg.method === 'GET' || msg.method === 'HEAD' ? undefined : (msg.body ?? ''),
+    });
+    const auth: HubAuthResult | null = msg.uid ? { userId: msg.uid, entryNodeId: fromHubId } : null;
+    if (path === '/api/hub/enrollments/redeem' && req.method === 'POST') {
+      return this.handleRedeem(req);
+    }
+    if (path === '/api/hub/enrollments' && req.method === 'POST') {
+      if (!auth) return json({ error: 'unauthorized' }, 401);
+      return this.handleCreateEnrollment(req, auth);
+    }
+    const rename = path.match(/^\/api\/hub\/nodes\/([^/]+)\/rename$/);
+    if (rename && req.method === 'POST') {
+      if (!auth) return json({ error: 'unauthorized' }, 401);
+      return this.handleRename(req, decodeURIComponent(rename[1] ?? ''), auth);
+    }
+    const revoke = path.match(/^\/api\/hub\/nodes\/([^/]+)\/revoke$/);
+    if (revoke && req.method === 'POST') {
+      if (!auth) return json({ error: 'unauthorized' }, 401);
+      return this.handleRevoke(req, decodeURIComponent(revoke[1] ?? ''), auth);
+    }
+    if (path === '/api/auth/keylog' && req.method === 'POST') {
+      if (!auth) return json({ error: 'unauthorized' }, 401);
+      return this.handleForwardedKeyLog(req, auth.userId);
+    }
+    return json({ error: 'not_found' }, 404);
+  }
+
+  private async handleForwardedKeyLog(req: Request, userId: string): Promise<Response> {
+    const body = await readJsonObjectBody(req);
+    if (!body) return json({ error: 'MALFORMED' }, 400);
+    let bytes: Uint8Array;
+    let sig: Uint8Array;
+    try {
+      bytes = requireB64url(body, 'bytes');
+      sig = requireB64url(body, 'sig', 64);
+    } catch (err) {
+      return validationError(err);
+    }
+    const already = await this.identicalForwardedKeyLog(userId, bytes, sig);
+    if (already) {
+      return json({ ok: true, seq: already.seq, hash: encodeBase64url(already.hash) });
+    }
+    const compat = inspectHubAuthRecordCompat(this.userStore, bytes, userId);
+    const forced = req.headers.get('x-tmex-force-keylog') === '1';
+    if (!compat.ok) {
+      if (forced) {
+        console.warn(
+          `[auth] forcing key-log append despite ${compat.code} minVersion=${compat.minVersion} nodes=${compat.nodes
+            .map((n) => n.id)
+            .join(',')}`
+        );
+      } else {
+        return json({ code: compat.code, minVersion: compat.minVersion, nodes: compat.nodes }, 409);
+      }
+    }
+    const result = await this.keyLogSource.append(userId, { bytes, sig });
+    if (!result.ok) return json({ error: result.error }, 400);
+    await this.uplink.applyAppendEffects(userId, result);
+    return json({
+      ok: true,
+      seq: result.seq,
+      hash: encodeBase64url(result.hash),
+    });
+  }
+
+  private async identicalForwardedKeyLog(
+    userId: string,
+    bytes: Uint8Array,
+    sig: Uint8Array
+  ): Promise<{ seq: bigint; hash: Uint8Array } | null> {
+    let seq: bigint;
+    try {
+      seq = decodeKeyLogRecord(bytes).seq;
+    } catch {
+      return null;
+    }
+    const listed = await this.keyLogSource.list(userId, seq);
+    const existing = listed.find((row) => row.seq === seq);
+    if (!existing) return null;
+    if (!bytesEqual(existing.bytes, bytes) || !bytesEqual(existing.sig, sig)) return null;
+    return { seq, hash: computeRecordHash(existing.bytes, existing.sig) };
+  }
+
+  private async requireWriterOrForward(
+    req: Request,
+    uid?: string | null
+  ): Promise<Response | null> {
     if (this.uplink.isWriter()) return null;
     if (requestAlreadyForwarded(req)) return notWriterResponse(this.uplink.notWriterError());
-    const forwarded = await this.forwardWrite(req);
+    const forwarded = await this.forwardWrite(req, uid);
     if (forwarded) return forwarded;
     return json(this.uplink.notWriterError(), 409);
   }
@@ -515,7 +700,7 @@ export class HubRuntime {
       }) ??
       hit('/api/hub/enrollments', 'POST', () =>
         this.withAuth(req, async (a) => {
-          const blocked = await this.requireWriterOrForward(req);
+          const blocked = await this.requireWriterOrForward(req, a.userId);
           return blocked ?? this.handleCreateEnrollment(req, a);
         })
       ) ??
@@ -525,13 +710,13 @@ export class HubRuntime {
       hit('/api/hub/nodes', 'GET', () => this.withAuth(req, (a) => this.handleListNodes(a))) ??
       hit('/api/hub/nodes/:id/rename', 'POST', (p) =>
         this.withAuth(req, async (a) => {
-          const blocked = await this.requireWriterOrForward(req);
+          const blocked = await this.requireWriterOrForward(req, a.userId);
           return blocked ?? this.handleRename(req, decodeURIComponent(p.id), a);
         })
       ) ??
       hit('/api/hub/nodes/:id/revoke', 'POST', (p) =>
         this.withAuth(req, async (a) => {
-          const blocked = await this.requireWriterOrForward(req);
+          const blocked = await this.requireWriterOrForward(req, a.userId);
           return blocked ?? this.handleRevoke(req, decodeURIComponent(p.id), a);
         })
       ) ??

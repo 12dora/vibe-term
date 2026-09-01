@@ -46,7 +46,7 @@ import {
   type LocalAuthStoreLike,
   standaloneClosedModeFields,
 } from '../db/local-auth-settings';
-import { inspectHubAuthRecordCompat } from '../hub/hub-authorization';
+import { filterNotRetiredHubRecords, inspectHubAuthRecordCompat } from '../hub/hub-authorization';
 import { LoginFailureLimiter } from './auth-login-limiter';
 import {
   AuthModeCache,
@@ -109,7 +109,7 @@ export type AuthRoutesDeps = {
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
   tlsInfo?: HubTlsInfoProvider;
   localAuth?: LocalAuthStoreLike;
-  forwardWriterWrite?: (req: Request) => Promise<Response | null>;
+  forwardWriterWrite?: (req: Request, uid?: string) => Promise<Response | null>;
 };
 
 /** 与 node 相同的登录前公开面；role 无关。 */
@@ -145,7 +145,8 @@ export class AuthRoutes {
   private tlsInfoProvider: HubTlsInfoProvider | undefined;
   private localAuth: LocalAuthStoreLike;
   private readonly modeCache = new AuthModeCache();
-  private forwardWriterWrite: ((req: Request) => Promise<Response | null>) | null = null;
+  private forwardWriterWrite: ((req: Request, uid?: string) => Promise<Response | null>) | null =
+    null;
 
   constructor(private readonly deps: AuthRoutesDeps) {
     this.localAuth = deps.localAuth ?? new LocalAuthStore();
@@ -161,7 +162,7 @@ export class AuthRoutes {
     this.forwardWriterWrite = deps.forwardWriterWrite ?? null;
   }
 
-  setWriterForward(fn: ((req: Request) => Promise<Response | null>) | null): void {
+  setWriterForward(fn: ((req: Request, uid?: string) => Promise<Response | null>) | null): void {
     this.forwardWriterWrite = fn;
   }
 
@@ -483,7 +484,7 @@ export class AuthRoutes {
   private async handleKeyLog(req: Request, userId: string | null): Promise<Response> {
     if (!userId) return jsonError('UNAUTHORIZED', 401);
     if (this.deps.roles.hub && this.deps.hubMode?.() === 'standby') {
-      const forwarded = await this.forwardWriterWrite?.(req);
+      const forwarded = await this.forwardWriterWrite?.(req, userId);
       if (forwarded) return forwarded;
       return this.hubNotWriterResponse();
     }
@@ -504,7 +505,8 @@ export class AuthRoutes {
     if (compat) return compat;
     const hubSync = this.usesHubSync(req);
     if (hubSync) {
-      return this.handleKeyLogHubSync(userId, bytes, sig);
+      const force = req.headers.get('x-tmex-force-keylog') === '1';
+      return this.handleKeyLogHubSync(userId, bytes, sig, force);
     }
     const applied = await this.deps.keyLogService.apply(userId, { bytes, sig });
     if (!applied.ok) {
@@ -535,7 +537,8 @@ export class AuthRoutes {
   private async handleKeyLogHubSync(
     userId: string,
     bytes: Uint8Array,
-    sig: Uint8Array
+    sig: Uint8Array,
+    force = false
   ): Promise<Response> {
     const preview = await this.previewKeyLog(userId, bytes, sig);
     if (!preview.ok) {
@@ -544,7 +547,7 @@ export class AuthRoutes {
       }
       return jsonError(preview.error, 400);
     }
-    const ack = await this.syncToHub({ bytes, sig });
+    const ack = await this.syncToHub({ bytes, sig, force });
     if (!ack.ok) {
       if (ack.error === 'HUB_TIMEOUT') {
         return jsonError('HUB_TIMEOUT', 504);
@@ -603,6 +606,7 @@ export class AuthRoutes {
   private async syncToHub(record: {
     bytes: Uint8Array;
     sig: Uint8Array;
+    force?: boolean;
   }): Promise<KeyLogHubAck> {
     if (!this.deps.publisher.publishAndAck) {
       return { ok: false, error: 'unavailable' };
@@ -628,6 +632,7 @@ export class AuthRoutes {
   private async safePublishAndAck(record: {
     bytes: Uint8Array;
     sig: Uint8Array;
+    force?: boolean;
   }): Promise<KeyLogHubAck> {
     const publishAndAck = this.deps.publisher.publishAndAck;
     if (!publishAndAck) {
@@ -727,13 +732,20 @@ export class AuthRoutes {
     });
   }
 
+  private authorizedHubRows() {
+    return filterNotRetiredHubRecords(this.deps.hubStore?.list() ?? [], {
+      userStore: this.deps.userStore,
+      selfId: this.deps.nodeId,
+    });
+  }
+
   private refuseIfAttachedNotWriter(): Response | null {
     if (this.deps.roles.hub && this.deps.hubMode?.() === 'standby') {
       return this.hubNotWriterResponse();
     }
     const attached = this.deps.attachedHub?.();
     if (!attached) return null;
-    const rows = this.deps.hubStore?.list() ?? [];
+    const rows = this.authorizedHubRows();
     const writerId = pickWriterHub(rows);
     if (!writerId) return this.hubNotWriterResponse();
     const writer = this.deps.hubStore?.get(writerId);
@@ -745,7 +757,7 @@ export class AuthRoutes {
   }
 
   private hubNotWriterResponse(): Response {
-    const rows = this.deps.hubStore?.list() ?? [];
+    const rows = this.authorizedHubRows();
     const writerId = pickWriterHub(rows);
     const writer = writerId ? this.deps.hubStore?.get(writerId) : undefined;
     return jsonError(HUB_NOT_WRITER, 409, {
@@ -756,7 +768,7 @@ export class AuthRoutes {
   }
 
   private resolveHub(): { nodeId: string | null; publicUrl: string | null } {
-    const rows = this.deps.hubStore?.list() ?? [];
+    const rows = this.authorizedHubRows();
     const writerId = pickWriterHub(rows);
     if (writerId) {
       const writer = this.deps.hubStore?.get(writerId);

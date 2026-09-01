@@ -1,36 +1,14 @@
 import {
   HUB_NOT_WRITER,
   type HubNotWriterError,
+  type HubWriteForwardHeaders,
+  type HubWriteForwardMessage,
   TMEX_FORWARDED_BY_HEADER,
 } from '@tmex/shared/uplink';
 import { json } from '../api/http';
-import type { HubTrustStore } from '../auth/hub-trust-store';
-import { uplinkWebSocketTls } from '../mesh/uplink-client';
-import { joinHubPath } from '../mesh/uplink-pool';
 
 export const WRITER_FORWARD_TIMEOUT_MS = 10_000;
 export const WRITER_FORWARD_HEADER = TMEX_FORWARDED_BY_HEADER;
-
-const HOP_BY_HOP = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade',
-  'host',
-  'content-length',
-]);
-
-const PASS_THROUGH = new Set([
-  'cookie',
-  'authorization',
-  'content-type',
-  'accept',
-  'x-tmex-force-keylog',
-]);
 
 export type WriterForwardTarget = {
   writerHubId: string | null;
@@ -38,13 +16,15 @@ export type WriterForwardTarget = {
   writerEpoch: number | null;
 };
 
-export type WriterForwardFetch = (url: string, init?: RequestInit) => Promise<Response>;
+export type WriterForwardSend = (msg: HubWriteForwardMessage) => void;
 
 export type WriterForwardContext = {
   selfHubId: string;
+  uid?: string | null;
   target: WriterForwardTarget;
-  hubTrust?: HubTrustStore;
-  fetch?: WriterForwardFetch;
+  send?: WriterForwardSend;
+  waitAck?: (id: string) => Promise<HubWriteForwardMessage | null>;
+  isLive?: () => boolean;
   timeoutMs?: number;
 };
 
@@ -63,65 +43,62 @@ export function requestAlreadyForwarded(req: Request): boolean {
   return Boolean(value && value.trim().length > 0);
 }
 
+export function collectWriteForwardHeaders(req: Request): HubWriteForwardHeaders | undefined {
+  const headers: HubWriteForwardHeaders = {};
+  const contentType = req.headers.get('content-type');
+  if (contentType) headers['content-type'] = contentType;
+  const force = req.headers.get('x-tmex-force-keylog');
+  if (force) headers['x-tmex-force-keylog'] = force;
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+export function ackToHttpResponse(msg: HubWriteForwardMessage, forwardedBy: string): Response {
+  const headers = new Headers();
+  const contentType = msg.headers?.['content-type'];
+  if (contentType) headers.set('content-type', contentType);
+  headers.set(WRITER_FORWARD_HEADER, forwardedBy);
+  return new Response(msg.body ?? null, { status: msg.status ?? 500, headers });
+}
+
+export async function buildWriteForwardRequest(
+  req: Request,
+  opts: { id: string; uid?: string | null }
+): Promise<HubWriteForwardMessage> {
+  const src = new URL(req.url);
+  const msg: HubWriteForwardMessage = {
+    t: 'hub.write-forward',
+    id: opts.id,
+    method: req.method,
+    path: `${src.pathname}${src.search}`,
+  };
+  const headers = collectWriteForwardHeaders(req);
+  if (headers) msg.headers = headers;
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    msg.body = await req.text();
+  }
+  if (opts.uid) msg.uid = opts.uid;
+  return msg;
+}
+
 export async function forwardWriteToWriter(
   req: Request,
   ctx: WriterForwardContext
 ): Promise<Response | null> {
   if (requestAlreadyForwarded(req)) return null;
-  const publicUrl = ctx.target.writerPublicUrl;
-  if (!publicUrl || !ctx.target.writerHubId) return null;
+  if (!ctx.target.writerHubId) return null;
+  if (!ctx.isLive?.() || !ctx.send || !ctx.waitAck) return null;
   const timeoutMs = ctx.timeoutMs ?? WRITER_FORWARD_TIMEOUT_MS;
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const id = crypto.randomUUID();
+  const msg = await buildWriteForwardRequest(req, { id, uid: ctx.uid });
   try {
-    const src = new URL(req.url);
-    const url = joinHubPath(publicUrl, `${src.pathname}${src.search}`);
-    const headers = new Headers();
-    for (const [name, value] of req.headers.entries()) {
-      const key = name.toLowerCase();
-      if (HOP_BY_HOP.has(key)) continue;
-      if (key === WRITER_FORWARD_HEADER.toLowerCase()) continue;
-      if (PASS_THROUGH.has(key) || key.startsWith('x-tmex-')) {
-        headers.set(name, value);
-      }
-    }
-    headers.set(WRITER_FORWARD_HEADER, ctx.selfHubId);
-    const init: RequestInit & { duplex?: 'half' } = {
-      method: req.method,
-      headers,
-      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : req.body,
-      signal: ac.signal,
-      redirect: 'error',
-      duplex: 'half',
-    };
-    const res = ctx.fetch
-      ? await ctx.fetch(url, init)
-      : await pinnedFetch(url, init, publicUrl, ctx.hubTrust);
-    const outHeaders = new Headers();
-    const contentType = res.headers.get('content-type');
-    if (contentType) outHeaders.set('content-type', contentType);
-    outHeaders.set(WRITER_FORWARD_HEADER, ctx.selfHubId);
-    return new Response(res.body, { status: res.status, headers: outHeaders });
+    ctx.send(msg);
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
-}
-
-async function pinnedFetch(
-  url: string,
-  init: RequestInit,
-  publicUrl: string,
-  hubTrust?: HubTrustStore
-): Promise<Response> {
-  let pinCa: string | null = null;
-  try {
-    pinCa = hubTrust?.get(publicUrl)?.caPem ?? null;
-  } catch {
-    pinCa = null;
-  }
-  const tls = uplinkWebSocketTls(pinCa ? [pinCa] : null);
-  if (tls) Object.assign(init, tls);
-  return fetch(url, init);
+  const ack = await Promise.race([
+    ctx.waitAck(id),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+  ]);
+  if (!ack?.ack) return null;
+  return ackToHttpResponse(ack, ctx.selfHubId);
 }

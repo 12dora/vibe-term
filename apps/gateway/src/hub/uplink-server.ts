@@ -21,6 +21,7 @@ import {
   type HubForwardMessage,
   type HubMode,
   type HubNotWriterError,
+  type HubWriteForwardMessage,
   UPLINK_CTL_MAX_HUBS,
 } from '@tmex/shared/uplink';
 import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
@@ -48,9 +49,10 @@ import {
 import {
   HUB_TOKENS_ACK_WAIT_MS,
   applyHubTokensMessage,
+  assertHubTokensEncodedSize,
   hubTokensAck,
   peerSupportsHubTokens,
-  snapshotHubTokensMessage,
+  snapshotHubTokensMessages,
 } from './hub-tokens';
 import { trimKeyLogPageToByteLimit } from './key-log-page';
 import { patchNode } from './node-persistence';
@@ -131,7 +133,7 @@ export type UplinkServerOptions = {
   meshHubs?: MeshHubStore;
   onModeChange?: () => void;
   onNewAuthorizedHub?: (hubNodeId: string) => void;
-  forwardAppend?: (record: { bytes: Uint8Array; sig: Uint8Array }) => Promise<{
+  forwardAppend?: (record: { bytes: Uint8Array; sig: Uint8Array; force?: boolean }) => Promise<{
     ok: boolean;
     seq?: bigint | number;
     error?: string;
@@ -139,6 +141,10 @@ export type UplinkServerOptions = {
   onForwardedWrite?: () => void;
   openHubStream?: (hubId: string, payload: Uint8Array) => Promise<LinkStream | null>;
   forwardHubCtl?: (msg: HubAttachmentsMessage | HubForwardMessage) => void;
+  onWriteForward?: (
+    fromHubId: string,
+    msg: HubWriteForwardMessage
+  ) => Promise<HubWriteForwardMessage>;
 };
 
 type PendingAuth = {
@@ -220,6 +226,10 @@ export class UplinkServer {
     payload: Uint8Array
   ) => Promise<LinkStream | null>;
   private readonly forwardHubCtl?: (msg: HubAttachmentsMessage | HubForwardMessage) => void;
+  private readonly onWriteForward?: (
+    fromHubId: string,
+    msg: HubWriteForwardMessage
+  ) => Promise<HubWriteForwardMessage>;
   readonly attachments: AttachmentRouter;
   private readonly rtcHubRoutes: RtcHubRouteTable;
   private attachmentRevision = 0;
@@ -282,6 +292,7 @@ export class UplinkServer {
     this.onForwardedWrite = opts.onForwardedWrite;
     this.openHubStream = opts.openHubStream;
     this.forwardHubCtl = opts.forwardHubCtl;
+    this.onWriteForward = opts.onWriteForward;
     this.now = opts.now ?? Date.now;
     this.attachments = new AttachmentRouter({
       selfHubId: () => this.hubNodeId(),
@@ -527,7 +538,19 @@ export class UplinkServer {
     if (!this.isAuthorizedHub(live.nodeId, live.userId)) return;
     const revision = this.userStore.nextEnrollmentTokenRevision(this.hubWriterEpoch);
     const id = crypto.randomUUID();
-    this.send(live.link, snapshotHubTokensMessage(this.userStore, revision, id));
+    const pages = snapshotHubTokensMessages(this.userStore, revision, id, live.userId);
+    for (const page of pages) {
+      assertHubTokensEncodedSize(page);
+      this.send(live.link, page);
+    }
+  }
+
+  private knownMaxWriterEpoch(): number {
+    let max = this.hubWriterEpoch;
+    for (const row of this.meshHubs.list()) {
+      if (row.writerEpoch > max) max = row.writerEpoch;
+    }
+    return max;
   }
 
   private handleHubTokens(live: LiveConnection, msg: HubTokensMessage): void {
@@ -543,12 +566,52 @@ export class UplinkServer {
       }
       return;
     }
-    if (this.isWriter()) {
-      console.warn(`[hub] hub.tokens upsert/tombstone ignored on writer from node=${live.nodeId}`);
+    const writerId = pickWriterHub(this.authorizedHubRecords());
+    if (live.nodeId !== writerId) {
+      console.warn(
+        `[hub] hub.tokens upsert/tombstone dropped: sender=${live.nodeId} is not current writer=${writerId}`
+      );
       return;
     }
-    applyHubTokensMessage(this.userStore, msg);
+    const senderEpoch = this.meshHubs.get(live.nodeId)?.writerEpoch ?? 0;
+    const localMax = this.knownMaxWriterEpoch();
+    if (senderEpoch < localMax) {
+      console.warn(
+        `[hub] hub.tokens upsert/tombstone dropped: senderEpoch=${senderEpoch} < localMax=${localMax} from=${live.nodeId}`
+      );
+      return;
+    }
+    applyHubTokensMessage(this.userStore, msg, live.userId);
     if (msg.id) this.send(live.link, hubTokensAck(msg));
+  }
+
+  private async handleHubWriteForward(
+    live: LiveConnection,
+    msg: HubWriteForwardMessage
+  ): Promise<void> {
+    if (msg.ack) return;
+    if (!this.isAuthorizedHub(live.nodeId, live.userId)) {
+      console.warn(`[hub] hub.write-forward rejected from unauthorized node=${live.nodeId}`);
+      return;
+    }
+    if (!this.onWriteForward) return;
+    try {
+      const ack = await this.onWriteForward(live.nodeId, msg);
+      if (msg.id) this.send(live.link, ack);
+    } catch (err) {
+      console.warn(
+        `[hub] hub.write-forward failed from=${live.nodeId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+      if (msg.id) {
+        this.send(live.link, {
+          t: 'hub.write-forward',
+          id: msg.id,
+          ack: true,
+          status: 500,
+          body: JSON.stringify({ error: 'forward_failed' }),
+        });
+      }
+    }
   }
 
   publishLocalAttachments(): void {
@@ -1096,7 +1159,7 @@ export class UplinkServer {
         await this.handleKeyLogReq(live, msg);
         return;
       case 'key.log.append':
-        await this.handleKeyLogAppend(live, msg.bytes, msg.sig, msg.id);
+        await this.handleKeyLogAppend(live, msg.bytes, msg.sig, msg.id, msg.force === true);
         return;
       case 'rtc.signal':
         this.handleRtcSignal(live, msg);
@@ -1109,6 +1172,9 @@ export class UplinkServer {
         return;
       case 'hub.forward':
         this.handleHubForward(live, msg);
+        return;
+      case 'hub.write-forward':
+        await this.handleHubWriteForward(live, msg);
         return;
       case 'key.log.res':
         link.close('protocol_error');
@@ -1377,7 +1443,8 @@ export class UplinkServer {
     live: LiveConnection,
     bytesB64: string,
     sigB64: string,
-    id?: string
+    id?: string,
+    force = false
   ): Promise<void> {
     let bytes: Uint8Array;
     let sig: Uint8Array;
@@ -1400,7 +1467,7 @@ export class UplinkServer {
         );
         return;
       }
-      const forwarded = this.forwardAppend ? await this.forwardAppend({ bytes, sig }) : null;
+      const forwarded = this.forwardAppend ? await this.forwardAppend({ bytes, sig, force }) : null;
       if (forwarded) {
         if (id) {
           if (forwarded.ok) {
@@ -1446,15 +1513,23 @@ export class UplinkServer {
     }
     const compat = inspectHubAuthRecordCompat(this.userStore, bytes, live.userId);
     if (!compat.ok) {
-      if (id) {
-        this.send(live.link, {
-          t: 'key.log.ack',
-          id,
-          ok: false,
-          error: KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
-        });
+      if (force) {
+        console.warn(
+          `[auth] forcing key-log append despite ${compat.code} minVersion=${compat.minVersion} nodes=${compat.nodes
+            .map((n) => n.id)
+            .join(',')}`
+        );
+      } else {
+        if (id) {
+          this.send(live.link, {
+            t: 'key.log.ack',
+            id,
+            ok: false,
+            error: KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
+          });
+        }
+        return;
       }
-      return;
     }
     const result = await this.keyLogSource.append(live.userId, { bytes, sig });
     if (result.ok) {

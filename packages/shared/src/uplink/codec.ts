@@ -19,6 +19,7 @@ export const UPLINK_CTL_TYPES = [
   'hub.tokens',
   'hub.attachments',
   'hub.forward',
+  'hub.write-forward',
 ] as const;
 
 export type UplinkCtlType = (typeof UPLINK_CTL_TYPES)[number];
@@ -45,7 +46,11 @@ export const UPLINK_CTL_MAX_TOKEN_JSON_LEN = 16 * 1024;
 
 function skipsCtlBounds(t: unknown): boolean {
   return (
-    t === 'key.log.res' || t === 'hub.tokens' || t === 'hub.attachments' || t === 'hub.forward'
+    t === 'key.log.res' ||
+    t === 'hub.tokens' ||
+    t === 'hub.attachments' ||
+    t === 'hub.forward' ||
+    t === 'hub.write-forward'
   );
 }
 export const KEY_LOG_PAGE_DEFAULT_LIMIT = 256;
@@ -324,6 +329,9 @@ function parseHubTokensMessage(parsed: Record<string, unknown>): HubTokensMessag
     }
     msg.tokens = parsed.tokens.map((row, i) => parseHubTokenRow(row, `tokens[${i}]`));
   }
+  if (parsed.more !== undefined && parsed.more !== null) {
+    msg.more = mBool(parsed.more, 'more');
+  }
   return msg;
 }
 
@@ -339,6 +347,7 @@ function encodeHubTokensMessage(msg: HubTokensMessage, legacy: boolean): Uint8Ar
     revision: msg.revision,
     ...(msg.id ? { id: msg.id } : {}),
     ...(msg.ack !== undefined ? { ack: msg.ack } : {}),
+    ...(msg.more !== undefined ? { more: msg.more } : {}),
     ...(msg.tokens
       ? { tokens: msg.tokens.map((row, i) => parseHubTokenRow(row, `tokens[${i}]`)) }
       : {}),
@@ -418,6 +427,58 @@ function parseHubForwardMessage(parsed: Record<string, unknown>): HubForwardMess
 function encodeHubForwardMessage(msg: HubForwardMessage, legacy: boolean): Uint8Array {
   if (legacy) return encodeJsonBytes({ t: 'hub.forward' });
   return encodeJsonBytes(parseHubForwardMessage({ ...msg, t: 'hub.forward' }));
+}
+
+const WRITE_FORWARD_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']);
+const WRITE_FORWARD_HEADER_KEYS = new Set(['content-type', 'x-tmex-force-keylog']);
+
+function parseWriteForwardHeaders(value: unknown): HubWriteForwardHeaders | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) throw new Error('hub.write-forward headers must be an object');
+  const headers: HubWriteForwardHeaders = {};
+  for (const [rawKey, rawVal] of Object.entries(value)) {
+    const key = rawKey.toLowerCase();
+    if (key === 'cookie' || key === 'authorization') continue;
+    if (!WRITE_FORWARD_HEADER_KEYS.has(key)) continue;
+    if (typeof rawVal !== 'string') {
+      throw new Error(`hub.write-forward headers.${key} must be a string`);
+    }
+    if (key === 'content-type') headers['content-type'] = rawVal;
+    else headers['x-tmex-force-keylog'] = rawVal;
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function parseHubWriteForwardMessage(parsed: Record<string, unknown>): HubWriteForwardMessage {
+  const id = mStr(parsed.id, 'id');
+  const ack =
+    parsed.ack === undefined || parsed.ack === null ? undefined : mBool(parsed.ack, 'ack');
+  const headers = parseWriteForwardHeaders(parsed.headers);
+  const body = mOptStr(parsed.body, 'body');
+  if (ack === true) {
+    const status = mNonNegInt(parsed.status, 'status');
+    if (status < 100 || status > 599) throw new Error('hub.write-forward status out of range');
+    const msg: HubWriteForwardMessage = { t: 'hub.write-forward', id, ack: true, status };
+    if (headers) msg.headers = headers;
+    if (body !== undefined) msg.body = body;
+    return msg;
+  }
+  const method = mStr(parsed.method, 'method').toUpperCase();
+  if (!WRITE_FORWARD_METHODS.has(method)) throw new Error('hub.write-forward method not allowed');
+  const path = mStr(parsed.path, 'path');
+  if (!path.startsWith('/')) throw new Error('hub.write-forward path must be absolute');
+  const msg: HubWriteForwardMessage = { t: 'hub.write-forward', id, method, path };
+  if (ack === false) msg.ack = false;
+  if (headers) msg.headers = headers;
+  if (body !== undefined) msg.body = body;
+  const uid = mOptStr(parsed.uid, 'uid');
+  if (uid) msg.uid = uid;
+  return msg;
+}
+
+function encodeHubWriteForwardMessage(msg: HubWriteForwardMessage, legacy: boolean): Uint8Array {
+  if (legacy) return encodeJsonBytes({ t: 'hub.write-forward' });
+  return encodeJsonBytes(parseHubWriteForwardMessage({ ...msg, t: 'hub.write-forward' }));
 }
 
 function stripAttachedHubId<T extends { attachedHubId?: string }>(
@@ -540,13 +601,14 @@ export type MeshUplinkCtlMessage =
       has_more?: boolean;
       retry_after_ms?: number;
     }
-  | { t: 'key.log.append'; bytes: Uint8Array; sig: Uint8Array; id?: string }
+  | { t: 'key.log.append'; bytes: Uint8Array; sig: Uint8Array; id?: string; force?: boolean }
   | MeshUplinkKeyLogAck
   | MeshUplinkRtcSignal
   | MeshUplinkEnrollRedeemed
   | HubTokensMessage
   | HubAttachmentsMessage
-  | HubForwardMessage;
+  | HubForwardMessage
+  | HubWriteForwardMessage;
 
 function parseMeshNode(value: unknown): MeshNodeInfo {
   if (!isRecord(value)) throw new Error('node.list node must be an object');
@@ -705,6 +767,9 @@ export function decodeMeshUplinkCtl(
       };
       const id = mOptStr(parsed.id, 'id');
       if (id) append.id = id;
+      if (parsed.force !== undefined && parsed.force !== null) {
+        append.force = mBool(parsed.force, 'force');
+      }
       return append;
     }
     case 'key.log.ack': {
@@ -750,6 +815,8 @@ export function decodeMeshUplinkCtl(
       return parseHubAttachmentsMessage(parsed);
     case 'hub.forward':
       return parseHubForwardMessage(parsed);
+    case 'hub.write-forward':
+      return parseHubWriteForwardMessage(parsed);
   }
 }
 
@@ -818,6 +885,7 @@ export function encodeMeshUplinkCtl(
         bytes: encodeBase64url(msg.bytes),
         sig: encodeBase64url(msg.sig),
         ...(msg.id ? { id: msg.id } : {}),
+        ...(!legacy && msg.force === true ? { force: true } : {}),
       });
     case 'key.log.ack':
       return encodeJsonBytes({
@@ -850,6 +918,8 @@ export function encodeMeshUplinkCtl(
       return encodeHubAttachmentsMessage(msg, legacy);
     case 'hub.forward':
       return encodeHubForwardMessage(msg, legacy);
+    case 'hub.write-forward':
+      return encodeHubWriteForwardMessage(msg, legacy);
   }
 }
 
@@ -904,7 +974,13 @@ export type KeyLogResMessage = {
   has_more?: boolean;
   retry_after_ms?: number;
 };
-export type KeyLogAppendMessage = { t: 'key.log.append'; bytes: string; sig: string; id?: string };
+export type KeyLogAppendMessage = {
+  t: 'key.log.append';
+  bytes: string;
+  sig: string;
+  id?: string;
+  force?: boolean;
+};
 type KeyLogAckMessage = {
   t: 'key.log.ack';
   id: string;
@@ -949,6 +1025,7 @@ export type HubTokensMessage = {
   id?: string;
   tokens?: HubTokenRow[];
   ack?: boolean;
+  more?: boolean;
 };
 export type HubAttachmentsEntry = {
   nodeId: string;
@@ -976,6 +1053,21 @@ export type HubForwardMessage = {
   visitedHubIds: string[];
   signal: HubForwardRtcSignal;
 };
+export type HubWriteForwardHeaders = {
+  'content-type'?: string;
+  'x-tmex-force-keylog'?: string;
+};
+export type HubWriteForwardMessage = {
+  t: 'hub.write-forward';
+  id: string;
+  ack?: boolean;
+  method?: string;
+  path?: string;
+  headers?: HubWriteForwardHeaders;
+  body?: string;
+  uid?: string;
+  status?: number;
+};
 export type HubUplinkCtlMessage =
   | AuthChallengeMessage
   | AuthResponseMessage
@@ -992,7 +1084,8 @@ export type HubUplinkCtlMessage =
   | EnrollRedeemedMessage
   | HubTokensMessage
   | HubAttachmentsMessage
-  | HubForwardMessage;
+  | HubForwardMessage
+  | HubWriteForwardMessage;
 
 function hStr(obj: Record<string, unknown>, key: string): string {
   const value = obj[key];
@@ -1194,6 +1287,9 @@ function decodeHubInner(
         sig: bytesToB64url(b64urlToBytes(hStr(parsed, 'sig'), 64)),
       };
       if (parsed.id !== undefined && parsed.id !== null) msg.id = hNe(parsed, 'id');
+      if (parsed.force !== undefined && parsed.force !== null) {
+        msg.force = hBool(parsed, 'force');
+      }
       return msg;
     }
     case 'key.log.ack': {
@@ -1263,6 +1359,12 @@ function decodeHubInner(
       } catch (err) {
         throw new UplinkCtlError(err instanceof Error ? err.message : 'invalid hub.forward');
       }
+    case 'hub.write-forward':
+      try {
+        return parseHubWriteForwardMessage(parsed);
+      } catch (err) {
+        throw new UplinkCtlError(err instanceof Error ? err.message : 'invalid hub.write-forward');
+      }
   }
   throw new UplinkCtlError(`unknown t: ${t}`);
 }
@@ -1296,6 +1398,13 @@ export function encodeHubUplinkCtl(
     if (msg.t === 'hub.forward') {
       return encodeJsonBytes({ t: 'hub.forward' });
     }
+    if (msg.t === 'hub.write-forward') {
+      return encodeJsonBytes({ t: 'hub.write-forward' });
+    }
+    if (msg.t === 'key.log.append') {
+      const { force: _force, ...rest } = msg;
+      return encodeJsonBytes(rest);
+    }
   }
   if (msg.t === 'node.list') {
     if (msg.hubs) parseHubs(msg.hubs);
@@ -1303,6 +1412,8 @@ export function encodeHubUplinkCtl(
     if (msg.writerEpoch !== undefined) mNonNegInt(msg.writerEpoch, 'writerEpoch');
   } else if (msg.t === 'node.status' && msg.hub) {
     parseHubAdvertisement(msg.hub);
+  } else if (msg.t === 'hub.write-forward') {
+    return encodeHubWriteForwardMessage(msg, false);
   }
   return encodeJsonBytes(msg);
 }

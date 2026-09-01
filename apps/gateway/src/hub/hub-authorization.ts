@@ -59,6 +59,37 @@ export function isAuthorizedHub(input: ResolveHubAuthorizationInput): boolean {
   return source === 'signed-active' || source === 'env' || source === 'self';
 }
 
+export function filterAuthorizedHubRecords<T extends { hubNodeId: string }>(
+  rows: T[],
+  opts: { userStore: UserStore; selfId?: string | null; envPeers: Iterable<string> }
+): T[] {
+  const uid = resolveMeshUserId(opts.userStore, { nodeId: opts.selfId });
+  return rows.filter((row) =>
+    isAuthorizedHub({
+      hubNodeId: row.hubNodeId,
+      selfId: opts.selfId,
+      envPeers: opts.envPeers,
+      signed: lookupSignedHubAuthorization(opts.userStore, uid, row.hubNodeId),
+    })
+  );
+}
+
+export function isSignedRetiredHub(
+  userStore: UserStore,
+  userId: string | null | undefined,
+  hubNodeId: string
+): boolean {
+  return lookupSignedHubAuthorization(userStore, userId, hubNodeId)?.status === 'retired';
+}
+
+export function filterNotRetiredHubRecords<T extends { hubNodeId: string }>(
+  rows: T[],
+  opts: { userStore: UserStore; selfId?: string | null }
+): T[] {
+  const uid = resolveMeshUserId(opts.userStore, { nodeId: opts.selfId });
+  return rows.filter((row) => !isSignedRetiredHub(opts.userStore, uid, row.hubNodeId));
+}
+
 export function hubAuthListColumn(source: HubAuthorizationSource): HubAuthListColumn {
   if (source === 'signed-active') return 'signed';
   if (source === 'env') return 'env';

@@ -109,6 +109,9 @@ describe('MeshHubStore', () => {
         priority: 10,
         caFingerprint: null,
       });
+      expect(
+        store.orderedEndpoints({ include: (id) => id !== C }).map((row) => row.hubNodeId)
+      ).toEqual([B, A]);
 
       store.remove(B);
       expect(store.get(B)).toBeNull();

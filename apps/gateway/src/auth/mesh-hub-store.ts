@@ -120,7 +120,7 @@ export class MeshHubStore {
   }
 
   /** Ordered failover candidates: same order as list(). */
-  orderedEndpoints(): Array<{
+  orderedEndpoints(opts?: { include?: (hubNodeId: string) => boolean }): Array<{
     hubNodeId: string;
     publicUrl: string;
     mode: HubMode;
@@ -128,7 +128,10 @@ export class MeshHubStore {
     priority: number;
     caFingerprint: string | null;
   }> {
-    return this.list().map((row) => ({
+    const rows = opts?.include
+      ? this.list().filter((row) => opts.include?.(row.hubNodeId))
+      : this.list();
+    return rows.map((row) => ({
       hubNodeId: row.hubNodeId,
       publicUrl: row.publicUrl,
       mode: row.mode,

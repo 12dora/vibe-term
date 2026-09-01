@@ -58,10 +58,8 @@ export function applyReplicatedNodeList(
     const value = id.trim().toLowerCase();
     if (value) envAllowed.add(value);
   }
-  const sourceId = meta.hubNodeId?.toLowerCase() ?? '';
   const allowed = (id: string): boolean => {
     const key = id.toLowerCase();
-    if (sourceId && key === sourceId) return true;
     if (self.isAuthorizedHub) return self.isAuthorizedHub(key);
     return envAllowed.has(key);
   };
