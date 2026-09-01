@@ -25,7 +25,7 @@ import {
 } from '../../auth';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import type { AuthDb } from '../../auth/types';
-import type { HubRuntime } from '../../hub';
+import { HubRuntime, createHubKeyLogSource } from '../../hub';
 import type { GatewayRuntime } from '../../runtime';
 import type { WebSocketServer } from '../../ws';
 import { MESH_VIA_SELF, setMeshRequestContext } from '../mesh-deps';
@@ -214,6 +214,10 @@ export function fakeGateway(db: AuthDb, label: string): GatewayRuntime {
 
 export function meshHubsOf(db: AuthDb): MeshHubStore {
   return new MeshHubStore(db);
+}
+
+export function keyLogList(db: AuthDb, userId: string) {
+  return new KeyLogStore(db).list(userId);
 }
 
 export function sidFromResponse(res: Response, nodeId = MESH_VIA_SELF): string {
@@ -576,7 +580,7 @@ export async function enrollAndStart(
         name: 'hub-a',
         mode: 'active',
         priority: 0,
-        writerEpoch: 99,
+        writerEpoch: 1,
         caFingerprint: null,
         online: true,
         lastSeenAt: now,
@@ -613,6 +617,13 @@ export async function enrollAndStart(
   const unsubscribe = opts.roles.hub ? wireReplication(mesh) : undefined;
   await mesh.start();
   await waitOnline(mesh);
+  if (opts.hubUrl && opts.wsFactory) {
+    const attached = mesh.attachedHub()?.publicUrl ?? null;
+    if (!attached || !sameHubUrl(attached, opts.hubUrl)) {
+      await mesh.uplink.switchTo(opts.hubUrl);
+      await waitOnline(mesh);
+    }
+  }
   return { mesh, db, close, userStore, unsubscribe };
 }
 
@@ -730,6 +741,42 @@ export function attachedUrl(mesh: MeshRuntime): string | null {
 
 export function attachedHubId(mesh: MeshRuntime): string | null {
   return mesh.attachedHub()?.hubNodeId ?? null;
+}
+
+export function reconstructHubRuntime(
+  node: HarnessNode,
+  opts: {
+    userId: string;
+    keys: UserKeyService;
+    keyLog: KeyLogStore;
+    authorizedHubIds: string[];
+    mode?: 'active' | 'standby';
+    writerEpoch?: number;
+    publicUrl?: string;
+    priority?: number;
+  }
+): HubRuntime {
+  return new HubRuntime({
+    db: node.db,
+    userStore: node.userStore,
+    keyLogSource: createHubKeyLogSource(opts.keys, opts.keyLog),
+    meshHubs: node.mesh.hub?.meshHubs ?? meshHubsOf(node.db),
+    config: {
+      publicUrl: opts.publicUrl ?? HUB_A_URL,
+      stun: [],
+      nodeId: node.mesh.nodeId,
+      hubNodeId: node.mesh.nodeId,
+      mode: opts.mode ?? 'active',
+      priority: opts.priority ?? 100,
+      writerEpoch: opts.writerEpoch ?? 1,
+      authorizedHubIds: opts.authorizedHubIds,
+    },
+    authenticate: () => ({
+      userId: opts.userId,
+      entryNodeId: node.mesh.nodeId,
+      sid: 'reconstructed',
+    }),
+  });
 }
 
 export async function getMeshHubs(mesh: MeshRuntime, cookie: string) {

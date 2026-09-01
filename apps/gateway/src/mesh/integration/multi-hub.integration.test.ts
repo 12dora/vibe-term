@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { encodeBase64url, encodeRevokeNodePayload } from '@tmex/shared/auth';
+import {
+  encodeBase64url,
+  encodeClearTotpPayload,
+  encodeRevokeNodePayload,
+} from '@tmex/shared/auth';
 import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
 import { signUserRecord } from '../../hub/hub-test-helpers';
 import {
@@ -21,10 +25,12 @@ import {
   getMeshHubs,
   getMeshNodes,
   jarFor,
+  keyLogList,
   loginRemote,
   loginSelf,
   meshHubsOf,
   notWriterBody,
+  reconstructHubRuntime,
   selfCookie,
   sidFromResponse,
   waitUntil,
@@ -433,6 +439,207 @@ describe('multi-hub in-process integration', () => {
       mode: 'active',
       writerEpoch: 1,
     });
+  });
+
+  test('unauthorized high-epoch hub advertisement does not demote A or appear as writer', async () => {
+    const { a, c, boot: user } = await boot();
+    const warns: string[] = [];
+    const warnSpy = spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warns.push(String(args[0]));
+    });
+    try {
+      expect(a.mesh.hub?.mode()).toBe('active');
+      c.mesh.uplink.sendCtl({
+        t: 'node.status',
+        version: 'evil-999',
+        tmux: false,
+        direct_capable: false,
+        inventory: {},
+        endpoints: [],
+        hub: {
+          publicUrl: 'http://evil.test',
+          mode: 'active',
+          priority: 1,
+          writerEpoch: 999,
+        },
+      });
+      await waitUntil(() => a.userStore.getNode(c.mesh.nodeId)?.version === 'evil-999', 8_000);
+      expect(a.mesh.hub?.mode()).toBe('active');
+      expect(meshHubsOf(a.db).get(c.mesh.nodeId)).toBeNull();
+      expect(
+        warns.some((line) =>
+          line.includes(`[hub] ignored hub advertisement from unauthorized node=${c.mesh.nodeId}`)
+        )
+      ).toBe(true);
+
+      const sid = await loginSelf(c.mesh, user);
+      const hubs = await getMeshHubs(c.mesh, selfCookie(sid));
+      expect(hubs.writerHubId).toBe(a.mesh.nodeId);
+      expect(hubs.hubs.some((row) => row.nodeId === c.mesh.nodeId)).toBe(false);
+      expect(hubs.hubs.some((row) => row.writerEpoch === 999)).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('A restarted after fencing by E stays standby and writes HUB_NOT_WRITER', async () => {
+    const router = new HubRouter();
+    const ePending = await createPendingNode();
+    const aBoot = await bootHubA(router, { hubPeers: [ePending.identity.nodeIdHex] });
+    fixtures.push({
+      stop: async () => {
+        aBoot.node.unsubscribe?.();
+        await aBoot.node.mesh.stop();
+        await aBoot.node.mesh.hub?.stop();
+        aBoot.node.close();
+      },
+    });
+    const e = await enrollAndStart(
+      { mesh: aBoot.node.mesh, boot: aBoot.boot, keys: aBoot.keys, keyLog: aBoot.keyLog },
+      {
+        name: 'node-e',
+        version: 'ver-e',
+        roles: { hub: true, node: true },
+        hubUrl: HUB_A_URL,
+        hubPublicUrl: HUB_E_URL,
+        hubMode: 'active',
+        hubPriority: 50,
+        hubWriterEpoch: 2,
+        wsFactory: router.factory,
+        pending: ePending,
+        label: 'e',
+      }
+    );
+    fixtures.push({
+      stop: async () => {
+        e.unsubscribe?.();
+        await e.mesh.stop();
+        await e.mesh.hub?.stop();
+        e.close();
+      },
+    });
+    if (e.mesh.hub) router.register(HUB_E_URL, e.mesh.hub);
+    await waitUntil(() => aBoot.node.mesh.hub?.mode() === 'standby', 8_000);
+    expect(aBoot.node.mesh.hub?.mode()).toBe('standby');
+
+    await aBoot.node.mesh.hub?.stop();
+    const logged: string[] = [];
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      logged.push(String(args[0]));
+    });
+    let restarted: ReturnType<typeof reconstructHubRuntime>;
+    try {
+      restarted = reconstructHubRuntime(aBoot.node, {
+        userId: aBoot.boot.userId,
+        keys: aBoot.keys,
+        keyLog: aBoot.keyLog,
+        authorizedHubIds: [e.mesh.nodeId],
+        mode: 'active',
+        writerEpoch: 1,
+      });
+    } finally {
+      errorSpy.mockRestore();
+    }
+    fixtures.push({ stop: async () => restarted.stop() });
+    expect(restarted.mode()).toBe('standby');
+    expect(
+      logged.some(
+        (line) => line.includes('[hub] starting fenced:') && line.includes('writerEpoch=2')
+      )
+    ).toBe(true);
+
+    const write = await callHub(restarted, 'http://hub/api/hub/enrollments/redeem', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(write.status).toBe(409);
+    expect(await write.json()).toEqual({
+      code: HUB_NOT_WRITER,
+      writerHubId: e.mesh.nodeId,
+      writerPublicUrl: HUB_E_URL,
+      writerEpoch: 2,
+    });
+  });
+
+  test('standby B rejects chain-extending key.log.append from C and acks identical replay', async () => {
+    const { b, c, router, boot: user } = await boot();
+    router.takeDown(HUB_A_URL);
+    await waitUntil(() => attachedUrl(c.mesh) === HUB_B_URL, 8_000);
+    expect(attachedHubId(c.mesh)).toBe(b.mesh.nodeId);
+    expect(b.mesh.hub?.mode()).toBe('standby');
+
+    const before = b.mesh.userKeyService.currentState(user.userId).head.seq;
+    const extending = signUserRecord(
+      b.mesh.userKeyService,
+      user.userId,
+      user.rootKey,
+      'clear-totp',
+      encodeClearTotpPayload()
+    );
+    const rejected = await c.mesh.uplink.appendAndAck(extending);
+    expect(rejected.ok).toBe(false);
+    expect(rejected.error).toBe(HUB_NOT_WRITER);
+    expect(b.mesh.userKeyService.currentState(user.userId).head.seq).toBe(before);
+
+    const existing = keyLogList(b.db, user.userId).at(-1);
+    if (!existing) throw new Error('B key log is empty');
+    const replayed = await c.mesh.uplink.appendAndAck({
+      bytes: existing.bytes,
+      sig: existing.sig,
+    });
+    expect(replayed.ok).toBe(true);
+    expect(b.mesh.userKeyService.currentState(user.userId).head.seq).toBe(before);
+  });
+
+  test('POST /api/auth/keylog on C attached to standby B is 409 until A is back', async () => {
+    const { a, b, c, router, boot: user } = await boot();
+    router.takeDown(HUB_A_URL);
+    await waitUntil(() => attachedUrl(c.mesh) === HUB_B_URL, 8_000);
+    expect(attachedHubId(c.mesh)).toBe(b.mesh.nodeId);
+
+    const sid = await loginSelf(c.mesh, user);
+    const cookie = selfCookie(sid);
+    const rec = signUserRecord(
+      c.mesh.userKeyService,
+      user.userId,
+      user.rootKey,
+      'clear-totp',
+      encodeClearTotpPayload()
+    );
+    const before = c.mesh.userKeyService.currentState(user.userId).head.seq;
+    const refused = await callMesh(c.mesh, 'http://entry/api/auth/keylog', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cookie,
+      body: JSON.stringify({
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+      }),
+    });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      code: HUB_NOT_WRITER,
+      writerHubId: a.mesh.nodeId,
+      writerPublicUrl: HUB_A_URL,
+      writerEpoch: 1,
+    });
+    expect(c.mesh.userKeyService.currentState(user.userId).head.seq).toBe(before);
+
+    router.bringUp(HUB_A_URL);
+    await c.mesh.uplink.switchTo(HUB_A_URL);
+    expect(attachedHubId(c.mesh)).toBe(a.mesh.nodeId);
+    const ok = await callMesh(c.mesh, 'http://entry/api/auth/keylog', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cookie,
+      body: JSON.stringify({
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+      }),
+    });
+    expect(ok.status).toBe(200);
+    expect(c.mesh.userKeyService.currentState(user.userId).head.seq).toBeGreaterThan(before);
   });
 });
 
