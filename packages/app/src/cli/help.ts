@@ -6,7 +6,7 @@ Usage:
   tmex init [--role standalone|node|hub,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--peer-port <port>] [--no-service]
   tmex doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
-  tmex uninstall [--install-dir <path>] [--yes] [--purge]
+  tmex uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
   tmex hub user add <username>
   tmex hub user passwd <username>
   tmex hub user totp <username>
@@ -37,7 +37,7 @@ const HELP_ZH = `tmex CLI
   tmex init [--role standalone|node|hub,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--peer-port <port>] [--no-service]
   tmex doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
-  tmex uninstall [--install-dir <path>] [--yes] [--purge]
+  tmex uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
   tmex hub user add <username>
   tmex hub user passwd <username>
   tmex hub user totp <username>

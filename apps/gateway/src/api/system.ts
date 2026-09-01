@@ -30,7 +30,10 @@ export function handleSystemApiRequest(
   path: string
 ): Response | Promise<Response> | undefined {
   if (path === '/api/system/info' && req.method === 'GET') {
-    return json({ ...getSystemInfo(), upgradeCapabilities: ['staged-package', 'upgrade-cancel'] });
+    return json({
+      ...getSystemInfo(),
+      upgradeCapabilities: ['staged-package', 'upgrade-cancel', 'uninstall'],
+    });
   }
 
   if (path === '/api/system/addresses' && req.method === 'GET') {
@@ -67,6 +70,17 @@ export function handleSystemApiRequest(
   if (path === '/api/system/upgrade/package' && req.method === 'DELETE') {
     if (managed) return managedExternallyResponse();
     return handleDeleteStagedPackageOpen(req);
+  }
+
+  if (path === '/api/system/uninstall' && req.method === 'GET') {
+    return handleUninstallStatusOpen();
+  }
+
+  if (path === '/api/system/uninstall' && req.method === 'POST') {
+    if (managed) {
+      return json({ code: 'UNINSTALL_NOT_ALLOWED', reason: 'managed' }, 409);
+    }
+    return handleStartUninstallOpen(req);
   }
 
   return undefined;
@@ -207,4 +221,14 @@ async function handleStagePackageOpen(req: Request): Promise<Response> {
     return json({ code: result.code }, result.status);
   }
   return json({ version: result.version, sha256: result.sha256, bytes: result.bytes });
+}
+
+async function handleStartUninstallOpen(req: Request): Promise<Response> {
+  const { startLocalUninstall } = await import('../system/uninstall');
+  return startLocalUninstall(req);
+}
+
+async function handleUninstallStatusOpen(): Promise<Response> {
+  const { readLocalUninstallStatus } = await import('../system/uninstall');
+  return json(readLocalUninstallStatus());
 }

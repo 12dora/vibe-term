@@ -239,7 +239,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'no-interactive',
   ]),
   upgrade: UPGRADE_FLAGS,
-  uninstall: new Set([...GLOBAL_FLAGS, 'install-dir', 'yes', 'purge', 'service-name']),
+  uninstall: new Set([...GLOBAL_FLAGS, 'install-dir', 'yes', 'purge', 'service-name', 'delay-ms']),
   direct: new Set([...GLOBAL_FLAGS, 'install-dir']),
   enroll: new Set([...GLOBAL_FLAGS, 'install-dir', 'ttl', 'service-name']),
   'hub.join': new Set([

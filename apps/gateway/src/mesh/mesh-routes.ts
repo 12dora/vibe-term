@@ -6,6 +6,14 @@ import type { MeshHubStore } from '../auth/mesh-hub-store';
 import { pickWriterHub } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
+import { config as gatewayConfig } from '../config';
+import {
+  envPeerSet,
+  hubHttpAuthorization,
+  lookupSignedHubAuthorization,
+  resolveHubAuthorization,
+  resolveMeshUserId,
+} from '../hub/hub-authorization';
 import type { PublicAuthNode } from './auth-routes';
 import {
   type ConnectionLookup,
@@ -30,6 +38,13 @@ import {
   type MeshNodeLinkDetail,
   projectMeshListNode,
 } from './node-list-projection';
+import {
+  handleMeshNodeUninstall,
+  handleNodeOperationDelete,
+  handleNodeOperationGet,
+  readNodeOperation,
+  sweepStaleNodeOperations,
+} from './node-operations';
 import {
   type AuthenticateOk,
   type SessionMiddlewareDeps,
@@ -64,6 +79,7 @@ export type MeshRoutesDeps = {
   hubStore?: MeshHubStore;
   attachedHub?: () => AttachedHub | null;
   hubCandidates?: () => Array<string | UplinkCandidate>;
+  hubPeers?: string[];
   forwardAuthorizedHttp?: (
     req: Request,
     input: { nodeId: string; method: string; path: string; query?: string; body?: unknown }
@@ -134,6 +150,10 @@ export class MeshRoutes {
     }
     const upgradeRoute = this.matchUpgradeNodeRoute(req, path);
     if (upgradeRoute) return upgradeRoute;
+    const uninstallRoute = this.matchUninstallNodeRoute(req, path);
+    if (uninstallRoute) return uninstallRoute;
+    const operationRoute = this.matchNodeOperationRoute(req, path);
+    if (operationRoute) return operationRoute;
     if (path === '/api/mesh/rtc-config' && req.method === 'GET') {
       return requireSession(this.sessionDeps, () => this.handleRtcConfig())(req);
     }
@@ -196,7 +216,15 @@ export class MeshRoutes {
   }
 
   private handleNodes(req: Request): Response {
-    return jsonBody({ nodes: this.collectNodes(req) });
+    const nodes = this.collectNodes(req);
+    const listed = new Set(nodes.map((n) => n.id));
+    sweepStaleNodeOperations(listed);
+    return jsonBody({
+      nodes: nodes.map((n) => ({
+        ...n,
+        operation: readNodeOperation(n.id),
+      })),
+    });
   }
 
   private handleHubs(): Response {
@@ -205,18 +233,30 @@ export class MeshRoutes {
     const writerHubId = pickWriterHub(rows);
     const attached = this.deps.attachedHub?.() ?? null;
     const rawCandidates = this.deps.hubCandidates?.() ?? rows.map((row) => row.publicUrl);
+    const uid = resolveMeshUserId(this.deps.userStore, { nodeId: this.deps.nodeId });
+    const envPeers = envPeerSet(this.deps.hubPeers ?? gatewayConfig.hubPeers);
     return jsonBody({
-      hubs: rows.map((row) => ({
-        nodeId: row.hubNodeId,
-        publicUrl: row.publicUrl,
-        ...(row.name ? { name: row.name } : {}),
-        mode: row.mode,
-        priority: row.priority,
-        writerEpoch: row.writerEpoch,
-        caFingerprint: row.caFingerprint,
-        online: row.online,
-        lastSeenAt: row.lastSeenAt,
-      })),
+      hubs: rows.map((row) => {
+        const source = resolveHubAuthorization({
+          hubNodeId: row.hubNodeId,
+          selfId: this.deps.nodeId,
+          envPeers,
+          signed: lookupSignedHubAuthorization(this.deps.userStore, uid, row.hubNodeId),
+        });
+        const authorization = hubHttpAuthorization(source);
+        return {
+          nodeId: row.hubNodeId,
+          publicUrl: row.publicUrl,
+          ...(row.name ? { name: row.name } : {}),
+          mode: row.mode,
+          priority: row.priority,
+          writerEpoch: row.writerEpoch,
+          caFingerprint: row.caFingerprint,
+          online: row.online,
+          lastSeenAt: row.lastSeenAt,
+          ...(authorization ? { authorization } : {}),
+        };
+      }),
       attached,
       writerHubId,
       candidates: rawCandidates.map(serializeHubCandidate),
@@ -276,6 +316,42 @@ export class MeshRoutes {
       nodeId,
       localNodeId: this.deps.nodeId,
       userStore: this.deps.userStore,
+      forward: {
+        forwardAuthorizedHttp: (r, input) => this.forwardAuthorized(r, input),
+      },
+    });
+  }
+
+  private matchUninstallNodeRoute(req: Request, path: string): Promise<Response> | undefined {
+    const match = path.match(/^\/api\/mesh\/nodes\/([^/]+)\/uninstall$/);
+    if (!match) return undefined;
+    const nodeId = decodeURIComponent(match[1] ?? '');
+    if (req.method === 'POST') {
+      return requireSession(this.sessionDeps, (r) => this.handleUninstallStart(r, nodeId))(req);
+    }
+    return undefined;
+  }
+
+  private matchNodeOperationRoute(req: Request, path: string): Promise<Response> | undefined {
+    const match = path.match(/^\/api\/mesh\/nodes\/([^/]+)\/operation$/);
+    if (!match) return undefined;
+    const nodeId = decodeURIComponent(match[1] ?? '');
+    if (req.method === 'GET') {
+      return requireSession(this.sessionDeps, () => handleNodeOperationGet(nodeId))(req);
+    }
+    if (req.method === 'DELETE') {
+      return requireSession(this.sessionDeps, () => handleNodeOperationDelete(nodeId))(req);
+    }
+    return undefined;
+  }
+
+  private handleUninstallStart(req: Request, nodeId: string): Promise<Response> {
+    return handleMeshNodeUninstall({
+      req,
+      nodeId,
+      localNodeId: this.deps.nodeId,
+      userStore: this.deps.userStore,
+      now: this.deps.now,
       forward: {
         forwardAuthorizedHttp: (r, input) => this.forwardAuthorized(r, input),
       },

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { releaseTarballName, wsBorsh } from '@tmex/shared';
 import {
@@ -8,6 +8,7 @@ import {
   hexToBytes,
 } from '@tmex/shared/auth';
 import type { LinkSession } from '@tmex/shared/link';
+import { runMigrations } from '../db/migrate';
 import { resetReleaseDownloadForTests } from '../system/release-download';
 import {
   resetRemoteUpgradeJobsForTests,
@@ -31,6 +32,7 @@ import {
   type MeshServerWebSocket,
   WS_CLOSE_LOGIN_REQUIRED,
 } from './mesh-deps';
+import { resetNodeOperationsForTests } from './node-operations';
 
 const PEER_ID = 'cc'.repeat(16);
 const REVOKED_ID = 'dd'.repeat(16);
@@ -1128,6 +1130,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   resetRemoteUpgradeJobsForTests();
   resetReleaseDownloadForTests();
+  resetNodeOperationsForTests();
   if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
   else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;
 });
@@ -1992,6 +1995,225 @@ describe('mesh upgrade routes', () => {
         'POST /api/system/upgrade',
         'DELETE /api/system/upgrade',
       ]);
+    } finally {
+      mesh.close();
+    }
+  });
+});
+
+describe('mesh uninstall routes', () => {
+  const UNINSTALL_PEER = 'ff'.repeat(16);
+
+  beforeAll(() => {
+    runMigrations();
+  });
+
+  test('POST uninstall of self is UNINSTALL_SELF_BLOCKED', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      for (const id of [NODE_ID, 'self']) {
+        const res = await call(mesh.runtime, `http://localhost/api/mesh/nodes/${id}/uninstall`, {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}` },
+          body: JSON.stringify({ mode: 'full' }),
+        });
+        expect(res.status).toBe(409);
+        expect(await res.json()).toEqual({ code: 'UNINSTALL_SELF_BLOCKED', nodeId: NODE_ID });
+      }
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote uninstall without a target session → NODE_LOGIN_REQUIRED', async () => {
+    const peers = new FakePeers();
+    peers.links.set(UNINSTALL_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UNINSTALL_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}` },
+        }
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ code: 'NODE_LOGIN_REQUIRED', nodeId: UNINSTALL_PEER });
+      expect(streams.opens).toEqual([]);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote uninstall when the peer is unreachable → NODE_UNREACHABLE', async () => {
+    const peers = new FakePeers();
+    const streams = new RecordingStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UNINSTALL_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UNINSTALL_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({
+        code: 'NODE_UNREACHABLE',
+        nodeId: UNINSTALL_PEER,
+      });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote uninstall maps target 404/405 to 501 UNINSTALL_UNSUPPORTED', async () => {
+    const peers = new FakePeers();
+    peers.links.set(UNINSTALL_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(new Response('not found', { status: 404 }));
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UNINSTALL_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UNINSTALL_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(501);
+      expect(await res.json()).toEqual({
+        code: 'UNINSTALL_UNSUPPORTED',
+        nodeId: UNINSTALL_PEER,
+      });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote uninstall propagates 409 UNINSTALL_NOT_ALLOWED', async () => {
+    const peers = new FakePeers();
+    peers.links.set(UNINSTALL_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(
+      jsonResponse({ code: 'UNINSTALL_NOT_ALLOWED', reason: 'not_cli_install' }, 409)
+    );
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UNINSTALL_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
+        {
+          method: 'POST',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UNINSTALL_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        code: 'UNINSTALL_NOT_ALLOWED',
+        reason: 'not_cli_install',
+        nodeId: UNINSTALL_PEER,
+      });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST remote uninstall 202 records uninstalling and GET nodes shows operation', async () => {
+    const peers = new FakePeers();
+    peers.links.set(UNINSTALL_PEER, dummyLink);
+    peers.reach.set(UNINSTALL_PEER, 'lan');
+    const streams = new RecordingStreams();
+    streams.responses.push(
+      jsonResponse({ state: 'scheduled', startedAt: '2026-09-02T00:00:00.000Z', error: null }, 202)
+    );
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UNINSTALL_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const cookie = `tmex_s_self=${sid}; tmex_s_${UNINSTALL_PEER}=remote-sid`;
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
+        {
+          method: 'POST',
+          headers: { cookie },
+          body: JSON.stringify({ mode: 'full' }),
+        }
+      );
+      expect(res.status).toBe(202);
+      expect(streams.opens).toHaveLength(1);
+      expect(streams.opens[0]).toMatchObject({
+        method: 'POST',
+        path: '/api/system/uninstall',
+        auth: 'remote-sid',
+      });
+      const op = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/operation`,
+        { headers: { cookie } }
+      );
+      expect(op.status).toBe(200);
+      const record = (await op.json()) as { kind: string; phase: string; error: string | null };
+      expect(record.kind).toBe('uninstall');
+      expect(record.phase).toBe('uninstalling');
+      expect(record.error).toBeNull();
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{ id: string; operation: { phase: string } | null }>;
+      };
+      const peer = body.nodes.find((n) => n.id === UNINSTALL_PEER);
+      expect(peer?.operation?.phase).toBe('uninstalling');
+      const self = body.nodes.find((n) => n.id === NODE_ID);
+      expect(self?.operation).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('DELETE /api/mesh/nodes/:id/operation clears the record', async () => {
+    const peers = new FakePeers();
+    peers.links.set(UNINSTALL_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(
+      jsonResponse({ state: 'scheduled', startedAt: '2026-09-02T00:00:00.000Z', error: null }, 202)
+    );
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UNINSTALL_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const cookie = `tmex_s_self=${sid}; tmex_s_${UNINSTALL_PEER}=remote-sid`;
+      await call(mesh.runtime, `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`, {
+        method: 'POST',
+        headers: { cookie },
+      });
+      const del = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/operation`,
+        { method: 'DELETE', headers: { cookie } }
+      );
+      expect(del.status).toBe(200);
+      const missing = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/operation`,
+        { headers: { cookie } }
+      );
+      expect(missing.status).toBe(404);
     } finally {
       mesh.close();
     }
