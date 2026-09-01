@@ -8,7 +8,7 @@ export const E2E_TMUX_SOCKET = 'tmex-e2e';
 
 // pane 的工作目录显式指定为 apps/fe：不传 -c 时 tmux 取客户端 cwd，跨 worktree / 跨次运行
 // 后可能已被删除，shell 里 `opencode .` 之类依赖 cwd 的命令会直接报错退出。
-const E2E_PANE_CWD = fileURLToPath(new URL('..', import.meta.url));
+const E2E_PANE_CWD = fileURLToPath(new URL('../..', import.meta.url));
 
 export function tmux(cmd: string): string {
   return execSync(`tmux -L ${E2E_TMUX_SOCKET} ${cmd}`, { encoding: 'utf8' }).trim();
