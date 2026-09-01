@@ -11,6 +11,7 @@ export type DetectedTunnel = TunnelExternalStatus & {
   tokenFile: string | null;
   logFile: string | null;
   accountId: string | null;
+  metricsAddr: string | null;
 };
 
 export type ExternalDetection = DetectedTunnel & { tokenAccountId: string | null };
@@ -36,6 +37,7 @@ export const EMPTY_EXTERNAL: ExternalDetection = {
   tokenFile: null,
   logFile: null,
   accountId: null,
+  metricsAddr: null,
   tokenAccountId: null,
   externalAccess: { ...EMPTY_EXTERNAL_ACCESS },
 };
@@ -183,6 +185,7 @@ async function collectCandidates(opts: {
     parsed: {
       tokenFile: null,
       logFile: null,
+      metricsAddr: null,
       configPath: defaultConfigPath,
       tunnelId: parsedYml?.tunnelId ?? null,
       tunnelName: parsedYml?.tunnelName ?? null,
@@ -221,6 +224,7 @@ async function attachAccessProbe(
     tokenFile: best.tokenFile,
     logFile: best.logFile,
     accountId: best.accountId,
+    metricsAddr: best.metricsAddr,
     externalAccess,
   };
 }
@@ -268,6 +272,7 @@ async function enrichCandidate(
   let accountId: string | null = null;
   const tokenFile = cand.parsed.tokenFile;
   const logFile = cand.parsed.logFile;
+  const metricsAddr = cand.parsed.metricsAddr;
   const configPath = cand.parsed.configPath;
   let yml: ReturnType<typeof parseCloudflaredYml> = null;
   if (configPath) {
@@ -327,6 +332,7 @@ async function enrichCandidate(
     tokenFile,
     logFile,
     accountId,
+    metricsAddr,
     score,
   };
 }
@@ -338,6 +344,7 @@ export function isCloudflaredTunnelCommand(command: string): boolean {
 export type ParsedArgs = {
   tokenFile: string | null;
   logFile: string | null;
+  metricsAddr: string | null;
   configPath: string | null;
   tunnelId: string | null;
   tunnelName: string | null;
@@ -348,6 +355,7 @@ const FLAGS_WITH_VALUE = new Set([
   '--token',
   '--logfile',
   '--log-file',
+  '--metrics',
   '--config',
   '--origincert',
   '--credentials-file',
@@ -356,6 +364,7 @@ const FLAGS_WITH_VALUE = new Set([
 export function parseArgv(tokens: string[]): ParsedArgs {
   const tokenFile = flagValue(tokens, '--token-file');
   const logFile = flagValue(tokens, '--logfile') ?? flagValue(tokens, '--log-file');
+  const metricsAddr = flagValue(tokens, '--metrics');
   const configPath = flagValue(tokens, '--config');
   let tunnelId: string | null = null;
   let tunnelName: string | null = null;
@@ -375,7 +384,7 @@ export function parseArgv(tokens: string[]): ParsedArgs {
       break;
     }
   }
-  return { tokenFile, logFile, configPath, tunnelId, tunnelName };
+  return { tokenFile, logFile, metricsAddr, configPath, tunnelId, tunnelName };
 }
 
 export function parseCommandLine(command: string): ParsedArgs {
@@ -717,6 +726,7 @@ function mergeParsed(primary: ParsedArgs, extra: ParsedArgs | null): ParsedArgs 
   return {
     tokenFile: primary.tokenFile ?? extra.tokenFile,
     logFile: primary.logFile ?? extra.logFile,
+    metricsAddr: primary.metricsAddr ?? extra.metricsAddr,
     configPath: primary.configPath ?? extra.configPath,
     tunnelId: primary.tunnelId ?? extra.tunnelId,
     tunnelName: primary.tunnelName ?? extra.tunnelName,

@@ -14,6 +14,28 @@ import {
 } from './external-detect';
 
 describe('external tunnel parsing', () => {
+  test('parses --metrics into metricsAddr without exposing it on the public status', () => {
+    expect(
+      parseArgv([
+        'cloudflared',
+        'tunnel',
+        '--metrics',
+        '127.0.0.1:20241',
+        '--logfile',
+        '/tmp/cf.log',
+        'run',
+        '--token-file',
+        '/tmp/token',
+      ]).metricsAddr
+    ).toBe('127.0.0.1:20241');
+    expect(
+      parseArgv(['cloudflared', 'tunnel', '--metrics=127.0.0.1:20242', 'run']).metricsAddr
+    ).toBe('127.0.0.1:20242');
+    expect(
+      toExternalStatus({ ...EMPTY_EXTERNAL, metricsAddr: '127.0.0.1:20241' })
+    ).not.toHaveProperty('metricsAddr');
+  });
+
   test('parses token-file / logfile flags and token payload without exposing the secret', () => {
     const procs = parsePsOutput(
       '42 /opt/homebrew/bin/cloudflared tunnel --logfile /tmp/cf.log run --token-file /tmp/token\n'

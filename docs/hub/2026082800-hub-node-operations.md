@@ -225,6 +225,12 @@ Cloudflare Tunnel / Access 可放在 hub 或任一 node 前面。推荐：
 
 该开关只作用于本机 UI 的 origin 计算，**不会**把转发来的 `X-Forwarded-*` 当成客户端 IP。
 
+### 连接器健康
+
+cloudflared 进程存活不等于边缘连通。本机代理 / TUN 抖动时进程常驻，日志里会出现 `TLS handshake with edge error` / `Unable to establish connection with Cloudflare edge`，公网地址随之不可达。
+
+权威信号是连接器本地 metrics：`GET http://127.0.0.1:<port>/ready`（`--metrics`、启动日志 `Starting metrics server on 127.0.0.1:20241/metrics`，缺省扫描 `20241–20245`）。`readyConnections === 0` 时状态为 `degraded`，连通性检查返回 `connector_down`（HTTP 503），即使 hostname 被 Cloudflare Access 302 拦截也不能当成成功。Access 拦截且连接器已验证有连接 → `access_protected`；找不到 metrics → `access_protected_unverified`。外部托管的 cloudflared 会读 `--logfile` 尾部（脱敏）填 `status.log`。`GET /api/tunnel/status` 对连接器探测最多等待约 800ms，过期则后台刷新。
+
 ## hub 离线
 
 登录不经过 hub，流程与在线相同。`node.list` 里的 hub 元数据会落入 `peer_cache` 哨兵行，重启后 `/api/auth/mode` 与节点列表在 uplink 断开时仍可回答。

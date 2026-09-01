@@ -168,6 +168,7 @@ export function createTunnelRoutes(manager: TunnelManager = tunnelManager): ApiR
         const blocked = rejectIfForwarded(req, ctx);
         if (blocked) return blocked;
         await manager.refreshExternal();
+        await manager.ensureFreshConnector({ maxWaitMs: 800 });
         return json(manager.status());
       },
     }),

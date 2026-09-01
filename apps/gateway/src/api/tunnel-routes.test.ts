@@ -134,6 +134,14 @@ describe('tunnel routes', () => {
     });
     expect(body.config.externallyManaged).toBe(false);
     expect(Array.isArray(body.log)).toBe(true);
+    expect(body.connector).toMatchObject({
+      reachable: null,
+      metricsAddr: null,
+      readyConnections: null,
+      connectorId: null,
+      checkedAt: null,
+      lastError: null,
+    });
   });
 
   test('POST create with invalid hostname is 400', async () => {

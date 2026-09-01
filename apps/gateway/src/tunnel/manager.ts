@@ -7,10 +7,12 @@ import type {
   TunnelActionRequest,
   TunnelActionResponse,
   TunnelBinaryStatus,
+  TunnelConnectorStatus,
   TunnelErrorResponse,
   TunnelJobKind,
   TunnelJobStatus,
   TunnelMode,
+  TunnelProcessState,
   TunnelStatusResponse,
 } from '@tmex/shared';
 import { PROCESS_STARTED_AT } from '../api/system-routes';
@@ -33,7 +35,13 @@ import {
   type TunnelConfigStoreLike,
   type TunnelPersisted,
 } from './config-store';
-import { EMPTY_CONNECTOR } from './connector-health';
+import {
+  EMPTY_CONNECTOR,
+  discoverMetricsAddr,
+  extractLastError,
+  probeConnector,
+  readLogTail,
+} from './connector-health';
 import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
 import { TunnelError, tunnelErrorFrom, tunnelHttpStatus } from './errors';
 import {
@@ -60,7 +68,7 @@ import {
   originCertPath,
   parseLoginUrl,
 } from './provider';
-import { type Spawner, bunSpawner, consumeLines } from './spawn';
+import { type PickPort, type Spawner, bunSpawner, consumeLines, pickFreePort } from './spawn';
 import { TunnelSupervisor } from './supervisor';
 type PatchHostEnv = (trustProxy: boolean) => Promise<void>;
 type ReadHostEnv = () => Promise<boolean | null>;
@@ -98,6 +106,11 @@ export type TunnelManagerOptions = {
   registerAccessGuard?: boolean;
   hasMeshRole?: boolean;
   ackDetectMs?: number;
+  pickPort?: PickPort;
+  /** 连接器轮询间隔；测试默认 0（关闭），生产默认 30s */
+  connectorPollMs?: number;
+  /** 无已知 metrics 地址时是否扫描 127.0.0.1:20241–20245；测试默认关闭以免碰到本机生产 cloudflared */
+  scanDefaultMetrics?: boolean;
 };
 
 type BinaryCache = {
@@ -158,6 +171,13 @@ export class TunnelManager {
   private readonly hasMeshRole: boolean;
   private readonly ackDetectMs: number;
   private lastExternal: ExternalDetection = { ...EMPTY_EXTERNAL };
+  private lastConnector: TunnelConnectorStatus = { ...EMPTY_CONNECTOR };
+  private readonly connectorPollMs: number;
+  private readonly scanDefaultMetrics: boolean;
+  private connectorPollGen = 0;
+  private connectorPolling = false;
+  private connectorProbeInFlight: Promise<TunnelConnectorStatus> | null = null;
+  private logTailCache: { at: number; path: string; lines: string[] } | null = null;
   private loginEnforcedFn: () => boolean;
   private trustProxy: boolean;
   private configuredTrustProxy: boolean;
@@ -203,6 +223,8 @@ export class TunnelManager {
     this.loginEnforcedFn = opts.loginEnforced ?? (() => defaultLoginEnforced());
     this.hasMeshRole = opts.hasMeshRole ?? (config.roles.hub || config.roles.node);
     this.ackDetectMs = opts.ackDetectMs ?? 3_000;
+    this.connectorPollMs = opts.connectorPollMs ?? (config.isTest ? 0 : 30_000);
+    this.scanDefaultMetrics = opts.scanDefaultMetrics ?? !config.isTest;
     this.warn = opts.warn ?? ((message) => console.warn(message));
     this.accessStore =
       opts.accessStore ??
@@ -230,7 +252,7 @@ export class TunnelManager {
       setAccessJwtVerifier(this.jwtVerifier);
     }
     const spawner: Spawner = opts.spawner ?? bunSpawner;
-    this.provider = new CloudflaredProvider(spawner, this.tunnelDir);
+    this.provider = new CloudflaredProvider(spawner, this.tunnelDir, opts.pickPort ?? pickFreePort);
     this.supervisor = new TunnelSupervisor({
       provider: this.provider,
       logs: this.logs,
@@ -279,7 +301,9 @@ export class TunnelManager {
   async stop(): Promise<void> {
     this.loginHandle?.kill();
     this.loginHandle = null;
+    this.stopConnectorPoll();
     await this.supervisor.stop();
+    this.lastConnector = { ...EMPTY_CONNECTOR };
   }
 
   status(): TunnelStatusResponse {
@@ -290,16 +314,16 @@ export class TunnelManager {
     const external = toExternalStatus(this.lastExternal);
     const loginEnforced = this.loginEnforcedFn();
     const exposureProtected = this.isExposureProtected(persisted, access, loginEnforced);
-    const running = persisted.externallyManaged
+    const processAlive = persisted.externallyManaged
       ? this.lastExternal.running
-      : this.supervisor.state === 'running';
+      : this.supervisor.state === 'running' || this.supervisor.state === 'degraded';
     const publicUrl = persisted.externallyManaged
       ? persisted.hostname
         ? `https://${persisted.hostname}`
         : null
-      : persisted.mode === 'named' && running && persisted.hostname
+      : persisted.mode === 'named' && processAlive && persisted.hostname
         ? `https://${persisted.hostname}`
-        : persisted.mode === 'quick' && running
+        : persisted.mode === 'quick' && processAlive
           ? this.supervisor.publicUrl
           : null;
     return {
@@ -325,18 +349,16 @@ export class TunnelManager {
         originPort: this.originPort,
       },
       process: {
-        state: persisted.externallyManaged
-          ? this.lastExternal.running
-            ? 'running'
-            : 'stopped'
-          : this.supervisor.state,
+        state: this.processState(persisted),
         pid: persisted.externallyManaged ? null : this.supervisor.pid,
         startedAt: persisted.externallyManaged ? null : this.supervisor.startedAt,
         publicUrl,
-        lastError: persisted.externallyManaged ? null : this.supervisor.lastError,
+        lastError: persisted.externallyManaged
+          ? this.lastConnector.lastError
+          : this.supervisor.lastError,
         restarts: persisted.externallyManaged ? 0 : this.supervisor.restarts,
       },
-      connector: { ...EMPTY_CONNECTOR },
+      connector: { ...this.lastConnector },
       access,
       external,
       loginEnforced,
@@ -345,8 +367,30 @@ export class TunnelManager {
       trustProxy: this.trustProxy,
       configuredTrustProxy: this.configuredTrustProxy,
       restartRequired: this.restartRequired,
-      log: this.logs.snapshot(),
+      log: this.statusLog(),
     };
+  }
+
+  async ensureFreshConnector(opts?: { maxWaitMs?: number }): Promise<void> {
+    const maxWaitMs = opts?.maxWaitMs ?? 800;
+    const logTail =
+      this.safePersisted().externallyManaged && this.lastExternal.logFile
+        ? this.refreshExternalLogTail()
+        : Promise.resolve();
+    if (!this.isConnectorStale()) {
+      if (maxWaitMs <= 0) {
+        void logTail;
+        return;
+      }
+      await Promise.race([logTail, this.sleep(maxWaitMs)]);
+      return;
+    }
+    const probe = Promise.all([this.probeAndStoreConnector(), logTail]);
+    if (maxWaitMs <= 0) {
+      void probe;
+      return;
+    }
+    await Promise.race([probe, this.sleep(maxWaitMs)]);
   }
 
   async handleAction(
@@ -580,6 +624,9 @@ export class TunnelManager {
   async refreshExternal(opts?: { force?: boolean }): Promise<void> {
     try {
       this.lastExternal = await this.externalDetector.detect(opts);
+      await this.refreshExternalLogTail();
+      if (opts?.force) await this.probeAndStoreConnector();
+      this.syncConnectorPoll();
     } catch (error) {
       if (opts?.force) throw error;
       this.lastExternal = { ...EMPTY_EXTERNAL };
@@ -824,7 +871,9 @@ export class TunnelManager {
 
   private async jobStop(step: (name: string) => void): Promise<void> {
     step('stop');
+    this.stopConnectorPoll();
     await this.supervisor.stop();
+    this.lastConnector = { ...EMPTY_CONNECTOR };
   }
 
   // 取消接管：只清本地配置，不停系统服务、不动 Cloudflare 上的隧道。
@@ -843,7 +892,9 @@ export class TunnelManager {
 
   private async jobRemove(step: (name: string) => void): Promise<void> {
     step('stop');
+    this.stopConnectorPoll();
     await this.supervisor.stop();
+    this.lastConnector = { ...EMPTY_CONNECTOR };
     const persisted = this.store.get();
     await rm(configYmlPath(this.tunnelDir), { force: true }).catch(() => {});
     if (persisted.tunnelName) {
@@ -879,17 +930,31 @@ export class TunnelManager {
     if (!target) {
       throw new TunnelError('not_configured', 'no hostname or public URL to check');
     }
+    const connector = await this.probeAndStoreConnector();
+    if (connector.reachable === true && connector.readyConnections === 0) {
+      throw new TunnelError(
+        'connector_down',
+        connector.lastError ?? 'cloudflared has no edge connections'
+      );
+    }
     const url = `${target.replace(/\/$/, '')}/healthz`;
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 5_000);
     try {
       const res = await this.fetchImpl(url, { signal: ac.signal, redirect: 'manual' });
       if (isAccessProtectedHealthResponse(res)) {
-        step('access_protected');
+        if (connector.reachable === true && (connector.readyConnections ?? 0) > 0) {
+          step('access_protected');
+        } else {
+          step('access_protected_unverified');
+        }
         return;
       }
       if (!res.ok) {
-        throw new TunnelError('unknown', `health check HTTP ${res.status}`);
+        throw new TunnelError(
+          'unknown',
+          `health check HTTP ${res.status}${this.connectorHint(connector)}`
+        );
       }
       const body = (await res.json()) as { startedAt?: unknown };
       if (body.startedAt !== this.healthzStartedAt) {
@@ -902,7 +967,10 @@ export class TunnelManager {
     } catch (error) {
       if (error instanceof TunnelError) throw error;
       const message = error instanceof Error ? error.message : String(error);
-      throw new TunnelError('unknown', `health check failed: ${message}`);
+      throw new TunnelError(
+        'unknown',
+        `health check failed: ${message}${this.connectorHint(connector)}`
+      );
     } finally {
       clearTimeout(timer);
     }
@@ -1159,12 +1227,167 @@ export class TunnelManager {
     this.supervisor.publicUrl = null;
     await this.supervisor.start(this.lastStartOpts);
     await this.waitUntilRunning();
+    await this.probeAndStoreConnector();
+    this.syncConnectorPoll();
+  }
+
+  private processUp(state: TunnelProcessState): boolean {
+    return state === 'running' || state === 'degraded';
+  }
+
+  private processState(persisted: TunnelPersisted): TunnelProcessState {
+    if (persisted.externallyManaged) {
+      if (!this.lastExternal.running) return 'stopped';
+      if (this.lastConnector.reachable === true && this.lastConnector.readyConnections === 0) {
+        return 'degraded';
+      }
+      return 'running';
+    }
+    if (
+      this.supervisor.state === 'running' &&
+      this.lastConnector.reachable === true &&
+      this.lastConnector.readyConnections === 0
+    ) {
+      return 'degraded';
+    }
+    return this.supervisor.state;
+  }
+
+  private statusLog(): string[] {
+    const persisted = this.safePersisted();
+    const path = persisted.externallyManaged ? this.lastExternal.logFile : null;
+    if (!path) return this.logs.snapshot();
+    const now = this.now();
+    const cache = this.logTailCache;
+    if (cache && cache.path === path && now - cache.at < 2_000) return cache.lines;
+    void this.refreshExternalLogTail();
+    return cache?.path === path ? cache.lines : [];
+  }
+
+  private async refreshExternalLogTail(): Promise<void> {
+    const path = this.lastExternal.logFile;
+    if (!path) {
+      this.logTailCache = null;
+      return;
+    }
+    const now = this.now();
+    const cache = this.logTailCache;
+    if (cache && cache.path === path && now - cache.at < 2_000) return;
+    try {
+      const lines = await readLogTail(path, { maxBytes: 64 * 1024, maxLines: 200 });
+      this.logTailCache = { at: this.now(), path, lines };
+    } catch {
+      this.logTailCache = { at: this.now(), path, lines: [] };
+    }
+  }
+
+  private shouldProbeConnector(): boolean {
+    const persisted = this.safePersisted();
+    if (persisted.externallyManaged) return this.lastExternal.running;
+    return (
+      this.supervisor.state === 'running' ||
+      this.supervisor.state === 'degraded' ||
+      this.supervisor.state === 'starting'
+    );
+  }
+
+  private isConnectorStale(): boolean {
+    if (!this.shouldProbeConnector()) return false;
+    if (!this.lastConnector.checkedAt) return true;
+    if (this.connectorPollMs <= 0) return false;
+    const at = Date.parse(this.lastConnector.checkedAt);
+    if (!Number.isFinite(at)) return true;
+    return this.now() - at >= this.connectorPollMs;
+  }
+
+  private stopConnectorPoll(): void {
+    this.connectorPollGen += 1;
+    this.connectorPolling = false;
+  }
+
+  private syncConnectorPoll(): void {
+    if (this.connectorPollMs <= 0 || !this.shouldProbeConnector()) {
+      this.stopConnectorPoll();
+      return;
+    }
+    if (this.connectorPolling) return;
+    this.connectorPolling = true;
+    this.connectorPollGen += 1;
+    const gen = this.connectorPollGen;
+    void this.connectorPollLoop(gen).finally(() => {
+      if (this.connectorPollGen === gen) this.connectorPolling = false;
+    });
+  }
+
+  private async connectorPollLoop(gen: number): Promise<void> {
+    while (gen === this.connectorPollGen) {
+      await this.sleep(this.connectorPollMs);
+      if (gen !== this.connectorPollGen) break;
+      if (!this.shouldProbeConnector()) break;
+      await this.probeAndStoreConnector();
+    }
+  }
+
+  private connectorHint(connector: TunnelConnectorStatus = this.lastConnector): string {
+    if (connector.reachable === true && connector.readyConnections != null) {
+      return ` (connector: ${connector.readyConnections} edge connections)`;
+    }
+    if (connector.reachable === false) return ' (connector: metrics unreachable)';
+    return '';
+  }
+
+  private async connectorLogLines(): Promise<string[]> {
+    if (this.safePersisted().externallyManaged && this.lastExternal.logFile) {
+      await this.refreshExternalLogTail();
+      return this.logTailCache?.lines ?? [];
+    }
+    return this.logs.snapshot();
+  }
+
+  async probeAndStoreConnector(): Promise<TunnelConnectorStatus> {
+    if (this.connectorProbeInFlight) return this.connectorProbeInFlight;
+    const run = this.runConnectorProbe();
+    this.connectorProbeInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.connectorProbeInFlight === run) this.connectorProbeInFlight = null;
+    }
+  }
+
+  private async runConnectorProbe(): Promise<TunnelConnectorStatus> {
+    try {
+      const logLines = await this.connectorLogLines();
+      const addrs = discoverMetricsAddr({
+        spawnedAddr: this.supervisor.metricsAddr,
+        argvAddr: this.lastExternal.metricsAddr,
+        logLines,
+        includeDefaults: this.scanDefaultMetrics,
+      });
+      const probed = await probeConnector(addrs, this.fetchImpl, {
+        timeoutMs: 1_500,
+        now: this.now,
+      });
+      this.lastConnector = {
+        ...probed,
+        lastError: extractLastError(logLines),
+        checkedAt: new Date(this.now()).toISOString(),
+      };
+    } catch {
+      const logLines = await this.connectorLogLines().catch(() => [] as string[]);
+      this.lastConnector = {
+        ...EMPTY_CONNECTOR,
+        lastError: extractLastError(logLines),
+        checkedAt: new Date(this.now()).toISOString(),
+      };
+    }
+    return this.lastConnector;
   }
 
   private async waitUntilRunning(): Promise<void> {
     const deadline = this.now() + this.runningWaitMs;
     while (this.now() < deadline) {
-      if (this.supervisor.state === 'running') return;
+      if (this.processUp(this.supervisor.state)) return;
       if (this.supervisor.state === 'error' && !this.supervisor.runningEnabled) {
         throw new TunnelError(
           'process_failed',
@@ -1173,7 +1396,7 @@ export class TunnelManager {
       }
       await Bun.sleep(5);
     }
-    if (this.supervisor.state !== 'running') {
+    if (!this.processUp(this.supervisor.state)) {
       throw new TunnelError('process_failed', 'cloudflared did not register a connection in time');
     }
   }

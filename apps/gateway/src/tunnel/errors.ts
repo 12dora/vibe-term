@@ -37,6 +37,8 @@ export function tunnelHttpStatus(code: TunnelErrorCode, override?: number): numb
     case 'not_logged_in':
     case 'access_api_failed':
       return 400;
+    case 'connector_down':
+      return 503;
     default:
       return 500;
   }
