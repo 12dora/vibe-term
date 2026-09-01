@@ -220,4 +220,72 @@ describe('HubRuntime.applyReplicatedNodeList', () => {
       close();
     }
   });
+
+  test('自身行被删后仍从 config 快照写回，不依赖 store 残留', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { hub } = makeHub(db);
+      hub.meshHubs.remove(SELF);
+      expect(hub.meshHubs.get(SELF)).toBeNull();
+      hub.applyReplicatedNodeList(
+        listOf([], [endpoint(WRITER, { mode: 'active', writerEpoch: 8 })]),
+        { hubNodeId: WRITER }
+      );
+      expect(hub.meshHubs.get(SELF)).toMatchObject({
+        mode: 'standby',
+        priority: 200,
+        writerEpoch: 1,
+        publicUrl: 'https://standby.example',
+        online: true,
+      });
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('复制 hubs[] 只保留 authorized ∪ self ∪ source', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const stranger = 'dd'.repeat(16);
+      const authorized = 'ee'.repeat(16);
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore, { now: 9_000 });
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: {
+          publicUrl: 'https://standby.example',
+          stun: [],
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 1,
+          hubNodeId: SELF,
+          nodeId: SELF,
+          authorizedHubIds: [authorized],
+        },
+        authenticate: () => ({ userId: user.id, entryNodeId: SELF }),
+        now: () => 9_000,
+      });
+      hub.applyReplicatedNodeList(
+        listOf(
+          [],
+          [
+            endpoint(WRITER, { publicUrl: 'https://writer.example' }),
+            endpoint(authorized, { publicUrl: 'https://peer.example', mode: 'standby' }),
+            endpoint(stranger, { publicUrl: 'https://evil.example', writerEpoch: 99 }),
+          ]
+        ),
+        { hubNodeId: WRITER }
+      );
+      expect(hub.meshHubs.get(WRITER)?.publicUrl).toBe('https://writer.example');
+      expect(hub.meshHubs.get(authorized)?.publicUrl).toBe('https://peer.example');
+      expect(hub.meshHubs.get(stranger)).toBeNull();
+      expect(hub.meshHubs.get(SELF)?.mode).toBe('standby');
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
 });

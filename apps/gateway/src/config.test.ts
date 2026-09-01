@@ -24,6 +24,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   hubPriority: number;
   hubWriterEpoch: number;
   hubUrls: string[];
+  hubPeers: string[];
   peerPort: number;
   stunServers: string[];
   peerBindHost: string[];
@@ -57,6 +58,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         hubPriority: number;
         hubWriterEpoch: number;
         hubUrls: string[];
+        hubPeers: string[];
         peerPort: number;
         stunServers: string[];
         peerBindHost: string[];
@@ -356,6 +358,31 @@ describe('config hub/node env', () => {
       TMEX_HUB_URLS: 'https://a.example,, https://b.example',
     });
     expect(urlsOnly.hubUrls).toEqual(['https://a.example', 'https://b.example']);
+  });
+
+  test('TMEX_HUB_PEERS 默认空，校验 32-hex、去重、小写', async () => {
+    const unset = await loadConfigWith({ TMEX_HUB_PEERS: undefined });
+    expect(unset.hubPeers).toEqual([]);
+
+    const empty = await loadConfigWith({ TMEX_HUB_PEERS: '' });
+    expect(empty.hubPeers).toEqual([]);
+
+    const a = 'aa'.repeat(16);
+    const b = 'bb'.repeat(16);
+    const parsed = await loadConfigWith({
+      TMEX_HUB_PEERS: ` ${a.toUpperCase()},, ${b}, ${a} `,
+    });
+    expect(parsed.hubPeers).toEqual([a, b]);
+  });
+
+  test('拒绝非法 TMEX_HUB_PEERS', async () => {
+    await expect(loadConfigWith({ TMEX_HUB_PEERS: 'not-hex' })).rejects.toThrow('TMEX_HUB_PEERS');
+    await expect(loadConfigWith({ TMEX_HUB_PEERS: 'aa'.repeat(15) })).rejects.toThrow(
+      'TMEX_HUB_PEERS'
+    );
+    await expect(loadConfigWith({ TMEX_HUB_PEERS: `${'aa'.repeat(16)},zz` })).rejects.toThrow(
+      'TMEX_HUB_PEERS'
+    );
   });
 });
 

@@ -483,6 +483,7 @@ async function createNodeMesh(input: {
       hubMode: gatewayConfig.hubMode,
       hubPriority: gatewayConfig.hubPriority,
       hubWriterEpoch: gatewayConfig.hubWriterEpoch,
+      hubPeers: gatewayConfig.hubPeers,
       hubNodeId: identity?.nodeId,
       peerPort: gatewayConfig.peerPort,
       stunServers: gatewayConfig.stunServers,

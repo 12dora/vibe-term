@@ -24,7 +24,7 @@ export function applyReplicatedNodeList(
   meshHubs: MeshHubStore,
   list: UplinkNodeList,
   meta: ReplicatedNodeListMeta,
-  self: { hubNodeId: string | undefined; record: OwnHubRow | null },
+  self: { hubNodeId: string | undefined; record: OwnHubRow | null; authorizedHubIds?: string[] },
   now: number
 ): void {
   const ownId = self.hubNodeId;
@@ -48,7 +48,16 @@ export function applyReplicatedNodeList(
   }
 
   if (!list.hubs) return;
-  const incoming = hubListToRecords(list.hubs);
+  const allowed = new Set<string>();
+  if (ownId) allowed.add(ownId.toLowerCase());
+  for (const id of self.authorizedHubIds ?? []) {
+    const value = id.trim().toLowerCase();
+    if (value) allowed.add(value);
+  }
+  if (meta.hubNodeId) allowed.add(meta.hubNodeId.toLowerCase());
+  const incoming = hubListToRecords(list.hubs).filter((row) =>
+    allowed.has(row.hubNodeId.toLowerCase())
+  );
   const byId = new Map(incoming.map((row) => [row.hubNodeId, row]));
   if (ownId && self.record) {
     byId.set(ownId, { ...self.record, online: true });

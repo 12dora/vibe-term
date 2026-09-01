@@ -1638,6 +1638,7 @@ describe('HubRuntime multi-hub', () => {
           priority: 200,
           writerEpoch: 1,
           hubNodeId: STANDBY_HUB,
+          authorizedHubIds: [WRITER_HUB],
         },
       });
       expect(hub.mode()).toBe('standby');
@@ -1755,6 +1756,71 @@ describe('HubRuntime multi-hub', () => {
         writerPublicUrl: null,
         writerEpoch: null,
       });
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('active 但不是 writer（store 中有更高 epoch 的授权 active）拒绝写入', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const now = () => 4_000;
+      const { hub, entry } = await startAuthedHub(db, now, {
+        config: {
+          publicUrl: 'https://hub.example',
+          mode: 'active',
+          priority: 100,
+          writerEpoch: 1,
+          hubNodeId: STANDBY_HUB,
+          authorizedHubIds: [WRITER_HUB],
+        },
+      });
+      expect(hub.mode()).toBe('active');
+      hub.meshHubs.upsert(
+        {
+          hubNodeId: WRITER_HUB,
+          publicUrl: 'https://writer.example',
+          name: 'writer',
+          mode: 'active',
+          priority: 50,
+          writerEpoch: 5,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
+      const enroll = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        dummyServer
+      );
+      expect(enroll?.status).toBe(409);
+      expect(await enroll?.json()).toEqual(WRITER_ERROR_BODY);
+
+      const redeem = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        dummyServer
+      );
+      expect(redeem?.status).toBe(409);
+
+      const rename = await hub.handleRequest(
+        new Request(`http://hub/api/hub/nodes/${entry.nodeId}/rename`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'nope' }),
+        }),
+        dummyServer
+      );
+      expect(rename?.status).toBe(409);
       hub.stop();
     } finally {
       close();

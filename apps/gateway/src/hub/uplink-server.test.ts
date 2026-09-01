@@ -17,6 +17,7 @@ import {
   signKeyLogRecordWithRoot,
 } from '@tmex/shared/auth';
 import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@tmex/shared/link';
+import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
 import { eq } from 'drizzle-orm';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
@@ -89,7 +90,7 @@ async function authNode(
   server: UplinkServer,
   store: UserStore,
   userId: string,
-  opts?: { name?: string; revoked?: boolean }
+  opts?: { name?: string; revoked?: boolean; node?: ReturnType<typeof seedAdmittedNode> }
 ): Promise<{
   nodeId: string;
   nodeIdBytes: Uint8Array;
@@ -99,7 +100,7 @@ async function authNode(
   inbox: CtlInbox;
   list: UplinkCtlMessage;
 }> {
-  const seeded = seedAdmittedNode(store, userId, opts);
+  const seeded = opts?.node ?? seedAdmittedNode(store, userId, opts);
   const [nodeLink, hubLink] = createInMemoryLinkPair();
   const inbox = ctlInbox(nodeLink);
   server.accept(hubLink);
@@ -1914,6 +1915,7 @@ describe('UplinkServer multi-hub', () => {
       const user = seedUser(userStore);
       const meshHubs = new MeshHubStore(db);
       let now = 1_000;
+      const peer = seedAdmittedNode(userStore, user.id, { name: 'standby-hub' });
       const { server } = makeServer(db, userStore, keyLogSource, {
         meshHubs,
         now: () => now,
@@ -1926,6 +1928,7 @@ describe('UplinkServer multi-hub', () => {
           mode: 'active',
           priority: 100,
           writerEpoch: 1,
+          authorizedHubIds: [peer.nodeId],
         },
       });
       const self = meshHubs.get(SELF_HUB);
@@ -1936,7 +1939,7 @@ describe('UplinkServer multi-hub', () => {
       expect(self?.publicUrl).toBe('https://hub.example');
       expect(self?.online).toBe(true);
 
-      const node = await authNode(server, userStore, user.id, { name: 'standby-hub' });
+      const node = await authNode(server, userStore, user.id, { node: peer });
       now = 2_000;
       sendHubStatus(node.nodeLink, {
         publicUrl: 'https://standby.example',
@@ -1971,6 +1974,7 @@ describe('UplinkServer multi-hub', () => {
       const { userStore, keyLogSource } = createHubTestStack(db);
       const user = seedUser(userStore);
       const meshHubs = new MeshHubStore(db);
+      const peer = seedAdmittedNode(userStore, user.id, { name: 'peer' });
       const { server } = makeServer(db, userStore, keyLogSource, {
         meshHubs,
         config: {
@@ -1982,9 +1986,10 @@ describe('UplinkServer multi-hub', () => {
           mode: 'active',
           priority: 100,
           writerEpoch: 4,
+          authorizedHubIds: [peer.nodeId],
         },
       });
-      const node = await authNode(server, userStore, user.id, { name: 'peer' });
+      const node = await authNode(server, userStore, user.id, { node: peer });
       sendHubStatus(node.nodeLink, {
         publicUrl: 'https://standby.example',
         mode: 'standby',
@@ -2056,6 +2061,7 @@ describe('UplinkServer multi-hub', () => {
           mode: 'standby',
           priority: 200,
           writerEpoch: 1,
+          authorizedHubIds: [writerId],
         },
       });
       const node = await authNode(server, userStore, user.id);
@@ -2075,7 +2081,7 @@ describe('UplinkServer multi-hub', () => {
     }
   });
 
-  test('更高 writerEpoch 的 active 广告触发 fencing 降级并重播', async () => {
+  test('未授权高 epoch active 广告不 fencing、不进 hubs、不变 writer', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const { userStore, keyLogSource } = createHubTestStack(db);
@@ -2094,11 +2100,67 @@ describe('UplinkServer multi-hub', () => {
           writerEpoch: 1,
         },
       });
+      const ignored: string[] = [];
+      const warn = spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+        ignored.push(String(args[0]));
+      });
+      const node = await authNode(server, userStore, user.id);
+      expect(server.mode()).toBe('active');
+      sendHubStatus(node.nodeLink, {
+        publicUrl: 'https://attacker.example',
+        mode: 'active',
+        priority: 10,
+        writerEpoch: 7,
+        caFingerprint: 'ab'.repeat(32),
+      });
+      const listed = await takeUntil(node.inbox, 'node.list');
+      expect(server.mode()).toBe('active');
+      expect(meshHubs.get(node.nodeId)).toBeNull();
+      expect(meshHubs.get(SELF_HUB)?.mode).toBe('active');
+      expect(listed.t).toBe('node.list');
+      if (listed.t !== 'node.list') throw new Error('expected list');
+      expect(listed.writerHubId).toBe(SELF_HUB);
+      expect(listed.writerEpoch).toBe(1);
+      expect(listed.hubs?.some((h) => h.nodeId === node.nodeId)).toBe(false);
+      expect(listed.hubs?.some((h) => h.caFingerprint === 'ab'.repeat(32))).toBe(false);
+      expect(
+        ignored.some((line) =>
+          line.includes(`[hub] ignored hub advertisement from unauthorized node=${node.nodeId}`)
+        )
+      ).toBe(true);
+      warn.mockRestore();
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('授权的更高 writerEpoch active 广告仍 fencing 降级并重播', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const meshHubs = new MeshHubStore(db);
+      const peer = seedAdmittedNode(userStore, user.id);
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        meshHubs,
+        config: {
+          publicUrl: 'https://hub.example',
+          stun: ['stun:example:3478'],
+          nodeId: SELF_HUB,
+          hubNodeId: SELF_HUB,
+          siteName: 'hub-site',
+          mode: 'active',
+          priority: 100,
+          writerEpoch: 1,
+          authorizedHubIds: [peer.nodeId],
+        },
+      });
       const logged: string[] = [];
       const error = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
         logged.push(String(args[0]));
       });
-      const node = await authNode(server, userStore, user.id);
+      const node = await authNode(server, userStore, user.id, { node: peer });
       expect(server.mode()).toBe('active');
       sendHubStatus(node.nodeLink, {
         publicUrl: 'https://new-writer.example',
@@ -2125,11 +2187,12 @@ describe('UplinkServer multi-hub', () => {
     }
   });
 
-  test('同等 epoch 的另一个 active 每 60s 打一次 split-brain 警告且不降级', async () => {
+  test('同等 epoch 的另一个授权 active 每 60s 打一次 split-brain 警告且不降级', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const { userStore, keyLogSource } = createHubTestStack(db);
       const user = seedUser(userStore);
+      const peer = seedAdmittedNode(userStore, user.id);
       let now = 10_000;
       const { server } = makeServer(db, userStore, keyLogSource, {
         now: () => now,
@@ -2141,13 +2204,14 @@ describe('UplinkServer multi-hub', () => {
           mode: 'active',
           priority: 100,
           writerEpoch: 3,
+          authorizedHubIds: [peer.nodeId],
         },
       });
       const warns: string[] = [];
       const warn = spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
         warns.push(String(args[0]));
       });
-      const node = await authNode(server, userStore, user.id);
+      const node = await authNode(server, userStore, user.id, { node: peer });
       const ad = {
         publicUrl: 'https://other.example',
         mode: 'active' as const,
@@ -2174,11 +2238,90 @@ describe('UplinkServer multi-hub', () => {
     }
   });
 
-  test('standby 仍接受能延长 key log 链的 catch-up append', async () => {
+  test('重启后若 store 中已有更高 epoch 的授权 active 则保持 standby', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      seedUser(userStore);
+      const writerId = 'bb'.repeat(16);
+      const meshHubs = new MeshHubStore(db);
+      meshHubs.upsert(
+        {
+          hubNodeId: writerId,
+          publicUrl: 'https://writer.example',
+          name: 'writer',
+          mode: 'active',
+          priority: 50,
+          writerEpoch: 7,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
+      meshHubs.upsert(
+        {
+          hubNodeId: SELF_HUB,
+          publicUrl: 'https://hub.example',
+          name: 'hub-site',
+          mode: 'standby',
+          priority: 100,
+          writerEpoch: 1,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
+      const logged: string[] = [];
+      const error = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        logged.push(String(args[0]));
+      });
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        meshHubs,
+        config: {
+          publicUrl: 'https://hub.example',
+          stun: ['stun:example:3478'],
+          nodeId: SELF_HUB,
+          hubNodeId: SELF_HUB,
+          siteName: 'hub-site',
+          mode: 'active',
+          priority: 100,
+          writerEpoch: 1,
+          authorizedHubIds: [writerId],
+        },
+      });
+      expect(server.mode()).toBe('standby');
+      expect(meshHubs.get(SELF_HUB)?.mode).toBe('standby');
+      expect(logged.some((line) => line.includes('[hub] starting fenced:'))).toBe(true);
+      error.mockRestore();
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('standby 拒绝延长 key log 的 append，相同记录重放仍 ack', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const { userStore, keyLogSource, service } = createHubTestStack(db);
       const user = seedUser(userStore);
+      const writerId = 'bb'.repeat(16);
+      const meshHubs = new MeshHubStore(db);
+      meshHubs.upsert(
+        {
+          hubNodeId: writerId,
+          publicUrl: 'https://writer.example',
+          name: 'writer',
+          mode: 'active',
+          priority: 50,
+          writerEpoch: 5,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
       const first = signUserRecord(
         service,
         user.id,
@@ -2188,6 +2331,7 @@ describe('UplinkServer multi-hub', () => {
       );
       expect((await keyLogSource.append(user.id, first)).ok).toBe(true);
       const { server } = makeServer(db, userStore, keyLogSource, {
+        meshHubs,
         config: {
           publicUrl: 'https://hub.example',
           stun: ['stun:example:3478'],
@@ -2196,9 +2340,11 @@ describe('UplinkServer multi-hub', () => {
           writerEpoch: 1,
           hubNodeId: SELF_HUB,
           nodeId: SELF_HUB,
+          authorizedHubIds: [writerId],
         },
       });
       const node = await authNode(server, userStore, user.id);
+      const sent = tapCtlSend(node.hubLink);
       const before = await keyLogSource.head(user.id);
       const next = signUserRecord(
         service,
@@ -2216,10 +2362,47 @@ describe('UplinkServer multi-hub', () => {
       const ack = await takeUntil(node.inbox, 'key.log.ack');
       expect(ack.t).toBe('key.log.ack');
       if (ack.t === 'key.log.ack') {
-        expect(ack.ok).toBe(true);
+        expect(ack.ok).toBe(false);
+        expect(ack.error).toBe(HUB_NOT_WRITER);
         expect(ack.id).toBe('catch-up-1');
       }
-      expect((await keyLogSource.head(user.id)).seq).toBe(before.seq + 1n);
+      expect((await keyLogSource.head(user.id)).seq).toBe(before.seq);
+      const rawAck = sent
+        .map((bytes) => {
+          try {
+            return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        })
+        .find((msg) => msg?.t === 'key.log.ack');
+      expect(rawAck).toMatchObject({
+        t: 'key.log.ack',
+        ok: false,
+        error: HUB_NOT_WRITER,
+        writerHubId: writerId,
+        writerPublicUrl: 'https://writer.example',
+        writerEpoch: 5,
+      });
+
+      sendCtl(node.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(first.bytes),
+        sig: encodeBase64url(first.sig),
+        id: 'replay-1',
+      });
+      const replay = await takeUntil(node.inbox, 'key.log.ack');
+      expect(replay.t).toBe('key.log.ack');
+      if (replay.t === 'key.log.ack') {
+        expect(replay.ok).toBe(true);
+        expect(replay.id).toBe('replay-1');
+      }
+      expect((await keyLogSource.head(user.id)).seq).toBe(before.seq);
+
+      sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1 });
+      const res = await takeUntil(node.inbox, 'key.log.res');
+      expect(res.t).toBe('key.log.res');
+      if (res.t === 'key.log.res') expect(res.records.length).toBeGreaterThan(0);
       server.stop();
     } finally {
       close();

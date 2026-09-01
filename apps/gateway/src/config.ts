@@ -186,6 +186,25 @@ export function parseHubUrls(seed: string | null, raw: string | undefined): stri
   return urls;
 }
 
+const HUB_PEER_ID = /^[0-9a-f]{32}$/;
+
+export function parseHubPeers(raw: string | undefined): string[] {
+  if (raw === undefined || raw.trim() === '') return [];
+  const peers: string[] = [];
+  const seen = new Set<string>();
+  for (const part of raw.split(',')) {
+    const value = part.trim().toLowerCase();
+    if (!value) continue;
+    if (!HUB_PEER_ID.test(value)) {
+      throw new Error('TMEX_HUB_PEERS must be comma-separated 32-hex node ids');
+    }
+    if (seen.has(value)) continue;
+    seen.add(value);
+    peers.push(value);
+  }
+  return peers;
+}
+
 /** cloudflared 数据目录：显式 `TMEX_TUNNEL_DIR`，否则 sqlite 旁的 `tunnel/`。 */
 export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.TMEX_TUNNEL_DIR?.trim();
@@ -256,6 +275,7 @@ export const config = {
   hubPriority: parseHubPriority(process.env.TMEX_HUB_PRIORITY, hubMode),
   hubWriterEpoch: parseHubWriterEpoch(process.env.TMEX_HUB_WRITER_EPOCH),
   hubUrls: parseHubUrls(hubUrl, process.env.TMEX_HUB_URLS),
+  hubPeers: parseHubPeers(process.env.TMEX_HUB_PEERS),
   peerPort: parsePeerPort(process.env.TMEX_PEER_PORT),
   stunServers: parseStunServers(process.env.TMEX_STUN_SERVERS),
   peerBindHost: parsePeerBindHost(process.env.TMEX_PEER_BIND_HOST),

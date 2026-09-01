@@ -178,8 +178,6 @@ export class HubRuntime {
   applyReplicatedNodeList(list: UplinkNodeList, meta: { hubNodeId: string | null }): void {
     const ownId = this.uplink.hubNodeId();
     if (ownId && meta.hubNodeId === ownId) return;
-    const existing = ownId ? this.meshHubs.get(ownId) : null;
-    const record = existing ? (({ updatedAt: _updatedAt, ...rest }) => rest)(existing) : null;
     replicateNodeList(
       this.db,
       this.userStore,
@@ -188,7 +186,8 @@ export class HubRuntime {
       meta,
       {
         hubNodeId: ownId,
-        record,
+        record: this.uplink.ownHubSnapshot(),
+        authorizedHubIds: this.config.authorizedHubIds,
       },
       this.now()
     );
@@ -196,7 +195,7 @@ export class HubRuntime {
   }
 
   private requireWriter(): Response | null {
-    return this.mode() === 'standby' ? json(this.uplink.notWriterError(), 409) : null;
+    return this.uplink.isWriter() ? null : json(this.uplink.notWriterError(), 409);
   }
 
   attachLocalNode(link: LinkSession): void {

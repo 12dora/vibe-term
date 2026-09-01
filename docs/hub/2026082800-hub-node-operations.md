@@ -51,6 +51,7 @@
 | `TMEX_HUB_PRIORITY` | active `100` / standby `200` | 同 mode 下越小越优先，整数 ≥ 0 |
 | `TMEX_HUB_WRITER_EPOCH` | `1` | writer 世代，整数 ≥ 1，单调递增 |
 | `TMEX_HUB_URLS` | 空 | 逗号分隔的备用 hub 基址，接在 `TMEX_HUB_URL` 之后去重 |
+| `TMEX_HUB_PEERS` | 空 | 逗号分隔的 32-hex 节点 id：本 hub 授权的**其他** hub。未列入的节点广告不会进入 `mesh_hubs`、不能 fencing、也不能当 writer |
 | `TMEX_NATIVE_DIR` | `run.sh` 导出 `<installDir>/native` | native addon 目录。未设则 loader 返回 `null`，`direct_capable=false`。不要指向本机生产安装目录去做开发验证 |
 | `RTC_LIVENESS_INTERVAL_MS` | `3000` | node↔node DataChannel 空闲时发 ping 的间隔。通道上有入站流量则重置，不给忙通道加 ping |
 | `RTC_LIVENESS_TIMEOUT_MS` | `10000` | 连续无任何入站（含 ping/pong 与业务帧）超过此时长则判定直连死亡，关闭 DC/PC 并回落 relay。须大于 `RTC_LIVENESS_INTERVAL_MS` |

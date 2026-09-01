@@ -133,6 +133,7 @@ const textEncoder = new TextEncoder();
 
 export const HUB_KEY_LOG_REQ_LOG_INTERVAL_MS = 10_000;
 export const HUB_SPLIT_BRAIN_LOG_INTERVAL_MS = 60_000;
+export const HUB_UNAUTHORIZED_HUB_AD_LOG_INTERVAL_MS = 10 * 60 * 1000;
 export const HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS = 10_000;
 export const HUB_UPLINK_AUTH_REJECT_LOG_GLOBAL_MAX = 20;
 export const HUB_UPLINK_AUTH_REJECT_LOG_ADDR_MAX = 20;
@@ -168,7 +169,10 @@ export class UplinkServer {
   private currentMode: HubMode;
   private readonly hubPriority: number;
   private readonly hubWriterEpoch: number;
+  private readonly authorizedHubIdSet: Set<string>;
+  private selfCaFingerprint: string | null = null;
   private lastSplitBrainLogAt: number | null = null;
+  private readonly lastUnauthorizedHubAdLog = new Map<string, number>();
   private readonly now: () => number;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeatMissLimit: number;
@@ -204,9 +208,18 @@ export class UplinkServer {
     this.registry = opts.registry;
     this.meshHubs = opts.meshHubs ?? new MeshHubStore(opts.db);
     this.config = opts.config;
-    this.currentMode = opts.config.mode ?? 'active';
     this.hubWriterEpoch = opts.config.writerEpoch ?? 1;
-    this.hubPriority = opts.config.priority ?? (this.currentMode === 'standby' ? 200 : 100);
+    const configMode = opts.config.mode ?? 'active';
+    this.hubPriority = opts.config.priority ?? (configMode === 'standby' ? 200 : 100);
+    this.authorizedHubIdSet = new Set(
+      (opts.config.authorizedHubIds ?? [])
+        .map((id) => id.trim().toLowerCase())
+        .filter((id) => HUB_NODE_ID_HEX.test(id))
+    );
+    const ownId = this.hubNodeId();
+    const existingOwn = ownId ? this.meshHubs.get(ownId) : null;
+    this.selfCaFingerprint = existingOwn?.caFingerprint ?? null;
+    this.currentMode = this.effectiveStartMode(configMode);
     this.now = opts.now ?? Date.now;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS;
     this.heartbeatMissLimit = opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT;
@@ -247,6 +260,40 @@ export class UplinkServer {
     return id && HUB_NODE_ID_HEX.test(id) ? id.toLowerCase() : undefined;
   }
 
+  isWriter(): boolean {
+    if (this.currentMode !== 'active') return false;
+    const own = this.hubNodeId();
+    const writer = pickWriterHub(this.authorizedHubRecords());
+    if (!own) return writer === null;
+    return writer === own;
+  }
+
+  ownHubSnapshot(): {
+    hubNodeId: string;
+    publicUrl: string;
+    name: string | null;
+    mode: HubMode;
+    priority: number;
+    writerEpoch: number;
+    caFingerprint: string | null;
+    online: boolean;
+    lastSeenAt: number | null;
+  } | null {
+    const hubNodeId = this.hubNodeId();
+    if (!hubNodeId) return null;
+    return {
+      hubNodeId,
+      publicUrl: this.config.publicUrl,
+      name: this.nodeDisplayName(hubNodeId),
+      mode: this.currentMode,
+      priority: this.hubPriority,
+      writerEpoch: this.hubWriterEpoch,
+      caFingerprint: this.selfCaFingerprint,
+      online: true,
+      lastSeenAt: this.now(),
+    };
+  }
+
   setMode(mode: HubMode): void {
     if (this.currentMode === mode) return;
     this.currentMode = mode;
@@ -255,8 +302,7 @@ export class UplinkServer {
   }
 
   notWriterError(): HubNotWriterError {
-    const hubs = this.meshHubs.list();
-    const writerId = pickWriterHub(hubs);
+    const writerId = pickWriterHub(this.authorizedHubRecords());
     const writer = writerId ? this.meshHubs.get(writerId) : null;
     return {
       code: HUB_NOT_WRITER,
@@ -860,6 +906,32 @@ export class UplinkServer {
       live.link.close('protocol_error');
       return;
     }
+    if (!this.isWriter()) {
+      const replayed = await this.identicalHeadRecord(live.userId, bytes, sig);
+      if (replayed) {
+        if (id) {
+          this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(replayed.seq) });
+        }
+        await this.runAppendEffects(
+          live.userId,
+          this.replayedAppendSuccess(bytes, sig, replayed.seq)
+        );
+        return;
+      }
+      if (id) {
+        const err = this.notWriterError();
+        this.send(live.link, {
+          t: 'key.log.ack',
+          id,
+          ok: false,
+          error: HUB_NOT_WRITER,
+          writerHubId: err.writerHubId,
+          writerPublicUrl: err.writerPublicUrl,
+          writerEpoch: err.writerEpoch,
+        } as UplinkCtlMessage);
+      }
+      return;
+    }
     const result = await this.keyLogSource.append(live.userId, { bytes, sig });
     if (result.ok) {
       if (id) {
@@ -1184,7 +1256,7 @@ export class UplinkServer {
         )
       );
     }
-    const hubRecords = this.meshHubs.list();
+    const hubRecords = this.authorizedHubRecords();
     const ownId = this.hubNodeId();
     const hubs = hubRecords
       .slice(0, UPLINK_CTL_MAX_HUBS)
@@ -1218,27 +1290,53 @@ export class UplinkServer {
   }
 
   private upsertSelfHub(): void {
-    const hubNodeId = this.hubNodeId();
-    if (!hubNodeId) return;
-    const existing = this.meshHubs.get(hubNodeId);
-    const now = this.now();
-    this.meshHubs.upsert(
-      {
-        hubNodeId,
-        publicUrl: this.config.publicUrl,
-        name: this.nodeDisplayName(hubNodeId),
-        mode: this.currentMode,
-        priority: this.hubPriority,
-        writerEpoch: this.hubWriterEpoch,
-        caFingerprint: existing?.caFingerprint ?? null,
-        online: true,
-        lastSeenAt: now,
-      },
-      now
+    const snapshot = this.ownHubSnapshot();
+    if (!snapshot) return;
+    this.meshHubs.upsert(snapshot, this.now());
+  }
+
+  private authorizedHubRecords() {
+    return this.meshHubs.list().filter((row) => this.isAuthorizedHub(row.hubNodeId));
+  }
+
+  private isAuthorizedHub(nodeId: string): boolean {
+    const id = nodeId.toLowerCase();
+    const own = this.hubNodeId();
+    if (own && id === own) return true;
+    return this.authorizedHubIdSet.has(id);
+  }
+
+  private effectiveStartMode(configMode: HubMode): HubMode {
+    const ownId = this.hubNodeId();
+    const higher = this.meshHubs
+      .list()
+      .find(
+        (row) =>
+          this.isAuthorizedHub(row.hubNodeId) &&
+          row.mode === 'active' &&
+          row.writerEpoch > this.hubWriterEpoch &&
+          row.hubNodeId !== ownId
+      );
+    if (!higher) return configMode;
+    console.error(
+      `[hub] starting fenced: higher writerEpoch=${higher.writerEpoch} from hub=${higher.hubNodeId}`
     );
+    return 'standby';
+  }
+
+  private warnUnauthorizedHubAd(nodeId: string): void {
+    const now = this.now();
+    const prev = this.lastUnauthorizedHubAdLog.get(nodeId);
+    if (prev !== undefined && now - prev < HUB_UNAUTHORIZED_HUB_AD_LOG_INTERVAL_MS) return;
+    this.lastUnauthorizedHubAdLog.set(nodeId, now);
+    console.warn(`[hub] ignored hub advertisement from unauthorized node=${nodeId}`);
   }
 
   private ingestHubAdvertisement(live: LiveConnection, ad: HubAdvertisement): void {
+    if (!this.isAuthorizedHub(live.nodeId)) {
+      this.warnUnauthorizedHubAd(live.nodeId);
+      return;
+    }
     const now = this.now();
     const existing = this.meshHubs.get(live.nodeId);
     const liveName = this.registry.get(live.nodeId)?.meta.name?.trim();

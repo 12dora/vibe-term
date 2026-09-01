@@ -45,6 +45,7 @@ export type HubRuntimeConfig = {
   priority?: number;
   writerEpoch?: number;
   hubNodeId?: string;
+  authorizedHubIds?: string[];
 };
 
 export type HubAuthResult = {
