@@ -74,3 +74,51 @@ export function takeViewportClaimKeys(
   }
   return affected;
 }
+
+export function collectWindowClaims(
+  claimants: Iterable<{ id: string; viewportClaims: Map<string, ViewportClaim> }>,
+  key: string
+): ViewportClaimRecord[] {
+  const records: ViewportClaimRecord[] = [];
+  for (const session of claimants) {
+    const claim = session.viewportClaims.get(key);
+    if (!claim) continue;
+    records.push({ sessionId: session.id, claim });
+  }
+  return records;
+}
+
+export function applyWinnerGeometry(
+  winner: ViewportWinner | null,
+  lastApplied: { cols: number; rows: number } | undefined
+): { paneId: string; cols: number; rows: number; force: boolean } | null {
+  if (!winner) return null;
+  const sameGeometry =
+    lastApplied != null &&
+    lastApplied.cols === winner.claim.cols &&
+    lastApplied.rows === winner.claim.rows;
+  if (sameGeometry) return null;
+  return {
+    paneId: winner.claim.paneId,
+    cols: winner.claim.cols,
+    rows: winner.claim.rows,
+    force: lastApplied != null,
+  };
+}
+
+export function notifyClaimants<
+  T extends { id: string; viewportClaims: Map<string, ViewportClaim> },
+>(
+  claimants: Iterable<T>,
+  key: string,
+  shouldBroadcast: boolean,
+  notifyFirst: T | undefined,
+  send: (session: T, claim: ViewportClaim) => void
+): void {
+  for (const session of claimants) {
+    const claim = session.viewportClaims.get(key);
+    if (!claim) continue;
+    if (!shouldBroadcast && session !== notifyFirst) continue;
+    send(session, claim);
+  }
+}

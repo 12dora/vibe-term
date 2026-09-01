@@ -44,6 +44,7 @@ import {
   type LocalAuthStoreLike,
   standaloneClosedModeFields,
 } from '../db/local-auth-settings';
+import { LoginFailureLimiter } from './auth-login-limiter';
 import {
   AuthModeCache,
   findPrimaryUser,
@@ -57,8 +58,6 @@ import {
   type KeyLogHubAck,
   type KeyLogPublisher,
   LOGIN_CHALLENGE_TTL_MS,
-  LOGIN_RATE_LIMIT,
-  LOGIN_RATE_WINDOW_MS,
   MESH_VIA_SELF,
   type MeshRoles,
   PASSKEY_REGISTER_TTL_MS,
@@ -132,7 +131,7 @@ export function isAuthPublicPath(
 }
 
 export class AuthRoutes {
-  private readonly failures = new Map<string, number[]>();
+  private readonly limiter = new LoginFailureLimiter(() => this.now());
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly verifyPasskey: VerifyDelegationPasskey;
   private tlsInfoProvider: HubTlsInfoProvider | undefined;
@@ -274,21 +273,21 @@ export class AuthRoutes {
     const ip = clientIpFromRequest(req) ?? 'local';
     const body = await readJsonObjectBody(req);
     if (!body) {
-      this.recordFailure(`ip:${ip}`);
+      this.limiter.recordFailure(`ip:${ip}`);
       return jsonError('MALFORMED', 400);
     }
     let uidHint = peekLoginUid(body);
-    if (this.isRateLimited(uidHint, ip)) return jsonError('RATE_LIMITED', 429);
+    if (this.limiter.isRateLimited(uidHint, ip)) return jsonError('RATE_LIMITED', 429);
     const fail = (code: string, status = 401): Response => {
-      this.recordFailure(`ip:${ip}`);
-      if (uidHint) this.recordFailure(`uid:${uidHint}`);
+      this.limiter.recordFailure(`ip:${ip}`);
+      if (uidHint) this.limiter.recordFailure(`uid:${uidHint}`);
       return jsonError(code, status);
     };
     try {
       const envelope = parseLoginEnvelope(body);
       if (!envelope) return fail('MALFORMED', 400);
       uidHint = envelope.login.uid;
-      if (this.isRateLimited(uidHint, ip)) return jsonError('RATE_LIMITED', 429);
+      if (this.limiter.isRateLimited(uidHint, ip)) return jsonError('RATE_LIMITED', 429);
       const challenge = this.deps.challengeStore.consume(envelope.login.challenge_id);
       if (!challenge || challenge.kind !== 'login') return fail('CHALLENGE_CONSUMED');
       const bound = loginBindingError(
@@ -796,30 +795,6 @@ export class AuthRoutes {
 
   private now(): number {
     return this.deps.now?.() ?? Date.now();
-  }
-
-  private isRateLimited(uid: string, ip: string): boolean {
-    const t = this.now();
-    const uidOver = uid ? this.countFailures(`uid:${uid}`, t) >= LOGIN_RATE_LIMIT : false;
-    const ipOver = this.countFailures(`ip:${ip}`, t) >= LOGIN_RATE_LIMIT;
-    return uidOver || ipOver;
-  }
-
-  private recordFailure(key: string): void {
-    const t = this.now();
-    const next = this.prune(this.failures.get(key) ?? [], t);
-    next.push(t);
-    this.failures.set(key, next);
-  }
-
-  private countFailures(key: string, now: number): number {
-    const next = this.prune(this.failures.get(key) ?? [], now);
-    this.failures.set(key, next);
-    return next.length;
-  }
-
-  private prune(times: number[], now: number): number[] {
-    return times.filter((t) => now - t < LOGIN_RATE_WINDOW_MS);
   }
 }
 

@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import {
   type ViewportClaim,
   type ViewportClaimRecord,
+  applyWinnerGeometry,
+  collectWindowClaims,
+  notifyClaimants,
   parseViewportClaimKey,
   resolveWinner,
   takeViewportClaimKeys,
@@ -112,5 +115,81 @@ describe('takeViewportClaimKeys', () => {
     ]);
     expect(takeViewportClaimKeys(claims)).toHaveLength(1);
     expect(claims.size).toBe(0);
+  });
+});
+
+function sessionClaims(
+  id: string,
+  entries: Array<[string, ViewportClaim]> = []
+): { id: string; viewportClaims: Map<string, ViewportClaim> } {
+  return { id, viewportClaims: new Map(entries) };
+}
+
+describe('collectWindowClaims', () => {
+  test('skips claimants without a claim for the key', () => {
+    const key = viewportClaimKey('dev-a', '@1');
+    const visible: ViewportClaim = {
+      paneId: '%0',
+      cols: 80,
+      rows: 24,
+      visible: true,
+      at: 1,
+    };
+    const records = collectWindowClaims(
+      [sessionClaims('a', [[key, visible]]), sessionClaims('b')],
+      key
+    );
+    expect(records).toEqual([{ sessionId: 'a', claim: visible }]);
+  });
+});
+
+describe('applyWinnerGeometry', () => {
+  test('returns null when there is no winner or geometry is unchanged', () => {
+    const winner = {
+      sessionId: 'a',
+      claim: { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 },
+    };
+    expect(applyWinnerGeometry(null, { cols: 80, rows: 24 })).toBeNull();
+    expect(applyWinnerGeometry(winner, { cols: 80, rows: 24 })).toBeNull();
+  });
+
+  test('returns force=false on first apply and force=true when size changes', () => {
+    const winner = {
+      sessionId: 'a',
+      claim: { paneId: '%0', cols: 120, rows: 40, visible: true, at: 1 },
+    };
+    expect(applyWinnerGeometry(winner, undefined)).toEqual({
+      paneId: '%0',
+      cols: 120,
+      rows: 40,
+      force: false,
+    });
+    expect(applyWinnerGeometry(winner, { cols: 80, rows: 24 })).toEqual({
+      paneId: '%0',
+      cols: 120,
+      rows: 40,
+      force: true,
+    });
+  });
+});
+
+describe('notifyClaimants', () => {
+  test('sends to every claimant on broadcast, otherwise only notifyFirst', () => {
+    const key = viewportClaimKey('dev-a', '@1');
+    const claim: ViewportClaim = { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 };
+    const first = sessionClaims('a', [[key, claim]]);
+    const second = sessionClaims('b', [[key, claim]]);
+    const sent: string[] = [];
+
+    notifyClaimants([first, second], key, true, first, (session) => {
+      sent.push(session.id);
+    });
+    expect(sent).toEqual(['a', 'b']);
+
+    sent.length = 0;
+    notifyClaimants([first, second], key, false, first, (session) => {
+      sent.push(session.id);
+    });
+    expect(sent).toEqual(['a']);
   });
 });

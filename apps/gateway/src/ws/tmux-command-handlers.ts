@@ -9,7 +9,9 @@ import type { GatewaySession } from './gateway-session';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import type { DeviceConnectionEntry, WebSocketServerDeps } from './types';
 import {
-  type ViewportClaimRecord,
+  applyWinnerGeometry,
+  collectWindowClaims,
+  notifyClaimants,
   resolveWinner,
   takeViewportClaimKeys,
   viewportClaimKey,
@@ -293,39 +295,20 @@ export function applyViewportPolicy(
   if (!entry) return;
 
   const key = viewportClaimKey(deviceId, windowId);
-  const records: ViewportClaimRecord[] = [];
   const claimants = new Set<GatewaySession>(entry.clients);
   if (options.extraSession) claimants.add(options.extraSession);
 
-  for (const session of claimants) {
-    const claim = session.viewportClaims.get(key);
-    if (!claim) continue;
-    records.push({ sessionId: session.id, claim });
-  }
-
-  const winner = resolveWinner(records);
+  const winner = resolveWinner(collectWindowClaims(claimants, key));
   const lastApplied = entry.lastAppliedViewport?.get(windowId);
   const previousWinnerId = entry.lastViewportWinnerId?.get(windowId) ?? null;
   const nextWinnerId = winner?.sessionId ?? null;
-  const winnerChanged = previousWinnerId !== nextWinnerId;
-  let geometryChanged = false;
-
-  if (winner) {
-    const sameGeometry =
-      lastApplied != null &&
-      lastApplied.cols === winner.claim.cols &&
-      lastApplied.rows === winner.claim.rows;
-    if (!sameGeometry) {
-      applyTermResizeToEntry(entry, winner.claim.paneId, winner.claim.cols, winner.claim.rows, {
-        force: lastApplied != null,
-      });
-      if (!entry.lastAppliedViewport) entry.lastAppliedViewport = new Map();
-      entry.lastAppliedViewport.set(windowId, {
-        cols: winner.claim.cols,
-        rows: winner.claim.rows,
-      });
-      geometryChanged = true;
-    }
+  const geometry = applyWinnerGeometry(winner, lastApplied);
+  if (geometry) {
+    applyTermResizeToEntry(entry, geometry.paneId, geometry.cols, geometry.rows, {
+      force: geometry.force,
+    });
+    if (!entry.lastAppliedViewport) entry.lastAppliedViewport = new Map();
+    entry.lastAppliedViewport.set(windowId, { cols: geometry.cols, rows: geometry.rows });
   }
 
   if (!entry.lastViewportWinnerId) entry.lastViewportWinnerId = new Map();
@@ -334,20 +317,22 @@ export function applyViewportPolicy(
   const applied = winner ? { cols: winner.claim.cols, rows: winner.claim.rows } : lastApplied;
   if (!applied) return;
 
-  const shouldBroadcast = winnerChanged || geometryChanged;
-  for (const session of claimants) {
-    const claim = session.viewportClaims.get(key);
-    if (!claim) continue;
-    if (!shouldBroadcast && session !== options.notifyFirst) continue;
-    sendViewportPolicy(host, session, {
-      deviceId,
-      windowId,
-      paneId: claim.paneId,
-      owner: winner?.sessionId === session.id,
-      cols: applied.cols,
-      rows: applied.rows,
-    });
-  }
+  notifyClaimants(
+    claimants,
+    key,
+    previousWinnerId !== nextWinnerId || geometry != null,
+    options.notifyFirst,
+    (session, claim) => {
+      sendViewportPolicy(host, session, {
+        deviceId,
+        windowId,
+        paneId: claim.paneId,
+        owner: winner?.sessionId === session.id,
+        cols: applied.cols,
+        rows: applied.rows,
+      });
+    }
+  );
 }
 
 function sendViewportPolicy(
