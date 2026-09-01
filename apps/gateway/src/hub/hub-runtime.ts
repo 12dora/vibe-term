@@ -148,6 +148,7 @@ export class HubRuntime {
   readonly uplink: UplinkServer;
   readonly meshHubs: MeshHubStore;
   private readonly peerPoller: HubPeerPoller;
+  private readonly modeListeners = new Set<() => void>();
 
   constructor(opts: HubRuntimeOptions) {
     this.db = opts.db;
@@ -172,6 +173,11 @@ export class HubRuntime {
       authTimeoutMs: opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS,
       onModeChange: () => {
         void this.peerPoller.pollNow();
+        for (const cb of this.modeListeners) {
+          try {
+            cb();
+          } catch {}
+        }
       },
       onNewAuthorizedHub: () => {
         void this.peerPoller.pollNow();
@@ -197,6 +203,14 @@ export class HubRuntime {
 
   setMode(mode: HubMode): void {
     this.uplink.setMode(mode);
+  }
+
+  /** 模式变化（含被围栏自动降级）通知；节点侧据此立即重发 node.status 广告。 */
+  onModeChange(cb: () => void): () => void {
+    this.modeListeners.add(cb);
+    return () => {
+      this.modeListeners.delete(cb);
+    };
   }
 
   writerEpoch(): number {

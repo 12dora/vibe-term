@@ -1353,6 +1353,7 @@ function assembleMeshRuntime(
     await d.refreshTls();
     if (d.state.caFingerprint !== prev) uplink.sendStatusIfChanged();
   };
+  const unsubscribeHubMode = hub?.onModeChange(() => uplink.sendStatusIfChanged()) ?? null;
   return {
     nodeId: identity.nodeIdHex,
     identity,
@@ -1439,6 +1440,7 @@ function assembleMeshRuntime(
       stopPromise = (async () => {
         tlsPoll?.clear();
         tlsPoll = null;
+        unsubscribeHubMode?.();
         d.nodeEventDedupe.clear();
         setMeshAgentBridge(null);
         await stopQuietly([
