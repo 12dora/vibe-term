@@ -17,9 +17,34 @@ const SUM_LINE = /^([a-fA-F0-9]{64})\s+\*?(\S+)\s*$/;
 /** 覆盖 GitHub 仓库根 URL；缺省为当前发行源。路径布局保持 `/releases/download/v<ver>/...`。 */
 export const RELEASE_BASE_URL_ENV = 'TMEX_RELEASE_BASE_URL';
 
-const inflight = new Map<string, Promise<{ path: string; sha256: string; bytes: number }>>();
+type InflightWaiter = {
+  resolve: (value: DownloadedRelease) => void;
+  reject: (reason: unknown) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+};
+
+type InflightDownload = {
+  waiters: Set<InflightWaiter>;
+  ac: AbortController;
+  partPath: string;
+  key: string;
+};
+
+const inflight = new Map<string, InflightDownload>();
 
 export function resetReleaseDownloadForTests(): void {
+  for (const entry of inflight.values()) {
+    entry.ac.abort();
+    const err = abortError();
+    for (const waiter of entry.waiters) {
+      if (waiter.signal && waiter.onAbort) {
+        waiter.signal.removeEventListener('abort', waiter.onAbort);
+      }
+      waiter.reject(err);
+    }
+    entry.waiters.clear();
+  }
   inflight.clear();
 }
 
@@ -109,14 +134,15 @@ export function assertReleaseIntegrity(
 export async function fetchReleaseSha256Sums(
   version: string,
   fileName: string,
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  signal?: AbortSignal
 ): Promise<{ hex: string | null; missing: boolean }> {
   let response: Response;
   try {
     response = await fetchFn(resolveReleaseSha256SumsUrl(version), {
       redirect: 'follow',
       cache: 'no-store',
-      signal: AbortSignal.timeout(SHA256SUMS_FETCH_TIMEOUT_MS),
+      signal: mergeAbortSignals(AbortSignal.timeout(SHA256SUMS_FETCH_TIMEOUT_MS), signal),
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -141,21 +167,95 @@ export type DownloadedRelease = {
 
 export async function downloadVerifiedRelease(
   version: string,
-  opts: { cacheDir: string; fetchFn?: typeof fetch }
+  opts: { cacheDir: string; fetchFn?: typeof fetch; signal?: AbortSignal }
 ): Promise<DownloadedRelease> {
+  throwIfAborted(opts.signal);
+  await mkdir(opts.cacheDir, { recursive: true, mode: 0o700 });
+  const dest = join(opts.cacheDir, releaseTarballName(version));
+  const sidecar = `${dest}.sha256`;
+  const cached = await readVerifiedCache(dest, sidecar);
+  if (cached) return cached;
+
   const key = `${opts.cacheDir}::${version}`;
-  const existing = inflight.get(key);
-  if (existing) return existing;
-  const pending = downloadVerifiedReleaseUncached(version, opts).finally(() => {
-    if (inflight.get(key) === pending) inflight.delete(key);
+  const partPath = `${dest}.part`;
+  return new Promise<DownloadedRelease>((resolve, reject) => {
+    const waiter: InflightWaiter = { resolve, reject, signal: opts.signal };
+    const onAbort = (): void => {
+      void abortWaiter(key, waiter, reject);
+    };
+    waiter.onAbort = onAbort;
+
+    let entry = inflight.get(key);
+    const created = !entry;
+    if (!entry) {
+      entry = { waiters: new Set(), ac: new AbortController(), partPath, key };
+      inflight.set(key, entry);
+    }
+
+    if (opts.signal?.aborted) {
+      if (created) inflight.delete(key);
+      reject(abortError());
+      return;
+    }
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
+    entry.waiters.add(waiter);
+
+    if (!created) return;
+    const owned = entry;
+    void downloadVerifiedReleaseUncached(version, { ...opts, signal: owned.ac.signal }).then(
+      (result) => {
+        if (inflight.get(key) === owned) inflight.delete(key);
+        settleInflight(owned, { ok: true, result });
+      },
+      (err) => {
+        if (inflight.get(key) === owned) inflight.delete(key);
+        settleInflight(owned, { ok: false, err });
+      }
+    );
   });
-  inflight.set(key, pending);
-  return pending;
+}
+
+async function abortWaiter(
+  key: string,
+  waiter: InflightWaiter,
+  reject: (reason: unknown) => void
+): Promise<void> {
+  const entry = inflight.get(key);
+  if (entry?.waiters.has(waiter)) {
+    entry.waiters.delete(waiter);
+    if (entry.waiters.size === 0) {
+      entry.ac.abort();
+      if (inflight.get(key) === entry) inflight.delete(key);
+      await rm(entry.partPath, { force: true }).catch(() => {});
+    }
+  }
+  reject(abortError());
+}
+
+function settleInflight(
+  entry: InflightDownload,
+  outcome: { ok: true; result: DownloadedRelease } | { ok: false; err: unknown }
+): void {
+  const waiters = [...entry.waiters];
+  entry.waiters.clear();
+  for (const waiter of waiters) {
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort);
+    }
+    if (outcome.ok) waiter.resolve(outcome.result);
+    else waiter.reject(outcome.err);
+  }
+}
+
+function abortError(): Error {
+  const err = new Error('UPGRADE_CANCELLED');
+  err.name = 'AbortError';
+  return err;
 }
 
 async function downloadVerifiedReleaseUncached(
   version: string,
-  opts: { cacheDir: string; fetchFn?: typeof fetch }
+  opts: { cacheDir: string; fetchFn?: typeof fetch; signal?: AbortSignal }
 ): Promise<DownloadedRelease> {
   await mkdir(opts.cacheDir, { recursive: true, mode: 0o700 });
   const fileName = releaseTarballName(version);
@@ -169,8 +269,15 @@ async function downloadVerifiedReleaseUncached(
   await rm(part, { force: true }).catch(() => {});
   let downloaded: { sha256: string; bytes: number };
   try {
-    downloaded = await downloadTarballToFile(resolveReleaseTarballUrl(version), part, fetchFn);
-    const sums = await fetchReleaseSha256Sums(version, fileName, fetchFn);
+    throwIfAborted(opts.signal);
+    downloaded = await downloadTarballToFile(
+      resolveReleaseTarballUrl(version),
+      part,
+      fetchFn,
+      opts.signal
+    );
+    throwIfAborted(opts.signal);
+    const sums = await fetchReleaseSha256Sums(version, fileName, fetchFn, opts.signal);
     assertReleaseSha256(version, downloaded.sha256, sums);
   } catch (err) {
     await rm(part, { force: true }).catch(() => {});
@@ -178,8 +285,10 @@ async function downloadVerifiedReleaseUncached(
   }
   let renamed = false;
   try {
+    throwIfAborted(opts.signal);
     await rename(part, dest);
     renamed = true;
+    throwIfAborted(opts.signal);
     await writeFile(sidecar, `${downloaded.sha256}\n`, { mode: 0o600 });
   } catch (err) {
     await rm(part, { force: true }).catch(() => {});
@@ -203,19 +312,38 @@ async function readVerifiedCache(dest: string, sidecar: string): Promise<Downloa
   }
 }
 
+function mergeAbortSignals(timeout: AbortSignal, user?: AbortSignal): AbortSignal {
+  if (!user) return timeout;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([timeout, user]);
+  if (user.aborted) return user;
+  const ac = new AbortController();
+  const onAbort = (): void => ac.abort();
+  timeout.addEventListener('abort', onAbort, { once: true });
+  user.addEventListener('abort', onAbort, { once: true });
+  return ac.signal;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw abortError();
+}
+
 async function downloadTarballToFile(
   url: string,
   destPath: string,
-  fetchFn: typeof fetch
+  fetchFn: typeof fetch,
+  signal?: AbortSignal
 ): Promise<{ sha256: string; bytes: number }> {
+  const combined = mergeAbortSignals(AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS), signal);
   const res = await fetchFn(url, {
     cache: 'no-store',
     redirect: 'follow',
-    signal: AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS),
+    signal: combined,
   });
   if (!res.ok) {
     throw new Error(`GitHub release tarball HTTP ${res.status}`);
   }
+  throwIfAborted(signal);
   const hash = createHash('sha256');
   let bytes = 0;
   const hasher = new Transform({
@@ -226,14 +354,24 @@ async function downloadTarballToFile(
     },
   });
   const ws = createWriteStream(destPath, { mode: 0o600 });
+  const src = res.body
+    ? Readable.fromWeb(res.body as unknown as NodeWebReadableStream)
+    : Readable.from([Buffer.from(await res.arrayBuffer())]);
+  const onAbort = (): void => {
+    src.destroy();
+    hasher.destroy();
+    ws.destroy();
+    void res.body?.cancel().catch(() => {});
+  };
+  combined.addEventListener('abort', onAbort, { once: true });
   try {
-    const src = res.body
-      ? Readable.fromWeb(res.body as unknown as NodeWebReadableStream)
-      : Readable.from([Buffer.from(await res.arrayBuffer())]);
     await pipeline(src, hasher, ws);
   } catch (err) {
     ws.destroy();
+    src.destroy();
     throw err;
+  } finally {
+    combined.removeEventListener('abort', onAbort);
   }
   return { sha256: hash.digest('hex'), bytes };
 }

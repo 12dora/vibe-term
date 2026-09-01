@@ -7,7 +7,7 @@ import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
-import { Download, Loader2, Pencil, ShieldAlert } from 'lucide-react';
+import { Download, Loader2, Pencil, ShieldAlert, Square } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { hubDetailText, hubModeLabel } from './hub-strip';
 import type { NodeActionDeps } from './types';
@@ -143,6 +143,7 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
             {t('nodes.actions.revoke')}
           </Button>
           <UpgradeButton row={row} upgrade={deps.upgrade} />
+          <UpgradeCancelButton row={row} upgrade={deps.upgrade} />
         </div>
       </Td>
     </tr>
@@ -152,12 +153,15 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
 /**
  * 升级按钮：目标离线、（远端）未登录、版本过旧无法远程升级、已是最新时禁用并说明原因；
  * 进行中显示阶段文案并锁住，批量升级期间整列一并锁住，避免同一节点被点两次。
+ * 刷新后回读这一行的升级状态期间同样锁住——不知道目标在不在升级时点下去只会撞上
+ * `UPGRADE_IN_PROGRESS`，还会把随后接手的 watcher 挤掉。
  * 本机同样可以升级——它会重启本机网关，当前访问随之中断，确认框里已经写明。
  */
 function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps['upgrade'] }) {
   const { t } = useTranslation();
   const entry = upgrade.entryOf(row.id);
   const busy = isUpgradeBusy(entry.phase);
+  const restoring = upgrade.restoringIds.has(row.id);
   const blocked = upgradeBlockedHint(row, upgrade.latest?.latestVersion ?? null, t);
   const version = entry.targetVersion ?? upgrade.latest?.latestVersion ?? null;
   const phaseText = upgradePhaseText(t, entry.phase);
@@ -167,8 +171,12 @@ function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps
       type="button"
       size="xs"
       variant="outline"
-      disabled={busy || blocked !== null || upgrade.batch.running}
-      title={blocked ?? upgradeTitle(entry.error, version, t)}
+      disabled={busy || blocked !== null || upgrade.batch.running || restoring}
+      title={
+        restoring
+          ? t('nodes.upgrade.restoring')
+          : (blocked ?? upgradeTitle(entry.error, version, t))
+      }
       onClick={() => upgrade.start(row)}
       data-testid={`node-upgrade-${row.id}`}
       data-upgrade-phase={entry.phase}
@@ -177,6 +185,42 @@ function UpgradeButton({ row, upgrade }: { row: NodeRow; upgrade: NodeActionDeps
       {phaseText ?? t('nodes.upgrade.action')}
     </Button>
   );
+}
+
+/**
+ * 「停止升级」：只在这一行有升级在跑时出现。下载阶段（含刚发出请求的 `pending`）可以打断；
+ * 进到安装 / 重启就只剩一个禁用的按钮说明原因——半路掐掉安装会留下一台装坏的机器。
+ * 停止请求在途时按钮转圈并锁住，连点不会发出第二条 DELETE。
+ */
+function UpgradeCancelButton({
+  row,
+  upgrade,
+}: { row: NodeRow; upgrade: NodeActionDeps['upgrade'] }) {
+  const { t } = useTranslation();
+  const { phase, cancelling } = upgrade.entryOf(row.id);
+  if (!isUpgradeBusy(phase)) return null;
+  const interruptible = phase === 'pending' || phase === 'downloading';
+  const title = t(cancelKey(interruptible, cancelling));
+
+  return (
+    <Button
+      type="button"
+      size="icon-xs"
+      variant="outline"
+      disabled={!interruptible || cancelling}
+      title={title}
+      aria-label={title}
+      onClick={() => upgrade.cancel(row)}
+      data-testid={`node-upgrade-cancel-${row.id}`}
+    >
+      {cancelling ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Square />}
+    </Button>
+  );
+}
+
+function cancelKey(interruptible: boolean, cancelling: boolean): string {
+  if (cancelling) return 'nodes.upgrade.cancelling';
+  return interruptible ? 'nodes.upgrade.cancel' : 'nodes.upgrade.cancelNotAllowed';
 }
 
 export function upgradeBlockedHint(

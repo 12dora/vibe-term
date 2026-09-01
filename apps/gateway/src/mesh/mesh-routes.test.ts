@@ -1779,6 +1779,223 @@ describe('mesh upgrade routes', () => {
       mesh.close();
     }
   });
+
+  test('DELETE remote upgrade without a target session → NODE_LOGIN_REQUIRED', async () => {
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'DELETE',
+          headers: { cookie: `tmex_s_self=${sid}` },
+        }
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ code: 'NODE_LOGIN_REQUIRED', nodeId: UPGRADE_PEER });
+      expect(streams.opens).toEqual([]);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('DELETE remote upgrade on an unknown node → NOT_FOUND', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'DELETE',
+          headers: { cookie: `tmex_s_self=${sid}` },
+        }
+      );
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ code: 'NOT_FOUND', nodeId: UPGRADE_PEER });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('DELETE remote upgrade job in download is 200 overlay and GET keeps UPGRADE_CANCELLED', async () => {
+    mockGithubLatest('9.9.9');
+    const latestFetch = globalThis.fetch;
+    let releaseTarball!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseTarball = resolve;
+    });
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('api.github.com')) return latestFetch(input, init);
+      await gate;
+      return new Response('nope', { status: 500 });
+    }) as typeof fetch;
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    const info = jsonResponse({
+      baseVersion: '1.0.0',
+      canSelfUpdate: true,
+      upgradeCapabilities: ['staged-package'],
+    });
+    streams.responses.push(info, info.clone());
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const cookie = `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid`;
+      const started = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        { method: 'POST', headers: { cookie } }
+      );
+      expect(started.status).toBe(200);
+      const cancelled = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        { method: 'DELETE', headers: { cookie } }
+      );
+      expect(cancelled.status).toBe(200);
+      expect(await cancelled.json()).toMatchObject({
+        state: 'idle',
+        targetVersion: null,
+        error: 'UPGRADE_CANCELLED',
+      });
+      const status = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        { headers: { cookie } }
+      );
+      expect(await status.json()).toMatchObject({
+        state: 'idle',
+        error: 'UPGRADE_CANCELLED',
+      });
+      expect(streams.opens.map((o) => `${o.method} ${o.path}`)).toEqual(['GET /api/system/info']);
+      const again = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        { method: 'POST', headers: { cookie } }
+      );
+      expect(again.status).toBe(200);
+    } finally {
+      releaseTarball();
+      mesh.close();
+    }
+  });
+
+  test('DELETE remote upgrade when the target is old maps 404 to 501 UPGRADE_CANCEL_UNSUPPORTED', async () => {
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(new Response('gone', { status: 404 }));
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        {
+          method: 'DELETE',
+          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+        }
+      );
+      expect(res.status).toBe(501);
+      expect(await res.json()).toEqual({
+        code: 'UPGRADE_CANCEL_UNSUPPORTED',
+        nodeId: UPGRADE_PEER,
+      });
+      expect(streams.opens[0]).toMatchObject({
+        method: 'DELETE',
+        path: '/api/system/upgrade',
+      });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('DELETE after a handed-off job is forwarded to the target', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-mesh-cancel-cache-'));
+    const tarball = new Uint8Array([1, 2, 3, 4, 5]);
+    const hex = createHash('sha256').update(tarball).digest('hex');
+    mockGithubLatest('9.9.9');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('api.github.com')) return latestFetch(input, init);
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${hex}  ${releaseTarballName('9.9.9')}\n`, { status: 200 });
+      }
+      return new Response(Buffer.from(tarball), { status: 200 });
+    }) as typeof fetch;
+    const peers = new FakePeers();
+    peers.links.set(UPGRADE_PEER, dummyLink);
+    const streams = new RecordingStreams();
+    streams.responses.push(
+      jsonResponse({
+        baseVersion: '1.0.0',
+        canSelfUpdate: true,
+        upgradeCapabilities: ['staged-package'],
+      }),
+      jsonResponse({ version: '9.9.9', sha256: hex, bytes: tarball.byteLength }),
+      jsonResponse({
+        state: 'downloading',
+        targetVersion: '9.9.9',
+        error: null,
+        startedAt: '2026-09-01T00:00:00.000Z',
+      }),
+      jsonResponse(
+        {
+          code: 'UPGRADE_NOT_CANCELLABLE',
+          state: 'executing',
+          targetVersion: '9.9.9',
+          error: null,
+          startedAt: '2026-09-01T00:00:00.000Z',
+        },
+        409
+      )
+    );
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      enrollPeer(mesh, UPGRADE_PEER);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const cookie = `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid`;
+      const started = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        { method: 'POST', headers: { cookie } }
+      );
+      expect(started.status).toBe(200);
+      await waitForRemoteUpgradeJob(UPGRADE_PEER);
+      const cancelled = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
+        { method: 'DELETE', headers: { cookie } }
+      );
+      expect(cancelled.status).toBe(409);
+      expect(await cancelled.json()).toMatchObject({
+        code: 'UPGRADE_NOT_CANCELLABLE',
+        nodeId: UPGRADE_PEER,
+      });
+      expect(streams.opens.map((o) => `${o.method} ${o.path}`)).toEqual([
+        'GET /api/system/info',
+        'PUT /api/system/upgrade/package',
+        'POST /api/system/upgrade',
+        'DELETE /api/system/upgrade',
+      ]);
+    } finally {
+      mesh.close();
+    }
+  });
 });
 
 function encodeRtcSignal(from: number): Uint8Array {

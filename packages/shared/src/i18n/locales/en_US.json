@@ -2057,7 +2057,16 @@
         "confirmAll_other": "Upgrade {{count}} nodes to {{version}}? The nodes restart one by one and their sessions drop.",
         "allDone": "All upgrades finished: {{success}} succeeded, {{failed}} failed.",
         "allDoneWithFailures": "All upgrades finished: {{success}} succeeded, {{failed}} failed. Failed: {{names}}.",
-        "listSeparator": ", "
+        "allDoneWithCancelled": "All upgrades finished: {{success}} succeeded, {{failed}} failed, {{cancelled}} cancelled.",
+        "listSeparator": ", ",
+        "cancel": "Stop Upgrade",
+        "cancelled": "Upgrade of “{{name}}” cancelled.",
+        "cancelling": "Stopping the upgrade…",
+        "cancelNotAllowed": "Installing; it cannot be interrupted.",
+        "cancelUnsupported": "This node's version cannot interrupt an upgrade.",
+        "cancelNotRunning": "No upgrade is running on this node.",
+        "cancelFailed": "Could not stop the upgrade: {{error}}",
+        "restoring": "Syncing upgrade status…"
       },
       "badge": {
         "direct": "Direct",

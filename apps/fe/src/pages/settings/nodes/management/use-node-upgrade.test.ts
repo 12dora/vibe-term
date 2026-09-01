@@ -1,9 +1,10 @@
-// 批量升级：候选筛选、执行顺序（普通节点 → 远端 hub → 本机）、并发上限与汇总提示。
-// 全部走注入的 `run`，不碰网络也不碰计时器。
+// 批量升级：候选筛选、执行顺序（普通节点 → 远端 hub → 本机）、并发上限与汇总提示；
+// 刷新后的状态恢复与「停止升级」也在这里，全部走注入的 `run` / `io`，不碰网络也不碰计时器。
 
 import { describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { UpgradeRunOutcome } from './types';
+import type { UpgradeStatus } from '@tmex/shared';
+import type { NodeUpgradeEntry, UpgradeRunOutcome } from './types';
 import {
   BATCH_CONCURRENCY,
   MIN_REMOTE_UPGRADE_VERSION,
@@ -16,11 +17,26 @@ import {
   upgradeBlockReason,
 } from './upgrade-batch';
 import {
+  RESTORE_CONCURRENCY,
   SILENT_UPGRADE_TOASTS,
+  type UpgradeCancelOutcome,
+  type UpgradeCancelParams,
+  type UpgradeIo,
+  type UpgradePollOutcome,
+  type UpgradeStartOutcome,
   type UpgradeToasts,
+  cancelNodeUpgrade,
+  createNodeAbortRegistry,
+  createResumeQueue,
+  createSemaphore,
+  createUpgradeCancelGate,
   launchRowUpgrade,
   launchUpgradeBatch,
   reportBatchSummary,
+  restorableRows,
+  restoreUpgradeStates,
+  retainKnownIds,
+  runNodeUpgrade,
 } from './use-node-upgrade';
 
 const t = (key: string, options?: Record<string, unknown>) =>
@@ -65,6 +81,22 @@ function recorder(): Recorder {
       warning: (m) => log.push(['warning', m]),
       error: (m) => log.push(['error', m]),
     },
+  };
+}
+
+function status(overrides: Partial<UpgradeStatus> = {}): UpgradeStatus {
+  return { state: 'idle', targetVersion: null, error: null, startedAt: null, ...overrides };
+}
+
+function stubIo(overrides: Partial<UpgradeIo> = {}): UpgradeIo {
+  return {
+    start: async () => ({ kind: 'cancelled' }),
+    poll: async () => ({ kind: 'unreachable' }),
+    cancel: async () => ({ kind: 'failed', code: 'UPGRADE_NOT_RUNNING', httpStatus: 409 }),
+    nodeVersion: async () => undefined,
+    wait: async () => true,
+    now: () => 0,
+    ...overrides,
   };
 }
 
@@ -226,7 +258,13 @@ describe('runUpgradeBatch', () => {
     g.release.get('self')?.();
     const summary = await done;
     expect(g.settled).toEqual(['a', 'b', 'hub', 'self']);
-    expect(summary).toEqual({ succeeded: 4, failed: 0, failedNames: [], cancelled: false });
+    expect(summary).toEqual({
+      succeeded: 4,
+      failed: 0,
+      failedNames: [],
+      cancelledCount: 0,
+      cancelled: false,
+    });
     expect(progress).toEqual([1, 2, 3, 4]);
   });
 
@@ -257,7 +295,7 @@ describe('runUpgradeBatch', () => {
     expect(g.started).toHaveLength(5);
   });
 
-  test('成败统计：done / alreadyLatest 计成功，failed / timeout 计失败，cancelled 两边都不算', async () => {
+  test('成败统计：done / alreadyLatest 计成功，failed / timeout 计失败，cancelled 单独一档', async () => {
     const outcomes: Record<string, UpgradeRunOutcome> = {
       a: 'done',
       b: 'alreadyLatest',
@@ -276,6 +314,7 @@ describe('runUpgradeBatch', () => {
       succeeded: 2,
       failed: 2,
       failedNames: ['c', 'd'],
+      cancelledCount: 1,
       cancelled: false,
     });
   });
@@ -323,6 +362,7 @@ describe('runUpgradeBatch', () => {
       succeeded: 3,
       failed: 1,
       failedNames: ['boom'],
+      cancelledCount: 0,
       cancelled: false,
     });
     // 进度不会因为异常断档，四台机器都记了账
@@ -337,6 +377,7 @@ describe('reportBatchSummary', () => {
       succeeded: 3,
       failed: 0,
       failedNames: [],
+      cancelledCount: 0,
       cancelled: false,
     });
     expect(rec.log).toEqual([['success', 'nodes.upgrade.allDone:{"success":3,"failed":0}']]);
@@ -348,6 +389,7 @@ describe('reportBatchSummary', () => {
       succeeded: 1,
       failed: 2,
       failedNames: ['a', 'b'],
+      cancelledCount: 0,
       cancelled: false,
     });
     expect(rec.log).toHaveLength(1);
@@ -356,15 +398,591 @@ describe('reportBatchSummary', () => {
     expect(rec.log[0]?.[1]).toContain('"names":"anodes.upgrade.listSeparatorb"');
   });
 
+  test('有用户中断时单独报一档「已取消」', () => {
+    const rec = recorder();
+    reportBatchSummary(t, rec.toasts, {
+      succeeded: 2,
+      failed: 0,
+      failedNames: [],
+      cancelledCount: 1,
+      cancelled: false,
+    });
+    expect(rec.log).toEqual([
+      ['info', 'nodes.upgrade.allDoneWithCancelled:{"success":2,"failed":0,"cancelled":1}'],
+    ]);
+  });
+
+  test('既有失败又有中断：一条 warning 里三个数都在', () => {
+    const rec = recorder();
+    reportBatchSummary(t, rec.toasts, {
+      succeeded: 1,
+      failed: 1,
+      failedNames: ['a'],
+      cancelledCount: 2,
+      cancelled: false,
+    });
+    expect(rec.log).toEqual([
+      ['warning', 'nodes.upgrade.allDoneWithCancelled:{"success":1,"failed":1,"cancelled":2}'],
+    ]);
+  });
+
   test('被取消时不弹任何 toast', () => {
     const rec = recorder();
     reportBatchSummary(t, rec.toasts, {
       succeeded: 1,
       failed: 1,
       failedNames: ['a'],
+      cancelledCount: 0,
       cancelled: true,
     });
     expect(rec.log).toEqual([]);
+  });
+});
+
+describe('restorableRows', () => {
+  test('只查在线且（本机或已登录）的行', () => {
+    const rows = [
+      row({ id: 'ok' }),
+      row({ id: 'self', isSelf: true, loggedIn: false }),
+      row({ id: 'offline', online: false }),
+      row({ id: 'anon', loggedIn: false }),
+    ];
+    expect(restorableRows(rows).map((item) => item.id)).toEqual(['ok', 'self']);
+  });
+});
+
+describe('restoreUpgradeStates', () => {
+  const SCRIPT: Record<string, UpgradePollOutcome> = {
+    dl: { kind: 'status', status: status({ state: 'downloading', targetVersion: '1.2.0' }) },
+    exec: { kind: 'status', status: status({ state: 'executing', targetVersion: '1.2.0' }) },
+    idle: { kind: 'status', status: status() },
+    stopped: { kind: 'status', status: status({ error: 'UPGRADE_CANCELLED' }) },
+    broken: { kind: 'status', status: status({ error: 'DOWNLOAD_FAILED' }) },
+    down: { kind: 'unreachable' },
+  };
+
+  test('非 idle 的行交回调用方接管，idle 的行一律不复活', async () => {
+    const seen: Array<[string, string]> = [];
+    const polled: string[] = [];
+    await restoreUpgradeStates({
+      rows: [
+        row({ id: 'dl' }),
+        row({ id: 'exec' }),
+        row({ id: 'idle' }),
+        row({ id: 'stopped' }),
+        row({ id: 'broken' }),
+        row({ id: 'down' }),
+        row({ id: 'offline', online: false }),
+        row({ id: 'anon', loggedIn: false }),
+      ],
+      io: stubIo({
+        poll: async (nodeId) => {
+          polled.push(nodeId);
+          return SCRIPT[nodeId] ?? { kind: 'unreachable' };
+        },
+      }),
+      signal: new AbortController().signal,
+      concurrency: 1,
+      skip: () => false,
+      onActive: (item, state) => seen.push([item.id, state.state]),
+    });
+    expect(seen).toEqual([
+      ['dl', 'downloading'],
+      ['exec', 'executing'],
+    ]);
+    expect(polled).toEqual(['dl', 'exec', 'idle', 'stopped', 'broken', 'down']);
+  });
+
+  test('本会话已有升级在跑的行跳过，连查询都不发', async () => {
+    const polled: string[] = [];
+    await restoreUpgradeStates({
+      rows: [row({ id: 'dl' }), row({ id: 'exec' })],
+      io: stubIo({
+        poll: async (nodeId) => {
+          polled.push(nodeId);
+          return SCRIPT[nodeId] ?? { kind: 'unreachable' };
+        },
+      }),
+      signal: new AbortController().signal,
+      concurrency: 1,
+      skip: (nodeId) => nodeId === 'dl',
+      onActive: () => undefined,
+    });
+    expect(polled).toEqual(['exec']);
+  });
+
+  test('查询并发上限为 3', async () => {
+    const started: string[] = [];
+    const release = new Map<string, () => void>();
+    const rows = ['a', 'b', 'c', 'd', 'e'].map((id) => row({ id }));
+    const done = restoreUpgradeStates({
+      rows,
+      io: stubIo({
+        poll: (nodeId) => {
+          started.push(nodeId);
+          return new Promise<UpgradePollOutcome>((resolve) => {
+            release.set(nodeId, () => resolve({ kind: 'status', status: status() }));
+          });
+        },
+      }),
+      signal: new AbortController().signal,
+      skip: () => false,
+      onActive: () => undefined,
+    });
+
+    await flush();
+    expect(RESTORE_CONCURRENCY).toBe(3);
+    expect(started).toEqual(['a', 'b', 'c']);
+
+    release.get('b')?.();
+    await flush();
+    expect(started).toEqual(['a', 'b', 'c', 'd']);
+
+    for (const id of ['a', 'c', 'd', 'e']) {
+      release.get(id)?.();
+      await flush();
+    }
+    await done;
+    expect(started).toHaveLength(5);
+  });
+
+  test('signal 已 abort：一次都不查', async () => {
+    const polled: string[] = [];
+    const controller = new AbortController();
+    controller.abort();
+    await restoreUpgradeStates({
+      rows: [row({ id: 'dl' })],
+      io: stubIo({
+        poll: async (nodeId) => {
+          polled.push(nodeId);
+          return SCRIPT.dl as UpgradePollOutcome;
+        },
+      }),
+      signal: controller.signal,
+      skip: () => false,
+      onActive: () => undefined,
+    });
+    expect(polled).toEqual([]);
+  });
+});
+
+describe('cancelNodeUpgrade', () => {
+  function run(outcome: UpgradeCancelOutcome, overrides: Partial<UpgradeCancelParams> = {}) {
+    const rec = recorder();
+    const patches: Array<Record<string, unknown>> = [];
+    const counts = { stopped: 0, changed: 0 };
+    const result = cancelNodeUpgrade({
+      row: { id: 'n1', name: 'studio' },
+      io: stubIo({ cancel: async () => outcome }),
+      signal: new AbortController().signal,
+      t,
+      toasts: rec.toasts,
+      patch: (entry) => patches.push(entry as Record<string, unknown>),
+      stopWatch: () => {
+        counts.stopped += 1;
+      },
+      onChanged: () => {
+        counts.changed += 1;
+      },
+      ...overrides,
+    });
+    return { rec, patches, counts, result };
+  }
+
+  test('200：先掐掉轮询，再回到静止态并给一条 info，最后刷新列表', async () => {
+    const done = run({ kind: 'cancelled', status: status({ error: 'UPGRADE_CANCELLED' }) });
+    expect(await done.result).toBe('cancelled');
+    expect(done.counts).toEqual({ stopped: 1, changed: 1 });
+    expect(done.patches).toEqual([{ phase: 'idle', targetVersion: null, error: null }]);
+    expect(done.rec.log).toEqual([['info', 'nodes.upgrade.cancelled:{"name":"studio"}']]);
+  });
+
+  test('409 UPGRADE_NOT_CANCELLABLE：只提示「正在安装」，轮询继续', async () => {
+    const done = run({ kind: 'failed', code: 'UPGRADE_NOT_CANCELLABLE', httpStatus: 409 });
+    expect(await done.result).toBe('rejected');
+    expect(done.counts).toEqual({ stopped: 0, changed: 0 });
+    expect(done.patches).toEqual([]);
+    expect(done.rec.log).toEqual([['warning', 'nodes.upgrade.cancelNotAllowed']]);
+  });
+
+  test('501 UPGRADE_CANCEL_UNSUPPORTED：提示该节点版本不支持中断', async () => {
+    const done = run({ kind: 'failed', code: 'UPGRADE_CANCEL_UNSUPPORTED', httpStatus: 501 });
+    expect(await done.result).toBe('rejected');
+    expect(done.rec.log).toEqual([['warning', 'nodes.upgrade.cancelUnsupported']]);
+  });
+
+  test('409 UPGRADE_NOT_RUNNING：良性结论，给 info 不给报错', async () => {
+    const done = run({ kind: 'failed', code: 'UPGRADE_NOT_RUNNING', httpStatus: 409 });
+    expect(await done.result).toBe('rejected');
+    expect(done.rec.log).toEqual([['info', 'nodes.upgrade.cancelNotRunning']]);
+  });
+
+  test('DELETE 扑空但 POST 还在途：改成等 POST 落地再补一次，不提示', async () => {
+    const done = run(
+      { kind: 'failed', code: 'UPGRADE_NOT_RUNNING', httpStatus: 409 },
+      {
+        retry: () => true,
+      }
+    );
+    expect(await done.result).toBe('deferred');
+    expect(done.rec.log).toEqual([]);
+    expect(done.counts).toEqual({ stopped: 0, changed: 0 });
+  });
+
+  test('旧入口 / 旧目标：404 / 405 / 501 一律按「不支持中断」提示，轮询继续', async () => {
+    for (const [httpStatus, code] of [
+      [404, 'NOT_FOUND'],
+      [405, 'method_not_allowed'],
+      [501, 'UPGRADE_FAILED'],
+    ] as const) {
+      const done = run({ kind: 'failed', code, httpStatus });
+      expect(await done.result).toBe('rejected');
+      expect(done.rec.log).toEqual([['warning', 'nodes.upgrade.cancelUnsupported']]);
+      expect(done.counts).toEqual({ stopped: 0, changed: 0 });
+    }
+  });
+
+  test('其余错误走错误表，轮询照常继续', async () => {
+    const done = run({ kind: 'failed', code: 'NODE_UNREACHABLE', httpStatus: 502 });
+    expect(await done.result).toBe('rejected');
+    expect(done.counts).toEqual({ stopped: 0, changed: 0 });
+    expect(done.rec.log).toEqual([
+      ['error', 'nodes.upgrade.cancelFailed:{"error":"nodes.upgrade.unreachable"}'],
+    ]);
+  });
+});
+
+describe('createNodeAbortRegistry', () => {
+  test('停一行不影响别的行；卸载时一把全停', () => {
+    const registry = createNodeAbortRegistry();
+    const a = registry.open('a');
+    const b = registry.open('b');
+    registry.stop('a');
+    expect(a.signal.aborted).toBe(true);
+    expect(b.signal.aborted).toBe(false);
+    // 已经停掉的行再停一次不会波及别人
+    registry.stop('a');
+    expect(b.signal.aborted).toBe(false);
+    registry.stopAll();
+    expect(b.signal.aborted).toBe(true);
+  });
+
+  test('release 只摘掉自己那把，不会误停后一次升级新开的 controller', () => {
+    const registry = createNodeAbortRegistry();
+    const first = registry.open('a');
+    const second = registry.open('a');
+    registry.release('a', first);
+    registry.stop('a');
+    expect(second.signal.aborted).toBe(true);
+  });
+});
+
+describe('createUpgradeCancelGate', () => {
+  test('POST 不在途时立刻发 DELETE；同一行不重复发', () => {
+    const gate = createUpgradeCancelGate();
+    expect(gate.request('a')).toBe('send');
+    expect(gate.cancelling('a')).toBe(true);
+    expect(gate.request('a')).toBe('busy');
+    gate.finish('a');
+    expect(gate.cancelling('a')).toBe(false);
+    expect(gate.request('a')).toBe('send');
+  });
+
+  test('POST 在途时先记账，等 POST 落地再补发一次', () => {
+    const gate = createUpgradeCancelGate();
+    gate.beginStart('a');
+    expect(gate.request('a')).toBe('defer');
+    expect(gate.pending('a')).toBe(true);
+    // 连点只记一次
+    expect(gate.request('a')).toBe('busy');
+    expect(gate.endStart('a')).toBe(true);
+    expect(gate.endStart('a')).toBe(false);
+  });
+
+  test('没按过停止：POST 落地不补发；DELETE 扑空时才改排队', () => {
+    const gate = createUpgradeCancelGate();
+    gate.beginStart('a');
+    expect(gate.pending('a')).toBe(false);
+    expect(gate.endStart('a')).toBe(false);
+    // POST 已经落地：没有可等的东西，不排队
+    expect(gate.deferIfStarting('a')).toBe(false);
+    gate.beginStart('b');
+    expect(gate.deferIfStarting('b')).toBe(true);
+    expect(gate.endStart('b')).toBe(true);
+  });
+
+  test('finish 把排队的那一次也清掉', () => {
+    const gate = createUpgradeCancelGate();
+    gate.beginStart('a');
+    gate.request('a');
+    gate.finish('a');
+    expect(gate.cancelling('a')).toBe(false);
+    expect(gate.endStart('a')).toBe(false);
+  });
+});
+
+describe('POST 在途时按下「停止升级」', () => {
+  const TARGET = { id: 'n1', name: 'studio' };
+
+  /** 复刻 hook 的接线：`UpgradeCancelGate` + `cancelNodeUpgrade` + `runNodeUpgrade` 的 handoff。 */
+  function wire(opts: { start: Promise<UpgradeStartOutcome>; cancel?: UpgradeCancelOutcome }) {
+    const rec = recorder();
+    const gate = createUpgradeCancelGate();
+    const controller = new AbortController();
+    const entry: NodeUpgradeEntry = {
+      phase: 'idle',
+      targetVersion: null,
+      error: null,
+      cancelling: false,
+    };
+    const cancels: string[] = [];
+    const io = stubIo({
+      start: () => opts.start,
+      cancel: async (nodeId) => {
+        cancels.push(nodeId);
+        return opts.cancel ?? { kind: 'cancelled', status: status({ error: 'UPGRADE_CANCELLED' }) };
+      },
+      poll: async () => ({ kind: 'failed', code: 'NOT_FOUND' }),
+    });
+    const patch = (next: Partial<NodeUpgradeEntry>) => Object.assign(entry, next);
+    const runCancel = () =>
+      cancelNodeUpgrade({
+        row: TARGET,
+        io,
+        signal: controller.signal,
+        t,
+        toasts: rec.toasts,
+        patch,
+        stopWatch: () => controller.abort(),
+        onChanged: () => undefined,
+        retry: () => gate.deferIfStarting(TARGET.id),
+      }).then((result) => {
+        if (result !== 'deferred') {
+          gate.finish(TARGET.id);
+          patch({ cancelling: false });
+        }
+        return result;
+      });
+    const run = runNodeUpgrade({
+      row: TARGET,
+      targetVersion: '1.2.0',
+      io,
+      signal: controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch,
+      onChanged: () => undefined,
+      handoff: {
+        begin: () => gate.beginStart(TARGET.id),
+        pending: () => gate.pending(TARGET.id),
+        settle: async (live) => {
+          if (!gate.endStart(TARGET.id)) return 'none';
+          if (!live) {
+            gate.finish(TARGET.id);
+            patch({ cancelling: false });
+            return 'none';
+          }
+          return (await runCancel()) === 'cancelled' ? 'cancelled' : 'rejected';
+        },
+      },
+    });
+    /** 用户按下停止按钮。 */
+    const press = () => {
+      const mode = gate.request(TARGET.id);
+      if (mode === 'busy') return mode;
+      patch({ cancelling: true });
+      if (mode === 'send') void runCancel();
+      return mode;
+    };
+    return { rec, gate, entry, cancels, run, press };
+  }
+
+  test('POST 在途时按停止：先记账不发 DELETE，POST 落地后只补发一次，行回到静止态', async () => {
+    let resolveStart!: (value: UpgradeStartOutcome) => void;
+    const start = new Promise<UpgradeStartOutcome>((resolve) => {
+      resolveStart = resolve;
+    });
+    const w = wire({ start });
+    await flush();
+
+    expect(w.entry.phase).toBe('pending');
+    expect(w.press()).toBe('defer');
+    // 连点两下也只排一次
+    expect(w.press()).toBe('busy');
+    expect(w.cancels).toEqual([]);
+    expect(w.entry.cancelling).toBe(true);
+
+    resolveStart({
+      kind: 'started',
+      status: status({ state: 'downloading', targetVersion: '1.2.0' }),
+    });
+    expect(await w.run).toBe('cancelled');
+    expect(w.cancels).toEqual(['n1']);
+    expect(w.entry).toEqual({
+      phase: 'idle',
+      targetVersion: null,
+      error: null,
+      cancelling: false,
+    });
+    // 「已开始升级」不再弹：用户按下停止之后再报开始只会添乱
+    expect(w.rec.log).toEqual([['info', 'nodes.upgrade.cancelled:{"name":"studio"}']]);
+    expect(w.gate.cancelling('n1')).toBe(false);
+  });
+
+  test('POST 落地就是失败：不补发 DELETE，取消记账一并清掉', async () => {
+    let resolveStart!: (value: UpgradeStartOutcome) => void;
+    const start = new Promise<UpgradeStartOutcome>((resolve) => {
+      resolveStart = resolve;
+    });
+    const w = wire({ start });
+    await flush();
+    w.press();
+
+    resolveStart({ kind: 'failed', code: 'UPGRADE_NOT_ALLOWED' });
+    expect(await w.run).toBe('failed');
+    expect(w.cancels).toEqual([]);
+    expect(w.entry.cancelling).toBe(false);
+    expect(w.gate.cancelling('n1')).toBe(false);
+    expect(w.rec.log).toEqual([
+      ['error', 'nodes.upgrade.failed:{"error":"nodes.upgrade.notAllowed"}'],
+    ]);
+  });
+
+  test('补发的 DELETE 被拒（正在安装）：轮询继续，不会谎报已取消', async () => {
+    let resolveStart!: (value: UpgradeStartOutcome) => void;
+    const start = new Promise<UpgradeStartOutcome>((resolve) => {
+      resolveStart = resolve;
+    });
+    const w = wire({
+      start,
+      cancel: { kind: 'failed', code: 'UPGRADE_NOT_CANCELLABLE', httpStatus: 409 },
+    });
+    await flush();
+    w.press();
+
+    resolveStart({
+      kind: 'started',
+      status: status({ state: 'downloading', targetVersion: '1.2.0' }),
+    });
+    // 停止被拒后接着盯：这一轮 poll 报节点已不在网络中，按失败收尾
+    expect(await w.run).toBe('failed');
+    expect(w.cancels).toEqual(['n1']);
+    expect(w.rec.log).toEqual([
+      ['warning', 'nodes.upgrade.cancelNotAllowed'],
+      ['error', 'nodes.upgrade.failed:{"error":"nodes.upgrade.nodeGone"}'],
+    ]);
+    expect(w.entry.cancelling).toBe(false);
+  });
+});
+
+describe('createSemaphore', () => {
+  test('多轮回读共用一把信号量：总并发始终不超过上限', async () => {
+    const gate = createSemaphore(RESTORE_CONCURRENCY);
+    const release = new Map<string, () => void>();
+    let active = 0;
+    let peak = 0;
+    const io = stubIo({
+      poll: (nodeId) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        return new Promise<UpgradePollOutcome>((resolve) => {
+          release.set(nodeId, () => {
+            active -= 1;
+            resolve({ kind: 'status', status: status() });
+          });
+        });
+      },
+    });
+    const shared = {
+      io,
+      gate,
+      signal: new AbortController().signal,
+      skip: () => false,
+      onActive: () => undefined,
+    };
+    const first = restoreUpgradeStates({
+      ...shared,
+      rows: ['a', 'b', 'c', 'd'].map((id) => row({ id })),
+    });
+    await flush();
+    // 第一轮的三个 GET 还没回来，列表又多了三台机器
+    const second = restoreUpgradeStates({
+      ...shared,
+      rows: ['e', 'f', 'g'].map((id) => row({ id })),
+    });
+    await flush();
+    expect(peak).toBe(RESTORE_CONCURRENCY);
+
+    for (const id of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+      release.get(id)?.();
+      await flush();
+    }
+    await Promise.all([first, second]);
+    expect(release.size).toBe(7);
+    expect(peak).toBe(RESTORE_CONCURRENCY);
+  });
+});
+
+describe('restoreUpgradeStates 的回读收尾', () => {
+  test('每一行都收尾一次，跳过的行也不例外', async () => {
+    const settled: string[] = [];
+    await restoreUpgradeStates({
+      rows: [row({ id: 'a' }), row({ id: 'b' }), row({ id: 'offline', online: false })],
+      io: stubIo({ poll: async () => ({ kind: 'status', status: status() }) }),
+      signal: new AbortController().signal,
+      concurrency: 1,
+      skip: (nodeId) => nodeId === 'b',
+      onSettled: (nodeId) => settled.push(nodeId),
+      onActive: () => undefined,
+    });
+    expect(settled).toEqual(['a', 'b']);
+  });
+});
+
+describe('retainKnownIds', () => {
+  test('节点离开列表就忘掉它：同一个 id 再出现时要重新回读', () => {
+    const seen = new Set(['a', 'b']);
+    retainKnownIds(seen, [row({ id: 'a' })]);
+    expect([...seen]).toEqual(['a']);
+    // 只是离线 / 掉登录的行仍在列表里，不重复回读
+    retainKnownIds(seen, [row({ id: 'a', online: false })]);
+    expect([...seen]).toEqual(['a']);
+  });
+});
+
+describe('createResumeQueue', () => {
+  test('这一行空着就直接接手', () => {
+    const seen: string[] = [];
+    const queue = createResumeQueue({ busy: () => false, resume: (item) => seen.push(item.id) });
+    expect(queue.offer(row({ id: 'a' }), status({ state: 'downloading' }))).toBe(true);
+    expect(seen).toEqual(['a']);
+  });
+
+  test('行内升级正占着这一行：排队等它让开，绝不把回读到的在途升级丢掉', () => {
+    const busy = new Set(['a']);
+    const seen: string[] = [];
+    const queue = createResumeQueue({
+      busy: (nodeId) => busy.has(nodeId),
+      resume: (item) => seen.push(item.id),
+    });
+    expect(queue.offer(row({ id: 'a' }), status({ state: 'downloading' }))).toBe(false);
+    expect(seen).toEqual([]);
+    busy.delete('a');
+    queue.release('a', 'failed');
+    expect(seen).toEqual(['a']);
+    // 只接手一次
+    queue.release('a', 'failed');
+    expect(seen).toEqual(['a']);
+  });
+
+  test('这一行刚自己升成功：排队的接手作废，回读到的状态已经过时', () => {
+    const seen: string[] = [];
+    const queue = createResumeQueue({ busy: () => true, resume: (item) => seen.push(item.id) });
+    queue.offer(row({ id: 'a' }), status({ state: 'downloading' }));
+    queue.release('a', 'done');
+    expect(seen).toEqual([]);
+    queue.release('a', 'failed');
+    expect(seen).toEqual([]);
   });
 });
 
@@ -387,6 +1005,7 @@ describe('launchUpgradeBatch', () => {
       rows,
       latestVersion: '1.2.0',
       rowRunning: false,
+      restoring: false,
       signal: controller.signal,
       t,
       toasts: rec.toasts,
@@ -443,6 +1062,15 @@ describe('launchUpgradeBatch', () => {
     expect(run.seen).toEqual([]);
     expect(run.rec.log).toEqual([['info', 'nodes.upgrade.allBusy']]);
   });
+
+  test('还在回读升级状态：整批让路，只给一条 info', () => {
+    const run = launch({ restoring: true });
+    expect(run.running).toBeNull();
+    expect(run.confirms).toEqual([]);
+    expect(run.starts).toEqual([]);
+    expect(run.seen).toEqual([]);
+    expect(run.rec.log).toEqual([['info', 'nodes.upgrade.restoring']]);
+  });
 });
 
 describe('launchRowUpgrade', () => {
@@ -454,6 +1082,7 @@ describe('launchRowUpgrade', () => {
       latestVersion: '1.2.0',
       batchRunning: false,
       nodeRunning: false,
+      restoring: false,
       t,
       confirm: (message) => {
         confirms.push(message);
@@ -487,6 +1116,13 @@ describe('launchRowUpgrade', () => {
     const run = launch({ nodeRunning: true });
     expect(run.started).toBeNull();
     expect(run.confirms).toEqual([]);
+  });
+
+  test('这一行正在回读升级状态：先不受理，免得与回读到的在途升级抢同一台机器', () => {
+    const run = launch({ restoring: true });
+    expect(run.started).toBeNull();
+    expect(run.confirms).toEqual([]);
+    expect(run.seen).toEqual([]);
   });
 
   test('用户取消确认框：不跑', () => {

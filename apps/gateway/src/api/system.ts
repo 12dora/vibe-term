@@ -30,7 +30,7 @@ export function handleSystemApiRequest(
   path: string
 ): Response | Promise<Response> | undefined {
   if (path === '/api/system/info' && req.method === 'GET') {
-    return json({ ...getSystemInfo(), upgradeCapabilities: ['staged-package'] });
+    return json({ ...getSystemInfo(), upgradeCapabilities: ['staged-package', 'upgrade-cancel'] });
   }
 
   if (path === '/api/system/addresses' && req.method === 'GET') {
@@ -54,9 +54,19 @@ export function handleSystemApiRequest(
     return handleStartUpgradeOpen(req);
   }
 
+  if (path === '/api/system/upgrade' && req.method === 'DELETE') {
+    if (managed) return managedExternallyResponse();
+    return handleCancelUpgradeOpen();
+  }
+
   if (path === '/api/system/upgrade/package' && req.method === 'PUT') {
     if (managed) return managedExternallyResponse();
     return handleStagePackageOpen(req);
+  }
+
+  if (path === '/api/system/upgrade/package' && req.method === 'DELETE') {
+    if (managed) return managedExternallyResponse();
+    return handleDeleteStagedPackageOpen(req);
   }
 
   return undefined;
@@ -133,6 +143,36 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
     return json({ ...result.status, error: t('apiError.upgradeInProgress') }, 409);
   }
   return json(result.status);
+}
+
+async function handleCancelUpgradeOpen(): Promise<Response> {
+  const { upgradeController } = await import('../system/upgrade');
+  const result = await upgradeController.cancel();
+  if (!result.ok) {
+    return json({ code: result.code, ...result.status }, 409);
+  }
+  return json(result.status);
+}
+
+async function handleDeleteStagedPackageOpen(req: Request): Promise<Response> {
+  if (!requestIsStagedAuthenticated(req)) {
+    return stagedRequiresAuth();
+  }
+  const info = getSystemInfo();
+  if (!info.canSelfUpdate) {
+    return json({ error: t('apiError.upgradeNotAllowed') }, 403);
+  }
+  const url = new URL(req.url);
+  const version = (url.searchParams.get('version') ?? '').trim();
+  if (!version || !isReleaseVersion(version)) {
+    return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+  }
+  const { upgradeController } = await import('../system/upgrade');
+  const result = await upgradeController.removeStagedPackage(version);
+  if (!result.ok) {
+    return json({ code: 'PACKAGE_NOT_STAGED' }, 404);
+  }
+  return json({ ok: true });
 }
 
 const SHA256_HEX = /^[0-9a-fA-F]{64}$/;

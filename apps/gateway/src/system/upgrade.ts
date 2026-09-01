@@ -1,9 +1,17 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { chmod, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import type { UpgradeState, UpgradeStatus } from '@tmex/shared';
+import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
 import { releaseTarballName } from '@tmex/shared';
 import { type InstallInfo, getInstallInfo } from './install-info';
 import { downloadVerifiedRelease, resolveReleaseCacheDir, sha256File } from './release-download';
@@ -50,7 +58,8 @@ export type ProcessStartIdentityFn = (pid: number) => string | null;
 export type UpgradeControllerDeps = {
   spawn?: UpgradeSpawnFn;
   getInstallInfo?: () => InstallInfo;
-  stageRelease?: (stageDir: string, version: string) => Promise<string>;
+  stageRelease?: (stageDir: string, version: string, signal?: AbortSignal) => Promise<string>;
+  extractPackage?: (tarballPath: string, stageDir: string, signal?: AbortSignal) => Promise<string>;
   processCommandLine?: ProcessCommandLineFn;
   processStartIdentity?: ProcessStartIdentityFn;
   maxPackageBytes?: number;
@@ -65,6 +74,14 @@ export type UpgradeStartOpts = {
 export type UpgradeStartResult =
   | { ok: true }
   | { ok: false; code: 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED' };
+
+export type UpgradeCancelResult =
+  | { ok: true; status: UpgradeStatus }
+  | {
+      ok: false;
+      code: 'UPGRADE_NOT_CANCELLABLE' | 'UPGRADE_NOT_RUNNING';
+      status: UpgradeStatus;
+    };
 
 export type StagedPackageRecord = {
   version: string;
@@ -135,6 +152,13 @@ export class UpgradeController {
   private readonly staged = new Map<string, StagedPackageRecord>();
   private stagedLoaded = false;
   private stagingInFlight = false;
+  private stagingVersion: string | null = null;
+  private stagingDone: Promise<void> = Promise.resolve();
+  private abort: AbortController | null = null;
+  private cancelRequested = false;
+  private commitStarted = false;
+  private activeTxnDir: string | null = null;
+  private lock: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: UpgradeControllerDeps = {}) {}
 
@@ -160,6 +184,14 @@ export class UpgradeController {
     this.staged.clear();
     this.stagedLoaded = false;
     this.stagingInFlight = false;
+    this.stagingVersion = null;
+    this.stagingDone = Promise.resolve();
+    this.abort?.abort();
+    this.abort = null;
+    this.cancelRequested = false;
+    this.commitStarted = false;
+    this.activeTxnDir = null;
+    this.lock = Promise.resolve();
   }
 
   /** 进入升级流程；返回 false 表示已忙（并发触发）。下载/执行异步进行，不阻塞调用方。 */
@@ -179,7 +211,55 @@ export class UpgradeController {
     this.targetVersion = version;
     this.error = null;
     this.startedAt = new Date().toISOString();
+    this.cancelRequested = false;
+    this.commitStarted = false;
+    this.abort = new AbortController();
+    this.activeTxnDir = null;
     void this.run(version, opts, staged);
+    return { ok: true };
+  }
+
+  async cancel(): Promise<UpgradeCancelResult> {
+    return this.withLock(async () => {
+      if (this.state === 'idle') {
+        return { ok: false, code: 'UPGRADE_NOT_RUNNING' as const, status: this.status() };
+      }
+      if (this.state === 'executing' || this.commitStarted) {
+        return { ok: false, code: 'UPGRADE_NOT_CANCELLABLE' as const, status: this.status() };
+      }
+      this.cancelRequested = true;
+      this.abort?.abort();
+      const txnDir = this.activeTxnDir;
+      const version = this.targetVersion;
+      const install = (this.deps.getInstallInfo ?? getInstallInfo)();
+      const installDir = resolveUpgradeInstallDir(install);
+      await this.cleanupCancelledUpgrade(installDir, txnDir, version);
+      this.state = 'idle';
+      this.error = UPGRADE_CANCELLED;
+      this.targetVersion = null;
+      this.activeTxnDir = null;
+      this.abort = null;
+      return { ok: true, status: this.status() };
+    });
+  }
+
+  async removeStagedPackage(version: string): Promise<{ ok: true } | { ok: false; status: 404 }> {
+    if (this.stagingVersion === version) {
+      await this.stagingDone;
+    }
+    const install = (this.deps.getInstallInfo ?? getInstallInfo)();
+    const installDir = resolveUpgradeInstallDir(install);
+    if (!installDir) return { ok: false, status: 404 };
+    this.loadStagedFromDisk(installDir);
+    const record = this.staged.get(version);
+    const stagedDir = join(installDir, 'staging', 'staged');
+    const tgz = record?.path ?? join(stagedDir, releaseTarballName(version));
+    const sidecar = join(stagedDir, `tmex-cli-${version}.json`);
+    const had = Boolean(record) || existsSync(tgz) || existsSync(sidecar);
+    if (!had) return { ok: false, status: 404 };
+    this.staged.delete(version);
+    await rm(tgz, { force: true }).catch(() => {});
+    await rm(sidecar, { force: true }).catch(() => {});
     return { ok: true };
   }
 
@@ -192,10 +272,17 @@ export class UpgradeController {
       return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
     }
     this.stagingInFlight = true;
+    this.stagingVersion = version;
+    let release!: () => void;
+    this.stagingDone = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     try {
       return await this.stagePackageLocked(version, sha256, body);
     } finally {
       this.stagingInFlight = false;
+      this.stagingVersion = null;
+      release();
     }
   }
 
@@ -215,6 +302,7 @@ export class UpgradeController {
     }
     if (!body) return { ok: false, status: 400, code: 'BAD_REQUEST' };
 
+    await this.repairStagingArtifacts(installDir);
     const stagedDir = join(installDir, 'staging', 'staged');
     await mkdir(stagedDir, { recursive: true, mode: 0o700 });
     const finalPath = join(stagedDir, releaseTarballName(version));
@@ -330,7 +418,10 @@ export class UpgradeController {
         ) {
           continue;
         }
-        if (!existsSync(parsed.path)) continue;
+        if (!existsSync(parsed.path)) {
+          rmSync(join(stagedDir, name), { force: true });
+          continue;
+        }
         this.staged.set(parsed.version, {
           version: parsed.version,
           sha256: parsed.sha256.toLowerCase(),
@@ -395,10 +486,105 @@ export class UpgradeController {
         await rm(path, { force: true, recursive: true }).catch(() => {});
         continue;
       }
+      if (name.endsWith('.json')) {
+        const version = name.startsWith('tmex-cli-')
+          ? name.slice('tmex-cli-'.length, -'.json'.length)
+          : '';
+        const tgz = version ? join(stagedDir, releaseTarballName(version)) : '';
+        if (!version || !existsSync(tgz) || !this.staged.has(version)) {
+          await rm(path, { force: true }).catch(() => {});
+        }
+        continue;
+      }
       if (name.endsWith('.tgz') && !keptPaths.has(path)) {
         await rm(path, { force: true }).catch(() => {});
       }
     }
+  }
+
+  private withLock<T>(fn: () => Promise<T> | T): Promise<T> {
+    const prev = this.lock;
+    let release!: () => void;
+    this.lock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return prev.then(async () => {
+      try {
+        return await fn();
+      } finally {
+        release();
+      }
+    });
+  }
+
+  private async cleanupCancelledUpgrade(
+    installDir: string | null,
+    txnDir: string | null,
+    version: string | null
+  ): Promise<void> {
+    if (txnDir) await rm(txnDir, { recursive: true, force: true }).catch(() => {});
+    if (!installDir || !version) return;
+    const cacheDir = resolveReleaseCacheDir(installDir);
+    await rm(join(cacheDir, `${releaseTarballName(version)}.part`), { force: true }).catch(
+      () => {}
+    );
+    const dest = join(cacheDir, releaseTarballName(version));
+    if (!existsSync(`${dest}.sha256`)) {
+      await rm(dest, { force: true }).catch(() => {});
+    }
+  }
+
+  private async repairStagingArtifacts(installDir: string): Promise<void> {
+    this.loadStagedFromDisk(installDir);
+    this.dropExpiredStaged(installDir);
+    await this.pruneOrphanStagedFiles(installDir);
+    await this.pruneOrphanReleaseCache(installDir);
+    await this.pruneOrphanTxnDirs(installDir);
+  }
+
+  private async pruneOrphanReleaseCache(installDir: string): Promise<void> {
+    const cacheDir = resolveReleaseCacheDir(installDir);
+    if (!existsSync(cacheDir)) return;
+    let names: string[] = [];
+    try {
+      names = readdirSync(cacheDir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const path = join(cacheDir, name);
+      if (name.includes('.part')) {
+        await rm(path, { force: true, recursive: true }).catch(() => {});
+        continue;
+      }
+      if (name.endsWith('.tgz') && !existsSync(`${path}.sha256`)) {
+        await rm(path, { force: true }).catch(() => {});
+      }
+    }
+  }
+
+  private async pruneOrphanTxnDirs(installDir: string): Promise<void> {
+    const root = join(installDir, 'staging');
+    if (!existsSync(root)) return;
+    const keep = new Set(['staged', 'release-cache']);
+    if (this.activeTxnDir) keep.add(basename(this.activeTxnDir));
+    let names: string[] = [];
+    try {
+      names = readdirSync(root);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (keep.has(name)) continue;
+      await rm(join(root, name), { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  private throwIfCancelled(): void {
+    if (!this.cancelRequested && !this.abort?.signal.aborted) return;
+    const err = new Error(UPGRADE_CANCELLED);
+    err.name = 'AbortError';
+    throw err;
   }
 
   private async run(
@@ -409,14 +595,19 @@ export class UpgradeController {
     const install = (this.deps.getInstallInfo ?? getInstallInfo)();
     const installDir = resolveUpgradeInstallDir(install);
     let stageDir: string | null = null;
+    const signal = this.abort?.signal;
 
     try {
       if (!installDir) {
         throw new Error('install directory could not be resolved');
       }
 
+      await this.repairStagingArtifacts(installDir);
+      this.throwIfCancelled();
+
       const txnId = createTxnId();
       stageDir = join(installDir, 'staging', txnId);
+      this.activeTxnDir = stageDir;
       await mkdir(stageDir, { recursive: true, mode: 0o700 });
       const source = opts?.source ?? 'release';
       let binPath: string;
@@ -424,11 +615,12 @@ export class UpgradeController {
         const record = staged ?? this.lookupStaged(version, opts?.sha256);
         if (!record) throw new Error('PACKAGE_NOT_STAGED');
         const consumedPath = join(stageDir, releaseTarballName(version));
-        await rename(record.path, consumedPath);
         this.staged.delete(version);
         await rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
           force: true,
-        }).catch(() => {});
+        });
+        await rename(record.path, consumedPath);
+        this.throwIfCancelled();
         const hashed = await sha256File(consumedPath);
         if (hashed.sha256 !== record.sha256) {
           throw new Error('PACKAGE_SHA256_MISMATCH');
@@ -437,22 +629,44 @@ export class UpgradeController {
         if (expected && expected !== hashed.sha256) {
           throw new Error('PACKAGE_SHA256_MISMATCH');
         }
-        binPath = await extractCliTarball(consumedPath, stageDir);
+        this.throwIfCancelled();
+        const extractPackage = this.deps.extractPackage ?? extractCliTarball;
+        binPath = await extractPackage(consumedPath, stageDir, signal);
       } else {
         const stageRelease = this.deps.stageRelease ?? stageGithubRelease;
-        binPath = await stageRelease(stageDir, version);
+        binPath = await stageRelease(stageDir, version, signal);
+      }
+      this.throwIfCancelled();
+      const committed = await this.withLock(() => {
+        if (this.cancelRequested || this.state !== 'downloading') return false;
+        this.commitStarted = true;
+        return true;
+      });
+      if (!committed) {
+        await this.cleanupCancelledUpgrade(installDir, stageDir, version);
+        return;
       }
       await this.spawnUpgrade(binPath, installDir, version, txnId);
-      this.state = 'executing';
-      if (this.pendingEarlyExit) {
-        this.error = this.pendingEarlyExit;
-        this.state = 'idle';
-        this.pendingEarlyExit = null;
-      }
+      await this.withLock(() => {
+        if (this.state !== 'downloading') return;
+        this.state = 'executing';
+        if (this.pendingEarlyExit) {
+          this.error = this.pendingEarlyExit;
+          this.state = 'idle';
+          this.pendingEarlyExit = null;
+        }
+      });
     } catch (err) {
-      this.error = err instanceof Error ? err.message : String(err);
-      this.state = 'idle';
-      this.targetVersion = null;
+      await this.withLock(async () => {
+        if (this.cancelRequested || this.error === UPGRADE_CANCELLED) {
+          await this.cleanupCancelledUpgrade(installDir, stageDir, version);
+          return;
+        }
+        this.error = err instanceof Error ? err.message : String(err);
+        this.state = 'idle';
+        this.targetVersion = null;
+        this.activeTxnDir = null;
+      });
       if (stageDir) await rm(stageDir, { recursive: true, force: true }).catch(() => {});
     }
   }
@@ -752,16 +966,30 @@ export function parsePidFileContents(raw: string): number | null {
  * 下载 GitHub Release tarball 并解压到 stageDir（npm pack 布局：package/）。
  * 返回 CLI 入口路径 `<stageDir>/package/bin/tmex.js`。
  */
-export async function stageGithubRelease(stageDir: string, version: string): Promise<string> {
+export async function stageGithubRelease(
+  stageDir: string,
+  version: string,
+  signal?: AbortSignal
+): Promise<string> {
   const installDir = resolveUpgradeInstallDir(getInstallInfo());
   const cached = await downloadVerifiedRelease(version, {
     cacheDir: resolveReleaseCacheDir(installDir),
+    signal,
   });
-  return extractCliTarball(cached.path, stageDir);
+  if (signal?.aborted) {
+    const err = new Error(UPGRADE_CANCELLED);
+    err.name = 'AbortError';
+    throw err;
+  }
+  return extractCliTarball(cached.path, stageDir, signal);
 }
 
-export async function extractCliTarball(tarballPath: string, stageDir: string): Promise<string> {
-  await extractTarball(tarballPath, stageDir);
+export async function extractCliTarball(
+  tarballPath: string,
+  stageDir: string,
+  signal?: AbortSignal
+): Promise<string> {
+  await extractTarball(tarballPath, stageDir, signal);
   const packageRoot = join(stageDir, 'package');
   const binPath = join(packageRoot, 'bin', 'tmex.js');
   if (!existsSync(binPath)) {
@@ -771,15 +999,40 @@ export async function extractCliTarball(tarballPath: string, stageDir: string): 
   return binPath;
 }
 
-function extractTarball(tarballPath: string, stageDir: string): Promise<void> {
+function extractTarball(
+  tarballPath: string,
+  stageDir: string,
+  signal?: AbortSignal
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
     const child = spawn('tar', ['-xzf', tarballPath, '-C', stageDir], {
       stdio: 'ignore',
     });
-    child.on('error', reject);
+    const onAbort = (): void => {
+      child.kill('SIGTERM');
+      const err = new Error(UPGRADE_CANCELLED);
+      err.name = 'AbortError';
+      finish(() => reject(err));
+    };
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    child.on('error', (err) => {
+      signal?.removeEventListener('abort', onAbort);
+      finish(() => reject(err));
+    });
     child.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`tar extract exited with code ${code ?? 'null'}`));
+      signal?.removeEventListener('abort', onAbort);
+      if (code === 0) finish(() => resolve());
+      else finish(() => reject(new Error(`tar extract exited with code ${code ?? 'null'}`)));
     });
   });
 }

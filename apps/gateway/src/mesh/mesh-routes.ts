@@ -233,6 +233,9 @@ export class MeshRoutes {
     if (req.method === 'GET') {
       return requireSession(this.sessionDeps, (r) => this.handleUpgradeStatus(r, nodeId))(req);
     }
+    if (req.method === 'DELETE') {
+      return requireSession(this.sessionDeps, (r) => this.handleUpgradeCancel(r, nodeId))(req);
+    }
     return undefined;
   }
 
@@ -256,6 +259,19 @@ export class MeshRoutes {
   private async handleUpgradeStatus(req: Request, nodeId: string): Promise<Response> {
     const { handleMeshNodeUpgradeStatus } = await import('../system/upgrade-service');
     return handleMeshNodeUpgradeStatus({
+      req,
+      nodeId,
+      localNodeId: this.deps.nodeId,
+      userStore: this.deps.userStore,
+      forward: {
+        forwardAuthorizedHttp: (r, input) => this.forwardAuthorized(r, input),
+      },
+    });
+  }
+
+  private async handleUpgradeCancel(req: Request, nodeId: string): Promise<Response> {
+    const { handleMeshNodeUpgradeCancel } = await import('../system/upgrade-service');
+    return handleMeshNodeUpgradeCancel({
       req,
       nodeId,
       localNodeId: this.deps.nodeId,

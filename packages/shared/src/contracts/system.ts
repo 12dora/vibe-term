@@ -35,6 +35,7 @@ export interface SystemInfo {
   /**
    * 本节点支持的升级能力。旧节点无此字段。
    * `'staged-package'`：接受入口推送的 tarball（`PUT /api/system/upgrade/package`）并从暂存包升级。
+   * `'upgrade-cancel'`：支持 `DELETE /api/system/upgrade` 与 `DELETE /api/system/upgrade/package`。
    */
   upgradeCapabilities?: string[];
 }
@@ -52,6 +53,9 @@ export interface UpdateCheckResult {
   /** 最新版本发布时间 ISO 串（无则 null） */
   publishedAt: string | null;
 }
+
+/** 用户取消下载阶段的升级；FE 按此精确字符串识别 */
+export const UPGRADE_CANCELLED = 'UPGRADE_CANCELLED';
 
 /** 升级状态（轮询） */
 export interface UpgradeStatus {
@@ -93,6 +97,9 @@ export type MeshUpgradeErrorCode =
   | 'UPGRADE_IN_PROGRESS'
   | 'UPGRADE_ALREADY_LATEST'
   | 'UPGRADE_UNSUPPORTED'
+  | 'UPGRADE_CANCEL_UNSUPPORTED'
+  | 'UPGRADE_NOT_CANCELLABLE'
+  | 'UPGRADE_NOT_RUNNING'
   | 'RELEASE_UNAVAILABLE'
   | 'NOT_FOUND';
 

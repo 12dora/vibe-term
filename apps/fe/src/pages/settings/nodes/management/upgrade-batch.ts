@@ -69,6 +69,8 @@ export interface UpgradeBatchSummary {
   succeeded: number;
   failed: number;
   failedNames: string[];
+  /** 用户中途按「停止升级」打断的节点数：既不算成功也不算失败，单独报一档。 */
+  cancelledCount: number;
   /** 组件卸载 / 页面离开：结论不完整，不该弹汇总 toast。 */
   cancelled: boolean;
 }
@@ -89,7 +91,9 @@ function tally(summary: UpgradeBatchSummary, row: NodeRow, outcome: UpgradeRunOu
   if (outcome === 'failed' || outcome === 'timeout') {
     summary.failed += 1;
     summary.failedNames.push(row.name);
+    return;
   }
+  summary.cancelledCount += 1;
 }
 
 async function runGroup(
@@ -127,6 +131,7 @@ export async function runUpgradeBatch(p: UpgradeBatchParams): Promise<UpgradeBat
     succeeded: 0,
     failed: 0,
     failedNames: [],
+    cancelledCount: 0,
     cancelled: false,
   };
   const progress = { completed: 0 };
