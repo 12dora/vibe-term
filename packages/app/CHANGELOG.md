@@ -1,18 +1,18 @@
-# 1.1.11
+# 1.1.12
 
-_2026-09-01_
+_2026-09-02_
 
 ## English
 
 ### New
 
-- Nodes page: an **Upgrade all** button next to **Add** upgrades every node that is behind the latest release — ordinary nodes first (three at a time), then the remote hub, then this machine — and finishes with a single summary toast (succeeded / failed). Per-row **Upgrade** buttons are greyed out when a node is already on the latest version, or when it is too old (before 1.1.0) to be upgraded remotely, with the reason shown on hover.
-- Remote upgrades no longer require the target machine to reach GitHub: the node you are using downloads the release, verifies it against `SHA256SUMS`, pushes it to the target over the mesh link and the target upgrades from the staged package. Targets older than 1.1.11 still download on their own; a target that cannot self-update (no service manager, container) now says so plainly.
-- Multi-hub (phase 1): a joined node can become a **standby hub** (`tmex hub standby --public-url …`) that the active hub authorises with `tmex hub allow <node-id>`. Nodes learn the hub set from the active hub, fail over in order when the active hub is unreachable, and switch back automatically (about a minute) when it returns. A standby serves reads and relays but refuses management writes (`HUB_NOT_WRITER`) until it is explicitly promoted (`tmex hub promote`); hubs fence each other by writer epoch, including across restarts. The Nodes page shows the hub set, which hub this entry is attached to, and the current writer.
+- Nodes page: an in-flight upgrade now survives a page refresh — the row picks up the current phase (downloading / installing) from the gateway and keeps tracking it.
+- A **Stop** button appears while an upgrade is still downloading (on this machine, on the node you are using, or on the target). Stopping aborts the download and removes every partial file — the download cache, the staged package and the working directory are left as they were. Installing cannot be interrupted; the button is disabled with an explanation. Nodes older than 1.1.12 cannot be stopped remotely and say so.
+- "Upgrade all" summaries now count stopped nodes separately (succeeded / failed / stopped).
 
 ### Fixes
 
-- Large transfers between nodes over a relayed or direct WebSocket link could be cut off at 1 MiB (the server socket's backpressure limit); the link now paces itself against the socket buffer.
+- Interrupting a package push no longer leaves a half-written package on the target.
 
 ---
 
@@ -20,10 +20,10 @@ _2026-09-01_
 
 ### 新增
 
-- 节点页新增「全部升级」按钮（位于「添加」左侧）：把所有落后于最新版的节点依次升级——先普通节点（并发 3），再远端 hub，最后本机——结束后只弹一条「成功 X，失败 Y」汇总。行内「升级」按钮在节点已是最新、或版本过旧（低于 1.1.0）无法远程升级时置灰，悬停可见原因。
-- 远程升级不再要求目标机器能访问 GitHub：由你正在使用的节点下载发行包、按 `SHA256SUMS` 校验，经 mesh 链路推送到目标节点，目标从暂存包完成升级。1.1.11 之前的旧目标仍自行下载；无法自更新的安装（无服务管理器、容器）现在会明确提示。
-- 多 hub（第一阶段）：已加入的节点可用 `tmex hub standby --public-url …` 变为**备用 hub**，由主 hub 执行 `tmex hub allow <节点 id>` 授权。各节点从主 hub 学到 hub 集合，主 hub 不可达时按序切换到备用 hub，主 hub 恢复后约一分钟内自动切回。备用 hub 提供读取与中继，但在显式 `tmex hub promote` 之前拒绝管理写入（`HUB_NOT_WRITER`）；hub 之间按写者 epoch 互相围栏，重启后依然有效。节点页展示 hub 集合、当前入口挂载的 hub 与当前写者。
+- 节点页：升级进行中刷新页面不再丢状态——行内会从网关取回当前阶段（下载中 / 安装中）并继续跟踪。
+- 升级仍处于下载阶段时（本机、当前入口或目标节点）显示**停止**按钮。停止会中断下载并清理所有半成品：下载缓存、暂存包与工作目录都恢复到升级前的状态。安装阶段不可中断，按钮置灰并说明原因；1.1.12 之前的节点不支持远程停止，会明确提示。
+- 「全部升级」汇总单独统计已停止的节点（成功 / 失败 / 已取消）。
 
 ### 修复
 
-- 节点间经中继或直连 WebSocket 链路传输大文件时可能在 1 MiB 处被掐断（服务端 socket 背压上限）；链路现在按 socket 缓冲量自行节流。
+- 中断安装包推送时不再在目标节点留下写了一半的包。
