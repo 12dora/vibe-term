@@ -25,6 +25,10 @@ function managedExternallyResponse(status = 403): Response {
   );
 }
 
+function isManaged(): boolean {
+  return isManagedBuild() || isManagedExternally();
+}
+
 export function handleSystemApiRequest(
   req: Request,
   path: string
@@ -40,52 +44,69 @@ export function handleSystemApiRequest(
     return json(getAccessAddresses());
   }
 
-  const managed = isManagedBuild() || isManagedExternally();
+  const upgrade = handleUpgradeApiRequest(req, path);
+  if (upgrade !== undefined) return upgrade;
 
-  if (path === '/api/system/update-check' && req.method === 'GET') {
-    if (managed) return managedExternallyResponse();
+  return handleUninstallApiRequest(req, path);
+}
+
+function handleUpgradeApiRequest(
+  req: Request,
+  path: string
+): Response | Promise<Response> | undefined {
+  if (path === '/api/system/update-check') {
+    if (req.method !== 'GET') return undefined;
+    if (isManaged()) return managedExternallyResponse();
     return handleUpdateCheckOpen();
   }
+  if (path === '/api/system/upgrade') return dispatchUpgradeCollection(req);
+  if (path === '/api/system/upgrade/package') return dispatchUpgradePackage(req);
+  return undefined;
+}
 
-  if (path === '/api/system/upgrade' && req.method === 'GET') {
-    if (managed) return managedExternallyResponse();
+function dispatchUpgradeCollection(req: Request): Response | Promise<Response> | undefined {
+  if (req.method === 'GET') {
+    if (isManaged()) return managedExternallyResponse();
     return handleUpgradeStatusOpen();
   }
-
-  if (path === '/api/system/upgrade' && req.method === 'POST') {
-    if (managed) return managedExternallyResponse();
+  if (req.method === 'POST') {
+    if (isManaged()) return managedExternallyResponse();
     return handleStartUpgradeOpen(req);
   }
-
-  if (path === '/api/system/upgrade' && req.method === 'DELETE') {
-    if (managed) return managedExternallyResponse();
+  if (req.method === 'DELETE') {
+    if (isManaged()) return managedExternallyResponse();
     return handleCancelUpgradeOpen();
   }
+  return undefined;
+}
 
-  if (path === '/api/system/upgrade/package' && req.method === 'PUT') {
-    if (managed) return managedExternallyResponse();
+function dispatchUpgradePackage(req: Request): Response | Promise<Response> | undefined {
+  if (req.method === 'PUT') {
+    if (isManaged()) return managedExternallyResponse();
     return handleStagePackageOpen(req);
   }
-
-  if (path === '/api/system/upgrade/package' && req.method === 'DELETE') {
-    if (managed) return managedExternallyResponse();
+  if (req.method === 'DELETE') {
+    if (isManaged()) return managedExternallyResponse();
     return handleDeleteStagedPackageOpen(req);
   }
+  return undefined;
+}
 
-  if (path === '/api/system/uninstall' && req.method === 'GET') {
-    return handleUninstallStatusOpen(req);
-  }
-
-  if (path === '/api/system/uninstall' && req.method === 'POST') {
+function handleUninstallApiRequest(
+  req: Request,
+  path: string
+): Response | Promise<Response> | undefined {
+  if (path !== '/api/system/uninstall') return undefined;
+  if (req.method === 'GET') return handleUninstallStatusOpen(req);
+  if (req.method === 'POST') {
     if (!requestIsStagedAuthenticated(req)) {
       return json({ code: 'UNAUTHORIZED' }, 401);
     }
-    if (managed) {
+    if (isManaged()) {
       return json({ code: 'UNINSTALL_NOT_ALLOWED', reason: 'managed' }, 409);
     }
     return handleStartUninstallOpen(req);
   }
-
   return undefined;
 }
 
@@ -124,7 +145,11 @@ function stagedRequiresAuth(): Response {
   return json({ code: 'UPGRADE_NOT_ALLOWED', reason: 'staged_requires_auth' }, 403);
 }
 
-async function handleStartUpgradeOpen(req: Request): Promise<Response> {
+type StartUpgradeParsed =
+  | { error: Response }
+  | { version: string; source: 'release' | 'staged'; sha256?: string };
+
+async function parseStartUpgradeRequest(req: Request): Promise<StartUpgradeParsed> {
   let version = '';
   let source: 'release' | 'staged' = 'release';
   let sha256: string | undefined;
@@ -132,24 +157,30 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
     const body = (await req.json()) as StartUpgradeRequest;
     version = (body?.version ?? '').trim();
     if (body?.source !== undefined && body.source !== 'staged' && body.source !== 'release') {
-      return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+      return { error: json({ error: t('apiError.upgradeVersionRequired') }, 400) };
     }
     if (body?.source === 'staged' || body?.source === 'release') source = body.source;
     if (typeof body?.sha256 === 'string' && body.sha256.trim()) sha256 = body.sha256.trim();
   } catch {
     version = '';
   }
-
   if (!version || !isReleaseVersion(version)) {
-    return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+    return { error: json({ error: t('apiError.upgradeVersionRequired') }, 400) };
   }
+  return { version, source, sha256 };
+}
 
-  if (source === 'staged' && !requestIsStagedAuthenticated(req)) {
+async function handleStartUpgradeOpen(req: Request): Promise<Response> {
+  const parsed = await parseStartUpgradeRequest(req);
+  if ('error' in parsed) return parsed.error;
+  if (parsed.source === 'staged' && !requestIsStagedAuthenticated(req)) {
     return stagedRequiresAuth();
   }
-
   const { startLocalUpgradeAttempt } = await import('../system/upgrade-service');
-  const result = await startLocalUpgradeAttempt(version, { source, sha256 });
+  const result = await startLocalUpgradeAttempt(parsed.version, {
+    source: parsed.source,
+    sha256: parsed.sha256,
+  });
   if (!result.ok && result.code === 'UPGRADE_NOT_ALLOWED') {
     return json({ error: t('apiError.upgradeNotAllowed') }, 403);
   }

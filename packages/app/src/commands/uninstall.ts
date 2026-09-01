@@ -49,6 +49,20 @@ function tempUninstallCopyRoot(argv1: string, tmp: string): string | null {
   return copyRoot;
 }
 
+type UninstallPlan = {
+  installDir: string;
+  installLayout: ReturnType<typeof createInstallLayout>;
+  serviceName: string;
+  purge: boolean;
+  removeService: boolean;
+  removeProgram: boolean;
+  removeEnv: boolean;
+  removeDatabase: boolean;
+  databasePath: string | undefined;
+  log: (message: string) => void;
+  deps: UninstallCommandDeps;
+};
+
 export async function runUninstall(
   parsed: ParsedArgs,
   deps: UninstallCommandDeps = {}
@@ -94,81 +108,106 @@ export async function runUninstall(
     databasePath = env.DATABASE_URL;
   }
 
-  if (removeService) {
-    log('service');
-    const uninstall = deps.uninstallService ?? uninstallService;
-    try {
-      await uninstall({ serviceName, installDir });
-    } catch (err) {
-      log(`service failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  if (removeProgram) {
-    log('files');
-    await removeIfExists(installLayout.runtimeDir);
-    await removeIfExists(installLayout.resourcesDir);
-    await removeIfExists(installLayout.cliDir);
-    await removeIfExists(installLayout.versionsDir);
-    await removeIfExists(installLayout.currentLink);
-    await removeIfExists(installLayout.stagingDir);
-    await removeIfExists(installLayout.backupsDir);
-    await removeIfExists(installLayout.journalPath);
-    await removeIfExists(installLayout.lockPath);
-    await removeIfExists(installLayout.runScriptPath);
-    await removeIfExists(installLayout.metaPath);
-    const removeShims =
-      deps.removeShims ??
-      ((opts: { installDir: string }) =>
-        removeTmexShims({
-          installDir: opts.installDir,
-          localBinDir: deps.shimDirs?.localBinDir,
-          bunBinDir: deps.shimDirs?.bunBinDir,
-        }));
-    log('shims');
-    try {
-      await removeShims({ installDir });
-    } catch (err) {
-      log(`shims failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  if (removeEnv) {
-    log('env');
-    await removeIfExists(installLayout.envPath);
-  }
-
-  if (removeDatabase) {
-    log('database');
-    if (databasePath) {
-      const resolvedDb = isAbsolute(databasePath)
-        ? resolvePath(databasePath)
-        : resolve(installDir, databasePath);
-      if (isInsideDir(resolvedDb, installDir)) {
-        await removeIfExists(resolvedDb);
-        await removeIfExists(`${resolvedDb}-wal`);
-        await removeIfExists(`${resolvedDb}-shm`);
-      } else {
-        log(`skip database outside installDir: ${resolvedDb}`);
-      }
-    }
-  }
-
-  if (purge) {
-    log('install-dir');
-    await removeIfExists(installLayout.installDir);
-  }
+  await executeUninstallPlan({
+    installDir,
+    installLayout,
+    serviceName,
+    purge,
+    removeService,
+    removeProgram,
+    removeEnv,
+    removeDatabase,
+    databasePath,
+    log,
+    deps,
+  });
 
   const argv1 = deps.argv1 ?? process.argv[1];
   if (argv1) {
-    const copyRoot = tempUninstallCopyRoot(argv1, deps.tmpdir?.() ?? tmpdir());
-    if (copyRoot) {
-      log('self-copy');
-      await rm(copyRoot, { recursive: true, force: true }).catch(() => undefined);
-    }
+    await removeTempUninstallCopy(argv1, deps.tmpdir?.() ?? tmpdir(), log);
   }
 
   console.log(`[tmex] ${t('uninstall.done')}`);
   console.log(`- ${t('uninstall.summary.installDir')}: ${installLayout.installDir}`);
   console.log(`- ${t('uninstall.summary.serviceName')}: ${serviceName}`);
+}
+
+async function executeUninstallPlan(plan: UninstallPlan): Promise<void> {
+  if (plan.removeService) await uninstallServiceStep(plan);
+  if (plan.removeProgram) await removeProgramStep(plan);
+  if (plan.removeEnv) {
+    plan.log('env');
+    await removeIfExists(plan.installLayout.envPath);
+  }
+  if (plan.removeDatabase) await removeDatabaseStep(plan);
+  if (plan.purge) {
+    plan.log('install-dir');
+    await removeIfExists(plan.installLayout.installDir);
+  }
+}
+
+async function uninstallServiceStep(plan: UninstallPlan): Promise<void> {
+  plan.log('service');
+  const uninstall = plan.deps.uninstallService ?? uninstallService;
+  try {
+    await uninstall({ serviceName: plan.serviceName, installDir: plan.installDir });
+  } catch (err) {
+    plan.log(`service failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function removeProgramStep(plan: UninstallPlan): Promise<void> {
+  plan.log('files');
+  const layout = plan.installLayout;
+  await removeIfExists(layout.runtimeDir);
+  await removeIfExists(layout.resourcesDir);
+  await removeIfExists(layout.cliDir);
+  await removeIfExists(layout.versionsDir);
+  await removeIfExists(layout.currentLink);
+  await removeIfExists(layout.stagingDir);
+  await removeIfExists(layout.backupsDir);
+  await removeIfExists(layout.journalPath);
+  await removeIfExists(layout.lockPath);
+  await removeIfExists(layout.runScriptPath);
+  await removeIfExists(layout.metaPath);
+  const removeShims =
+    plan.deps.removeShims ??
+    ((opts: { installDir: string }) =>
+      removeTmexShims({
+        installDir: opts.installDir,
+        localBinDir: plan.deps.shimDirs?.localBinDir,
+        bunBinDir: plan.deps.shimDirs?.bunBinDir,
+      }));
+  plan.log('shims');
+  try {
+    await removeShims({ installDir: plan.installDir });
+  } catch (err) {
+    plan.log(`shims failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function removeDatabaseStep(plan: UninstallPlan): Promise<void> {
+  plan.log('database');
+  if (!plan.databasePath) return;
+  const resolvedDb = isAbsolute(plan.databasePath)
+    ? resolvePath(plan.databasePath)
+    : resolve(plan.installDir, plan.databasePath);
+  if (isInsideDir(resolvedDb, plan.installDir)) {
+    await removeIfExists(resolvedDb);
+    await removeIfExists(`${resolvedDb}-wal`);
+    await removeIfExists(`${resolvedDb}-shm`);
+  } else {
+    plan.log(`skip database outside installDir: ${resolvedDb}`);
+  }
+}
+
+async function removeTempUninstallCopy(
+  argv1: string,
+  tmp: string,
+  log: (message: string) => void
+): Promise<void> {
+  const copyRoot = tempUninstallCopyRoot(argv1, tmp);
+  if (!copyRoot) return;
+  log('self-copy');
+  await rm(copyRoot, { recursive: true, force: true }).catch(() => undefined);
 }

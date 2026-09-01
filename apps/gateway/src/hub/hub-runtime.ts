@@ -120,6 +120,12 @@ export type HubRuntimeOptions = {
   autoPromoteTimeoutMs?: number;
 };
 
+type ForwardedWriteCtx = {
+  path: string;
+  req: Request;
+  auth: HubAuthResult | null;
+};
+
 export type HubCtlSource = {
   hubNodeId: string;
   generation: number;
@@ -563,6 +569,18 @@ export class HubRuntime {
     fromHubId: string,
     msg: HubWriteForwardMessage
   ): Promise<Response> {
+    const ctx = this.forwardedWriteCtx(fromHubId, msg);
+    return (
+      (await this.dispatchForwardedRedeem(ctx)) ??
+      (await this.dispatchForwardedCreateEnrollment(ctx)) ??
+      (await this.dispatchForwardedRename(ctx)) ??
+      (await this.dispatchForwardedRevoke(ctx)) ??
+      (await this.dispatchForwardedKeyLogPost(ctx)) ??
+      json({ error: 'not_found' }, 404)
+    );
+  }
+
+  private forwardedWriteCtx(fromHubId: string, msg: HubWriteForwardMessage): ForwardedWriteCtx {
     const path = (msg.path ?? '/').split('?')[0] ?? '/';
     const url = `http://hub${msg.path ?? '/'}`;
     const headers = new Headers();
@@ -576,28 +594,40 @@ export class HubRuntime {
       body: msg.method === 'GET' || msg.method === 'HEAD' ? undefined : (msg.body ?? ''),
     });
     const auth: HubAuthResult | null = msg.uid ? { userId: msg.uid, entryNodeId: fromHubId } : null;
-    if (path === '/api/hub/enrollments/redeem' && req.method === 'POST') {
-      return this.handleRedeem(req);
-    }
-    if (path === '/api/hub/enrollments' && req.method === 'POST') {
-      if (!auth) return json({ error: 'unauthorized' }, 401);
-      return this.handleCreateEnrollment(req, auth);
-    }
-    const rename = path.match(/^\/api\/hub\/nodes\/([^/]+)\/rename$/);
-    if (rename && req.method === 'POST') {
-      if (!auth) return json({ error: 'unauthorized' }, 401);
-      return this.handleRename(req, decodeURIComponent(rename[1] ?? ''), auth);
-    }
-    const revoke = path.match(/^\/api\/hub\/nodes\/([^/]+)\/revoke$/);
-    if (revoke && req.method === 'POST') {
-      if (!auth) return json({ error: 'unauthorized' }, 401);
-      return this.handleRevoke(req, decodeURIComponent(revoke[1] ?? ''), auth);
-    }
-    if (path === '/api/auth/keylog' && req.method === 'POST') {
-      if (!auth) return json({ error: 'unauthorized' }, 401);
-      return this.handleForwardedKeyLog(req, auth.userId);
-    }
-    return json({ error: 'not_found' }, 404);
+    return { path, req, auth };
+  }
+
+  private async dispatchForwardedRedeem(ctx: ForwardedWriteCtx): Promise<Response | undefined> {
+    if (ctx.path !== '/api/hub/enrollments/redeem' || ctx.req.method !== 'POST') return undefined;
+    return this.handleRedeem(ctx.req);
+  }
+
+  private async dispatchForwardedCreateEnrollment(
+    ctx: ForwardedWriteCtx
+  ): Promise<Response | undefined> {
+    if (ctx.path !== '/api/hub/enrollments' || ctx.req.method !== 'POST') return undefined;
+    if (!ctx.auth) return json({ error: 'unauthorized' }, 401);
+    return this.handleCreateEnrollment(ctx.req, ctx.auth);
+  }
+
+  private async dispatchForwardedRename(ctx: ForwardedWriteCtx): Promise<Response | undefined> {
+    const rename = ctx.path.match(/^\/api\/hub\/nodes\/([^/]+)\/rename$/);
+    if (!rename || ctx.req.method !== 'POST') return undefined;
+    if (!ctx.auth) return json({ error: 'unauthorized' }, 401);
+    return this.handleRename(ctx.req, decodeURIComponent(rename[1] ?? ''), ctx.auth);
+  }
+
+  private async dispatchForwardedRevoke(ctx: ForwardedWriteCtx): Promise<Response | undefined> {
+    const revoke = ctx.path.match(/^\/api\/hub\/nodes\/([^/]+)\/revoke$/);
+    if (!revoke || ctx.req.method !== 'POST') return undefined;
+    if (!ctx.auth) return json({ error: 'unauthorized' }, 401);
+    return this.handleRevoke(ctx.req, decodeURIComponent(revoke[1] ?? ''), ctx.auth);
+  }
+
+  private async dispatchForwardedKeyLogPost(ctx: ForwardedWriteCtx): Promise<Response | undefined> {
+    if (ctx.path !== '/api/auth/keylog' || ctx.req.method !== 'POST') return undefined;
+    if (!ctx.auth) return json({ error: 'unauthorized' }, 401);
+    return this.handleForwardedKeyLog(ctx.req, ctx.auth.userId);
   }
 
   private async handleForwardedKeyLog(req: Request, userId: string): Promise<Response> {
