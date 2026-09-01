@@ -50,16 +50,25 @@ const {
 const { clearDeviceSnapshot, writeDeviceSnapshot } = await import(
   '@/pages/devices/device-snapshot-store'
 );
+const { appNodeRuntimes } = await import('@/node/node-runtimes');
+const { sidebarNodeExpansionKey } = await import('@/node/sidebar-node-expansion');
 const { SortableVerticalList, useSortableRow } = await import('@tmex/panels/device-tree');
 
 /**
- * 分节自身要读宿主级共享的 UI store（设备可见性）；生产里 AppSidebar 永远在
+ * 分节自身要读宿主级共享的 UI store（设备可见性、node 分节展开态）；生产里 AppSidebar 永远在
  * NodeRuntimeBoundary 的 RuntimeProvider 内，这里补一个只带 ui 面的最小 runtime。
  * 不用真 zustand store：静态渲染走 useSyncExternalStore 的 server 快照（zustand 给的是
  * **建店时**的初始 state），建店后再改就读不到，测试无法准备数据。
  */
-function runtimeStub(sidebarDeviceVisibility: Record<string, boolean>): AppRuntime {
-  const state = { sidebarDeviceVisibility };
+function runtimeStub(
+  sidebarDeviceVisibility: Record<string, boolean>,
+  sidebarNodeExpansion: Record<string, boolean> = {}
+): AppRuntime {
+  const state = {
+    sidebarDeviceVisibility,
+    sidebarNodeExpansion,
+    setSidebarNodeExpansion: () => undefined,
+  };
   const ui = <T,>(selector: (value: typeof state) => T): T => selector(state);
   return { nodeId: 'self', stores: { ui } } as unknown as AppRuntime;
 }
@@ -81,10 +90,11 @@ function meshNode(overrides: Partial<MeshNode> & { id: string }): MeshNode {
 function render(
   ui: React.ReactNode,
   visibility: Record<string, boolean> = {},
-  entry = '/'
+  entry = '/',
+  expansion: Record<string, boolean> = {}
 ): string {
   return renderToStaticMarkup(
-    <RuntimeProvider runtime={runtimeStub(visibility)}>
+    <RuntimeProvider runtime={runtimeStub(visibility, expansion)}>
       <MemoryRouter initialEntries={[entry]}>{ui}</MemoryRouter>
     </RuntimeProvider>
   );
@@ -452,25 +462,122 @@ describe('SidebarNodeSection', () => {
     expect(html).toContain('data-testid="sidebar-node-login-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
   });
 
-  test('在线且已登录：挂该 node 的运行时并渲染设备树', () => {
+  test('在线且已登录的 self：恒展开，挂运行时并渲染设备树', () => {
     const html = render(
       <SidebarNodeSection
         node={{
-          id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
-          runtimeNodeId: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+          id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+          runtimeNodeId: 'self',
           name: 'studio',
           online: true,
           loggedIn: true,
-          isSelf: false,
+          isSelf: true,
           inventory: null,
         }}
       />
     );
-    expect(html).toContain('data-testid="sidebar-node-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
-    expect(html).toContain('data-testid="node-badge-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
+    expect(html).toContain('data-testid="sidebar-node-self"');
+    expect(html).toContain('data-testid="node-badge-self"');
     expect(html).toContain('data-online="true"');
     // 设备树与分节头一起挂在该 node 的运行时下
     expect(html).toContain('data-testid="runtime-device-list"');
+    // self 没有折叠开关
+    expect(html).not.toContain('data-testid="sidebar-node-toggle-self"');
+  });
+});
+
+/**
+ * 远端在线分节的折叠态：折叠 = 不挂运行时（不建 WS、不发直连协商）。
+ * 用 `appNodeRuntimes.has()` 断言——`useNodeRuntime` 在渲染期就会懒建运行时，
+ * 静态渲染同样看得到。每个用例换一个 node id，免得互相污染。
+ */
+describe('远端在线分节的按需运行时', () => {
+  const VISIBLE_DEVICE = 'd1';
+
+  function onlineNode(id: string) {
+    return {
+      id,
+      runtimeNodeId: id,
+      name: 'studio',
+      online: true,
+      loggedIn: true,
+      isSelf: false,
+      inventory: null,
+    };
+  }
+
+  test('缺省折叠：只出分节头，不渲染设备树，也不建该 node 的运行时', () => {
+    const node = '0a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a';
+    const html = render(<SidebarNodeSection node={onlineNode(node)} />, {
+      [sidebarDeviceVisibilityKey(node, VISIBLE_DEVICE)]: true,
+    });
+
+    expect(html).toContain(`data-testid="sidebar-node-collapsed-${node}"`);
+    expect(html).toContain(`data-testid="sidebar-node-toggle-${node}"`);
+    // 折叠态的在线徽标照常来自 mesh 投影
+    expect(html).toContain(`data-testid="node-badge-${node}"`);
+    expect(html).toContain('data-online="true"');
+    expect(html).not.toContain('data-testid="runtime-device-list"');
+    expect(appNodeRuntimes.has(node)).toBe(false);
+  });
+
+  test('一台设备都没开侧边栏显示时连折叠的分节头都不出', () => {
+    const node = '0a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a';
+    const html = render(<SidebarNodeSection node={onlineNode(node)} />);
+
+    expect(html).not.toContain(`data-testid="sidebar-node-collapsed-${node}"`);
+    expect(html).not.toContain(`data-testid="node-badge-${node}"`);
+    expect(appNodeRuntimes.has(node)).toBe(false);
+  });
+
+  test('（持久化的）展开态：挂运行时并渲染设备树', () => {
+    const node = '0a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a';
+    const html = render(
+      <SidebarNodeSection node={onlineNode(node)} />,
+      { [sidebarDeviceVisibilityKey(node, VISIBLE_DEVICE)]: true },
+      '/',
+      { [sidebarNodeExpansionKey('panes', node)]: true }
+    );
+
+    expect(html).toContain(`data-testid="sidebar-node-${node}"`);
+    expect(html).toContain('data-testid="runtime-device-list"');
+    expect(appNodeRuntimes.has(node)).toBe(true);
+  });
+
+  test('当前路由指向该 node 时缺省展开（它的运行时本来就由路由边界挂着）', () => {
+    const node = '0a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a';
+    const html = render(
+      <SidebarNodeSection node={onlineNode(node)} />,
+      {},
+      `/n/${node}/devices/${VISIBLE_DEVICE}`
+    );
+
+    expect(html).toContain('data-testid="runtime-device-list"');
+    expect(appNodeRuntimes.has(node)).toBe(true);
+  });
+
+  test('路由离开该 node 后回到折叠态：不再挂它的运行时', () => {
+    const node = '0a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a';
+    const html = render(<SidebarNodeSection node={onlineNode(node)} />, {
+      [sidebarDeviceVisibilityKey(node, VISIBLE_DEVICE)]: true,
+    });
+
+    expect(html).toContain(`data-testid="sidebar-node-collapsed-${node}"`);
+    expect(appNodeRuntimes.has(node)).toBe(false);
+  });
+
+  test('用户显式折叠优先于「路由指向它」这条缺省', () => {
+    const node = '0a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a';
+    const html = render(
+      <SidebarNodeSection node={onlineNode(node)} />,
+      {},
+      `/n/${node}/devices/${VISIBLE_DEVICE}`,
+      { [sidebarNodeExpansionKey('panes', node)]: false }
+    );
+
+    expect(html).toContain(`data-testid="sidebar-node-collapsed-${node}"`);
+    expect(html).not.toContain('data-testid="runtime-device-list"');
+    expect(appNodeRuntimes.has(node)).toBe(false);
   });
 });
 

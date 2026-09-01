@@ -1,5 +1,6 @@
 import { wsBorsh } from '@tmex/shared';
 import { type BorshDispatchHost, type BorshKindHandler, schemaHandler } from './borsh-dispatcher';
+import { createTmuxViewportHandlers } from './tmux-viewport-handlers';
 
 export function createTmuxKindHandlers(
   host: BorshDispatchHost
@@ -88,28 +89,6 @@ export function createTmuxKindHandlers(
       }),
     ],
     [
-      wsBorsh.KIND_TMUX_RESIZE_PANE,
-      schemaHandler(wsBorsh.schema.TmuxResizePaneSchema, (_ws, decoded) => {
-        host.handleResizePaneById(
-          decoded.deviceId,
-          decoded.paneId,
-          decoded.cols ?? undefined,
-          decoded.rows ?? undefined
-        );
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_APPLY_STACKED_LAYOUT,
-      schemaHandler(wsBorsh.schema.TmuxApplyStackedLayoutSchema, (_ws, decoded) => {
-        host.handleApplyStackedLayout(
-          decoded.deviceId,
-          decoded.windowId,
-          decoded.cols,
-          decoded.rows
-        );
-      }),
-    ],
-    [
       wsBorsh.KIND_TMUX_SPLIT_PANE,
       schemaHandler(wsBorsh.schema.TmuxSplitPaneSchema, (_ws, decoded) => {
         host.handleSplitPane(
@@ -170,17 +149,6 @@ export function createTmuxKindHandlers(
         );
       }),
     ],
-    [
-      wsBorsh.KIND_TERM_RESIZE,
-      schemaHandler(wsBorsh.schema.TermResizeSchema, (_ws, decoded) => {
-        host.handleTermResize(decoded.deviceId, decoded.paneId, decoded.cols, decoded.rows);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TERM_SYNC_SIZE,
-      schemaHandler(wsBorsh.schema.TermSyncSizeSchema, (_ws, decoded) => {
-        host.handleTermResize(decoded.deviceId, decoded.paneId, decoded.cols, decoded.rows);
-      }),
-    ],
+    ...createTmuxViewportHandlers(host),
   ];
 }

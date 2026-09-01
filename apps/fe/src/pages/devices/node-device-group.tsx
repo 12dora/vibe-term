@@ -5,13 +5,18 @@
 //   - 离线：**运行时保持挂载**（ready→offline 翻转不卸载子树，卡片不会消失），面板进 offline
 //     模式：不再拉列表，卡片来自 query 缓存 / 本地快照 / 节点 inventory，带「节点离线」标记；
 //     连接开关显示「连接」，点了就是一次手动连接尝试（节点仍不通时会走到 error / reconnecting）；
-//   - 在线但未登录：只渲染「登录此节点」按钮，不建运行时（避免每次渲染都撞 4401）。
+//   - 在线但未登录：先走静默登录门闸（会话钥还在，或能从 IndexedDB 恢复时用户什么都不用点），
+//     期间只显示一行「登录中…」；确实登不上才渲染「登录此节点」按钮（凭证类失败再补一行原因）。
+//     这一档不建运行时，避免每次渲染都撞 4401。
 //
 // 「添加设备」全页只有顶栏一个 +：ready 的分组把自己的 `openAddDevice` 登记到
 // `add-device-targets` 注册表，顶栏据此直接开或先让用户选节点；面板自身仍不监听全局事件
 // （多面板同时挂载会一起弹框），只有 entry 自身保留监听兜住其它派发方。
 
-import { NodeLoginButton } from '@/auth';
+import { NodeLoginButton } from '@/auth/NodeLoginButton';
+import { loginErrorKey } from '@/auth/login-errors';
+import { type LoginFailureCode, getSessionKey } from '@/auth/session-key-store';
+import { useNodeLoginGate } from '@/auth/use-node-login';
 import { useGlobalDevice } from '@/components/global-device-provider';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { SELF_NODE_ID } from '@tmex/api-client';
@@ -23,6 +28,7 @@ import {
 } from '@tmex/panels/device-management';
 import { NodeBadge } from '@tmex/panels/device-tree';
 import type { Device } from '@tmex/shared';
+import { Loader2 } from 'lucide-react';
 import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { registerAddDeviceTarget } from './add-device-targets';
@@ -147,8 +153,43 @@ function GroupHeader({
   );
 }
 
+/**
+ * 静默登录失败后要不要多给一行原因。
+ *
+ * 网络类失败（含 mesh 列表拉不到）本来就是「等会儿再来」，按钮本身已经够；凭证 / 授权类失败
+ * 必须说清楚，否则用户只会反复点同一个按钮。
+ */
+const SILENT_LOGIN_HINTLESS = new Set<string>(['NETWORK_ERROR', 'NODE_LIST_FAILED']);
+
+export function silentLoginHintKey(code: LoginFailureCode | null): string | null {
+  if (!code || SILENT_LOGIN_HINTLESS.has(code)) return null;
+  // 同一个签名类错误在密码 / passkey 两条路径下含义完全不同，按当前会话的方式取文案。
+  return loginErrorKey(code, getSessionKey()?.method === 'passkey' ? 'passkey' : 'password');
+}
+
+/**
+ * 在线但没有该 node 会话时的那一档。
+ *
+ * 会话钥还在（或能从 IndexedDB 恢复）就由门闸静默登完，用户全程不用点——这正是 PWA 冷启动后
+ * 「每台 node 都问一次密码」的修复点。只有门闸判定 `blocked` 才退回按钮。
+ */
 function SignedOutBody({ node }: { node: NodeDeviceGroupEntry }) {
   const { t } = useTranslation();
+  const gate = useNodeLoginGate(node.runtimeNodeId);
+
+  if (gate.status === 'pending') {
+    return (
+      <div
+        data-testid={`devices-node-signing-in-${node.runtimeNodeId}`}
+        className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+      >
+        <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />
+        <span>{t('auth.node.loggingIn')}</span>
+      </div>
+    );
+  }
+
+  const hint = gate.status === 'blocked' ? silentLoginHintKey(gate.code) : null;
   return (
     <div
       data-testid={`devices-node-login-${node.runtimeNodeId}`}
@@ -156,6 +197,14 @@ function SignedOutBody({ node }: { node: NodeDeviceGroupEntry }) {
     >
       <p className="text-xs text-muted-foreground">{t('devices.nodes.signInToManage')}</p>
       <NodeLoginButton nodeId={node.runtimeNodeId} nodeName={node.name} />
+      {hint && (
+        <p
+          data-testid={`devices-node-login-hint-${node.runtimeNodeId}`}
+          className="w-full text-xs text-destructive"
+        >
+          {t(hint)}
+        </p>
+      )}
     </div>
   );
 }

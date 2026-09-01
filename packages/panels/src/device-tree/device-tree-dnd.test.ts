@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter } from '@dnd-kit/core';
-import { pointerFirstCollisionDetection, reorderIdsByDragEnd } from './device-tree-dnd';
+import {
+  pointerFirstCollisionDetection,
+  reorderIdsByDragEnd,
+  restrictToVerticalAxis,
+} from './device-tree-dnd';
 
 const dragEvent = (activeId: string, overId: string | null) =>
   ({
@@ -33,6 +37,28 @@ describe('reorderIdsByDragEnd', () => {
   test('returns null when either id is unknown', () => {
     expect(reorderIdsByDragEnd(ids, dragEvent('z', 'b'))).toBeNull();
     expect(reorderIdsByDragEnd(ids, dragEvent('b', 'z'))).toBeNull();
+  });
+});
+
+describe('restrictToVerticalAxis', () => {
+  const apply = (transform: { x: number; y: number; scaleX: number; scaleY: number }) =>
+    restrictToVerticalAxis({ transform } as unknown as Parameters<
+      typeof restrictToVerticalAxis
+    >[0]);
+
+  test('抹掉横向位移，纵向位移与缩放原样保留', () => {
+    expect(apply({ x: 240, y: 60, scaleX: 1, scaleY: 1 })).toEqual({
+      x: 0,
+      y: 60,
+      scaleX: 1,
+      scaleY: 1,
+    });
+    expect(apply({ x: -180, y: -12, scaleX: 0.9, scaleY: 1.1 })).toEqual({
+      x: 0,
+      y: -12,
+      scaleX: 0.9,
+      scaleY: 1.1,
+    });
   });
 });
 

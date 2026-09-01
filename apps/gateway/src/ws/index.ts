@@ -24,7 +24,6 @@ import {
 } from './borsh-dispatcher';
 import { encodeCanonicalEvent, encodePayloadFrames, sendToClient } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
-import { switchBarrier } from './borsh/switch-barrier';
 import { CanonicalFeedSession } from './canonical-feed-session';
 import type { Carrier } from './carrier';
 import { BunSocketCarrier } from './carrier';
@@ -36,6 +35,7 @@ import { GatewayActivityMetrics } from './gateway-activity-metrics';
 import { type GatewayMetricsHost, logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
 import { GatewaySession } from './gateway-session';
 import { LegacyFeedBroadcaster, type LegacyFeedHost } from './legacy-feed-broadcaster';
+import { closeGatewaySession } from './session-close';
 import { type SnapshotOverlayHost, SnapshotOverlayStore } from './snapshot-overlays';
 import { TerminalOutputBatcher } from './terminal-output-batcher';
 import { TerminalOutputMetrics } from './terminal-output-metrics';
@@ -400,50 +400,21 @@ export class WebSocketServer
   }
 
   closeSession(session: GatewaySession, code: number, reason: string): void {
-    if (session.closed) {
-      return;
-    }
-    session.closed = true;
-    console.log('[ws] client disconnected');
-    try {
-      this.sessionClosedHandler?.(session);
-    } catch {
-      // mesh teardown
-    }
-
-    const attached = session.carriers();
-    for (const carrier of attached) {
-      gatewayWebSocketSendGuard.forget(carrier);
-    }
-    for (const carrier of attached) {
-      try {
-        carrier.close(code, reason);
-      } catch {
-        // The carrier may already be closing.
-      }
-    }
-    if (session.direct) {
-      session.detachCarrier(session.direct);
-    }
-
-    this.registry.abandonSocket(session);
-    this.canonicalSessions.get(session)?.close();
-    this.canonicalSessions.delete(session);
-    this.connectedClients.delete(session);
-    switchBarrier.cleanupClient(session);
-    sessionStateStore.cleanup(session);
-    agentWsHub.removeClient(session);
-    this.feed.releaseLegacyPaneObservers(session);
-
-    for (const [deviceId, entry] of this.connections) {
-      entry.canonicalClients?.delete(session);
-      if (entry.clients.delete(session)) {
-        delete session.borshState.selectedPanes[deviceId];
-        delete session.borshState.subscribedPanes[deviceId];
-      }
-      this.refreshSnapshotPolling(deviceId);
-      this.registry.scheduleConnectionEntryRelease(deviceId, entry);
-    }
+    closeGatewaySession(
+      {
+        onSessionClosed: this.sessionClosedHandler,
+        registry: this.registry,
+        canonicalSessions: this.canonicalSessions,
+        connectedClients: this.connectedClients,
+        feed: this.feed,
+        connections: this.connections,
+        refreshSnapshotPolling: (deviceId) => this.refreshSnapshotPolling(deviceId),
+        dropViewportClaims: (target) => this.dropViewportClaims(target),
+      },
+      session,
+      code,
+      reason
+    );
   }
 
   updateDefaultWorkingDir(deviceId: string, dir: string | undefined): void {
@@ -723,8 +694,29 @@ export class WebSocketServer
     tmuxCommands.handleTermInput(this, deviceId, paneId, data);
   }
 
-  handleTermResize(deviceId: string, paneId: string, cols: number, rows: number): void {
-    tmuxCommands.handleTermResize(this, deviceId, paneId, cols, rows);
+  handleTermResize(
+    session: GatewaySession,
+    deviceId: string,
+    paneId: string,
+    cols: number,
+    rows: number
+  ): void {
+    tmuxCommands.handleTermResize(this, session, deviceId, paneId, cols, rows);
+  }
+
+  handleTermViewport(
+    session: GatewaySession,
+    decoded: wsBorsh.b.infer<typeof wsBorsh.schema.TermViewportSchema>
+  ): void {
+    tmuxCommands.handleTermViewport(this, session, decoded);
+  }
+
+  dropViewportClaims(
+    session: GatewaySession,
+    deviceId?: string,
+    options: { recompute?: boolean } = {}
+  ): void {
+    tmuxCommands.dropViewportClaims(this, session, deviceId, options);
   }
 
   handleTermPaste(deviceId: string, paneId: string, data: string): void {
@@ -868,6 +860,10 @@ export class WebSocketServer
 
   async extendTmuxEvent(deviceId: string, event: TmuxEvent): Promise<TmuxEvent> {
     return this.feed.extendTmuxEvent(deviceId, event);
+  }
+
+  onStateSnapshotInstalled(deviceId: string): void {
+    tmuxCommands.reconcileDeviceViewportSnapshot(this, deviceId);
   }
 
   broadcastStateSnapshot(deviceId: string, payload: StateSnapshotPayload): void {

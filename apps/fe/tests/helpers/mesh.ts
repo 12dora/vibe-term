@@ -182,6 +182,27 @@ export async function logout(page: Page): Promise<void> {
     localStorage.clear();
     sessionStorage.clear();
   });
+  await clearPersistedSessionKey(page);
+}
+
+/**
+ * 删掉 IndexedDB 里持久化的会话钥（`tmex-auth`）。
+ *
+ * 会话钥现在能跨 document 活下来（不可导出的 WebCrypto 私钥 + 18 小时 delegation），所以
+ * 「回到未登录状态」除了清 cookie 还得清它，否则下一次进页面会被静默登录接管。
+ */
+export async function clearPersistedSessionKey(page: Page): Promise<void> {
+  await page
+    .evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const request = indexedDB.deleteDatabase('tmex-auth');
+          request.onsuccess = () => resolve();
+          request.onerror = () => resolve();
+          request.onblocked = () => resolve();
+        })
+    )
+    .catch(() => undefined);
 }
 
 /** CDP 虚拟认证器：让 WebAuthn 注册/断言在无头 Chromium 里可以自动完成。 */
@@ -224,26 +245,35 @@ interface XtermHandle {
   };
 }
 
+/** SPA 内部跳转到设备页（外壳与侧边栏都不重挂）。 */
+export async function openDevicesPage(page: Page): Promise<void> {
+  await page.locator('a[href="/devices"]').first().click();
+  await expect(page.getByTestId('devices-page-container')).toBeVisible({ timeout: 30_000 });
+}
+
 /**
- * 从「管理设备」登录某台远端 node。
+ * 从「管理设备」拿到某台远端 node 的会话。
  *
  * 登录页只登录 entry 自身（`loginSelf`，不做 fan-out），其余 node 一律按需登录；侧边栏也不再
- * 为没开过设备显示的 node 留登录入口，所以拿到该 node 的会话（`/n/:id/api/*` 需要它）只剩设备页
- * 这一条路。**必须走 SPA 内部跳转**：会话钥 sk_sess 只在内存里，`goto` / `reload` 这类整页导航
- * 会把它丢掉，「登录此节点」按钮届时只能退回 `/login?node=`。
+ * 为没开过设备显示的 node 留登录入口，所以设备页是唯一入口。
+ *
+ * 常态是**一下都不用点**：会话钥要么还在内存里，要么能从 IndexedDB 恢复（不可导出的 WebCrypto
+ * 私钥跨 document 存活），设备页那一档会自己静默登完。整页导航（`goto` / `reload`）也不再丢钥，
+ * 只有钥真的没了（登出 / 过期 / 环境不支持 Ed25519 WebCrypto）才退回「登录此节点」按钮，
+ * 这里顺手点掉它。
  *
  * 返回后浏览器上下文里带着该 node 的会话 cookie，`page.request` 与页面共用同一个 cookie jar。
  */
 export async function signInToNodeFromDevicesPage(page: Page, nodeId: string): Promise<void> {
-  await page.locator('a[href="/devices"]').first().click();
-  await expect(page.getByTestId('devices-page')).toBeVisible({ timeout: 30_000 });
+  await openDevicesPage(page);
+  const panel = page.getByTestId(`devices-node-panel-${nodeId}`);
   // node-login-<id> 同时出现在设备页与侧栏 Files 分节，必须按设备页容器收窄避免 strict mode 冲突
-  const deviceLogin = page.getByTestId(`devices-node-login-${nodeId}`);
-  await expect(deviceLogin).toBeVisible({ timeout: 30_000 });
-  await deviceLogin.getByTestId(`node-login-${nodeId}`).click();
-  await expect(page.getByTestId(`devices-node-login-${nodeId}`)).toHaveCount(0, {
-    timeout: 30_000,
-  });
+  const manualLogin = page.getByTestId(`devices-node-login-${nodeId}`);
+  await expect(panel.or(manualLogin).first()).toBeVisible({ timeout: 60_000 });
+  if (await manualLogin.isVisible()) {
+    await manualLogin.getByTestId(`node-login-${nodeId}`).click();
+  }
+  await expect(panel).toBeVisible({ timeout: 30_000 });
 }
 
 export async function createDeviceOnNode(

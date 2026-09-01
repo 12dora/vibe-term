@@ -182,6 +182,50 @@ describe('未登录 node 的懒登录门闸', () => {
   });
 });
 
+/**
+ * `GlobalDeviceProvider` 自带一条 `/api/devices` 查询，必须留在门闸**内部**：
+ * 门闸没放行就挂上它，进未登录的远端 node 必定先吃一发 401 再重试。
+ * 静态渲染下 `useQuery` 会把查询登记进该 node 的 QueryClient，据此断言它有没有被挂上。
+ */
+describe('设备列表查询受懒登录门闸约束', () => {
+  const PENDING_NODE = '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f';
+  const READY_NODE = '11111111111111111111111111111111';
+
+  afterEach(() => {
+    resetMeshNodesStateForTest();
+  });
+
+  function devicesQueryOf(nodeId: string): unknown {
+    return nodeQueryClient(nodeId)
+      .getQueryCache()
+      .find({ queryKey: ['devices'] });
+  }
+
+  test('门闸未放行时不挂设备列表查询', () => {
+    setMeshNodesStateForTest({
+      mode: MESH_MODE,
+      modeLoaded: true,
+      entryNodeId: ENTRY,
+      loadedAt: Date.now(),
+      nodes: [meshNode({ id: PENDING_NODE })],
+    });
+    renderAt(`/n/${PENDING_NODE}/devices/d1`);
+    expect(devicesQueryOf(PENDING_NODE)).toBeUndefined();
+  });
+
+  test('门闸放行后照常挂上', () => {
+    setMeshNodesStateForTest({
+      mode: MESH_MODE,
+      modeLoaded: true,
+      entryNodeId: ENTRY,
+      loadedAt: Date.now(),
+      nodes: [meshNode({ id: READY_NODE, loggedIn: true })],
+    });
+    renderAt(`/n/${READY_NODE}/devices/d1`);
+    expect(devicesQueryOf(READY_NODE)).toBeDefined();
+  });
+});
+
 interface DevicesData {
   devices: { id: string }[];
 }

@@ -83,5 +83,15 @@ export {
   setSidebarBridge,
 } from './flow-bridges';
 export { selectPaneAgentState, type PaneAgentState } from './use-pane-agent-state';
+export {
+  applyViewportPolicy,
+  clearViewportPolicyForDevice,
+  paneViewportKey,
+  selectPaneViewportOwner,
+  selectPaneViewportPolicy,
+  type PaneViewportPolicy,
+  type ViewportPolicyEvent,
+  type ViewportPolicyMap,
+} from './viewport-policy';
 
 export type { AgentSessionDto, AgentSessionStatus } from '@tmex/shared';

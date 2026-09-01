@@ -115,7 +115,8 @@ export type GatewayTransportEvent =
       pendingFrames: number;
       pendingBytes: number;
       droppedFrames: number;
-    };
+    }
+  | TerminalViewportPolicyEvent;
 
 export type GatewayNodeEvent = {
   type: 'node-event';
@@ -126,6 +127,17 @@ export type GatewayNodeEvent = {
   version: string | null;
   directCapable: boolean | null;
   name: string | null;
+};
+
+export type TerminalViewportPolicyEvent = {
+  type: 'terminal-viewport-policy';
+  kind: 'terminal-viewport-policy';
+  deviceId: string;
+  windowId: string;
+  paneId: string;
+  owner: boolean;
+  cols: number;
+  rows: number;
 };
 
 export type GatewayTransportEventHandler = (event: GatewayTransportEvent) => void;
@@ -154,6 +166,14 @@ export type GatewayTransportCommand =
   | { type: 'terminal-paste'; deviceId: string; paneId: string; data: string }
   | { type: 'terminal-resize'; deviceId: string; paneId: string; cols: number; rows: number }
   | { type: 'terminal-sync-size'; deviceId: string; paneId: string; cols: number; rows: number }
+  | {
+      type: 'terminal-viewport';
+      deviceId: string;
+      paneId: string;
+      cols: number;
+      rows: number;
+      visible: boolean;
+    }
   | { type: 'create-window'; deviceId: string; name?: string; cwd?: string }
   | { type: 'close-window'; deviceId: string; windowId: string }
   | { type: 'close-pane'; deviceId: string; paneId: string }

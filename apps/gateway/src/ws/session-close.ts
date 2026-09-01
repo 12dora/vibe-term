@@ -1,0 +1,73 @@
+import { agentWsHub } from '../agent/ws-hub';
+import { sessionStateStore } from './borsh/session-state';
+import { switchBarrier } from './borsh/switch-barrier';
+import type { CanonicalFeedSession } from './canonical-feed-session';
+import type { DeviceConnectionRegistry } from './device-connection-registry';
+import type { GatewaySession } from './gateway-session';
+import type { LegacyFeedBroadcaster } from './legacy-feed-broadcaster';
+import type { DeviceConnectionEntry } from './types';
+import { gatewayWebSocketSendGuard } from './websocket-send-guard';
+
+export interface SessionCloseHost {
+  onSessionClosed: ((session: GatewaySession) => void) | null;
+  registry: DeviceConnectionRegistry;
+  canonicalSessions: Map<GatewaySession, CanonicalFeedSession>;
+  connectedClients: Set<GatewaySession>;
+  feed: LegacyFeedBroadcaster;
+  connections: Map<string, DeviceConnectionEntry>;
+  refreshSnapshotPolling(deviceId: string): void;
+  dropViewportClaims(session: GatewaySession): void;
+}
+
+export function closeGatewaySession(
+  host: SessionCloseHost,
+  session: GatewaySession,
+  code: number,
+  reason: string
+): void {
+  if (session.closed) {
+    return;
+  }
+  session.closed = true;
+  console.log('[ws] client disconnected');
+  try {
+    host.onSessionClosed?.(session);
+  } catch {
+    // mesh teardown
+  }
+
+  const attached = session.carriers();
+  for (const carrier of attached) {
+    gatewayWebSocketSendGuard.forget(carrier);
+  }
+  for (const carrier of attached) {
+    try {
+      carrier.close(code, reason);
+    } catch {
+      // The carrier may already be closing.
+    }
+  }
+  if (session.direct) {
+    session.detachCarrier(session.direct);
+  }
+
+  host.registry.abandonSocket(session);
+  host.canonicalSessions.get(session)?.close();
+  host.canonicalSessions.delete(session);
+  host.connectedClients.delete(session);
+  switchBarrier.cleanupClient(session);
+  sessionStateStore.cleanup(session);
+  agentWsHub.removeClient(session);
+  host.feed.releaseLegacyPaneObservers(session);
+
+  for (const [deviceId, entry] of host.connections) {
+    entry.canonicalClients?.delete(session);
+    if (entry.clients.delete(session)) {
+      delete session.borshState.selectedPanes[deviceId];
+      delete session.borshState.subscribedPanes[deviceId];
+    }
+    host.refreshSnapshotPolling(deviceId);
+    host.registry.scheduleConnectionEntryRelease(deviceId, entry);
+  }
+  host.dropViewportClaims(session);
+}

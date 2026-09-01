@@ -434,6 +434,63 @@ describe('Gateway WS 的 client nonce（F3-5）', () => {
   });
 });
 
+describe('侧栏折叠 / 路由离开后的宽限释放', () => {
+  const NODE_HEX_D = 'd'.repeat(32);
+
+  test('引用归零后要等宽限期到点才回收：来回折叠不会重新拨号', () => {
+    const sockets: FakeSocket[] = [];
+    const timers: Array<{ fn: () => void; cancelled: boolean }> = [];
+    const disposed: string[] = [];
+    const manager = createAppNodeRuntimes(
+      {
+        onDispose: (id) => disposed.push(id),
+        createApiClient: () => ({}) as never,
+        createRuntime: () => ({ dispose: () => {} }) as unknown as AppRuntime,
+        setTimeoutFn: (fn) => {
+          timers.push({ fn, cancelled: false });
+          return timers.length - 1;
+        },
+        clearTimeoutFn: (handle) => {
+          const timer = timers[handle as number];
+          if (timer) timer.cancelled = true;
+        },
+      },
+      {
+        socketFactory: (url: string) => {
+          const socket = new FakeSocket(url);
+          sockets.push(socket);
+          return socket;
+        },
+        createController: () => null,
+      }
+    );
+
+    // 分节展开 → 建连接
+    const entry = manager.acquire(NODE_HEX_D);
+    entry.connection.client.connect();
+    expect(sockets.length).toBe(1);
+
+    // 折叠：引用归零，但宽限期内不回收
+    manager.release(NODE_HEX_D);
+    expect(manager.has(NODE_HEX_D)).toBe(true);
+    expect(disposed).toEqual([]);
+
+    // 立刻又展开：拿回的是同一条连接，没有第二次拨号
+    expect(manager.acquire(NODE_HEX_D).connection).toBe(entry.connection);
+    expect(sockets.length).toBe(1);
+
+    // 再折叠并让宽限期到点：这次真回收
+    manager.release(NODE_HEX_D);
+    const pending = timers.filter((timer) => !timer.cancelled);
+    expect(pending.length).toBe(1);
+    pending[0].fn();
+
+    expect(manager.has(NODE_HEX_D)).toBe(false);
+    expect(disposed).toEqual([NODE_HEX_D]);
+    manager.disposeAll();
+  });
+});
+
 describe('QueryClient 随 runtime 一起回收', () => {
   test('生产接线里 dispose 会释放该 node 的 QueryClient', () => {
     const sockets: FakeSocket[] = [];

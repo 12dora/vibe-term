@@ -23,6 +23,8 @@ export type {
   CompatibleTerminalLike,
   GhosttyCellDimensions,
   GhosttyCursorViewportRect,
+  GhosttyPanDelta,
+  GhosttyPanMetrics,
   GhosttyTerminalModeSnapshot,
   GhosttyTerminalInitOptions,
   GhosttyTerminalSize,

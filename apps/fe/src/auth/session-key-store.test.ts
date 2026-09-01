@@ -169,9 +169,9 @@ afterEach(() => {
 });
 
 describe('establishSessionFromSeed', () => {
-  test('派生 delegation 并清零传入的 seed', () => {
+  test('派生 delegation 并清零传入的 seed', async () => {
     const seed = new Uint8Array(ROOT_SEED);
-    const info = establishSessionFromSeed(seed, {
+    const info = await establishSessionFromSeed(seed, {
       uid: UID,
       entryNodeId: ENTRY,
       rootEpoch: 0,
@@ -184,8 +184,8 @@ describe('establishSessionFromSeed', () => {
     expect(hasSessionKey()).toBe(true);
   });
 
-  test('clearSessionKey 之后读不到会话钥', () => {
-    establishRoot();
+  test('clearSessionKey 之后读不到会话钥', async () => {
+    await establishRoot();
     clearSessionKey();
     expect(getSessionKey()).toBeNull();
   });
@@ -193,7 +193,7 @@ describe('establishSessionFromSeed', () => {
 
 describe('loginToNode', () => {
   test('登录签名可被共享验签器验证，delegation 由根钥签发', async () => {
-    establishRoot();
+    await establishRoot();
     const { api, captured } = mockApi({});
     const result = await loginToNode(NODE_A, { api });
     expect(result).toEqual({ ok: true });
@@ -221,7 +221,7 @@ describe('loginToNode', () => {
   });
 
   test('目标公钥与 mesh 列表不一致时中止，不发送 login', async () => {
-    establishRoot();
+    await establishRoot();
     const { api, captured } = mockApi({ nodePkOverride: { [NODE_A]: fill(32, 0x99) } });
     const result = await loginToNode(NODE_A, { api });
     expect(result).toEqual({ ok: false, code: 'NODE_PK_MISMATCH' });
@@ -234,13 +234,13 @@ describe('loginToNode', () => {
   });
 
   test('mesh 列表里没有该 node 时报 UNKNOWN_NODE', async () => {
-    establishRoot();
+    await establishRoot();
     const { api } = mockApi({});
     expect(await loginToNode(NODE_UNKNOWN, { api })).toEqual({ ok: false, code: 'UNKNOWN_NODE' });
   });
 
   test('列表 / challenge / login 任一网络失败都映射成 NETWORK_ERROR', async () => {
-    establishRoot();
+    await establishRoot();
     const offline = { ok: false, code: 'NETWORK_ERROR' };
     for (const match of [
       (url: string) => url === '/api/mesh/nodes',
@@ -252,7 +252,7 @@ describe('loginToNode', () => {
   });
 
   test('后端返回的 code 原样透出', async () => {
-    establishRoot();
+    await establishRoot();
     const { api } = mockApi({ loginStatus: () => 401 });
     expect(await loginToNode(NODE_A, { api })).toEqual({ ok: false, code: 'BAD_SIGNATURE' });
   });
@@ -260,7 +260,7 @@ describe('loginToNode', () => {
 
 describe('TOTP 只在 method=root 且用户开了 TOTP 时下发', () => {
   test('root + 已开 TOTP + 有验证码 → 带 totp 字段', async () => {
-    establishRoot({ hasTotp: true, totpCode: '123456' });
+    await establishRoot({ hasTotp: true, totpCode: '123456' });
     const { api, captured } = mockApi({});
     expect(await loginToNode(NODE_A, { api })).toEqual({ ok: true });
     const totp = (captured.login as { totp?: { code: string; k_totp: string } }).totp;
@@ -269,14 +269,14 @@ describe('TOTP 只在 method=root 且用户开了 TOTP 时下发', () => {
   });
 
   test('未开 TOTP → 不带 totp 字段', async () => {
-    establishRoot();
+    await establishRoot();
     const { api, captured } = mockApi({});
     await loginToNode(NODE_A, { api });
     expect((captured.login as { totp?: unknown }).totp).toBeUndefined();
   });
 
   test('已开 TOTP 但没有验证码 → TOTP_REQUIRED，且不发请求', async () => {
-    establishRoot({ hasTotp: true });
+    await establishRoot({ hasTotp: true });
     const { api, captured } = mockApi({});
     expect(await loginToNode(NODE_A, { api })).toEqual({ ok: false, code: 'TOTP_REQUIRED' });
     expect(captured.challengeCalls).toHaveLength(0);
@@ -285,7 +285,7 @@ describe('TOTP 只在 method=root 且用户开了 TOTP 时下发', () => {
 
 describe('loginSelf', () => {
   test('只登录 self，随后拉一次 mesh 列表核对本机公钥——不再对其余 node fan-out', async () => {
-    establishRoot();
+    await establishRoot();
     const { api, captured } = mockApi({
       nodes: [
         { id: NODE_A, publicKey: NODE_A_PK },
@@ -300,34 +300,34 @@ describe('loginSelf', () => {
   });
 
   test('self 登录失败时原样返回后端的码，且不拉 mesh 列表', async () => {
-    establishRoot();
+    await establishRoot();
     const { api, captured } = mockApi({ loginStatus: () => 401 });
     expect(await loginSelf({ api })).toEqual({ ok: false, code: 'BAD_SIGNATURE' });
     expect(captured.meshListCalls).toBe(0);
   });
 
   test('mesh 列表拉不到 → NODE_LIST_FAILED（不能当成登录完成）', async () => {
-    establishRoot();
+    await establishRoot();
     const { api } = mockApi({ meshListStatus: 500 });
     expect(await loginSelf({ api })).toEqual({ ok: false, code: 'NODE_LIST_FAILED' });
   });
 
   test('entry 公钥被掉包时清掉会话钥并报 NODE_PK_MISMATCH', async () => {
-    establishRoot();
+    await establishRoot();
     const { api } = mockApi({ entryPkInList: fill(32, 0x77) });
     expect(await loginSelf({ api })).toEqual({ ok: false, code: 'NODE_PK_MISMATCH' });
     expect(getSessionKey()).toBeNull();
   });
 
   test('一次性 TOTP 码用完即清：后续按需登录只能回登录页重新输码', async () => {
-    establishRoot({ hasTotp: true, totpCode: '654321' });
+    await establishRoot({ hasTotp: true, totpCode: '654321' });
     const { api } = mockApi({});
     expect(await loginSelf({ api })).toEqual({ ok: true });
     expect(await loginToNode(NODE_A, { api })).toEqual({ ok: false, code: 'TOTP_REQUIRED' });
   });
 
   test('成功后把 mesh store 里 entry 那一行标成已登录', async () => {
-    establishRoot();
+    await establishRoot();
     setMeshNodesStateForTest({
       entryNodeId: ENTRY,
       nodes: [meshRow(ENTRY, ENTRY_PK), meshRow(NODE_A, NODE_A_PK)],
@@ -341,7 +341,7 @@ describe('loginSelf', () => {
 
 describe('ensureNodeLogin', () => {
   test('并发调用共享同一次登录请求（单飞）', async () => {
-    establishRoot();
+    await establishRoot();
     const { api, captured } = mockApi({ nodes: [{ id: NODE_A, publicKey: NODE_A_PK }] });
     const [first, second] = await Promise.all([
       ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) }),
@@ -353,7 +353,7 @@ describe('ensureNodeLogin', () => {
   });
 
   test('成功后把该 node 在 mesh store 里标成已登录', async () => {
-    establishRoot();
+    await establishRoot();
     setMeshNodesStateForTest({
       entryNodeId: ENTRY,
       nodes: [meshRow(ENTRY, ENTRY_PK), meshRow(NODE_A, NODE_A_PK)],
@@ -366,7 +366,7 @@ describe('ensureNodeLogin', () => {
   });
 
   test('失败不标已登录，并把码交给调用方', async () => {
-    establishRoot();
+    await establishRoot();
     setMeshNodesStateForTest({ entryNodeId: ENTRY, nodes: [meshRow(NODE_A, NODE_A_PK)] });
     const { api } = mockApi({
       nodes: [{ id: NODE_A, publicKey: NODE_A_PK }],
@@ -387,7 +387,7 @@ describe('ensureNodeLogin', () => {
   });
 
   test('登录 chunk 拉不下来时返回 NETWORK_ERROR，下一次调用重新加载', async () => {
-    establishRoot();
+    await establishRoot();
     setMeshNodesStateForTest({ entryNodeId: ENTRY, nodes: [meshRow(NODE_A, NODE_A_PK)] });
     let loads = 0;
     setLoginLoaderForTest(() => {
@@ -406,7 +406,7 @@ describe('ensureNodeLogin', () => {
   });
 
   test('并发调用只加载一次实现、只登录一次', async () => {
-    establishRoot();
+    await establishRoot();
     let loads = 0;
     let logins = 0;
     let release = (): void => {};

@@ -21,6 +21,11 @@ export interface TerminalProps {
    * local：保活池里的隐藏实例，照常测量并对齐本地行列，但不上报（避免多实例互抢整窗尺寸）。
    */
   sizingMode?: 'report' | 'follow' | 'local';
+  /**
+   * follower（他人拥有 PTY 尺寸）时打开平移视口：本地保留权威 cols×rows 完整绘制，
+   * 超出容器的部分由 .xterm-viewport 双向滚动承载。默认 false = 与以往一致的裁剪语义。
+   */
+  viewportPan?: boolean;
   /** direct 模式挂载时是否自动聚焦（默认 true）；分屏非焦点 pane 传 false 防互抢 */
   autoFocus?: boolean;
   onData?: (data: string) => void;

@@ -33,10 +33,13 @@ describe('isSidebarDeviceVisible', () => {
 });
 
 describe('isSidebarFilesVisible', () => {
-  test('无记录时跟随「该设备是否配了目录」，本机与远端一致', () => {
+  test('无记录时只有本机且配了目录的设备默认显示', () => {
     expect(isSidebarFilesVisible({}, 'self', 'd1', true)).toBe(true);
-    expect(isSidebarFilesVisible({}, NODE_A, 'd1', true)).toBe(true);
     expect(isSidebarFilesVisible({}, 'self', 'd1', false)).toBe(false);
+  });
+
+  test('无记录时远端 node 的设备默认隐藏，配了目录也一样', () => {
+    expect(isSidebarFilesVisible({}, NODE_A, 'd1', true)).toBe(false);
     expect(isSidebarFilesVisible({}, NODE_A, 'd1', false)).toBe(false);
   });
 

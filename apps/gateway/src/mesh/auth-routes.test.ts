@@ -1364,6 +1364,144 @@ describe('auth-routes', () => {
     }
   });
 
+  test('trustProxy keys login limiter on CF-Connecting-IP; ignored when untrusted', async () => {
+    const failLogin = (
+      runtime: MeshHttpRuntime,
+      opts: { clientIp: string; trustProxy: boolean; cfIp: string }
+    ) =>
+      call(runtime, 'http://localhost/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'cf-connecting-ip': opts.cfIp,
+        },
+        body: JSON.stringify({}),
+        clientIp: opts.clientIp,
+        trustProxy: opts.trustProxy,
+      });
+
+    const mesh = await bootMesh();
+    try {
+      const socket = '10.0.0.1';
+      for (let i = 0; i < 10; i++) {
+        const res = await failLogin(mesh.runtime, {
+          clientIp: socket,
+          trustProxy: true,
+          cfIp: '203.0.113.1',
+        });
+        expect(res.status).toBe(400);
+      }
+      const other = await failLogin(mesh.runtime, {
+        clientIp: socket,
+        trustProxy: true,
+        cfIp: '203.0.113.2',
+      });
+      expect(other.status).toBe(400);
+      const same = await failLogin(mesh.runtime, {
+        clientIp: socket,
+        trustProxy: true,
+        cfIp: '203.0.113.1',
+      });
+      expect(same.status).toBe(429);
+      expect((await same.json()).code).toBe('RATE_LIMITED');
+    } finally {
+      mesh.close();
+    }
+
+    const untrusted = await bootMesh();
+    try {
+      const socket = '10.0.0.1';
+      for (let i = 0; i < 10; i++) {
+        const res = await failLogin(untrusted.runtime, {
+          clientIp: socket,
+          trustProxy: false,
+          cfIp: `203.0.113.${i + 1}`,
+        });
+        expect(res.status).toBe(400);
+      }
+      const blocked = await failLogin(untrusted.runtime, {
+        clientIp: socket,
+        trustProxy: false,
+        cfIp: '198.51.100.9',
+      });
+      expect(blocked.status).toBe(429);
+      expect((await blocked.json()).code).toBe('RATE_LIMITED');
+    } finally {
+      untrusted.close();
+    }
+  });
+
+  test('bootstrap loopback ignores spoofed XFF unless trustProxy; CF-Connecting-IP is never local', async () => {
+    const bootstrap = (
+      runtime: MeshHttpRuntime,
+      opts: { clientIp: string; trustProxy?: boolean; headers?: Record<string, string> }
+    ) =>
+      call(runtime, 'http://localhost/api/auth/local/bootstrap', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...opts.headers },
+        body: JSON.stringify({ username: 'owner', password: 'tmex-test' }),
+        clientIp: opts.clientIp,
+        trustProxy: opts.trustProxy,
+      });
+
+    const openStandalone = async () => {
+      const mesh = await bootMesh({
+        roles: { hub: false, node: false },
+        skipUserBootstrap: true,
+      });
+      mesh.runtime.auth.setLocalAuthStore(new MemoryLocalAuthStore());
+      return mesh;
+    };
+
+    const a = await openStandalone();
+    try {
+      const res = await bootstrap(a.runtime, { clientIp: '127.0.0.1' });
+      expect(res.status).toBe(200);
+    } finally {
+      a.close();
+    }
+
+    for (const trustProxy of [false, true]) {
+      const mesh = await openStandalone();
+      try {
+        const res = await bootstrap(mesh.runtime, {
+          clientIp: '127.0.0.1',
+          trustProxy,
+          headers: { 'cf-connecting-ip': '203.0.113.5' },
+        });
+        expect(res.status).toBe(403);
+        expect((await res.json()).code).toBe('LOCAL_ONLY');
+      } finally {
+        mesh.close();
+      }
+    }
+
+    const c = await openStandalone();
+    try {
+      const res = await bootstrap(c.runtime, {
+        clientIp: '127.0.0.1',
+        trustProxy: true,
+        headers: { 'x-forwarded-for': '203.0.113.5' },
+      });
+      expect(res.status).toBe(403);
+      expect((await res.json()).code).toBe('LOCAL_ONLY');
+    } finally {
+      c.close();
+    }
+
+    const d = await openStandalone();
+    try {
+      const res = await bootstrap(d.runtime, {
+        clientIp: '127.0.0.1',
+        trustProxy: false,
+        headers: { 'x-forwarded-for': '203.0.113.5' },
+      });
+      expect(res.status).toBe(200);
+    } finally {
+      d.close();
+    }
+  });
+
   test('passkey register/options requires session; login/options returns publicKey options', async () => {
     const mesh = await bootMesh();
     try {

@@ -26,6 +26,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       deviceConnected,
       isSelectionInvalid,
       sizingMode = 'report',
+      viewportPan = false,
       autoFocus = true,
       focused = true,
       onResize,
@@ -83,6 +84,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
 
     const getTerminalForTouch = useCallback(() => instance, [instance]);
     useMobileTouch(containerRef, getTerminalForTouch);
+
+    useEffect(() => {
+      instance?.setViewportPan?.(viewportPan);
+    }, [instance, viewportPan]);
 
     useTerminalInput({
       deviceId,

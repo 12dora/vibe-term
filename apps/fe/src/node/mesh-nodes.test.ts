@@ -1,16 +1,20 @@
-// mesh 节点列表的纯函数：指纹、NODE_EVENT 投影、排序、hub 合并与 hub 候选顺序。
+// mesh 节点列表的纯函数：指纹、NODE_EVENT 投影、排序、hub 合并与 hub 候选顺序；
+// 以及宿主级唯一那条轮询回路（单例引用计数 + 后台暂停）。
 
 import { describe, expect, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import type { AuthApi, MeshNode } from '@tmex/api-client/auth/index';
 import { wsBorsh } from '@tmex/shared';
 import { bytesToHex, encodeBase64url, sha256 } from '@tmex/shared/auth';
 import type { HubNodeRow } from './hub-api';
 import { decodeMeshFrame } from './mesh-events';
 import {
+  acquireMeshNodesPolling,
   findHubNodeId,
   mergeNodes,
   patchNodesWithEvent,
   publicKeyFingerprint,
+  resetMeshNodesStateForTest,
+  setMeshNodesStateForTest,
   sortNodes,
   toRuntimeNodeId,
 } from './mesh-nodes';
@@ -375,5 +379,120 @@ describe('mergeNodes 的 isHub', () => {
       hubNodeId: null,
     });
     expect(rows[0].isHub).toBe(true);
+  });
+});
+
+const INTERVAL_MS = 30_000;
+
+/** 一条被完全接管的轮询回路：定时器、可见性、时钟、刷新动作都由用例驱动。 */
+function pollingHarness() {
+  const state = {
+    refreshes: 0,
+    scheduled: 0,
+    tick: null as (() => void) | null,
+    onVisibilityChange: null as (() => void) | null,
+    hidden: false,
+    now: 1_000_000,
+  };
+  const options = {
+    intervalMs: INTERVAL_MS,
+    refresh: (_api: AuthApi) => {
+      state.refreshes += 1;
+    },
+    schedule: (fn: () => void) => {
+      state.scheduled += 1;
+      state.tick = fn;
+      return () => {
+        state.tick = null;
+      };
+    },
+    visibility: {
+      hidden: () => state.hidden,
+      subscribe: (listener: () => void) => {
+        state.onVisibilityChange = listener;
+        return () => {
+          state.onVisibilityChange = null;
+        };
+      },
+    },
+    now: () => state.now,
+  };
+  return { state, options };
+}
+
+describe('acquireMeshNodesPolling', () => {
+  test('两个消费方共用同一条回路：只装一个定时器，最后一个归还才停', () => {
+    const { state, options } = pollingHarness();
+    const first = acquireMeshNodesPolling(options);
+    // 第二个消费方的接线整个不生效（首个取用方定了这一轮回路），也不额外拉一次
+    const secondHarness = pollingHarness();
+    const second = acquireMeshNodesPolling(secondHarness.options);
+
+    expect(state.scheduled).toBe(1);
+    expect(state.refreshes).toBe(1);
+    expect(secondHarness.state.scheduled).toBe(0);
+    expect(secondHarness.state.refreshes).toBe(0);
+
+    first();
+    expect(state.tick).not.toBeNull();
+    state.tick?.();
+    expect(state.refreshes).toBe(2);
+
+    second();
+    expect(state.tick).toBeNull();
+    // 归还是幂等的：重复调用不会把下一条回路误停
+    second();
+    const next = acquireMeshNodesPolling(options);
+    expect(state.scheduled).toBe(2);
+    next();
+  });
+
+  test('页面隐藏期间跳过这一拍', () => {
+    const { state, options } = pollingHarness();
+    const release = acquireMeshNodesPolling(options);
+
+    state.hidden = true;
+    state.tick?.();
+    state.tick?.();
+    expect(state.refreshes).toBe(1);
+
+    state.hidden = false;
+    state.tick?.();
+    expect(state.refreshes).toBe(2);
+    release();
+  });
+
+  test('重新可见时：距上次刷新超过一个间隔就立刻补一次，否则等下一拍', () => {
+    const { state, options } = pollingHarness();
+    setMeshNodesStateForTest({ loadedAt: state.now });
+    const release = acquireMeshNodesPolling(options);
+
+    // 刚刷新过：回到前台不重复拉
+    state.onVisibilityChange?.();
+    expect(state.refreshes).toBe(1);
+
+    // 后台待够一个间隔：回到前台立刻补
+    state.now += INTERVAL_MS;
+    state.onVisibilityChange?.();
+    expect(state.refreshes).toBe(2);
+
+    // 仍在后台的 visibilitychange（切走那一次）不触发刷新
+    state.hidden = true;
+    state.now += INTERVAL_MS;
+    state.onVisibilityChange?.();
+    expect(state.refreshes).toBe(2);
+
+    release();
+    resetMeshNodesStateForTest();
+  });
+
+  test('一份数据都还没有时回到前台必定补拉', () => {
+    resetMeshNodesStateForTest();
+    const { state, options } = pollingHarness();
+    const release = acquireMeshNodesPolling(options);
+
+    state.onVisibilityChange?.();
+    expect(state.refreshes).toBe(2);
+    release();
   });
 });

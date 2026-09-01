@@ -35,7 +35,8 @@ export function selectVisibleFileRoots({
   return roots.filter(
     (root) =>
       root.enabled &&
-      // 这里的 root 本身就是「该设备配过目录」的证据，缺省即显示
+      // 这里的 root 本身就是「该设备配过目录」的证据；缺省是否显示由 node 归属决定
+      // （本机显示、远端隐藏，见 isSidebarFilesVisible）
       isSidebarFilesVisible(visibility, runtimeNodeId, root.deviceId, true) &&
       isFileRootDeviceReachable(root.deviceType, root.deviceId, deviceConnected)
   );

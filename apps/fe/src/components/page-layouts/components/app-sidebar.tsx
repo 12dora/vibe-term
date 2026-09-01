@@ -10,6 +10,7 @@ import { useRouteNodeId } from '@/node/node-runtime-boundary';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { nodeQueryClient } from '@/node/node-runtimes';
 import { selfAgentStore } from '@/node/self-agent-store';
+import { sidebarSectionExpanded, useSidebarSectionExpanded } from '@/node/sidebar-node-expansion';
 import { SELF_NODE_ID } from '@tmex/api-client';
 import { SortableVerticalList, useSortableRow } from '@tmex/panels/device-tree';
 import type { FilesNodeInfo } from '@tmex/panels/files';
@@ -54,9 +55,20 @@ function renderNodeLogin(node: FilesNodeInfo) {
   return <NodeLoginButton nodeId={node.runtimeNodeId} nodeName={node.name} className="w-full" />;
 }
 
-/** 该分节的运行时已挂载（在线且已登录）：只有这些 node 有自己的 QueryClient 与事件订阅。 */
+/** 该分节能挂运行时（在线且已登录）。 */
 function isFilesSectionMounted(entry: SidebarNodeEntry): boolean {
   return entry.online && entry.loggedIn;
+}
+
+/** 此刻确实挂着运行时：还要求分节没被折叠——只有这些 node 有自己的 QueryClient 与事件订阅。 */
+function hasMountedFilesRuntime(
+  entry: SidebarNodeEntry,
+  expansion: Record<string, boolean>
+): boolean {
+  return (
+    isFilesSectionMounted(entry) &&
+    (sidebarSectionExpanded(expansion, 'files', entry.runtimeNodeId) ?? true)
+  );
 }
 
 function SortableFilesNodeSection({ entry }: { entry: SidebarNodeEntry }) {
@@ -64,10 +76,21 @@ function SortableFilesNodeSection({ entry }: { entry: SidebarNodeEntry }) {
   const sortable = useSortableRow(sidebarNodeSortableId(entry.id));
   const drag = { sortable, dragHandleLabel: t('sidebar.node.dragHandle') };
   const node = filesNodeInfo(entry);
+  // 文件栏的分节缺省展开（用户切到这个标签就是要看文件），折叠后连运行时一起摘掉：
+  // 收起的远端 node 不该继续占着一条 WS 与直连协商。
+  const [expanded, setExpanded] = useSidebarSectionExpanded('files', node.runtimeNodeId, true);
 
-  // 离线 / 未登录的 node 不挂运行时：不建连接，也不发它的 files 查询。
-  if (!isFilesSectionMounted(entry)) {
-    return <FilesNodeSection node={node} drag={drag} renderLogin={renderNodeLogin} />;
+  // 离线 / 未登录 / 已折叠的 node 不挂运行时：不建连接，也不发它的 files 查询。
+  if (!isFilesSectionMounted(entry) || !expanded) {
+    return (
+      <FilesNodeSection
+        node={node}
+        drag={drag}
+        renderLogin={renderNodeLogin}
+        expanded={expanded}
+        onExpandedChange={setExpanded}
+      />
+    );
   }
   return (
     <NodeRuntimeScope nodeId={node.runtimeNodeId}>
@@ -75,7 +98,12 @@ function SortableFilesNodeSection({ entry }: { entry: SidebarNodeEntry }) {
           没有它，别处改了该 node 的目录配置，本页这份缓存要等手动刷新/窗口聚焦才更新。
           self 恒由 main.tsx 覆盖，不重复订阅。 */}
       {node.runtimeNodeId !== SELF_NODE_ID && <SettingsEventsInit />}
-      <FilesNodeSection node={node} drag={drag} />
+      <FilesNodeSection
+        node={node}
+        drag={drag}
+        expanded={expanded}
+        onExpandedChange={setExpanded}
+      />
     </NodeRuntimeScope>
   );
 }
@@ -88,6 +116,7 @@ function MeshFilesTab({ entryNodeId }: { entryNodeId: string | null }) {
   const { nodes } = useMeshNodes({ enabled: false });
   const sidebarNodeOrder = useUIStore((state) => state.sidebarNodeOrder);
   const setSidebarNodeOrder = useUIStore((state) => state.setSidebarNodeOrder);
+  const expansion = useUIStore((state) => state.sidebarNodeExpansion);
 
   const entries = useMemo(
     () => toSidebarEntries(nodes, entryNodeId, sidebarNodeOrder),
@@ -105,10 +134,10 @@ function MeshFilesTab({ entryNodeId }: { entryNodeId: string | null }) {
   // 调它会留下一份永远等不到 `onDispose` 的缓存。
   const refresh = useCallback(() => {
     for (const entry of entries) {
-      if (!isFilesSectionMounted(entry)) continue;
+      if (!hasMountedFilesRuntime(entry, expansion)) continue;
       void nodeQueryClient(entry.runtimeNodeId).invalidateQueries({ queryKey: FILES_QUERY_KEY });
     }
-  }, [entries]);
+  }, [entries, expansion]);
 
   // mesh 列表还没回来时先渲染 self 的文件树，避免侧边栏首屏闪空。
   if (entries.length === 0) return <FilesTab />;

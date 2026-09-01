@@ -15,6 +15,7 @@ export type {
   GatewayTransportEvent,
   GatewayTransportEventHandler,
   GatewayTransportSourceRoute,
+  TerminalViewportPolicyEvent,
 } from './transport-types';
 
 export { encodeGatewayTransportCommand } from './transport-command-encoder';

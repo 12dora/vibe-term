@@ -1,4 +1,5 @@
 import { MouseReportGesture } from './mouse-report-gesture';
+import { TouchPanAnchor, planPan } from './pan-gesture';
 import {
   type ElementFromPoint,
   documentElementFromPoint,
@@ -9,6 +10,11 @@ import { TouchScrollGesture } from './scroll-gesture';
 import { LongPressSelectionGesture } from './selection-gesture';
 import { type TouchPoint, exceedsMoveTolerance, findTouchById } from './touch-geometry';
 import type { ResolveTerminal, TouchGestureState } from './types';
+
+interface PanOutcome {
+  panned: boolean;
+  remainingY: number;
+}
 
 export interface GestureMachineOptions {
   container: Element;
@@ -33,6 +39,7 @@ export class MobileTouchGestureMachine {
   private readonly resolveTerminal: ResolveTerminal;
   private readonly elementFromPoint: ElementFromPoint;
   private readonly scroll: TouchScrollGesture;
+  private readonly pan = new TouchPanAnchor();
   private readonly selection = new LongPressSelectionGesture();
   private readonly mouseReport = new MouseReportGesture();
 
@@ -57,16 +64,59 @@ export class MobileTouchGestureMachine {
     this.touchId = null;
     this.reporting = false;
     this.scroll.resetAccumulator();
+    this.pan.reset();
+  }
+
+  // 平移分支：仅 follower（终端暴露 panMetrics）且非上报模式生效，且只在轴锁命中的
+  // 那一轴超尺寸时才吃位移；纵向到边的余量原样交回 scrollback（嵌套滚动语义）。
+  private applyPan(touch: TouchPoint, deltaY: number): PanOutcome {
+    const deltaX = this.pan.takeHorizontalDelta(touch.clientX);
+    if (this.reporting) {
+      return { panned: false, remainingY: deltaY };
+    }
+
+    const terminal = this.resolveTerminal();
+    const metrics = terminal?.panMetrics?.() ?? null;
+    if (!terminal || !metrics || typeof terminal.panBy !== 'function') {
+      return { panned: false, remainingY: deltaY };
+    }
+
+    const axis = this.pan.resolveAxis(touch.clientX, touch.clientY);
+    const plan = planPan(axis, metrics, deltaX, deltaY);
+    if (plan.panX === 0 && plan.panY === 0) {
+      return { panned: false, remainingY: plan.remainingY };
+    }
+
+    const applied = terminal.panBy(plan.panX, plan.panY);
+    return {
+      panned: applied.deltaX !== 0 || applied.deltaY !== 0,
+      remainingY: plan.remainingY,
+    };
   }
 
   private primaryTouch(touches: TouchList): TouchPoint | null {
     return findTouchById(touches, this.touchId) ?? touches.item(0);
   }
 
-  // 上报模式（alt-screen TUI）下本地滚动条无意义，右缘 36px 热区会变成 TUI 死区：
-  // 仅在直接命中滚动条元素时才 bypass
-  private bypasses(clientX: number, clientY: number, eventTarget: EventTarget | null): boolean {
+  // 平移视口是否正在生效：follower 开了 viewportPan，且内容表面至少有一轴超尺寸。
+  private panViewportActive(): boolean {
     if (this.reporting) {
+      return false;
+    }
+    const terminal = this.resolveTerminal();
+    if (!terminal || typeof terminal.panBy !== 'function') {
+      return false;
+    }
+    const metrics = terminal.panMetrics?.() ?? null;
+    return Boolean(metrics && (metrics.overflowX > 0 || metrics.overflowY > 0));
+  }
+
+  // 两种情况下右缘 36px 热区必须让位给自定义手势，仅在直接命中滚动条元素时才 bypass：
+  // - 上报模式（alt-screen TUI）：本地滚动条无意义，热区会变成 TUI 死区；
+  // - 平移视口生效时：视口上挂了 touch-action:none，交还原生等于一条既不平移也不
+  //   滚动的死带。
+  private bypasses(clientX: number, clientY: number, eventTarget: EventTarget | null): boolean {
+    if (this.reporting || this.panViewportActive()) {
       return hitsScrollbarElement(clientX, clientY, eventTarget, this.elementFromPoint);
     }
     return shouldBypassCustomScroll(
@@ -88,6 +138,7 @@ export class MobileTouchGestureMachine {
       this.touchStartX = touch.clientX;
       this.touchStartY = touch.clientY;
       this.scroll.anchorSingle(touch.clientY);
+      this.pan.anchor(touch.clientX, touch.clientY);
 
       const terminal = this.resolveTerminal();
       this.reporting = Boolean(terminal?.isMouseReporting?.());
@@ -151,7 +202,11 @@ export class MobileTouchGestureMachine {
       this.state = 'scroll';
     }
 
-    // state === 'scroll'：单指滚动路径（上报/非上报共用）
+    // state === 'scroll' | 'pan'：单指滚动/平移路径（上报/非上报共用）
+    this.handleSingleFingerMove(touch, event);
+  };
+
+  private handleSingleFingerMove(touch: TouchPoint, event: TouchEvent): void {
     if (
       this.selection.isArmed() &&
       exceedsMoveTolerance(this.touchStartX, this.touchStartY, touch.clientX, touch.clientY)
@@ -169,18 +224,30 @@ export class MobileTouchGestureMachine {
       return;
     }
 
-    const outcome = this.scroll.handleSingleMove(
+    // 先平移、余量再滚 scrollback：纵向到边时两者在同一次 move 里接力（嵌套滚动语义）。
+    const panOutcome = this.applyPan(touch, this.scroll.takeVerticalDelta(touch.clientY));
+    if (panOutcome.panned) {
+      this.state = 'pan';
+    }
+    if (panOutcome.remainingY === 0) {
+      if (panOutcome.panned) {
+        preventIfCancelable(event);
+      }
+      return;
+    }
+
+    const outcome = this.scroll.applyVerticalDelta(
       this.resolveTerminal,
+      panOutcome.remainingY,
       touch.clientX,
       touch.clientY
     );
-    if (!outcome) return;
+    if (!outcome || !event.cancelable) return;
 
-    if (!event.cancelable) return;
     if (outcome.didScroll || outcome.atTopWhilePullingDown) {
       event.preventDefault();
     }
-  };
+  }
 
   readonly handleTouchEnd = (event: TouchEvent): void => {
     // wheel 态触点减少但未清零：重锚质心继续
@@ -210,7 +277,12 @@ export class MobileTouchGestureMachine {
       return;
     }
 
-    if (this.state === 'scroll' || this.state === 'bypass' || this.state === 'wheel') {
+    if (
+      this.state === 'scroll' ||
+      this.state === 'pan' ||
+      this.state === 'bypass' ||
+      this.state === 'wheel'
+    ) {
       if (event.touches.length === 0) {
         this.resetGesture();
       }

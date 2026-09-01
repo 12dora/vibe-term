@@ -1,6 +1,7 @@
 // node 运行时边界：`/n/:nodeId/*` 与旧路由（等价于 `self`）各自的**页面区**运行时。
 // 取 nodeId → NodeConnectionManager 取运行时 → 注入 RuntimeProvider + 该 node 的
-// QueryClient + GlobalDeviceProvider；卸载时归还引用。
+// QueryClient；卸载时归还引用。设备列表（`GlobalDeviceProvider`）在门闸**内部**，
+// 见 `NodeRouteGate`。
 //
 // 边界只包页面区，不包外壳：`RuntimeProvider` 换 runtime 实例即整棵子树重挂
 // （见 `stores/react.tsx` 的 runtimeSubtreeKey——react-query 的 observer 在首次挂载时就和
@@ -50,9 +51,7 @@ export function NodeRuntimeBoundary({ children }: { children: ReactNode }) {
 
   return (
     <RuntimeProvider runtime={runtime}>
-      <QueryClientProvider client={queryClient}>
-        <GlobalDeviceProvider>{children}</GlobalDeviceProvider>
-      </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </RuntimeProvider>
   );
 }
@@ -60,11 +59,14 @@ export function NodeRuntimeBoundary({ children }: { children: ReactNode }) {
 /**
  * 「用到才登录」的门闸：静默登录没完成 / 已失败时，用整页状态顶掉**页面区**。
  * 必须放在 `NodeRuntimeBoundary` 内部——门闸放行前页面一个请求都不该发。
+ *
+ * `GlobalDeviceProvider` 也挂在门闸里面：它自己就带一条 `/api/devices` 查询，留在门闸外面的话
+ * 进未登录的远端 node 必定先吃一发 401 再重试（门闸的意义正是不让这种请求发出去）。
  */
 export function NodeRouteGate({ children }: { children: ReactNode }) {
   const nodeId = useRouteNodeId();
   const gate = useNodeLoginGate(nodeId);
-  if (gate.status === 'ready') return <>{children}</>;
+  if (gate.status === 'ready') return <GlobalDeviceProvider>{children}</GlobalDeviceProvider>;
   return <NodeGateScreen nodeId={nodeId} gate={gate} />;
 }
 

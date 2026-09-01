@@ -1,10 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  devicesQueryKey as defaultDevicesQueryKey,
-  fetchDevices,
-  reorderDevices,
-} from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
+import { useQuery } from '@tanstack/react-query';
+import { devicesQueryKey as defaultDevicesQueryKey, fetchDevices } from '@tmex/api-client';
 import { hostAppPath } from '@tmex/stores';
 import { useRuntime, useSiteStore, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { Button } from '@tmex/ui/button';
@@ -12,24 +7,14 @@ import { ScrollArea } from '@tmex/ui/scroll-area';
 import { SidebarGroup } from '@tmex/ui/sidebar';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
 import type { DeviceConnectionAdapter } from '../device-connection';
 import type { SidebarAgentAdapter } from './agent-adapter';
-import { reorderDevicesOptimistically } from './device-reorder';
 import { DeviceRow } from './device-row';
 import { useDeviceTreeDialogs } from './device-tree-dialogs';
 import { SortableVerticalList } from './device-tree-dnd';
 import { useDeviceTreeNavigationApi, useDeviceTreeSelection } from './device-tree-navigation';
-import {
-  mergeReorderedVisibleIds,
-  selectSidebarVisibleDevices,
-  sortDevices,
-} from './device-tree-selectors';
-
-type DeviceListItem = Device & {
-  lastError?: string | null;
-  lastErrorType?: string | null;
-};
+import { selectSidebarVisibleDevices, sortDevices } from './device-tree-selectors';
+import { useSidebarDeviceReorder } from './use-sidebar-device-reorder';
 
 const identityExpansionKey = (deviceId: string) => deviceId;
 
@@ -125,29 +110,6 @@ export function SideBarDeviceList({
     [runtime]
   );
 
-  const queryClient = useQueryClient();
-
-  const reorderDevicesMutation = useMutation({
-    mutationFn: (deviceIds: string[]) => reorderDevices(deviceIds, runtime.apiClient),
-    onMutate: async (deviceIds: string[]) => {
-      await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<{ devices: DeviceListItem[] }>(queryKey);
-      if (previous) {
-        queryClient.setQueryData(queryKey, {
-          devices: reorderDevicesOptimistically(previous.devices, deviceIds),
-        });
-      }
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
-      toast.error(t('device.reorderFailed'));
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey });
-    },
-  });
-
   // 必须锁住引用：本组件订阅了 snapshots，终端每次输出都会重渲染。
   // 若每次渲染都新建数组，下面两个 effect 会跟着空跑（对每台设备调 ensureDeviceSubscribed），
   // sortedDevices / knownDeviceIds 两个 useMemo 也永远命中不了缓存。
@@ -232,23 +194,21 @@ export function SideBarDeviceList({
   const allSortedDeviceIds = useMemo(() => allSortedDevices.map((d) => d.id), [allSortedDevices]);
   const sortedDeviceIds = useMemo(() => sortedDevices.map((d) => d.id), [sortedDevices]);
 
-  const reorderDevicesMutate = reorderDevicesMutation.mutate;
-  // 拖拽只在可见设备之间发生，但网关按提交序列整体重写 sortOrder：
-  // 必须把结果合并回完整顺序再提交，否则隐藏设备的旧 sortOrder 会与新序号撞车。
-  const handleReorderDevices = useCallback(
-    (nextIds: string[]) =>
-      reorderDevicesMutate(mergeReorderedVisibleIds(allSortedDeviceIds, sortedDeviceIds, nextIds)),
-    [reorderDevicesMutate, allSortedDeviceIds, sortedDeviceIds]
-  );
+  const deviceReorder = useSidebarDeviceReorder({
+    queryKey,
+    allSortedDeviceIds,
+    sortedDeviceIds,
+  });
 
   return (
     <SidebarGroup className="flex flex-col flex-1 min-h-0 py-0">
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="space-y-1.5 pb-1 pt-0.5 select-none [-webkit-user-select:none] [-webkit-touch-callout:none]">
+      {/* 只纵向滚：与文件页同理，拖拽行的横移不该把侧栏拽偏 */}
+      <ScrollArea axis="vertical" className="flex-1 min-h-0">
+        <div className="min-w-0 space-y-1.5 pb-1 pt-0.5 select-none [-webkit-user-select:none] [-webkit-touch-callout:none]">
           <SortableVerticalList
             ids={sortedDeviceIds}
-            disabled={reorderDevicesMutation.isPending}
-            onReorder={handleReorderDevices}
+            disabled={deviceReorder.isPending}
+            onReorder={deviceReorder.reorder}
           >
             {sortedDevices.map((device) => (
               <DeviceRow

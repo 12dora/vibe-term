@@ -15,6 +15,8 @@ type CanvasRendererOptions = {
   theme: GhosttyTheme;
   fontFamily: string;
   fontSize: number;
+  /** 四张 canvas 的 CSS 尺寸变化后回调（cols×cellW / rows×cellH），供平移内容表面同步。 */
+  onSurfaceSize?: (width: number, height: number) => void;
 };
 
 type CanvasRendererFrame = {
@@ -197,8 +199,10 @@ export class CanvasRenderer {
   private drawnSelectionRects: GhosttySelectionRect[] = [];
   private drawnSelectionColor = '';
   private readonly cursorLayer: CursorLayer;
+  private readonly onSurfaceSize: ((width: number, height: number) => void) | null;
 
   constructor(options: CanvasRendererOptions) {
+    this.onSurfaceSize = options.onSurfaceSize ?? null;
     this.theme = options.theme;
     this.fontFamily = options.fontFamily;
     this.fontSize = options.fontSize;
@@ -370,6 +374,8 @@ export class CanvasRenderer {
     const width = nextCols * deviceCellWidth;
     const height = nextRows * deviceCellHeight;
 
+    const cssWidth = width / dpr;
+    const cssHeight = height / dpr;
     for (const canvas of [
       this.mainCanvas,
       this.linkCanvas,
@@ -378,9 +384,10 @@ export class CanvasRenderer {
     ]) {
       canvas.width = width;
       canvas.height = height;
-      canvas.style.width = `${width / dpr}px`;
-      canvas.style.height = `${height / dpr}px`;
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
     }
+    this.onSurfaceSize?.(cssWidth, cssHeight);
 
     for (const context of [
       this.mainContext,

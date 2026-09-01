@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { extname, join, normalize, relative, resolve, sep } from 'node:path';
 import { t } from '../i18n';
 
 const MIME_MAP: Record<string, string> = {
@@ -18,9 +18,72 @@ const MIME_MAP: Record<string, string> = {
   '.map': 'application/json; charset=utf-8',
 };
 
+const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';
+const REVALIDATE_CACHE = 'no-cache';
+// Vite 默认 assets/[name]-[hash].ext（本仓库未覆盖 rollupOptions.output）
+// Rollup 4 的 [hash] 是 base64url 字母表，可含 `_` 与 `-`
+const HASHED_ASSET_NAME = /-[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9]+)+$/;
+
 function contentTypeByPath(path: string): string | undefined {
   const ext = extname(path).toLowerCase();
   return MIME_MAP[ext];
+}
+
+function isHashedViteAsset(staticRoot: string, targetPath: string): boolean {
+  const rel = relative(resolve(staticRoot), targetPath).replaceAll('\\', '/');
+  if (rel.startsWith('../') || rel === '..') return false;
+  if (!rel.startsWith('assets/')) return false;
+  const name = rel.slice(rel.lastIndexOf('/') + 1);
+  return HASHED_ASSET_NAME.test(name);
+}
+
+function makeEtag(size: number, mtimeMs: number): string {
+  return `W/"${size}-${mtimeMs}"`;
+}
+
+function etagMatches(header: string | null, etag: string): boolean {
+  if (!header) return false;
+  const strong = etag.startsWith('W/') ? etag.slice(2) : etag;
+  for (const raw of header.split(',')) {
+    const tag = raw.trim();
+    if (tag === '*') return true;
+    const tagStrong = tag.startsWith('W/') ? tag.slice(2) : tag;
+    if (tag === etag || tagStrong === strong) return true;
+  }
+  return false;
+}
+
+function isUnmodifiedSince(header: string | null, mtimeMs: number): boolean {
+  if (!header) return false;
+  const since = Date.parse(header);
+  if (Number.isNaN(since)) return false;
+  return Math.floor(mtimeMs / 1000) <= Math.floor(since / 1000);
+}
+
+function applyCachePolicy(
+  headers: Headers,
+  req: Request,
+  staticRoot: string,
+  targetPath: string
+): boolean {
+  if (isHashedViteAsset(staticRoot, targetPath)) {
+    headers.set('Cache-Control', IMMUTABLE_CACHE);
+    return false;
+  }
+
+  const st = statSync(targetPath);
+  const mtimeMs = Math.trunc(st.mtimeMs);
+  const etag = makeEtag(st.size, mtimeMs);
+  headers.set('Cache-Control', REVALIDATE_CACHE);
+  headers.set('ETag', etag);
+  headers.set('Last-Modified', new Date(mtimeMs).toUTCString());
+
+  const ifNoneMatch = req.headers.get('If-None-Match');
+  if (etagMatches(ifNoneMatch, etag)) return true;
+  if (!ifNoneMatch && isUnmodifiedSince(req.headers.get('If-Modified-Since'), mtimeMs)) {
+    return true;
+  }
+  return false;
 }
 
 export function resolveRequestedFile(staticRoot: string, pathname: string): string | null {
@@ -76,6 +139,11 @@ export async function serveFrontend(req: Request, staticRoot: string): Promise<R
   const type = contentTypeByPath(targetPath);
   if (type) {
     headers.set('Content-Type', type);
+  }
+
+  const notModified = applyCachePolicy(headers, req, staticRoot, targetPath);
+  if (notModified) {
+    return new Response(null, { status: 304, headers });
   }
 
   return new Response(Bun.file(targetPath), { headers });

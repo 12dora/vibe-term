@@ -274,9 +274,9 @@ describe('DevicesPage', () => {
     expect(offlinePanel).toContain('data-fallback="书房"');
     expect(html).not.toContain(`data-testid="node-login-${OFFLINE_ID}"`);
 
-    // 在线未登录：只给登录按钮，不挂面板
-    expect(html).toContain(`data-testid="devices-node-login-${SIGNED_OUT_ID}"`);
-    expect(html).toContain(`data-testid="node-login-${SIGNED_OUT_ID}"`);
+    // 在线未登录：先静默登录（静态渲染里门闸恒为 pending），既不给登录按钮也不挂面板
+    expect(html).toContain(`data-testid="devices-node-signing-in-${SIGNED_OUT_ID}"`);
+    expect(html).not.toContain(`data-testid="node-login-${SIGNED_OUT_ID}"`);
     expect(html).not.toContain(`data-testid="devices-node-panel-${SIGNED_OUT_ID}"`);
   });
 

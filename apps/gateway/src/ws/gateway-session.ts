@@ -1,6 +1,7 @@
 import { type BorshSessionState, createBorshSessionState } from './borsh/codec-borsh';
 import { type SessionState, createSessionState } from './borsh/session-state';
 import type { Carrier } from './carrier';
+import type { ViewportClaim } from './viewport-policy';
 
 export type CarrierRole = 'primary' | 'direct';
 
@@ -16,6 +17,7 @@ export class GatewaySession {
   activeCarrier: Carrier;
   closed = false;
   onCarrierDetached: ((carrier: Carrier) => void) | null = null;
+  readonly viewportClaims = new Map<string, ViewportClaim>();
 
   constructor(options: {
     id?: string;

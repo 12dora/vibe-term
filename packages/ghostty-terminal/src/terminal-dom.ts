@@ -1,12 +1,21 @@
 import { DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH, LINE_HEIGHT } from './terminal-constants';
 import type {
   GhosttyCellDimensions,
+  GhosttyPanDelta,
+  GhosttyPanMetrics,
   GhosttyTerminalInitOptions,
   GhosttyTerminalSize,
   GhosttyTheme,
 } from './types';
 
 const SCROLLBAR_FADE_MS = 3000;
+
+// iOS 惯性滚动的历史开关，标准 CSSOM 里没有；用交叉类型直接赋值，不支持的引擎上是惰性属性。
+type PanViewportStyle = CSSStyleDeclaration & { webkitOverflowScrolling?: string };
+
+function clamp(value: number, max: number): number {
+  return Math.max(0, Math.min(max, value));
+}
 
 // 淡出 deadline 用单调时钟，墙钟回拨不会让滚动条提前消失 / 长期挂着。
 function monotonicNow(): number {
@@ -129,6 +138,10 @@ export class TerminalDomSurface {
   };
 
   private root: HTMLElement | null = null;
+  // .xterm-viewport 兼任平移视口（pan 开启时 overflow:auto），.xterm-screen 兼任内容表面
+  //（pan 开启时 CSS 尺寸 = cols×cellW / rows×cellH）。两者都是既有元素，pan 关闭时
+  // DOM 与样式与以往完全一致。
+  private viewport: HTMLDivElement | null = null;
   private screen: HTMLDivElement | null = null;
   private helperTextarea: HTMLElement | null = null;
   private scrollbarThumb: HTMLDivElement | null = null;
@@ -137,6 +150,10 @@ export class TerminalDomSurface {
   private scrollbarVisible = false;
   private focused = true;
   private linkCursorActive = false;
+  private panEnabled = false;
+  private contentWidth = 0;
+  private contentHeight = 0;
+  private cursorCell: { x: number; y: number } | null = null;
 
   constructor(private readonly options: GhosttyTerminalInitOptions) {}
 
@@ -171,11 +188,117 @@ export class TerminalDomSurface {
     container.appendChild(root);
 
     this.root = root;
+    this.viewport = viewport;
     this.screen = screen;
     this.helperTextarea = textarea;
     this.scrollbarThumb = scrollbar.thumb;
+    viewport.addEventListener('scroll', this.handlePanScroll, { passive: true });
     return screen;
   }
+
+  // follower（他人拥有 PTY 尺寸）时打开：超尺寸的内容表面完整绘制，由平移视口裁剪 + 双向滚动。
+  setViewportPan(enabled: boolean): void {
+    if (this.panEnabled === enabled) {
+      return;
+    }
+
+    this.panEnabled = enabled;
+    this.applyPanStyles();
+  }
+
+  get viewportPanEnabled(): boolean {
+    return this.panEnabled;
+  }
+
+  // CanvasRenderer 每次几何变化后回调，记录内容表面应有的 CSS 尺寸。
+  setContentSurfaceSize(width: number, height: number): void {
+    this.contentWidth = width;
+    this.contentHeight = height;
+    this.applyContentSurfaceStyles();
+  }
+
+  panMetrics(): GhosttyPanMetrics | null {
+    const viewport = this.viewport;
+    if (!this.panEnabled || !viewport) {
+      return null;
+    }
+
+    return {
+      scrollLeft: viewport.scrollLeft,
+      scrollTop: viewport.scrollTop,
+      overflowX: Math.max(0, viewport.scrollWidth - viewport.clientWidth),
+      overflowY: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+    };
+  }
+
+  // 返回真正落地的位移（夹取到可滚范围内），调用方据此把余量回退给 scrollback。
+  panBy(deltaX: number, deltaY: number): GhosttyPanDelta {
+    const viewport = this.viewport;
+    const metrics = this.panMetrics();
+    if (!viewport || !metrics) {
+      return { deltaX: 0, deltaY: 0 };
+    }
+
+    viewport.scrollLeft = clamp(metrics.scrollLeft + deltaX, metrics.overflowX);
+    viewport.scrollTop = clamp(metrics.scrollTop + deltaY, metrics.overflowY);
+    return {
+      deltaX: viewport.scrollLeft - metrics.scrollLeft,
+      deltaY: viewport.scrollTop - metrics.scrollTop,
+    };
+  }
+
+  private applyPanStyles(): void {
+    const viewport = this.viewport;
+    if (!viewport) {
+      return;
+    }
+
+    if (this.panEnabled) {
+      viewport.dataset.panViewport = 'true';
+      viewport.style.overflow = 'auto';
+      viewport.style.overscrollBehavior = 'contain';
+      // 平移由手势状态机以像素为单位驱动，交给原生触摸滚动会与之打架（首指位移先被
+      // 原生吃掉，preventDefault 已不可撤销），故禁用原生触摸手势。
+      viewport.style.touchAction = 'none';
+      (viewport.style as PanViewportStyle).webkitOverflowScrolling = 'touch';
+    } else {
+      viewport.dataset.panViewport = '';
+      viewport.style.overflow = 'hidden';
+      viewport.style.overscrollBehavior = '';
+      viewport.style.touchAction = '';
+      (viewport.style as PanViewportStyle).webkitOverflowScrolling = '';
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+    }
+
+    this.applyContentSurfaceStyles();
+  }
+
+  private applyContentSurfaceStyles(): void {
+    const screen = this.screen;
+    if (!screen) {
+      return;
+    }
+
+    // 首帧渲染前还没有内容尺寸：保持铺满，避免出现 0×0 的内容表面。
+    if (!this.panEnabled || this.contentWidth <= 0 || this.contentHeight <= 0) {
+      screen.style.width = '100%';
+      screen.style.height = '100%';
+      return;
+    }
+
+    screen.style.width = `${this.contentWidth}px`;
+    screen.style.height = `${this.contentHeight}px`;
+  }
+
+  // 平移时 helper textarea（IME 候选框锚点）挂在 root 上不会跟着动，按滚动偏移重贴。
+  private readonly handlePanScroll = (): void => {
+    if (!this.panEnabled || !this.cursorCell) {
+      return;
+    }
+
+    this.positionTextareaAtCursor(this.cursorCell.x, this.cursorCell.y);
+  };
 
   applyTheme(theme: GhosttyTheme): void {
     if (this.root) {
@@ -274,8 +397,12 @@ export class TerminalDomSurface {
       return;
     }
 
-    textarea.style.left = `${cursorX * width}px`;
-    textarea.style.top = `${cursorY * height}px`;
+    this.cursorCell = { x: cursorX, y: cursorY };
+    // textarea 是 root 的子节点（不随内容表面平移），pan 开启时要手动扣掉滚动偏移。
+    const panLeft = this.panEnabled ? (this.viewport?.scrollLeft ?? 0) : 0;
+    const panTop = this.panEnabled ? (this.viewport?.scrollTop ?? 0) : 0;
+    textarea.style.left = `${cursorX * width - panLeft}px`;
+    textarea.style.top = `${cursorY * height - panTop}px`;
     textarea.style.width = `${Math.max(1, width)}px`;
     textarea.style.height = `${Math.max(1, height)}px`;
     textarea.style.lineHeight = `${height}px`;
@@ -289,7 +416,9 @@ export class TerminalDomSurface {
       return;
     }
 
-    const trackHeight = this.screen?.clientHeight ?? 0;
+    // 轨道贴在容器右缘，量的必须是可视高度：pan 开启后 .xterm-screen 是超尺寸内容表面，
+    // 只有 .xterm-viewport 仍等于容器（pan 关闭时两者恒等，行为不变）。
+    const trackHeight = this.viewport?.clientHeight ?? 0;
     if (trackHeight === 0 || scrollbar.total <= scrollbar.len) {
       thumb.style.opacity = '0';
       return;
@@ -372,10 +501,13 @@ export class TerminalDomSurface {
   }
 
   dispose(): void {
+    this.viewport?.removeEventListener('scroll', this.handlePanScroll);
     this.root?.remove();
     this.root = null;
+    this.viewport = null;
     this.screen = null;
     this.helperTextarea = null;
     this.scrollbarThumb = null;
+    this.cursorCell = null;
   }
 }

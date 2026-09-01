@@ -133,6 +133,13 @@ export class FakeElement {
   autocapitalize = '';
   autocomplete = '';
   attributes = new Map<string, string>();
+  // 平移视口用的布局字段：真实布局由测试显式喂（syncPanLayout），生产码只读不算。
+  scrollLeft = 0;
+  scrollTop = 0;
+  clientWidth = 0;
+  clientHeight = 0;
+  scrollWidth = 0;
+  scrollHeight = 0;
   private rect = { width: 0, height: 0, left: 0, top: 0 };
   private listeners = new Map<string, FakeEventListener[]>();
 

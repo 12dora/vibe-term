@@ -4,6 +4,7 @@ import { wsBorsh } from '@tmex/shared';
 import { type GatewayTransportCommand, createSharedGatewayTransport } from '@tmex/ws-client';
 import { createAppRuntime } from './app-runtime';
 import { installWindowStorage } from './test-utils';
+import { selectPaneViewportOwner } from './viewport-policy';
 
 installWindowStorage();
 
@@ -107,6 +108,70 @@ describe('tmux store shared transport adapter', () => {
       [],
     ]);
     expect(subscriptions.map((command) => command.generation)).toEqual([1n, 2n, 3n, 4n, 5n, 6n]);
+
+    runtime.dispose();
+    transport.dispose();
+  });
+
+  test('setPaneViewport emits a normalized terminal-viewport claim', () => {
+    const commands: GatewayTransportCommand[] = [];
+    const transport = createSharedGatewayTransport({
+      initialState: 'READY',
+      onCommand: (command) => {
+        commands.push(command);
+      },
+    });
+    const runtime = createAppRuntime({ transport, storagePrefix: 'shared-viewport:' });
+    const tmux = runtime.stores.tmux.getState();
+    tmux.ensureSocketConnected();
+    commands.length = 0;
+
+    tmux.setPaneViewport('device-a', '%1', { cols: 120.7, rows: 40, visible: true });
+    tmux.setPaneViewport('device-a', '%1', { cols: 120, rows: 40, visible: false });
+    tmux.setPaneViewport('', '%1', { cols: 120, rows: 40, visible: true });
+
+    expect(commands.filter((command) => command.type === 'terminal-viewport')).toEqual([
+      {
+        type: 'terminal-viewport',
+        deviceId: 'device-a',
+        paneId: '%1',
+        cols: 120,
+        rows: 40,
+        visible: true,
+      },
+      {
+        type: 'terminal-viewport',
+        deviceId: 'device-a',
+        paneId: '%1',
+        cols: 120,
+        rows: 40,
+        visible: false,
+      },
+    ]);
+
+    runtime.dispose();
+    transport.dispose();
+  });
+
+  test('terminal-viewport-policy lands in the store and clears on device disconnect', () => {
+    const transport = createSharedGatewayTransport({ initialState: 'READY', onCommand: () => {} });
+    const runtime = createAppRuntime({ transport, storagePrefix: 'shared-viewport-policy:' });
+    runtime.stores.tmux.getState().ensureSocketConnected();
+
+    transport.publish({
+      type: 'terminal-viewport-policy',
+      kind: 'terminal-viewport-policy',
+      deviceId: 'device-a',
+      windowId: '@1',
+      paneId: '%1',
+      owner: false,
+      cols: 200,
+      rows: 50,
+    });
+    expect(selectPaneViewportOwner(runtime.stores.tmux.getState(), 'device-a', '%1')).toBe(false);
+
+    transport.publish({ type: 'device-disconnected', deviceId: 'device-a' });
+    expect(selectPaneViewportOwner(runtime.stores.tmux.getState(), 'device-a', '%1')).toBe(true);
 
     runtime.dispose();
     transport.dispose();

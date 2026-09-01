@@ -106,7 +106,7 @@ peer link 传输选择（自动，按序）：
 
 - **根钥（password key）**：`sk_root = Ed25519(seed)`。私钥只在内存，不落盘，不发送。所有机器存 `users.root_public_key` 与 `root_epoch`。存公钥与存密码哈希一样可被离线爆破弱口令，argon2id 参数取高；与常规密码哈希方案等价，不更差。
 - **passkey**：WebAuthn 凭证。RP ID 必须是域名（`localhost` 或 DNS 名），IP 地址 origin 不可用；每个 credential 绑定注册时的**精确 origin**（scheme+host+port）。注册仪式：entry 生成 registration options（challenge 随机 32 字节、`rpId` = 当前 host、`userHandle` = uid、要求 UV）→ `@simplewebauthn/browser` `startRegistration()` → entry 用 `@simplewebauthn/server` `verifyRegistrationResponse()`（`expectedOrigin` = 当前请求 origin，`expectedRPID` = host）→ 提取 `credentialId / publicKey(COSE) / counter / transports / backupEligible / backupState / deviceType` → 前端签 `add-passkey` 记录（payload = 上述提取结果 + `rp_id` + `origin`，由根钥签，或由**另一把已有 passkey** 对该条记录做专用 assertion）→ 广播。registration challenge 由 entry 落库、60 秒有效、原子消费。删除 passkey 同理签 `remove-passkey`。passkey 登录不需 TOTP。assertion 验证按 WebAuthn 完整流程（challenge、RP ID hash、origin、UP/UV、签名、credential 状态）；counter：记录值非零且新值不大于记录值时拒绝，记录值为零的 authenticator 不做 counter 判断。
-- **浏览器临时钥（session key）**：登录时浏览器生成一把内存 Ed25519 `sk_sess`，由根钥或 passkey 签发**授权**：`delegation = {domain:'tmex/delegation/v1', uid, sess_pk, issued_at, exp = issued_at + 18h, method:'root'|'passkey', credential_id?}`；根钥直接签；passkey 路径：entry 先给出 authentication options（`challenge = sha256(borsh(delegation))`、`rpId`、`allowCredentials`、`userVerification:'required'`），浏览器 `startAuthentication({optionsJSON})`，得到的 assertion（`clientDataJSON / authenticatorData / signature`）整体作为 `delegation_sig`。之后对每台 node 的登录挑战都由 `sk_sess` 签，只需**一次**密码输入或一次 passkey 交互。**`sk_sess` 只能用于登录，不能签任何 `user_key_log` 记录**；持久变更（加/删 passkey、TOTP、admit/revoke node、改密）一律要求根钥或 passkey 对该条记录做一次专用 assertion（UI 在这些操作时再要一次密码或 passkey）。`sk_sess` 只在内存，页面关闭即失；cookie 中的 `node-session` 让刷新页面不必重新登录。
+- **浏览器临时钥（session key）**：登录时浏览器生成一把内存 Ed25519 `sk_sess`，由根钥或 passkey 签发**授权**：`delegation = {domain:'tmex/delegation/v1', uid, sess_pk, issued_at, exp = issued_at + 18h, method:'root'|'passkey', credential_id?}`；根钥直接签；passkey 路径：entry 先给出 authentication options（`challenge = sha256(borsh(delegation))`、`rpId`、`allowCredentials`、`userVerification:'required'`），浏览器 `startAuthentication({optionsJSON})`，得到的 assertion（`clientDataJSON / authenticatorData / signature`）整体作为 `delegation_sig`。之后对每台 node 的登录挑战都由 `sk_sess` 签，只需**一次**密码输入或一次 passkey 交互。**`sk_sess` 只能用于登录，不能签任何 `user_key_log` 记录**；持久变更（加/删 passkey、TOTP、admit/revoke node、改密）一律要求根钥或 passkey 对该条记录做一次专用 assertion（UI 在这些操作时再要一次密码或 passkey）。`sk_sess` 的**私钥字节**在任何形态下都不出浏览器密钥库：环境支持 WebCrypto Ed25519 时它是一把不可导出的 `CryptoKey`，连同 `delegation` 存进 IndexedDB，在 18 小时 TTL 内跨 document 有效（见「会话钥的跨文档持久化（PWA 冷启动）」）；不支持时退回 `@noble` 原始私钥并只留内存、页面关闭即失。cookie 中的 `node-session` 让刷新页面不必重新登录。
 - **密钥变更日志 `user_key_log`**：记录 = Borsh 编码的 `{domain:'tmex/keylog/v1', uid, seq: u64, prev_hash: [u8;32], root_epoch: u32, type, payload, signer:'root'|'passkey', credential_id?}`，`sig` 覆盖整条编码字节；`hash = sha256(记录字节 ‖ sig)`；数据库保存**原始 Borsh 字节与 sig**（`record_bytes`、`sig`），JSON 仅作只读投影。type ∈ `add-passkey | remove-passkey | rotate-root | set-totp | clear-totp | admit-node | revoke-node`。验签规则：记录外层 `root_epoch` = 应用它时的当前 epoch；`signer = root` 用当前 `root_public_key` 验，`signer = passkey` 用 `user_keys` 中该 credential 的公钥验 assertion（challenge = sha256(记录字节)）；`rotate-root` 由当前（即将成为旧）根钥签，payload 含新 `root_public_key`、新 `kdf_params`，应用后 `root_epoch += 1` 并切换验签钥，之后到达的记录必须带新 epoch。node 只接受 `seq = 本地 head + 1 && prev_hash = 本地 head hash` 的记录；遇到同一 `seq/prev_hash` 的两个不同后继即**硬失败**并在 UI 报"密钥日志分叉"，不由 hub 选胜者。hub 存全量并在 `node.list` 里带 `key_log_head {seq, hash}`；node 落后时向 hub 或任一 peer 拉取。
 - **根轮换 = 新安全 epoch**：`rotate-root` 应用后，各 node 撤销该 uid 全部 `node_sessions`，删除全部 `user_keys`（passkey 需重新注册），清空 TOTP（需重新设置）。密码改密流程在 UI 中明确提示"将注销所有设备上的 passkey 与 TOTP"。
 - **不依赖旧根钥的恢复（密码在失陷 entry 上泄露、攻击者抢先 `rotate-root` 时）**：在每台机器**本地**执行 `tmex-cli mesh reset-root`（输入新密码 → 新根公钥、`root_epoch += 1`、清空 `user_keys` / TOTP / `node_sessions`、`user_key_log` 从一条本地生成的 `reset-root` 记录重新开始，并把本机证书重新自签 `admit-node`）；该命令只信任本机 root 权限（拥有机器 = 拥有该点，与威胁模型一致），不接受任何远程触发。恢复后各机器需重新 `enroll`/`join` 建立成员关系；hub 侧 `hub user reset` 清空注册表。这是灾难恢复路径，不是日常流程。
@@ -158,6 +158,24 @@ peer_cache          node_id, name, endpoints_json, inventory_json, direct_capabl
 登录页体验：输入一次密码（或一次 passkey）→ 生成 `delegation` → 前端对 `/api/mesh/nodes` 中当前可达的每个 node 并行执行 1–3；`sk_sess` 留在内存供后续新出现的 node 登录；页面刷新后靠 cookie 继续，cookie 过期或新 node 出现且 `sk_sess` 已失时提示"登录此节点"。失败限速：每个 node 对同一 `uid` 或 ip 每分钟 10 次，超出 429。
 
 登出：`POST /n/:T/api/auth/logout` 撤销 T 上该 uid 的全部 `node_sessions`；"全部登出"= 前端对所有 node fan-out。
+
+### 会话钥的跨文档持久化（PWA 冷启动）
+
+**问题**：`sk_sess` 原本纯内存。iOS 上以 PWA 打开时每次冷启动都是一个新 document——entry 的 HttpOnly cookie 还在，会话钥却没了，于是每台远端 node 都退回"登录该节点"，逼用户逐台重输密码。
+
+**做法**：浏览器支持 WebCrypto 的 Ed25519（`crypto.subtle.generateKey({name:'Ed25519'}, false, ['sign','verify'])` 能成功，Safari 17+ / Chrome 137+ / Firefox 130+）时，`sk_sess` 直接生成为**不可导出**（`extractable:false`）的 `CryptoKey`，登录签名走 `crypto.subtle.sign('Ed25519', …)`；输出仍是标准 64 字节 Ed25519 签名，**node 侧验签一个字都不用改**。会话记录 `{info, privateKey(CryptoKey), sess_pk, delegation, delegation_sig}` 存进 IndexedDB（库 `tmex-auth`，单表单记录）——structured clone 保留 non-extractable，私钥字节从头到尾没进过 JS。不支持 Ed25519 的环境回退到 `@noble` 的原始私钥并**不持久化**，行为与改造前完全一致。
+
+**不写盘的东西**：`k_totp` 与一次性 TOTP 码永远只在内存，因此开了 TOTP 的密码会话整条记录都不落盘——冷启动后仍旧回登录页当场输码。
+
+**清理**：记录的有效期就是 `delegation.exp`（18 小时），恢复时校验一次，过期即删；登出、改密（`rotate-root` 会撤销所有会话）、entry 公钥核对失败等任何调用 `clearSessionKey()` 的路径都同步删掉这条记录。IndexedDB 不可用（隐私模式、配额、被其它 tab 阻塞）时所有操作静默降级成纯内存，不向 UI 抛错。
+
+**前端时序**：恢复是异步的，所有"要不要退回登录页"的判定都必须先等它落定——`ensureNodeLogin()` 内部先 `await` 一次恢复再决定 `NO_SESSION_KEY`，门闸在此期间停在 `pending`。设备页的"在线未登录"分组因此也走静默门闸：期间只显示一行"登录中…"，确实登不上才退回"登录此节点"按钮（凭证类失败再补一行原因，网络类失败不补）。
+
+**安全边界**：持久化的是一把不可导出私钥，能力上限就是"在本 origin 上签 login"，且受 18 小时 delegation TTL 约束。
+
+- 本 origin 的 XSS：能在页面存活期间用它签 login——这与现有 HttpOnly `tmex_s_*` cookie 属于同一暴露等级（XSS 本来就能带着 cookie 直接调 API），没有新增攻击面；它依然签不了任何 `user_key_log` 记录（那要根钥或 passkey 的专用 assertion）。
+- 设备失窃：攻击者拿到的是同一把 18 小时后自动失效的钥，与已签发的 `node-session` 上限一致。
+- node 侧验证完全不变：登录签名仍绑定 `target_pk` 与一次性 challenge，`node-session` 仍绑定 `via`，被偷的会话在别处依旧无法重放。
 
 ### node 注册（enrollment）与节点证书
 

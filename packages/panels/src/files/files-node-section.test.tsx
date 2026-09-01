@@ -64,10 +64,22 @@ const REMOTE_NODE: FilesNodeInfo = {
 
 let storageSeq = 0;
 
-function renderSection(node: FilesNodeInfo, roots: FileRootDto[] = []): string {
-  const runtime = createAppRuntime({ storagePrefix: `files-node-section-${storageSeq++}:` });
+/**
+ * `runtimeNodeId` 决定文件可见性的缺省：`self` 的设备配了目录就显示，远端 node 的设备默认隐藏。
+ * 静态渲染下 zustand 只认 `getInitialState`（改 store / 写持久化存储都不生效），
+ * 所以「开着开关的远端 node」只能靠 runtime 跑在 `self` 下来表达。
+ */
+function renderSection(
+  node: FilesNodeInfo,
+  roots: FileRootDto[] = [],
+  options: { runtimeNodeId?: string; rootsLoaded?: boolean } = {}
+): string {
+  const runtime = createAppRuntime({
+    storagePrefix: `files-node-section-${storageSeq++}:`,
+    nodeId: options.runtimeNodeId,
+  });
   const queryClient = new QueryClient();
-  queryClient.setQueryData(['files', 'roots'], { roots });
+  if (options.rootsLoaded !== false) queryClient.setQueryData(['files', 'roots'], { roots });
   const html = renderToStaticMarkup(
     <MemoryRouter>
       <I18nextProvider i18n={i18n}>
@@ -111,10 +123,60 @@ describe('FilesNodeSection 的分节头', () => {
     expect(html).not.toContain('data-testid="file-dir-r-remote-/srv/app"');
   });
 
+  test('远端 node 的设备缺省隐藏：一个可见目录都没有时整节不渲染', () => {
+    const html = renderSection(REMOTE_NODE, [REMOTE_ROOT], { runtimeNodeId: 'node-app' });
+    expect(html).not.toContain('data-testid="files-node-section-node-app"');
+    expect(html).not.toContain('demo-app');
+  });
+
+  test('目录列表还没回来时不渲染分节头，避免头闪一下又消失', () => {
+    const html = renderSection(REMOTE_NODE, [REMOTE_ROOT], { rootsLoaded: false });
+    expect(html).not.toContain('data-testid="files-node-section-node-app"');
+  });
+
+  test('离线 / 未登录的分节照常渲染（它们承载提示与登录入口）', () => {
+    const offline = renderSection({ ...REMOTE_NODE, online: false }, [], {
+      runtimeNodeId: 'node-app',
+    });
+    expect(offline).toContain('data-testid="files-node-section-node-app"');
+    const signedOut = renderSection({ ...REMOTE_NODE, loggedIn: false }, [], {
+      runtimeNodeId: 'node-app',
+    });
+    expect(signedOut).toContain('data-testid="files-node-section-node-app"');
+  });
+
   test('根行带拖拽手柄，分节头带折叠开关', () => {
     const html = renderSection(REMOTE_NODE, [REMOTE_ROOT]);
     expect(html).toContain('data-testid="files-node-toggle-node-app"');
     expect(html).toContain('aria-label="拖动以调整目录顺序"');
+  });
+
+  /**
+   * 受控折叠：宿主收起分节时会把该 node 的运行时一起摘掉，分节里一条查询都不能挂
+   * ——上下文里只剩 entry 的 QueryClient，挂上去读到的会是别人的目录。
+   */
+  test('受控折叠时只留分节头，不挂 roots 查询', () => {
+    const runtime = createAppRuntime({ storagePrefix: `files-node-section-${storageSeq++}:` });
+    const queryClient = new QueryClient();
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <I18nextProvider i18n={i18n}>
+          <QueryClientProvider client={queryClient}>
+            <RuntimeProvider runtime={runtime}>
+              <SidebarProvider>
+                <FilesNodeSection node={REMOTE_NODE} expanded={false} />
+              </SidebarProvider>
+            </RuntimeProvider>
+          </QueryClientProvider>
+        </I18nextProvider>
+      </MemoryRouter>
+    );
+    runtime.dispose();
+
+    expect(html).toContain('data-testid="files-node-section-node-app"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('data-testid="file-dir-r-remote-/srv/app"');
+    expect(queryClient.getQueryCache().find({ queryKey: ['files', 'roots'] })).toBeUndefined();
   });
 });
 

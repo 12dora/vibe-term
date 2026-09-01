@@ -78,4 +78,24 @@ describe('shared gateway transport', () => {
       name: 'editor',
     });
   });
+
+  test('encodes terminal-viewport claims', () => {
+    const message = encodeGatewayTransportCommand({
+      type: 'terminal-viewport',
+      deviceId: 'device-a',
+      paneId: '%1',
+      cols: 120,
+      rows: 36,
+      visible: false,
+    });
+
+    expect(message.kind).toBe(wsBorsh.KIND_TERM_VIEWPORT);
+    expect(wsBorsh.decodePayload(wsBorsh.schema.TermViewportSchema, message.payload)).toEqual({
+      deviceId: 'device-a',
+      paneId: '%1',
+      cols: 120,
+      rows: 36,
+      visible: false,
+    });
+  });
 });

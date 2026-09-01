@@ -78,6 +78,7 @@ export function DirectoryNodeView({
           ref={drag.sortable.setDragHandleRef}
           {...drag.sortable.dragHandleProps}
           aria-label={drag.label}
+          data-testid={`file-root-drag-${rootId}`}
           onClick={(e) => e.stopPropagation()}
           className="absolute left-0 top-0 flex h-6 w-3.5 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground/50 hover:text-muted-foreground [@media(any-pointer:coarse)]:h-7"
         >

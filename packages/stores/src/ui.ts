@@ -104,6 +104,12 @@ export interface UIState {
   deviceFolderExpanded: Record<string, boolean>;
   /** 侧边栏 node 分节的手工顺序（mesh node id）；未列出的 node 按 API 顺序排在后面 */
   sidebarNodeOrder: string[];
+  /**
+   * 侧边栏 node 分节的展开态；key 为 `${sidebarTab}:${runtimeNodeId}`（终端页与文件页各记一份）。
+   * 缺键即「用户没表过态」，由各栏自己的缺省决定（终端页折叠、文件页展开）。
+   * 展开与否决定宿主挂不挂该 node 的运行时，所以必须按浏览器持久化：手机与桌面各留各的选择。
+   */
+  sidebarNodeExpansion: Record<string, boolean>;
   inputMode: 'direct' | 'editor';
   editorSendWithEnter: boolean;
   theme: 'light' | 'dark';
@@ -124,6 +130,8 @@ export interface UIState {
   setSidebarFilesVisibility: (key: string, visible: boolean) => void;
   setDeviceFolderExpanded: (folderId: string, expanded: boolean) => void;
   setSidebarNodeOrder: (nodeIds: string[]) => void;
+  /** key 为 `${sidebarTab}:${runtimeNodeId}` */
+  setSidebarNodeExpansion: (key: string, expanded: boolean) => void;
   setInputMode: (mode: 'direct' | 'editor') => void;
   setKeyboardBehaviorMode: (mode: KeyboardBehaviorMode) => void;
   setEditorSendWithEnter: (enabled: boolean) => void;
@@ -139,6 +147,38 @@ export interface UIState {
   setTerminalFontId: (fontId: string) => void;
 }
 
+/**
+ * 落盘状态 → 内存状态。
+ *
+ * 两件事：丢弃旧版本 localStorage 里残留的 sidebarTab / sidebarSections（否则默认 merge 会
+ * 把它们带回来），以及把手工改坏的偏好表归一化（非法项直接丢掉，不让它进内存）。
+ */
+function mergePersistedUIState(persisted: unknown, current: UIState): UIState {
+  const {
+    sidebarTab: _legacyTab,
+    sidebarSections: _legacySections,
+    sidebarDeviceExpanded,
+    sidebarDeviceVisibility,
+    sidebarFilesVisibility,
+    deviceFolderExpanded,
+    sidebarNodeOrder,
+    sidebarNodeExpansion,
+    themePreset,
+    ...rest
+  } = (persisted ?? {}) as Partial<UIState> & { sidebarSections?: unknown };
+  return {
+    ...current,
+    ...rest,
+    sidebarDeviceExpanded: normalizeBooleanMap(sidebarDeviceExpanded),
+    sidebarDeviceVisibility: normalizeBooleanMap(sidebarDeviceVisibility),
+    sidebarFilesVisibility: normalizeBooleanMap(sidebarFilesVisibility),
+    deviceFolderExpanded: normalizeBooleanMap(deviceFolderExpanded),
+    sidebarNodeOrder: normalizeIdList(sidebarNodeOrder),
+    sidebarNodeExpansion: normalizeBooleanMap(sidebarNodeExpansion),
+    themePreset: normalizeThemePreset(themePreset),
+  };
+}
+
 export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
   const storageKey = `${core.storagePrefix}tmex-ui`;
 
@@ -152,6 +192,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         sidebarFilesVisibility: {},
         deviceFolderExpanded: {},
         sidebarNodeOrder: [],
+        sidebarNodeExpansion: {},
         inputMode: 'direct',
         editorSendWithEnter: true,
         theme: 'dark',
@@ -182,6 +223,10 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             deviceFolderExpanded: { ...state.deviceFolderExpanded, [folderId]: expanded },
           })),
         setSidebarNodeOrder: (nodeIds) => set({ sidebarNodeOrder: normalizeIdList(nodeIds) }),
+        setSidebarNodeExpansion: (key, expanded) =>
+          set((state) => ({
+            sidebarNodeExpansion: { ...state.sidebarNodeExpansion, [key]: expanded },
+          })),
         setInputMode: (mode) => set({ inputMode: mode }),
         setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
         setEditorSendWithEnter: (enabled) => set({ editorSendWithEnter: enabled }),
@@ -239,6 +284,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
           sidebarFilesVisibility: state.sidebarFilesVisibility,
           deviceFolderExpanded: state.deviceFolderExpanded,
           sidebarNodeOrder: state.sidebarNodeOrder,
+          sidebarNodeExpansion: state.sidebarNodeExpansion,
           inputMode: state.inputMode,
           editorSendWithEnter: state.editorSendWithEnter,
           theme: state.theme,
@@ -250,32 +296,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
           terminalLineHeight: state.terminalLineHeight,
           terminalFontId: state.terminalFontId,
         }),
-        // 丢弃旧版本 localStorage 里残留的 sidebarTab/sidebarSections，避免被默认 merge 带回。
-        merge: (persisted, current) => {
-          const {
-            sidebarTab: _legacyTab,
-            sidebarSections: _legacySections,
-            sidebarDeviceExpanded,
-            sidebarDeviceVisibility,
-            sidebarFilesVisibility,
-            deviceFolderExpanded,
-            sidebarNodeOrder,
-            themePreset,
-            ...rest
-          } = (persisted ?? {}) as Partial<UIState> & {
-            sidebarSections?: unknown;
-          };
-          return {
-            ...current,
-            ...rest,
-            sidebarDeviceExpanded: normalizeBooleanMap(sidebarDeviceExpanded),
-            sidebarDeviceVisibility: normalizeBooleanMap(sidebarDeviceVisibility),
-            sidebarFilesVisibility: normalizeBooleanMap(sidebarFilesVisibility),
-            deviceFolderExpanded: normalizeBooleanMap(deviceFolderExpanded),
-            sidebarNodeOrder: normalizeIdList(sidebarNodeOrder),
-            themePreset: normalizeThemePreset(themePreset),
-          };
-        },
+        merge: mergePersistedUIState,
       }
     )
   );

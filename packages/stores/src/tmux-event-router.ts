@@ -14,6 +14,7 @@ import {
   handleTmuxEvent,
 } from './tmux-device-events';
 import type { TmuxSelectionActions } from './tmux-selection-actions';
+import { applyViewportPolicy, clearViewportPolicyForDevice } from './viewport-policy';
 
 export interface TmuxEventRouterContext extends TmuxDomainEventContext {
   selection: TmuxSelectionActions;
@@ -87,6 +88,10 @@ function handleTransportStateChange(ctx: TmuxEventRouterContext, state: Connecti
   for (const deviceId of ctx.getState().connectedDevices) {
     ctx.selection.handleDeviceStreamInterrupted(deviceId);
     ctx.core.paneSinks.cleanupDevicePaneState(deviceId);
+    // 网关侧的视口声明随会话一起消失：本地策略同样作废，重连前按默认 owner 上报
+    ctx.setState((prev) => ({
+      viewportPolicy: clearViewportPolicyForDevice(prev.viewportPolicy, deviceId),
+    }));
   }
 }
 
@@ -126,6 +131,7 @@ const handlers: TmuxEventHandlers = {
     ctx.core.paneSinks.cleanupDevicePaneState(event.deviceId);
     ctx.setState((prev) => ({
       deviceConnected: { ...prev.deviceConnected, [event.deviceId]: false },
+      viewportPolicy: clearViewportPolicyForDevice(prev.viewportPolicy, event.deviceId),
     }));
   },
 
@@ -142,6 +148,13 @@ const handlers: TmuxEventHandlers = {
         ctx.selection.maybeReselectCurrentPane(event.event.deviceId);
       }
     }
+  },
+
+  'terminal-viewport-policy': (event, ctx) => {
+    ctx.setState((prev) => {
+      const viewportPolicy = applyViewportPolicy(prev.viewportPolicy, event);
+      return viewportPolicy === prev.viewportPolicy ? {} : { viewportPolicy };
+    });
   },
 
   'metadata-snapshot': (event, ctx) => {

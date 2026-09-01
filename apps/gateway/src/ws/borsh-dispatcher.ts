@@ -45,7 +45,17 @@ export interface BorshDispatchHost {
   handleBreakPane(deviceId: string, paneId: string): void;
   handleTermInput(deviceId: string, paneId: string, data: string): void;
   handleTermPaste(deviceId: string, paneId: string, data: string): void;
-  handleTermResize(deviceId: string, paneId: string, cols: number, rows: number): void;
+  handleTermResize(
+    session: GatewaySession,
+    deviceId: string,
+    paneId: string,
+    cols: number,
+    rows: number
+  ): void;
+  handleTermViewport(
+    session: GatewaySession,
+    decoded: wsBorsh.b.infer<typeof wsBorsh.schema.TermViewportSchema>
+  ): void;
   handleSiteThemeUpdate(
     session: GatewaySession,
     decoded: wsBorsh.b.infer<typeof wsBorsh.schema.SiteThemeUpdateC2SSchema>

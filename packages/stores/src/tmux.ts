@@ -7,9 +7,11 @@ import { createPaneSubscriptionManager } from './pane-subscriptions';
 import type { RuntimeCore } from './runtime';
 import type { SiteStore } from './site';
 import { createTmuxEventRouter } from './tmux-event-router';
-import { createTmuxSelectionActions, normalizeTerminalSize } from './tmux-selection-actions';
+import { createTmuxSelectionActions } from './tmux-selection-actions';
 import type { DeviceError, TmuxState } from './tmux-state';
+import { createTmuxViewportActions } from './tmux-viewport-actions';
 import type { UIStore } from './ui';
+import { clearViewportPolicyForDevice } from './viewport-policy';
 
 export type { DeviceInitialErrorInput, TmuxState } from './tmux-state';
 
@@ -145,6 +147,8 @@ export function createTmuxStore(
     };
 
     return {
+      ...createTmuxViewportActions(core, { recordTerminalSize: selection.recordTerminalSize }),
+
       connectionState: 'IDLE' as ConnectionState,
       hasConnectedOnce: false,
       wsLatencyMs: null,
@@ -156,6 +160,7 @@ export function createTmuxStore(
       selectedPanes: {},
       activePaneFromEvent: {},
       pendingCreateWindowAt: {},
+      viewportPolicy: {},
 
       ensureSocketConnected() {
         setupTransportHandlers();
@@ -188,6 +193,7 @@ export function createTmuxStore(
             connectedDevices: nextConnected,
             deviceConnected: { ...prev.deviceConnected, [deviceId]: false },
             deviceReconnecting: { ...prev.deviceReconnecting, [deviceId]: undefined },
+            viewportPolicy: clearViewportPolicyForDevice(prev.viewportPolicy, deviceId),
           };
         });
 
@@ -230,18 +236,6 @@ export function createTmuxStore(
       sendInput(deviceId, paneId, data, isComposing = false) {
         if (!deviceId || !paneId) return;
         core.transport.send({ type: 'terminal-input', deviceId, paneId, data, isComposing });
-      },
-
-      resizePane(deviceId, paneId, cols, rows) {
-        if (!deviceId || !paneId) return;
-        selection.recordTerminalSize(deviceId, cols, rows);
-        core.transport.send({ type: 'terminal-resize', deviceId, paneId, cols, rows });
-      },
-
-      syncPaneSize(deviceId, paneId, cols, rows) {
-        if (!deviceId || !paneId) return;
-        selection.recordTerminalSize(deviceId, cols, rows);
-        core.transport.send({ type: 'terminal-sync-size', deviceId, paneId, cols, rows });
       },
 
       paste(deviceId, paneId, data) {
@@ -338,25 +332,6 @@ export function createTmuxStore(
       breakPane(deviceId, paneId) {
         if (!deviceId || !paneId) return;
         core.transport.send({ type: 'break-pane', deviceId, paneId });
-      },
-
-      resizePaneInWindow(deviceId, paneId, size) {
-        if (!deviceId || !paneId) return;
-        if (size.cols === undefined && size.rows === undefined) return;
-        core.transport.send({ type: 'resize-pane-in-window', deviceId, paneId, ...size });
-      },
-
-      applyStackedLayout(deviceId, windowId, cols, rows) {
-        if (!deviceId || !windowId) return;
-        const normalized = normalizeTerminalSize(cols, rows);
-        if (!normalized) return;
-        core.transport.send({
-          type: 'apply-stacked-layout',
-          deviceId,
-          windowId,
-          cols: normalized.cols,
-          rows: normalized.rows,
-        });
       },
 
       reorderPanes(deviceId, windowId, paneIds) {

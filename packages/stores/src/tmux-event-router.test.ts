@@ -77,6 +77,7 @@ function createHarness(options: HarnessOptions = {}) {
     selectedPanes: {},
     activePaneFromEvent: {},
     pendingCreateWindowAt: {},
+    viewportPolicy: {},
   } as unknown as TmuxState;
 
   const setState: TmuxSetState = (partial) => {
@@ -191,6 +192,9 @@ function createHarness(options: HarnessOptions = {}) {
     dispose() {
       for (const dispose of disposers.splice(0)) dispose();
     },
+    setConnectedDevices(...deviceIds: string[]) {
+      setState({ connectedDevices: new Set(deviceIds) });
+    },
     setSelectedPane(deviceId: string, windowId: string, paneId: string) {
       setState((prev) => ({
         selectedPanes: { ...prev.selectedPanes, [deviceId]: { windowId, paneId } },
@@ -255,6 +259,69 @@ describe('tmux transport event router', () => {
       'device-a',
     ]);
     expect(harness.getState().deviceConnected['device-a']).toBe(false);
+  });
+
+  test('terminal-viewport-policy is stored per device:pane', () => {
+    const harness = createHarness();
+
+    harness.route({
+      type: 'terminal-viewport-policy',
+      kind: 'terminal-viewport-policy',
+      deviceId: 'device-a',
+      windowId: '@1',
+      paneId: '%1',
+      owner: false,
+      cols: 200,
+      rows: 50,
+    });
+
+    expect(harness.getState().viewportPolicy['device-a:%1']).toEqual({
+      owner: false,
+      cols: 200,
+      rows: 50,
+      windowId: '@1',
+    });
+    // 没收到策略的 pane 保持缺省（=owner）
+    expect(harness.getState().viewportPolicy['device-a:%2']).toBeUndefined();
+  });
+
+  test('device-disconnected drops the viewport policy of that device', () => {
+    const harness = createHarness();
+
+    harness.route({
+      type: 'terminal-viewport-policy',
+      kind: 'terminal-viewport-policy',
+      deviceId: 'device-a',
+      windowId: '@1',
+      paneId: '%1',
+      owner: false,
+      cols: 200,
+      rows: 50,
+    });
+    harness.route({ type: 'device-disconnected', deviceId: 'device-a' });
+
+    expect(harness.getState().viewportPolicy['device-a:%1']).toBeUndefined();
+  });
+
+  test('leaving READY drops the viewport policy of every connected device', () => {
+    const harness = createHarness();
+
+    harness.route({ type: 'connection-state', state: 'READY' });
+    harness.setConnectedDevices('device-a');
+    harness.route({
+      type: 'terminal-viewport-policy',
+      kind: 'terminal-viewport-policy',
+      deviceId: 'device-a',
+      windowId: '@1',
+      paneId: '%1',
+      owner: false,
+      cols: 200,
+      rows: 50,
+    });
+
+    harness.route({ type: 'connection-state', state: 'RECONNECT_BACKOFF' });
+
+    expect(harness.getState().viewportPolicy['device-a:%1']).toBeUndefined();
   });
 
   test('an auto-reconnect notice is treated as a device stream interruption', () => {

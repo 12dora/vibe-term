@@ -128,6 +128,7 @@ export {
   type GatewayNodeEvent,
   type GatewayTransportEvent,
   type GatewayTransportSourceRoute,
+  type TerminalViewportPolicyEvent,
   type SharedGatewayTransport,
   type SharedGatewayTransportOptions,
 } from './transport';
@@ -185,6 +186,7 @@ export {
   buildTermPaste,
   buildTermResize,
   buildTermSyncSize,
+  buildTermViewportMessage,
   buildAgentSubscribe,
   buildAgentUnsubscribe,
   buildSiteThemeUpdate,

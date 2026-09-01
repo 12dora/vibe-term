@@ -17,6 +17,8 @@ import {
   KIND_PING,
   KIND_PONG,
   KIND_SITE_THEME_UPDATE,
+  KIND_TERM_VIEWPORT,
+  KIND_TERM_VIEWPORT_POLICY,
   KIND_TMUX_REORDER_PANES,
   KIND_TMUX_REORDER_WINDOWS,
   KIND_WATCH_EVENT,
@@ -73,6 +75,8 @@ import {
   RtcSignalSchema,
   SiteThemeUpdateC2SSchema,
   SiteThemeUpdateS2CSchema,
+  TermViewportPolicySchema,
+  TermViewportSchema,
   TmuxReorderPanesSchema,
   TmuxReorderWindowsSchema,
   WatchEventSchema,
@@ -508,6 +512,53 @@ describe('tmux reorder 协议消息', () => {
       encodePayload(TmuxReorderWindowsSchema, { deviceId: 'd', windowIds: [] })
     );
     expect(decoded.windowIds).toEqual([]);
+  });
+});
+
+describe('term viewport 协议消息', () => {
+  it('KIND_TERM_VIEWPORT / KIND_TERM_VIEWPORT_POLICY 有效且可读名', () => {
+    expect(KIND_TERM_VIEWPORT).toBe(0x0308);
+    expect(KIND_TERM_VIEWPORT_POLICY).toBe(0x0309);
+    expect(isValidKind(KIND_TERM_VIEWPORT)).toBe(true);
+    expect(isValidKind(KIND_TERM_VIEWPORT_POLICY)).toBe(true);
+    expect(kindToString(KIND_TERM_VIEWPORT)).toBe('TERM_VIEWPORT');
+    expect(kindToString(KIND_TERM_VIEWPORT_POLICY)).toBe('TERM_VIEWPORT_POLICY');
+  });
+
+  it('TermViewportSchema payload roundtrip', () => {
+    const data = { deviceId: 'dev-1', paneId: '%0', cols: 120, rows: 40, visible: true };
+    const decoded = decodePayload(TermViewportSchema, encodePayload(TermViewportSchema, data));
+    expect(decoded).toEqual(data);
+
+    const hidden = decodePayload(
+      TermViewportSchema,
+      encodePayload(TermViewportSchema, { ...data, visible: false, cols: 80, rows: 24 })
+    );
+    expect(hidden.visible).toBe(false);
+    expect(hidden.cols).toBe(80);
+    expect(hidden.rows).toBe(24);
+  });
+
+  it('TermViewportPolicySchema envelope + payload roundtrip', () => {
+    const data = {
+      deviceId: 'dev-1',
+      windowId: '@2',
+      paneId: '%3',
+      owner: false,
+      cols: 160,
+      rows: 48,
+    };
+    const payloadBytes = encodePayload(TermViewportPolicySchema, data);
+    const envelope = encodeEnvelope(KIND_TERM_VIEWPORT_POLICY, payloadBytes, 11);
+    const decodedEnvelope = decodeEnvelope(envelope);
+    expect(decodedEnvelope.kind).toBe(KIND_TERM_VIEWPORT_POLICY);
+    expect(decodePayload(TermViewportPolicySchema, decodedEnvelope.payload)).toEqual(data);
+
+    const owner = decodePayload(
+      TermViewportPolicySchema,
+      encodePayload(TermViewportPolicySchema, { ...data, owner: true })
+    );
+    expect(owner.owner).toBe(true);
   });
 });
 

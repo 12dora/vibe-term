@@ -1,7 +1,8 @@
 // 聚合侧边栏里的「一个 node」分节。
 //
 // 三种形态（设计 §4「侧边栏聚合视图」）：
-//   - 在线且已登录：懒挂该 node 的运行时，渲染真实设备树，每行带 node 徽标；
+//   - 在线且已登录：展开时才懒挂该 node 的运行时并渲染真实设备树，每行带 node 徽标；
+//     折叠时只留一行分节头（在线态取自 `/api/mesh/nodes` 投影，不需要运行时）；
 //   - 在线但未登录：折叠，只给一个「登录」入口，**不**自动登录也**不**建立连接；
 //     用户点开才用内存里的会话钥静默登录，登不上再退回「登录此节点」按钮；
 //   - 离线：灰显最近一次已知的设备（本地快照优先，其次 node inventory；名字取不到就用
@@ -9,11 +10,15 @@
 //
 // 三种形态都受同一条门槛约束：远端 node 至少要有一台设备被打开侧边栏显示，整节才出现
 // （self 分节不受此限）。登录别的 node 一律走「管理设备」，侧边栏不做未开启 node 的登录入口。
+//
+// 远端分节缺省折叠（当前路由所在的 node 除外）：挂运行时 = 一条 Gateway WS + 一轮直连协商，
+// 见 `@/node/sidebar-node-expansion` 的说明。self 分节不受影响，恒为展开。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import { loginErrorKey } from '@/auth/login-errors';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
+import { useSidebarSectionExpanded } from '@/node/sidebar-node-expansion';
 import { offlineDevices } from '@/pages/devices/device-snapshot-store';
 import { SELF_NODE_ID, nodeAppPath, parseNodeIdFromPath } from '@tmex/api-client';
 import {
@@ -162,11 +167,15 @@ function SectionHeader({
   node,
   hint,
   drag,
+  disclosure,
 }: {
   node: SidebarNodeEntry;
   hint?: string;
   drag?: SidebarNodeSortable;
+  /** 传了就把节点名做成折叠开关（远端在线分节）；不传即今天的静态分节头。 */
+  disclosure?: { expanded: boolean; onToggle: () => void };
 }) {
+  const badge = <NodeBadge info={badgeOf(node)} variant="plain" className="min-w-0 flex-1" />;
   return (
     <div
       ref={drag?.sortable.setDragHandleRef}
@@ -178,7 +187,25 @@ function SectionHeader({
       )}
       data-testid={`sidebar-node-header-${node.runtimeNodeId}`}
     >
-      <NodeBadge info={badgeOf(node)} variant="plain" className="min-w-0 flex-1" />
+      {disclosure ? (
+        <button
+          type="button"
+          onClick={disclosure.onToggle}
+          aria-expanded={disclosure.expanded}
+          data-testid={`sidebar-node-toggle-${node.runtimeNodeId}`}
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left hover:bg-sidebar-accent"
+        >
+          <ChevronRight
+            className={cn(
+              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+              disclosure.expanded && 'rotate-90'
+            )}
+          />
+          {badge}
+        </button>
+      ) : (
+        badge
+      )}
       {hint && (
         <span className="shrink-0 truncate text-[10px] text-muted-foreground/70">{hint}</span>
       )}
@@ -315,28 +342,28 @@ function SidebarNodeOffline({
   );
 }
 
-export function SidebarNodeSection({
+/**
+ * 在线且已登录的分节：挂该 node 的运行时并渲染真实设备树。
+ *
+ * 分节头交给设备树一起渲染：可见设备数只有挂上该 node 运行时才读得到，
+ * 一台都不显示时整节（含分节头）都不该出现。
+ */
+function SidebarNodeRuntimeSection({
   node,
   drag,
-}: { node: SidebarNodeEntry; drag?: SidebarNodeSortable }) {
+  disclosure,
+}: {
+  node: SidebarNodeEntry;
+  drag?: SidebarNodeSortable;
+  disclosure?: { expanded: boolean; onToggle: () => void };
+}) {
   const { t } = useTranslation();
-
-  if (!node.online) {
-    return <SidebarNodeOffline node={node} drag={drag} />;
-  }
-
-  if (!node.loggedIn) {
-    return <SidebarNodeSignIn node={node} drag={drag} />;
-  }
-
-  // 分节头交给设备树一起渲染：可见设备数只有挂上该 node 运行时才读得到，
-  // 一台都不显示时整节（含分节头）都不该出现。
   return (
     <NodeRuntimeScope nodeId={node.runtimeNodeId}>
       <SideBarDeviceListForRuntime
         section={{
           testId: `sidebar-node-${node.runtimeNodeId}`,
-          header: <SectionHeader node={node} drag={drag} />,
+          header: <SectionHeader node={node} drag={drag} disclosure={disclosure} />,
           keepWhenNoDevices: node.isSelf,
           containerRef: drag?.sortable.setNodeRef,
           containerStyle: drag?.sortable.style,
@@ -351,4 +378,73 @@ export function SidebarNodeSection({
       />
     </NodeRuntimeScope>
   );
+}
+
+/**
+ * 折叠着的远端在线分节：只有一行分节头，**不挂运行时**（不建 WS、不发直连协商）。
+ *
+ * 在线态与节点名都来自 `/api/mesh/nodes` 投影（常驻的 `MeshNodesResident` 在维护），
+ * 与该 node 有没有运行时无关，所以折叠期间徽标照常是实时的。
+ * 是否出现这一行沿用「至少开过一台设备显示」那条门槛——与未登录形态同一个判据，都不需要运行时。
+ */
+function SidebarNodeCollapsed({
+  node,
+  drag,
+  onToggle,
+}: { node: SidebarNodeEntry; drag?: SidebarNodeSortable; onToggle: () => void }) {
+  const visibility = useUIStore((state) => state.sidebarDeviceVisibility);
+  const selectedDeviceId = selectedDeviceIdForNode(useLocation().pathname, node.runtimeNodeId);
+  const present =
+    selectedDeviceId !== null || hasSidebarVisibleDeviceForNode(visibility, node.runtimeNodeId);
+  const presence = useSectionPresence(present, null);
+  if (!presence.rendered) return null;
+
+  return (
+    <div
+      ref={drag?.sortable.setNodeRef}
+      style={drag?.sortable.style}
+      data-testid={`sidebar-node-collapsed-${node.runtimeNodeId}`}
+      className={cn('space-y-0.5', presence.className, drag?.sortable.isDragging && 'opacity-60')}
+    >
+      <SectionHeader node={node} drag={drag} disclosure={{ expanded: false, onToggle }} />
+    </div>
+  );
+}
+
+/**
+ * 远端在线分节的折叠开关。缺省折叠，当前路由指向的 node 除外——它的运行时本来就由
+ * `NodeRuntimeBoundary` 挂着，分节展开不额外要一份连接。
+ *
+ * 折叠回去时运行时并不会立刻回收：`NodeConnectionManager` 的引用计数归零后还有 30 s 宽限期
+ * （`DEFAULT_RELEASE_GRACE_MS`），来回点开点合不会反复拨号。
+ */
+function SidebarNodeOnline({ node, drag }: { node: SidebarNodeEntry; drag?: SidebarNodeSortable }) {
+  const routed = parseNodeIdFromPath(useLocation().pathname) === node.runtimeNodeId;
+  const [expanded, setExpanded] = useSidebarSectionExpanded('panes', node.runtimeNodeId, routed);
+  const disclosure = { expanded, onToggle: () => setExpanded(!expanded) };
+
+  if (!expanded) {
+    return <SidebarNodeCollapsed node={node} drag={drag} onToggle={() => setExpanded(true)} />;
+  }
+  return <SidebarNodeRuntimeSection node={node} drag={drag} disclosure={disclosure} />;
+}
+
+export function SidebarNodeSection({
+  node,
+  drag,
+}: { node: SidebarNodeEntry; drag?: SidebarNodeSortable }) {
+  if (!node.online) {
+    return <SidebarNodeOffline node={node} drag={drag} />;
+  }
+
+  if (!node.loggedIn) {
+    return <SidebarNodeSignIn node={node} drag={drag} />;
+  }
+
+  // self 恒展开：浏览器本来就连着 entry，折叠它省不下任何连接，只会让首屏没有设备可点。
+  if (node.isSelf || node.runtimeNodeId === SELF_NODE_ID) {
+    return <SidebarNodeRuntimeSection node={node} drag={drag} />;
+  }
+
+  return <SidebarNodeOnline node={node} drag={drag} />;
 }

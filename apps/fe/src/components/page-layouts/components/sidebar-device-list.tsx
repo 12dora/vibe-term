@@ -119,8 +119,10 @@ function MeshDeviceList({ entryNodeId }: { entryNodeId: string | null }) {
     // 聚合视图里滚动条归这一层：每个分节内部的 ScrollArea 落在块级容器里、拿不到受限高度，
     // 自己不会滚。这里不给 flex-1 + overflow 的话，靠后的分节会被 SidebarContent 直接裁掉——
     // 既看不到也拖不过去（拖拽的自动滚动同样要靠这个可滚动祖先）。
+    // 横向必须显式裁掉：只写 overflow-y 时 overflow-x 由 visible 变 auto，拖拽的横向溢出会把
+    // 整列节点拽偏（另一半防线是 SortableVerticalList 的竖轴 modifier）。
     <div
-      className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto"
+      className="flex min-h-0 flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto overscroll-x-none"
       data-testid="sidebar-node-list"
     >
       <SortableVerticalList ids={sortableIds} onReorder={handleReorder}>

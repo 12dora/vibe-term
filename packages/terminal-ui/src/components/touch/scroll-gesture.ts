@@ -77,15 +77,21 @@ export class TouchScrollGesture {
     }
   }
 
+  // 取本次 move 的纵向位移并重锚。平移路径也必须走它，否则锚点不更新，
+  // 手势从平移回落到 scrollback 时会一次性丢出整段累积位移。
+  takeVerticalDelta(clientY: number): number {
+    const deltaY = this.lastTouchY - clientY;
+    this.lastTouchY = clientY;
+    return deltaY;
+  }
+
   // 返回 null = 本次 move 未产生滚动语义（零位移 / 无可滚元素），调用方不得 preventDefault
-  handleSingleMove(
+  applyVerticalDelta(
     resolveTerminal: ResolveTerminal,
+    deltaY: number,
     clientX: number,
     clientY: number
   ): ScrollOutcome | null {
-    const deltaY = this.lastTouchY - clientY;
-    this.lastTouchY = clientY;
-
     if (deltaY === 0) return null;
 
     const terminal = resolveTerminal();

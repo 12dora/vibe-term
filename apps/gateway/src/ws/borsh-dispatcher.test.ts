@@ -52,6 +52,41 @@ describe('borsh dispatcher', () => {
     expect(calls).toEqual(['dev-1']);
   });
 
+  test('TERM_VIEWPORT 解码后带上 session 调用 handleTermViewport', async () => {
+    const calls: Array<{ deviceId: string; paneId: string; visible: boolean }> = [];
+    const host = {
+      handleTermViewport(
+        _ws: unknown,
+        decoded: { deviceId: string; paneId: string; visible: boolean }
+      ) {
+        calls.push({
+          deviceId: decoded.deviceId,
+          paneId: decoded.paneId,
+          visible: decoded.visible,
+        });
+      },
+      sendError() {
+        throw new Error('sendError should not be called');
+      },
+    } as unknown as BorshDispatchHost;
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.TermViewportSchema, {
+      deviceId: 'dev-1',
+      paneId: '%0',
+      cols: 80,
+      rows: 24,
+      visible: false,
+    });
+    await dispatchBorshKind(
+      createBorshKindHandlers(host),
+      host,
+      createWs(),
+      wsBorsh.KIND_TERM_VIEWPORT,
+      2,
+      payload
+    );
+    expect(calls).toEqual([{ deviceId: 'dev-1', paneId: '%0', visible: false }]);
+  });
+
   test('malformed schema payload throws WsBorshError before handle', async () => {
     let handled = false;
     const host = {
