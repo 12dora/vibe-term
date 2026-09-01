@@ -10,6 +10,7 @@ import type {
   PublicKeyCredentialDescriptorJSON,
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi, startAuthentication } from '@tmex/api-client/auth/index';
+import type { Login } from '@tmex/shared/auth';
 import {
   buildLogin,
   buildPasskeyDelegation,
@@ -23,12 +24,14 @@ import {
   encodeLogin,
   encodePasskeyAssertion,
   generateEd25519KeyPair,
+  generateWebCryptoEd25519KeyPair,
   rootKeyFromSeed,
   signLogin,
+  signWithWebCryptoEd25519,
 } from '@tmex/shared/auth';
 
 import { markLoggedIn } from '@/node/mesh-nodes';
-import type { LoginNodeResult, SessionKeyInfo } from './session-key-store';
+import type { LoginNodeResult, SessionKeyInfo, SessionKeySecrets } from './session-key-store';
 import {
   adoptSessionSecrets,
   clearSessionKey,
@@ -36,6 +39,62 @@ import {
   getSessionKey,
   readSessionSecrets,
 } from './session-key-store';
+
+// ---------------------------------------------------------------------------
+// 会话密钥材料
+// ---------------------------------------------------------------------------
+
+interface SessionKeyMaterial {
+  publicKey: Uint8Array;
+  /** WebCrypto 路径的不可导出私钥。 */
+  cryptoKey: CryptoKey | null;
+  /** `@noble` 回退路径的原始私钥。 */
+  secretKey: Uint8Array | null;
+  /** 没能交给 session store 时就地清零（只有 `@noble` 路径有字节要清）。 */
+  destroy(): void;
+}
+
+/** WebCrypto 的 Ed25519 是否可用；不可用（老 Safari / 老 Chrome）探测一次就记住。 */
+let webCryptoEd25519 = true;
+
+/**
+ * 生成 `sk_sess`。
+ *
+ * 首选 WebCrypto 的**不可导出**私钥：私钥字节从不进 JS，因而可以整把存进 IndexedDB，让 PWA
+ * 冷启动后还能静默登录别的 node。不支持 Ed25519 的环境回退到 `@noble` 的原始私钥——那条路径
+ * 只留内存，行为与改造前完全一致。
+ */
+async function generateSessionKeyMaterial(
+  override?: () => { publicKey: Uint8Array; secretKey: Uint8Array }
+): Promise<SessionKeyMaterial> {
+  if (!override && webCryptoEd25519) {
+    try {
+      const pair = await generateWebCryptoEd25519KeyPair();
+      return {
+        publicKey: pair.publicKey,
+        cryptoKey: pair.privateKey,
+        secretKey: null,
+        destroy: () => undefined,
+      };
+    } catch {
+      webCryptoEd25519 = false;
+    }
+  }
+  const pair = (override ?? generateEd25519KeyPair)();
+  return {
+    publicKey: pair.publicKey,
+    cryptoKey: null,
+    secretKey: pair.secretKey,
+    destroy: () => pair.secretKey.fill(0),
+  };
+}
+
+/** 两条私钥形态共用的 login 签名；输出都是标准 64 字节 Ed25519 签名，node 侧无差别。 */
+function signSessionLogin(secrets: SessionKeySecrets, login: Login): Promise<Uint8Array> {
+  if (secrets.sessKey) return signWithWebCryptoEd25519(secrets.sessKey, encodeLogin(login));
+  if (!secrets.sessSk) return Promise.reject(new Error('session key material is gone'));
+  return Promise.resolve(signLogin(secrets.sessSk, login));
+}
 
 // ---------------------------------------------------------------------------
 // 建立会话钥
@@ -53,14 +112,17 @@ interface EstablishFromSeedOptions {
 /**
  * 由 seed（argon2id 输出）建立会话钥。
  * **调用后 `seed` 会被清零**——调用方不得再使用该数组。
+ *
+ * 会话密钥材料先生成完再碰 seed：整段根钥操作是同步的，中间不留 await，seed 与根钥私钥
+ * 在内存里的窗口不会因为改成 async 而变长。
  */
-export function establishSessionFromSeed(
+export async function establishSessionFromSeed(
   seed: Uint8Array,
   opts: EstablishFromSeedOptions
-): SessionKeyInfo {
+): Promise<SessionKeyInfo> {
   const now = opts.now ?? Date.now();
+  const sess = await generateSessionKeyMaterial();
   const rootKey = rootKeyFromSeed(seed);
-  const sess = generateEd25519KeyPair();
   const signed = createDelegation(rootKey, { uid: opts.uid, sessPk: sess.publicKey, now });
   const kTotp = opts.hasTotp ? deriveTotpKey(seed, opts.uid, opts.rootEpoch) : null;
 
@@ -78,6 +140,7 @@ export function establishSessionFromSeed(
       hasTotp: opts.hasTotp,
       credentialId: null,
     },
+    sessKey: sess.cryptoKey,
     sessSk: sess.secretKey,
     sessPk: sess.publicKey,
     delegation: signed.delegation,
@@ -102,7 +165,7 @@ export async function establishSessionFromPassword(
     iterations: opts.kdfParams.iterations,
     parallelism: opts.kdfParams.parallelism,
   });
-  return establishSessionFromSeed(seed, opts);
+  return await establishSessionFromSeed(seed, opts);
 }
 
 interface EstablishFromPasskeyOptions {
@@ -206,7 +269,7 @@ export async function establishSessionFromPasskey(
 ): Promise<SessionKeyInfo> {
   const api = opts.api ?? defaultAuthApi;
   const now = opts.now ?? Date.now();
-  const sess = (opts.generateSessionKeyPair ?? generateEd25519KeyPair)();
+  const sess = await generateSessionKeyMaterial(opts.generateSessionKeyPair);
   let owned = false;
 
   try {
@@ -267,6 +330,7 @@ export async function establishSessionFromPasskey(
         hasTotp: false,
         credentialId,
       },
+      sessKey: sess.cryptoKey,
       sessSk: sess.secretKey,
       sessPk: sess.publicKey,
       delegation,
@@ -284,7 +348,7 @@ export async function establishSessionFromPasskey(
     owned = true;
     return info;
   } finally {
-    if (!owned) sess.secretKey.fill(0);
+    if (!owned) sess.destroy();
   }
 }
 
@@ -358,7 +422,7 @@ export async function loginToNode(
   });
   const body = {
     login: encodeBase64url(encodeLogin(login)),
-    sig: encodeBase64url(signLogin(secrets.sessSk, login)),
+    sig: encodeBase64url(await signSessionLogin(secrets, login)),
     delegation: encodeBase64url(secrets.delegationBytes),
     delegation_sig: encodeBase64url(secrets.delegationSig),
     totp,

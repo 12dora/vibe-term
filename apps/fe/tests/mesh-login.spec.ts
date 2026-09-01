@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { type Page, expect, test } from '@playwright/test';
 import {
   type MeshState,
   createDeviceOnNode,
@@ -8,6 +8,7 @@ import {
   loginWithPassword,
   meshTmux,
   meshUrl,
+  openDevicesPage,
   readMeshState,
   readTerminalBuffer,
   signInToNodeFromDevicesPage,
@@ -18,6 +19,21 @@ let state: MeshState;
 test.beforeAll(() => {
   state = readMeshState();
 });
+
+/** 浏览器此刻有没有该 node 的会话 cookie（`/api/mesh/nodes` 的 `loggedIn` 就是这个）。 */
+async function nodeLoggedIn(page: Page, nodeId: string): Promise<boolean> {
+  return page.evaluate(
+    (id) =>
+      fetch('/api/mesh/nodes', { credentials: 'include' })
+        .then((res) => res.json())
+        .then(
+          (body: { nodes: { id: string; loggedIn: boolean }[] }) =>
+            body.nodes.find((node) => node.id === id)?.loggedIn === true
+        )
+        .catch(() => false),
+    nodeId
+  );
+}
 
 test('mesh: other nodes join the sidebar only after one of their devices is enabled', async ({
   page,
@@ -58,7 +74,7 @@ test('mesh: other nodes join the sidebar only after one of their devices is enab
   });
   try {
     await page.reload();
-    await expect(page.getByTestId('devices-page')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('devices-page-container')).toBeVisible({ timeout: 30_000 });
     const card = page.locator(`[data-testid="device-card"][data-device-id="${deviceId}"]`);
     await expect(card).toBeVisible({ timeout: 30_000 });
 
@@ -75,6 +91,36 @@ test('mesh: other nodes join the sidebar only after one of their devices is enab
   } finally {
     await deleteDeviceOnNode(page, state, state.remoteNodeId, deviceId);
   }
+});
+
+test('mesh: the remote node signs in silently, and survives a full page reload', async ({
+  page,
+}) => {
+  await loginWithPassword(page, state);
+
+  // SPA 内部跳到设备页：一下都不用点，远端 node 由静默门闸自己登上（会话钥还在内存里）。
+  await openDevicesPage(page);
+  await expect(page.getByTestId(`devices-node-panel-${state.remoteNodeId}`)).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(page.getByTestId(`devices-node-login-${state.remoteNodeId}`)).toHaveCount(0);
+  await expect(page.getByTestId('login-page')).toHaveCount(0);
+
+  // 撤掉远端 node 的会话 cookie 再整页刷新：新 document 的内存是空的，只能靠 IndexedDB 里
+  // 那把不可导出的 sk_sess 恢复出会话钥再登一次——iOS PWA 每次冷启动就是这个场景。
+  await page.context().clearCookies({ name: `tmex_s_${state.remoteNodeId}` });
+  expect(await nodeLoggedIn(page, state.remoteNodeId)).toBe(false);
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('devices-page-container')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId(`devices-node-panel-${state.remoteNodeId}`)).toBeVisible({
+    timeout: 60_000,
+  });
+  // 既没退回登录页，也没退回「登录此节点」按钮
+  await expect(page.getByTestId('login-page')).toHaveCount(0);
+  await expect(page.getByTestId(`node-login-${state.remoteNodeId}`)).toHaveCount(0);
+  // 侧证：会话 cookie 是这次刷新之后重新签发的
+  await expect.poll(() => nodeLoggedIn(page, state.remoteNodeId), { timeout: 30_000 }).toBe(true);
 });
 
 test('mesh: terminal on the joined node echoes through the entry', async ({ page }) => {

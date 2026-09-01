@@ -136,6 +136,12 @@ export { buildLogin, signLogin, verifyLogin } from './login';
 export type { LoginErrorCode, VerifyLoginExpected, VerifyLoginResult } from './login';
 
 export {
+  generateWebCryptoEd25519KeyPair,
+  signWithWebCryptoEd25519,
+} from './webcrypto-ed25519';
+export type { WebCryptoEd25519KeyPair } from './webcrypto-ed25519';
+
+export {
   KEY_LOG_SIGNER_MATRIX,
   applyKeyLogRecord,
   buildKeyLogRecord,
