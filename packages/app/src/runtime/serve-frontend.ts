@@ -21,7 +21,8 @@ const MIME_MAP: Record<string, string> = {
 const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';
 const REVALIDATE_CACHE = 'no-cache';
 // Vite 默认 assets/[name]-[hash].ext（本仓库未覆盖 rollupOptions.output）
-const HASHED_ASSET_NAME = /-[A-Za-z0-9]{8,}(?:\.[A-Za-z0-9]+)+$/;
+// Rollup 4 的 [hash] 是 base64url 字母表，可含 `_` 与 `-`
+const HASHED_ASSET_NAME = /-[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9]+)+$/;
 
 function contentTypeByPath(path: string): string | undefined {
   const ext = extname(path).toLowerCase();

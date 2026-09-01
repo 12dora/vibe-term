@@ -16,8 +16,9 @@ export function resolveClientIp(input: ClientIpInput): string | undefined {
 }
 
 export function isRequestLoopback(input: ClientIpInput): boolean {
-  // Cloudflare 才会设置 CF-Connecting-IP；直连 localhost 不会带。未信任代理时只要出现即视为远端。
-  if (!input.trustProxy && headerValue(input.headers, 'cf-connecting-ip')) return false;
+  // Cloudflare 才会设置 CF-Connecting-IP；直连 localhost 不会带。只要出现即视为远端，
+  // 与是否信任代理无关——否则代理保留的 `127.0.0.1` / 非法值会在信任模式下重新打开本机 bootstrap。
+  if (headerValue(input.headers, 'cf-connecting-ip')) return false;
   return isLoopbackClientIp(resolveClientIp(input));
 }
 

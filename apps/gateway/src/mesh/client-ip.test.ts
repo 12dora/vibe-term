@@ -142,6 +142,15 @@ describe('isRequestLoopback', () => {
     const h = headers({ 'cf-connecting-ip': '203.0.113.5' });
     expect(isRequestLoopback({ socketIp: LOOPBACK, headers: h, trustProxy: false })).toBe(false);
     expect(isRequestLoopback({ socketIp: LOOPBACK, headers: h, trustProxy: true })).toBe(false);
+    for (const value of ['127.0.0.1', '::1', '::ffff:127.0.0.1', 'not-an-ip']) {
+      const forged = headers({ 'cf-connecting-ip': value });
+      expect(isRequestLoopback({ socketIp: LOOPBACK, headers: forged, trustProxy: true })).toBe(
+        false
+      );
+      expect(isRequestLoopback({ socketIp: LOOPBACK, headers: forged, trustProxy: false })).toBe(
+        false
+      );
+    }
   });
 
   test('(c) trustProxy + X-Forwarded-For uses the forwarded IP', () => {

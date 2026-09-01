@@ -27,7 +27,8 @@ Cloudflare Tunnel / 反代后面**必须**打开 `TMEX_TRUST_PROXY`（隧道管�
 
 `/api/auth/local/bootstrap`（及其他本机预会话路径）的 loopback 判定：
 
-- `trustProxy=true`：用上面解析出的客户端 IP（隧道访客不是 127.0.0.1，因此不能 bootstrap）。
-- `trustProxy=false`：仍用 socket IP，但只要请求带 `CF-Connecting-IP`（Cloudflare 才会加；本机直连不会带）即视为非本机。`X-Forwarded-For` 在未信任时仍忽略，行为与原先一致。
+- 请求带 `CF-Connecting-IP`（Cloudflare 才会加；本机直连不会带）即视为非本机，与是否信任代理无关——信任模式下也不解析其值，避免代理保留的 `127.0.0.1` / 非法值重新打开 bootstrap。
+- 否则 `trustProxy=true`：用上面解析出的客户端 IP（隧道访客不是 127.0.0.1，因此不能 bootstrap）。
+- 否则 `trustProxy=false`：仍用 socket IP；`X-Forwarded-For` 在未信任时忽略，行为与原先一致。
 
 首次部署应先在本机完成 bootstrap，再对外暴露隧道。

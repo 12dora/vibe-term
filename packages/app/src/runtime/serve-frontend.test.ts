@@ -17,6 +17,7 @@ async function makeStaticRoot(): Promise<string> {
   await writeFile(join(root, 'index.html'), '<html>ok</html>');
   await mkdir(join(root, 'assets'), { recursive: true });
   await writeFile(join(root, 'assets', HASHED_JS), 'console.log(1)');
+  await writeFile(join(root, 'assets', 'vendor.min-a_b2-3d4E.js'), 'console.log(2)');
   await mkdir(join(root, 'fonts'), { recursive: true });
   await writeFile(join(root, 'fonts', 'GeistMonoNerdFontMono-Regular.woff2'), 'woff2');
   return root;
@@ -49,6 +50,16 @@ describe('serveFrontend', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
     expect(await response.text()).toBe('console.log(1)');
+  });
+
+  test('treats base64url hashes with _ and - as immutable assets', async () => {
+    const root = await makeStaticRoot();
+    const response = await serveFrontend(
+      new Request('http://127.0.0.1/assets/vendor.min-a_b2-3d4E.js'),
+      root
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
   });
 
   test('sends no-cache plus ETag and Last-Modified for index.html', async () => {
