@@ -17,7 +17,7 @@
 | --- | --- |
 | `mobile-settings.spec.ts:5` | 选择器 `settings-enable-browser-bell-toast`、`settings-tab-devices` 已过期，移动视口下等不到元素 |
 | `mobile-terminal-interactions.spec.ts:79/140/221/303` | 等 `editor-shortcut-*` testid 超时；ShortcutsBar 现传 `idPrefix="terminal-shortcut"`，且 ui store 默认 `inputMode='direct'`，干净 localStorage 下首屏无该 testid |
-| `terminal-mouse-recovery.spec.ts:384` | focus 恢复重绘断言不稳 |
+| `terminal-mouse-recovery.spec.ts:311/355/407`（依赖 `opencode` 的三例） | 2026-09-01 起本机 opencode 1.15.12 启动 >20 s（附带「Update Available」弹窗），`alternate_on` 轮询超时，页面尚未打开即失败；main 同环境同样失败，属环境问题。低负载下 opencode 约 12 s 进入 alt screen，可考虑放宽超时或在 harness 里禁用 opencode 更新检查 |
 | `agent-session.spec.ts:538`（provider unreachable） | 偶发（repeat-each 3 中 1 失败）：发送成功、后端已报错，但截图停在 Terminals tab，错误横幅不在屏上 |
 
 - **解决方向**：前两项修测试选择器/时序；后两项偶发类，先在低负载下建稳定复现再定位。
