@@ -2,6 +2,7 @@
 //
 // 三种形态：
 //   - 在线且已登录：宿主把本组件包在该 node 的运行时里，分节头下渲染真实文件树；
+//     该 node 一个可见目录都没有时整节不渲染（见 `FilesNodeRootsSection`）；
 //   - 在线但未登录：只留宿主给的一行登录入口，不发任何请求；
 //   - 离线：只留一行「节点离线」。
 //
@@ -16,7 +17,7 @@ import { ChevronRight, GripVertical, Loader2 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SortableRow } from '../device-tree/device-tree-dnd';
-import { FilesNodeRoots } from './files-node-roots';
+import { FilesNodeRoots, useVisibleFileRoots } from './files-node-roots';
 
 export interface FilesNodeInfo {
   /** mesh 列表里的真实 node id（分节顺序按它记）。 */
@@ -107,9 +108,19 @@ function FilesNodeSectionShell({
   );
 }
 
-/** 在线且已登录：分节头随该 node 的 files 查询转圈，下面就是这台 node 的文件树。 */
+/**
+ * 在线且已登录：分节头随该 node 的 files 查询转圈，下面就是这台 node 的文件树。
+ *
+ * 一个可见目录都没有的 node 整节不渲染（连分节头都不出）——hub 下挂几十台 node，
+ * 用户没开过开关的节点只会堆成一屏空标题。目录列表回来之前同样不渲染，避免头闪一下又消失；
+ * 加载失败要出头，错误提示与重试按钮挂在里面。
+ */
 function FilesNodeRootsSection({ node, drag }: { node: FilesNodeInfo; drag?: FilesNodeSortable }) {
   const fetching = useIsFetching({ queryKey: ['files'] });
+  const { rootsQuery, roots } = useVisibleFileRoots();
+
+  if (!rootsQuery.isError && (!rootsQuery.isSuccess || roots.length === 0)) return null;
+
   return (
     <FilesNodeSectionShell node={node} drag={drag} busy={fetching > 0}>
       <FilesNodeRoots />

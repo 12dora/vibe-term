@@ -52,9 +52,15 @@ describe('isFileRootDeviceReachable', () => {
 });
 
 describe('selectVisibleFileRoots', () => {
-  test('默认显示：本机设备的启用目录，远端 node 同样默认显示', () => {
+  test('默认显示：本机设备的启用目录', () => {
     expect(select([LOCAL])).toEqual(['r-local']);
-    expect(select([LOCAL], { runtimeNodeId: NODE_A })).toEqual(['r-local']);
+  });
+
+  test('远端 node 的目录默认不显示，开了开关才出现', () => {
+    expect(select([LOCAL], { runtimeNodeId: NODE_A })).toEqual([]);
+    expect(
+      select([LOCAL], { runtimeNodeId: NODE_A, visibility: { [`${NODE_A}:d-local`]: true } })
+    ).toEqual(['r-local']);
   });
 
   test('禁用的目录不显示', () => {
@@ -66,10 +72,10 @@ describe('selectVisibleFileRoots', () => {
     expect(
       select([LOCAL], { runtimeNodeId: NODE_A, visibility: { [`${NODE_A}:d-local`]: false } })
     ).toEqual([]);
-    // 开关按 node 归属复合：别的 node 的同名 device id 不受影响
+    // 开关按 node 归属复合：别的 node 的同名 device id 不受影响（远端仍走自己的缺省=隐藏）
     expect(
-      select([LOCAL], { runtimeNodeId: NODE_A, visibility: { 'self:d-local': false } })
-    ).toEqual(['r-local']);
+      select([LOCAL], { runtimeNodeId: NODE_A, visibility: { 'self:d-local': true } })
+    ).toEqual([]);
   });
 
   test('设备断开时它的目录消失，重连后回来', () => {

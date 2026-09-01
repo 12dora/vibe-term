@@ -79,7 +79,8 @@ function FilesTabInner({ hideHeader, sections, onRefresh }: FilesTabProps) {
           </Button>
         </div>
       )}
-      <ScrollArea className="min-h-0 flex-1">
+      {/* 只纵向滚：拖拽时被拖的行若横移，横向溢出会把侧栏拽偏（见 device-tree-dnd 的 modifier） */}
+      <ScrollArea axis="vertical" className="min-h-0 flex-1">
         <div
           // 兜底：阻止把文件拖到非文件夹区域时浏览器默认打开/导航；真正的上传由 DirNode 的 onDrop 处理
           onDragOver={(e) => {
@@ -88,7 +89,7 @@ function FilesTabInner({ hideHeader, sections, onRefresh }: FilesTabProps) {
           onDrop={(e) => {
             if (hasExternalFiles(e)) e.preventDefault();
           }}
-          className="space-y-0.5 pr-1 pb-2 select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
+          className="min-w-0 space-y-0.5 pr-1 pb-2 select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
         >
           {sections ?? <FilesNodeRoots />}
         </div>

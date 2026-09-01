@@ -3,6 +3,7 @@ import {
   DndContext,
   type DragEndEvent,
   KeyboardSensor,
+  type Modifier,
   MouseSensor,
   TouchSensor,
   closestCenter,
@@ -57,6 +58,18 @@ export const pointerFirstCollisionDetection: CollisionDetection = (args) => {
   return collisions.length > 0 ? collisions : closestCenter(args);
 };
 
+/**
+ * 只保留纵向位移。竖排列表横着拖没有任何语义，却有两个真实后果：被拖的行会跟着指针平移，
+ * 平移出来的溢出把侧栏滚动容器撑成横向可滚，dnd-kit 的自动滚动接着把整条侧栏往右拽。
+ * 抹掉 `x` 后拖拽矩形不再横移，自动滚动的横向意图也一并归零（纵向自动滚动照常）。
+ *
+ * 自己写而不引 `@dnd-kit/modifiers`：整个包就为这三行，不值当多一个依赖。
+ */
+export const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
+
+// 常量数组：每次渲染新建会让 DndContext 重建 modifier 链
+const VERTICAL_ONLY: Modifier[] = [restrictToVerticalAxis];
+
 export interface SortableVerticalListProps {
   ids: string[];
   onReorder: (nextIds: string[]) => void;
@@ -80,6 +93,7 @@ export function SortableVerticalList({
     <DndContext
       sensors={sensors}
       collisionDetection={collisionDetection}
+      modifiers={VERTICAL_ONLY}
       onDragEnd={(event) => {
         if (disabled) return;
         const nextIds = reorderIdsByDragEnd(ids, event);

@@ -88,16 +88,41 @@ function useFileRootReorder(
   return { onReorder, pending: isPending };
 }
 
-export function FilesNodeRoots() {
-  const { t } = useTranslation();
+/**
+ * 当前运行时下「该显示哪些根目录」。
+ *
+ * 分节头（`FilesNodeSection`）也要据此决定整节渲不渲染，所以抽成 hook：同一个 QueryClient 下
+ * 多处调用共用同一份 roots 查询，不会多打一次请求。
+ */
+export function useVisibleFileRoots() {
   const { apiClient, nodeId } = useRuntime();
-  const pruneStaleRoots = useFileTreeStore((s) => s.pruneStaleRoots);
-
   const rootsQuery = useQuery({
     queryKey: FILE_ROOTS_QUERY_KEY,
     queryFn: () => fetchFileRoots(apiClient),
     refetchOnWindowFocus: true,
   });
+  const filesVisibility = useUIStore((state) => state.sidebarFilesVisibility);
+  const deviceConnected = useTmuxStore((state) => state.deviceConnected);
+  const allRoots = useMemo(() => rootsQuery.data?.roots ?? [], [rootsQuery.data]);
+  const roots = useMemo(
+    () =>
+      selectVisibleFileRoots({
+        roots: allRoots,
+        runtimeNodeId: nodeId,
+        visibility: filesVisibility,
+        deviceConnected,
+      }),
+    [allRoots, nodeId, filesVisibility, deviceConnected]
+  );
+  return { rootsQuery, allRoots, roots };
+}
+
+export function FilesNodeRoots() {
+  const { t } = useTranslation();
+  const { apiClient } = useRuntime();
+  const pruneStaleRoots = useFileTreeStore((s) => s.pruneStaleRoots);
+
+  const { rootsQuery, allRoots, roots } = useVisibleFileRoots();
   const devicesQuery = useQuery({
     queryKey: ['devices'],
     queryFn: () => fetchDevices(apiClient),
@@ -117,19 +142,6 @@ export function FilesNodeRoots() {
     throwOnError: false,
   });
 
-  const filesVisibility = useUIStore((state) => state.sidebarFilesVisibility);
-  const deviceConnected = useTmuxStore((state) => state.deviceConnected);
-  const allRoots = useMemo(() => rootsQuery.data?.roots ?? [], [rootsQuery.data]);
-  const roots = useMemo(
-    () =>
-      selectVisibleFileRoots({
-        roots: allRoots,
-        runtimeNodeId: nodeId,
-        visibility: filesVisibility,
-        deviceConnected,
-      }),
-    [allRoots, nodeId, filesVisibility, deviceConnected]
-  );
   const visibleIds = useMemo(() => roots.map((root) => root.id), [roots]);
   const reorder = useFileRootReorder(allRoots, visibleIds);
 

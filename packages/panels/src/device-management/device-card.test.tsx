@@ -336,16 +336,17 @@ describe('DeviceCard 的侧栏可见性开关', () => {
     expect(switchState(renderCard({ nodeContext: REMOTE_CONTEXT }))).toBe('unchecked');
   });
 
-  test('文件开关：配过目录就默认开，本机与远端一致', () => {
+  test('文件开关：self 的设备配过目录就默认开', () => {
     expect(
       switchState(renderCard({ roots: [DEVICE_ROOT] }), 'device-card-sidebar-files-dev-1')
     ).toBe('checked');
-    expect(
-      switchState(
-        renderCard({ nodeContext: REMOTE_CONTEXT, roots: [DEVICE_ROOT] }),
-        'device-card-sidebar-files-dev-1'
-      )
-    ).toBe('checked');
+  });
+
+  // 与终端开关同一条缺省：hub 下几十台 node，别人配的目录不该自动灌进文件树
+  test('文件开关：远端 node 的设备默认关，但配过目录就可开', () => {
+    const html = renderCard({ nodeContext: REMOTE_CONTEXT, roots: [DEVICE_ROOT] });
+    expect(switchState(html, 'device-card-sidebar-files-dev-1')).toBe('unchecked');
+    expect(tagOf(html, 'device-card-sidebar-files-dev-1')).not.toContain('aria-disabled="true"');
   });
 
   test('文件开关：没配过目录时禁用并提示去配目录', () => {
@@ -370,7 +371,8 @@ describe('DeviceCard 的侧栏可见性开关', () => {
       'device-card-sidebar-files-dev-1'
     );
     expect(tag).not.toContain('aria-disabled="true"');
-    expect(tag).toContain('aria-checked="true"');
+    // 远端设备缺省关，但缓存里有目录 → 开关可用（离线期间也能改）
+    expect(tag).toContain('aria-checked="false"');
   });
 
   test('紧凑布局仍保留 e2e 依赖的选择器', () => {
