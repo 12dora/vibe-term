@@ -6,8 +6,11 @@ import type { AuthApi, MeshNode } from '@tmex/api-client/auth/index';
 import { wsBorsh } from '@tmex/shared';
 import { bytesToHex, encodeBase64url, sha256 } from '@tmex/shared/auth';
 import type { HubNodeRow } from './hub-api';
-import { decodeMeshFrame } from './mesh-events';
+import { type NodeEventPayload, decodeMeshFrame } from './mesh-events';
 import {
+  MESH_NODES_POLL_MS,
+  MESH_NODES_STALE_MS,
+  type MeshEventSubscriber,
   acquireMeshNodesPolling,
   findHubNodeId,
   mergeNodes,
@@ -382,28 +385,73 @@ describe('mergeNodes 的 isHub', () => {
   });
 });
 
-const INTERVAL_MS = 30_000;
+const INTERVAL_MS = MESH_NODES_POLL_MS;
+
+/** 假的事件源：连接状态与 NODE_EVENT 全由用例驱动。 */
+function fakeEvents() {
+  const statusListeners = new Set<() => void>();
+  const nodeListeners = new Set<(event: NodeEventPayload) => void>();
+  const source: MeshEventSubscriber = {
+    connected: false,
+    onStatusChange: (listener) => {
+      statusListeners.add(listener);
+      return () => {
+        statusListeners.delete(listener);
+      };
+    },
+    onNodeEvent: (listener) => {
+      nodeListeners.add(listener);
+      return () => {
+        nodeListeners.delete(listener);
+      };
+    },
+  };
+  const mutable = source as { connected: boolean };
+  return {
+    source,
+    setConnected(next: boolean) {
+      mutable.connected = next;
+      for (const listener of statusListeners) listener();
+    },
+    emit(event: NodeEventPayload) {
+      for (const listener of nodeListeners) listener(event);
+    },
+  };
+}
 
 /** 一条被完全接管的轮询回路：定时器、可见性、时钟、刷新动作都由用例驱动。 */
-function pollingHarness() {
+function pollingHarness(overrides: { throttleMs?: number } = {}) {
+  const events = fakeEvents();
   const state = {
     refreshes: 0,
     scheduled: 0,
+    intervalMs: 0,
     tick: null as (() => void) | null,
+    delays: [] as { fn: () => void; ms: number }[],
     onVisibilityChange: null as (() => void) | null,
     hidden: false,
     now: 1_000_000,
   };
   const options = {
-    intervalMs: INTERVAL_MS,
+    // 兜底间隔不显式传，用例据此断言默认值就是 5 分钟
+    throttleMs: overrides.throttleMs ?? 0,
+    events: events.source,
     refresh: (_api: AuthApi) => {
       state.refreshes += 1;
     },
-    schedule: (fn: () => void) => {
+    schedule: (fn: () => void, ms: number) => {
       state.scheduled += 1;
+      state.intervalMs = ms;
       state.tick = fn;
       return () => {
         state.tick = null;
+      };
+    },
+    delay: (fn: () => void, ms: number) => {
+      const entry = { fn, ms };
+      state.delays.push(entry);
+      return () => {
+        state.delays = state.delays.filter((item) => item !== entry);
       };
     },
     visibility: {
@@ -417,11 +465,18 @@ function pollingHarness() {
     },
     now: () => state.now,
   };
-  return { state, options };
+  return { state, options, events };
 }
 
+const onlineEvent = (nodeId: string): NodeEventPayload => ({
+  nodeId,
+  status: 'online',
+  reach: 'lan',
+  inventory: null,
+});
+
 describe('acquireMeshNodesPolling', () => {
-  test('两个消费方共用同一条回路：只装一个定时器，最后一个归还才停', () => {
+  test('两个消费方共用同一条回路：只装一个定时器，兜底间隔 5 分钟，最后一个归还才停', () => {
     const { state, options } = pollingHarness();
     const first = acquireMeshNodesPolling(options);
     // 第二个消费方的接线整个不生效（首个取用方定了这一轮回路），也不额外拉一次
@@ -429,6 +484,8 @@ describe('acquireMeshNodesPolling', () => {
     const second = acquireMeshNodesPolling(secondHarness.options);
 
     expect(state.scheduled).toBe(1);
+    expect(state.intervalMs).toBe(300_000);
+    expect(MESH_NODES_POLL_MS).toBe(300_000);
     expect(state.refreshes).toBe(1);
     expect(secondHarness.state.scheduled).toBe(0);
     expect(secondHarness.state.refreshes).toBe(0);
@@ -462,7 +519,7 @@ describe('acquireMeshNodesPolling', () => {
     release();
   });
 
-  test('重新可见时：距上次刷新超过一个间隔就立刻补一次，否则等下一拍', () => {
+  test('重新可见时：距上次刷新超过 30 秒的过期阈值就立刻补一次，否则等下一拍', () => {
     const { state, options } = pollingHarness();
     setMeshNodesStateForTest({ loadedAt: state.now });
     const release = acquireMeshNodesPolling(options);
@@ -471,8 +528,13 @@ describe('acquireMeshNodesPolling', () => {
     state.onVisibilityChange?.();
     expect(state.refreshes).toBe(1);
 
-    // 后台待够一个间隔：回到前台立刻补
-    state.now += INTERVAL_MS;
+    // 后台待了不到 30 秒：仍然不补拉（兜底间隔已是 5 分钟，阈值是独立的 30 秒）
+    state.now += MESH_NODES_STALE_MS - 1;
+    state.onVisibilityChange?.();
+    expect(state.refreshes).toBe(1);
+
+    // 后台待够 30 秒：回到前台立刻补
+    state.now += 1;
     state.onVisibilityChange?.();
     expect(state.refreshes).toBe(2);
 
@@ -494,5 +556,104 @@ describe('acquireMeshNodesPolling', () => {
     state.onVisibilityChange?.();
     expect(state.refreshes).toBe(2);
     release();
+  });
+
+  test('/mesh/ws 连上与重连各补一次；断开本身不补', () => {
+    resetMeshNodesStateForTest();
+    const { state, options, events } = pollingHarness();
+    const release = acquireMeshNodesPolling(options);
+    expect(state.refreshes).toBe(1);
+
+    events.setConnected(true);
+    expect(state.refreshes).toBe(2);
+
+    // 断流期间不发请求，重连回来才补：断线那段时间的事件已经错过了
+    events.setConnected(false);
+    expect(state.refreshes).toBe(2);
+    events.setConnected(true);
+    expect(state.refreshes).toBe(3);
+
+    release();
+    // 归还后不再受事件驱动
+    events.setConnected(false);
+    events.setConnected(true);
+    expect(state.refreshes).toBe(3);
+  });
+
+  test('列表里没有的 node 的事件触发补拉，已知 node 与 revoked 不触发', () => {
+    const { state, options, events } = pollingHarness();
+    setMeshNodesStateForTest({ loadedAt: state.now, nodes: [node({ id: 'known' })] });
+    const release = acquireMeshNodesPolling(options);
+    expect(state.refreshes).toBe(1);
+
+    events.emit(onlineEvent('known'));
+    expect(state.refreshes).toBe(1);
+
+    // revoked 由 patchNodesWithEvent 就地摘行，不必回源
+    events.emit({ nodeId: 'stranger', status: 'revoked', reach: null, inventory: null });
+    expect(state.refreshes).toBe(1);
+
+    // 事件只改已知行，新成员必须靠 REST 才进得来
+    events.emit(onlineEvent('stranger'));
+    expect(state.refreshes).toBe(2);
+
+    release();
+    resetMeshNodesStateForTest();
+  });
+
+  test('REST 始终不返回的陌生 node 不会每次上下线都补拉，兜底一拍后才放行重试', () => {
+    const { state, options, events } = pollingHarness();
+    setMeshNodesStateForTest({ loadedAt: state.now, nodes: [node({ id: 'known' })] });
+    const release = acquireMeshNodesPolling(options);
+
+    events.emit(onlineEvent('ghost'));
+    expect(state.refreshes).toBe(2);
+    // 刷新回来它仍然不在列表里（例如公钥无效被投影丢掉）：不再为同一个 id 反复回源
+    events.emit(onlineEvent('ghost'));
+    events.emit(onlineEvent('ghost'));
+    expect(state.refreshes).toBe(2);
+
+    state.tick?.();
+    expect(state.refreshes).toBe(3);
+    events.emit(onlineEvent('ghost'));
+    expect(state.refreshes).toBe(4);
+
+    release();
+    resetMeshNodesStateForTest();
+  });
+
+  test('首拉还没回来时事件不抢跑（loadedAt 为 null）', () => {
+    resetMeshNodesStateForTest();
+    const { state, options, events } = pollingHarness();
+    const release = acquireMeshNodesPolling(options);
+
+    events.emit(onlineEvent('stranger'));
+    expect(state.refreshes).toBe(1);
+    release();
+  });
+
+  test('一串事件在节流窗口内只换来一次补拉', () => {
+    const { state, options, events } = pollingHarness({ throttleMs: 2_000 });
+    setMeshNodesStateForTest({ loadedAt: state.now, nodes: [node({ id: 'known' })] });
+    const release = acquireMeshNodesPolling(options);
+    expect(state.refreshes).toBe(1);
+
+    for (const id of ['s1', 's2', 's3', 's4', 's5']) events.emit(onlineEvent(id));
+    events.setConnected(true);
+    // 首拉刚发生，窗口内的这一串统统折叠成一次待发的补拉
+    expect(state.refreshes).toBe(1);
+    expect(state.delays).toHaveLength(1);
+    expect(state.delays[0].ms).toBe(2_000);
+
+    state.delays[0].fn();
+    expect(state.refreshes).toBe(2);
+
+    // 窗口过去之后的事件立刻补拉
+    state.now += 2_000;
+    events.emit(onlineEvent('s6'));
+    expect(state.refreshes).toBe(3);
+
+    release();
+    resetMeshNodesStateForTest();
   });
 });

@@ -5,7 +5,10 @@
 // standalone 下不发任何 `/api/mesh/*` 请求。
 //
 // 它也是**唯一**的轮询方（`owner`）：其余 `useMeshNodes()` 消费方只订阅这份 store，
-// 否则侧边栏、设备页各装一个 30 s 定时器，稳态就是好几轮重复的 `/api/mesh/nodes`。
+// 否则侧边栏、设备页各装一个定时器，稳态就是好几轮重复的 `/api/mesh/nodes`。
+//
+// 稳态只留 5 分钟的兜底轮询（`MESH_NODES_POLL_MS`）：实时更新由 `/mesh/ws` 的 NODE_EVENT
+// 推送，成员变动、事件断流与回到前台则各自触发即时补拉（见 `mesh-nodes.ts` 的轮询回路）。
 
 import { useMeshNodes, useSharedAuthMode } from './mesh-nodes';
 
