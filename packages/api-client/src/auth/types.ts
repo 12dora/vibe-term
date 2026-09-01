@@ -254,7 +254,13 @@ export interface MeshHubsResponse {
   attached: MeshAttachedHub | null;
   writerHubId: string | null;
   /** uplink 的候选地址顺序与最近一次失败原因（诊断用）。 */
-  candidates: Array<{ publicUrl: string; lastError: string | null; lastAttemptAt: number | null }>;
+  candidates: Array<{
+    publicUrl: string;
+    lastError: string | null;
+    lastAttemptAt: number | null;
+    rttMs?: number | null;
+    rttAt?: number | null;
+  }>;
 }
 
 /** standby hub 拒绝管理写入的 409：`code` 之外还带 writer 的地址，UI 据此指路。 */

@@ -91,7 +91,13 @@ export class AuthApi {
       hubs: payload.hubs ?? [],
       attached: payload.attached ?? null,
       writerHubId: payload.writerHubId ?? null,
-      candidates: payload.candidates ?? [],
+      candidates: (payload.candidates ?? []).map((row) => ({
+        publicUrl: row.publicUrl,
+        lastError: row.lastError ?? null,
+        lastAttemptAt: row.lastAttemptAt ?? null,
+        ...(row.rttMs !== undefined ? { rttMs: row.rttMs } : {}),
+        ...(row.rttAt !== undefined ? { rttAt: row.rttAt } : {}),
+      })),
     };
   }
 

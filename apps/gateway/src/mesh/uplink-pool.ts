@@ -3,7 +3,7 @@ import { canonicalHubUrl, hubHostFromUrl } from '@tmex/shared/auth';
 import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
 import type { HubTrustStore } from '../auth/hub-trust-store';
 import type { MeshHubRecord } from '../auth/mesh-hub-store';
-import { hubListToRecords } from '../auth/mesh-hub-store';
+import { hubListToRecords, pickWriterHub } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler } from './ctl';
 import type {
@@ -35,6 +35,8 @@ export const UPLINK_POOL_AUTH_DEADLINE_MS = 20_000;
 export const UPLINK_POOL_PROBE_INTERVAL_MS = 60_000;
 export const UPLINK_POOL_PROBE_TIMEOUT_MS = 5_000;
 export const UPLINK_POOL_PROBE_JITTER = 0.2;
+export const UPLINK_POOL_FAILBACK_DEBOUNCE_MS = 5_000;
+export const UPLINK_POOL_RTT_PROBE_INTERVAL_MS = 300_000;
 export const UPLINK_SEED_PRIORITY_BASE = 1_000;
 export const CA_BOOTSTRAP_TIMEOUT_MS = 5_000;
 export const CA_BOOTSTRAP_MAX_BYTES = 64 * 1024;
@@ -49,6 +51,8 @@ export type UplinkCandidate = {
   caFingerprint: string | null;
   lastError?: string | null;
   lastAttemptAt?: number | null;
+  rttMs?: number | null;
+  rttAt?: number | null;
 };
 
 export type AttachedHub = {
@@ -84,6 +88,9 @@ export type UplinkPoolOptions = {
   isLocalCandidate?: (cand: UplinkCandidate) => boolean;
   connectLocal?: (client: UplinkClient, signal: AbortSignal) => Promise<void>;
   probeJitter?: number;
+  failbackDebounceMs?: number;
+  rttProbeIntervalMs?: number;
+  enablePeriodicRttProbe?: boolean;
   onNodeList?: (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void;
   onRtcSignal?: (msg: UplinkRtcSignal) => void;
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
@@ -382,6 +389,21 @@ function fallbackCandidate(): UplinkCandidate {
   };
 }
 
+type UrlDiag = {
+  lastError: string | null;
+  lastAttemptAt: number | null;
+  rttMs: number | null;
+  rttAt: number | null;
+};
+
+type HubView = {
+  byUrl: Map<string, { online: boolean }>;
+  writerHubId: string | null;
+  writerEpoch: number | null;
+  bestKey: string | null;
+  attachedIsBest: boolean;
+};
+
 export class UplinkPool {
   readonly identity: MeshIdentity;
   lastConnectError: { reason: string; at: number } | null = null;
@@ -395,6 +417,8 @@ export class UplinkPool {
   private readonly probeIntervalMs: number;
   private readonly probeTimeoutMs: number;
   private readonly probeJitter: number;
+  private readonly failbackDebounceMs: number;
+  private readonly rttProbeIntervalMs: number;
 
   private live: UplinkClient | null = null;
   private pending: UplinkClient | null = null;
@@ -405,13 +429,16 @@ export class UplinkPool {
   private stopAbort: AbortController | null = null;
   private probe: { clear: () => void } | null = null;
   private probeInFlight = false;
+  private rttProbe: { clear: () => void } | null = null;
+  private rttProbeInFlight = false;
+  private failbackDebounceAbort: AbortController | null = null;
+  private failbackCoalesced = false;
+  private lastFailbackProbeAt = 0;
+  private lastHubView: HubView | null = null;
   private wrapAttempt = 0;
   private relayHandler: InboundRelayHandler | null = null;
   private readonly caBootstraps = new Map<string, Promise<void>>();
-  private readonly diagByUrl = new Map<
-    string,
-    { lastError: string | null; lastAttemptAt: number | null }
-  >();
+  private readonly diagByUrl = new Map<string, UrlDiag>();
   private readonly candLogAt = new Map<
     string,
     { index: number; error: string | null; transport: string; at: number }
@@ -437,6 +464,8 @@ export class UplinkPool {
     this.probeIntervalMs = opts.probeIntervalMs ?? UPLINK_POOL_PROBE_INTERVAL_MS;
     this.probeTimeoutMs = opts.probeTimeoutMs ?? UPLINK_POOL_PROBE_TIMEOUT_MS;
     this.probeJitter = opts.probeJitter ?? UPLINK_POOL_PROBE_JITTER;
+    this.failbackDebounceMs = opts.failbackDebounceMs ?? UPLINK_POOL_FAILBACK_DEBOUNCE_MS;
+    this.rttProbeIntervalMs = opts.rttProbeIntervalMs ?? UPLINK_POOL_RTT_PROBE_INTERVAL_MS;
   }
 
   get userId(): string {
@@ -468,6 +497,8 @@ export class UplinkPool {
         ...row,
         lastError: diag?.lastError ?? row.lastError ?? null,
         lastAttemptAt: diag?.lastAttemptAt ?? row.lastAttemptAt ?? null,
+        rttMs: diag?.rttMs ?? row.rttMs ?? null,
+        rttAt: diag?.rttAt ?? row.rttAt ?? null,
       };
     });
   }
@@ -535,6 +566,9 @@ export class UplinkPool {
     this.stopAbort?.abort();
     this.stopAbort = null;
     this.stopProbe();
+    this.stopRttProbe();
+    this.cancelFailbackDebounce();
+    this.failbackCoalesced = false;
     const live = this.live;
     const pending = this.pending;
     this.live = null;
@@ -636,6 +670,7 @@ export class UplinkPool {
   }
 
   private async run(signal: AbortSignal): Promise<void> {
+    this.syncRttProbe();
     while (!signal.aborted) {
       const cands = this.candidates();
       let session = false;
@@ -822,6 +857,7 @@ export class UplinkPool {
     this.emitState(client.state);
     client.sendStatusIfChanged();
     this.syncProbe();
+    this.syncRttProbe();
     if (old) {
       old.setOnRelayStream(null);
       try {
@@ -855,7 +891,11 @@ export class UplinkPool {
         /* listener errors must not break the pool */
       }
     }
+    const shouldFailback = this.shouldTriggerFailbackProbe(list);
+    this.lastHubView = this.captureHubView(list);
+    if (shouldFailback) this.requestFailbackProbeFromNodeList();
     this.syncProbe();
+    this.syncRttProbe();
     void this.pinAdvertisedCas(list);
     void this.pinCandidateFingerprints();
   }
@@ -1011,6 +1051,156 @@ export class UplinkPool {
     this.probe = null;
   }
 
+  private periodicRttEnabled(): boolean {
+    return this.opts.enablePeriodicRttProbe ?? process.env.NODE_ENV !== 'test';
+  }
+
+  private syncRttProbe(): void {
+    if (!this.periodicRttEnabled() || this.candidates().length < 2) {
+      this.stopRttProbe();
+      return;
+    }
+    if (this.rttProbe) return;
+    this.rttProbe = this.scheduler.interval(
+      () => {
+        void this.probeAllCandidateRtts();
+      },
+      jitteredIntervalMs(this.rttProbeIntervalMs, this.probeJitter)
+    );
+  }
+
+  private stopRttProbe(): void {
+    this.rttProbe?.clear();
+    this.rttProbe = null;
+  }
+
+  private async probeAllCandidateRtts(): Promise<void> {
+    if (this.rttProbeInFlight) return;
+    this.rttProbeInFlight = true;
+    try {
+      const cands = this.candidates();
+      if (cands.length < 2) return;
+      for (const cand of cands) {
+        if (this.stopAbort?.signal.aborted) return;
+        await this.probeHealthzTimed(cand.publicUrl);
+      }
+    } finally {
+      this.rttProbeInFlight = false;
+    }
+  }
+
+  private captureHubView(list: UplinkNodeList): HubView {
+    const recs = recordsFromNodeList(list);
+    const byUrl = new Map<string, { online: boolean }>();
+    for (const rec of recs) {
+      byUrl.set(normalizeHubEndpointUrl(rec.publicUrl), { online: rec.online === true });
+    }
+    const writerHubId = list.writerHubId ?? pickWriterHub(recs);
+    const writerEpoch =
+      list.writerEpoch ?? recs.find((row) => row.hubNodeId === writerHubId)?.writerEpoch ?? null;
+    const cands = this.candidates();
+    const attached = this.attached;
+    const attachedIdx = attached
+      ? cands.findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl))
+      : -1;
+    return {
+      byUrl,
+      writerHubId,
+      writerEpoch,
+      bestKey: cands[0] ? normalizeHubEndpointUrl(cands[0].publicUrl) : null,
+      attachedIsBest: attachedIdx === 0,
+    };
+  }
+
+  private shouldTriggerFailbackProbe(list: UplinkNodeList): boolean {
+    const attached = this.attached;
+    if (!attached) return false;
+    const next = this.captureHubView(list);
+    const prev = this.lastHubView;
+    const cands = this.candidates();
+    const attachedIdx = cands.findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+    let aheadCameOnline = false;
+    if (attachedIdx > 0) {
+      for (let i = 0; i < attachedIdx; i += 1) {
+        const cand = cands[i];
+        if (!cand) continue;
+        const key = normalizeHubEndpointUrl(cand.publicUrl);
+        const nowOnline = next.byUrl.get(key)?.online === true;
+        const wasOnline = prev?.byUrl.get(key)?.online === true;
+        if (nowOnline && !wasOnline) {
+          aheadCameOnline = true;
+          break;
+        }
+      }
+    }
+    const writerChanged =
+      prev != null &&
+      (prev.writerHubId !== next.writerHubId || prev.writerEpoch !== next.writerEpoch);
+    const lostBest =
+      !next.attachedIsBest &&
+      (prev == null || prev.attachedIsBest || prev.bestKey !== next.bestKey);
+    return aheadCameOnline || writerChanged || lostBest;
+  }
+
+  private requestFailbackProbeFromNodeList(): void {
+    this.logFailbackFromNodeList();
+    this.scheduleFailbackProbe();
+  }
+
+  private failbackDelayRemaining(): number {
+    if (this.lastFailbackProbeAt <= 0) return 0;
+    return Math.max(0, this.failbackDebounceMs - (this.scheduler.now() - this.lastFailbackProbeAt));
+  }
+
+  private cancelFailbackDebounce(): void {
+    this.failbackDebounceAbort?.abort();
+    this.failbackDebounceAbort = null;
+  }
+
+  private scheduleFailbackProbe(): void {
+    if (this.probeInFlight) {
+      this.failbackCoalesced = true;
+      return;
+    }
+    if (this.failbackDebounceAbort) return;
+    const delay = this.failbackDelayRemaining();
+    if (delay <= 0) {
+      void this.runFailbackProbe();
+      return;
+    }
+    const ac = new AbortController();
+    this.failbackDebounceAbort = ac;
+    const stop = this.stopAbort?.signal;
+    const combined = stop ? anyAbort(stop, ac.signal) : ac.signal;
+    void this.scheduler.sleep(delay, combined).then(
+      () => {
+        if (this.failbackDebounceAbort === ac) this.failbackDebounceAbort = null;
+        void this.runFailbackProbe();
+      },
+      () => {
+        if (this.failbackDebounceAbort === ac) this.failbackDebounceAbort = null;
+      }
+    );
+  }
+
+  private async runFailbackProbe(): Promise<void> {
+    if (this.probeInFlight) {
+      this.failbackCoalesced = true;
+      return;
+    }
+    this.lastFailbackProbeAt = this.scheduler.now();
+    await this.probePreferred();
+  }
+
+  private logFailbackFromNodeList(): void {
+    const now = this.scheduler.now();
+    const key = 'failback\0node.list';
+    const prev = this.candLogAt.get(key);
+    if (prev && now - prev.at < UPLINK_POOL_FAIL_LOG_INTERVAL_MS) return;
+    this.candLogAt.set(key, { index: 0, error: null, transport: '', at: now });
+    this.logInfo('[uplink] failback probe triggered by node.list');
+  }
+
   private async probePreferred(): Promise<void> {
     if (this.probeInFlight) return;
     this.probeInFlight = true;
@@ -1023,13 +1213,10 @@ export class UplinkPool {
         this.stopProbe();
         return;
       }
-      const probe = this.opts.probeHealthz ?? defaultProbeHealthz;
       for (let i = 0; i < idx; i += 1) {
         const pref = cands[i];
         if (!pref) continue;
-        const pin = this.opts.hubTrust.get(pref.publicUrl);
-        const tlsCa = pin?.caPem ? [pin.caPem] : null;
-        const ok = await probe(pref.publicUrl, tlsCa, this.probeTimeoutMs);
+        const ok = await this.probeHealthzTimed(pref.publicUrl);
         if (!ok) {
           this.logInfo(`[uplink] probe fail hub=${redactUrl(pref.publicUrl)}`);
           continue;
@@ -1046,21 +1233,53 @@ export class UplinkPool {
       }
     } finally {
       this.probeInFlight = false;
+      if (this.failbackCoalesced) {
+        this.failbackCoalesced = false;
+        this.scheduleFailbackProbe();
+      }
     }
   }
 
-  private noteAttempt(cand: UplinkCandidate): void {
-    const key = normalizeHubEndpointUrl(cand.publicUrl);
-    const prev = this.diagByUrl.get(key);
+  private async probeHealthzTimed(publicUrl: string): Promise<boolean> {
+    const pin = this.opts.hubTrust.get(publicUrl);
+    const tlsCa = pin?.caPem ? [pin.caPem] : null;
+    const probe = this.opts.probeHealthz ?? defaultProbeHealthz;
+    const started = performance.now();
+    let ok = false;
+    try {
+      ok = await probe(publicUrl, tlsCa, this.probeTimeoutMs);
+    } catch {
+      ok = false;
+    }
+    this.noteRtt(publicUrl, Math.max(0, Math.round(performance.now() - started)));
+    return ok;
+  }
+
+  private emptyDiag(): UrlDiag {
+    return { lastError: null, lastAttemptAt: null, rttMs: null, rttAt: null };
+  }
+
+  private patchDiag(publicUrl: string, patch: Partial<UrlDiag>): void {
+    const key = normalizeHubEndpointUrl(publicUrl);
+    const prev = this.diagByUrl.get(key) ?? this.emptyDiag();
     this.diagByUrl.set(key, {
-      lastError: prev?.lastError ?? null,
-      lastAttemptAt: this.scheduler.now(),
+      lastError: patch.lastError !== undefined ? patch.lastError : prev.lastError,
+      lastAttemptAt: patch.lastAttemptAt !== undefined ? patch.lastAttemptAt : prev.lastAttemptAt,
+      rttMs: patch.rttMs !== undefined ? patch.rttMs : prev.rttMs,
+      rttAt: patch.rttAt !== undefined ? patch.rttAt : prev.rttAt,
     });
   }
 
+  private noteRtt(publicUrl: string, rttMs: number): void {
+    this.patchDiag(publicUrl, { rttMs, rttAt: this.scheduler.now() });
+  }
+
+  private noteAttempt(cand: UplinkCandidate): void {
+    this.patchDiag(cand.publicUrl, { lastAttemptAt: this.scheduler.now() });
+  }
+
   private noteFailure(cand: UplinkCandidate, msg: string): void {
-    const key = normalizeHubEndpointUrl(cand.publicUrl);
-    this.diagByUrl.set(key, {
+    this.patchDiag(cand.publicUrl, {
       lastError: msg,
       lastAttemptAt: this.scheduler.now(),
     });

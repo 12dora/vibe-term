@@ -170,7 +170,7 @@ describe('AuthApi', () => {
       },
       writerHubId: 'h1',
       candidates: [
-        { publicUrl: 'https://h1', lastError: null, lastAttemptAt: null },
+        { publicUrl: 'https://h1', lastError: null, lastAttemptAt: null, rttMs: 12, rttAt: 99 },
         { publicUrl: 'https://h2', lastError: 'tls', lastAttemptAt: 1 },
       ],
     };
@@ -181,6 +181,9 @@ describe('AuthApi', () => {
     expect(out.attached?.mode).toBe('standby');
     expect(out.writerHubId).toBe('h1');
     expect(out.candidates.map((c) => c.publicUrl)).toEqual(['https://h1', 'https://h2']);
+    expect(out.candidates[0]).toMatchObject({ rttMs: 12, rttAt: 99 });
+    expect(out.candidates[1]?.rttMs).toBeUndefined();
+    expect(out.candidates[1]?.rttAt).toBeUndefined();
   });
 
   test('listHubs 对缺字段的响应补空集合，不抛', async () => {
