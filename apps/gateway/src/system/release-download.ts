@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto';
-import { createWriteStream, existsSync, readFileSync } from 'node:fs';
-import type { WriteStream } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync, readFileSync } from 'node:fs';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
 import { RELEASE_REPO_URL, releaseTag, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
 import { compareVersions } from './semver';
 
 const CHECKSUMS_REQUIRED_SINCE = '1.1.4';
-const TARBALL_FETCH_TIMEOUT_MS = 120_000;
+const TARBALL_FETCH_TIMEOUT_MS = 10 * 60 * 1000;
+const SHA256SUMS_FETCH_TIMEOUT_MS = 30_000;
 const SUM_LINE = /^([a-fA-F0-9]{64})\s+\*?(\S+)\s*$/;
 
 /** 覆盖 GitHub 仓库根 URL；缺省为当前发行源。路径布局保持 `/releases/download/v<ver>/...`。 */
@@ -21,6 +25,30 @@ export function resetReleaseDownloadForTests(): void {
 
 export function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+export async function sha256File(path: string): Promise<{ sha256: string; bytes: number }> {
+  const hash = createHash('sha256');
+  let bytes = 0;
+  const stream = createReadStream(path);
+  try {
+    for await (const chunk of stream) {
+      const buf = chunk as Buffer;
+      hash.update(buf);
+      bytes += buf.byteLength;
+    }
+  } catch (err) {
+    stream.destroy();
+    throw err;
+  }
+  return { sha256: hash.digest('hex'), bytes };
+}
+
+export function resolveReleaseCacheDir(installDir?: string | null): string {
+  const override = process.env.TMEX_RELEASE_CACHE_DIR?.trim();
+  if (override) return override;
+  if (installDir) return join(installDir, 'staging', 'release-cache');
+  return join(tmpdir(), 'tmex-release-cache');
 }
 
 export function parseSha256Sums(text: string, fileName: string): string | null {
@@ -52,9 +80,9 @@ export function releaseSha256SumsUrl(version: string): string {
   return resolveReleaseSha256SumsUrl(version);
 }
 
-export function assertReleaseIntegrity(
+export function assertReleaseSha256(
   version: string,
-  bytes: Uint8Array,
+  sha256: string,
   sums: { hex: string | null; missing: boolean }
 ): void {
   if (sums.missing || !sums.hex) {
@@ -65,9 +93,17 @@ export function assertReleaseIntegrity(
     }
     throw new Error('Release SHA256SUMS is missing; tarball integrity is unverified.');
   }
-  if (sha256Hex(bytes) !== sums.hex) {
+  if (sha256 !== sums.hex) {
     throw new Error(`Release tarball sha256 mismatch for ${releaseTarballName(version)}.`);
   }
+}
+
+export function assertReleaseIntegrity(
+  version: string,
+  bytes: Uint8Array,
+  sums: { hex: string | null; missing: boolean }
+): void {
+  assertReleaseSha256(version, sha256Hex(bytes), sums);
 }
 
 export async function fetchReleaseSha256Sums(
@@ -80,6 +116,7 @@ export async function fetchReleaseSha256Sums(
     response = await fetchFn(resolveReleaseSha256SumsUrl(version), {
       redirect: 'follow',
       cache: 'no-store',
+      signal: AbortSignal.timeout(SHA256SUMS_FETCH_TIMEOUT_MS),
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -124,7 +161,7 @@ async function downloadVerifiedReleaseUncached(
   const fileName = releaseTarballName(version);
   const dest = join(opts.cacheDir, fileName);
   const sidecar = `${dest}.sha256`;
-  const cached = readVerifiedCache(dest, sidecar);
+  const cached = await readVerifiedCache(dest, sidecar);
   if (cached) return cached;
 
   const fetchFn = opts.fetchFn ?? fetch;
@@ -134,28 +171,33 @@ async function downloadVerifiedReleaseUncached(
   try {
     downloaded = await downloadTarballToFile(resolveReleaseTarballUrl(version), part, fetchFn);
     const sums = await fetchReleaseSha256Sums(version, fileName, fetchFn);
-    const bytes = new Uint8Array(readFileSync(part));
-    assertReleaseIntegrity(version, bytes, sums);
-    if (downloaded.sha256 !== sha256Hex(bytes)) {
-      throw new Error(`Release tarball sha256 mismatch for ${fileName}.`);
-    }
+    assertReleaseSha256(version, downloaded.sha256, sums);
   } catch (err) {
     await rm(part, { force: true }).catch(() => {});
     throw err;
   }
-  await rename(part, dest);
-  await writeFile(sidecar, `${downloaded.sha256}\n`, { mode: 0o600 });
+  let renamed = false;
+  try {
+    await rename(part, dest);
+    renamed = true;
+    await writeFile(sidecar, `${downloaded.sha256}\n`, { mode: 0o600 });
+  } catch (err) {
+    await rm(part, { force: true }).catch(() => {});
+    if (renamed) await rm(dest, { force: true }).catch(() => {});
+    await rm(sidecar, { force: true, recursive: true }).catch(() => {});
+    throw err;
+  }
   return { path: dest, sha256: downloaded.sha256, bytes: downloaded.bytes };
 }
 
-function readVerifiedCache(dest: string, sidecar: string): DownloadedRelease | null {
+async function readVerifiedCache(dest: string, sidecar: string): Promise<DownloadedRelease | null> {
   if (!existsSync(dest) || !existsSync(sidecar)) return null;
   try {
     const expected = readFileSync(sidecar, 'utf8').trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(expected)) return null;
-    const bytes = new Uint8Array(readFileSync(dest));
-    if (sha256Hex(bytes) !== expected) return null;
-    return { path: dest, sha256: expected, bytes: bytes.byteLength };
+    const hashed = await sha256File(dest);
+    if (hashed.sha256 !== expected) return null;
+    return { path: dest, sha256: expected, bytes: hashed.bytes };
   } catch {
     return null;
   }
@@ -176,56 +218,22 @@ async function downloadTarballToFile(
   }
   const hash = createHash('sha256');
   let bytes = 0;
+  const hasher = new Transform({
+    transform(chunk, _enc, cb) {
+      hash.update(chunk);
+      bytes += chunk.byteLength;
+      cb(null, chunk);
+    },
+  });
   const ws = createWriteStream(destPath, { mode: 0o600 });
   try {
-    const reader = res.body?.getReader();
-    if (!reader) {
-      const buf = new Uint8Array(await res.arrayBuffer());
-      hash.update(buf);
-      bytes = buf.byteLength;
-      await writeAll(ws, buf);
-    } else {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!value?.byteLength) continue;
-        hash.update(value);
-        bytes += value.byteLength;
-        await writeAll(ws, value);
-      }
-    }
-    await closeWriteStream(ws);
+    const src = res.body
+      ? Readable.fromWeb(res.body as unknown as NodeWebReadableStream)
+      : Readable.from([Buffer.from(await res.arrayBuffer())]);
+    await pipeline(src, hasher, ws);
   } catch (err) {
-    await closeWriteStream(ws).catch(() => {});
+    ws.destroy();
     throw err;
   }
   return { sha256: hash.digest('hex'), bytes };
-}
-
-function writeAll(ws: WriteStream, chunk: Uint8Array): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const onErr = (err: Error) => {
-      ws.off('error', onErr);
-      reject(err);
-    };
-    ws.once('error', onErr);
-    if (ws.write(chunk)) {
-      ws.off('error', onErr);
-      resolve();
-      return;
-    }
-    ws.once('drain', () => {
-      ws.off('error', onErr);
-      resolve();
-    });
-  });
-}
-
-function closeWriteStream(ws: WriteStream): Promise<void> {
-  return new Promise((resolve, reject) => {
-    ws.end((err?: Error | null) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
 }

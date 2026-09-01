@@ -1025,6 +1025,7 @@ describe('mesh-routes', () => {
 });
 
 const originalFetch = globalThis.fetch;
+const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
 const UPGRADE_PEER = 'ee'.repeat(16);
 const dummyLink = {} as LinkSession;
 
@@ -1032,6 +1033,8 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   resetRemoteUpgradeJobsForTests();
   resetReleaseDownloadForTests();
+  if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
+  else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;
 });
 
 class RecordingStreams extends FakeStreams {
@@ -1614,6 +1617,10 @@ describe('mesh upgrade routes', () => {
   });
 
   test('POST remote upgrade with staged-package capability returns immediately then PUTs and POSTs staged', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-mesh-rel-cache-'));
     const tarball = new Uint8Array([1, 2, 3, 4, 5]);
     const hex = createHash('sha256').update(tarball).digest('hex');
     mockGithubLatest('9.9.9');

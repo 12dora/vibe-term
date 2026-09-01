@@ -1395,6 +1395,98 @@ describe('forwardAuthorizedHttp multi-MiB raw body over in-memory link', () => {
     expect(await res.json()).toEqual({ received: total });
     expect(received).toBe(total);
   });
+
+  test('target 413 without cancelling the request body is visible to the entry, not 503', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { createInMemoryLinkPair } = await import('@tmex/shared/link');
+    const { acceptHttpStream, openHttpStream } = await import('./stream-targets');
+    const { UpgradeController } = await import('../system/upgrade');
+    const installDir = mkdtempSync(join(tmpdir(), 'tmex-fwd-413-'));
+    const controller = new UpgradeController({
+      getInstallInfo: () => ({
+        installedViaCli: true,
+        deployment: 'launchd',
+        installDir,
+        serviceName: 'tmex',
+        cliVersion: '1.0.0',
+        bunPath: '/usr/bin/bun',
+      }),
+      maxPackageBytes: 64 * 1024,
+    });
+    const [local, remote] = createInMemoryLinkPair();
+    remote.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry',
+        sessionStore: {
+          verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+        } as never,
+        async dispatchHttp(req) {
+          const url = new URL(req.url);
+          const version = url.searchParams.get('version') ?? '';
+          const sha256 = url.searchParams.get('sha256') ?? '';
+          const result = await controller.stagePackage(version, sha256, req.body);
+          if (!result.ok) {
+            return new Response(JSON.stringify({ code: result.code }), {
+              status: result.status,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return new Response(JSON.stringify(result), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        },
+      });
+    });
+    const peers = new FakePeers();
+    peers.links.set(OTHER, local);
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams: {
+        openHttpStream: (link, open, body, signal) => openHttpStream(link, open, body, signal),
+        openWsStream: async () => {
+          throw new Error('ws not used');
+        },
+      },
+    });
+    try {
+      const total = 256 * 1024;
+      const chunk = new Uint8Array(16 * 1024).fill(3);
+      let remaining = total;
+      const rawBody = new ReadableStream<Uint8Array>({
+        pull(ctl) {
+          if (remaining <= 0) {
+            ctl.close();
+            return;
+          }
+          const n = Math.min(chunk.byteLength, remaining);
+          ctl.enqueue(n === chunk.byteLength ? chunk : chunk.subarray(0, n));
+          remaining -= n;
+        },
+      });
+      const res = await forwarder.forwardAuthorizedHttp(
+        new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+          method: 'PUT',
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid`, origin: 'http://localhost' },
+        }),
+        {
+          nodeId: OTHER,
+          method: 'PUT',
+          path: '/api/system/upgrade/package',
+          query: `?version=1.2.3&sha256=${'ab'.repeat(32)}`,
+          rawBody,
+          headers: { 'content-type': 'application/octet-stream' },
+        }
+      );
+      expect(res.status).toBe(413);
+      expect(await res.json()).toEqual({ code: 'PACKAGE_TOO_LARGE' });
+    } finally {
+      rmSync(installDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function encodeHelloFrame(): Uint8Array {

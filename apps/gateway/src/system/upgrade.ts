@@ -1,12 +1,12 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, openSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { chmod, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { UpgradeState, UpgradeStatus } from '@tmex/shared';
 import { releaseTarballName } from '@tmex/shared';
 import { type InstallInfo, getInstallInfo } from './install-info';
-import { downloadVerifiedRelease, sha256Hex } from './release-download';
+import { downloadVerifiedRelease, resolveReleaseCacheDir, sha256File } from './release-download';
 
 export {
   assertReleaseIntegrity,
@@ -134,6 +134,7 @@ export class UpgradeController {
   private startedAt: string | null = null;
   private readonly staged = new Map<string, StagedPackageRecord>();
   private stagedLoaded = false;
+  private stagingInFlight = false;
 
   constructor(private readonly deps: UpgradeControllerDeps = {}) {}
 
@@ -158,6 +159,7 @@ export class UpgradeController {
     this.pendingEarlyExit = null;
     this.staged.clear();
     this.stagedLoaded = false;
+    this.stagingInFlight = false;
   }
 
   /** 进入升级流程；返回 false 表示已忙（并发触发）。下载/执行异步进行，不阻塞调用方。 */
@@ -166,17 +168,18 @@ export class UpgradeController {
   }
 
   tryStart(version: string, opts?: UpgradeStartOpts): UpgradeStartResult {
-    if (this.isBusy()) return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
+    if (this.isBusy() || this.stagingInFlight) return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
     const source = opts?.source ?? 'release';
+    let staged: StagedPackageRecord | null = null;
     if (source === 'staged') {
-      const staged = this.requireStaged(version, opts?.sha256);
+      staged = this.lookupStaged(version, opts?.sha256);
       if (!staged) return { ok: false, code: 'PACKAGE_NOT_STAGED' };
     }
     this.state = 'downloading';
     this.targetVersion = version;
     this.error = null;
     this.startedAt = new Date().toISOString();
-    void this.run(version, opts);
+    void this.run(version, opts, staged);
     return { ok: true };
   }
 
@@ -185,7 +188,22 @@ export class UpgradeController {
     sha256: string,
     body: ReadableStream<Uint8Array> | null
   ): Promise<StagePackageResult> {
-    if (this.isBusy()) return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
+    if (this.isBusy() || this.stagingInFlight) {
+      return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
+    }
+    this.stagingInFlight = true;
+    try {
+      return await this.stagePackageLocked(version, sha256, body);
+    } finally {
+      this.stagingInFlight = false;
+    }
+  }
+
+  private async stagePackageLocked(
+    version: string,
+    sha256: string,
+    body: ReadableStream<Uint8Array> | null
+  ): Promise<StagePackageResult> {
     const expected = sha256.trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(expected)) {
       return { ok: false, status: 400, code: 'BAD_REQUEST' };
@@ -200,7 +218,7 @@ export class UpgradeController {
     const stagedDir = join(installDir, 'staging', 'staged');
     await mkdir(stagedDir, { recursive: true, mode: 0o700 });
     const finalPath = join(stagedDir, releaseTarballName(version));
-    const partPath = `${finalPath}.part`;
+    const partPath = `${finalPath}.part-${randomBytes(8).toString('hex')}`;
     const sidecarPath = join(stagedDir, `tmex-cli-${version}.json`);
     const maxBytes = this.deps.maxPackageBytes ?? STAGED_PACKAGE_MAX_BYTES;
     const hash = createHash('sha256');
@@ -215,10 +233,14 @@ export class UpgradeController {
         if (!value?.byteLength) continue;
         bytes += value.byteLength;
         if (bytes > maxBytes) {
-          await reader.cancel().catch(() => {});
           await fh.close().catch(() => {});
           fh = null;
           await rm(partPath, { force: true });
+          try {
+            reader.releaseLock();
+          } catch {
+            // already released
+          }
           return { ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' };
         }
         hash.update(value);
@@ -239,24 +261,33 @@ export class UpgradeController {
       return { ok: false, status: 400, code: 'PACKAGE_SHA256_MISMATCH' };
     }
 
-    await rm(finalPath, { force: true }).catch(() => {});
-    await rename(partPath, finalPath);
-    await chmod(finalPath, 0o600).catch(() => {});
-    const record: StagedPackageRecord = {
-      version,
-      sha256: digest,
-      path: finalPath,
-      bytes,
-      stagedAt: new Date((this.deps.now ?? Date.now)()).toISOString(),
-    };
-    await writeFile(sidecarPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-    this.loadStagedFromDisk(installDir);
-    this.staged.set(version, record);
-    await this.pruneStaged(installDir, version);
-    return { ok: true, version, sha256: digest, bytes };
+    let renamed = false;
+    try {
+      await rm(finalPath, { force: true }).catch(() => {});
+      await rename(partPath, finalPath);
+      renamed = true;
+      await chmod(finalPath, 0o600).catch(() => {});
+      const record: StagedPackageRecord = {
+        version,
+        sha256: digest,
+        path: finalPath,
+        bytes,
+        stagedAt: new Date((this.deps.now ?? Date.now)()).toISOString(),
+      };
+      await writeFile(sidecarPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+      this.loadStagedFromDisk(installDir);
+      this.staged.set(version, record);
+      await this.pruneStaged(installDir, version);
+      return { ok: true, version, sha256: digest, bytes };
+    } catch {
+      await rm(partPath, { force: true }).catch(() => {});
+      if (renamed) await rm(finalPath, { force: true }).catch(() => {});
+      await rm(sidecarPath, { force: true, recursive: true }).catch(() => {});
+      return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    }
   }
 
-  private requireStaged(version: string, sha256?: string): StagedPackageRecord | null {
+  private lookupStaged(version: string, sha256?: string): StagedPackageRecord | null {
     const install = (this.deps.getInstallInfo ?? getInstallInfo)();
     const installDir = resolveUpgradeInstallDir(install);
     if (!installDir) return null;
@@ -270,17 +301,6 @@ export class UpgradeController {
     }
     const expected = sha256?.trim().toLowerCase();
     if (expected && expected !== record.sha256) return null;
-    try {
-      const bytes = new Uint8Array(readFileSync(record.path));
-      if (sha256Hex(bytes) !== record.sha256) {
-        this.staged.delete(version);
-        return null;
-      }
-      if (expected && sha256Hex(bytes) !== expected) return null;
-    } catch {
-      this.staged.delete(version);
-      return null;
-    }
     return record;
   }
 
@@ -356,9 +376,36 @@ export class UpgradeController {
         force: true,
       }).catch(() => {});
     }
+    await this.pruneOrphanStagedFiles(installDir);
   }
 
-  private async run(version: string, opts?: UpgradeStartOpts): Promise<void> {
+  private async pruneOrphanStagedFiles(installDir: string): Promise<void> {
+    const stagedDir = join(installDir, 'staging', 'staged');
+    if (!existsSync(stagedDir)) return;
+    let names: string[] = [];
+    try {
+      names = readdirSync(stagedDir);
+    } catch {
+      return;
+    }
+    const keptPaths = new Set([...this.staged.values()].map((record) => record.path));
+    for (const name of names) {
+      const path = join(stagedDir, name);
+      if (name.includes('.part')) {
+        await rm(path, { force: true, recursive: true }).catch(() => {});
+        continue;
+      }
+      if (name.endsWith('.tgz') && !keptPaths.has(path)) {
+        await rm(path, { force: true }).catch(() => {});
+      }
+    }
+  }
+
+  private async run(
+    version: string,
+    opts?: UpgradeStartOpts,
+    staged?: StagedPackageRecord | null
+  ): Promise<void> {
     const install = (this.deps.getInstallInfo ?? getInstallInfo)();
     const installDir = resolveUpgradeInstallDir(install);
     let stageDir: string | null = null;
@@ -374,9 +421,23 @@ export class UpgradeController {
       const source = opts?.source ?? 'release';
       let binPath: string;
       if (source === 'staged') {
-        const staged = this.requireStaged(version, opts?.sha256);
-        if (!staged) throw new Error('PACKAGE_NOT_STAGED');
-        binPath = await extractCliTarball(staged.path, stageDir);
+        const record = staged ?? this.lookupStaged(version, opts?.sha256);
+        if (!record) throw new Error('PACKAGE_NOT_STAGED');
+        const consumedPath = join(stageDir, releaseTarballName(version));
+        await rename(record.path, consumedPath);
+        this.staged.delete(version);
+        await rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
+          force: true,
+        }).catch(() => {});
+        const hashed = await sha256File(consumedPath);
+        if (hashed.sha256 !== record.sha256) {
+          throw new Error('PACKAGE_SHA256_MISMATCH');
+        }
+        const expected = opts?.sha256?.trim().toLowerCase();
+        if (expected && expected !== hashed.sha256) {
+          throw new Error('PACKAGE_SHA256_MISMATCH');
+        }
+        binPath = await extractCliTarball(consumedPath, stageDir);
       } else {
         const stageRelease = this.deps.stageRelease ?? stageGithubRelease;
         binPath = await stageRelease(stageDir, version);
@@ -692,8 +753,9 @@ export function parsePidFileContents(raw: string): number | null {
  * 返回 CLI 入口路径 `<stageDir>/package/bin/tmex.js`。
  */
 export async function stageGithubRelease(stageDir: string, version: string): Promise<string> {
+  const installDir = resolveUpgradeInstallDir(getInstallInfo());
   const cached = await downloadVerifiedRelease(version, {
-    cacheDir: join(stageDir, '.release-cache'),
+    cacheDir: resolveReleaseCacheDir(installDir),
   });
   return extractCliTarball(cached.path, stageDir);
 }

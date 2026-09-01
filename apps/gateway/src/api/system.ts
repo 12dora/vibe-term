@@ -1,7 +1,10 @@
 import type { StartUpgradeRequest } from '@tmex/shared';
 import { t } from '../i18n';
+import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
+import { requestDispatchContext } from '../mesh/types';
 import { getAccessAddresses } from '../system/access-addresses';
 import { MANAGED_EXTERNALLY, getSystemInfo, isManagedExternally } from '../system/info-public';
+import { STAGED_PACKAGE_MAX_BYTES } from '../system/upgrade';
 import { json } from './http';
 
 // 构建期 define：managed compile 为 true，使自更新模块落入死分支并被剔除。
@@ -80,6 +83,20 @@ export function isReleaseVersion(value: string): boolean {
   return RELEASE_VERSION_PATTERN.test(value);
 }
 
+function requestIsStagedAuthenticated(req: Request): boolean {
+  const dispatch = requestDispatchContext.get(req);
+  if (dispatch) {
+    if (dispatch.viaNodeId !== MESH_VIA_SELF) return true;
+    if (dispatch.uid) return true;
+  }
+  const ctx = getMeshRequestContext(req);
+  return Boolean(ctx.sid && ctx.uid);
+}
+
+function stagedRequiresAuth(): Response {
+  return json({ code: 'UPGRADE_NOT_ALLOWED', reason: 'staged_requires_auth' }, 403);
+}
+
 async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   let version = '';
   let source: 'release' | 'staged' = 'release';
@@ -87,6 +104,9 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   try {
     const body = (await req.json()) as StartUpgradeRequest;
     version = (body?.version ?? '').trim();
+    if (body?.source !== undefined && body.source !== 'staged' && body.source !== 'release') {
+      return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+    }
     if (body?.source === 'staged' || body?.source === 'release') source = body.source;
     if (typeof body?.sha256 === 'string' && body.sha256.trim()) sha256 = body.sha256.trim();
   } catch {
@@ -95,6 +115,10 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
 
   if (!version || !isReleaseVersion(version)) {
     return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+  }
+
+  if (source === 'staged' && !requestIsStagedAuthenticated(req)) {
+    return stagedRequiresAuth();
   }
 
   const { startLocalUpgradeAttempt } = await import('../system/upgrade-service');
@@ -114,6 +138,9 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
 const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
 
 async function handleStagePackageOpen(req: Request): Promise<Response> {
+  if (!requestIsStagedAuthenticated(req)) {
+    return stagedRequiresAuth();
+  }
   const info = getSystemInfo();
   if (!info.canSelfUpdate) {
     return json({ error: t('apiError.upgradeNotAllowed') }, 403);
@@ -123,6 +150,13 @@ async function handleStagePackageOpen(req: Request): Promise<Response> {
   const sha256 = (url.searchParams.get('sha256') ?? '').trim();
   if (!version || !isReleaseVersion(version) || !SHA256_HEX.test(sha256)) {
     return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+  }
+  const contentLength = req.headers.get('content-length');
+  if (contentLength) {
+    const n = Number(contentLength);
+    if (Number.isFinite(n) && n > STAGED_PACKAGE_MAX_BYTES) {
+      return json({ code: 'PACKAGE_TOO_LARGE' }, 413);
+    }
   }
   const { upgradeController } = await import('../system/upgrade');
   const result = await upgradeController.stagePackage(version, sha256, req.body);

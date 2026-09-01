@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RELEASE_REPO_URL, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
@@ -144,5 +152,43 @@ describe('downloadVerifiedRelease', () => {
     const result = await downloadVerifiedRelease(version, { cacheDir });
     expect(result.sha256).toBe(sha256Hex(good));
     expect(readFileSync(join(cacheDir, releaseTarballName(version)))).toEqual(Buffer.from(good));
+  });
+
+  test('a non-writable cache dir fails the download instead of emitting unhandled error', async () => {
+    const version = '7.7.7';
+    const tarball = new Uint8Array([3, 2, 1]);
+    stubReleaseFetch(tarball, version);
+    const cacheDir = tempDir('tmex-rel-nowrite-');
+    chmodSync(cacheDir, 0o555);
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => {
+      unhandled.push(err);
+    };
+    const proc = process as unknown as {
+      on(event: string, listener: (err: unknown) => void): void;
+      off(event: string, listener: (err: unknown) => void): void;
+    };
+    proc.on('uncaughtException', onUnhandled);
+    proc.on('unhandledRejection', onUnhandled);
+    try {
+      await expect(downloadVerifiedRelease(version, { cacheDir })).rejects.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(unhandled).toEqual([]);
+    } finally {
+      proc.off('uncaughtException', onUnhandled);
+      proc.off('unhandledRejection', onUnhandled);
+      chmodSync(cacheDir, 0o700);
+    }
+  });
+
+  test('sidecar write failure cleans part/final/sidecar and rejects', async () => {
+    const version = '6.6.6';
+    const tarball = new Uint8Array([4, 5, 6]);
+    stubReleaseFetch(tarball, version);
+    const cacheDir = tempDir('tmex-rel-sidecar-');
+    mkdirSync(join(cacheDir, `${releaseTarballName(version)}.sha256`));
+    await expect(downloadVerifiedRelease(version, { cacheDir })).rejects.toThrow();
+    expect(existsSync(join(cacheDir, releaseTarballName(version)))).toBe(false);
+    expect(existsSync(join(cacheDir, `${releaseTarballName(version)}.part`))).toBe(false);
   });
 });

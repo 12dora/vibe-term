@@ -7,6 +7,7 @@ import { getSystemInfo } from './info-public';
 import {
   consumeHandedOffJob,
   getRemoteUpgradeJob,
+  hasRunningRemoteUpgradeJob,
   startRemoteUpgradeJob,
 } from './remote-upgrade-job';
 import { compareVersions } from './semver';
@@ -24,6 +25,7 @@ export type AuthorizedUpgradeForwardInput = {
   body?: unknown;
   rawBody?: ReadableStream<Uint8Array>;
   headers?: Record<string, string>;
+  signal?: AbortSignal;
 };
 
 export type AuthorizedUpgradeForward = {
@@ -83,6 +85,10 @@ export async function handleMeshNodeUpgradeStart(opts: {
     if (blocked) return blocked;
   } else if (!readNodeSession(req, nodeId)) {
     return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId });
+  }
+
+  if (!local && hasRunningRemoteUpgradeJob(resolvedId)) {
+    return jsonError('UPGRADE_IN_PROGRESS', 409, { nodeId: resolvedId });
   }
 
   let latestVersion: string;

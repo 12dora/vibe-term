@@ -261,6 +261,7 @@ export class Forwarder {
       body?: unknown;
       rawBody?: ReadableStream<Uint8Array>;
       headers?: Record<string, string>;
+      signal?: AbortSignal;
     },
     signal?: AbortSignal
   ): Promise<Response> {
@@ -269,7 +270,7 @@ export class Forwarder {
     if (!auth) {
       return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId: input.nodeId });
     }
-    const abort = signal ?? req.signal;
+    const abort = input.signal ?? signal ?? req.signal;
     const method = input.method.toUpperCase();
     const retryable = IDEMPOTENT_HTTP.has(method);
     const headers: Record<string, string> = { ...(input.headers ?? {}) };

@@ -95,6 +95,31 @@ describe('sweepUpgradeGarbage', () => {
     expect(await readFile(join(installDir, 'data', 'tmex.db'), 'utf8')).toBe('keep');
   });
 
+  test('keeps reserved staged and release-cache directories', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'tmex-gc-reserved-'));
+    tempDirs.push(installDir);
+    await mkdir(join(installDir, 'versions', '1.0.0'), { recursive: true });
+    await mkdir(join(installDir, 'staging', 'staged'), { recursive: true });
+    await mkdir(join(installDir, 'staging', 'release-cache'), { recursive: true });
+    await mkdir(join(installDir, 'staging', 'orphan-txn'), { recursive: true });
+    await writeFile(join(installDir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz'), 'pkg');
+    await writeFile(join(installDir, 'staging', 'release-cache', 'tmex-cli-9.9.9.tgz'), 'cache');
+    await writeFile(join(installDir, 'staging', 'orphan-txn', 'x'), 'x');
+    await switchCurrent(installDir, '1.0.0');
+
+    const { sweepOrphanStaging, sweepUpgradeGarbage } = await import('./upgrade-gc');
+    await sweepOrphanStaging(installDir, 'keep-me');
+    await sweepUpgradeGarbage(installDir);
+
+    expect(await pathExists(join(installDir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz'))).toBe(
+      true
+    );
+    expect(
+      await pathExists(join(installDir, 'staging', 'release-cache', 'tmex-cli-9.9.9.tgz'))
+    ).toBe(true);
+    expect(await pathExists(join(installDir, 'staging', 'orphan-txn'))).toBe(false);
+  });
+
   test('cleans shim tmex.*.tmp without touching foreign shims', async () => {
     const installDir = await mkdtemp(join(tmpdir(), 'tmex-gc-shim-'));
     tempDirs.push(installDir);

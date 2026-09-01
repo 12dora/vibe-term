@@ -14,11 +14,14 @@ import {
 } from './upgrade-service';
 
 const originalFetch = globalThis.fetch;
+const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
   resetRemoteUpgradeJobsForTests();
   resetReleaseDownloadForTests();
+  if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
+  else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;
 });
 
 describe('isAlreadyAtOrAboveLatest', () => {
@@ -331,6 +334,58 @@ describe('handleMeshNodeUpgradeStart staged-package job', () => {
     expect(calls).toEqual(['GET /api/system/info']);
   });
 
+  test('second start is 409 UPGRADE_IN_PROGRESS even when GitHub is down', async () => {
+    let releaseDownload!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseDownload = resolve;
+    });
+    mockGithubLatest('9.9.9');
+    const latestFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('api.github.com')) return latestFetch(input, init);
+      await gate;
+      return new Response('nope', { status: 500 });
+    }) as typeof fetch;
+    const req = authedRequest(nodeId);
+    const forward = {
+      async forwardAuthorizedHttp(_req: Request, input: { method: string; path: string }) {
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      },
+    };
+    const first = await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    expect(first.status).toBe(200);
+    globalThis.fetch = (async (_input: RequestInfo | URL) =>
+      new Response('unavailable', { status: 502 })) as typeof fetch;
+    const second = await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward: neverForward(),
+    });
+    expect(second.status).toBe(409);
+    expect(await second.json()).toMatchObject({ code: 'UPGRADE_IN_PROGRESS', nodeId });
+    releaseDownload();
+    await waitForRemoteUpgradeJob(nodeId).catch(() => {});
+  });
+
   test('legacy target without the capability still POSTs {version} and waits', async () => {
     mockGithubLatest('9.9.9');
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
@@ -480,6 +535,10 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
   });
 
   test('handed-off job is dropped and status is forwarded', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-rel-cache-'));
     mockGithubLatest('9.9.9');
     const req = authedRequest(nodeId);
     const forward = {

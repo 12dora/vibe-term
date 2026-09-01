@@ -220,4 +220,72 @@ describe('RemoteUpgradeJob', () => {
     releaseDownload();
     await waitForRemoteUpgradeJob(nodeId);
   });
+
+  test('a push that never responds fails with push timeout and frees the node', async () => {
+    const nodeId = 'ee'.repeat(16);
+    const path = tempFile(new Uint8Array([1]));
+    let cancelled = false;
+    const started = startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.rawBody) {
+            input.rawBody.cancel = (async () => {
+              cancelled = true;
+            }) as typeof input.rawBody.cancel;
+          }
+          await new Promise(() => {});
+          return new Response('never');
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 1 }),
+      timeouts: { pushMs: 50 },
+    });
+    expect(started.ok).toBe(true);
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toMatch(/push timeout/i);
+    const again = startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp() {
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 1 }),
+    });
+    expect(again.ok).toBe(true);
+    await waitForRemoteUpgradeJob(nodeId);
+    expect(cancelled).toBe(true);
+  });
+
+  test('failed job TTL is measured from failedAt not startedAt', async () => {
+    const nodeId = 'ff'.repeat(16);
+    let now = Date.parse('2026-09-01T00:00:00.000Z');
+    const started = startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp() {
+          throw new Error('should not forward');
+        },
+      },
+      download: async () => {
+        now += 9 * 60 * 1000 + 59 * 1000;
+        throw new Error('GitHub release tarball HTTP 403');
+      },
+      now: () => now,
+    });
+    expect(started.ok).toBe(true);
+    await waitForRemoteUpgradeJob(nodeId);
+    now += 2000;
+    expect(getRemoteUpgradeJob(nodeId, now)?.state).toBe('failed');
+    now += 10 * 60 * 1000;
+    expect(getRemoteUpgradeJob(nodeId, now)).toBeNull();
+  });
 });
