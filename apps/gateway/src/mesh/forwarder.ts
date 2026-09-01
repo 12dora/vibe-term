@@ -1,5 +1,6 @@
 import { wsBorsh } from '@tmex/shared';
 import { buildSetCookie, nodeSessionCookieName, parseCookies } from '../auth/cookies';
+import { buildJsonStreamBody } from './json-stream-body';
 import {
   AUTH_401_BODY_LIMIT,
   HTTP_FAILOVER_MAX_ATTEMPTS,
@@ -27,7 +28,6 @@ import {
   parseSetSessionHeader,
   setMeshRequestContext,
 } from './mesh-deps';
-import { buildJsonStreamBody } from './json-stream-body';
 import { isHttps, jsonError } from './session-middleware';
 import { StreamReplayState } from './stream-replay-state';
 

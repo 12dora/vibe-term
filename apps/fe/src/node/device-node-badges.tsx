@@ -332,10 +332,7 @@ function DiagnosticRow({ row }: { row: DiagnosticRowSpec }) {
   return (
     <div className="flex items-baseline justify-between gap-2">
       <dt className="shrink-0 text-muted-foreground">{t(row.labelKey)}</dt>
-      <dd
-        className={cn('truncate', (row.mono ?? true) && 'font-mono')}
-        title={value ?? undefined}
-      >
+      <dd className={cn('truncate', (row.mono ?? true) && 'font-mono')} title={value ?? undefined}>
         {value ?? t('nodes.badge.unknown')}
       </dd>
     </div>
