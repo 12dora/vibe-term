@@ -36,12 +36,34 @@ import {
 } from './types';
 import {
   MIN_REMOTE_UPGRADE_VERSION,
+  SILENT_UPGRADE_TOASTS,
+  type Translate,
   type UpgradeBatchSummary,
+  type UpgradeToasts,
   eligibleUpgradeRows,
-  runUpgradeBatch,
+  launchUpgradeBatch,
+  reportBatchSummary,
+  resumeUpgradeBatch,
 } from './upgrade-batch';
+import {
+  type BatchPlanSink,
+  UPGRADE_BATCH_HEARTBEAT_MS,
+  type UpgradeBatchPlan,
+  canAdoptBatchPlan,
+  clearBatchPlan,
+  createBatchPlan,
+  createBatchPlanSink,
+  currentTabId,
+  loadBatchPlan,
+} from './upgrade-batch-storage';
 
-export { MIN_REMOTE_UPGRADE_VERSION };
+export {
+  MIN_REMOTE_UPGRADE_VERSION,
+  SILENT_UPGRADE_TOASTS,
+  launchUpgradeBatch,
+  reportBatchSummary,
+};
+export type { Translate, UpgradeToasts };
 
 const POLL_MS = 2000;
 /** 下载 + 解包 + 重启 + 版本回传的总预算。 */
@@ -53,8 +75,6 @@ export const RESTORE_CONCURRENCY = 3;
 
 /** 后端取消升级后留在 idle 状态上的标记；FE 必须按「已取消」而不是失败处理。 */
 export const UPGRADE_CANCELLED_ERROR: string = UPGRADE_CANCELLED;
-
-type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 const ERROR_KEYS: Record<string, string> = {
   NODE_LOGIN_REQUIRED: 'nodes.upgrade.loginRequired',
@@ -338,14 +358,6 @@ export async function watchUpgrade(ctx: UpgradeWatchContext): Promise<UpgradeWat
   return { kind: 'timeout' };
 }
 
-/** sonner 的最小子集：单测注入 spy，避免真的弹 toast。 */
-export interface UpgradeToasts {
-  success: (message: string) => void;
-  info: (message: string) => void;
-  warning: (message: string) => void;
-  error: (message: string) => void;
-}
-
 /**
  * POST 在途时按下的「停止升级」：目标还没登记这次升级，DELETE 只会扑空，
  * 只能等 POST 落地再补发。由 hook 用 `UpgradeCancelGate` 接线。
@@ -492,40 +504,6 @@ export async function resumeNodeUpgrade(p: UpgradeResumeParams): Promise<Upgrade
   if (result.kind === 'cancelled' || p.signal.aborted) return 'cancelled';
   reportResult(p, version, result);
   return outcomeOf(result);
-}
-
-/** 批量升级期间用它顶掉每节点 toast：进度仍然逐行落到表格上，只是不再刷屏。 */
-export const SILENT_UPGRADE_TOASTS: UpgradeToasts = {
-  success: () => undefined,
-  info: () => undefined,
-  warning: () => undefined,
-  error: () => undefined,
-};
-
-/** 批量结束后的唯一一条 toast；被取消时不提示（结论不完整）。 */
-export function reportBatchSummary(
-  t: Translate,
-  toasts: UpgradeToasts,
-  summary: UpgradeBatchSummary
-): void {
-  if (summary.cancelled) return;
-  const counts = { success: summary.succeeded, failed: summary.failed };
-  if (summary.cancelledCount > 0) {
-    // 有人中途按了停止：三个数一起报，失败节点名让位给「已取消」这一档。
-    const text = t('nodes.upgrade.allDoneWithCancelled', {
-      ...counts,
-      cancelled: summary.cancelledCount,
-    });
-    if (summary.failed === 0) toasts.info(text);
-    else toasts.warning(text);
-    return;
-  }
-  if (summary.failed === 0) {
-    toasts.success(t('nodes.upgrade.allDone', counts));
-    return;
-  }
-  const names = summary.failedNames.join(t('nodes.upgrade.listSeparator'));
-  toasts.warning(t('nodes.upgrade.allDoneWithFailures', { ...counts, names }));
 }
 
 /** 刷新后需要回读升级状态的行：在线，且是本机或已登录（否则 GET 只会吃一条 401）。 */
@@ -792,55 +770,6 @@ export function createNodeAbortRegistry(): NodeAbortRegistry {
   };
 }
 
-export interface UpgradeBatchLaunch {
-  rows: NodeRow[];
-  latestVersion: string | null;
-  /** 已有行内升级在跑：批量必须让路，否则它会把那台机器当成「跳过」并打乱 hub → self 的次序。 */
-  rowRunning: boolean;
-  /** 还在回读各节点的升级状态：这会儿还不知道谁在升级，批量整体让路。 */
-  restoring: boolean;
-  signal: AbortSignal;
-  t: Translate;
-  toasts: UpgradeToasts;
-  confirm: (message: string) => boolean;
-  runOne: (row: NodeRow, version: string, toasts: UpgradeToasts) => Promise<UpgradeRunOutcome>;
-  onStart: (total: number) => void;
-  onProgress: (completed: number) => void;
-}
-
-/**
- * 「全部升级」的完整决策链：无行内任务 → 回读已收尾 → latest 已知 → 筛候选 → 一次确认 →
- * 按序执行 → 一条汇总 toast。没启动（有行内任务 / 正在回读 / latest 未知 / 没有候选 /
- * 用户取消）返回 `null`，调用方据此不进入 running 态。
- */
-export function launchUpgradeBatch(p: UpgradeBatchLaunch): Promise<UpgradeBatchSummary> | null {
-  if (p.rowRunning) {
-    p.toasts.info(p.t('nodes.upgrade.allBusy'));
-    return null;
-  }
-  if (p.restoring) {
-    // 回读还没收尾：这时开批量会与回读到的在途升级抢同一台机器。
-    p.toasts.info(p.t('nodes.upgrade.restoring'));
-    return null;
-  }
-  const version = p.latestVersion;
-  if (!version) return null;
-  const targets = eligibleUpgradeRows(p.rows, version);
-  if (targets.length === 0) return null;
-  if (!p.confirm(p.t('nodes.upgrade.confirmAll', { count: targets.length, version }))) return null;
-  p.onStart(targets.length);
-  return runUpgradeBatch({
-    rows: targets,
-    signal: p.signal,
-    // 批量期间每节点的 toast 全部吞掉，只保留行内阶段与最后那条汇总。
-    run: (row) => p.runOne(row, version, SILENT_UPGRADE_TOASTS),
-    onProgress: p.onProgress,
-  }).then((summary) => {
-    reportBatchSummary(p.t, p.toasts, summary);
-    return summary;
-  });
-}
-
 function confirmText(t: Translate, row: NodeRow, version: string | null): string {
   const target = version ?? t('nodes.upgrade.latestPending');
   return row.isSelf
@@ -915,7 +844,19 @@ export function useNodeUpgrade(
   /** 一把闸管所有回读轮次：列表连着新增几批节点也不会同时压出十几个 GET。 */
   const restoreGateRef = useRef<Semaphore>(createSemaphore(RESTORE_CONCURRENCY));
   const runningRef = useRef<Set<string>>(new Set());
+  /** 每行在途的那次升级：续跑的批量靠它等结论，不重发 POST。 */
+  const inFlightRef = useRef<Map<string, Promise<UpgradeRunOutcome>>>(new Map());
   const batchRunningRef = useRef(false);
+  /** 正在推进的批量的计划写入口；心跳与收尾都用它。 */
+  const planSinkRef = useRef<BatchPlanSink | null>(null);
+  /** 本次挂载待续接的计划；`undefined` 表示还没读过（入口 id 未知时不缓存）。 */
+  const planRef = useRef<UpgradeBatchPlan | null | undefined>(undefined);
+  /** 计划里的节点：它们的回读续跑属于这一批，每行的 toast 交给最后那条汇总。 */
+  const planIdsRef = useRef<ReadonlySet<string>>(EMPTY_IDS);
+  /** 续跑只尝试一次：判定为过期 / 被别的标签页占着之后不再反复重试。 */
+  const resumedRef = useRef(false);
+  /** 还没收尾的回读轮次数：大于零时不开续跑，免得与回读抢同一台机器。 */
+  const restoreActiveRef = useRef(0);
   /** 已经回读过状态的节点；节点离开列表就忘掉，再出现时重新回读一次。 */
   const restoredRef = useRef<Set<string>>(new Set());
   const latestRef = useRef<string | null>(null);
@@ -980,12 +921,13 @@ export function useNodeUpgrade(
       if (alive()) setRunningCount(runningRef.current.size);
       const settle = (outcome: UpgradeRunOutcome) => {
         runningRef.current.delete(row.id);
+        inFlightRef.current.delete(row.id);
         nodeAbortsRef.current.release(row.id, controller);
         if (alive()) setRunningCount(runningRef.current.size);
         // 回读到的在途升级要是被这次升级挡在门外，现在轮到它接手了。
         resumeQueueRef.current.release(row.id, outcome);
       };
-      return runner(controller.signal).then(
+      const running = runner(controller.signal).then(
         (outcome) => {
           settle(outcome);
           return outcome;
@@ -995,6 +937,8 @@ export function useNodeUpgrade(
           throw error;
         }
       );
+      inFlightRef.current.set(row.id, running);
+      return running;
     },
     [alive]
   );
@@ -1078,7 +1022,8 @@ export function useNodeUpgrade(
           io,
           signal,
           t,
-          toasts: toast,
+          // 属于待续接批量的行：每行的结论交给最后那条汇总，不逐台刷屏。
+          toasts: planIdsRef.current.has(row.id) ? SILENT_UPGRADE_TOASTS : toast,
           patch: (entry) => patch(row.id, entry),
           onChanged,
         })
@@ -1092,14 +1037,70 @@ export function useNodeUpgrade(
     };
   }, [resumeOnce]);
 
+  /** 入口节点（本机行）：批量计划按它落盘，换入口即换计划。 */
+  const entryNodeId = rows.find((row) => row.isSelf)?.id ?? null;
+
+  /**
+   * 本次挂载待续接的计划；只读一次。被别的标签页占着时按「没有」处理，之后也不再重试——
+   * 那一页多半正跑着这批，抢过来只会两页对着同一批机器同时发 POST。
+   */
+  const readPlan = useCallback((): UpgradeBatchPlan | null => {
+    if (planRef.current !== undefined) return planRef.current;
+    if (!entryNodeId) return null;
+    const now = io.now();
+    const stored = loadBatchPlan(entryNodeId, now);
+    const plan = stored && canAdoptBatchPlan(stored, currentTabId(), now) ? stored : null;
+    planRef.current = plan;
+    planIdsRef.current = new Set(plan ? plan.order.flat() : []);
+    return plan;
+  }, [entryNodeId, io]);
+
+  const openPlan = useCallback(
+    (order: string[][], targetVersion: string): BatchPlanSink | null => {
+      if (!entryNodeId) return null;
+      const created = createBatchPlan({
+        entryNodeId,
+        targetVersion,
+        order,
+        now: io.now(),
+        tabId: currentTabId(),
+      });
+      const sink = createBatchPlanSink(created, io.now);
+      planSinkRef.current = sink;
+      planIdsRef.current = new Set(order.flat());
+      // 用户亲手开的这一批顶掉上一次留下的计划：那份已经被覆盖，绝不能再去续跑。
+      planRef.current = null;
+      resumedRef.current = true;
+      return sink;
+    },
+    [entryNodeId, io]
+  );
+
+  /** 一批跑完的收尾记账：running 标记、进度条与心跳用的 sink 一起归位。 */
+  const trackBatch = useCallback(
+    (running: Promise<UpgradeBatchSummary>) => {
+      void running.finally(() => {
+        batchRunningRef.current = false;
+        planSinkRef.current = null;
+        if (alive()) setBatch(IDLE_UPGRADE_BATCH);
+      });
+    },
+    [alive]
+  );
+
+  const tryResumeRef = useRef<(() => void) | null>(null);
+
   // 刷新页面后升级还在目标机上跑：回读一遍状态，非 idle 的行直接接上轮询。
   useEffect(() => {
     const signal = abortRef.current?.signal;
     if (!signal || signal.aborted) return;
+    // 先认出待续接的批量：属于它的行在回读接管时就该静音，结论留给最后那条汇总。
+    readPlan();
     retainKnownIds(restoredRef.current, rows);
     const pending = restorableRows(rows).filter((row) => !restoredRef.current.has(row.id));
     if (pending.length === 0) return;
     for (const row of pending) restoredRef.current.add(row.id);
+    restoreActiveRef.current += 1;
     setRestoringIds((prev) => {
       const next = new Set(prev);
       for (const row of pending) next.add(row.id);
@@ -1117,8 +1118,12 @@ export function useNodeUpgrade(
       onActive: (row, status) => {
         resumeQueueRef.current.offer(row, status);
       },
+    }).finally(() => {
+      restoreActiveRef.current -= 1;
+      // 回读收尾后才知道谁已被接管：这时开续跑不会与它抢同一台机器。
+      tryResumeRef.current?.();
     });
-  }, [alive, io, rows]);
+  }, [alive, io, readPlan, rows]);
 
   const start = useCallback(
     (row: NodeRow) => {
@@ -1165,22 +1170,73 @@ export function useNodeUpgrade(
         toasts: toast,
         confirm: (message) => globalThis.confirm?.(message) === true,
         runOne: (row, version, toasts) => runOnce(row, version, toasts),
-        onStart: (total) => {
+        openPlan,
+        onStart: (total, completed) => {
           batchRunningRef.current = true;
-          setBatch({ running: true, total, completed: 0 });
+          setBatch({ running: true, total, completed });
         },
         onProgress: (completed) => {
           if (alive()) setBatch((prev) => ({ ...prev, completed }));
         },
       });
       if (!running) return;
-      void running.finally(() => {
-        batchRunningRef.current = false;
-        if (alive()) setBatch(IDLE_UPGRADE_BATCH);
-      });
+      trackBatch(running);
     },
-    [alive, latest, restoringIds, runOnce, t]
+    [alive, latest, openPlan, restoringIds, runOnce, t, trackBatch]
   );
+
+  /**
+   * 刷新后接上上一次的「全部升级」：回读收尾且 latest 已知时才动手，且只尝试一次——
+   * 计划过期或被别的标签页占着时反复重试没有意义。
+   */
+  const tryResumeBatch = useCallback(() => {
+    const signal = abortRef.current?.signal;
+    if (!signal || signal.aborted) return;
+    if (resumedRef.current || batchRunningRef.current || restoreActiveRef.current > 0) return;
+    const version = latest?.latestVersion;
+    if (!version) return;
+    const plan = readPlan();
+    if (!plan) return;
+    resumedRef.current = true;
+    if (plan.targetVersion !== version) {
+      // latest 已经往前走了：照这份计划跑只会把机器升到旧版本。
+      clearBatchPlan(plan.entryNodeId);
+      planIdsRef.current = EMPTY_IDS;
+      return;
+    }
+    // 接管这批：心跳换成本标签页，别的标签页从此不再抢。
+    const sink = createBatchPlanSink({ ...plan, ownerTabId: currentTabId() }, io.now);
+    planSinkRef.current = sink;
+    batchRunningRef.current = true;
+    trackBatch(
+      resumeUpgradeBatch({
+        plan,
+        rows,
+        signal,
+        t,
+        toasts: toast,
+        sink,
+        joinRunning: (row) => inFlightRef.current.get(row.id) ?? null,
+        runOne: (row, target, toasts) => runOnce(row, target, toasts),
+        onStart: (total, completed) => setBatch({ running: true, total, completed }),
+        onProgress: (completed) => {
+          if (alive()) setBatch((prev) => ({ ...prev, completed }));
+        },
+      })
+    );
+  }, [alive, io, latest, readPlan, rows, runOnce, t, trackBatch]);
+
+  useEffect(() => {
+    tryResumeRef.current = tryResumeBatch;
+    tryResumeBatch();
+  }, [tryResumeBatch]);
+
+  // 批量推进期间定时刷新计划的 `updatedAt`：别的标签页据此知道这批还有人在跑。
+  useEffect(() => {
+    if (!batch.running) return;
+    const timer = setInterval(() => planSinkRef.current?.touch(), UPGRADE_BATCH_HEARTBEAT_MS);
+    return () => clearInterval(timer);
+  }, [batch.running]);
 
   const entryOf = useCallback((nodeId: string) => entries[nodeId] ?? IDLE_UPGRADE_ENTRY, [entries]);
 

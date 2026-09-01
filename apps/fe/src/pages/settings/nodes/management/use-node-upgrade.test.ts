@@ -1,9 +1,11 @@
 // 批量升级：候选筛选、执行顺序（普通节点 → 远端 hub → 本机）、并发上限与汇总提示；
-// 刷新后的状态恢复与「停止升级」也在这里，全部走注入的 `run` / `io`，不碰网络也不碰计时器。
+// 刷新后的状态恢复、批量的断点续跑与「停止升级」也在这里，
+// 全部走注入的 `run` / `io`，不碰网络也不碰计时器。
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
 import type { UpgradeStatus } from '@tmex/shared';
+import { createMemoryStorage } from '@tmex/stores/test-utils';
 import type { NodeUpgradeEntry, UpgradeRunOutcome } from './types';
 import {
   BATCH_CONCURRENCY,
@@ -13,9 +15,16 @@ import {
   isBatchEligible,
   isTooOldForRemoteUpgrade,
   orderUpgradeGroups,
+  resumeUpgradeBatch,
   runUpgradeBatch,
   upgradeBlockReason,
 } from './upgrade-batch';
+import {
+  type UpgradeBatchPlan,
+  createBatchPlan,
+  createBatchPlanSink,
+  loadBatchPlan,
+} from './upgrade-batch-storage';
 import {
   RESTORE_CONCURRENCY,
   SILENT_UPGRADE_TOASTS,
@@ -1129,6 +1138,373 @@ describe('launchRowUpgrade', () => {
     const run = launch({ confirm: () => false });
     expect(run.started).toBeNull();
     expect(run.seen).toEqual([]);
+  });
+});
+
+describe('runUpgradeBatch 的续跑入参', () => {
+  const rows = ['a', 'b', 'c'].map((name) => row({ id: name, name }));
+
+  test('给了 groups 就按它推进，不再按 orderUpgradeGroups 重排', async () => {
+    const started: string[] = [];
+    await runUpgradeBatch({
+      rows,
+      groups: [[rows[1] as NodeRow], [rows[0] as NodeRow, rows[2] as NodeRow]],
+      signal: new AbortController().signal,
+      run: async (node) => {
+        started.push(node.name);
+        return 'done';
+      },
+      onProgress: () => undefined,
+    });
+    expect(started).toEqual(['b', 'a', 'c']);
+  });
+
+  test('settled 里的既有结论直接进汇总与进度', async () => {
+    const progress: number[] = [];
+    const summary = await runUpgradeBatch({
+      rows: [rows[0] as NodeRow],
+      signal: new AbortController().signal,
+      settled: [
+        { name: 'old-ok', outcome: 'done' },
+        { name: 'old-bad', outcome: 'timeout' },
+      ],
+      run: async () => 'done',
+      onProgress: (completed) => progress.push(completed),
+    });
+    expect(summary).toEqual({
+      succeeded: 2,
+      failed: 1,
+      failedNames: ['old-bad'],
+      cancelledCount: 0,
+      cancelled: false,
+    });
+    expect(progress).toEqual([3]);
+  });
+
+  test('onSettled 每台机器报一次结论', async () => {
+    const settled: Array<[string, UpgradeRunOutcome]> = [];
+    await runUpgradeBatch({
+      rows,
+      signal: new AbortController().signal,
+      concurrency: 1,
+      run: async (node) => (node.name === 'b' ? 'failed' : 'done'),
+      onSettled: (node, outcome) => settled.push([node.id, outcome]),
+      onProgress: () => undefined,
+    });
+    expect(settled).toEqual([
+      ['a', 'done'],
+      ['b', 'failed'],
+      ['c', 'done'],
+    ]);
+  });
+});
+
+describe('批量计划的落盘与续跑', () => {
+  const saved = new Map<string, PropertyDescriptor | undefined>();
+
+  beforeEach(() => {
+    for (const key of ['localStorage', 'sessionStorage'] as const) {
+      if (!saved.has(key)) saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+      Object.defineProperty(globalThis, key, {
+        value: createMemoryStorage(),
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
+  afterEach(() => {
+    for (const [key, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+    saved.clear();
+  });
+
+  const NOW = 1000;
+
+  function sinkFor(order: string[][], targetVersion: string, done: UpgradeBatchPlan['done'] = []) {
+    const plan: UpgradeBatchPlan = {
+      ...createBatchPlan({
+        entryNodeId: 'self',
+        targetVersion,
+        order,
+        now: NOW,
+        tabId: 'tab-1',
+      }),
+      done,
+    };
+    return { plan, sink: createBatchPlanSink(plan, () => NOW) };
+  }
+
+  test('批量开跑即落盘（分组顺序 + 目标版本），汇总弹完才清掉', async () => {
+    const rec = recorder();
+    const opened: Array<{ order: string[][]; version: string }> = [];
+    const running = launchUpgradeBatch({
+      rows: [
+        row({ id: 'self', name: 'self', isSelf: true, version: '1.1.9' }),
+        row({ id: 'hub', name: 'hub', isHub: true, version: '1.1.9' }),
+        row({ id: 'a', name: 'a', version: '1.1.9' }),
+      ],
+      latestVersion: '1.2.0',
+      rowRunning: false,
+      restoring: false,
+      signal: new AbortController().signal,
+      t,
+      toasts: rec.toasts,
+      confirm: () => true,
+      runOne: async () => 'done',
+      onStart: () => undefined,
+      onProgress: () => undefined,
+      openPlan: (order, version) => {
+        opened.push({ order, version });
+        return sinkFor(order, version).sink;
+      },
+    });
+    expect(opened).toEqual([{ order: [['a'], ['hub'], ['self']], version: '1.2.0' }]);
+    expect(loadBatchPlan('self', NOW)).not.toBeNull();
+
+    await running;
+    expect(rec.log).toEqual([['success', 'nodes.upgrade.allDone:{"success":3,"failed":0}']]);
+    expect(loadBatchPlan('self', NOW)).toBeNull();
+  });
+
+  test('每台机器落定都写进计划；卸载打断时计划原样留着', async () => {
+    const rec = recorder();
+    const controller = new AbortController();
+    let sink = sinkFor([['a']], '1.2.0').sink;
+    const running = launchUpgradeBatch({
+      rows: [
+        row({ id: 'a', name: 'a', version: '1.1.9' }),
+        row({ id: 'hub', name: 'hub', isHub: true, version: '1.1.9' }),
+      ],
+      latestVersion: '1.2.0',
+      rowRunning: false,
+      restoring: false,
+      signal: controller.signal,
+      t,
+      toasts: rec.toasts,
+      confirm: () => true,
+      runOne: async () => {
+        // 页面在第一台机器跑完时被关掉
+        controller.abort();
+        return 'done';
+      },
+      onStart: () => undefined,
+      onProgress: () => undefined,
+      openPlan: (order, version) => {
+        sink = sinkFor(order, version).sink;
+        return sink;
+      },
+    });
+    await running;
+    // 结论不完整：不弹汇总，计划留给下次挂载续跑
+    expect(rec.log).toEqual([]);
+    expect(sink.plan().done).toEqual([{ nodeId: 'a', outcome: 'done' }]);
+    expect(loadBatchPlan('self', NOW)?.done).toEqual([{ nodeId: 'a', outcome: 'done' }]);
+  });
+
+  test('刷新后续跑：在途的等结论，没开始的按组接着跑，只弹一条汇总并清掉计划', async () => {
+    const rows = [
+      row({ id: 'a', name: 'a', version: '1.1.9' }),
+      row({ id: 'b', name: 'b', version: '1.1.9' }),
+      row({ id: 'c', name: 'c', version: '1.1.9' }),
+      row({ id: 'hub', name: 'hub', isHub: true, version: '1.1.9' }),
+      row({ id: 'self', name: 'self', isSelf: true, version: '1.1.9' }),
+    ];
+    const { plan, sink } = sinkFor([['a', 'b', 'c'], ['hub'], ['self']], '1.2.0', [
+      { nodeId: 'a', outcome: 'done' },
+    ]);
+    const rec = recorder();
+    const posted: string[] = [];
+    const release = new Map<string, (outcome: UpgradeRunOutcome) => void>();
+    const starts: Array<[number, number]> = [];
+    const progress: number[] = [];
+    // b 的升级已经被刷新回读接管：只等它的结论，绝不重发 POST
+    const joined = new Promise<UpgradeRunOutcome>((resolve) => release.set('b', resolve));
+    const done = resumeUpgradeBatch({
+      plan,
+      rows,
+      signal: new AbortController().signal,
+      t,
+      toasts: rec.toasts,
+      sink,
+      joinRunning: (node) => (node.id === 'b' ? joined : null),
+      runOne: (node, version, toasts) => {
+        expect(version).toBe('1.2.0');
+        expect(toasts).toBe(SILENT_UPGRADE_TOASTS);
+        posted.push(node.name);
+        return new Promise<UpgradeRunOutcome>((resolve) => release.set(node.id, resolve));
+      },
+      onStart: (total, completed) => starts.push([total, completed]),
+      onProgress: (completed) => progress.push(completed),
+    });
+
+    await flush();
+    // 上一次已经跑完的 a 不再重发；同组的 c 立刻补上，hub / self 仍要等这一组收尾
+    expect(starts).toEqual([[5, 1]]);
+    expect(posted).toEqual(['c']);
+    expect(rec.log).toEqual([['info', 'nodes.upgrade.allResumed']]);
+
+    release.get('c')?.('done');
+    await flush();
+    expect(posted).toEqual(['c']);
+
+    release.get('b')?.('done');
+    await flush();
+    expect(posted).toEqual(['c', 'hub']);
+
+    release.get('hub')?.('done');
+    await flush();
+    expect(posted).toEqual(['c', 'hub', 'self']);
+
+    release.get('self')?.('done');
+    const summary = await done;
+    expect(summary).toEqual({
+      succeeded: 5,
+      failed: 0,
+      failedNames: [],
+      cancelledCount: 0,
+      cancelled: false,
+    });
+    expect(progress).toEqual([2, 3, 4, 5]);
+    expect(rec.log).toEqual([
+      ['info', 'nodes.upgrade.allResumed'],
+      ['success', 'nodes.upgrade.allDone:{"success":5,"failed":0}'],
+    ]);
+    // 落定顺序即写入顺序：c 先于 b 收尾
+    expect(sink.plan().done.map((item) => item.nodeId)).toEqual(['a', 'c', 'b', 'hub', 'self']);
+    expect(loadBatchPlan('self', NOW)).toBeNull();
+  });
+
+  test('本机在刷新前就升完了：不再发 POST，按已是最新计成功', async () => {
+    const { plan, sink } = sinkFor([['hub'], ['self']], '1.2.0', [
+      { nodeId: 'hub', outcome: 'done' },
+    ]);
+    const rec = recorder();
+    const posted: string[] = [];
+    const summary = await resumeUpgradeBatch({
+      plan,
+      rows: [
+        row({ id: 'hub', name: 'hub', isHub: true, version: '1.2.0' }),
+        // 本机重启回来，版本已经对上：这次批量对它已经收尾
+        row({ id: 'self', name: 'self', isSelf: true, version: '1.2.0' }),
+      ],
+      signal: new AbortController().signal,
+      t,
+      toasts: rec.toasts,
+      sink,
+      joinRunning: () => null,
+      runOne: async (node) => {
+        posted.push(node.name);
+        return 'done';
+      },
+      onStart: () => undefined,
+      onProgress: () => undefined,
+    });
+    expect(posted).toEqual([]);
+    expect(summary.succeeded).toBe(2);
+    expect(rec.log).toEqual([
+      ['info', 'nodes.upgrade.allResumed'],
+      ['success', 'nodes.upgrade.allDone:{"success":2,"failed":0}'],
+    ]);
+    expect(loadBatchPlan('self', NOW)).toBeNull();
+  });
+
+  test('计划里的机器一台都不在列表里：静默作废，不弹任何 toast', async () => {
+    const { plan, sink } = sinkFor([['gone']], '1.2.0');
+    const rec = recorder();
+    const summary = await resumeUpgradeBatch({
+      plan,
+      rows: [row({ id: 'other', name: 'other', version: '1.2.0' })],
+      signal: new AbortController().signal,
+      t,
+      toasts: rec.toasts,
+      sink,
+      joinRunning: () => null,
+      runOne: async () => 'done',
+      onStart: () => undefined,
+      onProgress: () => undefined,
+    });
+    expect(summary.succeeded).toBe(0);
+    expect(rec.log).toEqual([]);
+    expect(loadBatchPlan('self', NOW)).toBeNull();
+  });
+
+  test('计划里的节点已经离开列表：不再计入，也不当失败报', async () => {
+    const { plan, sink } = sinkFor([['gone'], ['self']], '1.2.0');
+    const rec = recorder();
+    const summary = await resumeUpgradeBatch({
+      plan,
+      rows: [row({ id: 'self', name: 'self', isSelf: true, version: '1.2.0' })],
+      signal: new AbortController().signal,
+      t,
+      toasts: rec.toasts,
+      sink,
+      joinRunning: () => null,
+      runOne: async () => 'done',
+      onStart: () => undefined,
+      onProgress: () => undefined,
+    });
+    expect(summary).toEqual({
+      succeeded: 1,
+      failed: 0,
+      failedNames: [],
+      cancelledCount: 0,
+      cancelled: false,
+    });
+  });
+
+  test('续跑期间用户按了停止：按已取消计入汇总，计划照常清掉', async () => {
+    const { plan, sink } = sinkFor([['a']], '1.2.0', [{ nodeId: 'x', outcome: 'done' }]);
+    const rec = recorder();
+    const summary = await resumeUpgradeBatch({
+      plan,
+      rows: [row({ id: 'a', name: 'a', version: '1.1.9' }), row({ id: 'x', name: 'x' })],
+      signal: new AbortController().signal,
+      t,
+      toasts: rec.toasts,
+      sink,
+      joinRunning: () => null,
+      runOne: async () => 'cancelled',
+      onStart: () => undefined,
+      onProgress: () => undefined,
+    });
+    expect(summary.cancelledCount).toBe(1);
+    expect(rec.log).toEqual([
+      ['info', 'nodes.upgrade.allResumed'],
+      ['info', 'nodes.upgrade.allDoneWithCancelled:{"success":1,"failed":0,"cancelled":1}'],
+    ]);
+    // 用户主动停的那台是确定结论，照常记账
+    expect(sink.plan().done).toContainEqual({ nodeId: 'a', outcome: 'cancelled' });
+    expect(loadBatchPlan('self', NOW)).toBeNull();
+  });
+
+  test('卸载打断的那台机器不记账：下次挂载还要接着盯它', async () => {
+    const controller = new AbortController();
+    const { plan, sink } = sinkFor([['a'], ['self']], '1.2.0');
+    await resumeUpgradeBatch({
+      plan,
+      rows: [
+        row({ id: 'a', name: 'a', version: '1.1.9' }),
+        row({ id: 'self', name: 'self', isSelf: true, version: '1.1.9' }),
+      ],
+      signal: controller.signal,
+      t,
+      toasts: recorder().toasts,
+      sink,
+      joinRunning: () => null,
+      runOne: async () => {
+        // 页面被关掉：这一行的轮询跟着停，但目标机上的升级还在跑
+        controller.abort();
+        return 'cancelled';
+      },
+      onStart: () => undefined,
+      onProgress: () => undefined,
+    });
+    expect(sink.plan().done).toEqual([]);
+    expect(sink.plan().summaryEmitted).toBe(false);
+    expect(loadBatchPlan('self', NOW)?.done).toEqual([]);
   });
 });
 
