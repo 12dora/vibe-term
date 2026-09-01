@@ -3,7 +3,12 @@
 // 只有两台及以上 hub 才渲染：单 hub 用户（绝大多数）看到的版式与多 hub 之前完全一致。
 
 import type { MeshHubCandidate } from '@/node/mesh-hubs';
-import type { HubEndpointInfo, HubMode } from '@tmex/api-client/auth/index';
+import type {
+  HubAuthorizationKind,
+  HubEndpointInfo,
+  HubMode,
+  MeshHubEndpoint,
+} from '@tmex/api-client/auth/index';
 import { cn } from '@tmex/ui';
 import { Link2, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -57,22 +62,36 @@ export function candidateFailure(
   return candidate?.lastError ? candidate : null;
 }
 
-/** chip 的悬浮详情：正常只有一行，最近连不上时补「最近尝试 / 最近错误」两行。 */
+const AUTHORIZATION_KEYS: Record<HubAuthorizationKind, string> = {
+  signed: 'nodes.hubs.authorization.signed',
+  env: 'nodes.hubs.authorization.env',
+  self: 'nodes.hubs.authorization.self',
+};
+
+/** 入口凭什么认这台 hub（签名授权 / 环境变量 / 本机）；旧后端不下发时不出这一行。 */
+export function hubAuthorizationText(t: Translate, hub: MeshHubEndpoint): string | null {
+  const key = hub.authorization ? AUTHORIZATION_KEYS[hub.authorization] : undefined;
+  return key ? t('nodes.hubs.authorization.label', { value: t(key) }) : null;
+}
+
+/** chip 的悬浮详情：地址那一行 + 授权来源，最近连不上时再补「最近尝试 / 最近错误」两行。 */
 export function hubChipTitle(
   t: Translate,
-  hub: HubEndpointInfo,
+  hub: MeshHubEndpoint,
   attached: boolean,
   failure: MeshHubCandidate | null
 ): string {
-  const detail = hubDetailText(t, hub, attached);
-  if (!failure) return detail;
-  const at = failure.lastAttemptAt ? new Date(failure.lastAttemptAt).toLocaleString() : '—';
-  const error = (failure.lastError ?? '').slice(0, CANDIDATE_ERROR_MAX);
-  return [
-    detail,
-    t('nodes.hubs.lastAttempt', { time: at }),
-    t('nodes.hubs.lastError', { error }),
-  ].join('\n');
+  const lines = [hubDetailText(t, hub, attached)];
+  const authorization = hubAuthorizationText(t, hub);
+  if (authorization) lines.push(authorization);
+  if (failure) {
+    const at = failure.lastAttemptAt ? new Date(failure.lastAttemptAt).toLocaleString() : '—';
+    lines.push(t('nodes.hubs.lastAttempt', { time: at }));
+    lines.push(
+      t('nodes.hubs.lastError', { error: (failure.lastError ?? '').slice(0, CANDIDATE_ERROR_MAX) })
+    );
+  }
+  return lines.join('\n');
 }
 
 export function HubStrip({
@@ -81,7 +100,7 @@ export function HubStrip({
   writerHubId,
   candidates = [],
 }: {
-  hubs: HubEndpointInfo[];
+  hubs: MeshHubEndpoint[];
   attachedHubId: string | null;
   writerHubId: string | null;
   candidates?: MeshHubCandidate[];
@@ -111,7 +130,7 @@ function HubChip({
   writer,
   failure,
 }: {
-  hub: HubEndpointInfo;
+  hub: MeshHubEndpoint;
   attached: boolean;
   writer: boolean;
   failure: MeshHubCandidate | null;

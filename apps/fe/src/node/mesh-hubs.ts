@@ -9,8 +9,8 @@
 import { isAuthTransitionActive } from '@/auth/auth-transition';
 import type {
   AuthApi,
-  HubEndpointInfo,
   MeshAttachedHub,
+  MeshHubEndpoint,
   MeshHubsResponse,
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
@@ -28,7 +28,7 @@ export const MESH_HUBS_REFRESH_THROTTLE_MS = 2_000;
 export type MeshHubCandidate = MeshHubsResponse['candidates'][number];
 
 export interface MeshHubsState {
-  hubs: HubEndpointInfo[];
+  hubs: MeshHubEndpoint[];
   /** uplink 候选地址的尝试记录；旧后端不下发时为空数组。 */
   candidates: MeshHubCandidate[];
   /** 本机 uplink 当前挂载的那台 hub；未连上或旧后端为 `null`。 */
@@ -85,7 +85,7 @@ export function resetMeshHubsStateForTest(): void {
 // ---------------------------------------------------------------------------
 
 /** 当前 writer hub 的那一行；`writerHubId` 为空或集合里没有它时为 `null`。 */
-export function writerHub(snapshot: MeshHubsState): HubEndpointInfo | null {
+export function writerHub(snapshot: MeshHubsState): MeshHubEndpoint | null {
   if (!snapshot.writerHubId) return null;
   return snapshot.hubs.find((hub) => hub.nodeId === snapshot.writerHubId) ?? null;
 }

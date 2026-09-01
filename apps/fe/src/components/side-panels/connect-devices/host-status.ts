@@ -36,13 +36,14 @@ function tunnelAlive(tunnel: TunnelStatusResponse): boolean {
 /**
  * 进程活着但连接器没有边缘连接。外部托管的 cloudflared 只探得到「进程在不在」，
  * 所以这里同时认后端给的 `degraded` 与连接器探测结果。
+ * 探不到 metrics 端点（`reachable` 非 `true`）只说明读不到这份指标，不能据此宣告断线。
  */
 function tunnelDegraded(tunnel: TunnelStatusResponse): boolean {
   if (!tunnelAlive(tunnel)) return false;
   if (tunnel.process?.state === 'degraded') return true;
   const connector = tunnel.connector;
-  if (!connector || connector.reachable === null || connector.reachable === undefined) return false;
-  return !connector.reachable || (connector.readyConnections ?? 0) === 0;
+  if (connector?.reachable !== true) return false;
+  return (connector.readyConnections ?? 0) === 0;
 }
 
 /**

@@ -153,10 +153,10 @@ describe('connectorState', () => {
     );
   });
 
-  test('metrics 端点应答失败与零连接同等对待', () => {
+  test('metrics 端点探不到只是「无法探测」：不能据此宣告零连接', () => {
     expect(
       connectorState(status({ connector: connector({ reachable: false, readyConnections: null }) }))
-    ).toBe('noConnections');
+    ).toBe('unknown');
   });
 
   test('探过了但找不到端点是「未知」，从未探过是「未探测」', () => {
@@ -210,6 +210,12 @@ describe('tunnelDegraded / degraded 徽标', () => {
     expect(
       tunnelPill(
         status({ ...base, connector: connector({ reachable: null, readyConnections: null }) })
+      )
+    ).toBe('running');
+    // metrics 端口被挡住（reachable=false）时隧道多半好好的，后端也仍报 running
+    expect(
+      tunnelPill(
+        status({ ...base, connector: connector({ reachable: false, readyConnections: null }) })
       )
     ).toBe('running');
   });

@@ -20,10 +20,13 @@ import {
   upgradeBlockReason,
 } from './upgrade-batch';
 import {
+  UPGRADE_BATCH_OWNER_STALE_MS,
   type UpgradeBatchPlan,
+  batchOwnedByOtherTab,
   createBatchPlan,
   createBatchPlanSink,
   loadBatchPlan,
+  saveBatchPlan,
 } from './upgrade-batch-storage';
 import {
   RESTORE_CONCURRENCY,
@@ -1236,6 +1239,23 @@ describe('批量计划的落盘与续跑', () => {
     };
     return { plan, sink: createBatchPlanSink(plan, () => NOW) };
   }
+
+  test('别的标签页还握着这批：`startAll` 前的互斥判定拦下，心跳停摆后才放行', () => {
+    saveBatchPlan(
+      createBatchPlan({
+        entryNodeId: 'self',
+        targetVersion: '1.1.13',
+        order: [['a'], ['self']],
+        now: NOW,
+        tabId: 'tab-other',
+      })
+    );
+    expect(batchOwnedByOtherTab('self', 'tab-mine', NOW)).toBe(true);
+    expect(batchOwnedByOtherTab('self', 'tab-other', NOW)).toBe(false);
+    expect(batchOwnedByOtherTab('self', 'tab-mine', NOW + UPGRADE_BATCH_OWNER_STALE_MS + 1)).toBe(
+      false
+    );
+  });
 
   test('批量开跑即落盘（分组顺序 + 目标版本），汇总弹完才清掉', async () => {
     const rec = recorder();

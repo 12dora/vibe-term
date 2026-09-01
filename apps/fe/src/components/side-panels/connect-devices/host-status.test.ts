@@ -156,6 +156,23 @@ describe('entryStatus', () => {
     expect(entryStatus(zero, null).degraded).toBe(true);
   });
 
+  test('metrics 端点探不到（reachable=false）不算断线：后端仍报 running 就是 running', () => {
+    const unprobed = status({
+      config: { ...named().config },
+      process: { ...status().process, state: 'running' },
+      connector: {
+        reachable: false,
+        metricsAddr: '127.0.0.1:20241',
+        readyConnections: null,
+        connectorId: null,
+        checkedAt: '2026-09-02T00:00:00.000Z',
+        lastError: null,
+      },
+    });
+    expect(entryStatus(unprobed, null).degraded).toBe(false);
+    expect(entryStatus(unprobed, null).running).toBe(true);
+  });
+
   test('后端直接给 degraded 态时同样不算可达', () => {
     const degraded = status({
       config: { ...named().config },

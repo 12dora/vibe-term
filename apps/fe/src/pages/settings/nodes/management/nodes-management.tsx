@@ -45,6 +45,7 @@ import {
   type ResolvedMode,
 } from './types';
 import { UninstallDialog } from './uninstall-dialog';
+import { isBatchEligible } from './upgrade-batch';
 import { useBulkRevoke } from './use-node-row-actions';
 import { isUninstalling, useNodeUninstall } from './use-node-uninstall';
 import { useNodeUpgrade } from './use-node-upgrade';
@@ -109,8 +110,14 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   // 传 rows 是为了刷新后能按行回读升级状态——状态只活在 React 里，页面一刷新就得重新问一遍。
   const upgrade = useNodeUpgrade(rows, refreshAll);
 
+  // 挂在 standby 上（或一台 writer 都没有）时，管理写入会被 hub 以 `HUB_NOT_WRITER` 拒绝：
+  // 先禁掉动作并给一行说明，比让用户点完再吃一条报错强。升级不走 hub 控制面，保持可用。
+  // 主 hub 掉线时「hub 不可达」与这一条说的是同一件事，只留更具体的那一条。
+  const writable = hub.online && !hubs.writesBlocked;
+  const blockedHint = hubs.writesBlocked ? t('nodes.hubs.standbyNotice') : t('nodes.hubOffline');
+
   const uninstall = useNodeUninstall(
-    { api, mode, prompt, writerPublicUrl: hubs.writerPublicUrl },
+    { api, mode, prompt, writerPublicUrl: hubs.writerPublicUrl, writable },
     refreshAll
   );
   const bulkRevoke = useBulkRevoke({
@@ -157,12 +164,6 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   });
   const engine = useEnrollmentEngineState();
 
-  // 挂在 standby 上（或一台 writer 都没有）时，管理写入会被 hub 以 `HUB_NOT_WRITER` 拒绝：
-  // 先禁掉动作并给一行说明，比让用户点完再吃一条报错强。升级不走 hub 控制面，保持可用。
-  // 主 hub 掉线时「hub 不可达」与这一条说的是同一件事，只留更具体的那一条。
-  const writable = hub.online && !hubs.writesBlocked;
-  const blockedHint = hubs.writesBlocked ? t('nodes.hubs.standbyNotice') : t('nodes.hubOffline');
-
   if (!mode) {
     return (
       <Card data-testid="nodes-management">
@@ -198,6 +199,7 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           </Button>
           <BulkActionsMenu
             rows={selectedRows}
+            selfRow={rows.find((row) => row.isSelf) ?? null}
             upgrade={upgrade}
             uninstall={uninstall}
             revoking={bulkRevoke.busy}
@@ -333,8 +335,10 @@ export interface BulkItemState {
 
 export interface BulkMenuInput {
   selectedCount: number;
-  /** 选中的行里当前 latest 下真能升级的台数。 */
+  /** 这次批量真能升级的台数（含被追加进来的本机）。 */
   eligibleUpgradeCount: number;
+  /** 本机会跟着这一批一起升级：升到最后一步时当前页面会断一下。 */
+  selfIncluded: boolean;
   latestKnown: boolean;
   /** 已有升级在跑（行内或批量）。 */
   upgradeBusy: boolean;
@@ -349,7 +353,7 @@ export interface BulkMenuInput {
 
 /**
  * 三个菜单项的可点性与禁用原因。共同的前置条件是「选中了东西」与「没有别的批量在跑」，
- * 各自再叠自己的条件：升级看 latest 与可升级台数，移除看 hub 是否收写入。
+ * 各自再叠自己的条件：升级看 latest 与可升级台数，移除与卸载都要 hub 收得下写入。
  */
 export function bulkMenuStates(
   input: BulkMenuInput,
@@ -372,7 +376,8 @@ export function bulkMenuStates(
     if (!input.latestKnown) return { disabled: true, title: t('nodes.upgrade.releaseUnavailable') };
     if (input.eligibleUpgradeCount === 0)
       return { disabled: true, title: t('nodes.upgrade.allNone') };
-    return { disabled: false };
+    if (!input.selfIncluded) return { disabled: false };
+    return { disabled: false, title: t('nodes.selection.upgradeSelfNotice') };
   };
 
   const revoke = (): BulkItemState => {
@@ -384,6 +389,8 @@ export function bulkMenuStates(
 
   const uninstall = (): BulkItemState => {
     if (input.selectedCount === 0) return empty;
+    // 卸载以一次签名 `revoke-node` 收尾：hub 不收写入时机器会被删干净，证书却撤不掉。
+    if (!input.writable) return { disabled: true, title: input.blockedHint };
     if (anyBusy) return busy;
     return { disabled: false };
   };
@@ -445,11 +452,30 @@ export function BulkActionsMenuList({
 }
 
 /**
+ * 批量升级的实际目标：勾选的行**再加上本机**。本机那一行不可勾选（移除 / 卸载都轮不到它），
+ * 但升级必须带得上它——持久化的「普通节点 → hub → 本机」次序与入口重启后的续跑，只有本机
+ * 真的进了批量才走得到。一个都没勾时不追加：菜单仍然停在「须先勾选节点」。
+ */
+export function bulkUpgradeTargets(
+  selected: NodeRow[],
+  selfRow: NodeRow | null,
+  latestVersion: string | null
+): { rows: NodeRow[]; selfIncluded: boolean } {
+  if (selected.length === 0 || !selfRow) return { rows: selected, selfIncluded: false };
+  // 用批量自己的那把尺子（`upgradeBlockReason` 为空 + 版本可解析且低于 latest）：
+  // 换一把更松的只会让标签写着「含本机」而 `launchUpgradeBatch` 转头把它筛掉。
+  if (!isBatchEligible(selfRow, latestVersion)) return { rows: selected, selfIncluded: false };
+  return { rows: [...selected, selfRow], selfIncluded: true };
+}
+
+/**
  * 「更多」：对**选中的行**批量升级 / 移除 / 卸载。没有单独的「全部升级」了——
  * 全选再走这个菜单即可，两个入口做同一件事只会让人猜它们有什么区别。
+ * 升级是唯一会自动带上本机的动作，标签里写明「含本机」。
  */
 export function BulkActionsMenu({
   rows,
+  selfRow,
   upgrade,
   uninstall,
   revoking,
@@ -458,6 +484,7 @@ export function BulkActionsMenu({
   blockedHint,
 }: {
   rows: NodeRow[];
+  selfRow: NodeRow | null;
   upgrade: NodeUpgradeController;
   uninstall: NodeUninstallController;
   revoking: boolean;
@@ -466,12 +493,15 @@ export function BulkActionsMenu({
   blockedHint: string;
 }) {
   const { t } = useTranslation();
-  const upgradeCount = upgrade.eligibleCount(rows);
+  const latestVersion = upgrade.latest?.latestVersion ?? null;
+  const targets = bulkUpgradeTargets(rows, selfRow, latestVersion);
+  const upgradeCount = upgrade.eligibleCount(targets.rows);
   const states = bulkMenuStates(
     {
       selectedCount: rows.length,
       eligibleUpgradeCount: upgradeCount,
-      latestKnown: Boolean(upgrade.latest?.latestVersion),
+      selfIncluded: targets.selfIncluded,
+      latestKnown: Boolean(latestVersion),
       upgradeBusy: upgrade.anyRunning || upgrade.batch.running,
       restoring: upgrade.restoring,
       writable,
@@ -502,11 +532,14 @@ export function BulkActionsMenu({
         <BulkActionsMenuList
           states={states}
           labels={{
-            upgrade: t('nodes.selection.upgrade', { count: upgradeCount }),
+            upgrade: t(
+              targets.selfIncluded ? 'nodes.selection.upgradeWithSelf' : 'nodes.selection.upgrade',
+              { count: upgradeCount }
+            ),
             revoke: t('nodes.selection.revoke'),
             uninstall: t('nodes.selection.uninstall'),
           }}
-          onUpgrade={() => upgrade.startAll(rows)}
+          onUpgrade={() => upgrade.startAll(targets.rows)}
           onRevoke={onRevoke}
           onUninstall={() => uninstall.request(rows)}
         />

@@ -26,6 +26,11 @@ export const UPGRADE_BATCH_HEARTBEAT_MS = 10_000;
 const KEY_PREFIX = 'tmex.nodes.upgrade-batch.';
 const TAB_KEY = `${KEY_PREFIX}tab`;
 
+/** 这个入口节点的计划落在哪个 localStorage 键上；`storage` 事件靠它认出「是我们这份」。 */
+export function batchPlanKey(entryNodeId: string): string {
+  return KEY_PREFIX + entryNodeId;
+}
+
 const OUTCOMES = new Set<string>(['done', 'failed', 'timeout', 'alreadyLatest', 'cancelled']);
 
 /** 一台机器在这次批量里的最终结论。 */
@@ -181,7 +186,7 @@ export function saveBatchPlan(plan: UpgradeBatchPlan): void {
   const store = storageOf('localStorage');
   if (!store) return;
   try {
-    store.setItem(KEY_PREFIX + plan.entryNodeId, JSON.stringify(plan));
+    store.setItem(batchPlanKey(plan.entryNodeId), JSON.stringify(plan));
   } catch {
     // 配额满 / 隐私模式：续跑能力可以没有，升级本身不能受影响。
   }
@@ -191,7 +196,7 @@ export function clearBatchPlan(entryNodeId: string): void {
   const store = storageOf('localStorage');
   if (!store) return;
   try {
-    store.removeItem(KEY_PREFIX + entryNodeId);
+    store.removeItem(batchPlanKey(entryNodeId));
   } catch {
     // 同上：删不掉也只是下次加载多读一次，`summaryEmitted` 会兜住。
   }
@@ -203,7 +208,7 @@ export function loadBatchPlan(entryNodeId: string, now: number): UpgradeBatchPla
   if (!store) return null;
   let raw: string | null;
   try {
-    raw = store.getItem(KEY_PREFIX + entryNodeId);
+    raw = store.getItem(batchPlanKey(entryNodeId));
   } catch {
     return null;
   }
@@ -232,6 +237,25 @@ export function planRemaining(plan: UpgradeBatchPlan): string[][] {
 /** 别的标签页正在推进这批（心跳还新鲜）时不抢；自己的计划永远认。 */
 export function canAdoptBatchPlan(plan: UpgradeBatchPlan, tabId: string, now: number): boolean {
   return plan.ownerTabId === tabId || now - plan.updatedAt > UPGRADE_BATCH_OWNER_STALE_MS;
+}
+
+/**
+ * 别的标签页正握着一份还在心跳的计划：此刻不能另开一批。两页同时跑会互相覆盖计划，
+ * 后开的那页还会把普通节点的 `UPGRADE_IN_PROGRESS` 当失败，在它们真升完之前就去动 hub。
+ */
+export function batchOwnedByOtherTab(
+  entryNodeId: string | null,
+  tabId: string,
+  now: number
+): boolean {
+  if (!entryNodeId) return false;
+  const plan = loadBatchPlan(entryNodeId, now);
+  return plan !== null && !canAdoptBatchPlan(plan, tabId, now);
+}
+
+/** `storage` 事件是不是打在这个入口的计划键上；`key` 为 `null` 表示整片存储被清空。 */
+export function isBatchPlanStorageEvent(entryNodeId: string, key: string | null): boolean {
+  return key === null || key === batchPlanKey(entryNodeId);
 }
 
 /** 批量推进过程中对计划的写入口；实现全部吞掉存储异常。 */

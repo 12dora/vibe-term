@@ -34,6 +34,7 @@ const {
   BulkActionsMenuList,
   NodesManagement,
   bulkMenuStates,
+  bulkUpgradeTargets,
   pruneSelection,
   selectableRows,
   toggleAllSelection,
@@ -728,6 +729,31 @@ describe('多选的纯逻辑', () => {
     const stable = new Set(['a']);
     expect(pruneSelection(stable, [row('a')])).toBe(stable);
   });
+
+  describe('批量升级带上本机', () => {
+    const self = row('self', { isSelf: true, version: '1.1.12' });
+
+    test('本机不可勾选，但批量升级会把它追加在最后', () => {
+      const targets = bulkUpgradeTargets([row('a')], self, '1.1.13');
+      expect(targets.selfIncluded).toBe(true);
+      expect(targets.rows.map((item) => item.id)).toEqual(['a', 'self']);
+    });
+
+    test('一个都没勾时不追加：菜单仍然停在「须先勾选节点」', () => {
+      expect(bulkUpgradeTargets([], self, '1.1.13')).toEqual({ rows: [], selfIncluded: false });
+    });
+
+    test('本机自己升不了（离线 / 已是最新 / 版本读不出）时不追加', () => {
+      const offline = row('self', { isSelf: true, online: false, version: '1.1.12' });
+      expect(bulkUpgradeTargets([row('a')], offline, '1.1.13').selfIncluded).toBe(false);
+      expect(bulkUpgradeTargets([row('a')], self, '1.1.12').selfIncluded).toBe(false);
+      expect(bulkUpgradeTargets([row('a')], null, '1.1.13').selfIncluded).toBe(false);
+      // 版本无法解析的本机进不了批量：标签也不能写「含本机」
+      const dev = row('self', { isSelf: true, version: '1.1.12_dev' });
+      expect(bulkUpgradeTargets([row('a')], dev, '1.1.13').selfIncluded).toBe(false);
+      expect(bulkUpgradeTargets([row('a')], self, null).selfIncluded).toBe(false);
+    });
+  });
 });
 
 describe('「更多」菜单的可点性', () => {
@@ -737,6 +763,7 @@ describe('「更多」菜单的可点性', () => {
   const base = {
     selectedCount: 2,
     eligibleUpgradeCount: 2,
+    selfIncluded: false,
     latestKnown: true,
     upgradeBusy: false,
     restoring: false,
@@ -761,12 +788,21 @@ describe('「更多」菜单的可点性', () => {
     }
   });
 
-  test('hub 不收写入：只有「移除节点」禁用', () => {
+  test('hub 不收写入：移除与卸载一并禁用，升级不受影响', () => {
     const states = bulkMenuStates({ ...base, writable: false }, t);
     expect(states.revoke.disabled).toBe(true);
     expect(states.revoke.title).toBe('nodes.hubOffline');
+    // 卸载最后要签一次 revoke-node：hub 不收写入时机器删干净了证书还留着
+    expect(states.uninstall.disabled).toBe(true);
+    expect(states.uninstall.title).toBe('nodes.hubOffline');
     expect(states.upgrade.disabled).toBe(false);
-    expect(states.uninstall.disabled).toBe(false);
+  });
+
+  test('本机跟着一起升级时，可点的「升级」也带一句本机会重启的说明', () => {
+    const states = bulkMenuStates({ ...base, selfIncluded: true }, t);
+    expect(states.upgrade.disabled).toBe(false);
+    expect(states.upgrade.title).toBe('nodes.selection.upgradeSelfNotice');
+    expect(bulkMenuStates(base, t).upgrade.title).toBeUndefined();
   });
 
   test('latest 未知 / 没有可升级的：只有「升级」禁用', () => {
@@ -1381,6 +1417,7 @@ describe('远程卸载', () => {
       t,
       onScheduled: (nodeId) => scheduled.push(nodeId),
       onFailed: (name) => failures.push(name),
+      canWrite: () => true,
       revoke: async (target) => {
         revoked.push(target.id);
         return target.id !== 'c';
@@ -1399,6 +1436,42 @@ describe('远程卸载', () => {
     expect(failures).toEqual(['b', 'c']);
   });
 
+  test('hub 中途不再收写入：剩下的一台都不碰，已受理的保留记录', async () => {
+    const started: string[] = [];
+    let writable = true;
+    const summary = await runUninstallBatch({
+      targets: [row('a'), row('b'), row('c')],
+      io: {
+        start: async (nodeId: string) => {
+          started.push(nodeId);
+          // 第一台卸完 hub 就掉线了
+          writable = false;
+          return { kind: 'scheduled' } as const;
+        },
+        clearOperation: async () => true,
+      },
+      t,
+      onScheduled: () => undefined,
+      canWrite: () => writable,
+      revoke: async () => true,
+    });
+    expect(started).toEqual(['a']);
+    expect(summary.scheduled).toBe(1);
+    expect(summary.aborted).toBe(2);
+  });
+
+  test('hub 一开始就不收写入：一台都不发 POST', async () => {
+    const summary = await runUninstallBatch({
+      targets: [row('a')],
+      io: { start: async () => ({ kind: 'scheduled' }) as const, clearOperation: async () => true },
+      t,
+      onScheduled: () => undefined,
+      canWrite: () => false,
+      revoke: async () => true,
+    });
+    expect(summary).toEqual({ scheduled: 0, revoked: 0, aborted: 1, failed: [] });
+  });
+
   test('稳定错误码走文案表，未知码原样显示', () => {
     expect(uninstallErrorText(t, 'UNINSTALL_UNSUPPORTED')).toBe(
       'nodes.uninstall.errors.unsupported'
@@ -1407,17 +1480,31 @@ describe('远程卸载', () => {
   });
 
   test('汇总提示：全成功报成功，有失败带上名字', () => {
-    expect(uninstallSummaryText(t, { scheduled: 2, revoked: 2, failed: [] })).toEqual({
+    expect(uninstallSummaryText(t, { scheduled: 2, revoked: 2, aborted: 0, failed: [] })).toEqual({
       level: 'success',
       text: 'nodes.uninstall.summary:{"count":2}',
     });
     const failed = uninstallSummaryText(t, {
       scheduled: 1,
       revoked: 1,
+      aborted: 0,
       failed: [{ name: 'studio', message: 'x' }],
     });
     expect(failed.level).toBe('error');
     expect(failed.text).toContain('studio');
+  });
+
+  test('中途停下时汇总说清楚剩了几台没卸', () => {
+    const aborted = uninstallSummaryText(t, {
+      scheduled: 1,
+      revoked: 1,
+      aborted: 2,
+      failed: [],
+    });
+    expect(aborted).toEqual({
+      level: 'error',
+      text: 'nodes.uninstall.summaryAborted:{"count":1,"remaining":2}',
+    });
   });
 
   test('确认框正文：列出将卸载的名字与跳过的原因', () => {

@@ -424,7 +424,7 @@
           "label": "连接器",
           "connected": "{{n}} 条边缘连接",
           "noConnections": "无边缘连接",
-          "unknown": "无法探测（未找到 metrics 端点）",
+          "unknown": "无法探测（metrics 端点不可达）",
           "unprobed": "未探测"
         },
         "mode": {
@@ -1740,7 +1740,13 @@
         "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
         "machineRole": "Hub 角色",
         "lastAttempt": "最近尝试：{{time}}",
-        "lastError": "最近错误：{{error}}"
+        "lastError": "最近错误：{{error}}",
+        "authorization": {
+          "label": "授权：{{value}}",
+          "signed": "已签名",
+          "env": "环境变量",
+          "self": "本机"
+        }
       },
       "machine": {
         "title": "本机",
@@ -2015,6 +2021,8 @@
         "none": "须先勾选节点。",
         "busy": "正在移除节点，请稍候。",
         "upgrade": "升级（{{count}}）",
+        "upgradeWithSelf": "升级（{{count}}，含本机）",
+        "upgradeSelfNotice": "本机排在最后升级，届时服务重启、当前页面短暂断开。",
         "revoke": "移除节点",
         "uninstall": "卸载 tmex"
       },
@@ -2042,6 +2050,7 @@
         "revokeFailed": "已卸载，但未能从多节点互联中移除",
         "summary": "已卸载 {{count}} 个节点",
         "summaryFailed": "已卸载 {{count}} 个，{{failed}} 个失败（{{names}}）",
+        "summaryAborted": "Hub 不可用，已停止卸载剩余 {{remaining}} 个节点（已卸载 {{count}} 个）。",
         "errors": {
           "loginRequired": "须先登录该节点。",
           "unreachable": "连不上该节点。",
@@ -2128,7 +2137,8 @@
         "cancelNotRunning": "该节点没有正在进行的升级。",
         "cancelFailed": "停止升级失败：{{error}}",
         "restoring": "正在同步升级状态…",
-        "allResumed": "已续接上次的批量升级。"
+        "allResumed": "已续接上次的批量升级。",
+        "allOtherTab": "另一个标签页正在批量升级。"
       },
       "badge": {
         "direct": "直连",

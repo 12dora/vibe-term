@@ -424,7 +424,7 @@
           "label": "Connector",
           "connected": "Edge connections: {{n}}",
           "noConnections": "No edge connections",
-          "unknown": "Cannot probe (metrics endpoint not found)",
+          "unknown": "Cannot probe (metrics endpoint unreachable)",
           "unprobed": "Not probed"
         },
         "mode": {
@@ -1740,7 +1740,13 @@
         "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
         "machineRole": "Hub Role",
         "lastAttempt": "Last attempt: {{time}}",
-        "lastError": "Last error: {{error}}"
+        "lastError": "Last error: {{error}}",
+        "authorization": {
+          "label": "Authorization: {{value}}",
+          "signed": "Signed",
+          "env": "Environment",
+          "self": "This machine"
+        }
       },
       "machine": {
         "title": "This machine",
@@ -2015,6 +2021,8 @@
         "none": "Select nodes first.",
         "busy": "Removing nodes. Wait for it to finish.",
         "upgrade": "Upgrade ({{count}})",
+        "upgradeWithSelf": "Upgrade ({{count}}, incl. this machine)",
+        "upgradeSelfNotice": "This machine is upgraded last; the service restarts and this page drops briefly.",
         "revoke": "Remove Nodes",
         "uninstall": "Uninstall tmex"
       },
@@ -2043,6 +2051,7 @@
         "summary_one": "{{count}} node uninstalled",
         "summary_other": "{{count}} nodes uninstalled",
         "summaryFailed": "{{count}} uninstalled, {{failed}} failed ({{names}})",
+        "summaryAborted": "Hub unavailable. Stopped with {{remaining}} node(s) left ({{count}} uninstalled).",
         "errors": {
           "loginRequired": "Sign in to that node first.",
           "unreachable": "That node cannot be reached.",
@@ -2133,7 +2142,8 @@
         "cancelNotRunning": "No upgrade is running on this node.",
         "cancelFailed": "Could not stop the upgrade: {{error}}",
         "restoring": "Syncing upgrade status…",
-        "allResumed": "Resumed the previous batch upgrade."
+        "allResumed": "Resumed the previous batch upgrade.",
+        "allOtherTab": "Another tab is running a batch upgrade."
       },
       "badge": {
         "direct": "Direct",

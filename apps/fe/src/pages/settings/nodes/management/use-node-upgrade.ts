@@ -49,11 +49,13 @@ import {
   type BatchPlanSink,
   UPGRADE_BATCH_HEARTBEAT_MS,
   type UpgradeBatchPlan,
+  batchOwnedByOtherTab,
   canAdoptBatchPlan,
   clearBatchPlan,
   createBatchPlan,
   createBatchPlanSink,
   currentTabId,
+  isBatchPlanStorageEvent,
   loadBatchPlan,
 } from './upgrade-batch-storage';
 
@@ -1160,6 +1162,11 @@ export function useNodeUpgrade(
     (rows: NodeRow[]) => {
       const signal = abortRef.current?.signal;
       if (!signal || signal.aborted || batchRunningRef.current) return;
+      // 别的标签页正握着一份还在心跳的计划：另开一批只会两页对着同一堆机器互相覆盖。
+      if (batchOwnedByOtherTab(entryNodeId, currentTabId(), io.now())) {
+        toast.info(t('nodes.upgrade.allOtherTab'));
+        return;
+      }
       const running = launchUpgradeBatch({
         rows,
         latestVersion: latest?.latestVersion ?? null,
@@ -1182,7 +1189,7 @@ export function useNodeUpgrade(
       if (!running) return;
       trackBatch(running);
     },
-    [alive, latest, openPlan, restoringIds, runOnce, t, trackBatch]
+    [alive, entryNodeId, io, latest, openPlan, restoringIds, runOnce, t, trackBatch]
   );
 
   /**
@@ -1230,6 +1237,21 @@ export function useNodeUpgrade(
     tryResumeRef.current = tryResumeBatch;
     tryResumeBatch();
   }, [tryResumeBatch]);
+
+  /**
+   * 计划在别的标签页里被改写（持有者收尾删除、或换了持有者）时再判一次能不能接管：
+   * 首次读到「别人占着」的标签页只缓存了一个 `null`，没有这一下它永远等不到接管的机会。
+   */
+  useEffect(() => {
+    if (!entryNodeId) return;
+    const onStorage = (event: StorageEvent) => {
+      if (!isBatchPlanStorageEvent(entryNodeId, event.key)) return;
+      planRef.current = undefined;
+      tryResumeRef.current?.();
+    };
+    globalThis.addEventListener('storage', onStorage);
+    return () => globalThis.removeEventListener('storage', onStorage);
+  }, [entryNodeId]);
 
   // 批量推进期间定时刷新计划的 `updatedAt`：别的标签页据此知道这批还有人在跑。
   useEffect(() => {

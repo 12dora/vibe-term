@@ -424,7 +424,7 @@
           "label": "コネクタ",
           "connected": "エッジ接続 {{n}} 本",
           "noConnections": "エッジ接続なし",
-          "unknown": "探測できません（metrics エンドポイントが見つかりません）",
+          "unknown": "探測できません（metrics エンドポイントに到達できません）",
           "unprobed": "未探測"
         },
         "mode": {
@@ -1740,7 +1740,13 @@
         "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
         "machineRole": "ハブの役割",
         "lastAttempt": "最終試行：{{time}}",
-        "lastError": "最終エラー：{{error}}"
+        "lastError": "最終エラー：{{error}}",
+        "authorization": {
+          "label": "認可：{{value}}",
+          "signed": "署名済み",
+          "env": "環境変数",
+          "self": "本機"
+        }
       },
       "machine": {
         "title": "このマシン",
@@ -2015,6 +2021,8 @@
         "none": "先にノードを選択してください。",
         "busy": "ノードを削除中です。完了までお待ちください。",
         "upgrade": "アップグレード（{{count}}）",
+        "upgradeWithSelf": "アップグレード（{{count}}、本機を含む）",
+        "upgradeSelfNotice": "本機は最後にアップグレードされ、サービス再起動でこのページは一時的に切断されます。",
         "revoke": "ノードを削除",
         "uninstall": "tmex をアンインストール"
       },
@@ -2042,6 +2050,7 @@
         "revokeFailed": "アンインストールしましたが、マルチノード接続から除外できませんでした",
         "summary": "{{count}} 個のノードをアンインストールしました",
         "summaryFailed": "{{count}} 個をアンインストール、{{failed}} 個が失敗しました（{{names}}）",
+        "summaryAborted": "Hub が利用できないため、残り {{remaining}} 台を中止しました（{{count}} 台はアンインストール済み）。",
         "errors": {
           "loginRequired": "先にそのノードにログインしてください。",
           "unreachable": "そのノードに接続できません。",
@@ -2128,7 +2137,8 @@
         "cancelNotRunning": "このノードで実行中のアップグレードはありません。",
         "cancelFailed": "アップグレードを中止できませんでした：{{error}}",
         "restoring": "アップグレード状態を同期中…",
-        "allResumed": "前回の一括アップグレードを再開しました。"
+        "allResumed": "前回の一括アップグレードを再開しました。",
+        "allOtherTab": "別のタブで一括アップグレードが実行中です。"
       },
       "badge": {
         "direct": "ダイレクト",

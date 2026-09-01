@@ -30,8 +30,8 @@ export function connectorState(status: TunnelStatusResponse): ConnectorState {
   const connector: TunnelConnectorStatus | undefined = status.connector;
   if (!connector) return 'unprobed';
   if (connector.reachable === null) return connector.checkedAt === null ? 'unprobed' : 'unknown';
-  // metrics 端点找到了却应答失败，与「应答了但零连接」一样都不能算在线。
-  if (!connector.reachable) return 'noConnections';
+  // 探不到 metrics 端点只说明本机读不到这份指标，边缘连接可能好好的：一律「无法探测」。
+  if (!connector.reachable) return 'unknown';
   return (connector.readyConnections ?? 0) > 0 ? 'connected' : 'noConnections';
 }
 

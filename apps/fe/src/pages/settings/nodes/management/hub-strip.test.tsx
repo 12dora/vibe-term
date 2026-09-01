@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { MeshHubCandidate } from '@/node/mesh-hubs';
-import type { HubEndpointInfo } from '@tmex/api-client/auth/index';
+import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   CANDIDATE_ERROR_MAX,
@@ -17,7 +17,7 @@ import {
 const t = (key: string, options?: Record<string, unknown>) =>
   options ? `${key}:${JSON.stringify(options)}` : key;
 
-function hub(overrides: Partial<HubEndpointInfo> & { nodeId: string }): HubEndpointInfo {
+function hub(overrides: Partial<MeshHubEndpoint> & { nodeId: string }): MeshHubEndpoint {
   return {
     publicUrl: `https://${overrides.nodeId}.example`,
     name: overrides.nodeId,
@@ -76,6 +76,26 @@ describe('chip 的悬浮详情', () => {
     );
   });
 
+  test('带授权来源时多出一行，且排在失败诊断之前', () => {
+    const signed = hubChipTitle(t, hub({ nodeId: 'h1', authorization: 'signed' }), false, null);
+    expect(signed.split('\n')[1]).toBe(
+      'nodes.hubs.authorization.label:{"value":"nodes.hubs.authorization.signed"}'
+    );
+    const env = hubChipTitle(t, hub({ nodeId: 'h1', authorization: 'env' }), false, {
+      publicUrl: 'https://h1.example',
+      lastError: 'boom',
+      lastAttemptAt: 1,
+    }).split('\n');
+    expect(env).toHaveLength(4);
+    expect(env[1]).toContain('nodes.hubs.authorization.env');
+    expect(env[2]).toContain('nodes.hubs.lastAttempt');
+  });
+
+  test('旧后端不下发 authorization：不多出这一行', () => {
+    const title = hubChipTitle(t, hub({ nodeId: 'h1' }), false, null);
+    expect(title).not.toContain('nodes.hubs.authorization');
+  });
+
   test('从未尝试过的候选：时间显示为破折号', () => {
     const title = hubChipTitle(t, hub({ nodeId: 'h1' }), false, {
       publicUrl: 'https://h1.example',
@@ -112,6 +132,19 @@ describe('HubStrip', () => {
     expect(html).toContain('data-testid="nodes-hub-strip"');
     expect(html).not.toContain('nodes-hub-warning');
     expect(chipTag(html, 'h1')).toContain('data-hub-failing="false"');
+  });
+
+  test('授权来源进 chip 的悬浮详情', () => {
+    const html = renderToStaticMarkup(
+      <HubStrip
+        hubs={[hub({ nodeId: 'h1', authorization: 'self' }), hubs[1]]}
+        attachedHubId="h1"
+        writerHubId="h1"
+      />
+    );
+    // 静态渲染下 t 只回键名，插值看不到；有没有这一行才是这里要证的
+    expect(chipTag(html, 'h1')).toContain('nodes.hubs.authorization.label');
+    expect(chipTag(html, 'h2')).not.toContain('nodes.hubs.authorization');
   });
 
   test('只有一台 hub 时整条不渲染', () => {

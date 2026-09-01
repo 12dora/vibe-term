@@ -244,13 +244,25 @@ export interface MeshAttachedHub {
 }
 
 /**
+ * 入口是凭什么认这台 hub 的：`signed` = 用户签名授权，`env` = 部署时写进 env 的 peer，
+ * `self` = 本机自己就是这台 hub。旧后端不下发。
+ */
+export type HubAuthorizationKind = 'signed' | 'env' | 'self';
+
+/**
+ * `GET /api/mesh/hubs` 里的一台 hub：uplink 契约的 `HubEndpointInfo` 再叠一个只有 REST 才有的
+ * `authorization`——它是入口本地的授权来源，不在 hub 之间广播，故不进 `HubEndpointInfo` 本体。
+ */
+export type MeshHubEndpoint = HubEndpointInfo & { authorization?: HubAuthorizationKind };
+
+/**
  * `GET /api/mesh/hubs`（**需会话**）。
  *
  * `writerHubId` 是当前接受管理写入的那台 hub（`active` 中 writerEpoch 最高的一台）；
  * 一台 active 都没有时为 `null`，此时任何 hub 都不收写入。
  */
 export interface MeshHubsResponse {
-  hubs: HubEndpointInfo[];
+  hubs: MeshHubEndpoint[];
   attached: MeshAttachedHub | null;
   writerHubId: string | null;
   /** uplink 的候选地址顺序与最近一次失败原因（诊断用）。 */

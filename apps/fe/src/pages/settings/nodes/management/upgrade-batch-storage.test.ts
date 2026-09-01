@@ -6,11 +6,14 @@ import {
   UPGRADE_BATCH_OWNER_STALE_MS,
   UPGRADE_BATCH_TTL_MS,
   type UpgradeBatchPlan,
+  batchOwnedByOtherTab,
+  batchPlanKey,
   canAdoptBatchPlan,
   clearBatchPlan,
   createBatchPlan,
   createBatchPlanSink,
   currentTabId,
+  isBatchPlanStorageEvent,
   loadBatchPlan,
   planRemaining,
   saveBatchPlan,
@@ -189,6 +192,28 @@ describe('标签页归属', () => {
     const other = plan({ ownerTabId: 'tab-9', updatedAt: 1000 });
     expect(canAdoptBatchPlan(other, 'tab-1', 1000 + UPGRADE_BATCH_OWNER_STALE_MS)).toBe(false);
     expect(canAdoptBatchPlan(other, 'tab-1', 1001 + UPGRADE_BATCH_OWNER_STALE_MS)).toBe(true);
+  });
+
+  test('别的标签页正跑着这批：不许另开一批；心跳停摆后放行', () => {
+    saveBatchPlan(plan({ ownerTabId: 'tab-9', updatedAt: 1000 }));
+    expect(batchOwnedByOtherTab('entry', 'tab-1', 1000)).toBe(true);
+    // 自己那份永远认
+    expect(batchOwnedByOtherTab('entry', 'tab-9', 1000)).toBe(false);
+    expect(batchOwnedByOtherTab('entry', 'tab-1', 1001 + UPGRADE_BATCH_OWNER_STALE_MS)).toBe(false);
+  });
+
+  test('没有计划 / 入口未知时一律放行', () => {
+    expect(batchOwnedByOtherTab('entry', 'tab-1', 1000)).toBe(false);
+    saveBatchPlan(plan({ ownerTabId: 'tab-9', updatedAt: 1000 }));
+    expect(batchOwnedByOtherTab(null, 'tab-1', 1000)).toBe(false);
+  });
+
+  test('storage 事件只认本入口的计划键；整片清空同样要重读', () => {
+    expect(batchPlanKey('entry')).toBe(KEY);
+    expect(isBatchPlanStorageEvent('entry', KEY)).toBe(true);
+    expect(isBatchPlanStorageEvent('entry', null)).toBe(true);
+    expect(isBatchPlanStorageEvent('entry', batchPlanKey('other'))).toBe(false);
+    expect(isBatchPlanStorageEvent('entry', 'tmex.something.else')).toBe(false);
   });
 });
 

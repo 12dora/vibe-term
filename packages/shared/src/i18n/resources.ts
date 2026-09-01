@@ -430,7 +430,7 @@ export const I18N_RESOURCES = {
           "label": "Connector",
           "connected": "Edge connections: {{n}}",
           "noConnections": "No edge connections",
-          "unknown": "Cannot probe (metrics endpoint not found)",
+          "unknown": "Cannot probe (metrics endpoint unreachable)",
           "unprobed": "Not probed"
         },
         "mode": {
@@ -1746,7 +1746,13 @@ export const I18N_RESOURCES = {
         "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
         "machineRole": "Hub Role",
         "lastAttempt": "Last attempt: {{time}}",
-        "lastError": "Last error: {{error}}"
+        "lastError": "Last error: {{error}}",
+        "authorization": {
+          "label": "Authorization: {{value}}",
+          "signed": "Signed",
+          "env": "Environment",
+          "self": "This machine"
+        }
       },
       "machine": {
         "title": "This machine",
@@ -2021,6 +2027,8 @@ export const I18N_RESOURCES = {
         "none": "Select nodes first.",
         "busy": "Removing nodes. Wait for it to finish.",
         "upgrade": "Upgrade ({{count}})",
+        "upgradeWithSelf": "Upgrade ({{count}}, incl. this machine)",
+        "upgradeSelfNotice": "This machine is upgraded last; the service restarts and this page drops briefly.",
         "revoke": "Remove Nodes",
         "uninstall": "Uninstall tmex"
       },
@@ -2049,6 +2057,7 @@ export const I18N_RESOURCES = {
         "summary_one": "{{count}} node uninstalled",
         "summary_other": "{{count}} nodes uninstalled",
         "summaryFailed": "{{count}} uninstalled, {{failed}} failed ({{names}})",
+        "summaryAborted": "Hub unavailable. Stopped with {{remaining}} node(s) left ({{count}} uninstalled).",
         "errors": {
           "loginRequired": "Sign in to that node first.",
           "unreachable": "That node cannot be reached.",
@@ -2139,7 +2148,8 @@ export const I18N_RESOURCES = {
         "cancelNotRunning": "No upgrade is running on this node.",
         "cancelFailed": "Could not stop the upgrade: {{error}}",
         "restoring": "Syncing upgrade status…",
-        "allResumed": "Resumed the previous batch upgrade."
+        "allResumed": "Resumed the previous batch upgrade.",
+        "allOtherTab": "Another tab is running a batch upgrade."
       },
       "badge": {
         "direct": "Direct",
@@ -2745,7 +2755,7 @@ export const I18N_RESOURCES = {
           "label": "连接器",
           "connected": "{{n}} 条边缘连接",
           "noConnections": "无边缘连接",
-          "unknown": "无法探测（未找到 metrics 端点）",
+          "unknown": "无法探测（metrics 端点不可达）",
           "unprobed": "未探测"
         },
         "mode": {
@@ -4061,7 +4071,13 @@ export const I18N_RESOURCES = {
         "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
         "machineRole": "Hub 角色",
         "lastAttempt": "最近尝试：{{time}}",
-        "lastError": "最近错误：{{error}}"
+        "lastError": "最近错误：{{error}}",
+        "authorization": {
+          "label": "授权：{{value}}",
+          "signed": "已签名",
+          "env": "环境变量",
+          "self": "本机"
+        }
       },
       "machine": {
         "title": "本机",
@@ -4336,6 +4352,8 @@ export const I18N_RESOURCES = {
         "none": "须先勾选节点。",
         "busy": "正在移除节点，请稍候。",
         "upgrade": "升级（{{count}}）",
+        "upgradeWithSelf": "升级（{{count}}，含本机）",
+        "upgradeSelfNotice": "本机排在最后升级，届时服务重启、当前页面短暂断开。",
         "revoke": "移除节点",
         "uninstall": "卸载 tmex"
       },
@@ -4363,6 +4381,7 @@ export const I18N_RESOURCES = {
         "revokeFailed": "已卸载，但未能从多节点互联中移除",
         "summary": "已卸载 {{count}} 个节点",
         "summaryFailed": "已卸载 {{count}} 个，{{failed}} 个失败（{{names}}）",
+        "summaryAborted": "Hub 不可用，已停止卸载剩余 {{remaining}} 个节点（已卸载 {{count}} 个）。",
         "errors": {
           "loginRequired": "须先登录该节点。",
           "unreachable": "连不上该节点。",
@@ -4449,7 +4468,8 @@ export const I18N_RESOURCES = {
         "cancelNotRunning": "该节点没有正在进行的升级。",
         "cancelFailed": "停止升级失败：{{error}}",
         "restoring": "正在同步升级状态…",
-        "allResumed": "已续接上次的批量升级。"
+        "allResumed": "已续接上次的批量升级。",
+        "allOtherTab": "另一个标签页正在批量升级。"
       },
       "badge": {
         "direct": "直连",
@@ -5054,7 +5074,7 @@ export const I18N_RESOURCES = {
           "label": "コネクタ",
           "connected": "エッジ接続 {{n}} 本",
           "noConnections": "エッジ接続なし",
-          "unknown": "探測できません（metrics エンドポイントが見つかりません）",
+          "unknown": "探測できません（metrics エンドポイントに到達できません）",
           "unprobed": "未探測"
         },
         "mode": {
@@ -6370,7 +6390,13 @@ export const I18N_RESOURCES = {
         "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
         "machineRole": "ハブの役割",
         "lastAttempt": "最終試行：{{time}}",
-        "lastError": "最終エラー：{{error}}"
+        "lastError": "最終エラー：{{error}}",
+        "authorization": {
+          "label": "認可：{{value}}",
+          "signed": "署名済み",
+          "env": "環境変数",
+          "self": "本機"
+        }
       },
       "machine": {
         "title": "このマシン",
@@ -6645,6 +6671,8 @@ export const I18N_RESOURCES = {
         "none": "先にノードを選択してください。",
         "busy": "ノードを削除中です。完了までお待ちください。",
         "upgrade": "アップグレード（{{count}}）",
+        "upgradeWithSelf": "アップグレード（{{count}}、本機を含む）",
+        "upgradeSelfNotice": "本機は最後にアップグレードされ、サービス再起動でこのページは一時的に切断されます。",
         "revoke": "ノードを削除",
         "uninstall": "tmex をアンインストール"
       },
@@ -6672,6 +6700,7 @@ export const I18N_RESOURCES = {
         "revokeFailed": "アンインストールしましたが、マルチノード接続から除外できませんでした",
         "summary": "{{count}} 個のノードをアンインストールしました",
         "summaryFailed": "{{count}} 個をアンインストール、{{failed}} 個が失敗しました（{{names}}）",
+        "summaryAborted": "Hub が利用できないため、残り {{remaining}} 台を中止しました（{{count}} 台はアンインストール済み）。",
         "errors": {
           "loginRequired": "先にそのノードにログインしてください。",
           "unreachable": "そのノードに接続できません。",
@@ -6758,7 +6787,8 @@ export const I18N_RESOURCES = {
         "cancelNotRunning": "このノードで実行中のアップグレードはありません。",
         "cancelFailed": "アップグレードを中止できませんでした：{{error}}",
         "restoring": "アップグレード状態を同期中…",
-        "allResumed": "前回の一括アップグレードを再開しました。"
+        "allResumed": "前回の一括アップグレードを再開しました。",
+        "allOtherTab": "別のタブで一括アップグレードが実行中です。"
       },
       "badge": {
         "direct": "ダイレクト",
