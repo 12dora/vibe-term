@@ -12,6 +12,15 @@ import {
   verifyEd25519,
 } from '@tmex/shared/auth';
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import {
+  HUB_NOT_WRITER,
+  type HubAdvertisement,
+  type HubEndpointInfo,
+  type HubMode,
+  type HubNotWriterError,
+  UPLINK_CTL_MAX_HUBS,
+} from '@tmex/shared/uplink';
+import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import { parseJson, projectNode, upsertById } from '../mesh/node-list-projection';
@@ -91,6 +100,7 @@ export type UplinkServerOptions = {
   rtcMaxSessions?: number;
   keyLogReqStateMax?: number;
   keyLogReqIdleTtlMs?: number;
+  meshHubs?: MeshHubStore;
 };
 
 type PendingAuth = {
@@ -122,10 +132,12 @@ const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 
 export const HUB_KEY_LOG_REQ_LOG_INTERVAL_MS = 10_000;
+export const HUB_SPLIT_BRAIN_LOG_INTERVAL_MS = 60_000;
 export const HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS = 10_000;
 export const HUB_UPLINK_AUTH_REJECT_LOG_GLOBAL_MAX = 20;
 export const HUB_UPLINK_AUTH_REJECT_LOG_ADDR_MAX = 20;
 const AUTH_REJECT_ADDR_BUDGET_MAX = 256;
+const HUB_NODE_ID_HEX = /^[0-9a-f]{32}$/i;
 
 function sanitizeLogField(value: string): string {
   let out = '';
@@ -151,7 +163,12 @@ export class UplinkServer {
   private readonly userStore: UserStore;
   private readonly keyLogSource: HubKeyLogSource;
   readonly registry: NodeRegistry;
+  readonly meshHubs: MeshHubStore;
   private readonly config: HubRuntimeConfig;
+  private currentMode: HubMode;
+  private readonly hubPriority: number;
+  private readonly hubWriterEpoch: number;
+  private lastSplitBrainLogAt: number | null = null;
   private readonly now: () => number;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeatMissLimit: number;
@@ -185,7 +202,11 @@ export class UplinkServer {
     this.userStore = opts.userStore;
     this.keyLogSource = opts.keyLogSource;
     this.registry = opts.registry;
+    this.meshHubs = opts.meshHubs ?? new MeshHubStore(opts.db);
     this.config = opts.config;
+    this.currentMode = opts.config.mode ?? 'active';
+    this.hubWriterEpoch = opts.config.writerEpoch ?? 1;
+    this.hubPriority = opts.config.priority ?? (this.currentMode === 'standby' ? 200 : 100);
     this.now = opts.now ?? Date.now;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS;
     this.heartbeatMissLimit = opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT;
@@ -209,6 +230,48 @@ export class UplinkServer {
         publicUrl: opts.config.publicUrl,
         now: this.now(),
       });
+    }
+    this.upsertSelfHub();
+  }
+
+  mode(): HubMode {
+    return this.currentMode;
+  }
+
+  writerEpoch(): number {
+    return this.hubWriterEpoch;
+  }
+
+  hubNodeId(): string | undefined {
+    const id = this.config.hubNodeId ?? this.config.nodeId;
+    return id && HUB_NODE_ID_HEX.test(id) ? id.toLowerCase() : undefined;
+  }
+
+  setMode(mode: HubMode): void {
+    if (this.currentMode === mode) return;
+    this.currentMode = mode;
+    this.upsertSelfHub();
+    this.broadcastAllNodeLists();
+  }
+
+  notWriterError(): HubNotWriterError {
+    const hubs = this.meshHubs.list();
+    const writerId = pickWriterHub(hubs);
+    const writer = writerId ? this.meshHubs.get(writerId) : null;
+    return {
+      code: HUB_NOT_WRITER,
+      writerHubId: writerId,
+      writerPublicUrl: writer?.publicUrl ?? null,
+      writerEpoch: writer?.writerEpoch ?? null,
+    };
+  }
+
+  broadcastAllNodeLists(): void {
+    const seen = new Set<string>();
+    for (const entry of this.registry.listAuthenticated()) {
+      if (seen.has(entry.userId)) continue;
+      seen.add(entry.userId);
+      void this.broadcastNodeList(entry.userId);
     }
   }
 
@@ -662,6 +725,7 @@ export class UplinkServer {
         },
         now
       );
+      if (msg.hub) this.ingestHubAdvertisement(live, msg.hub);
       await this.broadcastNodeList(live.userId);
     } catch {
       if (!this.stopped) throw new Error('node_status_failed');
@@ -1004,7 +1068,15 @@ export class UplinkServer {
     this.dropRtcForNode(live.nodeId);
     const removed = this.registry.remove(live.nodeId, live.generation);
     if (!removed || this.stopped) return;
-    patchNode(this.db, live.nodeId, { lastSeenAt: this.now() });
+    const now = this.now();
+    patchNode(this.db, live.nodeId, { lastSeenAt: now });
+    const ownId = this.hubNodeId();
+    if (live.nodeId !== ownId) {
+      const rec = this.meshHubs.get(live.nodeId);
+      if (rec) {
+        this.meshHubs.upsert({ ...rec, online: false, lastSeenAt: now }, now);
+      }
+    }
     void this.broadcastNodeList(live.userId);
   }
 
@@ -1086,7 +1158,7 @@ export class UplinkServer {
           live?.meta
         );
       });
-    const hubNodeId = this.config.nodeId ?? this.userStore.getHubMeta()?.nodeId;
+    const hubNodeId = this.hubNodeId() ?? this.config.nodeId ?? this.userStore.getHubMeta()?.nodeId;
     const hubName = hubNodeId ? this.nodeDisplayName(hubNodeId) : null;
     if (hubNodeId) {
       this.userStore.upsertHubMeta({
@@ -1112,22 +1184,124 @@ export class UplinkServer {
         )
       );
     }
+    const hubRecords = this.meshHubs.list();
+    const ownId = this.hubNodeId();
+    const hubs = hubRecords
+      .slice(0, UPLINK_CTL_MAX_HUBS)
+      .map((row) => this.toHubEndpoint(row, ownId));
+    const writerId = pickWriterHub(hubRecords);
+    const writer = writerId ? this.meshHubs.get(writerId) : null;
+    const writerName = writer?.name?.trim() || null;
+    const legacyHub = writer
+      ? {
+          nodeId: writer.hubNodeId,
+          publicUrl: writer.publicUrl,
+          ...(writerName ? { name: writerName } : {}),
+        }
+      : hubNodeId
+        ? {
+            nodeId: hubNodeId,
+            publicUrl: this.config.publicUrl,
+            ...(hubName ? { name: hubName } : {}),
+          }
+        : undefined;
     return {
       t: 'node.list',
       version,
       key_log_head: { seq: seqToWire(head.seq), hash: bytesToB64url(head.hash) },
       rtc: { stun: this.config.stun, turn: this.config.turn ?? null },
       nodes,
-      ...(hubNodeId
-        ? {
-            hub: {
-              nodeId: hubNodeId,
-              publicUrl: this.config.publicUrl,
-              ...(hubName ? { name: hubName } : {}),
-            },
-          }
-        : {}),
+      ...(legacyHub ? { hub: legacyHub } : {}),
+      ...(hubs.length > 0 ? { hubs } : {}),
+      ...(writerId ? { writerHubId: writerId, writerEpoch: writer?.writerEpoch } : {}),
     };
+  }
+
+  private upsertSelfHub(): void {
+    const hubNodeId = this.hubNodeId();
+    if (!hubNodeId) return;
+    const existing = this.meshHubs.get(hubNodeId);
+    const now = this.now();
+    this.meshHubs.upsert(
+      {
+        hubNodeId,
+        publicUrl: this.config.publicUrl,
+        name: this.nodeDisplayName(hubNodeId),
+        mode: this.currentMode,
+        priority: this.hubPriority,
+        writerEpoch: this.hubWriterEpoch,
+        caFingerprint: existing?.caFingerprint ?? null,
+        online: true,
+        lastSeenAt: now,
+      },
+      now
+    );
+  }
+
+  private ingestHubAdvertisement(live: LiveConnection, ad: HubAdvertisement): void {
+    const now = this.now();
+    const existing = this.meshHubs.get(live.nodeId);
+    const liveName = this.registry.get(live.nodeId)?.meta.name?.trim();
+    this.meshHubs.upsert(
+      {
+        hubNodeId: live.nodeId,
+        publicUrl: ad.publicUrl,
+        name: liveName && liveName !== live.nodeId ? liveName : (existing?.name ?? null),
+        mode: ad.mode,
+        priority: ad.priority,
+        writerEpoch: ad.writerEpoch,
+        caFingerprint:
+          ad.caFingerprint === undefined ? (existing?.caFingerprint ?? null) : ad.caFingerprint,
+        online: true,
+        lastSeenAt: now,
+      },
+      now
+    );
+    const ownId = this.hubNodeId();
+    if (ad.mode !== 'active' || live.nodeId === ownId || this.currentMode !== 'active') return;
+    if (ad.writerEpoch > this.hubWriterEpoch) {
+      console.error(`[hub] fenced: higher writerEpoch=${ad.writerEpoch} from hub=${live.nodeId}`);
+      this.setMode('standby');
+      return;
+    }
+    if (ad.writerEpoch === this.hubWriterEpoch) {
+      if (
+        this.lastSplitBrainLogAt === null ||
+        now - this.lastSplitBrainLogAt >= HUB_SPLIT_BRAIN_LOG_INTERVAL_MS
+      ) {
+        this.lastSplitBrainLogAt = now;
+        console.warn(
+          `[hub] split-brain: equal writerEpoch=${ad.writerEpoch} from hub=${live.nodeId}`
+        );
+      }
+    }
+  }
+
+  private toHubEndpoint(
+    row: {
+      hubNodeId: string;
+      publicUrl: string;
+      name: string | null;
+      mode: HubMode;
+      priority: number;
+      writerEpoch: number;
+      caFingerprint: string | null;
+      lastSeenAt: number | null;
+    },
+    ownId: string | undefined
+  ): HubEndpointInfo {
+    const info: HubEndpointInfo = {
+      nodeId: row.hubNodeId,
+      publicUrl: row.publicUrl,
+      mode: row.mode,
+      priority: row.priority,
+      writerEpoch: row.writerEpoch,
+      online: row.hubNodeId === ownId || Boolean(this.registry.get(row.hubNodeId)?.authenticated),
+      lastSeenAt: row.lastSeenAt,
+    };
+    if (row.name) info.name = row.name;
+    if (row.caFingerprint !== undefined) info.caFingerprint = row.caFingerprint;
+    return info;
   }
 
   private nodeDisplayName(nodeId: string): string {

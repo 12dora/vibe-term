@@ -12,12 +12,18 @@ import {
   verifyNodeCertificate,
 } from '@tmex/shared/auth';
 import { type LinkSession, type ServerSocketAdapter, WebSocketLink } from '@tmex/shared/link';
+import type { HubMode } from '@tmex/shared/uplink';
 import { json, readJsonObjectBody } from '../api/http';
 import { matchPath } from '../api/route';
 import { decodeB64url, requireB64url, validationError } from '../api/route-input';
+import { MeshHubStore } from '../auth/mesh-hub-store';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthDb } from '../auth/types';
 import { type UserRecord, UserStore } from '../auth/user-store';
+import {
+  type UplinkNodeList,
+  applyReplicatedNodeList as replicateNodeList,
+} from './hub-replication';
 import { detachEnrollmentTokensFromNode, patchNode } from './node-persistence';
 import { NodeRegistry } from './node-registry';
 import { encodeRedeemPopMessage } from './redeem-pop';
@@ -63,6 +69,7 @@ export type HubRuntimeOptions = {
   heartbeatMissLimit?: number;
   authTimeoutMs?: number;
   tlsInfo?: HubTlsInfoProvider;
+  meshHubs?: MeshHubStore;
 };
 
 type StoredEnrollmentPayload = {
@@ -130,6 +137,7 @@ export class HubRuntime {
   private readonly tlsInfo: HubTlsInfoProvider | undefined;
   readonly registry: NodeRegistry;
   readonly uplink: UplinkServer;
+  readonly meshHubs: MeshHubStore;
 
   constructor(opts: HubRuntimeOptions) {
     this.db = opts.db;
@@ -139,6 +147,7 @@ export class HubRuntime {
     this.now = opts.now ?? Date.now;
     this.config = opts.config;
     this.tlsInfo = opts.tlsInfo;
+    this.meshHubs = opts.meshHubs ?? new MeshHubStore(opts.db);
     this.registry = new NodeRegistry();
     this.uplink = new UplinkServer({
       db: opts.db,
@@ -146,11 +155,48 @@ export class HubRuntime {
       keyLogSource: opts.keyLogSource,
       registry: this.registry,
       config: opts.config,
+      meshHubs: this.meshHubs,
       now: this.now,
       heartbeatIntervalMs: opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS,
       heartbeatMissLimit: opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT,
       authTimeoutMs: opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS,
     });
+  }
+
+  mode(): HubMode {
+    return this.uplink.mode();
+  }
+
+  setMode(mode: HubMode): void {
+    this.uplink.setMode(mode);
+  }
+
+  writerEpoch(): number {
+    return this.uplink.writerEpoch();
+  }
+
+  applyReplicatedNodeList(list: UplinkNodeList, meta: { hubNodeId: string | null }): void {
+    const ownId = this.uplink.hubNodeId();
+    if (ownId && meta.hubNodeId === ownId) return;
+    const existing = ownId ? this.meshHubs.get(ownId) : null;
+    const record = existing ? (({ updatedAt: _updatedAt, ...rest }) => rest)(existing) : null;
+    replicateNodeList(
+      this.db,
+      this.userStore,
+      this.meshHubs,
+      list,
+      meta,
+      {
+        hubNodeId: ownId,
+        record,
+      },
+      this.now()
+    );
+    this.uplink.broadcastAllNodeLists();
+  }
+
+  private requireWriter(): Response | null {
+    return this.mode() === 'standby' ? json(this.uplink.notWriterError(), 409) : null;
   }
 
   attachLocalNode(link: LinkSession): void {
@@ -188,19 +234,28 @@ export class HubRuntime {
       return fn(params);
     };
     return (
-      hit('/api/hub/enrollments/redeem', 'POST', () => this.handleRedeem(req)) ??
+      hit('/api/hub/enrollments/redeem', 'POST', () => {
+        const blocked = this.requireWriter();
+        return blocked ?? this.handleRedeem(req);
+      }) ??
       hit('/api/hub/enrollments', 'POST', () =>
-        this.withAuth(req, (a) => this.handleCreateEnrollment(req, a))
+        this.withAuth(req, (a) => this.requireWriter() ?? this.handleCreateEnrollment(req, a))
       ) ??
       hit('/api/hub/enrollments/:id', 'GET', (p) =>
         this.withAuth(req, (a) => this.handleGetEnrollment(decodeURIComponent(p.id), a))
       ) ??
       hit('/api/hub/nodes', 'GET', () => this.withAuth(req, (a) => this.handleListNodes(a))) ??
       hit('/api/hub/nodes/:id/rename', 'POST', (p) =>
-        this.withAuth(req, (a) => this.handleRename(req, decodeURIComponent(p.id), a))
+        this.withAuth(
+          req,
+          (a) => this.requireWriter() ?? this.handleRename(req, decodeURIComponent(p.id), a)
+        )
       ) ??
       hit('/api/hub/nodes/:id/revoke', 'POST', (p) =>
-        this.withAuth(req, (a) => this.handleRevoke(req, decodeURIComponent(p.id), a))
+        this.withAuth(
+          req,
+          (a) => this.requireWriter() ?? this.handleRevoke(req, decodeURIComponent(p.id), a)
+        )
       ) ??
       json({ error: 'not_found' }, 404)
     );

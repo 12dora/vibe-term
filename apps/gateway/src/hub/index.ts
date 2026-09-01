@@ -7,7 +7,8 @@ export {
 } from './hub-runtime';
 export { createHubKeyLogSource } from './hub-key-log-source';
 export { NodeRegistry, type NodeRegistryMeta, type RegisteredNode } from './node-registry';
-export { patchNode, type NodePatch } from './node-persistence';
+export { applyReplicatedNodeList, type UplinkNodeList } from './hub-replication';
+export { patchNode, type NodePatch, upsertEnrolledNode } from './node-persistence';
 export {
   UPLINK_CTL_MAX_ARRAY_LEN,
   UPLINK_CTL_MAX_BYTES,
