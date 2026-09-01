@@ -1,15 +1,13 @@
 // 尺寸域：终端上报的本地 resize/sync 下发，以及远端 pane 尺寸回灌。
-// 回灌 effect 必须排在 select 派发与 active 跟随之后：它可能触发 fetchPaneHistory，
-// 提前会让 history 请求越过同一次提交里的 TMUX_SELECT。
+// 回灌 effect（useRemotePaneSize）必须排在 select 派发与 active 跟随之后：它可能触发
+// fetchPaneHistory，提前会让 history 请求越过同一次提交里的 TMUX_SELECT。
 
 import type { TmuxPane } from '@tmex/shared';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+import { useRuntime } from '@tmex/stores/react';
 import type { TerminalRef } from '@tmex/terminal-ui';
-import { type RefObject, useCallback, useEffect, useState } from 'react';
-import { resolveRemotePaneSizeSync } from './pane-selection-rules';
+import { type RefObject, useCallback, useEffect } from 'react';
 import type { PaneSelectionRefs } from './use-pane-selection-state';
-
-const REMOTE_PANE_SIZE_GUARD_TTL_MS = 2000;
+import { useRemotePaneSize } from './use-remote-pane-size';
 
 export interface PaneSizeSync {
   handleResize: (cols: number, rows: number) => void;
@@ -41,8 +39,6 @@ export function usePaneSizeSync({
   refs: PaneSelectionRefs;
 }): PaneSizeSync {
   const runtime = useRuntime();
-  const fetchPaneHistory = useTmuxStore((state) => state.fetchPaneHistory);
-  const [remoteSizeRetryRevision, setRemoteSizeRetryRevision] = useState(0);
 
   const { hasWindowSnapshotRef, isMobileRef, stackedLayoutTargetRef } = refs;
 
@@ -88,58 +84,15 @@ export function usePaneSizeSync({
     runtime.stores.tmux.getState().syncThemeAfterResize(deviceId);
   }, [deviceId, runtime]);
 
-  useEffect(() => {
-    void remoteSizeRetryRevision;
-    // 分屏模式：pane 尺寸完全由 layout 驱动（SplitTerminalArea 内部 resize），不走回灌
-    if (isSplitView) return;
-    if (!canInteractWithPane || !selectedPane || isLoading) return;
-
-    const terminal = terminalRef.current;
-    const term = terminal?.getTerminal();
-    if (!term) return;
-
-    const action = resolveRemotePaneSizeSync({
-      now: Date.now(),
-      isSplitView,
-      canInteractWithPane,
-      isLoading,
-      remotePane: selectedPane,
-      currentSize: { cols: term.cols, rows: term.rows },
-      pendingLocalSize: terminal?.getPendingLocalSize() ?? null,
-      ttlMs: REMOTE_PANE_SIZE_GUARD_TTL_MS,
-    });
-
-    if (action.kind === 'skip') return;
-    if (action.kind === 'retry') {
-      const timer = window.setTimeout(() => {
-        setRemoteSizeRetryRevision((revision) => revision + 1);
-      }, action.delayMs);
-      return () => window.clearTimeout(timer);
-    }
-
-    if (action.clearPendingLocalSize) terminal?.clearPendingLocalSize();
-    if (!action.resize) return;
-
-    // 走 TerminalRef.resize 而不是实例的 resize：它同时记下权威尺寸，
-    // follow 模式下 convergeSnapshotSize() 才知道快照写完后该收敛到哪个行列
-    terminal?.resize(action.cols, action.rows);
-    // 远端 resize 后本地 reflow 与 tmux reflow 不保证一致（差一行即让 TUI 的
-    // 相对移动重绘永久错位），重拉 history 以 tmux 权威状态重建本地屏幕；
-    // fetch gate 会缓冲期间的 live 输出保序
-    if (deviceId && resolvedPaneId) {
-      fetchPaneHistory(deviceId, resolvedPaneId);
-    }
-  }, [
-    canInteractWithPane,
+  useRemotePaneSize({
     deviceId,
-    fetchPaneHistory,
+    resolvedPaneId,
+    selectedPane,
     isLoading,
     isSplitView,
-    resolvedPaneId,
-    remoteSizeRetryRevision,
-    selectedPane,
+    canInteractWithPane,
     terminalRef,
-  ]);
+  });
 
   return { handleResize, handleSync, handleResizeSettled };
 }
