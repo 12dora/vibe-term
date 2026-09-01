@@ -14,7 +14,7 @@ import type { NodeActionDeps } from './types';
 
 export function useNodeRowActions(
   row: NodeRow,
-  { hubApi, mode, api, prompt, onChanged }: NodeActionDeps
+  { hubApi, mode, api, prompt, onChanged, writerPublicUrl }: NodeActionDeps
 ) {
   const { t } = useTranslation();
   const [renaming, setRenaming] = useState(false);
@@ -30,11 +30,11 @@ export function useNodeRowActions(
       toast.success(t('nodes.rename.done'));
       onChanged();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      toast.error(actionErrorText(t, err, { writerPublicUrl }));
     } finally {
       setBusy(false);
     }
-  }, [hubApi, nameDraft, onChanged, row.id, t]);
+  }, [hubApi, nameDraft, onChanged, row.id, t, writerPublicUrl]);
 
   /**
    * 吊销：**只有一条路径**——`POST /api/auth/keylog?hub=sync`。
@@ -88,7 +88,7 @@ export function useNodeRowActions(
         toast.error(
           failure === 'stale'
             ? t('nodes.enrollment.staleRecord')
-            : t(`auth.errors.${result.code}`, { defaultValue: result.code })
+            : actionErrorText(t, { code: result.code }, { writerPublicUrl })
         );
         return;
       }
@@ -99,11 +99,11 @@ export function useNodeRowActions(
       toast.success(t('nodes.revoke.done'));
       onChanged();
     } catch (err) {
-      toast.error(actionErrorText(t, err));
+      toast.error(actionErrorText(t, err, { writerPublicUrl }));
     } finally {
       setBusy(false);
     }
-  }, [api, mode, onChanged, prompt, row.id, row.name, t]);
+  }, [api, mode, onChanged, prompt, row.id, row.name, t, writerPublicUrl]);
 
   return { renaming, setRenaming, nameDraft, setNameDraft, busy, rename, revoke };
 }

@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
+import type { AuthModeResponse, HubEndpointInfo, MeshNode } from '@tmex/api-client/auth/index';
 import type { UpgradeStatus } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { installWindowStorage } from '@tmex/stores/test-utils';
@@ -20,6 +20,8 @@ installWindowStorage();
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
+const { resetMeshHubsStateForTest, setMeshHubsStateForTest } = await import('@/node/mesh-hubs');
+const { actionErrorText } = await import('./errors');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
 const { NodesManagement, UpgradeAllButton } = await import('./nodes-management');
 const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } = await import(
@@ -80,6 +82,7 @@ function render(mode: AuthModeResponse): string {
 beforeEach(() => {
   resetEnrollmentEngineForTest();
   resetMeshNodesStateForTest();
+  resetMeshHubsStateForTest();
   setPendingStorage({
     getItem: () => null,
     setItem: () => undefined,
@@ -232,6 +235,140 @@ describe('NodesManagement', () => {
   });
 });
 
+describe('Hub 集群展示与 standby 拒写', () => {
+  const HUB_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
+  const HUB_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
+  const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
+
+  function hubInfo(overrides: Partial<HubEndpointInfo> & { nodeId: string }): HubEndpointInfo {
+    return {
+      publicUrl: `https://${overrides.nodeId}.example`,
+      mode: 'active',
+      priority: 0,
+      writerEpoch: 1,
+      online: true,
+      ...overrides,
+    };
+  }
+
+  function withNodes(extra: MeshNode[] = []): void {
+    setMeshNodesStateForTest({
+      entryNodeId: ENTRY,
+      nodes: [meshNode({ id: ENTRY, name: 'entry', loggedIn: true }), ...extra],
+    });
+  }
+
+  test('只有一台 hub 时不渲染集群条，也没有备用 hub 提示', () => {
+    withNodes();
+    setMeshHubsStateForTest({
+      hubs: [hubInfo({ nodeId: HUB_A })],
+      writerHubId: HUB_A,
+      attached: {
+        hubNodeId: HUB_A,
+        publicUrl: `https://${HUB_A}.example`,
+        mode: 'active',
+        writerEpoch: 1,
+        since: 1,
+      },
+      loadedAt: 1,
+    });
+    const html = render(MODE);
+    expect(html).not.toContain('data-testid="nodes-hub-strip"');
+    expect(html).not.toContain('data-testid="nodes-hub-standby"');
+  });
+
+  test('两台 hub：一台一枚 chip，挂载的那枚与 writer 那枚各自标出', () => {
+    withNodes();
+    setMeshHubsStateForTest({
+      hubs: [
+        hubInfo({ nodeId: HUB_A, name: 'tokyo' }),
+        hubInfo({ nodeId: HUB_B, name: 'osaka', mode: 'standby', priority: 1, writerEpoch: 0 }),
+      ],
+      writerHubId: HUB_A,
+      attached: {
+        hubNodeId: HUB_B,
+        publicUrl: `https://${HUB_B}.example`,
+        mode: 'standby',
+        writerEpoch: 0,
+        since: 1,
+      },
+      loadedAt: 1,
+    });
+    const html = render(MODE);
+    expect(html).toContain('data-testid="nodes-hub-strip"');
+    const chipA = html.slice(html.indexOf(`data-testid="nodes-hub-chip-${HUB_A}"`));
+    expect(chipA.slice(0, 200)).toContain('data-hub-writer="true"');
+    expect(chipA.slice(0, 200)).toContain('data-hub-attached="false"');
+    const chipB = html.slice(html.indexOf(`data-testid="nodes-hub-chip-${HUB_B}"`));
+    expect(chipB.slice(0, 200)).toContain('data-hub-attached="true"');
+    expect(chipB.slice(0, 200)).toContain('data-hub-mode="standby"');
+    expect(html).toContain('tokyo');
+    expect(html).toContain('osaka');
+  });
+
+  test('挂在备用 hub 上：给出一行说明并禁用加入 / 重命名 / 移除，升级不受影响', () => {
+    withNodes([meshNode({ id: HUB_B, name: 'osaka', isHub: true, hubMode: 'standby' })]);
+    setMeshHubsStateForTest({
+      hubs: [hubInfo({ nodeId: HUB_A }), hubInfo({ nodeId: HUB_B, mode: 'standby' })],
+      writerHubId: HUB_A,
+      attached: {
+        hubNodeId: HUB_B,
+        publicUrl: `https://${HUB_B}.example`,
+        mode: 'standby',
+        writerEpoch: 0,
+        since: 1,
+      },
+      loadedAt: 1,
+    });
+    const html = render(MODE);
+    expect(html).toContain('data-testid="nodes-hub-standby"');
+    // 「hub 不可达」说的是同一件事，不再重复一遍
+    expect(html).not.toContain('data-testid="nodes-hub-offline"');
+    expect(buttonTag(html, 'nodes-add')).toContain('disabled=""');
+    expect(buttonTag(html, 'nodes-add')).toContain('title="nodes.hubs.standbyNotice"');
+    expect(buttonTag(html, `nodes-rename-${ENTRY}`)).toContain('title="nodes.hubs.standbyNotice"');
+    expect(buttonTag(html, `nodes-revoke-${HUB_B}`)).toContain('disabled=""');
+    expect(buttonTag(html, `node-upgrade-${ENTRY}`)).not.toContain('disabled=""');
+  });
+
+  test('表内 hub 徽标区分主 / 备；旧后端不下发 hubMode 时仍是「Hub」', () => {
+    withNodes([
+      meshNode({ id: HUB_A, name: 'tokyo', isHub: true, hubMode: 'active' }),
+      meshNode({ id: HUB_B, name: 'osaka', isHub: true, hubMode: 'standby' }),
+    ]);
+    const html = render(MODE);
+    expect(html).toContain(`data-testid="nodes-hub-tag-${HUB_A}" data-hub-mode="active"`);
+    expect(html).toContain(`data-testid="nodes-hub-tag-${HUB_B}" data-hub-mode="standby"`);
+    expect(html).toContain('nodes.hubs.active');
+    expect(html).toContain('nodes.hubs.standby');
+
+    withNodes([meshNode({ id: HUB_A, name: 'tokyo', isHub: true })]);
+    const legacy = render(MODE);
+    expect(legacy).toContain(`data-testid="nodes-hub-tag-${HUB_A}" data-hub-mode=""`);
+    expect(legacy).toContain('nodes.hub');
+  });
+});
+
+describe('actionErrorText 的 HUB_NOT_WRITER', () => {
+  const t = (key: string, options?: Record<string, unknown>) =>
+    options ? `${key}:${JSON.stringify(options)}` : key;
+
+  test('知道 writer 地址时把地址写进提示', () => {
+    const text = actionErrorText(t, { code: 'HUB_NOT_WRITER' }, { writerPublicUrl: 'https://w' });
+    expect(text).toBe('nodes.hubs.notWriter:{"url":"https://w"}');
+  });
+
+  test('不知道 writer 地址时退回不带地址的那句', () => {
+    expect(actionErrorText(t, { code: 'HUB_NOT_WRITER' })).toContain('auth.errors.HUB_NOT_WRITER');
+  });
+
+  test('其余带 code 的错误照旧走错误表', () => {
+    expect(actionErrorText(t, { code: 'MALFORMED' }, { writerPublicUrl: 'https://w' })).toContain(
+      'auth.errors.MALFORMED'
+    );
+  });
+});
+
 describe('节点表的升级按钮（注入升级控制器）', () => {
   function nodeRow(overrides: Partial<NodeRow> & { id: string }): NodeRow {
     return {
@@ -273,6 +410,9 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     const deps: NodeActionDeps = {
       hubApi: null,
       hubOnline: true,
+      hubWritable: true,
+      writerPublicUrl: null,
+      hubDetails: new Map(),
       mode: {
         ...MODE,
         uid: 'user-1',
@@ -325,6 +465,9 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     const deps: NodeActionDeps = {
       hubApi: null,
       hubOnline: true,
+      hubWritable: true,
+      writerPublicUrl: null,
+      hubDetails: new Map(),
       mode: {
         ...MODE,
         uid: 'user-1',

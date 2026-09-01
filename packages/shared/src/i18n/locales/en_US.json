@@ -1655,6 +1655,7 @@
         "ROOT_KEY_MISMATCH": "Wrong password.",
         "PASSKEY_ABORTED": "Passkey sign-in was cancelled.",
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
+        "HUB_NOT_WRITER": "A standby hub does not accept management changes. Use the primary hub.",
         "wrongPassword": "Wrong password."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
@@ -1713,6 +1714,19 @@
       "hub": "Hub",
       "loggedIn": "Signed in",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
+      "hubs": {
+        "title": "Hub Cluster",
+        "active": "Primary Hub",
+        "standby": "Standby Hub",
+        "writer": "Writes",
+        "attached": "This entry is attached to this hub",
+        "online": "Online",
+        "offline": "Offline",
+        "detail": "{{url}} | priority {{priority}} | epoch {{epoch}} | {{state}}",
+        "standbyNotice": "The primary hub is unreachable, running on a standby hub. Adding, renaming and removing nodes are unavailable.",
+        "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
+        "machineRole": "Hub Role"
+      },
       "machine": {
         "title": "This machine",
         "role": "Role",

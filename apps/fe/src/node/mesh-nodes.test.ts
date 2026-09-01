@@ -372,9 +372,19 @@ describe('findHubNodeId', () => {
     expect(findHubNodeId(rows, null)).toBeNull();
   });
 
-  test('isHub 优先于 mode 的 hubNodeId', () => {
+  test('isHub 优先于 mode 里那个列表中不存在的 hubNodeId', () => {
     const rows = [node({ id: 'b', isHub: true })];
     expect(findHubNodeId(rows, 'stale')).toBe('b');
+  });
+
+  test('多 hub：列表里认得出 mode 的 hubNodeId（writer）时以它为准', () => {
+    const rows = [
+      node({ id: 'standby', isHub: true, hubMode: 'standby' }),
+      node({ id: 'writer', isHub: true, hubMode: 'active' }),
+    ];
+    expect(findHubNodeId(rows, 'writer')).toBe('writer');
+    // 不是 hub 的 id 不作数，仍退回 isHub 扫描
+    expect(findHubNodeId(rows, 'plain')).toBe('standby');
   });
 });
 
@@ -385,6 +395,16 @@ describe('mergeNodes 的 isHub', () => {
       hubNodeId: null,
     });
     expect(rows[0].isHub).toBe(true);
+  });
+
+  test('多 hub：`hubMode` 原样带出，旧后端不下发时为 null', () => {
+    const rows = mergeNodes(
+      [node({ id: 'a', isHub: true, hubMode: 'standby' }), node({ id: 'b', isHub: true })],
+      null,
+      { entryNodeId: null, hubNodeId: null }
+    );
+    expect(rows.find((row) => row.id === 'a')?.hubMode).toBe('standby');
+    expect(rows.find((row) => row.id === 'b')?.hubMode).toBeNull();
   });
 });
 

@@ -1,7 +1,12 @@
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { HubApi } from '@/node/hub-api';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
+import type {
+  AuthApi,
+  AuthKdfParamsJson,
+  AuthModeResponse,
+  HubEndpointInfo,
+} from '@tmex/api-client/auth/index';
 
 /** 已确认带 uid / kdf 参数的 mesh 模式：管理动作都要签名，缺一不可。 */
 export type ResolvedMode = AuthModeResponse & { uid: string; kdfParams: AuthKdfParamsJson };
@@ -10,6 +15,16 @@ export type ResolvedMode = AuthModeResponse & { uid: string; kdfParams: AuthKdfP
 export interface NodeActionDeps {
   hubApi: HubApi | null;
   hubOnline: boolean;
+  /**
+   * 管理写入当前是否被 hub 接受。挂在 standby 上、或 writer hub 缺席 / 离线时为 `false`：
+   * 此时重命名 / 吊销 / 加入都会被 hub 以 `HUB_NOT_WRITER` 拒绝，不如先禁掉。
+   * hub 集合未知（旧入口、首屏未加载）时恒为 `true`，单 hub 用户没有任何变化。
+   */
+  hubWritable: boolean;
+  /** writer hub 的对外地址；拒写提示靠它指路。 */
+  writerPublicUrl: string | null;
+  /** hub 集合（按 nodeId 索引）：表内 hub 徽标的悬浮详情从这里取。 */
+  hubDetails: ReadonlyMap<string, HubEndpointInfo>;
   mode: ResolvedMode;
   api: AuthApi;
   prompt: CredentialPromptHandle;

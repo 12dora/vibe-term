@@ -3,6 +3,7 @@
 // 回来，否则用户会以为操作没生效。
 
 import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
+import { useMeshHubs } from '@/node/mesh-hubs';
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultLocalApi } from '@tmex/api-client/local/local-api';
@@ -26,6 +27,7 @@ import {
   describeDirectError,
   useDirectMutations,
 } from './direct-section';
+import { hubModeLabel } from './management/hub-strip';
 import type { SetupIntent } from './membership/intent';
 import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
 import { ROLE_LABEL_KEY, classifyRoleChange } from './membership/role-transition';
@@ -109,6 +111,12 @@ export function LocalMachineCard({
   const leave = useLeaveMesh({ mode, client });
   const role = useRoleSwitch(status, leave.busy, onSelectSetupPath);
 
+  // 本机的主 / 备身份：`/api/local/status` 不下发 hubMode，只能从 hub 集合里按自身 nodeId 取。
+  // 集合里没有本机（旧入口、集合还没拉到）时整行不渲染，不做任何猜测。
+  const hubs = useMeshHubs({ enabled: meshEnabled && status?.role === 'hub,node' });
+  const localHubMode =
+    hubs.hubs.find((hub) => hub.nodeId && hub.nodeId === mode?.nodeId)?.mode ?? null;
+
   // 动作的返回体就是权威结果，先盖在拉到的状态上：重新拉 `local-status` 是异步的，
   // 不盖的话开关会在这段时间里停在旧值。下一份状态到达（引用变了）即撤销。
   const fetched: LocalDirectStatus | null = status?.direct ?? null;
@@ -179,6 +187,14 @@ export function LocalMachineCard({
                 </SelectContent>
               </Select>
             </Row>
+
+            {localHubMode && (
+              <Row label={t('nodes.hubs.machineRole')}>
+                <span className="text-xs" data-testid="local-machine-hub-mode">
+                  {hubModeLabel(t, localHubMode)}
+                </span>
+              </Row>
+            )}
 
             {status.hubUrl && (
               <Row label={t('nodes.machine.hubUrl')}>

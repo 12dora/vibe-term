@@ -23,6 +23,8 @@ export function EnrollmentSection({
   mode,
   hubApi,
   hubOnline,
+  hubWritable,
+  writerPublicUrl,
   open,
   prompt,
   pendings,
@@ -36,6 +38,10 @@ export function EnrollmentSection({
   mode: ResolvedMode;
   hubApi: HubApi | null;
   hubOnline: boolean;
+  /** hub 是否接受管理写入（挂在 standby / writer 缺席时为 false）。 */
+  hubWritable: boolean;
+  /** writer hub 的对外地址；拒写提示靠它指路。 */
+  writerPublicUrl: string | null;
   /** 卡头「添加」按钮控制的展开态。 */
   open: boolean;
   prompt: CredentialPromptHandle;
@@ -50,8 +56,10 @@ export function EnrollmentSection({
   clearedIds: string[];
 }) {
   const { t } = useTranslation();
-  const create = useCreateEnrollment({ api, mode, hubApi, prompt, clearedIds });
+  const create = useCreateEnrollment({ api, mode, hubApi, prompt, clearedIds, writerPublicUrl });
   const { created, hubUrl } = create;
+  const writable = hubOnline && hubWritable;
+  const blockedHint = hubWritable ? t('nodes.hubOffline') : t('nodes.hubs.standbyNotice');
 
   return (
     <>
@@ -70,7 +78,8 @@ export function EnrollmentSection({
           <div>
             <Button
               type="button"
-              disabled={create.busy || !hubOnline}
+              disabled={create.busy || !writable}
+              title={writable ? undefined : blockedHint}
               onClick={() => void create.submit()}
               data-testid="nodes-enroll-submit"
             >
@@ -131,7 +140,8 @@ export function EnrollmentSection({
                   <Button
                     type="button"
                     size="xs"
-                    disabled={busy}
+                    disabled={busy || !writable}
+                    title={writable ? undefined : blockedHint}
                     onClick={() => onConfirm(pending)}
                     data-testid={`nodes-pending-confirm-${id}`}
                   >

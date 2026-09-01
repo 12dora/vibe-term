@@ -1661,6 +1661,7 @@ export const I18N_RESOURCES = {
         "ROOT_KEY_MISMATCH": "Wrong password.",
         "PASSKEY_ABORTED": "Passkey sign-in was cancelled.",
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
+        "HUB_NOT_WRITER": "A standby hub does not accept management changes. Use the primary hub.",
         "wrongPassword": "Wrong password."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
@@ -1719,6 +1720,19 @@ export const I18N_RESOURCES = {
       "hub": "Hub",
       "loggedIn": "Signed in",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
+      "hubs": {
+        "title": "Hub Cluster",
+        "active": "Primary Hub",
+        "standby": "Standby Hub",
+        "writer": "Writes",
+        "attached": "This entry is attached to this hub",
+        "online": "Online",
+        "offline": "Offline",
+        "detail": "{{url}} | priority {{priority}} | epoch {{epoch}} | {{state}}",
+        "standbyNotice": "The primary hub is unreachable, running on a standby hub. Adding, renaming and removing nodes are unavailable.",
+        "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
+        "machineRole": "Hub Role"
+      },
       "machine": {
         "title": "This machine",
         "role": "Role",
@@ -3886,6 +3900,7 @@ export const I18N_RESOURCES = {
         "ROOT_KEY_MISMATCH": "密码不正确。",
         "PASSKEY_ABORTED": "通行密钥授权已取消。",
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
+        "HUB_NOT_WRITER": "备用 Hub 不接受管理操作，请通过主 Hub 操作。",
         "wrongPassword": "密码不正确。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
@@ -3944,6 +3959,19 @@ export const I18N_RESOURCES = {
       "hub": "Hub",
       "loggedIn": "已登录",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
+      "hubs": {
+        "title": "Hub 集群",
+        "active": "主 Hub",
+        "standby": "备 Hub",
+        "writer": "写入",
+        "attached": "当前入口挂载于此 Hub",
+        "online": "在线",
+        "offline": "离线",
+        "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
+        "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
+        "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
+        "machineRole": "Hub 角色"
+      },
       "machine": {
         "title": "本机",
         "role": "角色",
@@ -6108,6 +6136,7 @@ export const I18N_RESOURCES = {
         "ROOT_KEY_MISMATCH": "パスワードが正しくありません。",
         "PASSKEY_ABORTED": "パスキーの操作がキャンセルされました。",
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
+        "HUB_NOT_WRITER": "予備ハブは管理操作を受け付けません。メインハブから操作してください。",
         "wrongPassword": "パスワードが正しくありません。"
       },
       "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
@@ -6166,6 +6195,19 @@ export const I18N_RESOURCES = {
       "hub": "ハブ",
       "loggedIn": "サインイン済み",
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
+      "hubs": {
+        "title": "ハブクラスター",
+        "active": "メインハブ",
+        "standby": "予備ハブ",
+        "writer": "書き込み",
+        "attached": "この入口は現在このハブに接続しています",
+        "online": "オンライン",
+        "offline": "オフライン",
+        "detail": "{{url}}｜優先度 {{priority}}｜エポック {{epoch}}｜{{state}}",
+        "standbyNotice": "メインハブに接続できないため予備ハブを使用中です。追加・名前変更・削除などの管理操作はできません。",
+        "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
+        "machineRole": "ハブの役割"
+      },
       "machine": {
         "title": "このマシン",
         "role": "ロール",

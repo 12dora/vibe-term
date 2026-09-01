@@ -1655,6 +1655,7 @@
         "ROOT_KEY_MISMATCH": "パスワードが正しくありません。",
         "PASSKEY_ABORTED": "パスキーの操作がキャンセルされました。",
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
+        "HUB_NOT_WRITER": "予備ハブは管理操作を受け付けません。メインハブから操作してください。",
         "wrongPassword": "パスワードが正しくありません。"
       },
       "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
@@ -1713,6 +1714,19 @@
       "hub": "ハブ",
       "loggedIn": "サインイン済み",
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
+      "hubs": {
+        "title": "ハブクラスター",
+        "active": "メインハブ",
+        "standby": "予備ハブ",
+        "writer": "書き込み",
+        "attached": "この入口は現在このハブに接続しています",
+        "online": "オンライン",
+        "offline": "オフライン",
+        "detail": "{{url}}｜優先度 {{priority}}｜エポック {{epoch}}｜{{state}}",
+        "standbyNotice": "メインハブに接続できないため予備ハブを使用中です。追加・名前変更・削除などの管理操作はできません。",
+        "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
+        "machineRole": "ハブの役割"
+      },
       "machine": {
         "title": "このマシン",
         "role": "ロール",

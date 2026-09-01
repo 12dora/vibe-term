@@ -14,6 +14,7 @@ import type {
   KeyLogHeadResponse,
   MeshConnectionResponse,
   MeshConnectionResult,
+  MeshHubsResponse,
   MeshNode,
   MeshNodesResponse,
   PasskeyRegistrationVerified,
@@ -72,6 +73,26 @@ export class AuthApi {
     }
     const payload = (await res.json()) as MeshNodesResponse;
     return payload.nodes ?? [];
+  }
+
+  /**
+   * `GET /api/mesh/hubs`（**需会话**）：hub 集合、本机 uplink 当前挂载的那台、writer 是谁。
+   *
+   * 缺字段一律补成空集合而不是抛错：旧入口（1.1.10 及以前）没有这条路由，此时调用方
+   * 只会拿到「一台 hub 都不知道」，UI 退化成单 hub 形态，不该整页报错。
+   */
+  async listHubs(): Promise<MeshHubsResponse> {
+    const res = await this.client.fetch('/api/mesh/hubs');
+    if (!res.ok) {
+      throw new Error(await parseApiError(res, 'Failed to load mesh hubs'));
+    }
+    const payload = (await res.json()) as Partial<MeshHubsResponse>;
+    return {
+      hubs: payload.hubs ?? [],
+      attached: payload.attached ?? null,
+      writerHubId: payload.writerHubId ?? null,
+      candidates: payload.candidates ?? [],
+    };
   }
 
   /**

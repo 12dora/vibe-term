@@ -1655,6 +1655,7 @@
         "ROOT_KEY_MISMATCH": "密码不正确。",
         "PASSKEY_ABORTED": "通行密钥授权已取消。",
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
+        "HUB_NOT_WRITER": "备用 Hub 不接受管理操作，请通过主 Hub 操作。",
         "wrongPassword": "密码不正确。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
@@ -1713,6 +1714,19 @@
       "hub": "Hub",
       "loggedIn": "已登录",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
+      "hubs": {
+        "title": "Hub 集群",
+        "active": "主 Hub",
+        "standby": "备 Hub",
+        "writer": "写入",
+        "attached": "当前入口挂载于此 Hub",
+        "online": "在线",
+        "offline": "离线",
+        "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
+        "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
+        "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
+        "machineRole": "Hub 角色"
+      },
       "machine": {
         "title": "本机",
         "role": "角色",

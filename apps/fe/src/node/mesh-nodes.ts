@@ -11,6 +11,7 @@ import type {
   AuthApi,
   AuthModeResponse,
   AuthRequiredDetail,
+  HubMode,
   MeshNode,
   MeshNodeReach,
   MeshNodeTransport,
@@ -125,6 +126,8 @@ export interface NodeRow {
   inventory: unknown;
   isSelf: boolean;
   isHub: boolean;
+  /** hub 机的主 / 备身份；非 hub、旧后端不下发、以及不关心这一段的构造方为空。 */
+  hubMode?: HubMode | null;
   /** hub 侧 `last_seen_at`（毫秒）；hub 不可达时为 `null`。 */
   lastSeenAt: number | null;
   /** hub 侧 `nodes.status`；hub 不可达时为 `null`。 */
@@ -175,6 +178,7 @@ export function mergeNodes(
       inventory: node.inventory ?? null,
       isSelf: context.entryNodeId != null && node.id === context.entryNodeId,
       isHub: node.isHub === true || (context.hubNodeId != null && node.id === context.hubNodeId),
+      hubMode: node.hubMode ?? null,
       lastSeenAt: hub?.last_seen_at ?? null,
       status: hub?.status ?? null,
       certificate: hub?.certificate ?? null,
@@ -192,6 +196,12 @@ export function mergeNodes(
  * 当成 hub。
  */
 export function findHubNodeId(nodes: MeshNode[], modeHubNodeId?: string | null): string | null {
+  // 多 hub 下 `isHub` 会命中任意一台（很可能是 standby，管理写入一律被拒），而
+  // `/api/auth/mode` 的 `hubNodeId` 指的就是当前 writer：列表里认得出它时以它为准。
+  const writer = modeHubNodeId
+    ? nodes.find((node) => node.id === modeHubNodeId && node.isHub === true)
+    : undefined;
+  if (writer) return writer.id;
   const flagged = nodes.find((node) => node.isHub === true);
   if (flagged) return flagged.id;
   return modeHubNodeId || null;

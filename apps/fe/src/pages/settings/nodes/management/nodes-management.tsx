@@ -13,6 +13,7 @@ import {
   useEnrollmentEngine,
   useEnrollmentEngineState,
 } from '@/node/enrollment-engine';
+import { useMeshHubs } from '@/node/mesh-hubs';
 import {
   type NodeRow,
   mergeNodes,
@@ -28,6 +29,7 @@ import { CircleArrowUp, Loader2, Plus, RefreshCw, ShieldAlert } from 'lucide-rea
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EnrollmentSection } from './enrollment-section';
+import { HubStrip } from './hub-strip';
 import { NodesTable } from './nodes-table';
 import { type NodeUpgradeController, PLACEHOLDER_KDF, type ResolvedMode } from './types';
 import { useNodeUpgrade } from './use-node-upgrade';
@@ -53,10 +55,13 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   }, [refreshNodes]);
 
   const hub = useHubNode(nodes, { hubNodeId: rawMode.hubNodeId ?? null });
+  // hub 集合的轮询归本页所有：整个宿主只有节点管理页要看主 / 备与挂载关系。
+  const hubs = useMeshHubs({ owner: true });
   const rows = useMemo(
     () => mergeNodes(nodes, hub.hubNodes, { entryNodeId, hubNodeId: hub.hubNodeId }),
     [nodes, hub.hubNodes, hub.hubNodeId, entryNodeId]
   );
+  const hubDetails = useMemo(() => new Map(hubs.hubs.map((row) => [row.nodeId, row])), [hubs.hubs]);
 
   const pendings = useSyncExternalStore(
     subscribePendingEnrollments,
@@ -78,10 +83,12 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
     passkeyAvailable: rawMode.passkeyAvailable,
   });
 
+  const refreshHubs = hubs.refresh;
   const refreshAll = useCallback(() => {
     refreshNodes();
     hub.refresh();
-  }, [hub, refreshNodes]);
+    refreshHubs();
+  }, [hub, refreshHubs, refreshNodes]);
 
   // 升级状态机独立于 enrollment / rename / revoke：它走入口 → 目标的 peer link，hub 离线也能用。
   const upgrade = useNodeUpgrade(refreshAll);
@@ -98,6 +105,12 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
     t,
   });
   const engine = useEnrollmentEngineState();
+
+  // 挂在 standby 上（或一台 writer 都没有）时，管理写入会被 hub 以 `HUB_NOT_WRITER` 拒绝：
+  // 先禁掉动作并给一行说明，比让用户点完再吃一条报错强。升级不走 hub 控制面，保持可用。
+  // 主 hub 掉线时「hub 不可达」与这一条说的是同一件事，只留更具体的那一条。
+  const writable = hub.online && !hubs.writesBlocked;
+  const blockedHint = hubs.writesBlocked ? t('nodes.hubs.standbyNotice') : t('nodes.hubOffline');
 
   if (!mode) {
     return (
@@ -136,8 +149,8 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           <Button
             type="button"
             size="sm"
-            disabled={!hub.online}
-            title={hub.online ? undefined : t('nodes.hubOffline')}
+            disabled={!writable}
+            title={writable ? undefined : blockedHint}
             onClick={() => setEnrollOpen((value) => !value)}
             data-testid="nodes-add"
           >
@@ -148,7 +161,13 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
       </CardHeader>
 
       <CardContent className="flex flex-col gap-3">
-        {!hub.online && (
+        <HubStrip
+          hubs={hubs.hubs}
+          attachedHubId={hubs.attached?.hubNodeId ?? null}
+          writerHubId={hubs.writerHubId}
+        />
+
+        {!hub.online && !hubs.writesBlocked && (
           <p
             className="flex items-center gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
             data-testid="nodes-hub-offline"
@@ -158,11 +177,23 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           </p>
         )}
 
+        {hubs.writesBlocked && (
+          <p
+            className="flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
+            data-testid="nodes-hub-standby"
+          >
+            <ShieldAlert className="size-3.5 shrink-0" />
+            {t('nodes.hubs.standbyNotice')}
+          </p>
+        )}
+
         <EnrollmentSection
           api={api}
           mode={mode}
           hubApi={hub.hubApi}
           hubOnline={hub.online}
+          hubWritable={!hubs.writesBlocked}
+          writerPublicUrl={hubs.writerPublicUrl}
           open={enrollOpen}
           prompt={prompt}
           pendings={pendings}
@@ -177,6 +208,9 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           rows={rows}
           hubApi={hub.hubApi}
           hubOnline={hub.online}
+          hubWritable={!hubs.writesBlocked}
+          writerPublicUrl={hubs.writerPublicUrl}
+          hubDetails={hubDetails}
           mode={mode}
           api={api}
           prompt={prompt}
