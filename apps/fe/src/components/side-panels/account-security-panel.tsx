@@ -226,8 +226,9 @@ function PasswordSection({
       setNewPassword('');
       setConfirm('');
       setOk(true);
-      // rotate-root 会撤销所有会话：本地 sk_sess 立刻作废。
-      clearSessionKey();
+      // rotate-root 会撤销所有会话：本地 sk_sess 立刻作废。等盘上那份也删掉再往下走，
+      // 否则用户随手刷新一下，IndexedDB 里那份已被服务端撤销的会话钥又会被恢复出来。
+      await clearSessionKey();
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

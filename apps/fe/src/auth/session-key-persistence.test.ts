@@ -54,6 +54,8 @@ class FakeIndexedDb {
   failOpen = false;
   /** 配额用尽：事务写不进去。 */
   failWrite = false;
+  /** 规范允许的时序：请求 `success` 已经发过，事务随后才 abort，改动整体回滚。 */
+  abortAfterSuccess = false;
 
   open(_name: string, _version: number): FakeRequest {
     const request: FakeRequest = {
@@ -79,6 +81,8 @@ class FakeIndexedDb {
 
 interface FakeTransaction {
   onabort: (() => void) | null;
+  onerror: (() => void) | null;
+  oncomplete: (() => void) | null;
   objectStore: (name: string) => FakeStore;
 }
 
@@ -96,8 +100,10 @@ class FakeDb {
   transaction(name: string, _mode: string): FakeTransaction {
     const table = this.idb.tables.get(name);
     if (!table) throw new Error(`NotFoundError: ${name}`);
-    const tx = {
-      onabort: null as (() => void) | null,
+    const tx: FakeTransaction = {
+      onabort: null,
+      onerror: null,
+      oncomplete: null,
       objectStore: (_store: string) => new FakeStore(table, tx, this.idb),
     };
     return tx;
@@ -111,7 +117,7 @@ class FakeDb {
 class FakeStore {
   constructor(
     private readonly table: Map<string, unknown>,
-    private readonly tx: { onabort: (() => void) | null },
+    private readonly tx: Pick<FakeTransaction, 'onabort' | 'oncomplete'>,
     private readonly idb: FakeIndexedDb
   ) {}
 
@@ -123,12 +129,24 @@ class FakeStore {
         this.tx.onabort?.();
         return;
       }
+      const before = write ? new Map(this.table) : null;
       try {
         request.result = run();
-        request.onsuccess?.();
       } catch {
         request.onerror?.();
+        if (write) this.tx.onabort?.();
+        return;
       }
+      request.onsuccess?.();
+      if (!write) return;
+      // 写事务额外走一次提交/回滚：请求 success 之后才 abort 是规范允许的时序。
+      if (this.idb.abortAfterSuccess) {
+        this.table.clear();
+        for (const [key, value] of before ?? []) this.table.set(key, value);
+        this.tx.onabort?.();
+        return;
+      }
+      this.tx.oncomplete?.();
     });
     return request;
   }
@@ -322,9 +340,26 @@ describe('session-key-persistence', () => {
 
     idb.failOpen = false;
     idb.failWrite = true;
-    await savePersistedSession(await persistedFixture());
+    expect(await savePersistedSession(await persistedFixture())).toBe(false);
     idb.failWrite = false;
     expect(await loadPersistedSession()).toBeNull();
+  });
+
+  test('请求 success 之后事务才 abort：写与删都按失败上报，改动整体回滚', async () => {
+    const record = await persistedFixture();
+    expect(await savePersistedSession(record)).toBe(true);
+    expect(rawRecord()).toBeDefined();
+
+    idb.abortAfterSuccess = true;
+    // 删：request.success 已经发过，但事务没提交——不能当成删掉了。
+    expect(await clearPersistedSession()).toBe(false);
+    expect(rawRecord()).toBeDefined();
+
+    // 写：同理，回滚后盘上还是原来那条。
+    const replacement = await persistedFixture({ info: { ...record.info, uid: 'mallory' } });
+    expect(await savePersistedSession(replacement)).toBe(false);
+    idb.abortAfterSuccess = false;
+    expect((await loadPersistedSession())?.info.uid).toBe(UID);
   });
 });
 
@@ -394,7 +429,8 @@ describe('会话钥跨 document 恢复', () => {
     resetSessionMemoryForTest();
 
     expect(await restoreSessionKey()).toBeNull();
-    await clearPersistedSession();
+    // 不许在这里手动删：清理必须由 `readPersistedSession()` 自己做，测试只冲一遍持久化队列。
+    await loadPersistedSession();
     expect(rawRecord()).toBeUndefined();
   });
 
@@ -414,6 +450,42 @@ describe('会话钥跨 document 恢复', () => {
 
     resetSessionMemoryForTest();
     expect(await restoreSessionKey()).toBeNull();
+  });
+
+  test('await clearSessionKey()：promise 落定时盘上那条一定已经没了', async () => {
+    await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+      uid: UID,
+      entryNodeId: ENTRY,
+      rootEpoch: 0,
+      hasTotp: false,
+    });
+    await loadPersistedSession();
+    expect(rawRecord()).toBeDefined();
+
+    const cleared = clearSessionKey();
+    // 内存是同步清的，盘上那条还在飞——登出路径必须等它。
+    expect(getSessionKey()).toBeNull();
+    expect(await cleared).toBe(true);
+    // 这里不再冲队列：await 本身就该保证删除已提交。
+    expect(rawRecord()).toBeUndefined();
+
+    resetSessionMemoryForTest();
+    expect(await restoreSessionKey()).toBeNull();
+  });
+
+  test('登出时删除没提交：clearSessionKey() 如实返回 false，不谎报已登出', async () => {
+    await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+      uid: UID,
+      entryNodeId: ENTRY,
+      rootEpoch: 0,
+      hasTotp: false,
+    });
+    await loadPersistedSession();
+
+    idb.abortAfterSuccess = true;
+    expect(await clearSessionKey()).toBe(false);
+    idb.abortAfterSuccess = false;
+    expect(rawRecord()).toBeDefined();
   });
 
   test('开了 TOTP 的密码会话不写盘：k_totp 与一次性码都不许落地', async () => {

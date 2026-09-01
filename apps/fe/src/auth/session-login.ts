@@ -464,7 +464,8 @@ export async function loginSelf(opts: LoginSelfOptions = {}): Promise<LoginNodeR
   const pinnedPk = selfChallengePk;
   selfChallengePk = null;
   if (pinnedPk && !pinnedPkOk(pinnedPk, selfRow)) {
-    clearSessionKey();
+    // 调用方据此退回登录页：等盘上那份真的删掉再返回，否则刷新一下会话钥又回来了。
+    await clearSessionKey();
     return { ok: false, code: 'NODE_PK_MISMATCH' };
   }
 

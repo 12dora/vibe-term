@@ -82,7 +82,7 @@ let generation = 0;
 export function getSessionKey(): SessionKeyInfo | null {
   if (!current) return null;
   if (Date.now() >= current.info.expiresAt) {
-    clearSessionKey();
+    void clearSessionKey();
     return null;
   }
   return current.info;
@@ -92,17 +92,25 @@ export function hasSessionKey(): boolean {
   return getSessionKey() !== null;
 }
 
-export function clearSessionKey(): void {
-  // 登出 / 换密码 / 会话过期：盘上那份也必须一起没，且此后不再尝试恢复。
+/**
+ * 登出 / 换密码 / 会话过期：内存**同步**清零，盘上那份异步删掉。
+ *
+ * 返回删除的 Promise：删除没提交就跳转 / 刷新，新 document 会把这份仍然有效的 delegation 恢复
+ * 出来，登出等于没发生。所以真正的登出路径必须 `await` 它再离开页面；别的地方（同步的
+ * `getSessionKey()` 过期清理等）不 await 也没关系。
+ */
+export function clearSessionKey(): Promise<boolean> {
   generation += 1;
   restorePromise = Promise.resolve(null);
-  void clearPersistedSession();
-  if (!current) return;
-  current.sessSk?.fill(0);
-  current.delegationSig.fill(0);
-  current.kTotp?.fill(0);
-  current.totpCode = null;
-  current = null;
+  const cleared = clearPersistedSession();
+  if (current) {
+    current.sessSk?.fill(0);
+    current.delegationSig.fill(0);
+    current.kTotp?.fill(0);
+    current.totpCode = null;
+    current = null;
+  }
+  return cleared;
 }
 
 /**
@@ -126,7 +134,7 @@ async function readPersistedSession(): Promise<SessionKeyInfo | null> {
   if (at !== generation) return getSessionKey();
   if (!record) return null;
   if (Date.now() >= record.info.expiresAt) {
-    void clearPersistedSession();
+    await clearPersistedSession();
     return null;
   }
   // 恢复出来的会话没有 k_totp / 一次性码：开了 TOTP 的密码会话本来就不持久化（见下）。
@@ -166,7 +174,8 @@ export function readSessionSecrets(): SessionKeySecrets | null {
  * 持久化，存下来也只会稳定返回 `TOTP_REQUIRED`，不如维持今天的「回登录页当场输码」。
  */
 export function adoptSessionSecrets(secrets: SessionKeySecrets): SessionKeyInfo {
-  clearSessionKey();
+  // 删旧记录与写新记录都排在同一条持久化队列上，先删后写的顺序有保证。
+  void clearSessionKey();
   current = secrets;
   restorePromise = Promise.resolve(secrets.info);
   if (secrets.sessKey && !secrets.info.hasTotp) {

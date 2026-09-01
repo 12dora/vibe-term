@@ -63,28 +63,47 @@ function openDb(): Promise<IDBDatabase | null> {
   });
 }
 
+type TxOutcome<T> = { ok: true; value: T } | { ok: false; value: null };
+
+const TX_FAILED = { ok: false, value: null } as const;
+
+/**
+ * 跑一个事务并交出结果。
+ *
+ * 写事务**只认 `tx.oncomplete`**：按 IndexedDB 规范，请求的 `success` 只说明这一步算出了结果，
+ * 事务此后仍可能 abort（配额、同事务里别的请求出错、文档被关掉），届时改动整体回滚。登出要的是
+ * 删除**真的落地**，所以写必须等提交，abort / error 一律按失败处理。读不需要提交证明，`success`
+ * 拿到值即可。
+ */
 async function withStore<T>(
   mode: IDBTransactionMode,
   run: (store: IDBObjectStore) => IDBRequest
-): Promise<T | null> {
+): Promise<TxOutcome<T | null>> {
   const db = await openDb();
-  if (!db) return null;
+  if (!db) return TX_FAILED;
+  const needsCommit = mode === 'readwrite';
   try {
-    return await new Promise<T | null>((resolve) => {
+    return await new Promise<TxOutcome<T | null>>((resolve) => {
       let request: IDBRequest;
+      let settled: T | null = null;
       try {
         const tx = db.transaction(STORE_NAME, mode);
-        tx.onabort = () => resolve(null);
+        tx.onabort = () => resolve(TX_FAILED);
+        tx.onerror = () => resolve(TX_FAILED);
+        if (needsCommit) tx.oncomplete = () => resolve({ ok: true, value: settled });
         request = run(tx.objectStore(STORE_NAME));
       } catch {
-        resolve(null);
+        resolve(TX_FAILED);
         return;
       }
-      request.onsuccess = () => resolve(request.result as T);
-      request.onerror = () => resolve(null);
+      request.onsuccess = () => {
+        settled = request.result as T;
+        if (!needsCommit) resolve({ ok: true, value: settled });
+      };
+      request.onerror = () => resolve(TX_FAILED);
     });
   } catch {
-    return null;
+    return TX_FAILED;
   } finally {
     try {
       db.close();
@@ -106,24 +125,29 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export function savePersistedSession(record: PersistedSession): Promise<void> {
+/** `true` = 事务已提交；失败（无 IndexedDB / 配额 / abort）返回 `false`，不抛。 */
+export function savePersistedSession(record: PersistedSession): Promise<boolean> {
   return enqueue(async () => {
-    await withStore('readwrite', (store) => store.put(record, RECORD_KEY));
+    const outcome = await withStore('readwrite', (store) => store.put(record, RECORD_KEY));
+    return outcome.ok;
   });
 }
 
 export function loadPersistedSession(): Promise<PersistedSession | null> {
   return enqueue(async () => {
-    const record = await withStore<PersistedSession | undefined>('readonly', (store) =>
+    const outcome = await withStore<PersistedSession | undefined>('readonly', (store) =>
       store.get(RECORD_KEY)
     );
+    const record = outcome.ok ? outcome.value : null;
     return isUsableRecord(record) ? record : null;
   });
 }
 
-export function clearPersistedSession(): Promise<void> {
+/** `true` = 删除已提交。登出必须等这个 `true`，否则盘上那条还能被下一个 document 恢复出来。 */
+export function clearPersistedSession(): Promise<boolean> {
   return enqueue(async () => {
-    await withStore('readwrite', (store) => store.delete(RECORD_KEY));
+    const outcome = await withStore('readwrite', (store) => store.delete(RECORD_KEY));
+    return outcome.ok;
   });
 }
 
