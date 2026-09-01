@@ -33,6 +33,7 @@ import {
   type TunnelConfigStoreLike,
   type TunnelPersisted,
 } from './config-store';
+import { EMPTY_CONNECTOR } from './connector-health';
 import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
 import { TunnelError, tunnelErrorFrom, tunnelHttpStatus } from './errors';
 import {
@@ -335,6 +336,7 @@ export class TunnelManager {
         lastError: persisted.externallyManaged ? null : this.supervisor.lastError,
         restarts: persisted.externallyManaged ? 0 : this.supervisor.restarts,
       },
+      connector: { ...EMPTY_CONNECTOR },
       access,
       external,
       loginEnforced,

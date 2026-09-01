@@ -3,7 +3,11 @@
 
 export type TunnelMode = 'off' | 'quick' | 'named';
 
-export type TunnelProcessState = 'stopped' | 'starting' | 'running' | 'error';
+/**
+ * `degraded`：cloudflared 进程活着，但连接器没有任何已注册的边缘连接（由本地 metrics
+ * `/ready` 或日志判定）——公网地址此时不可达，与「运行中」必须区分。
+ */
+export type TunnelProcessState = 'stopped' | 'starting' | 'running' | 'degraded' | 'error';
 
 export type TunnelJobKind =
   | 'install'
@@ -31,6 +35,8 @@ export type TunnelErrorCode =
   /** 本机既未启用登录也未受 Access 保护时，启动隧道必须显式带 acknowledgeExposure=true */
   | 'exposure_ack_required'
   | 'process_failed'
+  /** 连通性检查：cloudflared 进程在但边缘连接数为 0（边缘/Access 层可达不代表本机可达） */
+  | 'connector_down'
   | 'busy'
   | 'not_configured'
   | 'invalid_request'
@@ -138,6 +144,24 @@ export interface TunnelExternalAccessProbe {
   teamDomain: string | null;
 }
 
+/**
+ * cloudflared 连接器状态，来自其本地 metrics 端点 `GET /ready`（`--metrics` 参数、
+ * 日志里的 metrics 地址或缺省 127.0.0.1:20241–20245）。进程存活 ≠ 有边缘连接：
+ * 本机代理 / TUN 抖动时进程常驻但 0 连接，公网地址随之不可达。
+ */
+export interface TunnelConnectorStatus {
+  /** metrics 端点是否应答；`null` = 没找到端点，无法判断 */
+  reachable: boolean | null;
+  metricsAddr: string | null;
+  /** `/ready` 的 readyConnections；端点不可达时为 null */
+  readyConnections: number | null;
+  connectorId: string | null;
+  /** 最近一次探测时间（ISO）；从未探测为 null */
+  checkedAt: string | null;
+  /** cloudflared 日志（环形缓冲或 --logfile）里最近一条错误行（已脱敏） */
+  lastError: string | null;
+}
+
 export interface TunnelProcessStatus {
   state: TunnelProcessState;
   pid: number | null;
@@ -152,7 +176,12 @@ export interface TunnelJobStatus {
   id: string;
   kind: TunnelJobKind;
   state: TunnelJobState;
-  /** 当前步骤的简短机器可读标识（前端映射文案），如 download / verify / route_dns */
+  /**
+   * 当前步骤的简短机器可读标识（前端映射文案），如 download / verify / route_dns。
+   * `check` 结束后保留最后一步：`ok`（边缘 + 连接器都通）、`access_protected`（边缘由
+   * Cloudflare Access 拦截，且连接器已验证有连接）、`access_protected_unverified`（Access
+   * 拦截且找不到连接器 metrics，无法证明本机可达）。
+   */
   step: string | null;
   error: { code: TunnelErrorCode; message: string } | null;
   startedAt: string;
@@ -166,6 +195,8 @@ export interface TunnelStatusResponse {
   auth: TunnelAuthStatus;
   config: TunnelConfigStatus;
   process: TunnelProcessStatus;
+  /** 连接器（边缘连接）健康；托管与外部 cloudflared 都填 */
+  connector: TunnelConnectorStatus;
   access: TunnelAccessStatus;
   external: TunnelExternalStatus;
   /** 本机是否启用了登录（mesh 角色下的用户名/密码/2FA） */
