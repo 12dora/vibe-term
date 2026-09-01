@@ -422,7 +422,16 @@ export const I18N_RESOURCES = {
           "stopped": "Stopped",
           "starting": "Starting",
           "running": "Running",
+          "degraded": "No Edge Connections",
           "error": "Failed"
+        },
+        "degradedNotice": "The tunnel process is running but has no edge connections; the public URL is unreachable.",
+        "connector": {
+          "label": "Connector",
+          "connected": "Edge connections: {{n}}",
+          "noConnections": "No edge connections",
+          "unknown": "Cannot probe (metrics endpoint not found)",
+          "unprobed": "Not probed"
         },
         "mode": {
           "quick": {
@@ -514,13 +523,16 @@ export const I18N_RESOURCES = {
           "release": "Release"
         },
         "check": {
-          "reachable": "The public URL is reachable.",
+          "reachable": "This machine is reachable through the public URL.",
+          "accessProtected": "The public URL is protected by Cloudflare Access; the connector is online.",
+          "accessProtectedUnverified": "The public URL is protected by Cloudflare Access; the connector could not be probed, so reachability is unconfirmed.",
           "unreachable": "The public URL is unreachable.",
           "running": "Checking the public URL…"
         },
         "log": {
           "title": "cloudflared log",
-          "empty": "No output yet."
+          "empty": "No output yet.",
+          "emptyExternal": "The external cloudflared writes no log file (no --logfile in its startup arguments)."
         },
         "steps": {
           "path": {
@@ -648,6 +660,7 @@ export const I18N_RESOURCES = {
           "tunnel_exists": "A tunnel with this name already exists in Cloudflare. Pick another name, or delete the existing one.",
           "dns_route_failed": "Adding the DNS record failed. Confirm the domain is hosted in the same Cloudflare account and no conflicting record exists.",
           "process_failed": "cloudflared didn't start. Expand the cloudflared log to see why.",
+          "connector_down": "The connector has no edge connections: {{message}}",
           "busy": "The previous operation hasn't finished yet. Try again in a moment.",
           "not_configured": "Remote access isn't configured yet. Pick a method in the setup below.",
           "invalid_request": "The request was rejected as invalid; this page may be out of date. Reload and try again.",
@@ -2670,7 +2683,16 @@ export const I18N_RESOURCES = {
           "stopped": "已停止",
           "starting": "启动中",
           "running": "运行中",
+          "degraded": "无连接",
           "error": "异常"
+        },
+        "degradedNotice": "隧道进程运行中，但无边缘连接，公网地址当前不可达。",
+        "connector": {
+          "label": "连接器",
+          "connected": "{{n}} 条边缘连接",
+          "noConnections": "无边缘连接",
+          "unknown": "无法探测（未找到 metrics 端点）",
+          "unprobed": "未探测"
         },
         "mode": {
           "quick": {
@@ -2762,13 +2784,16 @@ export const I18N_RESOURCES = {
           "release": "取消接管"
         },
         "check": {
-          "reachable": "公网地址可以访问。",
+          "reachable": "本机经公网地址可达。",
+          "accessProtected": "公网地址受 Cloudflare Access 保护，连接器在线。",
+          "accessProtectedUnverified": "公网地址受 Cloudflare Access 保护；未探测到连接器，无法确认本机可达。",
           "unreachable": "公网地址不可达。",
           "running": "正在检查公网地址…"
         },
         "log": {
           "title": "cloudflared 日志",
-          "empty": "暂无输出。"
+          "empty": "暂无输出。",
+          "emptyExternal": "外部 cloudflared 未提供日志文件（启动参数无 --logfile）。"
         },
         "steps": {
           "path": {
@@ -2896,6 +2921,7 @@ export const I18N_RESOURCES = {
           "tunnel_exists": "Cloudflare 上已有同名隧道。请换一个名称，或先删除已有隧道。",
           "dns_route_failed": "添加 DNS 记录失败。请确认该域名托管在同一个 Cloudflare 账号下，且没有同名记录冲突。",
           "process_failed": "cloudflared 未能正常启动。请展开 cloudflared 日志查看具体原因。",
+          "connector_down": "连接器无边缘连接：{{message}}",
           "busy": "上一项操作还未结束，请稍候再试。",
           "not_configured": "还未配置远程访问，请先在下方向导里选择一种方式。",
           "invalid_request": "请求无效，页面数据可能已过期。请刷新页面后重试。",
@@ -4915,7 +4941,16 @@ export const I18N_RESOURCES = {
           "stopped": "停止中",
           "starting": "起動中",
           "running": "稼働中",
+          "degraded": "接続なし",
           "error": "異常"
+        },
+        "degradedNotice": "トンネルのプロセスは稼働中ですが、エッジ接続がなく、公開アドレスに到達できません。",
+        "connector": {
+          "label": "コネクタ",
+          "connected": "エッジ接続 {{n}} 本",
+          "noConnections": "エッジ接続なし",
+          "unknown": "探測できません（metrics エンドポイントが見つかりません）",
+          "unprobed": "未探測"
         },
         "mode": {
           "quick": {
@@ -5007,13 +5042,16 @@ export const I18N_RESOURCES = {
           "release": "引き継ぎを解除"
         },
         "check": {
-          "reachable": "公開アドレスに到達できました。",
+          "reachable": "公開アドレス経由で本機に到達できました。",
+          "accessProtected": "公開アドレスは Cloudflare Access で保護されており、コネクタはオンラインです。",
+          "accessProtectedUnverified": "公開アドレスは Cloudflare Access で保護されています。コネクタを探測できず、本機への到達は確認できません。",
           "unreachable": "公開アドレスに到達できません。",
           "running": "公開アドレスを確認しています…"
         },
         "log": {
           "title": "cloudflared のログ",
-          "empty": "出力はありません。"
+          "empty": "出力はありません。",
+          "emptyExternal": "外部の cloudflared はログファイルを出力していません（起動引数に --logfile がありません）。"
         },
         "steps": {
           "path": {
@@ -5141,6 +5179,7 @@ export const I18N_RESOURCES = {
           "tunnel_exists": "同名のトンネルが Cloudflare に既に存在します。別の名前を指定するか、既存のトンネルを削除してください。",
           "dns_route_failed": "DNS レコードの追加に失敗しました。同じ Cloudflare アカウントでドメインが管理されているか、既存レコードと競合していないか確認してください。",
           "process_failed": "cloudflared が起動できませんでした。cloudflared ログを開いて原因を確認してください。",
+          "connector_down": "コネクタにエッジ接続がありません：{{message}}",
           "busy": "前の操作がまだ完了していません。少し待ってから再試行してください。",
           "not_configured": "リモートアクセスは未設定です。下のセットアップで接続方法を選んでください。",
           "invalid_request": "リクエストが不正として拒否されました。ページの内容が古い可能性があります。再読み込みしてから操作してください。",

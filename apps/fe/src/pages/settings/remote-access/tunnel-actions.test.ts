@@ -40,6 +40,14 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       lastError: null,
       restarts: 0,
     },
+    connector: {
+      reachable: null,
+      metricsAddr: null,
+      readyConnections: null,
+      connectorId: null,
+      checkedAt: null,
+      lastError: null,
+    },
     access: {
       hasCredentials: false,
       accountId: null,
@@ -194,7 +202,12 @@ describe('TunnelActionController 结果处理', () => {
     expect(checkResultOf(accepted, 'check-1')).toBeNull();
 
     const done = job({ id: 'check-1', state: 'done' });
-    expect(checkResultOf(done, 'check-1')).toEqual({ ok: true, message: null });
+    expect(checkResultOf(done, 'check-1')).toEqual({
+      ok: true,
+      message: null,
+      step: null,
+      code: null,
+    });
   });
 
   test('check 的 job 转 error 时给不可达与服务端 message：running → error', async () => {
@@ -210,6 +223,8 @@ describe('TunnelActionController 结果处理', () => {
     expect(checkResultOf(failed, h.controller.snapshot().checkJobId)).toEqual({
       ok: false,
       message: 'health check HTTP 502',
+      step: null,
+      code: 'unknown',
     });
   });
 
@@ -284,6 +299,6 @@ describe('checkResultOf', () => {
         job({ id: 'check-1', state: 'error', error: { code: 'process_failed', message: '' } }),
         'check-1'
       )
-    ).toEqual({ ok: false, message: 'process_failed' });
+    ).toEqual({ ok: false, message: 'process_failed', step: null, code: 'process_failed' });
   });
 });

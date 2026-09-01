@@ -87,6 +87,14 @@ function tunnel(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       lastError: null,
       restarts: 0,
     },
+    connector: {
+      reachable: null,
+      metricsAddr: null,
+      readyConnections: null,
+      connectorId: null,
+      checkedAt: null,
+      lastError: null,
+    },
     access: {
       hasCredentials: false,
       accountId: null,
@@ -306,13 +314,17 @@ describe('状态徽标与操作按钮', () => {
 
   test('检查 job 到达终态后就地展示结果', () => {
     status = configured('quick', 'running');
-    actionState = { ...IDLE_ACTIONS, checkJobId: 'check-1', check: { ok: true, message: null } };
+    actionState = {
+      ...IDLE_ACTIONS,
+      checkJobId: 'check-1',
+      check: { ok: true, message: null, step: 'ok', code: null },
+    };
     expect(render()).toContain('data-testid="remote-access-check-ok"');
 
     actionState = {
       ...IDLE_ACTIONS,
       checkJobId: 'check-1',
-      check: { ok: false, message: '502 bad gateway' },
+      check: { ok: false, message: '502 bad gateway', step: 'check', code: 'unknown' },
     };
     const html = render();
     expect(html).toContain('data-testid="remote-access-check-failed"');
@@ -325,6 +337,139 @@ describe('状态徽标与操作按钮', () => {
     expect(html).toContain('data-testid="remote-access-remove"');
     // 静态渲染点不了按钮，对话框默认不在 DOM 里。
     expect(html).not.toContain('data-testid="remote-access-confirm-remove"');
+  });
+});
+
+describe('无边缘连接（degraded）', () => {
+  function connector(
+    overrides: Partial<TunnelStatusResponse['connector']> = {}
+  ): TunnelStatusResponse['connector'] {
+    return {
+      reachable: true,
+      metricsAddr: '127.0.0.1:20241',
+      readyConnections: 4,
+      connectorId: 'c-1',
+      checkedAt: '2026-09-02T00:00:00.000Z',
+      lastError: null,
+      ...overrides,
+    };
+  }
+
+  test('进程 degraded：徽标另有说法，给出警示，检查按钮仍在', () => {
+    status = configured('named', 'degraded');
+    const html = render();
+    expect(html).toContain('settings.remoteAccess.state.degraded');
+    expect(html).not.toContain('settings.remoteAccess.state.running');
+    expect(html).toContain('data-testid="remote-access-degraded"');
+    expect(html).toContain('settings.remoteAccess.degradedNotice');
+    expect(html).toContain('data-testid="remote-access-check"');
+  });
+
+  test('进程说运行中但连接器零连接：同样降级', () => {
+    status = configured('named', 'running', { connector: connector({ readyConnections: 0 }) });
+    const html = render();
+    expect(html).toContain('settings.remoteAccess.state.degraded');
+    expect(html).toContain('data-testid="remote-access-degraded"');
+  });
+
+  test('警示第二行给出进程或连接器的最近一次错误', () => {
+    status = configured('named', 'degraded');
+    status.process.lastError = 'connection refused';
+    expect(render()).toContain('connection refused');
+
+    status = configured('named', 'degraded', {
+      connector: connector({ readyConnections: 0, lastError: 'failed to dial edge' }),
+    });
+    expect(render()).toContain('failed to dial edge');
+  });
+
+  test('接管来的隧道零连接时也降级', () => {
+    status = configured('named', 'stopped', {
+      external: { ...tunnel().external, detected: true, running: true, source: 'launchd' },
+      connector: connector({ readyConnections: 0 }),
+    });
+    status.config.externallyManaged = true;
+    const html = render();
+    expect(html).toContain('settings.remoteAccess.state.degraded');
+    expect(html).toContain('data-testid="remote-access-check"');
+  });
+
+  test('连接器一行：有连接 / 无连接 / 探不到 / 未探测', () => {
+    status = configured('named', 'running', { connector: connector() });
+    const online = render();
+    expect(online).toContain('data-testid="remote-access-connector"');
+    expect(online).toContain('settings.remoteAccess.connector.connected');
+    // metrics 地址只进 title，不占版面。
+    expect(online).toContain('title="127.0.0.1:20241"');
+
+    status = configured('named', 'running', { connector: connector({ readyConnections: 0 }) });
+    const down = render();
+    expect(down).toContain('settings.remoteAccess.connector.noConnections');
+    expect(down).toContain('text-destructive');
+
+    status = configured('named', 'running', {
+      connector: connector({ reachable: null, readyConnections: null }),
+    });
+    expect(render()).toContain('settings.remoteAccess.connector.unknown');
+
+    status = configured('named', 'running');
+    expect(render()).toContain('settings.remoteAccess.connector.unprobed');
+  });
+
+  test('未配置时不摆连接器一行', () => {
+    expect(renderStatusCard()).not.toContain('data-testid="remote-access-connector"');
+  });
+});
+
+describe('检查结论', () => {
+  test('ok / access_protected 都算成功', () => {
+    status = configured('named', 'running');
+    actionState = {
+      ...IDLE_ACTIONS,
+      checkJobId: 'check-1',
+      check: { ok: true, message: null, step: 'ok', code: null },
+    };
+    expect(render()).toContain('settings.remoteAccess.check.reachable');
+
+    actionState = {
+      ...IDLE_ACTIONS,
+      checkJobId: 'check-1',
+      check: { ok: true, message: null, step: 'access_protected', code: null },
+    };
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-check-ok"');
+    expect(html).toContain('settings.remoteAccess.check.accessProtected');
+  });
+
+  test('Access 拦下且探不到连接器：警示而不是报喜', () => {
+    status = configured('named', 'running');
+    actionState = {
+      ...IDLE_ACTIONS,
+      checkJobId: 'check-1',
+      check: { ok: true, message: null, step: 'access_protected_unverified', code: null },
+    };
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-check-warning"');
+    expect(html).toContain('settings.remoteAccess.check.accessProtectedUnverified');
+    expect(html).not.toContain('data-testid="remote-access-check-ok"');
+  });
+
+  test('connector_down 用连接器专属文案', () => {
+    status = configured('named', 'running');
+    actionState = {
+      ...IDLE_ACTIONS,
+      checkJobId: 'check-1',
+      check: {
+        ok: false,
+        message: '0 edge connections',
+        step: 'check',
+        code: 'connector_down',
+      },
+    };
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-check-failed"');
+    expect(html).toContain('settings.remoteAccess.errors.connector_down');
+    expect(html).not.toContain('settings.remoteAccess.check.unreachable');
   });
 });
 
@@ -1316,7 +1461,16 @@ describe('日志', () => {
     expect(html).toContain('Registered tunnel connection');
 
     status = tunnel();
-    expect(renderStatusCard()).toContain('data-testid="remote-access-log-empty"');
+    const empty = renderStatusCard();
+    expect(empty).toContain('data-testid="remote-access-log-empty"');
+    expect(empty).toContain('settings.remoteAccess.log.empty');
+  });
+
+  test('外部 cloudflared 没有日志时说清原因，而不是「暂无输出」', () => {
+    status = configured('named', 'stopped');
+    status.config.externallyManaged = true;
+    const html = renderStatusCard();
+    expect(html).toContain('settings.remoteAccess.log.emptyExternal');
   });
 
   test('只渲染末尾 200 行', () => {

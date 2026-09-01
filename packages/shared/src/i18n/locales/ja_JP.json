@@ -416,7 +416,16 @@
           "stopped": "停止中",
           "starting": "起動中",
           "running": "稼働中",
+          "degraded": "接続なし",
           "error": "異常"
+        },
+        "degradedNotice": "トンネルのプロセスは稼働中ですが、エッジ接続がなく、公開アドレスに到達できません。",
+        "connector": {
+          "label": "コネクタ",
+          "connected": "エッジ接続 {{n}} 本",
+          "noConnections": "エッジ接続なし",
+          "unknown": "探測できません（metrics エンドポイントが見つかりません）",
+          "unprobed": "未探測"
         },
         "mode": {
           "quick": {
@@ -508,13 +517,16 @@
           "release": "引き継ぎを解除"
         },
         "check": {
-          "reachable": "公開アドレスに到達できました。",
+          "reachable": "公開アドレス経由で本機に到達できました。",
+          "accessProtected": "公開アドレスは Cloudflare Access で保護されており、コネクタはオンラインです。",
+          "accessProtectedUnverified": "公開アドレスは Cloudflare Access で保護されています。コネクタを探測できず、本機への到達は確認できません。",
           "unreachable": "公開アドレスに到達できません。",
           "running": "公開アドレスを確認しています…"
         },
         "log": {
           "title": "cloudflared のログ",
-          "empty": "出力はありません。"
+          "empty": "出力はありません。",
+          "emptyExternal": "外部の cloudflared はログファイルを出力していません（起動引数に --logfile がありません）。"
         },
         "steps": {
           "path": {
@@ -642,6 +654,7 @@
           "tunnel_exists": "同名のトンネルが Cloudflare に既に存在します。別の名前を指定するか、既存のトンネルを削除してください。",
           "dns_route_failed": "DNS レコードの追加に失敗しました。同じ Cloudflare アカウントでドメインが管理されているか、既存レコードと競合していないか確認してください。",
           "process_failed": "cloudflared が起動できませんでした。cloudflared ログを開いて原因を確認してください。",
+          "connector_down": "コネクタにエッジ接続がありません：{{message}}",
           "busy": "前の操作がまだ完了していません。少し待ってから再試行してください。",
           "not_configured": "リモートアクセスは未設定です。下のセットアップで接続方法を選んでください。",
           "invalid_request": "リクエストが不正として拒否されました。ページの内容が古い可能性があります。再読み込みしてから操作してください。",

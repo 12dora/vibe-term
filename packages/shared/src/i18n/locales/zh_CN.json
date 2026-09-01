@@ -416,7 +416,16 @@
           "stopped": "已停止",
           "starting": "启动中",
           "running": "运行中",
+          "degraded": "无连接",
           "error": "异常"
+        },
+        "degradedNotice": "隧道进程运行中，但无边缘连接，公网地址当前不可达。",
+        "connector": {
+          "label": "连接器",
+          "connected": "{{n}} 条边缘连接",
+          "noConnections": "无边缘连接",
+          "unknown": "无法探测（未找到 metrics 端点）",
+          "unprobed": "未探测"
         },
         "mode": {
           "quick": {
@@ -508,13 +517,16 @@
           "release": "取消接管"
         },
         "check": {
-          "reachable": "公网地址可以访问。",
+          "reachable": "本机经公网地址可达。",
+          "accessProtected": "公网地址受 Cloudflare Access 保护，连接器在线。",
+          "accessProtectedUnverified": "公网地址受 Cloudflare Access 保护；未探测到连接器，无法确认本机可达。",
           "unreachable": "公网地址不可达。",
           "running": "正在检查公网地址…"
         },
         "log": {
           "title": "cloudflared 日志",
-          "empty": "暂无输出。"
+          "empty": "暂无输出。",
+          "emptyExternal": "外部 cloudflared 未提供日志文件（启动参数无 --logfile）。"
         },
         "steps": {
           "path": {
@@ -642,6 +654,7 @@
           "tunnel_exists": "Cloudflare 上已有同名隧道。请换一个名称，或先删除已有隧道。",
           "dns_route_failed": "添加 DNS 记录失败。请确认该域名托管在同一个 Cloudflare 账号下，且没有同名记录冲突。",
           "process_failed": "cloudflared 未能正常启动。请展开 cloudflared 日志查看具体原因。",
+          "connector_down": "连接器无边缘连接：{{message}}",
           "busy": "上一项操作还未结束，请稍候再试。",
           "not_configured": "还未配置远程访问，请先在下方向导里选择一种方式。",
           "invalid_request": "请求无效，页面数据可能已过期。请刷新页面后重试。",

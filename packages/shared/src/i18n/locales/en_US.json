@@ -416,7 +416,16 @@
           "stopped": "Stopped",
           "starting": "Starting",
           "running": "Running",
+          "degraded": "No Edge Connections",
           "error": "Failed"
+        },
+        "degradedNotice": "The tunnel process is running but has no edge connections; the public URL is unreachable.",
+        "connector": {
+          "label": "Connector",
+          "connected": "Edge connections: {{n}}",
+          "noConnections": "No edge connections",
+          "unknown": "Cannot probe (metrics endpoint not found)",
+          "unprobed": "Not probed"
         },
         "mode": {
           "quick": {
@@ -508,13 +517,16 @@
           "release": "Release"
         },
         "check": {
-          "reachable": "The public URL is reachable.",
+          "reachable": "This machine is reachable through the public URL.",
+          "accessProtected": "The public URL is protected by Cloudflare Access; the connector is online.",
+          "accessProtectedUnverified": "The public URL is protected by Cloudflare Access; the connector could not be probed, so reachability is unconfirmed.",
           "unreachable": "The public URL is unreachable.",
           "running": "Checking the public URL…"
         },
         "log": {
           "title": "cloudflared log",
-          "empty": "No output yet."
+          "empty": "No output yet.",
+          "emptyExternal": "The external cloudflared writes no log file (no --logfile in its startup arguments)."
         },
         "steps": {
           "path": {
@@ -642,6 +654,7 @@
           "tunnel_exists": "A tunnel with this name already exists in Cloudflare. Pick another name, or delete the existing one.",
           "dns_route_failed": "Adding the DNS record failed. Confirm the domain is hosted in the same Cloudflare account and no conflicting record exists.",
           "process_failed": "cloudflared didn't start. Expand the cloudflared log to see why.",
+          "connector_down": "The connector has no edge connections: {{message}}",
           "busy": "The previous operation hasn't finished yet. Try again in a moment.",
           "not_configured": "Remote access isn't configured yet. Pick a method in the setup below.",
           "invalid_request": "The request was rejected as invalid; this page may be out of date. Reload and try again.",

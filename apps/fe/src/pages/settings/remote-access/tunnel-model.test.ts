@@ -8,6 +8,8 @@ import {
   TUNNEL_IDLE_POLL_MS,
   accessEffective,
   accessPill,
+  checkNotice,
+  connectorState,
   describeTunnelError,
   effectiveMode,
   effectivePath,
@@ -21,6 +23,7 @@ import {
   logTail,
   toTunnelError,
   trustProxyRestartRequired,
+  tunnelDegraded,
   tunnelErrorKey,
   tunnelPill,
   tunnelPollInterval,
@@ -52,6 +55,14 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       publicUrl: null,
       lastError: null,
       restarts: 0,
+    },
+    connector: {
+      reachable: null,
+      metricsAddr: null,
+      readyConnections: null,
+      connectorId: null,
+      checkedAt: null,
+      lastError: null,
     },
     access: {
       hasCredentials: false,
@@ -117,6 +128,203 @@ describe('tunnelPill', () => {
         status({ process: { ...status().process, state: 'error', lastError: 'exit code 1' } })
       )
     ).toBe('error');
+  });
+});
+
+function connector(
+  overrides: Partial<TunnelStatusResponse['connector']> = {}
+): TunnelStatusResponse['connector'] {
+  return {
+    reachable: true,
+    metricsAddr: '127.0.0.1:20241',
+    readyConnections: 4,
+    connectorId: 'c-1',
+    checkedAt: '2026-09-02T00:00:00.000Z',
+    lastError: null,
+    ...overrides,
+  };
+}
+
+describe('connectorState', () => {
+  test('有边缘连接才算在线', () => {
+    expect(connectorState(status({ connector: connector() }))).toBe('connected');
+    expect(connectorState(status({ connector: connector({ readyConnections: 0 }) }))).toBe(
+      'noConnections'
+    );
+  });
+
+  test('metrics 端点应答失败与零连接同等对待', () => {
+    expect(
+      connectorState(status({ connector: connector({ reachable: false, readyConnections: null }) }))
+    ).toBe('noConnections');
+  });
+
+  test('探过了但找不到端点是「未知」，从未探过是「未探测」', () => {
+    expect(
+      connectorState(status({ connector: connector({ reachable: null, readyConnections: null }) }))
+    ).toBe('unknown');
+    expect(
+      connectorState(
+        status({
+          connector: connector({ reachable: null, readyConnections: null, checkedAt: null }),
+        })
+      )
+    ).toBe('unprobed');
+  });
+
+  test('旧后端没有 connector 字段时按未探测处理，不能据此判无连接', () => {
+    const legacy = status();
+    const { connector: _connector, ...rest } = legacy;
+    expect(connectorState(rest as TunnelStatusResponse)).toBe('unprobed');
+  });
+});
+
+describe('tunnelDegraded / degraded 徽标', () => {
+  const config = { mode: 'quick' as const };
+
+  test('进程说自己 degraded 就是 degraded', () => {
+    const degraded = status({
+      config: { ...status().config, ...config },
+      process: { ...status().process, state: 'degraded' },
+    });
+    expect(tunnelDegraded(degraded)).toBe(true);
+    expect(tunnelPill(degraded)).toBe('degraded');
+  });
+
+  test('进程「运行中」但连接器零连接：同样是 degraded', () => {
+    const zero = status({
+      config: { ...status().config, ...config },
+      process: { ...status().process, state: 'running' },
+      connector: connector({ readyConnections: 0 }),
+    });
+    expect(tunnelDegraded(zero)).toBe(true);
+    expect(tunnelPill(zero)).toBe('degraded');
+  });
+
+  test('连接器在线时仍是运行中；探不到连接器时不冤枉它', () => {
+    const base = {
+      config: { ...status().config, ...config },
+      process: { ...status().process, state: 'running' as const },
+    };
+    expect(tunnelPill(status({ ...base, connector: connector() }))).toBe('running');
+    expect(
+      tunnelPill(
+        status({ ...base, connector: connector({ reachable: null, readyConnections: null }) })
+      )
+    ).toBe('running');
+  });
+
+  test('接管来的隧道：进程在跑但零连接也要降级', () => {
+    const adoptedConfig = {
+      ...status().config,
+      mode: 'named' as const,
+      externallyManaged: true,
+    };
+    const external = { ...status().external, detected: true, running: true };
+    expect(tunnelPill(status({ config: adoptedConfig, external, connector: connector() }))).toBe(
+      'running'
+    );
+    expect(
+      tunnelPill(
+        status({
+          config: adoptedConfig,
+          external,
+          connector: connector({ readyConnections: 0 }),
+        })
+      )
+    ).toBe('degraded');
+    // 进程都没在跑就谈不上降级。
+    expect(
+      tunnelPill(status({ config: adoptedConfig, connector: connector({ readyConnections: 0 }) }))
+    ).toBe('stopped');
+  });
+
+  test('停止 / 启动中不受连接器影响', () => {
+    const base = { config: { ...status().config, ...config } };
+    expect(tunnelPill(status({ ...base, connector: connector({ readyConnections: 0 }) }))).toBe(
+      'stopped'
+    );
+    expect(
+      tunnelPill(
+        status({
+          ...base,
+          process: { ...status().process, state: 'starting' },
+          connector: connector({ readyConnections: 0 }),
+        })
+      )
+    ).toBe('starting');
+  });
+
+  test('degraded 时进程还在，拿掉最后一道保护同样危险', () => {
+    const base = withAccess({}, { loginEnforced: false });
+    const degraded = { ...base, process: { ...base.process, state: 'degraded' as const } };
+    expect(isTunnelRunning(degraded)).toBe(true);
+    expect(wouldDropLastProtection(degraded)).toBe(true);
+  });
+});
+
+describe('checkNotice', () => {
+  test('ok：本机经公网地址可达', () => {
+    expect(checkNotice({ ok: true, message: null, step: 'ok', code: null })).toEqual({
+      tone: 'success',
+      testId: 'remote-access-check-ok',
+      key: 'settings.remoteAccess.check.reachable',
+      message: null,
+      detail: null,
+    });
+  });
+
+  test('access_protected：连接器已验证，仍算成功', () => {
+    const notice = checkNotice({ ok: true, message: null, step: 'access_protected', code: null });
+    expect(notice.tone).toBe('success');
+    expect(notice.key).toBe('settings.remoteAccess.check.accessProtected');
+  });
+
+  test('access_protected_unverified：证明不了本机可达，降成警示', () => {
+    const notice = checkNotice({
+      ok: true,
+      message: null,
+      step: 'access_protected_unverified',
+      code: null,
+    });
+    expect(notice.tone).toBe('warning');
+    expect(notice.testId).toBe('remote-access-check-warning');
+    expect(notice.key).toBe('settings.remoteAccess.check.accessProtectedUnverified');
+  });
+
+  test('旧后端没有 step 时退回通用的成功文案', () => {
+    expect(checkNotice({ ok: true, message: null, step: null, code: null }).key).toBe(
+      'settings.remoteAccess.check.reachable'
+    );
+  });
+
+  test('connector_down：服务端描述插进错误文案，不再另起一行', () => {
+    expect(
+      checkNotice({
+        ok: false,
+        message: 'no edge connections',
+        step: 'check',
+        code: 'connector_down',
+      })
+    ).toEqual({
+      tone: 'error',
+      testId: 'remote-access-check-failed',
+      key: 'settings.remoteAccess.errors.connector_down',
+      message: 'no edge connections',
+      detail: null,
+    });
+  });
+
+  test('其它失败：通用不可达 + 服务端原始描述', () => {
+    expect(
+      checkNotice({ ok: false, message: '502 bad gateway', step: 'check', code: 'unknown' })
+    ).toEqual({
+      tone: 'error',
+      testId: 'remote-access-check-failed',
+      key: 'settings.remoteAccess.check.unreachable',
+      message: null,
+      detail: '502 bad gateway',
+    });
   });
 });
 
@@ -662,6 +870,13 @@ describe('错误映射', () => {
   test('Access API 失败带上服务端的原始描述', () => {
     expect(describeTunnelError(t, { code: 'access_api_failed', message: 'token invalid' })).toBe(
       'settings.remoteAccess.errors.access_api_failed:{"message":"token invalid"}'
+    );
+  });
+
+  test('connector_down 带上服务端的原始描述', () => {
+    expect(tunnelErrorKey('connector_down')).toBe('settings.remoteAccess.errors.connector_down');
+    expect(describeTunnelError(t, { code: 'connector_down', message: '0 connections' })).toBe(
+      'settings.remoteAccess.errors.connector_down:{"message":"0 connections"}'
     );
   });
 
