@@ -49,6 +49,7 @@ export type HubServerWebSocket = {
   data: HubUplinkSocketData & { adapter?: BunServerWsAdapter };
   send(data: Uint8Array | ArrayBuffer | ArrayBufferView | string): number | undefined;
   close(code?: number, reason?: string): void;
+  getBufferedAmount?(): number;
 };
 
 export type HubTlsInfo = {
@@ -94,6 +95,10 @@ export class BunServerWsAdapter implements ServerSocketAdapter {
 
   close(code?: number, reason?: string): void {
     this.socket.close(code, reason);
+  }
+
+  bufferedAmount(): number {
+    return this.socket.getBufferedAmount?.() ?? 0;
   }
 
   onMessage(cb: (bytes: Uint8Array) => void): void {
