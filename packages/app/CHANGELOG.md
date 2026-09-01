@@ -1,3 +1,45 @@
+# 1.1.7
+
+_2026-09-01_
+
+## English
+
+### Features
+
+- Multi-client terminals: when the same pane is open on several devices, the largest visible client now owns the tmux window size. Opening a pane on a phone no longer shrinks the desktop; the phone keeps the desktop geometry and pans it locally (single-finger drag pans, then falls through to scrollback; horizontal wheel pans on desktop). Keyboard and mouse input stay shared. Ownership moves to the next largest visible client when the owner hides or disconnects.
+- Silent sign-in to other mesh nodes survives app relaunch: the browser session key is now a non-extractable WebCrypto Ed25519 key persisted in IndexedDB together with the root-signed delegation (18 h), so an installed PWA no longer asks for the password once per node after a cold start. TOTP-enabled password sessions and the `@noble` fallback stay memory-only; logout deletes the record. The Devices page attempts silent sign-in first and only shows "Sign in to this node" when it fails.
+
+### Performance
+
+- Remote node runtimes (WebRTC direct dialing, mesh connection/rtc-config/authorize requests, stats timers) are created only when the node is on screen: its sidebar section is expanded or its route is open. Sections have a disclosure toggle whose state is remembered per browser; Terminals sections default to collapsed, Files sections to expanded.
+- Mesh node list polling is now a single poller that pauses while the page is hidden; the devices query waits for the node's sign-in gate.
+- Static assets: hashed Vite bundles are served `immutable` for a year; other files get `no-cache` with ETag/Last-Modified and `304` support, so PWA launches stop re-downloading fonts and WASM.
+
+### Fixes
+
+- Files sidebar: devices from remote nodes were shown by default even though the "show in Files sidebar" switch was never enabled; the default now matches the terminal sidebar (this machine on, remote off; an explicit choice always wins). Node sections with no visible directories are no longer rendered.
+- Sidebar drag-sort no longer scrolls the sidebar horizontally: sortable lists are restricted to the vertical axis and the sidebar viewports disallow horizontal scrolling.
+- Public login hardening: the login rate limiter and the first-run bootstrap loopback check resolve the real client IP behind Cloudflare Tunnel / reverse proxies when `TMEX_TRUST_PROXY` is set; a request carrying `CF-Connecting-IP` is never treated as local.
+
+## 中文
+
+### 新功能
+
+- 多客户端终端：同一 pane 在多台设备打开时，由最大的可见客户端持有 tmux 整窗尺寸。手机打开终端不再把电脑画面缩成手机比例；手机保留电脑几何并本地平移（单指拖动先平移、到边后回到 scrollback；桌面横向滚轮平移）。键盘与鼠标输入仍然共享；owner 隐藏或断开时尺寸交给下一个最大的可见客户端。
+- 跨节点静默登录在应用重启后仍有效：浏览器会话钥改为不可导出的 WebCrypto Ed25519 私钥，与根钥签发的 delegation（18 小时）一起存入 IndexedDB，PWA 冷启动后不再每台节点各要一次密码。开启 TOTP 的密码会话与 `@noble` 回退路径仍只在内存；登出即删除。设备页对未登录节点先静默登录，失败才显示「登录此节点」。
+
+### 性能
+
+- 远端节点运行时（WebRTC 直连拨号、mesh connection/rtc-config/authorize 请求、统计定时器）只在节点出现在屏幕上时创建：侧栏分节展开或路由命中。分节新增展开开关并按浏览器记忆；终端页默认折叠、文件页默认展开。
+- mesh 节点列表改为单一轮询，页面隐藏时暂停；设备查询等待节点登录门闸就绪。
+- 静态资源：带哈希的 Vite 产物按 `immutable` 缓存一年，其余文件 `no-cache` + ETag/Last-Modified 并支持 `304`，PWA 启动不再重复下载字体与 WASM。
+
+### 修复
+
+- 文件侧栏：远端节点的设备在未开启「文件侧栏显示」时也默认显示；现与终端侧栏一致（本机默认显示、远端默认隐藏，显式选择永远优先），没有可见目录的节点分节不再渲染。
+- 侧栏拖动排序不再横向滚动：排序列表限制纵轴，侧栏视口禁止横向滚动。
+- 公网登录加固：设置 `TMEX_TRUST_PROXY` 时登录限流与首次 bootstrap 的本机判定按 Cloudflare Tunnel / 反向代理转发头解析真实客户端 IP；带 `CF-Connecting-IP` 的请求一律不视为本机。
+
 # 1.1.6
 
 _2026-09-01_
