@@ -5,6 +5,19 @@ export {
   type HubServerWebSocket,
   type HubUpgradeServer,
 } from './hub-runtime';
+export {
+  HUB_ROLE_RESTART_DELAY_MS,
+  handleGetHubRoleStatus,
+  handlePostHubRole,
+  type PatchHubRoleEnv,
+  type ScheduleHubRoleRestart,
+} from './hub-role-routes';
+export {
+  HubRoleTransitionStore,
+  envMatchesRoleTransition,
+  isHubRoleInFlight,
+  reconcileHubRoleTransition,
+} from './hub-role-transitions';
 export { createHubKeyLogSource } from './hub-key-log-source';
 export {
   applyKeyLogHubRuntime,

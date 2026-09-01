@@ -775,6 +775,84 @@ describe('multi-hub in-process integration', () => {
     });
     expect(forced.status).toBe(200);
   });
+
+  test('API demote A then promote B: C/D switch to B; A reconstructed with old env is fenced', async () => {
+    const topo = await boot();
+    const { a, b, c, d, boot: user, router } = topo;
+    const sid = await loginSelf(a.mesh, user);
+    const cookie = selfCookie(sid);
+    const demoteOp = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const promoteOp = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+    const demote = await callHub(a.mesh.hub!, 'http://hub/api/hub/role', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cookie,
+      body: JSON.stringify({ mode: 'standby', operationId: demoteOp }),
+    });
+    expect(demote.status).toBe(202);
+    expect(await demote.json()).toMatchObject({
+      operationId: demoteOp,
+      mode: 'standby',
+      phase: 'restarting',
+    });
+    expect(a.mesh.hub?.mode()).toBe('standby');
+    expect(a.roleEnv?.TMEX_HUB_MODE).toBe('standby');
+    expect(a.roleRestarts?.length).toBe(1);
+
+    const bSid = await loginSelf(b.mesh, user);
+    const promote = await callHub(b.mesh.hub!, 'http://hub/api/hub/role', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cookie: selfCookie(bSid),
+      body: JSON.stringify({ mode: 'active', writerEpoch: 2, operationId: promoteOp }),
+    });
+    expect(promote.status).toBe(202);
+    expect(await promote.json()).toMatchObject({
+      operationId: promoteOp,
+      mode: 'active',
+      writerEpoch: 2,
+      phase: 'restarting',
+    });
+    expect(b.mesh.hub?.mode()).toBe('active');
+    expect(b.mesh.hub?.writerEpoch()).toBe(2);
+    expect(b.roleEnv?.TMEX_HUB_MODE).toBe('active');
+    expect(b.roleEnv?.TMEX_HUB_WRITER_EPOCH).toBe('2');
+
+    router.takeDown(HUB_A_URL);
+    await waitUntil(
+      () => attachedUrl(c.mesh) === HUB_B_URL && attachedUrl(d.mesh) === HUB_B_URL,
+      8_000
+    );
+    expect(attachedHubId(c.mesh)).toBe(b.mesh.nodeId);
+    expect(attachedHubId(d.mesh)).toBe(b.mesh.nodeId);
+
+    await a.mesh.hub?.stop();
+    const logged: string[] = [];
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      logged.push(String(args[0]));
+    });
+    let restarted: ReturnType<typeof reconstructHubRuntime>;
+    try {
+      restarted = reconstructHubRuntime(a, {
+        userId: user.userId,
+        keys: topo.aKeys,
+        keyLog: topo.aKeyLog,
+        authorizedHubIds: [b.mesh.nodeId],
+        mode: 'active',
+        writerEpoch: 1,
+      });
+    } finally {
+      errorSpy.mockRestore();
+    }
+    fixtures.push({ stop: async () => restarted.stop() });
+    expect(restarted.mode()).toBe('standby');
+    expect(
+      logged.some(
+        (line) => line.includes('[hub] starting fenced:') && line.includes('writerEpoch=2')
+      )
+    ).toBe(true);
+  }, 20_000);
 });
 
 describe('multi-hub harness smoke (isolated A)', () => {

@@ -221,6 +221,21 @@ tmex hub demote
 
 只改 `TMEX_HUB_MODE=standby` 并重启。**不改** `TMEX_HUB_PEERS`，结束时打印当前名单。原主恢复上线前必须先做这一步。
 
+### 远程切换（UI）
+
+FE 在节点表的「主 Hub / 备 Hub」标签旁提供「切换」。入口把请求转发到目标 hub 的 `POST /n/<hubNodeId>/api/hub/role`（现有 `/n/<nodeId>/api/...` 转发器，无新协议）。目标若回答 404/405，入口/FE 映射为 `HUB_ROLE_UNSUPPORTED`（旧版本没有该接口）。
+
+契约：`packages/shared/src/contracts/hub-role.ts`。`POST /api/hub/role` body 为 `{ mode, writerEpoch?, operationId }`，鉴权与 `/api/hub/nodes/*` 相同；成功 202 `HubRoleTransition`。`GET /api/hub/role/status?operationId=` 回读指定过渡，无 id 则回读最新一条。
+
+目标机执行顺序：
+
+1. 校验：已安装 hub 角色（否则 `HUB_NOT_HUB`）；`operationId` 为 UUID；同一 `operationId` 幂等返回既有记录；同时只允许一条 in-flight（`HUB_ROLE_BUSY`）；`mode=active` 要求 `writerEpoch > max(env epoch, 本机 mesh_hubs, 全部已知 mesh_hubs)`（否则 `HUB_EPOCH_STALE`）；本机必须已授权（self 默认可，但若存在针对 self 的签名 `retire-hub` 则 `HUB_NOT_AUTHORIZED`）。无 `app.env` 补丁能力的独立 gateway 进程返回 `HUB_ROLE_UNSUPPORTED`。
+2. 持久化过渡 `accepted` → `persisting`：原子写入 `TMEX_HUB_MODE`（`active` 同时写 `TMEX_HUB_WRITER_EPOCH`），更新本机 `mesh_hubs` 行，并立刻 `setMode` / `setWriterEpoch`，使 demote 立即停止接受写入。
+3. `restarting`：约 1 s 后走既有自重启（`RuntimeController.requestRestart()`，与 `POST /api/settings/restart` 相同），以便 202 先刷出。
+4. 下次启动读 env：若最新过渡为 `restarting` 且 env 与目标一致则标 `complete`，否则 `failed`。过渡存在独立表 `hub_role_transitions`，不会被 `mesh_hubs.replaceAll()` 清掉。
+
+**把 X 设为写者的顺序：** 当前写者为 A、目标为 X。A 可达时先 demote A（`mode=standby`），再 promote X（`mode=active`，`writerEpoch = max(已知 epoch)+1`）。A 不可达时不能声称 HTTP demote 成功，只能依赖 X 的更高 epoch 把 A fence 成 standby；同 epoch 双 active 仍会脑裂。CLI `tmex hub promote/demote` 在本机库可写时也会落一条 `hub_role_transitions`（`phase=restarting`），`tmex hub list` 打印最新过渡 phase。
+
 ### 查看 hub 集合
 
 ```bash

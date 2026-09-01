@@ -26,6 +26,13 @@ import {
   type UplinkNodeList,
   applyReplicatedNodeList as replicateNodeList,
 } from './hub-replication';
+import {
+  type PatchHubRoleEnv,
+  type ScheduleHubRoleRestart,
+  handleGetHubRoleStatus,
+  handlePostHubRole,
+  reconcileHubRoleOnStart,
+} from './hub-role-routes';
 import { detachEnrollmentTokensFromNode, patchNode } from './node-persistence';
 import { NodeRegistry } from './node-registry';
 import { encodeRedeemPopMessage } from './redeem-pop';
@@ -75,6 +82,9 @@ export type HubRuntimeOptions = {
   meshHubs?: MeshHubStore;
   hubTrust?: HubTrustStore;
   fetchPeerStatus?: HubPeerFetch;
+  patchHostEnv?: PatchHubRoleEnv | null;
+  scheduleRestart?: ScheduleHubRoleRestart;
+  hubRoleInstalled?: boolean;
 };
 
 type StoredEnrollmentPayload = {
@@ -149,6 +159,9 @@ export class HubRuntime {
   readonly meshHubs: MeshHubStore;
   private readonly peerPoller: HubPeerPoller;
   private readonly modeListeners = new Set<() => void>();
+  private readonly patchHostEnv: PatchHubRoleEnv | null;
+  private readonly scheduleRestart: ScheduleHubRoleRestart | undefined;
+  private readonly hubRoleInstalled: boolean;
 
   constructor(opts: HubRuntimeOptions) {
     this.db = opts.db;
@@ -159,6 +172,9 @@ export class HubRuntime {
     this.config = opts.config;
     this.tlsInfo = opts.tlsInfo;
     this.meshHubs = opts.meshHubs ?? new MeshHubStore(opts.db);
+    this.patchHostEnv = opts.patchHostEnv ?? null;
+    this.scheduleRestart = opts.scheduleRestart;
+    this.hubRoleInstalled = opts.hubRoleInstalled ?? true;
     this.registry = new NodeRegistry();
     this.uplink = new UplinkServer({
       db: opts.db,
@@ -195,6 +211,21 @@ export class HubRuntime {
       hubTrust: opts.hubTrust,
     });
     if (opts.hubTrust) this.peerPoller.start();
+    reconcileHubRoleOnStart(this.roleContext());
+  }
+
+  private roleContext() {
+    return {
+      db: this.db,
+      uplink: this.uplink,
+      meshHubs: this.meshHubs,
+      now: this.now,
+      patchHostEnv: this.patchHostEnv,
+      scheduleRestart: this.scheduleRestart,
+      hubRoleInstalled: this.hubRoleInstalled,
+      configMode: this.config.mode ?? 'active',
+      configWriterEpoch: this.config.writerEpoch ?? 1,
+    };
   }
 
   mode(): HubMode {
@@ -203,6 +234,10 @@ export class HubRuntime {
 
   setMode(mode: HubMode): void {
     this.uplink.setMode(mode);
+  }
+
+  setWriterEpoch(epoch: number): void {
+    this.uplink.setWriterEpoch(epoch);
   }
 
   /** 模式变化（含被围栏自动降级）通知；节点侧据此立即重发 node.status 广告。 */
@@ -312,6 +347,12 @@ export class HubRuntime {
     };
     return (
       hit('/api/hub/status', 'GET', () => this.handleHubStatus()) ??
+      hit('/api/hub/role/status', 'GET', () =>
+        this.withAuth(req, () => handleGetHubRoleStatus(req, this.roleContext()))
+      ) ??
+      hit('/api/hub/role', 'POST', () =>
+        this.withAuth(req, () => handlePostHubRole(req, this.roleContext()))
+      ) ??
       hit('/api/hub/enrollments/redeem', 'POST', () => {
         const blocked = this.requireWriter();
         return blocked ?? this.handleRedeem(req);

@@ -113,6 +113,10 @@ export type CreateMeshRuntimeOptions = {
   meshHubStore?: MeshHubStore;
   /** TLS 指纹轮询间隔；默认 10 分钟。TLS 服务无变更回调时用轮询刷新 node.status.hub.caFingerprint。 */
   tlsPollIntervalMs?: number;
+  /** 由 packages/app assemble 注入：把 TMEX_HUB_MODE / TMEX_HUB_WRITER_EPOCH 写进 app.env。 */
+  patchHubRoleEnv?: (patch: Record<string, string>) => Promise<void>;
+  /** 由 packages/app assemble 注入：延迟调用 RuntimeController.requestRestart。 */
+  scheduleHubRoleRestart?: (delayMs: number) => void;
 };
 
 export const CONNECTION_ID_BYTES = 32;
@@ -727,6 +731,9 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
         },
         tlsInfo: opts.tlsInfo,
         hubTrust: new HubTrustStore(db),
+        patchHostEnv: opts.patchHubRoleEnv,
+        scheduleRestart: opts.scheduleHubRoleRestart,
+        hubRoleInstalled: config.roles.hub,
       }))
     : (opts.hub ?? null);
   keyLogService.onApplied = (_userId, step) => {

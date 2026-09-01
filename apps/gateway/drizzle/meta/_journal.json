@@ -239,6 +239,13 @@
       "when": 1788348000000,
       "tag": "0033_hub_authorizations",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1788434400000,
+      "tag": "0034_hub_role_transitions",
+      "breakpoints": true
     }
   ]
 }

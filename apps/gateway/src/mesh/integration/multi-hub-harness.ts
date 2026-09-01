@@ -162,7 +162,33 @@ export type HarnessNode = {
   close: () => void;
   userStore: UserStore;
   unsubscribe?: () => void;
+  roleEnv?: Record<string, string>;
+  roleRestarts?: number[];
 };
+
+export function memoryHubRoleHooks(initial?: Record<string, string>): {
+  env: Record<string, string>;
+  restarts: number[];
+  patchHubRoleEnv: (patch: Record<string, string>) => Promise<void>;
+  scheduleHubRoleRestart: (delayMs: number) => void;
+} {
+  const env = {
+    TMEX_HUB_MODE: 'active',
+    TMEX_HUB_WRITER_EPOCH: '1',
+    ...initial,
+  };
+  const restarts: number[] = [];
+  return {
+    env,
+    restarts,
+    patchHubRoleEnv: async (patch) => {
+      Object.assign(env, patch);
+    },
+    scheduleHubRoleRestart: (delayMs) => {
+      restarts.push(delayMs);
+    },
+  };
+}
 
 export type MultiHubTopology = {
   router: HubRouter;
@@ -408,6 +434,9 @@ type EnrollOpts = {
   scheduler?: MeshScheduler;
   label: string;
   pending?: PendingHarnessNode;
+  patchHubRoleEnv?: (patch: Record<string, string>) => Promise<void>;
+  scheduleHubRoleRestart?: (delayMs: number) => void;
+  roleEnv?: Record<string, string>;
 };
 
 export type PendingHarnessNode = {
@@ -424,7 +453,12 @@ export async function createPendingNode(): Promise<PendingHarnessNode> {
 
 export async function bootHubA(
   router: HubRouter,
-  extra?: { hubPeers?: string[] }
+  extra?: {
+    hubPeers?: string[];
+    patchHubRoleEnv?: (patch: Record<string, string>) => Promise<void>;
+    scheduleHubRoleRestart?: (delayMs: number) => void;
+    roleEnv?: Record<string, string>;
+  }
 ): Promise<{
   node: HarnessNode;
   boot: BootUser;
@@ -448,6 +482,11 @@ export async function bootHubA(
     password: PASSWORD,
     identity,
   });
+  const role = memoryHubRoleHooks({
+    TMEX_HUB_MODE: 'active',
+    TMEX_HUB_WRITER_EPOCH: '1',
+    ...extra?.roleEnv,
+  });
   const mesh = await createMeshRuntime({
     db,
     gateway: fakeGateway(db, 'a'),
@@ -468,6 +507,8 @@ export async function bootHubA(
     networkInterfaces: () => ({}),
     loadNative: async () => null,
     scheduler: new FastScheduler(),
+    patchHubRoleEnv: extra?.patchHubRoleEnv ?? role.patchHubRoleEnv,
+    scheduleHubRoleRestart: extra?.scheduleHubRoleRestart ?? role.scheduleHubRoleRestart,
   });
   const unsubscribe = wireReplication(mesh);
   if (!mesh.hub) throw new Error('hub A missing HubRuntime');
@@ -475,7 +516,15 @@ export async function bootHubA(
   await mesh.start();
   await waitOnline(mesh);
   return {
-    node: { mesh, db, close, userStore, unsubscribe },
+    node: {
+      mesh,
+      db,
+      close,
+      userStore,
+      unsubscribe,
+      roleEnv: role.env,
+      roleRestarts: role.restarts,
+    },
     boot,
     keys,
     keyLog,
@@ -589,6 +638,13 @@ export async function enrollAndStart(
     );
   }
 
+  const role = opts.roles.hub
+    ? memoryHubRoleHooks({
+        TMEX_HUB_MODE: opts.hubMode ?? 'standby',
+        TMEX_HUB_WRITER_EPOCH: String(opts.hubWriterEpoch ?? 1),
+        ...opts.roleEnv,
+      })
+    : null;
   const mesh = await createMeshRuntime({
     db,
     gateway: fakeGateway(db, opts.label),
@@ -613,6 +669,8 @@ export async function enrollAndStart(
     networkInterfaces: () => ({}),
     loadNative: async () => null,
     scheduler: opts.scheduler ?? new FastScheduler(),
+    patchHubRoleEnv: opts.patchHubRoleEnv ?? role?.patchHubRoleEnv,
+    scheduleHubRoleRestart: opts.scheduleHubRoleRestart ?? role?.scheduleHubRoleRestart,
   });
   const unsubscribe = opts.roles.hub ? wireReplication(mesh) : undefined;
   await mesh.start();
@@ -624,7 +682,15 @@ export async function enrollAndStart(
       await waitOnline(mesh);
     }
   }
-  return { mesh, db, close, userStore, unsubscribe };
+  return {
+    mesh,
+    db,
+    close,
+    userStore,
+    unsubscribe,
+    roleEnv: role?.env,
+    roleRestarts: role?.restarts,
+  };
 }
 
 export async function bootAbcdTopology(): Promise<MultiHubTopology> {

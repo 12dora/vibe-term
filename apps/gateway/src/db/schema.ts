@@ -728,6 +728,30 @@ export const meshHubs = sqliteTable('mesh_hubs', {
   updatedAt: integer('updated_at').notNull(),
 });
 
+export const hubRoleTransitions = sqliteTable(
+  'hub_role_transitions',
+  {
+    operationId: text('operation_id').primaryKey(),
+    targetHubId: text('target_hub_id').notNull(),
+    mode: text('mode').$type<'active' | 'standby'>().notNull(),
+    writerEpoch: integer('writer_epoch'),
+    phase: text('phase')
+      .$type<'accepted' | 'persisting' | 'restarting' | 'complete' | 'failed'>()
+      .notNull(),
+    error: text('error'),
+    startedAt: integer('started_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    check('hub_role_transitions_mode_check', sql`${table.mode} in ('active', 'standby')`),
+    check(
+      'hub_role_transitions_phase_check',
+      sql`${table.phase} in ('accepted', 'persisting', 'restarting', 'complete', 'failed')`
+    ),
+    index('hub_role_transitions_updated_at_idx').on(table.updatedAt),
+  ]
+);
+
 export const userHubAuthorizations = sqliteTable(
   'user_hub_authorizations',
   {

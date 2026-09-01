@@ -178,7 +178,7 @@ export class UplinkServer {
   private readonly config: HubRuntimeConfig;
   private currentMode: HubMode;
   private readonly hubPriority: number;
-  private readonly hubWriterEpoch: number;
+  private hubWriterEpoch: number;
   private readonly authorizedHubIdSet: Set<string>;
   private selfCaFingerprint: string | null = null;
   private lastSplitBrainLogAt: number | null = null;
@@ -309,8 +309,18 @@ export class UplinkServer {
   }
 
   setMode(mode: HubMode): void {
-    if (this.currentMode === mode) return;
+    this.applyLocalRole(mode);
+  }
+
+  setWriterEpoch(epoch: number): void {
+    this.applyLocalRole(this.currentMode, epoch);
+  }
+
+  applyLocalRole(mode: HubMode, writerEpoch?: number): void {
+    const nextEpoch = writerEpoch ?? this.hubWriterEpoch;
+    if (this.currentMode === mode && this.hubWriterEpoch === nextEpoch) return;
     this.currentMode = mode;
+    this.hubWriterEpoch = nextEpoch;
     this.upsertSelfHub();
     this.broadcastAllNodeLists();
     this.onModeChange?.();

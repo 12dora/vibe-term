@@ -9,6 +9,7 @@ import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-ident
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import type { NodeSessionStore } from '../../../../apps/gateway/src/auth/node-session-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
+import { runtimeController } from '../../../../apps/gateway/src/control/runtime';
 import {
   LocalAuthStore,
   readLocalAuthEffective,
@@ -513,6 +514,23 @@ async function createNodeMesh(input: {
         : null,
       caPem: (await input.tlsSlot.service?.caPem()) ?? null,
     }),
+    patchHubRoleEnv: async (patch) => {
+      const envPath = resolveSetupEnvPath();
+      await withEnvLock(async () => {
+        let existing: Record<string, string> = {};
+        try {
+          existing = await readEnvFile(envPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        await writeEnvFile(envPath, { ...existing, ...patch });
+      });
+    },
+    scheduleHubRoleRestart: (delayMs) => {
+      setTimeout(() => {
+        void runtimeController.requestRestart();
+      }, delayMs);
+    },
   };
   return input.createMesh(opts);
 }

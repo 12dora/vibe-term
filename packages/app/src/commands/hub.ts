@@ -9,6 +9,7 @@ import {
   resolveHubAuthorization,
   resolveMeshUserId,
 } from '../../../../apps/gateway/src/hub/hub-authorization';
+import { HubRoleTransitionStore } from '../../../../apps/gateway/src/hub/hub-role-transitions';
 import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/hub/redeem-pop';
 import {
   bytesEqual,
@@ -1050,6 +1051,30 @@ function readMeshHubRows(
   });
 }
 
+async function recordCliRoleTransition(
+  ctx: LocalAuthContext,
+  input: { mode: 'active' | 'standby'; writerEpoch: number | null }
+): Promise<void> {
+  try {
+    const identity = await ctx.identityStore.load();
+    const targetHubId = identity?.nodeId?.trim().toLowerCase() ?? '';
+    if (!targetHubId) return;
+    const now = Date.now();
+    new HubRoleTransitionStore(ctx.db).insert({
+      operationId: crypto.randomUUID(),
+      targetHubId,
+      mode: input.mode,
+      writerEpoch: input.writerEpoch,
+      phase: 'restarting',
+      error: null,
+      startedAt: now,
+      updatedAt: now,
+    });
+  } catch {
+    /* 旧库或无表时不挡 CLI */
+  }
+}
+
 function maxMeshHubWriterEpoch(ctx: LocalAuthContext): number | null {
   try {
     const rows = ctx.db
@@ -1200,6 +1225,7 @@ export async function runHubPromote(
     const dbMax = maxMeshHubWriterEpoch(ctx);
     const writerEpoch = dbMax == null ? envEpoch + 1 : Math.max(envEpoch, dbMax) + 1;
     await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { mode: 'active', writerEpoch }));
+    await recordCliRoleTransition(ctx, { mode: 'active', writerEpoch });
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
     }
@@ -1217,6 +1243,10 @@ export async function runHubDemote(parsed: ParsedArgs, io: HubIo = {}): Promise<
     }
     const peers = parseHubPeerIds(env.TMEX_HUB_PEERS);
     await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { mode: 'standby' }));
+    await recordCliRoleTransition(ctx, {
+      mode: 'standby',
+      writerEpoch: parseEnvWriterEpoch(env.TMEX_HUB_WRITER_EPOCH),
+    });
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
     }
@@ -1245,10 +1275,18 @@ export async function runHubList(
     const writerHubId = pickWriterHubId(hubs);
     if (hubs.length === 0) {
       log(io, t('hub.list.empty'));
-      return { hubs, writerHubId };
+    } else {
+      for (const line of formatHubList(hubs)) {
+        log(io, line);
+      }
     }
-    for (const line of formatHubList(hubs)) {
-      log(io, line);
+    try {
+      const latest = new HubRoleTransitionStore(ctx.db).latest();
+      if (latest) {
+        log(io, `role-transition ${latest.phase} ${latest.operationId}`);
+      }
+    } catch {
+      /* ignore */
     }
     return { hubs, writerHubId };
   });

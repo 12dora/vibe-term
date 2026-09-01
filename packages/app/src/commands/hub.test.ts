@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import { meshHubs } from '../../../../apps/gateway/src/db/schema';
+import { HubRoleTransitionStore } from '../../../../apps/gateway/src/hub/hub-role-transitions';
 import {
   bytesEqual,
   decodeKeyLogRecord,
@@ -656,6 +657,36 @@ describe('hub standby/promote/demote/list', () => {
     expect(text).toContain('self');
     expect(text).toContain('env');
     expect(text).toContain('no');
+  });
+
+  test('promote/demote persist hub_role_transitions; list prints latest phase', async () => {
+    const { auth } = await openEnvAuth('hub,node', { TMEX_HUB_MODE: 'standby' });
+    await seedJoinedIdentity(auth);
+    await runHubPromote(parseArgs(['hub', 'promote', '--yes']), {
+      auth,
+      log: () => undefined,
+      skipRestart: true,
+    });
+    const afterPromote = new HubRoleTransitionStore(auth.db).latest();
+    expect(afterPromote?.mode).toBe('active');
+    expect(afterPromote?.phase).toBe('restarting');
+    expect(afterPromote?.writerEpoch).toBeGreaterThanOrEqual(2);
+
+    await runHubDemote(parseArgs(['hub', 'demote']), {
+      auth,
+      log: () => undefined,
+      skipRestart: true,
+    });
+    const afterDemote = new HubRoleTransitionStore(auth.db).latest();
+    expect(afterDemote?.mode).toBe('standby');
+    expect(afterDemote?.phase).toBe('restarting');
+
+    const logs: string[] = [];
+    await runHubList(parseArgs(['hub', 'list']), {
+      auth,
+      log: (message) => logs.push(message),
+    });
+    expect(logs.join('\n')).toContain(`role-transition restarting ${afterDemote?.operationId}`);
   });
 });
 
