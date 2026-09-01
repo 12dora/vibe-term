@@ -38,6 +38,7 @@ export const UPLINK_POOL_PROBE_JITTER = 0.2;
 export const UPLINK_SEED_PRIORITY_BASE = 1_000;
 export const CA_BOOTSTRAP_TIMEOUT_MS = 5_000;
 export const CA_BOOTSTRAP_MAX_BYTES = 64 * 1024;
+export const UPLINK_POOL_FAIL_LOG_INTERVAL_MS = 60_000;
 
 export type UplinkCandidate = {
   hubNodeId: string | null;
@@ -46,6 +47,8 @@ export type UplinkCandidate = {
   writerEpoch: number;
   priority: number;
   caFingerprint: string | null;
+  lastError?: string | null;
+  lastAttemptAt?: number | null;
 };
 
 export type AttachedHub = {
@@ -330,6 +333,12 @@ export class UplinkPool {
   private wrapAttempt = 0;
   private relayHandler: InboundRelayHandler | null = null;
   private readonly caBootstraps = new Map<string, Promise<void>>();
+  private readonly diagByUrl = new Map<
+    string,
+    { lastError: string | null; lastAttemptAt: number | null }
+  >();
+  private readonly failLogAt = new Map<string, { msg: string; at: number }>();
+  private wrapSleepAbort: AbortController | null = null;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private readonly attachedListeners: Array<(hub: AttachedHub) => void> = [];
   private readonly detachedListeners: Array<() => void> = [];
@@ -374,7 +383,15 @@ export class UplinkPool {
 
   candidates(): UplinkCandidate[] {
     const list = this.opts.candidates();
-    return list.length > 0 ? list : [fallbackCandidate()];
+    const base = list.length > 0 ? list : [fallbackCandidate()];
+    return base.map((row) => {
+      const diag = this.diagByUrl.get(normalizeHubEndpointUrl(row.publicUrl));
+      return {
+        ...row,
+        lastError: diag?.lastError ?? row.lastError ?? null,
+        lastAttemptAt: diag?.lastAttemptAt ?? row.lastAttemptAt ?? null,
+      };
+    });
   }
 
   currentGeneration(): number {
@@ -505,6 +522,13 @@ export class UplinkPool {
     }
     const signal = this.stopAbort?.signal;
     if (!signal || signal.aborted) throw new Error('aborted');
+    const cands = this.candidates();
+    const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, publicUrl));
+    const transport = this.isLocalTransport(target) ? 'memory' : 'ws';
+    this.noteAttempt(target);
+    this.logInfo(
+      `[uplink] try hub=${target.publicUrl} mode=${target.mode} epoch=${target.writerEpoch} idx=${idx + 1}/${cands.length} transport=${transport}`
+    );
     const token = this.beginSwitch();
     const client = this.spawn(target);
     this.pending = client;
@@ -517,6 +541,10 @@ export class UplinkPool {
       }
       await this.promote(client, target, token);
     } catch (err) {
+      const msg = errMessage(err);
+      this.noteFailure(target, msg);
+      this.logCandidateFailed(target.publicUrl, msg, 1);
+      this.logMissingCaPin(target, err);
       if (this.pending === client) this.pending = null;
       await client.stop();
       throw err;
@@ -533,10 +561,13 @@ export class UplinkPool {
     while (!signal.aborted) {
       const cands = this.candidates();
       let session = false;
-      for (const cand of cands) {
-        if (signal.aborted) return;
-        session = await this.tryCandidate(cand, signal);
+      for (let i = 0; i < cands.length; i += 1) {
+        const cand = cands[i];
+        if (!cand || signal.aborted) return;
+        session = await this.tryCandidate(cand, signal, i, cands.length);
         if (session) break;
+        const next = cands[i + 1];
+        if (next) this.logInfo(`[uplink] failover → hub=${next.publicUrl}`);
       }
       if (signal.aborted) return;
       if (session) {
@@ -553,10 +584,14 @@ export class UplinkPool {
       }
       const delay = backoffDelayMs(this.wrapAttempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
       this.wrapAttempt += 1;
+      this.wrapSleepAbort = new AbortController();
+      const combined = anyAbort(signal, this.wrapSleepAbort.signal);
       try {
-        await this.scheduler.sleep(delay, signal);
+        await this.scheduler.sleep(delay, combined);
       } catch {
-        return;
+        if (signal.aborted) return;
+      } finally {
+        this.wrapSleepAbort = null;
       }
     }
   }
@@ -570,20 +605,28 @@ export class UplinkPool {
     return token === this.switchToken && !this.stopAbort?.signal.aborted;
   }
 
+  private isLocalTransport(cand: UplinkCandidate): boolean {
+    return this.opts.isLocalCandidate?.(cand) === true && Boolean(this.opts.connectLocal);
+  }
+
   private async connectCandidate(
     client: UplinkClient,
     cand: UplinkCandidate,
     signal: AbortSignal
   ): Promise<void> {
-    const local = this.opts.isLocalCandidate?.(cand) === true && Boolean(this.opts.connectLocal);
-    if (local && this.opts.connectLocal) {
+    if (this.isLocalTransport(cand) && this.opts.connectLocal) {
       await this.opts.connectLocal(client, signal);
       return;
     }
     await client.attemptConnect(signal);
   }
 
-  private async tryCandidate(cand: UplinkCandidate, signal: AbortSignal): Promise<boolean> {
+  private async tryCandidate(
+    cand: UplinkCandidate,
+    signal: AbortSignal,
+    index = 0,
+    total = 1
+  ): Promise<boolean> {
     const deadline = new AbortController();
     const combined = anyAbort(signal, deadline.signal);
     const deadlineStarted = this.scheduler.now();
@@ -597,6 +640,11 @@ export class UplinkPool {
     const token = this.beginSwitch();
     const client = this.spawn(cand);
     this.pending = client;
+    const transport = this.isLocalTransport(cand) ? 'memory' : 'ws';
+    this.noteAttempt(cand);
+    this.logInfo(
+      `[uplink] try hub=${cand.publicUrl} mode=${cand.mode} epoch=${cand.writerEpoch} idx=${index + 1}/${total} transport=${transport}`
+    );
     let failures = 0;
     try {
       while (failures < this.failLimit && !combined.aborted) {
@@ -613,9 +661,13 @@ export class UplinkPool {
           await this.promote(client, cand, token);
           await this.waitActiveSession(this.live ?? client, signal);
           return true;
-        } catch {
+        } catch (err) {
           failures += 1;
-          this.lastConnectError = { reason: 'connect-failed', at: this.scheduler.now() };
+          const msg = errMessage(err);
+          this.lastConnectError = { reason: msg, at: this.scheduler.now() };
+          this.noteFailure(cand, msg);
+          this.logCandidateFailed(cand.publicUrl, msg, failures);
+          this.logMissingCaPin(cand, err);
           if (combined.aborted || failures >= this.failLimit) break;
         }
       }
@@ -726,6 +778,7 @@ export class UplinkPool {
     }
     this.syncProbe();
     void this.pinAdvertisedCas(list);
+    void this.pinCandidateFingerprints();
   }
 
   private refreshAttachedFromList(list: UplinkNodeList): void {
@@ -771,19 +824,32 @@ export class UplinkPool {
     return work;
   }
 
+  private async pinCandidateFingerprints(): Promise<void> {
+    await Promise.all(
+      this.candidates().map((cand) =>
+        this.pinAdvertisedCa({ publicUrl: cand.publicUrl, caFingerprint: cand.caFingerprint })
+      )
+    );
+  }
+
   private async doPinAdvertisedCa(publicUrl: string, advertised: string): Promise<void> {
     try {
       const pem = await (this.opts.fetchCaPem ?? defaultFetchCaPem)(publicUrl);
       if (!this.opts.fingerprintPem) parseSingleCaCertificate(pem);
       const fingerprint = (this.opts.fingerprintPem ?? spkiFingerprintFromPem)(pem).toLowerCase();
-      if (fingerprint !== advertised) return;
+      if (fingerprint !== advertised) {
+        this.logInfo(`[uplink] ca bootstrap failed url=${publicUrl} err=fingerprint_mismatch`);
+        return;
+      }
       this.opts.hubTrust.put({
         hubUrl: publicUrl,
         caPem: pem,
         fingerprint,
       });
-    } catch {
-      /* pin is best-effort; next node.list retries */
+      this.logInfo(`[uplink] ca pin stored url=${publicUrl} fp=${fingerprint}`);
+      this.wakeWrapSleep();
+    } catch (err) {
+      this.logInfo(`[uplink] ca bootstrap failed url=${publicUrl} err=${errMessage(err)}`);
     }
   }
 
@@ -881,9 +947,14 @@ export class UplinkPool {
         const pin = this.opts.hubTrust.get(pref.publicUrl);
         const tlsCa = pin?.caPem ? [pin.caPem] : null;
         const ok = await probe(pref.publicUrl, tlsCa, this.probeTimeoutMs);
-        if (!ok) continue;
+        if (!ok) {
+          this.logInfo(`[uplink] probe fail hub=${pref.publicUrl}`);
+          continue;
+        }
+        this.logInfo(`[uplink] probe ok hub=${pref.publicUrl}`);
         try {
           await this.switchTo(pref.publicUrl);
+          this.logInfo(`[uplink] switch-back → hub=${pref.publicUrl}`);
         } catch {
           /* keep current attachment */
         }
@@ -892,6 +963,50 @@ export class UplinkPool {
     } finally {
       this.probeInFlight = false;
     }
+  }
+
+  private noteAttempt(cand: UplinkCandidate): void {
+    const key = normalizeHubEndpointUrl(cand.publicUrl);
+    const prev = this.diagByUrl.get(key);
+    this.diagByUrl.set(key, {
+      lastError: prev?.lastError ?? null,
+      lastAttemptAt: this.scheduler.now(),
+    });
+  }
+
+  private noteFailure(cand: UplinkCandidate, msg: string): void {
+    const key = normalizeHubEndpointUrl(cand.publicUrl);
+    this.diagByUrl.set(key, {
+      lastError: msg,
+      lastAttemptAt: this.scheduler.now(),
+    });
+  }
+
+  private logCandidateFailed(url: string, msg: string, fails: number): void {
+    const key = normalizeHubEndpointUrl(url);
+    const now = this.scheduler.now();
+    const prev = this.failLogAt.get(key);
+    if (prev && prev.msg === msg && now - prev.at < UPLINK_POOL_FAIL_LOG_INTERVAL_MS) return;
+    this.failLogAt.set(key, { msg, at: now });
+    this.logInfo(`[uplink] candidate failed hub=${url} err=${msg} fails=${fails}`);
+  }
+
+  private logMissingCaPin(cand: UplinkCandidate, err: unknown): void {
+    if (!isTlsCertificateError(err)) return;
+    if (this.opts.hubTrust.get(cand.publicUrl)) return;
+    const advertised = cand.caFingerprint?.trim() ?? '';
+    if (advertised && isCaFingerprintHex(advertised)) return;
+    this.logInfo(`[uplink] no CA pin for ${cand.publicUrl} and no advertised fingerprint`);
+  }
+
+  private wakeWrapSleep(): void {
+    const wake = this.wrapSleepAbort;
+    if (!wake || wake.signal.aborted) return;
+    wake.abort();
+  }
+
+  private logInfo(line: string): void {
+    console.info(line);
   }
 
   private emitState(state: UplinkState): void {
@@ -923,6 +1038,17 @@ export class UplinkPool {
       }
     }
   }
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isTlsCertificateError(err: unknown): boolean {
+  const msg = errMessage(err).toLowerCase();
+  return /tls|certificate|cert_|unable to verify|self[- ]signed|untrusted|err_cert|ssl|hostname/.test(
+    msg
+  );
 }
 
 function defaultWsFactory(tlsCa: string[] | null): UplinkWsFactory {

@@ -955,6 +955,33 @@ async function patchInstallEnv(
   });
 }
 
+function findPrimaryHubNodeId(ctx: LocalAuthContext, selfId: string | null): string | null {
+  const self = selfId?.trim().toLowerCase() || null;
+  try {
+    const rows = ctx.db.select().from(meshHubs).all() as Array<{
+      hubNodeId: string;
+      mode: string;
+      writerEpoch: number;
+      priority: number;
+    }>;
+    const writer = pickWriterHubId(rows);
+    if (writer) {
+      const id = writer.toLowerCase();
+      if (id !== self && /^[0-9a-f]{32}$/.test(id)) return id;
+    }
+  } catch {
+    /* mesh_hubs 可能尚未建表 */
+  }
+  try {
+    const meta = ctx.userStore.getHubMeta();
+    const id = meta?.nodeId?.trim().toLowerCase() ?? '';
+    if (id && id !== self && /^[0-9a-f]{32}$/.test(id)) return id;
+  } catch {
+    /* peer_cache 哨兵缺失或不可读 */
+  }
+  return null;
+}
+
 export function pickWriterHubId(
   hubs: Array<{ hubNodeId: string; mode: string; writerEpoch: number; priority: number }>
 ): string | null {
@@ -1099,6 +1126,10 @@ export async function runHubStandby(
     if (!env.TMEX_HUB_URL?.trim()) {
       throw new Error(t('hub.standby.missingHubUrl'));
     }
+    const primaryId = findPrimaryHubNodeId(ctx, identity.nodeId);
+    const peers = primaryId
+      ? mergeHubPeerIds(parseHubPeerIds(env.TMEX_HUB_PEERS), [primaryId])
+      : parseHubPeerIds(env.TMEX_HUB_PEERS);
     await patchInstallEnv(
       ctx,
       applyHubModeEnvKeys(env, {
@@ -1106,6 +1137,7 @@ export async function runHubStandby(
         mode: 'standby',
         publicUrl,
         priority,
+        ...(primaryId ? { hubPeers: peers } : {}),
       })
     );
     if (ctx.installDir) {
@@ -1114,6 +1146,14 @@ export async function runHubStandby(
     log(io, t('hub.standby.done', { priority, url: publicUrl }));
     log(io, t('hub.standby.nodeId', { nodeId: identity.nodeId }));
     log(io, t('hub.standby.allowHint', { nodeId: identity.nodeId }));
+    if (primaryId) {
+      log(
+        io,
+        t('hub.standby.authorizedPrimary', { nodeId: primaryId, peers: formatPeerList(peers) })
+      );
+    } else {
+      log(io, t('hub.standby.noPrimary'));
+    }
     return { publicUrl, priority, nodeId: identity.nodeId };
   });
 }
@@ -1144,6 +1184,7 @@ export async function runHubPromote(
       await maybeRestart(parsed, io, ctx.installDir);
     }
     log(io, t('hub.promote.done', { epoch: writerEpoch }));
+    log(io, t('hub.peers.current', { peers: formatPeerList(peers) }));
     return { writerEpoch };
   });
 }
@@ -1154,11 +1195,13 @@ export async function runHubDemote(parsed: ParsedArgs, io: HubIo = {}): Promise<
     if (!isHubNodeInstall(env)) {
       throw new Error(t('hub.demote.notHub'));
     }
+    const peers = parseHubPeerIds(env.TMEX_HUB_PEERS);
     await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { mode: 'standby' }));
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
     }
     log(io, t('hub.demote.done'));
+    log(io, t('hub.peers.current', { peers: formatPeerList(peers) }));
   });
 }
 

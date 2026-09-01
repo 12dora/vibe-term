@@ -169,7 +169,10 @@ describe('AuthApi', () => {
         since: 7,
       },
       writerHubId: 'h1',
-      candidates: ['https://h1', 'https://h2'],
+      candidates: [
+        { publicUrl: 'https://h1', lastError: null, lastAttemptAt: null },
+        { publicUrl: 'https://h2', lastError: 'tls', lastAttemptAt: 1 },
+      ],
     };
     const { api, calls } = recorder([new Response(JSON.stringify(body), { status: 200 })]);
     const out = await api.listHubs();
@@ -177,7 +180,7 @@ describe('AuthApi', () => {
     expect(out.hubs.map((h) => h.nodeId)).toEqual(['h1', 'h2']);
     expect(out.attached?.mode).toBe('standby');
     expect(out.writerHubId).toBe('h1');
-    expect(out.candidates).toEqual(['https://h1', 'https://h2']);
+    expect(out.candidates.map((c) => c.publicUrl)).toEqual(['https://h1', 'https://h2']);
   });
 
   test('listHubs 对缺字段的响应补空集合，不抛', async () => {

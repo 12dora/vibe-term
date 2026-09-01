@@ -114,6 +114,7 @@ function fakeMesh(overrides?: Partial<MeshRuntime> & { hub?: HubRuntime | null }
     start: async () => {},
     stop: async () => {},
     invalidateAuthModeCache() {},
+    refreshTlsAndAdvertise: async () => {},
     ...overrides,
   } as MeshRuntime;
 }
@@ -243,6 +244,27 @@ describe('assembleTmex role matrix', () => {
     });
     await assembled.start();
     expect(order).toEqual(['mesh', 'restore']);
+  });
+
+  test('calls refreshTlsAndAdvertise after the TLS service is assigned to tlsSlot', async () => {
+    const fingerprints: Array<string | null> = [];
+    let refresh = 0;
+    const mesh = fakeMesh({
+      async refreshTlsAndAdvertise() {
+        refresh += 1;
+      },
+    });
+    await assembleTmex({
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async (opts) => {
+        const tls = await opts.tlsInfo?.();
+        fingerprints.push(tls?.caFingerprint ?? null);
+        return mesh;
+      },
+    });
+    expect(fingerprints[0]).toBeNull();
+    expect(refresh).toBeGreaterThanOrEqual(1);
   });
 
   test('registers gateway WS with cid from the upgrade query, not a client connectionId', async () => {

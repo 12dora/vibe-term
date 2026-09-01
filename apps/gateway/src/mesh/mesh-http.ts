@@ -38,7 +38,7 @@ import {
   jsonError,
 } from './session-middleware';
 import type { UplinkStatus } from './types';
-import type { AttachedHub } from './uplink-pool';
+import type { AttachedHub, UplinkCandidate } from './uplink-pool';
 
 export type MeshHttpRuntimeOptions = {
   roles: MeshRoles;
@@ -57,7 +57,7 @@ export type MeshHttpRuntimeOptions = {
   hubPublicUrl?: string | null;
   hubStore?: MeshHubStore;
   attachedHub?: () => AttachedHub | null;
-  hubCandidates?: () => string[];
+  hubCandidates?: () => Array<string | UplinkCandidate>;
   trustProxy?: boolean;
   connectionLookup?: ConnectionLookup;
   selfStatus?: () => UplinkStatus;

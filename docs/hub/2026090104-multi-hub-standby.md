@@ -126,15 +126,18 @@ standby 对下列请求返回 HTTP 409，body 为：
 
 命令都跑在**目标机器本机**，要求已 `tmex init`。`hub join` 行为不变（只写一个种子 `TMEX_HUB_URL`）；其它 hub 靠 `node.list` 学习，不必改 join。
 
-### 两步启用 standby（必须先 allow）
+### 两步启用 standby（standby 自动授权主 hub；主 hub 仍须手动 allow）
 
 standby 自己改角色还不够：当前 active **不会**把未授权的 hub 广告写入 `hubs[]`。顺序是：
 
-1. 在已加入的 **node** 上执行 `tmex hub standby --public-url https://hub-b.example`。命令结束时打印本机 32 位 hex node id，以及要在 active 上跑的命令：`tmex hub allow <thisNodeId>`。在这一步完成前，active 会忽略该 standby。
-2. 在 **当前 active hub** 上执行打印出来的 `tmex hub allow <nodeId>`（写入 `TMEX_HUB_PEERS` 并重启，除非 `--no-restart`）。
+1. 在已加入的 **node** 上执行 `tmex hub standby --public-url https://hub-b.example`。命令会：
+   - 把本机写成 `hub,node` + `standby`；
+   - **自动把当前主 hub 的 node id 写入本机 `TMEX_HUB_PEERS`**（来源：本地 `mesh_hubs` 的 active 行，找不到则退到 `peer_cache` 哨兵行 `node_id='hub'` 的 `inventory_json.nodeId`）。找不到时打印警告，须手动 `tmex hub allow`。
+   - 打印本机 32 位 hex node id，以及要在 active 上跑的命令：`tmex hub allow <thisNodeId>`。
+2. 在 **当前 active hub** 上执行打印出来的 `tmex hub allow <nodeId>`（写入 `TMEX_HUB_PEERS` 并重启，除非 `--no-restart`）。**主 hub 不会自动授权备用 hub。**
 3. 之后 `tmex hub list` / `node.list.hubs[]` 才会出现这台 standby。`AUTH` 列为 `yes` 表示该 id 在本机 `TMEX_HUB_PEERS` 中，或就是 self。
 
-反过来：新写者 `promote` 之后，**旧写者**也必须 `tmex hub allow <新写者 nodeId>`，否则旧写者不会承认它，也无法被它 fence。
+反过来：新写者 `promote` 之后，**旧写者**也必须 `tmex hub allow <新写者 nodeId>`，否则旧写者不会承认它，也无法被它 fence。`promote` / `demote` **不改** `TMEX_HUB_PEERS`，但会打印当前名单。
 
 ### 把已加入的 node 变成 standby
 
@@ -151,6 +154,7 @@ tmex hub standby --public-url https://hub-b.example [--priority 200]
 | `TMEX_HUB_PUBLIC_URL` | 参数 URL |
 | `TMEX_HUB_PRIORITY` | `--priority`，缺省 `200` |
 | `TMEX_HUB_URL` | **保持不变**（当前主 hub 种子） |
+| `TMEX_HUB_PEERS` | **追加当前主 hub 的 node id**（已有名单去重保序；找不到主 hub 则不改） |
 
 约束：
 
@@ -187,6 +191,7 @@ tmex hub promote --yes
 - **一定**打印红字警告：原写者必须先 `demote` 或停机，否则脑裂；
 - 必须 `--yes`，或在 TTY 交互确认。非 TTY 不加 `--yes` 会拒绝；
 - 提醒原写者执行 `tmex hub allow <本机 nodeId>`。若本机 `TMEX_HUB_PEERS` 为空，额外警告：本机未授权任何对端，旧写者无法 fencing 本机（可以接受），但旧写者仍须把本机加入它的名单。
+- **不改** `TMEX_HUB_PEERS`，结束时打印当前名单。
 
 ### 降为备援（demote）
 
@@ -194,7 +199,7 @@ tmex hub promote --yes
 tmex hub demote
 ```
 
-只改 `TMEX_HUB_MODE=standby` 并重启。原主恢复上线前必须先做这一步。
+只改 `TMEX_HUB_MODE=standby` 并重启。**不改** `TMEX_HUB_PEERS`，结束时打印当前名单。原主恢复上线前必须先做这一步。
 
 ### 查看 hub 集合
 
@@ -203,6 +208,22 @@ tmex hub list
 ```
 
 读本机 `mesh_hubs`：短 node id、name、mode、priority、writerEpoch、authorized、publicUrl、online、lastSeen。写者行以 `*` 标记（规则与运行时 `pickWriterHub` 相同）。`AUTH=yes` 当且仅当该 id 在本机 `TMEX_HUB_PEERS` 中，或就是本机 self。表空表示还没从 `node.list` 学到集合（旧 hub、尚未 uplink，或对端尚未被 allow）。
+
+`GET /api/mesh/hubs` 的 `candidates[]` 现为对象（前端忽略多余字段）：`publicUrl`、`lastError`（最近一次拨号失败原因，没有则为 `null`）、`lastAttemptAt`（epoch 毫秒）。用于确认 failover 是否真的试过备用 hub、以及 TLS / CA pin 失败原因。
+
+节点 uplink 诊断日志（`console.info`，同一 URL 相同失败行 60 s 内只打一次）：
+
+```text
+[uplink] try hub=<url> mode=<active|standby> epoch=<n> idx=<i>/<n> transport=<ws|memory>
+[uplink] candidate failed hub=<url> err=<msg> fails=<k>
+[uplink] failover → hub=<url>
+[uplink] probe ok hub=<url>
+[uplink] probe fail hub=<url>
+[uplink] switch-back → hub=<url>
+[uplink] ca pin stored url=<url> fp=<64-hex>
+[uplink] ca bootstrap failed url=<url> err=<msg>
+[uplink] no CA pin for <url> and no advertised fingerprint
+```
 
 ### 主 hub 恢复：先 demote，再启动
 
@@ -244,13 +265,14 @@ tmex hub list
 
 ## 验收清单
 
-- [ ] 已加入的 node 上 `tmex hub standby --public-url https://…` 后角色为 `hub,node`、mode=`standby`，`TMEX_HUB_URL` 未改，服务重启；输出含本机 node id 与 `tmex hub allow <id>`。
+- [ ] 已加入的 node 上 `tmex hub standby --public-url https://…` 后角色为 `hub,node`、mode=`standby`，`TMEX_HUB_URL` 未改，服务重启；输出含本机 node id 与 `tmex hub allow <id>`；本机 `TMEX_HUB_PEERS` 已含当前主 hub（或打印找不到主 hub 的警告）。
 - [ ] 未加入 / 已是 active hub 的机器执行 standby 被拒绝。
 - [ ] 未 `allow` 前，active 的 `hubs[]` 不含该 standby；active 执行 `tmex hub allow <id>` 后才出现。
 - [ ] `tmex hub allow` / `disallow` 校验 32 位 hex、去重保序、非 `hub,node` 拒绝、`--no-restart` 不重启。
 - [ ] 主 hub 的 `node.list` 含 `hubs[]`；各 node `tmex hub list` 能看到主与备，写者打 `*`，`AUTH` 列对 self / 已 allow 的为 yes。
 - [ ] 停主 hub 后，node 在阈值内切到 standby；`GET /api/mesh/hubs` 的 `attached` 指向备机。
-- [ ] 备机 enroll / redeem / rename / revoke 返回 409 `HUB_NOT_WRITER`，带写者 URL。
+- [ ] 备机 enroll / redeem / rename / revoke 返回 409 `HUB_NOT_WRITER`，带写者 URL（standby 已自动授权主 hub 时 `writerHubId` 非 null）。
+- [ ] 主 hub 停机后 node 日志出现对备用 hub 的 `[uplink] try` / `candidate failed`（而不只是 `offline reason=stopped`）；`GET /api/mesh/hubs.candidates[].lastError` 能看到失败原因。
 - [ ] 主 hub 按「先 demote 再启动」恢复后，node 切回主；跳过 demote 会看到 fence 或 split-brain 日志。
 - [ ] `tmex hub promote --yes` 把 epoch 提到 `max(env, db)+1`；无 `--yes` 且非 TTY 拒绝。
 - [ ] 旧节点（v1.1.5）仍能解码 `node.list` 并保持单 hub uplink。

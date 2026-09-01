@@ -613,13 +613,57 @@ describe('mesh-routes', () => {
         hubs: Array<{ nodeId: string; mode: string; online: boolean }>;
         writerHubId: string | null;
         attached: { publicUrl: string } | null;
-        candidates: string[];
+        candidates: Array<{
+          publicUrl: string;
+          lastError: string | null;
+          lastAttemptAt: number | null;
+        }>;
       };
       expect(body.writerHubId).toBe(NODE_ID);
       expect(body.hubs.map((h) => h.nodeId)).toEqual([NODE_ID, PEER_ID]);
       expect(body.hubs.find((h) => h.nodeId === PEER_ID)?.mode).toBe('standby');
       expect(body.attached).toBeNull();
-      expect(body.candidates).toEqual(['https://writer.example', 'https://standby.example']);
+      expect(body.candidates).toEqual([
+        { publicUrl: 'https://writer.example', lastError: null, lastAttemptAt: null },
+        { publicUrl: 'https://standby.example', lastError: null, lastAttemptAt: null },
+      ]);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/hubs candidates include lastError and lastAttemptAt', async () => {
+    const mesh = await bootMesh();
+    try {
+      const routes = mesh.runtime.mesh as unknown as {
+        deps: { hubCandidates?: () => unknown };
+      };
+      routes.deps.hubCandidates = () => [
+        {
+          publicUrl: 'https://writer.example',
+          lastError: 'unable to verify the first certificate',
+          lastAttemptAt: 42,
+        },
+      ];
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        candidates: Array<{
+          publicUrl: string;
+          lastError: string | null;
+          lastAttemptAt: number | null;
+        }>;
+      };
+      expect(body.candidates).toEqual([
+        {
+          publicUrl: 'https://writer.example',
+          lastError: 'unable to verify the first certificate',
+          lastAttemptAt: 42,
+        },
+      ]);
     } finally {
       mesh.close();
     }
@@ -1297,7 +1341,7 @@ describe('mesh upgrade routes', () => {
         }
       );
       expect(res.status).toBe(503);
-      expect(await res.json()).toEqual({ code: 'NODE_UNREACHABLE', nodeId: UPGRADE_PEER });
+      expect(await res.json()).toMatchObject({ code: 'NODE_UNREACHABLE', nodeId: UPGRADE_PEER });
     } finally {
       mesh.close();
     }
@@ -1445,7 +1489,7 @@ describe('mesh upgrade routes', () => {
         }
       );
       expect(res.status).toBe(503);
-      expect(await res.json()).toEqual({ code: 'NODE_UNREACHABLE', nodeId: UPGRADE_PEER });
+      expect(await res.json()).toMatchObject({ code: 'NODE_UNREACHABLE', nodeId: UPGRADE_PEER });
       expect(streams.opens.map((o) => o.method)).toEqual(['GET', 'POST']);
     } finally {
       mesh.close();

@@ -1533,6 +1533,50 @@ describe('createMeshRuntime', () => {
       received.some((msg) => msg.t === 'node.status' && msg.hub?.caFingerprint === 'bb'.repeat(32))
     );
   });
+
+  test('refreshTlsAndAdvertise sends a fingerprint that was null at construct', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: ReturnType<typeof decodeUplinkCtl>[] = [];
+    hub.ctl.onMessage((bytes) => {
+      received.push(decodeUplinkCtl(bytes));
+    });
+    let fp: string | null = null;
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: true, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        hubPublicUrl: 'https://hub.example',
+        hubMode: 'standby',
+        hubPriority: 40,
+        hubWriterEpoch: 3,
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+      tlsInfo: () => ({ caFingerprint: fp, caPem: fp ? 'pem' : null }),
+      uplinkHub: null,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    await waitUntil(() => received.some((msg) => msg.t === 'node.status'));
+    const first = received.find((msg) => msg.t === 'node.status');
+    expect(first && first.t === 'node.status' ? first.hub?.caFingerprint : undefined).toBeNull();
+    fp = 'bb'.repeat(32);
+    await mesh.refreshTlsAndAdvertise();
+    await waitUntil(() =>
+      received.some((msg) => msg.t === 'node.status' && msg.hub?.caFingerprint === 'bb'.repeat(32))
+    );
+  });
 });
 
 describe('SessionRegistry', () => {

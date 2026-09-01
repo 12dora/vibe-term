@@ -38,7 +38,7 @@ import {
   requireSession,
 } from './session-middleware';
 import type { UplinkStatus } from './types';
-import type { AttachedHub } from './uplink-pool';
+import type { AttachedHub, UplinkCandidate } from './uplink-pool';
 
 export type { MeshNodeDto };
 
@@ -62,7 +62,7 @@ export type MeshRoutesDeps = {
   selfName?: () => string | null;
   hubStore?: MeshHubStore;
   attachedHub?: () => AttachedHub | null;
-  hubCandidates?: () => string[];
+  hubCandidates?: () => Array<string | UplinkCandidate>;
   forwardAuthorizedHttp?: (
     req: Request,
     input: { nodeId: string; method: string; path: string; query?: string; body?: unknown }
@@ -74,6 +74,21 @@ const STATUS_TO_U8: Record<string, number> = {
   offline: wsBorsh.NODE_EVENT_STATUS_OFFLINE,
   revoked: wsBorsh.NODE_EVENT_STATUS_REVOKED,
 };
+
+function serializeHubCandidate(entry: string | UplinkCandidate): {
+  publicUrl: string;
+  lastError: string | null;
+  lastAttemptAt: number | null;
+} {
+  if (typeof entry === 'string') {
+    return { publicUrl: entry, lastError: null, lastAttemptAt: null };
+  }
+  return {
+    publicUrl: entry.publicUrl,
+    lastError: entry.lastError ?? null,
+    lastAttemptAt: entry.lastAttemptAt ?? null,
+  };
+}
 
 export class MeshRoutes {
   private readonly sessionDeps: SessionMiddlewareDeps;
@@ -187,7 +202,7 @@ export class MeshRoutes {
     const rows = store?.list() ?? [];
     const writerHubId = pickWriterHub(rows);
     const attached = this.deps.attachedHub?.() ?? null;
-    const candidates = this.deps.hubCandidates?.() ?? rows.map((row) => row.publicUrl);
+    const rawCandidates = this.deps.hubCandidates?.() ?? rows.map((row) => row.publicUrl);
     return jsonBody({
       hubs: rows.map((row) => ({
         nodeId: row.hubNodeId,
@@ -202,7 +217,7 @@ export class MeshRoutes {
       })),
       attached,
       writerHubId,
-      candidates,
+      candidates: rawCandidates.map(serializeHubCandidate),
     });
   }
 

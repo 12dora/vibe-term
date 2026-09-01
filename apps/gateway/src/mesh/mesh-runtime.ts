@@ -318,6 +318,7 @@ export type MeshRuntime = {
     cb: (list: UplinkNodeList, meta: { hubNodeId: string | null; generation: number }) => void
   ): () => void;
   attachedHub(): AttachedHub | null;
+  refreshTlsAndAdvertise(): Promise<void>;
 };
 
 export type NetworkInterfacesFn = () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
@@ -1315,7 +1316,7 @@ function wireMeshHttp(
     hubPublicUrl: hubEndpointUrl(config),
     hubStore: d.hubStore,
     attachedHub: () => w.uplink.attachedHub(),
-    hubCandidates: () => w.uplink.candidates().map((row) => row.publicUrl),
+    hubCandidates: () => w.uplink.candidates(),
     trustProxy: gatewayConfig.trustProxy,
     connectionLookup: (input) =>
       d.sessions.lookup(input.sid, input.via, input.connectionId, input.cid),
@@ -1402,6 +1403,7 @@ function assembleMeshRuntime(
     attachedHub() {
       return uplink.attachedHub();
     },
+    refreshTlsAndAdvertise,
     async start() {
       await rtc.ready();
       if (!d.userIdOf()) {
@@ -1416,6 +1418,9 @@ function assembleMeshRuntime(
           );
           return;
         }
+      }
+      if (opts.tlsInfo) {
+        await refreshTlsAndAdvertise();
       }
       await peerManager.start();
       uplink.start();

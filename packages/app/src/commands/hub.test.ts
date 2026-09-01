@@ -512,6 +512,86 @@ describe('hub standby/promote/demote/list', () => {
     expect(text).toMatch(/ignore|忽略/i);
   });
 
+  test('standby auto-authorizes the current primary from mesh_hubs active rows', async () => {
+    const primary = 'aa'.repeat(16);
+    const { auth, envPath } = await openEnvAuth('node');
+    await seedJoinedIdentity(auth);
+    insertMeshHub(auth, {
+      hubNodeId: primary,
+      publicUrl: 'https://hub.example',
+      name: 'writer',
+      mode: 'active',
+      priority: 100,
+      writerEpoch: 4,
+    });
+    const logs: string[] = [];
+    await runHubStandby(parseArgs(['hub', 'standby', '--public-url', 'https://standby.example']), {
+      auth,
+      log: (message) => logs.push(message),
+      skipRestart: true,
+    });
+    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(primary);
+    expect(logs.join('\n')).toContain(primary);
+  });
+
+  test('standby falls back to the peer_cache hub sentinel when mesh_hubs has no active row', async () => {
+    const primary = 'bb'.repeat(16);
+    const { auth, envPath } = await openEnvAuth('node');
+    await seedJoinedIdentity(auth);
+    auth.userStore.upsertHubMeta({
+      nodeId: primary,
+      publicUrl: 'https://hub.example',
+      now: Date.now(),
+    });
+    const logs: string[] = [];
+    await runHubStandby(parseArgs(['hub', 'standby', '--public-url', 'https://standby.example']), {
+      auth,
+      log: (message) => logs.push(message),
+      skipRestart: true,
+    });
+    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(primary);
+    expect(logs.join('\n')).toContain(primary);
+  });
+
+  test('standby warns when no primary hub id can be found', async () => {
+    const { auth, envPath } = await openEnvAuth('node');
+    await seedJoinedIdentity(auth);
+    const logs: string[] = [];
+    await runHubStandby(parseArgs(['hub', 'standby', '--public-url', 'https://standby.example']), {
+      auth,
+      log: (message) => logs.push(message),
+      skipRestart: true,
+    });
+    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBeUndefined();
+    expect(logs.join('\n')).toMatch(/WARNING|警告/);
+  });
+
+  test('promote and demote print TMEX_HUB_PEERS without changing it', async () => {
+    const keep = 'cc'.repeat(16);
+    const { auth, envPath } = await openEnvAuth('hub,node', {
+      TMEX_HUB_MODE: 'standby',
+      TMEX_HUB_PEERS: keep,
+    });
+    await seedJoinedIdentity(auth);
+    const promoteLogs: string[] = [];
+    await runHubPromote(parseArgs(['hub', 'promote', '--yes']), {
+      auth,
+      log: (message) => promoteLogs.push(message),
+      skipRestart: true,
+    });
+    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(keep);
+    expect(promoteLogs.join('\n')).toContain(keep);
+
+    const demoteLogs: string[] = [];
+    await runHubDemote(parseArgs(['hub', 'demote']), {
+      auth,
+      log: (message) => demoteLogs.push(message),
+      skipRestart: true,
+    });
+    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(keep);
+    expect(demoteLogs.join('\n')).toContain(keep);
+  });
+
   test('promote warns when TMEX_HUB_PEERS is empty and reminds the old writer', async () => {
     const { auth } = await openEnvAuth('hub,node', { TMEX_HUB_MODE: 'standby' });
     await seedJoinedIdentity(auth);

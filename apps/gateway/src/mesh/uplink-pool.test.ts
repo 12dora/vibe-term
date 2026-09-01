@@ -152,6 +152,7 @@ type FakeBehavior = {
   failTimes?: number;
   hang?: boolean;
   gate?: { wait: () => Promise<void> };
+  error?: string;
 };
 
 class FakeUplink {
@@ -259,7 +260,7 @@ class FakeUplink {
       this.sharedFail.failTimes = (this.sharedFail.failTimes ?? 0) - 1;
       this.failTimes += 1;
       this.setState('offline');
-      throw new Error('connect-failed');
+      throw new Error(this.sharedFail.error ?? 'connect-failed');
     }
     this.link = {
       closed: new Promise((resolve) => {
@@ -1100,6 +1101,272 @@ describe('UplinkPool', () => {
     expect(hubTrust.get('https://badfp.example')).toBeNull();
     expect(fetches).not.toContain('https://badfp.example');
     expect(CA_BOOTSTRAP_TIMEOUT_MS).toBe(5_000);
+  });
+
+  test('logs every candidate attempt, failure, failover and records lastError', async () => {
+    const lines: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const { pool } = boot({
+        urls: ['https://a.example', 'https://b.example'],
+        behavior: { 'https://a.example': { failTimes: 3 } },
+      });
+      pool.start();
+      await waitMicro();
+      expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+      const a = pool.candidates().find((row) => row.publicUrl === 'https://a.example');
+      const b = pool.candidates().find((row) => row.publicUrl === 'https://b.example');
+      expect(a?.lastError).toBe('connect-failed');
+      expect(a?.lastAttemptAt).toBeGreaterThan(0);
+      expect(b?.lastError).toBeNull();
+      expect(b?.lastAttemptAt).toBeGreaterThan(0);
+      expect(
+        lines.some((row) =>
+          row.includes(
+            '[uplink] try hub=https://a.example mode=active epoch=3 idx=1/2 transport=ws'
+          )
+        )
+      ).toBe(true);
+      expect(
+        lines.some((row) =>
+          /\[uplink] candidate failed hub=https:\/\/a\.example err=connect-failed fails=\d+/.test(
+            row
+          )
+        )
+      ).toBe(true);
+      expect(lines.some((row) => row.includes('[uplink] failover → hub=https://b.example'))).toBe(
+        true
+      );
+      expect(
+        lines.some((row) =>
+          row.includes(
+            '[uplink] try hub=https://b.example mode=standby epoch=1 idx=2/2 transport=ws'
+          )
+        )
+      ).toBe(true);
+    } finally {
+      console.info = originalInfo;
+    }
+  });
+
+  test('rate-limits identical candidate failure lines to once per 60s per URL', async () => {
+    const lines: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const scheduler = new ManualScheduler();
+      const { pool } = boot({
+        urls: ['https://a.example'],
+        behavior: { 'https://a.example': { failTimes: 99 } },
+        scheduler,
+      });
+      pool.start();
+      await waitMicro();
+      const failed = () =>
+        lines.filter((row) =>
+          row.includes('[uplink] candidate failed hub=https://a.example err=connect-failed')
+        );
+      expect(failed().length).toBe(1);
+      await scheduler.advance(1_000);
+      await waitMicro();
+      expect(failed().length).toBe(1);
+      await scheduler.advance(60_000);
+      await waitMicro();
+      expect(failed().length).toBeGreaterThan(1);
+      const a = pool.candidates()[0];
+      expect(a?.lastError).toBe('connect-failed');
+    } finally {
+      console.info = originalInfo;
+    }
+  });
+
+  test('logs TLS failure when a candidate has no pin and no advertised fingerprint', async () => {
+    const lines: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const { pool } = boot({
+        urls: ['https://b.example'],
+        behavior: {
+          'https://b.example': {
+            failTimes: 3,
+            error: 'unable to verify the first certificate',
+          },
+        },
+        candidates: () => [
+          {
+            hubNodeId: ID.c,
+            publicUrl: 'https://b.example',
+            mode: 'standby',
+            writerEpoch: 1,
+            priority: 20,
+            caFingerprint: null,
+          },
+        ],
+      });
+      pool.start();
+      await waitMicro();
+      expect(
+        lines.some((row) =>
+          row.includes('no CA pin for https://b.example and no advertised fingerprint')
+        )
+      ).toBe(true);
+      expect(pool.candidates()[0]?.lastError).toContain('certificate');
+    } finally {
+      console.info = originalInfo;
+    }
+  });
+
+  test('logs CA pin stored and bootstrap failures', async () => {
+    const lines: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const fp = 'ab'.repeat(32);
+      const { pool, created } = boot({
+        urls: ['https://a.example'],
+        fetchCaPem: async (url) => {
+          if (url === 'https://ok.example') return 'pem-ok';
+          throw new Error('ca_unavailable');
+        },
+        fingerprintPem: () => fp,
+      });
+      pool.start();
+      await waitMicro();
+      created[0]?.emitStaleList({
+        t: 'node.list',
+        version: 2,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+        hubs: [
+          {
+            nodeId: ID.c,
+            publicUrl: 'https://ok.example',
+            mode: 'standby',
+            priority: 20,
+            writerEpoch: 1,
+            caFingerprint: fp,
+          },
+          {
+            nodeId: ID.b,
+            publicUrl: 'https://bad.example',
+            mode: 'standby',
+            priority: 30,
+            writerEpoch: 1,
+            caFingerprint: fp,
+          },
+        ],
+      });
+      await waitMicro();
+      expect(
+        lines.some((row) => row.includes('[uplink] ca pin stored url=https://ok.example fp='))
+      ).toBe(true);
+      expect(
+        lines.some((row) =>
+          row.includes('[uplink] ca bootstrap failed url=https://bad.example err=ca_unavailable')
+        )
+      ).toBe(true);
+    } finally {
+      console.info = originalInfo;
+    }
+  });
+
+  test('retries CA bootstrap immediately when a later node.list brings a fingerprint', async () => {
+    const fetches: string[] = [];
+    const fp = 'ab'.repeat(32);
+    const { pool, created, hubTrust } = boot({
+      urls: ['https://a.example'],
+      fetchCaPem: async (url) => {
+        fetches.push(url);
+        return 'pem-ok';
+      },
+      fingerprintPem: () => fp,
+    });
+    pool.start();
+    await waitMicro();
+    const live = created[0];
+    live?.emitStaleList({
+      t: 'node.list',
+      version: 2,
+      key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+      rtc: { stun: [], turn: null },
+      nodes: [],
+      hubs: [
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          caFingerprint: null,
+        },
+      ],
+    });
+    await waitMicro();
+    expect(fetches).toEqual([]);
+    live?.emitStaleList({
+      t: 'node.list',
+      version: 3,
+      key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+      rtc: { stun: [], turn: null },
+      nodes: [],
+      hubs: [
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          caFingerprint: fp,
+        },
+      ],
+    });
+    await waitMicro();
+    expect(fetches).toEqual(['https://b.example']);
+    expect(hubTrust.get('https://b.example')?.fingerprint).toBe(fp);
+  });
+
+  test('logs probe result and switch-back', async () => {
+    const lines: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const scheduler = new ManualScheduler();
+      let aHealthy = false;
+      const { pool } = boot({
+        urls: ['https://a.example', 'https://b.example'],
+        behavior: { 'https://a.example': { failTimes: 3 } },
+        scheduler,
+        probe: async (url) => url === 'https://a.example' && aHealthy,
+      });
+      pool.start();
+      await waitMicro();
+      expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+      aHealthy = true;
+      await scheduler.advance(60_000);
+      await waitMicro();
+      expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+      expect(lines.some((row) => row.includes('[uplink] probe ok hub=https://a.example'))).toBe(
+        true
+      );
+      expect(
+        lines.some((row) => row.includes('[uplink] switch-back → hub=https://a.example'))
+      ).toBe(true);
+    } finally {
+      console.info = originalInfo;
+    }
   });
 });
 

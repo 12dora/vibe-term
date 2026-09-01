@@ -342,7 +342,10 @@ function buildTlsLifecycle(
   db: GatewayRuntime['db'],
   routeDeps: LocalRouteDeps,
   tlsSlot: { service?: TlsService },
-  onStatusChange?: () => void
+  hooks?: {
+    onStatusChange?: () => void;
+    onTlsApplied?: () => void | Promise<void>;
+  }
 ) {
   const httpsListener = new HttpsListener({
     fetch,
@@ -355,7 +358,7 @@ function buildTlsLifecycle(
     challenge: new AcmeHttp01Challenge(),
     envPath: resolveSetupEnvPath(),
     trustProxy: gatewayConfig.trustProxy,
-    onStatusChange,
+    onStatusChange: hooks?.onStatusChange,
   });
   tlsSlot.service = tls;
   tunnelManager.setPatchHostEnv(async (trustProxy) => {
@@ -393,6 +396,7 @@ function buildTlsLifecycle(
       service: tls,
       authorize: async (req) =>
         routeDeps.authenticate(req).ok ? null : jsonErr('UNAUTHORIZED', 'login required', 401),
+      onApplied: hooks?.onTlsApplied,
     }),
   };
 }
@@ -711,11 +715,17 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     (req) => serveFrontend(req, staticRoot),
   ]);
   const websocket = routeWebsocket(gateway, mesh ?? wsAuthFrom(authHttp), hub);
-  const tlsLife = buildTlsLifecycle(fetch, websocket, gateway.db, routeDeps, tlsSlot, () => {
+  const refreshMeshTls = () => {
     authHttp?.auth.invalidateAuthModeCache();
     mesh?.invalidateAuthModeCache();
+    void mesh?.refreshTlsAndAdvertise();
+  };
+  const tlsLife = buildTlsLifecycle(fetch, websocket, gateway.db, routeDeps, tlsSlot, {
+    onStatusChange: refreshMeshTls,
+    onTlsApplied: refreshMeshTls,
   });
   tlsHandler = tlsLife.tlsHandler;
+  void mesh?.refreshTlsAndAdvertise();
   setHealthzTlsProvider(async () => {
     const status = await tlsLife.tls.status();
     return { mode: status.mode, listenerRunning: status.listener.running };

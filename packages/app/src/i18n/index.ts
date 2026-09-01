@@ -190,6 +190,11 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.standby.nodeId': 'this node id: {{nodeId}}',
     'hub.standby.allowHint':
       'the active hub ignores this standby until it runs: tmex hub allow {{nodeId}}',
+    'hub.standby.authorizedPrimary':
+      'authorized current primary hub {{nodeId}}; TMEX_HUB_PEERS={{peers}}',
+    'hub.standby.noPrimary':
+      'WARNING: could not find the current primary hub to authorize (no active mesh_hubs row and no peer_cache hub sentinel); set TMEX_HUB_PEERS manually with tmex hub allow',
+    'hub.peers.current': 'current TMEX_HUB_PEERS={{peers}}',
     'hub.promote.notHub': 'hub promote requires a hub,node install',
     'hub.promote.needConfirm':
       'promoting the writer risks split-brain; pass --yes or confirm interactively',
@@ -390,6 +395,10 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.standby.nodeId': '本机 node id：{{nodeId}}',
     'hub.standby.allowHint':
       '当前 active hub 会忽略本机 standby，直到执行：tmex hub allow {{nodeId}}',
+    'hub.standby.authorizedPrimary': '已授权当前主 hub {{nodeId}}；TMEX_HUB_PEERS={{peers}}',
+    'hub.standby.noPrimary':
+      '警告：找不到当前主 hub 可授权（mesh_hubs 无 active 行，peer_cache 也无 hub 哨兵）。请用 tmex hub allow 手动写入 TMEX_HUB_PEERS',
+    'hub.peers.current': '当前 TMEX_HUB_PEERS={{peers}}',
     'hub.promote.notHub': 'hub promote 仅适用于 hub,node 安装',
     'hub.promote.needConfirm': '提升写者有脑裂风险。请加 --yes 确认，或在交互终端确认。',
     'hub.promote.warning':
