@@ -1,7 +1,7 @@
 // mesh 身份鉴权相关的 REST 报文类型（设计见 docs/hub/2026082700-hub-node-architecture.md §2 / §4）。
 // 所有二进制字段一律 base64url（无 padding）字符串，与 `@tmex/shared/auth` 的 encodeBase64url 对齐。
 
-import type { LocalAuthStatus } from '@tmex/shared';
+import type { LocalAuthStatus, MeshNodeOperation } from '@tmex/shared';
 import type { HubEndpointInfo, HubMode } from '@tmex/shared/uplink';
 
 // hub 集合的契约类型来自 uplink codec（hub 广播 `node.list.hubs[]` 用的同一份），
@@ -225,6 +225,8 @@ export interface MeshNode {
   isHub?: boolean;
   /** hub 机的主 / 备身份；非 hub 或旧后端不下发。 */
   hubMode?: HubMode;
+  /** 入口记录的进行中长事务（卸载 / 主备切换）；无则缺省或 null。 */
+  operation?: MeshNodeOperation | null;
 }
 
 export interface MeshNodesResponse {

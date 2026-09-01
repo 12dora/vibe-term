@@ -103,6 +103,58 @@ export type MeshUpgradeErrorCode =
   | 'RELEASE_UNAVAILABLE'
   | 'NOT_FOUND';
 
+/**
+ * 远程卸载：目标节点 `POST /api/system/uninstall` 受理后返回 `scheduled`，随后由脱离的
+ * 卸载器停服务、删安装目录 / shim / 数据——之后目标离线，状态不再可查。
+ */
+export type UninstallState = 'idle' | 'scheduled' | 'failed';
+
+export interface UninstallStatus {
+  state: UninstallState;
+  startedAt: string | null;
+  error: string | null;
+}
+
+/** `POST /api/system/uninstall` 请求体；目前只有 `full`（删服务、程序、shim、env、数据库） */
+export interface StartUninstallRequest {
+  mode?: 'full';
+}
+
+/** 节点管理页「卸载 tmex」的稳定错误码 */
+export type MeshUninstallErrorCode =
+  | 'NODE_LOGIN_REQUIRED'
+  | 'NODE_UNREACHABLE'
+  /** 目标不是 CLI 安装（容器 / 手动部署）或无服务管理器，无法自卸载 */
+  | 'UNINSTALL_NOT_ALLOWED'
+  /** 目标版本没有卸载接口 */
+  | 'UNINSTALL_UNSUPPORTED'
+  /** 不能从入口卸载入口自己 */
+  | 'UNINSTALL_SELF_BLOCKED'
+  | 'UPGRADE_IN_PROGRESS'
+  | 'NOT_FOUND';
+
+export interface MeshUninstallError {
+  code: MeshUninstallErrorCode;
+  nodeId?: string;
+}
+
+/**
+ * 入口记录的节点长事务，随 `GET /api/mesh/nodes` 每行下发（`operation`），页面刷新后据此
+ * 恢复行状态。`uninstall`：requested → uninstalling（目标已受理，随后离线）→ 由入口在该
+ * 节点被吊销 / 消失时清除，或 `DELETE /api/mesh/nodes/:id/operation` 手动清除，超时自清。
+ * `role-switch`：由 hub 主备切换写入，phase 由该接口定义。
+ */
+export type MeshNodeOperationKind = 'uninstall' | 'role-switch';
+
+export interface MeshNodeOperation {
+  kind: MeshNodeOperationKind;
+  phase: string;
+  /** epoch 毫秒 */
+  startedAt: number;
+  updatedAt: number;
+  error: string | null;
+}
+
 /** `GET /api/mesh/upgrade/latest`：具体可安装版本，不含入口节点 hasUpdate */
 export interface MeshUpgradeLatest {
   latestVersion: string;
