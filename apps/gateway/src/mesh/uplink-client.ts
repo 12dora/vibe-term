@@ -12,6 +12,7 @@ import {
   WebSocketLink,
   type WebSocketTransportInput,
 } from '@tmex/shared/link';
+import type { HubAdvertisement } from '@tmex/shared/uplink';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler, jsonStable } from './ctl';
 import { jsonText } from './json-text';
@@ -66,7 +67,7 @@ export type UplinkClientOptions = {
   userId: string | (() => string);
   keyLogApplier: KeyLogApplier;
   userStore: UserStore;
-  statusProvider: () => UplinkStatus;
+  statusProvider: () => UplinkStatus & { hub?: HubAdvertisement };
   onNodeList?: (list: UplinkNodeList) => void;
   onRtcSignal?: (msg: UplinkRtcSignal) => void;
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
@@ -149,10 +150,10 @@ export class UplinkClient {
     return this.userIdOf();
   }
 
-  private readonly hubUrl: string;
+  readonly hubUrl: string;
   private readonly hubHost: string;
   private readonly userStore: UserStore;
-  private readonly statusProvider: () => UplinkStatus;
+  private readonly statusProvider: () => UplinkStatus & { hub?: HubAdvertisement };
   private readonly onNodeListCb?: (list: UplinkNodeList) => void;
   private readonly onRtcSignalCb?: (msg: UplinkRtcSignal) => void;
   private readonly onEnrollRedeemedCb?: (msg: UplinkEnrollRedeemed) => void;
@@ -246,6 +247,30 @@ export class UplinkClient {
     this.loop = this.runLoop(this.stopAbort.signal);
   }
 
+  async attemptConnect(signal?: AbortSignal): Promise<void> {
+    if (this.loop) throw new Error('uplink already started');
+    if (!this.stopAbort) this.stopAbort = new AbortController();
+    const effective = signal ?? this.stopAbort.signal;
+    if (effective.aborted) {
+      throw effective.reason instanceof Error ? effective.reason : new Error('aborted');
+    }
+    this.connectingAt = this.scheduler.now();
+    this.setState('connecting');
+    try {
+      await this.connectOnce(effective);
+    } catch (err) {
+      this.tearDownLink('connect-failed');
+      this.setState('offline');
+      throw err;
+    }
+  }
+
+  waitUntilClosed(signal?: AbortSignal): Promise<void> {
+    return this.waitUntilClosedSignal(
+      signal ?? this.stopAbort?.signal ?? new AbortController().signal
+    );
+  }
+
   async connectWithLink(link: LinkSession, signal?: AbortSignal): Promise<void> {
     if (!this.stopAbort) {
       this.stopAbort = new AbortController();
@@ -306,6 +331,7 @@ export class UplinkClient {
         direct_capable: status.direct_capable,
         inventory: status.inventory,
         endpoints: status.endpoints,
+        ...(status.hub ? { hub: status.hub } : {}),
       })
     );
   }
@@ -358,7 +384,7 @@ export class UplinkClient {
       try {
         await (this.customConnect ? this.customConnect(signal) : this.connectOnce(signal));
         this.onlineAt = this.scheduler.now();
-        await this.waitUntilClosed(signal);
+        await this.waitUntilClosedSignal(signal);
         if (signal.aborted) return;
         const uptime = this.scheduler.now() - this.onlineAt;
         const offlineReason = this.lastTearDownReason || 'disconnected';
@@ -682,7 +708,7 @@ export class UplinkClient {
     console.warn(`[uplink] ctl ${kind} error type=${safeType} len=${length} err=${code}`);
   }
 
-  private waitUntilClosed(signal: AbortSignal): Promise<void> {
+  private waitUntilClosedSignal(signal: AbortSignal): Promise<void> {
     const link = this.link;
     if (!link || signal.aborted) return Promise.resolve();
     return new Promise((resolve) => {

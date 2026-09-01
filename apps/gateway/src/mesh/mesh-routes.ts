@@ -2,6 +2,8 @@ import { wsBorsh } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { readJsonObjectBody } from '../api/http';
 import { parseCookies } from '../auth/cookies';
+import type { MeshHubStore } from '../auth/mesh-hub-store';
+import { pickWriterHub } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { PublicAuthNode } from './auth-routes';
@@ -36,6 +38,7 @@ import {
   requireSession,
 } from './session-middleware';
 import type { UplinkStatus } from './types';
+import type { AttachedHub } from './uplink-pool';
 
 export type { MeshNodeDto };
 
@@ -57,6 +60,9 @@ export type MeshRoutesDeps = {
   selfStatus?: () => UplinkStatus;
   listedNames?: () => ReadonlyArray<{ id: string; name: string }>;
   selfName?: () => string | null;
+  hubStore?: MeshHubStore;
+  attachedHub?: () => AttachedHub | null;
+  hubCandidates?: () => string[];
   forwardAuthorizedHttp?: (
     req: Request,
     input: { nodeId: string; method: string; path: string; query?: string; body?: unknown }
@@ -102,6 +108,9 @@ export class MeshRoutes {
     const path = new URL(req.url).pathname;
     if (path === '/api/mesh/nodes' && req.method === 'GET') {
       return requireSession(this.sessionDeps, (r) => this.handleNodes(r))(req);
+    }
+    if (path === '/api/mesh/hubs' && req.method === 'GET') {
+      return requireSession(this.sessionDeps, () => this.handleHubs())(req);
     }
     if (path === '/api/mesh/upgrade/latest' && req.method === 'GET') {
       return requireSession(this.sessionDeps, () => this.handleUpgradeLatest())(req);
@@ -171,6 +180,30 @@ export class MeshRoutes {
 
   private handleNodes(req: Request): Response {
     return jsonBody({ nodes: this.collectNodes(req) });
+  }
+
+  private handleHubs(): Response {
+    const store = this.deps.hubStore;
+    const rows = store?.list() ?? [];
+    const writerHubId = pickWriterHub(rows);
+    const attached = this.deps.attachedHub?.() ?? null;
+    const candidates = this.deps.hubCandidates?.() ?? rows.map((row) => row.publicUrl);
+    return jsonBody({
+      hubs: rows.map((row) => ({
+        nodeId: row.hubNodeId,
+        publicUrl: row.publicUrl,
+        ...(row.name ? { name: row.name } : {}),
+        mode: row.mode,
+        priority: row.priority,
+        writerEpoch: row.writerEpoch,
+        caFingerprint: row.caFingerprint,
+        online: row.online,
+        lastSeenAt: row.lastSeenAt,
+      })),
+      attached,
+      writerHubId,
+      candidates,
+    });
   }
 
   private matchUpgradeNodeRoute(req: Request, path: string): Promise<Response> | undefined {
@@ -271,9 +304,13 @@ export class MeshRoutes {
     const registryById = new Map(this.deps.userStore.listNodes().map((row) => [row.id, row.name]));
     const selfName = this.deps.selfName?.() ?? null;
     const self = this.deps.selfStatus?.();
+    const storedHubs = this.deps.hubStore?.list() ?? [];
+    const hubIds = new Set(storedHubs.map((row) => row.hubNodeId));
+    const hubModeById = new Map(storedHubs.map((row) => [row.hubNodeId, row.mode] as const));
     const hubNodeId = this.deps.roles.hub
       ? this.deps.nodeId
-      : (this.deps.userStore.getHubMeta()?.nodeId ?? null);
+      : (pickWriterHub(storedHubs) ?? this.deps.userStore.getHubMeta()?.nodeId ?? null);
+    if (hubNodeId) hubIds.add(hubNodeId);
     return [...new Set([this.deps.nodeId, ...certs.map((c) => c.nodeId)])]
       .map((id) =>
         projectMeshListNode(
@@ -292,7 +329,9 @@ export class MeshRoutes {
           hubNodeId,
           (nid) => this.deps.peers.transportOf?.(nid) ?? null,
           (nid) => this.deps.peers.rttOf?.(nid) ?? null,
-          (nid) => this.deps.peers.linkDetailOf?.(nid) ?? null
+          (nid) => this.deps.peers.linkDetailOf?.(nid) ?? null,
+          hubIds,
+          (nid) => hubModeById.get(nid)
         )
       )
       .filter((n) => n != null);

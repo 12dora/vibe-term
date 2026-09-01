@@ -21,6 +21,7 @@ import type { KeyLogEffect, VerifyDelegationPasskey } from '@tmex/shared/auth';
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 import type { ChallengeStore } from '../auth/challenge-store';
+import { type MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import { NODE_SESSION_TTL_MS, type NodeSessionStore } from '../auth/node-session-store';
 import {
   createAuthenticationOptions,
@@ -97,6 +98,7 @@ export type AuthRoutesDeps = {
   verifyDelegationPasskey?: VerifyDelegationPasskey;
   primaryUserId?: string;
   hubPublicUrl?: string | null;
+  hubStore?: MeshHubStore;
   listPublicNodes?: () => PublicAuthNode[];
   onLogout?: (userId: string) => void;
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
@@ -679,6 +681,15 @@ export class AuthRoutes {
   }
 
   private resolveHub(): { nodeId: string | null; publicUrl: string | null } {
+    const rows = this.deps.hubStore?.list() ?? [];
+    const writerId = pickWriterHub(rows);
+    if (writerId) {
+      const writer = this.deps.hubStore?.get(writerId);
+      return {
+        nodeId: writerId,
+        publicUrl: writer?.publicUrl ?? this.deps.hubPublicUrl ?? null,
+      };
+    }
     const meta = this.deps.userStore.getHubMeta();
     if (this.deps.roles.hub) {
       return {

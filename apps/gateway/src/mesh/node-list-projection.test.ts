@@ -196,4 +196,42 @@ describe('node-list-projection', () => {
     expect(selfDto?.endpoints).toEqual([]);
     expect(selfDto?.directFailure).toBeNull();
   });
+
+  test('isHub is true for every id in hubIds and carries hubMode', () => {
+    const selfId = 'aa'.repeat(16);
+    const peerId = 'cc'.repeat(16);
+    const cert = {
+      certificateBytes: encodeCertificate({
+        domain: DOMAIN_CERTIFICATE,
+        uid: 'user-1',
+        node_id: hexToBytes(peerId),
+        ed_pk: new Uint8Array(32).fill(4),
+        x25519_pk: new Uint8Array(32).fill(5),
+        enroll_pk: new Uint8Array(32).fill(6),
+        issued_at: 1n,
+      }),
+    };
+    const dto = projectMeshListNode(
+      peerId,
+      selfId,
+      new Uint8Array(32).fill(1),
+      new Map(),
+      new Map(),
+      new Set(),
+      new Map([[peerId, cert]]),
+      new Map(),
+      new Map([[peerId, 'standby']]),
+      new Map(),
+      null,
+      undefined,
+      selfId,
+      undefined,
+      undefined,
+      undefined,
+      new Set([selfId, peerId]),
+      (id) => (id === peerId ? 'standby' : 'active')
+    );
+    expect(dto?.isHub).toBe(true);
+    expect(dto?.hubMode).toBe('standby');
+  });
 });

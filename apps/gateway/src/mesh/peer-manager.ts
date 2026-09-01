@@ -67,6 +67,7 @@ import {
   type UplinkStatus,
 } from './types';
 import type { UplinkClient } from './uplink-client';
+import type { UplinkPool } from './uplink-pool';
 
 export const PEER_IDLE_MS = 5 * 60 * 1000;
 export const PEER_CONNECT_TIMEOUT_MS = 3_000;
@@ -110,7 +111,7 @@ export function comparePeerTransport(a: PeerTransportKind, b: PeerTransportKind)
 export type PeerManagerOptions = {
   identity: MeshIdentity;
   userStore: UserStore;
-  uplink: UplinkClient;
+  uplink: UplinkClient | UplinkPool;
   peerPort: number;
   now?: () => number;
   scheduler?: MeshScheduler;
@@ -128,7 +129,7 @@ export type PeerManagerOptions = {
   rtc?: RtcPeerManager;
   linkFactory?: PeerLinkFactory;
   interfacesFn?: () => Record<string, RankableIfaceAddr[] | undefined>;
-  hubHost?: string | null;
+  hubHost?: string | null | (() => string | null);
   onGatewaySession?: (
     session: import('../ws/gateway-session').GatewaySession,
     auth: { sid: string; uid: string; via: string; cid?: string }
@@ -243,7 +244,7 @@ function quiet(fn: () => void): void {
 export class PeerManager {
   readonly identity: MeshIdentity;
   private readonly userStore: UserStore;
-  private readonly uplink: UplinkClient;
+  private readonly uplink: UplinkClient | UplinkPool;
   private readonly scheduler: MeshScheduler;
   private readonly keyLogApplier?: KeyLogApplier;
   private readonly statusProvider?: () => UplinkStatus & { name?: string };
@@ -300,7 +301,7 @@ export class PeerManager {
   private readonly lastDirectAttempt = new Map<string, DirectAttemptRecord>();
   private readonly transportWaiters = new Map<string, TransportWaiter[]>();
   private readonly interfacesFn: () => Record<string, RankableIfaceAddr[] | undefined>;
-  private readonly hubHost: string | null;
+  private readonly hubHostOf: () => string | null;
   private upgradeInflight = 0;
   private linkInfoHold = 0;
   private readonly upgradeWaiters: Array<() => void> = [];
@@ -341,7 +342,8 @@ export class PeerManager {
     this.ensureDcSession = opts.ensureDcSession ?? null;
     this.onLinkInfo = opts.onLinkInfo ?? null;
     this.interfacesFn = opts.interfacesFn ?? (() => os.networkInterfaces());
-    this.hubHost = opts.hubHost ?? null;
+    const hubHost = opts.hubHost;
+    this.hubHostOf = typeof hubHost === 'function' ? hubHost : () => hubHost ?? null;
     this.uplink.setOnRelayStream((stream, from) => {
       void this.acceptRelay(stream, from);
     });
@@ -433,7 +435,7 @@ export class PeerManager {
   linkDetailOf(nodeId: string): PeerLinkDetail {
     const live = this.live.get(nodeId);
     return {
-      peerAddress: live?.transport === 'relay' ? this.hubHost : (live?.remoteAddress ?? null),
+      peerAddress: live?.transport === 'relay' ? this.hubHostOf() : (live?.remoteAddress ?? null),
       linkSinceAt: live?.linkSinceAt ?? null,
       endpoints: [],
       directFailure: directFailureView(this.lastDirectAttempt.get(nodeId)),

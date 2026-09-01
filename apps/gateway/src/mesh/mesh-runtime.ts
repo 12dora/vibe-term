@@ -1,6 +1,7 @@
 import os from 'node:os';
-import { canonicalHubUrl, encodeBase64url, hubHostFromUrl } from '@tmex/shared/auth';
+import { canonicalHubUrl, encodeBase64url } from '@tmex/shared/auth';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
+import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { filesBulkHooks } from '../api/files';
 import {
@@ -15,6 +16,7 @@ import {
   makeVerifyPasskeyAssertion,
 } from '../auth';
 import { HubTrustStore } from '../auth/hub-trust-store';
+import { MeshHubStore } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
 import { HUB_META_PEER_ID } from '../auth/user-store';
 import { type TmexRoles, config as gatewayConfig } from '../config';
@@ -59,13 +61,24 @@ import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
 import { authenticateRequest } from './session-middleware';
 import { openHttpStream, openWsStream } from './stream-targets';
 import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
-import { UplinkClient, type UplinkWsFactory } from './uplink-client';
+import type { UplinkWsFactory } from './uplink-client';
+import {
+  type AttachedHub,
+  UplinkPool,
+  attachedHubHost,
+  mergeUplinkCandidates,
+  recordsFromNodeList,
+} from './uplink-pool';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
 
 export type MeshRuntimeConfig = {
   roles: TmexRoles;
   hubUrl: string | null;
   hubPublicUrl?: string | null;
+  hubUrls?: string[];
+  hubMode?: HubMode;
+  hubPriority?: number;
+  hubWriterEpoch?: number;
   peerPort: number;
   stunServers: string[];
   turnUrl?: string | null;
@@ -81,7 +94,7 @@ export type CreateMeshRuntimeOptions = {
   config: MeshRuntimeConfig;
   hub?: HubRuntime;
   /** Same-process hub to attach an in-memory uplink to (remote node in hub+A+B tests). */
-  uplinkHub?: HubRuntime;
+  uplinkHub?: HubRuntime | null;
   wsFactory?: UplinkWsFactory;
   peerHostname?: PeerBindHost;
   startPeerServer?: boolean;
@@ -93,6 +106,8 @@ export type CreateMeshRuntimeOptions = {
   linkFactory?: PeerLinkFactory;
   rtcHandshakeTimeoutMs?: number;
   tlsInfo?: HubTlsInfoProvider;
+  /** 进程级共享的 hub 集合存储；双角色时 hub 侧与节点侧必须用同一实例。 */
+  meshHubStore?: MeshHubStore;
 };
 
 export const CONNECTION_ID_BYTES = 32;
@@ -268,7 +283,7 @@ export type MeshRuntime = {
   readonly nodeId: string;
   readonly identity: NodeIdentityKeys;
   readonly hub: HubRuntime | null;
-  readonly uplink: UplinkClient;
+  readonly uplink: UplinkPool;
   readonly peers: PeerManager;
   readonly rtc: RtcPeerManager;
   readonly sessions: SessionRegistry;
@@ -294,6 +309,10 @@ export type MeshRuntime = {
   start(): Promise<void>;
   stop(): Promise<void>;
   onNodeEvent(cb: (event: NodeEventPayload) => void): () => void;
+  onNodeList(
+    cb: (list: UplinkNodeList, meta: { hubNodeId: string | null; generation: number }) => void
+  ): () => void;
+  attachedHub(): AttachedHub | null;
 };
 
 export type NetworkInterfacesFn = () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
@@ -534,6 +553,41 @@ function hubEndpointUrl(config: MeshRuntimeConfig): string {
   );
 }
 
+function hubSeedUrls(config: MeshRuntimeConfig): string[] {
+  const out: string[] = [];
+  const add = (raw: string | null | undefined) => {
+    const trimmed = raw?.trim();
+    if (!trimmed) return;
+    if (out.some((existing) => existing === trimmed)) return;
+    out.push(trimmed);
+  };
+  add(config.hubUrl);
+  for (const url of config.hubUrls ?? []) add(url);
+  if (out.length === 0) add(hubEndpointUrl(config));
+  return out;
+}
+
+export function hubRoleAdvertisement(
+  config: MeshRuntimeConfig,
+  caFingerprint: string | null
+): HubAdvertisement | undefined {
+  if (!config.roles.hub) return undefined;
+  const publicUrl = config.hubPublicUrl ?? config.hubUrl;
+  if (!publicUrl) return undefined;
+  return {
+    publicUrl,
+    mode: config.hubMode ?? gatewayConfig.hubMode,
+    priority: config.hubPriority ?? gatewayConfig.hubPriority,
+    writerEpoch: config.hubWriterEpoch ?? gatewayConfig.hubWriterEpoch,
+    caFingerprint,
+  };
+}
+
+function listedHubNodeIds(list: UplinkNodeList): string[] {
+  if (list.hubs && list.hubs.length > 0) return list.hubs.map((hub) => hub.nodeId);
+  return list.hub?.nodeId ? [list.hub.nodeId] : [];
+}
+
 function rtcSignalCtl(msg: RtcSignalMessage) {
   return {
     t: 'rtc.signal' as const,
@@ -611,7 +665,9 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     lastNodeList: null as UplinkNodeList | null,
     hubPresenceLive: false,
     hubGeneration: 0,
+    caFingerprint: null as string | null,
   };
+  const hubStore = opts.meshHubStore ?? new MeshHubStore(db);
   const emitNodeEvent = (event: NodeEventPayload) => {
     if (event.status === 'offline' || event.status === 'revoked') notifyNodeOffline(event.nodeId);
     for (const cb of nodeEvents)
@@ -643,8 +699,13 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
           stun: config.stunServers,
           turn: (turnConfig(config) as HubTurnConfig) ?? null,
           nodeId: identity.nodeIdHex,
+          hubNodeId: identity.nodeIdHex,
           siteName: resolveSiteName(),
+          mode: config.hubMode ?? gatewayConfig.hubMode,
+          priority: config.hubPriority ?? gatewayConfig.hubPriority,
+          writerEpoch: config.hubWriterEpoch ?? gatewayConfig.hubWriterEpoch,
         },
+        meshHubs: hubStore,
         authenticate: (req) => {
           const result = authenticateRequest(req, { roles: config.roles, nodeSessionStore });
           if (!result.ok || !result.userId) return null;
@@ -678,6 +739,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     emitRevoked,
     signalListeners,
     hub,
+    hubStore,
     peerHolder,
     innerSignalsHolder: { router: null } as { router: MeshRtcSignalRouter | null },
     startBrowserAcceptHolder: { fn() {} } as { fn: (rtcSession: string) => void },
@@ -763,6 +825,13 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
   const stores = await createMeshStoresAndServices(opts);
   const bindings = createSessionBindings(stores);
   const scheduler = opts.scheduler ?? defaultScheduler();
+  const refreshTls = async () => {
+    const tls = await Promise.resolve(
+      opts.tlsInfo?.() ?? { caFingerprint: null as string | null, caPem: null }
+    );
+    stores.state.caFingerprint = tls.caFingerprint ?? null;
+  };
+  await refreshTls();
   const statusProvider = () => {
     const version = getDisplayVersion();
     return {
@@ -774,9 +843,10 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
         stores.peerHolder.manager?.listenPort ?? stores.config.peerPort,
         stores.interfacesFn()
       ),
+      hub: hubRoleAdvertisement(stores.config, stores.state.caFingerprint),
     };
   };
-  return { ...stores, ...bindings, scheduler, statusProvider };
+  return { ...stores, ...bindings, scheduler, statusProvider, refreshTls };
 }
 
 type MeshDeps = Awaited<ReturnType<typeof constructMeshDeps>>;
@@ -789,8 +859,13 @@ function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: Rej
   if (!state.hubPresenceLive) state.hubGeneration += 1;
   state.hubPresenceLive = true;
   state.lastRtc = { stun: list.rtc.stun, turn: list.rtc.turn ?? null };
+  const recs = recordsFromNodeList(list);
+  if (recs.length > 0) d.hubStore.replaceAll(recs, d.scheduler.now());
   const reach = d.peerHolder.manager?.listReach() ?? new Map();
-  const hubId = list.hub?.nodeId ?? null;
+  const hubIds = new Set([
+    ...listedHubNodeIds(list),
+    ...d.hubStore.list().map((row) => row.hubNodeId),
+  ]);
   const emitListed = (node: UplinkNodeList['nodes'][number]) => {
     d.emitListNodeEvent({
       nodeId: node.id,
@@ -808,7 +883,7 @@ function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: Rej
     });
     if (node.id !== identity.nodeIdHex) d.peerHolder.manager?.notifyPeerEndpointsChanged(node.id);
   };
-  const emitHubIfUnlisted = () => {
+  const emitHubIfUnlisted = (hubId: string, name?: string) => {
     if (
       hubId &&
       hubId !== identity.nodeIdHex &&
@@ -824,7 +899,7 @@ function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: Rej
           reach: reach.get(hubId) ?? null,
           transport: d.peerHolder.manager?.transportOf(hubId) ?? null,
           rttMs: d.peerHolder.manager?.rttOf(hubId) ?? null,
-          name: list.hub?.name,
+          name,
         });
       }
     }
@@ -834,16 +909,24 @@ function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: Rej
     if (rejectPeer(node.id, true)) continue;
     emitListed(node);
   }
-  emitHubIfUnlisted();
-  pruneStaleListedPeers(d, hubId, rejectPeer);
+  if (list.hubs && list.hubs.length > 0) {
+    for (const hub of list.hubs) emitHubIfUnlisted(hub.nodeId, hub.name);
+  } else if (list.hub) {
+    emitHubIfUnlisted(list.hub.nodeId, list.hub.name);
+  }
+  pruneStaleListedPeers(d, hubIds, rejectPeer);
 }
 
-function pruneStaleListedPeers(d: MeshDeps, hubId: string | null, rejectPeer: RejectPeerFn): void {
+function pruneStaleListedPeers(
+  d: MeshDeps,
+  hubIds: ReadonlySet<string>,
+  rejectPeer: RejectPeerFn
+): void {
   for (const peer of d.userStore.listPeers()) {
     if (
       peer.nodeId === d.identity.nodeIdHex ||
       peer.nodeId === HUB_META_PEER_ID ||
-      peer.nodeId === hubId
+      hubIds.has(peer.nodeId)
     ) {
       continue;
     }
@@ -853,11 +936,12 @@ function pruneStaleListedPeers(d: MeshDeps, hubId: string | null, rejectPeer: Re
 
 function createUplinkWiring(d: MeshDeps) {
   const { opts, config, identity, userStore, hub } = d;
-  const hubTrust = config.hubUrl ? new HubTrustStore(d.db).get(config.hubUrl) : null;
-  if (config.hubUrl && !hubTrust?.caPem) {
-    let label = config.hubUrl;
+  const hubTrust = new HubTrustStore(d.db);
+  for (const seed of hubSeedUrls(config)) {
+    if (hubTrust.get(seed)?.caPem) continue;
+    let label = seed;
     try {
-      label = canonicalHubUrl(config.hubUrl);
+      label = canonicalHubUrl(seed);
     } catch {}
     console.warn(`[uplink] no pinned CA for hub=${label}; using system trust`);
   }
@@ -879,15 +963,15 @@ function createUplinkWiring(d: MeshDeps) {
       hub?.uplink.ensureDcSession(d.userIdOf(), identity.nodeIdHex, peerNodeId);
     }
   };
-  const uplink = new UplinkClient({
-    hubUrl: hubEndpointUrl(config),
+  const uplink = new UplinkPool({
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
     userId: d.userIdOf,
     keyLogApplier: d.applier,
     userStore,
     statusProvider: d.statusProvider,
+    candidates: () => mergeUplinkCandidates(d.hubStore.orderedEndpoints(), hubSeedUrls(config)),
+    hubTrust,
     wsFactory: opts.wsFactory,
-    tlsCa: hubTrust?.caPem ? [hubTrust.caPem] : null,
     scheduler: d.scheduler,
     pingIntervalMs: opts.pingIntervalMs,
     onEnrollRedeemed: (msg) => {
@@ -924,7 +1008,7 @@ function createUplinkWiring(d: MeshDeps) {
   return { uplink, ensureDc };
 }
 
-function createPeerWiring(d: MeshDeps, uplink: UplinkClient, ensureDc: EnsureDcFn) {
+function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn) {
   const { opts, config, identity, userStore, state, rtc, sessions, hub } = d;
   const noopUpgrade: MeshUpgradeServer = { upgrade: () => false };
   const dispatchInboundHttp = async (request: Request, ctx: DispatchContext): Promise<Response> => {
@@ -962,7 +1046,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkClient, ensureDc: EnsureDcF
     rtc,
     linkFactory: opts.linkFactory,
     interfacesFn: d.interfacesFn,
-    hubHost: hubHostFromUrl(hubEndpointUrl(config)),
+    hubHost: () => attachedHubHost(uplink.attachedHub(), hubEndpointUrl(config)),
     onGatewaySession: (session, auth) => sessions.register({ ...auth, session }).ok,
     onGatewaySessionClose: (session) => {
       const entry = sessions.getBySession(session);
@@ -1010,7 +1094,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkClient, ensureDc: EnsureDcF
 
 function createRtcBrowserWiring(
   d: MeshDeps,
-  uplink: UplinkClient,
+  uplink: UplinkPool,
   peerManager: PeerManager,
   ensureDc: EnsureDcFn
 ) {
@@ -1189,7 +1273,11 @@ function wireMeshHttp(
       const rows: Array<{ id: string; name: string }> = [];
       if (!state.lastNodeList) return rows;
       for (const node of state.lastNodeList.nodes) rows.push({ id: node.id, name: node.name });
-      if (state.lastNodeList.hub?.name) {
+      if (state.lastNodeList.hubs) {
+        for (const hub of state.lastNodeList.hubs) {
+          if (hub.name) rows.push({ id: hub.nodeId, name: hub.name });
+        }
+      } else if (state.lastNodeList.hub?.name) {
         rows.push({ id: state.lastNodeList.hub.nodeId, name: state.lastNodeList.hub.name });
       }
       return rows;
@@ -1207,6 +1295,9 @@ function wireMeshHttp(
     },
     primaryUserId: d.userIdOf() || undefined,
     hubPublicUrl: hubEndpointUrl(config),
+    hubStore: d.hubStore,
+    attachedHub: () => w.uplink.attachedHub(),
+    hubCandidates: () => w.uplink.candidates().map((row) => row.publicUrl),
     trustProxy: gatewayConfig.trustProxy,
     connectionLookup: (input) =>
       d.sessions.lookup(input.sid, input.via, input.connectionId, input.cid),
@@ -1233,7 +1324,7 @@ function assembleMeshRuntime(
 ): MeshRuntime {
   const { opts, config, identity, hub, sessions, userStore, rtc, bulk, state } = d;
   const { uplink, peerManager } = w;
-  const uplinkHub = hub ?? opts.uplinkHub ?? null;
+  const uplinkHub = opts.uplinkHub !== undefined ? opts.uplinkHub : hub;
   let stopPromise: Promise<void> | null = null;
   return {
     nodeId: identity.nodeIdHex,
@@ -1281,6 +1372,12 @@ function assembleMeshRuntime(
       return () => {
         d.nodeEvents.delete(cb);
       };
+    },
+    onNodeList(cb) {
+      return uplink.onNodeList(cb);
+    },
+    attachedHub() {
+      return uplink.attachedHub();
     },
     async start() {
       await rtc.ready();

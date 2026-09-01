@@ -20,6 +20,7 @@ import {
 import type { LinkSession } from '@tmex/shared/link';
 import { ChallengeStore } from '../auth/challenge-store';
 import { KeyLogStore } from '../auth/key-log-store';
+import { MeshHubStore } from '../auth/mesh-hub-store';
 import { NodeSessionStore } from '../auth/node-session-store';
 import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createMigratedAuthDb } from '../auth/test-db';
@@ -216,6 +217,7 @@ export async function bootMesh(options?: {
   const challengeStore = new ChallengeStore({ now: options?.now });
   const peers = options?.peers ?? new FakePeers();
   const streams = options?.streams ?? new FakeStreams();
+  const hubStore = new MeshHubStore(db);
   const published: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
   const runtime = new MeshHttpRuntime({
     roles: options?.roles ?? { hub: false, node: true },
@@ -235,6 +237,7 @@ export async function bootMesh(options?: {
     rtc: options?.rtc,
     now: options?.now,
     primaryUserId: boot.userId || undefined,
+    hubStore,
     selfStatus: options?.selfStatus,
     listedNames: options?.listedNames,
     selfName: options?.selfName,
@@ -245,6 +248,7 @@ export async function bootMesh(options?: {
     close,
     runtime,
     userStore,
+    hubStore,
     keyLogService,
     nodeSessionStore,
     challengeStore,
@@ -682,6 +686,45 @@ describe('auth-routes', () => {
     expect(
       isAuthPublicPath('/api/auth/logout', { standalone: true, localAuthEffective: false })
     ).toBe(false);
+  });
+
+  test('GET /api/auth/mode uses the writer hub from mesh_hubs', async () => {
+    const mesh = await bootMesh();
+    try {
+      mesh.hubStore.replaceAll(
+        [
+          {
+            hubNodeId: 'bb'.repeat(16),
+            publicUrl: 'https://standby.example',
+            name: null,
+            mode: 'standby',
+            priority: 10,
+            writerEpoch: 9,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+          {
+            hubNodeId: 'cc'.repeat(16),
+            publicUrl: 'https://writer.example',
+            name: null,
+            mode: 'active',
+            priority: 20,
+            writerEpoch: 5,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+        ],
+        1
+      );
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      const body = (await res.json()) as { hubNodeId: string; hubPublicUrl: string };
+      expect(body.hubNodeId).toBe('cc'.repeat(16));
+      expect(body.hubPublicUrl).toBe('https://writer.example');
+    } finally {
+      mesh.close();
+    }
   });
 
   test('GET /api/auth/mode reports persisted hub meta and roles.hub', async () => {

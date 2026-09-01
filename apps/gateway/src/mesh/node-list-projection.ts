@@ -30,6 +30,7 @@ export type MeshNodeDto = {
   inventory: unknown;
   loggedIn: boolean;
   isHub: boolean;
+  hubMode?: 'active' | 'standby';
   peerAddress?: string | null;
   linkSinceAt?: number | null;
   endpoints?: string[];
@@ -167,7 +168,9 @@ export function projectMeshListNode(
   hubNodeId: string | null,
   transportOf?: (id: string) => 'ws-secure' | 'relay' | 'dc' | null,
   rttOf?: (id: string) => number | null,
-  linkDetailOf?: (id: string) => MeshNodeLinkDetail | null
+  linkDetailOf?: (id: string) => MeshNodeLinkDetail | null,
+  hubIds?: ReadonlySet<string>,
+  hubModeOf?: (id: string) => 'active' | 'standby' | undefined
 ): MeshNodeDto | null {
   const publicKey = publicKeyForMeshNode(id, selfId, selfPk, certById);
   if (!publicKey) return null;
@@ -206,7 +209,8 @@ export function projectMeshListNode(
     direct_capable: core.direct_capable,
     inventory: core.inventory,
     loggedIn: cookies.has(nodeSessionCookieName(isSelf ? MESH_VIA_SELF : id)),
-    isHub: hubNodeId === id,
+    isHub: hubIds ? hubIds.has(id) : hubNodeId === id,
+    ...(hubModeOf?.(id) ? { hubMode: hubModeOf(id) } : {}),
     ...meshLinkFields(isSelf, detail, endpointsFromJson(peer?.endpointsJson)),
   };
 }

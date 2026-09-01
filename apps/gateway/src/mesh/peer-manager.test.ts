@@ -3207,6 +3207,57 @@ describe('PeerManager', () => {
     link.close();
   });
 
+  test('relay diagnostics follow a hubHost getter, not a captured config host', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer']),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const [outerA, outerB] = createInMemoryLinkPair();
+    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      outerB.onStream(resolve)
+    );
+    const uplink = dummyUplink(self, store, async () => {
+      const stream = await outerA.openStream(
+        new TextEncoder().encode(JSON.stringify({ to: peer.nodeId, from: self.nodeId }))
+      );
+      return stream;
+    });
+    let host = 'old.example.com';
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink,
+      peerPort: 0,
+      startServer: false,
+      connectTimeoutMs: 200,
+      hubHost: () => host,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const acceptP = incoming.then((stream) =>
+      handshakeRelay({
+        stream,
+        role: 'acceptor',
+        identity: peer,
+        userStore: store,
+      })
+    );
+    const [link] = await Promise.all([manager.getLink(peer.nodeId), acceptP]);
+    host = 'new.example.com';
+    expect(manager.linkDetailOf(peer.nodeId).peerAddress).toBe('new.example.com');
+    link.close();
+  });
+
   test('stop during a ws-secure race aborts every in-flight attempt', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });
