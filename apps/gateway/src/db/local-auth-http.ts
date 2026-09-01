@@ -4,8 +4,8 @@ import { readJsonObjectBody } from '../api/http';
 import type { UserKeyService } from '../auth/user-key-service';
 import { kdfParamsFromJson } from '../auth/user-key-service';
 import type { UserRecord, UserStore } from '../auth/user-store';
+import { requestIsLoopback } from '../mesh/client-ip';
 import type { MeshRoles } from '../mesh/mesh-deps';
-import { getMeshRequestContext } from '../mesh/mesh-deps';
 import {
   type SessionMiddlewareDeps,
   authenticateRequest,
@@ -17,7 +17,6 @@ import {
   buildLocalAuthStatus,
   decideLocalAuthBootstrap,
   decideLocalAuthToggle,
-  isLoopbackClientIp,
   validateLocalAuthPassword,
   validateLocalAuthUsername,
 } from './local-auth-settings';
@@ -77,7 +76,7 @@ function publicKdfParams(jsonStr: string) {
 function loopbackAndAuth(req: Request, sessionDeps: SessionMiddlewareDeps) {
   const auth = authenticateRequest(req, sessionDeps);
   return {
-    loopback: isLoopbackClientIp(getMeshRequestContext(req).clientIp),
+    loopback: requestIsLoopback(req),
     authenticated: auth.ok && Boolean(auth.userId),
   };
 }
@@ -114,7 +113,7 @@ export async function handleLocalAuthBootstrap(
     standalone: isStandaloneRoles(ctx.roles),
     enabled: ctx.localAuth.getEnabled(),
     credentialsPresent: ctx.userStore.listUsers().length > 0,
-    loopback: isLoopbackClientIp(getMeshRequestContext(req).clientIp),
+    loopback: requestIsLoopback(req),
   });
   if (!decided.ok) return jsonError(decided.code, decided.status);
   await ctx.keyLogService.bootstrapUser({ username, password });

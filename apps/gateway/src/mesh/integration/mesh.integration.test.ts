@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import {
+  DELEGATION_TTL_MS,
+  DOMAIN_DELEGATION,
   buildLogin,
   createDelegation,
   createEnrollment,
@@ -8,6 +10,7 @@ import {
   decodeBase64url,
   encodeAdmitNodePayload,
   encodeBase64url,
+  encodeDelegation,
   encodeLogin,
   encodeRevokeNodePayload,
   generateEd25519KeyPair,
@@ -41,7 +44,12 @@ import { encodeRedeemPopMessage } from '../../hub/redeem-pop';
 import type { GatewayRuntime } from '../../runtime';
 import type { DeviceSessionRuntime } from '../../tmux-client/device-session-runtime';
 import { WebSocketServer } from '../../ws';
-import { MESH_FORWARD_WS_KIND, MESH_VIA_SELF, setMeshRequestContext } from '../mesh-deps';
+import {
+  MESH_FORWARD_WS_KIND,
+  MESH_VIA_SELF,
+  X_TMEX_SET_SESSION,
+  setMeshRequestContext,
+} from '../mesh-deps';
 import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
 import { RtcPeerManager } from '../rtc';
 import { createFakeNativeModule } from '../rtc/test-fakes';
@@ -171,6 +179,57 @@ async function loginSelf(
   });
   expect(res.status).toBe(200);
   return sidFromResponse(res, MESH_VIA_SELF);
+}
+
+function setCookieNames(res: Response): string[] {
+  const cookies = res.headers.getSetCookie?.() ?? [];
+  if (cookies.length > 0) return cookies.map((c) => c.split('=')[0] ?? '');
+  const header = res.headers.get('set-cookie');
+  return header ? [header.split(';')[0]?.split('=')[0] ?? ''] : [];
+}
+
+async function loginWithKeys(
+  entry: MeshRuntime,
+  target: MeshRuntime,
+  boot: { userId: string },
+  sess: ReturnType<typeof generateEd25519KeyPair>,
+  del: ReturnType<typeof createDelegation>,
+  cookie?: string
+): Promise<Response> {
+  const remote = entry.nodeId !== target.nodeId;
+  const chUrl = remote
+    ? `http://entry/n/${target.nodeId}/api/auth/challenge`
+    : 'http://entry/api/auth/challenge';
+  const loginUrl = remote
+    ? `http://entry/n/${target.nodeId}/api/auth/login`
+    : 'http://entry/api/auth/login';
+  const ch = await callMesh(entry, chUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    cookie,
+    body: JSON.stringify({ uid: boot.userId }),
+  });
+  if (ch.status !== 200) return ch;
+  const body = (await ch.json()) as { challenge_id: string; nonce: string; nodePk: string };
+  const login = buildLogin({
+    challengeId: body.challenge_id,
+    nonce: decodeBase64url(body.nonce),
+    target: target.nodeId,
+    targetPk: decodeBase64url(body.nodePk),
+    uid: boot.userId,
+    entry: remote ? entry.nodeId : MESH_VIA_SELF,
+  });
+  return callMesh(entry, loginUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    cookie,
+    body: JSON.stringify({
+      login: encodeBase64url(encodeLogin(login)),
+      sig: encodeBase64url(signLogin(sess.secretKey, login)),
+      delegation: encodeBase64url(del.bytes),
+      delegation_sig: encodeBase64url(del.sig),
+    }),
+  });
 }
 
 async function loginRemote(
@@ -884,6 +943,118 @@ describe('mesh phase-2 integration', () => {
       cookie: jar,
     });
     expect([401, 503]).toContain(again.status);
+  });
+
+  test('SSO: same delegation+sess key logs into B with only tmex_s_<B>', async () => {
+    const a = await bootHubA();
+    const b = await enrollNodeB(a);
+    const sess = generateEd25519KeyPair();
+    const del = createDelegation(a.boot.rootKey, {
+      uid: a.boot.userId,
+      sessPk: sess.publicKey,
+      now: Date.now(),
+    });
+    const toA = await loginWithKeys(a.mesh, a.mesh, a.boot, sess, del);
+    expect(toA.status).toBe(200);
+    const toB = await loginWithKeys(a.mesh, b.mesh, a.boot, sess, del, b.cookie);
+    expect(toB.status).toBe(200);
+    const names = setCookieNames(toB);
+    expect(names).toContain(nodeSessionCookieName(b.mesh.nodeId));
+    expect(names).not.toContain(nodeSessionCookieName(MESH_VIA_SELF));
+    expect(names).not.toContain(nodeSessionCookieName(a.mesh.nodeId));
+    expect(toB.headers.get(X_TMEX_SET_SESSION)).toBeNull();
+    expect(sidFromResponse(toB, b.mesh.nodeId).length).toBeGreaterThan(8);
+  });
+
+  test('SSO: Login bound to A is rejected by B', async () => {
+    const a = await bootHubA();
+    const b = await enrollNodeB(a);
+    const sess = generateEd25519KeyPair();
+    const del = createDelegation(a.boot.rootKey, {
+      uid: a.boot.userId,
+      sessPk: sess.publicKey,
+      now: Date.now(),
+    });
+    const ch = await callMesh(a.mesh, 'http://a/api/auth/challenge', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ uid: a.boot.userId }),
+    });
+    expect(ch.status).toBe(200);
+    const body = (await ch.json()) as { challenge_id: string; nonce: string; nodePk: string };
+    const login = buildLogin({
+      challengeId: body.challenge_id,
+      nonce: decodeBase64url(body.nonce),
+      target: a.mesh.nodeId,
+      targetPk: decodeBase64url(body.nodePk),
+      uid: a.boot.userId,
+      entry: MESH_VIA_SELF,
+    });
+    const forged = await callMesh(b.mesh, 'http://b/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        login: encodeBase64url(encodeLogin(login)),
+        sig: encodeBase64url(signLogin(sess.secretKey, login)),
+        delegation: encodeBase64url(del.bytes),
+        delegation_sig: encodeBase64url(del.sig),
+      }),
+    });
+    expect(forged.status).toBe(401);
+    expect(((await forged.json()) as { code?: string }).code).not.toBeUndefined();
+  });
+
+  test("SSO: A's session id as B's cookie is rejected by B", async () => {
+    const a = await bootHubA();
+    const b = await enrollNodeB(a);
+    const res = await callMesh(a.mesh, `http://entry/n/${b.mesh.nodeId}/api/devices`, {
+      cookie: `${b.cookie}; ${nodeSessionCookieName(b.mesh.nodeId)}=${b.sid}`,
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test('SSO: delegation TTL other than DELEGATION_TTL_MS is rejected', async () => {
+    const a = await bootHubA();
+    const b = await enrollNodeB(a);
+    const sess = generateEd25519KeyPair();
+    const issuedAt = BigInt(Date.now());
+    const delegation = {
+      domain: DOMAIN_DELEGATION,
+      uid: a.boot.userId,
+      sess_pk: sess.publicKey,
+      issued_at: issuedAt,
+      exp: issuedAt + BigInt(DELEGATION_TTL_MS) + 1n,
+      method: 'root' as const,
+      credential_id: null,
+    };
+    const bytes = encodeDelegation(delegation);
+    const ch = await callMesh(b.mesh, 'http://b/api/auth/challenge', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ uid: a.boot.userId }),
+    });
+    expect(ch.status).toBe(200);
+    const body = (await ch.json()) as { challenge_id: string; nonce: string; nodePk: string };
+    const login = buildLogin({
+      challengeId: body.challenge_id,
+      nonce: decodeBase64url(body.nonce),
+      target: b.mesh.nodeId,
+      targetPk: decodeBase64url(body.nodePk),
+      uid: a.boot.userId,
+      entry: MESH_VIA_SELF,
+    });
+    const res = await callMesh(b.mesh, 'http://b/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        login: encodeBase64url(encodeLogin(login)),
+        sig: encodeBase64url(signLogin(sess.secretKey, login)),
+        delegation: encodeBase64url(bytes),
+        delegation_sig: encodeBase64url(a.boot.rootKey.sign(bytes)),
+      }),
+    });
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { code?: string }).code).toBe('DELEGATION_INVALID_TTL');
   });
 
   test('compromise: A node key cannot obtain B http/ws/relay and cannot forge a session', async () => {

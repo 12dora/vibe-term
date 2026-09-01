@@ -51,6 +51,7 @@ import {
   loadAuthModeTls,
   withAuthModeInvalidation,
 } from './auth-mode-cache';
+import { clientIpFromRequest } from './client-ip';
 import {
   type HubTlsInfoProvider,
   type KeyLogHubAck,
@@ -270,7 +271,7 @@ export class AuthRoutes {
   }
 
   private async handleLogin(req: Request): Promise<Response> {
-    const ip = getMeshRequestContext(req).clientIp ?? 'local';
+    const ip = clientIpFromRequest(req) ?? 'local';
     const body = await readJsonObjectBody(req);
     if (!body) {
       this.recordFailure(`ip:${ip}`);
