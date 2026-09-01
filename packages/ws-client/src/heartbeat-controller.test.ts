@@ -89,6 +89,86 @@ describe('HeartbeatController', () => {
     controller.stop();
   });
 
+  test('setCadence 重排间隔定时器且不补发 PING', async () => {
+    let pings = 0;
+    const controller = new HeartbeatController({
+      intervalMs: 5,
+      pongTimeoutMs: 10_000,
+      sendPing: () => {
+        pings += 1;
+        return true;
+      },
+      onPongTimeout: () => {},
+    });
+
+    controller.start();
+    await wait(30);
+    controller.setCadence(10_000, 20_000);
+    expect(controller.cadence).toEqual({ intervalMs: 10_000, pongTimeoutMs: 20_000 });
+
+    const observed = pings;
+    expect(observed).toBeGreaterThanOrEqual(2);
+    await wait(40);
+    expect(pings).toBe(observed);
+    controller.stop();
+  });
+
+  test('setCadence 不影响在途 PONG 超时的截止时间', async () => {
+    let timeouts = 0;
+    const controller = new HeartbeatController({
+      intervalMs: 10_000,
+      pongTimeoutMs: 10,
+      sendPing: () => true,
+      onPongTimeout: () => {
+        timeouts += 1;
+      },
+    });
+
+    controller.ping();
+    controller.setCadence(30_000, 60_000);
+    expect(controller.hasPendingPong()).toBe(true);
+
+    await wait(30);
+    expect(timeouts).toBe(1);
+    controller.stop();
+  });
+
+  test('setCadence 后新的 PONG 超时按新节奏武装', async () => {
+    let timeouts = 0;
+    const controller = new HeartbeatController({
+      intervalMs: 10_000,
+      pongTimeoutMs: 10_000,
+      sendPing: () => true,
+      onPongTimeout: () => {
+        timeouts += 1;
+      },
+    });
+
+    controller.setCadence(10_000, 5);
+    controller.ping();
+    await wait(25);
+    expect(timeouts).toBe(1);
+    controller.stop();
+  });
+
+  test('未运行时 setCadence 只改参数，不会启动心跳', async () => {
+    let pings = 0;
+    const controller = new HeartbeatController({
+      intervalMs: 10_000,
+      pongTimeoutMs: 10_000,
+      sendPing: () => {
+        pings += 1;
+        return true;
+      },
+      onPongTimeout: () => {},
+    });
+
+    controller.setCadence(5, 10);
+    expect(controller.isRunning()).toBe(false);
+    await wait(30);
+    expect(pings).toBe(0);
+  });
+
   test('stop 同时解除在途 PONG 超时，避免误关新连接', async () => {
     let timeouts = 0;
     const controller = new HeartbeatController({
