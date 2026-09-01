@@ -16,10 +16,16 @@ export interface ChunkProgress {
   totalChunks: number;
 }
 
+/** HELLO_S2C 里被客户端留存的协商结果。 */
+export interface NegotiatedHello {
+  capabilities: readonly string[];
+  serverVersion: string;
+}
+
 export interface ProtocolDispatcherCallbacks {
   onMessage(message: BorshMessage): void;
   onChunkProgress(progress: ChunkProgress): void;
-  onHello(capabilities: readonly string[]): void;
+  onHello(hello: NegotiatedHello): void;
   onHelloFailure(error: Error): void;
   onPong(): void;
 }
@@ -99,7 +105,10 @@ export class ProtocolDispatcher {
   private handleHello(payload: Uint8Array): void {
     try {
       const hello = wsBorsh.decodePayload(wsBorsh.schema.HelloS2CSchema, payload);
-      this.callbacks.onHello(hello.capabilities ?? []);
+      this.callbacks.onHello({
+        capabilities: hello.capabilities ?? [],
+        serverVersion: hello.serverVersion ?? '',
+      });
     } catch (err) {
       console.error('[borsh-client] Failed to decode HELLO_S2C:', err);
       this.callbacks.onHelloFailure(new Error('HELLO negotiation failed'));

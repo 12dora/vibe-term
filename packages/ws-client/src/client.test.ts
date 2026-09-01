@@ -54,10 +54,10 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-function helloS2CFrame(capabilities: string[] = []): Uint8Array {
+function helloS2CFrame(capabilities: string[] = [], serverVersion = '0.1.0'): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
     serverImpl: 'tmex-gateway',
-    serverVersion: '0.1.0',
+    serverVersion,
     selectedVersion: 1,
     maxFrameBytes: 1048576,
     heartbeatIntervalMs: 5000,
@@ -1036,5 +1036,163 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
     expect(connection.activeCarrier).toBe('primary');
 
     connection.dispose();
+  });
+});
+
+// ========== TERM_VIEWPORT 版本闸门（1.1.7 起服务端才认识该 kind） ==========
+
+function sentKinds(socket: FakeSocket): number[] {
+  const kinds: number[] = [];
+  for (const frame of socket.sent) {
+    if (!(frame instanceof Uint8Array)) continue;
+    kinds.push(wsBorsh.decodeEnvelope(frame).kind);
+  }
+  return kinds;
+}
+
+function viewportPayload(): Uint8Array {
+  return wsBorsh.encodePayload(wsBorsh.schema.TermViewportSchema, {
+    deviceId: 'device-a',
+    paneId: '%1',
+    cols: 120,
+    rows: 36,
+    visible: true,
+  });
+}
+
+function sendViewport(client: BorshWebSocketClient): ReturnType<BorshWebSocketClient['send']> {
+  return client.send(wsBorsh.KIND_TERM_VIEWPORT, viewportPayload());
+}
+
+describe('TERM_VIEWPORT 版本闸门', () => {
+  test('serverVersion 低于 1.1.7 时静默丢弃，其它 kind 照发且不报错', () => {
+    const socket = new FakeSocket();
+    const errors: string[] = [];
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => socket,
+      heartbeatIntervalMs: 60_000,
+    });
+    client.onError((error) => errors.push(error.message));
+
+    client.connect();
+    socket.open();
+    socket.deliver(helloS2CFrame([], '1.1.6'));
+    expect(client.supportsTermViewport).toBe(false);
+
+    expect(sendViewport(client)).toBe('sent');
+    expect(sentKinds(socket)).not.toContain(wsBorsh.KIND_TERM_VIEWPORT);
+
+    client.send(wsBorsh.KIND_TERM_INPUT, new Uint8Array([1, 2, 3]));
+    expect(sentKinds(socket)).toContain(wsBorsh.KIND_TERM_INPUT);
+    expect(errors).toEqual([]);
+
+    client.disconnect();
+  });
+
+  test.each(['1.1.7', '1.1.9', '1.2.0', '2.0.0'])('serverVersion %s 正常下发', (version) => {
+    const socket = new FakeSocket();
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => socket,
+      heartbeatIntervalMs: 60_000,
+    });
+
+    client.connect();
+    socket.open();
+    socket.deliver(helloS2CFrame([], version));
+    expect(client.supportsTermViewport).toBe(true);
+
+    expect(sendViewport(client)).toBe('sent');
+    expect(sentKinds(socket)).toContain(wsBorsh.KIND_TERM_VIEWPORT);
+
+    client.disconnect();
+  });
+
+  // 开发态网关自报 `1.1.9_dev`（formatDisplayVersion 的 _dev 后缀），无法解析一律按新版处理
+  test.each(['', 'dev', '1.1.9_dev', '1.1.6_dev'])(
+    'serverVersion %p 无法解析时按新版下发',
+    (version) => {
+      const socket = new FakeSocket();
+      const client = new BorshWebSocketClient({
+        url: 'ws://example.test/ws',
+        socketFactory: () => socket,
+        heartbeatIntervalMs: 60_000,
+      });
+
+      client.connect();
+      socket.open();
+      socket.deliver(helloS2CFrame([], version));
+      expect(client.supportsTermViewport).toBe(true);
+
+      expect(sendViewport(client)).toBe('sent');
+      expect(sentKinds(socket)).toContain(wsBorsh.KIND_TERM_VIEWPORT);
+
+      client.disconnect();
+    }
+  );
+
+  test('HELLO 之前入队的帧在 flush 时按本连接版本重新判定', () => {
+    const oldSocket = new FakeSocket();
+    const oldClient = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => oldSocket,
+      heartbeatIntervalMs: 60_000,
+    });
+    oldClient.connect();
+    oldSocket.open();
+    expect(sendViewport(oldClient)).toBe('queued');
+    oldSocket.deliver(helloS2CFrame([], '1.1.6'));
+    expect(sentKinds(oldSocket)).not.toContain(wsBorsh.KIND_TERM_VIEWPORT);
+    oldClient.disconnect();
+
+    const newSocket = new FakeSocket();
+    const newClient = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => newSocket,
+      heartbeatIntervalMs: 60_000,
+    });
+    newClient.connect();
+    newSocket.open();
+    expect(sendViewport(newClient)).toBe('queued');
+    newSocket.deliver(helloS2CFrame([], '1.1.7'));
+    expect(sentKinds(newSocket)).toContain(wsBorsh.KIND_TERM_VIEWPORT);
+    newClient.disconnect();
+  });
+
+  test('重连后按新的 HELLO 重新推导：节点升级后恢复下发', async () => {
+    const sockets: FakeSocket[] = [];
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      heartbeatIntervalMs: 60_000,
+      reconnectDelayMs: 1,
+      maxReconnectAttempts: 2,
+    });
+
+    client.connect();
+    const stale = sockets[0] as FakeSocket;
+    stale.open();
+    stale.deliver(helloS2CFrame([], '1.1.6'));
+    expect(sendViewport(client)).toBe('sent');
+    expect(sentKinds(stale)).not.toContain(wsBorsh.KIND_TERM_VIEWPORT);
+
+    stale.simulateClose();
+    expect(client.serverVersion).toBeNull();
+    expect(client.supportsTermViewport).toBe(true);
+
+    await until(() => sockets.length === 2);
+    const fresh = sockets[1] as FakeSocket;
+    fresh.open();
+    fresh.deliver(helloS2CFrame([], '1.1.8'));
+
+    expect(sendViewport(client)).toBe('sent');
+    expect(sentKinds(fresh)).toContain(wsBorsh.KIND_TERM_VIEWPORT);
+
+    client.disconnect();
   });
 });

@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import { type BorshMessage, type ChunkProgress, ProtocolDispatcher } from './protocol-dispatcher';
+import {
+  type BorshMessage,
+  type ChunkProgress,
+  type NegotiatedHello,
+  ProtocolDispatcher,
+} from './protocol-dispatcher';
 
 interface Recorder {
   dispatcher: ProtocolDispatcher;
   messages: BorshMessage[];
   progress: ChunkProgress[];
-  hellos: Array<readonly string[]>;
+  hellos: NegotiatedHello[];
   helloFailures: string[];
   pongs: number;
 }
@@ -14,13 +19,13 @@ interface Recorder {
 function createRecorder(): Recorder {
   const messages: BorshMessage[] = [];
   const progress: ChunkProgress[] = [];
-  const hellos: Array<readonly string[]> = [];
+  const hellos: NegotiatedHello[] = [];
   const helloFailures: string[] = [];
   let pongs = 0;
   const dispatcher = new ProtocolDispatcher({
     onMessage: (message) => messages.push(message),
     onChunkProgress: (item) => progress.push(item),
-    onHello: (capabilities) => hellos.push(capabilities),
+    onHello: (hello) => hellos.push(hello),
     onHelloFailure: (error) => helloFailures.push(error.message),
     onPong: () => {
       pongs += 1;
@@ -75,7 +80,7 @@ describe('ProtocolDispatcher', () => {
       capabilities: ['a', 'b'],
     });
     rec.dispatcher.handleFrame(frame(wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, hello, 2)));
-    expect(rec.hellos).toEqual([['a', 'b']]);
+    expect(rec.hellos).toEqual([{ capabilities: ['a', 'b'], serverVersion: '0.1.0' }]);
     expect(rec.helloFailures).toEqual([]);
   });
 

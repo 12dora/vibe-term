@@ -26,6 +26,7 @@ export {
 // ==================== Version ====================
 
 export { formatDisplayVersion } from './version';
+export { type Semver, compareSemver, parseSemver } from './semver';
 
 // ==================== 品牌 ====================
 
