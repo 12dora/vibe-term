@@ -8,8 +8,10 @@ export {
 } from './hub-runtime';
 export {
   HUB_ROLE_RESTART_DELAY_MS,
+  executeHubRoleTransition,
   handleGetHubRoleStatus,
   handlePostHubRole,
+  knownMaxWriterEpoch,
   type PatchHubRoleEnv,
   type ScheduleHubRoleRestart,
 } from './hub-role-routes';

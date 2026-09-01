@@ -733,14 +733,17 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     (req) => serveFrontend(req, staticRoot),
   ]);
   const websocket = routeWebsocket(gateway, mesh ?? wsAuthFrom(authHttp), hub);
-  const refreshMeshTls = () => {
+  const invalidateTlsCaches = () => {
     authHttp?.auth.invalidateAuthModeCache();
     mesh?.invalidateAuthModeCache();
+  };
+  const refreshMeshTls = () => {
+    invalidateTlsCaches();
     void mesh?.refreshTlsAndAdvertise();
   };
   const tlsLife = buildTlsLifecycle(fetch, websocket, gateway.db, routeDeps, tlsSlot, {
     onStatusChange: refreshMeshTls,
-    onTlsApplied: refreshMeshTls,
+    onTlsApplied: invalidateTlsCaches,
   });
   tlsHandler = tlsLife.tlsHandler;
   void mesh?.refreshTlsAndAdvertise();

@@ -37,12 +37,60 @@ function errorJson(code: HubRoleError['code'], message: string, status: number):
   return json(body, status);
 }
 
-function knownMaxWriterEpoch(ctx: HubRoleRouteContext): number {
+export function knownMaxWriterEpoch(ctx: HubRoleRouteContext): number {
   let max = Math.max(ctx.configWriterEpoch, ctx.uplink.writerEpoch());
   for (const row of ctx.meshHubs.list()) {
     if (row.writerEpoch > max) max = row.writerEpoch;
   }
   return max;
+}
+
+export async function executeHubRoleTransition(
+  ctx: HubRoleRouteContext,
+  input: {
+    operationId: string;
+    mode: HubMode;
+    writerEpoch: number | null;
+    targetHubId: string;
+  }
+): Promise<HubRoleTransition> {
+  if (!ctx.patchHostEnv) {
+    throw new Error('host env patcher is not available in this process');
+  }
+  const store = new HubRoleTransitionStore(ctx.db);
+  const now = ctx.now();
+  store.insert({
+    operationId: input.operationId,
+    targetHubId: input.targetHubId,
+    mode: input.mode,
+    writerEpoch: input.writerEpoch,
+    phase: 'accepted',
+    error: null,
+    startedAt: now,
+    updatedAt: now,
+  });
+  try {
+    store.update(input.operationId, { phase: 'persisting' }, ctx.now());
+    const patch: Record<string, string> = { TMEX_HUB_MODE: input.mode };
+    if (input.mode === 'active' && input.writerEpoch != null) {
+      patch.TMEX_HUB_WRITER_EPOCH = String(input.writerEpoch);
+    }
+    await ctx.patchHostEnv(patch);
+    if (input.mode === 'active' && input.writerEpoch != null) {
+      ctx.uplink.applyLocalRole(input.mode, input.writerEpoch);
+    } else {
+      ctx.uplink.applyLocalRole(input.mode);
+    }
+    store.update(input.operationId, { phase: 'restarting' }, ctx.now());
+    ctx.scheduleRestart?.(HUB_ROLE_RESTART_DELAY_MS);
+    const row = store.get(input.operationId);
+    if (!row) throw new Error('hub role transition vanished');
+    return row;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    store.update(input.operationId, { phase: 'failed', error: message }, ctx.now());
+    throw err;
+  }
 }
 
 export function reconcileHubRoleOnStart(ctx: HubRoleRouteContext): void {
@@ -122,38 +170,17 @@ export async function handlePostHubRole(req: Request, ctx: HubRoleRouteContext):
     writerEpoch = ctx.uplink.writerEpoch();
   }
 
-  const now = ctx.now();
-  const accepted: HubRoleTransition = {
-    operationId,
-    targetHubId: self,
-    mode,
-    writerEpoch,
-    phase: 'accepted',
-    error: null,
-    startedAt: now,
-    updatedAt: now,
-  };
-  store.insert(accepted);
-
   try {
-    store.update(operationId, { phase: 'persisting' }, ctx.now());
-    const patch: Record<string, string> = { TMEX_HUB_MODE: mode };
-    if (mode === 'active' && writerEpoch != null) {
-      patch.TMEX_HUB_WRITER_EPOCH = String(writerEpoch);
-    }
-    await ctx.patchHostEnv(patch);
-    if (mode === 'active' && writerEpoch != null) {
-      ctx.uplink.applyLocalRole(mode, writerEpoch);
-    } else {
-      ctx.uplink.applyLocalRole(mode);
-    }
-    store.update(operationId, { phase: 'restarting' }, ctx.now());
-    ctx.scheduleRestart?.(HUB_ROLE_RESTART_DELAY_MS);
-    return json(store.get(operationId), 202);
+    const row = await executeHubRoleTransition(ctx, {
+      operationId,
+      mode,
+      writerEpoch,
+      targetHubId: self,
+    });
+    return json(row, 202);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    store.update(operationId, { phase: 'failed', error: message }, ctx.now());
     const failed = store.get(operationId);
+    const message = err instanceof Error ? err.message : String(err);
     return json(failed ?? { code: 'INVALID_REQUEST', message }, 500);
   }
 }

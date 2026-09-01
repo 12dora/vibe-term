@@ -23,9 +23,12 @@ import {
   type UplinkCandidate,
   UplinkPool,
   defaultFetchCaPem,
+  hubSupportsNearestAttach,
   isCaFingerprintHex,
+  isRttSwitchWorth,
   isSelfHubCandidate,
   mergeUplinkCandidates,
+  orderCandidatesByNearest,
   parseSingleCaCertificate,
   recordsFromNodeList,
   redactUrl,
@@ -512,6 +515,9 @@ describe('UplinkPool', () => {
     enablePeriodicRttProbe?: boolean;
     rttProbeIntervalMs?: number;
     failbackDebounceMs?: number;
+    preferNearest?: boolean | null;
+    rttSwitchDwellMs?: number;
+    versions?: Record<string, string>;
   }) {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
@@ -541,6 +547,7 @@ describe('UplinkPool', () => {
             writerEpoch: index === 0 ? 3 : 1,
             priority: 10 + index,
             caFingerprint: null,
+            version: input.versions?.[publicUrl] ?? '1.1.13',
           }))),
       hubTrust,
       scheduler,
@@ -552,6 +559,8 @@ describe('UplinkPool', () => {
       enablePeriodicRttProbe: input.enablePeriodicRttProbe,
       rttProbeIntervalMs: input.rttProbeIntervalMs,
       failbackDebounceMs: input.failbackDebounceMs,
+      preferNearest: input.preferNearest,
+      rttSwitchDwellMs: input.rttSwitchDwellMs,
       probeHealthz: async (url) => (input.probe ? input.probe(url) : false),
       fetchCaPem: input.fetchCaPem,
       fingerprintPem: input.fingerprintPem,
@@ -1861,6 +1870,195 @@ describe('UplinkPool', () => {
     await waitMicro();
     expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
     expect(scheduler.intervals.filter((row) => !row.cleared)).toEqual([]);
+  });
+
+  test('nearest ordering uses EWMA samples and keeps epoch/priority without them', () => {
+    const writer: UplinkCandidate = {
+      hubNodeId: ID.b,
+      publicUrl: 'https://a.example',
+      mode: 'active',
+      writerEpoch: 3,
+      priority: 10,
+      caFingerprint: null,
+      version: '1.1.13',
+    };
+    const standby: UplinkCandidate = {
+      hubNodeId: ID.c,
+      publicUrl: 'https://b.example',
+      mode: 'standby',
+      writerEpoch: 1,
+      priority: 20,
+      caFingerprint: null,
+      version: '1.1.13',
+    };
+    const rtts = new Map<string, { ewma: number; samples: number }>();
+    const orderedWithout = orderCandidatesByNearest([writer, standby], {
+      rttOf: (url) => rtts.get(url) ?? null,
+      writerHubId: ID.b,
+      versionOf: (cand) => cand.version,
+    });
+    expect(orderedWithout.map((row) => row.publicUrl)).toEqual([
+      'https://a.example',
+      'https://b.example',
+    ]);
+    rtts.set('https://a.example', { ewma: 80, samples: 2 });
+    rtts.set('https://b.example', { ewma: 20, samples: 2 });
+    const ordered = orderCandidatesByNearest([writer, standby], {
+      rttOf: (url) => rtts.get(url) ?? null,
+      writerHubId: ID.b,
+      versionOf: (cand) => cand.version,
+    });
+    expect(ordered.map((row) => row.publicUrl)).toEqual(['https://b.example', 'https://a.example']);
+    rtts.set('https://b.example', { ewma: 20, samples: 1 });
+    const notEnough = orderCandidatesByNearest([writer, standby], {
+      rttOf: (url) => rtts.get(url) ?? null,
+      writerHubId: ID.b,
+      versionOf: (cand) => cand.version,
+    });
+    expect(notEnough.map((row) => row.publicUrl)).toEqual([
+      'https://a.example',
+      'https://b.example',
+    ]);
+  });
+
+  test('legacy hubs below 1.1.13 are never ordered over the writer', () => {
+    const writer: UplinkCandidate = {
+      hubNodeId: ID.b,
+      publicUrl: 'https://a.example',
+      mode: 'active',
+      writerEpoch: 3,
+      priority: 10,
+      caFingerprint: null,
+      version: '1.1.13',
+    };
+    const legacy: UplinkCandidate = {
+      hubNodeId: ID.c,
+      publicUrl: 'https://b.example',
+      mode: 'standby',
+      writerEpoch: 1,
+      priority: 20,
+      caFingerprint: null,
+      version: '1.1.12',
+    };
+    const rtts = new Map([
+      ['https://a.example', { ewma: 80, samples: 2 }],
+      ['https://b.example', { ewma: 5, samples: 2 }],
+    ]);
+    const ordered = orderCandidatesByNearest([writer, legacy], {
+      rttOf: (url) => rtts.get(url) ?? null,
+      writerHubId: ID.b,
+      versionOf: (cand) => cand.version,
+    });
+    expect(ordered[0]?.publicUrl).toBe('https://a.example');
+    expect(hubSupportsNearestAttach('1.1.12')).toBe(false);
+    expect(hubSupportsNearestAttach('1.1.13')).toBe(true);
+  });
+
+  test('RTT hysteresis requires 30% and 15ms improvement', () => {
+    expect(isRttSwitchWorth(100, 80)).toBe(false);
+    expect(isRttSwitchWorth(100, 70)).toBe(true);
+    expect(isRttSwitchWorth(20, 6)).toBe(false);
+    expect(isRttSwitchWorth(20, 5)).toBe(true);
+  });
+
+  test('prefer-nearest switches to a faster hub after two samples', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: true,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      rttSwitchDwellMs: 60_000,
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? 40 : 5);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+  });
+
+  test('prefer-nearest dwell blocks a second RTT-motivated switch', async () => {
+    const scheduler = new ManualScheduler();
+    let aDelay = 50;
+    let bDelay = 5;
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: true,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      rttSwitchDwellMs: 60_000,
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? aDelay : bDelay);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    aDelay = 5;
+    bDelay = 50;
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+  });
+
+  test('legacy standby is not chosen over the writer even with better RTT', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: true,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      versions: { 'https://a.example': '1.1.13', 'https://b.example': '1.1.12' },
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? 40 : 5);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+  });
+
+  test('forced-off prefer-nearest keeps epoch/priority attach', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: false,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? 40 : 5);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
   });
 
   test('ten consecutive identical failures log at most two uplink lines', async () => {

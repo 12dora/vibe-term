@@ -372,6 +372,13 @@ export class UplinkServer {
     };
   }
 
+  updateSelfCaFingerprint(fp: string | null): void {
+    const next = fp ?? null;
+    if (this.selfCaFingerprint === next) return;
+    this.selfCaFingerprint = next;
+    this.upsertSelfHub();
+  }
+
   setMode(mode: HubMode): void {
     this.applyLocalRole(mode);
   }

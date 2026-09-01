@@ -6,7 +6,7 @@
  */
 import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
 import type { HubTrustStore } from '../auth/hub-trust-store';
-import type { MeshHubRecord, MeshHubStore } from '../auth/mesh-hub-store';
+import { type MeshHubRecord, type MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import { uplinkWebSocketTls } from '../mesh/uplink-client';
 import { jitteredIntervalMs, joinHubPath } from '../mesh/uplink-pool';
 
@@ -19,6 +19,13 @@ export const HUB_PEER_TLS_LOG_INTERVAL_MS = 10 * 60 * 1000;
 
 const HUB_NODE_ID_HEX = /^[0-9a-f]{32}$/i;
 
+export type HubWriterView = {
+  hubNodeId: string;
+  writerEpoch: number;
+  reachable: boolean;
+  observedAt: number;
+};
+
 export type HubPeerStatusBody = {
   hubNodeId: string;
   publicUrl: string;
@@ -27,6 +34,7 @@ export type HubPeerStatusBody = {
   writerEpoch: number;
   name?: string;
   caFingerprint?: string | null;
+  writerView?: HubWriterView;
 };
 
 export type HubPeerFetch = (url: string, init?: RequestInit) => Promise<Response>;
@@ -45,7 +53,67 @@ export type HubPeerPollerOptions = {
   timeoutMs?: number;
   jitter?: number;
   failLimit?: number;
+  autoPromote?: boolean;
+  autoPromoteTimeoutMs?: number;
+  selfMode?: () => HubMode;
+  selfPriority?: () => number;
+  onAutoPromote?: (operationId: string) => void | Promise<void>;
 };
+
+export const HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS = 600_000;
+
+export type AutoPromoteHub = {
+  hubNodeId: string;
+  mode: HubMode;
+  priority: number;
+};
+
+export function lowestPriorityStandbyId(hubs: AutoPromoteHub[]): string | null {
+  const standbys = hubs.filter((hub) => hub.mode === 'standby');
+  if (standbys.length === 0) return null;
+  standbys.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    if (a.hubNodeId < b.hubNodeId) return -1;
+    if (a.hubNodeId > b.hubNodeId) return 1;
+    return 0;
+  });
+  return standbys[0]?.hubNodeId ?? null;
+}
+
+export function shouldAutoPromote(input: {
+  enabled: boolean;
+  selfId: string;
+  selfMode: HubMode;
+  writerId: string | null;
+  writerUnreachableSince: number | null;
+  now: number;
+  timeoutMs: number;
+  authorized: AutoPromoteHub[];
+  peerWriterViews: ReadonlyMap<string, HubWriterView>;
+  pollIntervalMs: number;
+}): boolean {
+  if (!input.enabled) return false;
+  if (input.selfMode !== 'standby') return false;
+  if (!input.writerId || input.writerId === input.selfId) return false;
+  if (lowestPriorityStandbyId(input.authorized) !== input.selfId) return false;
+  if (input.writerUnreachableSince == null) return false;
+  if (input.now - input.writerUnreachableSince < input.timeoutMs) return false;
+  const n = input.authorized.length;
+  if (n < 2) return false;
+  if (n === 2) return true;
+  const others = input.authorized.filter(
+    (hub) => hub.hubNodeId !== input.selfId && hub.hubNodeId !== input.writerId
+  );
+  if (others.length === 0) return false;
+  const freshnessMs = 2 * input.pollIntervalMs;
+  const unreachableVotes = others.filter((hub) => {
+    const view = input.peerWriterViews.get(hub.hubNodeId);
+    if (!view || view.reachable) return false;
+    if (view.hubNodeId !== input.writerId) return false;
+    return input.now - view.observedAt <= freshnessMs;
+  });
+  return unreachableVotes.length > others.length / 2;
+}
 
 export function peerPollDelayMs(
   intervalMs = HUB_PEER_POLL_INTERVAL_MS,
@@ -68,8 +136,18 @@ export class HubPeerPoller {
   private readonly timeoutMs: number;
   private readonly jitter: number;
   private readonly failLimit: number;
+  private readonly autoPromote: boolean;
+  private readonly autoPromoteTimeoutMs: number;
+  private readonly selfMode?: () => HubMode;
+  private readonly selfPriority?: () => number;
+  private readonly onAutoPromote?: (operationId: string) => void | Promise<void>;
   private readonly failCounts = new Map<string, number>();
   private readonly lastTlsLogAt = new Map<string, number>();
+  private readonly peerWriterViews = new Map<string, HubWriterView>();
+  private writerView: HubWriterView | null = null;
+  private writerUnreachableSince: number | null = null;
+  private trackedWriterId: string | null = null;
+  private autoPromoteInFlight = false;
   private startTimer: ReturnType<typeof setTimeout> | null = null;
   private intervalTimer: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<void> | null = null;
@@ -91,6 +169,15 @@ export class HubPeerPoller {
     this.timeoutMs = opts.timeoutMs ?? HUB_PEER_POLL_TIMEOUT_MS;
     this.jitter = opts.jitter ?? HUB_PEER_POLL_JITTER;
     this.failLimit = opts.failLimit ?? HUB_PEER_POLL_FAIL_LIMIT;
+    this.autoPromote = opts.autoPromote ?? false;
+    this.autoPromoteTimeoutMs = opts.autoPromoteTimeoutMs ?? HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS;
+    this.selfMode = opts.selfMode;
+    this.selfPriority = opts.selfPriority;
+    this.onAutoPromote = opts.onAutoPromote;
+  }
+
+  localWriterView(): HubWriterView | null {
+    return this.writerView;
   }
 
   start(): void {
@@ -186,6 +273,7 @@ export class HubPeerPoller {
         /* ignore */
       }
     }
+    if (!this.stopped) await this.maybeAutoPromote();
   }
 
   private async pollOne(row: MeshHubRecord): Promise<boolean> {
@@ -230,6 +318,8 @@ export class HubPeerPoller {
       } catch {
         return false;
       }
+      if (body.writerView) this.peerWriterViews.set(row.hubNodeId, body.writerView);
+      this.noteWriterProbe(row.hubNodeId, true, body.writerEpoch);
       return true;
     } catch (err) {
       if (this.stopped) return false;
@@ -258,6 +348,7 @@ export class HubPeerPoller {
   private noteFailure(row: MeshHubRecord, err: unknown): boolean {
     if (this.stopped) return false;
     if (isTlsError(err)) this.warnTls(row.publicUrl, err);
+    this.noteWriterProbe(row.hubNodeId, false, row.writerEpoch);
     const next = (this.failCounts.get(row.hubNodeId) ?? 0) + 1;
     this.failCounts.set(row.hubNodeId, next);
     if (next < this.failLimit) return false;
@@ -268,6 +359,80 @@ export class HubPeerPoller {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private currentWriterId(): string | null {
+    const recs = this.meshHubs.list().filter((row) => this.isAuthorized(row.hubNodeId));
+    return pickWriterHub(recs);
+  }
+
+  private noteWriterProbe(hubNodeId: string, reachable: boolean, writerEpoch: number): void {
+    const writerId = this.currentWriterId();
+    if (!writerId || hubNodeId !== writerId) return;
+    if (this.trackedWriterId !== writerId) {
+      this.trackedWriterId = writerId;
+      this.writerUnreachableSince = null;
+    }
+    const now = this.now();
+    if (reachable) {
+      this.writerUnreachableSince = null;
+      this.writerView = { hubNodeId: writerId, writerEpoch, reachable: true, observedAt: now };
+      return;
+    }
+    if (this.writerUnreachableSince == null) this.writerUnreachableSince = now;
+    this.writerView = { hubNodeId: writerId, writerEpoch, reachable: false, observedAt: now };
+  }
+
+  private authorizedForPromote(): AutoPromoteHub[] {
+    const self = this.selfHubId()?.toLowerCase();
+    const out: AutoPromoteHub[] = [];
+    const seen = new Set<string>();
+    for (const row of this.meshHubs.list()) {
+      const id = row.hubNodeId.toLowerCase();
+      if (!this.isAuthorized(id) || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ hubNodeId: id, mode: row.mode, priority: row.priority });
+    }
+    if (self && !seen.has(self) && this.isAuthorized(self)) {
+      out.push({
+        hubNodeId: self,
+        mode: this.selfMode?.() ?? 'standby',
+        priority: this.selfPriority?.() ?? 200,
+      });
+    }
+    return out;
+  }
+
+  private async maybeAutoPromote(): Promise<void> {
+    if (this.autoPromoteInFlight || !this.autoPromote || !this.onAutoPromote) return;
+    const self = this.selfHubId()?.toLowerCase();
+    if (!self) return;
+    const ok = shouldAutoPromote({
+      enabled: true,
+      selfId: self,
+      selfMode: this.selfMode?.() ?? 'standby',
+      writerId: this.currentWriterId(),
+      writerUnreachableSince: this.writerUnreachableSince,
+      now: this.now(),
+      timeoutMs: this.autoPromoteTimeoutMs,
+      authorized: this.authorizedForPromote(),
+      peerWriterViews: this.peerWriterViews,
+      pollIntervalMs: this.intervalMs,
+    });
+    if (!ok) return;
+    const operationId = `auto-${this.now()}`;
+    this.autoPromoteInFlight = true;
+    try {
+      console.error(
+        `[hub] auto-promote: writer unreachable for >=${this.autoPromoteTimeoutMs}ms; promoting self=${self} operationId=${operationId}`
+      );
+      await this.onAutoPromote(operationId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[hub] auto-promote failed operationId=${operationId} err=${msg}`);
+    } finally {
+      this.autoPromoteInFlight = false;
     }
   }
 
@@ -303,7 +468,26 @@ function parsePeerStatusBody(raw: unknown): HubPeerStatusBody | null {
   if (typeof o.name === 'string' && o.name.trim()) body.name = o.name.trim();
   if (o.caFingerprint === null) body.caFingerprint = null;
   else if (typeof o.caFingerprint === 'string') body.caFingerprint = o.caFingerprint;
+  const view = parseWriterView(o.writerView);
+  if (view) body.writerView = view;
   return body;
+}
+
+function parseWriterView(raw: unknown): HubWriterView | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.hubNodeId !== 'string' || !HUB_NODE_ID_HEX.test(o.hubNodeId)) return undefined;
+  if (typeof o.writerEpoch !== 'number' || !Number.isInteger(o.writerEpoch) || o.writerEpoch < 0) {
+    return undefined;
+  }
+  if (typeof o.reachable !== 'boolean') return undefined;
+  if (typeof o.observedAt !== 'number' || !Number.isFinite(o.observedAt)) return undefined;
+  return {
+    hubNodeId: o.hubNodeId.toLowerCase(),
+    writerEpoch: o.writerEpoch,
+    reachable: o.reachable,
+    observedAt: o.observedAt,
+  };
 }
 
 function unrefTimer(timer: ReturnType<typeof setTimeout>): void {

@@ -442,6 +442,8 @@ type EnrollOpts = {
   hubPriority?: number;
   hubWriterEpoch?: number;
   hubPeers?: string[];
+  hubAutoPromote?: boolean;
+  hubAutoPromoteTimeoutMs?: number;
   uplinkHub?: HubRuntime | null;
   wsFactory?: UplinkWsFactory;
   scheduler?: MeshScheduler;
@@ -473,6 +475,8 @@ export async function bootHubA(
     scheduleHubRoleRestart?: (delayMs: number) => void;
     roleEnv?: Record<string, string>;
     hubFetch?: import('../../hub/hub-peer-poller').HubPeerFetch;
+    hubAutoPromote?: boolean;
+    hubAutoPromoteTimeoutMs?: number;
   }
 ): Promise<{
   node: HarnessNode;
@@ -514,6 +518,8 @@ export async function bootHubA(
       hubPriority: 100,
       hubWriterEpoch: 1,
       hubPeers: extra?.hubPeers,
+      hubAutoPromote: extra?.hubAutoPromote,
+      hubAutoPromoteTimeoutMs: extra?.hubAutoPromoteTimeoutMs,
       peerPort: 0,
       stunServers: [],
     },
@@ -676,6 +682,8 @@ export async function enrollAndStart(
       hubPriority: opts.hubPriority,
       hubWriterEpoch: opts.hubWriterEpoch,
       hubPeers: opts.hubPeers,
+      hubAutoPromote: opts.hubAutoPromote,
+      hubAutoPromoteTimeoutMs: opts.hubAutoPromoteTimeoutMs,
       peerPort: 0,
       stunServers: [],
     },
@@ -849,6 +857,7 @@ export function reconstructHubRuntime(
     writerEpoch?: number;
     publicUrl?: string;
     priority?: number;
+    fetchPeerStatus?: import('../../hub/hub-peer-poller').HubPeerFetch;
   }
 ): HubRuntime {
   return new HubRuntime({
@@ -871,6 +880,7 @@ export function reconstructHubRuntime(
       entryNodeId: node.mesh.nodeId,
       sid: 'reconstructed',
     }),
+    fetchPeerStatus: opts.fetchPeerStatus,
   });
 }
 

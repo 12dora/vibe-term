@@ -23,11 +23,10 @@
 
 **第一阶段不做：**
 
-- 自动选主（没有 quorum、没有 lease）；
 - 多 primary 同时写入；
-- 浏览器按 RTT 选最近 hub。
+- 浏览器按 RTT 选最近 hub（浏览器仍走当前页面入口）。
 
-这些属于后续阶段。挂在不同 hub 上的 node 现在可以通过写者 uplink 做跨 hub relay（见下）。
+节点侧按 RTT 挂载（`TMEX_UPLINK_PREFER_NEAREST`，多 hub 时默认开）与 opt-in 自动 promote（`TMEX_HUB_AUTO_PROMOTE`，默认关）已做，见下文。挂在不同 hub 上的 node 可以通过写者 uplink 做跨 hub relay。
 
 ## 拓扑
 
@@ -94,7 +93,9 @@
 2. `mode=standby`，按 `priority` 升序；
 3. 尚未学到 `hubNodeId` 的种子 URL（priority 从 1000 起）。
 
-同一 URL 去重。写者由 `pickWriterHub` 决定：最高 epoch 的 active；并列则 priority 更小；再并列则 `hubNodeId` 字典序。
+同一 URL 去重。写者由 `pickWriterHub` 决定：最高 epoch 的 active；并列则 priority 更小；再并列则 `hubNodeId` 字典序。写者选择不被 RTT 覆盖。
+
+**按 RTT 挂载（仅节点 uplink）：** `TMEX_UPLINK_PREFER_NEAREST` 默认在已知已授权 hub 多于一台时开启，可设 `0`/`off` 强制关闭。对 `/healthz` 的周期探测做 EWMA；至少 2 个样本后，健康且 advertised version ≥ 1.1.13 的已授权 hub 按平滑 RTT 排序。切换还要同时满足：新候选比当前快 ≥30% 且 ≥15 ms；两次 RTT 动机切换间隔 ≥10 分钟（make-before-break，generation 守卫不变）。没有足够 RTT 样本时 failover 仍走上面的 epoch/priority。不支持转发/relay 的旧版 hub 不会排到写者前面。写者始终是最后兜底。浏览器 `/mesh/ws` 与相对 URL 仍走当前页面 origin，不随节点挂载切换。
 
 **切走（failover）：**
 
@@ -130,7 +131,7 @@
 
 只读（节点列表、enrollment 查询、uplink 鉴权、`node.list`、本 hub 与跨 hub relay、RTC 信令、key log 拉取）在 standby 上仍可用。
 
-**epoch 围栏：** 本机 `mode=active` 时，若收到**已授权**的另一台 `mode=active` 且 `writerEpoch` **更大** 的广告，立即日志 `[hub] fenced: higher writerEpoch=… from hub=…`，`setMode('standby')`，把本机在 `mesh_hubs` 的行写成 standby。**不会自动 promote。**
+**epoch 围栏：** 本机 `mode=active` 时，若收到**已授权**的另一台 `mode=active` 且 `writerEpoch` **更大** 的广告，立即日志 `[hub] fenced: higher writerEpoch=… from hub=…`，`setMode('standby')`，把本机在 `mesh_hubs` 的行写成 standby。默认**不会**自动 promote；见下节 opt-in 自动 promote。
 
 围栏必须跨重启存活：被 fence 的 hub 下次启动会读 `mesh_hubs` 里更高 epoch 的已授权 active，仍以 standby 起来（日志 `[hub] starting fenced: …`），即使 `app.env` 里 `TMEX_HUB_MODE=active` 也一样。要重新当写者，必须显式 `tmex hub promote`。
 
@@ -145,6 +146,20 @@
 启动 2 s 后，以及之后每 60 s（±20% 抖动），本机对 `mesh_hubs` 里 **已授权**（id ∈ `TMEX_HUB_PEERS`）且不是 self 的行拉取 `<publicUrl>/api/hub/status`（超时 5 s）。TLS 使用 `HubTrustStore` 的 per-URL CA pin（与 uplink 相同）；没有 pin 的 https 走系统 CA。返回的 32-hex `hubNodeId` 必须等于该行 id，否则丢弃并警告。通过校验后走与授权 `node.status.hub` 相同的 upsert / fencing / 脑裂告警路径（更高 epoch 的 active 会把本机降为 standby，日志 `[hub] fenced by peer status …`）。连续 3 次不可达则把该行标 `online: false`，不删行。`setMode`（promote/demote）以及新授权 hub 行出现时立刻再探一次。
 
 探测结果可信，当且仅当 URL 经 TLS 认证（pin 或系统 CA）**并且** hub id 在本机 allowlist 中。未授权的 URL / id 不能 fencing 本机。
+
+`GET /api/hub/status` 可选带 `writerView: { hubNodeId, writerEpoch, reachable, observedAt }`：本机对当前写者的最新观测。供自动 promote 做 quorum，不单独作为信任根。
+
+## 自动 promote（opt-in）
+
+默认关闭。`TMEX_HUB_AUTO_PROMOTE=1` 才允许 standby 在写者长时间不可达时把自己提成写者。超时 `TMEX_HUB_AUTO_PROMOTE_TIMEOUT_MS`（默认 600_000，即 10 分钟）：本机对写者的探测必须在该窗口内连续失败（一次成功即清零计时）。
+
+同时必须满足：
+
+- 本机是所有已授权 standby 里 priority 最低者（相同则 node id 更小）；
+- 已授权 hub **恰好 2 台**时，不做 quorum（只靠开关 + 长超时）。两 hub 分区时无法区分「写者挂了」和「链路断了」，这是文档化的脑裂风险，恢复靠更高 epoch 围栏；
+- **≥3 台**时，其它已授权 hub（不含 self、不含写者）里，新鲜（≤2× 探测间隔）的 `writerView` 必须有严格多数报告写者不可达。过期 view 不计入。
+
+Promote 复用 `POST /api/hub/role` 的过渡：写 `TMEX_HUB_MODE=active` 与 `TMEX_HUB_WRITER_EPOCH=max(已知)+1`，`operationId=auto-<ts>`，然后重启。日志 `[hub] auto-promote: …`。旧写者回来后被更高 epoch fence。
 
 ## 授权 allowlist（为何必须有）
 
@@ -340,12 +355,12 @@ tmex hub list
 
 ## 已知限制
 
-1. 没有自动选主。主挂了只靠 node 侧有序 failover；要把 standby 变成写者必须人工 `promote`。
+1. 自动选主默认关闭。未设 `TMEX_HUB_AUTO_PROMOTE=1` 时，主挂了只靠 node 侧有序 failover，要把 standby 变成写者必须人工 `promote`。两 hub 开启自动 promote 无法从理论上消除脑裂。
 2. 两台 active 且 epoch 相同不会自动决出胜负，只打脑裂告警。
 3. enrollment token 是 best-effort 复制：只发给 ≥ 1.1.13 的已授权 hub；写者在 ACK 前崩溃则 standby 可能没有该 token。redeem 仍只在当前写者上执行。
 4. 注册表复制只覆盖「本地已有未吊销证书」的 node，不会凭空插入未知 id。
-5. 不做 hub 间 relay：挂在 standby 上的 node 只能跟同样挂在这台 standby 上的节点互相 relay。
-6. 浏览器仍走当前入口；不会按 RTT 选 hub。
+5. 跨 hub relay 已做（`hub.attachments` / `hub-relay`）；旧版（低于 1.1.13）仍只能同 hub relay。
+6. 节点可按 RTT 挂到最近的已授权 hub；浏览器仍走当前入口，不会按 RTT 选 hub。
 7. 混合版本下，旧节点看不到 `hubs[]`，只会连 `TMEX_HUB_URL` 那一个种子。
 8. `promote` 的 epoch 以**本机** env 与 `mesh_hubs` 为准。若本机表是旧快照，可能算出偏小的 epoch；以实际跑起来后的 fence 日志为准，必要时再 promote 一次。
 9. 被 fence 的 hub 重启后仍是 standby，直到显式 `promote`。不要指望改回 `TMEX_HUB_MODE=active` 再启动就能夺回写者。

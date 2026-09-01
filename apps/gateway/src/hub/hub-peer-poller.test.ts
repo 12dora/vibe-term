@@ -8,6 +8,7 @@ import {
   HUB_PEER_POLL_JITTER,
   HubPeerPoller,
   peerPollDelayMs,
+  shouldAutoPromote,
 } from './hub-peer-poller';
 import { HubRuntime } from './hub-runtime';
 import {
@@ -321,6 +322,335 @@ describe('HubPeerPoller', () => {
       await new Promise((r) => setTimeout(r, 20));
       expect(fetches).toBeGreaterThanOrEqual(1);
       await hub.stop();
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('shouldAutoPromote', () => {
+  const writer = PEER;
+  const self = SELF;
+  const other = OTHER;
+  const fourth = 'dd'.repeat(16);
+
+  function hubs(
+    rows: Array<{ id: string; mode: 'active' | 'standby'; priority: number }>
+  ): Array<{ hubNodeId: string; mode: 'active' | 'standby'; priority: number }> {
+    return rows.map((row) => ({ hubNodeId: row.id, mode: row.mode, priority: row.priority }));
+  }
+
+  test('quorum matrix: 3 hubs need the other standby fresh unreachable view', () => {
+    const authorized = hubs([
+      { id: writer, mode: 'active', priority: 100 },
+      { id: self, mode: 'standby', priority: 200 },
+      { id: other, mode: 'standby', priority: 200 },
+    ]);
+    const base = {
+      enabled: true,
+      selfId: self,
+      selfMode: 'standby' as const,
+      writerId: writer,
+      writerUnreachableSince: 0,
+      now: 600_000,
+      timeoutMs: 600_000,
+      authorized,
+      pollIntervalMs: 60_000,
+    };
+    expect(
+      shouldAutoPromote({
+        ...base,
+        peerWriterViews: new Map([
+          [other, { hubNodeId: writer, writerEpoch: 1, reachable: false, observedAt: 600_000 }],
+        ]),
+      })
+    ).toBe(true);
+    expect(shouldAutoPromote({ ...base, peerWriterViews: new Map() })).toBe(false);
+    expect(
+      shouldAutoPromote({
+        ...base,
+        peerWriterViews: new Map([
+          [other, { hubNodeId: writer, writerEpoch: 1, reachable: true, observedAt: 600_000 }],
+        ]),
+      })
+    ).toBe(false);
+  });
+
+  test('4 hubs need a strict majority of the other standbys', () => {
+    const authorized = hubs([
+      { id: writer, mode: 'active', priority: 100 },
+      { id: self, mode: 'standby', priority: 150 },
+      { id: other, mode: 'standby', priority: 200 },
+      { id: fourth, mode: 'standby', priority: 210 },
+    ]);
+    const base = {
+      enabled: true,
+      selfId: self,
+      selfMode: 'standby' as const,
+      writerId: writer,
+      writerUnreachableSince: 0,
+      now: 600_000,
+      timeoutMs: 600_000,
+      authorized,
+      pollIntervalMs: 60_000,
+    };
+    const unreachable = {
+      hubNodeId: writer,
+      writerEpoch: 1,
+      reachable: false,
+      observedAt: 600_000,
+    };
+    expect(
+      shouldAutoPromote({
+        ...base,
+        peerWriterViews: new Map([[other, unreachable]]),
+      })
+    ).toBe(false);
+    expect(
+      shouldAutoPromote({
+        ...base,
+        peerWriterViews: new Map([
+          [other, unreachable],
+          [fourth, unreachable],
+        ]),
+      })
+    ).toBe(true);
+  });
+
+  test('2-hub waiver skips quorum', () => {
+    expect(
+      shouldAutoPromote({
+        enabled: true,
+        selfId: self,
+        selfMode: 'standby',
+        writerId: writer,
+        writerUnreachableSince: 0,
+        now: 600_000,
+        timeoutMs: 600_000,
+        authorized: hubs([
+          { id: writer, mode: 'active', priority: 100 },
+          { id: self, mode: 'standby', priority: 200 },
+        ]),
+        peerWriterViews: new Map(),
+        pollIntervalMs: 60_000,
+      })
+    ).toBe(true);
+  });
+
+  test('not-lowest-priority standby does nothing', () => {
+    expect(
+      shouldAutoPromote({
+        enabled: true,
+        selfId: self,
+        selfMode: 'standby',
+        writerId: writer,
+        writerUnreachableSince: 0,
+        now: 600_000,
+        timeoutMs: 600_000,
+        authorized: hubs([
+          { id: writer, mode: 'active', priority: 100 },
+          { id: other, mode: 'standby', priority: 50 },
+          { id: self, mode: 'standby', priority: 200 },
+        ]),
+        peerWriterViews: new Map([
+          [other, { hubNodeId: writer, writerEpoch: 1, reachable: false, observedAt: 600_000 }],
+        ]),
+        pollIntervalMs: 60_000,
+      })
+    ).toBe(false);
+  });
+
+  test('stale writerView does not count toward quorum', () => {
+    expect(
+      shouldAutoPromote({
+        enabled: true,
+        selfId: self,
+        selfMode: 'standby',
+        writerId: writer,
+        writerUnreachableSince: 0,
+        now: 600_000,
+        timeoutMs: 600_000,
+        authorized: hubs([
+          { id: writer, mode: 'active', priority: 100 },
+          { id: self, mode: 'standby', priority: 200 },
+          { id: other, mode: 'standby', priority: 200 },
+        ]),
+        peerWriterViews: new Map([
+          [other, { hubNodeId: writer, writerEpoch: 1, reachable: false, observedAt: 1 }],
+        ]),
+        pollIntervalMs: 60_000,
+      })
+    ).toBe(false);
+  });
+
+  test('timeout not elapsed or a success reset blocks promote', () => {
+    const authorized = hubs([
+      { id: writer, mode: 'active', priority: 100 },
+      { id: self, mode: 'standby', priority: 200 },
+    ]);
+    expect(
+      shouldAutoPromote({
+        enabled: true,
+        selfId: self,
+        selfMode: 'standby',
+        writerId: writer,
+        writerUnreachableSince: 500_000,
+        now: 600_000,
+        timeoutMs: 600_000,
+        authorized,
+        peerWriterViews: new Map(),
+        pollIntervalMs: 60_000,
+      })
+    ).toBe(false);
+    expect(
+      shouldAutoPromote({
+        enabled: true,
+        selfId: self,
+        selfMode: 'standby',
+        writerId: writer,
+        writerUnreachableSince: null,
+        now: 600_000,
+        timeoutMs: 600_000,
+        authorized,
+        peerWriterViews: new Map(),
+        pollIntervalMs: 60_000,
+      })
+    ).toBe(false);
+  });
+});
+
+describe('HubPeerPoller auto-promote', () => {
+  const OTHER_URL = 'https://other.example';
+
+  function seedSelf(meshHubs: MeshHubStore, mode: 'active' | 'standby' = 'standby') {
+    meshHubs.upsert(
+      {
+        hubNodeId: SELF,
+        publicUrl: 'https://self.example',
+        name: 'self',
+        mode,
+        priority: 200,
+        writerEpoch: 1,
+        caFingerprint: null,
+        online: true,
+        lastSeenAt: 1,
+      },
+      1
+    );
+  }
+
+  test('timeout resets on a single successful writer probe', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const meshHubs = new MeshHubStore(db);
+      seedSelf(meshHubs);
+      seedPeerRow(meshHubs, { mode: 'active', writerEpoch: 1 });
+      let now = 1_000;
+      let writerOk = false;
+      const promoted: string[] = [];
+      const poller = new HubPeerPoller({
+        meshHubs,
+        selfHubId: () => SELF,
+        isAuthorized: (id) => id === PEER || id === SELF,
+        applyStatus: (id, ad) => {
+          const existing = meshHubs.get(id);
+          if (!existing) return;
+          meshHubs.upsert(
+            {
+              ...existing,
+              mode: ad.mode,
+              writerEpoch: ad.writerEpoch,
+              publicUrl: ad.publicUrl,
+              online: true,
+            },
+            now
+          );
+        },
+        now: () => now,
+        autoPromote: true,
+        autoPromoteTimeoutMs: 100,
+        intervalMs: 10,
+        selfMode: () => 'standby',
+        selfPriority: () => 200,
+        onAutoPromote: (id) => {
+          promoted.push(id);
+        },
+        fetch: async (url) => {
+          if (url.includes('peer.example')) {
+            if (!writerOk) throw new Error('down');
+            return jsonResponse(statusBody({ mode: 'active', writerEpoch: 1 }));
+          }
+          throw new Error('unexpected');
+        },
+        timeoutMs: 50,
+      });
+      await poller.pollNow();
+      now = 1_050;
+      writerOk = true;
+      await poller.pollNow();
+      now = 1_200;
+      writerOk = false;
+      await poller.pollNow();
+      expect(promoted).toEqual([]);
+      now = 1_300;
+      await poller.pollNow();
+      expect(promoted).toHaveLength(1);
+      expect(promoted[0]?.startsWith('auto-')).toBe(true);
+    } finally {
+      close();
+    }
+  });
+
+  test('GET-equivalent writerView is recorded from peer status', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const meshHubs = new MeshHubStore(db);
+      seedSelf(meshHubs);
+      seedPeerRow(meshHubs, { mode: 'active', writerEpoch: 1 });
+      meshHubs.upsert(
+        {
+          hubNodeId: OTHER,
+          publicUrl: OTHER_URL,
+          name: 'other',
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 1,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
+      const poller = new HubPeerPoller({
+        meshHubs,
+        selfHubId: () => SELF,
+        isAuthorized: (id) => id === PEER || id === OTHER || id === SELF,
+        applyStatus: () => {},
+        now: () => 5_000,
+        fetch: async (url) => {
+          if (url.includes('peer.example')) throw new Error('down');
+          return jsonResponse({
+            hubNodeId: OTHER,
+            publicUrl: OTHER_URL,
+            mode: 'standby',
+            priority: 200,
+            writerEpoch: 1,
+            writerView: {
+              hubNodeId: PEER,
+              writerEpoch: 1,
+              reachable: false,
+              observedAt: 4_900,
+            },
+          });
+        },
+        timeoutMs: 50,
+      });
+      await poller.pollNow();
+      expect(poller.localWriterView()).toMatchObject({
+        hubNodeId: PEER,
+        reachable: false,
+        observedAt: 5_000,
+      });
     } finally {
       close();
     }

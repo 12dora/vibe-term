@@ -617,4 +617,47 @@ describe('TlsService', () => {
     await ctx.service.applyMode({ mode: 'none' });
     expect(n).toBeGreaterThan(0);
   });
+
+  test('onStatusChange fires once after the listener successfully applies self-signed material', async () => {
+    let n = 0;
+    const ctx = await setup({
+      onStatusChange: () => {
+        n += 1;
+      },
+    });
+    cleanups.push(ctx.close);
+    await ctx.service.applyMode({
+      mode: 'selfsigned',
+      sans: ['localhost'],
+      tlsPort: 9443,
+      bindHost: '127.0.0.1',
+    });
+    expect(n).toBe(1);
+    expect(ctx.listener.state().running).toBe(true);
+    expect(ctx.listener.state().error).toBeNull();
+  });
+
+  test('onStatusChange does not fire when the listener fails to bind', async () => {
+    let n = 0;
+    const ctx = await setup({
+      onStatusChange: () => {
+        n += 1;
+      },
+    });
+    cleanups.push(ctx.close);
+    ctx.listener.failNext = true;
+    try {
+      await ctx.service.applyMode({
+        mode: 'selfsigned',
+        sans: ['localhost'],
+        tlsPort: 9443,
+        bindHost: '127.0.0.1',
+      });
+      throw new Error('expected port_in_use');
+    } catch (error) {
+      expect((error as TlsApiError).code).toBe('port_in_use');
+    }
+    expect(n).toBe(0);
+    expect(ctx.listener.state().error).toBe('Failed to bind');
+  });
 });

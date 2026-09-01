@@ -97,6 +97,9 @@ export type MeshRuntimeConfig = {
   hubPriority?: number;
   hubWriterEpoch?: number;
   hubPeers?: string[];
+  hubAutoPromote?: boolean;
+  hubAutoPromoteTimeoutMs?: number;
+  uplinkPreferNearest?: boolean | null;
   peerPort: number;
   stunServers: string[];
   turnUrl?: string | null;
@@ -797,6 +800,9 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
         patchHostEnv: opts.patchHubRoleEnv,
         scheduleRestart: opts.scheduleHubRoleRestart,
         hubRoleInstalled: config.roles.hub,
+        autoPromote: config.hubAutoPromote ?? gatewayConfig.hubAutoPromote,
+        autoPromoteTimeoutMs:
+          config.hubAutoPromoteTimeoutMs ?? gatewayConfig.hubAutoPromoteTimeoutMs,
       }))
     : (opts.hub ?? null);
   keyLogService.onApplied = (_userId, step) => {
@@ -1082,6 +1088,7 @@ function createUplinkWiring(d: MeshDeps) {
     wsFactory: opts.wsFactory,
     scheduler: d.scheduler,
     pingIntervalMs: opts.pingIntervalMs,
+    preferNearest: config.uplinkPreferNearest ?? gatewayConfig.uplinkPreferNearest,
     isLocalCandidate: (cand) =>
       Boolean(uplinkHub) &&
       isSelfHubCandidate(cand, { nodeId: identity.nodeIdHex, publicUrl: ownHubUrl }),
@@ -1505,10 +1512,18 @@ function assembleMeshRuntime(
   const { uplink, peerManager } = w;
   let stopPromise: Promise<void> | null = null;
   let tlsPoll: { clear: () => void } | null = null;
-  const refreshTlsAndAdvertise = async () => {
-    const prev = d.state.caFingerprint;
-    await d.refreshTls();
-    if (d.state.caFingerprint !== prev) uplink.sendStatusIfChanged();
+  let tlsRefreshInFlight: Promise<void> | null = null;
+  const refreshTlsAndAdvertise = () => {
+    if (tlsRefreshInFlight) return tlsRefreshInFlight;
+    tlsRefreshInFlight = (async () => {
+      const prev = d.state.caFingerprint;
+      await d.refreshTls();
+      hub?.updateSelfCaFingerprint(d.state.caFingerprint);
+      if (d.state.caFingerprint !== prev) uplink.sendStatusIfChanged();
+    })().finally(() => {
+      tlsRefreshInFlight = null;
+    });
+    return tlsRefreshInFlight;
   };
   const unsubscribeHubMode = hub?.onModeChange(() => uplink.sendStatusIfChanged()) ?? null;
   return {

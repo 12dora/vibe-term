@@ -42,10 +42,13 @@ import {
 import {
   type PatchHubRoleEnv,
   type ScheduleHubRoleRestart,
+  executeHubRoleTransition,
   handleGetHubRoleStatus,
   handlePostHubRole,
+  knownMaxWriterEpoch,
   reconcileHubRoleOnStart,
 } from './hub-role-routes';
+import { HubRoleTransitionStore } from './hub-role-transitions';
 import {
   HUB_TOKENS_ACK_WAIT_MS,
   applyHubTokensMessage,
@@ -112,6 +115,8 @@ export type HubRuntimeOptions = {
   patchHostEnv?: PatchHubRoleEnv | null;
   scheduleRestart?: ScheduleHubRoleRestart;
   hubRoleInstalled?: boolean;
+  autoPromote?: boolean;
+  autoPromoteTimeoutMs?: number;
 };
 
 export type HubWriterBridge = {
@@ -278,6 +283,11 @@ export class HubRuntime {
       now: this.now,
       fetch: opts.fetchPeerStatus,
       hubTrust: opts.hubTrust,
+      autoPromote: opts.autoPromote ?? false,
+      autoPromoteTimeoutMs: opts.autoPromoteTimeoutMs,
+      selfMode: () => this.uplink.mode(),
+      selfPriority: () => this.config.priority ?? (this.uplink.mode() === 'standby' ? 200 : 100),
+      onAutoPromote: (operationId) => this.runAutoPromote(operationId),
     });
     if (opts.hubTrust) this.peerPoller.start();
     reconcileHubRoleOnStart(this.roleContext());
@@ -319,6 +329,10 @@ export class HubRuntime {
 
   writerEpoch(): number {
     return this.uplink.writerEpoch();
+  }
+
+  updateSelfCaFingerprint(fp: string | null): void {
+    this.uplink.updateSelfCaFingerprint(fp);
   }
 
   applyReplicatedNodeList(list: UplinkNodeList, meta: { hubNodeId: string | null }): void {
@@ -639,6 +653,7 @@ export class HubRuntime {
   private handleHubStatus(): Response {
     const snap = this.uplink.ownHubSnapshot();
     if (!snap) return json({ error: 'hub_unconfigured' }, 503);
+    const writerView = this.peerPoller.localWriterView();
     return json({
       hubNodeId: snap.hubNodeId,
       publicUrl: snap.publicUrl,
@@ -648,6 +663,35 @@ export class HubRuntime {
       ...(snap.name ? { name: snap.name } : {}),
       caFingerprint: snap.caFingerprint,
       now: this.now(),
+      ...(writerView ? { writerView } : {}),
+    });
+  }
+
+  private async runAutoPromote(operationId: string): Promise<void> {
+    const ctx = this.roleContext();
+    const self = this.uplink.hubNodeId();
+    if (!self) return;
+    if (!ctx.patchHostEnv) {
+      console.error('[hub] auto-promote skipped: host env patcher is not available');
+      return;
+    }
+    try {
+      if (new HubRoleTransitionStore(ctx.db).inFlight().length > 0) {
+        console.error('[hub] auto-promote skipped: a hub role transition is already in progress');
+        return;
+      }
+    } catch {
+      /* 旧库尚未迁移时忽略 in-flight 检查，仍尝试 promote */
+    }
+    const writerEpoch = knownMaxWriterEpoch(ctx) + 1;
+    console.error(
+      `[hub] auto-promote applying mode=active writerEpoch=${writerEpoch} operationId=${operationId}`
+    );
+    await executeHubRoleTransition(ctx, {
+      operationId,
+      mode: 'active',
+      writerEpoch,
+      targetHubId: self,
     });
   }
 

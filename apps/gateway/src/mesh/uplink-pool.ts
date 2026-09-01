@@ -5,6 +5,7 @@ import type { HubTrustStore } from '../auth/hub-trust-store';
 import type { MeshHubRecord } from '../auth/mesh-hub-store';
 import { hubListToRecords, pickWriterHub } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
+import { nodeVersionSupportsHubAuthRecords } from '../hub/hub-authorization';
 import { backoffDelayMs, defaultScheduler } from './ctl';
 import type {
   InboundRelayHandler,
@@ -37,6 +38,11 @@ export const UPLINK_POOL_PROBE_TIMEOUT_MS = 5_000;
 export const UPLINK_POOL_PROBE_JITTER = 0.2;
 export const UPLINK_POOL_FAILBACK_DEBOUNCE_MS = 5_000;
 export const UPLINK_POOL_RTT_PROBE_INTERVAL_MS = 300_000;
+export const UPLINK_RTT_EWMA_ALPHA = 0.3;
+export const UPLINK_RTT_MIN_SAMPLES = 2;
+export const UPLINK_RTT_SWITCH_MIN_RATIO = 0.3;
+export const UPLINK_RTT_SWITCH_MIN_MS = 15;
+export const UPLINK_RTT_SWITCH_DWELL_MS = 10 * 60 * 1000;
 export const UPLINK_SEED_PRIORITY_BASE = 1_000;
 export const CA_BOOTSTRAP_TIMEOUT_MS = 5_000;
 export const CA_BOOTSTRAP_MAX_BYTES = 64 * 1024;
@@ -53,6 +59,7 @@ export type UplinkCandidate = {
   lastAttemptAt?: number | null;
   rttMs?: number | null;
   rttAt?: number | null;
+  version?: string | null;
 };
 
 export type AttachedHub = {
@@ -91,6 +98,9 @@ export type UplinkPoolOptions = {
   failbackDebounceMs?: number;
   rttProbeIntervalMs?: number;
   enablePeriodicRttProbe?: boolean;
+  /** `null` = auto (on when >1 authorized hub is known). `false` forces off. */
+  preferNearest?: boolean | null;
+  rttSwitchDwellMs?: number;
   onNodeList?: (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void;
   onRtcSignal?: (msg: UplinkRtcSignal) => void;
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
@@ -263,6 +273,75 @@ function compareUplinkCandidates(a: UplinkCandidate, b: UplinkCandidate): number
   return 0;
 }
 
+export function isRttSwitchWorth(currentMs: number, bestMs: number): boolean {
+  if (!(currentMs > 0) || !(bestMs >= 0)) return false;
+  const delta = currentMs - bestMs;
+  if (delta < UPLINK_RTT_SWITCH_MIN_MS) return false;
+  return delta / currentMs >= UPLINK_RTT_SWITCH_MIN_RATIO;
+}
+
+export function hubSupportsNearestAttach(version: string | null | undefined): boolean {
+  return nodeVersionSupportsHubAuthRecords(version);
+}
+
+export function writerHubIdOf(cands: UplinkCandidate[]): string | null {
+  return pickWriterHub(
+    cands
+      .filter((row): row is UplinkCandidate & { hubNodeId: string } => Boolean(row.hubNodeId))
+      .map((row) => ({
+        hubNodeId: row.hubNodeId,
+        mode: row.mode,
+        writerEpoch: row.writerEpoch,
+        priority: row.priority,
+      }))
+  );
+}
+
+export function orderCandidatesByNearest(
+  cands: UplinkCandidate[],
+  opts: {
+    rttOf: (publicUrl: string) => { ewma: number; samples: number } | null;
+    writerHubId: string | null;
+    versionOf: (cand: UplinkCandidate) => string | null | undefined;
+  }
+): UplinkCandidate[] {
+  if (cands.length <= 1) return cands;
+  const eligible: UplinkCandidate[] = [];
+  const rest: UplinkCandidate[] = [];
+  for (const cand of cands) {
+    const rtt = opts.rttOf(cand.publicUrl);
+    const isWriter = Boolean(cand.hubNodeId) && cand.hubNodeId === opts.writerHubId;
+    const supports = isWriter || hubSupportsNearestAttach(opts.versionOf(cand));
+    if (rtt && rtt.samples >= UPLINK_RTT_MIN_SAMPLES && supports) eligible.push(cand);
+    else rest.push(cand);
+  }
+  if (eligible.length === 0) return cands;
+  eligible.sort((a, b) => {
+    const ar = opts.rttOf(a.publicUrl)?.ewma ?? Number.POSITIVE_INFINITY;
+    const br = opts.rttOf(b.publicUrl)?.ewma ?? Number.POSITIVE_INFINITY;
+    if (ar !== br) return ar - br;
+    return compareUplinkCandidates(a, b);
+  });
+  const writerIdx = rest.findIndex((row) => row.hubNodeId === opts.writerHubId);
+  if (writerIdx > 0) {
+    const writer = rest[writerIdx];
+    const before = rest.slice(0, writerIdx);
+    const after = rest.slice(writerIdx + 1);
+    const keep: UplinkCandidate[] = [];
+    const demote: UplinkCandidate[] = [];
+    for (const row of before) {
+      const isWriter = row.hubNodeId === opts.writerHubId;
+      if (isWriter || hubSupportsNearestAttach(opts.versionOf(row))) keep.push(row);
+      else demote.push(row);
+    }
+    rest.length = 0;
+    rest.push(...keep);
+    if (writer) rest.push(writer);
+    rest.push(...demote, ...after);
+  }
+  return [...eligible, ...rest];
+}
+
 export function recordsFromNodeList(list: UplinkNodeList): Array<Omit<MeshHubRecord, 'updatedAt'>> {
   if (list.hubs && list.hubs.length > 0) return hubListToRecords(list.hubs);
   if (!list.hub) return [];
@@ -394,6 +473,7 @@ type UrlDiag = {
   lastAttemptAt: number | null;
   rttMs: number | null;
   rttAt: number | null;
+  rttSamples: number;
 };
 
 type HubView = {
@@ -419,6 +499,9 @@ export class UplinkPool {
   private readonly probeJitter: number;
   private readonly failbackDebounceMs: number;
   private readonly rttProbeIntervalMs: number;
+  private readonly preferNearestSetting: boolean | null;
+  private readonly rttSwitchDwellMs: number;
+  private lastRttSwitchAt = 0;
 
   private live: UplinkClient | null = null;
   private pending: UplinkClient | null = null;
@@ -466,6 +549,8 @@ export class UplinkPool {
     this.probeJitter = opts.probeJitter ?? UPLINK_POOL_PROBE_JITTER;
     this.failbackDebounceMs = opts.failbackDebounceMs ?? UPLINK_POOL_FAILBACK_DEBOUNCE_MS;
     this.rttProbeIntervalMs = opts.rttProbeIntervalMs ?? UPLINK_POOL_RTT_PROBE_INTERVAL_MS;
+    this.preferNearestSetting = opts.preferNearest === undefined ? null : opts.preferNearest;
+    this.rttSwitchDwellMs = opts.rttSwitchDwellMs ?? UPLINK_RTT_SWITCH_DWELL_MS;
   }
 
   get userId(): string {
@@ -491,15 +576,30 @@ export class UplinkPool {
   candidates(): UplinkCandidate[] {
     const list = this.opts.candidates();
     const base = list.length > 0 ? list : [fallbackCandidate()];
-    return base.map((row) => {
+    const withDiag = base.map((row) => {
       const diag = this.diagByUrl.get(normalizeHubEndpointUrl(row.publicUrl));
+      let version = row.version ?? null;
+      if (version == null && row.hubNodeId) {
+        try {
+          version = this.opts.userStore.getNode(row.hubNodeId)?.version ?? null;
+        } catch {
+          version = null;
+        }
+      }
       return {
         ...row,
         lastError: diag?.lastError ?? row.lastError ?? null,
         lastAttemptAt: diag?.lastAttemptAt ?? row.lastAttemptAt ?? null,
         rttMs: diag?.rttMs ?? row.rttMs ?? null,
         rttAt: diag?.rttAt ?? row.rttAt ?? null,
+        version,
       };
+    });
+    if (!this.preferNearestActive(withDiag)) return withDiag;
+    return orderCandidatesByNearest(withDiag, {
+      rttOf: (publicUrl) => this.rttState(publicUrl),
+      writerHubId: writerHubIdOf(withDiag),
+      versionOf: (cand) => cand.version,
     });
   }
 
@@ -1084,8 +1184,49 @@ export class UplinkPool {
         if (this.stopAbort?.signal.aborted) return;
         await this.probeHealthzTimed(cand.publicUrl);
       }
+      await this.considerNearestSwitch();
     } finally {
       this.rttProbeInFlight = false;
+    }
+  }
+
+  private preferNearestActive(cands?: UplinkCandidate[]): boolean {
+    if (this.preferNearestSetting === false) return false;
+    const list = cands ?? this.opts.candidates();
+    return list.filter((row) => row.hubNodeId).length > 1;
+  }
+
+  private rttState(publicUrl: string): { ewma: number; samples: number } | null {
+    const diag = this.diagByUrl.get(normalizeHubEndpointUrl(publicUrl));
+    if (!diag || diag.rttMs == null || diag.rttSamples < 1) return null;
+    return { ewma: diag.rttMs, samples: diag.rttSamples };
+  }
+
+  private async considerNearestSwitch(): Promise<void> {
+    if (!this.preferNearestActive()) return;
+    const attached = this.attached;
+    if (!attached || this.live?.state !== 'online') return;
+    const now = this.scheduler.now();
+    if (this.lastRttSwitchAt > 0 && now - this.lastRttSwitchAt < this.rttSwitchDwellMs) return;
+    const currentRtt = this.rttState(attached.publicUrl);
+    if (!currentRtt || currentRtt.samples < UPLINK_RTT_MIN_SAMPLES) return;
+    const ordered = this.candidates();
+    const best = ordered[0];
+    if (!best || sameHubUrl(best.publicUrl, attached.publicUrl)) return;
+    const bestRtt = this.rttState(best.publicUrl);
+    if (!bestRtt || bestRtt.samples < UPLINK_RTT_MIN_SAMPLES) return;
+    if (!isRttSwitchWorth(currentRtt.ewma, bestRtt.ewma)) return;
+    const writerId = writerHubIdOf(ordered);
+    const isWriter = Boolean(best.hubNodeId) && best.hubNodeId === writerId;
+    if (!isWriter && !hubSupportsNearestAttach(best.version)) return;
+    const ok = await this.probeHealthzTimed(best.publicUrl);
+    if (!ok) return;
+    try {
+      await this.switchTo(best.publicUrl);
+      this.lastRttSwitchAt = this.scheduler.now();
+      this.logInfo(`[uplink] nearest → hub=${redactUrl(best.publicUrl)}`);
+    } catch {
+      /* keep current attachment */
     }
   }
 
@@ -1241,8 +1382,14 @@ export class UplinkPool {
   }
 
   private async probeHealthzTimed(publicUrl: string): Promise<boolean> {
-    const pin = this.opts.hubTrust.get(publicUrl);
-    const tlsCa = pin?.caPem ? [pin.caPem] : null;
+    if (this.stopAbort?.signal.aborted) return false;
+    let tlsCa: string[] | null = null;
+    try {
+      const pin = this.opts.hubTrust.get(publicUrl);
+      tlsCa = pin?.caPem ? [pin.caPem] : null;
+    } catch {
+      tlsCa = null;
+    }
     const probe = this.opts.probeHealthz ?? defaultProbeHealthz;
     const started = performance.now();
     let ok = false;
@@ -1251,16 +1398,17 @@ export class UplinkPool {
     } catch {
       ok = false;
     }
+    if (this.stopAbort?.signal.aborted) return false;
     if (ok) {
       this.noteRtt(publicUrl, Math.max(0, Math.round(performance.now() - started)));
     } else {
-      this.patchDiag(publicUrl, { rttMs: null, rttAt: null });
+      this.patchDiag(publicUrl, { rttMs: null, rttAt: null, rttSamples: 0 });
     }
     return ok;
   }
 
   private emptyDiag(): UrlDiag {
-    return { lastError: null, lastAttemptAt: null, rttMs: null, rttAt: null };
+    return { lastError: null, lastAttemptAt: null, rttMs: null, rttAt: null, rttSamples: 0 };
   }
 
   private patchDiag(publicUrl: string, patch: Partial<UrlDiag>): void {
@@ -1271,11 +1419,18 @@ export class UplinkPool {
       lastAttemptAt: patch.lastAttemptAt !== undefined ? patch.lastAttemptAt : prev.lastAttemptAt,
       rttMs: patch.rttMs !== undefined ? patch.rttMs : prev.rttMs,
       rttAt: patch.rttAt !== undefined ? patch.rttAt : prev.rttAt,
+      rttSamples: patch.rttSamples !== undefined ? patch.rttSamples : prev.rttSamples,
     });
   }
 
   private noteRtt(publicUrl: string, rttMs: number): void {
-    this.patchDiag(publicUrl, { rttMs, rttAt: this.scheduler.now() });
+    const prev = this.diagByUrl.get(normalizeHubEndpointUrl(publicUrl)) ?? this.emptyDiag();
+    const samples = prev.rttSamples + 1;
+    const ewma =
+      samples === 1 || prev.rttMs == null
+        ? rttMs
+        : Math.round(UPLINK_RTT_EWMA_ALPHA * rttMs + (1 - UPLINK_RTT_EWMA_ALPHA) * prev.rttMs);
+    this.patchDiag(publicUrl, { rttMs: ewma, rttAt: this.scheduler.now(), rttSamples: samples });
   }
 
   private noteAttempt(cand: UplinkCandidate): void {

@@ -934,6 +934,89 @@ describe('multi-hub in-process integration', () => {
     ).toBe(true);
   }, 20_000);
 
+  test('G6: A down long enough → B auto-promotes → A returns fenced', async () => {
+    const router = new HubRouter();
+    const bPending = await createPendingNode();
+    const aBoot = await bootHubA(router, { hubPeers: [bPending.identity.nodeIdHex] });
+    const parent = {
+      mesh: aBoot.node.mesh,
+      boot: aBoot.boot,
+      keys: aBoot.keys,
+      keyLog: aBoot.keyLog,
+    };
+    const b = await enrollAndStart(parent, {
+      name: 'node-b',
+      version: 'ver-b',
+      roles: { hub: true, node: true },
+      hubUrl: HUB_A_URL,
+      hubPublicUrl: HUB_B_URL,
+      hubMode: 'standby',
+      hubPriority: 200,
+      hubWriterEpoch: 1,
+      hubPeers: [aBoot.node.mesh.nodeId],
+      wsFactory: router.factory,
+      pending: bPending,
+      label: 'b',
+      hubFetch: router.fetch,
+      hubAutoPromote: true,
+      hubAutoPromoteTimeoutMs: 20,
+    });
+    if (!b.mesh.hub) throw new Error('hub B missing HubRuntime');
+    router.register(HUB_B_URL, b.mesh.hub);
+    fixtures.push({
+      stop: async () => {
+        await b.mesh.stop();
+        b.close();
+        await aBoot.node.mesh.stop();
+        aBoot.node.close();
+      },
+    });
+    await waitUntil(() => meshHubsOf(b.db).get(aBoot.node.mesh.nodeId)?.mode === 'active', 8_000);
+
+    router.takeDown(HUB_A_URL);
+    const autoLogs: string[] = [];
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      autoLogs.push(String(args[0]));
+    });
+    try {
+      await b.mesh.hub.pollPeersNow();
+      await Bun.sleep(25);
+      await b.mesh.hub.pollPeersNow();
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(b.mesh.hub.mode()).toBe('active');
+    expect(b.mesh.hub.writerEpoch()).toBeGreaterThan(1);
+    expect(b.roleEnv?.TMEX_HUB_MODE).toBe('active');
+    expect(autoLogs.some((line) => line.includes('[hub] auto-promote'))).toBe(true);
+
+    await aBoot.node.mesh.hub?.stop();
+    const fenceLogs: string[] = [];
+    const fenceSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      fenceLogs.push(String(args[0]));
+    });
+    let restarted: ReturnType<typeof reconstructHubRuntime>;
+    try {
+      restarted = reconstructHubRuntime(aBoot.node, {
+        userId: aBoot.boot.userId,
+        keys: aBoot.keys,
+        keyLog: aBoot.keyLog,
+        authorizedHubIds: [b.mesh.nodeId],
+        mode: 'active',
+        writerEpoch: 1,
+        fetchPeerStatus: router.fetch,
+      });
+      await restarted.pollPeersNow();
+    } finally {
+      fenceSpy.mockRestore();
+    }
+    fixtures.push({ stop: async () => restarted.stop() });
+    expect(restarted.mode()).toBe('standby');
+    expect(
+      fenceLogs.some((line) => line.includes('[hub] fenced') || line.includes('writerEpoch='))
+    ).toBe(true);
+  }, 20_000);
+
   test('G5: C on A and D on B can HTTP-relay both ways, rtc.signal round-trip, A down rebuilds route', async () => {
     const topo = await boot();
     const { a, b, c, d, router, boot: user } = topo;
