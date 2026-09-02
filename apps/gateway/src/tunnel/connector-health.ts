@@ -250,3 +250,19 @@ export async function readLogTail(
     await fh?.close().catch(() => {});
   }
 }
+
+export function isAccessProtectedHealthResponse(res: Response): boolean {
+  const location = res.headers.get('location') ?? '';
+  if (
+    (res.status === 302 || res.status === 303) &&
+    /\.cloudflareaccess\.com(?:[:/?#]|$)/i.test(location)
+  ) {
+    return true;
+  }
+  if (res.status === 403) {
+    for (const key of res.headers.keys()) {
+      if (key.toLowerCase().startsWith('cf-access-')) return true;
+    }
+  }
+  return false;
+}

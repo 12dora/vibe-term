@@ -22,6 +22,7 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       autoStart: false,
       externallyManaged: false,
       originPort: 9883,
+      accessMode: null,
     },
     process: {
       state: 'stopped',

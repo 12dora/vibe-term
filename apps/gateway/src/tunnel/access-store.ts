@@ -48,6 +48,23 @@ export interface TunnelAccessStoreLike {
   getApiToken(): Promise<string | null>;
 }
 
+export function emptyAccessStatus(): TunnelAccessStatus {
+  return {
+    hasCredentials: false,
+    accountId: null,
+    teamDomain: null,
+    configured: false,
+    appId: null,
+    aud: null,
+    hostname: null,
+    rules: [],
+    enforceJwt: false,
+    effective: false,
+    bypassAppId: null,
+    lastError: null,
+  };
+}
+
 export function computeAccessEffective(opts: {
   configured: boolean;
   enforceJwt: boolean;

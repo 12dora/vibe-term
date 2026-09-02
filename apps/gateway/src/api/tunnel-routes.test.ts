@@ -103,6 +103,7 @@ describe('tunnel routes', () => {
       tunnelId: null,
       autoStart: false,
       originPort: 19883,
+      accessMode: null,
     });
     expect(body.process).toMatchObject({
       state: 'stopped',
@@ -251,6 +252,39 @@ describe('tunnel routes', () => {
       accountId: 'acc',
     });
     expect(res.status).toBe(400);
+  });
+
+  test('POST set_access_mode accepts none/login/cloudflare and persists', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    for (const accessMode of ['none', 'login', 'cloudflare'] as const) {
+      const res = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', {
+        action: 'set_access_mode',
+        accessMode,
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { status: TunnelStatusResponse };
+      expect(body.status.config.accessMode).toBe(accessMode);
+    }
+    const status = await dispatch(ctx.routes, 'GET', '/api/tunnel/status');
+    const body = (await status.json()) as TunnelStatusResponse;
+    expect(body.config.accessMode).toBe('cloudflare');
+  });
+
+  test('POST set_access_mode with invalid or missing accessMode is 400', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    for (const body of [
+      { action: 'set_access_mode' },
+      { action: 'set_access_mode', accessMode: 'bogus' },
+      { action: 'set_access_mode', accessMode: '' },
+      { action: 'set_access_mode', accessMode: 1 },
+    ]) {
+      const res = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', body);
+      expect(res.status).toBe(400);
+      const payload = (await res.json()) as { error: { code: string } };
+      expect(payload.error.code).toBe('invalid_request');
+    }
   });
 
   test('peer-forwarded /api/tunnel requests return 404', async () => {

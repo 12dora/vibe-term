@@ -4,6 +4,13 @@
 export type TunnelMode = 'off' | 'quick' | 'named';
 
 /**
+ * 访问控制方式（向导「访问控制」步的用户选择）：
+ * `none` 不设保护、`login` 账号密码登录（mesh 登录或本机登录）、`cloudflare` Cloudflare Access。
+ * `null` 表示尚未选择（旧数据），前端按实际状态推导。
+ */
+export type TunnelAccessMode = 'none' | 'login' | 'cloudflare';
+
+/**
  * `degraded`：cloudflared 进程活着，但连接器没有任何已注册的边缘连接（由本地 metrics
  * `/ready` 或日志判定）——公网地址此时不可达，与「运行中」必须区分。
  */
@@ -71,6 +78,8 @@ export interface TunnelConfigStatus {
   externallyManaged: boolean;
   /** 本机监听端口（cloudflared ingress 的 origin） */
   originPort: number;
+  /** 用户在「访问控制」步选定的方式；null = 尚未选择 */
+  accessMode: TunnelAccessMode | null;
 }
 
 export type TunnelAccessPolicyRule =
@@ -251,7 +260,12 @@ export type TunnelActionRequest =
    */
   | { action: 'adopt_external'; hostname: string }
   /** 关闭强制校验且这是最后一道保护时同样需要 acknowledgeExposure=true */
-  | { action: 'set_access_enforce'; enforceJwt: boolean; acknowledgeExposure?: boolean };
+  | { action: 'set_access_enforce'; enforceJwt: boolean; acknowledgeExposure?: boolean }
+  /**
+   * 记录「访问控制」步的选择。选 `none` 且隧道正在跑而当前没有任何保护时需 acknowledgeExposure=true，
+   * 否则 409 exposure_ack_required；只记录选择，不会移除 Access 应用或关闭登录。
+   */
+  | { action: 'set_access_mode'; accessMode: TunnelAccessMode; acknowledgeExposure?: boolean };
 
 export interface TunnelActionResponse {
   status: TunnelStatusResponse;

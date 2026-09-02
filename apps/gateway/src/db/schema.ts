@@ -8,6 +8,7 @@ import type {
   EventType,
   LlmProviderProtocol,
   TerminalShortcutItem,
+  TunnelAccessMode,
   WatchFireMode,
   WatchNoMatchBehavior,
   WatchTriggerType,
@@ -787,11 +788,16 @@ export const tunnelConfig = sqliteTable(
     autoStart: integer('auto_start', { mode: 'boolean' }).notNull().default(false),
     externallyManaged: integer('externally_managed', { mode: 'boolean' }).notNull().default(false),
     exposureAcknowledgedAt: text('exposure_acknowledged_at'),
+    accessMode: text('access_mode').$type<TunnelAccessMode | null>(),
     updatedAt: text('updated_at').notNull(),
   },
   (table) => [
     check('tunnel_config_singleton_check', sql`${table.id} = 'default'`),
     check('tunnel_config_mode_check', sql`${table.mode} in ('off', 'quick', 'named')`),
+    check(
+      'tunnel_config_access_mode_check',
+      sql`${table.accessMode} in ('none', 'login', 'cloudflare')`
+    ),
   ]
 );
 

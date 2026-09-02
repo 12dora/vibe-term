@@ -436,7 +436,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]?.parseMode).toBe('HTML');
       expect(calls[0]?.text).toContain(
-        '🔔 Bell from tmex&lt;prod&gt;&amp;: Window 7 · Terminal 3 @ dev&lt;1&gt;&amp;'
+        '🔔 Terminal Bell from tmex&lt;prod&gt;&amp;: Window 7 · Terminal 3 @ dev&lt;1&gt;&amp;'
       );
       expect(calls[0]?.text).toContain(
         '<a href="https://tmex.example.com/devices/device-html/windows/%401/panes/%251">Click to view</a>'
@@ -485,7 +485,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]?.parseMode).toBe('HTML');
       const text = calls[0]?.text ?? '';
-      expect(text).toContain('Watch Rule Error');
+      expect(text).toContain('Terminal Monitor Rule Error');
       // 问题1 回归：不再把 MarkdownV2 转义反斜杠当纯文本发出
       expect(text).not.toContain('\\-');
       expect(text).not.toContain('\\(');

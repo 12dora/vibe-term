@@ -40,6 +40,7 @@ const MIGRATIONS = [
   '0032_mesh_hubs.sql',
   '0033_hub_authorizations.sql',
   '0034_hub_role_transitions.sql',
+  '0035_tunnel_access_mode.sql',
 ] as const;
 
 export interface MaterializedMigrations {
