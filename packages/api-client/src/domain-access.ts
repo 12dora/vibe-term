@@ -17,10 +17,12 @@ async function readPolicy(res: Response, fallback: string): Promise<DomainAccess
   if (!res.ok) {
     let code = fallback;
     try {
-      const body = (await res.json()) as { error?: { code?: unknown } | string };
+      const body = (await res.json()) as { error?: { code?: unknown } | string; code?: unknown };
       const error = body.error;
       if (typeof error === 'string') code = error;
       else if (error && typeof error.code === 'string') code = error.code;
+      // `/n/<id>` 转发器自己的失败（如目标不可达）走顶层信封 `{ code, nodeId }`，没有 `error`
+      else if (typeof body.code === 'string') code = body.code;
     } catch {}
     const err = new Error(code) as Error & { status: number };
     err.status = res.status;

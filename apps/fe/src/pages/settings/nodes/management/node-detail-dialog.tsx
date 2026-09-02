@@ -73,6 +73,16 @@ export function createNodeDetailIo(rename: (name: string) => Promise<void>): Nod
   };
 }
 
+/**
+ * 域名访问这条通道的失败文案。目标节点不可达时 `/n/<id>` 转发器回的是自己的顶层信封
+ * （503 `NODE_UNREACHABLE`），照原样显示只会是一串大写代号，这里换成人话。
+ */
+export function domainAccessErrorText(t: Translate, err: unknown): string {
+  const message = err instanceof Error ? err.message : '';
+  if (message === 'NODE_UNREACHABLE') return t('nodes.detail.domainAccessUnreachable');
+  return actionErrorText(t, err);
+}
+
 export async function loadDomainAccessState(
   row: NodeRow,
   io: Pick<NodeDetailIo, 'loadDomainAccess'>,
@@ -89,7 +99,7 @@ export async function loadDomainAccessState(
   } catch (err) {
     const status = (err as { status?: number }).status;
     if (status !== undefined && UNSUPPORTED_STATUS.has(status)) return { kind: 'unsupported' };
-    return { kind: 'failed', message: actionErrorText(t, err) };
+    return { kind: 'failed', message: domainAccessErrorText(t, err) };
   }
 }
 
@@ -138,6 +148,10 @@ export interface NodeDetailSaveContext {
 export interface NodeDetailSaveResult {
   ok: boolean;
   errors: string[];
+  /** 改名这一条是否已落地；`plan.renameTo` 为空时恒 false。 */
+  renamed: boolean;
+  /** 域名访问这一条是否已落地；`plan.allowed` 为空时恒 false。 */
+  domainSaved: boolean;
 }
 
 /** 两条通道各自执行、各自报错：改名失败不该把已经改好的域名访问一起吞掉。 */
@@ -148,9 +162,12 @@ export async function saveNodeDetail(
   { t, writerPublicUrl }: NodeDetailSaveContext
 ): Promise<NodeDetailSaveResult> {
   const errors: string[] = [];
+  let renamed = false;
+  let domainSaved = false;
   if (plan.renameTo !== null) {
     try {
       await io.rename(plan.renameTo);
+      renamed = true;
     } catch (err) {
       errors.push(
         t('nodes.detail.renameFailed', { error: actionErrorText(t, err, { writerPublicUrl }) })
@@ -160,11 +177,29 @@ export async function saveNodeDetail(
   if (plan.allowed !== null) {
     try {
       await io.saveDomainAccess(row, plan.allowed);
+      domainSaved = true;
     } catch (err) {
-      errors.push(t('nodes.detail.domainAccessSaveFailed', { error: actionErrorText(t, err) }));
+      errors.push(
+        t('nodes.detail.domainAccessSaveFailed', { error: domainAccessErrorText(t, err) })
+      );
     }
   }
-  return { ok: errors.length === 0, errors };
+  return { ok: errors.length === 0, errors, renamed, domainSaved };
+}
+
+/**
+ * 一半成功一半失败之后的新基线：成功的那一条推进到已写入的值，重试时它就不再参与保存。
+ * 不这么做的话，用户对着「改名成功、域名访问失败」的对话框再点一次保存，会把名字再改一遍。
+ */
+export function nextNodeDetailBaseline(
+  baseline: NodeDetailValues,
+  plan: NodeDetailPlan,
+  result: Pick<NodeDetailSaveResult, 'renamed' | 'domainSaved'>
+): NodeDetailValues {
+  return {
+    name: result.renamed && plan.renameTo !== null ? plan.renameTo : baseline.name,
+    allowed: result.domainSaved && plan.allowed !== null ? plan.allowed : baseline.allowed,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +279,21 @@ export function domainAccessNote(state: DomainAccessState, t: Translate): string
   return t('nodes.detail.domainAccessDescription');
 }
 
+/**
+ * 域名访问开关是否锁住。
+ *
+ * 没有公开域名时「关闭」不解决任何问题（本来就没有公网入口），却会把这台机器锁在
+ * 「只能从局域网开回来」的状态里——与本机那一行同一条判据：当前是开着的就不给关。
+ * 当前已经是关的则允许开回来，否则用户没有任何路径把它恢复。
+ */
+export function domainAccessSwitchDisabled(
+  state: DomainAccessState,
+  allowed: boolean | null
+): boolean {
+  if (allowed === null) return true;
+  return state.kind === 'ready' && state.hosts.length === 0 && state.allowed;
+}
+
 export interface NodeDetailBodyProps {
   row: NodeRow;
   name: string;
@@ -267,7 +317,7 @@ export function NodeDetailBody({
   errors,
 }: NodeDetailBodyProps) {
   const { t } = useTranslation();
-  const switchDisabled = allowed === null;
+  const switchDisabled = domainAccessSwitchDisabled(domainAccess, allowed);
 
   return (
     <div className="flex flex-col gap-4" data-testid={`nodes-detail-body-${row.id}`}>
@@ -407,7 +457,13 @@ export function NodeDetailDialog({
     patch({ saving: true, errors: [] });
     const effective = io ?? createNodeDetailIo(rename);
     const result = await saveNodeDetail(row, plan, effective, { t, writerPublicUrl });
-    patch({ saving: false, errors: result.errors });
+    // 成功的那一条先认账：只错了一半时再点保存，只会重发失败的那一条
+    setState((prev) => ({
+      ...prev,
+      saving: false,
+      errors: result.errors,
+      baseline: nextNodeDetailBaseline(prev.baseline, plan, result),
+    }));
     if (!result.ok) return;
     toast.success(t('nodes.detail.saved'));
     onChanged();

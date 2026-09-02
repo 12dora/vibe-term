@@ -10,9 +10,17 @@ import { formatDisplayVersion, writeTextToClipboard } from '@tmex/shared';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { AlertTriangle, Check, ChevronRight, Copy, Home, RotateCw } from 'lucide-react';
-import { Component, type ErrorInfo, Fragment, type ReactNode, useEffect, useState } from 'react';
+import {
+  Component,
+  type ErrorInfo,
+  Fragment,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
-import { isRouteErrorResponse, useLocation, useNavigate, useRouteError } from 'react-router';
+import { isRouteErrorResponse, useRevalidator, useRouteError } from 'react-router';
 
 // vite define 注入的构建期常量；单测里不存在，用 typeof 探测而不是直接引用。
 const DISPLAY_VERSION =
@@ -226,25 +234,90 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
   }
 }
 
+/** 重新校验之后回头看一眼「错误清掉没有」的延时；只是兜底，不必贴着 loader 的耗时。 */
+export const ROUTE_RETRY_CHECK_MS = 400;
+
+export interface RouteRetryDeps {
+  /** 重新跑一遍当前路由的 loader。 */
+  revalidate: () => void;
+  /** 重新校验是否还在进行（读当前值，不是订阅时的快照）。 */
+  revalidating: () => boolean;
+  /** 兜底：整页重载。 */
+  reload: () => void;
+  /** 延时器；测试注入，返回取消函数。 */
+  delay?: (fn: () => void, ms: number) => () => void;
+}
+
+/**
+ * 「重试」的兜底逻辑。
+ *
+ * 重试本身只是 `revalidate()`：重新导航到同一个地址在 React Router 7 里会走 hash-only 快捷
+ * 路径（loader 不重跑、错误不清），普通导航又会把 `location.state` 清掉。
+ *
+ * 重新校验成功时错误被清掉，这张错误页随即卸载（`dispose`）；若延时到点时它还挂着，说明
+ * 错误没清掉（渲染期错误、或 loader 又失败了一次），只能整页重载。
+ */
+export class RouteRetryController {
+  private cancel: (() => void) | null = null;
+
+  constructor(private readonly deps: RouteRetryDeps) {}
+
+  start = (): void => {
+    this.dispose();
+    this.deps.revalidate();
+    this.arm();
+  };
+
+  dispose = (): void => {
+    this.cancel?.();
+    this.cancel = null;
+  };
+
+  private arm(): void {
+    const delay = this.deps.delay ?? defaultDelay;
+    this.cancel = delay(() => {
+      this.cancel = null;
+      // 还在跑就再等一轮：别把一次可能成功的重新校验打断
+      if (this.deps.revalidating()) {
+        this.arm();
+        return;
+      }
+      this.deps.reload();
+    }, ROUTE_RETRY_CHECK_MS);
+  }
+}
+
+function defaultDelay(fn: () => void, ms: number): () => void {
+  const timer = setTimeout(fn, ms);
+  return () => clearTimeout(timer);
+}
+
 /**
  * 根路由的 errorElement：loader / render 抛到路由层的错误都落在这里。
- * 重试重新导航到当前地址——data router 会在导航完成时清掉错误状态。
+ * 重试走重新校验（loader 重跑、错误随之清掉），当前地址与 `location.state` 原样保留。
  */
-export function RouteErrorElement() {
+export function RouteErrorElement({ reload = reloadApp }: { reload?: () => void } = {}) {
   const error = useRouteError();
-  const navigate = useNavigate();
-  const location = useLocation();
+  const revalidator = useRevalidator();
+
+  // 重新校验的状态每变一次就换一个 revalidator 对象，控制器只建一次，因此读 ref。
+  const latest = useRef({ revalidator, reload });
+  latest.current = { revalidator, reload };
+  const controllerRef = useRef<RouteRetryController | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = new RouteRetryController({
+      revalidate: () => void latest.current.revalidator.revalidate(),
+      revalidating: () => latest.current.revalidator.state !== 'idle',
+      reload: () => latest.current.reload(),
+    });
+  }
+  const controller = controllerRef.current;
+
+  useEffect(() => () => controller.dispose(), [controller]);
 
   useEffect(() => {
     console.error('[app] route error', error);
   }, [error]);
 
-  return (
-    <AppErrorFallback
-      error={error}
-      onRetry={() => {
-        void navigate(`${location.pathname}${location.search}${location.hash}`, { replace: true });
-      }}
-    />
-  );
+  return <AppErrorFallback error={error} onRetry={controller.start} />;
 }

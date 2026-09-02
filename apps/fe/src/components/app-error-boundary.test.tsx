@@ -5,8 +5,10 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  type DataRouter,
   type StaticHandlerContext,
   StaticRouterProvider,
+  createMemoryRouter,
   createStaticHandler,
   createStaticRouter,
 } from 'react-router';
@@ -14,6 +16,7 @@ import {
   AppErrorBoundary,
   AppErrorFallback,
   RouteErrorElement,
+  RouteRetryController,
   describeError,
   formatErrorDetails,
 } from './app-error-boundary';
@@ -113,6 +116,135 @@ describe('RouteErrorElement', () => {
     expect(html).toContain('appError.title');
     expect(html).not.toContain('Unexpected Application Error');
     expect(html).not.toContain('data-testid="page"');
+  });
+});
+
+describe('RouteRetryController', () => {
+  function harness() {
+    const calls = { revalidate: 0, reload: 0 };
+    let revalidating = false;
+    const timers: (() => void)[] = [];
+    const controller = new RouteRetryController({
+      revalidate: () => {
+        calls.revalidate += 1;
+      },
+      revalidating: () => revalidating,
+      reload: () => {
+        calls.reload += 1;
+      },
+      delay: (fn) => {
+        timers.push(fn);
+        return () => {
+          const at = timers.indexOf(fn);
+          if (at >= 0) timers.splice(at, 1);
+        };
+      },
+    });
+    return {
+      calls,
+      controller,
+      timers,
+      setRevalidating: (value: boolean) => {
+        revalidating = value;
+      },
+      fire: () => {
+        const fn = timers.shift();
+        if (!fn) throw new Error('no armed timer');
+        fn();
+      },
+    };
+  }
+
+  test('重试先重新校验；校验跑完错误还在（页面没卸载）才整页重载', () => {
+    const h = harness();
+    h.controller.start();
+    expect(h.calls.revalidate).toBe(1);
+    expect(h.calls.reload).toBe(0);
+
+    h.fire();
+    expect(h.calls.reload).toBe(1);
+  });
+
+  test('重新校验还在跑：再等一轮，不打断它', () => {
+    const h = harness();
+    h.controller.start();
+    h.setRevalidating(true);
+
+    h.fire();
+    expect(h.calls.reload).toBe(0);
+    expect(h.timers).toHaveLength(1);
+
+    h.setRevalidating(false);
+    h.fire();
+    expect(h.calls.reload).toBe(1);
+  });
+
+  test('错误被清掉（错误页卸载）后不再重载', () => {
+    const h = harness();
+    h.controller.start();
+    h.controller.dispose();
+
+    expect(h.timers).toHaveLength(0);
+    expect(h.calls.reload).toBe(0);
+  });
+
+  test('连点两次重试只留一个兜底定时器', () => {
+    const h = harness();
+    h.controller.start();
+    h.controller.start();
+
+    expect(h.calls.revalidate).toBe(2);
+    expect(h.timers).toHaveLength(1);
+  });
+});
+
+describe('路由错误的重试走重新校验', () => {
+  function settle(router: DataRouter): Promise<void> {
+    return new Promise((resolve) => {
+      const done = (state: DataRouter['state']) =>
+        state.initialized &&
+        state.navigation.state === 'idle' &&
+        state.revalidation === 'idle' &&
+        !state.fetchers.size;
+      if (done(router.state)) {
+        resolve();
+        return;
+      }
+      const stop = router.subscribe((state) => {
+        if (!done(state)) return;
+        stop();
+        resolve();
+      });
+    });
+  }
+
+  test('loader 抛 Response 后重新校验：错误清掉，hash 与 location.state 原样保留', async () => {
+    let fail = true;
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          errorElement: <RouteErrorElement />,
+          loader: () => {
+            if (fail) throw new Response('nope', { status: 500, statusText: 'Server Error' });
+            return { ok: true };
+          },
+          element: <span data-testid="page" />,
+        },
+      ],
+      { initialEntries: [{ pathname: '/', hash: '#frag', state: { keep: 1 } }] }
+    );
+    await settle(router);
+    expect(router.state.errors).not.toBeNull();
+
+    fail = false;
+    router.revalidate();
+    await settle(router);
+
+    expect(router.state.errors).toBeNull();
+    // 重新校验不动历史：地址、hash 与 state 都还在（普通导航会把 state 清掉）
+    expect(router.state.location.hash).toBe('#frag');
+    expect(router.state.location.state).toEqual({ keep: 1 });
   });
 });
 

@@ -157,6 +157,57 @@ export function hasSiteSettingsChanges(plan: SiteSettingsSavePlan): boolean {
 }
 
 /**
+ * 把已经改成功的名字钉进基线。
+ *
+ * 两个作用：改名成功、PATCH 失败时再点一次保存不会把名字又改一遍；重拉回来的旧名字
+ * （见 `refreshUntilRenamed`）也不会被当成「服务端的最新值」盖掉表单。
+ */
+export function pinSiteName(
+  baseline: SiteSettingsDraft,
+  pinnedName: string | null
+): SiteSettingsDraft {
+  if (!pinnedName || pinnedName === baseline.siteName) return baseline;
+  return { ...baseline, siteName: pinnedName };
+}
+
+/** 改名后回读站点设置的次数与间隔：够 hub 推一轮 `node.list` 回来，又不至于把页面拖住。 */
+export const RENAME_REFRESH_ATTEMPTS = 5;
+export const RENAME_REFRESH_INTERVAL_MS = 500;
+
+export interface RenameRefreshDeps {
+  /** 重拉一次站点设置，返回权威结果。 */
+  refresh: () => Promise<SiteSettings>;
+  /** 每次重拉的结果都要喂回查询缓存（哪怕名字还没跟上，别的字段是新的）。 */
+  apply: (settings: SiteSettings) => void;
+  wait: (ms: number) => Promise<void>;
+  attempts?: number;
+  intervalMs?: number;
+}
+
+/**
+ * 改名之后把站点设置拉到「新名字已回流」为止，返回是否等到了。
+ *
+ * 远端 node（`/n/<id>`）的名字由 hub 保管：rename 返回 200 只说明 hub 收下了，那台 node 要等
+ * hub 下一次 `node.list` 才知道自己叫什么。紧接着重拉一次多半还是旧名字，直接喂给表单会把
+ * 用户刚改好的名字盖回去。这里有界重试；等不到也不算错误——名字仍钉在表单里（`pinSiteName`），
+ * 下一次刷新自然对齐。
+ */
+export async function refreshUntilRenamed(
+  expectedName: string,
+  deps: RenameRefreshDeps
+): Promise<boolean> {
+  const attempts = deps.attempts ?? RENAME_REFRESH_ATTEMPTS;
+  const intervalMs = deps.intervalMs ?? RENAME_REFRESH_INTERVAL_MS;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const settings = await deps.refresh();
+    deps.apply(settings);
+    if (settings.siteName === expectedName) return true;
+    if (attempt < attempts) await deps.wait(intervalMs);
+  }
+  return false;
+}
+
+/**
  * 决定是否要把浏览器级的 i18next 语言切到 `targetLanguage`，返回要切的语言或 `null`。
  *
  * i18next 是整页共享的单例：只有自身 runtime（`controlsBrowserPrefs`）的设置页才允许改它，

@@ -9,7 +9,9 @@ import {
   createDefaultSiteSettingsDraft,
   createLanguagePreviewController,
   hasSiteSettingsChanges,
+  pinSiteName,
   planSiteSettingsSave,
+  refreshUntilRenamed,
   resolveLanguageSwitch,
   siteSettingsLinkage,
   siteSettingsToDraft,
@@ -352,5 +354,100 @@ describe('createLanguagePreviewController：语言包在途', () => {
     controller.release();
 
     expect(changed).toEqual(['zh_CN', 'en_US']);
+  });
+});
+
+describe('pinSiteName', () => {
+  const baseline = siteSettingsToDraft(makeSettings());
+
+  test('没有待回流的名字：原样返回同一个对象', () => {
+    expect(pinSiteName(baseline, null)).toBe(baseline);
+  });
+
+  test('钉住的名字与基线一致：不必造新对象', () => {
+    expect(pinSiteName(baseline, 'my-tmex')).toBe(baseline);
+  });
+
+  test('改名已落地：基线的名字推进到新值，其余字段照旧', () => {
+    const pinned = pinSiteName(baseline, 'studio');
+    expect(pinned).toEqual({ ...baseline, siteName: 'studio' });
+    // 基线推进之后重算的方案不会再发一次 rename
+    const linkage: SiteSettingsLinkage = {
+      siteNameLinkedToNode: true,
+      siteUrlEditable: false,
+      effectiveSiteUrl: 'https://hub.example',
+      nodeId: 'n1',
+    };
+    const draft = { ...baseline, siteName: 'studio', bellThrottleSeconds: 20 };
+    expect(planSiteSettingsSave(pinned, draft, linkage)).toEqual({
+      renameNodeTo: null,
+      patch: { bellThrottleSeconds: 20 },
+    });
+    // 未推进时同一份草稿仍会再改一次名
+    expect(planSiteSettingsSave(baseline, draft, linkage).renameNodeTo).toBe('studio');
+  });
+});
+
+describe('refreshUntilRenamed', () => {
+  function harness(names: string[]) {
+    const applied: string[] = [];
+    const waits: number[] = [];
+    let at = 0;
+    return {
+      applied,
+      waits,
+      calls: () => at,
+      deps: {
+        refresh: async () => {
+          const siteName = names[Math.min(at, names.length - 1)] as string;
+          at += 1;
+          return makeSettings({ siteName });
+        },
+        apply: (settings: SiteSettings) => {
+          applied.push(settings.siteName);
+        },
+        wait: async (ms: number) => {
+          waits.push(ms);
+        },
+      },
+    };
+  }
+
+  test('改名响应先于 hub 的 node.list：一直重拉到新名字回流为止', async () => {
+    const h = harness(['old', 'old', 'studio']);
+
+    expect(await refreshUntilRenamed('studio', h.deps)).toBe(true);
+    expect(h.calls()).toBe(3);
+    expect(h.applied).toEqual(['old', 'old', 'studio']);
+    // 每两次重拉之间等一拍，最后一次命中后不再等
+    expect(h.waits).toEqual([500, 500]);
+  });
+
+  test('第一次就回流：只拉一次，不等待', async () => {
+    const h = harness(['studio']);
+
+    expect(await refreshUntilRenamed('studio', h.deps)).toBe(true);
+    expect(h.calls()).toBe(1);
+    expect(h.waits).toEqual([]);
+  });
+
+  test('始终没回流：有界重试后放弃（不抛错，名字留在表单里）', async () => {
+    const h = harness(['old']);
+
+    expect(await refreshUntilRenamed('studio', h.deps)).toBe(false);
+    expect(h.calls()).toBe(5);
+    expect(h.waits).toHaveLength(4);
+    // 拉回来的每一份都喂给了缓存：名字之外的字段照样是新的
+    expect(h.applied).toHaveLength(5);
+  });
+
+  test('次数与间隔可覆盖', async () => {
+    const h = harness(['old']);
+
+    expect(await refreshUntilRenamed('studio', { ...h.deps, attempts: 2, intervalMs: 10 })).toBe(
+      false
+    );
+    expect(h.calls()).toBe(2);
+    expect(h.waits).toEqual([10]);
   });
 });

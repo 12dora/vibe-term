@@ -28,7 +28,8 @@ export interface MobileAddressChoice {
 export function useMobileAddressChoice(): MobileAddressChoice {
   const { list, loopbackHint } = useAccessAddresses();
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
-  // 候选是异步拉出来的：选中的那条还没进列表（或已消失）时退回第一条。
+  // 候选是异步拉出来的：选中的那条还没进列表（或已消失）时退回第一条
+  //（`buildAccessAddresses` 已保证第一条是当前真的可达的地址）。
   const selected = list.find((item) => item.url === selectedUrl) ?? list[0] ?? null;
   return { list, loopbackHint, selected, onSelect: setSelectedUrl };
 }

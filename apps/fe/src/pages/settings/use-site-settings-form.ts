@@ -1,8 +1,7 @@
-import type { HubApi } from '@/node/hub-api';
-import { useMeshHubs } from '@/node/mesh-hubs';
-import { refreshMeshNodes, useHubNode, useMeshNodes } from '@/node/mesh-nodes';
+import { refreshMeshNodes } from '@/node/mesh-nodes';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { parseApiError } from '@tmex/api-client';
+import type { SiteSettings } from '@tmex/shared';
 import { useRuntime, useSiteStore } from '@tmex/stores/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -17,10 +16,17 @@ import {
   createDefaultSiteSettingsDraft,
   createLanguagePreviewController,
   hasSiteSettingsChanges,
+  pinSiteName,
   planSiteSettingsSave,
+  refreshUntilRenamed,
   siteSettingsLinkage,
   siteSettingsToDraft,
 } from './site-settings-form';
+import { useNodeRenameChannel } from './use-node-rename-channel';
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export interface SiteSettingsForm {
   draft: SiteSettingsDraft;
@@ -65,30 +71,6 @@ function useLanguagePreview(controlsBrowserPrefs: boolean): LanguagePreviewContr
   return ref.current;
 }
 
-interface NodeRenameChannel {
-  hubApi: HubApi | null;
-  canRenameNode: boolean;
-  refreshHub: () => void;
-}
-
-/**
- * 联动改名走 entry 的 hub 控制面。非联动（standalone / 老服务端）下这三个 hook 全部空转，
- * 不发任何 `/api/mesh/*` 请求；hub 集合的轮询归节点管理页所有，这里只要一份 hubApi。
- */
-function useNodeRenameChannel(linkage: SiteSettingsLinkage): NodeRenameChannel {
-  const linked = linkage.siteNameLinkedToNode;
-  const { nodes } = useMeshNodes({ enabled: linked });
-  const hub = useHubNode(nodes, { enabled: linked, pollIntervalMs: 0 });
-  const hubs = useMeshHubs({ enabled: linked });
-  return {
-    hubApi: hub.hubApi,
-    canRenameNode: Boolean(
-      linked && linkage.nodeId && hub.hubApi && hub.online && !hubs.writesBlocked
-    ),
-    refreshHub: hub.refresh,
-  };
-}
-
 export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): SiteSettingsForm {
   const { enabled = true } = options;
   const { t } = useTranslation();
@@ -126,25 +108,53 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
 
   const { hubApi, canRenameNode, refreshHub } = useNodeRenameChannel(linkage);
 
+  // 已改成功、但站点设置还没回流的名字。ref 与 state 各有用途：ref 供注水效应读到最新值
+  // （它不该因为钉住名字而重跑，否则会把用户其它未保存的改动一起冲掉），state 供基线重算。
+  const [pinnedName, setPinnedName] = useState<string | null>(null);
+  const pinnedNameRef = useRef<string | null>(null);
+  pinnedNameRef.current = pinnedName;
+
   useEffect(() => {
     if (!baseline) {
       return;
     }
-    setDraft(baseline);
+    // 远端 node 的新名字要等 hub 下一次 node.list 才回流：重拉回来的旧名字不许盖掉它
+    setDraft(pinSiteName(baseline, pinnedNameRef.current));
     languagePreview.hydrate(baseline.language);
   }, [baseline, languagePreview]);
 
-  const plan = useMemo(
-    () => (baseline ? planSiteSettingsSave(baseline, draft, linkage) : null),
-    [baseline, draft, linkage]
+  const savedBaseline = useMemo(
+    () => (baseline ? pinSiteName(baseline, pinnedName) : null),
+    [baseline, pinnedName]
   );
 
+  const plan = useMemo(
+    () => (savedBaseline ? planSiteSettingsSave(savedBaseline, draft, linkage) : null),
+    [savedBaseline, draft, linkage]
+  );
+
+  const applySettings = useCallback(
+    (settings: SiteSettings) => {
+      // 重拉结果就是权威数据，直接喂给查询缓存；再 invalidate 一次只会对同一端点重复 GET
+      queryClient.setQueryData(['site-settings'], settings);
+    },
+    [queryClient]
+  );
+
+  // 本次保存里已经改成功的名字（成败都要善后，因此不放返回值里）。
+  const renamedInAttempt = useRef<string | null>(null);
+
   const saveMutation = useMutation({
-    mutationFn: async (): Promise<{ renamed: boolean }> => {
-      if (!plan) return { renamed: false };
+    mutationFn: async (): Promise<void> => {
+      renamedInAttempt.current = null;
+      if (!plan) return;
       if (plan.renameNodeTo) {
         if (!hubApi || !linkage.nodeId) throw new Error(t('settings.general.nameLinkedLocked'));
         await hubApi.rename(linkage.nodeId, plan.renameNodeTo);
+        // 改名已经落地：立刻推进基线，后面的 PATCH 再失败，重试时也不会又改一次名
+        renamedInAttempt.current = plan.renameNodeTo;
+        pinnedNameRef.current = plan.renameNodeTo;
+        setPinnedName(plan.renameNodeTo);
       }
       if (plan.patch) {
         const res = await apiClient.fetch('/api/settings/site', {
@@ -158,24 +168,33 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
           throw new Error(await parseApiError(res, t('settings.saveFailed')));
         }
       }
-      return { renamed: plan.renameNodeTo !== null };
     },
-    onSuccess: async ({ renamed }) => {
+    onSuccess: () => {
       // 先认账再重拉：重拉回来之前若用户已离开设置页，不该把刚保存的语言当预览回退掉
       languagePreview.commit(draft.language);
-      // 改名落在 hub 上，站点设置的 `siteName` 要等重拉才跟上；mesh 列表同理。
-      if (renamed) {
-        void refreshMeshNodes();
-        refreshHub();
-      }
-      // 保存后只重拉一次：store 的重拉结果就是权威数据，直接喂给查询缓存。
-      // 再 invalidate 一次只会对同一个端点重复 GET。
-      const settings = await refreshSettings();
-      queryClient.setQueryData(['site-settings'], settings);
       toast.success(t('settings.settingsSaved'));
     },
     onError: (err) => {
       toast.error(err instanceof Error ? err.message : t('common.error'));
+    },
+    onSettled: async (_data, error) => {
+      const renamed = renamedInAttempt.current;
+      renamedInAttempt.current = null;
+      if (!renamed) {
+        // 什么都没写成就别再多打一次 GET
+        if (!error) applySettings(await refreshSettings());
+        return;
+      }
+      // 改名落在 hub 上，mesh 列表与 hub 视图都要跟上
+      void refreshMeshNodes();
+      refreshHub();
+      const settled = await refreshUntilRenamed(renamed, {
+        refresh: refreshSettings,
+        apply: applySettings,
+        wait: sleep,
+      });
+      // 名字已回流：基线本身就是新值，钉子可以撤掉
+      if (settled) setPinnedName(null);
     },
   });
 

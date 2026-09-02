@@ -593,13 +593,55 @@ describe('LocalMachineCard 的多 hub 归属', () => {
     expect(html).toContain('data-testid="local-machine-hub-mode"');
   });
 
-  test('hub 集合为空：当前 Hub 退回入会种子，Hub 列表不渲染', () => {
+  test('没挂上任何 Hub：当前 Hub 显示未连接，种子退到「加入地址」副行，仍可更换 Hub', () => {
     const html = render(meshStatus('node'), MESH_MODE);
     expect(html).not.toContain(ATTACHED_ROW);
     expect(html).not.toContain(HUB_LIST_ROW);
     expect(html).toContain('nodes.machine.currentHub');
-    expect(html).toContain('data-testid="local-machine-hub-url"');
-    expect(html).toContain('>https://hub.example<');
+    // 入会种子不能冒充「当前 Hub」：那台机器可能早就不在了
+    expect(html).toContain('data-testid="local-machine-hub-disconnected"');
+    expect(html).toContain('nodes.machine.hubDisconnected');
+    expect(html).toContain('data-testid="local-machine-join-seed"');
+    expect(html).toContain('nodes.machine.joinSeed');
+    expect(html).toContain('data-testid="local-machine-change-hub"');
+  });
+
+  test('集合里没有挂载的那一行时用 attached 的地址，而不是入会种子', () => {
+    setMeshHubsStateForTest({
+      hubs: [hubRow({ nodeId: 'h1', name: 'hub-a' })],
+      attached: {
+        hubNodeId: 'h9',
+        publicUrl: 'https://hub-new.example',
+        mode: 'active',
+        writerEpoch: 4,
+        since: 1,
+      },
+      writerHubId: 'h1',
+      loadedAt: 1,
+    });
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-attached-hub-url"');
+    expect(html).toContain('>https://hub-new.example<');
+    expect(html).not.toContain('nodes.machine.hubDisconnected');
+    // 种子与它不是同一台，补一行「加入地址」
+    expect(html).toContain('data-testid="local-machine-join-seed"');
+  });
+
+  test('挂载信息连地址都没有：仍判未连接', () => {
+    setMeshHubsStateForTest({
+      hubs: [hubRow({ nodeId: 'h1', name: 'hub-a' })],
+      attached: {
+        hubNodeId: 'h9',
+        publicUrl: '',
+        mode: 'active',
+        writerEpoch: 4,
+        since: 1,
+      },
+      writerHubId: 'h1',
+      loadedAt: 1,
+    });
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-hub-disconnected"');
   });
 
   test('种子与挂载地址不一致时补一行「加入地址」，一致时不补', () => {
@@ -631,6 +673,8 @@ describe('LocalMachineCard 的多 hub 归属', () => {
     expect(zhCN.translation.nodes.machine.localAddress).toBe('本机地址');
     expect(enUS.translation.nodes.machine.localAddress).toBe("This Machine's Address");
     expect(zhCN.translation.nodes.machine.currentHub).toBe('当前 Hub');
+    expect(zhCN.translation.nodes.machine.hubDisconnected).toBe('未连接');
+    expect(enUS.translation.nodes.machine.hubDisconnected).toBe('Not connected');
     expect(zhCN.translation.nodes.machine.joinSeed).toContain('加入地址');
     expect(zhCN.translation.nodes.machine.hubList).toBe('Hub 列表');
     expect(zhCN.translation.nodes.machine.self).toBe('本机');

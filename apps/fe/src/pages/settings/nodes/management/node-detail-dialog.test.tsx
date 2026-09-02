@@ -4,7 +4,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
 import type { DomainAccessPolicy } from '@tmex/api-client';
+import enUS from '@tmex/shared/i18n/locales/en_US.json';
+import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
 import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { DomainAccessState } from './node-detail-dialog';
 
 installWindowStorage();
 
@@ -15,8 +18,10 @@ const {
   NodeDetailBody,
   createNodeDetailIo,
   domainAccessNote,
+  domainAccessSwitchDisabled,
   hasNodeDetailChanges,
   loadDomainAccessState,
+  nextNodeDetailBaseline,
   nodeDetailClient,
   planNodeDetailSave,
   saveNodeDetail,
@@ -125,6 +130,24 @@ describe('域名访问的请求通道', () => {
     expect(domainAccessNote(state, t)).toBe('nodes.detail.domainAccessUnsupported');
   });
 
+  test('节点不可达（转发器 503 顶层信封）：给出人话而不是代号', async () => {
+    stubFetch(() => json({ code: 'NODE_UNREACHABLE', nodeId: REMOTE.id }, 503));
+    const state = await loadDomainAccessState(
+      REMOTE,
+      createNodeDetailIo(async () => {}),
+      t
+    );
+
+    expect(state).toEqual({
+      kind: 'failed',
+      message: 'nodes.detail.domainAccessUnreachable',
+    });
+    expect(zhCN.translation.nodes.detail.domainAccessUnreachable).toBe('节点当前不可达。');
+    expect(enUS.translation.nodes.detail.domainAccessUnreachable).toBe(
+      'Node is currently unreachable.'
+    );
+  });
+
   test('其它失败保留原因，供正文提示', async () => {
     stubFetch(() => json({ error: 'boom' }, 500));
     const state = await loadDomainAccessState(
@@ -214,7 +237,7 @@ describe('保存', () => {
 
     expect(calls.renamed).toEqual([]);
     expect(calls.allowed).toEqual([false]);
-    expect(result).toEqual({ ok: true, errors: [] });
+    expect(result).toEqual({ ok: true, errors: [], renamed: false, domainSaved: true });
   });
 
   test('两项都改：两条动作各发一次', async () => {
@@ -270,6 +293,119 @@ describe('保存', () => {
 
     expect(result.ok).toBe(false);
     expect(result.errors[0]).toContain('nodes.detail.domainAccessSaveFailed');
+  });
+});
+
+describe('一半成功一半失败后的重试', () => {
+  /** 两条通道各自可控成败，并记录实际发出的请求。 */
+  function io(fail: { rename?: number; domain?: number } = {}) {
+    const calls = { renamed: [] as string[], allowed: [] as boolean[] };
+    let renameCalls = 0;
+    let domainCalls = 0;
+    return {
+      calls,
+      io: {
+        loadDomainAccess: async () => policy(),
+        saveDomainAccess: async (_row: NodeRow, allowed: boolean) => {
+          domainCalls += 1;
+          calls.allowed.push(allowed);
+          if (domainCalls <= (fail.domain ?? 0)) throw new Error('patch boom');
+          return policy({ allowed });
+        },
+        rename: async (name: string) => {
+          renameCalls += 1;
+          calls.renamed.push(name);
+          if (renameCalls <= (fail.rename ?? 0)) throw new Error('rename boom');
+        },
+      },
+    };
+  }
+
+  const ctx = { t, writerPublicUrl: null };
+
+  test('改名成功、域名访问失败：再点保存不会把名字又改一遍', async () => {
+    const { io: fake, calls } = io({ domain: 1 });
+    const draft = { name: 'laptop', allowed: false };
+    let baseline = { name: 'studio', allowed: true as boolean | null };
+
+    const first = planNodeDetailSave(baseline, draft);
+    const firstResult = await saveNodeDetail(REMOTE, first, fake, ctx);
+    expect(firstResult).toMatchObject({ ok: false, renamed: true, domainSaved: false });
+    baseline = nextNodeDetailBaseline(baseline, first, firstResult);
+    expect(baseline).toEqual({ name: 'laptop', allowed: true });
+
+    const second = planNodeDetailSave(baseline, draft);
+    expect(second).toEqual({ renameTo: null, allowed: false });
+    const secondResult = await saveNodeDetail(REMOTE, second, fake, ctx);
+
+    expect(secondResult).toMatchObject({ ok: true, renamed: false, domainSaved: true });
+    expect(calls.renamed).toEqual(['laptop']);
+    expect(calls.allowed).toEqual([false, false]);
+    expect(nextNodeDetailBaseline(baseline, second, secondResult)).toEqual({
+      name: 'laptop',
+      allowed: false,
+    });
+  });
+
+  test('域名访问成功、改名失败：再点保存不会把域名访问又写一遍', async () => {
+    const { io: fake, calls } = io({ rename: 1 });
+    const draft = { name: 'laptop', allowed: false };
+    let baseline = { name: 'studio', allowed: true as boolean | null };
+
+    const first = planNodeDetailSave(baseline, draft);
+    const firstResult = await saveNodeDetail(REMOTE, first, fake, ctx);
+    expect(firstResult).toMatchObject({ ok: false, renamed: false, domainSaved: true });
+    baseline = nextNodeDetailBaseline(baseline, first, firstResult);
+    expect(baseline).toEqual({ name: 'studio', allowed: false });
+
+    const second = planNodeDetailSave(baseline, draft);
+    expect(second).toEqual({ renameTo: 'laptop', allowed: null });
+    await saveNodeDetail(REMOTE, second, fake, ctx);
+
+    expect(calls.allowed).toEqual([false]);
+    expect(calls.renamed).toEqual(['laptop', 'laptop']);
+  });
+
+  test('全成功：基线整体推进', () => {
+    const plan = planNodeDetailSave(
+      { name: 'studio', allowed: true },
+      { name: 'l', allowed: false }
+    );
+    expect(
+      nextNodeDetailBaseline({ name: 'studio', allowed: true }, plan, {
+        renamed: true,
+        domainSaved: true,
+      })
+    ).toEqual({ name: 'l', allowed: false });
+  });
+});
+
+describe('没有公开域名时的开关', () => {
+  const noHosts: DomainAccessState = {
+    kind: 'ready',
+    allowed: true,
+    viaDomain: false,
+    hosts: [],
+  };
+
+  test('当前开着：不给关（关了就只能从局域网开回来）', () => {
+    expect(domainAccessSwitchDisabled(noHosts, true)).toBe(true);
+  });
+
+  test('当前已经关着：允许开回来', () => {
+    expect(domainAccessSwitchDisabled({ ...noHosts, allowed: false }, false)).toBe(false);
+  });
+
+  test('有公开域名照旧可开可关；没读到策略一律锁住', () => {
+    const ready: DomainAccessState = {
+      kind: 'ready',
+      allowed: true,
+      viaDomain: false,
+      hosts: ['a.example'],
+    };
+    expect(domainAccessSwitchDisabled(ready, true)).toBe(false);
+    expect(domainAccessSwitchDisabled({ kind: 'unsupported' }, null)).toBe(true);
+    expect(domainAccessSwitchDisabled({ kind: 'loading' }, null)).toBe(true);
   });
 });
 
@@ -339,6 +475,15 @@ describe('详情正文', () => {
   test('域名访问不支持时开关锁住', () => {
     const html = body({ domainAccess: { kind: 'unsupported' }, allowed: null });
     expect(html).toContain('nodes.detail.domainAccessUnsupported');
+    const at = html.indexOf(`data-testid="nodes-detail-domain-${REMOTE.id}"`);
+    expect(html.slice(html.lastIndexOf('<button', at), at)).toContain('disabled=""');
+  });
+
+  test('没有公开域名且当前开着：开关在正文里也是锁住的', () => {
+    const html = body({
+      domainAccess: { kind: 'ready', allowed: true, viaDomain: false, hosts: [] },
+      allowed: true,
+    });
     const at = html.indexOf(`data-testid="nodes-detail-domain-${REMOTE.id}"`);
     expect(html.slice(html.lastIndexOf('<button', at), at)).toContain('disabled=""');
   });

@@ -4,7 +4,7 @@
 // 回来，否则用户会以为操作没生效。
 
 import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
-import { type MeshHubsState, attachedHubId, useMeshHubs, writerHub } from '@/node/mesh-hubs';
+import { type MeshHubsState, useMeshHubs, writerHub } from '@/node/mesh-hubs';
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { AuthModeResponse, MeshHubEndpoint } from '@tmex/api-client/auth/index';
 import { defaultLocalApi } from '@tmex/api-client/local/local-api';
@@ -256,17 +256,28 @@ export function LocalMachineCard({
   );
 }
 
+/** 「当前 Hub」这一行要摆的东西：集合里的那一行 / 只知道地址 / 压根没连上。 */
+export type AttachedHubView =
+  | { kind: 'hub'; hub: MeshHubEndpoint; isSelf: boolean }
+  | { kind: 'url'; url: string }
+  | { kind: 'none' };
+
 /**
- * 本机挂载的那台 hub：`attached` 给出 hubNodeId 时按它取；没有 uplink（hub 机自己就是 hub）
- * 时退回集合里的本机那一行。集合里查不到就返回 `null`，不拿 `hubUrl` 那个入会种子充数。
+ * 本机挂载的那台 hub。**只认 uplink 的挂载事实**（`attached`）：`hubUrl` 是入会时写死的种子，
+ * 主备切换或退出之后早已不是当前挂载的那台，拿它充数会让一台没连上的机器显示得像连着。
+ *
+ * 集合里查不到挂载的那一行（刚切过去、集合还没拉到）时退回挂载信息自带的地址；
+ * 没有 uplink 的 hub 兼节点就是挂在自己身上，取集合里的本机那一行。
  */
-function resolveAttachedHub(
-  snapshot: MeshHubsState,
-  selfNodeId: string | null
-): MeshHubEndpoint | null {
-  const attachedId = attachedHubId(snapshot);
-  if (attachedId) return snapshot.hubs.find((hub) => hub.nodeId === attachedId) ?? null;
-  return snapshot.hubs.find((hub) => hub.nodeId === selfNodeId) ?? null;
+function resolveAttachedHub(snapshot: MeshHubsState, selfNodeId: string | null): AttachedHubView {
+  const attached = snapshot.attached;
+  if (attached?.hubNodeId) {
+    const row = snapshot.hubs.find((hub) => hub.nodeId === attached.hubNodeId);
+    if (row) return { kind: 'hub', hub: row, isSelf: row.nodeId === selfNodeId };
+    return attached.publicUrl ? { kind: 'url', url: attached.publicUrl } : { kind: 'none' };
+  }
+  const self = selfNodeId ? snapshot.hubs.find((hub) => hub.nodeId === selfNodeId) : undefined;
+  return self ? { kind: 'hub', hub: self, isSelf: true } : { kind: 'none' };
 }
 
 /** 列表次序：writer 打头，其余按优先级——用户先看的是「谁收写入」。 */
@@ -309,7 +320,9 @@ function MachineHubRows({
     role === 'hub,node'
       ? (snapshot.hubs.find((hub) => hub.nodeId && hub.nodeId === selfNodeId)?.mode ?? null)
       : null;
-  const attached = meshRole ? resolveAttachedHub(snapshot, selfNodeId) : null;
+  const attached: AttachedHubView = meshRole
+    ? resolveAttachedHub(snapshot, selfNodeId)
+    : { kind: 'none' };
   return (
     <>
       {localHubMode && (
@@ -320,10 +333,9 @@ function MachineHubRows({
         </Row>
       )}
       {role === 'hub,node' && <LocalAddressRow publicUrl={hubPublicUrl} />}
-      {meshRole && (attached || hubUrl) && (
+      {meshRole && (attached.kind !== 'none' || hubUrl) && (
         <CurrentHubRow
-          hub={attached}
-          isSelf={Boolean(attached && attached.nodeId === selfNodeId)}
+          attached={attached}
           writer={writerHub(snapshot)}
           seedUrl={hubUrl}
           {...(role === 'node'
@@ -357,51 +369,65 @@ function LocalAddressRow({ publicUrl }: { publicUrl: string | null }) {
   );
 }
 
-/** 入会种子与当前挂载地址不一致时才补出种子——一致时多这一行只是噪音。 */
-function seedLine(seedUrl: string | null, hub: MeshHubEndpoint | null): string | null {
-  if (!seedUrl || !hub) return null;
-  return normalizeHubUrl(seedUrl) === normalizeHubUrl(hub.publicUrl) ? null : seedUrl;
+/** 入会种子与当前挂载地址不一致时才补出种子——一致时多这一行只是噪音；没连上时它是唯一线索。 */
+function seedLine(seedUrl: string | null, currentUrl: string | null): string | null {
+  if (!seedUrl) return null;
+  if (!currentUrl) return seedUrl;
+  return normalizeHubUrl(seedUrl) === normalizeHubUrl(currentUrl) ? null : seedUrl;
+}
+
+/** 当前挂载的那台 hub 的地址；没连上时为 `null`（种子不算）。 */
+function attachedUrl(attached: AttachedHubView): string | null {
+  if (attached.kind === 'hub') return attached.hub.publicUrl;
+  return attached.kind === 'url' ? attached.url : null;
 }
 
 function CurrentHubRow({
-  hub,
-  isSelf,
+  attached,
   writer,
   seedUrl,
   changeHub,
 }: {
-  /** hub 集合还没拉到时为 `null`，此时行里只摆入会种子。 */
-  hub: MeshHubEndpoint | null;
-  isSelf: boolean;
+  attached: AttachedHubView;
   writer: MeshHubEndpoint | null;
   seedUrl: string | null;
   changeHub?: { disabled: boolean; onChange: () => void };
 }) {
   const { t } = useTranslation();
   // 挂在备 hub 上时写入其实落在别处，同一行补出 writer，省得用户去 hub 管理面对照。
-  const elsewhere = hub && writer && writer.nodeId !== hub.nodeId ? writer : null;
-  const seed = seedLine(seedUrl, hub);
+  const elsewhere =
+    attached.kind === 'hub' && writer && writer.nodeId !== attached.hub.nodeId ? writer : null;
+  const seed = seedLine(seedUrl, attachedUrl(attached));
   return (
     <Row label={t('nodes.machine.currentHub')}>
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
-          {hub ? (
+          {attached.kind === 'hub' && (
             <>
               <span
                 className="flex items-center gap-1.5 text-xs"
                 data-testid="local-machine-attached-hub"
               >
                 <span className="font-medium">
-                  {isSelf ? t('nodes.machine.self') : hubLabel(hub)}
+                  {attached.isSelf ? t('nodes.machine.self') : hubLabel(attached.hub)}
                 </span>
-                <HubModeTag mode={hub.mode} testId="local-machine-attached-hub-mode" />
+                <HubModeTag mode={attached.hub.mode} testId="local-machine-attached-hub-mode" />
               </span>
-              {!isSelf && (
-                <CopyableValue value={hub.publicUrl} testId="local-machine-attached-hub-url" />
+              {!attached.isSelf && (
+                <CopyableValue
+                  value={attached.hub.publicUrl}
+                  testId="local-machine-attached-hub-url"
+                />
               )}
             </>
-          ) : (
-            seedUrl && <CopyableValue value={seedUrl} testId="local-machine-hub-url" />
+          )}
+          {attached.kind === 'url' && (
+            <CopyableValue value={attached.url} testId="local-machine-attached-hub-url" />
+          )}
+          {attached.kind === 'none' && (
+            <span className="text-xs" data-testid="local-machine-hub-disconnected">
+              {t('nodes.machine.hubDisconnected')}
+            </span>
           )}
           {elsewhere && (
             <span className="text-xs text-muted-foreground" data-testid="local-machine-writer-hub">

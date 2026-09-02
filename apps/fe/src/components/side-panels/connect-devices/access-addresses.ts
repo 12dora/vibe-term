@@ -2,6 +2,7 @@
 // 而是按可达性排出来的候选——公网入口（隧道 / Hub 公开地址）、局域网 IP、以及非回环的当前地址。
 
 import type { AccessAddressesResponse, TunnelStatusResponse } from '@tmex/shared';
+import { entryStatus } from './host-status';
 
 // 种类只用来给候选打标签（界面上要区分「隧道 / Hub / 局域网 / 当前地址」），排序仍按可达性。
 export type AccessAddressKind = 'tunnel' | 'hub' | 'lan' | 'current';
@@ -38,7 +39,31 @@ function tunnelPublicUrl(tunnel: TunnelStatusResponse | null): string | null {
   return null;
 }
 
-/** 候选列表：隧道 → Hub → 局域网 → 当前地址；全部为空时退回当前 origin（哪怕是回环，界面另给提示）。 */
+/** 隧道候选：地址 + 它现在是否真的可达（与「本机作为中继」那三步同一条判据）。 */
+interface TunnelCandidate {
+  url: string | null;
+  /** 进程在跑且连接器有边缘连接：只有这种隧道才配当默认（二维码扫出来的那一条）。 */
+  healthy: boolean;
+}
+
+function tunnelCandidate(tunnel: TunnelStatusResponse | null): TunnelCandidate {
+  const url = tunnelPublicUrl(tunnel);
+  if (!url) return { url: null, healthy: false };
+  const entry = entryStatus(tunnel, null);
+  // 进程活着但没有边缘连接：地址暂时打不开，能列但不能排第一
+  if (entry.degraded) return { url, healthy: false };
+  // 进程已停：这个地址必然打不开，直接不摆出来
+  if (!entry.running) return { url: null, healthy: false };
+  return { url, healthy: true };
+}
+
+/**
+ * 候选列表：可用的隧道 → Hub → 局域网 → 掉线的隧道 → 当前地址；
+ * 全部为空时退回当前 origin（哪怕是回环，界面另给提示）。
+ *
+ * 第一条就是二维码的缺省地址，所以隧道只有**当前真的可达**才排第一：光看「配了主机名」
+ * 会把停掉的隧道推成默认，用户扫出来是一个打不开的地址。
+ */
 export function buildAccessAddresses(input: AccessAddressInput): AccessAddress[] {
   const out: AccessAddress[] = [];
   const seen = new Set<string>();
@@ -50,12 +75,14 @@ export function buildAccessAddresses(input: AccessAddressInput): AccessAddress[]
     out.push({ kind, url: normalized });
   };
 
-  push('tunnel', tunnelPublicUrl(input.tunnel));
+  const tunnel = tunnelCandidate(input.tunnel);
+  if (tunnel.healthy) push('tunnel', tunnel.url);
   push('hub', input.hubPublicUrl);
   const addresses = input.addresses;
   if (addresses && !addresses.loopbackOnly && Array.isArray(addresses.lanAddresses)) {
     for (const ip of addresses.lanAddresses) push('lan', `http://${ip}:${addresses.port}`);
   }
+  if (!tunnel.healthy) push('tunnel', tunnel.url);
   if (input.origin && !isLoopbackOrigin(input.origin)) push('current', input.origin);
   if (out.length === 0 && input.origin) push('current', input.origin);
   return out;
