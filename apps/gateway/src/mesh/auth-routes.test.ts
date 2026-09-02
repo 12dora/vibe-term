@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import {
   DELEGATION_TTL_MS,
+  KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
+  MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   buildLogin,
   buildPasskeyDelegation,
   createDelegation,
@@ -10,9 +12,12 @@ import {
   encodeClearTotpPayload,
   encodeDelegation,
   encodeLogin,
+  encodeRotateRootKeepPayload,
   encodeSetTotpPayload,
   encryptTotpSecret,
   generateEd25519KeyPair,
+  generateKdfParams,
+  rootKeyFromSeed,
   sha256,
   signLogin,
   totpCode,
@@ -1393,6 +1398,339 @@ describe('auth-routes', () => {
         totp: { code, k_totp: encodeBase64url(kTotp) },
       });
       expect(ok.res.status).toBe(200);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/auth/totp-record requires session and 404s when TOTP is off', async () => {
+    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    try {
+      const denied = await call(mesh.runtime, 'http://localhost/api/auth/totp-record');
+      expect(denied.status).toBe(401);
+      expect(denied.headers.get('Cache-Control')).toBe('private, no-store');
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const missing = await call(mesh.runtime, 'http://localhost/api/auth/totp-record', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(missing.status).toBe(404);
+      expect(missing.headers.get('Cache-Control')).toBe('private, no-store');
+      expect((await missing.json()).code).toBe('TOTP_NOT_ENABLED');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('rotate-root-keep keeps the session cookie and totp-record returns the nested payload', async () => {
+    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    try {
+      const {
+        deriveSeed,
+        deriveTotpKey,
+        buildKeyLogRecord,
+        encodeKeyLogRecord,
+        signKeyLogRecordWithRoot,
+      } = await import('@tmex/shared/auth');
+      const { kdfParamsFromJson } = await import('../auth/user-key-service');
+      const user = mesh.userStore.getById(mesh.boot.userId);
+      if (!user) throw new Error('missing user');
+      const oldParams = kdfParamsFromJson(user.kdfParamsJson);
+      const oldSeed = await deriveSeed(PASSWORD, oldParams);
+      const secret = new Uint8Array(20).fill(7);
+      const before = mesh.keyLogService.currentState(mesh.boot.userId);
+      const oldKTotp = deriveTotpKey(oldSeed, mesh.boot.userId, before.rootEpoch);
+      const totpPayload = await encryptTotpSecret(oldKTotp, secret, {
+        uid: mesh.boot.userId,
+        root_epoch: before.rootEpoch,
+        seq: before.head.seq + 1n,
+      });
+      expect(
+        (
+          await mesh.keyLogService.signAndApply(mesh.boot.userId, mesh.boot.rootKey, {
+            type: 'set-totp',
+            payload: encodeSetTotpPayload(totpPayload),
+          })
+        ).ok
+      ).toBe(true);
+
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        totp: {
+          code: totpCode(secret, Math.floor(Date.now() / 1000)),
+          k_totp: encodeBase64url(oldKTotp),
+        },
+      });
+      const cookie = { headers: { cookie: `tmex_s_self=${sid}` } };
+      const head = await call(mesh.runtime, 'http://localhost/api/auth/totp-record', cookie);
+      expect(head.status).toBe(200);
+      expect(head.headers.get('Cache-Control')).toBe('private, no-store');
+      const first = (await head.json()) as {
+        record_seq: number | string;
+        root_epoch: number;
+        payload: string;
+      };
+      expect(first.root_epoch).toBe(before.rootEpoch);
+      expect(decodeBase64url(first.payload).length).toBeGreaterThan(0);
+
+      const newParams = generateKdfParams();
+      const newRoot = rootKeyFromSeed(new Uint8Array(32).fill(9));
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const newKTotp = deriveTotpKey(
+        new Uint8Array(32).fill(3),
+        mesh.boot.userId,
+        state.rootEpoch + 1
+      );
+      const wrapped = await encryptTotpSecret(newKTotp, secret, {
+        uid: mesh.boot.userId,
+        root_epoch: state.rootEpoch + 1,
+        seq: state.head.seq + 1n,
+      });
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'rotate-root-keep',
+        payload: encodeRotateRootKeepPayload({
+          root_public_key: newRoot.publicKey,
+          kdf_params: newParams,
+          totp: {
+            root_epoch: state.rootEpoch + 1,
+            seq: state.head.seq + 1n,
+            payload: wrapped,
+          },
+        }),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const appended = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(appended.status).toBe(200);
+
+      const still = await call(mesh.runtime, 'http://localhost/api/auth/keylog/head', cookie);
+      expect(still.status).toBe(200);
+      const totpRec = await call(mesh.runtime, 'http://localhost/api/auth/totp-record', cookie);
+      expect(totpRec.status).toBe(200);
+      const body = (await totpRec.json()) as {
+        record_seq: number | string;
+        root_epoch: number;
+        payload: string;
+      };
+      expect(body.root_epoch).toBe(state.rootEpoch + 1);
+      expect(body.record_seq).toBe(Number(state.head.seq + 1n));
+      expect(decodeBase64url(body.payload)).toEqual(encodeSetTotpPayload(wrapped));
+
+      const after = mesh.keyLogService.currentState(mesh.boot.userId);
+      const code = totpCode(secret, Math.floor(Date.now() / 1000));
+      const login = await challengeAndLogin(
+        mesh.runtime,
+        { userId: mesh.boot.userId, rootKey: newRoot },
+        { totp: { code, k_totp: encodeBase64url(newKTotp) } }
+      );
+      expect(login.res.status).toBe(200);
+      expect(after.totp?.alg).toBe('A256GCM');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('rotate-root-keep compat gate 409s cert-only nodes; revoked certs do not block', async () => {
+    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    try {
+      const certOnlyId = 'bb'.repeat(16);
+      mesh.userStore.upsertCert({
+        nodeId: certOnlyId,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 1,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(8),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(8),
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'rotate-root-keep',
+        payload: encodeRotateRootKeepPayload({
+          root_public_key: new Uint8Array(32).fill(4),
+          kdf_params: generateKdfParams(),
+          totp: null,
+        }),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const blocked = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(blocked.status).toBe(409);
+      expect((await blocked.json()).code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq);
+
+      mesh.userStore.markCertRevoked(certOnlyId, 9);
+      mesh.userStore.createNode({
+        id: 'cc'.repeat(16),
+        userId: mesh.boot.userId,
+        name: 'old-revoked-cert',
+        version: '1.1.15',
+        now: 1,
+      });
+      mesh.userStore.upsertCert({
+        nodeId: 'cc'.repeat(16),
+        userId: mesh.boot.userId,
+        admitRecordSeq: 1,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(8),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(8),
+        revokedLogSeq: 4,
+      });
+      const allowed = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(allowed.status).toBe(200);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST /api/auth/keylog rotate-root-keep invalidates unused enrollment tokens', async () => {
+    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    try {
+      const enrollPk = new Uint8Array(32).fill(41);
+      mesh.userStore.createEnrollmentToken({
+        id: 'tok-unused',
+        userId: mesh.boot.userId,
+        enrollPublicKey: enrollPk,
+        authorizationJson: '{}',
+        authorizationSig: new Uint8Array(8),
+        expiresAt: Date.now() + 60_000,
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'rotate-root-keep',
+        payload: encodeRotateRootKeepPayload({
+          root_public_key: new Uint8Array(32).fill(4),
+          kdf_params: generateKdfParams(),
+          totp: null,
+        }),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(res.status).toBe(200);
+      const token = mesh.userStore.getEnrollmentTokenByEnrollPublicKey(enrollPk);
+      expect(token).not.toBeNull();
+      expect(
+        mesh.userStore.consumeEnrollmentToken(enrollPk, {
+          nodeId: 'bb'.repeat(16),
+          now: Date.now() + 1_000,
+        })
+      ).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('rotate-root-keep compat gate 409s old nodes even with x-tmex-force-keylog', async () => {
+    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    try {
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      mesh.userStore.createNode({
+        id: 'bb'.repeat(16),
+        userId: mesh.boot.userId,
+        name: 'old',
+        version: '1.1.15',
+        now: 1,
+      });
+      mesh.userStore.upsertCert({
+        nodeId: 'bb'.repeat(16),
+        userId: mesh.boot.userId,
+        admitRecordSeq: 1,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(8),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(8),
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'rotate-root-keep',
+        payload: encodeRotateRootKeepPayload({
+          root_public_key: new Uint8Array(32).fill(4),
+          kdf_params: generateKdfParams(),
+          totp: null,
+        }),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+          'x-tmex-force-keylog': '1',
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { code: string; minVersion: string };
+      expect(body.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+      expect(body.minVersion).toBe(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION);
+      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq);
     } finally {
       mesh.close();
     }

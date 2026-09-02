@@ -46,7 +46,11 @@ import {
   type LocalAuthStoreLike,
   standaloneClosedModeFields,
 } from '../db/local-auth-settings';
-import { filterNotRetiredHubRecords, inspectHubAuthRecordCompat } from '../hub/hub-authorization';
+import {
+  applyForcedKeyLogCompat,
+  filterNotRetiredHubRecords,
+  inspectHubAuthRecordCompat,
+} from '../hub/hub-authorization';
 import { LoginFailureLimiter } from './auth-login-limiter';
 import {
   AuthModeCache,
@@ -55,6 +59,7 @@ import {
   loadAuthModeTls,
   withAuthModeInvalidation,
 } from './auth-mode-cache';
+import { handleTotpRecordRequest } from './auth-totp-record';
 import { clientIpFromRequest } from './client-ip';
 import {
   type HubTlsInfoProvider,
@@ -199,6 +204,7 @@ export class AuthRoutes {
         session((r, uid) => this.handlePasskeyRegisterVerify(r, uid)),
       'POST /api/auth/passkey/login/options': () => this.handlePasskeyLoginOptions(req),
       'GET /api/auth/keylog/head': () => session((_r, uid) => this.handleKeyLogHead(uid)),
+      'GET /api/auth/totp-record': () => handleTotpRecordRequest(session, this.deps),
       'GET /api/auth/passkeys': () => session((r, uid) => this.handlePasskeys(r, uid)),
       'POST /api/auth/keylog': () => session((r, uid) => this.handleKeyLog(r, uid)),
       'POST /api/auth/local': () =>
@@ -715,17 +721,11 @@ export class AuthRoutes {
     if (this.identicalAppliedRecord(userId, bytes, sig)) {
       return null;
     }
-    const compat = inspectHubAuthRecordCompat(this.deps.userStore, bytes, userId);
+    const compat = applyForcedKeyLogCompat(
+      inspectHubAuthRecordCompat(this.deps.userStore, bytes, userId),
+      req.headers.get('x-tmex-force-keylog') === '1'
+    );
     if (compat.ok) return null;
-    const forced = req.headers.get('x-tmex-force-keylog') === '1';
-    if (forced) {
-      console.warn(
-        `[auth] forcing key-log append despite ${compat.code} minVersion=${compat.minVersion} nodes=${compat.nodes
-          .map((n) => n.id)
-          .join(',')}`
-      );
-      return null;
-    }
     return jsonError(compat.code, 409, {
       minVersion: compat.minVersion,
       nodes: compat.nodes,

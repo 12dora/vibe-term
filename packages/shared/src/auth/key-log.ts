@@ -19,6 +19,7 @@ import {
   decodeRemovePasskeyPayload,
   decodeRetireHubPayload,
   decodeRevokeNodePayload,
+  decodeRotateRootKeepPayload,
   decodeRotateRootPayload,
   decodeSetTotpPayload,
   nodeIdToHex,
@@ -65,8 +66,22 @@ export type UserKeyState = {
 
 /** 写入 `admit-hub` / `retire-hub` 前，所有未吊销节点须达到该版本，否则旧节点无法解码新记录。 */
 export const MIN_HUB_AUTH_RECORD_VERSION = '1.1.13';
+/** 写入 `rotate-root-keep` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
+export const MIN_ROTATE_ROOT_KEEP_RECORD_VERSION = '1.1.16';
 export const KEYLOG_TYPE_UNSUPPORTED_BY_NODES = 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES';
 export const HUB_AUTH_RECORD_TYPES = ['admit-hub', 'retire-hub'] as const;
+export const ROTATE_ROOT_KEEP_RECORD_TYPES = ['rotate-root-keep'] as const;
+
+export type KeyLogRecordCompatSpec = {
+  minVersion: string;
+  allowForce: boolean;
+};
+
+export const KEYLOG_RECORD_COMPAT: Readonly<Partial<Record<KeyLogType, KeyLogRecordCompatSpec>>> = {
+  'admit-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
+  'retire-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
+  'rotate-root-keep': { minVersion: MIN_ROTATE_ROOT_KEEP_RECORD_VERSION, allowForce: false },
+};
 
 export type KeyLogEffect =
   | { type: 'revokeAllSessions' }
@@ -85,6 +100,7 @@ export const KEY_LOG_SIGNER_MATRIX: Record<KeyLogType, readonly KeyLogSigner[]> 
   'reset-root': ['root'],
   'admit-hub': ['root', 'passkey'],
   'retire-hub': ['root', 'passkey'],
+  'rotate-root-keep': ['root'],
 };
 
 export type KeyLogSignedRecord = {
@@ -131,7 +147,8 @@ export type ApplyKeyLogError =
   | 'uid_mismatch'
   | 'unknown_node'
   | 'malformed_payload'
-  | 'node_id_reused';
+  | 'node_id_reused'
+  | 'totp_required';
 
 export type ApplyKeyLogCtx = {
   verifyPasskeyAssertion?: VerifyPasskeyAssertion;
@@ -319,6 +336,20 @@ function cloneState(state: UserKeyState): UserKeyState {
   };
 }
 
+export function totpPayloadFromKeyLogRecord(record: KeyLogRecord): SetTotpPayload | null {
+  try {
+    if (record.type === 'set-totp') {
+      return decodeSetTotpPayload(record.payload);
+    }
+    if (record.type === 'rotate-root-keep') {
+      return decodeRotateRootKeepPayload(record.payload).totp?.payload ?? null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function applyRootChange(
   state: UserKeyState,
   record: KeyLogRecord,
@@ -347,6 +378,34 @@ function applyRootChange(
     effects.push({ type: 'clearPeerCache' });
   }
   return { ok: true, state, effects };
+}
+
+function applyRotateRootKeep(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogResult {
+  let payload: ReturnType<typeof decodeRotateRootKeepPayload>;
+  try {
+    payload = decodeRotateRootKeepPayload(record.payload);
+  } catch {
+    return { ok: false, error: 'malformed_payload' };
+  }
+  if (payload.totp) {
+    if (payload.totp.root_epoch !== record.root_epoch + 1 || payload.totp.seq !== record.seq) {
+      return { ok: false, error: 'malformed_payload' };
+    }
+  } else if (state.totp) {
+    return { ok: false, error: 'totp_required' };
+  }
+  state.rootPublicKey = new Uint8Array(payload.root_public_key);
+  state.kdfParams = {
+    salt: new Uint8Array(payload.kdf_params.salt),
+    memory_kib: payload.kdf_params.memory_kib,
+    iterations: payload.kdf_params.iterations,
+    parallelism: payload.kdf_params.parallelism,
+  };
+  state.rootEpoch = state.rootEpoch + 1;
+  if (payload.totp) {
+    state.totp = payload.totp.payload;
+  }
+  return { ok: true, state, effects: [] };
 }
 
 function applyAdmitHub(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogResult {
@@ -486,6 +545,9 @@ export async function applyKeyLogRecord(
       case 'reset-root':
         result = applyRootChange(next, record, true);
         break;
+      case 'rotate-root-keep':
+        result = applyRotateRootKeep(next, record);
+        break;
       case 'add-passkey': {
         const payload = decodeAddPasskeyPayload(record.payload);
         next.passkeys.set(payload.credential_id, payload);
@@ -561,7 +623,7 @@ export type VerifyKeyLogChainResult =
 
 /**
  * 链是自描述的：首条记录必须是自签的 `reset-root`（genesis），其 payload 给出 epoch-0 根公钥；
- * 之后每条 `rotate-root` 切换验签钥。调用方（hub join）传 `expectedRootPublicKey` = join 串中的当前根公钥，
+ * 之后每条 `rotate-root` / `rotate-root-keep` 切换验签钥。调用方（hub join）传 `expectedRootPublicKey` = join 串中的当前根公钥，
  * 回放到头后必须与 `state.rootPublicKey` 一致。
  */
 export async function verifyKeyLogChain(

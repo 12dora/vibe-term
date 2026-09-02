@@ -6,7 +6,6 @@
 import {
   type TotpSetupDraft,
   beginTotpSetup,
-  changePassword,
   clearTotp,
   confirmTotpSetup,
   isPasskeyUsableHere,
@@ -18,7 +17,6 @@ import {
   decodeRootPublicKey,
   useCredentialPrompt,
 } from '@/auth/credential-prompt';
-import { clearSessionKey } from '@/auth/session-key-store';
 import { useAuthMode } from '@/auth/use-session-key';
 import type {
   AuthApi,
@@ -28,12 +26,26 @@ import type {
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
+import { Checkbox } from '@tmex/ui/checkbox';
 import { Input } from '@tmex/ui/input';
 import { OtpInput } from '@tmex/ui/otp-input';
 import { AlertTriangle, Fingerprint, KeyRound, Loader2, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import {
+  type PasswordChangeFeedback,
+  securityActionErrorText,
+  submitPasswordChange,
+} from './account-security-password';
+
+// 面板的调用方（与单测）沿用同一个入口，改密逻辑本身在 `./account-security-password`。
+export {
+  type PasswordChangeFollowUp,
+  finishPasswordChange,
+  passwordChangeFollowUp,
+  securityActionErrorText,
+} from './account-security-password';
 
 export interface AccountSecurityPanelProps {
   mode?: AuthModeResponse;
@@ -83,12 +95,15 @@ function Section({
   );
 }
 
-function Feedback({ tone, text }: { tone: 'error' | 'ok'; text: string }) {
+const FEEDBACK_TONE = {
+  error: 'text-destructive',
+  ok: 'text-emerald-500',
+  notice: 'text-muted-foreground',
+} as const;
+
+function Feedback({ tone, text }: { tone: keyof typeof FEEDBACK_TONE; text: string }) {
   return (
-    <p
-      className={`text-xs ${tone === 'error' ? 'text-destructive' : 'text-emerald-500'}`}
-      data-testid={`security-${tone}`}
-    >
+    <p className={`text-xs ${FEEDBACK_TONE[tone]}`} data-testid={`security-${tone}`}>
       {text}
     </p>
   );
@@ -175,32 +190,138 @@ const PLACEHOLDER_KDF: AuthKdfParamsJson = {
   parallelism: 0,
 };
 
-// ---------------------------------------------------------------------------
-// 改密
-// ---------------------------------------------------------------------------
+function PasswordFields({
+  oldPassword,
+  newPassword,
+  confirm,
+  onOldPassword,
+  onNewPassword,
+  onConfirm,
+}: {
+  oldPassword: string;
+  newPassword: string;
+  confirm: string;
+  onOldPassword: (value: string) => void;
+  onNewPassword: (value: string) => void;
+  onConfirm: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <Input
+        type="password"
+        autoComplete="current-password"
+        placeholder={t('auth.security.currentPassword')}
+        value={oldPassword}
+        data-testid="security-old-password"
+        onChange={(event) => onOldPassword(event.target.value)}
+      />
+      <Input
+        type="password"
+        autoComplete="new-password"
+        placeholder={t('auth.security.newPassword')}
+        value={newPassword}
+        data-testid="security-new-password"
+        onChange={(event) => onNewPassword(event.target.value)}
+      />
+      <Input
+        type="password"
+        autoComplete="new-password"
+        placeholder={t('auth.security.confirmPassword')}
+        value={confirm}
+        data-testid="security-confirm-password"
+        onChange={(event) => onConfirm(event.target.value)}
+      />
+    </>
+  );
+}
 
-function PasswordSection({
+/** 常规改密后要重新登录一次 entry；开了 TOTP 就得当场给一个码，留空则跳过。 */
+function ReloginCodeField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs text-muted-foreground">{t('auth.security.reloginTotpHint')}</p>
+      <OtpInput
+        value={value}
+        onChange={onChange}
+        digitLabel={(index, length) => t('auth.totpDigit', { index: index + 1, total: length })}
+        data-testid="security-relogin-code"
+      />
+    </div>
+  );
+}
+
+/** 全量重置的开关与它的破坏性警告：勾上之前不摆警告，免得常规改密被误读成会清空一切。 */
+function FullResetOption({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <label className="flex items-start gap-2 text-xs" htmlFor="security-full-reset">
+        <Checkbox
+          id="security-full-reset"
+          checked={checked}
+          onCheckedChange={(next) => onChange(next === true)}
+          data-testid="security-full-reset"
+        />
+        <span className="flex flex-col gap-0.5">
+          {t('auth.security.fullReset')}
+          <span className="text-muted-foreground">{t('auth.security.fullResetHint')}</span>
+        </span>
+      </label>
+      {checked ? (
+        <p
+          className="flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
+          data-testid="password-warning"
+        >
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          <span>{t('auth.security.changePasswordWarning')}</span>
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/** 单独导出供测试静态渲染：`initialFullReset` 只用来摆出勾选后的形态。 */
+export function PasswordSection({
   mode,
   api,
   uid,
   onDone,
+  initialFullReset = false,
 }: {
   mode: ResolvedMode;
   api: AuthApi;
   uid: string;
   onDone: () => void;
+  initialFullReset?: boolean;
 }) {
   const { t } = useTranslation();
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [fullReset, setFullReset] = useState(initialFullReset);
+  const [totpCode, setTotpCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState(false);
+  const [feedback, setFeedback] = useState<PasswordChangeFeedback | null>(null);
+  const totpEnabled = Boolean(mode.totpEnabled);
 
   const submit = useCallback(async () => {
     setError(null);
-    setOk(false);
+    setFeedback(null);
     if (!oldPassword || !newPassword) {
       setError(t('auth.security.passwordRequired'));
       return;
@@ -211,67 +332,64 @@ function PasswordSection({
     }
     setBusy(true);
     try {
-      const result = await changePassword({
+      const outcome = await submitPasswordChange({
         api,
         uid,
+        nodeId: mode.nodeId,
+        kdfParams: mode.kdfParams,
         oldPassword,
         newPassword,
-        currentKdfParams: mode.kdfParams,
+        fullReset,
+        totpEnabled,
+        totpCode,
+        t,
       });
-      if (!result.ok) {
-        setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+      if (outcome.tone === 'error') {
+        setError(outcome.text);
         return;
       }
       setOldPassword('');
       setNewPassword('');
       setConfirm('');
-      setOk(true);
-      // rotate-root 会撤销所有会话：本地 sk_sess 立刻作废。等盘上那份也删掉再往下走，
-      // 否则用户随手刷新一下，IndexedDB 里那份已被服务端撤销的会话钥又会被恢复出来。
-      await clearSessionKey();
+      setTotpCode('');
+      setFeedback(outcome);
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
-  }, [api, confirm, mode.kdfParams, newPassword, oldPassword, onDone, t, uid]);
+  }, [
+    api,
+    confirm,
+    fullReset,
+    mode.kdfParams,
+    mode.nodeId,
+    newPassword,
+    oldPassword,
+    onDone,
+    t,
+    totpCode,
+    totpEnabled,
+    uid,
+  ]);
 
   return (
     <Section title={t('auth.security.changePassword')}>
-      <p
-        className="flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
-        data-testid="password-warning"
-      >
-        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-        <span>{t('auth.security.changePasswordWarning')}</span>
-      </p>
-      <Input
-        type="password"
-        autoComplete="current-password"
-        placeholder={t('auth.security.currentPassword')}
-        value={oldPassword}
-        data-testid="security-old-password"
-        onChange={(event) => setOldPassword(event.target.value)}
+      <PasswordFields
+        oldPassword={oldPassword}
+        newPassword={newPassword}
+        confirm={confirm}
+        onOldPassword={setOldPassword}
+        onNewPassword={setNewPassword}
+        onConfirm={setConfirm}
       />
-      <Input
-        type="password"
-        autoComplete="new-password"
-        placeholder={t('auth.security.newPassword')}
-        value={newPassword}
-        data-testid="security-new-password"
-        onChange={(event) => setNewPassword(event.target.value)}
-      />
-      <Input
-        type="password"
-        autoComplete="new-password"
-        placeholder={t('auth.security.confirmPassword')}
-        value={confirm}
-        data-testid="security-confirm-password"
-        onChange={(event) => setConfirm(event.target.value)}
-      />
+      {totpEnabled && !fullReset ? (
+        <ReloginCodeField value={totpCode} onChange={setTotpCode} />
+      ) : null}
+      <FullResetOption checked={fullReset} onChange={setFullReset} />
       {error ? <Feedback tone="error" text={error} /> : null}
-      {ok ? <Feedback tone="ok" text={t('auth.security.changePasswordDone')} /> : null}
+      {feedback ? <Feedback tone={feedback.tone} text={feedback.text} /> : null}
       <div>
         <Button
           type="button"
@@ -357,7 +475,7 @@ function TotpSection({
         return;
       }
       if (!outcome.result.ok) {
-        setError(t(`auth.errors.${outcome.result.code}`, { defaultValue: outcome.result.code }));
+        setError(securityActionErrorText(t, outcome.result.code));
         return;
       }
       draft.secret.fill(0);
@@ -390,7 +508,7 @@ function TotpSection({
       });
       if (!result) return;
       if (!result.ok) {
-        setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+        setError(securityActionErrorText(t, result.code));
         return;
       }
       cancel();
@@ -514,7 +632,7 @@ function PasskeySection({
       );
       if (!result) return;
       if (!result.ok) {
-        setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+        setError(securityActionErrorText(t, result.code));
         return;
       }
       setName('');
@@ -537,7 +655,7 @@ function PasskeySection({
         );
         if (!result) return;
         if (!result.ok) {
-          setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+          setError(securityActionErrorText(t, result.code));
           return;
         }
         onDone();

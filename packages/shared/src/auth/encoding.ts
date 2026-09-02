@@ -37,6 +37,7 @@ export const KeyLogType = {
   'reset-root': 'reset-root',
   'admit-hub': 'admit-hub',
   'retire-hub': 'retire-hub',
+  'rotate-root-keep': 'rotate-root-keep',
 } as const;
 export type KeyLogType = (typeof KeyLogType)[keyof typeof KeyLogType];
 
@@ -188,6 +189,24 @@ export const SetTotpPayloadSchema = b.struct({
 });
 export type SetTotpPayload = b.infer<typeof SetTotpPayloadSchema>;
 
+/**
+ * 常规改密（保留 passkey / TOTP / 会话）随带的 TOTP 重封装：
+ * `root_epoch` 必须等于记录 `root_epoch + 1`，`seq` 必须等于记录自身 `seq`（即 AAD 的取值）。
+ */
+export const RotateRootKeepTotpSchema = b.struct({
+  root_epoch: b.u32(),
+  seq: b.u64(),
+  payload: SetTotpPayloadSchema,
+});
+export type RotateRootKeepTotp = b.infer<typeof RotateRootKeepTotpSchema>;
+
+export const RotateRootKeepPayloadSchema = b.struct({
+  root_public_key: b.bytes(32),
+  kdf_params: KdfParamsSchema,
+  totp: b.option(RotateRootKeepTotpSchema),
+});
+export type RotateRootKeepPayload = b.infer<typeof RotateRootKeepPayloadSchema>;
+
 export const ClearTotpPayloadSchema = b.struct({});
 export type ClearTotpPayload = b.infer<typeof ClearTotpPayloadSchema>;
 
@@ -315,6 +334,12 @@ export function decodeRemovePasskeyPayload(bytes: Uint8Array): RemovePasskeyPayl
 
 export function encodeRotateRootPayload(value: RotateRootPayload): Uint8Array {
   return RotateRootPayloadSchema.serialize(value);
+}
+export function encodeRotateRootKeepPayload(value: RotateRootKeepPayload): Uint8Array {
+  return RotateRootKeepPayloadSchema.serialize(value);
+}
+export function decodeRotateRootKeepPayload(bytes: Uint8Array): RotateRootKeepPayload {
+  return RotateRootKeepPayloadSchema.deserialize(bytes);
 }
 export function decodeRotateRootPayload(bytes: Uint8Array): RotateRootPayload {
   return RotateRootPayloadSchema.deserialize(bytes);

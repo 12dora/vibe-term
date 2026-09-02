@@ -5,11 +5,14 @@ import {
   buildRetireHubPayload,
   bytesEqual,
   computeRecordHash,
+  encodeAddPasskeyPayload,
   encodeAdmitNodePayload,
+  encodeBase64url,
   encodeClearTotpPayload,
   encodeKeyLogRecord,
   encodeResetRootPayload,
   encodeRevokeNodePayload,
+  encodeRotateRootKeepPayload,
   encodeRotateRootPayload,
   encodeSetTotpPayload,
   generateKdfParams,
@@ -120,6 +123,100 @@ describe('UserKeyService', () => {
       });
       expect(stale).toEqual({ ok: false, error: 'bad_signature' });
 
+      const fresh = await service.signAndApply(boot.userId, newRoot, {
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+      });
+      expect(fresh.ok).toBe(true);
+    } finally {
+      close();
+    }
+  });
+
+  test('signAndApply rotate-root-keep keeps passkeys/totp/sessions and reconstructs totp from the keep record', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, userStore, nodeSessionStore } = createService(db);
+      const boot = await service.bootstrapUser({ username: 'keep', password: 'old-pass' });
+      const cred = encodeBase64url(new Uint8Array(16).fill(8));
+      const added = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'add-passkey',
+        payload: encodeAddPasskeyPayload({
+          credential_id: cred,
+          public_key: new Uint8Array(32).fill(1),
+          rp_id: 'example.test',
+          origin: 'https://example.test',
+          counter: 0,
+          transports: ['internal'],
+          backup_eligible: false,
+          backup_state: false,
+          device_type: 'singleDevice',
+          name: 'laptop',
+        }),
+      });
+      expect(added.ok).toBe(true);
+      const totp = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'set-totp',
+        payload: encodeSetTotpPayload({
+          alg: 'A256GCM',
+          nonce: new Uint8Array(12).fill(1),
+          ciphertext: new Uint8Array(8).fill(2),
+          tag: new Uint8Array(16).fill(3),
+        }),
+      });
+      expect(totp.ok).toBe(true);
+
+      const session = nodeSessionStore.issue({
+        userId: boot.userId,
+        viaNodeId: 'self',
+        sessPublicKey: Uint8Array.from({ length: 32 }, (_, i) => i + 1),
+        delegationMethod: 'root',
+        now: Date.now(),
+      });
+      const before = service.currentState(boot.userId);
+      const newParams = generateKdfParams();
+      const newRoot = rootKeyFromSeed(new Uint8Array(32).fill(9));
+      const wrapped = {
+        alg: 'A256GCM',
+        nonce: new Uint8Array(12).fill(9),
+        ciphertext: new Uint8Array(8).fill(8),
+        tag: new Uint8Array(16).fill(7),
+      };
+      const rotated = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'rotate-root-keep',
+        payload: encodeRotateRootKeepPayload({
+          root_public_key: newRoot.publicKey,
+          kdf_params: newParams,
+          totp: {
+            root_epoch: before.rootEpoch + 1,
+            seq: before.head.seq + 1n,
+            payload: wrapped,
+          },
+        }),
+      });
+      expect(rotated.ok).toBe(true);
+      if (rotated.ok) {
+        expect(rotated.effects).toEqual([]);
+      }
+
+      const after = service.currentState(boot.userId);
+      expect(after.rootEpoch).toBe(before.rootEpoch + 1);
+      expect(bytesEqual(after.rootPublicKey, newRoot.publicKey)).toBe(true);
+      expect(after.passkeys.size).toBe(1);
+      expect(after.passkeys.get(cred)?.name).toBe('laptop');
+      expect(after.totp?.alg).toBe('A256GCM');
+      expect(bytesEqual(after.totp?.tag ?? new Uint8Array(), wrapped.tag)).toBe(true);
+      expect(userStore.listKeysByUser(boot.userId)).toHaveLength(1);
+      expect(userStore.getById(boot.userId)?.totpRecordSeq).toBe(Number(before.head.seq + 1n));
+      expect(nodeSessionStore.verify(session.sid, { viaNodeId: 'self', now: Date.now() }).ok).toBe(
+        true
+      );
+
+      const stale = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+      });
+      expect(stale).toEqual({ ok: false, error: 'bad_signature' });
       const fresh = await service.signAndApply(boot.userId, newRoot, {
         type: 'clear-totp',
         payload: encodeClearTotpPayload(),
@@ -874,6 +971,48 @@ describe('UserKeyService', () => {
           nextCert?.certificateBytes ?? new Uint8Array()
         )
       ).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  test('applyMany rotate-root-keep replay invalidates unused enrollment tokens', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, userStore } = createService(db);
+      const boot = await service.bootstrapUser({ username: 'standby', password: 'pw' });
+      const unusedPk = Uint8Array.from({ length: 32 }, () => 41);
+      userStore.createEnrollmentToken({
+        id: 'tok-replay',
+        userId: boot.userId,
+        enrollPublicKey: unusedPk,
+        authorizationJson: '{}',
+        authorizationSig: Uint8Array.from({ length: 64 }, () => 1),
+        expiresAt: Date.now() + 60_000,
+      });
+      const newRoot = rootKeyFromSeed(new Uint8Array(32).fill(9));
+      const state = service.currentState(boot.userId);
+      const record = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: boot.userId,
+        type: 'rotate-root-keep',
+        payload: encodeRotateRootKeepPayload({
+          root_public_key: newRoot.publicKey,
+          kdf_params: generateKdfParams(),
+          totp: null,
+        }),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(record);
+      const sig = signKeyLogRecordWithRoot(boot.rootKey, bytes);
+      const result = await service.applyMany(boot.userId, [{ bytes, sig }]);
+      expect(result.ok).toBe(true);
+      expect(
+        userStore.consumeEnrollmentToken(unusedPk, {
+          nodeId: 'aa'.repeat(16),
+          now: Date.now() + 1_000,
+        })
+      ).toBeNull();
     } finally {
       close();
     }

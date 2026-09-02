@@ -34,8 +34,22 @@ export function hubDetailText(t: Translate, hub: HubEndpointInfo, attached: bool
 }
 
 /** hub 的短名：没有名字时用 nodeId 前 8 位，与指纹列的读法一致。 */
-function hubLabel(hub: HubEndpointInfo): string {
+export function hubLabel(hub: HubEndpointInfo): string {
   return hub.name || hub.nodeId.slice(0, 8);
+}
+
+/** 主 / 备的小徽标：与节点表里的 hub 徽标同一版式，供本机区块复用。 */
+export function HubModeTag({ mode, testId }: { mode: HubMode | null; testId?: string }) {
+  const { t } = useTranslation();
+  return (
+    <span
+      className="rounded border border-border px-1 py-px text-[10px] text-muted-foreground"
+      data-testid={testId}
+      data-hub-mode={mode ?? ''}
+    >
+      {hubModeLabel(t, mode)}
+    </span>
+  );
 }
 
 /** uplink 候选地址的错误提示上限：title 里塞一整段栈没有意义，只留够定位的一截。 */

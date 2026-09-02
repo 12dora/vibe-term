@@ -13,6 +13,7 @@ import type {
   KeyLogSignedRecord,
   KeyLogType,
   RootKey,
+  RotateRootKeepTotp,
   SetTotpPayload,
 } from '@tmex/shared/auth';
 import {
@@ -20,10 +21,12 @@ import {
   decodeBase64url,
   deriveSeed,
   encodeAddPasskeyPayload,
+  encodeBase64url,
   encodeClearTotpPayload,
   encodeKeyLogRecord,
   encodePasskeyAssertion,
   encodeRemovePasskeyPayload,
+  encodeRotateRootKeepPayload,
   encodeRotateRootPayload,
   encodeSetTotpPayload,
   rootKeyFromSeed,
@@ -112,6 +115,21 @@ export function kdfParamsFromJson(json: {
   };
 }
 
+/** `kdfParamsFromJson` 的逆向：把签进记录的新参数交回给 UI / 会话重建路径。 */
+export function kdfParamsToJson(params: KdfParams): {
+  salt: string;
+  memory_kib: number;
+  iterations: number;
+  parallelism: number;
+} {
+  return {
+    salt: encodeBase64url(params.salt),
+    memory_kib: params.memory_kib,
+    iterations: params.iterations,
+    parallelism: params.parallelism,
+  };
+}
+
 export interface BuildRecordInput {
   head: KeyLogHead;
   rootEpoch: number;
@@ -147,8 +165,8 @@ export async function buildSignedRecord(input: BuildRecordInput): Promise<KeyLog
 }
 
 /**
- * 改密：`rotate-root` 由**旧**根钥签，payload 带新根公钥与新 kdf 参数。
- * 应用后各 node 撤销全部会话、清空 passkey 与 TOTP。
+ * 全量重置式改密：`rotate-root` 由**旧**根钥签，payload 带新根公钥与新 kdf 参数。
+ * 应用后各 node 撤销全部会话、清空 passkey 与 TOTP。常规改密请用 `buildRotateRootKeepRecord`。
  */
 export function buildRotateRootRecord(input: {
   head: KeyLogHead;
@@ -165,6 +183,37 @@ export function buildRotateRootRecord(input: {
   const record = buildKeyLogRecord(input.head, input.rootEpoch, {
     uid: input.uid,
     type: 'rotate-root',
+    payload,
+    signer: 'root',
+    credential_id: null,
+  });
+  const bytes = encodeKeyLogRecord(record);
+  return { bytes, sig: signKeyLogRecordWithRoot(input.oldRootKey, bytes) };
+}
+
+/**
+ * 常规改密：`rotate-root-keep` 同样由**旧**根钥签，但应用后保留 passkey、TOTP 与全部会话。
+ *
+ * `totp` 是把现有 TOTP 密文按新 epoch / 新记录 seq 重新封装的结果，契约固定为
+ * `root_epoch === 记录 root_epoch + 1`、`seq === 记录自身 seq`；账号没开 TOTP 时传 `null`。
+ */
+export function buildRotateRootKeepRecord(input: {
+  head: KeyLogHead;
+  rootEpoch: number;
+  uid: string;
+  oldRootKey: RootKey;
+  newRootPublicKey: Uint8Array;
+  newKdfParams: KdfParams;
+  totp: RotateRootKeepTotp | null;
+}): KeyLogSignedRecord {
+  const payload = encodeRotateRootKeepPayload({
+    root_public_key: new Uint8Array(input.newRootPublicKey),
+    kdf_params: input.newKdfParams,
+    totp: input.totp,
+  });
+  const record = buildKeyLogRecord(input.head, input.rootEpoch, {
+    uid: input.uid,
+    type: 'rotate-root-keep',
     payload,
     signer: 'root',
     credential_id: null,

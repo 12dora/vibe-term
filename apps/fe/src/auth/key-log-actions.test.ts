@@ -4,6 +4,7 @@ import {
   bytesEqual,
   decodeKeyLogRecord,
   decodePasskeyAssertion,
+  decodeRotateRootKeepPayload,
   decodeRotateRootPayload,
   encodeBase64url,
   generateKdfParams,
@@ -13,6 +14,7 @@ import {
 } from '@tmex/shared/auth';
 import {
   buildRemovePasskeyRecord,
+  buildRotateRootKeepRecord,
   buildRotateRootRecord,
   headFromResponse,
 } from './key-log-actions';
@@ -39,6 +41,87 @@ describe('headFromResponse', () => {
     });
     expect(head.seq).toBe(9007199254740993n);
     expect(head.hash).toHaveLength(32);
+  });
+});
+
+describe('rotate-root-keep 记录', () => {
+  const TOTP_PAYLOAD = {
+    alg: 'A256GCM',
+    nonce: fill(12, 0x33),
+    ciphertext: fill(20, 0x44),
+    tag: fill(16, 0x55),
+  };
+
+  test('类型是 rotate-root-keep，仍由旧根钥签名', async () => {
+    const newKdfParams = generateKdfParams();
+    const record = buildRotateRootKeepRecord({
+      head: HEAD,
+      rootEpoch: EPOCH,
+      uid: UID,
+      oldRootKey: OLD_ROOT,
+      newRootPublicKey: NEW_ROOT.publicKey,
+      newKdfParams,
+      totp: null,
+    });
+
+    const result = await verifyKeyLogRecord(record.bytes, record.sig, {
+      head: HEAD,
+      rootEpoch: EPOCH,
+      rootPublicKey: OLD_ROOT.publicKey,
+      resolvePasskey: () => null,
+    });
+    expect(result.ok).toBe(true);
+
+    const decoded = decodeKeyLogRecord(record.bytes);
+    expect(decoded.type).toBe('rotate-root-keep');
+    expect(decoded.signer).toBe('root');
+    expect(decoded.credential_id).toBeNull();
+    expect(decoded.seq).toBe(HEAD.seq + 1n);
+    expect(decoded.root_epoch).toBe(EPOCH);
+
+    const payload = decodeRotateRootKeepPayload(decoded.payload);
+    expect(bytesEqual(payload.root_public_key, NEW_ROOT.publicKey)).toBe(true);
+    expect(payload.totp).toBeNull();
+  });
+
+  test('带 TOTP 时嵌套字段按契约取 root_epoch + 1 与本条记录的 seq', () => {
+    const record = buildRotateRootKeepRecord({
+      head: HEAD,
+      rootEpoch: EPOCH,
+      uid: UID,
+      oldRootKey: OLD_ROOT,
+      newRootPublicKey: NEW_ROOT.publicKey,
+      newKdfParams: generateKdfParams(),
+      totp: { root_epoch: EPOCH + 1, seq: HEAD.seq + 1n, payload: TOTP_PAYLOAD },
+    });
+
+    const decoded = decodeKeyLogRecord(record.bytes);
+    const payload = decodeRotateRootKeepPayload(decoded.payload);
+    expect(payload.totp?.root_epoch).toBe(decoded.root_epoch + 1);
+    expect(payload.totp?.seq).toBe(decoded.seq);
+    expect(payload.totp?.payload.alg).toBe('A256GCM');
+    expect(bytesEqual(payload.totp?.payload.ciphertext ?? new Uint8Array(), fill(20, 0x44))).toBe(
+      true
+    );
+  });
+
+  test('新根钥签的同一条记录验不过（签名者必须是旧根）', async () => {
+    const record = buildRotateRootKeepRecord({
+      head: HEAD,
+      rootEpoch: EPOCH,
+      uid: UID,
+      oldRootKey: NEW_ROOT,
+      newRootPublicKey: NEW_ROOT.publicKey,
+      newKdfParams: generateKdfParams(),
+      totp: null,
+    });
+    const result = await verifyKeyLogRecord(record.bytes, record.sig, {
+      head: HEAD,
+      rootEpoch: EPOCH,
+      rootPublicKey: OLD_ROOT.publicKey,
+      resolvePasskey: () => null,
+    });
+    expect(result.ok).toBe(false);
   });
 });
 

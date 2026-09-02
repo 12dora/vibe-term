@@ -9,6 +9,7 @@ import type {
   AuthLoginRequest,
   AuthLoginResponse,
   AuthModeResponse,
+  AuthTotpRecordResponse,
   KeyLogAppendRequest,
   KeyLogAppendResult,
   KeyLogHeadResponse,
@@ -246,6 +247,43 @@ export class AuthApi {
       throw new Error(await parseApiError(res, 'Failed to load key log head'));
     }
     return (await res.json()) as KeyLogHeadResponse;
+  }
+
+  /**
+   * `GET /api/auth/totp-record`（需会话）。常规改密重封装 TOTP 用。
+   *
+   * **只有 404 + `TOTP_NOT_ENABLED` 才是「没开 TOTP」这一确定结论**：401 / 500 / 空体 / HTML
+   * 都只说明这次读不到，必须带真实的 code（读不出来就是 `HTTP_<status>`）透出去。把它们
+   * 一律当成「没开」，调用方会写出一条 `totp: null` 的 rotate-root-keep 记录，用户既有的
+   * TOTP 密文就此永久丢失（见评审 Major）。
+   */
+  async getTotpRecord(): Promise<
+    { ok: true; record: AuthTotpRecordResponse } | { ok: false; status: number; code: string }
+  > {
+    const res = await this.client.fetch('/api/auth/totp-record');
+    if (!res.ok) {
+      const code = await readCode(res, '');
+      if (res.status === 404 && code === 'TOTP_NOT_ENABLED') {
+        return { ok: false, status: 404, code };
+      }
+      return { ok: false, status: res.status, code: code || `HTTP_${res.status}` };
+    }
+    const payload = (await res.json()) as Partial<AuthTotpRecordResponse>;
+    if (
+      (typeof payload.record_seq !== 'string' && typeof payload.record_seq !== 'number') ||
+      typeof payload.root_epoch !== 'number' ||
+      typeof payload.payload !== 'string'
+    ) {
+      return { ok: false, status: res.status, code: 'MALFORMED' };
+    }
+    return {
+      ok: true,
+      record: {
+        record_seq: payload.record_seq,
+        root_epoch: payload.root_epoch,
+        payload: payload.payload,
+      },
+    };
   }
 
   /**

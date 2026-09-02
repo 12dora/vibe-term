@@ -30,6 +30,7 @@ import {
   clearSessionKey,
   ensureNodeLogin,
   getSessionKey,
+  replaceSessionKey,
   resetNodeLoginsForTest,
   resetSessionMemoryForTest,
   restoreSessionKey,
@@ -571,5 +572,216 @@ describe('会话钥跨 document 恢复', () => {
     } finally {
       installFakeIndexedDb();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 两阶段会话替换（常规改密）与持久化的关系
+// ---------------------------------------------------------------------------
+
+describe('两阶段会话替换不提前动持久化', () => {
+  /** 建一份会话并等它真的落盘，返回它的 issuedAt。 */
+  async function establishPersisted(now?: number): Promise<number> {
+    await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+      uid: UID,
+      entryNodeId: ENTRY,
+      rootEpoch: 0,
+      hasTotp: false,
+      now,
+    });
+    // 落盘是 fire-and-forget，冲一遍持久化队列。
+    await loadPersistedSession();
+    return getSessionKey()?.issuedAt as number;
+  }
+
+  function persistedIssuedAt(): number | undefined {
+    return (rawRecord() as PersistedSession | undefined)?.info.issuedAt;
+  }
+
+  test('新登录被拒：盘上那条旧记录一个字节都没被动过', async () => {
+    const oldIssuedAt = await establishPersisted();
+
+    const outcome = await replaceSessionKey(
+      async () => {
+        await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+          uid: UID,
+          entryNodeId: ENTRY,
+          rootEpoch: 1,
+          hasTotp: false,
+          now: oldIssuedAt + 1000,
+        });
+        // 准备阶段：新会话只在内存里，盘上仍然是旧那条。
+        expect(persistedIssuedAt()).toBe(oldIssuedAt);
+        return { ok: false, code: 'NETWORK_ERROR' } as const;
+      },
+      (result) => result.ok
+    );
+
+    expect(outcome.ok).toBe(false);
+    await loadPersistedSession();
+    expect(persistedIssuedAt()).toBe(oldIssuedAt);
+    expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt);
+
+    resetSessionMemoryForTest();
+    expect((await restoreSessionKey())?.issuedAt).toBe(oldIssuedAt);
+  });
+
+  test('run 抛异常：盘上那条同样原样留着，刷新还能恢复出旧会话', async () => {
+    const oldIssuedAt = await establishPersisted();
+
+    await expect(
+      replaceSessionKey(async () => {
+        await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+          uid: UID,
+          entryNodeId: ENTRY,
+          rootEpoch: 1,
+          hasTotp: false,
+          now: oldIssuedAt + 1000,
+        });
+        throw new Error('login blew up');
+      }, Boolean)
+    ).rejects.toThrow('login blew up');
+
+    await loadPersistedSession();
+    expect(persistedIssuedAt()).toBe(oldIssuedAt);
+
+    resetSessionMemoryForTest();
+    expect((await restoreSessionKey())?.issuedAt).toBe(oldIssuedAt);
+  });
+
+  test('准备与接受之间刷新页面：新 document 恢复出来的仍然是旧会话', async () => {
+    const oldIssuedAt = await establishPersisted();
+
+    let signalPrepared: () => void = () => undefined;
+    const prepared = new Promise<void>((resolve) => {
+      signalPrepared = resolve;
+    });
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const replacing = replaceSessionKey(
+      async () => {
+        await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+          uid: UID,
+          entryNodeId: ENTRY,
+          rootEpoch: 1,
+          hasTotp: false,
+          now: oldIssuedAt + 1000,
+        });
+        signalPrepared();
+        await gate;
+        return { ok: false } as const;
+      },
+      (result) => result.ok
+    );
+
+    await prepared;
+    // 这一刻刷新：内存全丢，只剩盘上那条——恢复出来的必须还是旧会话。
+    resetSessionMemoryForTest();
+    expect((await restoreSessionKey())?.issuedAt).toBe(oldIssuedAt);
+
+    release();
+    await replacing;
+    expect(persistedIssuedAt()).toBe(oldIssuedAt);
+  });
+
+  test('新会话被接受：这时才用一次 put 把盘上那条换成新的', async () => {
+    const oldIssuedAt = await establishPersisted();
+
+    await replaceSessionKey(
+      async () => {
+        await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+          uid: UID,
+          entryNodeId: ENTRY,
+          rootEpoch: 1,
+          hasTotp: false,
+          now: oldIssuedAt + 1000,
+        });
+        expect(persistedIssuedAt()).toBe(oldIssuedAt);
+        return { ok: true } as const;
+      },
+      (result) => result.ok
+    );
+
+    // 提交在 `replaceSessionKey()` 落定之前完成，不必再冲队列。
+    expect(persistedIssuedAt()).toBe(oldIssuedAt + 1000);
+    resetSessionMemoryForTest();
+    expect((await restoreSessionKey())?.issuedAt).toBe(oldIssuedAt + 1000);
+  });
+
+  test('接受时写盘失败（配额）：内存里是新会话，盘上那条旧记录仍然可用，不抛异常', async () => {
+    const oldIssuedAt = await establishPersisted();
+
+    idb.failWrite = true;
+    const outcome = await replaceSessionKey(
+      async () => {
+        await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+          uid: UID,
+          entryNodeId: ENTRY,
+          rootEpoch: 1,
+          hasTotp: false,
+          now: oldIssuedAt + 1000,
+        });
+        return { ok: true } as const;
+      },
+      (result) => result.ok
+    );
+    idb.failWrite = false;
+
+    expect(outcome.ok).toBe(true);
+    expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt + 1000);
+    // 写没提交：盘上仍是旧那条（仍然有效，服务端没撤销过它），不是一片空白。
+    expect(persistedIssuedAt()).toBe(oldIssuedAt);
+  });
+
+  test('整个替换期间 IndexedDB 都开不出来：只是不跨 document，流程照常', async () => {
+    const oldIssuedAt = await establishPersisted();
+
+    idb.failOpen = true;
+    const outcome = await replaceSessionKey(
+      async () => {
+        await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+          uid: UID,
+          entryNodeId: ENTRY,
+          rootEpoch: 1,
+          hasTotp: false,
+          now: oldIssuedAt + 1000,
+        });
+        return { ok: true } as const;
+      },
+      (result) => result.ok
+    );
+    idb.failOpen = false;
+
+    expect(outcome.ok).toBe(true);
+    expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt + 1000);
+  });
+
+  test('替换期间用户登出：两份会话都作废，盘上那条已被删掉', async () => {
+    const oldIssuedAt = await establishPersisted();
+
+    const outcome = await replaceSessionKey(
+      async () => {
+        await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+          uid: UID,
+          entryNodeId: ENTRY,
+          rootEpoch: 1,
+          hasTotp: false,
+          now: oldIssuedAt + 1000,
+        });
+        await clearSessionKey();
+        return { ok: true } as const;
+      },
+      (result) => result.ok
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(getSessionKey()).toBeNull();
+    await loadPersistedSession();
+    expect(rawRecord()).toBeUndefined();
+    resetSessionMemoryForTest();
+    expect(await restoreSessionKey()).toBeNull();
   });
 });

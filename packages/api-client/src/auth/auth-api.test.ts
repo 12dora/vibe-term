@@ -109,6 +109,59 @@ describe('AuthApi', () => {
     expect(calls[0].url).toBe('/api/auth/keylog/head');
   });
 
+  test('getTotpRecord 打 /api/auth/totp-record；404 TOTP_NOT_ENABLED 不抛', async () => {
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ record_seq: '4', root_epoch: 2, payload: 'AA' }), {
+        status: 200,
+      }),
+    ]);
+    expect(await api.getTotpRecord()).toEqual({
+      ok: true,
+      record: { record_seq: '4', root_epoch: 2, payload: 'AA' },
+    });
+    expect(calls[0].url).toBe('/api/auth/totp-record');
+
+    const missing = recorder([
+      new Response(JSON.stringify({ code: 'TOTP_NOT_ENABLED' }), { status: 404 }),
+    ]);
+    expect(await missing.api.getTotpRecord()).toEqual({
+      ok: false,
+      status: 404,
+      code: 'TOTP_NOT_ENABLED',
+    });
+  });
+
+  test('getTotpRecord：401 / 500 / HTML 体都不是「没开 TOTP」，原样透出真实的码', async () => {
+    const unauthorized = recorder([
+      new Response(JSON.stringify({ code: 'UNAUTHORIZED' }), { status: 401 }),
+    ]);
+    expect(await unauthorized.api.getTotpRecord()).toEqual({
+      ok: false,
+      status: 401,
+      code: 'UNAUTHORIZED',
+    });
+
+    const failed = recorder([new Response(JSON.stringify({ error: 'boom' }), { status: 500 })]);
+    expect(await failed.api.getTotpRecord()).toEqual({ ok: false, status: 500, code: 'boom' });
+
+    // 反代返回的错误页：体不是 JSON，只能按 HTTP 状态给码，绝不能回落成 TOTP_NOT_ENABLED。
+    const html = recorder([
+      new Response('<html><body>502 Bad Gateway</body></html>', {
+        status: 502,
+        headers: { 'content-type': 'text/html' },
+      }),
+    ]);
+    expect(await html.api.getTotpRecord()).toEqual({ ok: false, status: 502, code: 'HTTP_502' });
+
+    // 404 但码不对（旧后端 / 路由没挂）同样不是「没开」。
+    const notFound = recorder([new Response('', { status: 404 })]);
+    expect(await notFound.api.getTotpRecord()).toEqual({
+      ok: false,
+      status: 404,
+      code: 'HTTP_404',
+    });
+  });
+
   test('listPublicNodes 打公开的 /api/auth/nodes', async () => {
     const { api, calls } = recorder([
       new Response(JSON.stringify({ nodes: [{ id: 'a', name: 'A', online: true }] }), {

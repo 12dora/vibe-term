@@ -1,12 +1,12 @@
 // mesh 身份鉴权相关的 REST 报文类型（设计见 docs/hub/2026082700-hub-node-architecture.md §2 / §4）。
 // 所有二进制字段一律 base64url（无 padding）字符串，与 `@tmex/shared/auth` 的 encodeBase64url 对齐。
 
-import type { LocalAuthStatus, MeshNodeOperation } from '@tmex/shared';
+import type { AuthTotpRecordResponse, LocalAuthStatus, MeshNodeOperation } from '@tmex/shared';
 import type { HubEndpointInfo, HubMode } from '@tmex/shared/uplink';
 
 // hub 集合的契约类型来自 uplink codec（hub 广播 `node.list.hubs[]` 用的同一份），
 // 这里只做 type-only 转出：浏览器侧不会因此把 codec 打进 bundle。
-export type { HubEndpointInfo, HubMode };
+export type { AuthTotpRecordResponse, HubEndpointInfo, HubMode };
 
 /** `GET /api/auth/mode` 的 kdf 参数投影（salt 为 base64url）。 */
 export interface AuthKdfParamsJson {

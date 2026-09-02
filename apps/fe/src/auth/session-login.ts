@@ -10,7 +10,7 @@ import type {
   PublicKeyCredentialDescriptorJSON,
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi, startAuthentication } from '@tmex/api-client/auth/index';
-import type { Login } from '@tmex/shared/auth';
+import type { Login, RootKey } from '@tmex/shared/auth';
 import {
   buildLogin,
   buildPasskeyDelegation,
@@ -38,6 +38,7 @@ import {
   clearTotpCode,
   getSessionKey,
   readSessionSecrets,
+  replaceSessionKey,
 } from './session-key-store';
 
 // ---------------------------------------------------------------------------
@@ -107,48 +108,70 @@ interface EstablishFromSeedOptions {
   hasTotp: boolean;
   totpCode?: string;
   now?: number;
+  /** 会话密钥对生成器（测试注入）：拿到同一把 `sk_sess` 才能断言失败时它被清零。 */
+  generateSessionKeyPair?: () => { publicKey: Uint8Array; secretKey: Uint8Array };
+  /** k_totp 派生（测试注入）：用来构造 HKDF 抛错这条失败路径。 */
+  deriveKTotp?: (seed: Uint8Array, uid: string, rootEpoch: number) => Uint8Array;
 }
 
 /**
  * 由 seed（argon2id 输出）建立会话钥。
- * **调用后 `seed` 会被清零**——调用方不得再使用该数组。
+ * **调用后 `seed` 会被清零**——调用方不得再使用该数组，成功失败都一样。
  *
  * 会话密钥材料先生成完再碰 seed：整段根钥操作是同步的，中间不留 await，seed 与根钥私钥
  * 在内存里的窗口不会因为改成 async 而变长。
+ *
+ * 整段在 `try/finally` 里：会话钥生成失败、`createDelegation()` 抛（sess_pk 长度不对）、
+ * HKDF 抛，都必须把 seed、根钥私钥与那把没交出去的 `sk_sess` 就地清零——所有权只有在
+ * `adoptSessionSecrets()` 真的接手之后才转移给 session store（见评审 Major）。
  */
 export async function establishSessionFromSeed(
   seed: Uint8Array,
   opts: EstablishFromSeedOptions
 ): Promise<SessionKeyInfo> {
   const now = opts.now ?? Date.now();
-  const sess = await generateSessionKeyMaterial();
-  const rootKey = rootKeyFromSeed(seed);
-  const signed = createDelegation(rootKey, { uid: opts.uid, sessPk: sess.publicKey, now });
-  const kTotp = opts.hasTotp ? deriveTotpKey(seed, opts.uid, opts.rootEpoch) : null;
+  let sess: SessionKeyMaterial | null = null;
+  let rootKey: RootKey | null = null;
+  let kTotp: Uint8Array | null = null;
+  let owned = false;
+  try {
+    sess = await generateSessionKeyMaterial(opts.generateSessionKeyPair);
+    rootKey = rootKeyFromSeed(seed);
+    const signed = createDelegation(rootKey, { uid: opts.uid, sessPk: sess.publicKey, now });
+    kTotp = opts.hasTotp
+      ? (opts.deriveKTotp ?? deriveTotpKey)(seed, opts.uid, opts.rootEpoch)
+      : null;
 
-  // 根钥用完即弃：清零我们持有的 seed 与 rootKey 内部副本。
-  seed.fill(0);
-  rootKey.seed.fill(0);
-
-  return adoptSessionSecrets({
-    info: {
-      uid: opts.uid,
-      entryNodeId: opts.entryNodeId,
-      method: 'root',
-      issuedAt: Number(signed.delegation.issued_at),
-      expiresAt: Number(signed.delegation.exp),
-      hasTotp: opts.hasTotp,
-      credentialId: null,
-    },
-    sessKey: sess.cryptoKey,
-    sessSk: sess.secretKey,
-    sessPk: sess.publicKey,
-    delegation: signed.delegation,
-    delegationBytes: signed.bytes,
-    delegationSig: signed.sig,
-    kTotp,
-    totpCode: opts.totpCode ?? null,
-  });
+    const info = adoptSessionSecrets({
+      info: {
+        uid: opts.uid,
+        entryNodeId: opts.entryNodeId,
+        method: 'root',
+        issuedAt: Number(signed.delegation.issued_at),
+        expiresAt: Number(signed.delegation.exp),
+        hasTotp: opts.hasTotp,
+        credentialId: null,
+      },
+      sessKey: sess.cryptoKey,
+      sessSk: sess.secretKey,
+      sessPk: sess.publicKey,
+      delegation: signed.delegation,
+      delegationBytes: signed.bytes,
+      delegationSig: signed.sig,
+      kTotp,
+      totpCode: opts.totpCode ?? null,
+    });
+    owned = true;
+    return info;
+  } finally {
+    // 根钥用完即弃：清零我们持有的 seed 与 rootKey 内部副本。
+    seed.fill(0);
+    rootKey?.seed.fill(0);
+    if (!owned) {
+      sess?.destroy();
+      kTotp?.fill(0);
+    }
+  }
 }
 
 interface EstablishFromPasswordOptions extends EstablishFromSeedOptions {
@@ -166,6 +189,30 @@ export async function establishSessionFromPassword(
     parallelism: opts.kdfParams.parallelism,
   });
   return await establishSessionFromSeed(seed, opts);
+}
+
+interface ResumeAfterPasswordChangeOptions extends EstablishFromPasswordOptions {
+  api?: AuthApi;
+}
+
+/**
+ * 常规改密（`rotate-root-keep`）之后接回会话：用新密码、新 kdf 参数与新 root_epoch 重建
+ * delegation，再登录一次 entry 换新的入口 cookie。
+ *
+ * 顺序不能反——记录追加成功之前服务端只认旧根钥，新 delegation 一定验不过。整段走
+ * `replaceSessionKey()`：新登录没成功就把旧会话原样装回，用户手上那份仍然有效（这条路径
+ * 不撤销任何会话），页面不该因此掉线。
+ */
+export async function resumeSessionAfterPasswordChange(
+  opts: ResumeAfterPasswordChangeOptions
+): Promise<LoginNodeResult> {
+  return replaceSessionKey(
+    async () => {
+      await establishSessionFromPassword(opts);
+      return await loginSelf({ api: opts.api ?? defaultAuthApi });
+    },
+    (result) => result.ok
+  );
 }
 
 interface EstablishFromPasskeyOptions {

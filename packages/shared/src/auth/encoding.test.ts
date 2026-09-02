@@ -28,6 +28,7 @@ import {
   decodeResetRootPayload,
   decodeRetireHubPayload,
   decodeRevokeNodePayload,
+  decodeRotateRootKeepPayload,
   decodeRotateRootPayload,
   decodeSetTotpPayload,
   decodeTotpAad,
@@ -47,6 +48,7 @@ import {
   encodeResetRootPayload,
   encodeRetireHubPayload,
   encodeRevokeNodePayload,
+  encodeRotateRootKeepPayload,
   encodeRotateRootPayload,
   encodeSetTotpPayload,
   encodeTotpAad,
@@ -179,6 +181,7 @@ describe('keyLogRecord schema', () => {
       'reset-root',
       'admit-hub',
       'retire-hub',
+      'rotate-root-keep',
     ] as const;
     for (let i = 0; i < types.length; i++) {
       const bytes = encodeKeyLogRecord({ ...value, type: types[i] });
@@ -310,6 +313,42 @@ describe('key-log payload schemas', () => {
     expect(decodeResetRootPayload(encodeResetRootPayload(payload)).kdf_params.memory_kib).toBe(
       65536
     );
+  });
+
+  it('rotate-root-keep round-trips nested totp and null totp', () => {
+    const kdf = {
+      salt: fill(16, 0x22),
+      memory_kib: 65536,
+      iterations: 3,
+      parallelism: 1,
+    };
+    const totpPayload = {
+      alg: 'A256GCM',
+      nonce: fill(12, 1),
+      ciphertext: fill(8, 2),
+      tag: fill(16, 3),
+    };
+    const withTotp = decodeRotateRootKeepPayload(
+      encodeRotateRootKeepPayload({
+        root_public_key: fill(32, 0x11),
+        kdf_params: kdf,
+        totp: { root_epoch: 2, seq: 9n, payload: totpPayload },
+      })
+    );
+    expect(bytesEqual(withTotp.root_public_key, fill(32, 0x11))).toBe(true);
+    expect(withTotp.totp?.root_epoch).toBe(2);
+    expect(withTotp.totp?.seq).toBe(9n);
+    expect(withTotp.totp?.payload.alg).toBe('A256GCM');
+    expect(bytesEqual(withTotp.totp?.payload.tag ?? new Uint8Array(), fill(16, 3))).toBe(true);
+
+    const without = decodeRotateRootKeepPayload(
+      encodeRotateRootKeepPayload({
+        root_public_key: fill(32, 0x33),
+        kdf_params: kdf,
+        totp: null,
+      })
+    );
+    expect(without.totp).toBeNull();
   });
 
   it('set-totp / clear-totp / admit-node / revoke-node', () => {

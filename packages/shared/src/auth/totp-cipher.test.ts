@@ -39,4 +39,18 @@ describe('totp-cipher AES-256-GCM', () => {
     expect(bytesToHex(record.tag)).toBe('8e0b6151d060e1b56bf7c0e3e614f241');
     expect(bytesEqual(await decryptTotpSecret(kTotp, record, aad), secret)).toBe(true);
   });
+
+  it('re-encrypts a secret under a new epoch and seq; old AAD cannot decrypt', async () => {
+    const oldKey = new Uint8Array(32).fill(0x11);
+    const newKey = new Uint8Array(32).fill(0x22);
+    const oldAad = { uid: 'user-1', root_epoch: 1, seq: 4n };
+    const newAad = { uid: 'user-1', root_epoch: 2, seq: 9n };
+    const wrapped = await encryptTotpSecret(oldKey, secret, oldAad);
+    const plain = await decryptTotpSecret(oldKey, wrapped, oldAad);
+    const rewrapped = await encryptTotpSecret(newKey, plain, newAad);
+    expect(bytesEqual(await decryptTotpSecret(newKey, rewrapped, newAad), secret)).toBe(true);
+    await expect(decryptTotpSecret(oldKey, rewrapped, oldAad)).rejects.toBeDefined();
+    await expect(decryptTotpSecret(newKey, rewrapped, oldAad)).rejects.toBeDefined();
+    await expect(decryptTotpSecret(oldKey, wrapped, newAad)).rejects.toBeDefined();
+  });
 });

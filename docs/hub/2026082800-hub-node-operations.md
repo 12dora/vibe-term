@@ -202,7 +202,9 @@ hub 不可达（`mode.hubNodeId` / `isHub` 学不到）：顶栏提示，新增 
 
 ### 改密
 
-UI 与 `tmex hub user passwd <username>` 都走 `rotate-root`（旧根钥签）。这是新安全 epoch：各 node 撤销该用户全部 `node-session`，删除全部 passkey，清空 TOTP。CLI 会打印警告，须在各入口重新注册。非 TTY：旧密码 `TMEX_PASSWORD_OLD`，新密码 `TMEX_PASSWORD`。
+日常改密走 `rotate-root-keep`（旧根钥签）：更新根公钥、KDF 与 `root_epoch`，**保留** passkey、已启用的 TOTP（随记录按新 epoch / 新 seq 重封装）以及当前入口会话。未使用的 enrollment token 会立即失效，须重新签发。写入前所有未吊销节点须 ≥ 1.1.16，否则 409 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`；该类型不允许 `x-tmex-force-keylog` 绕过，以免旧节点按未知类型丢弃记录、造成状态分裂。
+
+`rotate-root` 仍是破坏性改密：撤销全部 `node-session`、清空 passkey 与 TOTP，须在各入口重新注册。`tmex hub user passwd <username>` 若仍走 `rotate-root`，语义与此相同。非 TTY：旧密码 `TMEX_PASSWORD_OLD`，新密码 `TMEX_PASSWORD`。灾难恢复仍用 `reset-root` / `mesh reset-root`，不要用日常改密代替。
 
 登录体验：输入一次密码（或一次 passkey）生成 18 小时 `delegation`，先登当前入口 `self`，再用 `tmex_s_self` 拉 `/api/mesh/nodes`，对在线未登录的 node 并行登录。cookie `tmex_s_<nodeId>` / `tmex_s_self`：`HttpOnly; SameSite=Lax; Max-Age=64800`（18 h），HTTPS 加 `Secure`。滑动续期 18 小时，绝对上限 7 天。
 
@@ -299,10 +301,10 @@ tmex hub user reset
 | 两边 `direct_capable=true` 但 `transport` 不是 `dc` | 只走了 hub relay / LAN WS，或升级尚未完成 | 日志前缀 `[mesh][rtc]`。应先有 `dial start role=offerer\|answerer`，较大 id 侧有 `kind=wake`，随后 `signal send/recv kind=sdp`。没有 `dial start` 说明没人拨号；只有 answerer 没有 wake/offer 是旧 bug。`ice failed … local_types=[host] remote_types=[…]` 且无 `srflx` → STUN 不可达；两边都有 `srflx` 仍失败 → 对称 NAT，需要 `TMEX_TURN_*`。`datachannel open` 才算 DC 握手成功。不要把完整 SDP / ICE 密码打进日志 |
 | `PROTOCOL_MISMATCH` | `/api/auth/mode` 缺 `rootEpoch` / `rootPublicKey` 等 mesh 必填字段 | 服务角色不是 mesh，或旧进程未起来 |
 | join 失败 `https` / `--insecure-local` | 非 HTTPS，或 production 用了 insecure | 换成系统信任链下的 HTTPS |
-| join `key log rejected` / `epoch_changed` | 签发 token 之后发生了 `rotate-root` / `reset-root` | 重新 enroll |
+| join `key log rejected` / `epoch_changed` | 签发 token 之后发生了 `rotate-root` / `rotate-root-keep` / `reset-root` | 重新 enroll |
 | enroll 一直「待确认」 | 证书未到本会话，或 passkey 路径需手动确认，或 hubAck 未到 | 等 join 完成再点确认；查 hub 是否在线；根钥路径才自动 admit |
 | 登录页没有 passkey | `passkeyAvailable=false` 或本 origin 无凭证 | 用域名 HTTPS（加 `TMEX_TRUST_PROXY`）；先在本入口注册 |
-| TOTP 登录 `TOTP_INVALID` | epoch 与派生盐不一致，或验证码过期 | 确认用的是当前 epoch 的密码；改密后须重设 TOTP |
+| TOTP 登录 `TOTP_INVALID` | epoch 与派生盐不一致，或验证码过期 | 确认用的是当前 epoch 的密码；日常改密会重封装 TOTP，无需重设；破坏性 `rotate-root` 后须重设 |
 | HTTP 409 `HUB_NOT_WRITER` | 打到了 standby hub 的写接口（enroll / redeem / rename / revoke） | 改打 body 里的 `writerPublicUrl`。要把这台变成写者，先让原主 `tmex hub demote`，再 `tmex hub promote --yes`。见 [多 hub 主/备](./2026090104-multi-hub-standby.md) |
 | 两台 hub 同时 `mode=active` | epoch 围栏未生效或旧主恢复时没先 demote | 立即把其中一台 `demote` 或停机。日志会有 `split-brain` 或 `fenced: higher writerEpoch`。切回顺序见 [多 hub 主/备](./2026090104-multi-hub-standby.md) |
 

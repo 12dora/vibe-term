@@ -24,3 +24,13 @@ export interface BootstrapLocalAuthRequest {
   username: string;
   password: string;
 }
+
+/**
+ * `GET /api/auth/totp-record`（需会话）。
+ * 常规改密重封装 TOTP 时取当前密文；`payload` 为 base64url(borsh(SetTotpPayload))。
+ */
+export interface AuthTotpRecordResponse {
+  record_seq: string | number;
+  root_epoch: number;
+  payload: string;
+}

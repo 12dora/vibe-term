@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { bytesEqual, genesisHead } from '@tmex/shared/auth';
-import { KeyLogStore } from './key-log-store';
+import {
+  bytesEqual,
+  encodeRotateRootKeepPayload,
+  generateKdfParams,
+  genesisHead,
+} from '@tmex/shared/auth';
+import { KeyLogStore, projectPayloadJson } from './key-log-store';
 import { createMigratedAuthDb } from './test-db';
 import { UserStore } from './user-store';
 
@@ -79,5 +84,33 @@ describe('KeyLogStore', () => {
     } finally {
       close();
     }
+  });
+
+  test('projectPayloadJson decodes rotate-root-keep nested totp and falls back on garbage', () => {
+    const kdf = generateKdfParams();
+    const json = projectPayloadJson(
+      'rotate-root-keep',
+      encodeRotateRootKeepPayload({
+        root_public_key: new Uint8Array(32).fill(1),
+        kdf_params: kdf,
+        totp: {
+          root_epoch: 2,
+          seq: 9n,
+          payload: {
+            alg: 'A256GCM',
+            nonce: new Uint8Array(12).fill(1),
+            ciphertext: new Uint8Array(8).fill(2),
+            tag: new Uint8Array(16).fill(3),
+          },
+        },
+      })
+    );
+    const parsed = JSON.parse(json) as {
+      totp: { root_epoch: number; seq: number; payload: { alg: string } } | null;
+    };
+    expect(parsed.totp?.root_epoch).toBe(2);
+    expect(parsed.totp?.seq).toBe(9);
+    expect(parsed.totp?.payload.alg).toBe('A256GCM');
+    expect(projectPayloadJson('rotate-root-keep', new Uint8Array([1, 2, 3]))).toBe('{}');
   });
 });

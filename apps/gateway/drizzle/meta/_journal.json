@@ -253,6 +253,13 @@
       "when": 1788520800000,
       "tag": "0035_tunnel_access_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1788607200000,
+      "tag": "0036_rotate_root_keep",
+      "breakpoints": true
     }
   ]
 }

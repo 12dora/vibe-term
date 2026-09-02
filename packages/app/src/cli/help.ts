@@ -8,7 +8,7 @@ Usage:
   tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   tmex uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
   tmex hub user add <username>
-  tmex hub user passwd <username>
+  tmex hub user passwd <username> [--full-reset]
   tmex hub user totp <username>
   tmex hub user reset
   tmex hub join <https-url> --token <t> [--name <n>] [--insecure-local] [--no-restart]
@@ -26,6 +26,7 @@ Usage:
 Password prompting (add / passwd / totp / reset-root / enroll):
   TTY: hidden input with confirmation where required; empty rejected.
   Non-TTY: TMEX_PASSWORD (TMEX_PASSWORD_OLD for passwd). NFKC is applied by deriveSeed.
+  --full-reset (passwd): also remove all passkeys and two-step verification and sign out everywhere
 
 Global flags:
   --lang <en|zh-CN>
@@ -39,7 +40,7 @@ const HELP_ZH = `tmex CLI
   tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   tmex uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
   tmex hub user add <username>
-  tmex hub user passwd <username>
+  tmex hub user passwd <username> [--full-reset]
   tmex hub user totp <username>
   tmex hub user reset
   tmex hub join <https-url> --token <t> [--name <n>] [--insecure-local] [--no-restart]
@@ -57,6 +58,7 @@ const HELP_ZH = `tmex CLI
 密码输入（add / passwd / totp / reset-root / enroll）：
   TTY：隐藏输入，需要时二次确认；拒绝空密码。
   非 TTY：TMEX_PASSWORD（passwd 的旧密码用 TMEX_PASSWORD_OLD）。NFKC 由 deriveSeed 处理。
+  --full-reset（passwd）：同时移除所有通行密钥、两步验证并注销全部会话
 
 全局参数：
   --lang <en|zh-CN>

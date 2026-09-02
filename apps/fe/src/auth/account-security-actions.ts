@@ -2,14 +2,22 @@
 // 每个动作都要 `POST /api/auth/keylog` 追加一条由根钥或 passkey 签名的记录，
 // sk_sess 一概不参与——所以每个动作都会重新要一次密码或一次 passkey 交互。
 
-import type { AuthApi, KeyLogAppendResult, PasskeySummary } from '@tmex/api-client/auth/index';
+import type {
+  AuthApi,
+  AuthKdfParamsJson,
+  KeyLogAppendResult,
+  PasskeySummary,
+} from '@tmex/api-client/auth/index';
 import { defaultAuthApi, startRegistration } from '@tmex/api-client/auth/index';
 import {
   type AddPasskeyPayload,
   type KdfParams,
   type KeyLogSignedRecord,
   type RootKey,
+  type RotateRootKeepTotp,
   decodeBase64url,
+  decodeSetTotpPayload,
+  decryptTotpSecret,
   deriveSeed,
   deriveTotpKey,
   encodeBase64url,
@@ -23,10 +31,12 @@ import {
   buildAddPasskeyRecord,
   buildClearTotpRecord,
   buildRemovePasskeyRecord,
+  buildRotateRootKeepRecord,
   buildRotateRootRecord,
   buildSetTotpRecord,
   headFromResponse,
   kdfParamsFromJson,
+  kdfParamsToJson,
 } from './key-log-actions';
 import { buildOtpauthUri, generateTotpSecret } from './totp-uri';
 
@@ -72,15 +82,94 @@ export interface ChangePasswordInput {
   newPassword: string;
   /** 当前 kdf 参数（来自 `/api/auth/mode`）。 */
   currentKdfParams: { salt: string; memory_kib: number; iterations: number; parallelism: number };
+  /**
+   * 全量重置：清空所有 passkey 与 TOTP 并注销全部会话（`rotate-root`）。
+   * 缺省 `false` = 常规改密（`rotate-root-keep`），登录方式与会话原样保留。
+   */
+  fullReset?: boolean;
+  /** 账号当前是否启用 TOTP（来自 `/api/auth/mode`）：常规改密要据此重新封装密文。 */
+  totpEnabled?: boolean;
   /** 根钥派生（测试注入）：拿到同一把根钥、并模拟第二次 Argon2 失败。 */
   deriveRootKey?: (password: string, kdfParams: KdfParams) => Promise<RootKey>;
 }
 
 /**
- * 改密 = `rotate-root`，由**旧**根钥签名，payload 是新根公钥 + 新 kdf 参数。
- * 应用后 root_epoch += 1，所有 node 撤销全部会话、清空 passkey 与 TOTP——UI 必须提前告知。
+ * 把现有 TOTP 密文从旧 seed / 旧 epoch 换封到新 seed / 新 epoch。
+ *
+ * 解密用 `k_old = HKDF(oldSeed, epoch=E)` + AAD `{uid, E, 该 set-totp 记录的 seq}`；
+ * 重加密用 `k_new = HKDF(newSeed, epoch=E+1)` + AAD `{uid, E+1, 本条 rotate 记录的 seq}`。
+ * 网关没有任何一把 seed，只能校验结构与这两个元数据，真正的验证发生在下一次登录解密时。
  */
-export async function changePassword(input: ChangePasswordInput): Promise<KeyLogAppendResult> {
+async function rewrapTotpSecret(input: {
+  api: AuthApi;
+  uid: string;
+  oldSeed: Uint8Array;
+  newSeed: Uint8Array;
+  rootEpoch: number;
+  recordSeq: bigint;
+}): Promise<RotateRootKeepTotp | null> {
+  const fetched = await input.api.getTotpRecord();
+  // 只认 404 + `TOTP_NOT_ENABLED`：服务端确实说没开（`totpEnabled` 已过期）时，写
+  // `totp: null` 才是对的记录。其余任何失败都只是「这次读不到」，必须中止整次改密——
+  // 照写 `totp: null` 等于把用户已有的 TOTP 密文永久丢掉。
+  if (!fetched.ok) {
+    if (fetched.status === 404 && fetched.code === 'TOTP_NOT_ENABLED') return null;
+    throw new Error(fetched.code);
+  }
+  const record = fetched.record;
+  const nextEpoch = input.rootEpoch + 1;
+  const kOld = deriveTotpKey(input.oldSeed, input.uid, input.rootEpoch);
+  const kNew = deriveTotpKey(input.newSeed, input.uid, nextEpoch);
+  let secret: Uint8Array | null = null;
+  try {
+    secret = await decryptTotpSecret(kOld, decodeSetTotpPayload(decodeBase64url(record.payload)), {
+      uid: input.uid,
+      root_epoch: input.rootEpoch,
+      seq: BigInt(record.record_seq),
+    });
+    const payload = await encryptTotpSecret(kNew, secret, {
+      uid: input.uid,
+      root_epoch: nextEpoch,
+      seq: input.recordSeq,
+    });
+    return { root_epoch: nextEpoch, seq: input.recordSeq, payload };
+  } finally {
+    secret?.fill(0);
+    kOld.fill(0);
+    kNew.fill(0);
+  }
+}
+
+/** 本次签进记录的东西：调用方据此重建会话，不必等 `/api/auth/mode` 追上新 epoch。 */
+export interface SignedPasswordChange {
+  /** 记录被应用后的 root_epoch（= 签名时的 `head.rootEpoch` + 1）。 */
+  nextRootEpoch: number;
+  /** 写进 payload 的新 kdf 参数（salt 为 base64url）。 */
+  newKdfParams: AuthKdfParamsJson;
+}
+
+export type ChangePasswordResult =
+  | (Extract<KeyLogAppendResult, { ok: true }> & SignedPasswordChange)
+  | Extract<KeyLogAppendResult, { ok: false }>;
+
+function withSigned(
+  result: KeyLogAppendResult,
+  signed: SignedPasswordChange
+): ChangePasswordResult {
+  return result.ok ? { ...result, ...signed } : result;
+}
+
+/**
+ * 改密：两条路径都由**旧**根钥签名，payload 都是新根公钥 + 新 kdf 参数，应用后 root_epoch += 1。
+ *
+ * - 常规（缺省）：`rotate-root-keep`，保留 passkey、TOTP 与全部会话；开了 TOTP 时把密文
+ *   随记录一起换封（`rewrapTotpSecret`），否则新密码解不开旧密文，账号会被远程锁死。
+ * - `fullReset`：`rotate-root`，清空 passkey 与 TOTP 并注销全部会话——UI 必须提前告知。
+ *
+ * 成功时连**签进记录的那两个值**一起返回：`/api/auth/mode` 是异步应用的，改密刚回来时
+ * 很可能还给着旧 epoch 与旧 kdf 参数，拿它去重建会话必然签出一份验不过的 delegation。
+ */
+export async function changePassword(input: ChangePasswordInput): Promise<ChangePasswordResult> {
   const api = input.api ?? defaultAuthApi;
   const head = await api.keyLogHead();
   const derive = input.deriveRootKey ?? rootKeyFrom;
@@ -91,15 +180,32 @@ export async function changePassword(input: ChangePasswordInput): Promise<KeyLog
     const newKdfParams = generateKdfParams();
     const newRootKey = await derive(input.newPassword, newKdfParams);
     try {
-      const record = buildRotateRootRecord({
+      const base = {
         head: headFromResponse(head),
         rootEpoch: head.rootEpoch,
         uid: input.uid,
         oldRootKey,
         newRootPublicKey: newRootKey.publicKey,
         newKdfParams,
-      });
-      return await append(api, record);
+      };
+      const signed: SignedPasswordChange = {
+        nextRootEpoch: head.rootEpoch + 1,
+        newKdfParams: kdfParamsToJson(newKdfParams),
+      };
+      if (input.fullReset) {
+        return withSigned(await append(api, buildRotateRootRecord(base)), signed);
+      }
+      const totp = input.totpEnabled
+        ? await rewrapTotpSecret({
+            api,
+            uid: input.uid,
+            oldSeed: oldRootKey.seed,
+            newSeed: newRootKey.seed,
+            rootEpoch: head.rootEpoch,
+            recordSeq: base.head.seq + 1n,
+          })
+        : null;
+      return withSigned(await append(api, buildRotateRootKeepRecord({ ...base, totp })), signed);
     } finally {
       newRootKey.seed.fill(0);
     }
