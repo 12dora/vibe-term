@@ -40,6 +40,7 @@ class FakeTransport implements GatewayTransport {
   };
   readonly hasConnectedOnce = true;
   readonly latencyMs = null;
+  readonly latencyRawMs = null;
   readonly serverCapabilities: readonly string[] = [];
   private readonly handlers = new Set<TransportEventHandler>();
   /** 下发给网关的设备连接/断开序列（即「调用序列」的可观测形式）。 */

@@ -21,7 +21,118 @@ export interface GatewayMetricsHost {
   readonly gatewayActivityMetrics: GatewayActivityMetrics;
 }
 
+export const PING_METRICS_INTERVAL_MS = 30_000;
+
+export type PingSendPath = 'bypassed' | 'queued';
+
+export interface GatewayPingMetricsSnapshot {
+  intervalMs: number;
+  probes: number;
+  serverHandleMsP50: number;
+  serverHandleMsMax: number;
+  bypassed: number;
+  queued: number;
+  bufferedMaxBytes: number;
+}
+
+export class GatewayPingMetrics {
+  private probes = 0;
+  private bypassed = 0;
+  private queued = 0;
+  private bufferedMaxBytes = 0;
+  private handleSamples: number[] = [];
+
+  constructor(
+    private readonly intervalMs = PING_METRICS_INTERVAL_MS,
+    private windowStartedAtMs = Date.now()
+  ) {
+    if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
+      throw new Error('ping metrics interval must be a positive safe integer');
+    }
+  }
+
+  record(input: {
+    serverHandleMs: number;
+    path: PingSendPath;
+    bufferedBytes: number;
+  }): void {
+    const handleMs = Math.max(0, Math.round(input.serverHandleMs));
+    this.probes += 1;
+    if (input.path === 'bypassed') this.bypassed += 1;
+    else this.queued += 1;
+    this.bufferedMaxBytes = Math.max(this.bufferedMaxBytes, Math.max(0, input.bufferedBytes));
+    this.handleSamples.push(handleMs);
+  }
+
+  takeIfDue(nowMs: number): GatewayPingMetricsSnapshot | null {
+    const elapsedMs = nowMs - this.windowStartedAtMs;
+    if (elapsedMs < this.intervalMs) {
+      return null;
+    }
+    const snapshot: GatewayPingMetricsSnapshot = {
+      intervalMs: elapsedMs,
+      probes: this.probes,
+      serverHandleMsP50: percentile50(this.handleSamples),
+      serverHandleMsMax: this.handleSamples.reduce((max, value) => Math.max(max, value), 0),
+      bypassed: this.bypassed,
+      queued: this.queued,
+      bufferedMaxBytes: this.bufferedMaxBytes,
+    };
+    this.windowStartedAtMs = nowMs;
+    this.probes = 0;
+    this.bypassed = 0;
+    this.queued = 0;
+    this.bufferedMaxBytes = 0;
+    this.handleSamples = [];
+    return snapshot;
+  }
+}
+
+function percentile50(samples: readonly number[]): number {
+  if (samples.length === 0) return 0;
+  const sorted = samples.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
+  return Math.round(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
+}
+
+let pingMetrics = new GatewayPingMetrics();
+
+export function recordPingProbe(input: {
+  serverHandleMs: number;
+  path: PingSendPath;
+  bufferedBytes: number;
+}): void {
+  pingMetrics.record(input);
+  logPingMetricsIfDue();
+}
+
+export function logPingMetricsIfDue(nowMs = Date.now()): void {
+  const metrics = pingMetrics.takeIfDue(nowMs);
+  if (!metrics) return;
+  const lag = gatewayEventLoopLag().snapshot();
+  console.log(
+    stamp(
+      `[ws-metrics] ping probes=${metrics.probes} ` +
+        `server_handle_ms_p50=${metrics.serverHandleMsP50} ` +
+        `server_handle_ms_max=${metrics.serverHandleMsMax} ` +
+        `bypassed=${metrics.bypassed} queued=${metrics.queued} ` +
+        `buffered_max_bytes=${metrics.bufferedMaxBytes} ` +
+        `event_loop_lag_ms=${lag.lagMs}`
+    )
+  );
+}
+
+export function setPingMetricsForTest(metrics: GatewayPingMetrics): void {
+  pingMetrics = metrics;
+}
+
+export function resetPingMetricsForTest(): void {
+  pingMetrics = new GatewayPingMetrics();
+}
+
 export function logTerminalOutputMetricsIfDue(host: GatewayMetricsHost): void {
+  logPingMetricsIfDue();
   const canonicalSessionStats = Array.from(host.canonicalSessions.values(), (session) =>
     session.snapshotStats()
   );

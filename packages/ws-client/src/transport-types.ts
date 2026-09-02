@@ -65,7 +65,7 @@ export type GatewayRebaseReason =
 
 export type GatewayTransportEvent =
   | { type: 'connection-state'; state: ConnectionState }
-  | { type: 'latency'; latencyMs: number }
+  | { type: 'latency'; latencyMs: number; rawMs: number }
   | { type: 'terminal-progress'; deviceId?: string }
   | { type: 'device-connected'; deviceId: string }
   | { type: 'device-disconnected'; deviceId: string }
@@ -246,6 +246,7 @@ export interface GatewayTransport {
   readonly capabilities: GatewayTransportCapabilities;
   readonly hasConnectedOnce: boolean;
   readonly latencyMs: number | null;
+  readonly latencyRawMs: number | null;
   readonly serverCapabilities: readonly string[];
   connect(): void;
   disconnect(): void;

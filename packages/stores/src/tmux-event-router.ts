@@ -102,12 +102,13 @@ const handlers: TmuxEventHandlers = {
       connectionState: event.state,
       hasConnectedOnce: event.state === 'READY' ? true : prev.hasConnectedOnce,
       wsLatencyMs: event.state === 'READY' ? prev.wsLatencyMs : null,
+      wsLatencyRawMs: event.state === 'READY' ? prev.wsLatencyRawMs : null,
     }));
     if (event.state === 'READY') ctx.onReady();
   },
 
   latency: (event, ctx) => {
-    ctx.setState({ wsLatencyMs: event.latencyMs });
+    ctx.setState({ wsLatencyMs: event.latencyMs, wsLatencyRawMs: event.rawMs });
   },
 
   'terminal-progress': (event, ctx) => {

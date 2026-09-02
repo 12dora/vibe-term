@@ -28,7 +28,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
   constructor(readonly client: BorshWebSocketClient) {
     this.disposers = [
       client.onStateChange((state) => this.emit({ type: 'connection-state', state })),
-      client.onLatency((latencyMs) => this.emit({ type: 'latency', latencyMs })),
+      client.onLatency((latencyMs, rawMs) => this.emit({ type: 'latency', latencyMs, rawMs })),
       client.onChunkProgress(({ originalKind }) => {
         if (
           originalKind === wsBorsh.KIND_TERM_HISTORY ||
@@ -51,6 +51,10 @@ export class WebSocketGatewayTransport implements GatewayTransport {
 
   get latencyMs(): number | null {
     return this.client.latencyMs;
+  }
+
+  get latencyRawMs(): number | null {
+    return this.client.latencyRawMs;
   }
 
   get serverCapabilities(): readonly string[] {
@@ -120,6 +124,10 @@ export class LazyWebSocketGatewayTransport implements GatewayTransport {
 
   get latencyMs(): number | null {
     return this.delegate().latencyMs;
+  }
+
+  get latencyRawMs(): number | null {
+    return this.delegate().latencyRawMs;
   }
 
   get serverCapabilities(): readonly string[] {

@@ -45,6 +45,7 @@ class FakeTransport implements GatewayTransport {
   };
   readonly hasConnectedOnce = true;
   readonly latencyMs = null;
+  readonly latencyRawMs = null;
   readonly serverCapabilities: readonly string[] = [];
   readonly handlers = new Set<TransportEventHandler>();
 

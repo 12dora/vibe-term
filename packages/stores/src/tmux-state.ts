@@ -26,6 +26,7 @@ export interface TmuxState {
   connectionState: ConnectionState;
   hasConnectedOnce: boolean;
   wsLatencyMs: number | null;
+  wsLatencyRawMs: number | null;
   snapshots: SnapshotMap;
   connectedDevices: Set<string>;
   deviceConnected: Record<string, boolean | undefined>;

@@ -5,6 +5,8 @@ import { carrierKindOf, logGuardEvent } from './ws-backpressure-log';
 export const GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES = 1_048_576;
 export const GATEWAY_WS_BACKPRESSURE_TIMEOUT_MS = 5_000;
 export const GATEWAY_WS_BACKPRESSURE_PROGRESS_MS = 5_000;
+/** PONG 在缓冲低于此值时走直发路径，计入 bypassed。 */
+export const GATEWAY_WS_PONG_BYPASS_BUFFERED_BYTES = 64 * 1024;
 
 interface BackpressureState {
   skippedFrame: boolean;
@@ -153,6 +155,40 @@ export class WebSocketSendGuard {
 
       if (status === 'closed') {
         this.terminate(carrier, 'dropped_frame');
+        return 'dropped';
+      }
+    }
+
+    return 'sent';
+  }
+
+  /**
+   * 控制面优先发送：不走终端输出的 drop/defer 策略。
+   * 已判定为不可用的 carrier 仍拒绝；其余情况一律交给底层 socket。
+   * bun 在 backpressure 时仍会入内核缓冲（send 返回 -1），PONG 无帧序依赖。
+   */
+  sendPriorityFrames(
+    carrier: Carrier,
+    frames: readonly (string | BufferSource)[]
+  ): WebSocketSendStatus {
+    if (this.unavailable.has(carrier)) {
+      return 'dropped';
+    }
+
+    for (let index = 0; index < frames.length; index += 1) {
+      const frame = frames[index];
+      if (frame === undefined) {
+        continue;
+      }
+
+      let status: ReturnType<Carrier['send']>;
+      try {
+        status = carrier.send(toUint8Array(frame));
+      } catch {
+        return 'dropped';
+      }
+
+      if (status === 'closed') {
         return 'dropped';
       }
     }

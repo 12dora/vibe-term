@@ -31,6 +31,7 @@ export function createSharedGatewayTransport(
   let state = options.initialState ?? 'IDLE';
   let connectedOnce = state === 'READY';
   let latencyMs: number | null = null;
+  let latencyRawMs: number | null = null;
   let disposed = false;
   let connectRequested = false;
   const handlers = new Set<GatewayTransportEventHandler>();
@@ -40,9 +41,13 @@ export function createSharedGatewayTransport(
     if (event.type === 'connection-state') {
       state = event.state;
       if (state === 'READY') connectedOnce = true;
-      if (state !== 'READY') latencyMs = null;
+      if (state !== 'READY') {
+        latencyMs = null;
+        latencyRawMs = null;
+      }
     } else if (event.type === 'latency') {
       latencyMs = event.latencyMs;
+      latencyRawMs = event.rawMs;
     }
     for (const handler of handlers) {
       try {
@@ -67,6 +72,9 @@ export function createSharedGatewayTransport(
     },
     get latencyMs() {
       return latencyMs;
+    },
+    get latencyRawMs() {
+      return latencyRawMs;
     },
     serverCapabilities: options.serverCapabilities ?? [],
     connect() {

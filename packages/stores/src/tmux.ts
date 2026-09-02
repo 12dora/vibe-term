@@ -127,6 +127,7 @@ export function createTmuxStore(
         connectionState: initialState,
         hasConnectedOnce: core.transport.hasConnectedOnce,
         wsLatencyMs: core.transport.latencyMs,
+        wsLatencyRawMs: core.transport.latencyRawMs ?? null,
       });
       if (initialState === 'READY') handleReady();
 
@@ -152,6 +153,7 @@ export function createTmuxStore(
       connectionState: 'IDLE' as ConnectionState,
       hasConnectedOnce: false,
       wsLatencyMs: null,
+      wsLatencyRawMs: null,
       snapshots: {},
       connectedDevices: new Set(),
       deviceConnected: {},

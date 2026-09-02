@@ -66,12 +66,43 @@ function helloS2CFrame(capabilities: string[] = [], serverVersion = '0.1.0'): Ui
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, payload, 1);
 }
 
-function pongFrame(): Uint8Array {
+function pongFrame(nonce = 7): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, {
-    nonce: 7,
+    nonce,
     timeMs: BigInt(Date.now()),
   });
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_PONG, payload, 2);
+}
+
+function asUint8Array(data: ArrayBufferLike | ArrayBufferView | string): Uint8Array {
+  if (typeof data === 'string') return new TextEncoder().encode(data);
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  return new Uint8Array(data);
+}
+
+function decodePingNonce(data: ArrayBufferLike | ArrayBufferView | string): number {
+  const envelope = wsBorsh.decodeEnvelope(asUint8Array(data));
+  return wsBorsh.decodePayload(wsBorsh.schema.PingPongSchema, envelope.payload).nonce;
+}
+
+/** 自动回匹配 nonce 的 PONG，让间隔探测能连续发出（单 in-flight 约束下否则会被跳过）。 */
+function enableAutoPong(socket: FakeSocket): void {
+  const send = socket.send.bind(socket);
+  socket.send = (data) => {
+    send(data);
+    try {
+      const envelope = wsBorsh.decodeEnvelope(asUint8Array(data));
+      if (envelope.kind !== wsBorsh.KIND_PING) return;
+      const ping = wsBorsh.decodePayload(wsBorsh.schema.PingPongSchema, envelope.payload);
+      queueMicrotask(() => socket.deliver(pongFrame(ping.nonce)));
+    } catch {
+      // 非 Borsh 帧忽略
+    }
+  };
 }
 
 /** 轮询等待条件成立；用真实定时器驱动重连/心跳这类时间相关路径。 */
@@ -473,9 +504,38 @@ describe('心跳接线', () => {
     expect(client.getState()).toBe('READY');
     expect(socket.sent.length).toBe(2);
 
-    socket.deliver(pongFrame());
+    const nonce = decodePingNonce(socket.sent[1] as ArrayBufferView);
+    socket.deliver(pongFrame((nonce + 1) >>> 0));
+    expect(latencies.length).toBe(0);
+    expect(client.latencyMs).toBeNull();
+
+    socket.deliver(pongFrame(nonce));
     expect(latencies.length).toBe(1);
     expect(client.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(client.latencyRawMs).toBe(client.latencyMs);
+    expect(client.latencyMs).toBe(latencies[0]);
+
+    client.disconnect();
+    expect(client.latencyMs).toBeNull();
+    expect(client.latencyRawMs).toBeNull();
+  });
+
+  test('在途 PONG 时间隔 tick 不再发新的 PING', async () => {
+    const socket = new FakeSocket();
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => socket,
+      heartbeatIntervalMs: 15,
+      pongTimeoutMs: 10_000,
+    });
+
+    client.connect();
+    socket.open();
+    socket.deliver(helloS2CFrame());
+    expect(socket.sent.length).toBe(2);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(socket.sent.length).toBe(2);
 
     client.disconnect();
   });
@@ -609,6 +669,7 @@ describe('心跳节奏随可见性切换', () => {
     const doc = stubDocument();
     try {
       const socket = new FakeSocket();
+      enableAutoPong(socket);
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
         socketFactory: () => socket,
@@ -639,6 +700,7 @@ describe('心跳节奏随可见性切换', () => {
     const doc = stubDocument();
     try {
       const socket = new FakeSocket();
+      enableAutoPong(socket);
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
         socketFactory: () => socket,
@@ -687,6 +749,7 @@ describe('心跳节奏随可见性切换', () => {
       socket.open();
       socket.deliver(helloS2CFrame());
       expect(client.getState()).toBe('READY');
+      socket.deliver(pongFrame(decodePingNonce(socket.sent[1] as ArrayBufferView)));
 
       doc.setVisibility('hidden');
       doc.dispatch();
@@ -707,6 +770,7 @@ describe('心跳节奏随可见性切换', () => {
     Reflect.deleteProperty(globalThis, 'document');
     try {
       const socket = new FakeSocket();
+      enableAutoPong(socket);
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
         socketFactory: () => socket,

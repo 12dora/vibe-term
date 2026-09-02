@@ -69,6 +69,7 @@ function createHarness(options: HarnessOptions = {}) {
     connectionState: 'IDLE',
     hasConnectedOnce: false,
     wsLatencyMs: null,
+    wsLatencyRawMs: null,
     snapshots: {},
     connectedDevices: new Set<string>(),
     deviceConnected: {},
@@ -214,18 +215,27 @@ describe('tmux transport event router', () => {
     expect(harness.namesOf('ready')).toHaveLength(1);
   });
 
+  test('latency event writes smoothed and raw fields', () => {
+    const harness = createHarness();
+    harness.route({ type: 'latency', latencyMs: 18, rawMs: 42 });
+    expect(harness.getState().wsLatencyMs).toBe(18);
+    expect(harness.getState().wsLatencyRawMs).toBe(42);
+  });
+
   test('non-READY connection-state clears latency and keeps hasConnectedOnce', () => {
     const harness = createHarness();
 
     harness.route({ type: 'connection-state', state: 'READY' });
-    harness.route({ type: 'latency', latencyMs: 42 });
-    expect(harness.getState().wsLatencyMs).toBe(42);
+    harness.route({ type: 'latency', latencyMs: 18, rawMs: 42 });
+    expect(harness.getState().wsLatencyMs).toBe(18);
+    expect(harness.getState().wsLatencyRawMs).toBe(42);
 
     harness.route({ type: 'connection-state', state: 'RECONNECT_BACKOFF' });
 
     expect(harness.getState().connectionState).toBe('RECONNECT_BACKOFF');
     expect(harness.getState().hasConnectedOnce).toBe(true);
     expect(harness.getState().wsLatencyMs).toBeNull();
+    expect(harness.getState().wsLatencyRawMs).toBeNull();
     expect(harness.namesOf('ready')).toHaveLength(1);
   });
 

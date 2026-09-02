@@ -278,4 +278,29 @@ describe('WebSocketSendGuard', () => {
     expect(drain).toContain('skipped_bytes=3');
     expect(term).toContain('reason=backpressure_gap');
   });
+
+  test('priority frames send during backpressure without marking a stream gap', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const target = createCarrier(['backpressure', 'sent']);
+
+    expect(guard.sendFramesStatus(target.carrier, [new Uint8Array([1])])).toBe('backpressured');
+    expect(guard.isBackpressured(target.carrier)).toBe(true);
+    expect(guard.sendPriorityFrames(target.carrier, [new Uint8Array([9])])).toBe('sent');
+    expect(target.sendCalls()).toBe(2);
+
+    guard.handleDrain(target.carrier);
+    expect(target.terminateCalls()).toBe(0);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(true);
+  });
+
+  test('priority frames still refuse an unavailable carrier', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1, onTerminate: () => {} });
+    const target = createCarrier(['backpressure']);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(false);
+    guard.handleDrain(target.carrier);
+    expect(target.terminateCalls()).toBe(1);
+    expect(guard.sendPriorityFrames(target.carrier, [new Uint8Array([9])])).toBe('dropped');
+    expect(target.sendCalls()).toBe(1);
+  });
 });

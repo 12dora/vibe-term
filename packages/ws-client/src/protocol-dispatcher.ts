@@ -27,7 +27,7 @@ export interface ProtocolDispatcherCallbacks {
   onChunkProgress(progress: ChunkProgress): void;
   onHello(hello: NegotiatedHello): void;
   onHelloFailure(error: Error): void;
-  onPong(): void;
+  onPong(payload: Uint8Array): void;
 }
 
 export class ProtocolDispatcher {
@@ -68,7 +68,7 @@ export class ProtocolDispatcher {
       }
 
       if (envelope.kind === wsBorsh.KIND_PONG) {
-        this.callbacks.onPong();
+        this.callbacks.onPong(envelope.payload);
         return;
       }
 

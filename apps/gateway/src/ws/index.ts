@@ -32,7 +32,11 @@ import {
   type DeviceConnectionRegistryHost,
 } from './device-connection-registry';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
-import { type GatewayMetricsHost, logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
+import {
+  type GatewayMetricsHost,
+  logTerminalOutputMetricsIfDue,
+  recordPingProbe,
+} from './gateway-metrics-log';
 import { GatewaySession } from './gateway-session';
 import { LegacyFeedBroadcaster, type LegacyFeedHost } from './legacy-feed-broadcaster';
 import { closeGatewaySession } from './session-close';
@@ -49,10 +53,19 @@ import {
   type WebSocketServerOptions,
   defaultDeps,
 } from './types';
-import { gatewayWebSocketSendGuard } from './websocket-send-guard';
+import {
+  GATEWAY_WS_PONG_BYPASS_BUFFERED_BYTES,
+  gatewayWebSocketSendGuard,
+} from './websocket-send-guard';
 
 export { RUNTIME_IDLE_GRACE_MS } from './types';
 export { parseWindowLayoutSize, payloadNeedsChunking } from './frame-utils';
+
+function monotonicMs(): number {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
 
 export class WebSocketServer
   implements
@@ -524,13 +537,14 @@ export class WebSocketServer
   }
 
   private handlePing(ws: GatewaySession, refSeq: number, payload: Uint8Array): void {
+    const startedAt = monotonicMs();
     try {
       const ping = wsBorsh.decodePayload(wsBorsh.schema.PingPongSchema, payload);
       const pongPayload = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, {
         nonce: ping.nonce,
         timeMs: ping.timeMs,
       });
-      this.sendEnvelope(ws, wsBorsh.KIND_PONG, pongPayload);
+      this.sendPong(ws, pongPayload, startedAt);
     } catch (err) {
       const e = err instanceof wsBorsh.WsBorshError ? err : null;
       this.sendError(
@@ -541,6 +555,34 @@ export class WebSocketServer
         e?.retryable ?? false
       );
     }
+  }
+
+  /** PONG 走优先发送：不进入终端输出的 drop/defer 队列。 */
+  private sendPong(ws: GatewaySession, payload: Uint8Array, startedAt: number): void {
+    if (ws.closed) return;
+    const carrier = ws.activeCarrier;
+    const state = ws.borshState;
+    const frames = encodePayloadFrames(
+      wsBorsh.KIND_PONG,
+      payload,
+      state.seqGen,
+      state.maxFrameBytes
+    );
+    let buffered = 0;
+    try {
+      buffered = Math.max(0, carrier.bufferedAmount());
+    } catch {
+      buffered = 0;
+    }
+    const bypassed =
+      buffered < GATEWAY_WS_PONG_BYPASS_BUFFERED_BYTES &&
+      !gatewayWebSocketSendGuard.isBackpressured(carrier);
+    gatewayWebSocketSendGuard.sendPriorityFrames(carrier, frames as readonly BufferSource[]);
+    recordPingProbe({
+      serverHandleMs: monotonicMs() - startedAt,
+      path: bypassed ? 'bypassed' : 'queued',
+      bufferedBytes: buffered,
+    });
   }
 
   sendEnvelope(ws: GatewaySession, kind: number, payload: Uint8Array): void {

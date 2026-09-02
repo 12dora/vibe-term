@@ -37,6 +37,17 @@ describe('shared gateway transport', () => {
     };
     expect(transport.send(command)).toBe(true);
     expect(commands).toEqual([command]);
+    expect(transport.latencyMs).toBeNull();
+    expect(transport.latencyRawMs).toBeNull();
+
+    transport.publish({ type: 'latency', latencyMs: 18, rawMs: 42 });
+    expect(transport.latencyMs).toBe(18);
+    expect(transport.latencyRawMs).toBe(42);
+    expect(events.at(-1)).toEqual({ type: 'latency', latencyMs: 18, rawMs: 42 });
+
+    transport.publish({ type: 'connection-state', state: 'RECONNECT_BACKOFF' });
+    expect(transport.latencyMs).toBeNull();
+    expect(transport.latencyRawMs).toBeNull();
 
     transport.publish({
       type: 'terminal-data',

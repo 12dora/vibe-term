@@ -14,6 +14,7 @@ interface Recorder {
   hellos: NegotiatedHello[];
   helloFailures: string[];
   pongs: number;
+  pongPayloads: Uint8Array[];
 }
 
 function createRecorder(): Recorder {
@@ -21,14 +22,14 @@ function createRecorder(): Recorder {
   const progress: ChunkProgress[] = [];
   const hellos: NegotiatedHello[] = [];
   const helloFailures: string[] = [];
-  let pongs = 0;
+  const pongs: Uint8Array[] = [];
   const dispatcher = new ProtocolDispatcher({
     onMessage: (message) => messages.push(message),
     onChunkProgress: (item) => progress.push(item),
     onHello: (hello) => hellos.push(hello),
     onHelloFailure: (error) => helloFailures.push(error.message),
-    onPong: () => {
-      pongs += 1;
+    onPong: (payload) => {
+      pongs.push(payload);
     },
   });
   return {
@@ -38,6 +39,9 @@ function createRecorder(): Recorder {
     hellos,
     helloFailures,
     get pongs() {
+      return pongs.length;
+    },
+    get pongPayloads() {
       return pongs;
     },
   };
@@ -66,10 +70,10 @@ describe('ProtocolDispatcher', () => {
 
   test('PONG 与 HELLO 分流到各自回调', () => {
     const rec = createRecorder();
-    rec.dispatcher.handleFrame(
-      frame(wsBorsh.encodeEnvelope(wsBorsh.KIND_PONG, new Uint8Array(), 1))
-    );
+    const pongPayload = new Uint8Array([1, 2, 3, 4]);
+    rec.dispatcher.handleFrame(frame(wsBorsh.encodeEnvelope(wsBorsh.KIND_PONG, pongPayload, 1)));
     expect(rec.pongs).toBe(1);
+    expect(rec.pongPayloads[0]).toEqual(pongPayload);
 
     const hello = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
       serverImpl: 'tmex-gateway',

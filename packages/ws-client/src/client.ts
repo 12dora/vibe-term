@@ -153,7 +153,7 @@ export class BorshWebSocketClient {
   private messageHandlers: Set<MessageHandler> = new Set();
   private stateChangeHandlers: Set<StateChangeHandler> = new Set();
   private errorHandlers: Set<ErrorHandler> = new Set();
-  private latencyHandlers: Set<(ms: number) => void> = new Set();
+  private latencyHandlers: Set<(latencyMs: number, rawMs: number) => void> = new Set();
   private chunkProgressHandlers: Set<ChunkProgressHandler> = new Set();
   private pendingOverflowHandlers: Set<PendingOverflowHandler> = new Set();
 
@@ -170,6 +170,7 @@ export class BorshWebSocketClient {
 
   hasConnectedOnce = false;
   latencyMs: number | null = null;
+  latencyRawMs: number | null = null;
   // 服务端 HELLO_S2C 协商的能力集（消费方按 featureset 判定；多实例宿主按连接读取）
   serverCapabilities: readonly string[] = [];
   // 本连接协商到的服务端版本；未协商（含重连等待期）为 null，下一次 HELLO 重新推导
@@ -192,7 +193,7 @@ export class BorshWebSocketClient {
       onChunkProgress: (progress) => this.dispatchChunkProgress(progress),
       onHello: (hello) => this.handleHelloNegotiated(hello),
       onHelloFailure: (error) => this.handleError(error),
-      onPong: () => this.handlePong(),
+      onPong: (payload) => this.handlePong(payload),
     });
 
     this.reconnector = new ReconnectController({
@@ -208,7 +209,7 @@ export class BorshWebSocketClient {
     this.heartbeat = new HeartbeatController({
       intervalMs: cadence.intervalMs,
       pongTimeoutMs: cadence.pongTimeoutMs,
-      sendPing: () => this.sendPingFrame(),
+      sendPing: (nonce) => this.sendPingFrame(nonce),
       onPongTimeout: () => this.ws?.close(),
     });
   }
@@ -260,7 +261,7 @@ export class BorshWebSocketClient {
     return () => this.errorHandlers.delete(handler);
   }
 
-  onLatency(handler: (ms: number) => void): () => void {
+  onLatency(handler: (latencyMs: number, rawMs: number) => void): () => void {
     this.latencyHandlers.add(handler);
     return () => this.latencyHandlers.delete(handler);
   }
@@ -335,7 +336,7 @@ export class BorshWebSocketClient {
     this.clearTimers();
     this.dispatcher.reset();
     this.barrier?.closeDirect();
-    this.latencyMs = null;
+    this.resetLatency();
 
     if (this.ws) {
       this.ws.close();
@@ -382,20 +383,33 @@ export class BorshWebSocketClient {
     this.reconnector.reset();
   }
 
-  private handlePong(): void {
-    const rtt = this.heartbeat.notePong();
-    if (rtt === null) return;
+  private handlePong(payload: Uint8Array): void {
+    let nonce: number;
+    try {
+      nonce = wsBorsh.decodePayload(wsBorsh.schema.PingPongSchema, payload).nonce;
+    } catch {
+      return;
+    }
+    const sample = this.heartbeat.notePong(nonce);
+    if (sample === null) return;
 
-    this.latencyMs = rtt;
+    this.latencyMs = sample.latencyMs;
+    this.latencyRawMs = sample.rawMs;
     for (const handler of this.latencyHandlers) {
       try {
-        handler(rtt);
+        handler(sample.latencyMs, sample.rawMs);
       } catch {}
     }
   }
 
+  private resetLatency(): void {
+    this.latencyMs = null;
+    this.latencyRawMs = null;
+  }
+
   private handleClose(): void {
     this.heartbeat.stop();
+    this.resetLatency();
     this.dispatcher.reset();
     this.serverVersion = null;
     // primary 断开 = 会话整体结束，直连随之关闭（设计 §3 步骤 4）；
@@ -601,11 +615,11 @@ export class BorshWebSocketClient {
     this.heartbeat.setCadence(intervalMs, pongTimeoutMs);
   }
 
-  private sendPingFrame(): boolean {
+  private sendPingFrame(nonce: number): boolean {
     if (!this.isReady()) return false;
 
     const ping = {
-      nonce: Math.floor(Math.random() * 0xffffffff),
+      nonce,
       timeMs: BigInt(Date.now()),
     };
 
@@ -678,7 +692,7 @@ export class BorshWebSocketClient {
   reconnect(): void {
     this.clearTimers();
     this.barrier?.closeDirect();
-    this.latencyMs = null;
+    this.resetLatency();
     if (this.ws) {
       this.ws.onclose = null;
       this.ws.onerror = null;
