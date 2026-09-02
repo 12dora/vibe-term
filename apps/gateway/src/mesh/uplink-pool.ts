@@ -15,6 +15,7 @@ import { hubListToRecords, pickWriterHub } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
 import { nodeVersionSupportsHubAuthRecords } from '../hub/hub-authorization';
 import { backoffDelayMs, defaultScheduler } from './ctl';
+import { stamp } from './mesh-log';
 import type {
   InboundRelayHandler,
   KeyLogApplier,
@@ -1515,7 +1516,7 @@ export class UplinkPool {
   }
 
   private logInfo(line: string): void {
-    console.info(line);
+    console.info(stamp(line));
   }
 
   private emitState(state: UplinkState): void {

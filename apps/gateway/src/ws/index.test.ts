@@ -1922,7 +1922,7 @@ describe('WebSocketServer session/carrier close semantics', () => {
       server.closeSession(session, 1000, 'metrics cleanup');
     }
 
-    const metricsLog = logs.find((line) => line.startsWith('[ws-metrics] terminal_output'));
+    const metricsLog = logs.find((line) => line.includes('[ws-metrics] terminal_output'));
     expect(metricsLog).toBeDefined();
     expect(metricsLog).toContain('ws_backpressured_carriers=2');
     expect(metricsLog).toContain('ws_unavailable_carriers=0');

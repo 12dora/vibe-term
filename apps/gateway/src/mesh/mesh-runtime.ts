@@ -540,6 +540,7 @@ async function openAdaptedWsStream(
   })();
   opened.stream.onAbort(() => notifyClose({ code: 1011, reason: 'reset' }));
   return {
+    muxStreamId: opened.stream.id,
     send(bytes) {
       return opened.send(bytes);
     },
@@ -1376,6 +1377,7 @@ function wireMeshHttp(
     listReach: () => peerManager.listReach(),
     transportOf: (nodeId: string) => peerManager.transportOf(nodeId),
     rttOf: (nodeId: string) => peerManager.rttOf(nodeId),
+    linkSinceAtOf: (nodeId: string) => peerManager.linkDetailOf(nodeId).linkSinceAt,
     linkDetailOf: (nodeId: string) => peerManager.linkDetailOf(nodeId),
     listHubOnline: () => {
       const ids = new Set<string>();

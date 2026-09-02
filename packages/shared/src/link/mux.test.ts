@@ -616,4 +616,44 @@ describe('link mux', () => {
     const info = await a.closed;
     expect(info.reason.toLowerCase()).toMatch(/ctl|cap|overflow|too many/);
   });
+
+  it('RST logs include muxStreamId and optional node/transport context', async () => {
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map(String).join(' '));
+    };
+    try {
+      const [t1, t2] = createBytePipe();
+      const a = new LinkMux(t1, {
+        role: 'initiator',
+        logContext: { nodeId: 'peer-a', transport: 'ws-secure' },
+      });
+      const b = new LinkMux(t2, {
+        role: 'acceptor',
+        logContext: { nodeId: 'peer-b', transport: 'ws-secure' },
+      });
+      const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
+      const out = await a.openStream(new Uint8Array([1]));
+      const incoming = await incomingP;
+      incoming.reset('offline');
+      await new Promise((r) => setTimeout(r, 20));
+      const send = warns.find((line) => line.includes('rst send'));
+      const recv = warns.find((line) => line.includes('rst recv'));
+      expect(send).toBeTruthy();
+      expect(recv).toBeTruthy();
+      expect(send).toContain(`muxStreamId=${incoming.id}`);
+      expect(recv).toContain(`muxStreamId=${incoming.id}`);
+      expect(send).toContain('nodeId=peer-b');
+      expect(recv).toContain('nodeId=peer-a');
+      expect(send).toContain('transport=ws-secure');
+      expect(recv).toContain('reason=offline');
+      expect(send).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z /);
+      void out.end();
+      a.close();
+      b.close();
+    } finally {
+      console.warn = orig;
+    }
+  });
 });

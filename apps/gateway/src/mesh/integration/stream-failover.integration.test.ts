@@ -536,7 +536,10 @@ describe('stream failover integration', () => {
       meshA.peers.getLive(meshB.nodeId)?.close('drop-dc');
       meshB.peers.getLive(meshA.nodeId)?.close('drop-dc');
 
-      await waitUntil(() => logs.some((line) => line.includes('[mesh][stream] failover')), 25_000);
+      await waitUntil(
+        () => logs.some((line) => line.includes('[mesh][stream] failover stream=')),
+        25_000
+      );
       await waitUntil(() => {
         const nums = entryFrames.flatMap(parseSeq);
         return nums.length >= beforeKill.length + 8;
@@ -798,7 +801,10 @@ describe('stream failover integration', () => {
       meshA.peers.getLive(meshB.nodeId)?.close('drop-dc');
       meshB.peers.getLive(meshA.nodeId)?.close('drop-dc');
 
-      await waitUntil(() => logs.some((line) => line.includes('[mesh][stream] failover')), 25_000);
+      await waitUntil(
+        () => logs.some((line) => line.includes('[mesh][stream] failover stream=')),
+        25_000
+      );
       expect(
         logs.some((line) =>
           /from=dc to=(relay|ws-secure|dc) resumed=1 mode=legacy panes=%1 cursor=-/.test(line)

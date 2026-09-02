@@ -1,4 +1,14 @@
 import { wsBorsh } from '@tmex/shared';
+import { envInt } from './mesh-log';
+
+export const FAILOVER_HISTORY_BYTES_PER_PANE_DEFAULT = 256 * 1024;
+export const FAILOVER_HISTORY_BYTES_TOTAL = 1024 * 1024;
+
+export type LegacyReplayStats = {
+  replayBytes: number;
+  historyPanes: number;
+  skippedPanes: string[];
+};
 
 export type InboundReplayNote = { kind: number | null; deviceId?: string };
 
@@ -24,6 +34,19 @@ export class StreamReplayState {
   private readonly resumeDevices = new Set<string>();
   private resumeSnapshot = false;
   private resumeGeneration: bigint | null = null;
+  private lastLegacyReplay: LegacyReplayStats = {
+    replayBytes: 0,
+    historyPanes: 0,
+    skippedPanes: [],
+  };
+
+  legacyReplayStats(): LegacyReplayStats {
+    return {
+      replayBytes: this.lastLegacyReplay.replayBytes,
+      historyPanes: this.lastLegacyReplay.historyPanes,
+      skippedPanes: [...this.lastLegacyReplay.skippedPanes],
+    };
+  }
 
   private tryDecodeEnvelope(bytes: Uint8Array): wsBorsh.Envelope | null {
     try {
@@ -255,15 +278,29 @@ export class StreamReplayState {
   }
 
   private buildLegacyHistoryRequests(): Uint8Array[] {
-    if (this.canonicalSub) return [];
+    if (this.canonicalSub) {
+      this.lastLegacyReplay = { replayBytes: 0, historyPanes: 0, skippedPanes: [] };
+      return [];
+    }
+    const perPane = envInt(
+      'TMEX_FAILOVER_HISTORY_BYTES_PER_PANE',
+      FAILOVER_HISTORY_BYTES_PER_PANE_DEFAULT
+    );
     const frames: Uint8Array[] = [];
+    const skippedPanes: string[] = [];
     const seen = new Set<string>();
+    let replayBytes = 0;
+    let historyPanes = 0;
     for (const row of this.paneSubPayloads()) {
       if (!row) continue;
       for (const paneId of row.paneIds) {
         const key = `${row.deviceId}\0${paneId}`;
         if (seen.has(key)) continue;
         seen.add(key);
+        if (perPane <= 0 || replayBytes + perPane > FAILOVER_HISTORY_BYTES_TOTAL) {
+          skippedPanes.push(paneId);
+          continue;
+        }
         const requestToken = new Uint8Array(16);
         crypto.getRandomValues(requestToken);
         this.outboundSeq += 1;
@@ -278,8 +315,11 @@ export class StreamReplayState {
             this.outboundSeq
           )
         );
+        replayBytes += perPane;
+        historyPanes += 1;
       }
     }
+    this.lastLegacyReplay = { replayBytes, historyPanes, skippedPanes };
     return frames;
   }
 

@@ -487,7 +487,13 @@ export async function acceptWsStream(
   const via = opts.peerNodeId;
   const uid = verified.uid;
   const cid = (str(open.cid) || str(open.connectionId)).trim();
-  const carrier = new LinkStreamCarrier(stream);
+  const carrier = new LinkStreamCarrier(stream, {
+    logContext: {
+      kind: 'mesh_link_stream',
+      nodeId: via,
+      ...(cid ? { cid } : {}),
+    },
+  });
   const attached = opts.wsServer.attachStreamSession(carrier);
   let tornDown = false;
   const teardown = (mode: 'end' | 'rst', reason?: string) => {

@@ -298,6 +298,7 @@ export type WebSocketLinkOptions = {
   streamWindow?: number;
   maxFramePayload?: number;
   maxLinkUnacked?: number;
+  logContext?: LinkMuxOptions['logContext'];
 };
 
 export class WebSocketLink implements LinkSession {

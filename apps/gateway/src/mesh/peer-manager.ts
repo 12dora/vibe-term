@@ -37,10 +37,11 @@ import {
   hasDirectFailure,
   noteDcOutcome,
   noteWsOutcome,
+  winningDialInitiator,
 } from './peer-direct-attempt';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
 import { PeerServer } from './peer-server';
-import { abortable, dialWsSecureCandidate, raceWsSecureEndpoints } from './peer-ws-race';
+import { abortable, dialWsSecureCandidate, quiet, raceWsSecureEndpoints } from './peer-ws-race';
 import type { RtcPeerManager } from './rtc';
 import {
   RTC_WAKE_DOMAIN,
@@ -54,6 +55,7 @@ import {
   peerRtcSession,
   verifyRtcWakeSignature,
 } from './rtc/ice';
+import { createGatewayRtcDialBreaker } from './rtc/rtc-dial-breaker';
 import { rtcLog, rtcLogRateLimited } from './rtc/rtc-log';
 import { acceptHttpStream, acceptWsStream, classifyOpenPayload } from './stream-targets';
 import {
@@ -92,12 +94,7 @@ export const PEER_RTC_WAKE_VERIFY_BURST = 5;
 export const PEER_RTC_WAKE_VERIFY_WINDOW_MS = 5_000;
 export const PEER_DC_UPGRADE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
 export const PEER_DC_UPGRADE_RETRY_TAIL_MS = 120_000;
-
-/** Connection initiated by the lexicographically smaller nodeId wins a simultaneous dial. */
-export function winningDialInitiator(selfNodeId: string, peerNodeId: string): string {
-  return selfNodeId < peerNodeId ? selfNodeId : peerNodeId;
-}
-
+export { winningDialInitiator };
 export const PEER_TRANSPORT_RANK: Record<PeerTransportKind, number> = {
   dc: 3,
   'ws-secure': 2,
@@ -233,14 +230,6 @@ type ParkedInbound = {
   remoteAddress: string | null;
 };
 
-function quiet(fn: () => void): void {
-  try {
-    fn();
-  } catch {
-    // ignore
-  }
-}
-
 export class PeerManager {
   readonly identity: MeshIdentity;
   private readonly userStore: UserStore;
@@ -297,6 +286,7 @@ export class PeerManager {
   private readonly incomingWakeGate = new Map<string, IncomingWakeGate>();
   private readonly rtcWakeNonces = new Map<string, Map<string, number>>();
   private readonly dcUpgradeRetry = new Map<string, DcUpgradeRetry>();
+  private readonly dcBreaker = createGatewayRtcDialBreaker();
   private readonly lostDirect = new Set<string>();
   private readonly lastDirectAttempt = new Map<string, DirectAttemptRecord>();
   private readonly transportWaiters = new Map<string, TransportWaiter[]>();
@@ -817,7 +807,11 @@ export class PeerManager {
   }
 
   private shouldTryDc(nodeId: string): boolean {
-    return this.rtc?.available === true && this.userStore.getPeer(nodeId)?.directCapable !== false;
+    return (
+      !this.dcBreaker.shouldSkip(nodeId) &&
+      this.rtc?.available === true &&
+      this.userStore.getPeer(nodeId)?.directCapable !== false
+    );
   }
 
   private handleIncomingRtcWake(fromNodeId: string, msg: RtcSignalMessage): void {
@@ -1242,7 +1236,11 @@ export class PeerManager {
         quiet(() => result.pc.close());
         throw new Error('stopped');
       }
-      const session = new LinkMux(result.link, { role: result.role });
+      this.dcBreaker.noteSuccess(result.peerNodeId);
+      const session = new LinkMux(result.link, {
+        role: result.role,
+        logContext: { nodeId: result.peerNodeId, transport: 'dc' },
+      });
       const initiatedBy = result.role === 'initiator' ? this.identity.nodeId : result.peerNodeId;
       const pair = result.pc.getSelectedCandidatePair?.();
       const remoteAddress =
@@ -1266,6 +1264,7 @@ export class PeerManager {
       unsub = null;
       return kept;
     } catch (err) {
+      this.dcBreaker.noteFailure(nodeId);
       this.releaseRtcAttempt(nodeId, unsub);
       throw err;
     } finally {
@@ -1761,6 +1760,7 @@ export class PeerManager {
       existing.inventoryJson !== inventoryJson ||
       existing.directCapable !== directCapable;
     if (changed) {
+      this.dcBreaker.notePeerChanged(peerNodeId);
       this.userStore.upsertPeer({
         nodeId: peerNodeId,
         name: existing?.name ?? peerNodeId,

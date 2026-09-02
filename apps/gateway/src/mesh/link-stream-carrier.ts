@@ -1,9 +1,10 @@
 import type { LinkStream } from '@tmex/shared/link';
-import type { Carrier, CarrierSendResult } from '../ws/carrier';
+import type { Carrier, CarrierLogContext, CarrierSendResult } from '../ws/carrier';
 
 export const LINK_STREAM_BACKPRESSURE_BYTES = 1024 * 1024;
 
 export class LinkStreamCarrier implements Carrier {
+  readonly logContext: CarrierLogContext;
   private readonly stream: LinkStream;
   private readonly highWaterMark: number;
   private readonly drainCallbacks: Array<() => void> = [];
@@ -15,9 +16,13 @@ export class LinkStreamCarrier implements Carrier {
   private closed = false;
   private aboveHigh = false;
 
-  constructor(stream: LinkStream, opts?: { highWaterMark?: number }) {
+  constructor(
+    stream: LinkStream,
+    opts?: { highWaterMark?: number; logContext?: CarrierLogContext }
+  ) {
     this.stream = stream;
     this.highWaterMark = opts?.highWaterMark ?? LINK_STREAM_BACKPRESSURE_BYTES;
+    this.logContext = { kind: 'mesh_link_stream', ...opts?.logContext };
     stream.onAbort(() => {
       this.closed = true;
       this.closing = true;

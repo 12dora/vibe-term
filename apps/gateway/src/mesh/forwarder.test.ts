@@ -658,6 +658,12 @@ describe('forwarder', () => {
       expect(replayed.some((frame) => bytesEqual(frame, subscribe))).toBe(true);
       expect(logs.some((line) => line.includes('[mesh][stream] failover'))).toBe(true);
       expect(logs.some((line) => /from=dc to=relay resumed=2/.test(line))).toBe(true);
+      expect(
+        logs.some((line) => line.includes('failover_start') && line.includes('cause=stream_close'))
+      ).toBe(true);
+      expect(
+        logs.some((line) => line.includes('failover_summary') && line.includes('duration_ms='))
+      ).toBe(true);
 
       streams.wsOpens[1]?.ws.pushFromRemote(new Uint8Array([9, 9]));
       expect(sent.at(-1)).toEqual(new Uint8Array([9, 9]));
