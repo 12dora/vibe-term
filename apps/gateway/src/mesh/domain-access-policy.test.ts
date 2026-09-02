@@ -4,6 +4,7 @@ import {
   decideDomainAccess,
   isIpLiteral,
   isJsonDeniedPath,
+  isLocalClientSource,
   isLocalName,
   isServicePath,
   isViaDomain,
@@ -160,17 +161,41 @@ describe('isServicePath / isJsonDeniedPath', () => {
   });
 });
 
+describe('isLocalClientSource', () => {
+  test('loopback, RFC1918, link-local, ULA, CGNAT and mapped forms', () => {
+    expect(isLocalClientSource('127.0.0.1')).toBe(true);
+    expect(isLocalClientSource('::1')).toBe(true);
+    expect(isLocalClientSource('10.0.0.8')).toBe(true);
+    expect(isLocalClientSource('192.168.1.5')).toBe(true);
+    expect(isLocalClientSource('172.16.0.1')).toBe(true);
+    expect(isLocalClientSource('169.254.1.1')).toBe(true);
+    expect(isLocalClientSource('fe80::1')).toBe(true);
+    expect(isLocalClientSource('fd12:3456:789a::1')).toBe(true);
+    expect(isLocalClientSource('100.64.1.2')).toBe(true);
+    expect(isLocalClientSource('::ffff:127.0.0.1')).toBe(true);
+    expect(isLocalClientSource('::ffff:100.64.1.2')).toBe(true);
+  });
+
+  test('public, missing and unparsable addresses are not local', () => {
+    expect(isLocalClientSource(undefined)).toBe(false);
+    expect(isLocalClientSource(null)).toBe(false);
+    expect(isLocalClientSource('')).toBe(false);
+    expect(isLocalClientSource('203.0.113.10')).toBe(false);
+    expect(isLocalClientSource('8.8.8.8')).toBe(false);
+    expect(isLocalClientSource('2001:db8::1')).toBe(false);
+  });
+});
+
 describe('decideDomainAccess', () => {
-  const hosts = ['tmex.example.com'];
-  const domain = new URL('https://tmex.example.com/');
+  const publicIp = '203.0.113.10';
+  const base = { viaSelf: true, allowed: false as const };
 
   test('fast-path allow when policy is enabled or not via self', () => {
     expect(
       decideDomainAccess({
         viaSelf: true,
         allowed: true,
-        hosts,
-        effectiveUrl: domain,
+        clientIp: publicIp,
         method: 'GET',
         pathname: '/',
       })
@@ -179,24 +204,126 @@ describe('decideDomainAccess', () => {
       decideDomainAccess({
         viaSelf: false,
         allowed: false,
-        hosts,
-        effectiveUrl: domain,
+        clientIp: publicIp,
         method: 'GET',
         pathname: '/api/x',
       })
     ).toBe('allow');
   });
 
-  test('deny-text vs deny-json vs service path', () => {
-    const base = {
-      viaSelf: true,
-      allowed: false,
-      hosts,
-      effectiveUrl: domain,
-    };
+  test('deny-text vs deny-json vs service path for a public client', () => {
+    expect(decideDomainAccess({ ...base, clientIp: publicIp, method: 'GET', pathname: '/' })).toBe(
+      'deny-text'
+    );
+    expect(
+      decideDomainAccess({ ...base, clientIp: publicIp, method: 'GET', pathname: '/api/x' })
+    ).toBe('deny-json');
+    expect(
+      decideDomainAccess({ ...base, clientIp: publicIp, method: 'GET', pathname: '/ws' })
+    ).toBe('deny-json');
+    expect(
+      decideDomainAccess({
+        ...base,
+        clientIp: publicIp,
+        method: 'GET',
+        pathname: '/n/abc/api/x',
+      })
+    ).toBe('deny-json');
+    expect(
+      decideDomainAccess({ ...base, clientIp: publicIp, method: 'GET', pathname: '/healthz' })
+    ).toBe('allow');
+    expect(
+      decideDomainAccess({ ...base, clientIp: publicIp, method: 'POST', pathname: '/hub/uplink' })
+    ).toBe('allow');
+  });
+
+  test('Host is ignored: public client with localhost or IP-literal Host is denied', () => {
+    expect(decideDomainAccess({ ...base, clientIp: publicIp, method: 'GET', pathname: '/' })).toBe(
+      'deny-text'
+    );
+    expect(
+      decideDomainAccess({
+        ...base,
+        clientIp: publicIp,
+        method: 'GET',
+        pathname: '/',
+        headers: new Headers({ host: 'localhost' }),
+      })
+    ).toBe('deny-text');
+    expect(
+      decideDomainAccess({
+        ...base,
+        clientIp: publicIp,
+        method: 'GET',
+        pathname: '/',
+        headers: new Headers({ host: '203.0.113.10' }),
+      })
+    ).toBe('deny-text');
+  });
+
+  test('LAN, loopback and CGNAT clients are allowed regardless of Host', () => {
+    expect(
+      decideDomainAccess({ ...base, clientIp: '192.168.1.5', method: 'GET', pathname: '/api/x' })
+    ).toBe('allow');
+    expect(
+      decideDomainAccess({ ...base, clientIp: '127.0.0.1', method: 'GET', pathname: '/' })
+    ).toBe('allow');
+    expect(
+      decideDomainAccess({ ...base, clientIp: '100.64.1.2', method: 'GET', pathname: '/ws' })
+    ).toBe('allow');
+  });
+
+  test('unknown source fails closed', () => {
     expect(decideDomainAccess({ ...base, method: 'GET', pathname: '/' })).toBe('deny-text');
-    expect(decideDomainAccess({ ...base, method: 'GET', pathname: '/api/x' })).toBe('deny-json');
-    expect(decideDomainAccess({ ...base, method: 'GET', pathname: '/ws' })).toBe('deny-json');
-    expect(decideDomainAccess({ ...base, method: 'GET', pathname: '/healthz' })).toBe('allow');
+    expect(decideDomainAccess({ ...base, clientIp: null, method: 'GET', pathname: '/api/x' })).toBe(
+      'deny-json'
+    );
+  });
+
+  test('TMEX_TRUST_PROXY=false uses socket IP and ignores spoofed XFF', () => {
+    const spoofed = new Headers({ 'x-forwarded-for': '203.0.113.9' });
+    expect(
+      decideDomainAccess({
+        ...base,
+        clientIp: '10.0.0.8',
+        trustProxy: false,
+        headers: spoofed,
+        method: 'GET',
+        pathname: '/',
+      })
+    ).toBe('allow');
+    expect(
+      decideDomainAccess({
+        ...base,
+        clientIp: '203.0.113.9',
+        trustProxy: false,
+        headers: new Headers({ 'x-forwarded-for': '10.0.0.8' }),
+        method: 'GET',
+        pathname: '/',
+      })
+    ).toBe('deny-text');
+  });
+
+  test('TMEX_TRUST_PROXY=true judges XFF last segment', () => {
+    expect(
+      decideDomainAccess({
+        ...base,
+        clientIp: '10.0.0.8',
+        trustProxy: true,
+        headers: new Headers({ 'x-forwarded-for': '1.2.3.4, 203.0.113.9' }),
+        method: 'GET',
+        pathname: '/',
+      })
+    ).toBe('deny-text');
+    expect(
+      decideDomainAccess({
+        ...base,
+        clientIp: '203.0.113.9',
+        trustProxy: true,
+        headers: new Headers({ 'x-forwarded-for': '1.2.3.4, 10.0.0.8' }),
+        method: 'GET',
+        pathname: '/',
+      })
+    ).toBe('allow');
   });
 });

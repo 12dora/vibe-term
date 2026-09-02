@@ -136,4 +136,112 @@ describe('createMeshSiteSettingsLink', () => {
     expect(link.localNodeId()).toBeNull();
     expect(link.effectiveSiteUrl()).toBeNull();
   });
+
+  test('standby hub without own public URL uses writer URL /n/<self>', () => {
+    const store = hubStore([
+      {
+        hubNodeId: WRITER,
+        publicUrl: 'https://a.example',
+        mode: 'active',
+        writerEpoch: 2,
+        priority: 1,
+      },
+      {
+        hubNodeId: STANDBY,
+        publicUrl: '',
+        mode: 'standby',
+        writerEpoch: 1,
+        priority: 9,
+      },
+    ]);
+    const standby = createMeshSiteSettingsLink({
+      roles: { hub: true, node: true },
+      localNodeId: () => STANDBY,
+      hubStore: store,
+      attachedHub: () => null,
+      hubPublicUrl: null,
+    });
+    expect(standby.effectiveSiteUrl()).toBe(`https://a.example/n/${STANDBY}`);
+  });
+
+  test('standby hub with own hub record publicUrl uses that root URL', () => {
+    const store = hubStore([
+      {
+        hubNodeId: WRITER,
+        publicUrl: 'https://a.example',
+        mode: 'active',
+        writerEpoch: 2,
+        priority: 1,
+      },
+      {
+        hubNodeId: STANDBY,
+        publicUrl: 'https://b.example',
+        mode: 'standby',
+        writerEpoch: 1,
+        priority: 9,
+      },
+    ]);
+    const standby = createMeshSiteSettingsLink({
+      roles: { hub: true, node: true },
+      localNodeId: () => STANDBY,
+      hubStore: store,
+      attachedHub: () => null,
+      hubPublicUrl: null,
+    });
+    expect(standby.effectiveSiteUrl()).toBe('https://b.example');
+  });
+
+  test('standby hub with own hubPublicUrl uses that root URL', () => {
+    const store = hubStore([
+      {
+        hubNodeId: WRITER,
+        publicUrl: 'https://a.example',
+        mode: 'active',
+        writerEpoch: 2,
+        priority: 1,
+      },
+      {
+        hubNodeId: STANDBY,
+        publicUrl: '',
+        mode: 'standby',
+        writerEpoch: 1,
+        priority: 9,
+      },
+    ]);
+    const standby = createMeshSiteSettingsLink({
+      roles: { hub: true, node: true },
+      localNodeId: () => STANDBY,
+      hubStore: store,
+      attachedHub: () => null,
+      hubPublicUrl: 'https://b.example',
+    });
+    expect(standby.effectiveSiteUrl()).toBe('https://b.example');
+  });
+
+  test('self as writer uses the hub root URL', () => {
+    const store = hubStore([
+      {
+        hubNodeId: WRITER,
+        publicUrl: 'https://a.example',
+        mode: 'active',
+        writerEpoch: 2,
+        priority: 1,
+      },
+      {
+        hubNodeId: STANDBY,
+        publicUrl: 'https://b.example',
+        mode: 'standby',
+        writerEpoch: 1,
+        priority: 9,
+      },
+    ]);
+    const writer = createMeshSiteSettingsLink({
+      roles: { hub: true, node: true },
+      localNodeId: () => WRITER,
+      hubStore: store,
+      attachedHub: () => null,
+      hubPublicUrl: null,
+    });
+    expect(writer.effectiveSiteUrl()).toBe('https://a.example');
+  });
 });

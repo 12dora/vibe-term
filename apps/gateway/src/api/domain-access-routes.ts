@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { config } from '../config';
-import { getSiteSettings } from '../db';
+import { getSiteSettings, getStoredSiteSettings } from '../db';
 import { getDb as getOrmDb } from '../db/client';
 import { type DomainAccessStore, domainAccessStore } from '../db/domain-access';
 import { meshHubs, nodeIdentity } from '../db/schema';
@@ -85,6 +85,7 @@ export function listDomainAccessHosts(): string[] {
   if (guardOverride?.hosts) return [...guardOverride.hosts];
   const sources: Array<string | null | undefined> = [config.baseUrl];
   try {
+    sources.push(getStoredSiteSettings().siteUrl);
     sources.push(getSiteSettings().siteUrl);
   } catch {
     /* site_settings may be missing in unit tests */
@@ -116,15 +117,16 @@ export function buildDomainAccessView(req: Request): DomainAccessView {
 }
 
 export function guardDomainAccess(req: Request): Response | null {
-  const viaSelf = getMeshRequestContext(req).via === MESH_VIA_SELF;
+  const ctx = getMeshRequestContext(req);
+  const viaSelf = ctx.via === MESH_VIA_SELF;
   const allowed = readAllowed();
   if (!viaSelf || allowed) return null;
-  const hosts = listDomainAccessHosts();
   const decision = decideDomainAccess({
     viaSelf,
     allowed,
-    hosts,
-    effectiveUrl: publicRequestUrl(req),
+    clientIp: ctx.clientIp,
+    trustProxy: ctx.trustProxy === true,
+    headers: req.headers,
     method: req.method,
     pathname: new URL(req.url).pathname,
   });

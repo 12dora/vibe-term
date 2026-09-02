@@ -1,7 +1,16 @@
+import { classifyRemoteAddress, isCgnatIpv4 } from './address-class';
+import { resolveClientIp } from './client-ip';
+
 const IPV4_RE = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 const DEFAULT_PORTS = new Set(['80', '443']);
 
 export type DomainAccessDecision = 'allow' | 'deny-json' | 'deny-text';
+
+export function isLocalClientSource(ip: string | null | undefined): boolean {
+  if (!ip) return false;
+  if (classifyRemoteAddress(ip) === 'lan') return true;
+  return isCgnatIpv4(ip);
+}
 
 export function normalizeHost(authority: string): string {
   const raw = authority.trim().toLowerCase();
@@ -87,14 +96,22 @@ export function isJsonDeniedPath(pathname: string): boolean {
 export function decideDomainAccess(input: {
   viaSelf: boolean;
   allowed: boolean;
-  hosts: readonly string[];
-  effectiveUrl: URL;
+  clientIp?: string | null;
+  trustProxy?: boolean;
+  headers?: Headers;
   method: string;
   pathname: string;
 }): DomainAccessDecision {
   if (!input.viaSelf || input.allowed) return 'allow';
-  if (!isViaDomain(input.effectiveUrl, input.hosts)) return 'allow';
   if (isServicePath(input.method, input.pathname)) return 'allow';
+  // Reverse-proxy deployments must enable TMEX_TRUST_PROXY, otherwise the proxy's
+  // own socket IP is judged (typically private → allowed).
+  const ip = resolveClientIp({
+    socketIp: input.clientIp,
+    headers: input.headers ?? new Headers(),
+    trustProxy: input.trustProxy === true,
+  });
+  if (isLocalClientSource(ip)) return 'allow';
   return isJsonDeniedPath(input.pathname) ? 'deny-json' : 'deny-text';
 }
 

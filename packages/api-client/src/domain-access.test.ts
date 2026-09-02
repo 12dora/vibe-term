@@ -36,6 +36,15 @@ describe('fetchDomainAccess / updateDomainAccess', () => {
     expect(calls[0]?.init?.body).toBe(JSON.stringify({ allowed: false }));
   });
 
+  test('转发器的顶层信封（节点不可达）：503 { code, nodeId } 也要读出 code', async () => {
+    const { client } = recorder([
+      new Response(JSON.stringify({ code: 'NODE_UNREACHABLE', nodeId: 'n1' }), { status: 503 }),
+    ]);
+    const err = (await fetchDomainAccess(client).catch((e) => e)) as Error & { status: number };
+    expect(err.message).toBe('NODE_UNREACHABLE');
+    expect(err.status).toBe(503);
+  });
+
   test('non-OK JSON error uses error.code', async () => {
     const { client } = recorder([
       new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED' } }), { status: 401 }),
@@ -43,5 +52,22 @@ describe('fetchDomainAccess / updateDomainAccess', () => {
     const err = (await fetchDomainAccess(client).catch((e) => e)) as Error & { status: number };
     expect(err.message).toBe('UNAUTHORIZED');
     expect(err.status).toBe(401);
+  });
+
+  test('403 DOMAIN_ACCESS_DISABLED surfaces error.code', async () => {
+    const { client } = recorder([
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 'DOMAIN_ACCESS_DISABLED',
+            message: 'Access through this domain is disabled for this node.',
+          },
+        }),
+        { status: 403 }
+      ),
+    ]);
+    const err = (await fetchDomainAccess(client).catch((e) => e)) as Error & { status: number };
+    expect(err.message).toBe('DOMAIN_ACCESS_DISABLED');
+    expect(err.status).toBe(403);
   });
 });

@@ -130,6 +130,16 @@ const dummyServer = {
   upgrade: () => false,
 } as unknown as Bun.Server<unknown>;
 
+function serverWithClientIp(address: string | null): Bun.Server<unknown> {
+  return {
+    upgrade: () => false,
+    requestIP: () =>
+      address == null
+        ? null
+        : { address, family: address.includes(':') ? 'IPv6' : 'IPv4', port: 443 },
+  } as unknown as Bun.Server<unknown>;
+}
+
 describe('assembleTmex role matrix', () => {
   const originalRoles = process.env.TMEX_ROLES;
 
@@ -1623,7 +1633,10 @@ describe('assembleTmex domain access guard', () => {
     );
     expect(enroll?.status).toBe(200);
 
-    const lan = await assembled.fetch(new Request('http://192.168.1.5/'), dummyServer);
+    const lan = await assembled.fetch(
+      new Request('https://tmex.example.com/'),
+      serverWithClientIp('192.168.1.5')
+    );
     expect(lan?.status).toBe(200);
     expect(await lan?.text()).toBe('spa');
   });
@@ -1635,6 +1648,52 @@ describe('assembleTmex domain access guard', () => {
     const res = await assembled.fetch(req, dummyServer);
     expect(res?.status).toBe(200);
     expect(await res?.text()).toBe('api-ok');
+  });
+
+  test('public client cannot bypass by sending Host localhost or an IP literal', async () => {
+    const assembled = await assembleDisabled();
+    const publicServer = serverWithClientIp('203.0.113.10');
+    const localhostHost = await assembled.fetch(new Request('http://localhost/'), publicServer);
+    expect(localhostHost?.status).toBe(403);
+    const ipHost = await assembled.fetch(new Request('http://203.0.113.10/'), publicServer);
+    expect(ipHost?.status).toBe(403);
+  });
+
+  test('loopback and CGNAT clients are allowed; unknown source is 403', async () => {
+    const assembled = await assembleDisabled();
+    const loopback = await assembled.fetch(
+      new Request('https://tmex.example.com/'),
+      serverWithClientIp('127.0.0.1')
+    );
+    expect(loopback?.status).toBe(200);
+    const cgnat = await assembled.fetch(
+      new Request('https://tmex.example.com/'),
+      serverWithClientIp('100.64.1.2')
+    );
+    expect(cgnat?.status).toBe(200);
+    const unknown = await assembled.fetch(
+      new Request('https://tmex.example.com/'),
+      serverWithClientIp(null)
+    );
+    expect(unknown?.status).toBe(403);
+  });
+
+  test('untrusted spoofed XFF is judged by the socket address', async () => {
+    const assembled = await assembleDisabled();
+    const lanSocket = await assembled.fetch(
+      new Request('https://tmex.example.com/', {
+        headers: { 'x-forwarded-for': '203.0.113.9' },
+      }),
+      serverWithClientIp('10.0.0.8')
+    );
+    expect(lanSocket?.status).toBe(200);
+    const publicSocket = await assembled.fetch(
+      new Request('https://tmex.example.com/', {
+        headers: { 'x-forwarded-for': '10.0.0.8' },
+      }),
+      serverWithClientIp('203.0.113.9')
+    );
+    expect(publicSocket?.status).toBe(403);
   });
 });
 
