@@ -1,4 +1,5 @@
-// 本机区块：角色、hub 地址、直连插件的安装与开关。直连的四个动作都只动磁盘与 env，运行中的
+// 本机区块：角色、两个地址（本机对外地址 / 当前挂载的 Hub）、直连插件与通用设置。
+// 直连的四个动作都只动磁盘与 env，运行中的
 // RTC 管理器无法热加载，后端恒返回 `restartRequired: true`——这里必须给出「立即重启」并等服务
 // 回来，否则用户会以为操作没生效。
 
@@ -16,7 +17,7 @@ import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 import { Loader2, Repeat, RotateCcw } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { CopyableValue, Row } from './copy-feedback';
@@ -27,7 +28,8 @@ import {
   describeDirectError,
   useDirectMutations,
 } from './direct-section';
-import { HubModeTag, hubLabel, hubModeLabel } from './management/hub-strip';
+import { DomainAccessRow, domainAccessApi, readDomainAccess } from './domain-access-row';
+import { HubModeTag, hubLabel, hubModeLabel, normalizeHubUrl } from './management/hub-strip';
 import type { SetupIntent } from './membership/intent';
 import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
 import { ROLE_LABEL_KEY, classifyRoleChange } from './membership/role-transition';
@@ -144,6 +146,8 @@ export function LocalMachineCard({
   });
 
   const busy = mutations.busy || restart.waiting;
+  const domainAccess = readDomainAccess(status);
+  const domainApi = useMemo(() => domainAccessApi(client), [client]);
 
   return (
     <Card data-testid="local-machine-card">
@@ -186,31 +190,11 @@ export function LocalMachineCard({
               role={status.role}
               selfNodeId={mode?.nodeId ?? null}
               enabled={meshEnabled}
+              hubUrl={status.hubUrl}
+              hubPublicUrl={status.hubPublicUrl}
+              changeHubDisabled={leave.busy}
+              onChangeHub={() => role.setRequest(CHANGE_HUB_REQUEST)}
             />
-
-            {status.hubUrl && (
-              <Row label={t('nodes.machine.hubUrl')}>
-                <CopyableValue value={status.hubUrl} testId="local-machine-hub-url" />
-                {status.role === 'node' && (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    disabled={leave.busy}
-                    onClick={() => role.setRequest(CHANGE_HUB_REQUEST)}
-                    data-testid="local-machine-change-hub"
-                  >
-                    <Repeat />
-                    {t('nodes.membership.changeHub')}
-                  </Button>
-                )}
-              </Row>
-            )}
-            {status.hubPublicUrl && (
-              <Row label={t('nodes.machine.hubPublicUrl')}>
-                <CopyableValue value={status.hubPublicUrl} testId="local-machine-hub-public-url" />
-              </Row>
-            )}
 
             <DirectSection
               direct={direct}
@@ -224,6 +208,15 @@ export function LocalMachineCard({
             />
 
             {restartRequired && <RestartBanner restart={restart} busy={busy} />}
+
+            {domainAccess && (
+              <>
+                <p className="pt-1 text-xs font-medium" data-testid="local-machine-general-heading">
+                  {t('nodes.machine.general')}
+                </p>
+                <DomainAccessRow policy={domainAccess} api={domainApi} onRefresh={onRefresh} />
+              </>
+            )}
           </>
         ) : null}
 
@@ -285,17 +278,27 @@ function orderHubs(hubs: MeshHubEndpoint[], writerHubId: string | null): MeshHub
 }
 
 /**
- * 多 hub 下本机的真实归属：`/api/local/status` 的 `hubUrl` 只是入会时写死的种子，
- * 主备切换后早已不是当前挂载的那台，必须拿 hub 集合覆盖掉这层误导。
+ * 本机的两个地址：
+ * - 「本机地址」= `hubPublicUrl`，只有 hub 角色才有，是别人访问本机的地址；
+ * - 「当前 Hub」= 真正挂载的那台 hub。`/api/local/status` 的 `hubUrl` 只是入会时写死的种子，
+ *   主备切换后早已不是当前挂载的那台，所以它只作为副行补充，不再单独占一行。
  */
 function MachineHubRows({
   role,
   selfNodeId,
   enabled,
+  hubUrl,
+  hubPublicUrl,
+  changeHubDisabled,
+  onChangeHub,
 }: {
   role: LocalRole;
   selfNodeId: string | null;
   enabled: boolean;
+  hubUrl: string | null;
+  hubPublicUrl: string | null;
+  changeHubDisabled: boolean;
+  onChangeHub: () => void;
 }) {
   const { t } = useTranslation();
   const meshRole = role === 'node' || role === 'hub,node';
@@ -316,11 +319,16 @@ function MachineHubRows({
           </span>
         </Row>
       )}
-      {attached && (
-        <AttachedHubRow
+      {role === 'hub,node' && <LocalAddressRow publicUrl={hubPublicUrl} />}
+      {meshRole && (attached || hubUrl) && (
+        <CurrentHubRow
           hub={attached}
-          isSelf={attached.nodeId === selfNodeId}
+          isSelf={Boolean(attached && attached.nodeId === selfNodeId)}
           writer={writerHub(snapshot)}
+          seedUrl={hubUrl}
+          {...(role === 'node'
+            ? { changeHub: { disabled: changeHubDisabled, onChange: onChangeHub } }
+            : {})}
         />
       )}
       {meshRole && snapshot.hubs.length >= 2 && (
@@ -330,30 +338,96 @@ function MachineHubRows({
   );
 }
 
-function AttachedHubRow({
+/** 别人访问本机 hub 用的地址；没设置时说清后果，指回角色设置。 */
+function LocalAddressRow({ publicUrl }: { publicUrl: string | null }) {
+  const { t } = useTranslation();
+  return (
+    <Row label={t('nodes.machine.localAddress')}>
+      {publicUrl ? (
+        <CopyableValue value={publicUrl} testId="local-machine-local-address" />
+      ) : (
+        <span className="flex flex-wrap items-center gap-2 text-xs">
+          <span data-testid="local-machine-local-address-unset">
+            {t('nodes.machine.localAddressUnset')}
+          </span>
+          <span className="text-muted-foreground">{t('nodes.machine.localAddressHint')}</span>
+        </span>
+      )}
+    </Row>
+  );
+}
+
+/** 入会种子与当前挂载地址不一致时才补出种子——一致时多这一行只是噪音。 */
+function seedLine(seedUrl: string | null, hub: MeshHubEndpoint | null): string | null {
+  if (!seedUrl || !hub) return null;
+  return normalizeHubUrl(seedUrl) === normalizeHubUrl(hub.publicUrl) ? null : seedUrl;
+}
+
+function CurrentHubRow({
   hub,
   isSelf,
   writer,
+  seedUrl,
+  changeHub,
 }: {
-  hub: MeshHubEndpoint;
+  /** hub 集合还没拉到时为 `null`，此时行里只摆入会种子。 */
+  hub: MeshHubEndpoint | null;
   isSelf: boolean;
   writer: MeshHubEndpoint | null;
+  seedUrl: string | null;
+  changeHub?: { disabled: boolean; onChange: () => void };
 }) {
   const { t } = useTranslation();
   // 挂在备 hub 上时写入其实落在别处，同一行补出 writer，省得用户去 hub 管理面对照。
-  const elsewhere = writer && writer.nodeId !== hub.nodeId ? writer : null;
+  const elsewhere = hub && writer && writer.nodeId !== hub.nodeId ? writer : null;
+  const seed = seedLine(seedUrl, hub);
   return (
-    <Row label={t('nodes.machine.attachedHub')}>
-      <span className="flex items-center gap-1.5 text-xs" data-testid="local-machine-attached-hub">
-        <span className="font-medium">{isSelf ? t('nodes.machine.self') : hubLabel(hub)}</span>
-        <HubModeTag mode={hub.mode} testId="local-machine-attached-hub-mode" />
-      </span>
-      <CopyableValue value={hub.publicUrl} testId="local-machine-attached-hub-url" />
-      {elsewhere && (
-        <span className="text-xs text-muted-foreground" data-testid="local-machine-writer-hub">
-          {t('nodes.machine.writerHub', { name: hubLabel(elsewhere) })}
-        </span>
-      )}
+    <Row label={t('nodes.machine.currentHub')}>
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          {hub ? (
+            <>
+              <span
+                className="flex items-center gap-1.5 text-xs"
+                data-testid="local-machine-attached-hub"
+              >
+                <span className="font-medium">
+                  {isSelf ? t('nodes.machine.self') : hubLabel(hub)}
+                </span>
+                <HubModeTag mode={hub.mode} testId="local-machine-attached-hub-mode" />
+              </span>
+              {!isSelf && (
+                <CopyableValue value={hub.publicUrl} testId="local-machine-attached-hub-url" />
+              )}
+            </>
+          ) : (
+            seedUrl && <CopyableValue value={seedUrl} testId="local-machine-hub-url" />
+          )}
+          {elsewhere && (
+            <span className="text-xs text-muted-foreground" data-testid="local-machine-writer-hub">
+              {t('nodes.machine.writerHub', { name: hubLabel(elsewhere) })}
+            </span>
+          )}
+          {changeHub && (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              disabled={changeHub.disabled}
+              onClick={changeHub.onChange}
+              data-testid="local-machine-change-hub"
+            >
+              <Repeat />
+              {t('nodes.membership.changeHub')}
+            </Button>
+          )}
+        </div>
+        {seed && (
+          <span className="text-xs text-muted-foreground" data-testid="local-machine-join-seed">
+            {t('nodes.machine.joinSeed', { url: seed })}
+          </span>
+        )}
+      </div>
     </Row>
   );
 }

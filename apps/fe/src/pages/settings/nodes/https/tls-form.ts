@@ -2,7 +2,13 @@
 //
 // 规则与批次 2 契约（PUT /api/tls）逐条对齐，前端先拦一遍只是为了少一次往返，后端仍是权威。
 
-import type { TlsStatusResponse } from '@tmex/api-client/local/tls-types';
+import type {
+  TlsChallenge,
+  TlsDnsCredentials,
+  TlsDnsProviderId,
+  TlsStatusResponse,
+  TlsUpdateAcmeRequest,
+} from '@tmex/api-client/local/tls-types';
 
 export const ACME_POLL_INTERVAL_MS = 3000;
 
@@ -139,4 +145,97 @@ export function daysUntil(timestamp: number, now: number = Date.now()): number {
 export function formatTimestamp(timestamp: number | null): string {
   if (!timestamp) return '—';
   return new Date(timestamp).toLocaleString();
+}
+
+// ---------------------------------------------------------------------------
+// ACME 表单
+// ---------------------------------------------------------------------------
+
+/** DNS-01 的服务商选项；顺序即界面里的顺序。 */
+export const TLS_DNS_PROVIDERS: readonly TlsDnsProviderId[] = ['cloudflare', 'dnspod'];
+
+export interface AcmeDraft {
+  domain: string;
+  email: string;
+  challenge: TlsChallenge;
+  dnsProvider: TlsDnsProviderId;
+  /** Cloudflare 的 API 令牌。 */
+  cloudflareToken: string;
+  /** DNSPod 密钥的两截（旧版 login_token，形如 `ID,Token`）。 */
+  dnspodId: string;
+  dnspodToken: string;
+  staging: boolean;
+  tlsPort: string;
+  bindHost: string;
+}
+
+export interface AcmeDraftErrors {
+  domain?: string;
+  email?: string;
+  tokenId?: string;
+  token?: string;
+  port?: string;
+  host?: string;
+}
+
+/** 与 `PUT /api/tls` 的 acme 分支逐字段对齐，模式由调用方补上。 */
+export type AcmeSaveDraft = Omit<TlsUpdateAcmeRequest, 'mode'>;
+
+/** 已存凭证时凭证字段可以整体留空，表示沿用。 */
+export function validateAcmeDraft(
+  draft: AcmeDraft,
+  hasStoredCredentials: boolean
+): AcmeDraftErrors {
+  const errors: AcmeDraftErrors = {};
+  const domainError = validateDomain(draft.domain);
+  if (domainError) errors.domain = domainError;
+  const emailError = validateEmail(draft.email);
+  if (emailError) errors.email = emailError;
+  const portError = validatePort(draft.tlsPort);
+  if (portError) errors.port = portError;
+  const hostError = validateBindHost(draft.bindHost);
+  if (hostError) errors.host = hostError;
+  if (draft.challenge !== 'dns-01') return errors;
+
+  if (draft.dnsProvider === 'cloudflare') {
+    if (!draft.cloudflareToken.trim() && !hasStoredCredentials) {
+      errors.token = `${VALIDATION_PREFIX}cloudflareTokenRequired`;
+    }
+    return errors;
+  }
+  const id = draft.dnspodId.trim();
+  const token = draft.dnspodToken.trim();
+  if (!id && !token && hasStoredCredentials) return errors;
+  if (!id) errors.tokenId = `${VALIDATION_PREFIX}dnspodIdRequired`;
+  if (!token) errors.token = `${VALIDATION_PREFIX}dnspodTokenRequired`;
+  return errors;
+}
+
+/** 凭证字段留空即不下发，后端沿用已存的那份。 */
+function dnsCredentials(draft: AcmeDraft): TlsDnsCredentials | null {
+  if (draft.dnsProvider === 'cloudflare') {
+    const token = draft.cloudflareToken.trim();
+    return token ? { token } : null;
+  }
+  const id = draft.dnspodId.trim();
+  const token = draft.dnspodToken.trim();
+  return id && token ? { id, token } : null;
+}
+
+export function acmeSavePayload(draft: AcmeDraft): AcmeSaveDraft {
+  const base: AcmeSaveDraft = {
+    domain: draft.domain.trim(),
+    email: draft.email.trim(),
+    challenge: draft.challenge,
+    staging: draft.staging,
+    tlsPort: Number(draft.tlsPort.trim()),
+    bindHost: draft.bindHost.trim(),
+  };
+  if (draft.challenge !== 'dns-01') return base;
+  const credentials = dnsCredentials(draft);
+  return {
+    ...base,
+    dnsProvider: draft.dnsProvider,
+    ...(credentials ? { dnsCredentials: credentials } : {}),
+  };
 }

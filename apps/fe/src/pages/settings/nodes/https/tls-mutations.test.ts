@@ -137,6 +137,7 @@ describe('stopsRunningListener / isTlsBusy', () => {
         lastAttemptAt: null,
         nextRenewAt: null,
         hasCloudflareToken: false,
+        dns: { provider: null, hasCredentials: false },
       },
     });
     expect(isTlsBusy(null, pendingAcme)).toBe(true);
@@ -195,6 +196,7 @@ describe('TlsMutationController 串行化', () => {
           lastAttemptAt: null,
           nextRenewAt: null,
           hasCloudflareToken: false,
+          dns: { provider: null, hasCredentials: false },
         },
       })
     );

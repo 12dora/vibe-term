@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { tlsErrorKey } from './tls-errors';
 import {
+  type AcmeDraft,
+  acmeSavePayload,
   daysUntil,
   defaultSans,
   formatTimestamp,
@@ -8,6 +10,7 @@ import {
   isIpv6Address,
   isValidSan,
   parseSansInput,
+  validateAcmeDraft,
   validateBindHost,
   validateDomain,
   validateEmail,
@@ -174,5 +177,80 @@ describe('tlsErrorKey', () => {
 
   test('未列举的码返回 null', () => {
     expect(tlsErrorKey('teapot')).toBeNull();
+  });
+});
+
+describe('ACME 表单草稿', () => {
+  const draft = (overrides: Partial<AcmeDraft> = {}): AcmeDraft => ({
+    domain: 'hub.example.com',
+    email: 'ops@example.com',
+    challenge: 'dns-01',
+    dnsProvider: 'cloudflare',
+    cloudflareToken: '',
+    dnspodId: '',
+    dnspodToken: '',
+    staging: false,
+    tlsPort: '9443',
+    bindHost: '0.0.0.0',
+    ...overrides,
+  });
+
+  test('http-01 不校验也不下发任何 DNS 字段', () => {
+    const http = draft({ challenge: 'http-01' });
+    expect(validateAcmeDraft(http, false)).toEqual({});
+    expect(acmeSavePayload(http)).toEqual({
+      domain: 'hub.example.com',
+      email: 'ops@example.com',
+      challenge: 'http-01',
+      staging: false,
+      tlsPort: 9443,
+      bindHost: '0.0.0.0',
+    });
+  });
+
+  test('Cloudflare：缺令牌且没存过时报错，填了就随 dnsCredentials 下发', () => {
+    expect(validateAcmeDraft(draft(), false).token).toBe(
+      'nodes.https.validation.cloudflareTokenRequired'
+    );
+    expect(validateAcmeDraft(draft(), true)).toEqual({});
+    const filled = draft({ cloudflareToken: '  cf-token  ' });
+    expect(validateAcmeDraft(filled, false)).toEqual({});
+    expect(acmeSavePayload(filled)).toMatchObject({
+      dnsProvider: 'cloudflare',
+      dnsCredentials: { token: 'cf-token' },
+    });
+  });
+
+  test('DNSPod：两截都要，缺哪截报哪截', () => {
+    const errors = validateAcmeDraft(draft({ dnsProvider: 'dnspod' }), false);
+    expect(errors.tokenId).toBe('nodes.https.validation.dnspodIdRequired');
+    expect(errors.token).toBe('nodes.https.validation.dnspodTokenRequired');
+    expect(validateAcmeDraft(draft({ dnsProvider: 'dnspod', dnspodId: '1234' }), false)).toEqual({
+      token: 'nodes.https.validation.dnspodTokenRequired',
+    });
+    const filled = draft({ dnsProvider: 'dnspod', dnspodId: ' 1234 ', dnspodToken: ' secret ' });
+    expect(validateAcmeDraft(filled, false)).toEqual({});
+    expect(acmeSavePayload(filled)).toMatchObject({
+      dnsProvider: 'dnspod',
+      dnsCredentials: { id: '1234', token: 'secret' },
+    });
+  });
+
+  test('已存凭证时整体留空表示沿用：只带服务商，不带凭证', () => {
+    const empty = draft({ dnsProvider: 'dnspod' });
+    expect(validateAcmeDraft(empty, true)).toEqual({});
+    const payload = acmeSavePayload(empty);
+    expect(payload.dnsProvider).toBe('dnspod');
+    expect(payload.dnsCredentials).toBeUndefined();
+  });
+
+  test('域名 / 邮箱 / 端口的错误照旧一次性给全', () => {
+    const bad = draft({ domain: '*.example.com', email: 'nope', tlsPort: '0', bindHost: ' ' });
+    expect(validateAcmeDraft(bad, true)).toEqual({
+      domain: 'nodes.https.validation.domainInvalid',
+      email: 'nodes.https.validation.emailInvalid',
+      port: 'nodes.https.validation.portInvalid',
+      host: 'nodes.https.validation.hostRequired',
+    });
   });
 });

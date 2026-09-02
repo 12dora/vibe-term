@@ -1970,11 +1970,10 @@ export const I18N_RESOURCES = {
         }
       },
       "https": {
-        "title": "HTTPS",
-        "description": "How this machine serves HTTPS. Sign-in and passkeys only work over a secure address.",
-        "hubUrlHint": "A hub's public address must use https. Either issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
-        "nodeRoleHint": "HTTPS only matters while this machine acts as a hub. Nodes are reached through the hub, so there is nothing to configure here.",
-        "currentMode": "Current mode",
+        "title": "HTTPS settings",
+        "description": "How this machine serves HTTPS. Sign-in and passkeys only work over an HTTPS address.",
+        "hubUrlHint": "A hub's public address must use https: issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
+        "nodeRoleHint": "HTTPS is only needed while this machine acts as a hub. Nodes are reached through the hub.",
         "modeActive": "in use",
         "save": "Save",
         "saved": "HTTPS settings saved",
@@ -1985,6 +1984,21 @@ export const I18N_RESOURCES = {
         "restartNow": "Restart now",
         "restarting": "Restarting…",
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "status": {
+          "access": "Access",
+          "accessBuiltin": "HTTPS, served by the built-in listener (port {{port}})",
+          "accessProxyVerified": "HTTPS, served by a reverse proxy (confirmed by this request)",
+          "accessProxyInferred": "HTTPS, inferred from the public address {{url}} (not confirmed by this request)",
+          "accessProxy": "HTTPS, served by a reverse proxy (not confirmed by this request)",
+          "accessNone": "HTTP, no HTTPS",
+          "proxyHint": "Switch to “External reverse proxy” and turn on “Trust proxy headers”.",
+          "externalUnverified": "HTTPS is inferred from the public address. Turn on “Trust proxy headers” to judge it from what the proxy forwards.",
+          "mode": "Mode",
+          "listener": "Built-in listener",
+          "listenerRunning": "Listening on port {{port}}",
+          "listenerStopped": "Not running",
+          "listenerFailed": "Failed to start: {{error}}"
+        },
         "confirmStop": {
           "title": "Stop the built-in HTTPS listener?",
           "description": "This page may be served by the listener on port {{port}}. Saving “{{mode}}” stops it right away.",
@@ -2004,31 +2018,16 @@ export const I18N_RESOURCES = {
           },
           "external": {
             "title": "External reverse proxy",
-            "description": "TLS is handled by Cloudflare Tunnel, nginx or Caddy in front of tmex."
+            "description": "TLS is handled by Cloudflare Tunnel, nginx or Caddy in front."
           },
           "selfsigned": {
-            "title": "Private CA",
-            "description": "tmex issues its own certificate. Every device has to install the CA once."
+            "title": "Built-in private CA",
+            "description": "This machine issues the certificate; every device installs the CA once."
           },
           "acme": {
-            "title": "Let's Encrypt",
-            "description": "A publicly trusted certificate, renewed automatically. Needs a public domain name."
+            "title": "Built-in Let's Encrypt",
+            "description": "A publicly trusted certificate, renewed automatically. Needs a public domain."
           }
-        },
-        "effective": {
-          "label": "Effective HTTPS",
-          "builtin": "Served by built-in HTTPS",
-          "reverseProxy": "HTTPS served by reverse proxy",
-          "reverseProxyVerified": "HTTPS served by reverse proxy (confirmed by this request)",
-          "reverseProxyInferred": "HTTPS served by reverse proxy (inferred from public address {{url}})",
-          "none": "HTTPS off",
-          "proxyHint": "HTTPS access through a reverse proxy was detected. Switch to “External reverse proxy” and turn on “Trust proxy headers” so cookies, passkeys and public addresses are handled as HTTPS.",
-          "externalUnverified": "The current HTTPS state is inferred from the public address. Turn on “Trust proxy headers” to judge it from what the proxy forwards."
-        },
-        "listener": {
-          "running": "Built-in listener: listening on port {{port}}",
-          "stopped": "Built-in listener: not listening",
-          "failed": "Built-in listener failed: {{error}}"
         },
         "certificate": {
           "subject": "Subject",
@@ -2042,7 +2041,7 @@ export const I18N_RESOURCES = {
         "external": {
           "intro": "tmex keeps serving plain HTTP and the proxy in front handles TLS. Point the proxy at the plain port and let it forward the original host, protocol and client address.",
           "trustProxy": "Trust proxy headers",
-          "trustProxyHint": "Turn this on only if tmex can be reached through your proxy alone.",
+          "trustProxyHint": "Turn this on only if tmex can be reached through the proxy alone.",
           "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Anyone who can reach the plain port directly could forge them, so keep that port closed."
         },
         "selfsigned": {
@@ -2083,7 +2082,7 @@ export const I18N_RESOURCES = {
           }
         },
         "acme": {
-          "intro": "Let's Encrypt issues a publicly trusted certificate for one domain. The domain must point at this machine; renewal runs automatically.",
+          "intro": "Let's Encrypt issues a publicly trusted certificate for one domain and renews it automatically. The domain must point at this machine.",
           "domain": "Domain",
           "domainHint": "One hostname, no wildcards. It must already point at this machine.",
           "email": "Contact email",
@@ -2091,11 +2090,17 @@ export const I18N_RESOURCES = {
           "challenge": "Validation method",
           "challengeHttp": "HTTP-01",
           "challengeHttpHint": "Let's Encrypt reaches this machine on public port 80.",
-          "challengeDns": "DNS-01 (Cloudflare)",
-          "challengeDnsHint": "Uses the Cloudflare API instead. Works behind NAT and without port 80.",
-          "cloudflareToken": "Cloudflare API token",
+          "challengeDns": "DNS-01",
+          "challengeDnsHint": "No need to open port 80; the domain's DNS must be hosted by the selected provider.",
+          "dnsProvider": "DNS provider",
+          "dnsProviderCloudflare": "Cloudflare",
+          "dnsProviderDnspod": "DNSPod",
+          "dnsToken": "API token",
           "cloudflareTokenHint": "Needs Zone:DNS:Edit on the zone that holds this domain. Stored encrypted.",
-          "cloudflareTokenStored": "A token is already stored. Leave this empty to keep it.",
+          "dnspodId": "Token ID",
+          "dnspodToken": "Token",
+          "dnspodHint": "Create an API key in the DNSPod console (legacy login_token, shaped ID,Token). Stored encrypted.",
+          "credentialsStored": "Credentials are stored. Leave this empty to keep them.",
           "staging": "Use the staging environment",
           "stagingHint": "Staging certificates are not trusted by browsers, but the rate limits are much looser. Use it while testing.",
           "statusLabel": "Issuance",
@@ -2112,7 +2117,7 @@ export const I18N_RESOURCES = {
           "hints": {
             "http01": "Public port 80 has to reach this machine. Behind NAT, forward it on your router.",
             "http01Linux": "A user-level systemd service cannot bind port 80. Forward it on the router, or use DNS-01.",
-            "dns01": "The domain's DNS has to be managed by Cloudflare, with an API token that can edit its records."
+            "dns01": "The domain's DNS has to be hosted by the selected provider, with an API key that can edit its records."
           }
         },
         "errors": {
@@ -2120,11 +2125,13 @@ export const I18N_RESOURCES = {
           "invalid_domain": "That is not a valid domain name. Wildcards are not supported.",
           "invalid_email": "That is not a valid email address.",
           "cloudflare_token_required": "DNS-01 needs a Cloudflare API token.",
+          "dns_provider_required": "Select a DNS provider.",
+          "dns_credentials_required": "DNS-01 needs an API key for the selected provider.",
           "invalid_port": "The port must be between 1 and 65535.",
           "port_in_use": "That port is already in use. The settings were saved, but the listener did not start.",
           "tls_failed": "Could not apply the HTTPS change.",
           "not_applicable": "There is nothing to renew in this mode.",
-          "no_ca": "This machine has no private CA yet. Save the private CA mode first.",
+          "no_ca": "This machine has no private CA yet. Save the built-in private CA mode first.",
           "unauthorized": "Sign in first.",
           "unknown": "Failed: {{message}}"
         },
@@ -2136,7 +2143,9 @@ export const I18N_RESOURCES = {
           "hostRequired": "Enter a bind address.",
           "domainInvalid": "Enter a domain name without wildcards.",
           "emailInvalid": "Enter a valid email address.",
-          "tokenRequired": "Enter a Cloudflare API token."
+          "cloudflareTokenRequired": "Enter a Cloudflare API token.",
+          "dnspodIdRequired": "Enter the Token ID.",
+          "dnspodTokenRequired": "Enter the Token."
         }
       },
       "columns": {
@@ -4466,11 +4475,10 @@ export const I18N_RESOURCES = {
         }
       },
       "https": {
-        "title": "HTTPS",
-        "description": "本机如何提供 HTTPS。登录与通行密钥只在安全地址下可用。",
-        "hubUrlHint": "Hub 的公开地址必须是 https：可以在这里签发证书，也可以在前面加反向代理并选择「外部反向代理」。",
-        "nodeRoleHint": "HTTPS 仅在本机作为 Hub 时需要；节点通过 Hub 访问，无需单独配置。",
-        "currentMode": "当前模式",
+        "title": "HTTPS 设置",
+        "description": "决定本机如何提供 HTTPS。登录与通行密钥只能在 HTTPS 地址下使用。",
+        "hubUrlHint": "Hub 的公开地址必须是 https：在这里签发证书，或在前面加反向代理并选「外部反向代理」。",
+        "nodeRoleHint": "只有本机作为 Hub 时才需要 HTTPS；节点经 Hub 访问，无需配置。",
         "modeActive": "生效中",
         "save": "保存",
         "saved": "HTTPS 设置已保存",
@@ -4481,6 +4489,21 @@ export const I18N_RESOURCES = {
         "restartNow": "立即重启",
         "restarting": "正在重启……",
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "status": {
+          "access": "对外访问",
+          "accessBuiltin": "HTTPS，由本机内置监听器提供（端口 {{port}}）",
+          "accessProxyVerified": "HTTPS，由前置反向代理提供（本次请求已确认）",
+          "accessProxyInferred": "HTTPS，按公开地址 {{url}} 推断（未经请求确认）",
+          "accessProxy": "HTTPS，由前置反向代理提供（未经请求确认）",
+          "accessNone": "HTTP，未启用 HTTPS",
+          "proxyHint": "建议切到「外部反向代理」并开启「信任代理请求头」。",
+          "externalUnverified": "当前 HTTPS 由公开地址推断。开启「信任代理请求头」后，才按代理转发的协议判定。",
+          "mode": "配置模式",
+          "listener": "内置监听器",
+          "listenerRunning": "正在监听 {{port}} 端口",
+          "listenerStopped": "未运行",
+          "listenerFailed": "启动失败：{{error}}"
+        },
         "confirmStop": {
           "title": "停止内置 HTTPS 监听？",
           "description": "本页可能正由 {{port}} 端口上的监听提供。保存「{{mode}}」会立即停止它。",
@@ -4500,31 +4523,16 @@ export const I18N_RESOURCES = {
           },
           "external": {
             "title": "外部反向代理",
-            "description": "由 tmex 前面的 Cloudflare Tunnel、nginx 或 Caddy 处理 TLS。"
+            "description": "TLS 由前面的 Cloudflare Tunnel、nginx 或 Caddy 处理。"
           },
           "selfsigned": {
-            "title": "私有 CA",
-            "description": "由 tmex 自己签发证书，每台设备都要安装一次 CA。"
+            "title": "内置私有 CA",
+            "description": "本机签发证书，每台设备须安装一次 CA。"
           },
           "acme": {
-            "title": "Let's Encrypt",
-            "description": "公共信任的证书，自动续期，需要公网域名。"
+            "title": "内置 Let's Encrypt",
+            "description": "公共信任的证书，自动续期，需公网域名。"
           }
-        },
-        "effective": {
-          "label": "对外 HTTPS",
-          "builtin": "由内置 HTTPS 提供",
-          "reverseProxy": "由反向代理提供 HTTPS",
-          "reverseProxyVerified": "由反向代理提供 HTTPS（已通过当前请求确认）",
-          "reverseProxyInferred": "由反向代理提供 HTTPS（按公开地址 {{url}} 推断）",
-          "none": "未启用 HTTPS",
-          "proxyHint": "检测到经反向代理的 HTTPS 访问。建议切换到「外部反向代理」并开启「信任代理请求头」，让 Cookie、通行密钥与公开地址按 HTTPS 处理。",
-          "externalUnverified": "当前 HTTPS 由公开地址推断而来。开启「信任代理请求头」后，tmex 才按代理转发的协议判定。"
-        },
-        "listener": {
-          "running": "内置监听器：正在监听 {{port}} 端口",
-          "stopped": "内置监听器：未监听",
-          "failed": "内置监听器启动失败：{{error}}"
         },
         "certificate": {
           "subject": "主体",
@@ -4538,7 +4546,7 @@ export const I18N_RESOURCES = {
         "external": {
           "intro": "tmex 继续提供明文 HTTP，由前置代理处理 TLS。请把代理指向明文端口，并转发原始 host、协议与客户端地址。",
           "trustProxy": "信任代理请求头",
-          "trustProxyHint": "仅当 tmex 只能经由你的代理访问时才开启。",
+          "trustProxyHint": "仅当 tmex 只能经由代理访问时才开启。",
           "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。能直连明文端口的人可以伪造这两个请求头，因此请关闭该端口的外部访问。"
         },
         "selfsigned": {
@@ -4579,19 +4587,25 @@ export const I18N_RESOURCES = {
           }
         },
         "acme": {
-          "intro": "Let's Encrypt 为单个域名签发公共信任的证书。该域名必须指向本机，续期会自动进行。",
+          "intro": "Let's Encrypt 为单个域名签发公共信任的证书，续期自动进行。域名须指向本机。",
           "domain": "域名",
-          "domainHint": "单个主机名，不支持通配符，且必须已经指向本机。",
+          "domainHint": "单个主机名，不支持通配符，且须已指向本机。",
           "email": "联系邮箱",
           "emailHint": "Let's Encrypt 用它发送到期提醒。",
           "challenge": "验证方式",
           "challengeHttp": "HTTP-01",
-          "challengeHttpHint": "Let's Encrypt 通过公网 80 端口访问本机。",
-          "challengeDns": "DNS-01（Cloudflare）",
-          "challengeDnsHint": "改用 Cloudflare API 验证，在 NAT 后面、没有 80 端口也能用。",
-          "cloudflareToken": "Cloudflare API 令牌",
-          "cloudflareTokenHint": "需要该域名所在区域的 Zone:DNS:Edit 权限，令牌加密存储。",
-          "cloudflareTokenStored": "已保存令牌，留空表示继续使用。",
+          "challengeHttpHint": "Let's Encrypt 经公网 80 端口访问本机。",
+          "challengeDns": "DNS-01",
+          "challengeDnsHint": "无需开放 80 端口，域名的 DNS 必须托管在所选服务商。",
+          "dnsProvider": "DNS 服务商",
+          "dnsProviderCloudflare": "Cloudflare",
+          "dnsProviderDnspod": "DNSPod",
+          "dnsToken": "API 令牌",
+          "cloudflareTokenHint": "需要该域名所在区域的 Zone:DNS:Edit 权限，密钥加密存储。",
+          "dnspodId": "Token ID",
+          "dnspodToken": "Token",
+          "dnspodHint": "在 DNSPod 控制台创建 API 密钥（旧版 login_token，形如 ID,Token）；密钥加密存储。",
+          "credentialsStored": "已保存凭证，留空表示继续使用。",
           "staging": "使用 staging 环境",
           "stagingHint": "staging 证书浏览器不信任，但限流宽松得多，适合先跑通流程。",
           "statusLabel": "签发状态",
@@ -4608,7 +4622,7 @@ export const I18N_RESOURCES = {
           "hints": {
             "http01": "公网 80 端口必须能访问到本机。在 NAT 后面时，请在路由器上做端口转发。",
             "http01Linux": "Linux 用户级 systemd 服务无法绑定 80 端口。请在路由器上做转发，或改用 DNS-01。",
-            "dns01": "该域名的 DNS 必须托管在 Cloudflare，并提供可修改其记录的 API 令牌。"
+            "dns01": "域名的 DNS 必须托管在所选服务商，并提供可修改其记录的 API 密钥。"
           }
         },
         "errors": {
@@ -4616,11 +4630,13 @@ export const I18N_RESOURCES = {
           "invalid_domain": "域名不合法，且不支持通配符。",
           "invalid_email": "邮箱地址不合法。",
           "cloudflare_token_required": "DNS-01 需要 Cloudflare API 令牌。",
+          "dns_provider_required": "请选择 DNS 服务商。",
+          "dns_credentials_required": "DNS-01 需要所选服务商的 API 密钥。",
           "invalid_port": "端口必须在 1 到 65535 之间。",
           "port_in_use": "端口已被占用。设置已保存，但监听没有启动。",
           "tls_failed": "HTTPS 变更未能生效。",
           "not_applicable": "当前模式没有可续期的证书。",
-          "no_ca": "本机还没有私有 CA，请先保存一次私有 CA 模式。",
+          "no_ca": "本机还没有私有 CA，请先保存一次内置私有 CA 模式。",
           "unauthorized": "请先登录。",
           "unknown": "操作失败：{{message}}"
         },
@@ -4632,7 +4648,9 @@ export const I18N_RESOURCES = {
           "hostRequired": "请输入绑定地址。",
           "domainInvalid": "请输入不含通配符的域名。",
           "emailInvalid": "请输入合法的邮箱地址。",
-          "tokenRequired": "请输入 Cloudflare API 令牌。"
+          "cloudflareTokenRequired": "请输入 Cloudflare API 令牌。",
+          "dnspodIdRequired": "请输入 Token ID。",
+          "dnspodTokenRequired": "请输入 Token。"
         }
       },
       "columns": {

@@ -34,7 +34,7 @@ export function ExternalPanel({
 
       {unverified && (
         <Notice tone="info" testId="https-external-effective">
-          <p>{t('nodes.https.effective.externalUnverified')}</p>
+          <p>{t('nodes.https.status.externalUnverified')}</p>
         </Notice>
       )}
 

@@ -25,7 +25,7 @@ import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Loader2, RotateCcw, Save } from 'lucide-react';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useRestartGateway } from '../restart/use-restart-now';
@@ -38,6 +38,8 @@ import { describeTlsError } from './tls-errors';
 import { daysUntil, defaultSans, formatTimestamp } from './tls-form';
 import { type TlsMutationKind, useTlsMutations } from './tls-mutations';
 import { useTlsStatus } from './use-tls-status';
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export interface HttpsSectionProps {
   api?: TlsApi;
@@ -329,72 +331,78 @@ function HttpsBody({
 }
 
 /**
- * 对外「有效 HTTPS」：反代终止 TLS 时内置监听器本就不该起，只看监听状态会把站点误读成没有 HTTPS。
+ * 对外访问一行：反代终止 TLS 时内置监听器本就不该起，只看监听状态会把站点误读成没有 HTTPS。
  * 旧版本节点不返回 `https`，此时整行不渲染。
  */
-function EffectiveHttps({ https, proxyHint }: { https: TlsEffectiveHttps; proxyHint: boolean }) {
-  const { t } = useTranslation();
-  const text = (() => {
-    if (https.source === 'builtin') return t('nodes.https.effective.builtin');
-    if (https.source !== 'reverse-proxy') return t('nodes.https.effective.none');
-    if (https.verified) return t('nodes.https.effective.reverseProxyVerified');
-    return https.publicUrl
-      ? t('nodes.https.effective.reverseProxyInferred', { url: https.publicUrl })
-      : t('nodes.https.effective.reverseProxy');
-  })();
+function accessText(t: Translate, status: TlsStatusResponse, https: TlsEffectiveHttps): string {
+  if (https.source === 'builtin') {
+    return t('nodes.https.status.accessBuiltin', { port: status.listener.port ?? status.tlsPort });
+  }
+  if (https.source !== 'reverse-proxy') return t('nodes.https.status.accessNone');
+  if (https.verified) return t('nodes.https.status.accessProxyVerified');
+  return https.publicUrl
+    ? t('nodes.https.status.accessProxyInferred', { url: https.publicUrl })
+    : t('nodes.https.status.accessProxy');
+}
 
+/** 内置监听器一行：只有自签 / ACME 会起监听，关闭与外部反代下这行只会让人误以为出了问题。 */
+function listenerText(t: Translate, status: TlsStatusResponse): string {
+  const { running, port, error } = status.listener;
+  if (error) return t('nodes.https.status.listenerFailed', { error });
+  return running
+    ? t('nodes.https.status.listenerRunning', { port: port ?? status.tlsPort })
+    : t('nodes.https.status.listenerStopped');
+}
+
+function StatusLine({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <>
-      <div className="flex flex-wrap items-baseline gap-2">
-        <span className="text-xs text-muted-foreground">{t('nodes.https.effective.label')}</span>
-        <span className="min-w-0 break-all text-xs font-medium" data-testid="https-effective">
-          {text}
-        </span>
-      </div>
-      {proxyHint && (
-        <p className="text-xs text-muted-foreground" data-testid="https-proxy-hint">
-          {t('nodes.https.effective.proxyHint')}
-        </p>
-      )}
-    </>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="flex min-w-0 flex-wrap items-center gap-1.5 break-all text-xs font-medium">
+        {children}
+      </span>
+    </div>
   );
 }
 
+/** 状态块：对外访问 / 配置模式 / 内置监听器，最多三行，后面跟当前证书摘要。 */
 function StatusHeader({ status }: { status: TlsStatusResponse }) {
   const { t } = useTranslation();
   const cert = status.certificate;
-  const listener = status.listener;
   const remaining = cert ? daysUntil(cert.notAfter) : null;
   const https = status.https;
+  const builtinListener = status.mode === 'selfsigned' || status.mode === 'acme';
 
   return (
     <div className="space-y-1.5 rounded-lg bg-muted/40 p-3" data-testid="https-status-header">
       {https && (
-        <EffectiveHttps
-          https={https}
-          proxyHint={status.mode === 'none' && https.source === 'reverse-proxy'}
-        />
+        <>
+          <StatusLine label={t('nodes.https.status.access')}>
+            <span data-testid="https-effective">{accessText(t, status, https)}</span>
+          </StatusLine>
+          {status.mode === 'none' && https.source === 'reverse-proxy' && (
+            <p className="text-xs text-muted-foreground" data-testid="https-proxy-hint">
+              {t('nodes.https.status.proxyHint')}
+            </p>
+          )}
+        </>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">{t('nodes.https.currentMode')}</span>
-        <Badge variant="secondary" data-testid="https-current-mode">
-          {t(`nodes.https.mode.${status.mode}.title`)}
-        </Badge>
-        {listener.error ? (
-          <Badge variant="destructive" data-testid="https-listener-state">
-            {t('nodes.https.listener.failed', { error: listener.error })}
-          </Badge>
-        ) : listener.running ? (
-          <Badge variant="outline" data-testid="https-listener-state">
-            {t('nodes.https.listener.running', { port: listener.port ?? status.tlsPort })}
-          </Badge>
-        ) : (
-          <Badge variant="outline" data-testid="https-listener-state">
-            {t('nodes.https.listener.stopped')}
-          </Badge>
-        )}
-      </div>
+      <StatusLine label={t('nodes.https.status.mode')}>
+        <span data-testid="https-current-mode">{t(`nodes.https.mode.${status.mode}.title`)}</span>
+        <Badge variant="secondary">{t('nodes.https.modeActive')}</Badge>
+      </StatusLine>
+
+      {builtinListener && (
+        <StatusLine label={t('nodes.https.status.listener')}>
+          <span
+            className={status.listener.error ? 'text-destructive' : undefined}
+            data-testid="https-listener-state"
+          >
+            {listenerText(t, status)}
+          </span>
+        </StatusLine>
+      )}
 
       {cert ? (
         <div className="space-y-0.5" data-testid="https-certificate">

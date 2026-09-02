@@ -191,10 +191,11 @@ describe('NodesManagement', () => {
     expect(html).toContain('data-testid="nodes-hub-offline"');
     expect(html).toMatch(/data-testid="nodes-add"[^>]*disabled/);
     expect(html).toMatch(
-      /data-testid="nodes-rename-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"[^>]*disabled/
-    );
-    expect(html).toMatch(
       /data-testid="nodes-revoke-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"[^>]*disabled/
+    );
+    // 「更多」不跟 hub 绑定：详情里的只读信息与域名访问都不经 hub 控制面
+    expect(buttonTag(html, 'nodes-detail-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e')).not.toContain(
+      'disabled=""'
     );
   });
 
@@ -212,9 +213,9 @@ describe('NodesManagement', () => {
       ],
     });
     const html = render(MODE);
-    // hub 离线（提示已渲染），rename / revoke 被禁用，但升级按钮照常可用
+    // hub 离线（提示已渲染），revoke 被禁用，但升级按钮照常可用
     expect(html).toContain('data-testid="nodes-hub-offline"');
-    expect(buttonTag(html, 'nodes-rename-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d')).toContain(
+    expect(buttonTag(html, 'nodes-revoke-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d')).toContain(
       'disabled=""'
     );
     expect(buttonTag(html, 'node-upgrade-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e')).not.toContain(
@@ -372,7 +373,7 @@ describe('Hub 集群展示与 standby 拒写', () => {
     expect(html).toContain('osaka');
   });
 
-  test('挂在备用 hub 上：给出一行说明并禁用加入 / 重命名 / 移除，升级不受影响', () => {
+  test('挂在备用 hub 上：给出一行说明并禁用加入 / 移除，升级不受影响', () => {
     withNodes([meshNode({ id: HUB_B, name: 'osaka', isHub: true, hubMode: 'standby' })]);
     setMeshHubsStateForTest({
       hubs: [hubInfo({ nodeId: HUB_A }), hubInfo({ nodeId: HUB_B, mode: 'standby' })],
@@ -392,7 +393,7 @@ describe('Hub 集群展示与 standby 拒写', () => {
     expect(html).not.toContain('data-testid="nodes-hub-offline"');
     expect(buttonTag(html, 'nodes-add')).toContain('disabled=""');
     expect(buttonTag(html, 'nodes-add')).toContain('title="nodes.hubs.standbyNotice"');
-    expect(buttonTag(html, `nodes-rename-${ENTRY}`)).toContain('title="nodes.hubs.standbyNotice"');
+    expect(buttonTag(html, `nodes-revoke-${HUB_B}`)).toContain('title="nodes.hubs.standbyNotice"');
     expect(buttonTag(html, `nodes-revoke-${HUB_B}`)).toContain('disabled=""');
     expect(buttonTag(html, `node-upgrade-${ENTRY}`)).not.toContain('disabled=""');
   });
@@ -647,7 +648,7 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(buttonTag(html, 'node-upgrade-hh')).not.toContain('disabled=""');
   });
 
-  test('正在卸载的行：状态列改显「卸载中」，重命名与升级锁住，移除仍可点', () => {
+  test('正在卸载的行：状态列改显「卸载中」，升级锁住，移除仍可点', () => {
     const html = renderTable(
       [nodeRow({ id: 'uu', version: '1.1.9' })],
       '1.2.0',
@@ -659,7 +660,6 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(html).toContain('data-testid="nodes-uninstall-state-uu"');
     expect(html).toContain('nodes.uninstall.stateRunning');
     expect(html).not.toContain('data-testid="nodes-status-uu"');
-    expect(buttonTag(html, 'nodes-rename-uu')).toContain('disabled=""');
     expect(buttonTag(html, 'node-upgrade-uu')).toContain('title="nodes.uninstall.busy"');
     // 卸载受理后证书还挂着：移除按钮必须留着
     expect(buttonTag(html, 'nodes-revoke-uu')).not.toContain('disabled=""');

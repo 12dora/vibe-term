@@ -30,7 +30,7 @@ export function ModeChooser({
     <div
       className="grid gap-3 sm:grid-cols-2"
       role="radiogroup"
-      aria-label={t('nodes.https.currentMode')}
+      aria-label={t('nodes.https.status.mode')}
       data-testid="https-mode-chooser"
     >
       {MODES.map(({ mode, icon }) => (

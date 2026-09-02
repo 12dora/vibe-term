@@ -11,5 +11,6 @@ export * from './format';
 export * from './llm-providers';
 export * from './node-url';
 export * from './site';
+export * from './domain-access';
 export * from './terminal-shortcuts';
 export * from './watch';

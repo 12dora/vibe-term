@@ -4,6 +4,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-hubs';
+import { ApiClient, type DomainAccessPolicy } from '@tmex/api-client';
 import type {
   AuthModeResponse,
   MeshAttachedHub,
@@ -18,7 +19,6 @@ import type {
   LocalStatusResponse,
 } from '@tmex/api-client/local/types';
 import enUS from '@tmex/shared/i18n/locales/en_US.json';
-import jaJP from '@tmex/shared/i18n/locales/ja_JP.json';
 import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
@@ -28,6 +28,12 @@ import {
   DirectMutationController,
   describeDirectError,
 } from './direct-section';
+import {
+  type DomainAccessApi,
+  DomainAccessController,
+  domainAccessApi,
+  domainAccessConfirmLines,
+} from './domain-access-row';
 import { LocalMachineCard } from './local-machine-card';
 
 const MESH_MODE: AuthModeResponse = {
@@ -57,6 +63,7 @@ function status(direct: Partial<LocalDirectStatus> = {}): LocalStatusResponse {
       ...direct,
     },
     tls: { mode: 'none', listenerRunning: false, tlsPort: null },
+    domainAccess: { allowed: true, viaDomain: false, hosts: [] },
   };
 }
 
@@ -111,11 +118,16 @@ function switchState(html: string, testId: string): { disabled: boolean; checked
 }
 
 describe('LocalMachineCard 直连状态渲染', () => {
+  /** 单枚状态徽章的档位。 */
+  function directState(html: string): string {
+    const tag = tagOf(html, 'local-machine-direct-status');
+    return /data-direct-state="([a-z-]+)"/.exec(tag)?.[1] ?? '';
+  }
+
   test('平台不支持：只有不支持徽章，按钮与开关都禁用', () => {
     const html = render(status({ supported: false, platform: 'linux-riscv64' }));
-    expect(html).toContain('data-testid="local-machine-direct-unsupported"');
-    expect(html).not.toContain('data-testid="local-machine-direct-supported"');
-    expect(html).not.toContain('data-testid="local-machine-direct-installed"');
+    expect(directState(html)).toBe('unsupported');
+    expect(html).toContain('nodes.machine.directUnsupported');
     expect(buttonDisabled(html, 'local-machine-direct-install')).toBe(true);
     expect(switchState(html, 'local-machine-direct-switch')).toEqual({
       disabled: true,
@@ -127,8 +139,7 @@ describe('LocalMachineCard 直连状态渲染', () => {
 
   test('支持但未安装：安装按钮可用，开关禁用并给出提示', () => {
     const html = render(status({ installed: false }));
-    expect(html).toContain('data-testid="local-machine-direct-supported"');
-    expect(tagOf(html, 'local-machine-direct-installed')).toBeTruthy();
+    expect(directState(html)).toBe('not-installed');
     expect(html).toContain('nodes.machine.directNotInstalled');
     expect(html).toContain('data-testid="local-machine-direct-install"');
     expect(html).not.toContain('data-testid="local-machine-direct-remove"');
@@ -138,17 +149,15 @@ describe('LocalMachineCard 直连状态渲染', () => {
       checked: false,
     });
     expect(html).toContain('data-testid="local-machine-direct-hint"');
-    expect(html).not.toContain('data-testid="local-machine-direct-active"');
-    expect(html).not.toContain('data-testid="local-machine-direct-disabled"');
   });
 
-  test('已安装且启用：版本徽章 + 生效徽章，删除按钮与打开的开关', () => {
+  test('已安装且启用：版本徽章 + 删除按钮 + 打开的开关，不再另起一行开关', () => {
     const html = render(
       status({ installed: true, enabled: true, capable: true, version: '0.4.2' })
     );
+    expect(directState(html)).toBe('installed');
     expect(html).toContain('nodes.machine.directInstalledVersion');
-    expect(html).toContain('data-testid="local-machine-direct-active"');
-    expect(html).not.toContain('data-testid="local-machine-direct-disabled"');
+    expect(html).toContain('nodes.machine.directEnable');
     expect(html).toContain('data-testid="local-machine-direct-remove"');
     expect(html).not.toContain('data-testid="local-machine-direct-install"');
     expect(buttonDisabled(html, 'local-machine-direct-remove')).toBe(false);
@@ -157,15 +166,17 @@ describe('LocalMachineCard 直连状态渲染', () => {
       checked: true,
     });
     expect(html).not.toContain('data-testid="local-machine-direct-hint"');
+    // 「本平台支持 / 已启用 / 已关闭」三枚徽章已并进这一枚 + 开关
+    expect(html).not.toContain('nodes.machine.directSupported');
+    expect(html).not.toContain('nodes.machine.directActive');
+    expect(html).not.toContain('nodes.machine.directDisabled');
   });
 
-  test('已安装但关闭：关闭徽章，开关可用且处于关闭态', () => {
+  test('已安装但关闭：徽章仍是已安装，开关可用且处于关闭态', () => {
     const html = render(
       status({ installed: true, enabled: false, capable: false, version: '0.4.2' })
     );
-    expect(html).toContain('data-testid="local-machine-direct-disabled"');
-    expect(html).not.toContain('data-testid="local-machine-direct-active"');
-    expect(html).toContain('data-testid="local-machine-direct-remove"');
+    expect(directState(html)).toBe('installed');
     expect(switchState(html, 'local-machine-direct-switch')).toEqual({
       disabled: false,
       checked: false,
@@ -384,25 +395,36 @@ describe('LocalMachineCard 角色与 Hub 归属', () => {
     expect(html).toContain('value="node"');
   });
 
-  test('纯 node：hub 地址行给出「更换 Hub」', () => {
+  test('纯 node：「当前 Hub」这一行带上「更换 Hub」，不再另起一行加入地址', () => {
     const html = render(meshStatus('node'), MESH_MODE);
-    expect(html).toContain('data-testid="local-machine-hub-url"');
+    expect(html).toContain('nodes.machine.currentHub');
     expect(html).toContain('data-testid="local-machine-change-hub"');
     expect(html).toContain('nodes.membership.changeHub');
     expect(buttonDisabled(html, 'local-machine-change-hub')).toBe(false);
+    expect(html).not.toContain('nodes.machine.hubUrl');
+    expect(html).not.toContain('nodes.machine.localAddress');
   });
 
-  test('hub 兼节点：公开地址只读，没有换 hub 入口', () => {
+  test('hub 兼节点：本机地址只读，没有换 hub 入口', () => {
     const html = render(meshStatus('hub,node'), MESH_MODE);
-    expect(html).toContain('data-testid="local-machine-hub-public-url"');
+    expect(html).toContain('nodes.machine.localAddress');
+    expect(html).toContain('data-testid="local-machine-local-address"');
     expect(html).not.toContain('data-testid="local-machine-change-hub"');
     // 角色下拉照样可用
     expect(html).toContain('data-testid="local-machine-role"');
   });
 
-  test('standalone：没有 hub 地址行，也没有换 hub 入口', () => {
+  test('hub 兼节点但没有公开地址：说未设置并指回角色设置', () => {
+    const html = render({ ...meshStatus('hub,node'), hubPublicUrl: null }, MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-local-address-unset"');
+    expect(html).toContain('nodes.machine.localAddressHint');
+    expect(html).not.toContain('data-testid="local-machine-local-address"');
+  });
+
+  test('standalone：没有地址行，也没有换 hub 入口', () => {
     const html = render(status(), null);
-    expect(html).not.toContain('data-testid="local-machine-hub-url"');
+    expect(html).not.toContain('nodes.machine.localAddress');
+    expect(html).not.toContain('nodes.machine.currentHub');
     expect(html).not.toContain('data-testid="local-machine-change-hub"');
     expect(html).toContain('nodes.machine.roleStandalone');
   });
@@ -498,7 +520,7 @@ describe('LocalMachineCard 的多 hub 归属', () => {
     });
     const html = render(meshStatus('node'), MESH_MODE);
     expect(html).toContain(ATTACHED_ROW);
-    expect(html).toContain('nodes.machine.attachedHub');
+    expect(html).toContain('nodes.machine.currentHub');
     expect(html).toContain('>hub-a<');
     expect(tagOf(html, 'local-machine-attached-hub-mode')).toContain('data-hub-mode="active"');
     expect(html).toContain('nodes.hubs.active');
@@ -564,27 +586,202 @@ describe('LocalMachineCard 的多 hub 归属', () => {
     expect(html).toContain(ATTACHED_ROW);
     expect(html).toContain('nodes.machine.self');
     expect(html).not.toContain('>hub-a<');
+    // 挂在自己身上时不重复地址，本机地址那一行已经给过
+    expect(html).not.toContain('data-testid="local-machine-attached-hub-url"');
     expect(html).not.toContain(WRITER_SUFFIX);
     // 主 / 备身份那一行照旧
     expect(html).toContain('data-testid="local-machine-hub-mode"');
   });
 
-  test('hub 集合为空：当前 Hub 与 Hub 列表都不渲染', () => {
+  test('hub 集合为空：当前 Hub 退回入会种子，Hub 列表不渲染', () => {
     const html = render(meshStatus('node'), MESH_MODE);
     expect(html).not.toContain(ATTACHED_ROW);
     expect(html).not.toContain(HUB_LIST_ROW);
-    // 入会种子那一行还在
+    expect(html).toContain('nodes.machine.currentHub');
     expect(html).toContain('data-testid="local-machine-hub-url"');
-    expect(html).toContain('nodes.machine.hubUrl');
+    expect(html).toContain('>https://hub.example<');
   });
 
-  test('入会种子那一行改叫「加入地址」，三语同步', () => {
-    expect(zhCN.translation.nodes.machine.hubUrl).toBe('加入地址');
-    expect(enUS.translation.nodes.machine.hubUrl).toBe('Join Address');
-    expect(jaJP.translation.nodes.machine.hubUrl).toBe('参加アドレス');
-    expect(zhCN.translation.nodes.machine.attachedHub).toBe('当前 Hub');
+  test('种子与挂载地址不一致时补一行「加入地址」，一致时不补', () => {
+    const hub = hubRow({ nodeId: 'h1', name: 'hub-a', publicUrl: 'https://hub-b.example' });
+    setMeshHubsStateForTest({
+      hubs: [hub],
+      attached: attachedTo(hub),
+      writerHubId: 'h1',
+      loadedAt: 1,
+    });
+    const moved = render(meshStatus('node'), MESH_MODE);
+    expect(moved).toContain('data-testid="local-machine-join-seed"');
+    expect(moved).toContain('nodes.machine.joinSeed');
+
+    const same = hubRow({ nodeId: 'h1', name: 'hub-a', publicUrl: 'https://hub.example/' });
+    setMeshHubsStateForTest({
+      hubs: [same],
+      attached: attachedTo(same),
+      writerHubId: 'h1',
+      loadedAt: 1,
+    });
+    // 只差一个末尾斜杠算同一台
+    expect(render(meshStatus('node'), MESH_MODE)).not.toContain(
+      'data-testid="local-machine-join-seed"'
+    );
+  });
+
+  test('地址行的三语键：本机地址 / 当前 Hub / 加入地址', () => {
+    expect(zhCN.translation.nodes.machine.localAddress).toBe('本机地址');
+    expect(enUS.translation.nodes.machine.localAddress).toBe("This Machine's Address");
+    expect(zhCN.translation.nodes.machine.currentHub).toBe('当前 Hub');
+    expect(zhCN.translation.nodes.machine.joinSeed).toContain('加入地址');
     expect(zhCN.translation.nodes.machine.hubList).toBe('Hub 列表');
     expect(zhCN.translation.nodes.machine.self).toBe('本机');
     expect(zhCN.translation.nodes.machine.writerHub).toContain('写者');
+  });
+});
+
+describe('LocalMachineCard 的通用设置：允许域名访问', () => {
+  const ROW = 'data-testid="local-machine-domain-access-switch"';
+
+  function withDomainAccess(policy: DomainAccessPolicy | undefined): LocalStatusResponse {
+    const base = meshStatus('hub,node');
+    if (policy) return { ...base, domainAccess: policy };
+    // 旧节点根本不下发该字段
+    const { domainAccess: _omitted, ...rest } = base;
+    return rest as LocalStatusResponse;
+  }
+
+  test('旧节点不下发该字段时整块不渲染', () => {
+    const html = render(withDomainAccess(undefined), MESH_MODE);
+    expect(html).not.toContain(ROW);
+    expect(html).not.toContain('nodes.machine.general');
+  });
+
+  test('有公开域名：通用设置标题 + 开关 + 说明', () => {
+    const html = render(
+      withDomainAccess({ allowed: true, viaDomain: false, hosts: ['tmex.example.com'] }),
+      MESH_MODE
+    );
+    expect(html).toContain('data-testid="local-machine-general-heading"');
+    expect(html).toContain('nodes.machine.general');
+    expect(html).toContain('nodes.machine.domainAccess.label');
+    expect(html).toContain('nodes.machine.domainAccess.description');
+    expect(switchState(html, 'local-machine-domain-access-switch')).toEqual({
+      disabled: false,
+      checked: true,
+    });
+  });
+
+  test('没有公开域名：说清尚未配置并禁用开关', () => {
+    const html = render(
+      withDomainAccess({ allowed: true, viaDomain: false, hosts: [] }),
+      MESH_MODE
+    );
+    expect(html).toContain('nodes.machine.domainAccess.noHosts');
+    expect(switchState(html, 'local-machine-domain-access-switch').disabled).toBe(true);
+  });
+
+  test('已关闭时开关处于关闭态', () => {
+    const html = render(
+      withDomainAccess({ allowed: false, viaDomain: false, hosts: ['tmex.example.com'] }),
+      MESH_MODE
+    );
+    expect(switchState(html, 'local-machine-domain-access-switch').checked).toBe(false);
+  });
+
+  test('正经该域名访问时确认框多一条强提示', () => {
+    expect(domainAccessConfirmLines(false)).toEqual([
+      'nodes.machine.domainAccess.confirm.description',
+    ]);
+    expect(domainAccessConfirmLines(true)).toEqual([
+      'nodes.machine.domainAccess.confirm.description',
+      'nodes.machine.domainAccess.confirm.viaDomain',
+    ]);
+  });
+});
+
+describe('DomainAccessController', () => {
+  function harness(outcome: (allowed: boolean) => DomainAccessPolicy | Error) {
+    const calls: boolean[] = [];
+    const results: DomainAccessPolicy[] = [];
+    let refreshes = 0;
+    const api: DomainAccessApi = {
+      update: (allowed) => {
+        calls.push(allowed);
+        const value = outcome(allowed);
+        return value instanceof Error ? Promise.reject(value) : Promise.resolve(value);
+      },
+    };
+    const controller = new DomainAccessController(api, () => ({
+      onResult: (policy) => {
+        results.push(policy);
+      },
+      onRefresh: () => {
+        refreshes += 1;
+      },
+    }));
+    return { calls, results, controller, refreshCount: () => refreshes };
+  }
+
+  const policy = (allowed: boolean): DomainAccessPolicy => ({
+    allowed,
+    viaDomain: false,
+    hosts: ['tmex.example.com'],
+  });
+
+  test('开启不需要确认，直接写', async () => {
+    const h = harness(() => policy(true));
+    await h.controller.request(true);
+    expect(h.calls).toEqual([true]);
+    expect(h.results).toEqual([policy(true)]);
+    expect(h.refreshCount()).toBe(1);
+    expect(h.controller.snapshot().confirming).toBe(false);
+  });
+
+  test('关闭先确认：确认前不发请求', async () => {
+    const h = harness(() => policy(false));
+    await h.controller.request(false);
+    expect(h.controller.snapshot().confirming).toBe(true);
+    expect(h.calls).toEqual([]);
+
+    await h.controller.confirm();
+    expect(h.calls).toEqual([false]);
+    expect(h.controller.snapshot().confirming).toBe(false);
+    expect(h.refreshCount()).toBe(1);
+  });
+
+  test('取消确认不发请求', async () => {
+    const h = harness(() => policy(false));
+    await h.controller.request(false);
+    h.controller.cancel();
+    await h.controller.confirm();
+    expect(h.calls).toEqual([]);
+    expect(h.refreshCount()).toBe(0);
+  });
+
+  test('失败时留下错误，不刷新状态', async () => {
+    const failure = new Error('domain_access_update_failed');
+    const h = harness(() => failure);
+    await h.controller.request(true);
+    expect(h.controller.snapshot().error).toBe(failure);
+    expect(h.controller.snapshot().pending).toBe(false);
+    expect(h.refreshCount()).toBe(0);
+  });
+});
+
+describe('updateDomainAccess 请求体', () => {
+  test('PATCH /api/system/domain-access，body 带 allowed', async () => {
+    const seen: Array<{ url: string; init?: RequestInit }> = [];
+    const client = new ApiClient('', (url, init) => {
+      seen.push({ url, ...(init ? { init } : {}) });
+      return Promise.resolve(
+        new Response(JSON.stringify({ allowed: false, viaDomain: true, hosts: ['a.example'] }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    });
+    const policy = await domainAccessApi(client).update(false);
+    expect(seen[0]?.url).toBe('/api/system/domain-access');
+    expect(seen[0]?.init?.method).toBe('PATCH');
+    expect(JSON.parse(String(seen[0]?.init?.body))).toEqual({ allowed: false });
+    expect(policy).toEqual({ allowed: false, viaDomain: true, hosts: ['a.example'] });
   });
 });

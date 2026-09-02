@@ -9,6 +9,8 @@ const KNOWN_ERROR_CODES = new Set([
   'invalid_domain',
   'invalid_email',
   'cloudflare_token_required',
+  'dns_provider_required',
+  'dns_credentials_required',
   'invalid_port',
   'port_in_use',
   'tls_failed',

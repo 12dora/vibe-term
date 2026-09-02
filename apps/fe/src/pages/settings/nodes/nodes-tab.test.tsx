@@ -83,6 +83,7 @@ function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusRespon
       platform: 'darwin-arm64',
     },
     tls: { mode: 'none', listenerRunning: false, tlsPort: null },
+    domainAccess: { allowed: true, viaDomain: false, hosts: [] },
     ...overrides,
   };
 }
@@ -134,7 +135,9 @@ describe('NodesTab standalone', () => {
       },
     });
     const html = render({ ...MESH_MODE, mode: 'none' });
-    expect(html).toContain('data-testid="local-machine-direct-unsupported"');
+    expect(html).toMatch(
+      /data-testid="local-machine-direct-status"[^>]*data-direct-state="unsupported"/
+    );
     expect(html).toMatch(/data-testid="local-machine-direct-switch"[^>]*disabled/);
   });
 });
@@ -144,7 +147,7 @@ describe('NodesTab mesh', () => {
     localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
     const html = render(MESH_MODE);
     expect(html).toContain('data-testid="local-machine-card"');
-    expect(html).toContain('data-testid="local-machine-hub-public-url"');
+    expect(html).toContain('data-testid="local-machine-local-address"');
     expect(html).toContain('data-testid="nodes-table"');
     expect(html).toContain('data-testid="https-section"');
     expect(html).not.toContain('data-testid="https-hub-url-hint"');

@@ -96,6 +96,32 @@ describe('TlsApi.update', () => {
     });
   });
 
+  test('acme 模式可带 dnsProvider / dnsCredentials', async () => {
+    const { api, calls } = recorder([new Response(JSON.stringify(STATUS), { status: 200 })]);
+    await api.update({
+      mode: 'acme',
+      domain: 'hub.example.com',
+      email: 'ops@example.com',
+      challenge: 'dns-01',
+      dnsProvider: 'dnspod',
+      dnsCredentials: { id: '1', token: 'tok' },
+      staging: false,
+      tlsPort: 9443,
+      bindHost: '0.0.0.0',
+    });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      mode: 'acme',
+      domain: 'hub.example.com',
+      email: 'ops@example.com',
+      challenge: 'dns-01',
+      dnsProvider: 'dnspod',
+      dnsCredentials: { id: '1', token: 'tok' },
+      staging: false,
+      tlsPort: 9443,
+      bindHost: '0.0.0.0',
+    });
+  });
+
   test('acme 模式省略 cloudflareToken 时 body 里不出现该键', async () => {
     const { api, calls } = recorder([new Response(JSON.stringify(STATUS), { status: 200 })]);
     await api.update({

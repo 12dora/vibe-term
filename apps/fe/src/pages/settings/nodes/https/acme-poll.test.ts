@@ -22,6 +22,7 @@ function statusWithAcme(state: TlsAcmeState | null): TlsStatusResponse {
           lastAttemptAt: null,
           nextRenewAt: null,
           hasCloudflareToken: false,
+          dns: { provider: null, hasCredentials: false },
         };
   return { mode: 'acme', acme } as TlsStatusResponse;
 }

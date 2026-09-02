@@ -201,6 +201,7 @@ describe('HttpsSection acme', () => {
         lastAttemptAt: Date.now(),
         nextRenewAt: null,
         hasCloudflareToken: false,
+        dns: { provider: null, hasCredentials: false },
       },
     });
     const html = render();
@@ -223,6 +224,7 @@ describe('HttpsSection acme', () => {
         lastAttemptAt: Date.now(),
         nextRenewAt: Date.now() + 86_400_000,
         hasCloudflareToken: true,
+        dns: { provider: 'cloudflare', hasCredentials: true },
       },
     });
     const html = render();
@@ -231,6 +233,53 @@ describe('HttpsSection acme', () => {
     expect(html).toContain('dns propagation timeout');
     expect(html).toContain('data-testid="https-acme-next-renew"');
     expect(html).toContain('nodes.https.acme.hints.dns01');
+    // 服务商选择器与 Cloudflare 的单个令牌字段
+    expect(html).toContain('data-testid="https-acme-dns-provider"');
+    expect(html).toContain('value="cloudflare"');
+    expect(html).not.toContain('data-testid="https-acme-dnspod-id"');
+    expect(html).toContain('nodes.https.acme.credentialsStored');
+  });
+
+  test('已存 DNSPod 凭证时预选 DNSPod，并摆出 Token ID / Token 两个字段', () => {
+    status = tls({
+      mode: 'acme',
+      acme: {
+        email: 'ops@example.com',
+        domain: 'hub.example.com',
+        challenge: 'dns-01',
+        staging: false,
+        status: 'ok',
+        lastError: null,
+        lastAttemptAt: Date.now(),
+        nextRenewAt: Date.now() + 86_400_000,
+        hasCloudflareToken: false,
+        dns: { provider: 'dnspod', hasCredentials: true },
+      },
+    });
+    const html = render();
+    expect(html).toContain('value="dnspod"');
+    expect(html).toContain('data-testid="https-acme-dnspod-id"');
+    expect(html).toContain('data-testid="https-acme-dnspod-token"');
+    expect(html).not.toContain('data-testid="https-acme-token"');
+  });
+
+  test('http-01 下不摆 DNS 服务商选择器', () => {
+    status = tls({
+      mode: 'acme',
+      acme: {
+        email: 'ops@example.com',
+        domain: 'hub.example.com',
+        challenge: 'http-01',
+        staging: false,
+        status: 'idle',
+        lastError: null,
+        lastAttemptAt: null,
+        nextRenewAt: null,
+        hasCloudflareToken: false,
+        dns: { provider: null, hasCredentials: false },
+      },
+    });
+    expect(render()).not.toContain('data-testid="https-acme-dns"');
   });
 });
 
@@ -248,6 +297,7 @@ describe('HttpsSection 变更串行化', () => {
         lastAttemptAt: Date.now(),
         nextRenewAt: null,
         hasCloudflareToken: false,
+        dns: { provider: null, hasCredentials: false },
       },
     });
 
@@ -298,7 +348,7 @@ describe('HttpsSection 变更串行化', () => {
   });
 });
 
-describe('HttpsSection 有效 HTTPS', () => {
+describe('HttpsSection 状态块', () => {
   const effective = (
     source: 'builtin' | 'reverse-proxy' | 'none',
     verified: boolean,
@@ -314,10 +364,35 @@ describe('HttpsSection 有效 HTTPS', () => {
     });
     const html = render();
     expect(html).toContain('data-testid="https-effective"');
-    expect(html).toContain('nodes.https.effective.reverseProxyVerified');
-    expect(html).not.toContain('nodes.https.effective.none');
+    expect(html).toContain('nodes.https.status.accessProxyVerified');
+    expect(html).not.toContain('nodes.https.status.accessNone');
     expect(html).not.toContain('data-testid="https-proxy-hint"');
-    expect(html).toContain('data-testid="https-listener-state"');
+    // 反代模式下内置监听器本就不该起，这行只会让人以为出了问题
+    expect(html).not.toContain('data-testid="https-listener-state"');
+  });
+
+  test('配置模式一行常在，关闭模式下不摆内置监听器', () => {
+    status = tls({ mode: 'none' });
+    const html = render();
+    expect(html).toContain('data-testid="https-current-mode"');
+    expect(html).toContain('nodes.https.mode.none.title');
+    expect(html).not.toContain('data-testid="https-listener-state"');
+  });
+
+  test('自签模式下内置监听器分正在监听 / 未运行 / 启动失败三档', () => {
+    status = tls({ mode: 'selfsigned', listener: { running: true, port: 9443, error: null } });
+    expect(render()).toContain('nodes.https.status.listenerRunning');
+
+    status = tls({ mode: 'selfsigned', listener: { running: false, port: null, error: null } });
+    expect(render()).toContain('nodes.https.status.listenerStopped');
+
+    status = tls({
+      mode: 'selfsigned',
+      listener: { running: false, port: null, error: 'bind failed' },
+    });
+    const failed = render();
+    expect(failed).toContain('nodes.https.status.listenerFailed');
+    expect(failed).toContain('data-testid="https-listener-state"');
   });
 
   test('关闭模式下按公开地址推断出反代 HTTPS 时，给出切模式提示', () => {
@@ -326,14 +401,14 @@ describe('HttpsSection 有效 HTTPS', () => {
       https: effective('reverse-proxy', false, 'https://hub.example.com'),
     });
     const html = render();
-    expect(html).toContain('nodes.https.effective.reverseProxyInferred');
+    expect(html).toContain('nodes.https.status.accessProxyInferred');
     expect(html).toContain('data-testid="https-proxy-hint"');
   });
 
   test('推断不到公开地址时退回不带地址的文案', () => {
     status = tls({ mode: 'none', https: effective('reverse-proxy', false) });
     const html = render();
-    expect(html).toContain('nodes.https.effective.reverseProxy<');
+    expect(html).toContain('nodes.https.status.accessProxy<');
     expect(html).toContain('data-testid="https-proxy-hint"');
   });
 
@@ -344,14 +419,14 @@ describe('HttpsSection 有效 HTTPS', () => {
       listener: { running: true, port: 9443, error: null },
     });
     const html = render();
-    expect(html).toContain('nodes.https.effective.builtin');
+    expect(html).toContain('nodes.https.status.accessBuiltin');
     expect(html).not.toContain('data-testid="https-proxy-hint"');
   });
 
   test('没有任何 HTTPS 证据时才说未启用', () => {
     status = tls({ mode: 'none', https: effective('none', false) });
     const html = render();
-    expect(html).toContain('nodes.https.effective.none');
+    expect(html).toContain('nodes.https.status.accessNone');
     expect(html).not.toContain('data-testid="https-proxy-hint"');
   });
 

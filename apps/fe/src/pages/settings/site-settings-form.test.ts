@@ -2,10 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import type { SiteSettings } from '@tmex/shared';
 import type { LocaleCode } from '@tmex/shared';
 import {
-  buildSiteSettingsPayload,
+  type SiteSettingsLinkage,
+  type SiteSettingsWithLinkage,
+  UNLINKED_SITE_SETTINGS,
+  buildSiteSettingsPatch,
   createDefaultSiteSettingsDraft,
   createLanguagePreviewController,
+  hasSiteSettingsChanges,
+  planSiteSettingsSave,
   resolveLanguageSwitch,
+  siteSettingsLinkage,
   siteSettingsToDraft,
 } from './site-settings-form';
 
@@ -87,32 +93,109 @@ describe('siteSettingsToDraft', () => {
   });
 });
 
-describe('buildSiteSettingsPayload', () => {
-  test('注水后直接保存不会把 SSH 重连配置重置为默认值', () => {
-    const draft = siteSettingsToDraft(makeSettings());
-    const payload = buildSiteSettingsPayload(draft);
+describe('buildSiteSettingsPatch', () => {
+  test('只带改动过的字段：未动的 SSH 重连配置不进 PATCH', () => {
+    const baseline = siteSettingsToDraft(makeSettings());
+    const patch = buildSiteSettingsPatch(baseline, { ...baseline, siteName: 'renamed' });
 
-    expect(payload.sshReconnectMaxRetries).toBe(8);
-    expect(payload.sshReconnectDelaySeconds).toBe(45);
+    expect(patch).toEqual({ siteName: 'renamed' });
   });
 
-  test('仅修改其他字段时 SSH 重连配置保持原值', () => {
-    const draft = { ...siteSettingsToDraft(makeSettings()), siteName: 'renamed' };
-    const payload = buildSiteSettingsPayload(draft);
+  test('一个字段都没动：空 PATCH', () => {
+    const baseline = siteSettingsToDraft(makeSettings());
 
-    expect(payload).toEqual({
-      siteName: 'renamed',
-      siteUrl: 'https://tmex.example.com',
-      language: 'zh_CN',
-      bellThrottleSeconds: 12,
-      notificationThrottleSeconds: 7,
-      enableBrowserNotificationToast: false,
-      enableNotificationPush: false,
-      enableBellPush: false,
-      enableBellSound: false,
-      sshReconnectMaxRetries: 8,
-      sshReconnectDelaySeconds: 45,
+    expect(buildSiteSettingsPatch(baseline, { ...baseline })).toEqual({});
+  });
+
+  test('skip 里的字段即使改了也不带上（托管字段）', () => {
+    const baseline = siteSettingsToDraft(makeSettings());
+    const draft = { ...baseline, siteUrl: 'https://other.example', bellThrottleSeconds: 30 };
+    const patch = buildSiteSettingsPatch(baseline, draft, new Set(['siteUrl']));
+
+    expect(patch).toEqual({ bellThrottleSeconds: 30 });
+  });
+});
+
+describe('siteSettingsLinkage', () => {
+  test('mesh 下的四个字段原样读出', () => {
+    const settings: SiteSettingsWithLinkage = {
+      ...makeSettings(),
+      effectiveSiteUrl: 'https://hub.example',
+      siteUrlEditable: false,
+      siteNameLinkedToNode: true,
+      nodeId: 'abc',
+    };
+
+    expect(siteSettingsLinkage(settings)).toEqual({
+      siteNameLinkedToNode: true,
+      siteUrlEditable: false,
+      effectiveSiteUrl: 'https://hub.example',
+      nodeId: 'abc',
     });
+  });
+
+  test('老服务端不下发这些字段：退回可自由编辑、不联动', () => {
+    expect(siteSettingsLinkage(makeSettings())).toEqual(UNLINKED_SITE_SETTINGS);
+  });
+});
+
+describe('planSiteSettingsSave', () => {
+  const baseline = siteSettingsToDraft(makeSettings());
+  const meshLinkage: SiteSettingsLinkage = {
+    siteNameLinkedToNode: true,
+    siteUrlEditable: false,
+    effectiveSiteUrl: 'https://hub.example',
+    nodeId: 'node-1',
+  };
+
+  test('未联动：改名走 PATCH，没有 rename', () => {
+    const plan = planSiteSettingsSave(
+      baseline,
+      { ...baseline, siteName: 'renamed' },
+      UNLINKED_SITE_SETTINGS
+    );
+
+    expect(plan).toEqual({ renameNodeTo: null, patch: { siteName: 'renamed' } });
+    expect(hasSiteSettingsChanges(plan)).toBe(true);
+  });
+
+  test('联动时只改了名字：走 rename，一条 PATCH 都不发', () => {
+    const plan = planSiteSettingsSave(baseline, { ...baseline, siteName: ' studio ' }, meshLinkage);
+
+    expect(plan).toEqual({ renameNodeTo: 'studio', patch: null });
+  });
+
+  test('联动时名字没变：既不 rename 也不 PATCH', () => {
+    const plan = planSiteSettingsSave(baseline, { ...baseline }, meshLinkage);
+
+    expect(plan).toEqual({ renameNodeTo: null, patch: null });
+    expect(hasSiteSettingsChanges(plan)).toBe(false);
+  });
+
+  test('联动时名字被清空：不发一条把节点改成空名的 rename', () => {
+    const plan = planSiteSettingsSave(baseline, { ...baseline, siteName: '   ' }, meshLinkage);
+
+    expect(plan.renameNodeTo).toBeNull();
+  });
+
+  test('地址不可编辑：即使草稿被改也不进 PATCH，其余字段照常', () => {
+    const plan = planSiteSettingsSave(
+      baseline,
+      { ...baseline, siteUrl: 'https://tampered.example', language: 'en_US' },
+      meshLinkage
+    );
+
+    expect(plan.patch).toEqual({ language: 'en_US' });
+  });
+
+  test('改名与其它字段同时改：两条动作各自成立', () => {
+    const plan = planSiteSettingsSave(
+      baseline,
+      { ...baseline, siteName: 'studio', bellThrottleSeconds: 20 },
+      meshLinkage
+    );
+
+    expect(plan).toEqual({ renameNodeTo: 'studio', patch: { bellThrottleSeconds: 20 } });
   });
 });
 

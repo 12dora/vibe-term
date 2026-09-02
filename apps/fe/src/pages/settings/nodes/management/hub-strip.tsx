@@ -1,4 +1,5 @@
-// Hub 集群条：一台 hub 一枚 chip，标出主 / 备、在线态、谁收写入、本入口挂在哪一台。
+// Hub 集群条：一台 hub 一枚 chip，正文只写「名字 + 主 / 备」，在线态、写入归属与挂载关系
+// 分别落在状态点、图标与悬浮详情里。
 //
 // 只有两台及以上 hub 才渲染：单 hub 用户（绝大多数）看到的版式与多 hub 之前完全一致。
 
@@ -89,14 +90,19 @@ export function hubAuthorizationText(t: Translate, hub: MeshHubEndpoint): string
   return key ? t('nodes.hubs.authorization.label', { value: t(key) }) : null;
 }
 
-/** chip 的悬浮详情：地址那一行 + 授权来源，最近连不上时再补「最近尝试 / 最近错误」两行。 */
+/**
+ * chip 的悬浮详情：地址那一行 + 写入归属 + 授权来源，最近连不上时再补「最近尝试 / 最近错误」两行。
+ * chip 本体只留「名字 + 主 / 备」，写入与挂载这类次要信息一律收进 title。
+ */
 export function hubChipTitle(
   t: Translate,
   hub: MeshHubEndpoint,
   attached: boolean,
-  failure: MeshHubCandidate | null
+  failure: MeshHubCandidate | null,
+  writer = false
 ): string {
   const lines = [hubDetailText(t, hub, attached)];
+  if (writer) lines.push(t('nodes.hubs.writer'));
   const authorization = hubAuthorizationText(t, hub);
   if (authorization) lines.push(authorization);
   if (failure) {
@@ -157,7 +163,7 @@ function HubChip({
         'inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]',
         attached ? 'border-primary/50 bg-primary/5' : 'border-border/60'
       )}
-      title={hubChipTitle(t, hub, attached, failure)}
+      title={hubChipTitle(t, hub, attached, failure, writer)}
       data-testid={`nodes-hub-chip-${hub.nodeId}`}
       data-hub-mode={hub.mode}
       data-hub-attached={attached ? 'true' : 'false'}
@@ -172,11 +178,6 @@ function HubChip({
       />
       <span className="truncate font-medium">{hubLabel(hub)}</span>
       <span className="text-muted-foreground">{hubModeLabel(t, hub.mode)}</span>
-      {writer && (
-        <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
-          {t('nodes.hubs.writer')}
-        </span>
-      )}
       {failure && (
         <TriangleAlert
           className="size-3 shrink-0 text-amber-500"

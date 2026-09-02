@@ -55,6 +55,15 @@ describe('候选地址的归一与匹配', () => {
 });
 
 describe('chip 的悬浮详情', () => {
+  test('写入归属只进悬浮详情，不占 chip 正文', () => {
+    expect(hubChipTitle(t, hub({ nodeId: 'h1' }), false, null, true)).toContain(
+      'nodes.hubs.writer'
+    );
+    expect(hubChipTitle(t, hub({ nodeId: 'h1' }), false, null, false)).not.toContain(
+      'nodes.hubs.writer'
+    );
+  });
+
   test('没有失败记录时只有原来那一行', () => {
     const title = hubChipTitle(t, hub({ nodeId: 'h1' }), false, null);
     expect(title).toContain('nodes.hubs.detail');
@@ -145,6 +154,18 @@ describe('HubStrip', () => {
     // 静态渲染下 t 只回键名，插值看不到；有没有这一行才是这里要证的
     expect(chipTag(html, 'h1')).toContain('nodes.hubs.authorization.label');
     expect(chipTag(html, 'h2')).not.toContain('nodes.hubs.authorization');
+  });
+
+  test('chip 正文只有名字与主 / 备：写入不再单占一枚徽标', () => {
+    const html = renderToStaticMarkup(<HubStrip hubs={hubs} attachedHubId="h1" writerHubId="h1" />);
+    const open = chipTag(html, 'h1');
+    const bodyAt = html.indexOf(open) + open.length;
+    const body = html.slice(bodyAt, html.lastIndexOf('<', html.indexOf('nodes-hub-chip-h2')));
+    // 写入归属只剩开标签上的数据属性与 title 里那一行，chip 正文不再为它留位置
+    expect(open).toContain('data-hub-writer="true"');
+    expect(open).toContain('nodes.hubs.writer');
+    expect(body).not.toContain('nodes.hubs.writer');
+    expect(body).toContain('nodes.hubs.active');
   });
 
   test('只有一台 hub 时整条不渲染', () => {

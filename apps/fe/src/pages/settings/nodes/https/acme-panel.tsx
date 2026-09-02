@@ -1,46 +1,47 @@
 // Let's Encrypt 模式。签发是后台任务：保存只把状态置为 pending，成败要靠轮询看。
 //
 // 失败原因几乎全是「校验通道不通」，所以错误旁边一定要给出人话解释：
-// http-01 需要公网 80 能打到本机明文端口，dns-01 需要一个有 Zone:DNS:Edit 的 Cloudflare token。
+// http-01 需要公网 80 能打到本机明文端口，dns-01 需要所选 DNS 服务商的 API 密钥。
 
 import type {
   TlsAcmeStatus,
-  TlsChallenge,
+  TlsDnsProviderId,
   TlsStatusResponse,
 } from '@tmex/api-client/local/tls-types';
 import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 import { Switch } from '@tmex/ui/switch';
 import { Loader2, RefreshCw, Save } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Field, InfoRow, ListenerFields, Notice } from './parts';
 import {
+  type AcmeDraft,
+  type AcmeDraftErrors,
+  type AcmeSaveDraft,
+  TLS_DNS_PROVIDERS,
+  acmeSavePayload,
   formatTimestamp,
-  validateBindHost,
-  validateDomain,
-  validateEmail,
-  validatePort,
+  validateAcmeDraft,
 } from './tls-form';
 
-interface AcmeDraft {
-  domain: string;
-  email: string;
-  challenge: TlsChallenge;
-  cloudflareToken: string;
-  staging: boolean;
-  tlsPort: string;
-  bindHost: string;
+/** 旧节点不下发 `acme.dns`，此时只有 Cloudflare 可能存过凭证（旧字段 `hasCloudflareToken`）。 */
+function storedProvider(acme: TlsAcmeStatus | null): TlsDnsProviderId | null {
+  if (acme?.dns?.provider) return acme.dns.provider;
+  return acme?.hasCloudflareToken ? 'cloudflare' : null;
 }
 
-interface DraftErrors {
-  domain?: string;
-  email?: string;
-  token?: string;
-  port?: string;
-  host?: string;
+function hasStoredCredentials(acme: TlsAcmeStatus | null, provider: TlsDnsProviderId): boolean {
+  if (acme?.dns) return acme.dns.provider === provider && acme.dns.hasCredentials;
+  return provider === 'cloudflare' && Boolean(acme?.hasCloudflareToken);
 }
+
+const PROVIDER_LABEL: Record<TlsDnsProviderId, string> = {
+  cloudflare: 'nodes.https.acme.dnsProviderCloudflare',
+  dnspod: 'nodes.https.acme.dnsProviderDnspod',
+};
 
 const STATE_VARIANT: Record<TlsAcmeStatus['status'], 'secondary' | 'outline' | 'destructive'> = {
   idle: 'outline',
@@ -65,15 +66,7 @@ export function AcmePanel({
   busy: boolean;
   savePending: boolean;
   renewPending: boolean;
-  onSave: (draft: {
-    domain: string;
-    email: string;
-    challenge: TlsChallenge;
-    cloudflareToken?: string;
-    staging: boolean;
-    tlsPort: number;
-    bindHost: string;
-  }) => void;
+  onSave: (draft: AcmeSaveDraft) => void;
   onRenew: () => void;
 }) {
   const { t } = useTranslation();
@@ -82,42 +75,24 @@ export function AcmePanel({
     domain: acme?.domain || defaultDomain,
     email: acme?.email ?? '',
     challenge: acme?.challenge ?? 'http-01',
+    dnsProvider: storedProvider(acme) ?? 'cloudflare',
     cloudflareToken: '',
+    dnspodId: '',
+    dnspodToken: '',
     staging: acme?.staging ?? false,
     tlsPort: String(status.tlsPort),
     bindHost: status.bindHost,
   }));
-  const [errors, setErrors] = useState<DraftErrors>({});
+  const [errors, setErrors] = useState<AcmeDraftErrors>({});
 
-  const hasStoredToken = Boolean(acme?.hasCloudflareToken);
+  const stored = hasStoredCredentials(acme, draft.dnsProvider);
   const patch = (next: Partial<AcmeDraft>) => setDraft((prev) => ({ ...prev, ...next }));
 
   const submit = () => {
-    const next: DraftErrors = {};
-    const domainError = validateDomain(draft.domain);
-    if (domainError) next.domain = domainError;
-    const emailError = validateEmail(draft.email);
-    if (emailError) next.email = emailError;
-    const portError = validatePort(draft.tlsPort);
-    if (portError) next.port = portError;
-    const hostError = validateBindHost(draft.bindHost);
-    if (hostError) next.host = hostError;
-    const token = draft.cloudflareToken.trim();
-    if (draft.challenge === 'dns-01' && !token && !hasStoredToken) {
-      next.token = 'nodes.https.validation.tokenRequired';
-    }
+    const next = validateAcmeDraft(draft, stored);
     setErrors(next);
     if (Object.keys(next).length > 0) return;
-
-    onSave({
-      domain: draft.domain.trim(),
-      email: draft.email.trim(),
-      challenge: draft.challenge,
-      ...(draft.challenge === 'dns-01' && token ? { cloudflareToken: token } : {}),
-      staging: draft.staging,
-      tlsPort: Number(draft.tlsPort.trim()),
-      bindHost: draft.bindHost.trim(),
-    });
+    onSave(acmeSavePayload(draft));
   };
 
   return (
@@ -197,26 +172,91 @@ export function AcmePanel({
       </fieldset>
 
       {draft.challenge === 'dns-01' && (
-        <Field
-          id="https-acme-token"
-          label={t('nodes.https.acme.cloudflareToken')}
-          hint={
-            hasStoredToken
-              ? t('nodes.https.acme.cloudflareTokenStored')
-              : t('nodes.https.acme.cloudflareTokenHint')
-          }
-          {...(errors.token ? { error: t(errors.token) } : {})}
-        >
-          <Input
-            id="https-acme-token"
-            data-testid="https-acme-token"
-            type="password"
-            autoComplete="off"
-            value={draft.cloudflareToken}
-            disabled={busy}
-            onChange={(event) => patch({ cloudflareToken: event.target.value })}
-          />
-        </Field>
+        <div className="space-y-3" data-testid="https-acme-dns">
+          <Field id="https-acme-dns-provider" label={t('nodes.https.acme.dnsProvider')}>
+            <Select
+              value={draft.dnsProvider}
+              onValueChange={(next) => next && patch({ dnsProvider: next as TlsDnsProviderId })}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-48"
+                disabled={busy}
+                data-testid="https-acme-dns-provider"
+              >
+                <SelectValue>{t(PROVIDER_LABEL[draft.dnsProvider])}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {TLS_DNS_PROVIDERS.map((provider) => (
+                  <SelectItem
+                    key={provider}
+                    value={provider}
+                    data-testid={`https-acme-dns-provider-${provider}`}
+                  >
+                    {t(PROVIDER_LABEL[provider])}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+
+          {draft.dnsProvider === 'cloudflare' ? (
+            <Field
+              id="https-acme-token"
+              label={t('nodes.https.acme.dnsToken')}
+              hint={
+                stored
+                  ? t('nodes.https.acme.credentialsStored')
+                  : t('nodes.https.acme.cloudflareTokenHint')
+              }
+              {...(errors.token ? { error: t(errors.token) } : {})}
+            >
+              <Input
+                id="https-acme-token"
+                data-testid="https-acme-token"
+                type="password"
+                autoComplete="off"
+                value={draft.cloudflareToken}
+                disabled={busy}
+                onChange={(event) => patch({ cloudflareToken: event.target.value })}
+              />
+            </Field>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                id="https-acme-dnspod-id"
+                label={t('nodes.https.acme.dnspodId')}
+                hint={stored ? t('nodes.https.acme.credentialsStored') : undefined}
+                {...(errors.tokenId ? { error: t(errors.tokenId) } : {})}
+              >
+                <Input
+                  id="https-acme-dnspod-id"
+                  data-testid="https-acme-dnspod-id"
+                  autoComplete="off"
+                  value={draft.dnspodId}
+                  disabled={busy}
+                  onChange={(event) => patch({ dnspodId: event.target.value })}
+                />
+              </Field>
+              <Field
+                id="https-acme-dnspod-token"
+                label={t('nodes.https.acme.dnspodToken')}
+                hint={t('nodes.https.acme.dnspodHint')}
+                {...(errors.token ? { error: t(errors.token) } : {})}
+              >
+                <Input
+                  id="https-acme-dnspod-token"
+                  data-testid="https-acme-dnspod-token"
+                  type="password"
+                  autoComplete="off"
+                  value={draft.dnspodToken}
+                  disabled={busy}
+                  onChange={(event) => patch({ dnspodToken: event.target.value })}
+                />
+              </Field>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="flex items-start justify-between gap-4">

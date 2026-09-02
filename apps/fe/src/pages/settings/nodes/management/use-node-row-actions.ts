@@ -135,24 +135,19 @@ export function useNodeRowActions(
   { hubApi, mode, api, prompt, onChanged, writerPublicUrl }: NodeActionDeps
 ) {
   const { t } = useTranslation();
-  const [renaming, setRenaming] = useState(false);
-  const [nameDraft, setNameDraft] = useState(row.name);
   const [busy, setBusy] = useState(false);
 
-  const rename = useCallback(async () => {
-    if (!hubApi) return;
-    setBusy(true);
-    try {
-      await hubApi.rename(row.id, nameDraft);
-      setRenaming(false);
-      toast.success(t('nodes.rename.done'));
-      onChanged();
-    } catch (err) {
-      toast.error(actionErrorText(t, err, { writerPublicUrl }));
-    } finally {
-      setBusy(false);
-    }
-  }, [hubApi, nameDraft, onChanged, row.id, t, writerPublicUrl]);
+  /**
+   * 重命名：**抛错不吞**。调用方是节点详情框，它要把这条错误与「域名访问」那条并排列出来，
+   * 在这里弹 toast 只会变成两套互相打架的反馈。
+   */
+  const rename = useCallback(
+    async (name: string) => {
+      if (!hubApi) throw new Error(t('nodes.hubOffline'));
+      await hubApi.rename(row.id, name);
+    },
+    [hubApi, row.id, t]
+  );
 
   /**
    * 凭据走 `withSigner`（**不**进 5 分钟复用窗口）：吊销是破坏性动作，每次都要用户当场确认；
@@ -175,7 +170,7 @@ export function useNodeRowActions(
     }
   }, [api, mode, onChanged, prompt, row, t, writerPublicUrl]);
 
-  return { renaming, setRenaming, nameDraft, setNameDraft, busy, rename, revoke };
+  return { busy, rename, revoke };
 }
 
 export interface BulkRevokeDeps {

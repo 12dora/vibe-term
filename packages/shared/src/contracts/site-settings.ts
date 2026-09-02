@@ -22,8 +22,22 @@ export interface SiteSettings {
   updatedAt: string;
 }
 
-export interface GetSiteSettingsResponse {
-  settings: SiteSettings;
+/** mesh 运行态投影：站点访问 URL / 显示名是否由节点身份托管。 */
+export interface SiteSettingsLinkFields {
+  /** 用户实际应使用的访问 URL；standalone 等于存储的 siteUrl。 */
+  effectiveSiteUrl: string | null;
+  /** mesh（hub 或 node）下为 false，站点 URL 由运行时决定。 */
+  siteUrlEditable: boolean;
+  /** mesh 下为 true：站点名与本机 mesh 节点名同步。 */
+  siteNameLinkedToNode: boolean;
+  /** mesh 下为本机 node id，standalone 为 null。 */
+  nodeId: string | null;
+}
+
+export type SiteSettingsView = SiteSettings & SiteSettingsLinkFields;
+
+export interface GetSiteSettingsResponse extends SiteSettingsLinkFields {
+  settings: SiteSettingsView;
 }
 
 export interface UpdateSiteSettingsRequest {
@@ -41,6 +55,6 @@ export interface UpdateSiteSettingsRequest {
   disabledNotificationChannels?: string[];
 }
 
-export interface UpdateSiteSettingsResponse {
-  settings: SiteSettings;
+export interface UpdateSiteSettingsResponse extends SiteSettingsLinkFields {
+  settings: SiteSettingsView;
 }

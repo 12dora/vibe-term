@@ -29,6 +29,7 @@ const STATUS: LocalStatusResponse = {
     platform: 'darwin-arm64',
   },
   tls: { mode: 'none', listenerRunning: false, tlsPort: null },
+  domainAccess: { allowed: true, viaDomain: false, hosts: [] },
 };
 
 function errorBody(code: string, message: string, status: number): Response {

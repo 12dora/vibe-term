@@ -1,5 +1,6 @@
-// 节点表：成员集 + 心跳合并后的一行一 node，重命名 / 吊销 / 升级动作。
-// hub 不可达时重命名与吊销禁用——它们走 hub 控制面；升级只依赖入口 → 目标的 peer link，
+// 节点表：成员集 + 心跳合并后的一行一 node，升级 / 详情 / 吊销三个动作。
+// 重命名与「允许域名访问」都收进详情框（「更多」），表里不再有行内输入框。
+// hub 不可达时详情里的改名与吊销禁用——它们走 hub 控制面；升级只依赖入口 → 目标的 peer link，
 // 因此**不**跟 hub 在线绑定，只看目标是否在线、是否已登录。
 // 表格本体铺在「节点管理」卡片里，只留一层浅边框做横向滚动容器。
 
@@ -7,20 +8,21 @@ import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { Button } from '@tmex/ui/button';
 import { Checkbox } from '@tmex/ui/checkbox';
-import { Input } from '@tmex/ui/input';
 import {
   ArrowLeftRight,
   Download,
+  Ellipsis,
   Loader2,
-  Pencil,
   ShieldAlert,
   Square,
   SquareCheckBig,
   SquareMinus,
   X,
 } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { hubDetailText, hubModeLabel } from './hub-strip';
+import { NodeDetailDialog } from './node-detail-dialog';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 import { upgradeBlockReason } from './upgrade-batch';
 import type { HubRoleSwitchController } from './use-hub-role-switch';
@@ -119,8 +121,8 @@ function NodeRowView({
   roleSwitch: HubRoleSwitchController;
 } & NodeActionDeps) {
   const { t } = useTranslation();
-  const { renaming, setRenaming, nameDraft, setNameDraft, busy, rename, revoke } =
-    useNodeRowActions(row, deps);
+  const { busy, rename, revoke } = useNodeRowActions(row, deps);
+  const [detailOpen, setDetailOpen] = useState(false);
   const uninstalling = isUninstalling(row, uninstall.scheduledIds);
   const writable = deps.hubOnline && deps.hubWritable;
   const disabledHint = deps.hubWritable
@@ -145,34 +147,20 @@ function NodeRowView({
         />
       </td>
       <Td>
-        {renaming ? (
-          <div className="flex items-center gap-1">
-            <Input
-              value={nameDraft}
-              className="h-7 w-32"
-              data-testid={`nodes-rename-input-${row.id}`}
-              onChange={(event) => setNameDraft(event.target.value)}
-            />
-            <Button type="button" size="xs" disabled={busy} onClick={() => void rename()}>
-              {t('nodes.rename.save')}
-            </Button>
-          </div>
-        ) : (
-          <span className="flex items-center gap-1.5">
-            <span className="truncate font-medium">{row.name}</span>
-            {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
-            {row.isHub && (
-              <>
-                <HubTag row={row} hubDetails={deps.hubDetails} />
-                <HubRoleSwitchButton
-                  row={row}
-                  roleSwitch={roleSwitch}
-                  rowBusy={uninstalling || isUpgradeBusy(deps.upgrade.entryOf(row.id).phase)}
-                />
-              </>
-            )}
-          </span>
-        )}
+        <span className="flex items-center gap-1.5">
+          <span className="truncate font-medium">{row.name}</span>
+          {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
+          {row.isHub && (
+            <>
+              <HubTag row={row} hubDetails={deps.hubDetails} />
+              <HubRoleSwitchButton
+                row={row}
+                roleSwitch={roleSwitch}
+                rowBusy={uninstalling || isUpgradeBusy(deps.upgrade.entryOf(row.id).phase)}
+              />
+            </>
+          )}
+        </span>
       </Td>
       <Td>
         <StatusCell
@@ -201,17 +189,18 @@ function NodeRowView({
       </Td>
       <Td>
         <div className="flex items-center gap-1">
+          <UpgradeButton row={row} upgrade={deps.upgrade} blocked={uninstalling} />
+          <UpgradeCancelButton row={row} upgrade={deps.upgrade} />
+          {/* 详情里既有只读信息也有节点本地的域名访问策略，hub 不可写时照样能开。 */}
           <Button
             type="button"
             size="xs"
             variant="outline"
-            disabled={!writable || busy || uninstalling}
-            title={uninstalling ? t('nodes.uninstall.busy') : disabledHint}
-            onClick={() => setRenaming((value) => !value)}
-            data-testid={`nodes-rename-${row.id}`}
+            onClick={() => setDetailOpen(true)}
+            data-testid={`nodes-detail-${row.id}`}
           >
-            <Pencil />
-            {t('nodes.actions.rename')}
+            <Ellipsis />
+            {t('nodes.actions.more')}
           </Button>
           {/* 卸载受理后目标随即离线，证书还挂着：这个按钮必须留着，用户刷新后能补上吊销。 */}
           <Button
@@ -226,9 +215,18 @@ function NodeRowView({
             <ShieldAlert />
             {t('nodes.actions.revoke')}
           </Button>
-          <UpgradeButton row={row} upgrade={deps.upgrade} blocked={uninstalling} />
-          <UpgradeCancelButton row={row} upgrade={deps.upgrade} />
         </div>
+        {detailOpen && (
+          <NodeDetailDialog
+            row={row}
+            open
+            onOpenChange={setDetailOpen}
+            renameAvailable={writable && !uninstalling}
+            writerPublicUrl={deps.writerPublicUrl}
+            rename={rename}
+            onChanged={deps.onChanged}
+          />
+        )}
       </Td>
     </tr>
   );

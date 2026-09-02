@@ -156,20 +156,23 @@ export function useDirectMutations(api: DirectApi, callbacks: DirectMutationCall
   };
 }
 
-/** 徽章列表：不支持时只有一枚，支持时按「支持 / 安装 / 生效 / 已停用」顺序累加。 */
-function directBadges(direct: LocalDirectStatus, t: Translate): Array<[string, string]> {
-  const { supported, installed, enabled, capable, version } = direct;
-  if (!supported) return [['unsupported', t('nodes.machine.directUnsupported')]];
-  const installedText = version
-    ? t('nodes.machine.directInstalledVersion', { version })
-    : t('nodes.machine.directInstalled');
-  const badges: Array<[string, string]> = [
-    ['supported', t('nodes.machine.directSupported')],
-    ['installed', installed ? installedText : t('nodes.machine.directNotInstalled')],
-  ];
-  if (installed && capable) badges.push(['active', t('nodes.machine.directActive')]);
-  if (installed && !enabled) badges.push(['disabled', t('nodes.machine.directDisabled')]);
-  return badges;
+/** 单枚状态徽章：不支持 → 未安装 → 已安装（带版本）。启用与否交给同一行的开关表达。 */
+export function directStatusBadge(
+  direct: LocalDirectStatus,
+  t: Translate
+): { state: string; text: string } {
+  if (!direct.supported) {
+    return { state: 'unsupported', text: t('nodes.machine.directUnsupported') };
+  }
+  if (!direct.installed) {
+    return { state: 'not-installed', text: t('nodes.machine.directNotInstalled') };
+  }
+  return {
+    state: 'installed',
+    text: direct.version
+      ? t('nodes.machine.directInstalledVersion', { version: direct.version })
+      : t('nodes.machine.directInstalled'),
+  };
 }
 
 export function DirectSection({
@@ -189,37 +192,45 @@ export function DirectSection({
   const { supported, installed, enabled } = direct;
   const primary = installed ? 'remove' : 'install';
   const PrimaryIcon = installed ? Trash2 : Download;
+  const badge = directStatusBadge(direct, t);
   return (
     <>
       <Row label={t('nodes.machine.direct')}>
-        <div className="flex flex-wrap items-center gap-2">
-          {directBadges(direct, t).map(([id, text]) => (
-            <Badge key={id} variant="outline" data-testid={`local-machine-direct-${id}`}>
-              {text}
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge
+              variant="outline"
+              data-testid="local-machine-direct-status"
+              data-direct-state={badge.state}
+            >
+              {badge.text}
             </Badge>
-          ))}
-          <Button
-            type="button"
-            size="xs"
-            variant={installed ? 'destructive' : 'outline'}
-            disabled={!supported || busy}
-            onClick={() => onAction(primary)}
-            data-testid={`local-machine-direct-${primary}`}
-          >
-            {pending === primary ? <Loader2 className="animate-spin" /> : <PrimaryIcon />}
-            {t(installed ? 'nodes.machine.directRemove' : 'nodes.machine.directInstall')}
-          </Button>
-        </div>
-      </Row>
-
-      <Row label={t('nodes.machine.directSwitch')}>
-        <div className="flex flex-wrap items-center gap-2">
-          <Switch
-            checked={installed && enabled}
-            disabled={!supported || !installed || busy}
-            onCheckedChange={(checked) => onAction(checked ? 'enable' : 'disable')}
-            data-testid="local-machine-direct-switch"
-          />
+            <Button
+              type="button"
+              size="xs"
+              variant={installed ? 'destructive' : 'outline'}
+              disabled={!supported || busy}
+              onClick={() => onAction(primary)}
+              data-testid={`local-machine-direct-${primary}`}
+            >
+              {pending === primary ? <Loader2 className="animate-spin" /> : <PrimaryIcon />}
+              {t(installed ? 'nodes.machine.directRemove' : 'nodes.machine.directInstall')}
+            </Button>
+            <label
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              htmlFor="local-machine-direct-switch"
+            >
+              {t('nodes.machine.directEnable')}
+              <Switch
+                id="local-machine-direct-switch"
+                size="sm"
+                checked={installed && enabled}
+                disabled={!supported || !installed || busy}
+                onCheckedChange={(checked) => onAction(checked ? 'enable' : 'disable')}
+                data-testid="local-machine-direct-switch"
+              />
+            </label>
+          </div>
           {supported && !installed && (
             <span className="text-xs text-muted-foreground" data-testid="local-machine-direct-hint">
               {t('nodes.machine.directSwitchHint')}

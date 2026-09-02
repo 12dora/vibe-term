@@ -2,6 +2,7 @@ import {
   type LocaleCode,
   PRODUCT_NAME,
   type SiteSettings,
+  type SiteSettingsLinkFields,
   type UpdateSiteSettingsRequest,
 } from '@tmex/shared';
 
@@ -60,20 +61,99 @@ export function siteSettingsToDraft(settings: SiteSettings): SiteSettingsDraft {
   };
 }
 
-export function buildSiteSettingsPayload(draft: SiteSettingsDraft): UpdateSiteSettingsRequest {
+/**
+ * `GET /api/settings/site` 会随设置一并下发 `SiteSettingsLinkFields`，但站点设置 store 的
+ * 返回类型仍是 `SiteSettings`（运行时带着这几个字段）：这里按可选收，老服务端不下发时
+ * 一律落回「可自由编辑、不联动」的旧行为。
+ */
+export type SiteSettingsWithLinkage = SiteSettings & Partial<SiteSettingsLinkFields>;
+
+export interface SiteSettingsLinkage {
+  /** 站点名称即节点名称：改名要经 hub 的 rename 接口，不能走 PATCH。 */
+  siteNameLinkedToNode: boolean;
+  /** 访问地址可否在本页编辑；mesh 下由 Hub 公开地址决定，只读。 */
+  siteUrlEditable: boolean;
+  /** 实际生效的访问地址；未知为 `null`。 */
+  effectiveSiteUrl: string | null;
+  /** 联动的节点 id，即 rename 的目标；未知为 `null`。 */
+  nodeId: string | null;
+}
+
+export const UNLINKED_SITE_SETTINGS: SiteSettingsLinkage = {
+  siteNameLinkedToNode: false,
+  siteUrlEditable: true,
+  effectiveSiteUrl: null,
+  nodeId: null,
+};
+
+export function siteSettingsLinkage(settings: SiteSettingsWithLinkage): SiteSettingsLinkage {
   return {
-    siteName: draft.siteName,
-    siteUrl: draft.siteUrl,
-    language: draft.language,
-    bellThrottleSeconds: draft.bellThrottleSeconds,
-    notificationThrottleSeconds: draft.notificationThrottleSeconds,
-    enableBrowserNotificationToast: draft.enableBrowserNotificationToast,
-    enableNotificationPush: draft.enableNotificationPush,
-    enableBellPush: draft.enableBellPush,
-    enableBellSound: draft.enableBellSound,
-    sshReconnectMaxRetries: draft.sshReconnectMaxRetries,
-    sshReconnectDelaySeconds: draft.sshReconnectDelaySeconds,
+    siteNameLinkedToNode: settings.siteNameLinkedToNode === true,
+    siteUrlEditable: settings.siteUrlEditable !== false,
+    effectiveSiteUrl: settings.effectiveSiteUrl ?? null,
+    nodeId: settings.nodeId ?? null,
   };
+}
+
+/** 草稿字段与 `UpdateSiteSettingsRequest` 同名同义，逐字段对比即可拼出增量。 */
+const PATCH_KEYS = [
+  'siteName',
+  'siteUrl',
+  'language',
+  'bellThrottleSeconds',
+  'notificationThrottleSeconds',
+  'enableBrowserNotificationToast',
+  'enableNotificationPush',
+  'enableBellPush',
+  'enableBellSound',
+  'sshReconnectMaxRetries',
+  'sshReconnectDelaySeconds',
+] as const satisfies readonly (keyof SiteSettingsDraft)[];
+
+/**
+ * 只把与已保存值不同的字段放进 PATCH。mesh 模式下服务端会以 `site_url_managed` /
+ * `site_name_managed` 拒绝被托管字段的**变更**，全量回传等于把整张表押在「值恰好没变」上。
+ */
+export function buildSiteSettingsPatch(
+  baseline: SiteSettingsDraft,
+  draft: SiteSettingsDraft,
+  skip: ReadonlySet<keyof SiteSettingsDraft> = new Set()
+): UpdateSiteSettingsRequest {
+  const patch: Record<string, unknown> = {};
+  for (const key of PATCH_KEYS) {
+    if (skip.has(key) || baseline[key] === draft[key]) continue;
+    patch[key] = draft[key];
+  }
+  return patch as UpdateSiteSettingsRequest;
+}
+
+export interface SiteSettingsSavePlan {
+  /** 要经 hub 改的节点名（已 trim）；不改名时为 `null`。 */
+  renameNodeTo: string | null;
+  /** 站点设置的增量；没有字段变化时为 `null`。 */
+  patch: UpdateSiteSettingsRequest | null;
+}
+
+/** 一次「保存」拆成的动作：联动的名字走 hub rename，其余字段走站点设置 PATCH。 */
+export function planSiteSettingsSave(
+  baseline: SiteSettingsDraft,
+  draft: SiteSettingsDraft,
+  linkage: SiteSettingsLinkage
+): SiteSettingsSavePlan {
+  const skip = new Set<keyof SiteSettingsDraft>();
+  let renameNodeTo: string | null = null;
+  if (linkage.siteNameLinkedToNode) {
+    skip.add('siteName');
+    const name = draft.siteName.trim();
+    if (name && name !== baseline.siteName) renameNodeTo = name;
+  }
+  if (!linkage.siteUrlEditable) skip.add('siteUrl');
+  const patch = buildSiteSettingsPatch(baseline, draft, skip);
+  return { renameNodeTo, patch: Object.keys(patch).length > 0 ? patch : null };
+}
+
+export function hasSiteSettingsChanges(plan: SiteSettingsSavePlan): boolean {
+  return plan.renameNodeTo !== null || plan.patch !== null;
 }
 
 /**

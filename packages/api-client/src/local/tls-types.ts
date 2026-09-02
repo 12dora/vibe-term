@@ -6,6 +6,12 @@ export type TlsMode = 'none' | 'external' | 'selfsigned' | 'acme';
 
 export type TlsChallenge = 'http-01' | 'dns-01';
 
+export type TlsDnsProviderId = 'cloudflare' | 'dnspod';
+
+export type TlsCloudflareDnsCredentials = { token: string };
+export type TlsDnspodDnsCredentials = { id: string; token: string };
+export type TlsDnsCredentials = TlsCloudflareDnsCredentials | TlsDnspodDnsCredentials;
+
 /** ACME 签发状态机：`pending` 期间前端需要轮询。 */
 export type TlsAcmeState = 'idle' | 'pending' | 'ok' | 'error';
 
@@ -36,6 +42,8 @@ export interface TlsAcmeStatus {
   nextRenewAt: number | null;
   /** 已存过 Cloudflare token：dns-01 再次保存时可以留空表示沿用。 */
   hasCloudflareToken: boolean;
+  /** 当前 ACME dns-01 提供商；无凭证时 `provider` 仍可能为上次保存的值。 */
+  dns: { provider: TlsDnsProviderId | null; hasCredentials: boolean };
 }
 
 /**
@@ -93,6 +101,10 @@ export interface TlsUpdateAcmeRequest {
   challenge: TlsChallenge;
   /** 留空表示沿用已存的 token（`hasCloudflareToken` 为 true 时）。 */
   cloudflareToken?: string;
+  /** dns-01 提供商；省略时沿用已存，或在只传 `cloudflareToken` 时视为 cloudflare。 */
+  dnsProvider?: TlsDnsProviderId;
+  /** 与 `dnsProvider` 配套的凭证；同一提供商已有凭证时可省略。 */
+  dnsCredentials?: TlsDnsCredentials;
   staging: boolean;
   tlsPort: number;
   bindHost: string;
@@ -110,6 +122,8 @@ export type TlsErrorCode =
   | 'invalid_domain'
   | 'invalid_email'
   | 'cloudflare_token_required'
+  | 'dns_provider_required'
+  | 'dns_credentials_required'
   | 'invalid_port'
   | 'port_in_use'
   | 'tls_failed'

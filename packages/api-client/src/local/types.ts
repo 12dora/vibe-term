@@ -17,6 +17,12 @@ export interface LocalTlsStatus {
   tlsPort: number | null;
 }
 
+export interface LocalDomainAccessStatus {
+  allowed: boolean;
+  viaDomain: boolean;
+  hosts: string[];
+}
+
 export interface LocalStatusResponse {
   role: LocalRole;
   nodeEnv: 'development' | 'test' | 'production';
@@ -24,6 +30,7 @@ export interface LocalStatusResponse {
   hubPublicUrl: string | null;
   direct: LocalDirectStatus;
   tls: LocalTlsStatus;
+  domainAccess: LocalDomainAccessStatus;
 }
 
 export type LocalDirectAction = 'install' | 'remove' | 'enable' | 'disable';
