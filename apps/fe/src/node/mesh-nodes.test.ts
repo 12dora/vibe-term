@@ -5,7 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import type { AuthApi, AuthRequiredDetail, MeshNode } from '@tmex/api-client/auth/index';
 import { wsBorsh } from '@tmex/shared';
 import { bytesToHex, encodeBase64url, sha256 } from '@tmex/shared/auth';
-import type { HubNodeRow } from './hub-api';
+import { HubApiError, type HubNodeRow } from './hub-api';
 import { type NodeEventPayload, decodeMeshFrame } from './mesh-events';
 import {
   MESH_NODES_POLL_MS,
@@ -15,6 +15,8 @@ import {
   ensureFreshMeshNodes,
   findHubNodeId,
   getMeshNodesState,
+  hubCandidateIds,
+  loadHubNodes,
   mergeNodes,
   patchNodesWithEvent,
   publicKeyFingerprint,
@@ -834,5 +836,70 @@ describe('ensureFreshMeshNodes', () => {
     await Promise.resolve();
     await Promise.resolve();
     resetMeshNodesStateForTest();
+  });
+});
+
+describe('hubCandidateIds / loadHubNodes', () => {
+  const rows = (ids: string[]) => ids.map((id) => ({ id }) as unknown as HubNodeRow);
+
+  test('写者优先，其余在线 hub 机兜底，去重', () => {
+    const nodes = [
+      node({ id: 'a', isHub: true }),
+      node({ id: 'b', isHub: true }),
+      node({ id: 'c', isHub: true, online: false }),
+      node({ id: 'n' }),
+    ];
+    expect(hubCandidateIds(nodes, 'b')).toEqual(['b', 'a']);
+    expect(hubCandidateIds(nodes, null)).toEqual(['a', 'b']);
+    expect(hubCandidateIds([node({ id: 'n' })], 'zz')).toEqual(['zz']);
+  });
+
+  test('401 先补节点登录再重试同一台，成功即返回该台', async () => {
+    const calls: string[] = [];
+    let loggedIn = false;
+    const result = await loadHubNodes(['b', 'a'], {
+      list: async (id) => {
+        calls.push(`list:${id}`);
+        if (id === 'b' && !loggedIn) throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
+        return rows([id]);
+      },
+      login: async (id) => {
+        calls.push(`login:${id}`);
+        loggedIn = true;
+        return { ok: true };
+      },
+    });
+    expect(result.hubNodeId).toBe('b');
+    expect(calls).toEqual(['list:b', 'login:b', 'list:b']);
+  });
+
+  test('写者登录不了就换下一台 hub 机（standby 会转发写入）', async () => {
+    const calls: string[] = [];
+    const result = await loadHubNodes(['b', 'a'], {
+      list: async (id) => {
+        calls.push(`list:${id}`);
+        if (id === 'b') throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
+        return rows(['x']);
+      },
+      login: async () => ({ ok: false }),
+    });
+    expect(result.hubNodeId).toBe('a');
+    expect(calls).toEqual(['list:b', 'list:a']);
+  });
+
+  test('非 401 错误不登录，直接换下一台；全部失败抛最后一个错误', async () => {
+    let logins = 0;
+    await expect(
+      loadHubNodes(['b', 'a'], {
+        list: async (id) => {
+          throw new HubApiError(id === 'b' ? 'boom' : 'last', 503);
+        },
+        login: async () => {
+          logins += 1;
+          return { ok: true };
+        },
+      })
+    ).rejects.toMatchObject({ code: 'last' });
+    expect(logins).toBe(0);
   });
 });

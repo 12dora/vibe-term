@@ -20,7 +20,7 @@ import { defaultAuthApi, onAuthRequired } from '@tmex/api-client/auth/index';
 import type { MeshNodeOperation } from '@tmex/shared';
 import { bytesToHex, decodeBase64url, sha256 } from '@tmex/shared/auth';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { HubApi, type HubNodeRow } from './hub-api';
+import { HubApi, HubApiError, type HubNodeRow } from './hub-api';
 import { HubLoadCoordinator, type HubRequest } from './hub-load-coordinator';
 import { type MeshEventSource, type NodeEventPayload, sharedMeshEvents } from './mesh-events';
 
@@ -212,6 +212,65 @@ export function findHubNodeId(nodes: MeshNode[], modeHubNodeId?: string | null):
   const flagged = nodes.find((node) => node.isHub === true);
   if (flagged) return flagged.id;
   return modeHubNodeId || null;
+}
+
+/**
+ * 管理面可用的 hub 机顺序：写者优先，其余 hub 机兜底——standby 会把管理写入转发给写者，
+ * 写者暂时打不通（或还没登录）时不该整页判「hub 不可达」。
+ */
+export function hubCandidateIds(nodes: MeshNode[], modeHubNodeId?: string | null): string[] {
+  const primary = findHubNodeId(nodes, modeHubNodeId);
+  const ids: string[] = primary ? [primary] : [];
+  for (const node of nodes) {
+    if (node.isHub === true && node.online !== false && !ids.includes(node.id)) ids.push(node.id);
+  }
+  return ids;
+}
+
+export interface HubLoadDeps {
+  list: (hubNodeId: string) => Promise<HubNodeRow[]>;
+  /** 对该 hub 机做静默节点登录；成功才重试一次。 */
+  login: (hubNodeId: string) => Promise<{ ok: boolean }>;
+}
+
+export interface HubLoadResult {
+  hubNodeId: string;
+  rows: HubNodeRow[];
+}
+
+function isNodeLoginRequired(error: unknown): boolean {
+  return error instanceof HubApiError && error.status === 401;
+}
+
+/**
+ * 依次尝试候选 hub 机：401 `NODE_LOGIN_REQUIRED` 先补一次节点登录再重试（浏览器此前可能
+ * 从未登录过新升上来的写者），仍失败才换下一台；全部失败抛最后一个错误。
+ */
+export async function loadHubNodes(
+  candidates: string[],
+  deps: HubLoadDeps
+): Promise<HubLoadResult> {
+  let lastError: unknown = new Error('hub_unreachable');
+  for (const hubNodeId of candidates) {
+    try {
+      return { hubNodeId, rows: await deps.list(hubNodeId) };
+    } catch (error) {
+      lastError = error;
+      if (!isNodeLoginRequired(error)) continue;
+      const login = await deps.login(hubNodeId).catch(() => ({ ok: false }));
+      if (!login.ok) continue;
+      try {
+        return { hubNodeId, rows: await deps.list(hubNodeId) };
+      } catch (retryError) {
+        lastError = retryError;
+      }
+    }
+  }
+  throw lastError;
+}
+
+function silentNodeLogin(hubNodeId: string): Promise<{ ok: boolean }> {
+  return import('@/auth/session-key-store').then((mod) => mod.ensureNodeLogin(hubNodeId));
 }
 
 // ---------------------------------------------------------------------------
@@ -666,6 +725,8 @@ export interface UseHubNodeOptions {
   /** `/api/auth/mode` 下发的 hub nodeId；mesh 列表还没到时用它。 */
   hubNodeId?: string | null;
   pollIntervalMs?: number;
+  /** 覆盖节点登录（测试注入）；缺省懒加载 `ensureNodeLogin`。 */
+  login?: (hubNodeId: string) => Promise<{ ok: boolean }>;
 }
 
 interface HubStateSetters {
@@ -721,13 +782,28 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
     () => findHubNodeId(nodes, options.hubNodeId),
     [nodes, options.hubNodeId]
   );
+  const candidatesKey = useMemo(
+    () => hubCandidateIds(nodes, options.hubNodeId).join(','),
+    [nodes, options.hubNodeId]
+  );
   const probe = options.probe;
+  const login = options.login ?? silentNodeLogin;
+  // 真正应答的那台 hub 机（写者打不通时可能是 standby），管理动作也发给它。
+  const [activeHubId, setActiveHubId] = useState<string | null>(null);
 
-  // 请求闭包同时充当单飞的身份：目标（enabled / hub id / probe）一变就是新的一次加载。
+  // 请求闭包同时充当单飞的身份：目标（enabled / 候选集 / probe）一变就是新的一次加载。
   const request = useMemo<HubRequest | null>(() => {
-    if (!enabled || !resolved) return null;
-    return () => (probe ? probe(resolved) : new HubApi(resolved).listNodes());
-  }, [enabled, probe, resolved]);
+    const candidates = candidatesKey ? candidatesKey.split(',') : [];
+    if (!enabled || candidates.length === 0) return null;
+    return async () => {
+      const result = await loadHubNodes(candidates, {
+        list: (id) => (probe ? probe(id) : new HubApi(id).listNodes()),
+        login,
+      });
+      setActiveHubId(result.hubNodeId);
+      return result.rows;
+    };
+  }, [enabled, probe, login, candidatesKey]);
 
   const coordinator = useHubLoadCoordinator({ setHubNodes, setLoading, setError });
 
@@ -742,10 +818,14 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
   }, [coordinator, request, pollIntervalMs]);
 
   const refresh = useCallback(() => void coordinator.load(request), [coordinator, request]);
-  const hubApi = useMemo(() => (resolved ? new HubApi(resolved) : null), [resolved]);
+  const effectiveHubId = activeHubId ?? resolved;
+  const hubApi = useMemo(
+    () => (effectiveHubId ? new HubApi(effectiveHubId) : null),
+    [effectiveHubId]
+  );
 
   return {
-    hubNodeId: resolved,
+    hubNodeId: effectiveHubId,
     hubApi,
     hubNodes,
     online: hubNodes !== null,
