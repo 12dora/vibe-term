@@ -4,11 +4,16 @@ import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import {
+  HUB_PEER_POLL_FAST_INTERVAL_MS,
+  HUB_PEER_POLL_FAST_WINDOW_MS,
   HUB_PEER_POLL_INTERVAL_MS,
   HUB_PEER_POLL_JITTER,
   HubPeerPoller,
   peerPollDelayMs,
   shouldAutoPromote,
+  shouldFastPeerPoll,
+  shouldRequestUplinkProbe,
+  stableImmediateJitterMs,
 } from './hub-peer-poller';
 import { HubRuntime } from './hub-runtime';
 import {
@@ -100,6 +105,262 @@ describe('peerPollDelayMs jitter', () => {
       expect(ms).toBeGreaterThanOrEqual(48_000);
       expect(ms).toBeLessThanOrEqual(72_000);
     }
+  });
+
+  test('fast 3s ±20% 落在 [2400, 3600]', () => {
+    for (let i = 0; i < 200; i++) {
+      const ms = peerPollDelayMs(HUB_PEER_POLL_FAST_INTERVAL_MS, HUB_PEER_POLL_JITTER);
+      expect(ms).toBeGreaterThanOrEqual(2_400);
+      expect(ms).toBeLessThanOrEqual(3_600);
+    }
+  });
+
+  test('immediate poll jitter is stable per seed and in [0, 500]', () => {
+    const a = stableImmediateJitterMs(SELF);
+    const b = stableImmediateJitterMs(SELF);
+    const c = stableImmediateJitterMs(PEER);
+    expect(a).toBe(b);
+    expect(a).toBeGreaterThanOrEqual(0);
+    expect(a).toBeLessThanOrEqual(500);
+    expect(c).toBeGreaterThanOrEqual(0);
+    expect(c).toBeLessThanOrEqual(500);
+  });
+});
+
+describe('shouldFastPeerPoll', () => {
+  const authorized = [
+    { hubNodeId: SELF, mode: 'standby' as const, writerEpoch: 2, priority: 200 },
+    { hubNodeId: PEER, mode: 'standby' as const, writerEpoch: 1, priority: 100 },
+  ];
+
+  test('standby attached to self within the fast window polls fast', () => {
+    expect(
+      shouldFastPeerPoll({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 2,
+        attachedHubId: SELF,
+        now: 5_000,
+        fastWindowStartedAt: 1_000,
+        fastWindowMs: HUB_PEER_POLL_FAST_WINDOW_MS,
+        authorized,
+      })
+    ).toBe(true);
+  });
+
+  test('no authorized active with epoch ≥ ours polls fast', () => {
+    expect(
+      shouldFastPeerPoll({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 2,
+        attachedHubId: PEER,
+        now: 5_000,
+        fastWindowStartedAt: 1_000,
+        fastWindowMs: HUB_PEER_POLL_FAST_WINDOW_MS,
+        authorized,
+      })
+    ).toBe(true);
+  });
+
+  test('attached hub is not the known writer polls fast', () => {
+    expect(
+      shouldFastPeerPoll({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 1,
+        attachedHubId: OTHER,
+        now: 5_000,
+        fastWindowStartedAt: 1_000,
+        fastWindowMs: HUB_PEER_POLL_FAST_WINDOW_MS,
+        authorized: [
+          { hubNodeId: SELF, mode: 'standby', writerEpoch: 1, priority: 200 },
+          { hubNodeId: PEER, mode: 'active', writerEpoch: 3, priority: 100 },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  test('writer attached and healthy stays on the slow cadence', () => {
+    expect(
+      shouldFastPeerPoll({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 1,
+        attachedHubId: PEER,
+        now: 5_000,
+        fastWindowStartedAt: 1_000,
+        fastWindowMs: HUB_PEER_POLL_FAST_WINDOW_MS,
+        authorized: [
+          { hubNodeId: SELF, mode: 'standby', writerEpoch: 1, priority: 200 },
+          { hubNodeId: PEER, mode: 'active', writerEpoch: 3, priority: 100 },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  test('active hub never enters fast poll', () => {
+    expect(
+      shouldFastPeerPoll({
+        selfMode: 'active',
+        selfId: SELF,
+        selfEpoch: 3,
+        attachedHubId: SELF,
+        now: 5_000,
+        fastWindowStartedAt: 1_000,
+        fastWindowMs: HUB_PEER_POLL_FAST_WINDOW_MS,
+        authorized: [{ hubNodeId: SELF, mode: 'active', writerEpoch: 3, priority: 100 }],
+      })
+    ).toBe(false);
+  });
+
+  test('fast window expiry falls back to 60s even if still attached to self', () => {
+    expect(
+      shouldFastPeerPoll({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 2,
+        attachedHubId: SELF,
+        now: 1_000 + HUB_PEER_POLL_FAST_WINDOW_MS + 1,
+        fastWindowStartedAt: 1_000,
+        fastWindowMs: HUB_PEER_POLL_FAST_WINDOW_MS,
+        authorized,
+      })
+    ).toBe(false);
+  });
+});
+
+describe('shouldRequestUplinkProbe', () => {
+  test('standby attached to self notifies when a peer is the writer', () => {
+    expect(
+      shouldRequestUplinkProbe({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 1,
+        attachedHubId: SELF,
+        attachedEpoch: 1,
+        writerId: PEER,
+        writerEpoch: 3,
+        learnedActive: [{ hubNodeId: PEER, writerEpoch: 3 }],
+      })
+    ).toBe(true);
+  });
+
+  test('learned active with epoch ≥ attached epoch notifies', () => {
+    expect(
+      shouldRequestUplinkProbe({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 1,
+        attachedHubId: OTHER,
+        attachedEpoch: 2,
+        writerId: OTHER,
+        writerEpoch: 2,
+        learnedActive: [{ hubNodeId: PEER, writerEpoch: 2 }],
+      })
+    ).toBe(true);
+  });
+
+  test('healthy writer attachment with only standby peers does not notify', () => {
+    expect(
+      shouldRequestUplinkProbe({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 1,
+        attachedHubId: PEER,
+        attachedEpoch: 3,
+        writerId: PEER,
+        writerEpoch: 3,
+        learnedActive: [],
+      })
+    ).toBe(false);
+  });
+
+  test('active hub does not notify', () => {
+    expect(
+      shouldRequestUplinkProbe({
+        selfMode: 'active',
+        selfId: SELF,
+        selfEpoch: 3,
+        attachedHubId: SELF,
+        attachedEpoch: 3,
+        writerId: SELF,
+        writerEpoch: 3,
+        learnedActive: [{ hubNodeId: PEER, writerEpoch: 4 }],
+      })
+    ).toBe(false);
+  });
+
+  test('attached to self does not notify for a lower-epoch active hub', () => {
+    expect(
+      shouldRequestUplinkProbe({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 10,
+        attachedHubId: SELF,
+        attachedEpoch: 10,
+        writerId: PEER,
+        writerEpoch: 8,
+        learnedActive: [{ hubNodeId: PEER, writerEpoch: 8 }],
+      })
+    ).toBe(false);
+  });
+
+  test('attached to self notifies for an equal-epoch active hub', () => {
+    expect(
+      shouldRequestUplinkProbe({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 10,
+        attachedHubId: SELF,
+        attachedEpoch: 10,
+        writerId: PEER,
+        writerEpoch: 10,
+        learnedActive: [{ hubNodeId: PEER, writerEpoch: 10 }],
+      })
+    ).toBe(true);
+  });
+
+  test('attached to self notifies for a higher-epoch active hub', () => {
+    expect(
+      shouldRequestUplinkProbe({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 10,
+        attachedHubId: SELF,
+        attachedEpoch: 10,
+        writerId: PEER,
+        writerEpoch: 11,
+        learnedActive: [{ hubNodeId: PEER, writerEpoch: 11 }],
+      })
+    ).toBe(true);
+  });
+
+  test('learned writer must beat max(selfEpoch, attachedEpoch) from the uplink attachment', () => {
+    expect(
+      shouldRequestUplinkProbe({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 10,
+        attachedHubId: OTHER,
+        attachedEpoch: 8,
+        writerId: PEER,
+        writerEpoch: 9,
+        learnedActive: [{ hubNodeId: PEER, writerEpoch: 9 }],
+      })
+    ).toBe(false);
+    expect(
+      shouldRequestUplinkProbe({
+        selfMode: 'standby',
+        selfId: SELF,
+        selfEpoch: 8,
+        attachedHubId: OTHER,
+        attachedEpoch: 10,
+        writerId: PEER,
+        writerEpoch: 10,
+        learnedActive: [{ hubNodeId: PEER, writerEpoch: 10 }],
+      })
+    ).toBe(true);
   });
 });
 
@@ -319,9 +580,431 @@ describe('HubPeerPoller', () => {
       });
       expect(fetches).toBe(0);
       hub.setMode('standby');
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise((r) => setTimeout(r, 600));
       expect(fetches).toBeGreaterThanOrEqual(1);
       await hub.stop();
+    } finally {
+      close();
+    }
+  });
+});
+
+type FakeTimer = {
+  id: number;
+  fn: () => void;
+  ms: number;
+  due: number;
+  cleared: boolean;
+};
+
+function fakeTimers() {
+  const delays: number[] = [];
+  const pending: FakeTimer[] = [];
+  let nextId = 1;
+  let now = 0;
+  const fireDue = () => {
+    const due = pending.filter((row) => !row.cleared && row.due <= now);
+    for (const row of due) {
+      row.cleared = true;
+      row.fn();
+    }
+  };
+  return {
+    delays,
+    pending,
+    now: () => now,
+    setTimeout: ((fn: () => void, ms?: number) => {
+      const id = nextId++;
+      const delay = ms ?? 0;
+      delays.push(delay);
+      pending.push({ id, fn, ms: delay, due: now + delay, cleared: false });
+      return id as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout,
+    clearTimeout: ((id: ReturnType<typeof setTimeout>) => {
+      const row = pending.find((item) => item.id === (id as unknown as number));
+      if (row) row.cleared = true;
+    }) as typeof clearTimeout,
+    fireAll() {
+      const due = pending.filter((row) => !row.cleared);
+      for (const row of due) {
+        row.cleared = true;
+        row.fn();
+      }
+    },
+    async advance(ms: number) {
+      now += ms;
+      fireDue();
+      await Promise.resolve();
+    },
+  };
+}
+
+describe('HubPeerPoller adaptive cadence', () => {
+  test('startDelayMs 0 polls immediately and arms a fast interval when attached to self', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const meshHubs = new MeshHubStore(db);
+      seedPeerRow(meshHubs, { mode: 'standby', writerEpoch: 1 });
+      const timers = fakeTimers();
+      let fetches = 0;
+      const poller = new HubPeerPoller({
+        meshHubs,
+        selfHubId: () => SELF,
+        isAuthorized: (id) => id === PEER || id === SELF,
+        applyStatus: () => {},
+        selfMode: () => 'standby',
+        attachedHubId: () => SELF,
+        selfWriterEpoch: () => 1,
+        startDelayMs: 0,
+        immediateJitterMs: 0,
+        jitter: 0,
+        setTimeout: timers.setTimeout,
+        clearTimeout: timers.clearTimeout,
+        fetch: async () => {
+          fetches += 1;
+          return jsonResponse(statusBody({ mode: 'standby', writerEpoch: 1 }));
+        },
+        timeoutMs: 50,
+      });
+      poller.start();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetches).toBe(1);
+      expect(poller.inFastPoll()).toBe(true);
+      expect(timers.delays.some((ms) => ms === HUB_PEER_POLL_FAST_INTERVAL_MS)).toBe(true);
+      expect(timers.delays.every((ms) => ms !== HUB_PEER_POLL_INTERVAL_MS)).toBe(true);
+      poller.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('start with a delay does not poll until the timer fires', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const meshHubs = new MeshHubStore(db);
+      seedPeerRow(meshHubs);
+      const timers = fakeTimers();
+      let fetches = 0;
+      const poller = new HubPeerPoller({
+        meshHubs,
+        selfHubId: () => SELF,
+        isAuthorized: (id) => id === PEER,
+        applyStatus: () => {},
+        startDelayMs: 2_000,
+        immediateJitterMs: 0,
+        jitter: 0,
+        setTimeout: timers.setTimeout,
+        clearTimeout: timers.clearTimeout,
+        fetch: async () => {
+          fetches += 1;
+          return jsonResponse(statusBody({ mode: 'standby', writerEpoch: 1 }));
+        },
+        timeoutMs: 50,
+      });
+      poller.start();
+      await Promise.resolve();
+      expect(fetches).toBe(0);
+      expect(timers.delays).toEqual([2_000]);
+      timers.fireAll();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetches).toBe(1);
+      poller.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('falls back to 60s once a healthy writer is attached', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const meshHubs = new MeshHubStore(db);
+      seedPeerRow(meshHubs, { mode: 'active', writerEpoch: 3 });
+      const timers = fakeTimers();
+      const poller = new HubPeerPoller({
+        meshHubs,
+        selfHubId: () => SELF,
+        isAuthorized: (id) => id === PEER || id === SELF,
+        applyStatus: () => {},
+        selfMode: () => 'standby',
+        attachedHubId: () => PEER,
+        selfWriterEpoch: () => 1,
+        startDelayMs: 0,
+        immediateJitterMs: 0,
+        jitter: 0,
+        setTimeout: timers.setTimeout,
+        clearTimeout: timers.clearTimeout,
+        fetch: async () => jsonResponse(statusBody({ mode: 'active', writerEpoch: 3 })),
+        timeoutMs: 50,
+      });
+      poller.start();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(poller.inFastPoll()).toBe(false);
+      expect(timers.delays.filter((ms) => ms === HUB_PEER_POLL_INTERVAL_MS).length).toBeGreaterThan(
+        0
+      );
+      poller.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('noteRoleTransition polls immediately and restarts the fast window', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const meshHubs = new MeshHubStore(db);
+      seedPeerRow(meshHubs, { mode: 'standby', writerEpoch: 1 });
+      const timers = fakeTimers();
+      let now = 1_000;
+      let fetches = 0;
+      const poller = new HubPeerPoller({
+        meshHubs,
+        selfHubId: () => SELF,
+        isAuthorized: (id) => id === PEER || id === SELF,
+        applyStatus: () => {},
+        now: () => now,
+        selfMode: () => 'standby',
+        attachedHubId: () => SELF,
+        selfWriterEpoch: () => 2,
+        startDelayMs: 2_000,
+        immediateJitterMs: 0,
+        jitter: 0,
+        setTimeout: timers.setTimeout,
+        clearTimeout: timers.clearTimeout,
+        fetch: async () => {
+          fetches += 1;
+          return jsonResponse(statusBody({ mode: 'standby', writerEpoch: 1 }));
+        },
+        timeoutMs: 50,
+      });
+      poller.start();
+      await Promise.resolve();
+      expect(fetches).toBe(0);
+      now = 1_000 + HUB_PEER_POLL_FAST_WINDOW_MS + 50_000;
+      expect(poller.inFastPoll()).toBe(false);
+      poller.noteRoleTransition();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetches).toBe(1);
+      expect(poller.inFastPoll()).toBe(true);
+      expect(timers.delays.includes(HUB_PEER_POLL_FAST_INTERVAL_MS)).toBe(true);
+      poller.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('learning an active peer while attached to self notifies uplink re-eval', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const meshHubs = new MeshHubStore(db);
+      seedPeerRow(meshHubs, { mode: 'standby', writerEpoch: 1 });
+      const learned: string[] = [];
+      const poller = new HubPeerPoller({
+        meshHubs,
+        selfHubId: () => SELF,
+        isAuthorized: (id) => id === PEER || id === SELF,
+        applyStatus: (id, ad) => {
+          const existing = meshHubs.get(id);
+          if (!existing) return;
+          meshHubs.upsert(
+            {
+              ...existing,
+              mode: ad.mode,
+              writerEpoch: ad.writerEpoch,
+              publicUrl: ad.publicUrl,
+              online: true,
+            },
+            1
+          );
+        },
+        selfMode: () => 'standby',
+        attachedHubId: () => SELF,
+        selfWriterEpoch: () => 1,
+        onWriterLearned: () => {
+          learned.push('probe');
+        },
+        fetch: async () => jsonResponse(statusBody({ mode: 'active', writerEpoch: 3 })),
+        timeoutMs: 50,
+      });
+      await poller.pollNow();
+      expect(meshHubs.get(PEER)?.mode).toBe('active');
+      expect(learned).toEqual(['probe']);
+    } finally {
+      close();
+    }
+  });
+
+  test('lower-epoch active while attached to self does not notify; equal/higher does', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const meshHubs = new MeshHubStore(db);
+      seedPeerRow(meshHubs, { mode: 'standby', writerEpoch: 1 });
+      meshHubs.upsert(
+        {
+          hubNodeId: SELF,
+          publicUrl: 'https://self.example',
+          name: 'self',
+          mode: 'standby',
+          priority: 200,
+          writerEpoch: 10,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 1,
+        },
+        1
+      );
+      const learned: string[] = [];
+      let peerEpoch = 8;
+      const poller = new HubPeerPoller({
+        meshHubs,
+        selfHubId: () => SELF,
+        isAuthorized: (id) => id === PEER || id === SELF,
+        applyStatus: (id, ad) => {
+          const existing = meshHubs.get(id);
+          if (!existing) return;
+          meshHubs.upsert(
+            {
+              ...existing,
+              mode: ad.mode,
+              writerEpoch: ad.writerEpoch,
+              publicUrl: ad.publicUrl,
+              online: true,
+            },
+            1
+          );
+        },
+        selfMode: () => 'standby',
+        attachedHubId: () => SELF,
+        attachedEpoch: () => 10,
+        selfWriterEpoch: () => 10,
+        onWriterLearned: () => {
+          learned.push(`e${peerEpoch}`);
+        },
+        fetch: async () => jsonResponse(statusBody({ mode: 'active', writerEpoch: peerEpoch })),
+        timeoutMs: 50,
+      });
+      await poller.pollNow();
+      expect(meshHubs.get(PEER)?.writerEpoch).toBe(8);
+      expect(learned).toEqual([]);
+
+      peerEpoch = 10;
+      await poller.pollNow();
+      expect(learned).toEqual(['e10']);
+
+      learned.length = 0;
+      peerEpoch = 12;
+      await poller.pollNow();
+      expect(learned).toEqual(['e12']);
+    } finally {
+      close();
+    }
+  });
+
+  test('poll longer than the fast interval arms the next poll after completion', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const meshHubs = new MeshHubStore(db);
+      seedPeerRow(meshHubs, { mode: 'standby', writerEpoch: 1 });
+      const timers = fakeTimers();
+      let fetches = 0;
+      let release: () => void = () => {};
+      let holdFirst = true;
+      const poller = new HubPeerPoller({
+        meshHubs,
+        selfHubId: () => SELF,
+        isAuthorized: (id) => id === PEER || id === SELF,
+        applyStatus: () => {},
+        selfMode: () => 'standby',
+        attachedHubId: () => SELF,
+        selfWriterEpoch: () => 1,
+        startDelayMs: 0,
+        immediateJitterMs: 0,
+        jitter: 0,
+        fastIntervalMs: 3_000,
+        timeoutMs: 30_000,
+        setTimeout: timers.setTimeout,
+        clearTimeout: timers.clearTimeout,
+        fetch: async () => {
+          fetches += 1;
+          if (holdFirst && fetches === 1) {
+            await new Promise<void>((resolve) => {
+              release = resolve;
+            });
+          }
+          return jsonResponse(statusBody({ mode: 'standby', writerEpoch: 1 }));
+        },
+      });
+      poller.start();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetches).toBe(1);
+
+      await timers.advance(3_000);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetches).toBe(1);
+
+      holdFirst = false;
+      release();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetches).toBe(1);
+
+      await timers.advance(2_999);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetches).toBe(1);
+
+      await timers.advance(1);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetches).toBe(2);
+      poller.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('refreshCadence on slow→fast re-arms within the fast interval', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const meshHubs = new MeshHubStore(db);
+      seedPeerRow(meshHubs, { mode: 'active', writerEpoch: 3 });
+      const timers = fakeTimers();
+      let attached = PEER;
+      let fetches = 0;
+      const poller = new HubPeerPoller({
+        meshHubs,
+        selfHubId: () => SELF,
+        isAuthorized: (id) => id === PEER || id === SELF,
+        applyStatus: () => {},
+        selfMode: () => 'standby',
+        attachedHubId: () => attached,
+        selfWriterEpoch: () => 1,
+        startDelayMs: 0,
+        immediateJitterMs: 0,
+        jitter: 0,
+        setTimeout: timers.setTimeout,
+        clearTimeout: timers.clearTimeout,
+        fetch: async () => {
+          fetches += 1;
+          return jsonResponse(statusBody({ mode: 'active', writerEpoch: 3 }));
+        },
+        timeoutMs: 50,
+      });
+      poller.start();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(poller.inFastPoll()).toBe(false);
+      expect(fetches).toBe(1);
+      const slow = timers.pending.filter(
+        (row) => !row.cleared && row.ms === HUB_PEER_POLL_INTERVAL_MS
+      );
+      expect(slow.length).toBeGreaterThan(0);
+
+      attached = SELF;
+      expect(poller.inFastPoll()).toBe(true);
+      poller.refreshCadence();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetches).toBe(2);
+      expect(slow.every((row) => row.cleared)).toBe(true);
+      expect(
+        timers.pending.some((row) => !row.cleared && row.ms === HUB_PEER_POLL_FAST_INTERVAL_MS)
+      ).toBe(true);
+      poller.stop();
     } finally {
       close();
     }

@@ -34,6 +34,7 @@ import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthDb } from '../auth/types';
 import { type UserRecord, UserStore } from '../auth/user-store';
 import { inspectHubAuthRecordCompat } from './hub-authorization';
+import { decodeCertificateIdentityKeys, parseKdfParams } from './hub-cert-keys';
 import { type HubPeerFetch, HubPeerPoller } from './hub-peer-poller';
 import {
   type UplinkNodeList,
@@ -215,7 +216,7 @@ export class HubRuntime {
   readonly registry: NodeRegistry;
   readonly uplink: UplinkServer;
   readonly meshHubs: MeshHubStore;
-  private readonly peerPoller: HubPeerPoller;
+  readonly peerPoller: HubPeerPoller;
   private readonly modeListeners = new Set<() => void>();
   private readonly patchHostEnv: PatchHubRoleEnv | null;
   private readonly scheduleRestart: ScheduleHubRoleRestart | undefined;
@@ -256,7 +257,7 @@ export class HubRuntime {
       heartbeatMissLimit: opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT,
       authTimeoutMs: opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS,
       onModeChange: () => {
-        void this.peerPoller.pollNow();
+        this.peerPoller.noteRoleTransition();
         for (const cb of this.modeListeners) {
           try {
             cb();
@@ -300,6 +301,7 @@ export class HubRuntime {
       autoPromoteTimeoutMs: opts.autoPromoteTimeoutMs,
       selfMode: () => this.uplink.mode(),
       selfPriority: () => this.config.priority ?? (this.uplink.mode() === 'standby' ? 200 : 100),
+      selfWriterEpoch: () => this.uplink.writerEpoch(),
       onAutoPromote: (operationId) => this.runAutoPromote(operationId),
     });
     if (opts.hubTrust) this.peerPoller.start();
@@ -332,7 +334,6 @@ export class HubRuntime {
     this.uplink.setWriterEpoch(epoch);
   }
 
-  /** 模式变化（含被围栏自动降级）通知；节点侧据此立即重发 node.status 广告。 */
   onModeChange(cb: () => void): () => void {
     this.modeListeners.add(cb);
     return () => {
@@ -711,6 +712,7 @@ export class HubRuntime {
       caFingerprint: snap.caFingerprint,
       now: this.now(),
       ...(writerView ? { writerView } : {}),
+      peerPollFast: this.peerPoller.inFastPoll(),
     });
   }
 
@@ -1375,24 +1377,5 @@ function readNodeIdentityKeys(
     return decodeCertificateIdentityKeys(decodeBase64url(stored.certificate_b64));
   } catch {
     return null;
-  }
-}
-
-function decodeCertificateIdentityKeys(
-  bytes: Uint8Array
-): { edPk: Uint8Array; x25519Pk: Uint8Array } | null {
-  try {
-    const decoded = decodeCertificate(bytes);
-    return { edPk: decoded.ed_pk, x25519Pk: decoded.x25519_pk };
-  } catch {
-    return null;
-  }
-}
-
-function parseKdfParams(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
   }
 }

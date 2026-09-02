@@ -108,6 +108,7 @@
 
 - 当前挂的不是最优先候选时，每 60 s 探测更优先 hub 的 `GET <publicUrl>/healthz`（按 URL 的 CA pin，超时 5 s）；
 - 收到 `node.list` 且更优先 hub 由 offline/unknown 变为 online、`writerHubId`/`writerEpoch` 变化、或当前挂载已不是最优候选时，立即再探一次（5 s 内合并重复触发；探测仍须 `/healthz` 成功、CA pin 与 generation 守卫后才 `switchTo`）；60 s 定时器仍作兜底；
+- hub 间 status 探测学到足够新的写者（`writerEpoch ≥ max(本机 epoch, 当前 uplink 附着 epoch)`；standby 仍挂在自己身上时同一条件）时走 `requestProbeNow()`（去抖取更早截止时间），避免等满 60 s 才切回；
 - 探测成功后 **make-before-break**：先打开新 uplink，等它鉴权成功再关旧链路，然后重发 `node.status`。
 
 **generation 守卫：** 每条 uplink 有世代号。被替换的链路上迟到的 `node.list` / `key.log` / `rtc.signal` / `hub.tokens` / `hub.attachments` / `hub.forward` / write-forward ACK / relay 回调直接丢弃，并取消该链路的 key-log catch-up，避免旧主的过期快照盖住新主。handler 使用实际发送该帧的 `{hubNodeId, generation}`，writer-only 帧再核对来源与 epoch。
@@ -145,7 +146,9 @@
 
 因此每台 hub 暴露公开接口 `GET /api/hub/status`（无需 session，与 `/healthz` 同级），返回 `ownHubSnapshot()` 的元数据：`hubNodeId`、`publicUrl`、`mode`、`priority`、`writerEpoch`、`name?`、`caFingerprint?`、`now`。这些字段本来就会出现在 `node.list.hubs[]` 里。
 
-启动 2 s 后，以及之后每 60 s（±20% 抖动），本机对 `mesh_hubs` 里 **已授权**（id ∈ `TMEX_HUB_PEERS`）且不是 self 的行拉取 `<publicUrl>/api/hub/status`（超时 5 s）。TLS 使用 `HubTrustStore` 的 per-URL CA pin（与 uplink 相同）；没有 pin 的 https 走系统 CA。返回的 32-hex `hubNodeId` 必须等于该行 id，否则丢弃并警告。通过校验后走与授权 `node.status.hub` 相同的 upsert / fencing / 脑裂告警路径（更高 epoch 的 active 会把本机降为 standby，日志 `[hub] fenced by peer status …`）。连续 3 次不可达则把该行标 `online: false`，不删行。`setMode`（promote/demote）以及新授权 hub 行出现时立刻再探一次。
+启动后立刻探测一次（0–500 ms 的稳定实例抖动，不再等 2 s），之后默认每 60 s（±20% 抖动）。本机对 `mesh_hubs` 里 **已授权**（id ∈ `TMEX_HUB_PEERS`）且不是 self 的行拉取 `<publicUrl>/api/hub/status`（超时 5 s）。TLS 使用 `HubTrustStore` 的 per-URL CA pin（与 uplink 相同）；没有 pin 的 https 走系统 CA。返回的 32-hex `hubNodeId` 必须等于该行 id，否则丢弃并警告。通过校验后走与授权 `node.status.hub` 相同的 upsert / fencing / 脑裂告警路径（更高 epoch 的 active 会把本机降为 standby，日志 `[hub] fenced by peer status …`）。连续 3 次不可达则把该行标 `online: false`，不删行。`setMode`（promote/demote）以及新授权 hub 行出现时立刻再探一次，并重置下面的快探测窗口。
+
+**角色切换后的快探测：** 本机是 standby，且（挂在自己身上 / 没有已授权 hub 广告 `mode=active` 且 `writerEpoch ≥` 本机 / 当前挂载不是已知写者）时，启动后或任何角色过渡后的 3 分钟内改为每 3 s（±20% 抖动）探测；写者已挂上且健康则保持 60 s。探测周期在一轮完成后才排下一轮（间隔从完成时起算，进行中的周期 tick 不会叠成连续探测）。uplink 附着或连接状态变化时按当前快/慢决策重排定时器；进入快探测则立刻再探一轮。探测到 `writerEpoch ≥ max(本机 epoch, 当前 uplink 附着 epoch)` 的 active 写者时，立刻通知 uplink 池 `requestProbeNow()`（去抖取更早截止时间，复用 `/healthz` make-before-break 切回），不必等 60 s 的 `probePreferred` 定时器。孤立的更低 epoch active 不会触发切回，以免写入分叉。`GET /api/hub/status` 带 `peerPollFast` 表示当前是否处于快探测。
 
 探测结果可信，当且仅当 URL 经 TLS 认证（pin 或系统 CA）**并且** hub id 在本机 allowlist 中。未授权的 URL / id 不能 fencing 本机。
 

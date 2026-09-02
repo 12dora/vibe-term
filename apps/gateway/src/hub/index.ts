@@ -50,12 +50,18 @@ export {
 export { applyReplicatedNodeList, type UplinkNodeList } from './hub-replication';
 export {
   HUB_PEER_POLL_FAIL_LIMIT,
+  HUB_PEER_POLL_FAST_INTERVAL_MS,
+  HUB_PEER_POLL_FAST_WINDOW_MS,
+  HUB_PEER_POLL_IMMEDIATE_JITTER_MS,
   HUB_PEER_POLL_INTERVAL_MS,
   HUB_PEER_POLL_JITTER,
   HUB_PEER_POLL_START_DELAY_MS,
   HUB_PEER_POLL_TIMEOUT_MS,
   HubPeerPoller,
   peerPollDelayMs,
+  shouldFastPeerPoll,
+  shouldRequestUplinkProbe,
+  stableImmediateJitterMs,
 } from './hub-peer-poller';
 export { patchNode, type NodePatch, upsertEnrolledNode } from './node-persistence';
 export {
