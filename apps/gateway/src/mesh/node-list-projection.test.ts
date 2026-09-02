@@ -163,6 +163,13 @@ describe('node-list-projection', () => {
           ws: 'timeout ws://10.77.88.3:39001/peer',
           dc: 'datachannel open timeout',
         },
+        dcBreaker: {
+          cooling: true,
+          until: 1_700_000_030_000,
+          failures: 3,
+          level: 1,
+          lastFailureKind: 'timeout',
+        },
       })
     );
     expect(peerDto?.endpoints).toEqual(['ws://10.77.88.3:39001/peer']);
@@ -170,6 +177,13 @@ describe('node-list-projection', () => {
       at: 1_700_000_000_100,
       ws: 'timeout ws://10.77.88.3:39001/peer',
       dc: 'datachannel open timeout',
+    });
+    expect(peerDto?.dcBreaker).toEqual({
+      cooling: true,
+      until: 1_700_000_030_000,
+      failures: 3,
+      level: 1,
+      lastFailureKind: 'timeout',
     });
     const selfDto = projectMeshListNode(
       selfId,
@@ -198,6 +212,7 @@ describe('node-list-projection', () => {
     expect(selfDto?.linkSinceAt).toBeNull();
     expect(selfDto?.endpoints).toEqual([]);
     expect(selfDto?.directFailure).toBeNull();
+    expect(selfDto?.dcBreaker).toBeNull();
   });
 
   test('isHub is true for every id in hubIds and carries hubMode', () => {

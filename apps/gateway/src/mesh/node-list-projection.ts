@@ -10,11 +10,20 @@ type Meta = {
   version?: string | null;
 };
 
+export type MeshNodeDcBreaker = {
+  cooling: boolean;
+  until: number | null;
+  failures: number;
+  level: number;
+  lastFailureKind: string | null;
+};
+
 export type MeshNodeLinkDetail = {
   peerAddress: string | null;
   linkSinceAt: number | null;
   endpoints: string[];
   directFailure: { at: number; ws?: string | null; dc?: string | null } | null;
+  dcBreaker?: MeshNodeDcBreaker | null;
 };
 
 export type MeshNodeDto = {
@@ -36,6 +45,7 @@ export type MeshNodeDto = {
   linkSinceAt?: number | null;
   endpoints?: string[];
   directFailure?: { at: number; ws?: string | null; dc?: string | null } | null;
+  dcBreaker?: MeshNodeDcBreaker | null;
 };
 
 export function parseJson(raw: string | null | undefined, fallback: unknown): unknown {
@@ -130,15 +140,22 @@ function meshLinkFields(
   isSelf: boolean,
   detail: MeshNodeLinkDetail | null | undefined,
   storedEndpoints: string[]
-): Pick<MeshNodeDto, 'peerAddress' | 'linkSinceAt' | 'endpoints' | 'directFailure'> {
+): Pick<MeshNodeDto, 'peerAddress' | 'linkSinceAt' | 'endpoints' | 'directFailure' | 'dcBreaker'> {
   if (isSelf) {
-    return { peerAddress: null, linkSinceAt: null, endpoints: [], directFailure: null };
+    return {
+      peerAddress: null,
+      linkSinceAt: null,
+      endpoints: [],
+      directFailure: null,
+      dcBreaker: null,
+    };
   }
   return {
     peerAddress: detail?.peerAddress ?? null,
     linkSinceAt: detail?.linkSinceAt ?? null,
     endpoints: storedEndpoints,
     directFailure: detail?.directFailure ?? null,
+    dcBreaker: detail?.dcBreaker ?? null,
   };
 }
 

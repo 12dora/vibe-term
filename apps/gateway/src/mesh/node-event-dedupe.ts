@@ -28,6 +28,15 @@ export class NodeEventDedupe {
       version: event.version ?? null,
       direct_capable: event.direct_capable ?? false,
       name: event.name ?? '',
+      dcBreaker: event.dcBreaker
+        ? {
+            cooling: event.dcBreaker.cooling,
+            until: event.dcBreaker.until,
+            failures: event.dcBreaker.failures,
+            level: event.dcBreaker.level,
+            lastFailureKind: event.dcBreaker.lastFailureKind,
+          }
+        : null,
     });
   }
 

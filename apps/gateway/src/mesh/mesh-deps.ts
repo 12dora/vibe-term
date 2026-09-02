@@ -69,6 +69,14 @@ export type PeerTransportKind = 'ws-secure' | 'relay' | 'dc';
 
 export type NodeEventStatus = 'online' | 'offline' | 'revoked';
 
+export type MeshNodeDcBreaker = {
+  cooling: boolean;
+  until: number | null;
+  failures: number;
+  level: number;
+  lastFailureKind: string | null;
+};
+
 export type NodeEventPayload = {
   nodeId: string;
   status: NodeEventStatus;
@@ -79,6 +87,8 @@ export type NodeEventPayload = {
   version?: string | null;
   direct_capable?: boolean;
   name?: string;
+  /** 进程内诊断；WS NODE_EVENT 帧暂不编码该字段（mesh-routes 超出本变更范围）。 */
+  dcBreaker?: MeshNodeDcBreaker | null;
 };
 
 export type PeerLinkProvider = {

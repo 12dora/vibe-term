@@ -93,6 +93,7 @@ function setup(overrides: Partial<DirectCarrierControllerOptions> = {}): Setup {
       peers.push(pc);
       return pc;
     },
+    now: () => clock.now,
     setTimeoutFn: clock.setTimeoutFn,
     clearTimeoutFn: clock.clearTimeoutFn,
     networkEvents: network,
@@ -655,8 +656,8 @@ describe('DirectCarrierController 载体切换与激活', () => {
 
     s.connection.switchTo('direct');
     expect(s.controller.getState()).toBe('active');
-    // 连接超时已撤销，只剩 stats 轮询；再走过原超时点也不会判失败
-    expect(s.clock.pendingDelays).toEqual([2000]);
+    // 连接超时已撤销，剩下 stats 轮询与 60s 健康定时器
+    expect(s.clock.pendingDelays.sort((a, b) => a - b)).toEqual([2000, 60_000]);
     s.clock.advance(6000);
     await flush();
     expect(s.controller.getState()).toBe('active');
@@ -715,8 +716,8 @@ describe('DirectCarrierController 载体切换与激活', () => {
 });
 
 describe('DirectCarrierController 退避与网络变化', () => {
-  test('退避 1s → 2s → 4s …，达到上限后停在 failed，retry() 重置', async () => {
-    const s = setup({ maxAttempts: 3 });
+  test('连续 3 次失败进入冷却，retryDirect 允许恰好一次探测', async () => {
+    const s = setup();
     s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
 
     s.controller.start();
@@ -729,18 +730,19 @@ describe('DirectCarrierController 退避与网络变化', () => {
 
     s.clock.advance(2000);
     await flush();
-    expect(s.clock.pendingDelays).toEqual([4000]);
+    expect(s.controller.diagnostics().cooling).toBe(true);
+    expect(s.controller.diagnostics().failures).toBe(3);
+    expect(s.clock.pendingDelays).toEqual([30_000]);
 
-    s.clock.advance(4000);
+    const frozen = s.peers.length;
+    s.clock.advance(10_000);
     await flush();
-    // 已用满 3 次重试，不再排队
-    expect(s.clock.pendingDelays).toEqual([]);
-    expect(s.controller.getState()).toBe('failed');
+    expect(s.peers.length).toBe(frozen);
 
-    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
-    s.controller.retry();
+    s.controller.retryDirect();
     await flush();
-    expect(s.clock.pendingDelays).toEqual([1000]);
+    expect(s.peers.length).toBe(frozen + 1);
+    expect(s.controller.diagnostics().cooling).toBe(true);
   });
 
   test('retryDelay 上限 30 s', () => {
@@ -877,6 +879,80 @@ describe('DirectCarrierController 退避与网络变化', () => {
     expect(s.pc().closeCount).toBe(1);
     expect(s.controller.getState()).toBe('idle');
     expect(s.controller.diagnostics().path).toBe('primary');
+  });
+
+  test('signaling not ready 不计入熔断；短命 active 不复位', async () => {
+    const s = setup();
+    s.signaling.setReady(false);
+    s.controller.start();
+    await flush();
+    expect(s.controller.diagnostics().failures).toBe(0);
+    expect(s.peers.length).toBe(0);
+
+    s.signaling.setReady(true);
+    await flush();
+    expect(s.peers.length).toBe(1);
+
+    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
+    s.pc().channel.simulateClose();
+    await flush();
+    s.clock.advance(1000);
+    await flush();
+    s.clock.advance(2000);
+    await flush();
+    expect(s.controller.diagnostics().cooling).toBe(true);
+
+    s.api.routes.set(RTC_AUTHORIZE_PATH, {
+      status: 200,
+      body: { nonce: NONCE, fp_node: { algorithm: 'sha-256', value: FP_NODE_VALUE } },
+    });
+    s.controller.retryDirect();
+    await flush();
+    s.signaling.deliver(answerSignal(s));
+    await flush();
+    s.pc().channel.open();
+    await flush();
+    s.connection.switchTo('direct');
+    await flush();
+    expect(s.controller.getState()).toBe('active');
+    expect(s.controller.diagnostics().failures).toBeGreaterThanOrEqual(3);
+
+    s.pc().channel.simulateClose();
+    await flush();
+    expect(s.controller.diagnostics().cooling).toBe(true);
+    expect(s.controller.diagnostics().level).toBeGreaterThanOrEqual(1);
+  });
+
+  test('active 满 60s 后熔断复位', async () => {
+    const s = setup();
+    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
+    s.controller.start();
+    await flush();
+    s.clock.advance(1000);
+    await flush();
+    s.clock.advance(2000);
+    await flush();
+    expect(s.controller.diagnostics().cooling).toBe(true);
+
+    s.api.routes.set(RTC_AUTHORIZE_PATH, {
+      status: 200,
+      body: { nonce: NONCE, fp_node: { algorithm: 'sha-256', value: FP_NODE_VALUE } },
+    });
+    s.controller.retryDirect();
+    await flush();
+    s.signaling.deliver(answerSignal(s));
+    await flush();
+    s.pc().channel.open();
+    await flush();
+    s.connection.switchTo('direct');
+    await flush();
+    expect(s.controller.getState()).toBe('active');
+
+    s.clock.advance(60_000);
+    await flush();
+    expect(s.controller.diagnostics().failures).toBe(0);
+    expect(s.controller.diagnostics().cooling).toBe(false);
+    expect(s.controller.diagnostics().level).toBe(0);
   });
 });
 

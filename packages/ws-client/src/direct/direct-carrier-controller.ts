@@ -27,13 +27,18 @@
 // - 信令严格串行：本地候选在 offer 发出前排队，远端候选在 `setRemoteDescription` 完成前排队。
 // - 信令通道（`/mesh/ws`）未就绪时不开 attempt、信令入队；恢复时重置退避并立刻重试。
 //
-// 失败重试：1 s 起指数退避、上限 30 s、最多 5 次，之后停在 `failed` 直到 `retry()` /
-// `online` / `navigator.connection` 变化 / 信令恢复。指纹不匹配、鉴权被拒（4xx）不重试。
-// `NO_CONNECTION` / `MULTIPLE_CONNECTIONS` 例外：退避解决不了，改成挂在 primary 状态上等
-// 它连上 / 重连过再重来一轮，且不消耗重试次数。
+// 失败重试：熔断器连续 3 次失败后进入冷却（30 s → 60 s → … 上限 30 min）；冷却期内
+// 不自动拨号，`retryDirect()` 允许恰好一次探测。通道保持 active ≥ 60 s 才复位计数。
+// 激活本身不复位。指纹不匹配、鉴权被拒（4xx）计入失败但不自动重试。
+// `NO_CONNECTION` / `MULTIPLE_CONNECTIONS` 与「signaling not ready」不计入失败。
 
 import type { DirectCarrierLike } from '../carrier-switch';
 import { DirectDataChannelCarrier, type RTCDataChannelLike } from './data-channel-carrier';
+import {
+  DIRECT_DIAL_BREAKER_HEALTHY_MS,
+  DirectDialBreaker,
+  classifyDirectDialFailure,
+} from './direct-dial-breaker';
 import { type DtlsFingerprint, fingerprintsEqual, parseSdpFingerprint } from './fingerprint';
 import {
   type DirectRoute,
@@ -103,6 +108,8 @@ export interface GatewayConnectionLike {
   onCarrierChange?(handler: (active: 'primary' | 'direct') => void): () => void;
   /** primary WS 客户端；缺省时 connectionId 相关的等待退化成普通退避重试。 */
   readonly client?: PrimaryStatusLike;
+  /** 由控制器挂上「强制拨一次」；`GatewayConnection.retryDirect()` 走这里。 */
+  setDirectRetry?(fn: (() => void) | null): void;
 }
 
 /** 事件源的最小结构子集（`window` / `navigator.connection` 都满足）。 */
@@ -136,6 +143,7 @@ export interface DirectCarrierControllerOptions {
   retryBaseMs?: number;
   retryMaxMs?: number;
   maxAttempts?: number;
+  now?: () => number;
   connectTimeoutMs?: number;
   statsIntervalMs?: number;
   iceDisconnectGraceMs?: number;
@@ -258,9 +266,13 @@ export class DirectCarrierController {
   private generation = 0;
   private attempts = 0;
   private retryHandle: unknown = null;
+  private coolingHandle: unknown = null;
+  private healthyHandle: unknown = null;
   private statsHandle: unknown = null;
   private networkDebounceHandle: unknown = null;
   private started = false;
+  private readonly breaker: DirectDialBreaker;
+  private readonly now: () => number;
   private readonly networkCleanups: (() => void)[] = [];
   private unsubscribeSignalingReady: (() => void) | null = null;
   private unsubscribeCarrierChange: (() => void) | null = null;
@@ -275,6 +287,8 @@ export class DirectCarrierController {
   constructor(options: DirectCarrierControllerOptions) {
     this.options = options;
     this.nodeId = options.nodeId;
+    this.now = options.now ?? Date.now;
+    this.breaker = new DirectDialBreaker({ now: this.now });
     this.schedule =
       options.setTimeoutFn ?? ((fn, ms) => (globalThis as typeof global).setTimeout(fn, ms));
     this.cancelTimer =
@@ -347,31 +361,41 @@ export class DirectCarrierController {
     if (this.started) return;
     this.started = true;
     this.attempts = 0;
+    this.options.connection.setDirectRetry?.(() => this.retryDirect());
     this.installNetworkListeners();
     this.installSignalingReadyListener();
     this.connect();
   }
 
-  /** 重置退避计数并立即重连（UI 的「重试直连」按钮 / 网络或信令恢复）。 */
-  retry(): void {
+  /** 强制拨一次（冷却中也允许恰好一次）；不复位失败计数。 */
+  retryDirect(): void {
     if (!this.started) {
       this.start();
       return;
     }
-    this.attempts = 0;
+    this.breaker.forceProbe(this.nodeId);
     this.retryHandle = this.clearHandle(this.retryHandle);
+    this.coolingHandle = this.clearHandle(this.coolingHandle);
     this.clearPrimaryWait();
     this.teardownAttempt();
     this.connect();
   }
 
+  /** 与 `retryDirect()` 相同：UI / 网络变化走强制探测，不复位熔断计数。 */
+  retry(): void {
+    this.retryDirect();
+  }
+
   stop(): void {
     this.started = false;
     this.retryHandle = this.clearHandle(this.retryHandle);
+    this.coolingHandle = this.clearHandle(this.coolingHandle);
+    this.healthyHandle = this.clearHandle(this.healthyHandle);
     this.statsHandle = this.clearHandle(this.statsHandle);
     this.clearPrimaryWait();
     this.removeNetworkListeners();
     this.removeSignalingReadyListener();
+    this.options.connection.setDirectRetry?.(null);
     this.teardownAttempt();
     this.setState('idle', null);
   }
@@ -384,6 +408,13 @@ export class DirectCarrierController {
     // 信令没通就别浪费一次 attempt：offer 发不出去，只会走到超时再退避。
     if (!this.signalingReady()) {
       this.setState('failed', 'signaling not ready');
+      return;
+    }
+    const decision = this.breaker.shouldTry(this.nodeId);
+    if (!decision.allow) {
+      this.setState('failed', this.failureReason);
+      this.armCoolingRetry(decision.until);
+      this.publish();
       return;
     }
     this.clearPrimaryWait();
@@ -426,6 +457,7 @@ export class DirectCarrierController {
       chain: Promise.resolve(),
     };
     this.attempt = attempt;
+    this.breaker.beginAttempt(this.nodeId, String(attempt.id));
     attempt.timeoutHandle = this.schedule(() => {
       attempt.timeoutHandle = null;
       if (this.stale(attempt)) return;
@@ -716,13 +748,12 @@ export class DirectCarrierController {
     if (!signaling.onReady || this.unsubscribeSignalingReady) return;
     this.unsubscribeSignalingReady = signaling.onReady((ready) => {
       if (!this.started || !ready) return;
-      // mesh WS 恢复：退避重来一轮，别停在 failed 等用户刷新页面。
-      this.attempts = 0;
       const attempt = this.attempt;
       if (attempt && !attempt.cancelled) {
         void this.pumpOutbox(attempt);
         return;
       }
+      if (!this.breaker.shouldTry(this.nodeId).allow) return;
       this.retryHandle = this.clearHandle(this.retryHandle);
       this.connect();
     });
@@ -795,19 +826,34 @@ export class DirectCarrierController {
   private activate(attempt: Attempt): void {
     if (this.stale(attempt) || !attempt.carrier) return;
     if (this.state === 'active') return;
-    this.attempts = 0;
     attempt.timeoutHandle = this.clearHandle(attempt.timeoutHandle);
+    this.breaker.noteChannelEstablished(this.nodeId, String(attempt.id));
+    this.healthyHandle = this.clearHandle(this.healthyHandle);
+    const establishedAt = this.now();
+    this.healthyHandle = this.schedule(() => {
+      this.healthyHandle = null;
+      if (this.state !== 'active' || this.attempt !== attempt) return;
+      if (this.now() - establishedAt < DIRECT_DIAL_BREAKER_HEALTHY_MS) return;
+      this.breaker.noteHealthy(this.nodeId);
+      this.publish();
+    }, DIRECT_DIAL_BREAKER_HEALTHY_MS);
     this.setState('active', null);
     this.startStatsPolling();
   }
 
   // ========== 失败与退避 ==========
 
-  private failAttempt(reason: string, retryable: boolean): void {
+  private failAttempt(reason: string, retryable: boolean, count = true): void {
+    const attemptId = this.attempt ? String(this.attempt.id) : undefined;
+    this.healthyHandle = this.clearHandle(this.healthyHandle);
     this.teardownAttempt();
     this.statsHandle = this.clearHandle(this.statsHandle);
     this.route = null;
     this.rttMs = null;
+    if (count) {
+      const kind = classifyDirectDialFailure(reason);
+      if (kind) this.breaker.noteFailure(this.nodeId, kind, attemptId);
+    }
     this.setState('failed', reason);
     if (retryable && this.started) this.scheduleRetry();
   }
@@ -817,7 +863,7 @@ export class DirectCarrierController {
    * 所以**不消耗重试次数**，挂在 primary 的状态上等它重连过再来一轮。
    */
   private failWaitingPrimary(reason: string, mode: PrimaryWaitMode): void {
-    this.failAttempt(reason, false);
+    this.failAttempt(reason, false, false);
     if (this.started) this.waitForPrimary(mode);
   }
 
@@ -883,13 +929,29 @@ export class DirectCarrierController {
   }
 
   private scheduleRetry(): void {
-    if (this.retryHandle != null) return;
-    // 停在 failed，等 retry() / 网络或信令恢复
-    if (this.attempts >= (this.options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)) return;
+    if (this.retryHandle != null || this.coolingHandle != null) return;
+    const decision = this.breaker.shouldTry(this.nodeId);
+    if (!decision.allow) {
+      this.armCoolingRetry(decision.until);
+      this.publish();
+      return;
+    }
+    const cap = this.options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    if (this.attempts >= cap) return;
     const delay = this.retryDelay(this.attempts);
     this.attempts += 1;
     this.retryHandle = this.schedule(() => {
       this.retryHandle = null;
+      if (!this.started) return;
+      this.connect();
+    }, delay);
+  }
+
+  private armCoolingRetry(until: number | null): void {
+    if (this.coolingHandle != null) return;
+    const delay = Math.max(0, (until ?? this.now()) - this.now());
+    this.coolingHandle = this.schedule(() => {
+      this.coolingHandle = null;
       if (!this.started) return;
       this.connect();
     }, delay);
@@ -985,17 +1047,28 @@ export class DirectCarrierController {
 
   private publish(): void {
     const active = this.state === 'active';
+    const snap = this.breaker.snapshot(this.nodeId);
     const next: DirectDiagnostics = {
       path: active ? 'direct' : 'primary',
       route: active ? this.route : null,
       rtt: active ? this.rttMs : null,
       ice: active || this.state === 'connecting' ? this.ice : null,
+      cooling: snap.cooling,
+      until: snap.until,
+      failures: snap.failures,
+      level: snap.level,
+      lastFailureKind: snap.lastFailureKind,
     };
     const prev = this.snapshot;
     if (
       prev.path === next.path &&
       prev.route === next.route &&
       prev.rtt === next.rtt &&
+      prev.cooling === next.cooling &&
+      prev.until === next.until &&
+      prev.failures === next.failures &&
+      prev.level === next.level &&
+      prev.lastFailureKind === next.lastFailureKind &&
       sameIce(prev.ice ?? null, next.ice ?? null)
     ) {
       return;

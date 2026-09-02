@@ -51,6 +51,38 @@ describe('NodeEventDedupe', () => {
         direct_capable: true,
       })
     ).toBe(true);
+    expect(
+      dedupe.shouldEmitList({
+        ...base,
+        inventory: '{"version":"2"}',
+        version: '2',
+        name: 'n2',
+        direct_capable: true,
+        dcBreaker: {
+          cooling: true,
+          until: 1,
+          failures: 3,
+          level: 1,
+          lastFailureKind: 'liveness-timeout',
+        },
+      })
+    ).toBe(true);
+    expect(
+      dedupe.shouldEmitList({
+        ...base,
+        inventory: '{"version":"2"}',
+        version: '2',
+        name: 'n2',
+        direct_capable: true,
+        dcBreaker: {
+          cooling: true,
+          until: 1,
+          failures: 3,
+          level: 1,
+          lastFailureKind: 'liveness-timeout',
+        },
+      })
+    ).toBe(false);
   });
 
   test('synthetic offline is de-duped per generation and list can emit online again', () => {

@@ -55,6 +55,17 @@ export {
 } from './direct/direct-carrier-controller';
 
 export {
+  DIRECT_DIAL_BREAKER_BASE_MS,
+  DIRECT_DIAL_BREAKER_FAILS,
+  DIRECT_DIAL_BREAKER_HEALTHY_MS,
+  DIRECT_DIAL_BREAKER_MAX_MS,
+  DirectDialBreaker,
+  classifyDirectDialFailure,
+  type DirectDialBreakerDecision,
+  type DirectDialBreakerSnapshot,
+} from './direct/direct-dial-breaker';
+
+export {
   BulkClient,
   BulkTransferError,
   bulkChannelLabel,

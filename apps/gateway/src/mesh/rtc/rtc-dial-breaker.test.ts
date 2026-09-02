@@ -8,67 +8,167 @@ import { seedNodeIdentity, seedUser, waitUntil } from '../test-support';
 import type { UplinkStatus } from '../types';
 import { UplinkClient } from '../uplink-client';
 import {
+  RTC_DIAL_BREAKER_BASE_MS_DEFAULT,
   RTC_DIAL_BREAKER_FAILS,
-  RTC_DIAL_BREAKER_MS_DEFAULT,
+  RTC_DIAL_BREAKER_HEALTHY_MS,
+  RTC_DIAL_BREAKER_MAX_MS,
   RtcDialBreaker,
+  classifyRtcDialFailure,
+  isIntentionalDcLoss,
 } from './rtc-dial-breaker';
 import type { RtcPeerManager } from './rtc-peer-manager';
 
 describe('RtcDialBreaker', () => {
-  test('opens after 8 consecutive DataChannel failures and skips until expiry', () => {
-    const logs: Array<{ peer: string; fails: number; until: number }> = [];
+  test('trips after 3 consecutive failures with 30s → 60s exponential cooldown', () => {
+    const trips: Array<{
+      peer: string;
+      fails: number;
+      level: number;
+      cooldownMs: number;
+      until: number;
+    }> = [];
+    let now = 1_000;
     const breaker = new RtcDialBreaker({
-      now: () => 1_000,
-      breakerMs: 6 * 60 * 60 * 1000,
-      onOpen: (event) => logs.push(event),
+      now: () => now,
+      breakerMs: 30_000,
+      onTrip: (event) => trips.push(event),
     });
     const peer = 'ec42f3';
-    for (let i = 0; i < RTC_DIAL_BREAKER_FAILS - 1; i += 1) {
-      expect(breaker.noteFailure(peer)).toEqual({ opened: false, open: false });
-      expect(breaker.shouldSkip(peer)).toBe(false);
-    }
-    const opened = breaker.noteFailure(peer);
+    expect(breaker.noteFailure(peer, 'timeout', 'a1')).toEqual({
+      counted: true,
+      opened: false,
+      open: false,
+    });
+    expect(breaker.shouldTry(peer).allow).toBe(true);
+    expect(breaker.noteFailure(peer, 'ice', 'a2')).toEqual({
+      counted: true,
+      opened: false,
+      open: false,
+    });
+    const opened = breaker.noteFailure(peer, 'channel-closed', 'a3');
     expect(opened).toEqual({
+      counted: true,
       opened: true,
       open: true,
-      until: 1_000 + RTC_DIAL_BREAKER_MS_DEFAULT,
+      until: 1_000 + 30_000,
     });
-    expect(breaker.shouldSkip(peer)).toBe(true);
-    expect(logs).toEqual([
-      { peer, fails: RTC_DIAL_BREAKER_FAILS, until: 1_000 + RTC_DIAL_BREAKER_MS_DEFAULT },
+    expect(breaker.shouldTry(peer)).toMatchObject({
+      allow: false,
+      cooling: true,
+      until: 1_000 + 30_000,
+      failures: 3,
+      level: 1,
+    });
+    expect(trips).toEqual([
+      { peer, fails: 3, level: 0, cooldownMs: 30_000, until: 1_000 + 30_000 },
     ]);
-    expect(breaker.noteFailure(peer)).toEqual({
+    expect(breaker.noteFailure(peer, 'timeout', 'a4')).toEqual({
+      counted: true,
       opened: false,
       open: true,
-      until: 1_000 + RTC_DIAL_BREAKER_MS_DEFAULT,
+      until: 1_000 + 30_000,
     });
-    expect(logs).toHaveLength(1);
+    expect(trips).toHaveLength(1);
+
+    now = 1_000 + 30_000;
+    expect(breaker.shouldTry(peer).allow).toBe(true);
+    expect(breaker.shouldTry(peer).cooling).toBe(false);
+    expect(breaker.shouldTry(peer).level).toBe(1);
+
+    const second = breaker.noteFailure(peer, 'timeout', 'a5');
+    expect(second.opened).toBe(true);
+    expect(second.until).toBe(now + 60_000);
+    expect(trips).toHaveLength(2);
+    expect(trips[1]).toMatchObject({ level: 1, cooldownMs: 60_000, fails: 5 });
   });
 
-  test('resets on success or advertised endpoint/capability change', () => {
+  test('dedupes noteFailure by attempt id and forceProbe allows one cooling attempt', () => {
+    const now = 0;
+    const breaker = new RtcDialBreaker({ now: () => now, breakerMs: 30_000 });
+    const peer = 'hub-a';
+    for (let i = 0; i < RTC_DIAL_BREAKER_FAILS; i += 1) {
+      breaker.noteFailure(peer, 'timeout', `t${i}`);
+    }
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+    expect(breaker.noteFailure(peer, 'timeout', 't2').counted).toBe(false);
+    breaker.forceProbe(peer);
+    expect(breaker.shouldTry(peer).allow).toBe(true);
+    expect(breaker.shouldTry(peer).cooling).toBe(true);
+    breaker.beginAttempt(peer, 'probe-1');
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+    breaker.noteFailure(peer, 'ice', 'probe-1');
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+    expect(breaker.snapshot(peer).failures).toBe(RTC_DIAL_BREAKER_FAILS + 1);
+  });
+
+  test('short-lived channel is a failure; healthy ≥ 60s resets level once', () => {
+    const resets: number[] = [];
+    let now = 10;
+    const breaker = new RtcDialBreaker({
+      now: () => now,
+      breakerMs: 30_000,
+      onReset: (event) => resets.push(event.healthyMs),
+    });
+    const peer = 'p';
+    breaker.noteFailure(peer, 'timeout', '1');
+    breaker.noteFailure(peer, 'timeout', '2');
+    breaker.noteChannelEstablished(peer, '3');
+    now = 10 + RTC_DIAL_BREAKER_HEALTHY_MS - 1;
+    expect(breaker.noteHealthy(peer)).toBe(false);
+    breaker.noteFailure(peer, 'liveness-timeout', '3');
+    expect(breaker.shouldTry(peer).failures).toBe(3);
+    expect(breaker.shouldTry(peer).cooling).toBe(true);
+    expect(resets).toEqual([]);
+
+    now = breaker.shouldTry(peer).until ?? now;
+    expect(breaker.shouldTry(peer).allow).toBe(true);
+    breaker.noteChannelEstablished(peer, '4');
+    now += RTC_DIAL_BREAKER_HEALTHY_MS;
+    expect(breaker.noteHealthy(peer)).toBe(true);
+    expect(breaker.shouldTry(peer)).toMatchObject({
+      allow: true,
+      cooling: false,
+      failures: 0,
+      level: 0,
+    });
+    expect(resets).toEqual([RTC_DIAL_BREAKER_HEALTHY_MS]);
+    expect(breaker.noteHealthy(peer)).toBe(false);
+  });
+
+  test('notePeerChanged / noteSuccess no longer reset cooling', () => {
     let now = 10;
     const breaker = new RtcDialBreaker({ now: () => now, breakerMs: 60_000 });
     const peer = 'hub-a';
-    for (let i = 0; i < RTC_DIAL_BREAKER_FAILS; i += 1) breaker.noteFailure(peer);
-    expect(breaker.shouldSkip(peer)).toBe(true);
+    for (let i = 0; i < RTC_DIAL_BREAKER_FAILS; i += 1) breaker.noteFailure(peer, 'x', `f${i}`);
+    expect(breaker.shouldTry(peer).allow).toBe(false);
     breaker.noteSuccess(peer);
-    expect(breaker.shouldSkip(peer)).toBe(false);
-
-    for (let i = 0; i < RTC_DIAL_BREAKER_FAILS; i += 1) breaker.noteFailure(peer);
-    expect(breaker.shouldSkip(peer)).toBe(true);
     breaker.notePeerChanged(peer);
-    expect(breaker.shouldSkip(peer)).toBe(false);
-
-    for (let i = 0; i < RTC_DIAL_BREAKER_FAILS; i += 1) breaker.noteFailure(peer);
+    expect(breaker.shouldTry(peer).allow).toBe(false);
     now = 10 + 60_000;
-    expect(breaker.shouldSkip(peer)).toBe(false);
+    expect(breaker.shouldTry(peer).allow).toBe(true);
   });
 
-  test('does not skip ws-secure peers: skip is per-peer DataChannel only', () => {
-    const breaker = new RtcDialBreaker({ now: () => 0 });
-    for (let i = 0; i < RTC_DIAL_BREAKER_FAILS; i += 1) breaker.noteFailure('a');
-    expect(breaker.shouldSkip('a')).toBe(true);
-    expect(breaker.shouldSkip('b')).toBe(false);
+  test('cooldown is capped at 30 min and skip is per-peer', () => {
+    const breaker = new RtcDialBreaker({ now: () => 0, breakerMs: 30_000 });
+    for (let i = 0; i < 20; i += 1) breaker.noteFailure('a', 'timeout', `a${i}`);
+    const until = breaker.shouldTry('a').until ?? 0;
+    expect(until).toBeLessThanOrEqual(RTC_DIAL_BREAKER_MAX_MS);
+    expect(breaker.shouldTry('b').allow).toBe(true);
+  });
+
+  test('classifies close reasons and ignores intentional drops', () => {
+    expect(classifyRtcDialFailure('datachannel open timeout')).toBe('timeout');
+    expect(classifyRtcDialFailure('ice failed')).toBe('ice');
+    expect(classifyRtcDialFailure('liveness-timeout')).toBe('liveness-timeout');
+    expect(classifyRtcDialFailure('missed-pong')).toBe('missed-pong');
+    expect(classifyRtcDialFailure('channel-closed')).toBe('channel-closed');
+    expect(classifyRtcDialFailure('fragment-protocol')).toBe('protocol');
+    expect(isIntentionalDcLoss('stopped')).toBe(true);
+    expect(isIntentionalDcLoss('revoked')).toBe(true);
+    expect(isIntentionalDcLoss('idle')).toBe(true);
+    expect(isIntentionalDcLoss('replaced')).toBe(true);
+    expect(isIntentionalDcLoss('liveness-timeout')).toBe(false);
+    expect(RTC_DIAL_BREAKER_BASE_MS_DEFAULT).toBe(30_000);
   });
 });
 
@@ -200,7 +300,7 @@ describe('PeerManager DataChannel breaker', () => {
     }
   }
 
-  test('8 consecutive DC failures stop RTC while ws-secure is still selected', async () => {
+  test('3 consecutive DC failures stop RTC while ws-secure is still selected', async () => {
     const { manager, peer, dcCalls } = await setupManager();
     await tripBreaker(manager, peer.nodeId, dcCalls);
     expect(dcCalls()).toBeGreaterThanOrEqual(RTC_DIAL_BREAKER_FAILS);
@@ -209,9 +309,13 @@ describe('PeerManager DataChannel breaker', () => {
     expect(dcCalls()).toBe(frozen);
     expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
     expect(link).toBeTruthy();
+    const detail = manager.linkDetailOf(peer.nodeId);
+    expect(detail.dcBreaker.cooling).toBe(true);
+    expect(detail.dcBreaker.failures).toBeGreaterThanOrEqual(RTC_DIAL_BREAKER_FAILS);
+    expect(detail.dcBreaker.level).toBeGreaterThanOrEqual(1);
   });
 
-  test('recovers RTC dials after a successful DC session', async () => {
+  test('short-lived DC does not reset the breaker; cooling keeps relay/ws-secure', async () => {
     const { manager, peer, dcCalls } = await setupManager();
     await tripBreaker(manager, peer.nodeId, dcCalls);
     const afterTrip = dcCalls();
@@ -222,11 +326,14 @@ describe('PeerManager DataChannel breaker', () => {
     expect(manager.adoptLink(peer.nodeId, dcLocal, 'dc', peer.nodeId)).toBe(dcLocal);
     dcLocal.close('drop-dc');
     await waitUntil(() => manager.transportOf(peer.nodeId) !== 'dc');
+    const frozen = dcCalls();
     await manager.getLink(peer.nodeId);
-    await waitUntil(() => dcCalls() > afterTrip);
+    expect(dcCalls()).toBe(frozen);
+    expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
+    expect(manager.linkDetailOf(peer.nodeId).dcBreaker.cooling).toBe(true);
   });
 
-  test('recovers RTC dials after advertised endpoint/direct-capable change', async () => {
+  test('endpoint/direct-capable change does not reset the breaker', async () => {
     const { manager, peer, remotes, dcCalls, store } = await setupManager();
     await tripBreaker(manager, peer.nodeId, dcCalls);
     const frozen = dcCalls();
@@ -249,7 +356,20 @@ describe('PeerManager DataChannel breaker', () => {
     });
     await dropLive(manager, peer.nodeId);
     await manager.getLink(peer.nodeId);
-    expect(dcCalls()).toBeGreaterThan(frozen);
+    expect(dcCalls()).toBe(frozen);
+  });
+
+  test('forced probe allows exactly one DC attempt during cooldown', async () => {
+    const { manager, peer, dcCalls } = await setupManager();
+    await tripBreaker(manager, peer.nodeId, dcCalls);
+    const frozen = dcCalls();
+    await manager.getLink(peer.nodeId);
+    expect(dcCalls()).toBe(frozen);
+    manager.forceDcProbe(peer.nodeId);
+    await waitUntil(() => dcCalls() > frozen);
+    expect(dcCalls()).toBe(frozen + 1);
+    await manager.getLink(peer.nodeId);
+    expect(dcCalls()).toBe(frozen + 1);
   });
 
   test('recovers RTC dials after breaker expiry', async () => {

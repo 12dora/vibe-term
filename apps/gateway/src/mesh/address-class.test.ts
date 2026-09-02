@@ -2,10 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import {
   type RankableIfaceAddr,
   addressFromIceCandidate,
+  canonicalPeerHost,
   classifyPeerReach,
   classifyRemoteAddress,
+  hasLocalCgnatAddress,
   hostFromWsUrl,
+  isCgnatIpv4,
+  isIpv6SiteLocal,
+  isIpv6Ula,
   isPeerReachable,
+  localNetworkFingerprint,
   parseIpv6Words,
   rankPeerEndpoints,
   rttChangedMaterially,
@@ -136,6 +142,40 @@ describe('parseIpv6Words', () => {
     expect(parseIpv6Words('2001:db8::1.2.3.4')).toBeNull();
     expect(parseIpv6Words('1:2:3:4:5:6:7:8:9')).toBeNull();
     expect(parseIpv6Words('::ffff:10.1.2.3')).toBeNull();
+  });
+});
+
+describe('CGNAT / ULA helpers and local fingerprint', () => {
+  test('classifies RFC 6598 and IPv6 ULA / site-local', () => {
+    expect(isCgnatIpv4('100.64.0.1')).toBe(true);
+    expect(isCgnatIpv4('100.127.255.255')).toBe(true);
+    expect(isCgnatIpv4('100.63.255.255')).toBe(false);
+    expect(isCgnatIpv4('100.128.0.1')).toBe(false);
+    expect(isCgnatIpv4('::ffff:100.64.1.2')).toBe(true);
+    expect(isIpv6Ula('fc00::1')).toBe(true);
+    expect(isIpv6Ula('fd12:3456:789a::1')).toBe(true);
+    expect(isIpv6Ula('fe80::1')).toBe(false);
+    expect(isIpv6SiteLocal('fec0::1')).toBe(true);
+    expect(isIpv6SiteLocal('fe80::1')).toBe(false);
+    expect(canonicalPeerHost('::ffff:10.0.0.1')).toBe('10.0.0.1');
+  });
+
+  test('fingerprint is the sorted unique non-internal address set', () => {
+    const ifaces = {
+      lo0: [{ address: '127.0.0.1', internal: true, family: 'IPv4' }],
+      en0: [
+        { address: '10.0.0.8', internal: false, family: 'IPv4' },
+        { address: '10.0.0.8', internal: false, family: 'IPv4' },
+      ],
+      en1: [{ address: '192.168.1.1', internal: false, family: 'IPv4' }],
+    };
+    expect(localNetworkFingerprint(ifaces)).toBe('10.0.0.8,192.168.1.1');
+    expect(hasLocalCgnatAddress(ifaces)).toBe(false);
+    expect(
+      hasLocalCgnatAddress({
+        utun4: [{ address: '100.64.1.1', internal: false, family: 'IPv4' }],
+      })
+    ).toBe(true);
   });
 });
 

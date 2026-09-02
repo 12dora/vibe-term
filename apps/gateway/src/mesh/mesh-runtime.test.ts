@@ -952,6 +952,66 @@ describe('createMeshRuntime', () => {
     expect(renamedBody.nodes.find((n) => n.id === peerId)?.name).toBe('renamed-a');
   });
 
+  test('node.list of this runtime node invokes onLocalNodeName when the name changes', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const names: string[] = [];
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+      onLocalNodeName: (name) => {
+        names.push(name);
+      },
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+
+    const sendSelf = (version: number, name: string) => {
+      hub.ctl.send(
+        encodeUplinkCtl({
+          t: 'node.list',
+          version,
+          key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+          rtc: { stun: [], turn: null },
+          nodes: [
+            {
+              id: mesh.nodeId,
+              name,
+              online: true,
+              endpoints: [],
+              inventory: {},
+              direct_capable: false,
+              version: '1.0.0',
+            },
+          ],
+        })
+      );
+    };
+
+    sendSelf(1, 'home');
+    await waitUntil(() => names.includes('home'));
+    sendSelf(2, 'home');
+    await waitUntil(() => names.filter((row) => row === 'home').length >= 2);
+    sendSelf(3, 'studio');
+    await waitUntil(() => names.includes('studio'));
+    expect(names[names.length - 1]).toBe('studio');
+  });
+
   test('emits hub online when hub meta is absent from nodes but the cert is live', async () => {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
@@ -1784,6 +1844,7 @@ describe('isAdvertisablePeerAddress', () => {
       ['10.0.0.12', 'IPv4'],
       ['192.0.2.10', 4],
       ['192.168.1.1', 'IPv4'],
+      ['172.28.0.4', 'IPv4'],
       ['223.255.255.255', 'IPv4'],
       ['240.0.0.1', 'IPv4'],
       ['255.255.255.255', 'IPv4'],
@@ -1793,7 +1854,6 @@ describe('isAdvertisablePeerAddress', () => {
       ['0.1.2.3', 'IPv4'],
       ['2600::1', 'IPv6'],
       ['fe7f::1', 'IPv6'],
-      ['fec0::1', 'IPv6'],
       ['::2', 'IPv6'],
     ];
     const reject: Array<[string, string | number, boolean?]> = [
@@ -1819,6 +1879,11 @@ describe('isAdvertisablePeerAddress', () => {
       ['::1', 6],
       [':::1', 'IPv6'],
       ['2001:db8::1.2.3.4', 'IPv6'],
+      ['fec0::1', 'IPv6'],
+      ['fc00::1', 'IPv6'],
+      ['fd12:3456:789a::1', 'IPv6'],
+      ['100.64.0.1', 'IPv4'],
+      ['100.127.255.255', 'IPv4'],
     ];
     for (const [address, family] of accept) {
       expect(isAdvertisablePeerAddress(ni(address, family)), `${family} ${address}`).toBe(true);
@@ -1829,6 +1894,22 @@ describe('isAdvertisablePeerAddress', () => {
         `${family} ${address}${internal ? ' internal' : ''}`
       ).toBe(false);
     }
+  });
+
+  test('skips container-oriented interfaces even for RFC1918', () => {
+    expect(isAdvertisablePeerAddress(ni('172.17.0.1', 'IPv4'), { iface: 'docker0' })).toBe(false);
+    expect(isAdvertisablePeerAddress(ni('10.0.0.12', 'IPv4'), { iface: 'vethabc' })).toBe(false);
+    expect(isAdvertisablePeerAddress(ni('10.0.0.12', 'IPv4'), { iface: 'br-1a2b' })).toBe(false);
+    expect(isAdvertisablePeerAddress(ni('10.0.0.12', 'IPv4'), { iface: 'en0' })).toBe(true);
+    expect(isAdvertisablePeerAddress(ni('10.0.0.12', 'IPv4'), { iface: 'utun4' })).toBe(true);
+  });
+
+  test('CGNAT is rejected unless allowCgnat is set', () => {
+    expect(isAdvertisablePeerAddress(ni('100.64.1.1', 'IPv4'))).toBe(false);
+    expect(isAdvertisablePeerAddress(ni('100.64.1.1', 'IPv4'), { allowCgnat: true })).toBe(true);
+    expect(
+      isAdvertisablePeerAddress(ni('100.64.1.1', 'IPv4'), { iface: 'utun0', allowCgnat: true })
+    ).toBe(true);
   });
 });
 

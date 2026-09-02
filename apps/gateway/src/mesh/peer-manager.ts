@@ -15,7 +15,9 @@ import {
   type RankableIfaceAddr,
   addressFromIceCandidate,
   classifyPeerReach,
+  classifyRemoteAddress,
   hostFromWsUrl,
+  localNetworkFingerprint,
   rankPeerEndpoints,
   rttChangedMaterially,
 } from './address-class';
@@ -39,9 +41,18 @@ import {
   noteWsOutcome,
   winningDialInitiator,
 } from './peer-direct-attempt';
+import { PeerEndpointBackoff, canonicalEndpointSet } from './peer-endpoint-backoff';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
 import { PeerServer } from './peer-server';
-import { abortable, dialWsSecureCandidate, quiet, raceWsSecureEndpoints } from './peer-ws-race';
+import {
+  type DirectDialLimiter,
+  abortable,
+  classifyWsDialFailure,
+  dialWsSecureCandidate,
+  quiet,
+  raceWsSecureEndpoints,
+  sharedDirectDialLimiter,
+} from './peer-ws-race';
 import type { RtcPeerManager } from './rtc';
 import {
   RTC_WAKE_DOMAIN,
@@ -55,7 +66,14 @@ import {
   peerRtcSession,
   verifyRtcWakeSignature,
 } from './rtc/ice';
-import { createGatewayRtcDialBreaker } from './rtc/rtc-dial-breaker';
+import {
+  RTC_DIAL_BREAKER_HEALTHY_MS,
+  type RtcDialBreaker,
+  type RtcDialBreakerSnapshot,
+  classifyRtcDialFailure,
+  createGatewayRtcDialBreaker,
+  isIntentionalDcLoss,
+} from './rtc/rtc-dial-breaker';
 import { flushDialFailed, rtcLog, rtcLogRateLimited } from './rtc/rtc-log';
 import { acceptHttpStream, acceptWsStream, classifyOpenPayload } from './stream-targets';
 import {
@@ -73,6 +91,7 @@ import type { UplinkPool } from './uplink-pool';
 
 export const PEER_IDLE_MS = 5 * 60 * 1000;
 export const PEER_CONNECT_TIMEOUT_MS = 3_000;
+export const PEER_LAN_DIAL_TIMEOUT_MS = 4_000;
 export const PEER_WS_DIAL_STAGGER_MS = 250;
 export const PEER_PING_INTERVAL_MS = 15_000;
 export const PEER_MISSED_PONG_LIMIT = 3;
@@ -127,6 +146,8 @@ export type PeerManagerOptions = {
   linkFactory?: PeerLinkFactory;
   interfacesFn?: () => Record<string, RankableIfaceAddr[] | undefined>;
   hubHost?: string | null | (() => string | null);
+  endpointBackoff?: PeerEndpointBackoff;
+  dialLimiter?: DirectDialLimiter;
   onGatewaySession?: (
     session: import('../ws/gateway-session').GatewaySession,
     auth: { sid: string; uid: string; via: string; cid?: string }
@@ -139,6 +160,7 @@ export type PeerManagerOptions = {
     reach: PeerReach;
     transport: PeerTransportKind | null;
     rttMs: number | null;
+    dcBreaker?: RtcDialBreakerSnapshot;
   }) => void;
 };
 
@@ -178,6 +200,7 @@ type LivePeer = {
   lastRttEmitAt: number;
   lastEmittedRttMs: number | null;
   linkSinceAt: number;
+  dcAttemptId: string | null;
 };
 
 type UpgradeGate = {
@@ -218,6 +241,7 @@ export type PeerLinkDetail = {
   linkSinceAt: number | null;
   endpoints: string[];
   directFailure: { at: number; ws?: string | null; dc?: string | null } | null;
+  dcBreaker: RtcDialBreakerSnapshot;
 };
 
 type ParkedInbound = {
@@ -276,6 +300,7 @@ export class PeerManager {
         reach: PeerReach;
         transport: PeerTransportKind | null;
         rttMs: number | null;
+        dcBreaker?: RtcDialBreakerSnapshot;
       }) => void)
     | null;
   private readonly rtcListeners = new Map<string, Set<(msg: RtcSignalMessage) => void>>();
@@ -286,12 +311,18 @@ export class PeerManager {
   private readonly incomingWakeGate = new Map<string, IncomingWakeGate>();
   private readonly rtcWakeNonces = new Map<string, Map<string, number>>();
   private readonly dcUpgradeRetry = new Map<string, DcUpgradeRetry>();
-  private readonly dcBreaker = createGatewayRtcDialBreaker();
+  private readonly dcBreaker: RtcDialBreaker;
+  private readonly dcHealth = new Map<string, AbortController>();
+  private dcAttemptSeq = 0;
   private readonly lostDirect = new Set<string>();
   private readonly lastDirectAttempt = new Map<string, DirectAttemptRecord>();
   private readonly transportWaiters = new Map<string, TransportWaiter[]>();
   private readonly interfacesFn: () => Record<string, RankableIfaceAddr[] | undefined>;
   private readonly hubHostOf: () => string | null;
+  private readonly endpointBackoff: PeerEndpointBackoff;
+  private readonly dialLimiter: DirectDialLimiter;
+  private readonly advertisedEndpointSet = new Map<string, string>();
+  private localFingerprint = '';
   private upgradeInflight = 0;
   private linkInfoHold = 0;
   private readonly upgradeWaiters: Array<() => void> = [];
@@ -334,6 +365,10 @@ export class PeerManager {
     this.interfacesFn = opts.interfacesFn ?? (() => os.networkInterfaces());
     const hubHost = opts.hubHost;
     this.hubHostOf = typeof hubHost === 'function' ? hubHost : () => hubHost ?? null;
+    this.endpointBackoff =
+      opts.endpointBackoff ?? new PeerEndpointBackoff({ now: () => this.scheduler.now() });
+    this.dialLimiter = opts.dialLimiter ?? sharedDirectDialLimiter();
+    this.dcBreaker = createGatewayRtcDialBreaker({ now: () => this.scheduler.now() });
     this.uplink.setOnRelayStream((stream, from) => {
       void this.acceptRelay(stream, from);
     });
@@ -362,8 +397,11 @@ export class PeerManager {
 
   async start(): Promise<void> {
     await this.server?.start();
+    this.syncLocalFingerprint();
     this.upgradeScan?.clear();
     this.upgradeScan = this.scheduler.interval(() => {
+      this.syncLocalFingerprint();
+      this.endpointBackoff.prune();
       this.refreshAdvertisedStatus();
       this.notifyPeerEndpointsChanged();
     }, PEER_UPGRADE_SCAN_MS);
@@ -401,7 +439,9 @@ export class PeerManager {
     this.incomingWakeGate.clear();
     this.rtcWakeNonces.clear();
     for (const nodeId of [...this.dcUpgradeRetry.keys()]) this.cancelDcUpgradeRetry(nodeId);
+    for (const nodeId of [...this.dcHealth.keys()]) this.cancelDcHealthTimer(nodeId);
     this.lostDirect.clear();
+    this.dcBreaker.reset();
   }
 
   getLive(nodeId: string): LinkSession | null {
@@ -429,7 +469,16 @@ export class PeerManager {
       linkSinceAt: live?.linkSinceAt ?? null,
       endpoints: [],
       directFailure: directFailureView(this.lastDirectAttempt.get(nodeId)),
+      dcBreaker: this.dcBreaker.snapshot(nodeId),
     };
+  }
+
+  forceDcProbe(nodeId: string): void {
+    if (this.stopped) return;
+    this.dcBreaker.forceProbe(nodeId);
+    const live = this.live.get(nodeId);
+    if (live) this.maybeUpgrade(nodeId, { cooldown: false });
+    else void this.getLink(nodeId).catch(() => undefined);
   }
 
   async waitForTransport(
@@ -573,15 +622,37 @@ export class PeerManager {
     this.upgrading.delete(nodeId);
     this.liveWaiters.delete(nodeId);
     this.failTransportWaiters(nodeId);
+    this.endpointBackoff.resetNode(nodeId);
+    this.advertisedEndpointSet.delete(nodeId);
   }
 
   notifyPeerEndpointsChanged(nodeId?: string): void {
     if (nodeId) {
+      this.syncPeerEndpointSet(nodeId);
       this.maybeUpgrade(nodeId, { cooldown: true });
       return;
     }
     for (const id of this.live.keys()) {
       this.maybeUpgrade(id, { cooldown: true });
+    }
+  }
+
+  async forceProbe(nodeId: string, endpoints?: string[]): Promise<LinkSession | null> {
+    this.requireTrusted(nodeId);
+    if (this.stopped) throw new NodeUnreachableError(nodeId, 'peer manager stopped');
+    const gen = this.generation;
+    const attempt = emptyDirectAttempt(this.scheduler.now());
+    try {
+      const session = await this.dialWsSecure(nodeId, gen, this.stopAbort.signal, attempt, {
+        bypassBackoff: true,
+        endpoints,
+      });
+      this.finishDirectAttempt(nodeId, attempt, session, null);
+      return session;
+    } catch (err) {
+      this.finishDirectAttempt(nodeId, attempt, null, null);
+      if (err instanceof NodeUnreachableError) throw err;
+      throw new NodeUnreachableError(nodeId, err instanceof Error ? err.message : 'unreachable');
     }
   }
 
@@ -806,12 +877,12 @@ export class PeerManager {
     return cached ? parseEndpoints(cached.endpointsJson, this.server?.port).length > 0 : false;
   }
 
+  private dcCapable(nodeId: string): boolean {
+    return this.rtc?.available === true && this.userStore.getPeer(nodeId)?.directCapable !== false;
+  }
+
   private shouldTryDc(nodeId: string): boolean {
-    return (
-      !this.dcBreaker.shouldSkip(nodeId) &&
-      this.rtc?.available === true &&
-      this.userStore.getPeer(nodeId)?.directCapable !== false
-    );
+    return this.dcCapable(nodeId) && this.dcBreaker.shouldTry(nodeId).allow;
   }
 
   private handleIncomingRtcWake(fromNodeId: string, msg: RtcSignalMessage): void {
@@ -936,6 +1007,42 @@ export class PeerManager {
     this.dcUpgradeRetry.delete(nodeId);
   }
 
+  private nextDcAttemptId(): string {
+    this.dcAttemptSeq += 1;
+    return `dc:${this.dcAttemptSeq}`;
+  }
+
+  private cancelDcHealthTimer(nodeId: string): void {
+    const abort = this.dcHealth.get(nodeId);
+    if (!abort) return;
+    this.dcHealth.delete(nodeId);
+    abort.abort();
+  }
+
+  private armDcHealthTimer(nodeId: string, attemptId: string): void {
+    this.cancelDcHealthTimer(nodeId);
+    const abort = new AbortController();
+    this.dcHealth.set(nodeId, abort);
+    const establishedAt = this.scheduler.now();
+    const handle = this.scheduler.interval(() => {
+      handle.clear();
+      if (this.dcHealth.get(nodeId) !== abort) return;
+      this.dcHealth.delete(nodeId);
+      if (this.scheduler.now() - establishedAt < RTC_DIAL_BREAKER_HEALTHY_MS) return;
+      const live = this.live.get(nodeId);
+      if (live?.transport !== 'dc' || live.dcAttemptId !== attemptId) return;
+      if (this.dcBreaker.noteHealthy(nodeId)) this.emitLinkInfo(live);
+    }, RTC_DIAL_BREAKER_HEALTHY_MS);
+    abort.signal.addEventListener(
+      'abort',
+      () => {
+        handle.clear();
+        if (this.dcHealth.get(nodeId) === abort) this.dcHealth.delete(nodeId);
+      },
+      { once: true }
+    );
+  }
+
   private dcUpgradeRetryDelayMs(attempt: number): number {
     return attempt < PEER_DC_UPGRADE_RETRY_DELAYS_MS.length
       ? PEER_DC_UPGRADE_RETRY_DELAYS_MS[attempt]
@@ -944,9 +1051,14 @@ export class PeerManager {
 
   private armDcUpgradeRetry(nodeId: string): void {
     if (this.stopped) return;
-    if (!this.shouldTryDc(nodeId)) {
+    if (!this.dcCapable(nodeId)) {
       this.lostDirect.delete(nodeId);
       this.cancelDcUpgradeRetry(nodeId);
+      return;
+    }
+    const decision = this.dcBreaker.shouldTry(nodeId);
+    if (!decision.allow) {
+      this.scheduleDcBreakerProbe(nodeId, decision.until);
       return;
     }
     const live = this.live.get(nodeId);
@@ -982,6 +1094,71 @@ export class PeerManager {
           return;
         }
         if (!this.shouldTryDc(nodeId) || !this.live.get(nodeId)) return;
+        this.maybeUpgrade(nodeId, { cooldown: true });
+        const pending = this.upgrading.get(nodeId) ?? this.pending.get(nodeId);
+        if (pending) {
+          void pending
+            .finally(() => {
+              if (this.live.get(nodeId)?.transport === 'dc') {
+                this.lostDirect.delete(nodeId);
+                this.cancelDcUpgradeRetry(nodeId);
+                return;
+              }
+              this.armDcUpgradeRetry(nodeId);
+            })
+            .catch(() => undefined);
+        } else {
+          this.armDcUpgradeRetry(nodeId);
+        }
+      },
+      () => {
+        this.stopAbort.signal.removeEventListener('abort', onStop);
+        if (rec.abort === abort) rec.abort = null;
+      }
+    );
+  }
+
+  private scheduleDcBreakerProbe(nodeId: string, until: number | null): void {
+    const live = this.live.get(nodeId);
+    if (live?.transport === 'dc') {
+      this.lostDirect.delete(nodeId);
+      this.cancelDcUpgradeRetry(nodeId);
+      return;
+    }
+    if (!live || !live.quiesceCapable) return;
+    let rec = this.dcUpgradeRetry.get(nodeId);
+    if (!rec) {
+      rec = { attempt: 0, abort: null };
+      this.dcUpgradeRetry.set(nodeId, rec);
+    }
+    if (rec.abort) return;
+    const inMs = Math.max(0, (until ?? this.scheduler.now()) - this.scheduler.now());
+    rtcLog('upgrade retry', {
+      peer: nodeId,
+      attempt: rec.attempt + 1,
+      in_ms: inMs,
+      cause: 'breaker_cooling',
+    });
+    const abort = new AbortController();
+    rec.abort = abort;
+    const onStop = () => abort.abort();
+    this.stopAbort.signal.addEventListener('abort', onStop, { once: true });
+    void this.scheduler.sleep(inMs, abort.signal).then(
+      () => {
+        this.stopAbort.signal.removeEventListener('abort', onStop);
+        if (rec.abort === abort) rec.abort = null;
+        if (this.stopped) return;
+        if (this.live.get(nodeId)?.transport === 'dc') {
+          this.lostDirect.delete(nodeId);
+          this.cancelDcUpgradeRetry(nodeId);
+          return;
+        }
+        if (!this.live.get(nodeId)) return;
+        if (!this.shouldTryDc(nodeId)) {
+          const next = this.dcBreaker.shouldTry(nodeId);
+          if (next.cooling) this.scheduleDcBreakerProbe(nodeId, next.until);
+          return;
+        }
         this.maybeUpgrade(nodeId, { cooldown: true });
         const pending = this.upgrading.get(nodeId) ?? this.pending.get(nodeId);
         if (pending) {
@@ -1217,6 +1394,8 @@ export class PeerManager {
     signal: AbortSignal
   ): Promise<LinkSession | null> {
     if (!this.rtc) return null;
+    const attemptId = this.nextDcAttemptId();
+    this.dcBreaker.beginAttempt(nodeId, attemptId);
     const signaling = this.signalingFor(nodeId);
     let unsub: (() => void) | null = null;
     const wrapped: RtcSignaling = {
@@ -1236,8 +1415,6 @@ export class PeerManager {
         quiet(() => result.pc.close());
         throw new Error('stopped');
       }
-      this.dcBreaker.noteSuccess(result.peerNodeId);
-      flushDialFailed(result.peerNodeId, { cause: 'success' });
       const session = new LinkMux(result.link, {
         role: result.role,
         logContext: { nodeId: result.peerNodeId, transport: 'dc' },
@@ -1253,7 +1430,8 @@ export class PeerManager {
         initiatedBy,
         gen,
         false,
-        remoteAddress
+        remoteAddress,
+        attemptId
       );
       if (kept === session) {
         const live = this.live.get(result.peerNodeId);
@@ -1265,7 +1443,11 @@ export class PeerManager {
       unsub = null;
       return kept;
     } catch (err) {
-      this.dcBreaker.noteFailure(nodeId);
+      const message = err instanceof Error ? err.message : String(err);
+      const aborted = (err instanceof Error && err.name === 'AbortError') || /abort/i.test(message);
+      if (!this.stopped && !aborted && !isIntentionalDcLoss(message)) {
+        this.dcBreaker.noteFailure(nodeId, classifyRtcDialFailure(message), attemptId);
+      }
       this.releaseRtcAttempt(nodeId, unsub);
       throw err;
     } finally {
@@ -1284,7 +1466,16 @@ export class PeerManager {
     const attempt = emptyDirectAttempt(this.scheduler.now());
     const above = (kind: PeerTransportKind) => PEER_TRANSPORT_RANK[kind] > floor;
     const tryDc = async (): Promise<LinkSession | null> => {
-      if (!above('dc') || !this.shouldTryDc(nodeId)) return null;
+      if (!above('dc') || !this.dcCapable(nodeId)) return null;
+      const decision = this.dcBreaker.shouldTry(nodeId);
+      if (!decision.allow) {
+        rtcLog('dial failed', {
+          peer: nodeId,
+          cause: 'breaker_cooling',
+          until: decision.until,
+        });
+        return null;
+      }
       try {
         return await this.dialDc(nodeId, gen, signal);
       } catch (err) {
@@ -1350,13 +1541,37 @@ export class PeerManager {
     }
   }
 
+  private lanDialBudgetMs(url: string): number | undefined {
+    return classifyRemoteAddress(hostFromWsUrl(url)) === 'lan'
+      ? PEER_LAN_DIAL_TIMEOUT_MS
+      : undefined;
+  }
+
+  private syncLocalFingerprint(): void {
+    const next = localNetworkFingerprint(this.interfacesFn());
+    if (this.localFingerprint && next !== this.localFingerprint) {
+      this.endpointBackoff.resetAll();
+    }
+    this.localFingerprint = next;
+  }
+
+  private syncPeerEndpointSet(nodeId: string): void {
+    const cached = this.userStore.getPeer(nodeId);
+    const urls = cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : [];
+    const next = canonicalEndpointSet(urls);
+    const prev = this.advertisedEndpointSet.get(nodeId);
+    if (prev !== undefined && prev !== next) this.endpointBackoff.resetNode(nodeId);
+    this.advertisedEndpointSet.set(nodeId, next);
+  }
+
   private async dialWsSecure(
     nodeId: string,
     gen: number,
     signal: AbortSignal,
-    attempt: DirectAttemptRecord
+    attempt: DirectAttemptRecord,
+    opts?: { bypassBackoff?: boolean; endpoints?: string[] }
   ): Promise<LinkSession | null> {
-    if (this.linkFactory) {
+    if (this.linkFactory && !opts?.endpoints) {
       try {
         const session = await abortable(Promise.resolve(this.linkFactory(nodeId, signal)), signal);
         if (session) {
@@ -1380,30 +1595,50 @@ export class PeerManager {
       }
     }
     const cached = this.userStore.getPeer(nodeId);
-    const endpoints = rankPeerEndpoints(
-      cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : [],
-      this.interfacesFn()
-    );
+    const parsed =
+      opts?.endpoints ?? (cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : []);
+    const endpoints = rankPeerEndpoints(parsed, this.interfacesFn());
     if (endpoints.length === 0) return null;
+    const now = this.scheduler.now();
+    const eligible = opts?.bypassBackoff
+      ? endpoints
+      : endpoints.filter((url) => this.endpointBackoff.eligible(nodeId, url, now));
+    if (eligible.length === 0) {
+      const waitMs = this.endpointBackoff.minWaitMs(nodeId, endpoints, now);
+      const secs = Math.max(0, Math.ceil(waitMs / 1000));
+      noteWsOutcome(attempt, `all endpoints backing off (next eligible in ${secs}s)`, endpoints);
+      return null;
+    }
     const raced = await raceWsSecureEndpoints({
-      urls: endpoints,
+      urls: eligible,
       gen,
       signal,
       stale: (g) => this.stale(g),
       sleep: (ms, sig) => this.scheduler.sleep(ms, sig),
       staggerMs: PEER_WS_DIAL_STAGGER_MS,
-      dial: (url, combined) =>
-        dialWsSecureCandidate({
-          url,
-          expectedId: nodeId,
-          gen,
-          signal: combined,
-          stale: (g) => this.stale(g),
-          connectTimeoutMs: this.connectTimeoutMs,
-          factory: this.wsFactory,
-          identity: this.identity,
-          userStore: this.userStore,
-        }),
+      dial: async (url, combined) => {
+        try {
+          const candidate = await dialWsSecureCandidate({
+            url,
+            expectedId: nodeId,
+            gen,
+            signal: combined,
+            stale: (g) => this.stale(g),
+            connectTimeoutMs: this.connectTimeoutMs,
+            totalTimeoutMs: this.lanDialBudgetMs(url),
+            factory: this.wsFactory,
+            identity: this.identity,
+            userStore: this.userStore,
+            limiter: this.dialLimiter,
+          });
+          if (candidate) this.endpointBackoff.noteSuccess(nodeId, url);
+          return candidate;
+        } catch (err) {
+          const classified = classifyWsDialFailure(url, err);
+          this.endpointBackoff.noteFailure(nodeId, url, classified.kind);
+          throw classified;
+        }
+      },
     });
     if (raced.lastReason) noteWsOutcome(attempt, raced.lastReason, endpoints);
     if (this.stale(gen)) {
@@ -1482,7 +1717,8 @@ export class PeerManager {
     initiatedBy: string,
     gen: number,
     quiesceCapable = false,
-    remoteAddress: string | null = null
+    remoteAddress: string | null = null,
+    dcAttemptId: string | null = null
   ): LinkSession | null {
     const reject = (reason: string, keep: LinkSession | null = null) => {
       quiet(() => session.close(reason));
@@ -1516,7 +1752,8 @@ export class PeerManager {
       initiatedBy,
       gen,
       quiesceCapable,
-      resolvedAddress
+      resolvedAddress,
+      dcAttemptId
     );
   }
 
@@ -1527,7 +1764,8 @@ export class PeerManager {
     initiatedBy: string,
     gen: number,
     quiesceCapable: boolean,
-    remoteAddress: string | null
+    remoteAddress: string | null,
+    dcAttemptId: string | null = null
   ): LinkSession {
     const keys = this.sessionKeys.get(session);
     const live: LivePeer = {
@@ -1561,11 +1799,13 @@ export class PeerManager {
       lastRttEmitAt: 0,
       lastEmittedRttMs: null,
       linkSinceAt: this.scheduler.now(),
+      dcAttemptId: transport === 'dc' ? (dcAttemptId ?? this.nextDcAttemptId()) : null,
     };
     this.live.set(peerNodeId, live);
     if (transport === 'dc') {
-      this.dcBreaker.noteSuccess(peerNodeId);
-      flushDialFailed(peerNodeId, { cause: 'success' });
+      this.dcBreaker.noteChannelEstablished(peerNodeId, live.dcAttemptId ?? undefined);
+      flushDialFailed(peerNodeId, { cause: 'established' });
+      if (live.dcAttemptId) this.armDcHealthTimer(peerNodeId, live.dcAttemptId);
     }
     if (transport === 'dc' || transport === 'ws-secure') {
       this.clearDirectFailure(peerNodeId);
@@ -1620,14 +1860,15 @@ export class PeerManager {
     session.ctl.onMessage((bytes) => {
       this.handlePeerCtl(live, bytes);
     });
-    void session.closed.then(() => {
+    void session.closed.then((info) => {
+      const reason = info?.reason ?? 'closed';
       if (this.live.get(peerNodeId)?.session === session) {
-        this.dropPeer(peerNodeId, 'closed');
+        this.dropPeer(peerNodeId, reason);
       }
       const set = this.retiring.get(peerNodeId);
       if (set) {
         for (const row of [...set]) {
-          if (row.session === session) this.finishRetire(row, 'closed');
+          if (row.session === session) this.finishRetire(row, reason);
         }
       }
     });
@@ -1748,7 +1989,6 @@ export class PeerManager {
       existing.inventoryJson !== inventoryJson ||
       existing.directCapable !== directCapable;
     if (changed) {
-      this.dcBreaker.notePeerChanged(peerNodeId);
       this.userStore.upsertPeer({
         nodeId: peerNodeId,
         name: existing?.name ?? peerNodeId,
@@ -1874,6 +2114,7 @@ export class PeerManager {
       reach: classifyPeerReach(live.transport, live.remoteAddress),
       transport: live.transport,
       rttMs: live.rttMs,
+      dcBreaker: this.dcBreaker.snapshot(live.peerNodeId),
     });
   }
 
@@ -1884,6 +2125,7 @@ export class PeerManager {
       reach: null,
       transport: null,
       rttMs: null,
+      dcBreaker: this.dcBreaker.snapshot(nodeId),
     });
   }
 
@@ -1926,6 +2168,8 @@ export class PeerManager {
   private dropPeer(nodeId: string, reason: string): void {
     const live = this.live.get(nodeId);
     const wasDc = live?.transport === 'dc';
+    const dcAttemptId = live?.dcAttemptId ?? null;
+    if (wasDc) this.cancelDcHealthTimer(nodeId);
     if (live) {
       this.live.delete(nodeId);
       this.finishRetire(live, reason);
@@ -1939,9 +2183,13 @@ export class PeerManager {
     if (this.stopped || reason === 'revoked') {
       this.cancelDcUpgradeRetry(nodeId);
       this.lostDirect.delete(nodeId);
+      if (reason === 'revoked') this.dcBreaker.reset(nodeId);
       this.dropParked(nodeId, reason);
       this.emitOfflineLinkInfo(nodeId);
       return;
+    }
+    if (wasDc && !isIntentionalDcLoss(reason)) {
+      this.dcBreaker.noteFailure(nodeId, classifyRtcDialFailure(reason), dcAttemptId ?? undefined);
     }
     if (wasDc) {
       this.lostDirect.add(nodeId);

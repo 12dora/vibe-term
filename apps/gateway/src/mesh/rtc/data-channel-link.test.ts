@@ -192,6 +192,19 @@ describe('DataChannelLink', () => {
     right.close();
   });
 
+  test('finishClose is idempotent so a dying channel yields one reason', () => {
+    const [a] = pairDataChannels('peer');
+    const left = new DataChannelLink(a, { liveness: false });
+    const reasons: string[] = [];
+    left.onClose((why) => {
+      reasons.push(why ?? '');
+    });
+    a.emitError('boom');
+    a.close();
+    left.close('again');
+    expect(reasons).toEqual(['boom']);
+  });
+
   test('silence closes the link after the liveness timeout', () => {
     const clock = new FakeClock();
     const [a, b] = pairDataChannels('peer');

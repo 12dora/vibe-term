@@ -140,6 +140,22 @@ describe('onClose 关闭码回调', () => {
     conn.dispose();
   });
 
+  test('retryDirect 把控制器挂上的强制探测转发出去', () => {
+    const conn = createGatewayConnection({ wsUrl: 'ws://x/ws' });
+    let called = 0;
+    conn.retryDirect();
+    expect(called).toBe(0);
+    conn.setDirectRetry(() => {
+      called += 1;
+    });
+    conn.retryDirect();
+    expect(called).toBe(1);
+    conn.setDirectRetry(null);
+    conn.retryDirect();
+    expect(called).toBe(1);
+    conn.dispose();
+  });
+
   test('不传 onClose 时 socketFactory 原样透传（零改动路径）', () => {
     let created = 0;
     const conn = createGatewayConnection({

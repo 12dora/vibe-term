@@ -1678,6 +1678,16 @@ describe('PeerManager', () => {
           (line) => line.includes('[mesh][rtc] liveness timeout') && line.includes('idle_ms=')
         )
       ).toBe(true);
+      const detailLarge = managerLarge.linkDetailOf(small.nodeId);
+      const detailSmall = managerSmall.linkDetailOf(large.nodeId);
+      expect(
+        detailLarge.dcBreaker.failures + detailSmall.dcBreaker.failures
+      ).toBeGreaterThanOrEqual(1);
+      expect(detailLarge.dcBreaker.failures).toBeLessThanOrEqual(1);
+      const kind =
+        detailLarge.dcBreaker.lastFailureKind ?? detailSmall.dcBreaker.lastFailureKind ?? '';
+      expect(['liveness-timeout', 'channel-closed']).toContain(kind);
+      expect(detailLarge.dcBreaker.cooling).toBe(false);
     } finally {
       console.log = orig;
     }
@@ -3662,7 +3672,7 @@ describe('PeerManager', () => {
     await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
     const first = manager.linkDetailOf(peer.nodeId);
     expect(first.directFailure?.dc).toBe('direct_capable=false');
-    expect(first.directFailure?.ws).toMatch(/127\.0\.0\.1:1/);
+    expect(first.directFailure?.ws).toMatch(/127\.0\.0\.1:1|all endpoints backing off/);
     store.upsertPeer({
       nodeId: peer.nodeId,
       name: 'peer',

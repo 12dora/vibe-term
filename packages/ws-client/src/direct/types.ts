@@ -36,6 +36,12 @@ export interface DirectDiagnostics {
   /** 往返时延（毫秒）；未知为 `null`。 */
   rtt: number | null;
   ice: DirectIceDiagnostics | null;
+  /** 熔断冷却中：不再自动拨号，直到 `until` 或 `retryDirect()`。 */
+  cooling?: boolean;
+  until?: number | null;
+  failures?: number;
+  level?: number;
+  lastFailureKind?: string | null;
 }
 
 /** 可订阅的诊断源：`get()` 取快照，`subscribe()` 在快照变化时回调（供 useSyncExternalStore）。 */
@@ -50,6 +56,11 @@ export const PRIMARY_ONLY_DIAGNOSTICS: DirectDiagnostics = Object.freeze({
   route: null,
   rtt: null,
   ice: null,
+  cooling: false,
+  until: null,
+  failures: 0,
+  level: 0,
+  lastFailureKind: null,
 });
 
 const NOOP_UNSUBSCRIBE = (): void => undefined;

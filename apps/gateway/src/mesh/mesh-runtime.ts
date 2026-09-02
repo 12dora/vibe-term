@@ -35,7 +35,12 @@ import type { HubTlsInfoProvider } from '../hub/hub-runtime';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
 import type { GatewaySession } from '../ws/gateway-session';
-import { isPeerReachable, parseIpv6Words } from './address-class';
+import {
+  hasLocalCgnatAddress,
+  isCgnatIpv4,
+  isPeerReachable,
+  parseIpv6Words,
+} from './address-class';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
 import { isRemoteNodePresent, lookupRemoteNode, setMeshAgentBridge } from './mesh-agent-bridge';
 import {
@@ -130,6 +135,8 @@ export type CreateMeshRuntimeOptions = {
   /** 由 packages/app assemble 注入：延迟调用 RuntimeController.requestRestart。 */
   scheduleHubRoleRestart?: (delayMs: number) => void;
   hubFetch?: HubPeerFetch;
+  /** 本机节点名随 hub node.list 变化时回调，用于同步 site_settings.site_name。 */
+  onLocalNodeName?: (name: string) => void;
 };
 
 export const CONNECTION_ID_BYTES = 32;
@@ -374,15 +381,46 @@ function isAdvertisableIpv6(address: string): boolean {
   if (!w) return false;
   const w0 = w[0];
   if ((w0 & 0xffc0) === 0xfe80) return false;
+  if ((w0 & 0xfe00) === 0xfc00) return false;
+  if ((w0 & 0xffc0) === 0xfec0) return false;
   if ((w0 & 0xff00) === 0xff00) return false;
   if (w.slice(0, 7).some((x) => x !== 0)) return true;
   return w[7] > 1;
 }
 
-export function isAdvertisablePeerAddress(addr: os.NetworkInterfaceInfo): boolean {
+const CONTAINER_IFACE_PREFIXES = [
+  'docker',
+  'veth',
+  'virbr',
+  'lxdbr',
+  'lxcbr',
+  'cni',
+  'flannel',
+  'podman',
+] as const;
+
+export function isContainerOrientedIface(name: string): boolean {
+  const n = name.toLowerCase();
+  if (n.startsWith('br-')) return true;
+  return CONTAINER_IFACE_PREFIXES.some((prefix) => n === prefix || n.startsWith(prefix));
+}
+
+export type AdvertisablePeerAddressOpts = {
+  iface?: string;
+  allowCgnat?: boolean;
+};
+
+export function isAdvertisablePeerAddress(
+  addr: os.NetworkInterfaceInfo,
+  opts?: AdvertisablePeerAddressOpts
+): boolean {
   if (addr.internal) return false;
+  if (opts?.iface && isContainerOrientedIface(opts.iface)) return false;
   const family = addr.family as string | number;
-  if (family === 'IPv4' || family === 4) return isAdvertisableIpv4(addr.address);
+  if (family === 'IPv4' || family === 4) {
+    if (!opts?.allowCgnat && isCgnatIpv4(addr.address)) return false;
+    return isAdvertisableIpv4(addr.address);
+  }
   if (family === 'IPv6' || family === 6) return isAdvertisableIpv6(addr.address);
   return false;
 }
@@ -393,10 +431,11 @@ export function enumeratePeerEndpoints(
 ): string[] {
   const urls: string[] = [];
   const seen = new Set<string>();
-  for (const addrs of Object.values(interfaces)) {
+  const allowCgnat = hasLocalCgnatAddress(interfaces);
+  for (const [iface, addrs] of Object.entries(interfaces)) {
     if (!addrs) continue;
     for (const addr of addrs) {
-      if (!isAdvertisablePeerAddress(addr)) continue;
+      if (!isAdvertisablePeerAddress(addr, { iface, allowCgnat })) continue;
       const family = addr.family as string | number;
       const v6 = family === 'IPv6' || family === 6;
       const host = v6 ? `[${stripZoneId(addr.address)}]` : stripZoneId(addr.address);
@@ -798,6 +837,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
         autoPromote: config.hubAutoPromote ?? gatewayConfig.hubAutoPromote,
         autoPromoteTimeoutMs:
           config.hubAutoPromoteTimeoutMs ?? gatewayConfig.hubAutoPromoteTimeoutMs,
+        syncLocalSiteName: opts.onLocalNodeName,
       }))
     : (opts.hub ?? null);
   keyLogService.onApplied = (_userId, step) => {
@@ -1006,6 +1046,12 @@ function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: Rej
     if (node.id === HUB_META_PEER_ID) continue;
     if (rejectPeer(node.id, true)) continue;
     emitListed(node);
+  }
+  const selfListed = list.nodes.find((node) => node.id === identity.nodeIdHex);
+  if (selfListed?.name) {
+    try {
+      d.opts.onLocalNodeName?.(selfListed.name);
+    } catch {}
   }
   if (list.hubs && list.hubs.length > 0) {
     for (const hub of list.hubs) emitHubIfUnlisted(hub.nodeId, hub.name);
@@ -1221,6 +1267,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
         version: listed?.version ?? undefined,
         direct_capable: peer?.directCapable,
         name: listed?.name,
+        dcBreaker: info.dcBreaker ?? null,
       });
     },
   });

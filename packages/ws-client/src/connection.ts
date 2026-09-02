@@ -135,6 +135,10 @@ export interface GatewayConnection {
    * 为空时 `resolveDirectDiagnostics()` 回落到恒为 primary 的桩。
    */
   directDiagnostics: DirectDiagnosticsSource | null;
+  /** 由 DirectCarrierController 挂上；强制拨一次直连（冷却中也允许恰好一次）。 */
+  setDirectRetry(fn: (() => void) | null): void;
+  /** 强制拨一次直连；未挂控制器时为 no-op。 */
+  retryDirect(): void;
   dispose(): void;
 }
 
@@ -155,6 +159,7 @@ export function createGatewayConnection(options: GatewayConnectionOptions = {}):
   const selectMachine = new SelectStateMachine(options.selectCallbacks);
   const transport = options.transport ?? new WebSocketGatewayTransport(client);
   const ownsTransport = options.transport === undefined;
+  let directRetry: (() => void) | null = null;
 
   return {
     client,
@@ -176,6 +181,12 @@ export function createGatewayConnection(options: GatewayConnectionOptions = {}):
     },
     setResumeSubscribedPanes(fn) {
       client.setResumeSubscribedPanes(fn);
+    },
+    setDirectRetry(fn) {
+      directRetry = fn;
+    },
+    retryDirect() {
+      directRetry?.();
     },
     dispose() {
       selectMachine.cleanupAll();

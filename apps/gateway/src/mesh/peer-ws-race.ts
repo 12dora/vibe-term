@@ -1,7 +1,11 @@
 import type { LinkSession, ServerSocketAdapter, WebSocketTransportInput } from '@tmex/shared/link';
 import type { UserStore } from '../auth/user-store';
+import { envInt } from './mesh-log';
+import type { ReachabilityFailureKind } from './peer-endpoint-backoff';
 import { type PeerHandshakeResult, handshakeWsDirect } from './peer-protocol';
-import type { MeshIdentity } from './types';
+import { type MeshIdentity, PeerHandshakeError } from './types';
+
+export { isReachabilityFailureKind } from './peer-endpoint-backoff';
 
 export type WsSecureCandidate = {
   session: LinkSession;
@@ -10,6 +14,155 @@ export type WsSecureCandidate = {
   recvKey?: Uint8Array;
   url: string;
 };
+
+export const PEER_DIRECT_DIAL_CONCURRENCY = 4;
+
+export type WsDialFailureKind = ReachabilityFailureKind | 'protocol' | 'aborted' | 'other';
+
+export class WsDialError extends Error {
+  readonly kind: WsDialFailureKind;
+  readonly url: string;
+
+  constructor(kind: WsDialFailureKind, url: string, cause?: unknown) {
+    const raw = cause instanceof Error ? cause.message : cause != null ? String(cause) : kind;
+    super(raw.trim() || kind);
+    this.name = 'WsDialError';
+    this.kind = kind;
+    this.url = url;
+  }
+}
+
+export class DirectDialLimiter {
+  private inflight = 0;
+  private readonly waiters: Array<{
+    grant: () => void;
+    fail: (err: unknown) => void;
+    signal: AbortSignal;
+    onAbort: () => void;
+  }> = [];
+
+  constructor(readonly max = PEER_DIRECT_DIAL_CONCURRENCY) {}
+
+  get active(): number {
+    return this.inflight;
+  }
+
+  async acquire(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) throw signal.reason ?? new Error('aborted');
+    if (this.inflight < this.max) {
+      this.inflight += 1;
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        const idx = this.waiters.findIndex((row) => row.onAbort === onAbort);
+        if (idx >= 0) this.waiters.splice(idx, 1);
+        reject(signal.reason ?? new Error('aborted'));
+      };
+      this.waiters.push({
+        grant: resolve,
+        fail: reject,
+        signal,
+        onAbort,
+      });
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  release(): void {
+    const next = this.waiters.shift();
+    if (next) {
+      next.signal.removeEventListener('abort', next.onAbort);
+      next.grant();
+      return;
+    }
+    this.inflight = Math.max(0, this.inflight - 1);
+  }
+}
+
+let sharedLimiter: DirectDialLimiter | null = null;
+
+export function sharedDirectDialLimiter(): DirectDialLimiter {
+  sharedLimiter ??= new DirectDialLimiter(
+    envInt('TMEX_PEER_DIRECT_DIAL_CONCURRENCY', PEER_DIRECT_DIAL_CONCURRENCY, 1)
+  );
+  return sharedLimiter;
+}
+
+export function resetSharedDirectDialLimiter(limiter?: DirectDialLimiter): void {
+  sharedLimiter =
+    limiter ??
+    new DirectDialLimiter(
+      envInt('TMEX_PEER_DIRECT_DIAL_CONCURRENCY', PEER_DIRECT_DIAL_CONCURRENCY, 1)
+    );
+}
+
+function errorErrno(err: unknown): string {
+  if (typeof err === 'object' && err && 'code' in err) {
+    const code = (err as { code: unknown }).code;
+    if (typeof code === 'string') return code.toUpperCase();
+  }
+  return '';
+}
+
+export function classifyWsDialFailure(url: string, err: unknown): WsDialError {
+  if (err instanceof WsDialError) return err;
+  const raw = err instanceof Error ? err.message : String(err);
+  const lower = raw.toLowerCase();
+  const errno = errorErrno(err);
+  if (lower.includes('aborted') || lower === 'stopped' || lower.includes('ws-race-lost')) {
+    return new WsDialError('aborted', url, err);
+  }
+  if (err instanceof PeerHandshakeError) {
+    if (err.code === 'timeout') return new WsDialError('timeout', url, err);
+    if (err.code === 'bad_signature' || err.code === 'revoked') {
+      return new WsDialError('protocol', url, err);
+    }
+  }
+  if (errno === 'ECONNREFUSED' || lower.includes('econnrefused')) {
+    return new WsDialError('refused', url, err);
+  }
+  if (
+    errno === 'EHOSTUNREACH' ||
+    errno === 'ENETUNREACH' ||
+    lower.includes('ehostunreach') ||
+    lower.includes('enetunreach')
+  ) {
+    return new WsDialError('unreachable', url, err);
+  }
+  if (
+    errno === 'ECONNRESET' ||
+    errno === 'EPIPE' ||
+    lower.includes('econnreset') ||
+    lower.includes('reset') ||
+    lower === 'ws-closed'
+  ) {
+    return new WsDialError('reset', url, err);
+  }
+  if (lower.includes('connect-timeout')) return new WsDialError('open-timeout', url, err);
+  if (
+    lower.includes('refused') ||
+    lower.includes('failed to connect') ||
+    lower.includes('unable to connect') ||
+    lower.includes('connection failed')
+  ) {
+    return new WsDialError('refused', url, err);
+  }
+  if (
+    lower.includes('handshake') ||
+    lower.includes('peer-id') ||
+    lower.includes('transcript') ||
+    lower.includes('not-trusted') ||
+    lower.includes('bad_signature') ||
+    (err instanceof PeerHandshakeError && err.code === 'protocol')
+  ) {
+    return new WsDialError('protocol', url, err);
+  }
+  if (lower.includes('timeout') || lower.includes('dial-timeout')) {
+    return new WsDialError('timeout', url, err);
+  }
+  return new WsDialError('other', url, err);
+}
 
 function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerSocketAdapter {
   return (
@@ -71,27 +224,15 @@ export function combineAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal
 }
 
 export function formatWsDialFailure(url: string, err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  const msg = raw.trim() || 'failed';
-  const lower = msg.toLowerCase();
-  if (lower.includes('timeout') || lower.includes('connect-timeout')) return `timeout ${url}`;
-  if (
-    lower.includes('refused') ||
-    lower.includes('econnrefused') ||
-    lower.includes('failed to connect') ||
-    lower.includes('unable to connect') ||
-    lower.includes('connection failed')
-  ) {
-    return `refused ${url}`;
+  const classified = classifyWsDialFailure(url, err);
+  const msg = classified.message.trim() || 'failed';
+  if (classified.kind === 'timeout' || classified.kind === 'open-timeout') {
+    return `timeout ${url}`;
   }
-  if (
-    lower.includes('handshake') ||
-    lower.includes('peer-id') ||
-    lower.includes('transcript') ||
-    lower.includes('not-trusted')
-  ) {
-    return `handshake: ${msg}`;
-  }
+  if (classified.kind === 'refused') return `refused ${url}`;
+  if (classified.kind === 'unreachable') return `unreachable ${url}`;
+  if (classified.kind === 'reset') return `reset ${url}`;
+  if (classified.kind === 'protocol') return `handshake: ${msg}`;
   return `${msg} ${url}`;
 }
 
@@ -205,46 +346,83 @@ export async function dialWsSecureCandidate(opts: {
   signal: AbortSignal;
   stale: (gen: number) => boolean;
   connectTimeoutMs: number;
+  totalTimeoutMs?: number;
+  handshakeTimeoutMs?: number;
   factory: (url: string) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
   identity: MeshIdentity;
   userStore: UserStore;
+  limiter?: DirectDialLimiter;
 }): Promise<WsSecureCandidate | null> {
   if (opts.signal.aborted || opts.stale(opts.gen)) return null;
-  const ws = await connectWsTransport({
-    factory: opts.factory,
-    url: opts.url,
-    signal: opts.signal,
-    connectTimeoutMs: opts.connectTimeoutMs,
-  });
-  if (opts.stale(opts.gen) || opts.signal.aborted) {
-    closeWsTransport(ws);
-    throw new Error('stopped');
-  }
-  let handshakeSession: LinkSession | null = null;
+  const limiter = opts.limiter ?? sharedDirectDialLimiter();
+  const totalMs = opts.totalTimeoutMs;
+  const totalAc = totalMs != null ? new AbortController() : null;
+  const totalTimer =
+    totalAc && totalMs != null
+      ? setTimeout(() => totalAc.abort(new Error('dial-timeout')), totalMs)
+      : null;
+  const combined = totalAc ? combineAbortSignals(opts.signal, totalAc.signal) : opts.signal;
+  const started = Date.now();
+  let acquired = false;
+  const budgetExpired = () => Boolean(totalAc?.signal.aborted && !opts.signal.aborted);
   try {
-    const result = await abortable(
-      handshakeWsDirect({
-        socket: ws,
-        role: 'initiator',
-        identity: opts.identity,
-        userStore: opts.userStore,
-      }).then((row) => {
-        handshakeSession = row.session;
-        return row;
-      }),
-      opts.signal
-    );
-    return candidateFromHandshake(
-      result,
-      opts.expectedId,
-      opts.stale(opts.gen),
-      opts.signal.aborted,
-      opts.url
-    );
+    await limiter.acquire(combined);
+    acquired = true;
+    if (combined.aborted || opts.stale(opts.gen)) {
+      if (budgetExpired()) throw new WsDialError('timeout', opts.url, new Error('dial-timeout'));
+      return null;
+    }
+    const connectTimeoutMs =
+      totalMs != null
+        ? Math.min(opts.connectTimeoutMs, Math.max(1, totalMs))
+        : opts.connectTimeoutMs;
+    const ws = await connectWsTransport({
+      factory: opts.factory,
+      url: opts.url,
+      signal: combined,
+      connectTimeoutMs,
+    });
+    if (opts.stale(opts.gen) || combined.aborted) {
+      closeWsTransport(ws);
+      if (budgetExpired()) throw new WsDialError('timeout', opts.url, new Error('dial-timeout'));
+      throw new Error('stopped');
+    }
+    const elapsed = Date.now() - started;
+    const handshakeTimeoutMs =
+      totalMs != null ? Math.max(1, totalMs - elapsed) : opts.handshakeTimeoutMs;
+    let handshakeSession: LinkSession | null = null;
+    try {
+      const result = await abortable(
+        handshakeWsDirect({
+          socket: ws,
+          role: 'initiator',
+          identity: opts.identity,
+          userStore: opts.userStore,
+          timeoutMs: handshakeTimeoutMs,
+        }).then((row) => {
+          handshakeSession = row.session;
+          return row;
+        }),
+        combined
+      );
+      return candidateFromHandshake(
+        result,
+        opts.expectedId,
+        opts.stale(opts.gen),
+        combined.aborted,
+        opts.url
+      );
+    } catch (err) {
+      if (handshakeSession) quiet(() => handshakeSession?.close('stopped'));
+      else closeWsTransport(ws);
+      throw err;
+    }
   } catch (err) {
-    if (handshakeSession) quiet(() => handshakeSession?.close('stopped'));
-    else closeWsTransport(ws);
-    throw err;
+    if (budgetExpired()) return Promise.reject(new WsDialError('timeout', opts.url, err));
+    throw classifyWsDialFailure(opts.url, err);
+  } finally {
+    if (totalTimer != null) clearTimeout(totalTimer);
+    if (acquired) limiter.release();
   }
 }
 

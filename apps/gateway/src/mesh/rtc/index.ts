@@ -88,6 +88,20 @@ export type {
 } from './native';
 export { copyBytes, sendBinary, toUint8Array } from './native';
 export {
+  RTC_DIAL_BREAKER_BASE_MS_DEFAULT,
+  RTC_DIAL_BREAKER_FAILS,
+  RTC_DIAL_BREAKER_HEALTHY_MS,
+  RTC_DIAL_BREAKER_MAX_MS,
+  RTC_DIAL_BREAKER_MS_DEFAULT,
+  RtcDialBreaker,
+  classifyRtcDialFailure,
+  createGatewayRtcDialBreaker,
+  isIntentionalDcLoss,
+  type RtcDialBreakerDecision,
+  type RtcDialBreakerSnapshot,
+  type RtcDialBreakerOptions,
+} from './rtc-dial-breaker';
+export {
   CONNECT_TIMEOUT_MS,
   PEER_CHANNEL_LABEL,
   RTC_AUTHORIZE_MAX,

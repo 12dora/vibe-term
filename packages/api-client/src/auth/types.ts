@@ -215,6 +215,15 @@ export interface MeshNodeDirectFailure {
   dc?: string | null;
 }
 
+/** DataChannel 拨号熔断器快照；未尝试或旧后端不下发。 */
+export interface MeshNodeDcBreaker {
+  cooling: boolean;
+  until: number | null;
+  failures: number;
+  level: number;
+  lastFailureKind: string | null;
+}
+
 /** `GET /api/mesh/nodes` 的单行（**需会话**）。 */
 export interface MeshNode {
   id: string;
@@ -239,6 +248,8 @@ export interface MeshNode {
   endpoints?: string[];
   /** 最近一次直连尝试的失败原因；已直连或从未尝试为 null。 */
   directFailure?: MeshNodeDirectFailure | null;
+  /** DataChannel 熔断器；冷却期间不再自动拨 DC。旧后端不下发。 */
+  dcBreaker?: MeshNodeDcBreaker | null;
   version: string | null;
   direct_capable: boolean;
   inventory?: unknown;

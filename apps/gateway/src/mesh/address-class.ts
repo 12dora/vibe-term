@@ -75,6 +75,70 @@ function normalizeHost(raw: string | null | undefined): string | null {
   return host || null;
 }
 
+/** Lowercased host without brackets/zone; IPv4-mapped forms become dotted IPv4. */
+export function canonicalPeerHost(raw: string | null | undefined): string | null {
+  const host = normalizeHost(raw);
+  if (!host) return null;
+  return unwrapIpv4Mapped(host) ?? host;
+}
+
+/** CGNAT shared-address space `100.64.0.0/10` (RFC 6598), including IPv4-mapped. */
+export function isCgnatIpv4(host: string): boolean {
+  const n = canonicalPeerHost(host);
+  if (!n) return false;
+  const o = parseIpv4(n);
+  if (!o) return false;
+  const a = o[0] ?? 0;
+  const b = o[1] ?? 0;
+  return a === 100 && b >= 64 && b <= 127;
+}
+
+/** IPv6 unique local `fc00::/7`. */
+export function isIpv6Ula(host: string): boolean {
+  const w = parseIpv6Words(host);
+  if (!w) return false;
+  return ((w[0] ?? 0) & 0xfe00) === 0xfc00;
+}
+
+/** Deprecated IPv6 site-local `fec0::/10`. */
+export function isIpv6SiteLocal(host: string): boolean {
+  const w = parseIpv6Words(host);
+  if (!w) return false;
+  return ((w[0] ?? 0) & 0xffc0) === 0xfec0;
+}
+
+export function hasLocalCgnatAddress(
+  interfaces: Record<string, RankableIfaceAddr[] | undefined>
+): boolean {
+  for (const addrs of Object.values(interfaces)) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (addr.internal) continue;
+      const family = addr.family as string | number | undefined;
+      if (family === 'IPv4' || family === 4) {
+        if (isCgnatIpv4(addr.address)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Sorted unique non-internal addresses; used to detect local network changes. */
+export function localNetworkFingerprint(
+  interfaces: Record<string, RankableIfaceAddr[] | undefined>
+): string {
+  const set = new Set<string>();
+  for (const addrs of Object.values(interfaces)) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (addr.internal) continue;
+      const host = normalizeHost(addr.address);
+      if (host) set.add(host);
+    }
+  }
+  return [...set].sort().join(',');
+}
+
 function unwrapIpv4Mapped(host: string): string | null {
   const dotted = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
   if (dotted) return dotted[1];

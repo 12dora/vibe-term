@@ -145,6 +145,44 @@ describe('enumeratePeerEndpoints', () => {
     });
     expect(urls).toEqual(['ws://192.0.2.8:39001/peer']);
   });
+
+  const v4 = (address: string, cidr: string): import('node:os').NetworkInterfaceInfo => ({
+    address,
+    netmask: '255.255.255.0',
+    family: 'IPv4',
+    mac: '',
+    internal: false,
+    cidr,
+  });
+  const v6 = (address: string, cidr: string): import('node:os').NetworkInterfaceInfo => ({
+    address,
+    netmask: 'ffff:ffff:ffff:ffff::',
+    family: 'IPv6',
+    mac: '',
+    internal: false,
+    cidr,
+    scopeid: 0,
+  });
+
+  test('skips docker/veth/bridge ifaces, ULA, and CGNAT unless the host is on 100.64/10', () => {
+    const urls = enumeratePeerEndpoints(39001, {
+      en0: [v4('10.0.0.12', '10.0.0.12/24'), v4('172.28.0.4', '172.28.0.4/16')],
+      docker0: [v4('172.17.0.1', '172.17.0.1/16')],
+      'br-abc123': [v4('172.18.0.1', '172.18.0.1/16')],
+      veth0: [v4('10.10.0.2', '10.10.0.2/24')],
+      en1: [v6('fd12:3456:789a::1', 'fd12:3456:789a::1/64'), v6('fec0::1', 'fec0::1/10')],
+    });
+    expect(urls).toEqual(['ws://10.0.0.12:39001/peer', 'ws://172.28.0.4:39001/peer']);
+  });
+
+  test('keeps Tailscale CGNAT on utun when the host itself has 100.64/10', () => {
+    const urls = enumeratePeerEndpoints(39001, {
+      en0: [v4('192.168.1.1', '192.168.1.1/24')],
+      utun4: [v4('100.64.12.34', '100.64.12.34/32')],
+      docker0: [v4('172.17.0.1', '172.17.0.1/16')],
+    });
+    expect(urls).toEqual(['ws://192.168.1.1:39001/peer', 'ws://100.64.12.34:39001/peer']);
+  });
 });
 
 describe('UplinkClient.connectWithLink', () => {

@@ -194,10 +194,20 @@ describe('RtcPeerManager', () => {
         right.connectToPeer(a.nodeId, sigB),
       ]);
       expect(lines.some((line) => line.includes('datachannel open'))).toBe(true);
-      const closed = new Promise<string | undefined>((resolve) => la.link.onClose(resolve));
+      let closeCount = 0;
+      const closed = new Promise<string | undefined>((resolve) =>
+        la.link.onClose((reason) => {
+          closeCount += 1;
+          resolve(reason);
+        })
+      );
       la.link.close('bye');
       expect(await closed).toBe('bye');
-      expect(lines.some((line) => line.includes('datachannel closed'))).toBe(true);
+      la.link.close('bye-again');
+      expect(closeCount).toBe(1);
+      expect(
+        lines.filter((line) => line.includes('datachannel closed')).length
+      ).toBeGreaterThanOrEqual(1);
     } finally {
       console.log = orig;
     }

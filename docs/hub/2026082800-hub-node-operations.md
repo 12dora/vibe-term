@@ -56,7 +56,7 @@
 | `RTC_LIVENESS_INTERVAL_MS` | `3000` | node↔node DataChannel 空闲时发 ping 的间隔。通道上有入站流量则重置，不给忙通道加 ping |
 | `RTC_LIVENESS_TIMEOUT_MS` | `10000` | 连续无任何入站（含 ping/pong 与业务帧）超过此时长则判定直连死亡，关闭 DC/PC 并回落 relay。须大于 `RTC_LIVENESS_INTERVAL_MS` |
 | `TMEX_EVENT_LOOP_LAG_WARN_MS` | `250` | event loop 采样滞后超过该值时打告警（10 s 至多一条） |
-| `TMEX_RTC_DIAL_BREAKER_MS` | `21600000`（6 h） | 同一 peer 连续 8 次 DataChannel 失败后跳过 DC dial 的时长；ws-secure / relay 不受影响 |
+| `TMEX_RTC_DIAL_BREAKER_MS` | `30000`（30 s） | DataChannel 熔断的**起始**冷却。连续 3 次失败（含拨号失败与通道打开后异常关闭 / liveness timeout / missed pong）后跳过 DC dial，冷却按 30 s → 60 s → 120 s … 指数递增，上限 30 min；`cooldownLevel` 在冷却过期后仍保留。通道保持健康 ≥ 60 s 才复位。本变量覆盖起始冷却，不改失败次数与上限。ws-secure / relay 不受影响 |
 | `TMEX_FAILOVER_HISTORY_BYTES_PER_PANE` | `262144`（256 KiB） | legacy failover 每 pane 重拉历史的预算；单次 failover 合计上限 1 MiB，超出只重订订阅 |
 
 相关但非 mesh 专有：`TMEX_MASTER_KEY`（加密落库的节点私钥等，生产必填）、`TMEX_BIND_HOST`、`GATEWAY_PORT`、`DATABASE_URL`。
@@ -254,7 +254,7 @@ cloudflared 进程存活不等于边缘连通。本机代理 / TUN 抖动时进�
 
 登录不经过 hub，流程与在线相同。`node.list` 里的 hub 元数据会落入 `peer_cache` 哨兵行，重启后 `/api/auth/mode` 与节点列表在 uplink 断开时仍可回答。
 
-同内网互操作依赖 `peer_cache` 里上次上报的地址（`os.networkInterfaces()` 的非 internal IPv4/IPv6 + `TMEX_PEER_PORT`）。**v1 不做局域网发现**：hub 不可达期间若对端 IP 变了，缓存失效，须等 hub 恢复。peer link 仍然活着时，地址变化会立刻互相更新。
+同内网互操作依赖 `peer_cache` 里上次上报的地址（本机非 internal、非容器网卡上的可路由 IPv4/IPv6 + `TMEX_PEER_PORT`；默认不广播 IPv6 ULA 与 CGNAT `100.64/10`，本机自身有非 internal 的 `100.64/10` 时除外，以兼容 Tailscale）。**v1 不做局域网发现**：hub 不可达期间若对端 IP 变了，缓存失效，须等 hub 恢复。对端仍广播不可达地址（例如旧版本的 docker 网桥）时，拨号侧按地址退避，避免反复空打。peer link 仍然活着时，地址变化会立刻互相更新。
 
 Nodes 页的管理动作（enroll / 改名 / 吊销）在 hub 离线时禁用。普通终端 / 文件走已有 peer link 或缓存 LAN 信令，不依赖 hub。
 
@@ -303,7 +303,7 @@ tmex hub user reset
 | 直连降级到 relay | ICE 失败、一端 `direct_capable=false`、或 `direct disable`、或 DC 存活超时 | 预期行为。功能应仍可用，徽标变为 `relay` / `turn`。UDP 被丢后 `transport` 应在约 10 s 内离开 `dc`（日志 `liveness timeout`）；若仍卡 ~35 s 才变，说明存活探测未生效 |
 | 两边 `direct_capable=true` 但 `transport` 不是 `dc` | 只走了 hub relay / LAN WS，或升级尚未完成 | 日志前缀 `[mesh][rtc]`。应先有 `dial start role=offerer\|answerer`，较大 id 侧有 `kind=wake`，随后 `signal send/recv kind=sdp`。没有 `dial start` 说明没人拨号；只有 answerer 没有 wake/offer 是旧 bug。`ice failed … local_types=[host] remote_types=[…]` 且无 `srflx` → STUN 不可达；两边都有 `srflx` 仍失败 → 对称 NAT，需要 `TMEX_TURN_*`。`datachannel open` 才算 DC 握手成功。不要把完整 SDP / ICE 密码打进日志 |
 | 终端数秒停顿、日志有 `[mesh][stream] failover` | Forwarder 在重建 mux stream 并 replay | 行首 ISO 时间戳可对齐。`failover_start` 的 `cause=stream_close\|send_failed`、`close_reason`、`from`、`queued_input_bytes` 区分 RST/发送失败；`failover_attempt` 的 `getLink_ms` / `open_stream_ms` / `hello_wait_ms` / `resume_wait_ms` 区分建链慢还是 HELLO/snapshot 等待；`failover_summary` 的 `duration_ms`、`replay_bytes`、`event_loop_lag_ms` 给出总耗时。`[ws] backpressure enter\|skip\|drain` 与 `terminate reason=backpressure_gap` 带 `carrier=physical_browser_ws\|mesh_link_stream` 以及 session/cid/node，用来判断背压在浏览器 socket 还是 mesh carrier。`[mesh][mux] rst send/recv` 现含 `muxStreamId` 与 `nodeId`/`transport`。`[ws-metrics] gateway_activity` 的 `event_loop_lag_ms` / `max_lag_ms` 判断主线程是否卡住 |
-| `[mesh][rtc] dial failed` 刷屏、hub 入站 UDP 被滤 | 对 `direct_capable≠false` 的 peer 会反复拨 DC | 连续 8 次 DataChannel 失败后打一条 `[mesh][rtc] breaker open peer=… fails=8 until=…`，6 h 内跳过该 peer 的 DC（可用 `TMEX_RTC_DIAL_BREAKER_MS` 调整）。`dial failed` 同一 peer 60 s 至多一条并带 `count=`。成功或对端 endpoints/`direct_capable` 变化会复位。不改 transport 优先级，也不改 `directCapable !== false` 门闩 |
+| `[mesh][rtc] dial failed` 刷屏、hub 入站 UDP 被滤 | 对 `direct_capable≠false` 的 peer 会反复拨 DC | 连续 3 次 DataChannel 失败（含通道打开后立刻死掉）后打一条 `[mesh][rtc] breaker trip peer=… fails=… level=… cooldown_ms=… until=…`，冷却期内跳过该 peer 的 DC（起始冷却默认 30 s，可用 `TMEX_RTC_DIAL_BREAKER_MS` 覆盖；之后 60 s / 120 s … 上限 30 min）。跳过时 `dial failed` 带 `cause=breaker_cooling`。`dial failed` 同一 peer 60 s 至多一条并带 `count=`。通道保持健康 ≥ 60 s 才打 `[mesh][rtc] breaker reset` 并清零；endpoints / `direct_capable` 变化不再复位。不改 transport 优先级，也不改 `directCapable !== false` 门闩 |
 | `PROTOCOL_MISMATCH` | `/api/auth/mode` 缺 `rootEpoch` / `rootPublicKey` 等 mesh 必填字段 | 服务角色不是 mesh，或旧进程未起来 |
 | join 失败 `https` / `--insecure-local` | 非 HTTPS，或 production 用了 insecure | 换成系统信任链下的 HTTPS |
 | join `key log rejected` / `epoch_changed` | 签发 token 之后发生了 `rotate-root` / `rotate-root-keep` / `reset-root` | 重新 enroll |
