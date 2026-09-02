@@ -21,6 +21,7 @@ import {
   decodeBase64url,
   deriveSeed,
   encodeAddPasskeyPayload,
+  encodeBase64url,
   encodeClearTotpPayload,
   encodeKeyLogRecord,
   encodePasskeyAssertion,
@@ -111,6 +112,21 @@ export function kdfParamsFromJson(json: {
     memory_kib: json.memory_kib,
     iterations: json.iterations,
     parallelism: json.parallelism,
+  };
+}
+
+/** `kdfParamsFromJson` 的逆向：把签进记录的新参数交回给 UI / 会话重建路径。 */
+export function kdfParamsToJson(params: KdfParams): {
+  salt: string;
+  memory_kib: number;
+  iterations: number;
+  parallelism: number;
+} {
+  return {
+    salt: encodeBase64url(params.salt),
+    memory_kib: params.memory_kib,
+    iterations: params.iterations,
+    parallelism: params.parallelism,
   };
 }
 

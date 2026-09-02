@@ -251,18 +251,22 @@ export class AuthApi {
 
   /**
    * `GET /api/auth/totp-record`（需会话）。常规改密重封装 TOTP 用。
-   * 未启用 TOTP 时返回 `{ ok: false, code: 'TOTP_NOT_ENABLED' }`，不抛异常。
+   *
+   * **只有 404 + `TOTP_NOT_ENABLED` 才是「没开 TOTP」这一确定结论**：401 / 500 / 空体 / HTML
+   * 都只说明这次读不到，必须带真实的 code（读不出来就是 `HTTP_<status>`）透出去。把它们
+   * 一律当成「没开」，调用方会写出一条 `totp: null` 的 rotate-root-keep 记录，用户既有的
+   * TOTP 密文就此永久丢失（见评审 Major）。
    */
   async getTotpRecord(): Promise<
     { ok: true; record: AuthTotpRecordResponse } | { ok: false; status: number; code: string }
   > {
     const res = await this.client.fetch('/api/auth/totp-record');
     if (!res.ok) {
-      return {
-        ok: false,
-        status: res.status,
-        code: await readCode(res, 'TOTP_NOT_ENABLED'),
-      };
+      const code = await readCode(res, '');
+      if (res.status === 404 && code === 'TOTP_NOT_ENABLED') {
+        return { ok: false, status: 404, code };
+      }
+      return { ok: false, status: res.status, code: code || `HTTP_${res.status}` };
     }
     const payload = (await res.json()) as Partial<AuthTotpRecordResponse>;
     if (

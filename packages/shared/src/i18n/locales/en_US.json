@@ -1729,7 +1729,7 @@
         "reloginTotpHint": "Signing back in after the change needs a code. Leave empty to skip.",
         "sessionResumeFailed": "Password updated. Signing back in did not finish; other nodes need a new sign-in.",
         "sessionResumeSkipped": "Password updated. No code entered; other nodes need a new sign-in.",
-        "primaryHubUnreachable": "The primary hub is unreachable and nothing was submitted. Switch hub roles in \"Settings → Multi-node Mesh\", then retry.",
+        "primaryHubUnreachable": "The primary hub did not confirm this change; the result is unknown. Restore the connection to the primary hub and refresh before retrying.",
         "switchToPrimaryHub": "This hub is a standby and does not accept account changes. Switch to the primary hub, then retry.",
         "nodesTooOld": "Some nodes are older than 1.1.16. Update every node first."
       },

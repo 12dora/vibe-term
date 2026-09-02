@@ -1735,7 +1735,7 @@ export const I18N_RESOURCES = {
         "reloginTotpHint": "Signing back in after the change needs a code. Leave empty to skip.",
         "sessionResumeFailed": "Password updated. Signing back in did not finish; other nodes need a new sign-in.",
         "sessionResumeSkipped": "Password updated. No code entered; other nodes need a new sign-in.",
-        "primaryHubUnreachable": "The primary hub is unreachable and nothing was submitted. Switch hub roles in \"Settings → Multi-node Mesh\", then retry.",
+        "primaryHubUnreachable": "The primary hub did not confirm this change; the result is unknown. Restore the connection to the primary hub and refresh before retrying.",
         "switchToPrimaryHub": "This hub is a standby and does not accept account changes. Switch to the primary hub, then retry.",
         "nodesTooOld": "Some nodes are older than 1.1.16. Update every node first."
       },
@@ -4153,7 +4153,7 @@ export const I18N_RESOURCES = {
         "reloginTotpHint": "改密后重新登录需要验证码；留空则跳过。",
         "sessionResumeFailed": "密码已更新；重新登录未完成，其他节点需重新登录。",
         "sessionResumeSkipped": "密码已更新；未输入验证码，其他节点需重新登录。",
-        "primaryHubUnreachable": "主 Hub 不可达，修改未提交；请先在「设置 → 多节点互联」切换 Hub 角色后重试。",
+        "primaryHubUnreachable": "主 Hub 未确认本次修改，结果未知。请恢复与主 Hub 的连接并刷新状态后再决定是否重试。",
         "switchToPrimaryHub": "当前 Hub 为备用，不接受账号变更；请切换到主 Hub 后重试。",
         "nodesTooOld": "有节点版本低于 1.1.16，须先升级全部节点。"
       },
@@ -6565,7 +6565,7 @@ export const I18N_RESOURCES = {
         "reloginTotpHint": "変更後の再サインインにはコードが必要です。空欄ならスキップします。",
         "sessionResumeFailed": "パスワードを更新しました。再サインインは完了していません。他のノードでは再度サインインが必要です。",
         "sessionResumeSkipped": "パスワードを更新しました。コード未入力のため、他のノードでは再度サインインが必要です。",
-        "primaryHubUnreachable": "メインハブに接続できず、変更は送信されていません。「設定 → マルチノード連携」でハブの役割を切り替えてから再試行してください。",
+        "primaryHubUnreachable": "メインハブがこの変更を確認できず、結果は不明です。メインハブとの接続を復旧し、状態を更新してから再試行を判断してください。",
         "switchToPrimaryHub": "このハブは予備のため、アカウントの変更を受け付けません。メインハブに切り替えてから再試行してください。",
         "nodesTooOld": "1.1.16 より古いノードがあります。先にすべてのノードを更新してください。"
       },

@@ -65,6 +65,8 @@ function mockApi(options: {
   nodes?: { id: string; publicKey: Uint8Array; online?: boolean; loggedIn?: boolean }[];
   nodePkOverride?: Record<string, Uint8Array>;
   loginStatus?: (nodeId: string) => number;
+  /** 非 200 时返回的业务码（缺省 BAD_SIGNATURE）。 */
+  loginErrorCode?: string;
   /** `/api/mesh/nodes` 失败（entry 已登录但列表拉不到）。 */
   meshListStatus?: number;
   /** entry 自身在 mesh 列表里的公钥（默认与 challenge 返回的一致）。 */
@@ -131,7 +133,9 @@ function mockApi(options: {
     captured.login = body;
     const status = options.loginStatus?.(nodeId) ?? 200;
     if (status !== 200) {
-      return Promise.resolve(Response.json({ code: 'BAD_SIGNATURE' }, { status }));
+      return Promise.resolve(
+        Response.json({ code: options.loginErrorCode ?? 'BAD_SIGNATURE' }, { status })
+      );
     }
     // B2-2b 契约：登录成功体只有 expires_at，没有 sid。
     return Promise.resolve(Response.json({ expires_at: 1 }));
@@ -191,6 +195,63 @@ describe('establishSessionFromSeed', () => {
     await establishRoot();
     clearSessionKey();
     expect(getSessionKey()).toBeNull();
+  });
+
+  test('会话钥生成失败：seed 照样清零，不留下任何会话', async () => {
+    const seed = new Uint8Array(ROOT_SEED);
+    await expect(
+      establishSessionFromSeed(seed, {
+        uid: UID,
+        entryNodeId: ENTRY,
+        rootEpoch: 0,
+        hasTotp: false,
+        generateSessionKeyPair: () => {
+          throw new Error('no ed25519 here');
+        },
+      })
+    ).rejects.toThrow('no ed25519 here');
+    expect(seed.every((byte) => byte === 0)).toBe(true);
+    expect(getSessionKey()).toBeNull();
+  });
+
+  test('createDelegation 抛（sess_pk 长度不对）：seed 与 sk_sess 都清零', async () => {
+    const seed = new Uint8Array(ROOT_SEED);
+    const secretKey = fill(32, 0x31);
+    await expect(
+      establishSessionFromSeed(seed, {
+        uid: UID,
+        entryNodeId: ENTRY,
+        rootEpoch: 0,
+        hasTotp: false,
+        generateSessionKeyPair: () => ({ publicKey: fill(8, 0x32), secretKey }),
+      })
+    ).rejects.toThrow('sessPk must be 32 bytes');
+    expect(seed.every((byte) => byte === 0)).toBe(true);
+    expect(secretKey.every((byte) => byte === 0)).toBe(true);
+    expect(getSessionKey()).toBeNull();
+  });
+
+  test('k_totp 的 HKDF 抛：seed 与 sk_sess 清零，手上那份旧会话不受影响', async () => {
+    await establishRoot();
+    const oldIssuedAt = getSessionKey()?.issuedAt as number;
+    const seed = new Uint8Array(ROOT_SEED);
+    const secretKey = fill(32, 0x41);
+
+    await expect(
+      establishSessionFromSeed(seed, {
+        uid: UID,
+        entryNodeId: ENTRY,
+        rootEpoch: 0,
+        hasTotp: true,
+        generateSessionKeyPair: () => ({ publicKey: fill(32, 0x42), secretKey }),
+        deriveKTotp: () => {
+          throw new Error('hkdf failed');
+        },
+      })
+    ).rejects.toThrow('hkdf failed');
+    expect(seed.every((byte) => byte === 0)).toBe(true);
+    expect(secretKey.every((byte) => byte === 0)).toBe(true);
+    expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt);
   });
 });
 
@@ -279,6 +340,13 @@ describe('replaceSessionKey（两阶段会话替换）', () => {
 });
 
 describe('resumeSessionAfterPasswordChange', () => {
+  const NEW_KDF = {
+    salt: encodeBase64url(fill(16, 0x05)),
+    memory_kib: 64,
+    iterations: 1,
+    parallelism: 1,
+  };
+
   test('登录成功后换成新会话（新 delegation 由新根钥签）', async () => {
     await establishRoot();
     const oldIssuedAt = getSessionKey()?.issuedAt as number;
@@ -302,6 +370,89 @@ describe('resumeSessionAfterPasswordChange', () => {
     expect(result).toEqual({ ok: true });
     expect(captured.loginCalls.map((row) => row.nodeId)).toEqual(['self']);
     expect(getSessionKey()?.issuedAt).not.toBe(oldIssuedAt);
+  }, 20000);
+
+  test('开了 TOTP 且当场给了码：新会话带着 totp 字段登录成功', async () => {
+    await establishRoot({ hasTotp: true, totpCode: '111111' });
+    const { api, captured } = mockApi({});
+
+    const result = await resumeSessionAfterPasswordChange({
+      api,
+      uid: UID,
+      password: 'new-secret',
+      kdfParams: NEW_KDF,
+      entryNodeId: ENTRY,
+      rootEpoch: 1,
+      hasTotp: true,
+      totpCode: '123456',
+    });
+
+    expect(result).toEqual({ ok: true });
+    const totp = (captured.loginCalls[0].body as { totp?: { code: string; k_totp: string } }).totp;
+    expect(totp?.code).toBe('123456');
+    expect(decodeBase64url(totp?.k_totp ?? '')).toHaveLength(32);
+    expect(getSessionKey()?.hasTotp).toBe(true);
+  }, 20000);
+
+  test('验证码不对：node 拒绝这次登录，手上那份旧会话原样留着', async () => {
+    await establishRoot({ hasTotp: true, totpCode: '111111' });
+    const oldIssuedAt = getSessionKey()?.issuedAt as number;
+    const { api } = mockApi({ loginStatus: () => 401, loginErrorCode: 'TOTP_INVALID' });
+
+    const result = await resumeSessionAfterPasswordChange({
+      api,
+      uid: UID,
+      password: 'new-secret',
+      kdfParams: NEW_KDF,
+      entryNodeId: ENTRY,
+      rootEpoch: 1,
+      hasTotp: true,
+      totpCode: '000000',
+    });
+
+    expect(result).toEqual({ ok: false, code: 'TOTP_INVALID' });
+    expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt);
+    expect(getSessionKey()?.hasTotp).toBe(true);
+  }, 20000);
+
+  test('开了 TOTP 却没给码：TOTP_REQUIRED，一个请求都不发，旧会话不动', async () => {
+    await establishRoot({ hasTotp: true, totpCode: '111111' });
+    const oldIssuedAt = getSessionKey()?.issuedAt as number;
+    const { api, captured } = mockApi({});
+
+    const result = await resumeSessionAfterPasswordChange({
+      api,
+      uid: UID,
+      password: 'new-secret',
+      kdfParams: NEW_KDF,
+      entryNodeId: ENTRY,
+      rootEpoch: 1,
+      hasTotp: true,
+    });
+
+    expect(result).toEqual({ ok: false, code: 'TOTP_REQUIRED' });
+    expect(captured.challengeCalls).toHaveLength(0);
+    expect(captured.loginCalls).toHaveLength(0);
+    expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt);
+  }, 20000);
+
+  test('entry 公钥被掉包：整次替换作废，旧会话也不留下', async () => {
+    await establishRoot();
+    const { api } = mockApi({ entryPkInList: fill(32, 0x77) });
+
+    const result = await resumeSessionAfterPasswordChange({
+      api,
+      uid: UID,
+      password: 'new-secret',
+      kdfParams: NEW_KDF,
+      entryNodeId: ENTRY,
+      rootEpoch: 1,
+      hasTotp: false,
+    });
+
+    // 出示的不是被签发过的那把钥：宁可退回登录页，也不让用户带着不可信的会话继续。
+    expect(result).toEqual({ ok: false, code: 'NODE_PK_MISMATCH' });
+    expect(getSessionKey()).toBeNull();
   }, 20000);
 
   test('重新登录失败时旧会话仍在，用户不被踢回登录页', async () => {

@@ -1729,7 +1729,7 @@
         "reloginTotpHint": "改密后重新登录需要验证码；留空则跳过。",
         "sessionResumeFailed": "密码已更新；重新登录未完成，其他节点需重新登录。",
         "sessionResumeSkipped": "密码已更新；未输入验证码，其他节点需重新登录。",
-        "primaryHubUnreachable": "主 Hub 不可达，修改未提交；请先在「设置 → 多节点互联」切换 Hub 角色后重试。",
+        "primaryHubUnreachable": "主 Hub 未确认本次修改，结果未知。请恢复与主 Hub 的连接并刷新状态后再决定是否重试。",
         "switchToPrimaryHub": "当前 Hub 为备用，不接受账号变更；请切换到主 Hub 后重试。",
         "nodesTooOld": "有节点版本低于 1.1.16，须先升级全部节点。"
       },

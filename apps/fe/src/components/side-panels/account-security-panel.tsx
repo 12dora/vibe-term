@@ -6,7 +6,6 @@
 import {
   type TotpSetupDraft,
   beginTotpSetup,
-  changePassword,
   clearTotp,
   confirmTotpSetup,
   isPasskeyUsableHere,
@@ -18,8 +17,6 @@ import {
   decodeRootPublicKey,
   useCredentialPrompt,
 } from '@/auth/credential-prompt';
-import { clearSessionKey, getSessionKey } from '@/auth/session-key-store';
-import { resumeSessionAfterPasswordChange } from '@/auth/session-login';
 import { useAuthMode } from '@/auth/use-session-key';
 import type {
   AuthApi,
@@ -27,8 +24,7 @@ import type {
   AuthModeResponse,
   PasskeySummary,
 } from '@tmex/api-client/auth/index';
-import { HUB_NOT_WRITER, defaultAuthApi } from '@tmex/api-client/auth/index';
-import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@tmex/shared/auth';
+import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Checkbox } from '@tmex/ui/checkbox';
 import { Input } from '@tmex/ui/input';
@@ -37,6 +33,19 @@ import { AlertTriangle, Fingerprint, KeyRound, Loader2, Trash2 } from 'lucide-re
 import { QRCodeSVG } from 'qrcode.react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import {
+  type PasswordChangeFeedback,
+  securityActionErrorText,
+  submitPasswordChange,
+} from './account-security-password';
+
+// 面板的调用方（与单测）沿用同一个入口，改密逻辑本身在 `./account-security-password`。
+export {
+  type PasswordChangeFollowUp,
+  finishPasswordChange,
+  passwordChangeFollowUp,
+  securityActionErrorText,
+} from './account-security-password';
 
 export interface AccountSecurityPanelProps {
   mode?: AuthModeResponse;
@@ -98,21 +107,6 @@ function Feedback({ tone, text }: { tone: keyof typeof FEEDBACK_TONE; text: stri
       {text}
     </p>
   );
-}
-
-const HUB_TIMEOUT = 'HUB_TIMEOUT';
-
-type Translate = (key: string, options?: Record<string, unknown>) => string;
-
-/**
- * key-log 动作失败的文案。多 hub 下三个码必须给出下一步该去哪台机器操作，
- * 通用错误表里那句「请通过主 Hub 操作」在账号安全这条路径上说不清楚要先做什么。
- */
-export function securityActionErrorText(t: Translate, code: string): string {
-  if (code === HUB_TIMEOUT) return t('auth.security.primaryHubUnreachable');
-  if (code === HUB_NOT_WRITER) return t('auth.security.switchToPrimaryHub');
-  if (code === KEYLOG_TYPE_UNSUPPORTED_BY_NODES) return t('auth.security.nodesTooOld');
-  return t(`auth.errors.${code}`, { defaultValue: code });
 }
 
 interface AccountSecurityProps {
@@ -195,126 +189,6 @@ const PLACEHOLDER_KDF: AuthKdfParamsJson = {
   iterations: 0,
   parallelism: 0,
 };
-
-// ---------------------------------------------------------------------------
-// 改密
-// ---------------------------------------------------------------------------
-
-export type PasswordChangeFollowUp = 'clear-session' | 'resume-session' | 'keep-session';
-
-/**
- * 改密成功后拿浏览器这份会话怎么办。
- *
- * - `clear-session`：全量重置撤销了全部会话，本地连 IndexedDB 一起清掉；
- * - `resume-session`：常规改密不撤销会话，用新密码重建 delegation 再登录一次 entry；
- * - `keep-session`：开了 TOTP 却没给验证码，重新登录做不了，保留手上这份仍然有效的会话。
- */
-export function passwordChangeFollowUp(input: {
-  fullReset: boolean;
-  totpEnabled: boolean;
-  totpCode: string;
-}): PasswordChangeFollowUp {
-  if (input.fullReset) return 'clear-session';
-  if (input.totpEnabled && !/^\d{6}$/.test(input.totpCode)) return 'keep-session';
-  return 'resume-session';
-}
-
-/**
- * 重新读一次 `/api/auth/mode`：新 kdf 参数与 root_epoch 只有服务端应用完记录才作准。
- *
- * 任何失败都只是「没接上」——密码已经改成功了，不能反过来报成改密失败；旧会话由
- * `replaceSessionKey()` 保住，调用方只给一行提示。
- */
-async function resumeSession(input: {
-  api: AuthApi;
-  uid: string;
-  password: string;
-  totpCode: string;
-}): Promise<boolean> {
-  try {
-    const next = await input.api.getMode();
-    if (!next.kdfParams || typeof next.rootEpoch !== 'number') return false;
-    const result = await resumeSessionAfterPasswordChange({
-      api: input.api,
-      uid: input.uid,
-      password: input.password,
-      kdfParams: next.kdfParams,
-      entryNodeId: getSessionKey()?.entryNodeId ?? next.nodeId,
-      rootEpoch: next.rootEpoch,
-      hasTotp: Boolean(next.totpEnabled),
-      totpCode: input.totpCode || undefined,
-    });
-    return result.ok;
-  } catch {
-    return false;
-  }
-}
-
-interface PasswordChangeFeedback {
-  tone: 'ok' | 'notice';
-  text: string;
-}
-
-/** 改密成功后的收尾：只有全量重置才清会话钥；常规改密走两阶段替换，失败也不动旧会话。 */
-export async function finishPasswordChange(input: {
-  api: AuthApi;
-  uid: string;
-  password: string;
-  totpCode: string;
-  follow: PasswordChangeFollowUp;
-  t: Translate;
-}): Promise<PasswordChangeFeedback> {
-  if (input.follow === 'clear-session') {
-    // rotate-root 撤销所有会话：等盘上那份也删掉再往下走，否则用户随手刷新一下，
-    // IndexedDB 里那份已被服务端撤销的会话钥又会被恢复出来。
-    await clearSessionKey();
-    return { tone: 'ok', text: input.t('auth.security.changePasswordDone') };
-  }
-  if (input.follow === 'keep-session') {
-    return { tone: 'notice', text: input.t('auth.security.sessionResumeSkipped') };
-  }
-  const resumed = await resumeSession(input);
-  return resumed
-    ? { tone: 'ok', text: input.t('auth.security.changePasswordKeepDone') }
-    : { tone: 'notice', text: input.t('auth.security.sessionResumeFailed') };
-}
-
-interface PasswordChangeRequest {
-  api: AuthApi;
-  uid: string;
-  kdfParams: AuthKdfParamsJson;
-  oldPassword: string;
-  newPassword: string;
-  fullReset: boolean;
-  totpEnabled: boolean;
-  totpCode: string;
-  t: Translate;
-}
-
-type PasswordChangeOutcome = { tone: 'error'; text: string } | PasswordChangeFeedback;
-
-async function submitPasswordChange(input: PasswordChangeRequest): Promise<PasswordChangeOutcome> {
-  const result = await changePassword({
-    api: input.api,
-    uid: input.uid,
-    oldPassword: input.oldPassword,
-    newPassword: input.newPassword,
-    currentKdfParams: input.kdfParams,
-    fullReset: input.fullReset,
-    totpEnabled: input.totpEnabled,
-  });
-  if (!result.ok) {
-    return { tone: 'error', text: securityActionErrorText(input.t, result.code) };
-  }
-  return finishPasswordChange({
-    api: input.api,
-    uid: input.uid,
-    password: input.newPassword,
-    totpCode: input.totpCode,
-    follow: passwordChangeFollowUp(input),
-    t: input.t,
-  });
-}
 
 function PasswordFields({
   oldPassword,
@@ -461,6 +335,7 @@ export function PasswordSection({
       const outcome = await submitPasswordChange({
         api,
         uid,
+        nodeId: mode.nodeId,
         kdfParams: mode.kdfParams,
         oldPassword,
         newPassword,
@@ -489,6 +364,7 @@ export function PasswordSection({
     confirm,
     fullReset,
     mode.kdfParams,
+    mode.nodeId,
     newPassword,
     oldPassword,
     onDone,

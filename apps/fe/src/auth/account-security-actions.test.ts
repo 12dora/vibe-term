@@ -26,6 +26,7 @@ import {
   passkeysForOrigin,
   withRootSigner,
 } from './account-security-actions';
+import { kdfParamsFromJson } from './key-log-actions';
 
 // 单测用便宜的 argon2 参数（真实参数 64 MiB / t=3 太慢）。
 const KDF_JSON = {
@@ -116,7 +117,7 @@ describe('changePassword', () => {
       currentKdfParams: KDF_JSON,
       fullReset: true,
     });
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true, nextRootEpoch: EPOCH + 1 });
     expect(posted).toHaveLength(1);
 
     const oldRoot = await rootKeyOf('old-secret');
@@ -254,6 +255,54 @@ describe('常规改密（rotate-root-keep）', () => {
     expect(record.type).toBe('rotate-root-keep');
     expect(decodeRotateRootKeepPayload(record.payload).totp).toBeNull();
   }, 20000);
+
+  test('成功时把签进记录的新 epoch 与新 kdf 参数一起返回（不必等 /api/auth/mode 追上）', async () => {
+    const mock = mockApi();
+    const result = await changePassword({
+      api: mock.api,
+      uid: UID,
+      oldPassword: 'old-secret',
+      newPassword: 'new-secret',
+      currentKdfParams: KDF_JSON,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.nextRootEpoch).toBe(EPOCH + 1);
+
+    // 返回的 kdf 参数就是写进 payload 的那份，且新密码配它能派生出记录里的新根公钥。
+    const payload = decodeRotateRootKeepPayload(decodeKeyLogRecord(mock.posted[0].bytes).payload);
+    expect(decodeBase64url(result.newKdfParams.salt)).toEqual(payload.kdf_params.salt);
+    expect(result.newKdfParams.memory_kib).toBe(payload.kdf_params.memory_kib);
+    const newSeed = await deriveSeed('new-secret', kdfParamsFromJson(result.newKdfParams));
+    expect(bytesEqual(payload.root_public_key, rootKeyFromSeed(newSeed).publicKey)).toBe(true);
+  }, 20000);
+
+  test('TOTP 记录读不到（401 / 500 / HTML 体）时中止改密，不写任何记录', async () => {
+    for (const failure of [
+      { status: 401, code: 'UNAUTHORIZED' },
+      { status: 500, code: 'INTERNAL' },
+      { status: 502, code: 'HTTP_502' },
+    ]) {
+      const mock = mockApi({ totpRecordError: failure });
+      const keys = [
+        rootKeyFromSeed(new Uint8Array(32).fill(0x51)),
+        rootKeyFromSeed(new Uint8Array(32).fill(0x52)),
+      ];
+      let calls = 0;
+      await expect(
+        changePassword({
+          api: mock.api,
+          uid: UID,
+          oldPassword: 'old-secret',
+          newPassword: 'new-secret',
+          currentKdfParams: KDF_JSON,
+          totpEnabled: true,
+          deriveRootKey: () => Promise.resolve(keys[calls++]),
+        })
+      ).rejects.toThrow(failure.code);
+      expect(mock.posted).toHaveLength(0);
+    }
+  });
 
   test('TOTP 记录拉不到时不写任何记录，两把根钥照样清零', async () => {
     const mock = mockApi({ totpRecordError: { status: 500, code: 'INTERNAL' } });

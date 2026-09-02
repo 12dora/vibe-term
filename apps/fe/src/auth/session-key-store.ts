@@ -78,6 +78,13 @@ let restorePromise: Promise<SessionKeyInfo | null> | null = null;
 /** 每次登录 / 登出 +1：读盘期间发生过状态变化时，旧记录一律作废。 */
 let generation = 0;
 
+/**
+ * 两阶段替换的令牌。进行中时 `adoptSessionSecrets()` 只换内存、不碰 IndexedDB；
+ * 期间只要有人调 `clearSessionKey()`（用户登出，或 `loginSelf()` 撞上 NODE_PK_MISMATCH
+ * 主动丢弃会话），整次替换即作废，新旧两份都不留。
+ */
+let pendingReplacement: { cancelled: boolean } | null = null;
+
 /** 命令式读取：顺带清掉已过期的会话钥。**不**触发恢复，只反映此刻内存里有什么。 */
 export function getSessionKey(): SessionKeyInfo | null {
   if (!current) return null;
@@ -100,6 +107,7 @@ export function hasSessionKey(): boolean {
  * `getSessionKey()` 过期清理等）不 await 也没关系。
  */
 export function clearSessionKey(): Promise<boolean> {
+  if (pendingReplacement) pendingReplacement.cancelled = true;
   generation += 1;
   restorePromise = Promise.resolve(null);
   const cleared = clearPersistedSession();
@@ -167,29 +175,42 @@ export function readSessionSecrets(): SessionKeySecrets | null {
 }
 
 /**
- * 接管一份新会话的所有权：旧会话就地清零，之后由 `clearSessionKey()` 负责清零新的。
+ * 把这份会话变成盘上唯一那条记录。
  *
- * 满足两个条件才写盘：私钥是不可导出的 `CryptoKey`（没有任何密钥字节会落盘），且这不是
+ * 满足两个条件才写：私钥是不可导出的 `CryptoKey`（没有任何密钥字节会落盘），且这不是
  * 开了 TOTP 的密码会话——那种会话每次登录 node 都要一个新的一次性码，而码与 k_totp 都不
  * 持久化，存下来也只会稳定返回 `TOTP_REQUIRED`，不如维持今天的「回登录页当场输码」。
+ * 不满足就把旧记录删掉：盘上绝不能留一条与内存里这份不是同一个会话的记录。
+ *
+ * 写走**一次 `put`**（同一个 key 覆盖），不再「先删后写」——那两个事务之间存在一个盘上
+ * 什么都没有的窗口，此刻刷新页面就等于莫名其妙登出一次。
+ */
+function persistSession(secrets: SessionKeySecrets): Promise<boolean> {
+  if (!secrets.sessKey || secrets.info.hasTotp) return clearPersistedSession();
+  return savePersistedSession({
+    version: PERSISTED_SESSION_VERSION,
+    info: secrets.info,
+    privateKey: secrets.sessKey,
+    // 都拷一份再交给 IndexedDB：写事务是异步的，而下一次清零会就地改这几个数组。
+    sessPk: new Uint8Array(secrets.sessPk),
+    delegation: secrets.delegation,
+    delegationBytes: new Uint8Array(secrets.delegationBytes),
+    delegationSig: new Uint8Array(secrets.delegationSig),
+  });
+}
+
+/**
+ * 接管一份新会话的所有权：旧会话就地清零，之后由 `clearSessionKey()` 负责清零新的。
+ *
+ * 两阶段替换（`replaceSessionKey()`）期间**一个字节都不写盘**：那时新会话还没被接受，
+ * 盘上必须原样留着旧那条，由 `replaceSessionKey()` 在接受之后统一提交。
  */
 export function adoptSessionSecrets(secrets: SessionKeySecrets): SessionKeyInfo {
-  // 删旧记录与写新记录都排在同一条持久化队列上，先删后写的顺序有保证。
-  void clearSessionKey();
+  generation += 1;
+  if (current) wipeSecrets(current);
   current = secrets;
   restorePromise = Promise.resolve(secrets.info);
-  if (secrets.sessKey && !secrets.info.hasTotp) {
-    void savePersistedSession({
-      version: PERSISTED_SESSION_VERSION,
-      info: secrets.info,
-      privateKey: secrets.sessKey,
-      // 都拷一份再交给 IndexedDB：写事务是异步的，而下一次 `clearSessionKey()` 会就地清零。
-      sessPk: new Uint8Array(secrets.sessPk),
-      delegation: secrets.delegation,
-      delegationBytes: new Uint8Array(secrets.delegationBytes),
-      delegationSig: new Uint8Array(secrets.delegationSig),
-    });
-  }
+  if (!pendingReplacement) void persistSession(secrets);
   return secrets.info;
 }
 
@@ -205,8 +226,10 @@ function wipeSecrets(secrets: SessionKeySecrets): void {
  * 两阶段会话替换：常规改密后要用新密码重建 delegation 并重新登录 entry，但**旧会话没有被
  * 服务端撤销**——新登录只要没成功，用户就该继续用手上这一份，而不是被踢回登录页。
  *
- * 因此 `run()` 期间旧会话只是被摘下（不清零、不进 IndexedDB），只有 `accept(value)` 为真才
- * 真正丢弃它；返回值被拒或 `run()` 抛异常时，旧会话原样装回（顺带清零那份没用上的新会话）。
+ * 因此 `run()` 期间旧会话只是从内存里被摘下，**持久化层完全不动**：盘上那条旧记录一直在，
+ * 直到 `accept(value)` 为真才被新会话一次性覆盖。这段窗口里刷新 / 冷启动，恢复出来的仍然是
+ * 旧会话（新的那份根本没落过盘）；返回值被拒或 `run()` 抛异常时，旧会话原样装回内存，盘上
+ * 那条从头到尾没被碰过。
  *
  * 这段窗口里 `getSessionKey()` 读到 null——调用方要在进入之前取好 `entryNodeId` 之类的信息。
  */
@@ -215,24 +238,49 @@ export async function replaceSessionKey<T>(
   accept: (value: T) => boolean
 ): Promise<T> {
   const previous = current;
+  const token = { cancelled: false };
   current = null;
   generation += 1;
   restorePromise = Promise.resolve(null);
+  pendingReplacement = token;
   let keep = false;
   try {
     const value = await run();
     keep = accept(value);
     return value;
   } finally {
-    if (keep) {
-      if (previous) wipeSecrets(previous);
-    } else if (previous) {
-      // adopt 会先把 `run()` 留下的那份新会话清零，再把旧会话重新写回内存与 IndexedDB。
-      adoptSessionSecrets(previous);
-    } else {
-      await clearSessionKey();
-    }
+    pendingReplacement = null;
+    await settleReplacement(token, previous, keep);
   }
+}
+
+async function settleReplacement(
+  token: { cancelled: boolean },
+  previous: SessionKeySecrets | null,
+  keep: boolean
+): Promise<void> {
+  const replacement = current;
+  // 替换期间会话被作废（登出 / entry 公钥对不上）：盘上那条已由 `clearSessionKey()` 删掉，
+  // 新旧两份一起丢弃，绝不把旧会话又装回去。
+  if (token.cancelled) {
+    if (previous) wipeSecrets(previous);
+    if (replacement) wipeSecrets(replacement);
+    current = null;
+    restorePromise = Promise.resolve(null);
+    return;
+  }
+  if (keep && replacement) {
+    if (previous) wipeSecrets(previous);
+    // 到这一刻盘上都还是旧那条；新会话被接受了，才用一次 put 把它换掉。
+    await persistSession(replacement);
+    return;
+  }
+  if (replacement) wipeSecrets(replacement);
+  current = previous;
+  generation += 1;
+  // 没有旧会话可装回时把恢复结果解锁：盘上那条（如果有）本来就没被动过，
+  // 下一次 `restoreSessionKey()` 该照常去读它，而不是被这次失败的替换锁成 null。
+  restorePromise = previous ? Promise.resolve(previous.info) : null;
 }
 
 // ---------------------------------------------------------------------------

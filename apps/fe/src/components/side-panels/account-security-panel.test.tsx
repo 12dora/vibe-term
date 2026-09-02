@@ -176,10 +176,70 @@ describe('securityActionErrorText', () => {
 });
 
 describe('finishPasswordChange', () => {
-  const modeApi = {
-    getMode: () =>
-      Promise.resolve({ ...MESH_MODE, rootEpoch: 1, totpEnabled: false } as AuthModeResponse),
-  } as unknown as AuthApi;
+  /** 本次签进记录的值：epoch = 签名时的 E + 1，kdf 参数是新生成的那份。 */
+  const SIGNED = {
+    nextRootEpoch: 1,
+    newKdfParams: {
+      salt: 'BBBBBBBBBBBBBBBBBBBBBB',
+      memory_kib: 65536,
+      iterations: 3,
+      parallelism: 1,
+    },
+  };
+  /** 记录应用之后 `/api/auth/mode` 才会给出的那份参数。 */
+  const SERVER_KDF = {
+    salt: 'CCCCCCCCCCCCCCCCCCCCCC',
+    memory_kib: 65536,
+    iterations: 3,
+    parallelism: 1,
+  };
+
+  /** `/api/auth/mode` 依次给出这些 rootEpoch（用完之后一直给最后一个）。 */
+  function modeApi(epochs: number[], totpEnabled = false) {
+    const state = { count: 0 };
+    const api = {
+      getMode: () => {
+        const epoch = epochs[Math.min(state.count, epochs.length - 1)];
+        state.count += 1;
+        return Promise.resolve({
+          ...MESH_MODE,
+          rootEpoch: epoch,
+          kdfParams: epoch === SIGNED.nextRootEpoch ? SERVER_KDF : MESH_MODE.kdfParams,
+          totpEnabled,
+        } as AuthModeResponse);
+      },
+    } as unknown as AuthApi;
+    return { api, state };
+  }
+
+  type FinishInput = Parameters<typeof finishPasswordChange>[0];
+
+  function finish(overrides: Partial<FinishInput> = {}) {
+    return finishPasswordChange({
+      api: modeApi([SIGNED.nextRootEpoch]).api,
+      uid: 'user-1',
+      nodeId: MESH_MODE.nodeId,
+      password: 'new-secret',
+      totpCode: '',
+      totpEnabled: false,
+      signed: SIGNED,
+      follow: 'resume-session',
+      t,
+      // 单测不等真的 200ms 轮询间隔。
+      sleep: () => Promise.resolve(),
+      ...overrides,
+    });
+  }
+
+  function resumedArgs() {
+    return resumed.mock.calls[0][0] as {
+      kdfParams: { salt: string };
+      rootEpoch: number;
+      hasTotp: boolean;
+      totpCode?: string;
+      entryNodeId: string;
+    };
+  }
 
   beforeEach(() => {
     cleared.mockClear();
@@ -188,14 +248,7 @@ describe('finishPasswordChange', () => {
   });
 
   test('常规改密成功后不清会话钥，只用新密码重新建立一次会话', async () => {
-    const feedback = await finishPasswordChange({
-      api: modeApi,
-      uid: 'user-1',
-      password: 'new-secret',
-      totpCode: '',
-      follow: 'resume-session',
-      t,
-    });
+    const feedback = await finish();
     expect(cleared).not.toHaveBeenCalled();
     expect(resumed).toHaveBeenCalledTimes(1);
     expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordKeepDone' });
@@ -203,57 +256,70 @@ describe('finishPasswordChange', () => {
 
   test('重新登录没成功：保留旧会话，只给一行提示', async () => {
     resumed.mockImplementation(async () => ({ ok: false, code: 'BAD_SIGNATURE' }));
-    const feedback = await finishPasswordChange({
-      api: modeApi,
-      uid: 'user-1',
-      password: 'new-secret',
-      totpCode: '',
-      follow: 'resume-session',
-      t,
-    });
+    const feedback = await finish();
     expect(cleared).not.toHaveBeenCalled();
     expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeFailed' });
   });
 
   test('重新登录过程中抛异常也只当作没接上，不报成改密失败', async () => {
     resumed.mockImplementation(() => Promise.reject(new Error('argon2 out of memory')));
-    const feedback = await finishPasswordChange({
-      api: modeApi,
-      uid: 'user-1',
-      password: 'new-secret',
-      totpCode: '',
-      follow: 'resume-session',
-      t,
-    });
+    const feedback = await finish();
     expect(cleared).not.toHaveBeenCalled();
     expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeFailed' });
   });
 
   test('跳过重新登录时既不清会话也不发请求', async () => {
-    const feedback = await finishPasswordChange({
-      api: modeApi,
-      uid: 'user-1',
-      password: 'new-secret',
-      totpCode: '',
-      follow: 'keep-session',
-      t,
-    });
+    const feedback = await finish({ follow: 'keep-session' });
     expect(cleared).not.toHaveBeenCalled();
     expect(resumed).not.toHaveBeenCalled();
     expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeSkipped' });
   });
 
   test('全量重置后清掉会话钥（含 IndexedDB 那份）', async () => {
-    const feedback = await finishPasswordChange({
-      api: modeApi,
-      uid: 'user-1',
-      password: 'new-secret',
-      totpCode: '',
-      follow: 'clear-session',
-      t,
-    });
+    const feedback = await finish({ follow: 'clear-session' });
     expect(cleared).toHaveBeenCalledTimes(1);
     expect(resumed).not.toHaveBeenCalled();
     expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordDone' });
+  });
+
+  test('mode 先给旧 epoch：poll 到新 epoch 后按服务端那份参数重建', async () => {
+    const { api, state } = modeApi([0, 0, SIGNED.nextRootEpoch]);
+    const feedback = await finish({ api });
+    expect(state.count).toBe(3);
+    expect(resumedArgs().kdfParams).toEqual(SERVER_KDF);
+    expect(resumedArgs().rootEpoch).toBe(SIGNED.nextRootEpoch);
+    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordKeepDone' });
+  });
+
+  test('mode 一直停在旧 epoch：最多问 3 次，然后回落到签进记录的新参数', async () => {
+    const { api, state } = modeApi([0]);
+    await finish({ api });
+    expect(state.count).toBe(3);
+    // 绝不能拿 mode 给的旧 kdf 参数去重建——那把 delegation 一定验不过。
+    expect(resumedArgs().kdfParams).toEqual(SIGNED.newKdfParams);
+    expect(resumedArgs().rootEpoch).toBe(SIGNED.nextRootEpoch);
+  });
+
+  test('mode 整个读不到时也照样按签进记录的值重建', async () => {
+    const api = {
+      getMode: () => Promise.reject(new Error('offline')),
+    } as unknown as AuthApi;
+    const feedback = await finish({ api });
+    expect(resumedArgs().kdfParams).toEqual(SIGNED.newKdfParams);
+    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordKeepDone' });
+  });
+
+  test('开了 TOTP：验证码原样转给重新登录，mode 没追上也知道还开着 TOTP', async () => {
+    const { api } = modeApi([0]);
+    await finish({ api, totpEnabled: true, totpCode: '123456' });
+    expect(resumedArgs().totpCode).toBe('123456');
+    expect(resumedArgs().hasTotp).toBe(true);
+  });
+
+  test('验证码不对：重新登录被拒，旧会话保留，只给一行提示', async () => {
+    resumed.mockImplementation(async () => ({ ok: false, code: 'TOTP_INVALID' }));
+    const feedback = await finish({ totpEnabled: true, totpCode: '000000' });
+    expect(cleared).not.toHaveBeenCalled();
+    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeFailed' });
   });
 });

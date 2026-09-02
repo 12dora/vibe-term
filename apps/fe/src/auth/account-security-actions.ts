@@ -2,7 +2,12 @@
 // 每个动作都要 `POST /api/auth/keylog` 追加一条由根钥或 passkey 签名的记录，
 // sk_sess 一概不参与——所以每个动作都会重新要一次密码或一次 passkey 交互。
 
-import type { AuthApi, KeyLogAppendResult, PasskeySummary } from '@tmex/api-client/auth/index';
+import type {
+  AuthApi,
+  AuthKdfParamsJson,
+  KeyLogAppendResult,
+  PasskeySummary,
+} from '@tmex/api-client/auth/index';
 import { defaultAuthApi, startRegistration } from '@tmex/api-client/auth/index';
 import {
   type AddPasskeyPayload,
@@ -31,6 +36,7 @@ import {
   buildSetTotpRecord,
   headFromResponse,
   kdfParamsFromJson,
+  kdfParamsToJson,
 } from './key-log-actions';
 import { buildOtpauthUri, generateTotpSecret } from './totp-uri';
 
@@ -103,9 +109,11 @@ async function rewrapTotpSecret(input: {
   recordSeq: bigint;
 }): Promise<RotateRootKeepTotp | null> {
   const fetched = await input.api.getTotpRecord();
-  // 服务端说没开 TOTP（`totpEnabled` 已过期）时就按没开处理：写 `totp: null` 才是对的记录。
+  // 只认 404 + `TOTP_NOT_ENABLED`：服务端确实说没开（`totpEnabled` 已过期）时，写
+  // `totp: null` 才是对的记录。其余任何失败都只是「这次读不到」，必须中止整次改密——
+  // 照写 `totp: null` 等于把用户已有的 TOTP 密文永久丢掉。
   if (!fetched.ok) {
-    if (fetched.code === 'TOTP_NOT_ENABLED') return null;
+    if (fetched.status === 404 && fetched.code === 'TOTP_NOT_ENABLED') return null;
     throw new Error(fetched.code);
   }
   const record = fetched.record;
@@ -132,14 +140,36 @@ async function rewrapTotpSecret(input: {
   }
 }
 
+/** 本次签进记录的东西：调用方据此重建会话，不必等 `/api/auth/mode` 追上新 epoch。 */
+export interface SignedPasswordChange {
+  /** 记录被应用后的 root_epoch（= 签名时的 `head.rootEpoch` + 1）。 */
+  nextRootEpoch: number;
+  /** 写进 payload 的新 kdf 参数（salt 为 base64url）。 */
+  newKdfParams: AuthKdfParamsJson;
+}
+
+export type ChangePasswordResult =
+  | (Extract<KeyLogAppendResult, { ok: true }> & SignedPasswordChange)
+  | Extract<KeyLogAppendResult, { ok: false }>;
+
+function withSigned(
+  result: KeyLogAppendResult,
+  signed: SignedPasswordChange
+): ChangePasswordResult {
+  return result.ok ? { ...result, ...signed } : result;
+}
+
 /**
  * 改密：两条路径都由**旧**根钥签名，payload 都是新根公钥 + 新 kdf 参数，应用后 root_epoch += 1。
  *
  * - 常规（缺省）：`rotate-root-keep`，保留 passkey、TOTP 与全部会话；开了 TOTP 时把密文
  *   随记录一起换封（`rewrapTotpSecret`），否则新密码解不开旧密文，账号会被远程锁死。
  * - `fullReset`：`rotate-root`，清空 passkey 与 TOTP 并注销全部会话——UI 必须提前告知。
+ *
+ * 成功时连**签进记录的那两个值**一起返回：`/api/auth/mode` 是异步应用的，改密刚回来时
+ * 很可能还给着旧 epoch 与旧 kdf 参数，拿它去重建会话必然签出一份验不过的 delegation。
  */
-export async function changePassword(input: ChangePasswordInput): Promise<KeyLogAppendResult> {
+export async function changePassword(input: ChangePasswordInput): Promise<ChangePasswordResult> {
   const api = input.api ?? defaultAuthApi;
   const head = await api.keyLogHead();
   const derive = input.deriveRootKey ?? rootKeyFrom;
@@ -158,8 +188,12 @@ export async function changePassword(input: ChangePasswordInput): Promise<KeyLog
         newRootPublicKey: newRootKey.publicKey,
         newKdfParams,
       };
+      const signed: SignedPasswordChange = {
+        nextRootEpoch: head.rootEpoch + 1,
+        newKdfParams: kdfParamsToJson(newKdfParams),
+      };
       if (input.fullReset) {
-        return await append(api, buildRotateRootRecord(base));
+        return withSigned(await append(api, buildRotateRootRecord(base)), signed);
       }
       const totp = input.totpEnabled
         ? await rewrapTotpSecret({
@@ -171,7 +205,7 @@ export async function changePassword(input: ChangePasswordInput): Promise<KeyLog
             recordSeq: base.head.seq + 1n,
           })
         : null;
-      return await append(api, buildRotateRootKeepRecord({ ...base, totp }));
+      return withSigned(await append(api, buildRotateRootKeepRecord({ ...base, totp })), signed);
     } finally {
       newRootKey.seed.fill(0);
     }
