@@ -1,6 +1,7 @@
 import type { ServerWebSocket } from 'bun';
 
-export type CarrierSendResult = 'sent' | 'backpressure' | 'closed';
+/** `backpressure` = 已入队；`rejected` = 未接受。 */
+export type CarrierSendResult = 'sent' | 'backpressure' | 'rejected' | 'closed';
 
 export type CarrierKind = 'physical_browser_ws' | 'mesh_link_stream';
 
@@ -13,6 +14,11 @@ export type CarrierLogContext = {
 
 export interface Carrier {
   send(bytes: Uint8Array): CarrierSendResult;
+  /**
+   * 控制面优先发送（PONG 等）。缺省等价于 `send()`。
+   * DataChannel 实现会把帧送进有界优先队列，在 drain 时先于 remainder 刷出。
+   */
+  sendPriority?(bytes: Uint8Array): CarrierSendResult;
   bufferedAmount(): number;
   onDrain(cb: () => void): void;
   close(code: number, reason: string): void;

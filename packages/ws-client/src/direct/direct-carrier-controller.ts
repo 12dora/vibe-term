@@ -17,7 +17,7 @@
 //      `RtcPeerManager.acceptBrowser` 在挂载载体前先读走这一条裸消息）
 //   7. 用该通道建 `DirectDataChannelCarrier`，交给连接的切换屏障；**此时仍是 `connecting`**，
 //      直到屏障处理完 `CARRIER_SWITCH{to:'direct'}` 并回了 ACK（`onCarrierChange('direct')`）
-//      才置 `active`、清零重试计数、开始 stats 轮询。
+//      才置 `active`、开始 stats 轮询。重试计数在 active ≥ 60 s 后清零。
 //
 // 关键的几条时序约束（都被 f3-1 评审点名过）：
 // - attempt 在**任何 await 之前**就登记好，回调 / catch / teardown 一律先比对 generation；
@@ -28,9 +28,10 @@
 // - 信令通道（`/mesh/ws`）未就绪时不开 attempt、信令入队；恢复时重置退避并立刻重试。
 //
 // 失败重试：熔断器连续 3 次失败后进入冷却（30 s → 60 s → … 上限 30 min）；冷却期内
-// 不自动拨号，`retryDirect()` 允许恰好一次探测。通道保持 active ≥ 60 s 才复位计数。
-// 激活本身不复位。指纹不匹配、鉴权被拒（4xx）计入失败但不自动重试。
-// `NO_CONNECTION` / `MULTIPLE_CONNECTIONS` 与「signaling not ready」不计入失败。
+// 不自动拨号，`retryDirect()` 允许恰好一次探测。通道保持 active ≥ 60 s 才复位熔断
+// 计数与 `maxAttempts` 重试预算。激活本身不复位。指纹不匹配、鉴权被拒（4xx）计入
+// 失败但不自动重试。`NO_CONNECTION` / `MULTIPLE_CONNECTIONS` 与「signaling not ready」
+// 不计入失败。`maxAttempts`（默认 5）只限制同一不健康周期内的自动重试次数。
 
 import type { DirectCarrierLike } from '../carrier-switch';
 import { DirectDataChannelCarrier, type RTCDataChannelLike } from './data-channel-carrier';
@@ -142,6 +143,11 @@ export interface DirectCarrierControllerOptions {
   rtcSession?: string;
   retryBaseMs?: number;
   retryMaxMs?: number;
+  /**
+   * 同一不健康周期内的自动重试上限（默认 5）。通道保持 `active` ≥ 60 s
+   * （熔断器 `noteHealthy` 复位）时清零。主限流是熔断器（连续 3 次失败进冷却），
+   * 本上限防止单次故障在熔断触发前空转。
+   */
   maxAttempts?: number;
   now?: () => number;
   connectTimeoutMs?: number;
@@ -835,6 +841,7 @@ export class DirectCarrierController {
       if (this.state !== 'active' || this.attempt !== attempt) return;
       if (this.now() - establishedAt < DIRECT_DIAL_BREAKER_HEALTHY_MS) return;
       this.breaker.noteHealthy(this.nodeId);
+      this.attempts = 0;
       this.publish();
     }, DIRECT_DIAL_BREAKER_HEALTHY_MS);
     this.setState('active', null);

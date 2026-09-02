@@ -293,6 +293,16 @@ describe('WebSocketSendGuard', () => {
     expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(true);
   });
 
+  test('priority frames report backpressured when the carrier rejects the frame', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const target = createCarrier(['rejected']);
+
+    expect(guard.sendPriorityFrames(target.carrier, [new Uint8Array([9])])).toBe('backpressured');
+    expect(target.sendCalls()).toBe(1);
+    expect(target.terminateCalls()).toBe(0);
+    expect(guard.isBackpressured(target.carrier)).toBe(false);
+  });
+
   test('priority frames still refuse an unavailable carrier', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1, onTerminate: () => {} });
     const target = createCarrier(['backpressure']);

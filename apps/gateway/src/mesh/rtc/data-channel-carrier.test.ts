@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { DC_HIGH_WATER_BYTES, DataChannelCarrier } from './data-channel-carrier';
+import { WebSocketSendGuard } from '../../ws/websocket-send-guard';
+import {
+  DC_HIGH_WATER_BYTES,
+  DC_PRIORITY_QUEUE_CAP,
+  DataChannelCarrier,
+} from './data-channel-carrier';
 import { FRAGMENT_HEADER_SIZE, FRAGMENT_PAYLOAD_SIZE } from './fragmenter';
 import { encodeLivenessChunk, parseLivenessChunk } from './liveness';
 import { pairDataChannels } from './test-fakes';
@@ -149,6 +154,83 @@ describe('DataChannelCarrier', () => {
     a.sendMessageBinary(Buffer.from(encodeLivenessChunk('ping')));
     expect(got).toEqual([]);
     expect(b.sent.some((chunk) => parseLivenessChunk(chunk) === 'pong')).toBe(true);
+  });
+
+  test('sendPriority queues a PONG ahead of a pending remainder and delivers it on drain', () => {
+    const [a, b] = pairDataChannels();
+    const left = new DataChannelCarrier(a);
+    const right = new DataChannelCarrier(b);
+    const got: Uint8Array[] = [];
+    right.onMessage((bytes) => {
+      got.push(bytes);
+    });
+    a.succeedsBeforeBlock = 1;
+    const large = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 20).fill(3);
+    expect(left.send(large)).toBe('sent');
+    expect(got).toEqual([]);
+    expect(left.hasPendingWrites()).toBe(true);
+
+    const pong = new Uint8Array([0x70, 0x6f, 0x6e, 0x67]);
+    expect(left.sendPriority(pong)).toBe('sent');
+    expect(got).toEqual([]);
+
+    a.emitLow();
+    expect(got).toHaveLength(2);
+    expect(got[0]).toEqual(pong);
+    expect(got[1]).toEqual(large);
+    expect(left.hasPendingWrites()).toBe(false);
+  });
+
+  test('sendPriority above high-water mark still delivers the PONG after drain', () => {
+    const [a, b] = pairDataChannels();
+    const left = new DataChannelCarrier(a);
+    const right = new DataChannelCarrier(b);
+    const got: Uint8Array[] = [];
+    right.onMessage((bytes) => {
+      got.push(bytes);
+    });
+    a.buffered = DC_HIGH_WATER_BYTES + 1;
+    const pong = new Uint8Array([9, 9, 9]);
+    expect(left.send(pong)).toBe('backpressure');
+    expect(left.sendPriority(pong)).toBe('sent');
+    expect(got).toEqual([]);
+    expect(a.sent).toHaveLength(0);
+
+    a.buffered = 10;
+    a.emitLow();
+    expect(got).toEqual([pong]);
+  });
+
+  test('sendPriority rejects when the bounded priority queue is full', () => {
+    const [a] = pairDataChannels();
+    const carrier = new DataChannelCarrier(a);
+    a.buffered = DC_HIGH_WATER_BYTES + 1;
+    for (let i = 0; i < DC_PRIORITY_QUEUE_CAP; i += 1) {
+      expect(carrier.sendPriority(new Uint8Array([i]))).toBe('sent');
+    }
+    expect(carrier.sendPriority(new Uint8Array([255]))).toBe('rejected');
+    a.close();
+  });
+
+  test('sendPriorityFrames reports sent for a queued PONG that later arrives', () => {
+    const [a, b] = pairDataChannels();
+    const left = new DataChannelCarrier(a);
+    const right = new DataChannelCarrier(b);
+    const got: Uint8Array[] = [];
+    right.onMessage((bytes) => {
+      got.push(bytes);
+    });
+    a.succeedsBeforeBlock = 1;
+    const large = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 20).fill(4);
+    expect(left.send(large)).toBe('sent');
+
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const pong = new Uint8Array([1, 2, 3, 4]);
+    expect(guard.sendPriorityFrames(left, [pong])).toBe('sent');
+    expect(got).toEqual([]);
+    a.emitLow();
+    expect(got[0]).toEqual(pong);
+    expect(got[1]).toEqual(large);
   });
 
   test('closes the channel on pending-frame overflow instead of dropping', () => {

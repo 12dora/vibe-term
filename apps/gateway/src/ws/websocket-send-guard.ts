@@ -148,7 +148,7 @@ export class WebSocketSendGuard {
         return 'dropped';
       }
 
-      if (status === 'backpressure') {
+      if (status === 'backpressure' || status === 'rejected') {
         this.enterBackpressure(carrier, frame, frames.slice(index + 1));
         return 'backpressured';
       }
@@ -164,8 +164,9 @@ export class WebSocketSendGuard {
 
   /**
    * 控制面优先发送：不走终端输出的 drop/defer 策略。
-   * 已判定为不可用的 carrier 仍拒绝；其余情况一律交给底层 socket。
-   * bun 在 backpressure 时仍会入内核缓冲（send 返回 -1），PONG 无帧序依赖。
+   * 已判定为不可用的 carrier 仍拒绝。
+   * Bun / LinkStream 的 `backpressure` 表示帧已入队；`rejected` 表示未接受，不得报 sent。
+   * 有 `sendPriority` 的载体（DataChannel）把控制帧送进优先队列。
    */
   sendPriorityFrames(
     carrier: Carrier,
@@ -175,6 +176,11 @@ export class WebSocketSendGuard {
       return 'dropped';
     }
 
+    const send = (bytes: Uint8Array) => {
+      if (typeof carrier.sendPriority === 'function') return carrier.sendPriority(bytes);
+      return carrier.send(bytes);
+    };
+
     for (let index = 0; index < frames.length; index += 1) {
       const frame = frames[index];
       if (frame === undefined) {
@@ -183,13 +189,16 @@ export class WebSocketSendGuard {
 
       let status: ReturnType<Carrier['send']>;
       try {
-        status = carrier.send(toUint8Array(frame));
+        status = send(toUint8Array(frame));
       } catch {
         return 'dropped';
       }
 
       if (status === 'closed') {
         return 'dropped';
+      }
+      if (status === 'rejected') {
+        return 'backpressured';
       }
     }
 

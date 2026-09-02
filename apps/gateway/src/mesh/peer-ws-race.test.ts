@@ -22,7 +22,7 @@ describe('peer-ws-race', () => {
         ? { session: sessionA, peerNodeId: 'peer', url, ...keysA }
         : { session: sessionB, peerNodeId: 'peer', url, ...keysB };
     const result = await raceWsSecureEndpoints({
-      urls: ['ws://127.0.0.1:1/a', 'ws://127.0.0.1:1/b'],
+      urls: ['ws://127.0.0.1:1/a', 'ws://127.0.0.1:2/b'],
       gen: 1,
       signal: new AbortController().signal,
       stale: () => false,
@@ -69,7 +69,7 @@ describe('peer-ws-race', () => {
     const [sessionA] = createInMemoryLinkPair();
     const parent = new AbortController();
     const result = await raceWsSecureEndpoints({
-      urls: ['ws://127.0.0.1:1/a', 'ws://127.0.0.1:1/b'],
+      urls: ['ws://127.0.0.1:1/a', 'ws://127.0.0.1:2/b'],
       gen: 1,
       signal: parent.signal,
       stale: () => parent.signal.aborted,
@@ -157,6 +157,30 @@ describe('peer-ws-race', () => {
     expect(pendingSleeps).toHaveLength(2);
     expect(pendingSleeps.every((row) => row.rejected)).toBe(true);
     expect(dialed).toEqual(['ws://127.0.0.1:1/a']);
+  });
+
+  test('duplicate and IPv4-mapped URLs of the same host:port only dial once', async () => {
+    const dialed: string[] = [];
+    const result = await raceWsSecureEndpoints({
+      urls: [
+        'ws://10.0.0.1:39001/peer',
+        'ws://10.0.0.1:39001/peer',
+        'ws://[::ffff:10.0.0.1]:39001/x',
+        'ws://10.0.0.2:39001/peer',
+      ],
+      gen: 1,
+      signal: new AbortController().signal,
+      stale: () => false,
+      sleep: async () => undefined,
+      staggerMs: 0,
+      dial: async (url): Promise<WsSecureCandidate> => {
+        dialed.push(url);
+        const [row] = createInMemoryLinkPair();
+        return { session: row, peerNodeId: 'peer', url };
+      },
+    });
+    expect(dialed).toEqual(['ws://10.0.0.1:39001/peer', 'ws://10.0.0.2:39001/peer']);
+    expect(result.winner?.url).toBe('ws://10.0.0.1:39001/peer');
   });
 });
 

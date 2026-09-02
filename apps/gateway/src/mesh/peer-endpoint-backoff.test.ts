@@ -4,7 +4,9 @@ import {
   ENDPOINT_BACKOFF_IDLE_MS,
   ENDPOINT_BACKOFF_MIN_MS,
   PeerEndpointBackoff,
+  canonicalEndpointKey,
   canonicalEndpointSet,
+  dedupeRankedPeerEndpoints,
   parsePeerEndpoint,
 } from './peer-endpoint-backoff';
 
@@ -105,6 +107,37 @@ describe('PeerEndpointBackoff', () => {
     now += ENDPOINT_BACKOFF_IDLE_MS + 1;
     expect(backoff.eligible(b, 'ws://10.0.0.2:1/peer', now)).toBe(true);
     expect(backoff.size()).toBe(0);
+  });
+
+  test('dedupeRankedPeerEndpoints keeps the first (best-ranked) URL per canonical address', () => {
+    expect(
+      dedupeRankedPeerEndpoints([
+        'ws://10.0.0.1:39001/peer',
+        'ws://10.0.0.1:39001/peer',
+        'ws://[::ffff:10.0.0.1]:39001/x',
+        'ws://10.0.0.2:39001/peer',
+        'ws://10.0.0.1:39002/peer',
+      ])
+    ).toEqual(['ws://10.0.0.1:39001/peer', 'ws://10.0.0.2:39001/peer', 'ws://10.0.0.1:39002/peer']);
+    expect(canonicalEndpointKey('ws://[::ffff:10.0.0.1]:39001/x')).toBe('10.0.0.1|39001');
+  });
+
+  test('noteFailureOnce counts duplicate and IPv4-mapped URLs once per dial', () => {
+    const now = 1_000;
+    const backoff = new PeerEndpointBackoff({ now: () => now });
+    const node = 'dd'.repeat(16);
+    const seen = new Set<string>();
+    const first = backoff.noteFailureOnce(seen, node, 'ws://10.0.0.1:1/peer', 'refused', now);
+    expect(first?.failures).toBe(1);
+    expect(backoff.noteFailureOnce(seen, node, 'ws://10.0.0.1:1/peer', 'refused', now)).toBeNull();
+    expect(
+      backoff.noteFailureOnce(seen, node, 'ws://[::ffff:10.0.0.1]:1/x', 'refused', now)
+    ).toBeNull();
+    const other = backoff.noteFailureOnce(seen, node, 'ws://10.0.0.2:1/peer', 'refused', now);
+    expect(other?.failures).toBe(1);
+    expect((backoff.nextEligibleAt(node, 'ws://10.0.0.1:1/peer') ?? 0) - now).toBe(
+      ENDPOINT_BACKOFF_MIN_MS
+    );
   });
 
   test('minWaitMs reports the soonest remaining backoff', () => {

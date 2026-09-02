@@ -1,7 +1,7 @@
 import type { LinkSession, ServerSocketAdapter, WebSocketTransportInput } from '@tmex/shared/link';
 import type { UserStore } from '../auth/user-store';
 import { envInt } from './mesh-log';
-import type { ReachabilityFailureKind } from './peer-endpoint-backoff';
+import { type ReachabilityFailureKind, dedupeRankedPeerEndpoints } from './peer-endpoint-backoff';
 import { type PeerHandshakeResult, handshakeWsDirect } from './peer-protocol';
 import { type MeshIdentity, PeerHandshakeError } from './types';
 
@@ -485,6 +485,7 @@ export async function raceWsSecureEndpoints(opts: {
   staggerMs: number;
   dial: (url: string, signal: AbortSignal) => Promise<WsSecureCandidate | null>;
 }): Promise<{ winner: WsSecureCandidate | null; lastReason: string | null }> {
+  const urls = dedupeRankedPeerEndpoints(opts.urls);
   const state: RaceState = { winner: null, winnerCtl: null, lastReason: null };
   const controllers: AbortController[] = [];
   const abortLosers = () => abortOtherControllers(controllers, state.winnerCtl);
@@ -495,13 +496,13 @@ export async function raceWsSecureEndpoints(opts: {
   opts.signal.addEventListener('abort', onParentAbort, { once: true });
   try {
     await new Promise<void>((resolve) => {
-      let left = opts.urls.length;
+      let left = urls.length;
       const oneDone = () => {
         left -= 1;
         if (state.winner || left <= 0) resolve();
       };
-      for (let i = 0; i < opts.urls.length; i++) {
-        const url = opts.urls[i] ?? '';
+      for (let i = 0; i < urls.length; i++) {
+        const url = urls[i] ?? '';
         const child = new AbortController();
         controllers.push(child);
         const combined = combineAbortSignals(opts.signal, child.signal);

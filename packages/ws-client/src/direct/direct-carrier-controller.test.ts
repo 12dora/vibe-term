@@ -745,6 +745,58 @@ describe('DirectCarrierController 退避与网络变化', () => {
     expect(s.controller.diagnostics().cooling).toBe(true);
   });
 
+  test('healthy 60s 复位后 maxAttempts 预算清零，跨周期仍可重试直到熔断', async () => {
+    const s = setup({ maxAttempts: 2 });
+    const authorizeOk = {
+      body: { nonce: NONCE, fp_node: { algorithm: 'sha-256', value: FP_NODE_VALUE } },
+    };
+    const recover = async () => {
+      s.signaling.deliver(answerSignal(s));
+      await flush();
+      s.pc().channel.open();
+      await flush();
+      s.connection.switchTo('direct');
+      await flush();
+      expect(s.controller.getState()).toBe('active');
+      s.clock.advance(60_000);
+      await flush();
+    };
+
+    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
+    s.controller.start();
+    await flush();
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.clock.pendingDelays).toEqual([1000]);
+
+    s.api.routes.set(RTC_AUTHORIZE_PATH, authorizeOk);
+    s.clock.advance(1000);
+    await flush();
+    await recover();
+
+    s.pc().channel.simulateClose();
+    await flush();
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.clock.pendingDelays).toEqual([1000]);
+    s.clock.advance(1000);
+    await flush();
+    await recover();
+
+    s.pc().channel.simulateClose();
+    await flush();
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.clock.pendingDelays).toEqual([1000]);
+
+    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
+    s.clock.advance(1000);
+    await flush();
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.clock.pendingDelays).toEqual([2000]);
+    s.clock.advance(2000);
+    await flush();
+    expect(s.controller.diagnostics().cooling).toBe(true);
+    expect(s.controller.diagnostics().failures).toBe(3);
+  });
+
   test('retryDelay 上限 30 s', () => {
     const s = setup();
     expect(s.controller.retryDelay(0)).toBe(1000);

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
+import { ENDPOINT_BACKOFF_MIN_MS, PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { PEER_UPGRADE_BACKOFF_CAP_MS, PEER_UPGRADE_COOLDOWN_MS, PeerManager } from './peer-manager';
 import { DirectDialLimiter } from './peer-ws-race';
 import {
@@ -127,6 +128,69 @@ describe('PeerManager endpoint backoff', () => {
     manager.notifyPeerEndpointsChanged(peer.nodeId);
     await waitUntil(() => wsCalls === 1, 2_000);
     expect(manager.linkDetailOf(peer.nodeId).directFailure?.ws).toMatch(/refused|10\.0\.0\.9/);
+
+    scheduler.nowMs += PEER_UPGRADE_COOLDOWN_MS;
+    manager.notifyPeerEndpointsChanged(peer.nodeId);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(wsCalls).toBe(1);
+    expect(manager.linkDetailOf(peer.nodeId).directFailure?.ws).toMatch(
+      /all endpoints backing off \(next eligible in \d+s\)/
+    );
+  });
+
+  test('duplicate and IPv4-mapped advertised URLs increment backoff once per dial', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const urls = [
+      'ws://10.0.0.9:39001/peer',
+      'ws://10.0.0.9:39001/peer',
+      'ws://[::ffff:10.0.0.9]:39001/peer',
+      ...Array.from({ length: 10 }, () => 'ws://10.0.0.9:39001/peer'),
+    ];
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(urls),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const scheduler = new ImmediateScheduler();
+    const backoff = new PeerEndpointBackoff({ now: () => scheduler.now() });
+    let wsCalls = 0;
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () => {
+        throw new Error('no-relay');
+      }),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      connectTimeoutMs: 20,
+      dialLimiter: new DirectDialLimiter(4),
+      endpointBackoff: backoff,
+      wsFactory: () => {
+        wsCalls += 1;
+        throw Object.assign(new Error('connect refused'), { code: 'ECONNREFUSED' });
+      },
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [relayA, relayB] = createInMemoryLinkPair();
+    echoQuiesceCaps(relayB);
+    expect(manager.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+    manager.notifyPeerEndpointsChanged(peer.nodeId);
+    await waitUntil(() => wsCalls === 1, 2_000);
+    expect(wsCalls).toBe(1);
+    expect(backoff.nextEligibleAt(peer.nodeId, 'ws://10.0.0.9:39001/peer')).toBe(
+      scheduler.now() + ENDPOINT_BACKOFF_MIN_MS
+    );
 
     scheduler.nowMs += PEER_UPGRADE_COOLDOWN_MS;
     manager.notifyPeerEndpointsChanged(peer.nodeId);

@@ -69,6 +69,24 @@ export function canonicalEndpointSet(urls: string[]): string {
   return keys.join('\n');
 }
 
+export function canonicalEndpointKey(url: string): string | null {
+  const parsed = parsePeerEndpoint(url);
+  return parsed ? addrKey(parsed.host, parsed.port) : null;
+}
+
+/** 按 canonical host/port 去重，保留每个地址第一次出现的 URL（调用方应先 rank）。 */
+export function dedupeRankedPeerEndpoints(urls: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const url of urls) {
+    const key = canonicalEndpointKey(url) ?? url;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(url);
+  }
+  return out;
+}
+
 function addrKey(host: string, port: number): string {
   return `${host}|${port}`;
 }
@@ -155,6 +173,21 @@ export class PeerEndpointBackoff {
         new Date(now)
       );
     }
+    return state;
+  }
+
+  /** 同一轮 dial 内每个 canonical 地址最多计一次失败。 */
+  noteFailureOnce(
+    seen: Set<string>,
+    nodeId: string,
+    url: string,
+    kind: string,
+    now = this.now()
+  ): EndpointBackoffState | null {
+    const key = canonicalEndpointKey(url) ?? url;
+    if (seen.has(key)) return null;
+    const state = this.noteFailure(nodeId, url, kind, now);
+    if (state) seen.add(key);
     return state;
   }
 

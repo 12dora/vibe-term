@@ -13,6 +13,7 @@ import { rtcLog } from './rtc-log';
 
 export const DC_HIGH_WATER_BYTES = 4 * 1024 * 1024;
 export const DC_LOW_WATER_BYTES = 1 * 1024 * 1024;
+export const DC_PRIORITY_QUEUE_CAP = 16;
 
 type OutboundFrame = {
   parts: Uint8Array[];
@@ -27,6 +28,7 @@ export class DataChannelCarrier implements Carrier {
   private readonly messageCbs: Array<(bytes: Uint8Array) => void> = [];
   private readonly closeCbs: Array<() => void> = [];
   private readonly pendingFrames: Uint8Array[] = [];
+  private readonly priorityQueue: OutboundFrame[] = [];
   private pendingBytes = 0;
   private nextFrameId = 1;
   private closed = false;
@@ -49,8 +51,8 @@ export class DataChannelCarrier implements Carrier {
     this.reassembler = opts?.reassembler ?? new FrameReassembler();
     channel.setBufferedAmountLowThreshold(DC_LOW_WATER_BYTES);
     channel.onBufferedAmountLow(() => {
-      this.flushRemainder();
-      if (this.closed || this.remainder) return;
+      this.flushOutbound();
+      if (this.closed || this.remainder || this.priorityQueue.length > 0) return;
       for (const cb of this.drainCbs) {
         try {
           cb();
@@ -119,15 +121,31 @@ export class DataChannelCarrier implements Carrier {
       parts: fragmentFrame(frameId, bytes, this.payloadSize),
       index: 0,
     };
-    this.flushRemainder();
+    this.flushOutbound();
     if (this.closed) return 'closed';
     if (this.remainder) return 'sent';
     if (this.channel.bufferedAmount() > DC_HIGH_WATER_BYTES) return 'backpressure';
     return 'sent';
   }
 
+  sendPriority(bytes: Uint8Array): CarrierSendResult {
+    if (this.closed || !this.channel.isOpen()) return 'closed';
+    if (this.priorityQueue.length >= DC_PRIORITY_QUEUE_CAP) return 'rejected';
+    this.priorityQueue.push({
+      parts: fragmentFrame(this.allocFrameId(), copyBytes(bytes), this.payloadSize),
+      index: 0,
+    });
+    this.flushOutbound();
+    if (this.closed) return 'closed';
+    return 'sent';
+  }
+
   hasPendingWrites(): boolean {
-    return this.remainder !== null || this.bufferedAmount() > DC_HIGH_WATER_BYTES;
+    return (
+      this.remainder !== null ||
+      this.priorityQueue.length > 0 ||
+      this.bufferedAmount() > DC_HIGH_WATER_BYTES
+    );
   }
 
   bufferedAmount(): number {
@@ -186,28 +204,49 @@ export class DataChannelCarrier implements Carrier {
     return frameId;
   }
 
+  private flushOutbound(): void {
+    this.flushPriority();
+    this.flushRemainder();
+  }
+
+  private flushPriority(): void {
+    while (this.priorityQueue.length > 0 && !this.closed) {
+      const frame = this.priorityQueue[0];
+      if (!frame) break;
+      if (!this.flushFrame(frame, true)) return;
+      this.priorityQueue.shift();
+    }
+  }
+
   private flushRemainder(): void {
     const remainder = this.remainder;
     if (!remainder || this.closed) return;
-    while (remainder.index < remainder.parts.length) {
-      const part = remainder.parts[remainder.index];
+    if (!this.flushFrame(remainder, false)) return;
+    this.remainder = null;
+  }
+
+  private flushFrame(frame: OutboundFrame, respectHighWater: boolean): boolean {
+    while (frame.index < frame.parts.length) {
+      const part = frame.parts[frame.index];
       if (!part) break;
+      if (respectHighWater && this.channel.bufferedAmount() > DC_HIGH_WATER_BYTES) return false;
       if (!sendBinary(this.channel, part)) {
         if (!this.channel.isOpen()) {
           this.failClosed();
-          return;
+          return false;
         }
-        return;
+        return false;
       }
-      remainder.index += 1;
+      frame.index += 1;
     }
-    this.remainder = null;
+    return true;
   }
 
   private failClosed(): void {
     if (this.closed) return;
     this.closed = true;
     this.remainder = null;
+    this.priorityQueue.length = 0;
     this.reassembler.dispose();
     try {
       this.channel.close();

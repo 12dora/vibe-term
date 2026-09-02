@@ -41,7 +41,11 @@ import {
   noteWsOutcome,
   winningDialInitiator,
 } from './peer-direct-attempt';
-import { PeerEndpointBackoff, canonicalEndpointSet } from './peer-endpoint-backoff';
+import {
+  PeerEndpointBackoff,
+  canonicalEndpointSet,
+  dedupeRankedPeerEndpoints,
+} from './peer-endpoint-backoff';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
 import { PeerServer } from './peer-server';
 import {
@@ -1597,7 +1601,7 @@ export class PeerManager {
     const cached = this.userStore.getPeer(nodeId);
     const parsed =
       opts?.endpoints ?? (cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : []);
-    const endpoints = rankPeerEndpoints(parsed, this.interfacesFn());
+    const endpoints = dedupeRankedPeerEndpoints(rankPeerEndpoints(parsed, this.interfacesFn()));
     if (endpoints.length === 0) return null;
     const now = this.scheduler.now();
     const eligible = opts?.bypassBackoff
@@ -1609,6 +1613,7 @@ export class PeerManager {
       noteWsOutcome(attempt, `all endpoints backing off (next eligible in ${secs}s)`, endpoints);
       return null;
     }
+    const failedAddrs = new Set<string>();
     const raced = await raceWsSecureEndpoints({
       urls: eligible,
       gen,
@@ -1635,7 +1640,7 @@ export class PeerManager {
           return candidate;
         } catch (err) {
           const classified = classifyWsDialFailure(url, err);
-          this.endpointBackoff.noteFailure(nodeId, url, classified.kind);
+          this.endpointBackoff.noteFailureOnce(failedAddrs, nodeId, url, classified.kind);
           throw classified;
         }
       },
