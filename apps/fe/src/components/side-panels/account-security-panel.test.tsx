@@ -20,8 +20,14 @@ mock.module('@/auth/session-login', () => ({
 const { renderToStaticMarkup } = await import('react-dom/server');
 const panelModule = await import('./account-security-panel');
 const AccountSecurityPanel = panelModule.default;
-const { PasswordSection, finishPasswordChange, passwordChangeFollowUp, securityActionErrorText } =
-  panelModule;
+const {
+  PasswordSection,
+  finishPasswordChange,
+  passwordChangeFollowUp,
+  securityActionErrorText,
+  securityPanelView,
+} = panelModule;
+type SecurityActionFeedback = import('./account-security-panel').SecurityActionFeedback;
 
 const MESH_MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -49,9 +55,12 @@ const RESOLVED_MODE = {
 };
 
 function renderPasswordSection(
-  overrides: Partial<AuthModeResponse> & { initialFullReset?: boolean } = {}
+  overrides: Partial<AuthModeResponse> & {
+    initialFullReset?: boolean;
+    feedback?: SecurityActionFeedback | null;
+  } = {}
 ): string {
-  const { initialFullReset, ...modeOverrides } = overrides;
+  const { initialFullReset, feedback = null, ...modeOverrides } = overrides;
   return renderToStaticMarkup(
     <PasswordSection
       mode={{
@@ -63,6 +72,8 @@ function renderPasswordSection(
       api={idleApi}
       uid="user-1"
       onDone={() => undefined}
+      feedback={feedback}
+      publishFeedback={() => undefined}
       initialFullReset={initialFullReset}
     />
   );
@@ -126,9 +137,55 @@ describe('AccountSecurityPanel', () => {
     );
   });
 
+  test('动作反馈来自面板级 state，按 section 摆回对应区块', () => {
+    const ok: SecurityActionFeedback = {
+      section: 'password',
+      tone: 'ok',
+      text: 'auth.security.changePasswordKeepDone',
+    };
+    const html = renderPasswordSection({ feedback: ok });
+    expect(html).toContain('data-testid="security-ok"');
+    expect(html).toContain('auth.security.changePasswordKeepDone');
+
+    const notice = renderPasswordSection({
+      feedback: { section: 'password', tone: 'notice', text: 'auth.security.sessionResumeFailed' },
+    });
+    expect(notice).toContain('data-testid="security-notice"');
+
+    // 别的区块的反馈不该跑到改密这一块来。
+    const other = renderPasswordSection({
+      feedback: { section: 'totp', tone: 'ok', text: 'auth.security.totpDone' },
+    });
+    expect(other).not.toContain('data-testid="security-ok"');
+    expect(renderPasswordSection()).not.toContain('data-testid="security-ok"');
+  });
+
   test('不再暴露整页路由（面板由 `?panel=security` 驱动）', () => {
     expect('accountSecurityRoute' in panelModule).toBe(false);
     expect('PageTitle' in panelModule).toBe(false);
+  });
+});
+
+describe('securityPanelView', () => {
+  test('第一次还没拿到 mode 才摆 spinner', () => {
+    expect(securityPanelView({ loading: true, mode: null })).toBe('pending');
+    expect(securityPanelView({ loading: false, mode: null })).toBe('empty');
+  });
+
+  test('改密后的刷新期间继续渲染内容：子树不卸载，反馈才留得住', () => {
+    // 这正是「改密成功后什么都没发生」的成因：reload() 把 loading 翻回 true，
+    // 旧实现这时回落到 spinner，刚写上的 security-ok 随子树一起消失。
+    expect(securityPanelView({ loading: true, mode: MESH_MODE })).toBe('content');
+    expect(securityPanelView({ loading: false, mode: MESH_MODE })).toBe('content');
+  });
+
+  test('standalone 无论加载与否都不渲染', () => {
+    expect(securityPanelView({ loading: false, mode: { ...MESH_MODE, mode: 'none' } })).toBe(
+      'empty'
+    );
+    expect(securityPanelView({ loading: true, mode: { ...MESH_MODE, mode: 'none' } })).toBe(
+      'empty'
+    );
   });
 });
 

@@ -52,14 +52,39 @@ export interface AccountSecurityPanelProps {
   api?: AuthApi;
 }
 
+/** 动作成功后的反馈：由哪一块发出的（决定摆在哪里）、什么调子、什么文案。 */
+export interface SecurityActionFeedback extends PasswordChangeFeedback {
+  section: 'password' | 'totp';
+}
+
+export type SecurityPanelView = 'pending' | 'empty' | 'content';
+
+/**
+ * 面板该渲染什么。
+ *
+ * 关键在于**刷新期间只要手上还有 mode 就继续渲染内容**：改密成功会 `reload()` 一次
+ * `/api/auth/mode`，若这时回落到 spinner，整棵子树连同刚写上的「改密成功」一起被卸载，
+ * 用户看到的就是「点完什么都没发生」。
+ */
+export function securityPanelView(input: {
+  loading: boolean;
+  mode: AuthModeResponse | null | undefined;
+}): SecurityPanelView {
+  if (input.mode) return input.mode.mode === 'none' ? 'empty' : 'content';
+  return input.loading ? 'pending' : 'empty';
+}
+
 export default function AccountSecurityPanel({
   mode: modeOverride,
   api = defaultAuthApi,
 }: AccountSecurityPanelProps) {
   const fetched = useAuthMode(api, { enabled: !modeOverride });
   const mode = modeOverride ?? fetched.mode;
+  // 反馈提到加载边界之上：各 Section 会因刷新重挂，本地 state 存不住这行字。
+  const [feedback, setFeedback] = useState<SecurityActionFeedback | null>(null);
+  const view = securityPanelView({ loading: !modeOverride && fetched.loading, mode });
 
-  if (!modeOverride && fetched.loading) {
+  if (view === 'pending') {
     return (
       <div
         className="flex flex-1 items-center justify-center p-8 text-muted-foreground"
@@ -69,10 +94,18 @@ export default function AccountSecurityPanel({
       </div>
     );
   }
-  if (!mode || mode.mode === 'none') {
+  if (view === 'empty' || !mode) {
     return null;
   }
-  return <AccountSecurity mode={mode} api={api} reloadMode={fetched.reload} />;
+  return (
+    <AccountSecurity
+      mode={mode}
+      api={api}
+      reloadMode={fetched.reload}
+      feedback={feedback}
+      publishFeedback={setFeedback}
+    />
+  );
 }
 
 function Section({
@@ -113,12 +146,20 @@ interface AccountSecurityProps {
   mode: AuthModeResponse;
   api: AuthApi;
   reloadMode: () => void;
+  feedback: SecurityActionFeedback | null;
+  publishFeedback: (next: SecurityActionFeedback | null) => void;
 }
 
 /** 已确认存在用户与 kdf 参数的 mode（各 Section 都依赖这两项）。 */
 type ResolvedMode = AuthModeResponse & { uid: string; kdfParams: AuthKdfParamsJson };
 
-function AccountSecurity({ mode: rawMode, api, reloadMode }: AccountSecurityProps) {
+function AccountSecurity({
+  mode: rawMode,
+  api,
+  reloadMode,
+  feedback,
+  publishFeedback,
+}: AccountSecurityProps) {
   const { t } = useTranslation();
   const [passkeys, setPasskeys] = useState<PasskeySummary[]>([]);
   const [passkeysError, setPasskeysError] = useState<string | null>(null);
@@ -155,7 +196,14 @@ function AccountSecurity({ mode: rawMode, api, reloadMode }: AccountSecurityProp
 
   return (
     <div className="flex w-full flex-col gap-4" data-testid="account-security-panel">
-      <PasswordSection mode={mode} api={api} uid={uid} onDone={reloadMode} />
+      <PasswordSection
+        mode={mode}
+        api={api}
+        uid={uid}
+        onDone={reloadMode}
+        feedback={feedback}
+        publishFeedback={publishFeedback}
+      />
       <TotpSection
         mode={mode}
         api={api}
@@ -163,6 +211,8 @@ function AccountSecurity({ mode: rawMode, api, reloadMode }: AccountSecurityProp
         passkeys={passkeys}
         prompt={prompt}
         onDone={reloadMode}
+        feedback={feedback}
+        publishFeedback={publishFeedback}
       />
       <PasskeySection
         mode={mode}
@@ -171,6 +221,7 @@ function AccountSecurity({ mode: rawMode, api, reloadMode }: AccountSecurityProp
         prompt={prompt}
         passkeys={passkeys}
         listError={passkeysError}
+        publishFeedback={publishFeedback}
         onDone={() => {
           reloadPasskeys();
           reloadMode();
@@ -300,12 +351,16 @@ export function PasswordSection({
   api,
   uid,
   onDone,
+  feedback,
+  publishFeedback,
   initialFullReset = false,
 }: {
   mode: ResolvedMode;
   api: AuthApi;
   uid: string;
   onDone: () => void;
+  feedback: SecurityActionFeedback | null;
+  publishFeedback: (next: SecurityActionFeedback | null) => void;
   initialFullReset?: boolean;
 }) {
   const { t } = useTranslation();
@@ -316,12 +371,12 @@ export function PasswordSection({
   const [totpCode, setTotpCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<PasswordChangeFeedback | null>(null);
+  const ownFeedback = feedback?.section === 'password' ? feedback : null;
   const totpEnabled = Boolean(mode.totpEnabled);
 
   const submit = useCallback(async () => {
     setError(null);
-    setFeedback(null);
+    publishFeedback(null);
     if (!oldPassword || !newPassword) {
       setError(t('auth.security.passwordRequired'));
       return;
@@ -352,7 +407,8 @@ export function PasswordSection({
       setNewPassword('');
       setConfirm('');
       setTotpCode('');
-      setFeedback(outcome);
+      // 先发反馈再 `onDone()`：后者会触发一次 mode 刷新，本地 state 存不住这行字。
+      publishFeedback({ ...outcome, section: 'password' });
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -368,6 +424,7 @@ export function PasswordSection({
     newPassword,
     oldPassword,
     onDone,
+    publishFeedback,
     t,
     totpCode,
     totpEnabled,
@@ -389,7 +446,7 @@ export function PasswordSection({
       ) : null}
       <FullResetOption checked={fullReset} onChange={setFullReset} />
       {error ? <Feedback tone="error" text={error} /> : null}
-      {feedback ? <Feedback tone={feedback.tone} text={feedback.text} /> : null}
+      {ownFeedback ? <Feedback tone={ownFeedback.tone} text={ownFeedback.text} /> : null}
       <div>
         <Button
           type="button"
@@ -416,6 +473,8 @@ function TotpSection({
   passkeys,
   prompt,
   onDone,
+  feedback,
+  publishFeedback,
 }: {
   mode: ResolvedMode;
   api: AuthApi;
@@ -423,12 +482,14 @@ function TotpSection({
   passkeys: PasskeySummary[];
   prompt: CredentialPromptHandle;
   onDone: () => void;
+  feedback: SecurityActionFeedback | null;
+  publishFeedback: (next: SecurityActionFeedback | null) => void;
 }) {
   const { t } = useTranslation();
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState(false);
+  const ownFeedback = feedback?.section === 'totp' ? feedback : null;
   // 第一阶段的草稿：密钥只在内存，用户确认验证码之前不会写任何 key-log 记录。
   const [draft, setDraft] = useState<TotpSetupDraft | null>(null);
   const [code, setCode] = useState('');
@@ -443,10 +504,10 @@ function TotpSection({
 
   const begin = useCallback(() => {
     setError(null);
-    setOk(false);
+    publishFeedback(null);
     setCode('');
     setDraft(beginTotpSetup({ uid, issuer: 'tmex' }));
-  }, [uid]);
+  }, [publishFeedback, uid]);
 
   const confirm = useCallback(async () => {
     setError(null);
@@ -481,14 +542,15 @@ function TotpSection({
       draft.secret.fill(0);
       setDraft(null);
       setCode('');
-      setOk(true);
+      // 同改密：`onDone()` 会触发 mode 刷新，反馈必须先交到面板级 state。
+      publishFeedback({ section: 'totp', tone: 'ok', text: t('auth.security.totpDone') });
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
-  }, [api, code, draft, mode.kdfParams, onDone, password, t, uid]);
+  }, [api, code, draft, mode.kdfParams, onDone, password, publishFeedback, t, uid]);
 
   const cancel = useCallback(() => {
     draft?.secret.fill(0);
@@ -500,7 +562,7 @@ function TotpSection({
   /** `clear-totp` 允许 passkey 签（不需要 seed），走统一的凭据对话框。 */
   const disable = useCallback(async () => {
     setError(null);
-    setOk(false);
+    publishFeedback(null);
     setBusy(true);
     try {
       const result = await prompt.withSigner((signer) => clearTotp({ api, uid, signer }), {
@@ -518,7 +580,7 @@ function TotpSection({
     } finally {
       setBusy(false);
     }
-  }, [api, cancel, onDone, prompt, t, uid]);
+  }, [api, cancel, onDone, prompt, publishFeedback, t, uid]);
 
   return (
     <Section
@@ -528,7 +590,7 @@ function TotpSection({
       }
     >
       {error ? <Feedback tone="error" text={error} /> : null}
-      {ok ? <Feedback tone="ok" text={t('auth.security.totpDone')} /> : null}
+      {ownFeedback ? <Feedback tone={ownFeedback.tone} text={ownFeedback.text} /> : null}
       <div className="flex gap-2">
         <Button type="button" disabled={busy} onClick={begin} data-testid="security-totp-set">
           {mode.totpEnabled ? t('auth.security.totpReset') : t('auth.security.totpSet')}
@@ -608,6 +670,7 @@ function PasskeySection({
   prompt,
   listError,
   onDone,
+  publishFeedback,
 }: {
   mode: ResolvedMode;
   api: AuthApi;
@@ -616,6 +679,7 @@ function PasskeySection({
   prompt: CredentialPromptHandle;
   listError: string | null;
   onDone: () => void;
+  publishFeedback: (next: SecurityActionFeedback | null) => void;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState('');
@@ -624,6 +688,8 @@ function PasskeySection({
 
   const add = useCallback(async () => {
     setError(null);
+    // 换了一个动作，上一条反馈（如改密成功）不再是当前状态的说明。
+    publishFeedback(null);
     setBusy(true);
     try {
       const result = await prompt.withSigner(
@@ -642,11 +708,12 @@ function PasskeySection({
     } finally {
       setBusy(false);
     }
-  }, [api, name, onDone, prompt, t, uid]);
+  }, [api, name, onDone, prompt, publishFeedback, t, uid]);
 
   const remove = useCallback(
     async (credentialId: string) => {
       setError(null);
+      publishFeedback(null);
       setBusy(true);
       try {
         const result = await prompt.withSigner(
@@ -665,7 +732,7 @@ function PasskeySection({
         setBusy(false);
       }
     },
-    [api, onDone, prompt, t, uid]
+    [api, onDone, prompt, publishFeedback, t, uid]
   );
 
   return (

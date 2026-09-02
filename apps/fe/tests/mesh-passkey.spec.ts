@@ -133,9 +133,7 @@ test('mesh: a cancelled passkey check keeps the user on the login page', async (
 
 // 常规改密（不勾「同时移除…」）走 rotate-root-keep：passkey、TOTP 与全部会话都保留，
 // 当前页面不该掉线，登出后原来那把 passkey 仍然能登录。
-// 既有 bug（见 docs/known-issues.md「改密成功后账号安全面板无反馈」）：改密链路服务端全 200，
-// 但 `security-ok` 从不渲染，用例在等提示处超时；与通行密钥二次验证无关（无 passkey 的对照同样复现）。
-test.fixme('mesh: a routine password change keeps the passkey and the current session', async () => {
+test('mesh: a routine password change keeps the passkey and the current session', async () => {
   await logout(page);
   await loginWithPassword(page, state);
 

@@ -119,6 +119,9 @@ test('mobile: editor interactions keep focus and send ws messages', async ({ pag
     await page.getByTestId('terminal-input-mode-toggle').click();
     const editorInput = page.getByTestId('editor-input');
     await expect(editorInput).toBeVisible();
+    // direct 模式的快捷键栏（TerminalShortcutsSlot）卸载、编辑器自带的那排接手，两者
+    // 用同一套 terminal-shortcut-* testid：等到整页只剩一排再点，避免命中正在卸载的那个。
+    await expect(page.getByTestId('terminal-shortcuts-strip')).toHaveCount(1);
     await editorInput.fill('echo hello');
     await expect(editorInput).toBeFocused();
 
@@ -374,26 +377,19 @@ test('mobile: terminal can scroll with touch gesture', async ({ page, request })
     const endY = box.y + box.height * 0.8;
     await swipe(page, '.xterm', { x, y: startY }, { x, y: endY });
 
+    // 等视口真的往回滚：原先这里只断言「取到的是两个数」（恒真），滑动还没生效就往下走，
+    // 末尾那条 after.viewportY < before.viewportY 于是随机失败。
     await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const g = globalThis as any;
-          const term = g.__tmexE2eXterm;
-          if (!term) {
-            return { viewportY: 0, baseY: 0 };
-          }
-          return {
-            viewportY: term.buffer?.active?.viewportY ?? 0,
-            baseY: term.buffer?.active?.baseY ?? 0,
-          };
-        })
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const g = globalThis as any;
+            const term = g.__tmexE2eXterm;
+            return term?.buffer?.active?.viewportY ?? Number.MAX_SAFE_INTEGER;
+          }),
+        { timeout: 10_000 }
       )
-      .toEqual(
-        expect.objectContaining({
-          viewportY: expect.any(Number),
-          baseY: expect.any(Number),
-        })
-      );
+      .toBeLessThan(before.viewportY);
 
     const after = await page.evaluate(() => {
       const g = globalThis as any;

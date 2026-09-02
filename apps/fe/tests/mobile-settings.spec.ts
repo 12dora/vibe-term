@@ -140,6 +140,8 @@ test('mobile: settings tabs + select + webhook crud are tappable', async ({ page
   await page.getByTestId('settings-tab-general').click();
   await page.getByTestId('settings-language-select').click();
   await page.locator('[data-slot="select-content"]').getByText('简体中文').click();
+  // 弹层收完再往下点：移动视口下它盖住半屏，退场动画没跑完时保存按钮点不到。
+  await expect(page.locator('[data-slot="select-content"]')).toBeHidden();
   // 选中即生效（无需保存 / 刷新）：标签文案与 <html lang> 立即切换
   await expect(page.getByTestId('settings-tab-general')).toHaveText('通用');
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
@@ -151,12 +153,13 @@ test('mobile: settings tabs + select + webhook crud are tappable', async ({ page
   await page.getByTestId('webhook-secret-input').fill(webhookSecret);
   await page.getByTestId('webhook-add').click();
 
-  expect(createdWebhookEventMask).toContain('terminal_notification');
-
+  // 先等列表里出现这一条（即 POST 已被 mock 接住并回写），再断言请求体里的事件掩码：
+  // 点完立刻读 createdWebhookEventMask 是在和一次异步请求赛跑。
   const webhookItem = page.locator(
     `[data-testid="webhook-item"][data-webhook-url="${webhookUrl}"]`
   );
   await expect(webhookItem).toBeVisible();
+  expect(createdWebhookEventMask).toContain('terminal_notification');
   await webhookItem.getByTestId('webhook-delete').click();
   await expect(webhookItem).toHaveCount(0);
 
@@ -164,5 +167,6 @@ test('mobile: settings tabs + select + webhook crud are tappable', async ({ page
   await page.getByTestId('settings-tab-general').click();
   await page.getByTestId('settings-language-select').click();
   await page.locator('[data-slot="select-content"]').getByText('English').click();
+  await expect(page.locator('[data-slot="select-content"]')).toBeHidden();
   await page.getByTestId('settings-save').click();
 });

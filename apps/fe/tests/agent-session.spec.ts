@@ -568,8 +568,13 @@ test.describe
       await textarea.fill('this will fail');
       await page.getByTestId('agent-chat-send').click();
 
-      await expect(page.getByTestId('agent-error-banner')).toBeVisible({ timeout: 150_000 });
-      await expect(page.getByTestId('agent-error-retry')).toBeVisible();
+      // 错误横幅只在 Agent Tab 挂着时渲染（app-sidebar 按 sidebarTab 条件挂载），而这一等
+      // 要 60~70s：期间侧栏若被切回「终端」，横幅就不在屏上（偶发失败的截图正是这一幕）。
+      // 会话的 lastError 存在 agent store 里，重新选回 Agent Tab 后照样渲染得出来。
+      await openAgentTab(page);
+      const agentTab = page.getByTestId('agent-tab');
+      await expect(agentTab.getByTestId('agent-error-banner')).toBeVisible({ timeout: 150_000 });
+      await expect(agentTab.getByTestId('agent-error-retry')).toBeVisible();
 
       // 恢复默认 settings 指回 mock provider 并删除 dead provider，避免污染后续用例与本地环境
       const restoreRes = await request.patch('/api/llm/settings', {
