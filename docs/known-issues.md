@@ -2,13 +2,6 @@
 
 本文件登记尚未解决的已知问题。解决后从本文件移除（并在对应模块文档留存背景）。
 
-## KI-2：缺真 tmux 全链路 e2e 集成测试（run_command）
-
-- **背景**：run_command/流式读屏的各层已分别单测覆盖（真 OSC 字节过 parser、真 ghostty wasm、run_command 全分支以 fake emulator）。
-- **现状**：缺一条「真 tmux → control-mode 流 → parser → emulator → run_command」的端到端集成测试（验证长输出不丢/退出码正确/vim 等 alternate 屏被拒）。
-- **解决方向**：参考 `local-external-connection.integration.test.ts` 的 `-L` 临时 socket 模式，起带 control-mode 流的真实会话跑 run_command。
-- **详情**：`docs/agent/2026061303-run-command-headless-ghostty.md`。
-
 ## KI-3：fe e2e 固定失败基线
 
 `cd apps/fe && bun run test:e2e` 在 main 上稳定失败以下用例，**属于测试自身缺陷，不是产品回归**；判断分支是否引入回归时须与本清单逐条对照，而不是看失败数是否为 0。
@@ -23,10 +16,3 @@
 - 2026-09-01（round10）已修并移出本清单：`sidebar-resize:40`（testid 过期）、`mobile-mouse-reporting:205`（单指语义已改为滚轮）、`settings-llm:42`（mock 缺 `searchProviders`）、`agent-session:404`（composer 控件溢出遮挡 Send，产品修复）、`ws-borsh-theme-resize:39`（基线取样过早，spec 改稳定基线+窗口总量断言）。
 - 2026-09-01（round12）已修并移出本清单：`terminal-mouse-recovery` 依赖 `opencode` 的三例——真因不是 opencode 启动慢，而是 e2e tmux pane 的 cwd 继承自客户端、跨 worktree/跨次运行后已被删除，`opencode .` 报 `current working directory was deleted` 直接退出；`tests/helpers/tmux.ts` 建 pane 一律显式 `-c apps/fe`，spec 同时禁用 opencode 自动更新并加 `--pure`。排查时顺带发现 `tmex-e2e` socket 上会残留历次运行的会话，必要时 `tmux -L tmex-e2e kill-server`（该 socket 仅供 e2e，绝不作用于默认 socket）。
 - **另注**：全量顺序跑（workers=1，约 10 分钟）时 `terminal-render-regressions`、`theme-propagation`、`mobile-mouse-reporting`、`terminal-mouse-drag-recovery`、`ws-borsh-switch-barrier`、`ws-borsh-resize:268`、`mobile-keyboard-avoidance:188` 会随机抖动，低负载单跑通过率高；本机全量 e2e 不能作为回归判定的唯一依据。
-
-## 改密成功后账号安全面板无反馈（2026-09-02 发现，未修）
-
-- 现象：「设置 → 账号安全」常规改密，服务端链路（`keylog/head` → `keylog` → `challenge` → `login`）全部 200，新密码可登录，但面板上 `security-ok` / `security-notice` / `security-error` 一个都不出现，只是输入框被清空。TOTP / 通行密钥区的成功提示同一模式（先 `setOk` 再 `onDone()`）。
-- 已排除：与通行密钥二次验证无关（账号无 passkey 的对照 e2e 同样复现）；仅把 `AccountSecurityPanel` 的 loading 门改成「首次加载才显示 spinner」不能解决。
-- 影响：mesh e2e `mesh-passkey.spec.ts` 的「常规改密保留通行密钥与会话」用例标记 `test.fixme`，修好后去掉。
-- 排查入口：`account-security-panel.tsx` `PasswordSection.submit()` 的 `setFeedback(outcome); onDone();` 之后 `feedback` 为何丢失（是否整棵 `AccountSecurity` 因 `reloadMode` / 会话钥替换被重挂）。

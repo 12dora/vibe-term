@@ -21,9 +21,10 @@ https: { source: 'builtin' | 'reverse-proxy' | 'none'; verified: boolean; public
 
 ## 前端
 
-状态头新增「对外 HTTPS」一行：内置 / 反向代理（已通过当前请求确认 | 按公开地址推断）/ 未启用；原「监听」行改为「内置监听器：…」，与对外状态区分。`mode = none` 但检测到反代 HTTPS 时提示切换到「外部反向代理」并开启「信任代理请求头」——否则 Cookie `Secure`、通行密钥 origin、公开地址都按 http 处理。旧节点不返回该字段时不渲染该行。
+状态块（2026-09-03 起标题为「HTTPS 设置」）固定三行：**对外访问**（内置 / 反向代理：已通过当前请求确认 | 按公开地址推断 / 未启用）、**配置模式**（`tls_config.mode`）、**内置监听器**（仅 `selfsigned` / `acme` 显示，运行中带端口 / 已停止 / 失败带原因）。对应 `data-testid`：`https-effective`、`https-current-mode`、`https-listener-state`。`mode = none` 但检测到反代 HTTPS 时提示切换到「外部反向代理」并开启「信任代理请求头」——否则 Cookie `Secure`、通行密钥 origin、公开地址都按 http 处理。旧节点不返回该字段时不渲染该行。
 
 ## 注意
 
 - 仅显示与提示，不改变任何安全判定；Cookie / passkey 仍以 `publicRequestUrl` 为准。
 - hub 既没配 https 公开地址又没开信任代理时会显示「未启用」，这是提醒运维补配置，不是误报。
+- dns-01 的提供商选择（Cloudflare / DNSPod）与非标端口监听见 [ACME dns-01 提供商](./2026090303-acme-dns-providers.md)。

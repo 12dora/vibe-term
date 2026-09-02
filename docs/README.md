@@ -47,6 +47,7 @@
 | 路径 | 用途 |
 | --- | --- |
 | `files/2026061500-transfer-progress-chunked.md` | 分块上传、两阶段进度与速度、取消、2GB 上限、上传路径安全与临时文件清理 |
+| `files/2026090101-files-sidebar-visibility-default.md` | 文件侧栏的可见性缺省与竖向拖拽 |
 
 ## fonts —— 字体
 
@@ -59,6 +60,7 @@
 | 路径 | 用途 |
 | --- | --- |
 | `frontend/packages.md` | workspace 包清单与出口、依赖方向、Connection/Runtime 两层工厂与嵌入用法 |
+| `frontend/2026090307-app-error-boundary.md` | 路由 `errorElement` / 面板级错误边界 / 懒加载 chunk 重试 |
 
 ## hub —— 多节点 mesh
 
@@ -66,6 +68,11 @@
 | --- | --- |
 | `hub/2026082700-hub-node-architecture.md` | hub / node mesh 架构设计：身份与 key-log、载体分级、直连与中继、失陷边界 |
 | `hub/2026082800-hub-node-operations.md` | hub / node 运维：角色装配、加入与吊销、登录与 passkey、直连排障 |
+| `hub/2026082801-hub-docker-e2e.md` | Docker 多容器 hub/node 实测 harness |
+| `hub/2026090104-multi-hub-standby.md` | 多 hub 主/备：writer 选举、fencing、切换 |
+| `hub/2026090301-site-settings-node-linkage.md` | 站点名 / 访问地址与 mesh 节点身份联动：有效地址、写保护、双向同步 |
+| `hub/2026090305-peer-endpoint-backoff.md` | 直连地址负向缓存与退避、LAN 预算、拨号并发、广播端网卡过滤 |
+| `hub/2026090306-rtc-dial-breaker.md` | WebRTC DataChannel 熔断：阈值、冷却阶梯、强制探测、`dcBreaker` 字段 |
 
 ## notify —— 通知渠道
 
@@ -73,17 +80,31 @@
 | --- | --- |
 | `notify/2026062000-weixin-clawbot-channel.md` | 微信（iLink / ClawBot）渠道：扫码登录、用户授权、半主动推送语义与 API |
 
+## onboarding —— 上手引导
+
+| 路径 | 用途 |
+| --- | --- |
+| `onboarding/2026083101-connect-devices-panel.md` | 「接入更多设备」面板（移动端选地址→扫码、服务器接入）与远程访问入口 |
+
 ## operations —— 运维排障
 
 | 路径 | 用途 |
 | --- | --- |
 | `operations/2026021200-db-key-mismatch-journald.md` | 数据库复制后 master key 不匹配的启动失败排障与 journald 日志配置 |
+| `operations/2026090101-public-login-hardening.md` | 公网登录面：客户端 IP 判定与首次 bootstrap 本机限制 |
+| `operations/2026090101-public-login-security-review.md` | 公网启用账号密码登录的安全评估 |
+| `operations/2026090201-effective-https-status.md` | HTTPS 设置区「对外有效 HTTPS」的判定与展示 |
+| `operations/2026090201-passkey-second-factor-opaque-login.md` | 登录失败模糊化与通行密钥二次验证 |
+| `operations/2026090302-domain-access-policy.md` | 按节点的「允许域名访问」开关：拦截规则、服务白名单、锁死自救 |
+| `operations/2026090303-acme-dns-providers.md` | ACME dns-01 提供商抽象（Cloudflare / DNSPod）与非标端口 HTTPS 配置 |
 
 ## performance —— 性能
 
 | 路径 | 用途 |
 | --- | --- |
 | `performance/2026082700-hot-path-optimizations.md` | 热路径优化实测：解析器零拷贝、retention 增量记账、帧精确尺寸、渲染桥缓存、history 分页、DB 索引，及 Rust/WASM 移植评估 |
+| `performance/2026083101-settings-tabs-latency.md` | 设置页各 tab 加载慢的根因与处置 |
+| `performance/2026090101-static-cache-policy.md` | 打包前端静态资源的缓存策略 |
 
 ## product —— 产品
 
@@ -98,6 +119,8 @@
 | --- | --- |
 | `release/2026041300-cli-release-process.md` | `tmex-cli` 发布流程：构建链、资源打包、版本注入 |
 | `release/2026061406-release-changelog-flow.md` | `scripts/release.ts` 的双语 changelog 生成与版本写入 |
+| `release/2026083101-github-releases-distribution.md` | 发行源切换到本仓库 GitHub Releases 与 `install.sh` |
+| `release/2026083101-upgrade-crash-safety.md` | 自升级的崩溃安全性与回滚 |
 
 ## service —— 常驻服务
 
@@ -113,6 +136,8 @@
 | `terminal/2026021404-terminal-switch-barrier-design.md` | pane 切换屏障（selectToken）：Gateway 时序、超时降级与验收用例 |
 | `terminal/2026061101-claude-code-osc-notification.md` | Claude Code 各通知渠道的 OSC 序列与 `TERM=xterm-ghostty` 注入 |
 | `terminal/2026061501-mobile-keyboard-behavior.md` | 移动端三种键盘避让模式（lift / resize / follow）与光标跟随算法 |
+| `terminal/2026090101-viewport-policy.md` | 终端视口策略：最小可见客户端拥有 PTY 尺寸 |
+| `terminal/2026090304-ws-latency-measurement.md` | 延迟徽标的测量口径：心跳 nonce / 中位数、网关 PONG 优先通道与 `[ws-metrics] ping` |
 
 ## testing —— 测试
 
