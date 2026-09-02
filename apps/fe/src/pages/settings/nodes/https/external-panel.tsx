@@ -24,10 +24,19 @@ export function ExternalPanel({
 }) {
   const { t } = useTranslation();
   const [trustProxy, setTrustProxy] = useState(status.trustProxy);
+  // 已经在经反代的 HTTPS 上访问，但 tmex 还没信任代理头：此时协议判断只能靠公开地址推断。
+  const unverified =
+    status.https?.source === 'reverse-proxy' && !status.https.verified && !status.trustProxy;
 
   return (
     <div className="space-y-3" data-testid="https-external-panel">
       <p className="text-xs text-muted-foreground">{t('nodes.https.external.intro')}</p>
+
+      {unverified && (
+        <Notice tone="info" testId="https-external-effective">
+          <p>{t('nodes.https.effective.externalUnverified')}</p>
+        </Notice>
+      )}
 
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 space-y-0.5">

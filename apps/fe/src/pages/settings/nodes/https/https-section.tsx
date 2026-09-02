@@ -6,6 +6,7 @@
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import { type TlsApi, defaultTlsApi } from '@tmex/api-client/local/tls-api';
 import type {
+  TlsEffectiveHttps,
   TlsMode,
   TlsStatusResponse,
   TlsUpdateRequest,
@@ -327,14 +328,54 @@ function HttpsBody({
   );
 }
 
+/**
+ * 对外「有效 HTTPS」：反代终止 TLS 时内置监听器本就不该起，只看监听状态会把站点误读成没有 HTTPS。
+ * 旧版本节点不返回 `https`，此时整行不渲染。
+ */
+function EffectiveHttps({ https, proxyHint }: { https: TlsEffectiveHttps; proxyHint: boolean }) {
+  const { t } = useTranslation();
+  const text = (() => {
+    if (https.source === 'builtin') return t('nodes.https.effective.builtin');
+    if (https.source !== 'reverse-proxy') return t('nodes.https.effective.none');
+    if (https.verified) return t('nodes.https.effective.reverseProxyVerified');
+    return https.publicUrl
+      ? t('nodes.https.effective.reverseProxyInferred', { url: https.publicUrl })
+      : t('nodes.https.effective.reverseProxy');
+  })();
+
+  return (
+    <>
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="text-xs text-muted-foreground">{t('nodes.https.effective.label')}</span>
+        <span className="min-w-0 break-all text-xs font-medium" data-testid="https-effective">
+          {text}
+        </span>
+      </div>
+      {proxyHint && (
+        <p className="text-xs text-muted-foreground" data-testid="https-proxy-hint">
+          {t('nodes.https.effective.proxyHint')}
+        </p>
+      )}
+    </>
+  );
+}
+
 function StatusHeader({ status }: { status: TlsStatusResponse }) {
   const { t } = useTranslation();
   const cert = status.certificate;
   const listener = status.listener;
   const remaining = cert ? daysUntil(cert.notAfter) : null;
+  const https = status.https;
 
   return (
     <div className="space-y-1.5 rounded-lg bg-muted/40 p-3" data-testid="https-status-header">
+      {https && (
+        <EffectiveHttps
+          https={https}
+          proxyHint={status.mode === 'none' && https.source === 'reverse-proxy'}
+        />
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">{t('nodes.https.currentMode')}</span>
         <Badge variant="secondary" data-testid="https-current-mode">

@@ -1962,10 +1962,20 @@
             "description": "A publicly trusted certificate, renewed automatically. Needs a public domain name."
           }
         },
+        "effective": {
+          "label": "Effective HTTPS",
+          "builtin": "Served by built-in HTTPS",
+          "reverseProxy": "HTTPS served by reverse proxy",
+          "reverseProxyVerified": "HTTPS served by reverse proxy (confirmed by this request)",
+          "reverseProxyInferred": "HTTPS served by reverse proxy (inferred from public address {{url}})",
+          "none": "HTTPS off",
+          "proxyHint": "HTTPS access through a reverse proxy was detected. Switch to “External reverse proxy” and turn on “Trust proxy headers” so cookies, passkeys and public addresses are handled as HTTPS.",
+          "externalUnverified": "The current HTTPS state is inferred from the public address. Turn on “Trust proxy headers” to judge it from what the proxy forwards."
+        },
         "listener": {
-          "running": "Listening on port {{port}}",
-          "stopped": "Not listening",
-          "failed": "Listener failed: {{error}}"
+          "running": "Built-in listener: listening on port {{port}}",
+          "stopped": "Built-in listener: not listening",
+          "failed": "Built-in listener failed: {{error}}"
         },
         "certificate": {
           "subject": "Subject",

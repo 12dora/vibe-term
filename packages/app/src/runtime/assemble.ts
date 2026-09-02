@@ -410,6 +410,9 @@ function buildTlsLifecycle(
       authorize: async (req) =>
         routeDeps.authenticate(req).ok ? null : jsonErr('UNAUTHORIZED', 'login required', 401),
       onApplied: hooks?.onTlsApplied,
+      configuredPublicUrl: routeDeps.roles.hub
+        ? (gatewayConfig.hubPublicUrl ?? gatewayConfig.hubUrl)
+        : gatewayConfig.baseUrl,
     }),
   };
 }
