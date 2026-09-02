@@ -976,6 +976,48 @@ describe('UserKeyService', () => {
     }
   });
 
+  test('applyMany rotate-root-keep replay invalidates unused enrollment tokens', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, userStore } = createService(db);
+      const boot = await service.bootstrapUser({ username: 'standby', password: 'pw' });
+      const unusedPk = Uint8Array.from({ length: 32 }, () => 41);
+      userStore.createEnrollmentToken({
+        id: 'tok-replay',
+        userId: boot.userId,
+        enrollPublicKey: unusedPk,
+        authorizationJson: '{}',
+        authorizationSig: Uint8Array.from({ length: 64 }, () => 1),
+        expiresAt: Date.now() + 60_000,
+      });
+      const newRoot = rootKeyFromSeed(new Uint8Array(32).fill(9));
+      const state = service.currentState(boot.userId);
+      const record = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: boot.userId,
+        type: 'rotate-root-keep',
+        payload: encodeRotateRootKeepPayload({
+          root_public_key: newRoot.publicKey,
+          kdf_params: generateKdfParams(),
+          totp: null,
+        }),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(record);
+      const sig = signKeyLogRecordWithRoot(boot.rootKey, bytes);
+      const result = await service.applyMany(boot.userId, [{ bytes, sig }]);
+      expect(result.ok).toBe(true);
+      expect(
+        userStore.consumeEnrollmentToken(unusedPk, {
+          nodeId: 'aa'.repeat(16),
+          now: Date.now() + 1_000,
+        })
+      ).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
   test('applyMany abort mid-batch does not commit further records', async () => {
     const { db, close } = createMigratedAuthDb();
     try {

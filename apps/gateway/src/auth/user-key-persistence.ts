@@ -138,6 +138,13 @@ export function persistApplied(
   userStore.setKeyLogHead(userId, { seq: Number(next.head.seq), hash: next.head.hash, now });
   projectRecord(userStore, userId, record, seq, now);
   applyEffects(stores, userId, effects, now);
+  if (
+    record.type === 'rotate-root' ||
+    record.type === 'reset-root' ||
+    record.type === 'rotate-root-keep'
+  ) {
+    userStore.invalidateUnusedEnrollmentTokens(userId, now);
+  }
   (onChange ?? stores.onChange)?.();
 }
 

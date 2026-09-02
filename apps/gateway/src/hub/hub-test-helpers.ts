@@ -75,10 +75,10 @@ export type SeededNode = {
   certSig: Uint8Array;
 };
 
-export function seedAdmittedNode(
+export function seedCertOnly(
   store: UserStore,
   userId: string,
-  opts?: { name?: string; now?: number; revoked?: boolean }
+  opts?: { now?: number; revoked?: boolean }
 ): SeededNode {
   const now = opts?.now ?? Date.now();
   const ed = generateEd25519KeyPair();
@@ -102,13 +102,6 @@ export function seedAdmittedNode(
     authorizationSig: new Uint8Array(64),
     revokedLogSeq: opts?.revoked ? 9 : null,
   });
-  store.createNode({
-    id: nodeId,
-    userId,
-    name: opts?.name ?? nodeId.slice(0, 8),
-    status: opts?.revoked ? 'revoked' : 'enrolled',
-    now,
-  });
   return {
     nodeId,
     nodeIdBytes: cert.nodeId,
@@ -118,6 +111,24 @@ export function seedAdmittedNode(
     certBytes: cert.certificateBytes,
     certSig: cert.certSig,
   };
+}
+
+export function seedAdmittedNode(
+  store: UserStore,
+  userId: string,
+  opts?: { name?: string; now?: number; revoked?: boolean; version?: string }
+): SeededNode {
+  const now = opts?.now ?? Date.now();
+  const seeded = seedCertOnly(store, userId, opts);
+  store.createNode({
+    id: seeded.nodeId,
+    userId,
+    name: opts?.name ?? seeded.nodeId.slice(0, 8),
+    status: opts?.revoked ? 'revoked' : 'enrolled',
+    version: opts?.version ?? null,
+    now,
+  });
+  return seeded;
 }
 
 export function signUserRecord(

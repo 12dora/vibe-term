@@ -24,11 +24,13 @@ import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createMigratedAuthDb } from '../auth/test-db';
+import { inspectHubAuthRecordCompat } from './hub-authorization';
 import { HubRuntime, type HubTlsInfoProvider } from './hub-runtime';
 import {
   createHubTestStack,
   ctlInbox,
   seedAdmittedNode,
+  seedCertOnly,
   seedUser,
   sendCtl,
   signAuth,
@@ -1566,6 +1568,56 @@ describe('HubRuntime HTTP', () => {
       expect(JSON.parse(ack.body ?? '{}')).toMatchObject({
         code: 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES',
       });
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('forwarded rotate-root-keep is blocked by a cert without a nodes row; revoked cert does not block', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const certOnly = seedCertOnly(userStore, user.id);
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: { publicUrl: 'https://hub.example', stun: [] },
+        authenticate: () => ({ userId: user.id, entryNodeId: 'entry' }),
+      });
+      const rec = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'rotate-root-keep',
+        encodeRotateRootKeepPayload({
+          root_public_key: new Uint8Array(32).fill(9),
+          kdf_params: generateKdfParams(),
+          totp: null,
+        })
+      );
+      const body = JSON.stringify({
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+      });
+      const blocked = await hub.executeForwardedWrite('aa'.repeat(16), {
+        t: 'hub.write-forward',
+        id: 'keep-cert',
+        method: 'POST',
+        path: '/api/auth/keylog',
+        uid: user.id,
+        headers: { 'content-type': 'application/json' },
+        body,
+      });
+      expect(blocked.status).toBe(409);
+      expect(JSON.parse(blocked.body ?? '{}')).toMatchObject({
+        code: 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES',
+      });
+
+      userStore.markCertRevoked(certOnly.nodeId, 9);
+      expect(inspectHubAuthRecordCompat(userStore, rec.bytes, user.id)).toEqual({ ok: true });
       hub.stop();
     } finally {
       close();

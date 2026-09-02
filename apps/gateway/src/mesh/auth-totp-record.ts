@@ -3,7 +3,31 @@ import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
 import { jsonBody, jsonError } from './session-middleware';
 
+const TOTP_RECORD_CACHE_CONTROL = 'private, no-store';
+
+export function withTotpRecordCacheControl(res: Response): Response {
+  const headers = new Headers(res.headers);
+  headers.set('Cache-Control', TOTP_RECORD_CACHE_CONTROL);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 export function handleTotpRecord(
+  deps: { userStore: UserStore; keyLogService: UserKeyService },
+  userId: string | null
+): Response {
+  return withTotpRecordCacheControl(totpRecordBody(deps, userId));
+}
+
+export async function handleTotpRecordRequest(
+  session: (
+    fn: (req: Request, uid: string | null) => Response | Promise<Response>
+  ) => Response | Promise<Response>,
+  deps: { userStore: UserStore; keyLogService: UserKeyService }
+): Promise<Response> {
+  return withTotpRecordCacheControl(await session((_r, uid) => handleTotpRecord(deps, uid)));
+}
+
+function totpRecordBody(
   deps: { userStore: UserStore; keyLogService: UserKeyService },
   userId: string | null
 ): Response {

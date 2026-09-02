@@ -22,6 +22,65 @@ import {
   resolveMeshUserId,
 } from './hub-authorization';
 
+function seedUser(store: UserStore, id = 'user-1'): void {
+  store.create({
+    id,
+    username: 'alice',
+    rootPublicKey: new Uint8Array(32),
+    rootEpoch: 1,
+    kdfParamsJson: '{}',
+    keyLogHeadSeq: 0,
+    keyLogHeadHash: new Uint8Array(32),
+    now: 1,
+  });
+}
+
+function seedCert(
+  store: UserStore,
+  userId: string,
+  nodeId: string,
+  revokedLogSeq: number | null = null
+): void {
+  store.upsertCert({
+    nodeId,
+    userId,
+    admitRecordSeq: 1,
+    certificateBytes: new Uint8Array(8),
+    certSig: new Uint8Array(8),
+    authorizationBytes: new Uint8Array(8),
+    authorizationSig: new Uint8Array(8),
+    revokedLogSeq,
+  });
+}
+
+function rotateRootKeepRecord(): Uint8Array {
+  return encodeKeyLogRecord(
+    buildKeyLogRecord(genesisHead(), 0, {
+      uid: 'user-1',
+      type: 'rotate-root-keep',
+      payload: encodeRotateRootKeepPayload({
+        root_public_key: new Uint8Array(32).fill(1),
+        kdf_params: generateKdfParams(),
+        totp: null,
+      }),
+      signer: 'root',
+      credential_id: null,
+    })
+  );
+}
+
+function admitHubRecord(): Uint8Array {
+  return encodeKeyLogRecord(
+    buildKeyLogRecord(genesisHead(), 0, {
+      uid: 'user-1',
+      type: 'admit-hub',
+      payload: buildAdmitHubPayload({ hubNodeId: new Uint8Array(16).fill(1) }),
+      signer: 'root',
+      credential_id: null,
+    })
+  );
+}
+
 const SELF = 'aa'.repeat(16);
 const PEER = 'bb'.repeat(16);
 const OTHER = 'cc'.repeat(16);
@@ -127,16 +186,7 @@ describe('hub auth record compat gate', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const store = new UserStore(db);
-      store.create({
-        id: 'user-1',
-        username: 'alice',
-        rootPublicKey: new Uint8Array(32),
-        rootEpoch: 1,
-        kdfParamsJson: '{}',
-        keyLogHeadSeq: 0,
-        keyLogHeadHash: new Uint8Array(32),
-        now: 1,
-      });
+      seedUser(store);
       store.createNode({
         id: SELF,
         userId: 'user-1',
@@ -144,6 +194,7 @@ describe('hub auth record compat gate', () => {
         version: '1.1.13',
         now: 1,
       });
+      seedCert(store, 'user-1', SELF);
       store.createNode({
         id: PEER,
         userId: 'user-1',
@@ -151,15 +202,8 @@ describe('hub auth record compat gate', () => {
         version: '1.1.12',
         now: 1,
       });
-      const record = encodeKeyLogRecord(
-        buildKeyLogRecord(genesisHead(), 0, {
-          uid: 'user-1',
-          type: 'admit-hub',
-          payload: buildAdmitHubPayload({ hubNodeId: new Uint8Array(16).fill(1) }),
-          signer: 'root',
-          credential_id: null,
-        })
-      );
+      seedCert(store, 'user-1', PEER);
+      const record = admitHubRecord();
       const blocked = inspectHubAuthRecordCompat(store, record, 'user-1');
       expect(blocked.ok).toBe(false);
       if (!blocked.ok) {
@@ -190,16 +234,7 @@ describe('hub auth record compat gate', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const store = new UserStore(db);
-      store.create({
-        id: 'user-1',
-        username: 'alice',
-        rootPublicKey: new Uint8Array(32),
-        rootEpoch: 1,
-        kdfParamsJson: '{}',
-        keyLogHeadSeq: 0,
-        keyLogHeadHash: new Uint8Array(32),
-        now: 1,
-      });
+      seedUser(store);
       store.createNode({
         id: SELF,
         userId: 'user-1',
@@ -207,15 +242,8 @@ describe('hub auth record compat gate', () => {
         version: '1.1.13_dev',
         now: 1,
       });
-      const record = encodeKeyLogRecord(
-        buildKeyLogRecord(genesisHead(), 0, {
-          uid: 'user-1',
-          type: 'admit-hub',
-          payload: buildAdmitHubPayload({ hubNodeId: new Uint8Array(16).fill(2) }),
-          signer: 'root',
-          credential_id: null,
-        })
-      );
+      seedCert(store, 'user-1', SELF);
+      const record = admitHubRecord();
       expect(inspectHubAuthRecordCompat(store, record, 'user-1')).toEqual({ ok: true });
     } finally {
       close();
@@ -226,16 +254,7 @@ describe('hub auth record compat gate', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const store = new UserStore(db);
-      store.create({
-        id: 'user-1',
-        username: 'alice',
-        rootPublicKey: new Uint8Array(32),
-        rootEpoch: 1,
-        kdfParamsJson: '{}',
-        keyLogHeadSeq: 0,
-        keyLogHeadHash: new Uint8Array(32),
-        now: 1,
-      });
+      seedUser(store);
       store.createNode({
         id: SELF,
         userId: 'user-1',
@@ -243,6 +262,7 @@ describe('hub auth record compat gate', () => {
         version: '1.1.16',
         now: 1,
       });
+      seedCert(store, 'user-1', SELF);
       store.createNode({
         id: PEER,
         userId: 'user-1',
@@ -250,6 +270,7 @@ describe('hub auth record compat gate', () => {
         version: '1.1.15',
         now: 1,
       });
+      seedCert(store, 'user-1', PEER);
       store.createNode({
         id: OTHER,
         userId: 'user-1',
@@ -258,19 +279,8 @@ describe('hub auth record compat gate', () => {
         version: '1.0.0',
         now: 1,
       });
-      const record = encodeKeyLogRecord(
-        buildKeyLogRecord(genesisHead(), 0, {
-          uid: 'user-1',
-          type: 'rotate-root-keep',
-          payload: encodeRotateRootKeepPayload({
-            root_public_key: new Uint8Array(32).fill(1),
-            kdf_params: generateKdfParams(),
-            totp: null,
-          }),
-          signer: 'root',
-          credential_id: null,
-        })
-      );
+      seedCert(store, 'user-1', OTHER, 9);
+      const record = rotateRootKeepRecord();
       const blocked = inspectHubAuthRecordCompat(store, record, 'user-1');
       expect(blocked.ok).toBe(false);
       if (!blocked.ok) {
@@ -288,16 +298,7 @@ describe('hub auth record compat gate', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const store = new UserStore(db);
-      store.create({
-        id: 'user-1',
-        username: 'alice',
-        rootPublicKey: new Uint8Array(32),
-        rootEpoch: 1,
-        kdfParamsJson: '{}',
-        keyLogHeadSeq: 0,
-        keyLogHeadHash: new Uint8Array(32),
-        now: 1,
-      });
+      seedUser(store);
       store.createNode({
         id: SELF,
         userId: 'user-1',
@@ -305,20 +306,74 @@ describe('hub auth record compat gate', () => {
         version: '1.1.16_dev',
         now: 1,
       });
-      const record = encodeKeyLogRecord(
-        buildKeyLogRecord(genesisHead(), 0, {
-          uid: 'user-1',
-          type: 'rotate-root-keep',
-          payload: encodeRotateRootKeepPayload({
-            root_public_key: new Uint8Array(32).fill(2),
-            kdf_params: generateKdfParams(),
-            totp: null,
-          }),
-          signer: 'root',
-          credential_id: null,
-        })
-      );
+      seedCert(store, 'user-1', SELF);
+      const record = rotateRootKeepRecord();
       expect(inspectHubAuthRecordCompat(store, record, 'user-1')).toEqual({ ok: true });
+    } finally {
+      close();
+    }
+  });
+
+  test('cert without a nodes row blocks; revoked cert does not', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      seedCert(store, 'user-1', SELF);
+      const keep = rotateRootKeepRecord();
+      const blockedKeep = inspectHubAuthRecordCompat(store, keep, 'user-1');
+      expect(blockedKeep.ok).toBe(false);
+      if (!blockedKeep.ok) {
+        expect(blockedKeep.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+        expect(blockedKeep.minVersion).toBe(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION);
+        expect(blockedKeep.allowForce).toBe(false);
+        expect(blockedKeep.nodes).toEqual([{ id: SELF, name: SELF, version: null }]);
+      }
+
+      const admit = admitHubRecord();
+      const blockedAdmit = inspectHubAuthRecordCompat(store, admit, 'user-1');
+      expect(blockedAdmit.ok).toBe(false);
+      if (!blockedAdmit.ok) {
+        expect(blockedAdmit.allowForce).toBe(true);
+        expect(blockedAdmit.nodes.map((n) => n.id)).toEqual([SELF]);
+      }
+
+      store.markCertRevoked(SELF, 9);
+      expect(inspectHubAuthRecordCompat(store, keep, 'user-1')).toEqual({ ok: true });
+      expect(inspectHubAuthRecordCompat(store, admit, 'user-1')).toEqual({ ok: true });
+
+      store.createNode({
+        id: PEER,
+        userId: 'user-1',
+        name: 'old-revoked-cert',
+        version: '1.1.15',
+        now: 1,
+      });
+      seedCert(store, 'user-1', PEER, 4);
+      expect(inspectHubAuthRecordCompat(store, keep, 'user-1')).toEqual({ ok: true });
+    } finally {
+      close();
+    }
+  });
+
+  test('unparseable node version on an un-revoked cert blocks', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      store.createNode({
+        id: SELF,
+        userId: 'user-1',
+        name: 'weird',
+        version: 'ver-b',
+        now: 1,
+      });
+      seedCert(store, 'user-1', SELF);
+      const blocked = inspectHubAuthRecordCompat(store, rotateRootKeepRecord(), 'user-1');
+      expect(blocked.ok).toBe(false);
+      if (!blocked.ok) {
+        expect(blocked.nodes).toEqual([{ id: SELF, name: 'weird', version: 'ver-b' }]);
+      }
     } finally {
       close();
     }

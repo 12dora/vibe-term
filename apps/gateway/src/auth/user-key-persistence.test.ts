@@ -383,6 +383,60 @@ describe('user-key-persistence', () => {
     }
   });
 
+  test('persistApplied rotate-root, reset-root and rotate-root-keep invalidate unused enrollment tokens', () => {
+    const types = ['rotate-root', 'reset-root', 'rotate-root-keep'] as const;
+    for (const type of types) {
+      const { db, close } = createMigratedAuthDb();
+      try {
+        const stores = openStores(db);
+        seedUser(stores.userStore, `user-${type}`);
+        const unusedPk = new Uint8Array(32).fill(41);
+        const usedPk = new Uint8Array(32).fill(42);
+        stores.userStore.createEnrollmentToken({
+          id: `tok-unused-${type}`,
+          userId: `user-${type}`,
+          enrollPublicKey: unusedPk,
+          authorizationJson: '{}',
+          authorizationSig: new Uint8Array(8),
+          expiresAt: 9_999,
+        });
+        stores.userStore.createEnrollmentToken({
+          id: `tok-used-${type}`,
+          userId: `user-${type}`,
+          enrollPublicKey: usedPk,
+          authorizationJson: '{}',
+          authorizationSig: new Uint8Array(8),
+          expiresAt: 9_999,
+        });
+        stores.userStore.markEnrollmentUsed(`tok-used-${type}`, {
+          nodeId: 'aa'.repeat(16),
+          now: 1_500,
+        });
+        const payload =
+          type === 'rotate-root-keep'
+            ? encodeRotateRootKeepPayload({
+                root_public_key: new Uint8Array(32).fill(5),
+                kdf_params: generateKdfParams(),
+                totp: null,
+              })
+            : undefined;
+        persistApplied(stores, `user-${type}`, makeStep(`user-${type}`, type, { payload }), 3_000);
+        expect(stores.userStore.getEnrollmentTokenByEnrollPublicKey(unusedPk)?.expiresAt).toBe(
+          3_000
+        );
+        expect(stores.userStore.getEnrollmentTokenByEnrollPublicKey(usedPk)?.expiresAt).toBe(9_999);
+        expect(
+          stores.userStore.consumeEnrollmentToken(unusedPk, {
+            nodeId: 'bb'.repeat(16),
+            now: 3_001,
+          })
+        ).toBeNull();
+      } finally {
+        close();
+      }
+    }
+  });
+
   test('persistApplied invokes onChange after a successful apply', () => {
     const { db, close } = createMigratedAuthDb();
     try {

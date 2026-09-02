@@ -181,11 +181,16 @@ export function nodesBlockingMinVersion(
   userId?: string | null
 ): UnsupportedKeyLogNode[] {
   const blocked: UnsupportedKeyLogNode[] = [];
-  for (const node of userStore.listNodes()) {
-    if (node.status === 'revoked') continue;
-    if (userId && node.userId !== userId) continue;
-    if (nodeVersionMeets(node.version, minVersion)) continue;
-    blocked.push({ id: node.id, name: node.name, version: node.version });
+  const certs = userId ? userStore.listCertsByUser(userId) : userStore.listCerts();
+  for (const cert of certs) {
+    if (cert.revokedLogSeq != null) continue;
+    const node = userStore.getNode(cert.nodeId);
+    if (nodeVersionMeets(node?.version, minVersion)) continue;
+    blocked.push({
+      id: cert.nodeId,
+      name: node?.name ?? cert.nodeId,
+      version: node?.version ?? null,
+    });
   }
   return blocked;
 }

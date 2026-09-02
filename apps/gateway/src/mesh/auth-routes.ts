@@ -59,7 +59,7 @@ import {
   loadAuthModeTls,
   withAuthModeInvalidation,
 } from './auth-mode-cache';
-import { handleTotpRecord } from './auth-totp-record';
+import { handleTotpRecordRequest } from './auth-totp-record';
 import { clientIpFromRequest } from './client-ip';
 import {
   type HubTlsInfoProvider,
@@ -204,7 +204,7 @@ export class AuthRoutes {
         session((r, uid) => this.handlePasskeyRegisterVerify(r, uid)),
       'POST /api/auth/passkey/login/options': () => this.handlePasskeyLoginOptions(req),
       'GET /api/auth/keylog/head': () => session((_r, uid) => this.handleKeyLogHead(uid)),
-      'GET /api/auth/totp-record': () => session((_r, uid) => handleTotpRecord(this.deps, uid)),
+      'GET /api/auth/totp-record': () => handleTotpRecordRequest(session, this.deps),
       'GET /api/auth/passkeys': () => session((r, uid) => this.handlePasskeys(r, uid)),
       'POST /api/auth/keylog': () => session((r, uid) => this.handleKeyLog(r, uid)),
       'POST /api/auth/local': () =>
