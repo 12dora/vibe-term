@@ -14,6 +14,7 @@ import { isAuthTransitionActive } from '@/auth/auth-transition';
 import { FlowBridges } from '@/components/flow-bridges';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { SidePanelHost } from '@/components/side-panels/side-panel-host';
+import { StandaloneLanding } from '@/components/standalone-landing';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { MeshNodesResident } from '@/node/mesh-nodes-resident';
 import { NodeRouteGate, NodeRuntimeBoundary, useRouteNodeId } from '@/node/node-runtime-boundary';
@@ -140,6 +141,7 @@ function RootLayout() {
     <>
       <SidebarProvider open={!sidebarCollapsed} onOpenChange={(open) => setSidebarCollapsed(!open)}>
         <StatusBarSync />
+        <StandaloneLanding />
         <FlowBridges />
         <MeshNodesResident />
         <NodeRuntimeScope nodeId={SELF_NODE_ID}>

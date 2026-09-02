@@ -16,3 +16,29 @@ test('mobile: topbar + sidebar sheet open/close', async ({ page }) => {
   await page.getByTestId('mobile-sidebar-close').click();
   await expect(page.getByTestId('mobile-sidebar-sheet')).toHaveCount(0);
 });
+
+// 以 PWA（standalone）启动落在 `/` 时，直接展开侧边栏抽屉，而不是停在设备页。
+test('mobile PWA: standalone launch lands on the sidebar sheet', async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = window.matchMedia.bind(window);
+    window.matchMedia = ((query: string) => {
+      if (!query.includes('display-mode: standalone')) return original(query);
+      return {
+        matches: true,
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false,
+      } as unknown as MediaQueryList;
+    }) as typeof window.matchMedia;
+  });
+
+  await page.goto('/');
+  await expect(page.getByTestId('mobile-sidebar-sheet')).toBeVisible();
+
+  await page.getByTestId('mobile-sidebar-close').click();
+  await expect(page.getByTestId('mobile-sidebar-sheet')).toHaveCount(0);
+});
