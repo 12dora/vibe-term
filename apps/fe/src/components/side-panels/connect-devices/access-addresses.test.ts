@@ -17,7 +17,7 @@ const lan: AccessAddressesResponse = {
 };
 
 describe('buildAccessAddresses', () => {
-  test('公网（命名隧道 / Hub）→ 局域网 → 当前地址，去重去尾斜杠', () => {
+  test('隧道 → Hub → 局域网 → 当前地址，去重去尾斜杠（隧道与 Hub 同址时留隧道）', () => {
     const list = buildAccessAddresses({
       origin: 'http://192.168.1.20:9883',
       tunnel: tunnel({ mode: 'named', hostname: 'tmex.example.com' }),
@@ -25,7 +25,7 @@ describe('buildAccessAddresses', () => {
       addresses: lan,
     });
     expect(list).toEqual([
-      { kind: 'public', url: 'https://tmex.example.com' },
+      { kind: 'tunnel', url: 'https://tmex.example.com' },
       { kind: 'lan', url: 'http://192.168.1.20:9883' },
       { kind: 'lan', url: 'http://10.0.0.5:9883' },
     ]);
@@ -38,7 +38,21 @@ describe('buildAccessAddresses', () => {
       hubPublicUrl: null,
       addresses: { ...lan, loopbackOnly: true, lanAddresses: [] },
     });
-    expect(list).toEqual([{ kind: 'public', url: 'https://abc.trycloudflare.com' }]);
+    expect(list).toEqual([{ kind: 'tunnel', url: 'https://abc.trycloudflare.com' }]);
+  });
+
+  test('只有 Hub 公开地址时按 hub 归类，排在局域网之前', () => {
+    const list = buildAccessAddresses({
+      origin: 'http://127.0.0.1:9883',
+      tunnel: tunnel({}),
+      hubPublicUrl: 'https://hub.example.com',
+      addresses: lan,
+    });
+    expect(list).toEqual([
+      { kind: 'hub', url: 'https://hub.example.com' },
+      { kind: 'lan', url: 'http://192.168.1.20:9883' },
+      { kind: 'lan', url: 'http://10.0.0.5:9883' },
+    ]);
   });
 
   test('什么都没有时退回当前 origin 并给回环提示', () => {

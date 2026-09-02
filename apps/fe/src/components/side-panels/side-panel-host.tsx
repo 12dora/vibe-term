@@ -3,22 +3,32 @@
 // 所以用 AppRoot 提供的 entry（self）运行时与 QueryClient 即可，不跟路由 node 走。
 //
 // 两块内容都按需加载：接入指引是纯静态长文，账号安全原属已删除的 `/account/security` 页，
-// 静态引入会把这两坨代码拖进首屏 chunk。
+// 静态引入会把这两坨代码拖进首屏 chunk。走 `lazyChunk` 而不是裸 `lazy`：
+// 发版后旧 chunk 404 时先就地重试，重试不回来才落到卡片上。
+//
+// 面板内容再包一层错误边界（panel 形态）：面板炸了只毁这一块，页面其他部分照常可用，
+// 不会像以前那样整片交给 React Router 的默认错误页。
 //
 // 退场动画由 Base UI 负责——Popup 在 `data-ending-style` 期间保持挂载，动画跑完才卸载。
 // 但 `rendered` 不能跟着 `panel` 一起立刻清空，否则内容在退场动画开始前就没了；
 // 这里等 `onOpenChangeComplete(false)` 再清。
 
+import { AppErrorBoundary } from '@/components/app-error-boundary';
+import { lazyChunk } from '@/lazy-chunk';
 import { Button } from '@tmex/ui/button';
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@tmex/ui/sheet';
 import { Loader2, X } from 'lucide-react';
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SidePanelName } from './side-panel-url';
 import { useSidePanel } from './use-side-panel';
 
-const ConnectDevicesPanel = lazy(() => import('./connect-devices/connect-devices-panel'));
-const AccountSecurityPanel = lazy(() => import('./account-security-panel'));
+const ConnectDevicesPanel = lazyChunk<Record<string, never>>(async () => {
+  return (await import('./connect-devices/connect-devices-panel')).default;
+});
+const AccountSecurityPanel = lazyChunk<Record<string, never>>(async () => {
+  return (await import('./account-security-panel')).default;
+});
 
 const PANEL_TITLE_KEY = {
   connect: 'nav.connectDevices',
@@ -69,13 +79,33 @@ export function SidePanelHost() {
             className="bg-muted/50 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-4 pb-[max(1rem,var(--tmex-safe-area-bottom))] [-webkit-overflow-scrolling:touch]"
             data-testid="side-panel-body"
           >
-            <Suspense fallback={<PanelPending />}>
-              {rendered === 'connect' ? <ConnectDevicesPanel /> : <AccountSecurityPanel />}
-            </Suspense>
+            <SidePanelBody panel={rendered} onClose={close} />
           </div>
         </SheetContent>
       ) : null}
     </Sheet>
+  );
+}
+
+/**
+ * 面板内容区。抽成独立组件是为了能单测：宿主本体渲染在 Base UI 的 portal 里，
+ * 服务端静态渲染取不到任何标记。
+ *
+ * 边界带 `key={panel}`：换面板等于换内容，上一块的错误不该留给下一块。
+ */
+export function SidePanelBody({
+  panel,
+  onClose,
+}: {
+  panel: SidePanelName;
+  onClose: () => void;
+}) {
+  return (
+    <AppErrorBoundary key={panel} variant="panel" onClose={onClose}>
+      <Suspense fallback={<PanelPending />}>
+        {panel === 'connect' ? <ConnectDevicesPanel /> : <AccountSecurityPanel />}
+      </Suspense>
+    </AppErrorBoundary>
   );
 }
 

@@ -52,7 +52,22 @@
       "switchToEditor": "切换到编辑器输入",
       "switchToDirect": "切换到直接输入",
       "refreshPage": "刷新页面",
-      "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。"
+      "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。",
+      "latencyTooltip": "延迟：浏览器与当前入口节点之间 WebSocket 心跳的往返时间（最近几次的中位数）。不包含入口到目标节点的链路。",
+      "latencyTooltipRaw": "最新样本：{{ms}} ms"
+    },
+    "appError": {
+      "title": "出了点问题",
+      "description": "页面遇到意外错误，已经停止显示。可以先重试；仍然不行就重新加载应用。",
+      "panelDescription": "这个面板遇到意外错误，页面其他部分仍可正常使用。",
+      "retry": "重试",
+      "reload": "重新加载应用",
+      "home": "返回首页",
+      "closePanel": "关闭面板",
+      "details": "技术详情",
+      "copyDetails": "复制详情",
+      "copied": "已复制",
+      "version": "版本 {{version}}"
     },
     "connectDevices": {
       "title": "接入更多设备",
@@ -67,15 +82,25 @@
           "android": "Android"
         },
         "address": {
-          "public": "公网地址",
-          "lan": "局域网地址",
+          "tunnel": "隧道",
+          "hub": "Hub",
+          "lan": "局域网",
           "current": "当前地址",
           "loopbackHint": "本机只监听 127.0.0.1，其他设备无法直接访问。请配置远程访问，或安装时用 --host 0.0.0.0 监听所有地址。"
         },
-        "addressLabel": "当前地址",
+        "chooseAddress": {
+          "title": "选择访问地址",
+          "description": "挑一个手机能连上的地址，下一步据此生成二维码。",
+          "single": "手机可用的访问地址："
+        },
+        "scan": {
+          "title": "扫码打开",
+          "ios": "用相机扫码，在 Safari 中打开（只有 Safari 能添加到主屏幕）。",
+          "android": "用相机或 Chrome 扫码打开。",
+          "alt": "访问地址二维码"
+        },
         "ios": {
           "open": {
-            "title": "在 Safari 中打开 tmex",
             "description": "iOS 仅 Safari 支持添加到主屏幕。在手机上访问："
           },
           "add": {
@@ -89,7 +114,6 @@
         },
         "android": {
           "open": {
-            "title": "在 Chrome 中打开 tmex",
             "description": "在手机上访问："
           },
           "add": {
@@ -330,6 +354,11 @@
       "siteNamePlaceholder": "tmex",
       "siteUrl": "站点访问 URL",
       "siteUrlPlaceholder": "http://localhost:3000",
+      "general": {
+        "nameLinkedHint": "与节点名称联动：这里修改会同步修改「多节点互联」里的节点名称。",
+        "nameLinkedLocked": "当前 Hub 不可写入，暂时无法改名。",
+        "urlManagedHint": "由 Hub 公开地址决定，请在「多节点互联」中修改。"
+      },
       "bellThrottle": "响铃通知频控（秒）",
       "notificationThrottle": "通知频控（秒）",
       "enableBrowserNotificationToast": "开启浏览器通知 Toast",
@@ -1765,7 +1794,7 @@
         "title": "Hub 集群",
         "active": "主 Hub",
         "standby": "备 Hub",
-        "writer": "写入",
+        "writer": "当前接受管理写入",
         "attached": "当前入口挂载于此 Hub",
         "online": "在线",
         "offline": "离线",
@@ -1847,20 +1876,20 @@
         "roleStandalone": "独立运行",
         "roleNode": "节点",
         "roleHub": "Hub 兼节点",
-        "hubUrl": "加入地址",
-        "hubPublicUrl": "Hub 公开地址",
-        "attachedHub": "当前 Hub",
+        "localAddress": "本机地址",
+        "localAddressUnset": "未设置",
+        "localAddressHint": "其它节点无法加入本机。请按「角色 → Hub 兼节点」重新设置。",
+        "currentHub": "当前 Hub",
+        "joinSeed": "加入地址：{{url}}",
         "writerHub": "写者：{{name}}",
         "hubList": "Hub 列表",
         "self": "本机",
         "direct": "直连插件",
-        "directSupported": "本平台支持",
         "directUnsupported": "本平台不支持",
         "directInstalled": "已安装",
-        "directInstalledVersion": "已安装（{{version}}）",
+        "directInstalledVersion": "已安装 v{{version}}",
         "directNotInstalled": "未安装",
-        "directActive": "已启用",
-        "directDisabled": "已关闭",
+        "directEnable": "启用",
         "directInstall": "安装插件",
         "directRemove": "删除插件",
         "directRemoveConfirm": {
@@ -1869,7 +1898,6 @@
           "confirm": "删除",
           "cancel": "取消"
         },
-        "directSwitch": "直连",
         "directSwitchHint": "请先安装插件。",
         "directRestartRequired": "重启 tmex 后生效。",
         "directFailed": "直连插件操作失败。",
@@ -1880,6 +1908,21 @@
         "restartNow": "立即重启",
         "restarting": "正在重启……",
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "general": "通用设置",
+        "domainAccess": {
+          "label": "允许域名访问",
+          "description": "关闭后，经公开域名（{{hosts}}）只提供 Hub / 节点互联服务，网页与 API 不再可用；通过内网 IP 或 localhost 访问不受影响。",
+          "noHosts": "尚未配置公开域名。",
+          "hostSeparator": "、",
+          "failed": "域名访问设置未能保存（{{detail}}）。",
+          "confirm": {
+            "title": "关闭域名访问？",
+            "description": "{{hosts}} 上的网页与 API 会立即停止服务，只保留 Hub / 节点互联。恢复须通过内网 IP 或 localhost 打开本页重新开启。",
+            "viaDomain": "本页正经该域名访问，关闭后会立即断开。请先确认能通过内网 IP 或 localhost 打开 tmex。",
+            "confirm": "关闭",
+            "cancel": "取消"
+          }
+        },
         "accountSecurity": "账号安全",
         "loginRequired": "登录后查看本机状态。"
       },
@@ -1921,11 +1964,10 @@
         }
       },
       "https": {
-        "title": "HTTPS",
-        "description": "本机如何提供 HTTPS。登录与通行密钥只在安全地址下可用。",
-        "hubUrlHint": "Hub 的公开地址必须是 https：可以在这里签发证书，也可以在前面加反向代理并选择「外部反向代理」。",
-        "nodeRoleHint": "HTTPS 仅在本机作为 Hub 时需要；节点通过 Hub 访问，无需单独配置。",
-        "currentMode": "当前模式",
+        "title": "HTTPS 设置",
+        "description": "决定本机如何提供 HTTPS。登录与通行密钥只能在 HTTPS 地址下使用。",
+        "hubUrlHint": "Hub 的公开地址必须是 https：在这里签发证书，或在前面加反向代理并选「外部反向代理」。",
+        "nodeRoleHint": "只有本机作为 Hub 时才需要 HTTPS；节点经 Hub 访问，无需配置。",
         "modeActive": "生效中",
         "save": "保存",
         "saved": "HTTPS 设置已保存",
@@ -1936,6 +1978,21 @@
         "restartNow": "立即重启",
         "restarting": "正在重启……",
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "status": {
+          "access": "对外访问",
+          "accessBuiltin": "HTTPS，由本机内置监听器提供（端口 {{port}}）",
+          "accessProxyVerified": "HTTPS，由前置反向代理提供（本次请求已确认）",
+          "accessProxyInferred": "HTTPS，按公开地址 {{url}} 推断（未经请求确认）",
+          "accessProxy": "HTTPS，由前置反向代理提供（未经请求确认）",
+          "accessNone": "HTTP，未启用 HTTPS",
+          "proxyHint": "建议切到「外部反向代理」并开启「信任代理请求头」。",
+          "externalUnverified": "当前 HTTPS 由公开地址推断。开启「信任代理请求头」后，才按代理转发的协议判定。",
+          "mode": "配置模式",
+          "listener": "内置监听器",
+          "listenerRunning": "正在监听 {{port}} 端口",
+          "listenerStopped": "未运行",
+          "listenerFailed": "启动失败：{{error}}"
+        },
         "confirmStop": {
           "title": "停止内置 HTTPS 监听？",
           "description": "本页可能正由 {{port}} 端口上的监听提供。保存「{{mode}}」会立即停止它。",
@@ -1955,31 +2012,16 @@
           },
           "external": {
             "title": "外部反向代理",
-            "description": "由 tmex 前面的 Cloudflare Tunnel、nginx 或 Caddy 处理 TLS。"
+            "description": "TLS 由前面的 Cloudflare Tunnel、nginx 或 Caddy 处理。"
           },
           "selfsigned": {
-            "title": "私有 CA",
-            "description": "由 tmex 自己签发证书，每台设备都要安装一次 CA。"
+            "title": "内置私有 CA",
+            "description": "本机签发证书，每台设备须安装一次 CA。"
           },
           "acme": {
-            "title": "Let's Encrypt",
-            "description": "公共信任的证书，自动续期，需要公网域名。"
+            "title": "内置 Let's Encrypt",
+            "description": "公共信任的证书，自动续期，需公网域名。"
           }
-        },
-        "effective": {
-          "label": "对外 HTTPS",
-          "builtin": "由内置 HTTPS 提供",
-          "reverseProxy": "由反向代理提供 HTTPS",
-          "reverseProxyVerified": "由反向代理提供 HTTPS（已通过当前请求确认）",
-          "reverseProxyInferred": "由反向代理提供 HTTPS（按公开地址 {{url}} 推断）",
-          "none": "未启用 HTTPS",
-          "proxyHint": "检测到经反向代理的 HTTPS 访问。建议切换到「外部反向代理」并开启「信任代理请求头」，让 Cookie、通行密钥与公开地址按 HTTPS 处理。",
-          "externalUnverified": "当前 HTTPS 由公开地址推断而来。开启「信任代理请求头」后，tmex 才按代理转发的协议判定。"
-        },
-        "listener": {
-          "running": "内置监听器：正在监听 {{port}} 端口",
-          "stopped": "内置监听器：未监听",
-          "failed": "内置监听器启动失败：{{error}}"
         },
         "certificate": {
           "subject": "主体",
@@ -1993,7 +2035,7 @@
         "external": {
           "intro": "tmex 继续提供明文 HTTP，由前置代理处理 TLS。请把代理指向明文端口，并转发原始 host、协议与客户端地址。",
           "trustProxy": "信任代理请求头",
-          "trustProxyHint": "仅当 tmex 只能经由你的代理访问时才开启。",
+          "trustProxyHint": "仅当 tmex 只能经由代理访问时才开启。",
           "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。能直连明文端口的人可以伪造这两个请求头，因此请关闭该端口的外部访问。"
         },
         "selfsigned": {
@@ -2034,19 +2076,25 @@
           }
         },
         "acme": {
-          "intro": "Let's Encrypt 为单个域名签发公共信任的证书。该域名必须指向本机，续期会自动进行。",
+          "intro": "Let's Encrypt 为单个域名签发公共信任的证书，续期自动进行。域名须指向本机。",
           "domain": "域名",
-          "domainHint": "单个主机名，不支持通配符，且必须已经指向本机。",
+          "domainHint": "单个主机名，不支持通配符，且须已指向本机。",
           "email": "联系邮箱",
           "emailHint": "Let's Encrypt 用它发送到期提醒。",
           "challenge": "验证方式",
           "challengeHttp": "HTTP-01",
-          "challengeHttpHint": "Let's Encrypt 通过公网 80 端口访问本机。",
-          "challengeDns": "DNS-01（Cloudflare）",
-          "challengeDnsHint": "改用 Cloudflare API 验证，在 NAT 后面、没有 80 端口也能用。",
-          "cloudflareToken": "Cloudflare API 令牌",
-          "cloudflareTokenHint": "需要该域名所在区域的 Zone:DNS:Edit 权限，令牌加密存储。",
-          "cloudflareTokenStored": "已保存令牌，留空表示继续使用。",
+          "challengeHttpHint": "Let's Encrypt 经公网 80 端口访问本机。",
+          "challengeDns": "DNS-01",
+          "challengeDnsHint": "无需开放 80 端口，域名的 DNS 必须托管在所选服务商。",
+          "dnsProvider": "DNS 服务商",
+          "dnsProviderCloudflare": "Cloudflare",
+          "dnsProviderDnspod": "DNSPod",
+          "dnsToken": "API 令牌",
+          "cloudflareTokenHint": "需要该域名所在区域的 Zone:DNS:Edit 权限，密钥加密存储。",
+          "dnspodId": "Token ID",
+          "dnspodToken": "Token",
+          "dnspodHint": "在 DNSPod 控制台创建 API 密钥（旧版 login_token，形如 ID,Token）；密钥加密存储。",
+          "credentialsStored": "已保存凭证，留空表示继续使用。",
           "staging": "使用 staging 环境",
           "stagingHint": "staging 证书浏览器不信任，但限流宽松得多，适合先跑通流程。",
           "statusLabel": "签发状态",
@@ -2063,7 +2111,7 @@
           "hints": {
             "http01": "公网 80 端口必须能访问到本机。在 NAT 后面时，请在路由器上做端口转发。",
             "http01Linux": "Linux 用户级 systemd 服务无法绑定 80 端口。请在路由器上做转发，或改用 DNS-01。",
-            "dns01": "该域名的 DNS 必须托管在 Cloudflare，并提供可修改其记录的 API 令牌。"
+            "dns01": "域名的 DNS 必须托管在所选服务商，并提供可修改其记录的 API 密钥。"
           }
         },
         "errors": {
@@ -2071,11 +2119,13 @@
           "invalid_domain": "域名不合法，且不支持通配符。",
           "invalid_email": "邮箱地址不合法。",
           "cloudflare_token_required": "DNS-01 需要 Cloudflare API 令牌。",
+          "dns_provider_required": "请选择 DNS 服务商。",
+          "dns_credentials_required": "DNS-01 需要所选服务商的 API 密钥。",
           "invalid_port": "端口必须在 1 到 65535 之间。",
           "port_in_use": "端口已被占用。设置已保存，但监听没有启动。",
           "tls_failed": "HTTPS 变更未能生效。",
           "not_applicable": "当前模式没有可续期的证书。",
-          "no_ca": "本机还没有私有 CA，请先保存一次私有 CA 模式。",
+          "no_ca": "本机还没有私有 CA，请先保存一次内置私有 CA 模式。",
           "unauthorized": "请先登录。",
           "unknown": "操作失败：{{message}}"
         },
@@ -2087,7 +2137,9 @@
           "hostRequired": "请输入绑定地址。",
           "domainInvalid": "请输入不含通配符的域名。",
           "emailInvalid": "请输入合法的邮箱地址。",
-          "tokenRequired": "请输入 Cloudflare API 令牌。"
+          "cloudflareTokenRequired": "请输入 Cloudflare API 令牌。",
+          "dnspodIdRequired": "请输入 Token ID。",
+          "dnspodTokenRequired": "请输入 Token。"
         }
       },
       "columns": {
@@ -2115,10 +2167,31 @@
       "actions": {
         "add": "添加",
         "rename": "重命名",
+        "more": "更多",
         "revoke": "移除",
         "refresh": "刷新",
         "copy": "复制",
         "copied": "已复制"
+      },
+      "detail": {
+        "description": "查看节点信息，修改名称与域名访问策略。",
+        "nodeId": "节点 ID",
+        "name": "名称",
+        "namePlaceholder": "节点名称",
+        "domainAccess": "允许域名访问",
+        "domainAccessDescription": "关闭后，经配置的公开域名将只提供 Hub / 节点互联服务，网页与 API 不可用；内网 IP 与 localhost 不受影响。",
+        "domainAccessLoading": "读取中……",
+        "domainAccessFailed": "读取失败：{{error}}",
+        "domainAccessUnsupported": "该节点版本不支持。",
+        "domainAccessHosts": "公开域名：{{hosts}}",
+        "disableTitle": "关闭域名访问？",
+        "disableText": "关闭后，经配置的公开域名将不再提供网页与 API，只保留 Hub / 节点互联服务。",
+        "disableSelfWarning": "当前正通过该域名访问 tmex，关闭后本页会立即失联；请确认还能通过内网 IP 或 localhost 访问。",
+        "disableConfirm": "关闭",
+        "renameUnavailable": "当前 Hub 不可写入，暂时无法改名。",
+        "renameFailed": "重命名失败：{{error}}",
+        "domainAccessSaveFailed": "域名访问设置保存失败：{{error}}",
+        "saved": "已保存"
       },
       "selection": {
         "more": "更多",

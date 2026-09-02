@@ -52,7 +52,22 @@
       "switchToEditor": "Switch to Editor Input",
       "switchToDirect": "Switch to Direct Input",
       "refreshPage": "Refresh Page",
-      "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost."
+      "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost.",
+      "latencyTooltip": "Latency: round-trip time of the WebSocket heartbeat between this browser and the entry node (median of recent samples). It does not include the hop from the entry node to the target node.",
+      "latencyTooltipRaw": "Latest sample: {{ms}} ms"
+    },
+    "appError": {
+      "title": "Something went wrong",
+      "description": "This page hit an unexpected error and stopped rendering. Try again, or reload the app if it keeps failing.",
+      "panelDescription": "This panel hit an unexpected error. The rest of the page still works.",
+      "retry": "Retry",
+      "reload": "Reload app",
+      "home": "Back to home",
+      "closePanel": "Close panel",
+      "details": "Technical details",
+      "copyDetails": "Copy details",
+      "copied": "Copied",
+      "version": "Version {{version}}"
     },
     "connectDevices": {
       "title": "Connect more devices",
@@ -67,15 +82,25 @@
           "android": "Android"
         },
         "address": {
-          "public": "Public address",
-          "lan": "LAN address",
+          "tunnel": "Tunnel",
+          "hub": "Hub",
+          "lan": "LAN",
           "current": "Current address",
           "loopbackHint": "This machine only listens on 127.0.0.1, so other devices cannot reach it directly. Set up remote access, or install with --host 0.0.0.0 to listen on all addresses."
         },
-        "addressLabel": "Current address",
+        "chooseAddress": {
+          "title": "Choose an address",
+          "description": "Pick an address your phone can reach; the next step turns it into a QR code.",
+          "single": "Address to open on your phone:"
+        },
+        "scan": {
+          "title": "Scan to open",
+          "ios": "Scan with the Camera app and open it in Safari (only Safari can add to the home screen).",
+          "android": "Scan with the Camera app or Chrome.",
+          "alt": "QR code for the access address"
+        },
         "ios": {
           "open": {
-            "title": "Open tmex in Safari",
             "description": "On iOS only Safari can add to the home screen. Open on your phone:"
           },
           "add": {
@@ -89,7 +114,6 @@
         },
         "android": {
           "open": {
-            "title": "Open tmex in Chrome",
             "description": "Open on your phone:"
           },
           "add": {
@@ -330,6 +354,11 @@
       "siteNamePlaceholder": "tmex",
       "siteUrl": "Site URL",
       "siteUrlPlaceholder": "http://localhost:3000",
+      "general": {
+        "nameLinkedHint": "Linked to the node name: changing it here renames this node in the mesh.",
+        "nameLinkedLocked": "The current Hub is not accepting writes; renaming is unavailable.",
+        "urlManagedHint": "Determined by the hub's public address; change it under Mesh settings."
+      },
       "bellThrottle": "Bell Notification Throttle (seconds)",
       "notificationThrottle": "Notification Throttle (seconds)",
       "enableBrowserNotificationToast": "Enable Browser Notification Toast",
@@ -1765,7 +1794,7 @@
         "title": "Hub Cluster",
         "active": "Primary Hub",
         "standby": "Standby Hub",
-        "writer": "Writes",
+        "writer": "Currently accepting management writes",
         "attached": "This entry is attached to this hub",
         "online": "Online",
         "offline": "Offline",
@@ -1847,20 +1876,20 @@
         "roleStandalone": "Standalone",
         "roleNode": "Node",
         "roleHub": "Hub and node",
-        "hubUrl": "Join Address",
-        "hubPublicUrl": "Public hub address",
-        "attachedHub": "Current Hub",
+        "localAddress": "This Machine's Address",
+        "localAddressUnset": "Not set",
+        "localAddressHint": "Other nodes cannot join. Set it up again under Role → Hub and node.",
+        "currentHub": "Current Hub",
+        "joinSeed": "Join address: {{url}}",
         "writerHub": "Writer: {{name}}",
         "hubList": "Hubs",
         "self": "This Machine",
         "direct": "Direct connection add-on",
-        "directSupported": "Supported",
         "directUnsupported": "Not supported on this platform",
         "directInstalled": "Installed",
-        "directInstalledVersion": "Installed ({{version}})",
+        "directInstalledVersion": "Installed v{{version}}",
         "directNotInstalled": "Not installed",
-        "directActive": "Active",
-        "directDisabled": "Off",
+        "directEnable": "Enable",
         "directInstall": "Install add-on",
         "directRemove": "Remove add-on",
         "directRemoveConfirm": {
@@ -1869,7 +1898,6 @@
           "confirm": "Remove",
           "cancel": "Cancel"
         },
-        "directSwitch": "Direct connections",
         "directSwitchHint": "Install the add-on first.",
         "directRestartRequired": "Restart tmex to apply this change.",
         "directFailed": "Could not update the direct connection add-on.",
@@ -1880,6 +1908,21 @@
         "restartNow": "Restart now",
         "restarting": "Restarting…",
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "general": "General",
+        "domainAccess": {
+          "label": "Allow Domain Access",
+          "description": "When off, the public domain ({{hosts}}) only carries hub and node traffic; the web UI and API stop responding there. Access over a LAN IP or localhost is unaffected.",
+          "noHosts": "No public domain configured yet.",
+          "hostSeparator": ", ",
+          "failed": "Could not save the domain access setting ({{detail}}).",
+          "confirm": {
+            "title": "Turn off domain access?",
+            "description": "The web UI and API on {{hosts}} stop responding right away; only hub and node traffic keeps working. Turning it back on requires opening tmex over a LAN IP or localhost.",
+            "viaDomain": "This page is served over that domain and will disconnect immediately. Make sure tmex opens over a LAN IP or localhost first.",
+            "confirm": "Turn Off",
+            "cancel": "Cancel"
+          }
+        },
         "accountSecurity": "Account security",
         "loginRequired": "Sign in to see this machine's status."
       },
@@ -1921,11 +1964,10 @@
         }
       },
       "https": {
-        "title": "HTTPS",
-        "description": "How this machine serves HTTPS. Sign-in and passkeys only work over a secure address.",
-        "hubUrlHint": "A hub's public address must use https. Either issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
-        "nodeRoleHint": "HTTPS only matters while this machine acts as a hub. Nodes are reached through the hub, so there is nothing to configure here.",
-        "currentMode": "Current mode",
+        "title": "HTTPS settings",
+        "description": "How this machine serves HTTPS. Sign-in and passkeys only work over an HTTPS address.",
+        "hubUrlHint": "A hub's public address must use https: issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
+        "nodeRoleHint": "HTTPS is only needed while this machine acts as a hub. Nodes are reached through the hub.",
         "modeActive": "in use",
         "save": "Save",
         "saved": "HTTPS settings saved",
@@ -1936,6 +1978,21 @@
         "restartNow": "Restart now",
         "restarting": "Restarting…",
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "status": {
+          "access": "Access",
+          "accessBuiltin": "HTTPS, served by the built-in listener (port {{port}})",
+          "accessProxyVerified": "HTTPS, served by a reverse proxy (confirmed by this request)",
+          "accessProxyInferred": "HTTPS, inferred from the public address {{url}} (not confirmed by this request)",
+          "accessProxy": "HTTPS, served by a reverse proxy (not confirmed by this request)",
+          "accessNone": "HTTP, no HTTPS",
+          "proxyHint": "Switch to “External reverse proxy” and turn on “Trust proxy headers”.",
+          "externalUnverified": "HTTPS is inferred from the public address. Turn on “Trust proxy headers” to judge it from what the proxy forwards.",
+          "mode": "Mode",
+          "listener": "Built-in listener",
+          "listenerRunning": "Listening on port {{port}}",
+          "listenerStopped": "Not running",
+          "listenerFailed": "Failed to start: {{error}}"
+        },
         "confirmStop": {
           "title": "Stop the built-in HTTPS listener?",
           "description": "This page may be served by the listener on port {{port}}. Saving “{{mode}}” stops it right away.",
@@ -1955,31 +2012,16 @@
           },
           "external": {
             "title": "External reverse proxy",
-            "description": "TLS is handled by Cloudflare Tunnel, nginx or Caddy in front of tmex."
+            "description": "TLS is handled by Cloudflare Tunnel, nginx or Caddy in front."
           },
           "selfsigned": {
-            "title": "Private CA",
-            "description": "tmex issues its own certificate. Every device has to install the CA once."
+            "title": "Built-in private CA",
+            "description": "This machine issues the certificate; every device installs the CA once."
           },
           "acme": {
-            "title": "Let's Encrypt",
-            "description": "A publicly trusted certificate, renewed automatically. Needs a public domain name."
+            "title": "Built-in Let's Encrypt",
+            "description": "A publicly trusted certificate, renewed automatically. Needs a public domain."
           }
-        },
-        "effective": {
-          "label": "Effective HTTPS",
-          "builtin": "Served by built-in HTTPS",
-          "reverseProxy": "HTTPS served by reverse proxy",
-          "reverseProxyVerified": "HTTPS served by reverse proxy (confirmed by this request)",
-          "reverseProxyInferred": "HTTPS served by reverse proxy (inferred from public address {{url}})",
-          "none": "HTTPS off",
-          "proxyHint": "HTTPS access through a reverse proxy was detected. Switch to \u201cExternal reverse proxy\u201d and turn on \u201cTrust proxy headers\u201d so cookies, passkeys and public addresses are handled as HTTPS.",
-          "externalUnverified": "The current HTTPS state is inferred from the public address. Turn on \u201cTrust proxy headers\u201d to judge it from what the proxy forwards."
-        },
-        "listener": {
-          "running": "Built-in listener: listening on port {{port}}",
-          "stopped": "Built-in listener: not listening",
-          "failed": "Built-in listener failed: {{error}}"
         },
         "certificate": {
           "subject": "Subject",
@@ -1993,7 +2035,7 @@
         "external": {
           "intro": "tmex keeps serving plain HTTP and the proxy in front handles TLS. Point the proxy at the plain port and let it forward the original host, protocol and client address.",
           "trustProxy": "Trust proxy headers",
-          "trustProxyHint": "Turn this on only if tmex can be reached through your proxy alone.",
+          "trustProxyHint": "Turn this on only if tmex can be reached through the proxy alone.",
           "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Anyone who can reach the plain port directly could forge them, so keep that port closed."
         },
         "selfsigned": {
@@ -2034,7 +2076,7 @@
           }
         },
         "acme": {
-          "intro": "Let's Encrypt issues a publicly trusted certificate for one domain. The domain must point at this machine; renewal runs automatically.",
+          "intro": "Let's Encrypt issues a publicly trusted certificate for one domain and renews it automatically. The domain must point at this machine.",
           "domain": "Domain",
           "domainHint": "One hostname, no wildcards. It must already point at this machine.",
           "email": "Contact email",
@@ -2042,11 +2084,17 @@
           "challenge": "Validation method",
           "challengeHttp": "HTTP-01",
           "challengeHttpHint": "Let's Encrypt reaches this machine on public port 80.",
-          "challengeDns": "DNS-01 (Cloudflare)",
-          "challengeDnsHint": "Uses the Cloudflare API instead. Works behind NAT and without port 80.",
-          "cloudflareToken": "Cloudflare API token",
+          "challengeDns": "DNS-01",
+          "challengeDnsHint": "No need to open port 80; the domain's DNS must be hosted by the selected provider.",
+          "dnsProvider": "DNS provider",
+          "dnsProviderCloudflare": "Cloudflare",
+          "dnsProviderDnspod": "DNSPod",
+          "dnsToken": "API token",
           "cloudflareTokenHint": "Needs Zone:DNS:Edit on the zone that holds this domain. Stored encrypted.",
-          "cloudflareTokenStored": "A token is already stored. Leave this empty to keep it.",
+          "dnspodId": "Token ID",
+          "dnspodToken": "Token",
+          "dnspodHint": "Create an API key in the DNSPod console (legacy login_token, shaped ID,Token). Stored encrypted.",
+          "credentialsStored": "Credentials are stored. Leave this empty to keep them.",
           "staging": "Use the staging environment",
           "stagingHint": "Staging certificates are not trusted by browsers, but the rate limits are much looser. Use it while testing.",
           "statusLabel": "Issuance",
@@ -2063,7 +2111,7 @@
           "hints": {
             "http01": "Public port 80 has to reach this machine. Behind NAT, forward it on your router.",
             "http01Linux": "A user-level systemd service cannot bind port 80. Forward it on the router, or use DNS-01.",
-            "dns01": "The domain's DNS has to be managed by Cloudflare, with an API token that can edit its records."
+            "dns01": "The domain's DNS has to be hosted by the selected provider, with an API key that can edit its records."
           }
         },
         "errors": {
@@ -2071,11 +2119,13 @@
           "invalid_domain": "That is not a valid domain name. Wildcards are not supported.",
           "invalid_email": "That is not a valid email address.",
           "cloudflare_token_required": "DNS-01 needs a Cloudflare API token.",
+          "dns_provider_required": "Select a DNS provider.",
+          "dns_credentials_required": "DNS-01 needs an API key for the selected provider.",
           "invalid_port": "The port must be between 1 and 65535.",
           "port_in_use": "That port is already in use. The settings were saved, but the listener did not start.",
           "tls_failed": "Could not apply the HTTPS change.",
           "not_applicable": "There is nothing to renew in this mode.",
-          "no_ca": "This machine has no private CA yet. Save the private CA mode first.",
+          "no_ca": "This machine has no private CA yet. Save the built-in private CA mode first.",
           "unauthorized": "Sign in first.",
           "unknown": "Failed: {{message}}"
         },
@@ -2087,7 +2137,9 @@
           "hostRequired": "Enter a bind address.",
           "domainInvalid": "Enter a domain name without wildcards.",
           "emailInvalid": "Enter a valid email address.",
-          "tokenRequired": "Enter a Cloudflare API token."
+          "cloudflareTokenRequired": "Enter a Cloudflare API token.",
+          "dnspodIdRequired": "Enter the Token ID.",
+          "dnspodTokenRequired": "Enter the Token."
         }
       },
       "columns": {
@@ -2115,10 +2167,31 @@
       "actions": {
         "add": "Add",
         "rename": "Rename",
+        "more": "More",
         "revoke": "Remove",
         "refresh": "Refresh",
         "copy": "Copy",
         "copied": "Copied"
+      },
+      "detail": {
+        "description": "Node details; rename it or change its domain access policy.",
+        "nodeId": "Node ID",
+        "name": "Name",
+        "namePlaceholder": "Node name",
+        "domainAccess": "Allow Domain Access",
+        "domainAccessDescription": "When off, the configured public domain only serves Hub and mesh traffic; the web UI and API are unavailable. LAN IPs and localhost are unaffected.",
+        "domainAccessLoading": "Loading…",
+        "domainAccessFailed": "Failed to load: {{error}}",
+        "domainAccessUnsupported": "Not supported by this node's version.",
+        "domainAccessHosts": "Public domains: {{hosts}}",
+        "disableTitle": "Turn off domain access?",
+        "disableText": "The configured public domain will stop serving the web UI and API, keeping only Hub and mesh traffic.",
+        "disableSelfWarning": "tmex is currently being accessed through this domain; this page will disconnect immediately. Make sure a LAN IP or localhost still works.",
+        "disableConfirm": "Turn Off",
+        "renameUnavailable": "The current Hub is not accepting writes; renaming is unavailable.",
+        "renameFailed": "Rename failed: {{error}}",
+        "domainAccessSaveFailed": "Could not save the domain access setting: {{error}}",
+        "saved": "Saved"
       },
       "selection": {
         "more": "More",

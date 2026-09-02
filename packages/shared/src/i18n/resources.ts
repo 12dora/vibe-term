@@ -58,7 +58,22 @@ export const I18N_RESOURCES = {
       "switchToEditor": "Switch to Editor Input",
       "switchToDirect": "Switch to Direct Input",
       "refreshPage": "Refresh Page",
-      "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost."
+      "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost.",
+      "latencyTooltip": "Latency: round-trip time of the WebSocket heartbeat between this browser and the entry node (median of recent samples). It does not include the hop from the entry node to the target node.",
+      "latencyTooltipRaw": "Latest sample: {{ms}} ms"
+    },
+    "appError": {
+      "title": "Something went wrong",
+      "description": "This page hit an unexpected error and stopped rendering. Try again, or reload the app if it keeps failing.",
+      "panelDescription": "This panel hit an unexpected error. The rest of the page still works.",
+      "retry": "Retry",
+      "reload": "Reload app",
+      "home": "Back to home",
+      "closePanel": "Close panel",
+      "details": "Technical details",
+      "copyDetails": "Copy details",
+      "copied": "Copied",
+      "version": "Version {{version}}"
     },
     "connectDevices": {
       "title": "Connect more devices",
@@ -73,15 +88,25 @@ export const I18N_RESOURCES = {
           "android": "Android"
         },
         "address": {
-          "public": "Public address",
-          "lan": "LAN address",
+          "tunnel": "Tunnel",
+          "hub": "Hub",
+          "lan": "LAN",
           "current": "Current address",
           "loopbackHint": "This machine only listens on 127.0.0.1, so other devices cannot reach it directly. Set up remote access, or install with --host 0.0.0.0 to listen on all addresses."
         },
-        "addressLabel": "Current address",
+        "chooseAddress": {
+          "title": "Choose an address",
+          "description": "Pick an address your phone can reach; the next step turns it into a QR code.",
+          "single": "Address to open on your phone:"
+        },
+        "scan": {
+          "title": "Scan to open",
+          "ios": "Scan with the Camera app and open it in Safari (only Safari can add to the home screen).",
+          "android": "Scan with the Camera app or Chrome.",
+          "alt": "QR code for the access address"
+        },
         "ios": {
           "open": {
-            "title": "Open tmex in Safari",
             "description": "On iOS only Safari can add to the home screen. Open on your phone:"
           },
           "add": {
@@ -95,7 +120,6 @@ export const I18N_RESOURCES = {
         },
         "android": {
           "open": {
-            "title": "Open tmex in Chrome",
             "description": "Open on your phone:"
           },
           "add": {
@@ -336,6 +360,11 @@ export const I18N_RESOURCES = {
       "siteNamePlaceholder": "tmex",
       "siteUrl": "Site URL",
       "siteUrlPlaceholder": "http://localhost:3000",
+      "general": {
+        "nameLinkedHint": "Linked to the node name: changing it here renames this node in the mesh.",
+        "nameLinkedLocked": "The current Hub is not accepting writes; renaming is unavailable.",
+        "urlManagedHint": "Determined by the hub's public address; change it under Mesh settings."
+      },
       "bellThrottle": "Bell Notification Throttle (seconds)",
       "notificationThrottle": "Notification Throttle (seconds)",
       "enableBrowserNotificationToast": "Enable Browser Notification Toast",
@@ -1771,7 +1800,7 @@ export const I18N_RESOURCES = {
         "title": "Hub Cluster",
         "active": "Primary Hub",
         "standby": "Standby Hub",
-        "writer": "Writes",
+        "writer": "Currently accepting management writes",
         "attached": "This entry is attached to this hub",
         "online": "Online",
         "offline": "Offline",
@@ -1853,20 +1882,20 @@ export const I18N_RESOURCES = {
         "roleStandalone": "Standalone",
         "roleNode": "Node",
         "roleHub": "Hub and node",
-        "hubUrl": "Join Address",
-        "hubPublicUrl": "Public hub address",
-        "attachedHub": "Current Hub",
+        "localAddress": "This Machine's Address",
+        "localAddressUnset": "Not set",
+        "localAddressHint": "Other nodes cannot join. Set it up again under Role → Hub and node.",
+        "currentHub": "Current Hub",
+        "joinSeed": "Join address: {{url}}",
         "writerHub": "Writer: {{name}}",
         "hubList": "Hubs",
         "self": "This Machine",
         "direct": "Direct connection add-on",
-        "directSupported": "Supported",
         "directUnsupported": "Not supported on this platform",
         "directInstalled": "Installed",
-        "directInstalledVersion": "Installed ({{version}})",
+        "directInstalledVersion": "Installed v{{version}}",
         "directNotInstalled": "Not installed",
-        "directActive": "Active",
-        "directDisabled": "Off",
+        "directEnable": "Enable",
         "directInstall": "Install add-on",
         "directRemove": "Remove add-on",
         "directRemoveConfirm": {
@@ -1875,7 +1904,6 @@ export const I18N_RESOURCES = {
           "confirm": "Remove",
           "cancel": "Cancel"
         },
-        "directSwitch": "Direct connections",
         "directSwitchHint": "Install the add-on first.",
         "directRestartRequired": "Restart tmex to apply this change.",
         "directFailed": "Could not update the direct connection add-on.",
@@ -1886,6 +1914,21 @@ export const I18N_RESOURCES = {
         "restartNow": "Restart now",
         "restarting": "Restarting…",
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "general": "General",
+        "domainAccess": {
+          "label": "Allow Domain Access",
+          "description": "When off, the public domain ({{hosts}}) only carries hub and node traffic; the web UI and API stop responding there. Access over a LAN IP or localhost is unaffected.",
+          "noHosts": "No public domain configured yet.",
+          "hostSeparator": ", ",
+          "failed": "Could not save the domain access setting ({{detail}}).",
+          "confirm": {
+            "title": "Turn off domain access?",
+            "description": "The web UI and API on {{hosts}} stop responding right away; only hub and node traffic keeps working. Turning it back on requires opening tmex over a LAN IP or localhost.",
+            "viaDomain": "This page is served over that domain and will disconnect immediately. Make sure tmex opens over a LAN IP or localhost first.",
+            "confirm": "Turn Off",
+            "cancel": "Cancel"
+          }
+        },
         "accountSecurity": "Account security",
         "loginRequired": "Sign in to see this machine's status."
       },
@@ -2121,10 +2164,31 @@ export const I18N_RESOURCES = {
       "actions": {
         "add": "Add",
         "rename": "Rename",
+        "more": "More",
         "revoke": "Remove",
         "refresh": "Refresh",
         "copy": "Copy",
         "copied": "Copied"
+      },
+      "detail": {
+        "description": "Node details; rename it or change its domain access policy.",
+        "nodeId": "Node ID",
+        "name": "Name",
+        "namePlaceholder": "Node name",
+        "domainAccess": "Allow Domain Access",
+        "domainAccessDescription": "When off, the configured public domain only serves Hub and mesh traffic; the web UI and API are unavailable. LAN IPs and localhost are unaffected.",
+        "domainAccessLoading": "Loading…",
+        "domainAccessFailed": "Failed to load: {{error}}",
+        "domainAccessUnsupported": "Not supported by this node's version.",
+        "domainAccessHosts": "Public domains: {{hosts}}",
+        "disableTitle": "Turn off domain access?",
+        "disableText": "The configured public domain will stop serving the web UI and API, keeping only Hub and mesh traffic.",
+        "disableSelfWarning": "tmex is currently being accessed through this domain; this page will disconnect immediately. Make sure a LAN IP or localhost still works.",
+        "disableConfirm": "Turn Off",
+        "renameUnavailable": "The current Hub is not accepting writes; renaming is unavailable.",
+        "renameFailed": "Rename failed: {{error}}",
+        "domainAccessSaveFailed": "Could not save the domain access setting: {{error}}",
+        "saved": "Saved"
       },
       "selection": {
         "more": "More",
@@ -2490,7 +2554,22 @@ export const I18N_RESOURCES = {
       "switchToEditor": "切换到编辑器输入",
       "switchToDirect": "切换到直接输入",
       "refreshPage": "刷新页面",
-      "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。"
+      "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。",
+      "latencyTooltip": "延迟：浏览器与当前入口节点之间 WebSocket 心跳的往返时间（最近几次的中位数）。不包含入口到目标节点的链路。",
+      "latencyTooltipRaw": "最新样本：{{ms}} ms"
+    },
+    "appError": {
+      "title": "出了点问题",
+      "description": "页面遇到意外错误，已经停止显示。可以先重试；仍然不行就重新加载应用。",
+      "panelDescription": "这个面板遇到意外错误，页面其他部分仍可正常使用。",
+      "retry": "重试",
+      "reload": "重新加载应用",
+      "home": "返回首页",
+      "closePanel": "关闭面板",
+      "details": "技术详情",
+      "copyDetails": "复制详情",
+      "copied": "已复制",
+      "version": "版本 {{version}}"
     },
     "connectDevices": {
       "title": "接入更多设备",
@@ -2505,15 +2584,25 @@ export const I18N_RESOURCES = {
           "android": "Android"
         },
         "address": {
-          "public": "公网地址",
-          "lan": "局域网地址",
+          "tunnel": "隧道",
+          "hub": "Hub",
+          "lan": "局域网",
           "current": "当前地址",
           "loopbackHint": "本机只监听 127.0.0.1，其他设备无法直接访问。请配置远程访问，或安装时用 --host 0.0.0.0 监听所有地址。"
         },
-        "addressLabel": "当前地址",
+        "chooseAddress": {
+          "title": "选择访问地址",
+          "description": "挑一个手机能连上的地址，下一步据此生成二维码。",
+          "single": "手机可用的访问地址："
+        },
+        "scan": {
+          "title": "扫码打开",
+          "ios": "用相机扫码，在 Safari 中打开（只有 Safari 能添加到主屏幕）。",
+          "android": "用相机或 Chrome 扫码打开。",
+          "alt": "访问地址二维码"
+        },
         "ios": {
           "open": {
-            "title": "在 Safari 中打开 tmex",
             "description": "iOS 仅 Safari 支持添加到主屏幕。在手机上访问："
           },
           "add": {
@@ -2527,7 +2616,6 @@ export const I18N_RESOURCES = {
         },
         "android": {
           "open": {
-            "title": "在 Chrome 中打开 tmex",
             "description": "在手机上访问："
           },
           "add": {
@@ -2768,6 +2856,11 @@ export const I18N_RESOURCES = {
       "siteNamePlaceholder": "tmex",
       "siteUrl": "站点访问 URL",
       "siteUrlPlaceholder": "http://localhost:3000",
+      "general": {
+        "nameLinkedHint": "与节点名称联动：这里修改会同步修改「多节点互联」里的节点名称。",
+        "nameLinkedLocked": "当前 Hub 不可写入，暂时无法改名。",
+        "urlManagedHint": "由 Hub 公开地址决定，请在「多节点互联」中修改。"
+      },
       "bellThrottle": "响铃通知频控（秒）",
       "notificationThrottle": "通知频控（秒）",
       "enableBrowserNotificationToast": "开启浏览器通知 Toast",
@@ -4203,7 +4296,7 @@ export const I18N_RESOURCES = {
         "title": "Hub 集群",
         "active": "主 Hub",
         "standby": "备 Hub",
-        "writer": "写入",
+        "writer": "当前接受管理写入",
         "attached": "当前入口挂载于此 Hub",
         "online": "在线",
         "offline": "离线",
@@ -4285,20 +4378,20 @@ export const I18N_RESOURCES = {
         "roleStandalone": "独立运行",
         "roleNode": "节点",
         "roleHub": "Hub 兼节点",
-        "hubUrl": "加入地址",
-        "hubPublicUrl": "Hub 公开地址",
-        "attachedHub": "当前 Hub",
+        "localAddress": "本机地址",
+        "localAddressUnset": "未设置",
+        "localAddressHint": "其它节点无法加入本机。请按「角色 → Hub 兼节点」重新设置。",
+        "currentHub": "当前 Hub",
+        "joinSeed": "加入地址：{{url}}",
         "writerHub": "写者：{{name}}",
         "hubList": "Hub 列表",
         "self": "本机",
         "direct": "直连插件",
-        "directSupported": "本平台支持",
         "directUnsupported": "本平台不支持",
         "directInstalled": "已安装",
-        "directInstalledVersion": "已安装（{{version}}）",
+        "directInstalledVersion": "已安装 v{{version}}",
         "directNotInstalled": "未安装",
-        "directActive": "已启用",
-        "directDisabled": "已关闭",
+        "directEnable": "启用",
         "directInstall": "安装插件",
         "directRemove": "删除插件",
         "directRemoveConfirm": {
@@ -4307,7 +4400,6 @@ export const I18N_RESOURCES = {
           "confirm": "删除",
           "cancel": "取消"
         },
-        "directSwitch": "直连",
         "directSwitchHint": "请先安装插件。",
         "directRestartRequired": "重启 tmex 后生效。",
         "directFailed": "直连插件操作失败。",
@@ -4318,6 +4410,21 @@ export const I18N_RESOURCES = {
         "restartNow": "立即重启",
         "restarting": "正在重启……",
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "general": "通用设置",
+        "domainAccess": {
+          "label": "允许域名访问",
+          "description": "关闭后，经公开域名（{{hosts}}）只提供 Hub / 节点互联服务，网页与 API 不再可用；通过内网 IP 或 localhost 访问不受影响。",
+          "noHosts": "尚未配置公开域名。",
+          "hostSeparator": "、",
+          "failed": "域名访问设置未能保存（{{detail}}）。",
+          "confirm": {
+            "title": "关闭域名访问？",
+            "description": "{{hosts}} 上的网页与 API 会立即停止服务，只保留 Hub / 节点互联。恢复须通过内网 IP 或 localhost 打开本页重新开启。",
+            "viaDomain": "本页正经该域名访问，关闭后会立即断开。请先确认能通过内网 IP 或 localhost 打开 tmex。",
+            "confirm": "关闭",
+            "cancel": "取消"
+          }
+        },
         "accountSecurity": "账号安全",
         "loginRequired": "登录后查看本机状态。"
       },
@@ -4553,10 +4660,31 @@ export const I18N_RESOURCES = {
       "actions": {
         "add": "添加",
         "rename": "重命名",
+        "more": "更多",
         "revoke": "移除",
         "refresh": "刷新",
         "copy": "复制",
         "copied": "已复制"
+      },
+      "detail": {
+        "description": "查看节点信息，修改名称与域名访问策略。",
+        "nodeId": "节点 ID",
+        "name": "名称",
+        "namePlaceholder": "节点名称",
+        "domainAccess": "允许域名访问",
+        "domainAccessDescription": "关闭后，经配置的公开域名将只提供 Hub / 节点互联服务，网页与 API 不可用；内网 IP 与 localhost 不受影响。",
+        "domainAccessLoading": "读取中……",
+        "domainAccessFailed": "读取失败：{{error}}",
+        "domainAccessUnsupported": "该节点版本不支持。",
+        "domainAccessHosts": "公开域名：{{hosts}}",
+        "disableTitle": "关闭域名访问？",
+        "disableText": "关闭后，经配置的公开域名将不再提供网页与 API，只保留 Hub / 节点互联服务。",
+        "disableSelfWarning": "当前正通过该域名访问 tmex，关闭后本页会立即失联；请确认还能通过内网 IP 或 localhost 访问。",
+        "disableConfirm": "关闭",
+        "renameUnavailable": "当前 Hub 不可写入，暂时无法改名。",
+        "renameFailed": "重命名失败：{{error}}",
+        "domainAccessSaveFailed": "域名访问设置保存失败：{{error}}",
+        "saved": "已保存"
       },
       "selection": {
         "more": "更多",

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import type { AuthModeResponse } from '@tmex/api-client/auth/index';
 import { INSTALL_COMMAND } from '@tmex/shared';
 import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AccessAddress } from './access-addresses';
 
 installWindowStorage();
 
@@ -23,7 +24,7 @@ const { SidebarProvider } = await import('@tmex/ui/sidebar');
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const ConnectDevicesPanel = (await import('./connect-devices-panel')).default;
-const { MobilePlatformSteps } = await import('./mobile-guide');
+const { AddressChoiceList, MobilePlatformSteps, ScanBlock } = await import('./mobile-guide');
 const { ComputerGuide, HostSteps } = await import('./computer-guide');
 const { ADMITTED_SESSION_TTL_MS, JoinConfirmStatus, isSessionValid, joinTokenTtlMinutes } =
   await import('./join-token');
@@ -71,21 +72,24 @@ function render(node: React.ReactNode): string {
 }
 
 describe('ConnectDevicesPanel', () => {
-  test('默认落在「移动设备」页，给出 iOS 三步与本机当前地址', () => {
+  test('默认落在「移动设备」页，给出 iOS 四步与本机当前地址的二维码', () => {
     const html = render(<ConnectDevicesPanel />);
     expect(html).toContain('data-testid="connect-devices-panel"');
     expect(html).toContain('data-testid="connect-tab-mobile"');
     expect(html).toContain('data-testid="connect-tab-computer"');
     expect(html).toContain('data-testid="connect-platform-ios"');
     expect(html).toContain('data-testid="connect-platform-android"');
-    for (const step of ['open', 'add', 'launch']) {
+    for (const step of ['address', 'scan', 'add', 'launch']) {
       expect(html).toContain(`data-testid="connect-step-ios-${step}"`);
     }
     // 数据未到、origin 是回环：只剩「当前地址」兜底并给出回环提示。
-    expect(html).toContain('data-testid="command-block-address-0"');
+    expect(html).toContain('data-testid="connect-access-addresses"');
+    expect(html).toContain('data-testid="command-block-mobile-address"');
+    expect(html).toContain('data-testid="connect-qr"');
     expect(html).toContain(ORIGIN);
     expect(html).toContain('data-testid="connect-loopback-hint"');
-    expect(html).toContain('connectDevices.mobile.ios.open.title');
+    expect(html).toContain('connectDevices.mobile.chooseAddress.title');
+    expect(html).toContain('connectDevices.mobile.scan.ios');
   });
 
   test('一级 / 二级都是真的 tab 组件：tablist + tab + tabpanel，未选中的页不挂载', () => {
@@ -98,6 +102,8 @@ describe('ConnectDevicesPanel', () => {
     // 未选中的分支不进 DOM。
     expect(html).not.toContain('data-testid="connect-step-install"');
     expect(html).not.toContain('data-testid="connect-step-android-add"');
+    // 只有一个候选地址：这步退化成静态说明，不做成单选。
+    expect(html).not.toContain('type="radio"');
   });
 
   test('移动设备页给出远程访问入口，链接不带 panel 参数（跳转即关面板）', () => {
@@ -106,11 +112,73 @@ describe('ConnectDevicesPanel', () => {
     expect(html).not.toContain('panel=connect');
   });
 
-  test('Android 页换成 Android 三步', () => {
-    const html = render(<MobilePlatformSteps platform="android" />);
+  test('Android 页换成 Android 的添加步骤与扫码提示', () => {
+    const html = render(<MobilePlatformSteps platform="android" choice={choice(ADDRESSES)} />);
     expect(html).toContain('data-testid="connect-step-android-add"');
     expect(html).toContain('connectDevices.mobile.android.add.title');
+    expect(html).toContain('connectDevices.mobile.scan.android');
     expect(html).not.toContain('connect-step-ios-add');
+  });
+});
+
+const ADDRESSES: AccessAddress[] = [
+  { kind: 'tunnel', url: 'https://tmex.example.com' },
+  { kind: 'lan', url: 'http://192.168.1.20:9883' },
+];
+
+function choice(list: AccessAddress[], selectedIndex = 0) {
+  return {
+    list,
+    loopbackHint: false,
+    selected: list[selectedIndex] ?? null,
+    onSelect: () => undefined,
+  };
+}
+
+describe('移动设备页的地址选择与二维码', () => {
+  test('多个候选做成一组原生单选：默认选中第一条，标签按种类给出', () => {
+    const html = render(<AddressChoiceList {...choice(ADDRESSES)} />);
+    expect(html).toContain('role="radiogroup"');
+    expect(html.split('type="radio"').length - 1).toBe(2);
+    expect(html).toContain('connectDevices.mobile.address.tunnel');
+    expect(html).toContain('connectDevices.mobile.address.lan');
+    // 第一条选中、第二条未选。
+    expect(html.split('checked=""').length - 1).toBe(1);
+    expect(html.indexOf('checked=""')).toBeLessThan(
+      html.indexOf('data-testid="connect-address-1"')
+    );
+  });
+
+  test('换一条地址：选中态跟着走', () => {
+    const html = render(<AddressChoiceList {...choice(ADDRESSES, 1)} />);
+    expect(html.split('checked=""').length - 1).toBe(1);
+    expect(html.indexOf('data-testid="connect-address-1"')).toBeLessThan(
+      html.indexOf('checked=""')
+    );
+  });
+
+  test('只有一个候选时退化成静态说明，地址仍然摆出来', () => {
+    const html = render(<AddressChoiceList {...choice([ADDRESSES[1]])} />);
+    expect(html).not.toContain('type="radio"');
+    expect(html).toContain('connectDevices.mobile.chooseAddress.single');
+    expect(html).toContain('http://192.168.1.20:9883');
+  });
+
+  test('二维码内容随选中的地址变化，命令块同步给出可手输的地址', () => {
+    const first = render(<ScanBlock platform="ios" url={ADDRESSES[0].url} />);
+    const second = render(<ScanBlock platform="ios" url={ADDRESSES[1].url} />);
+    expect(first).toContain('data-testid="connect-qr"');
+    expect(first).toContain(ADDRESSES[0].url);
+    expect(second).toContain(ADDRESSES[1].url);
+    // 二维码本身也变了（同一份 SVG 路径说明没跟着选中项走）。
+    const path = (html: string) => html.slice(html.indexOf('<svg'), html.indexOf('</svg>'));
+    expect(path(first)).not.toBe(path(second));
+  });
+
+  test('没有任何候选地址时不渲染二维码', () => {
+    const html = render(<ScanBlock platform="ios" url={null} />);
+    expect(html).not.toContain('data-testid="connect-qr"');
+    expect(html).not.toContain('data-testid="command-block-mobile-address"');
   });
 });
 

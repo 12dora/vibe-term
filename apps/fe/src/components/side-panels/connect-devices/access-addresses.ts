@@ -3,7 +3,8 @@
 
 import type { AccessAddressesResponse, TunnelStatusResponse } from '@tmex/shared';
 
-export type AccessAddressKind = 'public' | 'lan' | 'current';
+// 种类只用来给候选打标签（界面上要区分「隧道 / Hub / 局域网 / 当前地址」），排序仍按可达性。
+export type AccessAddressKind = 'tunnel' | 'hub' | 'lan' | 'current';
 
 export interface AccessAddress {
   kind: AccessAddressKind;
@@ -37,7 +38,7 @@ function tunnelPublicUrl(tunnel: TunnelStatusResponse | null): string | null {
   return null;
 }
 
-/** 候选列表：公网 → 局域网 → 当前地址；全部为空时退回当前 origin（哪怕是回环，界面另给提示）。 */
+/** 候选列表：隧道 → Hub → 局域网 → 当前地址；全部为空时退回当前 origin（哪怕是回环，界面另给提示）。 */
 export function buildAccessAddresses(input: AccessAddressInput): AccessAddress[] {
   const out: AccessAddress[] = [];
   const seen = new Set<string>();
@@ -49,8 +50,8 @@ export function buildAccessAddresses(input: AccessAddressInput): AccessAddress[]
     out.push({ kind, url: normalized });
   };
 
-  push('public', tunnelPublicUrl(input.tunnel));
-  push('public', input.hubPublicUrl);
+  push('tunnel', tunnelPublicUrl(input.tunnel));
+  push('hub', input.hubPublicUrl);
   const addresses = input.addresses;
   if (addresses && !addresses.loopbackOnly && Array.isArray(addresses.lanAddresses)) {
     for (const ip of addresses.lanAddresses) push('lan', `http://${ip}:${addresses.port}`);

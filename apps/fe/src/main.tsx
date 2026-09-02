@@ -11,6 +11,7 @@ import './index.css';
 console.info(`${PRODUCT_NAME} ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
 
 import { isAuthTransitionActive } from '@/auth/auth-transition';
+import { RouteErrorElement } from '@/components/app-error-boundary';
 import { FlowBridges } from '@/components/flow-bridges';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { SidePanelHost } from '@/components/side-panels/side-panel-host';
@@ -278,16 +279,23 @@ function pageRoutes() {
 }
 
 // 路由配置 - Data 模式：/n/:nodeId/... 为显式 node，旧路由等价于 self（不做重定向）
+// 顶层套一个无路径的父路由，只为把 errorElement 挂上去：子路由继承它，
+// 任何抛到路由层的错误都落到自家的友好错误页，而不是 React Router 的开发者页面。
 const router = createBrowserRouter([
-  { path: '/login', element: <PageWrapper moduleLoader={loginModule} withSidebar={false} /> },
-  // 独立的 /nodes、/account/security 两页已并入设置页与右侧滑出面板；老书签重定向过去，
-  // 不要变成 404。
-  { path: '/nodes', element: <Navigate to="/settings?tab=nodes" replace /> },
-  { path: '/account/security', element: <Navigate to="/settings?panel=security" replace /> },
   {
-    path: '/',
-    Component: RootLayout,
-    children: [...pageRoutes(), { path: 'n/:nodeId', children: pageRoutes() }],
+    errorElement: <RouteErrorElement />,
+    children: [
+      { path: '/login', element: <PageWrapper moduleLoader={loginModule} withSidebar={false} /> },
+      // 独立的 /nodes、/account/security 两页已并入设置页与右侧滑出面板；老书签重定向过去，
+      // 不要变成 404。
+      { path: '/nodes', element: <Navigate to="/settings?tab=nodes" replace /> },
+      { path: '/account/security', element: <Navigate to="/settings?panel=security" replace /> },
+      {
+        path: '/',
+        Component: RootLayout,
+        children: [...pageRoutes(), { path: 'n/:nodeId', children: pageRoutes() }],
+      },
+    ],
   },
 ]);
 
