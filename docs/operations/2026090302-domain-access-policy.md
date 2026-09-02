@@ -14,7 +14,7 @@
 
 ## 拦截规则
 
-关闭后，`via=self` 且命中「配置的公开域名」且不在服务白名单里的请求：
+关闭后，`via=self`、路径不在服务白名单、且**客户端源地址不是本机/内网**的请求一律拒绝（判定不看 Host，Host 可被任意伪造）：
 
 | 路径 | 响应 |
 | --- | --- |
@@ -22,17 +22,15 @@
 | `/ws`、`/n/:id/ws`、`/mesh/ws` | 同上 JSON 403（在 upgrade 之前拒绝） |
 | 其它（SPA、静态资源…） | `403` `text/plain`：`Domain access is disabled for this host.` |
 
-**服务白名单**（关掉后仍可经域名访问）：`/hub/uplink`、`/healthz`、`/.well-known/acme-challenge/*`、`POST /api/hub/enrollments/redeem`、`GET /api/hub/status`、`GET /api/hub/enrollments/:id`。所以 uplink、健康检查、ACME 续期与加入码兑换不会被这个开关打断。
+**源地址豁免**（这些来源即使带着域名 Host 也照常可用）：loopback、RFC1918 私网、链路本地、CGNAT `100.64/10`（Tailscale）、IPv6 ULA / 链路本地 / loopback，以及它们的 IPv4-mapped 写法。源地址取自 `client-ip.ts`：默认是 socket 对端地址；`TMEX_TRUST_PROXY` 开启时按 `cf-connecting-ip → x-real-ip → XFF 最后一段`。解析不出源地址时按公网处理（fail closed）。**反向代理部署必须开启信任代理头**，否则判定的是代理自身的 socket 地址（通常是私网，会误放行）。
 
-### 「配置的公开域名」从哪来
+**服务白名单**（公网仍可访问）：`/hub/uplink`、`/healthz`、`/.well-known/acme-challenge/*`、`POST /api/hub/enrollments/redeem`、`GET /api/hub/status`、`GET /api/hub/enrollments/:id`。所以 uplink、健康检查、ACME 续期与加入码兑换不会被这个开关打断。peer 入站（`via=<nodeId>`）不经过这个守卫。
 
-`listDomainAccessHosts()` 汇总：`TMEX_BASE_URL`（`config.baseUrl`）、`site_settings.site_url`、hub 角色下的 `TMEX_HUB_PUBLIC_URL` 与本机在 `mesh_hubs` 里的 `public_url`、`tunnel_config.hostname`、运行中隧道的 `publicUrl`。**不含** `TMEX_HUB_URL`（那是远端 hub），也不读证书 SAN。
+### `hosts` 与 `viaDomain`（仅供界面提示）
 
-规范化后：小写、去尾点、去 IPv6 zone id、`80`/`443` 视为默认端口被剥掉。IP 字面量（含 IPv4-mapped）、`localhost` / `*.localhost`、`local` / `*.local`、`127.0.0.0/8`、`::1` 一律**不进** hosts 集合，也永远不算 via-domain——即使它们出现在 `site_url` 或 `TMEX_BASE_URL` 里。
+`listDomainAccessHosts()` 汇总：`TMEX_BASE_URL`（`config.baseUrl`）、数据库里的 `site_settings.site_url` 与 mesh 投影后的有效地址（两者都算）、hub 角色下的 `TMEX_HUB_PUBLIC_URL` 与本机在 `mesh_hubs` 里的 `public_url`、`tunnel_config.hostname`、运行中隧道的 `publicUrl`。**不含** `TMEX_HUB_URL`（那是远端 hub），也不读证书 SAN。规范化后小写、去尾点、剥默认端口；IP 字面量、`localhost`、`*.local` 不进集合。
 
-端口规则：配置项**不带端口**时匹配该主机名的任意端口（`example.com` 在 443 和 9443 上都算域名）；配置项**带非默认端口**时精确匹配。
-
-请求侧的 host 取自 `publicRequestUrl(req)`，它只在 `TMEX_TRUST_PROXY` 开启且 `via=self` 时采信第一个 `X-Forwarded-Host`。反代场景下没开信任代理，判定会退回 Bun 看到的 Host。
+`viaDomain` = 当前请求的有效 URL（`publicRequestUrl(req)`，仅在 `TMEX_TRUST_PROXY` 且 `via=self` 时采信 `X-Forwarded-Host`）命中 `hosts`。它只用来在关开关时提醒「你正经域名访问，关闭后会失联」，不参与拦截。
 
 ## API
 
