@@ -119,6 +119,8 @@ export type HubRuntimeOptions = {
   hubRoleInstalled?: boolean;
   autoPromote?: boolean;
   autoPromoteTimeoutMs?: number;
+  /** 本机节点被 rename 成功后回调，用于同步 site_settings.site_name。 */
+  syncLocalSiteName?: (name: string) => void;
 };
 
 type ForwardedWriteCtx = {
@@ -223,6 +225,7 @@ export class HubRuntime {
   private readonly hubRoleInstalled: boolean;
   private readonly hubTrust: HubTrustStore | undefined;
   private readonly hubFetch: HubPeerFetch | undefined;
+  private readonly syncLocalSiteName: ((name: string) => void) | undefined;
   private writerBridge: HubWriterBridge | null = null;
   private readonly writeForwardWaiters = new Map<
     string,
@@ -245,6 +248,7 @@ export class HubRuntime {
     this.registry = new NodeRegistry();
     this.hubTrust = opts.hubTrust;
     this.hubFetch = opts.hubFetch ?? opts.fetchPeerStatus;
+    this.syncLocalSiteName = opts.syncLocalSiteName;
     this.uplink = new UplinkServer({
       db: opts.db,
       userStore: opts.userStore,
@@ -910,6 +914,12 @@ export class HubRuntime {
     patchNode(this.db, nodeId, { name: next });
     this.registry.updateMeta(nodeId, { name: next }, this.now());
     await this.uplink.broadcastNodeList(auth.userId);
+    const ownId = this.config.nodeId ?? this.config.hubNodeId ?? this.uplink.hubNodeId();
+    if (ownId && nodeId === ownId) {
+      try {
+        this.syncLocalSiteName?.(next);
+      } catch {}
+    }
     return json({ ok: true, id: nodeId, name: next });
   }
 

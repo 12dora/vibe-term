@@ -84,6 +84,7 @@ describe('GET /api/local/status', () => {
         platform: 'darwin-arm64',
       },
       tls: { mode: 'none', listenerRunning: false, tlsPort: 9443 },
+      domainAccess: { allowed: true, viaDomain: false, hosts: [] },
     });
   });
 
@@ -110,6 +111,27 @@ describe('GET /api/local/status', () => {
       mode: 'selfsigned',
       listenerRunning: true,
       tlsPort: 21443,
+    });
+  });
+
+  test('domainAccess comes from the domainAccess dep', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/status'),
+        deps({
+          domainAccess: () => ({
+            allowed: false,
+            viaDomain: true,
+            hosts: ['tmex.example.com'],
+          }),
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect((body as { domainAccess: unknown }).domainAccess).toEqual({
+      allowed: false,
+      viaDomain: true,
+      hosts: ['tmex.example.com'],
     });
   });
 

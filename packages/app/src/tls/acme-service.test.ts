@@ -16,6 +16,8 @@ import {
 } from './acme-service';
 import { createCa, issueLeaf } from './cert-authority';
 import { CloudflareDnsClient } from './cloudflare-dns';
+import { CloudflareDnsProvider } from './dns-provider';
+import { DnspodDnsClient } from './dnspod-dns';
 
 const AUTHZ = { identifier: { type: 'dns', value: 'example.com' } };
 
@@ -92,7 +94,9 @@ describe('issue', () => {
       const result = await issue({
         store,
         challenge: responder,
-        dns: new CloudflareDnsClient(async () => new Response('no', { status: 500 })),
+        dns: new CloudflareDnsProvider(
+          new CloudflareDnsClient(async () => new Response('no', { status: 500 }))
+        ),
         clientFactory: () => client,
       });
       expect(seenPending).toBe(true);
@@ -129,30 +133,35 @@ describe('issue', () => {
       });
       const calls: string[] = [];
       const seenNameservers: Array<string[] | undefined> = [];
-      const dns = new CloudflareDnsClient(async (url, init) => {
-        const method = init?.method ?? 'GET';
-        calls.push(`${method} ${url}`);
-        if (String(url).includes('/zones?name=example.com')) {
-          return Response.json({ success: true, result: [{ id: 'zone-1', name: 'example.com' }] });
-        }
-        if (method === 'GET' && String(url).endsWith('/zones/zone-1')) {
-          return Response.json({
-            success: true,
-            result: { name_servers: ['ns1.example.com', '203.0.113.1'] },
-          });
-        }
-        if (method === 'POST') {
-          const body = JSON.parse(String(init?.body));
-          expect(body.name).toBe('_acme-challenge.example.com');
-          expect(body.content).toBe('dns-key-auth');
-          return Response.json({ success: true, result: { id: 'rec-1' } });
-        }
-        if (method === 'DELETE') {
-          expect(String(url)).toContain('/dns_records/rec-1');
-          return Response.json({ success: true, result: { id: 'rec-1' } });
-        }
-        return Response.json({ success: false }, { status: 400 });
-      });
+      const dns = new CloudflareDnsProvider(
+        new CloudflareDnsClient(async (url, init) => {
+          const method = init?.method ?? 'GET';
+          calls.push(`${method} ${url}`);
+          if (String(url).includes('/zones?name=example.com')) {
+            return Response.json({
+              success: true,
+              result: [{ id: 'zone-1', name: 'example.com' }],
+            });
+          }
+          if (method === 'GET' && String(url).endsWith('/zones/zone-1')) {
+            return Response.json({
+              success: true,
+              result: { name_servers: ['ns1.example.com', '203.0.113.1'] },
+            });
+          }
+          if (method === 'POST') {
+            const body = JSON.parse(String(init?.body));
+            expect(body.name).toBe('_acme-challenge.example.com');
+            expect(body.content).toBe('dns-key-auth');
+            return Response.json({ success: true, result: { id: 'rec-1' } });
+          }
+          if (method === 'DELETE') {
+            expect(String(url)).toContain('/dns_records/rec-1');
+            return Response.json({ success: true, result: { id: 'rec-1' } });
+          }
+          return Response.json({ success: false }, { status: 400 });
+        })
+      );
       const result = await issue({
         store,
         challenge: new AcmeHttp01Challenge(),
@@ -197,22 +206,30 @@ describe('issue', () => {
         acmeChallenge: 'dns-01',
         acmeCfToken: 'cf-secret',
       });
-      const dns = new CloudflareDnsClient(async (url, init) => {
-        const method = init?.method ?? 'GET';
-        if (String(url).includes('/zones?name=example.com')) {
-          return Response.json({ success: true, result: [{ id: 'zone-1', name: 'example.com' }] });
-        }
-        if (method === 'GET' && String(url).endsWith('/zones/zone-1')) {
-          return Response.json({ success: true, result: { name_servers: ['203.0.113.1'] } });
-        }
-        if (method === 'POST') {
-          return Response.json({ success: true, result: { id: 'rec-1' } });
-        }
-        if (method === 'DELETE') {
-          return Response.json({ success: false, errors: [{ message: 'busy' }] }, { status: 500 });
-        }
-        return Response.json({ success: false }, { status: 400 });
-      });
+      const dns = new CloudflareDnsProvider(
+        new CloudflareDnsClient(async (url, init) => {
+          const method = init?.method ?? 'GET';
+          if (String(url).includes('/zones?name=example.com')) {
+            return Response.json({
+              success: true,
+              result: [{ id: 'zone-1', name: 'example.com' }],
+            });
+          }
+          if (method === 'GET' && String(url).endsWith('/zones/zone-1')) {
+            return Response.json({ success: true, result: { name_servers: ['203.0.113.1'] } });
+          }
+          if (method === 'POST') {
+            return Response.json({ success: true, result: { id: 'rec-1' } });
+          }
+          if (method === 'DELETE') {
+            return Response.json(
+              { success: false, errors: [{ message: 'busy' }] },
+              { status: 500 }
+            );
+          }
+          return Response.json({ success: false }, { status: 400 });
+        })
+      );
       const result = await issue({
         store,
         challenge: new AcmeHttp01Challenge(),
@@ -267,7 +284,9 @@ describe('issue', () => {
       const staging = await issue({
         store,
         challenge: new AcmeHttp01Challenge(),
-        dns: new CloudflareDnsClient(async () => new Response('no', { status: 500 })),
+        dns: new CloudflareDnsProvider(
+          new CloudflareDnsClient(async () => new Response('no', { status: 500 }))
+        ),
         clientFactory: factory,
         config: { staging: true },
       });
@@ -277,7 +296,9 @@ describe('issue', () => {
       const production = await issue({
         store,
         challenge: new AcmeHttp01Challenge(),
-        dns: new CloudflareDnsClient(async () => new Response('no', { status: 500 })),
+        dns: new CloudflareDnsProvider(
+          new CloudflareDnsClient(async () => new Response('no', { status: 500 }))
+        ),
         clientFactory: factory,
         config: { staging: false },
       });
@@ -292,7 +313,9 @@ describe('issue', () => {
       const backToStaging = await issue({
         store,
         challenge: new AcmeHttp01Challenge(),
-        dns: new CloudflareDnsClient(async () => new Response('no', { status: 500 })),
+        dns: new CloudflareDnsProvider(
+          new CloudflareDnsClient(async () => new Response('no', { status: 500 }))
+        ),
         clientFactory: factory,
         config: { staging: true },
       });
@@ -317,7 +340,9 @@ describe('issue', () => {
         issue({
           store,
           challenge: new AcmeHttp01Challenge(),
-          dns: new CloudflareDnsClient(async () => new Response('no', { status: 500 })),
+          dns: new CloudflareDnsProvider(
+            new CloudflareDnsClient(async () => new Response('no', { status: 500 }))
+          ),
           clientFactory: () =>
             fakeClient({
               certPem: 'nope',
@@ -331,6 +356,69 @@ describe('issue', () => {
       expect(row.acmeStatus).toBe('idle');
       expect(row.certPem).toBeNull();
       expect(row.acmeLastError).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
+  test('dns-01 dnspod provider creates and removes TXT via dnsapi.cn', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new TlsConfigStore(db);
+      const ca = await createCa({ name: 'acme dnspod' });
+      const leaf = await issueLeaf({ ca, sans: ['example.com'], days: 90 });
+      await store.upsert({
+        mode: 'acme',
+        acmeDomain: 'example.com',
+        acmeEmail: 'ops@example.com',
+        acmeChallenge: 'dns-01',
+        acmeDnsProvider: 'dnspod',
+        acmeDnsSecret: JSON.stringify({ id: '123', token: 'tok' }),
+      });
+      const methods: string[] = [];
+      const dns = new DnspodDnsClient({
+        email: 'ops@example.com',
+        version: '1.2.3',
+        fetch: async (url, init) => {
+          const method = String(url).split('/').pop() ?? '';
+          methods.push(method);
+          const body = new URLSearchParams(String(init?.body ?? ''));
+          if (method === 'Domain.Info' && body.get('domain') === '_acme-challenge.example.com') {
+            return Response.json({ status: { code: '13', message: 'domain error' } });
+          }
+          if (method === 'Domain.Info' && body.get('domain') === 'example.com') {
+            return Response.json({
+              status: { code: '1' },
+              domain: { name: 'example.com', dnspod_ns: ['ns1.dnspod.net'] },
+            });
+          }
+          if (method === 'Record.Create') {
+            expect(body.get('sub_domain')).toBe('_acme-challenge');
+            expect(body.get('value')).toBe('dns-key-auth');
+            return Response.json({ status: { code: '1' }, record: { id: '77' } });
+          }
+          if (method === 'Record.Remove') {
+            expect(body.get('record_id')).toBe('77');
+            return Response.json({ status: { code: '1' } });
+          }
+          return Response.json({ status: { code: '0', message: 'unexpected' } }, { status: 400 });
+        },
+      });
+      const result = await issue({
+        store,
+        challenge: new AcmeHttp01Challenge(),
+        dns,
+        clientFactory: () =>
+          fakeClient({
+            certPem: leaf.certPem,
+            challenge: { type: 'dns-01', token: 'dns-tok' },
+            keyAuth: 'dns-key-auth',
+          }),
+        ...instantDnsWait(),
+      });
+      expect(methods).toContain('Record.Create');
+      expect(methods).toContain('Record.Remove');
+      expect(result.cleanupWarning).toBeNull();
     } finally {
       close();
     }

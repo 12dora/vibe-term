@@ -42,6 +42,8 @@ const MIGRATIONS = [
   '0034_hub_role_transitions.sql',
   '0035_tunnel_access_mode.sql',
   '0036_rotate_root_keep.sql',
+  '0037_acme_dns_provider.sql',
+  '0038_node_access_policy.sql',
 ] as const;
 
 export interface MaterializedMigrations {

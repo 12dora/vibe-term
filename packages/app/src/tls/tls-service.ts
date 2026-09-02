@@ -2,6 +2,7 @@ import { isIP } from 'node:net';
 import type { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import type {
   AcmeChallengeType,
+  DnsProviderId,
   TlsConfigPatch,
   TlsConfigPublic,
   TlsMode,
@@ -27,6 +28,14 @@ import {
   spkiFingerprint,
 } from './cert-authority';
 import { CloudflareDnsClient } from './cloudflare-dns';
+import {
+  CloudflareDnsProvider,
+  type DnsCredentials,
+  type DnsProvider,
+  normalizeDnsCredentials,
+  serializeDnsCredentials,
+} from './dns-provider';
+import { DnspodDnsClient } from './dnspod-dns';
 import { TlsApiError } from './errors';
 import type { HttpsListenerConfig, HttpsListenerState } from './https-listener';
 
@@ -46,6 +55,8 @@ export type ApplyModeInput =
       email: string;
       challenge: AcmeChallengeType;
       cloudflareToken?: string;
+      dnsProvider?: DnsProviderId;
+      dnsCredentials?: DnsCredentials;
       staging: boolean;
       tlsPort: number;
       bindHost: string;
@@ -76,6 +87,7 @@ export type TlsStatus = {
     lastAttemptAt: number | null;
     nextRenewAt: number | null;
     hasCloudflareToken: boolean;
+    dns: { provider: DnsProviderId | null; hasCredentials: boolean };
   } | null;
   restartRequired: boolean;
 };
@@ -97,7 +109,7 @@ export type TlsServiceOptions = {
   now?: () => number;
   log?: (message: string) => void;
   fetch?: typeof fetch;
-  dns?: CloudflareDnsClient;
+  dns?: DnsProvider;
   issueAcme?: (input: AcmeIssueInput) => Promise<AcmeIssuedMaterial>;
   scheduleBackground?: (work: () => Promise<void>) => void;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
@@ -140,14 +152,12 @@ export class TlsService {
   private readonly mutex = new SerialQueue();
   private readonly scheduler: RenewalScheduler;
   private readonly now: () => number;
-  private readonly dns: CloudflareDnsClient;
   private readonly issueAcmeFn: (input: AcmeIssueInput) => Promise<AcmeIssuedMaterial>;
   private readonly scheduleBackground: (work: () => Promise<void>) => void;
 
   constructor(private readonly opts: TlsServiceOptions) {
     this.trustProxy = opts.trustProxy ?? false;
     this.now = opts.now ?? Date.now;
-    this.dns = opts.dns ?? new CloudflareDnsClient(opts.fetch);
     this.issueAcmeFn = opts.issueAcme ?? issueAcmeCert;
     this.scheduleBackground =
       opts.scheduleBackground ??
@@ -258,6 +268,10 @@ export class TlsService {
               lastAttemptAt: row.acmeLastAttemptAt,
               nextRenewAt: row.acmeNextRenewAt,
               hasCloudflareToken: row.hasCloudflareToken,
+              dns: {
+                provider: row.acmeDnsProvider,
+                hasCredentials: row.hasDnsCredentials,
+              },
             }
           : null,
       restartRequired: this.restartRequired,
@@ -390,13 +404,7 @@ export class TlsService {
       throw new TlsApiError('invalid_domain', 400, 'challenge must be http-01 or dns-01');
     }
     const current = await this.opts.store.get();
-    if (input.challenge === 'dns-01' && !input.cloudflareToken && !current.hasCloudflareToken) {
-      throw new TlsApiError(
-        'cloudflare_token_required',
-        400,
-        'cloudflareToken is required for dns-01'
-      );
-    }
+    const dnsPatch = resolveAcmeDnsPatch(input, current);
     const directoryUrl = acmeDirectoryUrl(Boolean(input.staging));
     await this.upsert({
       mode: 'acme',
@@ -412,7 +420,7 @@ export class TlsService {
       acmeNextRenewAt: this.now() + RENEWAL_BACKOFF_MIN_MS,
       acmeAccountDirectory: directoryUrl,
       ...(current.acmeAccountDirectory !== directoryUrl ? { acmeAccountUrl: null } : {}),
-      ...(input.cloudflareToken ? { acmeCfToken: input.cloudflareToken } : {}),
+      ...dnsPatch,
     });
     this.queueAcmeIssue('apply');
     this.scheduler.start();
@@ -522,7 +530,7 @@ export class TlsService {
         },
         store: this.opts.store,
         challenge: this.opts.challenge,
-        dns: this.dns,
+        dns: this.createDnsProvider(row.acmeDnsProvider ?? 'cloudflare', row.acmeEmail ?? ''),
         log: this.opts.log,
         now: this.now,
         signal,
@@ -652,6 +660,100 @@ export class TlsService {
     const error = this.opts.listener.state().error;
     if (error) throw new TlsApiError('port_in_use', 409, error);
   }
+
+  private createDnsProvider(id: DnsProviderId, email: string): DnsProvider {
+    if (this.opts.dns?.id === id) return this.opts.dns;
+    if (id === 'dnspod') {
+      return new DnspodDnsClient({ fetch: this.opts.fetch, email });
+    }
+    return new CloudflareDnsProvider(new CloudflareDnsClient(this.opts.fetch));
+  }
+}
+
+function nonempty(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function resolveAcmeDnsPatch(
+  input: Extract<ApplyModeInput, { mode: 'acme' }>,
+  current: TlsConfigPublic
+): Pick<TlsConfigPatch, 'acmeDnsProvider' | 'acmeDnsSecret'> {
+  if (input.challenge !== 'dns-01') {
+    if (!input.dnsProvider && !input.dnsCredentials && !nonempty(input.cloudflareToken)) {
+      return {};
+    }
+  }
+  const legacyToken = nonempty(input.cloudflareToken);
+  const usedNewFields = input.dnsProvider !== undefined || input.dnsCredentials !== undefined;
+  const requestedProvider =
+    input.dnsProvider ??
+    (legacyToken ? 'cloudflare' : null) ??
+    current.acmeDnsProvider ??
+    (current.hasCloudflareToken ? 'cloudflare' : null);
+
+  if (input.challenge === 'dns-01' && !requestedProvider) {
+    if (usedNewFields) {
+      throw new TlsApiError('dns_provider_required', 400, 'dnsProvider is required for dns-01');
+    }
+    throw new TlsApiError(
+      'cloudflare_token_required',
+      400,
+      'cloudflareToken is required for dns-01'
+    );
+  }
+
+  const incoming = input.dnsCredentials
+    ? input.dnsProvider
+      ? normalizeDnsCredentials(input.dnsProvider, input.dnsCredentials)
+      : null
+    : legacyToken
+      ? { token: legacyToken }
+      : null;
+
+  if (input.dnsCredentials && !input.dnsProvider) {
+    throw new TlsApiError('dns_provider_required', 400, 'dnsProvider is required for dns-01');
+  }
+  if (input.dnsCredentials && input.dnsProvider && !incoming) {
+    throw new TlsApiError(
+      'dns_credentials_required',
+      400,
+      'dnsCredentials do not match the selected provider'
+    );
+  }
+
+  if (incoming && requestedProvider) {
+    const normalized = normalizeDnsCredentials(requestedProvider, incoming);
+    if (!normalized) {
+      throw new TlsApiError(
+        'dns_credentials_required',
+        400,
+        'dnsCredentials do not match the selected provider'
+      );
+    }
+    return {
+      acmeDnsProvider: requestedProvider,
+      acmeDnsSecret: serializeDnsCredentials(normalized),
+    };
+  }
+
+  if (input.challenge !== 'dns-01') return {};
+
+  const storedSame =
+    Boolean(requestedProvider) &&
+    current.acmeDnsProvider === requestedProvider &&
+    current.hasDnsCredentials;
+  const storedLegacyCloudflare = requestedProvider === 'cloudflare' && current.hasCloudflareToken;
+  if (storedSame || storedLegacyCloudflare) return {};
+
+  if (usedNewFields || input.dnsProvider) {
+    throw new TlsApiError(
+      'dns_credentials_required',
+      400,
+      'dnsCredentials are required for dns-01'
+    );
+  }
+  throw new TlsApiError('cloudflare_token_required', 400, 'cloudflareToken is required for dns-01');
 }
 
 function validatePort(value: number): number {

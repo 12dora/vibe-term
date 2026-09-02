@@ -3,6 +3,7 @@ import { t } from '../i18n';
 import { agentRoutes } from './agent';
 import { deviceFolderRoutes } from './device-folder-routes';
 import { deviceRoutes } from './device-routes';
+import { domainAccessRoutes } from './domain-access-routes';
 import { filesRoutes } from './files';
 import { json } from './http';
 import { llmRoutes } from './llm';
@@ -38,6 +39,7 @@ const apiRoutes: ApiRoute[] = [
   ...agentRoutes,
   ...watchRoutes,
   ...filesRoutes,
+  ...domainAccessRoutes,
   ...systemPrefixRoutes,
   ...webhookRoutes,
   ...healthRoutes,

@@ -21,6 +21,22 @@ export {
   spkiFingerprint,
 } from './cert-authority';
 export { CloudflareDnsClient } from './cloudflare-dns';
+export {
+  CloudflareDnsProvider,
+  asDnsProviderId,
+  parseDnsSecret,
+  resolveStoredDnsCredentials,
+  serializeDnsCredentials,
+} from './dns-provider';
+export type {
+  CloudflareDnsCredentials,
+  DnsCredentials,
+  DnsProvider,
+  DnsProviderId,
+  DnsTxtRef,
+  DnspodDnsCredentials,
+} from './dns-provider';
+export { DnspodDnsClient } from './dnspod-dns';
 export { TlsApiError } from './errors';
 export { HttpsListener } from './https-listener';
 export { TlsService } from './tls-service';

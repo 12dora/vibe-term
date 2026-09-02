@@ -1,5 +1,10 @@
 import { resolve } from 'node:path';
 import {
+  buildDomainAccessView,
+  guardDomainAccess,
+} from '../../../../apps/gateway/src/api/domain-access-routes';
+import { setSiteSettingsLinkProvider } from '../../../../apps/gateway/src/api/site-settings-link';
+import {
   PROCESS_STARTED_AT,
   setHealthzTlsProvider,
 } from '../../../../apps/gateway/src/api/system-routes';
@@ -10,11 +15,13 @@ import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identi
 import type { NodeSessionStore } from '../../../../apps/gateway/src/auth/node-session-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
 import { runtimeController } from '../../../../apps/gateway/src/control/runtime';
+import { getStoredSiteSettings, updateSiteSettings } from '../../../../apps/gateway/src/db';
 import {
   LocalAuthStore,
   readLocalAuthEffective,
 } from '../../../../apps/gateway/src/db/local-auth-settings';
 import type { HubRuntime, HubServerWebSocket } from '../../../../apps/gateway/src/hub';
+import { createMeshSiteSettingsLink } from '../../../../apps/gateway/src/mesh/effective-site-url';
 import {
   MESH_FORWARD_WS_KIND,
   MESH_GATEWAY_WS_KIND,
@@ -39,6 +46,7 @@ import {
   authenticateRequest,
 } from '../../../../apps/gateway/src/mesh/session-middleware';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
+import { broadcastSettingsUpdate } from '../../../../apps/gateway/src/settings/broadcaster';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
@@ -239,6 +247,8 @@ function createHttpDispatch(handlers: HttpHandler[]): AssembledTmex['fetch'] {
     if (!rewritten) {
       const denied = await guardEntryAccess(req);
       if (denied) return denied;
+      const domainDenied = guardDomainAccess(req);
+      if (domainDenied) return domainDenied;
     }
     for (const handler of handlers) {
       const out = await handler(req, bunServer);
@@ -475,6 +485,15 @@ type MeshHubAssembleOpts = CreateMeshRuntimeOptions & {
   };
 };
 
+function syncLocalSiteNameFromMesh(name: string): void {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const current = getStoredSiteSettings();
+  if (current.siteName === trimmed) return;
+  updateSiteSettings({ siteName: trimmed });
+  broadcastSettingsUpdate('site');
+}
+
 async function createNodeMesh(input: {
   roles: TmexRoles;
   gateway: GatewayRuntime;
@@ -484,6 +503,7 @@ async function createNodeMesh(input: {
   nativeDir?: string;
   tlsSlot: { service?: TlsService };
   meshHubStore?: MeshHubStore;
+  onLocalNodeName?: (name: string) => void;
 }): Promise<MeshRuntime> {
   const nativeDir = input.nativeDir ?? process.env.TMEX_NATIVE_DIR ?? '';
   const identity = await new NodeIdentityStore(input.gateway.db).load();
@@ -536,6 +556,7 @@ async function createNodeMesh(input: {
         void runtimeController.requestRestart();
       }, delayMs);
     },
+    onLocalNodeName: input.onLocalNodeName,
   };
   return input.createMesh(opts);
 }
@@ -611,6 +632,7 @@ async function createAssembleAuthSurface(input: {
   createMesh: (opts: CreateMeshRuntimeOptions) => Promise<MeshRuntime>;
   tlsSlot: { service?: TlsService };
   meshHubStore?: MeshHubStore;
+  onLocalNodeName?: (name: string) => void;
 }) {
   const auth = await createAuthContextFromDb(input.gateway.db, {
     installDir: resolveGatewayInstallDir(),
@@ -633,6 +655,7 @@ async function createAssembleAuthSurface(input: {
       nativeDir: input.opts.nativeDir,
       tlsSlot: input.tlsSlot,
       meshHubStore: input.meshHubStore,
+      onLocalNodeName: input.onLocalNodeName,
     });
   } else {
     authHttp = await createStandaloneAuthHttp({
@@ -665,7 +688,22 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     createMesh,
     tlsSlot,
     meshHubStore,
+    onLocalNodeName: syncLocalSiteNameFromMesh,
   });
+  if (roles.hub || roles.node) {
+    setSiteSettingsLinkProvider(
+      createMeshSiteSettingsLink({
+        roles,
+        localNodeId: () => mesh?.nodeId ?? null,
+        hubStore: meshHubStore ?? null,
+        attachedHub: () => mesh?.attachedHub() ?? null,
+        hubPublicUrl: gatewayConfig.hubPublicUrl,
+        hubMetaPublicUrl: () => mesh?.userStore.getHubMeta()?.publicUrl ?? null,
+      })
+    );
+  } else {
+    setSiteSettingsLinkProvider(null);
+  }
   const localAuthEffective = resolveLocalAuthEffective(opts.localAuthEffective, authHttp);
   if (roles.hub) {
     console.log(
@@ -723,6 +761,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       const { mode, listener, tlsPort } = await tlsSlot.service.status();
       return { mode, listenerRunning: listener.running, tlsPort };
     },
+    domainAccess: (req) => buildDomainAccessView(req),
   };
 
   const authSurface = mesh ?? authHttp;
@@ -786,6 +825,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
         unsubscribeNodeList?.();
         unsubscribeNodeList = undefined;
         setHealthzTlsProvider(null);
+        setSiteSettingsLinkProvider(null);
         await tryStop(() => gateway.stopAgentSessions?.(), 'agent-supervisor');
         await tryStop(() => mesh?.stop(), 'mesh');
         await tryStop(() => authHttp?.stop(), 'auth');

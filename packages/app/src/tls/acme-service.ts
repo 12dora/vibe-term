@@ -6,7 +6,8 @@ import type { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config
 import type { AcmeChallengeType } from '../../../../apps/gateway/src/tls/types';
 import type { AcmeHttp01Challenge } from './acme-challenge';
 import { parseCertificate } from './cert-authority';
-import type { CloudflareDnsClient } from './cloudflare-dns';
+import type { DnsCredentials, DnsProvider, DnsProviderId, DnsTxtRef } from './dns-provider';
+import { resolveStoredDnsCredentials } from './dns-provider';
 
 export const ACME_RENEW_LEAD_MS = 30 * 24 * 60 * 60 * 1000;
 export const RENEWAL_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -67,7 +68,7 @@ export type AcmeIssueInput = {
   };
   store: TlsConfigStore;
   challenge: AcmeHttp01Challenge;
-  dns: CloudflareDnsClient;
+  dns: DnsProvider;
   log?: (message: string) => void;
   now?: () => number;
   clientFactory?: AcmeClientFactory;
@@ -79,7 +80,7 @@ export type AcmeIssueInput = {
 };
 
 type PendingChallenges = {
-  dns: Array<{ zoneId: string; recordId: string; token: string }>;
+  dns: Array<{ ref: DnsTxtRef; token: string }>;
   http: string[];
   failures: string[];
 };
@@ -252,9 +253,14 @@ async function openAccount(
   };
 }
 
+function dnsLogPrefix(providerId: DnsProviderId): string {
+  return `acme dns-01 ${providerId}`;
+}
+
 async function createChallenge(
   input: AcmeIssueInput,
-  cfToken: string | null,
+  creds: DnsCredentials | null,
+  providerId: DnsProviderId,
   pending: PendingChallenges,
   now: () => number,
   authz: AcmeAuthorization,
@@ -268,20 +274,26 @@ async function createChallenge(
     return;
   }
   if (challenge.type !== 'dns-01') throw new Error(`unsupported acme challenge ${challenge.type}`);
-  if (!cfToken) throw new Error('cloudflare token required for dns-01');
+  if (!creds) {
+    throw new Error(
+      providerId === 'cloudflare'
+        ? 'cloudflare token required for dns-01'
+        : `${providerId} credentials required for dns-01`
+    );
+  }
   const domain = authz.identifier.value;
-  const zoneId = await input.dns.findZoneId(cfToken, domain);
   const name = `_acme-challenge.${domain}`;
-  pending.dns.push({
-    zoneId,
-    recordId: await input.dns.createTxt(cfToken, zoneId, name, keyAuthorization),
-    token: challenge.token,
-  });
+  const ref = await input.dns.createTxt(creds, name, keyAuthorization);
+  pending.dns.push({ ref, token: challenge.token });
   let nameservers: string[] | undefined;
-  try {
-    nameservers = await input.dns.getNameServers(cfToken, zoneId);
-  } catch (error) {
-    input.log?.(`acme dns-01 nameserver lookup failed, using system resolver: ${errMsg(error)}`);
+  if (ref.zone && input.dns.getNameServers) {
+    try {
+      nameservers = await input.dns.getNameServers(creds, ref.zone);
+    } catch (error) {
+      input.log?.(
+        `${dnsLogPrefix(providerId)} nameserver lookup failed, using system resolver: ${errMsg(error)}`
+      );
+    }
   }
   await waitForTxt({
     hostname: name,
@@ -298,7 +310,8 @@ async function createChallenge(
 
 async function removeChallenge(
   input: AcmeIssueInput,
-  cfToken: string | null,
+  creds: DnsCredentials | null,
+  providerId: DnsProviderId,
   pending: PendingChallenges,
   challenge: AcmeChallenge
 ): Promise<void> {
@@ -311,32 +324,37 @@ async function removeChallenge(
   if (challenge.type !== 'dns-01') return;
   const storedIdx = pending.dns.findIndex((item) => item.token === challenge.token);
   const stored = storedIdx >= 0 ? pending.dns[storedIdx] : undefined;
-  if (!cfToken || !stored) return;
+  if (!creds || !stored) return;
   try {
-    await input.dns.deleteRecord(cfToken, stored.zoneId, stored.recordId);
+    await input.dns.deleteTxt(creds, stored.ref);
     pending.dns.splice(storedIdx, 1);
   } catch (error) {
-    input.log?.(`acme dns-01 challengeRemoveFn failed for ${stored.recordId}: ${errMsg(error)}`);
+    input.log?.(
+      `${dnsLogPrefix(providerId)} challengeRemoveFn failed for ${stored.ref.recordId}: ${errMsg(error)}`
+    );
   }
 }
 
 async function cleanupChallenges(
   input: AcmeIssueInput,
-  cfToken: string | null,
+  creds: DnsCredentials | null,
+  providerId: DnsProviderId,
   pending: PendingChallenges
 ): Promise<void> {
   while (pending.dns.length > 0) {
     const rec = pending.dns.pop();
     if (!rec) continue;
-    if (!cfToken) {
-      pending.failures.push(`missing cloudflare token for ${rec.recordId}`);
+    if (!creds) {
+      pending.failures.push(`missing ${providerId} credentials for ${rec.ref.recordId}`);
       continue;
     }
     try {
-      await input.dns.deleteRecord(cfToken, rec.zoneId, rec.recordId);
+      await input.dns.deleteTxt(creds, rec.ref);
     } catch (error) {
-      pending.failures.push(`${rec.recordId}: ${errMsg(error)}`);
-      input.log?.(`acme dns-01 cleanup failed for ${rec.recordId}: ${errMsg(error)}`);
+      pending.failures.push(`${rec.ref.recordId}: ${errMsg(error)}`);
+      input.log?.(
+        `${dnsLogPrefix(providerId)} cleanup failed for ${rec.ref.recordId}: ${errMsg(error)}`
+      );
     }
   }
   for (const token of pending.http) input.challenge.clear(token);
@@ -362,7 +380,12 @@ export async function issue(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> 
   const leafKey = asPem(await acme.crypto.createPrivateEcdsaKey('P-256'));
   const [, csr] = await acme.crypto.createCsr({ commonName: domain, altNames: [domain] }, leafKey);
   const pending: PendingChallenges = { dns: [], http: [], failures: [] };
-  const cfToken = secrets.acmeCfToken;
+  const storedDns = resolveStoredDnsCredentials(
+    { acmeDnsProvider: current.acmeDnsProvider },
+    { acmeDnsSecret: secrets.acmeDnsSecret, acmeCfToken: secrets.acmeCfToken }
+  );
+  const creds = storedDns.credentials;
+  const providerId = input.dns.id;
   let certPem: string | undefined;
   try {
     certPem = await client.auto({
@@ -372,12 +395,13 @@ export async function issue(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> 
       challengePriority: [challengeType],
       skipChallengeVerification: true,
       challengeCreateFn: (authz, challenge, keyAuthorization) =>
-        createChallenge(input, cfToken, pending, now, authz, challenge, keyAuthorization),
-      challengeRemoveFn: (_authz, challenge) => removeChallenge(input, cfToken, pending, challenge),
+        createChallenge(input, creds, providerId, pending, now, authz, challenge, keyAuthorization),
+      challengeRemoveFn: (_authz, challenge) =>
+        removeChallenge(input, creds, providerId, pending, challenge),
     });
     throwIfAborted(input.signal);
   } finally {
-    await cleanupChallenges(input, cfToken, pending);
+    await cleanupChallenges(input, creds, providerId, pending);
   }
   if (!certPem) throw new Error('acme auto returned an empty certificate');
   const parsed = parseCertificate(certPem);

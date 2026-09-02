@@ -7,6 +7,7 @@ export {
   TLS_CONFIG_SCOPE,
   type AcmeChallengeType,
   type AcmeStatus,
+  type DnsProviderId,
   type TlsConfigPatch,
   type TlsConfigPublic,
   type TlsMode,

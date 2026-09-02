@@ -1,5 +1,6 @@
 import type { SiteSettings } from '@tmex/shared';
 import { eq } from 'drizzle-orm';
+import { getSiteSettingsLinkProvider } from '../api/site-settings-link';
 import { config } from '../config';
 import { i18next } from '../i18n';
 import { getDb as getOrmDb } from './client';
@@ -58,17 +59,26 @@ function refreshSiteSettingsCache(): SiteSettings {
   return settings;
 }
 
-export function getSiteSettings(): SiteSettings {
+export function getStoredSiteSettings(): SiteSettings {
   if (siteSettingsCache && Date.now() < siteSettingsCache.expiresAt) {
     return siteSettingsCache.value;
   }
   return refreshSiteSettingsCache();
 }
 
+export function getSiteSettings(): SiteSettings {
+  const stored = getStoredSiteSettings();
+  const link = getSiteSettingsLinkProvider();
+  if (!link.linked()) return stored;
+  const effective = link.effectiveSiteUrl();
+  if (!effective || effective === stored.siteUrl) return stored;
+  return { ...stored, siteUrl: effective };
+}
+
 export function updateSiteSettings(
   updates: Partial<Omit<SiteSettings, 'updatedAt'>>
 ): SiteSettings {
-  const current = getSiteSettings();
+  const current = getStoredSiteSettings();
   const next: SiteSettings = {
     siteName: updates.siteName ?? current.siteName,
     siteUrl: updates.siteUrl ?? current.siteUrl,

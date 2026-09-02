@@ -272,6 +272,95 @@ describe('createTlsRoutes', () => {
     expect(applied).toBe(1);
   });
 
+  test('PUT acme dns-01 accepts dnsProvider/dnsCredentials and keeps legacy cloudflareToken', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-dns-'));
+    const service = new TlsService({
+      store: new TlsConfigStore(db),
+      listener: new FakeListener(),
+      challenge: new AcmeHttp01Challenge(),
+      envPath: join(dir, 'app.env'),
+      scheduleBackground: () => {},
+      setTimeoutFn: () => 1,
+      clearTimeoutFn: () => {},
+      issueAcme: async () => {
+        throw new Error('should not issue in this test');
+      },
+    });
+    cleanups.push(async () => {
+      service.stop();
+      close();
+      await rm(dir, { recursive: true, force: true });
+    });
+    const handle = createTlsRoutes({ service, authorize: async () => null });
+
+    const missing = await handle(
+      new Request('http://127.0.0.1/api/tls', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'acme',
+          domain: 'example.com',
+          email: 'ops@example.com',
+          challenge: 'dns-01',
+          staging: true,
+          tlsPort: 9443,
+          bindHost: '0.0.0.0',
+        }),
+      })
+    );
+    expect(missing?.status).toBe(400);
+    expect(await missing?.json()).toEqual({
+      error: { code: 'cloudflare_token_required', message: expect.any(String) },
+    });
+
+    const badProvider = await handle(
+      new Request('http://127.0.0.1/api/tls', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'acme',
+          domain: 'example.com',
+          email: 'ops@example.com',
+          challenge: 'dns-01',
+          dnsProvider: 'route53',
+          dnsCredentials: { token: 'x' },
+          staging: true,
+          tlsPort: 9443,
+          bindHost: '0.0.0.0',
+        }),
+      })
+    );
+    expect(badProvider?.status).toBe(400);
+    expect(((await badProvider?.json()) as { error: { code: string } }).error.code).toBe(
+      'dns_provider_required'
+    );
+
+    const put = await handle(
+      new Request('http://127.0.0.1/api/tls', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'acme',
+          domain: 'example.com',
+          email: 'ops@example.com',
+          challenge: 'dns-01',
+          dnsProvider: 'dnspod',
+          dnsCredentials: { id: '1', token: 'tok' },
+          staging: true,
+          tlsPort: 9443,
+          bindHost: '0.0.0.0',
+        }),
+      })
+    );
+    expect(put?.status).toBe(200);
+    const body = (await put?.json()) as {
+      acme: { dns: { provider: string; hasCredentials: boolean }; hasCloudflareToken: boolean };
+    };
+    expect(body.acme.dns).toEqual({ provider: 'dnspod', hasCredentials: true });
+    expect(body.acme.hasCloudflareToken).toBe(false);
+  });
+
   test('maps validation errors to { error: { code, message } }', async () => {
     const { db, close } = createMigratedAuthDb();
     const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-routes-err-'));

@@ -1,11 +1,16 @@
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
+import {
+  resetDomainAccessForTests,
+  setDomainAccessGuardForTests,
+} from '../../../../apps/gateway/src/api/domain-access-routes';
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import {
   MESH_GATEWAY_WS_KIND,
   MESH_REJECT_4401_KIND,
+  setMeshRequestContext,
 } from '../../../../apps/gateway/src/mesh/mesh-deps';
 import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
@@ -99,6 +104,8 @@ function fakeMesh(overrides?: Partial<MeshRuntime> & { hub?: HubRuntime | null }
     nodeId: 'ab'.repeat(16),
     hub: overrides?.hub ?? null,
     handleRequest: async () => null,
+    attachedHub: () => null,
+    userStore: { getHubMeta: () => null },
     localUiGuard: () => null,
     guardGatewayWebSocket: () => null,
     rewriteSelf: () => null,
@@ -1479,6 +1486,158 @@ describe('assembleTmex Access guard at outermost fetch', () => {
   });
 });
 
+describe('assembleTmex domain access guard', () => {
+  afterEach(() => {
+    resetDomainAccessForTests();
+  });
+
+  const HOSTS = ['tmex.example.com'];
+
+  async function assembleDisabled(overrides?: {
+    hub?: HubRuntime;
+    gateway?: GatewayRuntime;
+  }) {
+    setDomainAccessGuardForTests({ allowed: false, hosts: HOSTS });
+    return assembleTmex({
+      roles: { hub: false, node: false },
+      serveFrontend: async () => new Response('spa'),
+      hub:
+        overrides?.hub ??
+        fakeHub({
+          handleRequest: async (req) =>
+            new URL(req.url).pathname === '/hub/uplink' ? new Response('uplink-ok') : undefined,
+        }),
+      createGatewayRuntime: async () =>
+        overrides?.gateway ??
+        fakeGateway({
+          handleRequest: (req) => {
+            const path = new URL(req.url).pathname;
+            if (path === '/healthz') {
+              return new Response(JSON.stringify({ status: 'ok' }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+              });
+            }
+            if (path.startsWith('/api/')) return new Response('api-ok');
+            return undefined;
+          },
+        }),
+    });
+  }
+
+  test('default allowed does not change public dispatch', async () => {
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: false },
+      serveFrontend: async () => new Response('spa'),
+      createGatewayRuntime: async () => fakeGateway(),
+    });
+    const res = await assembled.fetch(new Request('https://tmex.example.com/'), dummyServer);
+    expect(res?.status).toBe(200);
+    expect(await res?.text()).toBe('spa');
+  });
+
+  test('disabled domain: / is 403 text, /api and /ws are 403 JSON', async () => {
+    const assembled = await assembleDisabled();
+    const page = await assembled.fetch(new Request('https://tmex.example.com/'), dummyServer);
+    expect(page?.status).toBe(403);
+    expect(page?.headers.get('content-type')).toContain('text/plain');
+    expect(await page?.text()).toBe('Domain access is disabled for this host.');
+
+    const api = await assembled.fetch(new Request('https://tmex.example.com/api/x'), dummyServer);
+    expect(api?.status).toBe(403);
+    expect(await api?.json()).toEqual({
+      error: {
+        code: 'DOMAIN_ACCESS_DISABLED',
+        message: 'Access through this domain is disabled for this node.',
+      },
+    });
+
+    const ws = await assembled.fetch(new Request('https://tmex.example.com/ws'), dummyServer);
+    expect(ws?.status).toBe(403);
+    expect(await ws?.json()).toEqual({
+      error: {
+        code: 'DOMAIN_ACCESS_DISABLED',
+        message: 'Access through this domain is disabled for this node.',
+      },
+    });
+  });
+
+  test('disabled domain: /n/:id/api is 403 JSON; service paths and LAN pass', async () => {
+    let hubHits = 0;
+    const assembled = await assembleDisabled({
+      hub: fakeHub({
+        handleRequest: async (req) => {
+          if (new URL(req.url).pathname === '/hub/uplink') {
+            hubHits += 1;
+            return new Response('uplink-ok');
+          }
+          return undefined;
+        },
+      }),
+    });
+    const nodeApi = await assembled.fetch(
+      new Request('https://tmex.example.com/n/abc/api/x'),
+      dummyServer
+    );
+    expect(nodeApi?.status).toBe(403);
+    expect((await nodeApi?.json()) as { error: { code: string } }).toEqual({
+      error: expect.objectContaining({ code: 'DOMAIN_ACCESS_DISABLED' }),
+    });
+
+    const health = await assembled.fetch(
+      new Request('https://tmex.example.com/healthz'),
+      dummyServer
+    );
+    expect(health?.status).toBe(200);
+
+    const uplink = await assembled.fetch(
+      new Request('https://tmex.example.com/hub/uplink'),
+      dummyServer
+    );
+    expect(uplink?.status).toBe(200);
+    expect(await uplink?.text()).toBe('uplink-ok');
+    expect(hubHits).toBe(1);
+
+    const acme = await assembled.fetch(
+      new Request('https://tmex.example.com/.well-known/acme-challenge/tok'),
+      dummyServer
+    );
+    expect(acme?.status).not.toBe(403);
+
+    const redeem = await assembled.fetch(
+      new Request('https://tmex.example.com/api/hub/enrollments/redeem', { method: 'POST' }),
+      dummyServer
+    );
+    expect(redeem?.status).toBe(200);
+    expect(await redeem?.text()).toBe('api-ok');
+
+    const hubStatus = await assembled.fetch(
+      new Request('https://tmex.example.com/api/hub/status'),
+      dummyServer
+    );
+    expect(hubStatus?.status).toBe(200);
+
+    const enroll = await assembled.fetch(
+      new Request('https://tmex.example.com/api/hub/enrollments/tok-1'),
+      dummyServer
+    );
+    expect(enroll?.status).toBe(200);
+
+    const lan = await assembled.fetch(new Request('http://192.168.1.5/'), dummyServer);
+    expect(lan?.status).toBe(200);
+    expect(await lan?.text()).toBe('spa');
+  });
+
+  test('peer-inbound via=<nodeId> is not blocked by the public dispatcher guard', async () => {
+    const assembled = await assembleDisabled();
+    const req = new Request('https://tmex.example.com/api/x');
+    setMeshRequestContext(req, { via: 'ab'.repeat(16) });
+    const res = await assembled.fetch(req, dummyServer);
+    expect(res?.status).toBe(200);
+    expect(await res?.text()).toBe('api-ok');
+  });
+});
+
 describe('assembleTmex preflight', () => {
   test('skips mesh/TLS/frontend and only serves /healthz', async () => {
     let meshCalls = 0;
@@ -1556,6 +1715,7 @@ describe('assembleTmex multi-hub wiring', () => {
           hubNodeId: extra.config.hubNodeId,
         };
         expect(extra.meshHubs).toBe(extra.meshHubStore);
+        expect(typeof extra.onLocalNodeName).toBe('function');
         return fakeMesh({ hub });
       },
     });

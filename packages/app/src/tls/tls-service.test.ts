@@ -237,7 +237,112 @@ describe('TlsService', () => {
     expect(ok.acme?.status).toBe('ok');
     expect(ok.listener.running).toBe(true);
     expect(ok.acme?.hasCloudflareToken).toBe(false);
+    expect(ok.acme?.dns).toEqual({ provider: null, hasCredentials: false });
     expect(ok.acme?.nextRenewAt).not.toBeNull();
+  });
+
+  test('dns-01 rejects missing credentials with the legacy cloudflare error', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    try {
+      await ctx.service.applyMode({
+        mode: 'acme',
+        domain: 'example.com',
+        email: 'ops@example.com',
+        challenge: 'dns-01',
+        staging: true,
+        tlsPort: 9443,
+        bindHost: '0.0.0.0',
+      });
+      throw new Error('expected cloudflare_token_required');
+    } catch (error) {
+      expect((error as TlsApiError).code).toBe('cloudflare_token_required');
+      expect((error as TlsApiError).status).toBe(400);
+    }
+  });
+
+  test('dns-01 dnspod stores JSON credentials and reports dns status', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    const pending = await ctx.service.applyMode({
+      mode: 'acme',
+      domain: 'example.com',
+      email: 'ops@example.com',
+      challenge: 'dns-01',
+      dnsProvider: 'dnspod',
+      dnsCredentials: { id: '100', token: 'dnspod-token' },
+      staging: true,
+      tlsPort: 9443,
+      bindHost: '0.0.0.0',
+    });
+    expect(pending.acme?.dns).toEqual({ provider: 'dnspod', hasCredentials: true });
+    expect(pending.acme?.hasCloudflareToken).toBe(false);
+    const material = await ctx.store.getPrivateMaterial();
+    expect(material.acmeDnsSecret).toBe('{"id":"100","token":"dnspod-token"}');
+    expect(material.acmeCfToken).toBeNull();
+    await Promise.all(ctx.jobs);
+  });
+
+  test('dns-01 may omit credentials when the same provider is already stored', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    await ctx.service.applyMode({
+      mode: 'acme',
+      domain: 'example.com',
+      email: 'ops@example.com',
+      challenge: 'dns-01',
+      dnsProvider: 'cloudflare',
+      dnsCredentials: { token: 'cf-secret' },
+      staging: true,
+      tlsPort: 9443,
+      bindHost: '0.0.0.0',
+    });
+    await Promise.all(ctx.jobs);
+    const again = await ctx.service.applyMode({
+      mode: 'acme',
+      domain: 'example.com',
+      email: 'ops@example.com',
+      challenge: 'dns-01',
+      dnsProvider: 'cloudflare',
+      staging: true,
+      tlsPort: 9443,
+      bindHost: '0.0.0.0',
+    });
+    expect(again.acme?.hasCloudflareToken).toBe(true);
+    expect(again.acme?.dns).toEqual({ provider: 'cloudflare', hasCredentials: true });
+    expect((await ctx.store.getPrivateMaterial()).acmeDnsSecret).toBe('{"token":"cf-secret"}');
+    await Promise.all(ctx.jobs);
+  });
+
+  test('switching dns-01 provider without new credentials is dns_credentials_required', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    await ctx.service.applyMode({
+      mode: 'acme',
+      domain: 'example.com',
+      email: 'ops@example.com',
+      challenge: 'dns-01',
+      cloudflareToken: 'cf-secret',
+      staging: true,
+      tlsPort: 9443,
+      bindHost: '0.0.0.0',
+    });
+    await Promise.all(ctx.jobs);
+    try {
+      await ctx.service.applyMode({
+        mode: 'acme',
+        domain: 'example.com',
+        email: 'ops@example.com',
+        challenge: 'dns-01',
+        dnsProvider: 'dnspod',
+        staging: true,
+        tlsPort: 9443,
+        bindHost: '0.0.0.0',
+      });
+      throw new Error('expected dns_credentials_required');
+    } catch (error) {
+      expect((error as TlsApiError).code).toBe('dns_credentials_required');
+    }
   });
 
   test('renew is not applicable for none/external', async () => {

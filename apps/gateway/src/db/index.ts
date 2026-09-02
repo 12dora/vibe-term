@@ -46,6 +46,7 @@ export type { LocalAuthStoreLike } from './local-auth-settings';
 export {
   ensureSiteSettingsInitialized,
   getSiteSettings,
+  getStoredSiteSettings,
   updateSiteSettings,
 } from './site-settings';
 

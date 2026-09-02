@@ -1,8 +1,9 @@
-import { beforeAll, describe, expect, test } from 'bun:test';
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
-import { ensureSiteSettingsInitialized, updateSiteSettings } from '.';
+import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '.';
+import { setSiteSettingsLinkProvider } from '../api/site-settings-link';
 import { getDb as getOrmDb } from './client';
 import { siteSettings } from './schema';
 
@@ -19,6 +20,10 @@ function dbRow() {
 beforeAll(() => {
   migrate(getOrmDb(), { migrationsFolder: resolve(import.meta.dir, '../../drizzle') });
   ensureSiteSettingsInitialized();
+});
+
+afterEach(() => {
+  setSiteSettingsLinkProvider(null);
 });
 
 describe('updateSiteSettings 持久化', () => {
@@ -49,5 +54,18 @@ describe('updateSiteSettings 持久化', () => {
     const after = dbRow();
     expect(after.siteName).toBe('persist-probe');
     expect(after.updatedAt > before).toBe(true);
+  });
+
+  test('mesh overlay of siteUrl is not written back on unrelated updates', () => {
+    const storedUrl = dbRow().siteUrl;
+    setSiteSettingsLinkProvider({
+      linked: () => true,
+      localNodeId: () => 'ab'.repeat(16),
+      effectiveSiteUrl: () => 'https://hub.example/n/overlay',
+    });
+    expect(getSiteSettings().siteUrl).toBe('https://hub.example/n/overlay');
+    updateSiteSettings({ enableBellSound: dbRow().enableBellSound });
+    expect(dbRow().siteUrl).toBe(storedUrl);
+    expect(getSiteSettings().siteUrl).toBe('https://hub.example/n/overlay');
   });
 });

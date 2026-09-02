@@ -24,6 +24,9 @@ import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createMigratedAuthDb } from '../auth/test-db';
+import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
+import { runMigrations } from '../db/migrate';
+import { broadcastSettingsUpdate } from '../settings/broadcaster';
 import { inspectHubAuthRecordCompat } from './hub-authorization';
 import { HubRuntime, type HubTlsInfoProvider } from './hub-runtime';
 import {
@@ -1351,6 +1354,79 @@ describe('HubRuntime HTTP', () => {
       expect(userStore.getNode(node.nodeId)?.status).toBe('revoked');
       expect(userStore.getCert(node.nodeId)?.revokedLogSeq).not.toBeNull();
       expect((await closed).reason).toBe('revoked');
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('rename of this runtime node updates local site_settings.site_name', async () => {
+    runMigrations();
+    ensureSiteSettingsInitialized();
+    const previous = getSiteSettings().siteName;
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const node = seedAdmittedNode(userStore, user.id, { name: 'old' });
+      updateSiteSettings({ siteName: 'old' });
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: { publicUrl: 'https://hub.example', stun: [], nodeId: node.nodeId },
+        authenticate: () => ({ userId: user.id, entryNodeId: node.nodeId }),
+        heartbeatIntervalMs: 60_000,
+        syncLocalSiteName: (name) => {
+          updateSiteSettings({ siteName: name });
+          broadcastSettingsUpdate('site');
+        },
+      });
+      const renamed = await hub.handleRequest(
+        new Request(`http://hub/api/hub/nodes/${node.nodeId}/rename`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'studio' }),
+        }),
+        dummyServer
+      );
+      expect(renamed?.status).toBe(200);
+      expect(getSiteSettings().siteName).toBe('studio');
+      hub.stop();
+    } finally {
+      updateSiteSettings({ siteName: previous });
+      close();
+    }
+  });
+
+  test('rename of a peer node does not sync local site name', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const node = seedAdmittedNode(userStore, user.id, { name: 'old' });
+      const names: string[] = [];
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: { publicUrl: 'https://hub.example', stun: [], nodeId: 'aa'.repeat(16) },
+        authenticate: () => ({ userId: user.id, entryNodeId: node.nodeId }),
+        heartbeatIntervalMs: 60_000,
+        syncLocalSiteName: (name) => {
+          names.push(name);
+        },
+      });
+      const renamed = await hub.handleRequest(
+        new Request(`http://hub/api/hub/nodes/${node.nodeId}/rename`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'studio' }),
+        }),
+        dummyServer
+      );
+      expect(renamed?.status).toBe(200);
+      expect(names).toEqual([]);
       hub.stop();
     } finally {
       close();

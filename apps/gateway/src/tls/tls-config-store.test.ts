@@ -40,6 +40,8 @@ describe('TlsConfigStore', () => {
         'acme_next_renew_at',
         'updated_at',
         'acme_account_directory',
+        'acme_dns_provider',
+        'acme_dns_secret_enc',
       ]);
     } finally {
       close();
@@ -59,6 +61,8 @@ describe('TlsConfigStore', () => {
       expect(row.certPem).toBeNull();
       expect(row.acmeStatus).toBe('idle');
       expect(row.acmeAccountDirectory).toBeNull();
+      expect(row.acmeDnsProvider).toBeNull();
+      expect(row.hasDnsCredentials).toBe(false);
       expect(row.hasCloudflareToken).toBe(false);
       expect(row.hasCaKey).toBe(false);
       expect(row.hasLeafKey).toBe(false);
@@ -69,6 +73,7 @@ describe('TlsConfigStore', () => {
         keyPem: null,
         acmeCfToken: null,
         acmeAccountKey: null,
+        acmeDnsSecret: null,
       });
     } finally {
       close();
@@ -100,6 +105,8 @@ describe('TlsConfigStore', () => {
       expect(saved.hasCaKey).toBe(true);
       expect(saved.hasLeafKey).toBe(true);
       expect(saved.hasCloudflareToken).toBe(true);
+      expect(saved.hasDnsCredentials).toBe(true);
+      expect(saved.acmeDnsProvider).toBe('cloudflare');
       expect(saved.hasAccountKey).toBe(true);
       expect(JSON.stringify(saved)).not.toContain('CA_PRIVATE_KEY');
       expect(JSON.stringify(saved)).not.toContain('LEAF_PRIVATE_KEY');
@@ -155,6 +162,54 @@ describe('TlsConfigStore', () => {
       expect(material.keyPem).toBe('LEAF_PRIVATE_KEY');
       expect(material.acmeCfToken).toBe('cf-token-secret');
       expect(material.acmeAccountKey).toBe('ACME_ACCOUNT_KEY');
+      expect(material.acmeDnsSecret).toBe('{"token":"cf-token-secret"}');
+    } finally {
+      close();
+    }
+  });
+
+  test('legacy acme_cf_token_enc is presented as cloudflare when new columns are empty', async () => {
+    const { db, sqlite, close } = createMigratedAuthDb();
+    try {
+      const store = new TlsConfigStore(db);
+      await store.upsert({ acmeCfToken: 'legacy-token' });
+      sqlite
+        .query(
+          'UPDATE tls_config SET acme_dns_provider = NULL, acme_dns_secret_enc = NULL WHERE id = 1'
+        )
+        .run();
+      const row = await store.get();
+      expect(row.acmeDnsProvider).toBe('cloudflare');
+      expect(row.hasCloudflareToken).toBe(true);
+      expect(row.hasDnsCredentials).toBe(true);
+      const material = await store.getPrivateMaterial();
+      expect(material.acmeCfToken).toBe('legacy-token');
+      expect(material.acmeDnsSecret).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
+  test('stores dnspod JSON secret without writing the legacy cf token column', async () => {
+    const { db, sqlite, close } = createMigratedAuthDb();
+    try {
+      const store = new TlsConfigStore(db);
+      const saved = await store.upsert({
+        mode: 'acme',
+        acmeDnsProvider: 'dnspod',
+        acmeDnsSecret: JSON.stringify({ id: '42', token: 'dnspod-secret' }),
+      });
+      expect(saved.acmeDnsProvider).toBe('dnspod');
+      expect(saved.hasDnsCredentials).toBe(true);
+      expect(saved.hasCloudflareToken).toBe(false);
+      const raw = sqlite
+        .query('SELECT acme_cf_token_enc, acme_dns_secret_enc FROM tls_config WHERE id = 1')
+        .get() as { acme_cf_token_enc: string | null; acme_dns_secret_enc: string };
+      expect(raw.acme_cf_token_enc).toBeNull();
+      expect(raw.acme_dns_secret_enc).not.toBe('{"id":"42","token":"dnspod-secret"}');
+      const material = await store.getPrivateMaterial();
+      expect(material.acmeDnsSecret).toBe('{"id":"42","token":"dnspod-secret"}');
+      expect(material.acmeCfToken).toBeNull();
     } finally {
       close();
     }

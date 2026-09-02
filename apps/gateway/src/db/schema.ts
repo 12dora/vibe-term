@@ -683,6 +683,8 @@ export const tlsConfig = sqliteTable(
     acmeChallenge: text('acme_challenge'),
     acmeStaging: integer('acme_staging', { mode: 'boolean' }).notNull().default(false),
     acmeCfTokenEnc: text('acme_cf_token_enc'),
+    acmeDnsProvider: text('acme_dns_provider'),
+    acmeDnsSecretEnc: text('acme_dns_secret_enc'),
     acmeAccountKeyEnc: text('acme_account_key_enc'),
     acmeAccountUrl: text('acme_account_url'),
     acmeAccountDirectory: text('acme_account_directory'),
@@ -705,6 +707,10 @@ export const tlsConfig = sqliteTable(
     check(
       'tls_config_acme_status_check',
       sql`${table.acmeStatus} in ('idle', 'pending', 'ok', 'error')`
+    ),
+    check(
+      'tls_config_acme_dns_provider_check',
+      sql`${table.acmeDnsProvider} is null or ${table.acmeDnsProvider} in ('cloudflare', 'dnspod')`
     ),
   ]
 );
@@ -830,6 +836,16 @@ export const tunnelAccess = sqliteTable(
   (table) => [check('tunnel_access_singleton_check', sql`${table.id} = 'default'`)]
 );
 
+export const nodeAccessPolicy = sqliteTable(
+  'node_access_policy',
+  {
+    id: integer('id').primaryKey(),
+    allowDomainAccess: integer('allow_domain_access', { mode: 'boolean' }).notNull().default(true),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [check('node_access_policy_singleton_check', sql`${table.id} = 1`)]
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type UserKeyRow = typeof userKeys.$inferSelect;
 export type UserKeyLogRow = typeof userKeyLog.$inferSelect;
@@ -845,3 +861,4 @@ export type MeshHubRow = typeof meshHubs.$inferSelect;
 export type TunnelConfigRow = typeof tunnelConfig.$inferSelect;
 export type TunnelAccessRow = typeof tunnelAccess.$inferSelect;
 export type LocalAuthSettingsRow = typeof localAuthSettings.$inferSelect;
+export type NodeAccessPolicyRow = typeof nodeAccessPolicy.$inferSelect;

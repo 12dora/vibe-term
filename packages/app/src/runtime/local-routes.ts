@@ -17,10 +17,21 @@ export type LocalTlsStatus = {
   tlsPort: number;
 };
 
+export type DomainAccessStatus = {
+  allowed: boolean;
+  viaDomain: boolean;
+  hosts: string[];
+};
+
 export type LocalRouteDeps = SetupServiceDeps & {
   authenticate: (req: Request) => AuthenticateResult;
   tlsStatus: () => Promise<LocalTlsStatus>;
+  domainAccess?: (req: Request) => DomainAccessStatus;
 };
+
+function defaultDomainAccess(): DomainAccessStatus {
+  return { allowed: true, viaDomain: false, hosts: [] };
+}
 
 function isMeshRoleName(value: unknown): value is MeshRoleName {
   return value === 'node' || value === 'hub,node';
@@ -81,6 +92,7 @@ export async function handleLocalRequest(
           listenerRunning: tls.listenerRunning,
           tlsPort: tls.tlsPort,
         },
+        domainAccess: (deps.domainAccess ?? defaultDomainAccess)(req),
       });
     } catch (error) {
       return mapError(error, 'direct_failed');

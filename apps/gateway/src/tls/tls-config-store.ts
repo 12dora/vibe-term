@@ -18,6 +18,7 @@ const SECRET_SPECS = [
   ['keyPem', 'keyEnc', 'key'],
   ['acmeCfToken', 'acmeCfTokenEnc', 'acme_cf_token'],
   ['acmeAccountKey', 'acmeAccountKeyEnc', 'acme_account_key'],
+  ['acmeDnsSecret', 'acmeDnsSecretEnc', 'acme_dns_secret'],
 ] as const;
 
 const MERGE_KEYS = ['mode', 'tlsPort', 'bindHost', 'sans', 'acmeStaging', 'acmeStatus'] as const;
@@ -31,6 +32,7 @@ const NULLABLE_KEYS = [
   'acmeChallenge',
   'acmeAccountUrl',
   'acmeAccountDirectory',
+  'acmeDnsProvider',
   'acmeLastError',
   'acmeLastAttemptAt',
   'acmeNextRenewAt',
@@ -66,6 +68,8 @@ function emptyPublic(now = 0): TlsConfigPublic {
     acmeLastError: null,
     acmeLastAttemptAt: null,
     acmeNextRenewAt: null,
+    acmeDnsProvider: null,
+    hasDnsCredentials: false,
     hasCloudflareToken: false,
     hasCaKey: false,
     hasLeafKey: false,
@@ -117,7 +121,7 @@ export class TlsConfigStore {
       acmeLastError: row.acmeLastError ?? null,
       acmeLastAttemptAt: row.acmeLastAttemptAt ?? null,
       acmeNextRenewAt: row.acmeNextRenewAt ?? null,
-      hasCloudflareToken: Boolean(row.acmeCfTokenEnc),
+      ...dnsPresence(row.acmeDnsProvider, row.acmeDnsSecretEnc, row.acmeCfTokenEnc),
       hasCaKey: Boolean(row.caKeyEnc),
       hasLeafKey: Boolean(row.keyEnc),
       hasAccountKey: Boolean(row.acmeAccountKeyEnc),
@@ -128,7 +132,13 @@ export class TlsConfigStore {
   async getPrivateMaterial(): Promise<TlsPrivateMaterial> {
     const row = this.db.select().from(tlsConfig).where(eq(tlsConfig.id, TLS_CONFIG_ROW_ID)).get();
     if (!row) {
-      return { caKeyPem: null, keyPem: null, acmeCfToken: null, acmeAccountKey: null };
+      return {
+        caKeyPem: null,
+        keyPem: null,
+        acmeCfToken: null,
+        acmeAccountKey: null,
+        acmeDnsSecret: null,
+      };
     }
     return Object.fromEntries(
       await Promise.all(
@@ -140,8 +150,9 @@ export class TlsConfigStore {
   async upsert(partial: TlsConfigPatch): Promise<TlsConfigPublic> {
     const current = await this.get();
     const secrets = await this.getPrivateMaterial();
+    const patch = withLegacyDnsWrap(partial);
     const nextSecrets = Object.fromEntries(
-      SECRET_SPECS.map(([key]) => [key, key in partial ? (partial[key] ?? null) : secrets[key]])
+      SECRET_SPECS.map(([key]) => [key, key in patch ? (patch[key] ?? null) : secrets[key]])
     ) as TlsPrivateMaterial;
     const enc = Object.fromEntries(
       await Promise.all(
@@ -150,10 +161,10 @@ export class TlsConfigStore {
     );
     const values = {
       id: TLS_CONFIG_ROW_ID,
-      updatedAt: partial.updatedAt ?? Date.now(),
-      ...Object.fromEntries(MERGE_KEYS.map((key) => [key, partial[key] ?? current[key]])),
+      updatedAt: patch.updatedAt ?? Date.now(),
+      ...Object.fromEntries(MERGE_KEYS.map((key) => [key, patch[key] ?? current[key]])),
       ...Object.fromEntries(
-        NULLABLE_KEYS.map((key) => [key, key in partial ? (partial[key] ?? null) : current[key]])
+        NULLABLE_KEYS.map((key) => [key, key in patch ? (patch[key] ?? null) : current[key]])
       ),
       ...enc,
     };
@@ -165,6 +176,34 @@ export class TlsConfigStore {
       .run();
     return this.get();
   }
+}
+
+function dnsPresence(
+  rawProvider: string | null | undefined,
+  secretEnc: string | null | undefined,
+  cfTokenEnc: string | null | undefined
+): Pick<TlsConfigPublic, 'acmeDnsProvider' | 'hasDnsCredentials' | 'hasCloudflareToken'> {
+  const stored = oneOf(rawProvider, ['cloudflare', 'dnspod'] as const);
+  const provider = stored ?? (cfTokenEnc ? 'cloudflare' : null);
+  const hasDnsCredentials =
+    Boolean(secretEnc) || (provider === 'cloudflare' && Boolean(cfTokenEnc));
+  return {
+    acmeDnsProvider: (hasDnsCredentials ? provider : stored) ?? null,
+    hasDnsCredentials,
+    hasCloudflareToken: provider === 'cloudflare' && hasDnsCredentials,
+  };
+}
+
+/** Legacy `acmeCfToken` writes also populate the JSON secret columns going forward. */
+function withLegacyDnsWrap(partial: TlsConfigPatch): TlsConfigPatch {
+  if (!('acmeCfToken' in partial) || !partial.acmeCfToken || 'acmeDnsSecret' in partial) {
+    return partial;
+  }
+  return {
+    ...partial,
+    acmeDnsSecret: JSON.stringify({ token: partial.acmeCfToken }),
+    acmeDnsProvider: partial.acmeDnsProvider ?? 'cloudflare',
+  };
 }
 
 async function encryptField(plaintext: string | null): Promise<string | null> {

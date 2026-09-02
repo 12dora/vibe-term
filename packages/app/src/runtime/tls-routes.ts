@@ -1,4 +1,10 @@
 import { publicRequestUrl } from '../../../../apps/gateway/src/mesh/session-middleware';
+import {
+  type DnsCredentials,
+  type DnsProviderId,
+  asDnsProviderId,
+  normalizeDnsCredentials,
+} from '../tls/dns-provider';
 import { TlsApiError } from '../tls/errors';
 import type { ApplyModeInput, TlsService, TlsStatus } from '../tls/tls-service';
 
@@ -135,18 +141,53 @@ function parseApplyMode(body: Record<string, unknown>): ApplyModeInput {
     }
     const cloudflareToken =
       typeof body.cloudflareToken === 'string' ? body.cloudflareToken : undefined;
+    const dnsProvider = parseDnsProvider(body.dnsProvider);
+    const dnsCredentials = parseDnsCredentials(dnsProvider, body.dnsCredentials);
     return {
       mode: 'acme',
       domain: asString(body.domain, 'domain'),
       email: asString(body.email, 'email'),
       challenge,
       cloudflareToken,
+      dnsProvider: dnsProvider ?? undefined,
+      dnsCredentials: dnsCredentials ?? undefined,
       staging: Boolean(body.staging),
       tlsPort: asNumber(body.tlsPort, 'tlsPort'),
       bindHost: asString(body.bindHost, 'bindHost'),
     };
   }
   throw new TlsApiError('tls_failed', 400, 'mode is required');
+}
+
+function parseDnsProvider(value: unknown): DnsProviderId | null {
+  if (value === undefined) return null;
+  const id = asDnsProviderId(value);
+  if (!id) {
+    throw new TlsApiError('dns_provider_required', 400, 'dnsProvider must be cloudflare or dnspod');
+  }
+  return id;
+}
+
+function parseDnsCredentials(
+  provider: DnsProviderId | null,
+  value: unknown
+): DnsCredentials | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TlsApiError('dns_credentials_required', 400, 'dnsCredentials must be an object');
+  }
+  if (!provider) {
+    throw new TlsApiError('dns_provider_required', 400, 'dnsProvider is required for dns-01');
+  }
+  const normalized = normalizeDnsCredentials(provider, value);
+  if (!normalized) {
+    throw new TlsApiError(
+      'dns_credentials_required',
+      400,
+      'dnsCredentials do not match the selected provider'
+    );
+  }
+  return normalized;
 }
 
 function asString(value: unknown, field: string): string {

@@ -1,6 +1,7 @@
 export type TlsMode = 'none' | 'external' | 'selfsigned' | 'acme';
 export type AcmeChallengeType = 'http-01' | 'dns-01';
 export type AcmeStatus = 'idle' | 'pending' | 'ok' | 'error';
+export type DnsProviderId = 'cloudflare' | 'dnspod';
 
 export const TLS_CONFIG_ROW_ID = 1;
 export const TLS_CONFIG_SCOPE = 'tls_config';
@@ -29,6 +30,8 @@ export type TlsConfigPublic = {
   acmeLastError: string | null;
   acmeLastAttemptAt: number | null;
   acmeNextRenewAt: number | null;
+  acmeDnsProvider: DnsProviderId | null;
+  hasDnsCredentials: boolean;
   hasCloudflareToken: boolean;
   hasCaKey: boolean;
   hasLeafKey: boolean;
@@ -41,6 +44,7 @@ export type TlsPrivateMaterial = {
   keyPem: string | null;
   acmeCfToken: string | null;
   acmeAccountKey: string | null;
+  acmeDnsSecret: string | null;
 };
 
 export type TlsConfigPatch = {
@@ -59,6 +63,8 @@ export type TlsConfigPatch = {
   acmeChallenge?: AcmeChallengeType | null;
   acmeStaging?: boolean;
   acmeCfToken?: string | null;
+  acmeDnsProvider?: DnsProviderId | null;
+  acmeDnsSecret?: string | null;
   acmeAccountKey?: string | null;
   acmeAccountUrl?: string | null;
   acmeAccountDirectory?: string | null;
