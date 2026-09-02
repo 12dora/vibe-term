@@ -52,7 +52,22 @@
       "switchToEditor": "エディタ入力に切り替え",
       "switchToDirect": "直接入力に切り替え",
       "refreshPage": "ページを更新",
-      "refreshPageConfirm": "ページを更新してもよろしいですか？保存されていない内容は失われます。"
+      "refreshPageConfirm": "ページを更新してもよろしいですか？保存されていない内容は失われます。",
+      "latencyTooltip": "遅延：ブラウザーと現在の入口ノードとの間の WebSocket ハートビートの往復時間です（直近数回の中央値）。入口ノードから対象ノードまでの区間は含みません。",
+      "latencyTooltipRaw": "最新サンプル：{{ms}} ms"
+    },
+    "appError": {
+      "title": "問題が発生しました",
+      "description": "このページで予期しないエラーが発生し、表示を停止しました。まず再試行し、それでも直らない場合はアプリを再読み込みしてください。",
+      "panelDescription": "このパネルで予期しないエラーが発生しました。ページの他の部分は引き続き利用できます。",
+      "retry": "再試行",
+      "reload": "アプリを再読み込み",
+      "home": "ホームに戻る",
+      "closePanel": "パネルを閉じる",
+      "details": "技術的な詳細",
+      "copyDetails": "詳細をコピー",
+      "copied": "コピーしました",
+      "version": "バージョン {{version}}"
     },
     "connectDevices": {
       "title": "デバイスを追加",
@@ -67,15 +82,25 @@
           "android": "Android"
         },
         "address": {
-          "public": "公開アドレス",
+          "tunnel": "トンネル",
+          "hub": "ハブ",
           "lan": "LAN アドレス",
           "current": "現在のアドレス",
           "loopbackHint": "このマシンは 127.0.0.1 でのみ待ち受けているため、他のデバイスから直接アクセスできません。リモートアクセスを設定するか、--host 0.0.0.0 でインストールしてください。"
         },
-        "addressLabel": "現在のアドレス",
+        "chooseAddress": {
+          "title": "アクセスアドレスを選択",
+          "description": "端末から接続できるアドレスを選びます。次の手順で、そのアドレスの QR コードを表示します。",
+          "single": "端末で開くアクセスアドレス："
+        },
+        "scan": {
+          "title": "QR コードで開く",
+          "ios": "カメラで QR コードを読み取り、Safari で開きます（ホーム画面に追加できるのは Safari のみです）。",
+          "android": "カメラまたは Chrome で QR コードを読み取って開きます。",
+          "alt": "アクセスアドレスの QR コード"
+        },
         "ios": {
           "open": {
-            "title": "Safari で tmex を開く",
             "description": "iOS でホーム画面に追加できるのは Safari のみです。端末で次のアドレスを開きます："
           },
           "add": {
@@ -89,7 +114,6 @@
         },
         "android": {
           "open": {
-            "title": "Chrome で tmex を開く",
             "description": "端末で次のアドレスを開きます："
           },
           "add": {
@@ -330,6 +354,11 @@
       "siteNamePlaceholder": "tmex",
       "siteUrl": "サイト URL",
       "siteUrlPlaceholder": "http://localhost:3000",
+      "general": {
+        "nameLinkedHint": "ノード名と連動します。ここで変更すると「マルチノード連携」のノード名も変わります。",
+        "nameLinkedLocked": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
+        "urlManagedHint": "ハブの公開アドレスによって決まります。「マルチノード連携」で変更してください。"
+      },
       "bellThrottle": "ベル通知の制限（秒）",
       "notificationThrottle": "通知制限（秒）",
       "enableBrowserNotificationToast": "ブラウザ通知 Toast を有効にする",
@@ -1765,7 +1794,7 @@
         "title": "ハブクラスター",
         "active": "メインハブ",
         "standby": "予備ハブ",
-        "writer": "書き込み",
+        "writer": "現在、管理操作の書き込みを受け付けています",
         "attached": "この入口は現在このハブに接続しています",
         "online": "オンライン",
         "offline": "オフライン",
@@ -1847,20 +1876,20 @@
         "roleStandalone": "スタンドアロン",
         "roleNode": "ノード",
         "roleHub": "ハブ兼ノード",
-        "hubUrl": "参加アドレス",
-        "hubPublicUrl": "ハブの公開アドレス",
-        "attachedHub": "現在の Hub",
+        "localAddress": "このマシンのアドレス",
+        "localAddressUnset": "未設定",
+        "localAddressHint": "他のノードはこのマシンに参加できません。「ロール → ハブ兼ノード」で設定し直してください。",
+        "currentHub": "現在のハブ",
+        "joinSeed": "参加アドレス：{{url}}",
         "writerHub": "ライター：{{name}}",
         "hubList": "Hub 一覧",
         "self": "このマシン",
         "direct": "ダイレクト接続アドオン",
-        "directSupported": "対応",
         "directUnsupported": "このプラットフォームでは非対応",
         "directInstalled": "インストール済み",
-        "directInstalledVersion": "インストール済み（{{version}}）",
+        "directInstalledVersion": "インストール済み v{{version}}",
         "directNotInstalled": "未インストール",
-        "directActive": "有効",
-        "directDisabled": "オフ",
+        "directEnable": "有効",
         "directInstall": "アドオンをインストール",
         "directRemove": "アドオンを削除",
         "directRemoveConfirm": {
@@ -1869,7 +1898,6 @@
           "confirm": "削除",
           "cancel": "キャンセル"
         },
-        "directSwitch": "ダイレクト接続",
         "directSwitchHint": "先にアドオンをインストールしてください。",
         "directRestartRequired": "tmex を再起動すると反映されます。",
         "directFailed": "ダイレクト接続アドオンを更新できませんでした。",
@@ -1880,6 +1908,21 @@
         "restartNow": "今すぐ再起動",
         "restarting": "再起動しています…",
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
+        "general": "一般設定",
+        "domainAccess": {
+          "label": "ドメインアクセスを許可",
+          "description": "オフにすると、公開ドメイン（{{hosts}}）ではハブ／ノード間の通信のみを提供し、ウェブ画面と API は応答しなくなります。LAN の IP アドレスや localhost からのアクセスには影響しません。",
+          "noHosts": "公開ドメインはまだ設定されていません。",
+          "hostSeparator": "、",
+          "failed": "ドメインアクセスの設定を保存できませんでした（{{detail}}）。",
+          "confirm": {
+            "title": "ドメインアクセスをオフにしますか？",
+            "description": "{{hosts}} 上のウェブ画面と API は直ちに停止し、ハブ／ノード間の通信のみが残ります。元に戻すには、LAN の IP アドレスまたは localhost でこのページを開き直す必要があります。",
+            "viaDomain": "このページはそのドメイン経由で表示されているため、オフにすると直ちに切断されます。先に LAN の IP アドレスまたは localhost で tmex を開けることを確認してください。",
+            "confirm": "オフにする",
+            "cancel": "キャンセル"
+          }
+        },
         "accountSecurity": "アカウントセキュリティ",
         "loginRequired": "サインインするとこのマシンの状態を表示します。"
       },
@@ -1921,11 +1964,10 @@
         }
       },
       "https": {
-        "title": "HTTPS",
-        "description": "このマシンで HTTPS をどう提供するか。サインインとパスキーは安全なアドレスでのみ動作します。",
+        "title": "HTTPS 設定",
+        "description": "このマシンが HTTPS をどう提供するかを設定します。ログインとパスキーは HTTPS のアドレスでのみ利用できます。",
         "hubUrlHint": "ハブの公開アドレスは https である必要があります。ここで証明書を発行するか、前段にリバースプロキシを置いて「外部リバースプロキシ」を選んでください。",
-        "nodeRoleHint": "HTTPS はこのマシンがハブとして動作する場合にのみ必要です。ノードへはハブ経由でアクセスするため、ここでの設定は不要です。",
-        "currentMode": "現在のモード",
+        "nodeRoleHint": "HTTPS が必要なのは、このマシンがハブとして動作する場合だけです。ノードへはハブ経由でアクセスするため、設定は不要です。",
         "modeActive": "適用中",
         "save": "保存",
         "saved": "HTTPS 設定を保存しました",
@@ -1936,6 +1978,21 @@
         "restartNow": "今すぐ再起動",
         "restarting": "再起動しています…",
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
+        "status": {
+          "access": "外部アクセス",
+          "accessBuiltin": "HTTPS（内蔵リスナーが提供、ポート {{port}}）",
+          "accessProxyVerified": "HTTPS（前段のリバースプロキシが提供、今回のリクエストで確認済み）",
+          "accessProxyInferred": "HTTPS（公開アドレス {{url}} からの推定、リクエストでは未確認）",
+          "accessProxy": "HTTPS（前段のリバースプロキシが提供、リクエストでは未確認）",
+          "accessNone": "HTTP（HTTPS は無効）",
+          "proxyHint": "「外部リバースプロキシ」に切り替え、「プロキシヘッダーを信頼する」を有効にすることをおすすめします。",
+          "externalUnverified": "現在の HTTPS は公開アドレスからの推定です。「プロキシヘッダーを信頼する」を有効にすると、プロキシが転送するプロトコルで判定します。",
+          "mode": "設定モード",
+          "listener": "内蔵リスナー",
+          "listenerRunning": "ポート {{port}} で待ち受け中",
+          "listenerStopped": "停止中",
+          "listenerFailed": "起動に失敗しました：{{error}}"
+        },
         "confirmStop": {
           "title": "内蔵 HTTPS リスナーを停止しますか？",
           "description": "このページはポート {{port}} のリスナーが提供している可能性があります。「{{mode}}」を保存すると直ちに停止します。",
@@ -1950,36 +2007,21 @@
         "mode": {
           "none": {
             "title": "オフ",
-            "description": "平文 HTTP のみ。",
+            "description": "平文 HTTP のみを提供します。",
             "detail": "発行済みの証明書はディスクに残るため、いつでも戻せます。"
           },
           "external": {
             "title": "外部リバースプロキシ",
-            "description": "tmex の前段にある Cloudflare Tunnel、nginx、Caddy が TLS を処理します。"
+            "description": "前段の Cloudflare Tunnel、nginx、Caddy が TLS を処理します。"
           },
           "selfsigned": {
-            "title": "プライベート CA",
-            "description": "tmex が自ら証明書を発行します。各デバイスに CA を一度インストールする必要があります。"
+            "title": "内蔵プライベート CA",
+            "description": "このマシンが証明書を発行します。各デバイスに CA を一度インストールする必要があります。"
           },
           "acme": {
-            "title": "Let's Encrypt",
+            "title": "内蔵 Let's Encrypt",
             "description": "一般に信頼される証明書を自動で更新します。公開ドメイン名が必要です。"
           }
-        },
-        "effective": {
-          "label": "対外 HTTPS",
-          "builtin": "内蔵 HTTPS が提供",
-          "reverseProxy": "リバースプロキシが HTTPS を提供",
-          "reverseProxyVerified": "リバースプロキシが HTTPS を提供（現在のリクエストで確認済み）",
-          "reverseProxyInferred": "リバースプロキシが HTTPS を提供（公開アドレス {{url}} から推定）",
-          "none": "HTTPS は無効",
-          "proxyHint": "リバースプロキシ経由の HTTPS アクセスを検出しました。「外部リバースプロキシ」に切り替えて「プロキシヘッダーを信頼する」を有効にすると、Cookie、パスキー、公開アドレスが HTTPS として扱われます。",
-          "externalUnverified": "現在の HTTPS は公開アドレスから推定したものです。「プロキシヘッダーを信頼する」を有効にすると、tmex はプロキシが転送したプロトコルで判定します。"
-        },
-        "listener": {
-          "running": "内蔵リスナー：ポート {{port}} で待ち受け中",
-          "stopped": "内蔵リスナー：待ち受けていません",
-          "failed": "内蔵リスナーの起動に失敗しました：{{error}}"
         },
         "certificate": {
           "subject": "サブジェクト",
@@ -2034,7 +2076,7 @@
           }
         },
         "acme": {
-          "intro": "Let's Encrypt は 1 つのドメインに対して一般に信頼される証明書を発行します。ドメインはこのマシンを指している必要があり、更新は自動で行われます。",
+          "intro": "Let's Encrypt は 1 つのドメインに対して一般に信頼される証明書を発行し、更新は自動で行われます。ドメインはこのマシンを指している必要があります。",
           "domain": "ドメイン",
           "domainHint": "ホスト名 1 つ、ワイルドカードは使えません。すでにこのマシンを指している必要があります。",
           "email": "連絡先メールアドレス",
@@ -2042,11 +2084,17 @@
           "challenge": "検証方法",
           "challengeHttp": "HTTP-01",
           "challengeHttpHint": "Let's Encrypt が公開ポート 80 でこのマシンに接続します。",
-          "challengeDns": "DNS-01（Cloudflare）",
-          "challengeDnsHint": "代わりに Cloudflare API を使います。NAT 内でも、ポート 80 がなくても動作します。",
-          "cloudflareToken": "Cloudflare API トークン",
+          "challengeDns": "DNS-01",
+          "challengeDnsHint": "ポート 80 を開ける必要はありません。ドメインの DNS を、選択したプロバイダーで管理している必要があります。",
+          "dnsProvider": "DNS プロバイダー",
+          "dnsProviderCloudflare": "Cloudflare",
+          "dnsProviderDnspod": "DNSPod",
+          "dnsToken": "API トークン",
           "cloudflareTokenHint": "このドメインを含むゾーンに対する Zone:DNS:Edit 権限が必要です。暗号化して保存されます。",
-          "cloudflareTokenStored": "トークンは保存済みです。変更しない場合は空のままにしてください。",
+          "dnspodId": "Token ID",
+          "dnspodToken": "Token",
+          "dnspodHint": "DNSPod のコンソールで API キー（旧来の login_token、ID,Token の形式）を作成します。キーは暗号化して保存されます。",
+          "credentialsStored": "認証情報は保存済みです。空のままにすると引き続き使用します。",
           "staging": "ステージング環境を使う",
           "stagingHint": "ステージングの証明書はブラウザーに信頼されませんが、レート制限は緩やかです。動作確認に使ってください。",
           "statusLabel": "発行状況",
@@ -2063,7 +2111,7 @@
           "hints": {
             "http01": "公開ポート 80 がこのマシンに到達する必要があります。NAT 内ではルーターでポート転送を設定してください。",
             "http01Linux": "ユーザー権限の systemd サービスはポート 80 を使えません。ルーターで転送するか、DNS-01 に切り替えてください。",
-            "dns01": "ドメインの DNS が Cloudflare で管理されており、レコードを編集できる API トークンが必要です。"
+            "dns01": "ドメインの DNS を選択したプロバイダーで管理し、そのレコードを編集できる API キーを用意してください。"
           }
         },
         "errors": {
@@ -2071,11 +2119,13 @@
           "invalid_domain": "ドメイン名が正しくありません。ワイルドカードは使えません。",
           "invalid_email": "メールアドレスが正しくありません。",
           "cloudflare_token_required": "DNS-01 には Cloudflare API トークンが必要です。",
+          "dns_provider_required": "DNS プロバイダーを選択してください。",
+          "dns_credentials_required": "DNS-01 には、選択したプロバイダーの API キーが必要です。",
           "invalid_port": "ポートは 1〜65535 の範囲で指定してください。",
           "port_in_use": "そのポートは使用中です。設定は保存しましたが、リスナーは起動していません。",
           "tls_failed": "HTTPS の変更を適用できませんでした。",
           "not_applicable": "このモードでは更新するものがありません。",
-          "no_ca": "このマシンにはプライベート CA がまだありません。先にプライベート CA モードを保存してください。",
+          "no_ca": "このマシンにはプライベート CA がまだありません。先に「内蔵プライベート CA」モードを一度保存してください。",
           "unauthorized": "先にサインインしてください。",
           "unknown": "失敗しました：{{message}}"
         },
@@ -2087,7 +2137,9 @@
           "hostRequired": "バインドアドレスを入力してください。",
           "domainInvalid": "ワイルドカードを含まないドメイン名を入力してください。",
           "emailInvalid": "有効なメールアドレスを入力してください。",
-          "tokenRequired": "Cloudflare API トークンを入力してください。"
+          "cloudflareTokenRequired": "Cloudflare API トークンを入力してください。",
+          "dnspodIdRequired": "Token ID を入力してください。",
+          "dnspodTokenRequired": "Token を入力してください。"
         }
       },
       "columns": {
@@ -2115,10 +2167,31 @@
       "actions": {
         "add": "追加",
         "rename": "名前を変更",
+        "more": "その他",
         "revoke": "削除",
         "refresh": "更新",
         "copy": "コピー",
         "copied": "コピーしました"
+      },
+      "detail": {
+        "description": "ノードの情報を確認し、名前とドメインアクセスの設定を変更します。",
+        "nodeId": "ノード ID",
+        "name": "名前",
+        "namePlaceholder": "ノード名",
+        "domainAccess": "ドメインアクセスを許可",
+        "domainAccessDescription": "オフにすると、設定した公開ドメインではハブ／ノード間の通信のみを提供し、ウェブ画面と API は利用できません。LAN の IP アドレスと localhost には影響しません。",
+        "domainAccessLoading": "読み込み中…",
+        "domainAccessFailed": "読み込みに失敗しました：{{error}}",
+        "domainAccessUnsupported": "このノードのバージョンでは対応していません。",
+        "domainAccessHosts": "公開ドメイン：{{hosts}}",
+        "disableTitle": "ドメインアクセスをオフにしますか？",
+        "disableText": "オフにすると、設定した公開ドメインではウェブ画面と API を提供しなくなり、ハブ／ノード間の通信のみが残ります。",
+        "disableSelfWarning": "現在このドメイン経由で tmex にアクセスしています。オフにするとこのページは直ちに接続を失います。LAN の IP アドレスまたは localhost からアクセスできることを確認してください。",
+        "disableConfirm": "オフにする",
+        "renameUnavailable": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
+        "renameFailed": "名前の変更に失敗しました：{{error}}",
+        "domainAccessSaveFailed": "ドメインアクセス設定の保存に失敗しました：{{error}}",
+        "saved": "保存しました"
       },
       "selection": {
         "more": "その他",
