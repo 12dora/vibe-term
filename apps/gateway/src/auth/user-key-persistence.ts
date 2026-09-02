@@ -8,6 +8,7 @@ import {
   decodeRemovePasskeyPayload,
   decodeRetireHubPayload,
   decodeRevokeNodePayload,
+  decodeRotateRootKeepPayload,
   encodeBase64url,
   nodeIdToHex,
 } from '@tmex/shared/auth';
@@ -113,7 +114,7 @@ export function persistApplied(
   now: number,
   onChange?: () => void
 ): void {
-  const { userStore, keyLogStore, nodeSessionStore } = stores;
+  const { userStore, keyLogStore } = stores;
   const { record, input, hash, effects, next } = step;
   const seq = Number(record.seq);
   keyLogStore.append({
@@ -135,7 +136,18 @@ export function persistApplied(
     now,
   });
   userStore.setKeyLogHead(userId, { seq: Number(next.head.seq), hash: next.head.hash, now });
+  projectRecord(userStore, userId, record, seq, now);
+  applyEffects(stores, userId, effects, now);
+  (onChange ?? stores.onChange)?.();
+}
 
+function projectRecord(
+  userStore: UserStore,
+  userId: string,
+  record: KeyLogRecord,
+  seq: number,
+  now: number
+): void {
   if (record.type === 'rotate-root' || record.type === 'reset-root') {
     userStore.deleteKeysByUser(userId);
     userStore.setTotpRecordSeq(userId, null, now);
@@ -147,6 +159,10 @@ export function persistApplied(
   const byType: Partial<Record<KeyLogRecord['type'], () => void>> = {
     'set-totp': () => userStore.setTotpRecordSeq(userId, seq, now),
     'clear-totp': () => userStore.setTotpRecordSeq(userId, null, now),
+    'rotate-root-keep': () => {
+      const payload = decodeRotateRootKeepPayload(record.payload);
+      if (payload.totp) userStore.setTotpRecordSeq(userId, seq, now);
+    },
     'add-passkey': () => {
       const payload = decodeAddPasskeyPayload(record.payload);
       userStore.insertKey({
@@ -233,7 +249,15 @@ export function persistApplied(
     },
   };
   byType[record.type]?.();
+}
 
+function applyEffects(
+  stores: AuthStores,
+  userId: string,
+  effects: AppliedKeyLogStep['effects'],
+  now: number
+): void {
+  const { userStore, nodeSessionStore } = stores;
   for (const effect of effects) {
     if (effect.type === 'revokeAllSessions') nodeSessionStore.revokeAllForUser(userId, now);
     else if (effect.type === 'revokeSessionsByCredential') {
@@ -242,5 +266,4 @@ export function persistApplied(
       nodeSessionStore.revokeVia(nodeIdToHex(effect.nodeId), now);
     } else if (effect.type === 'clearPeerCache') userStore.deleteAllPeers();
   }
-  (onChange ?? stores.onChange)?.();
 }

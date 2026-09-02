@@ -33,6 +33,7 @@ import { pumpLink } from '../mesh/stream-pump';
 import { ATTACHMENT_KEEPALIVE_MS, AttachmentRouter } from './attachment-router';
 import { AttachmentSnapshotAssembler, paginateHubAttachments } from './hub-attachments';
 import {
+  applyForcedKeyLogCompat,
   applyKeyLogHubRuntime,
   inspectHubAuthRecordCompat,
   lookupSignedHubAuthorization,
@@ -1078,7 +1079,11 @@ export class UplinkServer {
   }
 
   async applyAppendEffects(userId: string, result: HubKeyLogAppendSuccess): Promise<void> {
-    if (result.record.type === 'rotate-root' || result.record.type === 'reset-root') {
+    if (
+      result.record.type === 'rotate-root' ||
+      result.record.type === 'reset-root' ||
+      result.record.type === 'rotate-root-keep'
+    ) {
       this.userStore.invalidateUnusedEnrollmentTokens(userId, this.now());
     }
     if (
@@ -1600,25 +1605,20 @@ export class UplinkServer {
       await this.runAppendEffects(live.userId, this.replayedAppendSuccess(bytes, sig, already.seq));
       return;
     }
-    const compat = inspectHubAuthRecordCompat(this.userStore, bytes, live.userId);
+    const compat = applyForcedKeyLogCompat(
+      inspectHubAuthRecordCompat(this.userStore, bytes, live.userId),
+      force
+    );
     if (!compat.ok) {
-      if (force) {
-        console.warn(
-          `[auth] forcing key-log append despite ${compat.code} minVersion=${compat.minVersion} nodes=${compat.nodes
-            .map((n) => n.id)
-            .join(',')}`
-        );
-      } else {
-        if (id) {
-          this.send(live.link, {
-            t: 'key.log.ack',
-            id,
-            ok: false,
-            error: KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
-          });
-        }
-        return;
+      if (id) {
+        this.send(live.link, {
+          t: 'key.log.ack',
+          id,
+          ok: false,
+          error: KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
+        });
       }
+      return;
     }
     const result = await this.keyLogSource.append(live.userId, { bytes, sig });
     if (result.ok) {

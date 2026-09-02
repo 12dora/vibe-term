@@ -8,6 +8,7 @@ import {
   encodeBase64url,
   encodeClearTotpPayload,
   encodeRevokeNodePayload,
+  encodeRotateRootKeepPayload,
   encodeRotateRootPayload,
   generateEd25519KeyPair,
   generateKdfParams,
@@ -1433,6 +1434,138 @@ describe('HubRuntime HTTP', () => {
       );
       expect(redeem?.status).toBe(400);
       expect(await redeem?.json()).toEqual({ error: 'epoch_mismatch' });
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('rotate-root-keep 后旧 enrollment redeem 返回 epoch_mismatch 并作废未用 token', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const now = 3_000_000;
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore, { now });
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: { publicUrl: 'https://hub.example', stun: [] },
+        authenticate: () => ({ userId: user.id, entryNodeId: 'entry' }),
+        now: () => now,
+      });
+      const enrollment = await createEnrollment(user.root, {
+        uid: user.id,
+        rootEpoch: 0,
+        now,
+        ttlMs: 60_000,
+      });
+      const created = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            enroll_pk: encodeBase64url(enrollment.enrollPk),
+            authorization: encodeBase64url(enrollment.authorizationBytes),
+            authorization_sig: encodeBase64url(enrollment.authorizationSig),
+            exp: now + 60_000,
+          }),
+        }),
+        dummyServer
+      );
+      expect(created?.status).toBe(201);
+
+      const newRoot = rootKeyFromSeed(randomBytes(32));
+      const rotated = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'rotate-root-keep',
+        encodeRotateRootKeepPayload({
+          root_public_key: newRoot.publicKey,
+          kdf_params: generateKdfParams(),
+          totp: null,
+        })
+      );
+      const applied = await keyLogSource.append(user.id, rotated);
+      expect(applied.ok).toBe(true);
+      if (applied.ok) {
+        await hub.uplink.applyAppendEffects(user.id, applied);
+      }
+      expect(userStore.getEnrollmentTokenByEnrollPublicKey(enrollment.enrollPk)?.expiresAt).toBe(
+        now
+      );
+
+      const ed = generateEd25519KeyPair();
+      const x = generateX25519KeyPair();
+      const cert = createNodeCertificate(enrollment.enrollSk, {
+        uid: user.id,
+        edPk: ed.publicKey,
+        x25519Pk: x.publicKey,
+        enrollPk: enrollment.enrollPk,
+        now,
+      });
+      const redeem = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            certificate: encodeBase64url(cert.certificateBytes),
+            cert_sig: encodeBase64url(cert.certSig),
+            name: 'stale',
+            version: '1',
+          }),
+        }),
+        dummyServer
+      );
+      expect(redeem?.status).toBe(400);
+      expect(await redeem?.json()).toEqual({ error: 'epoch_mismatch' });
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('forwarded rotate-root-keep is blocked by old nodes even with x-tmex-force-keylog', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      seedAdmittedNode(userStore, user.id, { name: 'old-node' });
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: { publicUrl: 'https://hub.example', stun: [] },
+        authenticate: () => ({ userId: user.id, entryNodeId: 'entry' }),
+      });
+      const rec = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'rotate-root-keep',
+        encodeRotateRootKeepPayload({
+          root_public_key: new Uint8Array(32).fill(9),
+          kdf_params: generateKdfParams(),
+          totp: null,
+        })
+      );
+      const ack = await hub.executeForwardedWrite('aa'.repeat(16), {
+        t: 'hub.write-forward',
+        id: 'keep-1',
+        method: 'POST',
+        path: '/api/auth/keylog',
+        uid: user.id,
+        headers: { 'content-type': 'application/json', 'x-tmex-force-keylog': '1' },
+        body: JSON.stringify({
+          bytes: encodeBase64url(rec.bytes),
+          sig: encodeBase64url(rec.sig),
+        }),
+      });
+      expect(ack.status).toBe(409);
+      expect(JSON.parse(ack.body ?? '{}')).toMatchObject({
+        code: 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES',
+      });
       hub.stop();
     } finally {
       close();

@@ -1,6 +1,7 @@
 import { compareSemver } from '@tmex/shared';
 import {
   HUB_AUTH_RECORD_TYPES,
+  KEYLOG_RECORD_COMPAT,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
   decodeAdmitHubPayload,
@@ -150,6 +151,7 @@ export type HubAuthRecordCompatResult =
       code: typeof KEYLOG_TYPE_UNSUPPORTED_BY_NODES;
       minVersion: string;
       nodes: UnsupportedKeyLogNode[];
+      allowForce: boolean;
     };
 
 export function isHubAuthRecordType(type: string): boolean {
@@ -162,25 +164,37 @@ export function normalizeReportedNodeVersion(raw: string | null | undefined): st
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function nodeVersionSupportsHubAuthRecords(raw: string | null | undefined): boolean {
+export function nodeVersionMeets(raw: string | null | undefined, minVersion: string): boolean {
   const version = normalizeReportedNodeVersion(raw);
   if (!version) return false;
-  const cmp = compareSemver(version, MIN_HUB_AUTH_RECORD_VERSION);
+  const cmp = compareSemver(version, minVersion);
   return cmp !== null && cmp >= 0;
 }
 
-export function nodesBlockingHubAuthRecords(
+export function nodeVersionSupportsHubAuthRecords(raw: string | null | undefined): boolean {
+  return nodeVersionMeets(raw, MIN_HUB_AUTH_RECORD_VERSION);
+}
+
+export function nodesBlockingMinVersion(
   userStore: UserStore,
+  minVersion: string,
   userId?: string | null
 ): UnsupportedKeyLogNode[] {
   const blocked: UnsupportedKeyLogNode[] = [];
   for (const node of userStore.listNodes()) {
     if (node.status === 'revoked') continue;
     if (userId && node.userId !== userId) continue;
-    if (nodeVersionSupportsHubAuthRecords(node.version)) continue;
+    if (nodeVersionMeets(node.version, minVersion)) continue;
     blocked.push({ id: node.id, name: node.name, version: node.version });
   }
   return blocked;
+}
+
+export function nodesBlockingHubAuthRecords(
+  userStore: UserStore,
+  userId?: string | null
+): UnsupportedKeyLogNode[] {
+  return nodesBlockingMinVersion(userStore, MIN_HUB_AUTH_RECORD_VERSION, userId);
 }
 
 export function inspectHubAuthRecordCompat(
@@ -194,15 +208,32 @@ export function inspectHubAuthRecordCompat(
   } catch {
     return { ok: true };
   }
-  if (!isHubAuthRecordType(type)) return { ok: true };
-  const nodes = nodesBlockingHubAuthRecords(userStore, userId);
+  const spec = KEYLOG_RECORD_COMPAT[type as keyof typeof KEYLOG_RECORD_COMPAT];
+  if (!spec) return { ok: true };
+  const nodes = nodesBlockingMinVersion(userStore, spec.minVersion, userId);
   if (nodes.length === 0) return { ok: true };
   return {
     ok: false,
     code: KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
-    minVersion: MIN_HUB_AUTH_RECORD_VERSION,
+    minVersion: spec.minVersion,
     nodes,
+    allowForce: spec.allowForce,
   };
+}
+
+/** `x-tmex-force-keylog` 仅对 allowForce 的记录类型生效；`rotate-root-keep` 不可绕过。 */
+export function applyForcedKeyLogCompat(
+  compat: HubAuthRecordCompatResult,
+  forced: boolean
+): HubAuthRecordCompatResult {
+  if (compat.ok) return compat;
+  if (!forced || !compat.allowForce) return compat;
+  console.warn(
+    `[auth] forcing key-log append despite ${compat.code} minVersion=${compat.minVersion} nodes=${compat.nodes
+      .map((n) => n.id)
+      .join(',')}`
+  );
+  return { ok: true };
 }
 
 export function applyKeyLogHubRuntime(

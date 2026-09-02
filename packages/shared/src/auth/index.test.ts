@@ -16,6 +16,8 @@ describe('@tmex/shared/auth barrel', () => {
     expect(typeof auth.verifyDelegationTimes).toBe('function');
     expect(typeof auth.encodePasskeyAssertion).toBe('function');
     expect(auth.KEY_LOG_SIGNER_MATRIX['rotate-root']).toEqual(['root']);
+    expect(auth.KEY_LOG_SIGNER_MATRIX['rotate-root-keep']).toEqual(['root']);
+    expect(auth.MIN_ROTATE_ROOT_KEEP_RECORD_VERSION).toBe('1.1.16');
     expect(auth.DELEGATION_CLOCK_SKEW_MS).toBe(60_000);
   });
 });

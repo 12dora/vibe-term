@@ -2,9 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import {
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
+  MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   buildAdmitHubPayload,
   buildKeyLogRecord,
   encodeKeyLogRecord,
+  encodeRotateRootKeepPayload,
+  generateKdfParams,
   genesisHead,
 } from '@tmex/shared/auth';
 import { createMigratedAuthDb } from '../auth/test-db';
@@ -209,6 +212,108 @@ describe('hub auth record compat gate', () => {
           uid: 'user-1',
           type: 'admit-hub',
           payload: buildAdmitHubPayload({ hubNodeId: new Uint8Array(16).fill(2) }),
+          signer: 'root',
+          credential_id: null,
+        })
+      );
+      expect(inspectHubAuthRecordCompat(store, record, 'user-1')).toEqual({ ok: true });
+    } finally {
+      close();
+    }
+  });
+
+  test('blocks rotate-root-keep when a live node is old or unknown; revoked nodes do not block', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      store.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 1,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      store.createNode({
+        id: SELF,
+        userId: 'user-1',
+        name: 'writer',
+        version: '1.1.16',
+        now: 1,
+      });
+      store.createNode({
+        id: PEER,
+        userId: 'user-1',
+        name: 'old',
+        version: '1.1.15',
+        now: 1,
+      });
+      store.createNode({
+        id: OTHER,
+        userId: 'user-1',
+        name: 'revoked-old',
+        status: 'revoked',
+        version: '1.0.0',
+        now: 1,
+      });
+      const record = encodeKeyLogRecord(
+        buildKeyLogRecord(genesisHead(), 0, {
+          uid: 'user-1',
+          type: 'rotate-root-keep',
+          payload: encodeRotateRootKeepPayload({
+            root_public_key: new Uint8Array(32).fill(1),
+            kdf_params: generateKdfParams(),
+            totp: null,
+          }),
+          signer: 'root',
+          credential_id: null,
+        })
+      );
+      const blocked = inspectHubAuthRecordCompat(store, record, 'user-1');
+      expect(blocked.ok).toBe(false);
+      if (!blocked.ok) {
+        expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+        expect(blocked.minVersion).toBe(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION);
+        expect(blocked.allowForce).toBe(false);
+        expect(blocked.nodes).toEqual([{ id: PEER, name: 'old', version: '1.1.15' }]);
+      }
+    } finally {
+      close();
+    }
+  });
+
+  test('allows rotate-root-keep when every live node meets 1.1.16', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      store.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 1,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      store.createNode({
+        id: SELF,
+        userId: 'user-1',
+        name: 'writer',
+        version: '1.1.16_dev',
+        now: 1,
+      });
+      const record = encodeKeyLogRecord(
+        buildKeyLogRecord(genesisHead(), 0, {
+          uid: 'user-1',
+          type: 'rotate-root-keep',
+          payload: encodeRotateRootKeepPayload({
+            root_public_key: new Uint8Array(32).fill(2),
+            kdf_params: generateKdfParams(),
+            totp: null,
+          }),
           signer: 'root',
           credential_id: null,
         })

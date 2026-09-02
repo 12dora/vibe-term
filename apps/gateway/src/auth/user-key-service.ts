@@ -17,7 +17,6 @@ import {
   decodeBase64url,
   decodeKeyLogRecord,
   decodeResetRootPayload,
-  decodeSetTotpPayload,
   deriveSeed,
   detectFork,
   emptyUserKeyState,
@@ -30,6 +29,7 @@ import {
   hexToBytes,
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
+  totpPayloadFromKeyLogRecord,
   verifyKeyLogRecord,
 } from '@tmex/shared/auth';
 import { encrypt } from '../crypto';
@@ -206,7 +206,7 @@ export class UserKeyService {
       const rec = this.keyLogStore.getAtSeq(userId, user.totpRecordSeq);
       if (rec) {
         try {
-          totp = decodeSetTotpPayload(decodeKeyLogRecord(rec.bytes).payload);
+          totp = totpPayloadFromKeyLogRecord(decodeKeyLogRecord(rec.bytes));
         } catch {
           totp = null;
         }
@@ -849,6 +849,7 @@ function joinEpochBroke(
   return (
     type === 'rotate-root' ||
     type === 'reset-root' ||
+    type === 'rotate-root-keep' ||
     (epochAtAnchor != null && epoch !== epochAtAnchor)
   );
 }

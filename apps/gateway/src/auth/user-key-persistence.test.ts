@@ -5,6 +5,7 @@ import {
   emptyUserKeyState,
   encodeAddPasskeyPayload,
   encodeBase64url,
+  encodeRotateRootKeepPayload,
   generateKdfParams,
 } from '@tmex/shared/auth';
 import { eq } from 'drizzle-orm';
@@ -178,6 +179,82 @@ describe('user-key-persistence', () => {
       expect(
         stores.nodeSessionStore.verify(session.sid, { viaNodeId: 'self', now: 3_000 }).ok
       ).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  test('persistApplied rotate-root-keep keeps keys and sessions; nested totp sets totpRecordSeq', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const stores = openStores(db);
+      seedUser(stores.userStore);
+      stores.userStore.insertKey({
+        id: crypto.randomUUID(),
+        userId: 'user-1',
+        credentialId: new Uint8Array(16).fill(1),
+        publicKey: new Uint8Array(32).fill(2),
+        rpId: 'example.test',
+        origin: 'https://example.test',
+        counter: 0,
+        transports: [],
+        name: 'old',
+        logSeq: 2,
+        now: 1_000,
+      });
+      stores.userStore.upsertCert({
+        nodeId: 'aa'.repeat(16),
+        userId: 'user-1',
+        admitRecordSeq: 2,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(8),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(8),
+      });
+      const session = stores.nodeSessionStore.issue({
+        userId: 'user-1',
+        viaNodeId: 'self',
+        sessPublicKey: new Uint8Array(32).fill(3),
+        delegationMethod: 'root',
+        now: 1_000,
+      });
+      const payload = encodeRotateRootKeepPayload({
+        root_public_key: new Uint8Array(32).fill(5),
+        kdf_params: generateKdfParams(),
+        totp: {
+          root_epoch: 3,
+          seq: 4n,
+          payload: {
+            alg: 'A256GCM',
+            nonce: new Uint8Array(12).fill(1),
+            ciphertext: new Uint8Array(8).fill(2),
+            tag: new Uint8Array(16).fill(3),
+          },
+        },
+      });
+      persistApplied(stores, 'user-1', makeStep('user-1', 'rotate-root-keep', { payload }), 3_000);
+      expect(stores.userStore.listKeysByUser('user-1')).toHaveLength(1);
+      expect(stores.userStore.listCertsByUser('user-1')).toHaveLength(1);
+      expect(stores.userStore.getById('user-1')?.totpRecordSeq).toBe(4);
+      expect(
+        stores.nodeSessionStore.verify(session.sid, { viaNodeId: 'self', now: 3_000 }).ok
+      ).toBe(true);
+
+      persistApplied(
+        stores,
+        'user-1',
+        makeStep('user-1', 'rotate-root-keep', {
+          seq: 5n,
+          payload: encodeRotateRootKeepPayload({
+            root_public_key: new Uint8Array(32).fill(6),
+            kdf_params: generateKdfParams(),
+            totp: null,
+          }),
+        }),
+        4_000
+      );
+      expect(stores.userStore.getById('user-1')?.totpRecordSeq).toBe(4);
+      expect(stores.userStore.listKeysByUser('user-1')).toHaveLength(1);
     } finally {
       close();
     }

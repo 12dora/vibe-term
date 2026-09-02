@@ -157,9 +157,12 @@ export type { WebCryptoEd25519KeyPair } from './webcrypto-ed25519';
 
 export {
   HUB_AUTH_RECORD_TYPES,
+  KEYLOG_RECORD_COMPAT,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   KEY_LOG_SIGNER_MATRIX,
   MIN_HUB_AUTH_RECORD_VERSION,
+  MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
+  ROTATE_ROOT_KEEP_RECORD_TYPES,
   applyKeyLogRecord,
   buildKeyLogRecord,
   computeRecordHash,
@@ -167,6 +170,7 @@ export {
   emptyUserKeyState,
   genesisHead,
   signKeyLogRecordWithRoot,
+  totpPayloadFromKeyLogRecord,
   verifyKeyLogChain,
   verifyKeyLogRecord,
 } from './key-log';
@@ -177,6 +181,7 @@ export type {
   HubAuthorizationStatus,
   KeyLogEffect,
   KeyLogHead,
+  KeyLogRecordCompatSpec,
   KeyLogSignedRecord,
   PasskeyRecord,
   StoredHubAuthorization,

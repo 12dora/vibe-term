@@ -109,6 +109,28 @@ describe('AuthApi', () => {
     expect(calls[0].url).toBe('/api/auth/keylog/head');
   });
 
+  test('getTotpRecord 打 /api/auth/totp-record；404 TOTP_NOT_ENABLED 不抛', async () => {
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ record_seq: '4', root_epoch: 2, payload: 'AA' }), {
+        status: 200,
+      }),
+    ]);
+    expect(await api.getTotpRecord()).toEqual({
+      ok: true,
+      record: { record_seq: '4', root_epoch: 2, payload: 'AA' },
+    });
+    expect(calls[0].url).toBe('/api/auth/totp-record');
+
+    const missing = recorder([
+      new Response(JSON.stringify({ code: 'TOTP_NOT_ENABLED' }), { status: 404 }),
+    ]);
+    expect(await missing.api.getTotpRecord()).toEqual({
+      ok: false,
+      status: 404,
+      code: 'TOTP_NOT_ENABLED',
+    });
+  });
+
   test('listPublicNodes 打公开的 /api/auth/nodes', async () => {
     const { api, calls } = recorder([
       new Response(JSON.stringify({ nodes: [{ id: 'a', name: 'A', online: true }] }), {

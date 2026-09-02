@@ -8,6 +8,7 @@ import {
   decodeResetRootPayload,
   decodeRetireHubPayload,
   decodeRevokeNodePayload,
+  decodeRotateRootKeepPayload,
   decodeRotateRootPayload,
   decodeSetTotpPayload,
   encodeBase64url,
@@ -113,6 +114,8 @@ function decodePayload(type: string, payload: Uint8Array): unknown {
       return decodeRemovePasskeyPayload(payload);
     case 'rotate-root':
       return decodeRotateRootPayload(payload);
+    case 'rotate-root-keep':
+      return decodeRotateRootKeepPayload(payload);
     case 'reset-root':
       return decodeResetRootPayload(payload);
     case 'set-totp':

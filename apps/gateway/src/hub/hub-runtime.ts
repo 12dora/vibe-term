@@ -33,7 +33,7 @@ import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthDb } from '../auth/types';
 import { type UserRecord, UserStore } from '../auth/user-store';
-import { inspectHubAuthRecordCompat } from './hub-authorization';
+import { applyForcedKeyLogCompat, inspectHubAuthRecordCompat } from './hub-authorization';
 import { decodeCertificateIdentityKeys, parseKdfParams } from './hub-cert-keys';
 import { type HubPeerFetch, HubPeerPoller } from './hub-peer-poller';
 import {
@@ -646,18 +646,12 @@ export class HubRuntime {
     if (already) {
       return json({ ok: true, seq: already.seq, hash: encodeBase64url(already.hash) });
     }
-    const compat = inspectHubAuthRecordCompat(this.userStore, bytes, userId);
-    const forced = req.headers.get('x-tmex-force-keylog') === '1';
+    const compat = applyForcedKeyLogCompat(
+      inspectHubAuthRecordCompat(this.userStore, bytes, userId),
+      req.headers.get('x-tmex-force-keylog') === '1'
+    );
     if (!compat.ok) {
-      if (forced) {
-        console.warn(
-          `[auth] forcing key-log append despite ${compat.code} minVersion=${compat.minVersion} nodes=${compat.nodes
-            .map((n) => n.id)
-            .join(',')}`
-        );
-      } else {
-        return json({ code: compat.code, minVersion: compat.minVersion, nodes: compat.nodes }, 409);
-      }
+      return json({ code: compat.code, minVersion: compat.minVersion, nodes: compat.nodes }, 409);
     }
     const result = await this.keyLogSource.append(userId, { bytes, sig });
     if (!result.ok) return json({ error: result.error }, 400);

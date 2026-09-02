@@ -11,6 +11,7 @@ import {
   encodeClearTotpPayload,
   encodeKeyLogRecord,
   encodeRevokeNodePayload,
+  encodeRotateRootKeepPayload,
   encodeRotateRootPayload,
   generateEd25519KeyPair,
   generateKdfParams,
@@ -2585,6 +2586,53 @@ describe('UplinkServer multi-hub', () => {
       } finally {
         console.warn = orig;
       }
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('rotate-root-keep 在旧节点存在时拒绝，force 也不能绕过', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      seedAdmittedNode(userStore, user.id, { name: 'old-node' });
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: { publicUrl: 'https://hub.example', nodeId: SELF_HUB, hubNodeId: SELF_HUB },
+      });
+      const node = await authNode(server, userStore, user.id);
+      const rec = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'rotate-root-keep',
+        encodeRotateRootKeepPayload({
+          root_public_key: new Uint8Array(32).fill(9),
+          kdf_params: generateKdfParams(),
+          totp: null,
+        })
+      );
+      sendCtl(node.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+        id: 'keep-no-force',
+      });
+      const refused = await takeUntil(node.inbox, 'key.log.ack');
+      expect(refused).toMatchObject({ t: 'key.log.ack', id: 'keep-no-force', ok: false });
+      if (refused.t === 'key.log.ack') expect(refused.error).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+
+      sendCtl(node.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+        id: 'keep-force',
+        force: true,
+      });
+      const still = await takeUntil(node.inbox, 'key.log.ack');
+      expect(still).toMatchObject({ t: 'key.log.ack', id: 'keep-force', ok: false });
+      if (still.t === 'key.log.ack') expect(still.error).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
       server.stop();
     } finally {
       close();

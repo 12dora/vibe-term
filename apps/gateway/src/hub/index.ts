@@ -24,6 +24,7 @@ export {
 } from './hub-role-transitions';
 export { createHubKeyLogSource } from './hub-key-log-source';
 export {
+  applyForcedKeyLogCompat,
   applyKeyLogHubRuntime,
   envPeerSet,
   filterAuthorizedHubRecords,

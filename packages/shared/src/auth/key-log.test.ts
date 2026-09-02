@@ -11,14 +11,17 @@ import {
   encodePasskeyAssertion,
   encodeRemovePasskeyPayload,
   encodeRevokeNodePayload,
+  encodeRotateRootKeepPayload,
   encodeRotateRootPayload,
   encodeSetTotpPayload,
   nodeIdToHex,
 } from './encoding';
 import { createEnrollment, createNodeCertificate } from './enrollment';
 import {
+  KEYLOG_RECORD_COMPAT,
   KEY_LOG_SIGNER_MATRIX,
   MIN_HUB_AUTH_RECORD_VERSION,
+  MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   applyKeyLogRecord,
   buildKeyLogRecord,
   computeRecordHash,
@@ -753,11 +756,20 @@ describe('signer matrix', () => {
   it('exports the type/signer table', () => {
     expect(KEY_LOG_SIGNER_MATRIX['rotate-root']).toEqual(['root']);
     expect(KEY_LOG_SIGNER_MATRIX['reset-root']).toEqual(['root']);
+    expect(KEY_LOG_SIGNER_MATRIX['rotate-root-keep']).toEqual(['root']);
     expect(KEY_LOG_SIGNER_MATRIX['add-passkey']).toEqual(['root', 'passkey']);
     expect(KEY_LOG_SIGNER_MATRIX['admit-node']).toEqual(['root', 'passkey']);
     expect(KEY_LOG_SIGNER_MATRIX['admit-hub']).toEqual(['root', 'passkey']);
     expect(KEY_LOG_SIGNER_MATRIX['retire-hub']).toEqual(['root', 'passkey']);
     expect(MIN_HUB_AUTH_RECORD_VERSION).toBe('1.1.13');
+    expect(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION).toBe('1.1.16');
+    expect(KEYLOG_RECORD_COMPAT['admit-hub']?.minVersion).toBe(MIN_HUB_AUTH_RECORD_VERSION);
+    expect(KEYLOG_RECORD_COMPAT['retire-hub']?.minVersion).toBe(MIN_HUB_AUTH_RECORD_VERSION);
+    expect(KEYLOG_RECORD_COMPAT['rotate-root-keep']?.minVersion).toBe(
+      MIN_ROTATE_ROOT_KEEP_RECORD_VERSION
+    );
+    expect(KEYLOG_RECORD_COMPAT['rotate-root-keep']?.allowForce).toBe(false);
+    expect(KEYLOG_RECORD_COMPAT['admit-hub']?.allowForce).toBe(true);
   });
 
   it('rejects passkey-signed rotate-root before verifying the assertion', async () => {
@@ -907,6 +919,263 @@ describe('reset-root vs rotate-root membership', () => {
       expect(reset.state.hubAuthorizations.size).toBe(0);
       expect(reset.state.passkeys.size).toBe(0);
       expect(reset.effects).toEqual([{ type: 'revokeAllSessions' }, { type: 'clearPeerCache' }]);
+    }
+  });
+});
+
+const SAMPLE_TOTP = {
+  alg: 'A256GCM',
+  nonce: new Uint8Array(12).fill(1),
+  ciphertext: new Uint8Array(8).fill(2),
+  tag: new Uint8Array(16).fill(3),
+};
+
+describe('rotate-root-keep', () => {
+  it('keeps passkeys, totp, certs and hub auths; emits no effects', async () => {
+    const oldRoot = root(1);
+    const newRoot = root(2);
+    let state = emptyUserKeyState(oldRoot.publicKey);
+    state = (await commit(state, oldRoot, 'add-passkey', ADD_PASSKEY)).state;
+    state = (await commit(state, oldRoot, 'set-totp', encodeSetTotpPayload(SAMPLE_TOTP))).state;
+    const enroll = await createEnrollment(oldRoot, { uid: UID, rootEpoch: 0, now: 1 });
+    const ed = generateEd25519KeyPair();
+    const x = generateX25519KeyPair();
+    const cert = createNodeCertificate(enroll.enrollSk, {
+      uid: UID,
+      edPk: ed.publicKey,
+      x25519Pk: x.publicKey,
+      enrollPk: enroll.enrollPk,
+      now: 1,
+    });
+    state = (
+      await commit(
+        state,
+        oldRoot,
+        'admit-node',
+        encodeAdmitNodePayload({
+          authorization_bytes: enroll.authorizationBytes,
+          authorization_sig: enroll.authorizationSig,
+          certificate_bytes: cert.certificateBytes,
+          cert_sig: cert.certSig,
+        })
+      )
+    ).state;
+    state = (
+      await commit(state, oldRoot, 'admit-hub', buildAdmitHubPayload({ hubNodeId: cert.nodeId }))
+    ).state;
+
+    const nextSeq = state.head.seq + 1n;
+    const wrapped = {
+      alg: 'A256GCM',
+      nonce: new Uint8Array(12).fill(9),
+      ciphertext: new Uint8Array(8).fill(8),
+      tag: new Uint8Array(16).fill(7),
+    };
+    const rotated = await commit(
+      state,
+      oldRoot,
+      'rotate-root-keep',
+      encodeRotateRootKeepPayload({
+        root_public_key: newRoot.publicKey,
+        kdf_params: KDF,
+        totp: { root_epoch: state.rootEpoch + 1, seq: nextSeq, payload: wrapped },
+      })
+    );
+    expect(rotated.state.rootEpoch).toBe(1);
+    expect(bytesEqual(rotated.state.rootPublicKey, newRoot.publicKey)).toBe(true);
+    expect(rotated.state.passkeys.size).toBe(1);
+    expect(rotated.state.passkeys.get('cred-1')?.name).toBe('key');
+    expect(rotated.state.totp?.alg).toBe('A256GCM');
+    expect(bytesEqual(rotated.state.totp?.tag ?? new Uint8Array(), wrapped.tag)).toBe(true);
+    expect(rotated.state.nodeCerts.size).toBe(1);
+    expect(rotated.state.hubAuthorizations.size).toBe(1);
+    expect(rotated.effects).toEqual([]);
+
+    const stale = buildKeyLogRecord(rotated.state.head, rotated.state.rootEpoch, {
+      uid: UID,
+      type: 'clear-totp',
+      payload: encodeClearTotpPayload(),
+      signer: 'root',
+      credential_id: null,
+    });
+    const { verified: staleVerify } = await signAndVerify(rotated.state, oldRoot, stale);
+    expect(staleVerify).toEqual({ ok: false, error: 'bad_signature' });
+    const { verified: fresh } = await signAndVerify(rotated.state, newRoot, stale);
+    expect(fresh.ok).toBe(true);
+  });
+
+  it('rejects totp=null when TOTP is enabled', async () => {
+    const r = root(1);
+    const newRoot = root(2);
+    let state = emptyUserKeyState(r.publicKey);
+    state = (await commit(state, r, 'set-totp', encodeSetTotpPayload(SAMPLE_TOTP))).state;
+    const failed = await commitFail(
+      state,
+      r,
+      'rotate-root-keep',
+      encodeRotateRootKeepPayload({
+        root_public_key: newRoot.publicKey,
+        kdf_params: KDF,
+        totp: null,
+      })
+    );
+    expect(failed).toEqual({ ok: false, error: 'totp_required' });
+    expect(state.totp).not.toBeNull();
+  });
+
+  it('rejects nested totp AAD that does not match the new epoch and record seq', async () => {
+    const r = root(1);
+    const newRoot = root(2);
+    let state = emptyUserKeyState(r.publicKey);
+    state = (await commit(state, r, 'set-totp', encodeSetTotpPayload(SAMPLE_TOTP))).state;
+    const nextSeq = state.head.seq + 1n;
+    const badEpoch = await commitFail(
+      state,
+      r,
+      'rotate-root-keep',
+      encodeRotateRootKeepPayload({
+        root_public_key: newRoot.publicKey,
+        kdf_params: KDF,
+        totp: { root_epoch: state.rootEpoch, seq: nextSeq, payload: SAMPLE_TOTP },
+      })
+    );
+    expect(badEpoch).toEqual({ ok: false, error: 'malformed_payload' });
+    const badSeq = await commitFail(
+      state,
+      r,
+      'rotate-root-keep',
+      encodeRotateRootKeepPayload({
+        root_public_key: newRoot.publicKey,
+        kdf_params: KDF,
+        totp: { root_epoch: state.rootEpoch + 1, seq: nextSeq + 1n, payload: SAMPLE_TOTP },
+      })
+    );
+    expect(badSeq).toEqual({ ok: false, error: 'malformed_payload' });
+  });
+
+  it('allows totp=null when TOTP was not enabled', async () => {
+    const r = root(1);
+    const newRoot = root(2);
+    const state = emptyUserKeyState(r.publicKey);
+    const rotated = await commit(
+      state,
+      r,
+      'rotate-root-keep',
+      encodeRotateRootKeepPayload({
+        root_public_key: newRoot.publicKey,
+        kdf_params: KDF,
+        totp: null,
+      })
+    );
+    expect(rotated.state.totp).toBeNull();
+    expect(rotated.state.rootEpoch).toBe(1);
+    expect(rotated.effects).toEqual([]);
+  });
+
+  it('rejects passkey-signed rotate-root-keep before verifying the assertion', async () => {
+    const r = root(1);
+    const newRoot = root(2);
+    let state = emptyUserKeyState(r.publicKey);
+    state = (await commit(state, r, 'add-passkey', ADD_PASSKEY)).state;
+    const record = buildKeyLogRecord(state.head, state.rootEpoch, {
+      uid: UID,
+      type: 'rotate-root-keep',
+      payload: encodeRotateRootKeepPayload({
+        root_public_key: newRoot.publicKey,
+        kdf_params: KDF,
+        totp: null,
+      }),
+      signer: 'passkey',
+      credential_id: 'cred-1',
+    });
+    const bytes = encodeKeyLogRecord(record);
+    let hooked = false;
+    const verified = await verifyKeyLogRecord(bytes, new Uint8Array(8), {
+      head: state.head,
+      rootEpoch: state.rootEpoch,
+      rootPublicKey: state.rootPublicKey,
+      resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
+      verifyPasskeyAssertion: async () => {
+        hooked = true;
+        return true;
+      },
+    });
+    expect(verified).toEqual({ ok: false, error: 'signer_not_allowed' });
+    expect(hooked).toBe(false);
+  });
+
+  it('verifyKeyLogChain reconstructs TOTP from rotate-root-keep', async () => {
+    const oldRoot = root(3);
+    const newRoot = root(4);
+    const records: { bytes: Uint8Array; sig: Uint8Array }[] = [];
+    const genesis = buildKeyLogRecord(genesisHead(), 0, {
+      uid: UID,
+      type: 'reset-root',
+      payload: encodeRotateRootPayload({
+        root_public_key: oldRoot.publicKey,
+        kdf_params: KDF,
+      }),
+      signer: 'root',
+      credential_id: null,
+    });
+    const genesisBytes = encodeKeyLogRecord(genesis);
+    records.push({ bytes: genesisBytes, sig: signKeyLogRecordWithRoot(oldRoot, genesisBytes) });
+    const afterGenesis = await applyKeyLogRecord(
+      emptyUserKeyState(new Uint8Array(32), undefined, 0),
+      genesis,
+      computeRecordHash(records[0]!.bytes, records[0]!.sig)
+    );
+    expect(afterGenesis.ok).toBe(true);
+    if (!afterGenesis.ok) throw new Error(afterGenesis.error);
+
+    const totpRecord = buildKeyLogRecord(afterGenesis.state.head, afterGenesis.state.rootEpoch, {
+      uid: UID,
+      type: 'set-totp',
+      payload: encodeSetTotpPayload(SAMPLE_TOTP),
+      signer: 'root',
+      credential_id: null,
+    });
+    const totpBytes = encodeKeyLogRecord(totpRecord);
+    records.push({ bytes: totpBytes, sig: signKeyLogRecordWithRoot(oldRoot, totpBytes) });
+    const afterTotp = await applyKeyLogRecord(
+      afterGenesis.state,
+      totpRecord,
+      computeRecordHash(records[1]!.bytes, records[1]!.sig)
+    );
+    expect(afterTotp.ok).toBe(true);
+    if (!afterTotp.ok) throw new Error(afterTotp.error);
+
+    const wrapped = {
+      alg: 'A256GCM',
+      nonce: new Uint8Array(12).fill(4),
+      ciphertext: new Uint8Array(8).fill(5),
+      tag: new Uint8Array(16).fill(6),
+    };
+    const keep = buildKeyLogRecord(afterTotp.state.head, afterTotp.state.rootEpoch, {
+      uid: UID,
+      type: 'rotate-root-keep',
+      payload: encodeRotateRootKeepPayload({
+        root_public_key: newRoot.publicKey,
+        kdf_params: KDF,
+        totp: {
+          root_epoch: afterTotp.state.rootEpoch + 1,
+          seq: afterTotp.state.head.seq + 1n,
+          payload: wrapped,
+        },
+      }),
+      signer: 'root',
+      credential_id: null,
+    });
+    const keepBytes = encodeKeyLogRecord(keep);
+    records.push({ bytes: keepBytes, sig: signKeyLogRecordWithRoot(oldRoot, keepBytes) });
+
+    const chain = await verifyKeyLogChain(records, newRoot.publicKey);
+    expect(chain.ok).toBe(true);
+    if (chain.ok) {
+      expect(chain.state.rootEpoch).toBe(2);
+      expect(bytesEqual(chain.state.rootPublicKey, newRoot.publicKey)).toBe(true);
+      expect(chain.state.totp?.alg).toBe('A256GCM');
+      expect(bytesEqual(chain.state.totp?.tag ?? new Uint8Array(), wrapped.tag)).toBe(true);
     }
   });
 });

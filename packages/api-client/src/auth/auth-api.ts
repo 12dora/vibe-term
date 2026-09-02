@@ -9,6 +9,7 @@ import type {
   AuthLoginRequest,
   AuthLoginResponse,
   AuthModeResponse,
+  AuthTotpRecordResponse,
   KeyLogAppendRequest,
   KeyLogAppendResult,
   KeyLogHeadResponse,
@@ -246,6 +247,39 @@ export class AuthApi {
       throw new Error(await parseApiError(res, 'Failed to load key log head'));
     }
     return (await res.json()) as KeyLogHeadResponse;
+  }
+
+  /**
+   * `GET /api/auth/totp-record`（需会话）。常规改密重封装 TOTP 用。
+   * 未启用 TOTP 时返回 `{ ok: false, code: 'TOTP_NOT_ENABLED' }`，不抛异常。
+   */
+  async getTotpRecord(): Promise<
+    { ok: true; record: AuthTotpRecordResponse } | { ok: false; status: number; code: string }
+  > {
+    const res = await this.client.fetch('/api/auth/totp-record');
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        code: await readCode(res, 'TOTP_NOT_ENABLED'),
+      };
+    }
+    const payload = (await res.json()) as Partial<AuthTotpRecordResponse>;
+    if (
+      (typeof payload.record_seq !== 'string' && typeof payload.record_seq !== 'number') ||
+      typeof payload.root_epoch !== 'number' ||
+      typeof payload.payload !== 'string'
+    ) {
+      return { ok: false, status: res.status, code: 'MALFORMED' };
+    }
+    return {
+      ok: true,
+      record: {
+        record_seq: payload.record_seq,
+        root_epoch: payload.root_epoch,
+        payload: payload.payload,
+      },
+    };
   }
 
   /**
