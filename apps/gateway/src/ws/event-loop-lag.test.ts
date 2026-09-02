@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { EventLoopLagSampler } from './event-loop-lag';
+import {
+  EventLoopLagSampler,
+  gatewayEventLoopLag,
+  startGatewayEventLoopLag,
+  stopGatewayEventLoopLag,
+  stopGatewayEventLoopLagForTest,
+} from './event-loop-lag';
 
 describe('EventLoopLagSampler', () => {
   const samplers: EventLoopLagSampler[] = [];
@@ -71,5 +77,21 @@ describe('EventLoopLagSampler', () => {
     }
     expect(sampler.snapshot().lagMs).toBe(0);
     expect(sampler.snapshot().maxLagMs).toBe(0);
+  });
+});
+
+describe('gatewayEventLoopLag lifecycle', () => {
+  afterEach(() => {
+    stopGatewayEventLoopLagForTest();
+  });
+
+  test('does not start a timer until startGatewayEventLoopLag', () => {
+    const sampler = gatewayEventLoopLag();
+    expect(sampler.running()).toBe(false);
+    expect(sampler.snapshot()).toEqual({ lagMs: 0, maxLagMs: 0 });
+    startGatewayEventLoopLag();
+    expect(sampler.running()).toBe(true);
+    stopGatewayEventLoopLag();
+    expect(gatewayEventLoopLag().running()).toBe(false);
   });
 });

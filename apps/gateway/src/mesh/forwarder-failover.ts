@@ -46,8 +46,17 @@ export type StreamFailoverHost = {
   discardStream(pump: ForwardPump, stream: OpenedWsStream): void;
   closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void;
   sendToStream(pump: ForwardPump, stream: OpenedWsStream, bytes: Uint8Array): void;
+  sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void;
   flushQueue(pump: ForwardPump): void;
 };
+
+function safeLog(host: StreamFailoverHost, line: string): void {
+  try {
+    host.log(line);
+  } catch {
+    // diagnostic logging must never break the failover state machine
+  }
+}
 
 function pumpDead(pump: ForwardPump, signal: AbortSignal): boolean {
   return pump.browserClosed || signal.aborted;
@@ -65,28 +74,29 @@ export async function runStreamFailover(
   info: { code?: number; reason?: string }
 ): Promise<void> {
   if (pump.browserClosed || pump.failingOver) return;
-  pump.failingOver = true;
-  const from = pump.boundTransport ?? 'none';
-  const cause = failoverCauseOf(info);
-  const startedAt = Date.now();
-  const muxStreamId = pump.stream?.muxStreamId ?? null;
-  pump.stream = null;
   const abort = new AbortController();
+  pump.failingOver = true;
   pump.failoverAbort = abort;
-  host.log(
-    formatFailoverStart({
-      nodeId: pump.nodeId,
-      cid: pump.cid,
-      pumpId: pump.id,
-      muxStreamId,
-      cause,
-      closeReason: info.reason,
-      from,
-      linkSinceAt: host.peers.linkSinceAtOf?.(pump.nodeId) ?? null,
-      queuedInputBytes: pump.queueBytes,
-    })
-  );
   try {
+    const from = pump.boundTransport ?? 'none';
+    const cause = failoverCauseOf(info);
+    const startedAt = Date.now();
+    const muxStreamId = pump.stream?.muxStreamId ?? null;
+    pump.stream = null;
+    safeLog(
+      host,
+      formatFailoverStart({
+        nodeId: pump.nodeId,
+        cid: pump.cid,
+        pumpId: pump.id,
+        muxStreamId,
+        cause,
+        closeReason: info.reason,
+        from,
+        linkSinceAt: host.peers.linkSinceAtOf?.(pump.nodeId) ?? null,
+        queuedInputBytes: pump.queueBytes,
+      })
+    );
     for (let attempt = 0; attempt < STREAM_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
       const opened = await openFailoverStream(host, pump, abort.signal, attempt);
       if (opened === 'aborted') return;
@@ -107,6 +117,8 @@ export async function runStreamFailover(
       }
     }
     host.closeBrowser(pump, { code: 1011, reason: 'failover-exhausted' });
+  } catch {
+    if (!pump.browserClosed) host.closeBrowser(pump, { code: 1011, reason: 'failover-error' });
   } finally {
     if (pump.failingOver) {
       pump.failingOver = false;
@@ -135,7 +147,8 @@ async function openFailoverStream(
   if (pumpDead(pump, signal)) return 'aborted';
   const link = linked.value;
   if (!link) {
-    host.log(
+    safeLog(
+      host,
       formatFailoverAttempt({
         pumpId: pump.id,
         attempt: attempt + 1,
@@ -153,7 +166,8 @@ async function openFailoverStream(
   );
   const stream = opened.value;
   if (!stream) {
-    host.log(
+    safeLog(
+      host,
       formatFailoverAttempt({
         pumpId: pump.id,
         attempt: attempt + 1,
@@ -191,7 +205,8 @@ async function completeFailover(
   signal: AbortSignal
 ): Promise<boolean> {
   const waits = await replaySubscription(host, pump, stream, signal);
-  host.log(
+  safeLog(
+    host,
     formatFailoverAttempt({
       pumpId: pump.id,
       attempt: pump.lastAttempt?.attempt ?? 1,
@@ -211,11 +226,18 @@ async function completeFailover(
   const replayBytes = pump.replay.legacyReplayStats().replayBytes;
   const durationMs = Date.now() - startedAt;
   const to = pump.boundTransport ?? 'none';
-  const lag = gatewayEventLoopLag().snapshot();
-  host.log(
+  let lag = { lagMs: 0, maxLagMs: 0 };
+  try {
+    lag = gatewayEventLoopLag().snapshot();
+  } catch {
+    lag = { lagMs: 0, maxLagMs: 0 };
+  }
+  safeLog(
+    host,
     `[mesh][stream] failover stream=${pump.id} from=${from} to=${to} resumed=${resumed} mode=${desc.mode} panes=${desc.panes} cursor=${desc.cursor}`
   );
-  host.log(
+  safeLog(
+    host,
     formatFailoverDone({
       pumpId: pump.id,
       durationMs,
@@ -225,7 +247,8 @@ async function completeFailover(
       replayBytes,
     })
   );
-  host.log(
+  safeLog(
+    host,
     formatFailoverSummary({
       pumpId: pump.id,
       durationMs,
@@ -238,6 +261,9 @@ async function completeFailover(
       maxLagMs: lag.maxLagMs,
     })
   );
+  for (const frame of pump.replay.browserSignalFrames()) {
+    host.sendToBrowser(pump, frame);
+  }
   pump.failingOver = false;
   pump.failoverAbort = null;
   host.flushQueue(pump);

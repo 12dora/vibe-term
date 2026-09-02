@@ -57,6 +57,17 @@ export function resetRtcLogStateForTest(): void {
   dialFailedAt.clear();
 }
 
+export function flushDialFailed(peer: string, fields: Record<string, unknown> = {}): void {
+  const rec = dialFailedAt.get(peer);
+  if (!rec || rec.suppressed <= 0) {
+    dialFailedAt.delete(peer);
+    return;
+  }
+  const count = rec.suppressed;
+  dialFailedAt.delete(peer);
+  console.log(stamp(formatRtcLog('dial failed', { peer, ...fields, count })));
+}
+
 function logDialFailed(peer: string, fields: Record<string, unknown>): void {
   const now = Date.now();
   const rec = dialFailedAt.get(peer) ?? { at: 0, suppressed: 0 };

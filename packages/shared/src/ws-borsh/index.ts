@@ -122,6 +122,8 @@ export {
   peekCanonicalPaneDataHeader,
   type CanonicalPaneDataHeader,
 } from './canonical-state';
+export { decodeTmuxFetchPaneHistory, type TmuxFetchPaneHistory } from './schema';
+
 export {
   STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON,
   applyLegacyStateSnapshotDiff,

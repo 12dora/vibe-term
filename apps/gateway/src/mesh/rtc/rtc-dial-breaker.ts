@@ -1,5 +1,5 @@
 import { envInt } from '../mesh-log';
-import { rtcLog } from './rtc-log';
+import { flushDialFailed, rtcLog } from './rtc-log';
 
 export const RTC_DIAL_BREAKER_FAILS = 8;
 export const RTC_DIAL_BREAKER_MS_DEFAULT = 6 * 60 * 60 * 1000;
@@ -82,6 +82,7 @@ export class RtcDialBreaker {
 export function createGatewayRtcDialBreaker(): RtcDialBreaker {
   return new RtcDialBreaker({
     onOpen: ({ peer, fails, until }) => {
+      flushDialFailed(peer, { cause: 'breaker_open' });
       rtcLog('breaker open', { peer, fails, until: new Date(until).toISOString() });
     },
   });

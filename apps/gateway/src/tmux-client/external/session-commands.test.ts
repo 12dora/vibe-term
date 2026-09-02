@@ -396,6 +396,23 @@ describe('SessionCommands', () => {
     expect(result?.data.startsWith('VISIBLE')).toBe(true);
   });
 
+  test('fetchPaneHistory honors an explicit byteLimit on capture', async () => {
+    const captures: Array<{ argv: string[]; maxOutputBytes: number }> = [];
+    const { host, responses } = createHost({
+      runHistoryCapture: async (argv, maxOutputBytes) => {
+        captures.push({ argv, maxOutputBytes });
+        return 'VISIBLE\n';
+      },
+    });
+    responses.set(screenInfoArgv.join(' '), ok('0 8 1 4 0 0 0 0 0\n'));
+
+    const result = await new SessionCommands(host).fetchPaneHistory('%1', 64 * 1024);
+
+    expect(captures).toHaveLength(1);
+    expect(captures[0]?.maxOutputBytes).toBe(64 * 1024);
+    expect(result?.data.startsWith('VISIBLE')).toBe(true);
+  });
+
   test('fetchPaneHistory captures both screens only when alt-screen state is unknown, still bounded', async () => {
     const captures: Array<{ argv: string[]; maxOutputBytes: number }> = [];
     const { host, responses } = createHost({

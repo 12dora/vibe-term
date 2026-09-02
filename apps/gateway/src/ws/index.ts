@@ -816,9 +816,10 @@ export class WebSocketServer
     ws: GatewaySession,
     deviceId: string,
     paneId: string,
-    requestToken: Uint8Array
+    requestToken: Uint8Array,
+    byteLimit?: number | null
   ): void {
-    tmuxCommands.handleFetchPaneHistory(this, ws, deviceId, paneId, requestToken);
+    tmuxCommands.handleFetchPaneHistory(this, ws, deviceId, paneId, requestToken, byteLimit);
   }
 
   handleResizePaneById(deviceId: string, paneId: string, cols?: number, rows?: number): void {

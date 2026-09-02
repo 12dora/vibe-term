@@ -525,9 +525,10 @@ export abstract class ExternalTmuxConnectionCore {
   }
 
   async fetchPaneHistory(
-    paneId: string
+    paneId: string,
+    byteLimit?: number
   ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
-    return this.sessionCommands.fetchPaneHistory(paneId);
+    return this.sessionCommands.fetchPaneHistory(paneId, byteLimit);
   }
 
   protected abstract resolveDefaultWorkingDir(): string;

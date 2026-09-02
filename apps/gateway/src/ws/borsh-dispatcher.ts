@@ -29,7 +29,8 @@ export interface BorshDispatchHost {
     session: GatewaySession,
     deviceId: string,
     paneId: string,
-    requestToken: Uint8Array
+    requestToken: Uint8Array,
+    byteLimit?: number | null
   ): void;
   handleResizePaneById(deviceId: string, paneId: string, cols?: number, rows?: number): void;
   handleApplyStackedLayout(deviceId: string, windowId: string, cols: number, rows: number): void;

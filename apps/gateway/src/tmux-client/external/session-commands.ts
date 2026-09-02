@@ -340,12 +340,17 @@ export class SessionCommands {
   }
 
   async fetchPaneHistory(
-    paneId: string
+    paneId: string,
+    byteLimit?: number
   ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
-    const key = `${this.historyTransportGeneration}:${paneId}`;
+    const captureLimit =
+      byteLimit != null && Number.isSafeInteger(byteLimit) && byteLimit > 0
+        ? Math.min(byteLimit, MAX_PANE_HISTORY_CAPTURE_BYTES)
+        : MAX_PANE_HISTORY_CAPTURE_BYTES;
+    const key = `${this.historyTransportGeneration}:${paneId}:${captureLimit}`;
     const existing = this.paneHistoryInflight.get(key);
     if (existing) return existing;
-    const pending = this.fetchPaneHistoryUncached(paneId).finally(() => {
+    const pending = this.fetchPaneHistoryUncached(paneId, captureLimit).finally(() => {
       if (this.paneHistoryInflight.get(key) === pending) {
         this.paneHistoryInflight.delete(key);
       }
@@ -355,7 +360,8 @@ export class SessionCommands {
   }
 
   private async fetchPaneHistoryUncached(
-    paneId: string
+    paneId: string,
+    captureLimit: number
   ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
     const screenResult = await this.runTmux(
       ['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT],
@@ -369,10 +375,7 @@ export class SessionCommands {
     const alternateOn = parseAlternateOnFlag(screenRaw);
 
     const capture = (alternate: boolean): Promise<string> =>
-      this.host.runHistoryCapture(
-        buildLegacyHistoryCaptureArgv(paneId, alternate),
-        MAX_PANE_HISTORY_CAPTURE_BYTES
-      );
+      this.host.runHistoryCapture(buildLegacyHistoryCaptureArgv(paneId, alternate), captureLimit);
 
     let history: string;
     try {

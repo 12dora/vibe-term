@@ -1,8 +1,10 @@
+import { wsBorsh } from '@tmex/shared';
 import type { Carrier } from './carrier';
 import { carrierKindOf, logGuardEvent } from './ws-backpressure-log';
 
 export const GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES = 1_048_576;
 export const GATEWAY_WS_BACKPRESSURE_TIMEOUT_MS = 5_000;
+export const GATEWAY_WS_BACKPRESSURE_PROGRESS_MS = 5_000;
 
 interface BackpressureState {
   skippedFrame: boolean;
@@ -12,7 +14,10 @@ interface BackpressureState {
   skippedFrames: number;
   skippedBytes: number;
   frameKind: string;
+  lastKind: string;
+  lastFrame: string | BufferSource | undefined;
   frameBytes: number;
+  lastProgressAt: number;
 }
 
 interface WebSocketSendGuardOptions {
@@ -254,7 +259,10 @@ export class WebSocketSendGuard {
       skippedFrames: rest.length,
       skippedBytes: restBytes,
       frameKind: frameKindOf(frame),
+      lastKind: frameKindOf(frame),
+      lastFrame: rest[rest.length - 1] ?? frame,
       frameBytes,
+      lastProgressAt: Date.now(),
     };
     this.states.set(carrier, state);
     logGuardEvent('backpressure enter', carrier, {
@@ -272,16 +280,24 @@ export class WebSocketSendGuard {
   private noteSkip(carrier: Carrier, frames: readonly (string | BufferSource)[]): void {
     const state = this.states.get(carrier);
     if (!state) return;
-    const bytes = frames.reduce((sum, frame) => sum + frameByteLength(frame), 0);
+    let bytes = 0;
+    for (const frame of frames) bytes += frameByteLength(frame);
     state.skippedFrames += frames.length;
     state.skippedBytes += bytes;
+    const last = frames[frames.length - 1];
+    if (last !== undefined) state.lastFrame = last;
+    const now = Date.now();
+    if (now - state.lastProgressAt < GATEWAY_WS_BACKPRESSURE_PROGRESS_MS) return;
+    state.lastProgressAt = now;
+    state.lastKind = frameKindOf(state.lastFrame);
     logGuardEvent('backpressure skip', carrier, {
       buffered_before: state.bufferedBefore,
-      frame_kind: frameKindOf(frames[0]),
-      frame_bytes: bytes,
+      frame_kind: state.lastKind || state.frameKind,
+      first_kind: state.frameKind,
+      last_kind: state.lastKind,
       first_backpressure_at: state.firstAt,
-      skipped_frames: frames.length,
-      skipped_bytes: bytes,
+      skipped_frames: state.skippedFrames,
+      skipped_bytes: state.skippedBytes,
     });
   }
 
@@ -312,15 +328,12 @@ function frameKindOf(frame: string | BufferSource | undefined): string {
   if (frame === undefined) return 'raw';
   try {
     const bytes = toUint8Array(frame);
-    if (bytes.byteLength < 8) return 'raw';
-    const kind = (bytes[4] << 8) | bytes[5];
-    if (bytes[0] === 0x74 && bytes[1] === 0x6d && bytes[2] === 0x78 && bytes[3] === 0x01) {
-      return kind.toString(16).padStart(4, '0');
-    }
+    if (!wsBorsh.checkMagic(bytes) || bytes.byteLength < 6) return 'raw';
+    const kind = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint16(4, true);
+    return kind.toString(16).padStart(4, '0');
   } catch {
     return 'raw';
   }
-  return 'raw';
 }
 
 export const gatewayWebSocketSendGuard = new WebSocketSendGuard();

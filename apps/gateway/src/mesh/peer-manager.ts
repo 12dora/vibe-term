@@ -56,7 +56,7 @@ import {
   verifyRtcWakeSignature,
 } from './rtc/ice';
 import { createGatewayRtcDialBreaker } from './rtc/rtc-dial-breaker';
-import { rtcLog, rtcLogRateLimited } from './rtc/rtc-log';
+import { flushDialFailed, rtcLog, rtcLogRateLimited } from './rtc/rtc-log';
 import { acceptHttpStream, acceptWsStream, classifyOpenPayload } from './stream-targets';
 import {
   type DispatchHttp,
@@ -1237,6 +1237,7 @@ export class PeerManager {
         throw new Error('stopped');
       }
       this.dcBreaker.noteSuccess(result.peerNodeId);
+      flushDialFailed(result.peerNodeId, { cause: 'success' });
       const session = new LinkMux(result.link, {
         role: result.role,
         logContext: { nodeId: result.peerNodeId, transport: 'dc' },
@@ -1288,6 +1289,10 @@ export class PeerManager {
         return await this.dialDc(nodeId, gen, signal);
       } catch (err) {
         dcError = err;
+        rtcLog('dial failed', {
+          peer: nodeId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
         this.throwIfStopped(nodeId, gen, err);
         return null;
       }
@@ -1295,14 +1300,12 @@ export class PeerManager {
     const liveOf = async () => this.live.get(nodeId)?.session ?? null;
     const attempts: Array<{
       run: () => Promise<LinkSession | null>;
-      fallback?: 'ws-secure';
       skipStop?: boolean;
     }> = [];
     if (!skipDcFirst) attempts.push({ run: tryDc });
     if (above('ws-secure')) {
       attempts.push({
         run: () => this.dialWsSecure(nodeId, gen, signal, attempt),
-        fallback: 'ws-secure',
       });
     }
     attempts.push({ run: liveOf });
@@ -1311,13 +1314,6 @@ export class PeerManager {
       attempts.push({ run: liveOf });
     }
     for (const step of attempts) {
-      if (step.fallback && dcError) {
-        rtcLog('dial failed', {
-          peer: nodeId,
-          reason: dcError instanceof Error ? dcError.message : String(dcError),
-          fallback: step.fallback,
-        });
-      }
       const got = await step.run();
       if (got) {
         this.finishDirectAttempt(nodeId, attempt, got, dcError);
@@ -1326,18 +1322,6 @@ export class PeerManager {
       if (!step.skipStop) this.throwIfStopped(nodeId, gen);
     }
     this.finishDirectAttempt(nodeId, attempt, null, dcError);
-    if (dcError != null || (above('dc') && this.shouldTryDc(nodeId))) {
-      rtcLog('dial failed', {
-        peer: nodeId,
-        reason:
-          dcError instanceof Error
-            ? dcError.message
-            : dcError
-              ? String(dcError)
-              : 'datachannel unavailable',
-        fallback: 'relay',
-      });
-    }
     try {
       const stream = await this.uplink.openRelay(nodeId);
       const result = await handshakeRelay({
@@ -1579,6 +1563,10 @@ export class PeerManager {
       linkSinceAt: this.scheduler.now(),
     };
     this.live.set(peerNodeId, live);
+    if (transport === 'dc') {
+      this.dcBreaker.noteSuccess(peerNodeId);
+      flushDialFailed(peerNodeId, { cause: 'success' });
+    }
     if (transport === 'dc' || transport === 'ws-secure') {
       this.clearDirectFailure(peerNodeId);
     }

@@ -238,12 +238,14 @@ export function buildTmuxSubscribePanes(
 export function buildTmuxFetchPaneHistory(
   deviceId: string,
   paneId: string,
-  requestToken: Uint8Array
+  requestToken: Uint8Array,
+  byteLimit?: number | null
 ): { kind: number; payload: Uint8Array } {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.TmuxFetchPaneHistorySchema, {
     deviceId,
     paneId,
     requestToken,
+    byteLimit: byteLimit ?? null,
   });
   return { kind: wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY, payload };
 }

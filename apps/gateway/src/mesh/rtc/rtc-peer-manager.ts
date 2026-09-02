@@ -313,10 +313,6 @@ export class RtcPeerManager implements RtcFingerprintProvider {
         role: offerer ? 'initiator' : 'acceptor',
       };
     } catch (err) {
-      rtcLog('dial failed', {
-        peer: peerNodeId,
-        reason: err instanceof Error ? err.message : String(err),
-      });
       unsubSignaling();
       unsubDiag();
       this.untrackAndClose(pc);

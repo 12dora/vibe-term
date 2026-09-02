@@ -66,6 +66,10 @@ export class EventLoopLagSampler {
     this.timer = null;
   }
 
+  running(): boolean {
+    return this.timer !== null;
+  }
+
   snapshot(): EventLoopLagSnapshot {
     this.prune(this.now());
     return { lagMs: this.lagMs, maxLagMs: this.maxLag() };
@@ -112,14 +116,24 @@ export class EventLoopLagSampler {
 let shared: EventLoopLagSampler | null = null;
 
 export function gatewayEventLoopLag(): EventLoopLagSampler {
-  if (!shared) {
-    shared = new EventLoopLagSampler();
-    shared.start();
-  }
+  if (!shared) shared = new EventLoopLagSampler();
   return shared;
 }
 
-export function stopGatewayEventLoopLagForTest(): void {
+export function startGatewayEventLoopLag(): void {
+  gatewayEventLoopLag().start();
+}
+
+export function stopGatewayEventLoopLag(): void {
   shared?.stop();
   shared = null;
+}
+
+export function setGatewayEventLoopLagForTest(sampler: EventLoopLagSampler | null): void {
+  shared?.stop();
+  shared = sampler;
+}
+
+export function stopGatewayEventLoopLagForTest(): void {
+  stopGatewayEventLoopLag();
 }
