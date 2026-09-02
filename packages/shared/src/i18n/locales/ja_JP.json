@@ -612,8 +612,8 @@
             "pending": "先に Cloudflare の認可を完了してください。"
           },
           "access": {
-            "title": "アクセス制御（Access）",
-            "description": "Cloudflare でメールアドレスの許可リストを設定します。リストにないリクエストは遮断されます。"
+            "title": "アクセス制御",
+            "description": "アクセス保護の方式を選択します：なし、パスワードログイン、または Cloudflare Access。"
           },
           "create": {
             "title": "作成して起動",

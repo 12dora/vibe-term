@@ -612,8 +612,8 @@
             "pending": "请先完成 Cloudflare 授权。"
           },
           "access": {
-            "title": "访问控制（Access）",
-            "description": "在 Cloudflare 设置邮箱白名单，不在白名单的登录请求将被阻止。"
+            "title": "访问控制",
+            "description": "选择访问保护方式：无、账号密码或 Cloudflare Access。"
           },
           "create": {
             "title": "创建并启动",

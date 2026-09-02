@@ -618,8 +618,8 @@ export const I18N_RESOURCES = {
             "pending": "Finish the Cloudflare authorization first."
           },
           "access": {
-            "title": "Access",
-            "description": "Set an email allowlist in Cloudflare; requests from anyone else are blocked at the edge."
+            "title": "Access Control",
+            "description": "Choose how access is protected: none, password login, or Cloudflare Access."
           },
           "create": {
             "title": "Create and start",
@@ -3023,8 +3023,8 @@ export const I18N_RESOURCES = {
             "pending": "请先完成 Cloudflare 授权。"
           },
           "access": {
-            "title": "访问控制（Access）",
-            "description": "在 Cloudflare 设置邮箱白名单，不在白名单的登录请求将被阻止。"
+            "title": "访问控制",
+            "description": "选择访问保护方式：无、账号密码或 Cloudflare Access。"
           },
           "create": {
             "title": "创建并启动",
@@ -5422,8 +5422,8 @@ export const I18N_RESOURCES = {
             "pending": "先に Cloudflare の認可を完了してください。"
           },
           "access": {
-            "title": "アクセス制御（Access）",
-            "description": "Cloudflare でメールアドレスの許可リストを設定します。リストにないリクエストは遮断されます。"
+            "title": "アクセス制御",
+            "description": "アクセス保護の方式を選択します：なし、パスワードログイン、または Cloudflare Access。"
           },
           "create": {
             "title": "作成して起動",

@@ -612,8 +612,8 @@
             "pending": "Finish the Cloudflare authorization first."
           },
           "access": {
-            "title": "Access",
-            "description": "Set an email allowlist in Cloudflare; requests from anyone else are blocked at the edge."
+            "title": "Access Control",
+            "description": "Choose how access is protected: none, password login, or Cloudflare Access."
           },
           "create": {
             "title": "Create and start",
