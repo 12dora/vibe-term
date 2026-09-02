@@ -85,6 +85,7 @@ export const KEY_LOG_SIGNER_MATRIX: Record<KeyLogType, readonly KeyLogSigner[]> 
   'reset-root': ['root'],
   'admit-hub': ['root', 'passkey'],
   'retire-hub': ['root', 'passkey'],
+  'rotate-root-keep': ['root'],
 };
 
 export type KeyLogSignedRecord = {
