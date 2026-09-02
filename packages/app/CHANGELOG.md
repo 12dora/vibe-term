@@ -1,35 +1,57 @@
-# 1.1.18
+# 1.1.19
 
-_2026-09-02_
+_2026-09-03_
 
 ## English
 
-### Security
+### New
 
-- Sign-in failures no longer reveal why they failed: an unknown user, a wrong password and a bad session signature all return the same `INVALID_CREDENTIALS` and the same neutral message. Requesting a challenge for an unknown user no longer returns 404.
-- Passkeys now act as a mandatory second factor: once an account has at least one passkey registered, password sign-in also asks for the passkey (one prompt per sign-in; the same proof is reused for every node for the session lifetime). Removing every passkey turns the check off again. Passkey-only sign-in is unchanged.
-- `/api/auth/mode` returns the root public key only to signed-in callers, so the public KDF parameters can no longer be combined with it for offline password cracking.
-- Challenge and passkey-option requests are rate-limited per client IP; unauthenticated JSON bodies are capped at 1 MiB; the challenge store and the sign-in rate-limit table are bounded.
-- Behind a reverse proxy with `TMEX_TRUST_PROXY`, the client IP is now taken from `CF-Connecting-IP`, then `X-Real-IP`, then the last `X-Forwarded-For` entry (the first entry is attacker-controlled and could bypass rate limiting).
+- Site name and access URL now follow the mesh: renaming the site in Settings → General renames this node everywhere, and in hub or node mode the access URL is shown read-only from the hub's public address.
+- Per-node "Allow domain access" switch (local machine card → General, and the node detail dialog): turn it off to stop serving the web UI and API to the public internet while hub/node mesh services keep working; access from your LAN and this machine is unaffected. A confirmation warns you before you lock yourself out.
+- Node management: the row actions are now Upgrade / More / Remove. "More" opens a node detail dialog with the name and the domain-access switch; nothing is submitted unless you actually changed it.
+- Connect devices → Mobile: pick one address, then scan a QR code to open tmex on the phone before adding it to the home screen.
+- HTTPS settings: Let's Encrypt DNS-01 now supports DNSPod in addition to Cloudflare, so a hub behind another web server on ports 80/443 can still get its own certificate on the built-in listener.
+
+### Improvements
+
+- Local machine card: the three confusing address rows are now "Local address" and "Current hub" (with the join address shown only when it differs); the direct-connect plug-in shows one status pill with the Enable switch on the same row.
+- HTTPS settings were retitled and rewritten: a compact status block shows external access, configured mode and the built-in listener without contradictory wording.
+- Primary/standby hub chips no longer carry the extra "writes" label.
+- The latency badge now shows the median of recent heartbeat samples and explains on hover what it measures (browser ↔ entry node WebSocket round trip). Heartbeat replies bypass terminal-output backpressure, so bursty terminal output no longer inflates the number.
+- Direct LAN connection attempts remember unreachable addresses (Docker bridge and carrier-NAT subnets are no longer advertised), back off exponentially and stop hammering peers.
+- The WebRTC direct-connect circuit breaker now really trips: three consecutive failures, exponential cooldown, and a reset only after the channel stays healthy.
+- Errors inside the app show a friendly page with retry, reload and copy-details actions instead of the framework's default error screen.
 
 ### Fixes
 
-- The HTTPS section now shows the effective public HTTPS state ("served by reverse proxy", confirmed by the current request or inferred from the public address) instead of only reporting tmex's built-in listener as "off" behind nginx, Baota or a Cloudflare Tunnel, and suggests switching to the external reverse-proxy mode when TLS is terminated in front of tmex.
-- Full-screen TUIs (Claude Code, vim, htop) no longer overflow on phones when the same pane is also open on a desktop: the shared tmux window now follows the narrowest visible client instead of the largest one.
+- Changing the password no longer kicks you back to the login page, and the success message now appears.
+- Domain-access enforcement is decided by the client's source address, so it cannot be bypassed with a forged Host header.
+- Standby hubs and remote nodes get an access URL that actually reaches them.
 
 ---
 
 ## 中文
 
-### 安全
+### 新增
 
-- 登录失败不再区分原因：用户不存在、密码错误、会话签名错误统一返回 `INVALID_CREDENTIALS` 与同一句提示；为未知用户申请挑战也不再返回 404。
-- 通行密钥成为强制二次验证：账号注册了至少一把通行密钥后，密码登录也需要通过通行密钥验证（每次登录只弹一次，同一份验证在会话期内复用于所有节点）；移除全部通行密钥即关闭。仅用通行密钥登录不受影响。
-- `/api/auth/mode` 只对已登录请求返回根公钥，公开的 KDF 参数无法再与之组合做离线密码爆破。
-- 挑战与通行密钥选项请求按客户端 IP 限速；未登录的 JSON 请求体封顶 1 MiB；挑战存储与登录限流表设上限。
-- 反向代理后开启 `TMEX_TRUST_PROXY` 时，客户端 IP 依次取 `CF-Connecting-IP`、`X-Real-IP`、`X-Forwarded-For` 的最后一段（首段由客户端自带、可伪造绕过限流）。
+- 站点名称与访问地址跟随多节点互联：在「设置 → 通用」修改站点名称等于修改本节点名称；hub 或节点模式下访问地址改为只读，来自 Hub 的公开地址。
+- 按节点的「允许域名访问」开关（本机卡片 → 通用设置，以及节点详情弹窗）：关闭后不再向公网提供网页与 API，Hub / 节点互联服务照常；局域网与本机访问不受影响。关闭前会弹出确认，避免把自己锁在门外。
+- 节点管理：行操作改为「升级 / 更多 / 移除」，「更多」打开节点详情弹窗（名称、允许域名访问），未改动的项不会重复提交。
+- 接入设备 → 移动设备：先选一个访问地址，再用手机扫码打开 tmex，然后添加到主屏幕。
+- HTTPS 设置：Let's Encrypt DNS-01 验证在 Cloudflare 之外新增 DNSPod，80/443 被其它 Web 服务占用的 hub 也能用内置监听器拿到自己的证书。
+
+### 改进
+
+- 本机卡片：原先三行让人困惑的地址精简为「本机地址」与「当前 Hub」（加入地址只在不同时显示）；直连插件只保留一个状态标签，「启用」开关移到同一行。
+- HTTPS 设置改名并重写文案：用「对外访问 / 配置模式 / 内置监听器」三行状态块替代前后矛盾的表述。
+- 主 / 备 Hub 标签不再附带「写入」字样。
+- 左上角延迟改为最近几次心跳的中位数，悬停可查看含义（浏览器与入口节点之间的 WebSocket 往返）；心跳回复不再排在终端输出的背压队列后面，大量输出时数字不再虚高。
+- 局域网直连会记住不可达地址（不再广播 Docker 网桥与运营商 NAT 网段），按指数退避，不再反复冲撞对端。
+- WebRTC 直连熔断真正生效：连续三次失败即冷却、指数延长，通道持续健康后才重置。
+- 应用内部出错时显示友好的错误页（重试 / 重新加载 / 复制详情），不再是框架默认错误页。
 
 ### 修复
 
-- HTTPS 设置区显示对外有效的 HTTPS 状态（「由反向代理提供」，并注明是经当前请求确认还是按公开地址推断），不再在 nginx、宝塔或 Cloudflare Tunnel 终止 TLS 时只显示内置监听器「关闭」；TLS 在 tmex 之前终止时会提示切换到外部反向代理模式。
-- 同一个 pane 同时在桌面和手机上打开时，全屏 TUI（Claude Code、vim、htop）不再在手机上溢出：共享的 tmux 窗口尺寸改为跟随最窄的可见客户端，而不是最大的。
+- 修改密码后不再被踢回登录页，成功提示正常显示。
+- 域名访问限制按客户端来源地址判定，伪造 Host 无法绕过。
+- 备 Hub 与远端节点得到的访问地址现在真正指向自身。
