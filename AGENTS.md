@@ -12,9 +12,7 @@
 - **干活必须在 worktree 里**：新需求、bug 修复一律开新 worktree（`git worktree add`），**禁止在主仓工作区直接改代码**。唯一例外：对**当前已干完活的工作区**做与该任务直接相关的后续变更（如修 bug、补测试、改文档），则留在原 worktree 里完成，不要再开新 worktree。切换 worktree 前必须检查代码与 commit 的相互依赖：确认目标 worktree 的 base commit 是否包含当前工作所依赖的改动（如共享类型、DB schema、i18n key 的变更是否已落入该 worktree 可见的历史），避免在一个 worktree 里改了被另一个 worktree 依赖的接口却未提交/未同步导致编译或运行断裂。主仓工作区只用于拉取最新、管理 worktree、发版，不用于直接编码。
 - **实测（live integration）**：打真实 endpoint 的测试（LLM / 搜索）用 `*.integration.ts` 命名，默认 `bun test` 不发现，只由 `test:live:*` 脚本显式跑；凭证只放 `test.env.local`，缺失时守卫 `requireLiveEnv`/`requireAnyLiveEnv` 报错退出（exit 1），不退化成测试 fail。详见 `docs/testing/2026061302-live-integration-tests.md`。
 - **永远不要对生成文件跑 lint / format / fix**：包括但不限于 `packages/shared/src/i18n/resources.ts`、`packages/shared/src/i18n/types.ts`、任何 `resources/fe-dist/*`、`dist/*`、`node_modules/*`、`.wasm` 产物。生成文件由对应脚本重建（如 `bun run build:i18n`），人为 lint/format 只会和下一次生成结果打架。如果看到这些文件在 `git status` 里变化，要么是脚本刚跑过，要么是上游源文件被改了——先判断是否属于当前任务范围，不属于就 revert。
-- 必要的skills:
-  - using-superpowers
-  - brainstorming
+- 可用的skills：`frontend-design`、`webapp-testing`、`fullstack-developer`（superpowers 系技能已于 2026-09-02 全部卸载，不要再引用 `using-superpowers`、`brainstorming` 等）。
 - 使用Plan Mode生成计划，或尝试实现计划时：
   - plan中需要介绍背景和注意事项（如参考特定旧分支），方便没有上下文的情况重新开启任务
   - 在 `prompt-archives` 文件夹按照现有规则创建文件夹，文件夹名称应该用英文清晰、简短地概括文档内容，同时使用日期+数字编号，如`2026020900-migration-continue`，并创建对应的plan-prompt.md文件，并将prompt存档到该文件中（包括后续对话的prompt）
