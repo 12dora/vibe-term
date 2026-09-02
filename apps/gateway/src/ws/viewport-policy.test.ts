@@ -38,20 +38,49 @@ describe('viewportClaimKey', () => {
 });
 
 describe('resolveWinner', () => {
-  test('largest visible area wins', () => {
+  test('smallest visible cols wins', () => {
     const winner = resolveWinner([
       claim('small', { cols: 80, rows: 24 }),
       claim('large', { cols: 160, rows: 48 }),
       claim('mid', { cols: 120, rows: 30 }),
     ]);
-    expect(winner?.sessionId).toBe('large');
-    expect(winner?.claim.cols).toBe(160);
-    expect(winner?.claim.rows).toBe(48);
+    expect(winner?.sessionId).toBe('small');
+    expect(winner?.claim.cols).toBe(80);
+    expect(winner?.claim.rows).toBe(24);
+  });
+
+  test('160x48 vs 80x24 picks 80x24', () => {
+    const winner = resolveWinner([
+      claim('desktop', { cols: 160, rows: 48 }),
+      claim('phone', { cols: 80, rows: 24 }),
+    ]);
+    expect(winner?.sessionId).toBe('phone');
+    expect(winner?.claim.cols).toBe(80);
+    expect(winner?.claim.rows).toBe(24);
+  });
+
+  test('min cols wins even when that claim has a larger area', () => {
+    const listed = resolveWinner([
+      claim('wide', { cols: 100, rows: 30 }),
+      claim('phone', { cols: 42, rows: 60 }),
+    ]);
+    expect(listed?.sessionId).toBe('phone');
+    expect(listed?.claim.cols).toBe(42);
+    expect(listed?.claim.rows).toBe(60);
+
+    // 42×80 面积大于 100×30，min-area 会选 wide；min-cols 仍选 phone
+    const taller = resolveWinner([
+      claim('wide', { cols: 100, rows: 30 }),
+      claim('phone', { cols: 42, rows: 80 }),
+    ]);
+    expect(taller?.sessionId).toBe('phone');
+    expect(taller?.claim.cols).toBe(42);
+    expect(taller?.claim.rows).toBe(80);
   });
 
   test('hidden claims are excluded', () => {
     const winner = resolveWinner([
-      claim('large', { cols: 200, rows: 50, visible: false }),
+      claim('tiny', { cols: 20, rows: 10, visible: false }),
       claim('small', { cols: 80, rows: 24 }),
     ]);
     expect(winner?.sessionId).toBe('small');
@@ -67,16 +96,11 @@ describe('resolveWinner', () => {
     expect(resolveWinner([])).toBeNull();
   });
 
-  test('equal area prefers greater cols, then rows, then lowest session id', () => {
-    expect(
-      resolveWinner([claim('b', { cols: 100, rows: 40 }), claim('a', { cols: 80, rows: 50 })])
-        ?.sessionId
-    ).toBe('b');
-
+  test('equal cols prefers smaller rows, then lowest session id', () => {
     expect(
       resolveWinner([claim('b', { cols: 80, rows: 50 }), claim('a', { cols: 80, rows: 40 })])
         ?.sessionId
-    ).toBe('b');
+    ).toBe('a');
 
     expect(
       resolveWinner([
@@ -86,12 +110,14 @@ describe('resolveWinner', () => {
     ).toBe('sess-a');
   });
 
-  test('removing a claim is just resolving the remainder', () => {
+  test('when the smallest hides, the next-smallest visible wins', () => {
     const remaining = [
-      claim('small', { cols: 80, rows: 24 }),
-      claim('hidden', { cols: 200, rows: 60, visible: false }),
+      claim('desktop', { cols: 160, rows: 48 }),
+      claim('phone', { cols: 80, rows: 24, visible: false }),
+      claim('tablet', { cols: 100, rows: 30 }),
     ];
-    expect(resolveWinner(remaining)?.sessionId).toBe('small');
+    expect(resolveWinner(remaining)?.sessionId).toBe('tablet');
+    expect(resolveWinner(remaining)?.claim.cols).toBe(100);
   });
 });
 

@@ -1,8 +1,8 @@
 // 视口声明：把「本客户端在该 pane 上的可见状态 + 容器测量几何」告诉网关，
-// 网关据此在多客户端间仲裁整窗尺寸（最大的可见客户端持有 PTY 尺寸）。
+// 网关据此在多客户端间仲裁整窗尺寸（可见客户端中列数最小者持有 PTY 尺寸，更大的跟随以免溢出）。
 //
 // 为什么不复用 terminal-resize：跟随者（sizingMode='follow'）下 TerminalResizeReporter
-// 根本不测量也不上报，若只靠 resize 声明，跟随者把窗口拉大后永远抢不回 owner。
+// 根本不测量也不上报，若只靠 resize 声明，跟随者改窗口尺寸后永远抢不回 owner。
 
 import { useRuntime } from '@tmex/stores/react';
 import { type RefObject, useEffect, useRef } from 'react';
