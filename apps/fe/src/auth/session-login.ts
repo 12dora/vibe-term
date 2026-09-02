@@ -38,6 +38,7 @@ import {
   clearTotpCode,
   getSessionKey,
   readSessionSecrets,
+  replaceSessionKey,
 } from './session-key-store';
 
 // ---------------------------------------------------------------------------
@@ -166,6 +167,30 @@ export async function establishSessionFromPassword(
     parallelism: opts.kdfParams.parallelism,
   });
   return await establishSessionFromSeed(seed, opts);
+}
+
+interface ResumeAfterPasswordChangeOptions extends EstablishFromPasswordOptions {
+  api?: AuthApi;
+}
+
+/**
+ * 常规改密（`rotate-root-keep`）之后接回会话：用新密码、新 kdf 参数与新 root_epoch 重建
+ * delegation，再登录一次 entry 换新的入口 cookie。
+ *
+ * 顺序不能反——记录追加成功之前服务端只认旧根钥，新 delegation 一定验不过。整段走
+ * `replaceSessionKey()`：新登录没成功就把旧会话原样装回，用户手上那份仍然有效（这条路径
+ * 不撤销任何会话），页面不该因此掉线。
+ */
+export async function resumeSessionAfterPasswordChange(
+  opts: ResumeAfterPasswordChangeOptions
+): Promise<LoginNodeResult> {
+  return replaceSessionKey(
+    async () => {
+      await establishSessionFromPassword(opts);
+      return await loginSelf({ api: opts.api ?? defaultAuthApi });
+    },
+    (result) => result.ok
+  );
 }
 
 interface EstablishFromPasskeyOptions {

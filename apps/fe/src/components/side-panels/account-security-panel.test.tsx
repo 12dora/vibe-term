@@ -1,15 +1,27 @@
 // 账号安全面板（原 `/account/security` 整页）：三个区块的静态渲染与 standalone 下的空渲染。
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（副作用里的 passkey 列表请求不会跑）。
 
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { installWindowStorage } from '@tmex/stores/test-utils';
 
 installWindowStorage();
 
+const cleared = mock(() => Promise.resolve(true));
+const resumed = mock(async (_opts: unknown) => ({ ok: true }) as { ok: boolean; code?: string });
+mock.module('@/auth/session-key-store', () => ({
+  clearSessionKey: cleared,
+  getSessionKey: () => ({ entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e' }),
+}));
+mock.module('@/auth/session-login', () => ({
+  resumeSessionAfterPasswordChange: resumed,
+}));
+
 const { renderToStaticMarkup } = await import('react-dom/server');
 const panelModule = await import('./account-security-panel');
 const AccountSecurityPanel = panelModule.default;
+const { PasswordSection, finishPasswordChange, passwordChangeFollowUp, securityActionErrorText } =
+  panelModule;
 
 const MESH_MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -30,6 +42,36 @@ function render(mode: AuthModeResponse): string {
   return renderToStaticMarkup(<AccountSecurityPanel mode={mode} api={idleApi} />);
 }
 
+const RESOLVED_MODE = {
+  ...MESH_MODE,
+  uid: 'user-1',
+  kdfParams: MESH_MODE.kdfParams as NonNullable<AuthModeResponse['kdfParams']>,
+};
+
+function renderPasswordSection(
+  overrides: Partial<AuthModeResponse> & { initialFullReset?: boolean } = {}
+): string {
+  const { initialFullReset, ...modeOverrides } = overrides;
+  return renderToStaticMarkup(
+    <PasswordSection
+      mode={{
+        ...RESOLVED_MODE,
+        ...modeOverrides,
+        uid: 'user-1',
+        kdfParams: RESOLVED_MODE.kdfParams,
+      }}
+      api={idleApi}
+      uid="user-1"
+      onDone={() => undefined}
+      initialFullReset={initialFullReset}
+    />
+  );
+}
+
+/** 静态渲染下 i18n 未初始化，`t()` 直接回落成 key。 */
+const t = (key: string, options?: Record<string, unknown>) =>
+  typeof options?.defaultValue === 'string' ? key : key;
+
 describe('AccountSecurityPanel', () => {
   test('mesh 下渲染改密 / TOTP / 通行密钥三块', () => {
     const html = render(MESH_MODE);
@@ -37,7 +79,7 @@ describe('AccountSecurityPanel', () => {
     expect(html).toContain('data-testid="security-change-password"');
     expect(html).toContain('data-testid="security-totp-set"');
     expect(html).toContain('data-testid="security-passkey-add"');
-    expect(html).toContain('data-testid="password-warning"');
+    expect(html).toContain('data-testid="security-full-reset"');
   });
 
   test('standalone（mode:none）整块不渲染', () => {
@@ -63,8 +105,155 @@ describe('AccountSecurityPanel', () => {
     );
   });
 
+  test('全量重置默认不勾选，破坏性警告只在勾上之后出现', () => {
+    const idle = renderPasswordSection();
+    expect(idle).toContain('data-testid="security-full-reset"');
+    expect(idle).toContain('auth.security.fullResetHint');
+    expect(idle).not.toContain('data-testid="password-warning"');
+
+    const checked = renderPasswordSection({ initialFullReset: true });
+    expect(checked).toContain('data-testid="password-warning"');
+    expect(checked).toContain('auth.security.changePasswordWarning');
+  });
+
+  test('开了 TOTP 才多一格重新登录用的验证码；勾上全量重置后不再需要', () => {
+    expect(renderPasswordSection()).not.toContain('data-testid="security-relogin-code"');
+    expect(renderPasswordSection({ totpEnabled: true })).toContain(
+      'data-testid="security-relogin-code"'
+    );
+    expect(renderPasswordSection({ totpEnabled: true, initialFullReset: true })).not.toContain(
+      'data-testid="security-relogin-code"'
+    );
+  });
+
   test('不再暴露整页路由（面板由 `?panel=security` 驱动）', () => {
     expect('accountSecurityRoute' in panelModule).toBe(false);
     expect('PageTitle' in panelModule).toBe(false);
+  });
+});
+
+describe('passwordChangeFollowUp', () => {
+  test('常规改密不清会话：拿新密码重建 delegation 再登录一次 entry', () => {
+    expect(passwordChangeFollowUp({ fullReset: false, totpEnabled: false, totpCode: '' })).toBe(
+      'resume-session'
+    );
+    expect(
+      passwordChangeFollowUp({ fullReset: false, totpEnabled: true, totpCode: '123456' })
+    ).toBe('resume-session');
+  });
+
+  test('开了 TOTP 却没给验证码：跳过重新登录，保留手上这份仍然有效的会话', () => {
+    expect(passwordChangeFollowUp({ fullReset: false, totpEnabled: true, totpCode: '' })).toBe(
+      'keep-session'
+    );
+    expect(passwordChangeFollowUp({ fullReset: false, totpEnabled: true, totpCode: '12' })).toBe(
+      'keep-session'
+    );
+  });
+
+  test('全量重置：服务端撤销了全部会话，本地必须清掉', () => {
+    expect(passwordChangeFollowUp({ fullReset: true, totpEnabled: false, totpCode: '' })).toBe(
+      'clear-session'
+    );
+    expect(passwordChangeFollowUp({ fullReset: true, totpEnabled: true, totpCode: '123456' })).toBe(
+      'clear-session'
+    );
+  });
+});
+
+describe('securityActionErrorText', () => {
+  test('hub 相关的码给出下一步该做什么', () => {
+    expect(securityActionErrorText(t, 'HUB_TIMEOUT')).toBe('auth.security.primaryHubUnreachable');
+    expect(securityActionErrorText(t, 'HUB_NOT_WRITER')).toBe('auth.security.switchToPrimaryHub');
+    expect(securityActionErrorText(t, 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES')).toBe(
+      'auth.security.nodesTooOld'
+    );
+  });
+
+  test('其余码落回通用错误表', () => {
+    expect(securityActionErrorText(t, 'KEY_LOG_FORK')).toBe('auth.errors.KEY_LOG_FORK');
+  });
+});
+
+describe('finishPasswordChange', () => {
+  const modeApi = {
+    getMode: () =>
+      Promise.resolve({ ...MESH_MODE, rootEpoch: 1, totpEnabled: false } as AuthModeResponse),
+  } as unknown as AuthApi;
+
+  beforeEach(() => {
+    cleared.mockClear();
+    resumed.mockClear();
+    resumed.mockImplementation(async () => ({ ok: true }));
+  });
+
+  test('常规改密成功后不清会话钥，只用新密码重新建立一次会话', async () => {
+    const feedback = await finishPasswordChange({
+      api: modeApi,
+      uid: 'user-1',
+      password: 'new-secret',
+      totpCode: '',
+      follow: 'resume-session',
+      t,
+    });
+    expect(cleared).not.toHaveBeenCalled();
+    expect(resumed).toHaveBeenCalledTimes(1);
+    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordKeepDone' });
+  });
+
+  test('重新登录没成功：保留旧会话，只给一行提示', async () => {
+    resumed.mockImplementation(async () => ({ ok: false, code: 'BAD_SIGNATURE' }));
+    const feedback = await finishPasswordChange({
+      api: modeApi,
+      uid: 'user-1',
+      password: 'new-secret',
+      totpCode: '',
+      follow: 'resume-session',
+      t,
+    });
+    expect(cleared).not.toHaveBeenCalled();
+    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeFailed' });
+  });
+
+  test('重新登录过程中抛异常也只当作没接上，不报成改密失败', async () => {
+    resumed.mockImplementation(() => Promise.reject(new Error('argon2 out of memory')));
+    const feedback = await finishPasswordChange({
+      api: modeApi,
+      uid: 'user-1',
+      password: 'new-secret',
+      totpCode: '',
+      follow: 'resume-session',
+      t,
+    });
+    expect(cleared).not.toHaveBeenCalled();
+    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeFailed' });
+  });
+
+  test('跳过重新登录时既不清会话也不发请求', async () => {
+    const feedback = await finishPasswordChange({
+      api: modeApi,
+      uid: 'user-1',
+      password: 'new-secret',
+      totpCode: '',
+      follow: 'keep-session',
+      t,
+    });
+    expect(cleared).not.toHaveBeenCalled();
+    expect(resumed).not.toHaveBeenCalled();
+    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeSkipped' });
+  });
+
+  test('全量重置后清掉会话钥（含 IndexedDB 那份）', async () => {
+    const feedback = await finishPasswordChange({
+      api: modeApi,
+      uid: 'user-1',
+      password: 'new-secret',
+      totpCode: '',
+      follow: 'clear-session',
+      t,
+    });
+    expect(cleared).toHaveBeenCalledTimes(1);
+    expect(resumed).not.toHaveBeenCalled();
+    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordDone' });
   });
 });

@@ -1728,7 +1728,16 @@ export const I18N_RESOURCES = {
         "totpCodeRequired": "Enter the 6-digit code.",
         "totpDone": "Authenticator turned on",
         "passkeyListFailed": "Could not load your passkeys: {{error}}",
-        "passkeyOtherOrigin": "(created on another address — unusable here)"
+        "passkeyOtherOrigin": "(created on another address — unusable here)",
+        "fullReset": "Also remove all passkeys and two-step verification and sign out everywhere",
+        "fullResetHint": "For a password that may have been exposed. Leave unchecked to keep existing sign-in methods and sessions.",
+        "changePasswordKeepDone": "Password updated. Existing sign-in methods still work.",
+        "reloginTotpHint": "Signing back in after the change needs a code. Leave empty to skip.",
+        "sessionResumeFailed": "Password updated. Signing back in did not finish; other nodes need a new sign-in.",
+        "sessionResumeSkipped": "Password updated. No code entered; other nodes need a new sign-in.",
+        "primaryHubUnreachable": "The primary hub is unreachable and nothing was submitted. Switch hub roles in \"Settings → Multi-node Mesh\", then retry.",
+        "switchToPrimaryHub": "This hub is a standby and does not accept account changes. Switch to the primary hub, then retry.",
+        "nodesTooOld": "Some nodes are older than 1.1.16. Update every node first."
       },
       "credential": {
         "title": "Confirm it's you",
@@ -4137,7 +4146,16 @@ export const I18N_RESOURCES = {
         "totpCodeRequired": "请输入 6 位验证码。",
         "totpDone": "验证码已启用",
         "passkeyListFailed": "通行密钥列表加载失败：{{error}}",
-        "passkeyOtherOrigin": "（属于其他地址，此处不可用）"
+        "passkeyOtherOrigin": "（属于其他地址，此处不可用）",
+        "fullReset": "同时移除所有通行密钥、两步验证并注销全部会话",
+        "fullResetHint": "适用于密码可能已泄露的情况。不勾选则保留现有登录方式和会话。",
+        "changePasswordKeepDone": "密码已更新，现有登录方式保持不变。",
+        "reloginTotpHint": "改密后重新登录需要验证码；留空则跳过。",
+        "sessionResumeFailed": "密码已更新；重新登录未完成，其他节点需重新登录。",
+        "sessionResumeSkipped": "密码已更新；未输入验证码，其他节点需重新登录。",
+        "primaryHubUnreachable": "主 Hub 不可达，修改未提交；请先在「设置 → 多节点互联」切换 Hub 角色后重试。",
+        "switchToPrimaryHub": "当前 Hub 为备用，不接受账号变更；请切换到主 Hub 后重试。",
+        "nodesTooOld": "有节点版本低于 1.1.16，须先升级全部节点。"
       },
       "credential": {
         "title": "确认身份",
@@ -6540,7 +6558,16 @@ export const I18N_RESOURCES = {
         "totpCodeRequired": "6 桁のコードを入力してください。",
         "totpDone": "認証アプリを有効にしました",
         "passkeyListFailed": "パスキーを読み込めませんでした：{{error}}",
-        "passkeyOtherOrigin": "（別のアドレスで作成されたため、ここでは使えません）"
+        "passkeyOtherOrigin": "（別のアドレスで作成されたため、ここでは使えません）",
+        "fullReset": "すべてのパスキーと 2 段階認証を削除し、全セッションからサインアウトする",
+        "fullResetHint": "パスワードが漏れた可能性がある場合に使います。オフのままなら既存のサインイン方法とセッションを保持します。",
+        "changePasswordKeepDone": "パスワードを更新しました。既存のサインイン方法はそのまま使えます。",
+        "reloginTotpHint": "変更後の再サインインにはコードが必要です。空欄ならスキップします。",
+        "sessionResumeFailed": "パスワードを更新しました。再サインインは完了していません。他のノードでは再度サインインが必要です。",
+        "sessionResumeSkipped": "パスワードを更新しました。コード未入力のため、他のノードでは再度サインインが必要です。",
+        "primaryHubUnreachable": "メインハブに接続できず、変更は送信されていません。「設定 → マルチノード連携」でハブの役割を切り替えてから再試行してください。",
+        "switchToPrimaryHub": "このハブは予備のため、アカウントの変更を受け付けません。メインハブに切り替えてから再試行してください。",
+        "nodesTooOld": "1.1.16 より古いノードがあります。先にすべてのノードを更新してください。"
       },
       "credential": {
         "title": "本人確認",

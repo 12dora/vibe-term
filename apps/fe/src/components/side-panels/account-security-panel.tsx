@@ -18,7 +18,8 @@ import {
   decodeRootPublicKey,
   useCredentialPrompt,
 } from '@/auth/credential-prompt';
-import { clearSessionKey } from '@/auth/session-key-store';
+import { clearSessionKey, getSessionKey } from '@/auth/session-key-store';
+import { resumeSessionAfterPasswordChange } from '@/auth/session-login';
 import { useAuthMode } from '@/auth/use-session-key';
 import type {
   AuthApi,
@@ -26,8 +27,10 @@ import type {
   AuthModeResponse,
   PasskeySummary,
 } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
+import { HUB_NOT_WRITER, defaultAuthApi } from '@tmex/api-client/auth/index';
+import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@tmex/shared/auth';
 import { Button } from '@tmex/ui/button';
+import { Checkbox } from '@tmex/ui/checkbox';
 import { Input } from '@tmex/ui/input';
 import { OtpInput } from '@tmex/ui/otp-input';
 import { AlertTriangle, Fingerprint, KeyRound, Loader2, Trash2 } from 'lucide-react';
@@ -83,15 +86,33 @@ function Section({
   );
 }
 
-function Feedback({ tone, text }: { tone: 'error' | 'ok'; text: string }) {
+const FEEDBACK_TONE = {
+  error: 'text-destructive',
+  ok: 'text-emerald-500',
+  notice: 'text-muted-foreground',
+} as const;
+
+function Feedback({ tone, text }: { tone: keyof typeof FEEDBACK_TONE; text: string }) {
   return (
-    <p
-      className={`text-xs ${tone === 'error' ? 'text-destructive' : 'text-emerald-500'}`}
-      data-testid={`security-${tone}`}
-    >
+    <p className={`text-xs ${FEEDBACK_TONE[tone]}`} data-testid={`security-${tone}`}>
       {text}
     </p>
   );
+}
+
+const HUB_TIMEOUT = 'HUB_TIMEOUT';
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+/**
+ * key-log 动作失败的文案。多 hub 下三个码必须给出下一步该去哪台机器操作，
+ * 通用错误表里那句「请通过主 Hub 操作」在账号安全这条路径上说不清楚要先做什么。
+ */
+export function securityActionErrorText(t: Translate, code: string): string {
+  if (code === HUB_TIMEOUT) return t('auth.security.primaryHubUnreachable');
+  if (code === HUB_NOT_WRITER) return t('auth.security.switchToPrimaryHub');
+  if (code === KEYLOG_TYPE_UNSUPPORTED_BY_NODES) return t('auth.security.nodesTooOld');
+  return t(`auth.errors.${code}`, { defaultValue: code });
 }
 
 interface AccountSecurityProps {
@@ -179,28 +200,254 @@ const PLACEHOLDER_KDF: AuthKdfParamsJson = {
 // 改密
 // ---------------------------------------------------------------------------
 
-function PasswordSection({
+export type PasswordChangeFollowUp = 'clear-session' | 'resume-session' | 'keep-session';
+
+/**
+ * 改密成功后拿浏览器这份会话怎么办。
+ *
+ * - `clear-session`：全量重置撤销了全部会话，本地连 IndexedDB 一起清掉；
+ * - `resume-session`：常规改密不撤销会话，用新密码重建 delegation 再登录一次 entry；
+ * - `keep-session`：开了 TOTP 却没给验证码，重新登录做不了，保留手上这份仍然有效的会话。
+ */
+export function passwordChangeFollowUp(input: {
+  fullReset: boolean;
+  totpEnabled: boolean;
+  totpCode: string;
+}): PasswordChangeFollowUp {
+  if (input.fullReset) return 'clear-session';
+  if (input.totpEnabled && !/^\d{6}$/.test(input.totpCode)) return 'keep-session';
+  return 'resume-session';
+}
+
+/**
+ * 重新读一次 `/api/auth/mode`：新 kdf 参数与 root_epoch 只有服务端应用完记录才作准。
+ *
+ * 任何失败都只是「没接上」——密码已经改成功了，不能反过来报成改密失败；旧会话由
+ * `replaceSessionKey()` 保住，调用方只给一行提示。
+ */
+async function resumeSession(input: {
+  api: AuthApi;
+  uid: string;
+  password: string;
+  totpCode: string;
+}): Promise<boolean> {
+  try {
+    const next = await input.api.getMode();
+    if (!next.kdfParams || typeof next.rootEpoch !== 'number') return false;
+    const result = await resumeSessionAfterPasswordChange({
+      api: input.api,
+      uid: input.uid,
+      password: input.password,
+      kdfParams: next.kdfParams,
+      entryNodeId: getSessionKey()?.entryNodeId ?? next.nodeId,
+      rootEpoch: next.rootEpoch,
+      hasTotp: Boolean(next.totpEnabled),
+      totpCode: input.totpCode || undefined,
+    });
+    return result.ok;
+  } catch {
+    return false;
+  }
+}
+
+interface PasswordChangeFeedback {
+  tone: 'ok' | 'notice';
+  text: string;
+}
+
+/** 改密成功后的收尾：只有全量重置才清会话钥；常规改密走两阶段替换，失败也不动旧会话。 */
+export async function finishPasswordChange(input: {
+  api: AuthApi;
+  uid: string;
+  password: string;
+  totpCode: string;
+  follow: PasswordChangeFollowUp;
+  t: Translate;
+}): Promise<PasswordChangeFeedback> {
+  if (input.follow === 'clear-session') {
+    // rotate-root 撤销所有会话：等盘上那份也删掉再往下走，否则用户随手刷新一下，
+    // IndexedDB 里那份已被服务端撤销的会话钥又会被恢复出来。
+    await clearSessionKey();
+    return { tone: 'ok', text: input.t('auth.security.changePasswordDone') };
+  }
+  if (input.follow === 'keep-session') {
+    return { tone: 'notice', text: input.t('auth.security.sessionResumeSkipped') };
+  }
+  const resumed = await resumeSession(input);
+  return resumed
+    ? { tone: 'ok', text: input.t('auth.security.changePasswordKeepDone') }
+    : { tone: 'notice', text: input.t('auth.security.sessionResumeFailed') };
+}
+
+interface PasswordChangeRequest {
+  api: AuthApi;
+  uid: string;
+  kdfParams: AuthKdfParamsJson;
+  oldPassword: string;
+  newPassword: string;
+  fullReset: boolean;
+  totpEnabled: boolean;
+  totpCode: string;
+  t: Translate;
+}
+
+type PasswordChangeOutcome = { tone: 'error'; text: string } | PasswordChangeFeedback;
+
+async function submitPasswordChange(input: PasswordChangeRequest): Promise<PasswordChangeOutcome> {
+  const result = await changePassword({
+    api: input.api,
+    uid: input.uid,
+    oldPassword: input.oldPassword,
+    newPassword: input.newPassword,
+    currentKdfParams: input.kdfParams,
+    fullReset: input.fullReset,
+    totpEnabled: input.totpEnabled,
+  });
+  if (!result.ok) {
+    return { tone: 'error', text: securityActionErrorText(input.t, result.code) };
+  }
+  return finishPasswordChange({
+    api: input.api,
+    uid: input.uid,
+    password: input.newPassword,
+    totpCode: input.totpCode,
+    follow: passwordChangeFollowUp(input),
+    t: input.t,
+  });
+}
+
+function PasswordFields({
+  oldPassword,
+  newPassword,
+  confirm,
+  onOldPassword,
+  onNewPassword,
+  onConfirm,
+}: {
+  oldPassword: string;
+  newPassword: string;
+  confirm: string;
+  onOldPassword: (value: string) => void;
+  onNewPassword: (value: string) => void;
+  onConfirm: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <Input
+        type="password"
+        autoComplete="current-password"
+        placeholder={t('auth.security.currentPassword')}
+        value={oldPassword}
+        data-testid="security-old-password"
+        onChange={(event) => onOldPassword(event.target.value)}
+      />
+      <Input
+        type="password"
+        autoComplete="new-password"
+        placeholder={t('auth.security.newPassword')}
+        value={newPassword}
+        data-testid="security-new-password"
+        onChange={(event) => onNewPassword(event.target.value)}
+      />
+      <Input
+        type="password"
+        autoComplete="new-password"
+        placeholder={t('auth.security.confirmPassword')}
+        value={confirm}
+        data-testid="security-confirm-password"
+        onChange={(event) => onConfirm(event.target.value)}
+      />
+    </>
+  );
+}
+
+/** 常规改密后要重新登录一次 entry；开了 TOTP 就得当场给一个码，留空则跳过。 */
+function ReloginCodeField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs text-muted-foreground">{t('auth.security.reloginTotpHint')}</p>
+      <OtpInput
+        value={value}
+        onChange={onChange}
+        digitLabel={(index, length) => t('auth.totpDigit', { index: index + 1, total: length })}
+        data-testid="security-relogin-code"
+      />
+    </div>
+  );
+}
+
+/** 全量重置的开关与它的破坏性警告：勾上之前不摆警告，免得常规改密被误读成会清空一切。 */
+function FullResetOption({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <label className="flex items-start gap-2 text-xs" htmlFor="security-full-reset">
+        <Checkbox
+          id="security-full-reset"
+          checked={checked}
+          onCheckedChange={(next) => onChange(next === true)}
+          data-testid="security-full-reset"
+        />
+        <span className="flex flex-col gap-0.5">
+          {t('auth.security.fullReset')}
+          <span className="text-muted-foreground">{t('auth.security.fullResetHint')}</span>
+        </span>
+      </label>
+      {checked ? (
+        <p
+          className="flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
+          data-testid="password-warning"
+        >
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          <span>{t('auth.security.changePasswordWarning')}</span>
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/** 单独导出供测试静态渲染：`initialFullReset` 只用来摆出勾选后的形态。 */
+export function PasswordSection({
   mode,
   api,
   uid,
   onDone,
+  initialFullReset = false,
 }: {
   mode: ResolvedMode;
   api: AuthApi;
   uid: string;
   onDone: () => void;
+  initialFullReset?: boolean;
 }) {
   const { t } = useTranslation();
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [fullReset, setFullReset] = useState(initialFullReset);
+  const [totpCode, setTotpCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState(false);
+  const [feedback, setFeedback] = useState<PasswordChangeFeedback | null>(null);
+  const totpEnabled = Boolean(mode.totpEnabled);
 
   const submit = useCallback(async () => {
     setError(null);
-    setOk(false);
+    setFeedback(null);
     if (!oldPassword || !newPassword) {
       setError(t('auth.security.passwordRequired'));
       return;
@@ -211,67 +458,62 @@ function PasswordSection({
     }
     setBusy(true);
     try {
-      const result = await changePassword({
+      const outcome = await submitPasswordChange({
         api,
         uid,
+        kdfParams: mode.kdfParams,
         oldPassword,
         newPassword,
-        currentKdfParams: mode.kdfParams,
+        fullReset,
+        totpEnabled,
+        totpCode,
+        t,
       });
-      if (!result.ok) {
-        setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+      if (outcome.tone === 'error') {
+        setError(outcome.text);
         return;
       }
       setOldPassword('');
       setNewPassword('');
       setConfirm('');
-      setOk(true);
-      // rotate-root 会撤销所有会话：本地 sk_sess 立刻作废。等盘上那份也删掉再往下走，
-      // 否则用户随手刷新一下，IndexedDB 里那份已被服务端撤销的会话钥又会被恢复出来。
-      await clearSessionKey();
+      setTotpCode('');
+      setFeedback(outcome);
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
-  }, [api, confirm, mode.kdfParams, newPassword, oldPassword, onDone, t, uid]);
+  }, [
+    api,
+    confirm,
+    fullReset,
+    mode.kdfParams,
+    newPassword,
+    oldPassword,
+    onDone,
+    t,
+    totpCode,
+    totpEnabled,
+    uid,
+  ]);
 
   return (
     <Section title={t('auth.security.changePassword')}>
-      <p
-        className="flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
-        data-testid="password-warning"
-      >
-        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-        <span>{t('auth.security.changePasswordWarning')}</span>
-      </p>
-      <Input
-        type="password"
-        autoComplete="current-password"
-        placeholder={t('auth.security.currentPassword')}
-        value={oldPassword}
-        data-testid="security-old-password"
-        onChange={(event) => setOldPassword(event.target.value)}
+      <PasswordFields
+        oldPassword={oldPassword}
+        newPassword={newPassword}
+        confirm={confirm}
+        onOldPassword={setOldPassword}
+        onNewPassword={setNewPassword}
+        onConfirm={setConfirm}
       />
-      <Input
-        type="password"
-        autoComplete="new-password"
-        placeholder={t('auth.security.newPassword')}
-        value={newPassword}
-        data-testid="security-new-password"
-        onChange={(event) => setNewPassword(event.target.value)}
-      />
-      <Input
-        type="password"
-        autoComplete="new-password"
-        placeholder={t('auth.security.confirmPassword')}
-        value={confirm}
-        data-testid="security-confirm-password"
-        onChange={(event) => setConfirm(event.target.value)}
-      />
+      {totpEnabled && !fullReset ? (
+        <ReloginCodeField value={totpCode} onChange={setTotpCode} />
+      ) : null}
+      <FullResetOption checked={fullReset} onChange={setFullReset} />
       {error ? <Feedback tone="error" text={error} /> : null}
-      {ok ? <Feedback tone="ok" text={t('auth.security.changePasswordDone')} /> : null}
+      {feedback ? <Feedback tone={feedback.tone} text={feedback.text} /> : null}
       <div>
         <Button
           type="button"
@@ -357,7 +599,7 @@ function TotpSection({
         return;
       }
       if (!outcome.result.ok) {
-        setError(t(`auth.errors.${outcome.result.code}`, { defaultValue: outcome.result.code }));
+        setError(securityActionErrorText(t, outcome.result.code));
         return;
       }
       draft.secret.fill(0);
@@ -390,7 +632,7 @@ function TotpSection({
       });
       if (!result) return;
       if (!result.ok) {
-        setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+        setError(securityActionErrorText(t, result.code));
         return;
       }
       cancel();
@@ -514,7 +756,7 @@ function PasskeySection({
       );
       if (!result) return;
       if (!result.ok) {
-        setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+        setError(securityActionErrorText(t, result.code));
         return;
       }
       setName('');
@@ -537,7 +779,7 @@ function PasskeySection({
         );
         if (!result) return;
         if (!result.ok) {
-          setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+          setError(securityActionErrorText(t, result.code));
           return;
         }
         onDone();

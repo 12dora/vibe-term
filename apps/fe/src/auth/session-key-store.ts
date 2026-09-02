@@ -193,6 +193,48 @@ export function adoptSessionSecrets(secrets: SessionKeySecrets): SessionKeyInfo 
   return secrets.info;
 }
 
+/** 就地清零一份不再使用的会话材料（`clearSessionKey()` 对 `current` 做的那套）。 */
+function wipeSecrets(secrets: SessionKeySecrets): void {
+  secrets.sessSk?.fill(0);
+  secrets.delegationSig.fill(0);
+  secrets.kTotp?.fill(0);
+  secrets.totpCode = null;
+}
+
+/**
+ * 两阶段会话替换：常规改密后要用新密码重建 delegation 并重新登录 entry，但**旧会话没有被
+ * 服务端撤销**——新登录只要没成功，用户就该继续用手上这一份，而不是被踢回登录页。
+ *
+ * 因此 `run()` 期间旧会话只是被摘下（不清零、不进 IndexedDB），只有 `accept(value)` 为真才
+ * 真正丢弃它；返回值被拒或 `run()` 抛异常时，旧会话原样装回（顺带清零那份没用上的新会话）。
+ *
+ * 这段窗口里 `getSessionKey()` 读到 null——调用方要在进入之前取好 `entryNodeId` 之类的信息。
+ */
+export async function replaceSessionKey<T>(
+  run: () => Promise<T>,
+  accept: (value: T) => boolean
+): Promise<T> {
+  const previous = current;
+  current = null;
+  generation += 1;
+  restorePromise = Promise.resolve(null);
+  let keep = false;
+  try {
+    const value = await run();
+    keep = accept(value);
+    return value;
+  } finally {
+    if (keep) {
+      if (previous) wipeSecrets(previous);
+    } else if (previous) {
+      // adopt 会先把 `run()` 留下的那份新会话清零，再把旧会话重新写回内存与 IndexedDB。
+      adoptSessionSecrets(previous);
+    } else {
+      await clearSessionKey();
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 按需的单 node 登录
 // ---------------------------------------------------------------------------

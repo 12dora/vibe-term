@@ -9,7 +9,10 @@ import {
   type KdfParams,
   type KeyLogSignedRecord,
   type RootKey,
+  type RotateRootKeepTotp,
   decodeBase64url,
+  decodeSetTotpPayload,
+  decryptTotpSecret,
   deriveSeed,
   deriveTotpKey,
   encodeBase64url,
@@ -23,6 +26,7 @@ import {
   buildAddPasskeyRecord,
   buildClearTotpRecord,
   buildRemovePasskeyRecord,
+  buildRotateRootKeepRecord,
   buildRotateRootRecord,
   buildSetTotpRecord,
   headFromResponse,
@@ -72,13 +76,68 @@ export interface ChangePasswordInput {
   newPassword: string;
   /** 当前 kdf 参数（来自 `/api/auth/mode`）。 */
   currentKdfParams: { salt: string; memory_kib: number; iterations: number; parallelism: number };
+  /**
+   * 全量重置：清空所有 passkey 与 TOTP 并注销全部会话（`rotate-root`）。
+   * 缺省 `false` = 常规改密（`rotate-root-keep`），登录方式与会话原样保留。
+   */
+  fullReset?: boolean;
+  /** 账号当前是否启用 TOTP（来自 `/api/auth/mode`）：常规改密要据此重新封装密文。 */
+  totpEnabled?: boolean;
   /** 根钥派生（测试注入）：拿到同一把根钥、并模拟第二次 Argon2 失败。 */
   deriveRootKey?: (password: string, kdfParams: KdfParams) => Promise<RootKey>;
 }
 
 /**
- * 改密 = `rotate-root`，由**旧**根钥签名，payload 是新根公钥 + 新 kdf 参数。
- * 应用后 root_epoch += 1，所有 node 撤销全部会话、清空 passkey 与 TOTP——UI 必须提前告知。
+ * 把现有 TOTP 密文从旧 seed / 旧 epoch 换封到新 seed / 新 epoch。
+ *
+ * 解密用 `k_old = HKDF(oldSeed, epoch=E)` + AAD `{uid, E, 该 set-totp 记录的 seq}`；
+ * 重加密用 `k_new = HKDF(newSeed, epoch=E+1)` + AAD `{uid, E+1, 本条 rotate 记录的 seq}`。
+ * 网关没有任何一把 seed，只能校验结构与这两个元数据，真正的验证发生在下一次登录解密时。
+ */
+async function rewrapTotpSecret(input: {
+  api: AuthApi;
+  uid: string;
+  oldSeed: Uint8Array;
+  newSeed: Uint8Array;
+  rootEpoch: number;
+  recordSeq: bigint;
+}): Promise<RotateRootKeepTotp | null> {
+  const fetched = await input.api.getTotpRecord();
+  // 服务端说没开 TOTP（`totpEnabled` 已过期）时就按没开处理：写 `totp: null` 才是对的记录。
+  if (!fetched.ok) {
+    if (fetched.code === 'TOTP_NOT_ENABLED') return null;
+    throw new Error(fetched.code);
+  }
+  const record = fetched.record;
+  const nextEpoch = input.rootEpoch + 1;
+  const kOld = deriveTotpKey(input.oldSeed, input.uid, input.rootEpoch);
+  const kNew = deriveTotpKey(input.newSeed, input.uid, nextEpoch);
+  let secret: Uint8Array | null = null;
+  try {
+    secret = await decryptTotpSecret(kOld, decodeSetTotpPayload(decodeBase64url(record.payload)), {
+      uid: input.uid,
+      root_epoch: input.rootEpoch,
+      seq: BigInt(record.record_seq),
+    });
+    const payload = await encryptTotpSecret(kNew, secret, {
+      uid: input.uid,
+      root_epoch: nextEpoch,
+      seq: input.recordSeq,
+    });
+    return { root_epoch: nextEpoch, seq: input.recordSeq, payload };
+  } finally {
+    secret?.fill(0);
+    kOld.fill(0);
+    kNew.fill(0);
+  }
+}
+
+/**
+ * 改密：两条路径都由**旧**根钥签名，payload 都是新根公钥 + 新 kdf 参数，应用后 root_epoch += 1。
+ *
+ * - 常规（缺省）：`rotate-root-keep`，保留 passkey、TOTP 与全部会话；开了 TOTP 时把密文
+ *   随记录一起换封（`rewrapTotpSecret`），否则新密码解不开旧密文，账号会被远程锁死。
+ * - `fullReset`：`rotate-root`，清空 passkey 与 TOTP 并注销全部会话——UI 必须提前告知。
  */
 export async function changePassword(input: ChangePasswordInput): Promise<KeyLogAppendResult> {
   const api = input.api ?? defaultAuthApi;
@@ -91,15 +150,28 @@ export async function changePassword(input: ChangePasswordInput): Promise<KeyLog
     const newKdfParams = generateKdfParams();
     const newRootKey = await derive(input.newPassword, newKdfParams);
     try {
-      const record = buildRotateRootRecord({
+      const base = {
         head: headFromResponse(head),
         rootEpoch: head.rootEpoch,
         uid: input.uid,
         oldRootKey,
         newRootPublicKey: newRootKey.publicKey,
         newKdfParams,
-      });
-      return await append(api, record);
+      };
+      if (input.fullReset) {
+        return await append(api, buildRotateRootRecord(base));
+      }
+      const totp = input.totpEnabled
+        ? await rewrapTotpSecret({
+            api,
+            uid: input.uid,
+            oldSeed: oldRootKey.seed,
+            newSeed: newRootKey.seed,
+            rootEpoch: head.rootEpoch,
+            recordSeq: base.head.seq + 1n,
+          })
+        : null;
+      return await append(api, buildRotateRootKeepRecord({ ...base, totp }));
     } finally {
       newRootKey.seed.fill(0);
     }

@@ -20,6 +20,8 @@ import {
   ensureNodeLogin,
   getSessionKey,
   hasSessionKey,
+  readSessionSecrets,
+  replaceSessionKey,
   resetNodeLoginsForTest,
   setLoginLoaderForTest,
 } from './session-key-store';
@@ -28,6 +30,7 @@ import {
   establishSessionFromSeed,
   loginSelf,
   loginToNode,
+  resumeSessionAfterPasswordChange,
   selectPasskeyCredential,
 } from './session-login';
 
@@ -189,6 +192,141 @@ describe('establishSessionFromSeed', () => {
     clearSessionKey();
     expect(getSessionKey()).toBeNull();
   });
+});
+
+describe('replaceSessionKey（两阶段会话替换）', () => {
+  test('新会话被接受：旧会话材料清零，内存里留下新的那一份', async () => {
+    await establishRoot();
+    const previous = readSessionSecrets();
+    const oldSig = previous?.delegationSig as Uint8Array;
+    const oldIssuedAt = previous?.info.issuedAt as number;
+
+    const info = await replaceSessionKey(
+      async () => {
+        await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+          uid: UID,
+          entryNodeId: ENTRY,
+          rootEpoch: 1,
+          hasTotp: false,
+          now: oldIssuedAt + 1000,
+        });
+        return { ok: true } as const;
+      },
+      (result) => result.ok
+    );
+
+    expect(info.ok).toBe(true);
+    expect(oldSig.every((byte) => byte === 0)).toBe(true);
+    expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt + 1000);
+  });
+
+  test('新会话被拒：旧会话原样装回，新的那一份被清零', async () => {
+    await establishRoot();
+    const previous = readSessionSecrets();
+    const oldSig = previous?.delegationSig as Uint8Array;
+    const oldIssuedAt = previous?.info.issuedAt as number;
+    let newSig: Uint8Array | null = null;
+
+    const outcome = await replaceSessionKey(
+      async () => {
+        await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+          uid: UID,
+          entryNodeId: ENTRY,
+          rootEpoch: 1,
+          hasTotp: false,
+          now: oldIssuedAt + 1000,
+        });
+        newSig = readSessionSecrets()?.delegationSig ?? null;
+        return { ok: false, code: 'NETWORK_ERROR' } as const;
+      },
+      (result) => result.ok
+    );
+
+    expect(outcome.ok).toBe(false);
+    // 服务端没有撤销旧会话，页面不该因为一次新登录没打通就掉线。
+    expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt);
+    expect(readSessionSecrets()?.delegationSig).toBe(oldSig);
+    expect(oldSig.every((byte) => byte === 0)).toBe(false);
+    expect((newSig as unknown as Uint8Array).every((byte) => byte === 0)).toBe(true);
+  });
+
+  test('run 抛异常也把旧会话装回，异常照常抛出', async () => {
+    await establishRoot();
+    const oldIssuedAt = getSessionKey()?.issuedAt;
+
+    await expect(
+      replaceSessionKey(async () => {
+        throw new Error('argon2 out of memory');
+      }, Boolean)
+    ).rejects.toThrow('argon2 out of memory');
+
+    expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt as number);
+  });
+
+  test('替换期间读不到会话钥（调用方必须提前取好 entryNodeId）', async () => {
+    await establishRoot();
+    let during: unknown = 'unset';
+    await replaceSessionKey(
+      async () => {
+        during = getSessionKey();
+        return { ok: false } as const;
+      },
+      () => false
+    );
+    expect(during).toBeNull();
+    expect(hasSessionKey()).toBe(true);
+  });
+});
+
+describe('resumeSessionAfterPasswordChange', () => {
+  test('登录成功后换成新会话（新 delegation 由新根钥签）', async () => {
+    await establishRoot();
+    const oldIssuedAt = getSessionKey()?.issuedAt as number;
+    const { api, captured } = mockApi({});
+
+    const result = await resumeSessionAfterPasswordChange({
+      api,
+      uid: UID,
+      password: 'new-secret',
+      kdfParams: {
+        salt: encodeBase64url(fill(16, 0x05)),
+        memory_kib: 64,
+        iterations: 1,
+        parallelism: 1,
+      },
+      entryNodeId: ENTRY,
+      rootEpoch: 1,
+      hasTotp: false,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(captured.loginCalls.map((row) => row.nodeId)).toEqual(['self']);
+    expect(getSessionKey()?.issuedAt).not.toBe(oldIssuedAt);
+  }, 20000);
+
+  test('重新登录失败时旧会话仍在，用户不被踢回登录页', async () => {
+    await establishRoot();
+    const oldIssuedAt = getSessionKey()?.issuedAt as number;
+    const { api } = mockApi({ loginStatus: () => 401 });
+
+    const result = await resumeSessionAfterPasswordChange({
+      api,
+      uid: UID,
+      password: 'new-secret',
+      kdfParams: {
+        salt: encodeBase64url(fill(16, 0x05)),
+        memory_kib: 64,
+        iterations: 1,
+        parallelism: 1,
+      },
+      entryNodeId: ENTRY,
+      rootEpoch: 1,
+      hasTotp: false,
+    });
+
+    expect(result).toEqual({ ok: false, code: 'BAD_SIGNATURE' });
+    expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt);
+  }, 20000);
 });
 
 describe('loginToNode', () => {
