@@ -13,6 +13,7 @@ import {
 } from '@tmex/shared/auth';
 import { HUB_NOT_WRITER, TMEX_FORWARDED_BY_HEADER } from '@tmex/shared/uplink';
 import { signUserRecord } from '../../hub/hub-test-helpers';
+import { patchNode } from '../../hub/node-persistence';
 import { decodeUplinkCtl } from '../uplink-protocol';
 import {
   FAKE_NODE_ID,
@@ -812,7 +813,6 @@ describe('multi-hub in-process integration', () => {
 
   test('writer refuses admit-hub while an old-version node is present', async () => {
     const { a, c, boot: user } = await boot();
-    stampNodeVersions(a.db, '1.1.13', new Set([c.mesh.nodeId]));
     const rec = signUserRecord(
       a.mesh.userKeyService,
       user.userId,
@@ -825,6 +825,8 @@ describe('multi-hub in-process integration', () => {
     );
     const sid = await loginSelf(a.mesh, user);
     const cookie = selfCookie(sid);
+    stampNodeVersions(a.db, '1.1.13');
+    patchNode(a.db, c.mesh.nodeId, { version: '1.1.12' });
     const refused = await callMesh(a.mesh, 'http://entry/api/auth/keylog', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -842,8 +844,9 @@ describe('multi-hub in-process integration', () => {
     };
     expect(body.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
     expect(body.minVersion).toBe(MIN_HUB_AUTH_RECORD_VERSION);
-    expect(body.nodes.some((n) => n.id === c.mesh.nodeId)).toBe(true);
+    expect(body.nodes.some((n) => n.id === c.mesh.nodeId && n.version === '1.1.12')).toBe(true);
 
+    patchNode(a.db, c.mesh.nodeId, { version: '1.1.12' });
     const forced = await callMesh(a.mesh, 'http://entry/api/auth/keylog', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'X-Tmex-Force-Keylog': '1' },
