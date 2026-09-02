@@ -289,3 +289,6 @@ export function parseSetSessionHeader(value: string): { sid: string; maxAgeSec: 
   if (!Number.isFinite(maxAgeSec)) return null;
   return { sid, maxAgeSec };
 }
+
+export const LOGIN_LIMITER_MAX_KEYS = 10_000;
+export const LOGIN_LIMITER_PRUNE_EVERY = 256;

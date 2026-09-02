@@ -40,22 +40,18 @@ function inputFromRequest(req: Request): ClientIpInput {
 }
 
 function pickForwardedClientIp(headers: Headers): string | undefined {
-  const candidates = [
-    headerValue(headers, 'cf-connecting-ip'),
-    firstForwardedFor(headers.get('x-forwarded-for')),
-    headerValue(headers, 'x-real-ip'),
-  ];
-  for (const raw of candidates) {
-    const ip = parseIpLiteral(raw);
-    if (ip) return ip;
-  }
-  return undefined;
+  const cf = parseIpLiteral(headerValue(headers, 'cf-connecting-ip'));
+  if (cf) return cf;
+  const real = parseIpLiteral(headerValue(headers, 'x-real-ip'));
+  if (real) return real;
+  return parseIpLiteral(lastForwardedFor(headers.get('x-forwarded-for')));
 }
 
-function firstForwardedFor(value: string | null): string | undefined {
+function lastForwardedFor(value: string | null): string | undefined {
   if (!value) return undefined;
-  for (const part of value.split(',')) {
-    const trimmed = part.trim();
+  const parts = value.split(',');
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const trimmed = parts[i]?.trim();
     if (trimmed) return trimmed;
   }
   return undefined;
