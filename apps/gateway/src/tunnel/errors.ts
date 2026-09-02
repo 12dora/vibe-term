@@ -1,5 +1,10 @@
 import type { TunnelErrorCode } from '@tmex/shared';
 
+export const HOST_ENV_MESSAGE = 'Host environment is not managed by tmex-cli';
+export const EXPOSURE_ACK_MESSAGE =
+  'This instance has no sign-in and no Cloudflare Access protection; confirm public exposure explicitly';
+export const EXTERNAL_MANAGED_MESSAGE = 'managed by the system service';
+
 export class TunnelError extends Error {
   constructor(
     readonly code: TunnelErrorCode,

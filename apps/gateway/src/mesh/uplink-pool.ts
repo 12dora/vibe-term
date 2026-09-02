@@ -32,6 +32,16 @@ import {
   type UplinkWsFactory,
   uplinkWebSocketTls,
 } from './uplink-client';
+import { defaultFetchCaPem, defaultProbeHealthz } from './uplink-pool-http';
+
+export {
+  CA_BOOTSTRAP_MAX_BYTES,
+  CA_BOOTSTRAP_TIMEOUT_MS,
+  defaultFetchCaPem,
+  defaultProbeHealthz,
+  joinHubPath,
+  readResponseTextLimited,
+} from './uplink-pool-http';
 import type {
   UplinkCtlMessage,
   UplinkEnrollRedeemed,
@@ -52,8 +62,7 @@ export const UPLINK_RTT_SWITCH_MIN_RATIO = 0.3;
 export const UPLINK_RTT_SWITCH_MIN_MS = 15;
 export const UPLINK_RTT_SWITCH_DWELL_MS = 10 * 60 * 1000;
 export const UPLINK_SEED_PRIORITY_BASE = 1_000;
-export const CA_BOOTSTRAP_TIMEOUT_MS = 5_000;
-export const CA_BOOTSTRAP_MAX_BYTES = 64 * 1024;
+export const UPLINK_POOL_PROBE_NOW_DEBOUNCE_MS = 2_000;
 export const UPLINK_POOL_FAIL_LOG_INTERVAL_MS = 60_000;
 
 export type UplinkCandidate = {
@@ -109,6 +118,7 @@ export type UplinkPoolOptions = {
   connectLocal?: (client: UplinkClient, signal: AbortSignal) => Promise<void>;
   probeJitter?: number;
   failbackDebounceMs?: number;
+  probeNowDebounceMs?: number;
   rttProbeIntervalMs?: number;
   enablePeriodicRttProbe?: boolean;
   /** `null` = auto (on when >1 authorized hub is known). `false` forces off. */
@@ -387,95 +397,6 @@ export function spkiFingerprintFromPem(pem: string): string {
   return createHash('sha256').update(spki).digest('hex');
 }
 
-export async function readResponseTextLimited(res: Response, maxBytes: number): Promise<string> {
-  const body = res.body;
-  if (!body) return '';
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      try {
-        await reader.cancel();
-      } catch {
-        /* ignore */
-      }
-      throw new Error('ca_too_large');
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(out);
-}
-
-export function joinHubPath(publicUrl: string, path: string): string {
-  return `${publicUrl.replace(/\/+$/, '')}${path}`;
-}
-
-export async function defaultProbeHealthz(
-  publicUrl: string,
-  tlsCa: string[] | null,
-  timeoutMs: number
-): Promise<boolean> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    const init: RequestInit = { method: 'GET', signal: ac.signal, redirect: 'error' };
-    const tls = uplinkWebSocketTls(tlsCa);
-    if (tls) Object.assign(init, tls);
-    const res = await fetch(joinHubPath(publicUrl, '/healthz'), init);
-    return res.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-export async function defaultFetchCaPem(
-  publicUrl: string,
-  opts?: {
-    fetch?: (input: string, init?: RequestInit) => Promise<Response>;
-    timeoutMs?: number;
-    maxBytes?: number;
-  }
-): Promise<string> {
-  const timeoutMs = opts?.timeoutMs ?? CA_BOOTSTRAP_TIMEOUT_MS;
-  const maxBytes = opts?.maxBytes ?? CA_BOOTSTRAP_MAX_BYTES;
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  const timedOut = new Promise<never>((_resolve, reject) => {
-    const fail = () => reject(new Error('ca_timeout'));
-    if (ac.signal.aborted) fail();
-    else ac.signal.addEventListener('abort', fail, { once: true });
-  });
-  try {
-    const doFetch = opts?.fetch ?? fetch;
-    const res = await Promise.race([
-      doFetch(joinHubPath(publicUrl, '/api/tls/ca.crt'), {
-        redirect: 'error',
-        signal: ac.signal,
-        tls: { rejectUnauthorized: false },
-      } as RequestInit),
-      timedOut,
-    ]);
-    if (!res.ok) throw new Error('ca_unavailable');
-    return await Promise.race([readResponseTextLimited(res, maxBytes), timedOut]);
-  } finally {
-    clearTimeout(timer);
-    if (!ac.signal.aborted) ac.abort();
-  }
-}
-
 function fallbackCandidate(): UplinkCandidate {
   return {
     hubNodeId: null,
@@ -517,6 +438,7 @@ export class UplinkPool {
   private readonly probeTimeoutMs: number;
   private readonly probeJitter: number;
   private readonly failbackDebounceMs: number;
+  private readonly probeNowDebounceMs: number;
   private readonly rttProbeIntervalMs: number;
   private readonly preferNearestSetting: boolean | null;
   private readonly rttSwitchDwellMs: number;
@@ -535,6 +457,8 @@ export class UplinkPool {
   private rttProbeInFlight = false;
   private failbackDebounceAbort: AbortController | null = null;
   private failbackCoalesced = false;
+  private coalescedDebounceMs: number;
+  private failbackProbeDeadlineAt = 0;
   private lastFailbackProbeAt = 0;
   private lastHubView: HubView | null = null;
   private wrapAttempt = 0;
@@ -567,6 +491,8 @@ export class UplinkPool {
     this.probeTimeoutMs = opts.probeTimeoutMs ?? UPLINK_POOL_PROBE_TIMEOUT_MS;
     this.probeJitter = opts.probeJitter ?? UPLINK_POOL_PROBE_JITTER;
     this.failbackDebounceMs = opts.failbackDebounceMs ?? UPLINK_POOL_FAILBACK_DEBOUNCE_MS;
+    this.probeNowDebounceMs = opts.probeNowDebounceMs ?? UPLINK_POOL_PROBE_NOW_DEBOUNCE_MS;
+    this.coalescedDebounceMs = this.failbackDebounceMs;
     this.rttProbeIntervalMs = opts.rttProbeIntervalMs ?? UPLINK_POOL_RTT_PROBE_INTERVAL_MS;
     this.preferNearestSetting = opts.preferNearest === undefined ? null : opts.preferNearest;
     this.rttSwitchDwellMs = opts.rttSwitchDwellMs ?? UPLINK_RTT_SWITCH_DWELL_MS;
@@ -739,6 +665,10 @@ export class UplinkPool {
     generation?: number
   ) {
     return this.requireLive().appendAndAck(record, timeoutMs, generation);
+  }
+
+  requestProbeNow(): void {
+    this.scheduleProbe(this.probeNowDebounceMs);
   }
 
   async switchTo(publicUrl: string): Promise<void> {
@@ -1334,48 +1264,65 @@ export class UplinkPool {
 
   private requestFailbackProbeFromNodeList(): void {
     this.logFailbackFromNodeList();
-    this.scheduleFailbackProbe();
+    this.scheduleProbe(this.failbackDebounceMs);
   }
 
-  private failbackDelayRemaining(): number {
+  private probeDelayRemaining(debounceMs: number): number {
     if (this.lastFailbackProbeAt <= 0) return 0;
-    return Math.max(0, this.failbackDebounceMs - (this.scheduler.now() - this.lastFailbackProbeAt));
+    return Math.max(0, debounceMs - (this.scheduler.now() - this.lastFailbackProbeAt));
   }
 
   private cancelFailbackDebounce(): void {
     this.failbackDebounceAbort?.abort();
     this.failbackDebounceAbort = null;
+    this.failbackProbeDeadlineAt = 0;
   }
 
-  private scheduleFailbackProbe(): void {
+  private noteProbeCoalesce(debounceMs: number): void {
+    this.failbackCoalesced = true;
+    this.coalescedDebounceMs = Math.min(this.coalescedDebounceMs, debounceMs);
+  }
+
+  private scheduleProbe(debounceMs: number): void {
     if (this.probeInFlight) {
-      this.failbackCoalesced = true;
+      this.noteProbeCoalesce(debounceMs);
       return;
     }
-    if (this.failbackDebounceAbort) return;
-    const delay = this.failbackDelayRemaining();
+    const now = this.scheduler.now();
+    const delay = this.probeDelayRemaining(debounceMs);
+    const deadline = now + delay;
+    if (this.failbackDebounceAbort) {
+      if (deadline >= this.failbackProbeDeadlineAt) return;
+      this.cancelFailbackDebounce();
+    }
     if (delay <= 0) {
+      this.failbackProbeDeadlineAt = 0;
       void this.runFailbackProbe();
       return;
     }
     const ac = new AbortController();
     this.failbackDebounceAbort = ac;
+    this.failbackProbeDeadlineAt = deadline;
     const stop = this.stopAbort?.signal;
     const combined = stop ? anyAbort(stop, ac.signal) : ac.signal;
     void this.scheduler.sleep(delay, combined).then(
       () => {
-        if (this.failbackDebounceAbort === ac) this.failbackDebounceAbort = null;
+        if (this.failbackDebounceAbort !== ac) return;
+        this.failbackDebounceAbort = null;
+        this.failbackProbeDeadlineAt = 0;
         void this.runFailbackProbe();
       },
       () => {
-        if (this.failbackDebounceAbort === ac) this.failbackDebounceAbort = null;
+        if (this.failbackDebounceAbort !== ac) return;
+        this.failbackDebounceAbort = null;
+        this.failbackProbeDeadlineAt = 0;
       }
     );
   }
 
   private async runFailbackProbe(): Promise<void> {
     if (this.probeInFlight) {
-      this.failbackCoalesced = true;
+      this.noteProbeCoalesce(this.failbackDebounceMs);
       return;
     }
     this.lastFailbackProbeAt = this.scheduler.now();
@@ -1425,7 +1372,9 @@ export class UplinkPool {
       this.probeInFlight = false;
       if (this.failbackCoalesced) {
         this.failbackCoalesced = false;
-        this.scheduleFailbackProbe();
+        const debounce = this.coalescedDebounceMs;
+        this.coalescedDebounceMs = this.failbackDebounceMs;
+        this.scheduleProbe(debounce);
       }
     }
   }

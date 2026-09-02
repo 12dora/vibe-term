@@ -1861,6 +1861,7 @@ describe('GET /api/hub/status', () => {
       expect(body.name).toBe('hub-site');
       expect(body).toHaveProperty('caFingerprint');
       expect(body.now).toBe(12_345);
+      expect(body.peerPollFast).toBe(false);
       await hub.stop();
     } finally {
       close();

@@ -51,7 +51,8 @@ const PASSKEY_ONLY: Record<string, string> = {
   PASSKEY_VERIFY_FAILED: 'auth.errors.PASSKEY_VERIFY_FAILED',
   PASSKEY_ABORTED: 'auth.errors.PASSKEY_ABORTED',
   PASSKEY_CREDENTIAL_UNKNOWN: 'auth.errors.PASSKEY_CREDENTIAL_UNKNOWN',
-  NO_PASSKEY_FOR_ORIGIN: 'auth.errors.NO_PASSKEY_FOR_ORIGIN',
+  // 服务端也会在 mode 快照过期时回这个码，文案与登录页的前置提示保持同一句。
+  NO_PASSKEY_FOR_ORIGIN: 'auth.login.passkeyNotRegistered',
 };
 
 /** 失败码 → i18n key；认不出的码一律落到通用文案，绝不把码本身显示出来。 */

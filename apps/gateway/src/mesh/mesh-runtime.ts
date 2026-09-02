@@ -79,6 +79,7 @@ import {
   recordsFromNodeList,
   sameHubUrl,
 } from './uplink-pool';
+import { bindHubUplinkHooks, kickHubPeerDiscovery } from './uplink-pool-hooks';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
 
 export type MeshRuntimeConfig = {
@@ -1139,42 +1140,20 @@ function createUplinkWiring(d: MeshDeps) {
       }
     },
   });
-  hub?.bindWriterBridge({
-    appendAndAck: async (record) => {
-      const attached = uplink.attachedHub();
-      if (uplink.state !== 'online' || attached?.mode !== 'active') return null;
-      try {
-        return await uplink.appendAndAck(record);
-      } catch {
-        return null;
-      }
-    },
-    requestCatchUp: () => {
-      try {
-        uplink.liveClient()?.requestCatchUpNow();
-      } catch {
-        /* offline */
-      }
-    },
-    sendCtl: (msg) => {
-      try {
-        uplink.sendCtl(msg);
-      } catch {
-        /* offline */
-      }
-    },
-    openStream: async (payload) => {
-      const link = uplink.liveClient()?.link;
-      if (!link || uplink.state !== 'online') throw new Error('uplink-offline');
-      return link.openStream(payload);
-    },
-    isLive: () => uplink.state === 'online' && uplink.attachedHub()?.mode === 'active',
-  });
-  uplink.onStateChange((state) => {
-    if (state === 'online') d.hub?.onWriterUplinkOnline();
-    else d.hub?.onWriterUplinkOffline();
-  });
+  bindHubUplinkHooks(hub, uplink);
   return { uplink, ensureDc };
+}
+
+function startTlsFingerprintPoll(
+  opts: CreateMeshRuntimeOptions,
+  scheduler: MeshScheduler,
+  refresh: () => void
+): { clear: () => void } | null {
+  if (!opts.tlsInfo) return null;
+  const intervalMs = opts.tlsPollIntervalMs ?? TLS_STATUS_POLL_MS;
+  return scheduler.interval(() => {
+    void refresh();
+  }, intervalMs);
 }
 
 function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn) {
@@ -1590,12 +1569,8 @@ function assembleMeshRuntime(
       }
       await peerManager.start();
       uplink.start();
-      if (opts.tlsInfo) {
-        const intervalMs = opts.tlsPollIntervalMs ?? TLS_STATUS_POLL_MS;
-        tlsPoll = d.scheduler.interval(() => {
-          void refreshTlsAndAdvertise();
-        }, intervalMs);
-      }
+      kickHubPeerDiscovery(hub, uplink);
+      tlsPoll = startTlsFingerprintPoll(opts, d.scheduler, refreshTlsAndAdvertise);
     },
     async stop() {
       if (stopPromise) return stopPromise;

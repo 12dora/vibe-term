@@ -1008,6 +1008,248 @@ describe('TunnelManager', () => {
     expect(ctx.manager.status().access.configured).toBe(true);
   });
 
+  test('set_access_mode records the choice and status returns it without deriving', async () => {
+    const ctx = await setup({ loginEnforced: () => false });
+    dirs.push(ctx.dir);
+    expect(ctx.manager.status().config.accessMode).toBeNull();
+    const login = await ctx.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'login',
+    });
+    expect(login.httpStatus).toBe(200);
+    expect(ctx.manager.status().config.accessMode).toBe('login');
+    expect(ctx.manager.status().exposureProtected).toBe(false);
+    const cloudflare = await ctx.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'cloudflare',
+    });
+    expect(cloudflare.httpStatus).toBe(200);
+    expect(ctx.manager.status().config.accessMode).toBe('cloudflare');
+  });
+
+  test('set_access_mode none requires ack when running unprotected, stamps when acknowledged', async () => {
+    let now = Date.parse('2026-09-02T00:00:00.000Z');
+    const ctx = await setup({ loginEnforced: () => false, now: () => now });
+    dirs.push(ctx.dir);
+    ctx.store.save({ mode: 'named', hostname: 'ok.example.com', tunnelId: 'tid', tunnelName: 'n' });
+    ctx.spawner.on((s) => argsInclude(s, 'run'), {
+      hold: true,
+      stdout: 'Registered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'start', acknowledgeExposure: true });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().process.state).toBe('running');
+    expect(ctx.manager.status().exposureProtected).toBe(false);
+    const stampedAtStart = ctx.store.get().exposureAcknowledgedAt;
+
+    const denied = await ctx.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'none',
+    });
+    expect(denied.httpStatus).toBe(409);
+    expect('error' in denied.payload && denied.payload.error.code).toBe('exposure_ack_required');
+    expect(ctx.manager.status().config.accessMode).toBeNull();
+
+    const login = await ctx.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'login',
+    });
+    expect(login.httpStatus).toBe(200);
+    expect(ctx.manager.status().config.accessMode).toBe('login');
+
+    const cloudflare = await ctx.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'cloudflare',
+    });
+    expect(cloudflare.httpStatus).toBe(200);
+    expect(ctx.manager.status().config.accessMode).toBe('cloudflare');
+
+    now += 1000;
+    const acked = await ctx.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'none',
+      acknowledgeExposure: true,
+    });
+    expect(acked.httpStatus).toBe(200);
+    expect(ctx.manager.status().config.accessMode).toBe('none');
+    expect(ctx.store.get().exposureAcknowledgedAt).toBe(new Date(now).toISOString());
+    expect(ctx.store.get().exposureAcknowledgedAt).not.toBe(stampedAtStart);
+    expect(ctx.manager.status().access.configured).toBe(false);
+    expect(ctx.manager.status().loginEnforced).toBe(false);
+  });
+
+  test('set_access_mode none is allowed without ack when the tunnel is stopped', async () => {
+    const ctx = await setup({ loginEnforced: () => false });
+    dirs.push(ctx.dir);
+    expect(ctx.manager.status().process.state).toBe('stopped');
+    const result = await ctx.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'none',
+    });
+    expect(result.httpStatus).toBe(200);
+    expect(ctx.manager.status().config.accessMode).toBe('none');
+    expect(ctx.store.get().exposureAcknowledgedAt).toBeNull();
+  });
+
+  test('set_access_mode none requires ack after autostart timeout leaves the process enabled', async () => {
+    const ctx = await setup({ loginEnforced: () => false, runningWaitMs: 40 });
+    dirs.push(ctx.dir);
+    ctx.store.save({
+      mode: 'named',
+      hostname: 'ok.example.com',
+      tunnelId: 'tid',
+      tunnelName: 'n',
+      autoStart: true,
+      exposureAcknowledgedAt: '2026-09-01T00:00:00.000Z',
+    });
+    ctx.spawner.on((s) => argsInclude(s, 'run'), { hold: true });
+    await ctx.manager.start();
+    expect(ctx.manager.status().process.state).toBe('error');
+    expect(ctx.manager.status().process.pid).not.toBeNull();
+    const denied = await ctx.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'none',
+    });
+    expect(denied.httpStatus).toBe(409);
+    expect('error' in denied.payload && denied.payload.error.code).toBe('exposure_ack_required');
+    expect(ctx.manager.status().config.accessMode).toBeNull();
+    await ctx.manager.stop();
+  });
+
+  test('set_access_mode none requires ack when the tunnel is starting or degraded', async () => {
+    const starting = await setup({ loginEnforced: () => false, runningWaitMs: 2_000 });
+    dirs.push(starting.dir);
+    starting.store.save({
+      mode: 'named',
+      hostname: 'ok.example.com',
+      tunnelId: 'tid',
+      tunnelName: 'n',
+    });
+    starting.spawner.on((s) => argsInclude(s, 'run'), { hold: true });
+    const queued = await starting.manager.handleAction({
+      action: 'start',
+      acknowledgeExposure: true,
+    });
+    expect(queued.httpStatus).toBe(202);
+    await waitState(starting.manager, 'starting');
+    const deniedStarting = await starting.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'none',
+    });
+    expect(deniedStarting.httpStatus).toBe(409);
+    expect('error' in deniedStarting.payload && deniedStarting.payload.error.code).toBe(
+      'exposure_ack_required'
+    );
+    await starting.manager.stop();
+
+    const degraded = await setup({ loginEnforced: () => false });
+    dirs.push(degraded.dir);
+    degraded.store.save({
+      mode: 'named',
+      hostname: 'ok.example.com',
+      tunnelId: 'tid',
+      tunnelName: 'n',
+    });
+    degraded.spawner.on((s) => argsInclude(s, 'run'), {
+      hold: true,
+      stdout: 'Registered tunnel connection connIndex=0\n',
+    });
+    await degraded.manager.handleAction({ action: 'start', acknowledgeExposure: true });
+    await waitJob(degraded.manager);
+    expect(degraded.manager.status().process.state).toBe('running');
+    degraded.spawner.lastHandle()?.writeStdout('Unregistered tunnel connection connIndex=0\n');
+    await waitState(degraded.manager, 'degraded');
+    const deniedDegraded = await degraded.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'none',
+    });
+    expect(deniedDegraded.httpStatus).toBe(409);
+    expect('error' in deniedDegraded.payload && deniedDegraded.payload.error.code).toBe(
+      'exposure_ack_required'
+    );
+    await degraded.manager.stop();
+  });
+
+  test('set_access_mode none requires ack for a freshly detected running external tunnel', async () => {
+    const ctx = await setup({
+      loginEnforced: () => false,
+      ackDetectMs: 80,
+      externalDetectDeps: {
+        listProcesses: async () => '9 cloudflared tunnel run --token-file /tmp/token\n',
+        readFile: async (path) =>
+          path === '/tmp/token'
+            ? Buffer.from(JSON.stringify({ a: 'a', t: 'tid', s: 's' })).toString('base64')
+            : path === '/tmp/hostname'
+              ? 'ok.example.com\n'
+              : null,
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({
+      mode: 'named',
+      hostname: 'ok.example.com',
+      tunnelId: 'tid',
+      externallyManaged: true,
+    });
+    const denied = await ctx.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'none',
+    });
+    expect(denied.httpStatus).toBe(409);
+    expect('error' in denied.payload && denied.payload.error.code).toBe('exposure_ack_required');
+    expect(ctx.manager.status().config.accessMode).toBeNull();
+  });
+
+  test('set_access_mode none is allowed without ack after a fresh stopped external detect', async () => {
+    const ctx = await setup({
+      loginEnforced: () => false,
+      ackDetectMs: 80,
+      externalDetectDeps: {
+        listProcesses: async () => '',
+        readFile: async () => null,
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({
+      mode: 'named',
+      hostname: 'ok.example.com',
+      tunnelId: 'tid',
+      externallyManaged: true,
+    });
+    const result = await ctx.manager.handleAction({
+      action: 'set_access_mode',
+      accessMode: 'none',
+    });
+    expect(result.httpStatus).toBe(200);
+    expect(ctx.manager.status().config.accessMode).toBe('none');
+    expect(ctx.store.get().exposureAcknowledgedAt).toBeNull();
+  });
+
+  test('access status fallback does not share a mutable rules array', async () => {
+    const ctx = await setup({
+      accessStore: {
+        get() {
+          throw new Error('access store unavailable');
+        },
+        save: async () => {
+          throw new Error('access store unavailable');
+        },
+        getApiToken: async () => null,
+      },
+    });
+    dirs.push(ctx.dir);
+    const first = ctx.manager.status().access;
+    expect(first.rules).toEqual([]);
+    first.rules.push({ kind: 'email', value: 'leaked@example.com' });
+    expect(ctx.manager.status().access.rules).toEqual([]);
+  });
+
   test('remove_access and set_access_enforce(false) require ack when tunnel is running unprotected', async () => {
     const accessStore = new MemoryTunnelAccessStore();
     await accessStore.save({

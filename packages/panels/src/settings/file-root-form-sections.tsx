@@ -14,7 +14,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@tmex/ui/select';
-import { Switch } from '@tmex/ui/switch';
 
 import { DirectoryPickerModal } from './directory-picker-modal';
 import { FileRootDeviceIcon } from './file-root-device-icon';
@@ -179,22 +178,6 @@ export function FileRootPathField({ form }: { form: FileRootFormModel }) {
           onSelect={form.setPath}
         />
       )}
-    </div>
-  );
-}
-
-export function FileRootEnabledField({ form }: { form: FileRootFormModel }) {
-  const { t } = useTranslation();
-  return (
-    <div className="flex items-center gap-2">
-      <Switch
-        checked={form.enabled}
-        onCheckedChange={(checked) => form.setEnabled(Boolean(checked))}
-        data-testid="settings-files-enabled-switch"
-      />
-      <label className="text-sm font-medium" htmlFor="settings-files-enabled-switch">
-        {t('settings.files.enabled')}
-      </label>
     </div>
   );
 }

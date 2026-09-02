@@ -1,4 +1,4 @@
-import type { TunnelActionRequest } from '@tmex/shared';
+import type { TunnelAccessMode, TunnelActionRequest } from '@tmex/shared';
 import { MESH_VIA_SELF, getMeshRequestContext, requestDispatchContext } from '../mesh/mesh-deps';
 import { isPeerInboundRequest } from '../mesh/peer-request-marker';
 import { parseAccessRules } from '../tunnel/access-rules';
@@ -45,7 +45,74 @@ function optionalAck(body: Record<string, unknown>): boolean | undefined {
   return body.acknowledgeExposure;
 }
 
+function parseAccessMode(value: unknown): TunnelAccessMode {
+  if (value === 'none' || value === 'login' || value === 'cloudflare') return value;
+  throw new TunnelError('invalid_request', 'accessMode must be none, login, or cloudflare');
+}
+
+function parseAccessAction(body: Record<string, unknown>): TunnelActionRequest | null {
+  switch (body.action) {
+    case 'remove_access': {
+      const acknowledgeExposure = optionalAck(body);
+      return acknowledgeExposure === undefined
+        ? { action: 'remove_access' }
+        : { action: 'remove_access', acknowledgeExposure };
+    }
+    case 'sync_access': {
+      const hostname = optionalHostname(body);
+      return hostname === undefined
+        ? { action: 'sync_access' }
+        : { action: 'sync_access', hostname };
+    }
+    case 'set_access_credentials': {
+      if (typeof body.apiToken !== 'string' || typeof body.accountId !== 'string') {
+        throw new TunnelError('invalid_request', 'apiToken and accountId are required');
+      }
+      return {
+        action: 'set_access_credentials',
+        apiToken: body.apiToken,
+        accountId: body.accountId,
+      };
+    }
+    case 'configure_access': {
+      if (!Array.isArray(body.rules)) {
+        throw new TunnelError('invalid_request', 'rules must be an array');
+      }
+      const hostname = optionalHostname(body);
+      return {
+        action: 'configure_access',
+        rules: parseAccessRules(body.rules),
+        ...(hostname === undefined ? {} : { hostname }),
+      };
+    }
+    case 'set_access_enforce': {
+      if (typeof body.enforceJwt !== 'boolean') {
+        throw new TunnelError('invalid_request', 'enforceJwt must be a boolean');
+      }
+      const acknowledgeExposure = optionalAck(body);
+      return {
+        action: 'set_access_enforce',
+        enforceJwt: body.enforceJwt,
+        ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
+      };
+    }
+    default:
+      return null;
+  }
+}
+
 function parseAction(body: Record<string, unknown>): TunnelActionRequest {
+  const access = parseAccessAction(body);
+  if (access) return access;
+  if (body.action === 'set_access_mode') {
+    const accessMode = parseAccessMode(body.accessMode);
+    const acknowledgeExposure = optionalAck(body);
+    return {
+      action: 'set_access_mode',
+      accessMode,
+      ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
+    };
+  }
   const action = body.action;
   switch (action) {
     case 'install':
@@ -56,14 +123,6 @@ function parseAction(body: Record<string, unknown>): TunnelActionRequest {
     case 'check':
     case 'clear_access_credentials':
       return { action };
-    case 'remove_access': {
-      const acknowledgeExposure = optionalAck(body);
-      return acknowledgeExposure === undefined ? { action } : { action, acknowledgeExposure };
-    }
-    case 'sync_access': {
-      const hostname = optionalHostname(body);
-      return hostname === undefined ? { action } : { action, hostname };
-    }
     case 'quick_start':
     case 'start': {
       const acknowledgeExposure = optionalAck(body);
@@ -112,38 +171,6 @@ function parseAction(body: Record<string, unknown>): TunnelActionRequest {
         throw new TunnelError('invalid_request', 'trustProxy must be a boolean');
       }
       return { action: 'set_trust_proxy', trustProxy: body.trustProxy };
-    case 'set_access_credentials': {
-      if (typeof body.apiToken !== 'string' || typeof body.accountId !== 'string') {
-        throw new TunnelError('invalid_request', 'apiToken and accountId are required');
-      }
-      return {
-        action: 'set_access_credentials',
-        apiToken: body.apiToken,
-        accountId: body.accountId,
-      };
-    }
-    case 'configure_access': {
-      if (!Array.isArray(body.rules)) {
-        throw new TunnelError('invalid_request', 'rules must be an array');
-      }
-      const hostname = optionalHostname(body);
-      return {
-        action: 'configure_access',
-        rules: parseAccessRules(body.rules),
-        ...(hostname === undefined ? {} : { hostname }),
-      };
-    }
-    case 'set_access_enforce': {
-      if (typeof body.enforceJwt !== 'boolean') {
-        throw new TunnelError('invalid_request', 'enforceJwt must be a boolean');
-      }
-      const acknowledgeExposure = optionalAck(body);
-      return {
-        action: 'set_access_enforce',
-        enforceJwt: body.enforceJwt,
-        ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
-      };
-    }
     case 'adopt_external': {
       if (typeof body.hostname !== 'string') {
         throw new TunnelError('invalid_request', 'hostname is required');

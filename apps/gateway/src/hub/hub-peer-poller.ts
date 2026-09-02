@@ -12,8 +12,11 @@ import { jitteredIntervalMs, joinHubPath } from '../mesh/uplink-pool';
 
 export const HUB_PEER_POLL_START_DELAY_MS = 2_000;
 export const HUB_PEER_POLL_INTERVAL_MS = 60_000;
+export const HUB_PEER_POLL_FAST_INTERVAL_MS = 3_000;
+export const HUB_PEER_POLL_FAST_WINDOW_MS = 180_000;
 export const HUB_PEER_POLL_TIMEOUT_MS = 5_000;
 export const HUB_PEER_POLL_JITTER = 0.2;
+export const HUB_PEER_POLL_IMMEDIATE_JITTER_MS = 500;
 export const HUB_PEER_POLL_FAIL_LIMIT = 3;
 export const HUB_PEER_TLS_LOG_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -59,6 +62,15 @@ export type HubPeerPollerOptions = {
   selfMode?: () => HubMode;
   selfPriority?: () => number;
   onAutoPromote?: (operationId: string) => void | Promise<void>;
+  attachedHubId?: () => string | undefined;
+  attachedEpoch?: () => number | null | undefined;
+  selfWriterEpoch?: () => number;
+  onWriterLearned?: () => void;
+  fastIntervalMs?: number;
+  fastWindowMs?: number;
+  immediateJitterMs?: number;
+  setTimeout?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeout?: (id: ReturnType<typeof setTimeout>) => void;
 };
 
 export const HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS = 600_000;
@@ -67,6 +79,7 @@ export type AutoPromoteHub = {
   hubNodeId: string;
   mode: HubMode;
   priority: number;
+  writerEpoch?: number;
 };
 
 export function lowestPriorityStandbyId(hubs: AutoPromoteHub[]): string | null {
@@ -126,6 +139,82 @@ export function peerPollDelayMs(
   return jitteredIntervalMs(intervalMs, jitter);
 }
 
+export function stableImmediateJitterMs(
+  seed: string,
+  maxMs = HUB_PEER_POLL_IMMEDIATE_JITTER_MS
+): number {
+  if (maxMs <= 0) return 0;
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % (maxMs + 1);
+}
+
+export type FastPeerPollHub = {
+  hubNodeId: string;
+  mode: HubMode;
+  writerEpoch?: number;
+  priority?: number;
+};
+
+export function shouldFastPeerPoll(input: {
+  selfMode: HubMode;
+  selfId?: string;
+  selfEpoch: number;
+  attachedHubId?: string | null;
+  now: number;
+  fastWindowStartedAt: number;
+  fastWindowMs: number;
+  authorized: FastPeerPollHub[];
+}): boolean {
+  if (input.selfMode !== 'standby') return false;
+  if (input.now - input.fastWindowStartedAt > input.fastWindowMs) return false;
+  const self = input.selfId?.toLowerCase();
+  const attached = input.attachedHubId?.toLowerCase() || null;
+  if (!attached || (self && attached === self)) return true;
+  const hasActiveAtLeastOurs = input.authorized.some(
+    (hub) => hub.mode === 'active' && (hub.writerEpoch ?? 0) >= input.selfEpoch
+  );
+  if (!hasActiveAtLeastOurs) return true;
+  const writerId = pickWriterHub(
+    input.authorized.map((hub) => ({
+      hubNodeId: hub.hubNodeId,
+      mode: hub.mode,
+      writerEpoch: hub.writerEpoch ?? 0,
+      priority: hub.priority ?? 200,
+    }))
+  );
+  return Boolean(writerId && attached !== writerId.toLowerCase());
+}
+
+export function shouldRequestUplinkProbe(input: {
+  selfMode: HubMode;
+  selfId?: string;
+  selfEpoch: number;
+  attachedHubId?: string | null;
+  attachedEpoch: number;
+  writerId: string | null;
+  writerEpoch?: number;
+  learnedActive: Array<{ hubNodeId: string; writerEpoch: number }>;
+}): boolean {
+  if (input.selfMode !== 'standby') return false;
+  const minEpoch = Math.max(input.selfEpoch, input.attachedEpoch);
+  const self = input.selfId?.toLowerCase();
+  const qualifies = (id: string, epoch: number) => {
+    if (self && id.toLowerCase() === self) return false;
+    return epoch >= minEpoch;
+  };
+  if (input.learnedActive.some((hub) => qualifies(hub.hubNodeId, hub.writerEpoch))) return true;
+  const attached = input.attachedHubId?.toLowerCase() || null;
+  const writer = input.writerId?.toLowerCase() ?? null;
+  if (self && attached === self && writer && writer !== self) {
+    return qualifies(writer, input.writerEpoch ?? 0);
+  }
+  return false;
+}
+
 export class HubPeerPoller {
   private readonly meshHubs: MeshHubStore;
   private readonly selfHubId: () => string | undefined;
@@ -145,6 +234,15 @@ export class HubPeerPoller {
   private readonly selfMode?: () => HubMode;
   private readonly selfPriority?: () => number;
   private readonly onAutoPromote?: (operationId: string) => void | Promise<void>;
+  private attachedHubIdFn?: () => string | undefined;
+  private attachedEpochFn?: () => number | null | undefined;
+  private onWriterLearnedFn?: () => void;
+  private readonly selfWriterEpoch?: () => number;
+  private readonly fastIntervalMs: number;
+  private readonly fastWindowMs: number;
+  private readonly immediateJitterMs: number;
+  private readonly setTimeoutImpl: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  private readonly clearTimeoutImpl: (id: ReturnType<typeof setTimeout>) => void;
   private readonly failCounts = new Map<string, number>();
   private readonly lastTlsLogAt = new Map<string, number>();
   private readonly peerWriterViews = new Map<string, HubWriterView>();
@@ -158,6 +256,8 @@ export class HubPeerPoller {
   private inFlight: Promise<void> | null = null;
   private dirty = false;
   private stopped = false;
+  private running = false;
+  private fastWindowStartedAt = 0;
   private readonly stopAbort = new AbortController();
 
   constructor(opts: HubPeerPollerOptions) {
@@ -179,6 +279,27 @@ export class HubPeerPoller {
     this.selfMode = opts.selfMode;
     this.selfPriority = opts.selfPriority;
     this.onAutoPromote = opts.onAutoPromote;
+    this.attachedHubIdFn = opts.attachedHubId;
+    this.attachedEpochFn = opts.attachedEpoch;
+    this.onWriterLearnedFn = opts.onWriterLearned;
+    this.selfWriterEpoch = opts.selfWriterEpoch;
+    this.fastIntervalMs = opts.fastIntervalMs ?? HUB_PEER_POLL_FAST_INTERVAL_MS;
+    this.fastWindowMs = opts.fastWindowMs ?? HUB_PEER_POLL_FAST_WINDOW_MS;
+    this.immediateJitterMs =
+      opts.immediateJitterMs ??
+      stableImmediateJitterMs(opts.selfHubId?.() ?? '', HUB_PEER_POLL_IMMEDIATE_JITTER_MS);
+    this.setTimeoutImpl = opts.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
+    this.clearTimeoutImpl = opts.clearTimeout ?? ((id) => clearTimeout(id));
+  }
+
+  setDiscoveryHooks(hooks: {
+    attachedHubId?: () => string | undefined;
+    attachedEpoch?: () => number | null | undefined;
+    onWriterLearned?: () => void;
+  }): void {
+    if (hooks.attachedHubId) this.attachedHubIdFn = hooks.attachedHubId;
+    if (hooks.attachedEpoch) this.attachedEpochFn = hooks.attachedEpoch;
+    if (hooks.onWriterLearned) this.onWriterLearnedFn = hooks.onWriterLearned;
   }
 
   localWriterView(): HubWriterView | null {
@@ -186,28 +307,49 @@ export class HubPeerPoller {
   }
 
   start(): void {
-    if (this.stopped || this.startTimer || this.intervalTimer) return;
-    this.startTimer = setTimeout(() => {
-      this.startTimer = null;
-      if (this.stopped) return;
-      void this.pollNow();
-      this.armInterval();
-    }, this.startDelayMs);
-    unrefTimer(this.startTimer);
+    if (this.stopped || this.running) return;
+    this.running = true;
+    this.fastWindowStartedAt = this.now();
+    this.beginPolling(this.startDelayMs);
+  }
+
+  noteRoleTransition(): void {
+    if (this.stopped) return;
+    this.fastWindowStartedAt = this.now();
+    this.clearTimers();
+    this.pollSoon();
+  }
+
+  refreshCadence(): void {
+    if (this.stopped || !this.running) return;
+    this.clearTimers();
+    if (this.inFlight) {
+      if (this.inFastPoll()) this.dirty = true;
+      return;
+    }
+    if (this.inFastPoll()) this.pollSoon();
+    else this.armInterval();
+  }
+
+  scheduleImmediatePoll(): void {
+    if (this.stopped) return;
+    this.pollSoon();
+  }
+
+  inFastPoll(): boolean {
+    try {
+      return shouldFastPeerPoll(this.fastPollInput());
+    } catch {
+      return false;
+    }
   }
 
   stop(): void {
     this.stopped = true;
+    this.running = false;
     this.dirty = false;
     if (!this.stopAbort.signal.aborted) this.stopAbort.abort();
-    if (this.startTimer) {
-      clearTimeout(this.startTimer);
-      this.startTimer = null;
-    }
-    if (this.intervalTimer) {
-      clearTimeout(this.intervalTimer);
-      this.intervalTimer = null;
-    }
+    this.clearTimers();
   }
 
   pollNow(): Promise<void> {
@@ -216,6 +358,7 @@ export class HubPeerPoller {
       this.dirty = true;
       return this.inFlight;
     }
+    this.clearIntervalTimer();
     const run = this.runLoop();
     this.inFlight = run;
     return run;
@@ -232,21 +375,102 @@ export class HubPeerPoller {
       /* db closed after mesh.stop without hub.stop */
     } finally {
       this.inFlight = null;
+      if (this.running && !this.stopped) this.armInterval();
     }
   }
 
-  private armInterval(): void {
+  private beginPolling(delayMs: number): void {
+    const wait = delayMs > 0 ? delayMs : this.immediateJitterMs;
+    const begin = () => {
+      this.startTimer = null;
+      if (this.stopped) return;
+      void this.pollNow();
+    };
+    if (wait <= 0) {
+      begin();
+      return;
+    }
+    this.startTimer = this.setTimeoutImpl(begin, wait);
+    unrefTimer(this.startTimer);
+  }
+
+  private pollSoon(): void {
     if (this.stopped) return;
-    this.intervalTimer = setTimeout(
+    if (this.inFlight) {
+      this.dirty = true;
+      return;
+    }
+    if (this.startTimer) {
+      this.clearTimeoutImpl(this.startTimer);
+      this.startTimer = null;
+    }
+    const delay = this.immediateJitterMs;
+    if (delay <= 0) {
+      void this.pollNow();
+      return;
+    }
+    this.startTimer = this.setTimeoutImpl(() => {
+      this.startTimer = null;
+      if (this.stopped) return;
+      void this.pollNow();
+    }, delay);
+    unrefTimer(this.startTimer);
+  }
+
+  private clearIntervalTimer(): void {
+    if (!this.intervalTimer) return;
+    this.clearTimeoutImpl(this.intervalTimer);
+    this.intervalTimer = null;
+  }
+
+  private clearTimers(): void {
+    if (this.startTimer) {
+      this.clearTimeoutImpl(this.startTimer);
+      this.startTimer = null;
+    }
+    this.clearIntervalTimer();
+  }
+
+  private armInterval(): void {
+    if (this.stopped || !this.running) return;
+    this.clearIntervalTimer();
+    this.intervalTimer = this.setTimeoutImpl(
       () => {
         this.intervalTimer = null;
         if (this.stopped) return;
         void this.pollNow();
-        this.armInterval();
       },
-      peerPollDelayMs(this.intervalMs, this.jitter)
+      peerPollDelayMs(this.nextPollIntervalMs(), this.jitter)
     );
     unrefTimer(this.intervalTimer);
+  }
+
+  private nextPollIntervalMs(): number {
+    return this.inFastPoll() ? this.fastIntervalMs : this.intervalMs;
+  }
+
+  private localSelfEpoch(): number {
+    if (this.selfWriterEpoch) return this.selfWriterEpoch();
+    const selfId = this.selfHubId();
+    if (!selfId) return 1;
+    try {
+      return this.meshHubs.get(selfId)?.writerEpoch ?? 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  private fastPollInput() {
+    return {
+      selfMode: this.selfMode?.() ?? 'standby',
+      selfId: this.selfHubId(),
+      selfEpoch: this.localSelfEpoch(),
+      attachedHubId: this.attachedHubIdFn?.(),
+      now: this.now(),
+      fastWindowStartedAt: this.fastWindowStartedAt,
+      fastWindowMs: this.fastWindowMs,
+      authorized: this.authorizedForPromote(),
+    };
   }
 
   private peers(): MeshHubRecord[] {
@@ -266,10 +490,16 @@ export class HubPeerPoller {
 
   private async pollAll(): Promise<void> {
     let changed = false;
+    const learnedActive: Array<{ hubNodeId: string; writerEpoch: number }> = [];
     for (const row of this.peers()) {
       if (this.stopped) return;
       const result = await this.pollOne(row);
-      if (result) changed = true;
+      if (!result) continue;
+      changed = true;
+      const rec = this.meshHubs.get(row.hubNodeId);
+      if (rec?.mode === 'active') {
+        learnedActive.push({ hubNodeId: rec.hubNodeId, writerEpoch: rec.writerEpoch });
+      }
     }
     if (changed && !this.stopped) {
       try {
@@ -278,7 +508,33 @@ export class HubPeerPoller {
         /* ignore */
       }
     }
+    if (!this.stopped) this.maybeNotifyUplink(learnedActive);
     if (!this.stopped) await this.maybeAutoPromote();
+  }
+
+  private maybeNotifyUplink(
+    learnedActive: Array<{ hubNodeId: string; writerEpoch: number }>
+  ): void {
+    if (!this.onWriterLearnedFn) return;
+    const attachedHubId = this.attachedHubIdFn?.();
+    const attachedEpoch = this.attachedEpochFn?.() ?? 0;
+    const writerId = this.currentWriterId();
+    const ok = shouldRequestUplinkProbe({
+      selfMode: this.selfMode?.() ?? 'standby',
+      selfId: this.selfHubId(),
+      selfEpoch: this.localSelfEpoch(),
+      attachedHubId,
+      attachedEpoch,
+      writerId,
+      writerEpoch: writerId ? (this.meshHubs.get(writerId)?.writerEpoch ?? 0) : 0,
+      learnedActive,
+    });
+    if (!ok) return;
+    try {
+      this.onWriterLearnedFn();
+    } catch {
+      /* ignore */
+    }
   }
 
   private async pollOne(row: MeshHubRecord): Promise<boolean> {
@@ -409,20 +665,33 @@ export class HubPeerPoller {
   }
 
   private authorizedForPromote(): AutoPromoteHub[] {
+    if (this.stopped) return [];
     const self = this.selfHubId()?.toLowerCase();
     const out: AutoPromoteHub[] = [];
     const seen = new Set<string>();
-    for (const row of this.meshHubs.list()) {
+    let rows: MeshHubRecord[] = [];
+    try {
+      rows = this.meshHubs.list();
+    } catch {
+      return [];
+    }
+    for (const row of rows) {
       const id = row.hubNodeId.toLowerCase();
       if (!this.isAuthorized(id) || seen.has(id)) continue;
       seen.add(id);
-      out.push({ hubNodeId: id, mode: row.mode, priority: row.priority });
+      out.push({
+        hubNodeId: id,
+        mode: row.mode,
+        priority: row.priority,
+        writerEpoch: row.writerEpoch,
+      });
     }
     if (self && !seen.has(self) && this.isAuthorized(self)) {
       out.push({
         hubNodeId: self,
         mode: this.selfMode?.() ?? 'standby',
         priority: this.selfPriority?.() ?? 200,
+        writerEpoch: this.selfWriterEpoch?.() ?? 1,
       });
     }
     return out;

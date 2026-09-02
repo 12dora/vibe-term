@@ -1646,6 +1646,152 @@ describe('UplinkPool', () => {
     expect(scheduler.intervals.filter((row) => !row.cleared && row.ms >= 50_000).length).toBe(0);
   });
 
+  test('requestProbeNow probes the preferred hub immediately then debounces 2s', async () => {
+    const scheduler = new ManualScheduler();
+    const probed: string[] = [];
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { failTimes: 3 } },
+      scheduler,
+      probe: async (url) => {
+        probed.push(url);
+        return false;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    probed.length = 0;
+
+    pool.requestProbeNow();
+    await waitMicro();
+    expect(probed).toEqual(['https://a.example']);
+
+    pool.requestProbeNow();
+    await waitMicro();
+    expect(probed).toEqual(['https://a.example']);
+
+    await scheduler.advance(1_999);
+    await waitMicro();
+    expect(probed).toEqual(['https://a.example']);
+
+    await scheduler.advance(1);
+    await waitMicro();
+    expect(probed).toEqual(['https://a.example', 'https://a.example']);
+  });
+
+  test('requestProbeNow coalesces while a probe is in flight', async () => {
+    const scheduler = new ManualScheduler();
+    let probeStarted = 0;
+    let releaseProbe: () => void = () => {};
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { failTimes: 3 } },
+      scheduler,
+      probe: async () => {
+        probeStarted += 1;
+        await new Promise<void>((resolve) => {
+          releaseProbe = resolve;
+        });
+        return false;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    pool.requestProbeNow();
+    await waitMicro();
+    expect(probeStarted).toBe(1);
+
+    pool.requestProbeNow();
+    pool.requestProbeNow();
+    await waitMicro();
+    expect(probeStarted).toBe(1);
+
+    releaseProbe();
+    await waitMicro();
+    expect(probeStarted).toBe(1);
+
+    await scheduler.advance(2_000);
+    await waitMicro();
+    expect(probeStarted).toBe(2);
+  });
+
+  test('requestProbeNow with a sooner deadline replaces a pending 5s failback probe', async () => {
+    const scheduler = new ManualScheduler();
+    const probed: string[] = [];
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { failTimes: 3 } },
+      scheduler,
+      probe: async (url) => {
+        probed.push(url);
+        return false;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    const live = created.find((row) => row.hubUrl === 'https://b.example');
+    live?.emitStaleList(
+      hubStatusList([
+        {
+          nodeId: ID.b,
+          publicUrl: 'https://a.example',
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 3,
+          online: true,
+        },
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          online: true,
+        },
+      ])
+    );
+    await waitMicro();
+    expect(probed).toEqual(['https://a.example']);
+    probed.length = 0;
+
+    live?.emitStaleList(
+      hubStatusList([
+        {
+          nodeId: ID.b,
+          publicUrl: 'https://a.example',
+          mode: 'active',
+          priority: 10,
+          writerEpoch: 4,
+          online: true,
+        },
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          online: true,
+        },
+      ])
+    );
+    await waitMicro();
+    expect(probed).toEqual([]);
+
+    pool.requestProbeNow();
+    await waitMicro();
+    expect(probed).toEqual([]);
+
+    await scheduler.advance(1_999);
+    await waitMicro();
+    expect(probed).toEqual([]);
+
+    await scheduler.advance(1);
+    await waitMicro();
+    expect(probed).toEqual(['https://a.example']);
+  });
+
   test('node.list failback probes are debounced to 5s and coalesced while in flight', async () => {
     const scheduler = new ManualScheduler();
     let probeStarted = 0;

@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { TunnelApiError } from '@tmex/api-client/local/tunnel-api';
-import type { LocalAuthStatus, TunnelStatusResponse } from '@tmex/shared';
+import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@tmex/shared';
 import {
   TUNNEL_ACTIVE_POLL_MS,
   TUNNEL_IDLE_POLL_MS,
@@ -21,10 +21,12 @@ import {
   isValidTunnelName,
   jobStepKey,
   logTail,
+  protectionPill,
   toTunnelError,
   trustProxyRestartRequired,
   tunnelDegraded,
   tunnelErrorKey,
+  tunnelExposed,
   tunnelPill,
   tunnelPollInterval,
   withExposureAck,
@@ -47,6 +49,7 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       autoStart: false,
       externallyManaged: false,
       originPort: 9883,
+      accessMode: null,
     },
     process: {
       state: 'stopped',
@@ -447,14 +450,30 @@ describe('wizardStepState', () => {
     expect(wizardStepState('create', ctx(loggedIn, 'named', true))).toBe('current');
   });
 
-  test('访问控制是可选步：没配就一直是待办，配了才打勾，绝不抢当前步', () => {
-    const loggedIn = status({ auth: { loggedIn: true, loginUrl: null } });
-    expect(wizardStepState('access', ctx(loggedIn, 'named', true))).toBe('todo');
-    const configured = status({
-      auth: { loggedIn: true, loginUrl: null },
-      access: { ...status().access, configured: true },
+  test('访问控制步：主机名没确认前一律待办，确认后按选定的方式推进', () => {
+    const auth = { loggedIn: true, loginUrl: null };
+    const withMode = (s: TunnelStatusResponse, accessMode: TunnelAccessMode) => ({
+      ...s,
+      config: { ...s.config, accessMode },
     });
-    expect(wizardStepState('access', ctx(configured, 'named', true))).toBe('done');
+    // 与创建步同一条门槛：主机名还没确认时不抢当前步。
+    expect(wizardStepState('access', ctx(status({ auth }), 'named'))).toBe('todo');
+
+    // 什么都没选、也没有登录门：停在当前步等用户选。
+    const undecided = status({ auth, loginEnforced: false });
+    expect(wizardStepState('access', ctx(undecided, 'named', true))).toBe('current');
+
+    // 有登录门时推导成「账号密码」，直接打勾。
+    expect(wizardStepState('access', ctx(status({ auth }), 'named', true))).toBe('done');
+
+    // 明确选了「无」也算做完这一步。
+    expect(wizardStepState('access', ctx(withMode(undecided, 'none'), 'named', true))).toBe('done');
+
+    // 选了 Cloudflare Access 但还没生效：停在当前步；生效后打勾。
+    expect(wizardStepState('access', ctx(withMode(undecided, 'cloudflare'), 'named', true))).toBe(
+      'current'
+    );
+    expect(wizardStepState('access', ctx(withAccess({}, { auth }), 'named', true))).toBe('done');
   });
 
   test('隧道建好后创建步打勾、反向代理步成为当前步', () => {
@@ -656,15 +675,109 @@ describe('accessPill', () => {
   });
 });
 
+describe('protectionPill', () => {
+  const withMode = (s: TunnelStatusResponse, accessMode: TunnelAccessMode) => ({
+    ...s,
+    config: { ...s.config, accessMode },
+  });
+
+  test('实际保护优先：Access 校验生效就报「已生效」，与选了什么无关', () => {
+    expect(protectionPill(withMode(withAccess(), 'cloudflare'))).toBe('protected');
+    // 用户选了「无」但应用还生效：徽标必须照实报，否则会让人以为已经没有保护了。
+    expect(protectionPill(withMode(withAccess(), 'none'))).toBe('protected');
+    expect(protectionPill(withMode(withAccess(), 'login'))).toBe('protected');
+    expect(protectionPill(withAccess({}, { loginEnforced: false }))).toBe('protected');
+  });
+
+  test('没有 Access 校验但有登录门：报登录保护', () => {
+    expect(protectionPill(status())).toBe('loginProtected');
+    expect(protectionPill(withMode(status(), 'login'))).toBe('loginProtected');
+    // 选了「无」也一样：登录门确实还在，不能报没有保护。
+    expect(protectionPill(withMode(status(), 'none'))).toBe('loginProtected');
+  });
+
+  test('两样保护都没有时才按选定的方式解释差在哪', () => {
+    const bare = status({ loginEnforced: false });
+    expect(protectionPill(withMode(bare, 'login'))).toBe('loginMissing');
+    expect(protectionPill(withMode(bare, 'none'))).toBe('unprotected');
+    // 从没选过、也没有任何应用：没有保护就是没有保护。
+    expect(protectionPill(bare)).toBe('unprotected');
+    // 选了 Access（或旧数据里留着一个没生效的应用）：沿用 Access 的诊断徽标。
+    expect(protectionPill(withMode(bare, 'cloudflare'))).toBe('notConfigured');
+    expect(
+      protectionPill(
+        withMode(
+          withAccess({ enforceJwt: false, effective: false }, { loginEnforced: false }),
+          'cloudflare'
+        )
+      )
+    ).toBe('notEnforced');
+    expect(
+      protectionPill(
+        withAccess({ hostname: 'old.example.com', effective: false }, { loginEnforced: false })
+      )
+    ).toBe('hostnameMismatch');
+  });
+});
+
+describe('tunnelExposed', () => {
+  test('托管进程只要不是「已停止」就算暴露，含自启动失败留下的 error', () => {
+    const base = withAccess({}, { loginEnforced: false });
+    const withState = (state: TunnelStatusResponse['process']['state']) => ({
+      ...base,
+      process: { ...base.process, state },
+    });
+    expect(tunnelExposed(withState('running'))).toBe(true);
+    expect(tunnelExposed(withState('starting'))).toBe(true);
+    expect(tunnelExposed(withState('degraded'))).toBe(true);
+    // 后端的 runningEnabled 状态里看不到：自启动超时会停在 error，但拉起意图还在。
+    expect(tunnelExposed(withState('error'))).toBe(true);
+    expect(tunnelExposed(withState('stopped'))).toBe(false);
+  });
+
+  test('没建隧道就谈不上暴露', () => {
+    const base = withAccess({}, { loginEnforced: false });
+    expect(
+      tunnelExposed({
+        ...base,
+        config: { ...base.config, mode: 'off' },
+        process: { ...base.process, state: 'error' },
+      })
+    ).toBe(false);
+  });
+
+  test('接管来的隧道看探测结果，探测进行中一并算暴露', () => {
+    const base = withAccess({}, { loginEnforced: false });
+    const adopted = (external: Partial<TunnelStatusResponse['external']>) => ({
+      ...base,
+      config: { ...base.config, externallyManaged: true },
+      process: { ...base.process, state: 'stopped' as const },
+      external: { ...base.external, detected: true, running: false, ...external },
+    });
+    expect(tunnelExposed(adopted({ running: true }))).toBe(true);
+    // 探测还没有结论：后端拿不到结果时同样会拦，前端跟着算暴露。
+    expect(tunnelExposed(adopted({ probing: true }))).toBe(true);
+    expect(tunnelExposed(adopted({}))).toBe(false);
+  });
+});
+
 describe('wouldDropLastProtection', () => {
-  test('隧道在跑、没有登录、Access 是唯一保护时才需要确认', () => {
+  test('与后端一致：隧道暴露着且没有登录就要确认，与 Access 是否生效无关', () => {
     expect(wouldDropLastProtection(withAccess({}, { loginEnforced: false }))).toBe(true);
     // 启用了登录：拿掉 Access 还有登录兜底。
     expect(wouldDropLastProtection(withAccess({}, { loginEnforced: true }))).toBe(false);
-    // Access 本来就没生效，拿掉它不改变暴露面。
+    // Access 绑的是别的主机名、校验没生效：后端照样拦，勾选必须提前摆出来。
     expect(
-      wouldDropLastProtection(withAccess({ effective: false }, { loginEnforced: false }))
-    ).toBe(false);
+      wouldDropLastProtection(
+        withAccess({ hostname: 'old.example.com', effective: false }, { loginEnforced: false })
+      )
+    ).toBe(true);
+    // 连令牌校验都关着：同样是暴露中的隧道，后端一样要确认。
+    expect(
+      wouldDropLastProtection(
+        withAccess({ enforceJwt: false, effective: false }, { loginEnforced: false })
+      )
+    ).toBe(true);
   });
 
   test('隧道没跑起来就不算暴露', () => {
@@ -697,6 +810,25 @@ describe('暴露确认', () => {
     expect(isExposingAction({ action: 'set_auto_start', autoStart: false })).toBe(false);
     expect(isExposingAction({ action: 'stop' })).toBe(false);
     expect(isExposingAction({ action: 'install' })).toBe(false);
+  });
+
+  test('把访问控制改成「无」是开放性动作，改成其他方式不是', () => {
+    expect(isExposingAction({ action: 'set_access_mode', accessMode: 'none' })).toBe(true);
+    expect(isExposingAction({ action: 'set_access_mode', accessMode: 'login' })).toBe(false);
+    expect(isExposingAction({ action: 'set_access_mode', accessMode: 'cloudflare' })).toBe(false);
+    expect(withExposureAck({ action: 'set_access_mode', accessMode: 'none' }, true)).toEqual({
+      action: 'set_access_mode',
+      accessMode: 'none',
+      acknowledgeExposure: true,
+    });
+    expect(withExposureAck({ action: 'set_access_mode', accessMode: 'none' }, false)).toEqual({
+      action: 'set_access_mode',
+      accessMode: 'none',
+    });
+    expect(withExposureAck({ action: 'set_access_mode', accessMode: 'login' }, true)).toEqual({
+      action: 'set_access_mode',
+      accessMode: 'login',
+    });
   });
 
   test('拿掉最后一道保护的动作同样算开放性动作', () => {

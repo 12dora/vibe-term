@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import type {
+  TunnelAccessMode,
   TunnelAccessStatus,
   TunnelActionRequest,
   TunnelActionResponse,
@@ -22,12 +23,14 @@ import { defaultLoginEnforced } from '../db/local-auth-settings';
 import { CloudflareAccessClient, type TunnelFetch, sanitizeAccessMessage } from './access-client';
 import { setAccessGuardSource, setAccessJwtVerifier } from './access-guard';
 import { AccessJwtVerifier } from './access-jwt';
+import { type AccessControlAction, isAccessControlAction, processUp } from './access-mode';
 import { parseAccessRules } from './access-rules';
 import {
   MemoryTunnelAccessStore,
   TunnelAccessStore,
   type TunnelAccessStoreLike,
   computeAccessEffective,
+  emptyAccessStatus,
 } from './access-store';
 import {
   DEFAULT_TUNNEL_CONFIG,
@@ -39,11 +42,19 @@ import {
   EMPTY_CONNECTOR,
   discoverMetricsAddr,
   extractLastError,
+  isAccessProtectedHealthResponse,
   probeConnector,
   readLogTail,
 } from './connector-health';
 import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
-import { TunnelError, tunnelErrorFrom, tunnelHttpStatus } from './errors';
+import {
+  EXPOSURE_ACK_MESSAGE,
+  EXTERNAL_MANAGED_MESSAGE,
+  HOST_ENV_MESSAGE,
+  TunnelError,
+  tunnelErrorFrom,
+  tunnelHttpStatus,
+} from './errors';
 import {
   EMPTY_EXTERNAL,
   type ExternalDetectDeps,
@@ -122,26 +133,6 @@ type BinaryCache = {
 
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const LOGIN_POLL_MS = 500;
-const HOST_ENV_MESSAGE = 'Host environment is not managed by tmex-cli';
-const EXPOSURE_ACK_MESSAGE =
-  'This instance has no sign-in and no Cloudflare Access protection; confirm public exposure explicitly';
-const EXTERNAL_MANAGED_MESSAGE = 'managed by the system service';
-
-function isAccessProtectedHealthResponse(res: Response): boolean {
-  const location = res.headers.get('location') ?? '';
-  if (
-    (res.status === 302 || res.status === 303) &&
-    /\.cloudflareaccess\.com(?:[:/?#]|$)/i.test(location)
-  ) {
-    return true;
-  }
-  if (res.status === 403) {
-    for (const key of res.headers.keys()) {
-      if (key.toLowerCase().startsWith('cf-access-')) return true;
-    }
-  }
-  return false;
-}
 
 export class TunnelManager {
   private readonly tunnelDir: string;
@@ -316,7 +307,7 @@ export class TunnelManager {
     const exposureProtected = this.isExposureProtected(persisted, access, loginEnforced);
     const processAlive = persisted.externallyManaged
       ? this.lastExternal.running
-      : this.processUp(this.supervisor.state);
+      : processUp(this.supervisor.state);
     const publicUrl = persisted.externallyManaged
       ? persisted.hostname
         ? `https://${persisted.hostname}`
@@ -347,6 +338,7 @@ export class TunnelManager {
         autoStart: persisted.autoStart,
         externallyManaged: persisted.externallyManaged,
         originPort: this.originPort,
+        accessMode: persisted.accessMode,
       },
       process: {
         state: this.processState(persisted),
@@ -397,6 +389,7 @@ export class TunnelManager {
     body: TunnelActionRequest
   ): Promise<{ httpStatus: number; payload: TunnelActionResponse | TunnelErrorResponse }> {
     try {
+      if (isAccessControlAction(body)) return await this.handleAccessControlAction(body);
       switch (body.action) {
         case 'install':
           return await this.enqueueJob('install', (step) => this.jobInstall(step));
@@ -442,24 +435,6 @@ export class TunnelManager {
         case 'set_trust_proxy':
           await this.setTrustProxy(body.trustProxy);
           return this.ok(200);
-        case 'set_access_credentials':
-          await this.setAccessCredentials(body.apiToken, body.accountId);
-          return this.ok(200);
-        case 'clear_access_credentials':
-          await this.clearAccessCredentials();
-          return this.ok(200);
-        case 'configure_access':
-          return await this.enqueueJob('access', (step) =>
-            this.jobConfigureAccess(body.rules, step, body.hostname)
-          );
-        case 'remove_access':
-          await this.requireLastProtectionAck(body.acknowledgeExposure);
-          return await this.enqueueJob('access', (step) => this.jobRemoveAccess(step));
-        case 'sync_access':
-          return await this.enqueueJob('access', (step) => this.jobSyncAccess(step, body.hostname));
-        case 'set_access_enforce':
-          await this.setAccessEnforce(body.enforceJwt, body.acknowledgeExposure);
-          return this.ok(200);
         case 'adopt_external':
           await this.adoptExternal(body.hostname);
           return this.ok(200);
@@ -474,6 +449,46 @@ export class TunnelManager {
         payload: { error: parsed },
       };
     }
+  }
+
+  private async handleAccessControlAction(
+    body: AccessControlAction
+  ): Promise<{ httpStatus: number; payload: TunnelActionResponse | TunnelErrorResponse }> {
+    switch (body.action) {
+      case 'set_access_credentials':
+        await this.setAccessCredentials(body.apiToken, body.accountId);
+        return this.ok(200);
+      case 'clear_access_credentials':
+        await this.clearAccessCredentials();
+        return this.ok(200);
+      case 'configure_access':
+        return await this.enqueueJob('access', (step) =>
+          this.jobConfigureAccess(body.rules, step, body.hostname)
+        );
+      case 'remove_access':
+        await this.requireLastProtectionAck(body.acknowledgeExposure);
+        return await this.enqueueJob('access', (step) => this.jobRemoveAccess(step));
+      case 'sync_access':
+        return await this.enqueueJob('access', (step) => this.jobSyncAccess(step, body.hostname));
+      case 'set_access_enforce':
+        await this.setAccessEnforce(body.enforceJwt, body.acknowledgeExposure);
+        return this.ok(200);
+      case 'set_access_mode':
+        await this.setAccessMode(body.accessMode, {
+          acknowledgeExposure: body.acknowledgeExposure,
+        });
+        return this.ok(200);
+    }
+  }
+
+  async setAccessMode(
+    mode: TunnelAccessMode,
+    opts?: { acknowledgeExposure?: boolean }
+  ): Promise<void> {
+    if (mode === 'none' && !this.isExposureProtected()) {
+      await this.requireLastProtectionAck(opts?.acknowledgeExposure);
+    }
+    this.store.save({ accessMode: mode });
   }
 
   private ok(httpStatus: number): { httpStatus: number; payload: TunnelActionResponse } {
@@ -544,6 +559,9 @@ export class TunnelManager {
   ): boolean {
     return loginEnforced || access.effective;
   }
+  private isManagedProcessActive(): boolean {
+    return this.supervisor.runningEnabled || processUp(this.supervisor.state);
+  }
   private async requireLastProtectionAck(acknowledgeExposure: boolean | undefined): Promise<void> {
     if (this.loginEnforcedFn()) return;
     if (acknowledgeExposure === true) {
@@ -551,7 +569,7 @@ export class TunnelManager {
       return;
     }
     const persisted = this.safePersisted();
-    if (!persisted.externallyManaged && !this.processUp(this.supervisor.state)) return;
+    if (!persisted.externallyManaged && !this.isManagedProcessActive()) return;
     if (persisted.externallyManaged) {
       try {
         const raced = await Promise.race([
@@ -604,20 +622,7 @@ export class TunnelManager {
         lastError: row.lastError,
       };
     } catch {
-      return {
-        hasCredentials: false,
-        accountId: null,
-        teamDomain: null,
-        configured: false,
-        appId: null,
-        aud: null,
-        hostname: null,
-        rules: [],
-        enforceJwt: false,
-        effective: false,
-        bypassAppId: null,
-        lastError: null,
-      };
+      return emptyAccessStatus();
     }
   }
 
@@ -1209,11 +1214,7 @@ export class TunnelManager {
     }
     const bin = this.requireBinary();
     this.resetConnector();
-    if (
-      this.supervisor.runningEnabled ||
-      this.processUp(this.supervisor.state) ||
-      this.supervisor.state === 'starting'
-    ) {
+    if (this.isManagedProcessActive()) {
       await this.supervisor.stop();
     }
     this.lastStartOpts = {
@@ -1228,10 +1229,6 @@ export class TunnelManager {
     await this.waitUntilRunning();
     await this.probeAndStoreConnector();
     this.syncConnectorPoll();
-  }
-
-  private processUp(state: TunnelProcessState): boolean {
-    return state === 'running' || state === 'degraded';
   }
 
   private processState(persisted: TunnelPersisted): TunnelProcessState {
@@ -1283,7 +1280,7 @@ export class TunnelManager {
   private shouldProbeConnector(): boolean {
     const persisted = this.safePersisted();
     if (persisted.externallyManaged) return this.lastExternal.running;
-    return this.processUp(this.supervisor.state) || this.supervisor.state === 'starting';
+    return processUp(this.supervisor.state) || this.supervisor.state === 'starting';
   }
 
   private isConnectorStale(): boolean {
@@ -1401,7 +1398,7 @@ export class TunnelManager {
   private async waitUntilRunning(): Promise<void> {
     const deadline = this.now() + this.runningWaitMs;
     while (this.now() < deadline) {
-      if (this.processUp(this.supervisor.state)) return;
+      if (processUp(this.supervisor.state)) return;
       if (this.supervisor.state === 'error' && !this.supervisor.runningEnabled) {
         throw new TunnelError(
           'process_failed',
@@ -1410,7 +1407,7 @@ export class TunnelManager {
       }
       await Bun.sleep(5);
     }
-    if (!this.processUp(this.supervisor.state)) {
+    if (!processUp(this.supervisor.state)) {
       throw new TunnelError('process_failed', 'cloudflared did not register a connection in time');
     }
   }

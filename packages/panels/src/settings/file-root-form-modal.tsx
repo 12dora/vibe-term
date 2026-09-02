@@ -13,11 +13,7 @@ import {
   DialogTitle,
 } from '@tmex/ui/dialog';
 
-import {
-  FileRootDeviceField,
-  FileRootEnabledField,
-  FileRootPathField,
-} from './file-root-form-sections';
+import { FileRootDeviceField, FileRootPathField } from './file-root-form-sections';
 import type { FileRootDeviceGroup } from './file-root-query';
 import { useFileRootForm } from './use-file-root-form';
 
@@ -80,7 +76,6 @@ export function FileRootFormModal({
             deviceGroups={deviceGroups}
           />
           <FileRootPathField form={form} />
-          <FileRootEnabledField form={form} />
         </div>
 
         <DialogFooter>

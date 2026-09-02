@@ -295,7 +295,7 @@
       "paneClosed": "The current terminal has been closed. Select another one from the sidebar.",
       "bellNotification": "Terminal Bell",
       "bellDescriptionWithTitle": "Window {{window}} · {{paneLabel}}",
-      "bellFallback": "Received tmux bell",
+      "bellFallback": "Received terminal bell",
       "notificationFallbackTitle": "Terminal Notification",
       "notificationSourceLabel": "From {{source}}",
       "notificationFallbackDetail": "Terminal notification",
@@ -330,12 +330,12 @@
       "siteNamePlaceholder": "tmex",
       "siteUrl": "Site URL",
       "siteUrlPlaceholder": "http://localhost:3000",
-      "bellThrottle": "Bell Throttle (seconds)",
+      "bellThrottle": "Bell Notification Throttle (seconds)",
       "notificationThrottle": "Notification Throttle (seconds)",
       "enableBrowserNotificationToast": "Enable Browser Notification Toast",
       "enableNotificationPush": "Enable Notification Push",
-      "enableBellPush": "Enable Bell Push",
-      "enableBellSound": "Enable Bell Sound",
+      "enableBellPush": "Push Terminal Bell Events",
+      "enableBellSound": "Play Sound On Terminal Bell",
       "sshReconnectRetries": "SSH Reconnect Retries",
       "sshReconnectDelay": "SSH Reconnect Delay (seconds)",
       "language": "Language",
@@ -612,8 +612,8 @@
             "pending": "Finish the Cloudflare authorization first."
           },
           "access": {
-            "title": "Access",
-            "description": "Set an email allowlist in Cloudflare; requests from anyone else are blocked at the edge."
+            "title": "Access Control",
+            "description": "Choose how access is protected: none, password login, or Cloudflare Access."
           },
           "create": {
             "title": "Create and start",
@@ -680,7 +680,27 @@
           "dashboardCovered": "Access managed in dashboard",
           "notEnforced": "Access not enforced",
           "protected": "Access enforced",
-          "hostnameMismatch": "Access hostname mismatch"
+          "hostnameMismatch": "Access hostname mismatch",
+          "loginProtected": "Login Protection On",
+          "loginMissing": "Login Protection Not Active",
+          "unprotected": "No Access Protection"
+        },
+        "accessMode": {
+          "hint": "Choose how access is protected.",
+          "none": {
+            "title": "None",
+            "description": "No access protection: anyone with the address can use the tmex on this machine.",
+            "warning": "No access protection: anyone with the address can use the tmex on this machine.",
+            "appRemains": "The Access app still exists. Remove it here."
+          },
+          "login": {
+            "title": "Password Login",
+            "description": "Reaching this machine requires signing in first."
+          },
+          "cloudflare": {
+            "title": "Cloudflare Access",
+            "description": "Cloudflare verifies each visitor; it can be layered on top of sign-in."
+          }
         },
         "externallyManaged": "Run by a system service",
         "externallyManagedNotice": "A system service runs this tunnel. tmex only shows its state and can't start or stop it. Release it first to hand the tunnel back to tmex.",
@@ -688,7 +708,7 @@
           "warning": "No access protection is configured: anyone with the tunnel URL can use tmex. Enable sign-in (multi-node), or configure Access and turn on token verification.",
           "warningShort": "Nothing is protecting this machine right now: anyone with the tunnel URL can use tmex.",
           "acknowledge": "I understand the risk and want to expose tmex publicly",
-          "ackRequired": "This exposes tmex to the public internet. Tick the box above to confirm.",
+          "ackRequired": "This exposes tmex to the public internet. Tick the confirmation to continue.",
           "enableLogin": "Enable sign-in (multi-node)",
           "dropWarning": "Warning: the tunnel keeps running — once this is removed, anyone can use tmex."
         },
@@ -885,7 +905,6 @@
         "pickerSymlink": "Symbolic link",
         "pickerCurrent": "Current directory",
         "pickerConfirm": "Select this directory",
-        "enabled": "Enabled",
         "addFailed": "Failed to add directory",
         "updateFailed": "Failed to update directory",
         "deleteFailed": "Failed to remove directory",
@@ -1118,7 +1137,7 @@
     "apiError": {
       "siteNameRequired": "Site name cannot be empty",
       "siteUrlInvalid": "Site URL must start with http:// or https://",
-      "bellThrottleInvalid": "Bell throttle seconds must be between 0-300",
+      "bellThrottleInvalid": "Bell notification throttle seconds must be between 0-300",
       "sshRetriesInvalid": "SSH reconnect retries must be between 0-20",
       "sshDelayInvalid": "SSH reconnect delay must be between 1-300 seconds",
       "languageInvalid": "Language must be one of the supported locales",
@@ -1193,20 +1212,20 @@
     "notification": {
       "clickToJump": "Click to jump to the corresponding terminal",
       "eventType": {
-        "terminal_bell": "🔔 Terminal Bell",
-        "terminal_notification": "🔔 Terminal Notification",
-        "tmux_window_close": "🪟 Window Closed",
-        "tmux_pane_close": "📱 Terminal Closed",
-        "device_tmux_missing": "⚠️ Tmux Missing",
-        "device_disconnect": "🔌 Device Disconnected",
-        "session_created": "🆕 Session Created",
-        "session_closed": "🚪 Session Closed",
-        "agent_confirmation_pending": "🤖 Agent Confirmation Pending",
-        "agent_turn_finished": "🤖 Agent Turn Finished",
-        "agent_error": "🤖 Agent Error",
-        "watch_triggered": "👁️ Watch Rule Triggered",
-        "watch_model_unavailable": "👁️ Watch Model Unavailable",
-        "watch_rule_error": "👁️ Watch Rule Error"
+        "terminal_bell": "Terminal Bell",
+        "terminal_notification": "Terminal Notification",
+        "tmux_window_close": "Window Closed",
+        "tmux_pane_close": "Terminal Closed",
+        "device_tmux_missing": "Tmux Missing",
+        "device_disconnect": "Device Disconnected",
+        "session_created": "Session Created",
+        "session_closed": "Session Closed",
+        "agent_confirmation_pending": "Agent Confirmation Pending",
+        "agent_turn_finished": "Agent Turn Finished",
+        "agent_error": "Agent Error",
+        "watch_triggered": "Terminal Monitor Triggered",
+        "watch_model_unavailable": "Terminal Monitor Model Unavailable",
+        "watch_rule_error": "Terminal Monitor Rule Error"
       },
       "site": "Site",
       "device": "Device",
@@ -1218,7 +1237,7 @@
       "paneTitle": "Title",
       "process": "Process",
       "telegramBell": {
-        "title": "🔔 Bell from {{siteName}}: {{terminalTopbarLabel}}",
+        "title": "🔔 Terminal Bell from {{siteName}}: {{terminalTopbarLabel}}",
         "viewLink": "Click to view",
         "terminalTopbarLabel": "Window {{window}} · Terminal {{pane}} @ {{device}}"
       },
@@ -1624,7 +1643,9 @@
         "usePasskey": "Use a passkey",
         "credentialsRequired": "Enter your username and password.",
         "totpRequired": "Enter your authenticator code.",
-        "nodeListFailed": "Could not load the node list. Try again."
+        "nodeListFailed": "Could not load the node list. Try again.",
+        "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
+        "passkeyUnavailable": "Passkeys require HTTPS or localhost."
       },
       "node": {
         "loginToThisNode": "Sign in",

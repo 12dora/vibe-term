@@ -1,0 +1,126 @@
+import { describe, expect, test } from 'bun:test';
+import { isStandaloneDisplay, shouldOpenSidebarOnLaunch } from './standalone';
+
+const mediaWindow = (matches: boolean) => ({
+  matchMedia: (query: string) => ({ matches: matches && query === '(display-mode: standalone)' }),
+});
+
+describe('isStandaloneDisplay', () => {
+  test('display-mode: standalone 命中时为 true', () => {
+    expect(isStandaloneDisplay(mediaWindow(true))).toBe(true);
+  });
+
+  test('navigator.standalone 为 true 时（旧版 iOS）也算', () => {
+    expect(isStandaloneDisplay({ ...mediaWindow(false), navigator: { standalone: true } })).toBe(
+      true
+    );
+  });
+
+  test('两者都不满足时为 false', () => {
+    expect(isStandaloneDisplay({ ...mediaWindow(false), navigator: { standalone: false } })).toBe(
+      false
+    );
+  });
+
+  test('window 上两个能力都不存在时为 false', () => {
+    expect(isStandaloneDisplay({})).toBe(false);
+  });
+
+  test('没有 window（SSR）时为 false', () => {
+    const saved = globalThis.window;
+    (globalThis as { window?: unknown }).window = undefined;
+    try {
+      expect(isStandaloneDisplay()).toBe(false);
+    } finally {
+      (globalThis as { window?: unknown }).window = saved;
+    }
+  });
+});
+
+describe('shouldOpenSidebarOnLaunch', () => {
+  const base = { isMobile: true, standalone: true, launchPathname: '/', alreadyFired: false };
+
+  test('手机 + PWA + 首页时打开', () => {
+    expect(shouldOpenSidebarOnLaunch(base)).toBe(true);
+  });
+
+  test('桌面端不打开', () => {
+    expect(shouldOpenSidebarOnLaunch({ ...base, isMobile: false })).toBe(false);
+  });
+
+  test('浏览器标签页（非 PWA）不打开', () => {
+    expect(shouldOpenSidebarOnLaunch({ ...base, standalone: false })).toBe(false);
+  });
+
+  test('深链不打开', () => {
+    for (const launchPathname of [
+      '/settings',
+      '/devices',
+      '/n/abc',
+      '/n/abc/devices/1',
+      '/login',
+    ]) {
+      expect(shouldOpenSidebarOnLaunch({ ...base, launchPathname })).toBe(false);
+    }
+  });
+
+  test('每次加载只触发一次', () => {
+    expect(shouldOpenSidebarOnLaunch({ ...base, alreadyFired: true })).toBe(false);
+  });
+});
+
+// StandaloneLanding 的 effect 只有两个 ref：落地路径（挂载时定死）与「已触发」。
+// 这里按同样的方式跑一遍，覆盖路由变化 / isMobile 晚到 / StrictMode 双跑。
+function mountLanding(launchPathname: string, standalone = true) {
+  const launchRef = launchPathname;
+  let fired = false;
+  let opened = 0;
+  return {
+    runEffect(isMobile: boolean) {
+      const shouldOpen = shouldOpenSidebarOnLaunch({
+        isMobile,
+        standalone,
+        launchPathname: launchRef,
+        alreadyFired: fired,
+      });
+      if (!shouldOpen) return;
+      fired = true;
+      opened += 1;
+    },
+    get opened() {
+      return opened;
+    },
+  };
+}
+
+describe('StandaloneLanding 的落地判定', () => {
+  test('深链启动后再导航到首页也不打开', () => {
+    const landing = mountLanding('/settings');
+    landing.runEffect(true);
+    // 路由变到 `/` 不改变落地路径，effect 依赖里也没有 pathname；再跑一次仍不打开。
+    landing.runEffect(true);
+    expect(landing.opened).toBe(0);
+  });
+
+  test('isMobile 晚一帧才为真时补开，且只开一次', () => {
+    const landing = mountLanding('/');
+    landing.runEffect(false);
+    expect(landing.opened).toBe(0);
+    landing.runEffect(true);
+    landing.runEffect(true);
+    expect(landing.opened).toBe(1);
+  });
+
+  test('StrictMode 下 effect 跑两遍也只开一次', () => {
+    const landing = mountLanding('/');
+    landing.runEffect(true);
+    landing.runEffect(true);
+    expect(landing.opened).toBe(1);
+  });
+
+  test('非 PWA 时首页也不打开', () => {
+    const landing = mountLanding('/', false);
+    landing.runEffect(true);
+    expect(landing.opened).toBe(0);
+  });
+});

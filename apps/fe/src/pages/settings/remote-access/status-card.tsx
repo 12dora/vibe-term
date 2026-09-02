@@ -19,16 +19,23 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CopyButton } from '../nodes/copy-feedback';
 import { SetupNotice } from '../nodes/setup/form-parts';
-import { type ExposureState, ExposureWarning } from './exposure';
+import {
+  EXPOSURE_ACK,
+  type ExposureState,
+  ExposureWarning,
+  exposureAck,
+  exposureShown,
+} from './exposure';
 import { DetailRow } from './step-shell';
 import type { TunnelActions, TunnelCheckResult } from './tunnel-actions';
 import {
-  accessPill,
+  type TunnelPill,
   checkNotice,
   connectorState,
   describeTunnelError,
   isExposureAckError,
   logTail,
+  protectionPill,
   tunnelPill,
 } from './tunnel-model';
 
@@ -41,7 +48,7 @@ const PILL_VARIANT = {
   error: 'destructive',
 } as const;
 
-const ACCESS_PILL_VARIANT = {
+const PROTECTION_PILL_VARIANT = {
   notConfigured: 'outline',
   // 「查不了」与「查过了没有」在语义上都不是保护，但要让用户看出差别：前者用中性底色。
   unknown: 'secondary',
@@ -49,6 +56,10 @@ const ACCESS_PILL_VARIANT = {
   notEnforced: 'secondary',
   hostnameMismatch: 'secondary',
   protected: 'default',
+  loginProtected: 'default',
+  loginMissing: 'secondary',
+  // 用户明确选了「无」：这是唯一一档「确实没有保护」，用最重的语气。
+  unprotected: 'destructive',
 } as const;
 
 export function TunnelStatusCard({
@@ -62,7 +73,6 @@ export function TunnelStatusCard({
 }) {
   const { t } = useTranslation();
   const pill = tunnelPill(status);
-  const access = accessPill(status);
   const configured = status.config.mode !== 'off';
   const adopted = status.config.externallyManaged;
   const stoppable =
@@ -74,25 +84,17 @@ export function TunnelStatusCard({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const remove = () => actions.run({ action: 'remove' });
   const ackError = isExposureAckError(status, actions.error);
+  const startable = configured && !adopted && !stoppable;
+  // 确认只属于「启动」这一个动作：卡片顶部那条只是说明后端为什么拒了，不带勾选。
+  const startAck = exposureAck(
+    exposure,
+    EXPOSURE_ACK.start,
+    startable && exposureShown(exposure, 'compact')
+  );
 
   return (
     <Card data-testid="remote-access-status">
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2">
-          {t('settings.remoteAccess.title')}
-          <Badge variant={PILL_VARIANT[pill]} data-testid="remote-access-state">
-            {t(`settings.remoteAccess.state.${pill}`)}
-          </Badge>
-          <Badge variant={ACCESS_PILL_VARIANT[access]} data-testid="remote-access-access-state">
-            {t(`settings.remoteAccess.accessState.${access}`)}
-          </Badge>
-          {adopted && (
-            <Badge variant="secondary" data-testid="remote-access-managed">
-              {t('settings.remoteAccess.externallyManaged')}
-            </Badge>
-          )}
-        </CardTitle>
-      </CardHeader>
+      <StatusHeader status={status} pill={pill} adopted={adopted} />
       <CardContent className="space-y-3">
         {actions.error && !ackError && (
           <SetupNotice tone="error" testId="remote-access-error">
@@ -100,10 +102,10 @@ export function TunnelStatusCard({
           </SetupNotice>
         )}
 
-        {ackError && (
+        {/* 启动按钮旁那条警示已经带了确认勾选与「请先勾选」提示，这里不再重复一遍。 */}
+        {ackError && !startAck.shown && (
           <ExposureWarning
             exposure={{ ...exposure, ackRequired: true }}
-            id="remote-access-status-ack"
             testId="remote-access-status-exposure"
           />
         )}
@@ -125,7 +127,7 @@ export function TunnelStatusCard({
               <DetailRow label={t('settings.remoteAccess.publicUrl')}>
                 <span className="flex flex-wrap items-center gap-1">
                   <code
-                    className="min-w-0 break-all rounded bg-background px-1.5 py-0.5 font-mono text-[11px]"
+                    className="-ml-1.5 min-w-0 break-all rounded bg-background px-1.5 py-0.5 font-mono text-[11px]"
                     data-testid="remote-access-public-url"
                   >
                     {status.process.publicUrl}
@@ -163,10 +165,10 @@ export function TunnelStatusCard({
         )}
 
         {/* 接管来的隧道由系统服务拉起，tmex 这边的启停 / 移除会被后端 409 挡回来。 */}
-        {configured && !adopted && !stoppable && (
+        {startAck.shown && (
           <ExposureWarning
             exposure={exposure}
-            id="remote-access-start-ack"
+            ack={startAck}
             testId="remote-access-start-exposure"
             variant="compact"
           />
@@ -174,12 +176,12 @@ export function TunnelStatusCard({
 
         {configured && (
           <div className="flex flex-wrap gap-2">
-            {!adopted && !stoppable && (
+            {startable && (
               <Button
                 type="button"
                 size="sm"
                 disabled={busy}
-                onClick={() => actions.run({ action: 'start' })}
+                onClick={() => startAck.submit(actions.run, { action: 'start' })}
                 data-testid="remote-access-start"
               >
                 {pending === 'start' ? <Loader2 className="animate-spin" /> : <Play />}
@@ -259,6 +261,41 @@ export function TunnelStatusCard({
         }}
       />
     </Card>
+  );
+}
+
+/** 卡片标题上的三枚徽标：隧道状态、访问保护、是否由系统服务托管。 */
+function StatusHeader({
+  status,
+  pill,
+  adopted,
+}: {
+  status: TunnelStatusResponse;
+  pill: TunnelPill;
+  adopted: boolean;
+}) {
+  const { t } = useTranslation();
+  const protection = protectionPill(status);
+  return (
+    <CardHeader>
+      <CardTitle className="flex flex-wrap items-center gap-2">
+        {t('settings.remoteAccess.title')}
+        <Badge variant={PILL_VARIANT[pill]} data-testid="remote-access-state">
+          {t(`settings.remoteAccess.state.${pill}`)}
+        </Badge>
+        <Badge
+          variant={PROTECTION_PILL_VARIANT[protection]}
+          data-testid="remote-access-access-state"
+        >
+          {t(`settings.remoteAccess.accessState.${protection}`)}
+        </Badge>
+        {adopted && (
+          <Badge variant="secondary" data-testid="remote-access-managed">
+            {t('settings.remoteAccess.externallyManaged')}
+          </Badge>
+        )}
+      </CardTitle>
+    </CardHeader>
   );
 }
 

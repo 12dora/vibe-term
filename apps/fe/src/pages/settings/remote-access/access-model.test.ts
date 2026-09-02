@@ -1,19 +1,23 @@
 // Access 规则草稿的校验与归一、可应用性判断与步骤标签。
 
 import { describe, expect, test } from 'bun:test';
-import type { TunnelStatusResponse } from '@tmex/shared';
+import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@tmex/shared';
 import {
   type AccessRuleDraft,
   accessConfigureHostname,
+  accessEffective,
   accessRulesValid,
+  accessStepState,
   accessStepTag,
   accessSyncHostname,
   canApplyAccess,
   canSyncAccess,
   configureAccessRequest,
+  effectiveAccessMode,
   isValidRuleValue,
   ruleDraftError,
   ruleDraftsFrom,
+  setAccessModeRequest,
   shouldOfferAccessSync,
   toAccessRules,
 } from './access-model';
@@ -32,6 +36,7 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       autoStart: false,
       externallyManaged: false,
       originPort: 9883,
+      accessMode: null,
     },
     process: {
       state: 'running',
@@ -240,9 +245,161 @@ describe('configureAccessRequest', () => {
   });
 });
 
+describe('setAccessModeRequest', () => {
+  test('只组请求体，暴露确认由 withExposureAck 补', () => {
+    expect(setAccessModeRequest('none')).toEqual({ action: 'set_access_mode', accessMode: 'none' });
+    expect(setAccessModeRequest('login')).toEqual({
+      action: 'set_access_mode',
+      accessMode: 'login',
+    });
+    expect(setAccessModeRequest('cloudflare')).toEqual({
+      action: 'set_access_mode',
+      accessMode: 'cloudflare',
+    });
+  });
+});
+
 describe('accessStepTag', () => {
-  test('没有登录体系时标推荐，有登录时标可选', () => {
+  test('还没有任何保护时标推荐，已选过或已有保护时标可选', () => {
     expect(accessStepTag(status({ loginEnforced: false }))).toBe('recommended');
     expect(accessStepTag(status({ loginEnforced: true }))).toBe('optional');
+    expect(accessStepTag(withMode(status({ loginEnforced: false }), 'none'))).toBe('optional');
+  });
+
+  test('旧数据里留着一个没生效的 Access 应用：还是没有保护，仍标推荐', () => {
+    const ineffective = status({
+      loginEnforced: false,
+      access: {
+        ...status().access,
+        configured: true,
+        enforceJwt: true,
+        hostname: 'old.example.com',
+        effective: false,
+      },
+    });
+    expect(accessStepTag(ineffective)).toBe('recommended');
+    expect(
+      accessStepTag({
+        ...ineffective,
+        access: { ...ineffective.access, hostname: 'tmex.example.com', effective: true },
+      })
+    ).toBe('optional');
+  });
+});
+
+function withMode(s: TunnelStatusResponse, accessMode: TunnelAccessMode): TunnelStatusResponse {
+  return { ...s, config: { ...s.config, accessMode } };
+}
+
+function localAuth(overrides: Partial<LocalAuthStatus> = {}): LocalAuthStatus {
+  return {
+    supported: true,
+    enabled: false,
+    effective: false,
+    credentialsPresent: false,
+    ...overrides,
+  };
+}
+
+describe('effectiveAccessMode', () => {
+  test('用户选过就以选择为准', () => {
+    for (const mode of ['none', 'login', 'cloudflare'] as const) {
+      expect(effectiveAccessMode(withMode(status(), mode))).toBe(mode);
+    }
+  });
+
+  test('没选过时按实际保护推导：Access 校验 > 登录门 > 没生效的 Access 应用 > 未选择', () => {
+    const effective = status({
+      loginEnforced: false,
+      access: {
+        ...status().access,
+        configured: true,
+        enforceJwt: true,
+        hostname: 'tmex.example.com',
+        effective: true,
+      },
+    });
+    expect(effectiveAccessMode(effective)).toBe('cloudflare');
+    expect(effectiveAccessMode(status({ loginEnforced: true }))).toBe('login');
+    expect(effectiveAccessMode(status({ loginEnforced: false }))).toBeNull();
+  });
+
+  test('应用建了但没生效：有登录门时算登录，没有登录门时仍归到 Access 这一档', () => {
+    const ineffective = {
+      ...status().access,
+      configured: true,
+      enforceJwt: true,
+      hostname: 'old.example.com',
+      effective: false,
+    };
+    expect(effectiveAccessMode(status({ loginEnforced: true, access: ineffective }))).toBe('login');
+    // 没有登录门：这一档展开后正好告诉用户应用哪里没配对。
+    expect(effectiveAccessMode(status({ loginEnforced: false, access: ineffective }))).toBe(
+      'cloudflare'
+    );
+  });
+});
+
+describe('accessStepState', () => {
+  test('没选过时停在当前步', () => {
+    expect(accessStepState(status({ loginEnforced: false }))).toBe('current');
+  });
+
+  test('选「无」就是做完了', () => {
+    expect(accessStepState(withMode(status({ loginEnforced: false }), 'none'))).toBe('done');
+  });
+
+  test('选「账号密码」要真有登录门才算做完', () => {
+    const noLogin = withMode(status({ loginEnforced: false }), 'login');
+    expect(accessStepState(noLogin)).toBe('current');
+    // mesh 的登录门与本机登录都算数；`localAuth` 缺失时不当作已保护。
+    expect(accessStepState(withMode(status({ loginEnforced: true }), 'login'))).toBe('done');
+    expect(accessStepState(noLogin, localAuth())).toBe('current');
+    expect(accessStepState(noLogin, localAuth({ supported: false }))).toBe('done');
+    expect(
+      accessStepState(
+        noLogin,
+        localAuth({ enabled: true, effective: true, credentialsPresent: true })
+      )
+    ).toBe('done');
+  });
+
+  test('选 Cloudflare Access 要校验真的生效才算做完', () => {
+    const chosen = withMode(status({ loginEnforced: false }), 'cloudflare');
+    expect(accessStepState(chosen)).toBe('current');
+    const effective = withMode(
+      status({
+        loginEnforced: false,
+        access: {
+          ...status().access,
+          configured: true,
+          enforceJwt: true,
+          hostname: 'tmex.example.com',
+          effective: true,
+        },
+      }),
+      'cloudflare'
+    );
+    expect(accessStepState(effective)).toBe('done');
+  });
+});
+
+describe('accessEffective', () => {
+  test('以后端的 effective 为准，缺字段时按同一条谓词兜底', () => {
+    const base = status({
+      access: {
+        ...status().access,
+        configured: true,
+        enforceJwt: true,
+        hostname: 'tmex.example.com',
+        effective: true,
+      },
+    });
+    expect(accessEffective(base)).toBe(true);
+    expect(accessEffective({ ...base, access: { ...base.access, effective: false } })).toBe(false);
+    const { effective: _effective, ...legacy } = base.access;
+    expect(accessEffective({ ...base, access: legacy as TunnelStatusResponse['access'] })).toBe(
+      true
+    );
   });
 });

@@ -1,4 +1,4 @@
-import type { TunnelMode } from '@tmex/shared';
+import type { TunnelAccessMode, TunnelMode } from '@tmex/shared';
 import { eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { tunnelConfig } from '../db/schema';
@@ -13,6 +13,7 @@ export type TunnelPersisted = {
   autoStart: boolean;
   externallyManaged: boolean;
   exposureAcknowledgedAt: string | null;
+  accessMode: TunnelAccessMode | null;
   updatedAt: string;
 };
 
@@ -24,6 +25,7 @@ export const DEFAULT_TUNNEL_CONFIG: TunnelPersisted = {
   autoStart: false,
   externallyManaged: false,
   exposureAcknowledgedAt: null,
+  accessMode: null,
   updatedAt: '',
 };
 
@@ -35,6 +37,11 @@ export interface TunnelConfigStoreLike {
 function asMode(value: string | null | undefined): TunnelMode {
   if (value === 'quick' || value === 'named' || value === 'off') return value;
   return 'off';
+}
+
+function asAccessMode(value: string | null | undefined): TunnelAccessMode | null {
+  if (value === 'none' || value === 'login' || value === 'cloudflare') return value;
+  return null;
 }
 
 export class MemoryTunnelConfigStore implements TunnelConfigStoreLike {
@@ -73,6 +80,7 @@ export class TunnelConfigStore implements TunnelConfigStoreLike {
         autoStart: Boolean(row.autoStart),
         externallyManaged: Boolean(row.externallyManaged),
         exposureAcknowledgedAt: row.exposureAcknowledgedAt ?? null,
+        accessMode: asAccessMode(row.accessMode),
         updatedAt: row.updatedAt,
       };
     } catch {
@@ -94,6 +102,7 @@ export class TunnelConfigStore implements TunnelConfigStoreLike {
         patch.exposureAcknowledgedAt !== undefined
           ? patch.exposureAcknowledgedAt
           : current.exposureAcknowledgedAt,
+      accessMode: patch.accessMode !== undefined ? patch.accessMode : current.accessMode,
       updatedAt: new Date().toISOString(),
     };
     const values = {
@@ -105,6 +114,7 @@ export class TunnelConfigStore implements TunnelConfigStoreLike {
       autoStart: next.autoStart,
       externallyManaged: next.externallyManaged,
       exposureAcknowledgedAt: next.exposureAcknowledgedAt,
+      accessMode: next.accessMode,
       updatedAt: next.updatedAt,
     };
     this.db
@@ -120,6 +130,7 @@ export class TunnelConfigStore implements TunnelConfigStoreLike {
           autoStart: values.autoStart,
           externallyManaged: values.externallyManaged,
           exposureAcknowledgedAt: values.exposureAcknowledgedAt,
+          accessMode: values.accessMode,
           updatedAt: values.updatedAt,
         },
       })
