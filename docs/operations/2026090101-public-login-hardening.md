@@ -13,9 +13,11 @@
 - `TMEX_TRUST_PROXY` 未开启：始终用 socket IP，忽略转发头。
 - 已开启时按序取第一个**合法 IPv4/IPv6 字面量**（trim；非法则跳过）：
   1. `CF-Connecting-IP`
-  2. `X-Forwarded-For` 的**第一个非空**条目
-  3. `X-Real-IP`
+  2. `X-Real-IP`（nginx 的 `$remote_addr`，客户端无法伪造）
+  3. `X-Forwarded-For` 的**最后一个非空**条目（`proxy_add_x_forwarded_for` 把真实客户端追加在末尾；首段由客户端自带、可伪造，取首段会让限流被随机 XFF 绕过）。末段不是合法字面量时不回退到更早的条目。
   4. 回退 socket IP
+
+（2026-09-02 起顺序如上；此前是 XFF 首段优先。）
 
 登录限流的 IP 桶使用该结果；UID 桶与阈值不变。
 
@@ -32,3 +34,10 @@ Cloudflare Tunnel / 反代后面**必须**打开 `TMEX_TRUST_PROXY`（隧道管�
 - 否则 `trustProxy=false`：仍用 socket IP；`X-Forwarded-For` 在未信任时忽略，行为与原先一致。
 
 首次部署应先在本机完成 bootstrap，再对外暴露隧道。
+
+## 未登录面的资源上限（2026-09-02）
+
+- `readJsonObjectBody` / `readJsonBody` 统一封顶 1 MiB（`JSON_BODY_MAX_BYTES`）：`Content-Length` 超限直接拒；否则流式累计，超限即取消读取并按 `MALFORMED` 处理。登录、挑战、passkey、enrollment redeem、setup 全部经此两处；分块上传走自己的 8 MiB 上限，不受影响。
+- 挑战存储上限 4096 条（先清过期，再按插入序淘汰最旧）。
+- 登录失败限流表：空 key 即删，key 数上限 1 万，每 256 次记录做一次全表清理。
+- `POST /api/auth/challenge` 与 `POST /api/auth/passkey/login/options` 按客户端 IP 限速（每 60 秒 60 次，超出 `429 RATE_LIMITED`）。
