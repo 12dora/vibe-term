@@ -4,6 +4,9 @@
 // 页面上只有：品牌、用户名、密码、验证码（开了 TOTP 才有）、登录、用通行密钥登录，外加一行错误。
 // 内部状态（会登录哪些节点、逐台的 fan-out 进度、会话钥怎么用）不出现在界面上；passkey 的
 // **注册**入口只在「账号安全」里，这里只有**用 passkey 登录**。
+//
+// 通行密钥按钮只要当前地址支持（HTTPS / localhost）就一直在——按「本 origin 已注册过」来藏它，
+// 等于没人发现得了这个功能；没注册的情况在点击时给出下一步，不可用的地址给一行说明。
 
 import {
   isCredentialFailure,
@@ -24,7 +27,7 @@ import {
 import { useAuthMode } from '@/auth/use-session-key';
 import { Brand } from '@/components/brand';
 import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { defaultAuthApi, requireRootEpoch } from '@tmex/api-client/auth/index';
+import { defaultAuthApi, isWebAuthnAvailable, requireRootEpoch } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { OtpInput } from '@tmex/ui/otp-input';
@@ -64,7 +67,114 @@ interface LoginFormProps {
   api: AuthApi;
 }
 
-type Phase = 'idle' | 'deriving' | 'signingIn' | 'done';
+export type Phase = 'idle' | 'deriving' | 'signingIn' | 'done';
+
+/** 「使用通行密钥」这一栏渲染成什么：按钮 / 一行不可用说明 / 什么都不给。 */
+export type PasskeyAffordance = 'button' | 'unavailable' | 'none';
+
+/**
+ * 按钮**不**依赖本 origin 是否已注册过通行密钥——藏起来等于没人发现得了这个功能。
+ * 浏览器压根不支持 WebAuthn 时才整栏不出现，说明「需要 HTTPS」只会让人更糊涂。
+ */
+export function passkeyAffordance(
+  mode: Pick<AuthModeResponse, 'passkeyAvailable'>,
+  webauthnSupported: boolean = isWebAuthnAvailable()
+): PasskeyAffordance {
+  if (!webauthnSupported) return 'none';
+  return mode.passkeyAvailable ? 'button' : 'unavailable';
+}
+
+/** 点按钮时的前置判定：返回文案 key 表示不进入 WebAuthn 仪式。 */
+export function passkeyBlockReason(
+  mode: Pick<AuthModeResponse, 'passkeysForThisOrigin'>
+): string | null {
+  return mode.passkeysForThisOrigin ? null : 'auth.login.passkeyNotRegistered';
+}
+
+/** 「使用通行密钥」的动作：前置判定没过就只回文案 key，绝不发起 WebAuthn 仪式。成功回 null。 */
+export async function attemptPasskeyLogin(args: {
+  mode: AuthModeResponse;
+  uid: string;
+  api: AuthApi;
+}): Promise<string | null> {
+  const blocked = passkeyBlockReason(args.mode);
+  if (blocked) return blocked;
+  try {
+    // credentialId 交给 entry 下发的 allowCredentials 决定。
+    await establishSessionFromPasskey({
+      uid: args.uid,
+      entryNodeId: args.mode.nodeId,
+      api: args.api,
+    });
+    return null;
+  } catch (err) {
+    return loginErrorKeyFromException(err, 'passkey');
+  }
+}
+
+export interface PasskeyLoginDeps {
+  mode: AuthModeResponse;
+  uid: string;
+  api: AuthApi;
+  /** 会话钥建好之后的最后一步：登录本机或 `?node=` 指定的那台。 */
+  finishLogin: (method: 'passkey') => Promise<void>;
+  setPhase: (phase: Phase) => void;
+  /** 只回文案 key，`t()` 留给组件。 */
+  onErrorKey: (key: string) => void;
+}
+
+/**
+ * 通行密钥登录的完整编排。收尾这一步（节点签名、会话钥落盘）同样会抛，必须和仪式
+ * 一起裹在同一个 try 里：漏在外面就是一个 unhandled rejection，页面停在「登录中」
+ * 且一行错误都没有。
+ */
+export async function runPasskeyLogin(deps: PasskeyLoginDeps): Promise<void> {
+  deps.setPhase('deriving');
+  try {
+    const errorKey = await attemptPasskeyLogin({ mode: deps.mode, uid: deps.uid, api: deps.api });
+    if (errorKey) {
+      deps.onErrorKey(errorKey);
+      deps.setPhase('idle');
+      return;
+    }
+    await deps.finishLogin('passkey');
+  } catch (err) {
+    deps.onErrorKey(loginErrorKeyFromException(err, 'passkey'));
+    deps.setPhase('idle');
+  }
+}
+
+function PasskeyRow({
+  affordance,
+  busy,
+  onClick,
+}: {
+  affordance: PasskeyAffordance;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  const { t } = useTranslation();
+  if (affordance === 'none') return null;
+  if (affordance === 'unavailable') {
+    return (
+      <p className="text-xs text-muted-foreground" data-testid="login-passkey-unavailable">
+        {t('auth.login.passkeyUnavailable')}
+      </p>
+    );
+  }
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      disabled={busy}
+      data-testid="login-passkey"
+      onClick={onClick}
+    >
+      <Fingerprint />
+      {t('auth.login.usePasskey')}
+    </Button>
+  );
+}
 
 // `login.uid` / `delegation.uid` / k_totp 的 HKDF info 用的都是 **user id**，
 // 输入框里的是用户名——只有在与 mode 返回的用户名一致时才能安全地换成 uid。
@@ -89,7 +199,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
 
-  const canUsePasskey = mode.passkeyAvailable && mode.passkeysForThisOrigin;
+  const affordance = passkeyAffordance(mode);
 
   const resolveUid = useCallback(() => resolveLoginUid(mode, username), [mode, username]);
 
@@ -174,23 +284,26 @@ function LoginForm({ mode, api }: LoginFormProps) {
   const onPasskey = useCallback(async () => {
     if (busy) return;
     setError(null);
+    // 这个 origin 一个通行密钥都没有：直接给出下一步，别把用户丢进注定失败的系统弹窗。
+    const blocked = passkeyBlockReason(mode);
+    if (blocked) {
+      setError(t(blocked));
+      return;
+    }
     setBusy(true);
-    setPhase('deriving');
     try {
-      // credentialId 交给 entry 下发的 allowCredentials 决定。
-      await establishSessionFromPasskey({
+      await runPasskeyLogin({
+        mode,
         uid: resolveUid(),
-        entryNodeId: mode.nodeId,
         api,
+        finishLogin,
+        setPhase,
+        onErrorKey: (key) => setError(t(key)),
       });
-      await finishLogin('passkey');
-    } catch (err) {
-      setError(t(loginErrorKeyFromException(err, 'passkey')));
-      setPhase('idle');
     } finally {
       setBusy(false);
     }
-  }, [api, busy, finishLogin, mode.nodeId, resolveUid, t]);
+  }, [api, busy, finishLogin, mode, resolveUid, t]);
 
   return (
     <div className="flex min-h-full items-center justify-center p-4" data-testid="login-page">
@@ -271,18 +384,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
               : t('auth.login.submit')}
         </Button>
 
-        {canUsePasskey ? (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            data-testid="login-passkey"
-            onClick={() => void onPasskey()}
-          >
-            <Fingerprint />
-            {t('auth.login.usePasskey')}
-          </Button>
-        ) : null}
+        <PasskeyRow affordance={affordance} busy={busy} onClick={() => void onPasskey()} />
       </form>
     </div>
   );

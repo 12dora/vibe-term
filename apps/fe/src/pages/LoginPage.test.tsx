@@ -1,17 +1,61 @@
 // 登录页：只渲染品牌 + 表单 + 一行错误；错误映射到真正的原因；self 登录成功即跳转。
 // 无 DOM 测试环境，表单渲染用 react-dom/server 静态渲染，交互路径直接测纯函数与 store。
 
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import { loginErrorKey, loginErrorKeyFromException } from '@/auth/login-errors';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
+import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { WebAuthnError } from '@tmex/api-client/auth/index';
 import { installWindowStorage } from '@tmex/stores/test-utils';
 
 installWindowStorage();
 
+/** `isWebAuthnAvailable()` 只看这两个全局，测试环境里补上就够了。 */
+function installWebAuthnStub(): void {
+  Object.defineProperty(globalThis, 'PublicKeyCredential', {
+    value: class {},
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(globalThis.navigator, 'credentials', {
+    value: { create: () => Promise.resolve(null), get: () => Promise.resolve(null) },
+    configurable: true,
+    writable: true,
+  });
+}
+
+function withoutWebAuthn<T>(run: () => T): T {
+  const saved = (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential;
+  Reflect.deleteProperty(globalThis, 'PublicKeyCredential');
+  try {
+    return run();
+  } finally {
+    Object.defineProperty(globalThis, 'PublicKeyCredential', {
+      value: saved,
+      configurable: true,
+      writable: true,
+    });
+  }
+}
+
+installWebAuthnStub();
+
+const passkeyCeremony = mock(async () => {});
+mock.module('@/auth/session-login', () => ({
+  establishSessionFromPasskey: passkeyCeremony,
+  establishSessionFromPassword: mock(async () => {}),
+  loginSelf: mock(async () => ({ ok: true })),
+}));
+
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { default: LoginPage } = await import('./LoginPage');
+const {
+  default: LoginPage,
+  attemptPasskeyLogin,
+  passkeyAffordance,
+  passkeyBlockReason,
+  runPasskeyLogin,
+} = await import('./LoginPage');
+type Phase = Parameters<Parameters<typeof runPasskeyLogin>[0]['setPhase']>[0];
 
 const BASE: AuthModeResponse = {
   mode: 'mesh',
@@ -56,11 +100,29 @@ describe('LoginPage', () => {
     expect(html).toContain('autoComplete="one-time-code"');
   });
 
-  test('passkey 按钮仅在本 origin 有 passkey 且环境可用时出现', () => {
-    expect(render(BASE)).not.toContain('data-testid="login-passkey"');
+  test('本 origin 还没注册过 passkey 也照样给按钮（否则没人发现得了这个功能）', () => {
+    const html = render({ ...BASE, passkeyAvailable: true, passkeysForThisOrigin: false });
+    expect(html).toContain('data-testid="login-passkey"');
+    expect(html).not.toContain('data-testid="login-passkey-unavailable"');
+  });
+
+  test('已注册 passkey 时同样是这个按钮', () => {
     expect(render({ ...BASE, passkeyAvailable: true, passkeysForThisOrigin: true })).toContain(
       'data-testid="login-passkey"'
     );
+  });
+
+  test('地址不支持 passkey（http + IP）时给一行说明，不给按钮', () => {
+    const html = render({ ...BASE, passkeyAvailable: false });
+    expect(html).not.toContain('data-testid="login-passkey"');
+    expect(html).toContain('data-testid="login-passkey-unavailable"');
+    expect(html).toContain('text-xs text-muted-foreground');
+  });
+
+  test('浏览器不支持 WebAuthn 时按钮和说明都不出现', () => {
+    const html = withoutWebAuthn(() => render({ ...BASE, passkeyAvailable: true }));
+    expect(html).not.toContain('data-testid="login-passkey"');
+    expect(html).not.toContain('data-testid="login-passkey-unavailable"');
   });
 
   test('不再提供 passkey 注册入口（注册只在账号安全面板里）', () => {
@@ -74,6 +136,127 @@ describe('LoginPage', () => {
     const html = render(BASE);
     expect(html).not.toContain('data-testid="login-targets"');
     expect(html).not.toContain('data-testid="login-progress"');
+  });
+});
+
+describe('passkey 入口判定', () => {
+  test('地址可用就给按钮，不可用给说明，环境不支持就整栏不给', () => {
+    expect(passkeyAffordance({ passkeyAvailable: true }, true)).toBe('button');
+    expect(passkeyAffordance({ passkeyAvailable: false }, true)).toBe('unavailable');
+    expect(passkeyAffordance({ passkeyAvailable: true }, false)).toBe('none');
+    expect(passkeyAffordance({ passkeyAvailable: false }, false)).toBe('none');
+  });
+
+  test('默认参数走 isWebAuthnAvailable()，测试环境里已 stub 成可用', () => {
+    expect(passkeyAffordance({ passkeyAvailable: true })).toBe('button');
+    expect(withoutWebAuthn(() => passkeyAffordance({ passkeyAvailable: true }))).toBe('none');
+  });
+
+  test('本 origin 没注册过 passkey → 前置判定拦下并给出「去哪儿加」', () => {
+    expect(passkeyBlockReason({ passkeysForThisOrigin: false })).toBe(
+      'auth.login.passkeyNotRegistered'
+    );
+    expect(passkeyBlockReason({ passkeysForThisOrigin: true })).toBeNull();
+  });
+
+  test('被拦下时不发起 WebAuthn 仪式，只回文案 key', async () => {
+    passkeyCeremony.mockClear();
+    const key = await attemptPasskeyLogin({
+      mode: { ...BASE, passkeyAvailable: true, passkeysForThisOrigin: false },
+      uid: 'user-1',
+      api: {} as AuthApi,
+    });
+    expect(key).toBe('auth.login.passkeyNotRegistered');
+    expect(passkeyCeremony).not.toHaveBeenCalled();
+  });
+
+  test('已注册时照常走仪式，成功回 null', async () => {
+    passkeyCeremony.mockClear();
+    const key = await attemptPasskeyLogin({
+      mode: { ...BASE, passkeyAvailable: true, passkeysForThisOrigin: true },
+      uid: 'user-1',
+      api: {} as AuthApi,
+    });
+    expect(key).toBeNull();
+    expect(passkeyCeremony).toHaveBeenCalledTimes(1);
+  });
+
+  test('仪式抛错 → 按 passkey 路径映射文案，不外泄原始码', async () => {
+    passkeyCeremony.mockClear();
+    passkeyCeremony.mockImplementationOnce(() => {
+      throw new WebAuthnError('aborted', 'x');
+    });
+    const key = await attemptPasskeyLogin({
+      mode: { ...BASE, passkeyAvailable: true, passkeysForThisOrigin: true },
+      uid: 'user-1',
+      api: {} as AuthApi,
+    });
+    expect(key).toBe('auth.errors.PASSKEY_ABORTED');
+  });
+});
+
+describe('runPasskeyLogin 编排', () => {
+  const mode: AuthModeResponse = { ...BASE, passkeyAvailable: true, passkeysForThisOrigin: true };
+
+  function collect(finishLogin: (method: 'passkey') => Promise<void>) {
+    const phases: Phase[] = [];
+    const errors: string[] = [];
+    return {
+      phases,
+      errors,
+      deps: {
+        mode,
+        uid: 'user-1',
+        api: {} as AuthApi,
+        finishLogin,
+        setPhase: (phase: Phase) => phases.push(phase),
+        onErrorKey: (key: string) => errors.push(key),
+      },
+    };
+  }
+
+  test('一路顺利：只推进到 deriving，收尾交给 finishLogin，不报错', async () => {
+    passkeyCeremony.mockClear();
+    const finishLogin = mock(async () => {});
+    const run = collect(finishLogin);
+    await runPasskeyLogin(run.deps);
+    expect(passkeyCeremony).toHaveBeenCalledTimes(1);
+    expect(finishLogin).toHaveBeenCalledTimes(1);
+    expect(run.phases).toEqual(['deriving']);
+    expect(run.errors).toEqual([]);
+  });
+
+  test('收尾抛错（节点签名 / 会话钥落盘）→ 给出报错并退回 idle，不是卡在登录中', async () => {
+    passkeyCeremony.mockClear();
+    const run = collect(async () => {
+      throw new Error('persist failed');
+    });
+    await runPasskeyLogin(run.deps);
+    expect(run.errors).toEqual(['auth.errors.LOGIN_FAILED']);
+    expect(run.phases.at(-1)).toBe('idle');
+  });
+
+  test('收尾抛出带 code 的错误 → 按 passkey 路径映射文案', async () => {
+    passkeyCeremony.mockClear();
+    const run = collect(async () => {
+      throw Object.assign(new Error('x'), { code: 'DELEGATION_BAD_SIGNATURE' });
+    });
+    await runPasskeyLogin(run.deps);
+    expect(run.errors).toEqual(['auth.errors.PASSKEY_VERIFY_FAILED']);
+    expect(run.phases.at(-1)).toBe('idle');
+  });
+
+  test('仪式失败时不进入收尾', async () => {
+    passkeyCeremony.mockClear();
+    passkeyCeremony.mockImplementationOnce(() => {
+      throw new WebAuthnError('aborted', 'x');
+    });
+    const finishLogin = mock(async () => {});
+    const run = collect(finishLogin);
+    await runPasskeyLogin(run.deps);
+    expect(finishLogin).not.toHaveBeenCalled();
+    expect(run.errors).toEqual(['auth.errors.PASSKEY_ABORTED']);
+    expect(run.phases.at(-1)).toBe('idle');
   });
 });
 
@@ -95,8 +278,14 @@ describe('登录失败文案', () => {
     expect(loginErrorKey('DELEGATION_BAD_SIGNATURE', 'passkey')).toBe(
       'auth.errors.PASSKEY_VERIFY_FAILED'
     );
+  });
+
+  test('服务端回 NO_PASSKEY_FOR_ORIGIN 时与前置提示同一句文案', () => {
     expect(loginErrorKey('NO_PASSKEY_FOR_ORIGIN', 'passkey')).toBe(
-      'auth.errors.NO_PASSKEY_FOR_ORIGIN'
+      'auth.login.passkeyNotRegistered'
+    );
+    expect(loginErrorKeyFromException({ code: 'NO_PASSKEY_FOR_ORIGIN' }, 'passkey')).toBe(
+      'auth.login.passkeyNotRegistered'
     );
   });
 
