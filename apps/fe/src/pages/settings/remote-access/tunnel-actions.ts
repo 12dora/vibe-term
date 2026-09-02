@@ -32,6 +32,11 @@ export interface TunnelActionState {
   pending: TunnelActionName | null;
   error: TunnelError | null;
   /**
+   * 产生 `error` 的那个请求。暴露确认的 409 必须落到发起它的那个动作旁边，
+   * 光有错误码分不清是「启动隧道」还是「关掉令牌校验」被拒。与 `error` 同生同灭。
+   */
+  failedRequest: TunnelActionRequest | null;
+  /**
    * 最近一次「检查连通性」受理到的 job id。`check` 是后台 job：202 只代表受理，
    * 结果必须等轮询看到同一个 job 到达 done / error 才算数。
    */
@@ -52,7 +57,12 @@ export function isTunnelBusy(
   return pending !== null || status?.job?.state === 'running';
 }
 
-const INITIAL: TunnelActionState = { pending: null, error: null, checkJobId: null };
+const INITIAL: TunnelActionState = {
+  pending: null,
+  error: null,
+  failedRequest: null,
+  checkJobId: null,
+};
 
 export class TunnelActionController {
   private state: TunnelActionState = INITIAL;
@@ -78,7 +88,7 @@ export class TunnelActionController {
   }
 
   clearError = (): void => {
-    if (this.state.error) this.update({ error: null });
+    if (this.state.error) this.update({ error: null, failedRequest: null });
   };
 
   run = async (req: TunnelActionRequest): Promise<void> => {
@@ -88,6 +98,7 @@ export class TunnelActionController {
     this.update({
       pending: req.action,
       error: null,
+      failedRequest: null,
       checkJobId: req.action === 'check' ? null : this.state.checkJobId,
     });
     try {
@@ -95,7 +106,7 @@ export class TunnelActionController {
       this.readCallbacks().onStatus(res.status);
       if (req.action === 'check') this.update({ checkJobId: res.job?.id ?? null });
     } catch (error) {
-      this.update({ error: toTunnelError(error) });
+      this.update({ error: toTunnelError(error), failedRequest: req });
       // 失败时服务端状态很可能已经变了（进程退出、job 转 error），必须重拉才看得到。
       this.readCallbacks().onRefresh();
     } finally {

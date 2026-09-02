@@ -7,6 +7,7 @@ import {
   EXPOSURE_ACK,
   type ExposureState,
   exposureAck,
+  exposureAckIdOf,
   exposureShown,
   protectionSnapshot,
 } from './exposure';
@@ -90,6 +91,7 @@ function tab(initial: string | null = null, overrides: Partial<ExposureState> = 
     state: (): ExposureState => ({
       unprotected: true,
       ackRequired: false,
+      ackRequiredId: null,
       ackedId,
       setAckedId: (id) => {
         ackedId = id;
@@ -107,6 +109,7 @@ describe('exposureShown', () => {
     const state = (over: Partial<ExposureState>): ExposureState => ({
       unprotected: false,
       ackRequired: false,
+      ackRequiredId: null,
       ackedId: null,
       setAckedId: () => undefined,
       ...over,
@@ -195,6 +198,100 @@ describe('exposureAck', () => {
     retry.submit(page.run, { action: 'start' });
     expect(page.sent).toEqual([{ action: 'start', acknowledgeExposure: true }]);
     expect(page.ackedId).toBeNull();
+  });
+});
+
+describe('exposureAckIdOf', () => {
+  test('会开放公网的动作各自认领一条警示', () => {
+    expect(exposureAckIdOf({ action: 'start' })).toBe(EXPOSURE_ACK.start);
+    expect(exposureAckIdOf({ action: 'quick_start' })).toBe(EXPOSURE_ACK.quick);
+    expect(exposureAckIdOf({ action: 'create', hostname: 'a.example.com' })).toBe(
+      EXPOSURE_ACK.create
+    );
+    expect(exposureAckIdOf({ action: 'set_auto_start', autoStart: true })).toBe(
+      EXPOSURE_ACK.autoStart
+    );
+    expect(exposureAckIdOf({ action: 'set_access_mode', accessMode: 'none' })).toBe(
+      EXPOSURE_ACK.accessMode
+    );
+    expect(exposureAckIdOf({ action: 'set_access_enforce', enforceJwt: false })).toBe(
+      EXPOSURE_ACK.accessEnforce
+    );
+    expect(exposureAckIdOf({ action: 'remove_access' })).toBe(EXPOSURE_ACK.accessRemove);
+  });
+
+  test('收敛动作与没有请求时都没有归属', () => {
+    expect(exposureAckIdOf({ action: 'set_auto_start', autoStart: false })).toBeNull();
+    expect(exposureAckIdOf({ action: 'set_access_mode', accessMode: 'login' })).toBeNull();
+    expect(exposureAckIdOf({ action: 'set_access_enforce', enforceJwt: true })).toBeNull();
+    expect(exposureAckIdOf({ action: 'stop' })).toBeNull();
+    expect(exposureAckIdOf(null)).toBeNull();
+  });
+});
+
+describe('409 兜底：被拒的那个动作一定拿得到勾选框', () => {
+  const ACCESS_MODE: string = EXPOSURE_ACK.accessMode;
+  const ACCESS_REMOVE: string = EXPOSURE_ACK.accessRemove;
+
+  /** 后端判定暴露的口径比前端宽，本地判定说「不用确认」时照样会吃 409。 */
+  const rejected = (id: string): ExposureState => ({
+    unprotected: false,
+    ackRequired: true,
+    ackRequiredId: id,
+    ackedId: null,
+    setAckedId: () => undefined,
+  });
+
+  test('本地判定说不必确认，仍然渲染被拒动作那一条', () => {
+    const state = rejected(EXPOSURE_ACK.accessMode);
+    const ack = exposureAck(state, EXPOSURE_ACK.accessMode, false);
+    expect(ack.shown).toBe(true);
+    expect(ack.ackRequired).toBe(true);
+    expect(ack.checked).toBe(false);
+  });
+
+  test('只作用于被拒的那个动作，别的动作不受影响', () => {
+    const state = rejected(EXPOSURE_ACK.accessRemove);
+    expect(exposureAck(state, EXPOSURE_ACK.accessEnforce, false).shown).toBe(false);
+    expect(exposureAck(state, EXPOSURE_ACK.accessEnforce, false).ackRequired).toBe(false);
+    expect(exposureAck(state, EXPOSURE_ACK.start, false).shown).toBe(false);
+  });
+
+  test('`exposureShown` 传入 id 时同样认这条兜底', () => {
+    const state = rejected(EXPOSURE_ACK.accessRemove);
+    expect(exposureShown(state, 'compact', EXPOSURE_ACK.accessRemove)).toBe(true);
+    // 没有 409 归属时按原来的判定走：受保护 + 没有全局 ackRequired 就不出现。
+    const quiet: ExposureState = { ...state, ackRequired: false, ackRequiredId: null };
+    expect(exposureShown(quiet, 'compact', EXPOSURE_ACK.accessRemove)).toBe(false);
+  });
+
+  test('勾上之后重试就带上确认', () => {
+    const page = tab(null, { unprotected: false, ackRequired: true, ackRequiredId: ACCESS_MODE });
+
+    exposureAck(page.state(), ACCESS_MODE, false).set(true);
+    expect(page.ackedId).toBe(ACCESS_MODE);
+
+    const retry = exposureAck(page.state(), ACCESS_MODE, false);
+    expect(retry.checked).toBe(true);
+    retry.submit(page.run, { action: 'set_access_mode', accessMode: 'none' });
+    expect(page.sent).toEqual([
+      { action: 'set_access_mode', accessMode: 'none', acknowledgeExposure: true },
+    ]);
+    expect(page.ackedId).toBeNull();
+  });
+
+  test('移除 Access 被拒后同样勾得上、带得走', () => {
+    const page = tab(null, {
+      unprotected: false,
+      ackRequired: true,
+      ackRequiredId: ACCESS_REMOVE,
+    });
+
+    const ack = exposureAck(page.state(), ACCESS_REMOVE, false);
+    expect(ack.shown).toBe(true);
+    ack.set(true);
+    exposureAck(page.state(), ACCESS_REMOVE, false).submit(page.run, { action: 'remove_access' });
+    expect(page.sent).toEqual([{ action: 'remove_access', acknowledgeExposure: true }]);
   });
 });
 

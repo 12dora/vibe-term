@@ -28,6 +28,7 @@ type ActionSnapshot = Omit<TunnelActions, 'run' | 'clearError'>;
 const IDLE_ACTIONS: ActionSnapshot = {
   pending: null,
   error: null,
+  failedRequest: null,
   checkJobId: null,
   check: null,
   checking: false,
@@ -761,6 +762,46 @@ describe('暴露警示与确认', () => {
     expect(html).not.toContain('data-testid="remote-access-status-exposure"');
   });
 
+  test('409 的归属来自失败的那个请求：标签层把勾选接到对应的警示上', () => {
+    const access = {
+      ...tunnel().access,
+      hasCredentials: true,
+      configured: true,
+      enforceJwt: true,
+      hostname: 'tmex.example.com',
+      effective: true,
+      rules: [{ kind: 'email' as const, value: 'you@example.com' }],
+    };
+    status = configured('named', 'stopped', {
+      auth: { loggedIn: true, loginUrl: null },
+      access,
+      loginEnforced: false,
+    });
+    actionState = {
+      ...IDLE_ACTIONS,
+      error: { code: 'exposure_ack_required', message: 'ack required' },
+      failedRequest: { action: 'set_access_enforce', enforceJwt: false },
+    };
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-access-drop-exposure-ack"');
+    expect(html).toContain(`id="${EXPOSURE_ACK.accessEnforce}"`);
+    expect(isSwitchDisabled(html, 'remote-access-access-enforce')).toBe(true);
+    // 被拒的是关校验，启动按钮旁那条不跟着亮。
+    expect(html).not.toContain('data-testid="remote-access-start-exposure"');
+  });
+
+  test('收敛动作失败时不冒出任何勾选：归属为空就不兜底', () => {
+    status = configured('quick', 'stopped');
+    actionState = {
+      ...IDLE_ACTIONS,
+      error: { code: 'busy', message: 'another action is running' },
+      failedRequest: { action: 'stop' },
+    };
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-error"');
+    expect(html).not.toContain('data-testid="remote-access-start-exposure"');
+  });
+
   test('确认框跟着动作走：隧道在跑时启动按钮不在，被拒的提示落回卡片顶部', () => {
     status = configured('quick', 'running');
     actionState = {
@@ -1348,6 +1389,33 @@ describe('访问控制三选一', () => {
     expect(isDisabled(html, 'remote-access-access-mode-none-input')).toBe(false);
   });
 
+  test('本地判定说没跑起来但后端回了 409：被拒的「无」照样给出勾选', () => {
+    status = withMode(tunnel({ auth, loginEnforced: false, exposureProtected: false }), 'login');
+    const rejected = renderWizard('named', {
+      exposure: { ackRequired: true, ackRequiredId: EXPOSURE_ACK.accessMode },
+    });
+    expect(rejected).toContain('data-testid="remote-access-access-mode-exposure"');
+    expect(rejected).toContain('data-testid="remote-access-access-mode-exposure-ack"');
+    expect(rejected).toContain(`id="${EXPOSURE_ACK.accessMode}"`);
+    expect(isDisabled(rejected, 'remote-access-access-mode-none-input')).toBe(true);
+
+    // 归属只认被拒的那个动作：别处被拒不会把这条警示带出来。
+    const elsewhere = renderWizard('named', {
+      exposure: { ackRequired: true, ackRequiredId: EXPOSURE_ACK.start },
+    });
+    expect(elsewhere).not.toContain('data-testid="remote-access-access-mode-exposure"');
+
+    // 勾上之后放行：重试由 `exposureAck.submit` 带上 acknowledgeExposure。
+    const acknowledged = renderWizard('named', {
+      exposure: {
+        ackRequired: true,
+        ackRequiredId: EXPOSURE_ACK.accessMode,
+        ackedId: EXPOSURE_ACK.accessMode,
+      },
+    });
+    expect(isDisabled(acknowledged, 'remote-access-access-mode-none-input')).toBe(false);
+  });
+
   test('忙锁：动作进行中时三张卡都点不动', () => {
     status = tunnel({ auth, loginEnforced: false });
     const html = renderWizard('named', {
@@ -1667,6 +1735,85 @@ describe('Cloudflare Access 区块', () => {
     expect(isSwitchDisabled(stopped, 'remote-access-access-enforce')).toBe(false);
   });
 
+  test('Access 没生效也要确认：主机名不匹配、隧道在跑又没有登录时勾选提前摆出来', () => {
+    const mismatched = {
+      ...tunnel().access,
+      hasCredentials: true,
+      configured: true,
+      enforceJwt: true,
+      hostname: 'old.example.com',
+      effective: false,
+      rules: [{ kind: 'email' as const, value: 'you@example.com' }],
+    };
+    status = loggedIn({ access: mismatched, loginEnforced: false, exposureProtected: false });
+    const html = renderWizard('named');
+    expect(html).toContain('data-testid="remote-access-access-drop-exposure"');
+    expect(html).toContain('data-testid="remote-access-access-drop-exposure-ack"');
+    expect(isSwitchDisabled(html, 'remote-access-access-enforce')).toBe(true);
+    expect(html).toContain('data-testid="remote-access-access-remove"');
+
+    const acknowledged = renderWizard('named', {
+      exposure: { ackedId: EXPOSURE_ACK.accessEnforce },
+    });
+    expect(isSwitchDisabled(acknowledged, 'remote-access-access-enforce')).toBe(false);
+  });
+
+  test('关闭校验被 409 拒掉：隧道看着已停也要把勾选亮出来', () => {
+    const access = {
+      ...tunnel().access,
+      hasCredentials: true,
+      configured: true,
+      enforceJwt: true,
+      hostname: 'tmex.example.com',
+      effective: true,
+      rules: [{ kind: 'email' as const, value: 'you@example.com' }],
+    };
+    status = configured('named', 'stopped', {
+      auth: { loggedIn: true, loginUrl: null },
+      access,
+      loginEnforced: false,
+    });
+    expect(renderWizard('named')).not.toContain('data-testid="remote-access-access-drop-exposure"');
+
+    const rejected = renderWizard('named', {
+      exposure: { ackRequired: true, ackRequiredId: EXPOSURE_ACK.accessEnforce },
+    });
+    expect(rejected).toContain('data-testid="remote-access-access-drop-exposure"');
+    expect(rejected).toContain('data-testid="remote-access-access-drop-exposure-ack"');
+    expect(isSwitchDisabled(rejected, 'remote-access-access-enforce')).toBe(true);
+    // 移除按钮那条属于另一个动作，不跟着亮。
+    expect(rejected).not.toContain('data-testid="remote-access-access-remove-exposure"');
+  });
+
+  test('移除 Access 被 409 拒掉：确认框从对话框里挪到按钮旁边', () => {
+    const access = {
+      ...tunnel().access,
+      hasCredentials: true,
+      configured: true,
+      enforceJwt: true,
+      hostname: 'tmex.example.com',
+      effective: true,
+      rules: [{ kind: 'email' as const, value: 'you@example.com' }],
+    };
+    status = configured('named', 'stopped', {
+      auth: { loggedIn: true, loginUrl: null },
+      access,
+      loginEnforced: false,
+    });
+    // 对话框没打开，平时按钮旁不重复挂一条警示。
+    expect(renderWizard('named')).not.toContain(
+      'data-testid="remote-access-access-remove-exposure"'
+    );
+
+    const rejected = renderWizard('named', {
+      exposure: { ackRequired: true, ackRequiredId: EXPOSURE_ACK.accessRemove },
+    });
+    expect(rejected).toContain('data-testid="remote-access-access-remove-exposure"');
+    expect(rejected).toContain('data-testid="remote-access-access-remove-exposure-ack"');
+    expect(rejected).toContain(`id="${EXPOSURE_ACK.accessRemove}"`);
+    expect(rejected).not.toContain('data-testid="remote-access-access-drop-exposure"');
+  });
+
   test('Access 最近一次错误就地展示', () => {
     status = loggedIn({
       access: { ...tunnel().access, hasCredentials: true, lastError: 'token expired' },
@@ -1747,6 +1894,7 @@ function exposureState(overrides: Partial<ExposureState> = {}): ExposureState {
   return {
     unprotected: current ? !current.exposureProtected : false,
     ackRequired: false,
+    ackRequiredId: null,
     ackedId: null,
     setAckedId: () => undefined,
     ...overrides,

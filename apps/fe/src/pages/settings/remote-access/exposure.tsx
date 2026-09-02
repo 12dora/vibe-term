@@ -8,13 +8,19 @@ import type { TunnelActionRequest, TunnelStatusResponse } from '@tmex/shared';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { SetupNotice } from '../nodes/setup/form-parts';
-import { isTunnelRunning, withExposureAck } from './tunnel-model';
+import { isExposingAction, isTunnelRunning, withExposureAck } from './tunnel-model';
 
 export interface ExposureState {
   /** 既没有启用登录，也没有生效的 Cloudflare Access。 */
   unprotected: boolean;
   /** 后端已经回过 `exposure_ack_required`。 */
   ackRequired: boolean;
+  /**
+   * 被 409 拒掉的那个动作对应的勾选框 id。后端判定暴露的口径比前端宽（自启动超时留下的
+   * `error`、探测超时的接管隧道都算暴露），本地判定说「不用确认」时同样会吃 409；
+   * 这条兜底保证被拒的那个动作旁边一定会出现勾选框，否则重试永远带不上确认。
+   */
+  ackRequiredId: string | null;
   /** 当前被勾上的那条警示（用勾选框 id 标识）；同一时刻至多一条。 */
   ackedId: string | null;
   setAckedId: (id: string | null) => void;
@@ -31,6 +37,22 @@ export const EXPOSURE_ACK = {
   accessRemove: 'remote-access-access-remove-ack',
 } as const;
 
+/** 动作 → 勾选框 id：409 回来时据此找到该由哪条警示接住这次确认。 */
+const ACK_ID_BY_ACTION: Partial<Record<TunnelActionRequest['action'], string>> = {
+  start: EXPOSURE_ACK.start,
+  quick_start: EXPOSURE_ACK.quick,
+  create: EXPOSURE_ACK.create,
+  set_auto_start: EXPOSURE_ACK.autoStart,
+  set_access_mode: EXPOSURE_ACK.accessMode,
+  set_access_enforce: EXPOSURE_ACK.accessEnforce,
+  remove_access: EXPOSURE_ACK.accessRemove,
+};
+
+export function exposureAckIdOf(req: TunnelActionRequest | null | undefined): string | null {
+  if (!req || !isExposingAction(req)) return null;
+  return ACK_ID_BY_ACTION[req.action] ?? null;
+}
+
 export type ExposureVariant = 'full' | 'compact' | 'drop';
 
 const WARNING_KEY: Record<ExposureVariant, string> = {
@@ -39,12 +61,25 @@ const WARNING_KEY: Record<ExposureVariant, string> = {
   drop: 'settings.remoteAccess.exposure.dropWarning',
 };
 
+/** 后端刚因为这个动作回过 409：这条警示无论本地判定如何都必须出现。 */
+function ackForced(exposure: ExposureState, id: string): boolean {
+  return exposure.ackRequiredId !== null && exposure.ackRequiredId === id;
+}
+
 /**
  * 这一档警示要不要出现。`drop` 用于「关掉令牌校验 / 删掉 Access 应用」——此刻保护还在
  * （`unprotected` 为假），但动作本身会把它拿掉，所以只要调用方判定会掉保护就无条件渲染。
+ * 传了 `id` 时，被 409 拒掉的那个动作一律出现。
  */
-export function exposureShown(exposure: ExposureState, variant: ExposureVariant): boolean {
-  return variant === 'drop' || exposure.unprotected || exposure.ackRequired;
+export function exposureShown(
+  exposure: ExposureState,
+  variant: ExposureVariant,
+  id?: string
+): boolean {
+  if (id !== undefined && ackForced(exposure, id)) return true;
+  // 已经知道 409 属于哪个动作时，只有那一条该亮；归属不明（旧后端的 job 错误）才全体兜底。
+  const unowned = exposure.ackRequired && exposure.ackRequiredId === null;
+  return variant === 'drop' || exposure.unprotected || unowned;
 }
 
 export interface ExposureAck {
@@ -52,6 +87,8 @@ export interface ExposureAck {
   id: string;
   /** 对应的警示是否真的渲染在页面上。 */
   shown: boolean;
+  /** 这次显示是后端 409 逼出来的（本地判定可能认为不必确认）。 */
+  ackRequired: boolean;
   /** 警示在页面上且用户勾了它。 */
   checked: boolean;
   set: (next: boolean) => void;
@@ -59,12 +96,18 @@ export interface ExposureAck {
   submit: (run: (req: TunnelActionRequest) => void, req: TunnelActionRequest) => void;
 }
 
-/** 把某条警示的勾选状态绑到一个动作上：`shown` 由调用方按自己的渲染条件给出。 */
+/**
+ * 把某条警示的勾选状态绑到一个动作上：`shown` 由调用方按自己的渲染条件给出，
+ * 后端已经因为这个动作回过 409 时无条件显示——本地判定漏了，重试才有地方勾。
+ */
 export function exposureAck(exposure: ExposureState, id: string, shown: boolean): ExposureAck {
-  const checked = shown && exposure.ackedId === id;
+  const ackRequired = ackForced(exposure, id);
+  const visible = shown || ackRequired;
+  const checked = visible && exposure.ackedId === id;
   return {
     id,
-    shown,
+    shown: visible,
+    ackRequired,
     checked,
     set: (next) => exposure.setAckedId(next ? id : null),
     submit: (run, req) => {
@@ -96,11 +139,14 @@ export function ExposureWarning({
 }) {
   const { t } = useTranslation();
   if (!(ack ? ack.shown : exposureShown(exposure, variant))) return null;
+  // 「请先勾选」只挂在被拒的那个动作旁边；归属不明时退回全局。
+  const ackRequiredHere =
+    exposure.ackRequired && (exposure.ackRequiredId === null || ack?.ackRequired === true);
 
   return (
     <SetupNotice tone="error" testId={testId}>
       <p>{t(WARNING_KEY[variant])}</p>
-      {exposure.ackRequired && !ack?.checked && (
+      {ackRequiredHere && !ack?.checked && (
         <p data-testid={`${testId}-required`}>{t('settings.remoteAccess.exposure.ackRequired')}</p>
       )}
       {ack && (

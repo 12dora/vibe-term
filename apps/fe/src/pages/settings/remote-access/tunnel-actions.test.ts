@@ -269,6 +269,36 @@ describe('TunnelActionController 结果处理', () => {
     await h.controller.run({ action: 'install' });
     expect(h.controller.snapshot().error).toBeNull();
   });
+
+  test('记下失败的那个请求：409 要落到发起它的动作旁边', async () => {
+    let fail = true;
+    const h = harness(async () => {
+      if (fail) throw new TunnelApiError('exposure_ack_required', 'ack required', 409);
+      return { status: status(), job: null };
+    });
+
+    await h.controller.run({ action: 'set_access_mode', accessMode: 'none' });
+    expect(h.controller.snapshot().failedRequest).toEqual({
+      action: 'set_access_mode',
+      accessMode: 'none',
+    });
+
+    // 换一个动作：上一次的归属立刻作废，勾选框不会留在别处。
+    fail = false;
+    await h.controller.run({ action: 'check' });
+    expect(h.controller.snapshot().failedRequest).toBeNull();
+  });
+
+  test('clearError 一并清掉失败请求', async () => {
+    const h = harness(async () => {
+      throw new TunnelApiError('exposure_ack_required', 'ack required', 409);
+    });
+    await h.controller.run({ action: 'remove_access' });
+    expect(h.controller.snapshot().failedRequest).toEqual({ action: 'remove_access' });
+    h.controller.clearError();
+    expect(h.controller.snapshot().failedRequest).toBeNull();
+    expect(h.controller.snapshot().error).toBeNull();
+  });
 });
 
 describe('checkRunning', () => {

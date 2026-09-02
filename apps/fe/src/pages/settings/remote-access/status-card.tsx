@@ -165,7 +165,7 @@ export function TunnelStatusCard({
         )}
 
         {/* 接管来的隧道由系统服务拉起，tmex 这边的启停 / 移除会被后端 409 挡回来。 */}
-        {startable && (
+        {startAck.shown && (
           <ExposureWarning
             exposure={exposure}
             ack={startAck}

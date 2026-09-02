@@ -26,6 +26,7 @@ import {
   trustProxyRestartRequired,
   tunnelDegraded,
   tunnelErrorKey,
+  tunnelExposed,
   tunnelPill,
   tunnelPollInterval,
   withExposureAck,
@@ -719,15 +720,64 @@ describe('protectionPill', () => {
   });
 });
 
+describe('tunnelExposed', () => {
+  test('托管进程只要不是「已停止」就算暴露，含自启动失败留下的 error', () => {
+    const base = withAccess({}, { loginEnforced: false });
+    const withState = (state: TunnelStatusResponse['process']['state']) => ({
+      ...base,
+      process: { ...base.process, state },
+    });
+    expect(tunnelExposed(withState('running'))).toBe(true);
+    expect(tunnelExposed(withState('starting'))).toBe(true);
+    expect(tunnelExposed(withState('degraded'))).toBe(true);
+    // 后端的 runningEnabled 状态里看不到：自启动超时会停在 error，但拉起意图还在。
+    expect(tunnelExposed(withState('error'))).toBe(true);
+    expect(tunnelExposed(withState('stopped'))).toBe(false);
+  });
+
+  test('没建隧道就谈不上暴露', () => {
+    const base = withAccess({}, { loginEnforced: false });
+    expect(
+      tunnelExposed({
+        ...base,
+        config: { ...base.config, mode: 'off' },
+        process: { ...base.process, state: 'error' },
+      })
+    ).toBe(false);
+  });
+
+  test('接管来的隧道看探测结果，探测进行中一并算暴露', () => {
+    const base = withAccess({}, { loginEnforced: false });
+    const adopted = (external: Partial<TunnelStatusResponse['external']>) => ({
+      ...base,
+      config: { ...base.config, externallyManaged: true },
+      process: { ...base.process, state: 'stopped' as const },
+      external: { ...base.external, detected: true, running: false, ...external },
+    });
+    expect(tunnelExposed(adopted({ running: true }))).toBe(true);
+    // 探测还没有结论：后端拿不到结果时同样会拦，前端跟着算暴露。
+    expect(tunnelExposed(adopted({ probing: true }))).toBe(true);
+    expect(tunnelExposed(adopted({}))).toBe(false);
+  });
+});
+
 describe('wouldDropLastProtection', () => {
-  test('隧道在跑、没有登录、Access 是唯一保护时才需要确认', () => {
+  test('与后端一致：隧道暴露着且没有登录就要确认，与 Access 是否生效无关', () => {
     expect(wouldDropLastProtection(withAccess({}, { loginEnforced: false }))).toBe(true);
     // 启用了登录：拿掉 Access 还有登录兜底。
     expect(wouldDropLastProtection(withAccess({}, { loginEnforced: true }))).toBe(false);
-    // Access 本来就没生效，拿掉它不改变暴露面。
+    // Access 绑的是别的主机名、校验没生效：后端照样拦，勾选必须提前摆出来。
     expect(
-      wouldDropLastProtection(withAccess({ effective: false }, { loginEnforced: false }))
-    ).toBe(false);
+      wouldDropLastProtection(
+        withAccess({ hostname: 'old.example.com', effective: false }, { loginEnforced: false })
+      )
+    ).toBe(true);
+    // 连令牌校验都关着：同样是暴露中的隧道，后端一样要确认。
+    expect(
+      wouldDropLastProtection(
+        withAccess({ enforceJwt: false, effective: false }, { loginEnforced: false })
+      )
+    ).toBe(true);
   });
 
   test('隧道没跑起来就不算暴露', () => {

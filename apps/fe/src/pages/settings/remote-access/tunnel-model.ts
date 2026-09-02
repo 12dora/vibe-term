@@ -127,11 +127,26 @@ export function isTunnelRunning(status: TunnelStatusResponse): boolean {
 }
 
 /**
- * 关闭强制校验 / 移除 Access 应用会拿掉最后一道保护：隧道正在跑、本机没有登录，
- * 而当前唯一的保护就是生效中的 Access。此时动作必须带上用户的显式确认。
+ * 隧道正在对外暴露，或随时会暴露——对齐后端 `requireLastProtectionAck` 的判定口径。
+ * 接管来的隧道以探测结果为准，探测还在进行时一并算上（后端拿不到探测结论时同样会拦）；
+ * 托管进程只要不是「已停止」就算，`error` 也在内：自启动超时会留下 `error`，但拉起意图
+ * （后端的 `runningEnabled`）还在，状态里没有这一位，只能按暴露处理。
+ */
+export function tunnelExposed(status: TunnelStatusResponse): boolean {
+  if (status.config.externallyManaged) {
+    return status.external.running || status.external.probing === true;
+  }
+  if (status.config.mode === 'off') return false;
+  return status.process.state !== 'stopped';
+}
+
+/**
+ * 关闭强制校验 / 移除 Access 应用 / 把访问控制改成「无」会拿掉最后一道保护。
+ * 判定与后端一致：隧道暴露着且本机没有登录就要确认，与 Access 当前是否生效无关——
+ * 一个没生效的 Access 应用后端照样拦，前端提前把勾选摆出来，免得先白吃一个 409。
  */
 export function wouldDropLastProtection(status: TunnelStatusResponse): boolean {
-  return !status.loginEnforced && isTunnelRunning(status) && accessEffective(status);
+  return !status.loginEnforced && tunnelExposed(status);
 }
 
 export type WizardStepId =

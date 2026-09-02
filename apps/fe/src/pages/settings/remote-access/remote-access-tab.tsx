@@ -13,7 +13,7 @@ import { Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SetupNotice } from '../nodes/setup/form-parts';
-import { type ExposureState, protectionSnapshot } from './exposure';
+import { type ExposureState, exposureAckIdOf, protectionSnapshot } from './exposure';
 import type { NamedDraft } from './named-step';
 import { TunnelStatusCard } from './status-card';
 import { useTunnelActions } from './tunnel-actions';
@@ -135,6 +135,11 @@ function SelfRemoteAccess() {
   const exposure: ExposureState = {
     unprotected: !status.exposureProtected,
     ackRequired: isExposureAckError(status, actions.error),
+    // 409 归属哪个动作只能看发出去的那个请求：错误码本身分不清是启动隧道还是撤掉保护。
+    ackRequiredId:
+      actions.error?.code === 'exposure_ack_required'
+        ? exposureAckIdOf(actions.failedRequest)
+        : null,
     ackedId,
     setAckedId,
   };

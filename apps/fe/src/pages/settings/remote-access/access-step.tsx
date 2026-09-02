@@ -62,7 +62,7 @@ import {
 import { EnableLocalAuth, LoginProtectionNotice } from './login-protection';
 import { DetailRow, JobProgress } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
-import { isTunnelRunning, wouldDropLastProtection } from './tunnel-model';
+import { tunnelExposed, wouldDropLastProtection } from './tunnel-model';
 
 export function AccessStep({
   status,
@@ -141,7 +141,7 @@ function AccessModeChooser({
   mode: TunnelAccessMode | null;
 }) {
   const { t } = useTranslation();
-  const ackNeeded = isTunnelRunning(status) && !status.exposureProtected;
+  const ackNeeded = tunnelExposed(status) && !status.exposureProtected;
   const ack = exposureAck(
     exposure,
     EXPOSURE_ACK.accessMode,
@@ -712,6 +712,15 @@ function RemoveAccessAppButton({
 
   return (
     <>
+      {/* 确认框长在对话框里，而对话框在发出动作时就关了：被 409 拒回来时先就地把它亮出来。 */}
+      {ack.ackRequired && !confirmRemove && (
+        <ExposureWarning
+          exposure={exposure}
+          ack={ack}
+          testId="remote-access-access-remove-exposure"
+          variant="drop"
+        />
+      )}
       <Button
         type="button"
         size="xs"
