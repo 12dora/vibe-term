@@ -359,16 +359,43 @@ describe('passkeyLoginOptions 的 origin 过滤（B2-8）', () => {
     expect((error as NoPasskeyForOriginError).code).toBe('NO_PASSKEY_FOR_ORIGIN');
   });
 
-  test('别的 404（UNKNOWN_USER）不冒充成「本入口没有 passkey」', async () => {
+  // 账号不存在时服务端同样回 NO_PASSKEY_FOR_ORIGIN（不区分原因，避免用户名枚举），
+  // 所以这里只验「别的码不会被冒充成它」，并且 code 必须原样带到异常上。
+  test('别的 404 不冒充成「本入口没有 passkey」，且 code 原样保留', async () => {
     const { api } = recorder([
-      new Response(JSON.stringify({ code: 'UNKNOWN_USER' }), { status: 404 }),
+      new Response(JSON.stringify({ code: 'NOT_FOUND' }), { status: 404 }),
     ]);
     const error = await api.passkeyLoginOptions('alice', 'DELEGATION').then(
       () => null,
       (err: unknown) => err
     );
     expect(error).not.toBeInstanceOf(NoPasskeyForOriginError);
-    expect((error as Error).message).toBe('UNKNOWN_USER');
+    expect((error as { code?: string }).code).toBe('NOT_FOUND');
+    expect((error as Error).message).toBe('NOT_FOUND');
+  });
+
+  test('challenge 失败时把服务端 code 带到异常上（否则调用方只能报「网络错误」）', async () => {
+    const { api } = recorder([
+      new Response(JSON.stringify({ code: 'RATE_LIMITED', error: 'too many attempts' }), {
+        status: 429,
+      }),
+    ]);
+    const error = await api.challenge('self', 'alice').then(
+      () => null,
+      (err: unknown) => err
+    );
+    expect((error as { code?: string }).code).toBe('RATE_LIMITED');
+    expect((error as { status?: number }).status).toBe(429);
+    expect((error as Error).message).toBe('too many attempts');
+  });
+
+  test('challenge 的非 JSON 错误响应退化成 HTTP_<status>，不抛解析异常', async () => {
+    const { api } = recorder([new Response('<html>502</html>', { status: 502 })]);
+    const error = await api.challenge('self', 'alice').then(
+      () => null,
+      (err: unknown) => err
+    );
+    expect((error as { code?: string }).code).toBe('HTTP_502');
   });
 
   test('200 原样返回后端已按精确 origin 过滤过的 allowCredentials', async () => {

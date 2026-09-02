@@ -45,6 +45,13 @@ export interface SessionKeySecrets {
   delegation: Delegation;
   delegationBytes: Uint8Array;
   delegationSig: Uint8Array;
+  /**
+   * 密码登录的通行密钥二次验证：断言绑定的凭证 id 与 borsh(PasskeyAssertion) 字节。
+   * 断言的 challenge 是 `sha256(borsh(delegation))`，与 delegation 同寿命，因此同一份可以
+   * 复用于所有 node 的登录；没有二次验证时两者都为 null。
+   */
+  passkeyCredentialId: string | null;
+  passkeySig: Uint8Array | null;
   kTotp: Uint8Array | null;
   totpCode: string | null;
 }
@@ -54,6 +61,8 @@ export type LoginFailureCode =
   | 'UNKNOWN_NODE'
   | 'NODE_PK_MISMATCH'
   | 'TOTP_REQUIRED'
+  /** 用户已注册通行密钥，但这次登录没带二次验证断言（且当前调用不允许当场做仪式）。 */
+  | 'PASSKEY_REQUIRED'
   | 'NETWORK_ERROR'
   /** entry 已登录，但随后的 `/api/mesh/nodes` 拉不到——会话没法核对，不能当成登录完成。 */
   | 'NODE_LIST_FAILED'
@@ -114,6 +123,7 @@ export function clearSessionKey(): Promise<boolean> {
   if (current) {
     current.sessSk?.fill(0);
     current.delegationSig.fill(0);
+    current.passkeySig?.fill(0);
     current.kTotp?.fill(0);
     current.totpCode = null;
     current = null;
@@ -154,6 +164,9 @@ async function readPersistedSession(): Promise<SessionKeyInfo | null> {
     delegation: record.delegation,
     delegationBytes: record.delegationBytes,
     delegationSig: record.delegationSig,
+    // 旧记录（这个字段出现之前存的）没有这两项，按「没有二次验证」恢复即可。
+    passkeyCredentialId: record.passkeyCredentialId ?? null,
+    passkeySig: record.passkeySig ?? null,
     kTotp: null,
     totpCode: null,
   };
@@ -167,6 +180,41 @@ export function clearTotpCode(): void {
 
 export function setTotpCode(code: string): void {
   if (current) current.totpCode = code;
+}
+
+/**
+ * 把刚做完的通行密钥二次验证断言挂到当前会话上，并落盘。
+ *
+ * 服务端在 mode 快照过期时会回 `PASSKEY_REQUIRED`，此时会话钥本身没问题，补一次仪式即可；
+ * 断言与 delegation 同寿命，存下来之后其余 node 的登录都能静默复用它。
+ */
+export function setPasskeyAssertion(credentialId: string, sig: Uint8Array): void {
+  if (!current) return;
+  current.passkeySig?.fill(0);
+  current.passkeyCredentialId = credentialId;
+  current.passkeySig = sig;
+  if (!pendingReplacement) void persistSession(current);
+}
+
+/**
+ * 丢掉这份被判为无效的断言，**但保留会话钥**。
+ *
+ * 断言与 delegation 绑死，服务端说它不认，重发多少次都是同一个结果——所以必须丢。但会话钥本身
+ * 没有任何问题：丢掉断言之后，下一次登录退化成不带二次验证，服务端会回 `PASSKEY_REQUIRED`，
+ * 用户主动发起的那次登录当场补一次仪式即可，**连密码都不用重输**。
+ *
+ * 返回落盘的 Promise：盘上那份也必须一起改掉，否则刷新一下这把已被拒的断言又回来了。
+ */
+export function clearPasskeyAssertion(): Promise<boolean> {
+  if (!current || (!current.passkeyCredentialId && !current.passkeySig)) {
+    return Promise.resolve(true);
+  }
+  current.passkeySig?.fill(0);
+  current.passkeyCredentialId = null;
+  current.passkeySig = null;
+  // 两阶段替换期间一个字节都不写盘，由 `replaceSessionKey()` 在接受之后统一提交。
+  if (pendingReplacement) return Promise.resolve(true);
+  return persistSession(current);
 }
 
 /** 仅供 `./session-login` 读内存里的私钥材料。 */
@@ -196,6 +244,9 @@ function persistSession(secrets: SessionKeySecrets): Promise<boolean> {
     delegation: secrets.delegation,
     delegationBytes: new Uint8Array(secrets.delegationBytes),
     delegationSig: new Uint8Array(secrets.delegationSig),
+    // 断言是签名不是密钥：存下来才能让别的 node 静默登录，不必再弹一次系统仪式。
+    passkeyCredentialId: secrets.passkeyCredentialId,
+    passkeySig: secrets.passkeySig ? new Uint8Array(secrets.passkeySig) : null,
   });
 }
 
@@ -218,6 +269,7 @@ export function adoptSessionSecrets(secrets: SessionKeySecrets): SessionKeyInfo 
 function wipeSecrets(secrets: SessionKeySecrets): void {
   secrets.sessSk?.fill(0);
   secrets.delegationSig.fill(0);
+  secrets.passkeySig?.fill(0);
   secrets.kTotp?.fill(0);
   secrets.totpCode = null;
 }
@@ -291,6 +343,11 @@ interface EnsureNodeLoginOptions {
   api?: AuthApi;
   /** 已知的 node 行，省掉 `loginToNode` 内部再拉一次 `/api/mesh/nodes`。 */
   node?: MeshNode;
+  /**
+   * 允许在服务端回 `PASSKEY_REQUIRED` 时当场做一次通行密钥仪式再重试。
+   * 只有**用户主动发起**的登录能给 true——后台静默登录弹系统仪式是惊吓，不是功能。
+   */
+  allowPasskeyPrompt?: boolean;
 }
 
 /** 每个 node 同时只允许一次登录请求在途，重复调用共享同一个 Promise。 */
@@ -315,6 +372,17 @@ let loadLogin: () => Promise<LoginModule> = () => import('./session-login');
  *
  * 开了 TOTP 的密码会话：node 端每次登录都要校验一次 TOTP，而浏览器只持有 k_totp、生成不了
  * 新码，所以这里会返回 `TOTP_REQUIRED`，同样退回登录页让用户当场输码。
+ *
+ * `PASSKEY_INVALID` 会就地把那份断言丢掉（`clearPasskeyAssertion()`），但**不丢会话钥**：
+ * 断言与 delegation 绑死，被判无效后重发是可证明无用的；而会话钥本身没问题，丢掉断言之后
+ * 下一次登录退化成不带二次验证，服务端回 `PASSKEY_REQUIRED`，用户点一次「登录此节点」就能
+ * 当场补仪式，密码都不用重输。
+ *
+ * **不在这里丢会话钥**是有意的：远端 node 回 `PASSKEY_INVALID` / 签名类码（`BAD_SIGNATURE`、
+ * `BAD_DELEGATION`、`ROOT_KEY_MISMATCH` …）最常见的现实原因，是那台机器的密钥日志还没同步到
+ * 最新 epoch，属于会自愈的临时状态。凭一台掉队的 node 的判决就把整个会话清掉，就是 1.1.8
+ * 「401 即登出」那次闪断事故的形状。entry 自己的登录页另说——那里 `isCredentialFailure()`
+ * 仍然把 `PASSKEY_INVALID` 当凭证失败丢钥，因为那次判决来自用户刚刚交互过的这台机器。
  */
 export function ensureNodeLogin(
   nodeId: string,
@@ -328,7 +396,12 @@ export function ensureNodeLogin(
       if (!session) return { ok: false, code: 'NO_SESSION_KEY' };
       const mod = await loadLogin();
       const result = await mod.loginToNode(nodeId, opts);
-      if (result.ok) markLoggedIn(nodeId);
+      if (result.ok) {
+        markLoggedIn(nodeId);
+        return result;
+      }
+      // 等盘上那份真的改掉再返回，否则刷新一下这把已被拒的断言又回来了。
+      if (result.code === 'PASSKEY_INVALID') await clearPasskeyAssertion();
       return result;
     })
     // chunk 拉不下来（离线 / 部署换了 hash）也得给调用方一个结果，否则门闸永远停在 pending。

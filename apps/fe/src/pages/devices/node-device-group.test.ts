@@ -24,7 +24,7 @@ describe('silentLoginHintKey', () => {
     expect(silentLoginHintKey('SOMETHING_NEW')).toBe('auth.errors.LOGIN_FAILED');
   });
 
-  test('没有会话时按密码路径取文案：签名类失败的现实含义就是密码不对', () => {
-    expect(silentLoginHintKey('BAD_SIGNATURE')).toBe('auth.errors.wrongPassword');
+  test('没有会话时按密码路径取文案：凭证类失败一律是同一句中性文案', () => {
+    expect(silentLoginHintKey('BAD_SIGNATURE')).toBe('auth.errors.invalidCredentials');
   });
 });

@@ -1,13 +1,56 @@
+import { publicRequestUrl } from '../../../../apps/gateway/src/mesh/session-middleware';
 import { TlsApiError } from '../tls/errors';
-import type { ApplyModeInput, TlsService } from '../tls/tls-service';
+import type { ApplyModeInput, TlsService, TlsStatus } from '../tls/tls-service';
 
 export type TlsRouteAuthorize = (req: Request) => Promise<Response | null>;
+
+export type TlsEffectiveHttps = {
+  source: 'builtin' | 'reverse-proxy' | 'none';
+  verified: boolean;
+  publicUrl: string | null;
+};
+
+export function resolveEffectiveHttps(
+  status: Pick<TlsStatus, 'listener'>,
+  req: Request,
+  configuredPublicUrl?: string | null
+): TlsEffectiveHttps {
+  if (status.listener.running) {
+    return { source: 'builtin', verified: true, publicUrl: null };
+  }
+  const requestUrl = publicRequestUrl(req);
+  if (requestUrl.protocol === 'https:') {
+    return { source: 'reverse-proxy', verified: true, publicUrl: requestUrl.origin };
+  }
+  const configured = httpsConfiguredUrl(configuredPublicUrl);
+  if (configured) {
+    return { source: 'reverse-proxy', verified: false, publicUrl: configured };
+  }
+  return { source: 'none', verified: false, publicUrl: null };
+}
+
+function httpsConfiguredUrl(value: string | null | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  try {
+    return new URL(raw).protocol === 'https:' ? raw : null;
+  } catch {
+    return null;
+  }
+}
 
 export function createTlsRoutes(deps: {
   service: TlsService;
   authorize: TlsRouteAuthorize;
   onApplied?: () => void | Promise<void>;
+  configuredPublicUrl?: string | null;
 }): (req: Request) => Promise<Response | null> {
+  const jsonWithHttps = (status: TlsStatus, req: Request) =>
+    json({
+      ...status,
+      https: resolveEffectiveHttps(status, req, deps.configuredPublicUrl),
+    });
+
   return async (req) => {
     const challenge = deps.service.handleChallenge(req);
     if (challenge) return challenge;
@@ -37,7 +80,7 @@ export function createTlsRoutes(deps: {
 
     try {
       if (path === '/api/tls' && req.method === 'GET') {
-        return json(await deps.service.status());
+        return jsonWithHttps(await deps.service.status(), req);
       }
       if (path === '/api/tls' && req.method === 'PUT') {
         const body = await readJson(req);
@@ -46,12 +89,12 @@ export function createTlsRoutes(deps: {
         }
         const applied = await deps.service.applyMode(parseApplyMode(body));
         await deps.onApplied?.();
-        return json(applied);
+        return jsonWithHttps(applied, req);
       }
       if (path === '/api/tls/renew' && req.method === 'POST') {
         const renewed = await deps.service.renew();
         await deps.onApplied?.();
-        return json(renewed);
+        return jsonWithHttps(renewed, req);
       }
       return errorJson('method_not_allowed', 405, 'method not allowed');
     } catch (error) {

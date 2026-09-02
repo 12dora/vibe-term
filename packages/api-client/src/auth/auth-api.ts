@@ -54,6 +54,37 @@ async function readCode(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
+/**
+ * 抛异常的端点也必须把服务端的 `{code}` 原样带出去。
+ *
+ * 只留 message 的话，调用方（登录页的 `loginErrorKeyFromException`）读不到码，会把
+ * `PASSKEY_REQUIRED` / `NO_PASSKEY_FOR_ORIGIN` 这类**结论性**失败一律显示成「网络错误」。
+ */
+function requestError(code: string, status: number, message: string): Error {
+  return Object.assign(new Error(message), { code, status });
+}
+
+/** 读一次错误信封：`code` 用于分支判定，`error`/兜底文案用于 message。 */
+async function readErrorEnvelope(
+  res: Response,
+  fallback: string
+): Promise<{ code: string; message: string }> {
+  let code = '';
+  let message = '';
+  try {
+    const payload = (await res.json()) as { code?: unknown; error?: unknown };
+    if (typeof payload.code === 'string') code = payload.code;
+    if (typeof payload.error === 'string') message = payload.error;
+    else if (payload.error && typeof payload.error === 'object') {
+      const inner = (payload.error as { message?: unknown }).message;
+      if (typeof inner === 'string') message = inner;
+    }
+  } catch {
+    // 非 JSON 响应：只剩兜底文案
+  }
+  return { code: code || `HTTP_${res.status}`, message: message || code || fallback };
+}
+
 export class AuthApi {
   constructor(private readonly client: ApiClient = defaultApiClient) {}
 
@@ -156,7 +187,8 @@ export class AuthApi {
       body: JSON.stringify({ uid }),
     });
     if (!res.ok) {
-      throw new Error(await parseApiError(res, 'Failed to obtain login challenge'));
+      const envelope = await readErrorEnvelope(res, 'Failed to obtain login challenge');
+      throw requestError(envelope.code, res.status, envelope.message);
     }
     return (await res.json()) as AuthChallengeResponse;
   }
@@ -221,11 +253,11 @@ export class AuthApi {
     if (!res.ok) {
       // 404 `NO_PASSKEY_FOR_ORIGIN`（B2-8）是「本入口没有可用 passkey」这一确定结论，
       // 必须以可判别的类型抛出：调用方据此提示用户，而不是当成未知失败去猜、去回退。
-      const code = await readCode(res, '');
-      if (res.status === 404 && code === 'NO_PASSKEY_FOR_ORIGIN') {
+      const envelope = await readErrorEnvelope(res, 'Failed to create passkey login options');
+      if (res.status === 404 && envelope.code === 'NO_PASSKEY_FOR_ORIGIN') {
         throw new NoPasskeyForOriginError();
       }
-      throw new Error(code || 'Failed to create passkey login options');
+      throw requestError(envelope.code, res.status, envelope.message);
     }
     return (await res.json()) as PublicKeyCredentialRequestOptionsJSON;
   }

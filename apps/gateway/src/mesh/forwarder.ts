@@ -1,5 +1,8 @@
 import { wsBorsh } from '@tmex/shared';
+import { readJsonObjectBody } from '../api/http';
 import { buildSetCookie, nodeSessionCookieName, parseCookies } from '../auth/cookies';
+import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
+import { clientIpFromRequest } from './client-ip';
 import { type ForwardPump as FailoverPump, runStreamFailover } from './forwarder-failover';
 import { buildJsonStreamBody } from './json-stream-body';
 import {
@@ -31,7 +34,13 @@ import { stamp } from './mesh-log';
 import { isHttps, jsonError } from './session-middleware';
 import { StreamReplayState } from './stream-replay-state';
 
-const AUTH_SKIP = new Set(['/api/auth/challenge', '/api/auth/login']);
+const AUTH_SKIP = new Set([
+  '/api/auth/challenge',
+  '/api/auth/login',
+  '/api/auth/passkey/login/options',
+]);
+const AUTH_CHALLENGE_PATHS = new Set(['/api/auth/challenge', '/api/auth/passkey/login/options']);
+const AUTH_LOGIN_PATH = '/api/auth/login';
 const RESPONSE_ALLOW = new Set([
   'content-length',
   'content-range',
@@ -64,6 +73,7 @@ type ForwarderDeps = {
   streams: StreamOpener;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   log?: (line: string) => void;
+  authRateLimits?: AuthRateLimits | null;
 };
 
 type ForwardMeta = {
@@ -120,11 +130,17 @@ export class Forwarder {
   private readonly pumps = new Map<MeshServerWebSocket, ForwardPump>();
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly log: (line: string) => void;
+  private authRateLimits: AuthRateLimits | null;
 
   constructor(private readonly deps: ForwarderDeps) {
     this.sleep = deps.sleep ?? defaultSleep;
     const sink = deps.log ?? ((line: string) => console.info(line));
     this.log = (line) => sink(stamp(line));
+    this.authRateLimits = deps.authRateLimits ?? null;
+  }
+
+  setAuthRateLimits(limits: AuthRateLimits | null): void {
+    this.authRateLimits = limits;
   }
 
   async handle(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult> {
@@ -544,6 +560,8 @@ export class Forwarder {
     search: string,
     signal: AbortSignal
   ): Promise<Response> {
+    const gated = await this.gateForwardedAuth(req, rest);
+    if (gated.response) return gated.response;
     const headers = filterRequestHeaders(req);
     const auth = AUTH_SKIP.has(rest)
       ? null
@@ -563,7 +581,7 @@ export class Forwarder {
       }
       try {
         const link = await this.deps.peers.getLink(nodeId);
-        return await this.adaptResponse(
+        const upstream = await this.adaptResponse(
           req,
           await this.deps.streams.openHttpStream(
             link,
@@ -573,11 +591,54 @@ export class Forwarder {
           ),
           nodeId
         );
+        await this.recordForwardedLoginFailure(gated, rest, upstream);
+        return upstream;
       } catch {
         if (!retryable) break;
       }
     }
     return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+  }
+
+  private async gateForwardedAuth(
+    req: Request,
+    rest: string
+  ): Promise<{ response: Response | null; uidHint: string; ip: string }> {
+    const ip = clientIpFromRequest(req) ?? 'local';
+    const empty = { response: null, uidHint: '', ip };
+    const limits = this.authRateLimits;
+    if (!limits) return empty;
+    if (AUTH_CHALLENGE_PATHS.has(rest)) {
+      return { response: limits.consumeChallengeQuota(req), uidHint: '', ip };
+    }
+    if (rest !== AUTH_LOGIN_PATH) return empty;
+    let uidHint = '';
+    try {
+      const parsed = await readJsonObjectBody(req.clone());
+      uidHint = parsed ? peekLoginUid(parsed) : '';
+    } catch {
+      uidHint = '';
+    }
+    if (uidHint && authUidTooLong(uidHint)) {
+      return { response: jsonError('MALFORMED', 400), uidHint, ip };
+    }
+    if (limits.isLoginRateLimited(uidHint, ip)) {
+      return { response: jsonError('RATE_LIMITED', 429), uidHint, ip };
+    }
+    return { response: null, uidHint, ip };
+  }
+
+  private async recordForwardedLoginFailure(
+    gated: { uidHint: string; ip: string },
+    rest: string,
+    upstream: Response
+  ): Promise<void> {
+    const limits = this.authRateLimits;
+    if (!limits || rest !== AUTH_LOGIN_PATH || upstream.status !== 401) return;
+    const code = await peekJsonCode(upstream.clone());
+    if (code === 'TOTP_REQUIRED' || code === 'PASSKEY_REQUIRED') return;
+    if (gated.uidHint && authUidTooLong(gated.uidHint)) return;
+    limits.recordLoginFailure(gated.uidHint, gated.ip);
   }
 
   private async handleRemoteWs(
@@ -626,8 +687,9 @@ export class Forwarder {
 
   private async adaptResponse(req: Request, upstream: Response, nodeId: string): Promise<Response> {
     const headers = copyUpstreamHeaders(upstream);
+    const rest = parseNodePrefix(new URL(req.url).pathname)?.rest ?? '';
     return (
-      (await applyAuthPolicy(req, headers, upstream, nodeId)) ??
+      (await applyAuthPolicy(req, headers, upstream, nodeId, AUTH_SKIP.has(rest))) ??
       new Response(upstream.body, { status: upstream.status, headers })
     );
   }
@@ -747,7 +809,8 @@ async function applyAuthPolicy(
   req: Request,
   headers: Headers,
   upstream: Response,
-  nodeId: string
+  nodeId: string,
+  skip401Rewrite = false
 ): Promise<Response | null> {
   const parsed = parseSetSessionHeader(upstream.headers.get(X_TMEX_SET_SESSION) ?? '');
   if (parsed) appendNodeCookie(req, headers, nodeId, parsed.sid, parsed.maxAgeSec);
@@ -766,7 +829,7 @@ async function applyAuthPolicy(
       );
     }
   }
-  if (upstream.status !== 401) return null;
+  if (upstream.status !== 401 || skip401Rewrite) return null;
   const raw = await readBodyLimited(upstream, AUTH_401_BODY_LIMIT);
   let body: Record<string, unknown> = { code: 'NODE_LOGIN_REQUIRED', nodeId };
   try {
@@ -873,6 +936,19 @@ function countStreamBytes(
       },
     })
   );
+}
+
+async function peekJsonCode(response: Response): Promise<string> {
+  try {
+    const parsed = (await response.json()) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return '';
+    const rec = parsed as { code?: unknown; error?: unknown };
+    if (typeof rec.code === 'string') return rec.code;
+    if (typeof rec.error === 'string') return rec.error;
+    return '';
+  } catch {
+    return '';
+  }
 }
 
 function toBytes(message: unknown): Uint8Array | null {

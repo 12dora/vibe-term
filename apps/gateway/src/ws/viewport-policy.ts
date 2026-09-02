@@ -1,3 +1,7 @@
+// 视口仲裁：一个 tmux 窗口只有一份 PTY 几何。可见客户端中列数最小者持有整窗尺寸，
+// 避免窄屏溢出；更大的客户端跟随该尺寸。不可见声明不参与。
+// 并列取更小行数，再平取更小 sessionId。
+
 /** 上一次真正发给该会话的策略：再来任何声明时若与之不同就重发，丢一条也能靠下一次声明补回。 */
 export interface ViewportSentPolicy {
   paneId: string;
@@ -37,10 +41,6 @@ export function parseViewportClaimKey(key: string): { deviceId: string; windowId
   return { deviceId: key.slice(0, slash), windowId: key.slice(slash + 1) };
 }
 
-function area(claim: ViewportClaim): number {
-  return claim.cols * claim.rows;
-}
-
 export function resolveWinner(claims: Iterable<ViewportClaimRecord>): ViewportWinner | null {
   let winner: ViewportWinner | null = null;
   for (const entry of claims) {
@@ -49,18 +49,12 @@ export function resolveWinner(claims: Iterable<ViewportClaimRecord>): ViewportWi
       winner = entry;
       continue;
     }
-    const nextArea = area(entry.claim);
-    const winnerArea = area(winner.claim);
-    if (nextArea !== winnerArea) {
-      if (nextArea > winnerArea) winner = entry;
-      continue;
-    }
     if (entry.claim.cols !== winner.claim.cols) {
-      if (entry.claim.cols > winner.claim.cols) winner = entry;
+      if (entry.claim.cols < winner.claim.cols) winner = entry;
       continue;
     }
     if (entry.claim.rows !== winner.claim.rows) {
-      if (entry.claim.rows > winner.claim.rows) winner = entry;
+      if (entry.claim.rows < winner.claim.rows) winner = entry;
       continue;
     }
     if (entry.sessionId < winner.sessionId) winner = entry;

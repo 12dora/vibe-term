@@ -17,6 +17,7 @@ function recorder(responses: Response[]): { api: TlsApi; calls: Call[] } {
 
 const STATUS: TlsStatusResponse = {
   mode: 'selfsigned',
+  https: { source: 'builtin', verified: true, publicUrl: null },
   trustProxy: false,
   tlsPort: 9443,
   bindHost: '0.0.0.0',

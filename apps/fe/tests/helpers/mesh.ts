@@ -186,30 +186,65 @@ export async function logout(page: Page): Promise<void> {
 }
 
 /**
- * 删掉 IndexedDB 里持久化的会话钥（`tmex-auth`）。
+ * 删掉 IndexedDB 里持久化的会话钥（`tmex-auth` / `session` / `current`）。
  *
  * 会话钥现在能跨 document 活下来（不可导出的 WebCrypto 私钥 + 18 小时 delegation），所以
  * 「回到未登录状态」除了清 cookie 还得清它，否则下一次进页面会被静默登录接管。
+ *
+ * 删的是**那一条记录**而不是整个库：`deleteDatabase()` 遇到还没关掉的连接会挂在 `blocked`
+ * 上，此后同源的每一次 `open()` 都排在它后面永不返回——应用侧的持久化队列（串行）会因此
+ * 整个卡死。同一个 browser context 里连着跑多条用例时这一点是致命的。
  */
 export async function clearPersistedSessionKey(page: Page): Promise<void> {
   await page
     .evaluate(
       () =>
         new Promise<void>((resolve) => {
-          const request = indexedDB.deleteDatabase('tmex-auth');
-          request.onsuccess = () => resolve();
-          request.onerror = () => resolve();
-          request.onblocked = () => resolve();
+          const open = indexedDB.open('tmex-auth', 1);
+          open.onupgradeneeded = () => {
+            const db = open.result;
+            if (!db.objectStoreNames.contains('session')) db.createObjectStore('session');
+          };
+          open.onerror = () => resolve();
+          open.onblocked = () => resolve();
+          open.onsuccess = () => {
+            const db = open.result;
+            const done = () => {
+              db.close();
+              resolve();
+            };
+            try {
+              const tx = db.transaction('session', 'readwrite');
+              tx.oncomplete = done;
+              tx.onabort = done;
+              tx.onerror = done;
+              tx.objectStore('session').delete('current');
+            } catch {
+              done();
+            }
+          };
         })
     )
     .catch(() => undefined);
 }
 
+/** 虚拟认证器句柄：凭证只活在这一个 CDP 会话里，换 browser context 就没了。 */
+export interface VirtualAuthenticator {
+  authenticatorId: string;
+  /** 认证器里现有的凭证；`signCount` 每做成一次断言就 +1，用来证明仪式真的走过。 */
+  credentials(): Promise<{ credentialId: string; signCount: number }[]>;
+  /**
+   * 开关用户验证。服务端下发的 options 是 `userVerification: 'required'`，关掉之后
+   * 认证器无法完成 UV，浏览器直接抛 `NotAllowedError`——等价于用户取消仪式。
+   */
+  setUserVerified(value: boolean): Promise<void>;
+}
+
 /** CDP 虚拟认证器：让 WebAuthn 注册/断言在无头 Chromium 里可以自动完成。 */
-export async function addVirtualAuthenticator(page: Page): Promise<void> {
+export async function addVirtualAuthenticator(page: Page): Promise<VirtualAuthenticator> {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('WebAuthn.enable');
-  await cdp.send('WebAuthn.addVirtualAuthenticator', {
+  const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
     options: {
       protocol: 'ctap2',
       transport: 'internal',
@@ -219,6 +254,19 @@ export async function addVirtualAuthenticator(page: Page): Promise<void> {
       automaticPresenceSimulation: true,
     },
   });
+  return {
+    authenticatorId,
+    credentials: async () => {
+      const { credentials } = await cdp.send('WebAuthn.getCredentials', { authenticatorId });
+      return credentials.map((row) => ({
+        credentialId: row.credentialId,
+        signCount: row.signCount,
+      }));
+    },
+    setUserVerified: async (value) => {
+      await cdp.send('WebAuthn.setUserVerified', { authenticatorId, isUserVerified: value });
+    },
+  };
 }
 
 /** 读整个 xterm buffer（不止视口），marker 被滚出屏幕时也能命中。 */

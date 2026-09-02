@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ChallengeStore } from './challenge-store';
+import { CHALLENGE_STORE_MAX_ENTRIES, ChallengeStore } from './challenge-store';
 
 describe('ChallengeStore', () => {
   test('create returns a 32-byte nonce and records the entry node', () => {
@@ -89,5 +89,56 @@ describe('ChallengeStore', () => {
   test('unknown challenge id returns null', () => {
     const store = new ChallengeStore();
     expect(store.consume('missing')).toBeNull();
+  });
+
+  test('create evicts the oldest entries when over the cap', () => {
+    const store = new ChallengeStore({ now: () => 1_000 });
+    const ids: string[] = [];
+    for (let i = 0; i < CHALLENGE_STORE_MAX_ENTRIES + 10; i += 1) {
+      ids.push(
+        store.create({
+          uid: `user-${i}`,
+          entryNodeId: 'self',
+          kind: 'login',
+          ttlMs: 60_000,
+        }).challengeId
+      );
+    }
+    expect(store.size).toBeLessThanOrEqual(CHALLENGE_STORE_MAX_ENTRIES);
+    expect(store.size).toBe(CHALLENGE_STORE_MAX_ENTRIES);
+    for (let i = 0; i < 10; i += 1) {
+      expect(store.consume(ids[i] ?? '')).toBeNull();
+    }
+    expect(store.consume(ids[10] ?? '')).not.toBeNull();
+    expect(store.consume(ids[ids.length - 1] ?? '')).not.toBeNull();
+  });
+
+  test('expired entries are swept before eviction so long-lived oldest survive', () => {
+    let now = 0;
+    const store = new ChallengeStore({ now: () => now });
+    const longLived = store.create({
+      uid: 'keep',
+      entryNodeId: 'self',
+      kind: 'login',
+      ttlMs: 1_000_000,
+    });
+    for (let i = 1; i < CHALLENGE_STORE_MAX_ENTRIES; i += 1) {
+      store.create({
+        uid: `expire-${i}`,
+        entryNodeId: 'self',
+        kind: 'login',
+        ttlMs: 10,
+      });
+    }
+    expect(store.size).toBe(CHALLENGE_STORE_MAX_ENTRIES);
+    now = 11;
+    const newest = store.create({
+      uid: 'new',
+      entryNodeId: 'self',
+      kind: 'login',
+      ttlMs: 1_000,
+    });
+    expect(store.consume(longLived.challengeId)).not.toBeNull();
+    expect(store.consume(newest.challengeId)).not.toBeNull();
   });
 });

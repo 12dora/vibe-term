@@ -149,61 +149,64 @@ function expectResizeBeforeCapture(ops: string[], size: string): void {
 }
 
 describe('viewport claims', () => {
-  test('larger visible client owns the size; both receive policy', () => {
+  test('smallest visible client owns the size; both receive that policy', () => {
     const { server, recorder, large, small } = setupTwoClients();
 
     server.handleTermResize(large, 'device-a', '%0', 160, 48);
     server.handleTermResize(small, 'device-a', '%0', 80, 24);
 
-    expect(recorder.resizePaneCalls).toEqual([['%0', 160, 48]]);
+    expect(recorder.resizePaneCalls).toEqual([
+      ['%0', 160, 48],
+      ['%0', 80, 24],
+    ]);
     expect(lastPolicy(large)).toMatchObject({
       deviceId: 'device-a',
       windowId: '@1',
       paneId: '%0',
-      owner: true,
-      cols: 160,
-      rows: 48,
+      owner: false,
+      cols: 80,
+      rows: 24,
     });
     expect(lastPolicy(small)).toMatchObject({
-      owner: false,
-      cols: 160,
-      rows: 48,
+      owner: true,
+      cols: 80,
+      rows: 24,
       paneId: '%0',
     });
   });
 
-  test('larger going hidden applies the smaller geometry and flips owners', () => {
+  test('smaller going hidden applies the larger geometry and flips owners', () => {
     const { server, recorder, large, small } = setupTwoClients();
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
     server.handleTermResize(large, 'device-a', '%0', 160, 48);
+    server.handleTermResize(small, 'device-a', '%0', 80, 24);
     recorder.resizePaneCalls.length = 0;
 
-    server.handleTermViewport(large, {
+    server.handleTermViewport(small, {
       deviceId: 'device-a',
       paneId: '%0',
-      cols: 160,
-      rows: 48,
+      cols: 80,
+      rows: 24,
       visible: false,
     });
 
-    expect(recorder.resizePaneCalls).toEqual([['%0', 80, 24]]);
-    expect(lastPolicy(small)?.owner).toBe(true);
-    expect(lastPolicy(small)).toMatchObject({ cols: 80, rows: 24 });
-    expect(lastPolicy(large)?.owner).toBe(false);
+    expect(recorder.resizePaneCalls).toEqual([['%0', 160, 48]]);
+    expect(lastPolicy(large)?.owner).toBe(true);
+    expect(lastPolicy(large)).toMatchObject({ cols: 160, rows: 48 });
+    expect(lastPolicy(small)?.owner).toBe(false);
   });
 
-  test('larger disconnect applies the smaller geometry', () => {
+  test('smaller disconnect applies the larger geometry', () => {
     const { server, recorder, large, small, entry } = setupTwoClients();
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
     server.handleTermResize(large, 'device-a', '%0', 160, 48);
+    server.handleTermResize(small, 'device-a', '%0', 80, 24);
     recorder.resizePaneCalls.length = 0;
 
-    entry.clients.delete(large);
-    server.dropViewportClaims(large);
+    entry.clients.delete(small);
+    server.dropViewportClaims(small);
 
-    expect(recorder.resizePaneCalls).toEqual([['%0', 80, 24]]);
-    expect(lastPolicy(small)?.owner).toBe(true);
-    expect(lastPolicy(small)).toMatchObject({ cols: 80, rows: 24 });
+    expect(recorder.resizePaneCalls).toEqual([['%0', 160, 48]]);
+    expect(lastPolicy(large)?.owner).toBe(true);
+    expect(lastPolicy(large)).toMatchObject({ cols: 160, rows: 48 });
   });
 
   test('smaller-only applies as today', () => {
@@ -224,9 +227,14 @@ describe('viewport claims', () => {
       visible: true,
     });
 
-    expect(recorder.resizePaneCalls).toEqual([['%0', 160, 48]]);
-    expect(lastPolicy(small)?.owner).toBe(false);
-    expect(lastPolicy(small)).toMatchObject({ cols: 160, rows: 48 });
+    expect(recorder.resizePaneCalls).toEqual([
+      ['%0', 160, 48],
+      ['%0', 80, 24],
+    ]);
+    expect(lastPolicy(small)?.owner).toBe(true);
+    expect(lastPolicy(small)).toMatchObject({ cols: 80, rows: 24 });
+    expect(lastPolicy(large)?.owner).toBe(false);
+    expect(lastPolicy(large)).toMatchObject({ cols: 80, rows: 24 });
   });
 
   test('unknown pane viewport claim is ignored', () => {
@@ -245,15 +253,15 @@ describe('viewport claims', () => {
 
   test('device detach drops claims and recomputes', () => {
     const { server, recorder, large, small } = setupTwoClients();
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
     server.handleTermResize(large, 'device-a', '%0', 160, 48);
+    server.handleTermResize(small, 'device-a', '%0', 80, 24);
     recorder.resizePaneCalls.length = 0;
 
-    server.handleDeviceDisconnect(large, 'device-a');
+    server.handleDeviceDisconnect(small, 'device-a');
 
-    expect(large.viewportClaims.size).toBe(0);
-    expect(recorder.resizePaneCalls).toEqual([['%0', 80, 24]]);
-    expect(lastPolicy(small)?.owner).toBe(true);
+    expect(small.viewportClaims.size).toBe(0);
+    expect(recorder.resizePaneCalls).toEqual([['%0', 160, 48]]);
+    expect(lastPolicy(large)?.owner).toBe(true);
   });
 
   test('reconnect-failure drops claims without resizing', () => {
@@ -282,14 +290,14 @@ describe('viewport claims', () => {
     recorder.resizePaneCalls.length = 0;
     recorder.selectPaneWithSizeCalls.length = 0;
 
-    server.handleTmuxSelect(small, {
+    server.handleTmuxSelect(large, {
       deviceId: 'device-a',
       windowId: '@1',
       paneId: '%1',
       selectToken: new Uint8Array(16).fill(1),
       wantHistory: false,
-      cols: 80,
-      rows: 24,
+      cols: 200,
+      rows: 50,
     });
 
     expect(recorder.resizeWindowCalls).toEqual([]);
@@ -297,17 +305,17 @@ describe('viewport claims', () => {
     expect(recorder.selectPaneWithSizeCalls).toEqual([]);
     expect(recorder.focusPaneCalls).toEqual([{ windowId: '@1', paneId: '%1' }]);
 
-    server.handleTmuxSelect(large, {
+    server.handleTmuxSelect(small, {
       deviceId: 'device-a',
       windowId: '@1',
       paneId: '%1',
       selectToken: new Uint8Array(16).fill(2),
       wantHistory: false,
-      cols: 200,
-      rows: 50,
+      cols: 70,
+      rows: 20,
     });
 
-    expect(recorder.resizeWindowCalls).toEqual([['@1', 200, 50]]);
+    expect(recorder.resizeWindowCalls).toEqual([['@1', 70, 20]]);
     expect(recorder.selectPaneWithSizeCalls).toEqual([]);
     cleanupSelectSessions(large, small);
   });
@@ -332,17 +340,17 @@ describe('viewport claims', () => {
     const { server, large, small } = setupTwoClients({ paneCount: 2 });
     server.handleTermResize(large, 'device-a', '%0', 160, 48);
     server.handleTermResize(small, 'device-a', '%0', 80, 24);
-    small.sent.length = 0;
+    large.sent.length = 0;
 
-    server.handleTermResize(small, 'device-a', '%1', 80, 24);
+    server.handleTermResize(large, 'device-a', '%1', 160, 48);
 
-    expect(lastPolicy(small)).toMatchObject({
+    expect(lastPolicy(large)).toMatchObject({
       deviceId: 'device-a',
       windowId: '@1',
       paneId: '%1',
       owner: false,
-      cols: 160,
-      rows: 48,
+      cols: 80,
+      rows: 24,
     });
   });
 
@@ -406,8 +414,8 @@ describe('viewport claims', () => {
     server.handleTermResize(small, 'device-a', '%0', 80, 24);
     const live = entry.lastSnapshot?.session?.windows[0]?.panes[0];
     if (live) {
-      live.width = 160;
-      live.height = 48;
+      live.width = 80;
+      live.height = 24;
     }
     recorder.ops.length = 0;
     recorder.resizeWindowCalls.length = 0;
@@ -415,8 +423,8 @@ describe('viewport claims', () => {
     recorder.selectPaneWithSizeCalls.length = 0;
     recorder.selectPaneCalls.length = 0;
 
-    server.handleTmuxSelect(small, {
-      ...sizedSelect('%1', 80, 24, 10),
+    server.handleTmuxSelect(large, {
+      ...sizedSelect('%1', 160, 48, 10),
       windowId: '@1',
     });
 
@@ -434,16 +442,16 @@ describe('viewport claims', () => {
     recorder.selectPaneCalls.length = 0;
     recorder.selectPaneWithSizeCalls.length = 0;
 
-    server.handleTmuxSelect(small, {
-      ...sizedSelect('%1', 80, 24, 11),
+    server.handleTmuxSelect(large, {
+      ...sizedSelect('%1', 160, 48, 11),
       windowId: '@1',
     });
 
     expect(recorder.selectPaneWithSizeCalls).toEqual([
-      { windowId: '@1', paneId: '%1', cols: 160, rows: 48 },
+      { windowId: '@1', paneId: '%1', cols: 80, rows: 24 },
     ]);
-    expect(recorder.ops.some((op) => op.includes('80x24'))).toBe(false);
-    expectResizeBeforeCapture(recorder.ops, '160x48');
+    expect(recorder.ops.some((op) => op.includes('160x48'))).toBe(false);
+    expectResizeBeforeCapture(recorder.ops, '80x24');
     cleanupSelectSessions(large, small);
   });
 

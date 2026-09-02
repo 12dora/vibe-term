@@ -50,6 +50,9 @@ function log(io: EnrollIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
 }
 
+const PASSKEY_ENROLL_UNAVAILABLE =
+  'This account requires passkey second-factor for password sign-in, so CLI password enrollment is unavailable. Use the web UI (Settings → Nodes → Node management → Add → generate a join code) and run the join command instead.';
+
 function existingAdmission(
   ctx: LocalAuthContext,
   candidate: AdmitCandidate
@@ -309,6 +312,18 @@ async function enrollOnLocalHub(
   return undefined;
 }
 
+async function assertCliPasswordEnrollAllowed(ctx: LocalAuthContext, io: EnrollIo): Promise<void> {
+  const hubUrl = ctx.env.TMEX_HUB_URL || process.env.TMEX_HUB_URL;
+  if (!hubUrl) {
+    throw new Error('TMEX_HUB_URL is required to enroll from a non-hub node');
+  }
+  const fetcher = io.fetcher ?? createHubFetcher(new HubTrustStore(ctx.db), hubUrl);
+  const mode = await fetchAuthMode(hubUrl, fetcher);
+  if (mode.passkeySecondFactor) {
+    throw new Error(PASSKEY_ENROLL_UNAVAILABLE);
+  }
+}
+
 async function enrollOnRemoteHub(
   ctx: LocalAuthContext,
   io: EnrollIo,
@@ -324,6 +339,9 @@ async function enrollOnRemoteHub(
   }
   const fetcher = io.fetcher ?? createHubFetcher(new HubTrustStore(ctx.db), hubUrl);
   const mode = await fetchAuthMode(hubUrl, fetcher);
+  if (mode.passkeySecondFactor) {
+    throw new Error(PASSKEY_ENROLL_UNAVAILABLE);
+  }
   const caFingerprint =
     typeof mode.caFingerprint === 'string' && /^[0-9a-f]{64}$/.test(mode.caFingerprint)
       ? mode.caFingerprint
@@ -445,11 +463,6 @@ export async function runEnroll(
   parsed: ParsedArgs,
   io: EnrollIo = {}
 ): Promise<{ token: string; joinCommand: string; admitted: boolean }> {
-  const password = await resolvePassword({
-    password: io.password,
-    confirm: false,
-    prompt: 'Password',
-  });
   const ttlMs = resolveTtlMs(parsed, io);
 
   return await withAuth(parsed, io, async (ctx) => {
@@ -465,6 +478,15 @@ export async function runEnroll(
     if (!user) {
       throw new Error('user missing');
     }
+    const roles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
+    if (!roles.hub) {
+      await assertCliPasswordEnrollAllowed(ctx, io);
+    }
+    const password = await resolvePassword({
+      password: io.password,
+      confirm: false,
+      prompt: 'Password',
+    });
     const rootKey = await deriveRootKey(password, kdfParamsFromJson(user.kdfParamsJson));
     assertRootKeyMatches(rootKey, user.rootPublicKey);
 
@@ -475,7 +497,6 @@ export async function runEnroll(
       now,
       ttlMs,
     });
-    const roles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
     const remote = roles.hub
       ? null
       : await enrollOnRemoteHub(ctx, io, user, rootKey, enrollment, now, ttlMs);

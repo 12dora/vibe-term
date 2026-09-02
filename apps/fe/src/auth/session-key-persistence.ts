@@ -26,6 +26,13 @@ export interface PersistedSession {
   delegation: Delegation;
   delegationBytes: Uint8Array;
   delegationSig: Uint8Array;
+  /**
+   * 密码登录的通行密钥二次验证断言（签名，不是密钥），与 delegation 同寿命。
+   * 可选：这两个字段是后加的，此前存下的记录没有它们，按「没有二次验证」读即可，
+   * 因此 `PERSISTED_SESSION_VERSION` 不变。
+   */
+  passkeyCredentialId?: string | null;
+  passkeySig?: Uint8Array | null;
 }
 
 function factory(): IDBFactory | null {
@@ -157,6 +164,8 @@ function isUsableRecord(record: PersistedSession | null | undefined): record is 
   if (record.version !== PERSISTED_SESSION_VERSION) return false;
   const key = record.privateKey as CryptoKey | undefined;
   if (!key || typeof key !== 'object' || key.extractable !== false) return false;
+  // `passkeySig` 是加性字段：没有时按「没有二次验证」，有就必须是字节数组。
+  if (record.passkeySig != null && !(record.passkeySig instanceof Uint8Array)) return false;
   return (
     record.sessPk instanceof Uint8Array &&
     record.delegationBytes instanceof Uint8Array &&

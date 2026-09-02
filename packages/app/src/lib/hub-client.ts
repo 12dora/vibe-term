@@ -17,6 +17,7 @@ export type HubAuthMode = {
   uid: string | null;
   username: string | null;
   totpEnabled: boolean;
+  passkeySecondFactor: boolean;
   kdfParams: {
     salt: string;
     memory_kib: number;
@@ -155,6 +156,7 @@ export async function fetchAuthMode(
     uid: typeof body.uid === 'string' ? body.uid : null,
     username: typeof body.username === 'string' ? body.username : null,
     totpEnabled: body.totpEnabled === true,
+    passkeySecondFactor: body.passkeySecondFactor === true,
     kdfParams:
       body.kdfParams && typeof body.kdfParams === 'object'
         ? (body.kdfParams as HubAuthMode['kdfParams'])
@@ -229,9 +231,7 @@ export async function loginWithRootKey(options: {
   );
   const loginBody = await readJson(loginRes);
   if (!loginRes.ok) {
-    throw new Error(
-      `auth login failed: HTTP ${loginRes.status} ${String(loginBody.error ?? loginBody.code ?? '')}`
-    );
+    throw authLoginError(loginRes.status, loginBody);
   }
   const sid = sessionIdFromLoginResponse(loginRes, nodeId);
   if (!sid) {
@@ -244,6 +244,20 @@ export async function loginWithRootKey(options: {
     cookieHeader,
     nodeId,
   };
+}
+
+const AUTH_LOGIN_ERROR_BY_CODE: Record<string, string> = {
+  PASSKEY_REQUIRED:
+    'This account requires passkey second-factor for password sign-in; CLI password login is unavailable. Use the web UI to sign in.',
+  PASSKEY_INVALID: 'Passkey second-factor verification failed.',
+  INVALID_CREDENTIALS: 'Invalid credentials.',
+};
+
+function authLoginError(status: number, body: Record<string, unknown>): Error {
+  const code = String(body.error ?? body.code ?? '');
+  const mapped = AUTH_LOGIN_ERROR_BY_CODE[code];
+  if (mapped) return new Error(mapped);
+  return new Error(`auth login failed: HTTP ${status} ${code}`);
 }
 
 const SESSION_COOKIE_PREFIX = 'tmex_s_';

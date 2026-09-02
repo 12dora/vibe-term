@@ -297,3 +297,89 @@ describe('HttpsSection 变更串行化', () => {
     expect(render()).toContain('data-testid="https-mode-chooser"');
   });
 });
+
+describe('HttpsSection 有效 HTTPS', () => {
+  const effective = (
+    source: 'builtin' | 'reverse-proxy' | 'none',
+    verified: boolean,
+    publicUrl: string | null = null
+  ) => ({ source, verified, publicUrl }) as const;
+
+  test('反代终止 TLS 且内置监听未起时，不再显示成「未启用 HTTPS」', () => {
+    status = tls({
+      mode: 'external',
+      trustProxy: true,
+      https: effective('reverse-proxy', true),
+      listener: { running: false, port: null, error: null },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="https-effective"');
+    expect(html).toContain('nodes.https.effective.reverseProxyVerified');
+    expect(html).not.toContain('nodes.https.effective.none');
+    expect(html).not.toContain('data-testid="https-proxy-hint"');
+    expect(html).toContain('data-testid="https-listener-state"');
+  });
+
+  test('关闭模式下按公开地址推断出反代 HTTPS 时，给出切模式提示', () => {
+    status = tls({
+      mode: 'none',
+      https: effective('reverse-proxy', false, 'https://hub.example.com'),
+    });
+    const html = render();
+    expect(html).toContain('nodes.https.effective.reverseProxyInferred');
+    expect(html).toContain('data-testid="https-proxy-hint"');
+  });
+
+  test('推断不到公开地址时退回不带地址的文案', () => {
+    status = tls({ mode: 'none', https: effective('reverse-proxy', false) });
+    const html = render();
+    expect(html).toContain('nodes.https.effective.reverseProxy<');
+    expect(html).toContain('data-testid="https-proxy-hint"');
+  });
+
+  test('内置监听在跑时说明由内置 HTTPS 提供', () => {
+    status = tls({
+      mode: 'selfsigned',
+      https: effective('builtin', true),
+      listener: { running: true, port: 9443, error: null },
+    });
+    const html = render();
+    expect(html).toContain('nodes.https.effective.builtin');
+    expect(html).not.toContain('data-testid="https-proxy-hint"');
+  });
+
+  test('没有任何 HTTPS 证据时才说未启用', () => {
+    status = tls({ mode: 'none', https: effective('none', false) });
+    const html = render();
+    expect(html).toContain('nodes.https.effective.none');
+    expect(html).not.toContain('data-testid="https-proxy-hint"');
+  });
+
+  test('旧版本节点不返回该字段时不渲染该行也不报错', () => {
+    status = tls({ mode: 'none' });
+    const html = render();
+    expect(html).not.toContain('data-testid="https-effective"');
+    expect(html).not.toContain('data-testid="https-proxy-hint"');
+    expect(html).toContain('data-testid="https-mode-chooser"');
+  });
+});
+
+describe('ExternalPanel 有效 HTTPS 提示', () => {
+  test('反代 HTTPS 未经代理头确认且未开信任时，提示开启信任代理请求头', () => {
+    status = tls({
+      mode: 'external',
+      trustProxy: false,
+      https: { source: 'reverse-proxy', verified: false, publicUrl: 'https://hub.example.com' },
+    });
+    expect(render()).toContain('data-testid="https-external-effective"');
+  });
+
+  test('已开启信任代理请求头并确认后不再重复提示', () => {
+    status = tls({
+      mode: 'external',
+      trustProxy: true,
+      https: { source: 'reverse-proxy', verified: true, publicUrl: null },
+    });
+    expect(render()).not.toContain('data-testid="https-external-effective"');
+  });
+});

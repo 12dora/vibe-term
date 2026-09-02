@@ -35,6 +35,11 @@ export interface AuthModeResponse {
   kdfParams: AuthKdfParamsJson | null;
   passkeysForThisOrigin: boolean;
   passkeyAvailable: boolean;
+  /**
+   * 用户名下**任意 origin** 已注册 ≥1 把通行密钥：密码登录必须附带通行密钥二次验证
+   * （`AuthLoginRequest.passkey`），否则服务端回 `PASSKEY_REQUIRED`。旧版本节点不返回该字段。
+   */
+  passkeySecondFactor?: boolean;
   totpEnabled?: boolean;
   /** mesh 模式必填；standalone 与「没有主用户」时为 `null`。 */
   rootEpoch?: number | null;
@@ -148,6 +153,17 @@ export interface AuthLoginRequest {
     /** base64url，32 字节 */
     k_totp: string;
   };
+  /**
+   * 密码登录的通行密钥二次验证（method=root 且用户已注册通行密钥时必填）。
+   * 断言的 WebAuthn challenge 固定为 `sha256(borsh(Delegation))`（与 passkey 直接登录相同），
+   * 因此同一份断言可随 delegation 复用于所有 node 的登录，直到 delegation 过期。
+   */
+  passkey?: {
+    /** base64url 的 credential id */
+    credential_id: string;
+    /** base64url(borsh(PasskeyAssertion)) */
+    sig: string;
+  };
 }
 
 /**
@@ -167,8 +183,14 @@ export type AuthLoginErrorCode =
   | 'ENTRY_MISMATCH'
   | 'BAD_SIGNATURE'
   | 'BAD_DELEGATION'
+  /** 账号不存在 / 密码错误 / 会话签名错误统一为这一个码（不区分原因）。 */
+  | 'INVALID_CREDENTIALS'
   | 'TOTP_REQUIRED'
   | 'TOTP_INVALID'
+  /** 用户已注册通行密钥但本次密码登录未附带 `passkey` 二次验证。 */
+  | 'PASSKEY_REQUIRED'
+  /** 附带的通行密钥断言校验失败（凭证不属于该用户 / 签名错 / 计数器回退）。 */
+  | 'PASSKEY_INVALID'
   | 'RATE_LIMITED'
   | (string & {});
 

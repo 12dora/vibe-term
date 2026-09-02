@@ -1645,7 +1645,9 @@
         "totpRequired": "認証アプリのコードを入力してください。",
         "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。",
         "passkeyNotRegistered": "このアドレスにはパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
-        "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。"
+        "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。",
+        "passkeySecondFactor": "パスキーの確認を完了してください…",
+        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレスからサインインし、このアドレス用のパスキーを追加してください。"
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",
@@ -1690,7 +1692,8 @@
         "PASSKEY_ABORTED": "パスキーの操作がキャンセルされました。",
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
         "HUB_NOT_WRITER": "予備ハブは管理操作を受け付けません。メインハブから操作してください。",
-        "wrongPassword": "パスワードが正しくありません。"
+        "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
+        "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。"
       },
       "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
       "security": {
@@ -1716,6 +1719,7 @@
         "passkeyName": "パスキーの名前",
         "registerPasskey": "パスキーを追加",
         "signWithExistingPasskey": "パスワードの代わりに、パスキーで確認できます。",
+        "passkeySecondFactorHint": "パスキーを登録すると、パスワードでのサインインにもパスキーの確認が必要になります。確認はパスキーを登録したアドレスでのみ行えます。すべてのパスキーを削除すると無効になります。",
         "sessionKeyNote": "このページの操作はすべて、パスワードまたはパスキーの確認を求めます。",
         "totpConfirm": "確認して有効にする",
         "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。",
@@ -1962,10 +1966,20 @@
             "description": "一般に信頼される証明書を自動で更新します。公開ドメイン名が必要です。"
           }
         },
+        "effective": {
+          "label": "対外 HTTPS",
+          "builtin": "内蔵 HTTPS が提供",
+          "reverseProxy": "リバースプロキシが HTTPS を提供",
+          "reverseProxyVerified": "リバースプロキシが HTTPS を提供（現在のリクエストで確認済み）",
+          "reverseProxyInferred": "リバースプロキシが HTTPS を提供（公開アドレス {{url}} から推定）",
+          "none": "HTTPS は無効",
+          "proxyHint": "リバースプロキシ経由の HTTPS アクセスを検出しました。「外部リバースプロキシ」に切り替えて「プロキシヘッダーを信頼する」を有効にすると、Cookie、パスキー、公開アドレスが HTTPS として扱われます。",
+          "externalUnverified": "現在の HTTPS は公開アドレスから推定したものです。「プロキシヘッダーを信頼する」を有効にすると、tmex はプロキシが転送したプロトコルで判定します。"
+        },
         "listener": {
-          "running": "ポート {{port}} で待ち受け中",
-          "stopped": "待ち受けていません",
-          "failed": "リスナーの起動に失敗しました：{{error}}"
+          "running": "内蔵リスナー：ポート {{port}} で待ち受け中",
+          "stopped": "内蔵リスナー：待ち受けていません",
+          "failed": "内蔵リスナーの起動に失敗しました：{{error}}"
         },
         "certificate": {
           "subject": "サブジェクト",

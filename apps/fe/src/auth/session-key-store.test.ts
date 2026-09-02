@@ -4,12 +4,18 @@ import {
   resetMeshNodesStateForTest,
   setMeshNodesStateForTest,
 } from '@/node/mesh-nodes';
-import { ApiClient } from '@tmex/api-client';
-import { AuthApi, type MeshNode } from '@tmex/api-client/auth/index';
+import { ApiClient, SELF_NODE_ID } from '@tmex/api-client';
+import {
+  AuthApi,
+  type AuthenticationResponseJSON,
+  type MeshNode,
+  WebAuthnError,
+} from '@tmex/api-client/auth/index';
 import {
   decodeBase64url,
   decodeDelegation,
   decodeLogin,
+  decodePasskeyAssertion,
   encodeBase64url,
   rootKeyFromSeed,
   verifyDelegation,
@@ -32,6 +38,7 @@ import {
   loginToNode,
   resumeSessionAfterPasswordChange,
   selectPasskeyCredential,
+  setPasskeyCeremonyForTest,
 } from './session-login';
 
 const UID = 'alice';
@@ -69,6 +76,9 @@ function mockApi(options: {
   loginErrorCode?: string;
   /** `/api/mesh/nodes` 失败（entry 已登录但列表拉不到）。 */
   meshListStatus?: number;
+  /** `POST /api/auth/challenge` 的非 200 状态与业务码。 */
+  challengeStatus?: number;
+  challengeCode?: string;
   /** entry 自身在 mesh 列表里的公钥（默认与 challenge 返回的一致）。 */
   entryPkInList?: Uint8Array;
   /** 让匹配的请求直接网络失败。 */
@@ -116,6 +126,13 @@ function mockApi(options: {
     const kind = selfMatch ? match[1] : match[2];
     if (kind === 'challenge') {
       captured.challengeCalls.push(nodeId);
+      if (options.challengeStatus && options.challengeStatus !== 200) {
+        return Promise.resolve(
+          options.challengeCode
+            ? Response.json({ code: options.challengeCode }, { status: options.challengeStatus })
+            : new Response('<html>bad gateway</html>', { status: options.challengeStatus })
+        );
+      }
       const pk =
         options.nodePkOverride?.[nodeId] ??
         (selfMatch ? ENTRY_PK : nodes.find((node) => node.id === nodeId)?.publicKey) ??
@@ -955,5 +972,419 @@ describe('establishSessionFromPasskey', () => {
     expect((error as { code?: string })?.code).toBe('PASSKEY_CREDENTIAL_UNKNOWN');
     // 只有那次探测 options：绑定凭证的第二次请求与仪式都不该发生
     expect(passkey.calls).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 密码登录的通行密钥二次验证（O1）
+// ---------------------------------------------------------------------------
+
+const CRED_A = 'cred-a';
+
+function fakeAssertion(credentialId: string): AuthenticationResponseJSON {
+  return {
+    id: credentialId,
+    rawId: credentialId,
+    type: 'public-key',
+    clientExtensionResults: {},
+    response: {
+      clientDataJSON: encodeBase64url(fill(8, 0xc1)),
+      authenticatorData: encodeBase64url(fill(8, 0xc2)),
+      signature: encodeBase64url(fill(8, 0xc3)),
+    },
+  };
+}
+
+interface SecondFactorApi {
+  api: AuthApi;
+  optionsCalls: { uid: string; delegation: string }[];
+  loginBodies: Record<string, unknown>[];
+}
+
+/** entry（self）一台就够：options + challenge + login，login 的结果按次数给。 */
+function secondFactorApi(
+  options: {
+    optionsStatus?: number;
+    optionsBody?: unknown;
+    allowCredentials?: { id: string }[];
+    /** 第 n 次（从 1 起）登录的结果码；返回 undefined 即 200。 */
+    loginCode?: (call: number) => string | undefined;
+  } = {}
+): SecondFactorApi {
+  const state: SecondFactorApi = {
+    api: null as unknown as AuthApi,
+    optionsCalls: [],
+    loginBodies: [],
+  };
+  const client = new ApiClient('', (url, init) => {
+    if (url === '/api/auth/passkey/login/options') {
+      const body = JSON.parse(String(init?.body)) as { uid: string; delegation: string };
+      state.optionsCalls.push(body);
+      const status = options.optionsStatus ?? 200;
+      if (status !== 200) {
+        return Promise.resolve(Response.json(options.optionsBody ?? {}, { status }));
+      }
+      return Promise.resolve(
+        Response.json({
+          challenge: encodeBase64url(fill(32, 0x77)),
+          rpId: 'node.example',
+          allowCredentials: (options.allowCredentials ?? [{ id: CRED_A }]).map((row) => ({
+            id: row.id,
+            type: 'public-key',
+          })),
+        })
+      );
+    }
+    if (url === '/api/auth/challenge') {
+      return Promise.resolve(
+        Response.json({
+          challenge_id: `c-${state.loginBodies.length}`,
+          nonce: encodeBase64url(NONCE),
+          nodePk: encodeBase64url(ENTRY_PK),
+        })
+      );
+    }
+    if (url === '/api/auth/login') {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      state.loginBodies.push(body);
+      const code = options.loginCode?.(state.loginBodies.length);
+      if (code) return Promise.resolve(Response.json({ code }, { status: 401 }));
+      return Promise.resolve(Response.json({ expires_at: 1 }));
+    }
+    if (url === '/api/mesh/nodes') {
+      return Promise.resolve(
+        Response.json({
+          nodes: [
+            {
+              id: ENTRY,
+              name: 'entry',
+              publicKey: encodeBase64url(ENTRY_PK),
+              online: true,
+              reach: 'direct',
+              version: '0.0.0',
+              direct_capable: true,
+              loggedIn: true,
+            },
+          ],
+        })
+      );
+    }
+    return Promise.resolve(new Response('not found', { status: 404 }));
+  });
+  state.api = new AuthApi(client);
+  return state;
+}
+
+describe('密码登录的通行密钥二次验证', () => {
+  afterEach(() => setPasskeyCeremonyForTest());
+
+  test('passkeySecondFactor：建会话时做一次仪式，登录体带上 passkey', async () => {
+    const backend = secondFactorApi({});
+    let prompted = 0;
+    setPasskeyCeremonyForTest(async () => fakeAssertion(CRED_A));
+
+    await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+      uid: UID,
+      entryNodeId: ENTRY,
+      rootEpoch: 0,
+      hasTotp: false,
+      passkeySecondFactor: true,
+      api: backend.api,
+      origin: 'https://node.example',
+      onPasskeyPrompt: () => {
+        prompted += 1;
+      },
+    });
+
+    expect(prompted).toBe(1);
+    // challenge 是对 root delegation 算的：options 收到的就是登录体里那份 delegation。
+    expect(backend.optionsCalls).toHaveLength(1);
+    expect(backend.optionsCalls[0].uid).toBe(UID);
+
+    expect(await loginToNode(SELF_NODE_ID, { api: backend.api, selfBootstrap: true })).toEqual({
+      ok: true,
+    });
+    const body = backend.loginBodies[0] as {
+      delegation: string;
+      passkey?: { credential_id: string; sig: string };
+    };
+    expect(backend.optionsCalls[0].delegation).toBe(body.delegation);
+    expect(body.passkey?.credential_id).toBe(CRED_A);
+    const assertion = decodePasskeyAssertion(decodeBase64url(body.passkey?.sig ?? ''));
+    expect(assertion.credential_id).toBe(CRED_A);
+    expect(assertion.signature).toEqual(fill(8, 0xc3));
+  });
+
+  test('同一份断言复用于其它 node：只做一次仪式', async () => {
+    const backend = secondFactorApi({});
+    setPasskeyCeremonyForTest(async () => fakeAssertion(CRED_A));
+    await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+      uid: UID,
+      entryNodeId: ENTRY,
+      rootEpoch: 0,
+      hasTotp: false,
+      passkeySecondFactor: true,
+      api: backend.api,
+      origin: 'https://node.example',
+    });
+
+    const { api, captured } = mockApi({});
+    expect(await loginToNode(NODE_A, { api })).toEqual({ ok: true });
+    const body = captured.login as { passkey?: { credential_id: string } };
+    expect(body.passkey?.credential_id).toBe(CRED_A);
+    expect(backend.optionsCalls).toHaveLength(1);
+  });
+
+  test('未开二次验证时登录体不带 passkey 字段', async () => {
+    await establishRoot();
+    const { api, captured } = mockApi({});
+    await loginToNode(NODE_A, { api });
+    expect((captured.login as { passkey?: unknown }).passkey).toBeUndefined();
+  });
+
+  test('本地址没注册通行密钥（404）：可判别错误 + sk_sess 清零，不留会话', async () => {
+    const backend = secondFactorApi({
+      optionsStatus: 404,
+      optionsBody: { code: 'NO_PASSKEY_FOR_ORIGIN' },
+    });
+    const secretKey = fill(64, 0x6a);
+    setPasskeyCeremonyForTest(async () => fakeAssertion(CRED_A));
+
+    const error = await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+      uid: UID,
+      entryNodeId: ENTRY,
+      rootEpoch: 0,
+      hasTotp: false,
+      passkeySecondFactor: true,
+      api: backend.api,
+      origin: 'https://node.example',
+      generateSessionKeyPair: () => ({ publicKey: fill(32, 0x6b), secretKey }),
+    }).then(
+      () => null,
+      (err: unknown) => err
+    );
+
+    expect((error as { code?: string })?.code).toBe('NO_PASSKEY_FOR_ORIGIN');
+    expect(secretKey.every((byte) => byte === 0)).toBe(true);
+    expect(hasSessionKey()).toBe(false);
+  });
+
+  test('用户取消仪式：seed 与 sk_sess 都清零，不留会话', async () => {
+    const backend = secondFactorApi({});
+    const seed = new Uint8Array(ROOT_SEED);
+    const secretKey = fill(64, 0x5a);
+    setPasskeyCeremonyForTest(() => Promise.reject(new WebAuthnError('aborted', 'cancelled')));
+
+    await expect(
+      establishSessionFromSeed(seed, {
+        uid: UID,
+        entryNodeId: ENTRY,
+        rootEpoch: 0,
+        hasTotp: false,
+        passkeySecondFactor: true,
+        api: backend.api,
+        origin: 'https://node.example',
+        generateSessionKeyPair: () => ({ publicKey: fill(32, 0x5b), secretKey }),
+      })
+    ).rejects.toThrow('cancelled');
+
+    expect(seed.every((byte) => byte === 0)).toBe(true);
+    expect(secretKey.every((byte) => byte === 0)).toBe(true);
+    expect(hasSessionKey()).toBe(false);
+  });
+
+  test('多把候选原样交给浏览器，绝不盲取第一把', async () => {
+    const backend = secondFactorApi({ allowCredentials: [{ id: CRED_A }, { id: 'cred-b' }] });
+    let handed: unknown = null;
+    setPasskeyCeremonyForTest(async (options) => {
+      handed = options.allowCredentials;
+      return fakeAssertion('cred-b');
+    });
+
+    await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+      uid: UID,
+      entryNodeId: ENTRY,
+      rootEpoch: 0,
+      hasTotp: false,
+      passkeySecondFactor: true,
+      api: backend.api,
+      origin: 'https://node.example',
+    });
+
+    expect(handed).toEqual([
+      { id: CRED_A, type: 'public-key' },
+      { id: 'cred-b', type: 'public-key' },
+    ]);
+    expect(readSessionSecrets()?.passkeyCredentialId).toBe('cred-b');
+  });
+
+  test('PASSKEY_REQUIRED（mode 快照过期）：补一次仪式后用新 challenge 重试一次', async () => {
+    await establishRoot();
+    const backend = secondFactorApi({
+      loginCode: (call) => (call === 1 ? 'PASSKEY_REQUIRED' : undefined),
+    });
+    setPasskeyCeremonyForTest(async () => fakeAssertion(CRED_A));
+
+    const result = await loginToNode(SELF_NODE_ID, {
+      api: backend.api,
+      selfBootstrap: true,
+      allowPasskeyPrompt: true,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(backend.loginBodies).toHaveLength(2);
+    expect((backend.loginBodies[0] as { passkey?: unknown }).passkey).toBeUndefined();
+    expect(
+      (backend.loginBodies[1] as { passkey?: { credential_id: string } }).passkey?.credential_id
+    ).toBe(CRED_A);
+    // 重试必须换一份 challenge：nonce 是一次性的。
+    const first = decodeLogin(decodeBase64url((backend.loginBodies[0] as { login: string }).login));
+    const second = decodeLogin(
+      decodeBase64url((backend.loginBodies[1] as { login: string }).login)
+    );
+    expect(first.challenge_id).not.toBe(second.challenge_id);
+    // 断言留在会话里，别的 node 直接复用。
+    expect(readSessionSecrets()?.passkeyCredentialId).toBe(CRED_A);
+    expect(hasSessionKey()).toBe(true);
+  });
+
+  test('后台静默登录拿到 PASSKEY_REQUIRED：原样交回调用方，不弹仪式、不丢会话钥', async () => {
+    await establishRoot();
+    const backend = secondFactorApi({ loginCode: () => 'PASSKEY_REQUIRED' });
+    let ceremonies = 0;
+    setPasskeyCeremonyForTest(async () => {
+      ceremonies += 1;
+      return fakeAssertion(CRED_A);
+    });
+
+    const result = await loginToNode(SELF_NODE_ID, { api: backend.api, selfBootstrap: true });
+
+    expect(result).toEqual({ ok: false, code: 'PASSKEY_REQUIRED' });
+    expect(ceremonies).toBe(0);
+    expect(backend.loginBodies).toHaveLength(1);
+    expect(hasSessionKey()).toBe(true);
+  });
+
+  test('用户取消补做的仪式：交回 PASSKEY_ABORTED，不是一句「登录失败」', async () => {
+    await establishRoot();
+    const backend = secondFactorApi({ loginCode: () => 'PASSKEY_REQUIRED' });
+    setPasskeyCeremonyForTest(() => Promise.reject(new WebAuthnError('aborted', 'cancelled')));
+
+    const result = await loginToNode(SELF_NODE_ID, {
+      api: backend.api,
+      selfBootstrap: true,
+      allowPasskeyPrompt: true,
+    });
+
+    expect(result).toEqual({ ok: false, code: 'PASSKEY_ABORTED' });
+    expect(hasSessionKey()).toBe(true);
+  });
+
+  test('补仪式时本地址没有可用凭证：把 NO_PASSKEY_FOR_ORIGIN 交回调用方，会话钥留着', async () => {
+    await establishRoot();
+    const backend = secondFactorApi({
+      loginCode: () => 'PASSKEY_REQUIRED',
+      optionsStatus: 404,
+      optionsBody: { code: 'NO_PASSKEY_FOR_ORIGIN' },
+    });
+    setPasskeyCeremonyForTest(async () => fakeAssertion(CRED_A));
+
+    const result = await loginToNode(SELF_NODE_ID, {
+      api: backend.api,
+      selfBootstrap: true,
+      allowPasskeyPrompt: true,
+    });
+
+    expect(result).toEqual({ ok: false, code: 'NO_PASSKEY_FOR_ORIGIN' });
+    expect(hasSessionKey()).toBe(true);
+  });
+});
+
+describe('challenge 失败的分因（不能一律压成网络错误）', () => {
+  test('429 RATE_LIMITED 原样透出：压成「检查网络后重试」会让用户继续猛点', async () => {
+    await establishRoot();
+    const { api, captured } = mockApi({ challengeStatus: 429, challengeCode: 'RATE_LIMITED' });
+    expect(await loginToNode(NODE_A, { api })).toEqual({ ok: false, code: 'RATE_LIMITED' });
+    expect(captured.loginCalls).toHaveLength(0);
+  });
+
+  test('网关层的非 JSON 5xx 没有业务含义，仍按 NETWORK_ERROR', async () => {
+    await establishRoot();
+    const { api } = mockApi({ challengeStatus: 502 });
+    expect(await loginToNode(NODE_A, { api })).toEqual({ ok: false, code: 'NETWORK_ERROR' });
+  });
+
+  test('真的没拿到响应（断网）才是 NETWORK_ERROR', async () => {
+    await establishRoot();
+    const { api } = mockApi({ offline: (url) => url.endsWith('/challenge') });
+    expect(await loginToNode(NODE_A, { api })).toEqual({ ok: false, code: 'NETWORK_ERROR' });
+  });
+});
+
+describe('ensureNodeLogin 对已被拒的通行密钥断言', () => {
+  /** 建一个带二次验证断言的会话（走完整仪式，断言真的进了 session store）。 */
+  async function establishWithAssertion() {
+    const backend = secondFactorApi({});
+    setPasskeyCeremonyForTest(async () => fakeAssertion(CRED_A));
+    await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+      uid: UID,
+      entryNodeId: ENTRY,
+      rootEpoch: 0,
+      hasTotp: false,
+      passkeySecondFactor: true,
+      api: backend.api,
+      origin: 'https://node.example',
+    });
+  }
+
+  test('PASSKEY_INVALID：只丢断言，会话钥留着——下一次登录退化成不带二次验证', async () => {
+    await establishWithAssertion();
+    expect(readSessionSecrets()?.passkeyCredentialId).toBe(CRED_A);
+    const sig = readSessionSecrets()?.passkeySig as Uint8Array;
+    setMeshNodesStateForTest({ entryNodeId: ENTRY, nodes: [meshRow(NODE_A, NODE_A_PK)] });
+    const { api, captured } = mockApi({
+      nodes: [{ id: NODE_A, publicKey: NODE_A_PK }],
+      loginStatus: () => 401,
+      loginErrorCode: 'PASSKEY_INVALID',
+    });
+
+    expect(await ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) })).toEqual({
+      ok: false,
+      code: 'PASSKEY_INVALID',
+    });
+    // 会话钥必须活着：一台远端 node 的判决不该把整个会话清掉（1.1.8「401 即登出」）。
+    expect(hasSessionKey()).toBe(true);
+    // 断言本身丢干净，字节也就地清零。
+    expect(readSessionSecrets()?.passkeyCredentialId).toBeNull();
+    expect(readSessionSecrets()?.passkeySig).toBeNull();
+    expect(sig.every((byte) => byte === 0)).toBe(true);
+    // 第一次确实带了断言。
+    expect(
+      (captured.loginCalls[0].body as { passkey?: { credential_id: string } }).passkey
+        ?.credential_id
+    ).toBe(CRED_A);
+
+    // 第二次退化成不带二次验证：服务端据此回 PASSKEY_REQUIRED，用户点一次按钮就能补仪式。
+    resetNodeLoginsForTest();
+    await ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) });
+    expect(captured.loginCalls).toHaveLength(2);
+    expect((captured.loginCalls[1].body as { passkey?: unknown }).passkey).toBeUndefined();
+    expect(hasSessionKey()).toBe(true);
+  });
+
+  test('签名类失败不丢钥：远端 node 的密钥日志没同步是会自愈的临时状态', async () => {
+    await establishRoot();
+    setMeshNodesStateForTest({ entryNodeId: ENTRY, nodes: [meshRow(NODE_A, NODE_A_PK)] });
+    const { api } = mockApi({
+      nodes: [{ id: NODE_A, publicKey: NODE_A_PK }],
+      loginStatus: () => 401,
+      loginErrorCode: 'BAD_SIGNATURE',
+    });
+
+    expect(await ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) })).toEqual({
+      ok: false,
+      code: 'BAD_SIGNATURE',
+    });
+    expect(hasSessionKey()).toBe(true);
   });
 });

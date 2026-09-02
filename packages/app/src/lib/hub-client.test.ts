@@ -80,6 +80,26 @@ describe('createHubFetcher', () => {
   });
 });
 
+describe('fetchAuthMode', () => {
+  test('parses passkeySecondFactor as boolean and defaults to false', async () => {
+    const fetcher: typeof fetch = async () =>
+      Response.json({
+        mode: 'mesh',
+        nodeId: 'self',
+        uid: 'u1',
+        totpEnabled: false,
+        passkeySecondFactor: true,
+      });
+    const on = await fetchAuthMode('https://hub.example', fetcher);
+    expect(on.passkeySecondFactor).toBe(true);
+
+    const off = await fetchAuthMode('https://hub.example', async () =>
+      Response.json({ mode: 'mesh', nodeId: 'self', uid: 'u1', totpEnabled: false })
+    );
+    expect(off.passkeySecondFactor).toBe(false);
+  });
+});
+
 describe('hub-client fetch policy', () => {
   test('all hub fetches set redirect: error', async () => {
     const redirects: Array<RequestRedirect | undefined> = [];
@@ -192,6 +212,7 @@ describe('hub-client fetch policy', () => {
 function loginFetcher(options: {
   loginHeaders?: HeadersInit;
   loginBody?: unknown;
+  loginStatus?: number;
   nodeId?: string;
   onLogin?: (req: RequestInit | undefined) => void;
 }): typeof fetch {
@@ -215,7 +236,7 @@ function loginFetcher(options: {
       return new Response(
         JSON.stringify(options.loginBody ?? { expires_at: Date.now() + 60_000 }),
         {
-          status: 200,
+          status: options.loginStatus ?? 200,
           headers: {
             'content-type': 'application/json',
             ...(options.loginHeaders ?? {}),
@@ -318,5 +339,41 @@ describe('loginWithRootKey session extraction', () => {
       fetcher,
     });
     expect(cookies[0]).toContain('tmex_s_self=sess-9');
+  });
+
+  test('maps PASSKEY_REQUIRED / PASSKEY_INVALID / INVALID_CREDENTIALS to clear errors', async () => {
+    await expect(
+      loginWithRootKey({
+        baseUrl: 'https://hub.example',
+        rootKey,
+        uid: 'u1',
+        fetcher: loginFetcher({
+          loginStatus: 401,
+          loginBody: { code: 'PASSKEY_REQUIRED' },
+        }),
+      })
+    ).rejects.toThrow(/passkey second-factor/i);
+    await expect(
+      loginWithRootKey({
+        baseUrl: 'https://hub.example',
+        rootKey,
+        uid: 'u1',
+        fetcher: loginFetcher({
+          loginStatus: 401,
+          loginBody: { code: 'PASSKEY_INVALID' },
+        }),
+      })
+    ).rejects.toThrow(/Passkey second-factor verification failed/i);
+    await expect(
+      loginWithRootKey({
+        baseUrl: 'https://hub.example',
+        rootKey,
+        uid: 'u1',
+        fetcher: loginFetcher({
+          loginStatus: 401,
+          loginBody: { code: 'INVALID_CREDENTIALS' },
+        }),
+      })
+    ).rejects.toThrow(/Invalid credentials/i);
   });
 });

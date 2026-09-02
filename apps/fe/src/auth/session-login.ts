@@ -5,11 +5,13 @@
 import { SELF_NODE_ID } from '@tmex/api-client';
 import type {
   AuthApi,
+  AuthenticationResponseJSON,
   MeshNode,
   PasskeySummary,
   PublicKeyCredentialDescriptorJSON,
+  PublicKeyCredentialRequestOptionsJSON,
 } from '@tmex/api-client/auth/index';
-import { defaultAuthApi, startAuthentication } from '@tmex/api-client/auth/index';
+import { WebAuthnError, defaultAuthApi, startAuthentication } from '@tmex/api-client/auth/index';
 import type { Login, RootKey } from '@tmex/shared/auth';
 import {
   buildLogin,
@@ -39,7 +41,23 @@ import {
   getSessionKey,
   readSessionSecrets,
   replaceSessionKey,
+  setPasskeyAssertion,
 } from './session-key-store';
+
+/**
+ * WebAuthn 断言仪式。真实实现来自 `@tmex/api-client`，测试用 `setPasskeyCeremonyForTest()`
+ * 换掉——bun 里没有认证器，没有这个接缝就只能测失败路径。
+ */
+let passkeyCeremony: (
+  options: PublicKeyCredentialRequestOptionsJSON
+) => Promise<AuthenticationResponseJSON> = startAuthentication;
+
+/** 仅测试使用：替换 WebAuthn 断言仪式，不传则还原成真实实现。 */
+export function setPasskeyCeremonyForTest(
+  fn?: (options: PublicKeyCredentialRequestOptionsJSON) => Promise<AuthenticationResponseJSON>
+): void {
+  passkeyCeremony = fn ?? startAuthentication;
+}
 
 // ---------------------------------------------------------------------------
 // 会话密钥材料
@@ -112,6 +130,16 @@ interface EstablishFromSeedOptions {
   generateSessionKeyPair?: () => { publicKey: Uint8Array; secretKey: Uint8Array };
   /** k_totp 派生（测试注入）：用来构造 HKDF 抛错这条失败路径。 */
   deriveKTotp?: (seed: Uint8Array, uid: string, rootEpoch: number) => Uint8Array;
+  /**
+   * 用户名下已注册通行密钥（`/api/auth/mode` 的 `passkeySecondFactor`）：密码登录必须再做一次
+   * 通行密钥断言，服务端否则回 `PASSKEY_REQUIRED`。
+   */
+  passkeySecondFactor?: boolean;
+  api?: AuthApi;
+  /** 当前 origin（测试注入）；缺省读 `location.origin`。 */
+  origin?: string;
+  /** 二次验证仪式即将弹出：UI 据此把状态切成「请完成通行密钥验证」。 */
+  onPasskeyPrompt?: () => void;
 }
 
 /**
@@ -141,6 +169,21 @@ export async function establishSessionFromSeed(
     kTotp = opts.hasTotp
       ? (opts.deriveKTotp ?? deriveTotpKey)(seed, opts.uid, opts.rootEpoch)
       : null;
+    // 根钥材料到此为止就没用了：二次验证仪式要等用户按指纹，可能是几十秒，
+    // 绝不让 seed / 根钥私钥在这段时间里继续躺在内存。`finally` 里再清一次无妨。
+    seed.fill(0);
+    rootKey.seed.fill(0);
+    rootKey = null;
+
+    const passkey = opts.passkeySecondFactor
+      ? await runPasskeySecondFactor({
+          api: opts.api ?? defaultAuthApi,
+          uid: opts.uid,
+          delegationBytes: signed.bytes,
+          origin: opts.origin,
+          onPrompt: opts.onPasskeyPrompt,
+        })
+      : null;
 
     const info = adoptSessionSecrets({
       info: {
@@ -158,6 +201,8 @@ export async function establishSessionFromSeed(
       delegation: signed.delegation,
       delegationBytes: signed.bytes,
       delegationSig: signed.sig,
+      passkeyCredentialId: passkey?.credentialId ?? null,
+      passkeySig: passkey?.sig ?? null,
       kTotp,
       totpCode: opts.totpCode ?? null,
     });
@@ -209,7 +254,8 @@ export async function resumeSessionAfterPasswordChange(
   return replaceSessionKey(
     async () => {
       await establishSessionFromPassword(opts);
-      return await loginSelf({ api: opts.api ?? defaultAuthApi });
+      // 改密后重新登录同样要过通行密钥二次验证：`rotate-root-keep` 不会删掉已注册的通行密钥。
+      return await loginSelf({ api: opts.api ?? defaultAuthApi, allowPasskeyPrompt: true });
     },
     (result) => result.ok
   );
@@ -344,7 +390,7 @@ export async function establishSessionFromPasskey(
       if (selection.kind === 'browser') {
         // 探测仪式：列表原样下发，浏览器选谁我们就绑谁。这份断言签的是探测 delegation
         // （credential_id 为空），服务端一定拒绝，拿来当凭证也没用。
-        const probe = await startAuthentication({
+        const probe = await passkeyCeremony({
           ...options,
           allowCredentials: selection.allowCredentials,
         });
@@ -359,7 +405,7 @@ export async function establishSessionFromPasskey(
       );
     }
     // 只允许用 delegation 里绑定的那把凭证，否则断言与 credential_id 对不上。
-    const assertion = await startAuthentication({
+    const assertion = await passkeyCeremony({
       ...options,
       allowCredentials: [{ id: credentialId }],
     });
@@ -388,6 +434,9 @@ export async function establishSessionFromPasskey(
         authenticator_data: decodeBase64url(assertion.response.authenticatorData),
         signature: decodeBase64url(assertion.response.signature),
       }),
+      // passkey 直接登录本身就是通行密钥授权，不需要再叠一层二次验证。
+      passkeyCredentialId: null,
+      passkeySig: null,
       kTotp: null,
       totpCode: null,
     });
@@ -397,6 +446,58 @@ export async function establishSessionFromPasskey(
   } finally {
     if (!owned) sess.destroy();
   }
+}
+
+/** 一次通行密钥二次验证的产物：断言字节与它绑定的凭证 id。 */
+interface PasskeySecondFactor {
+  credentialId: string;
+  /** borsh(PasskeyAssertion)，与登录体的 `passkey.sig` 同一份编码。 */
+  sig: Uint8Array;
+}
+
+/**
+ * 密码登录的通行密钥二次验证。
+ *
+ * challenge 就是 `delegationChallenge(delegation)` = sha256(borsh(delegation))，与 passkey 直接
+ * 登录完全相同——所以一次仪式产出的断言，在 delegation 的 18 小时里对**所有** node 都有效，
+ * 用户不会每登录一台就被弹一次指纹。
+ *
+ * 这里**不拉** `/api/auth/passkeys`：这一步发生在拿到会话之前，那个接口必然 401。凭证范围由
+ * 服务端按精确 origin 过滤过的 `allowCredentials` 决定，候选不唯一时原样交给浏览器选，
+ * 绝不盲取第一把（见 `selectPasskeyCredential`）。root delegation 不绑 credential_id，
+ * 因此不需要 passkey 直接登录那套「探测 + 绑定」两次仪式。
+ */
+async function runPasskeySecondFactor(args: {
+  api: AuthApi;
+  uid: string;
+  delegationBytes: Uint8Array;
+  origin?: string;
+  onPrompt?: () => void;
+}): Promise<PasskeySecondFactor> {
+  const options = await args.api.passkeyLoginOptions(
+    args.uid,
+    encodeBase64url(args.delegationBytes)
+  );
+  const selection = selectPasskeyCredential({
+    allowCredentials: options.allowCredentials,
+    passkeys: null,
+    origin: currentOrigin(args.origin),
+  });
+  if (selection.kind === 'none') throw new PasskeyCredentialUnknownError();
+  const allowCredentials =
+    selection.kind === 'bind' ? [{ id: selection.credentialId }] : selection.allowCredentials;
+
+  args.onPrompt?.();
+  const assertion = await passkeyCeremony({ ...options, allowCredentials });
+  return {
+    credentialId: assertion.id,
+    sig: encodePasskeyAssertion({
+      credential_id: assertion.id,
+      client_data_json: decodeBase64url(assertion.response.clientDataJSON),
+      authenticator_data: decodeBase64url(assertion.response.authenticatorData),
+      signature: decodeBase64url(assertion.response.signature),
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +513,11 @@ interface LoginToNodeOptions {
    * 只能先登录、再用新会话拉列表回头核对（`verifySelfPublicKey`）。仅 `self` 允许。
    */
   selfBootstrap?: boolean;
+  /**
+   * 允许在服务端回 `PASSKEY_REQUIRED` 时当场补一次通行密钥仪式再重试一次。
+   * 只有用户主动发起的登录能给 true；后台静默登录一律把码交回调用方，不弹系统仪式。
+   */
+  allowPasskeyPrompt?: boolean;
 }
 
 /** self bootstrap 登录时用过的 nodePk，登录后必须与 mesh 列表里的公钥核对。 */
@@ -435,7 +541,12 @@ const pinnedPkOk = (targetPk: Uint8Array, node: MeshNode | undefined): boolean =
  */
 export async function loginToNode(
   nodeId: string,
-  { api = defaultAuthApi, node: knownNode, selfBootstrap }: LoginToNodeOptions = {}
+  {
+    api = defaultAuthApi,
+    node: knownNode,
+    selfBootstrap,
+    allowPasskeyPrompt,
+  }: LoginToNodeOptions = {}
 ): Promise<LoginNodeResult> {
   const session = getSessionKey();
   const secrets = readSessionSecrets();
@@ -452,16 +563,73 @@ export async function loginToNode(
   const totp = resolveTotp(session);
   if (totp === null) return { ok: false, code: 'TOTP_REQUIRED' };
 
-  const challenge = await api.challenge(nodeId, session.uid).catch(() => null);
-  if (!challenge) return { ok: false, code: 'NETWORK_ERROR' };
+  const attempt = () => signAndLogin({ api, nodeId, session, secrets, node, totp });
+  const first = await attempt();
+  if (first.ok || first.code !== 'PASSKEY_REQUIRED') return first;
 
-  const targetPk = decodeBase64url(challenge.nodePk);
+  // mode 快照过期：这次登录没带二次验证断言。会话钥本身是好的，补一次仪式后用**新的**
+  // challenge 重试一次即可——绝不把它当成凭证失败去丢钥。
+  if (!allowPasskeyPrompt || secrets.passkeySig) return first;
+  try {
+    const passkey = await runPasskeySecondFactor({
+      api,
+      uid: session.uid,
+      delegationBytes: secrets.delegationBytes,
+    });
+    setPasskeyAssertion(passkey.credentialId, passkey.sig);
+  } catch (err) {
+    return { ok: false, code: secondFactorFailureCode(err) };
+  }
+  return await attempt();
+}
+
+/**
+ * 补做二次验证失败时交回给调用方的码。
+ * WebAuthn 仪式异常没有业务码，用户取消必须说成「已取消」，否则界面只会给一句「登录失败」。
+ */
+function secondFactorFailureCode(err: unknown): string {
+  if (err instanceof WebAuthnError) {
+    return err.code === 'aborted' ? 'PASSKEY_ABORTED' : 'PASSKEY_VERIFY_FAILED';
+  }
+  return (err as { code?: string } | null)?.code ?? 'PASSKEY_REQUIRED';
+}
+
+/**
+ * 请求抛异常时该报哪个码。
+ *
+ * `RATE_LIMITED` 这类**服务端的业务结论**必须原样透出：一律压成 `NETWORK_ERROR` 会让用户看到
+ * 「检查网络后重试」，然后继续猛点重试，把限流撞得更死。只有真的没拿到响应（断网、DNS、
+ * CORS）以及网关层的 `HTTP_<status>`（502/504 之类，没有业务含义）才算网络错误。
+ */
+function transportFailureCode(err: unknown): string {
+  const code = (err as { code?: string } | null)?.code;
+  if (!code || code.startsWith('HTTP_')) return 'NETWORK_ERROR';
+  return code;
+}
+
+/** 单次「取 challenge → 签 login → POST /login」。重试时必须整套重来：nonce 是一次性的。 */
+async function signAndLogin(args: {
+  api: AuthApi;
+  nodeId: string;
+  session: SessionKeyInfo;
+  secrets: SessionKeySecrets;
+  node: MeshNode | undefined;
+  totp: { code: string; k_totp: string } | undefined;
+}): Promise<LoginNodeResult> {
+  const { api, nodeId, session, secrets, node, totp } = args;
+  const challenge = await api.challenge(nodeId, session.uid).then(
+    (value) => ({ ok: true as const, value }),
+    (err: unknown) => ({ ok: false as const, code: transportFailureCode(err) })
+  );
+  if (!challenge.ok) return { ok: false, code: challenge.code };
+
+  const targetPk = decodeBase64url(challenge.value.nodePk);
   if (!pinnedPkOk(targetPk, node)) return { ok: false, code: 'NODE_PK_MISMATCH' };
   if (!node) selfChallengePk = targetPk;
 
   const login = buildLogin({
-    challengeId: challenge.challenge_id,
-    nonce: decodeBase64url(challenge.nonce),
+    challengeId: challenge.value.challenge_id,
+    nonce: decodeBase64url(challenge.value.nonce),
     target: nodeId,
     targetPk,
     uid: session.uid,
@@ -473,6 +641,14 @@ export async function loginToNode(
     delegation: encodeBase64url(secrets.delegationBytes),
     delegation_sig: encodeBase64url(secrets.delegationSig),
     totp,
+    // 断言与 delegation 同寿命：手上有就一直带着，其余 node 因此不必再弹仪式。
+    passkey:
+      secrets.passkeyCredentialId && secrets.passkeySig
+        ? {
+            credential_id: secrets.passkeyCredentialId,
+            sig: encodeBase64url(secrets.passkeySig),
+          }
+        : undefined,
   };
   const result = await api.login(nodeId, body).catch(() => null);
   if (!result) return { ok: false, code: 'NETWORK_ERROR' };
@@ -481,6 +657,8 @@ export async function loginToNode(
 
 interface LoginSelfOptions {
   api?: AuthApi;
+  /** 用户主动发起的登录：允许在 `PASSKEY_REQUIRED` 时当场补一次通行密钥仪式。 */
+  allowPasskeyPrompt?: boolean;
 }
 
 /**
@@ -494,7 +672,11 @@ interface LoginSelfOptions {
  */
 export async function loginSelf(opts: LoginSelfOptions = {}): Promise<LoginNodeResult> {
   const api = opts.api ?? defaultAuthApi;
-  const selfResult = await loginToNode(SELF_NODE_ID, { api, selfBootstrap: true });
+  const selfResult = await loginToNode(SELF_NODE_ID, {
+    api,
+    selfBootstrap: true,
+    allowPasskeyPrompt: opts.allowPasskeyPrompt,
+  });
   if (!selfResult.ok) {
     clearTotpCode();
     return selfResult;

@@ -36,7 +36,7 @@ describe('resolveClientIp', () => {
     ).toBe(CF_A);
   });
 
-  test('trusted: first X-Forwarded-For entry when CF is absent', () => {
+  test('trusted: X-Real-IP wins over X-Forwarded-For when CF is absent', () => {
     expect(
       resolveClientIp({
         socketIp: SOCKET,
@@ -46,17 +46,37 @@ describe('resolveClientIp', () => {
         }),
         trustProxy: true,
       })
-    ).toBe(XFF);
+    ).toBe(REAL);
   });
 
-  test('trusted: skips empty X-Forwarded-For entries', () => {
+  test('trusted: last X-Forwarded-For entry when CF and X-Real-IP are absent', () => {
     expect(
       resolveClientIp({
         socketIp: SOCKET,
-        headers: headers({ 'x-forwarded-for': ` ,  ${XFF}` }),
+        headers: headers({ 'x-forwarded-for': '1.2.3.4, 10.0.0.9' }),
+        trustProxy: true,
+      })
+    ).toBe('10.0.0.9');
+  });
+
+  test('trusted: skips empty X-Forwarded-For entries from the end', () => {
+    expect(
+      resolveClientIp({
+        socketIp: SOCKET,
+        headers: headers({ 'x-forwarded-for': ` ${XFF} ,  ` }),
         trustProxy: true,
       })
     ).toBe(XFF);
+  });
+
+  test('trusted: invalid last X-Forwarded-For entry does not fall back to earlier ones', () => {
+    expect(
+      resolveClientIp({
+        socketIp: SOCKET,
+        headers: headers({ 'x-forwarded-for': '1.2.3.4, not-an-ip' }),
+        trustProxy: true,
+      })
+    ).toBe(SOCKET);
   });
 
   test('trusted: X-Real-IP when CF and XFF are absent', () => {

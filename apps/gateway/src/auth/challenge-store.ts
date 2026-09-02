@@ -20,6 +20,8 @@ export interface ChallengeEntry {
   payload?: unknown;
 }
 
+export const CHALLENGE_STORE_MAX_ENTRIES = 4096;
+
 export class ChallengeStore {
   private readonly entries = new Map<string, ChallengeEntry>();
   private readonly nowFn: () => number;
@@ -28,8 +30,17 @@ export class ChallengeStore {
     this.nowFn = options?.now ?? Date.now;
   }
 
+  get size(): number {
+    return this.entries.size;
+  }
+
   create(input: ChallengeCreateInput): { challengeId: string; nonce: Uint8Array } {
     this.sweepExpired();
+    while (this.entries.size >= CHALLENGE_STORE_MAX_ENTRIES) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
     const nonce = crypto.getRandomValues(new Uint8Array(32));
     const challengeId = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString(
       'base64url'
