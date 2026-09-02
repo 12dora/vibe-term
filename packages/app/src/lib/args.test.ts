@@ -195,6 +195,12 @@ describe('assertKnownFlags', () => {
     );
   });
 
+  test('accepts hub user passwd --full-reset', () => {
+    const parsed = parseArgs(['hub', 'user', 'passwd', 'bob', '--full-reset']);
+    expect(parsed.flags['full-reset']).toBe(true);
+    expect(() => assertKnownFlags(parsed)).not.toThrow();
+  });
+
   test('accepts documented upgrade flags', () => {
     expect(() =>
       assertKnownFlags(
@@ -227,6 +233,11 @@ describe('cli help', () => {
     expect(help).toContain('tmex init');
     expect(help).toContain('tmex doctor');
     expect(help).toContain('tmex hub user add <username>');
+    expect(help).toContain('tmex hub user passwd <username> [--full-reset]');
+    expect(help).toContain(
+      'also remove all passkeys and two-step verification and sign out everywhere'
+    );
+    expect(cliHelpText('zh-CN')).toContain('同时移除所有通行密钥、两步验证并注销全部会话');
     expect(help).toContain('tmex hub join');
     expect(help).toContain('tmex hub standby --public-url');
     expect(help).toContain('tmex hub promote');

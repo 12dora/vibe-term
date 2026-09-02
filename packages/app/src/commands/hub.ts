@@ -23,10 +23,8 @@ import {
   decodeKeyLogRecord,
   deriveTotpKey,
   encodeBase64url,
-  encodeRotateRootPayload,
   encodeSetTotpPayload,
   encryptTotpSecret,
-  generateKdfParams,
   randomBytes,
   rootKeyFromSeed,
   signEd25519,
@@ -44,6 +42,7 @@ import {
   isNetworkFetchError,
   redeemEnrollment,
 } from '../lib/hub-client';
+import { applyHubUserPasswd, mapPasswdApplyError } from '../lib/hub-user-passwd';
 import { applyHubModeEnvKeys, parseHubPeerIds } from '../lib/install';
 import { createInstallLayout } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
@@ -100,6 +99,8 @@ export const HUB_MANUAL_RESTART_HINT =
 
 export const NODE_REVOKED_REJOIN_ERROR =
   'this node identity was revoked; use a fresh identity (mesh reset / re-init)';
+
+export { mapPasswdApplyError };
 
 export type JoinErrorCode =
   | 'invalid_token'
@@ -392,48 +393,11 @@ export async function runHubUserPasswd(
   parsed: ParsedArgs,
   username: string,
   io: HubIo = {}
-): Promise<{ rootEpoch: number }> {
+): Promise<{ rootEpoch: number; mode: 'keep' | 'full-reset' }> {
   if (!username) {
     throw new Error('hub user passwd requires <username>');
   }
-  return await withAuth(parsed, io, async (ctx) => {
-    const user = ctx.userStore.getByUsername(username);
-    if (!user) {
-      throw new Error(`user not found: ${username}`);
-    }
-    const oldPassword = await resolvePassword({
-      password: io.oldPassword,
-      envKey: 'TMEX_PASSWORD_OLD',
-      confirm: false,
-      prompt: 'Current password',
-    });
-    const oldKey = await deriveRootKey(oldPassword, kdfParamsFromJson(user.kdfParamsJson));
-    assertRootKeyMatches(oldKey, user.rootPublicKey);
-
-    const newPassword = await resolvePassword({
-      password: io.newPassword ?? io.password,
-      envKey: 'TMEX_PASSWORD',
-      confirm: io.newPassword === undefined && io.password === undefined,
-      prompt: 'New password',
-      confirmPrompt: 'Confirm new password',
-    });
-    const kdfParams = generateKdfParams();
-    const newKey = await deriveRootKey(newPassword, kdfParams);
-    const applied = await ctx.userKeys.signAndApply(user.id, oldKey, {
-      type: 'rotate-root',
-      payload: encodeRotateRootPayload({
-        root_public_key: newKey.publicKey,
-        kdf_params: kdfParams,
-      }),
-    });
-    if (!applied.ok) {
-      throw new Error(`rotate-root failed: ${applied.error}`);
-    }
-    const next = ctx.userStore.getById(user.id);
-    log(io, `password updated for ${username}`);
-    log(io, 'warning: all passkeys and TOTP were reset; re-register them on each node');
-    return { rootEpoch: next?.rootEpoch ?? user.rootEpoch + 1 };
-  });
+  return await withAuth(parsed, io, (ctx) => applyHubUserPasswd(parsed, username, ctx, io));
 }
 
 export async function runHubUserTotp(

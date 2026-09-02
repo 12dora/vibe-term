@@ -14,14 +14,19 @@ import {
   decryptTotpSecret,
   deriveSeed,
   deriveTotpKey,
+  encodeAddPasskeyPayload,
+  encodeBase64url,
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
+import { setLang, t } from '../i18n';
 import { parseArgs } from '../lib/args';
 import { readEnvFile, stringifyEnv } from '../lib/env-file';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
+import { deriveRootKey } from '../lib/password';
 import {
   HUB_MANUAL_RESTART_HINT,
   HUB_SIGNED_AUTH_PRECEDENCE_NOTE,
+  mapPasswdApplyError,
   runHubAllow,
   runHubDemote,
   runHubDisallow,
@@ -42,6 +47,38 @@ function must<T>(value: T | null | undefined, label: string): T {
   return value;
 }
 
+function lastKeyLogType(auth: LocalAuthContext, userId: string): string {
+  const logs = auth.keyLogStore.list(userId);
+  const last = logs.at(-1);
+  if (!last) throw new Error('empty key log');
+  return decodeKeyLogRecord(last.bytes).type;
+}
+
+async function addTestPasskey(
+  auth: LocalAuthContext,
+  username: string,
+  password: string
+): Promise<void> {
+  const user = must(auth.userStore.getByUsername(username), username);
+  const rootKey = await deriveRootKey(password, kdfParamsFromJson(user.kdfParamsJson));
+  const applied = await auth.userKeys.signAndApply(user.id, rootKey, {
+    type: 'add-passkey',
+    payload: encodeAddPasskeyPayload({
+      credential_id: encodeBase64url(new Uint8Array(16).fill(8)),
+      public_key: new Uint8Array(32).fill(1),
+      rp_id: 'example.test',
+      origin: 'https://example.test',
+      counter: 0,
+      transports: ['internal'],
+      backup_eligible: false,
+      backup_state: false,
+      device_type: 'singleDevice',
+      name: 'laptop',
+    }),
+  });
+  if (!applied.ok) throw new Error(`add-passkey failed: ${applied.error}`);
+}
+
 async function openHubAuth(roles = 'hub,node'): Promise<LocalAuthContext> {
   return await openLocalAuth({
     memory: true,
@@ -56,6 +93,7 @@ async function openHubAuth(roles = 'hub,node'): Promise<LocalAuthContext> {
 const authHandles: LocalAuthContext[] = [];
 
 afterEach(() => {
+  setLang('en');
   for (const ctx of authHandles.splice(0)) {
     ctx.close();
   }
@@ -83,7 +121,7 @@ describe('hub user commands', () => {
     expect(identity?.userId).toBe(result.userId);
   });
 
-  test('hub user passwd rotate-root accepts new password and rejects old', async () => {
+  test('hub user passwd defaults to rotate-root-keep and rejects the old password', async () => {
     const auth = await openHubAuth();
     authHandles.push(auth);
     await runHubUserAdd(parsed, 'bob', {
@@ -92,13 +130,17 @@ describe('hub user commands', () => {
       log: () => undefined,
     });
     const before = must(auth.userStore.getByUsername('bob'), 'bob');
+    const logs: string[] = [];
     const rotated = await runHubUserPasswd(parsed, 'bob', {
       auth,
       oldPassword: 'old-pass-word',
       newPassword: 'new-pass-word',
-      log: () => undefined,
+      log: (message) => logs.push(message),
     });
     expect(rotated.rootEpoch).toBeGreaterThan(before.rootEpoch);
+    expect(rotated.mode).toBe('keep');
+    expect(lastKeyLogType(auth, before.id)).toBe('rotate-root-keep');
+    expect(logs).toEqual([t('hub.user.passwd.doneKeep', { username: 'bob' })]);
 
     const after = must(auth.userStore.getByUsername('bob'), 'bob after rotate');
     const oldSeed = await deriveSeed('old-pass-word', kdfParamsFromJson(after.kdfParamsJson));
@@ -114,6 +156,123 @@ describe('hub user commands', () => {
         log: () => undefined,
       })
     ).rejects.toThrow(/password does not match/);
+  });
+
+  test('hub user passwd keep re-wraps TOTP and retains passkeys', async () => {
+    const auth = await openHubAuth();
+    authHandles.push(auth);
+    await runHubUserAdd(parsed, 'bob', {
+      auth,
+      password: 'old-pass-word',
+      log: () => undefined,
+    });
+    const enrolled = await runHubUserTotp(parsed, 'bob', {
+      auth,
+      password: 'old-pass-word',
+      log: () => undefined,
+    });
+    await addTestPasskey(auth, 'bob', 'old-pass-word');
+    const before = must(auth.userStore.getByUsername('bob'), 'bob');
+    expect(before.totpRecordSeq).not.toBeNull();
+    expect(auth.userStore.listKeysByUser(before.id)).toHaveLength(1);
+
+    const rotated = await runHubUserPasswd(parsed, 'bob', {
+      auth,
+      oldPassword: 'old-pass-word',
+      newPassword: 'new-pass-word',
+      log: () => undefined,
+    });
+    expect(rotated.mode).toBe('keep');
+    expect(lastKeyLogType(auth, before.id)).toBe('rotate-root-keep');
+
+    const after = must(auth.userStore.getByUsername('bob'), 'bob after keep');
+    expect(auth.userStore.listKeysByUser(after.id)).toHaveLength(1);
+    expect(after.totpRecordSeq).toBe(after.keyLogHeadSeq);
+    const state = auth.userKeys.currentState(after.id);
+    expect(state.totp).toBeTruthy();
+    const seed = await deriveSeed('new-pass-word', state.kdfParams);
+    const kTotp = deriveTotpKey(seed, after.id, state.rootEpoch);
+    const totpSeq = after.totpRecordSeq;
+    if (totpSeq == null) throw new Error('missing totp seq');
+    const plain = await decryptTotpSecret(kTotp, state.totp!, {
+      uid: after.id,
+      root_epoch: state.rootEpoch,
+      seq: BigInt(totpSeq),
+    });
+    expect(bytesEqual(plain, enrolled.secret)).toBe(true);
+  });
+
+  test('hub user passwd --full-reset writes rotate-root and clears TOTP and passkeys', async () => {
+    const auth = await openHubAuth();
+    authHandles.push(auth);
+    await runHubUserAdd(parsed, 'bob', {
+      auth,
+      password: 'old-pass-word',
+      log: () => undefined,
+    });
+    await runHubUserTotp(parsed, 'bob', {
+      auth,
+      password: 'old-pass-word',
+      log: () => undefined,
+    });
+    await addTestPasskey(auth, 'bob', 'old-pass-word');
+    const before = must(auth.userStore.getByUsername('bob'), 'bob');
+    const logs: string[] = [];
+    const rotated = await runHubUserPasswd(
+      parseArgs(['hub', 'user', 'passwd', 'bob', '--full-reset']),
+      'bob',
+      {
+        auth,
+        oldPassword: 'old-pass-word',
+        newPassword: 'new-pass-word',
+        log: (message) => logs.push(message),
+      }
+    );
+    expect(rotated.mode).toBe('full-reset');
+    expect(lastKeyLogType(auth, before.id)).toBe('rotate-root');
+    expect(logs).toEqual([t('hub.user.passwd.doneFullReset', { username: 'bob' })]);
+
+    const after = must(auth.userStore.getByUsername('bob'), 'bob after full-reset');
+    expect(after.totpRecordSeq).toBeNull();
+    expect(auth.userKeys.currentState(after.id).totp).toBeNull();
+    expect(auth.userStore.listKeysByUser(after.id)).toEqual([]);
+    const newSeed = await deriveSeed('new-pass-word', kdfParamsFromJson(after.kdfParamsJson));
+    expect(bytesEqual(rootKeyFromSeed(newSeed).publicKey, after.rootPublicKey)).toBe(true);
+  });
+
+  test('hub user passwd maps hub apply errors in both languages', async () => {
+    const cases = [
+      ['HUB_TIMEOUT', 'hub.user.passwd.hubTimeout'],
+      ['HUB_NOT_WRITER', 'hub.user.passwd.hubNotWriter'],
+      ['KEYLOG_TYPE_UNSUPPORTED_BY_NODES', 'hub.user.passwd.nodesTooOld'],
+    ] as const;
+    for (const lang of ['en', 'zh-CN'] as const) {
+      setLang(lang);
+      for (const [code, key] of cases) {
+        expect(mapPasswdApplyError(code)).toBe(t(key));
+      }
+    }
+
+    const auth = await openHubAuth();
+    authHandles.push(auth);
+    await runHubUserAdd(parsed, 'bob', {
+      auth,
+      password: 'old-pass-word',
+      log: () => undefined,
+    });
+    auth.userKeys.signAndApply = (async () => ({
+      ok: false as const,
+      error: 'HUB_TIMEOUT',
+    })) as typeof auth.userKeys.signAndApply;
+    setLang('zh-CN');
+    await expect(
+      runHubUserPasswd(parsed, 'bob', {
+        auth,
+        oldPassword: 'old-pass-word',
+        newPassword: 'new-pass-word',
+        log: () => undefined,
+      })
+    ).rejects.toThrow(t('hub.user.passwd.hubTimeout'));
   });
 
   test('hub user totp record decrypts with deriveTotpKey', async () => {

@@ -219,6 +219,17 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.list.empty': 'mesh_hubs is empty (no hub set learned from node.list yet)',
     'hub.list.header':
       'NODE       NAME            MODE     PRI  EPOCH  AUTH  ONLINE  LAST SEEN             PUBLIC URL',
+
+    'hub.user.passwd.hubTimeout':
+      'Primary hub is unreachable; the change was not submitted. Switch hub roles, then retry.',
+    'hub.user.passwd.hubNotWriter':
+      'This hub is a standby and does not accept account changes. Switch hub roles, then retry.',
+    'hub.user.passwd.nodesTooOld': 'Some nodes are older than 1.1.16. Update every node first.',
+    'hub.user.passwd.failed': 'password update failed: {{error}}',
+    'hub.user.passwd.doneKeep':
+      'password updated for {{username}} (keep): existing sign-in methods remain',
+    'hub.user.passwd.doneFullReset':
+      'password updated for {{username}} (full-reset): passkeys, two-step verification, and sessions were removed',
   },
   'zh-CN': {
     'cli.error.unknownCommand': '未知命令：{{command}}',
@@ -421,6 +432,14 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.list.empty': '本地 mesh_hubs 为空（尚未从 node.list 学到其它 hub）',
     'hub.list.header':
       'NODE       NAME            MODE     PRI  EPOCH  AUTH  ONLINE  LAST SEEN             PUBLIC URL',
+
+    'hub.user.passwd.hubTimeout': '主 Hub 不可达，修改未提交；请先切换 Hub 角色后重试。',
+    'hub.user.passwd.hubNotWriter': '当前 Hub 为备用，不接受账号变更；请先切换 Hub 角色后重试。',
+    'hub.user.passwd.nodesTooOld': '有节点版本低于 1.1.16，须先升级全部节点。',
+    'hub.user.passwd.failed': '密码更新失败：{{error}}',
+    'hub.user.passwd.doneKeep': '已更新 {{username}} 的密码（保留）：现有登录方式保持不变。',
+    'hub.user.passwd.doneFullReset':
+      '已更新 {{username}} 的密码（全量重置）：已移除通行密钥、两步验证并注销全部会话。',
   },
 };
 
