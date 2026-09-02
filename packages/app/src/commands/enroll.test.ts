@@ -308,6 +308,46 @@ describe('enroll', () => {
     expect(decodeJoinToken(result.token).caFingerprint).toBe('ab'.repeat(32));
   });
 
+  test('non-hub enroll fails before password/TOTP when hub requires passkey second-factor', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'node',
+        TMEX_HUB_URL: 'http://127.0.0.1:9',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'ivy', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    let loginCalls = 0;
+    await expect(
+      runEnroll(parsed, {
+        auth,
+        password: 'enroll-pass-word',
+        wait: false,
+        log: () => undefined,
+        totpCode: '',
+        fetcher: async (input) => {
+          const url = String(input);
+          if (url.includes('/api/auth/login')) loginCalls += 1;
+          return Response.json({
+            mode: 'mesh',
+            nodeId: 'self',
+            uid: auth.userStore.getByUsername('ivy')?.id,
+            totpEnabled: true,
+            passkeySecondFactor: true,
+          });
+        },
+      })
+    ).rejects.toThrow(/passkey second-factor/);
+    expect(loginCalls).toBe(0);
+  });
+
   test('explicitly empty totpCode is rejected instead of prompting', async () => {
     const auth = await openLocalAuth({
       memory: true,

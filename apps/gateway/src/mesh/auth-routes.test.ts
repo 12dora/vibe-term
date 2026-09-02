@@ -143,6 +143,8 @@ export class FakeStreams implements StreamOpener {
     method: string;
   } | null = null;
   nextResponse: Response = new Response('ok');
+  httpOpenCount = 0;
+  nextResponseFactory: (() => Response) | null = null;
   httpOpenError: Error | null = null;
   lastWs: FakeWs | null = null;
   wsAuth: string | null = null;
@@ -168,12 +170,14 @@ export class FakeStreams implements StreamOpener {
       this.httpOpenError = null;
       throw err;
     }
+    this.httpOpenCount += 1;
     this.lastOpen = {
       path: open.path,
       headers: open.headers,
       auth: open.auth,
       method: open.method,
     };
+    if (this.nextResponseFactory) return this.nextResponseFactory();
     return this.nextResponse;
   }
 
@@ -2120,6 +2124,108 @@ describe('auth-routes', () => {
       });
       expect(blocked.status).toBe(429);
       expect((await blocked.json()).code).toBe('RATE_LIMITED');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('oversized uid is MALFORMED on challenge, login, and passkey options and is not retained', async () => {
+    const mesh = await bootMesh();
+    const oversized = 'x'.repeat(300);
+    try {
+      const challenge = await call(mesh.runtime, 'http://localhost/api/auth/challenge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ uid: oversized }),
+      });
+      expect(challenge.status).toBe(400);
+      expect((await challenge.json()).code).toBe('MALFORMED');
+      expect(mesh.challengeStore.size).toBe(0);
+
+      const login = buildLogin({
+        challengeId: 'c1',
+        nonce: new Uint8Array(32),
+        target: NODE_ID,
+        targetPk: NODE_PK,
+        uid: oversized,
+        entry: 'self',
+      });
+      for (let i = 0; i < 11; i += 1) {
+        const res = await call(mesh.runtime, 'http://localhost/api/auth/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            login: encodeBase64url(encodeLogin(login)),
+            sig: encodeBase64url(new Uint8Array(64)),
+            delegation: encodeBase64url(new Uint8Array(8)),
+            delegation_sig: encodeBase64url(new Uint8Array(64)),
+          }),
+        });
+        expect(res.status).toBe(400);
+        expect((await res.json()).code).toBe('MALFORMED');
+      }
+
+      const sess = generateEd25519KeyPair();
+      const del = createDelegation(mesh.boot.rootKey, {
+        uid: mesh.boot.userId,
+        sessPk: sess.publicKey,
+        now: Date.now(),
+      });
+      const options = await call(mesh.runtime, 'http://localhost/api/auth/passkey/login/options', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: 'http://localhost:19663' },
+        body: JSON.stringify({
+          uid: oversized,
+          delegation: encodeBase64url(encodeDelegation(del.delegation)),
+        }),
+      });
+      expect(options.status).toBe(400);
+      expect((await options.json()).code).toBe('MALFORMED');
+      expect(mesh.challengeStore.size).toBe(0);
+
+      const ok = await call(mesh.runtime, 'http://localhost/api/auth/challenge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ uid: mesh.boot.userId }),
+      });
+      expect(ok.status).toBe(200);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('peer-context challenge requests are not counted by the per-IP challenge limiter', async () => {
+    const mesh = await bootMesh();
+    try {
+      const peerIp = 'peer:entry-node';
+      for (let i = 0; i < CHALLENGE_RATE_LIMIT + 1; i += 1) {
+        const res = await call(mesh.runtime, 'http://localhost/api/auth/challenge', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ uid: mesh.boot.userId }),
+          via: 'entry-node',
+          clientIp: peerIp,
+        });
+        expect(res.status).toBe(200);
+      }
+
+      const localIp = '203.0.113.60';
+      for (let i = 0; i < CHALLENGE_RATE_LIMIT; i += 1) {
+        const res = await call(mesh.runtime, 'http://localhost/api/auth/challenge', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ uid: mesh.boot.userId }),
+          clientIp: localIp,
+        });
+        expect(res.status).toBe(200);
+      }
+      const blocked = await call(mesh.runtime, 'http://localhost/api/auth/challenge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ uid: mesh.boot.userId }),
+        clientIp: localIp,
+      });
+      expect(blocked.status).toBe(429);
     } finally {
       mesh.close();
     }

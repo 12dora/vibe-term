@@ -40,3 +40,6 @@ tmex 准备暴露到公网。此前登录失败会区分「用户不存在」（
 
 - 只在一个 origin 注册了通行密钥，又必须从另一个 origin（如局域网 IP）登录：会被 `PASSKEY_REQUIRED` 挡住。恢复路径：在已注册地址登录后为新地址添加通行密钥；或在主 hub 上 `tmex hub user passwd <user> --full-reset`（`rotate-root` 全量重置会移除全部通行密钥）。
 - 滚动升级期间旧节点仍返回 `UNKNOWN_USER` / `DELEGATION_BAD_SIGNATURE`，前端已兼容映射；旧节点不认识 `passkey` 字段会忽略它，不会拒登。
+- 二次验证按**节点**各自执行：未升级的节点仍只验密码，知道密码的人经 `/n/<旧节点>/api/auth/login` 可以拿到该旧节点的会话；旧入口也会把新节点的 `PASSKEY_REQUIRED` 改写成 `NODE_LOGIN_REQUIRED`。这是滚动升级窗口内的既定行为，不做版本门禁——注册通行密钥前把全部节点升到 ≥1.1.18（节点管理里可批量升级）。
+- CLI `tmex enroll` 用密码登录 hub 后再创建 enrollment；账号启用通行密钥二次验证后该路径不可用，CLI 会在提示输入密码前直接给出说明。加入节点请在网页「设置 → 多节点互联 → 节点管理 → 添加 → 生成加入码」后使用加入命令（redeem 走加入码，不需要密码登录）。
+- 未登录的 `/api/auth/challenge`、`/api/auth/login`、`/api/auth/passkey/login/options` 只接受 ≤256 字节的 uid，超长直接 `MALFORMED`，避免用超长用户名撑爆挑战存储 / 限流表。经入口转发到目标节点的鉴权请求，按真实客户端 IP 的限速在**入口**执行；目标节点看到的是 `peer:<入口>`，对 peer 上下文不再做按 IP 的挑战限速（uid 维度的登录失败限流仍在目标节点执行）。

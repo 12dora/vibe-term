@@ -227,7 +227,7 @@ interface Captured {
   login?: Record<string, string>;
 }
 
-function mockApi(): { api: AuthApi; captured: Captured } {
+function mockApi(options: { loginCode?: string } = {}): { api: AuthApi; captured: Captured } {
   const captured: Captured = {};
   const client = new ApiClient('', (url, init) => {
     const match = /^\/n\/([^/]+)\/api\/auth\/(challenge|login)$/.exec(url);
@@ -242,6 +242,9 @@ function mockApi(): { api: AuthApi; captured: Captured } {
       );
     }
     captured.login = JSON.parse(String(init?.body)) as Record<string, string>;
+    if (options.loginCode) {
+      return Promise.resolve(Response.json({ code: options.loginCode }, { status: 401 }));
+    }
     return Promise.resolve(Response.json({ expires_at: 1 }));
   });
   return { api: new AuthApi(client), captured };
@@ -428,6 +431,40 @@ describe('会话钥跨 document 恢复', () => {
     ).passkey;
     expect(passkey?.credential_id).toBe('cred-a');
     expect(decodeBase64url(passkey?.sig ?? '')).toEqual(fill(20, 0x66));
+  });
+
+  test('断言被判无效：盘上那份也一起改掉，但会话钥留在盘上不动', async () => {
+    const record = await persistedFixture();
+    await savePersistedSession({
+      ...record,
+      passkeyCredentialId: 'cred-a',
+      passkeySig: fill(20, 0x66),
+    });
+    resetSessionMemoryForTest();
+    expect(await restoreSessionKey()).not.toBeNull();
+
+    const { api } = mockApi({ loginCode: 'PASSKEY_INVALID' });
+    expect(await ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) })).toEqual({
+      ok: false,
+      code: 'PASSKEY_INVALID',
+    });
+
+    // 会话钥还在（内存与盘上都在），只有断言没了。
+    expect(getSessionKey()).not.toBeNull();
+    const stored = await loadPersistedSession();
+    expect(stored).not.toBeNull();
+    expect(stored?.passkeyCredentialId).toBeNull();
+    expect(stored?.passkeySig).toBeNull();
+
+    // 换个 document 再恢复：这把被拒的断言不会又回来。
+    resetSessionMemoryForTest();
+    resetNodeLoginsForTest();
+    expect(await restoreSessionKey()).not.toBeNull();
+    const retry = mockApi();
+    expect(
+      await ensureNodeLogin(NODE_A, { api: retry.api, node: meshRow(NODE_A, NODE_A_PK) })
+    ).toEqual({ ok: true });
+    expect((retry.captured.login as unknown as { passkey?: unknown }).passkey).toBeUndefined();
   });
 
   test('这两个字段之前存下的旧记录照常恢复，只是没有二次验证', async () => {

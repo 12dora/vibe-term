@@ -21,6 +21,7 @@ import {
   setPendingForwardStreamTtlMs,
 } from './forwarder';
 import {
+  CHALLENGE_RATE_LIMIT,
   MESH_FORWARD_CSP,
   MESH_FORWARD_WS_KIND,
   MESH_REJECT_4401_KIND,
@@ -244,6 +245,52 @@ describe('forwarder', () => {
       expect(cookie).toContain('Max-Age=64800');
       expect(res.headers.get(X_TMEX_SET_SESSION)).toBeNull();
       expect(streams.lastOpen?.auth).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('entry rate-limits forwarded challenge by client IP and does not forward the 61st', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponseFactory = () =>
+      new Response(JSON.stringify({ challenge_id: 'c1' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const ip = '203.0.113.70';
+      const url = `http://localhost/n/${OTHER}/api/auth/challenge`;
+      for (let i = 0; i < CHALLENGE_RATE_LIMIT; i += 1) {
+        const res = await call(mesh.runtime, url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ uid: mesh.boot.userId }),
+          clientIp: ip,
+        });
+        expect(res.status).toBe(200);
+      }
+      expect(streams.httpOpenCount).toBe(CHALLENGE_RATE_LIMIT);
+      const blocked = await call(mesh.runtime, url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ uid: mesh.boot.userId }),
+        clientIp: ip,
+      });
+      expect(blocked.status).toBe(429);
+      expect((await blocked.json()).code).toBe('RATE_LIMITED');
+      expect(streams.httpOpenCount).toBe(CHALLENGE_RATE_LIMIT);
+
+      const other = await call(mesh.runtime, url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ uid: mesh.boot.userId }),
+        clientIp: '203.0.113.71',
+      });
+      expect(other.status).toBe(200);
+      expect(streams.httpOpenCount).toBe(CHALLENGE_RATE_LIMIT + 1);
     } finally {
       mesh.close();
     }

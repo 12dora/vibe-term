@@ -185,6 +185,7 @@ export class MeshHttpRuntime {
       onKeyLogEffects: (userId, effects) => this.applyKeyLogEffects(userId, effects),
       localAuth: opts.localAuth,
     });
+    this.forwarder.setAuthRateLimits(this.auth.rateLimits);
   }
 
   stop(): void {

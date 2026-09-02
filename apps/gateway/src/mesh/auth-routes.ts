@@ -62,11 +62,13 @@ import {
 import { handleTotpRecordRequest } from './auth-totp-record';
 import { clientIpFromRequest } from './client-ip';
 import {
+  AUTH_UID_MAX_BYTES,
   CHALLENGE_RATE_LIMIT,
   type HubTlsInfoProvider,
   type KeyLogHubAck,
   type KeyLogPublisher,
   LOGIN_CHALLENGE_TTL_MS,
+  LOGIN_RATE_LIMIT,
   MESH_VIA_SELF,
   type MeshRoles,
   PASSKEY_REGISTER_TTL_MS,
@@ -88,6 +90,31 @@ export type { KeyLogHubAck };
 export { findPrimaryUser, isPasskeyAvailable };
 
 export type AuthKeyLogPublisher = KeyLogPublisher;
+
+export type AuthRateLimits = {
+  consumeChallengeQuota(req: Request): Response | null;
+  isLoginRateLimited(uidHint: string, ip: string): boolean;
+  recordLoginFailure(uidHint: string, ip: string): void;
+};
+
+const uidEncoder = new TextEncoder();
+
+export function authUidTooLong(uid: string): boolean {
+  return uidEncoder.encode(uid).byteLength > AUTH_UID_MAX_BYTES;
+}
+
+export function peekLoginUid(body: Record<string, unknown>): string {
+  try {
+    return typeof body.login === 'string' ? decodeLogin(decodeBase64url(body.login)).uid : '';
+  } catch {
+    return '';
+  }
+}
+
+function isPeerAuthRequest(req: Request): boolean {
+  const ctx = getMeshRequestContext(req);
+  return ctx.via !== MESH_VIA_SELF || Boolean(ctx.clientIp?.startsWith('peer:'));
+}
 
 export type PublicAuthNode = {
   id: string;
@@ -155,6 +182,7 @@ export class AuthRoutes {
   private readonly modeCache = new AuthModeCache();
   private forwardWriterWrite: ((req: Request, uid?: string) => Promise<Response | null>) | null =
     null;
+  readonly rateLimits: AuthRateLimits;
 
   constructor(private readonly deps: AuthRoutesDeps) {
     this.localAuth = deps.localAuth ?? new LocalAuthStore();
@@ -168,6 +196,14 @@ export class AuthRoutes {
       deps.verifyDelegationPasskey ?? makeVerifyDelegationPasskey(deps.userStore);
     this.tlsInfoProvider = deps.tlsInfo;
     this.forwardWriterWrite = deps.forwardWriterWrite ?? null;
+    this.rateLimits = {
+      consumeChallengeQuota: (req) => this.consumeChallengeQuota(req),
+      isLoginRateLimited: (uidHint, ip) => this.limiter.isRateLimited(uidHint, ip),
+      recordLoginFailure: (uidHint, ip) => {
+        if (ip) this.limiter.recordFailure(`ip:${ip}`);
+        if (uidHint && !authUidTooLong(uidHint)) this.limiter.recordFailure(`uid:${uidHint}`);
+      },
+    };
   }
 
   setWriterForward(fn: ((req: Request, uid?: string) => Promise<Response | null>) | null): void {
@@ -275,13 +311,13 @@ export class AuthRoutes {
   }
 
   private async handleChallenge(req: Request): Promise<Response> {
-    const limited = this.consumeChallengeQuota(req);
-    if (limited) return limited;
     const body = await readJsonObjectBody(req);
     const uidRaw = typeof body?.uid === 'string' ? body.uid : '';
-    if (!uidRaw) {
+    if (!uidRaw || authUidTooLong(uidRaw)) {
       return jsonError('MALFORMED', 400);
     }
+    const limited = this.consumeChallengeQuota(req);
+    if (limited) return limited;
     const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
     const created = this.deps.challengeStore.create({
       uid: uidRaw,
@@ -297,17 +333,19 @@ export class AuthRoutes {
   }
 
   private async handleLogin(req: Request): Promise<Response> {
-    const ip = clientIpFromRequest(req) ?? 'local';
+    const peer = isPeerAuthRequest(req);
+    const ip = peer ? '' : (clientIpFromRequest(req) ?? 'local');
     const body = await readJsonObjectBody(req);
     if (!body) {
-      this.limiter.recordFailure(`ip:${ip}`);
+      if (ip) this.limiter.recordFailure(`ip:${ip}`);
       return jsonError('MALFORMED', 400);
     }
     let uidHint = peekLoginUid(body);
-    if (this.limiter.isRateLimited(uidHint, ip)) return jsonError('RATE_LIMITED', 429);
+    if (uidHint && authUidTooLong(uidHint)) return jsonError('MALFORMED', 400);
+    if (this.loginLimited(uidHint, ip)) return jsonError('RATE_LIMITED', 429);
     const fail = (code: string, status = 401): Response => {
       if (code !== 'TOTP_REQUIRED' && code !== 'PASSKEY_REQUIRED') {
-        this.limiter.recordFailure(`ip:${ip}`);
+        if (ip) this.limiter.recordFailure(`ip:${ip}`);
         if (uidHint) this.limiter.recordFailure(`uid:${uidHint}`);
       }
       return jsonError(code, status);
@@ -316,7 +354,8 @@ export class AuthRoutes {
       const envelope = parseLoginEnvelope(body);
       if (!envelope) return fail('MALFORMED', 400);
       uidHint = envelope.login.uid;
-      if (this.limiter.isRateLimited(uidHint, ip)) return jsonError('RATE_LIMITED', 429);
+      if (uidHint && authUidTooLong(uidHint)) return jsonError('MALFORMED', 400);
+      if (this.loginLimited(uidHint, ip)) return jsonError('RATE_LIMITED', 429);
       const challenge = this.deps.challengeStore.consume(envelope.login.challenge_id);
       if (!challenge || challenge.kind !== 'login') return fail('CHALLENGE_CONSUMED');
       const bound = loginBindingError(
@@ -443,11 +482,12 @@ export class AuthRoutes {
   }
 
   private async handlePasskeyLoginOptions(req: Request): Promise<Response> {
-    const limited = this.consumeChallengeQuota(req);
-    if (limited) return limited;
     const body = await readJsonObjectBody(req);
     const fields = body && requiredStrings(body, ['uid', 'delegation']);
     if (!fields) return jsonError('MALFORMED', 400);
+    if (authUidTooLong(fields.uid)) return jsonError('MALFORMED', 400);
+    const limited = this.consumeChallengeQuota(req);
+    if (limited) return limited;
     let delegation: Delegation;
     try {
       delegation = decodeDelegation(decodeBase64url(fields.delegation));
@@ -936,6 +976,7 @@ export class AuthRoutes {
   }
 
   private consumeChallengeQuota(req: Request): Response | null {
+    if (isPeerAuthRequest(req)) return null;
     const ip = clientIpFromRequest(req) ?? 'local';
     const key = `ip:${ip}`;
     if (this.challengeLimiter.count(key) >= CHALLENGE_RATE_LIMIT) {
@@ -943,6 +984,11 @@ export class AuthRoutes {
     }
     this.challengeLimiter.record(key);
     return null;
+  }
+
+  private loginLimited(uidHint: string, ip: string): boolean {
+    if (ip) return this.limiter.isRateLimited(uidHint, ip);
+    return uidHint ? this.limiter.count(`uid:${uidHint}`) >= LOGIN_RATE_LIMIT : false;
   }
 }
 
@@ -992,14 +1038,6 @@ function parseTotpBody(value: unknown): { code: string; kTotp: Uint8Array } | nu
     return { code: rec.code, kTotp: decodeBase64url(rec.k_totp) };
   } catch {
     return null;
-  }
-}
-
-function peekLoginUid(body: Record<string, unknown>): string {
-  try {
-    return typeof body.login === 'string' ? decodeLogin(decodeBase64url(body.login)).uid : '';
-  } catch {
-    return '';
   }
 }
 

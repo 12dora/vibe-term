@@ -76,6 +76,9 @@ function mockApi(options: {
   loginErrorCode?: string;
   /** `/api/mesh/nodes` 失败（entry 已登录但列表拉不到）。 */
   meshListStatus?: number;
+  /** `POST /api/auth/challenge` 的非 200 状态与业务码。 */
+  challengeStatus?: number;
+  challengeCode?: string;
   /** entry 自身在 mesh 列表里的公钥（默认与 challenge 返回的一致）。 */
   entryPkInList?: Uint8Array;
   /** 让匹配的请求直接网络失败。 */
@@ -123,6 +126,13 @@ function mockApi(options: {
     const kind = selfMatch ? match[1] : match[2];
     if (kind === 'challenge') {
       captured.challengeCalls.push(nodeId);
+      if (options.challengeStatus && options.challengeStatus !== 200) {
+        return Promise.resolve(
+          options.challengeCode
+            ? Response.json({ code: options.challengeCode }, { status: options.challengeStatus })
+            : new Response('<html>bad gateway</html>', { status: options.challengeStatus })
+        );
+      }
       const pk =
         options.nodePkOverride?.[nodeId] ??
         (selfMatch ? ENTRY_PK : nodes.find((node) => node.id === nodeId)?.publicKey) ??
@@ -1286,6 +1296,95 @@ describe('密码登录的通行密钥二次验证', () => {
     });
 
     expect(result).toEqual({ ok: false, code: 'NO_PASSKEY_FOR_ORIGIN' });
+    expect(hasSessionKey()).toBe(true);
+  });
+});
+
+describe('challenge 失败的分因（不能一律压成网络错误）', () => {
+  test('429 RATE_LIMITED 原样透出：压成「检查网络后重试」会让用户继续猛点', async () => {
+    await establishRoot();
+    const { api, captured } = mockApi({ challengeStatus: 429, challengeCode: 'RATE_LIMITED' });
+    expect(await loginToNode(NODE_A, { api })).toEqual({ ok: false, code: 'RATE_LIMITED' });
+    expect(captured.loginCalls).toHaveLength(0);
+  });
+
+  test('网关层的非 JSON 5xx 没有业务含义，仍按 NETWORK_ERROR', async () => {
+    await establishRoot();
+    const { api } = mockApi({ challengeStatus: 502 });
+    expect(await loginToNode(NODE_A, { api })).toEqual({ ok: false, code: 'NETWORK_ERROR' });
+  });
+
+  test('真的没拿到响应（断网）才是 NETWORK_ERROR', async () => {
+    await establishRoot();
+    const { api } = mockApi({ offline: (url) => url.endsWith('/challenge') });
+    expect(await loginToNode(NODE_A, { api })).toEqual({ ok: false, code: 'NETWORK_ERROR' });
+  });
+});
+
+describe('ensureNodeLogin 对已被拒的通行密钥断言', () => {
+  /** 建一个带二次验证断言的会话（走完整仪式，断言真的进了 session store）。 */
+  async function establishWithAssertion() {
+    const backend = secondFactorApi({});
+    setPasskeyCeremonyForTest(async () => fakeAssertion(CRED_A));
+    await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+      uid: UID,
+      entryNodeId: ENTRY,
+      rootEpoch: 0,
+      hasTotp: false,
+      passkeySecondFactor: true,
+      api: backend.api,
+      origin: 'https://node.example',
+    });
+  }
+
+  test('PASSKEY_INVALID：只丢断言，会话钥留着——下一次登录退化成不带二次验证', async () => {
+    await establishWithAssertion();
+    expect(readSessionSecrets()?.passkeyCredentialId).toBe(CRED_A);
+    const sig = readSessionSecrets()?.passkeySig as Uint8Array;
+    setMeshNodesStateForTest({ entryNodeId: ENTRY, nodes: [meshRow(NODE_A, NODE_A_PK)] });
+    const { api, captured } = mockApi({
+      nodes: [{ id: NODE_A, publicKey: NODE_A_PK }],
+      loginStatus: () => 401,
+      loginErrorCode: 'PASSKEY_INVALID',
+    });
+
+    expect(await ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) })).toEqual({
+      ok: false,
+      code: 'PASSKEY_INVALID',
+    });
+    // 会话钥必须活着：一台远端 node 的判决不该把整个会话清掉（1.1.8「401 即登出」）。
+    expect(hasSessionKey()).toBe(true);
+    // 断言本身丢干净，字节也就地清零。
+    expect(readSessionSecrets()?.passkeyCredentialId).toBeNull();
+    expect(readSessionSecrets()?.passkeySig).toBeNull();
+    expect(sig.every((byte) => byte === 0)).toBe(true);
+    // 第一次确实带了断言。
+    expect(
+      (captured.loginCalls[0].body as { passkey?: { credential_id: string } }).passkey
+        ?.credential_id
+    ).toBe(CRED_A);
+
+    // 第二次退化成不带二次验证：服务端据此回 PASSKEY_REQUIRED，用户点一次按钮就能补仪式。
+    resetNodeLoginsForTest();
+    await ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) });
+    expect(captured.loginCalls).toHaveLength(2);
+    expect((captured.loginCalls[1].body as { passkey?: unknown }).passkey).toBeUndefined();
+    expect(hasSessionKey()).toBe(true);
+  });
+
+  test('签名类失败不丢钥：远端 node 的密钥日志没同步是会自愈的临时状态', async () => {
+    await establishRoot();
+    setMeshNodesStateForTest({ entryNodeId: ENTRY, nodes: [meshRow(NODE_A, NODE_A_PK)] });
+    const { api } = mockApi({
+      nodes: [{ id: NODE_A, publicKey: NODE_A_PK }],
+      loginStatus: () => 401,
+      loginErrorCode: 'BAD_SIGNATURE',
+    });
+
+    expect(await ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) })).toEqual({
+      ok: false,
+      code: 'BAD_SIGNATURE',
+    });
     expect(hasSessionKey()).toBe(true);
   });
 });

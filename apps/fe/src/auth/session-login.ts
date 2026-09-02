@@ -594,6 +594,19 @@ function secondFactorFailureCode(err: unknown): string {
   return (err as { code?: string } | null)?.code ?? 'PASSKEY_REQUIRED';
 }
 
+/**
+ * 请求抛异常时该报哪个码。
+ *
+ * `RATE_LIMITED` 这类**服务端的业务结论**必须原样透出：一律压成 `NETWORK_ERROR` 会让用户看到
+ * 「检查网络后重试」，然后继续猛点重试，把限流撞得更死。只有真的没拿到响应（断网、DNS、
+ * CORS）以及网关层的 `HTTP_<status>`（502/504 之类，没有业务含义）才算网络错误。
+ */
+function transportFailureCode(err: unknown): string {
+  const code = (err as { code?: string } | null)?.code;
+  if (!code || code.startsWith('HTTP_')) return 'NETWORK_ERROR';
+  return code;
+}
+
 /** 单次「取 challenge → 签 login → POST /login」。重试时必须整套重来：nonce 是一次性的。 */
 async function signAndLogin(args: {
   api: AuthApi;
@@ -604,16 +617,19 @@ async function signAndLogin(args: {
   totp: { code: string; k_totp: string } | undefined;
 }): Promise<LoginNodeResult> {
   const { api, nodeId, session, secrets, node, totp } = args;
-  const challenge = await api.challenge(nodeId, session.uid).catch(() => null);
-  if (!challenge) return { ok: false, code: 'NETWORK_ERROR' };
+  const challenge = await api.challenge(nodeId, session.uid).then(
+    (value) => ({ ok: true as const, value }),
+    (err: unknown) => ({ ok: false as const, code: transportFailureCode(err) })
+  );
+  if (!challenge.ok) return { ok: false, code: challenge.code };
 
-  const targetPk = decodeBase64url(challenge.nodePk);
+  const targetPk = decodeBase64url(challenge.value.nodePk);
   if (!pinnedPkOk(targetPk, node)) return { ok: false, code: 'NODE_PK_MISMATCH' };
   if (!node) selfChallengePk = targetPk;
 
   const login = buildLogin({
-    challengeId: challenge.challenge_id,
-    nonce: decodeBase64url(challenge.nonce),
+    challengeId: challenge.value.challenge_id,
+    nonce: decodeBase64url(challenge.value.nonce),
     target: nodeId,
     targetPk,
     uid: session.uid,

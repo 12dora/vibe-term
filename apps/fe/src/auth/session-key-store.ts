@@ -196,6 +196,27 @@ export function setPasskeyAssertion(credentialId: string, sig: Uint8Array): void
   if (!pendingReplacement) void persistSession(current);
 }
 
+/**
+ * 丢掉这份被判为无效的断言，**但保留会话钥**。
+ *
+ * 断言与 delegation 绑死，服务端说它不认，重发多少次都是同一个结果——所以必须丢。但会话钥本身
+ * 没有任何问题：丢掉断言之后，下一次登录退化成不带二次验证，服务端会回 `PASSKEY_REQUIRED`，
+ * 用户主动发起的那次登录当场补一次仪式即可，**连密码都不用重输**。
+ *
+ * 返回落盘的 Promise：盘上那份也必须一起改掉，否则刷新一下这把已被拒的断言又回来了。
+ */
+export function clearPasskeyAssertion(): Promise<boolean> {
+  if (!current || (!current.passkeyCredentialId && !current.passkeySig)) {
+    return Promise.resolve(true);
+  }
+  current.passkeySig?.fill(0);
+  current.passkeyCredentialId = null;
+  current.passkeySig = null;
+  // 两阶段替换期间一个字节都不写盘，由 `replaceSessionKey()` 在接受之后统一提交。
+  if (pendingReplacement) return Promise.resolve(true);
+  return persistSession(current);
+}
+
 /** 仅供 `./session-login` 读内存里的私钥材料。 */
 export function readSessionSecrets(): SessionKeySecrets | null {
   return current;
@@ -351,6 +372,17 @@ let loadLogin: () => Promise<LoginModule> = () => import('./session-login');
  *
  * 开了 TOTP 的密码会话：node 端每次登录都要校验一次 TOTP，而浏览器只持有 k_totp、生成不了
  * 新码，所以这里会返回 `TOTP_REQUIRED`，同样退回登录页让用户当场输码。
+ *
+ * `PASSKEY_INVALID` 会就地把那份断言丢掉（`clearPasskeyAssertion()`），但**不丢会话钥**：
+ * 断言与 delegation 绑死，被判无效后重发是可证明无用的；而会话钥本身没问题，丢掉断言之后
+ * 下一次登录退化成不带二次验证，服务端回 `PASSKEY_REQUIRED`，用户点一次「登录此节点」就能
+ * 当场补仪式，密码都不用重输。
+ *
+ * **不在这里丢会话钥**是有意的：远端 node 回 `PASSKEY_INVALID` / 签名类码（`BAD_SIGNATURE`、
+ * `BAD_DELEGATION`、`ROOT_KEY_MISMATCH` …）最常见的现实原因，是那台机器的密钥日志还没同步到
+ * 最新 epoch，属于会自愈的临时状态。凭一台掉队的 node 的判决就把整个会话清掉，就是 1.1.8
+ * 「401 即登出」那次闪断事故的形状。entry 自己的登录页另说——那里 `isCredentialFailure()`
+ * 仍然把 `PASSKEY_INVALID` 当凭证失败丢钥，因为那次判决来自用户刚刚交互过的这台机器。
  */
 export function ensureNodeLogin(
   nodeId: string,
@@ -364,7 +396,12 @@ export function ensureNodeLogin(
       if (!session) return { ok: false, code: 'NO_SESSION_KEY' };
       const mod = await loadLogin();
       const result = await mod.loginToNode(nodeId, opts);
-      if (result.ok) markLoggedIn(nodeId);
+      if (result.ok) {
+        markLoggedIn(nodeId);
+        return result;
+      }
+      // 等盘上那份真的改掉再返回，否则刷新一下这把已被拒的断言又回来了。
+      if (result.code === 'PASSKEY_INVALID') await clearPasskeyAssertion();
       return result;
     })
     // chunk 拉不下来（离线 / 部署换了 hash）也得给调用方一个结果，否则门闸永远停在 pending。
