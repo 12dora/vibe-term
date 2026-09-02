@@ -70,6 +70,33 @@ describe('session interceptor', () => {
     expect(navigated).toEqual(['/login?next=%2Fdevices%2Fabc']);
   });
 
+  test('登录仪式自身的 401 既不派发也不跳转', async () => {
+    const { events, navigated } = setup();
+    for (const path of [
+      '/api/auth/login',
+      '/api/auth/challenge',
+      '/api/auth/passkey/login/options',
+    ]) {
+      const client = clientReturning(
+        () => new Response(JSON.stringify({ code: 'PASSKEY_REQUIRED' }), { status: 401 })
+      );
+      await client.fetch(path);
+    }
+    await flush();
+
+    expect(events).toEqual([]);
+    expect(navigated).toEqual([]);
+  });
+
+  test('仪式之外的 auth 端点 401 仍然跳登录页', async () => {
+    const { navigated } = setup();
+    const client = clientReturning(() => new Response('{}', { status: 401 }));
+    await client.fetch('/api/auth/passkeys');
+    await flush();
+
+    expect(navigated).toEqual(['/login?next=%2Fdevices%2Fabc']);
+  });
+
   test('NODE_LOGIN_REQUIRED 只派发 node 事件，不跳转', async () => {
     const { events, navigated } = setup();
     const client = clientReturning(

@@ -11,6 +11,7 @@ import './index.css';
 console.info(`${PRODUCT_NAME} ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
 
 import { isAuthTransitionActive } from '@/auth/auth-transition';
+import { createLoginRedirect } from '@/auth/login-redirect';
 import { RouteErrorElement } from '@/components/app-error-boundary';
 import { FlowBridges } from '@/components/flow-bridges';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
@@ -299,13 +300,18 @@ const router = createBrowserRouter([
   },
 ]);
 
-// 退出 mesh 期间本机会话会被主动清空，随之而来的自身 401 是预期内的：
-// 这时跳 /login 会把还在等网关重启的编排一起卸载掉，直接压住即可。
+// 退出 mesh / 常规改密后重新登录这两段窗口里的自身 401 都是预期内的，
+// 跳 /login 会把还在进行的编排一起卸载掉（见 `createLoginRedirect`）。
 installSessionInterceptor({
-  navigate: (to) => {
-    if (isAuthTransitionActive()) return;
-    void router.navigate(to);
-  },
+  navigate: createLoginRedirect({
+    navigate: (to) => {
+      void router.navigate(to);
+    },
+    authTransitionActive: isAuthTransitionActive,
+    // 会话替换期间被压住的那一跳最终不跳时，把 entry 那条 WS 重新拉起来：
+    // 触发它的 401 / 4401 可能已经把连接拆了，而会话其实一直有效。
+    onSessionKept: () => appNodeRuntimes.get(SELF_NODE_ID).connection.client.reconnect(),
+  }),
 });
 
 // 宿主根：entry（self）运行时常驻，供路由之外的外壳组件（Toaster 等）消费。

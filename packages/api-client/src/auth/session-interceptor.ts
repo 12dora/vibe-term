@@ -2,6 +2,7 @@
 //   * 全局 401（entry 自身未登录）→ 派发 `auth:required` 并跳 `/login?next=`
 //   * `/n/:id/*` 转发回来的 401 `{code:'NODE_LOGIN_REQUIRED', nodeId}` → 只派发事件，
 //     由该 node 所在的行/侧边栏显示「登录此节点」，绝不把整页踢去登录页。
+//   * 登录仪式自身的 401 → 什么都不做，见 `isLoginCeremonyPath`。
 
 import { type ResponseHook, addResponseHook, urlPathname } from '../client';
 import { SELF_NODE_ID, isValidNodeId } from '../node-url';
@@ -99,6 +100,26 @@ export function nodeIdFromPath(path: string): string {
   return isValidNodeId(raw) ? raw : SELF_NODE_ID;
 }
 
+/**
+ * 登录仪式自身的端点。
+ *
+ * 它们的 401 是**这一次登录尝试**的结论（密码不对、缺通行密钥二次验证……），而不是
+ * 「手上这份会话失效了」。当成后者会把整页踢去登录页：常规改密后的重新登录必然先撞一次
+ * `401 PASSKEY_REQUIRED`（服务端据此索要二次验证），调用方正准备补一次仪式再登一次，
+ * 页面却已经被导航走、连同还在进行的编排一起卸载掉。
+ *
+ * 真正「会话没了」的信号来自别的路径：任何需要会话的业务端点的 401，以及 WS 的 4401。
+ */
+const LOGIN_CEREMONY_PATHS = new Set([
+  '/api/auth/challenge',
+  '/api/auth/login',
+  '/api/auth/passkey/login/options',
+]);
+
+function isLoginCeremonyPath(path: string): boolean {
+  return LOGIN_CEREMONY_PATHS.has(urlPathname(path));
+}
+
 type ErrorBody = { code?: unknown; nodeId?: unknown };
 
 const warnedForeignNodeIds = new Set<string>();
@@ -150,6 +171,8 @@ export async function handleUnauthorized(res: Response, path: string): Promise<v
     emit({ nodeId, scope: 'node', path });
     return;
   }
+  // 登录仪式自身的 401：这次尝试的结论归调用方处理，绝不能当成「当前会话失效」。
+  if (isLoginCeremonyPath(path)) return;
   emit({ nodeId: SELF_NODE_ID, scope: 'global', path });
   goToLogin();
 }

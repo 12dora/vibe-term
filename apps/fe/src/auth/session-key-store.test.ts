@@ -4,12 +4,16 @@ import {
   resetMeshNodesStateForTest,
   setMeshNodesStateForTest,
 } from '@/node/mesh-nodes';
-import { ApiClient, SELF_NODE_ID } from '@tmex/api-client';
+import { ApiClient, SELF_NODE_ID, clearResponseHooks } from '@tmex/api-client';
 import {
   AuthApi,
   type AuthenticationResponseJSON,
   type MeshNode,
   WebAuthnError,
+  configureSessionInterceptor,
+  installSessionInterceptor,
+  onAuthRequired,
+  uninstallSessionInterceptor,
 } from '@tmex/api-client/auth/index';
 import {
   decodeBase64url,
@@ -26,10 +30,12 @@ import {
   ensureNodeLogin,
   getSessionKey,
   hasSessionKey,
+  isSessionReplacementPending,
   readSessionSecrets,
   replaceSessionKey,
   resetNodeLoginsForTest,
   setLoginLoaderForTest,
+  whenSessionReplacementSettled,
 } from './session-key-store';
 import {
   establishSessionFromPasskey,
@@ -341,18 +347,69 @@ describe('replaceSessionKey（两阶段会话替换）', () => {
     expect(getSessionKey()?.issuedAt).toBe(oldIssuedAt as number);
   });
 
-  test('替换期间读不到会话钥（调用方必须提前取好 entryNodeId）', async () => {
+  test('替换期间对外仍是旧会话：私钥材料读不到，但没有登出', async () => {
+    await establishRoot();
+    const oldIssuedAt = getSessionKey()?.issuedAt as number;
+    let during: unknown = 'unset';
+    let secretsDuring: unknown = 'unset';
+    let pendingDuring = false;
+    await replaceSessionKey(
+      async () => {
+        during = getSessionKey();
+        secretsDuring = readSessionSecrets();
+        pendingDuring = isSessionReplacementPending();
+        return { ok: false } as const;
+      },
+      () => false
+    );
+    expect(pendingDuring).toBe(true);
+    // 盘上那条旧记录一直在、服务端也没撤销它：这段窗口里「还登录着吗」的答案必须是「是」，
+    // 否则路由守卫会把正在改密的用户踢去登录页。
+    expect((during as { issuedAt: number } | null)?.issuedAt).toBe(oldIssuedAt);
+    // 但签名材料绝不回退成旧的：替换期间要签的是新 delegation。
+    expect(secretsDuring).toBeNull();
+    expect(hasSessionKey()).toBe(true);
+    expect(isSessionReplacementPending()).toBe(false);
+  });
+
+  test('替换期间登出：旧会话不再对外可见，替换整体作废', async () => {
     await establishRoot();
     let during: unknown = 'unset';
     await replaceSessionKey(
       async () => {
+        await clearSessionKey();
         during = getSessionKey();
         return { ok: false } as const;
       },
       () => false
     );
     expect(during).toBeNull();
-    expect(hasSessionKey()).toBe(true);
+    expect(hasSessionKey()).toBe(false);
+  });
+
+  test('`whenSessionReplacementSettled()` 在替换落定之前不 resolve', async () => {
+    await establishRoot();
+    const settledOrder: string[] = [];
+    let duringTick: string[] = ['unset'];
+    let settled: Promise<void> = Promise.resolve();
+    await replaceSessionKey(
+      async () => {
+        settled = whenSessionReplacementSettled().then(() => {
+          settledOrder.push(`${hasSessionKey()}/${isSessionReplacementPending()}`);
+        });
+        // 排空两轮微任务：替换还没落定，它就不该 resolve。
+        await Promise.resolve();
+        await Promise.resolve();
+        duringTick = [...settledOrder];
+        return { ok: false } as const;
+      },
+      () => false
+    );
+    await settled;
+    // 没有进行中的替换时立刻 resolve。
+    await whenSessionReplacementSettled();
+    expect(duringTick).toEqual([]);
+    expect(settledOrder).toEqual(['true/false']);
   });
 });
 
@@ -1216,6 +1273,57 @@ describe('密码登录的通行密钥二次验证', () => {
       { id: 'cred-b', type: 'public-key' },
     ]);
     expect(readSessionSecrets()?.passkeyCredentialId).toBe('cred-b');
+  });
+
+  // 常规改密（rotate-root-keep）后重新登录的完整链路：第一次 `POST /api/auth/login` 必然
+  // 撞 401 `PASSKEY_REQUIRED`（服务端据此索要二次验证）。这一下 401 曾经被全局会话拦截器
+  // 当成「entry 未登录」，把整页导航到 `/login`——密码其实已经改成功、仪式也正要补做，
+  // 用户却在设置面板上被踢了出去。
+  test('改密后重新登录撞 PASSKEY_REQUIRED：不派发全局 401、不跳登录页', async () => {
+    await establishRoot();
+    const backend = secondFactorApi({
+      loginCode: (call) => (call === 1 ? 'PASSKEY_REQUIRED' : undefined),
+    });
+    setPasskeyCeremonyForTest(async () => fakeAssertion(CRED_A));
+
+    const navigated: string[] = [];
+    const globalPaths: string[] = [];
+    const offEvent = onAuthRequired((detail) => {
+      if (detail.scope === 'global') globalPaths.push(detail.path);
+    });
+    configureSessionInterceptor({
+      navigate: (to) => navigated.push(to),
+      currentLocation: () => '/settings?panel=security',
+    });
+    installSessionInterceptor();
+
+    try {
+      const result = await resumeSessionAfterPasswordChange({
+        api: backend.api,
+        uid: UID,
+        password: 'new-secret',
+        kdfParams: {
+          salt: encodeBase64url(fill(16, 0x05)),
+          memory_kib: 64,
+          iterations: 1,
+          parallelism: 1,
+        },
+        entryNodeId: ENTRY,
+        rootEpoch: 1,
+        hasTotp: false,
+      });
+      expect(result).toEqual({ ok: true });
+    } finally {
+      offEvent();
+      uninstallSessionInterceptor();
+      clearResponseHooks();
+      configureSessionInterceptor({ navigate: undefined, currentLocation: undefined });
+    }
+
+    expect(backend.loginBodies).toHaveLength(2);
+    expect(navigated).toEqual([]);
+    expect(globalPaths).toEqual([]);
+    expect(hasSessionKey()).toBe(true);
   });
 
   test('PASSKEY_REQUIRED（mode 快照过期）：补一次仪式后用新 challenge 重试一次', async () => {

@@ -91,12 +91,38 @@ let generation = 0;
  * 两阶段替换的令牌。进行中时 `adoptSessionSecrets()` 只换内存、不碰 IndexedDB；
  * 期间只要有人调 `clearSessionKey()`（用户登出，或 `loginSelf()` 撞上 NODE_PK_MISMATCH
  * 主动丢弃会话），整次替换即作废，新旧两份都不留。
+ *
+ * `previous` 是被摘下来的旧会话，`settled` 在这次替换落定（新会话被接受 / 旧会话装回 /
+ * 整体作废）之后 resolve，供「要不要退回登录页」这类判断等它一等。
  */
-let pendingReplacement: { cancelled: boolean } | null = null;
+interface ReplacementToken {
+  cancelled: boolean;
+  previous: SessionKeySecrets | null;
+  settled: Promise<void>;
+}
+
+let pendingReplacement: ReplacementToken | null = null;
+
+/**
+ * 替换窗口里对外该报的会话：旧那份。
+ *
+ * 盘上留着的、刷新一下能恢复出来的、服务端也没撤销的，都还是它——所以这段窗口里
+ * 「用户还登录着吗」的答案必须是「是」。被 `clearSessionKey()` 作废之后除外：那是
+ * 明确的登出，两份都不算数了。
+ *
+ * 只有 `getSessionKey()` 这类**只读元数据**的入口走这条回退；`readSessionSecrets()`
+ * 绝不回退，否则替换期间的签名会用上旧 delegation。
+ */
+function replacedSessionInfo(): SessionKeyInfo | null {
+  const previous = pendingReplacement?.cancelled === false ? pendingReplacement.previous : null;
+  if (!previous) return null;
+  // 过期了只当没有，**不**在这里 `clearSessionKey()`：那会把正在进行的替换一起作废。
+  return Date.now() >= previous.info.expiresAt ? null : previous.info;
+}
 
 /** 命令式读取：顺带清掉已过期的会话钥。**不**触发恢复，只反映此刻内存里有什么。 */
 export function getSessionKey(): SessionKeyInfo | null {
-  if (!current) return null;
+  if (!current) return replacedSessionInfo();
   if (Date.now() >= current.info.expiresAt) {
     void clearSessionKey();
     return null;
@@ -106,6 +132,16 @@ export function getSessionKey(): SessionKeyInfo | null {
 
 export function hasSessionKey(): boolean {
   return getSessionKey() !== null;
+}
+
+/** 两阶段会话替换是否正在进行（见 `replaceSessionKey()`）。 */
+export function isSessionReplacementPending(): boolean {
+  return pendingReplacement !== null;
+}
+
+/** 等在进行中的替换落定；没有进行中的替换时立刻 resolve。 */
+export function whenSessionReplacementSettled(): Promise<void> {
+  return pendingReplacement?.settled ?? Promise.resolve();
 }
 
 /**
@@ -283,14 +319,20 @@ function wipeSecrets(secrets: SessionKeySecrets): void {
  * 旧会话（新的那份根本没落过盘）；返回值被拒或 `run()` 抛异常时，旧会话原样装回内存，盘上
  * 那条从头到尾没被碰过。
  *
- * 这段窗口里 `getSessionKey()` 读到 null——调用方要在进入之前取好 `entryNodeId` 之类的信息。
+ * 这段窗口里 `readSessionSecrets()` 读到 null（新会话还没建出来之前），调用方要在进入之前
+ * 取好 `entryNodeId` 之类的信息；而 `getSessionKey()` / `hasSessionKey()` 仍然报旧会话——
+ * 盘上那条还在，用户并没有登出，路由守卫不该在这段窗口里把人踢去登录页。
  */
 export async function replaceSessionKey<T>(
   run: () => Promise<T>,
   accept: (value: T) => boolean
 ): Promise<T> {
   const previous = current;
-  const token = { cancelled: false };
+  let markSettled = (): void => undefined;
+  const settled = new Promise<void>((resolve) => {
+    markSettled = resolve;
+  });
+  const token: ReplacementToken = { cancelled: false, previous, settled };
   current = null;
   generation += 1;
   restorePromise = Promise.resolve(null);
@@ -302,7 +344,11 @@ export async function replaceSessionKey<T>(
     return value;
   } finally {
     pendingReplacement = null;
-    await settleReplacement(token, previous, keep);
+    try {
+      await settleReplacement(token, previous, keep);
+    } finally {
+      markSettled();
+    }
   }
 }
 
