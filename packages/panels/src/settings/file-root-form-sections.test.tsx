@@ -43,7 +43,6 @@ function formModel(overrides: Partial<FileRootFormModel> = {}): FileRootFormMode
     path: '',
     setPath: () => undefined,
     enabled: true,
-    setEnabled: () => undefined,
     deviceOptions: DEVICES,
     selectedDevice: DEVICES.find((device) => device.id === deviceId),
     canSubmit: false,

@@ -38,6 +38,11 @@ export function resolveFileRootFormDeviceId(
   return root?.deviceId ?? lockedDeviceId ?? '';
 }
 
+/** 启用态不在表单里编辑：新增默认启用，编辑沿用当前值（列表行的开关负责改）。 */
+export function resolveFileRootFormEnabled(root: FileRootDto | undefined): boolean {
+  return root?.enabled ?? true;
+}
+
 export interface FileRootFormParams {
   open: boolean;
   /** 缺省表示新增模式 */
@@ -60,7 +65,6 @@ export interface FileRootFormModel {
   path: string;
   setPath: (path: string) => void;
   enabled: boolean;
-  setEnabled: (enabled: boolean) => void;
   deviceOptions: FileRootDeviceOption[];
   selectedDevice: FileRootDeviceOption | undefined;
   canSubmit: boolean;
@@ -84,7 +88,7 @@ export function useFileRootForm({
   const { apiClient } = useRuntime();
   const [deviceId, setDeviceId] = useState(() => resolveFileRootFormDeviceId(root, lockedDeviceId));
   const [path, setPath] = useState('');
-  const [enabled, setEnabled] = useState(true);
+  const [enabled, setEnabled] = useState(() => resolveFileRootFormEnabled(root));
 
   useEffect(() => {
     if (!open) {
@@ -92,7 +96,7 @@ export function useFileRootForm({
     }
     setDeviceId(resolveFileRootFormDeviceId(root, lockedDeviceId));
     setPath(root?.path ?? '');
-    setEnabled(root?.enabled ?? true);
+    setEnabled(resolveFileRootFormEnabled(root));
   }, [open, root, lockedDeviceId]);
 
   const saveMutation = useFileRootSaveMutation({
@@ -114,7 +118,6 @@ export function useFileRootForm({
     path,
     setPath,
     enabled,
-    setEnabled,
     deviceOptions,
     selectedDevice: deviceOptions.find((device) => device.id === deviceId),
     canSubmit,

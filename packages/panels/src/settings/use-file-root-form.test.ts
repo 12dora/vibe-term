@@ -7,6 +7,7 @@ import {
   collectFileRootDeviceOptions,
   isFileRootFormSubmittable,
   resolveFileRootFormDeviceId,
+  resolveFileRootFormEnabled,
 } from './use-file-root-form';
 
 const devices = [
@@ -74,5 +75,16 @@ describe('resolveFileRootFormDeviceId', () => {
 
   test('未锁定时新增从空开始', () => {
     expect(resolveFileRootFormDeviceId(undefined, undefined)).toBe('');
+  });
+});
+
+describe('resolveFileRootFormEnabled', () => {
+  test('新增默认启用', () => {
+    expect(resolveFileRootFormEnabled(undefined)).toBe(true);
+  });
+
+  test('编辑沿用 root 当前的启用态', () => {
+    expect(resolveFileRootFormEnabled({ enabled: false } as FileRootDto)).toBe(false);
+    expect(resolveFileRootFormEnabled({ enabled: true } as FileRootDto)).toBe(true);
   });
 });
