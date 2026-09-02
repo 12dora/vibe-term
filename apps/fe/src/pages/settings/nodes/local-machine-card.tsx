@@ -3,9 +3,9 @@
 // 回来，否则用户会以为操作没生效。
 
 import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
-import { useMeshHubs } from '@/node/mesh-hubs';
+import { type MeshHubsState, attachedHubId, useMeshHubs, writerHub } from '@/node/mesh-hubs';
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
+import type { AuthModeResponse, MeshHubEndpoint } from '@tmex/api-client/auth/index';
 import { defaultLocalApi } from '@tmex/api-client/local/local-api';
 import type {
   LocalDirectStatus,
@@ -27,7 +27,7 @@ import {
   describeDirectError,
   useDirectMutations,
 } from './direct-section';
-import { hubModeLabel } from './management/hub-strip';
+import { HubModeTag, hubLabel, hubModeLabel } from './management/hub-strip';
 import type { SetupIntent } from './membership/intent';
 import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
 import { ROLE_LABEL_KEY, classifyRoleChange } from './membership/role-transition';
@@ -111,12 +111,6 @@ export function LocalMachineCard({
   const leave = useLeaveMesh({ mode, client });
   const role = useRoleSwitch(status, leave.busy, onSelectSetupPath);
 
-  // 本机的主 / 备身份：`/api/local/status` 不下发 hubMode，只能从 hub 集合里按自身 nodeId 取。
-  // 集合里没有本机（旧入口、集合还没拉到）时整行不渲染，不做任何猜测。
-  const hubs = useMeshHubs({ enabled: meshEnabled && status?.role === 'hub,node' });
-  const localHubMode =
-    hubs.hubs.find((hub) => hub.nodeId && hub.nodeId === mode?.nodeId)?.mode ?? null;
-
   // 动作的返回体就是权威结果，先盖在拉到的状态上：重新拉 `local-status` 是异步的，
   // 不盖的话开关会在这段时间里停在旧值。下一份状态到达（引用变了）即撤销。
   const fetched: LocalDirectStatus | null = status?.direct ?? null;
@@ -188,13 +182,11 @@ export function LocalMachineCard({
               </Select>
             </Row>
 
-            {localHubMode && (
-              <Row label={t('nodes.hubs.machineRole')}>
-                <span className="text-xs" data-testid="local-machine-hub-mode">
-                  {hubModeLabel(t, localHubMode)}
-                </span>
-              </Row>
-            )}
+            <MachineHubRows
+              role={status.role}
+              selfNodeId={mode?.nodeId ?? null}
+              enabled={meshEnabled}
+            />
 
             {status.hubUrl && (
               <Row label={t('nodes.machine.hubUrl')}>
@@ -268,6 +260,138 @@ export function LocalMachineCard({
       />
       {leave.dialog}
     </Card>
+  );
+}
+
+/**
+ * 本机挂载的那台 hub：`attached` 给出 hubNodeId 时按它取；没有 uplink（hub 机自己就是 hub）
+ * 时退回集合里的本机那一行。集合里查不到就返回 `null`，不拿 `hubUrl` 那个入会种子充数。
+ */
+function resolveAttachedHub(
+  snapshot: MeshHubsState,
+  selfNodeId: string | null
+): MeshHubEndpoint | null {
+  const attachedId = attachedHubId(snapshot);
+  if (attachedId) return snapshot.hubs.find((hub) => hub.nodeId === attachedId) ?? null;
+  return snapshot.hubs.find((hub) => hub.nodeId === selfNodeId) ?? null;
+}
+
+/** 列表次序：writer 打头，其余按优先级——用户先看的是「谁收写入」。 */
+function orderHubs(hubs: MeshHubEndpoint[], writerHubId: string | null): MeshHubEndpoint[] {
+  return [...hubs].sort((a, b) => {
+    const rank = (hub: MeshHubEndpoint) => (hub.nodeId === writerHubId ? 0 : 1);
+    return rank(a) - rank(b) || a.priority - b.priority;
+  });
+}
+
+/**
+ * 多 hub 下本机的真实归属：`/api/local/status` 的 `hubUrl` 只是入会时写死的种子，
+ * 主备切换后早已不是当前挂载的那台，必须拿 hub 集合覆盖掉这层误导。
+ */
+function MachineHubRows({
+  role,
+  selfNodeId,
+  enabled,
+}: {
+  role: LocalRole;
+  selfNodeId: string | null;
+  enabled: boolean;
+}) {
+  const { t } = useTranslation();
+  const meshRole = role === 'node' || role === 'hub,node';
+  const snapshot = useMeshHubs({ enabled: enabled && meshRole });
+  // 本机的主 / 备身份：`/api/local/status` 不下发 hubMode，只能从 hub 集合里按自身 nodeId 取。
+  // 集合里没有本机（旧入口、集合还没拉到）时整行不渲染，不做任何猜测。
+  const localHubMode =
+    role === 'hub,node'
+      ? (snapshot.hubs.find((hub) => hub.nodeId && hub.nodeId === selfNodeId)?.mode ?? null)
+      : null;
+  const attached = meshRole ? resolveAttachedHub(snapshot, selfNodeId) : null;
+  return (
+    <>
+      {localHubMode && (
+        <Row label={t('nodes.hubs.machineRole')}>
+          <span className="text-xs" data-testid="local-machine-hub-mode">
+            {hubModeLabel(t, localHubMode)}
+          </span>
+        </Row>
+      )}
+      {attached && (
+        <AttachedHubRow
+          hub={attached}
+          isSelf={attached.nodeId === selfNodeId}
+          writer={writerHub(snapshot)}
+        />
+      )}
+      {meshRole && snapshot.hubs.length >= 2 && (
+        <HubListRow hubs={orderHubs(snapshot.hubs, snapshot.writerHubId)} />
+      )}
+    </>
+  );
+}
+
+function AttachedHubRow({
+  hub,
+  isSelf,
+  writer,
+}: {
+  hub: MeshHubEndpoint;
+  isSelf: boolean;
+  writer: MeshHubEndpoint | null;
+}) {
+  const { t } = useTranslation();
+  // 挂在备 hub 上时写入其实落在别处，同一行补出 writer，省得用户去 hub 管理面对照。
+  const elsewhere = writer && writer.nodeId !== hub.nodeId ? writer : null;
+  return (
+    <Row label={t('nodes.machine.attachedHub')}>
+      <span className="flex items-center gap-1.5 text-xs" data-testid="local-machine-attached-hub">
+        <span className="font-medium">{isSelf ? t('nodes.machine.self') : hubLabel(hub)}</span>
+        <HubModeTag mode={hub.mode} testId="local-machine-attached-hub-mode" />
+      </span>
+      <CopyableValue value={hub.publicUrl} testId="local-machine-attached-hub-url" />
+      {elsewhere && (
+        <span className="text-xs text-muted-foreground" data-testid="local-machine-writer-hub">
+          {t('nodes.machine.writerHub', { name: hubLabel(elsewhere) })}
+        </span>
+      )}
+    </Row>
+  );
+}
+
+function HubListRow({ hubs }: { hubs: MeshHubEndpoint[] }) {
+  const { t } = useTranslation();
+  return (
+    <Row label={t('nodes.machine.hubList')}>
+      <span className="flex flex-wrap items-center gap-1.5" data-testid="local-machine-hub-list">
+        {hubs.map((hub) => (
+          <MachineHubChip key={hub.nodeId} hub={hub} />
+        ))}
+      </span>
+    </Row>
+  );
+}
+
+function MachineHubChip({ hub }: { hub: MeshHubEndpoint }) {
+  const { t } = useTranslation();
+  const offline = hub.online === false;
+  return (
+    <span
+      className="inline-flex max-w-full items-center gap-1 rounded-full border border-border/60 px-2 py-0.5 text-[11px]"
+      data-testid={`local-machine-hub-item-${hub.nodeId}`}
+      data-hub-mode={hub.mode}
+      data-hub-online={offline ? 'false' : 'true'}
+    >
+      <span className="truncate font-medium">{hubLabel(hub)}</span>
+      <span className="text-muted-foreground">{hubModeLabel(t, hub.mode)}</span>
+      {offline && (
+        <span
+          className="text-muted-foreground"
+          data-testid={`local-machine-hub-offline-${hub.nodeId}`}
+        >
+          {t('nodes.hubs.offline')}
+        </span>
+      )}
+    </span>
   );
 }
 

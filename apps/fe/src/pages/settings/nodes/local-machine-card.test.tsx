@@ -4,7 +4,11 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-hubs';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
+import type {
+  AuthModeResponse,
+  MeshAttachedHub,
+  MeshHubEndpoint,
+} from '@tmex/api-client/auth/index';
 import { LocalApiError } from '@tmex/api-client/local/local-api';
 import type {
   LocalDirectAction,
@@ -13,6 +17,9 @@ import type {
   LocalRole,
   LocalStatusResponse,
 } from '@tmex/api-client/local/types';
+import enUS from '@tmex/shared/i18n/locales/en_US.json';
+import jaJP from '@tmex/shared/i18n/locales/ja_JP.json';
+import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
 import {
@@ -453,5 +460,131 @@ describe('LocalMachineCard 的本机 Hub 主 / 备身份', () => {
     expect(render(meshStatus('hub,node'), MESH_MODE)).not.toContain(HUB_MODE_ROW);
     resetMeshHubsStateForTest();
     expect(render(meshStatus('node'), MESH_MODE)).not.toContain(HUB_MODE_ROW);
+  });
+});
+
+describe('LocalMachineCard 的多 hub 归属', () => {
+  const ATTACHED_ROW = 'data-testid="local-machine-attached-hub"';
+  const HUB_LIST_ROW = 'data-testid="local-machine-hub-list"';
+  const WRITER_SUFFIX = 'data-testid="local-machine-writer-hub"';
+
+  function hubRow(overrides: Partial<MeshHubEndpoint> & { nodeId: string }): MeshHubEndpoint {
+    return {
+      publicUrl: `https://${overrides.nodeId}.example`,
+      mode: 'active',
+      priority: 0,
+      writerEpoch: 1,
+      ...overrides,
+    };
+  }
+
+  function attachedTo(hub: MeshHubEndpoint): MeshAttachedHub {
+    return {
+      hubNodeId: hub.nodeId,
+      publicUrl: hub.publicUrl,
+      mode: hub.mode,
+      writerEpoch: hub.writerEpoch,
+      since: 1,
+    };
+  }
+
+  test('挂在 writer 上：名字 + 主 Hub 徽标 + 可复制地址，不补写者', () => {
+    const hub = hubRow({ nodeId: 'h1', name: 'hub-a', writerEpoch: 2 });
+    setMeshHubsStateForTest({
+      hubs: [hub],
+      attached: attachedTo(hub),
+      writerHubId: 'h1',
+      loadedAt: 1,
+    });
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain(ATTACHED_ROW);
+    expect(html).toContain('nodes.machine.attachedHub');
+    expect(html).toContain('>hub-a<');
+    expect(tagOf(html, 'local-machine-attached-hub-mode')).toContain('data-hub-mode="active"');
+    expect(html).toContain('nodes.hubs.active');
+    expect(html).toContain('>https://h1.example<');
+    expect(html).not.toContain(WRITER_SUFFIX);
+    // 只有一台 hub 时不摆列表：单 hub 用户的版式与之前一致
+    expect(html).not.toContain(HUB_LIST_ROW);
+  });
+
+  test('挂在备 Hub 上：同一行补出当前写者', () => {
+    const writer = hubRow({ nodeId: 'h1', name: 'hub-a', writerEpoch: 3 });
+    const standby = hubRow({ nodeId: 'h2', name: 'hub-b', mode: 'standby', priority: 1 });
+    setMeshHubsStateForTest({
+      hubs: [writer, standby],
+      attached: attachedTo(standby),
+      writerHubId: 'h1',
+      loadedAt: 1,
+    });
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain(ATTACHED_ROW);
+    expect(html).toContain('>hub-b<');
+    expect(tagOf(html, 'local-machine-attached-hub-mode')).toContain('data-hub-mode="standby"');
+    expect(html).toContain(WRITER_SUFFIX);
+    expect(html).toContain('nodes.machine.writerHub');
+  });
+
+  test('两台 hub：列表 writer 打头，离线那台带离线标记', () => {
+    const writer = hubRow({ nodeId: 'h1', name: 'hub-a', writerEpoch: 3 });
+    const standby = hubRow({
+      nodeId: 'h2',
+      name: 'hub-b',
+      mode: 'standby',
+      priority: -1,
+      online: false,
+    });
+    setMeshHubsStateForTest({
+      hubs: [standby, writer],
+      attached: attachedTo(writer),
+      writerHubId: 'h1',
+      loadedAt: 1,
+    });
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain(HUB_LIST_ROW);
+    expect(html).toContain('nodes.machine.hubList');
+    // 优先级更高的备 hub 也要排在 writer 后面
+    expect(html.indexOf('local-machine-hub-item-h1')).toBeLessThan(
+      html.indexOf('local-machine-hub-item-h2')
+    );
+    expect(tagOf(html, 'local-machine-hub-item-h2')).toContain('data-hub-online="false"');
+    expect(html).toContain('data-testid="local-machine-hub-offline-h2"');
+    expect(html).not.toContain('data-testid="local-machine-hub-offline-h1"');
+    expect(tagOf(html, 'local-machine-hub-item-h1')).toContain('data-hub-online="true"');
+  });
+
+  test('hub 兼节点且自己就是 writer：当前 Hub 显示本机', () => {
+    setMeshHubsStateForTest({
+      hubs: [hubRow({ nodeId: MESH_MODE.nodeId, name: 'hub-a', writerEpoch: 2 })],
+      attached: null,
+      writerHubId: MESH_MODE.nodeId,
+      loadedAt: 1,
+    });
+    const html = render(meshStatus('hub,node'), MESH_MODE);
+    expect(html).toContain(ATTACHED_ROW);
+    expect(html).toContain('nodes.machine.self');
+    expect(html).not.toContain('>hub-a<');
+    expect(html).not.toContain(WRITER_SUFFIX);
+    // 主 / 备身份那一行照旧
+    expect(html).toContain('data-testid="local-machine-hub-mode"');
+  });
+
+  test('hub 集合为空：当前 Hub 与 Hub 列表都不渲染', () => {
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).not.toContain(ATTACHED_ROW);
+    expect(html).not.toContain(HUB_LIST_ROW);
+    // 入会种子那一行还在
+    expect(html).toContain('data-testid="local-machine-hub-url"');
+    expect(html).toContain('nodes.machine.hubUrl');
+  });
+
+  test('入会种子那一行改叫「加入地址」，三语同步', () => {
+    expect(zhCN.translation.nodes.machine.hubUrl).toBe('加入地址');
+    expect(enUS.translation.nodes.machine.hubUrl).toBe('Join Address');
+    expect(jaJP.translation.nodes.machine.hubUrl).toBe('参加アドレス');
+    expect(zhCN.translation.nodes.machine.attachedHub).toBe('当前 Hub');
+    expect(zhCN.translation.nodes.machine.hubList).toBe('Hub 列表');
+    expect(zhCN.translation.nodes.machine.self).toBe('本机');
+    expect(zhCN.translation.nodes.machine.writerHub).toContain('写者');
   });
 });
