@@ -1,9 +1,11 @@
-// 访问控制（Cloudflare Access）：凭证 → 允许访问的用户 → 应用状态。
+// 访问控制：先在「无 / 账号密码 / Cloudflare Access」里选一种，再展开对应的配置。
 //
-// Access 是可选的加固层：没有它隧道照样能开，只是任何人都能打到 tmex 的登录页（或裸界面）。
+// 选择本身落在 `config.accessMode` 上（`set_access_mode`）；选「无」等于放弃访问保护，
+// 隧道正在跑且当前没有任何保护时必须先勾确认，否则后端 409 `exposure_ack_required`。
+// Cloudflare Access 分支：凭证 → 允许访问的用户 → 应用状态；
 // API token 与 account id 只往服务端送一次，状态里永远只回「是否已保存」。
 
-import type { TunnelStatusResponse } from '@tmex/shared';
+import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@tmex/shared';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,8 +18,18 @@ import {
 } from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
-import { Loader2, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import {
+  KeyRound,
+  Loader2,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  ShieldOff,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { FormField, SetupNotice, SwitchRow } from '../nodes/setup/form-parts';
@@ -25,22 +37,183 @@ import {
   type AccessRuleDraft,
   type AccessRuleKind,
   accessConfigureHostname,
+  accessEffective,
   accessSyncHostname,
   canApplyAccess,
   canSyncAccess,
   configureAccessRequest,
+  effectiveAccessMode,
   externalAccessState,
   ruleDraftError,
   ruleDraftsFrom,
+  setAccessModeRequest,
   shouldOfferAccessSync,
   toAccessRules,
 } from './access-model';
-import { type ExposureState, ExposureWarning } from './exposure';
+import { ChoiceCard } from './choice-card';
+import { directProtection } from './direct-model';
+import {
+  EXPOSURE_ACK,
+  type ExposureState,
+  ExposureWarning,
+  exposureAck,
+  exposureShown,
+} from './exposure';
+import { EnableLocalAuth, LoginProtectionNotice } from './login-protection';
 import { DetailRow, JobProgress } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
-import { accessEffective, wouldDropLastProtection } from './tunnel-model';
+import { isTunnelRunning, wouldDropLastProtection } from './tunnel-model';
 
 export function AccessStep({
+  status,
+  actions,
+  draftHostname,
+  exposure,
+  localAuth,
+  onLocalAuth,
+}: {
+  status: TunnelStatusResponse;
+  actions: TunnelActions;
+  /** 向导里已确认的主机名草稿：隧道还没建时，Access 就按它配。 */
+  draftHostname: string;
+  exposure: ExposureState;
+  localAuth: LocalAuthStatus | null;
+  onLocalAuth: (next: LocalAuthStatus) => void;
+}) {
+  const { t } = useTranslation();
+  const mode = effectiveAccessMode(status);
+
+  return (
+    <div
+      className="space-y-4"
+      data-testid="remote-access-access"
+      data-access-mode={mode ?? 'undecided'}
+    >
+      <AccessModeChooser status={status} actions={actions} exposure={exposure} mode={mode} />
+
+      {mode === null && (
+        <p className="text-xs text-muted-foreground" data-testid="remote-access-access-mode-hint">
+          {t('settings.remoteAccess.accessMode.hint')}
+        </p>
+      )}
+
+      {mode === 'login' && (
+        <div className="space-y-3" data-testid="remote-access-access-login">
+          <LoginProtectionNotice localAuth={localAuth} />
+          {directProtection(localAuth) === 'unprotected' && (
+            <EnableLocalAuth localAuth={localAuth} onLocalAuth={onLocalAuth} />
+          )}
+        </div>
+      )}
+
+      {mode === 'none' && <NoProtection status={status} actions={actions} exposure={exposure} />}
+
+      {mode === 'cloudflare' && (
+        <CloudflareAccess
+          status={status}
+          actions={actions}
+          draftHostname={draftHostname}
+          exposure={exposure}
+        />
+      )}
+    </div>
+  );
+}
+
+const ACCESS_MODES: TunnelAccessMode[] = ['none', 'login', 'cloudflare'];
+
+const ACCESS_MODE_ICON: Record<TunnelAccessMode, ReactNode> = {
+  none: <ShieldOff className="size-4" />,
+  login: <KeyRound className="size-4" />,
+  cloudflare: <ShieldCheck className="size-4" />,
+};
+
+/** 三选一。选「无」会把最后一道保护撤掉时（隧道在跑且当前无保护），先要用户勾确认。 */
+function AccessModeChooser({
+  status,
+  actions,
+  exposure,
+  mode,
+}: {
+  status: TunnelStatusResponse;
+  actions: TunnelActions;
+  exposure: ExposureState;
+  mode: TunnelAccessMode | null;
+}) {
+  const { t } = useTranslation();
+  const ackNeeded = isTunnelRunning(status) && !status.exposureProtected;
+  const ack = exposureAck(
+    exposure,
+    EXPOSURE_ACK.accessMode,
+    ackNeeded && exposureShown(exposure, 'compact')
+  );
+  const blocked = ack.shown && !ack.checked;
+
+  return (
+    <div className="space-y-2">
+      <div
+        className="grid gap-3 sm:grid-cols-3"
+        role="radiogroup"
+        aria-label={t('settings.remoteAccess.steps.access.title')}
+        data-testid="remote-access-access-mode-chooser"
+      >
+        {ACCESS_MODES.map((value) => (
+          <ChoiceCard
+            key={value}
+            group="access-mode"
+            keyGroup="accessMode"
+            value={value}
+            icon={ACCESS_MODE_ICON[value]}
+            selected={mode === value}
+            disabled={actions.busy || (value === 'none' && blocked)}
+            onSelect={(accessMode) => ack.submit(actions.run, setAccessModeRequest(accessMode))}
+          />
+        ))}
+      </div>
+      {ack.shown && (
+        <ExposureWarning
+          exposure={exposure}
+          ack={ack}
+          testId="remote-access-access-mode-exposure"
+          variant="compact"
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * 选了「无」：只说清后果。只要 Access 应用还在（不论是否生效）就地给出移除入口——
+ * 生效中的应用会与「无」直接矛盾，没生效的则是留在 Cloudflare 上的残留，都该清掉。
+ */
+function NoProtection({
+  status,
+  actions,
+  exposure,
+}: {
+  status: TunnelStatusResponse;
+  actions: TunnelActions;
+  exposure: ExposureState;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-3" data-testid="remote-access-access-none">
+      <SetupNotice tone="warning" testId="remote-access-access-none-warning">
+        {t('settings.remoteAccess.accessMode.none.warning')}
+      </SetupNotice>
+      {status.access.configured && (
+        <div className="space-y-2" data-testid="remote-access-access-none-app">
+          <p className="text-xs text-muted-foreground">
+            {t('settings.remoteAccess.accessMode.none.appRemains')}
+          </p>
+          <RemoveAccessAppButton status={status} actions={actions} exposure={exposure} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CloudflareAccess({
   status,
   actions,
   draftHostname,
@@ -48,7 +221,6 @@ export function AccessStep({
 }: {
   status: TunnelStatusResponse;
   actions: TunnelActions;
-  /** 向导里已确认的主机名草稿：隧道还没建时，Access 就按它配。 */
   draftHostname: string;
   exposure: ExposureState;
 }) {
@@ -57,7 +229,7 @@ export function AccessStep({
   useCredentialsSavedToast(access.hasCredentials);
 
   return (
-    <div className="space-y-4" data-testid="remote-access-access">
+    <div className="space-y-4" data-testid="remote-access-access-cloudflare">
       {access.lastError && (
         <SetupNotice tone="error" testId="remote-access-access-last-error">
           {t('settings.remoteAccess.access.lastError', { message: access.lastError })}
@@ -445,10 +617,10 @@ function AccessAppStatus({
 }) {
   const { t } = useTranslation();
   const access = status.access;
-  const [confirmRemove, setConfirmRemove] = useState(false);
   // 关校验 / 删应用会拿掉最后一道保护时，先要用户明确确认（与开隧道同一条契约）。
   const dropsProtection = wouldDropLastProtection(status);
-  const blocked = dropsProtection && !exposure.acknowledged;
+  const ack = exposureAck(exposure, EXPOSURE_ACK.accessEnforce, dropsProtection);
+  const blocked = ack.shown && !ack.checked;
 
   return (
     <div className="space-y-3" data-testid="remote-access-access-app">
@@ -494,10 +666,10 @@ function AccessAppStatus({
         </SetupNotice>
       )}
 
-      {dropsProtection && (
+      {ack.shown && (
         <ExposureWarning
           exposure={exposure}
-          id="remote-access-access-drop-ack"
+          ack={ack}
           testId="remote-access-access-drop-exposure"
           variant="drop"
         />
@@ -510,7 +682,7 @@ function AccessAppStatus({
         checked={access.enforceJwt}
         disabled={actions.busy || blocked}
         onCheckedChange={(checked) =>
-          actions.run({ action: 'set_access_enforce', enforceJwt: checked })
+          ack.submit(actions.run, { action: 'set_access_enforce', enforceJwt: checked })
         }
       />
       {!access.enforceJwt && (
@@ -519,6 +691,27 @@ function AccessAppStatus({
         </SetupNotice>
       )}
 
+      <RemoveAccessAppButton status={status} actions={actions} exposure={exposure} />
+    </div>
+  );
+}
+
+/** 移除 Access 应用：不可撤销，且可能拿掉最后一道保护，二次确认与暴露确认都在这里。 */
+function RemoveAccessAppButton({
+  status,
+  actions,
+  exposure,
+}: {
+  status: TunnelStatusResponse;
+  actions: TunnelActions;
+  exposure: ExposureState;
+}) {
+  const { t } = useTranslation();
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const ack = exposureAck(exposure, EXPOSURE_ACK.accessRemove, wouldDropLastProtection(status));
+
+  return (
+    <>
       <Button
         type="button"
         size="xs"
@@ -547,10 +740,10 @@ function AccessAppStatus({
                 {t('settings.remoteAccess.access.confirmRemove.description')}
               </AlertDialogDescription>
             </AlertDialogHeader>
-            {dropsProtection && (
+            {ack.shown && (
               <ExposureWarning
                 exposure={exposure}
-                id="remote-access-access-remove-ack"
+                ack={ack}
                 testId="remote-access-access-remove-exposure"
                 variant="drop"
               />
@@ -561,10 +754,10 @@ function AccessAppStatus({
               </AlertDialogCancel>
               <AlertDialogAction
                 variant="destructive"
-                disabled={blocked}
+                disabled={ack.shown && !ack.checked}
                 onClick={() => {
                   setConfirmRemove(false);
-                  actions.run({ action: 'remove_access' });
+                  ack.submit(actions.run, { action: 'remove_access' });
                 }}
                 data-testid="remote-access-access-confirm-remove-confirm"
               >
@@ -574,7 +767,7 @@ function AccessAppStatus({
           </AlertDialogContent>
         </AlertDialog>
       )}
-    </div>
+    </>
   );
 }
 

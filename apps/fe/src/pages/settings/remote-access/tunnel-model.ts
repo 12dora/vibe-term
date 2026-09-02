@@ -10,9 +10,17 @@ import type {
   TunnelMode,
   TunnelStatusResponse,
 } from '@tmex/shared';
-import { externalAccessState } from './access-model';
+import {
+  accessEffective,
+  accessStepState,
+  effectiveAccessMode,
+  externalAccessState,
+} from './access-model';
 import { directProtected } from './direct-model';
 import type { TunnelCheckResult } from './tunnel-actions';
+
+// `accessEffective` 迁到 access-model（`accessStepState` 要用），这里原样转出，调用方不必改。
+export { accessEffective } from './access-model';
 
 export type TunnelPill =
   | 'notConfigured'
@@ -65,24 +73,6 @@ export function tunnelPill(status: TunnelStatusResponse): TunnelPill {
 }
 
 /**
- * Access 校验是否真的生效。后端 `access.effective` 是唯一真相；旧后端没有这个字段时
- * 用同一条谓词兜底：应用已建、网关强制校验，且应用覆盖的主机名就是当前隧道的主机名
- * （两边都为空不算匹配——没有隧道就谈不上保护）。
- */
-export function accessEffective(status: TunnelStatusResponse): boolean {
-  const access: { effective?: boolean } = status.access;
-  return (
-    access.effective ??
-    Boolean(
-      status.access.configured &&
-        status.access.enforceJwt &&
-        status.access.hostname &&
-        status.access.hostname === status.config.hostname
-    )
-  );
-}
-
-/**
  * Access 徽标。前三档是 tmex 托管的应用（`access.configured`）：不校验令牌 / 绑了别的主机名 / 校验已生效。
  * 后两档来自只读探测，只在 tmex 没有托管应用时出现：
  * `dashboardCovered` = Cloudflare 控制台上已有应用覆盖这个主机名（tmex 不校验令牌）；
@@ -109,6 +99,22 @@ export function accessPill(status: TunnelStatusResponse): AccessPill {
   const probed = externalAccessState(status);
   if (probed === 'covered') return 'dashboardCovered';
   return probed === 'unknown' && hasCoverableHostname(status) ? 'unknown' : 'notConfigured';
+}
+
+/**
+ * 状态卡上的访问保护徽标。它报的是**实际保护状态**，不是用户选了什么：先看 Access 校验有没有
+ * 生效，再看有没有登录门；都没有时才按选定的方式解释「差在哪」——Access 这一档沿用诊断徽标，
+ * 「账号密码」报登录门缺失，选了「无」或从没选过就是没有保护。
+ * 所以选了「无」但 Access 应用仍在生效时，徽标照实报「已生效」。
+ */
+export type ProtectionPill = AccessPill | 'loginProtected' | 'loginMissing' | 'unprotected';
+
+export function protectionPill(status: TunnelStatusResponse): ProtectionPill {
+  if (accessEffective(status)) return 'protected';
+  if (status.loginEnforced) return 'loginProtected';
+  const mode = effectiveAccessMode(status);
+  if (mode === 'cloudflare') return accessPill(status);
+  return mode === 'login' ? 'loginMissing' : 'unprotected';
 }
 
 /**
@@ -250,7 +256,10 @@ export function wizardStepState(step: WizardStepId, ctx: WizardContext): StepSta
       if (wizardStepState('login', ctx) !== 'done') return 'todo';
       return created || hostnameConfirmed ? 'done' : 'current';
     case 'access':
-      return status.access.configured ? 'done' : 'todo';
+      // 与创建步同一条门槛：主机名没确认之前轮不到访问控制，步骤编号也就不会跳。
+      return wizardStepState('hostname', ctx) === 'done'
+        ? accessStepState(status, ctx.localAuth)
+        : 'todo';
     case 'create':
       if (created) return 'done';
       return wizardStepState('hostname', ctx) === 'done' ? 'current' : 'todo';
@@ -451,6 +460,7 @@ type ExposingAction = Extract<TunnelActionRequest, { acknowledgeExposure?: boole
 export function isExposingAction(req: TunnelActionRequest): req is ExposingAction {
   if (req.action === 'set_auto_start') return req.autoStart;
   if (req.action === 'set_access_enforce') return !req.enforceJwt;
+  if (req.action === 'set_access_mode') return req.accessMode === 'none';
   return (
     req.action === 'create' ||
     req.action === 'quick_start' ||
@@ -459,7 +469,7 @@ export function isExposingAction(req: TunnelActionRequest): req is ExposingActio
   );
 }
 
-/** 只有用户勾了「我了解风险」才带上 `acknowledgeExposure`，否则由后端 409 挡下。 */
+/** 只有用户勾了这个动作旁边那条警示才带上 `acknowledgeExposure`，否则由后端 409 挡下。 */
 export function withExposureAck(
   req: TunnelActionRequest,
   acknowledged: boolean

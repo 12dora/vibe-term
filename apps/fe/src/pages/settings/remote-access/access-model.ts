@@ -1,10 +1,14 @@
 // Cloudflare Access 区块的纯推导：规则草稿的校验与归一、可用性判断、步骤标签。
 
 import type {
+  LocalAuthStatus,
+  TunnelAccessMode,
   TunnelAccessPolicyRule,
   TunnelActionRequest,
   TunnelStatusResponse,
 } from '@tmex/shared';
+import { directProtected } from './direct-model';
+import type { StepState } from './tunnel-model';
 
 export type AccessRuleKind = TunnelAccessPolicyRule['kind'];
 
@@ -102,9 +106,68 @@ export function shouldOfferAccessSync(status: TunnelStatusResponse): boolean {
 
 export type AccessStepTag = 'recommended' | 'optional';
 
-/** 没有登录体系时 Access 是唯一的鉴权层，标「推荐」；有登录时只是加固，标「可选」。 */
+/**
+ * 用户明确选过、或本机当前真有保护（Access 已生效 / 登录门在）时只是加固，标「可选」；
+ * 其余情况都是「还没有任何保护」——包括旧数据里留着一个没生效的 Access 应用——标「推荐」。
+ */
 export function accessStepTag(status: TunnelStatusResponse): AccessStepTag {
-  return status.loginEnforced ? 'optional' : 'recommended';
+  if (status.config.accessMode !== null) return 'optional';
+  return accessEffective(status) || status.loginEnforced ? 'optional' : 'recommended';
+}
+
+/**
+ * Access 校验是否真的生效。后端 `access.effective` 是唯一真相；旧后端没有这个字段时
+ * 用同一条谓词兜底：应用已建、网关强制校验，且应用覆盖的主机名就是当前隧道的主机名
+ * （两边都为空不算匹配——没有隧道就谈不上保护）。
+ */
+export function accessEffective(status: TunnelStatusResponse): boolean {
+  const access: { effective?: boolean } = status.access;
+  return (
+    access.effective ??
+    Boolean(
+      status.access.configured &&
+        status.access.enforceJwt &&
+        status.access.hostname &&
+        status.access.hostname === status.config.hostname
+    )
+  );
+}
+
+/**
+ * 当前生效的访问保护方式。用户选过就以选择为准；`null`（旧数据 / 从没选过）按实际保护推导：
+ * 先看真正在生效的那一个（Access 校验 > 登录门），都没有时再看有没有一个没生效的 Access 应用
+ * ——那说明用户走的是 Access 这条路，只是还没配好，展开这一档正好告诉他怎么修。
+ */
+export function effectiveAccessMode(status: TunnelStatusResponse): TunnelAccessMode | null {
+  if (status.config.accessMode !== null) return status.config.accessMode;
+  if (accessEffective(status)) return 'cloudflare';
+  if (status.loginEnforced) return 'login';
+  return status.access.configured ? 'cloudflare' : null;
+}
+
+/**
+ * 选定访问保护方式的动作。选「无」时是否带 `acknowledgeExposure` 由发起动作的那条警示决定
+ * （见 `exposureAck`），这里只负责组请求体。
+ */
+export function setAccessModeRequest(accessMode: TunnelAccessMode): TunnelActionRequest {
+  return { action: 'set_access_mode', accessMode };
+}
+
+/** 访问控制步的完成度：选定的方式真正落地了才打勾，没选过则停在当前步。 */
+export function accessStepState(
+  status: TunnelStatusResponse,
+  localAuth?: LocalAuthStatus | null
+): StepState {
+  switch (effectiveAccessMode(status)) {
+    case 'none':
+      return 'done';
+    case 'login':
+      return status.loginEnforced || directProtected(localAuth) ? 'done' : 'current';
+    case 'cloudflare':
+      return accessEffective(status) ? 'done' : 'current';
+    default:
+      return 'current';
+  }
 }
 
 /**

@@ -295,7 +295,7 @@
       "paneClosed": "現在のターミナルは閉じられました。サイドバーから選択してください。",
       "bellNotification": "ターミナルベル",
       "bellDescriptionWithTitle": "ウィンドウ {{window}} · {{paneLabel}}",
-      "bellFallback": "tmux ベルを受信",
+      "bellFallback": "ターミナルベルを受信",
       "notificationFallbackTitle": "ターミナル通知",
       "notificationSourceLabel": "{{source}} から",
       "notificationFallbackDetail": "ターミナル通知",
@@ -330,12 +330,12 @@
       "siteNamePlaceholder": "tmex",
       "siteUrl": "サイト URL",
       "siteUrlPlaceholder": "http://localhost:3000",
-      "bellThrottle": "ベル制限（秒）",
+      "bellThrottle": "ベル通知の制限（秒）",
       "notificationThrottle": "通知制限（秒）",
       "enableBrowserNotificationToast": "ブラウザ通知 Toast を有効にする",
       "enableNotificationPush": "通知プッシュを有効にする",
-      "enableBellPush": "ベルプッシュを有効にする",
-      "enableBellSound": "ベル通知音を有効にする",
+      "enableBellPush": "ターミナルベルをプッシュ通知",
+      "enableBellSound": "ターミナルベル時に通知音を再生",
       "sshReconnectRetries": "SSH 再接続試行回数",
       "sshReconnectDelay": "SSH 再接続待機（秒）",
       "language": "言語",
@@ -680,7 +680,27 @@
           "dashboardCovered": "Access はダッシュボード管理",
           "notEnforced": "Access 未強制",
           "protected": "Access 有効",
-          "hostnameMismatch": "Access ホスト名不一致"
+          "hostnameMismatch": "Access ホスト名不一致",
+          "loginProtected": "ログイン保護 有効",
+          "loginMissing": "ログイン保護 未適用",
+          "unprotected": "アクセス保護なし"
+        },
+        "accessMode": {
+          "hint": "アクセス保護の方式を選択してください。",
+          "none": {
+            "title": "なし",
+            "description": "アクセス保護を設定しません。アドレスを知った人は誰でも本機の tmex を使えます。",
+            "warning": "アクセス保護が無効です。アドレスを知った人は誰でも本機の tmex を使えます。",
+            "appRemains": "Access アプリはまだ残っています。ここで削除できます。"
+          },
+          "login": {
+            "title": "アカウントとパスワード",
+            "description": "アクセスには本機へのログインが必要です。"
+          },
+          "cloudflare": {
+            "title": "Cloudflare Access",
+            "description": "Cloudflare が訪問者を検証します。ログインと併用できます。"
+          }
         },
         "externallyManaged": "システムサービスが実行",
         "externallyManagedNotice": "トンネルはシステムサービスが実行しており、tmex は状態を表示するだけで起動・停止はできません。tmex で管理するには、先に引き継ぎを解除してください。",
@@ -688,7 +708,7 @@
           "warning": "アクセス保護が未設定です。トンネルのアドレスを知っている人は誰でも tmex を使えます。ログイン（マルチノード）を有効にするか、Access を設定してトークン検証を有効にしてください。",
           "warningShort": "現在、アクセス保護がありません。トンネルの URL を知っている人は誰でも tmex を使えます。",
           "acknowledge": "リスクを理解した上でインターネットに公開する",
-          "ackRequired": "この操作は tmex をインターネットに公開します。上のチェックを入れて確認してください。",
+          "ackRequired": "この操作は tmex をインターネットに公開します。確認にチェックを入れてください。",
           "enableLogin": "ログインを有効にする（マルチノード）",
           "dropWarning": "警告：トンネルは動作したままで、解除すると誰でも tmex を使えるようになります。"
         },
@@ -885,7 +905,6 @@
         "pickerSymlink": "シンボリックリンク",
         "pickerCurrent": "現在のディレクトリ",
         "pickerConfirm": "このディレクトリを選択",
-        "enabled": "有効",
         "addFailed": "ディレクトリの追加に失敗しました",
         "updateFailed": "ディレクトリの更新に失敗しました",
         "deleteFailed": "ディレクトリの削除に失敗しました",
@@ -1118,7 +1137,7 @@
     "apiError": {
       "siteNameRequired": "サイト名は空にできません",
       "siteUrlInvalid": "サイト URL は http:// または https:// で始まる必要があります",
-      "bellThrottleInvalid": "ベル制限秒数は 0-300 の間である必要があります",
+      "bellThrottleInvalid": "ベル通知の制限秒数は 0-300 の間である必要があります",
       "sshRetriesInvalid": "SSH 再接続試行回数は 0-20 の間である必要があります",
       "sshDelayInvalid": "SSH 再接続待機時間は 1-300 秒の間である必要があります",
       "languageInvalid": "言語はサポートされているロケールのいずれかである必要があります",
@@ -1158,7 +1177,7 @@
       "agentConfirmationNotFound": "確認リクエストが存在しません",
       "agentConfirmationAlreadyDecided": "確認リクエストは既に処理済みです",
       "agentMessageTextRequired": "メッセージ内容を入力してください",
-      "watchRuleNotFound": "Watch ルールが存在しません",
+      "watchRuleNotFound": "モニタールールが存在しません",
       "watchNameRequired": "ルール名を入力してください",
       "watchTriggerTypeInvalid": "トリガー種別は match、unchanged、llm のいずれかです",
       "watchPatternRequired": "match/unchanged ルールには正規表現が必要です",
@@ -1193,20 +1212,20 @@
     "notification": {
       "clickToJump": "対応するターミナルにジャンプ",
       "eventType": {
-        "terminal_bell": "🔔 ターミナルベル",
-        "terminal_notification": "🔔 ターミナル通知",
-        "tmux_window_close": "🪟 ウィンドウ閉じる",
-        "tmux_pane_close": "📱 ターミナルを閉じました",
-        "device_tmux_missing": "⚠️ Tmux がありません",
-        "device_disconnect": "🔌 デバイス切断",
-        "session_created": "🆕 セッション作成",
-        "session_closed": "🚪 セッション閉じる",
-        "agent_confirmation_pending": "🤖 エージェント確認待ち",
-        "agent_turn_finished": "🤖 エージェントターン完了",
-        "agent_error": "🤖 エージェントエラー",
-        "watch_triggered": "👁️ Watch ルール発動",
-        "watch_model_unavailable": "👁️ Watch モデル利用不可",
-        "watch_rule_error": "👁️ Watch ルールエラー"
+        "terminal_bell": "ターミナルベル",
+        "terminal_notification": "ターミナル通知",
+        "tmux_window_close": "ウィンドウ閉じる",
+        "tmux_pane_close": "ターミナルを閉じました",
+        "device_tmux_missing": "Tmux がありません",
+        "device_disconnect": "デバイス切断",
+        "session_created": "セッション作成",
+        "session_closed": "セッション閉じる",
+        "agent_confirmation_pending": "エージェント確認待ち",
+        "agent_turn_finished": "エージェントターン完了",
+        "agent_error": "エージェントエラー",
+        "watch_triggered": "ターミナルモニター発動",
+        "watch_model_unavailable": "ターミナルモニターのモデル利用不可",
+        "watch_rule_error": "ターミナルモニターのルールエラー"
       },
       "site": "サイト",
       "device": "デバイス",
@@ -1218,7 +1237,7 @@
       "paneTitle": "タイトル",
       "process": "プロセス",
       "telegramBell": {
-        "title": "🔔 {{siteName}} からのベル：{{terminalTopbarLabel}}",
+        "title": "🔔 {{siteName}} からのターミナルベル：{{terminalTopbarLabel}}",
         "viewLink": "表示",
         "terminalTopbarLabel": "ウィンドウ {{window}} · ターミナル {{pane}} @ {{device}}"
       },
@@ -1229,14 +1248,14 @@
         "error": "エージェント「{{title}}」でエラーが発生しました：{{message}}"
       },
       "watch": {
-        "matchTriggered": "Watch「{{name}}」がマッチしました：{{text}}",
-        "unchangedTriggered": "Watch「{{name}}」の値「{{value}}」が {{minutes}} 分間変化していません",
-        "llmTriggered": "Watch「{{name}}」の条件を満たしました：{{reason}}",
-        "summaryTriggered": "Watch「{{name}}」：{{summary}}",
+        "matchTriggered": "モニター「{{name}}」がマッチしました：{{text}}",
+        "unchangedTriggered": "モニター「{{name}}」の値「{{value}}」が {{minutes}} 分間変化していません",
+        "llmTriggered": "モニター「{{name}}」の条件を満たしました：{{reason}}",
+        "summaryTriggered": "モニター「{{name}}」：{{summary}}",
         "unconfirmedSuffix": "（モデル利用不可のため LLM 未確認）",
-        "modelUnavailable": "Watch「{{name}}」のモデル呼び出しに失敗しました：{{message}}",
-        "ruleError": "Watch「{{name}}」が {{count}} 回連続で失敗したため自動停止しました：{{message}}",
-        "paneGone": "Watch「{{name}}」のターミナル（{{paneId}}）が破棄されたため、ルールを削除しました"
+        "modelUnavailable": "モニター「{{name}}」のモデル呼び出しに失敗しました：{{message}}",
+        "ruleError": "モニター「{{name}}」が {{count}} 回連続で失敗したため自動停止しました：{{message}}",
+        "paneGone": "モニター「{{name}}」のターミナル（{{paneId}}）が破棄されたため、ルールを削除しました"
       }
     },
     "sidebar": {
@@ -1624,7 +1643,9 @@
         "usePasskey": "パスキーを使う",
         "credentialsRequired": "ユーザー名とパスワードを入力してください。",
         "totpRequired": "認証アプリのコードを入力してください。",
-        "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。"
+        "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。",
+        "passkeyNotRegistered": "このアドレスにはパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
+        "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。"
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",

@@ -301,7 +301,7 @@ export const I18N_RESOURCES = {
       "paneClosed": "The current terminal has been closed. Select another one from the sidebar.",
       "bellNotification": "Terminal Bell",
       "bellDescriptionWithTitle": "Window {{window}} · {{paneLabel}}",
-      "bellFallback": "Received tmux bell",
+      "bellFallback": "Received terminal bell",
       "notificationFallbackTitle": "Terminal Notification",
       "notificationSourceLabel": "From {{source}}",
       "notificationFallbackDetail": "Terminal notification",
@@ -336,12 +336,12 @@ export const I18N_RESOURCES = {
       "siteNamePlaceholder": "tmex",
       "siteUrl": "Site URL",
       "siteUrlPlaceholder": "http://localhost:3000",
-      "bellThrottle": "Bell Throttle (seconds)",
+      "bellThrottle": "Bell Notification Throttle (seconds)",
       "notificationThrottle": "Notification Throttle (seconds)",
       "enableBrowserNotificationToast": "Enable Browser Notification Toast",
       "enableNotificationPush": "Enable Notification Push",
-      "enableBellPush": "Enable Bell Push",
-      "enableBellSound": "Enable Bell Sound",
+      "enableBellPush": "Push Terminal Bell Events",
+      "enableBellSound": "Play Sound On Terminal Bell",
       "sshReconnectRetries": "SSH Reconnect Retries",
       "sshReconnectDelay": "SSH Reconnect Delay (seconds)",
       "language": "Language",
@@ -686,7 +686,27 @@ export const I18N_RESOURCES = {
           "dashboardCovered": "Access managed in dashboard",
           "notEnforced": "Access not enforced",
           "protected": "Access enforced",
-          "hostnameMismatch": "Access hostname mismatch"
+          "hostnameMismatch": "Access hostname mismatch",
+          "loginProtected": "Login Protection On",
+          "loginMissing": "Login Protection Not Active",
+          "unprotected": "No Access Protection"
+        },
+        "accessMode": {
+          "hint": "Choose how access is protected.",
+          "none": {
+            "title": "None",
+            "description": "No access protection: anyone with the address can use the tmex on this machine.",
+            "warning": "No access protection: anyone with the address can use the tmex on this machine.",
+            "appRemains": "The Access app still exists. Remove it here."
+          },
+          "login": {
+            "title": "Password Login",
+            "description": "Reaching this machine requires signing in first."
+          },
+          "cloudflare": {
+            "title": "Cloudflare Access",
+            "description": "Cloudflare verifies each visitor; it can be layered on top of sign-in."
+          }
         },
         "externallyManaged": "Run by a system service",
         "externallyManagedNotice": "A system service runs this tunnel. tmex only shows its state and can't start or stop it. Release it first to hand the tunnel back to tmex.",
@@ -694,7 +714,7 @@ export const I18N_RESOURCES = {
           "warning": "No access protection is configured: anyone with the tunnel URL can use tmex. Enable sign-in (multi-node), or configure Access and turn on token verification.",
           "warningShort": "Nothing is protecting this machine right now: anyone with the tunnel URL can use tmex.",
           "acknowledge": "I understand the risk and want to expose tmex publicly",
-          "ackRequired": "This exposes tmex to the public internet. Tick the box above to confirm.",
+          "ackRequired": "This exposes tmex to the public internet. Tick the confirmation to continue.",
           "enableLogin": "Enable sign-in (multi-node)",
           "dropWarning": "Warning: the tunnel keeps running — once this is removed, anyone can use tmex."
         },
@@ -891,7 +911,6 @@ export const I18N_RESOURCES = {
         "pickerSymlink": "Symbolic link",
         "pickerCurrent": "Current directory",
         "pickerConfirm": "Select this directory",
-        "enabled": "Enabled",
         "addFailed": "Failed to add directory",
         "updateFailed": "Failed to update directory",
         "deleteFailed": "Failed to remove directory",
@@ -1124,7 +1143,7 @@ export const I18N_RESOURCES = {
     "apiError": {
       "siteNameRequired": "Site name cannot be empty",
       "siteUrlInvalid": "Site URL must start with http:// or https://",
-      "bellThrottleInvalid": "Bell throttle seconds must be between 0-300",
+      "bellThrottleInvalid": "Bell notification throttle seconds must be between 0-300",
       "sshRetriesInvalid": "SSH reconnect retries must be between 0-20",
       "sshDelayInvalid": "SSH reconnect delay must be between 1-300 seconds",
       "languageInvalid": "Language must be one of the supported locales",
@@ -1199,20 +1218,20 @@ export const I18N_RESOURCES = {
     "notification": {
       "clickToJump": "Click to jump to the corresponding terminal",
       "eventType": {
-        "terminal_bell": "🔔 Terminal Bell",
-        "terminal_notification": "🔔 Terminal Notification",
-        "tmux_window_close": "🪟 Window Closed",
-        "tmux_pane_close": "📱 Terminal Closed",
-        "device_tmux_missing": "⚠️ Tmux Missing",
-        "device_disconnect": "🔌 Device Disconnected",
-        "session_created": "🆕 Session Created",
-        "session_closed": "🚪 Session Closed",
-        "agent_confirmation_pending": "🤖 Agent Confirmation Pending",
-        "agent_turn_finished": "🤖 Agent Turn Finished",
-        "agent_error": "🤖 Agent Error",
-        "watch_triggered": "👁️ Watch Rule Triggered",
-        "watch_model_unavailable": "👁️ Watch Model Unavailable",
-        "watch_rule_error": "👁️ Watch Rule Error"
+        "terminal_bell": "Terminal Bell",
+        "terminal_notification": "Terminal Notification",
+        "tmux_window_close": "Window Closed",
+        "tmux_pane_close": "Terminal Closed",
+        "device_tmux_missing": "Tmux Missing",
+        "device_disconnect": "Device Disconnected",
+        "session_created": "Session Created",
+        "session_closed": "Session Closed",
+        "agent_confirmation_pending": "Agent Confirmation Pending",
+        "agent_turn_finished": "Agent Turn Finished",
+        "agent_error": "Agent Error",
+        "watch_triggered": "Terminal Monitor Triggered",
+        "watch_model_unavailable": "Terminal Monitor Model Unavailable",
+        "watch_rule_error": "Terminal Monitor Rule Error"
       },
       "site": "Site",
       "device": "Device",
@@ -1224,7 +1243,7 @@ export const I18N_RESOURCES = {
       "paneTitle": "Title",
       "process": "Process",
       "telegramBell": {
-        "title": "🔔 Bell from {{siteName}}: {{terminalTopbarLabel}}",
+        "title": "🔔 Terminal Bell from {{siteName}}: {{terminalTopbarLabel}}",
         "viewLink": "Click to view",
         "terminalTopbarLabel": "Window {{window}} · Terminal {{pane}} @ {{device}}"
       },
@@ -1630,7 +1649,9 @@ export const I18N_RESOURCES = {
         "usePasskey": "Use a passkey",
         "credentialsRequired": "Enter your username and password.",
         "totpRequired": "Enter your authenticator code.",
-        "nodeListFailed": "Could not load the node list. Try again."
+        "nodeListFailed": "Could not load the node list. Try again.",
+        "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
+        "passkeyUnavailable": "Passkeys require HTTPS or localhost."
       },
       "node": {
         "loginToThisNode": "Sign in",
@@ -2683,9 +2704,9 @@ export const I18N_RESOURCES = {
       "noDeviceSelected": "未选择设备",
       "windowClosed": "当前窗口已关闭，请在侧边栏重新选择窗口。",
       "paneClosed": "当前终端已关闭，请在侧边栏重新选择。",
-      "bellNotification": "终端 Bell",
+      "bellNotification": "终端响铃",
       "bellDescriptionWithTitle": "窗口 {{window}} · {{paneLabel}}",
-      "bellFallback": "收到 tmux bell",
+      "bellFallback": "收到终端响铃",
       "notificationFallbackTitle": "终端通知",
       "notificationSourceLabel": "来自 {{source}}",
       "notificationFallbackDetail": "终端通知",
@@ -2720,12 +2741,12 @@ export const I18N_RESOURCES = {
       "siteNamePlaceholder": "tmex",
       "siteUrl": "站点访问 URL",
       "siteUrlPlaceholder": "http://localhost:3000",
-      "bellThrottle": "Bell 频控（秒）",
+      "bellThrottle": "响铃通知频控（秒）",
       "notificationThrottle": "通知频控（秒）",
       "enableBrowserNotificationToast": "开启浏览器通知 Toast",
       "enableNotificationPush": "开启通知推送",
-      "enableBellPush": "开启 Bell 推送",
-      "enableBellSound": "开启 Bell 提示音",
+      "enableBellPush": "推送终端响铃",
+      "enableBellSound": "终端响铃时播放提示音",
       "sshReconnectRetries": "SSH 重连次数",
       "sshReconnectDelay": "SSH 重连等待（秒）",
       "language": "语言",
@@ -3070,7 +3091,27 @@ export const I18N_RESOURCES = {
           "dashboardCovered": "Access 由控制台管理",
           "notEnforced": "Access 未强制校验",
           "protected": "Access 已生效",
-          "hostnameMismatch": "Access 主机名不匹配"
+          "hostnameMismatch": "Access 主机名不匹配",
+          "loginProtected": "登录保护已启用",
+          "loginMissing": "登录保护未生效",
+          "unprotected": "访问保护未启用"
+        },
+        "accessMode": {
+          "hint": "选择一种访问保护方式。",
+          "none": {
+            "title": "无",
+            "description": "不设访问保护，任何人拿到地址即可使用本机 tmex。",
+            "warning": "访问保护未启用：任何人拿到地址即可使用本机 tmex。",
+            "appRemains": "Access 应用仍在，可在此移除。"
+          },
+          "login": {
+            "title": "账号密码",
+            "description": "访问须先登录本机账号。"
+          },
+          "cloudflare": {
+            "title": "Cloudflare Access",
+            "description": "由 Cloudflare 校验访问者身份，可与登录叠加。"
+          }
         },
         "externallyManaged": "由系统服务托管",
         "externallyManagedNotice": "隧道由系统服务运行，tmex 仅显示状态，无法启动或停止。要交回 tmex 管理，请先取消接管。",
@@ -3078,7 +3119,7 @@ export const I18N_RESOURCES = {
           "warning": "当前未配置访问保护：任何人拿到隧道地址, 都能直接使用 tmex。请启用登录（多节点互联），或配置 Access 并开启令牌校验。",
           "warningShort": "当前没有任何访问保护：拿到隧道地址的人都能直接使用 tmex。",
           "acknowledge": "我已了解风险，仍要开放公网访问",
-          "ackRequired": "该操作会把 tmex 开放到公网，请先勾选上面的确认。",
+          "ackRequired": "该操作会把 tmex 开放到公网，请先勾选风险确认。",
           "enableLogin": "启用登录（多节点互联）",
           "dropWarning": "警告：隧道仍在运行，移除后任何人都能直接使用 tmex。"
         },
@@ -3275,7 +3316,6 @@ export const I18N_RESOURCES = {
         "pickerSymlink": "符号链接",
         "pickerCurrent": "当前目录",
         "pickerConfirm": "选择此目录",
-        "enabled": "启用",
         "addFailed": "添加目录失败",
         "updateFailed": "更新目录失败",
         "deleteFailed": "移除目录失败",
@@ -3508,7 +3548,7 @@ export const I18N_RESOURCES = {
     "apiError": {
       "siteNameRequired": "站点名称不能为空",
       "siteUrlInvalid": "站点 URL 必须以 http:// 或 https:// 开头",
-      "bellThrottleInvalid": "Bell 频控秒数需在 0-300 之间",
+      "bellThrottleInvalid": "响铃通知频控秒数需在 0-300 之间",
       "sshRetriesInvalid": "SSH 重连次数需在 0-20 之间",
       "sshDelayInvalid": "SSH 重连等待时间需在 1-300 秒之间",
       "languageInvalid": "语言必须是受支持的区域设置之一",
@@ -3548,7 +3588,7 @@ export const I18N_RESOURCES = {
       "agentConfirmationNotFound": "确认请求不存在",
       "agentConfirmationAlreadyDecided": "确认请求已被处理",
       "agentMessageTextRequired": "消息内容不能为空",
-      "watchRuleNotFound": "Watch 规则不存在",
+      "watchRuleNotFound": "监控规则不存在",
       "watchNameRequired": "规则名称不能为空",
       "watchTriggerTypeInvalid": "触发类型必须是 match、unchanged 或 llm",
       "watchPatternRequired": "match/unchanged 规则必须提供正则表达式",
@@ -3583,20 +3623,20 @@ export const I18N_RESOURCES = {
     "notification": {
       "clickToJump": "点击跳转到对应终端",
       "eventType": {
-        "terminal_bell": "🔔 终端 Bell",
-        "terminal_notification": "🔔 终端通知",
-        "tmux_window_close": "🪟 窗口关闭",
-        "tmux_pane_close": "📱 终端关闭",
-        "device_tmux_missing": "⚠️ Tmux 不可用",
-        "device_disconnect": "🔌 设备断开",
-        "session_created": "🆕 会话创建",
-        "session_closed": "🚪 会话关闭",
-        "agent_confirmation_pending": "🤖 智能体等待确认",
-        "agent_turn_finished": "🤖 智能体回合完成",
-        "agent_error": "🤖 智能体错误",
-        "watch_triggered": "👁️ Watch 规则触发",
-        "watch_model_unavailable": "👁️ Watch 模型不可用",
-        "watch_rule_error": "👁️ Watch 规则错误"
+        "terminal_bell": "终端响铃",
+        "terminal_notification": "终端通知",
+        "tmux_window_close": "窗口关闭",
+        "tmux_pane_close": "终端关闭",
+        "device_tmux_missing": "Tmux 不可用",
+        "device_disconnect": "设备断开",
+        "session_created": "会话创建",
+        "session_closed": "会话关闭",
+        "agent_confirmation_pending": "智能体等待确认",
+        "agent_turn_finished": "智能体回合完成",
+        "agent_error": "智能体错误",
+        "watch_triggered": "终端监控触发",
+        "watch_model_unavailable": "终端监控模型不可用",
+        "watch_rule_error": "终端监控规则错误"
       },
       "site": "站点",
       "device": "设备",
@@ -3608,7 +3648,7 @@ export const I18N_RESOURCES = {
       "paneTitle": "标题",
       "process": "进程",
       "telegramBell": {
-        "title": "🔔 来自 {{siteName}} 的 Bell：{{terminalTopbarLabel}}",
+        "title": "🔔 来自 {{siteName}} 的终端响铃：{{terminalTopbarLabel}}",
         "viewLink": "点击查看",
         "terminalTopbarLabel": "窗口 {{window}} · 终端 {{pane}} @ {{device}}"
       },
@@ -4014,7 +4054,9 @@ export const I18N_RESOURCES = {
         "usePasskey": "使用通行密钥",
         "credentialsRequired": "请输入用户名和密码。",
         "totpRequired": "请输入验证码。",
-        "nodeListFailed": "节点列表加载失败，请重试。"
+        "nodeListFailed": "节点列表加载失败，请重试。",
+        "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
+        "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。"
       },
       "node": {
         "loginToThisNode": "登录该节点",
@@ -5063,7 +5105,7 @@ export const I18N_RESOURCES = {
       "paneClosed": "現在のターミナルは閉じられました。サイドバーから選択してください。",
       "bellNotification": "ターミナルベル",
       "bellDescriptionWithTitle": "ウィンドウ {{window}} · {{paneLabel}}",
-      "bellFallback": "tmux ベルを受信",
+      "bellFallback": "ターミナルベルを受信",
       "notificationFallbackTitle": "ターミナル通知",
       "notificationSourceLabel": "{{source}} から",
       "notificationFallbackDetail": "ターミナル通知",
@@ -5098,12 +5140,12 @@ export const I18N_RESOURCES = {
       "siteNamePlaceholder": "tmex",
       "siteUrl": "サイト URL",
       "siteUrlPlaceholder": "http://localhost:3000",
-      "bellThrottle": "ベル制限（秒）",
+      "bellThrottle": "ベル通知の制限（秒）",
       "notificationThrottle": "通知制限（秒）",
       "enableBrowserNotificationToast": "ブラウザ通知 Toast を有効にする",
       "enableNotificationPush": "通知プッシュを有効にする",
-      "enableBellPush": "ベルプッシュを有効にする",
-      "enableBellSound": "ベル通知音を有効にする",
+      "enableBellPush": "ターミナルベルをプッシュ通知",
+      "enableBellSound": "ターミナルベル時に通知音を再生",
       "sshReconnectRetries": "SSH 再接続試行回数",
       "sshReconnectDelay": "SSH 再接続待機（秒）",
       "language": "言語",
@@ -5448,7 +5490,27 @@ export const I18N_RESOURCES = {
           "dashboardCovered": "Access はダッシュボード管理",
           "notEnforced": "Access 未強制",
           "protected": "Access 有効",
-          "hostnameMismatch": "Access ホスト名不一致"
+          "hostnameMismatch": "Access ホスト名不一致",
+          "loginProtected": "ログイン保護 有効",
+          "loginMissing": "ログイン保護 未適用",
+          "unprotected": "アクセス保護なし"
+        },
+        "accessMode": {
+          "hint": "アクセス保護の方式を選択してください。",
+          "none": {
+            "title": "なし",
+            "description": "アクセス保護を設定しません。アドレスを知った人は誰でも本機の tmex を使えます。",
+            "warning": "アクセス保護が無効です。アドレスを知った人は誰でも本機の tmex を使えます。",
+            "appRemains": "Access アプリはまだ残っています。ここで削除できます。"
+          },
+          "login": {
+            "title": "アカウントとパスワード",
+            "description": "アクセスには本機へのログインが必要です。"
+          },
+          "cloudflare": {
+            "title": "Cloudflare Access",
+            "description": "Cloudflare が訪問者を検証します。ログインと併用できます。"
+          }
         },
         "externallyManaged": "システムサービスが実行",
         "externallyManagedNotice": "トンネルはシステムサービスが実行しており、tmex は状態を表示するだけで起動・停止はできません。tmex で管理するには、先に引き継ぎを解除してください。",
@@ -5456,7 +5518,7 @@ export const I18N_RESOURCES = {
           "warning": "アクセス保護が未設定です。トンネルのアドレスを知っている人は誰でも tmex を使えます。ログイン（マルチノード）を有効にするか、Access を設定してトークン検証を有効にしてください。",
           "warningShort": "現在、アクセス保護がありません。トンネルの URL を知っている人は誰でも tmex を使えます。",
           "acknowledge": "リスクを理解した上でインターネットに公開する",
-          "ackRequired": "この操作は tmex をインターネットに公開します。上のチェックを入れて確認してください。",
+          "ackRequired": "この操作は tmex をインターネットに公開します。確認にチェックを入れてください。",
           "enableLogin": "ログインを有効にする（マルチノード）",
           "dropWarning": "警告：トンネルは動作したままで、解除すると誰でも tmex を使えるようになります。"
         },
@@ -5653,7 +5715,6 @@ export const I18N_RESOURCES = {
         "pickerSymlink": "シンボリックリンク",
         "pickerCurrent": "現在のディレクトリ",
         "pickerConfirm": "このディレクトリを選択",
-        "enabled": "有効",
         "addFailed": "ディレクトリの追加に失敗しました",
         "updateFailed": "ディレクトリの更新に失敗しました",
         "deleteFailed": "ディレクトリの削除に失敗しました",
@@ -5886,7 +5947,7 @@ export const I18N_RESOURCES = {
     "apiError": {
       "siteNameRequired": "サイト名は空にできません",
       "siteUrlInvalid": "サイト URL は http:// または https:// で始まる必要があります",
-      "bellThrottleInvalid": "ベル制限秒数は 0-300 の間である必要があります",
+      "bellThrottleInvalid": "ベル通知の制限秒数は 0-300 の間である必要があります",
       "sshRetriesInvalid": "SSH 再接続試行回数は 0-20 の間である必要があります",
       "sshDelayInvalid": "SSH 再接続待機時間は 1-300 秒の間である必要があります",
       "languageInvalid": "言語はサポートされているロケールのいずれかである必要があります",
@@ -5926,7 +5987,7 @@ export const I18N_RESOURCES = {
       "agentConfirmationNotFound": "確認リクエストが存在しません",
       "agentConfirmationAlreadyDecided": "確認リクエストは既に処理済みです",
       "agentMessageTextRequired": "メッセージ内容を入力してください",
-      "watchRuleNotFound": "Watch ルールが存在しません",
+      "watchRuleNotFound": "モニタールールが存在しません",
       "watchNameRequired": "ルール名を入力してください",
       "watchTriggerTypeInvalid": "トリガー種別は match、unchanged、llm のいずれかです",
       "watchPatternRequired": "match/unchanged ルールには正規表現が必要です",
@@ -5961,20 +6022,20 @@ export const I18N_RESOURCES = {
     "notification": {
       "clickToJump": "対応するターミナルにジャンプ",
       "eventType": {
-        "terminal_bell": "🔔 ターミナルベル",
-        "terminal_notification": "🔔 ターミナル通知",
-        "tmux_window_close": "🪟 ウィンドウ閉じる",
-        "tmux_pane_close": "📱 ターミナルを閉じました",
-        "device_tmux_missing": "⚠️ Tmux がありません",
-        "device_disconnect": "🔌 デバイス切断",
-        "session_created": "🆕 セッション作成",
-        "session_closed": "🚪 セッション閉じる",
-        "agent_confirmation_pending": "🤖 エージェント確認待ち",
-        "agent_turn_finished": "🤖 エージェントターン完了",
-        "agent_error": "🤖 エージェントエラー",
-        "watch_triggered": "👁️ Watch ルール発動",
-        "watch_model_unavailable": "👁️ Watch モデル利用不可",
-        "watch_rule_error": "👁️ Watch ルールエラー"
+        "terminal_bell": "ターミナルベル",
+        "terminal_notification": "ターミナル通知",
+        "tmux_window_close": "ウィンドウ閉じる",
+        "tmux_pane_close": "ターミナルを閉じました",
+        "device_tmux_missing": "Tmux がありません",
+        "device_disconnect": "デバイス切断",
+        "session_created": "セッション作成",
+        "session_closed": "セッション閉じる",
+        "agent_confirmation_pending": "エージェント確認待ち",
+        "agent_turn_finished": "エージェントターン完了",
+        "agent_error": "エージェントエラー",
+        "watch_triggered": "ターミナルモニター発動",
+        "watch_model_unavailable": "ターミナルモニターのモデル利用不可",
+        "watch_rule_error": "ターミナルモニターのルールエラー"
       },
       "site": "サイト",
       "device": "デバイス",
@@ -5986,7 +6047,7 @@ export const I18N_RESOURCES = {
       "paneTitle": "タイトル",
       "process": "プロセス",
       "telegramBell": {
-        "title": "🔔 {{siteName}} からのベル：{{terminalTopbarLabel}}",
+        "title": "🔔 {{siteName}} からのターミナルベル：{{terminalTopbarLabel}}",
         "viewLink": "表示",
         "terminalTopbarLabel": "ウィンドウ {{window}} · ターミナル {{pane}} @ {{device}}"
       },
@@ -5997,14 +6058,14 @@ export const I18N_RESOURCES = {
         "error": "エージェント「{{title}}」でエラーが発生しました：{{message}}"
       },
       "watch": {
-        "matchTriggered": "Watch「{{name}}」がマッチしました：{{text}}",
-        "unchangedTriggered": "Watch「{{name}}」の値「{{value}}」が {{minutes}} 分間変化していません",
-        "llmTriggered": "Watch「{{name}}」の条件を満たしました：{{reason}}",
-        "summaryTriggered": "Watch「{{name}}」：{{summary}}",
+        "matchTriggered": "モニター「{{name}}」がマッチしました：{{text}}",
+        "unchangedTriggered": "モニター「{{name}}」の値「{{value}}」が {{minutes}} 分間変化していません",
+        "llmTriggered": "モニター「{{name}}」の条件を満たしました：{{reason}}",
+        "summaryTriggered": "モニター「{{name}}」：{{summary}}",
         "unconfirmedSuffix": "（モデル利用不可のため LLM 未確認）",
-        "modelUnavailable": "Watch「{{name}}」のモデル呼び出しに失敗しました：{{message}}",
-        "ruleError": "Watch「{{name}}」が {{count}} 回連続で失敗したため自動停止しました：{{message}}",
-        "paneGone": "Watch「{{name}}」のターミナル（{{paneId}}）が破棄されたため、ルールを削除しました"
+        "modelUnavailable": "モニター「{{name}}」のモデル呼び出しに失敗しました：{{message}}",
+        "ruleError": "モニター「{{name}}」が {{count}} 回連続で失敗したため自動停止しました：{{message}}",
+        "paneGone": "モニター「{{name}}」のターミナル（{{paneId}}）が破棄されたため、ルールを削除しました"
       }
     },
     "sidebar": {
@@ -6392,7 +6453,9 @@ export const I18N_RESOURCES = {
         "usePasskey": "パスキーを使う",
         "credentialsRequired": "ユーザー名とパスワードを入力してください。",
         "totpRequired": "認証アプリのコードを入力してください。",
-        "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。"
+        "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。",
+        "passkeyNotRegistered": "このアドレスにはパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
+        "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。"
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",

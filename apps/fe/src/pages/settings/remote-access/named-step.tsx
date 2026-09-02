@@ -14,7 +14,13 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { CopyButton } from '../nodes/copy-feedback';
 import { FormField, SetupNotice } from '../nodes/setup/form-parts';
-import { type ExposureState, ExposureWarning } from './exposure';
+import {
+  EXPOSURE_ACK,
+  type ExposureState,
+  ExposureWarning,
+  exposureAck,
+  exposureShown,
+} from './exposure';
 import { DetailRow, JobProgress, ProgressRow } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
 import { describeTunnelError, isValidHostname, isValidTunnelName } from './tunnel-model';
@@ -305,6 +311,7 @@ export function CreateStep({
   const createFailed = job?.kind === 'create' && job.state === 'error' && job.error !== null;
   const hostname = draft.hostname.trim();
   const name = draft.tunnelName.trim();
+  const ack = exposureAck(exposure, EXPOSURE_ACK.create, exposureShown(exposure, 'compact'));
 
   return (
     <div className="space-y-3" data-testid="remote-access-create">
@@ -316,7 +323,7 @@ export function CreateStep({
 
       <ExposureWarning
         exposure={exposure}
-        id="remote-access-create-ack"
+        ack={ack}
         testId="remote-access-create-exposure"
         variant="compact"
       />
@@ -329,7 +336,8 @@ export function CreateStep({
           size="sm"
           disabled={actions.busy}
           onClick={() =>
-            actions.run(
+            ack.submit(
+              actions.run,
               name
                 ? { action: 'create', hostname, tunnelName: name }
                 : { action: 'create', hostname }

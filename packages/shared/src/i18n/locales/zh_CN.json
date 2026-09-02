@@ -293,9 +293,9 @@
       "noDeviceSelected": "未选择设备",
       "windowClosed": "当前窗口已关闭，请在侧边栏重新选择窗口。",
       "paneClosed": "当前终端已关闭，请在侧边栏重新选择。",
-      "bellNotification": "终端 Bell",
+      "bellNotification": "终端响铃",
       "bellDescriptionWithTitle": "窗口 {{window}} · {{paneLabel}}",
-      "bellFallback": "收到 tmux bell",
+      "bellFallback": "收到终端响铃",
       "notificationFallbackTitle": "终端通知",
       "notificationSourceLabel": "来自 {{source}}",
       "notificationFallbackDetail": "终端通知",
@@ -330,12 +330,12 @@
       "siteNamePlaceholder": "tmex",
       "siteUrl": "站点访问 URL",
       "siteUrlPlaceholder": "http://localhost:3000",
-      "bellThrottle": "Bell 频控（秒）",
+      "bellThrottle": "响铃通知频控（秒）",
       "notificationThrottle": "通知频控（秒）",
       "enableBrowserNotificationToast": "开启浏览器通知 Toast",
       "enableNotificationPush": "开启通知推送",
-      "enableBellPush": "开启 Bell 推送",
-      "enableBellSound": "开启 Bell 提示音",
+      "enableBellPush": "推送终端响铃",
+      "enableBellSound": "终端响铃时播放提示音",
       "sshReconnectRetries": "SSH 重连次数",
       "sshReconnectDelay": "SSH 重连等待（秒）",
       "language": "语言",
@@ -680,7 +680,27 @@
           "dashboardCovered": "Access 由控制台管理",
           "notEnforced": "Access 未强制校验",
           "protected": "Access 已生效",
-          "hostnameMismatch": "Access 主机名不匹配"
+          "hostnameMismatch": "Access 主机名不匹配",
+          "loginProtected": "登录保护已启用",
+          "loginMissing": "登录保护未生效",
+          "unprotected": "访问保护未启用"
+        },
+        "accessMode": {
+          "hint": "选择一种访问保护方式。",
+          "none": {
+            "title": "无",
+            "description": "不设访问保护，任何人拿到地址即可使用本机 tmex。",
+            "warning": "访问保护未启用：任何人拿到地址即可使用本机 tmex。",
+            "appRemains": "Access 应用仍在，可在此移除。"
+          },
+          "login": {
+            "title": "账号密码",
+            "description": "访问须先登录本机账号。"
+          },
+          "cloudflare": {
+            "title": "Cloudflare Access",
+            "description": "由 Cloudflare 校验访问者身份，可与登录叠加。"
+          }
         },
         "externallyManaged": "由系统服务托管",
         "externallyManagedNotice": "隧道由系统服务运行，tmex 仅显示状态，无法启动或停止。要交回 tmex 管理，请先取消接管。",
@@ -688,7 +708,7 @@
           "warning": "当前未配置访问保护：任何人拿到隧道地址, 都能直接使用 tmex。请启用登录（多节点互联），或配置 Access 并开启令牌校验。",
           "warningShort": "当前没有任何访问保护：拿到隧道地址的人都能直接使用 tmex。",
           "acknowledge": "我已了解风险，仍要开放公网访问",
-          "ackRequired": "该操作会把 tmex 开放到公网，请先勾选上面的确认。",
+          "ackRequired": "该操作会把 tmex 开放到公网，请先勾选风险确认。",
           "enableLogin": "启用登录（多节点互联）",
           "dropWarning": "警告：隧道仍在运行，移除后任何人都能直接使用 tmex。"
         },
@@ -885,7 +905,6 @@
         "pickerSymlink": "符号链接",
         "pickerCurrent": "当前目录",
         "pickerConfirm": "选择此目录",
-        "enabled": "启用",
         "addFailed": "添加目录失败",
         "updateFailed": "更新目录失败",
         "deleteFailed": "移除目录失败",
@@ -1118,7 +1137,7 @@
     "apiError": {
       "siteNameRequired": "站点名称不能为空",
       "siteUrlInvalid": "站点 URL 必须以 http:// 或 https:// 开头",
-      "bellThrottleInvalid": "Bell 频控秒数需在 0-300 之间",
+      "bellThrottleInvalid": "响铃通知频控秒数需在 0-300 之间",
       "sshRetriesInvalid": "SSH 重连次数需在 0-20 之间",
       "sshDelayInvalid": "SSH 重连等待时间需在 1-300 秒之间",
       "languageInvalid": "语言必须是受支持的区域设置之一",
@@ -1158,7 +1177,7 @@
       "agentConfirmationNotFound": "确认请求不存在",
       "agentConfirmationAlreadyDecided": "确认请求已被处理",
       "agentMessageTextRequired": "消息内容不能为空",
-      "watchRuleNotFound": "Watch 规则不存在",
+      "watchRuleNotFound": "监控规则不存在",
       "watchNameRequired": "规则名称不能为空",
       "watchTriggerTypeInvalid": "触发类型必须是 match、unchanged 或 llm",
       "watchPatternRequired": "match/unchanged 规则必须提供正则表达式",
@@ -1193,20 +1212,20 @@
     "notification": {
       "clickToJump": "点击跳转到对应终端",
       "eventType": {
-        "terminal_bell": "🔔 终端 Bell",
-        "terminal_notification": "🔔 终端通知",
-        "tmux_window_close": "🪟 窗口关闭",
-        "tmux_pane_close": "📱 终端关闭",
-        "device_tmux_missing": "⚠️ Tmux 不可用",
-        "device_disconnect": "🔌 设备断开",
-        "session_created": "🆕 会话创建",
-        "session_closed": "🚪 会话关闭",
-        "agent_confirmation_pending": "🤖 智能体等待确认",
-        "agent_turn_finished": "🤖 智能体回合完成",
-        "agent_error": "🤖 智能体错误",
-        "watch_triggered": "👁️ Watch 规则触发",
-        "watch_model_unavailable": "👁️ Watch 模型不可用",
-        "watch_rule_error": "👁️ Watch 规则错误"
+        "terminal_bell": "终端响铃",
+        "terminal_notification": "终端通知",
+        "tmux_window_close": "窗口关闭",
+        "tmux_pane_close": "终端关闭",
+        "device_tmux_missing": "Tmux 不可用",
+        "device_disconnect": "设备断开",
+        "session_created": "会话创建",
+        "session_closed": "会话关闭",
+        "agent_confirmation_pending": "智能体等待确认",
+        "agent_turn_finished": "智能体回合完成",
+        "agent_error": "智能体错误",
+        "watch_triggered": "终端监控触发",
+        "watch_model_unavailable": "终端监控模型不可用",
+        "watch_rule_error": "终端监控规则错误"
       },
       "site": "站点",
       "device": "设备",
@@ -1218,7 +1237,7 @@
       "paneTitle": "标题",
       "process": "进程",
       "telegramBell": {
-        "title": "🔔 来自 {{siteName}} 的 Bell：{{terminalTopbarLabel}}",
+        "title": "🔔 来自 {{siteName}} 的终端响铃：{{terminalTopbarLabel}}",
         "viewLink": "点击查看",
         "terminalTopbarLabel": "窗口 {{window}} · 终端 {{pane}} @ {{device}}"
       },
@@ -1624,7 +1643,9 @@
         "usePasskey": "使用通行密钥",
         "credentialsRequired": "请输入用户名和密码。",
         "totpRequired": "请输入验证码。",
-        "nodeListFailed": "节点列表加载失败，请重试。"
+        "nodeListFailed": "节点列表加载失败，请重试。",
+        "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
+        "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。"
       },
       "node": {
         "loginToThisNode": "登录该节点",

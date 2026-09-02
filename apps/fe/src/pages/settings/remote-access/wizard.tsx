@@ -14,8 +14,15 @@ import { useRestartGateway } from '../nodes/restart/use-restart-now';
 import { SetupNotice, SwitchRow } from '../nodes/setup/form-parts';
 import { accessStepTag } from './access-model';
 import { AccessStep } from './access-step';
+import { ChoiceCard } from './choice-card';
 import { DirectStep } from './direct-step';
-import { type ExposureState, ExposureWarning } from './exposure';
+import {
+  EXPOSURE_ACK,
+  type ExposureState,
+  ExposureWarning,
+  exposureAck,
+  exposureShown,
+} from './exposure';
 import { ExternalTunnelCard } from './external-card';
 import { CreateStep, HostnameStep, LoginStep, type NamedDraft } from './named-step';
 import { DetailRow, JobProgress, WizardStepCard } from './step-shell';
@@ -103,12 +110,9 @@ export function TunnelWizard({
                 </Link>
               </SetupNotice>
             )}
+            {/* 这一步没有会开放公网的动作：只提醒，确认勾选留给真正发起动作的那一步。 */}
             {step === 'mode' && (
-              <ExposureWarning
-                exposure={exposure}
-                id="remote-access-mode-ack"
-                testId="remote-access-exposure"
-              />
+              <ExposureWarning exposure={exposure} testId="remote-access-exposure" />
             )}
             <StepContent
               step={step}
@@ -238,6 +242,8 @@ function StepContent({
           actions={actions}
           draftHostname={draft.hostname}
           exposure={exposure}
+          localAuth={localAuth}
+          onLocalAuth={onLocalAuth}
         />
       );
     case 'create':
@@ -415,51 +421,6 @@ function ModeChooser({
   );
 }
 
-/** 连接方式与隧道类型两组单选卡共用：`group` 同时决定 testid、单选组名与文案键前缀。 */
-function ChoiceCard<T extends string>({
-  group,
-  value,
-  icon,
-  selected,
-  disabled,
-  onSelect,
-}: {
-  group: 'path' | 'mode';
-  value: T;
-  icon: ReactNode;
-  selected: boolean;
-  disabled: boolean;
-  onSelect: (value: T) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <label
-      data-testid={`remote-access-${group}-${value}`}
-      data-selected={selected ? 'true' : 'false'}
-      className={`flex cursor-pointer flex-col gap-1.5 rounded-xl p-3 text-left ring-1 has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
-        selected ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10 hover:bg-muted/50'
-      } ${disabled ? 'pointer-events-none opacity-60' : ''}`}
-    >
-      <input
-        type="radio"
-        name={`remote-access-${group}`}
-        data-testid={`remote-access-${group}-${value}-input`}
-        className="sr-only"
-        checked={selected}
-        disabled={disabled}
-        onChange={() => onSelect(value)}
-      />
-      <span className="flex items-center gap-2 text-sm font-medium">
-        {icon}
-        {t(`settings.remoteAccess.${group}.${value}.title`)}
-      </span>
-      <span className="text-xs text-muted-foreground">
-        {t(`settings.remoteAccess.${group}.${value}.description`)}
-      </span>
-    </label>
-  );
-}
-
 function QuickTunnelStep({
   status,
   actions,
@@ -473,6 +434,7 @@ function QuickTunnelStep({
   const job = status.job;
   const starting = job?.kind === 'start' && job.state === 'running';
   const started = status.config.mode === 'quick' && status.process.publicUrl !== null;
+  const ack = exposureAck(exposure, EXPOSURE_ACK.quick, exposureShown(exposure, 'compact'));
 
   return (
     <div className="space-y-2" data-testid="remote-access-quick">
@@ -489,7 +451,7 @@ function QuickTunnelStep({
         <>
           <ExposureWarning
             exposure={exposure}
-            id="remote-access-quick-ack"
+            ack={ack}
             testId="remote-access-quick-exposure"
             variant="compact"
           />
@@ -497,7 +459,7 @@ function QuickTunnelStep({
             type="button"
             size="sm"
             disabled={actions.busy || !status.binary.installed}
-            onClick={() => actions.run({ action: 'quick_start' })}
+            onClick={() => ack.submit(actions.run, { action: 'quick_start' })}
             data-testid="remote-access-quick-start"
           >
             {actions.pending === 'quick_start' ? <Loader2 className="animate-spin" /> : <Rocket />}
@@ -523,6 +485,11 @@ function ProxyStep({
   const { t } = useTranslation();
   const restart = useRestartGateway(undefined, onRestarted);
   const restartRequired = trustProxyRestartRequired(status);
+  const autoStartAck = exposureAck(
+    exposure,
+    EXPOSURE_ACK.autoStart,
+    !status.config.autoStart && exposureShown(exposure, 'compact')
+  );
 
   return (
     <div className="space-y-3">
@@ -556,13 +523,13 @@ function ProxyStep({
             checked={status.config.autoStart}
             disabled={actions.busy}
             onCheckedChange={(checked) =>
-              actions.run({ action: 'set_auto_start', autoStart: checked })
+              autoStartAck.submit(actions.run, { action: 'set_auto_start', autoStart: checked })
             }
           />
-          {!status.config.autoStart && (
+          {autoStartAck.shown && (
             <ExposureWarning
               exposure={exposure}
-              id="remote-access-auto-start-ack"
+              ack={autoStartAck}
               testId="remote-access-auto-start-exposure"
               variant="compact"
             />
