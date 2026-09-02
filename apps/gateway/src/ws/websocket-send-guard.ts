@@ -1,11 +1,23 @@
+import { wsBorsh } from '@tmex/shared';
 import type { Carrier } from './carrier';
+import { carrierKindOf, logGuardEvent } from './ws-backpressure-log';
 
 export const GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES = 1_048_576;
 export const GATEWAY_WS_BACKPRESSURE_TIMEOUT_MS = 5_000;
+export const GATEWAY_WS_BACKPRESSURE_PROGRESS_MS = 5_000;
 
 interface BackpressureState {
   skippedFrame: boolean;
   timer: ReturnType<typeof setTimeout>;
+  firstAt: number;
+  bufferedBefore: number;
+  skippedFrames: number;
+  skippedBytes: number;
+  frameKind: string;
+  lastKind: string;
+  lastFrame: string | BufferSource | undefined;
+  frameBytes: number;
+  lastProgressAt: number;
 }
 
 interface WebSocketSendGuardOptions {
@@ -28,6 +40,7 @@ export interface WebSocketSendGuardStats {
   perSessionBytesLimit: number;
   backpressureTimeoutMs: number;
   terminationsByReason: Record<TerminationReason, number>;
+  carriersByKind: Record<string, number>;
 }
 
 function frameByteLength(frame: string | BufferSource): number {
@@ -100,7 +113,12 @@ export class WebSocketSendGuard {
     frames: readonly (string | BufferSource)[],
     maxFrameBytes?: number | null
   ): WebSocketSendStatus {
-    if (!this.canSend(carrier)) {
+    if (this.unavailable.has(carrier)) {
+      return 'dropped';
+    }
+    if (this.states.has(carrier)) {
+      this.canSend(carrier);
+      this.noteSkip(carrier, frames);
       return 'dropped';
     }
 
@@ -129,17 +147,7 @@ export class WebSocketSendGuard {
       }
 
       if (status === 'backpressure') {
-        const state: BackpressureState = {
-          skippedFrame: index + 1 < frames.length,
-          timer: setTimeout(() => {
-            if (this.states.get(carrier) !== state) {
-              return;
-            }
-            this.states.delete(carrier);
-            this.terminate(carrier, 'backpressure_timeout');
-          }, this.timeoutMs),
-        };
-        this.states.set(carrier, state);
+        this.enterBackpressure(carrier, frame, frames.slice(index + 1));
         return 'backpressured';
       }
 
@@ -158,10 +166,23 @@ export class WebSocketSendGuard {
       return;
     }
     clearTimeout(state.timer);
-    this.states.delete(carrier);
+    let bufferedAfter = 0;
+    try {
+      bufferedAfter = Math.max(0, carrier.bufferedAmount());
+    } catch {
+      bufferedAfter = 0;
+    }
+    logGuardEvent('backpressure drain', carrier, {
+      buffered_before: state.bufferedBefore,
+      buffered_after: bufferedAfter,
+      skipped_frames: state.skippedFrames,
+      skipped_bytes: state.skippedBytes,
+      first_backpressure_at: state.firstAt,
+    });
     if (state.skippedFrame) {
       this.terminate(carrier, 'backpressure_gap');
     }
+    this.states.delete(carrier);
   }
 
   markStreamGap(carrier: Carrier): void {
@@ -185,10 +206,13 @@ export class WebSocketSendGuard {
     let backpressuredSessions = 0;
     let unavailableSessions = 0;
     let queuedBytes = 0;
+    const carriersByKind: Record<string, number> = {};
     for (const carrier of carriers) {
       sessions += 1;
       if (this.states.has(carrier)) backpressuredSessions += 1;
       if (this.unavailable.has(carrier)) unavailableSessions += 1;
+      const kind = carrierKindOf(carrier);
+      carriersByKind[kind] = (carriersByKind[kind] ?? 0) + 1;
       try {
         queuedBytes += Math.max(0, carrier.bufferedAmount());
       } catch {
@@ -204,7 +228,77 @@ export class WebSocketSendGuard {
       perSessionBytesLimit: GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
       backpressureTimeoutMs: this.timeoutMs,
       terminationsByReason: { ...this.terminationsByReason },
+      carriersByKind,
     };
+  }
+
+  private enterBackpressure(
+    carrier: Carrier,
+    frame: string | BufferSource,
+    rest: readonly (string | BufferSource)[]
+  ): BackpressureState {
+    const frameBytes = frameByteLength(frame);
+    let bufferedBefore = 0;
+    try {
+      bufferedBefore = Math.max(0, carrier.bufferedAmount());
+    } catch {
+      bufferedBefore = 0;
+    }
+    const restBytes = rest.reduce((sum, item) => sum + frameByteLength(item), 0);
+    const state: BackpressureState = {
+      skippedFrame: rest.length > 0,
+      timer: setTimeout(() => {
+        if (this.states.get(carrier) !== state) {
+          return;
+        }
+        this.terminate(carrier, 'backpressure_timeout');
+        this.states.delete(carrier);
+      }, this.timeoutMs),
+      firstAt: Date.now(),
+      bufferedBefore,
+      skippedFrames: rest.length,
+      skippedBytes: restBytes,
+      frameKind: frameKindOf(frame),
+      lastKind: frameKindOf(frame),
+      lastFrame: rest[rest.length - 1] ?? frame,
+      frameBytes,
+      lastProgressAt: Date.now(),
+    };
+    this.states.set(carrier, state);
+    logGuardEvent('backpressure enter', carrier, {
+      buffered_before: bufferedBefore,
+      buffered_after: bufferedBefore,
+      frame_kind: state.frameKind,
+      frame_bytes: frameBytes,
+      first_backpressure_at: state.firstAt,
+      skipped_frames: state.skippedFrames,
+      skipped_bytes: state.skippedBytes,
+    });
+    return state;
+  }
+
+  private noteSkip(carrier: Carrier, frames: readonly (string | BufferSource)[]): void {
+    const state = this.states.get(carrier);
+    if (!state) return;
+    let bytes = 0;
+    for (const frame of frames) bytes += frameByteLength(frame);
+    state.skippedFrames += frames.length;
+    state.skippedBytes += bytes;
+    const last = frames[frames.length - 1];
+    if (last !== undefined) state.lastFrame = last;
+    const now = Date.now();
+    if (now - state.lastProgressAt < GATEWAY_WS_BACKPRESSURE_PROGRESS_MS) return;
+    state.lastProgressAt = now;
+    state.lastKind = frameKindOf(state.lastFrame);
+    logGuardEvent('backpressure skip', carrier, {
+      buffered_before: state.bufferedBefore,
+      frame_kind: state.lastKind || state.frameKind,
+      first_kind: state.frameKind,
+      last_kind: state.lastKind,
+      first_backpressure_at: state.firstAt,
+      skipped_frames: state.skippedFrames,
+      skipped_bytes: state.skippedBytes,
+    });
   }
 
   private terminate(carrier: Carrier, reason: TerminationReason): void {
@@ -213,12 +307,32 @@ export class WebSocketSendGuard {
     }
     this.unavailable.add(carrier);
     this.terminationsByReason[reason] += 1;
+    const state = this.states.get(carrier);
+    logGuardEvent('terminate', carrier, {
+      reason,
+      buffered_before: state?.bufferedBefore ?? 0,
+      skipped_frames: state?.skippedFrames ?? 0,
+      skipped_bytes: state?.skippedBytes ?? 0,
+      first_backpressure_at: state?.firstAt ?? 0,
+    });
     this.onTerminate(reason);
     try {
       carrier.terminate();
     } catch {
       // The carrier may already be closing.
     }
+  }
+}
+
+function frameKindOf(frame: string | BufferSource | undefined): string {
+  if (frame === undefined) return 'raw';
+  try {
+    const bytes = toUint8Array(frame);
+    if (!wsBorsh.checkMagic(bytes) || bytes.byteLength < 6) return 'raw';
+    const kind = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint16(4, true);
+    return kind.toString(16).padStart(4, '0');
+  } catch {
+    return 'raw';
   }
 }
 

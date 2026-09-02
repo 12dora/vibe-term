@@ -379,7 +379,10 @@ export async function handshakeWsDirect(opts: {
       recvKey: keys.recvKey,
       ...directions,
     });
-    const session = new LinkMux(secure, { role: opts.role });
+    const session = new LinkMux(secure, {
+      role: opts.role,
+      logContext: { nodeId: result.peerNodeId, transport: 'ws-secure' },
+    });
     return {
       session,
       peerNodeId: result.peerNodeId,
@@ -439,7 +442,10 @@ export async function handshakeRelay(opts: {
       recvKey: keys.recvKey,
       ...directions,
     });
-    const session = new LinkMux(secure, { role: opts.role });
+    const session = new LinkMux(secure, {
+      role: opts.role,
+      logContext: { nodeId: result.peerNodeId, transport: 'relay' },
+    });
     return {
       session,
       peerNodeId: result.peerNodeId,

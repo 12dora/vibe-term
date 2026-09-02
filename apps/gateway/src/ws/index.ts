@@ -164,6 +164,7 @@ export class WebSocketServer
     }
     const carrier = new BunSocketCarrier(ws);
     const session = new GatewaySession({ primary: carrier });
+    carrier.logContext.sessionId = session.id;
     ws.data = { session, carrier };
     return session;
   }
@@ -198,6 +199,8 @@ export class WebSocketServer
     onClose: () => void;
   } {
     const session = new GatewaySession({ primary: carrier });
+    const ctx = carrier.logContext ?? { kind: 'physical_browser_ws' as const };
+    carrier.logContext = { ...ctx, sessionId: session.id };
     this.handleOpen(session);
     carrier.onDrain(() => {
       this.handleDrain(session, carrier);
@@ -813,9 +816,10 @@ export class WebSocketServer
     ws: GatewaySession,
     deviceId: string,
     paneId: string,
-    requestToken: Uint8Array
+    requestToken: Uint8Array,
+    byteLimit?: number | null
   ): void {
-    tmuxCommands.handleFetchPaneHistory(this, ws, deviceId, paneId, requestToken);
+    tmuxCommands.handleFetchPaneHistory(this, ws, deviceId, paneId, requestToken, byteLimit);
   }
 
   handleResizePaneById(deviceId: string, paneId: string, cols?: number, rows?: number): void {

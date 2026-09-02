@@ -1,3 +1,7 @@
+export function winningDialInitiator(selfNodeId: string, peerNodeId: string): string {
+  return selfNodeId < peerNodeId ? selfNodeId : peerNodeId;
+}
+
 export type DirectAttemptRecord = {
   at: number;
   ws: string | null;

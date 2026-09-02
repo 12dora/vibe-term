@@ -2,6 +2,15 @@ import type { ServerWebSocket } from 'bun';
 
 export type CarrierSendResult = 'sent' | 'backpressure' | 'closed';
 
+export type CarrierKind = 'physical_browser_ws' | 'mesh_link_stream';
+
+export type CarrierLogContext = {
+  kind?: CarrierKind;
+  sessionId?: string;
+  cid?: string;
+  nodeId?: string;
+};
+
 export interface Carrier {
   send(bytes: Uint8Array): CarrierSendResult;
   bufferedAmount(): number;
@@ -9,9 +18,11 @@ export interface Carrier {
   close(code: number, reason: string): void;
   terminate(): void;
   hasPendingWrites?(): boolean;
+  logContext?: CarrierLogContext;
 }
 
 export class BunSocketCarrier implements Carrier {
+  readonly logContext: CarrierLogContext = { kind: 'physical_browser_ws' };
   private readonly drainCallbacks: Array<() => void> = [];
 
   constructor(private readonly socket: ServerWebSocket<unknown>) {}

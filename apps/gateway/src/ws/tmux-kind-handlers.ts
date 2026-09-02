@@ -1,6 +1,23 @@
 import { wsBorsh } from '@tmex/shared';
-import { type BorshDispatchHost, type BorshKindHandler, schemaHandler } from './borsh-dispatcher';
+import {
+  type BorshDispatchHost,
+  type BorshKindHandler,
+  decoderHandler,
+  schemaHandler,
+} from './borsh-dispatcher';
 import { createTmuxViewportHandlers } from './tmux-viewport-handlers';
+
+function fetchPaneHistoryHandler(host: BorshDispatchHost): BorshKindHandler<unknown> {
+  return decoderHandler(wsBorsh.schema.decodeTmuxFetchPaneHistory, (ws, decoded) =>
+    host.handleFetchPaneHistory(
+      ws,
+      decoded.deviceId,
+      decoded.paneId,
+      decoded.requestToken,
+      decoded.byteLimit
+    )
+  );
+}
 
 export function createTmuxKindHandlers(
   host: BorshDispatchHost
@@ -82,12 +99,7 @@ export function createTmuxKindHandlers(
         host.handleSubscribePanes(ws, decoded.deviceId, decoded.paneIds);
       }),
     ],
-    [
-      wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY,
-      schemaHandler(wsBorsh.schema.TmuxFetchPaneHistorySchema, (ws, decoded) => {
-        host.handleFetchPaneHistory(ws, decoded.deviceId, decoded.paneId, decoded.requestToken);
-      }),
-    ],
+    [wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY, fetchPaneHistoryHandler(host)],
     [
       wsBorsh.KIND_TMUX_SPLIT_PANE,
       schemaHandler(wsBorsh.schema.TmuxSplitPaneSchema, (_ws, decoded) => {

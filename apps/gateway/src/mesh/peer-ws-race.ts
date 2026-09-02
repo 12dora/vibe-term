@@ -18,7 +18,7 @@ function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerS
   );
 }
 
-function quiet(fn: () => void): void {
+export function quiet(fn: () => void): void {
   try {
     fn();
   } catch {

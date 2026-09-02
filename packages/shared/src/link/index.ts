@@ -14,6 +14,7 @@ export {
   MAX_CTL_INBOX,
   MAX_MUX_STREAMS,
   MAX_PENDING_INCOMING,
+  type LinkMuxLogContext,
   type LinkMuxOptions,
 } from './mux';
 export { createBytePipe, createInMemoryLinkPair } from './in-memory-link';

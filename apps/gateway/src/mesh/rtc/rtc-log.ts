@@ -1,9 +1,12 @@
+import { stamp } from '../mesh-log';
 import { maskIceAddress, maskIceCandidate, parseIceCandidateType } from './ice';
 
 export const RTC_LOG_PREFIX = '[mesh][rtc]';
 export const RTC_LOG_CANDIDATE_INTERVAL_MS = 1_000;
+export const RTC_DIAL_FAILED_LOG_INTERVAL_MS = 60_000;
 
 const lastLogAt = new Map<string, number>();
+const dialFailedAt = new Map<string, { at: number; suppressed: number }>();
 
 export type IceCandidateTrace = {
   local: Set<string>;
@@ -42,7 +45,42 @@ export function formatRtcLog(event: string, fields: Record<string, unknown> = {}
 }
 
 export function rtcLog(event: string, fields: Record<string, unknown> = {}): void {
-  console.log(formatRtcLog(event, fields));
+  if (event === 'dial failed' && typeof fields.peer === 'string') {
+    logDialFailed(fields.peer, fields);
+    return;
+  }
+  console.log(stamp(formatRtcLog(event, fields)));
+}
+
+export function resetRtcLogStateForTest(): void {
+  lastLogAt.clear();
+  dialFailedAt.clear();
+}
+
+export function flushDialFailed(peer: string, fields: Record<string, unknown> = {}): void {
+  const rec = dialFailedAt.get(peer);
+  if (!rec || rec.suppressed <= 0) {
+    dialFailedAt.delete(peer);
+    return;
+  }
+  const count = rec.suppressed;
+  dialFailedAt.delete(peer);
+  console.log(stamp(formatRtcLog('dial failed', { peer, ...fields, count })));
+}
+
+function logDialFailed(peer: string, fields: Record<string, unknown>): void {
+  const now = Date.now();
+  const rec = dialFailedAt.get(peer) ?? { at: 0, suppressed: 0 };
+  if (rec.at > 0 && now - rec.at < RTC_DIAL_FAILED_LOG_INTERVAL_MS) {
+    rec.suppressed += 1;
+    dialFailedAt.set(peer, rec);
+    return;
+  }
+  const count = rec.suppressed + 1;
+  rec.at = now;
+  rec.suppressed = 0;
+  dialFailedAt.set(peer, rec);
+  console.log(stamp(formatRtcLog('dial failed', { ...fields, count })));
 }
 
 export function rtcLogRateLimited(

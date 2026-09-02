@@ -62,7 +62,8 @@ export interface DeviceSessionRuntimeConnection {
   breakPane(paneId: string): void;
   requestPaneHistory(paneId: string): Promise<void>;
   fetchPaneHistory(
-    paneId: string
+    paneId: string,
+    byteLimit?: number
   ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null>;
   renameWindow(windowId: string, name: string): void;
   setWindowStyle(style: string): Promise<void>;
@@ -402,9 +403,10 @@ export class DeviceSessionRuntime {
   }
 
   async fetchPaneHistory(
-    paneId: string
+    paneId: string,
+    byteLimit?: number
   ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
-    return this.connection.fetchPaneHistory(paneId);
+    return this.connection.fetchPaneHistory(paneId, byteLimit);
   }
 
   renameWindow(windowId: string, name: string): void {

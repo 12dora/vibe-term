@@ -1,7 +1,9 @@
 import type { ThemeMode } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
+import { truncateUtf8Tail } from '../bytes';
 import type { DeviceTreeOrderRecord } from '../db';
 import type { SettingsNamespace } from '../settings/broadcaster';
+import { MAX_PANE_HISTORY_CAPTURE_BYTES } from '../tmux-client/control-mode-capture';
 import { isTmuxPaneId, isTmuxWindowId } from '../tmux-client/snapshot-format';
 import { switchBarrier } from './borsh/switch-barrier';
 import { parseWindowLayoutSize } from './frame-utils';
@@ -782,15 +784,22 @@ export function handleFetchPaneHistory(
   session: GatewaySession,
   deviceId: string,
   paneId: string,
-  requestToken: Uint8Array
+  requestToken: Uint8Array,
+  byteLimit?: number | null
 ): void {
   const entry = host.connections.get(deviceId);
   if (!entry || !isTmuxPaneId(paneId)) return;
+  const limit =
+    byteLimit != null && Number.isSafeInteger(byteLimit) && byteLimit > 0
+      ? Math.min(byteLimit, MAX_PANE_HISTORY_CAPTURE_BYTES)
+      : MAX_PANE_HISTORY_CAPTURE_BYTES;
 
   void entry.runtime
-    .fetchPaneHistory(paneId)
+    .fetchPaneHistory(paneId, limit)
     .then((captured) => {
       if (!captured) return;
+      const encoded = new TextEncoder().encode(captured.data);
+      const data = encoded.byteLength <= limit ? encoded : truncateUtf8Tail(encoded, limit);
       const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.TermHistorySchema, {
         deviceId,
         paneId,
@@ -798,7 +807,7 @@ export function handleFetchPaneHistory(
         encoding: 1,
         alternateScreen: captured.alternateScreen,
         modes: captured.modes,
-        data: new TextEncoder().encode(captured.data),
+        data,
       });
       host.sendChunked(session, wsBorsh.KIND_TERM_HISTORY, payloadBytes);
     })

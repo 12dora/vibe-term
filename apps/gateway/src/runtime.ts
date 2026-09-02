@@ -29,6 +29,7 @@ import { tunnelManager } from './tunnel/manager';
 import { watchService } from './watch/service';
 import { weixinService } from './weixin/service';
 import { WebSocketServer } from './ws';
+import { startGatewayEventLoopLag, stopGatewayEventLoopLag } from './ws/event-loop-lag';
 import type { GatewaySocketData } from './ws/types';
 import { GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES } from './ws/websocket-send-guard';
 
@@ -79,6 +80,7 @@ function noopWebsocket(): GatewayRuntime['websocket'] {
 }
 
 async function startLiveGatewayServices(): Promise<void> {
+  startGatewayEventLoopLag();
   await telegramService.refresh();
   await weixinService.refresh();
   await pushSupervisor.start();
@@ -166,12 +168,10 @@ export async function createGatewayRuntime(
       wsServer.broadcastSiteThemeUpdateS2C(theme);
     }
   );
-  registerSettingsBroadcaster((namespace) => {
-    wsServer.broadcastSettingsUpdate(namespace);
-  });
-  registerEventNotifyBroadcaster((eventType, event) => {
-    wsServer.broadcastEventNotify(eventType, event);
-  });
+  registerSettingsBroadcaster((namespace) => wsServer.broadcastSettingsUpdate(namespace));
+  registerEventNotifyBroadcaster((eventType, event) =>
+    wsServer.broadcastEventNotify(eventType, event)
+  );
   registerTreeOverlayBridge({
     reorderWindows: (deviceId, windowIds) => wsServer.reorderWindows(deviceId, windowIds),
     reorderPanes: (deviceId, windowId, paneIds) =>
@@ -247,6 +247,7 @@ export async function createGatewayRuntime(
       return agentSupervisor.stop();
     },
     async stop() {
+      stopGatewayEventLoopLag();
       connectionAlertNotifier.setBroadcaster(null);
       connectionAlertNotifier.setEventEmitter(null);
       registerThemeBroadcaster(null);

@@ -24,11 +24,17 @@ export const MAX_PENDING_INCOMING = 64;
 export const MAX_CTL_INBOX = 64;
 export const MAX_MUX_STREAMS = 256;
 
+export type LinkMuxLogContext = {
+  nodeId?: string;
+  transport?: string;
+};
+
 export type LinkMuxOptions = {
   role: LinkRole;
   streamWindow?: number;
   maxFramePayload?: number;
   maxLinkUnacked?: number;
+  logContext?: LinkMuxLogContext;
 };
 
 type Waiter = {
@@ -57,9 +63,10 @@ function encodeRstReason(reason?: string): Uint8Array {
 function muxTrace(event: string, fields: Record<string, unknown>): void {
   const bits: string[] = [];
   for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || value === null) continue;
     bits.push(`${key}=${String(value)}`);
   }
-  console.warn(`[mesh][mux] ${event} ${bits.join(' ')}`);
+  console.warn(`${new Date().toISOString()} [mesh][mux] ${event} ${bits.join(' ')}`);
 }
 
 class MuxStream implements LinkStream {
@@ -407,6 +414,7 @@ export class LinkMux implements LinkSession {
   private readonly pendingChunks: Uint8Array[] = [];
   private ctlFlushing = false;
   private closeReason = 'closed';
+  private readonly logContext: LinkMuxLogContext;
 
   constructor(transport: ByteTransport, opts: LinkMuxOptions) {
     this.transport = transport;
@@ -414,6 +422,7 @@ export class LinkMux implements LinkSession {
     this.streamWindow = opts.streamWindow ?? INITIAL_STREAM_WINDOW;
     this.maxFramePayload = opts.maxFramePayload ?? MAX_FRAME_PAYLOAD;
     this.maxLinkUnacked = opts.maxLinkUnacked ?? MAX_LINK_UNACKED;
+    this.logContext = opts.logContext ?? {};
     this.nextStreamId = opts.role === 'initiator' ? 1 : 2;
     this.decoder = new FrameDecoder({ maxPayload: this.maxFramePayload });
     this.closed = new Promise((resolve) => {
@@ -530,7 +539,7 @@ export class LinkMux implements LinkSession {
 
   resetStream(stream: MuxStream, reason?: string): void {
     if (stream.dead) return;
-    muxTrace('rst send', { stream: stream.id, reason: reason ?? '' });
+    this.traceRst('rst send', stream, reason ?? '');
     const payload = encodeRstReason(reason);
     this.releaseOutstanding(stream);
     void this.sendFrame({
@@ -549,6 +558,15 @@ export class LinkMux implements LinkSession {
       op: FrameOp.RST,
       payload: encodeRstReason('unknown stream'),
     }).catch(() => undefined);
+  }
+
+  private traceRst(event: 'rst send' | 'rst recv', stream: MuxStream, reason: string): void {
+    muxTrace(event, {
+      ...this.logContext,
+      muxStreamId: stream.id,
+      stream: stream.id,
+      reason,
+    });
   }
 
   forgetStream(id: number): void {
@@ -729,7 +747,7 @@ export class LinkMux implements LinkSession {
       return;
     }
     const message = rstReason(payload);
-    muxTrace('rst recv', { stream: stream.id, reason: message ?? '' });
+    this.traceRst('rst recv', stream, message ?? '');
     this.releaseOutstanding(stream);
     stream.abort({ reason: 'rst', message });
     this.streams.delete(stream.id);

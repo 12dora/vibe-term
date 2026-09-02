@@ -66,9 +66,19 @@ const COMMAND_ENCODERS: CommandEncoders = {
   'reorder-windows': (command) => buildTmuxReorderWindows(command.deviceId, command.windowIds),
   'set-pane-subscriptions': (command) => buildTmuxSubscribePanes(command.deviceId, command.paneIds),
   'request-pane-screen': (command) =>
-    buildTmuxFetchPaneHistory(command.deviceId, command.paneId, command.requestId),
+    buildTmuxFetchPaneHistory(
+      command.deviceId,
+      command.paneId,
+      command.requestId,
+      command.byteLimit
+    ),
   'request-pane-history': (command) =>
-    buildTmuxFetchPaneHistory(command.deviceId, command.paneId, command.requestId),
+    buildTmuxFetchPaneHistory(
+      command.deviceId,
+      command.paneId,
+      command.requestId,
+      command.byteLimit
+    ),
   'resize-pane-in-window': (command) =>
     buildTmuxResizePane(command.deviceId, command.paneId, {
       cols: command.cols,

@@ -87,6 +87,7 @@ export type PeerLinkProvider = {
   listHubOnline?(): ReadonlySet<string>;
   transportOf?(nodeId: string): PeerTransportKind | null;
   rttOf?(nodeId: string): number | null;
+  linkSinceAtOf?(nodeId: string): number | null;
   onNodeEvent(cb: (event: NodeEventPayload) => void): () => void;
 };
 
@@ -104,6 +105,7 @@ export type OpenedWsStream = {
   onMessage(cb: (bytes: Uint8Array) => void): void;
   onClose(cb: (info: { code?: number; reason?: string }) => void): void;
   close(code?: number, reason?: string): void;
+  muxStreamId?: number;
 };
 
 export type StreamOpener = {

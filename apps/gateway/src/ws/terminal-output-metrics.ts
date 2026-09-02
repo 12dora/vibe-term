@@ -96,6 +96,7 @@ export function emptyTerminalOutputQueueStats(): TerminalOutputQueueStats {
         dropped_frame: 0,
         oversized_frame: 0,
       },
+      carriersByKind: {},
     },
     canonical: {
       pendingPaneGaps: 0,

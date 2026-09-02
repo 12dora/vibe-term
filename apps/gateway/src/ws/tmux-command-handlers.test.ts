@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
+import { wsBorsh } from '@tmex/shared';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { createGatewaySession, setupConnectionEntry } from './test-helpers';
-import { type TmuxCommandHost, handleTmuxSelect } from './tmux-command-handlers';
+import {
+  type TmuxCommandHost,
+  handleFetchPaneHistory,
+  handleTmuxSelect,
+} from './tmux-command-handlers';
 
 function makeSnapshot(): StateSnapshotPayload {
   return {
@@ -192,5 +197,74 @@ describe('handleTmuxSelect wantHistory', () => {
     expect(fixture.focusPaneCalls).toEqual([]);
     switchBarrier.cleanupClient(ws);
     sessionStateStore.delete(ws);
+  });
+});
+
+describe('handleFetchPaneHistory byteLimit', () => {
+  const TOKEN = new Uint8Array(16).fill(9);
+
+  function createHistoryHost(data: string) {
+    const fetchCalls: Array<{ paneId: string; byteLimit?: number }> = [];
+    const chunks: Uint8Array[] = [];
+    const runtime = {
+      fetchPaneHistory(paneId: string, byteLimit?: number) {
+        fetchCalls.push({ paneId, byteLimit });
+        return Promise.resolve({
+          data,
+          alternateScreen: false,
+          modes: 0,
+        });
+      },
+    };
+    const connections = new Map();
+    const host = {
+      connections,
+      sendChunked(_session: unknown, kind: number, payload: Uint8Array) {
+        expect(kind).toBe(wsBorsh.KIND_TERM_HISTORY);
+        chunks.push(payload);
+        return true;
+      },
+    } as unknown as TmuxCommandHost;
+    return { host, connections, runtime, fetchCalls, chunks };
+  }
+
+  test('passes byteLimit into fetch and hard-truncates the encoded tail', async () => {
+    const ws = createGatewaySession({ session: true });
+    const body = `HEAD${'X'.repeat(40)}TAIL`;
+    const fixture = createHistoryHost(body);
+    setupConnectionEntry(
+      { connections: fixture.connections },
+      { ws, runtime: fixture.runtime, lastSnapshot: makeSnapshot() }
+    );
+
+    handleFetchPaneHistory(fixture.host, ws, 'device-a', '%1', TOKEN, 8);
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(fixture.fetchCalls).toEqual([{ paneId: '%1', byteLimit: 8 }]);
+    expect(fixture.chunks).toHaveLength(1);
+    const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermHistorySchema, fixture.chunks[0]!);
+    const text = new TextDecoder().decode(decoded.data);
+    expect(text.endsWith('TAIL')).toBe(true);
+    expect(decoded.data.byteLength).toBeLessThanOrEqual(8);
+    expect(text.includes('HEAD')).toBe(false);
+  });
+
+  test('legacy requests without byteLimit still fetch and send history', async () => {
+    const ws = createGatewaySession({ session: true });
+    const fixture = createHistoryHost('full-screen');
+    setupConnectionEntry(
+      { connections: fixture.connections },
+      { ws, runtime: fixture.runtime, lastSnapshot: makeSnapshot() }
+    );
+
+    handleFetchPaneHistory(fixture.host, ws, 'device-a', '%1', TOKEN);
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(fixture.fetchCalls[0]?.paneId).toBe('%1');
+    expect(fixture.chunks).toHaveLength(1);
+    const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermHistorySchema, fixture.chunks[0]!);
+    expect(new TextDecoder().decode(decoded.data)).toBe('full-screen');
   });
 });

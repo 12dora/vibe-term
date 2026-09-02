@@ -16,6 +16,7 @@ import type { HubAdvertisement, HubWriteForwardMessage } from '@tmex/shared/upli
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler, jsonStable } from './ctl';
 import { jsonText } from './json-text';
+import { stamp } from './mesh-log';
 import { parseOpenPayload } from './peer-protocol';
 import type {
   InboundRelayHandler,
@@ -475,7 +476,7 @@ export class UplinkClient {
     const prev = this.lastDiagAt.get(key) ?? Number.NEGATIVE_INFINITY;
     if (now - prev < UPLINK_CONNECT_LOG_INTERVAL_MS) return;
     this.lastDiagAt.set(key, now);
-    console.warn(line);
+    console.warn(stamp(line));
   }
 
   private bindLink(link: LinkSession, generation: number): void {

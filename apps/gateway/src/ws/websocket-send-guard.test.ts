@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { wsBorsh } from '@tmex/shared';
 import type { CarrierSendResult } from './carrier';
 import { createFakeCarrier } from './test-helpers';
 import { GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES, WebSocketSendGuard } from './websocket-send-guard';
@@ -184,5 +185,97 @@ describe('WebSocketSendGuard', () => {
     guard.handleDrain(primary.carrier);
     expect(primary.terminateCalls()).toBe(0);
     expect(guard.sendFrames(primary.carrier, [new Uint8Array([3])])).toBe(true);
+  });
+
+  test('N skipped sends while backpressured produce at most two log lines', () => {
+    const lines: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+      const target = createCarrier(['backpressure']);
+      expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
+      for (let i = 0; i < 40; i += 1) {
+        expect(guard.sendFrames(target.carrier, [new Uint8Array([i + 2])])).toBe(false);
+      }
+    } finally {
+      console.warn = orig;
+    }
+    expect(lines.length).toBeLessThanOrEqual(2);
+    expect(lines.filter((line) => line.includes('backpressure enter'))).toHaveLength(1);
+    expect(lines.filter((line) => line.includes('backpressure skip')).length).toBeLessThanOrEqual(
+      1
+    );
+  });
+
+  test('decodes frame kind from a real encodeEnvelope TX little-endian frame', () => {
+    const lines: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+      const target = createCarrier(['backpressure']);
+      const frame = wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_TERM_OUTPUT,
+        wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
+          deviceId: 'd',
+          paneId: '%1',
+          encoding: 0,
+          data: new Uint8Array([1, 2, 3]),
+        }),
+        1
+      );
+      expect(guard.sendFrames(target.carrier, [new Uint8Array(frame)])).toBe(false);
+    } finally {
+      console.warn = orig;
+    }
+    const entry = lines.find((line) => line.includes('backpressure enter'));
+    expect(entry).toContain('frame_kind=0305');
+  });
+
+  test('logs backpressure entry, skip, drain, and terminate with carrier kind', () => {
+    const lines: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+      const target = createCarrier(['backpressure']);
+      target.carrier.logContext = {
+        kind: 'mesh_link_stream',
+        sessionId: 'sess-1',
+        cid: 'tab-a',
+        nodeId: 'node-1',
+      };
+      expect(guard.sendFrames(target.carrier, [new Uint8Array([1, 2])])).toBe(false);
+      expect(guard.sendFrames(target.carrier, [new Uint8Array([3, 4, 5])])).toBe(false);
+      guard.handleDrain(target.carrier);
+    } finally {
+      console.warn = orig;
+    }
+    const entry = lines.find((line) => line.includes('backpressure enter'));
+    const skip = lines.find((line) => line.includes('backpressure skip'));
+    const drain = lines.find((line) => line.includes('backpressure drain'));
+    const term = lines.find((line) => line.includes('terminate'));
+    expect(entry).toBeTruthy();
+    expect(skip).toBeFalsy();
+    expect(drain).toBeTruthy();
+    expect(term).toBeTruthy();
+    for (const line of [entry, drain, term]) {
+      expect(line).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z /);
+      expect(line).toContain('carrier=mesh_link_stream');
+      expect(line).toContain('session=sess-1');
+      expect(line).toContain('cid=tab-a');
+      expect(line).toContain('node=node-1');
+    }
+    expect(entry).toContain('buffered_before=37');
+    expect(drain).toContain('skipped_frames=1');
+    expect(drain).toContain('skipped_bytes=3');
+    expect(term).toContain('reason=backpressure_gap');
   });
 });

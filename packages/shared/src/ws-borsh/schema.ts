@@ -146,11 +146,34 @@ export const TmuxSubscribePanesSchema = b.struct({
 });
 
 // 拉取非焦点 pane 的首屏历史；回包复用 KIND_TERM_HISTORY，selectToken = requestToken
-export const TmuxFetchPaneHistorySchema = b.struct({
+export const TmuxFetchPaneHistoryLegacySchema = b.struct({
   deviceId: b.string(),
   paneId: b.string(),
   requestToken: b.bytes(16),
 });
+
+export const TmuxFetchPaneHistorySchema = b.struct({
+  deviceId: b.string(),
+  paneId: b.string(),
+  requestToken: b.bytes(16),
+  byteLimit: OptionU32Schema,
+});
+
+export type TmuxFetchPaneHistory = {
+  deviceId: string;
+  paneId: string;
+  requestToken: Uint8Array;
+  byteLimit: number | null;
+};
+
+export function decodeTmuxFetchPaneHistory(data: Uint8Array): TmuxFetchPaneHistory {
+  try {
+    return TmuxFetchPaneHistorySchema.deserialize(data);
+  } catch {
+    const legacy = TmuxFetchPaneHistoryLegacySchema.deserialize(data);
+    return { ...legacy, byteLimit: null };
+  }
+}
 
 // splitter 拖拽提交：resize-pane 绝对值（cols/rows 至少一个）
 export const TmuxResizePaneSchema = b.struct({

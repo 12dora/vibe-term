@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  RTC_DIAL_FAILED_LOG_INTERVAL_MS,
   RTC_LOG_PREFIX,
   createIceCandidateTrace,
+  flushDialFailed,
   formatRtcLog,
   iceTypesOf,
   noteCandidate,
+  resetRtcLogStateForTest,
+  rtcLog,
   rtcLogRateLimited,
 } from './rtc-log';
 
@@ -41,5 +45,53 @@ describe('rtc-log', () => {
     }
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('[mesh][rtc] signal');
+    expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z /);
+  });
+
+  test('rate-limits dial failed per peer and attaches an aggregated count', () => {
+    resetRtcLogStateForTest();
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      rtcLog('dial failed', { peer: 'p1', reason: 'datachannel' });
+      rtcLog('dial failed', { peer: 'p1', reason: 'datachannel' });
+      rtcLog('dial failed', { peer: 'p1', reason: 'datachannel' });
+      rtcLog('dial failed', { peer: 'p2', reason: 'datachannel' });
+    } finally {
+      console.log = orig;
+    }
+    const p1 = lines.filter((line) => line.includes('peer=p1'));
+    const p2 = lines.filter((line) => line.includes('peer=p2'));
+    expect(p1).toHaveLength(1);
+    expect(p2).toHaveLength(1);
+    expect(p1[0]).toContain('count=1');
+    expect(p1[0]).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[mesh\]\[rtc\] dial failed/
+    );
+    expect(RTC_DIAL_FAILED_LOG_INTERVAL_MS).toBe(60_000);
+  });
+
+  test('flushes the suppressed dial-failed count on success or breaker open', () => {
+    resetRtcLogStateForTest();
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      rtcLog('dial failed', { peer: 'p1', reason: 'datachannel' });
+      rtcLog('dial failed', { peer: 'p1', reason: 'datachannel' });
+      rtcLog('dial failed', { peer: 'p1', reason: 'datachannel' });
+      flushDialFailed('p1', { cause: 'success' });
+    } finally {
+      console.log = orig;
+    }
+    const p1 = lines.filter((line) => line.includes('peer=p1'));
+    expect(p1).toHaveLength(2);
+    expect(p1[1]).toContain('count=2');
+    expect(p1[1]).toContain('cause=success');
   });
 });

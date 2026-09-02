@@ -1,5 +1,6 @@
 import { wsBorsh } from '@tmex/shared';
 import { buildSetCookie, nodeSessionCookieName, parseCookies } from '../auth/cookies';
+import { type ForwardPump as FailoverPump, runStreamFailover } from './forwarder-failover';
 import { buildJsonStreamBody } from './json-stream-body';
 import {
   AUTH_401_BODY_LIMIT,
@@ -16,8 +17,6 @@ import {
   type PeerLinkProvider,
   type PeerTransportKind,
   STREAM_FAILOVER_BACKOFF_MS,
-  STREAM_FAILOVER_MAX_ATTEMPTS,
-  STREAM_FAILOVER_RESUME_WAIT_MS,
   STREAM_QUEUE_MAX_BYTES,
   STREAM_QUEUE_MAX_FRAMES,
   STREAM_QUEUE_OVERFLOW_REASON,
@@ -28,6 +27,7 @@ import {
   parseSetSessionHeader,
   setMeshRequestContext,
 } from './mesh-deps';
+import { stamp } from './mesh-log';
 import { isHttps, jsonError } from './session-middleware';
 import { StreamReplayState } from './stream-replay-state';
 
@@ -73,25 +73,9 @@ type ForwardMeta = {
   transport: PeerTransportKind | null;
 };
 
-type ForwardPump = {
-  id: string;
+type ForwardPump = FailoverPump & {
   ws: MeshServerWebSocket;
-  nodeId: string;
-  auth: string;
-  cid?: string;
-  stream: OpenedWsStream | null;
-  boundTransport: PeerTransportKind | null;
-  replay: StreamReplayState;
   generation: number;
-  browserClosed: boolean;
-  failingOver: boolean;
-  failoverAbort: AbortController | null;
-  queue: Uint8Array[];
-  helloWait: (() => void) | null;
-  resumeWait: (() => void) | null;
-  streamAlive: boolean;
-  inflight: OpenedWsStream | null;
-  queueBytes: number;
   browserPaused: boolean;
   inboundHold: Uint8Array[];
   inboundHoldBytes: number;
@@ -139,7 +123,8 @@ export class Forwarder {
 
   constructor(private readonly deps: ForwarderDeps) {
     this.sleep = deps.sleep ?? defaultSleep;
-    this.log = deps.log ?? ((line) => console.info(line));
+    const sink = deps.log ?? ((line: string) => console.info(line));
+    this.log = (line) => sink(stamp(line));
   }
 
   async handle(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult> {
@@ -379,7 +364,7 @@ export class Forwarder {
       pump.helloWait?.();
       pump.helloWait = null;
       if (pump.failingOver) return;
-      void this.failover(pump, info);
+      void this.failover(pump, info ?? {});
     });
   }
 
@@ -436,114 +421,24 @@ export class Forwarder {
 
   private async failover(
     pump: ForwardPump,
-    _info: { code?: number; reason?: string }
+    info: { code?: number; reason?: string }
   ): Promise<void> {
-    if (pump.browserClosed || pump.failingOver) return;
-    pump.failingOver = true;
-    pump.stream = null;
-    const from = pump.boundTransport ?? 'none';
-    const abort = new AbortController();
-    pump.failoverAbort = abort;
-    try {
-      for (let attempt = 0; attempt < STREAM_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
-        const stream = await this.openFailoverStream(pump, abort.signal, attempt);
-        if (stream === 'aborted') return;
-        if (!stream) continue;
-        if (await this.completeFailover(pump, stream, from, abort.signal)) return;
-      }
-      this.closeBrowser(pump, { code: 1011, reason: 'failover-exhausted' });
-    } finally {
-      if (pump.failingOver) {
-        pump.failingOver = false;
-        pump.failoverAbort = null;
-      }
-    }
-  }
-
-  private async openFailoverStream(
-    pump: ForwardPump,
-    signal: AbortSignal,
-    attempt: number
-  ): Promise<OpenedWsStream | null | 'aborted'> {
-    if (pumpDead(pump, signal)) return 'aborted';
-    const delay = STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 1600;
-    if (delay > 0) {
-      try {
-        await this.sleep(delay, signal);
-      } catch {
-        return 'aborted';
-      }
-    }
-    if (pumpDead(pump, signal)) return 'aborted';
-    const link = await this.deps.peers.getLink(pump.nodeId).catch(() => null);
-    if (pumpDead(pump, signal)) return 'aborted';
-    if (!link) return null;
-    const transport = this.deps.peers.transportOf?.(pump.nodeId) ?? null;
-    const stream = await this.deps.streams
-      .openWsStream(link, pump.auth, pump.cid)
-      .catch(() => null);
-    if (!stream) return pumpDead(pump, signal) ? 'aborted' : null;
-    pump.inflight = stream;
-    if (pumpDead(pump, signal)) {
-      this.discardStream(pump, stream);
-      return 'aborted';
-    }
-    this.bindStream(pump, stream, transport);
-    pump.inflight = null;
-    return stream;
-  }
-
-  private async completeFailover(
-    pump: ForwardPump,
-    stream: OpenedWsStream,
-    from: string,
-    signal: AbortSignal
-  ): Promise<boolean> {
-    const resumed = await this.replaySubscription(pump, stream, signal);
-    if (pumpDead(pump, signal)) {
-      this.discardStream(pump, stream);
-      return true;
-    }
-    if (!pump.streamAlive || pump.stream !== stream) return false;
-    const desc = pump.replay.describeReplay();
-    this.log(
-      `[mesh][stream] failover stream=${pump.id} from=${from} to=${pump.boundTransport ?? 'none'} resumed=${resumed} mode=${desc.mode} panes=${desc.panes} cursor=${desc.cursor}`
+    await runStreamFailover(
+      {
+        sleep: this.sleep,
+        log: this.log,
+        peers: this.deps.peers,
+        streams: this.deps.streams,
+        bindStream: (p, stream, transport) => this.bindStream(p as ForwardPump, stream, transport),
+        discardStream: (p, stream) => this.discardStream(p as ForwardPump, stream),
+        closeBrowser: (p, closeInfo) => this.closeBrowser(p as ForwardPump, closeInfo),
+        sendToStream: (p, stream, bytes) => this.sendToStream(p as ForwardPump, stream, bytes),
+        sendToBrowser: (p, bytes) => this.sendToBrowser(p as ForwardPump, bytes),
+        flushQueue: (p) => this.flushQueue(p as ForwardPump),
+      },
+      pump,
+      info
     );
-    pump.failingOver = false;
-    pump.failoverAbort = null;
-    this.flushQueue(pump);
-    return true;
-  }
-
-  private async replaySubscription(
-    pump: ForwardPump,
-    stream: OpenedWsStream,
-    signal: AbortSignal
-  ): Promise<number> {
-    pump.replay.beginResume();
-    const wait = async (key: 'helloWait' | 'resumeWait', ms: number, before?: () => void) => {
-      const waited = new Promise<void>((resolve) => {
-        pump[key] = resolve;
-      });
-      before?.();
-      await Promise.race([waited, this.sleep(ms, signal).catch(() => undefined)]);
-      pump[key] = null;
-    };
-    const hello = pump.replay.hello;
-    if (hello) await wait('helloWait', 2_000, () => this.sendToStream(pump, stream, hello));
-    const sendAll = (frames: Uint8Array[]): void => {
-      for (const frame of frames) {
-        if (pumpDead(pump, signal)) return;
-        this.sendToStream(pump, stream, frame);
-      }
-    };
-    sendAll(pump.replay.buildConnectFrames());
-    if (pump.replay.devices.size > 0 && !pump.replay.isResumeReady()) {
-      await wait('resumeWait', STREAM_FAILOVER_RESUME_WAIT_MS);
-    }
-    sendAll(pump.replay.buildPostConnectFrames());
-    if (!pumpDead(pump, signal)) pump.replay.markCanonicalResumeSent();
-    return pump.replay.resumedPaneCount();
   }
 
   private flushQueue(pump: ForwardPump): void {
@@ -792,10 +687,6 @@ export function expirePendingForwardStream(token: string, stream: OpenedWsStream
   try {
     stream.close();
   } catch {}
-}
-
-function pumpDead(pump: ForwardPump, signal: AbortSignal): boolean {
-  return pump.browserClosed || signal.aborted;
 }
 
 function holdInbound(pump: ForwardPump, bytes: Uint8Array): boolean {

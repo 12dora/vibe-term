@@ -592,7 +592,7 @@ describe('RtcPeerManager', () => {
     } finally {
       console.log = orig;
     }
-    const rtc = lines.filter((line) => line.startsWith('[mesh][rtc]'));
+    const rtc = lines.filter((line) => line.includes('[mesh][rtc]'));
     expect(rtc.some((line) => line.includes('dial start'))).toBe(true);
     expect(
       rtc.some((line) => line.includes('role=offerer') || line.includes('role=answerer'))

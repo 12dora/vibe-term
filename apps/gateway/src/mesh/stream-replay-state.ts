@@ -1,4 +1,16 @@
 import { wsBorsh } from '@tmex/shared';
+import { envInt } from './mesh-log';
+
+export const FAILOVER_HISTORY_BYTES_PER_PANE_DEFAULT = 256 * 1024;
+export const FAILOVER_HISTORY_BYTES_TOTAL = 1024 * 1024;
+export const FAILOVER_HISTORY_BYTES_FLOOR = 16 * 1024;
+
+export type LegacyReplayStats = {
+  replayBytes: number;
+  historyPanes: number;
+  skippedPanes: string[];
+  gapPanes: string[];
+};
 
 export type InboundReplayNote = { kind: number | null; deviceId?: string };
 
@@ -24,6 +36,26 @@ export class StreamReplayState {
   private readonly resumeDevices = new Set<string>();
   private resumeSnapshot = false;
   private resumeGeneration: bigint | null = null;
+  private lastLegacyReplay: LegacyReplayStats = {
+    replayBytes: 0,
+    historyPanes: 0,
+    skippedPanes: [],
+    gapPanes: [],
+  };
+  private lastBrowserSignals: Uint8Array[] = [];
+
+  legacyReplayStats(): LegacyReplayStats {
+    return {
+      replayBytes: this.lastLegacyReplay.replayBytes,
+      historyPanes: this.lastLegacyReplay.historyPanes,
+      skippedPanes: [...this.lastLegacyReplay.skippedPanes],
+      gapPanes: [...this.lastLegacyReplay.gapPanes],
+    };
+  }
+
+  browserSignalFrames(): Uint8Array[] {
+    return this.lastBrowserSignals.map((frame) => frame.slice());
+  }
 
   private tryDecodeEnvelope(bytes: Uint8Array): wsBorsh.Envelope | null {
     try {
@@ -255,31 +287,44 @@ export class StreamReplayState {
   }
 
   private buildLegacyHistoryRequests(): Uint8Array[] {
-    if (this.canonicalSub) return [];
-    const frames: Uint8Array[] = [];
-    const seen = new Set<string>();
-    for (const row of this.paneSubPayloads()) {
-      if (!row) continue;
-      for (const paneId of row.paneIds) {
-        const key = `${row.deviceId}\0${paneId}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const requestToken = new Uint8Array(16);
-        crypto.getRandomValues(requestToken);
-        this.outboundSeq += 1;
-        frames.push(
-          wsBorsh.encodeEnvelope(
-            wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY,
-            wsBorsh.encodePayload(wsBorsh.schema.TmuxFetchPaneHistorySchema, {
-              deviceId: row.deviceId,
-              paneId,
-              requestToken,
-            }),
-            this.outboundSeq
-          )
-        );
-      }
+    if (this.canonicalSub) {
+      this.lastLegacyReplay = { replayBytes: 0, historyPanes: 0, skippedPanes: [], gapPanes: [] };
+      this.lastBrowserSignals = [];
+      return [];
     }
+    const perPane = envInt(
+      'TMEX_FAILOVER_HISTORY_BYTES_PER_PANE',
+      FAILOVER_HISTORY_BYTES_PER_PANE_DEFAULT
+    );
+    const panes = collectUniquePanes(this.paneSubPayloads());
+    const frames: Uint8Array[] = [];
+    const signals: Uint8Array[] = [];
+    const gapPanes: string[] = [];
+    let remaining = FAILOVER_HISTORY_BYTES_TOTAL;
+    let remainingCount = panes.length;
+    let replayBytes = 0;
+    for (const pane of panes) {
+      const byteLimit = allocateHistoryByteLimit(remaining, remainingCount, perPane);
+      remainingCount -= 1;
+      this.outboundSeq += 1;
+      if (byteLimit == null) {
+        gapPanes.push(pane.paneId);
+        signals.push(encodePaneResourceGap(pane.deviceId, pane.paneId, this.outboundSeq));
+        continue;
+      }
+      frames.push(
+        encodeLegacyHistoryRequest(pane.deviceId, pane.paneId, byteLimit, this.outboundSeq)
+      );
+      remaining -= byteLimit;
+      replayBytes += byteLimit;
+    }
+    this.lastLegacyReplay = {
+      replayBytes,
+      historyPanes: frames.length,
+      skippedPanes: [],
+      gapPanes,
+    };
+    this.lastBrowserSignals = signals;
     return frames;
   }
 
@@ -310,4 +355,78 @@ export class StreamReplayState {
 
 function paneCursorKey(deviceId: string, paneId: string): string {
   return `${deviceId}\0${paneId}`;
+}
+
+function collectUniquePanes(
+  rows: Array<{ deviceId: string; paneIds: string[] } | null>
+): Array<{ deviceId: string; paneId: string }> {
+  const out: Array<{ deviceId: string; paneId: string }> = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (!row) continue;
+    for (const paneId of row.paneIds) {
+      const key = paneCursorKey(row.deviceId, paneId);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ deviceId: row.deviceId, paneId });
+    }
+  }
+  return out;
+}
+
+export function allocateHistoryByteLimit(
+  remaining: number,
+  remainingCount: number,
+  perPane: number
+): number | null {
+  if (remainingCount <= 0 || remaining < FAILOVER_HISTORY_BYTES_FLOOR || perPane <= 0) return null;
+  const share = Math.floor(remaining / remainingCount);
+  const cap = Math.min(perPane, share);
+  if (cap >= FAILOVER_HISTORY_BYTES_FLOOR) return cap;
+  if (remaining >= FAILOVER_HISTORY_BYTES_FLOOR) {
+    return Math.min(perPane, FAILOVER_HISTORY_BYTES_FLOOR);
+  }
+  return null;
+}
+
+function encodeLegacyHistoryRequest(
+  deviceId: string,
+  paneId: string,
+  byteLimit: number,
+  seq: number
+): Uint8Array {
+  const requestToken = new Uint8Array(16);
+  crypto.getRandomValues(requestToken);
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY,
+    wsBorsh.encodePayload(wsBorsh.schema.TmuxFetchPaneHistorySchema, {
+      deviceId,
+      paneId,
+      requestToken,
+      byteLimit,
+    }),
+    seq
+  );
+}
+
+function encodePaneResourceGap(deviceId: string, paneId: string, seq: number): Uint8Array {
+  const zero = new Uint8Array(16);
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_CANONICAL_EVENT,
+    wsBorsh.encodeCanonicalEventPayload({
+      SourceGap: {
+        reason: wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED,
+        scope: {
+          Pane: {
+            pane: { deviceId, serverEpoch: zero, paneId },
+            expectedPaneEpoch: zero,
+            availablePaneEpoch: zero,
+            expectedSeq: 0n,
+            availableSeq: 0n,
+          },
+        },
+      },
+    }),
+    seq
+  );
 }
