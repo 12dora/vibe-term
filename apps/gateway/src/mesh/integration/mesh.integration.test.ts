@@ -1126,7 +1126,7 @@ describe('mesh phase-2 integration', () => {
     });
     expect(forged.status).toBe(401);
     expect(forged.status).not.toBe(503);
-    expect(((await forged.json()) as { code?: string }).code).toBe('DELEGATION_BAD_SIGNATURE');
+    expect(((await forged.json()) as { code?: string }).code).toBe('INVALID_CREDENTIALS');
   });
 
   test('compromise: hub DB cannot mint a credential B accepts; forged node.list is ignored', async () => {

@@ -165,6 +165,29 @@ describe('forwarder', () => {
     }
   });
 
+  test('401 from remote /api/auth/login keeps the target code', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponse = new Response(JSON.stringify({ code: 'INVALID_CREDENTIALS' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/auth/login`, { method: 'POST' }),
+          dummyServer
+        )
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ code: 'INVALID_CREDENTIALS' });
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('401 from target is augmented with NODE_LOGIN_REQUIRED', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);

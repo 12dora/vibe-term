@@ -62,6 +62,7 @@ import {
 import { handleTotpRecordRequest } from './auth-totp-record';
 import { clientIpFromRequest } from './client-ip';
 import {
+  CHALLENGE_RATE_LIMIT,
   type HubTlsInfoProvider,
   type KeyLogHubAck,
   type KeyLogPublisher,
@@ -75,6 +76,7 @@ import {
 } from './mesh-deps';
 import {
   type SessionMiddlewareDeps,
+  authenticateRequest,
   jsonBody,
   jsonError,
   publicRequestUrl,
@@ -145,6 +147,7 @@ export function isAuthPublicPath(
 
 export class AuthRoutes {
   private readonly limiter = new LoginFailureLimiter(() => this.now());
+  private readonly challengeLimiter = new LoginFailureLimiter(() => this.now());
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly verifyPasskey: VerifyDelegationPasskey;
   private tlsInfoProvider: HubTlsInfoProvider | undefined;
@@ -245,9 +248,12 @@ export class AuthRoutes {
     if (snapshot.closed) {
       return jsonBody({ ...shared, ...standaloneClosedModeFields() });
     }
+    const fields = meshAuthModeUserFields(snapshot.user, origin, this.deps.userStore, snapshot.hub);
+    const auth = authenticateRequest(req, this.sessionDeps);
     return jsonBody({
       ...shared,
-      ...meshAuthModeUserFields(snapshot.user, origin, this.deps.userStore, snapshot.hub),
+      ...fields,
+      rootPublicKey: auth.ok && auth.userId ? fields.rootPublicKey : null,
     });
   }
 
@@ -269,16 +275,16 @@ export class AuthRoutes {
   }
 
   private async handleChallenge(req: Request): Promise<Response> {
+    const limited = this.consumeChallengeQuota(req);
+    if (limited) return limited;
     const body = await readJsonObjectBody(req);
     const uidRaw = typeof body?.uid === 'string' ? body.uid : '';
     if (!uidRaw) {
       return jsonError('MALFORMED', 400);
     }
-    const user = resolveUser(this.deps.userStore, uidRaw);
-    if (!user) return jsonError('UNKNOWN_USER', 404);
     const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
     const created = this.deps.challengeStore.create({
-      uid: user.id,
+      uid: uidRaw,
       entryNodeId: via,
       kind: 'login',
       ttlMs: LOGIN_CHALLENGE_TTL_MS,
@@ -300,8 +306,10 @@ export class AuthRoutes {
     let uidHint = peekLoginUid(body);
     if (this.limiter.isRateLimited(uidHint, ip)) return jsonError('RATE_LIMITED', 429);
     const fail = (code: string, status = 401): Response => {
-      this.limiter.recordFailure(`ip:${ip}`);
-      if (uidHint) this.limiter.recordFailure(`uid:${uidHint}`);
+      if (code !== 'TOTP_REQUIRED' && code !== 'PASSKEY_REQUIRED') {
+        this.limiter.recordFailure(`ip:${ip}`);
+        if (uidHint) this.limiter.recordFailure(`uid:${uidHint}`);
+      }
       return jsonError(code, status);
     };
     try {
@@ -320,7 +328,7 @@ export class AuthRoutes {
       );
       if (bound) return fail(bound);
       const user = resolveUser(this.deps.userStore, envelope.login.uid);
-      if (!user) return fail('UNKNOWN_USER', 404);
+      if (!user) return fail('INVALID_CREDENTIALS');
       const now = this.now();
       const delOk = await this.verifyDelegationForLogin(
         envelope.delegation,
@@ -340,6 +348,12 @@ export class AuthRoutes {
       if (!loginOk.ok) return fail(loginErrorCode(loginOk.error));
       const totpCheck = await this.checkTotp(user, envelope.delegation.method, body.totp);
       if (!totpCheck.ok) return fail(totpCheck.code);
+      const passkeyCheck = await this.checkPasskeySecondFactor(
+        user,
+        envelope.delegation,
+        body.passkey
+      );
+      if (!passkeyCheck.ok) return fail(passkeyCheck.code);
       return this.issueLoginSession(user.id, challenge.entryNodeId, envelope.delegation, now, fail);
     } catch {
       return fail('MALFORMED', 400);
@@ -429,11 +443,11 @@ export class AuthRoutes {
   }
 
   private async handlePasskeyLoginOptions(req: Request): Promise<Response> {
+    const limited = this.consumeChallengeQuota(req);
+    if (limited) return limited;
     const body = await readJsonObjectBody(req);
     const fields = body && requiredStrings(body, ['uid', 'delegation']);
     if (!fields) return jsonError('MALFORMED', 400);
-    const user = resolveUser(this.deps.userStore, fields.uid);
-    if (!user) return jsonError('UNKNOWN_USER', 404);
     let delegation: Delegation;
     try {
       delegation = decodeDelegation(decodeBase64url(fields.delegation));
@@ -442,7 +456,10 @@ export class AuthRoutes {
     }
     const origin = requestOrigin(req);
     const rpId = rpIdFromOrigin(origin);
-    const keys = this.deps.userStore.listKeysByUser(user.id).filter((k) => k.origin === origin);
+    const user = resolveUser(this.deps.userStore, fields.uid);
+    const keys = user
+      ? this.deps.userStore.listKeysByUser(user.id).filter((k) => k.origin === origin)
+      : [];
     if (keys.length === 0) {
       return jsonError('NO_PASSKEY_FOR_ORIGIN', 404);
     }
@@ -855,6 +872,29 @@ export class AuthRoutes {
     }
   }
 
+  private async checkPasskeySecondFactor(
+    user: UserRecord,
+    delegation: Delegation,
+    passkeyBody: unknown
+  ): Promise<{ ok: true } | { ok: false; code: string }> {
+    if (delegation.method !== 'root') return { ok: true };
+    if (this.deps.userStore.listKeysByUser(user.id).length === 0) return { ok: true };
+    const parsed = parsePasskeySecondFactor(passkeyBody);
+    if (!parsed) return { ok: false, code: 'PASSKEY_REQUIRED' };
+    try {
+      const assertion = decodePasskeyAssertionSig(decodeBase64url(parsed.sig));
+      const ok = await this.verifyPasskey({
+        challenge: delegationChallenge(delegation),
+        delegation,
+        assertion,
+        credentialId: parsed.credentialId,
+      });
+      return ok ? { ok: true } : { ok: false, code: 'PASSKEY_INVALID' };
+    } catch {
+      return { ok: false, code: 'PASSKEY_INVALID' };
+    }
+  }
+
   private issueLoginSession(
     userId: string,
     viaNodeId: string,
@@ -894,6 +934,16 @@ export class AuthRoutes {
   private now(): number {
     return this.deps.now?.() ?? Date.now();
   }
+
+  private consumeChallengeQuota(req: Request): Response | null {
+    const ip = clientIpFromRequest(req) ?? 'local';
+    const key = `ip:${ip}`;
+    if (this.challengeLimiter.count(key) >= CHALLENGE_RATE_LIMIT) {
+      return jsonError('RATE_LIMITED', 429);
+    }
+    this.challengeLimiter.record(key);
+    return null;
+  }
 }
 
 export function resolveUser(store: UserStore, uid: string): UserRecord | null {
@@ -924,6 +974,14 @@ function credentialIdBytes(id: string | null): Uint8Array | null {
   } catch {
     return new TextEncoder().encode(id);
   }
+}
+
+function parsePasskeySecondFactor(value: unknown): { credentialId: string; sig: string } | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const rec = value as { credential_id?: unknown; sig?: unknown };
+  if (typeof rec.credential_id !== 'string' || rec.credential_id.length === 0) return null;
+  if (typeof rec.sig !== 'string' || rec.sig.length === 0) return null;
+  return { credentialId: rec.credential_id, sig: rec.sig };
 }
 
 function parseTotpBody(value: unknown): { code: string; kTotp: Uint8Array } | null {
@@ -979,8 +1037,8 @@ function loginErrorCode(error: string): string {
       target_mismatch: 'TARGET_MISMATCH',
       uid_mismatch: 'UID_MISMATCH',
       entry_mismatch: 'ENTRY_MISMATCH',
-      bad_signature: 'BAD_SIGNATURE',
-    }[error] ?? 'BAD_SIGNATURE'
+      bad_signature: 'INVALID_CREDENTIALS',
+    }[error] ?? 'INVALID_CREDENTIALS'
   );
 }
 
@@ -988,10 +1046,10 @@ function delegationErrorCode(error: string): string {
   return (
     {
       expired: 'DELEGATION_EXPIRED',
-      bad_signature: 'DELEGATION_BAD_SIGNATURE',
-      method_mismatch: 'DELEGATION_METHOD_MISMATCH',
+      bad_signature: 'INVALID_CREDENTIALS',
+      method_mismatch: 'INVALID_CREDENTIALS',
       invalid_ttl: 'DELEGATION_INVALID_TTL',
       issued_in_future: 'DELEGATION_ISSUED_IN_FUTURE',
-    }[error] ?? 'DELEGATION_BAD_SIGNATURE'
+    }[error] ?? 'INVALID_CREDENTIALS'
   );
 }

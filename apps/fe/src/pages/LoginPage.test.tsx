@@ -2,7 +2,11 @@
 // 无 DOM 测试环境，表单渲染用 react-dom/server 静态渲染，交互路径直接测纯函数与 store。
 
 import { describe, expect, mock, test } from 'bun:test';
-import { loginErrorKey, loginErrorKeyFromException } from '@/auth/login-errors';
+import {
+  isCredentialFailure,
+  loginErrorKey,
+  loginErrorKeyFromException,
+} from '@/auth/login-errors';
 import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { WebAuthnError } from '@tmex/api-client/auth/index';
 import { installWindowStorage } from '@tmex/stores/test-utils';
@@ -261,10 +265,37 @@ describe('runPasskeyLogin 编排', () => {
 });
 
 describe('登录失败文案', () => {
-  test('密码路径下签名类失败一律说「密码不正确」，不是「所有节点都失败」', () => {
-    expect(loginErrorKey('DELEGATION_BAD_SIGNATURE', 'password')).toBe('auth.errors.wrongPassword');
-    expect(loginErrorKey('BAD_SIGNATURE', 'password')).toBe('auth.errors.wrongPassword');
-    expect(loginErrorKey('ROOT_KEY_MISMATCH', 'password')).toBe('auth.errors.wrongPassword');
+  test('密码路径下凭证类失败全部收敛到同一句中性文案（不泄露账号是否存在）', () => {
+    for (const code of [
+      'INVALID_CREDENTIALS',
+      'DELEGATION_BAD_SIGNATURE',
+      'BAD_SIGNATURE',
+      'ROOT_KEY_MISMATCH',
+      'BAD_DELEGATION',
+      'DELEGATION_METHOD_MISMATCH',
+      'UNKNOWN_USER',
+    ]) {
+      expect(loginErrorKey(code, 'password')).toBe('auth.errors.invalidCredentials');
+    }
+  });
+
+  test('二次验证失败按自己的原因说，不混进「用户名或密码错误」', () => {
+    expect(loginErrorKey('PASSKEY_INVALID', 'password')).toBe('auth.errors.PASSKEY_VERIFY_FAILED');
+    expect(loginErrorKey('PASSKEY_INVALID', 'passkey')).toBe('auth.errors.PASSKEY_VERIFY_FAILED');
+    expect(loginErrorKey('NO_PASSKEY_FOR_ORIGIN', 'password')).toBe(
+      'auth.login.passkeySecondFactorNotRegistered'
+    );
+    expect(loginErrorKey('PASSKEY_CREDENTIAL_UNKNOWN', 'password')).toBe(
+      'auth.login.passkeySecondFactorNotRegistered'
+    );
+    expect(loginErrorKey('PASSKEY_REQUIRED', 'password')).toBe('auth.errors.PASSKEY_REQUIRED');
+  });
+
+  test('用户取消二次验证仪式 → 取消文案（密码路径同样适用）', () => {
+    expect(loginErrorKeyFromException(new WebAuthnError('aborted', 'x'), 'password')).toBe(
+      'auth.errors.PASSKEY_ABORTED'
+    );
+    expect(loginErrorKey('PASSKEY_ABORTED', 'password')).toBe('auth.errors.PASSKEY_ABORTED');
   });
 
   test('验证码 / 网络错误各自映射到自己的文案', () => {
@@ -301,5 +332,24 @@ describe('登录失败文案', () => {
     expect(loginErrorKeyFromException(new WebAuthnError('aborted', 'x'), 'passkey')).toBe(
       'auth.errors.PASSKEY_ABORTED'
     );
+  });
+});
+
+describe('isCredentialFailure', () => {
+  test('凭证本身不可用才丢会话钥', () => {
+    expect(isCredentialFailure('INVALID_CREDENTIALS')).toBe(true);
+    expect(isCredentialFailure('BAD_SIGNATURE')).toBe(true);
+    expect(isCredentialFailure('UNKNOWN_USER')).toBe(true);
+  });
+
+  test('PASSKEY_INVALID：同一份断言永远过不了，必须连会话钥一起丢', () => {
+    expect(isCredentialFailure('PASSKEY_INVALID')).toBe(true);
+  });
+
+  test('PASSKEY_REQUIRED 只是少带了一次断言，会话钥必须留着', () => {
+    expect(isCredentialFailure('PASSKEY_REQUIRED')).toBe(false);
+    expect(isCredentialFailure('TOTP_INVALID')).toBe(false);
+    expect(isCredentialFailure('NETWORK_ERROR')).toBe(false);
+    expect(isCredentialFailure(undefined)).toBe(false);
   });
 });

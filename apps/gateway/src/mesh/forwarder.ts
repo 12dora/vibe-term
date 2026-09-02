@@ -626,8 +626,9 @@ export class Forwarder {
 
   private async adaptResponse(req: Request, upstream: Response, nodeId: string): Promise<Response> {
     const headers = copyUpstreamHeaders(upstream);
+    const rest = parseNodePrefix(new URL(req.url).pathname)?.rest ?? '';
     return (
-      (await applyAuthPolicy(req, headers, upstream, nodeId)) ??
+      (await applyAuthPolicy(req, headers, upstream, nodeId, AUTH_SKIP.has(rest))) ??
       new Response(upstream.body, { status: upstream.status, headers })
     );
   }
@@ -747,7 +748,8 @@ async function applyAuthPolicy(
   req: Request,
   headers: Headers,
   upstream: Response,
-  nodeId: string
+  nodeId: string,
+  skip401Rewrite = false
 ): Promise<Response | null> {
   const parsed = parseSetSessionHeader(upstream.headers.get(X_TMEX_SET_SESSION) ?? '');
   if (parsed) appendNodeCookie(req, headers, nodeId, parsed.sid, parsed.maxAgeSec);
@@ -766,7 +768,7 @@ async function applyAuthPolicy(
       );
     }
   }
-  if (upstream.status !== 401) return null;
+  if (upstream.status !== 401 || skip401Rewrite) return null;
   const raw = await readBodyLimited(upstream, AUTH_401_BODY_LIMIT);
   let body: Record<string, unknown> = { code: 'NODE_LOGIN_REQUIRED', nodeId };
   try {

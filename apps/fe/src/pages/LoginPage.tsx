@@ -67,7 +67,14 @@ interface LoginFormProps {
   api: AuthApi;
 }
 
-export type Phase = 'idle' | 'deriving' | 'signingIn' | 'done';
+export type Phase = 'idle' | 'deriving' | 'passkeyCheck' | 'signingIn' | 'done';
+
+/** 登录按钮在各阶段的文案；`idle` / `done` 都用默认那句。 */
+const SUBMIT_LABEL_KEYS: Partial<Record<Phase, string>> = {
+  deriving: 'auth.login.deriving',
+  passkeyCheck: 'auth.login.passkeySecondFactor',
+  signingIn: 'auth.login.signingIn',
+};
 
 /** 「使用通行密钥」这一栏渲染成什么：按钮 / 一行不可用说明 / 什么都不给。 */
 export type PasskeyAffordance = 'button' | 'unavailable' | 'none';
@@ -219,8 +226,8 @@ function LoginForm({ mode, api }: LoginFormProps) {
     async (method: 'password' | 'passkey') => {
       setPhase('signingIn');
       const result = targetNode
-        ? await ensureNodeLogin(targetNode, { api })
-        : await loginSelf({ api });
+        ? await ensureNodeLogin(targetNode, { api, allowPasskeyPrompt: true })
+        : await loginSelf({ api, allowPasskeyPrompt: true });
       if (targetNode) clearTotpCode();
       if (result.ok) {
         setPhase('done');
@@ -249,7 +256,8 @@ function LoginForm({ mode, api }: LoginFormProps) {
         return;
       }
       if (!mode.kdfParams) {
-        setError(t('auth.errors.UNKNOWN_USER'));
+        // 「没有主用户」与「密码不对」在界面上必须是同一句：别把账号是否存在漏出去。
+        setError(t('auth.errors.invalidCredentials'));
         return;
       }
       setBusy(true);
@@ -265,6 +273,10 @@ function LoginForm({ mode, api }: LoginFormProps) {
           rootEpoch,
           hasTotp: Boolean(mode.totpEnabled),
           totpCode: totp || undefined,
+          // 名下有通行密钥就必须再过一次断言，否则服务端回 PASSKEY_REQUIRED。
+          passkeySecondFactor: Boolean(mode.passkeySecondFactor),
+          api,
+          onPasskeyPrompt: () => setPhase('passkeyCheck'),
         });
         // 密码与验证码用完即清，不留在 React state 里。
         setPassword('');
@@ -278,7 +290,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
         setBusy(false);
       }
     },
-    [busy, finishLogin, mode, password, resolveUid, t, totp, username]
+    [api, busy, finishLogin, mode, password, resolveUid, t, totp, username]
   );
 
   const onPasskey = useCallback(async () => {
@@ -377,11 +389,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
 
         <Button type="submit" disabled={busy} data-testid="login-submit">
           {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : null}
-          {phase === 'deriving'
-            ? t('auth.login.deriving')
-            : phase === 'signingIn'
-              ? t('auth.login.signingIn')
-              : t('auth.login.submit')}
+          {t(SUBMIT_LABEL_KEYS[phase] ?? 'auth.login.submit')}
         </Button>
 
         <PasskeyRow affordance={affordance} busy={busy} onClick={() => void onPasskey()} />

@@ -1651,7 +1651,9 @@ export const I18N_RESOURCES = {
         "totpRequired": "Enter your authenticator code.",
         "nodeListFailed": "Could not load the node list. Try again.",
         "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
-        "passkeyUnavailable": "Passkeys require HTTPS or localhost."
+        "passkeyUnavailable": "Passkeys require HTTPS or localhost.",
+        "passkeySecondFactor": "Complete the passkey check…",
+        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address where a passkey is registered, then add one for this address."
       },
       "node": {
         "loginToThisNode": "Sign in",
@@ -1696,7 +1698,8 @@ export const I18N_RESOURCES = {
         "PASSKEY_ABORTED": "Passkey sign-in was cancelled.",
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
         "HUB_NOT_WRITER": "A standby hub does not accept management changes. Use the primary hub.",
-        "wrongPassword": "Wrong password."
+        "invalidCredentials": "Incorrect username or password.",
+        "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {
@@ -1722,6 +1725,7 @@ export const I18N_RESOURCES = {
         "passkeyName": "Passkey name",
         "registerPasskey": "Add passkey",
         "signWithExistingPasskey": "You can confirm with your passkey instead of typing your password.",
+        "passkeySecondFactorHint": "Once a passkey is registered, password sign-in also requires a passkey check. The check only works on addresses where a passkey is registered; removing all passkeys turns it off.",
         "sessionKeyNote": "Every action on this page asks for your password or a passkey.",
         "totpConfirm": "Confirm and turn on",
         "totpConfirmHint": "Enter the 6-digit code from your authenticator app.",
@@ -1968,10 +1972,20 @@ export const I18N_RESOURCES = {
             "description": "A publicly trusted certificate, renewed automatically. Needs a public domain name."
           }
         },
+        "effective": {
+          "label": "Effective HTTPS",
+          "builtin": "Served by built-in HTTPS",
+          "reverseProxy": "HTTPS served by reverse proxy",
+          "reverseProxyVerified": "HTTPS served by reverse proxy (confirmed by this request)",
+          "reverseProxyInferred": "HTTPS served by reverse proxy (inferred from public address {{url}})",
+          "none": "HTTPS off",
+          "proxyHint": "HTTPS access through a reverse proxy was detected. Switch to “External reverse proxy” and turn on “Trust proxy headers” so cookies, passkeys and public addresses are handled as HTTPS.",
+          "externalUnverified": "The current HTTPS state is inferred from the public address. Turn on “Trust proxy headers” to judge it from what the proxy forwards."
+        },
         "listener": {
-          "running": "Listening on port {{port}}",
-          "stopped": "Not listening",
-          "failed": "Listener failed: {{error}}"
+          "running": "Built-in listener: listening on port {{port}}",
+          "stopped": "Built-in listener: not listening",
+          "failed": "Built-in listener failed: {{error}}"
         },
         "certificate": {
           "subject": "Subject",
@@ -4069,7 +4083,9 @@ export const I18N_RESOURCES = {
         "totpRequired": "请输入验证码。",
         "nodeListFailed": "节点列表加载失败，请重试。",
         "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
-        "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。"
+        "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
+        "passkeySecondFactor": "请完成通行密钥验证…",
+        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请在已注册通行密钥的地址登录后，为此地址添加通行密钥。"
       },
       "node": {
         "loginToThisNode": "登录该节点",
@@ -4114,7 +4130,8 @@ export const I18N_RESOURCES = {
         "PASSKEY_ABORTED": "通行密钥授权已取消。",
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
         "HUB_NOT_WRITER": "备用 Hub 不接受管理操作，请通过主 Hub 操作。",
-        "wrongPassword": "密码不正确。"
+        "invalidCredentials": "用户名或密码错误。",
+        "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
@@ -4140,6 +4157,7 @@ export const I18N_RESOURCES = {
         "passkeyName": "通行密钥名称",
         "registerPasskey": "添加通行密钥",
         "signWithExistingPasskey": "可以用通行密钥确认，无需输入密码。",
+        "passkeySecondFactorHint": "注册通行密钥后，密码登录还需通过通行密钥二次验证；二次验证只能在已注册通行密钥的地址完成，移除全部通行密钥即关闭。",
         "sessionKeyNote": "本页的每个操作都会要求输入密码或使用通行密钥。",
         "totpConfirm": "确认并启用",
         "totpConfirmHint": "请输入验证器应用当前显示的 6 位验证码。",
@@ -4386,10 +4404,20 @@ export const I18N_RESOURCES = {
             "description": "公共信任的证书，自动续期，需要公网域名。"
           }
         },
+        "effective": {
+          "label": "对外 HTTPS",
+          "builtin": "由内置 HTTPS 提供",
+          "reverseProxy": "由反向代理提供 HTTPS",
+          "reverseProxyVerified": "由反向代理提供 HTTPS（已通过当前请求确认）",
+          "reverseProxyInferred": "由反向代理提供 HTTPS（按公开地址 {{url}} 推断）",
+          "none": "未启用 HTTPS",
+          "proxyHint": "检测到经反向代理的 HTTPS 访问。建议切换到「外部反向代理」并开启「信任代理请求头」，让 Cookie、通行密钥与公开地址按 HTTPS 处理。",
+          "externalUnverified": "当前 HTTPS 由公开地址推断而来。开启「信任代理请求头」后，tmex 才按代理转发的协议判定。"
+        },
         "listener": {
-          "running": "正在监听 {{port}} 端口",
-          "stopped": "未监听",
-          "failed": "监听启动失败：{{error}}"
+          "running": "内置监听器：正在监听 {{port}} 端口",
+          "stopped": "内置监听器：未监听",
+          "failed": "内置监听器启动失败：{{error}}"
         },
         "certificate": {
           "subject": "主体",
@@ -6481,7 +6509,9 @@ export const I18N_RESOURCES = {
         "totpRequired": "認証アプリのコードを入力してください。",
         "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。",
         "passkeyNotRegistered": "このアドレスにはパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
-        "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。"
+        "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。",
+        "passkeySecondFactor": "パスキーの確認を完了してください…",
+        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレスからサインインし、このアドレス用のパスキーを追加してください。"
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",
@@ -6526,7 +6556,8 @@ export const I18N_RESOURCES = {
         "PASSKEY_ABORTED": "パスキーの操作がキャンセルされました。",
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
         "HUB_NOT_WRITER": "予備ハブは管理操作を受け付けません。メインハブから操作してください。",
-        "wrongPassword": "パスワードが正しくありません。"
+        "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
+        "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。"
       },
       "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
       "security": {
@@ -6552,6 +6583,7 @@ export const I18N_RESOURCES = {
         "passkeyName": "パスキーの名前",
         "registerPasskey": "パスキーを追加",
         "signWithExistingPasskey": "パスワードの代わりに、パスキーで確認できます。",
+        "passkeySecondFactorHint": "パスキーを登録すると、パスワードでのサインインにもパスキーの確認が必要になります。確認はパスキーを登録したアドレスでのみ行えます。すべてのパスキーを削除すると無効になります。",
         "sessionKeyNote": "このページの操作はすべて、パスワードまたはパスキーの確認を求めます。",
         "totpConfirm": "確認して有効にする",
         "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。",
@@ -6798,10 +6830,20 @@ export const I18N_RESOURCES = {
             "description": "一般に信頼される証明書を自動で更新します。公開ドメイン名が必要です。"
           }
         },
+        "effective": {
+          "label": "対外 HTTPS",
+          "builtin": "内蔵 HTTPS が提供",
+          "reverseProxy": "リバースプロキシが HTTPS を提供",
+          "reverseProxyVerified": "リバースプロキシが HTTPS を提供（現在のリクエストで確認済み）",
+          "reverseProxyInferred": "リバースプロキシが HTTPS を提供（公開アドレス {{url}} から推定）",
+          "none": "HTTPS は無効",
+          "proxyHint": "リバースプロキシ経由の HTTPS アクセスを検出しました。「外部リバースプロキシ」に切り替えて「プロキシヘッダーを信頼する」を有効にすると、Cookie、パスキー、公開アドレスが HTTPS として扱われます。",
+          "externalUnverified": "現在の HTTPS は公開アドレスから推定したものです。「プロキシヘッダーを信頼する」を有効にすると、tmex はプロキシが転送したプロトコルで判定します。"
+        },
         "listener": {
-          "running": "ポート {{port}} で待ち受け中",
-          "stopped": "待ち受けていません",
-          "failed": "リスナーの起動に失敗しました：{{error}}"
+          "running": "内蔵リスナー：ポート {{port}} で待ち受け中",
+          "stopped": "内蔵リスナー：待ち受けていません",
+          "failed": "内蔵リスナーの起動に失敗しました：{{error}}"
         },
         "certificate": {
           "subject": "サブジェクト",

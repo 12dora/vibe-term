@@ -1645,7 +1645,9 @@
         "totpRequired": "Enter your authenticator code.",
         "nodeListFailed": "Could not load the node list. Try again.",
         "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
-        "passkeyUnavailable": "Passkeys require HTTPS or localhost."
+        "passkeyUnavailable": "Passkeys require HTTPS or localhost.",
+        "passkeySecondFactor": "Complete the passkey check…",
+        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address where a passkey is registered, then add one for this address."
       },
       "node": {
         "loginToThisNode": "Sign in",
@@ -1690,7 +1692,8 @@
         "PASSKEY_ABORTED": "Passkey sign-in was cancelled.",
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
         "HUB_NOT_WRITER": "A standby hub does not accept management changes. Use the primary hub.",
-        "wrongPassword": "Wrong password."
+        "invalidCredentials": "Incorrect username or password.",
+        "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {
@@ -1716,6 +1719,7 @@
         "passkeyName": "Passkey name",
         "registerPasskey": "Add passkey",
         "signWithExistingPasskey": "You can confirm with your passkey instead of typing your password.",
+        "passkeySecondFactorHint": "Once a passkey is registered, password sign-in also requires a passkey check. The check only works on addresses where a passkey is registered; removing all passkeys turns it off.",
         "sessionKeyNote": "Every action on this page asks for your password or a passkey.",
         "totpConfirm": "Confirm and turn on",
         "totpConfirmHint": "Enter the 6-digit code from your authenticator app.",
@@ -1969,8 +1973,8 @@
           "reverseProxyVerified": "HTTPS served by reverse proxy (confirmed by this request)",
           "reverseProxyInferred": "HTTPS served by reverse proxy (inferred from public address {{url}})",
           "none": "HTTPS off",
-          "proxyHint": "HTTPS access through a reverse proxy was detected. Switch to “External reverse proxy” and turn on “Trust proxy headers” so cookies, passkeys and public addresses are handled as HTTPS.",
-          "externalUnverified": "The current HTTPS state is inferred from the public address. Turn on “Trust proxy headers” to judge it from what the proxy forwards."
+          "proxyHint": "HTTPS access through a reverse proxy was detected. Switch to \u201cExternal reverse proxy\u201d and turn on \u201cTrust proxy headers\u201d so cookies, passkeys and public addresses are handled as HTTPS.",
+          "externalUnverified": "The current HTTPS state is inferred from the public address. Turn on \u201cTrust proxy headers\u201d to judge it from what the proxy forwards."
         },
         "listener": {
           "running": "Built-in listener: listening on port {{port}}",

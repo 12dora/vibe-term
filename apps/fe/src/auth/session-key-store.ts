@@ -45,6 +45,13 @@ export interface SessionKeySecrets {
   delegation: Delegation;
   delegationBytes: Uint8Array;
   delegationSig: Uint8Array;
+  /**
+   * 密码登录的通行密钥二次验证：断言绑定的凭证 id 与 borsh(PasskeyAssertion) 字节。
+   * 断言的 challenge 是 `sha256(borsh(delegation))`，与 delegation 同寿命，因此同一份可以
+   * 复用于所有 node 的登录；没有二次验证时两者都为 null。
+   */
+  passkeyCredentialId: string | null;
+  passkeySig: Uint8Array | null;
   kTotp: Uint8Array | null;
   totpCode: string | null;
 }
@@ -54,6 +61,8 @@ export type LoginFailureCode =
   | 'UNKNOWN_NODE'
   | 'NODE_PK_MISMATCH'
   | 'TOTP_REQUIRED'
+  /** 用户已注册通行密钥，但这次登录没带二次验证断言（且当前调用不允许当场做仪式）。 */
+  | 'PASSKEY_REQUIRED'
   | 'NETWORK_ERROR'
   /** entry 已登录，但随后的 `/api/mesh/nodes` 拉不到——会话没法核对，不能当成登录完成。 */
   | 'NODE_LIST_FAILED'
@@ -114,6 +123,7 @@ export function clearSessionKey(): Promise<boolean> {
   if (current) {
     current.sessSk?.fill(0);
     current.delegationSig.fill(0);
+    current.passkeySig?.fill(0);
     current.kTotp?.fill(0);
     current.totpCode = null;
     current = null;
@@ -154,6 +164,9 @@ async function readPersistedSession(): Promise<SessionKeyInfo | null> {
     delegation: record.delegation,
     delegationBytes: record.delegationBytes,
     delegationSig: record.delegationSig,
+    // 旧记录（这个字段出现之前存的）没有这两项，按「没有二次验证」恢复即可。
+    passkeyCredentialId: record.passkeyCredentialId ?? null,
+    passkeySig: record.passkeySig ?? null,
     kTotp: null,
     totpCode: null,
   };
@@ -167,6 +180,20 @@ export function clearTotpCode(): void {
 
 export function setTotpCode(code: string): void {
   if (current) current.totpCode = code;
+}
+
+/**
+ * 把刚做完的通行密钥二次验证断言挂到当前会话上，并落盘。
+ *
+ * 服务端在 mode 快照过期时会回 `PASSKEY_REQUIRED`，此时会话钥本身没问题，补一次仪式即可；
+ * 断言与 delegation 同寿命，存下来之后其余 node 的登录都能静默复用它。
+ */
+export function setPasskeyAssertion(credentialId: string, sig: Uint8Array): void {
+  if (!current) return;
+  current.passkeySig?.fill(0);
+  current.passkeyCredentialId = credentialId;
+  current.passkeySig = sig;
+  if (!pendingReplacement) void persistSession(current);
 }
 
 /** 仅供 `./session-login` 读内存里的私钥材料。 */
@@ -196,6 +223,9 @@ function persistSession(secrets: SessionKeySecrets): Promise<boolean> {
     delegation: secrets.delegation,
     delegationBytes: new Uint8Array(secrets.delegationBytes),
     delegationSig: new Uint8Array(secrets.delegationSig),
+    // 断言是签名不是密钥：存下来才能让别的 node 静默登录，不必再弹一次系统仪式。
+    passkeyCredentialId: secrets.passkeyCredentialId,
+    passkeySig: secrets.passkeySig ? new Uint8Array(secrets.passkeySig) : null,
   });
 }
 
@@ -218,6 +248,7 @@ export function adoptSessionSecrets(secrets: SessionKeySecrets): SessionKeyInfo 
 function wipeSecrets(secrets: SessionKeySecrets): void {
   secrets.sessSk?.fill(0);
   secrets.delegationSig.fill(0);
+  secrets.passkeySig?.fill(0);
   secrets.kTotp?.fill(0);
   secrets.totpCode = null;
 }
@@ -291,6 +322,11 @@ interface EnsureNodeLoginOptions {
   api?: AuthApi;
   /** 已知的 node 行，省掉 `loginToNode` 内部再拉一次 `/api/mesh/nodes`。 */
   node?: MeshNode;
+  /**
+   * 允许在服务端回 `PASSKEY_REQUIRED` 时当场做一次通行密钥仪式再重试。
+   * 只有**用户主动发起**的登录能给 true——后台静默登录弹系统仪式是惊吓，不是功能。
+   */
+  allowPasskeyPrompt?: boolean;
 }
 
 /** 每个 node 同时只允许一次登录请求在途，重复调用共享同一个 Promise。 */

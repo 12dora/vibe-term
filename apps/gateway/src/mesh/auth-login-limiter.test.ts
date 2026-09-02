@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { LoginFailureLimiter } from './auth-login-limiter';
-import { LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_MS } from './mesh-deps';
+import { CHALLENGE_RATE_LIMIT, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_MS } from './mesh-deps';
 
 describe('LoginFailureLimiter', () => {
   test('drops keys whose timestamp list becomes empty', () => {
@@ -43,5 +43,23 @@ describe('LoginFailureLimiter', () => {
     expect(limiter.size).toBe(1);
     expect(limiter.isRateLimited('user', '198.51.100.1')).toBe(false);
     expect(limiter.isRateLimited('user', '203.0.113.9')).toBe(false);
+  });
+
+  test('record/count is a sliding window per key', () => {
+    let now = 1_000;
+    const limiter = new LoginFailureLimiter(() => now);
+    for (let n = 0; n < CHALLENGE_RATE_LIMIT; n += 1) {
+      limiter.record('ip:203.0.113.10');
+    }
+    expect(limiter.count('ip:203.0.113.10')).toBe(CHALLENGE_RATE_LIMIT);
+    expect(limiter.count('ip:203.0.113.11')).toBe(0);
+
+    limiter.record('ip:203.0.113.10');
+    expect(limiter.count('ip:203.0.113.10')).toBe(CHALLENGE_RATE_LIMIT + 1);
+
+    now += LOGIN_RATE_WINDOW_MS;
+    expect(limiter.count('ip:203.0.113.10')).toBe(0);
+    limiter.record('ip:203.0.113.10');
+    expect(limiter.count('ip:203.0.113.10')).toBe(1);
   });
 });

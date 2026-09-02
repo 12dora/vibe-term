@@ -405,6 +405,46 @@ describe('会话钥跨 document 恢复', () => {
     ).toEqual({ ok: true });
   });
 
+  test('通行密钥二次验证的断言随会话一起落盘，冷启动后其它 node 直接复用', async () => {
+    const record = await persistedFixture();
+    await savePersistedSession({
+      ...record,
+      passkeyCredentialId: 'cred-a',
+      passkeySig: fill(20, 0x66),
+    });
+
+    const loaded = await loadPersistedSession();
+    expect(loaded?.passkeyCredentialId).toBe('cred-a');
+    expect(loaded?.passkeySig).toEqual(fill(20, 0x66));
+
+    resetSessionMemoryForTest();
+    expect(await restoreSessionKey()).not.toBeNull();
+    const { api, captured } = mockApi();
+    expect(await loginToNode(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) })).toEqual({
+      ok: true,
+    });
+    const passkey = (
+      captured.login as unknown as { passkey?: { credential_id: string; sig: string } }
+    ).passkey;
+    expect(passkey?.credential_id).toBe('cred-a');
+    expect(decodeBase64url(passkey?.sig ?? '')).toEqual(fill(20, 0x66));
+  });
+
+  test('这两个字段之前存下的旧记录照常恢复，只是没有二次验证', async () => {
+    const record = await persistedFixture();
+    // 刻意做成「字段根本不存在」的老形态，而不是显式 null。
+    await savePersistedSession(record);
+    expect('passkeySig' in (rawRecord() as object)).toBe(false);
+
+    resetSessionMemoryForTest();
+    expect(await restoreSessionKey()).not.toBeNull();
+    const { api, captured } = mockApi();
+    expect(await loginToNode(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) })).toEqual({
+      ok: true,
+    });
+    expect((captured.login as unknown as { passkey?: unknown }).passkey).toBeUndefined();
+  });
+
   test('ensureNodeLogin 先等恢复再判定，不会把冷启动第一帧误判成 NO_SESSION_KEY', async () => {
     await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
       uid: UID,
@@ -524,6 +564,8 @@ describe('会话钥跨 document 恢复', () => {
       delegation: signed.delegation,
       delegationBytes: signed.bytes,
       delegationSig: signed.sig,
+      passkeyCredentialId: null,
+      passkeySig: null,
       kTotp: null,
       totpCode: null,
     });

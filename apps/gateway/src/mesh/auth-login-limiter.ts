@@ -30,6 +30,14 @@ export class LoginFailureLimiter {
     return uidOver || ipOver;
   }
 
+  count(key: string): number {
+    return this.countFailures(key, this.now());
+  }
+
+  record(key: string): void {
+    this.recordFailure(key);
+  }
+
   recordFailure(key: string): void {
     this.recordCount += 1;
     if (this.pruneEvery > 0 && this.recordCount % this.pruneEvery === 0) {

@@ -732,6 +732,13 @@ function PasskeySection({
         onChange={(event) => setName(event.target.value)}
       />
 
+      <p
+        className="text-xs text-muted-foreground"
+        data-testid="security-passkey-second-factor-hint"
+      >
+        {t('auth.security.passkeySecondFactorHint')}
+      </p>
+
       {prompt.passkeys.length > 0 ? (
         <p className="text-xs text-muted-foreground" data-testid="security-passkey-signing-note">
           {t('auth.security.signWithExistingPasskey')}

@@ -292,3 +292,4 @@ export function parseSetSessionHeader(value: string): { sid: string; maxAgeSec: 
 
 export const LOGIN_LIMITER_MAX_KEYS = 10_000;
 export const LOGIN_LIMITER_PRUNE_EVERY = 256;
+export const CHALLENGE_RATE_LIMIT = 60;

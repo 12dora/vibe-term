@@ -1645,7 +1645,9 @@
         "totpRequired": "请输入验证码。",
         "nodeListFailed": "节点列表加载失败，请重试。",
         "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
-        "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。"
+        "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
+        "passkeySecondFactor": "请完成通行密钥验证…",
+        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请在已注册通行密钥的地址登录后，为此地址添加通行密钥。"
       },
       "node": {
         "loginToThisNode": "登录该节点",
@@ -1690,7 +1692,8 @@
         "PASSKEY_ABORTED": "通行密钥授权已取消。",
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
         "HUB_NOT_WRITER": "备用 Hub 不接受管理操作，请通过主 Hub 操作。",
-        "wrongPassword": "密码不正确。"
+        "invalidCredentials": "用户名或密码错误。",
+        "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
@@ -1716,6 +1719,7 @@
         "passkeyName": "通行密钥名称",
         "registerPasskey": "添加通行密钥",
         "signWithExistingPasskey": "可以用通行密钥确认，无需输入密码。",
+        "passkeySecondFactorHint": "注册通行密钥后，密码登录还需通过通行密钥二次验证；二次验证只能在已注册通行密钥的地址完成，移除全部通行密钥即关闭。",
         "sessionKeyNote": "本页的每个操作都会要求输入密码或使用通行密钥。",
         "totpConfirm": "确认并启用",
         "totpConfirmHint": "请输入验证器应用当前显示的 6 位验证码。",
