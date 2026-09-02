@@ -4,15 +4,7 @@
 
 ## KI-3：fe e2e 固定失败基线
 
-`cd apps/fe && bun run test:e2e` 在 main 上稳定失败以下用例，**属于测试自身缺陷，不是产品回归**；判断分支是否引入回归时须与本清单逐条对照，而不是看失败数是否为 0。
+`cd apps/fe && bun run test:e2e` 在 main 上曾稳定失败的用例，截至 2026-09-03（1.1.19）已全部修复并定向复跑通过：`mobile-settings.spec.ts`（webhook 创建与切语言两处竞态）、`mobile-terminal-interactions.spec.ts`（切编辑模式后等快捷键栏唯一化、滚动断言改为真实等待）、`agent-session.spec.ts`（等错误横幅前重新选中 Agent tab）。本清单当前为空；判断分支是否引入回归时以定向复跑为准。
 
-| 用例 | 症状 / 疑因 |
-| --- | --- |
-| `mobile-settings.spec.ts:5` | 选择器 `settings-enable-browser-bell-toast`、`settings-tab-devices` 已过期，移动视口下等不到元素 |
-| `mobile-terminal-interactions.spec.ts:79/140/221/303` | 等 `editor-shortcut-*` testid 超时；ShortcutsBar 现传 `idPrefix="terminal-shortcut"`，且 ui store 默认 `inputMode='direct'`，干净 localStorage 下首屏无该 testid |
-| `agent-session.spec.ts:538`（provider unreachable） | 偶发（repeat-each 3 中 1 失败）：发送成功、后端已报错，但截图停在 Terminals tab，错误横幅不在屏上 |
-
-- **解决方向**：前两项修测试选择器/时序；末项偶发类，先在低负载下建稳定复现再定位。
-- 2026-09-01（round10）已修并移出本清单：`sidebar-resize:40`（testid 过期）、`mobile-mouse-reporting:205`（单指语义已改为滚轮）、`settings-llm:42`（mock 缺 `searchProviders`）、`agent-session:404`（composer 控件溢出遮挡 Send，产品修复）、`ws-borsh-theme-resize:39`（基线取样过早，spec 改稳定基线+窗口总量断言）。
-- 2026-09-01（round12）已修并移出本清单：`terminal-mouse-recovery` 依赖 `opencode` 的三例——真因不是 opencode 启动慢，而是 e2e tmux pane 的 cwd 继承自客户端、跨 worktree/跨次运行后已被删除，`opencode .` 报 `current working directory was deleted` 直接退出；`tests/helpers/tmux.ts` 建 pane 一律显式 `-c apps/fe`，spec 同时禁用 opencode 自动更新并加 `--pure`。排查时顺带发现 `tmex-e2e` socket 上会残留历次运行的会话，必要时 `tmux -L tmex-e2e kill-server`（该 socket 仅供 e2e，绝不作用于默认 socket）。
-- **另注**：全量顺序跑（workers=1，约 10 分钟）时 `terminal-render-regressions`、`theme-propagation`、`mobile-mouse-reporting`、`terminal-mouse-drag-recovery`、`ws-borsh-switch-barrier`、`ws-borsh-resize:268`、`mobile-keyboard-avoidance:188` 会随机抖动，低负载单跑通过率高；本机全量 e2e 不能作为回归判定的唯一依据。
+- 历史（2026-09-01 round10 / round12、2026-09-03 round19）已修项见各轮档案。
+- **另注**：全量顺序跑（workers=1，约 10 分钟）时 `terminal-render-regressions`、`theme-propagation`、`mobile-mouse-reporting`、`terminal-mouse-drag-recovery`、`ws-borsh-switch-barrier`、`ws-borsh-resize:268`、`mobile-keyboard-avoidance:188` 会随机抖动，低负载单跑通过率高；本机全量 e2e 不能作为回归判定的唯一依据。gateway 全量单测在高负载下 `dc-handshake`、`run-command` 的 `--More--` 用例偶发失败，隔离复跑通过。
