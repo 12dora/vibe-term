@@ -18,12 +18,12 @@ import { stamp } from './mesh-log';
 import { parseOpenPayload } from './peer-protocol';
 import { RelayKeyLogSync, relayMemberFromRecord } from './relay-key-log-sync';
 import {
+  acceptRelayEnrollRedeemed,
   buildRelayStatusMessage,
   relayListToNodeList,
   relayRtcToSignal,
   relayStatusBlobOf,
   sealRelayRtcSignal,
-  toUplinkEnrollRedeemed,
 } from './relay-node-list';
 import type { RelaySecrets } from './relay-secrets';
 import {
@@ -403,9 +403,8 @@ export class RelayUplinkClient {
   }
 
   private handleEnrollRedeemed(msg: Extract<RelayCtlMessage, { t: 'enroll.redeemed' }>): void {
-    const normalized = toUplinkEnrollRedeemed(msg);
-    if (normalized) this.opts.onEnrollRedeemed?.(normalized);
-    else console.warn(stamp('[relay] malformed enroll.redeemed'));
+    const redeemed = acceptRelayEnrollRedeemed(this.opts.userStore, msg, this.scheduler.now());
+    if (redeemed) this.opts.onEnrollRedeemed?.(redeemed);
   }
 
   private acceptAuthOk(msg: Extract<RelayCtlMessage, { t: 'auth.ok' }>, generation: number): void {

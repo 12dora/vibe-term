@@ -38,7 +38,7 @@ async function serveTarball(bytes: Uint8Array): Promise<{ url: string; stop: () 
     hostname: '127.0.0.1',
     port: 0,
     fetch() {
-      return new Response(bytes, {
+      return new Response(new Uint8Array(bytes), {
         headers: { 'content-type': 'application/octet-stream' },
       });
     },

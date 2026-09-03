@@ -289,7 +289,7 @@ describe('applyUpgrade', () => {
     await seedInstall(installDir, '1.0.0');
     const pkg = await writePackage(join(installDir, '_pkg2'), '2.0.0');
     const service = fakeService();
-    const healthCalls: string[] = [];
+    const healthCalls: (string | undefined)[] = [];
 
     await applyUpgrade(
       {

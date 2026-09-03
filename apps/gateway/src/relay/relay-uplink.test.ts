@@ -70,6 +70,16 @@ describe('relay uplink auth', () => {
     expect(await closed(client)).toBe('client-too-old');
   });
 
+  test('accepts the dev build suffix reported by non-production gateways', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node, { clientVersion: '1.1.23_dev' });
+    const ok = await client.inbox.takeOf('auth.ok');
+    expect(ok.t).toBe('auth.ok');
+    expect(relay.runtime.tenants.getNode(tenant.id, node.nodeId)?.clientVersion).toBe('1.1.23_dev');
+  });
+
   test('accepts a passkey-signed admit only when the tenant already has an admitted node', async () => {
     const relay = await boot();
     const tenant = await relay.createTenant();

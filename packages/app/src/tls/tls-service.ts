@@ -10,6 +10,7 @@ import type {
 } from '../../../../apps/gateway/src/tls/types';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
+import type { FetchLike } from '../lib/fetch-like';
 import type { AcmeHttp01Challenge } from './acme-challenge';
 import { resolveAcmeDnsPatch } from './acme-dns-patch';
 import {
@@ -104,7 +105,7 @@ export type TlsServiceOptions = {
   trustProxy?: boolean;
   now?: () => number;
   log?: (message: string) => void;
-  fetch?: typeof fetch;
+  fetch?: FetchLike;
   dns?: DnsProvider;
   issueAcme?: (input: AcmeIssueInput) => Promise<AcmeIssuedMaterial>;
   scheduleBackground?: (work: () => Promise<void>) => void;
@@ -648,18 +649,14 @@ export class TlsService {
 
   private async applyListener(): Promise<void> {
     const row = await this.opts.store.get();
-    const secrets = await this.opts.store.getPrivateMaterial();
-    if (!row.certPem || !secrets.keyPem) {
+    const { keyPem } = await this.opts.store.getPrivateMaterial();
+    const { certPem, tlsPort, bindHost } = row;
+    if (!certPem || !keyPem) {
       await this.withListenerApply(() => this.opts.listener.apply(null));
       return;
     }
     await this.withListenerApply(() =>
-      this.opts.listener.apply({
-        port: row.tlsPort,
-        host: row.bindHost,
-        certPem: row.certPem,
-        keyPem: secrets.keyPem,
-      })
+      this.opts.listener.apply({ port: tlsPort, host: bindHost, certPem, keyPem })
     );
   }
 

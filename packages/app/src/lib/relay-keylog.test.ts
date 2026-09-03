@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { generateTenantKey, sealEnvelope } from '../../../shared/src/relay';
 import {
   decodeRelayKeyLogPlaintext,
   encodeRelayKeyLogPlaintext,
-  openRelayKeyLogPage,
-  parseRelayKeyLogPage,
-} from './relay-keylog';
+  generateTenantKey,
+  sealEnvelope,
+} from '../../../shared/src/relay';
+import { openRelayKeyLogPage, parseRelayKeyLogPage } from './relay-keylog';
 
 const KEY = generateTenantKey();
 

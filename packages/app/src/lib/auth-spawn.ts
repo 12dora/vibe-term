@@ -170,8 +170,10 @@ function installSignalForwarding(child: ChildProcess): () => void {
   });
 
   return () => {
+    // @types/bun 把 process.off 收窄成只接受 'memoryPressure'，用 EventEmitter 视图取回原始签名
+    const emitter: NodeJS.EventEmitter = process;
     for (const [signal, handler] of handlers) {
-      process.off(signal, handler);
+      emitter.off(signal, handler);
     }
   };
 }

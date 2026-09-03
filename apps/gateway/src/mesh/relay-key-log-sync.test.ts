@@ -9,22 +9,19 @@ import {
   randomBytes,
 } from '@tmex/shared/auth';
 import {
+  RELAY_KEYLOG_ENVELOPE_KIND,
   RELAY_KEYLOG_SEQ_MISMATCH,
   type RelayCtlMessage,
+  decodeRelayKeyLogPlaintext,
+  encodeRelayKeyLogPlaintext,
   generateTenantKey,
+  openRelayKeyLogRecord,
   relaySeqFromWire,
   relaySeqToWire,
   sealEnvelope,
-} from '@tmex/shared/relay';
-import {
-  RELAY_KEYLOG_ENVELOPE_KIND,
-  RelayKeyLogSync,
-  decodeRelayKeyLogPlaintext,
-  encodeRelayKeyLogPlaintext,
-  openRelayKeyLogRecord,
-  relayMemberFromRecord,
   sealRelayKeyLogRecord,
-} from './relay-key-log-sync';
+} from '@tmex/shared/relay';
+import { RelayKeyLogSync, relayMemberFromRecord } from './relay-key-log-sync';
 import { waitUntil } from './test-support';
 import type { KeyLogApplier } from './types';
 

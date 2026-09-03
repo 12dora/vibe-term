@@ -1,38 +1,8 @@
-import { decodeBase64url, encodeBase64url } from '../../../shared/src/auth';
-import { type RelayEnvelope, openEnvelope } from '../../../shared/src/relay';
-
-/**
- * 中继密钥日志块的明文帧。plan 1.4 只写了 `recordBytes ‖ sig`；sig 在 passkey 签名下是变长的
- * Borsh 断言，必须有长度界定，这里统一用与 hub `key.log.res` 一致的 `{bytes, sig}` b64url JSON。
- */
-export type RelayKeyLogEntry = { bytes: Uint8Array; sig: Uint8Array };
-
-export const RELAY_KEYLOG_ENVELOPE_KIND = 'keylog';
-export const RELAY_KEYLOG_PLAINTEXT_MAX_BYTES = 256 * 1024;
-
-export function encodeRelayKeyLogPlaintext(entry: RelayKeyLogEntry): Uint8Array {
-  const json = JSON.stringify({
-    bytes: encodeBase64url(entry.bytes),
-    sig: encodeBase64url(entry.sig),
-  });
-  return new TextEncoder().encode(json);
-}
-
-export function decodeRelayKeyLogPlaintext(plaintext: Uint8Array): RelayKeyLogEntry {
-  if (plaintext.byteLength > RELAY_KEYLOG_PLAINTEXT_MAX_BYTES) {
-    throw new Error('relay key log record too large');
-  }
-  let parsed: { bytes?: unknown; sig?: unknown };
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(plaintext)) as typeof parsed;
-  } catch {
-    throw new Error('relay key log record is not valid JSON');
-  }
-  if (typeof parsed.bytes !== 'string' || typeof parsed.sig !== 'string') {
-    throw new Error('relay key log record missing bytes/sig');
-  }
-  return { bytes: decodeBase64url(parsed.bytes), sig: decodeBase64url(parsed.sig) };
-}
+import {
+  type RelayEnvelope,
+  type RelayKeyLogEntry,
+  openRelayKeyLogRecord,
+} from '../../../shared/src/relay';
 
 export type RelayKeyLogPageItem = { seq: number | string; blob: RelayEnvelope };
 
@@ -55,8 +25,7 @@ export async function openRelayKeyLogPage(
       throw new Error(`relay key log is not contiguous at seq ${String(item.seq)}`);
     }
     expected += 1n;
-    const plaintext = await openEnvelope(logKey, RELAY_KEYLOG_ENVELOPE_KIND, item.blob);
-    out.push(decodeRelayKeyLogPlaintext(plaintext));
+    out.push(await openRelayKeyLogRecord(logKey, item.blob));
   }
   return out;
 }

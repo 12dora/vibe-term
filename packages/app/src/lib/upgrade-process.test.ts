@@ -169,12 +169,13 @@ describe('createDirectProcessControl', () => {
       stdio: 'ignore',
       detached: true,
     });
-    if (!child.pid) throw new Error('spawn failed');
+    const pid = child.pid;
+    if (!pid) throw new Error('spawn failed');
     child.unref();
-    livePids.push(child.pid);
+    livePids.push(pid);
     expect(() =>
       assertOwnedInstallProcess({
-        pid: child.pid,
+        pid,
         installDir: dir,
         commandLine: `vim ${serverJs}`,
       })

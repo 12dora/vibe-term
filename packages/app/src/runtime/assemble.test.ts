@@ -7,6 +7,7 @@ import {
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
+import type { HubTlsInfoProvider } from '../../../../apps/gateway/src/hub/hub-runtime';
 import {
   MESH_GATEWAY_WS_KIND,
   MESH_REJECT_4401_KIND,
@@ -60,7 +61,7 @@ function fakeIdentityDb(): GatewayRuntime['db'] {
       return undefined;
     },
   };
-  return chain as GatewayRuntime['db'];
+  return chain as unknown as GatewayRuntime['db'];
 }
 
 function fakeGateway(overrides?: Partial<GatewayRuntime>): GatewayRuntime {
@@ -288,9 +289,7 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('tlsInfo withholds CA fingerprint while the HTTPS listener is not running', async () => {
-    let tlsInfo:
-      | (() => Promise<{ caFingerprint: string | null; caPem: string | null }>)
-      | undefined;
+    let tlsInfo: HubTlsInfoProvider | undefined;
     const assembled = await assembleTmex({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
@@ -657,7 +656,7 @@ describe('assembleTmex role matrix', () => {
   test('shutdown order is mesh (peer+uplink) → hub → gateway', async () => {
     const order: string[] = [];
     const hub = fakeHub({
-      stop() {
+      async stop() {
         order.push('hub');
       },
     });
@@ -809,9 +808,10 @@ describe('assembleTmex role matrix', () => {
         throw new Error('no mesh');
       },
     });
-    let captured: { fetch?: unknown; websocket?: unknown } | null = null;
+    // 闭包里赋值不参与控制流收窄，用容器对象保住声明类型
+    const captured: { opts: { fetch?: unknown; websocket?: unknown } | null } = { opts: null };
     const serve = ((opts: { fetch: unknown; websocket: unknown }) => {
-      captured = opts;
+      captured.opts = opts;
       return { port: 0, stop() {} };
     }) as unknown as typeof Bun.serve;
     const server = serve({
@@ -820,8 +820,8 @@ describe('assembleTmex role matrix', () => {
       fetch: assembled.fetch,
       websocket: assembled.websocket,
     });
-    expect(captured?.fetch).toBe(assembled.fetch);
-    expect(captured?.websocket).toBe(assembled.websocket);
+    expect(captured.opts?.fetch).toBe(assembled.fetch);
+    expect(captured.opts?.websocket).toBe(assembled.websocket);
     server.stop();
   });
 
@@ -839,7 +839,10 @@ describe('assembleTmex role matrix', () => {
       dummyServer
     );
     expect(res?.status).toBe(200);
-    const body = (await res?.json()) as { role: string; tls: { mode: string } };
+    const body = (await res?.json()) as {
+      role: string;
+      tls: { mode: string; listenerRunning: boolean; tlsPort: number };
+    };
     expect(body.role).toBe('standalone');
     expect(body.tls).toEqual({ mode: 'none', listenerRunning: false, tlsPort: 9443 });
   });

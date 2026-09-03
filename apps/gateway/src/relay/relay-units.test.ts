@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { RELAY_KEYLOG_SEQ_MISMATCH } from '@tmex/shared/relay';
+import { MIN_RELAY_CLIENT_VERSION, RELAY_KEYLOG_SEQ_MISMATCH } from '@tmex/shared/relay';
+import { nodeVersionMeets } from '../hub/hub-authorization';
 import { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError } from './relay-http';
 import { trimRelayKeyLogPage } from './relay-key-log-page';
@@ -173,5 +174,21 @@ describe('relay error bodies', () => {
       error: { code: 'RELAY_PASSWORD_INVALID', message: 'RELAY_PASSWORD_INVALID' },
     });
     expect(RELAY_KEYLOG_SEQ_MISMATCH).toBe('SEQ_MISMATCH');
+  });
+});
+
+describe('relay client version gate', () => {
+  test('接受 1.1.23 与开发态 1.1.23_dev，拒绝 1.1.22 与无法解析的版本', () => {
+    expect(MIN_RELAY_CLIENT_VERSION).toBe('1.1.23');
+    for (const version of ['1.1.23', '1.1.23_dev', '1.1.24', '1.2.0', '2.0.0_dev']) {
+      expect(nodeVersionMeets(version, MIN_RELAY_CLIENT_VERSION)).toBe(true);
+    }
+    for (const version of ['1.1.22', '1.1.22_dev', '1.0.99', '', 'nightly', null, undefined]) {
+      expect(nodeVersionMeets(version, MIN_RELAY_CLIENT_VERSION)).toBe(false);
+    }
+  });
+
+  test('预发布版本低于正式版：1.1.23-rc.1 不满足 1.1.23', () => {
+    expect(nodeVersionMeets('1.1.23-rc.1', MIN_RELAY_CLIENT_VERSION)).toBe(false);
   });
 });

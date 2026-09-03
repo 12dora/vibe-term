@@ -1,3 +1,4 @@
+import type { FetchLike } from '../lib/fetch-like';
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
@@ -43,7 +44,7 @@ function deps(overrides: Partial<SetupServiceDeps> = {}): SetupServiceDeps {
     installDir: '/tmp',
     scheduleRestart: () => undefined,
     startedAt: 7,
-    fetch: (async () => Response.json({ status: 'ok', startedAt: 7 })) as typeof fetch,
+    fetch: (async () => Response.json({ status: 'ok', startedAt: 7 })) as FetchLike,
     performHubJoin: async () => ({
       userId: 'uid',
       username: 'alice',

@@ -1,71 +1,24 @@
-import { decodeBase64url, decodeKeyLogRecord, encodeBase64url } from '@tmex/shared/auth';
+import { decodeKeyLogRecord, encodeBase64url } from '@tmex/shared/auth';
 import {
   RELAY_KEYLOG_PAGE_DEFAULT_LIMIT,
   RELAY_KEYLOG_PAGE_MAX_LIMIT,
   type RelayCtlMessage,
   type RelayEnvelope,
+  type RelayKeyLogEntry,
   type RelayKeyLogRecordWire,
   type RelayKeylogMember,
-  openEnvelope,
+  openRelayKeyLogRecord,
   relaySeqFromWire,
   relaySeqToWire,
-  sealEnvelope,
+  sealRelayKeyLogRecord,
 } from '@tmex/shared/relay';
 import { stamp } from './mesh-log';
 import type { KeyLogApplier, MeshScheduler } from './types';
 
-export const RELAY_KEYLOG_ENVELOPE_KIND = 'keylog';
-export const RELAY_KEYLOG_PLAINTEXT_MAX_BYTES = 256 * 1024;
 export const RELAY_KEYLOG_ACK_TIMEOUT_MS = 10_000;
 
-export type RelayKeyLogRecord = { bytes: Uint8Array; sig: Uint8Array };
+export type RelayKeyLogRecord = RelayKeyLogEntry;
 export type RelayKeyLogAck = { ok: boolean; seq?: bigint; error?: string; head?: bigint };
-
-/**
- * 中继密钥日志块的明文帧：`{bytes, sig}` 的 b64url JSON（与 hub `key.log.res` 同形状）。
- * passkey 签名是变长 Borsh 断言，拼接形态无法切分，所以不用 plan 1.4 字面写的 `bytes ‖ sig`。
- * 与 `packages/app/src/lib/relay-keylog.ts` 逐字节一致，两侧解得开对方的块。
- */
-export function encodeRelayKeyLogPlaintext(record: RelayKeyLogRecord): Uint8Array {
-  return new TextEncoder().encode(
-    JSON.stringify({
-      bytes: encodeBase64url(record.bytes),
-      sig: encodeBase64url(record.sig),
-    })
-  );
-}
-
-export function decodeRelayKeyLogPlaintext(plaintext: Uint8Array): RelayKeyLogRecord {
-  if (plaintext.byteLength > RELAY_KEYLOG_PLAINTEXT_MAX_BYTES) {
-    throw new Error('relay key log record too large');
-  }
-  let parsed: { bytes?: unknown; sig?: unknown };
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(plaintext)) as typeof parsed;
-  } catch {
-    throw new Error('relay key log record is not valid JSON');
-  }
-  if (typeof parsed.bytes !== 'string' || typeof parsed.sig !== 'string') {
-    throw new Error('relay key log record missing bytes/sig');
-  }
-  return { bytes: decodeBase64url(parsed.bytes), sig: decodeBase64url(parsed.sig) };
-}
-
-export async function sealRelayKeyLogRecord(
-  logKey: Uint8Array,
-  record: RelayKeyLogRecord
-): Promise<RelayEnvelope> {
-  return sealEnvelope(logKey, RELAY_KEYLOG_ENVELOPE_KIND, encodeRelayKeyLogPlaintext(record));
-}
-
-export async function openRelayKeyLogRecord(
-  logKey: Uint8Array,
-  envelope: RelayEnvelope
-): Promise<RelayKeyLogRecord> {
-  return decodeRelayKeyLogPlaintext(
-    await openEnvelope(logKey, RELAY_KEYLOG_ENVELOPE_KIND, envelope)
-  );
-}
 
 /**
  * admit-node / revoke-node 记录额外附带明文，供中继重建准入注册表；

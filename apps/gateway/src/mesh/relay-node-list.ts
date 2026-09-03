@@ -1,4 +1,4 @@
-import { decodeBase64url } from '@tmex/shared/auth';
+import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
 import {
   type RelayCtlMessage,
   type RelayListNode,
@@ -208,4 +208,54 @@ export function toUplinkEnrollRedeemed(
   } catch {
     return null;
   }
+}
+
+/**
+ * 归一化中继的 `enroll.redeemed` 并把证书写回本地 `enrollment_tokens`。
+ * 中继不带 entry_sid（它不知道是哪台机器发起的加节点），不落库的话
+ * `GET /api/mesh/relay/enrollments/:id` 会永远停在 pending，
+ * 租户主节点也就拿不到证书去签 `admit-node`。
+ */
+export function acceptRelayEnrollRedeemed(
+  userStore: UserStore,
+  msg: Extract<RelayCtlMessage, { t: 'enroll.redeemed' }>,
+  now: number
+): UplinkEnrollRedeemed | null {
+  const normalized = toUplinkEnrollRedeemed(msg);
+  if (!normalized) {
+    console.warn(stamp('[relay] malformed enroll.redeemed'));
+    return null;
+  }
+  try {
+    persistRelayEnrollRedeemed(userStore, normalized, now);
+  } catch (err) {
+    console.warn(stamp(`[relay] enroll.redeemed persist failed err=${String(err)}`));
+  }
+  return normalized;
+}
+
+function persistRelayEnrollRedeemed(
+  userStore: UserStore,
+  msg: UplinkEnrollRedeemed,
+  now: number
+): boolean {
+  const token = userStore.getEnrollmentTokenByEnrollPublicKey(msg.enroll_pk);
+  if (!token || token.usedAt !== null) return false;
+  let stored: Record<string, unknown>;
+  try {
+    stored = JSON.parse(token.authorizationJson) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  const consumed = userStore.consumeEnrollmentToken(msg.enroll_pk, {
+    nodeId: msg.nodeId,
+    now,
+    authorizationJson: JSON.stringify({
+      ...stored,
+      certificate_b64: encodeBase64url(msg.certificate),
+      cert_sig_b64: encodeBase64url(msg.cert_sig),
+      node_id: msg.nodeId,
+    }),
+  });
+  return consumed !== null;
 }

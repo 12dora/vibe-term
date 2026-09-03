@@ -14,6 +14,7 @@ import {
   nodeIdToHex,
 } from '../../../shared/src/auth';
 import { parseDurationMs } from '../lib/duration';
+import type { FetchLike } from '../lib/fetch-like';
 import {
   createHubFetcher,
   fetchAuthMode,
@@ -166,8 +167,7 @@ export async function fakeLocalRedeem(
     certificate_b64: encodeBase64url(input.certificateBytes),
     cert_sig_b64: encodeBase64url(input.certSig),
   });
-  const sqlite = ctx.sqlite as { run: (query: string, params?: unknown[]) => void };
-  sqlite.run(
+  ctx.sqlite.run(
     'UPDATE enrollment_tokens SET used_at = ?, node_id = ?, authorization_json = ? WHERE id = ?',
     [now, nodeId, authorizationJson, token.id]
   );
@@ -207,7 +207,7 @@ export async function pollHubEnrollment(options: {
   baseUrl: string;
   cookieHeader: string;
   enrollmentId: string;
-  fetcher?: typeof fetch;
+  fetcher?: FetchLike;
 }): Promise<AdmitCandidate | null> {
   const fetcher = options.fetcher ?? fetch;
   const response = await fetcher(
@@ -243,7 +243,7 @@ export async function pollHubNodesForCertificate(options: {
   baseUrl: string;
   cookieHeader: string;
   enrollPk: Uint8Array;
-  fetcher?: typeof fetch;
+  fetcher?: FetchLike;
 }): Promise<AdmitCandidate | null> {
   const nodes = await listHubNodes(options);
   for (const node of nodes) {
@@ -374,12 +374,13 @@ function makeRedeemPoll(
   if (io.pollRedeemed) return io.pollRedeemed;
   if (isHub) return () => pollLocalEnrollmentRedeem(ctx, enrollPk);
   if (!remote) return null;
-  if (remote.enrollmentId) {
+  const enrollmentId = remote.enrollmentId;
+  if (enrollmentId) {
     return () =>
       pollHubEnrollment({
         baseUrl: remote.hubUrl,
         cookieHeader: remote.cookieHeader,
-        enrollmentId: remote.enrollmentId,
+        enrollmentId,
         fetcher: remote.fetcher,
       });
   }
@@ -439,7 +440,10 @@ async function pollAndAdmit(
       }
     }
   } finally {
-    if (controller && typeof process.off === 'function') process.off('SIGINT', onSigint);
+    if (controller && typeof process.off === 'function') {
+      const emitter: NodeJS.EventEmitter = process;
+      emitter.off('SIGINT', onSigint);
+    }
   }
   return false;
 }

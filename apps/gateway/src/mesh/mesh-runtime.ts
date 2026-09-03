@@ -1419,6 +1419,8 @@ function assembleMeshRuntime(
         await stopQuietly([
           ['peer', () => peerManager.stop()],
           ['uplink', () => uplink.stop()],
+          // 自己造的 HubRuntime 自己收（幂等）：不收的话 attachment keepalive 会一直打已关闭的库
+          ['hub', () => d.hub?.stop() ?? Promise.resolve()],
           ['mesh http', () => http.stop()],
           ['rtc', () => rtc.close()],
           ['bulk', () => bulk.close()],

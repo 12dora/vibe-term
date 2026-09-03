@@ -28,7 +28,11 @@ export type RelayWiring = {
   reconcileQuietly(): Promise<void>;
 };
 
-type RelayBinding = { uplink: UplinkPool; hubStore: Pick<MeshHubStore, 'replaceAll'> };
+type RelayBinding = {
+  uplink: UplinkPool;
+  hubStore: Pick<MeshHubStore, 'replaceAll'>;
+  metaEpoch: number;
+};
 
 const RELAY_BINDINGS = new WeakMap<RelayWiring, RelayBinding>();
 
@@ -55,8 +59,14 @@ async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise
     // 切到中继后不再保留 hub 集合，`/api/mesh/hubs` 自然返回空表
     if (result.kind === 'relay') bound?.hubStore.replaceAll([], Date.now());
     if (allowRestart && result.targetsChanged && bound) {
+      bound.metaEpoch = result.metaEpoch;
       await reconfigureUplinkPool(bound.uplink);
+      return;
     }
+    if (!bound || result.metaEpoch === bound.metaEpoch) return;
+    bound.metaEpoch = result.metaEpoch;
+    // 新世代到手才第一次封得出状态块；不立刻重发的话对端要等到下一次心跳才看得见本节点
+    if (allowRestart) bound.uplink.liveClient()?.sendStatus();
   } catch (err) {
     console.error(stamp('[relay] reconcile failed'), err);
   }
@@ -82,7 +92,7 @@ export function bindRelayReconcile(
   uplink: UplinkPool,
   hubStore: Pick<MeshHubStore, 'replaceAll'>
 ): void {
-  RELAY_BINDINGS.set(wiring, { uplink, hubStore });
+  RELAY_BINDINGS.set(wiring, { uplink, hubStore, metaEpoch: wiring.secrets.currentMetaEpoch() });
 }
 
 export type RelayUplinkOverrides = {

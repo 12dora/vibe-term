@@ -1,4 +1,5 @@
 import { t } from '../i18n';
+import type { FetchLike } from '../lib/fetch-like';
 import { loadInstallEnv } from '../lib/local-auth';
 import { promptPassword } from '../lib/prompt';
 import { asString } from '../lib/validate';
@@ -56,7 +57,7 @@ export type RelayAdminStatus = {
 type AdminCall = {
   baseUrl: string;
   headers: Record<string, string>;
-  fetcher?: typeof fetch;
+  fetcher?: FetchLike;
 };
 
 async function adminCall(parsed: ParsedArgs, io: RelayIo): Promise<AdminCall> {

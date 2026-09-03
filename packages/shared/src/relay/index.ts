@@ -94,6 +94,7 @@ export type { RelayEnvelope, WrapEntry } from './tenant-cipher';
 
 export {
   RELAY_JOIN_TOKEN_CA_FINGERPRINT_CHARS,
+  RELAY_JOIN_TOKEN_ENTRY_CRED_BYTES,
   RELAY_JOIN_TOKEN_FIXED_BYTES,
   RELAY_JOIN_TOKEN_MAX_URLS,
   RELAY_JOIN_TOKEN_MAX_URL_LEN,
@@ -104,4 +105,14 @@ export {
   isRelayJoinToken,
   normalizeRelayUrl,
 } from './join-token';
-export type { RelayJoinToken } from './join-token';
+export type { RelayJoinToken, RelayJoinTokenEntry } from './join-token';
+
+export {
+  RELAY_KEYLOG_ENVELOPE_KIND,
+  RELAY_KEYLOG_PLAINTEXT_MAX_BYTES,
+  decodeRelayKeyLogPlaintext,
+  encodeRelayKeyLogPlaintext,
+  openRelayKeyLogRecord,
+  sealRelayKeyLogRecord,
+} from './keylog-frame';
+export type { RelayKeyLogEntry } from './keylog-frame';

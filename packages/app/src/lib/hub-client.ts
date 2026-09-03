@@ -10,6 +10,7 @@ import {
   generateEd25519KeyPair,
   signLogin,
 } from '../../../shared/src/auth';
+import type { FetchLike } from './fetch-like';
 
 export type HubAuthMode = {
   mode: string;
@@ -55,7 +56,7 @@ export type RedeemResponse = {
   }>;
 };
 
-export type HubFetch = typeof fetch;
+export type HubFetch = FetchLike;
 
 export type HubTrustLookup = {
   get(hubUrl: string): { caPem: string } | null;
@@ -75,7 +76,8 @@ export function createHubFetcher(
   const trusted = hubTrustStore.get(key);
   if (!trusted?.caPem) return inner;
   const ca = [trusted.caPem];
-  return ((input, init) => inner(input, { ...init, tls: { ca } })) as HubFetch;
+  const pinned: HubFetch = (input, init) => inner(input, { ...init, tls: { ca } });
+  return pinned;
 }
 
 export type HubNodeListItem = {

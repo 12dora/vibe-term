@@ -248,8 +248,11 @@ describe('enroll', () => {
       password: 'enroll-pass-word',
       log: () => undefined,
     });
-    let loginBody: Record<string, unknown> | null = null;
-    let enrollmentCookie: string | null = null;
+    // 闭包里赋值不参与控制流收窄，用容器对象保住声明类型
+    const seen: {
+      loginBody: Record<string, unknown> | null;
+      enrollmentCookie: string | null;
+    } = { loginBody: null, enrollmentCookie: null };
     const nonce = encodeBase64url(randomBytes(32));
     const nodePk = encodeBase64url(randomBytes(32));
     const server = Bun.serve({
@@ -270,7 +273,7 @@ describe('enroll', () => {
           return Response.json({ challenge_id: 'c1', nonce, nodePk });
         }
         if (url.pathname === '/api/auth/login') {
-          loginBody = (await req.json()) as Record<string, unknown>;
+          seen.loginBody = (await req.json()) as Record<string, unknown>;
           return new Response(JSON.stringify({ expires_at: Date.now() + 60_000 }), {
             status: 200,
             headers: {
@@ -280,7 +283,7 @@ describe('enroll', () => {
           });
         }
         if (url.pathname === '/api/hub/enrollments' && req.method === 'POST') {
-          enrollmentCookie = req.headers.get('cookie');
+          seen.enrollmentCookie = req.headers.get('cookie');
           return Response.json({ ok: true, id: 'enroll-1' }, { status: 201 });
         }
         return new Response('nope', { status: 404 });
@@ -299,12 +302,12 @@ describe('enroll', () => {
     });
     server.stop();
     expect(result.admitted).toBe(false);
-    expect(loginBody).toBeTruthy();
-    const totp = loginBody?.totp as { code?: string; k_totp?: string } | undefined;
+    expect(seen.loginBody).toBeTruthy();
+    const totp = seen.loginBody?.totp as { code?: string; k_totp?: string } | undefined;
     expect(totp?.code).toBe('123456');
     expect(typeof totp?.k_totp).toBe('string');
     expect(totp?.k_totp?.length).toBeGreaterThan(10);
-    expect(enrollmentCookie).toContain('tmex_s_self=sid-1');
+    expect(seen.enrollmentCookie).toContain('tmex_s_self=sid-1');
     expect(decodeJoinToken(result.token).caFingerprint).toBe('ab'.repeat(32));
   });
 
@@ -453,7 +456,7 @@ describe('enroll', () => {
       password: 'enroll-pass-word',
       log: () => undefined,
     });
-    let enrollmentCookie: string | null = null;
+    const seen: { enrollmentCookie: string | null } = { enrollmentCookie: null };
     const nonce = encodeBase64url(randomBytes(32));
     const nodePk = encodeBase64url(randomBytes(32));
     const server = Bun.serve({
@@ -482,7 +485,7 @@ describe('enroll', () => {
           });
         }
         if (url.pathname === '/api/hub/enrollments' && req.method === 'POST') {
-          enrollmentCookie = req.headers.get('cookie');
+          seen.enrollmentCookie = req.headers.get('cookie');
           return Response.json({ ok: true, id: 'enroll-2' }, { status: 201 });
         }
         return new Response('nope', { status: 404 });
@@ -500,7 +503,7 @@ describe('enroll', () => {
     });
     server.stop();
     expect(result.admitted).toBe(false);
-    expect(enrollmentCookie).toContain('tmex_s_self=header-sid');
+    expect(seen.enrollmentCookie).toContain('tmex_s_self=header-sid');
   });
 
   test('pollHubNodesForCertificate matches enroll_pk on hub node list', async () => {

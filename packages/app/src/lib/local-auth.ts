@@ -1,3 +1,4 @@
+import type { SQLQueryBindings } from 'bun:sqlite';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { AuthDb } from '../../../../apps/gateway/src/auth/types';
@@ -10,6 +11,12 @@ import { asString } from './validate';
 
 export type LocalAuthEnv = Record<string, string>;
 
+/** CLI 只用到底层 sqlite 客户端的这一小块（bun:sqlite `Database` 的子集）。 */
+export type LocalSqliteClient = {
+  close: () => void;
+  run: (sql: string, params: SQLQueryBindings[]) => unknown;
+};
+
 export type LocalAuthContext = {
   env: LocalAuthEnv;
   installDir: string;
@@ -17,7 +24,7 @@ export type LocalAuthContext = {
   databaseUrl: string;
   migrationsFolder: string;
   db: AuthDb;
-  sqlite: { close: () => void };
+  sqlite: LocalSqliteClient;
   close: () => void;
   userStore: import('../../../../apps/gateway/src/auth/user-store').UserStore;
   keyLogStore: import('../../../../apps/gateway/src/auth/key-log-store').KeyLogStore;
@@ -73,7 +80,7 @@ export type CreateAuthContextFromDbOptions = {
   envPath?: string;
   databaseUrl?: string;
   migrationsFolder?: string;
-  sqlite?: { close: () => void };
+  sqlite?: LocalSqliteClient;
   close?: () => void;
 };
 
@@ -93,7 +100,12 @@ export async function createAuthContextFromDb(
   const nodeSessionStore = new NodeSessionStore(db);
   const identityStore = new NodeIdentityStore(db);
   const userKeys = new UserKeyService({ db, userStore, keyLogStore, nodeSessionStore });
-  const sqlite = options.sqlite ?? { close() {} };
+  const sqlite: LocalSqliteClient = options.sqlite ?? {
+    close() {},
+    run() {
+      throw new Error('no sqlite client is bound to this auth context');
+    },
+  };
   const close = options.close ?? (() => sqlite.close());
   return {
     env: options.env ?? {},

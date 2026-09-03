@@ -1,11 +1,10 @@
 import { EventEmitter } from 'events';
-import nodeDataChannel from './node-datachannel';
+import nodeDataChannel, { type NativeWebSocketServer } from './node-datachannel';
 import { WebSocketServerConfiguration } from './types';
 import { WebSocket } from './websocket';
 
 export class WebSocketServer extends EventEmitter {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  #server: any;
+  #server: NativeWebSocketServer | null;
   #clients: WebSocket[] = [];
 
   constructor(options: WebSocketServerConfiguration) {

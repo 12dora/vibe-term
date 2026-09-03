@@ -4,6 +4,7 @@ import { isIP } from 'node:net';
 import acme from 'acme-client';
 import type { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import type { AcmeChallengeType } from '../../../../apps/gateway/src/tls/types';
+import type { FetchLike } from '../lib/fetch-like';
 import type { AcmeHttp01Challenge } from './acme-challenge';
 import { parseCertificate } from './cert-authority';
 import type { DnsCredentials, DnsProvider, DnsProviderId, DnsTxtRef } from './dns-provider';
@@ -146,7 +147,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 /** UDP 53 在代理/受限网络下常不可达，先走 DNS-over-HTTPS（可过 HTTP 代理），再退到权威 NS 与系统解析器。 */
 export async function resolveTxtOverHttps(
   hostname: string,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: FetchLike = fetch,
   endpoint = DOH_ENDPOINT
 ): Promise<string[][]> {
   const url = new URL(endpoint);

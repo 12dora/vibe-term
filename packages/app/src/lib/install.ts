@@ -60,7 +60,8 @@ export function applyHubModeEnvKeys(
   if (patch.priority !== undefined) next.TMEX_HUB_PRIORITY = String(patch.priority);
   if (patch.writerEpoch !== undefined) next.TMEX_HUB_WRITER_EPOCH = String(patch.writerEpoch);
   if (patch.hubPeers !== undefined) {
-    next.TMEX_HUB_PEERS = Array.isArray(patch.hubPeers) ? patch.hubPeers.join(',') : patch.hubPeers;
+    next.TMEX_HUB_PEERS =
+      typeof patch.hubPeers === 'string' ? patch.hubPeers : patch.hubPeers.join(',');
   }
   return next;
 }

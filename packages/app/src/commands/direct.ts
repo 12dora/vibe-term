@@ -3,6 +3,7 @@ import { rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { defaultInstallDir } from '../constants';
 import { sha256Hex } from '../lib/artifacts-manifest';
+import type { FetchLike } from '../lib/fetch-like';
 import { ensureDir, pathExists } from '../lib/fs-utils';
 import { type InstallLayout, createInstallLayout, resolveInstallDir } from '../lib/install-layout';
 import { writeJsonFile } from '../lib/json-file';
@@ -24,7 +25,7 @@ export interface EnableDirectOptions {
   platform?: NodeJS.Platform | string;
   arch?: string;
   libc?: 'gnu' | 'glibc' | 'musl' | null | 'detect';
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchLike;
   log?: (message: string) => void;
   signal?: AbortSignal;
 }
@@ -280,8 +281,8 @@ export async function reenableDirectIfNeeded(
     return {
       ok: true,
       skipped: true,
-      platformId: installed?.platform ?? '',
-      version: installed?.version ?? '',
+      platformId: '',
+      version: '',
       addonPath: addon,
     };
   }
@@ -315,7 +316,7 @@ export async function reenableDirectIfNeeded(
 
 export interface RunDirectDeps {
   pin?: NativePin | null;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchLike;
   platform?: NodeJS.Platform | string;
   arch?: string;
 }

@@ -8,7 +8,7 @@ describe('createTmexGatewayRuntime', () => {
 
     await createTmexGatewayRuntime(async (options) => {
       receivedHandler = options?.systemApiHandler;
-      const response = options?.systemApiHandler?.(
+      const response = await options?.systemApiHandler?.(
         new Request('http://localhost/api/system/info'),
         '/api/system/info'
       );

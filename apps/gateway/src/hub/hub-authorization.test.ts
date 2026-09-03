@@ -69,6 +69,18 @@ function rotateRootKeepRecord(): Uint8Array {
   );
 }
 
+function relayRecord(type: 'set-relays' | 'meta-key'): Uint8Array {
+  return encodeKeyLogRecord(
+    buildKeyLogRecord(genesisHead(), 0, {
+      uid: 'user-1',
+      type,
+      payload: new Uint8Array(4),
+      signer: 'root',
+      credential_id: null,
+    })
+  );
+}
+
 function admitHubRecord(): Uint8Array {
   return encodeKeyLogRecord(
     buildKeyLogRecord(genesisHead(), 0, {
@@ -309,6 +321,36 @@ describe('hub auth record compat gate', () => {
       seedCert(store, 'user-1', SELF);
       const record = rotateRootKeepRecord();
       expect(inspectHubAuthRecordCompat(store, record, 'user-1')).toEqual({ ok: true });
+    } finally {
+      close();
+    }
+  });
+
+  test('中继记录在空注册表（纯节点）上放行，hub-auth 记录仍然 fail-closed', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      seedCert(store, 'user-1', SELF);
+      // 纯节点没有 nodes 注册表：set-relays / meta-key 放行
+      expect(inspectHubAuthRecordCompat(store, relayRecord('set-relays'), 'user-1')).toEqual({
+        ok: true,
+      });
+      expect(inspectHubAuthRecordCompat(store, relayRecord('meta-key'), 'user-1')).toEqual({
+        ok: true,
+      });
+      // 同一张空表下 hub-auth 记录照旧被拒
+      expect(inspectHubAuthRecordCompat(store, admitHubRecord(), 'user-1').ok).toBe(false);
+
+      // 一旦有了注册表（hub 侧），中继记录也回到版本门禁
+      store.createNode({ id: PEER, userId: 'user-1', name: 'old', version: '1.1.22', now: 1 });
+      seedCert(store, 'user-1', PEER);
+      const blocked = inspectHubAuthRecordCompat(store, relayRecord('set-relays'), 'user-1');
+      expect(blocked.ok).toBe(false);
+      if (!blocked.ok) {
+        expect(blocked.minVersion).toBe('1.1.23');
+        expect(blocked.nodes.map((n) => n.id).sort()).toEqual([PEER, SELF].sort());
+      }
     } finally {
       close();
     }

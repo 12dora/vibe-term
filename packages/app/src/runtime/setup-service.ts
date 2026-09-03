@@ -132,7 +132,7 @@ export type SetupServiceDeps = {
   installDir: string;
   hubUrl?: string | null;
   hubPublicUrl?: string | null;
-  fetch?: typeof fetch;
+  fetch?: import('../lib/fetch-like').FetchLike;
   precheckCaPem?: () => Promise<string | null>;
   enableDirect?: (opts: EnableDirectOptions) => Promise<DirectEnableResult>;
   disableDirect?: (opts: DisableDirectOptions) => Promise<void>;

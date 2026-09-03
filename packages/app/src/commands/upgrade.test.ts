@@ -19,11 +19,16 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+/** 直接读 `process.exitCode` 会被上面赋的 undefined 收窄掉，包一层拿回声明类型。 */
+function currentExitCode(): number | string | undefined {
+  return process.exitCode;
+}
+
 function fakeFetch(tarball: Uint8Array): (url: string | URL) => Promise<Response> {
   return async (url) => {
     const href = String(url);
     if (href === releaseTarballUrl('1.1.0') || href.includes('tmex-cli-')) {
-      return new Response(tarball, { status: 200 });
+      return new Response(new Uint8Array(tarball), { status: 200 });
     }
     if (href.includes('SHA256SUMS')) {
       return new Response('missing', { status: 404 });
@@ -155,7 +160,7 @@ describe('delegateUpgrade', () => {
           }
         )
       ).rejects.toThrow(/7/);
-      expect(process.exitCode).toBe(7);
+      expect(currentExitCode()).toBe(7);
     } finally {
       process.exitCode = previous ?? 0;
     }
@@ -222,7 +227,8 @@ describe('delegateUpgrade', () => {
           fetch: async (url) => {
             const href = String(url);
             if (href.includes('SHA256SUMS')) return new Response('missing', { status: 404 });
-            if (href.includes('tmex-cli-')) return new Response(tarball, { status: 200 });
+            if (href.includes('tmex-cli-'))
+              return new Response(new Uint8Array(tarball), { status: 200 });
             return new Response('nope', { status: 404 });
           },
           runCommand: async () => ({ code: 0, stdout: '', stderr: '' }),
@@ -406,7 +412,7 @@ await applyUpgrade(
         fetch: async (url) => {
           const href = String(url);
           if (href === releaseTarballUrl('2.0.0') || href.includes(releaseTarballName('2.0.0'))) {
-            return new Response(tarball, { status: 200 });
+            return new Response(new Uint8Array(tarball), { status: 200 });
           }
           if (href.includes('SHA256SUMS')) {
             return new Response(`${hex}  ${releaseTarballName('2.0.0')}\n`, { status: 200 });
