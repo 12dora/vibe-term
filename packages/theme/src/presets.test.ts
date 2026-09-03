@@ -24,11 +24,7 @@ function semanticTokensFromRoot(): string[] {
   return [...root[1].matchAll(/^\s*(--[a-z0-9-]+):/gm)]
     .map((m) => m[1])
     .filter(
-      (name) =>
-        !name.startsWith('--base-') &&
-        !name.startsWith('--tmex-') &&
-        name !== '--radius' &&
-        name !== '--display-weight'
+      (name) => !name.startsWith('--base-') && !name.startsWith('--tmex-') && name !== '--radius'
     );
 }
 
@@ -86,7 +82,6 @@ describe('每个预设覆盖完整语义 token', () => {
     expect(semantic).toContain('--background');
     expect(semantic).toContain('--sidebar-ring');
     expect(semantic).toContain('--chat-surface');
-    expect(semantic).toContain('--fc-today-bg-color');
   });
 
   for (const id of THEME_PRESETS) {

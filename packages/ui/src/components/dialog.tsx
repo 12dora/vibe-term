@@ -1,128 +1,70 @@
+// 公开面：与 dialog-impl 同名同签名，实现随 chunk 按需到货（见 ../lazy-overlay）。
+
 'use client';
 
-import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
-import type * as React from 'react';
+import type { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
+import { createContext, useContext } from 'react';
 
-import { XIcon } from 'lucide-react';
-import { cn } from '../utils';
-import { Button } from './button';
+import {
+  type OverlayGate,
+  OverlayTrigger,
+  createOverlayPart,
+  overlayClosedChildren,
+  useOverlayGate,
+} from '../lazy-overlay';
+import { type OverlaysImpl, overlayLoader } from '../overlay-impl-loader';
+
+const NO_GATE: OverlayGate<OverlaysImpl> = {
+  impl: null,
+  requestLoad: () => undefined,
+  requestOpen: () => undefined,
+};
+
+const GateContext = createContext<OverlayGate<OverlaysImpl>>(NO_GATE);
+// 没有外层 Root 时（部件被单独渲染，属误用）回落到模块级缓存，让 base-ui 照常抛出
+// 「must be used within …」——这条契约不该因为懒加载而消失。
+const useDialogImpl = () => useContext(GateContext).impl ?? overlayLoader.peek();
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
-}
-
-function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
-}
-
-function DialogPortal({ ...props }: DialogPrimitive.Portal.Props) {
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />;
-}
-
-function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
-}
-
-function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) {
+  const { gate, forceOpen } = useOverlayGate(
+    overlayLoader,
+    props.open === true || props.defaultOpen === true
+  );
+  const Impl = gate.impl?.Dialog;
   return (
-    <DialogPrimitive.Backdrop
-      data-slot="dialog-overlay"
-      className={cn(
-        'data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 bg-black/10 duration-(--tmex-motion-standard) ease-out motion-reduce:animate-none supports-backdrop-filter:backdrop-blur-xs fixed inset-0 isolate z-50',
-        className
+    <GateContext.Provider value={gate}>
+      {Impl ? (
+        <Impl {...props} defaultOpen={forceOpen || props.defaultOpen} />
+      ) : (
+        overlayClosedChildren(props.children)
       )}
-      {...props}
+    </GateContext.Provider>
+  );
+}
+
+function DialogTrigger({ render, ...props }: DialogPrimitive.Trigger.Props) {
+  const gate = useContext(GateContext);
+  const Impl = (gate.impl ?? overlayLoader.peek())?.DialogTrigger;
+  if (Impl) return <Impl render={render} {...props} />;
+  return (
+    <OverlayTrigger
+      slot="dialog-trigger"
+      render={render}
+      props={props as Record<string, unknown>}
+      onActivate={gate.requestLoad}
+      onOpen={gate.requestOpen}
     />
   );
 }
 
-function DialogContent({
-  className,
-  children,
-  showCloseButton = true,
-  ...props
-}: DialogPrimitive.Popup.Props & {
-  showCloseButton?: boolean;
-}) {
-  return (
-    <DialogPortal>
-      <DialogOverlay />
-      <DialogPrimitive.Popup
-        data-slot="dialog-content"
-        className={cn(
-          'bg-background data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 ring-foreground/10 grid max-w-[calc(100%-2rem)] gap-4 rounded-xl p-4 text-sm ring-1 duration-(--tmex-motion-standard) ease-out motion-reduce:animate-none sm:max-w-sm fixed top-1/2 left-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 outline-none',
-          className
-        )}
-        {...props}
-      >
-        {children}
-        {showCloseButton && (
-          <DialogPrimitive.Close
-            data-slot="dialog-close"
-            render={<Button variant="ghost" className="absolute top-2 right-2" size="icon-sm" />}
-          >
-            <XIcon />
-            <span className="sr-only">Close</span>
-          </DialogPrimitive.Close>
-        )}
-      </DialogPrimitive.Popup>
-    </DialogPortal>
-  );
-}
-
-function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
-  return (
-    <div data-slot="dialog-header" className={cn('gap-2 flex flex-col', className)} {...props} />
-  );
-}
-
-function DialogFooter({
-  className,
-  showCloseButton = false,
-  children,
-  ...props
-}: React.ComponentProps<'div'> & {
-  showCloseButton?: boolean;
-}) {
-  return (
-    <div
-      data-slot="dialog-footer"
-      className={cn(
-        'bg-muted/50 -mx-4 -mb-4 rounded-b-xl border-t p-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end',
-        className
-      )}
-      {...props}
-    >
-      {children}
-      {showCloseButton && (
-        <DialogPrimitive.Close render={<Button variant="outline" />}>Close</DialogPrimitive.Close>
-      )}
-    </div>
-  );
-}
-
-function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
-  return (
-    <DialogPrimitive.Title
-      data-slot="dialog-title"
-      className={cn('text-base leading-none font-medium', className)}
-      {...props}
-    />
-  );
-}
-
-function DialogDescription({ className, ...props }: DialogPrimitive.Description.Props) {
-  return (
-    <DialogPrimitive.Description
-      data-slot="dialog-description"
-      className={cn(
-        'text-muted-foreground *:[a]:hover:text-foreground text-sm *:[a]:underline *:[a]:underline-offset-3',
-        className
-      )}
-      {...props}
-    />
-  );
-}
+const DialogPortal = createOverlayPart(useDialogImpl, 'DialogPortal');
+const DialogClose = createOverlayPart(useDialogImpl, 'DialogClose');
+const DialogOverlay = createOverlayPart(useDialogImpl, 'DialogOverlay');
+const DialogContent = createOverlayPart(useDialogImpl, 'DialogContent');
+const DialogHeader = createOverlayPart(useDialogImpl, 'DialogHeader');
+const DialogFooter = createOverlayPart(useDialogImpl, 'DialogFooter');
+const DialogTitle = createOverlayPart(useDialogImpl, 'DialogTitle');
+const DialogDescription = createOverlayPart(useDialogImpl, 'DialogDescription');
 
 export {
   Dialog,

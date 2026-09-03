@@ -32,11 +32,6 @@ function renderThemeTokens(id: string, palette: PresetPalette): string {
     ['--border', ui.border],
     ['--input', ui.input],
     ['--ring', ui.primary],
-    ['--chart-1', ui.charts[0]],
-    ['--chart-2', ui.charts[1]],
-    ['--chart-3', ui.charts[2]],
-    ['--chart-4', ui.charts[3]],
-    ['--chart-5', ui.charts[4]],
     ['--sidebar', ui.sidebar],
     ['--sidebar-foreground', ui.foreground],
     ['--sidebar-primary', ui.primary],
@@ -46,25 +41,10 @@ function renderThemeTokens(id: string, palette: PresetPalette): string {
     ['--sidebar-border', ui.border],
     ['--sidebar-ring', ui.primary],
   ];
-  const fc = [
-    ['--fc-button-bg-color', 'var(--primary)'],
-    ['--fc-button-hover-bg-color', 'var(--primary)'],
-    ['--fc-button-active-bg-color', 'var(--primary)'],
-    ['--fc-button-border-color', 'transparent'],
-    ['--fc-button-hover-border-color', 'transparent'],
-    ['--fc-button-active-border-color', 'transparent'],
-    ['--fc-event-border-color', 'transparent'],
-    ['--fc-event-text-color', ui.primaryForeground],
-    ['--fc-border-color', 'var(--border)'],
-    ['--fc-page-bg-color', 'var(--muted)'],
-    ['--fc-today-bg-color', 'var(--muted)'],
-  ];
   const body = [
     ...lines.map(([k, v]) => `  ${k}: ${v};`),
     '',
     `  --chat-surface: ${ui.chatSurface};`,
-    '',
-    ...fc.map(([k, v]) => `  ${k}: ${v};`),
   ].join('\n');
   return `[data-theme-preset="${id}"] {\n${body}\n}`;
 }

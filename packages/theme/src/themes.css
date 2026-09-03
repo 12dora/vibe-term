@@ -24,11 +24,6 @@ body {
   --border: #44475a;
   --input: #5a5e78;
   --ring: #bd93f9;
-  --chart-1: #bd93f9;
-  --chart-2: #ff79c6;
-  --chart-3: #8be9fd;
-  --chart-4: #50fa7b;
-  --chart-5: #ffb86c;
   --sidebar: #21222c;
   --sidebar-foreground: #f8f8f2;
   --sidebar-primary: #bd93f9;
@@ -39,18 +34,6 @@ body {
   --sidebar-ring: #bd93f9;
 
   --chat-surface: #24252f;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #282a36;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="tokyo-night"] {
@@ -72,11 +55,6 @@ body {
   --border: #2f334d;
   --input: #3b4261;
   --ring: #7aa2f7;
-  --chart-1: #7aa2f7;
-  --chart-2: #bb9af7;
-  --chart-3: #7dcfff;
-  --chart-4: #9ece6a;
-  --chart-5: #e0af68;
   --sidebar: #16161e;
   --sidebar-foreground: #c0caf5;
   --sidebar-primary: #7aa2f7;
@@ -87,18 +65,6 @@ body {
   --sidebar-ring: #7aa2f7;
 
   --chat-surface: #16161e;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #1a1b26;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="tokyo-night-storm"] {
@@ -120,11 +86,6 @@ body {
   --border: #343a55;
   --input: #414868;
   --ring: #7aa2f7;
-  --chart-1: #7aa2f7;
-  --chart-2: #bb9af7;
-  --chart-3: #7dcfff;
-  --chart-4: #9ece6a;
-  --chart-5: #e0af68;
   --sidebar: #1f2335;
   --sidebar-foreground: #c0caf5;
   --sidebar-primary: #7aa2f7;
@@ -135,18 +96,6 @@ body {
   --sidebar-ring: #7aa2f7;
 
   --chat-surface: #1f2335;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #1f2335;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="tokyo-night-light"] {
@@ -168,11 +117,6 @@ body {
   --border: #c4c8da;
   --input: #a8aecb;
   --ring: #2667bf;
-  --chart-1: #2e7de9;
-  --chart-2: #9854f1;
-  --chart-3: #007197;
-  --chart-4: #587539;
-  --chart-5: #b15c00;
   --sidebar: #e9e9ec;
   --sidebar-foreground: #3359b2;
   --sidebar-primary: #2667bf;
@@ -183,18 +127,6 @@ body {
   --sidebar-ring: #2667bf;
 
   --chat-surface: #e9e9ec;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #e9e9ec;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="catppuccin-mocha"] {
@@ -216,11 +148,6 @@ body {
   --border: #313244;
   --input: #585b70;
   --ring: #cba6f7;
-  --chart-1: #cba6f7;
-  --chart-2: #89b4fa;
-  --chart-3: #94e2d5;
-  --chart-4: #a6e3a1;
-  --chart-5: #fab387;
   --sidebar: #181825;
   --sidebar-foreground: #cdd6f4;
   --sidebar-primary: #cba6f7;
@@ -231,18 +158,6 @@ body {
   --sidebar-ring: #cba6f7;
 
   --chat-surface: #181825;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #1e1e2e;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="catppuccin-latte"] {
@@ -264,11 +179,6 @@ body {
   --border: #ccd0da;
   --input: #acb0be;
   --ring: #1e66f5;
-  --chart-1: #1e66f5;
-  --chart-2: #8839ef;
-  --chart-3: #179299;
-  --chart-4: #40a02b;
-  --chart-5: #fe640b;
   --sidebar: #e6e9ef;
   --sidebar-foreground: #4c4f69;
   --sidebar-primary: #1e66f5;
@@ -279,18 +189,6 @@ body {
   --sidebar-ring: #1e66f5;
 
   --chat-surface: #f4f5f8;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #ffffff;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="nord"] {
@@ -312,11 +210,6 @@ body {
   --border: #434c5e;
   --input: #4c566a;
   --ring: #88c0d0;
-  --chart-1: #88c0d0;
-  --chart-2: #81a1c1;
-  --chart-3: #8fbcbb;
-  --chart-4: #a3be8c;
-  --chart-5: #b48ead;
   --sidebar: #272c36;
   --sidebar-foreground: #d8dee9;
   --sidebar-primary: #88c0d0;
@@ -327,18 +220,6 @@ body {
   --sidebar-ring: #88c0d0;
 
   --chat-surface: #292e39;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #2e3440;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="one-dark"] {
@@ -360,11 +241,6 @@ body {
   --border: #3e4451;
   --input: #4b5263;
   --ring: #61afef;
-  --chart-1: #61afef;
-  --chart-2: #c678dd;
-  --chart-3: #56b6c2;
-  --chart-4: #98c379;
-  --chart-5: #e5c07b;
   --sidebar: #21252b;
   --sidebar-foreground: #abb2bf;
   --sidebar-primary: #61afef;
@@ -375,18 +251,6 @@ body {
   --sidebar-ring: #61afef;
 
   --chat-surface: #21252b;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #282c34;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="solarized-dark"] {
@@ -408,11 +272,6 @@ body {
   --border: #0e4a58;
   --input: #586e75;
   --ring: #268bd2;
-  --chart-1: #268bd2;
-  --chart-2: #2aa198;
-  --chart-3: #859900;
-  --chart-4: #b58900;
-  --chart-5: #d33682;
   --sidebar: #00212a;
   --sidebar-foreground: #93a1a1;
   --sidebar-primary: #268bd2;
@@ -423,18 +282,6 @@ body {
   --sidebar-ring: #268bd2;
 
   --chat-surface: #00242e;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #00222b;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="solarized-light"] {
@@ -456,11 +303,6 @@ body {
   --border: #ded7c2;
   --input: #c8c1ac;
   --ring: #2075b0;
-  --chart-1: #268bd2;
-  --chart-2: #2aa198;
-  --chart-3: #859900;
-  --chart-4: #b58900;
-  --chart-5: #d33682;
   --sidebar: #f4eddb;
   --sidebar-foreground: #556b72;
   --sidebar-primary: #2075b0;
@@ -471,18 +313,6 @@ body {
   --sidebar-ring: #2075b0;
 
   --chat-surface: #fbf3dd;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #fdf6e3;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="gruvbox-dark"] {
@@ -504,11 +334,6 @@ body {
   --border: #3c3836;
   --input: #504945;
   --ring: #fabd2f;
-  --chart-1: #fabd2f;
-  --chart-2: #83a598;
-  --chart-3: #b8bb26;
-  --chart-4: #d3869b;
-  --chart-5: #fe8019;
   --sidebar: #1d2021;
   --sidebar-foreground: #ebdbb2;
   --sidebar-primary: #fabd2f;
@@ -519,18 +344,6 @@ body {
   --sidebar-ring: #fabd2f;
 
   --chat-surface: #1d2021;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #282828;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="gruvbox-light"] {
@@ -552,11 +365,6 @@ body {
   --border: #d5c4a1;
   --input: #bdae93;
   --ring: #076678;
-  --chart-1: #076678;
-  --chart-2: #427b58;
-  --chart-3: #79740e;
-  --chart-4: #b57614;
-  --chart-5: #8f3f71;
   --sidebar: #f2e5bc;
   --sidebar-foreground: #3c3836;
   --sidebar-primary: #076678;
@@ -567,18 +375,6 @@ body {
   --sidebar-ring: #076678;
 
   --chat-surface: #f9f5d7;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #fbf1c7;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="github-dark"] {
@@ -600,11 +396,6 @@ body {
   --border: #30363d;
   --input: #484f58;
   --ring: #1f6feb;
-  --chart-1: #1f6feb;
-  --chart-2: #a371f7;
-  --chart-3: #3fb950;
-  --chart-4: #d29922;
-  --chart-5: #db6d28;
   --sidebar: #010409;
   --sidebar-foreground: #e6edf3;
   --sidebar-primary: #1f6feb;
@@ -615,18 +406,6 @@ body {
   --sidebar-ring: #1f6feb;
 
   --chat-surface: #010409;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #ffffff;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 [data-theme-preset="github-light"] {
@@ -648,11 +427,6 @@ body {
   --border: #d0d7de;
   --input: #afb8c1;
   --ring: #0969da;
-  --chart-1: #0969da;
-  --chart-2: #8250df;
-  --chart-3: #1a7f37;
-  --chart-4: #9a6700;
-  --chart-5: #bc4c00;
   --sidebar: #f6f8fa;
   --sidebar-foreground: #1f2328;
   --sidebar-primary: #0969da;
@@ -663,18 +437,6 @@ body {
   --sidebar-ring: #0969da;
 
   --chat-surface: #fbfcfd;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-border-color: transparent;
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: #ffffff;
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 /* Theme presets */

@@ -44,27 +44,6 @@
   font-display: swap;
 }
 @theme inline {
-  --animate-scroll: scroll var(--animation-duration, 40s) var(--animation-direction, forwards)
-    linear infinite;
-
-  @keyframes scroll {
-    to {
-      transform: translate(calc(-50% - 0.5rem));
-    }
-  }
-
-  @keyframes pulse-dot {
-    0%,
-    100% {
-      transform: scale(1);
-      opacity: 0.8;
-    }
-    50% {
-      transform: scale(1.5);
-      opacity: 1;
-    }
-  }
-
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -88,11 +67,6 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -102,8 +76,6 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --font-display: var(--display-family);
-  --display-weight: var(--display-weight);
   --font-sans: var(--text-family);
   /* 等宽栈与终端 XTERM_FONT_FAMILY 保持一致（components/terminal/theme.ts）：
      Geist Mono Nerd Font 打底 + Noto Sans Symbols 2 兜符号 + monospace 走系统 CJK。
@@ -139,10 +111,6 @@
   [data-terminal-engine] * {
     -webkit-user-select: text;
     user-select: text;
-  }
-
-  .font-display {
-    font-weight: var(--display-weight);
   }
 
   [data-slot="button"],

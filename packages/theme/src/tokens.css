@@ -34,11 +34,6 @@
   --border: var(--base-200);
   --input: var(--base-300);
   --ring: var(--base-800);
-  --chart-1: var(--base-950);
-  --chart-2: var(--base-600);
-  --chart-3: var(--base-800);
-  --chart-4: var(--base-400);
-  --chart-5: var(--base-300);
   --radius: 0.5rem;
   --sidebar: var(--base-100);
   --sidebar-foreground: var(--base-500);
@@ -51,20 +46,6 @@
 
   /* Agent 聊天内容区/输入区背景（与语义 token 解耦，明暗各一档） */
   --chat-surface: #fcfcfc;
-
-  --display-weight: 700;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-button-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: oklch(1 0 0);
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
 }
 
 .dark {
@@ -86,11 +67,6 @@
   --border: var(--base-800);
   --input: var(--base-700);
   --ring: var(--base-200);
-  --chart-1: var(--base-50);
-  --chart-2: var(--base-400);
-  --chart-3: var(--base-200);
-  --chart-4: var(--base-600);
-  --chart-5: var(--base-700);
   --sidebar: var(--base-900);
   --sidebar-foreground: var(--base-200);
   --sidebar-primary: var(--base-50);

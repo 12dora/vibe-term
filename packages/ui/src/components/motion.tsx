@@ -10,12 +10,7 @@ export const motionDurations = {
   slow: 300,
 } as const;
 
-export type MotionDurationName = keyof typeof motionDurations;
-
 export const revealClassName = 'tmex-reveal';
-export const fadeClassName = 'tmex-fade';
-export const scaleInClassName = 'tmex-scale-in';
-export const staggerClassName = 'tmex-stagger';
 
 export function staggerItemStyle(index: number): React.CSSProperties {
   return { '--tmex-stagger-index': Math.max(0, index) } as React.CSSProperties;
@@ -46,34 +41,6 @@ export function Reveal({
       style={delayStyle ? { ...style, ...delayStyle } : style}
       {...props}
     />
-  );
-}
-
-export type StaggerProps = React.ComponentProps<'div'> & {
-  as?: React.ElementType;
-  startIndex?: number;
-};
-
-// 每个子节点套一层 div 承载 --tmex-stagger-index：比 cloneElement 安全（不依赖子节点接受 style）。
-export function Stagger({
-  as: Component = 'div',
-  className,
-  children,
-  startIndex = 0,
-  ...props
-}: StaggerProps) {
-  return (
-    <Component data-slot="stagger" className={cn(staggerClassName, className)} {...props}>
-      {React.Children.map(children, (child, index) =>
-        child === null || child === undefined || child === false ? (
-          child
-        ) : (
-          <div data-slot="stagger-item" style={staggerItemStyle(startIndex + index)}>
-            {child}
-          </div>
-        )
-      )}
-    </Component>
   );
 }
 

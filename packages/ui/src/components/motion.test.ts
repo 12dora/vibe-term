@@ -1,14 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import {
-  fadeClassName,
-  motionDurations,
-  revealClassName,
-  revealDelayStyle,
-  scaleInClassName,
-  staggerClassName,
-  staggerItemStyle,
-} from './motion';
+import { motionDurations, revealClassName, revealDelayStyle, staggerItemStyle } from './motion';
 
 describe('motion tokens', () => {
   it('时长档位与 motion.css 中的 token 保持一致', () => {
@@ -17,9 +9,6 @@ describe('motion tokens', () => {
 
   it('类名与 motion.css 中定义的一致', () => {
     expect(revealClassName).toBe('tmex-reveal');
-    expect(fadeClassName).toBe('tmex-fade');
-    expect(scaleInClassName).toBe('tmex-scale-in');
-    expect(staggerClassName).toBe('tmex-stagger');
   });
 });
 

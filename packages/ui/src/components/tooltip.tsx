@@ -1,52 +1,64 @@
-import { Tooltip as TooltipPrimitive } from '@base-ui/react/tooltip';
+// 公开面：与 tooltip-impl 同名同签名，实现随 chunk 按需到货（见 ../lazy-overlay）。
+// 闭合态由占位触发器同步渲染，`data-slot="tooltip-trigger"` 与实现侧一致。
 
-import { cn } from '../utils';
+import type { Tooltip as TooltipPrimitive } from '@base-ui/react/tooltip';
+import { type ComponentProps, createContext, useContext } from 'react';
 
-function TooltipProvider({ delay = 0, ...props }: TooltipPrimitive.Provider.Props) {
-  return <TooltipPrimitive.Provider data-slot="tooltip-provider" delay={delay} {...props} />;
+import {
+  type OverlayGate,
+  OverlayTrigger,
+  overlayClosedChildren,
+  useOverlayGate,
+} from '../lazy-overlay';
+import { type OverlaysImpl, overlayLoader } from '../overlay-impl-loader';
+
+const NO_GATE: OverlayGate<OverlaysImpl> = {
+  impl: null,
+  requestLoad: () => undefined,
+  requestOpen: () => undefined,
+};
+
+const GateContext = createContext<OverlayGate<OverlaysImpl>>(NO_GATE);
+// 没有外层 Root 时（部件被单独渲染，属误用）回落到模块级缓存，让 base-ui 照常抛出
+// 「must be used within …」——这条契约不该因为懒加载而消失。
+const useTooltipImpl = () => useContext(GateContext).impl ?? overlayLoader.peek();
+
+function TooltipProvider({ children, ...props }: TooltipPrimitive.Provider.Props) {
+  const { gate } = useOverlayGate(overlayLoader, false);
+  const Impl = gate.impl?.TooltipProvider;
+  if (!Impl) return <>{children}</>;
+  return <Impl {...props}>{children}</Impl>;
 }
 
 function Tooltip({ ...props }: TooltipPrimitive.Root.Props) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />;
-}
-
-function TooltipTrigger({ ...props }: TooltipPrimitive.Trigger.Props) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
-}
-
-function TooltipContent({
-  className,
-  side = 'top',
-  sideOffset = 4,
-  align = 'center',
-  alignOffset = 0,
-  children,
-  ...props
-}: TooltipPrimitive.Popup.Props &
-  Pick<TooltipPrimitive.Positioner.Props, 'align' | 'alignOffset' | 'side' | 'sideOffset'>) {
+  const { gate } = useOverlayGate(overlayLoader, props.open === true || props.defaultOpen === true);
+  const Impl = gate.impl?.Tooltip;
   return (
-    <TooltipPrimitive.Portal>
-      <TooltipPrimitive.Positioner
-        align={align}
-        alignOffset={alignOffset}
-        side={side}
-        sideOffset={sideOffset}
-        className="isolate z-50"
-      >
-        <TooltipPrimitive.Popup
-          data-slot="tooltip-content"
-          className={cn(
-            'data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 rounded-md px-3 py-1.5 text-xs duration-(--tmex-motion-standard) ease-out motion-reduce:animate-none data-[side=inline-start]:slide-in-from-right-2 data-[side=inline-end]:slide-in-from-left-2 bg-foreground text-background z-50 w-fit max-w-xs origin-(--transform-origin)',
-            className
-          )}
-          {...props}
-        >
-          {children}
-          <TooltipPrimitive.Arrow className="size-2.5 translate-y-[calc(-50%-2px)] rotate-45 rounded-[2px] data-[side=inline-end]:top-1/2! data-[side=inline-end]:-left-1 data-[side=inline-end]:-translate-y-1/2 data-[side=inline-start]:top-1/2! data-[side=inline-start]:-right-1 data-[side=inline-start]:-translate-y-1/2 bg-foreground fill-foreground z-50 data-[side=bottom]:top-1 data-[side=left]:top-1/2! data-[side=left]:-right-1 data-[side=left]:-translate-y-1/2 data-[side=right]:top-1/2! data-[side=right]:-left-1 data-[side=right]:-translate-y-1/2 data-[side=top]:-bottom-2.5" />
-        </TooltipPrimitive.Popup>
-      </TooltipPrimitive.Positioner>
-    </TooltipPrimitive.Portal>
+    <GateContext.Provider value={gate}>
+      {Impl ? <Impl {...props} /> : overlayClosedChildren(props.children)}
+    </GateContext.Provider>
   );
+}
+
+function TooltipTrigger({ render, ...props }: TooltipPrimitive.Trigger.Props) {
+  const gate = useContext(GateContext);
+  const Impl = (gate.impl ?? overlayLoader.peek())?.TooltipTrigger;
+  if (Impl) return <Impl render={render} {...props} />;
+  // tooltip 没有「按下即开」语义：指到/聚焦只是把加载提前，开合仍由 base-ui 的 hover 逻辑决定
+  return (
+    <OverlayTrigger
+      slot="tooltip-trigger"
+      render={render}
+      props={props as Record<string, unknown>}
+      onActivate={gate.requestLoad}
+    />
+  );
+}
+
+function TooltipContent(props: ComponentProps<OverlaysImpl['TooltipContent']>) {
+  const Impl = useTooltipImpl()?.TooltipContent;
+  if (!Impl) return null;
+  return <Impl {...props} />;
 }
 
 export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider };
