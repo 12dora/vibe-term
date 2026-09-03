@@ -103,7 +103,7 @@ async function baseDeps(overrides: Partial<SetupServiceDeps> = {}): Promise<Setu
   const auth = overrides.auth ?? (await openAuth());
   await seedMembership(auth);
   return {
-    roles: { hub: false, node: true },
+    roles: { hub: false, node: true, relay: false },
     nodeEnv: 'test',
     auth,
     envPath,
@@ -151,13 +151,13 @@ describe('leaveMesh', () => {
   });
 
   test('hub,node expectedRole matches and returns fromRole', async () => {
-    const deps = await baseDeps({ roles: { hub: true, node: true } });
+    const deps = await baseDeps({ roles: { hub: true, node: true, relay: false } });
     const result = await leaveMesh({ expectedRole: 'hub,node' }, deps);
     expect(result.fromRole).toBe('hub,node');
   });
 
   test('standalone is 400 not_member', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: false } });
+    const deps = await baseDeps({ roles: { hub: false, node: false, relay: false } });
     const err = await leaveMesh({ expectedRole: 'node' }, deps).catch((error) => error);
     expect(err).toBeInstanceOf(SetupError);
     expect((err as SetupError).code).toBe('not_member');
@@ -166,7 +166,7 @@ describe('leaveMesh', () => {
   });
 
   test('wrong expectedRole is 409 role_mismatch and does not wipe', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: true } });
+    const deps = await baseDeps({ roles: { hub: false, node: true, relay: false } });
     const err = await leaveMesh({ expectedRole: 'hub,node' }, deps).catch((error) => error);
     expect(err).toBeInstanceOf(SetupError);
     expect((err as SetupError).code).toBe('role_mismatch');

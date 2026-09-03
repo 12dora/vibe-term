@@ -158,7 +158,7 @@ describe('assembleTmex role matrix', () => {
       let loadNative: LoadNative | undefined;
       let canLoadNative: (() => boolean) | undefined;
       await assembleTmex({
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         nativeDir: '/tmp/tmex-native-should-not-load',
         createGatewayRuntime: async () => fakeGateway(),
         createMeshRuntime: async (opts) => {
@@ -190,9 +190,9 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('standalone does not install mesh shutdown handlers', () => {
-    expect(meshShutdownNeeded({ hub: false, node: false })).toBe(false);
-    expect(meshShutdownNeeded({ hub: false, node: true })).toBe(true);
-    expect(meshShutdownNeeded({ hub: true, node: true })).toBe(true);
+    expect(meshShutdownNeeded({ hub: false, node: false, relay: false })).toBe(false);
+    expect(meshShutdownNeeded({ hub: false, node: true, relay: false })).toBe(true);
+    expect(meshShutdownNeeded({ hub: true, node: true, relay: false })).toBe(true);
     expect(SHUTDOWN_TIMEOUT_MS).toBe(20_000);
   });
 
@@ -209,7 +209,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -237,7 +237,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -258,7 +258,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -275,7 +275,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async (opts) => {
         const tls = await opts.tlsInfo?.();
@@ -292,7 +292,7 @@ describe('assembleTmex role matrix', () => {
       | (() => Promise<{ caFingerprint: string | null; caPem: string | null }>)
       | undefined;
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async (opts) => {
         tlsInfo = opts.tlsInfo;
@@ -342,7 +342,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -449,7 +449,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
       serveFrontend: async () => {
@@ -497,7 +497,7 @@ describe('assembleTmex role matrix', () => {
     });
     let seenHub: HubRuntime | undefined;
     const assembled = await assembleTmex({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async (opts) => {
         seenHub = opts.hub;
@@ -518,7 +518,7 @@ describe('assembleTmex role matrix', () => {
 
   test('SPA deep links /login /nodes /n/:id fall through to frontend', async () => {
     const assembled = await assembleTmex({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => fakeMesh({ hub: fakeHub() }),
       serveFrontend: async (req) => new Response(`spa:${new URL(req.url).pathname}`),
@@ -585,7 +585,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -646,7 +646,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -673,7 +673,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -711,7 +711,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -762,7 +762,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -788,7 +788,7 @@ describe('assembleTmex role matrix', () => {
       });
       let seen: string | undefined;
       await assembleTmex({
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         createGatewayRuntime: async () => fakeGateway({ db }),
         createMeshRuntime: async (opts) => {
           seen = opts.userId;
@@ -803,7 +803,7 @@ describe('assembleTmex role matrix', () => {
 
   test('fake Bun.serve captures fetch and websocket from the assembly', async () => {
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
         throw new Error('no mesh');
@@ -828,7 +828,7 @@ describe('assembleTmex role matrix', () => {
   test('standalone /api/local/status is served before gateway dispatch', async () => {
     process.env.TMEX_ROLES = 'standalone';
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
         throw new Error('no mesh');
@@ -847,7 +847,7 @@ describe('assembleTmex role matrix', () => {
   test('standalone GET /api/tls is served through assembled.fetch and returns mode none', async () => {
     process.env.TMEX_ROLES = 'standalone';
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           handleRequest(req) {
@@ -870,7 +870,7 @@ describe('assembleTmex role matrix', () => {
 
   test('mesh GET /api/tls without a session is 401 UNAUTHORIZED', async () => {
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => fakeMesh(),
     });
@@ -884,7 +884,7 @@ describe('assembleTmex role matrix', () => {
   test('standalone localAuth 生效时 GET /api/tls 与 node 一样要求会话', async () => {
     process.env.TMEX_ROLES = 'standalone';
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       localAuthEffective: () => true,
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
@@ -902,7 +902,7 @@ describe('assembleTmex role matrix', () => {
     process.env.TMEX_ROLES = 'standalone';
     let effective = false;
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       localAuthEffective: () => effective,
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
@@ -921,7 +921,7 @@ describe('assembleTmex role matrix', () => {
 
   test('node GET /api/tls 不因 localAuthEffective=false 而放行', async () => {
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       localAuthEffective: () => false,
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => fakeMesh(),
@@ -932,7 +932,7 @@ describe('assembleTmex role matrix', () => {
 
   test('unknown ACME challenge token is 404, not SPA fallback', async () => {
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
         throw new Error('no mesh');
@@ -971,7 +971,7 @@ describe('assembleTmex role matrix', () => {
       certNotAfter: parsed.notAfter,
     });
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           db,
@@ -1027,7 +1027,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => mesh,
     });
@@ -1058,7 +1058,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     const assembled = await assembleTmex({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => mesh,
     });
@@ -1074,7 +1074,7 @@ describe('assembleTmex role matrix', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const assembled = await assembleTmex({
-        roles: { hub: false, node: false },
+        roles: { hub: false, node: false, relay: false },
         localAuthEffective: () => true,
         createGatewayRuntime: async () =>
           fakeGateway({
@@ -1120,7 +1120,7 @@ describe('assembleTmex standalone auth surface', () => {
   async function assembleStandalone(db: GatewayRuntime['db']) {
     process.env.TMEX_ROLES = 'standalone';
     return assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           db,
@@ -1431,7 +1431,7 @@ describe('assembleTmex Access guard at outermost fetch', () => {
     setAccessGuardSnapshot(() => ENFORCED);
     let gatewayHits = 0;
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           handleRequest: () => {
@@ -1462,7 +1462,7 @@ describe('assembleTmex Access guard at outermost fetch', () => {
       }
     );
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           handleRequest: () => new Response('from-gateway'),
@@ -1484,7 +1484,7 @@ describe('assembleTmex Access guard at outermost fetch', () => {
   test('/hub/uplink without JWT is not blocked by the guard', async () => {
     setAccessGuardSnapshot(() => ENFORCED);
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       hub: fakeHub({
         handleRequest: async () => new Response('uplink-ok'),
       }),
@@ -1512,7 +1512,7 @@ describe('assembleTmex domain access guard', () => {
   }) {
     setDomainAccessGuardForTests({ allowed: false, hosts: HOSTS });
     return assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       serveFrontend: async () => new Response('spa'),
       hub:
         overrides?.hub ??
@@ -1540,7 +1540,7 @@ describe('assembleTmex domain access guard', () => {
 
   test('default allowed does not change public dispatch', async () => {
     const assembled = await assembleTmex({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       serveFrontend: async () => new Response('spa'),
       createGatewayRuntime: async () => fakeGateway(),
     });
@@ -1707,7 +1707,7 @@ describe('assembleTmex preflight', () => {
     let restored = 0;
     const assembled = await assembleTmex({
       runtimeMode: 'preflight',
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           restoreRemoteAgentSessions() {
@@ -1756,7 +1756,7 @@ describe('assembleTmex multi-hub wiring', () => {
     } = {};
     const hub = fakeHub();
     await assembleTmex({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async (opts) => {
         const extra = opts as typeof opts & {
@@ -1809,7 +1809,7 @@ describe('assembleTmex multi-hub wiring', () => {
       },
     } as Partial<MeshRuntime> & { hub: HubRuntime });
     const assembled = await assembleTmex({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => mesh,
     });
@@ -1830,7 +1830,7 @@ describe('assembleTmex multi-hub wiring', () => {
     };
     try {
       await assembleTmex({
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         createGatewayRuntime: async () => fakeGateway(),
         createMeshRuntime: async () => fakeMesh({ hub: fakeHub() }),
       });

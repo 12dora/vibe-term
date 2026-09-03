@@ -35,7 +35,7 @@ function failAuth(): AuthenticateResult {
 function deps(overrides: Partial<LocalRouteDeps> = {}): LocalRouteDeps {
   const env: Record<string, string> = {};
   const base: SetupServiceDeps = {
-    roles: { hub: false, node: false },
+    roles: { hub: false, node: false, relay: false },
     nodeEnv: 'test',
     auth: {} as SetupServiceDeps['auth'],
     envPath: '/tmp/app.env',
@@ -141,7 +141,7 @@ describe('GET /api/local/status', () => {
       await handleLocalRequest(
         new Request('http://127.0.0.1/api/local/status'),
         deps({
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           authenticate: failAuth,
         })
       )
@@ -155,7 +155,7 @@ describe('GET /api/local/status', () => {
       await handleLocalRequest(
         new Request('http://127.0.0.1/api/local/status'),
         deps({
-          roles: { hub: true, node: true },
+          roles: { hub: true, node: true, relay: false },
           hubPublicUrl: 'https://hub.example',
           authenticate: okAuth,
         })
@@ -515,7 +515,7 @@ describe('POST /api/local/direct', () => {
           body: JSON.stringify({ action: 'remove' }),
         }),
         deps({
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           authenticate: failAuth,
         })
       )
@@ -555,7 +555,7 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
       delegationMethod: 'root',
       now: Date.now(),
     });
-    const roles = { hub: true, node: true };
+    const roles = { hub: true, node: true, relay: false };
     return {
       sid: issued.sid,
       routeDeps: deps({
@@ -616,7 +616,7 @@ describe('POST /api/local/leave', () => {
       await handleLocalRequest(
         leaveRequest({ expectedRole: 'node' }),
         deps({
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           authenticate: failAuth,
         })
       )
@@ -669,7 +669,7 @@ describe('POST /api/local/leave', () => {
       await handleLocalRequest(
         leaveRequest({ expectedRole: 'node' }),
         deps({
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           auth: ctx,
           authenticate: okAuth,
           scheduleRestart: () => {

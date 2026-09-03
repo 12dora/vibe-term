@@ -2199,7 +2199,7 @@ describe('UplinkPool', () => {
       urls: ['https://a.example', 'https://b.example'],
       scheduler,
       preferNearest: true,
-      localRoles: { hub: true, node: true },
+      localRoles: { hub: true, node: true, relay: false },
       enablePeriodicRttProbe: true,
       rttProbeIntervalMs: 1_000,
       probe: async (url) => {

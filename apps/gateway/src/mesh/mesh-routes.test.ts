@@ -256,7 +256,7 @@ describe('mesh-routes', () => {
   });
 
   test('GET /api/mesh/nodes uses nodes registry names when peer_cache is empty', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
       mesh.userStore.upsertCert({
         nodeId: PEER_ID,
@@ -852,7 +852,7 @@ describe('mesh-routes', () => {
     const withFp = await bootMesh();
     try {
       const runtime = new (await import('./mesh-http')).MeshHttpRuntime({
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         nodeId: NODE_ID,
         nodePk: NODE_PK,
         userStore: withFp.userStore,
@@ -911,7 +911,7 @@ describe('mesh-routes', () => {
       }> = [];
       let mode: 'one' | 'many' | 'none' | 'match' = 'one';
       const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         nodeId: NODE_ID,
         nodePk: NODE_PK,
         userStore: mesh.userStore,
@@ -2081,7 +2081,7 @@ describe('mesh uninstall routes', () => {
   });
 
   test('POST uninstall without a user session is UNAUTHORIZED', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       const res = await call(
         mesh.runtime,

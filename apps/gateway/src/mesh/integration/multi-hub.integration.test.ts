@@ -360,7 +360,7 @@ describe('multi-hub in-process integration', () => {
         {
           name: 'node-e',
           version: 'ver-e',
-          roles: { hub: true, node: true },
+          roles: { hub: true, node: true, relay: false },
           hubUrl: HUB_A_URL,
           hubPublicUrl: HUB_E_URL,
           hubMode: 'active',
@@ -431,7 +431,7 @@ describe('multi-hub in-process integration', () => {
         {
           name: 'node-twin',
           version: 'ver-twin',
-          roles: { hub: true, node: true },
+          roles: { hub: true, node: true, relay: false },
           hubUrl: HUB_A_URL,
           hubPublicUrl: 'http://hub-twin.test',
           hubMode: 'active',
@@ -586,7 +586,7 @@ describe('multi-hub in-process integration', () => {
       {
         name: 'node-e',
         version: 'ver-e',
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: HUB_A_URL,
         hubPublicUrl: HUB_E_URL,
         hubMode: 'active',
@@ -750,7 +750,7 @@ describe('multi-hub in-process integration', () => {
     const b = await enrollAndStart(parent, {
       name: 'node-b',
       version: '1.1.13',
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       hubUrl: HUB_A_URL,
       hubPublicUrl: HUB_B_URL,
       hubMode: 'standby',
@@ -950,7 +950,7 @@ describe('multi-hub in-process integration', () => {
     const b = await enrollAndStart(parent, {
       name: 'node-b',
       version: 'ver-b',
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       hubUrl: HUB_A_URL,
       hubPublicUrl: HUB_B_URL,
       hubMode: 'standby',

@@ -340,7 +340,7 @@ describe('stream failover integration', () => {
       gateway: fakeGateway(db, wsServerA),
       userId: boot.userId,
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://hub.example',
         peerPort: 39001,
@@ -441,7 +441,7 @@ describe('stream failover integration', () => {
       gateway: fakeGateway(dbB, wsServerB),
       userId: boot.userId,
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://hub.example',
         peerPort: 39002,
         stunServers: [],
@@ -588,7 +588,7 @@ describe('stream failover integration', () => {
       gateway: fakeGateway(db, wsServerA),
       userId: boot.userId,
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://hub.example',
         peerPort: 39011,
@@ -715,7 +715,7 @@ describe('stream failover integration', () => {
       gateway: fakeGateway(dbB, wsServerB),
       userId: boot.userId,
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://hub.example',
         peerPort: 39012,
         stunServers: [],

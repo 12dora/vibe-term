@@ -201,10 +201,10 @@ describe('config.gatewayOwnerToken', () => {
 
 describe('parseTmexRoles', () => {
   test('defaults to standalone and accepts the three legal values', () => {
-    expect(parseTmexRoles(undefined)).toEqual({ hub: false, node: false });
-    expect(parseTmexRoles('standalone')).toEqual({ hub: false, node: false });
-    expect(parseTmexRoles('node')).toEqual({ hub: false, node: true });
-    expect(parseTmexRoles('hub,node')).toEqual({ hub: true, node: true });
+    expect(parseTmexRoles(undefined)).toEqual({ hub: false, node: false, relay: false });
+    expect(parseTmexRoles('standalone')).toEqual({ hub: false, node: false, relay: false });
+    expect(parseTmexRoles('node')).toEqual({ hub: false, node: true, relay: false });
+    expect(parseTmexRoles('hub,node')).toEqual({ hub: true, node: true, relay: false });
   });
 
   test('rejects anything else including pure hub and reordered roles', () => {
@@ -260,7 +260,7 @@ describe('config hub/node env', () => {
       TMEX_HUB_URL: undefined,
       TMEX_STUN_SERVERS: undefined,
     });
-    expect(config.roles).toEqual({ hub: false, node: false });
+    expect(config.roles).toEqual({ hub: false, node: false, relay: false });
     expect(config.peerPort).toBe(39001);
     expect(config.hubUrl).toBeNull();
     expect(config.stunServers).toEqual([]);
@@ -283,7 +283,7 @@ describe('config hub/node env', () => {
       TMEX_TURN_USERNAME: 'u',
       TMEX_TURN_CREDENTIAL: 'p',
     });
-    expect(config.roles).toEqual({ hub: true, node: true });
+    expect(config.roles).toEqual({ hub: true, node: true, relay: false });
     expect(config.hubUrl).toBe('https://hub.example');
     expect(config.hubPublicUrl).toBe('https://hub.example');
     expect(config.stunServers).toEqual(['stun:stun.l.google.com:19302']);

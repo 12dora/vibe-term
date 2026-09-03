@@ -234,7 +234,7 @@ export async function bootMesh(options?: {
   const hubStore = new MeshHubStore(db);
   const published: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
   const runtime = new MeshHttpRuntime({
-    roles: options?.roles ?? { hub: false, node: true },
+    roles: options?.roles ?? { hub: false, node: true, relay: false },
     nodeId: NODE_ID,
     nodePk: NODE_PK,
     userStore,
@@ -503,7 +503,7 @@ describe('auth-routes', () => {
       mesh.close();
     }
 
-    const standalone = await bootMesh({ roles: { hub: false, node: false } });
+    const standalone = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       const res = await call(standalone.runtime, 'http://localhost/api/auth/mode');
       const body = (await res.json()) as { mode: string; localAuth?: { supported: boolean } };
@@ -515,7 +515,7 @@ describe('auth-routes', () => {
   });
 
   test('GET /api/auth/mode standalone+effective 返回 mesh 载荷与 localAuth', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       const store = new MemoryLocalAuthStore();
       store.setEnabled(true);
@@ -568,7 +568,7 @@ describe('auth-routes', () => {
 
   test('POST /api/auth/local 无凭证拒绝开启；bootstrap 后可开；公网拒绝', async () => {
     const mesh = await bootMesh({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       skipUserBootstrap: true,
     });
     try {
@@ -784,10 +784,10 @@ describe('auth-routes', () => {
       mesh.close();
     }
 
-    const hub = await bootMesh({ roles: { hub: true, node: true } });
+    const hub = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
       const runtime = new MeshHttpRuntime({
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         nodeId: NODE_ID,
         nodePk: NODE_PK,
         userStore: hub.userStore,
@@ -879,7 +879,7 @@ describe('auth-routes', () => {
 
   test('GET /api/auth/mode invalidates cached derivation after local-auth bootstrap', async () => {
     const mesh = await bootMesh({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       skipUserBootstrap: true,
     });
     try {
@@ -1124,7 +1124,7 @@ describe('auth-routes', () => {
     try {
       const acked: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
       const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         nodeId: NODE_ID,
         nodePk: NODE_PK,
         userStore: mesh.userStore,
@@ -1183,7 +1183,7 @@ describe('auth-routes', () => {
     const mesh = await bootMesh();
     try {
       const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         nodeId: NODE_ID,
         nodePk: NODE_PK,
         userStore: mesh.userStore,
@@ -1289,7 +1289,7 @@ describe('auth-routes', () => {
       const hash = computeRecordHash(bytes, sig);
       let calls = 0;
       const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         nodeId: NODE_ID,
         nodePk: NODE_PK,
         userStore: mesh.userStore,
@@ -1336,7 +1336,7 @@ describe('auth-routes', () => {
     const mesh = await bootMesh();
     try {
       const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         nodeId: NODE_ID,
         nodePk: NODE_PK,
         userStore: mesh.userStore,
@@ -1556,7 +1556,7 @@ describe('auth-routes', () => {
   });
 
   test('GET /api/auth/totp-record requires session and 404s when TOTP is off', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
       const denied = await call(mesh.runtime, 'http://localhost/api/auth/totp-record');
       expect(denied.status).toBe(401);
@@ -1574,7 +1574,7 @@ describe('auth-routes', () => {
   });
 
   test('rotate-root-keep keeps the session cookie and totp-record returns the nested payload', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
       const {
         deriveSeed,
@@ -1694,7 +1694,7 @@ describe('auth-routes', () => {
   });
 
   test('rotate-root-keep compat gate 409s cert-only nodes; revoked certs do not block', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
       const certOnlyId = 'bb'.repeat(16);
       mesh.userStore.upsertCert({
@@ -1775,7 +1775,7 @@ describe('auth-routes', () => {
   });
 
   test('POST /api/auth/keylog rotate-root-keep invalidates unused enrollment tokens', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
       const enrollPk = new Uint8Array(32).fill(41);
       mesh.userStore.createEnrollmentToken({
@@ -1830,7 +1830,7 @@ describe('auth-routes', () => {
   });
 
   test('rotate-root-keep compat gate 409s old nodes even with x-tmex-force-keylog', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
         '@tmex/shared/auth'
@@ -2250,7 +2250,7 @@ describe('auth-routes', () => {
 
     const openStandalone = async () => {
       const mesh = await bootMesh({
-        roles: { hub: false, node: false },
+        roles: { hub: false, node: false, relay: false },
         skipUserBootstrap: true,
       });
       mesh.runtime.auth.setLocalAuthStore(new MemoryLocalAuthStore());
@@ -2393,7 +2393,7 @@ describe('auth-routes', () => {
   });
 
   test('keylog apply forwards to publisher; fork → 409', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
@@ -2459,7 +2459,7 @@ describe('auth-routes', () => {
     const writerId = 'bb'.repeat(16);
     const standbyId = 'cc'.repeat(16);
     const mesh = await bootMesh({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       attachedHub: () => ({
         hubNodeId: standbyId,
         publicUrl: 'https://standby.example',
@@ -2544,7 +2544,7 @@ describe('auth-routes', () => {
 
   test('POST /api/auth/keylog still applies locally when attached hub is unknown', async () => {
     const mesh = await bootMesh({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       attachedHub: () => null,
     });
     try {
@@ -2583,7 +2583,7 @@ describe('auth-routes', () => {
   test('dual-role standby refuses local key-log append when attached hub is null', async () => {
     const writerId = 'bb'.repeat(16);
     const mesh = await bootMesh({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       attachedHub: () => null,
       hubMode: () => 'standby',
     });
@@ -2652,7 +2652,7 @@ describe('auth-routes', () => {
 
   test('dual-role active writer applies local key-log append when attached hub is null', async () => {
     const mesh = await bootMesh({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       attachedHub: () => null,
       hubMode: () => 'active',
     });
@@ -2691,7 +2691,7 @@ describe('auth-routes', () => {
 
   test('plain node unknown attach does not return HUB_NOT_WRITER', async () => {
     const mesh = await bootMesh({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       attachedHub: () => null,
       hubMode: () => 'standby',
     });
@@ -2731,7 +2731,7 @@ describe('auth-routes', () => {
 
   test('standalone unknown attach is not gated as HUB_NOT_WRITER', async () => {
     const mesh = await bootMesh({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       attachedHub: () => null,
       hubMode: () => 'standby',
     });

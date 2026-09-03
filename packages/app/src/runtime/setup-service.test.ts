@@ -75,7 +75,7 @@ async function baseDeps(
   await writeFile(envPath, 'GATEWAY_PORT=21111\nOTHER=keep\n', 'utf8');
   const auth = overrides.auth ?? (await openAuth());
   return {
-    roles: { hub: false, node: false },
+    roles: { hub: false, node: false, relay: false },
     nodeEnv: 'test',
     auth,
     hubUrl: null,
@@ -736,7 +736,7 @@ describe('precheckHubUrl', () => {
 describe('direct status and setLocalDirect', () => {
   test('getLocalStatus maps supported/installed/capable/version/platform', async () => {
     const deps = await baseDeps({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       nodeEnv: 'production',
       hubUrl: 'https://hub.example.com',
       hubPublicUrl: 'https://pub.example.com',

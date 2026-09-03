@@ -95,7 +95,7 @@ describe('mesh node presence for agent sessions', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],

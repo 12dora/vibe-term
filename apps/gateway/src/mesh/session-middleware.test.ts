@@ -11,11 +11,11 @@ import {
 
 describe('session-middleware', () => {
   test('standalone bypasses with uid=null', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       const req = new Request('http://localhost/api/devices');
       const auth = authenticateRequest(req, {
-        roles: { hub: false, node: false },
+        roles: { hub: false, node: false, relay: false },
         nodeSessionStore: mesh.nodeSessionStore,
       });
       expect(auth.ok).toBe(true);
@@ -29,11 +29,11 @@ describe('session-middleware', () => {
   });
 
   test('standalone + localAuthEffective 无 cookie → 拒绝', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       const req = new Request('http://localhost/api/devices');
       const auth = authenticateRequest(req, {
-        roles: { hub: false, node: false },
+        roles: { hub: false, node: false, relay: false },
         nodeSessionStore: mesh.nodeSessionStore,
         localAuthEffective: () => true,
       });
@@ -44,11 +44,11 @@ describe('session-middleware', () => {
   });
 
   test('standalone + enabled 但未生效仍短路', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       const req = new Request('http://localhost/api/devices');
       const auth = authenticateRequest(req, {
-        roles: { hub: false, node: false },
+        roles: { hub: false, node: false, relay: false },
         nodeSessionStore: mesh.nodeSessionStore,
         localAuthEffective: () => false,
       });
@@ -60,14 +60,14 @@ describe('session-middleware', () => {
   });
 
   test('standalone + effective 校验 cookie 会话', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const req = new Request('http://localhost/api/devices', {
         headers: { cookie: `tmex_s_self=${sid}` },
       });
       const auth = authenticateRequest(req, {
-        roles: { hub: false, node: false },
+        roles: { hub: false, node: false, relay: false },
         nodeSessionStore: mesh.nodeSessionStore,
         localAuthEffective: () => true,
       });
@@ -79,11 +79,11 @@ describe('session-middleware', () => {
   });
 
   test('node 角色不因 localAuthEffective=false 而短路', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: true } });
+    const mesh = await bootMesh({ roles: { hub: false, node: true, relay: false } });
     try {
       const req = new Request('http://localhost/api/devices');
       const auth = authenticateRequest(req, {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         nodeSessionStore: mesh.nodeSessionStore,
         localAuthEffective: () => false,
       });
@@ -114,7 +114,7 @@ describe('session-middleware', () => {
     const mesh = await bootMesh();
     try {
       const handler = requireSession(
-        { roles: { hub: false, node: true }, nodeSessionStore: mesh.nodeSessionStore },
+        { roles: { hub: false, node: true, relay: false }, nodeSessionStore: mesh.nodeSessionStore },
         async () => new Response('ok')
       );
       const res = await handler(new Request('http://localhost/api/x'));
@@ -197,7 +197,7 @@ describe('session-middleware', () => {
         setMeshRequestContext(req, { via: 'self', auth: 'cookie-sid' });
         requestDispatchContext.set(req, { uid: 'user-1', viaNodeId: 'peer-node' });
         const auth = authenticateRequest(req, {
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           nodeSessionStore: mesh.nodeSessionStore,
         });
         expect(auth.ok).toBe(true);

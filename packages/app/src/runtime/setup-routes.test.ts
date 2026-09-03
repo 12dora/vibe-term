@@ -34,7 +34,7 @@ async function openAuth(): Promise<LocalAuthContext> {
 
 function deps(overrides: Partial<SetupServiceDeps> = {}): SetupServiceDeps {
   return {
-    roles: { hub: false, node: false },
+    roles: { hub: false, node: false, relay: false },
     nodeEnv: 'test',
     auth: {
       userStore: { getByUsername: () => null },
@@ -80,7 +80,7 @@ function post(path: string, body: unknown): Request {
 
 describe('setup routes gating', () => {
   test('mesh returns 404 not_standalone for all setup paths', async () => {
-    const mesh = deps({ roles: { hub: true, node: true } });
+    const mesh = deps({ roles: { hub: true, node: true, relay: false } });
     for (const path of ['/api/setup/precheck', '/api/setup/hub', '/api/setup/join']) {
       const { status, body } = await jsonOf(
         await handleSetupRequest(post(path, { url: 'https://h.example' }), mesh)
