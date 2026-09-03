@@ -1,4 +1,10 @@
 import {
+  type DepInstallPlan,
+  type DepName,
+  type InstallCommand,
+  isRootUid,
+} from './dep-install-types';
+import {
   type DependencyInstallRunnerDeps,
   confirmInstall,
   resolveInstallPlan,
@@ -14,25 +20,23 @@ import {
 import { runCommand } from './process';
 
 export type {
+  DepInstallPlan,
+  DepName,
   DependencyInstallOptions,
   DependencyInstallRunnerDeps,
-} from './dependency-install-runner';
+  InstallCommand,
+} from './dep-install-types';
+export { isRootUid, isSudoAvailable, resolveInstallCommand } from './dep-install-types';
 
-export type DepName = 'bun' | 'tmux';
-
-export interface InstallCommand {
-  label: string;
-  command: string;
-  requiresSudo: boolean;
-  packageManager: string;
-}
-
-export interface DepInstallPlan {
-  dep: DepName;
-  commands: InstallCommand[];
-  currentVersion?: string;
-  requiredVersion: string;
-  issue: 'missing' | 'version-too-low';
+export function planBunInstall(): InstallCommand[] {
+  return [
+    {
+      label: 'Official installer',
+      command: 'curl -fsSL https://bun.sh/install | bash',
+      requiresSudo: false,
+      packageManager: 'curl',
+    },
+  ];
 }
 
 const TMUX_INSTALL_COMMANDS: Record<PackageManagerFamily, InstallCommand | null> = {
@@ -59,17 +63,6 @@ const TMUX_INSTALL_COMMANDS: Record<PackageManagerFamily, InstallCommand | null>
   },
   unknown: null,
 };
-
-export function planBunInstall(): InstallCommand[] {
-  return [
-    {
-      label: 'Official installer',
-      command: 'curl -fsSL https://bun.sh/install | bash',
-      requiresSudo: false,
-      packageManager: 'curl',
-    },
-  ];
-}
 
 export interface PlanTmuxInstallDeps {
   isCommandAvailable?: (command: string) => Promise<boolean>;
@@ -146,29 +139,8 @@ async function isCommandAvailable(command: string): Promise<boolean> {
   return result !== null && result.code === 0;
 }
 
-export function isRootUid(uid: number | undefined): boolean {
-  return uid === 0;
-}
-
 export function isRoot(): boolean {
   return isRootUid(process.getuid?.());
-}
-
-export async function isSudoAvailable(): Promise<boolean> {
-  const result = await runCommand('sudo', ['-n', 'true'], {
-    stdio: 'pipe',
-    timeoutMs: 5000,
-  }).catch(() => null);
-  return result !== null && result.code === 0;
-}
-
-export function resolveInstallCommand(
-  cmd: InstallCommand,
-  uid: number | undefined = process.getuid?.()
-): string {
-  if (!cmd.requiresSudo) return cmd.command;
-  if (isRootUid(uid)) return cmd.command;
-  return `sudo ${cmd.command}`;
 }
 
 export async function executeDependencyInstall(

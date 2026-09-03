@@ -1,53 +1,31 @@
 import { t } from '../i18n';
 import { checkBunVersion } from './bun';
 import {
+  type CommandSpawner,
+  type ConfirmPrompt,
   type DepInstallPlan,
   type DepName,
+  type DependencyInstallOptions,
+  type DependencyInstallRunnerDeps,
   type InstallCommand,
+  type ResolvedInstallPlan,
+  type VersionCheckResult,
   isSudoAvailable as detectSudoAvailable,
   isRootUid,
   resolveInstallCommand,
-} from './dep-install';
+} from './dep-install-types';
 import { type RunCommandResult, runCommand } from './process';
 import { promptConfirm as defaultPromptConfirm } from './prompt';
 import { checkTmuxVersion } from './tmux';
 
-export type CommandSpawner = (
-  command: string,
-  args: string[],
-  options?: { stdio?: 'inherit' | 'pipe'; timeoutMs?: number }
-) => Promise<RunCommandResult>;
-
-export type ConfirmPrompt = (
-  ctx: { nonInteractive: boolean },
-  message: string,
-  defaultValue: boolean
-) => Promise<boolean>;
-
-export interface VersionCheckResult {
-  ok: boolean;
-}
-
-export interface DependencyInstallRunnerDeps {
-  runCommand?: CommandSpawner;
-  promptConfirm?: ConfirmPrompt;
-  checkBunVersion?: () => Promise<VersionCheckResult>;
-  checkTmuxVersion?: () => Promise<VersionCheckResult>;
-  isSudoAvailable?: () => Promise<boolean>;
-  uid?: number | undefined;
-  platform?: NodeJS.Platform;
-  log?: (message: string) => void;
-  error?: (message: string) => void;
-}
-
-export interface DependencyInstallOptions {
-  nonInteractive: boolean;
-  autoConfirm: boolean;
-}
-
-export type ResolvedInstallPlan =
-  | { ok: false }
-  | { ok: true; command: InstallCommand; fullCommand: string };
+export type {
+  CommandSpawner,
+  ConfirmPrompt,
+  DependencyInstallOptions,
+  DependencyInstallRunnerDeps,
+  ResolvedInstallPlan,
+  VersionCheckResult,
+} from './dep-install-types';
 
 interface ResolvedRunnerDeps {
   runCommand: CommandSpawner;
