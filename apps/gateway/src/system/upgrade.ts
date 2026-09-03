@@ -14,6 +14,7 @@ import { basename, dirname, join } from 'node:path';
 import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
 import { releaseTarballName } from '@tmex/shared';
 import { processCommandLine, processStartIdentity } from '@tmex/shared/process';
+import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../packages/shared/src/process/pid-file';
 import { type InstallInfo, getInstallInfo } from './install-info';
 import { downloadVerifiedRelease, resolveReleaseCacheDir, sha256File } from './release-download';
 
@@ -883,35 +884,11 @@ export function cmdlineOwnsInstallRuntime(cmdline: string, installDir: string): 
   return false;
 }
 
-function asPositiveInt(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : value;
-  if (typeof n === 'number' && Number.isInteger(n) && n > 0) return n;
-  return null;
-}
-
 export type PidFileRecord = { pid: number; identity?: string | null };
 
 export function parsePidFileRecord(raw: string): PidFileRecord | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const direct = asPositiveInt(trimmed);
-  if (direct !== null) return { pid: direct };
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (parsed && typeof parsed === 'object' && 'pid' in parsed) {
-      const pid = asPositiveInt((parsed as { pid: unknown }).pid);
-      if (pid === null) return null;
-      const identity = (parsed as { identity?: unknown }).identity;
-      return {
-        pid,
-        identity: typeof identity === 'string' ? identity : null,
-      };
-    }
-    const pid = asPositiveInt(parsed);
-    return pid !== null ? { pid } : null;
-  } catch {
-    return null;
-  }
+  const record = parseSharedPidFileRecord(raw);
+  return record ? { pid: record.pid, identity: record.identity ?? null } : null;
 }
 
 /**

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { parsePidFileRecord } from '../../../shared/src/process/pid-file';
 import { processCommandLine } from '../../../shared/src/process/process-identity';
 import { t } from '../i18n';
 import { writeTextAtomic } from './fs-utils';
@@ -149,25 +150,7 @@ export function ownedRuntimePaths(installDir: string): string[] {
 }
 
 export function parsePidRecord(raw: string): PidRecord | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (/^\d+$/.test(trimmed)) {
-    const pid = Number(trimmed);
-    return Number.isInteger(pid) && pid > 0 ? { pid } : null;
-  }
-  try {
-    const parsed = JSON.parse(trimmed) as Partial<PidRecord>;
-    if (typeof parsed.pid !== 'number' || !Number.isInteger(parsed.pid) || parsed.pid <= 0) {
-      return null;
-    }
-    return {
-      pid: parsed.pid,
-      identity: typeof parsed.identity === 'string' ? parsed.identity : null,
-      runtimePath: typeof parsed.runtimePath === 'string' ? parsed.runtimePath : undefined,
-    };
-  } catch {
-    return null;
-  }
+  return parsePidFileRecord(raw);
 }
 
 export function formatPidRecord(record: PidRecord): string {
