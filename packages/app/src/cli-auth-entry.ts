@@ -1,8 +1,47 @@
 import 'reflect-metadata';
 import { type CliLang, normalizeLang, setLang, t } from './i18n';
-import { parseArgs, resolveNestedCommand } from './lib/args';
+import {
+  type NestedCommand,
+  type NestedCommandName,
+  parseArgs,
+  resolveNestedCommand,
+} from './lib/args';
 import { loadInstallEnv } from './lib/local-auth';
 import type { ParsedArgs } from './types';
+
+type AuthHandler = (parsed: ParsedArgs, nested: NestedCommand) => Promise<unknown>;
+
+const hub = async () => await import('./commands/hub');
+const relay = async () => await import('./commands/relay');
+const relayAdmin = async () => await import('./commands/relay-admin');
+
+const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
+  'hub.user.add': async (p, n) => await (await hub()).runHubUserAdd(p, n.rest[0] ?? ''),
+  'hub.user.passwd': async (p, n) => await (await hub()).runHubUserPasswd(p, n.rest[0] ?? ''),
+  'hub.user.totp': async (p, n) => await (await hub()).runHubUserTotp(p, n.rest[0] ?? ''),
+  'hub.user.reset': async (p) => await (await hub()).runHubUserReset(p),
+  'hub.join': async (p, n) => await (await hub()).runHubJoin(p, n.rest[0] ?? ''),
+  'hub.leave': async (p) => await (await hub()).runHubLeave(p),
+  'hub.standby': async (p) => await (await hub()).runHubStandby(p),
+  'hub.promote': async (p) => await (await hub()).runHubPromote(p),
+  'hub.demote': async (p) => await (await hub()).runHubDemote(p),
+  'hub.list': async (p) => await (await hub()).runHubList(p),
+  'hub.allow': async (p, n) => await (await hub()).runHubAllow(p, n.rest),
+  'hub.disallow': async (p, n) => await (await hub()).runHubDisallow(p, n.rest[0] ?? ''),
+  'mesh.reset-root': async (p) => await (await import('./commands/mesh')).runMeshResetRoot(p),
+  enroll: async (p) => await (await import('./commands/enroll')).runEnroll(p),
+  'relay.status': async (p) => await (await relayAdmin()).runRelayStatus(p),
+  'relay.tenants': async (p) => await (await relayAdmin()).runRelayTenants(p),
+  'relay.passwd': async (p) => await (await relayAdmin()).runRelayPasswd(p),
+  'relay.kick': async (p, n) => await (await relayAdmin()).runRelayKick(p, n.rest[0] ?? ''),
+  'relay.remove': async (p, n) => await (await relayAdmin()).runRelayRemove(p, n.rest[0] ?? ''),
+  'relay.quota': async (p, n) => await (await relayAdmin()).runRelayQuota(p, n.rest[0] ?? ''),
+  'relay.label': async (p, n) => await (await relayAdmin()).runRelayLabel(p, n.rest),
+  'relay.enroll': async (p, n) => await (await relay()).runRelayEnroll(p, n.rest[0] ?? ''),
+  'relay.reauth': async (p, n) => await (await relay()).runRelayReauth(p, n.rest[0] ?? ''),
+  'relay.leave': async (p) => await (await relay()).runRelayLeave(p),
+  'relay.list': async (p) => await (await relay()).runRelayList(p),
+};
 
 export async function dispatchAuthCli(parsed: ParsedArgs, lang: CliLang): Promise<void> {
   setLang(lang);
@@ -10,86 +49,15 @@ export async function dispatchAuthCli(parsed: ParsedArgs, lang: CliLang): Promis
   if (nested.name !== 'help') {
     await loadInstallEnv(parsed);
   }
-
-  switch (nested.name) {
-    case 'hub.user.add': {
-      const { runHubUserAdd } = await import('./commands/hub');
-      await runHubUserAdd(parsed, nested.rest[0] ?? '');
-      return;
-    }
-    case 'hub.user.passwd': {
-      const { runHubUserPasswd } = await import('./commands/hub');
-      await runHubUserPasswd(parsed, nested.rest[0] ?? '');
-      return;
-    }
-    case 'hub.user.totp': {
-      const { runHubUserTotp } = await import('./commands/hub');
-      await runHubUserTotp(parsed, nested.rest[0] ?? '');
-      return;
-    }
-    case 'hub.user.reset': {
-      const { runHubUserReset } = await import('./commands/hub');
-      await runHubUserReset(parsed);
-      return;
-    }
-    case 'hub.join': {
-      const { runHubJoin } = await import('./commands/hub');
-      await runHubJoin(parsed, nested.rest[0] ?? '');
-      return;
-    }
-    case 'hub.leave': {
-      const { runHubLeave } = await import('./commands/hub');
-      await runHubLeave(parsed);
-      return;
-    }
-    case 'hub.standby': {
-      const { runHubStandby } = await import('./commands/hub');
-      await runHubStandby(parsed);
-      return;
-    }
-    case 'hub.promote': {
-      const { runHubPromote } = await import('./commands/hub');
-      await runHubPromote(parsed);
-      return;
-    }
-    case 'hub.demote': {
-      const { runHubDemote } = await import('./commands/hub');
-      await runHubDemote(parsed);
-      return;
-    }
-    case 'hub.list': {
-      const { runHubList } = await import('./commands/hub');
-      await runHubList(parsed);
-      return;
-    }
-    case 'hub.allow': {
-      const { runHubAllow } = await import('./commands/hub');
-      await runHubAllow(parsed, nested.rest);
-      return;
-    }
-    case 'hub.disallow': {
-      const { runHubDisallow } = await import('./commands/hub');
-      await runHubDisallow(parsed, nested.rest[0] ?? '');
-      return;
-    }
-    case 'mesh.reset-root': {
-      const { runMeshResetRoot } = await import('./commands/mesh');
-      await runMeshResetRoot(parsed);
-      return;
-    }
-    case 'enroll': {
-      const { runEnroll } = await import('./commands/enroll');
-      await runEnroll(parsed);
-      return;
-    }
-    case 'help':
-      console.log(t('cli.help'));
-      return;
-    default:
-      throw new Error(
-        t('cli.error.unknownCommand', { command: parsed.command ?? nested.raw ?? '' })
-      );
+  if (nested.name === 'help') {
+    console.log(t('cli.help'));
+    return;
   }
+  const handler = HANDLERS[nested.name];
+  if (!handler) {
+    throw new Error(t('cli.error.unknownCommand', { command: parsed.command ?? nested.raw ?? '' }));
+  }
+  await handler(parsed, nested);
 }
 
 export async function main(): Promise<void> {

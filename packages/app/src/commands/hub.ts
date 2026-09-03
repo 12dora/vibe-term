@@ -15,8 +15,6 @@ import {
   bytesEqual,
   canonicalHubUrl,
   createNodeCertificate,
-  decodeAdmitNodePayload,
-  decodeAuthorization,
   decodeBase64url,
   decodeCertificate,
   decodeJoinToken,
@@ -30,6 +28,7 @@ import {
   signEd25519,
   verifyKeyLogChain,
 } from '../../../shared/src/auth';
+import { isRelayJoinToken } from '../../../shared/src/relay';
 import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
@@ -57,6 +56,7 @@ import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
 import type { InstallMeta } from '../types';
+import { assertChainUids, assertResponseCertsMatchProjections } from './hub-join-verify';
 import { withAuth } from './with-auth';
 
 export type HubIo = {
@@ -288,7 +288,7 @@ async function resolveServiceName(parsed: ParsedArgs, installDir: string): Promi
   return serviceName;
 }
 
-async function maybeRestart(
+export async function maybeRestart(
   parsed: ParsedArgs,
   io: HubIo | undefined,
   installDir: string
@@ -571,12 +571,17 @@ export async function runHubJoin(
   userId: string;
   hubUrl: string;
 }> {
-  if (!urlRaw) {
-    throw new Error('hub join requires <https-url>');
-  }
   const token = asString(parsed.flags.token);
   if (!token) {
     throw new Error('hub join requires --token');
+  }
+  if (isRelayJoinToken(token)) {
+    const { runRelayJoin } = await import('./relay-join');
+    const relay = await runRelayJoin(parsed, urlRaw, token, io);
+    return { userId: relay.userId, hubUrl: relay.relayUrl };
+  }
+  if (!urlRaw) {
+    throw new Error('hub join requires <https-url>');
   }
   const insecureLocal = parsed.flags['insecure-local'] === true || io.insecureLocal === true;
   const name = asString(parsed.flags.name) || 'node';
@@ -712,69 +717,6 @@ async function commitVerifiedJoin(
   return committed.replacedStaleUsername
     ? { replacedStaleUsername: committed.replacedStaleUsername }
     : {};
-}
-
-function assertChainUids(records: Array<{ bytes: Uint8Array }>, genesisUid: string): void {
-  for (const item of records) {
-    const decoded = decodeKeyLogRecord(item.bytes);
-    if (decoded.uid !== genesisUid) {
-      throw new Error('join uid mismatch');
-    }
-    if (decoded.type !== 'admit-node') continue;
-    const payload = decodeAdmitNodePayload(decoded.payload);
-    const authorization = decodeAuthorization(payload.authorization_bytes);
-    const certificate = decodeCertificate(payload.certificate_bytes);
-    if (authorization.uid !== genesisUid || certificate.uid !== genesisUid) {
-      throw new Error('join uid mismatch');
-    }
-  }
-}
-
-function assertResponseCertsMatchProjections(
-  redeemed: RedeemResponse,
-  state: {
-    nodeCerts: Map<
-      string,
-      {
-        certificateBytes: Uint8Array;
-        certSig: Uint8Array;
-        authorizationBytes: Uint8Array;
-        authorizationSig: Uint8Array;
-        revoked: boolean;
-      }
-    >;
-  },
-  userId: string
-): void {
-  if (redeemed.node_certs.length === 0) return;
-  if (redeemed.node_certs.length !== state.nodeCerts.size) {
-    throw new Error('node_certs mismatch');
-  }
-  for (const cert of redeemed.node_certs) {
-    const projected = state.nodeCerts.get(cert.node_id);
-    if (!projected) {
-      throw new Error('node_certs mismatch');
-    }
-    if ((cert.user_id || userId) !== userId) {
-      throw new Error('node_certs mismatch');
-    }
-    if (!bytesEqual(decodeBase64url(cert.certificate), projected.certificateBytes)) {
-      throw new Error('node_certs mismatch');
-    }
-    if (!bytesEqual(decodeBase64url(cert.cert_sig), projected.certSig)) {
-      throw new Error('node_certs mismatch');
-    }
-    if (!bytesEqual(decodeBase64url(cert.authorization), projected.authorizationBytes)) {
-      throw new Error('node_certs mismatch');
-    }
-    if (!bytesEqual(decodeBase64url(cert.authorization_sig), projected.authorizationSig)) {
-      throw new Error('node_certs mismatch');
-    }
-    const revoked = cert.revoked_log_seq != null;
-    if (revoked !== projected.revoked) {
-      throw new Error('node_certs mismatch');
-    }
-  }
 }
 
 export async function runHubLeave(parsed: ParsedArgs, io: HubIo = {}): Promise<void> {

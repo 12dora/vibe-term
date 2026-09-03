@@ -22,6 +22,8 @@ export interface AppEnvInput {
   hubUrl?: string;
   peerPort?: number;
   hubPublicUrl?: string;
+  relayPublicUrl?: string;
+  relayAdminToken?: string;
   stunServers?: string;
 }
 
@@ -80,6 +82,23 @@ export function hubEnvDefaults(input?: {
   };
 }
 
+export function generateRelayAdminToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+/** 只有 relay / relay,node 才写中继键，避免给其它角色的 app.env 塞无用项。 */
+export function relayEnvDefaults(input?: {
+  role?: TmexRoleName;
+  relayPublicUrl?: string;
+  relayAdminToken?: string;
+}): Record<string, string> {
+  if (input?.role !== 'relay' && input?.role !== 'relay,node') return {};
+  return {
+    TMEX_RELAY_PUBLIC_URL: input.relayPublicUrl ?? '',
+    TMEX_RELAY_ADMIN_TOKEN: input.relayAdminToken || generateRelayAdminToken(),
+  };
+}
+
 export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
   return {
     NODE_ENV: 'production',
@@ -91,6 +110,7 @@ export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
     TMEX_SITE_NAME: 'tmex',
     TMEX_DIRECT_ENABLED: 'true',
     ...hubEnvDefaults(input),
+    ...relayEnvDefaults(input),
   };
 }
 

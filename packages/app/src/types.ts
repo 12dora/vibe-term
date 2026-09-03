@@ -20,6 +20,7 @@ export interface InitConfig {
   role: TmexRoleName;
   hubUrl: string;
   hubPublicUrl: string;
+  relayPublicUrl: string;
   peerPort: number;
   stunServers: string;
   noService: boolean;

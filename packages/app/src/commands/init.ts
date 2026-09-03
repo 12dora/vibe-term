@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import {
   DEFAULT_SERVICE_NAME,
   defaultDatabasePath,
@@ -35,7 +35,13 @@ import {
 } from '../lib/install-layout';
 import { detectServiceManager } from '../lib/platform';
 import { promptConfirm, promptText } from '../lib/prompt';
-import { DEFAULT_PEER_PORT, DEFAULT_STUN_SERVERS, parseTmexRoleName } from '../lib/roles';
+import {
+  DEFAULT_PEER_PORT,
+  DEFAULT_STUN_SERVERS,
+  parseTmexRoleName,
+  rolesFromName,
+  validateRoles,
+} from '../lib/roles';
 import { installService, serviceHint } from '../lib/service';
 import { checkTmuxVersion } from '../lib/tmux';
 import { repairUpgrade, withUpgradeLock } from '../lib/upgrade-apply';
@@ -150,18 +156,7 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
         ),
     'service-name'
   );
-  const role = parseTmexRoleName(
-    (await ask('role', 'Role (standalone|node|hub,node)', 'standalone', false)) || 'standalone'
-  );
-  const hubUrl = await ask('hub-url', 'Hub URL (TMEX_HUB_URL, empty allowed)', '', false);
-  const peerPort = parsePort(
-    (await ask('peer-port', 'Peer port (TMEX_PEER_PORT)', String(DEFAULT_PEER_PORT), false)) ||
-      String(DEFAULT_PEER_PORT)
-  );
-  let hubPublicUrl = asString(flags['hub-public-url']) || '';
-  if (role === 'hub,node') {
-    hubPublicUrl = await resolveHubPublicUrl(ni, hubPublicUrl);
-  }
+  const uplink = await buildUplinkConfig(parsed, ni, ask);
   return {
     installDir,
     host,
@@ -173,13 +168,67 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
     nonInteractive: ni,
     installDeps: asBoolean(flags['install-deps']) ?? false,
     skipDepCheck: asBoolean(flags['skip-dep-check']) ?? false,
-    role,
-    hubUrl,
-    peerPort,
-    hubPublicUrl,
+    ...uplink,
     stunServers: asString(flags['stun-servers']) || DEFAULT_STUN_SERVERS,
     noService: asBoolean(flags['no-service']) ?? false,
   };
+}
+
+type AskFlag = (
+  key: string,
+  prompt: string,
+  fallback: string,
+  required?: boolean
+) => Promise<string>;
+
+type UplinkConfig = Pick<
+  InitConfig,
+  'role' | 'hubUrl' | 'hubPublicUrl' | 'relayPublicUrl' | 'peerPort'
+>;
+
+async function buildUplinkConfig(
+  parsed: ParsedArgs,
+  ni: boolean,
+  ask: AskFlag
+): Promise<UplinkConfig> {
+  const flags = parsed.flags;
+  const role = parseTmexRoleName(
+    (await ask('role', 'Role (standalone|node|hub,node|relay|relay,node)', 'standalone', false)) ||
+      'standalone'
+  );
+  const invalidRole = validateRoles(rolesFromName(role));
+  if (invalidRole) {
+    throw new Error(invalidRole);
+  }
+  const isRelay = role === 'relay' || role === 'relay,node';
+  const hubUrl = isRelay
+    ? ''
+    : await ask('hub-url', 'Hub URL (TMEX_HUB_URL, empty allowed)', '', false);
+  const peerPort = parsePort(
+    (await ask('peer-port', 'Peer port (TMEX_PEER_PORT)', String(DEFAULT_PEER_PORT), false)) ||
+      String(DEFAULT_PEER_PORT)
+  );
+  const hubPublicUrlFlag = asString(flags['hub-public-url']) || '';
+  const hubPublicUrl =
+    role === 'hub,node' ? await resolveHubPublicUrl(ni, hubPublicUrlFlag) : hubPublicUrlFlag;
+  const relayPublicUrl = isRelay
+    ? await resolveRelayPublicUrl(ni, asString(flags['relay-public-url']) || '')
+    : '';
+  return { role, hubUrl, hubPublicUrl, relayPublicUrl, peerPort };
+}
+
+async function resolveRelayPublicUrl(nonInteractive: boolean, current: string): Promise<string> {
+  if (nonInteractive) {
+    if (!current) {
+      throw new Error('init --role relay requires --relay-public-url in non-interactive mode');
+    }
+    return current;
+  }
+  return await promptText(
+    { nonInteractive: false },
+    'Relay public URL (TMEX_RELAY_PUBLIC_URL)',
+    current
+  );
 }
 
 async function resolveHubPublicUrl(nonInteractive: boolean, current: string): Promise<string> {
@@ -226,7 +275,7 @@ async function checkInitDependencies(
   config: InitConfig,
   parsed: ParsedArgs
 ): Promise<{ path: string; version?: string; ok: boolean; reason?: string }> {
-  if (!config.skipDepCheck) {
+  if (!config.skipDepCheck && config.role !== 'relay') {
     const tmux = await checkTmuxVersion();
     if (!tmux.ok) {
       const reason =
@@ -290,6 +339,12 @@ function printInitSummary(
   if (shim.pathHint) {
     console.log(`- ${shim.pathHint}`);
   }
+  if (config.role === 'relay' || config.role === 'relay,node') {
+    console.log(
+      `- relay admin token: TMEX_RELAY_ADMIN_TOKEN in ${join(config.installDir, 'app.env')}`
+    );
+    console.log('- run "tmex relay status" on this machine to manage tenants');
+  }
 }
 
 export async function runInit(parsed: ParsedArgs): Promise<void> {
@@ -347,6 +402,7 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
     hubUrl: config.hubUrl,
     peerPort: config.peerPort,
     hubPublicUrl: config.hubPublicUrl,
+    relayPublicUrl: config.relayPublicUrl,
     stunServers: config.stunServers,
   });
   await writeEnvFile(installLayout.envPath, envValues);

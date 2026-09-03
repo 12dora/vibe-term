@@ -28,6 +28,17 @@ export const AUTH_COMMANDS = new Set([
   'hub.allow',
   'hub.disallow',
   'mesh.reset-root',
+  'relay.status',
+  'relay.tenants',
+  'relay.passwd',
+  'relay.kick',
+  'relay.remove',
+  'relay.quota',
+  'relay.label',
+  'relay.enroll',
+  'relay.reauth',
+  'relay.leave',
+  'relay.list',
   'enroll',
 ]);
 
