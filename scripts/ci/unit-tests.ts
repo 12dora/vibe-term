@@ -21,11 +21,17 @@ const TARGETS: Array<{ dir: string; args: string[]; retry?: boolean }> = [
 ];
 // gateway 全量在一个进程里跑时，跨文件共享的 sqlite/端口/RTC 状态会互相打扰（closed database、
 // DC 握手超时），本地实测 4 条 flake 隔离复跑全过。CI 里按 src 一级目录分进程跑，失败的目录单独重跑一次。
+function hasTests(dir: string): boolean {
+  return readdirSync(dir, { recursive: true, encoding: 'utf8' }).some((f) =>
+    /\.test\.tsx?$/.test(f)
+  );
+}
+
 const GATEWAY = 'apps/gateway';
 for (const entry of readdirSync(join(ROOT, GATEWAY, 'src'))) {
   const rel = join('src', entry);
   const isDir = statSync(join(ROOT, GATEWAY, rel)).isDirectory();
-  if (!isDir && !/\.test\.ts$/.test(entry)) continue;
+  if (isDir ? !hasTests(join(ROOT, GATEWAY, rel)) : !/\.test\.ts$/.test(entry)) continue;
   TARGETS.push({ dir: GATEWAY, args: ['test', rel], retry: true });
 }
 
