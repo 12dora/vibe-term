@@ -5,7 +5,7 @@ import {
   pointerFirstCollisionDetection,
   reorderIdsByDragEnd,
   restrictToVerticalAxis,
-} from './device-tree-dnd';
+} from './device-tree-dnd-impl';
 
 const dragEvent = (activeId: string, overId: string | null) =>
   ({

@@ -2,12 +2,99 @@
 // 左侧行号栏 + 右侧可横向滚动代码区，font-mono 与终端共享字体栈。
 
 import { cn } from '@tmex/ui';
-// 只引入常用语言子集（~37 种），避免 full build（~190 种语言，约 1MB）拖大 FilePage chunk。
+// 只引入常用语言子集（36 种），避免 full build（~190 种语言，约 1MB）拖大 FilePage chunk。
 // 子集已覆盖 ts/js/py/json/css/xml/bash/yaml/sql/go/rust/java/c/cpp/markdown/makefile 等；
 // 未覆盖的（dockerfile/dart/scala 等）回退到 highlightAuto，不影响可读性。
-import hljs from 'highlight.js/lib/common';
+//
+// 刻意不用 `highlight.js/lib/common`：那个入口是 CJS 构建（`lib/languages/*.js`），而 markdown
+// 预览那条链（rehype-highlight → lowlight）拿的是同一批语法的 ESM 构建（`es/languages/*.js`）。
+// rollup 跨构建格式去重不了，同时打开文件页和 markdown 预览就会下两份 hljs（各 38 个模块）。
+// 这里按 `lib/common` 的**同一套语言、同一注册顺序**（highlightAuto 的相关度排序会看注册顺序）
+// 自己拼一份：包的 exports map 把 `import` 条件指向 ESM 构建，于是两条链共用同一批模块。
+import type { LanguageFn } from 'highlight.js';
+import hljs from 'highlight.js/lib/core';
+import bash from 'highlight.js/lib/languages/bash';
+import c from 'highlight.js/lib/languages/c';
+import cpp from 'highlight.js/lib/languages/cpp';
+import csharp from 'highlight.js/lib/languages/csharp';
+import css from 'highlight.js/lib/languages/css';
+import diff from 'highlight.js/lib/languages/diff';
+import go from 'highlight.js/lib/languages/go';
+import graphql from 'highlight.js/lib/languages/graphql';
+import ini from 'highlight.js/lib/languages/ini';
+import java from 'highlight.js/lib/languages/java';
+import javascript from 'highlight.js/lib/languages/javascript';
+import json from 'highlight.js/lib/languages/json';
+import kotlin from 'highlight.js/lib/languages/kotlin';
+import less from 'highlight.js/lib/languages/less';
+import lua from 'highlight.js/lib/languages/lua';
+import makefile from 'highlight.js/lib/languages/makefile';
+import markdown from 'highlight.js/lib/languages/markdown';
+import objectivec from 'highlight.js/lib/languages/objectivec';
+import perl from 'highlight.js/lib/languages/perl';
+import php from 'highlight.js/lib/languages/php';
+import phpTemplate from 'highlight.js/lib/languages/php-template';
+import plaintext from 'highlight.js/lib/languages/plaintext';
+import python from 'highlight.js/lib/languages/python';
+import pythonRepl from 'highlight.js/lib/languages/python-repl';
+import r from 'highlight.js/lib/languages/r';
+import ruby from 'highlight.js/lib/languages/ruby';
+import rust from 'highlight.js/lib/languages/rust';
+import scss from 'highlight.js/lib/languages/scss';
+import shell from 'highlight.js/lib/languages/shell';
+import sql from 'highlight.js/lib/languages/sql';
+import swift from 'highlight.js/lib/languages/swift';
+import typescript from 'highlight.js/lib/languages/typescript';
+import vbnet from 'highlight.js/lib/languages/vbnet';
+import wasm from 'highlight.js/lib/languages/wasm';
+import xml from 'highlight.js/lib/languages/xml';
+import yaml from 'highlight.js/lib/languages/yaml';
 import { useMemo } from 'react';
 import './hljs-terminal-theme.css';
+
+// 顺序与 `highlight.js/lib/common.js` 逐行一致，勿随手排序。
+const COMMON_LANGUAGES: ReadonlyArray<readonly [string, LanguageFn]> = [
+  ['xml', xml],
+  ['bash', bash],
+  ['c', c],
+  ['cpp', cpp],
+  ['csharp', csharp],
+  ['css', css],
+  ['markdown', markdown],
+  ['diff', diff],
+  ['ruby', ruby],
+  ['go', go],
+  ['graphql', graphql],
+  ['ini', ini],
+  ['java', java],
+  ['javascript', javascript],
+  ['json', json],
+  ['kotlin', kotlin],
+  ['less', less],
+  ['lua', lua],
+  ['makefile', makefile],
+  ['perl', perl],
+  ['objectivec', objectivec],
+  ['php', php],
+  ['php-template', phpTemplate],
+  ['plaintext', plaintext],
+  ['python', python],
+  ['python-repl', pythonRepl],
+  ['r', r],
+  ['rust', rust],
+  ['scss', scss],
+  ['shell', shell],
+  ['sql', sql],
+  ['swift', swift],
+  ['yaml', yaml],
+  ['typescript', typescript],
+  ['vbnet', vbnet],
+  ['wasm', wasm],
+];
+
+for (const [name, language] of COMMON_LANGUAGES) {
+  hljs.registerLanguage(name, language);
+}
 
 // 文件扩展名 -> highlight.js 语言名映射，覆盖常见语言。
 const EXT_TO_LANG: Record<string, string> = {

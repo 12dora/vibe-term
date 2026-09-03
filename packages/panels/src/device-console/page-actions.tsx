@@ -3,7 +3,7 @@
 // 数据面在 useDeviceConsoleActions，本组件只负责组合视图。
 
 import { useState } from 'react';
-import { WatchDialog } from '../watch/watch-dialog';
+import { DeferredWatchDialog, useWatchDialogPreload } from '../watch/deferred-watch-dialog';
 import {
   DeferredTerminalSettingsSheet,
   useTerminalSettingsPreload,
@@ -25,6 +25,8 @@ export function DeviceConsoleActions({ deviceId, windowId, paneId }: DeviceConso
   const [showTerminalSettings, setShowTerminalSettings] = useState(false);
   // 空闲预热终端设置 chunk：趁当前 index.html 还新鲜先拉下来，绕开发版后旧 chunk 404 的窗口
   useTerminalSettingsPreload();
+  // 同理预热监视规则对话框：工具栏上的 watch 按钮点开即用
+  useWatchDialogPreload();
 
   return (
     <>
@@ -41,7 +43,7 @@ export function DeviceConsoleActions({ deviceId, windowId, paneId }: DeviceConso
       />
 
       {model.watchUi && model.deviceId && model.resolvedPaneId && (
-        <WatchDialog
+        <DeferredWatchDialog
           open={showWatchDialog}
           onOpenChange={setShowWatchDialog}
           deviceId={model.deviceId}

@@ -1,6 +1,6 @@
 import { useRuntime } from '@tmex/stores/react';
 import { type ReactNode, useCallback, useState } from 'react';
-import { WatchDialog } from '../watch/watch-dialog';
+import { DeferredWatchDialog } from '../watch/deferred-watch-dialog';
 import { CloseConfirmDialog } from './close-confirm-dialog';
 import { RenameDialog } from './rename-dialog';
 import { type UseCloseDialogOptions, useCloseDialog } from './use-close-dialog';
@@ -35,7 +35,7 @@ export function useDeviceTreeDialogs({
       <CloseConfirmDialog state={close} />
       <RenameDialog state={rename} />
       {runtime.features.watchUi && watchTarget && (
-        <WatchDialog
+        <DeferredWatchDialog
           open
           onOpenChange={(open) => !open && setWatchTarget(null)}
           deviceId={watchTarget.deviceId}

@@ -2,6 +2,9 @@
 // 避免 highlightAuto 在大文件上把主线程卡住数秒。
 
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import hljs from 'highlight.js/lib/core';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { CodeViewer } from './code-viewer';
@@ -31,5 +34,22 @@ describe('CodeViewer 高亮护栏', () => {
     const html = render(SNIPPET.repeat(30_000), 'a.ts');
     expect(html).not.toContain('hljs-keyword');
     expect(html).toContain('&lt;tag&gt;');
+  });
+});
+
+// code-viewer 不再用 `highlight.js/lib/common`（CJS 构建，和 markdown 预览那条 lowlight 链的
+// ESM 构建打不到一块去），改成自己按同一份清单往 `lib/core` 上注册。清单一旦跟上游漂了，
+// highlightAuto 的候选集合与相关度排序就会变——所以直接读包里的 `lib/common.js` 对账，
+// 升级 highlight.js 时这条会先红。注意**不能** import 那个入口，否则等于把语言注册进来。
+const highlightJsDir = dirname(Bun.resolveSync('highlight.js/package.json', import.meta.dir));
+const upstreamCommon = readFileSync(join(highlightJsDir, 'lib', 'common.js'), 'utf8');
+const upstreamLanguages = [...upstreamCommon.matchAll(/registerLanguage\('([^']+)'/g)].map(
+  (match) => match[1]
+);
+
+describe('CodeViewer 语言清单', () => {
+  test('与 highlight.js/lib/common 同一套语言、同一注册顺序', () => {
+    expect(upstreamLanguages.length).toBe(36);
+    expect(hljs.listLanguages()).toEqual(upstreamLanguages);
   });
 });

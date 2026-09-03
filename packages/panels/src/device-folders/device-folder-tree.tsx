@@ -39,7 +39,7 @@ import {
   useState,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useDeviceTreeSensors } from '../device-tree/device-tree-dnd';
+import { useDeviceTreeSensors } from '../device-tree/device-tree-dnd-impl';
 import { deviceFolderCollisionDetection } from './collision';
 import { DeviceFolderNodeShell } from './draggable-item';
 import { useDropZone } from './drop-zone';
