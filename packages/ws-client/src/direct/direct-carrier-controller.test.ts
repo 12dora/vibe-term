@@ -656,7 +656,8 @@ describe('DirectCarrierController 载体切换与激活', () => {
 
     s.connection.switchTo('direct');
     expect(s.controller.getState()).toBe('active');
-    // 连接超时已撤销，剩下 stats 轮询与 60s 健康定时器
+    await flush();
+    // 连接超时已撤销；首轮 getStats 完成后再挂 stats 间隔与 60s 健康定时器
     expect(s.clock.pendingDelays.sort((a, b) => a - b)).toEqual([2000, 60_000]);
     s.clock.advance(6000);
     await flush();
@@ -1117,6 +1118,38 @@ describe('DirectCarrierController 诊断', () => {
     s.clock.advance(2000);
     await flush();
     expect(calls()).toBe(2);
+  });
+
+  test('getStats 未完成时不叠加下一轮，完成后才排下一拍', async () => {
+    const visibility = new FakeVisibility();
+    const s = setup({ visibility, statsIntervalMs: 2000 });
+    await reachActive(s);
+
+    let calls = 0;
+    const releases: Array<() => void> = [];
+    s.pc().getStats = () => {
+      calls += 1;
+      const snapshot = s.pc().stats;
+      return new Promise((resolve) => {
+        releases.push(() => resolve(snapshot));
+      });
+    };
+
+    s.clock.advance(2000);
+    await flush();
+    expect(calls).toBe(1);
+
+    s.clock.advance(10_000);
+    await flush();
+    expect(calls).toBe(1);
+
+    releases[0]?.();
+    await flush();
+    s.clock.advance(2000);
+    await flush();
+    expect(calls).toBe(2);
+    releases[1]?.();
+    await flush();
   });
 
   test('仅 RTT 抖动不通知订阅者；连接态变化立即通知', async () => {

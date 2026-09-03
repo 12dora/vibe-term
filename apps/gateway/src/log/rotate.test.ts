@@ -9,6 +9,7 @@ import {
   listLogGenerationPaths,
   maybeInstallProcessLogRotation,
   processLogRotationInstalledForTest,
+  processLogStdoutDupTargets,
   resolveProcessLogRotationConfig,
   restoreProcessLogRotationForTest,
   shouldInstallProcessLogRotation,
@@ -116,6 +117,28 @@ describe('RotatingFileWriter', () => {
     expect(previous.endsWith('\n')).toBe(true);
     expect(previous.includes('\n', 0) && previous.indexOf('\n') === previous.length - 1).toBe(true);
   });
+
+  test('onFdChange fires on construct and each rotate with the new fd', async () => {
+    const dir = await tempDir();
+    const filePath = join(dir, 'fd.log');
+    const fds: number[] = [];
+    const writer = new RotatingFileWriter({
+      filePath,
+      maxBytes: 4096,
+      generations: 2,
+      onFdChange: (fd) => fds.push(fd),
+    });
+    try {
+      expect(fds.length).toBe(1);
+      for (let i = 0; i < 200; i++) {
+        writer.write(`line-${String(i).padStart(3, '0')}-${'x'.repeat(40)}\n`);
+      }
+    } finally {
+      writer.close();
+    }
+    expect(fds.length).toBeGreaterThan(1);
+    expect(fds.every((fd) => Number.isInteger(fd) && fd >= 0)).toBe(true);
+  });
 });
 
 describe('process log rotation config', () => {
@@ -170,5 +193,10 @@ describe('process log rotation config', () => {
   test('maybeInstall is a no-op during bun test unless TMEX_LOG_ROTATE=1', () => {
     expect(maybeInstallProcessLogRotation()).toBe(false);
     expect(processLogRotationInstalledForTest()).toBe(false);
+  });
+
+  test('shared stdout/stderr path dup2s both fd 1 and fd 2 on rotate', () => {
+    expect(processLogStdoutDupTargets(false)).toEqual([1]);
+    expect(processLogStdoutDupTargets(true)).toEqual([1, 2]);
   });
 });

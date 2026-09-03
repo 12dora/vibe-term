@@ -19,13 +19,25 @@ export function logWsClientConnected(session: GatewaySession): void {
   logAt('debug', `[ws] client connected ${formatWsClientFields(session)}`);
 }
 
+const WS_CLOSE_REASON_LOG_MAX = 64;
+
+/** 断开日志只保留 ASCII 打印字符并截断，避免控制序列清屏或把 token 整段写入轮转文件。 */
+export function sanitizeWsCloseReason(reason: string): string {
+  let out = '';
+  for (let i = 0; i < reason.length && out.length < WS_CLOSE_REASON_LOG_MAX; i++) {
+    const code = reason.charCodeAt(i);
+    if (code >= 32 && code <= 126) out += reason[i];
+  }
+  return out;
+}
+
 export function logWsClientDisconnected(
   session: GatewaySession,
   code: number,
   reason: string
 ): void {
   const level = code === 1000 || code === 1001 ? 'debug' : 'info';
-  const safeReason = reason.replace(/[\r\n]+/g, ' ');
+  const safeReason = sanitizeWsCloseReason(reason);
   logAt(
     level,
     `[ws] client disconnected ${formatWsClientFields(session)} code=${code} reason=${safeReason}`

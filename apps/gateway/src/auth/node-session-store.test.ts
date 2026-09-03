@@ -186,6 +186,44 @@ describe('NodeSessionStore', () => {
     }
   });
 
+  test('clamped to hardExpiresAt does not rewrite or reissue cookie on every request', () => {
+    const { store, close } = storeWithUser();
+    try {
+      const issued = store.issue({
+        userId: 'user-1',
+        viaNodeId: 'self',
+        sessPublicKey: SESS_PK,
+        delegationMethod: 'root',
+        now: 0,
+      });
+      for (let t = HOUR_MS; t < NODE_SESSION_HARD_TTL_MS - 8 * HOUR_MS; t += HOUR_MS) {
+        const walked = store.verify(issued.sid, { viaNodeId: 'self', now: t });
+        expect(walked.ok).toBe(true);
+      }
+
+      const nearHard = NODE_SESSION_HARD_TTL_MS - 8 * HOUR_MS;
+      const first = store.verify(issued.sid, { viaNodeId: 'self', now: nearHard });
+      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error('expected live session');
+      expect(first.session.expiresAt).toBe(issued.hardExpiresAt);
+
+      const second = store.verify(issued.sid, { viaNodeId: 'self', now: nearHard + 1 });
+      expect(second.ok).toBe(true);
+      if (!second.ok) throw new Error('expected live session');
+      expect(second.renewedExpiresAt).toBeUndefined();
+      expect(second.session.expiresAt).toBe(issued.hardExpiresAt);
+      expect(second.session.renewedAt).toBe(first.session.renewedAt);
+
+      const third = store.verify(issued.sid, { viaNodeId: 'self', now: nearHard + 60_000 });
+      expect(third.ok).toBe(true);
+      if (!third.ok) throw new Error('expected live session');
+      expect(third.renewedExpiresAt).toBeUndefined();
+      expect(third.session.renewedAt).toBe(first.session.renewedAt);
+    } finally {
+      close();
+    }
+  });
+
   test('revokeAllForUser / revokeByCredential / revokeVia only touch matching rows', () => {
     const { db, close } = createMigratedAuthDb();
     try {

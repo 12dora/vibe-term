@@ -35,6 +35,8 @@ export interface DeferredPersistStorage<T extends object> {
   storage: PersistStorage<T>;
   /** 立即落盘尚未写出的草稿；无待写时无副作用 */
   flush: () => void;
+  /** 取消未触发的定时器并丢弃 pending，避免销毁后的迟到写覆盖新 runtime */
+  dispose: () => void;
 }
 
 const defaultTimers: DeferredPersistTimers = {
@@ -81,6 +83,7 @@ export function createDeferredPersistStorage<T extends object>(
   let written: T | null = null;
   let pending: { name: string; value: StorageValue<T> } | null = null;
   let handle: unknown = null;
+  let disposed = false;
 
   const resolveStorage = (): WritableStorage | null => options.storage ?? browserStorage();
 
@@ -104,12 +107,19 @@ export function createDeferredPersistStorage<T extends object>(
   };
 
   const flush = () => {
-    if (!pending) return;
+    if (disposed || !pending) return;
     write(pending.name, pending.value);
+  };
+
+  const dispose = () => {
+    cancelTimer();
+    pending = null;
+    disposed = true;
   };
 
   return {
     flush,
+    dispose,
     storage: {
       getItem: (name) => {
         const storage = resolveStorage();
@@ -128,7 +138,14 @@ export function createDeferredPersistStorage<T extends object>(
         }
       },
       setItem: (name, value) => {
-        switch (changeKind(written, value.state, deferred)) {
+        if (disposed) return;
+        const next = value.state;
+        if (changeKind(written, next, deferred) === 'none') {
+          cancelTimer();
+          pending = null;
+          return;
+        }
+        switch (changeKind(pending?.value.state ?? written, next, deferred)) {
           case 'none':
             return;
           case 'deferred':

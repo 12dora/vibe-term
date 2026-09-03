@@ -255,6 +255,11 @@ function wrapConsoleMethod(
   return original;
 }
 
+/** stdout writer 轮转时要 dup2 的目标 fd；stderr 与 stdout 同路径时 fd 2 必须一起跟上。 */
+export function processLogStdoutDupTargets(sharedStderr: boolean): readonly number[] {
+  return sharedStderr ? [1, 2] : [1];
+}
+
 export function maybeInstallProcessLogRotation(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
@@ -264,13 +269,17 @@ export function maybeInstallProcessLogRotation(
   const config = resolveProcessLogRotationConfig(env);
   if (!config) return false;
 
+  const stderrSame = config.stderrPath === config.stdoutPath;
   const stdout = new RotatingFileWriter({
     filePath: config.stdoutPath,
     maxBytes: config.maxBytes,
     generations: config.generations,
-    onFdChange: (fd) => posixDup2(fd, 1),
+    onFdChange: (fd) => {
+      for (const target of processLogStdoutDupTargets(stderrSame)) {
+        posixDup2(fd, target);
+      }
+    },
   });
-  const stderrSame = config.stderrPath === config.stdoutPath;
   const stderr = stderrSame
     ? stdout
     : new RotatingFileWriter({

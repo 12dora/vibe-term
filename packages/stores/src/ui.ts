@@ -228,6 +228,8 @@ function partializeUIState(state: UIState): UIPersistedState {
 export interface CreateUIStoreOptions {
   /** 测试注入用；缺省走 setTimeout + window.localStorage */
   persistStorage?: Omit<DeferredPersistOptions<UIPersistedState>, 'deferredKeys'>;
+  /** 由 createAppRuntime 传入，dispose 时卸掉离场监听并取消未落盘定时器 */
+  disposers?: Array<() => void>;
 }
 
 // 草稿延后落盘：editor 模式每敲一个键都会 set，同步序列化 + 写盘全在输入关键路径上
@@ -346,8 +348,13 @@ export function createUIStore(
     )
   );
 
-  subscribeThemeStorageSync(store, storageKey);
-  subscribeDraftPersistFlush(persisted.flush);
+  const unsubTheme = subscribeThemeStorageSync(store, storageKey);
+  const unsubFlush = subscribeDraftPersistFlush(persisted.flush);
+  options.disposers?.push(() => {
+    unsubTheme();
+    unsubFlush();
+    persisted.dispose();
+  });
   return store;
 }
 
@@ -355,17 +362,27 @@ export function createUIStore(
  * 延后的草稿必须在页面离场前落盘：标签页被切到后台后浏览器随时可能把它整个丢掉，
  * `pagehide` 是移动端 Safari 唯一可靠的卸载信号（`beforeunload` 在 BFCache 下不触发）。
  */
-function subscribeDraftPersistFlush(flush: () => void): void {
+function subscribeDraftPersistFlush(flush: () => void): () => void {
   const doc = typeof document === 'undefined' ? null : document;
+  const onVisibility = () => {
+    if (!doc || doc.visibilityState !== 'hidden') return;
+    flush();
+  };
+  const onPageHide = () => flush();
   if (doc && typeof doc.addEventListener === 'function') {
-    doc.addEventListener('visibilitychange', () => {
-      if (doc.visibilityState !== 'hidden') return;
-      flush();
-    });
+    doc.addEventListener('visibilitychange', onVisibility);
   }
   if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-    window.addEventListener('pagehide', () => flush());
+    window.addEventListener('pagehide', onPageHide);
   }
+  return () => {
+    if (doc && typeof doc.removeEventListener === 'function') {
+      doc.removeEventListener('visibilitychange', onVisibility);
+    }
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('pagehide', onPageHide);
+    }
+  };
 }
 
 export type UIStore = ReturnType<typeof createUIStore>;
@@ -374,14 +391,23 @@ export type UIStore = ReturnType<typeof createUIStore>;
  * 同源多标签页共用一份 localStorage：另一标签页改了外观/预设后本页内存 store 仍是旧值，
  * 随后到达的 S2C 外观帧会据此误判失配，把对方刚写入的预设清成 null 并回写覆盖。
  */
-function subscribeThemeStorageSync(store: { getState: () => UIState }, storageKey: string): void {
+function subscribeThemeStorageSync(
+  store: { getState: () => UIState },
+  storageKey: string
+): () => void {
   if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
-    return;
+    return () => {};
   }
-  window.addEventListener('storage', (event: StorageEvent) => {
+  const onStorage = (event: StorageEvent) => {
     if (event.key !== storageKey) {
       return;
     }
     store.getState().syncThemeFromStorage();
-  });
+  };
+  window.addEventListener('storage', onStorage);
+  return () => {
+    if (typeof window.removeEventListener === 'function') {
+      window.removeEventListener('storage', onStorage);
+    }
+  };
 }

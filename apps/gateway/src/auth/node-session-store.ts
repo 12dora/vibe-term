@@ -100,14 +100,17 @@ export class NodeSessionStore {
       let renewedExpiresAt: number | undefined;
       let expiresAt = row.expiresAt;
       let renewedAt = row.renewedAt;
-      if (row.expiresAt - input.now < NODE_SESSION_TTL_MS / 2) {
-        expiresAt = Math.min(input.now + NODE_SESSION_TTL_MS, row.hardExpiresAt);
-        renewedAt = input.now;
-        renewedExpiresAt = expiresAt;
-        tx.update(nodeSessions)
-          .set({ expiresAt, renewedAt })
-          .where(eq(nodeSessions.sid, sidBytes))
-          .run();
+      if (row.expiresAt - input.now < NODE_SESSION_RENEW_THROTTLE_MS) {
+        const nextExpiresAt = Math.min(input.now + NODE_SESSION_TTL_MS, row.hardExpiresAt);
+        if (nextExpiresAt > row.expiresAt) {
+          expiresAt = nextExpiresAt;
+          renewedAt = input.now;
+          renewedExpiresAt = expiresAt;
+          tx.update(nodeSessions)
+            .set({ expiresAt, renewedAt })
+            .where(eq(nodeSessions.sid, sidBytes))
+            .run();
+        }
       }
 
       return {

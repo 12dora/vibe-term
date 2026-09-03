@@ -140,6 +140,48 @@ describe('createDeferredPersistStorage', () => {
     clock.run();
     expect(writes()).toBe(2);
   });
+
+  test('回到已落盘基线时清掉 pending，定时器不会把已撤销的草稿写回', () => {
+    const { storage, writes } = countingStorage();
+    const clock = fakeTimers();
+    const persisted = createDeferredPersistStorage<{ a: number; drafts: Record<string, string> }>({
+      deferredKeys: ['drafts'],
+      storage,
+      timers: clock.timers,
+    });
+
+    const empty: Record<string, string> = {};
+    persisted.storage.setItem('k', { state: { a: 1, drafts: empty }, version: 0 });
+    persisted.storage.setItem('k', { state: { a: 1, drafts: { d: 'x' } }, version: 0 });
+    expect(writes()).toBe(1);
+    expect(clock.armed()).toBe(1);
+
+    persisted.storage.setItem('k', { state: { a: 1, drafts: empty }, version: 0 });
+    expect(clock.armed()).toBe(0);
+
+    clock.run();
+    expect(writes()).toBe(1);
+    expect(JSON.parse(storage.getItem('k') ?? '{}').state.drafts).toEqual({});
+  });
+
+  test('dispose 取消未触发的定时器且不再 flush pending', () => {
+    const { storage, writes } = countingStorage();
+    const clock = fakeTimers();
+    const persisted = createDeferredPersistStorage<{ a: number; drafts: Record<string, string> }>({
+      deferredKeys: ['drafts'],
+      storage,
+      timers: clock.timers,
+    });
+
+    persisted.storage.setItem('k', { state: { a: 1, drafts: {} }, version: 0 });
+    persisted.storage.setItem('k', { state: { a: 1, drafts: { d: 'stale' } }, version: 0 });
+    expect(writes()).toBe(1);
+    persisted.dispose();
+    expect(clock.armed()).toBe(0);
+    clock.run();
+    expect(writes()).toBe(1);
+    expect(JSON.parse(storage.getItem('k') ?? '{}').state.drafts).toEqual({});
+  });
 });
 
 describe('UI store 草稿持久化', () => {
@@ -232,15 +274,25 @@ describe('页面离场时 flush 草稿', () => {
     listeners.clear();
     const win = globalThis.window as unknown as {
       addEventListener?: (type: string, handler: Listener) => void;
+      removeEventListener?: (type: string, handler: Listener) => void;
     };
     const originalWindowAdd = win.addEventListener;
+    const originalWindowRemove = win.removeEventListener;
     win.addEventListener = (type: string, handler: Listener) => {
       const list = listeners.get(type) ?? [];
       list.push(handler);
       listeners.set(type, list);
     };
+    win.removeEventListener = (type: string, handler: Listener) => {
+      const list = listeners.get(type) ?? [];
+      listeners.set(
+        type,
+        list.filter((item) => item !== handler)
+      );
+    };
     restoreWindow = () => {
       win.addEventListener = originalWindowAdd;
+      win.removeEventListener = originalWindowRemove;
     };
     const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
     Object.defineProperty(globalThis, 'document', {
@@ -252,6 +304,13 @@ describe('页面离场时 flush 草稿', () => {
           const list = listeners.get(type) ?? [];
           list.push(handler);
           listeners.set(type, list);
+        },
+        removeEventListener: (type: string, handler: Listener) => {
+          const list = listeners.get(type) ?? [];
+          listeners.set(
+            type,
+            list.filter((item) => item !== handler)
+          );
         },
       },
     });
@@ -313,5 +372,48 @@ describe('页面离场时 flush 草稿', () => {
     expect(
       JSON.parse(counting.storage.getItem(`${prefix}tmex-ui`) ?? '{}').state.editorDrafts
     ).toEqual({ 'dev:%1': 'unsaved' });
+  });
+
+  test('dispose 卸掉离场监听并取消 pending，不会把旧草稿写到新 runtime 之后', () => {
+    const clock = fakeTimers();
+    const counting = countingStorage();
+    const prefix = `ui-draft-dispose-${Date.now()}-`;
+    const disposers: Array<() => void> = [];
+    const store = createUIStore(
+      { storagePrefix: prefix },
+      { persistStorage: { storage: counting.storage, timers: clock.timers }, disposers }
+    );
+
+    store.getState().setEditorDraft('dev:%1', 'first');
+    store.getState().setEditorDraft('dev:%1', 'stale');
+    expect(clock.armed()).toBe(1);
+
+    for (const dispose of disposers.splice(0)) dispose();
+    expect(clock.armed()).toBe(0);
+    expect((listeners.get('visibilitychange') ?? []).length).toBe(0);
+    expect((listeners.get('pagehide') ?? []).length).toBe(0);
+
+    (globalThis.document as unknown as { visibilityState: string }).visibilityState = 'hidden';
+    fire('visibilitychange');
+    fire('pagehide');
+    clock.run();
+    expect(
+      JSON.parse(counting.storage.getItem(`${prefix}tmex-ui`) ?? '{}').state.editorDrafts
+    ).toEqual({ 'dev:%1': 'first' });
+
+    const nextDisposers: Array<() => void> = [];
+    const next = createUIStore(
+      { storagePrefix: prefix },
+      {
+        persistStorage: { storage: counting.storage, timers: clock.timers },
+        disposers: nextDisposers,
+      }
+    );
+    next.getState().setEditorDraft('dev:%1', 'fresh');
+    clock.run();
+    expect(
+      JSON.parse(counting.storage.getItem(`${prefix}tmex-ui`) ?? '{}').state.editorDrafts
+    ).toEqual({ 'dev:%1': 'fresh' });
+    for (const dispose of nextDisposers.splice(0)) dispose();
   });
 });

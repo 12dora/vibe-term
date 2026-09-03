@@ -268,6 +268,7 @@ export class DirectCarrierController {
   private coolingHandle: unknown = null;
   private healthyHandle: unknown = null;
   private statsHandle: unknown = null;
+  private statsPollGeneration = 0;
   private statsVisibilityUnsub: (() => void) | null = null;
   private networkDebounceHandle: unknown = null;
   private started = false;
@@ -990,38 +991,42 @@ export class DirectCarrierController {
     this.options.connection.detachDirectCarrier?.();
   }
 
-  // ========== 诊断 ==========
-
   private startStatsPolling(): void {
     this.stopStatsPolling();
     const visibility = this.options.visibility ?? browserVisibility();
     const interval = this.options.statsIntervalMs ?? DEFAULT_STATS_INTERVAL_MS;
+    const gen = this.statsPollGeneration;
+    let busy = false;
+    const live = () =>
+      this.statsPollGeneration === gen &&
+      this.state === 'active' &&
+      !!this.attempt &&
+      !visibility.hidden();
     const tick = () => {
       this.statsHandle = null;
-      if (this.state !== 'active' || !this.attempt) return;
-      if (visibility.hidden()) return;
-      void this.pollStats();
-      this.statsHandle = this.schedule(tick, interval);
+      if (!live() || busy) return;
+      busy = true;
+      void this.pollStats().finally(() => {
+        busy = false;
+        if (live()) this.statsHandle = this.schedule(tick, interval);
+      });
     };
     this.statsVisibilityUnsub = visibility.subscribe(() => {
-      if (this.state !== 'active' || !this.attempt) return;
-      if (visibility.hidden()) {
-        this.statsHandle = this.clearHandle(this.statsHandle);
-        return;
-      }
-      tick();
+      if (this.statsPollGeneration !== gen || this.state !== 'active' || !this.attempt) return;
+      if (visibility.hidden()) this.statsHandle = this.clearHandle(this.statsHandle);
+      else tick();
     });
     tick();
   }
 
   private stopStatsPolling(): void {
+    this.statsPollGeneration += 1;
     this.statsHandle = this.clearHandle(this.statsHandle);
     const unsub = this.statsVisibilityUnsub;
     this.statsVisibilityUnsub = null;
     quietly(unsub);
   }
 
-  /** 立即抓一次 stats（测试用；正常由轮询驱动）。 */
   async pollStats(): Promise<void> {
     const attempt = this.attempt;
     const pc = attempt?.pc;
@@ -1039,7 +1044,6 @@ export class DirectCarrierController {
     this.publish();
   }
 
-  /** PC 回调里只刷新两个状态字段，选中候选对仍沿用上一次 `pollStats` 的结果。 */
   private refreshIceSnapshot(): void {
     const pc = this.attempt?.pc;
     if (!pc) return;
@@ -1054,14 +1058,10 @@ export class DirectCarrierController {
       ice: this.ice,
       breaker: this.breaker.snapshot(this.nodeId),
     });
-    if (sameDirectDiagnostics(this.snapshot, next)) {
-      return;
-    }
+    if (sameDirectDiagnostics(this.snapshot, next)) return;
     this.snapshot = next;
     for (const listener of this.listeners) quietly(listener);
   }
-
-  // ========== 状态与网络事件 ==========
 
   private setState(state: DirectCarrierState, reason: string | null): void {
     if (this.state === state && this.failureReason === reason) return;
