@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { compareSemver, parseSemver } from './semver';
+import { compareSemver, compareSemverRequired, parseSemver, requireSemver } from './semver';
 
 describe('parseSemver', () => {
   test('解析 X.Y.Z 与 prerelease', () => {
@@ -48,5 +48,47 @@ describe('compareSemver', () => {
     expect(compareSemver('dev', '1.1.7')).toBeNull();
     expect(compareSemver('', '1.1.7')).toBeNull();
     expect(compareSemver('1.1.7', 'unknown')).toBeNull();
+  });
+
+  test('follows SemVer 2.0 prerelease precedence', () => {
+    const chain = [
+      '1.0.0-alpha',
+      '1.0.0-alpha.1',
+      '1.0.0-alpha.beta',
+      '1.0.0-beta',
+      '1.0.0-beta.2',
+      '1.0.0-beta.11',
+      '1.0.0-rc.1',
+      '1.0.0',
+    ];
+    for (let i = 0; i < chain.length - 1; i++) {
+      expect(compareSemver(chain[i] as string, chain[i + 1] as string)).toBe(-1);
+    }
+  });
+});
+
+describe('requireSemver / compareSemverRequired', () => {
+  test('requireSemver 成功时返回解析结果', () => {
+    expect(requireSemver('1.2.3-beta.1')).toEqual({
+      major: 1,
+      minor: 2,
+      patch: 3,
+      prerelease: 'beta.1',
+    });
+  });
+
+  test('requireSemver 无法解析时抛错', () => {
+    expect(() => requireSemver('dev')).toThrow(/invalid semver/);
+    expect(() => requireSemver('1.1.9_dev')).toThrow(/invalid semver/);
+  });
+
+  test('compareSemverRequired 与 compareSemver 同序', () => {
+    expect(compareSemverRequired('1.2.4', '1.2.3')).toBe(1);
+    expect(compareSemverRequired('1.2.3-beta.2', '1.2.3-beta.10')).toBe(-1);
+  });
+
+  test('compareSemverRequired 无法解析时抛错', () => {
+    expect(() => compareSemverRequired('unknown', '1.2.3')).toThrow(/invalid semver/);
+    expect(() => compareSemverRequired('1.2.3', 'nope')).toThrow(/invalid semver/);
   });
 });

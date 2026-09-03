@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { compareSemver } from '../../../shared/src/semver';
 import { MIN_BUN_VERSION } from '../constants';
 import { t } from '../i18n';
 import type { ParsedArgs } from '../types';
 import { runCommand } from './process';
-import { compareSemver } from './semver';
 import { asString } from './validate';
 
 export interface BunCheckResult {
@@ -239,7 +239,11 @@ async function validateBunAt(candidate: string, minVersion: string): Promise<Bun
   }
 
   const version = sanitizeBunPath(versionResult.stdout);
-  if (compareSemver(version, minVersion) < 0) {
+  const ordering = compareSemver(version, minVersion);
+  if (ordering === null) {
+    throw new Error(t('errors.version.invalid', { input: version }));
+  }
+  if (ordering < 0) {
     return {
       ok: false,
       path: candidate,

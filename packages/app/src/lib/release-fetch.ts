@@ -5,6 +5,7 @@ import {
   releaseTarballName,
   releaseTarballUrl,
 } from '../../../shared/src/release/source';
+import { parseSha256Sums } from '../../../shared/src/release/verify';
 import { t } from '../i18n';
 import { writeBytesAtomic } from './fs-utils';
 
@@ -116,7 +117,6 @@ export async function fetchReleaseSha256Sums(
   if (!response.ok) {
     throw new Error(t('upgrade.checksumHttpFailed', { detail: `HTTP ${response.status}` }));
   }
-  const { parseSha256Sums } = await import('./upgrade-verify');
   const hex = parseSha256Sums(await response.text(), fileName || releaseTarballName(version));
   return { hex, missing: hex === null, unpublished: false };
 }

@@ -1,25 +1,17 @@
-import { basename } from 'node:path';
 import { releaseTarballName } from '../../../shared/src/release/source';
+import { parseSha256Sums } from '../../../shared/src/release/verify';
+import { compareSemver } from '../../../shared/src/semver';
 import { t } from '../i18n';
 import { sha256Hex } from './artifacts-manifest';
-import { compareSemver } from './semver';
 
-const SUM_LINE = /^([a-fA-F0-9]{64})\s+\*?(\S+)\s*$/;
+export { parseSha256Sums };
 
 export const SHA256SUMS_REQUIRED_SINCE = '1.1.4';
 
 export function sha256SumsRequired(version: string): boolean {
-  return compareSemver(version, SHA256SUMS_REQUIRED_SINCE) >= 0;
-}
-
-export function parseSha256Sums(text: string, fileName: string): string | null {
-  const want = basename(fileName);
-  for (const raw of text.split(/\r?\n/)) {
-    const match = raw.trim().match(SUM_LINE);
-    if (!match) continue;
-    if (basename(match[2]) === want) return match[1].toLowerCase();
-  }
-  return null;
+  const cmp = compareSemver(version, SHA256SUMS_REQUIRED_SINCE);
+  if (cmp === null) throw new Error(t('errors.version.invalid', { input: version }));
+  return cmp >= 0;
 }
 
 export function verifyTarballSha256(bytes: Uint8Array, expectedHex: string): boolean {
@@ -51,6 +43,7 @@ export function assertReleaseIntegrity(
     return;
   }
 
+  // < 1.1.4 且 --allow-unverified：commands/upgrade.ts 占用中，须保留此兼容分支。
   if (sums.unpublished === true) {
     if (!opts.allowUnverified) {
       throw new Error(t('upgrade.integrityUnverifiedDenied', { version }));

@@ -1,4 +1,9 @@
-import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
+import {
+  UPGRADE_CANCELLED,
+  type UpgradeState,
+  type UpgradeStatus,
+  compareSemver,
+} from '@tmex/shared';
 import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import type { UserStore } from '../auth/user-store';
 import { MESH_VIA_SELF } from '../mesh/mesh-deps';
@@ -11,7 +16,6 @@ import {
   hasRunningRemoteUpgradeJob,
   startRemoteUpgradeJob,
 } from './remote-upgrade-job';
-import { compareVersions } from './semver';
 import { requireLatestUpgradeRelease } from './update-check';
 
 const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
@@ -53,7 +57,8 @@ export function isAlreadyAtOrAboveLatest(
 ): boolean {
   if (!currentVersion || !RELEASE_VERSION_PATTERN.test(currentVersion.trim())) return false;
   if (!RELEASE_VERSION_PATTERN.test(latestVersion.trim())) return false;
-  return compareVersions(currentVersion, latestVersion) >= 0;
+  const cmp = compareSemver(currentVersion, latestVersion);
+  return cmp !== null && cmp >= 0;
 }
 
 export async function handleMeshUpgradeLatest(): Promise<Response> {

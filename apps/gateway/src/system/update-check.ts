@@ -1,6 +1,9 @@
-import type { UpdateCheckResult } from '@tmex/shared';
-import { RELEASE_API_LATEST_URL, releaseTarballName } from '@tmex/shared';
-import { compareVersions } from './semver';
+import {
+  RELEASE_API_LATEST_URL,
+  type UpdateCheckResult,
+  compareSemver,
+  releaseTarballName,
+} from '@tmex/shared';
 import { getBaseVersion } from './version';
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -44,7 +47,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     release.latestVersion !== null &&
     release.hasTarball &&
     current !== 'unknown' &&
-    compareVersions(release.latestVersion, current) > 0;
+    (compareSemver(release.latestVersion, current) ?? 0) > 0;
 
   return {
     currentVersion: current,

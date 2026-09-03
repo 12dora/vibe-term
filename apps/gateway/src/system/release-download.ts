@@ -2,17 +2,21 @@ import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, existsSync, readFileSync } from 'node:fs';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
 import { RELEASE_REPO_URL, releaseTag, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
-import { compareVersions } from './semver';
+import {
+  assertReleaseChecksum,
+  parseSha256Sums,
+  sha256Hex,
+} from '../../../../packages/shared/src/release/verify';
 
-const CHECKSUMS_REQUIRED_SINCE = '1.1.4';
+export { parseSha256Sums, sha256Hex };
+
 const TARBALL_FETCH_TIMEOUT_MS = 10 * 60 * 1000;
 const SHA256SUMS_FETCH_TIMEOUT_MS = 30_000;
-const SUM_LINE = /^([a-fA-F0-9]{64})\s+\*?(\S+)\s*$/;
 
 /** 覆盖 GitHub 仓库根 URL；缺省为当前发行源。路径布局保持 `/releases/download/v<ver>/...`。 */
 export const RELEASE_BASE_URL_ENV = 'TMEX_RELEASE_BASE_URL';
@@ -48,10 +52,6 @@ export function resetReleaseDownloadForTests(): void {
   inflight.clear();
 }
 
-export function sha256Hex(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
-}
-
 export async function sha256File(path: string): Promise<{ sha256: string; bytes: number }> {
   const hash = createHash('sha256');
   let bytes = 0;
@@ -74,16 +74,6 @@ export function resolveReleaseCacheDir(installDir?: string | null): string {
   if (override) return override;
   if (installDir) return join(installDir, 'staging', 'release-cache');
   return join(tmpdir(), 'tmex-release-cache');
-}
-
-export function parseSha256Sums(text: string, fileName: string): string | null {
-  const want = basename(fileName);
-  for (const raw of text.split(/\r?\n/)) {
-    const match = raw.trim().match(SUM_LINE);
-    if (!match) continue;
-    if (basename(match[2]) === want) return match[1].toLowerCase();
-  }
-  return null;
 }
 
 export function resolveReleaseBaseUrl(): string {
@@ -110,17 +100,7 @@ export function assertReleaseSha256(
   sha256: string,
   sums: { hex: string | null; missing: boolean }
 ): void {
-  if (sums.missing || !sums.hex) {
-    if (compareVersions(version, CHECKSUMS_REQUIRED_SINCE) >= 0) {
-      throw new Error(
-        `Release ${version} requires SHA256SUMS (HTTP 200, matching digest). Refusing to continue.`
-      );
-    }
-    throw new Error('Release SHA256SUMS is missing; tarball integrity is unverified.');
-  }
-  if (sha256 !== sums.hex) {
-    throw new Error(`Release tarball sha256 mismatch for ${releaseTarballName(version)}.`);
-  }
+  assertReleaseChecksum(sha256, sums, releaseTarballName(version));
 }
 
 export function assertReleaseIntegrity(

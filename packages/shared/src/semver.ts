@@ -62,3 +62,17 @@ export function compareSemver(left: string, right: string): number | null {
   if (b.prerelease === null) return -1;
   return comparePrerelease(a.prerelease, b.prerelease);
 }
+
+/** 无法解析时抛错。调用方若要自定义文案，应先 `parseSemver` 再自行处理 null。 */
+export function requireSemver(input: string): Semver {
+  const parsed = parseSemver(input);
+  if (!parsed) throw new Error(`invalid semver: ${input}`);
+  return parsed;
+}
+
+/** 与 `compareSemver` 同序；任一侧无法解析时抛错。 */
+export function compareSemverRequired(left: string, right: string): number {
+  const result = compareSemver(left, right);
+  if (result === null) throw new Error(`invalid semver: ${left} vs ${right}`);
+  return result;
+}
