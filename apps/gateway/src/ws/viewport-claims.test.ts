@@ -26,6 +26,24 @@ function termResize(
   });
 }
 
+/** canonical v1.1 尺寸补发（reason=resend），复用该 pane 上一次 change 的 epoch。 */
+function termResend(
+  server: any,
+  session: ReturnType<typeof createGatewaySession>,
+  paneId: string,
+  cols: number,
+  rows: number
+): void {
+  server.handleCanonicalResize(session, {
+    deviceId: 'device-a',
+    paneId,
+    cols,
+    rows,
+    reason: wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND,
+    sizeEpoch: sizeEpochCounter > 0n ? sizeEpochCounter : 1n,
+  });
+}
+
 function decodePolicies(session: ReturnType<typeof createGatewaySession>) {
   return session.sent.flatMap((bytes) => {
     const envelope = wsBorsh.decodeEnvelope(bytes);
@@ -298,6 +316,49 @@ describe('viewport claims', () => {
     expect(recorder.resizePaneCalls).toEqual([]);
   });
 
+  // entry↔node 切换会在节点侧新建 GatewaySession：旧会话的 claim 随之消失，
+  // 浏览器物理 WS 没断也不会自己重发，只能由 entry 在新流上补发视口声明与尺寸。
+  test('切换后补发视口 + resend 尺寸：owner 与几何回到切换前', () => {
+    const { server, recorder, large, small, entry } = setupTwoClients();
+    termResize(server, large, '%0', 160, 48);
+    termResize(server, small, '%0', 80, 24);
+    const claimEpoch = sizeEpochCounter;
+    const followerPolicy = lastPolicy(large);
+    expect(followerPolicy).toMatchObject({ owner: false, cols: 80, rows: 24 });
+    expect(lastPolicy(small)).toMatchObject({ owner: true, cols: 80, rows: 24 });
+
+    // 节点侧的旧会话随切换一起消失
+    entry.clients.delete(small);
+    server.dropViewportClaims(small, 'device-a');
+    server.dropPaneSizeEpochs(small);
+    expect(lastPolicy(large)).toMatchObject({ owner: true, cols: 160, rows: 48 });
+    recorder.resizePaneCalls.length = 0;
+
+    // entry 在新流上补发：TERM_VIEWPORT + ResizePaneV11(resend，沿用同一 sizeEpoch)
+    const resumed = createGatewaySession({ id: 'sess-small-2' });
+    entry.clients.add(resumed);
+    server.handleTermViewport(resumed, {
+      deviceId: 'device-a',
+      paneId: '%0',
+      cols: 80,
+      rows: 24,
+      visible: true,
+    });
+    server.handleCanonicalResize(resumed, {
+      deviceId: 'device-a',
+      paneId: '%0',
+      cols: 80,
+      rows: 24,
+      reason: wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND,
+      sizeEpoch: claimEpoch,
+    });
+
+    expect(lastPolicy(resumed)).toMatchObject({ owner: true, cols: 80, rows: 24 });
+    expect(lastPolicy(large)).toEqual(followerPolicy as never);
+    // 视口声明已经把窗口拉回 80x24，同尺寸的 resend 不再重复下发。
+    expect(recorder.resizePaneCalls).toEqual([['%0', 80, 24]]);
+  });
+
   test('sized follower TMUX_SELECT does not resize; owner select applies', () => {
     const { server, recorder, large, small } = setupTwoClients({
       paneCount: 2,
@@ -387,7 +448,8 @@ describe('viewport claims', () => {
     cleanupSelectSessions(large);
   });
 
-  test('owning sized warm select still resizes when this window has never been applied', () => {
+  // canonical v1.1：TMUX_SELECT 不再绕过实时几何去重，补发只由 ResizePaneV11(resend) 负责。
+  test('sized warm select 与快照一致时不 resize；随后的 resend 强制下发', () => {
     const { server, recorder, large } = setupTwoClients({ session: true });
     recorder.resizePaneCalls.length = 0;
     recorder.focusPaneCalls.length = 0;
@@ -395,12 +457,16 @@ describe('viewport claims', () => {
     server.handleTmuxSelect(large, sizedSelect('%0', 80, 24, 12, false));
 
     expect(recorder.focusPaneCalls).toEqual([{ windowId: '@1', paneId: '%0' }]);
-    expect(recorder.resizePaneCalls).toEqual([['%0', 80, 24]]);
+    expect(recorder.resizePaneCalls).toEqual([]);
     expect(recorder.selectPaneWithSizeCalls).toEqual([]);
+
+    termResend(server, large, '%0', 80, 24);
+
+    expect(recorder.resizePaneCalls).toEqual([['%0', 80, 24]]);
     cleanupSelectSessions(large);
   });
 
-  test('warm select onto a second window resizes even when its snapshot already matches the claim', () => {
+  test('warm select onto a second window follows the snapshot; the resend forces the resize', () => {
     const { server, recorder, large, entry } = setupTwoClients({ session: true });
     entry.lastSnapshot = snapshot([
       {
@@ -428,8 +494,12 @@ describe('viewport claims', () => {
     });
 
     expect(recorder.focusPaneCalls).toEqual([{ windowId: '@2', paneId: '%1' }]);
-    expect(recorder.resizePaneCalls).toEqual([['%1', 80, 24]]);
+    expect(recorder.resizePaneCalls).toEqual([]);
     expect(recorder.selectPaneWithSizeCalls).toEqual([]);
+
+    termResend(server, large, '%1', 80, 24);
+
+    expect(recorder.resizePaneCalls).toEqual([['%1', 80, 24]]);
     cleanupSelectSessions(large);
   });
 

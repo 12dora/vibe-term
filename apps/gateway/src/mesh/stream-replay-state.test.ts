@@ -161,6 +161,172 @@ describe('StreamReplayState canonical v1.1 对端门槛', () => {
     expect(stale.peerVersion).toBe('1.1.21');
     expect(stale.peerSupportsCanonical()).toBe(false);
   });
+
+  test('HELLO_S2C 解不出 payload 时判定为不支持，不沿用旧版本', () => {
+    const replay = new StreamReplayState();
+    replay.noteInbound(encodeHelloS2C(65_536, '1.1.23'));
+    expect(replay.peerSupportsCanonical()).toBe(true);
+
+    const malformed = wsBorsh.encodeEnvelope(
+      wsBorsh.KIND_HELLO_S2C,
+      new Uint8Array([0xff, 0x00]),
+      1
+    );
+    expect(replay.noteInbound(malformed)).toEqual({
+      kind: wsBorsh.KIND_HELLO_S2C,
+      peerUnsupported: true,
+    });
+    expect(replay.peerVersion).toBeNull();
+    expect(replay.peerSupportsCanonical()).toBe(false);
+  });
+
+  test('beginResume 清空 peerVersion：新流必须自己重新证明版本', () => {
+    const replay = new StreamReplayState();
+    replay.noteInbound(encodeHelloS2C(65_536, '1.1.23'));
+    expect(replay.peerSupportsCanonical()).toBe(true);
+
+    replay.beginResume();
+    expect(replay.peerVersion).toBeNull();
+    expect(replay.peerSupportsCanonical()).toBe(false);
+
+    replay.noteInbound(encodeHelloS2C(65_536, '1.1.23'));
+    expect(replay.peerSupportsCanonical()).toBe(true);
+  });
+});
+
+function encodeTermViewport(
+  deviceId: string,
+  paneId: string,
+  cols: number,
+  rows: number,
+  seq = 20
+): Uint8Array {
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_TERM_VIEWPORT,
+    wsBorsh.encodePayload(wsBorsh.schema.TermViewportSchema, {
+      deviceId,
+      paneId,
+      cols,
+      rows,
+      visible: true,
+    }),
+    seq
+  );
+}
+
+function encodeTmuxSelect(
+  deviceId: string,
+  windowId: string,
+  paneId: string,
+  seq = 21
+): Uint8Array {
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_TMUX_SELECT,
+    wsBorsh.encodePayload(wsBorsh.schema.TmuxSelectSchema, {
+      deviceId,
+      windowId,
+      paneId,
+      selectToken: new Uint8Array(16).fill(9),
+      wantHistory: false,
+      cols: 100,
+      rows: 30,
+    }),
+    seq
+  );
+}
+
+function encodeResizeV11(
+  pane: wsBorsh.CanonicalPaneTarget,
+  cols: number,
+  rows: number,
+  sizeEpoch: bigint,
+  seq = 22
+): Uint8Array {
+  return encodeCanonicalCommand(
+    {
+      ResizePaneV11: {
+        requestId: new Uint8Array(16).fill(4),
+        pane,
+        rows,
+        cols,
+        geometryReason: wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE,
+        sizeEpoch,
+      },
+    },
+    seq
+  );
+}
+
+function decodeReplayedResizes(frames: Uint8Array[]) {
+  return frames.flatMap((frame) => {
+    const env = wsBorsh.decodeEnvelope(frame);
+    if (env.kind !== wsBorsh.KIND_CANONICAL_COMMAND) return [];
+    const command = wsBorsh.decodeCanonicalCommandPayload(env.payload).command;
+    return 'ResizePaneV11' in command ? [command.ResizePaneV11] : [];
+  });
+}
+
+describe('StreamReplayState 视口/几何补发', () => {
+  const serverEpoch = new Uint8Array(16).fill(1);
+  const pane = { deviceId: 'dev-1', serverEpoch, paneId: '%1' };
+
+  test('切换后补发最新视口声明、焦点与尺寸；尺寸改写成 resend 且 epoch 不变', () => {
+    const replay = new StreamReplayState();
+    replay.noteOutbound(encodeDeviceConnect('dev-1'));
+    replay.noteOutbound(encodeTermViewport('dev-1', '%1', 80, 24));
+    replay.noteOutbound(encodeTmuxSelect('dev-1', '@1', '%1'));
+    replay.noteOutbound(encodeResizeV11(pane, 100, 30, 7n));
+    // 同一 pane 的第二次尺寸变化只保留最后一条
+    replay.noteOutbound(encodeResizeV11(pane, 120, 40, 8n));
+
+    const frames = replay.buildPostConnectFrames();
+    const kinds = frames.map((frame) => wsBorsh.decodeEnvelope(frame).kind);
+    expect(kinds).toEqual([
+      wsBorsh.KIND_TERM_VIEWPORT,
+      wsBorsh.KIND_TMUX_SELECT,
+      wsBorsh.KIND_CANONICAL_COMMAND,
+    ]);
+
+    const resizes = decodeReplayedResizes(frames);
+    expect(resizes).toHaveLength(1);
+    expect(resizes[0]?.cols).toBe(120);
+    expect(resizes[0]?.rows).toBe(40);
+    expect(resizes[0]?.sizeEpoch).toBe(8n);
+    expect(resizes[0]?.geometryReason).toBe(wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND);
+  });
+
+  test('补发顺序按最后一次写入排列：后来的视口声明覆盖更早的尺寸', () => {
+    const replay = new StreamReplayState();
+    replay.noteOutbound(encodeResizeV11(pane, 100, 30, 3n));
+    replay.noteOutbound(encodeTermViewport('dev-1', '%1', 80, 24));
+
+    expect(
+      replay.viewportReplayFrames().map((frame) => wsBorsh.decodeEnvelope(frame).kind)
+    ).toEqual([wsBorsh.KIND_CANONICAL_COMMAND, wsBorsh.KIND_TERM_VIEWPORT]);
+
+    replay.noteOutbound(encodeResizeV11(pane, 100, 30, 4n));
+    expect(
+      replay.viewportReplayFrames().map((frame) => wsBorsh.decodeEnvelope(frame).kind)
+    ).toEqual([wsBorsh.KIND_TERM_VIEWPORT, wsBorsh.KIND_CANONICAL_COMMAND]);
+  });
+
+  test('设备断开后不再补发该设备的几何', () => {
+    const replay = new StreamReplayState();
+    replay.noteOutbound(encodeDeviceConnect('dev-1'));
+    replay.noteOutbound(encodeTermViewport('dev-1', '%1', 80, 24));
+    replay.noteOutbound(encodeTermViewport('dev-2', '%2', 90, 25));
+    replay.noteOutbound(encodeResizeV11(pane, 100, 30, 5n));
+    expect(replay.viewportReplayFrames()).toHaveLength(3);
+
+    replay.noteOutbound(encodeDeviceDisconnect('dev-1'));
+    const remaining = replay.viewportReplayFrames();
+    expect(remaining).toHaveLength(1);
+    const payload = wsBorsh.decodePayload(
+      wsBorsh.schema.TermViewportSchema,
+      wsBorsh.decodeEnvelope(remaining[0] as Uint8Array).payload
+    );
+    expect(payload.deviceId).toBe('dev-2');
+  });
 });
 
 describe('StreamReplayState canonical failover replay', () => {

@@ -130,6 +130,29 @@ function acceptSizeEpoch(session: GatewaySession, intent: CanonicalResizeIntent)
   return true;
 }
 
+/**
+ * 快照对账时清掉该设备上已消失 pane 的 sizeEpoch。
+ * 否则 pane 反复增删会让这张表随会话寿命无界增长（只在断开设备/关会话时才清）。
+ */
+function pruneMissingPaneSizeEpochs(
+  entry: DeviceConnectionEntry,
+  deviceId: string,
+  sessions: Iterable<GatewaySession>
+): void {
+  const windows = entry.lastSnapshot?.session?.windows;
+  if (!windows) return;
+  const live = new Set<string>();
+  for (const window of windows) {
+    for (const pane of window.panes) live.add(paneSizeEpochKey(deviceId, pane.id));
+  }
+  const prefix = `${deviceId}\0`;
+  for (const session of sessions) {
+    for (const key of session.paneSizeEpochs.keys()) {
+      if (key.startsWith(prefix) && !live.has(key)) session.paneSizeEpochs.delete(key);
+    }
+  }
+}
+
 export function dropPaneSizeEpochs(session: GatewaySession, deviceId?: string): void {
   if (!deviceId) {
     session.paneSizeEpochs.clear();
@@ -283,6 +306,7 @@ export function reconcileDeviceViewportSnapshot(host: TmuxCommandHost, deviceId:
     (paneId) => findWindowForPane(entry, paneId)?.id ?? null
   );
   pruneMissingWindowViewportState(entry);
+  pruneMissingPaneSizeEpochs(entry, deviceId, claimants);
   const seen = new Set<string>();
   for (const windowId of affected) {
     applyViewportPolicy(host, deviceId, windowId, { seen });

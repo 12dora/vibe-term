@@ -99,7 +99,7 @@ function dispatchTmuxSelection(
         rows: requested.rows,
         visible: true,
       },
-      { applyUnknown: false, skipResize: data.wantHistory, distrustLive: !data.wantHistory }
+      { applyUnknown: false, skipResize: data.wantHistory }
     );
     selectSize = resolveSizedSelectSize(session.id, winner, requested, data.wantHistory, live);
   }

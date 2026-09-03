@@ -632,6 +632,8 @@ describe('forwarder', () => {
       expect(error.message).toContain('canonical-state-v1.1 required');
       expect(error.retryable).toBe(false);
       expect(closed()?.code).toBe(1002);
+      // 拒绝路径必须把上游 mesh 流也断掉，否则远端 GatewaySession 一直挂着。
+      expect(streams.lastWs?.closedOnce).toBe(true);
     } finally {
       mesh.close();
     }
@@ -654,6 +656,99 @@ describe('forwarder', () => {
 
       expect(sent).toEqual([hello]);
       expect(closed()).toBeUndefined();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('切换后的新流不答 HELLO 时报错断流，不补订阅也不冲队列', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    answerHelloOnNewStreams(streams, (index) =>
+      index === 0 ? encodeHelloS2CFrame('1.1.23') : null
+    );
+    const origGetLink = peers.getLink.bind(peers);
+    let blockLink = false;
+    let releaseLink: (() => void) | undefined;
+    peers.getLink = async (nodeId: string) => {
+      if (blockLink) {
+        await new Promise<void>((resolve) => {
+          releaseLink = resolve;
+        });
+      }
+      return origGetLink(nodeId);
+    };
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws, closed } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const sent: Uint8Array[] = [];
+      ws.send = (frame: Uint8Array) => {
+        sent.push(frame);
+        return frame.byteLength;
+      };
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      mesh.runtime.handleWebSocket.message(
+        ws,
+        encodeCanonicalSub(1n, '%1', 2, new Uint8Array(16).fill(5))
+      );
+      blockLink = true;
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => releaseLink !== undefined, 2_000);
+      const queued = new Uint8Array([0xa1, 0xa2]);
+      mesh.runtime.handleWebSocket.message(ws, queued);
+      releaseLink?.();
+      await waitUntil(() => closed() !== undefined, 2_000);
+
+      expect(closed()).toEqual({ code: 1002, reason: 'node-too-old' });
+      const errors = decodeErrorFrames(sent);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.code).toBe(wsBorsh.ERROR_UNSUPPORTED_PROTOCOL);
+      expect(errors[0]?.message).toContain('canonical-state-v1.1 required');
+      const second = streams.wsOpens[1]?.ws;
+      expect(second?.closedOnce).toBe(true);
+      // 只补发了 HELLO：订阅没重放，排队的浏览器帧也没冲进去。
+      expect(second?.sent).toHaveLength(1);
+      expect(isHelloC2S(second?.sent[0] as Uint8Array)).toBe(true);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('切换后的新流回了坏 HELLO 时不沿用上一条流的版本判定', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    answerHelloOnNewStreams(streams, (index) =>
+      index === 0 ? encodeHelloS2CFrame('1.1.23') : malformedHelloS2CFrame()
+    );
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws, closed } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const sent: Uint8Array[] = [];
+      ws.send = (frame: Uint8Array) => {
+        sent.push(frame);
+        return frame.byteLength;
+      };
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => closed() !== undefined, 2_000);
+
+      expect(closed()).toEqual({ code: 1002, reason: 'node-too-old' });
+      const errors = decodeErrorFrames(sent);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.message).toContain('node unknown');
+      expect(streams.wsOpens[1]?.ws.closedOnce).toBe(true);
     } finally {
       mesh.close();
     }
@@ -811,6 +906,7 @@ describe('forwarder', () => {
 
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => streams.wsOpens.length === 2, 2_000);
       expect(browserClosed).toBeUndefined();
@@ -879,6 +975,7 @@ describe('forwarder', () => {
       );
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => streams.wsOpens.length === 2, 2_000);
       const replayed = streams.wsOpens[1]?.ws.sent ?? [];
@@ -950,6 +1047,7 @@ describe('forwarder', () => {
       );
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => streams.wsOpens.length === 2, 2_000);
       const replayed = streams.wsOpens[1]?.ws.sent ?? [];
@@ -998,6 +1096,7 @@ describe('forwarder', () => {
       blockLink = true;
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => releaseLink !== undefined, 2_000);
       mesh.runtime.handleWebSocket.message(ws, encodeCanonicalSub(4n, '%2', 5, epoch));
@@ -1066,6 +1165,7 @@ describe('forwarder', () => {
       peers.failGetLink = 2;
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => streams.wsOpens.length === 2, 2_000);
       expect(closed()).toBeUndefined();
@@ -1119,6 +1219,7 @@ describe('forwarder', () => {
       blockLink = true;
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => releaseLink !== undefined, 2_000);
       const queued = new Uint8Array([0xff, 0xfe, 0xfd, 0xfc, 0x01]);
@@ -1194,6 +1295,7 @@ describe('forwarder', () => {
       blockLink = true;
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => releaseLink !== undefined, 2_000);
       const queued: Uint8Array[] = [];
@@ -1236,6 +1338,7 @@ describe('forwarder', () => {
       const first = streams.lastWs;
       expect(first).not.toBeNull();
       if (!first) throw new Error('expected upstream ws');
+      answerHelloOnNewStreams(streams);
       first.sendError = new Error('write-closed');
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
@@ -1830,6 +1933,50 @@ function trackAbort(controller: AbortController): {
     return remove(type, listener, opts);
   }) as typeof signal.removeEventListener;
   return tracked;
+}
+
+/**
+ * 让此后新开的转发流像真节点一样应答 HELLO_S2C：失败切换的 canonical v1.1 版本门要求。
+ * `reply` 按开流序号给出应答帧，返回 null 表示这条流不答 HELLO。
+ */
+function answerHelloOnNewStreams(
+  streams: FakeStreams,
+  reply: (index: number) => Uint8Array | null = () => encodeHelloS2CFrame('1.1.23')
+): void {
+  let index = 0;
+  const open = streams.openWsStream.bind(streams);
+  streams.openWsStream = async (link: LinkSession, auth: string, cid?: string) => {
+    const stream = (await open(link, auth, cid)) as FakeWs;
+    const answer = reply(index);
+    index += 1;
+    const send = stream.send.bind(stream);
+    stream.send = (bytes: Uint8Array) => {
+      const result = send(bytes);
+      if (answer && isHelloC2S(bytes)) stream.pushFromRemote(answer);
+      return result;
+    };
+    return stream;
+  };
+}
+
+function malformedHelloS2CFrame(): Uint8Array {
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, new Uint8Array([0xff, 0x00]), 1);
+}
+
+function decodeErrorFrames(frames: Uint8Array[]) {
+  return frames.flatMap((frame) => {
+    const env = wsBorsh.decodeEnvelope(frame);
+    if (env.kind !== wsBorsh.KIND_ERROR) return [];
+    return [wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, env.payload)];
+  });
+}
+
+function isHelloC2S(bytes: Uint8Array): boolean {
+  try {
+    return wsBorsh.decodeEnvelopeView(bytes).kind === wsBorsh.KIND_HELLO_C2S;
+  } catch {
+    return false;
+  }
 }
 
 async function beginBlockedFailover(): Promise<{

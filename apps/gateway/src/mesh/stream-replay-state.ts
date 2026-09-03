@@ -1,5 +1,6 @@
 import { wsBorsh } from '@tmex/shared';
 import { ERROR_CANONICAL_V11_REQUIRED, peerNodeTooOldMessage } from '../ws/canonical-gate';
+import { ViewportReplayCache } from './stream-replay-state-viewport';
 
 export type InboundReplayNote = {
   kind: number | null;
@@ -15,8 +16,8 @@ export interface StaleNodeStreamPump {
 }
 
 /**
- * 对端节点低于 canonical v1.1 门槛：不回退 legacy 状态流，
- * 直接向浏览器发 ERROR 并断开整条转发流。返回是否已拒绝。
+ * 对端节点低于 canonical v1.1 门槛（含 HELLO 未答/解不出版本）：不回退 legacy 状态流，
+ * 直接向浏览器发 ERROR，并整条拆掉（上游流 + 在途流 + 浏览器）。返回是否已拒绝。
  */
 export function rejectStaleNodeStream<P extends StaleNodeStreamPump>(
   unsupported: boolean | undefined,
@@ -24,7 +25,7 @@ export function rejectStaleNodeStream<P extends StaleNodeStreamPump>(
   io: {
     log(line: string): void;
     sendToBrowser(pump: P, bytes: Uint8Array): void;
-    closeBrowser(pump: P, info: { code?: number; reason?: string }): void;
+    closePump(pump: P, info: { code?: number; reason?: string }): void;
   }
 ): boolean {
   if (!unsupported) return false;
@@ -45,7 +46,7 @@ export function rejectStaleNodeStream<P extends StaleNodeStreamPump>(
       )
     );
   } catch {}
-  io.closeBrowser(pump, { code: 1002, reason: 'node-too-old' });
+  io.closePump(pump, { code: 1002, reason: 'node-too-old' });
   return true;
 }
 
@@ -76,6 +77,7 @@ export class StreamReplayState {
     { paneEpoch: Uint8Array; terminalSeq: bigint; pane: wsBorsh.CanonicalPaneTarget }
   >();
   private readonly canonicalTargets = new Map<string, wsBorsh.CanonicalPaneSubscription>();
+  private readonly viewport = new ViewportReplayCache();
   private readonly screenTransactions = new Map<string, PendingScreenTransaction>();
   private outboundSeq = 1;
   private clientMaxFrameBytes = wsBorsh.DEFAULT_MAX_FRAME_BYTES;
@@ -147,8 +149,13 @@ export class StreamReplayState {
               seq: env.seq,
             };
             this.reconcilePaneCursors(value.activePanes, value.hotPanes);
+            return;
           }
+          if ('ResizePaneV11' in command) this.viewport.noteResize(command.ResizePaneV11, env.seq);
+          return;
         }
+        default:
+          this.viewport.noteFrame(env, bytes);
       }
     } catch {}
   }
@@ -161,7 +168,10 @@ export class StreamReplayState {
         const payload = wsBorsh.decodePayload(wsBorsh.schema.HelloS2CSchema, env.payload);
         this.serverMaxFrameBytes = payload.maxFrameBytes;
         this.peerVersion = payload.serverVersion;
-      } catch {}
+      } catch {
+        // 解不出 HELLO 就当版本未知：fail-closed，不能继承上一条流的判定。
+        this.peerVersion = null;
+      }
       return { kind: env.kind, peerUnsupported: !this.peerSupportsCanonical() };
     }
     if (env.kind === wsBorsh.KIND_DEVICE_CONNECTED) {
@@ -186,6 +196,8 @@ export class StreamReplayState {
   }
 
   beginResume(): void {
+    // 新流要重新握手：版本判定不能沿用上一条流的结果。
+    this.peerVersion = null;
     this.resumeDevices.clear();
     this.resumeGeneration = null;
     this.lastBrowserSignals = [];
@@ -209,7 +221,15 @@ export class StreamReplayState {
 
   buildPostConnectFrames(): Uint8Array[] {
     const canonical = this.buildCanonicalResume();
-    return [...(canonical ? [canonical] : []), ...this.agents.values()];
+    return [
+      ...(canonical ? [canonical] : []),
+      ...this.viewport.replayFrames(),
+      ...this.agents.values(),
+    ];
+  }
+
+  viewportReplayFrames(): Uint8Array[] {
+    return this.viewport.replayFrames();
   }
 
   markCanonicalResumeSent(): void {
@@ -525,6 +545,7 @@ export class StreamReplayState {
   }
 
   private removeCanonicalDevice(deviceId: string): void {
+    this.viewport.removeDevice(deviceId);
     if (this.canonicalSub) {
       this.canonicalSub = {
         ...this.canonicalSub,

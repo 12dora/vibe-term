@@ -189,15 +189,7 @@ export class Forwarder {
       return;
     }
     pump.browserClosed = true;
-    pump.failoverAbort?.abort();
-    pump.helloWait?.();
-    pump.helloWait = null;
-    pump.resumeWait?.();
-    pump.resumeWait = null;
-    const inflight = pump.inflight;
-    pump.inflight = null;
-    inflight?.close(code, reason);
-    pump.stream?.close(code, reason);
+    this.closePump(pump, { code, reason });
   }
 
   attachForwardPump(ws: MeshServerWebSocket, stream: OpenedWsStream): void {
@@ -447,6 +439,7 @@ export class Forwarder {
         bindStream: (p, stream, transport) => this.bindStream(p as ForwardPump, stream, transport),
         discardStream: (p, stream) => this.discardStream(p as ForwardPump, stream),
         closeBrowser: (p, closeInfo) => this.closeBrowser(p as ForwardPump, closeInfo),
+        closePump: (p, closeInfo) => this.closePump(p as ForwardPump, closeInfo),
         sendToStream: (p, stream, bytes) => this.sendToStream(p as ForwardPump, stream, bytes),
         sendToBrowser: (p, bytes) => this.sendToBrowser(p as ForwardPump, bytes),
         flushQueue: (p) => this.flushQueue(p as ForwardPump),
@@ -489,7 +482,11 @@ export class Forwarder {
   }
 
   private failPump(pump: ForwardPump, reason: string): void {
-    if (pump.browserClosed) return;
+    this.closePump(pump, { code: 1011, reason });
+  }
+
+  /** 整条转发流拆解：先断上游（当前流 + 在途流），再断浏览器，避免留下无主的 mesh 流。 */
+  closePump(pump: ForwardPump, info: { code?: number; reason?: string }): void {
     pump.failoverAbort?.abort();
     pump.helloWait?.();
     pump.helloWait = null;
@@ -497,9 +494,11 @@ export class Forwarder {
     pump.resumeWait = null;
     const inflight = pump.inflight;
     pump.inflight = null;
-    inflight?.close(1011, reason);
-    pump.stream?.close(1011, reason);
-    this.closeBrowser(pump, { code: 1011, reason });
+    inflight?.close(info.code, info.reason);
+    pump.stream?.close(info.code, info.reason);
+    pump.stream = null;
+    pump.streamAlive = false;
+    this.closeBrowser(pump, info);
   }
 
   private discardStream(pump: ForwardPump, stream: OpenedWsStream): void {

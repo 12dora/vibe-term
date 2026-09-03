@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
+import { wsBorsh } from '@tmex/shared';
 import { sessionStateStore } from './borsh/session-state';
 import { createGatewaySession, setupConnectionEntry } from './test-helpers';
 import type { TmuxCommandHost } from './tmux-command-handlers';
+import { handleCanonicalResize } from './tmux-geometry-handlers';
 import { handleTmuxSelect } from './tmux-selection-handlers';
 
 function makeSnapshot(): StateSnapshotPayload {
@@ -134,7 +136,9 @@ describe('handleTmuxSelect wantHistory', () => {
     sessionStateStore.delete(ws);
   });
 
-  test('wantHistory:false 带与快照相同的尺寸时仍 resize（tmux 可能已漂移）', () => {
+  // canonical v1.1：只有 ResizePaneV11(geometryReason=resend) 才不信任快照几何，
+  // TMUX_SELECT 一律走去重（canonical 客户端的 wantHistory 恒为 false）。
+  test('wantHistory:false 带与快照相同的尺寸时不 resize；随后的 resend 强制下发', () => {
     const ws = createGatewaySession({ session: true });
     const fixture = createHost();
     setupConnectionEntry(
@@ -153,9 +157,20 @@ describe('handleTmuxSelect wantHistory', () => {
     });
 
     expect(fixture.focusPaneCalls).toEqual([{ windowId: '@1', paneId: '%1' }]);
-    expect(fixture.resizePaneCalls).toEqual([{ paneId: '%1', cols: 80, rows: 24 }]);
+    expect(fixture.resizePaneCalls).toEqual([]);
     expect(fixture.selectPaneCalls).toEqual([]);
     expect(fixture.selectPaneWithSizeCalls).toEqual([]);
+
+    handleCanonicalResize(fixture.host, ws, {
+      deviceId: 'device-a',
+      paneId: '%1',
+      cols: 80,
+      rows: 24,
+      reason: wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND,
+      sizeEpoch: 1n,
+    });
+
+    expect(fixture.resizePaneCalls).toEqual([{ paneId: '%1', cols: 80, rows: 24 }]);
     sessionStateStore.delete(ws);
   });
 

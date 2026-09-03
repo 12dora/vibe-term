@@ -197,4 +197,34 @@ describe('canonical v1.1 尺寸 reason/epoch', () => {
     server.dropPaneSizeEpochs(session, 'device-a');
     expect(session.paneSizeEpochs.size).toBe(0);
   });
+
+  test('pane 增删后快照对账清掉已消失 pane 的尺寸 epoch', () => {
+    const { server } = setupResizeServer();
+    const session = createGatewaySession();
+    const entry = server.connections.get('device-a');
+    entry.clients.add(session);
+
+    let epoch = 0n;
+    for (const paneId of ['%0', '%1', '%2', '%3']) {
+      epoch += 1n;
+      server.handleCanonicalResize(session, {
+        deviceId: 'device-a',
+        paneId,
+        cols: 100,
+        rows: 30,
+        reason: wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE,
+        sizeEpoch: epoch,
+      });
+    }
+    expect(session.paneSizeEpochs.size).toBe(4);
+
+    // 快照里只剩 %0：其余三个 pane 已经不存在，epoch 不该继续挂着。
+    server.installStateSnapshot('device-a', snapshotWith(80, 24));
+    expect([...session.paneSizeEpochs.keys()]).toEqual(['device-a\0%0']);
+
+    // 别的设备不受影响
+    session.paneSizeEpochs.set('device-b\0%9', 1n);
+    server.installStateSnapshot('device-a', snapshotWith(80, 24));
+    expect(session.paneSizeEpochs.has('device-b\0%9')).toBe(true);
+  });
 });
