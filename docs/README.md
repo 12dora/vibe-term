@@ -97,6 +97,7 @@
 | `operations/2026090201-passkey-second-factor-opaque-login.md` | 登录失败模糊化与通行密钥二次验证 |
 | `operations/2026090302-domain-access-policy.md` | 按节点的「允许域名访问」开关：拦截规则、服务白名单、锁死自救 |
 | `operations/2026090303-acme-dns-providers.md` | ACME dns-01 提供商抽象（Cloudflare / DNSPod）与非标端口 HTTPS 配置 |
+| `operations/2026090304-passkey-trusted-local-source-waiver.md` | 本机 / 内网 / CGNAT 源地址免通行密钥二次验证：判定、入口打标、安全边界 |
 
 ## performance —— 性能
 

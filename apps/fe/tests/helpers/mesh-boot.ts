@@ -106,6 +106,12 @@ function renderAppEnv(spec: InstanceSpec, masterKey: string): string {
     `TMEX_PEER_PORT=${spec.peerPort}`,
     'TMEX_PEER_BIND_HOST=127.0.0.1',
     'TMEX_STUN_SERVERS=',
+    // Playwright 的浏览器从 loopback 连过来，客户端来源会被判成 trusted-local，
+    // 通行密钥二次验证等按来源收紧的策略会被整体豁免。打开信任代理之后用例可以用
+    // `x-forwarded-for` 显式声明来源是公网，强路径与豁免路径都能在同一套实例上验。
+    // 只影响 x-forwarded-* / x-real-ip / cf-connecting-ip 的解读，不带这些头的请求
+    // 仍然按 socket IP 判定（见 apps/gateway/src/mesh/client-ip.ts）。
+    'TMEX_TRUST_PROXY=true',
     `TMEX_TMUX_SOCKET=${spec.tmuxSocket}`,
     'TMEX_SITE_NAME=tmex',
   ].join('\n')}\n`;

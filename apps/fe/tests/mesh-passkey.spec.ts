@@ -1,4 +1,4 @@
-import { type BrowserContext, type Page, expect, test } from '@playwright/test';
+import { type Browser, type BrowserContext, type Page, expect, test } from '@playwright/test';
 import {
   type MeshState,
   type VirtualAuthenticator,
@@ -14,10 +14,27 @@ const INVALID_CREDENTIALS_COPY = /Incorrect username or password\.|用户名或�
 const PASSKEY_ABORTED_COPY = /Passkey sign-in was cancelled\.|通行密钥授权已取消。/;
 const PASSKEY_CHECK_COPY = /Complete the passkey check|请完成通行密钥验证/;
 
+/**
+ * 强路径用例声明的「公网来源」。
+ *
+ * entry 把来源判成 trusted-local（loopback / 私网 / CGNAT）的登录一律豁免通行密钥二次验证，
+ * 而 Playwright 的浏览器正是从 loopback 连过来的。mesh 实例因此以 `TMEX_TRUST_PROXY=true` 启动
+ * （见 helpers/mesh-boot.ts），用例给自己的 context 挂上 `x-forwarded-for` 就能把来源声明成公网，
+ * 强制走严格路径。TEST-NET-3（RFC 5737）地址，永远不会撞上真实网段。
+ */
+const FORWARDED_PUBLIC_IP = '203.0.113.9';
+
 let state: MeshState;
 let context: BrowserContext;
 let page: Page;
 let authenticator: VirtualAuthenticator;
+
+/** 带公网来源头的 context：里面每一个请求（含页面内 fetch 与 WS 握手）都会带上 XFF。 */
+async function newForwardedContext(browser: Browser): Promise<BrowserContext> {
+  const created = await browser.newContext();
+  await created.setExtraHTTPHeaders({ 'x-forwarded-for': FORWARDED_PUBLIC_IP });
+  return created;
+}
 
 /**
  * 整份文件共用一个 browser context 与一个虚拟认证器。
@@ -29,7 +46,7 @@ let authenticator: VirtualAuthenticator;
  */
 test.beforeAll(async ({ browser }) => {
   state = readMeshState();
-  context = await browser.newContext();
+  context = await newForwardedContext(browser);
   page = await context.newPage();
   authenticator = await addVirtualAuthenticator(page);
 });
@@ -69,15 +86,15 @@ test('mesh: register a passkey on the entry node and log in with it', async () =
 // 断言，前端在密码提交后自动补一次仪式。复用上一条用例注册的那把凭证，不再重复注册。
 test('mesh: after a passkey is registered, password login requires the passkey', async () => {
   await logout(page);
-  await gotoLogin();
+  await gotoLogin(page);
 
-  expect(await authModeFlag('passkeySecondFactor')).toBe(true);
+  expect(await authModeFlag(page, 'passkeySecondFactor')).toBe(true);
 
   const before = await totalSignCount();
   expect(before.credentials).toBeGreaterThan(0);
 
-  await fillCredentials(state.password);
-  await watchSubmitLabels();
+  await fillCredentials(page, state.password);
+  await watchSubmitLabels(page);
   await page.getByTestId('login-submit').click();
   await expect(page.getByTestId('sidebar')).toBeVisible({ timeout: 90_000 });
 
@@ -85,17 +102,87 @@ test('mesh: after a passkey is registered, password login requires the passkey',
   const after = await totalSignCount();
   expect(after.signCount).toBeGreaterThan(before.signCount);
   // 中间那一帧太短，轮询抓不住，用 MutationObserver 录下按钮上出现过的全部文案。
-  expect((await readSubmitLabels()).join('\n')).toMatch(PASSKEY_CHECK_COPY);
+  expect((await readSubmitLabels(page)).join('\n')).toMatch(PASSKEY_CHECK_COPY);
   // 会话真的建起来了：`/api/mesh/nodes` 需要该 node 的会话 cookie。
-  expect(await meshNodesStatus()).toBe(200);
+  expect(await meshNodesStatus(page)).toBe(200);
+});
+
+/**
+ * 来源被 entry 判成 trusted-local 时，通行密钥二次验证整体豁免。
+ *
+ * 这条用例刻意不带 `x-forwarded-for`，也刻意不给这个 context 挂虚拟认证器：浏览器直接从
+ * loopback 连 entry，密码登录必须一次过，且全程不能触发任何 WebAuthn 仪式
+ * （`navigator.credentials.get` 的调用次数是硬证据）。
+ */
+test('mesh: a loopback client source waives the passkey second factor', async ({ browser }) => {
+  const local = await browser.newContext();
+  await local.addInitScript(() => {
+    const store = window as unknown as { __tmexPasskeyGetCalls?: number };
+    store.__tmexPasskeyGetCalls = 0;
+    const credentials = navigator.credentials;
+    if (!credentials) return;
+    const original = credentials.get.bind(credentials);
+    credentials.get = (options?: CredentialRequestOptions) => {
+      store.__tmexPasskeyGetCalls = (store.__tmexPasskeyGetCalls ?? 0) + 1;
+      return original(options);
+    };
+  });
+  const localPage = await local.newPage();
+
+  try {
+    await gotoLogin(localPage);
+    expect(await authModeFlag(localPage, 'passkeySecondFactor')).toBe(false);
+    expect(await authModeFlag(localPage, 'passkeySecondFactorWaived')).toBe(true);
+
+    await fillCredentials(localPage, state.password);
+    await watchSubmitLabels(localPage);
+    await localPage.getByTestId('login-submit').click();
+    await expect(localPage.getByTestId('sidebar')).toBeVisible({ timeout: 90_000 });
+
+    // 仪式一次都没起过：按钮上没出现过「请完成通行密钥验证」，认证器接口也没被调用。
+    expect((await readSubmitLabels(localPage)).join('\n')).not.toMatch(PASSKEY_CHECK_COPY);
+    expect(await passkeyGetCalls(localPage)).toBe(0);
+    expect(await meshNodesStatus(localPage)).toBe(200);
+
+    // 设置 →「多节点互联」：entry 就是 hub，节点表能列出两台就说明 hub 侧也接受了这次登录
+    // （豁免要在 entry 与 hub 两端一致，只要有一端仍然强制断言，这里就会退化成横幅）。
+    await localPage.goto(meshUrl(state, '/settings?tab=nodes'), { waitUntil: 'domcontentloaded' });
+    await expect(localPage.getByTestId('nodes-management')).toBeVisible({ timeout: 60_000 });
+    await expect(localPage.getByTestId(`nodes-row-${state.hubNodeId}`)).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(localPage.getByTestId(`nodes-row-${state.remoteNodeId}`)).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(localPage.getByTestId('nodes-hub-offline')).toHaveCount(0);
+    await expect(localPage.getByTestId('nodes-hub-login-rejected')).toHaveCount(0);
+  } finally {
+    await local.close();
+  }
+});
+
+// 反证：同一台实例、同一个账号，来源一旦是公网就仍然要求二次验证——豁免只认来源，
+// 不是把这条策略整体关掉了。
+test('mesh: a forwarded public source still enforces the passkey second factor', async ({
+  browser,
+}) => {
+  const forwarded = await newForwardedContext(browser);
+  const forwardedPage = await forwarded.newPage();
+  try {
+    await gotoLogin(forwardedPage);
+    expect(await authModeFlag(forwardedPage, 'passkeySecondFactor')).toBe(true);
+    expect(await authModeFlag(forwardedPage, 'passkeySecondFactorWaived')).not.toBe(true);
+  } finally {
+    await forwarded.close();
+  }
 });
 
 // 密码错误只给一句中性文案：账号是否存在、错在密码还是签名，一律不外泄。
 test('mesh: a wrong password shows the neutral message and stays on the login page', async () => {
   await logout(page);
-  await gotoLogin();
+  await gotoLogin(page);
 
-  await fillCredentials(`${state.password}-wrong`);
+  await fillCredentials(page, `${state.password}-wrong`);
   await page.getByTestId('login-submit').click();
 
   await expect(page.getByTestId('login-error')).toHaveText(INVALID_CREDENTIALS_COPY, {
@@ -104,18 +191,18 @@ test('mesh: a wrong password shows the neutral message and stays on the login pa
   await expect(page.getByTestId('login-page')).toBeVisible();
   await expect(page.getByTestId('sidebar')).toHaveCount(0);
   expect(new URL(page.url()).pathname).toBe('/login');
-  expect(await meshNodesStatus()).not.toBe(200);
+  expect(await meshNodesStatus(page)).not.toBe(200);
 });
 
 // 二次验证被取消（这里用「认证器无法完成用户验证」模拟：服务端下发的 options 是
 // userVerification:'required'，浏览器直接抛 NotAllowedError）：停在登录页，不产生任何会话。
 test('mesh: a cancelled passkey check keeps the user on the login page', async () => {
   await logout(page);
-  await gotoLogin();
+  await gotoLogin(page);
 
   await authenticator.setUserVerified(false);
   try {
-    await fillCredentials(state.password);
+    await fillCredentials(page, state.password);
     await page.getByTestId('login-submit').click();
 
     await expect(page.getByTestId('login-error')).toHaveText(PASSKEY_ABORTED_COPY, {
@@ -124,7 +211,7 @@ test('mesh: a cancelled passkey check keeps the user on the login page', async (
     await expect(page.getByTestId('login-page')).toBeVisible();
     await expect(page.getByTestId('sidebar')).toHaveCount(0);
     expect(new URL(page.url()).pathname).toBe('/login');
-    expect(await meshNodesStatus()).not.toBe(200);
+    expect(await meshNodesStatus(page)).not.toBe(200);
   } finally {
     // 后面的用例还要用同一把凭证登录，认证器必须复原。
     await authenticator.setUserVerified(true);
@@ -172,19 +259,19 @@ test('mesh: a routine password change keeps the passkey and the current session'
   }
 });
 
-async function gotoLogin(): Promise<void> {
-  await page.goto(meshUrl(state, '/login'), { waitUntil: 'domcontentloaded' });
-  await expect(page.getByTestId('login-page')).toBeVisible({ timeout: 30_000 });
+async function gotoLogin(target: Page): Promise<void> {
+  await target.goto(meshUrl(state, '/login'), { waitUntil: 'domcontentloaded' });
+  await expect(target.getByTestId('login-page')).toBeVisible({ timeout: 30_000 });
 }
 
-async function fillCredentials(password: string): Promise<void> {
-  await page.getByTestId('login-username').fill(state.username);
-  await page.getByTestId('login-password').fill(password);
+async function fillCredentials(target: Page, password: string): Promise<void> {
+  await target.getByTestId('login-username').fill(state.username);
+  await target.getByTestId('login-password').fill(password);
 }
 
-/** `/api/auth/mode` 的某个布尔字段；从页面里发请求，Origin 与登录时完全一致。 */
-async function authModeFlag(field: string): Promise<boolean | undefined> {
-  return page.evaluate(
+/** `/api/auth/mode` 的某个布尔字段；从页面里发请求，Origin 与来源头都与登录时完全一致。 */
+async function authModeFlag(target: Page, field: string): Promise<boolean | undefined> {
+  return target.evaluate(
     (key) =>
       fetch('/api/auth/mode', { credentials: 'include' })
         .then((res) => res.json())
@@ -194,11 +281,18 @@ async function authModeFlag(field: string): Promise<boolean | undefined> {
 }
 
 /** 需要会话的接口的状态码：200 表示这个浏览器手上真的有 entry 的会话 cookie。 */
-async function meshNodesStatus(): Promise<number> {
-  return page.evaluate(() =>
+async function meshNodesStatus(target: Page): Promise<number> {
+  return target.evaluate(() =>
     fetch('/api/mesh/nodes', { credentials: 'include' })
       .then((res) => res.status)
       .catch(() => 0)
+  );
+}
+
+/** 本 document 至今起过几次 WebAuthn 断言仪式（由 context 的 init script 计数）。 */
+async function passkeyGetCalls(target: Page): Promise<number> {
+  return target.evaluate(
+    () => (window as unknown as { __tmexPasskeyGetCalls?: number }).__tmexPasskeyGetCalls ?? 0
   );
 }
 
@@ -211,8 +305,8 @@ async function totalSignCount(): Promise<{ credentials: number; signCount: numbe
 }
 
 /** 录下登录按钮上出现过的所有文案：`passkeyCheck` 那一帧只存在于仪式的那几毫秒里。 */
-async function watchSubmitLabels(): Promise<void> {
-  await page.evaluate(() => {
+async function watchSubmitLabels(target: Page): Promise<void> {
+  await target.evaluate(() => {
     const store = window as unknown as { __tmexSubmitLabels?: string[] };
     store.__tmexSubmitLabels = [];
     const button = document.querySelector('[data-testid="login-submit"]');
@@ -224,8 +318,8 @@ async function watchSubmitLabels(): Promise<void> {
   });
 }
 
-async function readSubmitLabels(): Promise<string[]> {
-  return page.evaluate(
+async function readSubmitLabels(target: Page): Promise<string[]> {
+  return target.evaluate(
     () => (window as unknown as { __tmexSubmitLabels?: string[] }).__tmexSubmitLabels ?? []
   );
 }
