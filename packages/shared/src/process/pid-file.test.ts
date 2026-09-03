@@ -25,6 +25,16 @@ describe('parsePidFileRecord', () => {
     expect(parsePidFileRecord(JSON.stringify({ pid: '12345' }))).toBeNull();
   });
 
+  test('accepts a JSON numeric-string pid only with the gateway compatibility option', () => {
+    const raw = JSON.stringify({ pid: '12345', identity: 'boot' });
+    expect(parsePidFileRecord(raw, { allowNumericStringPid: true })).toEqual({
+      pid: 12345,
+      identity: 'boot',
+      runtimePath: undefined,
+    });
+    expect(parsePidFileRecord(raw)).toBeNull();
+  });
+
   test('CLI-strict: bare JSON number is not an object record', () => {
     expect(parsePidFileRecord('12345')).toEqual({ pid: 12345 });
     expect(parsePidFileRecord('  "12345"  ')).toBeNull();

@@ -47,6 +47,7 @@ import {
   dedupeRankedPeerEndpoints,
 } from './peer-endpoint-backoff';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
+import { type LivePeer, PeerReconnectWake } from './peer-reconnect-wake';
 import { PEER_RTC_WAKE_COOLDOWN_MS, RtcWakeGate } from './peer-rtc-wake';
 import { PeerServer } from './peer-server';
 import {
@@ -119,6 +120,10 @@ export function comparePeerTransport(a: PeerTransportKind, b: PeerTransportKind)
   return PEER_TRANSPORT_RANK[a] - PEER_TRANSPORT_RANK[b];
 }
 
+async function ensureRtcReady(rtc: RtcPeerManager): Promise<void> {
+  if ((await rtc.ready?.()) === false) throw new Error('node-datachannel is not available');
+}
+
 export type PeerManagerOptions = {
   identity: MeshIdentity;
   userStore: UserStore;
@@ -164,40 +169,6 @@ export type PeerLinkFactory = (
   peerNodeId: string,
   signal: AbortSignal
 ) => Promise<LinkSession | null>;
-
-type LivePeer = {
-  session: LinkSession;
-  peerNodeId: string;
-  transport: PeerTransportKind;
-  initiatedBy: string;
-  generation: number;
-  streams: number;
-  lastStreamAt: number;
-  idleTimer: { clear: () => void } | null;
-  pingTimer: { clear: () => void } | null;
-  missedPongs: number;
-  retiring: boolean;
-  retiredAt: number;
-  zeroStreamsSince: number;
-  gotQuiesceAck: boolean;
-  gotPeerQuiesce: boolean;
-  retireTimer: { clear: () => void } | null;
-  finishRetired: boolean;
-  lastAdvertisedStatusJson: string;
-  unsubRtc: (() => void) | null;
-  sendKey?: Uint8Array;
-  recvKey?: Uint8Array;
-  quiesceCapable: boolean;
-  helloReplied: boolean;
-  probeSent: boolean;
-  remoteAddress: string | null;
-  rttMs: number | null;
-  pingSentAt: number | null;
-  lastRttEmitAt: number;
-  lastEmittedRttMs: number | null;
-  linkSinceAt: number;
-  dcAttemptId: string | null;
-};
 
 type TransportWaiter = {
   kind: PeerTransportKind;
@@ -281,6 +252,7 @@ export class PeerManager extends PeerCollaboratorHost {
   protected readonly dcUpgrade: DcUpgradeCoordinator;
   protected readonly rtcWake: RtcWakeGate;
   private readonly lostDirect = new Set<string>();
+  private readonly peerReconnectWake = new PeerReconnectWake();
   private readonly lastDirectAttempt = new Map<string, DirectAttemptRecord>();
   private readonly transportWaiters = new Map<string, TransportWaiter[]>();
   private readonly interfacesFn: () => Record<string, RankableIfaceAddr[] | undefined>;
@@ -443,6 +415,7 @@ export class PeerManager extends PeerCollaboratorHost {
     this.upgrading.clear();
     this.rtcWake.dispose();
     this.lostDirect.clear();
+    this.peerReconnectWake.reset();
     this.dcUpgrade.dispose();
   }
 
@@ -835,7 +808,8 @@ export class PeerManager extends PeerCollaboratorHost {
     gen: number,
     signal: AbortSignal
   ): Promise<LinkSession | null> {
-    if (!this.rtc) return null;
+    const rtc = this.rtc;
+    if (!rtc) return null;
     const attemptId = this.nextDcAttemptId();
     this.dcBreaker.beginAttempt(nodeId, attemptId);
     const signaling = this.signalingFor(nodeId);
@@ -847,9 +821,11 @@ export class PeerManager extends PeerCollaboratorHost {
         return unsub;
       },
     };
-    const connectP = this.rtc.connectToPeer(nodeId, wrapped);
-    this.dispatchRtcWake(nodeId);
     try {
+      await ensureRtcReady(rtc);
+      this.throwIfStopped(nodeId, gen);
+      const connectP = rtc.connectToPeer(nodeId, wrapped);
+      this.dispatchRtcWake(nodeId);
       const result = await abortable(connectP, signal);
       if (this.stale(gen)) {
         this.releaseRtcAttempt(nodeId, unsub);
@@ -1257,6 +1233,7 @@ export class PeerManager extends PeerCollaboratorHost {
       this.clearDirectFailure(peerNodeId);
     }
     this.bindSession(live);
+    this.peerReconnectWake.installed(live, (nodeId) => this.dcUpgrade.onPeerReconnected(nodeId));
     if (!live.quiesceCapable) this.sendLinkHello(live);
     this.armIdle(live);
     this.startPing(live);
@@ -1325,13 +1302,18 @@ export class PeerManager extends PeerCollaboratorHost {
     live.lastStreamAt = this.scheduler.now();
     live.zeroStreamsSince = 0;
     this.clearIdle(live);
-    if (live.retiring) this.armRetireTimer(live);
+    if (live.retiring) {
+      live.gotQuiesceAck = false;
+      live.gotPeerQuiesce = false;
+      this.armRetireTimer(live);
+    }
     void stream.closed.then(() => {
       live.streams = Math.max(0, live.streams - 1);
       live.lastStreamAt = this.scheduler.now();
       if (live.streams === 0) live.zeroStreamsSince = this.scheduler.now();
       if (live.streams > 0) return;
       if (live.retiring) {
+        this.restartQuiesce(live);
         this.maybeFinishRetire(live);
         if (live.retiring && !live.finishRetired) this.armRetireTimer(live);
         return;
@@ -1620,6 +1602,7 @@ export class PeerManager extends PeerCollaboratorHost {
 
   private dropPeer(nodeId: string, reason: string): void {
     const live = this.live.get(nodeId);
+    const disabledLiveLost = Boolean(live && this.dcBreaker.isDisabled(nodeId));
     const wasDc = live?.transport === 'dc';
     const dcAttemptId = live?.dcAttemptId ?? null;
     if (wasDc) this.cancelDcHealthTimer(nodeId);
@@ -1636,6 +1619,7 @@ export class PeerManager extends PeerCollaboratorHost {
     if (this.stopped || reason === 'revoked') {
       this.cancelDcUpgradeRetry(nodeId);
       this.lostDirect.delete(nodeId);
+      this.peerReconnectWake.clear(nodeId);
       if (reason === 'revoked') this.dcBreaker.reset(nodeId);
       this.dropParked(nodeId, reason);
       this.emitOfflineLinkInfo(nodeId);
@@ -1661,6 +1645,7 @@ export class PeerManager extends PeerCollaboratorHost {
     }
     if (wasDc) this.armDcUpgradeRetry(nodeId);
     const next = this.live.get(nodeId);
+    this.peerReconnectWake.lost(nodeId, disabledLiveLost, Boolean(next));
     if (next) this.emitLinkInfo(next);
     else this.emitOfflineLinkInfo(nodeId);
   }
@@ -1798,15 +1783,13 @@ export class PeerManager extends PeerCollaboratorHost {
     prev.retiring = true;
     prev.retiredAt = this.scheduler.now();
     prev.zeroStreamsSince = prev.streams === 0 ? prev.retiredAt : 0;
-    prev.gotQuiesceAck = false;
-    prev.gotPeerQuiesce = false;
     let set = this.retiring.get(prev.peerNodeId);
     if (!set) {
       set = new Set();
       this.retiring.set(prev.peerNodeId, set);
     }
     set.add(prev);
-    this.sendPeerCtl(prev, { t: 'link.quiesce' });
+    this.restartQuiesce(prev);
     this.armRetireTimer(prev, reason);
     this.maybeFinishRetire(prev, reason);
   }
@@ -1853,6 +1836,12 @@ export class PeerManager extends PeerCollaboratorHost {
     });
   }
 
+  private restartQuiesce(live: LivePeer): void {
+    live.gotQuiesceAck = false;
+    live.gotPeerQuiesce = false;
+    this.sendPeerCtl(live, { t: 'link.quiesce' });
+  }
+
   private sendLinkHello(live: LivePeer): void {
     this.sendPeerCtl(live, { t: 'link.hello', caps: ['quiesce'] });
   }
@@ -1868,6 +1857,8 @@ export class PeerManager extends PeerCollaboratorHost {
     live.quiesceCapable = true;
     if (already || live.retiring) return;
     this.activateParked(live.peerNodeId);
+    const current = this.live.get(live.peerNodeId);
+    this.peerReconnectWake.ready(current, (nodeId) => this.dcUpgrade.onPeerReconnected(nodeId));
     if (this.dcUpgrade.upgradeGate.get(live.peerNodeId)?.coalesced) {
       this.maybeUpgrade(live.peerNodeId, { cooldown: true });
     }

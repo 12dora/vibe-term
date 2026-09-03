@@ -854,6 +854,7 @@ describe('PeerManager', () => {
       idleMs: 60_000,
       rtc: {
         available: true,
+        ready: async () => true,
         connectToPeer: async () => {
           throw new Error('skip-dc');
         },
@@ -904,6 +905,7 @@ describe('PeerManager', () => {
         get available() {
           return tryDc;
         },
+        ready: async () => tryDc,
         connectToPeer: async (
           _id: string,
           signaling: { onMessage: (cb: (msg: unknown) => void) => () => void }
@@ -1112,6 +1114,49 @@ describe('PeerManager', () => {
     expect(managerSmall.transportOf(large.nodeId)).toBe('dc');
     expect(wakes.length).toBeGreaterThanOrEqual(1);
     expect(wakes.every((from) => from === large.nodeId)).toBe(true);
+  });
+
+  test('lazy native miss falls back without waking the peer', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1', { nodeId: new Uint8Array(16).fill(0xff) });
+    const peer = seedNodeIdentity(store, 'user-1', { nodeId: new Uint8Array(16).fill(0x01) });
+    let readyCalls = 0;
+    let connectCalls = 0;
+    let wakes = 0;
+    const rtc = {
+      available: true,
+      async ready() {
+        readyCalls += 1;
+        return false;
+      },
+      async connectToPeer() {
+        connectCalls += 1;
+        throw new Error('node-datachannel is not available');
+      },
+    } as unknown as RtcPeerManager;
+    const uplink = dummyUplink(self, store, async () => {
+      throw new Error('relay unavailable');
+    });
+    uplink.sendCtl = (msg) => {
+      if (msg.t === 'rtc.signal') wakes += 1;
+    };
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink,
+      peerPort: 0,
+      startServer: false,
+      rtc,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+
+    await expect(manager.getLink(peer.nodeId)).rejects.toBeInstanceOf(NodeUnreachableError);
+    expect(readyCalls).toBe(1);
+    expect(connectCalls).toBe(0);
+    expect(wakes).toBe(0);
   });
 
   test('rtc wake is coalesced and ignored once the peer is already dc', async () => {
@@ -1894,6 +1939,7 @@ describe('PeerManager', () => {
     });
     const rtc = {
       available: true,
+      ready: async () => true,
       connectToPeer: () => iceAttempt,
     } as unknown as RtcPeerManager;
     const scheduler = new ImmediateScheduler();
@@ -1949,6 +1995,7 @@ describe('PeerManager', () => {
     const waiters: Array<(err: Error) => void> = [];
     const rtc = {
       available: true,
+      ready: async () => true,
       connectToPeer: () => {
         attempts += 1;
         return new Promise<never>((_, reject) => {
@@ -2138,6 +2185,7 @@ describe('PeerManager', () => {
     let dials = 0;
     const rtc = {
       available: true,
+      ready: async () => true,
       connectToPeer: () => {
         dials += 1;
         return new Promise<never>((_, reject) => {

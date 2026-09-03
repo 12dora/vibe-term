@@ -1,6 +1,7 @@
 export const GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS = 16;
 export const GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES = 64 * 1024;
 export const GATEWAY_TERM_OUTPUT_BATCH_TOTAL_MAX_BYTES = 8 * 1024 * 1024;
+export const GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS = 4096;
 
 export interface TerminalOutputBatcherStats {
   pendingPanes: number;
@@ -40,7 +41,7 @@ const INITIAL_BATCH_CAPACITY_BYTES = 1024;
 
 export class TerminalOutputBatcher {
   private readonly pending = new Map<string, Map<string, PendingBatch>>();
-  private readonly lastFlushAt = new Map<string, Map<string, number>>();
+  private readonly lastFlushAt = new Map<string, number>();
   private readonly delayMs: number;
   private readonly maxBytes: number;
   private readonly totalMaxBytes: number;
@@ -113,7 +114,10 @@ export class TerminalOutputBatcher {
       }
     }
     this.pending.delete(deviceId);
-    this.lastFlushAt.delete(deviceId);
+    const prefix = `${deviceId}\0`;
+    for (const key of this.lastFlushAt.keys()) {
+      if (key.startsWith(prefix)) this.lastFlushAt.delete(key);
+    }
   }
 
   snapshotStats(): TerminalOutputBatcherStats {
@@ -186,20 +190,42 @@ export class TerminalOutputBatcher {
   }
 
   private nextDelayMs(deviceId: string, paneId: string): number {
-    const last = this.lastFlushAt.get(deviceId)?.get(paneId);
+    const key = cooldownKey(deviceId, paneId);
+    const last = this.lastFlushAt.get(key);
     if (last === undefined) return 0;
     const elapsed = this.now() - last;
-    if (elapsed >= this.delayMs) return 0;
+    if (elapsed >= this.delayMs) {
+      this.lastFlushAt.delete(key);
+      return 0;
+    }
     return this.delayMs - elapsed;
   }
 
   private markFlushed(deviceId: string, paneId: string): void {
-    let panes = this.lastFlushAt.get(deviceId);
-    if (!panes) {
-      panes = new Map();
-      this.lastFlushAt.set(deviceId, panes);
+    const now = this.now();
+    this.pruneLastFlushes(now);
+    const key = cooldownKey(deviceId, paneId);
+    this.lastFlushAt.delete(key);
+    this.lastFlushAt.set(key, now);
+    while (this.lastFlushAt.size > GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS) {
+      const oldest = this.lastFlushAt.keys().next().value;
+      if (oldest === undefined) break;
+      this.lastFlushAt.delete(oldest);
     }
-    panes.set(paneId, this.now());
+  }
+
+  private pruneLastFlushes(now: number): void {
+    while (this.lastFlushAt.size > 0) {
+      const oldest = this.lastFlushAt.entries().next().value as [string, number] | undefined;
+      if (!oldest) return;
+      if (
+        this.lastFlushAt.size < GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS &&
+        now - oldest[1] < this.delayMs
+      ) {
+        return;
+      }
+      this.lastFlushAt.delete(oldest[0]);
+    }
   }
 
   private flushOldest(): void {
@@ -211,4 +237,8 @@ export class TerminalOutputBatcher {
     }
     throw new Error('terminal output batch accounting is inconsistent');
   }
+}
+
+function cooldownKey(deviceId: string, paneId: string): string {
+  return `${deviceId}\0${paneId}`;
 }

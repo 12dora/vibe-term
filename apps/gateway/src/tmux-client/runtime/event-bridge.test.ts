@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
 
 import { createControlModeSubscription } from '../control-mode-subscription';
@@ -6,10 +6,17 @@ import type { DeviceSessionRuntimeListener } from '../device-session-runtime';
 import { MetadataProjection } from '../metadata-projection';
 import { PaneHistoryReader } from '../pane-history-reader';
 import { PaneRetention } from '../pane-retention';
+import { clearSkippedPaneOutputsForDevice } from '../retention/skipped-output';
 import { RuntimeEventBridge, stateSnapshotsEqual } from './event-bridge';
+import {
+  finishPaneOutputMaterializationRequest,
+  requestPaneOutputMaterializationPredicate,
+} from './output-materialization';
 
 const SERVER_EPOCH = new Uint8Array(16).fill(1);
 const encoder = new TextEncoder();
+
+afterEach(() => clearSkippedPaneOutputsForDevice('device-a'));
 
 function snapshotPaneTitle(payload: StateSnapshotPayload | null): string | undefined {
   return payload?.session?.windows[0]?.panes[0]?.title;
@@ -226,6 +233,119 @@ describe('RuntimeEventBridge', () => {
 
     lease.close();
     subscription.dispose();
+    paneRetention.dispose();
+    metadata.dispose();
+    historyReader.dispose();
+  });
+
+  test('materialized output does not hide an earlier cold-output gap from an old cursor', () => {
+    const metadata = new MetadataProjection('device-a');
+    const paneRetention = new PaneRetention({ scheduleTimers: false });
+    const historyReader = new PaneHistoryReader({
+      getPaneHistoryCaptureInfo: async () => ({ historySize: 0, cols: 80 }),
+      capturePaneHistoryRange: async () => '',
+    });
+    let lastSnapshot: StateSnapshotPayload | null = null;
+    const bridge = new RuntimeEventBridge({
+      metadata,
+      paneRetention,
+      getHistoryReader: () => historyReader,
+      getLastSnapshot: () => lastSnapshot,
+      setLastSnapshot: (payload) => {
+        lastSnapshot = payload;
+      },
+      broadcast: () => {},
+      handleUnexpectedClose: () => undefined,
+    });
+    const options = bridge.connectionOptions({ deviceId: 'device-a' });
+    options.onSourceReady?.(SERVER_EPOCH);
+    options.onSnapshot(snapshot());
+    const oldCursor = paneRetention.getLatestCursor('%1');
+    if (!oldCursor) throw new Error('expected initial cursor');
+    expect(oldCursor.terminalSeq).toBe(0n);
+
+    const discoveryData = new Uint8Array();
+    const request = requestPaneOutputMaterializationPredicate(discoveryData);
+    options.onTerminalOutput('%1', discoveryData);
+    const materializeOutput = finishPaneOutputMaterializationRequest(request);
+    if (!materializeOutput) throw new Error('expected materialization predicate');
+    const subscription = createControlModeSubscription(
+      {
+        onTerminalOutput: options.onTerminalOutput,
+        onTitle: () => {},
+        onBell: () => {},
+        onNotification: () => {},
+        onStructureChanged: () => {},
+        onExit: () => {},
+      },
+      { materializeOutput }
+    );
+
+    subscription.push(encoder.encode(`%output %1 ${'x'.repeat(50)}\n`));
+    expect(paneRetention.getLatestCursor('%1')?.terminalSeq).toBe(0n);
+
+    const paneEpoch = metadata.getPaneEpoch('%1');
+    if (!paneEpoch) throw new Error('expected pane epoch');
+    const firstClient = paneRetention.attachConsumer({ onData: () => {} });
+    firstClient.applySubscriptions(1n, [{ paneId: '%1', paneEpoch, cursor: oldCursor }], []);
+    subscription.push(encoder.encode('%output %1 later\n'));
+    expect(paneRetention.getLatestCursor('%1')?.terminalSeq).toBe(5n);
+
+    const oldClient = paneRetention.attachConsumer({ onData: () => {} });
+    const replay = oldClient.applySubscriptions(
+      1n,
+      [{ paneId: '%1', paneEpoch, cursor: oldCursor }],
+      []
+    ).replay[0];
+    expect(replay?.needsScreen).toBe(true);
+    expect(replay?.gap?.reason).toBe('cache_evicted');
+    expect(replay?.segments).toEqual([]);
+
+    oldClient.close();
+    firstClient.close();
+    subscription.dispose();
+    paneRetention.dispose();
+    metadata.dispose();
+    historyReader.dispose();
+  });
+
+  test('moves a cold-output gap marker to the current pane epoch', () => {
+    const epochA = new Uint8Array(16).fill(3);
+    const epochB = new Uint8Array(16).fill(4);
+    let currentEpoch = epochA;
+    const metadata = new MetadataProjection('device-a');
+    metadata.ensurePaneEpoch = () => currentEpoch.slice();
+    const paneRetention = new PaneRetention({ scheduleTimers: false });
+    paneRetention.reconcilePanes([{ paneId: '%1', paneEpoch: epochA }]);
+    const historyReader = new PaneHistoryReader({
+      getPaneHistoryCaptureInfo: async () => ({ historySize: 0, cols: 80 }),
+      capturePaneHistoryRange: async () => '',
+    });
+    const bridge = new RuntimeEventBridge({
+      metadata,
+      paneRetention,
+      getHistoryReader: () => historyReader,
+      getLastSnapshot: () => null,
+      setLastSnapshot: () => {},
+      broadcast: () => {},
+      handleUnexpectedClose: () => undefined,
+    });
+    const options = bridge.connectionOptions({ deviceId: 'device-a' });
+    const discoveryData = new Uint8Array();
+    const request = requestPaneOutputMaterializationPredicate(discoveryData);
+    options.onTerminalOutput('%1', discoveryData);
+    const materializeOutput = finishPaneOutputMaterializationRequest(request);
+    if (!materializeOutput) throw new Error('expected materialization predicate');
+
+    expect(materializeOutput('%1')).toBe(false);
+    currentEpoch = epochB;
+    paneRetention.reconcilePanes([{ paneId: '%1', paneEpoch: epochB }]);
+    expect(materializeOutput('%1')).toBe(false);
+
+    const replay = paneRetention.readReplay('%1', { paneEpoch: epochB, terminalSeq: 0n });
+    expect(replay?.needsScreen).toBe(true);
+    expect(replay?.gap?.reason).toBe('cache_evicted');
+
     paneRetention.dispose();
     metadata.dispose();
     historyReader.dispose();

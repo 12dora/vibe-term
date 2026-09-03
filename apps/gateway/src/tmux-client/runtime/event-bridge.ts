@@ -10,7 +10,6 @@ import { bytesEqual } from '../retention/bytes';
 import {
   clearSkippedPaneOutput,
   clearSkippedPaneOutputsForDevice,
-  hasDeviceSkippedPaneOutput,
   markSkippedPaneOutput,
 } from '../retention/skipped-output';
 import {
@@ -58,10 +57,8 @@ export class RuntimeEventBridge {
       ) {
         return true;
       }
-      if (!hasDeviceSkippedPaneOutput(base.deviceId, paneId)) {
-        const paneEpoch = this.host.metadata.ensurePaneEpoch(paneId);
-        if (paneEpoch) markSkippedPaneOutput(base.deviceId, paneId, paneEpoch);
-      }
+      const paneEpoch = this.host.metadata.ensurePaneEpoch(paneId);
+      if (paneEpoch) markSkippedPaneOutput(base.deviceId, paneId, paneEpoch);
       return false;
     };
     return {
@@ -74,7 +71,6 @@ export class RuntimeEventBridge {
         providePaneOutputMaterializationPredicate(data, materializeOutput);
         const paneEpoch = this.host.metadata.ensurePaneEpoch(paneId);
         if (paneEpoch) this.host.paneRetention.ingest(paneId, paneEpoch, data);
-        clearSkippedPaneOutput(base.deviceId, paneId);
         this.host.broadcast((listener) => listener.onTerminalOutput?.(paneId, data));
       },
       onTerminalHistory: (paneId, data, alternateScreen, modes) => {

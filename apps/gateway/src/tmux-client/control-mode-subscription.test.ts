@@ -92,6 +92,28 @@ describe('control mode subscription', () => {
     subscription.dispose();
   });
 
+  test('keeps outer unescaped output stable during synchronous re-entry', () => {
+    const outputs: string[] = [];
+    let reentered = false;
+    const subscription = createControlModeSubscription({
+      onTerminalOutput: (_paneId, data) => outputs.push(new TextDecoder().decode(data)),
+      onTitle: () => {},
+      onBell: () => {
+        if (reentered) return;
+        reentered = true;
+        subscription.push(lines('%output %1 XYZ\\007A'));
+      },
+      onNotification: () => {},
+      onStructureChanged: () => {},
+      onExit: () => {},
+    });
+
+    subscription.push(lines('%output %1 A\\007B'));
+
+    expect(outputs).toEqual(['XYZA', 'AB']);
+    subscription.dispose();
+  });
+
   test('parses OSC 9 notification escaped in control stream', () => {
     const { subscription, collected } = createCollector();
     subscription.push(lines('%output %4 \\033]9;hi from claude\\007'));

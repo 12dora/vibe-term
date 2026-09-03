@@ -18,37 +18,26 @@ function bytes(...parts: Array<number | string | Uint8Array>): Uint8Array {
   return new Uint8Array(list);
 }
 
-function isViewOf(
-  result: Uint8Array,
-  source: Uint8Array,
-  start: number,
-  end = source.length
-): void {
-  expect(result.buffer).toBe(source.buffer);
-  expect(result.byteOffset).toBe(source.byteOffset + start);
-  expect(result.byteLength).toBe(end - start);
-}
-
 describe('unescapeControlModeData', () => {
-  test('returns the original subarray when there is no backslash', () => {
+  test('plain helper returns an owned copy when there is no backslash', () => {
     const line = bytes('hello world without escapes');
     const result = unescapeControlModeData(line, 0);
     expect(Array.from(result)).toEqual(Array.from(line));
-    isViewOf(result, line, 0);
+    expect(result.buffer).not.toBe(line.buffer);
   });
 
-  test('returns a view from start when the payload has no backslash', () => {
+  test('plain helper copies from start when the payload has no backslash', () => {
     const line = bytes('%output %0 hello');
     const result = unescapeControlModeData(line, 11);
     expect(Array.from(result)).toEqual(Array.from(bytes('hello')));
-    isViewOf(result, line, 11);
+    expect(result.buffer).not.toBe(line.buffer);
   });
 
-  test('empty payload at end of line is a zero-length view of the source', () => {
+  test('plain helper owns an empty payload at end of line', () => {
     const line = bytes('%output %0 ');
     const result = unescapeControlModeData(line, line.length);
     expect(result.length).toBe(0);
-    isViewOf(result, line, line.length);
+    expect(result.buffer).not.toBe(line.buffer);
   });
 
   test('backslash at end of line is passed through', () => {
@@ -75,6 +64,12 @@ describe('unescapeControlModeData', () => {
     expect(Array.from(unescapeControlModeData(line, 0))).toEqual(
       Array.from(bytes('AAAA', 0x09, 'BBBB', 0x5c, 'CCCC'))
     );
+  });
+
+  test('plain helper results stay stable across later escaped calls', () => {
+    const first = unescapeControlModeData(bytes('A\\007B'), 0);
+    unescapeControlModeData(bytes('XYZ\\033A'), 0);
+    expect(Array.from(first)).toEqual([0x41, 0x07, 0x42]);
   });
 
   test('reuses and grows one scratch backing buffer across escaped payloads', () => {

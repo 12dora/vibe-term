@@ -217,6 +217,14 @@ export function dispatchControlModeLine(
   state: NotificationParseState,
   line: Uint8Array
 ): void {
+  state.unescaper.withScratchLease(() => dispatchControlModeLineLeased(callbacks, state, line));
+}
+
+function dispatchControlModeLineLeased(
+  callbacks: ControlModeParserCallbacks,
+  state: NotificationParseState,
+  line: Uint8Array
+): void {
   if (line.length === 0) {
     if (state.currentBlock && state.literalBlock) {
       pushBlockLine(state, '');

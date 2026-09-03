@@ -699,6 +699,64 @@ describe('PeerManager upgrade review fixes', () => {
     expect(accepted).toBe(1);
   });
 
+  test('retiring link re-quiesces after its last stream drains', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: failingUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [oldLocal, oldRemote] = createInMemoryLinkPair();
+    const encodeCtl = (value: Record<string, unknown>) =>
+      new TextEncoder().encode(JSON.stringify(value));
+    let quiesces = 0;
+    oldRemote.ctl.onMessage((bytes) => {
+      const msg = JSON.parse(new TextDecoder().decode(bytes)) as { t?: string };
+      if (msg.t === 'link.hello') {
+        oldRemote.ctl.send(encodeCtl({ t: 'link.hello', caps: ['quiesce'] }));
+      } else if (msg.t === 'link.quiesce') {
+        quiesces += 1;
+        if (quiesces === 1) {
+          oldRemote.ctl.send(encodeCtl({ t: 'link.quiesce.ack' }));
+          oldRemote.ctl.send(encodeCtl({ t: 'link.quiesce' }));
+        }
+      }
+    });
+    expect(manager.adoptLink(peer.nodeId, oldLocal, 'relay', self.nodeId)).toBe(oldLocal);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId), 2_000);
+    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      oldRemote.onStream(resolve)
+    );
+    const outbound = await oldLocal.openStream(HTTP_OPEN);
+    const inbound = await incoming;
+
+    const [nextLocal, nextRemote] = createInMemoryLinkPair();
+    fixtures.push({ close: () => nextRemote.close('test') });
+    expect(manager.adoptLink(peer.nodeId, nextLocal, 'ws-secure', self.nodeId)).toBe(nextLocal);
+    await waitUntil(() => quiesces === 1, 2_000);
+
+    await Promise.all([outbound.end(), inbound.end()]);
+    await Promise.all([outbound.closed, inbound.closed]);
+    await waitUntil(() => quiesces === 2, 2_000);
+    const beforeAck = await Promise.race([
+      oldRemote.closed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 30)),
+    ]);
+    expect(beforeAck).toBe('open');
+
+    oldRemote.ctl.send(encodeCtl({ t: 'link.quiesce.ack' }));
+    oldRemote.ctl.send(encodeCtl({ t: 'link.quiesce' }));
+    expect((await oldRemote.closed).reason).toBe('replaced');
+  });
+
   test('getLink upgrade of an existing link respects nextEligibleAt backoff', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

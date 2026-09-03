@@ -614,7 +614,7 @@ export class WebSocketServer
     frameCache: Map<number, Uint8Array> | null = null
   ): number | null {
     const carrier = ws.activeCarrier;
-    if (!gatewayWebSocketSendGuard.canSend(carrier)) return null;
+    if (!gatewayWebSocketSendGuard.canSend(carrier, true)) return null;
     const state = ws.borshState;
     const originalSeq = state.seqGen();
     let frame = frameCache?.get(originalSeq);

@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 
-import { GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS } from '../terminal-output-batcher';
+import {
+  GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
+  GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS,
+} from '../terminal-output-batcher';
 import { CanonicalFrameSizer } from './frame-sizer';
 import { CanonicalPaneStream } from './pane-stream';
 import { CanonicalTransactionSender } from './transaction-sender';
@@ -315,5 +318,42 @@ describe('canonical pane stream leading-edge', () => {
     harness.timer.runAll();
 
     expect(harness.texts()).toEqual(['ab', 'cd']);
+  });
+
+  test('evicts expired cooldown keys and caps live history', () => {
+    const harness = createLeadingHarness();
+    const stream = harness.stream as any;
+
+    harness.stream.handlePaneData('device-old', paneSegment('a', 0n));
+    harness.timer.runAll();
+    harness.setNow(DELAY + 1);
+    harness.stream.handlePaneData('device-new', paneSegment('b', 0n));
+    harness.timer.runAll();
+    expect(stream.paneDataLastFlushAt.has('device-old\0%1')).toBe(false);
+
+    for (let index = 0; index <= GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS; index += 1) {
+      harness.stream.handlePaneData('device-cap', {
+        ...paneSegment('c', 0n),
+        paneId: `%${index}`,
+      });
+    }
+    harness.timer.runAll();
+    expect(stream.paneDataLastFlushAt.size).toBeLessThanOrEqual(
+      GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS
+    );
+  });
+
+  test('device detach clears only that device cooldown keys', () => {
+    const harness = createLeadingHarness();
+
+    harness.stream.handlePaneData('device-a', paneSegment('a', 0n));
+    harness.stream.handlePaneData('device-b', paneSegment('b', 0n));
+    harness.timer.runAll();
+    harness.setNow(5);
+    harness.stream.flushPaneDataBatchesForDevice('device-a');
+    harness.stream.handlePaneData('device-a', paneSegment('c', 1n));
+    harness.stream.handlePaneData('device-b', paneSegment('d', 1n));
+
+    expect(harness.delays()).toEqual([0, DELAY - 5]);
   });
 });

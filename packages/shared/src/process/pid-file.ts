@@ -11,7 +11,14 @@ export type PidFileRecord = {
   runtimePath?: string;
 };
 
-export function parsePidFileRecord(raw: string): PidFileRecord | null {
+export type ParsePidFileRecordOptions = {
+  allowNumericStringPid?: boolean;
+};
+
+export function parsePidFileRecord(
+  raw: string,
+  options: ParsePidFileRecordOptions = {}
+): PidFileRecord | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   if (/^\d+$/.test(trimmed)) {
@@ -19,12 +26,16 @@ export function parsePidFileRecord(raw: string): PidFileRecord | null {
     return Number.isInteger(pid) && pid > 0 ? { pid } : null;
   }
   try {
-    const parsed = JSON.parse(trimmed) as Partial<PidFileRecord>;
-    if (typeof parsed.pid !== 'number' || !Number.isInteger(parsed.pid) || parsed.pid <= 0) {
+    const parsed = JSON.parse(trimmed) as Partial<PidFileRecord> & { pid?: unknown };
+    const pid =
+      options.allowNumericStringPid && typeof parsed.pid === 'string'
+        ? Number(parsed.pid)
+        : parsed.pid;
+    if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
       return null;
     }
     return {
-      pid: parsed.pid,
+      pid,
       identity: typeof parsed.identity === 'string' ? parsed.identity : null,
       runtimePath: typeof parsed.runtimePath === 'string' ? parsed.runtimePath : undefined,
     };

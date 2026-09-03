@@ -29,6 +29,7 @@ import {
   type PaneTerminalCursor,
 } from './pane-retention';
 import type { PromptMarker } from './pane-stream-parser';
+import { clearSkippedPaneOutput } from './retention/skipped-output';
 import { CanonicalScreenCapture } from './runtime/canonical-screen-capture';
 import { RuntimeEventBridge } from './runtime/event-bridge';
 import { SshExternalTmuxConnection } from './ssh-external-connection';
@@ -187,7 +188,11 @@ export class DeviceSessionRuntime {
       getPaneHistoryCaptureInfo: (paneId) => this.connection.getPaneHistoryCaptureInfo(paneId),
       createHistoryCursor: (paneId, paneEpoch, beforeLine) =>
         this.paneHistoryReader.createCursor(paneId, paneEpoch, beforeLine),
-      storeScreenCheckpoint: (checkpoint) => this.paneRetention.storeScreenCheckpoint(checkpoint),
+      storeScreenCheckpoint: (checkpoint) => {
+        const stored = this.paneRetention.storeScreenCheckpoint(checkpoint);
+        if (stored) clearSkippedPaneOutput(this.deviceId, checkpoint.paneId);
+        return stored;
+      },
     });
   }
 

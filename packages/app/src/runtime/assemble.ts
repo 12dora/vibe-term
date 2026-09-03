@@ -179,6 +179,9 @@ async function createNodeMesh(input: {
     hub: input.hub,
     meshHubStore: input.meshHubStore,
     meshHubs: input.meshHubStore,
+    canLoadNative: () =>
+      process.env.TMEX_DIRECT_ENABLED !== 'false' &&
+      (input.loadNative !== undefined || nativeDir.length > 0),
     loadNative:
       input.loadNative ??
       (async () =>

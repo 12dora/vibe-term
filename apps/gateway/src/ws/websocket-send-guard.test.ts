@@ -50,6 +50,36 @@ function isStreamPaneGap(frame: Uint8Array): boolean {
   }
 }
 
+function termOutputFrame(
+  seq: number,
+  data = new Uint8Array([seq & 0xff])
+): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(
+    wsBorsh.encodeTermOutputFrame({ deviceId: 'device-a', paneId: '%1', encoding: 1, data }, seq)
+  );
+}
+
+function paneDataFrame(seq: number): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(
+    wsBorsh.encodeCanonicalEventFrame(
+      {
+        PaneData: {
+          pane: {
+            deviceId: 'device-a',
+            serverEpoch: new Uint8Array(16).fill(1),
+            paneId: '%1',
+          },
+          paneEpoch: new Uint8Array(16).fill(2),
+          seqStart: 0n,
+          seqEnd: 1n,
+          data: new Uint8Array([seq & 0xff]),
+        },
+      },
+      seq
+    )
+  );
+}
+
 describe('WebSocketSendGuard', () => {
   test('resumes after a backpressured frame drains without any skipped frame', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
@@ -72,7 +102,7 @@ describe('WebSocketSendGuard', () => {
 
     expect(guard.sendFramesStatus(target.carrier, [new Uint8Array([1])])).toBe('backpressured');
     expect(guard.isBackpressured(target.carrier)).toBe(true);
-    expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [termOutputFrame(2)])).toBe(false);
 
     guard.handleDrain(target.carrier);
     expect(target.terminateCalls()).toBe(0);
@@ -85,7 +115,7 @@ describe('WebSocketSendGuard', () => {
     const target = createCarrier(['backpressure', 'sent']);
 
     expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
-    expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [paneDataFrame(2)])).toBe(false);
     expect(target.sendCalls()).toBe(1);
 
     guard.handleDrain(target.carrier);
@@ -103,7 +133,7 @@ describe('WebSocketSendGuard', () => {
 
     expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
     for (let i = 0; i < 12; i += 1) {
-      expect(guard.sendFrames(target.carrier, [new Uint8Array([i + 2])])).toBe(false);
+      expect(guard.sendFrames(target.carrier, [termOutputFrame(i + 2)])).toBe(false);
     }
     expect(target.sendCalls()).toBe(1);
 
@@ -113,7 +143,7 @@ describe('WebSocketSendGuard', () => {
 
     expect(guard.sendFrames(target.carrier, [new Uint8Array([99])])).toBe(true);
     expect(guard.sendFrames(target.carrier, [new Uint8Array([100])])).toBe(false);
-    expect(guard.sendFrames(target.carrier, [new Uint8Array([101])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [paneDataFrame(101)])).toBe(false);
     guard.handleDrain(target.carrier);
     expect(target.sent.filter(isStreamPaneGap)).toHaveLength(2);
     expect(target.terminateCalls()).toBe(0);
@@ -124,11 +154,7 @@ describe('WebSocketSendGuard', () => {
     const target = createCarrier(['backpressure', 'sent']);
 
     expect(
-      guard.sendFrames(target.carrier, [
-        new Uint8Array([1]),
-        new Uint8Array([2]),
-        new Uint8Array([3]),
-      ])
+      guard.sendFrames(target.carrier, [new Uint8Array([1]), termOutputFrame(2), paneDataFrame(3)])
     ).toBe(false);
     expect(target.sendCalls()).toBe(1);
 
@@ -138,16 +164,55 @@ describe('WebSocketSendGuard', () => {
     expect(guard.sendFrames(target.carrier, [new Uint8Array([4])])).toBe(true);
   });
 
-  test('marks a stateful abandoned continuation as a stream gap and resyncs', () => {
-    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+  test('terminates after a stateful continuation is abandoned under backpressure', () => {
+    const reasons: string[] = [];
+    const guard = new WebSocketSendGuard({
+      timeoutMs: 1000,
+      onTerminate: (reason) => reasons.push(reason),
+    });
     const target = createCarrier(['backpressure', 'sent']);
 
     expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
     guard.markStreamGap(target.carrier);
     guard.handleDrain(target.carrier);
 
-    expect(target.terminateCalls()).toBe(0);
-    expect(target.sent.filter(isStreamPaneGap)).toHaveLength(1);
+    expect(target.terminateCalls()).toBe(1);
+    expect(target.sent.filter(isStreamPaneGap)).toHaveLength(0);
+    expect(reasons).toEqual(['backpressure_gap']);
+  });
+
+  test('terminates when any skipped frame is not screen-reconstructible terminal data', () => {
+    const reasons: string[] = [];
+    const guard = new WebSocketSendGuard({
+      timeoutMs: 1000,
+      onTerminate: (reason) => reasons.push(reason),
+    });
+    const target = createCarrier(['backpressure', 'sent']);
+    const control = new Uint8Array(wsBorsh.encodeEnvelope(wsBorsh.KIND_PONG, new Uint8Array(), 2));
+
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [termOutputFrame(1), control])).toBe(false);
+    guard.handleDrain(target.carrier);
+
+    expect(target.terminateCalls()).toBe(1);
+    expect(target.sent.filter(isStreamPaneGap)).toHaveLength(0);
+    expect(reasons).toEqual(['backpressure_gap']);
+  });
+
+  test('terminates when the drain resync frame is rejected', () => {
+    const reasons: string[] = [];
+    const guard = new WebSocketSendGuard({
+      timeoutMs: 1000,
+      onTerminate: (reason) => reasons.push(reason),
+    });
+    const target = createCarrier(['backpressure', 'rejected']);
+
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [termOutputFrame(2)])).toBe(false);
+    guard.handleDrain(target.carrier);
+
+    expect(target.terminateCalls()).toBe(1);
+    expect(reasons).toEqual(['backpressure_gap']);
   });
 
   test('terminates a carrier that stays backpressured past the deadline', async () => {
@@ -303,8 +368,9 @@ describe('WebSocketSendGuard', () => {
         cid: 'tab-a',
         nodeId: 'node-1',
       };
+      const skipped = termOutputFrame(2, new Uint8Array([3, 4, 5]));
       expect(guard.sendFrames(target.carrier, [new Uint8Array([1, 2])])).toBe(false);
-      expect(guard.sendFrames(target.carrier, [new Uint8Array([3, 4, 5])])).toBe(false);
+      expect(guard.sendFrames(target.carrier, [skipped])).toBe(false);
       guard.handleDrain(target.carrier);
     } finally {
       console.warn = orig;
@@ -326,7 +392,9 @@ describe('WebSocketSendGuard', () => {
     }
     expect(entry).toContain('buffered_before=37');
     expect(drain).toContain('skipped_frames=1');
-    expect(drain).toContain('skipped_bytes=3');
+    expect(drain).toContain(
+      `skipped_bytes=${termOutputFrame(2, new Uint8Array([3, 4, 5])).byteLength}`
+    );
     expect(drain).toContain('resync=1');
   });
 

@@ -322,13 +322,15 @@ describe('PeerManager DataChannel breaker', () => {
   async function tripBreaker(
     manager: PeerManager,
     peerNodeId: string,
-    dcCalls: () => number
+    dcCalls: () => number,
+    opts: { keepFinalLive?: boolean } = {}
   ): Promise<void> {
     await dropLive(manager, peerNodeId);
     const start = dcCalls();
     while (dcCalls() - start < RTC_DIAL_BREAKER_FAILS) {
       const link = await manager.getLink(peerNodeId);
       expect(manager.transportOf(peerNodeId)).toBe('ws-secure');
+      if (opts.keepFinalLive && dcCalls() - start >= RTC_DIAL_BREAKER_FAILS) return;
       link.close('drop');
       await waitUntil(() => manager.transportOf(peerNodeId) === null);
     }
@@ -421,10 +423,9 @@ describe('PeerManager DataChannel breaker', () => {
       breakerMs: '40',
       disableAfter: String(RTC_DIAL_BREAKER_FAILS),
     });
-    await tripBreaker(manager, peer.nodeId, dcCalls);
+    await tripBreaker(manager, peer.nodeId, dcCalls, { keepFinalLive: true });
     expect(manager.linkDetailOf(peer.nodeId).dcBreaker.disabled).toBe(true);
     const frozen = dcCalls();
-    await dropLive(manager, peer.nodeId);
     await Bun.sleep(50);
     const link = await manager.getLink(peer.nodeId);
     expect(dcCalls()).toBe(frozen);
@@ -434,5 +435,24 @@ describe('PeerManager DataChannel breaker', () => {
     await waitUntil(() => dcCalls() > frozen);
     expect(dcCalls()).toBe(frozen + 1);
     expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
+  });
+
+  test('disabled DC upgrade retries immediately after the same endpoint reconnects', async () => {
+    const { manager, peer, dcCalls } = await setupManager({
+      breakerMs: '60000',
+      disableAfter: String(RTC_DIAL_BREAKER_FAILS),
+    });
+    await tripBreaker(manager, peer.nodeId, dcCalls, { keepFinalLive: true });
+    expect(manager.linkDetailOf(peer.nodeId).dcBreaker.disabled).toBe(true);
+    const frozen = dcCalls();
+
+    await dropLive(manager, peer.nodeId);
+    const link = await manager.getLink(peer.nodeId);
+    await waitUntil(() => dcCalls() > frozen);
+
+    expect(dcCalls()).toBe(frozen + 1);
+    expect(manager.linkDetailOf(peer.nodeId).dcBreaker.disabled).toBe(false);
+    expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
+    expect(link).toBeTruthy();
   });
 });

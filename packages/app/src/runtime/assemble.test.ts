@@ -156,16 +156,19 @@ describe('assembleTmex role matrix', () => {
     process.env.TMEX_DIRECT_ENABLED = 'false';
     try {
       let loadNative: LoadNative | undefined;
+      let canLoadNative: (() => boolean) | undefined;
       await assembleTmex({
         roles: { hub: false, node: true },
         nativeDir: '/tmp/tmex-native-should-not-load',
         createGatewayRuntime: async () => fakeGateway(),
         createMeshRuntime: async (opts) => {
           loadNative = opts.loadNative;
+          canLoadNative = opts.canLoadNative;
           return fakeMesh();
         },
       });
       expect(loadNative).toBeTypeOf('function');
+      expect(canLoadNative?.()).toBe(false);
       const warnings: string[] = [];
       const originalWarn = console.warn;
       console.warn = (...args: unknown[]) => {

@@ -112,7 +112,6 @@ export type MeshRuntimeConfig = {
   bindHost?: string;
   peerBindHost?: PeerBindHost;
 };
-
 export type CreateMeshRuntimeOptions = {
   db: AuthDb;
   gateway: GatewayRuntime;
@@ -127,6 +126,7 @@ export type CreateMeshRuntimeOptions = {
   scheduler?: MeshScheduler;
   userId?: string;
   loadNative?: LoadNative;
+  canLoadNative?: () => boolean;
   networkInterfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
   linkFactory?: PeerLinkFactory;
   rtcHandshakeTimeoutMs?: number;
@@ -143,7 +143,6 @@ export type CreateMeshRuntimeOptions = {
   /** 本机节点名随 hub node.list 变化时回调，用于同步 site_settings.site_name。 */
   onLocalNodeName?: (name: string) => void;
 };
-
 export const CONNECTION_ID_BYTES = 32;
 export const TLS_STATUS_POLL_MS = 10 * 60 * 1000;
 
@@ -855,6 +854,7 @@ function createSessionBindings(s: Awaited<ReturnType<typeof createMeshStoresAndS
   const acceptingBrowser = new Set<string>();
   const rtc = new RtcPeerManager({
     loadNative,
+    canLoadNative: opts.canLoadNative ?? (() => opts.loadNative !== undefined),
     iceConfigProvider: () =>
       state.lastRtc ?? { stun: config.stunServers, turn: turnConfig(config) },
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },

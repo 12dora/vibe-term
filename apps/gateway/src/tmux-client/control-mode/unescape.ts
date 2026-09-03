@@ -7,7 +7,17 @@ function isOctalDigit(byte: number): boolean {
 }
 
 export class ControlModeUnescaper {
-  private scratch = EMPTY_SCRATCH;
+  private readonly scratches: Uint8Array[] = [EMPTY_SCRATCH];
+  private activeLeases = 0;
+
+  withScratchLease<T>(callback: () => T): T {
+    this.activeLeases += 1;
+    try {
+      return callback();
+    } finally {
+      this.activeLeases -= 1;
+    }
+  }
 
   // 含转义时返回的视图仅在下一次 unescape 前有效，调用方必须同步消费。
   unescape(line: Uint8Array, start: number, onInvalidEscape?: () => void): Uint8Array {
@@ -15,8 +25,9 @@ export class ControlModeUnescaper {
     if (firstSlash < 0) {
       return line.subarray(start);
     }
-    this.ensureCapacity(line.length - start);
-    const result = this.scratch;
+    const scratchIndex = Math.max(0, this.activeLeases - 1);
+    this.ensureCapacity(scratchIndex, line.length - start);
+    const result = this.scratches[scratchIndex] as Uint8Array;
     if (firstSlash > start) {
       result.set(line.subarray(start, firstSlash));
     }
@@ -54,20 +65,19 @@ export class ControlModeUnescaper {
     return result.subarray(0, written);
   }
 
-  private ensureCapacity(required: number): void {
-    if (this.scratch.length >= required) return;
-    let capacity = Math.max(256, this.scratch.length);
+  private ensureCapacity(index: number, required: number): void {
+    const scratch = this.scratches[index] ?? EMPTY_SCRATCH;
+    if (scratch.length >= required) return;
+    let capacity = Math.max(256, scratch.length);
     while (capacity < required) capacity *= 2;
-    this.scratch = new Uint8Array(capacity);
+    this.scratches[index] = new Uint8Array(capacity);
   }
 }
-
-const defaultUnescaper = new ControlModeUnescaper();
 
 export function unescapeControlModeData(
   line: Uint8Array,
   start: number,
   onInvalidEscape?: () => void
 ): Uint8Array {
-  return defaultUnescaper.unescape(line, start, onInvalidEscape);
+  return new ControlModeUnescaper().unescape(line, start, onInvalidEscape).slice();
 }

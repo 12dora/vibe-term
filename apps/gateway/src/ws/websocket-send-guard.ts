@@ -12,6 +12,7 @@ export const GATEWAY_WS_PONG_BYPASS_BUFFERED_BYTES = 64 * 1024;
 
 interface BackpressureState {
   skippedFrame: boolean;
+  onlySkippedTerminalData: boolean;
   timer: ReturnType<typeof setTimeout>;
   firstAt: number;
   bufferedBefore: number;
@@ -88,7 +89,7 @@ export class WebSocketSendGuard {
       });
   }
 
-  canSend(carrier: Carrier): boolean {
+  canSend(carrier: Carrier, skippedTerminalData = false): boolean {
     if (this.unavailable.has(carrier)) {
       return false;
     }
@@ -97,6 +98,7 @@ export class WebSocketSendGuard {
       return true;
     }
     state.skippedFrame = true;
+    state.onlySkippedTerminalData &&= skippedTerminalData;
     return false;
   }
 
@@ -125,7 +127,6 @@ export class WebSocketSendGuard {
       return 'dropped';
     }
     if (this.states.has(carrier)) {
-      this.canSend(carrier);
       this.noteSkip(carrier, frames);
       return 'dropped';
     }
@@ -155,7 +156,11 @@ export class WebSocketSendGuard {
       }
 
       if (status === 'backpressure' || status === 'rejected') {
-        this.enterBackpressure(carrier, frame, frames.slice(index + 1));
+        this.enterBackpressure(
+          carrier,
+          frame,
+          frames.slice(status === 'rejected' ? index : index + 1)
+        );
         return 'backpressured';
       }
 
@@ -224,9 +229,14 @@ export class WebSocketSendGuard {
       skipped_frames: state.skippedFrames,
       skipped_bytes: state.skippedBytes,
       first_backpressure_at: state.firstAt,
-      resync: state.skippedFrame ? 1 : 0,
+      resync: state.skippedFrame && state.onlySkippedTerminalData ? 1 : 0,
     });
     const skipped = state.skippedFrame;
+    if (skipped && !state.onlySkippedTerminalData) {
+      this.terminate(carrier, 'backpressure_gap');
+      this.states.delete(carrier);
+      return;
+    }
     this.states.delete(carrier);
     if (skipped) this.sendStreamGapResync(carrier);
   }
@@ -235,6 +245,7 @@ export class WebSocketSendGuard {
     const state = this.states.get(carrier);
     if (state) {
       state.skippedFrame = true;
+      state.onlySkippedTerminalData = false;
     }
   }
 
@@ -281,13 +292,14 @@ export class WebSocketSendGuard {
   private enterBackpressure(
     carrier: Carrier,
     frame: string | BufferSource,
-    rest: readonly (string | BufferSource)[]
+    skipped: readonly (string | BufferSource)[]
   ): BackpressureState {
     const frameBytes = frameByteLength(frame);
     const bufferedBefore = this.bufferedAmountOf(carrier);
-    const restBytes = rest.reduce((sum, item) => sum + frameByteLength(item), 0);
+    const skippedBytes = skipped.reduce((sum, item) => sum + frameByteLength(item), 0);
     const state: BackpressureState = {
-      skippedFrame: rest.length > 0,
+      skippedFrame: skipped.length > 0,
+      onlySkippedTerminalData: skipped.every(isScreenReconstructibleTerminalFrame),
       timer: setTimeout(() => {
         if (this.states.get(carrier) !== state) {
           return;
@@ -297,11 +309,11 @@ export class WebSocketSendGuard {
       }, this.timeoutMs),
       firstAt: Date.now(),
       bufferedBefore,
-      skippedFrames: rest.length,
-      skippedBytes: restBytes,
+      skippedFrames: skipped.length,
+      skippedBytes,
       frameKind: frameKindOf(frame),
       lastKind: frameKindOf(frame),
-      lastFrame: rest[rest.length - 1] ?? frame,
+      lastFrame: skipped[skipped.length - 1] ?? frame,
       frameBytes,
       lastProgressAt: Date.now(),
     };
@@ -322,7 +334,11 @@ export class WebSocketSendGuard {
     const state = this.states.get(carrier);
     if (!state) return;
     let bytes = 0;
-    for (const frame of frames) bytes += frameByteLength(frame);
+    for (const frame of frames) {
+      bytes += frameByteLength(frame);
+      state.onlySkippedTerminalData &&= isScreenReconstructibleTerminalFrame(frame);
+    }
+    state.skippedFrame ||= frames.length > 0;
     state.skippedFrames += frames.length;
     state.skippedBytes += bytes;
     const last = frames[frames.length - 1];
@@ -344,7 +360,7 @@ export class WebSocketSendGuard {
 
   private sendStreamGapResync(carrier: Carrier): void {
     const status = this.sendPriorityFrames(carrier, [streamPaneGapFrame() as BufferSource]);
-    if (status === 'dropped') this.terminate(carrier, 'backpressure_gap');
+    if (status !== 'sent') this.terminate(carrier, 'backpressure_gap');
   }
 
   private bufferedAmountOf(carrier: Carrier): number {
@@ -375,6 +391,22 @@ export class WebSocketSendGuard {
     } catch {
       // The carrier may already be closing.
     }
+  }
+}
+
+function isScreenReconstructibleTerminalFrame(frame: string | BufferSource): boolean {
+  try {
+    const envelope = wsBorsh.decodeEnvelopeView(toUint8Array(frame));
+    if (envelope.kind === wsBorsh.KIND_TERM_OUTPUT) return true;
+    if (envelope.kind === wsBorsh.KIND_CANONICAL_EVENT) {
+      return wsBorsh.peekCanonicalPaneDataHeader(envelope.payload) !== null;
+    }
+    if (envelope.kind === wsBorsh.KIND_CHUNK) {
+      return wsBorsh.decodeChunk(envelope.payload).originalKind === wsBorsh.KIND_TERM_OUTPUT;
+    }
+    return false;
+  } catch {
+    return false;
   }
 }
 

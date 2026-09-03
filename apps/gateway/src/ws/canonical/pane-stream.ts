@@ -8,6 +8,7 @@ import {
 import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
   GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
+  GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS,
 } from '../terminal-output-batcher';
 import { bytesEqual, copyBytes, paneKey } from './bytes';
 import type { CanonicalTransactionSender } from './transaction-sender';
@@ -213,6 +214,9 @@ export class CanonicalPaneStream {
     }
     for (const key of Array.from(this.paneDataBatches.keys())) {
       if (key.startsWith(`${deviceId}\0`)) this.flushPaneDataBatch(key);
+    }
+    for (const key of this.paneDataLastFlushAt.keys()) {
+      if (key.startsWith(`${deviceId}\0`)) this.paneDataLastFlushAt.delete(key);
     }
   }
 
@@ -452,12 +456,35 @@ export class CanonicalPaneStream {
     const last = this.paneDataLastFlushAt.get(key);
     if (last === undefined) return 0;
     const elapsed = this.now() - last;
-    if (elapsed >= GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS) return 0;
+    if (elapsed >= GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS) {
+      this.paneDataLastFlushAt.delete(key);
+      return 0;
+    }
     return GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS - elapsed;
   }
 
   private markFlushed(key: string): void {
-    this.paneDataLastFlushAt.set(key, this.now());
+    const now = this.now();
+    while (this.paneDataLastFlushAt.size > 0) {
+      const oldest = this.paneDataLastFlushAt.entries().next().value as
+        | [string, number]
+        | undefined;
+      if (!oldest) break;
+      if (
+        this.paneDataLastFlushAt.size < GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS &&
+        now - oldest[1] < GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS
+      ) {
+        break;
+      }
+      this.paneDataLastFlushAt.delete(oldest[0]);
+    }
+    this.paneDataLastFlushAt.delete(key);
+    this.paneDataLastFlushAt.set(key, now);
+    while (this.paneDataLastFlushAt.size > GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS) {
+      const oldest = this.paneDataLastFlushAt.keys().next().value;
+      if (oldest === undefined) break;
+      this.paneDataLastFlushAt.delete(oldest);
+    }
   }
 
   private armPaneDataTimer(key: string): unknown {

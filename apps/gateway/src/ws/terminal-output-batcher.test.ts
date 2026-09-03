@@ -4,6 +4,7 @@ import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
   GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
   GATEWAY_TERM_OUTPUT_BATCH_TOTAL_MAX_BYTES,
+  GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS,
   type TerminalOutputBatchScheduler,
   TerminalOutputBatcher,
 } from './terminal-output-batcher';
@@ -278,5 +279,23 @@ describe('TerminalOutputBatcher leading-edge', () => {
       [1, 2],
       [3, 4],
     ]);
+  });
+
+  test('evicts expired cooldown keys and caps live history', () => {
+    const harness = createLeadingHarness();
+    const batcher = harness.batcher as any;
+
+    harness.batcher.push('device-old', '%1', new Uint8Array([1]));
+    harness.scheduler.runAll();
+    harness.setNow(DELAY + 1);
+    harness.batcher.push('device-new', '%1', new Uint8Array([2]));
+    harness.scheduler.runAll();
+    expect(batcher.lastFlushAt.has('device-old\0%1')).toBe(false);
+
+    for (let index = 0; index <= GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS; index += 1) {
+      harness.batcher.push('device-cap', `%${index}`, new Uint8Array([3]));
+    }
+    harness.scheduler.runAll();
+    expect(batcher.lastFlushAt.size).toBeLessThanOrEqual(GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS);
   });
 });

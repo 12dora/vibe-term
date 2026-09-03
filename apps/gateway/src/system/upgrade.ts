@@ -887,7 +887,7 @@ export function cmdlineOwnsInstallRuntime(cmdline: string, installDir: string): 
 export type PidFileRecord = { pid: number; identity?: string | null };
 
 export function parsePidFileRecord(raw: string): PidFileRecord | null {
-  const record = parseSharedPidFileRecord(raw);
+  const record = parseSharedPidFileRecord(raw, { allowNumericStringPid: true });
   return record ? { pid: record.pid, identity: record.identity ?? null } : null;
 }
 

@@ -21,6 +21,7 @@ import {
   UpgradeController,
   assertExtractedCliPackage,
   cmdlineOwnsInstallRuntime,
+  parsePidFileRecord,
   releaseSha256SumsUrl,
   resolveUpgradeInstallDir,
   sha256Hex,
@@ -1296,5 +1297,14 @@ describe('cmdlineOwnsInstallRuntime', () => {
     expect(cmdlineOwnsInstallRuntime(`vim ${serverJs}`, dir)).toBe(false);
     expect(cmdlineOwnsInstallRuntime(`tail -f ${serverJs}`, dir)).toBe(false);
     expect(cmdlineOwnsInstallRuntime(`bun ${serverJs}.bak`, dir)).toBe(false);
+  });
+});
+
+describe('parsePidFileRecord', () => {
+  test('accepts a legacy JSON numeric-string pid in the gateway wrapper', () => {
+    expect(parsePidFileRecord('{"pid":"1234","identity":"boot-a"}')).toEqual({
+      pid: 1234,
+      identity: 'boot-a',
+    });
   });
 });
