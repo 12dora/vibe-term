@@ -1638,7 +1638,8 @@
           "withDetail": "{{base}}（{{detail}}）",
           "unknown": "エラーが発生しました：{{message}}"
         }
-      }
+      },
+      "uplinkOffline": "上位リンクに接続していません。復帰するまで参加コードは作成できません。"
     },
     "devices": {
       "nodes": {
@@ -1711,7 +1712,9 @@
           "add": "中継を追加",
           "reauth": "パスワードを再入力",
           "rotate": "メタデータ鍵をローテーション",
-          "leave": "中継から離脱"
+          "leave": "中継から離脱",
+          "removeOne": "{{host}} を削除",
+          "reauthOne": "{{host}} のパスワードを再入力"
         },
         "dialog": {
           "enrollTitle": "中継に接続",
@@ -1742,7 +1745,13 @@
           "done": "メタデータ鍵をローテーションしました。",
           "needsRotate": "新しいノードにメタデータ鍵が配布されていません。「中継の操作 → メタデータ鍵をローテーション」で配布してください。",
           "admitFailed": "新しいノードへのメタデータ鍵の配布に失敗しました：{{error}}",
-          "rotateFailed": "メタデータ鍵のローテーションに失敗しました：{{error}}"
+          "rotateFailed": "メタデータ鍵のローテーションに失敗しました：{{error}}",
+          "pending": "メタデータ鍵のローテーションが {{count}} 件未送信です。削除したノードがまだメタデータを読めます。",
+          "retry": "再試行",
+          "retryFailed": "メタデータ鍵のローテーションはまだ送信できていません。しばらくしてから再試行してください。",
+          "revokePending": "ノードは削除しましたが、メタデータ鍵のローテーションが送信できていません（{{error}}）。ノード画面で再試行してください。",
+          "revokePendingBulk": "{{count}} 台分のメタデータ鍵のローテーションが送信できていません。ノード画面で再試行してください。",
+          "afterPasswordChange": "メタデータ鍵のローテーションは未送信です。ログインし直してノード画面で再試行してください。"
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "現在のパスワードが正しくありません。",
@@ -1761,7 +1770,21 @@
           "DUPLICATE_ENROLL_PK": "その参加コードは既に存在します。",
           "INVALID_URL": "中継アドレスが不正です。",
           "BAD_PROOF": "接続証明の検証に失敗しました。再試行してください。",
-          "MALFORMED": "要求内容が不正です。"
+          "MALFORMED": "要求内容が不正です。",
+          "RELAY_NOT_FOUND": "その中継は本機の中継一覧にありません。",
+          "RELAY_LAST": "中継はこれ 1 件だけです。「中継から離脱」を使ってください。",
+          "RELAY_META_KEY_NEEDS_SIGNER": "メタデータ鍵を配布するには本人確認をやり直してください。",
+          "RELAY_META_KEY_PREPARE_FAILED": "本機が新しいメタデータ鍵を用意できませんでした。再試行してください。",
+          "RELAY_PASSWORD_REQUIRED": "この中継には接続パスワードが必要です。",
+          "RELAY_RATE_LIMITED": "試行が多すぎます。しばらくしてから再試行してください。",
+          "RELAY_TENANT_KICKED": "中継がこのテナントのトークンを失効させました。パスワードを入力し直してください。",
+          "RELAY_TOKEN_INVALID": "中継トークンが失効しました。パスワードを入力し直してください。"
+        },
+        "remove": {
+          "title": "この中継を削除しますか？",
+          "description": "本機は {{url}} に接続しなくなります。ほかの中継はそのまま使えます。",
+          "confirm": "削除",
+          "done": "中継を削除しました。"
         }
       },
       "admin": {
@@ -1828,9 +1851,9 @@
           "inheritBadge": "既定",
           "summary": "{{nodes}} ノード · {{streams}} ストリーム · {{bandwidth}}",
           "bandwidthValue": "{{kb}} KB/s",
-          "invalidNodes": "ノード数の上限は 1 以上の整数で入力してください。",
-          "invalidStreams": "同時ストリームの上限は 1 以上の整数で入力してください。",
-          "invalidBandwidth": "帯域の上限は 1 以上の整数で入力してください。",
+          "invalidNodes": "ノード数の上限は 1〜{{max}} の整数で入力してください。",
+          "invalidStreams": "同時ストリームの上限は 1〜{{max}} の整数で入力してください。",
+          "invalidBandwidth": "帯域の上限は 1〜{{max}} KB/s の整数で入力してください。",
           "saved": "既定クォータを更新しました。",
           "failed": "クォータを更新できませんでした：{{message}}"
         },

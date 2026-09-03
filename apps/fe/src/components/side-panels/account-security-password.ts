@@ -3,9 +3,14 @@
 // 从面板组件里拆出来只是为了让那个文件不再继续膨胀；这里不含任何 JSX，
 // 也因此能被单测直接调用（见 `account-security-panel.test.tsx`）。
 
-import { type SignedPasswordChange, changePassword } from '@/auth/account-security-actions';
+import {
+  type MetaKeyRotationOutcome,
+  type SignedPasswordChange,
+  changePassword,
+} from '@/auth/account-security-actions';
 import { clearSessionKey, getSessionKey } from '@/auth/session-key-store';
 import { resumeSessionAfterPasswordChange } from '@/auth/session-login';
+import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { HUB_NOT_WRITER } from '@tmex/api-client/auth/index';
 import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@tmex/shared/auth';
@@ -166,11 +171,13 @@ export async function submitPasswordChange(
     currentKdfParams: input.kdfParams,
     fullReset: input.fullReset,
     totpEnabled: input.totpEnabled,
+    // 改密与紧随其后的 `meta-key` 必须连成一段，且与 admit / revoke 抢同一个 key log 头。
+    lock: withKeyLogLock,
   });
   if (!result.ok) {
     return { tone: 'error', text: securityActionErrorText(input.t, result.code) };
   }
-  return finishPasswordChange({
+  const feedback = await finishPasswordChange({
     api: input.api,
     uid: input.uid,
     nodeId: input.nodeId,
@@ -182,4 +189,22 @@ export async function submitPasswordChange(
     follow: passwordChangeFollowUp(input),
     t: input.t,
   });
+  return withMetaKeyNotice(feedback, result.metaKey, input.t);
+}
+
+/**
+ * 中继模式下改密要顺带换一代元数据密钥（plan §1.3）。没换成不能当没事发生：
+ * 全量重置（`rotate-root`）会当场撤销全部会话，那条记录必然要等重新登录后才送得出去——
+ * 它已经签好并落在待办里，节点页会一直挂告警直到送达。
+ */
+export function withMetaKeyNotice(
+  feedback: PasswordChangeFeedback,
+  metaKey: MetaKeyRotationOutcome | undefined,
+  t: Translate
+): PasswordChangeFeedback {
+  if (!metaKey || metaKey.ok) return feedback;
+  return {
+    tone: 'notice',
+    text: `${feedback.text} ${t('relay.tenant.metaKey.afterPasswordChange')}`,
+  };
 }

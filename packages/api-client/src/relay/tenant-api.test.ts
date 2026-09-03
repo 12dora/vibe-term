@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { ApiClient } from '../client';
 import { RelayApiError } from './admin-api';
 import {
+  RELAY_LAST,
   RelayTenantApi,
   isRelayNotConfigured,
   isRelayPasswordInvalid,
@@ -156,6 +157,26 @@ describe('RelayTenantApi 待签 payload', () => {
     expect(prepared.payload).toBe('AA');
   });
 
+  test('removePrepare 只送要摘掉的地址', async () => {
+    const { api, calls } = recorder([ok({ payload: 'AA', payloadHash: 'BB', metaEpoch: 3 })]);
+    const prepared = await api.removePrepare('https://relay-2.example');
+    expect(calls[0].url).toBe('/api/mesh/relay/remove/prepare');
+    expect(bodyOf(calls[0])).toEqual({ url: 'https://relay-2.example' });
+    expect(prepared.metaEpoch).toBe(3);
+  });
+
+  test('removePrepare 把 RELAY_LAST 透传成类型化错误', async () => {
+    const { api } = recorder([
+      new Response(JSON.stringify({ code: 'RELAY_LAST' }), {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ]);
+    await expect(api.removePrepare('https://relay.example')).rejects.toMatchObject({
+      code: RELAY_LAST,
+    });
+  });
+
   test('metaKeyPrepare 原样送 op', async () => {
     const { api, calls } = recorder([
       ok({ epoch: 4, payload: 'AA', payloadHash: 'BB' }),
@@ -204,7 +225,7 @@ describe('RelayTenantApi enrollment 与 join 材料', () => {
 
   test('createEnrollment / getEnrollment 的路径', async () => {
     const { api, calls } = recorder([
-      ok({ ok: true, id: 'enr-1', expires_at: 1_700_000_600_000 }, 201),
+      ok({ ok: true, id: 'enr-1', expiresAt: 1_700_000_600_000 }, 201),
       ok({ status: 'redeemed', enroll_pk: 'pk', certificate: 'c', cert_sig: 's' }),
     ]);
     const created = await api.createEnrollment({
@@ -215,6 +236,7 @@ describe('RelayTenantApi enrollment 与 join 材料', () => {
     });
     expect(calls[0].url).toBe('/api/mesh/relay/enrollments');
     expect(created.id).toBe('enr-1');
+    expect(created.expiresAt).toBe(1_700_000_600_000);
     const status = await api.getEnrollment('enr 1');
     expect(calls[1].url).toBe('/api/mesh/relay/enrollments/enr%201');
     expect(status.status).toBe('redeemed');

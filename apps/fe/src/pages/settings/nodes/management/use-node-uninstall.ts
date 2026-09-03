@@ -24,7 +24,7 @@ import type {
   UninstallPlan,
   UninstallSkipReason,
 } from './types';
-import { revokeNodeRecord } from './use-node-row-actions';
+import { revokeLanded, revokeNodeRecord } from './use-node-row-actions';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -287,7 +287,9 @@ export function useNodeUninstall(
                   writerPublicUrl,
                   t,
                 });
-                return attempt.kind === 'done';
+                // 欠着 `meta-key` 换代也算移除成功（节点已经不在成员表里），
+                // 那一条由节点页的重试回路继续送。
+                return revokeLanded(attempt);
               },
             }),
           { purpose: 'revoke' }

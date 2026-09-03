@@ -6,13 +6,21 @@
 // 所有记录都经 `withKeyLogLock` 提交：与 admit / revoke 抢同一个 key log 头。
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
+import type { RecordSigner } from '@/auth/key-log-actions';
 import { withKeyLogLock } from '@/node/enrollment-engine';
-import type { RelayFlowMode, RelayFlowResult } from '@/node/relay-enroll';
-import { appendMetaKey, enrollRelay, leaveRelay } from '@/node/relay-enroll';
+import { attachedRelay, getMeshRelayState, subscribeMeshRelay } from '@/node/mesh-relay';
+import type { RelayFlowDeps, RelayFlowMode, RelayFlowResult } from '@/node/relay-enroll';
+import { appendMetaKey, enrollRelay, leaveRelay, removeRelay } from '@/node/relay-enroll';
+import {
+  type PendingMetaKey,
+  listPendingMetaKeys,
+  retryPendingMetaKeys,
+  subscribePendingMetaKeys,
+} from '@/node/relay-meta-key-pending';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
@@ -21,8 +29,8 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 /** 接入对话框的四种来意；四者走同一条 `enrollRelay`，差别只在标题与预填地址。 */
 export type RelayEnrollIntent = 'enroll' | 'migrate' | 'add' | 'reauth';
 
-/** 需要二次确认的两个动作。 */
-export type RelayConfirmIntent = 'leave' | 'rotate';
+/** 需要二次确认的三个动作。 */
+export type RelayConfirmIntent = 'leave' | 'rotate' | 'remove';
 
 export interface RelayEnrollForm {
   url: string;
@@ -32,6 +40,8 @@ export interface RelayEnrollForm {
 
 export interface RelayConfirmRequest {
   intent: RelayConfirmIntent;
+  /** `remove` 要摘掉的那条中继地址。 */
+  url?: string;
 }
 
 export interface RelayActionsController {
@@ -43,10 +53,14 @@ export interface RelayActionsController {
   error: string | null;
   openEnroll: (intent: RelayEnrollIntent, url?: string) => void;
   closeEnroll: () => void;
-  requestConfirm: (intent: RelayConfirmIntent) => void;
+  requestConfirm: (intent: RelayConfirmIntent, url?: string) => void;
   dismissConfirm: () => void;
   submitEnroll: (form: RelayEnrollForm) => Promise<void>;
   runConfirm: () => Promise<void>;
+  /** 还没落账的 `meta-key` 换代；非空时页面必须一直挂着告警。 */
+  metaPending: PendingMetaKey[];
+  /** 手动重试欠账（需要一次凭据）。 */
+  retryMetaKey: () => Promise<void>;
 }
 
 export interface RelayActionsDeps {
@@ -101,8 +115,8 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
     setError(null);
   }, []);
 
-  const requestConfirm = useCallback((intent: RelayConfirmIntent) => {
-    setConfirm({ intent });
+  const requestConfirm = useCallback((intent: RelayConfirmIntent, url?: string) => {
+    setConfirm(url === undefined ? { intent } : { intent, url });
   }, []);
 
   const dismissConfirm = useCallback(() => setConfirm(null), []);
@@ -146,10 +160,7 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
     try {
       // 两个动作都会改变成员的解密能力，凭据走 `withSigner`（不进复用窗口），每次当场确认。
       const result = await prompt.withSigner(
-        (signer) =>
-          request.intent === 'rotate'
-            ? appendMetaKey(flowDeps, { op: 'rotate' }, signer)
-            : leaveRelay(flowDeps, signer),
+        (signer) => runConfirmAction(flowDeps, request, signer),
         { purpose: 'revoke' }
       );
       if (!result) return;
@@ -159,6 +170,27 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
       setBusy(false);
     }
   }, [confirm, flowDeps, onChanged, prompt, t]);
+
+  const metaPending = useAutoRetryMetaKey(flowDeps, onChanged);
+
+  const retryMetaKey = useCallback(async () => {
+    if (!flowDeps) return;
+    setBusy(true);
+    try {
+      const left = await prompt.withSigner((signer) => retryPendingMetaKeys(flowDeps, signer), {
+        purpose: 'revoke',
+      });
+      if (left === null) return;
+      if (left === 0) {
+        toast.success(t('relay.tenant.metaKey.done'));
+        onChanged();
+        return;
+      }
+      toast.error(t('relay.tenant.metaKey.retryFailed'));
+    } finally {
+      setBusy(false);
+    }
+  }, [flowDeps, onChanged, prompt, t]);
 
   return {
     enroll,
@@ -171,9 +203,60 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
     dismissConfirm,
     submitEnroll,
     runConfirm,
+    metaPending,
+    retryMetaKey,
   };
 }
 
+function runConfirmAction(
+  deps: RelayFlowDeps,
+  request: RelayConfirmRequest,
+  signer: RecordSigner
+): Promise<RelayFlowResult> {
+  if (request.intent === 'rotate') return appendMetaKey(deps, { op: 'rotate' }, signer);
+  if (request.intent === 'remove') {
+    return request.url
+      ? removeRelay(deps, request.url, signer)
+      : Promise.resolve({ ok: false as const, code: 'INVALID_URL' });
+  }
+  return leaveRelay(deps, signer);
+}
+
+const DONE_KEYS: Record<RelayConfirmIntent, string> = {
+  rotate: 'relay.tenant.metaKey.done',
+  remove: 'relay.tenant.remove.done',
+  leave: 'relay.tenant.leave.done',
+};
+
 function doneKeyOf(intent: RelayConfirmIntent): string {
-  return intent === 'rotate' ? 'relay.tenant.metaKey.done' : 'relay.tenant.leave.done';
+  return DONE_KEYS[intent];
+}
+
+/**
+ * 欠账的自动重发：只在**挂上中继**且手上还留着已签字节时做（没字节的必须重新要凭据）。
+ * 同一批 id 只自动试一次，失败后由告警条上的「重试」按钮接手，避免打进死循环。
+ */
+function useAutoRetryMetaKey(deps: RelayFlowDeps | null, onSettled: () => void): PendingMetaKey[] {
+  const pending = useSyncExternalStore(
+    subscribePendingMetaKeys,
+    listPendingMetaKeys,
+    listPendingMetaKeys
+  );
+  const relay = useSyncExternalStore(subscribeMeshRelay, getMeshRelayState, getMeshRelayState);
+  const attached = attachedRelay(relay) !== null;
+  const ids = pending.map((row) => row.id).join(',');
+  const attempted = useRef('');
+
+  useEffect(() => {
+    if (!deps || !attached || ids === '') return;
+    const key = `${attached}:${ids}`;
+    if (attempted.current === key) return;
+    if (!listPendingMetaKeys().some((row) => row.record)) return;
+    attempted.current = key;
+    void retryPendingMetaKeys(deps).then((left) => {
+      if (left === 0) onSettled();
+    });
+  }, [attached, deps, ids, onSettled]);
+
+  return pending;
 }

@@ -16,6 +16,16 @@ export interface RelayQuota {
   bandwidthBytesPerSec: number | null;
 }
 
+/**
+ * 服务端对配额的硬上限（`apps/gateway/src/relay/relay-quota.ts`）：任一字段越界都回
+ * `400 RELAY_BAD_QUOTA`，表单据此在提交前给字段级报错。
+ */
+export const RELAY_QUOTA_LIMITS = {
+  maxNodes: 4096,
+  maxStreams: 65_536,
+  bandwidthBytesPerSec: 10 * 1024 * 1024 * 1024,
+} as const;
+
 /** 中继全局配置。`hasPassword` 为 false 时任何人都能 enroll。 */
 export interface RelayConfigSummary {
   hasPassword: boolean;

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { RelayQuota } from '@tmex/api-client/relay/admin-api';
+import { RELAY_QUOTA_LIMITS } from '@tmex/api-client/relay/admin-api';
 import {
+  BANDWIDTH_KB_LIMIT,
   PASSWORD_MIN_LENGTH,
   emptyPasswordDraft,
   parsePasswordDraft,
@@ -145,5 +147,36 @@ describe('parsePasswordDraft', () => {
       password: null,
       mode: 'kick',
     });
+  });
+});
+
+describe('配额上限（与服务端 relay-quota.ts 对齐）', () => {
+  const draft = (
+    patch: Partial<{ maxNodes: string; maxStreams: string; bandwidthKb: string }>
+  ) => ({
+    maxNodes: '8',
+    maxStreams: '16',
+    bandwidthKb: '512',
+    unlimited: false,
+    ...patch,
+  });
+
+  test('刚好到上限通过，超一格报字段错误', () => {
+    expect(
+      parseQuotaDraft(draft({ maxNodes: String(RELAY_QUOTA_LIMITS.maxNodes) })).errors
+    ).toBeNull();
+    expect(
+      parseQuotaDraft(draft({ maxNodes: String(RELAY_QUOTA_LIMITS.maxNodes + 1) })).errors
+    ).toEqual({ maxNodes: 'relay.admin.quota.invalidNodes' });
+    expect(
+      parseQuotaDraft(draft({ maxStreams: String(RELAY_QUOTA_LIMITS.maxStreams + 1) })).errors
+    ).toEqual({ maxStreams: 'relay.admin.quota.invalidStreams' });
+    expect(parseQuotaDraft(draft({ bandwidthKb: String(BANDWIDTH_KB_LIMIT + 1) })).errors).toEqual({
+      bandwidthKb: 'relay.admin.quota.invalidBandwidth',
+    });
+  });
+
+  test('带宽上限按服务端的字节上限折算成 KB/s', () => {
+    expect(BANDWIDTH_KB_LIMIT * 1024).toBe(RELAY_QUOTA_LIMITS.bandwidthBytesPerSec);
   });
 });

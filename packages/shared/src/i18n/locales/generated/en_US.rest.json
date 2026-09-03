@@ -1642,7 +1642,8 @@
           "withDetail": "{{base}} ({{detail}})",
           "unknown": "Something went wrong: {{message}}"
         }
-      }
+      },
+      "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back."
     },
     "devices": {
       "nodes": {
@@ -1716,7 +1717,9 @@
           "add": "Add Relay",
           "reauth": "Re-enter Password",
           "rotate": "Rotate Metadata Key",
-          "leave": "Leave Relay"
+          "leave": "Leave Relay",
+          "removeOne": "Remove {{host}}",
+          "reauthOne": "Re-enter password for {{host}}"
         },
         "dialog": {
           "enrollTitle": "Connect Relay",
@@ -1747,7 +1750,13 @@
           "done": "Metadata key rotated.",
           "needsRotate": "The new node did not receive the metadata key. Use \"Relay Actions -> Rotate Metadata Key\".",
           "admitFailed": "Failed to deliver the metadata key to the new node: {{error}}",
-          "rotateFailed": "Metadata key rotation failed: {{error}}"
+          "rotateFailed": "Metadata key rotation failed: {{error}}",
+          "pending": "{{count}} metadata key rotation(s) have not landed yet; removed nodes can still read metadata.",
+          "retry": "Retry",
+          "retryFailed": "The metadata key rotation still has not landed. Try again later.",
+          "revokePending": "The node was removed, but the metadata key rotation did not land ({{error}}). Retry on the nodes page.",
+          "revokePendingBulk": "Metadata key rotation did not land for {{count}} node(s). Retry on the nodes page.",
+          "afterPasswordChange": "The metadata key rotation has not landed yet. Sign in again and retry on the nodes page."
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "Current password is incorrect.",
@@ -1766,7 +1775,21 @@
           "DUPLICATE_ENROLL_PK": "That join code already exists.",
           "INVALID_URL": "The relay address is invalid.",
           "BAD_PROOF": "The enrollment proof failed verification. Try again.",
-          "MALFORMED": "The request content is invalid."
+          "MALFORMED": "The request content is invalid.",
+          "RELAY_NOT_FOUND": "That relay is not in this machine’s relay list.",
+          "RELAY_LAST": "This is the only relay left. Use \"Leave Relay\" instead.",
+          "RELAY_META_KEY_NEEDS_SIGNER": "Verify your identity again to deliver the metadata key.",
+          "RELAY_META_KEY_PREPARE_FAILED": "This machine could not prepare a new metadata key. Try again.",
+          "RELAY_PASSWORD_REQUIRED": "This relay requires a connection password.",
+          "RELAY_RATE_LIMITED": "Too many attempts. Try again later.",
+          "RELAY_TENANT_KICKED": "The relay revoked this tenant’s token. Re-enter the relay password.",
+          "RELAY_TOKEN_INVALID": "The relay token expired. Re-enter the relay password."
+        },
+        "remove": {
+          "title": "Remove this relay?",
+          "description": "This machine stops connecting to {{url}}. The other relays keep working.",
+          "confirm": "Remove",
+          "done": "Relay removed."
         }
       },
       "admin": {
@@ -1833,9 +1856,9 @@
           "inheritBadge": "Default",
           "summary": "{{nodes}} nodes · {{streams}} streams · {{bandwidth}}",
           "bandwidthValue": "{{kb}} KB/s",
-          "invalidNodes": "Max nodes must be an integer of 1 or more.",
-          "invalidStreams": "Max streams must be an integer of 1 or more.",
-          "invalidBandwidth": "Max bandwidth must be an integer of 1 or more.",
+          "invalidNodes": "Max nodes must be an integer between 1 and {{max}}.",
+          "invalidStreams": "Max streams must be an integer between 1 and {{max}}.",
+          "invalidBandwidth": "Max bandwidth must be an integer between 1 and {{max}} KB/s.",
           "saved": "Default quota updated.",
           "failed": "Could not update the quota: {{message}}"
         },

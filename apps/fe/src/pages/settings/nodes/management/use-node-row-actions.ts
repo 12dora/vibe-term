@@ -9,10 +9,12 @@ import type { RecordSigner } from '@/auth/key-log-actions';
 import { buildRevokeNodeRecord, classifyKeyLogFailure } from '@/node/enrollment';
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { getMeshRelayState, isRelayMode } from '@/node/mesh-relay';
+import { fetchRelayMode } from '@/node/mesh-relay';
 import { alreadyLocked, appendMetaKey } from '@/node/relay-enroll';
+import { rememberPendingMetaKey } from '@/node/relay-meta-key-pending';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
+import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { useCallback, useState } from 'react';
@@ -26,15 +28,24 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 /** 一次吊销的结论。`unconfirmed`：hub 没确认，服务端一条都没落库，节点**没有**被移除。 */
 export type RevokeAttempt =
   | { kind: 'done' }
+  /** 记录已落账，但紧跟的 `meta-key` 换代没送上去：节点已移除，元数据密钥还欠一条。 */
+  | { kind: 'meta-pending'; code: string }
   | { kind: 'unconfirmed'; error: string }
   | { kind: 'stale' }
   | { kind: 'failed'; message: string };
+
+/** 吊销本身有没有落账（`meta-pending` 也落账了，只是欠一条换代）。 */
+export function revokeLanded(attempt: RevokeAttempt): boolean {
+  return attempt.kind === 'done' || attempt.kind === 'meta-pending';
+}
 
 export interface RevokeContext {
   api: AuthApi;
   mode: ResolvedMode;
   writerPublicUrl: string | null;
   t: Translate;
+  /** 测试注入；缺省打本机 `/api/mesh/relay/*`。 */
+  relayApi?: RelayTenantApi;
 }
 
 /**
@@ -56,7 +67,7 @@ export async function revokeNodeRecord(
 ): Promise<RevokeAttempt> {
   try {
     const rootEpoch = requireRootEpoch(ctx.mode);
-    const result = await withKeyLogLock(async () => {
+    const outcome = await withKeyLogLock(async () => {
       const head = headFromResponse(await ctx.api.keyLogHead());
       const record = await buildRevokeNodeRecord({
         head,
@@ -70,9 +81,10 @@ export async function revokeNodeRecord(
         { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
         { hubSync: true }
       );
-      if (appended.ok) await rotateMetaKeyAfterRevoke(ctx, row.id, signer);
-      return appended;
+      const metaPending = appended.ok ? await rotateMetaKeyAfterRevoke(ctx, row.id, signer) : null;
+      return { appended, metaPending };
     });
+    const { appended: result, metaPending } = outcome;
     if (!result.ok) {
       // B2-6：hub 未确认时服务端一条都没落库（409 / 504），撤销**没有生效**。
       const failure = classifyKeyLogFailure(result.code);
@@ -88,6 +100,7 @@ export async function revokeNodeRecord(
       };
     }
     if (result.hubAck !== true) return { kind: 'unconfirmed', error: result.hubError ?? '' };
+    if (metaPending) return { kind: 'meta-pending', code: metaPending };
     return { kind: 'done' };
   } catch (err) {
     return {
@@ -101,29 +114,46 @@ export async function revokeNodeRecord(
  * 中继模式下吊销之后**必须**紧接一条 `meta-key`（新世代，只封装给剩余节点）：不换代的话，
  * 被吊销的节点虽然连不上握手，仍能用旧 `K_meta` 解出中继转发的元数据块（plan §1.4、§1.12）。
  *
- * 已经在写锁里，因此传 `alreadyLocked`。换代失败不回滚吊销（记录已经落库），只警告——
- * 恢复路径是节点页「中继 → 轮换元数据密钥」，它做的是同一件事。
+ * 「本机是不是中继模式」当场问网关（`GET /api/mesh/relay/status`），不读页面上那份轮询 store：
+ * 它最长会陈旧 30 秒，刚接入中继就吊销一台，靠陈旧快照会**整条跳过换代**。
+ *
+ * 已经在写锁里，因此传 `alreadyLocked`。换代失败不回滚吊销（记录已经落库），但也**不报「已移除」**：
+ * 欠账落进 `relay-meta-key-pending`，由节点页的重试回路继续送，送到之前一直挂着告警。
+ *
+ * 返回失败码；成功或不适用返回 `null`。
  */
 async function rotateMetaKeyAfterRevoke(
   ctx: RevokeContext,
   nodeIdHex: string,
   signer: RecordSigner
-): Promise<void> {
-  if (!isRelayMode(getMeshRelayState())) return;
+): Promise<string | null> {
+  const relayApi = ctx.relayApi ?? defaultRelayTenantApi;
+  if (!(await fetchRelayMode(relayApi))) return null;
+  const op: RelayMetaKeyOp = { op: 'rotate', exclude: [nodeIdHex] };
   const result = await appendMetaKey(
-    { api: ctx.api, relayApi: defaultRelayTenantApi, mode: ctx.mode, lock: alreadyLocked },
-    { op: 'rotate', exclude: [nodeIdHex] },
+    { api: ctx.api, relayApi, mode: ctx.mode, lock: alreadyLocked },
+    op,
     signer
   );
-  if (!result.ok) {
-    toast.warning(ctx.t('relay.tenant.metaKey.rotateFailed', { error: result.code }));
-  }
+  if (result.ok) return null;
+  rememberPendingMetaKey({
+    id: `revoke:${nodeIdHex}`,
+    reason: 'revoke',
+    op,
+    record: result.record ?? null,
+  });
+  return result.code;
 }
 
-/** 单台吊销的提示；返回是否成功，批量路径据此计数。 */
+/** 单台吊销的提示；返回吊销是否落账，批量路径据此计数。 */
 export function reportRevokeAttempt(t: Translate, attempt: RevokeAttempt): boolean {
   if (attempt.kind === 'done') {
     toast.success(t('nodes.revoke.done'));
+    return true;
+  }
+  if (attempt.kind === 'meta-pending') {
+    // 节点确实移除了，但元数据密钥还停在旧世代——这一条不能说成「已移除」。
+    toast.warning(t('relay.tenant.metaKey.revokePending', { error: attempt.code }));
     return true;
   }
   if (attempt.kind === 'unconfirmed') {
@@ -137,6 +167,8 @@ export function reportRevokeAttempt(t: Translate, attempt: RevokeAttempt): boole
 export interface BulkRevokeSummary {
   succeeded: number;
   failedNames: string[];
+  /** 已移除但欠着 `meta-key` 换代的台数。 */
+  metaPending: number;
 }
 
 /**
@@ -149,11 +181,15 @@ export async function revokeNodesSequentially(
   reason: string,
   ctx: RevokeContext
 ): Promise<BulkRevokeSummary> {
-  const summary: BulkRevokeSummary = { succeeded: 0, failedNames: [] };
+  const summary: BulkRevokeSummary = { succeeded: 0, failedNames: [], metaPending: 0 };
   for (const row of rows) {
     const attempt = await revokeNodeRecord(signer, row, reason, ctx);
-    if (attempt.kind === 'done') summary.succeeded += 1;
-    else summary.failedNames.push(row.name);
+    if (!revokeLanded(attempt)) {
+      summary.failedNames.push(row.name);
+      continue;
+    }
+    summary.succeeded += 1;
+    if (attempt.kind === 'meta-pending') summary.metaPending += 1;
   }
   return summary;
 }
@@ -239,6 +275,11 @@ export function useBulkRevoke({ mode, api, prompt, onChanged, writerPublicUrl }:
           { purpose: 'revoke' }
         );
         if (!summary) return;
+        if (summary.metaPending > 0) {
+          toast.warning(
+            t('relay.tenant.metaKey.revokePendingBulk', { count: summary.metaPending })
+          );
+        }
         if (summary.failedNames.length === 0) {
           toast.success(t('nodes.revoke.bulkDone', { count: summary.succeeded }));
         } else {
