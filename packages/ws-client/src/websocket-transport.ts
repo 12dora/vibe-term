@@ -2,6 +2,7 @@
 
 import { wsBorsh } from '@tmex/shared';
 import { CanonicalStateClient } from './canonical-state-client';
+import { clonePendingCommand, isOrderedInput, mergeSendResult } from './canonical-state-helpers';
 import type {
   BorshWebSocketClient,
   ClientSendResult,
@@ -33,17 +34,6 @@ const LEGACY_STATE_KINDS = new Set([
   wsBorsh.KIND_TERM_OUTPUT,
 ]);
 
-function mergeSendResult(left: ClientSendResult, right: ClientSendResult): ClientSendResult {
-  if (left === 'overflow' || right === 'overflow') return 'overflow';
-  if (left === 'backpressure' || right === 'backpressure') return 'backpressure';
-  if (left === 'queued' || right === 'queued') return 'queued';
-  return 'sent';
-}
-
-function orderedInput(command: GatewayTransportCommand): boolean {
-  return command.type === 'terminal-input' || command.type === 'terminal-paste';
-}
-
 // TERM_RESIZE / TERM_SYNC_SIZE 没有 canonical 等价物：后者是「焦点恢复补一次尺寸、
 // 不引发 resize 循环」。两者在网关都进同一套 viewport 仲裁，但线协议必须保持区分。
 function isLegacySizeCommand(command: GatewayTransportCommand): boolean {
@@ -64,38 +54,6 @@ function onDocumentVisible(resume: () => void): () => void {
   };
   owner.addEventListener('visibilitychange', handler);
   return () => owner.removeEventListener('visibilitychange', handler);
-}
-
-function cloneCommand(command: GatewayTransportCommand): GatewayTransportCommand {
-  if (command.type === 'select-pane') {
-    return { ...command, selectToken: Uint8Array.from(command.selectToken) };
-  }
-  if (command.type === 'set-pane-subscriptions') {
-    return { ...command, paneIds: [...command.paneIds] };
-  }
-  if (command.type === 'reorder-windows') {
-    return { ...command, windowIds: [...command.windowIds] };
-  }
-  if (command.type === 'reorder-panes') {
-    return { ...command, paneIds: [...command.paneIds] };
-  }
-  if (command.type === 'request-pane-screen') {
-    return { ...command, requestId: Uint8Array.from(command.requestId) };
-  }
-  if (command.type === 'request-pane-history') {
-    return {
-      ...command,
-      requestId: Uint8Array.from(command.requestId),
-      cursor: command.cursor
-        ? {
-            paneEpoch: Uint8Array.from(command.cursor.paneEpoch),
-            historyEpoch: Uint8Array.from(command.cursor.historyEpoch),
-            beforeLine: command.cursor.beforeLine,
-          }
-        : null,
-    };
-  }
-  return { ...command };
 }
 
 export class WebSocketGatewayTransport implements GatewayTransport {
@@ -301,7 +259,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
   }
 
   private enqueueCommand(command: GatewayTransportCommand): ClientSendResult {
-    if (orderedInput(command) && this.pendingInputAborted) return 'overflow';
+    if (isOrderedInput(command) && this.pendingInputAborted) return 'overflow';
     let encoded: ReturnType<typeof encodeGatewayTransportCommand>;
     try {
       encoded = encodeGatewayTransportCommand(command);
@@ -319,16 +277,16 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       this.pendingBytes + bytes <= limits.maxBytes
     ) {
       this.canonical.stageCommand(command);
-      this.pendingCommands.push({ command: cloneCommand(command), bytes });
+      this.pendingCommands.push({ command: clonePendingCommand(command), bytes });
       this.pendingBytes += bytes;
       return 'queued';
     }
     let droppedFrames = 0;
-    if (orderedInput(command)) {
+    if (isOrderedInput(command)) {
       const kept: PendingTransportCommand[] = [];
       let keptBytes = 0;
       for (const pending of this.pendingCommands) {
-        if (orderedInput(pending.command)) droppedFrames += 1;
+        if (isOrderedInput(pending.command)) droppedFrames += 1;
         else {
           kept.push(pending);
           keptBytes += pending.bytes;

@@ -87,6 +87,21 @@ export function inputByteGroups(
 }
 
 export function clonePendingCommand(command: GatewayTransportCommand): GatewayTransportCommand {
+  if (command.type === 'select-pane') {
+    return { ...command, selectToken: copyBytes(command.selectToken) };
+  }
+  if (command.type === 'set-pane-subscriptions') {
+    return { ...command, paneIds: [...command.paneIds] };
+  }
+  if (command.type === 'reorder-windows') {
+    return { ...command, windowIds: [...command.windowIds] };
+  }
+  if (command.type === 'reorder-panes') {
+    return { ...command, paneIds: [...command.paneIds] };
+  }
+  if (command.type === 'request-pane-screen') {
+    return { ...command, requestId: copyBytes(command.requestId) };
+  }
   if (command.type === 'request-pane-history') {
     return {
       ...command,
@@ -100,10 +115,7 @@ export function clonePendingCommand(command: GatewayTransportCommand): GatewayTr
         : null,
     };
   }
-  if (command.type === 'request-pane-screen') {
-    return { ...command, requestId: copyBytes(command.requestId) };
-  }
-  return command;
+  return { ...command };
 }
 
 export function paneKey(deviceId: string, paneId: string): string {
@@ -122,20 +134,6 @@ export function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
 
 export function copyBytes(bytes: Uint8Array): Uint8Array {
   return Uint8Array.from(bytes);
-}
-
-export function paneEpochsFromRecords(
-  records: readonly wsBorsh.SourceMetadataRecord[]
-): Map<string, Uint8Array> {
-  const epochs = new Map<string, Uint8Array>();
-  for (const record of records) {
-    if (record.key.entityKind !== wsBorsh.SOURCE_ENTITY_PANE) continue;
-    const field = record.fields.find((item) => item.field === wsBorsh.SOURCE_FIELD_PANE_EPOCH);
-    if (field && 'Bytes16' in field.value) {
-      epochs.set(record.key.nativeId, copyBytes(field.value.Bytes16));
-    }
-  }
-  return epochs;
 }
 
 export function discardSupersededMetadataAssemblies(

@@ -5,6 +5,17 @@ import {
   type PendingContentRequest,
 } from './canonical-content-transactions';
 import { CanonicalMetadataAssemblies } from './canonical-metadata-assemblies';
+import {
+  type MetadataLiveCaches,
+  applySubscriptionRejections,
+  decidePaneData,
+  deletePrefixedPaneKeys,
+  ingestMetadataPatch,
+  ingestMetadataSnapshot,
+  plannedSubscriptions,
+  sameStringList,
+  shouldSkipSubscriptionSend,
+} from './canonical-metadata-identity';
 import { CanonicalMetadataOverlay } from './canonical-metadata-overlay';
 import { CanonicalMetadataRecovery } from './canonical-metadata-recovery';
 import { CanonicalPendingCommands } from './canonical-pending-commands';
@@ -16,14 +27,11 @@ import {
   type MetadataSnapshotEvent,
   type PaneDataEvent,
   type SubscriptionAppliedEvent,
-  ZERO_EPOCH,
   bytesEqual,
-  bytesKey,
   clonePendingCommand,
   copyBytes,
   inputByteGroups,
   mergeSendResult,
-  paneEpochsFromRecords,
   paneKey,
   rejectionReason,
   sourceGapReason,
@@ -201,7 +209,7 @@ export class CanonicalStateClient {
       this.overlays.remove(command.deviceId);
       this.metadataRecovery.resolved(command.deviceId);
       this.clearPaneStateForDevice(command.deviceId);
-      this.dropPendingCommandsForDevice(command.deviceId);
+      this.pending.dropDevice(command.deviceId);
     }
   }
 
@@ -214,7 +222,7 @@ export class CanonicalStateClient {
     this.overlays.remove(deviceId);
     this.metadataRecovery.resolved(deviceId);
     this.clearPaneStateForDevice(deviceId);
-    this.dropPendingCommandsForDevice(deviceId);
+    this.pending.dropDevice(deviceId);
     return this.active ? this.sendSubscriptions(true) : 'sent';
   }
 
@@ -298,57 +306,34 @@ export class CanonicalStateClient {
   }
 
   private sendSubscriptions(force = false): ClientSendResult {
-    const activePanes: wsBorsh.CanonicalPaneSubscription[] = [];
-    for (const [deviceId, desired] of [...this.desired].sort(([left], [right]) =>
-      left.localeCompare(right)
-    )) {
-      if (this.epochRecoveryDevices.has(deviceId)) continue;
-      const device = this.metadata.get(deviceId);
-      for (const paneId of desired.paneIds) {
-        const key = paneKey(deviceId, paneId);
-        const cursor = this.terminalCursors.get(key);
-        activePanes.push({
-          pane: {
-            deviceId,
-            serverEpoch: copyBytes(device?.serverEpoch ?? ZERO_EPOCH),
-            paneId,
-          },
-          cursor: cursor
-            ? { paneEpoch: copyBytes(cursor.paneEpoch), terminalSeq: cursor.terminalSeq }
-            : null,
-        });
-      }
-    }
-    const fingerprint = activePanes
-      .map(
-        ({ pane, cursor }) =>
-          `${pane.deviceId}\0${pane.paneId}\0${bytesKey(pane.serverEpoch)}\0${cursor ? `${bytesKey(cursor.paneEpoch)}:${cursor.terminalSeq}` : '-'}`
-      )
-      .join('\u0001');
-    const identityFingerprint = activePanes
-      .map(({ pane }) => `${pane.deviceId}\0${pane.paneId}\0${bytesKey(pane.serverEpoch)}`)
-      .join('\u0001');
+    const planned = plannedSubscriptions(
+      this.desired,
+      this.metadata,
+      this.terminalCursors,
+      this.epochRecoveryDevices
+    );
     if (
-      !force &&
-      identityFingerprint === this.lastSubscriptionIdentityFingerprint &&
-      this.wireGeneration > 0n
-    ) {
+      shouldSkipSubscriptionSend(
+        force,
+        this.wireGeneration,
+        planned.fingerprint,
+        planned.identityFingerprint,
+        this.lastSubscriptionFingerprint,
+        this.lastSubscriptionIdentityFingerprint
+      )
+    )
       return 'sent';
-    }
-    if (!force && fingerprint === this.lastSubscriptionFingerprint && this.wireGeneration > 0n) {
-      return 'sent';
-    }
     this.wireGeneration += 1n;
     const result = this.send({
       SetPaneSubscriptions: {
         generation: this.wireGeneration,
-        activePanes,
+        activePanes: planned.activePanes,
         hotPanes: [],
       },
     });
     if (result !== 'overflow') {
-      this.lastSubscriptionFingerprint = fingerprint;
-      this.lastSubscriptionIdentityFingerprint = identityFingerprint;
+      this.lastSubscriptionFingerprint = planned.fingerprint;
+      this.lastSubscriptionIdentityFingerprint = planned.identityFingerprint;
     }
     return result;
   }
@@ -356,7 +341,7 @@ export class CanonicalStateClient {
   private updateDesiredSubscriptions(deviceId: string, paneIds: readonly string[]): void {
     const panes = [...new Set(paneIds)].sort();
     const previous = this.desired.get(deviceId)?.paneIds ?? [];
-    if (!sameStrings(previous, panes)) this.subscriptionRetry.resolved();
+    if (!sameStringList(previous, panes)) this.subscriptionRetry.resolved();
     if (panes.length === 0) this.desired.delete(deviceId);
     else this.desired.set(deviceId, { paneIds: panes });
   }
@@ -534,164 +519,41 @@ export class CanonicalStateClient {
   private handleMetadataSnapshot(event: MetadataSnapshotEvent): void {
     const snapshot = this.metadataAssemblies.accept(event);
     if (!snapshot) return;
-    this.commitMetadataSnapshot(snapshot.metadataEpoch, snapshot.revision, snapshot.records);
-  }
-
-  private commitMetadataSnapshot(
-    metadataEpoch: Uint8Array,
-    revision: bigint,
-    records: wsBorsh.SourceMetadataRecord[]
-  ): void {
-    const byDevice = new Map<string, wsBorsh.SourceMetadataRecord[]>();
-    let recoveredMetadata = false;
-    for (const record of records) {
-      const group = byDevice.get(record.key.deviceId) ?? [];
-      group.push(record);
-      byDevice.set(record.key.deviceId, group);
-    }
-    for (const [deviceId, deviceRecords] of byDevice) {
-      const serverEpoch = deviceRecords[0]?.key.serverEpoch;
-      if (!serverEpoch) continue;
-      const diff = wsBorsh.sourceMetadataPatchToLegacyDiff({
-        metadataEpoch,
-        fromRevision: 0n,
-        throughRevision: revision,
-        upserts: deviceRecords,
-        removals: [],
-      });
-      const snapshot = this.overlays.apply(
-        wsBorsh.applyLegacyStateSnapshotDiff({ deviceId, session: null }, diff)
-      );
-      const previous = this.metadata.get(deviceId);
-      if (previous && !bytesEqual(previous.serverEpoch, serverEpoch)) {
-        this.clearPaneStateForDevice(deviceId);
-      }
-      const paneEpochs = paneEpochsFromRecords(deviceRecords);
-      this.metadata.set(deviceId, {
-        metadataEpoch: copyBytes(metadataEpoch),
-        revision,
-        serverEpoch: copyBytes(serverEpoch),
-        paneEpochs,
-        snapshot,
-      });
-      const recoveredEpoch = this.epochRecoveryDevices.delete(deviceId);
-      recoveredMetadata ||= this.awaitingMetadataDevices.has(deviceId) || recoveredEpoch;
-      if (recoveredEpoch) this.subscriptionRetry.resolved();
-      this.metadataRecovery.resolved(deviceId);
-      this.awaitingMetadataDevices.delete(deviceId);
-      this.options.emit({ type: 'metadata-snapshot', snapshot });
-    }
-    this.sendSubscriptions(recoveredMetadata);
+    const recovered = ingestMetadataSnapshot(
+      this.metadataCaches(),
+      snapshot.metadataEpoch,
+      snapshot.revision,
+      snapshot.records
+    );
+    this.sendSubscriptions(recovered);
     this.flushTargetCommands();
   }
 
   private handleMetadataPatch(event: MetadataPatchEvent): void {
-    if (event.throughRevision < event.fromRevision) {
+    if (ingestMetadataPatch(this.metadataCaches(), event) === 'global-gap') {
       this.emitMetadataGap();
       return;
-    }
-    const deviceIds = new Set<string>();
-    for (const record of event.upserts) deviceIds.add(record.key.deviceId);
-    for (const key of event.removals) deviceIds.add(key.deviceId);
-    for (const deviceId of deviceIds) {
-      const state = this.metadata.get(deviceId);
-      if (
-        !state ||
-        !bytesEqual(state.metadataEpoch, event.metadataEpoch) ||
-        state.revision !== event.fromRevision
-      ) {
-        this.emitMetadataGap(deviceId);
-        continue;
-      }
-      const upserts = event.upserts.filter((record) => record.key.deviceId === deviceId);
-      const removals = event.removals.filter((key) => key.deviceId === deviceId);
-      const patch = { ...event, upserts, removals };
-      const diff = wsBorsh.sourceMetadataPatchToLegacyDiff(patch);
-      this.updateMetadataIdentity(state, upserts, removals);
-      state.revision = event.throughRevision;
-      state.snapshot = this.overlays.apply(
-        wsBorsh.applyLegacyStateSnapshotDiff(state.snapshot, diff)
-      );
-      this.options.emit({ type: 'metadata-patch', deviceId, patch: diff });
     }
     this.sendSubscriptions();
     this.flushTargetCommands();
   }
 
-  private updateMetadataIdentity(
-    state: DeviceMetadataState,
-    upserts: readonly wsBorsh.SourceMetadataRecord[],
-    removals: readonly wsBorsh.SourceEntityKey[]
-  ): void {
-    const nextServerEpoch = upserts[0]?.key.serverEpoch ?? removals[0]?.serverEpoch;
-    if (nextServerEpoch && !bytesEqual(state.serverEpoch, nextServerEpoch)) {
-      this.clearPaneStateForDevice(upserts[0]?.key.deviceId ?? removals[0]?.deviceId ?? '');
-      state.serverEpoch = copyBytes(nextServerEpoch);
-      state.paneEpochs.clear();
-    }
-    for (const key of removals) {
-      if (key.entityKind !== wsBorsh.SOURCE_ENTITY_PANE) continue;
-      state.paneEpochs.delete(key.nativeId);
-      this.terminalCursors.delete(paneKey(key.deviceId, key.nativeId));
-      this.blockedPanes.delete(paneKey(key.deviceId, key.nativeId));
-      this.content.cancelPane(key.deviceId, key.nativeId);
-      this.dropPendingCommandsForPane(key.deviceId, key.nativeId);
-    }
-    for (const record of upserts) {
-      if (record.key.entityKind !== wsBorsh.SOURCE_ENTITY_PANE) continue;
-      const field = record.fields.find((item) => item.field === wsBorsh.SOURCE_FIELD_PANE_EPOCH);
-      if (!field) continue;
-      const key = paneKey(record.key.deviceId, record.key.nativeId);
-      if ('Bytes16' in field.value) {
-        const previous = state.paneEpochs.get(record.key.nativeId);
-        if (previous && !bytesEqual(previous, field.value.Bytes16)) {
-          this.terminalCursors.delete(key);
-          this.blockedPanes.add(key);
-        }
-        state.paneEpochs.set(record.key.nativeId, copyBytes(field.value.Bytes16));
-      } else if ('Unset' in field.value) {
-        state.paneEpochs.delete(record.key.nativeId);
-        this.terminalCursors.delete(key);
-      }
-    }
-  }
-
   private handlePaneData(event: PaneDataEvent, copyData = false): void {
     const key = paneKey(event.pane.deviceId, event.pane.paneId);
-    if (this.blockedPanes.has(key)) return;
-    if (this.awaitingMetadataDevices.has(event.pane.deviceId)) return;
-    const device = this.metadata.get(event.pane.deviceId);
-    const knownPaneEpoch = device?.paneEpochs.get(event.pane.paneId);
-    if (!device || !knownPaneEpoch) {
+    const decision = decidePaneData(event, {
+      blocked: this.blockedPanes.has(key),
+      awaitingMetadata: this.awaitingMetadataDevices.has(event.pane.deviceId),
+      device: this.metadata.get(event.pane.deviceId),
+      cursor: this.terminalCursors.get(key),
+    });
+    if (decision.kind === 'ignore') return;
+    if (decision.kind === 'metadata-gap') {
       this.emitMetadataGap(event.pane.deviceId);
       return;
     }
-    if (!bytesEqual(device.serverEpoch, event.pane.serverEpoch)) {
-      this.emitPaneRebase(event.pane.deviceId, event.pane.paneId, 'epoch_changed');
+    if (decision.kind === 'rebase') {
+      this.emitPaneRebase(event.pane.deviceId, event.pane.paneId, decision.reason);
       return;
-    }
-    if (!bytesEqual(knownPaneEpoch, event.paneEpoch)) {
-      this.emitPaneRebase(event.pane.deviceId, event.pane.paneId, 'epoch_changed');
-      return;
-    }
-    const cursor = this.terminalCursors.get(key);
-    if (cursor && !bytesEqual(cursor.paneEpoch, event.paneEpoch)) {
-      this.emitPaneRebase(event.pane.deviceId, event.pane.paneId, 'epoch_changed');
-      return;
-    }
-    let seqStart = event.seqStart;
-    let data = event.data;
-    if (cursor) {
-      if (seqStart > cursor.terminalSeq) {
-        this.emitPaneRebase(event.pane.deviceId, event.pane.paneId, 'pane_gap');
-        return;
-      }
-      if (event.seqEnd <= cursor.terminalSeq) return;
-      if (seqStart < cursor.terminalSeq) {
-        const offset = Number(cursor.terminalSeq - seqStart);
-        data = data.subarray(offset);
-        seqStart = cursor.terminalSeq;
-      }
     }
     this.terminalCursors.set(key, {
       paneEpoch: copyBytes(event.paneEpoch),
@@ -703,9 +565,9 @@ export class CanonicalStateClient {
         deviceId: event.pane.deviceId,
         paneId: event.pane.paneId,
         paneEpoch: copyBytes(event.paneEpoch),
-        seqStart,
+        seqStart: decision.seqStart,
         seqEnd: event.seqEnd,
-        data: copyData ? data.slice() : data,
+        data: copyData ? decision.data.slice() : decision.data,
       },
     });
   }
@@ -736,7 +598,13 @@ export class CanonicalStateClient {
         reason: 'cache_evicted',
       });
     }
-    const [epochChangedDevices, resourceExhausted] = this.applySubscriptionRejections(rejections);
+    const [epochChangedDevices, resourceExhausted] = applySubscriptionRejections(
+      rejections,
+      this.terminalCursors,
+      this.blockedPanes,
+      (deviceId) => this.metadata.has(deviceId),
+      (deviceId, paneId) => this.pending.dropPane(deviceId, paneId)
+    );
     if (resourceExhausted || epochChangedDevices.size > 0) {
       const scheduled = this.subscriptionRetry.request(() => {
         if (!this.active) return;
@@ -752,29 +620,6 @@ export class CanonicalStateClient {
     } else {
       this.subscriptionRetry.resolved();
     }
-  }
-
-  private applySubscriptionRejections(
-    rejections: readonly GatewaySubscriptionRejection[]
-  ): [Set<string>, boolean] {
-    const epochChangedDevices = new Set<string>();
-    let resourceExhausted = false;
-    for (const rejection of rejections) {
-      const key = paneKey(rejection.deviceId, rejection.paneId);
-      this.terminalCursors.delete(key);
-      if (rejection.reason === 'not_found') {
-        this.blockedPanes.delete(key);
-        this.dropPendingCommandsForPane(rejection.deviceId, rejection.paneId);
-        continue;
-      }
-      this.blockedPanes.add(key);
-      if (rejection.reason === 'resource_exhausted') {
-        resourceExhausted = true;
-      } else if (this.metadata.has(rejection.deviceId)) {
-        epochChangedDevices.add(rejection.deviceId);
-      }
-    }
-    return [epochChangedDevices, resourceExhausted];
   }
 
   private handleSourceGap(gap: Extract<CanonicalEvent, { SourceGap: unknown }>['SourceGap']): void {
@@ -859,22 +704,29 @@ export class CanonicalStateClient {
     }
   }
 
+  private metadataCaches(): MetadataLiveCaches {
+    return {
+      metadata: this.metadata,
+      awaitingMetadataDevices: this.awaitingMetadataDevices,
+      epochRecoveryDevices: this.epochRecoveryDevices,
+      terminalCursors: this.terminalCursors,
+      blockedPanes: this.blockedPanes,
+      applyOverlay: (snapshot) => this.overlays.apply(snapshot),
+      clearPaneStateForDevice: (deviceId) => this.clearPaneStateForDevice(deviceId),
+      cancelPane: (deviceId, paneId) => this.content.cancelPane(deviceId, paneId),
+      dropPendingPane: (deviceId, paneId) => this.pending.dropPane(deviceId, paneId),
+      resolvedRecovery: (deviceId) => this.metadataRecovery.resolved(deviceId),
+      resolvedSubscriptionRetry: () => this.subscriptionRetry.resolved(),
+      emitSnapshot: (snapshot) => this.options.emit({ type: 'metadata-snapshot', snapshot }),
+      emitPatch: (deviceId, patch) =>
+        this.options.emit({ type: 'metadata-patch', deviceId, patch }),
+      emitMetadataGap: (deviceId) => this.emitMetadataGap(deviceId),
+    };
+  }
+
   private clearPaneStateForDevice(deviceId: string): void {
-    const prefix = `${deviceId}\0`;
-    for (const key of this.terminalCursors.keys()) {
-      if (key.startsWith(prefix)) this.terminalCursors.delete(key);
-    }
-    for (const key of this.blockedPanes) {
-      if (key.startsWith(prefix)) this.blockedPanes.delete(key);
-    }
-  }
-
-  private dropPendingCommandsForDevice(deviceId: string): void {
-    this.pending.dropDevice(deviceId);
-  }
-
-  private dropPendingCommandsForPane(deviceId: string, paneId: string): void {
-    this.pending.dropPane(deviceId, paneId);
+    deletePrefixedPaneKeys(this.terminalCursors, deviceId);
+    deletePrefixedPaneKeys(this.blockedPanes, deviceId);
   }
 
   private resetConnectionAssemblies(): void {
@@ -885,8 +737,4 @@ export class CanonicalStateClient {
     this.feedMaxFrameBytes = null;
     this.gatewayEpoch = null;
   }
-}
-
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
