@@ -3,7 +3,12 @@
 // （useSyncExternalStore 以 Object.is 比较快照，同值即不重渲染）。
 
 import { describe, expect, test } from 'bun:test';
-import { type SelectedFile, isFileSelected, selectedPathInRoot } from './selected-file';
+import {
+  type SelectedFile,
+  isFileSelected,
+  selectedChildPath,
+  selectedPathInRoot,
+} from './selected-file';
 
 const ROOT = 'root-a';
 
@@ -52,5 +57,51 @@ describe('selectedPathInRoot', () => {
     const second = selectedPathInRoot({ rootId: 'root-b', path: 'b.ts' }, ROOT);
     expect(first).toBeNull();
     expect(second).toBe(first);
+  });
+});
+
+// 目录节点只用「选中文件是不是自己的直接子项」撑开显示上限。按整根的选中路径订阅时，
+// 同一个根下换文件会让这个根里所有已挂载的目录节点快照都变一遍，白白重渲染。
+describe('selectedChildPath', () => {
+  test('只认直接子项，孙子与旁支都不算', () => {
+    const selected: SelectedFile = { rootId: ROOT, path: '/w/src/a.ts' };
+    expect(selectedChildPath(selected, ROOT, '/w/src')).toBe('/w/src/a.ts');
+    expect(selectedChildPath(selected, ROOT, '/w')).toBeNull();
+    expect(selectedChildPath(selected, ROOT, '/w/src/deep')).toBeNull();
+    expect(selectedChildPath(selected, ROOT, '/w/other')).toBeNull();
+    expect(selectedChildPath(selected, 'root-b', '/w/src')).toBeNull();
+    expect(selectedChildPath(null, ROOT, '/w/src')).toBeNull();
+  });
+
+  test('根目录 / 与末尾多余分隔符都能正确比较', () => {
+    const selected: SelectedFile = { rootId: ROOT, path: '/etc' };
+    expect(selectedChildPath(selected, ROOT, '/')).toBe('/etc');
+    expect(selectedChildPath({ rootId: ROOT, path: '/w/a.ts' }, ROOT, '/w/')).toBe('/w/a.ts');
+  });
+
+  test('同目录内换文件：只有该目录的快照变，其余目录逐帧同值', () => {
+    const dirs = ['/w', '/w/src', '/w/src/deep', '/w/pkg', '/w/pkg/nested'];
+    const before = dirs.map((dir) =>
+      selectedChildPath({ rootId: ROOT, path: '/w/src/a.ts' }, ROOT, dir)
+    );
+    const after = dirs.map((dir) =>
+      selectedChildPath({ rootId: ROOT, path: '/w/src/b.ts' }, ROOT, dir)
+    );
+
+    const changed = dirs.filter((_, i) => !Object.is(before[i], after[i]));
+    expect(changed).toEqual(['/w/src']);
+  });
+
+  test('跨目录换文件：只有得失选中子项的那两个目录快照变', () => {
+    const dirs = ['/w', '/w/src', '/w/src/deep', '/w/pkg', '/w/pkg/nested'];
+    const before = dirs.map((dir) =>
+      selectedChildPath({ rootId: ROOT, path: '/w/src/a.ts' }, ROOT, dir)
+    );
+    const after = dirs.map((dir) =>
+      selectedChildPath({ rootId: ROOT, path: '/w/pkg/b.ts' }, ROOT, dir)
+    );
+
+    const changed = dirs.filter((_, i) => !Object.is(before[i], after[i]));
+    expect(changed).toEqual(['/w/src', '/w/pkg']);
   });
 });

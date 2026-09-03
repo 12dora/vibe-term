@@ -6,11 +6,23 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  MAX_DND_AUTO_RETRIES,
   SortableVerticalList,
+  deviceTreeDndLoadStateForTests,
+  dndRetryDelayMs,
   loadDeviceTreeDnd,
+  requestDeviceTreeDnd,
   resetDeviceTreeDndForTests,
+  setDeviceTreeDndImporterForTests,
   useSortableRow,
 } from './device-tree-dnd';
+
+/** 让 import() 的 then 链走完 */
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
 
 function Probe() {
   const row = useSortableRow('row-1');
@@ -64,5 +76,82 @@ describe('device-tree 拖拽懒加载', () => {
     const first = await loadDeviceTreeDnd();
     const second = await loadDeviceTreeDnd();
     expect(second).toBe(first);
+  });
+});
+
+// 加载失败后的恢复：常驻侧栏一次失败若不重试，整个页面生命周期内拖拽都是死的。
+describe('device-tree 拖拽加载失败恢复', () => {
+  test('退避时长指数增长且封顶 30s', () => {
+    expect(dndRetryDelayMs(1)).toBe(800);
+    expect(dndRetryDelayMs(2)).toBe(1600);
+    expect(dndRetryDelayMs(3)).toBe(3200);
+    expect(dndRetryDelayMs(20)).toBe(30_000);
+  });
+
+  test('失败后记一次并排一次退避重试，而不是就此躺平', async () => {
+    setDeviceTreeDndImporterForTests(() => Promise.reject(new Error('chunk 404')));
+    requestDeviceTreeDnd();
+    await flushMicrotasks();
+
+    const state = deviceTreeDndLoadStateForTests();
+    expect(state.loaded).toBe(false);
+    expect(state.failures).toBe(1);
+    expect(state.retryScheduled).toBe(true);
+  });
+
+  test('自动重试次数封顶，不在离线时空转', async () => {
+    setDeviceTreeDndImporterForTests(() => Promise.reject(new Error('chunk 404')));
+    for (let i = 0; i <= MAX_DND_AUTO_RETRIES + 1; i += 1) {
+      requestDeviceTreeDnd();
+      await flushMicrotasks();
+    }
+    const state = deviceTreeDndLoadStateForTests();
+    expect(state.failures).toBeGreaterThan(MAX_DND_AUTO_RETRIES);
+    expect(state.retryScheduled).toBe(false);
+  });
+
+  test('失败后再次请求会重新发起 import，成功即清零失败计数', async () => {
+    let calls = 0;
+    setDeviceTreeDndImporterForTests(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('chunk 404');
+      return await import('./device-tree-dnd-impl');
+    });
+
+    requestDeviceTreeDnd();
+    await flushMicrotasks();
+    expect(deviceTreeDndLoadStateForTests().failures).toBe(1);
+
+    requestDeviceTreeDnd();
+    await flushMicrotasks();
+    const state = deviceTreeDndLoadStateForTests();
+    expect(state.loaded).toBe(true);
+    expect(state.failures).toBe(0);
+    expect(state.retryScheduled).toBe(false);
+    expect(calls).toBe(2);
+  });
+
+  test('空样板的拖拽手柄带上了「碰一下就重试」的钩子', async () => {
+    setDeviceTreeDndImporterForTests(() => Promise.reject(new Error('chunk 404')));
+    let handleProps: Record<string, unknown> | null = null;
+    function CaptureProbe() {
+      const row = useSortableRow('row-1');
+      handleProps = row.dragHandleProps as unknown as Record<string, unknown>;
+      return null;
+    }
+    renderToStaticMarkup(
+      <SortableVerticalList ids={['row-1']} onReorder={() => undefined}>
+        <CaptureProbe />
+      </SortableVerticalList>
+    );
+
+    const props = handleProps as unknown as Record<string, unknown>;
+    expect(typeof props.onPointerDown).toBe('function');
+    expect(typeof props.onKeyDown).toBe('function');
+
+    // 用户真的去碰手柄：立刻再试一次，不必等退避到期
+    (props.onPointerDown as () => void)();
+    await flushMicrotasks();
+    expect(deviceTreeDndLoadStateForTests().failures).toBe(1);
   });
 });

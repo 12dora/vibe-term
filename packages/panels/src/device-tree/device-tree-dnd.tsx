@@ -20,6 +20,14 @@
 // 首屏 `<script>` 已经不含它（这才是要优化的量），chunk 在用户来得及交互之前就已就位。
 // 代价：极慢的链路上，chunk 到达前的第一个拖拽手势不会有任何反应（不是报错，是没反应），
 // 松手重拖即可。
+//
+// 加载失败怎么办：侧栏是常驻组件，一次失败若不重试，整个页面生命周期内拖拽就永久失效，
+// 而且没有任何提示。这里做两道恢复：
+//   1) 指数退避自动重试（有限次）——瞬时网络抖动自己会好；
+//   2) 用户真的去碰拖拽手柄时立刻重试一次（`requestDeviceTreeDnd`），不受退避次数限制。
+// 侧栏里不放任何错误 UI：拖拽是增强功能，为它在常驻侧栏挂一条报错横幅得不偿失。
+// 注意发版后旧 chunk 404 这类「就地重试也没用」的情形（浏览器把失败的模块 URL 记进
+// module map），退避封顶后就不再空转，等用户整页刷新拿到新 index.html 自然恢复。
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import type * as DeviceTreeDndImpl from './device-tree-dnd-impl';
@@ -36,14 +44,33 @@ export type SortableVerticalListProps = DeviceTreeDndImpl.SortableVerticalListPr
 
 type DndImplModule = typeof DeviceTreeDndImpl;
 
+/** 自动退避重试的次数上限；超过后只有用户碰手柄才会再试 */
+export const MAX_DND_AUTO_RETRIES = 4;
+const RETRY_BASE_MS = 800;
+const RETRY_MAX_MS = 30_000;
+
+type DndImplImporter = () => Promise<DndImplModule>;
+
+const defaultImporter: DndImplImporter = () => import('./device-tree-dnd-impl');
+
+let importImpl: DndImplImporter = defaultImporter;
 let loadedImpl: DndImplModule | null = null;
 let inflight: Promise<DndImplModule> | null = null;
+let failureCount = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+const readyListeners = new Set<() => void>();
 
-/** 拉取拖拽实现；失败不缓存，下一次挂载会重新发起。 */
+/** 第 n 次失败后的退避时长；封顶 30s，避免离线时空转 */
+export function dndRetryDelayMs(failures: number): number {
+  const shift = Math.min(Math.max(failures - 1, 0), 16);
+  return Math.min(RETRY_BASE_MS * 2 ** shift, RETRY_MAX_MS);
+}
+
+/** 拉取拖拽实现；失败不缓存，下一次请求会重新发起。 */
 export function loadDeviceTreeDnd(): Promise<DndImplModule> {
   if (loadedImpl) return Promise.resolve(loadedImpl);
   if (!inflight) {
-    inflight = import('./device-tree-dnd-impl').then(
+    inflight = importImpl().then(
       (module) => {
         loadedImpl = module;
         inflight = null;
@@ -58,10 +85,63 @@ export function loadDeviceTreeDnd(): Promise<DndImplModule> {
   return inflight;
 }
 
-/** 仅供测试：清掉模块级缓存，让下一次挂载重新走一遍加载。 */
+function scheduleRetry(): void {
+  if (retryTimer !== null || loadedImpl || failureCount > MAX_DND_AUTO_RETRIES) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    requestDeviceTreeDnd();
+  }, dndRetryDelayMs(failureCount));
+}
+
+/**
+ * 请求加载拖拽实现：已就位直接返回，失败则记一次并排一次退避重试。
+ * 用户触碰拖拽手柄时也会调它——那一次不受退避计数限制，且会抢在待办的退避之前发起。
+ */
+export function requestDeviceTreeDnd(): void {
+  if (loadedImpl) return;
+  if (retryTimer !== null) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  void loadDeviceTreeDnd().then(
+    () => {
+      failureCount = 0;
+      for (const listener of readyListeners) listener();
+    },
+    () => {
+      failureCount += 1;
+      scheduleRetry();
+    }
+  );
+}
+
+/** 仅供测试：替换动态 import（传 null 恢复默认） */
+export function setDeviceTreeDndImporterForTests(importer: DndImplImporter | null): void {
+  importImpl = importer ?? defaultImporter;
+}
+
+/** 仅供测试：清掉模块级缓存与重试状态，让下一次挂载重新走一遍加载。 */
 export function resetDeviceTreeDndForTests(): void {
+  importImpl = defaultImporter;
   loadedImpl = null;
   inflight = null;
+  failureCount = 0;
+  if (retryTimer !== null) clearTimeout(retryTimer);
+  retryTimer = null;
+  readyListeners.clear();
+}
+
+/** 仅供测试：观察退避重试状态 */
+export function deviceTreeDndLoadStateForTests(): {
+  loaded: boolean;
+  failures: number;
+  retryScheduled: boolean;
+} {
+  return {
+    loaded: loadedImpl !== null,
+    failures: failureCount,
+    retryScheduled: retryTimer !== null,
+  };
 }
 
 // 行读的是**祖先容器渲染时用的那份实现**，不是模块级变量：否则容器还在空壳分支、行已经
@@ -73,13 +153,21 @@ const noopRef = (): void => undefined;
 // 空样板保留 dnd-kit 的 role/tabIndex/aria-roledescription，加载前后焦点顺序与语义一致。
 // 不带 `aria-describedby`：它指向 DndContext 挂的说明节点，这会儿那个节点还不存在，
 // 填上就是一条悬空引用。
+// 手柄上的 pointerdown / keydown 兼作「用户真的想拖」的信号：实现还没就位（多半是之前加载
+// 失败了）时立刻再试一次，不必等退避到期，也不必刷新页面。
+const retryOnInteraction = (): void => requestDeviceTreeDnd();
+
 const idleDragHandleProps = {
-  role: 'button',
-  tabIndex: 0,
-  'aria-disabled': false,
-  'aria-pressed': undefined,
-  'aria-roledescription': 'sortable',
-} as SortableRow['dragHandleProps'];
+  ...({
+    role: 'button',
+    tabIndex: 0,
+    'aria-disabled': false,
+    'aria-pressed': undefined,
+    'aria-roledescription': 'sortable',
+  } as SortableRow['dragHandleProps']),
+  onPointerDown: retryOnInteraction,
+  onKeyDown: retryOnInteraction,
+};
 
 const idleSortableRow: SortableRow = {
   setNodeRef: noopRef,
@@ -95,14 +183,17 @@ function useDndImpl(): DndImplModule | null {
   useEffect(() => {
     if (impl) return;
     let cancelled = false;
-    void loadDeviceTreeDnd().then(
-      (module) => {
-        if (!cancelled) setImpl(module);
-      },
-      () => undefined
-    );
+    // 订阅模块级的「就位」广播：重试可能由别处（另一个列表、手柄交互、退避定时器）发起，
+    // 单纯 await 自己这一次 promise 会漏掉那些成功。
+    const onReady = () => {
+      if (!cancelled && loadedImpl) setImpl(loadedImpl);
+    };
+    readyListeners.add(onReady);
+    requestDeviceTreeDnd();
+    onReady();
     return () => {
       cancelled = true;
+      readyListeners.delete(onReady);
     };
   }, [impl]);
 

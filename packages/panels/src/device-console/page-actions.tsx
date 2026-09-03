@@ -25,8 +25,9 @@ export function DeviceConsoleActions({ deviceId, windowId, paneId }: DeviceConso
   const [showTerminalSettings, setShowTerminalSettings] = useState(false);
   // 空闲预热终端设置 chunk：趁当前 index.html 还新鲜先拉下来，绕开发版后旧 chunk 404 的窗口
   useTerminalSettingsPreload();
-  // 同理预热监视规则对话框：工具栏上的 watch 按钮点开即用
-  useWatchDialogPreload();
+  // 同理预热监视规则对话框，但只在按钮真的会渲染时预热——功能关掉还拉一遍就是白费流量
+  const watchAvailable = Boolean(model.watchUi && model.deviceId && model.resolvedPaneId);
+  useWatchDialogPreload(watchAvailable);
 
   return (
     <>
@@ -42,7 +43,7 @@ export function DeviceConsoleActions({ deviceId, windowId, paneId }: DeviceConso
         onOpenChange={setShowTerminalSettings}
       />
 
-      {model.watchUi && model.deviceId && model.resolvedPaneId && (
+      {watchAvailable && model.deviceId && model.resolvedPaneId && (
         <DeferredWatchDialog
           open={showWatchDialog}
           onOpenChange={setShowWatchDialog}

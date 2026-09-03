@@ -69,6 +69,32 @@ export function selectedPathInRoot(selected: SelectedFile | null, rootId: string
   return selected !== null && selected.rootId === rootId ? selected.path : null;
 }
 
+/** 去掉目录路径末尾多余的分隔符（保留根 `/` 本身），便于与父目录逐字比较 */
+function dirKey(dir: string): string {
+  let end = dir.length;
+  while (end > 1 && dir[end - 1] === '/') end -= 1;
+  return dir.slice(0, end);
+}
+
+/**
+ * 选中文件是该目录的**直接子项**时给出它的路径，否则 null。
+ *
+ * 目录节点只用这一个值撑开显示上限（`entries` 就是直接子项，别处的选中文件永远 findIndex
+ * 不到），所以按「整根的选中路径」订阅是过量的：同一个根下换文件会让这个根里所有已挂载的
+ * 目录节点快照都变一遍。按直接子项派生后，只有真正得失一个选中子项的那一两个目录会重渲染。
+ */
+export function selectedChildPath(
+  selected: SelectedFile | null,
+  rootId: string,
+  dirPath: string
+): string | null {
+  const path = selectedPathInRoot(selected, rootId);
+  if (path === null) return null;
+  const cut = path.lastIndexOf('/');
+  const parent = cut < 0 ? '' : cut === 0 ? '/' : path.slice(0, cut);
+  return parent === dirKey(dirPath) ? path : null;
+}
+
 const SelectedFileContext = createContext<SelectedFileStore | null>(null);
 
 function useSelectedFileStore(): SelectedFileStore {
@@ -114,10 +140,13 @@ export function useIsFileSelected(rootId: string, path: string): boolean {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-/** 选中文件落在该根下时给出它的路径，否则 null（目录节点据此撑开显示上限） */
-export function useSelectedPathInRoot(rootId: string): string | null {
+/** 选中文件是该目录的直接子项时给出它的路径，否则 null（目录节点据此撑开显示上限） */
+export function useSelectedChildPath(rootId: string, dirPath: string): string | null {
   const store = useSelectedFileStore();
   const subscribe = useCallback((listener: () => void) => store.subscribe(listener), [store]);
-  const getSnapshot = useCallback(() => selectedPathInRoot(store.get(), rootId), [store, rootId]);
+  const getSnapshot = useCallback(
+    () => selectedChildPath(store.get(), rootId, dirPath),
+    [store, rootId, dirPath]
+  );
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

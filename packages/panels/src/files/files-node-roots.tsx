@@ -18,7 +18,7 @@ import { Button } from '@tmex/ui/button';
 import { ContextMenu, ContextMenuTrigger } from '@tmex/ui/context-menu';
 import { useSidebar } from '@tmex/ui/sidebar';
 import { Loader2, TriangleAlert } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
@@ -33,7 +33,8 @@ import {
   fileRootReorderOptions,
 } from './root-reorder';
 import { selectVisibleFileRoots } from './root-visibility';
-import { SelectedFileProvider, useIsFileSelected, useSelectedPathInRoot } from './selected-file';
+import { SelectedFileProvider, useIsFileSelected, useSelectedChildPath } from './selected-file';
+import { ShowAllEntriesProvider, useShowAllEntries } from './show-all-entries';
 import { useDirectoryListing } from './use-directory-listing';
 import { useDirectoryUpload } from './use-directory-upload';
 import { useRsyncMissingToast } from './use-rsync-missing-toast';
@@ -153,15 +154,17 @@ export function FilesNodeRoots() {
 
   return (
     <SelectedFileProvider>
-      <SortableVerticalList
-        ids={visibleIds}
-        onReorder={reorder.onReorder}
-        disabled={reorder.pending}
-      >
-        {roots.map((root) => (
-          <SortableRootNode key={root.id} root={root} ctx={ctx} />
-        ))}
-      </SortableVerticalList>
+      <ShowAllEntriesProvider>
+        <SortableVerticalList
+          ids={visibleIds}
+          onReorder={reorder.onReorder}
+          disabled={reorder.pending}
+        >
+          {roots.map((root) => (
+            <SortableRootNode key={root.id} root={root} ctx={ctx} />
+          ))}
+        </SortableVerticalList>
+      </ShowAllEntriesProvider>
       {rootsQuery.isLoading && (
         <div className="px-2 py-3 text-center text-xs text-muted-foreground">
           {t('common.loading')}
@@ -243,16 +246,17 @@ const DirNode = memo(function DirNode({
     localDeviceId: ctx.localDeviceId,
   });
 
-  const [showAll, setShowAll] = useState(false);
+  // 「显示全部」提到根节点之上：拖拽 chunk 落地会重挂整棵树，放在这里会被清零（见 show-all-entries）
+  const { showAll, show: onShowAll } = useShowAllEntries(nodeKey);
 
   const indent = depth * INDENT_STEP + 4;
   const childIndent = indent + 18;
   const entries = query.data?.entries;
   // 选中的文件落在上限之外时把上限撑到它，否则路由直达的那一行根本不会挂载
-  const selectedPath = useSelectedPathInRoot(rootId);
+  const selectedChild = useSelectedChildPath(rootId, path);
   const cap =
-    entries && entries.length > DISPLAY_CAP && selectedPath !== null
-      ? Math.max(DISPLAY_CAP, entries.findIndex((entry) => entry.path === selectedPath) + 1)
+    entries && entries.length > DISPLAY_CAP && selectedChild !== null
+      ? Math.max(DISPLAY_CAP, entries.findIndex((entry) => entry.path === selectedChild) + 1)
       : DISPLAY_CAP;
   const hidden = !showAll && entries ? Math.max(entries.length - cap, 0) : 0;
   const visible = hidden > 0 && entries ? entries.slice(0, cap) : entries;
@@ -304,7 +308,7 @@ const DirNode = memo(function DirNode({
         <button
           type="button"
           data-testid={`file-show-more-${rootId}-${path}`}
-          onClick={() => setShowAll(true)}
+          onClick={onShowAll}
           style={{ paddingLeft: childIndent }}
           className="flex w-full min-w-0 items-center rounded-md py-1 pr-2 text-left text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
         >
