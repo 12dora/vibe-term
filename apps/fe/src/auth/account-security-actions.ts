@@ -17,12 +17,12 @@ import {
   type RotateRootKeepTotp,
   decodeBase64url,
   decodeSetTotpPayload,
-  decryptTotpSecret,
   deriveSeed,
   deriveTotpKey,
   encodeBase64url,
   encryptTotpSecret,
   generateKdfParams,
+  rewrapTotpSecret as rewrapTotpCiphertext,
   rootKeyFromSeed,
   verifyTotpCode,
 } from '@tmex/shared/auth';
@@ -117,27 +117,15 @@ async function rewrapTotpSecret(input: {
     throw new Error(fetched.code);
   }
   const record = fetched.record;
-  const nextEpoch = input.rootEpoch + 1;
-  const kOld = deriveTotpKey(input.oldSeed, input.uid, input.rootEpoch);
-  const kNew = deriveTotpKey(input.newSeed, input.uid, nextEpoch);
-  let secret: Uint8Array | null = null;
-  try {
-    secret = await decryptTotpSecret(kOld, decodeSetTotpPayload(decodeBase64url(record.payload)), {
-      uid: input.uid,
-      root_epoch: input.rootEpoch,
-      seq: BigInt(record.record_seq),
-    });
-    const payload = await encryptTotpSecret(kNew, secret, {
-      uid: input.uid,
-      root_epoch: nextEpoch,
-      seq: input.recordSeq,
-    });
-    return { root_epoch: nextEpoch, seq: input.recordSeq, payload };
-  } finally {
-    secret?.fill(0);
-    kOld.fill(0);
-    kNew.fill(0);
-  }
+  return rewrapTotpCiphertext({
+    uid: input.uid,
+    oldSeed: input.oldSeed,
+    newSeed: input.newSeed,
+    rootEpoch: input.rootEpoch,
+    totpRecordSeq: BigInt(record.record_seq),
+    totp: decodeSetTotpPayload(decodeBase64url(record.payload)),
+    nextSeq: input.recordSeq,
+  });
 }
 
 /** 本次签进记录的东西：调用方据此重建会话，不必等 `/api/auth/mode` 追上新 epoch。 */

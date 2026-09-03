@@ -2,12 +2,10 @@ import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-se
 import {
   type RotateRootKeepTotp,
   type SetTotpPayload,
-  decryptTotpSecret,
-  deriveTotpKey,
   encodeRotateRootKeepPayload,
   encodeRotateRootPayload,
-  encryptTotpSecret,
   generateKdfParams,
+  rewrapTotpSecret,
 } from '../../../shared/src/auth';
 import { t } from '../i18n';
 import type { ParsedArgs } from '../types';
@@ -41,27 +39,15 @@ async function rewrapTotpForKeep(input: {
   nextSeq: bigint;
 }): Promise<RotateRootKeepTotp | null> {
   if (input.totpRecordSeq == null || !input.totp) return null;
-  const nextEpoch = input.rootEpoch + 1;
-  const kOld = deriveTotpKey(input.oldSeed, input.uid, input.rootEpoch);
-  const kNew = deriveTotpKey(input.newSeed, input.uid, nextEpoch);
-  let secret: Uint8Array | null = null;
-  try {
-    secret = await decryptTotpSecret(kOld, input.totp, {
-      uid: input.uid,
-      root_epoch: input.rootEpoch,
-      seq: BigInt(input.totpRecordSeq),
-    });
-    const payload = await encryptTotpSecret(kNew, secret, {
-      uid: input.uid,
-      root_epoch: nextEpoch,
-      seq: input.nextSeq,
-    });
-    return { root_epoch: nextEpoch, seq: input.nextSeq, payload };
-  } finally {
-    secret?.fill(0);
-    kOld.fill(0);
-    kNew.fill(0);
-  }
+  return rewrapTotpSecret({
+    uid: input.uid,
+    oldSeed: input.oldSeed,
+    newSeed: input.newSeed,
+    rootEpoch: input.rootEpoch,
+    totpRecordSeq: input.totpRecordSeq,
+    totp: input.totp,
+    nextSeq: input.nextSeq,
+  });
 }
 
 function buildPasswdRecord(input: {

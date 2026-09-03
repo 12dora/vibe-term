@@ -10,6 +10,9 @@ describe('@tmex/shared/auth barrel', () => {
     expect(typeof auth.createEnrollment).toBe('function');
     expect(typeof auth.deriveTotpKey).toBe('function');
     expect(typeof auth.encryptTotpSecret).toBe('function');
+    expect(typeof auth.encodeBase32).toBe('function');
+    expect(typeof auth.decodeBase32).toBe('function');
+    expect(typeof auth.rewrapTotpSecret).toBe('function');
     expect(typeof auth.derivePeerSessionKeys).toBe('function');
     expect(auth.DOMAIN_DELEGATION).toBe('tmex/delegation/v1');
     expect(auth.KeyLogType['reset-root']).toBe('reset-root');

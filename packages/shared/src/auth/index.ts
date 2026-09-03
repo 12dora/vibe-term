@@ -40,6 +40,7 @@ export {
   decodeAdmitHubPayload,
   decodeAdmitNodePayload,
   decodeAuthorization,
+  decodeBase32,
   decodeBase64url,
   decodeCertificate,
   decodeClearTotpPayload,
@@ -61,6 +62,7 @@ export {
   encodeAdmitHubPayload,
   encodeAdmitNodePayload,
   encodeAuthorization,
+  encodeBase32,
   encodeBase64url,
   encodeCertificate,
   encodeClearTotpPayload,
@@ -229,6 +231,9 @@ export {
   encryptTotpSecret,
   totpAadBytes,
 } from './totp-cipher';
+
+export { rewrapTotpSecret } from './rewrap-totp';
+export type { RewrapTotpInput } from './rewrap-totp';
 
 export {
   PEER_SESSION_INFO_PREFIX,

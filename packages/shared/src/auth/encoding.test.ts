@@ -16,6 +16,7 @@ import {
   decodeAdmitHubPayload,
   decodeAdmitNodePayload,
   decodeAuthorization,
+  decodeBase32,
   decodeBase64url,
   decodeCertificate,
   decodeClearTotpPayload,
@@ -36,6 +37,7 @@ import {
   encodeAdmitHubPayload,
   encodeAdmitNodePayload,
   encodeAuthorization,
+  encodeBase32,
   encodeBase64url,
   encodeCertificate,
   encodeClearTotpPayload,
@@ -92,6 +94,21 @@ describe('encoding helpers', () => {
     expect(token.length).toBe(128);
     expect(token.includes('+') || token.includes('/') || token.includes('=')).toBe(false);
     expect(bytesEqual(decodeBase64url(token), raw)).toBe(true);
+  });
+
+  it('RFC 4648 base32 vectors without padding', () => {
+    const utf8 = (s: string) => new TextEncoder().encode(s);
+    expect(encodeBase32(utf8(''))).toBe('');
+    expect(encodeBase32(utf8('f'))).toBe('MY');
+    expect(encodeBase32(utf8('fo'))).toBe('MZXQ');
+    expect(encodeBase32(utf8('foo'))).toBe('MZXW6');
+    expect(encodeBase32(utf8('foob'))).toBe('MZXW6YQ');
+    expect(encodeBase32(utf8('fooba'))).toBe('MZXW6YTB');
+    expect(encodeBase32(utf8('foobar'))).toBe('MZXW6YTBOI');
+    expect(new TextDecoder().decode(decodeBase32('MY======'))).toBe('f');
+    expect(new TextDecoder().decode(decodeBase32('mzxw6'))).toBe('foo');
+    expect(bytesEqual(decodeBase32(encodeBase32(fill(20, 0x7a))), fill(20, 0x7a))).toBe(true);
+    expect(() => decodeBase32('MZXW1')).toThrow(/invalid base32 char/);
   });
 
   it('randomBytes uses CSPRNG of requested length', () => {
