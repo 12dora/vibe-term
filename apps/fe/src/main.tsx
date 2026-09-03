@@ -32,6 +32,7 @@ import { RuntimeProvider, useUIStore } from '@tmex/stores/react';
 import { useKeyboardAvoidance } from '@tmex/terminal-ui/hooks/use-keyboard-avoidance';
 import { applyThemePreset, isThemePreset } from '@tmex/theme';
 import { SidebarInset, SidebarProvider, useSidebar } from '@tmex/ui/sidebar';
+import { markToasterReady } from '@tmex/ui/toast';
 
 function applyInitialTheme(): void {
   try {
@@ -138,6 +139,12 @@ function useDeferredToaster(): ComponentType<ToasterProps> | null {
 function ThemedToaster() {
   const theme = useUIStore((state) => state.theme);
   const Toaster = useDeferredToaster();
+
+  // Toaster 的订阅 effect 先于本 effect 跑（子先于父），此时补发积压通知才不会再丢
+  useEffect(() => {
+    if (Toaster) markToasterReady();
+  }, [Toaster]);
+
   if (!Toaster) return null;
   return (
     <Toaster

@@ -14,8 +14,12 @@ function DropdownMenuPortal({ ...props }: MenuPrimitive.Portal.Props) {
   return <MenuPrimitive.Portal data-slot="dropdown-menu-portal" {...props} />;
 }
 
-function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
-  return <MenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />;
+// ref 由公开面接手：占位换实现时 DOM 节点会重建，靠它把焦点/悬停补回新节点（见 ../lazy-overlay）
+function DropdownMenuTrigger({
+  ref,
+  ...props
+}: MenuPrimitive.Trigger.Props & React.RefAttributes<HTMLElement>) {
+  return <MenuPrimitive.Trigger ref={ref} data-slot="dropdown-menu-trigger" {...props} />;
 }
 
 function DropdownMenuContent({

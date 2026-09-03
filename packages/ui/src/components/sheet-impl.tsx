@@ -11,8 +11,12 @@ function Sheet({ ...props }: SheetPrimitive.Root.Props) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />;
 }
 
-function SheetTrigger({ ...props }: SheetPrimitive.Trigger.Props) {
-  return <SheetPrimitive.Trigger data-slot="sheet-trigger" {...props} />;
+// ref 由公开面接手：占位换实现时 DOM 节点会重建，靠它把焦点/悬停补回新节点（见 ../lazy-overlay）
+function SheetTrigger({
+  ref,
+  ...props
+}: SheetPrimitive.Trigger.Props & React.RefAttributes<HTMLElement>) {
+  return <SheetPrimitive.Trigger ref={ref} data-slot="sheet-trigger" {...props} />;
 }
 
 function SheetClose({ ...props }: SheetPrimitive.Close.Props) {

@@ -11,8 +11,12 @@ function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />;
 }
 
-function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
+// ref 由公开面接手：占位换实现时 DOM 节点会重建，靠它把焦点/悬停补回新节点（见 ../lazy-overlay）
+function DialogTrigger({
+  ref,
+  ...props
+}: DialogPrimitive.Trigger.Props & React.RefAttributes<HTMLElement>) {
+  return <DialogPrimitive.Trigger ref={ref} data-slot="dialog-trigger" {...props} />;
 }
 
 function DialogPortal({ ...props }: DialogPrimitive.Portal.Props) {

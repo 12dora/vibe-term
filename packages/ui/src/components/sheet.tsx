@@ -6,27 +6,23 @@ import type { Dialog as SheetPrimitive } from '@base-ui/react/dialog';
 import { createContext, useContext } from 'react';
 
 import {
-  type OverlayGate,
+  DIALOG_TRIGGER_SEMANTICS,
+  OverlayLoadFallback,
   OverlayTrigger,
   createOverlayPart,
   overlayClosedChildren,
   useOverlayGate,
+  useTriggerHandoff,
 } from '../lazy-overlay';
-import { type OverlaysImpl, overlayLoader } from '../overlay-impl-loader';
+import { NO_OVERLAY_GATE, overlayLoader } from '../overlay-impl-loader';
 
-const NO_GATE: OverlayGate<OverlaysImpl> = {
-  impl: null,
-  requestLoad: () => undefined,
-  requestOpen: () => undefined,
-};
-
-const GateContext = createContext<OverlayGate<OverlaysImpl>>(NO_GATE);
+const GateContext = createContext(NO_OVERLAY_GATE);
 // 没有外层 Root 时（部件被单独渲染，属误用）回落到模块级缓存，让 base-ui 照常抛出
 // 「must be used within …」——这条契约不该因为懒加载而消失。
 const useSheetImpl = () => useContext(GateContext).impl ?? overlayLoader.peek();
 
 function Sheet({ ...props }: SheetPrimitive.Root.Props) {
-  const { gate, forceOpen } = useOverlayGate(
+  const { gate, forceOpen, showFallback } = useOverlayGate(
     overlayLoader,
     props.open === true || props.defaultOpen === true
   );
@@ -36,7 +32,10 @@ function Sheet({ ...props }: SheetPrimitive.Root.Props) {
       {Impl ? (
         <Impl {...props} defaultOpen={forceOpen || props.defaultOpen} />
       ) : (
-        overlayClosedChildren(props.children)
+        <>
+          {overlayClosedChildren(props.children)}
+          {showFallback && <OverlayLoadFallback onRetry={gate.retry} />}
+        </>
       )}
     </GateContext.Provider>
   );
@@ -44,11 +43,14 @@ function Sheet({ ...props }: SheetPrimitive.Root.Props) {
 
 function SheetTrigger({ render, ...props }: SheetPrimitive.Trigger.Props) {
   const gate = useContext(GateContext);
+  const handoff = useTriggerHandoff(props.id);
   const Impl = (gate.impl ?? overlayLoader.peek())?.SheetTrigger;
-  if (Impl) return <Impl render={render} {...props} />;
+  if (Impl) return <Impl render={render} {...props} id={handoff.id} ref={handoff.adopt} />;
   return (
     <OverlayTrigger
       slot="sheet-trigger"
+      semantics={DIALOG_TRIGGER_SEMANTICS}
+      handoff={handoff}
       render={render}
       props={props as Record<string, unknown>}
       onActivate={gate.requestLoad}

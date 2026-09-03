@@ -1,4 +1,5 @@
 import { Tooltip as TooltipPrimitive } from '@base-ui/react/tooltip';
+import type * as React from 'react';
 
 import { cn } from '../utils';
 
@@ -10,8 +11,12 @@ function Tooltip({ ...props }: TooltipPrimitive.Root.Props) {
   return <TooltipPrimitive.Root data-slot="tooltip" {...props} />;
 }
 
-function TooltipTrigger({ ...props }: TooltipPrimitive.Trigger.Props) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+// ref 由公开面接手：占位换实现时 DOM 节点会重建，靠它把焦点/悬停补回新节点（见 ../lazy-overlay）
+function TooltipTrigger({
+  ref,
+  ...props
+}: TooltipPrimitive.Trigger.Props & React.RefAttributes<HTMLElement>) {
+  return <TooltipPrimitive.Trigger ref={ref} data-slot="tooltip-trigger" {...props} />;
 }
 
 function TooltipContent({
