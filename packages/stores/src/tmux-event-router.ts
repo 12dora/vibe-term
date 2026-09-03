@@ -107,8 +107,14 @@ const handlers: TmuxEventHandlers = {
     if (event.state === 'READY') ctx.onReady();
   },
 
+  'state-feed-mode': () => {},
+
   latency: (event, ctx) => {
-    ctx.setState({ wsLatencyMs: event.latencyMs, wsLatencyRawMs: event.rawMs });
+    const prev = ctx.getState();
+    const wsLatencyMs = Math.round(event.latencyMs);
+    const wsLatencyRawMs = Math.round(event.rawMs);
+    if (prev.wsLatencyMs === wsLatencyMs && prev.wsLatencyRawMs === wsLatencyRawMs) return;
+    ctx.setState({ wsLatencyMs, wsLatencyRawMs });
   },
 
   'terminal-progress': (event, ctx) => {

@@ -222,6 +222,22 @@ describe('tmux transport event router', () => {
     expect(harness.getState().wsLatencyRawMs).toBe(42);
   });
 
+  test('latency event skips store write when displayed milliseconds are unchanged', () => {
+    const harness = createHarness();
+    harness.route({ type: 'latency', latencyMs: 18.4, rawMs: 42.4 });
+    expect(harness.getState().wsLatencyMs).toBe(18);
+    expect(harness.getState().wsLatencyRawMs).toBe(42);
+    const unchanged = harness.getState();
+
+    harness.route({ type: 'latency', latencyMs: 18.1, rawMs: 42.2 });
+    expect(harness.getState()).toBe(unchanged);
+
+    harness.route({ type: 'latency', latencyMs: 19, rawMs: 42 });
+    expect(harness.getState()).not.toBe(unchanged);
+    expect(harness.getState().wsLatencyMs).toBe(19);
+    expect(harness.getState().wsLatencyRawMs).toBe(42);
+  });
+
   test('non-READY connection-state clears latency and keeps hasConnectedOnce', () => {
     const harness = createHarness();
 

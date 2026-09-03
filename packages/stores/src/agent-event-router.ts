@@ -372,6 +372,8 @@ const handlerTable = agentEventHandlers as unknown as Record<
   UntypedAgentEventHandler | undefined
 >;
 
+const utf8Decoder = new TextDecoder();
+
 /** 返回是否命中处理函数；未知 eventType 静默忽略（前后端可独立升级） */
 export function dispatchAgentEvent(
   ctx: AgentEventContext,
@@ -401,7 +403,7 @@ export function handleAgentEventMessage(ctx: AgentEventContext, msg: BorshMessag
 
   let payload: unknown;
   try {
-    payload = JSON.parse(new TextDecoder().decode(decoded.payload));
+    payload = JSON.parse(utf8Decoder.decode(decoded.payload));
   } catch (error) {
     console.error('[agent] failed to parse AGENT_EVENT payload:', error);
     return;

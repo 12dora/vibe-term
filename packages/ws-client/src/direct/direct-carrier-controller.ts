@@ -36,6 +36,11 @@
 import type { DirectCarrierLike } from '../carrier-switch';
 import { DirectDataChannelCarrier, type RTCDataChannelLike } from './data-channel-carrier';
 import {
+  type PageVisibility,
+  browserVisibility,
+  sameDiagnosticsForPublish,
+} from './direct-diagnostics';
+import {
   DIRECT_DIAL_BREAKER_HEALTHY_MS,
   DirectDialBreaker,
   classifyDirectDialFailure,
@@ -152,6 +157,11 @@ export interface DirectCarrierControllerOptions {
   now?: () => number;
   connectTimeoutMs?: number;
   statsIntervalMs?: number;
+  /**
+   * 页面可见性（测试注入）。缺省 `browserVisibility()`：隐藏时暂停 `getStats`
+   * 轮询，回到前台立刻补一拍。失败检测（ICE 宽限 / 通道关闭 / 熔断）不走这条回路。
+   */
+  visibility?: PageVisibility;
   iceDisconnectGraceMs?: number;
   networkChangeDebounceMs?: number;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
@@ -275,6 +285,7 @@ export class DirectCarrierController {
   private coolingHandle: unknown = null;
   private healthyHandle: unknown = null;
   private statsHandle: unknown = null;
+  private statsVisibilityUnsub: (() => void) | null = null;
   private networkDebounceHandle: unknown = null;
   private started = false;
   private readonly breaker: DirectDialBreaker;
@@ -397,7 +408,7 @@ export class DirectCarrierController {
     this.retryHandle = this.clearHandle(this.retryHandle);
     this.coolingHandle = this.clearHandle(this.coolingHandle);
     this.healthyHandle = this.clearHandle(this.healthyHandle);
-    this.statsHandle = this.clearHandle(this.statsHandle);
+    this.stopStatsPolling();
     this.clearPrimaryWait();
     this.removeNetworkListeners();
     this.removeSignalingReadyListener();
@@ -854,7 +865,7 @@ export class DirectCarrierController {
     const attemptId = this.attempt ? String(this.attempt.id) : undefined;
     this.healthyHandle = this.clearHandle(this.healthyHandle);
     this.teardownAttempt();
-    this.statsHandle = this.clearHandle(this.statsHandle);
+    this.stopStatsPolling();
     this.route = null;
     this.rttMs = null;
     if (count) {
@@ -999,19 +1010,32 @@ export class DirectCarrierController {
   // ========== 诊断 ==========
 
   private startStatsPolling(): void {
-    this.statsHandle = this.clearHandle(this.statsHandle);
+    this.stopStatsPolling();
+    const visibility = this.options.visibility ?? browserVisibility();
     const interval = this.options.statsIntervalMs ?? DEFAULT_STATS_INTERVAL_MS;
     const tick = () => {
       this.statsHandle = null;
       if (this.state !== 'active' || !this.attempt) return;
-      void this.pollStats().finally(() => {
-        if (this.state === 'active' && this.attempt) {
-          this.statsHandle = this.schedule(tick, interval);
-        }
-      });
+      if (visibility.hidden()) return;
+      void this.pollStats();
+      this.statsHandle = this.schedule(tick, interval);
     };
-    void this.pollStats();
-    this.statsHandle = this.schedule(tick, interval);
+    this.statsVisibilityUnsub = visibility.subscribe(() => {
+      if (this.state !== 'active' || !this.attempt) return;
+      if (visibility.hidden()) {
+        this.statsHandle = this.clearHandle(this.statsHandle);
+        return;
+      }
+      tick();
+    });
+    tick();
+  }
+
+  private stopStatsPolling(): void {
+    this.statsHandle = this.clearHandle(this.statsHandle);
+    const unsub = this.statsVisibilityUnsub;
+    this.statsVisibilityUnsub = null;
+    quietly(unsub);
   }
 
   /** 立即抓一次 stats（测试用；正常由轮询驱动）。 */
@@ -1067,17 +1091,7 @@ export class DirectCarrierController {
       lastFailureKind: snap.lastFailureKind,
     };
     const prev = this.snapshot;
-    if (
-      prev.path === next.path &&
-      prev.route === next.route &&
-      prev.rtt === next.rtt &&
-      prev.cooling === next.cooling &&
-      prev.until === next.until &&
-      prev.failures === next.failures &&
-      prev.level === next.level &&
-      prev.lastFailureKind === next.lastFailureKind &&
-      sameIce(prev.ice ?? null, next.ice ?? null)
-    ) {
+    if (sameDiagnosticsForPublish(prev, next)) {
       return;
     }
     this.snapshot = next;
@@ -1182,16 +1196,4 @@ async function readErrorCode(res: Response): Promise<string> {
     // 非 JSON 或空 body
   }
   return '';
-}
-
-function sameIce(a: DirectIceDiagnostics | null, b: DirectIceDiagnostics | null): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return (
-    a.connectionState === b.connectionState &&
-    a.iceConnectionState === b.iceConnectionState &&
-    a.localCandidateType === b.localCandidateType &&
-    a.remoteCandidateType === b.remoteCandidateType &&
-    a.selectedPair === b.selectedPair
-  );
 }

@@ -1098,4 +1098,107 @@ describe('DirectCarrierController 诊断', () => {
     s.controller.stop();
     expect(() => s.controller.createDataChannel('bulk:2')).toThrow('direct carrier not active');
   });
+
+  test('隐藏时停止 getStats 轮询，回到前台立刻补一拍', async () => {
+    const visibility = new FakeVisibility();
+    const s = setup({ visibility, statsIntervalMs: 2000 });
+    await reachActive(s);
+    const { calls } = wrapGetStats(s.pc());
+
+    visibility.setHidden(true);
+    s.clock.advance(10_000);
+    await flush();
+    expect(calls()).toBe(0);
+
+    visibility.setHidden(false);
+    await flush();
+    expect(calls()).toBe(1);
+
+    s.clock.advance(2000);
+    await flush();
+    expect(calls()).toBe(2);
+  });
+
+  test('仅 RTT 抖动不通知订阅者；连接态变化立即通知', async () => {
+    const s = setup();
+    await reachActive(s);
+    s.pc().stats = hostPairStats(0.004);
+    await s.controller.pollStats();
+
+    let notified = 0;
+    s.controller.diagnosticsSource.subscribe(() => {
+      notified += 1;
+    });
+
+    s.pc().stats = hostPairStats(0.0064);
+    await s.controller.pollStats();
+    expect(notified).toBe(0);
+    expect(s.controller.rtt).toBeCloseTo(6.4, 3);
+
+    s.pc().setConnectionState('connected');
+    expect(notified).toBe(1);
+    expect(s.controller.diagnosticsSource.get().ice?.connectionState).toBe('connected');
+  });
+
+  test('页面隐藏不推迟 ICE disconnected 宽限（失败检测不走诊断轮询）', async () => {
+    const visibility = new FakeVisibility();
+    const s = setup({ visibility, iceDisconnectGraceMs: 5000 });
+    await reachActive(s);
+    visibility.setHidden(true);
+
+    s.pc().setIceConnectionState('disconnected');
+    await flush();
+    expect(s.controller.getState()).toBe('active');
+
+    s.clock.advance(5000);
+    await flush();
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.controller.reason).toContain('ice disconnected');
+  });
 });
+
+class FakeVisibility {
+  private hiddenFlag = false;
+  private readonly listeners = new Set<() => void>();
+
+  hidden = (): boolean => this.hiddenFlag;
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  setHidden(hidden: boolean): void {
+    if (this.hiddenFlag === hidden) return;
+    this.hiddenFlag = hidden;
+    for (const listener of [...this.listeners]) listener();
+  }
+}
+
+function wrapGetStats(pc: FakePeerConnection): { calls: () => number } {
+  let n = 0;
+  const orig = pc.getStats.bind(pc);
+  pc.getStats = async () => {
+    n += 1;
+    return orig();
+  };
+  return { calls: () => n };
+}
+
+function hostPairStats(rttSeconds: number) {
+  return statsReport([
+    { id: 'L', type: 'local-candidate', candidateType: 'host', address: '10.0.0.1' },
+    { id: 'R', type: 'remote-candidate', candidateType: 'host', address: '10.0.0.2' },
+    {
+      id: 'P',
+      type: 'candidate-pair',
+      state: 'succeeded',
+      nominated: true,
+      localCandidateId: 'L',
+      remoteCandidateId: 'R',
+      currentRoundTripTime: rttSeconds,
+    },
+  ]);
+}
