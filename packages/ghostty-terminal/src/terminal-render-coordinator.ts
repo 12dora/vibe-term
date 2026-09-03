@@ -123,12 +123,16 @@ export class TerminalRenderCoordinator {
     this.loop.schedule();
   }
 
+  noteOutput(): void {
+    this.outputSinceRender = true;
+  }
+
   // 由应用输出（write）触发的渲染。与 schedule() 的唯一区别是标记「这一帧可能是中间态」：
   // 一次整屏重绘的字节常分多个 write 到达（websocket / tmux %output 的分片），rAF 到点
   // 就画会把笔尖当刻所在当成光标落点，于是光标在「刚写完的字符后面那一格」与应用真正的
   // 落点之间按输出频率来回跳（用户看到的疯狂闪烁）。
   scheduleFromOutput(): void {
-    this.outputSinceRender = true;
+    this.noteOutput();
     this.loop.schedule();
   }
 
@@ -183,6 +187,11 @@ export class TerminalRenderCoordinator {
   }
 
   getLineModel(line: number): SelectionLineModel {
+    const visibleRow = this.renderedRows[line - this.viewportOffset];
+    if (visibleRow) {
+      return this.cacheLineModel(line, this.lineModelFor(visibleRow));
+    }
+
     const cached = this.lineCache.get(line);
     if (cached) {
       this.lineCache.delete(line);
@@ -190,10 +199,7 @@ export class TerminalRenderCoordinator {
       return cached;
     }
 
-    const visibleRow = this.renderedRows[line - this.viewportOffset];
-    return visibleRow
-      ? this.cacheLineModel(line, this.lineModelFor(visibleRow))
-      : EMPTY_SELECTION_LINE_MODEL;
+    return EMPTY_SELECTION_LINE_MODEL;
   }
 
   hitTest(clientX: number, clientY: number): SelectionPoint | null {
@@ -270,10 +276,13 @@ export class TerminalRenderCoordinator {
     this.viewportOffset = scrollbar.offset;
     this.viewportRows = Math.max(2, meta.rows || fallbackRows);
     this.renderedRows = rows;
-    this.lineCacheLimit = Math.max(
+    const boundedLineCacheLimit = Math.max(
       LINE_CACHE_MIN_LIMIT,
       this.viewportRows * LINE_CACHE_VIEWPORT_MULTIPLIER
     );
+    this.lineCacheLimit = this.selectionActive
+      ? Math.max(boundedLineCacheLimit, scrollbar.total)
+      : boundedLineCacheLimit;
     this.trimLineCache();
     if (this.selectionActive) {
       this.cacheVisibleLineModels(rows, scrollbar.offset);
@@ -286,6 +295,10 @@ export class TerminalRenderCoordinator {
       this.cacheVisibleLineModels(rows, scrollbar.offset);
     }
     this.selectionActive = selectionActive;
+    this.lineCacheLimit = selectionActive
+      ? Math.max(boundedLineCacheLimit, scrollbar.total)
+      : boundedLineCacheLimit;
+    this.trimLineCache();
     const cursorSettled = this.consumeCursorSettled();
 
     renderer.render({
@@ -442,12 +455,6 @@ export class TerminalRenderCoordinator {
   }
 
   private lineModelForOverlay(line: number): SelectionLineModel {
-    const cached = this.lineCache.get(line);
-    if (cached) {
-      return cached;
-    }
-
-    const visibleRow = this.renderedRows[line - this.viewportOffset];
-    return visibleRow ? this.lineModelFor(visibleRow) : EMPTY_SELECTION_LINE_MODEL;
+    return this.getLineModel(line);
   }
 }

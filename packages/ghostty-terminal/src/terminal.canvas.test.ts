@@ -2881,6 +2881,12 @@ describe('GhosttyTerminalController 平移视口', () => {
   test('横向滚轮平移 X，纵向滚轮仍走 scrollback', async () => {
     dom = installCanvasDom();
     const bindings = createFakeBindings();
+    let viewportOffset = 10;
+    bindings.readScrollbar = () => ({ total: 48, offset: viewportOffset, len: 24 });
+    bindings.scrollViewportDelta = (_terminal: number, amount: number) => {
+      bindings.scrollDeltaCalls.push(amount);
+      viewportOffset = Math.max(0, Math.min(24, viewportOffset + amount));
+    };
     const { terminal, root, viewport, screen } = await openTerminal(bindings);
 
     terminal.setViewportPan(true);

@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { CanvasRendererFrame } from './canvas-renderer';
 import { getGhosttyBindings } from './ghostty-wasm';
 import { createRenderState, disposeRenderStateResources } from './render-state';
-import type { SelectionLineModel } from './selection-model';
+import { type SelectionLineModel, serializeSelectionText } from './selection-model';
+import type { LinkUnderlineSegment } from './terminal-links';
 import { TerminalRenderCoordinator } from './terminal-render-coordinator';
 import type { GhosttySelectionRect } from './types';
 
@@ -24,23 +25,38 @@ afterEach(() => {
   globalThis.cancelAnimationFrame = previousCancelAnimationFrame;
 });
 
-async function createHarness() {
+async function createHarness(
+  options: {
+    cols?: number;
+    rows?: number;
+    scrollback?: number;
+    lineCount?: number;
+    data?: string;
+  } = {}
+) {
+  const cols = options.cols ?? COLS;
+  const rows = options.rows ?? ROWS;
   const bindings = await getGhosttyBindings();
-  const terminal = bindings.createTerminal(COLS, ROWS, 300);
+  const terminal = bindings.createTerminal(cols, rows, options.scrollback ?? 300);
   const renderState = createRenderState(bindings);
   const frames: CanvasRendererFrame[] = [];
+  const linkUnderlines: LinkUnderlineSegment[][] = [];
   let selectionText: string | null = null;
   let selectionRects: GhosttySelectionRect[] = [];
 
-  for (let index = 0; index < 80; index += 1) {
-    bindings.writeVt(terminal, `line-${index.toString().padStart(2, '0')}\r\n`);
+  if (options.data !== undefined) {
+    bindings.writeVt(terminal, options.data);
+  } else {
+    for (let index = 0; index < (options.lineCount ?? 80); index += 1) {
+      bindings.writeVt(terminal, `line-${index.toString().padStart(2, '0')}\r\n`);
+    }
   }
 
   const coordinator = new TerminalRenderCoordinator(bindings, terminal, renderState, {
     cellDimensions: () => ({ width: 8, height: 16 }),
     screenBounds: () => ({ left: 0, top: 0 }),
-    viewportCols: () => COLS,
-    viewportRows: () => ROWS,
+    viewportCols: () => cols,
+    viewportRows: () => rows,
     selectionRects: () => selectionRects,
     selectionText: () => selectionText,
     selectionColor: () => 'rgba(80,80,80,0.4)',
@@ -52,7 +68,7 @@ async function createHarness() {
     kind: 'fake',
     render: (frame: CanvasRendererFrame) => frames.push(frame),
     drawSelectionOnly: () => {},
-    drawLinkUnderlines: () => {},
+    drawLinkUnderlines: (segments: LinkUnderlineSegment[]) => linkUnderlines.push(segments),
     clearLinkUnderlines: () => {},
     commitCursor: () => {},
     dispose: () => {},
@@ -64,6 +80,7 @@ async function createHarness() {
     renderState,
     coordinator,
     frames,
+    linkUnderlines,
     setSelection: (text: string | null, rects: GhosttySelectionRect[] = []) => {
       selectionText = text;
       selectionRects = rects;
@@ -154,6 +171,81 @@ describe('TerminalRenderCoordinator performance guards', () => {
       harness.coordinator.renderNow();
       expect(probe.lineCacheLimit).toBe(2020);
       expect(probe.lineCache.size).toBeLessThanOrEqual(2020);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  test('an active selection retains more than 2000 absolute rows and trims after it ends', async () => {
+    const harness = await createHarness({ lineCount: 2100, scrollback: 3000 });
+    try {
+      harness.setSelection('selected', [{ row: 0, x: 0, width: 1 }]);
+      harness.coordinator.renderNow();
+
+      const probe = harness.coordinator as unknown as {
+        lineCache: Map<number, SelectionLineModel>;
+        lineCacheLimit: number;
+        cacheLineModel(line: number, model: SelectionLineModel): SelectionLineModel;
+      };
+      const total = harness.bindings.readScrollbar(harness.terminal).total;
+      expect(total).toBeGreaterThan(2000);
+      expect(probe.lineCacheLimit).toBe(total);
+
+      const model: SelectionLineModel = {
+        colChars: ['x'],
+        contentCols: 1,
+        wrappedToNext: false,
+      };
+      for (let line = 0; line < total; line += 1) {
+        probe.cacheLineModel(line, model);
+      }
+
+      expect(probe.lineCache.size).toBe(total);
+      expect(probe.lineCache.has(0)).toBeTrue();
+      const copied = serializeSelectionText(
+        {
+          anchor: { line: 0, col: 0 },
+          focus: { line: total - 1, col: 0 },
+          mode: 'character',
+        },
+        (line) => harness.coordinator.getLineModel(line)
+      );
+      expect(copied?.startsWith('x\n')).toBeTrue();
+
+      harness.setSelection(null);
+      harness.coordinator.renderNow();
+      expect(probe.lineCacheLimit).toBe(2000);
+      expect(probe.lineCache.size).toBe(2000);
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  test('link overlay caches the preceding row for a wrapped URL crossing the viewport top', async () => {
+    const harness = await createHarness({
+      cols: 10,
+      rows: 3,
+      scrollback: 50,
+      data: 'https://example.com\r\nA\r\nB\r\nC\r\n',
+    });
+    try {
+      const probe = harness.coordinator as unknown as {
+        updateLinkOverlay(): void;
+      };
+
+      harness.bindings.scrollViewportTop(harness.terminal);
+      harness.coordinator.renderNow();
+      probe.updateLinkOverlay();
+
+      harness.bindings.scrollViewportDelta(harness.terminal, 1);
+      harness.coordinator.renderNow();
+      probe.updateLinkOverlay();
+
+      expect(harness.coordinator.linkAt(8, 8)).toEqual({
+        kind: 'url',
+        url: 'https://example.com',
+      });
+      expect(harness.linkUnderlines.at(-1)).toContainEqual({ row: 0, startCol: 0, endCol: 8 });
     } finally {
       harness.dispose();
     }

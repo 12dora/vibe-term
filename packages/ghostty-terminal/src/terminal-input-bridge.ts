@@ -49,7 +49,8 @@ export type InputBridgeHost = {
   emitData(data: string): void;
   viewportCols(): number;
   viewportRows(): number;
-  scrollLines(amount: number): void;
+  // biome-ignore lint/suspicious/noConfusingVoidType: Compatibility with legacy hosts that return void
+  scrollLines(amount: number): boolean | void;
 };
 
 // 模式快照的字段 ↔ DEC 私有模式号映射；export/restore 共用，顺序即 restore 的下发顺序。
@@ -312,8 +313,8 @@ export class TerminalInputBridge {
       return this.emitAltScrollInput(lines);
     }
 
-    this.host.scrollLines(lines);
-    return true;
+    const didScroll = this.host.scrollLines(lines);
+    return typeof didScroll === 'boolean' ? didScroll : true;
   }
 
   private isDuplicateMotion(col: number, row: number): boolean {

@@ -335,6 +335,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     // 之后的查询都命中新一代缓存，两次写入之间的悬停/滚轮不再重复问 WASM。
     const prevAltScreen = this.input.isAltScreenActive();
     this.bindings.writeVt(this.handles.terminal, data);
+    this.renderCoordinator.noteOutput();
     this.input.invalidateModeCache();
     if (prevAltScreen && !this.input.isAltScreenActive()) {
       this.clearMouseTrackingModes();
@@ -346,13 +347,13 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       if (this.syncOutputFallbackTimer === null) {
         this.syncOutputFallbackTimer = setTimeout(() => {
           this.syncOutputFallbackTimer = null;
-          this.renderCoordinator.scheduleFromOutput();
+          this.renderCoordinator.schedule();
         }, SYNCHRONIZED_OUTPUT_FALLBACK_MS);
       }
       return;
     }
     this.cancelSynchronizedOutputFallback();
-    this.renderCoordinator.scheduleFromOutput();
+    this.renderCoordinator.schedule();
   }
 
   clearMouseTrackingModes(): void {

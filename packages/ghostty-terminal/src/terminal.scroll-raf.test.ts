@@ -213,6 +213,27 @@ describe('GhosttyTerminalController scroll render scheduling', () => {
     terminal.dispose();
   });
 
+  test('贴边滚轮手势返回 false 且不排渲染帧', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    const { state, maxOffset } = installScrollableViewport(bindings, 0);
+    const terminal = await openTerminal(bindings);
+    const gesture = {
+      source: 'wheel' as const,
+      deltaX: 0,
+      deltaMode: 1,
+      clientX: 0,
+      clientY: 0,
+    };
+
+    expect(terminal.handleViewportGesture({ ...gesture, deltaY: -1 })).toBeFalse();
+    state.offset = maxOffset;
+    expect(terminal.handleViewportGesture({ ...gesture, deltaY: 1 })).toBeFalse();
+    expect(renderSpy.count).toBe(0);
+    expect((dom as FakeDom).pendingAnimationFrames()).toBe(0);
+    terminal.dispose();
+  });
+
   test('跳顶 / 跳底保持同步渲染：调用方紧接着就读 viewportY', async () => {
     dom = installFakeDom();
     const bindings = createFakeBindings();

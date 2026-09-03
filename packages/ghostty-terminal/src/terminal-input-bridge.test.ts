@@ -21,7 +21,10 @@ type Harness = {
   scrolled: number[];
 };
 
-function createHarness(modes: ReadonlySet<number> = MOUSE_REPORTING_MODES): Harness {
+function createHarness(
+  modes: ReadonlySet<number> = MOUSE_REPORTING_MODES,
+  scrollResult?: boolean
+): Harness {
   const mouseCalls: MouseEncodeOptions[] = [];
   const scrolled: number[] = [];
 
@@ -47,6 +50,7 @@ function createHarness(modes: ReadonlySet<number> = MOUSE_REPORTING_MODES): Harn
     viewportRows: () => 24,
     scrollLines: (amount: number) => {
       scrolled.push(amount);
+      return scrollResult;
     },
   };
 
@@ -118,5 +122,21 @@ describe('TerminalInputBridge.resetPointerAccumulation', () => {
     bridge.resetPointerAccumulation();
 
     expect(bridge.mouse.pressedButtons.size).toBe(0);
+  });
+});
+
+describe('TerminalInputBridge.handleViewportGesture local scroll result', () => {
+  test('returns the host boundary result instead of consuming a clamped scroll', () => {
+    const { bridge, scrolled } = createHarness(new Set(), false);
+
+    expect(bridge.handleViewportGesture(wheel(0, CELL_HEIGHT))).toBeFalse();
+    expect(scrolled).toEqual([1]);
+  });
+
+  test('keeps the legacy consumed fallback when the host returns void', () => {
+    const { bridge, scrolled } = createHarness(new Set());
+
+    expect(bridge.handleViewportGesture(wheel(0, CELL_HEIGHT))).toBeTrue();
+    expect(scrolled).toEqual([1]);
   });
 });
