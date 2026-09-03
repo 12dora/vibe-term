@@ -297,6 +297,39 @@ describe('canonical state capability gate', () => {
     transport.disconnect();
   });
 
+  test('canonical mode still emits TERM_RESIZE / TERM_SYNC_SIZE so sync stays distinct from resize', () => {
+    const { socket, client, transport } = createHarness();
+    socket.open();
+    socket.deliver(hello([GATEWAY_CAPABILITY_CANONICAL_STATE_V1]));
+    expect(client.stateFeedMode).toBe('canonical');
+
+    expect(
+      transport.send({
+        type: 'terminal-resize',
+        deviceId: 'device-a',
+        paneId: '%1',
+        cols: 100,
+        rows: 30,
+      })
+    ).toBe('sent');
+    expect(
+      transport.send({
+        type: 'terminal-sync-size',
+        deviceId: 'device-a',
+        paneId: '%1',
+        cols: 90,
+        rows: 24,
+      })
+    ).toBe('sent');
+
+    expect(businessKinds(socket)).toEqual([
+      wsBorsh.KIND_CANONICAL_COMMAND,
+      wsBorsh.KIND_TERM_RESIZE,
+      wsBorsh.KIND_TERM_SYNC_SIZE,
+    ]);
+    transport.disconnect();
+  });
+
   test('falls back to legacy when the negotiated frame limit cannot sustain a canonical feed', () => {
     const { socket, client, transport } = createHarness();
     socket.open();

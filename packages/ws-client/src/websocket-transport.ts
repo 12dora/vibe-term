@@ -44,6 +44,12 @@ function orderedInput(command: GatewayTransportCommand): boolean {
   return command.type === 'terminal-input' || command.type === 'terminal-paste';
 }
 
+// TERM_RESIZE / TERM_SYNC_SIZE 没有 canonical 等价物：后者是「焦点恢复补一次尺寸、
+// 不引发 resize 循环」。两者在网关都进同一套 viewport 仲裁，但线协议必须保持区分。
+function isLegacySizeCommand(command: GatewayTransportCommand): boolean {
+  return command.type === 'terminal-resize' || command.type === 'terminal-sync-size';
+}
+
 function onDocumentVisible(resume: () => void): () => void {
   if (typeof document === 'undefined') return () => {};
   const owner = document;
@@ -273,7 +279,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
   private sendReadyCommand(command: GatewayTransportCommand): ClientSendResult {
     try {
       let result: ClientSendResult = 'sent';
-      if (this.client.stateFeedMode === 'canonical') {
+      if (this.client.stateFeedMode === 'canonical' && !isLegacySizeCommand(command)) {
         if (command.type === 'disconnect-device') {
           result = this.canonical.removeDevice(command.deviceId);
         } else {
