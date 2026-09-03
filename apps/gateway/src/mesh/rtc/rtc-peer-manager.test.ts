@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+
+// 真实 node-datachannel 的 ICE/DC 用例需要可用的本地网络候选；CI runner 没有，用环境变量跳过。
+const describeRtc = process.env.TMEX_SKIP_RTC_TESTS === '1' ? describe.skip : describe;
 import { wsBorsh } from '@tmex/shared';
 import { encodeBase64url, normalizeFingerprint } from '@tmex/shared/auth';
 import { LinkMux } from '@tmex/shared/link';
@@ -15,7 +18,7 @@ import { RTC_AUTHORIZE_MAX, RtcPeerManager, SESS_CHANNEL_LABEL } from './rtc-pee
 import { loopbackSignaling } from './rtc-test-fixtures';
 import { type FakePeerConnection, createFakeNativeModule, pairDataChannels } from './test-fakes';
 
-describe('RtcPeerManager', () => {
+describeRtc('RtcPeerManager', () => {
   const fixtures: Array<{ close: () => void }> = [];
   afterEach(() => {
     while (fixtures.length) fixtures.pop()?.close();

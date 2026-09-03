@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+
+// 真实 node-datachannel 的 ICE/DC 用例需要可用的本地网络候选；CI runner 没有，用环境变量跳过。
+const describeRtc = process.env.TMEX_SKIP_RTC_TESTS === '1' ? describe.skip : describe;
 import {
   FRAME_HEADER_SIZE,
   FrameOp,
@@ -296,7 +299,7 @@ function bunLikeChunks(bytes: Uint8Array): Uint8Array[] {
   return chunks;
 }
 
-describe('HTTP-style bulk over PeerManager DataChannel', () => {
+describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
   const fixtures: Array<{ close: () => void }> = [];
   afterEach(() => {
     while (fixtures.length) fixtures.pop()?.close();

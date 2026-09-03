@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+
+// 真实 node-datachannel 的 ICE/DC 用例需要可用的本地网络候选；CI runner 没有，用环境变量跳过。
+const describeRtc = process.env.TMEX_SKIP_RTC_TESTS === '1' ? describe.skip : describe;
 import { encodeBase64url } from '@tmex/shared/auth';
 import { LinkMux } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
@@ -97,7 +100,7 @@ function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
   });
 }
 
-describe('handshakeDataChannel', () => {
+describeRtc('handshakeDataChannel', () => {
   const fixtures: Array<{ close: () => void }> = [];
   afterEach(() => {
     while (fixtures.length) fixtures.pop()?.close();
