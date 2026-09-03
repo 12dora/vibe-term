@@ -172,26 +172,53 @@ describe('collectWindowClaims', () => {
 });
 
 describe('applyWinnerGeometry', () => {
-  test('returns null when there is no winner or geometry is unchanged', () => {
+  test('returns null when there is no winner or last-applied geometry is unchanged', () => {
     const winner = {
       sessionId: 'a',
       claim: { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 },
     };
     expect(applyWinnerGeometry(null, { cols: 80, rows: 24 })).toBeNull();
     expect(applyWinnerGeometry(winner, { cols: 80, rows: 24 })).toBeNull();
+    expect(applyWinnerGeometry(winner, { cols: 80, rows: 24 }, { cols: 80, rows: 24 })).toBeNull();
   });
 
-  test('returns force=false on first apply and force=true when size changes', () => {
+  test('applies when this window has never been resized even if the snapshot already matches', () => {
+    const winner = {
+      sessionId: 'a',
+      claim: { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 },
+    };
+    expect(applyWinnerGeometry(winner, undefined)).toEqual({
+      paneId: '%0',
+      cols: 80,
+      rows: 24,
+      force: true,
+    });
+    expect(applyWinnerGeometry(winner, undefined, { cols: 80, rows: 24 })).toEqual({
+      paneId: '%0',
+      cols: 80,
+      rows: 24,
+      force: true,
+    });
+  });
+
+  test('forces a resize when last-applied matches but live tmux geometry has drifted', () => {
+    const winner = {
+      sessionId: 'a',
+      claim: { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 },
+    };
+    expect(applyWinnerGeometry(winner, { cols: 80, rows: 24 }, { cols: 60, rows: 18 })).toEqual({
+      paneId: '%0',
+      cols: 80,
+      rows: 24,
+      force: true,
+    });
+  });
+
+  test('forces a resize when the claimed size changes', () => {
     const winner = {
       sessionId: 'a',
       claim: { paneId: '%0', cols: 120, rows: 40, visible: true, at: 1 },
     };
-    expect(applyWinnerGeometry(winner, undefined)).toEqual({
-      paneId: '%0',
-      cols: 120,
-      rows: 40,
-      force: false,
-    });
     expect(applyWinnerGeometry(winner, { cols: 80, rows: 24 })).toEqual({
       paneId: '%0',
       cols: 120,

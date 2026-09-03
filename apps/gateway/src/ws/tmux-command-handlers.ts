@@ -490,7 +490,7 @@ function applyResolvedViewportPolicy(
   const lastApplied = entry.lastAppliedViewport?.get(windowId);
   const previousWinnerId = entry.lastViewportWinnerId?.get(windowId) ?? null;
   const nextWinnerId = winner?.sessionId ?? null;
-  const geometry = applyWinnerGeometry(winner, liveWindowGeometry(entry, windowId) ?? lastApplied);
+  const geometry = applyWinnerGeometry(winner, lastApplied, liveWindowGeometry(entry, windowId));
   if (geometry) {
     if (!options.skipResize) {
       applyTermResizeToEntry(entry, geometry.paneId, geometry.cols, geometry.rows, {

@@ -134,21 +134,29 @@ export function rebindAllViewportClaims(
   return [...affected];
 }
 
+function sameViewportSize(
+  size: { cols: number; rows: number } | undefined,
+  cols: number,
+  rows: number
+): boolean {
+  return size != null && size.cols === cols && size.rows === rows;
+}
+
 export function applyWinnerGeometry(
   winner: ViewportWinner | null,
-  lastApplied: { cols: number; rows: number } | undefined
+  lastApplied: { cols: number; rows: number } | undefined,
+  live?: { cols: number; rows: number }
 ): { paneId: string; cols: number; rows: number; force: boolean } | null {
   if (!winner) return null;
-  const sameGeometry =
-    lastApplied != null &&
-    lastApplied.cols === winner.claim.cols &&
-    lastApplied.rows === winner.claim.rows;
-  if (sameGeometry) return null;
+  const { cols, rows } = winner.claim;
+  const appliedMatches = sameViewportSize(lastApplied, cols, rows);
+  const liveMatches = live == null || sameViewportSize(live, cols, rows);
+  if (appliedMatches && liveMatches) return null;
   return {
     paneId: winner.claim.paneId,
-    cols: winner.claim.cols,
-    rows: winner.claim.rows,
-    force: lastApplied != null,
+    cols,
+    rows,
+    force: true,
   };
 }
 

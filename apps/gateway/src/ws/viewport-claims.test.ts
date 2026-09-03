@@ -368,6 +368,52 @@ describe('viewport claims', () => {
     cleanupSelectSessions(large);
   });
 
+  test('owning sized warm select still resizes when this window has never been applied', () => {
+    const { server, recorder, large } = setupTwoClients({ session: true });
+    recorder.resizePaneCalls.length = 0;
+    recorder.focusPaneCalls.length = 0;
+
+    server.handleTmuxSelect(large, sizedSelect('%0', 80, 24, 12, false));
+
+    expect(recorder.focusPaneCalls).toEqual([{ windowId: '@1', paneId: '%0' }]);
+    expect(recorder.resizePaneCalls).toEqual([['%0', 80, 24]]);
+    expect(recorder.selectPaneWithSizeCalls).toEqual([]);
+    cleanupSelectSessions(large);
+  });
+
+  test('warm select onto a second window resizes even when its snapshot already matches the claim', () => {
+    const { server, recorder, large, entry } = setupTwoClients({ session: true });
+    entry.lastSnapshot = snapshot([
+      {
+        id: '@1',
+        name: 'w1',
+        index: 0,
+        active: true,
+        panes: [pane('%0', '@1', 0, 80, 24)],
+      },
+      {
+        id: '@2',
+        name: 'w2',
+        index: 1,
+        active: false,
+        panes: [pane('%1', '@2', 0, 80, 24)],
+      },
+    ]);
+    server.handleTermResize(large, 'device-a', '%0', 80, 24);
+    recorder.resizePaneCalls.length = 0;
+    recorder.focusPaneCalls.length = 0;
+
+    server.handleTmuxSelect(large, {
+      ...sizedSelect('%1', 80, 24, 13, false),
+      windowId: '@2',
+    });
+
+    expect(recorder.focusPaneCalls).toEqual([{ windowId: '@2', paneId: '%1' }]);
+    expect(recorder.resizePaneCalls).toEqual([['%1', 80, 24]]);
+    expect(recorder.selectPaneWithSizeCalls).toEqual([]);
+    cleanupSelectSessions(large);
+  });
+
   test('owning sized cold select still resizes when cached geometry already matches (tmux drifted)', () => {
     const { server, recorder, large, entry } = setupTwoClients({ session: true });
     server.handleTermResize(large, 'device-a', '%0', 100, 30);

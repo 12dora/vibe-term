@@ -1,3 +1,5 @@
+import { wsBorsh } from '@tmex/shared';
+
 // gateway 的 WS 端点。URL 带 per-socket 的 `?cid=` nonce（多 node 下服务端靠它认连接），
 // 因此不能用 endsWith('/ws') 判断。
 export function isGatewayWsUrl(url: string): boolean {
@@ -249,4 +251,172 @@ export function decodeSiteThemeUpdateS2C(payload: Buffer): SiteThemeUpdateS2CPay
   const low = BigInt(c.readU32());
   const high = BigInt(c.readU32());
   return { theme, serverTimestamp: (high << 32n) | low };
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('hex');
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
+export interface PaneFeedCollector {
+  selectTokenByPane: Map<string, string>;
+  barrierKindsByToken: Map<string, number[]>;
+  historyTextByToken: Map<string, string>;
+  canonicalScreenTextByPane: Map<string, string>;
+  canonicalOutputTextByPane: Map<string, string>;
+  sawCanonicalEvent: boolean;
+  paneContent(paneId: string): string;
+  handleOutbound(kind: number, payloadBytes: Uint8Array): void;
+  handleInbound(kind: number, payloadBytes: Uint8Array): void;
+}
+
+/** 同时收 legacy TERM_HISTORY / 屏障帧和 canonical Screen/PaneData，按当前生效 feed 断言。 */
+export function createPaneFeedCollector(): PaneFeedCollector {
+  const selectTokenByPane = new Map<string, string>();
+  const barrierKindsByToken = new Map<string, number[]>();
+  const historyTextByToken = new Map<string, string>();
+  const canonicalScreenTextByPane = new Map<string, string>();
+  const canonicalOutputTextByPane = new Map<string, string>();
+  const screenByRequest = new Map<string, { paneId: string; chunks: Uint8Array[] }>();
+  const collector: PaneFeedCollector = {
+    selectTokenByPane,
+    barrierKindsByToken,
+    historyTextByToken,
+    canonicalScreenTextByPane,
+    canonicalOutputTextByPane,
+    sawCanonicalEvent: false,
+    paneContent(paneId) {
+      const token = selectTokenByPane.get(paneId);
+      const history = token ? (historyTextByToken.get(token) ?? '') : '';
+      const screen = canonicalScreenTextByPane.get(paneId) ?? '';
+      const output = canonicalOutputTextByPane.get(paneId) ?? '';
+      return `${history}${screen}${output}`;
+    },
+    handleOutbound(kind, payloadBytes) {
+      if (kind !== wsBorsh.KIND_TMUX_SELECT) return;
+      const decoded = wsBorsh.decodePayload(wsBorsh.schema.TmuxSelectSchema, payloadBytes);
+      if (!decoded.paneId) return;
+      selectTokenByPane.set(decoded.paneId, bytesToHex(decoded.selectToken));
+    },
+    handleInbound(kind, payloadBytes) {
+      if (kind === wsBorsh.KIND_CANONICAL_EVENT) {
+        handleCanonicalEvent(payloadBytes);
+        return;
+      }
+      if (kind === wsBorsh.KIND_SWITCH_ACK) {
+        const decoded = wsBorsh.decodePayload(wsBorsh.schema.SwitchAckSchema, payloadBytes);
+        pushBarrier(bytesToHex(decoded.selectToken), kind);
+        return;
+      }
+      if (kind === wsBorsh.KIND_LIVE_RESUME) {
+        const decoded = wsBorsh.decodePayload(wsBorsh.schema.LiveResumeSchema, payloadBytes);
+        pushBarrier(bytesToHex(decoded.selectToken), kind);
+        return;
+      }
+      if (kind !== wsBorsh.KIND_TERM_HISTORY) return;
+      const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermHistorySchema, payloadBytes);
+      const tokenHex = bytesToHex(decoded.selectToken);
+      historyTextByToken.set(tokenHex, decodeUtf8(decoded.data));
+      pushBarrier(tokenHex, kind);
+    },
+  };
+
+  function pushBarrier(tokenHex: string, kind: number): void {
+    const list = barrierKindsByToken.get(tokenHex) ?? [];
+    list.push(kind);
+    barrierKindsByToken.set(tokenHex, list);
+  }
+
+  function handleCanonicalEvent(payload: Uint8Array): void {
+    let event: ReturnType<typeof wsBorsh.decodeCanonicalEventPayload>['event'];
+    try {
+      event = wsBorsh.decodeCanonicalEventPayload(payload).event;
+    } catch {
+      return;
+    }
+    collector.sawCanonicalEvent = true;
+    if ('ScreenBegin' in event) {
+      const begin = event.ScreenBegin;
+      screenByRequest.set(bytesToHex(begin.requestId), { paneId: begin.pane.paneId, chunks: [] });
+      return;
+    }
+    if ('ScreenChunk' in event) {
+      const chunk = event.ScreenChunk;
+      screenByRequest.get(bytesToHex(chunk.requestId))?.chunks.push(chunk.data);
+      return;
+    }
+    if ('ScreenCommit' in event) {
+      const commit = event.ScreenCommit;
+      const pending = screenByRequest.get(bytesToHex(commit.requestId));
+      if (!pending) return;
+      canonicalScreenTextByPane.set(
+        pending.paneId,
+        pending.chunks.map((chunk) => decodeUtf8(chunk)).join('')
+      );
+      return;
+    }
+    if ('PaneData' in event) {
+      const frame = event.PaneData;
+      const previous = canonicalOutputTextByPane.get(frame.pane.paneId) ?? '';
+      canonicalOutputTextByPane.set(frame.pane.paneId, previous + decodeUtf8(frame.data));
+    }
+  }
+
+  return collector;
+}
+
+export function attachPaneFeedCollector(page: import('@playwright/test').Page): PaneFeedCollector {
+  const collector = createPaneFeedCollector();
+  const reassembler = new wsBorsh.ChunkReassembler();
+
+  const decodeFrame = (payload: unknown): { kind: number; payload: Uint8Array } | null => {
+    if (typeof payload === 'string') return null;
+    const bytes =
+      payload instanceof Buffer ? new Uint8Array(payload) : new Uint8Array(payload as ArrayBuffer);
+    if (!wsBorsh.checkMagic(bytes)) return null;
+    try {
+      const envelope = wsBorsh.decodeEnvelope(bytes);
+      if (envelope.kind !== wsBorsh.KIND_CHUNK) {
+        return { kind: envelope.kind, payload: envelope.payload };
+      }
+      return reassembler.addChunk(wsBorsh.decodeChunk(envelope.payload));
+    } catch {
+      return null;
+    }
+  };
+
+  page.on('websocket', (socket) => {
+    if (!isGatewayWsUrl(socket.url())) return;
+    socket.on('framesent', (frame) => {
+      const decoded = decodeFrame(frame.payload);
+      if (decoded) collector.handleOutbound(decoded.kind, decoded.payload);
+    });
+    socket.on('framereceived', (frame) => {
+      const decoded = decodeFrame(frame.payload);
+      if (decoded) collector.handleInbound(decoded.kind, decoded.payload);
+    });
+  });
+
+  return collector;
+}
+
+export async function readVisibleTerminalText(
+  page: import('@playwright/test').Page
+): Promise<string> {
+  return page.evaluate(() => {
+    const term = (window as any).__tmexE2eXterm;
+    if (!term) return '';
+    const buffer = term.buffer.active;
+    const start = buffer.viewportY;
+    const end = Math.min(buffer.length, start + term.rows);
+    const lines: string[] = [];
+    for (let y = start; y < end; y++) {
+      const line = buffer.getLine(y);
+      lines.push(line ? line.translateToString(true) : '');
+    }
+    return lines.join('\n');
+  });
 }

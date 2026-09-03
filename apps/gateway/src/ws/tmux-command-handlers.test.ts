@@ -145,6 +145,32 @@ describe('handleTmuxSelect wantHistory', () => {
     sessionStateStore.delete(ws);
   });
 
+  test('wantHistory:false 带与快照相同的尺寸时仍 resize（tmux 可能已漂移）', () => {
+    const ws = createGatewaySession({ session: true });
+    const fixture = createHost();
+    setupConnectionEntry(
+      { connections: fixture.connections },
+      { ws, runtime: fixture.runtime, lastSnapshot: makeSnapshot() }
+    );
+
+    handleTmuxSelect(fixture.host, ws, {
+      deviceId: 'device-a',
+      windowId: '@1',
+      paneId: '%1',
+      selectToken: new Uint8Array(16).fill(5),
+      wantHistory: false,
+      cols: 80,
+      rows: 24,
+    });
+
+    expect(fixture.focusPaneCalls).toEqual([{ windowId: '@1', paneId: '%1' }]);
+    expect(fixture.resizePaneCalls).toEqual([{ paneId: '%1', cols: 80, rows: 24 }]);
+    expect(fixture.selectPaneCalls).toEqual([]);
+    expect(fixture.selectPaneWithSizeCalls).toEqual([]);
+    switchBarrier.cleanupClient(ws);
+    sessionStateStore.delete(ws);
+  });
+
   test('wantHistory:false 带尺寸时 focus + resize，仍不 capture', () => {
     const ws = createGatewaySession({ session: true });
     const fixture = createHost();
