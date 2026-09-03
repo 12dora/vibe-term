@@ -223,7 +223,6 @@ async function completeFailover(
   if (!pump.streamAlive || pump.stream !== stream) return false;
   const resumed = pump.replay.resumedPaneCount();
   const desc = pump.replay.describeReplay();
-  const replayBytes = pump.replay.legacyReplayStats().replayBytes;
   const durationMs = Date.now() - startedAt;
   const to = pump.boundTransport ?? 'none';
   let lag = { lagMs: 0, maxLagMs: 0 };
@@ -244,7 +243,6 @@ async function completeFailover(
       to,
       resumed,
       replayMode: desc.mode,
-      replayBytes,
     })
   );
   safeLog(
@@ -256,7 +254,6 @@ async function completeFailover(
       closeReason,
       from,
       to,
-      replayBytes,
       eventLoopLagMs: lag.lagMs,
       maxLagMs: lag.maxLagMs,
     })

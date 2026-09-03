@@ -34,7 +34,7 @@ import {
 } from './mesh-deps';
 import { stamp } from './mesh-log';
 import { isHttps, jsonError } from './session-middleware';
-import { StreamReplayState } from './stream-replay-state';
+import { StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
 
 const AUTH_SKIP = AUTH_LOGIN_PUBLIC_PATHS;
 const AUTH_CHALLENGE_PATHS = new Set(['/api/auth/challenge', '/api/auth/passkey/login/options']);
@@ -128,7 +128,7 @@ function rewriteRequest(req: Request, rewrite: string): Request {
 export class Forwarder {
   private readonly pumps = new Map<MeshServerWebSocket, ForwardPump>();
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-  private readonly log: (line: string) => void;
+  readonly log: (line: string) => void;
   private authRateLimits: AuthRateLimits | null;
 
   constructor(private readonly deps: ForwarderDeps) {
@@ -392,18 +392,18 @@ export class Forwarder {
     if (noted.kind === wsBorsh.KIND_HELLO_S2C) {
       pump.helloWait?.();
       pump.helloWait = null;
+      if (rejectStaleNodeStream(noted.peerUnsupported, pump, this)) return;
       if (pump.replay.helloForwarded) return;
       pump.replay.helloForwarded = true;
     }
-    if (noted.kind === wsBorsh.KIND_DEVICE_CONNECTED) {
-      const deviceId = noted.deviceId;
-      if (deviceId && pump.replay.connectedForwarded.has(deviceId)) return;
-      if (deviceId) pump.replay.connectedForwarded.add(deviceId);
+    if (noted.kind === wsBorsh.KIND_DEVICE_CONNECTED && noted.deviceId) {
+      if (pump.replay.connectedForwarded.has(noted.deviceId)) return;
+      pump.replay.connectedForwarded.add(noted.deviceId);
     }
     this.sendToBrowser(pump, bytes);
   }
 
-  private sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void {
+  sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void {
     if (pump.browserClosed) return;
     if (pump.browserPaused) {
       if (!holdInbound(pump, bytes)) this.failPump(pump, STREAM_QUEUE_OVERFLOW_REASON);
@@ -513,7 +513,7 @@ export class Forwarder {
     } catch {}
   }
 
-  private closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void {
+  closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void {
     if (pump.browserClosed) return;
     pump.browserClosed = true;
     this.pumps.delete(pump.ws);

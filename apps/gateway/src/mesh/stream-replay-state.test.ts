@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import { StreamReplayState } from './stream-replay-state';
+import { type InboundReplayNote, StreamReplayState } from './stream-replay-state';
 
 function encodeDeviceConnect(deviceId: string): Uint8Array {
   return wsBorsh.encodeEnvelope(
@@ -31,7 +31,7 @@ function encodeHelloC2S(maxFrameBytes: number): Uint8Array {
     wsBorsh.KIND_HELLO_C2S,
     wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl: 'stream-replay-test',
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes,
       supportsCompression: false,
       supportsDiffSnapshot: false,
@@ -40,16 +40,16 @@ function encodeHelloC2S(maxFrameBytes: number): Uint8Array {
   );
 }
 
-function encodeHelloS2C(maxFrameBytes: number): Uint8Array {
+function encodeHelloS2C(maxFrameBytes: number, serverVersion = '1.1.23'): Uint8Array {
   return wsBorsh.encodeEnvelope(
     wsBorsh.KIND_HELLO_S2C,
     wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
       serverImpl: 'tmex-gateway',
-      serverVersion: 'test',
+      serverVersion,
       selectedVersion: wsBorsh.CURRENT_VERSION,
       maxFrameBytes,
       heartbeatIntervalMs: 15_000,
-      capabilities: ['canonical-state-v1'],
+      capabilities: ['canonical-state-v1', 'canonical-state-v1.1'],
     }),
     1
   );
@@ -137,126 +137,34 @@ describe('StreamReplayState.rewriteQueuedFrame', () => {
   });
 });
 
-function encodeSubscribe(deviceId: string, paneIds: string[]): Uint8Array {
-  return wsBorsh.encodeEnvelope(
-    wsBorsh.KIND_TMUX_SUBSCRIBE_PANES,
-    wsBorsh.encodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, { deviceId, paneIds }),
-    3
-  );
-}
-
-function decodeHistoryRequests(frames: Uint8Array[]): Array<{ paneId: string; byteLimit: number }> {
-  const out: Array<{ paneId: string; byteLimit: number }> = [];
-  for (const frame of frames) {
-    try {
-      const env = wsBorsh.decodeEnvelope(frame);
-      if (env.kind !== wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY) continue;
-      const payload = wsBorsh.schema.decodeTmuxFetchPaneHistory(env.payload);
-      out.push({ paneId: payload.paneId, byteLimit: payload.byteLimit ?? 0 });
-    } catch {
-      // ignore
-    }
-  }
-  return out;
-}
-
-function decodeSourceGapPanes(frames: Uint8Array[]): string[] {
-  const out: string[] = [];
-  for (const frame of frames) {
-    try {
-      const env = wsBorsh.decodeEnvelope(frame);
-      if (env.kind !== wsBorsh.KIND_CANONICAL_EVENT) continue;
-      const event = wsBorsh.decodeCanonicalEventPayload(env.payload).event;
-      if (!('SourceGap' in event) || !('Pane' in event.SourceGap.scope)) continue;
-      expect(event.SourceGap.reason).toBe(wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED);
-      out.push(event.SourceGap.scope.Pane.pane.paneId);
-    } catch {
-      // ignore
-    }
-  }
-  return out;
-}
-
-describe('StreamReplayState legacy failover history cap', () => {
-  test('divides the remaining budget so every pane gets a bounded tail with byteLimit', () => {
-    const prevPane = process.env.TMEX_FAILOVER_HISTORY_BYTES_PER_PANE;
-    process.env.TMEX_FAILOVER_HISTORY_BYTES_PER_PANE = String(256 * 1024);
-    try {
-      const replay = new StreamReplayState();
-      replay.noteOutbound(encodeSubscribe('dev-1', ['%1', '%2', '%3', '%4', '%5']));
-      const frames = replay.buildPostConnectFrames();
-      const history = decodeHistoryRequests(frames);
-      expect(history).toHaveLength(5);
-      expect(history.every((row) => row.byteLimit > 0 && row.byteLimit <= 256 * 1024)).toBe(true);
-      expect(history.reduce((sum, row) => sum + row.byteLimit, 0)).toBeLessThanOrEqual(1024 * 1024);
-      expect(history.map((row) => row.paneId)).toEqual(['%1', '%2', '%3', '%4', '%5']);
-      const stats = replay.legacyReplayStats();
-      expect(stats.historyPanes).toBe(5);
-      expect(stats.skippedPanes).toEqual([]);
-      expect(stats.gapPanes).toEqual([]);
-      expect(stats.replayBytes).toBe(history.reduce((sum, row) => sum + row.byteLimit, 0));
-      expect(replay.browserSignalFrames()).toEqual([]);
-      expect(
-        frames.some(
-          (frame) => wsBorsh.decodeEnvelope(frame).kind === wsBorsh.KIND_TMUX_SUBSCRIBE_PANES
-        )
-      ).toBe(true);
-    } finally {
-      if (prevPane === undefined) delete process.env.TMEX_FAILOVER_HISTORY_BYTES_PER_PANE;
-      else process.env.TMEX_FAILOVER_HISTORY_BYTES_PER_PANE = prevPane;
-    }
+describe('StreamReplayState canonical v1.1 对端门槛', () => {
+  test('HELLO_S2C 未到达时 fail-closed', () => {
+    const replay = new StreamReplayState();
+    expect(replay.peerVersion).toBeNull();
+    expect(replay.peerSupportsCanonical()).toBe(false);
   });
 
-  test('sends a resource_exhausted SourceGap for panes that cannot get a 16 KiB tail', () => {
-    const replay = new StreamReplayState();
-    const paneIds = Array.from({ length: 65 }, (_, i) => `%${i + 1}`);
-    replay.noteOutbound(encodeSubscribe('dev-1', paneIds));
-    const frames = replay.buildPostConnectFrames();
-    const history = decodeHistoryRequests(frames);
-    const gaps = decodeSourceGapPanes(replay.browserSignalFrames());
-    expect(history.length + gaps.length).toBe(65);
-    expect(history.length).toBeGreaterThan(0);
-    expect(gaps.length).toBeGreaterThan(0);
-    expect(history.every((row) => row.byteLimit >= 16 * 1024)).toBe(true);
-    expect(history.reduce((sum, row) => sum + row.byteLimit, 0)).toBeLessThanOrEqual(1024 * 1024);
-    expect(replay.legacyReplayStats().gapPanes).toEqual(gaps);
-    expect(replay.legacyReplayStats().skippedPanes).toEqual([]);
-  });
-
-  test('does not cap canonical resume frames', () => {
-    const replay = new StreamReplayState();
-    const epoch = new Uint8Array(16);
-    replay.noteOutbound(
-      wsBorsh.encodeEnvelope(
-        wsBorsh.KIND_CANONICAL_COMMAND,
-        wsBorsh.encodeCanonicalCommandPayload({
-          SetPaneSubscriptions: {
-            generation: 1n,
-            activePanes: [
-              {
-                pane: { deviceId: 'dev-1', serverEpoch: epoch, paneId: '%1' },
-                cursor: { paneEpoch: epoch, terminalSeq: 0n },
-              },
-            ],
-            hotPanes: [],
-          },
-        }),
-        1
-      )
-    );
-    const frames = replay.buildPostConnectFrames();
-    expect(frames).toHaveLength(1);
-    expect(replay.legacyReplayStats()).toEqual({
-      replayBytes: 0,
-      historyPanes: 0,
-      skippedPanes: [],
-      gapPanes: [],
+  test('对端版本 >= 1.1.22 才放行', () => {
+    const supported = new StreamReplayState();
+    expect(supported.noteInbound(encodeHelloS2C(65_536, '1.1.23'))).toEqual({
+      kind: wsBorsh.KIND_HELLO_S2C,
+      peerUnsupported: false,
     });
+    expect(supported.peerVersion).toBe('1.1.23');
+    expect(supported.peerSupportsCanonical()).toBe(true);
+
+    const stale = new StreamReplayState();
+    expect(stale.noteInbound(encodeHelloS2C(65_536, '1.1.21'))).toEqual({
+      kind: wsBorsh.KIND_HELLO_S2C,
+      peerUnsupported: true,
+    });
+    expect(stale.peerVersion).toBe('1.1.21');
+    expect(stale.peerSupportsCanonical()).toBe(false);
   });
 });
 
 describe('StreamReplayState canonical failover replay', () => {
-  test('uses generation+1 and the latest PaneData cursor without legacy subscribe or history', () => {
+  test('uses generation+1 and the latest PaneData cursor', () => {
     const replay = new StreamReplayState();
     const serverEpoch = new Uint8Array(16).fill(1);
     const paneEpoch = new Uint8Array(16).fill(2);
@@ -264,11 +172,9 @@ describe('StreamReplayState canonical failover replay', () => {
 
     replay.noteOutbound(encodeDeviceConnect('dev-1'));
     replay.noteOutbound(encodeDeviceConnect('dev-2'));
-    replay.noteOutbound(encodeSubscribe('dev-1', ['%1']));
     replay.noteOutbound(
       encodeCanonicalSubscription(7n, [{ pane, cursor: { paneEpoch, terminalSeq: 0n } }])
     );
-    replay.noteOutbound(encodeSubscribe('dev-1', ['%legacy']));
     replay.noteInbound(
       encodeCanonicalEvent({
         PaneData: {
@@ -302,12 +208,6 @@ describe('StreamReplayState canonical failover replay', () => {
     const subscription = decodeCanonicalSubscription(frames);
     expect(subscription.generation).toBe(8n);
     expect(subscription.activePanes[0]?.cursor).toEqual({ paneEpoch, terminalSeq: 4n });
-    expect(replay.legacyReplayStats()).toEqual({
-      replayBytes: 0,
-      historyPanes: 0,
-      skippedPanes: [],
-      gapPanes: [],
-    });
   });
 
   test('DEVICE_DISCONNECT removes canonical panes and cursor state', () => {
@@ -683,24 +583,14 @@ describe('StreamReplayState canonical failover replay', () => {
   });
 });
 
-function encodeTermOutput(data: Uint8Array, seq = 9): Uint8Array {
-  return wsBorsh.encodeEnvelope(
-    wsBorsh.KIND_TERM_OUTPUT,
-    wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
-      deviceId: 'dev-1',
-      paneId: '%1',
-      encoding: 0,
-      data,
-    }),
-    seq
-  );
+/** 与 replay 状态无关的大帧：仅用来验证信封解码路径与性能。 */
+function encodeLargeFrame(data: Uint8Array, seq = 9): Uint8Array {
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_PASTE, data, seq);
 }
 
 function replayDecisionSnapshot(replay: StreamReplayState) {
   return {
     devices: [...replay.devices.keys()].sort(),
-    paneSubs: [...replay.paneSubs.keys()].sort(),
-    lastSelect: [...replay.lastSelect.keys()].sort(),
     agents: [...replay.agents.keys()].sort(),
     canonicalGeneration: replay.canonicalSub?.generation ?? null,
     canonicalActive: replay.canonicalSub?.activePanes.map((row) => row.pane.paneId) ?? [],
@@ -721,26 +611,10 @@ describe('StreamReplayState decodeEnvelopeView', () => {
     const replay = new StreamReplayState();
     const epoch = new Uint8Array(16).fill(3);
     const pane = { deviceId: 'dev-1', serverEpoch: epoch, paneId: '%1' };
-    const inboundNotes: Array<{ kind: number | null; deviceId?: string }> = [];
+    const inboundNotes: InboundReplayNote[] = [];
 
     replay.noteOutbound(encodeHelloC2S(65_536));
     replay.noteOutbound(encodeDeviceConnect('dev-1'));
-    replay.noteOutbound(encodeSubscribe('dev-1', ['%1', '%2']));
-    replay.noteOutbound(
-      wsBorsh.encodeEnvelope(
-        wsBorsh.KIND_TMUX_SELECT,
-        wsBorsh.encodePayload(wsBorsh.schema.TmuxSelectSchema, {
-          deviceId: 'dev-1',
-          windowId: '@1',
-          paneId: '%1',
-          selectToken: new Uint8Array(16),
-          wantHistory: true,
-          cols: 120,
-          rows: 32,
-        }),
-        4
-      )
-    );
     replay.noteOutbound(
       wsBorsh.encodeEnvelope(
         wsBorsh.KIND_AGENT_SUBSCRIBE,
@@ -751,7 +625,7 @@ describe('StreamReplayState decodeEnvelopeView', () => {
     replay.noteOutbound(
       encodeCanonicalSubscription(2n, [{ pane, cursor: { paneEpoch: epoch, terminalSeq: 0n } }])
     );
-    replay.noteOutbound(encodeTermOutput(new Uint8Array(32 * 1024).fill(0x41), 10));
+    replay.noteOutbound(encodeLargeFrame(new Uint8Array(32 * 1024).fill(0x41), 10));
 
     inboundNotes.push(replay.noteInbound(encodeHelloS2C(65_536)));
     inboundNotes.push(replay.noteInbound(encodeDeviceConnected('dev-1')));
@@ -768,24 +642,16 @@ describe('StreamReplayState decodeEnvelopeView', () => {
         })
       )
     );
-    inboundNotes.push(
-      replay.noteInbound(
-        wsBorsh.encodeEnvelope(wsBorsh.KIND_STATE_SNAPSHOT, new Uint8Array([0, 0, 0, 0]), 11)
-      )
-    );
     inboundNotes.push(replay.noteInbound(new Uint8Array([1, 2, 3])));
 
     expect(inboundNotes).toEqual([
-      { kind: wsBorsh.KIND_HELLO_S2C },
+      { kind: wsBorsh.KIND_HELLO_S2C, peerUnsupported: false },
       { kind: wsBorsh.KIND_DEVICE_CONNECTED, deviceId: 'dev-1' },
       { kind: wsBorsh.KIND_CANONICAL_EVENT },
-      { kind: wsBorsh.KIND_STATE_SNAPSHOT },
       { kind: null },
     ]);
     expect(replayDecisionSnapshot(replay)).toEqual({
       devices: ['dev-1'],
-      paneSubs: [],
-      lastSelect: ['dev-1'],
       agents: ['ag-1'],
       canonicalGeneration: 2n,
       canonicalActive: ['%1'],
@@ -829,7 +695,7 @@ describe('StreamReplayState decodeEnvelopeView', () => {
   });
 
   test('decodeEnvelopeView is at least 10× faster than decodeEnvelope on a 32 KiB frame', () => {
-    const frame = encodeTermOutput(new Uint8Array(32 * 1024).fill(0x42), 1);
+    const frame = encodeLargeFrame(new Uint8Array(32 * 1024).fill(0x42), 1);
     const iterations = 400;
     for (let i = 0; i < 40; i += 1) {
       wsBorsh.decodeEnvelope(frame);

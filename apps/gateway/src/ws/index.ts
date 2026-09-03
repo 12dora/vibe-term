@@ -25,12 +25,14 @@ import {
 import { encodePayloadFrames, sendToClient } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { CanonicalFeedSession } from './canonical-feed-session';
+import { ERROR_CANONICAL_V11_REQUIRED, clientTooOldMessage } from './canonical-gate';
 import type { Carrier } from './carrier';
 import { BunSocketCarrier } from './carrier';
 import {
   DeviceConnectionRegistry,
   type DeviceConnectionRegistryHost,
 } from './device-connection-registry';
+import { DeviceFeedBroadcaster, type DeviceFeedHost } from './device-feed-broadcaster';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
 import {
   type GatewayMetricsHost,
@@ -38,10 +40,8 @@ import {
   recordPingProbe,
 } from './gateway-metrics-log';
 import { GatewaySession } from './gateway-session';
-import { LegacyFeedBroadcaster, type LegacyFeedHost } from './legacy-feed-broadcaster';
 import { closeGatewaySession, logWsClientConnected } from './session-close';
 import { type SnapshotOverlayHost, SnapshotOverlayStore } from './snapshot-overlays';
-import { TerminalOutputBatcher } from './terminal-output-batcher';
 import { TerminalOutputMetrics } from './terminal-output-metrics';
 import { ThemeSettingsBroadcaster, type ThemeSettingsHost } from './theme-settings-broadcaster';
 import { WebSocketServerTmuxFacade } from './tmux-command-facade';
@@ -74,22 +74,13 @@ export class WebSocketServer
     DeviceConnectionRegistryHost,
     ThemeSettingsHost,
     SnapshotOverlayHost,
-    LegacyFeedHost,
+    DeviceFeedHost,
     TmuxCommandHost,
     GatewayMetricsHost
 {
   readonly gatewayActivityMetrics = new GatewayActivityMetrics();
   readonly terminalOutputMetrics = new TerminalOutputMetrics();
   terminalOutputEventsUntilMetricsCheck = 1024;
-  readonly terminalOutputBatcher = new TerminalOutputBatcher((deviceId, paneId, data) => {
-    try {
-      this.terminalOutputMetrics.recordBatch(data.length);
-      this.feed.sendTerminalOutput(deviceId, paneId, data);
-      this.reportTerminalOutputMetricsIfDue();
-    } catch (error) {
-      console.error('[ws] terminal output batch failed:', error);
-    }
-  });
 
   connectedClients = new Set<GatewaySession>();
   readonly canonicalSessions = new Map<GatewaySession, CanonicalFeedSession>();
@@ -97,7 +88,7 @@ export class WebSocketServer
   private readonly registry: DeviceConnectionRegistry;
   private readonly theme: ThemeSettingsBroadcaster;
   private readonly overlays: SnapshotOverlayStore;
-  private readonly feed: LegacyFeedBroadcaster;
+  private readonly feed: DeviceFeedBroadcaster;
   private readonly borshHandlers: BorshKindHandlerMap;
 
   get connections() {
@@ -146,7 +137,7 @@ export class WebSocketServer
     this.registry = new DeviceConnectionRegistry(this);
     this.theme = new ThemeSettingsBroadcaster(this);
     this.overlays = new SnapshotOverlayStore(this);
-    this.feed = new LegacyFeedBroadcaster(this);
+    this.feed = new DeviceFeedBroadcaster(this);
     this.borshHandlers = createBorshKindHandlers(this);
   }
 
@@ -339,7 +330,6 @@ export class WebSocketServer
         if (!entry) return null;
         entry.canonicalClients ??= new Set();
         entry.canonicalClients.add(session);
-        this.feed.syncLegacyPaneObservers(session, deviceId);
         this.registry.clearIdleReleaseTimer(entry);
         return entry.runtime;
       },
@@ -353,13 +343,6 @@ export class WebSocketServer
         entry.canonicalClients ??= new Set();
         entry.canonicalClients.add(session);
         this.registry.clearIdleReleaseTimer(entry);
-        if (entry.lastSnapshot) {
-          this.sendChunked(
-            session,
-            wsBorsh.KIND_STATE_SNAPSHOT,
-            this.encodeSnapshotWithOverlays(entry.lastSnapshot)
-          );
-        }
       },
       onDeviceDetached: (deviceId, runtime) => {
         const entry = this.connections.get(deviceId);
@@ -367,10 +350,20 @@ export class WebSocketServer
         entry.canonicalClients?.delete(session);
         this.registry.scheduleConnectionEntryRelease(deviceId, entry);
       },
-      resizePane: (deviceId, paneId, cols, rows, runtime) => {
-        const entry = this.connections.get(deviceId);
-        if (!entry || entry.runtime !== runtime) return;
-        this.handleTermResize(session, deviceId, paneId, cols, rows);
+      resizePane: (intent) => {
+        const entry = this.connections.get(intent.deviceId);
+        if (!entry || entry.runtime !== intent.runtime) return;
+        this.handleCanonicalResize(session, {
+          deviceId: intent.deviceId,
+          paneId: intent.paneId,
+          cols: intent.cols,
+          rows: intent.rows,
+          reason:
+            intent.reason === wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND
+              ? wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND
+              : wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE,
+          sizeEpoch: intent.sizeEpoch,
+        });
       },
     });
     this.canonicalSessions.set(session, canonical);
@@ -439,10 +432,10 @@ export class WebSocketServer
         registry: this.registry,
         canonicalSessions: this.canonicalSessions,
         connectedClients: this.connectedClients,
-        feed: this.feed,
         connections: this.connections,
         refreshSnapshotPolling: (deviceId) => this.refreshSnapshotPolling(deviceId),
         dropViewportClaims: (target) => this.dropViewportClaims(target),
+        dropPaneSizeEpochs: (target) => this.dropPaneSizeEpochs(target),
       },
       session,
       code,
@@ -532,11 +525,26 @@ export class WebSocketServer
       return;
     }
 
+    const clientVersion = hello.clientVersion.slice(0, 64);
+    if (!wsBorsh.peerSupportsCanonicalV11(clientVersion)) {
+      // fail-closed：不回退 legacy 状态流，直接拒绝并关闭。
+      this.sendError(
+        ws,
+        refSeq,
+        ERROR_CANONICAL_V11_REQUIRED,
+        clientTooOldMessage(clientVersion),
+        false
+      );
+      this.closeSession(ws, 1002, 'canonical-state-v1.1 required');
+      return;
+    }
+
     const serverMaxFrameBytes = wsBorsh.DEFAULT_MAX_FRAME_BYTES;
     const effectiveMaxFrameBytes = Math.min(hello.maxFrameBytes, serverMaxFrameBytes);
 
     ws.borshState.negotiated = true;
     ws.borshState.clientImpl = hello.clientImpl.slice(0, 64);
+    ws.borshState.clientVersion = clientVersion;
     ws.borshState.maxFrameBytes = effectiveMaxFrameBytes;
     agentWsHub.registerClient(ws);
 
@@ -606,40 +614,6 @@ export class WebSocketServer
     this.sendChunked(ws, kind, payload);
   }
 
-  sendTermOutput(
-    ws: GatewaySession,
-    deviceId: string,
-    paneId: string,
-    data: Uint8Array,
-    frameCache: Map<number, Uint8Array> | null = null
-  ): number | null {
-    const carrier = ws.activeCarrier;
-    if (!gatewayWebSocketSendGuard.canSend(carrier, true)) return null;
-    const state = ws.borshState;
-    const originalSeq = state.seqGen();
-    let frame = frameCache?.get(originalSeq);
-    if (!frame) {
-      frame = wsBorsh.encodeTermOutputFrame({ deviceId, paneId, encoding: 1, data }, originalSeq);
-      frameCache?.set(originalSeq, frame);
-    }
-    const payloadBytes = frame.byteLength - wsBorsh.WS_ENVELOPE_WIRE_OVERHEAD_BYTES;
-    let frames = [frame];
-    if (frame.byteLength > state.maxFrameBytes) {
-      let reuseOriginalSeq = true;
-      frames = encodePayloadFrames(
-        wsBorsh.KIND_TERM_OUTPUT,
-        frame.subarray(wsBorsh.WS_ENVELOPE_WIRE_OVERHEAD_BYTES),
-        () => {
-          if (!reuseOriginalSeq) return state.seqGen();
-          reuseOriginalSeq = false;
-          return originalSeq;
-        },
-        state.maxFrameBytes
-      );
-    }
-    return sendToClient(carrier, frames, state.maxFrameBytes) ? payloadBytes : null;
-  }
-
   sendControl(
     ws: GatewaySession,
     kind: number,
@@ -706,7 +680,6 @@ export class WebSocketServer
   }
 
   releaseConnectionEntry(deviceId: string, entry: DeviceConnectionEntry): void {
-    this.terminalOutputBatcher.discardDevice(deviceId);
     this.registry.clearSnapshotTimer(entry);
     this.registry.clearSnapshotPollTimer(entry);
     this.registry.clearReconnectTimer(entry);
@@ -719,28 +692,28 @@ export class WebSocketServer
   }
 
   attachRuntime(deviceId: string, runtime: DeviceSessionRuntime): () => void {
+    this.applyDeviceOverlaysToRuntime(deviceId, runtime);
     const listener: DeviceSessionRuntimeListener = {
       onEvent: (event) => {
         void this.feed.broadcastTmuxEvent(deviceId, event);
       },
       onTerminalOutput: (paneId, data) => {
-        this.feed.broadcastTerminalOutput(deviceId, paneId, data);
-      },
-      onTerminalHistory: (paneId, data, alternateScreen, modes) => {
-        this.feed.broadcastTerminalHistory(deviceId, paneId, data, alternateScreen, modes);
+        this.feed.noteTerminalOutput(deviceId, paneId, data);
       },
       onClipboardWrite: (paneId, text) => {
         this.feed.broadcastClipboardWrite(deviceId, paneId, text);
       },
       onSnapshot: (payload) => {
-        this.feed.broadcastStateSnapshot(deviceId, payload);
+        this.installStateSnapshot(deviceId, payload);
       },
-      onMetadataPatch: (patch) => {
-        this.feed.broadcastLegacyMetadataPatch(deviceId, patch, runtime.getCurrentSnapshot());
+      onMetadataPatch: () => {
+        const snapshot = runtime.getCurrentSnapshot();
+        const entry = this.connections.get(deviceId);
+        if (entry && snapshot) entry.lastSnapshot = snapshot;
       },
       onMetadataRebaseRequired: () => {
         const snapshot = runtime.getCurrentSnapshot();
-        if (snapshot) this.feed.broadcastStateSnapshot(deviceId, snapshot);
+        if (snapshot) this.installStateSnapshot(deviceId, snapshot);
       },
       onError: (error) => {
         this.feed.broadcastError(deviceId, error);
@@ -751,6 +724,17 @@ export class WebSocketServer
     };
 
     return runtime.subscribe(listener);
+  }
+
+  /** 设备树顺序与自定义名是网关侧持久状态，运行时新建后要立刻灌进 canonical metadata 投影。 */
+  private applyDeviceOverlaysToRuntime(deviceId: string, runtime: DeviceSessionRuntime): void {
+    runtime.setTreeOrder?.(this.getCachedDeviceTreeOrder(deviceId));
+    for (const [windowId, name] of this.windowCustomNames.get(deviceId) ?? []) {
+      runtime.setCustomName?.('window', windowId, name);
+    }
+    for (const [paneId, name] of this.paneCustomNames.get(deviceId) ?? []) {
+      runtime.setCustomName?.('pane', paneId, name);
+    }
   }
 
   refreshSnapshotPolling(deviceId: string): void {
@@ -765,14 +749,6 @@ export class WebSocketServer
 
   handleDeviceDisconnect(ws: GatewaySession, deviceId: string): void {
     this.registry.handleDeviceDisconnect(ws, deviceId);
-  }
-
-  syncLegacyPaneObservers(session: GatewaySession, deviceId: string): void {
-    this.feed.syncLegacyPaneObservers(session, deviceId);
-  }
-
-  releaseLegacyPaneObservers(session: GatewaySession, deviceId?: string): void {
-    this.feed.releaseLegacyPaneObservers(session, deviceId);
   }
 
   handleSiteThemeUpdate(
@@ -810,28 +786,14 @@ export class WebSocketServer
     this.theme.broadcastThemeChange(theme);
   }
 
-  encodeSnapshotWithOverlays(payload: StateSnapshotPayload): Uint8Array {
-    return this.overlays.encodeSnapshotWithOverlays(payload);
-  }
-
   getCachedDeviceTreeOrder(deviceId: string): DeviceTreeOrderRecord {
     return this.overlays.getCachedDeviceTreeOrder(deviceId);
   }
 
   storeDeviceTreeOrder(order: DeviceTreeOrderRecord): DeviceTreeOrderRecord {
-    return this.overlays.storeDeviceTreeOrder(order);
-  }
-
-  sendSnapshotToClients(
-    entry: DeviceConnectionEntry,
-    payload: StateSnapshotPayload,
-    options?: { includeCanonical?: boolean }
-  ): void {
-    this.feed.sendSnapshotToClients(entry, payload, options);
-  }
-
-  broadcastTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
-    this.feed.broadcastTerminalOutput(deviceId, paneId, data);
+    const stored = this.overlays.storeDeviceTreeOrder(order);
+    this.connections.get(order.deviceId)?.runtime.setTreeOrder?.(stored);
+    return stored;
   }
 
   async broadcastTmuxEvent(deviceId: string, event: TmuxEvent): Promise<void> {
@@ -842,18 +804,9 @@ export class WebSocketServer
     return this.feed.extendTmuxEvent(deviceId, event);
   }
 
-  broadcastStateSnapshot(deviceId: string, payload: StateSnapshotPayload): void {
-    this.feed.broadcastStateSnapshot(deviceId, payload);
-  }
-
-  broadcastTerminalHistory(
-    deviceId: string,
-    paneId: string,
-    data: string,
-    alternateScreen: boolean,
-    modes: number
-  ): void {
-    this.feed.broadcastTerminalHistory(deviceId, paneId, data, alternateScreen, modes);
+  installStateSnapshot(deviceId: string, payload: StateSnapshotPayload): void {
+    this.overlays.pruneCustomNames(payload);
+    this.feed.installStateSnapshot(deviceId, payload);
   }
 
   broadcastDeviceError(deviceId: string, payload: EventDevicePayload): void {

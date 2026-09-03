@@ -70,6 +70,11 @@ function u16Field(record: wsBorsh.SourceMetadataRecord, field: number): number |
   return value && 'U16' in value ? value.U16 : null;
 }
 
+function u32Field(record: wsBorsh.SourceMetadataRecord, field: number): number | null {
+  const value = record.fields.find((candidate) => candidate.field === field)?.value;
+  return value && 'U32' in value ? value.U32 : null;
+}
+
 function twoWindowSnapshot(): StateSnapshotPayload {
   return {
     deviceId: 'device-a',
@@ -416,5 +421,116 @@ describe('runtime metadata projection', () => {
     expect(patches).toEqual([]);
     expect(rebases).toEqual([]);
     expect(projection.currentSnapshot().records).toEqual([]);
+  });
+});
+
+describe('设备树顺序（SOURCE_FIELD_TREE_ORDER）', () => {
+  test('establish 前设置顺序：首次投影就带上 TREE_ORDER', () => {
+    const { projection } = createProjection();
+    projection.setTreeOrder({ windows: ['@2', '@1'], panes: { '@1': ['%1'] } });
+    projection.reconcile(twoWindowSnapshot());
+
+    const value = projection.currentSnapshot();
+    expect(
+      u32Field(
+        findRecord(value, wsBorsh.SOURCE_ENTITY_WINDOW, '@2'),
+        wsBorsh.SOURCE_FIELD_TREE_ORDER
+      )
+    ).toBe(0);
+    expect(
+      u32Field(
+        findRecord(value, wsBorsh.SOURCE_ENTITY_WINDOW, '@1'),
+        wsBorsh.SOURCE_FIELD_TREE_ORDER
+      )
+    ).toBe(1);
+    expect(
+      u32Field(findRecord(value, wsBorsh.SOURCE_ENTITY_PANE, '%1'), wsBorsh.SOURCE_FIELD_TREE_ORDER)
+    ).toBe(0);
+    // 未列入顺序的 pane 不带该字段
+    expect(
+      u32Field(findRecord(value, wsBorsh.SOURCE_ENTITY_PANE, '%2'), wsBorsh.SOURCE_FIELD_TREE_ORDER)
+    ).toBeNull();
+  });
+
+  test('establish 后改顺序：走 patch 增量，只动变化的实体', () => {
+    const { projection, patches } = createProjection();
+    projection.reconcile(twoWindowSnapshot());
+    patches.length = 0;
+
+    projection.setTreeOrder({ windows: ['@2', '@1'], panes: {} });
+    projection.flushPending();
+
+    expect(patches).toHaveLength(1);
+    const upserts = patches[0]?.upserts ?? [];
+    expect(upserts.map((record) => record.key.nativeId).sort()).toEqual(['@1', '@2']);
+    for (const record of upserts) {
+      expect(record.fields.map((field) => field.field)).toEqual([wsBorsh.SOURCE_FIELD_TREE_ORDER]);
+    }
+    const value = projection.currentSnapshot();
+    expect(
+      u32Field(
+        findRecord(value, wsBorsh.SOURCE_ENTITY_WINDOW, '@2'),
+        wsBorsh.SOURCE_FIELD_TREE_ORDER
+      )
+    ).toBe(0);
+  });
+
+  test('退出自定义顺序写 Unset 并从记录里移除该字段', () => {
+    const { projection, patches } = createProjection();
+    projection.setTreeOrder({ windows: ['@2', '@1'], panes: {} });
+    projection.reconcile(twoWindowSnapshot());
+    patches.length = 0;
+
+    projection.setTreeOrder({ windows: [], panes: {} });
+    projection.flushPending();
+
+    expect(patches).toHaveLength(1);
+    const upserts = patches[0]?.upserts ?? [];
+    expect(upserts).toHaveLength(2);
+    for (const record of upserts) {
+      const field = record.fields.find(
+        (candidate) => candidate.field === wsBorsh.SOURCE_FIELD_TREE_ORDER
+      );
+      expect(field?.value).toEqual({ Unset: {} });
+    }
+    const value = projection.currentSnapshot();
+    expect(
+      u32Field(
+        findRecord(value, wsBorsh.SOURCE_ENTITY_WINDOW, '@1'),
+        wsBorsh.SOURCE_FIELD_TREE_ORDER
+      )
+    ).toBeNull();
+  });
+
+  test('顺序不变时不产生 patch', () => {
+    const { projection, patches } = createProjection();
+    projection.setTreeOrder({ windows: ['@1', '@2'], panes: {} });
+    projection.reconcile(twoWindowSnapshot());
+    patches.length = 0;
+
+    projection.setTreeOrder({ windows: ['@1', '@2'], panes: {} });
+    projection.flushPending();
+
+    expect(patches).toHaveLength(0);
+  });
+
+  test('重复 id 只取第一次出现的序号', () => {
+    const { projection } = createProjection();
+    projection.setTreeOrder({ windows: ['@2', '@1', '@2'], panes: {} });
+    projection.reconcile(twoWindowSnapshot());
+
+    const value = projection.currentSnapshot();
+    expect(
+      u32Field(
+        findRecord(value, wsBorsh.SOURCE_ENTITY_WINDOW, '@2'),
+        wsBorsh.SOURCE_FIELD_TREE_ORDER
+      )
+    ).toBe(0);
+    expect(
+      u32Field(
+        findRecord(value, wsBorsh.SOURCE_ENTITY_WINDOW, '@1'),
+        wsBorsh.SOURCE_FIELD_TREE_ORDER
+      )
+    ).toBe(1);
   });
 });

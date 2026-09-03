@@ -1,15 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
-  clearLegacyPaneOutputObservers,
   finishPaneOutputMaterializationRequest,
-  isLegacyPaneOutputObserved,
-  markLegacyPaneOutputObserversTracked,
   providePaneOutputMaterializationPredicate,
   requestPaneOutputMaterializationPredicate,
-  setLegacyPaneOutputObserved,
-  setPaneOutputClientPresence,
-  syncLegacyPaneOutputObserverCounts,
 } from './output-materialization';
 
 describe('pane output materialization wiring', () => {
@@ -21,33 +15,21 @@ describe('pane output materialization wiring', () => {
     expect(finishPaneOutputMaterializationRequest(request)).toBe(predicate);
   });
 
-  test('idle devices are unobserved and connected clients stay conservative until tracking starts', () => {
-    const deviceId = 'device-observation';
-    clearLegacyPaneOutputObservers(deviceId);
-    expect(isLegacyPaneOutputObserved(deviceId, '%1')).toBe(false);
+  test('第一个 provide 生效，后续 provide 不覆盖', () => {
+    const data = new Uint8Array([2]);
+    const first = () => true;
+    const second = () => false;
+    const request = requestPaneOutputMaterializationPredicate(data);
+    providePaneOutputMaterializationPredicate(data, first);
+    providePaneOutputMaterializationPredicate(data, second);
+    expect(finishPaneOutputMaterializationRequest(request)).toBe(first);
+  });
 
-    setPaneOutputClientPresence(deviceId, true);
-    expect(isLegacyPaneOutputObserved(deviceId, '%1')).toBe(true);
-    markLegacyPaneOutputObserversTracked(deviceId);
-    expect(isLegacyPaneOutputObserved(deviceId, '%1')).toBe(false);
-
-    setLegacyPaneOutputObserved(deviceId, '%1', true);
-    expect(isLegacyPaneOutputObserved(deviceId, '%1')).toBe(true);
-    expect(isLegacyPaneOutputObserved(deviceId, '%2')).toBe(false);
-    setLegacyPaneOutputObserved(deviceId, '%1', false);
-    expect(isLegacyPaneOutputObserved(deviceId, '%1')).toBe(false);
-
-    syncLegacyPaneOutputObserverCounts(
-      deviceId,
-      new Map([
-        [`${deviceId}\0%2`, 2],
-        ['other-device\0%1', 1],
-      ])
-    );
-    expect(isLegacyPaneOutputObserved(deviceId, '%1')).toBe(false);
-    expect(isLegacyPaneOutputObserved(deviceId, '%2')).toBe(true);
-
-    setPaneOutputClientPresence(deviceId, false);
-    clearLegacyPaneOutputObservers(deviceId);
+  test('未 provide 时返回 null，并清理挂起请求', () => {
+    const data = new Uint8Array([3]);
+    const request = requestPaneOutputMaterializationPredicate(data);
+    expect(finishPaneOutputMaterializationRequest(request)).toBeNull();
+    providePaneOutputMaterializationPredicate(data, () => true);
+    expect(finishPaneOutputMaterializationRequest(request)).toBeNull();
   });
 });

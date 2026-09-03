@@ -12,10 +12,7 @@ import {
   clearSkippedPaneOutputsForDevice,
   markSkippedPaneOutput,
 } from '../retention/skipped-output';
-import {
-  isLegacyPaneOutputObserved,
-  providePaneOutputMaterializationPredicate,
-} from './output-materialization';
+import { providePaneOutputMaterializationPredicate } from './output-materialization';
 
 export interface RuntimeEventBridgeHost {
   metadata: MetadataProjection;
@@ -51,10 +48,7 @@ export class RuntimeEventBridge {
     notifyEvent?: LifecycleEventEmitter;
   }): TmuxConnectionOptions {
     const materializeOutput = (paneId: string): boolean => {
-      if (
-        isLegacyPaneOutputObserved(base.deviceId, paneId) ||
-        this.host.paneRetention.isPaneRetained(paneId)
-      ) {
+      if (this.host.paneRetention.isPaneRetained(paneId)) {
         return true;
       }
       const paneEpoch = this.host.metadata.ensurePaneEpoch(paneId);

@@ -1,7 +1,5 @@
 import type { StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
 import type { DeviceTreeOrderRecord } from '../db';
-import { applyDeviceTreeOverlay } from './overlay-utils';
 import type { WebSocketServerDeps } from './types';
 
 export interface SnapshotOverlayHost {
@@ -19,45 +17,23 @@ export class SnapshotOverlayStore {
     this.deviceTreeOrders.delete(deviceId);
   }
 
-  applyWindowCustomNames(payload: StateSnapshotPayload): StateSnapshotPayload {
+  /** 清理已不存在于快照里的 stale 自定义名（canonical 投影按 id 维护，快照只用于回收）。 */
+  pruneCustomNames(payload: StateSnapshotPayload): void {
+    if (!payload.session) return;
     const names = this.windowCustomNames.get(payload.deviceId);
     const paneNames = this.paneCustomNames.get(payload.deviceId);
-    if ((!names?.size && !paneNames?.size) || !payload.session) return payload;
+    if (!names?.size && !paneNames?.size) return;
 
-    const liveWindowIds = new Set(payload.session.windows.map((w) => w.id));
-    for (const windowId of names?.keys() ?? []) {
-      if (!liveWindowIds.has(windowId)) {
-        names?.delete(windowId);
-      }
+    const liveWindowIds = new Set(payload.session.windows.map((window) => window.id));
+    for (const windowId of [...(names?.keys() ?? [])]) {
+      if (!liveWindowIds.has(windowId)) names?.delete(windowId);
     }
-
     const livePaneIds = new Set(
-      payload.session.windows.flatMap((w) => w.panes.map((pane) => pane.id))
+      payload.session.windows.flatMap((window) => window.panes.map((pane) => pane.id))
     );
-    for (const paneId of paneNames?.keys() ?? []) {
-      if (!livePaneIds.has(paneId)) {
-        paneNames?.delete(paneId);
-      }
+    for (const paneId of [...(paneNames?.keys() ?? [])]) {
+      if (!livePaneIds.has(paneId)) paneNames?.delete(paneId);
     }
-
-    return {
-      ...payload,
-      session: {
-        ...payload.session,
-        windows: payload.session.windows.map((window) => {
-          const customName = names?.get(window.id);
-          const panes = paneNames?.size
-            ? window.panes.map((pane) => {
-                const paneCustomName = paneNames.get(pane.id);
-                return paneCustomName ? { ...pane, customName: paneCustomName } : pane;
-              })
-            : window.panes;
-          return customName || panes !== window.panes
-            ? { ...window, ...(customName ? { customName } : {}), panes }
-            : window;
-        }),
-      },
-    };
   }
 
   storeDeviceTreeOrder(order: DeviceTreeOrderRecord): DeviceTreeOrderRecord {
@@ -78,13 +54,5 @@ export class SnapshotOverlayStore {
       return cached;
     }
     return this.storeDeviceTreeOrder(this.host.deps.loadDeviceTreeOrder(deviceId));
-  }
-
-  encodeSnapshotWithOverlays(payload: StateSnapshotPayload): Uint8Array {
-    const ordered = applyDeviceTreeOverlay(
-      payload,
-      this.getCachedDeviceTreeOrder(payload.deviceId)
-    );
-    return wsBorsh.encodeStateSnapshot(this.applyWindowCustomNames(ordered));
   }
 }

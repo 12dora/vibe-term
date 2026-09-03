@@ -1,6 +1,5 @@
-import { wsBorsh } from '@tmex/shared';
+import type { wsBorsh } from '@tmex/shared';
 import { isTmuxPaneId, isTmuxWindowId } from '../tmux-client/snapshot-format';
-import { switchBarrier } from './borsh/switch-barrier';
 import type { GatewaySession } from './gateway-session';
 import type { TmuxCommandHost } from './tmux-command-handlers';
 import { recordViewportClaim } from './tmux-geometry-handlers';
@@ -72,32 +71,7 @@ export function handleTmuxSelect(
   if (!windowId || !paneId) return;
   if (!canSelectPane(entry, deviceId, windowId, paneId)) return;
 
-  host.terminalOutputBatcher.flushDevice(deviceId);
-  const started = switchBarrier.startTransaction(session, {
-    deviceId,
-    windowId,
-    paneId,
-    selectToken: data.selectToken,
-    wantHistory: data.wantHistory,
-    cols: data.cols ?? null,
-    rows: data.rows ?? null,
-  });
-
-  if (!started) {
-    host.sendError(
-      session,
-      null,
-      wsBorsh.ERROR_SELECT_CONFLICT,
-      'Failed to start select transaction',
-      false
-    );
-    return;
-  }
-
-  session.borshState.selectedPanes[deviceId] = paneId;
-  host.syncLegacyPaneObservers(session, deviceId);
   host.refreshSnapshotPolling(deviceId);
-  switchBarrier.sendSwitchAck(session, deviceId);
   dispatchTmuxSelection(host, session, entry, deviceId, windowId, paneId, data);
 }
 

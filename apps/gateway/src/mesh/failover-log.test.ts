@@ -48,11 +48,10 @@ describe('failover-log', () => {
         durationMs: 842,
         to: 'ws-secure',
         resumed: 2,
-        replayMode: 'legacy',
-        replayBytes: 262144,
+        replayMode: 'canonical',
       })
     ).toBe(
-      '[mesh][stream] failover_done stream=090a62e0 duration_ms=842 to=ws-secure resumed=2 replay_mode=legacy replay_bytes=262144'
+      '[mesh][stream] failover_done stream=090a62e0 duration_ms=842 to=ws-secure resumed=2 replay_mode=canonical'
     );
     expect(
       formatFailoverSummary({
@@ -62,12 +61,11 @@ describe('failover-log', () => {
         closeReason: 'offline',
         from: 'ws-secure',
         to: 'ws-secure',
-        replayBytes: 262144,
         eventLoopLagMs: 12,
         maxLagMs: 40,
       })
     ).toBe(
-      '[mesh][stream] failover_summary stream=090a62e0 duration_ms=842 cause=stream_close close_reason=offline from=ws-secure to=ws-secure replay_bytes=262144 event_loop_lag_ms=12 max_lag_ms=40'
+      '[mesh][stream] failover_summary stream=090a62e0 duration_ms=842 cause=stream_close close_reason=offline from=ws-secure to=ws-secure event_loop_lag_ms=12 max_lag_ms=40'
     );
   });
 });

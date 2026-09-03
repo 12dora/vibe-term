@@ -3,10 +3,6 @@ import { getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
 import { getSiteSettings } from '../db';
 import { t } from '../i18n';
 import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';
-import {
-  clearLegacyPaneOutputObservers,
-  setPaneOutputClientPresence,
-} from '../tmux-client/runtime/output-materialization';
 import type { CanonicalFeedSession } from './canonical-feed-session';
 import { classifySshError } from './error-classify';
 import type { GatewaySession } from './gateway-session';
@@ -27,18 +23,13 @@ export interface DeviceConnectionRegistryHost {
   attachRuntime(deviceId: string, runtime: DeviceSessionRuntime): () => void;
   releaseConnectionEntry(deviceId: string, entry: DeviceConnectionEntry): void;
   sendEnvelope(session: GatewaySession, kind: number, payload: Uint8Array): void;
-  sendChunked(session: GatewaySession, kind: number, payload: Uint8Array): boolean;
-  encodeSnapshotWithOverlays(
-    payload: NonNullable<DeviceConnectionEntry['lastSnapshot']>
-  ): Uint8Array;
   broadcastDeviceEvent(entry: DeviceConnectionEntry, payload: EventDevicePayload): void;
-  releaseLegacyPaneObservers(session: GatewaySession, deviceId?: string): void;
-  syncLegacyPaneObservers(session: GatewaySession, deviceId: string): void;
   dropViewportClaims(
     session: GatewaySession,
     deviceId?: string,
     options?: { recompute?: boolean }
   ): void;
+  dropPaneSizeEpochs(session: GatewaySession, deviceId?: string): void;
 }
 
 export class DeviceConnectionRegistry {
@@ -96,7 +87,6 @@ export class DeviceConnectionRegistry {
       entry.idleReleaseTimer = null;
       if (this.connections.get(deviceId) !== entry || this.entryHasClients(entry)) return;
       this.connections.delete(deviceId);
-      clearLegacyPaneOutputObservers(deviceId);
       this.host.releaseConnectionEntry(deviceId, entry);
     }, RUNTIME_IDLE_GRACE_MS);
   }
@@ -147,7 +137,6 @@ export class DeviceConnectionRegistry {
     this.closed = true;
     this.generation += 1;
     for (const [deviceId, entry] of this.connections) {
-      clearLegacyPaneOutputObservers(deviceId);
       this.host.releaseConnectionEntry(deviceId, entry);
       this.connections.delete(deviceId);
     }
@@ -231,10 +220,7 @@ export class DeviceConnectionRegistry {
     if (!entry) return;
 
     entry.clients.add(session);
-    setPaneOutputClientPresence(deviceId, true);
     this.clearIdleReleaseTimer(entry);
-    session.borshState.selectedPanes[deviceId] ??= null;
-    this.host.syncLegacyPaneObservers(session, deviceId);
 
     const canonicalSession = this.host.canonicalSessions.get(session);
     if (canonicalSession) await canonicalSession.attachDevice(deviceId, entry.runtime);
@@ -244,31 +230,21 @@ export class DeviceConnectionRegistry {
     });
     this.host.sendEnvelope(session, wsBorsh.KIND_DEVICE_CONNECTED, connectedPayload);
 
-    if (entry.lastSnapshot) {
-      if (!entry.canonicalClients?.has(session)) {
-        const snapshotBytes = this.host.encodeSnapshotWithOverlays(entry.lastSnapshot);
-        this.host.sendChunked(session, wsBorsh.KIND_STATE_SNAPSHOT, snapshotBytes);
-      }
-    } else {
-      entry.runtime.requestSnapshot();
-    }
+    if (!entry.lastSnapshot) entry.runtime.requestSnapshot();
   }
 
   handleDeviceDisconnect(session: GatewaySession, deviceId: string): void {
     this.bumpConnectGeneration(session, deviceId);
     this.host.canonicalSessions.get(session)?.detachDevice(deviceId);
-    this.host.releaseLegacyPaneObservers?.(session, deviceId);
     const entry = this.connections.get(deviceId);
     if (entry) {
       entry.clients.delete(session);
-      setPaneOutputClientPresence(deviceId, this.entryHasClients(entry));
       this.clearSnapshotPollTimer(entry);
       this.scheduleConnectionEntryRelease(deviceId, entry);
     }
 
-    delete session.borshState.selectedPanes[deviceId];
-    delete session.borshState.subscribedPanes[deviceId];
     this.host.dropViewportClaims?.(session, deviceId);
+    this.host.dropPaneSizeEpochs?.(session, deviceId);
 
     const disconnectedPayload = wsBorsh.encodePayload(wsBorsh.schema.DeviceDisconnectedSchema, {
       deviceId,
@@ -382,13 +358,11 @@ export class DeviceConnectionRegistry {
       this.host.canonicalSessions.get(client)?.detachDevice(deviceId);
     }
     for (const client of entry.clients) {
-      this.host.releaseLegacyPaneObservers?.(client, deviceId);
-      delete client.borshState.selectedPanes[deviceId];
       this.host.dropViewportClaims?.(client, deviceId, { recompute: false });
+      this.host.dropPaneSizeEpochs?.(client, deviceId);
     }
     entry.clients.clear();
     entry.canonicalClients?.clear();
     this.connections.delete(deviceId);
-    clearLegacyPaneOutputObservers(deviceId);
   }
 }

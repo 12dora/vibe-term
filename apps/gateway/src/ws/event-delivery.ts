@@ -2,7 +2,7 @@ import { wsBorsh } from '@tmex/shared';
 import { sessionStateStore } from './borsh/session-state';
 import type { GatewaySession } from './gateway-session';
 
-export interface LegacyEventSender {
+export interface DeviceEventSender {
   sendEnvelope(session: GatewaySession, kind: number, payload: Uint8Array): void;
 }
 
@@ -26,7 +26,7 @@ export function isEmptyNotification(type: string, data: unknown): boolean {
 function deliverToAllowedClients(
   clients: Iterable<GatewaySession>,
   payloadBytes: Uint8Array,
-  sender: LegacyEventSender,
+  sender: DeviceEventSender,
   allow: (client: GatewaySession) => boolean
 ): number {
   let deliveryAttempts = 0;
@@ -44,7 +44,7 @@ export function deliverBell(
   deviceId: string,
   data: unknown,
   throttleSeconds: number,
-  sender: LegacyEventSender
+  sender: DeviceEventSender
 ): number {
   const paneId = eventStringField(asEventData(data), 'paneId', '-');
   return deliverToAllowedClients(clients, payloadBytes, sender, (client) =>
@@ -58,7 +58,7 @@ export function deliverNotification(
   deviceId: string,
   data: unknown,
   throttleSeconds: number,
-  sender: LegacyEventSender
+  sender: DeviceEventSender
 ): number {
   const record = asEventData(data);
   const paneId = eventStringField(record, 'paneId', '-');
@@ -71,7 +71,7 @@ export function deliverNotification(
 export function deliverGenericEvent(
   clients: Iterable<GatewaySession>,
   payloadBytes: Uint8Array,
-  sender: LegacyEventSender
+  sender: DeviceEventSender
 ): number {
   return deliverToAllowedClients(clients, payloadBytes, sender, () => true);
 }

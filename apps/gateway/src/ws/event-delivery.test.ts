@@ -1,16 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import { sessionStateStore } from './borsh/session-state';
-import type { GatewaySession } from './gateway-session';
 import {
   deliverBell,
   deliverGenericEvent,
   deliverNotification,
   isEmptyNotification,
-} from './legacy-event-delivery';
+} from './event-delivery';
+import type { GatewaySession } from './gateway-session';
 import { createGatewaySession } from './test-helpers';
 
-describe('legacy event delivery', () => {
+describe('device event delivery', () => {
   test('treats notifications without title or body as empty', () => {
     expect(isEmptyNotification('notification', { source: 'osc9', body: '' })).toBe(true);
     expect(isEmptyNotification('notification', { title: 'Build', body: '' })).toBe(false);

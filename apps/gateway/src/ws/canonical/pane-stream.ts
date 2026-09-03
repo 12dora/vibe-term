@@ -9,7 +9,7 @@ import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
   GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
   GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS,
-} from '../terminal-output-batcher';
+} from '../terminal-output-batching';
 import { bytesEqual, copyBytes, paneKey } from './bytes';
 import type { CanonicalTransactionSender } from './transaction-sender';
 import {
@@ -108,7 +108,7 @@ export class CanonicalPaneStream {
     return this.paneDataHolds.size;
   }
 
-  // tmux 一次整屏重绘会以几十个独立 %output 到达；legacy 广播路径经 TerminalOutputBatcher
+  // tmux 一次整屏重绘会以几十个独立 %output 到达；
   // 合帧，canonical 路径若逐段直发，同样的重绘就变成几十个独立帧一路放大到客户端
   // （每帧独立编码/加密/系统调用，公网上被 RTT 摊开跨渲染帧到达，表现为逐行扫描式重绘，
   // 客户端主线程也被 message 洪水填满拖慢输入）。此处按 legacy 相同参数（16ms/64KiB）

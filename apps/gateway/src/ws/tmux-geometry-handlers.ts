@@ -104,25 +104,66 @@ export function applyTermResizeToEntry(
   entry.runtime.resizePane(paneId, cols, rows);
 }
 
-export function handleTermResize(
+export type GeometryReason =
+  | typeof wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE
+  | typeof wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND;
+
+export interface CanonicalResizeIntent {
+  deviceId: string;
+  paneId: string;
+  cols: number;
+  rows: number;
+  reason: GeometryReason;
+  sizeEpoch: bigint;
+}
+
+function paneSizeEpochKey(deviceId: string, paneId: string): string {
+  return `${deviceId}\0${paneId}`;
+}
+
+/** 过期尺寸丢弃：低于该 pane 已接受的最大 epoch 一律忽略；同 epoch 的 resend 必须放行。 */
+function acceptSizeEpoch(session: GatewaySession, intent: CanonicalResizeIntent): boolean {
+  const key = paneSizeEpochKey(intent.deviceId, intent.paneId);
+  const last = session.paneSizeEpochs.get(key);
+  if (last !== undefined && intent.sizeEpoch < last) return false;
+  session.paneSizeEpochs.set(key, intent.sizeEpoch);
+  return true;
+}
+
+export function dropPaneSizeEpochs(session: GatewaySession, deviceId?: string): void {
+  if (!deviceId) {
+    session.paneSizeEpochs.clear();
+    return;
+  }
+  const prefix = `${deviceId}\0`;
+  for (const key of session.paneSizeEpochs.keys()) {
+    if (key.startsWith(prefix)) session.paneSizeEpochs.delete(key);
+  }
+}
+
+/**
+ * canonical v1.1 尺寸命令。
+ * `change` = 浏览器视口声明（信任当前快照几何去重）；
+ * `resend` = 暖切换 / 重连后的尺寸补发（不信任快照几何，强制重新下发）。
+ */
+export function handleCanonicalResize(
   host: TmuxCommandHost,
   session: GatewaySession,
-  deviceId: string,
-  paneId: string,
-  cols: number,
-  rows: number
+  intent: CanonicalResizeIntent
 ): void {
+  if (!acceptSizeEpoch(session, intent)) return;
+  const resend = intent.reason === wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND;
   recordViewportClaim(
     host,
     session,
     {
-      deviceId,
-      paneId,
-      cols,
-      rows,
+      deviceId: intent.deviceId,
+      paneId: intent.paneId,
+      cols: intent.cols,
+      rows: intent.rows,
       visible: true,
     },
-    { applyUnknown: true }
+    { applyUnknown: true, distrustLive: resend }
   );
 }
 
@@ -187,7 +228,7 @@ type ViewportPolicyOptions = {
   notifyFirst?: GatewaySession;
   seen?: Set<string>;
   skipResize?: boolean;
-  // 暖切换（wantHistory=false）时不信任快照几何：该窗口可能自上次快照后已在 tmux 侧漂移。
+  // 尺寸补发（geometryReason=resend）时不信任快照几何：该窗口可能自上次快照后已在 tmux 侧漂移。
   distrustLive?: boolean;
 };
 

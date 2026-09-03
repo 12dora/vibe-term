@@ -7,22 +7,6 @@ export type PaneOutputMaterializationRequest = {
 
 const pendingRequests = new WeakMap<Uint8Array, PaneOutputMaterializationRequest>();
 
-type LegacyObservationState = {
-  hasClients: boolean;
-  tracked: boolean;
-  panes: Set<string>;
-};
-
-const legacyObservationStates = new Map<string, LegacyObservationState>();
-
-function getLegacyObservationState(deviceId: string): LegacyObservationState {
-  const existing = legacyObservationStates.get(deviceId);
-  if (existing) return existing;
-  const state = { hasClients: false, tracked: false, panes: new Set<string>() };
-  legacyObservationStates.set(deviceId, state);
-  return state;
-}
-
 export function requestPaneOutputMaterializationPredicate(
   data: Uint8Array
 ): PaneOutputMaterializationRequest {
@@ -45,52 +29,4 @@ export function finishPaneOutputMaterializationRequest(
 ): PaneOutputMaterializationPredicate | null {
   pendingRequests.delete(request.data);
   return request.predicate;
-}
-
-export function setLegacyPaneOutputObserved(
-  deviceId: string,
-  paneId: string,
-  observed: boolean
-): void {
-  const state = getLegacyObservationState(deviceId);
-  state.tracked = true;
-  if (observed) {
-    state.panes.add(paneId);
-    return;
-  }
-  state.panes.delete(paneId);
-}
-
-export function markLegacyPaneOutputObserversTracked(deviceId: string): void {
-  getLegacyObservationState(deviceId).tracked = true;
-}
-
-export function syncLegacyPaneOutputObserverCounts(
-  deviceId: string,
-  observerCounts: ReadonlyMap<string, number>
-): void {
-  const state = getLegacyObservationState(deviceId);
-  const prefix = `${deviceId}\0`;
-  state.tracked = true;
-  state.panes.clear();
-  for (const [key, count] of observerCounts) {
-    if (count > 0 && key.startsWith(prefix)) state.panes.add(key.slice(prefix.length));
-  }
-}
-
-export function setPaneOutputClientPresence(deviceId: string, hasClients: boolean): void {
-  const state = getLegacyObservationState(deviceId);
-  state.hasClients = hasClients;
-  if (!hasClients && state.panes.size === 0) legacyObservationStates.delete(deviceId);
-}
-
-export function isLegacyPaneOutputObserved(deviceId: string, paneId: string): boolean {
-  const state = legacyObservationStates.get(deviceId);
-  if (!state?.hasClients) return false;
-  // 观察者计数接线生效前对已连接客户端保持旧行为，避免 legacy feed 丢输出。
-  return state.tracked ? state.panes.has(paneId) : true;
-}
-
-export function clearLegacyPaneOutputObservers(deviceId: string): void {
-  legacyObservationStates.delete(deviceId);
 }

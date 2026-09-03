@@ -249,7 +249,7 @@ describe('direct path integration', () => {
     await waitUntil(() => openedSessions.length >= 2, 3_000);
     const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl: 'direct-path-test',
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
       supportsCompression: false,
       supportsDiffSnapshot: false,
@@ -604,7 +604,7 @@ describe('direct path integration', () => {
     const session = openedSessions[0] as GatewaySession;
     const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl: 'direct-path-test',
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
       supportsCompression: false,
       supportsDiffSnapshot: false,

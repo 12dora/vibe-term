@@ -51,6 +51,8 @@ describe('MetadataHierarchyBuilder', () => {
       getServerEpoch: () => SERVER_EPOCH,
       getWindowCustomName: () => 'win-custom',
       getPaneCustomName: () => undefined,
+      getWindowTreeOrder: () => undefined,
+      getPaneTreeOrder: () => undefined,
       ensurePaneEpoch: () => new Uint8Array(16).fill(7),
       takeUnknownPaneHints: (paneId) => {
         taken.push(paneId);
@@ -87,6 +89,8 @@ describe('MetadataHierarchyBuilder', () => {
       getServerEpoch: () => SERVER_EPOCH,
       getWindowCustomName: () => undefined,
       getPaneCustomName: () => undefined,
+      getWindowTreeOrder: () => undefined,
+      getPaneTreeOrder: () => undefined,
       ensurePaneEpoch: () => null,
       takeUnknownPaneHints: () => undefined,
     });
@@ -136,6 +140,8 @@ describe('MetadataHierarchyBuilder', () => {
         getServerEpoch: () => SERVER_EPOCH,
         getWindowCustomName: () => hostWindow,
         getPaneCustomName: () => hostPane,
+        getWindowTreeOrder: () => undefined,
+        getPaneTreeOrder: () => undefined,
         ensurePaneEpoch: () => new Uint8Array(16).fill(7),
         takeUnknownPaneHints: () => undefined,
       });
@@ -162,6 +168,8 @@ describe('MetadataHierarchyBuilder', () => {
       getServerEpoch: () => null,
       getWindowCustomName: () => undefined,
       getPaneCustomName: () => undefined,
+      getWindowTreeOrder: () => undefined,
+      getPaneTreeOrder: () => undefined,
       ensurePaneEpoch: () => null,
       takeUnknownPaneHints: () => undefined,
     });

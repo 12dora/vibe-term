@@ -808,7 +808,7 @@ describe('mesh phase-2 integration', () => {
       wsBorsh.KIND_HELLO_C2S,
       wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
         clientImpl: 'test',
-        clientVersion: '1',
+        clientVersion: '1.1.23',
         maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
         supportsCompression: false,
         supportsDiffSnapshot: false,

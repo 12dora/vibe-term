@@ -2,9 +2,29 @@ import { describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import { sessionStateStore } from './borsh/session-state';
-import { switchBarrier } from './borsh/switch-barrier';
 import { WebSocketServer } from './index';
 import { createGatewaySession, setupConnectionEntry } from './test-helpers';
+
+let sizeEpochCounter = 0n;
+
+/** canonical v1.1 尺寸变更（reason=change），每次调用推进一次 epoch。 */
+function termResize(
+  server: any,
+  session: ReturnType<typeof createGatewaySession>,
+  paneId: string,
+  cols: number,
+  rows: number
+): void {
+  sizeEpochCounter += 1n;
+  server.handleCanonicalResize(session, {
+    deviceId: 'device-a',
+    paneId,
+    cols,
+    rows,
+    reason: wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE,
+    sizeEpoch: sizeEpochCounter,
+  });
+}
 
 function decodePolicies(session: ReturnType<typeof createGatewaySession>) {
   return session.sent.flatMap((bytes) => {
@@ -116,7 +136,6 @@ function setupTwoClients(options: { paneCount?: number; session?: boolean } = {}
 
 function cleanupSelectSessions(...sessions: Array<ReturnType<typeof createGatewaySession>>): void {
   for (const session of sessions) {
-    switchBarrier.cleanupClient(session);
     sessionStateStore.delete(session);
   }
 }
@@ -152,8 +171,8 @@ describe('viewport claims', () => {
   test('smallest visible client owns the size; both receive that policy', () => {
     const { server, recorder, large, small } = setupTwoClients();
 
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
+    termResize(server, large, '%0', 160, 48);
+    termResize(server, small, '%0', 80, 24);
 
     expect(recorder.resizePaneCalls).toEqual([
       ['%0', 160, 48],
@@ -177,8 +196,8 @@ describe('viewport claims', () => {
 
   test('smaller going hidden applies the larger geometry and flips owners', () => {
     const { server, recorder, large, small } = setupTwoClients();
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
+    termResize(server, large, '%0', 160, 48);
+    termResize(server, small, '%0', 80, 24);
     recorder.resizePaneCalls.length = 0;
 
     server.handleTermViewport(small, {
@@ -197,8 +216,8 @@ describe('viewport claims', () => {
 
   test('smaller disconnect applies the larger geometry', () => {
     const { server, recorder, large, small, entry } = setupTwoClients();
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
+    termResize(server, large, '%0', 160, 48);
+    termResize(server, small, '%0', 80, 24);
     recorder.resizePaneCalls.length = 0;
 
     entry.clients.delete(small);
@@ -211,14 +230,14 @@ describe('viewport claims', () => {
 
   test('smaller-only applies as today', () => {
     const { server, recorder, small } = setupTwoClients();
-    server.handleTermResize(small, 'device-a', '%0', 100, 30);
+    termResize(server, small, '%0', 100, 30);
     expect(recorder.resizePaneCalls).toEqual([['%0', 100, 30]]);
     expect(lastPolicy(small)?.owner).toBe(true);
   });
 
   test('legacy resize-only client is a visible claimant', () => {
     const { server, recorder, large, small } = setupTwoClients();
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
+    termResize(server, large, '%0', 160, 48);
     server.handleTermViewport(small, {
       deviceId: 'device-a',
       paneId: '%0',
@@ -253,8 +272,8 @@ describe('viewport claims', () => {
 
   test('device detach drops claims and recomputes', () => {
     const { server, recorder, large, small } = setupTwoClients();
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
+    termResize(server, large, '%0', 160, 48);
+    termResize(server, small, '%0', 80, 24);
     recorder.resizePaneCalls.length = 0;
 
     server.handleDeviceDisconnect(small, 'device-a');
@@ -266,8 +285,8 @@ describe('viewport claims', () => {
 
   test('reconnect-failure drops claims without resizing', () => {
     const { server, recorder, large, small, entry } = setupTwoClients();
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
+    termResize(server, large, '%0', 160, 48);
+    termResize(server, small, '%0', 80, 24);
     recorder.resizePaneCalls.length = 0;
 
     server.dropViewportClaims(large, 'device-a', { recompute: false });
@@ -284,8 +303,8 @@ describe('viewport claims', () => {
       paneCount: 2,
       session: true,
     });
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
+    termResize(server, large, '%0', 160, 48);
+    termResize(server, small, '%0', 80, 24);
     recorder.resizeWindowCalls.length = 0;
     recorder.resizePaneCalls.length = 0;
     recorder.selectPaneWithSizeCalls.length = 0;
@@ -322,7 +341,7 @@ describe('viewport claims', () => {
 
   test('repeated sync after out-of-band tmux resize is applied', () => {
     const { server, recorder, large, entry } = setupTwoClients();
-    server.handleTermResize(large, 'device-a', '%0', 100, 30);
+    termResize(server, large, '%0', 100, 30);
     expect(recorder.resizePaneCalls).toEqual([['%0', 100, 30]]);
     recorder.resizePaneCalls.length = 0;
 
@@ -332,17 +351,17 @@ describe('viewport claims', () => {
     livePane.width = 40;
     livePane.height = 12;
 
-    server.handleTermResize(large, 'device-a', '%0', 100, 30);
+    termResize(server, large, '%0', 100, 30);
     expect(recorder.resizePaneCalls).toEqual([['%0', 100, 30]]);
   });
 
   test('follower pane switch on the same window sends policy for the new pane', () => {
     const { server, large, small } = setupTwoClients({ paneCount: 2 });
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
+    termResize(server, large, '%0', 160, 48);
+    termResize(server, small, '%0', 80, 24);
     large.sent.length = 0;
 
-    server.handleTermResize(large, 'device-a', '%1', 160, 48);
+    termResize(server, large, '%1', 160, 48);
 
     expect(lastPolicy(large)).toMatchObject({
       deviceId: 'device-a',
@@ -399,7 +418,7 @@ describe('viewport claims', () => {
         panes: [pane('%1', '@2', 0, 80, 24)],
       },
     ]);
-    server.handleTermResize(large, 'device-a', '%0', 80, 24);
+    termResize(server, large, '%0', 80, 24);
     recorder.resizePaneCalls.length = 0;
     recorder.focusPaneCalls.length = 0;
 
@@ -416,7 +435,7 @@ describe('viewport claims', () => {
 
   test('owning sized cold select still resizes when cached geometry already matches (tmux drifted)', () => {
     const { server, recorder, large, entry } = setupTwoClients({ session: true });
-    server.handleTermResize(large, 'device-a', '%0', 100, 30);
+    termResize(server, large, '%0', 100, 30);
     const livePane = entry.lastSnapshot?.session?.windows[0]?.panes[0];
     expect(livePane).toMatchObject({ width: 100, height: 30 });
     recorder.ops.length = 0;
@@ -434,7 +453,7 @@ describe('viewport claims', () => {
 
   test('owning sized cold select after reconnect still uses ordered selectPaneWithSize', () => {
     const { server, recorder, large, entry } = setupTwoClients({ session: true });
-    server.handleTermResize(large, 'device-a', '%0', 100, 30);
+    termResize(server, large, '%0', 100, 30);
     server.handleDeviceDisconnect(large, 'device-a');
     entry.clients.add(large);
     recorder.ops.length = 0;
@@ -456,8 +475,8 @@ describe('viewport claims', () => {
       paneCount: 2,
       session: true,
     });
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
-    server.handleTermResize(small, 'device-a', '%0', 80, 24);
+    termResize(server, large, '%0', 160, 48);
+    termResize(server, small, '%0', 80, 24);
     const live = entry.lastSnapshot?.session?.windows[0]?.panes[0];
     if (live) {
       live.width = 80;
@@ -503,13 +522,13 @@ describe('viewport claims', () => {
 
   test('snapshot install re-keys a moved pane claim and arbitrates the destination window', () => {
     const { server, recorder, large, entry } = setupTwoClients();
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
+    termResize(server, large, '%0', 160, 48);
     expect(large.viewportClaims.has('device-a/@1')).toBe(true);
     recorder.resizePaneCalls.length = 0;
     recorder.resizeWindowCalls.length = 0;
     large.sent.length = 0;
 
-    server.broadcastStateSnapshot(
+    server.installStateSnapshot(
       'device-a',
       snapshot([
         {
@@ -544,11 +563,11 @@ describe('viewport claims', () => {
 
   test('snapshot install drops claims for a closed window and prunes applied state', () => {
     const { server, recorder, large, entry } = setupTwoClients();
-    server.handleTermResize(large, 'device-a', '%0', 160, 48);
+    termResize(server, large, '%0', 160, 48);
     recorder.resizePaneCalls.length = 0;
     recorder.resizeWindowCalls.length = 0;
 
-    server.broadcastStateSnapshot(
+    server.installStateSnapshot(
       'device-a',
       snapshot([
         {

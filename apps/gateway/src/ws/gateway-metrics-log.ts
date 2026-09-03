@@ -7,7 +7,6 @@ import {
   collectCanonicalStateMetrics,
 } from './gateway-activity-metrics';
 import type { GatewaySession } from './gateway-session';
-import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import type {
   TerminalOutputMetrics,
   TerminalOutputMetricsSnapshot,
@@ -20,7 +19,6 @@ export interface GatewayMetricsHost {
   readonly connectedClients: Set<GatewaySession>;
   readonly connections: Map<string, DeviceConnectionEntry>;
   readonly canonicalSessions: Map<GatewaySession, CanonicalFeedSession>;
-  readonly terminalOutputBatcher: TerminalOutputBatcher;
   readonly terminalOutputMetrics: TerminalOutputMetrics;
   readonly gatewayActivityMetrics: GatewayActivityMetrics;
 }
@@ -108,14 +106,8 @@ const TERMINAL_OUTPUT_COUNTER_FIELDS = [
   'sourceBytes',
   'droppedEvents',
   'droppedBytes',
-  'legacyObservedEvents',
-  'legacyObservedBytes',
   'canonicalObservedEvents',
   'canonicalObservedBytes',
-  'batches',
-  'batchBytes',
-  'recipientDeliveries',
-  'recipientBytes',
   'canonicalRecipientDeliveries',
   'canonicalRecipientBytes',
   'canonicalDeliveryDrops',
@@ -133,12 +125,10 @@ function allZero(values: readonly number[]): boolean {
 
 export function isQuietTerminalOutputSnapshot(metrics: TerminalOutputMetricsSnapshot): boolean {
   const counters = TERMINAL_OUTPUT_COUNTER_FIELDS.map((field) => metrics[field]);
-  const { batch, websocket, canonical } = metrics.queues;
+  const { websocket, canonical } = metrics.queues;
   return (
     allZero(counters) &&
     allZero([
-      batch.pendingBytes,
-      batch.pendingPanes,
       websocket.queuedBytes,
       websocket.backpressuredSessions,
       websocket.unavailableSessions,
@@ -215,7 +205,6 @@ export function logTerminalOutputMetricsIfDue(host: GatewayMetricsHost): void {
     session.snapshotStats()
   );
   const metrics = host.terminalOutputMetrics.takeIfDue(Date.now(), {
-    batch: host.terminalOutputBatcher.snapshotStats(),
     websocket: gatewayWebSocketSendGuard.snapshotStats(
       Array.from(host.connectedClients, (session) => session.carriers()).flat()
     ),
@@ -250,21 +239,12 @@ export function logTerminalOutputMetricsIfDue(host: GatewayMetricsHost): void {
       `[ws-metrics] terminal_output interval_ms=${metrics.intervalMs} ` +
         `source_events=${metrics.sourceEvents} source_bytes=${metrics.sourceBytes} ` +
         `dropped_events=${metrics.droppedEvents} dropped_bytes=${metrics.droppedBytes} ` +
-        `legacy_observed_events=${metrics.legacyObservedEvents} ` +
-        `legacy_observed_bytes=${metrics.legacyObservedBytes} ` +
         `canonical_observed_events=${metrics.canonicalObservedEvents} ` +
         `canonical_observed_bytes=${metrics.canonicalObservedBytes} ` +
-        `batches=${metrics.batches} batch_bytes=${metrics.batchBytes} ` +
-        `recipient_deliveries=${metrics.recipientDeliveries} ` +
-        `recipient_bytes=${metrics.recipientBytes} ` +
         `canonical_recipient_deliveries=${metrics.canonicalRecipientDeliveries} ` +
         `canonical_recipient_bytes=${metrics.canonicalRecipientBytes} ` +
         `canonical_delivery_drops=${metrics.canonicalDeliveryDrops} ` +
         `canonical_delivery_drop_bytes=${metrics.canonicalDeliveryDropBytes} ` +
-        `batch_queue_bytes=${metrics.queues.batch.pendingBytes} ` +
-        `batch_queue_limit_bytes=${metrics.queues.batch.pendingBytesLimit} ` +
-        `batch_queue_panes=${metrics.queues.batch.pendingPanes} ` +
-        `batch_queue_pane_limit_bytes=${metrics.queues.batch.perPaneBytesLimit} ` +
         `ws_queue_bytes=${metrics.queues.websocket.queuedBytes} ` +
         `ws_queue_limit_bytes=${metrics.queues.websocket.queuedBytesLimit} ` +
         `ws_backpressured_carriers=${metrics.queues.websocket.backpressuredSessions} ` +

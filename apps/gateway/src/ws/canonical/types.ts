@@ -36,6 +36,18 @@ export interface CanonicalFeedRuntime
 
 export type CanonicalSendResult = boolean | 'backpressured';
 
+/** canonical v1.1 尺寸请求：v1 ResizePane 归一为 reason=change、sizeEpoch=0n。 */
+export interface CanonicalResizeRequest {
+  deviceId: string;
+  paneId: string;
+  cols: number;
+  rows: number;
+  /** wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE | ..._RESEND */
+  reason: number;
+  sizeEpoch: bigint;
+  runtime: CanonicalFeedRuntime;
+}
+
 export function canonicalSendAccepted(result: CanonicalSendResult): boolean {
   return result === true || result === 'backpressured';
 }
@@ -51,13 +63,7 @@ export interface CanonicalFeedSessionOptions {
   initialDeviceIds?: () => Iterable<string>;
   onDeviceAttached?: (deviceId: string, runtime: CanonicalFeedRuntime) => void;
   onDeviceDetached?: (deviceId: string, runtime: CanonicalFeedRuntime) => void;
-  resizePane?: (
-    deviceId: string,
-    paneId: string,
-    cols: number,
-    rows: number,
-    runtime: CanonicalFeedRuntime
-  ) => void;
+  resizePane?: (intent: CanonicalResizeRequest) => void;
   createEpoch?: () => Uint8Array;
   maxPendingPaneGaps?: number;
 }
