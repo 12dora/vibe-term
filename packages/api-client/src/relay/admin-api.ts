@@ -40,7 +40,10 @@ export interface RelayTenantSummary {
   label: string | null;
   createdAt: number;
   lastSeenAt: number | null;
+  /** 未吊销的节点数（与配额口径一致）。 */
   nodes: number;
+  /** 已吊销的节点数；不计入 `nodes`，表里只作灰色后缀。 */
+  nodesRevoked: number;
   nodesOnline: number;
   streams: number;
   bytesIn: number;

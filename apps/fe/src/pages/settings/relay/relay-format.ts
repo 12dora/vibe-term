@@ -84,10 +84,15 @@ export function quotaSummary(
   };
 }
 
-/** 「↑ 发送｜↓ 接收」一格。 */
-export function trafficText(t: Translate, bytesIn: number, bytesOut: number): string {
-  return t('relay.admin.tenants.trafficValue', {
-    out: formatBytes(bytesOut),
-    in: formatBytes(bytesIn),
-  });
+/**
+ * 中转流量一格。中继每转发一帧都同时计进 `bytesIn` 与 `bytesOut`，
+ * 两个计数逐字节相等，摆两列只会让人以为统计坏了——所以只出一个数。
+ */
+export function trafficText(bytes: number): string {
+  return formatBytes(bytes);
+}
+
+/** 代次一格：口令 / 令牌 / 元数据密钥统一说「第 N 代」。 */
+export function epochText(t: Translate, epoch: number): string {
+  return t('relay.admin.epochValue', { epoch });
 }

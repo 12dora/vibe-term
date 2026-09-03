@@ -21,6 +21,7 @@ function tenant(patch: Partial<RelayTenantSummary> = {}): RelayTenantSummary {
     createdAt: 1_700_000_000_000,
     lastSeenAt: 1_700_000_000_000,
     nodes: 3,
+    nodesRevoked: 0,
     nodesOnline: 2,
     streams: 1,
     bytesIn: 1024,
@@ -121,6 +122,18 @@ describe('RelayTab 的正文', () => {
     expect(html).toContain(`data-testid="relay-tenant-edit-${row.id}"`);
     expect(html).toContain(`data-testid="relay-tenant-kick-${row.id}"`);
     expect(html).toContain(`data-testid="relay-tenant-remove-${row.id}"`);
+  });
+
+  test('吊销过节点的租户在节点数后面挂灰色后缀', () => {
+    const row = tenant({ nodesRevoked: 2 });
+    setRelayAdminStateForTest({ availability: 'available', status: status([row]) });
+    expect(render()).toContain(`data-testid="relay-tenant-nodes-revoked-${row.id}"`);
+  });
+
+  test('没有吊销节点时不挂后缀', () => {
+    const row = tenant();
+    setRelayAdminStateForTest({ availability: 'available', status: status([row]) });
+    expect(render()).not.toContain(`data-testid="relay-tenant-nodes-revoked-${row.id}"`);
   });
 
   test('有自己配额的租户不打「默认」徽标；被踢过的行带徽标', () => {

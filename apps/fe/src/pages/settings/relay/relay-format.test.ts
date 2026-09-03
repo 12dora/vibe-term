@@ -3,6 +3,7 @@ import type { RelayQuota } from '@tmex/api-client/relay/admin-api';
 import {
   bandwidthText,
   bytesToKb,
+  epochText,
   kbToBytes,
   quotaSummary,
   relativeTimeText,
@@ -111,9 +112,13 @@ describe('quotaSummary', () => {
 });
 
 describe('trafficText', () => {
-  test('发送在前、接收在后', () => {
-    expect(trafficText(t, 1024, 2048)).toBe(
-      'relay.admin.tenants.trafficValue({"out":"2.00 KB","in":"1.00 KB"})'
-    );
+  test('只出一个中转流量值', () => {
+    expect(trafficText(2048)).toBe('2.00 KB');
+  });
+});
+
+describe('epochText', () => {
+  test('代次统一走「第 N 代」', () => {
+    expect(epochText(t, 3)).toBe('relay.admin.epochValue({"epoch":3})');
   });
 });

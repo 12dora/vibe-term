@@ -1,14 +1,22 @@
 // 租户表：一行一租户，编辑 / 踢出 / 删除三个动作。备注可在表里就地改，其余改动进编辑框。
 
 import type { RelayQuota, RelayTenantSummary } from '@tmex/api-client/relay/admin-api';
+import { cn } from '@tmex/ui';
 import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { Pencil, Trash2, Unplug } from 'lucide-react';
 import { type KeyboardEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { WideTableScroll, stickyActionColumn } from '../components/wide-table';
 import { CopyButton } from '../nodes/copy-feedback';
-import { quotaSummary, relativeTimeText, shortTenantId, trafficText } from './relay-format';
+import {
+  epochText,
+  quotaSummary,
+  relativeTimeText,
+  shortTenantId,
+  trafficText,
+} from './relay-format';
 
 export interface TenantTableProps {
   tenants: RelayTenantSummary[];
@@ -27,7 +35,7 @@ export function TenantTable(props: TenantTableProps) {
   const { t } = useTranslation();
   const { tenants } = props;
   return (
-    <section className="overflow-x-auto rounded-lg border border-border/60">
+    <WideTableScroll>
       <table className="w-full min-w-[62rem] text-xs" data-testid="relay-tenants-table">
         <thead className="text-muted-foreground">
           <tr className="border-b border-border">
@@ -40,7 +48,7 @@ export function TenantTable(props: TenantTableProps) {
             <Th>{t('relay.admin.tenants.columns.traffic')}</Th>
             <Th>{t('relay.admin.tenants.columns.quota')}</Th>
             <Th>{t('relay.admin.tenants.columns.tokenEpoch')}</Th>
-            <Th>{t('relay.admin.tenants.columns.actions')}</Th>
+            <Th className={stickyActionColumn}>{t('relay.admin.tenants.columns.actions')}</Th>
           </tr>
         </thead>
         <tbody>
@@ -56,7 +64,7 @@ export function TenantTable(props: TenantTableProps) {
           )}
         </tbody>
       </table>
-    </section>
+    </WideTableScroll>
   );
 }
 
@@ -93,17 +101,27 @@ function TenantRow({
       <Td>{relativeTimeText(t, tenant.createdAt, now)}</Td>
       <Td>{relativeTimeText(t, tenant.lastSeenAt, now)}</Td>
       <Td>
-        <span data-testid={`relay-tenant-nodes-${tenant.id}`}>
-          {t('relay.admin.tenants.nodesValue', {
-            online: tenant.nodesOnline,
-            total: tenant.nodes,
-          })}
+        <span className="flex items-center gap-1">
+          <span data-testid={`relay-tenant-nodes-${tenant.id}`}>
+            {t('relay.admin.tenants.nodesValue', {
+              online: tenant.nodesOnline,
+              total: tenant.nodes,
+            })}
+          </span>
+          {tenant.nodesRevoked > 0 && (
+            <span
+              className="text-muted-foreground"
+              data-testid={`relay-tenant-nodes-revoked-${tenant.id}`}
+            >
+              {t('relay.admin.tenants.nodesRevoked', { count: tenant.nodesRevoked })}
+            </span>
+          )}
         </span>
       </Td>
       <Td>{tenant.streams}</Td>
       <Td>
         <span data-testid={`relay-tenant-traffic-${tenant.id}`}>
-          {trafficText(t, tenant.bytesIn, tenant.bytesOut)}
+          {trafficText(tenant.bytesOut)}
         </span>
       </Td>
       <Td>
@@ -118,7 +136,7 @@ function TenantRow({
       </Td>
       <Td>
         <span className="flex items-center gap-1">
-          {tenant.tokenEpoch}
+          {epochText(t, tenant.tokenEpoch)}
           {tenant.kicked && (
             <Badge variant="destructive" data-testid={`relay-tenant-kicked-${tenant.id}`}>
               {t('relay.admin.tenants.kicked')}
@@ -126,7 +144,7 @@ function TenantRow({
           )}
         </span>
       </Td>
-      <Td>
+      <Td className={stickyActionColumn}>
         <div className="flex items-center gap-1">
           <Button
             type="button"
@@ -233,10 +251,14 @@ function TenantLabelCell({
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="whitespace-nowrap px-3 py-2 text-left font-medium">{children}</th>;
+function Th({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <th className={cn('whitespace-nowrap px-3 py-2 text-left font-medium', className)}>
+      {children}
+    </th>
+  );
 }
 
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="whitespace-nowrap px-3 py-2 align-middle">{children}</td>;
+function Td({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <td className={cn('whitespace-nowrap px-3 py-2 align-middle', className)}>{children}</td>;
 }

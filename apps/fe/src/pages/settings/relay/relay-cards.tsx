@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { KeyRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { InfoRow, Notice } from '../components/form-primitives';
-import { bandwidthText, uptimeText } from './relay-format';
+import { bandwidthText, epochText, uptimeText } from './relay-format';
 
 function SectionCard({
   title,
@@ -72,11 +72,9 @@ export function RelayTotalsCard({ totals }: { totals: RelayTotals }) {
       <InfoRow label={t('relay.admin.totals.streams')} testId="relay-totals-streams">
         {totals.streams}
       </InfoRow>
-      <InfoRow label={t('relay.admin.totals.outbound')} testId="relay-totals-out">
+      {/* 中继每转发一帧都同时计进 in 和 out，两个数逐字节相等——只摆一个「中转流量」。 */}
+      <InfoRow label={t('relay.admin.totals.traffic')} testId="relay-totals-traffic">
         {formatBytes(totals.bytesOut)}
-      </InfoRow>
-      <InfoRow label={t('relay.admin.totals.inbound')} testId="relay-totals-in">
-        {formatBytes(totals.bytesIn)}
       </InfoRow>
     </SectionCard>
   );
@@ -107,10 +105,10 @@ export function RelayPasswordCard({
         </Badge>
       </InfoRow>
       <InfoRow label={t('relay.admin.password.epoch')} testId="relay-password-epoch">
-        {config.passwordEpoch}
+        {epochText(t, config.passwordEpoch)}
       </InfoRow>
       <InfoRow label={t('relay.admin.password.minTokenEpoch')} testId="relay-password-min-epoch">
-        {config.minTokenEpoch}
+        {epochText(t, config.minTokenEpoch)}
       </InfoRow>
       {!config.hasPassword && (
         <Notice tone="warning" testId="relay-password-unset-warning">

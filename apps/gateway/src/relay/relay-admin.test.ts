@@ -29,6 +29,7 @@ type StatusBody = {
     createdAt: number;
     lastSeenAt: number | null;
     nodes: number;
+    nodesRevoked: number;
     nodesOnline: number;
     streams: number;
     bytesIn: number;
@@ -127,6 +128,7 @@ describe('relay admin status', () => {
     expect(row?.label).toBeNull();
     expect(row?.quota).toBeNull();
     expect(row?.nodes).toBe(1);
+    expect(row?.nodesRevoked).toBe(0);
     expect(row?.nodesOnline).toBe(1);
     expect(row?.bytesIn).toBe(40);
     expect(row?.bytesOut).toBe(2);
@@ -139,6 +141,28 @@ describe('relay admin status', () => {
       bytesIn: 40,
       bytesOut: 2,
     });
+  });
+
+  test('counts revoked nodes separately instead of leaving them in the tenant total', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const a = tenant.addNode();
+    const b = tenant.addNode();
+    const clientA = await tenant.connect(a);
+    await clientA.inbox.takeOf('auth.ok');
+    const clientB = await tenant.connect(b);
+    await clientB.inbox.takeOf('auth.ok');
+    const before = (await (await relay.adminFetch('/api/relay/status')).json()) as StatusBody;
+    expect(before.tenants[0]?.nodes).toBe(2);
+    expect(before.tenants[0]?.nodesRevoked).toBe(0);
+
+    await tenant.appendMember(clientA, 'revoke', tenant.revokeRecord(b.nodeId));
+    await clientB.inbox.takeOf('relay.kicked');
+
+    const after = (await (await relay.adminFetch('/api/relay/status')).json()) as StatusBody;
+    // 吊销过的节点不再挂在「已知节点」里（否则运营者永远看到「1 / 2」），只作独立计数。
+    expect(after.tenants[0]?.nodes).toBe(1);
+    expect(after.tenants[0]?.nodesRevoked).toBe(1);
   });
 
   test('flushes pending usage into the tenant row on stop', async () => {

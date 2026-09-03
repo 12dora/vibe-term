@@ -1,4 +1,4 @@
-// 中继的两个对话框：接入表单（要根密码）与三个破坏性动作的确认框。
+// 中继的两个对话框：接入表单（要本机账号密码）与三个破坏性动作的确认框。
 //
 // 接入表单单列一个「本机登录密码」输入：接入证明是根钥对 Borsh 结构的 Ed25519 签名，
 // 通行密钥给不出这种签名（plan §1.7），所以这一步没有 passkey 分支，必须当场输密码。
@@ -38,6 +38,14 @@ const ENROLL_TITLES: Record<RelayEnrollIntent, string> = {
   migrate: 'relay.tenant.dialog.migrateTitle',
   add: 'relay.tenant.dialog.addTitle',
   reauth: 'relay.tenant.dialog.reauthTitle',
+};
+
+// 每种来意各说各的：reauth 的地址是锁死的，再提「填公网地址」就是答非所问。
+const ENROLL_NOTICES: Record<RelayEnrollIntent, string> = {
+  enroll: 'relay.tenant.dialog.urlHint',
+  migrate: 'relay.tenant.dialog.migrateNotice',
+  add: 'relay.tenant.dialog.urlHint',
+  reauth: 'relay.tenant.dialog.reauthNotice',
 };
 
 const CONFIRM_COPY: Record<RelayConfirmIntent, { title: string; description: string; ok: string }> =
@@ -97,13 +105,7 @@ function RelayEnrollForm({ actions }: { actions: RelayActionsController }) {
     <>
       <DialogHeader>
         <DialogTitle>{t(ENROLL_TITLES[open.intent])}</DialogTitle>
-        <DialogDescription>
-          {t(
-            open.intent === 'migrate'
-              ? 'relay.tenant.dialog.migrateNotice'
-              : 'relay.tenant.dialog.urlHint'
-          )}
-        </DialogDescription>
+        <DialogDescription>{t(ENROLL_NOTICES[open.intent])}</DialogDescription>
       </DialogHeader>
 
       <div className="flex flex-col gap-2 text-xs">

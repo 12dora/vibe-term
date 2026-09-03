@@ -171,9 +171,27 @@ const SettingsTabBar = memo(function SettingsTabBar({
 }) {
   const { t } = useTranslation();
   const items = showRelay ? [...SETTINGS_TAB_BAR, RELAY_TAB_ITEM] : SETTINGS_TAB_BAR;
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  // 标签条在窄屏下是横向滚动的：深链进来（如 `?tab=relay`，它还排在最后）时它停在最左，
+  // 选中态整个在视口外，用户看不出自己在哪一页。选中的标签变了就把它滚进来。
+  // 中继标签是门禁结论回来之后才挂上的，结论没回来时先不找。
+  useEffect(() => {
+    if (activeTab === 'relay' && !showRelay) return;
+    const trigger = listRef.current?.querySelector<HTMLElement>(
+      `[data-testid="settings-tab-${activeTab}"]`
+    );
+    if (trigger && typeof trigger.scrollIntoView === 'function') {
+      trigger.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    }
+  }, [activeTab, showRelay]);
+
   return (
     <Tabs value={activeTab} onValueChange={(value) => onSelect(value as SettingsTab)}>
-      <TabsList className="w-full gap-1 !justify-start overflow-x-auto rounded-xl border border-border/60 p-1.5 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <TabsList
+        ref={listRef}
+        className="w-full gap-1 !justify-start overflow-x-auto rounded-xl border border-border/60 p-1.5 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         {items.map((item) => {
           const Icon = item.icon;
           return (

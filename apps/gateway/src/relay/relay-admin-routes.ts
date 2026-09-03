@@ -28,6 +28,9 @@ export function relayStatusPayload(deps: RelayAdminDeps): Response {
     const live = deps.registry.listTenant(tenant.id);
     const pending = deps.metering.pendingFor(tenant.id);
     const streams = deps.registry.streamCount(tenant.id);
+    // 与 countActiveNodes 同口径：revoked 是终态，既不占配额，也不该永远挂在「已知节点」里。
+    const nodeRecords = deps.tenants.listNodes(tenant.id);
+    const nodesRevoked = nodeRecords.filter((node) => node.status === 'revoked').length;
     const bytesIn = tenant.bytesIn + pending.bytesIn;
     const bytesOut = tenant.bytesOut + pending.bytesOut;
     totals.tenants += 1;
@@ -40,7 +43,8 @@ export function relayStatusPayload(deps: RelayAdminDeps): Response {
       label: tenant.label,
       createdAt: tenant.createdAt,
       lastSeenAt: tenant.lastSeenAt,
-      nodes: deps.tenants.listNodes(tenant.id).length,
+      nodes: nodeRecords.length - nodesRevoked,
+      nodesRevoked,
       nodesOnline: live.length,
       streams,
       bytesIn,
