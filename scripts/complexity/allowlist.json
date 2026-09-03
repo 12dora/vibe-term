@@ -570,5 +570,153 @@
   "packages/ws-client/src/direct/direct-dial-breaker.ts:classifyDirectDialFailure": {
     "cc": 16,
     "reason": "同上：入参是字符串、可返回 null 表示不计入失败，语义与前两者相反（第二十一轮 EX3 §3.2，prompt-archives/2026090302-round21-perf-idle-smell）"
+  },
+  "apps/fe/src/auth/session-login.ts": {
+    "fileLines": 704,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/fe/src/components/side-panels/account-security-panel.tsx": {
+    "fileLines": 831,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/fe/src/node/enrollment.ts": {
+    "fileLines": 776,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/fe/src/node/enrollment-engine.ts": {
+    "fileLines": 881,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/fe/src/node/mesh-nodes.ts": {
+    "fileLines": 780,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/fe/src/pages/settings/remote-access/access-step.tsx": {
+    "fileLines": 786,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/mesh/mesh-routes.ts": {
+    "fileLines": 639,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/mesh/uplink-key-log-sync.ts": {
+    "fileLines": 669,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/mesh/peer-dc-upgrade.ts": {
+    "fileLines": 622,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/mesh/uplink-client.ts": {
+    "fileLines": 720,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/mesh/stream-targets.ts": {
+    "fileLines": 609,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/mesh/auth-routes.ts": {
+    "fileLines": 767,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/mesh/stream-replay-state.ts": {
+    "fileLines": 827,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/mesh/rtc/rtc-peer-manager.ts": {
+    "fileLines": 714,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/tmux-client/external-tmux-core.ts": {
+    "fileLines": 712,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/tmux-client/local-external-connection.ts": {
+    "fileLines": 680,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/tmux-client/external/session-commands.ts": {
+    "fileLines": 793,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/tmux-client/ssh-external-connection.ts": {
+    "fileLines": 734,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/auth/user-key-service.ts": {
+    "fileLines": 867,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/agent/supervisor.ts": {
+    "fileLines": 711,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/hub/hub-peer-poller.ts": {
+    "fileLines": 807,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/ws/canonical-feed-session.ts": {
+    "fileLines": 682,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/ws/index.ts": {
+    "fileLines": 871,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/app/src/runtime/setup-service.ts": {
+    "fileLines": 747,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/app/src/tls/tls-service.ts": {
+    "fileLines": 743,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/shared/src/auth/key-log.ts": {
+    "fileLines": 717,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/shared/src/ws-borsh/schema.ts": {
+    "fileLines": 653,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/shared/src/link/mux.ts": {
+    "fileLines": 807,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/theme/src/preset-palettes.ts": {
+    "fileLines": 708,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/ws-client/src/direct/bulk-client.ts": {
+    "fileLines": 601,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/ws-client/src/canonical-state-client.ts": {
+    "fileLines": 741,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/ws-client/src/state-machine.ts": {
+    "fileLines": 782,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/ws-client/src/client.ts": {
+    "fileLines": 826,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/ghostty-terminal/src/terminal-dom.ts": {
+    "fileLines": 603,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/ghostty-terminal/src/canvas-renderer.ts": {
+    "fileLines": 740,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/ghostty-terminal/src/terminal.ts": {
+    "fileLines": 876,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "packages/ghostty-terminal/src/test-support/fake-dom.ts": {
+    "fileLines": 625,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   }
 }

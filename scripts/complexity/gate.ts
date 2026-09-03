@@ -9,7 +9,10 @@ import { join, relative } from 'node:path';
 import ts from 'typescript';
 
 const ROOT = join(import.meta.dir, '..', '..');
-const LIMITS = { cc: 15, fnLines: 120, fileLines: 900 };
+const LIMITS = { cc: 15, fnLines: 120, fileLines: 600 };
+// 文件接近阈值只提醒不失败：让改动者在被门禁拦下之前就知道该拆了（round22 五个文件曾离 900 行门禁 ≤12 行）。
+// 函数级不提醒：CC 14–15 与 110–120 行的函数有三百多个，提醒会变成噪声。
+const WARN_RATIO = 0.9;
 const SKIP_DIRS = new Set([
   'node_modules',
   'dist',
@@ -121,6 +124,7 @@ for (const top of ['apps', 'packages']) walk(join(ROOT, top), files);
 
 const all: Fn[] = [];
 const violations: string[] = [];
+const warnings: string[] = [];
 const usedAllow = new Set<string>();
 const fileLineCounts = new Map<string, number>();
 for (const file of files) {
@@ -132,6 +136,8 @@ for (const file of files) {
   if (fileAllow) usedAllow.add(rel);
   const fileLimit = fileAllow?.fileLines ?? LIMITS.fileLines;
   if (lines > fileLimit) violations.push(`${rel}: ${lines} lines > ${fileLimit}`);
+  else if (lines > fileLimit * WARN_RATIO)
+    warnings.push(`${rel}: ${lines} lines (limit ${fileLimit})`);
   for (const fn of fns) {
     const key = `${rel}:${fn.name}`;
     const entry = allow[key];
@@ -196,6 +202,7 @@ if (process.argv.includes('--report')) {
   for (const f of byCc) console.log(`${f.cc}\t${f.lines}L\t${f.file}:${f.line}\t${f.name}`);
   process.exit(0);
 }
+for (const w of warnings) console.warn(`complexity near limit: ${w}`);
 for (const v of violations) console.error(`complexity: ${v}`);
 for (const k of stale)
   console.error(`complexity: allowlist entry no longer matches anything: ${k}`);

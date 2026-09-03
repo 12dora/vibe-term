@@ -18,6 +18,7 @@
     "release:tmex": "bun scripts/release.ts",
     "pack:tmex": "bun run build && bun run --filter tmex-cli pack",
     "test": "bun run --filter '*' test",
+    "test:unit": "bun scripts/ci/unit-tests.ts",
     "test:tmex": "bun run --filter tmex-cli test",
     "lint": "biome check . && bun scripts/complexity/gate.ts",
     "lint:fix": "biome check . --write",
