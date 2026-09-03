@@ -31,6 +31,8 @@ import type {
 // 链接下划线重算节流：只扫可见区，且相邻两次重算至少间隔此值（trailing 保证终态正确）。
 const LINK_OVERLAY_THROTTLE_MS = 150;
 const LINK_MATCH_CACHE_LIMIT = 300;
+const LINE_CACHE_MIN_LIMIT = 2000;
+const LINE_CACHE_VIEWPORT_MULTIPLIER = 20;
 // 光标落定的兜底上限：应用若持续不停地写（流永不静默），最多把光标压这么久就按当刻
 // 状态落笔，保证它不会长期停在过期位置。正常 TUI（10–30Hz）每帧之间都有几十毫秒静默，
 // 走的是静默落定路径，这个上限不会触发。
@@ -63,6 +65,7 @@ export type RenderCoordinatorHost = {
 export class TerminalRenderCoordinator {
   private renderer: CanvasRenderer | null = null;
   private readonly lineCache = new Map<number, SelectionLineModel>();
+  private lineCacheLimit = LINE_CACHE_MIN_LIMIT;
   // 行模型按 cells 数组的对象身份缓存：render-state 对内容未变的行会复用同一个 cells
   // 数组，于是整帧只为真正变化的行重建模型；数组换新即自动 miss，不存在过期风险。
   private readonly lineModelByCells = new WeakMap<GhosttyRenderCell[], SelectionLineModel>();
@@ -83,6 +86,8 @@ export class TerminalRenderCoordinator {
   private viewportOffset = 0;
   private viewportRows = DEFAULT_ROWS;
   private renderedRows: GhosttyRenderRow[] = [];
+  private rowShiftInvalidated = false;
+  private selectionActive = false;
   // 每帧缓存的光标快照，供 getCursorViewportRect / IME 定位读取，避免重复消费 dirty。
   private lastCursor: GhosttyRenderCursor | null = null;
 
@@ -173,17 +178,21 @@ export class TerminalRenderCoordinator {
   // resize / reset 会重排软换行与 scrollback 行号，按绝对行号缓存的行模型全部作废。
   invalidateLines(): void {
     this.lineCache.clear();
+    this.rowShiftInvalidated = true;
+    this.selectionActive = false;
   }
 
   getLineModel(line: number): SelectionLineModel {
     const cached = this.lineCache.get(line);
     if (cached) {
+      this.lineCache.delete(line);
+      this.lineCache.set(line, cached);
       return cached;
     }
 
     const visibleRow = this.renderedRows[line - this.viewportOffset];
     return visibleRow
-      ? buildLineModel(visibleRow.cells, visibleRow.wrap)
+      ? this.cacheLineModel(line, this.lineModelFor(visibleRow))
       : EMPTY_SELECTION_LINE_MODEL;
   }
 
@@ -245,23 +254,38 @@ export class TerminalRenderCoordinator {
 
     const scrollbar = this.bindings.readScrollbar(this.terminalHandle);
     const fallbackRows = Math.max(1, scrollbar.len || this.host.viewportRows());
+    const scrollDelta =
+      this.outputSinceRender || this.rowShiftInvalidated
+        ? 0
+        : scrollbar.offset - this.viewportOffset;
 
     updateRenderState(this.renderState, this.terminalHandle);
     // 先取行、再取 meta：render-state 会在完整迭代结束后按逐 cell 比对把内核恒报的
     // dirty='full' 降级成 'partial'/'clean'，meta 必须在那之后读才拿得到降级结果。
-    const rows = Array.from(iterateRows(this.renderState));
+    const rows = Array.from(iterateRows(this.renderState, scrollDelta));
     const meta = readRenderSnapshotMeta(this.renderState);
+    this.rowShiftInvalidated = false;
 
     this.lastCursor = meta.cursor;
     this.viewportOffset = scrollbar.offset;
     this.viewportRows = Math.max(2, meta.rows || fallbackRows);
     this.renderedRows = rows;
-    for (const row of rows) {
-      this.lineCache.set(scrollbar.offset + row.y, this.lineModelFor(row));
+    this.lineCacheLimit = Math.max(
+      LINE_CACHE_MIN_LIMIT,
+      this.viewportRows * LINE_CACHE_VIEWPORT_MULTIPLIER
+    );
+    this.trimLineCache();
+    if (this.selectionActive) {
+      this.cacheVisibleLineModels(rows, scrollbar.offset);
     }
 
     const selectionRects = this.host.selectionRects(this.viewportOffset, this.viewportRows);
     const selectionText = this.host.selectionText();
+    const selectionActive = selectionText !== null || selectionRects.length > 0;
+    if (selectionActive && !this.selectionActive) {
+      this.cacheVisibleLineModels(rows, scrollbar.offset);
+    }
+    this.selectionActive = selectionActive;
     const cursorSettled = this.consumeCursorSettled();
 
     renderer.render({
@@ -272,6 +296,7 @@ export class TerminalRenderCoordinator {
       selectionColor: this.host.selectionColor(),
       forceFull,
       cursorSettled,
+      scrollDelta: this.renderState.appliedScrollDelta,
     });
 
     if (!cursorSettled) {
@@ -374,6 +399,29 @@ export class TerminalRenderCoordinator {
     return model;
   }
 
+  private cacheLineModel(line: number, model: SelectionLineModel): SelectionLineModel {
+    this.lineCache.delete(line);
+    this.lineCache.set(line, model);
+    this.trimLineCache();
+    return model;
+  }
+
+  private cacheVisibleLineModels(rows: GhosttyRenderRow[], offset: number): void {
+    for (const row of rows) {
+      this.cacheLineModel(offset + row.y, this.lineModelFor(row));
+    }
+  }
+
+  private trimLineCache(): void {
+    while (this.lineCache.size > this.lineCacheLimit) {
+      const oldest = this.lineCache.keys().next().value;
+      if (oldest === undefined) {
+        return;
+      }
+      this.lineCache.delete(oldest);
+    }
+  }
+
   private updateLinkOverlay(): void {
     const renderer = this.renderer;
     if (!renderer) {
@@ -384,12 +432,22 @@ export class TerminalRenderCoordinator {
     const segments = collectLinkUnderlineSegments({
       offset,
       rows: this.viewportRows,
-      getLineModel: (line) => this.getLineModel(line),
+      getLineModel: (line) => this.lineModelForOverlay(line),
       cache: this.linkMatchCache,
       fileLinkContext: this.host.fileLinkContext(),
     });
 
     this.linkOverlayDrawnOffset = offset;
     renderer.drawLinkUnderlines(segments);
+  }
+
+  private lineModelForOverlay(line: number): SelectionLineModel {
+    const cached = this.lineCache.get(line);
+    if (cached) {
+      return cached;
+    }
+
+    const visibleRow = this.renderedRows[line - this.viewportOffset];
+    return visibleRow ? this.lineModelFor(visibleRow) : EMPTY_SELECTION_LINE_MODEL;
   }
 }

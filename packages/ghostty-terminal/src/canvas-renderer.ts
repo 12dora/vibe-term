@@ -34,6 +34,7 @@ type CanvasRendererFrame = {
   // 应用这一帧的最终落点。此时只把光标状态挂起，等 commitCursor() 在输出静默的那一帧
   // 落笔。缺省（undefined）视为已落定，保持非输出触发路径（主题/尺寸/滚动）的原语义。
   cursorSettled?: boolean;
+  scrollDelta?: number;
 };
 
 type CanvasRendererDebugState = {
@@ -116,6 +117,10 @@ function hasVisibleGlyph(cell: GhosttyRenderCell): boolean {
   return !isSpacerCell(cell) && cell.text !== '' && !cell.style.invisible;
 }
 
+function hasDecorations(style: GhosttyRenderCellStyle): boolean {
+  return style.underline > 0 || style.strikethrough || style.overline;
+}
+
 // inverse 时前后景互换；缺省色回落到快照的默认前/背景。返回的都是已有实例，不分配。
 function cellForegroundColor(
   cell: GhosttyRenderCell,
@@ -161,14 +166,16 @@ function ensureContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
 export class CanvasRenderer {
   readonly kind = 'canvas';
 
-  private readonly mainCanvas: HTMLCanvasElement;
+  private mainCanvas: HTMLCanvasElement;
   private readonly linkCanvas: HTMLCanvasElement;
   private readonly selectionCanvas: HTMLCanvasElement;
   private readonly cursorCanvas: HTMLCanvasElement;
-  private readonly mainContext: CanvasRenderingContext2D;
+  private scratchCanvas: HTMLCanvasElement;
+  private mainContext: CanvasRenderingContext2D;
   private readonly linkContext: CanvasRenderingContext2D;
   private readonly selectionContext: CanvasRenderingContext2D;
   private readonly cursorContext: CanvasRenderingContext2D;
+  private scratchContext: CanvasRenderingContext2D;
   private theme: GhosttyTheme;
   private readonly fontFamily: string;
   private readonly fontSize: number;
@@ -194,6 +201,9 @@ export class CanvasRenderer {
   private readonly colorCache = new Map<number, string>();
   // 四种字形变体（regular / italic / bold / bold-italic），随 deviceFontSize 在 resize 内失效。
   private fontVariants: (string | null)[] = [null, null, null, null];
+  private maxTextRun = 1;
+  private assignedMainFillStyle: string | null = null;
+  private assignedMainFont: string | null = null;
   // 上一帧的完整输入：拖拽期间 dpr/cell 变化时用它整帧重画（见 drawSelectionOnly）。
   private lastFrame: CanvasRendererFrame | null = null;
   private drawnSelectionRects: GhosttySelectionRect[] = [];
@@ -214,6 +224,14 @@ export class CanvasRenderer {
     this.linkCanvas = document.createElement('canvas');
     this.selectionCanvas = document.createElement('canvas');
     this.cursorCanvas = document.createElement('canvas');
+    this.scratchCanvas = document.createElement('canvas');
+    this.scratchCanvas.dataset.layer = 'scratch';
+    this.scratchCanvas.style.position = 'absolute';
+    this.scratchCanvas.style.inset = '0';
+    this.scratchCanvas.style.width = '100%';
+    this.scratchCanvas.style.height = '100%';
+    this.scratchCanvas.style.pointerEvents = 'none';
+    this.scratchCanvas.style.opacity = '0';
 
     for (const [canvas, layer] of [
       [this.mainCanvas, 'main'],
@@ -234,6 +252,7 @@ export class CanvasRenderer {
     this.linkContext = ensureContext(this.linkCanvas);
     this.selectionContext = ensureContext(this.selectionCanvas);
     this.cursorContext = ensureContext(this.cursorCanvas);
+    this.scratchContext = ensureContext(this.scratchCanvas);
     this.cursorLayer = new CursorLayer(this.cursorCanvas, this.cursorContext);
   }
 
@@ -263,7 +282,14 @@ export class CanvasRenderer {
       return;
     }
 
-    const drawAllRows = effectiveDirty === 'full';
+    const scrollDelta = frame.scrollDelta ?? 0;
+    const wantsScrollBlit =
+      effectiveDirty === 'partial' &&
+      Number.isInteger(scrollDelta) &&
+      scrollDelta !== 0 &&
+      Math.abs(scrollDelta) < this.rows;
+    const scrollBlitted = wantsScrollBlit ? this.blitRows(scrollDelta) : false;
+    const drawAllRows = effectiveDirty === 'full' || (wantsScrollBlit && !scrollBlitted);
     const dirtyRows = drawAllRows ? frame.rows : frame.rows.filter((row) => row.dirty);
 
     // 允许字形垂直溢出相邻 cell——兼容带高升部/深降部的「奇怪」Unicode（组合记号、Zalgo、
@@ -318,8 +344,13 @@ export class CanvasRenderer {
     this.linkCanvas.remove();
     this.selectionCanvas.remove();
     this.cursorCanvas.remove();
+    this.scratchCanvas.remove();
+    this.scratchCanvas.width = 0;
+    this.scratchCanvas.height = 0;
     this.colorCache.clear();
     this.fontVariants = [null, null, null, null];
+    this.assignedMainFillStyle = null;
+    this.assignedMainFont = null;
     this.drawnSelectionRects = [];
     this.lastFrame = null;
     this.cursorLayer.dispose();
@@ -360,6 +391,14 @@ export class CanvasRenderer {
     // 升降部都不溢出，且用本引擎自报度量，跨平台自洽。
     this.mainContext.font = `${this.deviceFontSize}px ${this.fontFamily}`;
     const metrics = this.mainContext.measureText('Mg|qyÅ');
+    const advanceSampleLength = Math.max(1, Math.min(nextCols, 64));
+    const measuredAdvance =
+      this.mainContext.measureText('x'.repeat(advanceSampleLength)).width / advanceSampleLength;
+    const residual = Math.abs(measuredAdvance - deviceCellWidth);
+    this.maxTextRun =
+      Number.isFinite(residual) && residual > Number.EPSILON
+        ? Math.max(1, Math.min(nextCols, Math.floor(0.4 / residual)))
+        : nextCols;
     let ascent = metrics.fontBoundingBoxAscent;
     let descent = metrics.fontBoundingBoxDescent;
     if (!(Number.isFinite(ascent) && Number.isFinite(descent) && ascent > 0)) {
@@ -400,6 +439,8 @@ export class CanvasRenderer {
       context.textBaseline = 'alphabetic';
       context.imageSmoothingEnabled = false;
     }
+    this.assignedMainFillStyle = null;
+    this.assignedMainFont = null;
 
     return true;
   }
@@ -515,10 +556,11 @@ export class CanvasRenderer {
     const defaultBackground = this.toCss(colors.background);
 
     this.mainContext.clearRect(0, y, width, this.deviceCellHeight);
-    this.mainContext.fillStyle = defaultBackground;
+    this.setMainFillStyle(defaultBackground);
     this.mainContext.fillRect(0, y, width, this.deviceCellHeight);
 
-    for (const cell of row.cells) {
+    for (let index = 0; index < row.cells.length; index += 1) {
+      const cell = row.cells[index];
       if (isSpacerCell(cell)) {
         continue;
       }
@@ -529,19 +571,53 @@ export class CanvasRenderer {
         bg.g !== colors.background.g ||
         bg.b !== colors.background.b
       ) {
-        this.mainContext.fillStyle = this.toCss(bg);
-        this.mainContext.fillRect(
-          cell.x * this.deviceCellWidth,
-          y,
-          this.cellDeviceWidth(cell),
-          this.deviceCellHeight
-        );
+        const css = this.toCss(bg);
+        if (this.canBatchBackground(cell)) {
+          let end = index + 1;
+          while (end < row.cells.length) {
+            const next = row.cells[end];
+            if (
+              !this.canBatchBackground(next) ||
+              next.x !== cell.x + (end - index) ||
+              this.toCss(cellBackgroundColor(next, colors)) !== css
+            ) {
+              break;
+            }
+            end += 1;
+          }
+          this.setMainFillStyle(css);
+          this.mainContext.fillRect(
+            cell.x * this.deviceCellWidth,
+            y,
+            (end - index) * this.deviceCellWidth,
+            this.deviceCellHeight
+          );
+          index = end - 1;
+        } else {
+          this.setMainFillStyle(css);
+          this.mainContext.fillRect(
+            cell.x * this.deviceCellWidth,
+            y,
+            this.cellDeviceWidth(cell),
+            this.deviceCellHeight
+          );
+        }
       }
     }
   }
 
   private cellDeviceWidth(cell: GhosttyRenderCell): number {
     return cell.widthKind === 'wide' ? this.deviceCellWidth * 2 : this.deviceCellWidth;
+  }
+
+  private canBatchBackground(cell: GhosttyRenderCell): boolean {
+    return (
+      cell.widthKind === 'narrow' && blockElementCodepoint(cell) < 0 && !hasDecorations(cell.style)
+    );
+  }
+
+  private canBatchGlyph(cell: GhosttyRenderCell): boolean {
+    return !cell.style.invisible && this.canBatchBackground(cell);
   }
 
   // 前景遍：逐 cell 画字形/块元素/装饰线。在所有行背景铺完后调用，故字形可越界相邻 cell
@@ -553,7 +629,8 @@ export class CanvasRenderer {
     const y = row.y * this.deviceCellHeight;
     const lineThickness = Math.max(1, Math.round(this.dpr));
 
-    for (const cell of row.cells) {
+    for (let index = 0; index < row.cells.length; index += 1) {
+      const cell = row.cells[index];
       if (!hasVisibleGlyph(cell)) {
         continue;
       }
@@ -561,7 +638,33 @@ export class CanvasRenderer {
       const x = cell.x * this.deviceCellWidth;
       const cellWidth = this.cellDeviceWidth(cell);
 
-      this.mainContext.fillStyle = this.toCss(cellForegroundColor(cell, colors));
+      const fillStyle = this.toCss(cellForegroundColor(cell, colors));
+      if (this.canBatchGlyph(cell)) {
+        const font = this.resolveFont(cell.style);
+        let text = cell.text;
+        let end = index + 1;
+        while (end < row.cells.length) {
+          const next = row.cells[end];
+          if (
+            end - index >= this.maxTextRun ||
+            !this.canBatchGlyph(next) ||
+            next.x !== cell.x + (end - index) ||
+            this.toCss(cellForegroundColor(next, colors)) !== fillStyle ||
+            this.resolveFont(next.style) !== font
+          ) {
+            break;
+          }
+          text += next.text || ' ';
+          end += 1;
+        }
+        this.setMainFillStyle(fillStyle);
+        this.setMainFont(font);
+        this.mainContext.fillText(text, x, y + this.textBaselineY);
+        index = end - 1;
+        continue;
+      }
+
+      this.setMainFillStyle(fillStyle);
       this.drawCellGlyph(cell, x, y, cellWidth);
       this.drawCellDecorations(cell.style, x, y, cellWidth, lineThickness);
     }
@@ -576,7 +679,7 @@ export class CanvasRenderer {
       return;
     }
 
-    this.mainContext.font = this.resolveFont(cell.style);
+    this.setMainFont(this.resolveFont(cell.style));
     this.mainContext.fillText(cell.text, x, y + this.textBaselineY);
   }
 
@@ -702,6 +805,91 @@ export class CanvasRenderer {
     if (row !== null) {
       this.lastDrawnRows.push(row);
     }
+  }
+
+  private blitRows(scrollDelta: number): boolean {
+    if (
+      typeof this.mainContext.drawImage !== 'function' ||
+      typeof this.scratchContext.drawImage !== 'function'
+    ) {
+      return false;
+    }
+
+    const shiftedRows = Math.abs(scrollDelta);
+    const retainedHeight = (this.rows - shiftedRows) * this.deviceCellHeight;
+    if (retainedHeight <= 0) {
+      return false;
+    }
+
+    const width = this.mainCanvas.width;
+    if (
+      this.scratchCanvas.width !== width ||
+      this.scratchCanvas.height !== this.mainCanvas.height
+    ) {
+      this.scratchCanvas.width = width;
+      this.scratchCanvas.height = this.mainCanvas.height;
+      this.scratchContext.setTransform(1, 0, 0, 1, 0, 0);
+      this.scratchContext.imageSmoothingEnabled = false;
+    }
+    const parent = this.mainCanvas.parentElement;
+    if (!parent) {
+      return false;
+    }
+    if (this.scratchCanvas.parentElement !== parent) {
+      parent.insertBefore(this.scratchCanvas, this.mainCanvas);
+    }
+
+    this.scratchCanvas.style.width = this.mainCanvas.style.width;
+    this.scratchCanvas.style.height = this.mainCanvas.style.height;
+    this.scratchContext.setTransform(1, 0, 0, 1, 0, 0);
+    this.scratchContext.textBaseline = 'alphabetic';
+    this.scratchContext.imageSmoothingEnabled = false;
+
+    const sourceY = scrollDelta > 0 ? shiftedRows * this.deviceCellHeight : 0;
+    const destinationY = scrollDelta > 0 ? 0 : shiftedRows * this.deviceCellHeight;
+    this.scratchContext.globalCompositeOperation = 'copy';
+    this.scratchContext.drawImage(
+      this.mainCanvas,
+      0,
+      sourceY,
+      width,
+      retainedHeight,
+      0,
+      destinationY,
+      width,
+      retainedHeight
+    );
+    this.scratchContext.globalCompositeOperation = 'source-over';
+
+    const previousCanvas = this.mainCanvas;
+    const previousContext = this.mainContext;
+    previousCanvas.dataset.layer = 'scratch';
+    previousCanvas.style.opacity = '0';
+    this.scratchCanvas.dataset.layer = 'main';
+    this.scratchCanvas.style.opacity = '1';
+    this.mainCanvas = this.scratchCanvas;
+    this.mainContext = this.scratchContext;
+    this.scratchCanvas = previousCanvas;
+    this.scratchContext = previousContext;
+    this.assignedMainFillStyle = null;
+    this.assignedMainFont = null;
+    return true;
+  }
+
+  private setMainFillStyle(fillStyle: string): void {
+    if (this.assignedMainFillStyle === fillStyle) {
+      return;
+    }
+    this.mainContext.fillStyle = fillStyle;
+    this.assignedMainFillStyle = fillStyle;
+  }
+
+  private setMainFont(font: string): void {
+    if (this.assignedMainFont === font) {
+      return;
+    }
+    this.mainContext.font = font;
+    this.assignedMainFont = font;
   }
 
   private resolveFont(style: GhosttyRenderCellStyle): string {

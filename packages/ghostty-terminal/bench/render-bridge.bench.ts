@@ -14,7 +14,7 @@ import { buildLineModel } from '../src/selection-model';
 const COLS = 120;
 const ROWS = 40;
 const WARMUP_FRAMES = 20;
-const MEASURED_FRAMES = 120;
+const MEASURED_FRAMES = 200;
 
 const SGR = ['', '\x1b[31m', '\x1b[1;32m', '\x1b[4;34m', '\x1b[7;33m', '\x1b[45;97m'];
 
@@ -140,6 +140,63 @@ async function runScenario(scenario: Scenario): Promise<void> {
   bindings.freeTerminal(terminal);
 }
 
+async function runScrollScenario(name: string, amount: number): Promise<void> {
+  const bindings = await getGhosttyBindings();
+  const terminal = bindings.createTerminal(COLS, ROWS, 2000);
+  const renderState = createRenderState(bindings);
+  const totalFrames = WARMUP_FRAMES + MEASURED_FRAMES;
+
+  for (let line = 0; line < 1000; line += 1) {
+    bindings.writeVt(terminal, `${rowPayload(line)}\r\n`);
+  }
+  if (amount > 0) {
+    bindings.scrollViewportDelta(terminal, -(amount * totalFrames + 5));
+  }
+
+  updateRenderState(renderState, terminal);
+  Array.from(iterateRows(renderState));
+  readRenderSnapshotMeta(renderState);
+
+  const samples: number[] = [];
+  let previousOffset = bindings.readScrollbar(terminal).offset;
+  let dirtyRows = 0;
+  let fullFrames = 0;
+
+  for (let frame = 0; frame < totalFrames; frame += 1) {
+    bindings.scrollViewportDelta(terminal, amount);
+    const offset = bindings.readScrollbar(terminal).offset;
+    const actualDelta = offset - previousOffset;
+    if (actualDelta !== amount) {
+      throw new Error(`${name} clamped unexpectedly: requested ${amount}, moved ${actualDelta}`);
+    }
+
+    const started = performance.now();
+    updateRenderState(renderState, terminal);
+    const rows = Array.from(iterateRows(renderState, actualDelta));
+    const meta = readRenderSnapshotMeta(renderState);
+    const elapsed = performance.now() - started;
+
+    if (frame >= WARMUP_FRAMES) {
+      samples.push(elapsed);
+      dirtyRows += rows.reduce((count, row) => count + (row.dirty ? 1 : 0), 0);
+      if (meta.dirty === 'full') {
+        fullFrames += 1;
+      }
+    }
+    previousOffset = offset;
+  }
+
+  const { mean, p50, p95 } = stats(samples);
+  console.log(
+    `${name.padEnd(34)} mean=${format(mean)}ms  p50=${format(p50)}ms  p95=${format(p95)}ms` +
+      `  dirtyRows/frame=${(dirtyRows / MEASURED_FRAMES).toFixed(1)}` +
+      `  full=${fullFrames}/${MEASURED_FRAMES}`
+  );
+
+  disposeRenderStateResources(renderState);
+  bindings.freeTerminal(terminal);
+}
+
 // 单次 wasm 边界调用的成本：用于判断「打包行 ABI」是否值得。
 async function measureWasmCallCost(): Promise<void> {
   const bindings = await getGhosttyBindings();
@@ -222,5 +279,8 @@ console.log(`render bridge bench — ${COLS}x${ROWS}, ${MEASURED_FRAMES} measure
 for (const scenario of SCENARIOS) {
   await runScenario(scenario);
 }
+await runScrollScenario('scroll +1 line/frame', 1);
+await runScrollScenario('scroll +3 lines/frame', 3);
+await runScrollScenario('scroll -1 line/frame', -1);
 console.log('');
 await measureWasmCallCost();

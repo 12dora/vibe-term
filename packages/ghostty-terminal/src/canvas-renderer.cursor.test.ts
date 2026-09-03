@@ -1,5 +1,5 @@
 // 光标层渲染：四种 GhosttyCursorVisualStyle 必须画出各自的形状（此前无论哪种都只画
-// 底部横条），且 cursor.blinking=false 时不得启动闪烁定时器。
+// 底部横条），且闪烁由 CSS 动画类驱动——任何情况下都不得再起 JS 定时器。
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { CanvasRenderer } from './canvas-renderer';
 import type {
@@ -78,11 +78,19 @@ class FakeCanvas {
   width = 0;
   height = 0;
   readonly ctx = new FakeCtx();
+  readonly classes = new Set<string>();
+  readonly classList = {
+    add: (name: string) => this.classes.add(name),
+    remove: (name: string) => this.classes.delete(name),
+  };
+  constructor(readonly ownerDocument: unknown) {}
   getContext(): FakeCtx {
     return this.ctx;
   }
   remove(): void {}
 }
+
+type FakeStyleElement = { id: string; textContent: string };
 
 class FakeScreen {
   style: Record<string, string> = {};
@@ -128,13 +136,25 @@ let clearedIntervals: number[];
 function setup(dpr = 1) {
   (globalThis as { devicePixelRatio?: number }).devicePixelRatio = dpr;
   const created: FakeCanvas[] = [];
-  (globalThis as { document?: unknown }).document = {
-    createElement: () => {
-      const canvas = new FakeCanvas();
+  const styleSheets: FakeStyleElement[] = [];
+  const doc: Record<string, unknown> = {
+    createElement: (tag: string) => {
+      if (tag === 'style') {
+        const style: FakeStyleElement = { id: '', textContent: '' };
+        return style;
+      }
+      const canvas = new FakeCanvas(doc);
       created.push(canvas);
       return canvas;
     },
+    getElementById: (id: string) => styleSheets.find((style) => style.id === id) ?? null,
+    head: {
+      appendChild: (style: FakeStyleElement) => {
+        styleSheets.push(style);
+      },
+    },
   };
+  (globalThis as { document?: unknown }).document = doc;
   const screen = new FakeScreen();
   const renderer = new CanvasRenderer({
     screenElement: screen as unknown as HTMLElement,
@@ -144,7 +164,7 @@ function setup(dpr = 1) {
   });
 
   // 构造顺序：main / link / selection / cursor
-  return { renderer, cursorCanvas: created[3] };
+  return { renderer, cursorCanvas: created[3], styleSheets };
 }
 
 function cursorOps(canvas: FakeCanvas): DrawOp[] {
@@ -258,7 +278,7 @@ describe('drawCursor 按 cursor.style 画出对应形状', () => {
 });
 
 describe('drawCursor 遵循 cursor.blinking', () => {
-  test('blinking=false 不启动定时器，光标层不透明度保持 1', () => {
+  test('blinking=false 不挂动画类，光标层不透明度保持 1', () => {
     const { renderer, cursorCanvas } = setup();
     renderer.render({
       meta: makeMeta({ style: 'block', blinking: false }),
@@ -267,29 +287,51 @@ describe('drawCursor 遵循 cursor.blinking', () => {
     });
 
     expect(intervalCalls).toHaveLength(0);
+    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeFalse();
     expect(cursorCanvas.style.opacity).toBe('1');
   });
 
-  test('blinking=true 启动定时器', () => {
-    const { renderer } = setup();
+  test('blinking=true 挂上 CSS 动画类，且不起任何 JS 定时器', () => {
+    const { renderer, cursorCanvas, styleSheets } = setup();
     renderer.render({
       meta: makeMeta({ style: 'block', blinking: true }),
       rows: [],
       cellDimensions: CELL,
     });
 
-    expect(intervalCalls).toHaveLength(1);
+    expect(intervalCalls).toHaveLength(0);
+    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeTrue();
+    expect(styleSheets).toHaveLength(1);
+    expect(styleSheets[0]?.textContent).toContain('@keyframes tmex-cursor-blink');
+    // 后台/隐藏槽必须整条停掉动画
+    expect(styleSheets[0]?.textContent).toContain(
+      '[data-tmex-terminal-hidden] canvas.tmex-cursor-blink{animation:none}'
+    );
     renderer.dispose();
   });
 
-  test('blinking 由 true 变 false 时停掉已有定时器', () => {
+  test('样式只注入一次', () => {
+    const { renderer, styleSheets } = setup();
+    for (const y of [0, 1, 0]) {
+      renderer.render({
+        meta: makeMeta({ style: 'block', blinking: true, y }),
+        rows: [],
+        cellDimensions: CELL,
+      });
+    }
+
+    expect(styleSheets).toHaveLength(1);
+    renderer.dispose();
+  });
+
+  test('blinking 由 true 变 false 时摘掉动画类', () => {
     const { renderer, cursorCanvas } = setup();
     renderer.render({
       meta: makeMeta({ style: 'block', blinking: true }),
       rows: [],
       cellDimensions: CELL,
     });
-    expect(intervalCalls).toHaveLength(1);
+    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeTrue();
 
     renderer.render({
       meta: makeMeta({ style: 'block', blinking: false }),
@@ -297,8 +339,42 @@ describe('drawCursor 遵循 cursor.blinking', () => {
       cellDimensions: CELL,
     });
 
-    expect(clearedIntervals).toHaveLength(1);
+    expect(clearedIntervals).toHaveLength(0);
+    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeFalse();
     expect(cursorCanvas.style.opacity).toBe('1');
+  });
+
+  test('重新变回 blinking=true 时动画类恢复', () => {
+    const { renderer, cursorCanvas } = setup();
+    for (const blinking of [true, false, true]) {
+      renderer.render({
+        meta: makeMeta({ style: 'block', blinking }),
+        rows: [],
+        cellDimensions: CELL,
+      });
+    }
+
+    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeTrue();
+    renderer.dispose();
+  });
+
+  test('光标转不可见时摘掉动画类', () => {
+    const { renderer, cursorCanvas } = setup();
+    renderer.render({
+      meta: makeMeta({ style: 'block', blinking: true }),
+      rows: [],
+      cellDimensions: CELL,
+    });
+    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeTrue();
+
+    renderer.render({
+      meta: makeMeta({ style: 'block', blinking: true, visible: false }),
+      rows: [],
+      cellDimensions: CELL,
+    });
+
+    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeFalse();
+    renderer.dispose();
   });
 
   test('blinking 变化计入 lastCursor 差异检测（重绘旧光标所在行）', () => {

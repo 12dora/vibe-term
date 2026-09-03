@@ -111,6 +111,7 @@ type GhosttyRenderStateResources = {
   previousRows: GhosttyRenderRow[] | null;
   previousCols: number;
   rowsVersion: number;
+  appliedScrollDelta: number;
 };
 
 function ensureActive(resources: GhosttyRenderStateResources): void {
@@ -707,7 +708,7 @@ export function reuseUnchangedRow(
     return null;
   }
 
-  if (!previous.dirty) {
+  if (!previous.dirty && previous.y === rowIndex) {
     return previous;
   }
 
@@ -773,12 +774,15 @@ function readRowCells(
 function readRow(
   resources: GhosttyRenderStateResources,
   rowIndex: number,
-  previous: GhosttyRenderRow | null
+  previous: GhosttyRenderRow | null,
+  reuseReportedDirty = false
 ): GhosttyRenderRow {
   // dirty 位先读：内核报本行未脏且上一帧可比时整行沿用，一个 cell 都不读。
   const reportedDirty = consumeReportedRowDirty(resources);
-  if (!reportedDirty && previous) {
-    return previous.dirty ? { ...previous, dirty: false } : previous;
+  if (previous && (reuseReportedDirty || !reportedDirty)) {
+    return previous.dirty || previous.y !== rowIndex
+      ? { ...previous, y: rowIndex, dirty: false }
+      : previous;
   }
 
   const rawRow = readRowRaw(resources);
@@ -847,6 +851,7 @@ export function createRenderState(bindings: GhosttyBindings): GhosttyRenderState
     previousRows: null,
     previousCols: -1,
     rowsVersion: -1,
+    appliedScrollDelta: 0,
   };
 }
 
@@ -876,10 +881,12 @@ export function readRenderSnapshotMeta(
 }
 
 export function* iterateRows(
-  resources: GhosttyRenderStateResources
+  resources: GhosttyRenderStateResources,
+  scrollDelta = 0
 ): Generator<GhosttyRenderRow, void, undefined> {
   ensureActive(resources);
   const meta = readRenderSnapshotMeta(resources);
+  resources.appliedScrollDelta = 0;
 
   const settled = resources.previousRows;
   if (settled && resources.rowsVersion === resources.snapshotVersion) {
@@ -893,6 +900,13 @@ export function* iterateRows(
     settled.length === meta.rows &&
     resources.previousCols === meta.cols &&
     !resources.colorsChanged;
+  const shifted =
+    comparable &&
+    Number.isInteger(scrollDelta) &&
+    scrollDelta !== 0 &&
+    Math.abs(scrollDelta) < meta.rows
+      ? scrollDelta
+      : 0;
 
   resources.bindings.bindRenderStateRowIterator(
     resources.renderStateHandle,
@@ -908,7 +922,12 @@ export function* iterateRows(
     rowIndex < meta.rows &&
     resources.bindings.nextRenderStateRowIterator(resources.rowIteratorHandle)
   ) {
-    const row = readRow(resources, rowIndex, comparable && settled ? settled[rowIndex] : null);
+    const previousIndex = rowIndex + shifted;
+    const previous =
+      comparable && settled && previousIndex >= 0 && previousIndex < settled.length
+        ? settled[previousIndex]
+        : null;
+    const row = readRow(resources, rowIndex, previous, shifted !== 0 && previous !== null);
     rows.push(row);
     yield row;
     rowIndex += 1;
@@ -922,11 +941,12 @@ export function* iterateRows(
   resources.previousRows = rows;
   resources.previousCols = meta.cols;
   resources.rowsVersion = resources.snapshotVersion;
+  resources.appliedScrollDelta = shifted;
 
-  if (comparable && meta.dirty === 'full') {
+  if (comparable && (meta.dirty === 'full' || shifted !== 0)) {
     const changedRows = rows.reduce((count, row) => count + (row.dirty ? 1 : 0), 0);
     if (changedRows === 0) {
-      meta.dirty = 'clean';
+      meta.dirty = shifted === 0 ? 'clean' : 'partial';
     } else if (changedRows < rows.length) {
       meta.dirty = 'partial';
     }
