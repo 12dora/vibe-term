@@ -136,7 +136,7 @@ for (const file of files) {
   if (fileAllow) usedAllow.add(rel);
   const fileLimit = fileAllow?.fileLines ?? LIMITS.fileLines;
   if (lines > fileLimit) violations.push(`${rel}: ${lines} lines > ${fileLimit}`);
-  else if (lines > fileLimit * WARN_RATIO)
+  else if (!fileAllow && lines > fileLimit * WARN_RATIO)
     warnings.push(`${rel}: ${lines} lines (limit ${fileLimit})`);
   for (const fn of fns) {
     const key = `${rel}:${fn.name}`;
