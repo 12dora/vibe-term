@@ -84,19 +84,16 @@ function scrollbackLinesToBytes(scrollbackLines: number, cols: number): number {
   );
   return Math.max(1, pages) * GHOSTTY_SCROLLBACK_PAGE_BYTES;
 }
-
 type LayoutField = {
   offset: number;
   size: number;
   type: string;
 };
-
 type LayoutType = {
   size: number;
   align: number;
   fields: Record<string, LayoutField>;
 };
-
 type LayoutMap = Record<string, LayoutType>;
 
 type GhosttyMouseEncodeOptions = {
@@ -111,7 +108,8 @@ type GhosttyMouseEncodeOptions = {
   cellWidth: number;
   cellHeight: number;
 };
-
+type MultiGet32 = (v: number, n: number, k: number, p: number, w: number) => number;
+type MultiGet64 = (v: bigint, n: number, k: number, p: number, w: number) => number;
 type GhosttyExports = WebAssembly.Exports & {
   memory: WebAssembly.Memory;
   ghostty_type_json: () => number;
@@ -162,8 +160,10 @@ type GhosttyExports = WebAssembly.Exports & {
   ghostty_render_state_row_cells_next: (cells: number) => number;
   ghostty_render_state_row_cells_select: (cells: number, x: number) => number;
   ghostty_render_state_row_cells_get: (cells: number, data: number, outPtr: number) => number;
+  ghostty_render_state_row_cells_get_multi: MultiGet32;
   ghostty_row_get: (row: bigint, data: number, outPtr: number) => number;
   ghostty_cell_get: (cell: bigint, data: number, outPtr: number) => number;
+  ghostty_cell_get_multi: MultiGet64;
   ghostty_formatter_terminal_new: (
     allocatorPtr: number,
     outFormatterPtr: number,

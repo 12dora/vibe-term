@@ -13,6 +13,16 @@ export function internColor(
   blue: number
 ): GhosttyColorRgb {
   const key = (red << 16) | (green << 8) | blue;
+  return internColorByKey(colorCache, key, red, green, blue);
+}
+
+export function internColorByKey(
+  colorCache: Map<number, GhosttyColorRgb>,
+  key: number,
+  red: number,
+  green: number,
+  blue: number
+): GhosttyColorRgb {
   const cached = colorCache.get(key);
   if (cached) {
     return cached;

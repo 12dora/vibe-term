@@ -1,15 +1,19 @@
 import type { GhosttyBindings } from './ghostty-wasm';
-import { INTERN_LIMIT, readColorAt } from './render-state-color';
+import { readColorAt } from './render-state-color';
+import {
+  type RenderStateScratch,
+  ensureRenderStateScratch,
+  readRenderStateRow,
+  releaseRenderStateScratch,
+} from './render-state-read';
 import {
   applyShiftDirtyDowngrade,
   lookupShiftedPreviousRow,
   resolveShiftBaseline,
 } from './render-state-shift';
 import type {
-  GhosttyCellWidthKind,
   GhosttyColorRgb,
   GhosttyCursorVisualStyle,
-  GhosttyRenderCell,
   GhosttyRenderCellStyle,
   GhosttyRenderColors,
   GhosttyRenderCursor,
@@ -19,7 +23,6 @@ import type {
 } from './types';
 
 const GHOSTTY_SUCCESS = 0;
-const GHOSTTY_INVALID_VALUE = -2;
 
 const GHOSTTY_RENDER_STATE_DATA_COLS = 1;
 const GHOSTTY_RENDER_STATE_DATA_ROWS = 2;
@@ -32,69 +35,6 @@ const GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE = 14;
 const GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X = 15;
 const GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y = 16;
 const GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL = 17;
-
-const GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY = 1;
-const GHOSTTY_RENDER_STATE_ROW_DATA_RAW = 2;
-
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW = 1;
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE = 2;
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN = 3;
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF = 4;
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR = 5;
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR = 6;
-
-const GHOSTTY_ROW_DATA_WRAP = 1;
-const GHOSTTY_ROW_DATA_WRAP_CONTINUATION = 2;
-
-const GHOSTTY_CELL_DATA_WIDE = 3;
-const GHOSTTY_CELL_DATA_HAS_TEXT = 4;
-
-const STYLE_FLAG_FIELDS = [
-  'bold',
-  'italic',
-  'faint',
-  'blink',
-  'inverse',
-  'invisible',
-  'strikethrough',
-  'overline',
-] as const;
-
-// 共享不可变常量：绝大多数 cell 是空白或单个 ASCII 字符，复用这些实例把每 cell 的
-// 数组/字符串分配降到 0（GhosttyRenderCell.codepoints 全链路只读）。
-const EMPTY_CODEPOINTS: number[] = [];
-const ASCII_TEXT: string[] = [];
-const ASCII_CODEPOINTS: number[][] = [];
-for (let codepoint = 0; codepoint < 128; codepoint += 1) {
-  ASCII_TEXT.push(String.fromCharCode(codepoint));
-  ASCII_CODEPOINTS.push([codepoint]);
-}
-
-const GRAPHEME_SCRATCH_CODEPOINTS = 64;
-
-// 每个 render state 一块常驻 WASM 暂存区：替代原先「每次读取 alloc/free 一次」的
-// 模式（一对 alloc+free 约等于 3.5 次普通导出调用）。
-type RenderStateScratch = {
-  base: number;
-  size: number;
-  u64: number;
-  u32: number;
-  u8: number;
-  style: number;
-  color: number;
-  colors: number;
-  graphemes: number;
-  colorsSize: number;
-  styleSize: number;
-  styleSizeOffset: number;
-  styleFlagOffsets: number[];
-  styleUnderlineOffset: number;
-  colorsPaletteOffset: number;
-  colorsBackgroundOffset: number;
-  colorsForegroundOffset: number;
-  colorsCursorOffset: number;
-  colorsCursorHasValueOffset: number;
-};
 
 type GhosttyRenderStateResources = {
   bindings: GhosttyBindings;
@@ -123,58 +63,6 @@ function ensureActive(resources: GhosttyRenderStateResources): void {
   }
 }
 
-function alignUp(value: number, alignment: number): number {
-  return Math.ceil(value / alignment) * alignment;
-}
-
-function ensureScratch(resources: GhosttyRenderStateResources): RenderStateScratch {
-  const existing = resources.scratch;
-  if (existing) {
-    return existing;
-  }
-
-  const bindings = resources.bindings;
-  const styleSize = bindings.typeSize('GhosttyStyle');
-  const colorSize = bindings.typeSize('GhosttyColorRgb');
-  const colorsSize = bindings.typeSize('GhosttyRenderStateColors');
-
-  const styleOffset = 16;
-  const colorOffset = alignUp(styleOffset + styleSize, 8);
-  const colorsOffset = alignUp(colorOffset + colorSize, 8);
-  const graphemesOffset = alignUp(colorsOffset + colorsSize, 8);
-  const size = graphemesOffset + GRAPHEME_SCRATCH_CODEPOINTS * 4;
-
-  // 多 8 字节用于把基址对齐到 8：u8 分配器不保证 u64 对齐。
-  const raw = bindings.allocBytes(size + 8);
-  const base = alignUp(raw, 8);
-
-  const scratch: RenderStateScratch = {
-    base: raw,
-    size: size + 8,
-    u64: base,
-    u32: base + 8,
-    u8: base + 12,
-    style: base + styleOffset,
-    color: base + colorOffset,
-    colors: base + colorsOffset,
-    graphemes: base + graphemesOffset,
-    colorsSize,
-    styleSize,
-    styleSizeOffset: bindings.field('GhosttyStyle', 'size').offset,
-    styleFlagOffsets: STYLE_FLAG_FIELDS.map((name) => bindings.field('GhosttyStyle', name).offset),
-    styleUnderlineOffset: bindings.field('GhosttyStyle', 'underline').offset,
-    colorsPaletteOffset: bindings.field('GhosttyRenderStateColors', 'palette').offset,
-    colorsBackgroundOffset: bindings.field('GhosttyRenderStateColors', 'background').offset,
-    colorsForegroundOffset: bindings.field('GhosttyRenderStateColors', 'foreground').offset,
-    colorsCursorOffset: bindings.field('GhosttyRenderStateColors', 'cursor').offset,
-    colorsCursorHasValueOffset: bindings.field('GhosttyRenderStateColors', 'cursor_has_value')
-      .offset,
-  };
-
-  resources.scratch = scratch;
-  return scratch;
-}
-
 function resultToDirtyState(value: number): GhosttyRenderDirtyState {
   switch (value) {
     case 2:
@@ -199,19 +87,6 @@ function resultToCursorStyle(value: number): GhosttyCursorVisualStyle {
   }
 }
 
-function resultToCellWidthKind(value: number): GhosttyCellWidthKind {
-  switch (value) {
-    case 1:
-      return 'wide';
-    case 2:
-      return 'spacer-tail';
-    case 3:
-      return 'spacer-head';
-    default:
-      return 'narrow';
-  }
-}
-
 function assertReadResult(result: unknown, what: string): void {
   if (typeof result === 'number' && result !== GHOSTTY_SUCCESS) {
     throw new Error(`ghostty ${what} read failed with result ${result}`);
@@ -219,13 +94,13 @@ function assertReadResult(result: unknown, what: string): void {
 }
 
 function readBool(resources: GhosttyRenderStateResources, read: (ptr: number) => number): boolean {
-  const scratch = ensureScratch(resources);
+  const scratch = ensureRenderStateScratch(resources);
   assertReadResult(read(scratch.u8), 'bool');
   return resources.bindings.view().getUint8(scratch.u8) !== 0;
 }
 
 function readU16(resources: GhosttyRenderStateResources, read: (ptr: number) => number): number {
-  const scratch = ensureScratch(resources);
+  const scratch = ensureRenderStateScratch(resources);
   assertReadResult(read(scratch.u32), 'u16');
   return resources.bindings.view().getUint16(scratch.u32, true);
 }
@@ -234,262 +109,9 @@ function readEnumI32(
   resources: GhosttyRenderStateResources,
   read: (ptr: number) => number
 ): number {
-  const scratch = ensureScratch(resources);
+  const scratch = ensureRenderStateScratch(resources);
   assertReadResult(read(scratch.u32), 'enum');
   return resources.bindings.view().getInt32(scratch.u32, true);
-}
-
-// 以下 row/cell 级读取全部直读常驻暂存区、不接受回调：热路径上每 cell 一个闭包
-// 就是每 cell 一次分配，逐 cell 复用判断的收益会被它吃掉。
-function readRowRaw(resources: GhosttyRenderStateResources): bigint {
-  const scratch = ensureScratch(resources);
-  const bindings = resources.bindings;
-  assertReadResult(
-    bindings.getRenderStateRowValueResult(
-      resources.rowIteratorHandle,
-      GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
-      scratch.u64
-    ),
-    'u64'
-  );
-  return bindings.view().getBigUint64(scratch.u64, true);
-}
-
-function readCellRaw(resources: GhosttyRenderStateResources): bigint {
-  const scratch = ensureScratch(resources);
-  const bindings = resources.bindings;
-  assertReadResult(
-    bindings.getRenderStateRowCellValueResult(
-      resources.rowCellsHandle,
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
-      scratch.u64
-    ),
-    'u64'
-  );
-  return bindings.view().getBigUint64(scratch.u64, true);
-}
-
-function readRawRowBool(
-  resources: GhosttyRenderStateResources,
-  rawRow: bigint,
-  data: number
-): boolean {
-  const scratch = ensureScratch(resources);
-  const bindings = resources.bindings;
-  assertReadResult(bindings.getRawRowValueResult(rawRow, data, scratch.u8), 'bool');
-  return bindings.view().getUint8(scratch.u8) !== 0;
-}
-
-function readRawCellBool(
-  resources: GhosttyRenderStateResources,
-  rawCell: bigint,
-  data: number
-): boolean {
-  const scratch = ensureScratch(resources);
-  const bindings = resources.bindings;
-  assertReadResult(bindings.getRawCellValueResult(rawCell, data, scratch.u8), 'bool');
-  return bindings.view().getUint8(scratch.u8) !== 0;
-}
-
-function readRawCellEnum(
-  resources: GhosttyRenderStateResources,
-  rawCell: bigint,
-  data: number
-): number {
-  const scratch = ensureScratch(resources);
-  const bindings = resources.bindings;
-  assertReadResult(bindings.getRawCellValueResult(rawCell, data, scratch.u32), 'enum');
-  return bindings.view().getInt32(scratch.u32, true);
-}
-
-// 内核的行 dirty 位遵循「消费即清」：读到 true 必须写回 false，否则它一直是 true
-//（旧实现从不回写，于是每行恒报脏，只能靠逐 cell 比对判断变化）。
-function consumeReportedRowDirty(resources: GhosttyRenderStateResources): boolean {
-  const scratch = ensureScratch(resources);
-  const bindings = resources.bindings;
-  assertReadResult(
-    bindings.getRenderStateRowValueResult(
-      resources.rowIteratorHandle,
-      GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
-      scratch.u8
-    ),
-    'bool'
-  );
-  if (bindings.view().getUint8(scratch.u8) === 0) {
-    return false;
-  }
-
-  bindings.view().setUint8(scratch.u8, 0);
-  bindings.setRenderStateRowValue(
-    resources.rowIteratorHandle,
-    GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
-    scratch.u8
-  );
-  return true;
-}
-
-function readCellColor(
-  resources: GhosttyRenderStateResources,
-  data: number
-): GhosttyColorRgb | null {
-  const scratch = ensureScratch(resources);
-  const bindings = resources.bindings;
-  const result = bindings.getRenderStateRowCellValueResult(
-    resources.rowCellsHandle,
-    data,
-    scratch.color
-  );
-  if (result === GHOSTTY_INVALID_VALUE) {
-    return null;
-  }
-
-  if (result !== GHOSTTY_SUCCESS) {
-    throw new Error(`ghostty optional color read failed with result ${result}`);
-  }
-
-  return readColorAt(resources.colorCache, scratch.color, bindings.view());
-}
-
-// style 内插：把 8 个 bool + underline 打成整数键，整屏通常只有个位数到几十种组合。
-function readStyle(resources: GhosttyRenderStateResources): GhosttyRenderCellStyle {
-  const scratch = ensureScratch(resources);
-  const bindings = resources.bindings;
-  bindings.view().setUint32(scratch.style + scratch.styleSizeOffset, scratch.styleSize, true);
-  bindings.getRenderStateRowCellValue(
-    resources.rowCellsHandle,
-    GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
-    scratch.style
-  );
-
-  const view = bindings.view();
-  const offsets = scratch.styleFlagOffsets;
-  let flags = 0;
-  for (let index = 0; index < offsets.length; index += 1) {
-    if (view.getUint8(scratch.style + offsets[index]) !== 0) {
-      flags |= 1 << index;
-    }
-  }
-  const underline = view.getInt32(scratch.style + scratch.styleUnderlineOffset, true);
-
-  const key = underline * 256 + flags;
-  const cached = resources.styleCache.get(key);
-  if (cached) {
-    return cached;
-  }
-
-  if (resources.styleCache.size >= INTERN_LIMIT) {
-    resources.styleCache.clear();
-  }
-
-  const style: GhosttyRenderCellStyle = {
-    bold: (flags & 0b0000_0001) !== 0,
-    italic: (flags & 0b0000_0010) !== 0,
-    faint: (flags & 0b0000_0100) !== 0,
-    blink: (flags & 0b0000_1000) !== 0,
-    inverse: (flags & 0b0001_0000) !== 0,
-    invisible: (flags & 0b0010_0000) !== 0,
-    strikethrough: (flags & 0b0100_0000) !== 0,
-    overline: (flags & 0b1000_0000) !== 0,
-    underline,
-  };
-  resources.styleCache.set(key, style);
-  return style;
-}
-
-function readGraphemeLen(resources: GhosttyRenderStateResources): number {
-  const scratch = ensureScratch(resources);
-  const bindings = resources.bindings;
-  assertReadResult(
-    bindings.getRenderStateRowCellValueResult(
-      resources.rowCellsHandle,
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN,
-      scratch.u32
-    ),
-    'u32'
-  );
-  return bindings.view().getUint32(scratch.u32, true);
-}
-
-function readCodepointsInto(resources: GhosttyRenderStateResources, buffer: number[]): number {
-  const graphemeLen = readGraphemeLen(resources);
-  if (graphemeLen === 0) {
-    return 0;
-  }
-
-  const scratch = ensureScratch(resources);
-  const inline = graphemeLen <= GRAPHEME_SCRATCH_CODEPOINTS;
-  const bufPtr = inline ? scratch.graphemes : resources.bindings.allocBytes(graphemeLen * 4);
-
-  try {
-    resources.bindings.getRenderStateRowCellValue(
-      resources.rowCellsHandle,
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF,
-      bufPtr
-    );
-
-    const view = resources.bindings.view();
-    for (let index = 0; index < graphemeLen; index += 1) {
-      buffer[index] = view.getUint32(bufPtr + index * 4, true);
-    }
-
-    return graphemeLen;
-  } finally {
-    if (!inline) {
-      resources.bindings.freeBytes(bufPtr, graphemeLen * 4);
-    }
-  }
-}
-
-function codepointsToText(buffer: number[], length: number): string {
-  if (length === 0) {
-    return '';
-  }
-
-  if (length === 1) {
-    const codepoint = buffer[0];
-    if (codepoint < 128) {
-      return ASCII_TEXT[codepoint];
-    }
-  }
-
-  try {
-    return String.fromCodePoint(...buffer.slice(0, length));
-  } catch {
-    return '';
-  }
-}
-
-function materializeCodepoints(buffer: number[], length: number): number[] {
-  if (length === 0) {
-    return EMPTY_CODEPOINTS;
-  }
-
-  if (length === 1 && buffer[0] < 128) {
-    return ASCII_CODEPOINTS[buffer[0]];
-  }
-
-  return buffer.slice(0, length);
-}
-
-function buildRowText(cells: GhosttyRenderCell[]): string {
-  let text = '';
-
-  for (const cell of cells) {
-    if (cell.widthKind === 'spacer-tail' || cell.widthKind === 'spacer-head') {
-      continue;
-    }
-
-    if (cell.text) {
-      text += cell.text;
-      continue;
-    }
-
-    if (cell.widthKind === 'narrow') {
-      text += ' ';
-    }
-  }
-
-  return text;
 }
 
 type RenderStatePointerRead = (ptr: number) => number;
@@ -526,7 +148,7 @@ function readOptionalStateU16(
 // 用「把 colors 结构体读进常驻暂存区后按字节比对」当变更信号：每帧一次导出调用 +
 // 一次约 800 字节的 memcmp，换掉每帧 256 个 palette 对象的重建。
 function readColors(resources: GhosttyRenderStateResources): GhosttyRenderColors {
-  const scratch = ensureScratch(resources);
+  const scratch = ensureRenderStateScratch(resources);
   const bindings = resources.bindings;
 
   bindings.setField(
@@ -649,152 +271,6 @@ function readMeta(resources: GhosttyRenderStateResources): GhosttyRenderSnapshot
   };
 }
 
-const graphemeScratch: number[] = new Array(GRAPHEME_SCRATCH_CODEPOINTS).fill(0);
-
-// style / 颜色都是内插实例，比对退化成引用相等；参数全是原始值或已有引用，
-// 逐 cell 调用不产生任何分配。
-export function isCellUnchanged(
-  candidate: GhosttyRenderCell,
-  text: string,
-  codepointCount: number,
-  widthKind: GhosttyCellWidthKind,
-  hasText: boolean,
-  style: GhosttyRenderCellStyle,
-  fgColor: GhosttyColorRgb | null,
-  bgColor: GhosttyColorRgb | null
-): boolean {
-  return (
-    candidate.text === text &&
-    candidate.codepoints.length === codepointCount &&
-    candidate.widthKind === widthKind &&
-    candidate.hasText === hasText &&
-    candidate.style === style &&
-    candidate.fgColor === fgColor &&
-    candidate.bgColor === bgColor
-  );
-}
-
-// 行级复用：所有 cell 都命中复用且行属性未变时，整行沿用上一帧（含已构建的 text）；
-// 上一帧标了 dirty 的话只换一层「dirty=false」的外壳，cells / text 仍是同一批引用。
-export function reuseUnchangedRow(
-  previous: GhosttyRenderRow | null,
-  rowIndex: number,
-  cellCount: number,
-  wrap: boolean,
-  wrapContinuation: boolean
-): GhosttyRenderRow | null {
-  if (
-    !previous ||
-    previous.cells.length !== cellCount ||
-    previous.wrap !== wrap ||
-    previous.wrapContinuation !== wrapContinuation
-  ) {
-    return null;
-  }
-
-  if (!previous.dirty && previous.y === rowIndex) {
-    return previous;
-  }
-
-  return {
-    y: rowIndex,
-    dirty: false,
-    wrap,
-    wrapContinuation,
-    text: previous.text,
-    cells: previous.cells,
-  };
-}
-
-// 逐 cell 先读原始值再和上一帧同位置比对：内容未变时直接复用上一帧的 cell 对象（不新建）。
-// cells 由调用方传入并就地填充；返回 true 表示至少有一个 cell 与上一帧不同。
-function readRowCells(
-  resources: GhosttyRenderStateResources,
-  previousCells: GhosttyRenderCell[] | null,
-  cells: GhosttyRenderCell[]
-): boolean {
-  const bindings = resources.bindings;
-  let changed = false;
-  let x = 0;
-
-  while (bindings.nextRenderStateRowCell(resources.rowCellsHandle)) {
-    const rawCell = readCellRaw(resources);
-    const codepointCount = readCodepointsInto(resources, graphemeScratch);
-    const widthKind = resultToCellWidthKind(
-      readRawCellEnum(resources, rawCell, GHOSTTY_CELL_DATA_WIDE)
-    );
-    const hasText = readRawCellBool(resources, rawCell, GHOSTTY_CELL_DATA_HAS_TEXT);
-    const style = readStyle(resources);
-    const fgColor = readCellColor(resources, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR);
-    const bgColor = readCellColor(resources, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR);
-    const text = codepointsToText(graphemeScratch, codepointCount);
-
-    const reusable = previousCells ? previousCells[x] : undefined;
-    if (
-      reusable &&
-      isCellUnchanged(reusable, text, codepointCount, widthKind, hasText, style, fgColor, bgColor)
-    ) {
-      cells.push(reusable);
-    } else {
-      changed = true;
-      cells.push({
-        x,
-        text,
-        codepoints: materializeCodepoints(graphemeScratch, codepointCount),
-        widthKind,
-        hasText,
-        style,
-        fgColor,
-        bgColor,
-      });
-    }
-    x += 1;
-  }
-
-  return changed;
-}
-
-// 整行未变时复用上一帧的行对象（含已构建的 text）。
-function readRow(
-  resources: GhosttyRenderStateResources,
-  rowIndex: number,
-  previous: GhosttyRenderRow | null,
-  reuseReportedDirty = false
-): GhosttyRenderRow {
-  // dirty 位先读：内核报本行未脏且上一帧可比时整行沿用，一个 cell 都不读。
-  const reportedDirty = consumeReportedRowDirty(resources);
-  if (previous && (reuseReportedDirty || !reportedDirty)) {
-    return previous.dirty || previous.y !== rowIndex
-      ? { ...previous, y: rowIndex, dirty: false }
-      : previous;
-  }
-
-  const rawRow = readRowRaw(resources);
-  resources.bindings.bindRenderStateRowCells(resources.rowIteratorHandle, resources.rowCellsHandle);
-
-  const cells: GhosttyRenderCell[] = [];
-  const changed = readRowCells(resources, previous?.cells ?? null, cells);
-
-  const wrap = readRawRowBool(resources, rawRow, GHOSTTY_ROW_DATA_WRAP);
-  const wrapContinuation = readRawRowBool(resources, rawRow, GHOSTTY_ROW_DATA_WRAP_CONTINUATION);
-
-  const reused = changed
-    ? null
-    : reuseUnchangedRow(previous, rowIndex, cells.length, wrap, wrapContinuation);
-  if (reused) {
-    return reused;
-  }
-
-  return {
-    y: rowIndex,
-    dirty: reportedDirty || changed,
-    wrap,
-    wrapContinuation,
-    text: buildRowText(cells),
-    cells,
-  };
-}
-
 export function createRenderState(bindings: GhosttyBindings): GhosttyRenderStateResources {
   let renderStateHandle = 0;
   let rowIteratorHandle = 0;
@@ -901,7 +377,12 @@ export function* iterateRows(
     resources.bindings.nextRenderStateRowIterator(resources.rowIteratorHandle)
   ) {
     const previous = lookupShiftedPreviousRow(comparable, settled, rowIndex, shifted);
-    const row = readRow(resources, rowIndex, previous, shifted !== 0 && previous !== null);
+    const row = readRenderStateRow(
+      resources,
+      rowIndex,
+      previous,
+      shifted !== 0 && previous !== null
+    );
     rows.push(row);
     yield row;
     rowIndex += 1;
@@ -925,10 +406,7 @@ export function disposeRenderStateResources(resources: GhosttyRenderStateResourc
   }
 
   resources.disposed = true;
-  if (resources.scratch) {
-    resources.bindings.freeBytes(resources.scratch.base, resources.scratch.size);
-    resources.scratch = null;
-  }
+  releaseRenderStateScratch(resources);
   if (resources.rowCellsHandle !== 0) {
     resources.bindings.freeRenderStateRowCells(resources.rowCellsHandle);
     resources.rowCellsHandle = 0;
@@ -950,3 +428,4 @@ export function disposeRenderStateResources(resources: GhosttyRenderStateResourc
 }
 
 export type { GhosttyRenderStateResources };
+export { isCellUnchanged, reuseUnchangedRow } from './render-state-read';
