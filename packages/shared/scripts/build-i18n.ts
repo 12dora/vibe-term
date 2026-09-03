@@ -6,18 +6,21 @@
  * 1. Read all locale JSON files from src/i18n/locales/
  * 2. Merge them into a single resources.ts file
  * 3. Generate type definitions
- * 4. Keep the manifest.json for runtime use
+ * 4. Emit the per-locale core/rest split consumed by the frontend
+ * 5. Keep the manifest.json for runtime use
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { type TranslationTree, splitTranslation } from '../src/i18n/core-keys';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const LOCALES_DIR = path.join(__dirname, '../src/i18n/locales');
 const OUTPUT_FILE = path.join(__dirname, '../src/i18n/resources.ts');
+const SPLIT_DIR = path.join(LOCALES_DIR, 'generated');
 
 interface LocaleInfo {
   code: string;
@@ -68,7 +71,38 @@ function main() {
   fs.writeFileSync(typesFile, typesContent, 'utf-8');
   console.log(`[i18n] Generated: ${path.relative(process.cwd(), typesFile)}`);
 
+  writeSplitBundles(resources);
+
   console.log(`[i18n] Build complete. ${Object.keys(resources).length} locales.`);
+}
+
+// 首屏语言包按 core/rest 切分：core 覆盖入口 chunk 用得到的 key，rest 由懒路由按需补齐。
+function writeSplitBundles(resources: Record<string, unknown>): void {
+  fs.mkdirSync(SPLIT_DIR, { recursive: true });
+
+  for (const [code, content] of Object.entries(resources)) {
+    const translation = (content as { translation?: TranslationTree }).translation ?? {};
+    const { core, rest } = splitTranslation(translation);
+
+    const leafCount = (tree: TranslationTree): number =>
+      Object.values(tree).reduce<number>(
+        (sum, value) => sum + (typeof value === 'string' ? 1 : leafCount(value)),
+        0
+      );
+    const total = leafCount(translation);
+    if (leafCount(core) + leafCount(rest) !== total) {
+      throw new Error(`[i18n] core/rest split lost keys for ${code}`);
+    }
+
+    for (const [part, tree] of [
+      ['core', core],
+      ['rest', rest],
+    ] as const) {
+      const file = path.join(SPLIT_DIR, `${code}.${part}.json`);
+      fs.writeFileSync(file, `${JSON.stringify({ translation: tree }, null, 2)}\n`, 'utf-8');
+    }
+    console.log(`[i18n] Split ${code}: core ${leafCount(core)} / rest ${leafCount(rest)} keys`);
+  }
 }
 
 function generateTypeScript(resources: Record<string, unknown>, manifest: Manifest): string {

@@ -49,6 +49,8 @@ The installer generates keys, deploys runtime files, registers a user service (l
 |---|---|---|
 | The browser-side terminal uses Ghostty’s official VT kernel compiled to WebAssembly. You get native-grade terminal semantics without a hand-rolled ANSI parser. | Manage local machines and remote SSH hosts side by side. Authenticate with password, private key, SSH Agent, or SSH Config. Drag to reorder the device tree. | tmex is built on tmux Control Mode, so pane output, window lifecycle events, and bell notifications arrive in real time. Use the web UI alongside iTerm2 or any native tmux client. |
 
+**Multi-machine mesh.** Any tmex install can join a mesh: one machine with a public HTTPS address acts as the hub, and the rest join it with a join code, needing only outbound connections. Every node is a full entry point — open any one of them and you see and operate every machine in the mesh. Nodes connect to each other directly over WebRTC where possible and fall back to hub relay, and every link is encrypted end to end. Set it up in **Settings → Multi-node Mesh**, or from the CLI with `tmex init --role hub,node` and `tmex hub join <https-url> --token <t>`.
+
 ## Install & Upgrade
 
 ```bash
@@ -77,14 +79,25 @@ Installation requires [Bun](https://bun.sh) (the installer will install it if mi
 
 ## Security
 
-> **tmex does not include built-in authentication. Run it inside a trusted network only. Do not expose it directly to the public internet.**
->
-> For remote access, protect it with a zero-trust layer such as [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/) or Tailscale.
+tmex ships a full authentication stack, but on a standalone install it is **off by default**: a fresh install binds to `127.0.0.1:9883` and serves no login page. Turn on login protection in **Settings → Remote access** before the UI is reachable from anywhere but the machine itself. A machine that joins a mesh always requires login — there the switch does not exist.
+
+**Accounts.** The password never leaves the browser. Argon2id (64 MiB, 3 passes) derives an Ed25519 root key client-side; the server stores only the root public key and the KDF parameters. A login signs a delegation valid for 18 hours to a per-browser session key, and node sessions renew on a sliding 18-hour window with a 7-day hard cap. Failed logins are rate limited per source IP and per account, and every credential failure returns the same error.
+
+**Second factors, both optional.** Register a passkey (WebAuthn) and password logins additionally require a passkey assertion; a passkey can also be used to sign in on its own. Requests whose source address is loopback, private, link-local, or CGNAT skip that step — WebAuthn cannot be used on IP-literal origins such as `http://192.168.1.5:9883`. TOTP is independent and can be enabled alongside it; its secret is encrypted under a key derived from the root key and decrypted only during login.
+
+**Credential rotation.** Passkeys, TOTP, node certificates, and hub authorizations live in a hash-chained log signed by the root key and replicated to every node. A normal password change rotates the root key and keeps passkeys, TOTP, and open sessions; `tmex hub user passwd <user> --full-reset` also removes every passkey and TOTP and signs out everywhere.
+
+**Mesh.** Membership is proved by Ed25519 node certificates issued by your root key — the hub issues no credentials of its own. Node-to-node links are mutually authenticated and encrypted end to end with AES-256-GCM, so a relaying hub only ever moves ciphertext.
+
+**Transport.** The built-in TLS listener serves a self-signed CA or a Let's Encrypt certificate obtained over ACME (`http-01`, or `dns-01` via Cloudflare or DNSPod). You can also terminate TLS at your own reverse proxy and set `TMEX_TRUST_PROXY=true` so tmex reads the real client address and scheme. Without a public IP, tmex downloads and supervises `cloudflared` itself — on your own hostname or as a quick tunnel — and can enforce [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/) JWTs in front of it.
 
 - Passwords and private keys are encrypted at rest with AES-256-GCM.
 - Webhook notifications are signed with HMAC-SHA256.
 - Agent terminal writes are bound to a single pane and require explicit approval by default.
 - `fetch_url` denies loopback, link-local, and private addresses by default to prevent SSRF.
+- Every node has an "Allow Domain Access" switch: turn it off and only local and private-network clients reach it, while mesh traffic keeps flowing.
+
+**Still on you.** Pick a strong password, serve tmex over HTTPS (passkeys and `Secure` cookies need it), and keep every node upgraded — during a rolling upgrade a node on an older version still accepts password-only logins.
 
 ## FAQ
 

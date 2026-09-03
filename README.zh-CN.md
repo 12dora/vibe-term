@@ -50,6 +50,8 @@ curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.s
 |---|---|---|
 | 浏览器端终端由 Ghostty 官方 VT 内核编译为 WebAssembly 提供，不依赖自研 ANSI 解析器，终端语义与原生客户端一致。 | 同一侧边栏管理本地机器与远程 SSH 主机，支持密码、私钥、SSH Agent、SSH Config 认证，设备树支持拖拽排序。 | 基于 tmux Control Mode 构建，pane 输出、窗口生命周期与 bell 通知实时到达。Web UI 可与 iTerm2 等原生 tmux 客户端共用同一份会话。 |
 
+**多节点互联**：任意一台 tmex 都可以组网——一台有公网 HTTPS 地址的机器作为中继（Hub），其余机器用加入码加入，只需出站连接。每个节点都是完整入口：打开其中任意一台，就能看到并操作网内的全部机器。节点之间优先 WebRTC 直连，不通时回落 Hub 中转，链路端到端加密。在「设置 → 多节点互联」里配置，或用 `tmex init --role hub,node` 与 `tmex hub join <https-url> --token <t>`。
+
 ## 安装与升级
 
 ```bash
@@ -78,14 +80,25 @@ tmex uninstall
 
 ## 安全
 
-> **tmex 未内置用户鉴权，请在受信网络内运行，不要直接暴露到公网。**
->
-> 如需远程访问，建议通过 [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/)、Tailscale 等零信任方案保护。
+tmex 内置完整的登录保护，但 standalone 安装默认**不启用**：全新安装绑定 `127.0.0.1:9883`，不提供登录页。在把界面暴露到本机以外之前，须先在「设置 → 远程访问」里开启登录保护。已组网的机器强制登录，没有这个开关。
+
+**账号**：口令不离开浏览器。浏览器侧用 Argon2id（64 MiB、3 轮）从口令派生 Ed25519 根钥，服务端只存根公钥与 KDF 参数。登录签发有效期 18 小时的授权凭据给浏览器临时会话钥；节点会话按 18 小时滑动续期，绝对上限 7 天。登录失败按源 IP 与账号分别限流，凭证类失败一律返回同一个错误码。
+
+**两种可选第二因素**：注册通行密钥（WebAuthn）后，口令登录须附带一次通行密钥断言；通行密钥也可以单独用于登录。源地址为回环、内网、链路本地或 CGNAT 的请求免这一步——`http://192.168.1.5:9883` 这类 IP 字面量地址无法注册 WebAuthn 凭证。两步验证（TOTP）与之独立，可同时启用；其密钥由根钥派生的密钥加密存放，仅在登录时现场解密。
+
+**凭证轮换**：通行密钥、TOTP、节点证书与 Hub 授权都记录在一条由根钥签名的哈希链式密钥日志里，并同步到每个节点。常规改密只轮换根钥，通行密钥、TOTP 与已有会话保留；`tmex hub user passwd <user> --full-reset` 会同时移除全部通行密钥与 TOTP，并注销所有会话。
+
+**多节点互联**：节点成员资格由根钥签发的 Ed25519 证书证明，Hub 不签发任何凭证。节点之间的链路双向认证，并以 AES-256-GCM 端到端加密，做中转的 Hub 只搬密文。
+
+**传输**：内置 TLS 监听器可提供自签 CA 证书，或经 ACME（`http-01`，或通过 Cloudflare / DNSPod 的 `dns-01`）签发的 Let's Encrypt 证书；也可以在自己的反向代理上终止 TLS，并设 `TMEX_TRUST_PROXY=true`，让 tmex 读到真实的客户端地址与协议。没有公网 IP 时，tmex 自行下载并托管 `cloudflared`，用自有域名或临时隧道对外，并可在其前面强制校验 [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/) 的 JWT。
 
 - 密码与私钥均使用 AES-256-GCM 加密存储。
 - Webhook 通知使用 HMAC-SHA256 签名验证。
 - Agent 写终端操作默认按动作请求确认，且被绑定到单个 pane。
 - `fetch_url` 默认拒绝回环、链路本地与私网地址，防止 SSRF。
+- 每个节点都有「允许域名访问」开关：关闭后只有本机与局域网客户端能访问它，节点之间的服务流量不受影响。
+
+**仍需自行处理**：口令须足够强；对外服务走 HTTPS（通行密钥与 `Secure` Cookie 依赖它）；保持所有节点为最新版本——滚动升级期间，版本落后的节点仍只校验口令。
 
 ## 常见问题
 

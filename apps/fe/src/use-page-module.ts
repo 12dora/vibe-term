@@ -27,13 +27,29 @@ export function toPageModuleError(reason: unknown): Error {
   return reason instanceof Error ? reason : new Error(String(reason));
 }
 
+// 懒路由 chunk 之外的前置条件（i18n rest 语言包）。由 `@/i18n` 在启动时注入：
+// 这里不能静态 import 它——那个模块用的是 vite 专属的 import.meta.glob，进不了单测环境。
+// 未注入时保持原有时序，一个 then 直达 ready。
+let pageModulePrerequisite: (() => Promise<unknown>) | null = null;
+
+export function setPageModulePrerequisite(prerequisite: (() => Promise<unknown>) | null): void {
+  pageModulePrerequisite = prerequisite;
+}
+
 /** 发起一次加载并返回取消函数：取消后 resolve/reject 都不再写状态 */
 export function requestPageModule(
   loader: PageModuleLoader,
   apply: (state: PageModuleState) => void
 ): () => void {
   let cancelled = false;
-  void loader().then(
+  const pending = loader();
+  // 语言包失败不该拖垮页面：前置条件只等，不参与失败判定。
+  const ready = pageModulePrerequisite
+    ? Promise.all([pending, pageModulePrerequisite().catch(() => undefined)]).then(
+        ([module]) => module
+      )
+    : pending;
+  void ready.then(
     (module) => {
       if (!cancelled) apply({ status: 'ready', module, error: null });
     },

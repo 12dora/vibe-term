@@ -46,27 +46,31 @@
 - `RECONNECT_BACKOFF`
 - `CLOSED`
 
-### 事件
+状态枚举即 `ConnectionState`（`packages/ws-client/src/client.ts`）。
 
-- `connect()`
-- `ws_open`
-- `hello_s2c`
-- `ws_error/ws_close`
-- `backoff_timeout`
-- `disconnect()`
+### 事件（无独立事件枚举，均为回调 / 方法）
+
+- `BorshWebSocketClient.connect()`
+- `socket.onopen` -> `sendHello()`
+- `ProtocolDispatcher.onHello` -> `handleHelloNegotiated(hello)`
+- `socket.onerror` -> `handleError()`、`socket.onclose` -> `handleClose()`
+- `ReconnectController.schedule()` 的退避定时器到期 -> `onReconnect` -> `connect()`
+- `BorshWebSocketClient.disconnect()`
 
 ### 转移
 
 - `IDLE -> WS_CONNECTING`：调用 `connect()`。
-- `WS_CONNECTING -> HELLO_NEGOTIATING`：WS open 发送 `HELLO_C2S`。
-- `HELLO_NEGOTIATING -> READY`：收到 `HELLO_S2C`。
-- `READY -> RECONNECT_BACKOFF`：ws close/error。
-- `RECONNECT_BACKOFF -> WS_CONNECTING`：backoff 到期。
-- 任意状态 `-> CLOSED`：手动断开。
+- `WS_CONNECTING -> HELLO_NEGOTIATING`：`socket.onopen` 里 `sendHello()` 发出 `HELLO_C2S`。
+- `HELLO_NEGOTIATING -> READY`：`handleHelloNegotiated()` 收下 `HELLO_S2C` 的协商结果。
+- `READY -> RECONNECT_BACKOFF`：`handleClose()` 且 `reconnector.canRetry()`。
+- `RECONNECT_BACKOFF -> WS_CONNECTING`：退避定时器到期回调 `connect()`。
+- 任意状态 `-> CLOSED`：`disconnect()`，或重试次数用尽后由 `handleClose()` 置位。
 
 ### 超时
 
-- HELLO 超时：3s。超时则 close 并进入 backoff。
+- 没有独立的 HELLO 超时定时器：`HELLO_S2C` 解码失败走 `onHelloFailure`，其余情况靠 socket 关闭与心跳兜底。
+- 心跳 PONG 超时（`HeartbeatController`，缺省 10s，页面隐藏时 60s）直接 `ws.close()`，随后按 `handleClose()` 进入退避。
+- 退避为指数退避（基数 `reconnectDelayMs` 1s，上限 30s）；尝试次数超过 `maxReconnectAttempts`（缺省 5）后置 `CLOSED`。
 
 ### 关键实现点
 
@@ -170,20 +174,21 @@
 
 ---
 
-## 5) Resize 状态机（FE，按 deviceId+paneId）
+## 5) Resize 上报编排（FE，按 deviceId+paneId）
 
-### 状态
+这里没有显式状态枚举：在途状态就是调度器持有的定时器 / RAF 回调，闸门是每次执行时现取的快照。
 
-- `IDLE`
-- `PENDING_DEBOUNCE`
-- `SENT`
+### 实现
 
-### 规则
+- 触发源：容器 `ResizeObserver`（`useContainerResizeObserver`）+ `FitAddon.proposeDimensions()`（`ghostty-terminal` 提供的兼容实现）。
+- 编排：`TerminalResizeScheduler`（`packages/terminal-ui/src/components/terminal-resize-scheduler.ts`）先防抖合并，再落到一次 RAF 上执行（`RafCoalescer`），等布局稳定后才测量。
+- 上报闸门：`TerminalResizeReporter`（同目录 `terminal-resize-reporter.ts`）在**执行时**取 `TerminalResizeGate`；`sizingMode` 为 `report | follow | local`，只有 `report` 才真正发帧，避免防抖排队期间实例被切到后台仍替它上报。
 
-- Resize 触发源：ResizeObserver + `FitAddon`（`ghostty-terminal` 提供的兼容实现）。
-- 实现见 `packages/terminal-ui/src/components/terminal-resize-{reporter,scheduler}.ts`。
+### 参数与规则
+
+- 防抖：`RESIZE_DEBOUNCE_MS = 150`。
+- 切 pane 后补测三轮（`runPostSelect`）：立即一次、`POST_SELECT_RETRY_MS = 60` 后一次、`document.fonts.ready` 后一次。
 - 去重：cols/rows 未变化不发送。
-- debounce：80ms。
 - `TMUX_SELECT` 可以携带 cols/rows 作为首包同步。
 - `TERM_RESIZE` 与 `TERM_SYNC_SIZE` 语义一致；建议：
   - `TERM_SYNC_SIZE` 用于 “select 后强制同步”
@@ -213,19 +218,19 @@
 
 > 对应 `apps/gateway/src/ws/device-connection-registry.ts` 的 device entry 管理与重连（由 `apps/gateway/src/ws/index.ts` 装配）。
 
-### 状态
+### 状态（隐式，由 registry 的两张表与 entry 上的定时器体现）
 
-- `NONE`：无 entry
-- `CONNECTING`
-- `ACTIVE`：tmux ready，能处理命令与输出
-- `RECONNECTING`：自动重连中
-- `CLOSING`
+- 无 entry：`connections` 里没有该 deviceId。
+- 创建中：`pendingConnectionEntries` 有在途 promise，并发 connect 合流到同一个 promise。
+- ACTIVE：`connections` 有 entry，tmux ready，能处理命令与输出。
+- RECONNECTING：`entry.reconnectTimer` 在途。
+- 空闲宽限：`entry.clients` 与 `entry.canonicalClients` 都空，`entry.idleReleaseTimer` 在途。
 
 ### 规则
 
-- clients 集合为空时进入 CLOSING 并断开 tmux。
-- clients 不为空且断链时进入 RECONNECTING（按 settings 重试次数与间隔）。
-- RECONNECTING 成功后发送 `DEVICE_EVENT(reconnected)` 并主动推 snapshot。
+- 客户端集合为空时不立即断开 tmux，而是 `scheduleConnectionEntryRelease()` 排一次 `RUNTIME_IDLE_GRACE_MS`（5s）宽限；宽限内重新 connect 直接复用同一 entry，超时才 `releaseConnectionEntry()`。
+- clients 不为空且断链时走 `handleConnectionClose()` 重连（按 site settings 的 `sshReconnectMaxRetries` / `sshReconnectDelaySeconds`）。
+- 重连成功后发送 `DEVICE_EVENT(reconnected)` 并主动推 snapshot；重试用尽由 `finalizeReconnectFailure()` 广播终态事件并清空 entry。
 
 ---
 
@@ -246,14 +251,15 @@
 
 - `NEGOTIATING`：等待 HELLO，不能收发 canonical 业务消息。
 - `READY`：已发送一次 `FeedReady` 和完整 metadata snapshot，可接受命令。
-- `RESYNCING`：检测到 metadata revision 或 pane sequence gap，正在发送对应 snapshot。
 - `CLOSED`：释放客户端订阅；不关闭仍被其他消费者使用的 device runtime。
+
+三个状态在 `CanonicalFeedSession` 里是 `readySent` / `bootstrapped` / `closed` 三个标志，不是枚举。metadata 重置不是会话级状态，而是 per-device 标志 `AttachedDevice.metadataNeedsRebase`（`requestMetadataRebase()` 置位并重发完整 metadata snapshot）；pane sequence gap 由 `CanonicalPaneStream` 发 `SourceGap`，同样不改变会话状态。
 
 ### 不变量
 
 1. 同一个 `deviceId` 的所有 WS 消费者共享一个 `DeviceSessionRuntime` 和一条底层 tmux control/output 连接，不能按浏览器 tab 新建采集流。
 2. feed 建立时先发 `FeedReady`，再发完整 metadata snapshot；snapshot Commit 前客户端不可应用后续 patch。
-3. metadata patch 必须满足 `fromRevision == clientRevision`；不连续时进入 `RESYNCING` 并重发完整 metadata snapshot。
+3. metadata patch 必须满足 `fromRevision == clientRevision`；不连续时置 `metadataNeedsRebase` 并重发完整 metadata snapshot。
 4. pane output 只下发给该 feed 的 active/hot 并集；未订阅 pane 的元数据仍实时下发，但终端字节不下发。
 5. `SetPaneSubscriptions` 是集合替换，不是增量修改。generation 小于等于已应用 generation 时幂等忽略并回当前 ACK。
 6. canonical event 直接编码为不超过 32KiB 的 Envelope，严禁再经通用 `CHUNK`。

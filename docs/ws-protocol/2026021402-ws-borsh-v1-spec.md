@@ -125,6 +125,17 @@ export const EnvelopeSchema = b.struct({
 | 0x0208 | STATE_SNAPSHOT | S2C | tmux 状态快照 |
 | 0x0209 | STATE_SNAPSHOT_DIFF | S2C | 快照 diff（v1 保留，可忽略） |
 | 0x020A | TMUX_SET_WINDOW_STYLE | C2S | 按前端主题更新 window-style |
+| 0x020B | TMUX_REORDER_WINDOWS | C2S | 按给定顺序重排 window |
+| 0x020C | TMUX_REORDER_PANES | C2S | 按给定顺序重排 window 内 pane |
+| 0x020D | TMUX_SUBSCRIBE_PANES | C2S | 分屏：幂等全量声明额外接收输出的 pane 集合 |
+| 0x020E | TMUX_FETCH_PANE_HISTORY | C2S | 拉取非焦点 pane 首屏历史（回包复用 TERM_HISTORY） |
+| 0x020F | TMUX_RESIZE_PANE | C2S | splitter 拖拽提交的 resize-pane 绝对值 |
+| 0x0210 | TMUX_APPLY_STACKED_LAYOUT | C2S | 移动端拼接布局（resize-window + even-horizontal） |
+| 0x0211 | TMUX_SPLIT_PANE | C2S | 切分 pane |
+| 0x0212 | TMUX_FOCUS_PANE | C2S | 分屏内轻量焦点切换（不走屏障） |
+| 0x0213 | TMUX_RENAME_PANE | C2S | pane 自定义名（gateway 内存 overlay） |
+| 0x0214 | TMUX_MOVE_PANE | C2S | 拖拽重排：move-pane 到目标 pane 某一侧 |
+| 0x0215 | TMUX_BREAK_PANE | C2S | break-pane 拆为独立 window |
 
 ### 终端数据（0x0300-0x03FF）
 
@@ -136,6 +147,7 @@ export const EnvelopeSchema = b.struct({
 | 0x0304 | TERM_SYNC_SIZE | C2S | 同步尺寸（语义同 TERM_RESIZE，便于区分来源） |
 | 0x0305 | TERM_OUTPUT | S2C | 终端输出（raw bytes） |
 | 0x0306 | TERM_HISTORY | S2C | 历史输出（与 selectToken 绑定） |
+| 0x0307 | CLIPBOARD_WRITE | S2C | pane 输出里解析出的 OSC52 剪贴板写入请求 |
 | 0x0308 | TERM_VIEWPORT | C2S | 客户端视口 claim（几何 + 可见性） |
 | 0x0309 | TERM_VIEWPORT_POLICY | S2C | window 尺寸策略（owner / 权威 cols×rows） |
 
@@ -166,6 +178,14 @@ export const EnvelopeSchema = b.struct({
 |---:|---|---|---|
 | 0x0701 | WATCH_EVENT | S2C | watch 规则事件，广播给所有已协商客户端（payload 为 JSON bytes） |
 
+### 站点设置与站点级广播（0x0800-0x08FF）
+
+| kind | 名称 | 方向 | 说明 |
+|---:|---|---|---|
+| 0x0801 | SITE_THEME_UPDATE | BIDI | 站点主题切换请求与广播（同 kind 双向，C2S/S2C 各一套 schema） |
+| 0x0802 | SETTINGS_UPDATE | S2C | 设置变更广播（缓存失效信号，按 namespace 重拉 REST） |
+| 0x0803 | NOTIFY_EVENT | S2C | 站点级事件通知广播（body 为事件 JSON 字符串） |
+
 ### Canonical State（0x0900-0x09FF）
 
 | kind | 名称 | 方向 | 说明 |
@@ -174,6 +194,18 @@ export const EnvelopeSchema = b.struct({
 | 0x0902 | CANONICAL_EVENT | S2C | 元数据、pane 增量、订阅 ACK、screen/history 事务与 gap |
 
 协商能力：`canonical-state-v1`。客户端只有在 `HELLO_S2C.capabilities` 包含该值时才能发送 canonical command。
+
+### Mesh / hub（0x0A00-0x0AFF）
+
+| kind | 名称 | 方向 | 说明 |
+|---:|---|---|---|
+| 0x0A01 | NODE_EVENT | S2C | 节点上下线 / 吊销与 reach、版本、载体、RTT 播报 |
+| 0x0A02 | RTC_SIGNAL | BIDI | 浏览器 <-> node 的 WebRTC SDP / candidate 中转 |
+| 0x0A03 | CARRIER_SWITCH | S2C | 载体切换指令（直连 <-> primary） |
+| 0x0A04 | CARRIER_SWITCH_ACK | C2S | 载体切换回执（原样回显 epoch 与 rtcSession） |
+| 0x0A05 | ENROLL_REDEEMED | S2C | 入网码兑换结果（证书下发给入口客户端） |
+
+0x0A01 / 0x0A02 / 0x0A05 走 `/mesh/ws` 端点，0x0A03 / 0x0A04 走普通 Gateway `/ws`。
 
 ## payload schemas（完整）
 
@@ -291,6 +323,7 @@ export const EnvelopeSchema = b.struct({
 
 - `deviceId: string`
 - `name: option(string)`
+- `cwd: option(string)`
 
 ### TMUX_CLOSE_WINDOW（0x0204）
 
@@ -381,8 +414,10 @@ WindowWire：
 
 - `id: string`
 - `name: string`
+- `customName: option(string)`
 - `index: u16`
 - `active: bool`
+- `layout: option(string)`
 - `panes: vec(PaneWire)`
 
 PaneWire：
@@ -391,9 +426,14 @@ PaneWire：
 - `windowId: string`
 - `index: u16`
 - `title: option(string)`
+- `customName: option(string)`
 - `active: bool`
 - `width: u16`
 - `height: u16`
+- `currentPath: option(string)`
+- `currentCommand: option(string)`
+- `left: option(u16)`
+- `top: option(u16)`
 
 ### STATE_SNAPSHOT_DIFF（0x0209，v1 保留）
 
@@ -420,6 +460,129 @@ PaneWire：
 
 - 客户端在主题切换、设备连接/重连后发送，gateway 据此更新会话所有 window 的 `window-style` 及 `after-new-window` hook。
 - gateway 按 `TMEX_TMUX_WINDOW_STYLE` 的白名单规则校验 style，非法值忽略；该配置为 `off` 时忽略本消息。
+
+### TMUX_REORDER_WINDOWS（0x020B）
+
+字段：
+
+- `deviceId: string`
+- `windowIds: vec(string)`（期望的 window 顺序，全量）
+
+### TMUX_REORDER_PANES（0x020C）
+
+字段：
+
+- `deviceId: string`
+- `windowId: string`
+- `paneIds: vec(string)`（该 window 内期望的 pane 顺序，全量）
+
+### TMUX_SUBSCRIBE_PANES（0x020D）
+
+字段：
+
+- `deviceId: string`
+- `paneIds: vec(string)`
+
+语义：
+
+- 幂等全量声明：除焦点 pane 外还要接收输出的 pane 集合，后到的声明整体替换前一次。
+
+### TMUX_FETCH_PANE_HISTORY（0x020E）
+
+字段：
+
+- `deviceId: string`
+- `paneId: string`
+- `requestToken: bytes(16)`
+- `byteLimit: option(u32)`
+
+语义：
+
+- 回包复用 `TERM_HISTORY`，其 `selectToken` 即本请求的 `requestToken`。
+- `byteLimit` 为后加字段；解码按新→旧两代依次尝试（`decodeTmuxFetchPaneHistory`），老客户端的帧补 null。
+
+### TMUX_RESIZE_PANE（0x020F）
+
+字段：
+
+- `deviceId: string`
+- `paneId: string`
+- `cols: option(u16)`
+- `rows: option(u16)`
+
+语义：
+
+- splitter 拖拽提交的绝对值，`cols` / `rows` 至少一个非空。
+
+### TMUX_APPLY_STACKED_LAYOUT（0x0210）
+
+字段：
+
+- `deviceId: string`
+- `windowId: string`
+- `cols: u16`
+- `rows: u16`
+
+语义：
+
+- 移动端拼接布局：resize-window 到 `N*cols+(N-1) x rows`，再 select-layout even-horizontal。
+
+### TMUX_SPLIT_PANE（0x0211）
+
+字段：
+
+- `deviceId: string`
+- `paneId: string`
+- `direction: u8`（1=right（`-h`），2=down（`-v`））
+- `cwd: option(string)`
+
+### TMUX_FOCUS_PANE（0x0212）
+
+字段：
+
+- `deviceId: string`
+- `windowId: string`
+- `paneId: string`
+
+语义：
+
+- 分屏内轻量焦点切换（select-window / select-pane），不走屏障、不发 history、不重置终端。
+
+### TMUX_RENAME_PANE（0x0213）
+
+字段：
+
+- `deviceId: string`
+- `paneId: string`
+- `name: string`（空串 = 恢复自动名）
+
+语义：
+
+- gateway 内存 overlay，不写 tmux；快照下发时合并进 `PaneWire.customName`。
+
+### TMUX_MOVE_PANE（0x0214）
+
+字段：
+
+- `deviceId: string`
+- `srcPaneId: string`
+- `dstPaneId: string`
+- `position: u8`（1=left，2=right，3=top，4=bottom）
+
+语义：
+
+- 拖拽重排：tmux move-pane，把 `srcPaneId` 移到 `dstPaneId` 的指定一侧。
+
+### TMUX_BREAK_PANE（0x0215）
+
+字段：
+
+- `deviceId: string`
+- `paneId: string`
+
+语义：
+
+- tmux break-pane，把该 pane 拆为独立 window，焦点跟随新窗口。
 
 ### TERM_INPUT（0x0301）
 
@@ -493,7 +656,21 @@ PaneWire：
 - `paneId: string`
 - `selectToken: bytes(16)`
 - `encoding: u8`（2=utf8-bytes）
+- `alternateScreen: bool`
+- `modes: u8`（pane 终端模式位图，见 `packages/shared/src/ws-borsh/pane-modes.ts`；capture 快照不含 DECSET，鼠标模式随 history 下发）
 - `data: bytes()`
+
+### CLIPBOARD_WRITE（0x0307）
+
+字段：
+
+- `deviceId: string`
+- `paneId: string`
+- `text: string`
+
+语义：
+
+- gateway 从 pane 输出里解析出 OSC52 写剪贴板请求后，单发给订阅该 pane 的客户端。
 
 ### SWITCH_ACK（0x0401）
 
@@ -622,6 +799,100 @@ eventType 枚举：
 | 1 | triggered | `WatchTriggeredPayload` |
 | 2 | model_unavailable | `WatchModelUnavailablePayload` |
 | 3 | rule_error | `WatchRuleErrorPayload` |
+
+### SITE_THEME_UPDATE（0x0801）
+
+同一 kind 双向，两个方向各一套 schema。
+
+C2S 字段：
+
+- `theme: u8`（0=dark，1=light）
+
+S2C 字段：
+
+- `theme: u8`
+- `serverTimestamp: u64`（服务端 `Date.now()` 分配，严格递增，last-writer-wins）
+
+C2S 不带 clientTimestamp，避免多端时钟漂移导致顺序错乱。细节见 `docs/ws-protocol/2026070402-site-theme-update.md`。
+
+### SETTINGS_UPDATE（0x0802）
+
+字段：
+
+- `namespace: string`（设置面标识，如 `site` / `terminal-shortcuts` / `theme` / `llm` / `file-roots` / `webhooks` / `telegram` / `weixin` / `devices` / `tree-order`）
+- `serverTimestamp: u64`
+
+语义：
+
+- 纯缓存失效信号，不带设置内容；客户端按 namespace 重拉对应 REST。
+
+### NOTIFY_EVENT（0x0803）
+
+字段：
+
+- `eventType: string`（冗余外提，便于客户端快速过滤）
+- `eventJson: string`（完整事件 JSON，形状同 webhook 推送体）
+- `timestamp: u64`
+
+字段顺序即 Borsh 线序，已定稿不可变。
+
+### NODE_EVENT（0x0A01）
+
+字段：
+
+- `nodeId: string`
+- `status: u8`（0=online，1=offline，2=revoked）
+- `reach: option(string)`
+- `inventory: option(string)`
+- `version: option(string)`
+- `directCapable: option(bool)`
+- `name: option(string)`
+- `transport: option(string)`
+- `rttMs: option(u32)`
+
+语义：
+
+- 该 payload 已演进三代（原始四字段 / V2 七字段 / 当前九字段）。解码按新→旧依次尝试（`decodeNodeEvent`），老 node 发来的帧缺后加字段时补 null。
+
+### RTC_SIGNAL（0x0A02）
+
+字段：
+
+- `rtcSession: string`
+- `from: u8`（0=browser，1=node）
+- `to: string`
+- `sdp: option(string)`
+- `candidate: option(string)`
+
+### CARRIER_SWITCH（0x0A03）
+
+字段：
+
+- `epoch: u32`
+- `to: u8`（0=direct，1=primary）
+- `rtcSession: string`
+
+语义：
+
+- `rtcSession` 把切换绑定到具体的直连 attempt：浏览器只接受与当前载体同 session 的切换帧。空串 = 未携带（老 node），由接收方按「只有一个待定 attempt」宽容处理。
+
+### CARRIER_SWITCH_ACK（0x0A04）
+
+字段：
+
+- `epoch: u32`
+- `rtcSession: string`（原样回显）
+
+### ENROLL_REDEEMED（0x0A05）
+
+字段：
+
+- `enrollPk: bytes(32)`
+- `certificate: bytes()`（不超过 `ENROLL_REDEEMED_MAX_CERT_BYTES` = 2048）
+- `certSig: bytes(64)`
+- `nodeId: string`（32 位 hex）
+
+发送前由 `assertEnrollRedeemedFields` 校验上述长度与格式约束，不满足直接丢弃。
 
 ## 关键时序（必须遵守）
 

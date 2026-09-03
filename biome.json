@@ -19,6 +19,7 @@
       "apps/gateway/drizzle/**",
       "packages/shared/src/i18n/resources.ts",
       "packages/shared/src/i18n/types.ts",
+      "packages/shared/src/i18n/locales/generated/**",
       "packages/app/src/vendor/**"
     ]
   },
