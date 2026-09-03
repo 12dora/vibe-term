@@ -398,7 +398,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   }
 
   // 标记 renderer.render 必须全画所有行，并立即同步执行（不等 rAF）。
-  // 用于 history 注入（onApplyHistory）等需要内容立即可见的场景：
+  // 用于 canonical 首屏快照写入等需要内容立即可见的场景：
   // DOM 重插入或容器尺寸变化后 canvas 位图可能已被 resize 清空，但 ghostty 内核
   // 未必同步报 dirty='full'（issue #45 bug 3）。同步 render 消除 rAF 延迟。
   forceFullRepaint(): void {

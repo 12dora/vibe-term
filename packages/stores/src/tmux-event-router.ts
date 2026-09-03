@@ -118,11 +118,14 @@ const handlers: TmuxEventHandlers = {
   },
 
   // 网关低于 canonical v1.1 门槛：状态流建不起来且不回退，store 里 stateFeedMode 记
-  // 'unsupported' 供 UI 判断，这里只留一条可诊断的日志（提示文案待 i18n key 落地）。
-  'server-too-old': (event) => {
+  // 'unsupported' 供 UI 判断，另外弹一次提示——否则终端只会一直空白，用户无从判断原因。
+  'server-too-old': (event, ctx) => {
     console.error(
       '[tmux] gateway too old for canonical state v1.1:',
       `server=${event.serverVersion ?? 'unknown'} required>=${event.minVersion}`
+    );
+    ctx.core.notifications.error(
+      ctx.core.t('websocket.serverTooOld', { minVersion: event.minVersion })
     );
   },
 

@@ -9,13 +9,16 @@
 > | 状态机 | 实现 |
 > | --- | --- |
 > | WS 连接 / 重连 / 心跳（FE） | `packages/ws-client/src/{connection,reconnect-controller,heartbeat-controller}.ts` |
-> | 选择事务 + 输出门控（FE） | `packages/ws-client/src/state-machine.ts`（`SelectStateMachine`、`SelectTransactionState`、`OutputGateState`） |
-> | history 分页门控（FE） | `packages/ws-client/src/pane-history-gate.ts` |
-> | 切换屏障（Gateway） | `apps/gateway/src/ws/borsh/switch-barrier.ts`（`SwitchBarrier`） |
+> | canonical 状态流客户端（FE） | `packages/ws-client/src/canonical-state-client.ts`、`pane-sink-registry.ts`、`canonical-size-epochs.ts` |
 > | 设备连接 entry（Gateway） | `apps/gateway/src/ws/device-connection-registry.ts` |
 > | canonical feed（Gateway） | `apps/gateway/src/ws/canonical-feed-session.ts`、`apps/gateway/src/ws/canonical/` |
 >
-> 第 3、4 节是切换屏障的 FE 侧；Gateway 侧时序、超时降级与验收用例见 `docs/terminal/2026021404-terminal-switch-barrier-design.md`。
+> **1.1.23 起 legacy 状态流整体下线**：`SWITCH_ACK` / `TERM_HISTORY` / `LIVE_RESUME` / `TERM_OUTPUT` /
+> `STATE_SNAPSHOT(_DIFF)` / `TERM_RESIZE` / `TERM_SYNC_SIZE` / `TMUX_FETCH_PANE_HISTORY` 全部删除，
+> 对应的 `SelectStateMachine`、`pane-history-gate`、`SwitchBarrier` 也一并删除。对端不满足
+> canonical v1.1 门槛（能力 `canonical-state-v1.1` + 版本 ≥ 1.1.22）时**不回退**，直接判定
+> `stateFeedMode = 'unsupported'` 并提示用户升级。切换语义见
+> `docs/terminal/2026021404-terminal-switch-barrier-design.md`。
 
 ## 设计原则
 
@@ -26,12 +29,15 @@
 
 ## 全局不变量（必须满足）
 
-1. 每个 `deviceId` 在每个客户端上同时最多只有一个“当前活跃选择事务”。
-2. `LIVE_RESUME(selectToken)` 之前不允许把 live output 直接写入终端。
-3. `TERM_HISTORY(selectToken)` 只能应用到匹配 token 的事务。
-4. 任何消息若 token 不匹配或事务已被新事务替代，必须丢弃。
-5. resize 以浏览器视口为源（FE），Gateway 仅做同步与 tmux client/pty 对齐。
-6. bell 去重与频控必须在 Gateway 统一，FE 仅展示。
+1. 每个 pane 的画面基线只能由 canonical 首屏事务（`ScreenBegin → ScreenChunk* → ScreenCommit`）建立；
+   没有基线的流中片段一律丢弃，不缓冲等待。
+2. `SetPaneSubscriptions` 是集合替换；`SubscriptionApplied` 的 `generation` 单调递增，收到更旧的
+   generation 必须幂等忽略。
+3. pane 字节流按 `(paneEpoch, terminalSeq)` 对账；不连续时由服务端发 `SourceGap`，客户端重取整屏，
+   不允许静默拼接。
+4. resize 以浏览器视口为源（FE），Gateway 仅做同步与 tmux client/pty 对齐；两类几何语义由
+   `ResizePaneV11.geometryReason` 区分。
+5. bell 去重与频控必须在 Gateway 统一，FE 仅展示。
 
 ---
 
@@ -103,74 +109,44 @@
 
 ---
 
-## 3) 选择事务状态机（FE，按 deviceId）
+## 3) Pane 画面重建（FE，按 deviceId+paneId）
 
-> 这是最关键的状态机，决定 history/live 合并与输出门控。
+> legacy 的「选择事务状态机」（`SELECTING/ACKED/HISTORY_APPLIED/LIVE/SELECT_FAILED` + selectToken 对账）
+> 已于 1.1.23 删除。切 pane 不再有屏障帧，画面重建完全由 canonical 首屏事务承担。
 
-### 状态
+### 流程
 
-- `STABLE`：当前 pane 已处于 LIVE。
-- `SELECTING`：已发送 `TMUX_SELECT(token)`，等待 `SWITCH_ACK`。
-- `ACKED`：收到 `SWITCH_ACK(token)`。
-- `HISTORY_APPLIED`：已应用 `TERM_HISTORY(token)`。
-- `LIVE`：收到 `LIVE_RESUME(token)` 并已 flush 缓冲。
-- `SELECT_FAILED`：超时/错误。
+1. pane 挂载 → `mountPane()` 把它加进订阅集合 → 发 `SetPaneSubscriptions(generation, active, hot)`。
+2. 发 `RequestScreen(requestId, pane, byteLimit)`。
+3. 收 `ScreenBegin(requestId, paneEpoch, baseSeq, rows, cols, modes, totalBytes)`
+   → `ScreenChunk(requestId, offset, data)*` → `ScreenCommit(requestId, totalBytes, historyCursor)`。
+   Commit 才整屏重写终端（`writeCanonicalSnapshot`：reset → resize → 恢复 tmux 模式位图 → 一次 write）。
+4. 之后的 `PaneData(pane, paneEpoch, seqStart, seqEnd, data)` 按序追加；`seqStart` 早于 `baseSeq` 的部分丢弃。
+5. 向上滚动时按 `historyCursor` 发 `RequestHistory`，服务端以
+   `HistoryBegin → HistoryChunk* → HistoryCommit(nextCursor)` 分页返回。
 
-### 事件
+### 不变量
 
-- `selectRequested(token, paneId, windowId)`：由路由变化或 `pane-active` 事件触发。
-- `switchAck(token)`
-- `history(token, bytes)`
-- `liveResume(token)`
-- `error(token?/refSeq?)`
-- `timeout`
-
-### 转移规则
-
-1. `STABLE -> SELECTING`：触发新选择事务。
-2. `SELECTING -> ACKED`：收到 `SWITCH_ACK(token)`。
-3. `ACKED -> HISTORY_APPLIED`：收到 `TERM_HISTORY(token)`（若 wantHistory=true）。
-4. `ACKED/HISTORY_APPLIED -> LIVE`：收到 `LIVE_RESUME(token)`。
-5. `LIVE -> STABLE`：标记该 token 成为当前稳定 pane。
-
-并发/替换：
-
-- 任意状态收到 `selectRequested(newToken)`：
-  - 立刻废弃旧 token（清空缓冲、停止等待）。
-  - 进入 `SELECTING(newToken)`。
-
-失败：
-
-- `SELECTING/ACKED/HISTORY_APPLIED` 超时 -> `SELECT_FAILED`。
-- `SELECT_FAILED` 可回退到上一个 `STABLE` 的 pane（若存在），或保持空白并提示。
-
-### 超时策略
-
-- 选择事务使用“无进展超时”，每收到一个属于当前 token 的有效 ACK、history chunk 或 live bytes 都刷新 deadline。
-- 超时后保留上一份已提交画布并自动重试当前 select；不得先清空终端，也不得提交缺块的 history。
-- 新 token 会立即废弃旧 token 的事务缓冲；旧 token 的后续帧全部丢弃。
+- 未提交首屏的 pane 不写任何流中字节（`PaneSinkRegistry` 直接丢弃，不做无界缓冲）。
+- `requestId` 一一对应：Begin 与 Commit 必须同 `requestId`，中途换 pane 只是让旧事务的 Commit 被忽略。
+- pane epoch 变化（tmux pane 重建）即基线失效，服务端发 `SourceGap`，客户端重取整屏。
+- 没有超时重试状态机：请求失败/缺块由 `SourceGap` 与重订阅驱动，不再有「无进展超时」。
 
 ---
 
-## 4) 输出门控状态机（FE，按 deviceId）
+## 4) 订阅代与重连补流（FE，按 deviceId）
 
-### 状态
-
-- `FLOWING`：直接写入终端。
-- `BUFFERING`：缓冲 output bytes。
+> legacy 的「输出门控状态机」（`FLOWING/BUFFERING` + `LIVE_RESUME` 放闸）已随屏障一起删除。
+> canonical 下没有需要闸门的窗口期：订阅集合与首屏事务本身就界定了哪些字节该写。
 
 ### 规则
 
-- 进入新 `SELECTING` 时强制切到 `BUFFERING`。
-- 收到 `LIVE_RESUME(token)` 时：
-  1. 把缓冲 output 依次写入终端。
-  2. 切回 `FLOWING`。
-- 若收到 output 时处于 BUFFERING：追加到缓冲。
-
-不变量：
-
-- BUFFERING 期间绝不直接 write 到终端（当前底座为 Ghostty wasm，见 `docs/terminal/2026041600-ghostty-wasm-runtime.md`）。
-- 缓冲有显式字节上限，超限时丢弃最旧数据并靠后续 snapshot 恢复，不形成无界积压。
+- 订阅集合变更（挂载/卸载 pane、keep-alive 池置冷）各产生一次 `SetPaneSubscriptions`，`generation` 自增。
+- 服务端以 `SubscriptionApplied(generation, activePanes, hotPanes, rejected)` 回执；客户端只认最新 generation。
+- 直连（WebRTC）回落到 primary 后**不主动重取整屏**：重订阅带 cursor，服务端只补缺口，
+  确实有 gap 时才发 `SourceGap` 触发整屏。
+- 网关不满足 canonical v1.1 门槛时进入 `stateFeedMode = 'unsupported'`：canonical 会话不建立、
+  待发命令丢弃、弹一次 `websocket.serverTooOld` 提示，**不回退 legacy**。
 
 ---
 
@@ -190,9 +166,12 @@
 - 切 pane 后补测三轮（`runPostSelect`）：立即一次、`POST_SELECT_RETRY_MS = 60` 后一次、`document.fonts.ready` 后一次。
 - 去重：cols/rows 未变化不发送。
 - `TMUX_SELECT` 可以携带 cols/rows 作为首包同步。
-- `TERM_RESIZE` 与 `TERM_SYNC_SIZE` 语义一致；建议：
-  - `TERM_SYNC_SIZE` 用于 “select 后强制同步”
-  - `TERM_RESIZE` 用于 “正常容器变化”
+- 尺寸命令统一走 canonical `ResizePaneV11`，两类语义由 `geometryReason` 区分（原 `TERM_RESIZE` /
+  `TERM_SYNC_SIZE` 两个 kind 已删除）：
+  - `geometryReason = 0`（change）：真实容器/视口变化，发送前 `sizeEpoch` 自增。
+  - `geometryReason = 1`（resend）：焦点恢复、暖切换后重新声明当前尺寸，复用该 pane 上一次 change 的
+    `sizeEpoch`；网关据此走「不信任旧快照几何」的分支。
+- `sizeEpoch` 是 u64 且恒 ≥ 1（0 为保留值）；网关按 epoch 丢弃过期尺寸，同 epoch 的补发必须放行。
 
 ---
 

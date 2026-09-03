@@ -95,18 +95,6 @@ class MeshRtcSignalHub {
 
 const meshRtcSignals = new MeshRtcSignalHub(() => sharedMeshEvents());
 
-export const CANONICAL_STATE_KILL_SWITCH_KEY = 'tmex.disable-canonical-state';
-
-export function canonicalStateEnabled(storage?: Pick<Storage, 'getItem'> | null): boolean {
-  try {
-    const target = storage === undefined ? globalThis.localStorage : storage;
-    const value = target?.getItem(CANONICAL_STATE_KILL_SWITCH_KEY)?.toLowerCase();
-    return value !== '1' && value !== 'true';
-  } catch {
-    return true;
-  }
-}
-
 /** 懒加载的直连栈里，宿主真正要用到的三个符号。 */
 export type DirectLinkModule = Pick<
   typeof import('@tmex/ws-client/direct'),
@@ -214,9 +202,10 @@ function directFallbackText(runtime: AppRuntime | null): string {
  * 1. 重发该 device 的整份 pane 订阅——`mountPane()` 拿到的释放函数**立刻调用**，
  *    引用计数一加一减回到原值，但两次都会以新 generation 重下发当前订阅集合；
  *    订阅面在 `@tmex/stores`，没有对外暴露「只重发一次」的入口（见 result 备注）。
- * 2. legacy feed 对挂载 pane 重取整屏；canonical feed 由带 cursor 的重订阅精确补流，
- *    只有服务端明确返回 gap 时才重取整屏。
- * 3. 提示用户：浏览器→node 方向的最近输入可能没送到（这一方向没有补齐机制）。
+ * 2. 提示用户：浏览器→node 方向的最近输入可能没送到（这一方向没有补齐机制）。
+ *
+ * canonical feed 由带 cursor 的重订阅精确补流，只有服务端明确返回 gap 时才重取整屏，
+ * 因此这里不主动请求首屏。
  */
 function resumeSubscribedPanes(
   nodeId: string,
@@ -227,15 +216,10 @@ function resumeSubscribedPanes(
   const sink = wiring.notifications ?? runtime?.notifications ?? sonnerNotificationSink;
   if (runtime) {
     const tmux = runtime.stores.tmux.getState();
-    const canonical = connection.transport.stateFeedMode === 'canonical';
     for (const deviceId of tmux.connectedDevices) {
-      const paneIds = mountedPaneIds(connection, runtime, deviceId);
-      const first = paneIds[0];
+      const first = mountedPaneIds(connection, runtime, deviceId)[0];
       if (first === undefined) continue;
       tmux.mountPane(deviceId, first)();
-      if (!canonical) {
-        for (const paneId of paneIds) tmux.requestPaneScreen(deviceId, paneId);
-      }
     }
   }
   sink.warning(directFallbackText(runtime));
@@ -316,7 +300,6 @@ export function createNodeConnection(
         wsUrl: nodeWsUrl(id),
         wsUrlFactory: () => wsUrls.nextUrl(),
         onClose: close,
-        clientOptions: { canonicalStateEnabled: canonicalStateEnabled() },
         ...(wiring.socketFactory ? { socketFactory: wiring.socketFactory } : {}),
       }))
   )(nodeId, onClose);

@@ -1,6 +1,11 @@
 import { type Page, expect, test } from '@playwright/test';
 import { createTwoPaneSession, ensureCleanSession, tmux } from './helpers/tmux';
-import { KIND, decodeEnvelope, decodeTermInput, isGatewayWsUrl } from './helpers/ws-borsh';
+import {
+  KIND,
+  attachCanonicalCommandCollector,
+  decodeEnvelope,
+  isGatewayWsUrl,
+} from './helpers/ws-borsh';
 
 function launchVimWithMouse(paneId: string): void {
   tmux(`send-keys -t ${paneId} C-c`);
@@ -49,7 +54,12 @@ test('desktop: sidebar new-window click does not inject SGR mouse sequences into
   const deviceId = created.device.id;
   const vimPath = `/devices/${deviceId}/windows/${windowId}/panes/${encodeURIComponent(vimPaneId ?? '')}`;
 
-  const sgrInjections: string[] = [];
+  // 终端输入走 canonical TerminalInput：侧栏点击不得把 SGR 鼠标序列灌进 pty
+  const commands = attachCanonicalCommandCollector(page);
+  const sgrInjections = (): string[] =>
+    commands.inputs
+      .map((input) => input.data.toString('binary'))
+      .filter((text) => text.includes('\x1b[<'));
   let createWindowSent = 0;
 
   page.on('websocket', (ws) => {
@@ -57,17 +67,6 @@ test('desktop: sidebar new-window click does not inject SGR mouse sequences into
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope) return;
-      if (envelope.kind === KIND.TERM_INPUT) {
-        try {
-          const decoded = decodeTermInput(envelope.payload);
-          const text = decoded.data.toString('binary');
-          if (text.includes('\x1b[<')) {
-            sgrInjections.push(text);
-          }
-        } catch {
-          // ignore malformed frames
-        }
-      }
       if (envelope.kind === KIND.TMUX_CREATE_WINDOW) {
         createWindowSent += 1;
       }
@@ -80,7 +79,7 @@ test('desktop: sidebar new-window click does not inject SGR mouse sequences into
     await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain('~');
 
     await page.waitForTimeout(500);
-    sgrInjections.length = 0;
+    commands.reset();
 
     const createButton = page.locator(`[data-testid="window-create-${deviceId}"]`);
     await expect(createButton).toBeVisible();
@@ -89,9 +88,8 @@ test('desktop: sidebar new-window click does not inject SGR mouse sequences into
     await expect.poll(() => createWindowSent, { timeout: 5_000 }).toBeGreaterThan(0);
     await page.waitForTimeout(300);
 
-    expect(sgrInjections, `unexpected SGR injections: ${JSON.stringify(sgrInjections)}`).toEqual(
-      []
-    );
+    const injected = sgrInjections();
+    expect(injected, `unexpected SGR injections: ${JSON.stringify(injected)}`).toEqual([]);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

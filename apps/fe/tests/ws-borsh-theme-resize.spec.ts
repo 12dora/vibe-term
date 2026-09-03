@@ -6,7 +6,12 @@ import {
   getPaneSize,
   getWindowSize,
 } from './helpers/tmux';
-import { KIND, decodeEnvelope, isGatewayWsUrl } from './helpers/ws-borsh';
+import {
+  KIND,
+  attachCanonicalCommandCollector,
+  decodeEnvelope,
+  isGatewayWsUrl,
+} from './helpers/ws-borsh';
 
 async function readTerminalSize(page: import('@playwright/test').Page): Promise<{
   cols: number;
@@ -56,25 +61,27 @@ async function waitForSettledTerminalSize(
     .toBe('settled');
 }
 
+// 尺寸命令统一走 canonical ResizePaneV11（change / resend 由 geometryReason 区分），
+// 窗口样式仍是 tmux 控制面的 TMUX_SET_WINDOW_STYLE 帧。
 function attachFrameCounter(page: import('@playwright/test').Page): {
   read: () => { resize: number; sync: number; windowStyle: number };
 } {
-  const counts = { resize: 0, sync: 0, windowStyle: 0 };
+  const commands = attachCanonicalCommandCollector(page);
+  let windowStyle = 0;
 
   page.on('websocket', (ws) => {
     if (!isGatewayWsUrl(ws.url())) return;
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope) return;
-      if (envelope.kind === KIND.TERM_RESIZE) counts.resize += 1;
-      if (envelope.kind === KIND.TERM_SYNC_SIZE) counts.sync += 1;
-      if (envelope.kind === 0x020a) counts.windowStyle += 1;
+      if (envelope.kind === KIND.TMUX_SET_WINDOW_STYLE) windowStyle += 1;
     });
   });
 
   return {
     read() {
-      return { ...counts };
+      const { change, resend } = commands.counts();
+      return { resize: change, sync: resend, windowStyle };
     },
   };
 }

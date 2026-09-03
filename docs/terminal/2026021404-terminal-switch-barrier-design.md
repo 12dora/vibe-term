@@ -1,18 +1,19 @@
-# 终端切换屏障（selectToken）设计
+# 终端切换屏障（selectToken）设计 — 已于 1.1.23 下线
 
-> 状态：**已实现**。本文是当前行为的规范说明，不是待办设计稿。
+> 状态：**已移除**。屏障机制（`SWITCH_ACK` → `TERM_HISTORY` → `LIVE_RESUME`）连同整条 legacy 状态流
+> 在 1.1.23 删除，代码（`apps/gateway/src/ws/borsh/switch-barrier.ts`、
+> `packages/ws-client/src/state-machine.ts`、`packages/ws-client/src/pane-history-gate.ts`）已不存在。
+> 本文保留背景与问题定义，供理解 canonical 方案为什么这么设计；实现细节以第 3 节为准。
 >
-> 目标：解决 pane 切换时 history/live 乱序、丢失、重复，以及“切换后短时间输出写到错误 pane”的问题。
+> 代码索引（现行）：
 >
-> 代码索引：
+> - Gateway canonical feed：`apps/gateway/src/ws/canonical-feed-session.ts`、`apps/gateway/src/ws/canonical/`。
+> - FE canonical 状态流：`packages/ws-client/src/canonical-state-client.ts`、`pane-sink-registry.ts`。
+> - e2e：`apps/fe/tests/ws-borsh-switch-barrier.spec.ts`（已改写为 canonical 首屏事务 + 订阅代断言）。
 >
-> - Gateway 屏障：`apps/gateway/src/ws/borsh/switch-barrier.ts`（`SwitchBarrier`，单例 `switchBarrier`），回归用例 `apps/gateway/src/ws/switch-barrier.issue45.test.ts`。
-> - FE 事务与门控：`packages/ws-client/src/state-machine.ts`（`SelectStateMachine`），history 分页门控 `packages/ws-client/src/pane-history-gate.ts`。
-> - e2e：`apps/fe/tests/ws-borsh-switch-barrier.spec.ts`。
->
-> FE 侧的状态枚举与转移表见 `docs/ws-protocol/2026021403-ws-state-machines.md` 第 3、4 节；本文侧重 Gateway 时序、超时降级与验收用例。
+> 状态机全貌见 `docs/ws-protocol/2026021403-ws-state-machines.md` 第 3、4 节。
 
-## 背景与问题
+## 1. 背景与问题（仍然成立）
 
 屏障引入前的实现依赖：
 
@@ -23,122 +24,79 @@
 
 - live output 可能在 history 之前到达并被写入，随后 history 覆盖，造成乱序。
 - 用户快速切换 pane 时，旧 pane 的 history/live 可能写入新 pane。
-- 历史订阅与 select 的时机竞态，导致偶发“无历史/白屏”。
+- 历史订阅与 select 的时机竞态，导致偶发「无历史/白屏」。
 
-## 核心思路
+## 2. 屏障方案（历史，已删除）
 
-- 每次选择事务由客户端生成 `selectToken(16 bytes)`。
-- 服务端必须按序发送三段式屏障消息：
-  1. `SWITCH_ACK(selectToken)`：确认切换事务开始。
-  2. `TERM_HISTORY(selectToken)`：发送与该 token 绑定的历史（可选）。
-  3. `LIVE_RESUME(selectToken)`：解除屏障，从此刻起 live output 才能直写。
+每次选择事务由客户端生成 `selectToken(16 bytes)`，服务端按序发 `SWITCH_ACK` → `TERM_HISTORY` →
+`LIVE_RESUME` 三段式屏障，`LIVE_RESUME` 之前的 live output 在 Gateway 侧缓冲。
 
-并且：
+局限（也是被替换的原因）：
 
-- `LIVE_RESUME` 之前产生的 live output 必须缓冲，不能提前下发到 FE。
+- 屏障边界与 tmux `capture-pane` 的一致性靠时序约定维持，没有可对账的序号；capture 与 live
+  之间的重叠/缺口无法证明。
+- history 只有「当前屏」一页，向上滚动要另发 `TMUX_FETCH_PANE_HISTORY`，两条路径各有一套门控。
+- 缓冲期在 Gateway 与 FE 各存一份，快切时两侧都要靠 token 对账丢弃，出错就是白屏。
+- 尺寸补发与真实尺寸变化在 wire 上无法区分（`TERM_RESIZE` / `TERM_SYNC_SIZE` 字段完全相同）。
 
-## 端到端时序
+## 3. canonical 方案（现行）
+
+切换不再有屏障帧。画面重建是一次**带 requestId 与序号的首屏事务**，输出连续性靠
+`(paneEpoch, terminalSeq)` 对账：
 
 ```text
-FE                        Gateway                         tmux
- |  TMUX_SELECT(token)      |                               |
- |------------------------->| select window/pane            |
- |                          |------------------------------>|
- |                          | SWITCH_ACK(token)             |
- |<-------------------------|                               |
- | (reset terminal, gate)   | capture-pane/history          |
- |                          |------------------------------>|
- |                          | TERM_HISTORY(token)           |
- |<-------------------------|                               |
- | (apply history)          | LIVE_RESUME(token)            |
- |<-------------------------| (flush buffered output)       |
- | (flush buffered output)  | TERM_OUTPUT (live)            |
- |<-------------------------|<------------------------------|
+FE                                  Gateway                          tmux
+ | SetPaneSubscriptions(gen, panes)  |                                |
+ |---------------------------------->| 订阅集合替换                    |
+ |         SubscriptionApplied(gen)  |                                |
+ |<----------------------------------|                                |
+ | RequestScreen(requestId, pane)    |                                |
+ |---------------------------------->| capture-pane（同一 command block）|
+ |                                   |------------------------------->|
+ |  ScreenBegin(requestId, baseSeq)  |                                |
+ |<----------------------------------|                                |
+ |  ScreenChunk(requestId, offset)*  |                                |
+ |<----------------------------------|                                |
+ |  ScreenCommit(requestId, cursor)  |                                |
+ |<----------------------------------| （提交后才整屏重写）              |
+ |  PaneData(seqStart..seqEnd)       |                                |
+ |<----------------------------------|<-------------------------------|
 ```
 
-## Gateway 侧实现要求
+对应关系：
 
-### 1) per-client 事务状态
+| 旧机制 | canonical 替代 |
+| --- | --- |
+| `SWITCH_ACK(token)` | `SubscriptionApplied(generation)`：订阅集合替换的回执，generation 单调递增 |
+| `TERM_HISTORY(token)` | `ScreenBegin/Chunk/Commit`（首屏）+ `HistoryBegin/Chunk/Commit`（游标分页） |
+| `LIVE_RESUME(token)` | `ScreenCommit` 的 `baseSeq`：早于它的 `PaneData` 直接丢弃，无需闸门 |
+| Gateway 屏障期缓冲 | 无。未提交首屏的 pane 直接丢弃流中字节 |
+| token 对账 | `requestId`（首屏/历史）与 `generation`（订阅），过期的自然被忽略 |
+| 超时降级重试 | `SourceGap` + 重取整屏；不再有「无进展超时」状态机 |
+| `TERM_RESIZE` / `TERM_SYNC_SIZE` | `ResizePaneV11` 的 `geometryReason`（change / resend）+ `sizeEpoch` |
 
-每个 ws client、每个 deviceId 维护：
+`TMUX_SELECT` / `TMUX_SELECT_WINDOW` / `TMUX_FOCUS_PANE` 保留：它们是 tmux 控制面（真正切
+tmux 的当前 pane、携带视口尺寸参与几何仲裁），不属于被删除的状态流。`selectToken` 仍随 wire 发
+（schema 未改），但客户端已不再用它对账。
 
-- `currentSelection: { windowId, paneId } | null`
-- `pendingToken: Uint8Array(16) | null`
-- `barrierState: 'idle' | 'acked' | 'history_sent' | 'live'`
-- `outputBuffer: Uint8Array[]`（屏障期缓冲）
+## 4. 关键边界条件（canonical 下如何满足）
 
-### 2) 收到 TMUX_SELECT(token)
+- **快速切换 pane**：旧 pane 的首屏 Commit 到达时其 requestId 已无人认领；订阅集合以最新
+  generation 为准，旧 generation 的回执幂等忽略。
+- **history 很大**：首屏与历史都按 `ScreenChunk` / `HistoryChunk` 分片，且不经通用 `CHUNK` 通道。
+- **设备断线/重连**：视为新 feed，客户端重发订阅集合，服务端回最新 metadata snapshot 与
+  `SubscriptionApplied`；server/pane epoch 变化则发 `SourceGap` 并重推整屏。
+- **网关过旧**：对端不满足 canonical v1.1 门槛（能力 `canonical-state-v1.1` + 版本 ≥ 1.1.22）时
+  **不回退**，`stateFeedMode = 'unsupported'` 并提示用户升级。
 
-必须按以下顺序执行：
+## 5. 验收用例（e2e）
 
-1. 记录 `pendingToken = token`，清空旧 buffer。
-2. 立即把该 client 的订阅过滤目标切到新 pane（避免 output 路由错误）。
-3. 下发 `SWITCH_ACK(token)`。
-4. 若请求带 cols/rows：先同步 resize（transport pty + tmux client）。
-5. 执行 tmux select（window/pane）。
-6. 若 `wantHistory=true`：执行 `capture-pane`（normal + alternate + mode）并在完成后下发 `TERM_HISTORY(token)`。
-7. 下发 `LIVE_RESUME(token)`，并把屏障期缓冲的 output flush 给该 client。
+`apps/fe/tests/ws-borsh-switch-barrier.spec.ts`：
 
-### 3) output 缓冲策略
+1. 跨 window 切换后，`TMUX_SELECT` 仍携带本地 cols/rows；目标 pane 的首屏事务 Begin/Commit 成对且
+   requestId 一致；目标 pane 进入最新订阅集合。
+2. 连续两次跨 window 切换后，订阅 generation 单调递增、最终订阅集合含最后选中的 pane，且没有
+   `PaneData` 落在从未进过订阅集合的 pane 上。
 
-- 屏障未解除（未发 LIVE_RESUME）时：把输出 append 到 `outputBuffer`。
-- LIVE_RESUME 发出后：
-  - 先 flush buffer，再把后续 output 直接发送。
-
-### 4) 超时与降级
-
-- capture history 超时：允许发送空 history（或跳过 history），但仍必须发送 LIVE_RESUME 以解除屏障。
-- 若 tmux select 失败（target missing）：
-  - 发送 `ERROR(refSeq)`
-  - 并尝试回退到上一次稳定选择（如果存在）。
-
-## FE 侧实现要求
-
-### 1) 事务触发源
-
-- 路由变化（URL 中 windowId/paneId）。
-- 收到 `TMUX_EVENT(pane-active)`（同 deviceId，自动跟随）。
-
-触发后：
-
-1. 生成 `selectToken(16 bytes)`。
-2. 发送 `TMUX_SELECT(token, wantHistory=true, cols/rows)`。
-3. 对自动跟随的路由跳转使用 `navigate(..., { replace: true })`。
-
-### 2) Terminal gate（写入门控）
-
-- 收到 `SWITCH_ACK(token)`：
-  - reset 终端（清空屏幕与状态）
-  - 进入 gate 状态：禁止写入 live output，改为本地 buffer。
-- 收到 `TERM_HISTORY(token)`：
-  - 写入 history
-  - 标记 historyApplied
-- 收到 `LIVE_RESUME(token)`：
-  - flush 本地 buffer
-  - 解除 gate：后续 output 直写
-
-### 3) 并发与替换
-
-- 若在旧 token 未完成时用户又触发新 token：
-  - 立即丢弃旧 token 的 history/output
-  - reset 终端，以新 token 为准
-
-### 4) 失败处理
-
-- 若 ACK/HISTORY/RESUME 超时：
-  - 显示提示（toast/状态条）
-  - 允许用户重试 select
-
-## 关键边界条件
-
-- 用户快速切换 pane：必须保证旧 token 的输出不会写入新 pane。
-- history 很大：必须支持 CHUNK 分片与重组。
-- 设备断线/重连：需要将当前 token 状态清空，并重新触发 select。
-
-## 验收用例（必须覆盖）
-
-1. output 先到、history 后到：最终显示顺序为 history -> output。
-2. history 先到、output 后到：正常。
-3. 切换期间连续多次 select：只有最后一次生效。
-4. history capture 失败：仍能进入 live，且不会卡死。
-
+`apps/fe/tests/ws-borsh-history.spec.ts`、`ws-borsh-pane-route.spec.ts` 分别覆盖首屏内容与
+canonical PaneTarget 的 pane 路由。

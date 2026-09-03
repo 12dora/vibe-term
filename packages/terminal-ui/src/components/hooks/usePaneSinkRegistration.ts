@@ -4,11 +4,7 @@ import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { type RefObject, useEffect, useMemo, useRef } from 'react';
 import type { TerminalSurface } from '../TerminalSurface';
 import { historyRequestDeadlineMs, shouldRequestOlderHistory } from '../paneHistoryRequest';
-import {
-  type TerminalGeometry,
-  type TerminalRenderTarget,
-  writeRestoredHistory,
-} from '../terminal-snapshot';
+import type { TerminalRenderTarget } from '../terminal-snapshot';
 
 export interface UsePaneSinkRegistrationOptions {
   deviceId: string;
@@ -16,29 +12,12 @@ export interface UsePaneSinkRegistrationOptions {
   instance: CompatibleTerminalLike | null;
   surfaceRef: RefObject<TerminalSurface<TerminalRenderTarget> | null>;
   containerRef: RefObject<HTMLDivElement | null>;
-  runPostSelectResize: () => void;
   /** 是否把本 pane 计入 wire 订阅集合（默认 true）；sink 注册与之无关，恒生效 */
   subscribe?: boolean;
 }
 
-// legacy history 的几何权威是 tmux 快照里的 pane 尺寸（gateway 正是按这个尺寸
-// capture 的）；这里同步读取而不订阅，避免 pane 尺寸变化重建 sink。
-function remotePaneGeometry(
-  runtime: ReturnType<typeof useRuntime>,
-  deviceId: string,
-  paneId: string
-): TerminalGeometry | null {
-  const session = runtime.stores.tmux.getState().snapshots[deviceId]?.session;
-  for (const window of session?.windows ?? []) {
-    for (const pane of window.panes) {
-      if (pane.id === paneId) return { cols: pane.width, rows: pane.height };
-    }
-  }
-  return null;
-}
-
 /**
- * pane 数据面：把 gateway 的 reset/history/live/snapshot/rebase 接进当前渲染面，
+ * pane 数据面：把 gateway 的 live/snapshot/history/rebase 接进当前渲染面，
  * 并负责 pane 挂载、首屏请求与向上滚动时的 history 续拉。
  */
 export function usePaneSinkRegistration({
@@ -47,7 +26,6 @@ export function usePaneSinkRegistration({
   instance,
   surfaceRef,
   containerRef,
-  runPostSelectResize,
   subscribe = true,
 }: UsePaneSinkRegistrationOptions): void {
   const runtime = useRuntime();
@@ -66,25 +44,6 @@ export function usePaneSinkRegistration({
     }
 
     return {
-      onReset: (origin) => {
-        const target = surfaceRef.current?.getVisibleTarget();
-        target?.terminal.reset();
-        if (target) target.liveOutputEndedWithCR = false;
-        // history-refresh（远端 resize 后的内容重建）不上报本地尺寸，
-        // 避免不同视口的客户端互相抢 window 尺寸
-        if (origin !== 'history-refresh') {
-          runPostSelectResize();
-        }
-      },
-      onApplyHistory: (data, alternateScreen, modes) => {
-        const target = surfaceRef.current?.getVisibleTarget();
-        if (!target) return;
-        writeRestoredHistory(
-          target,
-          { data, alternateScreen, modes },
-          remotePaneGeometry(runtime, deviceId, paneId)
-        );
-      },
       onOutput: (data, frame) => {
         surfaceRef.current?.write(frame ?? { deviceId, paneId, data });
       },
@@ -97,7 +56,7 @@ export function usePaneSinkRegistration({
       },
       onRebase: (reason) => surfaceRef.current?.rebase(reason),
     };
-  }, [deviceId, instance, paneId, runPostSelectResize, runtime, surfaceRef]);
+  }, [deviceId, instance, paneId, surfaceRef]);
 
   useEffect(() => {
     if (!paneSink || !deviceId || !paneId) {

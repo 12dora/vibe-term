@@ -442,12 +442,15 @@ describe('tmux transport event router', () => {
     expect(harness.namesOf('dispatchPaneTerminalData')).toHaveLength(2);
   });
 
-  test('server-too-old 只记日志，不改状态', () => {
+  test('server-too-old 弹一次错误提示，不改状态', () => {
     const harness = createHarness();
 
     expect(() =>
       harness.route({ type: 'server-too-old', minVersion: '1.1.22', serverVersion: '1.1.21' })
     ).not.toThrow();
+    expect(harness.namesOf('notify:error').map((call) => call.args[0])).toEqual([
+      'websocket.serverTooOld',
+    ]);
   });
 
   test('rebase-required ignores metadata gaps and broadcasts to mounted panes', () => {

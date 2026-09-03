@@ -45,7 +45,7 @@ export function usePaneSizeSync({
 
   // 移动端多 pane window：终端上报的尺寸即「单屏适配尺寸」，改道拼接布局
   // （window 宽 = N*cols+(N-1)、even-horizontal，每 pane 恰好一屏），
-  // 不得发普通 TERM_RESIZE，否则整窗被压成单 pane 尺寸破坏拼接
+  // 不得发普通的 ResizePane 尺寸声明，否则整窗被压成单 pane 尺寸破坏拼接
   useEffect(() => {
     if (!deviceConnected || !stackedLayoutTarget) return;
     terminalRef.current?.runPostSelectResize();
