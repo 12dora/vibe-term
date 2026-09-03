@@ -1,29 +1,13 @@
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
-import { type LocalAuthContext, openInstallAuth } from '../lib/local-auth';
 import { resolvePassword } from '../lib/password';
 import { isStandaloneRoles, parseTmexRoles } from '../lib/roles';
 import { fingerprintPublicKey } from '../lib/totp-uri';
 import type { ParsedArgs } from '../types';
 import type { HubIo } from './hub';
+import { withAuth } from './with-auth';
 
 function log(io: HubIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
-}
-
-async function withAuth<T>(
-  parsed: ParsedArgs,
-  io: HubIo | undefined,
-  fn: (ctx: LocalAuthContext) => Promise<T>
-): Promise<T> {
-  if (io?.auth) {
-    return await fn(io.auth);
-  }
-  const ctx = await openInstallAuth(parsed);
-  try {
-    return await fn(ctx);
-  } finally {
-    ctx.close();
-  }
 }
 
 export async function runMeshResetRoot(

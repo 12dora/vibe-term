@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import {
   constants,
   closeSync,
@@ -9,8 +8,11 @@ import {
   writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { processStartIdentity } from '../../../shared/src/process/process-identity';
 import { t } from '../i18n';
 import { ensureDir } from './fs-utils';
+
+export { processStartIdentity };
 
 export interface UpgradeLock {
   installDir: string;
@@ -34,29 +36,6 @@ export function isPidAlive(pid: number): boolean {
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-export function processStartIdentity(pid: number): string | null {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  if (process.platform === 'linux' && existsSync(`/proc/${pid}/stat`)) {
-    try {
-      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-      const close = stat.lastIndexOf(')');
-      const rest = stat.slice(close + 2).split(' ');
-      return rest[19] ?? null;
-    } catch {
-      return null;
-    }
-  }
-  try {
-    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-      encoding: 'utf8',
-      timeout: 2_000,
-    }).trim();
-    return out || null;
-  } catch {
-    return null;
   }
 }
 

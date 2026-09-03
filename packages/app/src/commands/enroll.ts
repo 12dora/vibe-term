@@ -22,7 +22,7 @@ import {
   postEnrollment,
 } from '../lib/hub-client';
 import { quotePosixShellArg } from '../lib/install';
-import { type LocalAuthContext, openInstallAuth } from '../lib/local-auth';
+import type { LocalAuthContext } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { promptPassword } from '../lib/prompt';
 import { parseTmexRoles } from '../lib/roles';
@@ -30,6 +30,7 @@ import { asString } from '../lib/validate';
 import { spkiFingerprint } from '../tls/cert-authority';
 import type { ParsedArgs } from '../types';
 import { type HubIo, NODE_REVOKED_REJOIN_ERROR } from './hub';
+import { withAuth } from './with-auth';
 
 export type AdmitCandidate = {
   certificateBytes: Uint8Array;
@@ -85,22 +86,6 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-async function withAuth<T>(
-  parsed: ParsedArgs,
-  io: EnrollIo | undefined,
-  fn: (ctx: LocalAuthContext) => Promise<T>
-): Promise<T> {
-  if (io?.auth) {
-    return await fn(io.auth);
-  }
-  const ctx = await openInstallAuth(parsed);
-  try {
-    return await fn(ctx);
-  } finally {
-    ctx.close();
-  }
 }
 
 function resolveTtlMs(parsed: ParsedArgs, io?: EnrollIo): number {

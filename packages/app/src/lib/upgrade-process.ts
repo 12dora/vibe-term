@@ -1,12 +1,13 @@
-import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { readFileSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { processCommandLine } from '../../../shared/src/process/process-identity';
 import { t } from '../i18n';
 import { writeTextAtomic } from './fs-utils';
 import { isPidAlive, processStartIdentity } from './upgrade-lock';
 
-export { isPidAlive };
+export { isPidAlive, processCommandLine };
 
 export type UpgradeServiceControl = {
   stop: () => Promise<void>;
@@ -43,26 +44,6 @@ export async function waitForPidExit(pid: number, timeoutMs: number): Promise<vo
     timeoutMs,
     `pid ${pid} did not exit within ${timeoutMs}ms`
   );
-}
-
-export function processCommandLine(pid: number): string | null {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  if (process.platform === 'linux' && existsSync(`/proc/${pid}/cmdline`)) {
-    try {
-      return readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ').trim() || null;
-    } catch {
-      return null;
-    }
-  }
-  try {
-    const out = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], {
-      encoding: 'utf8',
-      timeout: 2_000,
-    }).trim();
-    return out || null;
-  } catch {
-    return null;
-  }
 }
 
 export type KillPidProbes = {

@@ -1,4 +1,4 @@
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   closeSync,
@@ -13,6 +13,7 @@ import { chmod, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
 import { releaseTarballName } from '@tmex/shared';
+import { processCommandLine, processStartIdentity } from '@tmex/shared/process';
 import { type InstallInfo, getInstallInfo } from './install-info';
 import { downloadVerifiedRelease, resolveReleaseCacheDir, sha256File } from './release-download';
 
@@ -23,6 +24,7 @@ export {
   releaseSha256SumsUrl,
   sha256Hex,
 } from './release-download';
+export { processCommandLine, processStartIdentity };
 
 export const STAGED_PACKAGE_MAX_BYTES = 256 * 1024 * 1024;
 const STAGED_PACKAGE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -841,52 +843,6 @@ export function assertExtractedCliPackage(packageRoot: string): void {
     if (!existsSync(path)) {
       throw new Error(`extracted package is missing ${path}`);
     }
-  }
-}
-
-export function processCommandLine(pid: number): string | null {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  if (process.platform === 'linux') {
-    const procPath = `/proc/${pid}/cmdline`;
-    if (existsSync(procPath)) {
-      try {
-        return readFileSync(procPath, 'utf8').replace(/\0/g, ' ').trim() || null;
-      } catch {
-        return null;
-      }
-    }
-  }
-  try {
-    const out = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
-      encoding: 'utf8',
-      timeout: 2_000,
-    }).trim();
-    return out || null;
-  } catch {
-    return null;
-  }
-}
-
-export function processStartIdentity(pid: number): string | null {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  if (process.platform === 'linux' && existsSync(`/proc/${pid}/stat`)) {
-    try {
-      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-      const close = stat.lastIndexOf(')');
-      const rest = stat.slice(close + 2).split(' ');
-      return rest[19] ?? null;
-    } catch {
-      return null;
-    }
-  }
-  try {
-    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-      encoding: 'utf8',
-      timeout: 2_000,
-    }).trim();
-    return out || null;
-  } catch {
-    return null;
   }
 }
 

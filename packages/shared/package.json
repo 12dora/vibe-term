@@ -12,7 +12,10 @@
     "./i18n/locales/zh_CN.json": "./src/i18n/locales/zh_CN.json",
     "./i18n/locales/ja_JP.json": "./src/i18n/locales/ja_JP.json",
     "./link": "./src/link/index.ts",
-    "./uplink": "./src/uplink/codec.ts"
+    "./uplink": "./src/uplink/codec.ts",
+    "./http": "./src/http/read-body.ts",
+    "./net": "./src/net/dial-breaker.ts",
+    "./process": "./src/process/process-identity.ts"
   },
   "scripts": {
     "build:i18n": "bun scripts/build-i18n.ts",

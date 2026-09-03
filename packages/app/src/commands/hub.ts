@@ -46,7 +46,7 @@ import { applyHubUserPasswd, mapPasswdApplyError } from '../lib/hub-user-passwd'
 import { applyHubModeEnvKeys, parseHubPeerIds } from '../lib/install';
 import { createInstallLayout } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
-import { type LocalAuthContext, loadInstallEnv, openInstallAuth } from '../lib/local-auth';
+import { type LocalAuthContext, loadInstallEnv } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { parseAndValidateCaPem, readBoundedResponseText } from '../lib/pem';
 import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
@@ -57,6 +57,7 @@ import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
 import type { InstallMeta } from '../types';
+import { withAuth } from './with-auth';
 
 export type HubIo = {
   log?: (message: string) => void;
@@ -262,22 +263,6 @@ function log(io: HubIo | undefined, message: string): void {
 
 function nowMs(io?: HubIo): number {
   return io?.now?.() ?? Date.now();
-}
-
-async function withAuth<T>(
-  parsed: ParsedArgs,
-  io: HubIo | undefined,
-  fn: (ctx: LocalAuthContext) => Promise<T>
-): Promise<T> {
-  if (io?.auth) {
-    return await fn(io.auth);
-  }
-  const ctx = await openInstallAuth(parsed);
-  try {
-    return await fn(ctx);
-  } finally {
-    ctx.close();
-  }
 }
 
 async function writeRolesAndHubUrl(envPath: string, roles: string, hubUrl: string): Promise<void> {
