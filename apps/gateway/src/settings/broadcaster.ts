@@ -1,5 +1,5 @@
 // 设置变更广播注册表：api 层无法直接引用 wsServer 实例（runtime 局部创建），
-// 仿 tmux/theme-broadcaster 的注册模式解耦。runtime.ts 启动时注册、stop 时注销。
+// 用注册表解耦。runtime.ts 启动时注册、stop 时注销。
 
 export type SettingsNamespace =
   | 'site'

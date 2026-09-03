@@ -59,7 +59,7 @@ const baseUrl = requireArg(args, 'base-url');
 const cookies = (await loadLoginState(requireArg(args, 'cookie-file'))).cookieHeader;
 const nodeId = requireArg(args, 'node-id');
 const deviceId = requireArg(args, 'device-id');
-const paneId = requireArg(args, 'pane-id');
+const paneId = typeof args['pane-id'] === 'string' ? args['pane-id'] : '';
 const captureSeq = args['capture-seq'] === true || args['capture-seq'] === 'true';
 const marker = typeof args.marker === 'string' ? args.marker : '';
 if (!captureSeq && !marker) {
@@ -212,6 +212,9 @@ while (!connected && Date.now() < connectDeadline) await sleep(50);
 const snapDeadline = Date.now() + 8_000;
 while (!snapshotPane && Date.now() < snapDeadline) await sleep(50);
 const activePane = snapshotPane || paneId;
+if (!activePane) {
+  throw new Error('no pane in STATE_SNAPSHOT and no --pane-id fallback');
+}
 process.stderr.write(`using pane=${activePane} connected=${connected}\n`);
 
 const sub = wsBorsh.encodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, {
