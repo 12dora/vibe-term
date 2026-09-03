@@ -3,8 +3,6 @@ import {
   decodeAuthorization,
   decodeBase64url,
   decodeCertificate,
-  decodeKeyLogRecord,
-  decodeRevokeNodePayload,
   encodeBase64url,
   nodeIdToHex,
   sha256,
@@ -579,7 +577,6 @@ export class HubRuntime {
       (await this.dispatchForwardedRedeem(ctx)) ??
       (await this.dispatchForwardedCreateEnrollment(ctx)) ??
       (await this.dispatchForwardedRename(ctx)) ??
-      (await this.dispatchForwardedRevoke(ctx)) ??
       (await this.dispatchForwardedKeyLogPost(ctx)) ??
       json({ error: 'not_found' }, 404)
     );
@@ -620,13 +617,6 @@ export class HubRuntime {
     if (!rename || ctx.req.method !== 'POST') return undefined;
     if (!ctx.auth) return json({ error: 'unauthorized' }, 401);
     return this.handleRename(ctx.req, decodeURIComponent(rename[1] ?? ''), ctx.auth);
-  }
-
-  private async dispatchForwardedRevoke(ctx: ForwardedWriteCtx): Promise<Response | undefined> {
-    const revoke = ctx.path.match(/^\/api\/hub\/nodes\/([^/]+)\/revoke$/);
-    if (!revoke || ctx.req.method !== 'POST') return undefined;
-    if (!ctx.auth) return json({ error: 'unauthorized' }, 401);
-    return this.handleRevoke(ctx.req, decodeURIComponent(revoke[1] ?? ''), ctx.auth);
   }
 
   private async dispatchForwardedKeyLogPost(ctx: ForwardedWriteCtx): Promise<Response | undefined> {
@@ -787,12 +777,6 @@ export class HubRuntime {
           return blocked ?? this.handleRename(req, decodeURIComponent(p.id), a);
         })
       ) ??
-      hit('/api/hub/nodes/:id/revoke', 'POST', (p) =>
-        this.withAuth(req, async (a) => {
-          const blocked = await this.requireWriterOrForward(req, a.userId);
-          return blocked ?? this.handleRevoke(req, decodeURIComponent(p.id), a);
-        })
-      ) ??
       json({ error: 'not_found' }, 404)
     );
   }
@@ -903,41 +887,6 @@ export class HubRuntime {
       } catch {}
     }
     return json({ ok: true, id: nodeId, name: next });
-  }
-
-  private async handleRevoke(req: Request, nodeId: string, auth: HubAuthResult): Promise<Response> {
-    const cert = this.userStore.getCert(nodeId);
-    if (!cert || cert.userId !== auth.userId) {
-      return json({ error: 'not_found' }, 404);
-    }
-    const body = await readJsonObjectBody(req);
-    if (!body) return json({ error: 'invalid_body' }, 400);
-    let bytes: Uint8Array;
-    let sig: Uint8Array;
-    try {
-      bytes = requireB64url(body, 'bytes');
-      sig = requireB64url(body, 'sig', 64);
-    } catch (err) {
-      return validationError(err);
-    }
-    let record: ReturnType<typeof decodeKeyLogRecord>;
-    try {
-      record = decodeKeyLogRecord(bytes);
-    } catch {
-      return json({ error: 'bad_record' }, 400);
-    }
-    if (record.type !== 'revoke-node') return json({ error: 'not_revoke_node' }, 400);
-    let payload: ReturnType<typeof decodeRevokeNodePayload>;
-    try {
-      payload = decodeRevokeNodePayload(record.payload);
-    } catch {
-      return json({ error: 'bad_payload' }, 400);
-    }
-    if (nodeIdToHex(payload.node_id) !== nodeId) return json({ error: 'node_mismatch' }, 400);
-    const result = await this.keyLogSource.append(auth.userId, { bytes, sig });
-    if (!result.ok) return json({ error: result.error }, 400);
-    await this.uplink.applyAppendEffects(auth.userId, result);
-    return json({ ok: true, id: nodeId, status: 'revoked' });
   }
 
   private async handleCreateEnrollment(req: Request, auth: HubAuthResult): Promise<Response> {

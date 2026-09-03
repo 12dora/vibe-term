@@ -197,7 +197,7 @@ peer_cache          node_id, name, endpoints_json, inventory_json, direct_capabl
 ### 首个用户与 hub 管理
 
 - hub 机 `init --role hub,node` 后执行 `tmex-cli hub user add <username>`：本机提示输入密码 → 派生根钥 → 写 `users`、生成本机 enrollment 授权与节点证书并自签 `admit-node`（hub 机既是 hub 又是第一个 node，无需 join）。`hub user passwd` 生成 `rotate-root` 记录（旧钥签）；`hub user totp` 生成 `set-totp` 记录。
-- hub 管理 API（`nodes` list/rename/revoke、`enrollments` create）以 hub 机的 node 为目标 `/n/<hubNodeId>/api/hub/*`，鉴权即普通 `node-session`；`revoke` 同时要求前端签 `revoke-node` 记录。非 hub 机的 entry 经 peer link / relay 转发，hub 离线时按钮禁用。
+- hub 管理 API（`nodes` list/rename、`enrollments` create）以 hub 机的 node 为目标 `/n/<hubNodeId>/api/hub/*`，鉴权即普通 `node-session`。撤销不走 hub 管理 API：前端签出 `revoke-node` 记录后走 `POST /api/auth/keylog?hub=sync`，由 hub 的 key-log 追加与 append effects 生效。非 hub 机的 entry 经 peer link / relay 转发，hub 离线时按钮禁用。
 
 ### 撤销
 

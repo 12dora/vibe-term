@@ -2,13 +2,11 @@ import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import { config } from '../config';
 import { runtimeController } from '../control/runtime';
 import { getSiteSettings } from '../db';
-import { t } from '../i18n';
 import { getBaseVersion } from '../system/version';
 import { createGatewayOwnerProof } from './gateway-ownership';
 import { json, manifestJson } from './http';
 import { type ApiRoute, route } from './route';
 import { getTmuxHealth } from './tmux-health';
-import { handleTmuxTreeApiRequest } from './tmux-tree';
 
 export type HealthzTlsInfo = {
   mode: string;
@@ -53,14 +51,6 @@ async function handleGetManifest(method: 'GET' | 'HEAD'): Promise<Response> {
 
   return manifestJson(manifest, method);
 }
-
-export const tmuxTreeRoutes: ApiRoute[] = [
-  route({
-    method: '*',
-    path: '/api/tmux/tree',
-    handler: (req, _params, ctx) => handleTmuxTreeApiRequest(req, ctx.path),
-  }),
-];
 
 export const systemPrefixRoutes: ApiRoute[] = [
   route({

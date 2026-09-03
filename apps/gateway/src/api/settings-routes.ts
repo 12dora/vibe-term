@@ -20,7 +20,6 @@ import {
   toSiteSettingsHttpPayload,
 } from './site-settings-link';
 import { normalizeTerminalShortcutsInput } from './terminal-shortcuts';
-import { handleThemeApiRequest } from './theme';
 
 function rejectManagedSiteIdentity(body: UpdateSiteSettingsRequest): Response | null {
   const link = getSiteSettingsLinkProvider();
@@ -110,11 +109,6 @@ export const settingsRoutes: ApiRoute[] = [
     method: 'PATCH',
     path: '/api/settings/terminal-shortcuts',
     handler: (req) => handleUpdateTerminalShortcuts(req),
-  }),
-  route({
-    method: ['GET', 'POST'],
-    path: '/api/settings/theme',
-    handler: (req, _params, ctx) => handleThemeApiRequest(req, ctx.path),
   }),
   route({
     method: 'POST',

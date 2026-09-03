@@ -15,7 +15,7 @@ import {
   dispatchRoutes,
 } from './route';
 import { settingsRoutes } from './settings-routes';
-import { healthRoutes, systemPrefixRoutes, tmuxTreeRoutes } from './system-routes';
+import { healthRoutes, systemPrefixRoutes } from './system-routes';
 import { tunnelRoutes } from './tunnel-routes';
 import { watchRoutes } from './watch';
 
@@ -24,7 +24,6 @@ export type { SystemApiHandler };
 const apiRoutes: ApiRoute[] = [
   ...deviceRoutes,
   ...deviceFolderRoutes,
-  ...tmuxTreeRoutes,
   ...settingsRoutes,
   ...tunnelRoutes,
   ...telegramRoutes,

@@ -1279,7 +1279,7 @@ describe('HubRuntime HTTP', () => {
     }
   });
 
-  test('GET /api/hub/nodes 与 rename；revoke 必须带签名 revoke-node 记录', async () => {
+  test('GET /api/hub/nodes 与 rename；revoke-node 记录经 uplink 落库并踢下线', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const { userStore, keyLogSource, service } = createHubTestStack(db);
@@ -1312,26 +1312,30 @@ describe('HubRuntime HTTP', () => {
       expect(renamed?.status).toBe(200);
       expect(userStore.getNode(node.nodeId)?.name).toBe('studio');
 
-      const sessionOnly = await hub.handleRequest(
-        new Request(`http://hub/api/hub/nodes/${node.nodeId}/revoke`, { method: 'POST' }),
-        dummyServer
-      );
-      expect(sessionOnly?.status).toBe(400);
       expect(userStore.getNode(node.nodeId)?.status).toBe('enrolled');
 
-      const [nodeLink, hubLink] = createInMemoryLinkPair();
-      const inbox = ctlInbox(nodeLink);
-      hub.attachLocalNode(hubLink);
-      const challenge = await inbox.take();
-      if (challenge.t !== 'auth.challenge') throw new Error('expected challenge');
-      sendCtl(nodeLink, {
-        t: 'auth.response',
-        node_id: node.nodeId,
-        sig: signAuth(node.ed.secretKey, decodeBase64url(challenge.nonce)),
-      });
-      await inbox.take();
-      await inbox.take();
-      const closed = hubLink.closed;
+      // 撤销的唯一上行通道是 key-log：入口节点的 POST /api/auth/keylog?hub=sync 最终就落成
+      // 这条 uplink key.log.append，hub 先回 ack 再跑 append effects（踢被撤销节点 + 广播）。
+      const entry = seedAdmittedNode(userStore, user.id, { name: 'entry' });
+      const attach = async (seeded: typeof node) => {
+        const [nodeLink, hubLink] = createInMemoryLinkPair();
+        const inbox = ctlInbox(nodeLink);
+        hub.attachLocalNode(hubLink);
+        const challenge = await inbox.take();
+        if (challenge.t !== 'auth.challenge') throw new Error('expected challenge');
+        sendCtl(nodeLink, {
+          t: 'auth.response',
+          node_id: seeded.nodeId,
+          sig: signAuth(seeded.ed.secretKey, decodeBase64url(challenge.nonce)),
+        });
+        expect((await inbox.take()).t).toBe('auth.ok');
+        expect((await inbox.take()).t).toBe('node.list');
+        return { nodeLink, hubLink, inbox };
+      };
+      const target = await attach(node);
+      const admin = await attach(entry);
+      const closed = target.hubLink.closed;
+
       const rec = signUserRecord(
         service,
         user.id,
@@ -1339,18 +1343,16 @@ describe('HubRuntime HTTP', () => {
         'revoke-node',
         encodeRevokeNodePayload({ node_id: node.nodeIdBytes, reason: 'lost' })
       );
-      const revoked = await hub.handleRequest(
-        new Request(`http://hub/api/hub/nodes/${node.nodeId}/revoke`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            bytes: encodeBase64url(rec.bytes),
-            sig: encodeBase64url(rec.sig),
-          }),
-        }),
-        dummyServer
-      );
-      expect(revoked?.status).toBe(200);
+      sendCtl(admin.nodeLink, {
+        t: 'key.log.append',
+        id: 'revoke-1',
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+      });
+      const ack = await admin.inbox.take();
+      if (ack.t !== 'key.log.ack') throw new Error('expected key.log.ack');
+      expect(ack.ok).toBe(true);
+      expect(ack.id).toBe('revoke-1');
       expect(userStore.getNode(node.nodeId)?.status).toBe('revoked');
       expect(userStore.getCert(node.nodeId)?.revokedLogSeq).not.toBeNull();
       expect((await closed).reason).toBe('revoked');
@@ -1886,12 +1888,12 @@ describe('HubRuntime multi-hub', () => {
     }
   });
 
-  test('standby 四条写路由返回 409 HUB_NOT_WRITER；读路由仍 200', async () => {
+  test('standby 三条写路由返回 409 HUB_NOT_WRITER；读路由仍 200', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const now = () => 4_000;
       const meshHubs = seedWriterHub(db);
-      const { hub, user, entry, userStore, service } = await startAuthedHub(db, now, {
+      const { hub, user, entry, userStore } = await startAuthedHub(db, now, {
         meshHubs,
         config: {
           publicUrl: 'https://hub.example',
@@ -1936,28 +1938,6 @@ describe('HubRuntime multi-hub', () => {
       );
       expect(rename?.status).toBe(409);
       expect(await rename?.json()).toEqual(WRITER_ERROR_BODY);
-
-      const rec = signUserRecord(
-        service,
-        user.id,
-        user.root,
-        'revoke-node',
-        encodeRevokeNodePayload({ node_id: entry.nodeIdBytes, reason: 'lost' })
-      );
-      const revoke = await hub.handleRequest(
-        new Request(`http://hub/api/hub/nodes/${entry.nodeId}/revoke`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            bytes: encodeBase64url(rec.bytes),
-            sig: encodeBase64url(rec.sig),
-          }),
-        }),
-        dummyServer
-      );
-      expect(revoke?.status).toBe(409);
-      expect(await revoke?.json()).toEqual(WRITER_ERROR_BODY);
-      expect(userStore.getNode(entry.nodeId)?.status).toBe('enrolled');
 
       const listed = await hub.handleRequest(new Request('http://hub/api/hub/nodes'), dummyServer);
       expect(listed?.status).toBe(200);

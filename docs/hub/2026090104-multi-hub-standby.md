@@ -117,7 +117,7 @@
 
 写者可达且 advertised version ≥ 1.1.13 时，standby 把下列写入经**已认证 hub↔hub uplink** 发成控制帧 `hub.write-forward { id, method, path, headers（仅 content-type 与 X-Tmex-Force-Keylog）, body, uid?, writerHubId?, writerEpoch? }`，写者执行前校验 `isWriter()`、本机 ID 与当前 epoch，不匹配则 409 `HUB_NOT_WRITER` ack。执行后回 ack（status / body）；超 48 KiB 的 ACK 按 `{id, part, final, bytes}` 分片，standby 重组。请求体发送前做尺寸检查，超限返回 413 `payload_too_large`。写者按 `(fromHubId, id)` 做有界幂等缓存：同摘要重放原 ACK，不同摘要拒绝。响应加 `X-Tmex-Forwarded-By: <standbyHubId>`。帧里**不带** `cookie` / `authorization`。已带该响应头的请求不再转发（环路守卫）。无活的写者 uplink 或对端版本不够时，仍 409 `HUB_NOT_WRITER`。
 
-写者把请求归到转发 hub：enrollment create 的用户签名、redeem 的 enroll-key 证书、revoke / keylog 的签名记录均自认证。**rename** 额外带 `uid`：standby 断言「该用户已在本机通过会话认证」，写者接受该 uid **仅因为发送方是已授权 hub**（不复验 standby 侧会话）。失陷的已授权 standby 可以冒用其已认证用户做 rename。
+写者把请求归到转发 hub：enrollment create 的用户签名、redeem 的 enroll-key 证书、keylog（含 `revoke-node`）的签名记录均自认证。**rename** 额外带 `uid`：standby 断言「该用户已在本机通过会话认证」，写者接受该 uid **仅因为发送方是已授权 hub**（不复验 standby 侧会话）。失陷的已授权 standby 可以冒用其已认证用户做 rename。
 
 写者未知或不可达时，仍返回 HTTP 409：
 
@@ -130,7 +130,7 @@
 }
 ```
 
-覆盖：`POST /api/hub/enrollments`、`POST /api/hub/enrollments/redeem`、`POST /api/hub/nodes/:id/rename`、`POST /api/hub/nodes/:id/revoke`，以及 `POST /api/auth/keylog?hub=sync` 的 hub 追加。挂在 standby 上的 node 发来的 uplink `key.log.append` 经 standby 自己的写者 uplink 转发，并把 ack/error 回传；无活的写者 uplink 时仍是 `HUB_NOT_WRITER`。转发成功后 standby 立即触发 key-log catch-up，不等下一轮 `node.list`。
+覆盖：`POST /api/hub/enrollments`、`POST /api/hub/enrollments/redeem`、`POST /api/hub/nodes/:id/rename`，以及 `POST /api/auth/keylog?hub=sync` 的 hub 追加（撤销即走这条）。挂在 standby 上的 node 发来的 uplink `key.log.append` 经 standby 自己的写者 uplink 转发，并把 ack/error 回传；无活的写者 uplink 时仍是 `HUB_NOT_WRITER`。转发成功后 standby 立即触发 key-log catch-up，不等下一轮 `node.list`。
 
 只读（节点列表、enrollment 查询、uplink 鉴权、`node.list`、本 hub 与跨 hub relay、RTC 信令、key log 拉取）在 standby 上仍可用。
 

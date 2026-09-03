@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { setSiteTheme } from './helpers/site-theme';
 import {
   createTwoPaneSession,
   ensureCleanSession,
@@ -108,8 +109,7 @@ test('ws-borsh: rapid theme toggle × browser resize converges back to window si
 
     for (let i = 0; i < 4; i++) {
       const theme = i % 2 === 0 ? 'light' : 'dark';
-      const res = await request.post('/api/settings/theme', { data: { theme } });
-      expect(res.ok()).toBeTruthy();
+      await setSiteTheme(theme);
       await page.waitForTimeout(50);
       await page.setViewportSize({
         width: 1200 + (i % 2 === 0 ? -50 : 50),
@@ -144,7 +144,7 @@ test('ws-borsh: rapid theme toggle × browser resize converges back to window si
     expect(counts.windowStyle).toBeGreaterThanOrEqual(1);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     ensureCleanSession(sessionName);
   }
 });

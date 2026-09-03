@@ -1,5 +1,6 @@
 import { type Page, expect, test } from '@playwright/test';
 import { createLocalDevice } from './helpers/device';
+import { setSiteTheme } from './helpers/site-theme';
 import { createSinglePaneSession, ensureCleanSession } from './helpers/tmux';
 
 // 命名主题预设 e2e：侧栏主题菜单选中预设后，根节点 data-theme-preset / .dark、页面 token
@@ -51,7 +52,7 @@ test('theme-presets: Dracula 同时换 UI token 与终端配色，刷新后保�
   const trigger = page.getByTestId('theme-menu-trigger');
 
   try {
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('device-page')).toBeVisible();
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
@@ -81,17 +82,17 @@ test('theme-presets: Dracula 同时换 UI token 与终端配色，刷新后保�
       .toBe(DRACULA_BG);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     ensureCleanSession(sessionName);
   }
 });
 
-test('theme-presets: 浅色预设去掉 .dark，选回 Dark 清空预设', async ({ page, request }) => {
+test('theme-presets: 浅色预设去掉 .dark，选回 Dark 清空预设', async ({ page }) => {
   const html = page.locator('html');
   const trigger = page.getByTestId('theme-menu-trigger');
 
   try {
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await page.goto('/settings');
     await expect(page.getByTestId('settings-page')).toBeVisible();
     await expect(html).toHaveClass(/\bdark\b/);
@@ -115,6 +116,6 @@ test('theme-presets: 浅色预设去掉 .dark，选回 Dark 清空预设', async
       .poll(async () => normalizeColor(await readBodyBackground(page)), { timeout: 10_000 })
       .not.toBe(SOLARIZED_LIGHT_BG);
   } finally {
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
   }
 });
