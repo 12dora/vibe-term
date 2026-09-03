@@ -2,19 +2,25 @@ import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import type { CarrierSendResult } from './carrier';
 import { createFakeCarrier } from './test-helpers';
-import { GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES, WebSocketSendGuard } from './websocket-send-guard';
+import {
+  GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES,
+  GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
+  WebSocketSendGuard,
+} from './websocket-send-guard';
 
 function createCarrier(statuses: Array<CarrierSendResult | 'throw'>, bufferedAmount = 37) {
   let sendCalls = 0;
   let terminateCalls = 0;
+  const sent: Uint8Array[] = [];
   const carrier = createFakeCarrier({
     bufferedAmount,
-    send() {
+    send(bytes) {
       const status = statuses[Math.min(sendCalls, statuses.length - 1)] ?? 'sent';
       sendCalls += 1;
       if (status === 'throw') {
         throw new Error('send failed');
       }
+      sent.push(bytes.slice());
       return status;
     },
     terminate() {
@@ -25,7 +31,23 @@ function createCarrier(statuses: Array<CarrierSendResult | 'throw'>, bufferedAmo
     carrier,
     sendCalls: () => sendCalls,
     terminateCalls: () => terminateCalls,
+    sent,
   };
+}
+
+function isStreamPaneGap(frame: Uint8Array): boolean {
+  try {
+    const env = wsBorsh.decodeEnvelopeView(frame);
+    if (env.kind !== wsBorsh.KIND_CANONICAL_EVENT) return false;
+    const event = wsBorsh.decodeCanonicalEventPayload(env.payload).event;
+    return (
+      'SourceGap' in event &&
+      'Stream' in event.SourceGap.scope &&
+      event.SourceGap.reason === wsBorsh.SOURCE_GAP_REASON_PANE_GAP
+    );
+  } catch {
+    return false;
+  }
 }
 
 describe('WebSocketSendGuard', () => {
@@ -53,12 +75,14 @@ describe('WebSocketSendGuard', () => {
     expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(false);
 
     guard.handleDrain(target.carrier);
-    expect(target.terminateCalls()).toBe(1);
+    expect(target.terminateCalls()).toBe(0);
+    expect(target.sent.filter(isStreamPaneGap)).toHaveLength(1);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([3])])).toBe(true);
   });
 
-  test('terminates on drain when live frames were skipped during backpressure', () => {
+  test('sends one SourceGap on drain after skipped frames and keeps the socket open', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-    const target = createCarrier(['backpressure']);
+    const target = createCarrier(['backpressure', 'sent']);
 
     expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
     expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(false);
@@ -66,14 +90,38 @@ describe('WebSocketSendGuard', () => {
 
     guard.handleDrain(target.carrier);
 
-    expect(target.terminateCalls()).toBe(1);
-    expect(guard.sendFrames(target.carrier, [new Uint8Array([3])])).toBe(false);
-    expect(target.sendCalls()).toBe(1);
+    expect(target.terminateCalls()).toBe(0);
+    expect(guard.isBackpressured(target.carrier)).toBe(false);
+    expect(target.sent.filter(isStreamPaneGap)).toHaveLength(1);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([3])])).toBe(true);
+    expect(target.sendCalls()).toBe(3);
   });
 
-  test('marks a partial chunk batch as skipped and isolates it after drain', () => {
+  test('repeated skips in one backpressure window emit a single SourceGap', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-    const target = createCarrier(['backpressure']);
+    const target = createCarrier(['backpressure', 'sent', 'sent', 'backpressure', 'sent']);
+
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
+    for (let i = 0; i < 12; i += 1) {
+      expect(guard.sendFrames(target.carrier, [new Uint8Array([i + 2])])).toBe(false);
+    }
+    expect(target.sendCalls()).toBe(1);
+
+    guard.handleDrain(target.carrier);
+    expect(target.terminateCalls()).toBe(0);
+    expect(target.sent.filter(isStreamPaneGap)).toHaveLength(1);
+
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([99])])).toBe(true);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([100])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([101])])).toBe(false);
+    guard.handleDrain(target.carrier);
+    expect(target.sent.filter(isStreamPaneGap)).toHaveLength(2);
+    expect(target.terminateCalls()).toBe(0);
+  });
+
+  test('marks a partial chunk batch as skipped and resyncs after drain', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const target = createCarrier(['backpressure', 'sent']);
 
     expect(
       guard.sendFrames(target.carrier, [
@@ -85,18 +133,21 @@ describe('WebSocketSendGuard', () => {
     expect(target.sendCalls()).toBe(1);
 
     guard.handleDrain(target.carrier);
-    expect(target.terminateCalls()).toBe(1);
+    expect(target.terminateCalls()).toBe(0);
+    expect(target.sent.filter(isStreamPaneGap)).toHaveLength(1);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([4])])).toBe(true);
   });
 
-  test('lets a stateful sender mark an abandoned continuation as a stream gap', () => {
+  test('marks a stateful abandoned continuation as a stream gap and resyncs', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-    const target = createCarrier(['backpressure']);
+    const target = createCarrier(['backpressure', 'sent']);
 
     expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
     guard.markStreamGap(target.carrier);
     guard.handleDrain(target.carrier);
 
-    expect(target.terminateCalls()).toBe(1);
+    expect(target.terminateCalls()).toBe(0);
+    expect(target.sent.filter(isStreamPaneGap)).toHaveLength(1);
   });
 
   test('terminates a carrier that stays backpressured past the deadline', async () => {
@@ -237,7 +288,7 @@ describe('WebSocketSendGuard', () => {
     expect(entry).toContain('frame_kind=0305');
   });
 
-  test('logs backpressure entry, skip, drain, and terminate with carrier kind', () => {
+  test('logs backpressure entry, skip, drain, and resync with carrier kind', () => {
     const lines: string[] = [];
     const orig = console.warn;
     console.warn = (...args: unknown[]) => {
@@ -245,7 +296,7 @@ describe('WebSocketSendGuard', () => {
     };
     try {
       const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-      const target = createCarrier(['backpressure']);
+      const target = createCarrier(['backpressure', 'sent']);
       target.carrier.logContext = {
         kind: 'mesh_link_stream',
         sessionId: 'sess-1',
@@ -265,8 +316,8 @@ describe('WebSocketSendGuard', () => {
     expect(entry).toBeTruthy();
     expect(skip).toBeFalsy();
     expect(drain).toBeTruthy();
-    expect(term).toBeTruthy();
-    for (const line of [entry, drain, term]) {
+    expect(term).toBeFalsy();
+    for (const line of [entry, drain]) {
       expect(line).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z /);
       expect(line).toContain('carrier=mesh_link_stream');
       expect(line).toContain('session=sess-1');
@@ -276,7 +327,7 @@ describe('WebSocketSendGuard', () => {
     expect(entry).toContain('buffered_before=37');
     expect(drain).toContain('skipped_frames=1');
     expect(drain).toContain('skipped_bytes=3');
-    expect(term).toContain('reason=backpressure_gap');
+    expect(drain).toContain('resync=1');
   });
 
   test('priority frames send during backpressure without marking a stream gap', () => {
@@ -304,13 +355,25 @@ describe('WebSocketSendGuard', () => {
   });
 
   test('priority frames still refuse an unavailable carrier', () => {
-    const guard = new WebSocketSendGuard({ timeoutMs: 1, onTerminate: () => {} });
-    const target = createCarrier(['backpressure']);
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const target = createCarrier(['closed']);
     expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
-    expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(false);
-    guard.handleDrain(target.carrier);
     expect(target.terminateCalls()).toBe(1);
     expect(guard.sendPriorityFrames(target.carrier, [new Uint8Array([9])])).toBe('dropped');
     expect(target.sendCalls()).toBe(1);
+  });
+
+  test('hard backpressure limit still terminates the carrier', () => {
+    const reasons: string[] = [];
+    const guard = new WebSocketSendGuard({
+      timeoutMs: 1000,
+      onTerminate: (reason) => reasons.push(reason),
+    });
+    const target = createCarrier(['sent'], GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
+    expect(target.sendCalls()).toBe(0);
+    expect(target.terminateCalls()).toBe(1);
+    expect(reasons).toEqual(['backpressure_gap']);
+    expect(guard.sendPriorityFrames(target.carrier, [new Uint8Array([9])])).toBe('dropped');
   });
 });

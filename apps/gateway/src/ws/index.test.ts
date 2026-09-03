@@ -396,14 +396,40 @@ describe('WebSocketServer slow consumer isolation', () => {
     expect(Array.from(payload.data)).toEqual([1, 2, 3]);
   });
 
-  test('stops encoding live output while blocked and terminates after a skipped frame drains', () => {
+  test('shares one immutable fused frame across clients with the same sequence', () => {
+    const server = new WebSocketServer() as any;
+    const first = createBorshTestWs();
+    const second = createBorshTestWs();
+    first.data.borshState.selectedPanes['device-shared'] = '%1';
+    second.data.borshState.selectedPanes['device-shared'] = '%1';
+    setupConnectionEntry(server, {
+      deviceId: 'device-shared',
+      clients: new Set([first, second]),
+    });
+
+    server.broadcastTerminalOutput('device-shared', '%1', new Uint8Array([1, 2, 3]));
+    server.terminalOutputBatcher.flushDevice('device-shared');
+
+    expect(first.sent).toHaveLength(1);
+    expect(second.sent).toHaveLength(1);
+    expect(first.sent[0]).toBe(second.sent[0]);
+
+    second.data.borshState.seqGen();
+    server.broadcastTerminalOutput('device-shared', '%1', new Uint8Array([4]));
+    server.terminalOutputBatcher.flushDevice('device-shared');
+    expect(first.sent[1]).not.toBe(second.sent[1]);
+  });
+
+  test('stops encoding live output while blocked and resyncs after a skipped frame drains', () => {
     const server = new WebSocketServer() as any;
     let sendCalls = 0;
     let terminateCalls = 0;
+    const sent: Uint8Array[] = [];
     const ws = createBorshTestWs({
-      send() {
+      send(bytes) {
         sendCalls += 1;
-        return -1;
+        sent.push(bytes.slice());
+        return sendCalls === 1 ? -1 : bytes.byteLength;
       },
       terminate() {
         terminateCalls += 1;
@@ -422,7 +448,18 @@ describe('WebSocketServer slow consumer isolation', () => {
 
     server.handleDrain(ws);
 
-    expect(terminateCalls).toBe(1);
+    expect(terminateCalls).toBe(0);
+    const gap = sent.find((frame) => {
+      try {
+        const env = wsBorsh.decodeEnvelopeView(frame);
+        if (env.kind !== wsBorsh.KIND_CANONICAL_EVENT) return false;
+        const event = wsBorsh.decodeCanonicalEventPayload(env.payload).event;
+        return 'SourceGap' in event && 'Stream' in event.SourceGap.scope;
+      } catch {
+        return false;
+      }
+    });
+    expect(gap).toBeDefined();
   });
 });
 
@@ -451,6 +488,43 @@ describe('WebSocketServer frame sizing', () => {
       expect(frame.byteLength).toBeLessThanOrEqual(128);
       expect(wsBorsh.decodeEnvelope(frame).kind).toBe(wsBorsh.KIND_CHUNK);
     }
+  });
+
+  test('fused terminal output preserves generic chunk framing and sequence semantics', () => {
+    const server = new WebSocketServer() as any;
+    const sent: Uint8Array[] = [];
+    const ws = createBorshTestWs({
+      send(frame) {
+        sent.push(frame.slice());
+        return frame.byteLength;
+      },
+    });
+    ws.data.borshState.maxFrameBytes = 128;
+    const data = new Uint8Array(512).fill(0x7a);
+
+    const payloadBytes = server.sendTermOutput(ws, '设备-a', '%窗格-1', data);
+
+    expect(payloadBytes).toBeGreaterThan(data.byteLength);
+    expect(sent.length).toBeGreaterThan(1);
+    const reassembler = new wsBorsh.ChunkReassembler();
+    let reassembled: wsBorsh.ReassembledMessage | null = null;
+    for (const [index, frame] of sent.entries()) {
+      expect(frame.byteLength).toBeLessThanOrEqual(128);
+      const envelope = wsBorsh.decodeEnvelope(frame);
+      expect(envelope.kind).toBe(wsBorsh.KIND_CHUNK);
+      expect(envelope.seq).toBe(index + 2);
+      const chunk = wsBorsh.decodeChunk(envelope.payload);
+      expect(chunk.originalSeq).toBe(1);
+      reassembled = reassembler.addChunk(chunk) ?? reassembled;
+    }
+    expect(reassembled?.kind).toBe(wsBorsh.KIND_TERM_OUTPUT);
+    const output = wsBorsh.decodePayload(
+      wsBorsh.schema.TermOutputSchema,
+      reassembled?.payload ?? new Uint8Array()
+    );
+    expect(output.deviceId).toBe('设备-a');
+    expect(output.paneId).toBe('%窗格-1');
+    expect(output.data).toEqual(data);
   });
 });
 

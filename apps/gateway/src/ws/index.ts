@@ -22,7 +22,7 @@ import {
   createBorshKindHandlers,
   dispatchBorshKind,
 } from './borsh-dispatcher';
-import { encodeCanonicalEvent, encodePayloadFrames, sendToClient } from './borsh/codec-borsh';
+import { encodePayloadFrames, sendToClient } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { CanonicalFeedSession } from './canonical-feed-session';
 import type { Carrier } from './carrier';
@@ -256,7 +256,7 @@ export class WebSocketServer
       }
       let envelope: wsBorsh.Envelope;
       try {
-        envelope = wsBorsh.decodeEnvelope(bytes);
+        envelope = wsBorsh.decodeEnvelopeView(bytes);
       } catch (err) {
         const e = err instanceof wsBorsh.WsBorshError ? err : null;
         this.sendError(
@@ -384,7 +384,7 @@ export class WebSocketServer
   ): boolean | 'backpressured' {
     const terminalBytes = 'PaneData' in event ? event.PaneData.data.byteLength : null;
     try {
-      const frame = encodeCanonicalEvent(
+      const frame = wsBorsh.encodeCanonicalEventFrame(
         event,
         session.borshState.seqGen(),
         session.borshState.maxFrameBytes
@@ -604,6 +604,40 @@ export class WebSocketServer
 
   sendEnvelope(ws: GatewaySession, kind: number, payload: Uint8Array): void {
     this.sendChunked(ws, kind, payload);
+  }
+
+  sendTermOutput(
+    ws: GatewaySession,
+    deviceId: string,
+    paneId: string,
+    data: Uint8Array,
+    frameCache: Map<number, Uint8Array> | null = null
+  ): number | null {
+    const carrier = ws.activeCarrier;
+    if (!gatewayWebSocketSendGuard.canSend(carrier)) return null;
+    const state = ws.borshState;
+    const originalSeq = state.seqGen();
+    let frame = frameCache?.get(originalSeq);
+    if (!frame) {
+      frame = wsBorsh.encodeTermOutputFrame({ deviceId, paneId, encoding: 1, data }, originalSeq);
+      frameCache?.set(originalSeq, frame);
+    }
+    const payloadBytes = frame.byteLength - wsBorsh.WS_ENVELOPE_WIRE_OVERHEAD_BYTES;
+    let frames = [frame];
+    if (frame.byteLength > state.maxFrameBytes) {
+      let reuseOriginalSeq = true;
+      frames = encodePayloadFrames(
+        wsBorsh.KIND_TERM_OUTPUT,
+        frame.subarray(wsBorsh.WS_ENVELOPE_WIRE_OVERHEAD_BYTES),
+        () => {
+          if (!reuseOriginalSeq) return state.seqGen();
+          reuseOriginalSeq = false;
+          return originalSeq;
+        },
+        state.maxFrameBytes
+      );
+    }
+    return sendToClient(carrier, frames, state.maxFrameBytes) ? payloadBytes : null;
   }
 
   sendControl(

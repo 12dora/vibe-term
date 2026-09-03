@@ -1600,3 +1600,99 @@ describe('CanonicalStateClient', () => {
     client.dispose();
   });
 });
+
+describe('CanonicalStateClient PaneData payload fast path', () => {
+  const eventFor = (
+    data: Uint8Array,
+    seqStart: bigint,
+    serverEpoch = SERVER_EPOCH,
+    paneEpoch = PANE_EPOCH
+  ): Extract<wsBorsh.CanonicalEvent, { PaneData: unknown }> => ({
+    PaneData: {
+      pane: { deviceId: 'device-a', serverEpoch, paneId: '%1' },
+      paneEpoch,
+      seqStart,
+      seqEnd: seqStart + BigInt(data.byteLength),
+      data,
+    },
+  });
+
+  test('owns delivered bytes before the source payload can be reused', () => {
+    const { client, events } = createHarness();
+    installMetadata(client);
+    events.length = 0;
+    const payload = wsBorsh.encodeCanonicalEventPayload(
+      eventFor(new TextEncoder().encode('stable-output'), 0n)
+    );
+
+    client.handleEventPayload(payload);
+    const output = events.at(-1);
+    if (!output || output.type !== 'terminal-data') throw new Error('missing terminal data');
+    expect(output.frame.data.buffer).not.toBe(payload.buffer);
+    payload.fill(0xee);
+    expect(new TextDecoder().decode(output.frame.data)).toBe('stable-output');
+    client.dispose();
+  });
+
+  test('matches full decoding across random sequence gaps and epoch edges', () => {
+    let state = 0xa341_316c;
+    const next = () => {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      return state >>> 0;
+    };
+    const bytes = (length: number) => Uint8Array.from({ length }, () => next() & 0xff);
+
+    for (let index = 0; index < 96; index += 1) {
+      const fast = createHarness();
+      const slow = createHarness();
+      installMetadata(fast.client);
+      installMetadata(slow.client);
+      const baseStart = BigInt(next() % 10_000);
+      const baseLength = 1 + (next() % 32);
+      const baseEvent = eventFor(bytes(baseLength), baseStart);
+      fast.client.handleEventPayload(wsBorsh.encodeCanonicalEventPayload(baseEvent));
+      slow.client.handleEvent(baseEvent);
+      fast.events.length = 0;
+      slow.events.length = 0;
+      fast.messages.length = 0;
+      slow.messages.length = 0;
+
+      const baseEnd = baseStart + BigInt(baseLength);
+      const mode = index % 7;
+      let data = bytes(1 + (next() % 64));
+      let seqStart = baseEnd;
+      let serverEpoch = SERVER_EPOCH;
+      let paneEpoch = PANE_EPOCH;
+      if (mode === 1) {
+        const overlap = 1 + (next() % baseLength);
+        seqStart = baseEnd - BigInt(overlap);
+        data = bytes(overlap + 1 + (next() % 16));
+      } else if (mode === 2) {
+        data = bytes(1 + (next() % baseLength));
+        seqStart = baseStart;
+      } else if (mode === 3) {
+        seqStart = baseEnd + 1n;
+      } else if (mode === 4) {
+        serverEpoch = new Uint8Array(16).fill(0x91);
+      } else if (mode === 5) {
+        paneEpoch = new Uint8Array(16).fill(0x92);
+      } else if (mode === 6) {
+        data = new Uint8Array();
+      }
+
+      const event = eventFor(data, seqStart, serverEpoch, paneEpoch);
+      const payload = wsBorsh.encodeCanonicalEventPayload(event);
+      const decoded = wsBorsh.decodeCanonicalEventPayload(payload).event;
+      slow.client.handleEvent(decoded);
+      fast.client.handleEventPayload(payload);
+      payload.fill(0xee);
+
+      expect(fast.events).toEqual(slow.events);
+      expect(fast.messages).toEqual(slow.messages);
+      fast.client.dispose();
+      slow.client.dispose();
+    }
+  });
+});

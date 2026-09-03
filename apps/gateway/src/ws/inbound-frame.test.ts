@@ -134,7 +134,7 @@ function decodeErrorFrame(frame: Uint8Array) {
 }
 
 describe('RTC inbound decoded envelope', () => {
-  test('frame is envelope-decoded exactly once and skips handleMessage', async () => {
+  test('frame is envelope-view decoded exactly once and skips handleMessage', async () => {
     const server = new WebSocketServer();
     const ws = createBorshTestWs();
     const received: Uint8Array[] = [];
@@ -144,18 +144,21 @@ describe('RTC inbound decoded envelope', () => {
       }
     );
     const handleMessage = spyOn(server, 'handleMessage');
-    const decode = spyOn(wsBorsh, 'decodeEnvelope');
+    const fullDecode = spyOn(wsBorsh, 'decodeEnvelope');
+    const viewDecode = spyOn(wsBorsh, 'decodeEnvelopeView');
     const { frame, payload } = encodeHelloFrame();
 
     server.deliverRtcInbound(ws, frame);
     await flushAsync();
 
-    expect(decode.mock.calls.length).toBe(1);
+    expect(viewDecode.mock.calls.length).toBe(1);
+    expect(fullDecode).not.toHaveBeenCalled();
     expect(handleMessage).not.toHaveBeenCalled();
     expect(received).toHaveLength(1);
     expect(received[0]).toEqual(payload);
 
-    decode.mockRestore();
+    viewDecode.mockRestore();
+    fullDecode.mockRestore();
     handleMessage.mockRestore();
     handleBorshMessage.mockRestore();
   });
@@ -206,12 +209,8 @@ describe('RTC inbound decoded envelope', () => {
     const { frame, payload } = encodeHelloFrame();
     const backing = new Uint8Array(frame.byteLength);
     backing.set(frame);
-    const decode = spyOn(wsBorsh, 'decodeEnvelope').mockImplementation((data) =>
-      wsBorsh.decodeEnvelopeView(data)
-    );
     server.deliverRtcInbound(ws, backing);
     backing.fill(0xee);
-    decode.mockRestore();
     release();
     await flushAsync();
 

@@ -3,6 +3,8 @@ import type { Carrier } from './carrier';
 import { carrierKindOf, logGuardEvent } from './ws-backpressure-log';
 
 export const GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES = 1_048_576;
+/** Bun `closeOnBackpressureLimit` 硬顶。guard 在首次 −1 后丢帧，此值只拦仍往 socket 里塞的路径。 */
+export const GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES = 4 * 1_048_576;
 export const GATEWAY_WS_BACKPRESSURE_TIMEOUT_MS = 5_000;
 export const GATEWAY_WS_BACKPRESSURE_PROGRESS_MS = 5_000;
 /** PONG 在缓冲低于此值时走直发路径，计入 bypassed。 */
@@ -118,6 +120,10 @@ export class WebSocketSendGuard {
     if (this.unavailable.has(carrier)) {
       return 'dropped';
     }
+    if (this.bufferedAmountOf(carrier) >= GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES) {
+      this.terminate(carrier, 'backpressure_gap');
+      return 'dropped';
+    }
     if (this.states.has(carrier)) {
       this.canSend(carrier);
       this.noteSkip(carrier, frames);
@@ -211,23 +217,18 @@ export class WebSocketSendGuard {
       return;
     }
     clearTimeout(state.timer);
-    let bufferedAfter = 0;
-    try {
-      bufferedAfter = Math.max(0, carrier.bufferedAmount());
-    } catch {
-      bufferedAfter = 0;
-    }
+    const bufferedAfter = this.bufferedAmountOf(carrier);
     logGuardEvent('backpressure drain', carrier, {
       buffered_before: state.bufferedBefore,
       buffered_after: bufferedAfter,
       skipped_frames: state.skippedFrames,
       skipped_bytes: state.skippedBytes,
       first_backpressure_at: state.firstAt,
+      resync: state.skippedFrame ? 1 : 0,
     });
-    if (state.skippedFrame) {
-      this.terminate(carrier, 'backpressure_gap');
-    }
+    const skipped = state.skippedFrame;
     this.states.delete(carrier);
+    if (skipped) this.sendStreamGapResync(carrier);
   }
 
   markStreamGap(carrier: Carrier): void {
@@ -283,12 +284,7 @@ export class WebSocketSendGuard {
     rest: readonly (string | BufferSource)[]
   ): BackpressureState {
     const frameBytes = frameByteLength(frame);
-    let bufferedBefore = 0;
-    try {
-      bufferedBefore = Math.max(0, carrier.bufferedAmount());
-    } catch {
-      bufferedBefore = 0;
-    }
+    const bufferedBefore = this.bufferedAmountOf(carrier);
     const restBytes = rest.reduce((sum, item) => sum + frameByteLength(item), 0);
     const state: BackpressureState = {
       skippedFrame: rest.length > 0,
@@ -346,6 +342,19 @@ export class WebSocketSendGuard {
     });
   }
 
+  private sendStreamGapResync(carrier: Carrier): void {
+    const status = this.sendPriorityFrames(carrier, [streamPaneGapFrame() as BufferSource]);
+    if (status === 'dropped') this.terminate(carrier, 'backpressure_gap');
+  }
+
+  private bufferedAmountOf(carrier: Carrier): number {
+    try {
+      return Math.max(0, carrier.bufferedAmount());
+    } catch {
+      return 0;
+    }
+  }
+
   private terminate(carrier: Carrier, reason: TerminationReason): void {
     if (this.unavailable.has(carrier)) {
       return;
@@ -379,6 +388,23 @@ function frameKindOf(frame: string | BufferSource | undefined): string {
   } catch {
     return 'raw';
   }
+}
+
+let streamGapFrame: Uint8Array | null = null;
+
+function streamPaneGapFrame(): Uint8Array {
+  if (streamGapFrame) return streamGapFrame;
+  streamGapFrame = wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_CANONICAL_EVENT,
+    wsBorsh.encodeCanonicalEventPayload({
+      SourceGap: {
+        reason: wsBorsh.SOURCE_GAP_REASON_PANE_GAP,
+        scope: { Stream: {} },
+      },
+    }),
+    0
+  );
+  return streamGapFrame;
 }
 
 export const gatewayWebSocketSendGuard = new WebSocketSendGuard();

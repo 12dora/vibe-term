@@ -263,7 +263,48 @@ describe('peekCanonicalPaneDataHeader', () => {
     expect(peeked.paneEpoch).toEqual(decoded.PaneData.paneEpoch);
     expect(peeked.seqStart).toBe(decoded.PaneData.seqStart);
     expect(peeked.seqEnd).toBe(decoded.PaneData.seqEnd);
+    expect(peeked.data).toEqual(decoded.PaneData.data);
+    expect(peeked.data.buffer).toBe(payload.buffer);
     expect(peeked.paneEpoch).not.toBe(payload);
+  });
+
+  test('matches full decoding for seeded random PaneData fields', () => {
+    let state = 0x9e37_79b9;
+    const next = () => {
+      state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+      return state;
+    };
+    const bytes = (length: number) => Uint8Array.from({ length }, () => next() & 0xff);
+
+    for (let index = 0; index < 200; index += 1) {
+      const data = bytes(next() % 2049);
+      const rawStart = (BigInt(next()) << 32n) | BigInt(next());
+      const maxStart = 0xffff_ffff_ffff_ffffn - BigInt(data.byteLength);
+      const seqStart = rawStart > maxStart ? maxStart : rawStart;
+      const event: CanonicalEvent = {
+        PaneData: {
+          pane: {
+            deviceId: `设备-${next().toString(36)}`,
+            serverEpoch: bytes(16),
+            paneId: `%窗格-${next().toString(36)}`,
+          },
+          paneEpoch: bytes(16),
+          seqStart,
+          seqEnd: seqStart + BigInt(data.byteLength),
+          data,
+        },
+      };
+      const payload = encodeCanonicalEventPayload(event);
+      const peeked = peekCanonicalPaneDataHeader(payload);
+      const decoded = decodeCanonicalEventPayload(payload).event;
+      if (!peeked || !('PaneData' in decoded)) throw new Error('expected PaneData');
+      expect(peeked.pane).toEqual(decoded.PaneData.pane);
+      expect(peeked.paneEpoch).toEqual(decoded.PaneData.paneEpoch);
+      expect(peeked.seqStart).toBe(decoded.PaneData.seqStart);
+      expect(peeked.seqEnd).toBe(decoded.PaneData.seqEnd);
+      expect(peeked.data).toEqual(decoded.PaneData.data);
+      expect(peeked.data.buffer).toBe(payload.buffer);
+    }
   });
 
   test('returns null for non-PaneData events and rejects malformed PaneData like decode', () => {

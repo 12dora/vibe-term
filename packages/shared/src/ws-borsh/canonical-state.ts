@@ -371,6 +371,7 @@ export type CanonicalPaneDataHeader = {
   paneEpoch: Uint8Array;
   seqStart: bigint;
   seqEnd: bigint;
+  data: Uint8Array;
 };
 
 export function peekCanonicalPaneDataHeader(payload: Uint8Array): CanonicalPaneDataHeader | null {
@@ -414,6 +415,7 @@ function readValidatedPaneDataHeader(payload: Uint8Array): CanonicalPaneDataHead
   const seqEnd = readU64Le(payload, offset);
   offset += 8;
   const dataLen = readU32Le(payload, offset);
+  offset += 4;
   if (seqEnd < seqStart || seqEnd - seqStart !== BigInt(dataLen)) {
     throw new WsBorshError(ERROR_INVALID_FRAME, false, 'PaneData sequence range mismatch');
   }
@@ -422,5 +424,6 @@ function readValidatedPaneDataHeader(payload: Uint8Array): CanonicalPaneDataHead
     paneEpoch,
     seqStart,
     seqEnd,
+    data: payload.subarray(offset, offset + dataLen),
   };
 }

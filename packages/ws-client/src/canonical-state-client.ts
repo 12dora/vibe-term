@@ -229,6 +229,11 @@ export class CanonicalStateClient {
   }
 
   handleEventPayload(payload: Uint8Array): void {
+    const paneData = wsBorsh.peekCanonicalPaneDataHeader(payload);
+    if (paneData) {
+      this.handlePaneData(paneData, true);
+      return;
+    }
     this.handleEvent(wsBorsh.decodeCanonicalEventPayload(payload).event);
   }
 
@@ -651,7 +656,7 @@ export class CanonicalStateClient {
     }
   }
 
-  private handlePaneData(event: PaneDataEvent): void {
+  private handlePaneData(event: PaneDataEvent, copyData = false): void {
     const key = paneKey(event.pane.deviceId, event.pane.paneId);
     if (this.blockedPanes.has(key)) return;
     if (this.awaitingMetadataDevices.has(event.pane.deviceId)) return;
@@ -700,7 +705,7 @@ export class CanonicalStateClient {
         paneEpoch: copyBytes(event.paneEpoch),
         seqStart,
         seqEnd: event.seqEnd,
-        data,
+        data: copyData ? data.slice() : data,
       },
     });
   }

@@ -26,6 +26,13 @@ export interface LegacyFeedHost {
   terminalOutputEventsUntilMetricsCheck: number;
   sendEnvelope(session: GatewaySession, kind: number, payload: Uint8Array): void;
   sendChunked(session: GatewaySession, kind: number, payload: Uint8Array): boolean;
+  sendTermOutput(
+    session: GatewaySession,
+    deviceId: string,
+    paneId: string,
+    data: Uint8Array,
+    frameCache: Map<number, Uint8Array> | null
+  ): number | null;
   encodeSnapshotWithOverlays(payload: StateSnapshotPayload): Uint8Array;
   reportTerminalOutputMetricsIfDue(): void;
   onStateSnapshotInstalled(deviceId: string): void;
@@ -256,7 +263,7 @@ export class LegacyFeedBroadcaster {
     const entry = this.host.connections.get(deviceId);
     if (!entry) return;
 
-    let payloadBytes: Uint8Array | null = null;
+    const frameCache = entry.clients.size > 1 ? new Map<number, Uint8Array>() : null;
     for (const client of entry.clients) {
       if (entry.canonicalClients?.has(client)) continue;
       const isFocused = client.borshState.selectedPanes[deviceId] === paneId;
@@ -269,15 +276,8 @@ export class LegacyFeedBroadcaster {
         continue;
       }
 
-      payloadBytes ??= wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
-        deviceId,
-        paneId,
-        encoding: 1,
-        data,
-      });
-      if (this.host.sendChunked(client, wsBorsh.KIND_TERM_OUTPUT, payloadBytes)) {
-        this.host.terminalOutputMetrics.recordRecipient(payloadBytes.length);
-      }
+      const payloadBytes = this.host.sendTermOutput(client, deviceId, paneId, data, frameCache);
+      if (payloadBytes !== null) this.host.terminalOutputMetrics.recordRecipient(payloadBytes);
     }
   }
 
