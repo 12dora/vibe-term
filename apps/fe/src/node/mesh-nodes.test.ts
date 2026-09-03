@@ -887,6 +887,42 @@ describe('hubCandidateIds / loadHubNodes', () => {
     expect(calls).toEqual(['list:b', 'list:a']);
   });
 
+  test('静默登录被鉴权码拒掉时，抛的是那次登录失败而不是列表的 401', async () => {
+    await expect(
+      loadHubNodes(['b'], {
+        list: async () => {
+          throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
+        },
+        login: async () => ({ ok: false, code: 'PASSKEY_REQUIRED' }),
+      })
+    ).rejects.toMatchObject({ code: 'PASSKEY_REQUIRED', status: 401 });
+  });
+
+  test('登录失败码不是鉴权类（如 NETWORK_ERROR）时保留列表原错误', async () => {
+    await expect(
+      loadHubNodes(['b'], {
+        list: async () => {
+          throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
+        },
+        login: async () => ({ ok: false, code: 'NETWORK_ERROR' }),
+      })
+    ).rejects.toMatchObject({ code: 'NODE_LOGIN_REQUIRED' });
+  });
+
+  test('登录被拒仍然继续试下一台 hub 机', async () => {
+    const calls: string[] = [];
+    const result = await loadHubNodes(['b', 'a'], {
+      list: async (id) => {
+        calls.push(`list:${id}`);
+        if (id === 'b') throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
+        return rows([id]);
+      },
+      login: async () => ({ ok: false, code: 'TOTP_REQUIRED' }),
+    });
+    expect(result.hubNodeId).toBe('a');
+    expect(calls).toEqual(['list:b', 'list:a']);
+  });
+
   test('非 401 错误不登录，直接换下一台；全部失败抛最后一个错误', async () => {
     let logins = 0;
     await expect(

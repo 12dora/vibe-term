@@ -29,7 +29,7 @@ import {
   useDirectMutations,
 } from './direct-section';
 import { DomainAccessRow, domainAccessApi, readDomainAccess } from './domain-access-row';
-import { HubModeTag, hubLabel, hubModeLabel, normalizeHubUrl } from './management/hub-strip';
+import { HubModeTag, hubLabel, hubModeLabel } from './management/hub-strip';
 import type { SetupIntent } from './membership/intent';
 import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
 import { ROLE_LABEL_KEY, classifyRoleChange } from './membership/role-transition';
@@ -291,8 +291,8 @@ function orderHubs(hubs: MeshHubEndpoint[], writerHubId: string | null): MeshHub
 /**
  * 本机的两个地址：
  * - 「本机地址」= `hubPublicUrl`，只有 hub 角色才有，是别人访问本机的地址；
- * - 「当前 Hub」= 真正挂载的那台 hub。`/api/local/status` 的 `hubUrl` 只是入会时写死的种子，
- *   主备切换后早已不是当前挂载的那台，所以它只作为副行补充，不再单独占一行。
+ * - 「当前 Hub」= 真正挂载的那台 hub。`/api/local/status` 的 `hubUrl` 只是入会时写死的拨号种子，
+ *   主备切换后早已不是当前挂载的那台，界面上不展示它，只用来判断这一行要不要渲染。
  */
 function MachineHubRows({
   role,
@@ -337,7 +337,6 @@ function MachineHubRows({
         <CurrentHubRow
           attached={attached}
           writer={writerHub(snapshot)}
-          seedUrl={hubUrl}
           {...(role === 'node'
             ? { changeHub: { disabled: changeHubDisabled, onChange: onChangeHub } }
             : {})}
@@ -369,89 +368,66 @@ function LocalAddressRow({ publicUrl }: { publicUrl: string | null }) {
   );
 }
 
-/** 入会种子与当前挂载地址不一致时才补出种子——一致时多这一行只是噪音；没连上时它是唯一线索。 */
-function seedLine(seedUrl: string | null, currentUrl: string | null): string | null {
-  if (!seedUrl) return null;
-  if (!currentUrl) return seedUrl;
-  return normalizeHubUrl(seedUrl) === normalizeHubUrl(currentUrl) ? null : seedUrl;
-}
-
-/** 当前挂载的那台 hub 的地址；没连上时为 `null`（种子不算）。 */
-function attachedUrl(attached: AttachedHubView): string | null {
-  if (attached.kind === 'hub') return attached.hub.publicUrl;
-  return attached.kind === 'url' ? attached.url : null;
-}
-
 function CurrentHubRow({
   attached,
   writer,
-  seedUrl,
   changeHub,
 }: {
   attached: AttachedHubView;
   writer: MeshHubEndpoint | null;
-  seedUrl: string | null;
   changeHub?: { disabled: boolean; onChange: () => void };
 }) {
   const { t } = useTranslation();
   // 挂在备 hub 上时写入其实落在别处，同一行补出 writer，省得用户去 hub 管理面对照。
   const elsewhere =
     attached.kind === 'hub' && writer && writer.nodeId !== attached.hub.nodeId ? writer : null;
-  const seed = seedLine(seedUrl, attachedUrl(attached));
   return (
     <Row label={t('nodes.machine.currentHub')}>
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-2">
-          {attached.kind === 'hub' && (
-            <>
-              <span
-                className="flex items-center gap-1.5 text-xs"
-                data-testid="local-machine-attached-hub"
-              >
-                <span className="font-medium">
-                  {attached.isSelf ? t('nodes.machine.self') : hubLabel(attached.hub)}
-                </span>
-                <HubModeTag mode={attached.hub.mode} testId="local-machine-attached-hub-mode" />
-              </span>
-              {!attached.isSelf && (
-                <CopyableValue
-                  value={attached.hub.publicUrl}
-                  testId="local-machine-attached-hub-url"
-                />
-              )}
-            </>
-          )}
-          {attached.kind === 'url' && (
-            <CopyableValue value={attached.url} testId="local-machine-attached-hub-url" />
-          )}
-          {attached.kind === 'none' && (
-            <span className="text-xs" data-testid="local-machine-hub-disconnected">
-              {t('nodes.machine.hubDisconnected')}
-            </span>
-          )}
-          {elsewhere && (
-            <span className="text-xs text-muted-foreground" data-testid="local-machine-writer-hub">
-              {t('nodes.machine.writerHub', { name: hubLabel(elsewhere) })}
-            </span>
-          )}
-          {changeHub && (
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              disabled={changeHub.disabled}
-              onClick={changeHub.onChange}
-              data-testid="local-machine-change-hub"
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {attached.kind === 'hub' && (
+          <>
+            <span
+              className="flex items-center gap-1.5 text-xs"
+              data-testid="local-machine-attached-hub"
             >
-              <Repeat />
-              {t('nodes.membership.changeHub')}
-            </Button>
-          )}
-        </div>
-        {seed && (
-          <span className="text-xs text-muted-foreground" data-testid="local-machine-join-seed">
-            {t('nodes.machine.joinSeed', { url: seed })}
+              <span className="font-medium">
+                {attached.isSelf ? t('nodes.machine.self') : hubLabel(attached.hub)}
+              </span>
+              <HubModeTag mode={attached.hub.mode} testId="local-machine-attached-hub-mode" />
+            </span>
+            {!attached.isSelf && (
+              <CopyableValue
+                value={attached.hub.publicUrl}
+                testId="local-machine-attached-hub-url"
+              />
+            )}
+          </>
+        )}
+        {attached.kind === 'url' && (
+          <CopyableValue value={attached.url} testId="local-machine-attached-hub-url" />
+        )}
+        {attached.kind === 'none' && (
+          <span className="text-xs" data-testid="local-machine-hub-disconnected">
+            {t('nodes.machine.hubDisconnected')}
           </span>
+        )}
+        {elsewhere && (
+          <span className="text-xs text-muted-foreground" data-testid="local-machine-writer-hub">
+            {t('nodes.machine.writerHub', { name: hubLabel(elsewhere) })}
+          </span>
+        )}
+        {changeHub && (
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={changeHub.disabled}
+            onClick={changeHub.onChange}
+            data-testid="local-machine-change-hub"
+          >
+            <Repeat />
+            {t('nodes.membership.changeHub')}
+          </Button>
         )}
       </div>
     </Row>

@@ -1676,7 +1676,7 @@
         "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
         "passkeySecondFactor": "请完成通行密钥验证…",
-        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请在已注册通行密钥的地址登录后，为此地址添加通行密钥。"
+        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥。"
       },
       "node": {
         "loginToThisNode": "登录该节点",
@@ -1748,7 +1748,7 @@
         "passkeyName": "通行密钥名称",
         "registerPasskey": "添加通行密钥",
         "signWithExistingPasskey": "可以用通行密钥确认，无需输入密码。",
-        "passkeySecondFactorHint": "注册通行密钥后，密码登录还需通过通行密钥二次验证；二次验证只能在已注册通行密钥的地址完成，移除全部通行密钥即关闭。",
+        "passkeySecondFactorHint": "注册通行密钥后，密码登录还需通过通行密钥二次验证；从本机或局域网地址登录无需二次验证，其余地址须已注册通行密钥。移除全部通行密钥即关闭。",
         "sessionKeyNote": "本页的每个操作都会要求输入密码或使用通行密钥。",
         "totpConfirm": "确认并启用",
         "totpConfirmHint": "请输入验证器应用当前显示的 6 位验证码。",
@@ -1790,6 +1790,7 @@
       "hub": "Hub",
       "loggedIn": "已登录",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
+      "hubLoginRejected": "Hub 拒绝了本次登录（{{code}}）：请重新登录后再试。",
       "hubs": {
         "title": "Hub 集群",
         "active": "主 Hub",
@@ -1881,7 +1882,6 @@
         "localAddressHint": "其它节点无法加入本机。请按「角色 → Hub 兼节点」重新设置。",
         "currentHub": "当前 Hub",
         "hubDisconnected": "未连接",
-        "joinSeed": "加入地址：{{url}}",
         "writerHub": "写者：{{name}}",
         "hubList": "Hub 列表",
         "self": "本机",

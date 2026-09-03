@@ -13,6 +13,7 @@ import {
   useEnrollmentEngine,
   useEnrollmentEngineState,
 } from '@/node/enrollment-engine';
+import type { HubFailureReason } from '@/node/hub-load-coordinator';
 import { useMeshHubs } from '@/node/mesh-hubs';
 import {
   type NodeRow,
@@ -55,6 +56,27 @@ import { useNodeUpgrade } from './use-node-upgrade';
 export interface NodesManagementProps {
   mode: AuthModeResponse;
   api?: AuthApi;
+}
+
+export interface HubNoticeCopy {
+  testId: string;
+  key: string;
+  params?: Record<string, string>;
+}
+
+/**
+ * hub 管理面不可用时那一行提示。hub 应答了、只是不认这次身份（通行密钥 / TOTP / 未登录）
+ * 与 hub 根本打不通是两回事：前者要用户重新登录，说成「Hub 不可达」只会把人引向错误的排查。
+ */
+export function hubFailureNotice(failure: HubFailureReason | null): HubNoticeCopy {
+  if (failure?.kind === 'auth') {
+    return {
+      testId: 'nodes-hub-login-rejected',
+      key: 'nodes.hubLoginRejected',
+      params: { code: failure.code },
+    };
+  }
+  return { testId: 'nodes-hub-offline', key: 'nodes.hubOffline' };
 }
 
 export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesManagementProps) {
@@ -117,6 +139,7 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   // 主 hub 掉线时「hub 不可达」与这一条说的是同一件事，只留更具体的那一条。
   const writable = hub.online && !hubs.writesBlocked;
   const blockedHint = hubs.writesBlocked ? t('nodes.hubs.standbyNotice') : t('nodes.hubOffline');
+  const hubNotice = useMemo(() => hubFailureNotice(hub.failure), [hub.failure]);
 
   const uninstall = useNodeUninstall(
     { api, mode, prompt, writerPublicUrl: hubs.writerPublicUrl, writable },
@@ -248,10 +271,10 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
         {!hub.online && !hubs.writesBlocked && (
           <p
             className="flex items-center gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
-            data-testid="nodes-hub-offline"
+            data-testid={hubNotice.testId}
           >
             <ShieldAlert className="size-3.5 shrink-0" />
-            {t('nodes.hubOffline')}
+            {t(hubNotice.key, hubNotice.params)}
           </p>
         )}
 

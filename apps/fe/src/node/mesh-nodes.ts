@@ -21,7 +21,12 @@ import type { MeshNodeOperation } from '@tmex/shared';
 import { bytesToHex, decodeBase64url, sha256 } from '@tmex/shared/auth';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { HubApi, HubApiError, type HubNodeRow } from './hub-api';
-import { HubLoadCoordinator, type HubRequest } from './hub-load-coordinator';
+import {
+  type HubFailureReason,
+  HubLoadCoordinator,
+  type HubRequest,
+  isHubAuthCode,
+} from './hub-load-coordinator';
 import { type MeshEventSource, type NodeEventPayload, sharedMeshEvents } from './mesh-events';
 
 // ---------------------------------------------------------------------------
@@ -229,8 +234,8 @@ export function hubCandidateIds(nodes: MeshNode[], modeHubNodeId?: string | null
 
 export interface HubLoadDeps {
   list: (hubNodeId: string) => Promise<HubNodeRow[]>;
-  /** 对该 hub 机做静默节点登录；成功才重试一次。 */
-  login: (hubNodeId: string) => Promise<{ ok: boolean }>;
+  /** 对该 hub 机做静默节点登录；成功才重试一次。失败码用于区分「hub 拒登」与「打不通」。 */
+  login: (hubNodeId: string) => Promise<{ ok: boolean; code?: string }>;
 }
 
 export interface HubLoadResult {
@@ -245,6 +250,10 @@ function isNodeLoginRequired(error: unknown): boolean {
 /**
  * 依次尝试候选 hub 机：401 `NODE_LOGIN_REQUIRED` 先补一次节点登录再重试（浏览器此前可能
  * 从未登录过新升上来的写者），仍失败才换下一台；全部失败抛最后一个错误。
+ *
+ * 静默登录被 hub 以鉴权码拒掉时，**抛出去的必须是那次登录失败**：列表那条 401 只说明
+ * 「还没登录」，把它一路抛到界面只会显示成一句「Hub 不可达」，掩盖掉真正的原因
+ * （通行密钥 / TOTP 没过）。
  */
 export async function loadHubNodes(
   candidates: string[],
@@ -257,8 +266,13 @@ export async function loadHubNodes(
     } catch (error) {
       lastError = error;
       if (!isNodeLoginRequired(error)) continue;
-      const login = await deps.login(hubNodeId).catch(() => ({ ok: false }));
-      if (!login.ok) continue;
+      const login = await deps
+        .login(hubNodeId)
+        .catch((): { ok: boolean; code?: string } => ({ ok: false }));
+      if (!login.ok) {
+        if (isHubAuthCode(login.code)) lastError = new HubApiError(login.code, 401);
+        continue;
+      }
       try {
         return { hubNodeId, rows: await deps.list(hubNodeId) };
       } catch (retryError) {
@@ -714,7 +728,8 @@ export interface HubNodeState {
   /** hub 管理面是否可用（探测成功且最近一次 list 成功）。 */
   online: boolean;
   loading: boolean;
-  error: string | null;
+  /** 最近一次失败的性质；从未失败或已恢复为 `null`。 */
+  failure: HubFailureReason | null;
   refresh: () => void;
 }
 
@@ -732,12 +747,12 @@ export interface UseHubNodeOptions {
 interface HubStateSetters {
   setHubNodes: (rows: HubNodeRow[] | null) => void;
   setLoading: (value: boolean) => void;
-  setError: (message: string | null) => void;
+  setFailure: (reason: HubFailureReason | null) => void;
 }
 
 /** 协调器只建一次（`useState` 的 setter 恒等），挂载/卸载切它的写状态开关。 */
 function useHubLoadCoordinator(setters: HubStateSetters): HubLoadCoordinator {
-  const { setHubNodes, setLoading, setError } = setters;
+  const { setHubNodes, setLoading, setFailure } = setters;
   const ref = useRef<HubLoadCoordinator | null>(null);
   if (ref.current === null) {
     ref.current = new HubLoadCoordinator({
@@ -748,11 +763,11 @@ function useHubLoadCoordinator(setters: HubStateSetters): HubLoadCoordinator {
       },
       rows: (rows) => {
         setHubNodes(rows);
-        setError(null);
+        setFailure(null);
       },
-      failed: (message) => {
+      failed: (reason) => {
         setHubNodes(null);
-        setError(message);
+        setFailure(reason);
       },
     });
   }
@@ -776,7 +791,7 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
   const pollIntervalMs = options.pollIntervalMs ?? HUB_POLL_MS;
   const [hubNodes, setHubNodes] = useState<HubNodeRow[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<HubFailureReason | null>(null);
 
   const resolved = useMemo(
     () => findHubNodeId(nodes, options.hubNodeId),
@@ -805,7 +820,7 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
     };
   }, [enabled, probe, login, candidatesKey]);
 
-  const coordinator = useHubLoadCoordinator({ setHubNodes, setLoading, setError });
+  const coordinator = useHubLoadCoordinator({ setHubNodes, setLoading, setFailure });
 
   useEffect(() => {
     void coordinator.load(request);
@@ -830,7 +845,7 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
     hubNodes,
     online: hubNodes !== null,
     loading,
-    error,
+    failure,
     refresh,
   };
 }

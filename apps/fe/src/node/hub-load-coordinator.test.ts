@@ -2,8 +2,13 @@
 // 仓库没有 DOM 测试环境（effect 跑不起来），所以时序逻辑放在 React 之外的协调器里单测。
 
 import { describe, expect, test } from 'bun:test';
-import type { HubNodeRow } from './hub-api';
-import { HubLoadCoordinator, type HubRequest } from './hub-load-coordinator';
+import { HubApiError, type HubNodeRow } from './hub-api';
+import {
+  type HubFailureReason,
+  HubLoadCoordinator,
+  type HubRequest,
+  classifyHubFailure,
+} from './hub-load-coordinator';
 
 function row(id: string): HubNodeRow {
   return {
@@ -53,7 +58,7 @@ interface Recorder {
   events: string[];
   rows: HubNodeRow[] | null;
   loading: boolean;
-  error: string | null;
+  failure: HubFailureReason | null;
 }
 
 function recorder(): Recorder {
@@ -61,7 +66,7 @@ function recorder(): Recorder {
     events: [],
     rows: null,
     loading: false,
-    error: null,
+    failure: null,
     sink: {
       loading: (value) => {
         state.events.push(`loading:${value}`);
@@ -75,12 +80,12 @@ function recorder(): Recorder {
       rows: (rows) => {
         state.events.push(`rows:${rows.map((item) => item.id).join(',')}`);
         state.rows = rows;
-        state.error = null;
+        state.failure = null;
       },
-      failed: (message) => {
-        state.events.push(`failed:${message}`);
+      failed: (reason) => {
+        state.events.push(`failed:${reason.kind}:${reason.message}`);
         state.rows = null;
-        state.error = message;
+        state.failure = reason;
       },
     },
   };
@@ -127,7 +132,7 @@ describe('HubLoadCoordinator', () => {
     await first;
     await flush();
 
-    expect(sink.error).toBeNull();
+    expect(sink.failure).toBeNull();
     expect(sink.loading).toBe(true);
     expect(sink.events).toEqual(['loading:true', 'loading:true']);
   });
@@ -169,7 +174,7 @@ describe('HubLoadCoordinator', () => {
 
     expect(sink.events).toEqual(['loading:true']);
     expect(sink.rows).toBeNull();
-    expect(sink.error).toBeNull();
+    expect(sink.failure).toBeNull();
   });
 
   test('卸载中途失败同样不写 error', async () => {
@@ -183,7 +188,7 @@ describe('HubLoadCoordinator', () => {
     await promise;
     await flush();
 
-    expect(sink.error).toBeNull();
+    expect(sink.failure).toBeNull();
     expect(sink.events).toEqual(['loading:true']);
   });
 
@@ -215,9 +220,25 @@ describe('HubLoadCoordinator', () => {
     failing.reject(new Error('hub unreachable'));
     await promise;
 
-    expect(sink.error).toBe('hub unreachable');
+    expect(sink.failure).toEqual({ kind: 'unreachable', code: null, message: 'hub unreachable' });
     expect(sink.rows).toBeNull();
     expect(sink.loading).toBe(false);
+  });
+
+  test('鉴权失败带出 auth 与错误码，供界面区分「hub 拒登」与「打不通」', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const rejecting = deferred();
+
+    const promise = coordinator.load(rejecting.request);
+    rejecting.reject(new HubApiError('PASSKEY_REQUIRED', 401));
+    await promise;
+
+    expect(sink.failure).toEqual({
+      kind: 'auth',
+      code: 'PASSKEY_REQUIRED',
+      message: 'PASSKEY_REQUIRED',
+    });
   });
 
   test('没有可用 hub 时清空列表且不留在 loading', async () => {
@@ -248,5 +269,33 @@ describe('HubLoadCoordinator', () => {
 
     expect(sink.rows).toBeNull();
     expect(sink.events).toEqual(['loading:true', 'reset']);
+  });
+});
+
+describe('classifyHubFailure', () => {
+  test('401 与鉴权码判成 auth：hub 是通的，只是不认这次身份', () => {
+    expect(classifyHubFailure(new HubApiError('NODE_LOGIN_REQUIRED', 401))).toEqual({
+      kind: 'auth',
+      code: 'NODE_LOGIN_REQUIRED',
+      message: 'NODE_LOGIN_REQUIRED',
+    });
+    expect(classifyHubFailure(new HubApiError('PASSKEY_REQUIRED', 401)).kind).toBe('auth');
+    expect(classifyHubFailure(new HubApiError('TOTP_REQUIRED', 401)).kind).toBe('auth');
+    // 转发链把状态码改写掉时只看码同样判得出
+    expect(classifyHubFailure(new HubApiError('PASSKEY_INVALID', 500)).kind).toBe('auth');
+    expect(classifyHubFailure(new HubApiError('INVALID_CREDENTIALS', 403)).kind).toBe('auth');
+  });
+
+  test('其余错误一律 unreachable，带得出码就带上', () => {
+    expect(classifyHubFailure(new HubApiError('hub_nodes_failed', 503))).toEqual({
+      kind: 'unreachable',
+      code: 'hub_nodes_failed',
+      message: 'hub_nodes_failed',
+    });
+    expect(classifyHubFailure(new Error('boom'))).toEqual({
+      kind: 'unreachable',
+      code: null,
+      message: 'boom',
+    });
   });
 });

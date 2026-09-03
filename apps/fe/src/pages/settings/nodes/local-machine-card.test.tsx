@@ -489,6 +489,7 @@ describe('LocalMachineCard 的多 hub 归属', () => {
   const ATTACHED_ROW = 'data-testid="local-machine-attached-hub"';
   const HUB_LIST_ROW = 'data-testid="local-machine-hub-list"';
   const WRITER_SUFFIX = 'data-testid="local-machine-writer-hub"';
+  const JOIN_SEED_ROW = 'data-testid="local-machine-join-seed"';
 
   function hubRow(overrides: Partial<MeshHubEndpoint> & { nodeId: string }): MeshHubEndpoint {
     return {
@@ -593,7 +594,7 @@ describe('LocalMachineCard 的多 hub 归属', () => {
     expect(html).toContain('data-testid="local-machine-hub-mode"');
   });
 
-  test('没挂上任何 Hub：当前 Hub 显示未连接，种子退到「加入地址」副行，仍可更换 Hub', () => {
+  test('没挂上任何 Hub：当前 Hub 显示未连接，不展示入会种子，仍可更换 Hub', () => {
     const html = render(meshStatus('node'), MESH_MODE);
     expect(html).not.toContain(ATTACHED_ROW);
     expect(html).not.toContain(HUB_LIST_ROW);
@@ -601,8 +602,8 @@ describe('LocalMachineCard 的多 hub 归属', () => {
     // 入会种子不能冒充「当前 Hub」：那台机器可能早就不在了
     expect(html).toContain('data-testid="local-machine-hub-disconnected"');
     expect(html).toContain('nodes.machine.hubDisconnected');
-    expect(html).toContain('data-testid="local-machine-join-seed"');
-    expect(html).toContain('nodes.machine.joinSeed');
+    expect(html).not.toContain(JOIN_SEED_ROW);
+    expect(html).not.toContain('nodes.machine.joinSeed');
     expect(html).toContain('data-testid="local-machine-change-hub"');
   });
 
@@ -623,8 +624,8 @@ describe('LocalMachineCard 的多 hub 归属', () => {
     expect(html).toContain('data-testid="local-machine-attached-hub-url"');
     expect(html).toContain('>https://hub-new.example<');
     expect(html).not.toContain('nodes.machine.hubDisconnected');
-    // 种子与它不是同一台，补一行「加入地址」
-    expect(html).toContain('data-testid="local-machine-join-seed"');
+    // 种子与它不是同一台，但界面上不再出现种子
+    expect(html).not.toContain(JOIN_SEED_ROW);
   });
 
   test('挂载信息连地址都没有：仍判未连接', () => {
@@ -644,7 +645,7 @@ describe('LocalMachineCard 的多 hub 归属', () => {
     expect(html).toContain('data-testid="local-machine-hub-disconnected"');
   });
 
-  test('种子与挂载地址不一致时补一行「加入地址」，一致时不补', () => {
+  test('种子与挂载地址不一致也不展示入会种子，当前 Hub 只反映实际挂靠', () => {
     const hub = hubRow({ nodeId: 'h1', name: 'hub-a', publicUrl: 'https://hub-b.example' });
     setMeshHubsStateForTest({
       hubs: [hub],
@@ -652,9 +653,13 @@ describe('LocalMachineCard 的多 hub 归属', () => {
       writerHubId: 'h1',
       loadedAt: 1,
     });
+    // meshStatus('node') 的种子是 https://hub.example，与挂载的 hub-b 不是同一台
     const moved = render(meshStatus('node'), MESH_MODE);
-    expect(moved).toContain('data-testid="local-machine-join-seed"');
-    expect(moved).toContain('nodes.machine.joinSeed');
+    expect(moved).not.toContain(JOIN_SEED_ROW);
+    expect(moved).not.toContain('nodes.machine.joinSeed');
+    expect(moved).not.toContain('https://hub.example<');
+    expect(moved).toContain(ATTACHED_ROW);
+    expect(moved).toContain('>hub-a<');
 
     const same = hubRow({ nodeId: 'h1', name: 'hub-a', publicUrl: 'https://hub.example/' });
     setMeshHubsStateForTest({
@@ -663,19 +668,15 @@ describe('LocalMachineCard 的多 hub 归属', () => {
       writerHubId: 'h1',
       loadedAt: 1,
     });
-    // 只差一个末尾斜杠算同一台
-    expect(render(meshStatus('node'), MESH_MODE)).not.toContain(
-      'data-testid="local-machine-join-seed"'
-    );
+    expect(render(meshStatus('node'), MESH_MODE)).not.toContain(JOIN_SEED_ROW);
   });
 
-  test('地址行的三语键：本机地址 / 当前 Hub / 加入地址', () => {
+  test('地址行的三语键：本机地址 / 当前 Hub', () => {
     expect(zhCN.translation.nodes.machine.localAddress).toBe('本机地址');
     expect(enUS.translation.nodes.machine.localAddress).toBe("This Machine's Address");
     expect(zhCN.translation.nodes.machine.currentHub).toBe('当前 Hub');
     expect(zhCN.translation.nodes.machine.hubDisconnected).toBe('未连接');
     expect(enUS.translation.nodes.machine.hubDisconnected).toBe('Not connected');
-    expect(zhCN.translation.nodes.machine.joinSeed).toContain('加入地址');
     expect(zhCN.translation.nodes.machine.hubList).toBe('Hub 列表');
     expect(zhCN.translation.nodes.machine.self).toBe('本机');
     expect(zhCN.translation.nodes.machine.writerHub).toContain('写者');

@@ -1682,7 +1682,7 @@ export const I18N_RESOURCES = {
         "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
         "passkeyUnavailable": "Passkeys require HTTPS or localhost.",
         "passkeySecondFactor": "Complete the passkey check…",
-        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address where a passkey is registered, then add one for this address."
+        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address."
       },
       "node": {
         "loginToThisNode": "Sign in",
@@ -1754,7 +1754,7 @@ export const I18N_RESOURCES = {
         "passkeyName": "Passkey name",
         "registerPasskey": "Add passkey",
         "signWithExistingPasskey": "You can confirm with your passkey instead of typing your password.",
-        "passkeySecondFactorHint": "Once a passkey is registered, password sign-in also requires a passkey check. The check only works on addresses where a passkey is registered; removing all passkeys turns it off.",
+        "passkeySecondFactorHint": "Once a passkey is registered, password sign-in also requires a passkey check. Sign-ins from the local machine or a LAN address skip the check; other addresses need a passkey registered. Removing all passkeys turns it off.",
         "sessionKeyNote": "Every action on this page asks for your password or a passkey.",
         "totpConfirm": "Confirm and turn on",
         "totpConfirmHint": "Enter the 6-digit code from your authenticator app.",
@@ -1796,6 +1796,7 @@ export const I18N_RESOURCES = {
       "hub": "Hub",
       "loggedIn": "Signed in",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
+      "hubLoginRejected": "The hub rejected this sign-in ({{code}}). Sign in again, then retry.",
       "hubs": {
         "title": "Hub Cluster",
         "active": "Primary Hub",
@@ -1887,7 +1888,6 @@ export const I18N_RESOURCES = {
         "localAddressHint": "Other nodes cannot join. Set it up again under Role → Hub and node.",
         "currentHub": "Current Hub",
         "hubDisconnected": "Not connected",
-        "joinSeed": "Join address: {{url}}",
         "writerHub": "Writer: {{name}}",
         "hubList": "Hubs",
         "self": "This Machine",
@@ -4189,7 +4189,7 @@ export const I18N_RESOURCES = {
         "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
         "passkeySecondFactor": "请完成通行密钥验证…",
-        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请在已注册通行密钥的地址登录后，为此地址添加通行密钥。"
+        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥。"
       },
       "node": {
         "loginToThisNode": "登录该节点",
@@ -4261,7 +4261,7 @@ export const I18N_RESOURCES = {
         "passkeyName": "通行密钥名称",
         "registerPasskey": "添加通行密钥",
         "signWithExistingPasskey": "可以用通行密钥确认，无需输入密码。",
-        "passkeySecondFactorHint": "注册通行密钥后，密码登录还需通过通行密钥二次验证；二次验证只能在已注册通行密钥的地址完成，移除全部通行密钥即关闭。",
+        "passkeySecondFactorHint": "注册通行密钥后，密码登录还需通过通行密钥二次验证；从本机或局域网地址登录无需二次验证，其余地址须已注册通行密钥。移除全部通行密钥即关闭。",
         "sessionKeyNote": "本页的每个操作都会要求输入密码或使用通行密钥。",
         "totpConfirm": "确认并启用",
         "totpConfirmHint": "请输入验证器应用当前显示的 6 位验证码。",
@@ -4303,6 +4303,7 @@ export const I18N_RESOURCES = {
       "hub": "Hub",
       "loggedIn": "已登录",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
+      "hubLoginRejected": "Hub 拒绝了本次登录（{{code}}）：请重新登录后再试。",
       "hubs": {
         "title": "Hub 集群",
         "active": "主 Hub",
@@ -4394,7 +4395,6 @@ export const I18N_RESOURCES = {
         "localAddressHint": "其它节点无法加入本机。请按「角色 → Hub 兼节点」重新设置。",
         "currentHub": "当前 Hub",
         "hubDisconnected": "未连接",
-        "joinSeed": "加入地址：{{url}}",
         "writerHub": "写者：{{name}}",
         "hubList": "Hub 列表",
         "self": "本机",
@@ -6690,7 +6690,7 @@ export const I18N_RESOURCES = {
         "passkeyNotRegistered": "このアドレスにはパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
         "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。",
         "passkeySecondFactor": "パスキーの確認を完了してください…",
-        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレスからサインインし、このアドレス用のパスキーを追加してください。"
+        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。"
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",
@@ -6762,7 +6762,7 @@ export const I18N_RESOURCES = {
         "passkeyName": "パスキーの名前",
         "registerPasskey": "パスキーを追加",
         "signWithExistingPasskey": "パスワードの代わりに、パスキーで確認できます。",
-        "passkeySecondFactorHint": "パスキーを登録すると、パスワードでのサインインにもパスキーの確認が必要になります。確認はパスキーを登録したアドレスでのみ行えます。すべてのパスキーを削除すると無効になります。",
+        "passkeySecondFactorHint": "パスキーを登録すると、パスワードでのサインインにもパスキーの確認が必要になります。このマシンや LAN アドレスからのサインインでは確認は不要で、それ以外のアドレスではパスキーの登録が必要です。すべてのパスキーを削除すると無効になります。",
         "sessionKeyNote": "このページの操作はすべて、パスワードまたはパスキーの確認を求めます。",
         "totpConfirm": "確認して有効にする",
         "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。",
@@ -6804,6 +6804,7 @@ export const I18N_RESOURCES = {
       "hub": "ハブ",
       "loggedIn": "サインイン済み",
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
+      "hubLoginRejected": "ハブがこのサインインを拒否しました（{{code}}）。サインインし直してからお試しください。",
       "hubs": {
         "title": "ハブクラスター",
         "active": "メインハブ",
@@ -6895,7 +6896,6 @@ export const I18N_RESOURCES = {
         "localAddressHint": "他のノードはこのマシンに参加できません。「ロール → ハブ兼ノード」で設定し直してください。",
         "currentHub": "現在のハブ",
         "hubDisconnected": "未接続",
-        "joinSeed": "参加アドレス：{{url}}",
         "writerHub": "ライター：{{name}}",
         "hubList": "Hub 一覧",
         "self": "このマシン",

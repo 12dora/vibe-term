@@ -9,9 +9,17 @@
 // 「已卸载」与「过期响应」是两回事，分别判定：前者永不写状态（组件没了），
 // 后者只是被更新的一代取代。
 
-import type { HubNodeRow } from './hub-api';
+import { HubApiError, type HubNodeRow } from './hub-api';
 
 export type HubRequest = () => Promise<HubNodeRow[]>;
+
+/**
+ * 加载失败的性质。`auth` = hub 应答了、只是不认这次身份（须重新登录）；
+ * `unreachable` = 根本没拿到有意义的应答。两者的处置完全不同，界面必须分开说。
+ */
+export type HubFailureReason =
+  | { kind: 'auth'; code: string; message: string }
+  | { kind: 'unreachable'; code: string | null; message: string };
 
 export interface HubLoadSink {
   /** 请求开始 / 结束时的 loading 翻转。 */
@@ -19,7 +27,35 @@ export interface HubLoadSink {
   /** 没有可用 hub（未启用或定位不到）：清空列表并结束 loading。 */
   reset: () => void;
   rows: (rows: HubNodeRow[]) => void;
-  failed: (message: string) => void;
+  failed: (reason: HubFailureReason) => void;
+}
+
+/** 节点登录被拒的业务码：拿到其中任何一个都说明 hub 是通的，只是这次身份没过。 */
+const HUB_AUTH_CODES = new Set([
+  'PASSKEY_REQUIRED',
+  'PASSKEY_INVALID',
+  'TOTP_REQUIRED',
+  'NODE_LOGIN_REQUIRED',
+  'INVALID_CREDENTIALS',
+]);
+
+export function isHubAuthCode(code: string | null | undefined): code is string {
+  return typeof code === 'string' && HUB_AUTH_CODES.has(code);
+}
+
+/**
+ * 唯一的失败分类入口：401（任何码）与上面那组码算鉴权失败，其余一律算不可达。
+ * 转发链把状态码改写掉时单看码仍然判得出，反之亦然。
+ */
+export function classifyHubFailure(err: unknown): HubFailureReason {
+  const message = errorMessage(err);
+  if (err instanceof HubApiError) {
+    if (err.status === 401 || isHubAuthCode(err.code)) {
+      return { kind: 'auth', code: err.code, message };
+    }
+    return { kind: 'unreachable', code: err.code, message };
+  }
+  return { kind: 'unreachable', code: null, message };
 }
 
 function errorMessage(err: unknown): string {
@@ -70,7 +106,7 @@ export class HubLoadCoordinator {
       const rows = await request();
       if (this.canApply(generation)) this.sink.rows(rows);
     } catch (err) {
-      if (this.canApply(generation)) this.sink.failed(errorMessage(err));
+      if (this.canApply(generation)) this.sink.failed(classifyHubFailure(err));
     } finally {
       // loading 只由最新一代收尾：过期响应结束时新请求还在飞，不该让转圈提前停。
       if (this.canApply(generation)) this.sink.loading(false);

@@ -1676,7 +1676,7 @@
         "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
         "passkeyUnavailable": "Passkeys require HTTPS or localhost.",
         "passkeySecondFactor": "Complete the passkey check…",
-        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address where a passkey is registered, then add one for this address."
+        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address."
       },
       "node": {
         "loginToThisNode": "Sign in",
@@ -1748,7 +1748,7 @@
         "passkeyName": "Passkey name",
         "registerPasskey": "Add passkey",
         "signWithExistingPasskey": "You can confirm with your passkey instead of typing your password.",
-        "passkeySecondFactorHint": "Once a passkey is registered, password sign-in also requires a passkey check. The check only works on addresses where a passkey is registered; removing all passkeys turns it off.",
+        "passkeySecondFactorHint": "Once a passkey is registered, password sign-in also requires a passkey check. Sign-ins from the local machine or a LAN address skip the check; other addresses need a passkey registered. Removing all passkeys turns it off.",
         "sessionKeyNote": "Every action on this page asks for your password or a passkey.",
         "totpConfirm": "Confirm and turn on",
         "totpConfirmHint": "Enter the 6-digit code from your authenticator app.",
@@ -1790,6 +1790,7 @@
       "hub": "Hub",
       "loggedIn": "Signed in",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
+      "hubLoginRejected": "The hub rejected this sign-in ({{code}}). Sign in again, then retry.",
       "hubs": {
         "title": "Hub Cluster",
         "active": "Primary Hub",
@@ -1881,7 +1882,6 @@
         "localAddressHint": "Other nodes cannot join. Set it up again under Role → Hub and node.",
         "currentHub": "Current Hub",
         "hubDisconnected": "Not connected",
-        "joinSeed": "Join address: {{url}}",
         "writerHub": "Writer: {{name}}",
         "hubList": "Hubs",
         "self": "This Machine",

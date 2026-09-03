@@ -41,6 +41,7 @@ const {
   NodesManagement,
   bulkMenuStates,
   bulkUpgradeTargets,
+  hubFailureNotice,
   pruneSelection,
   selectableRows,
   toggleAllSelection,
@@ -299,6 +300,26 @@ describe('NodesManagement', () => {
     const header = elementTag(html, 'nodes-select-all');
     expect(header).toContain('data-all-selected="false"');
     expect(header).toContain('aria-label="nodes.selection.selectAll"');
+  });
+});
+
+describe('hub 不可用时那一行提示', () => {
+  test('hub 拒绝了登录：换一条带错误码的提示，不再说「Hub 不可达」', () => {
+    expect(
+      hubFailureNotice({ kind: 'auth', code: 'PASSKEY_REQUIRED', message: 'PASSKEY_REQUIRED' })
+    ).toEqual({
+      testId: 'nodes-hub-login-rejected',
+      key: 'nodes.hubLoginRejected',
+      params: { code: 'PASSKEY_REQUIRED' },
+    });
+  });
+
+  test('打不通 / 还没失败过：保持原来的「Hub 不可达」', () => {
+    const offline = { testId: 'nodes-hub-offline', key: 'nodes.hubOffline' };
+    expect(hubFailureNotice(null)).toEqual(offline);
+    expect(
+      hubFailureNotice({ kind: 'unreachable', code: null, message: 'hub_unreachable' })
+    ).toEqual(offline);
   });
 });
 
