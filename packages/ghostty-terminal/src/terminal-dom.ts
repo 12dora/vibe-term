@@ -447,8 +447,10 @@ export class TerminalDomSurface {
     return this.helperTextarea !== null && document.activeElement === this.helperTextarea;
   }
 
+  // 每次击键都会调用：contenteditable 子树即使写入同样的空串也会失效布局，
+  // 而紧随其后的 positionTextareaAtCursor 要读几何，所以已经空就不写。
   clearTextarea(): void {
-    if (this.helperTextarea) {
+    if (this.helperTextarea && this.helperTextarea.textContent !== '') {
       this.helperTextarea.textContent = '';
     }
   }

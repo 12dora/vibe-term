@@ -534,7 +534,8 @@ describe('CanvasRenderer run batching and scroll blitting', () => {
       scrollDelta: -1,
     });
 
-    expect(harness.created[4].context.drawImageCalls).toBe(0);
+    // blit 被 dpr 变化绕过，共享中转画布因此从未被分配（只有四张层画布）。
+    expect(harness.created).toHaveLength(4);
     expect(harness.created[0].context.drawImageCalls).toBe(0);
     expect(harness.renderer.getDebugState().lastDrawnRows).toEqual([0, 1, 2]);
     harness.renderer.dispose();

@@ -93,6 +93,34 @@ function fgAt(rows: GhosttyRenderRow[], y: number, x: number): string {
 }
 
 describe('EX2：输出与 forceFullRepaint 撞车时行内容被位移复用吞掉', () => {
+  test('挂起期间的输出在恢复强制全画时仍禁用位移复用', async () => {
+    const harness = await createHarness();
+    try {
+      harness.bindings.writeVt(harness.terminal, harness.paintBox('\x1b[32m'));
+      harness.coordinator.scheduleFromOutput();
+      harness.coordinator.renderNow();
+      harness.coordinator.renderNow();
+      const framesBeforeSuspend = harness.frames.length;
+
+      harness.coordinator.setRenderSuspended(true);
+      harness.bindings.writeVt(harness.terminal, `\r\n${harness.paintBox('\x1b[0m')}`);
+      harness.coordinator.scheduleFromOutput();
+      harness.coordinator.renderNow();
+      expect(harness.frames).toHaveLength(framesBeforeSuspend);
+
+      harness.coordinator.setRenderSuspended(false);
+
+      const resumed = harness.frames.at(-1);
+      const colors = [0, 1, 2, 3].map((index) => fgAt(resumed?.rows ?? [], ROWS - 3 + index, 0));
+      expect(harness.frames).toHaveLength(framesBeforeSuspend + 1);
+      expect(resumed?.forceFull).toBe(true);
+      expect(resumed?.scrollDelta).toBe(0);
+      expect(colors).toEqual(['default', 'default', 'default', 'default']);
+    } finally {
+      harness.dispose();
+    }
+  });
+
   test('滚动 + 原位重画同批到达后 forceFullRepaint，输入框各行必须落到新颜色', async () => {
     const harness = await createHarness();
     try {

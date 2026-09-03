@@ -60,6 +60,7 @@ export class FakeCanvasContext2D {
   textBaseline = 'top';
   imageSmoothingEnabled = false;
   globalAlpha = 1;
+  globalCompositeOperation = 'source-over';
   operations: Array<Record<string, unknown>> = [];
 
   clearRect(x: number, y: number, width: number, height: number): void {
@@ -86,6 +87,32 @@ export class FakeCanvasContext2D {
       y,
       fillStyle: this.fillStyle,
       font: this.font,
+    });
+  }
+
+  drawImage(
+    source: { width: number; height: number },
+    sourceX: number,
+    sourceY: number,
+    sourceWidth: number,
+    sourceHeight: number,
+    destinationX: number,
+    destinationY: number,
+    destinationWidth: number,
+    destinationHeight: number
+  ): void {
+    this.operations.push({
+      type: 'drawImage',
+      source,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      destinationX,
+      destinationY,
+      destinationWidth,
+      destinationHeight,
+      globalCompositeOperation: this.globalCompositeOperation,
     });
   }
 
@@ -149,8 +176,21 @@ export class FakeElement {
   }
 
   appendChild(child: FakeElement): FakeElement {
+    child.remove();
     child.parentElement = this;
     this.children.push(child);
+    return child;
+  }
+
+  insertBefore(child: FakeElement, reference: FakeElement | null): FakeElement {
+    child.remove();
+    child.parentElement = this;
+    const index = reference ? this.children.indexOf(reference) : -1;
+    if (index < 0) {
+      this.children.push(child);
+    } else {
+      this.children.splice(index, 0, child);
+    }
     return child;
   }
 

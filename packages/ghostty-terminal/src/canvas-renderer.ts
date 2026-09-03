@@ -1,3 +1,12 @@
+import { drawBlockElement, drawCellDecorations } from './canvas-block-elements';
+import {
+  CellStyleResolver,
+  blockElementCodepoint,
+  cellBackgroundColor,
+  hasDecorations,
+  hasVisibleGlyph,
+  isSpacerCell,
+} from './canvas-cell-style';
 import {
   expandNeighborRows,
   resolveEffectiveDirty,
@@ -6,7 +15,6 @@ import {
 } from './canvas-renderer-draw-plan';
 import {
   canvasSurfaceUnchanged,
-  colorToCss,
   measureMaxTextRun,
   sameSelectionRects,
   toDeviceCell,
@@ -16,7 +24,6 @@ import type {
   GhosttyCellDimensions,
   GhosttyColorRgb,
   GhosttyRenderCell,
-  GhosttyRenderCellStyle,
   GhosttyRenderRow,
   GhosttyRenderSnapshotMeta,
   GhosttySelectionRect,
@@ -63,83 +70,6 @@ type LinkUnderlineSegment = {
   endCol: number;
 };
 
-function colorKey(color: GhosttyColorRgb): number {
-  return (color.r << 16) | (color.g << 8) | color.b;
-}
-
-function fontVariantIndex(style: GhosttyRenderCellStyle): number {
-  return (style.italic ? 1 : 0) | (style.bold ? 2 : 0);
-}
-
-// U+2596–U+259F quadrant 块的象限组合：UL=1、UR=2、LL=4、LR=8
-const QUADRANT_FLAGS = new Map<number, number>([
-  [0x2596, 0b0100],
-  [0x2597, 0b1000],
-  [0x2598, 0b0001],
-  [0x2599, 0b1101],
-  [0x259a, 0b1001],
-  [0x259b, 0b0111],
-  [0x259c, 0b1011],
-  [0x259d, 0b0010],
-  [0x259e, 0b0110],
-  [0x259f, 0b1110],
-]);
-
-const SHADE_ALPHA = new Map<number, number>([
-  [0x2591, 0.25],
-  [0x2592, 0.5],
-  [0x2593, 0.75],
-]);
-
-function isBlockElement(codepoint: number): boolean {
-  return codepoint >= 0x2580 && codepoint <= 0x259f;
-}
-
-function isSpacerCell(cell: GhosttyRenderCell): boolean {
-  return cell.widthKind === 'spacer-tail' || cell.widthKind === 'spacer-head';
-}
-
-function hasVisibleGlyph(cell: GhosttyRenderCell): boolean {
-  return !isSpacerCell(cell) && cell.text !== '' && !cell.style.invisible;
-}
-
-function hasDecorations(style: GhosttyRenderCellStyle): boolean {
-  return style.underline > 0 || style.strikethrough || style.overline;
-}
-
-// inverse 时前后景互换；缺省色回落到快照的默认前/背景。返回的都是已有实例，不分配。
-function cellForegroundColor(
-  cell: GhosttyRenderCell,
-  colors: GhosttyRenderSnapshotMeta['colors']
-): GhosttyColorRgb {
-  if (cell.style.inverse) {
-    return cell.bgColor ?? colors.background;
-  }
-
-  return cell.fgColor ?? colors.foreground;
-}
-
-function cellBackgroundColor(
-  cell: GhosttyRenderCell,
-  colors: GhosttyRenderSnapshotMeta['colors']
-): GhosttyColorRgb {
-  if (cell.style.inverse) {
-    return cell.fgColor ?? colors.foreground;
-  }
-
-  return cell.bgColor ?? colors.background;
-}
-
-// 只有「单码位且落在块元素区」的 cell 才自绘，其余交给字体。
-function blockElementCodepoint(cell: GhosttyRenderCell): number {
-  if (cell.codepoints.length !== 1) {
-    return -1;
-  }
-
-  const codepoint = cell.codepoints[0];
-  return isBlockElement(codepoint) ? codepoint : -1;
-}
-
 function ensureContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const context = canvas.getContext('2d');
   if (!context) {
@@ -149,6 +79,47 @@ function ensureContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   return context;
 }
 
+type ScratchSurface = { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D };
+
+// blitRows 的 ping-pong 中转画布：全尺寸位图（iPhone DPR3 下每张 ~10 MB），而 blit 在
+// 一帧内同步完成、不会重入，所以整个模块共用一张即可 —— 保活多个终端时省下 N−1 张。
+// 交换后「让位」的旧主画布随即成为新的共享中转，池里始终至多一张。
+let sharedScratch: ScratchSurface | null = null;
+let liveRenderers = 0;
+
+function parkScratchSurface(surface: ScratchSurface): void {
+  sharedScratch = surface;
+}
+
+// owner 是本实例主画布所属的 document：跨 document 的位图不能共用。
+function acquireScratchSurface(owner: Document): ScratchSurface {
+  if (sharedScratch && sharedScratch.canvas.ownerDocument === owner) {
+    return sharedScratch;
+  }
+
+  dropSharedScratch();
+  const canvas = document.createElement('canvas');
+  canvas.dataset.layer = 'scratch';
+  canvas.style.position = 'absolute';
+  canvas.style.inset = '0';
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  canvas.style.pointerEvents = 'none';
+  canvas.style.opacity = '0';
+  const surface = { canvas, context: ensureContext(canvas) };
+  parkScratchSurface(surface);
+  return surface;
+}
+
+function dropSharedScratch(): void {
+  if (sharedScratch) {
+    sharedScratch.canvas.remove();
+    sharedScratch.canvas.width = 0;
+    sharedScratch.canvas.height = 0;
+  }
+  sharedScratch = null;
+}
+
 export class CanvasRenderer {
   readonly kind = 'canvas';
 
@@ -156,14 +127,11 @@ export class CanvasRenderer {
   private readonly linkCanvas: HTMLCanvasElement;
   private readonly selectionCanvas: HTMLCanvasElement;
   private readonly cursorCanvas: HTMLCanvasElement;
-  private scratchCanvas: HTMLCanvasElement;
   private mainContext: CanvasRenderingContext2D;
   private readonly linkContext: CanvasRenderingContext2D;
   private readonly selectionContext: CanvasRenderingContext2D;
   private readonly cursorContext: CanvasRenderingContext2D;
-  private scratchContext: CanvasRenderingContext2D;
   private theme: GhosttyTheme;
-  private readonly fontFamily: string;
   private readonly fontSize: number;
   private cellDimensions: GhosttyCellDimensions = { width: 9, height: 17 };
   // 设备像素整数 cell。所有绘制坐标必须落在整数物理像素上：相邻 fillRect 在
@@ -184,9 +152,7 @@ export class CanvasRenderer {
   private rows = 0;
   private frameCount = 0;
   private lastDrawnRows: number[] = [];
-  private readonly colorCache = new Map<number, string>();
-  // 四种字形变体（regular / italic / bold / bold-italic），随 deviceFontSize 在 resize 内失效。
-  private fontVariants: (string | null)[] = [null, null, null, null];
+  private readonly cellStyle: CellStyleResolver;
   private maxTextRun = 1;
   private assignedMainFillStyle: string | null = null;
   private assignedMainFont: string | null = null;
@@ -196,12 +162,14 @@ export class CanvasRenderer {
   private drawnSelectionColor = '';
   private readonly cursorLayer: CursorLayer;
   private readonly onSurfaceSize: ((width: number, height: number) => void) | null;
+  private disposed = false;
 
   constructor(options: CanvasRendererOptions) {
     this.onSurfaceSize = options.onSurfaceSize ?? null;
     this.theme = options.theme;
-    this.fontFamily = options.fontFamily;
     this.fontSize = options.fontSize;
+    this.cellStyle = new CellStyleResolver(options.fontFamily);
+    liveRenderers += 1;
 
     options.screenElement.style.position = 'relative';
     options.screenElement.style.overflow = 'hidden';
@@ -210,14 +178,6 @@ export class CanvasRenderer {
     this.linkCanvas = document.createElement('canvas');
     this.selectionCanvas = document.createElement('canvas');
     this.cursorCanvas = document.createElement('canvas');
-    this.scratchCanvas = document.createElement('canvas');
-    this.scratchCanvas.dataset.layer = 'scratch';
-    this.scratchCanvas.style.position = 'absolute';
-    this.scratchCanvas.style.inset = '0';
-    this.scratchCanvas.style.width = '100%';
-    this.scratchCanvas.style.height = '100%';
-    this.scratchCanvas.style.pointerEvents = 'none';
-    this.scratchCanvas.style.opacity = '0';
 
     for (const [canvas, layer] of [
       [this.mainCanvas, 'main'],
@@ -238,13 +198,12 @@ export class CanvasRenderer {
     this.linkContext = ensureContext(this.linkCanvas);
     this.selectionContext = ensureContext(this.selectionCanvas);
     this.cursorContext = ensureContext(this.cursorCanvas);
-    this.scratchContext = ensureContext(this.scratchCanvas);
     this.cursorLayer = new CursorLayer(this.cursorCanvas, this.cursorContext);
   }
 
   setTheme(theme: GhosttyTheme): void {
     this.theme = theme;
-    this.colorCache.clear();
+    this.cellStyle.clearColors();
   }
 
   render(frame: CanvasRendererFrame): void {
@@ -311,20 +270,34 @@ export class CanvasRenderer {
   }
 
   dispose(): void {
+    this.releaseScratch();
     this.mainCanvas.remove();
     this.linkCanvas.remove();
     this.selectionCanvas.remove();
     this.cursorCanvas.remove();
-    this.scratchCanvas.remove();
-    this.scratchCanvas.width = 0;
-    this.scratchCanvas.height = 0;
-    this.colorCache.clear();
-    this.fontVariants = [null, null, null, null];
+    this.cellStyle.dispose();
     this.assignedMainFillStyle = null;
     this.assignedMainFont = null;
     this.drawnSelectionRects = [];
     this.lastFrame = null;
     this.cursorLayer.dispose();
+  }
+
+  // 共享中转画布可能正停在本实例的层栈里：先摘出来；本实例是最后一个时整张释放。
+  private releaseScratch(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+
+    const parent = this.mainCanvas.parentElement;
+    if (sharedScratch && parent && sharedScratch.canvas.parentElement === parent) {
+      sharedScratch.canvas.remove();
+    }
+    liveRenderers = Math.max(0, liveRenderers - 1);
+    if (liveRenderers === 0) {
+      dropSharedScratch();
+    }
   }
 
   // 返回 true 表示触发了 canvas.width/height 赋值（HTML5 标准会 wipe 已绘位图），
@@ -360,11 +333,11 @@ export class CanvasRenderer {
     this.deviceCellHeight = deviceCellHeight;
     this.deviceFontSize = this.fontSize * dpr;
     this.cursorLayer.setMetrics(deviceCellWidth, deviceCellHeight, dpr);
-    this.fontVariants = [null, null, null, null];
+    this.cellStyle.resetFonts(this.deviceFontSize);
     // 量真实字体度量（含升/降部的字形盒），把字形盒整体在 cell 内垂直居中。
     // baseline 用 alphabetic：盒高 ≤ cell 时 [topGap, topGap+ascent+descent] ⊆ [0, cellH]，
     // 升降部都不溢出，且用本引擎自报度量，跨平台自洽。
-    this.mainContext.font = `${this.deviceFontSize}px ${this.fontFamily}`;
+    this.mainContext.font = this.cellStyle.regularFont();
     const metrics = this.mainContext.measureText('Mg|qyÅ');
     this.maxTextRun = measureMaxTextRun(
       (text) => this.mainContext.measureText(text).width,
@@ -525,7 +498,7 @@ export class CanvasRenderer {
   ): void {
     const y = row.y * this.deviceCellHeight;
     const width = this.cols * this.deviceCellWidth;
-    const defaultBackground = this.toCss(colors.background);
+    const defaultBackground = this.cellStyle.toCss(colors.background);
 
     this.mainContext.clearRect(0, y, width, this.deviceCellHeight);
     this.setMainFillStyle(defaultBackground);
@@ -543,7 +516,7 @@ export class CanvasRenderer {
         bg.g !== colors.background.g ||
         bg.b !== colors.background.b
       ) {
-        const css = this.toCss(bg);
+        const css = this.cellStyle.toCss(bg);
         if (this.canBatchBackground(cell)) {
           let end = index + 1;
           while (end < row.cells.length) {
@@ -551,7 +524,7 @@ export class CanvasRenderer {
             if (
               !this.canBatchBackground(next) ||
               next.x !== cell.x + (end - index) ||
-              this.toCss(cellBackgroundColor(next, colors)) !== css
+              this.cellStyle.toCss(cellBackgroundColor(next, colors)) !== css
             ) {
               break;
             }
@@ -610,9 +583,9 @@ export class CanvasRenderer {
       const x = cell.x * this.deviceCellWidth;
       const cellWidth = this.cellDeviceWidth(cell);
 
-      const fillStyle = this.toCss(cellForegroundColor(cell, colors));
+      const fillStyle = this.cellStyle.foregroundCss(cell, colors);
       if (this.canBatchGlyph(cell)) {
-        const font = this.resolveFont(cell.style);
+        const font = this.cellStyle.resolveFont(cell.style);
         let text = cell.text;
         let end = index + 1;
         while (end < row.cells.length) {
@@ -621,8 +594,8 @@ export class CanvasRenderer {
             end - index >= this.maxTextRun ||
             !this.canBatchGlyph(next) ||
             next.x !== cell.x + (end - index) ||
-            this.toCss(cellForegroundColor(next, colors)) !== fillStyle ||
-            this.resolveFont(next.style) !== font
+            this.cellStyle.foregroundCss(next, colors) !== fillStyle ||
+            this.cellStyle.resolveFont(next.style) !== font
           ) {
             break;
           }
@@ -638,7 +611,12 @@ export class CanvasRenderer {
 
       this.setMainFillStyle(fillStyle);
       this.drawCellGlyph(cell, x, y, cellWidth);
-      this.drawCellDecorations(cell.style, x, y, cellWidth, lineThickness);
+      drawCellDecorations(this.mainContext, cell.style, x, y, cellWidth, {
+        cellHeight: this.deviceCellHeight,
+        textTopGap: this.textTopGap,
+        glyphBoxHeight: this.glyphBoxHeight,
+        lineThickness,
+      });
     }
   }
 
@@ -647,126 +625,19 @@ export class CanvasRenderer {
   private drawCellGlyph(cell: GhosttyRenderCell, x: number, y: number, cellWidth: number): void {
     const blockCodepoint = blockElementCodepoint(cell);
     if (blockCodepoint >= 0) {
-      this.drawBlockElement(blockCodepoint, x, y, cellWidth, this.deviceCellHeight);
+      drawBlockElement(this.mainContext, blockCodepoint, x, y, cellWidth, this.deviceCellHeight);
       return;
     }
 
-    this.setMainFont(this.resolveFont(cell.style));
+    this.setMainFont(this.cellStyle.resolveFont(cell.style));
     this.mainContext.fillText(cell.text, x, y + this.textBaselineY);
-  }
-
-  // 装饰线随真实字形盒走，而非 cell 边缘：下划线贴字底、上划线贴字顶、
-  // 删除线穿字形几何中线。fillStyle 由调用方设好。
-  private drawCellDecorations(
-    style: GhosttyRenderCellStyle,
-    x: number,
-    y: number,
-    cellWidth: number,
-    lineThickness: number
-  ): void {
-    const lineWidth = Math.max(cellWidth - lineThickness, lineThickness);
-
-    if (style.underline > 0) {
-      const glyphBottom = y + this.textTopGap + this.glyphBoxHeight;
-      this.mainContext.fillRect(
-        x,
-        Math.min(
-          Math.round(glyphBottom - lineThickness),
-          y + this.deviceCellHeight - lineThickness
-        ),
-        lineWidth,
-        lineThickness
-      );
-    }
-
-    if (style.strikethrough) {
-      this.mainContext.fillRect(
-        x,
-        Math.round(y + this.textTopGap + this.glyphBoxHeight / 2),
-        lineWidth,
-        lineThickness
-      );
-    }
-
-    if (style.overline) {
-      this.mainContext.fillRect(
-        x,
-        Math.max(y, Math.round(y + this.textTopGap)),
-        lineWidth,
-        lineThickness
-      );
-    }
-  }
-
-  // fillStyle 由调用方设好。分割点统一 round 到整数物理像素，相邻块元素的
-  // 拼接处既不留缝也不重叠。
-  private drawBlockElement(
-    codepoint: number,
-    x: number,
-    y: number,
-    width: number,
-    height: number
-  ): void {
-    const context = this.mainContext;
-    const sx = (n: number) => Math.round((width * n) / 8);
-    const sy = (n: number) => Math.round((height * n) / 8);
-    const fill = (x0: number, y0: number, x1: number, y1: number) => {
-      context.fillRect(x + x0, y + y0, x1 - x0, y1 - y0);
-    };
-
-    if (codepoint === 0x2580) {
-      // ▀ 上半块
-      fill(0, 0, width, sy(4));
-      return;
-    }
-    if (codepoint >= 0x2581 && codepoint <= 0x2588) {
-      // ▁..█ 自下而上 n/8
-      fill(0, sy(8 - (codepoint - 0x2580)), width, height);
-      return;
-    }
-    if (codepoint >= 0x2589 && codepoint <= 0x258f) {
-      // ▉..▏ 自左起 n/8
-      fill(0, 0, sx(0x2590 - codepoint), height);
-      return;
-    }
-    if (codepoint === 0x2590) {
-      // ▐ 右半块
-      fill(sx(4), 0, width, height);
-      return;
-    }
-    const shadeAlpha = SHADE_ALPHA.get(codepoint);
-    if (shadeAlpha !== undefined) {
-      // ░▒▓ 按前景色 alpha 混合
-      const previousAlpha = context.globalAlpha;
-      context.globalAlpha = previousAlpha * shadeAlpha;
-      fill(0, 0, width, height);
-      context.globalAlpha = previousAlpha;
-      return;
-    }
-    if (codepoint === 0x2594) {
-      // ▔ 上 1/8
-      fill(0, 0, width, sy(1));
-      return;
-    }
-    if (codepoint === 0x2595) {
-      // ▕ 右 1/8
-      fill(sx(7), 0, width, height);
-      return;
-    }
-    const quadrants = QUADRANT_FLAGS.get(codepoint) ?? 0;
-    const midX = sx(4);
-    const midY = sy(4);
-    if (quadrants & 0b0001) fill(0, 0, midX, midY);
-    if (quadrants & 0b0010) fill(midX, 0, width, midY);
-    if (quadrants & 0b0100) fill(0, midY, midX, height);
-    if (quadrants & 0b1000) fill(midX, midY, width, height);
   }
 
   // 光标层的每帧入口：解析光标色后交给 CursorLayer（落定语义见该模块注释）。
   // 光标色取自 ghostty render state（colors.cursor 缺省时回落到 colors.foreground），
   // 不读 this.theme——主题切换由 WASM 侧 setTerminalTheme 反映到 render state。
   private updateCursor(frame: CanvasRendererFrame, wiped: boolean): void {
-    const cssColor = this.toCss(frame.meta.colors.cursor ?? frame.meta.colors.foreground);
+    const cssColor = this.cellStyle.toCss(frame.meta.colors.cursor ?? frame.meta.colors.foreground);
     this.noteVacatedRow(
       this.cursorLayer.update(frame.meta.cursor, cssColor, wiped, frame.cursorSettled !== false)
     );
@@ -780,10 +651,7 @@ export class CanvasRenderer {
   }
 
   private blitRows(scrollDelta: number): boolean {
-    if (
-      typeof this.mainContext.drawImage !== 'function' ||
-      typeof this.scratchContext.drawImage !== 'function'
-    ) {
+    if (typeof this.mainContext.drawImage !== 'function') {
       return false;
     }
 
@@ -793,34 +661,31 @@ export class CanvasRenderer {
       return false;
     }
 
-    const width = this.mainCanvas.width;
-    if (
-      this.scratchCanvas.width !== width ||
-      this.scratchCanvas.height !== this.mainCanvas.height
-    ) {
-      this.scratchCanvas.width = width;
-      this.scratchCanvas.height = this.mainCanvas.height;
-      this.scratchContext.setTransform(1, 0, 0, 1, 0, 0);
-      this.scratchContext.imageSmoothingEnabled = false;
-    }
     const parent = this.mainCanvas.parentElement;
     if (!parent) {
       return false;
     }
-    if (this.scratchCanvas.parentElement !== parent) {
-      parent.insertBefore(this.scratchCanvas, this.mainCanvas);
+
+    const scratch = acquireScratchSurface(this.mainCanvas.ownerDocument);
+    const width = this.mainCanvas.width;
+    if (scratch.canvas.width !== width || scratch.canvas.height !== this.mainCanvas.height) {
+      scratch.canvas.width = width;
+      scratch.canvas.height = this.mainCanvas.height;
+    }
+    if (scratch.canvas.parentElement !== parent) {
+      parent.insertBefore(scratch.canvas, this.mainCanvas);
     }
 
-    this.scratchCanvas.style.width = this.mainCanvas.style.width;
-    this.scratchCanvas.style.height = this.mainCanvas.style.height;
-    this.scratchContext.setTransform(1, 0, 0, 1, 0, 0);
-    this.scratchContext.textBaseline = 'alphabetic';
-    this.scratchContext.imageSmoothingEnabled = false;
+    scratch.canvas.style.width = this.mainCanvas.style.width;
+    scratch.canvas.style.height = this.mainCanvas.style.height;
+    scratch.context.setTransform(1, 0, 0, 1, 0, 0);
+    scratch.context.textBaseline = 'alphabetic';
+    scratch.context.imageSmoothingEnabled = false;
 
     const sourceY = scrollDelta > 0 ? shiftedRows * this.deviceCellHeight : 0;
     const destinationY = scrollDelta > 0 ? 0 : shiftedRows * this.deviceCellHeight;
-    this.scratchContext.globalCompositeOperation = 'copy';
-    this.scratchContext.drawImage(
+    scratch.context.globalCompositeOperation = 'copy';
+    scratch.context.drawImage(
       this.mainCanvas,
       0,
       sourceY,
@@ -831,18 +696,18 @@ export class CanvasRenderer {
       width,
       retainedHeight
     );
-    this.scratchContext.globalCompositeOperation = 'source-over';
+    scratch.context.globalCompositeOperation = 'source-over';
 
     const previousCanvas = this.mainCanvas;
     const previousContext = this.mainContext;
     previousCanvas.dataset.layer = 'scratch';
     previousCanvas.style.opacity = '0';
-    this.scratchCanvas.dataset.layer = 'main';
-    this.scratchCanvas.style.opacity = '1';
-    this.mainCanvas = this.scratchCanvas;
-    this.mainContext = this.scratchContext;
-    this.scratchCanvas = previousCanvas;
-    this.scratchContext = previousContext;
+    scratch.canvas.dataset.layer = 'main';
+    scratch.canvas.style.opacity = '1';
+    this.mainCanvas = scratch.canvas;
+    this.mainContext = scratch.context;
+    // 让位的旧主画布成为新的共享中转，池里始终只有一张全尺寸位图。
+    parkScratchSurface({ canvas: previousCanvas, context: previousContext });
     this.assignedMainFillStyle = null;
     this.assignedMainFont = null;
     return true;
@@ -862,30 +727,6 @@ export class CanvasRenderer {
     }
     this.mainContext.font = font;
     this.assignedMainFont = font;
-  }
-
-  private resolveFont(style: GhosttyRenderCellStyle): string {
-    const index = fontVariantIndex(style);
-    const cached = this.fontVariants[index];
-    if (cached !== null) {
-      return cached;
-    }
-
-    const font = `${style.italic ? 'italic ' : ''}${style.bold ? '700 ' : ''}${this.deviceFontSize}px ${this.fontFamily}`;
-    this.fontVariants[index] = font;
-    return font;
-  }
-
-  private toCss(color: GhosttyColorRgb): string {
-    const key = colorKey(color);
-    const cached = this.colorCache.get(key);
-    if (cached) {
-      return cached;
-    }
-
-    const css = colorToCss(color);
-    this.colorCache.set(key, css);
-    return css;
   }
 }
 
