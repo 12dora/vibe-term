@@ -9,8 +9,20 @@ import { UserStore } from '../auth/user-store';
 import { runMigrations } from '../db/migrate';
 import { createGatewayRuntime } from '../runtime';
 import { WebSocketServer } from '../ws';
+import {
+  CLIENT_SOURCE_LOCAL,
+  X_TMEX_CLIENT_SOURCE,
+  waivesPasskeySecondFactor,
+} from './client-source';
 import { LinkStreamCarrier } from './link-stream-carrier';
-import { acceptHttpStream, acceptWsStream, openHttpStream, openWsStream } from './stream-targets';
+import { setMeshRequestContext } from './mesh-deps';
+import {
+  acceptHttpStream,
+  acceptWsStream,
+  openHttpStream,
+  openWsStream,
+  stripForwardedRequestHeaders,
+} from './stream-targets';
 import { seedUser, waitUntil } from './test-support';
 import { requestDispatchContext } from './types';
 
@@ -420,6 +432,7 @@ describe('http/ws stream targets', () => {
         'x-tmex-via': 'forged',
         'content-type': 'application/json',
         'x-custom': 'keep',
+        [X_TMEX_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL,
       },
     });
     expect(res.status).toBe(200);
@@ -433,6 +446,55 @@ describe('http/ws stream targets', () => {
     expect(openHeaders['x-tmex-via']).toBeUndefined();
     expect(openHeaders['content-type']).toBe('application/json');
     expect(openHeaders['x-custom']).toBe('keep');
+    expect(openHeaders[X_TMEX_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
+  });
+
+  test('stripForwardedRequestHeaders 保留 x-tmex-client-source', () => {
+    const out = stripForwardedRequestHeaders({
+      cookie: 'secret=1',
+      authorization: 'Bearer x',
+      [X_TMEX_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL,
+      'x-forwarded-for': '1.2.3.4',
+      'x-custom': 'keep',
+    });
+    expect(out[X_TMEX_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(out['x-custom']).toBe('keep');
+    expect(out.cookie).toBeUndefined();
+    expect(out.authorization).toBeUndefined();
+    expect(out['x-forwarded-for']).toBeUndefined();
+  });
+
+  test('acceptHttpStream 把 x-tmex-client-source 带到 inbound peer Request', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const seen = { header: null as string | null, waived: false, via: '' };
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: {
+          verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+        } as unknown as NodeSessionStore,
+        async dispatchHttp(req, ctx) {
+          setMeshRequestContext(req, {
+            via: ctx.viaNodeId,
+            clientIp: `peer:${ctx.viaNodeId}`,
+          });
+          seen.header = req.headers.get(X_TMEX_CLIENT_SOURCE);
+          seen.via = ctx.viaNodeId;
+          seen.waived = waivesPasskeySecondFactor(req);
+          return new Response('ok');
+        },
+      });
+    });
+    await openHttpStream(a, {
+      method: 'GET',
+      path: '/api/auth/mode',
+      origin: 'http://localhost',
+      auth: 'sid',
+      headers: { [X_TMEX_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL },
+    });
+    expect(seen.header).toBe(CLIENT_SOURCE_LOCAL);
+    expect(seen.via).toBe('entry-1');
+    expect(seen.waived).toBe(true);
   });
 
   test('acceptHttpStream never forwards set-cookie and injects session renewal', async () => {

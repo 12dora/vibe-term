@@ -45,9 +45,12 @@ export function meshAuthModeUserFields(
   user: UserRecord | null,
   origin: string,
   userStore: UserStore,
-  hub: { nodeId: string | null; publicUrl: string | null }
+  hub: { nodeId: string | null; publicUrl: string | null },
+  opts?: { waivePasskeySecondFactor?: boolean }
 ) {
   const keys = user ? userStore.listKeysByUser(user.id) : [];
+  const hasPasskeys = keys.length > 0;
+  const waived = Boolean(opts?.waivePasskeySecondFactor) && hasPasskeys;
   return {
     mode: 'mesh' as const,
     uid: user?.id ?? null,
@@ -55,7 +58,8 @@ export function meshAuthModeUserFields(
     kdfParams: user ? publicKdfParams(user.kdfParamsJson) : null,
     passkeysForThisOrigin: keys.some((k) => k.origin === origin),
     // Origin 头可被伪造，二次验证是否启用必须看任意 origin 是否已有通行密钥
-    passkeySecondFactor: keys.length > 0,
+    passkeySecondFactor: hasPasskeys && !waived,
+    passkeySecondFactorWaived: waived,
     totpEnabled: user?.totpRecordSeq != null,
     rootEpoch: user?.rootEpoch ?? null,
     rootPublicKey: user ? encodeBase64url(user.rootPublicKey) : null,

@@ -115,6 +115,7 @@ describe('forwarder', () => {
               'cf-access-jwt-assertion': 'header.payload.sig',
               'cf-access-authenticated-user-email': 'user@example.com',
               'cf-ray': 'abc123',
+              'x-tmex-client-source': 'local',
             },
           }),
           dummyServer
@@ -137,6 +138,7 @@ describe('forwarder', () => {
       expect(streams.lastOpen?.headers['cf-access-jwt-assertion']).toBeUndefined();
       expect(streams.lastOpen?.headers['cf-access-authenticated-user-email']).toBeUndefined();
       expect(streams.lastOpen?.headers['cf-ray']).toBeUndefined();
+      expect(streams.lastOpen?.headers['x-tmex-client-source']).toBeUndefined();
 
       streams.nextResponse = new Response('<html></html>', {
         headers: { 'content-type': 'text/html; charset=utf-8' },
@@ -161,6 +163,48 @@ describe('forwarder', () => {
       );
       expect(png.headers.get('content-type')).toBe('image/png');
       expect(png.headers.get('content-disposition')).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('stamps x-tmex-client-source: local for trusted entry clients and drops browser forgeries', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponse = new Response('{}', { headers: { 'content-type': 'application/json' } });
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const local = await call(mesh.runtime, `http://localhost/n/${OTHER}/api/auth/mode`, {
+        clientIp: '127.0.0.1',
+        headers: { 'x-tmex-client-source': 'forged' },
+      });
+      expect(local.status).toBe(200);
+      expect(streams.lastOpen?.headers['x-tmex-client-source']).toBe('local');
+      expect(streams.lastOpen?.path).toBe('/api/auth/mode');
+
+      streams.nextResponse = new Response('{}', {
+        headers: { 'content-type': 'application/json' },
+      });
+      const lan = await call(mesh.runtime, `http://localhost/n/${OTHER}/api/auth/login`, {
+        method: 'POST',
+        clientIp: '192.168.1.5',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(lan.status).toBe(200);
+      expect(streams.lastOpen?.headers['x-tmex-client-source']).toBe('local');
+      expect(streams.lastOpen?.path).toBe('/api/auth/login');
+
+      streams.nextResponse = new Response('{}', {
+        headers: { 'content-type': 'application/json' },
+      });
+      const publicSrc = await call(mesh.runtime, `http://localhost/n/${OTHER}/api/auth/mode`, {
+        clientIp: '203.0.113.10',
+        headers: { 'x-tmex-client-source': 'local' },
+      });
+      expect(publicSrc.status).toBe(200);
+      expect(streams.lastOpen?.headers['x-tmex-client-source']).toBeUndefined();
     } finally {
       mesh.close();
     }

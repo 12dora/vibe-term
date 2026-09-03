@@ -40,6 +40,11 @@ export interface AuthModeResponse {
    * （`AuthLoginRequest.passkey`），否则服务端回 `PASSKEY_REQUIRED`。旧版本节点不返回该字段。
    */
   passkeySecondFactor?: boolean;
+  /**
+   * 入口判定浏览器来自受信本机来源时，即使账号已注册通行密钥也不要求二次验证。
+   * 此时 `passkeySecondFactor` 为 false。旧版本节点不返回该字段。
+   */
+  passkeySecondFactorWaived?: boolean;
   totpEnabled?: boolean;
   /** mesh 模式必填；standalone 与「没有主用户」时为 `null`。 */
   rootEpoch?: number | null;

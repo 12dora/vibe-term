@@ -349,6 +349,8 @@ export async function challengeAndLogin(
         ) =>
           | { credential_id: string; sig: string }
           | Promise<{ credential_id: string; sig: string }>);
+    headers?: Record<string, string>;
+    trustProxy?: boolean;
   }
 ) {
   const sess = generateEd25519KeyPair();
@@ -367,10 +369,11 @@ export async function challengeAndLogin(
   } else {
     const ch = await call(runtime, 'http://localhost/api/auth/challenge', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...tweak?.headers },
       body: JSON.stringify({ uid }),
       via: tweak?.via,
       clientIp: tweak?.clientIp,
+      trustProxy: tweak?.trustProxy,
     });
     const body = (await ch.json()) as { challenge_id: string; nonce: string };
     challengeId = body.challenge_id;
@@ -392,7 +395,7 @@ export async function challengeAndLogin(
   const passkey = typeof tweak?.passkey === 'function' ? await tweak.passkey(del) : tweak?.passkey;
   const res = await call(runtime, 'http://localhost/api/auth/login', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...tweak?.headers },
     body: JSON.stringify({
       login: encodeBase64url(encodeLogin(login)),
       sig: encodeBase64url(sig),
@@ -403,6 +406,7 @@ export async function challengeAndLogin(
     }),
     via: tweak?.via,
     clientIp: tweak?.clientIp,
+    trustProxy: tweak?.trustProxy,
   });
   return { res, sid: res.ok ? sidFromLogin(res) : '', challengeId, nonce, del };
 }
@@ -1947,7 +1951,7 @@ describe('auth-routes', () => {
       const code = totpCode(secret, Math.floor(Date.now() / 1000));
       for (let i = 0; i < 11; i++) {
         const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
-          clientIp: '10.0.0.22',
+          clientIp: '203.0.113.22',
           totp: { code, k_totp: encodeBase64url(kTotp) },
         });
         expect(res.status).toBe(401);
@@ -3114,6 +3118,85 @@ describe('auth-routes', () => {
       });
       expect(verified.ok).toBe(true);
       if (verified.ok) expect(verified.session.delegationMethod).toBe('root');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('trusted local source waives passkey second factor on mode and login', async () => {
+    const mesh = await bootMesh();
+    try {
+      insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: 'http://localhost:19663',
+        rpId: 'localhost',
+        fill: 41,
+      });
+      const loopbackMode = await call(mesh.runtime, 'http://localhost/api/auth/mode', {
+        headers: { origin: 'http://localhost:19663' },
+        clientIp: '127.0.0.1',
+      });
+      const loopbackBody = (await loopbackMode.json()) as {
+        passkeySecondFactor?: boolean;
+        passkeySecondFactorWaived?: boolean;
+      };
+      expect(loopbackBody.passkeySecondFactor).toBe(false);
+      expect(loopbackBody.passkeySecondFactorWaived).toBe(true);
+
+      const loopbackLogin = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '127.0.0.1',
+      });
+      expect(loopbackLogin.res.status).toBe(200);
+
+      const publicMode = await call(mesh.runtime, 'http://localhost/api/auth/mode', {
+        headers: { origin: 'http://localhost:19663' },
+        clientIp: '203.0.113.10',
+      });
+      const publicBody = (await publicMode.json()) as {
+        passkeySecondFactor?: boolean;
+        passkeySecondFactorWaived?: boolean;
+      };
+      expect(publicBody.passkeySecondFactor).toBe(true);
+      expect(publicBody.passkeySecondFactorWaived).toBe(false);
+
+      const publicLogin = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '203.0.113.10',
+      });
+      expect(publicLogin.res.status).toBe(401);
+      expect((await publicLogin.res.json()).code).toBe('PASSKEY_REQUIRED');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('peer x-tmex-client-source: local waives passkey; header on a public direct request does not', async () => {
+    const mesh = await bootMesh();
+    try {
+      insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: 'http://localhost:19663',
+        rpId: 'localhost',
+        fill: 42,
+      });
+      const entry = 'ab'.repeat(16);
+      const waived = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        via: entry,
+        clientIp: `peer:${entry}`,
+        headers: { 'x-tmex-client-source': 'local' },
+      });
+      expect(waived.res.status).toBe(200);
+
+      const peerNoHeader = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        via: entry,
+        clientIp: `peer:${entry}`,
+      });
+      expect(peerNoHeader.res.status).toBe(401);
+      expect((await peerNoHeader.res.json()).code).toBe('PASSKEY_REQUIRED');
+
+      const forgedDirect = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '203.0.113.10',
+        headers: { 'x-tmex-client-source': 'local' },
+      });
+      expect(forgedDirect.res.status).toBe(401);
+      expect((await forgedDirect.res.json()).code).toBe('PASSKEY_REQUIRED');
     } finally {
       mesh.close();
     }

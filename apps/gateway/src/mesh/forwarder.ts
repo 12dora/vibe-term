@@ -3,6 +3,7 @@ import { readJsonObjectBody } from '../api/http';
 import { buildSetCookie, nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
+import { CLIENT_SOURCE_LOCAL, X_TMEX_CLIENT_SOURCE, isTrustedLocalClient } from './client-source';
 import { type ForwardPump as FailoverPump, runStreamFailover } from './forwarder-failover';
 import { buildJsonStreamBody } from './json-stream-body';
 import {
@@ -65,6 +66,7 @@ const DROP_REQUEST_HEADERS = new Set([
   'cf-access-jwt-assertion',
   'cf-access-authenticated-user-email',
   'cf-ray',
+  X_TMEX_CLIENT_SOURCE,
 ]);
 
 type ForwarderDeps = {
@@ -871,6 +873,9 @@ function filterRequestHeaders(req: Request): Record<string, string> {
     }
     out[key] = value;
   });
+  if (isTrustedLocalClient(req)) {
+    out[X_TMEX_CLIENT_SOURCE] = CLIENT_SOURCE_LOCAL;
+  }
   return out;
 }
 

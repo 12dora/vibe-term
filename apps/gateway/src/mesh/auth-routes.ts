@@ -61,6 +61,7 @@ import {
 } from './auth-mode-cache';
 import { handleTotpRecordRequest } from './auth-totp-record';
 import { clientIpFromRequest } from './client-ip';
+import { isPeerRequest, waivesPasskeySecondFactor } from './client-source';
 import {
   AUTH_UID_MAX_BYTES,
   CHALLENGE_RATE_LIMIT,
@@ -109,11 +110,6 @@ export function peekLoginUid(body: Record<string, unknown>): string {
   } catch {
     return '';
   }
-}
-
-function isPeerAuthRequest(req: Request): boolean {
-  const ctx = getMeshRequestContext(req);
-  return ctx.via !== MESH_VIA_SELF || Boolean(ctx.clientIp?.startsWith('peer:'));
 }
 
 export type PublicAuthNode = {
@@ -284,7 +280,13 @@ export class AuthRoutes {
     if (snapshot.closed) {
       return jsonBody({ ...shared, ...standaloneClosedModeFields() });
     }
-    const fields = meshAuthModeUserFields(snapshot.user, origin, this.deps.userStore, snapshot.hub);
+    const fields = meshAuthModeUserFields(
+      snapshot.user,
+      origin,
+      this.deps.userStore,
+      snapshot.hub,
+      { waivePasskeySecondFactor: waivesPasskeySecondFactor(req) }
+    );
     const auth = authenticateRequest(req, this.sessionDeps);
     return jsonBody({
       ...shared,
@@ -333,7 +335,7 @@ export class AuthRoutes {
   }
 
   private async handleLogin(req: Request): Promise<Response> {
-    const peer = isPeerAuthRequest(req);
+    const peer = isPeerRequest(req);
     const ip = peer ? '' : (clientIpFromRequest(req) ?? 'local');
     const body = await readJsonObjectBody(req);
     if (!body) {
@@ -388,6 +390,7 @@ export class AuthRoutes {
       const totpCheck = await this.checkTotp(user, envelope.delegation.method, body.totp);
       if (!totpCheck.ok) return fail(totpCheck.code);
       const passkeyCheck = await this.checkPasskeySecondFactor(
+        req,
         user,
         envelope.delegation,
         body.passkey
@@ -913,11 +916,13 @@ export class AuthRoutes {
   }
 
   private async checkPasskeySecondFactor(
+    req: Request,
     user: UserRecord,
     delegation: Delegation,
     passkeyBody: unknown
   ): Promise<{ ok: true } | { ok: false; code: string }> {
     if (delegation.method !== 'root') return { ok: true };
+    if (waivesPasskeySecondFactor(req)) return { ok: true };
     if (this.deps.userStore.listKeysByUser(user.id).length === 0) return { ok: true };
     const parsed = parsePasskeySecondFactor(passkeyBody);
     if (!parsed) return { ok: false, code: 'PASSKEY_REQUIRED' };
@@ -976,7 +981,7 @@ export class AuthRoutes {
   }
 
   private consumeChallengeQuota(req: Request): Response | null {
-    if (isPeerAuthRequest(req)) return null;
+    if (isPeerRequest(req)) return null;
     const ip = clientIpFromRequest(req) ?? 'local';
     const key = `ip:${ip}`;
     if (this.challengeLimiter.count(key) >= CHALLENGE_RATE_LIMIT) {
