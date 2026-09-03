@@ -1,5 +1,5 @@
+import { randomUUID } from 'node:crypto';
 import type { EventType, WebhookEndpoint } from '@tmex/shared';
-import { v4 as uuidv4 } from 'uuid';
 import { createWebhookEndpoint, deleteWebhookEndpoint, getAllWebhookEndpoints } from '../db';
 import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
@@ -65,7 +65,7 @@ async function handleCreateWebhook(req: Request): Promise<Response> {
 
   const now = new Date().toISOString();
   const endpoint: WebhookEndpoint = {
-    id: uuidv4(),
+    id: randomUUID(),
     enabled: parsed.fields.enabled,
     url: parsed.fields.url,
     secret: parsed.fields.secret,

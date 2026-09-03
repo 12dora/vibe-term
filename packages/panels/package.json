@@ -41,7 +41,6 @@
     "@tmex/theme": "workspace:*",
     "@tmex/ui": "workspace:*",
     "@tmex/ws-client": "workspace:*",
-    "ghostty-terminal": "workspace:*",
     "highlight.js": "^11.11.1",
     "katex": "^0.17.0",
     "lucide-react": "^0.564.0",

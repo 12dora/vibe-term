@@ -1,5 +1,5 @@
+import { randomUUID } from 'node:crypto';
 import { toBCP47 } from '@tmex/shared';
-import { v4 as uuidv4 } from 'uuid';
 import {
   approveWeixinUser,
   createWeixinAccount,
@@ -83,7 +83,7 @@ async function handleCreateWeixinAccount(req: Request): Promise<Response> {
   }
 
   const now = new Date().toISOString();
-  const id = uuidv4();
+  const id = randomUUID();
   createWeixinAccount({
     id,
     name: parsed.fields.name,

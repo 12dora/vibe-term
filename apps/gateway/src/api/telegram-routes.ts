@@ -1,5 +1,5 @@
+import { randomUUID } from 'node:crypto';
 import { toBCP47 } from '@tmex/shared';
-import { v4 as uuidv4 } from 'uuid';
 import { encrypt } from '../crypto';
 import {
   approveTelegramChat,
@@ -93,7 +93,7 @@ async function handleCreateTelegramBot(req: Request): Promise<Response> {
 
   const now = new Date().toISOString();
   createTelegramBot({
-    id: uuidv4(),
+    id: randomUUID(),
     name: parsed.fields.name,
     tokenEnc: await encrypt(parsed.fields.token),
     enabled: parsed.fields.enabled,

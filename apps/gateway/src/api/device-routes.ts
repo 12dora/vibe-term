@@ -1,5 +1,5 @@
+import { randomUUID } from 'node:crypto';
 import type { CreateDeviceRequest, Device } from '@tmex/shared';
-import { v4 as uuidv4 } from 'uuid';
 import { encrypt } from '../crypto';
 import {
   createDevice,
@@ -80,7 +80,7 @@ async function handleCreateDevice(req: Request): Promise<Response> {
 
   const now = new Date().toISOString();
   const device: Device = {
-    id: uuidv4(),
+    id: randomUUID(),
     name: body.name,
     type: body.type,
     host: body.host,

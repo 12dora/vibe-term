@@ -1,5 +1,5 @@
+import { randomUUID } from 'node:crypto';
 import { asc, eq, max } from 'drizzle-orm';
-import { v4 as uuidv4 } from 'uuid';
 import { getDb as getOrmDb } from './client';
 import { fileRoots } from './schema';
 
@@ -35,7 +35,7 @@ export function createFileRoot(input: CreateFileRootInput): FileRootRecord {
     .from(fileRoots)
     .get();
   const record: FileRootRecord = {
-    id: uuidv4(),
+    id: randomUUID(),
     deviceId: input.deviceId,
     path: input.path,
     enabled: input.enabled ?? true,
