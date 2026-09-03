@@ -333,7 +333,7 @@
       "siteUrl": "サイト URL",
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
-        "nameLinkedHint": "ノード名と連動します。ここで変更すると「マルチノード連携」のノード名も変わります。",
+        "nameLinkedHint": "「マルチノード連携」のノード名も同時に変わります。",
         "nameLinkedLocked": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
         "urlManagedHint": "ハブの公開アドレスによって決まります。「マルチノード連携」で変更してください。"
       },
@@ -371,7 +371,7 @@
         "reloadApp": "アプリを再読み込み",
         "shortcuts": {
           "title": "カスタムショートカット",
-          "savedOnServer": "サーバーに保存され、すべてのブラウザで共有されます。変更は「保存」後に反映されます。",
+          "savedOnServer": "サーバーに保存され、すべてのブラウザで共有されます。「保存」で反映されます。",
           "preview": "プレビュー",
           "useIcons": "キーをアイコンで表示",
           "useIconsDesc": "Ctrl/Shift/Enter などのキー名を Apple 風の記号（⌃⇧⏎）に置き換えます。",
@@ -403,7 +403,7 @@
         "title": "リモートアクセス",
         "wizardTitle": "セットアップ",
         "description": "Cloudflare Tunnel または直接接続で、このマシンの tmex にリモートアクセスします。",
-        "remoteNodeNotice": "リモートアクセスは、ブラウザが直接接続しているマシンでのみ設定できます。対象のマシンに切り替えてから、このページを開いてください。",
+        "remoteNodeNotice": "リモートアクセスは、ブラウザが直接接続しているノードでのみ設定できます。先にそのノードに切り替えてください。",
         "loginRequired": "リモートアクセスを設定する前にログインしてください。",
         "loadFailed": "リモートアクセスの状態を取得できませんでした。tmex ゲートウェイが稼働しているか確認し、ページを再読み込みしてください。",
         "unsupported": "このプラットフォーム（{{platform}}）向けの cloudflared がないため、Cloudflare Tunnel は利用できません。",
@@ -430,7 +430,7 @@
         "mode": {
           "quick": {
             "title": "一時トンネル",
-            "description": "Cloudflare アカウント不要。起動のたびに新しい一時アドレスが発行されます。デモや切り分け向けです。"
+            "description": "Cloudflare アカウント不要。起動時に新しい一時アドレスが発行されます。デモや切り分け向けです。"
           },
           "named": {
             "title": "名前付きトンネル",
@@ -444,7 +444,7 @@
           },
           "direct": {
             "title": "直接接続",
-            "description": "固定 IP・ポート転送・リバースプロキシ経由で接続します。Cloudflare は不要です。"
+            "description": "固定 IP・ポート転送・リバースプロキシ経由で接続します。"
           }
         },
         "direct": {
@@ -469,7 +469,7 @@
           "entryLabel": "現在の入口",
           "entryHint": "tmex のアクセスアドレスです。外部に公開する場合は、このマシンの {{port}} 番ポートまたはリバースプロキシに向けてください。",
           "tls": {
-            "hint": "直接公開するときは必ず HTTPS を使ってください。平文の HTTP ではパスワードとセッション情報が経路上に流れます。",
+            "hint": "HTTPS を有効にしてください。平文の HTTP ではパスワードとセッション情報が経路上に流れます。",
             "link": "ノード設定で HTTPS を設定する"
           },
           "enable": {
@@ -556,7 +556,7 @@
           },
           "quick": {
             "title": "一時トンネル",
-            "description": "開始すると Cloudflare が trycloudflare.com の一時アドレスを発行します。停止すると無効になります。",
+            "description": "開始すると trycloudflare.com の一時アドレスが発行されます。停止すると無効になります。",
             "started": "一時トンネルが稼働しています。公開アドレスは次のとおりです。"
           },
           "named": {
@@ -569,7 +569,7 @@
             },
             "hostname": "ホスト名",
             "hostnamePlaceholder": "tmex.example.com",
-            "hostnameHint": "Cloudflare で管理しているドメインのサブドメインを指定します。",
+            "hostnameHint": "Cloudflare で管理しているサブドメインを指定します。",
             "hostnameInvalid": "tmex.example.com のような小文字のホスト名を入力してください。",
             "tunnelName": "トンネル名",
             "tunnelNamePlaceholder": "tmex",
@@ -592,7 +592,7 @@
             "restartNow": "今すぐ再起動",
             "restarting": "tmex を再起動しています",
             "restartTimeout": "再起動の待機がタイムアウトしました。tmex を手動で再起動し、ページを再読み込みしてください。",
-            "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。トンネルを迂回してローカルの待ち受けポートに直接到達できる相手はこれらを偽装できるため、そのポートへのアクセスを制限してください。",
+            "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。トンネルを迂回してヘッダーを偽装されるリスクがあるため、そのポートへの外部アクセスは禁止してください。",
             "trustProxyEffective": "現在の適用値",
             "trustProxyState": {
               "on": "信頼中",
@@ -664,7 +664,7 @@
           "exposure_ack_required": "この操作は tmex をインターネットに公開します。先にリスクを確認してください。"
         },
         "authRequired": {
-          "notice": "このマシンではログインが有効になっていません。公開する前に有効化しないと、誰でも tmex に入れてしまいます。",
+          "notice": "警告: ログインが有効になっていません。公開する前に有効化しないと、誰でも tmex にアクセスできます。",
           "link": "マルチノード設定を開く"
         },
         "confirmRemove": {
@@ -691,7 +691,7 @@
             "title": "なし",
             "description": "アクセス保護を設定しません。アドレスを知った人は誰でも本機の tmex を使えます。",
             "warning": "アクセス保護が無効です。アドレスを知った人は誰でも本機の tmex を使えます。",
-            "appRemains": "Access アプリはまだ残っています。ここで削除できます。"
+            "appRemains": "Access アプリは削除されていません。ここで削除できます。"
           },
           "login": {
             "title": "アカウントとパスワード",
@@ -754,7 +754,7 @@
             "hint": "認証情報は保存済みですが、tmex 側に Access アプリケーションの記録がありません。{{hostname}} 用のアプリケーションを Cloudflare ダッシュボードで作成済みの場合は、重複を避けるため先に同期してください。"
           },
           "probe": {
-            "unknown": "{{hostname}} の Cloudflare Access 状態を確認できません。利用できる Cloudflare 認証情報がないか、照会に失敗しました。未設定という意味ではありません。下で API トークンとアカウント ID を保存すると、自動的に再確認します。",
+            "unknown": "{{hostname}} の Cloudflare Access 状態を確認できません。利用できる認証情報がないか、照会に失敗しました。未設定という意味ではありません。下で API トークンとアカウント ID を保存すると、自動的に再確認します。",
             "covered": "読み取り専用の検出結果：Cloudflare ダッシュボード上に {{hostname}} を対象とする Access アプリケーションが既にあります。これは tmex の管理外で、ゲートウェイはそのトークンを検証しません。「Cloudflare から同期」で tmex の管理下に取り込めます。",
             "absent": "読み取り専用の検出結果：{{hostname}} を対象とする Access アプリケーションは Cloudflare にありません。下で許可するユーザーを指定して適用すると作成できます。",
             "teamDomain": "チームドメイン：{{teamDomain}}",
@@ -768,8 +768,8 @@
             "rules": "ルール",
             "noRules": "なし",
             "enforce": "ゲートウェイで Access トークンを検証",
-            "enforceHint": "トンネル経由のリクエストで Cf-Access-Jwt-Assertion を検証し、通らないものを拒否します。",
-            "enforceOff": "トークン検証は無効です。Cloudflare のエッジでは引き続き未認可のアクセスを遮断しますが、Access を迂回してトンネルに届いたリクエストは通過します。",
+            "enforceHint": "トンネル経由のリクエストで Cf-Access-Jwt-Assertion を検証し、通らないものは拒否します。",
+            "enforceOff": "トークン検証は無効です。Cloudflare のエッジでは引き続き未認可のアクセスを遮断しますが、Access を迂回したリクエストは通過します。",
             "remove": "Access アプリケーションを削除",
             "hostnameMismatch": "このアプリケーションの対象ホスト名が現在のトンネルと異なるため、トークン検証は有効になりません。ルールを適用し直して、現在のホスト名に紐づけてください。"
           },
@@ -805,7 +805,7 @@
           "noHostname": "このトンネルの設定に、このマシンの tmex（127.0.0.1:{{port}}）を指すホスト名が見つからないため、引き継げません。ingress の設定を確認するか、tmex で別のトンネルを作成してください。",
           "chooseHostname": "引き継ぐホスト名を選択",
           "adopt": "既存のトンネルを引き継ぐ",
-          "adoptHint": "引き継ぐと、このホスト名を公開アドレスとして設定し、トンネルの状態とアクセス制御を表示します。トンネル自体はシステムサービスが実行したままで、tmex が起動・停止や設定変更を行うことはありません。引き継ぎはいつでも解除できます。",
+          "adoptHint": "引き継ぐと、このホスト名を公開アドレスとして設定し、トンネルの状態とアクセス制御を表示します。",
           "dismiss": "無視して新規作成"
         }
       },
@@ -930,10 +930,10 @@
         "changelogUnavailable": "このバージョンの変更履歴はありません。",
         "publishedAt": "公開日 {{date}}",
         "upgrade": "今すぐ更新",
-        "upgradeDisabledDev": "production 以外の環境ではアプリ内更新は無効です。",
+        "upgradeDisabledDev": "本番環境以外ではアプリ内更新は無効です。",
         "upgradeDisabledNonCli": "アプリ内更新は CLI インストール時のみ利用できます。",
         "upgradeWarningTitle": "更新の確認",
-        "upgradeWarningBody": "更新するとサービスが再起動し、現在のセッションが中断されます。サービスが管理する tmux プロセスの存続にも影響する可能性があります。続行しますか？",
+        "upgradeWarningBody": "更新するとサービスが再起動し、現在のセッションが中断されます。サービスが管理する tmux プロセスに影響する可能性があります。続行しますか？",
         "upgradeStarted": "更新を開始しました",
         "stateDownloading": "新しいバージョンをダウンロード中…",
         "stateExecuting": "更新を適用中、サービスを再起動しています…",
@@ -1649,7 +1649,7 @@
       "security": {
         "title": "アカウントセキュリティ",
         "changePassword": "パスワードを変更",
-        "changePasswordWarning": "パスワードを変更すると、すべてのデバイスのパスキーと認証アプリの設定が削除され、すべてのセッションからサインアウトします。設定し直しが必要です。",
+        "changePasswordWarning": "パスワードを変更すると、すべてのデバイスのパスキーと認証アプリの設定が削除され、すべてのセッションからサインアウトします。",
         "changePasswordDone": "パスワードを変更しました。各ノードで再度サインインしてください。",
         "currentPassword": "現在のパスワード",
         "newPassword": "新しいパスワード",
@@ -1657,8 +1657,8 @@
         "passwordRequired": "パスワードを入力してください。",
         "passwordMismatch": "新しいパスワードが一致しません。",
         "totp": "認証アプリ",
-        "totpNote": "パスワードが漏れた場合にアカウントを守ります。より強い二要素にはパスキーを使ってください。",
-        "totpPasskeyNote": "パスキーでサインインする場合、コードは求められません。",
+        "totpNote": "パスワードが漏れた場合にアカウントを守ります。より強い二要素認証にはパスキーを使ってください。",
+        "totpPasskeyNote": "パスキーでサインインする場合、コードは不要です。",
         "totpSet": "設定する",
         "totpReset": "再設定",
         "totpClear": "オフにする",
@@ -1669,7 +1669,7 @@
         "passkeyName": "パスキーの名前",
         "registerPasskey": "パスキーを追加",
         "signWithExistingPasskey": "パスワードの代わりに、パスキーで確認できます。",
-        "passkeySecondFactorHint": "パスキーを登録すると、パスワードでのサインインにもパスキーの確認が必要になります。このマシンや LAN アドレスからのサインインでは確認は不要で、それ以外のアドレスではパスキーの登録が必要です。すべてのパスキーを削除すると無効になります。",
+        "passkeySecondFactorHint": "登録すると、パスワードでのサインインにもパスキーの確認が必要になります（このマシンや LAN アドレスからのサインインでは不要）。",
         "sessionKeyNote": "このページの操作はすべて、パスワードまたはパスキーの確認を求めます。",
         "totpConfirm": "確認して有効にする",
         "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。",
@@ -1833,7 +1833,7 @@
         "general": "一般設定",
         "domainAccess": {
           "label": "ドメインアクセスを許可",
-          "description": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され、ハブ / ノード連携サービスのみが利用できます。ローカルネットワークとこのマシンからのアクセスは影響を受けません。公開ドメイン：{{hosts}}",
+          "description": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され（LAN とこのマシンからのアクセスは影響なし）、ハブ / ノード連携サービスのみが利用できます。公開ドメイン：{{hosts}}",
           "noHosts": "公開ドメインはまだ設定されていません。",
           "hostSeparator": "、",
           "failed": "ドメインアクセスの設定を保存できませんでした（{{detail}}）。",
@@ -1852,8 +1852,8 @@
         "changeHub": "ハブを変更",
         "confirm": "退出して再起動",
         "cancel": "キャンセル",
-        "consequencesNode": "このマシンのメッシュ状態（アカウント、ノード ID、キャッシュ済みピア）はすべて削除されます。退出前にハブ側でこのマシンを自動的に失効させます。自動失効に失敗した場合はハブにオフラインの記録が残るため、ハブ側で手動失効が必要です。tmex は再起動し、現在のセッションは終了します。",
-        "consequencesHub": "このマシンがハブです。退出するとメッシュ状態（アカウント、ノード ID、キャッシュ済みピア）はすべて削除され、配下のノードはハブを失います。復旧には別のハブへ参加し直す必要があります。tmex は再起動し、現在のセッションは終了します。",
+        "consequencesNode": "退出すると、このマシンのマルチノード連携の状態はすべて削除され、tmex が再起動して現在のセッションは終了します。退出前にハブ側でこのマシンを自動的に失効させます。",
+        "consequencesHub": "このマシンがハブです。退出するとマルチノード連携の状態はすべて削除され、tmex が再起動して現在のセッションは終了します。配下のノードはハブを失い、復旧には別のハブへ参加し直す必要があります。",
         "leaveConfirm": {
           "title": "ハブから退出しますか？",
           "description": "このマシンはスタンドアロン動作に戻ります。"
@@ -1888,7 +1888,7 @@
       "https": {
         "title": "HTTPS 設定",
         "description": "このマシンが HTTPS をどう提供するかを設定します。ログインとパスキーは HTTPS のアドレスでのみ利用できます。",
-        "hubUrlHint": "ハブの公開アドレスは https である必要があります。ここで証明書を発行するか、前段にリバースプロキシを置いて「外部リバースプロキシ」を選んでください。",
+        "hubUrlHint": "ハブの公開アドレスは HTTPS である必要があります。ここで証明書を発行するか、前段にリバースプロキシを置いて「外部リバースプロキシ」を選んでください。",
         "nodeRoleHint": "HTTPS が必要なのは、このマシンがハブとして動作する場合だけです。ノードへはハブ経由でアクセスするため、設定は不要です。",
         "modeActive": "適用中",
         "save": "保存",
@@ -1958,10 +1958,10 @@
           "intro": "tmex は平文 HTTP を提供し続け、前段のプロキシが TLS を処理します。プロキシを平文ポートに向け、元のホスト・プロトコル・クライアントアドレスを転送してください。",
           "trustProxy": "プロキシヘッダーを信頼する",
           "trustProxyHint": "tmex にプロキシ経由でしか到達できない場合のみ有効にしてください。",
-          "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。平文ポートに直接到達できる相手はこれらを偽装できるため、そのポートは閉じてください。"
+          "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。直接接続でヘッダーを偽装されるリスクがあるため、そのポートへの外部アクセスは禁止してください。"
         },
         "selfsigned": {
-          "intro": "公開ドメインがない LAN やトンネル向けです。プライベート認証局（CA）はこのマシンから出ず、証明書の有効期間は 398 日です。",
+          "intro": "公開ドメインがない LAN やトンネル向けです。プライベート認証局（CA）はこのマシンに保存され、証明書の有効期間は 398 日です。",
           "sans": "証明書に含める名前",
           "sansHint": "ブラウザーで実際に入力するホスト名または IP アドレス（最大 20 件）。ここにないアドレスは証明書エラーになります。",
           "sansPlaceholder": "hub.lan または 192.168.1.10",
@@ -1998,7 +1998,7 @@
           }
         },
         "acme": {
-          "intro": "Let's Encrypt は 1 つのドメインに対して一般に信頼される証明書を発行し、更新は自動で行われます。ドメインはこのマシンを指している必要があります。",
+          "intro": "Let's Encrypt は 1 つのドメインに HTTPS 証明書を発行し、自動で更新します。ドメインはこのマシンを指している必要があります。",
           "domain": "ドメイン",
           "domainHint": "ホスト名 1 つ、ワイルドカードは使えません。すでにこのマシンを指している必要があります。",
           "email": "連絡先メールアドレス",
@@ -2031,8 +2031,8 @@
           "nextRenew": "次回の更新",
           "renewNow": "今すぐ更新",
           "hints": {
-            "http01": "公開ポート 80 がこのマシンに到達する必要があります。NAT 内ではルーターでポート転送を設定してください。",
-            "http01Linux": "ユーザー権限の systemd サービスはポート 80 を使えません。ルーターで転送するか、DNS-01 に切り替えてください。",
+            "http01": "公開ポート 80 がこのマシンに到達する必要があります。NAT 環境ではルーターでポート転送を設定してください。",
+            "http01Linux": "ユーザー権限の systemd サービスはポート 80 を使えません。ルーターで転送を設定するか、DNS-01 に切り替えてください。",
             "dns01": "ドメインの DNS を選択したプロバイダーで管理し、そのレコードを編集できる API キーを用意してください。"
           }
         },
@@ -2275,7 +2275,7 @@
         "path": {
           "becomeHub": {
             "title": "このマシンをハブにする",
-            "description": "他のマシンがこのマシンに参加します。公開 HTTPS アドレスが必要です。"
+            "description": "他のノードがこのマシンに参加します。公開 HTTPS アドレスが必要です。"
           },
           "joinHub": {
             "title": "既存のハブに参加する",
@@ -2292,7 +2292,7 @@
         },
         "fields": {
           "hubPublicUrl": "ハブの公開アドレス",
-          "hubPublicUrlHint": "全員が使う https アドレス（例：https://tmex.example.com）。参加するすべてのマシンから到達できる必要があります。",
+          "hubPublicUrlHint": "外部から到達できる https アドレス（例：https://tmex.example.com）。参加するすべてのノードから到達できる必要があります。",
           "username": "ユーザー名",
           "usernameHint": "1〜64 文字。英数字、ドット、アンダースコア、ハイフンが使えます。",
           "password": "パスワード",
@@ -2412,6 +2412,125 @@
         "resetConfirmDescription": "すべてのグループを削除し、すべてのノードを既定の順序で最上位に戻します。",
         "resetFailed": "レイアウトのリセットに失敗しました",
         "resetDone": "レイアウトを既定に戻しました"
+      }
+    },
+    "relay": {
+      "admin": {
+        "tabLabel": "リレー",
+        "title": "リレー運用",
+        "description": "本機は公開リレーとして、参加したテナントの通信を中継します。",
+        "unavailable": "本機ではリレー役割が有効になっていません。",
+        "unavailableHint": "リレー役割はインストール時に選択します。有効になるまでこのページは空です。",
+        "loginRequired": "先にログインしてからリレーを管理してください。",
+        "loadFailed": "リレーの状態を読み込めませんでした：{{message}}",
+        "health": {
+          "title": "稼働状態",
+          "state": "状態",
+          "ok": "正常",
+          "down": "異常",
+          "unknown": "不明",
+          "version": "バージョン",
+          "uptime": "稼働時間",
+          "uptimeDays": "{{d}} 日 {{h}} 時間",
+          "uptimeHours": "{{h}} 時間 {{m}} 分",
+          "uptimeMinutes": "{{m}} 分"
+        },
+        "totals": {
+          "title": "合計",
+          "tenants": "テナント",
+          "nodesOnline": "オンラインノード",
+          "streams": "同時ストリーム",
+          "inbound": "受信",
+          "outbound": "送信"
+        },
+        "password": {
+          "title": "参加パスワード",
+          "state": "状態",
+          "set": "設定済み",
+          "unset": "未設定",
+          "unsetWarning": "パスワードが未設定のため、誰でも本リレーに参加できます。",
+          "epoch": "パスワード世代",
+          "minTokenEpoch": "最小トークン世代",
+          "change": "パスワードを変更",
+          "dialogTitle": "参加パスワードの変更",
+          "newPassword": "新しいパスワード",
+          "newPasswordHint": "8 文字以上で入力してください。",
+          "clear": "パスワードを削除",
+          "clearHint": "削除すると誰でも本リレーに参加できます。",
+          "modeLabel": "既存テナント",
+          "modeKeep": "既存テナントを維持",
+          "modeKeepHint": "既存テナントはそのまま、新しいパスワードは新規参加にのみ適用されます。",
+          "modeKick": "既存トークンを失効",
+          "modeKickHint": "既存トークンを失効し、全テナントがパスワードを再入力する必要があります。",
+          "tooShort": "パスワードは 8 文字以上で入力してください。",
+          "saved": "参加パスワードを更新しました。",
+          "failed": "パスワードを更新できませんでした：{{message}}",
+          "dialogDescription": "新しいパスワードを設定するか、削除して誰でも参加できるようにします。"
+        },
+        "quota": {
+          "title": "既定クォータ",
+          "description": "個別のクォータがないテナントはこの値を使用します。",
+          "maxNodes": "ノード数の上限",
+          "maxStreams": "同時ストリームの上限",
+          "bandwidth": "帯域の上限（KB/s）",
+          "unlimited": "無制限",
+          "unlimitedValue": "無制限",
+          "inherit": "既定に従う",
+          "inheritBadge": "既定",
+          "summary": "{{nodes}} ノード · {{streams}} ストリーム · {{bandwidth}}",
+          "bandwidthValue": "{{kb}} KB/s",
+          "invalidNodes": "ノード数の上限は 1 以上の整数で入力してください。",
+          "invalidStreams": "同時ストリームの上限は 1 以上の整数で入力してください。",
+          "invalidBandwidth": "帯域の上限は 1 以上の整数で入力してください。",
+          "saved": "既定クォータを更新しました。",
+          "failed": "クォータを更新できませんでした：{{message}}"
+        },
+        "tenants": {
+          "title": "テナント",
+          "total": "全 {{n}} 件",
+          "empty": "参加しているテナントはまだありません。",
+          "columns": {
+            "id": "ID",
+            "label": "メモ",
+            "created": "参加日時",
+            "lastSeen": "最終アクセス",
+            "nodes": "ノード",
+            "streams": "同時ストリーム",
+            "traffic": "通信量",
+            "quota": "クォータ",
+            "tokenEpoch": "トークン世代",
+            "actions": "操作"
+          },
+          "nodesValue": "{{online}} / {{total}}",
+          "trafficValue": "↑ {{out}}｜↓ {{in}}",
+          "noLabel": "メモなし",
+          "kicked": "切断済み",
+          "edit": "編集",
+          "editTitle": "テナントの編集",
+          "label": "メモ",
+          "labelPlaceholder": "識別しやすい名前",
+          "saved": "テナントを更新しました。",
+          "failed": "テナントを更新できませんでした：{{message}}",
+          "kick": "切断",
+          "kickTitle": "テナントの切断",
+          "kickText": "このテナントのトークンを失効し接続を切断します。パスワードを入力すれば再参加できます。",
+          "kickDone": "テナントを切断しました。",
+          "kickFailed": "切断できませんでした：{{message}}",
+          "remove": "削除",
+          "removeTitle": "テナントの削除",
+          "removeText": "このテナントの登録情報と鍵ログを削除します。取り消せません。",
+          "removeConfirmLabel": "確認のためテナント ID を入力",
+          "removeMismatch": "ID が一致しません。",
+          "removeDone": "テナントを削除しました。",
+          "removeFailed": "削除できませんでした：{{message}}"
+        },
+        "time": {
+          "never": "なし",
+          "justNow": "たった今",
+          "minutes": "{{n}} 分前",
+          "hours": "{{n}} 時間前",
+          "days": "{{n}} 日前"
+        }
       }
     }
   }
