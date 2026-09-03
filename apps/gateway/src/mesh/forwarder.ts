@@ -438,7 +438,6 @@ export class Forwarder {
         streams: this.deps.streams,
         bindStream: (p, stream, transport) => this.bindStream(p as ForwardPump, stream, transport),
         discardStream: (p, stream) => this.discardStream(p as ForwardPump, stream),
-        closeBrowser: (p, closeInfo) => this.closeBrowser(p as ForwardPump, closeInfo),
         closePump: (p, closeInfo) => this.closePump(p as ForwardPump, closeInfo),
         sendToStream: (p, stream, bytes) => this.sendToStream(p as ForwardPump, stream, bytes),
         sendToBrowser: (p, bytes) => this.sendToBrowser(p as ForwardPump, bytes),

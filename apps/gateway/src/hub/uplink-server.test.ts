@@ -2979,4 +2979,70 @@ describe('UplinkServer G7 hardening', () => {
       close();
     }
   });
+
+  test('stop() 回收全部定时器，停机后不再挂新的', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        attachmentKeepaliveMs: 50,
+        heartbeatIntervalMs: 1_000,
+        authTimeoutMs: 60_000,
+      });
+      // 构造函数就挂上了 attachment keepalive
+      expect(server.pendingTimerCount).toBe(1);
+
+      const [, danglingHubLink] = createInMemoryLinkPair();
+      server.accept(danglingHubLink);
+      // 只 accept、不认证：多一条 auth 超时定时器
+      expect(server.pendingTimerCount).toBe(2);
+
+      const node = await authNode(server, userStore, user.id);
+      // 认证成功后再多一条心跳
+      expect(server.pendingTimerCount).toBe(3);
+
+      await server.stop();
+      expect(server.pendingTimerCount).toBe(0);
+
+      // 停机后新连接直接被拒，不会重新挂上定时器
+      const [, afterStopLink] = createInMemoryLinkPair();
+      server.accept(afterStopLink);
+      expect(server.pendingTimerCount).toBe(0);
+      node.nodeLink.close('done');
+    } finally {
+      close();
+    }
+  });
+
+  test('keepalive 在库已关闭后只告警，不把异常抛进事件循环', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const { userStore, keyLogSource } = createHubTestStack(db);
+    const user = seedUser(userStore);
+    const { server } = makeServer(db, userStore, keyLogSource, {
+      attachmentKeepaliveMs: 5,
+      config: {
+        publicUrl: 'https://hub.example',
+        mode: 'active',
+        hubNodeId: SELF_HUB,
+        nodeId: SELF_HUB,
+      },
+    });
+    const node = await authNode(server, userStore, user.id);
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // 模拟「测试只关库、没调 stop()」：keepalive 还会再烧几轮
+      close();
+      await Bun.sleep(30);
+      expect(server.pendingTimerCount).toBeGreaterThan(0);
+      expect(
+        warn.mock.calls.some((args) => String(args[0]).includes('attachment keepalive failed'))
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+      node.nodeLink.close('done');
+      await server.stop();
+    }
+    expect(server.pendingTimerCount).toBe(0);
+  });
 });

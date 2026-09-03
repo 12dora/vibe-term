@@ -44,8 +44,7 @@ export type StreamFailoverHost = {
   streams: StreamOpener;
   bindStream(pump: ForwardPump, stream: OpenedWsStream, transport: PeerTransportKind | null): void;
   discardStream(pump: ForwardPump, stream: OpenedWsStream): void;
-  closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void;
-  /** 整条拆解（上游流 + 在途流 + 浏览器），用于不可续流的终止路径。 */
+  /** 整条拆解（上游流 + 在途流 + 浏览器）：failover 的所有终止路径都走它。 */
   closePump(pump: ForwardPump, info: { code?: number; reason?: string }): void;
   sendToStream(pump: ForwardPump, stream: OpenedWsStream, bytes: Uint8Array): void;
   sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void;
@@ -118,9 +117,9 @@ export async function runStreamFailover(
         return;
       }
     }
-    host.closeBrowser(pump, { code: 1011, reason: 'failover-exhausted' });
+    host.closePump(pump, { code: 1011, reason: 'failover-exhausted' });
   } catch {
-    if (!pump.browserClosed) host.closeBrowser(pump, { code: 1011, reason: 'failover-error' });
+    if (!pump.browserClosed) host.closePump(pump, { code: 1011, reason: 'failover-error' });
   } finally {
     if (pump.failingOver) {
       pump.failingOver = false;
@@ -231,7 +230,11 @@ async function completeFailover(
     });
     return true;
   }
-  if (!pump.streamAlive || pump.stream !== stream) return false;
+  // 这条流不再是要续的那条（已断 / 已被新流顶掉）：放弃它之前先关掉，别留给下一轮。
+  if (!pump.streamAlive || pump.stream !== stream) {
+    host.discardStream(pump, stream);
+    return false;
+  }
   const resumed = pump.replay.resumedPaneCount();
   const desc = pump.replay.describeReplay();
   const durationMs = Date.now() - startedAt;
