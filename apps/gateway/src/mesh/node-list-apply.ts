@@ -1,5 +1,5 @@
 import type { UserKeyService } from '../auth';
-import type { MeshHubStore } from '../auth/mesh-hub-store';
+import type { MeshHubRecord, MeshHubStore } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
 import { HUB_META_PEER_ID } from '../auth/user-store';
 import { lookupSignedHubAuthorization, resolveMeshUserId } from '../hub/hub-authorization';
@@ -88,12 +88,50 @@ export function listedHubNodeIds(list: UplinkNodeList): string[] {
   return list.hub?.nodeId ? [list.hub.nodeId] : [];
 }
 
+type HubWrite = Omit<MeshHubRecord, 'updatedAt'>;
+
+function asHubWrite(row: MeshHubRecord): HubWrite {
+  return {
+    hubNodeId: row.hubNodeId,
+    publicUrl: row.publicUrl,
+    name: row.name,
+    mode: row.mode,
+    priority: row.priority,
+    writerEpoch: row.writerEpoch,
+    caFingerprint: row.caFingerprint,
+    online: row.online,
+    lastSeenAt: row.lastSeenAt,
+  };
+}
+
+function localHubRowOutranks(own: HubWrite, incoming: HubWrite): boolean {
+  if (own.writerEpoch !== incoming.writerEpoch) return own.writerEpoch > incoming.writerEpoch;
+  return own.mode === 'active' && incoming.mode === 'standby';
+}
+
+function preferLocalHubRecords(d: NodeListApplyDeps, recs: HubWrite[]): HubWrite[] {
+  const selfId = d.identity.nodeIdHex;
+  const own = d.hubStore.list().find((row) => row.hubNodeId === selfId);
+  if (!own) return recs;
+  const ownWrite = asHubWrite(own);
+  const idx = recs.findIndex((row) => row.hubNodeId === selfId);
+  if (idx < 0) return [...recs, ownWrite];
+  const incoming = recs[idx];
+  if (!incoming || !localHubRowOutranks(ownWrite, incoming)) return recs;
+  const next = recs.slice();
+  next[idx] = ownWrite;
+  return next;
+}
+
 export function reconcileHubStoreFromNodeList(d: NodeListApplyDeps, list: UplinkNodeList): void {
   const sourceId = list.writerHubId ?? list.hub?.nodeId ?? null;
   if (sourceId && !meshHubNotRetired(d, sourceId)) {
     d.hubStore.remove(sourceId);
   } else {
-    const recs = recordsFromNodeList(list).filter((row) => meshHubNotRetired(d, row.hubNodeId));
+    const recs = preferLocalHubRecords(
+      d,
+      recordsFromNodeList(list).filter((row) => meshHubNotRetired(d, row.hubNodeId))
+    );
     if (recs.length > 0) d.hubStore.replaceAll(recs, d.scheduler.now());
   }
   if (d.userIdOf()) {
