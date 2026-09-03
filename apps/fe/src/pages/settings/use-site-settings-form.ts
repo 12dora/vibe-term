@@ -1,11 +1,7 @@
-import { refreshMeshNodes } from '@/node/mesh-nodes';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SiteSettings } from '@tmex/shared';
 import { useRuntime, useSiteStore } from '@tmex/stores/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
 import i18n from '../../i18n';
 import { SETTINGS_STALE_MS } from './data-prefetch';
 import {
@@ -18,15 +14,11 @@ import {
   hasSiteSettingsChanges,
   pinSiteName,
   planSiteSettingsSave,
-  refreshUntilRenamed,
   siteSettingsLinkage,
   siteSettingsToDraft,
 } from './site-settings-form';
 import { useNodeRenameChannel } from './use-node-rename-channel';
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+import { useSiteSettingsSave } from './use-site-settings-save';
 
 export interface SiteSettingsForm {
   draft: SiteSettingsDraft;
@@ -73,9 +65,8 @@ function useLanguagePreview(controlsBrowserPrefs: boolean): LanguagePreviewContr
 
 export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): SiteSettingsForm {
   const { enabled = true } = options;
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { apiClient, controlsBrowserPrefs } = useRuntime();
+  const { controlsBrowserPrefs } = useRuntime();
   const ensureFreshSettings = useSiteStore((state) => state.ensureFreshSettings);
   const refreshSettings = useSiteStore((state) => state.refreshSettings);
 
@@ -113,6 +104,10 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
   const [pinnedName, setPinnedName] = useState<string | null>(null);
   const pinnedNameRef = useRef<string | null>(null);
   pinnedNameRef.current = pinnedName;
+  const pinName = useCallback((name: string | null) => {
+    pinnedNameRef.current = name;
+    setPinnedName(name);
+  }, []);
 
   useEffect(() => {
     if (!baseline) {
@@ -141,61 +136,16 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
     [queryClient]
   );
 
-  // 本次保存里已经改成功的名字（成败都要善后，因此不放返回值里）。
-  const renamedInAttempt = useRef<string | null>(null);
-
-  const saveMutation = useMutation({
-    mutationFn: async (): Promise<void> => {
-      renamedInAttempt.current = null;
-      if (!plan) return;
-      if (plan.renameNodeTo) {
-        if (!hubApi || !linkage.nodeId) throw new Error(t('settings.general.nameLinkedLocked'));
-        await hubApi.rename(linkage.nodeId, plan.renameNodeTo);
-        // 改名已经落地：立刻推进基线，后面的 PATCH 再失败，重试时也不会又改一次名
-        renamedInAttempt.current = plan.renameNodeTo;
-        pinnedNameRef.current = plan.renameNodeTo;
-        setPinnedName(plan.renameNodeTo);
-      }
-      if (plan.patch) {
-        const res = await apiClient.fetch('/api/settings/site', {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(plan.patch),
-        });
-        if (!res.ok) {
-          throw new Error(await parseApiError(res, t('settings.saveFailed')));
-        }
-      }
-    },
-    onSuccess: () => {
-      // 先认账再重拉：重拉回来之前若用户已离开设置页，不该把刚保存的语言当预览回退掉
-      languagePreview.commit(draft.language);
-      toast.success(t('settings.settingsSaved'));
-    },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : t('common.error'));
-    },
-    onSettled: async (_data, error) => {
-      const renamed = renamedInAttempt.current;
-      renamedInAttempt.current = null;
-      if (!renamed) {
-        // 什么都没写成就别再多打一次 GET
-        if (!error) applySettings(await refreshSettings());
-        return;
-      }
-      // 改名落在 hub 上，mesh 列表与 hub 视图都要跟上
-      void refreshMeshNodes();
-      refreshHub();
-      const settled = await refreshUntilRenamed(renamed, {
-        refresh: refreshSettings,
-        apply: applySettings,
-        wait: sleep,
-      });
-      // 名字已回流：基线本身就是新值，钉子可以撤掉
-      if (settled) setPinnedName(null);
-    },
+  const { save, isSaving } = useSiteSettingsSave({
+    plan,
+    hubApi,
+    linkage,
+    languagePreview,
+    draft,
+    applySettings,
+    refreshSettings,
+    refreshHub,
+    setPinnedName: pinName,
   });
 
   const updateDraft = useCallback(
@@ -208,15 +158,11 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
 
   useEffect(() => () => languagePreview.release(), [languagePreview]);
 
-  const save = useCallback(() => {
-    saveMutation.mutate();
-  }, [saveMutation.mutate]);
-
   return {
     draft,
     updateDraft,
     save,
-    isSaving: saveMutation.isPending,
+    isSaving,
     linkage,
     canRenameNode,
     canSave: plan !== null && hasSiteSettingsChanges(plan),
