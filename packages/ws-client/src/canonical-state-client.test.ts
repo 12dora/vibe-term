@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import { CanonicalStateClient } from './canonical-state-client';
+import { CanonicalStateClient, type CanonicalStateClientOptions } from './canonical-state-client';
 import type {
   EncodedGatewayCommand,
   GatewayTransportCommand,
@@ -80,7 +80,20 @@ function decode(message: EncodedGatewayCommand): wsBorsh.CanonicalCommand {
   return wsBorsh.decodeCanonicalCommandPayload(message.payload).command;
 }
 
-function createHarness(maxFrameBytes = 32 * 1024, subscriptionRetryMs?: number) {
+type HarnessOptions = Pick<
+  CanonicalStateClientOptions,
+  | 'subscriptionRetryMaxAttempts'
+  | 'maxMetadataBufferedBytes'
+  | 'metadataAssemblyTimeoutMs'
+  | 'metadataRecoveryDelayMs'
+  | 'onMetadataGap'
+>;
+
+function createHarness(
+  maxFrameBytes = 32 * 1024,
+  subscriptionRetryMs?: number,
+  options: HarnessOptions = {}
+) {
   const messages: EncodedGatewayCommand[] = [];
   const events: GatewayTransportEvent[] = [];
   let id = 0;
@@ -93,6 +106,7 @@ function createHarness(maxFrameBytes = 32 * 1024, subscriptionRetryMs?: number) 
     effectiveMaxFrameBytes: () => maxFrameBytes,
     createId: () => new Uint8Array(16).fill(++id),
     subscriptionRetryMs,
+    ...options,
   });
   return { client, messages, events };
 }
@@ -505,7 +519,13 @@ describe('CanonicalStateClient', () => {
     expect(messages).toHaveLength(before);
     installMetadata(client, 2n);
 
-    expect(messages).toHaveLength(before + 1);
+    expect(messages).toHaveLength(before + 2);
+    expect(
+      messages
+        .slice(before)
+        .map(decode)
+        .some((command) => 'SetPaneSubscriptions' in command)
+    ).toBe(true);
     const retried = decode(messages.at(-1) as EncodedGatewayCommand);
     if (!('RequestScreen' in retried)) throw new Error('missing retried screen request');
     expect(retried.RequestScreen.requestId).toEqual(REQUEST_ID);
@@ -562,6 +582,36 @@ describe('CanonicalStateClient', () => {
     const retried = decode(messages.at(-1) as EncodedGatewayCommand);
     if (!('RequestScreen' in retried)) throw new Error('missing retried screen request');
     expect(retried.RequestScreen.requestId).toEqual(REQUEST_ID);
+    client.dispose();
+  });
+
+  test('moves a scheduled content retry back to the transport queue when suspended', async () => {
+    const { client, messages } = createHarness();
+    const command: GatewayTransportCommand = {
+      type: 'request-pane-screen',
+      requestId: REQUEST_ID,
+      deviceId: 'device-a',
+      paneId: '%1',
+      byteLimit: 4_096,
+    };
+    client.activate();
+    installMetadata(client);
+    client.sendCommand(command);
+    client.handleEvent({
+      Error: {
+        requestId: REQUEST_ID,
+        code: wsBorsh.ERROR_TMUX_NOT_READY,
+        message: 'screen unavailable',
+        retryable: true,
+      },
+    });
+    const beforeSuspend = messages.length;
+
+    client.suspend();
+
+    expect(client.takePendingCommands()).toEqual([command]);
+    await Bun.sleep(70);
+    expect(messages).toHaveLength(beforeSuspend);
     client.dispose();
   });
 
@@ -704,6 +754,38 @@ describe('CanonicalStateClient', () => {
     }
 
     expect(events).toEqual([{ type: 'rebase-required', reason: 'metadata_gap' }]);
+  });
+
+  test('bounds buffered metadata bytes and expires incomplete snapshot assemblies', async () => {
+    const partial = {
+      metadataEpoch: METADATA_EPOCH,
+      revision: 1n,
+      snapshotId: REQUEST_ID,
+      chunkIndex: 0,
+      totalChunks: 2,
+      records: metadataRecords().slice(0, 1),
+    };
+    const chunkBytes = wsBorsh.encodeCanonicalEventPayload({
+      SourceMetadataSnapshot: partial,
+    }).byteLength;
+    const bounded = createHarness(32 * 1024, undefined, {
+      maxMetadataBufferedBytes: chunkBytes - 1,
+    });
+    bounded.client.activate();
+    bounded.client.handleEvent({ SourceMetadataSnapshot: partial });
+
+    expect(bounded.events).toEqual([{ type: 'rebase-required', reason: 'metadata_gap' }]);
+    bounded.client.dispose();
+
+    const expiring = createHarness(32 * 1024, undefined, {
+      metadataAssemblyTimeoutMs: 2,
+    });
+    expiring.client.activate();
+    expiring.client.handleEvent({ SourceMetadataSnapshot: partial });
+    await Bun.sleep(10);
+
+    expect(expiring.events).toEqual([{ type: 'rebase-required', reason: 'metadata_gap' }]);
+    expiring.client.dispose();
   });
 
   test('discards an older partial snapshot after a newer snapshot commits for the device', () => {
@@ -1071,6 +1153,61 @@ describe('CanonicalStateClient', () => {
     expect(events).toEqual([{ type: 'rebase-required', reason: 'metadata_gap' }]);
   });
 
+  test('force-resubscribes from the retained cursor after metadata recovery drops pane data', () => {
+    const { client, messages, events } = createHarness();
+    client.activate();
+    client.sendCommand({
+      type: 'set-pane-subscriptions',
+      deviceId: 'device-a',
+      generation: 1n,
+      paneIds: ['%1'],
+    });
+    installMetadata(client);
+    client.handleEvent({
+      PaneData: {
+        pane: { deviceId: 'device-a', serverEpoch: SERVER_EPOCH, paneId: '%1' },
+        paneEpoch: PANE_EPOCH,
+        seqStart: 0n,
+        seqEnd: 1n,
+        data: new Uint8Array([1]),
+      },
+    });
+    client.handleEvent({
+      SourceMetadataPatch: {
+        metadataEpoch: METADATA_EPOCH,
+        fromRevision: 2n,
+        throughRevision: 3n,
+        upserts: [metadataRecords().at(-1) as wsBorsh.SourceMetadataRecord],
+        removals: [],
+      },
+    });
+    const beforeRecovery = messages.length;
+    events.length = 0;
+
+    client.handleEvent({
+      PaneData: {
+        pane: { deviceId: 'device-a', serverEpoch: SERVER_EPOCH, paneId: '%1' },
+        paneEpoch: PANE_EPOCH,
+        seqStart: 1n,
+        seqEnd: 2n,
+        data: new Uint8Array([2]),
+      },
+    });
+    installMetadata(client, 3n);
+
+    expect(events.some((event) => event.type === 'terminal-data')).toBe(false);
+    expect(messages).toHaveLength(beforeRecovery + 1);
+    const subscription = decode(messages.at(-1) as EncodedGatewayCommand);
+    if (!('SetPaneSubscriptions' in subscription)) {
+      throw new Error('missing recovery subscription');
+    }
+    expect(subscription.SetPaneSubscriptions.activePanes[0]?.cursor).toEqual({
+      paneEpoch: PANE_EPOCH,
+      terminalSeq: 1n,
+    });
+    client.dispose();
+  });
+
   test('requests a connection-level metadata recovery when no snapshot resolves a gap', async () => {
     let recoveries = 0;
     const client = new CanonicalStateClient({
@@ -1283,6 +1420,145 @@ describe('CanonicalStateClient', () => {
     installMetadata(client);
 
     expect(messages.map(decode).some((command) => 'TerminalInput' in command)).toBe(false);
+  });
+
+  test('backs off epoch-changed retries and waits for fresh metadata after exhaustion', async () => {
+    let recoveries = 0;
+    const { client, messages } = createHarness(32 * 1024, 1, {
+      subscriptionRetryMaxAttempts: 2,
+      metadataRecoveryDelayMs: 0,
+      onMetadataGap: () => {
+        recoveries += 1;
+      },
+    });
+    client.activate();
+    client.sendCommand({
+      type: 'set-pane-subscriptions',
+      deviceId: 'device-a',
+      generation: 1n,
+      paneIds: ['%1'],
+    });
+    installMetadata(client);
+    client.handleEvent({
+      PaneData: {
+        pane: { deviceId: 'device-a', serverEpoch: SERVER_EPOCH, paneId: '%1' },
+        paneEpoch: PANE_EPOCH,
+        seqStart: 0n,
+        seqEnd: 1n,
+        data: new Uint8Array([1]),
+      },
+    });
+    const rejectLatest = () => {
+      const subscription = decode(messages.at(-1) as EncodedGatewayCommand);
+      if (!('SetPaneSubscriptions' in subscription)) throw new Error('missing subscription');
+      client.handleEvent({
+        SubscriptionApplied: {
+          generation: subscription.SetPaneSubscriptions.generation,
+          activePanes: [],
+          hotPanes: [],
+          rejected: [
+            {
+              pane: { deviceId: 'device-a', serverEpoch: SERVER_EPOCH, paneId: '%1' },
+              reason: wsBorsh.SUBSCRIPTION_REJECTED_EPOCH_CHANGED,
+            },
+          ],
+        },
+      });
+    };
+
+    let beforeRetry = messages.length;
+    rejectLatest();
+    expect(messages).toHaveLength(beforeRetry);
+    await Bun.sleep(5);
+    expect(messages).toHaveLength(beforeRetry + 1);
+    let retried = decode(messages.at(-1) as EncodedGatewayCommand);
+    if (!('SetPaneSubscriptions' in retried)) throw new Error('missing subscription retry');
+    expect(retried.SetPaneSubscriptions.activePanes[0]?.cursor).toBeNull();
+
+    beforeRetry = messages.length;
+    rejectLatest();
+    await Bun.sleep(5);
+    expect(messages).toHaveLength(beforeRetry + 1);
+
+    beforeRetry = messages.length;
+    rejectLatest();
+    await Bun.sleep(5);
+    expect(messages).toHaveLength(beforeRetry);
+    expect(recoveries).toBe(1);
+
+    const nextServerEpoch = new Uint8Array(16).fill(0x77);
+    client.handleEvent({
+      SourceMetadataSnapshot: {
+        metadataEpoch: METADATA_EPOCH,
+        revision: 2n,
+        snapshotId: new Uint8Array(16).fill(0x78),
+        chunkIndex: 0,
+        totalChunks: 1,
+        records: metadataRecordsForDevice('device-a', nextServerEpoch),
+      },
+    });
+    retried = decode(messages.at(-1) as EncodedGatewayCommand);
+    if (!('SetPaneSubscriptions' in retried)) throw new Error('missing recovered subscription');
+    expect(retried.SetPaneSubscriptions.activePanes[0]?.pane.serverEpoch).toEqual(nextServerEpoch);
+    client.dispose();
+  });
+
+  test('stops permanent resource-exhausted retries until a recovery condition occurs', async () => {
+    const { client, messages } = createHarness(32 * 1024, 0, {
+      subscriptionRetryMaxAttempts: 1,
+    });
+    client.activate();
+    client.sendCommand({
+      type: 'set-pane-subscriptions',
+      deviceId: 'device-a',
+      generation: 1n,
+      paneIds: ['%1'],
+    });
+    installMetadata(client);
+    const rejectLatest = () => {
+      const subscription = decode(messages.at(-1) as EncodedGatewayCommand);
+      if (!('SetPaneSubscriptions' in subscription)) throw new Error('missing subscription');
+      client.handleEvent({
+        SubscriptionApplied: {
+          generation: subscription.SetPaneSubscriptions.generation,
+          activePanes: [],
+          hotPanes: [],
+          rejected: [
+            {
+              pane: { deviceId: 'device-a', serverEpoch: SERVER_EPOCH, paneId: '%1' },
+              reason: wsBorsh.SUBSCRIPTION_REJECTED_RESOURCE_EXHAUSTED,
+            },
+          ],
+        },
+      });
+    };
+
+    rejectLatest();
+    await Bun.sleep(5);
+    rejectLatest();
+    const stableCount = messages.length;
+    await Bun.sleep(10);
+    expect(messages).toHaveLength(stableCount);
+
+    client.sendCommand({
+      type: 'set-pane-subscriptions',
+      deviceId: 'device-a',
+      generation: 2n,
+      paneIds: ['%1', '%2'],
+    });
+    rejectLatest();
+    await Bun.sleep(5);
+    expect(messages.length).toBe(stableCount + 2);
+
+    rejectLatest();
+    const exhaustedAgain = messages.length;
+    expect(client.resumeSubscriptions()).toBe('sent');
+    expect(messages).toHaveLength(exhaustedAgain + 1);
+
+    client.suspend();
+    client.activate();
+    expect(messages).toHaveLength(exhaustedAgain + 2);
+    client.dispose();
   });
 
   test('retries a resource-exhausted subscription with a higher generation', async () => {

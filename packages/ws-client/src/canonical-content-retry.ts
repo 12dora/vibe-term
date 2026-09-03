@@ -14,7 +14,10 @@ export interface CanonicalContentRetryOptions {
 
 export class CanonicalContentRetry {
   private readonly attempts = new Map<string, number>();
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly scheduled = new Map<
+    string,
+    { request: PendingContentRequest; timer: ReturnType<typeof setTimeout> }
+  >();
 
   constructor(private readonly options: CanonicalContentRetryOptions) {}
 
@@ -27,20 +30,20 @@ export class CanonicalContentRetry {
       this.options.exhausted(request);
       return;
     }
-    this.timers.set(
-      key,
-      setTimeout(() => {
-        this.timers.delete(key);
+    this.scheduled.set(key, {
+      request,
+      timer: setTimeout(() => {
+        this.scheduled.delete(key);
         this.options.retry(request);
-      }, RETRY_DELAY_MS)
-    );
+      }, RETRY_DELAY_MS),
+    });
   }
 
   cancelScheduled(kind: PendingContentRequest['kind'], deviceId: string, paneId: string): void {
     const key = retryKey({ kind, deviceId, paneId });
-    const timer = this.timers.get(key);
-    if (timer) clearTimeout(timer);
-    this.timers.delete(key);
+    const scheduled = this.scheduled.get(key);
+    if (scheduled) clearTimeout(scheduled.timer);
+    this.scheduled.delete(key);
   }
 
   complete(kind: PendingContentRequest['kind'], deviceId: string, paneId: string): void {
@@ -54,9 +57,15 @@ export class CanonicalContentRetry {
     this.complete('history', deviceId, paneId);
   }
 
-  dispose(): void {
-    for (const timer of this.timers.values()) clearTimeout(timer);
-    this.timers.clear();
+  takeScheduled(): PendingContentRequest[] {
+    const requests = Array.from(this.scheduled.values(), ({ request }) => request);
+    for (const { timer } of this.scheduled.values()) clearTimeout(timer);
+    this.scheduled.clear();
     this.attempts.clear();
+    return requests;
+  }
+
+  dispose(): void {
+    this.takeScheduled();
   }
 }

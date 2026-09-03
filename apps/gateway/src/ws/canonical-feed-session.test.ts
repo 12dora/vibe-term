@@ -409,6 +409,64 @@ describe('canonical feed session', () => {
     session.close();
   });
 
+  test('queues a cursor-miss gap when the subscription acknowledgement starts backpressure', async () => {
+    const runtime = new FakeRuntime();
+    const events: wsBorsh.CanonicalEvent[] = [];
+    let blocked = false;
+    let armAcknowledgement = false;
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+      sendEvent: (event) => {
+        if (blocked) return false;
+        events.push(event);
+        if (armAcknowledgement && 'SubscriptionApplied' in event) {
+          blocked = true;
+          return 'backpressured';
+        }
+        return true;
+      },
+      resolveRuntime: async () => runtime,
+    });
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [{ pane: target(), cursor: null }],
+        hotPanes: [],
+      },
+    });
+    runtime.output('abc');
+    await awaitPaneDataFlush();
+    events.length = 0;
+    armAcknowledgement = true;
+
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 2n,
+        activePanes: [
+          {
+            pane: target(),
+            cursor: { paneEpoch: PANE_EPOCH, terminalSeq: 99n },
+          },
+        ],
+        hotPanes: [],
+      },
+    });
+
+    expect(events.map((event) => Object.keys(event)[0])).toEqual(['SubscriptionApplied']);
+    expect(session.snapshotStats().pendingPaneGaps).toBe(1);
+
+    blocked = false;
+    armAcknowledgement = false;
+    session.onDrain();
+
+    expect(events.map((event) => Object.keys(event)[0])).toEqual([
+      'SubscriptionApplied',
+      'SourceGap',
+    ]);
+    expect(session.snapshotStats().pendingPaneGaps).toBe(0);
+    session.close();
+  });
+
   test('uses semantic chunks that each fit a small negotiated frame', async () => {
     const runtime = new FakeRuntime();
     runtime.screenData = new Uint8Array(4_096).fill(0x61);

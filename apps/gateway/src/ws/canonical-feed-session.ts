@@ -404,7 +404,7 @@ export class CanonicalFeedSession {
     });
     for (const { deviceId, plans } of applied.replay) {
       for (const plan of plans) {
-        if (plan.gap) this.stream.sendPaneGap(deviceId, plan.gap);
+        if (plan.gap) this.stream.handlePaneGap(deviceId, plan.gap);
         if (plan.needsScreen) continue;
         for (const segment of plan.segments) this.stream.sendPaneData(deviceId, segment);
       }

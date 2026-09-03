@@ -67,6 +67,44 @@ function createHarness(canonicalStateEnabled = true) {
   return { socket, client, transport, events };
 }
 
+function stubDocument(): {
+  setVisibility(value: string): void;
+  dispatch(): void;
+  restore(): void;
+} {
+  const listeners = new Set<() => void>();
+  const doc = {
+    visibilityState: 'hidden',
+    addEventListener(type: string, handler: () => void) {
+      if (type === 'visibilitychange') listeners.add(handler);
+    },
+    removeEventListener(type: string, handler: () => void) {
+      if (type === 'visibilitychange') listeners.delete(handler);
+    },
+  };
+  const hadDocument = 'document' in globalThis;
+  const previous = Reflect.get(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', { value: doc, configurable: true });
+  return {
+    setVisibility(value) {
+      doc.visibilityState = value;
+    },
+    dispatch() {
+      for (const listener of [...listeners]) listener();
+    },
+    restore() {
+      if (hadDocument) {
+        Object.defineProperty(globalThis, 'document', {
+          value: previous,
+          configurable: true,
+        });
+      } else {
+        Reflect.deleteProperty(globalThis, 'document');
+      }
+    },
+  };
+}
+
 function businessKinds(socket: FakeSocket): number[] {
   return socket.sent
     .map((frame) => wsBorsh.decodeEnvelope(frame).kind)
@@ -74,6 +112,33 @@ function businessKinds(socket: FakeSocket): number[] {
 }
 
 describe('canonical state capability gate', () => {
+  test('forwards visible page transitions to canonical subscription recovery', () => {
+    const doc = stubDocument();
+    try {
+      const { transport } = createHarness();
+      const canonical = Reflect.get(transport, 'canonical') as {
+        resumeSubscriptions(): unknown;
+      };
+      const resume = canonical.resumeSubscriptions.bind(canonical);
+      let calls = 0;
+      canonical.resumeSubscriptions = () => {
+        calls += 1;
+        return resume();
+      };
+
+      doc.dispatch();
+      expect(calls).toBe(0);
+      doc.setVisibility('visible');
+      doc.dispatch();
+      expect(calls).toBe(1);
+
+      transport.disconnect();
+      transport.dispose();
+    } finally {
+      doc.restore();
+    }
+  });
+
   test('delays typed subscriptions until HELLO and selects canonical when advertised', () => {
     const { socket, client, transport, events } = createHarness();
     expect(transport.send({ type: 'connect-device', deviceId: 'device-a' })).toBe('queued');

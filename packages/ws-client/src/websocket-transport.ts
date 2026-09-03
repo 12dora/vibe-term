@@ -44,6 +44,22 @@ function orderedInput(command: GatewayTransportCommand): boolean {
   return command.type === 'terminal-input' || command.type === 'terminal-paste';
 }
 
+function onDocumentVisible(resume: () => void): () => void {
+  if (typeof document === 'undefined') return () => {};
+  const owner = document;
+  if (
+    typeof owner.addEventListener !== 'function' ||
+    typeof owner.removeEventListener !== 'function'
+  ) {
+    return () => {};
+  }
+  const handler = () => {
+    if (owner.visibilityState === 'visible') resume();
+  };
+  owner.addEventListener('visibilitychange', handler);
+  return () => owner.removeEventListener('visibilitychange', handler);
+}
+
 function cloneCommand(command: GatewayTransportCommand): GatewayTransportCommand {
   if (command.type === 'select-pane') {
     return { ...command, selectToken: Uint8Array.from(command.selectToken) };
@@ -123,6 +139,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       client.onMessage((message) => this.handleMessage(message.kind, message.payload)),
       client.onError((error) => this.emit({ type: 'transport-error', error })),
       client.onPendingOverflow((info) => this.emit({ type: 'pending-overflow', ...info })),
+      onDocumentVisible(() => this.canonical.resumeSubscriptions()),
     ];
     if (client.isReady()) {
       this.syncFeedMode(client.stateFeedMode);

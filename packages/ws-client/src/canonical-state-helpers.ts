@@ -27,6 +27,8 @@ export type SubscriptionAppliedEvent = Extract<
 export const ZERO_EPOCH = new Uint8Array(16);
 export const MAX_METADATA_CHUNKS = 4_096;
 export const MAX_METADATA_ASSEMBLIES = 8;
+export const MAX_METADATA_BUFFERED_BYTES = 8 * 1024 * 1024;
+export const METADATA_ASSEMBLY_TIMEOUT_MS = 15_000;
 const LEGACY_PASTE_CHUNK_CHARS = 1_024;
 const UTF8 = new TextEncoder();
 
@@ -48,6 +50,8 @@ export interface MetadataSnapshotAssembly {
   totalChunks: number;
   chunks: Array<wsBorsh.SourceMetadataRecord[] | undefined>;
   receivedChunks: number;
+  bufferedBytes: number;
+  expiresAt: number;
   deviceIds: Set<string>;
 }
 

@@ -4,6 +4,7 @@ import {
   CanonicalContentTransactions,
   type PendingContentRequest,
 } from './canonical-content-transactions';
+import { CanonicalMetadataAssemblies } from './canonical-metadata-assemblies';
 import { CanonicalMetadataOverlay } from './canonical-metadata-overlay';
 import { CanonicalMetadataRecovery } from './canonical-metadata-recovery';
 import { CanonicalPendingCommands } from './canonical-pending-commands';
@@ -11,10 +12,7 @@ import {
   type CanonicalEvent,
   type DesiredSubscriptions,
   type DeviceMetadataState,
-  MAX_METADATA_ASSEMBLIES,
-  MAX_METADATA_CHUNKS,
   type MetadataPatchEvent,
-  type MetadataSnapshotAssembly,
   type MetadataSnapshotEvent,
   type PaneDataEvent,
   type SubscriptionAppliedEvent,
@@ -23,7 +21,6 @@ import {
   bytesKey,
   clonePendingCommand,
   copyBytes,
-  discardSupersededMetadataAssemblies,
   inputByteGroups,
   mergeSendResult,
   paneEpochsFromRecords,
@@ -53,6 +50,9 @@ export interface CanonicalStateClientOptions {
   onMetadataGap?: () => void;
   metadataRecoveryDelayMs?: number;
   subscriptionRetryMs?: number;
+  subscriptionRetryMaxAttempts?: number;
+  maxMetadataBufferedBytes?: number;
+  metadataAssemblyTimeoutMs?: number;
 }
 
 function newId(): Uint8Array {
@@ -62,10 +62,11 @@ function newId(): Uint8Array {
 export class CanonicalStateClient {
   private readonly desired = new Map<string, DesiredSubscriptions>();
   private readonly metadata = new Map<string, DeviceMetadataState>();
-  private readonly metadataAssemblies = new Map<string, MetadataSnapshotAssembly>();
+  private readonly metadataAssemblies: CanonicalMetadataAssemblies;
   private readonly terminalCursors = new Map<string, wsBorsh.CanonicalTerminalCursor>();
   private readonly blockedPanes = new Set<string>();
   private readonly awaitingMetadataDevices = new Set<string>();
+  private readonly epochRecoveryDevices = new Set<string>();
   private readonly content: CanonicalContentTransactions;
   private readonly contentRetry: CanonicalContentRetry;
   private readonly overlays = new CanonicalMetadataOverlay();
@@ -87,6 +88,11 @@ export class CanonicalStateClient {
     this.createId = options.createId ?? newId;
     this.maxPendingBytes = options.maxPendingBytes ?? 2 * 1024 * 1024;
     this.maxPendingFrames = options.maxPendingFrames ?? 2_048;
+    this.metadataAssemblies = new CanonicalMetadataAssemblies({
+      maxBufferedBytes: options.maxMetadataBufferedBytes,
+      timeoutMs: options.metadataAssemblyTimeoutMs,
+      onGap: () => this.emitMetadataGap(),
+    });
     this.pending = new CanonicalPendingCommands(
       options.emit,
       this.maxPendingBytes,
@@ -96,7 +102,11 @@ export class CanonicalStateClient {
       options.onMetadataGap,
       options.metadataRecoveryDelayMs
     );
-    this.subscriptionRetry = new CanonicalSubscriptionRetry(options.subscriptionRetryMs);
+    this.subscriptionRetry = new CanonicalSubscriptionRetry(
+      options.subscriptionRetryMs,
+      undefined,
+      options.subscriptionRetryMaxAttempts
+    );
     this.contentRetry = new CanonicalContentRetry({
       retry: (request) => {
         if (this.active) this.sendCanonicalCommand(request.command, true);
@@ -131,6 +141,7 @@ export class CanonicalStateClient {
   activate(): ClientSendResult {
     this.active = true;
     this.blockedPanes.clear();
+    this.epochRecoveryDevices.clear();
     this.wireGeneration = 0n;
     this.latestSubscriptionGeneration = 0n;
     this.lastSubscriptionFingerprint = null;
@@ -143,7 +154,7 @@ export class CanonicalStateClient {
 
   suspend(): void {
     this.active = false;
-    const retry = this.content.pendingRequests();
+    const retry = [...this.content.pendingRequests(), ...this.contentRetry.takeScheduled()];
     this.subscriptionRetry.resolved();
     this.resetConnectionAssemblies();
     for (const request of retry) this.deferTargetCommand(request.command, true);
@@ -155,6 +166,8 @@ export class CanonicalStateClient {
     this.metadata.clear();
     this.terminalCursors.clear();
     this.blockedPanes.clear();
+    this.epochRecoveryDevices.clear();
+    this.overlays.clear();
     this.pending.clear();
     this.contentRetry.dispose();
   }
@@ -181,8 +194,11 @@ export class CanonicalStateClient {
       this.updateDesiredSubscriptions(command.deviceId, command.paneIds);
     } else if (command.type === 'disconnect-device') {
       this.desired.delete(command.deviceId);
+      this.subscriptionRetry.resolved();
       this.metadata.delete(command.deviceId);
       this.awaitingMetadataDevices.delete(command.deviceId);
+      this.epochRecoveryDevices.delete(command.deviceId);
+      this.overlays.remove(command.deviceId);
       this.metadataRecovery.resolved(command.deviceId);
       this.clearPaneStateForDevice(command.deviceId);
       this.dropPendingCommandsForDevice(command.deviceId);
@@ -191,8 +207,11 @@ export class CanonicalStateClient {
 
   removeDevice(deviceId: string): ClientSendResult {
     this.desired.delete(deviceId);
+    this.subscriptionRetry.resolved();
     this.metadata.delete(deviceId);
     this.awaitingMetadataDevices.delete(deviceId);
+    this.epochRecoveryDevices.delete(deviceId);
+    this.overlays.remove(deviceId);
     this.metadataRecovery.resolved(deviceId);
     this.clearPaneStateForDevice(deviceId);
     this.dropPendingCommandsForDevice(deviceId);
@@ -201,6 +220,12 @@ export class CanonicalStateClient {
 
   takePendingCommands(): GatewayTransportCommand[] {
     return this.pending.takeAll();
+  }
+
+  resumeSubscriptions(): ClientSendResult {
+    if (!this.active || !this.subscriptionRetry.hasAttempted()) return 'sent';
+    this.subscriptionRetry.resolved();
+    return this.sendSubscriptions(true);
   }
 
   handleEventPayload(payload: Uint8Array): void {
@@ -272,6 +297,7 @@ export class CanonicalStateClient {
     for (const [deviceId, desired] of [...this.desired].sort(([left], [right]) =>
       left.localeCompare(right)
     )) {
+      if (this.epochRecoveryDevices.has(deviceId)) continue;
       const device = this.metadata.get(deviceId);
       for (const paneId of desired.paneIds) {
         const key = paneKey(deviceId, paneId);
@@ -324,6 +350,8 @@ export class CanonicalStateClient {
 
   private updateDesiredSubscriptions(deviceId: string, paneIds: readonly string[]): void {
     const panes = [...new Set(paneIds)].sort();
+    const previous = this.desired.get(deviceId)?.paneIds ?? [];
+    if (!sameStrings(previous, panes)) this.subscriptionRetry.resolved();
     if (panes.length === 0) this.desired.delete(deviceId);
     else this.desired.set(deviceId, { paneIds: panes });
   }
@@ -487,7 +515,7 @@ export class CanonicalStateClient {
     event: Extract<CanonicalEvent, { FeedReady: unknown }>['FeedReady']
   ): void {
     if (this.gatewayEpoch && !bytesEqual(this.gatewayEpoch, event.gatewayEpoch)) {
-      const retry = this.content.pendingRequests();
+      const retry = [...this.content.pendingRequests(), ...this.contentRetry.takeScheduled()];
       this.metadataAssemblies.clear();
       this.content.clear();
       for (const deviceId of this.metadata.keys()) this.awaitingMetadataDevices.add(deviceId);
@@ -499,53 +527,9 @@ export class CanonicalStateClient {
   }
 
   private handleMetadataSnapshot(event: MetadataSnapshotEvent): void {
-    if (
-      event.totalChunks === 0 ||
-      event.totalChunks > MAX_METADATA_CHUNKS ||
-      event.chunkIndex >= event.totalChunks
-    ) {
-      this.emitMetadataGap();
-      return;
-    }
-    const key = bytesKey(event.snapshotId);
-    let assembly = this.metadataAssemblies.get(key);
-    if (!assembly) {
-      if (this.metadataAssemblies.size >= MAX_METADATA_ASSEMBLIES) {
-        this.metadataAssemblies.clear();
-        this.emitMetadataGap();
-        return;
-      }
-      assembly = {
-        metadataEpoch: copyBytes(event.metadataEpoch),
-        revision: event.revision,
-        totalChunks: event.totalChunks,
-        chunks: new Array(event.totalChunks),
-        receivedChunks: 0,
-        deviceIds: new Set(),
-      };
-      this.metadataAssemblies.set(key, assembly);
-    } else if (
-      !bytesEqual(assembly.metadataEpoch, event.metadataEpoch) ||
-      assembly.revision !== event.revision ||
-      assembly.totalChunks !== event.totalChunks
-    ) {
-      this.metadataAssemblies.delete(key);
-      this.emitMetadataGap();
-      return;
-    }
-    if (assembly.chunks[event.chunkIndex]) {
-      this.metadataAssemblies.delete(key);
-      this.emitMetadataGap();
-      return;
-    }
-    for (const record of event.records) assembly.deviceIds.add(record.key.deviceId);
-    assembly.chunks[event.chunkIndex] = event.records;
-    assembly.receivedChunks += 1;
-    if (assembly.receivedChunks !== assembly.totalChunks) return;
-    this.metadataAssemblies.delete(key);
-    const records = assembly.chunks.flatMap((chunk) => chunk ?? []);
-    discardSupersededMetadataAssemblies(this.metadataAssemblies, assembly.deviceIds);
-    this.commitMetadataSnapshot(assembly.metadataEpoch, assembly.revision, records);
+    const snapshot = this.metadataAssemblies.accept(event);
+    if (!snapshot) return;
+    this.commitMetadataSnapshot(snapshot.metadataEpoch, snapshot.revision, snapshot.records);
   }
 
   private commitMetadataSnapshot(
@@ -554,6 +538,7 @@ export class CanonicalStateClient {
     records: wsBorsh.SourceMetadataRecord[]
   ): void {
     const byDevice = new Map<string, wsBorsh.SourceMetadataRecord[]>();
+    let recoveredMetadata = false;
     for (const record of records) {
       const group = byDevice.get(record.key.deviceId) ?? [];
       group.push(record);
@@ -584,11 +569,14 @@ export class CanonicalStateClient {
         paneEpochs,
         snapshot,
       });
+      const recoveredEpoch = this.epochRecoveryDevices.delete(deviceId);
+      recoveredMetadata ||= this.awaitingMetadataDevices.has(deviceId) || recoveredEpoch;
+      if (recoveredEpoch) this.subscriptionRetry.resolved();
       this.metadataRecovery.resolved(deviceId);
       this.awaitingMetadataDevices.delete(deviceId);
       this.options.emit({ type: 'metadata-snapshot', snapshot });
     }
-    this.sendSubscriptions();
+    this.sendSubscriptions(recoveredMetadata);
     this.flushTargetCommands();
   }
 
@@ -743,7 +731,28 @@ export class CanonicalStateClient {
         reason: 'cache_evicted',
       });
     }
-    let retry = false;
+    const [epochChangedDevices, resourceExhausted] = this.applySubscriptionRejections(rejections);
+    if (resourceExhausted || epochChangedDevices.size > 0) {
+      const scheduled = this.subscriptionRetry.request(() => {
+        if (!this.active) return;
+        this.lastSubscriptionFingerprint = null;
+        this.sendSubscriptions(true);
+      });
+      if (!scheduled && epochChangedDevices.size > 0) {
+        for (const deviceId of epochChangedDevices) {
+          this.epochRecoveryDevices.add(deviceId);
+          this.emitMetadataGap(deviceId);
+        }
+      }
+    } else {
+      this.subscriptionRetry.resolved();
+    }
+  }
+
+  private applySubscriptionRejections(
+    rejections: readonly GatewaySubscriptionRejection[]
+  ): [Set<string>, boolean] {
+    const epochChangedDevices = new Set<string>();
     let resourceExhausted = false;
     for (const rejection of rejections) {
       const key = paneKey(rejection.deviceId, rejection.paneId);
@@ -756,26 +765,11 @@ export class CanonicalStateClient {
       this.blockedPanes.add(key);
       if (rejection.reason === 'resource_exhausted') {
         resourceExhausted = true;
-        continue;
-      }
-      if (rejection.reason === 'epoch_changed' && this.metadata.has(rejection.deviceId)) {
-        this.blockedPanes.add(key);
-        retry = true;
+      } else if (this.metadata.has(rejection.deviceId)) {
+        epochChangedDevices.add(rejection.deviceId);
       }
     }
-    if (retry && event.generation === this.wireGeneration) {
-      this.lastSubscriptionFingerprint = null;
-      this.sendSubscriptions(true);
-    }
-    if (resourceExhausted) {
-      this.subscriptionRetry.request(() => {
-        if (!this.active) return;
-        this.lastSubscriptionFingerprint = null;
-        this.sendSubscriptions(true);
-      });
-    } else {
-      this.subscriptionRetry.resolved();
-    }
+    return [epochChangedDevices, resourceExhausted];
   }
 
   private handleSourceGap(gap: Extract<CanonicalEvent, { SourceGap: unknown }>['SourceGap']): void {
@@ -886,4 +880,8 @@ export class CanonicalStateClient {
     this.feedMaxFrameBytes = null;
     this.gatewayEpoch = null;
   }
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }

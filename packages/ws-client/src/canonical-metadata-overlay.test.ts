@@ -64,4 +64,22 @@ describe('CanonicalMetadataOverlay', () => {
     expect(afterPatch.session?.windows[0]?.panes[0]?.customName).toBeUndefined();
     expect(afterPatch.session?.windows[0]?.panes[1]?.customName).toBe('Shell');
   });
+
+  test('drops device overlays on removal, empty snapshots, and disposal cleanup', () => {
+    const overlay = new CanonicalMetadataOverlay();
+    const legacy = snapshot([window('@2', ['%2']), window('@1', ['%1'])]);
+    const canonical = snapshot([window('@1', ['%1']), window('@2', ['%2'])]);
+
+    overlay.capture(legacy);
+    overlay.remove('device-a');
+    expect(overlay.apply(canonical).session?.windows.map((item) => item.id)).toEqual(['@1', '@2']);
+
+    overlay.capture(legacy);
+    overlay.capture({ deviceId: 'device-a', session: null });
+    expect(overlay.apply(canonical).session?.windows.map((item) => item.id)).toEqual(['@1', '@2']);
+
+    overlay.capture(legacy);
+    overlay.clear();
+    expect(overlay.apply(canonical).session?.windows.map((item) => item.id)).toEqual(['@1', '@2']);
+  });
 });

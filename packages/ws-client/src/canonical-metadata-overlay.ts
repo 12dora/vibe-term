@@ -33,7 +33,10 @@ export class CanonicalMetadataOverlay {
   private readonly orders = new Map<string, DeviceTreeOrder>();
 
   capture(snapshot: StateSnapshotPayload): void {
-    if (!snapshot.session) return;
+    if (!snapshot.session) {
+      this.remove(snapshot.deviceId);
+      return;
+    }
     this.orders.set(snapshot.deviceId, {
       windows: snapshot.session.windows.map((window) => window.id),
       panes: new Map(
@@ -78,6 +81,14 @@ export class CanonicalMetadataOverlay {
     order.windowCustomNames.clear();
     order.paneCustomNames.clear();
     return { ...snapshot, session: { ...snapshot.session, windows } };
+  }
+
+  remove(deviceId: string): void {
+    this.orders.delete(deviceId);
+  }
+
+  clear(): void {
+    this.orders.clear();
   }
 }
 

@@ -197,7 +197,8 @@ export interface CompatibleTerminalLike {
   reset: () => void;
   refresh?: () => void;
   resize: (cols: number, rows: number) => void;
-  scrollLines: (amount: number) => void;
+  // biome-ignore lint/suspicious/noConfusingVoidType: Compatibility with legacy implementations that return void
+  scrollLines: (amount: number) => boolean | void;
   scrollToTop: () => void;
   scrollToBottom: () => void;
   handleViewportGesture?: (gesture: GhosttyViewportGesture) => boolean;
