@@ -1,3 +1,4 @@
+import type { FetchLike } from '../lib/fetch-like';
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -6,18 +7,31 @@ import { join, resolve } from 'node:path';
 import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import {
+  encodePasskeyAssertionSig,
+  makeVerifyPasskeyAssertion,
+  verifyRegistration,
+} from '../../../../apps/gateway/src/auth/passkey';
+import { createEs256Authenticator } from '../../../../apps/gateway/src/auth/passkey-test-fixtures';
+import { UserKeyService } from '../../../../apps/gateway/src/auth/user-key-service';
+import {
   JOIN_TOKEN_CHARS,
+  buildKeyLogRecord,
   createEnrollment,
   createNodeCertificate,
   decodeBase64url,
   decodeCertificate,
   deriveSeed,
+  encodeAddPasskeyPayload,
   encodeBase64url,
   encodeJoinToken,
+  encodeKeyLogRecord,
+  encodeRevokeNodePayload,
   generateX25519KeyPair,
+  hexToBytes,
   nodeIdToHex,
   randomBytes,
   rootKeyFromSeed,
+  sha256,
 } from '../../../shared/src/auth';
 import { parseArgs } from '../lib/args';
 import { readEnvFile } from '../lib/env-file';
@@ -971,7 +985,7 @@ describe('performHubJoin CA pin', () => {
     const records = hub.keyLogStore.list(user.id);
     const certs = hub.userStore.listCertsByUser(user.id);
     const paths: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
+    const fetcher: FetchLike = async (input) => {
       const url = new URL(String(input));
       paths.push(url.pathname);
       if (url.pathname === '/api/auth/mode') {
@@ -1033,7 +1047,7 @@ describe('performHubJoin CA pin', () => {
       randomBytes(32),
       'ff'.repeat(32)
     );
-    const fetcher: typeof fetch = async (input, init) => {
+    const fetcher: FetchLike = async (input, init) => {
       const url = new URL(String(input));
       if (url.pathname === '/api/tls/ca.crt') {
         expect((init as { tls?: { rejectUnauthorized?: boolean } } | undefined)?.tls).toEqual({
@@ -1087,7 +1101,7 @@ describe('performHubJoin CA pin', () => {
     const records = hub.keyLogStore.list(user.id);
     const certs = hub.userStore.listCertsByUser(user.id);
     const tlsOpts: unknown[] = [];
-    const fetcher: typeof fetch = async (input, init) => {
+    const fetcher: FetchLike = async (input, init) => {
       const url = new URL(String(input));
       tlsOpts.push((init as { tls?: unknown } | undefined)?.tls);
       if (url.pathname === '/api/tls/ca.crt') {
@@ -1155,7 +1169,7 @@ describe('performHubJoin CA pin', () => {
     const attacker = await createCa({ name: 'attacker' });
     const fingerprint = await spkiFingerprint(ca.certPem);
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
-    const fetcher: typeof fetch = async (input) => {
+    const fetcher: FetchLike = async (input) => {
       const url = new URL(String(input));
       if (url.pathname === '/api/tls/ca.crt') {
         return new Response(`${ca.certPem}\n${attacker.certPem}`, { status: 200 });
@@ -1182,7 +1196,7 @@ describe('performHubJoin CA pin', () => {
     const ca = await createCa({ name: 'tmex-test' });
     const fingerprint = await spkiFingerprint(ca.certPem);
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
-    const fetcher: typeof fetch = async (input) => {
+    const fetcher: FetchLike = async (input) => {
       const url = new URL(String(input));
       if (url.pathname === '/api/tls/ca.crt') {
         return new Response(`${ca.certPem}\n# junk\n`, { status: 200 });
@@ -1208,7 +1222,7 @@ describe('performHubJoin CA pin', () => {
     const ca = await createCa({ name: 'tmex-test' });
     const fingerprint = await spkiFingerprint(ca.certPem);
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
-    const fetcher: typeof fetch = async (input) => {
+    const fetcher: FetchLike = async (input) => {
       const url = new URL(String(input));
       if (url.pathname === '/api/tls/ca.crt') {
         return new Response('x'.repeat(MAX_CA_RESPONSE_BYTES + 1), { status: 200 });
@@ -1235,7 +1249,7 @@ describe('performHubJoin CA pin', () => {
     const leaf = await issueLeaf({ ca, sans: ['127.0.0.1'], days: 1 });
     const fingerprint = await spkiFingerprint(leaf.certPem);
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
-    const fetcher: typeof fetch = async (input) => {
+    const fetcher: FetchLike = async (input) => {
       const url = new URL(String(input));
       if (url.pathname === '/api/tls/ca.crt') {
         return new Response(leaf.certPem, { status: 200 });
@@ -1261,7 +1275,7 @@ describe('performHubJoin CA pin', () => {
 describe('performHubJoin auth mode errors', () => {
   test('preserves network failure cause', async () => {
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32));
-    const fetcher: typeof fetch = async () => {
+    const fetcher: FetchLike = async () => {
       throw Object.assign(new Error('ECONNREFUSED'), { code: 'ECONNREFUSED' });
     };
     const node = await openAuth('standalone');
@@ -1286,7 +1300,7 @@ describe('performHubJoin auth mode errors', () => {
     const ca = await createCa({ name: 'tmex-test' });
     const fingerprint = await spkiFingerprint(ca.certPem);
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
-    const fetcher: typeof fetch = async (input) => {
+    const fetcher: FetchLike = async (input) => {
       const url = new URL(String(input));
       if (url.pathname === '/api/tls/ca.crt') {
         return new Response(ca.certPem, { status: 200 });
@@ -1315,7 +1329,7 @@ describe('performHubJoin auth mode errors', () => {
 
   test('v1 TLS failure against a self-signed hub advises generating a v2 token', async () => {
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32));
-    const fetcher: typeof fetch = async () => {
+    const fetcher: FetchLike = async () => {
       throw Object.assign(new Error('self signed certificate'), {
         code: 'DEPTH_ZERO_SELF_SIGNED_CERT',
       });
@@ -1336,5 +1350,246 @@ describe('performHubJoin auth mode errors', () => {
       code: 'hub_unreachable',
       message: expect.stringMatching(/self-signed certificate.*v2 join token/i),
     });
+  });
+});
+
+describe('hub join with passkey-signed records', () => {
+  const PASSKEY_ORIGIN = 'https://hub.example';
+  const PASSKEY_RP_ID = 'hub.example';
+
+  /** 造一把真 ES256 认证器并登记成 `add-passkey` 的 payload。 */
+  async function registerPasskey() {
+    const authenticator = await createEs256Authenticator();
+    const challenge = new Uint8Array(32).fill(7);
+    const registration = await authenticator.register({
+      challenge,
+      rpId: PASSKEY_RP_ID,
+      origin: PASSKEY_ORIGIN,
+      counter: 0,
+    });
+    const payload = await verifyRegistration({
+      response: registration,
+      expectedChallenge: encodeBase64url(challenge),
+      origin: PASSKEY_ORIGIN,
+      rpId: PASSKEY_RP_ID,
+    });
+    if (!payload) throw new Error('registration failed');
+    return { authenticator, payload };
+  }
+
+  test('replays a chain whose revoke-node is signed by a passkey', async () => {
+    const hub = await openAuth('hub,node');
+    const added = await runHubUserAdd(parseArgs([]), 'hubuser', {
+      auth: hub,
+      password: 'hub-pass-word',
+      log: () => undefined,
+    });
+    const userId = added.userId;
+    const rootKey = rootKeyFromSeed(
+      await deriveSeed('hub-pass-word', hub.userKeys.currentState(userId).kdfParams)
+    );
+
+    const { authenticator, payload } = await registerPasskey();
+    const addPasskey = await hub.userKeys.signAndApply(userId, rootKey, {
+      type: 'add-passkey',
+      payload: encodeAddPasskeyPayload(payload),
+    });
+    expect(addPasskey.ok).toBe(true);
+
+    // 用这把 passkey（而不是根钥）签一条 revoke-node：加入方回放时必须能验开它。
+    const beforeRevoke = hub.userKeys.currentState(userId);
+    const victim = [...beforeRevoke.nodeCerts.keys()][0];
+    if (!victim) throw new Error('hub has no self-admitted node');
+    const record = buildKeyLogRecord(beforeRevoke.head, beforeRevoke.rootEpoch, {
+      uid: userId,
+      type: 'revoke-node',
+      payload: encodeRevokeNodePayload({ node_id: hexToBytes(victim), reason: 'retired' }),
+      signer: 'passkey',
+      credential_id: payload.credential_id,
+    });
+    const bytes = encodeKeyLogRecord(record);
+    const assertion = await authenticator.assert({
+      challenge: sha256(bytes),
+      rpId: PASSKEY_RP_ID,
+      origin: PASSKEY_ORIGIN,
+      counter: 1,
+    });
+    const hubService = new UserKeyService({
+      db: hub.db,
+      userStore: hub.userStore,
+      keyLogStore: hub.keyLogStore,
+      nodeSessionStore: hub.nodeSessionStore,
+      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(hub.userStore),
+    });
+    const revoked = await hubService.apply(userId, {
+      bytes,
+      sig: encodePasskeyAssertionSig(assertion),
+    });
+    expect(revoked.ok).toBe(true);
+
+    const state = hub.userKeys.currentState(userId);
+    const enrollment = await createEnrollment(rootKey, {
+      uid: userId,
+      rootEpoch: state.rootEpoch,
+      now: Date.now(),
+    });
+    const token = encodeJoinToken(enrollment.enrollSk, state.rootPublicKey, state.head.hash);
+    const user = hub.userStore.getById(userId);
+    if (!user) throw new Error('missing hub user');
+    const records = hub.keyLogStore.list(userId);
+    const certs = hub.userStore.listCertsByUser(userId);
+    expect(certs.some((cert) => cert.revokedLogSeq != null)).toBe(true);
+
+    const fetcher: FetchLike = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/auth/mode') {
+        return Response.json({
+          mode: 'mesh',
+          nodeId: 'self',
+          uid: user.id,
+          username: user.username,
+        });
+      }
+      if (url.pathname === '/api/hub/enrollments/redeem') {
+        return Response.json({
+          user: {
+            id: user.id,
+            username: user.username,
+            root_public_key: encodeBase64url(user.rootPublicKey),
+            root_epoch: user.rootEpoch,
+            kdf_params: JSON.parse(user.kdfParamsJson),
+          },
+          user_key_log: records.map((row) => ({
+            seq: row.seq,
+            bytes: encodeBase64url(row.bytes),
+            sig: encodeBase64url(row.sig),
+          })),
+          node_certs: certs.map((cert) => ({
+            node_id: cert.nodeId,
+            user_id: cert.userId,
+            admit_record_seq: cert.admitRecordSeq,
+            certificate: encodeBase64url(cert.certificateBytes),
+            cert_sig: encodeBase64url(cert.certSig),
+            authorization: encodeBase64url(cert.authorizationBytes),
+            authorization_sig: encodeBase64url(cert.authorizationSig),
+            revoked_log_seq: cert.revokedLogSeq,
+          })),
+        });
+      }
+      return new Response('nope', { status: 404 });
+    };
+
+    const node = await openAuth('standalone');
+    const joined = await performHubJoin(
+      {
+        hubUrl: 'http://127.0.0.1:9',
+        token,
+        name: 'studio',
+        insecureLocal: true,
+        nodeEnv: 'test',
+      },
+      { auth: node, fetcher }
+    );
+    expect(joined.userId).toBe(user.id);
+    expect(node.keyLogStore.list(user.id).length).toBe(records.length);
+    // 吊销确实被回放进来了（不是「跳过 passkey 记录」蒙混过关）。
+    expect(node.userStore.listCertsByUser(user.id).some((cert) => cert.revokedLogSeq != null)).toBe(
+      true
+    );
+  });
+
+  test('an unverifiable passkey signature still rejects the chain', async () => {
+    const hub = await openAuth('hub,node');
+    const added = await runHubUserAdd(parseArgs([]), 'hubuser', {
+      auth: hub,
+      password: 'hub-pass-word',
+      log: () => undefined,
+    });
+    const userId = added.userId;
+    const rootKey = rootKeyFromSeed(
+      await deriveSeed('hub-pass-word', hub.userKeys.currentState(userId).kdfParams)
+    );
+    const { authenticator, payload } = await registerPasskey();
+    await hub.userKeys.signAndApply(userId, rootKey, {
+      type: 'add-passkey',
+      payload: encodeAddPasskeyPayload(payload),
+    });
+    const state = hub.userKeys.currentState(userId);
+    const victim = [...state.nodeCerts.keys()][0] ?? '';
+    const record = buildKeyLogRecord(state.head, state.rootEpoch, {
+      uid: userId,
+      type: 'revoke-node',
+      payload: encodeRevokeNodePayload({ node_id: hexToBytes(victim), reason: 'retired' }),
+      signer: 'passkey',
+      credential_id: payload.credential_id,
+    });
+    const bytes = encodeKeyLogRecord(record);
+    // 断言签的是另一条挑战，签名对不上这条记录。
+    const assertion = await authenticator.assert({
+      challenge: new Uint8Array(32).fill(9),
+      rpId: PASSKEY_RP_ID,
+      origin: PASSKEY_ORIGIN,
+      counter: 1,
+    });
+    const forged = { bytes, sig: encodePasskeyAssertionSig(assertion) };
+
+    const enrollment = await createEnrollment(rootKey, {
+      uid: userId,
+      rootEpoch: state.rootEpoch,
+      now: Date.now(),
+    });
+    const user = hub.userStore.getById(userId);
+    if (!user) throw new Error('missing hub user');
+    const records = [
+      ...hub.keyLogStore.list(userId).map((row) => ({
+        seq: row.seq,
+        bytes: row.bytes,
+        sig: row.sig,
+      })),
+      { seq: Number(record.seq), bytes: forged.bytes, sig: forged.sig },
+    ];
+    const token = encodeJoinToken(enrollment.enrollSk, state.rootPublicKey, state.head.hash);
+    const fetcher: FetchLike = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/auth/mode') {
+        return Response.json({
+          mode: 'mesh',
+          nodeId: 'self',
+          uid: user.id,
+          username: user.username,
+        });
+      }
+      if (url.pathname === '/api/hub/enrollments/redeem') {
+        return Response.json({
+          user: {
+            id: user.id,
+            username: user.username,
+            root_public_key: encodeBase64url(user.rootPublicKey),
+            root_epoch: user.rootEpoch,
+            kdf_params: JSON.parse(user.kdfParamsJson),
+          },
+          user_key_log: records.map((row) => ({
+            seq: row.seq,
+            bytes: encodeBase64url(row.bytes),
+            sig: encodeBase64url(row.sig),
+          })),
+          node_certs: [],
+        });
+      }
+      return new Response('nope', { status: 404 });
+    };
+    const node = await openAuth('standalone');
+    await expect(
+      performHubJoin(
+        {
+          hubUrl: 'http://127.0.0.1:9',
+          token,
+          name: 'studio',
+          insecureLocal: true,
+          nodeEnv: 'test',
+        },
+        { auth: node, fetcher }
+      )
+    ).rejects.toThrow('key log rejected');
   });
 });

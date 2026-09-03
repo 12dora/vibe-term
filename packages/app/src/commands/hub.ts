@@ -45,6 +45,7 @@ import { applyHubUserPasswd, mapPasswdApplyError } from '../lib/hub-user-passwd'
 import { applyHubModeEnvKeys, parseHubPeerIds } from '../lib/install';
 import { createInstallLayout } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
+import { joinUserKeyService, makeReplayPasskeyVerifier } from '../lib/keylog-passkey-replay';
 import { type LocalAuthContext, loadInstallEnv } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { parseAndValidateCaPem, readBoundedResponseText } from '../lib/pem';
@@ -667,7 +668,12 @@ async function commitVerifiedJoin(
     bytes: decodeBase64url(item.bytes),
     sig: decodeBase64url(item.sig),
   }));
-  const preview = await verifyKeyLogChain(records, input.expectedRootPublicKey);
+  // 链上可能有 passkey 签名的记录，而本机此刻还没有这个用户（UserStore 里没有凭据），
+  // 只能用链自身投影出来的凭据表验签；`commitJoin` 内部会再回放一遍，同样需要它。
+  const verifyPasskeyAssertion = makeReplayPasskeyVerifier(records);
+  const preview = await verifyKeyLogChain(records, input.expectedRootPublicKey, undefined, {
+    verifyPasskeyAssertion,
+  });
   if (!preview.ok) {
     throw new Error(`key log rejected: ${preview.error}`);
   }
@@ -686,7 +692,7 @@ async function commitVerifiedJoin(
 
   const loaded = await ctx.identityStore.load();
   const admitted = input.admittedCert;
-  const committed = await ctx.userKeys.commitJoin({
+  const committed = await joinUserKeyService(ctx, records).commitJoin({
     records,
     expectedRootPublicKey: input.expectedRootPublicKey,
     anchorHash: input.anchorHash,
