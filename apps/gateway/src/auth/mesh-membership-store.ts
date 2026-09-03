@@ -2,6 +2,8 @@ import {
   enrollmentTokens,
   hubTrust,
   meshHubs,
+  meshRelays,
+  meshSecrets,
   nodeCerts,
   nodeIdentity,
   nodeSessions,
@@ -27,6 +29,9 @@ export class MeshMembershipStore {
       tx.delete(peerCache).run();
       tx.delete(hubTrust).run();
       tx.delete(meshHubs).run();
+      // 中继租户令牌与 K_log / K_meta 不能在退出后留在盘上
+      tx.delete(meshRelays).run();
+      tx.delete(meshSecrets).run();
       tx.delete(nodeIdentity).run();
       tx.delete(users).run();
     });

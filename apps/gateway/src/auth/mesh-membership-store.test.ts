@@ -3,6 +3,7 @@ import { HubTrustStore } from './hub-trust-store';
 import { KeyLogStore } from './key-log-store';
 import { MeshHubStore } from './mesh-hub-store';
 import { MeshMembershipStore } from './mesh-membership-store';
+import { MeshRelayStore } from './mesh-relay-store';
 import { NodeIdentityStore } from './node-identity-store';
 import { NodeSessionStore } from './node-session-store';
 import { createMigratedAuthDb } from './test-db';
@@ -34,7 +35,7 @@ function tableCount(
 }
 
 describe('MeshMembershipStore.clearAll', () => {
-  test('deletes users, derived rows, nodes, enrollments, peers, hub_trust, mesh_hubs, and node_identity', async () => {
+  test('deletes users, derived rows, nodes, enrollments, peers, hub_trust, mesh_hubs, mesh_relays, mesh_secrets, and node_identity', async () => {
     const { db, sqlite, close } = createMigratedAuthDb();
     try {
       const users = new UserStore(db);
@@ -141,6 +142,36 @@ describe('MeshMembershipStore.clearAll', () => {
       );
       expect(hubs.list()).toHaveLength(1);
 
+      // 中继模式的落库状态：租户令牌 + K_log / K_meta + uplink_kind / name
+      const relays = new MeshRelayStore(db);
+      await relays.replaceRelays(
+        [
+          {
+            url: 'https://relay.example',
+            tenantId: 'ab'.repeat(16),
+            token: Uint8Array.from({ length: 32 }, () => 7),
+            priority: 0,
+          },
+        ],
+        1_000
+      );
+      await relays.putSecret(
+        'log',
+        0,
+        Uint8Array.from({ length: 32 }, () => 1),
+        1_000
+      );
+      await relays.putSecret(
+        'meta',
+        1,
+        Uint8Array.from({ length: 32 }, () => 2),
+        1_000
+      );
+      relays.setUplinkKind('relay');
+      relays.setLocalName('studio');
+      expect(relays.listRelayRows()).toHaveLength(1);
+      expect(relays.listSecretEpochs('meta')).toEqual([1]);
+
       new MeshMembershipStore(db).clearAll();
 
       for (const table of [
@@ -154,10 +185,17 @@ describe('MeshMembershipStore.clearAll', () => {
         'peer_cache',
         'hub_trust',
         'mesh_hubs',
+        'mesh_relays',
+        'mesh_secrets',
         'node_identity',
       ]) {
         expect(tableCount(sqlite, table)).toBe(0);
       }
+      // uplink_kind / name 随 node_identity 整行消失，退出后不残留租户密钥
+      expect(relays.listRelayRows()).toHaveLength(0);
+      expect(relays.listSecretEpochs('log')).toEqual([]);
+      expect(relays.uplinkKind()).toBe('hub');
+      expect(relays.localName()).toBeNull();
       expect(users.listUsers()).toHaveLength(0);
       expect(await identity.load()).toBeNull();
       expect(trust.get('https://hub.example')).toBeNull();

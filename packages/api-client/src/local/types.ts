@@ -43,13 +43,16 @@ export interface LocalDirectResponse {
   restartRequired: boolean;
 }
 
+/** 能退出 mesh 的角色：必须带 node 才有成员身份，纯 `relay` 不算。 */
+export type LocalMeshRole = Exclude<LocalRole, 'standalone' | 'relay'>;
+
 export interface LocalLeaveRequest {
-  expectedRole: 'node' | 'hub,node';
+  expectedRole: LocalMeshRole;
 }
 
 export interface LocalLeaveResponse {
   ok: true;
-  fromRole: 'node' | 'hub,node';
+  fromRole: LocalMeshRole;
   restarting: true;
 }
 
