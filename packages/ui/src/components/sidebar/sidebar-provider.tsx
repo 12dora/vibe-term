@@ -8,7 +8,12 @@ import {
   SIDEBAR_WIDTH_ICON,
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from './constants';
-import { SidebarContext, type SidebarContextProps } from './context';
+import {
+  SidebarContext,
+  type SidebarContextProps,
+  SidebarWidthContext,
+  type SidebarWidthContextProps,
+} from './context';
 import { readSidebarStorage, removeSidebarStorage, writeSidebarStorage } from './storage';
 import {
   clampSidebarWidth,
@@ -16,6 +21,56 @@ import {
   preferredSidebarWidth,
   viewportWidth,
 } from './width';
+
+/**
+ * 侧栏宽度这一份状态。
+ *
+ * preferredWidthRef 保存用户期望宽度（仅受下限约束、不被视口裁剪），实际展示的 width 再按当前
+ * 视口 clamp，这样窗口缩小后再放大能恢复原宽度；视口宽度自身缓存在 ref 里，只随 resize 刷新，
+ * 免得拖拽期间每帧读 window.innerWidth（刚写过样式，读一次就是一次强制同步布局）。
+ * 落盘只在 commitWidth（拖拽结束）时发生。
+ */
+function useSidebarWidthState(): SidebarWidthContextProps {
+  const preferredWidthRef = React.useRef<number>(SIDEBAR_WIDTH_DEFAULT_PX);
+  const viewportWidthRef = React.useRef<number>(Number.POSITIVE_INFINITY);
+  const [width, setWidthState] = React.useState<number>(() => {
+    if (typeof window === 'undefined') return SIDEBAR_WIDTH_DEFAULT_PX;
+    const preferred = parseStoredSidebarWidth(readSidebarStorage(SIDEBAR_WIDTH_STORAGE_KEY));
+    preferredWidthRef.current = preferred;
+    viewportWidthRef.current = viewportWidth();
+    return clampSidebarWidth(preferred, viewportWidthRef.current);
+  });
+
+  const setWidth = React.useCallback((value: number) => {
+    const preferred = preferredSidebarWidth(value);
+    preferredWidthRef.current = preferred;
+    setWidthState(clampSidebarWidth(preferred, viewportWidthRef.current));
+  }, []);
+
+  const commitWidth = React.useCallback(() => {
+    writeSidebarStorage(SIDEBAR_WIDTH_STORAGE_KEY, String(preferredWidthRef.current));
+  }, []);
+
+  const resetWidth = React.useCallback(() => {
+    preferredWidthRef.current = SIDEBAR_WIDTH_DEFAULT_PX;
+    setWidthState(clampSidebarWidth(SIDEBAR_WIDTH_DEFAULT_PX, viewportWidthRef.current));
+    removeSidebarStorage(SIDEBAR_WIDTH_STORAGE_KEY);
+  }, []);
+
+  React.useEffect(() => {
+    const onResize = () => {
+      viewportWidthRef.current = viewportWidth();
+      setWidthState(clampSidebarWidth(preferredWidthRef.current, viewportWidthRef.current));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  return React.useMemo(
+    () => ({ width, setWidth, commitWidth, resetWidth }),
+    [width, setWidth, commitWidth, resetWidth]
+  );
+}
 
 export function SidebarProvider({
   defaultOpen = true,
@@ -33,37 +88,9 @@ export function SidebarProvider({
   const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = React.useState(false);
 
-  // preferredWidthRef 保存用户期望宽度（仅受下限约束、不被视口裁剪），
-  // 实际展示的 width 再按当前视口 clamp，这样窗口缩小后再放大能恢复原宽度。
-  const preferredWidthRef = React.useRef<number>(SIDEBAR_WIDTH_DEFAULT_PX);
-  const [width, _setWidth] = React.useState<number>(() => {
-    if (typeof window === 'undefined') return SIDEBAR_WIDTH_DEFAULT_PX;
-    const preferred = parseStoredSidebarWidth(readSidebarStorage(SIDEBAR_WIDTH_STORAGE_KEY));
-    preferredWidthRef.current = preferred;
-    return clampSidebarWidth(preferred, viewportWidth());
-  });
+  const widthContextValue = useSidebarWidthState();
+  const width = widthContextValue.width;
   const [isResizing, setIsResizing] = React.useState(false);
-
-  const setWidth = React.useCallback((value: number) => {
-    const preferred = preferredSidebarWidth(value);
-    preferredWidthRef.current = preferred;
-    _setWidth(clampSidebarWidth(preferred, viewportWidth()));
-    writeSidebarStorage(SIDEBAR_WIDTH_STORAGE_KEY, String(preferred));
-  }, []);
-
-  const resetWidth = React.useCallback(() => {
-    preferredWidthRef.current = SIDEBAR_WIDTH_DEFAULT_PX;
-    _setWidth(clampSidebarWidth(SIDEBAR_WIDTH_DEFAULT_PX, viewportWidth()));
-    removeSidebarStorage(SIDEBAR_WIDTH_STORAGE_KEY);
-  }, []);
-
-  React.useEffect(() => {
-    const onResize = () => {
-      _setWidth(clampSidebarWidth(preferredWidthRef.current, viewportWidth()));
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
 
   // 桌面端展开状态：受控时以 openProp 为准（持久化交给调用方），否则退回内部 state。
   const [_open, _setOpen] = React.useState(defaultOpen);
@@ -118,45 +145,34 @@ export function SidebarProvider({
       openMobile,
       setOpenMobile,
       toggleSidebar,
-      width,
-      setWidth,
-      resetWidth,
       isResizing,
       setIsResizing,
     }),
-    [
-      state,
-      open,
-      setOpen,
-      isMobile,
-      openMobile,
-      toggleSidebar,
-      width,
-      setWidth,
-      resetWidth,
-      isResizing,
-    ]
+    [state, open, setOpen, isMobile, openMobile, toggleSidebar, isResizing]
   );
 
   return (
     <SidebarContext.Provider value={contextValue}>
-      <div
-        data-slot="sidebar-wrapper"
-        style={
-          {
-            '--sidebar-width': `${width}px`,
-            '--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
-            ...style,
-          } as React.CSSProperties
-        }
-        className={cn(
-          'group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex min-h-svh w-full',
-          className
-        )}
-        {...props}
-      >
-        {children}
-      </div>
+      <SidebarWidthContext.Provider value={widthContextValue}>
+        <div
+          data-slot="sidebar-wrapper"
+          data-resizing={isResizing ? 'true' : undefined}
+          style={
+            {
+              '--sidebar-width': `${width}px`,
+              '--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
+              ...style,
+            } as React.CSSProperties
+          }
+          className={cn(
+            'group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex min-h-svh w-full',
+            className
+          )}
+          {...props}
+        >
+          {children}
+        </div>
+      </SidebarWidthContext.Provider>
     </SidebarContext.Provider>
   );
 }

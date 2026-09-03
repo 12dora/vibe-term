@@ -31,7 +31,7 @@ import { isSidebarDeviceVisible } from '@tmex/stores';
 import { useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { ChevronRight, Loader2, Monitor } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, useLocation } from 'react-router';
 import { SideBarDeviceListForRuntime } from './sidebar-device-list-runtime';
@@ -348,7 +348,7 @@ function SidebarNodeOffline({
  * 分节头交给设备树一起渲染：可见设备数只有挂上该 node 运行时才读得到，
  * 一台都不显示时整节（含分节头）都不该出现。
  */
-function SidebarNodeRuntimeSection({
+const SidebarNodeRuntimeSection = memo(function SidebarNodeRuntimeSection({
   node,
   drag,
   disclosure,
@@ -378,7 +378,7 @@ function SidebarNodeRuntimeSection({
       />
     </NodeRuntimeScope>
   );
-}
+});
 
 /**
  * 折叠着的远端在线分节：只有一行分节头，**不挂运行时**（不建 WS、不发直连协商）。
@@ -421,10 +421,14 @@ function SidebarNodeCollapsed({
 function SidebarNodeOnline({ node, drag }: { node: SidebarNodeEntry; drag?: SidebarNodeSortable }) {
   const routed = parseNodeIdFromPath(useLocation().pathname) === node.runtimeNodeId;
   const [expanded, setExpanded] = useSidebarSectionExpanded('panes', node.runtimeNodeId, routed);
-  const disclosure = { expanded, onToggle: () => setExpanded(!expanded) };
+  // 分节自身每次导航都会重渲染（要跟着路由算 routed），但展开的分节下面挂着整棵设备树：
+  // 折叠开关保持恒等，memo 才能把这次重渲染挡在运行时子树之外。
+  const toggle = useCallback(() => setExpanded(!expanded), [expanded, setExpanded]);
+  const expand = useCallback(() => setExpanded(true), [setExpanded]);
+  const disclosure = useMemo(() => ({ expanded, onToggle: toggle }), [expanded, toggle]);
 
   if (!expanded) {
-    return <SidebarNodeCollapsed node={node} drag={drag} onToggle={() => setExpanded(true)} />;
+    return <SidebarNodeCollapsed node={node} drag={drag} onToggle={expand} />;
   }
   return <SidebarNodeRuntimeSection node={node} drag={drag} disclosure={disclosure} />;
 }

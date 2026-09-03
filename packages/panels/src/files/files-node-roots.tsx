@@ -11,7 +11,7 @@ import {
   reorderFileRoots,
 } from '@tmex/api-client';
 import type { FileEntryDto, FileRootDto, SystemInfo } from '@tmex/shared';
-import { decodeFileRef, fileRoute, hostAppPath } from '@tmex/stores';
+import { fileRoute, hostAppPath } from '@tmex/stores';
 import { useFileTreeStore, useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
@@ -20,7 +20,7 @@ import { useSidebar } from '@tmex/ui/sidebar';
 import { Loader2, TriangleAlert } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { matchPath, useLocation, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { SortableVerticalList, useSortableRow } from '../device-tree/device-tree-dnd';
 import { type DirectoryDragHandle, DirectoryNodeView } from './directory-node-view';
@@ -33,6 +33,7 @@ import {
   fileRootReorderOptions,
 } from './root-reorder';
 import { selectVisibleFileRoots } from './root-visibility';
+import { SelectedFileProvider, useIsFileSelected, useSelectedPathInRoot } from './selected-file';
 import { useDirectoryListing } from './use-directory-listing';
 import { useDirectoryUpload } from './use-directory-upload';
 import { useRsyncMissingToast } from './use-rsync-missing-toast';
@@ -43,16 +44,6 @@ const INDENT_STEP = 12;
 
 // 单个目录一次最多渲染多少行：后端每目录上限 2000，全量挂载会造出上千个带右键菜单的组件
 const DISPLAY_CAP = 500;
-
-function useSelectedFilePath(): { rootId: string; path: string } | null {
-  const location = useLocation();
-  const { host } = useRuntime();
-  return useMemo(() => {
-    const match = matchPath(hostAppPath(host, '/file/:ref'), location.pathname);
-    if (!match?.params.ref) return null;
-    return decodeFileRef(match.params.ref);
-  }, [location.pathname, host]);
-}
 
 interface TreeContext {
   llmConfigured: boolean;
@@ -161,7 +152,7 @@ export function FilesNodeRoots() {
   );
 
   return (
-    <>
+    <SelectedFileProvider>
       <SortableVerticalList
         ids={visibleIds}
         onReorder={reorder.onReorder}
@@ -201,7 +192,7 @@ export function FilesNodeRoots() {
           {t('files.noRoots')}
         </div>
       )}
-    </>
+    </SelectedFileProvider>
   );
 }
 
@@ -258,10 +249,10 @@ const DirNode = memo(function DirNode({
   const childIndent = indent + 18;
   const entries = query.data?.entries;
   // 选中的文件落在上限之外时把上限撑到它，否则路由直达的那一行根本不会挂载
-  const selected = useSelectedFilePath();
+  const selectedPath = useSelectedPathInRoot(rootId);
   const cap =
-    entries && entries.length > DISPLAY_CAP && selected?.rootId === rootId
-      ? Math.max(DISPLAY_CAP, entries.findIndex((entry) => entry.path === selected.path) + 1)
+    entries && entries.length > DISPLAY_CAP && selectedPath !== null
+      ? Math.max(DISPLAY_CAP, entries.findIndex((entry) => entry.path === selectedPath) + 1)
       : DISPLAY_CAP;
   const hidden = !showAll && entries ? Math.max(entries.length - cap, 0) : 0;
   const visible = hidden > 0 && entries ? entries.slice(0, cap) : entries;
@@ -349,9 +340,8 @@ const FileLeaf = memo(function FileLeaf({
   const navigate = useNavigate();
   const runtime = useRuntime();
   const { isMobile, setOpenMobile } = useSidebar();
-  const selected = useSelectedFilePath();
   const rootId = root.id;
-  const isSelected = selected?.rootId === rootId && selected?.path === entry.path;
+  const isSelected = useIsFileSelected(rootId, entry.path);
   const Icon = fileIconFor(entry);
   const indent = depth * INDENT_STEP + 4 + 18;
   const { download, dragHandlers } = useFileNodeActions(rootId, entry);

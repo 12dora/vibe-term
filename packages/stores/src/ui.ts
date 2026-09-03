@@ -2,6 +2,7 @@ import { DEFAULT_FONT_ID, type ThemePreset, isThemePreset } from '@tmex/theme';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { RuntimeCore } from './runtime';
+import { type DeferredPersistOptions, createDeferredPersistStorage } from './ui-persist';
 
 export type SidebarTab = 'panes' | 'agent' | 'files';
 
@@ -179,8 +180,70 @@ function mergePersistedUIState(persisted: unknown, current: UIState): UIState {
   };
 }
 
-export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
+/** 落盘字段面；`partialize` 的产出与它一一对应 */
+type UIPersistedState = Pick<
+  UIState,
+  | 'sidebarCollapsed'
+  | 'sidebarDeviceExpanded'
+  | 'sidebarDeviceVisibility'
+  | 'sidebarFilesVisibility'
+  | 'deviceFolderExpanded'
+  | 'sidebarNodeOrder'
+  | 'sidebarNodeExpansion'
+  | 'inputMode'
+  | 'editorSendWithEnter'
+  | 'theme'
+  | 'themePreset'
+  | 'keyboardBehaviorMode'
+  | 'editorHistory'
+  | 'editorDrafts'
+  | 'terminalFontSize'
+  | 'terminalLineHeight'
+  | 'terminalFontId'
+>;
+
+// sidebarTab 不持久化：每次加载都回到默认 'panes'。
+function partializeUIState(state: UIState): UIPersistedState {
+  return {
+    sidebarCollapsed: state.sidebarCollapsed,
+    sidebarDeviceExpanded: state.sidebarDeviceExpanded,
+    sidebarDeviceVisibility: state.sidebarDeviceVisibility,
+    sidebarFilesVisibility: state.sidebarFilesVisibility,
+    deviceFolderExpanded: state.deviceFolderExpanded,
+    sidebarNodeOrder: state.sidebarNodeOrder,
+    sidebarNodeExpansion: state.sidebarNodeExpansion,
+    inputMode: state.inputMode,
+    editorSendWithEnter: state.editorSendWithEnter,
+    theme: state.theme,
+    themePreset: state.themePreset,
+    keyboardBehaviorMode: state.keyboardBehaviorMode,
+    editorHistory: state.editorHistory,
+    editorDrafts: state.editorDrafts,
+    terminalFontSize: state.terminalFontSize,
+    terminalLineHeight: state.terminalLineHeight,
+    terminalFontId: state.terminalFontId,
+  };
+}
+
+export interface CreateUIStoreOptions {
+  /** 测试注入用；缺省走 setTimeout + window.localStorage */
+  persistStorage?: Omit<DeferredPersistOptions<UIPersistedState>, 'deferredKeys'>;
+}
+
+// 草稿延后落盘：editor 模式每敲一个键都会 set，同步序列化 + 写盘全在输入关键路径上
+function createUIPersistStorage(options: CreateUIStoreOptions) {
+  return createDeferredPersistStorage<UIPersistedState>({
+    ...options.persistStorage,
+    deferredKeys: ['editorDrafts'],
+  });
+}
+
+export function createUIStore(
+  core: Pick<RuntimeCore, 'storagePrefix'>,
+  options: CreateUIStoreOptions = {}
+) {
   const storageKey = `${core.storagePrefix}tmex-ui`;
+  const persisted = createUIPersistStorage(options);
 
   const store = create<UIState>()(
     persist(
@@ -276,33 +339,33 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
       }),
       {
         name: storageKey,
-        // sidebarTab 不持久化：每次加载都回到默认 'panes'。
-        partialize: (state) => ({
-          sidebarCollapsed: state.sidebarCollapsed,
-          sidebarDeviceExpanded: state.sidebarDeviceExpanded,
-          sidebarDeviceVisibility: state.sidebarDeviceVisibility,
-          sidebarFilesVisibility: state.sidebarFilesVisibility,
-          deviceFolderExpanded: state.deviceFolderExpanded,
-          sidebarNodeOrder: state.sidebarNodeOrder,
-          sidebarNodeExpansion: state.sidebarNodeExpansion,
-          inputMode: state.inputMode,
-          editorSendWithEnter: state.editorSendWithEnter,
-          theme: state.theme,
-          themePreset: state.themePreset,
-          keyboardBehaviorMode: state.keyboardBehaviorMode,
-          editorHistory: state.editorHistory,
-          editorDrafts: state.editorDrafts,
-          terminalFontSize: state.terminalFontSize,
-          terminalLineHeight: state.terminalLineHeight,
-          terminalFontId: state.terminalFontId,
-        }),
+        storage: persisted.storage,
+        partialize: partializeUIState,
         merge: mergePersistedUIState,
       }
     )
   );
 
   subscribeThemeStorageSync(store, storageKey);
+  subscribeDraftPersistFlush(persisted.flush);
   return store;
+}
+
+/**
+ * 延后的草稿必须在页面离场前落盘：标签页被切到后台后浏览器随时可能把它整个丢掉，
+ * `pagehide` 是移动端 Safari 唯一可靠的卸载信号（`beforeunload` 在 BFCache 下不触发）。
+ */
+function subscribeDraftPersistFlush(flush: () => void): void {
+  const doc = typeof document === 'undefined' ? null : document;
+  if (doc && typeof doc.addEventListener === 'function') {
+    doc.addEventListener('visibilitychange', () => {
+      if (doc.visibilityState !== 'hidden') return;
+      flush();
+    });
+  }
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('pagehide', () => flush());
+  }
 }
 
 export type UIStore = ReturnType<typeof createUIStore>;

@@ -5,8 +5,9 @@ import { cn } from '../../utils';
 import { Button } from '../button';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../sheet';
 import { SIDEBAR_WIDTH_MOBILE } from './constants';
-import { useSidebar } from './context';
-import { type SidebarSide, resizedSidebarWidth } from './width';
+import { useSidebar, useSidebarWidth } from './context';
+import { createSidebarResizeController, domResizeFrames } from './resize-controller';
+import type { SidebarSide } from './width';
 
 export function Sidebar({
   side = 'left',
@@ -128,28 +129,22 @@ export function Sidebar({
 }
 
 export function SidebarResizer({ side }: { side: SidebarSide }) {
-  const { width, setWidth, resetWidth, setIsResizing } = useSidebar();
-  const dragStateRef = React.useRef<{
-    pointerId: number;
-    startX: number;
-    startWidth: number;
-  } | null>(null);
+  const { width, setWidth, commitWidth, resetWidth } = useSidebarWidth();
+  const { setIsResizing } = useSidebar();
 
-  const endDrag = React.useCallback(() => {
-    dragStateRef.current = null;
-    setIsResizing(false);
-  }, [setIsResizing]);
+  // 三个回调都是 provider 里恒等的 useCallback / setState，所以控制器实际只建一次
+  const controller = React.useMemo(
+    () =>
+      createSidebarResizeController({
+        setWidth,
+        commitWidth,
+        setResizing: setIsResizing,
+        ...domResizeFrames,
+      }),
+    [setWidth, commitWidth, setIsResizing]
+  );
 
-  // 拖拽途中侧栏被折叠（如 Ctrl+B）会直接卸载 resizer，此时补一次收尾，
-  // 否则 isResizing 永远停在 true，展开/折叠动画会被一直禁用。
-  React.useEffect(() => {
-    return () => {
-      if (dragStateRef.current) {
-        dragStateRef.current = null;
-        setIsResizing(false);
-      }
-    };
-  }, [setIsResizing]);
+  React.useEffect(() => () => controller.dispose(), [controller]);
 
   return (
     <div
@@ -163,27 +158,12 @@ export function SidebarResizer({ side }: { side: SidebarSide }) {
       )}
       onPointerDown={(event) => {
         event.preventDefault();
-        dragStateRef.current = {
-          pointerId: event.pointerId,
-          startX: event.clientX,
-          startWidth: width,
-        };
         event.currentTarget.setPointerCapture(event.pointerId);
-        setIsResizing(true);
+        controller.start(event.pointerId, event.clientX, width);
       }}
-      onPointerMove={(event) => {
-        const drag = dragStateRef.current;
-        if (!drag || drag.pointerId !== event.pointerId) return;
-        setWidth(resizedSidebarWidth(drag.startWidth, event.clientX - drag.startX, side));
-      }}
-      onPointerUp={(event) => {
-        if (dragStateRef.current?.pointerId !== event.pointerId) return;
-        endDrag();
-      }}
-      onPointerCancel={(event) => {
-        if (dragStateRef.current?.pointerId !== event.pointerId) return;
-        endDrag();
-      }}
+      onPointerMove={(event) => controller.move(event.pointerId, event.clientX, side)}
+      onPointerUp={(event) => controller.end(event.pointerId)}
+      onPointerCancel={(event) => controller.end(event.pointerId)}
       onDoubleClick={resetWidth}
     />
   );

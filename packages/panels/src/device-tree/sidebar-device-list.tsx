@@ -12,11 +12,34 @@ import type { SidebarAgentAdapter } from './agent-adapter';
 import { DeviceRow } from './device-row';
 import { useDeviceTreeDialogs } from './device-tree-dialogs';
 import { SortableVerticalList } from './device-tree-dnd';
-import { useDeviceTreeNavigationApi, useDeviceTreeSelection } from './device-tree-navigation';
+import {
+  type DeviceTreeSelection,
+  useDeviceTreeNavigationApi,
+  useDeviceTreeSelection,
+} from './device-tree-navigation';
 import { selectSidebarVisibleDevices, sortDevices } from './device-tree-selectors';
 import { useSidebarDeviceReorder } from './use-sidebar-device-reorder';
 
 const identityExpansionKey = (deviceId: string) => deviceId;
+
+/**
+ * 一台设备行要的选中信息。
+ *
+ * 窗口/pane 的选中态一律先过「这台设备是不是选中的那台」（见 `WindowRow` 的 `isPaneSelected`），
+ * 所以未选中的设备下发 undefined 与下发全局值等价——但前者让 `DeviceRow` 的 memo 在切 pane 时
+ * 真的能 bail，后者会让每次路由变化重渲染侧栏里的每一台设备。
+ */
+export function deviceRowSelection(
+  selection: DeviceTreeSelection,
+  deviceId: string
+): { isSelected: boolean; selectedWindowId?: string; selectedPaneId?: string } {
+  if (deviceId !== selection.selectedDeviceId) return { isSelected: false };
+  return {
+    isSelected: true,
+    selectedWindowId: selection.selectedWindowId,
+    selectedPaneId: selection.selectedPaneId,
+  };
+}
 
 export interface SideBarDeviceListProps {
   /** 展开/选中设备时保证已订阅其 tmux 快照（宿主接自己的连接管理） */
@@ -56,7 +79,8 @@ export function SideBarDeviceList({
   const setSidebarDeviceExpanded = useUIStore((state) => state.setSidebarDeviceExpanded);
   const sidebarDeviceVisibility = useUIStore((state) => state.sidebarDeviceVisibility);
 
-  const { selectedDeviceId, selectedWindowId, selectedPaneId } = useDeviceTreeSelection();
+  const selection = useDeviceTreeSelection();
+  const { selectedDeviceId, selectedWindowId } = selection;
 
   const closeWindow = useTmuxStore((state) => state.closeWindow);
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
@@ -215,9 +239,7 @@ export function SideBarDeviceList({
                 key={device.id}
                 device={device}
                 isExpanded={sidebarDeviceExpanded[expansionKey(device.id)] !== false}
-                isSelected={device.id === selectedDeviceId}
-                selectedWindowId={selectedWindowId}
-                selectedPaneId={selectedPaneId}
+                {...deviceRowSelection(selection, device.id)}
                 onExpandedChange={handleDeviceExpandedChange}
                 onCreateWindow={handleCreateWindow}
                 onCloseWindow={requestCloseWindow}

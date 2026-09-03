@@ -45,6 +45,30 @@ export interface EditorInput {
   handleEditorClear: () => void;
 }
 
+/** 发送后短暂置灰按钮：定时器与「正在发送」这一位状态自成一体，单独拿出来 */
+function useSendFeedback(): { isSending: boolean; markSending: () => void } {
+  const [isSending, setIsSending] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    []
+  );
+
+  const markSending = useCallback(() => {
+    setIsSending(true);
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      setIsSending(false);
+    }, SEND_FEEDBACK_MS);
+  }, []);
+
+  return { isSending, markSending };
+}
+
 export function useEditorInput({
   deviceId,
   paneId,
@@ -55,9 +79,14 @@ export function useEditorInput({
   const { t } = useTranslation();
   const runtime = useRuntime();
   const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const sendFeedbackTimerRef = useRef<number | null>(null);
   const [editorText, setEditorText] = useState('');
-  const [isSending, setIsSending] = useState(false);
+  const { isSending, markSending } = useSendFeedback();
+  // 本地已渲染的文本：草稿写回 store 后会顺着订阅绕回来，同值再 setState 会白跑一轮渲染
+  const editorTextRef = useRef('');
+  const applyEditorText = useCallback((text: string) => {
+    editorTextRef.current = text;
+    setEditorText(text);
+  }, []);
 
   const inputMode = useUIStore((state) => state.inputMode);
   const editorSendWithEnter = useUIStore((state) => state.editorSendWithEnter);
@@ -69,17 +98,9 @@ export function useEditorInput({
   );
 
   useEffect(() => {
-    setEditorText(paneEditorDraft);
-  }, [paneEditorDraft]);
-
-  useEffect(
-    () => () => {
-      if (sendFeedbackTimerRef.current !== null) {
-        window.clearTimeout(sendFeedbackTimerRef.current);
-      }
-    },
-    []
-  );
+    if (paneEditorDraft === editorTextRef.current) return;
+    applyEditorText(paneEditorDraft);
+  }, [paneEditorDraft, applyEditorText]);
 
   const focusEditor = useCallback(() => {
     editorTextareaRef.current?.focus({ preventScroll: true });
@@ -107,14 +128,7 @@ export function useEditorInput({
       if (!deviceId || !paneId) return;
       if (!editorText.trim()) return;
 
-      setIsSending(true);
-      if (sendFeedbackTimerRef.current !== null) {
-        window.clearTimeout(sendFeedbackTimerRef.current);
-      }
-      sendFeedbackTimerRef.current = window.setTimeout(() => {
-        sendFeedbackTimerRef.current = null;
-        setIsSending(false);
-      }, SEND_FEEDBACK_MS);
+      markSending();
 
       const store = runtime.stores.tmux.getState();
       for (const payload of buildEditorPayloads(editorText, mode, editorSendWithEnter)) {
@@ -123,15 +137,17 @@ export function useEditorInput({
 
       addEditorHistory(editorText);
       clearDraft();
-      setEditorText('');
+      applyEditorText('');
     },
     [
       addEditorHistory,
+      applyEditorText,
       canInteractWithPane,
       clearDraft,
       deviceId,
       editorSendWithEnter,
       editorText,
+      markSending,
       paneId,
       runtime,
       t,
@@ -149,14 +165,14 @@ export function useEditorInput({
   }, [refocusOnMobile, sendEditorText]);
 
   const handleEditorClear = useCallback(() => {
-    setEditorText('');
+    applyEditorText('');
     clearDraft();
     refocusOnMobile();
-  }, [clearDraft, refocusOnMobile]);
+  }, [applyEditorText, clearDraft, refocusOnMobile]);
 
   const handleEditorChange = useCallback(
     (nextText: string) => {
-      setEditorText(nextText);
+      applyEditorText(nextText);
       if (!draftKey) {
         return;
       }
@@ -166,7 +182,7 @@ export function useEditorInput({
       }
       removeEditorDraft(draftKey);
     },
-    [draftKey, removeEditorDraft, setEditorDraft]
+    [applyEditorText, draftKey, removeEditorDraft, setEditorDraft]
   );
 
   return {
