@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { decodeBase64url, decodeCertificate, encodeBase64url } from '@tmex/shared/auth';
+import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
 import {
   LinkMux,
   type LinkSession,
@@ -21,16 +21,16 @@ import {
   rankPeerEndpoints,
   rttChangedMaterially,
 } from './address-class';
-import {
-  backoffDelayMs,
-  defaultScheduler,
-  encodeJsonBytes,
-  isRecord,
-  jsonStable,
-  parseSeq,
-} from './ctl';
+import { defaultScheduler, encodeJsonBytes, isRecord, jsonStable, parseSeq } from './ctl';
 import { jsonText } from './json-text';
 import type { RtcSignalMessage } from './mesh-deps';
+import {
+  DcUpgradeCoordinator,
+  PeerCollaboratorHost,
+  dcFailureReason as describeDcFailure,
+  parseEndpoints,
+  sanitizeEndpoints,
+} from './peer-dc-upgrade';
 import {
   type DirectAttemptRecord,
   clearedDirectAttempt,
@@ -47,6 +47,7 @@ import {
   dedupeRankedPeerEndpoints,
 } from './peer-endpoint-backoff';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
+import { PEER_RTC_WAKE_COOLDOWN_MS, RtcWakeGate } from './peer-rtc-wake';
 import { PeerServer } from './peer-server';
 import {
   type DirectDialLimiter,
@@ -58,27 +59,13 @@ import {
   sharedDirectDialLimiter,
 } from './peer-ws-race';
 import type { RtcPeerManager } from './rtc';
+import { type RtcSignaling, isRtcWakeSdp } from './rtc/ice';
 import {
-  RTC_WAKE_DOMAIN,
-  RTC_WAKE_MAX_SKEW_MS,
-  type RtcSignaling,
-  type RtcWakeFields,
-  encodeRtcWakeSdp,
-  isCanonicalRtcWakeNonce,
-  isRtcWakeSdp,
-  parseRtcWakeSdp,
-  peerRtcSession,
-  verifyRtcWakeSignature,
-} from './rtc/ice';
-import {
-  RTC_DIAL_BREAKER_HEALTHY_MS,
-  type RtcDialBreaker,
   type RtcDialBreakerSnapshot,
   classifyRtcDialFailure,
-  createGatewayRtcDialBreaker,
   isIntentionalDcLoss,
 } from './rtc/rtc-dial-breaker';
-import { flushDialFailed, rtcLog, rtcLogRateLimited } from './rtc/rtc-log';
+import { flushDialFailed, rtcLog } from './rtc/rtc-log';
 import { acceptHttpStream, acceptWsStream, classifyOpenPayload } from './stream-targets';
 import {
   type DispatchHttp,
@@ -100,23 +87,27 @@ export const PEER_WS_DIAL_STAGGER_MS = 250;
 export const PEER_PING_INTERVAL_MS = 15_000;
 export const PEER_MISSED_PONG_LIMIT = 3;
 export const PEER_MAX_CONCURRENT_STREAMS = 256;
-export const PEER_UPGRADE_COOLDOWN_MS = 10_000;
-export const PEER_UPGRADE_SCAN_MS = 15_000;
 export const KEY_LOG_STATUS_DEBOUNCE_MS = 100;
-export const PEER_UPGRADE_BACKOFF_CAP_MS = 5 * 60 * 1000;
-export const PEER_UPGRADE_MAX_INFLIGHT = 4;
-export const PEER_MAX_ENDPOINTS = 16;
-export const PEER_MAX_ENDPOINT_LENGTH = 256;
 export const PEER_RETIRE_MIN_MS = 5_000;
 export const PEER_RETIRE_QUIET_MS = 2_000;
 export const PEER_RETIRE_MAX_MS = 30_000;
 export const RTC_PEER_INBOX_MAX_MESSAGES = 32;
-export const PEER_RTC_WAKE_COOLDOWN_MS = 5_000;
-export const PEER_RTC_WAKE_NONCE_CACHE = 256;
-export const PEER_RTC_WAKE_VERIFY_BURST = 5;
-export const PEER_RTC_WAKE_VERIFY_WINDOW_MS = 5_000;
-export const PEER_DC_UPGRADE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
-export const PEER_DC_UPGRADE_RETRY_TAIL_MS = 120_000;
+export {
+  PEER_DC_UPGRADE_RETRY_DELAYS_MS,
+  PEER_DC_UPGRADE_RETRY_TAIL_MS,
+  PEER_MAX_ENDPOINT_LENGTH,
+  PEER_MAX_ENDPOINTS,
+  PEER_UPGRADE_BACKOFF_CAP_MS,
+  PEER_UPGRADE_COOLDOWN_MS,
+  PEER_UPGRADE_MAX_INFLIGHT,
+  PEER_UPGRADE_SCAN_MS,
+} from './peer-dc-upgrade';
+export {
+  PEER_RTC_WAKE_COOLDOWN_MS,
+  PEER_RTC_WAKE_NONCE_CACHE,
+  PEER_RTC_WAKE_VERIFY_BURST,
+  PEER_RTC_WAKE_VERIFY_WINDOW_MS,
+} from './peer-rtc-wake';
 export { winningDialInitiator };
 export const PEER_TRANSPORT_RANK: Record<PeerTransportKind, number> = {
   dc: 3,
@@ -208,30 +199,6 @@ type LivePeer = {
   dcAttemptId: string | null;
 };
 
-type UpgradeGate = {
-  nextEligibleAt: number;
-  failures: number;
-  coalesced: boolean;
-  scheduled: boolean;
-};
-
-type WakeGate = {
-  inflight: boolean;
-  nextEligibleAt: number;
-  deferredAbort: AbortController | null;
-};
-
-type IncomingWakeGate = {
-  nextEligibleAt: number;
-  verifyTokens: number;
-  verifyRefillAt: number;
-};
-
-type DcUpgradeRetry = {
-  attempt: number;
-  abort: AbortController | null;
-};
-
 type TransportWaiter = {
   kind: PeerTransportKind;
   resolve: (ok: boolean) => void;
@@ -259,7 +226,7 @@ type ParkedInbound = {
   remoteAddress: string | null;
 };
 
-export class PeerManager {
+export class PeerManager extends PeerCollaboratorHost {
   readonly identity: MeshIdentity;
   private readonly userStore: UserStore;
   private readonly uplink: UplinkClient | UplinkPool;
@@ -311,14 +278,8 @@ export class PeerManager {
   private readonly rtcListeners = new Map<string, Set<(msg: RtcSignalMessage) => void>>();
   private readonly rtcInbox = new Map<string, RtcSignalMessage[]>();
   private readonly server: PeerServer | null;
-  private readonly upgradeGate = new Map<string, UpgradeGate>();
-  private readonly wakeGate = new Map<string, WakeGate>();
-  private readonly incomingWakeGate = new Map<string, IncomingWakeGate>();
-  private readonly rtcWakeNonces = new Map<string, Map<string, number>>();
-  private readonly dcUpgradeRetry = new Map<string, DcUpgradeRetry>();
-  private readonly dcBreaker: RtcDialBreaker;
-  private readonly dcHealth = new Map<string, AbortController>();
-  private dcAttemptSeq = 0;
+  protected readonly dcUpgrade: DcUpgradeCoordinator;
+  protected readonly rtcWake: RtcWakeGate;
   private readonly lostDirect = new Set<string>();
   private readonly lastDirectAttempt = new Map<string, DirectAttemptRecord>();
   private readonly transportWaiters = new Map<string, TransportWaiter[]>();
@@ -332,16 +293,14 @@ export class PeerManager {
   private readonly advertisedEndpointSet = new Map<string, string>();
   private localFingerprint = '';
   private keyLogHeadCache: { userId: string; seq: bigint; hash: Uint8Array } | null = null;
-  private upgradeInflight = 0;
   private linkInfoHold = 0;
-  private readonly upgradeWaiters: Array<() => void> = [];
-  private upgradeScan: { clear: () => void } | null = null;
   private keyLogStatusDebounce: { clear: () => void } | null = null;
   private stopped = false;
   private generation = 0;
   private stopAbort = new AbortController();
 
   constructor(opts: PeerManagerOptions) {
+    super();
     this.identity = opts.identity;
     this.userStore = opts.userStore;
     this.uplink = opts.uplink;
@@ -378,7 +337,45 @@ export class PeerManager {
     this.endpointBackoff =
       opts.endpointBackoff ?? new PeerEndpointBackoff({ now: () => this.scheduler.now() });
     this.dialLimiter = opts.dialLimiter ?? sharedDirectDialLimiter();
-    this.dcBreaker = createGatewayRtcDialBreaker({ now: () => this.scheduler.now() });
+    this.dcUpgrade = new DcUpgradeCoordinator({
+      scheduler: this.scheduler,
+      live: () => this.live,
+      dialDc: (nodeId) => this.dial(nodeId),
+      shouldTryDc: (nodeId) => this.shouldTryDc(nodeId),
+      dcCapable: (nodeId) => this.dcCapable(nodeId),
+      emitLinkInfo: (live) => this.emitLinkInfo(live as LivePeer),
+      log: rtcLog,
+      stopped: () => this.stopped,
+      stopSignal: () => this.stopAbort.signal,
+      isTrusted: (nodeId) => this.isTrusted(nodeId),
+      pending: () => this.pending,
+      upgrading: () => this.upgrading,
+      probeQuiesce: (live) => this.probeQuiesce(live as LivePeer),
+      hasWsSecureCandidate: (nodeId) => this.hasWsSecureCandidate(nodeId),
+      lostDirect: () => this.lostDirect,
+    });
+    this.rtcWake = new RtcWakeGate({
+      identity: this.identity,
+      userStore: this.userStore,
+      scheduler: this.scheduler,
+      sendRtcSignal: (peerNodeId, msg) => this.rtcWake.sendRtcSignal(peerNodeId, msg),
+      dcCapable: (nodeId) => this.dcCapable(nodeId),
+      maybeUpgrade: (nodeId, opts) => this.maybeUpgrade(nodeId, opts),
+      stopSignal: () => this.stopAbort.signal,
+      stopped: () => this.stopped,
+      isTrusted: (nodeId) => this.isTrusted(nodeId),
+      live: () => this.live,
+      shouldTryDc: (nodeId) => this.shouldTryDc(nodeId),
+      pending: () => this.pending,
+      upgrading: () => this.upgrading,
+      wantsUpgrade: (live) => this.wantsUpgrade(live as LivePeer),
+      getLink: (nodeId) => this.getLink(nodeId),
+      rtcListeners: () => this.rtcListeners,
+      rtcInbox: () => this.rtcInbox,
+      sendPeerCtl: (live, payload) => this.sendPeerCtl(live as LivePeer, payload),
+      ensureDcSession: this.ensureDcSession,
+      uplinkSendCtl: (payload) => this.uplink.sendCtl(payload),
+    });
     this.uplink.setOnRelayStream((stream, from) => {
       void this.acceptRelay(stream, from);
     });
@@ -396,11 +393,13 @@ export class PeerManager {
     }
   }
 
-  get listenPort(): number | null {
-    if (!this.server?.listening) return null;
-    return this.server.port;
+  private get dcBreaker() {
+    return this.dcUpgrade.dcBreaker;
   }
 
+  get listenPort(): number | null {
+    return this.server?.listening ? this.server.port : null;
+  }
   quiesceCapableOf(nodeId: string): boolean {
     return this.live.get(nodeId)?.quiesceCapable === true;
   }
@@ -408,13 +407,12 @@ export class PeerManager {
   async start(): Promise<void> {
     await this.server?.start();
     this.syncLocalFingerprint();
-    this.upgradeScan?.clear();
-    this.upgradeScan = this.scheduler.interval(() => {
+    this.dcUpgrade.startScan(() => {
       this.syncLocalFingerprint();
       this.endpointBackoff.prune();
       this.refreshAdvertisedStatus();
       this.notifyPeerEndpointsChanged();
-    }, PEER_UPGRADE_SCAN_MS);
+    });
   }
 
   async stop(): Promise<void> {
@@ -422,8 +420,7 @@ export class PeerManager {
     this.stopped = true;
     this.generation += 1;
     this.stopAbort.abort();
-    this.upgradeScan?.clear();
-    this.upgradeScan = null;
+    this.dcUpgrade.clearScan();
     this.keyLogStatusDebounce?.clear();
     this.keyLogStatusDebounce = null;
     this.server?.stop();
@@ -444,14 +441,9 @@ export class PeerManager {
     }
     this.liveWaiters.clear();
     this.upgrading.clear();
-    this.abortDeferredRtcWakes();
-    this.wakeGate.clear();
-    this.incomingWakeGate.clear();
-    this.rtcWakeNonces.clear();
-    for (const nodeId of [...this.dcUpgradeRetry.keys()]) this.cancelDcUpgradeRetry(nodeId);
-    for (const nodeId of [...this.dcHealth.keys()]) this.cancelDcHealthTimer(nodeId);
+    this.rtcWake.dispose();
     this.lostDirect.clear();
-    this.dcBreaker.reset();
+    this.dcUpgrade.dispose();
   }
 
   getLive(nodeId: string): LinkSession | null {
@@ -467,7 +459,6 @@ export class PeerManager {
   transportOf(nodeId: string): PeerTransportKind | null {
     return this.live.get(nodeId)?.transport ?? null;
   }
-
   rttOf(nodeId: string): number | null {
     return this.live.get(nodeId)?.rttMs ?? null;
   }
@@ -621,11 +612,8 @@ export class PeerManager {
     this.dropPeer(nodeId, 'revoked');
     this.forceCloseRetiring(nodeId, 'revoked');
     this.userStore.deletePeer(nodeId);
-    this.upgradeGate.delete(nodeId);
-    this.releaseRtcWakeAttempt(nodeId);
-    this.wakeGate.delete(nodeId);
-    this.incomingWakeGate.delete(nodeId);
-    this.rtcWakeNonces.delete(nodeId.toLowerCase());
+    this.dcUpgrade.upgradeGate.delete(nodeId);
+    this.rtcWake.forgetPeer(nodeId);
     this.cancelDcUpgradeRetry(nodeId);
     this.lostDirect.delete(nodeId);
     this.lastDirectAttempt.delete(nodeId);
@@ -743,145 +731,6 @@ export class PeerManager {
     }
   }
 
-  private wantsUpgrade(live: LivePeer): boolean {
-    if (live.retiring) return false;
-    if (live.transport === 'dc') return false;
-    return (
-      this.shouldTryDc(live.peerNodeId) ||
-      (live.transport === 'relay' && this.hasWsSecureCandidate(live.peerNodeId))
-    );
-  }
-
-  private ensureGate(nodeId: string): UpgradeGate {
-    let gate = this.upgradeGate.get(nodeId);
-    if (!gate) {
-      gate = { nextEligibleAt: 0, failures: 0, coalesced: false, scheduled: false };
-      this.upgradeGate.set(nodeId, gate);
-    }
-    return gate;
-  }
-
-  private noteUpgradeResult(nodeId: string, ok: boolean): void {
-    const gate = this.ensureGate(nodeId);
-    const now = this.scheduler.now();
-    if (ok) {
-      gate.failures = 0;
-      gate.nextEligibleAt = now + PEER_UPGRADE_COOLDOWN_MS;
-      return;
-    }
-    gate.failures += 1;
-    gate.nextEligibleAt =
-      now +
-      backoffDelayMs(gate.failures - 1, PEER_UPGRADE_COOLDOWN_MS, PEER_UPGRADE_BACKOFF_CAP_MS);
-  }
-
-  private scheduleCoalescedUpgrade(nodeId: string): void {
-    const gate = this.ensureGate(nodeId);
-    if (gate.scheduled || this.stopped) return;
-    gate.scheduled = true;
-    const wait = Math.max(0, gate.nextEligibleAt - this.scheduler.now());
-    void this.scheduler.sleep(wait, this.stopAbort.signal).then(
-      () => {
-        gate.scheduled = false;
-        if (this.stopped) return;
-        if (this.scheduler.now() < gate.nextEligibleAt) return;
-        if (!this.upgradeGate.get(nodeId)?.coalesced) return;
-        this.maybeUpgrade(nodeId, { cooldown: true });
-      },
-      () => {
-        gate.scheduled = false;
-      }
-    );
-  }
-
-  private acquireUpgradeSlot(): Promise<void> {
-    if (this.stopped) return Promise.reject(new Error('stopped'));
-    if (this.upgradeInflight < PEER_UPGRADE_MAX_INFLIGHT) {
-      this.upgradeInflight += 1;
-      return Promise.resolve();
-    }
-    return new Promise((resolve, reject) => {
-      const waiter = () => {
-        this.stopAbort.signal.removeEventListener('abort', onAbort);
-        if (this.stopped) {
-          reject(new Error('stopped'));
-          return;
-        }
-        this.upgradeInflight += 1;
-        resolve();
-      };
-      const onAbort = () => {
-        const idx = this.upgradeWaiters.indexOf(waiter);
-        if (idx >= 0) this.upgradeWaiters.splice(idx, 1);
-        reject(this.stopAbort.signal.reason ?? new Error('stopped'));
-      };
-      this.upgradeWaiters.push(waiter);
-      this.stopAbort.signal.addEventListener('abort', onAbort, { once: true });
-    });
-  }
-
-  private releaseUpgradeSlot(): void {
-    this.upgradeInflight = Math.max(0, this.upgradeInflight - 1);
-    const next = this.upgradeWaiters.shift();
-    next?.();
-  }
-
-  private maybeUpgrade(nodeId: string, opts: { cooldown: boolean; userPath?: boolean }): void {
-    if (this.stopped) return;
-    if (!this.isTrusted(nodeId)) return;
-    const live = this.live.get(nodeId);
-    if (!live || !this.wantsUpgrade(live)) return;
-    if (!live.quiesceCapable) {
-      this.probeQuiesce(live);
-      this.ensureGate(nodeId).coalesced = true;
-      return;
-    }
-    if (this.pending.has(nodeId) || this.upgrading.has(nodeId)) {
-      this.ensureGate(nodeId).coalesced = true;
-      return;
-    }
-    const gate = this.ensureGate(nodeId);
-    if (opts.cooldown && this.scheduler.now() < gate.nextEligibleAt) {
-      gate.coalesced = true;
-      this.scheduleCoalescedUpgrade(nodeId);
-      return;
-    }
-    gate.coalesced = false;
-    this.queueUpgrade(nodeId);
-  }
-
-  private queueUpgrade(nodeId: string): void {
-    if (this.upgrading.has(nodeId)) {
-      this.ensureGate(nodeId).coalesced = true;
-      return;
-    }
-    const before = this.live.get(nodeId)?.session ?? null;
-    const upgrade = this.runUpgradeDial(nodeId, before);
-    this.upgrading.set(nodeId, upgrade);
-    void upgrade
-      .catch(() => undefined)
-      .finally(() => {
-        if (this.upgrading.get(nodeId) === upgrade) this.upgrading.delete(nodeId);
-        if (this.upgradeGate.get(nodeId)?.coalesced && !this.stopped) {
-          this.scheduleCoalescedUpgrade(nodeId);
-        }
-      });
-  }
-
-  private async runUpgradeDial(nodeId: string, before: LinkSession | null): Promise<LinkSession> {
-    await this.acquireUpgradeSlot();
-    try {
-      const session = await this.dial(nodeId);
-      this.noteUpgradeResult(nodeId, session !== before);
-      return session;
-    } catch (err) {
-      this.noteUpgradeResult(nodeId, false);
-      throw err;
-    } finally {
-      this.releaseUpgradeSlot();
-    }
-  }
-
   private hasWsSecureCandidate(nodeId: string): boolean {
     if (this.linkFactory) return true;
     const cached = this.userStore.getPeer(nodeId);
@@ -894,384 +743,6 @@ export class PeerManager {
 
   private shouldTryDc(nodeId: string): boolean {
     return this.dcCapable(nodeId) && this.dcBreaker.shouldTry(nodeId).allow;
-  }
-
-  private handleIncomingRtcWake(fromNodeId: string, msg: RtcSignalMessage): void {
-    if (this.stopped) return;
-    const now = this.scheduler.now();
-    const gate = this.ensureIncomingWakeGate(fromNodeId);
-    const drop = (tag: string, dropped: string) =>
-      rtcLogRateLimited(`wake:${tag}:${fromNodeId}`, 'signal recv', {
-        peer: fromNodeId,
-        kind: 'wake',
-        dropped,
-      });
-    if (now < gate.nextEligibleAt) {
-      drop('rate', 'rate');
-      return;
-    }
-    if (!this.consumeWakeVerifyToken(gate, now)) {
-      drop('rate', 'rate');
-      return;
-    }
-    const wake = parseRtcWakeSdp(msg.sdp);
-    if (!wake || !this.acceptSignedRtcWake(fromNodeId, msg, wake)) {
-      drop('auth', 'auth');
-      return;
-    }
-    gate.nextEligibleAt = now + PEER_RTC_WAKE_COOLDOWN_MS;
-    if (this.identity.nodeId.toLowerCase() >= fromNodeId.toLowerCase()) {
-      drop('role', 'not-offerer');
-      return;
-    }
-    rtcLog('signal recv', { peer: fromNodeId, kind: 'wake' });
-    const live = this.live.get(fromNodeId);
-    if (live?.transport === 'dc' || !this.shouldTryDc(fromNodeId)) return;
-    if (this.pending.has(fromNodeId) || this.upgrading.has(fromNodeId)) return;
-    if (live && !this.wantsUpgrade(live)) return;
-    void this.getLink(fromNodeId).catch(() => undefined);
-  }
-
-  private acceptSignedRtcWake(
-    fromNodeId: string,
-    msg: RtcSignalMessage,
-    wake: RtcWakeFields
-  ): boolean {
-    if (wake.domain !== RTC_WAKE_DOMAIN) return false;
-    if (wake.from.toLowerCase() !== fromNodeId.toLowerCase()) return false;
-    if (wake.to.toLowerCase() !== this.identity.nodeId.toLowerCase()) return false;
-    const session = peerRtcSession(wake.from, wake.to);
-    if (wake.rtcSession.toLowerCase() !== session.toLowerCase()) return false;
-    if (msg.rtcSession && msg.rtcSession.toLowerCase() !== session.toLowerCase()) return false;
-    if (Math.abs(this.scheduler.now() - wake.issued_at) > RTC_WAKE_MAX_SKEW_MS) return false;
-    if (!this.isTrusted(wake.from)) return false;
-    const cert = this.userStore.getCert(wake.from);
-    if (!cert) return false;
-    let edPk: Uint8Array;
-    try {
-      edPk = decodeCertificate(cert.certificateBytes).ed_pk;
-    } catch {
-      return false;
-    }
-    if (!isCanonicalRtcWakeNonce(wake.nonce)) return false;
-    if (!verifyRtcWakeSignature(wake, edPk)) return false;
-    return this.rememberRtcWakeNonce(fromNodeId, wake.nonce, wake.issued_at);
-  }
-
-  private rememberRtcWakeNonce(fromNodeId: string, nonce: string, issuedAt: number): boolean {
-    const from = fromNodeId.toLowerCase();
-    let peer = this.rtcWakeNonces.get(from);
-    if (!peer) {
-      peer = new Map();
-      this.rtcWakeNonces.set(from, peer);
-    }
-    this.pruneRtcWakeNonces(peer);
-    if (peer.has(nonce)) return false;
-    if (peer.size >= PEER_RTC_WAKE_NONCE_CACHE) return false;
-    peer.set(nonce, issuedAt + RTC_WAKE_MAX_SKEW_MS);
-    return true;
-  }
-
-  private pruneRtcWakeNonces(peer: Map<string, number>): void {
-    const now = this.scheduler.now();
-    for (const [nonce, exp] of peer) {
-      if (now > exp) peer.delete(nonce);
-    }
-  }
-
-  private ensureIncomingWakeGate(fromNodeId: string): IncomingWakeGate {
-    let gate = this.incomingWakeGate.get(fromNodeId);
-    if (!gate) {
-      gate = {
-        nextEligibleAt: 0,
-        verifyTokens: PEER_RTC_WAKE_VERIFY_BURST,
-        verifyRefillAt: 0,
-      };
-      this.incomingWakeGate.set(fromNodeId, gate);
-    }
-    return gate;
-  }
-
-  private consumeWakeVerifyToken(gate: IncomingWakeGate, now: number): boolean {
-    const interval = PEER_RTC_WAKE_VERIFY_WINDOW_MS / PEER_RTC_WAKE_VERIFY_BURST;
-    if (!(interval > 0)) return false;
-    if (gate.verifyRefillAt <= 0) {
-      gate.verifyTokens = PEER_RTC_WAKE_VERIFY_BURST;
-      gate.verifyRefillAt = now;
-    } else if (now > gate.verifyRefillAt) {
-      const add = Math.floor((now - gate.verifyRefillAt) / interval);
-      if (add > 0) {
-        gate.verifyTokens = Math.min(PEER_RTC_WAKE_VERIFY_BURST, gate.verifyTokens + add);
-        gate.verifyRefillAt += add * interval;
-      }
-    }
-    if (gate.verifyTokens < 1) return false;
-    gate.verifyTokens -= 1;
-    return true;
-  }
-
-  private cancelDcUpgradeRetry(nodeId: string): void {
-    const rec = this.dcUpgradeRetry.get(nodeId);
-    if (!rec) return;
-    rec.abort?.abort();
-    rec.abort = null;
-    this.dcUpgradeRetry.delete(nodeId);
-  }
-
-  private nextDcAttemptId(): string {
-    this.dcAttemptSeq += 1;
-    return `dc:${this.dcAttemptSeq}`;
-  }
-
-  private cancelDcHealthTimer(nodeId: string): void {
-    const abort = this.dcHealth.get(nodeId);
-    if (!abort) return;
-    this.dcHealth.delete(nodeId);
-    abort.abort();
-  }
-
-  private armDcHealthTimer(nodeId: string, attemptId: string): void {
-    this.cancelDcHealthTimer(nodeId);
-    const abort = new AbortController();
-    this.dcHealth.set(nodeId, abort);
-    const establishedAt = this.scheduler.now();
-    const handle = this.scheduler.interval(() => {
-      handle.clear();
-      if (this.dcHealth.get(nodeId) !== abort) return;
-      this.dcHealth.delete(nodeId);
-      if (this.scheduler.now() - establishedAt < RTC_DIAL_BREAKER_HEALTHY_MS) return;
-      const live = this.live.get(nodeId);
-      if (live?.transport !== 'dc' || live.dcAttemptId !== attemptId) return;
-      if (this.dcBreaker.noteHealthy(nodeId)) this.emitLinkInfo(live);
-    }, RTC_DIAL_BREAKER_HEALTHY_MS);
-    abort.signal.addEventListener(
-      'abort',
-      () => {
-        handle.clear();
-        if (this.dcHealth.get(nodeId) === abort) this.dcHealth.delete(nodeId);
-      },
-      { once: true }
-    );
-  }
-
-  private dcUpgradeRetryDelayMs(attempt: number): number {
-    return attempt < PEER_DC_UPGRADE_RETRY_DELAYS_MS.length
-      ? PEER_DC_UPGRADE_RETRY_DELAYS_MS[attempt]
-      : PEER_DC_UPGRADE_RETRY_TAIL_MS;
-  }
-
-  private armDcUpgradeRetry(nodeId: string): void {
-    if (this.stopped) return;
-    if (!this.dcCapable(nodeId)) {
-      this.lostDirect.delete(nodeId);
-      this.cancelDcUpgradeRetry(nodeId);
-      return;
-    }
-    const decision = this.dcBreaker.shouldTry(nodeId);
-    if (!decision.allow) {
-      this.scheduleDcBreakerProbe(nodeId, decision.until);
-      return;
-    }
-    const live = this.live.get(nodeId);
-    if (live?.transport === 'dc') {
-      this.lostDirect.delete(nodeId);
-      this.cancelDcUpgradeRetry(nodeId);
-      return;
-    }
-    if (!live) return;
-    if (!live.quiesceCapable) return;
-    let rec = this.dcUpgradeRetry.get(nodeId);
-    if (!rec) {
-      rec = { attempt: 0, abort: null };
-      this.dcUpgradeRetry.set(nodeId, rec);
-    }
-    if (rec.abort) return;
-    const inMs = this.dcUpgradeRetryDelayMs(rec.attempt);
-    const attempt = rec.attempt + 1;
-    rtcLog('upgrade retry', { peer: nodeId, attempt, in_ms: inMs });
-    const abort = new AbortController();
-    rec.abort = abort;
-    const onStop = () => abort.abort();
-    this.stopAbort.signal.addEventListener('abort', onStop, { once: true });
-    void this.scheduler.sleep(inMs, abort.signal).then(
-      () => {
-        this.stopAbort.signal.removeEventListener('abort', onStop);
-        if (rec.abort === abort) rec.abort = null;
-        rec.attempt = attempt;
-        if (this.stopped) return;
-        if (this.live.get(nodeId)?.transport === 'dc') {
-          this.lostDirect.delete(nodeId);
-          this.cancelDcUpgradeRetry(nodeId);
-          return;
-        }
-        if (!this.shouldTryDc(nodeId) || !this.live.get(nodeId)) return;
-        this.maybeUpgrade(nodeId, { cooldown: true });
-        const pending = this.upgrading.get(nodeId) ?? this.pending.get(nodeId);
-        if (pending) {
-          void pending
-            .finally(() => {
-              if (this.live.get(nodeId)?.transport === 'dc') {
-                this.lostDirect.delete(nodeId);
-                this.cancelDcUpgradeRetry(nodeId);
-                return;
-              }
-              this.armDcUpgradeRetry(nodeId);
-            })
-            .catch(() => undefined);
-        } else {
-          this.armDcUpgradeRetry(nodeId);
-        }
-      },
-      () => {
-        this.stopAbort.signal.removeEventListener('abort', onStop);
-        if (rec.abort === abort) rec.abort = null;
-      }
-    );
-  }
-
-  private scheduleDcBreakerProbe(nodeId: string, until: number | null): void {
-    const live = this.live.get(nodeId);
-    if (live?.transport === 'dc') {
-      this.lostDirect.delete(nodeId);
-      this.cancelDcUpgradeRetry(nodeId);
-      return;
-    }
-    if (!live || !live.quiesceCapable) return;
-    let rec = this.dcUpgradeRetry.get(nodeId);
-    if (!rec) {
-      rec = { attempt: 0, abort: null };
-      this.dcUpgradeRetry.set(nodeId, rec);
-    }
-    if (rec.abort) return;
-    const inMs = Math.max(0, (until ?? this.scheduler.now()) - this.scheduler.now());
-    rtcLog('upgrade retry', {
-      peer: nodeId,
-      attempt: rec.attempt + 1,
-      in_ms: inMs,
-      cause: 'breaker_cooling',
-    });
-    const abort = new AbortController();
-    rec.abort = abort;
-    const onStop = () => abort.abort();
-    this.stopAbort.signal.addEventListener('abort', onStop, { once: true });
-    void this.scheduler.sleep(inMs, abort.signal).then(
-      () => {
-        this.stopAbort.signal.removeEventListener('abort', onStop);
-        if (rec.abort === abort) rec.abort = null;
-        if (this.stopped) return;
-        if (this.live.get(nodeId)?.transport === 'dc') {
-          this.lostDirect.delete(nodeId);
-          this.cancelDcUpgradeRetry(nodeId);
-          return;
-        }
-        if (!this.live.get(nodeId)) return;
-        if (!this.shouldTryDc(nodeId)) {
-          const next = this.dcBreaker.shouldTry(nodeId);
-          if (next.cooling) this.scheduleDcBreakerProbe(nodeId, next.until);
-          return;
-        }
-        this.maybeUpgrade(nodeId, { cooldown: true });
-        const pending = this.upgrading.get(nodeId) ?? this.pending.get(nodeId);
-        if (pending) {
-          void pending
-            .finally(() => {
-              if (this.live.get(nodeId)?.transport === 'dc') {
-                this.lostDirect.delete(nodeId);
-                this.cancelDcUpgradeRetry(nodeId);
-                return;
-              }
-              this.armDcUpgradeRetry(nodeId);
-            })
-            .catch(() => undefined);
-        } else {
-          this.armDcUpgradeRetry(nodeId);
-        }
-      },
-      () => {
-        this.stopAbort.signal.removeEventListener('abort', onStop);
-        if (rec.abort === abort) rec.abort = null;
-      }
-    );
-  }
-
-  private ensureWakeGate(peerNodeId: string): WakeGate {
-    let gate = this.wakeGate.get(peerNodeId);
-    if (!gate) {
-      gate = { inflight: false, nextEligibleAt: 0, deferredAbort: null };
-      this.wakeGate.set(peerNodeId, gate);
-    }
-    return gate;
-  }
-
-  private abortDeferredRtcWakes(): void {
-    for (const gate of this.wakeGate.values()) {
-      this.disarmDeferredRtcWake(gate);
-    }
-  }
-
-  private disarmDeferredRtcWake(gate: WakeGate): void {
-    gate.deferredAbort?.abort();
-    gate.deferredAbort = null;
-  }
-
-  private armDeferredRtcWake(peerNodeId: string, gate: WakeGate): void {
-    if (gate.deferredAbort || this.stopped) return;
-    const delay = Math.max(0, gate.nextEligibleAt - this.scheduler.now());
-    const abort = new AbortController();
-    gate.deferredAbort = abort;
-    const onStop = () => abort.abort();
-    this.stopAbort.signal.addEventListener('abort', onStop, { once: true });
-    void this.scheduler.sleep(delay, abort.signal).then(
-      () => {
-        this.stopAbort.signal.removeEventListener('abort', onStop);
-        if (gate.deferredAbort === abort) gate.deferredAbort = null;
-        if (this.stopped) return;
-        gate.nextEligibleAt = Math.min(gate.nextEligibleAt, this.scheduler.now());
-        this.dispatchRtcWake(peerNodeId);
-      },
-      () => {
-        this.stopAbort.signal.removeEventListener('abort', onStop);
-        if (gate.deferredAbort === abort) gate.deferredAbort = null;
-      }
-    );
-  }
-
-  private releaseRtcWakeAttempt(peerNodeId: string): void {
-    const gate = this.wakeGate.get(peerNodeId);
-    if (!gate) return;
-    gate.inflight = false;
-    this.disarmDeferredRtcWake(gate);
-  }
-
-  private dispatchRtcWake(peerNodeId: string): void {
-    if (this.identity.nodeId.toLowerCase() < peerNodeId.toLowerCase()) return;
-    if (this.live.get(peerNodeId)?.transport === 'dc') {
-      this.releaseRtcWakeAttempt(peerNodeId);
-      return;
-    }
-    if (!this.shouldTryDc(peerNodeId)) return;
-    const gate = this.ensureWakeGate(peerNodeId);
-    if (gate.inflight) return;
-    const now = this.scheduler.now();
-    if (now < gate.nextEligibleAt) {
-      this.armDeferredRtcWake(peerNodeId, gate);
-      return;
-    }
-    gate.inflight = true;
-    gate.nextEligibleAt = now + PEER_RTC_WAKE_COOLDOWN_MS;
-    rtcLog('signal send', { peer: peerNodeId, kind: 'wake' });
-    this.sendRtcSignal(peerNodeId, {
-      rtcSession: peerRtcSession(this.identity.nodeId, peerNodeId),
-      from: 'node',
-      to: peerNodeId,
-      sdp: encodeRtcWakeSdp({
-        from: this.identity.nodeId,
-        to: peerNodeId,
-        rtcSession: peerRtcSession(this.identity.nodeId, peerNodeId),
-        issuedAt: now,
-        secretKey: this.identity.edSecretKey,
-      }),
-    });
   }
 
   private notifyTransport(nodeId: string): void {
@@ -1347,51 +818,6 @@ export class PeerManager {
     if (!waiters || waiters.length === 0) return;
     this.transportWaiters.delete(nodeId);
     for (const waiter of waiters) waiter.resolve(false);
-  }
-
-  private signalingFor(peerNodeId: string): RtcSignaling {
-    return {
-      send: (msg) => this.sendRtcSignal(peerNodeId, msg),
-      onMessage: (cb) => {
-        let set = this.rtcListeners.get(peerNodeId);
-        if (!set) {
-          set = new Set();
-          this.rtcListeners.set(peerNodeId, set);
-        }
-        set.add(cb);
-        const inbox = this.rtcInbox.get(peerNodeId);
-        if (inbox && inbox.length > 0) {
-          this.rtcInbox.delete(peerNodeId);
-          for (const msg of inbox) cb(msg);
-        }
-        return () => {
-          set?.delete(cb);
-          if (set && set.size === 0) this.rtcListeners.delete(peerNodeId);
-        };
-      },
-    };
-  }
-
-  private sendRtcSignal(peerNodeId: string, msg: RtcSignalMessage): void {
-    const payload = {
-      t: 'rtc.signal' as const,
-      rtcSession: msg.rtcSession,
-      from: msg.from,
-      to: msg.to,
-      ...(msg.sdp ? { sdp: msg.sdp } : {}),
-      ...(msg.candidate ? { candidate: msg.candidate } : {}),
-    };
-    const live = this.live.get(peerNodeId);
-    if (live && live.transport !== 'dc') {
-      this.sendPeerCtl(live, payload);
-      return;
-    }
-    this.ensureDcSession?.(peerNodeId, msg.rtcSession);
-    try {
-      this.uplink.sendCtl(payload);
-    } catch {
-      // uplink offline
-    }
   }
 
   private releaseRtcAttempt(peerNodeId: string, unsub: (() => void) | null): void {
@@ -1552,12 +978,6 @@ export class PeerManager {
     }
   }
 
-  private lanDialBudgetMs(url: string): number | undefined {
-    return classifyRemoteAddress(hostFromWsUrl(url)) === 'lan'
-      ? PEER_LAN_DIAL_TIMEOUT_MS
-      : undefined;
-  }
-
   private syncLocalFingerprint(): void {
     const next = localNetworkFingerprint(
       this.refreshLocalInterfaces ? this.refreshLocalInterfaces() : this.interfacesFn()
@@ -1639,7 +1059,10 @@ export class PeerManager {
             signal: combined,
             stale: (g) => this.stale(g),
             connectTimeoutMs: this.connectTimeoutMs,
-            totalTimeoutMs: this.lanDialBudgetMs(url),
+            totalTimeoutMs:
+              classifyRemoteAddress(hostFromWsUrl(url)) === 'lan'
+                ? PEER_LAN_DIAL_TIMEOUT_MS
+                : undefined,
             factory: this.wsFactory,
             identity: this.identity,
             userStore: this.userStore,
@@ -2436,7 +1859,7 @@ export class PeerManager {
     live.quiesceCapable = true;
     if (already || live.retiring) return;
     this.activateParked(live.peerNodeId);
-    if (this.upgradeGate.get(live.peerNodeId)?.coalesced) {
+    if (this.dcUpgrade.upgradeGate.get(live.peerNodeId)?.coalesced) {
       this.maybeUpgrade(live.peerNodeId, { cooldown: true });
     }
     if (this.lostDirect.has(live.peerNodeId)) {
@@ -2498,58 +1921,9 @@ export class PeerManager {
   }
 
   private dcFailureReason(nodeId: string, dcError: unknown): string | null {
-    const peer = this.userStore.getPeer(nodeId);
-    if (peer && peer.directCapable === false) return 'direct_capable=false';
-    if (!this.rtc?.available) return 'datachannel unavailable';
-    if (dcError instanceof Error) return dcError.message;
-    if (dcError != null) return String(dcError);
-    return null;
+    return describeDcFailure(nodeId, dcError, {
+      directCapable: this.userStore.getPeer(nodeId)?.directCapable,
+      rtcAvailable: this.rtc?.available === true,
+    });
   }
-}
-
-function sanitizeEndpoints(value: unknown, fallbackPort?: number): string[] {
-  if (typeof value === 'string') return parseEndpoints(value, fallbackPort);
-  try {
-    return parseEndpoints(JSON.stringify(value ?? []), fallbackPort);
-  } catch {
-    return [];
-  }
-}
-
-function parseEndpoints(endpointsJson: string, fallbackPort?: number): string[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(endpointsJson);
-  } catch {
-    return [];
-  }
-  const urls: string[] = [];
-  const push = (raw: string) => {
-    if (urls.length >= PEER_MAX_ENDPOINTS) return;
-    if (raw.length > PEER_MAX_ENDPOINT_LENGTH) return;
-    if (raw.startsWith('ws://') || raw.startsWith('wss://')) {
-      urls.push(raw);
-      return;
-    }
-    if (raw.includes('://')) return;
-    const withPath = raw.includes('/peer') ? raw : `${raw}/peer`;
-    const url = withPath.startsWith('ws') ? withPath : `ws://${withPath}`;
-    if (url.length > PEER_MAX_ENDPOINT_LENGTH) return;
-    urls.push(url);
-  };
-  if (Array.isArray(parsed)) {
-    for (const item of parsed) {
-      if (typeof item === 'string') {
-        push(item);
-      } else if (isRecord(item)) {
-        if (typeof item.url === 'string') push(item.url);
-        else if (typeof item.host === 'string') {
-          const port = typeof item.port === 'number' ? item.port : (fallbackPort ?? 39001);
-          const path = typeof item.path === 'string' ? item.path : '/peer';
-          push(`ws://${item.host}:${port}${path.startsWith('/') ? path : `/${path}`}`);
-        }
-      }
-    }
-  }
-  return urls;
 }
