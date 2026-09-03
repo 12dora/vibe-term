@@ -6,8 +6,11 @@ import {
   DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS,
   DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS,
   DEFAULT_PONG_TIMEOUT_MS,
+  MAX_NEGOTIATED_HEARTBEAT_INTERVAL_MS,
+  MIN_NEGOTIATED_HEARTBEAT_INTERVAL_MS,
   type WebSocketLike,
   defaultWsUrl,
+  normalizeNegotiatedHeartbeatIntervalMs,
 } from './client';
 import { createGatewayConnection } from './connection';
 
@@ -54,13 +57,17 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-function helloS2CFrame(capabilities: string[] = [], serverVersion = '0.1.0'): Uint8Array {
+function helloS2CFrame(
+  capabilities: string[] = [],
+  serverVersion = '0.1.0',
+  heartbeatIntervalMs = 5000
+): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
     serverImpl: 'tmex-gateway',
     serverVersion,
     selectedVersion: 1,
     maxFrameBytes: 1048576,
-    heartbeatIntervalMs: 5000,
+    heartbeatIntervalMs,
     capabilities,
   });
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, payload, 1);
@@ -1258,5 +1265,93 @@ describe('TERM_VIEWPORT 版本闸门', () => {
     expect(sentKinds(fresh)).toContain(wsBorsh.KIND_TERM_VIEWPORT);
 
     client.disconnect();
+  });
+});
+
+// 网关在 HELLO_S2C 播报 heartbeatIntervalMs（当前 15s），此前客户端完全无视它。
+describe('心跳间隔协商', () => {
+  function connectWithHello(
+    heartbeatIntervalMs: number,
+    clientOptions: Record<string, unknown> = {}
+  ): { client: BorshWebSocketClient; socket: FakeSocket } {
+    const socket = new FakeSocket();
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => socket,
+      ...clientOptions,
+    });
+    client.connect();
+    socket.open();
+    socket.deliver(helloS2CFrame([], '0.1.0', heartbeatIntervalMs));
+    return { client, socket };
+  }
+
+  test('缺省客户端采纳服务端播报的 15s，并按原比值把 PONG 超时放大到 30s', () => {
+    const { client } = connectWithHello(15_000);
+
+    expect(client.getState()).toBe('READY');
+    expect(client.heartbeatCadence).toEqual({ intervalMs: 15_000, pongTimeoutMs: 30_000 });
+    // 15s ping / 30s timeout 仍远在外部代理（Cloudflare Tunnel 约 100s）的空闲预算内
+    expect(client.heartbeatCadence.pongTimeoutMs).toBeLessThan(100_000);
+
+    client.disconnect();
+  });
+
+  test('服务端未播报（0）时保持客户端缺省 5s/10s', () => {
+    const { client } = connectWithHello(0);
+
+    expect(client.heartbeatCadence).toEqual({
+      intervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
+      pongTimeoutMs: DEFAULT_PONG_TIMEOUT_MS,
+    });
+
+    client.disconnect();
+  });
+
+  test('越界播报被钳到 [5s, 30s]', () => {
+    const tooFast = connectWithHello(200);
+    expect(tooFast.client.heartbeatCadence.intervalMs).toBe(MIN_NEGOTIATED_HEARTBEAT_INTERVAL_MS);
+    tooFast.client.disconnect();
+
+    const tooSlow = connectWithHello(600_000);
+    expect(tooSlow.client.heartbeatCadence.intervalMs).toBe(MAX_NEGOTIATED_HEARTBEAT_INTERVAL_MS);
+    // 比值不变 ⇒ 30s ping / 60s timeout，仍未触及代理预算
+    expect(tooSlow.client.heartbeatCadence.pongTimeoutMs).toBe(60_000);
+    tooSlow.client.disconnect();
+  });
+
+  test('调用方显式指定 heartbeatIntervalMs 时协商值不生效（应用侧设置优先）', () => {
+    const { client } = connectWithHello(15_000, {
+      heartbeatIntervalMs: 60_000,
+      pongTimeoutMs: 60_000,
+    });
+
+    expect(client.heartbeatCadence).toEqual({ intervalMs: 60_000, pongTimeoutMs: 60_000 });
+
+    client.disconnect();
+  });
+
+  test('断开后协商值失效，重连前回到缺省节奏', () => {
+    const { client, socket } = connectWithHello(15_000);
+    expect(client.heartbeatCadence.intervalMs).toBe(15_000);
+
+    socket.simulateClose();
+    expect(client.heartbeatCadence.intervalMs).toBe(15_000);
+
+    client.disconnect();
+    // 下一次 READY 之前不应继续沿用上一条连接的协商值
+    const next = connectWithHello(0);
+    expect(next.client.heartbeatCadence.intervalMs).toBe(DEFAULT_HEARTBEAT_INTERVAL_MS);
+    next.client.disconnect();
+  });
+
+  test('normalizeNegotiatedHeartbeatIntervalMs 的边界', () => {
+    expect(normalizeNegotiatedHeartbeatIntervalMs(undefined)).toBeNull();
+    expect(normalizeNegotiatedHeartbeatIntervalMs(0)).toBeNull();
+    expect(normalizeNegotiatedHeartbeatIntervalMs(-1)).toBeNull();
+    expect(normalizeNegotiatedHeartbeatIntervalMs(Number.NaN)).toBeNull();
+    expect(normalizeNegotiatedHeartbeatIntervalMs(4999)).toBe(5000);
+    expect(normalizeNegotiatedHeartbeatIntervalMs(15_000)).toBe(15_000);
+    expect(normalizeNegotiatedHeartbeatIntervalMs(30_001)).toBe(30_000);
   });
 });

@@ -67,10 +67,23 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 5000;
 export const DEFAULT_PONG_TIMEOUT_MS = 10000;
+// 网关在 HELLO_S2C 里播报 heartbeatIntervalMs（当前 15s）。采纳它能把空闲会话的
+// PING/PONG 从 24 次/min 降到 8 次/min；钳位区间保证既不比缺省更吵，也不会因为
+// 服务端播报一个离谱值而把死连接检出拖到分钟级。
+export const MIN_NEGOTIATED_HEARTBEAT_INTERVAL_MS = 5000;
+export const MAX_NEGOTIATED_HEARTBEAT_INTERVAL_MS = 30000;
 // 页面在后台时的慢节奏：30s/60s。网关自身不设 socket 空闲超时，上界由外部代理决定
 // （Cloudflare Tunnel 约 100s），30s 仍有充足余量，同时把后台唤醒次数降到 1/6。
 export const DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS = 30000;
 export const DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS = 60000;
+
+/** 服务端播报值归一化：0 / 非有限值视为「未协商」，其余钳到 [5s, 30s]。 */
+export function normalizeNegotiatedHeartbeatIntervalMs(value: number | undefined): number | null {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return null;
+  if (value < MIN_NEGOTIATED_HEARTBEAT_INTERVAL_MS) return MIN_NEGOTIATED_HEARTBEAT_INTERVAL_MS;
+  if (value > MAX_NEGOTIATED_HEARTBEAT_INTERVAL_MS) return MAX_NEGOTIATED_HEARTBEAT_INTERVAL_MS;
+  return Math.round(value);
+}
 
 const DEFAULT_OPTIONS: BorshClientOptions = {
   clientImpl: 'tmex-fe',
@@ -154,6 +167,9 @@ export class BorshWebSocketClient {
   // 重连 / 心跳
   private readonly reconnector: ReconnectController;
   private readonly heartbeat: HeartbeatController;
+  /** 调用方显式给了 heartbeatIntervalMs 时不接受服务端协商值（应用侧设置优先） */
+  private readonly heartbeatIntervalPinned: boolean;
+  private negotiatedHeartbeatIntervalMs: number | null = null;
 
   // 回调
   private messageHandlers: Set<MessageHandler> = new Set();
@@ -198,6 +214,11 @@ export class BorshWebSocketClient {
     };
   }
 
+  /** 当前生效的心跳节奏（协商 + 可见性两条都算进去后的结果）。 */
+  get heartbeatCadence(): HeartbeatCadence {
+    return this.heartbeat.cadence;
+  }
+
   /** 服务端是否认识 TERM_VIEWPORT（1.1.7 起）；未知版本按新版处理。 */
   get supportsTermViewport(): boolean {
     return serverSupportsTermViewport(this.serverVersion);
@@ -205,6 +226,7 @@ export class BorshWebSocketClient {
 
   constructor(options: Partial<BorshClientOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.heartbeatIntervalPinned = options.heartbeatIntervalMs !== undefined;
     this.pending = new PendingSendQueue({
       maxBytes: this.options.maxPendingBytes ?? DEFAULT_MAX_PENDING_BYTES,
       maxFrames: this.options.maxPendingFrames ?? DEFAULT_MAX_PENDING_FRAMES,
@@ -356,6 +378,7 @@ export class BorshWebSocketClient {
   disconnect(): void {
     this.setState('CLOSED');
     this.clearTimers();
+    this.negotiatedHeartbeatIntervalMs = null;
     this.dispatcher.reset();
     this.barrier?.closeDirect();
     this.resetLatency();
@@ -398,6 +421,9 @@ export class BorshWebSocketClient {
   }
 
   private handleHelloNegotiated(hello: NegotiatedHello): void {
+    this.negotiatedHeartbeatIntervalMs = this.heartbeatIntervalPinned
+      ? null
+      : normalizeNegotiatedHeartbeatIntervalMs(hello.heartbeatIntervalMs);
     this.serverCapabilities = hello.capabilities;
     this.serverVersion = hello.serverVersion;
     this.serverMaxFrameBytes = hello.maxFrameBytes;
@@ -442,6 +468,7 @@ export class BorshWebSocketClient {
 
   private handleClose(): void {
     this.heartbeat.stop();
+    this.negotiatedHeartbeatIntervalMs = null;
     this.resetLatency();
     this.dispatcher.reset();
     this.serverCapabilities = [];
@@ -659,9 +686,18 @@ export class BorshWebSocketClient {
         pongTimeoutMs: this.options.hiddenHeartbeatTimeoutMs ?? DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS,
       };
     }
+    const baseIntervalMs = this.options.heartbeatIntervalMs;
+    const baseTimeoutMs = this.options.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
+    const negotiated = this.negotiatedHeartbeatIntervalMs;
+    if (negotiated === null || negotiated === baseIntervalMs) {
+      return { intervalMs: baseIntervalMs, pongTimeoutMs: baseTimeoutMs };
+    }
+    // timeout/interval 比值保持不变（缺省 2×）：15s ping ⇒ 30s timeout，
+    // 仍远在外部代理（Cloudflare Tunnel 约 100s）的空闲预算内。
+    const ratio = baseIntervalMs > 0 ? baseTimeoutMs / baseIntervalMs : 2;
     return {
-      intervalMs: this.options.heartbeatIntervalMs,
-      pongTimeoutMs: this.options.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS,
+      intervalMs: negotiated,
+      pongTimeoutMs: Math.round(negotiated * ratio),
     };
   }
 

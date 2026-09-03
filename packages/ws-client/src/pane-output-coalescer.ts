@@ -1,7 +1,8 @@
 // per-pane 输出合并：高频小帧逐帧下发时，每帧都要在 WASM 里搬一次缓冲、查一次 alt-screen、
 // 排一次渲染，成本按帧数线性增长。每条 WebSocket 消息是独立宏任务，微任务边界只能合并
-// 同一条消息里的连续帧，因此这里用有界窗口：攒够 flushBytes 立即下发，否则最多等
-// DEFAULT_PANE_OUTPUT_FLUSH_MS 毫秒（不用 rAF：一帧 16.7ms 的回显延迟比这更差）。
+// 同一条消息里的连续帧，因此这里用有界窗口：攒够 flushBytes 立即下发；否则缓冲为空且
+// 距上次 flush ≥ DEFAULT_PANE_OUTPUT_FLUSH_MS 时 leading-edge（0 延迟调度，同轮 burst
+// 仍合帧），随后进入冷却窗口按 trailing 合帧（不用 rAF：一帧 16.7ms 的回显延迟比这更差）。
 //
 // 顺序保证：同一 pane 的字节严格按到达顺序拼接；任何会改变画面基线的事件
 //（reset / history / snapshot / rebase / sink 换绑与注销）都要先 flush 再执行。
@@ -9,14 +10,16 @@
 import type { GatewayTerminalData } from './transport';
 
 export const DEFAULT_PANE_OUTPUT_FLUSH_BYTES = 32 * 1024;
-// 攒不满阈值时的最大附加延迟
+// 冷却窗口 / 攒不满阈值时的最大附加延迟
 export const DEFAULT_PANE_OUTPUT_FLUSH_MS = 4;
 
-export type PaneOutputScheduler = (flush: () => void) => void;
+export type PaneOutputScheduler = (flush: () => void, delayMs?: number) => void;
 
 export interface PaneOutputCoalescerOptions {
   flushBytes?: number;
+  flushMs?: number;
   schedule?: PaneOutputScheduler;
+  now?: () => number;
 }
 
 interface PaneOutputBuffer {
@@ -61,17 +64,26 @@ function toFrame(buffer: PaneOutputBuffer): GatewayTerminalData {
 
 export class PaneOutputCoalescer {
   private readonly buffers = new Map<string, PaneOutputBuffer>();
+  private readonly lastFlushAt = new Map<string, number>();
   private readonly flushBytes: number;
+  private readonly flushMs: number;
   private readonly schedule: PaneOutputScheduler;
+  private readonly now: () => number;
+  private readonly usesDefaultTimer: boolean;
   private scheduled = false;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private armedDelayMs = Number.POSITIVE_INFINITY;
 
   constructor(
     private readonly emit: (key: string, frame: GatewayTerminalData) => void,
     options: PaneOutputCoalescerOptions = {}
   ) {
     this.flushBytes = options.flushBytes ?? DEFAULT_PANE_OUTPUT_FLUSH_BYTES;
+    this.flushMs = options.flushMs ?? DEFAULT_PANE_OUTPUT_FLUSH_MS;
+    this.now = options.now ?? Date.now;
+    this.usesDefaultTimer = options.schedule === undefined;
     this.schedule =
-      options.schedule ?? ((flush) => void setTimeout(flush, DEFAULT_PANE_OUTPUT_FLUSH_MS));
+      options.schedule ?? ((flush, delayMs = this.flushMs) => void setTimeout(flush, delayMs));
   }
 
   push(key: string, frame: GatewayTerminalData): void {
@@ -90,13 +102,14 @@ export class PaneOutputCoalescer {
       this.flush(key);
       return;
     }
-    this.ensureScheduled();
+    this.ensureScheduled(this.nextDelayMs(key));
   }
 
   flush(key: string): void {
     const buffer = this.buffers.get(key);
     if (!buffer) return;
     this.buffers.delete(key);
+    this.lastFlushAt.set(key, this.now());
     this.emit(key, toFrame(buffer));
   }
 
@@ -129,12 +142,31 @@ export class PaneOutputCoalescer {
     return buffer;
   }
 
-  private ensureScheduled(): void {
+  private nextDelayMs(key: string): number {
+    const last = this.lastFlushAt.get(key);
+    if (last === undefined) return 0;
+    const elapsed = this.now() - last;
+    if (elapsed >= this.flushMs) return 0;
+    return this.flushMs - elapsed;
+  }
+
+  private ensureScheduled(delayMs: number): void {
+    if (this.usesDefaultTimer) {
+      if (this.timer !== null && delayMs >= this.armedDelayMs) return;
+      if (this.timer !== null) clearTimeout(this.timer);
+      this.armedDelayMs = delayMs;
+      this.timer = setTimeout(() => {
+        this.timer = null;
+        this.armedDelayMs = Number.POSITIVE_INFINITY;
+        this.flushAll();
+      }, delayMs);
+      return;
+    }
     if (this.scheduled) return;
     this.scheduled = true;
     this.schedule(() => {
       this.scheduled = false;
       this.flushAll();
-    });
+    }, delayMs);
   }
 }

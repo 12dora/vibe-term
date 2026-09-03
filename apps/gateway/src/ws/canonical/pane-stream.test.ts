@@ -11,9 +11,34 @@ const SERVER_EPOCH = new Uint8Array(16).fill(0x11);
 const PANE_EPOCH = new Uint8Array(16).fill(0x22);
 const encoder = new TextEncoder();
 
+class ManualTimer {
+  private nextId = 1;
+  readonly tasks = new Map<number, { callback: () => void; delayMs: number }>();
+
+  schedule = (callback: () => void, delayMs: number): unknown => {
+    const id = this.nextId;
+    this.nextId += 1;
+    this.tasks.set(id, { callback, delayMs });
+    return id;
+  };
+
+  cancel = (handle: unknown): void => {
+    this.tasks.delete(handle as number);
+  };
+
+  runAll(): void {
+    const tasks = [...this.tasks.entries()];
+    for (const [id, task] of tasks) {
+      if (!this.tasks.delete(id)) continue;
+      task.callback();
+    }
+  }
+}
+
 function createStream(
   sendEvent: (event: wsBorsh.CanonicalEvent) => CanonicalSendResult,
-  maxFrameBytes = wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES
+  maxFrameBytes = wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+  extras: { now?: () => number; timer?: ManualTimer } = {}
 ) {
   const sizer = new CanonicalFrameSizer(maxFrameBytes);
   const sender = new CanonicalTransactionSender({
@@ -28,8 +53,31 @@ function createStream(
     getServerEpoch: () => SERVER_EPOCH,
     maxPendingPaneGaps: 8,
     onPendingWork: () => pending.push(1),
+    now: extras.now,
+    scheduleTimer: extras.timer?.schedule,
+    cancelTimer: extras.timer?.cancel,
   });
   return { stream, pending, sizer };
+}
+
+function paneSegment(
+  text: string,
+  seqStart: bigint
+): {
+  paneId: string;
+  paneEpoch: Uint8Array;
+  seqStart: bigint;
+  seqEnd: bigint;
+  data: Uint8Array;
+} {
+  const data = encoder.encode(text);
+  return {
+    paneId: '%1',
+    paneEpoch: PANE_EPOCH,
+    seqStart,
+    seqEnd: seqStart + BigInt(data.byteLength),
+    data,
+  };
 }
 
 describe('canonical pane stream', () => {
@@ -171,5 +219,101 @@ describe('canonical pane stream', () => {
     const original = new Uint8Array(400);
     for (let index = 0; index < original.byteLength; index += 1) original[index] = index & 0xff;
     expect(recovered).toEqual(original);
+  });
+});
+
+describe('canonical pane stream leading-edge', () => {
+  const DELAY = GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS;
+  const decoder = new TextDecoder();
+
+  function createLeadingHarness() {
+    let nowMs = 0;
+    const events: wsBorsh.CanonicalEvent[] = [];
+    const timer = new ManualTimer();
+    const { stream } = createStream(
+      (event) => {
+        events.push(event);
+        return true;
+      },
+      wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+      { now: () => nowMs, timer }
+    );
+    return {
+      stream,
+      timer,
+      events,
+      texts: () =>
+        events.map((event) => {
+          if (!('PaneData' in event)) throw new Error('expected PaneData');
+          return decoder.decode(event.PaneData.data);
+        }),
+      delays: () => [...timer.tasks.values()].map((task) => task.delayMs),
+      setNow: (ms: number) => {
+        nowMs = ms;
+      },
+    };
+  }
+
+  test('isolated chunk is scheduled with 0 delay and emitted without waiting DELAY_MS', () => {
+    const harness = createLeadingHarness();
+
+    harness.stream.handlePaneData('device-a', paneSegment('ab', 0n));
+    expect(harness.events).toHaveLength(0);
+    expect(harness.delays()).toEqual([0]);
+
+    harness.timer.runAll();
+    expect(harness.texts()).toEqual(['ab']);
+    expect(harness.timer.tasks.size).toBe(0);
+  });
+
+  test('burst of N chunks in one window does not increase flush count', () => {
+    const harness = createLeadingHarness();
+    const burst = 12;
+    let seq = 0n;
+    for (let index = 0; index < burst; index += 1) {
+      const text = String.fromCharCode(97 + index);
+      harness.stream.handlePaneData('device-a', paneSegment(text, seq));
+      seq += BigInt(text.length);
+    }
+
+    expect(harness.events).toHaveLength(0);
+    expect(harness.timer.tasks.size).toBe(1);
+    harness.timer.runAll();
+
+    expect(harness.events.length).toBeLessThanOrEqual(2);
+    expect(harness.events).toHaveLength(1);
+    expect(harness.texts()).toEqual(['abcdefghijkl']);
+  });
+
+  test('two chunks separated by more than delay produce two leading-edge emits', () => {
+    const harness = createLeadingHarness();
+
+    harness.stream.handlePaneData('device-a', paneSegment('a', 0n));
+    expect(harness.delays()).toEqual([0]);
+    harness.timer.runAll();
+
+    harness.setNow(DELAY + 1);
+    harness.stream.handlePaneData('device-a', paneSegment('b', 1n));
+    expect(harness.delays()).toEqual([0]);
+    harness.timer.runAll();
+
+    expect(harness.texts()).toEqual(['a', 'b']);
+  });
+
+  test('preserves order across the cooldown boundary', () => {
+    const harness = createLeadingHarness();
+
+    harness.stream.handlePaneData('device-a', paneSegment('a', 0n));
+    harness.stream.handlePaneData('device-a', paneSegment('b', 1n));
+    harness.timer.runAll();
+    expect(harness.texts()).toEqual(['ab']);
+
+    harness.setNow(5);
+    harness.stream.handlePaneData('device-a', paneSegment('c', 2n));
+    harness.stream.handlePaneData('device-a', paneSegment('d', 3n));
+    expect(harness.delays()).toEqual([DELAY - 5]);
+    harness.timer.runAll();
+
+    expect(harness.texts()).toEqual(['ab', 'cd']);
   });
 });

@@ -60,9 +60,7 @@ describe('TerminalOutputBatcher', () => {
     batcher.push('device-a', '%1', new Uint8Array([4, 5]));
 
     expect(emitted).toHaveLength(0);
-    expect([...scheduler.tasks.values()].map((task) => task.delayMs)).toEqual([
-      GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
-    ]);
+    expect([...scheduler.tasks.values()].map((task) => task.delayMs)).toEqual([0]);
     scheduler.runAll();
 
     expect(emitted).toHaveLength(1);
@@ -191,5 +189,94 @@ describe('TerminalOutputBatcher', () => {
     expect(GATEWAY_TERM_OUTPUT_BATCH_TOTAL_MAX_BYTES).toBeGreaterThanOrEqual(
       GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES
     );
+  });
+});
+
+describe('TerminalOutputBatcher leading-edge', () => {
+  const DELAY = GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS;
+
+  function createLeadingHarness() {
+    let nowMs = 0;
+    const emitted: Array<{ deviceId: string; paneId: string; data: Uint8Array }> = [];
+    const scheduler = new ManualScheduler();
+    const batcher = new TerminalOutputBatcher(
+      (deviceId, paneId, data) => {
+        emitted.push({ deviceId, paneId, data });
+      },
+      { scheduler, now: () => nowMs, delayMs: DELAY }
+    );
+    return {
+      batcher,
+      scheduler,
+      emitted,
+      texts: () => emitted.map((entry) => values(entry.data)),
+      setNow: (ms: number) => {
+        nowMs = ms;
+      },
+    };
+  }
+
+  test('isolated chunk is scheduled with 0 delay and emitted without waiting DELAY_MS', () => {
+    const harness = createLeadingHarness();
+
+    harness.batcher.push('device-a', '%1', new Uint8Array([1, 2]));
+    expect(harness.emitted).toHaveLength(0);
+    expect([...harness.scheduler.tasks.values()].map((task) => task.delayMs)).toEqual([0]);
+
+    harness.scheduler.runAll();
+    expect(harness.texts()).toEqual([[1, 2]]);
+    expect(harness.scheduler.tasks.size).toBe(0);
+  });
+
+  test('burst of N chunks in one window does not increase flush count', () => {
+    const harness = createLeadingHarness();
+    const burst = 20;
+
+    for (let index = 0; index < burst; index += 1) {
+      harness.batcher.push('device-a', '%1', new Uint8Array([index]));
+    }
+
+    expect(harness.emitted).toHaveLength(0);
+    expect(harness.scheduler.tasks.size).toBe(1);
+    harness.scheduler.runAll();
+
+    expect(harness.emitted.length).toBeLessThanOrEqual(2);
+    expect(harness.emitted).toHaveLength(1);
+    expect(harness.texts()[0]).toEqual([...Array(burst).keys()]);
+  });
+
+  test('two chunks separated by more than delay produce two leading-edge emits', () => {
+    const harness = createLeadingHarness();
+
+    harness.batcher.push('device-a', '%1', new Uint8Array([1]));
+    expect([...harness.scheduler.tasks.values()].map((task) => task.delayMs)).toEqual([0]);
+    harness.scheduler.runAll();
+
+    harness.setNow(DELAY + 1);
+    harness.batcher.push('device-a', '%1', new Uint8Array([2]));
+    expect([...harness.scheduler.tasks.values()].map((task) => task.delayMs)).toEqual([0]);
+    harness.scheduler.runAll();
+
+    expect(harness.texts()).toEqual([[1], [2]]);
+  });
+
+  test('preserves order across the cooldown boundary', () => {
+    const harness = createLeadingHarness();
+
+    harness.batcher.push('device-a', '%1', new Uint8Array([1]));
+    harness.batcher.push('device-a', '%1', new Uint8Array([2]));
+    harness.scheduler.runAll();
+    expect(harness.texts()).toEqual([[1, 2]]);
+
+    harness.setNow(5);
+    harness.batcher.push('device-a', '%1', new Uint8Array([3]));
+    harness.batcher.push('device-a', '%1', new Uint8Array([4]));
+    expect([...harness.scheduler.tasks.values()].map((task) => task.delayMs)).toEqual([DELAY - 5]);
+    harness.scheduler.runAll();
+
+    expect(harness.texts()).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
   });
 });

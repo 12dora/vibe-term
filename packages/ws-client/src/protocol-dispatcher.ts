@@ -21,6 +21,8 @@ export interface NegotiatedHello {
   capabilities: readonly string[];
   serverVersion: string;
   maxFrameBytes: number;
+  /** 服务端播报的心跳间隔；0 / 缺席表示不协商，客户端沿用自身缺省 */
+  heartbeatIntervalMs?: number;
 }
 
 export interface ProtocolDispatcherCallbacks {
@@ -120,6 +122,7 @@ export class ProtocolDispatcher {
         capabilities: hello.capabilities ?? [],
         serverVersion: hello.serverVersion ?? '',
         maxFrameBytes: hello.maxFrameBytes,
+        heartbeatIntervalMs: hello.heartbeatIntervalMs,
       });
     } catch (err) {
       console.error('[borsh-client] Failed to decode HELLO_S2C:', err);

@@ -28,6 +28,7 @@ interface TerminalOutputBatcherOptions {
   maxBytes?: number;
   totalMaxBytes?: number;
   scheduler?: TerminalOutputBatchScheduler;
+  now?: () => number;
 }
 
 const defaultScheduler: TerminalOutputBatchScheduler = {
@@ -39,10 +40,12 @@ const INITIAL_BATCH_CAPACITY_BYTES = 1024;
 
 export class TerminalOutputBatcher {
   private readonly pending = new Map<string, Map<string, PendingBatch>>();
+  private readonly lastFlushAt = new Map<string, Map<string, number>>();
   private readonly delayMs: number;
   private readonly maxBytes: number;
   private readonly totalMaxBytes: number;
   private readonly scheduler: TerminalOutputBatchScheduler;
+  private readonly now: () => number;
   private pendingBytes = 0;
 
   constructor(
@@ -53,6 +56,7 @@ export class TerminalOutputBatcher {
     this.maxBytes = options.maxBytes ?? GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES;
     this.totalMaxBytes = options.totalMaxBytes ?? GATEWAY_TERM_OUTPUT_BATCH_TOTAL_MAX_BYTES;
     this.scheduler = options.scheduler ?? defaultScheduler;
+    this.now = options.now ?? Date.now;
     if (!Number.isSafeInteger(this.delayMs) || this.delayMs <= 0) {
       throw new Error('terminal output batch delay must be a positive safe integer');
     }
@@ -109,6 +113,7 @@ export class TerminalOutputBatcher {
       }
     }
     this.pending.delete(deviceId);
+    this.lastFlushAt.delete(deviceId);
   }
 
   snapshotStats(): TerminalOutputBatcherStats {
@@ -137,9 +142,12 @@ export class TerminalOutputBatcher {
     const batch: PendingBatch = {
       data: new Uint8Array(Math.min(this.maxBytes, INITIAL_BATCH_CAPACITY_BYTES)),
       length: 0,
-      timer: this.scheduler.schedule(() => {
-        this.flush(deviceId, paneId, batch);
-      }, this.delayMs),
+      timer: this.scheduler.schedule(
+        () => {
+          this.flush(deviceId, paneId, batch);
+        },
+        this.nextDelayMs(deviceId, paneId)
+      ),
     };
     panes.set(paneId, batch);
     return batch;
@@ -173,7 +181,25 @@ export class TerminalOutputBatcher {
     if (batch.length === 0) {
       return;
     }
+    this.markFlushed(deviceId, paneId);
     this.emit(deviceId, paneId, batch.data.subarray(0, batch.length));
+  }
+
+  private nextDelayMs(deviceId: string, paneId: string): number {
+    const last = this.lastFlushAt.get(deviceId)?.get(paneId);
+    if (last === undefined) return 0;
+    const elapsed = this.now() - last;
+    if (elapsed >= this.delayMs) return 0;
+    return this.delayMs - elapsed;
+  }
+
+  private markFlushed(deviceId: string, paneId: string): void {
+    let panes = this.lastFlushAt.get(deviceId);
+    if (!panes) {
+      panes = new Map();
+      this.lastFlushAt.set(deviceId, panes);
+    }
+    panes.set(paneId, this.now());
   }
 
   private flushOldest(): void {

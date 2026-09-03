@@ -56,6 +56,7 @@ export class MobileTouchGestureMachine {
 
   dispose(): void {
     this.selection.clear();
+    this.scroll.cancelFling();
   }
 
   private resetGesture(): void {
@@ -284,6 +285,11 @@ export class MobileTouchGestureMachine {
       this.state === 'wheel'
     ) {
       if (event.touches.length === 0) {
+        // 抬指惯性只接 scrollback 这条（pan 途中余量也可能落在 scrollback 上，
+        // 是否真起惯性由 TouchScrollGesture 按「本手势是否真的滚过」判定）
+        if (this.state === 'scroll' || this.state === 'pan') {
+          this.scroll.endGesture();
+        }
         this.resetGesture();
       }
       return;

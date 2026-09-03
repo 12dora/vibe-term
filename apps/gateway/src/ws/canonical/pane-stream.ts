@@ -26,7 +26,7 @@ interface PendingPaneDataBatch {
   seqEnd: bigint;
   chunks: Uint8Array[];
   length: number;
-  timer: ReturnType<typeof setTimeout> | null;
+  timer: unknown;
 }
 
 export const CANONICAL_MAX_HELD_PANE_BYTES = DEFAULT_MAX_REPLAY_BYTES_PER_PANE;
@@ -42,6 +42,9 @@ export interface CanonicalPaneStreamOptions {
   getServerEpoch: (deviceId: string) => Uint8Array | null | undefined;
   maxPendingPaneGaps: number;
   onPendingWork: () => void;
+  now?: () => number;
+  scheduleTimer?: (callback: () => void, delayMs: number) => unknown;
+  cancelTimer?: (handle: unknown) => void;
 }
 
 export interface CanonicalPaneStreamStats {
@@ -61,6 +64,7 @@ export interface CanonicalPaneStreamStats {
 export class CanonicalPaneStream {
   private readonly paneSendGaps = new Map<string, PaneReplayGap>();
   private readonly paneDataBatches = new Map<string, PendingPaneDataBatch>();
+  private readonly paneDataLastFlushAt = new Map<string, number>();
   private readonly paneDataHolds = new Set<string>();
   private readonly paneDataHoldOverflows = new Set<string>();
   private streamGapPendingReason: number | null = null;
@@ -107,8 +111,9 @@ export class CanonicalPaneStream {
   // 合帧，canonical 路径若逐段直发，同样的重绘就变成几十个独立帧一路放大到客户端
   // （每帧独立编码/加密/系统调用，公网上被 RTT 摊开跨渲染帧到达，表现为逐行扫描式重绘，
   // 客户端主线程也被 message 洪水填满拖慢输入）。此处按 legacy 相同参数（16ms/64KiB）
-  // 对 seq 连续的同 pane 段合帧；发出任何同 pane 的 gap/快照/目标 gap 前必须先 flush，
-  // 保持 pane 内事件全序。
+  // 对 seq 连续的同 pane 段合帧：缓冲为空且距上次 flush ≥ delay 时 leading-edge（0 延迟
+  // 调度，同轮 burst 仍合帧），随后进入 delay 冷却窗口按 trailing 合帧。发出任何同 pane
+  // 的 gap/快照/目标 gap 前必须先 flush，保持 pane 内事件全序。
   handlePaneData(deviceId: string, segment: PaneDataSegment): void {
     const key = paneKey(deviceId, segment.paneId);
     const held = this.paneDataHolds.has(key);
@@ -128,6 +133,7 @@ export class CanonicalPaneStream {
     }
     if (!held && segment.data.byteLength >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) {
       this.sendPaneData(deviceId, segment);
+      this.markFlushed(key);
       return;
     }
     this.paneDataBatches.set(key, {
@@ -138,9 +144,7 @@ export class CanonicalPaneStream {
       seqEnd: segment.seqEnd,
       chunks: [segment.data],
       length: segment.data.byteLength,
-      timer: held
-        ? null
-        : setTimeout(() => this.flushPaneDataBatch(key), GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS),
+      timer: held ? null : this.armPaneDataTimer(key),
     });
   }
 
@@ -155,7 +159,7 @@ export class CanonicalPaneStream {
     }
     const heldBytes = (pending?.length ?? 0) + segment.data.byteLength;
     if (heldBytes <= CANONICAL_MAX_HELD_PANE_BYTES) return false;
-    if (pending?.timer) clearTimeout(pending.timer);
+    if (pending?.timer != null) this.cancelTimer(pending.timer);
     this.paneDataBatches.delete(key);
     this.paneDataHoldOverflows.add(key);
     this.recordPaneDataDrop(heldBytes);
@@ -167,8 +171,8 @@ export class CanonicalPaneStream {
     this.paneDataHolds.add(key);
     this.paneDataHoldOverflows.delete(key);
     const pending = this.paneDataBatches.get(key);
-    if (!pending?.timer) return;
-    clearTimeout(pending.timer);
+    if (pending?.timer == null) return;
+    this.cancelTimer(pending.timer);
     pending.timer = null;
   }
 
@@ -187,9 +191,10 @@ export class CanonicalPaneStream {
     if (!force && this.paneDataHolds.has(key)) return;
     const pending = this.paneDataBatches.get(key);
     if (!pending) return;
-    if (pending.timer) clearTimeout(pending.timer);
+    if (pending.timer != null) this.cancelTimer(pending.timer);
     this.paneDataBatches.delete(key);
     const data = concatChunks(pending.chunks, pending.length);
+    this.markFlushed(key);
     this.sendPaneData(pending.deviceId, {
       paneId: pending.paneId,
       paneEpoch: pending.paneEpoch,
@@ -213,9 +218,10 @@ export class CanonicalPaneStream {
 
   discardPaneDataBatches(): void {
     for (const pending of this.paneDataBatches.values()) {
-      if (pending.timer) clearTimeout(pending.timer);
+      if (pending.timer != null) this.cancelTimer(pending.timer);
     }
     this.paneDataBatches.clear();
+    this.paneDataLastFlushAt.clear();
     this.paneDataHolds.clear();
     this.paneDataHoldOverflows.clear();
   }
@@ -394,7 +400,7 @@ export class CanonicalPaneStream {
       this.flushPaneDataBatch(key, true);
       return null;
     }
-    if (pending.timer) clearTimeout(pending.timer);
+    if (pending.timer != null) this.cancelTimer(pending.timer);
     this.paneDataBatches.delete(key);
     if (pending.seqEnd <= baseSeq) return null;
     let data = concatChunks(pending.chunks, pending.length);
@@ -436,6 +442,36 @@ export class CanonicalPaneStream {
   private recordPaneDataDrop(bytes: number): void {
     this.paneDataDrops += 1;
     this.paneDataDropBytes += Math.max(0, bytes);
+  }
+
+  private now(): number {
+    return this.options.now?.() ?? Date.now();
+  }
+
+  private nextDelayMs(key: string): number {
+    const last = this.paneDataLastFlushAt.get(key);
+    if (last === undefined) return 0;
+    const elapsed = this.now() - last;
+    if (elapsed >= GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS) return 0;
+    return GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS - elapsed;
+  }
+
+  private markFlushed(key: string): void {
+    this.paneDataLastFlushAt.set(key, this.now());
+  }
+
+  private armPaneDataTimer(key: string): unknown {
+    const schedule =
+      this.options.scheduleTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+    return schedule(() => this.flushPaneDataBatch(key), this.nextDelayMs(key));
+  }
+
+  private cancelTimer(handle: unknown): void {
+    if (this.options.cancelTimer) {
+      this.options.cancelTimer(handle);
+      return;
+    }
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
   }
 }
 

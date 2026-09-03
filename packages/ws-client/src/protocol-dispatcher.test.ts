@@ -85,7 +85,12 @@ describe('ProtocolDispatcher', () => {
     });
     rec.dispatcher.handleFrame(frame(wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, hello, 2)));
     expect(rec.hellos).toEqual([
-      { capabilities: ['a', 'b'], serverVersion: '0.1.0', maxFrameBytes: 1024 },
+      {
+        capabilities: ['a', 'b'],
+        serverVersion: '0.1.0',
+        maxFrameBytes: 1024,
+        heartbeatIntervalMs: 5000,
+      },
     ]);
     expect(rec.helloFailures).toEqual([]);
   });

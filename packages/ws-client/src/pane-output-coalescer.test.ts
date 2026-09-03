@@ -156,16 +156,18 @@ describe('PaneOutputCoalescer 默认有界调度', () => {
     expect(harness.texts()).toEqual(['ab']);
   });
 
-  test('窗口内跨宏任务到达的帧同样合并', async () => {
+  test('窗口内跨宏任务到达的帧：首帧 leading-edge 0 延迟下发，冷却窗口内继续合并', async () => {
     const harness = createDefaultHarness();
 
     harness.coalescer.push('dev:%1', frame('%1', 'a'));
     await tick(0);
+    expect(harness.texts()).toEqual(['a']);
+
     harness.coalescer.push('dev:%1', frame('%1', 'b'));
-    expect(harness.texts()).toEqual([]);
+    expect(harness.texts()).toEqual(['a']);
 
     await tick(DEFAULT_PANE_OUTPUT_FLUSH_MS * 4);
-    expect(harness.texts()).toEqual(['ab']);
+    expect(harness.texts()).toEqual(['a', 'b']);
   });
 
   test('控制事件的 flush 立即下发，窗口到点不再补发空帧', async () => {
@@ -177,5 +179,102 @@ describe('PaneOutputCoalescer 默认有界调度', () => {
 
     await tick(DEFAULT_PANE_OUTPUT_FLUSH_MS * 4);
     expect(harness.texts()).toEqual(['a']);
+  });
+});
+
+describe('PaneOutputCoalescer leading-edge', () => {
+  const DELAY = DEFAULT_PANE_OUTPUT_FLUSH_MS;
+
+  function createLeadingHarness() {
+    let nowMs = 0;
+    const emitted: Array<{ key: string; frame: GatewayTerminalData }> = [];
+    let pending: Array<() => void> = [];
+    const delays: number[] = [];
+    const coalescer = new PaneOutputCoalescer(
+      (key, merged) => emitted.push({ key, frame: merged }),
+      {
+        now: () => nowMs,
+        flushMs: DELAY,
+        schedule: (flush, delayMs = DELAY) => {
+          delays.push(delayMs);
+          pending.push(flush);
+        },
+      }
+    );
+    return {
+      coalescer,
+      emitted,
+      delays,
+      texts: () => emitted.map((entry) => decode(entry.frame.data)),
+      runScheduled: () => {
+        const callbacks = pending;
+        pending = [];
+        for (const callback of callbacks) callback();
+      },
+      scheduledCount: () => pending.length,
+      setNow: (ms: number) => {
+        nowMs = ms;
+      },
+    };
+  }
+
+  test('isolated chunk is scheduled with 0 delay and emitted without waiting DELAY_MS', () => {
+    const harness = createLeadingHarness();
+
+    harness.coalescer.push('dev:%1', frame('%1', 'ab'));
+    expect(harness.emitted).toEqual([]);
+    expect(harness.delays).toEqual([0]);
+
+    harness.runScheduled();
+    expect(harness.texts()).toEqual(['ab']);
+    expect(harness.scheduledCount()).toBe(0);
+  });
+
+  test('burst of N chunks in one window does not increase flush count', () => {
+    const harness = createLeadingHarness();
+    const burst = 16;
+    for (let index = 0; index < burst; index += 1) {
+      harness.coalescer.push('dev:%1', frame('%1', String.fromCharCode(97 + index)));
+    }
+
+    expect(harness.emitted).toEqual([]);
+    expect(harness.scheduledCount()).toBe(1);
+    harness.runScheduled();
+
+    expect(harness.emitted.length).toBeLessThanOrEqual(2);
+    expect(harness.emitted).toHaveLength(1);
+    expect(harness.texts()).toEqual(['abcdefghijklmnop']);
+  });
+
+  test('two chunks separated by more than delay produce two leading-edge emits', () => {
+    const harness = createLeadingHarness();
+
+    harness.coalescer.push('dev:%1', frame('%1', 'a'));
+    expect(harness.delays).toEqual([0]);
+    harness.runScheduled();
+
+    harness.setNow(DELAY + 1);
+    harness.coalescer.push('dev:%1', frame('%1', 'b'));
+    expect(harness.delays).toEqual([0, 0]);
+    harness.runScheduled();
+
+    expect(harness.texts()).toEqual(['a', 'b']);
+  });
+
+  test('preserves order across the cooldown boundary', () => {
+    const harness = createLeadingHarness();
+
+    harness.coalescer.push('dev:%1', frame('%1', 'a'));
+    harness.coalescer.push('dev:%1', frame('%1', 'b'));
+    harness.runScheduled();
+    expect(harness.texts()).toEqual(['ab']);
+
+    harness.setNow(2);
+    harness.coalescer.push('dev:%1', frame('%1', 'c'));
+    harness.coalescer.push('dev:%1', frame('%1', 'd'));
+    expect(harness.delays).toEqual([0, DELAY - 2]);
+    harness.runScheduled();
+
+    expect(harness.texts()).toEqual(['ab', 'cd']);
   });
 });
