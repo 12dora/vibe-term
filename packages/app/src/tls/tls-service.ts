@@ -6,10 +6,12 @@ import type {
   TlsConfigPatch,
   TlsConfigPublic,
   TlsMode,
+  TlsPrivateMaterial,
 } from '../../../../apps/gateway/src/tls/types';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import type { AcmeHttp01Challenge } from './acme-challenge';
+import { resolveAcmeDnsPatch } from './acme-dns-patch';
 import {
   ACME_RENEW_LEAD_MS,
   type AcmeIssueInput,
@@ -28,13 +30,7 @@ import {
   spkiFingerprint,
 } from './cert-authority';
 import { CloudflareDnsClient } from './cloudflare-dns';
-import {
-  CloudflareDnsProvider,
-  type DnsCredentials,
-  type DnsProvider,
-  normalizeDnsCredentials,
-  serializeDnsCredentials,
-} from './dns-provider';
+import { CloudflareDnsProvider, type DnsCredentials, type DnsProvider } from './dns-provider';
 import { DnspodDnsClient } from './dnspod-dns';
 import { TlsApiError } from './errors';
 import type { HttpsListenerConfig, HttpsListenerState } from './https-listener';
@@ -489,26 +485,7 @@ export class TlsService {
       staging: row.acmeStaging,
     };
     const secrets = await this.opts.store.getPrivateMaterial();
-    const certDue =
-      row.certNotAfter !== null && this.now() >= row.certNotAfter - ACME_RENEW_LEAD_MS;
-    if (
-      Boolean(row.certPem) &&
-      Boolean(secrets.keyPem) &&
-      !certDue &&
-      (reason === 'scheduler' || reason === 'startup')
-    ) {
-      await this.runIfJob(epoch, tuple, async () => {
-        await this.applyListenerOrFail();
-        await this.upsert({
-          acmeStatus: 'ok',
-          acmeLastError: null,
-          acmeLastAttemptAt: this.now(),
-          acmeNextRenewAt: (row.certNotAfter ?? this.now()) - ACME_RENEW_LEAD_MS,
-        });
-        this.scheduler.resetBackoff();
-      });
-      return;
-    }
+    if (await this.tryReuseValidCert(row, secrets, reason, epoch, tuple)) return;
 
     await this.runIfJob(epoch, tuple, async () => {
       await this.upsert({
@@ -566,6 +543,36 @@ export class TlsService {
       signal,
       () => this.opts.log?.('discarding stale acme issuance')
     );
+  }
+
+  private async tryReuseValidCert(
+    row: TlsConfigPublic,
+    secrets: TlsPrivateMaterial,
+    reason: AcmeRunReason,
+    epoch: number,
+    tuple: AcmeJobTuple
+  ): Promise<boolean> {
+    const certDue =
+      row.certNotAfter !== null && this.now() >= row.certNotAfter - ACME_RENEW_LEAD_MS;
+    if (
+      Boolean(row.certPem) &&
+      Boolean(secrets.keyPem) &&
+      !certDue &&
+      (reason === 'scheduler' || reason === 'startup')
+    ) {
+      await this.runIfJob(epoch, tuple, async () => {
+        await this.applyListenerOrFail();
+        await this.upsert({
+          acmeStatus: 'ok',
+          acmeLastError: null,
+          acmeLastAttemptAt: this.now(),
+          acmeNextRenewAt: (row.certNotAfter ?? this.now()) - ACME_RENEW_LEAD_MS,
+        });
+        this.scheduler.resetBackoff();
+      });
+      return true;
+    }
+    return false;
   }
 
   private async runIfJob(
@@ -668,92 +675,6 @@ export class TlsService {
     }
     return new CloudflareDnsProvider(new CloudflareDnsClient(this.opts.fetch));
   }
-}
-
-function nonempty(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-function resolveAcmeDnsPatch(
-  input: Extract<ApplyModeInput, { mode: 'acme' }>,
-  current: TlsConfigPublic
-): Pick<TlsConfigPatch, 'acmeDnsProvider' | 'acmeDnsSecret'> {
-  if (input.challenge !== 'dns-01') {
-    if (!input.dnsProvider && !input.dnsCredentials && !nonempty(input.cloudflareToken)) {
-      return {};
-    }
-  }
-  const legacyToken = nonempty(input.cloudflareToken);
-  const usedNewFields = input.dnsProvider !== undefined || input.dnsCredentials !== undefined;
-  const requestedProvider =
-    input.dnsProvider ??
-    (legacyToken ? 'cloudflare' : null) ??
-    current.acmeDnsProvider ??
-    (current.hasCloudflareToken ? 'cloudflare' : null);
-
-  if (input.challenge === 'dns-01' && !requestedProvider) {
-    if (usedNewFields) {
-      throw new TlsApiError('dns_provider_required', 400, 'dnsProvider is required for dns-01');
-    }
-    throw new TlsApiError(
-      'cloudflare_token_required',
-      400,
-      'cloudflareToken is required for dns-01'
-    );
-  }
-
-  const incoming = input.dnsCredentials
-    ? input.dnsProvider
-      ? normalizeDnsCredentials(input.dnsProvider, input.dnsCredentials)
-      : null
-    : legacyToken
-      ? { token: legacyToken }
-      : null;
-
-  if (input.dnsCredentials && !input.dnsProvider) {
-    throw new TlsApiError('dns_provider_required', 400, 'dnsProvider is required for dns-01');
-  }
-  if (input.dnsCredentials && input.dnsProvider && !incoming) {
-    throw new TlsApiError(
-      'dns_credentials_required',
-      400,
-      'dnsCredentials do not match the selected provider'
-    );
-  }
-
-  if (incoming && requestedProvider) {
-    const normalized = normalizeDnsCredentials(requestedProvider, incoming);
-    if (!normalized) {
-      throw new TlsApiError(
-        'dns_credentials_required',
-        400,
-        'dnsCredentials do not match the selected provider'
-      );
-    }
-    return {
-      acmeDnsProvider: requestedProvider,
-      acmeDnsSecret: serializeDnsCredentials(normalized),
-    };
-  }
-
-  if (input.challenge !== 'dns-01') return {};
-
-  const storedSame =
-    Boolean(requestedProvider) &&
-    current.acmeDnsProvider === requestedProvider &&
-    current.hasDnsCredentials;
-  const storedLegacyCloudflare = requestedProvider === 'cloudflare' && current.hasCloudflareToken;
-  if (storedSame || storedLegacyCloudflare) return {};
-
-  if (usedNewFields || input.dnsProvider) {
-    throw new TlsApiError(
-      'dns_credentials_required',
-      400,
-      'dnsCredentials are required for dns-01'
-    );
-  }
-  throw new TlsApiError('cloudflare_token_required', 400, 'cloudflareToken is required for dns-01');
 }
 
 function validatePort(value: number): number {
