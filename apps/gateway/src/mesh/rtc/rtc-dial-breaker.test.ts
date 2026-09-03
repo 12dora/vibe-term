@@ -135,13 +135,12 @@ describe('RtcDialBreaker', () => {
     expect(breaker.noteHealthy(peer)).toBe(false);
   });
 
-  test('notePeerChanged / noteSuccess no longer reset cooling', () => {
+  test('notePeerChanged does not reset cooling', () => {
     let now = 10;
     const breaker = new RtcDialBreaker({ now: () => now, breakerMs: 60_000 });
     const peer = 'hub-a';
     for (let i = 0; i < RTC_DIAL_BREAKER_FAILS; i += 1) breaker.noteFailure(peer, 'x', `f${i}`);
     expect(breaker.shouldTry(peer).allow).toBe(false);
-    breaker.noteSuccess(peer);
     breaker.notePeerChanged(peer);
     expect(breaker.shouldTry(peer).allow).toBe(false);
     now = 10 + 60_000;

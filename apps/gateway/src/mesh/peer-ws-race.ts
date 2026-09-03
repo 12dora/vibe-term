@@ -339,6 +339,84 @@ function candidateFromHandshake(
   };
 }
 
+type DialBudget = {
+  combined: AbortSignal;
+  budgetExpired: () => boolean;
+  connectTimeoutMs: (base: number) => number;
+  handshakeTimeoutMs: (elapsed: number) => number | undefined;
+  dispose: () => void;
+};
+
+function createDialBudget(signal: AbortSignal, totalMs: number | undefined): DialBudget {
+  const totalAc = totalMs != null ? new AbortController() : null;
+  const totalTimer =
+    totalAc && totalMs != null
+      ? setTimeout(() => totalAc.abort(new Error('dial-timeout')), totalMs)
+      : null;
+  const combined = totalAc ? combineAbortSignals(signal, totalAc.signal) : signal;
+  return {
+    combined,
+    budgetExpired: () => Boolean(totalAc?.signal.aborted && !signal.aborted),
+    connectTimeoutMs: (base) => (totalMs != null ? Math.min(base, Math.max(1, totalMs)) : base),
+    handshakeTimeoutMs: (elapsed) => (totalMs != null ? Math.max(1, totalMs - elapsed) : undefined),
+    dispose: () => {
+      if (totalTimer != null) clearTimeout(totalTimer);
+    },
+  };
+}
+
+async function handshakeOrClose(
+  ws: WebSocketTransportInput,
+  opts: {
+    expectedId: string;
+    gen: number;
+    stale: (gen: number) => boolean;
+    url: string;
+    identity: MeshIdentity;
+    userStore: UserStore;
+    started: number;
+    handshakeTimeoutMs: (elapsed: number) => number | undefined;
+    fallbackHandshakeTimeoutMs?: number;
+    budgetExpired: () => boolean;
+  },
+  combined: AbortSignal
+): Promise<WsSecureCandidate> {
+  if (opts.stale(opts.gen) || combined.aborted) {
+    closeWsTransport(ws);
+    if (opts.budgetExpired()) throw new WsDialError('timeout', opts.url, new Error('dial-timeout'));
+    throw new Error('stopped');
+  }
+  const handshakeTimeoutMs =
+    opts.handshakeTimeoutMs(Date.now() - opts.started) ?? opts.fallbackHandshakeTimeoutMs;
+  let handshakeSession: LinkSession | null = null;
+  try {
+    const result = await abortable(
+      handshakeWsDirect({
+        socket: ws,
+        role: 'initiator',
+        identity: opts.identity,
+        userStore: opts.userStore,
+        timeoutMs: handshakeTimeoutMs,
+      }).then((row) => {
+        handshakeSession = row.session;
+        return row;
+      }),
+      combined
+    );
+    return candidateFromHandshake(
+      result,
+      opts.expectedId,
+      opts.stale(opts.gen),
+      combined.aborted,
+      opts.url
+    );
+  } catch (err) {
+    if (handshakeSession) quiet(() => handshakeSession?.close('stopped'));
+    else closeWsTransport(ws);
+    throw err;
+  }
+}
+
 export async function dialWsSecureCandidate(opts: {
   url: string;
   expectedId: string;
@@ -355,73 +433,44 @@ export async function dialWsSecureCandidate(opts: {
 }): Promise<WsSecureCandidate | null> {
   if (opts.signal.aborted || opts.stale(opts.gen)) return null;
   const limiter = opts.limiter ?? sharedDirectDialLimiter();
-  const totalMs = opts.totalTimeoutMs;
-  const totalAc = totalMs != null ? new AbortController() : null;
-  const totalTimer =
-    totalAc && totalMs != null
-      ? setTimeout(() => totalAc.abort(new Error('dial-timeout')), totalMs)
-      : null;
-  const combined = totalAc ? combineAbortSignals(opts.signal, totalAc.signal) : opts.signal;
+  const budget = createDialBudget(opts.signal, opts.totalTimeoutMs);
   const started = Date.now();
   let acquired = false;
-  const budgetExpired = () => Boolean(totalAc?.signal.aborted && !opts.signal.aborted);
   try {
-    await limiter.acquire(combined);
+    await limiter.acquire(budget.combined);
     acquired = true;
-    if (combined.aborted || opts.stale(opts.gen)) {
-      if (budgetExpired()) throw new WsDialError('timeout', opts.url, new Error('dial-timeout'));
+    if (budget.combined.aborted || opts.stale(opts.gen)) {
+      if (budget.budgetExpired())
+        throw new WsDialError('timeout', opts.url, new Error('dial-timeout'));
       return null;
     }
-    const connectTimeoutMs =
-      totalMs != null
-        ? Math.min(opts.connectTimeoutMs, Math.max(1, totalMs))
-        : opts.connectTimeoutMs;
     const ws = await connectWsTransport({
       factory: opts.factory,
       url: opts.url,
-      signal: combined,
-      connectTimeoutMs,
+      signal: budget.combined,
+      connectTimeoutMs: budget.connectTimeoutMs(opts.connectTimeoutMs),
     });
-    if (opts.stale(opts.gen) || combined.aborted) {
-      closeWsTransport(ws);
-      if (budgetExpired()) throw new WsDialError('timeout', opts.url, new Error('dial-timeout'));
-      throw new Error('stopped');
-    }
-    const elapsed = Date.now() - started;
-    const handshakeTimeoutMs =
-      totalMs != null ? Math.max(1, totalMs - elapsed) : opts.handshakeTimeoutMs;
-    let handshakeSession: LinkSession | null = null;
-    try {
-      const result = await abortable(
-        handshakeWsDirect({
-          socket: ws,
-          role: 'initiator',
-          identity: opts.identity,
-          userStore: opts.userStore,
-          timeoutMs: handshakeTimeoutMs,
-        }).then((row) => {
-          handshakeSession = row.session;
-          return row;
-        }),
-        combined
-      );
-      return candidateFromHandshake(
-        result,
-        opts.expectedId,
-        opts.stale(opts.gen),
-        combined.aborted,
-        opts.url
-      );
-    } catch (err) {
-      if (handshakeSession) quiet(() => handshakeSession?.close('stopped'));
-      else closeWsTransport(ws);
-      throw err;
-    }
+    return await handshakeOrClose(
+      ws,
+      {
+        expectedId: opts.expectedId,
+        gen: opts.gen,
+        stale: opts.stale,
+        url: opts.url,
+        identity: opts.identity,
+        userStore: opts.userStore,
+        started,
+        handshakeTimeoutMs: budget.handshakeTimeoutMs,
+        fallbackHandshakeTimeoutMs: opts.handshakeTimeoutMs,
+        budgetExpired: budget.budgetExpired,
+      },
+      budget.combined
+    );
   } catch (err) {
-    if (budgetExpired()) return Promise.reject(new WsDialError('timeout', opts.url, err));
+    if (budget.budgetExpired()) return Promise.reject(new WsDialError('timeout', opts.url, err));
     throw classifyWsDialFailure(opts.url, err);
   } finally {
-    if (totalTimer != null) clearTimeout(totalTimer);
+    budget.dispose();
     if (acquired) limiter.release();
   }
 }
