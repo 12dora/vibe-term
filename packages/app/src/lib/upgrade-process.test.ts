@@ -10,8 +10,7 @@ import {
   createDirectProcessControl,
   formatPidRecord,
   killPidAndWait,
-  parsePidRecord,
-} from './upgrade-process';
+  parsePidRecord,, processCommandLine } from './upgrade-process';
 
 const tempDirs: string[] = [];
 const livePids: number[] = [];
@@ -148,6 +147,10 @@ describe('createDirectProcessControl', () => {
     livePids.push(child.pid);
     const pidPath = join(dir, 'tmex.pid');
     await writeFile(pidPath, `${child.pid}\n`);
+    // Linux 上 /proc/<pid>/cmdline 在 exec 完成前是空的，先等子进程真正带着 server.js 跑起来。
+    for (let i = 0; i < 100 && !(processCommandLine(child.pid) ?? '').includes(serverJs); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     assertOwnedInstallProcess({ pid: child.pid, installDir: dir });
     const control = createDirectProcessControl({
       runScriptPath: join(dir, 'missing-run.sh'),
