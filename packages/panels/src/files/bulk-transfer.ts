@@ -29,7 +29,7 @@ import { parseError } from '@tmex/api-client/file-errors';
 import { readNdjsonStream } from '@tmex/api-client/ndjson-stream';
 import type { TransferOpts } from '@tmex/api-client/transfer-types';
 import type { UploadCommitEvent, UploadInitRequest, UploadInitResponse } from '@tmex/shared';
-import { getBulkClient } from '@tmex/ws-client';
+import { getBulkClient } from '@tmex/ws-client/direct/bulk-client';
 
 /** 本次传输实际走的通道：`direct` = 浏览器↔node 直连，`relay` = 经 hub 中转的 REST。 */
 export type TransferPath = 'direct' | 'relay';

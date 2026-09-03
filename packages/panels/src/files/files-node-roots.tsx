@@ -11,21 +11,17 @@ import {
   reorderFileRoots,
 } from '@tmex/api-client';
 import type { FileEntryDto, FileRootDto, SystemInfo } from '@tmex/shared';
-import { fileRoute, hostAppPath } from '@tmex/stores';
 import { useFileTreeStore, useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
-import { ContextMenu, ContextMenuTrigger } from '@tmex/ui/context-menu';
-import { useSidebar } from '@tmex/ui/sidebar';
 import { Loader2, TriangleAlert } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { SortableVerticalList, useSortableRow } from '../device-tree/device-tree-dnd';
 import { type DirectoryDragHandle, DirectoryNodeView } from './directory-node-view';
 import { fileIconColor, fileIconFor } from './file-icon';
-import { FileNodeMenuContent, useFileNodeActions } from './file-node-actions';
+import { FileLeafContextMenu } from './file-leaf-menu';
 import { NodeError } from './node-menu';
 import {
   FILE_ROOTS_QUERY_KEY,
@@ -43,7 +39,7 @@ const DEFAULT_TRANSFER_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 
 const INDENT_STEP = 12;
 
-// 单个目录一次最多渲染多少行：后端每目录上限 2000，全量挂载会造出上千个带右键菜单的组件
+// 单个目录一次最多渲染多少行：后端每目录上限 2000，全量挂载会造出上千个 DOM 行
 const DISPLAY_CAP = 500;
 
 interface TreeContext {
@@ -155,15 +151,18 @@ export function FilesNodeRoots() {
   return (
     <SelectedFileProvider>
       <ShowAllEntriesProvider>
-        <SortableVerticalList
-          ids={visibleIds}
-          onReorder={reorder.onReorder}
-          disabled={reorder.pending}
-        >
-          {roots.map((root) => (
-            <SortableRootNode key={root.id} root={root} ctx={ctx} />
-          ))}
-        </SortableVerticalList>
+        {/* space-y-0.5 原本由宿主容器给根行之间加间距；这里多了一层 trigger，间距跟着下移一层 */}
+        <FileLeafContextMenu roots={roots} className="space-y-0.5">
+          <SortableVerticalList
+            ids={visibleIds}
+            onReorder={reorder.onReorder}
+            disabled={reorder.pending}
+          >
+            {roots.map((root) => (
+              <SortableRootNode key={root.id} root={root} ctx={ctx} />
+            ))}
+          </SortableVerticalList>
+        </FileLeafContextMenu>
       </ShowAllEntriesProvider>
       {rootsQuery.isLoading && (
         <div className="px-2 py-3 text-center text-xs text-muted-foreground">
@@ -235,7 +234,7 @@ const DirNode = memo(function DirNode({
   drag?: DirectoryDragHandle;
 }) {
   const { t } = useTranslation();
-  const { nodeKey, expanded, toggle, query, errCode } = useDirectoryListing(rootId, path);
+  const { nodeKey, expanded, toggle, query, entries, errCode } = useDirectoryListing(rootId, path);
   const upload = useDirectoryUpload(rootId, path, ctx.transferMaxBytes);
 
   useRsyncMissingToast({
@@ -251,7 +250,9 @@ const DirNode = memo(function DirNode({
 
   const indent = depth * INDENT_STEP + 4;
   const childIndent = indent + 18;
-  const entries = query.data?.entries;
+  // 文件行比同级的状态行（加载中/显示其余）多缩进一级，与子目录行对齐
+  const leafIndent = childIndent + INDENT_STEP;
+  const symlinkTitle = t('files.symlink');
   // 选中的文件落在上限之外时把上限撑到它，否则路由直达的那一行根本不会挂载
   const selectedChild = useSelectedChildPath(rootId, path);
   const cap =
@@ -277,127 +278,112 @@ const DirNode = memo(function DirNode({
       onFileInputChange={upload.handleFileInputChange}
       drag={drag}
     >
-      {(query.isLoading || (query.isFetching && !query.data)) && (
-        <div
-          style={{ paddingLeft: childIndent }}
-          className="flex items-center gap-1.5 py-1 text-[11px] text-muted-foreground"
-        >
-          <Loader2 className="h-3 w-3 animate-spin" />
-          {t('common.loading')}
-        </div>
-      )}
-      {query.isError && (
-        <NodeError code={errCode} indent={childIndent} onRetry={() => void query.refetch()} />
-      )}
-      {visible?.map((entry) =>
-        entry.type === 'dir' ? (
-          <DirNode
-            key={entry.path}
-            root={root}
-            rootId={rootId}
-            path={entry.path}
-            depth={depth + 1}
-            isRoot={false}
-            ctx={ctx}
-          />
-        ) : (
-          <FileLeaf key={entry.path} entry={entry} root={root} depth={depth + 1} />
-        )
-      )}
-      {hidden > 0 && (
-        <button
-          type="button"
-          data-testid={`file-show-more-${rootId}-${path}`}
-          onClick={onShowAll}
-          style={{ paddingLeft: childIndent }}
-          className="flex w-full min-w-0 items-center rounded-md py-1 pr-2 text-left text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-        >
-          {t('files.showMore', { count: hidden })}
-        </button>
-      )}
-      {query.data && query.data.entries.length === 0 && (
-        <div
-          style={{ paddingLeft: childIndent }}
-          className="py-1 text-[11px] text-muted-foreground/70"
-        >
-          {t('files.emptyDir')}
-        </div>
-      )}
-      {query.data?.truncated && (
-        <div
-          style={{ paddingLeft: childIndent }}
-          className="py-1 text-[11px] text-muted-foreground/70"
-        >
-          {t('files.truncated')}
-        </div>
-      )}
+      {/* 这两个属性是共享右键菜单回查 entry 的唯一线索（见 file-leaf-target 的常量）：
+          行只留自己的路径，根 id 与所在目录由容器带 */}
+      <div data-file-list-root={rootId} data-file-list-dir={path}>
+        {(query.isLoading || (query.isFetching && !query.data)) && (
+          <div
+            style={{ paddingLeft: childIndent }}
+            className="flex items-center gap-1.5 py-1 text-[11px] text-muted-foreground"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {t('common.loading')}
+          </div>
+        )}
+        {query.isError && (
+          <NodeError code={errCode} indent={childIndent} onRetry={() => void query.refetch()} />
+        )}
+        {visible?.map((entry) =>
+          entry.type === 'dir' ? (
+            <DirNode
+              key={entry.path}
+              root={root}
+              rootId={rootId}
+              path={entry.path}
+              depth={depth + 1}
+              isRoot={false}
+              ctx={ctx}
+            />
+          ) : (
+            <FileLeaf
+              key={entry.path}
+              entry={entry}
+              rootId={rootId}
+              indent={leafIndent}
+              symlinkTitle={symlinkTitle}
+            />
+          )
+        )}
+        {hidden > 0 && (
+          <button
+            type="button"
+            data-testid={`file-show-more-${rootId}-${path}`}
+            onClick={onShowAll}
+            style={{ paddingLeft: childIndent }}
+            className="flex w-full min-w-0 items-center rounded-md py-1 pr-2 text-left text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+          >
+            {t('files.showMore', { count: hidden })}
+          </button>
+        )}
+        {query.data && query.data.entries.length === 0 && (
+          <div
+            style={{ paddingLeft: childIndent }}
+            className="py-1 text-[11px] text-muted-foreground/70"
+          >
+            {t('files.emptyDir')}
+          </div>
+        )}
+        {query.data?.truncated && (
+          <div
+            style={{ paddingLeft: childIndent }}
+            className="py-1 text-[11px] text-muted-foreground/70"
+          >
+            {t('files.truncated')}
+          </div>
+        )}
+      </div>
     </DirectoryNodeView>
   );
 });
 
+// 行只剩一个 `<button>`：没有右键菜单、没有回调、没有 useTranslation——点击/右键/长按/拖拽
+// 全部由树根的 `FileLeafContextMenu` 事件委托接管（见 EX1 §U5 的 17 倍单价）。
 const FileLeaf = memo(function FileLeaf({
   entry,
-  root,
-  depth,
-}: { entry: FileEntryDto; root: FileRootDto; depth: number }) {
-  const { t } = useTranslation();
-  const navigate = useNavigate();
-  const runtime = useRuntime();
-  const { isMobile, setOpenMobile } = useSidebar();
-  const rootId = root.id;
+  rootId,
+  indent,
+  symlinkTitle,
+}: { entry: FileEntryDto; rootId: string; indent: number; symlinkTitle: string }) {
   const isSelected = useIsFileSelected(rootId, entry.path);
   const Icon = fileIconFor(entry);
-  const indent = depth * INDENT_STEP + 4 + 18;
-  const { download, dragHandlers } = useFileNodeActions(rootId, entry);
-
-  const open = () => {
-    navigate(hostAppPath(runtime.host, fileRoute(rootId, entry.path)));
-    if (isMobile) setOpenMobile(false);
-  };
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger
-        render={
-          <button
-            type="button"
-            draggable
-            onClick={open}
-            {...dragHandlers}
-            data-testid={`file-item-${rootId}-${entry.path}`}
-            title={entry.name}
-            style={{ paddingLeft: indent }}
-            className={cn(
-              'flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 pr-2 text-left transition-colors data-[pressed]:bg-sidebar-accent [@media(any-pointer:coarse)]:py-1.5',
-              isSelected
-                ? 'bg-primary/10 text-primary'
-                : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-foreground'
-            )}
-          >
-            <Icon
-              className={cn(
-                'h-4 w-4 shrink-0',
-                isSelected ? 'text-primary' : fileIconColor(entry.category)
-              )}
-            />
-            <span className="min-w-0 flex-1 truncate text-xs">{entry.name}</span>
-            {entry.isSymlink && (
-              <span
-                className="shrink-0 text-[9px] text-muted-foreground/60"
-                title={t('files.symlink')}
-              >
-                ↗
-              </span>
-            )}
-          </button>
-        }
+    <button
+      type="button"
+      draggable
+      data-file-leaf-path={entry.path}
+      data-testid={`file-item-${rootId}-${entry.path}`}
+      title={entry.name}
+      style={{ paddingLeft: indent }}
+      className={cn(
+        'flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 pr-2 text-left transition-colors data-[pressed]:bg-sidebar-accent [@media(any-pointer:coarse)]:py-1.5',
+        isSelected
+          ? 'bg-primary/10 text-primary'
+          : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-foreground'
+      )}
+    >
+      <Icon
+        className={cn(
+          'h-4 w-4 shrink-0',
+          isSelected ? 'text-primary' : fileIconColor(entry.category)
+        )}
       />
-      <FileNodeMenuContent
-        root={root}
-        entry={entry}
-        onOpen={open}
-        onDownload={() => void download()}
-      />
-    </ContextMenu>
+      <span className="min-w-0 flex-1 truncate text-xs">{entry.name}</span>
+      {entry.isSymlink && (
+        <span className="shrink-0 text-[9px] text-muted-foreground/60" title={symlinkTitle}>
+          ↗
+        </span>
+      )}
+    </button>
   );
 });
