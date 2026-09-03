@@ -1,6 +1,7 @@
 import {
   enrollmentTokens,
   hubTrust,
+  meshHubs,
   nodeCerts,
   nodeIdentity,
   nodeSessions,
@@ -25,6 +26,7 @@ export class MeshMembershipStore {
       tx.delete(enrollmentTokens).run();
       tx.delete(peerCache).run();
       tx.delete(hubTrust).run();
+      tx.delete(meshHubs).run();
       tx.delete(nodeIdentity).run();
       tx.delete(users).run();
     });

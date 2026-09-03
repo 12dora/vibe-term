@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { HubTrustStore } from './hub-trust-store';
 import { KeyLogStore } from './key-log-store';
+import { MeshHubStore } from './mesh-hub-store';
 import { MeshMembershipStore } from './mesh-membership-store';
 import { NodeIdentityStore } from './node-identity-store';
 import { NodeSessionStore } from './node-session-store';
@@ -33,7 +34,7 @@ function tableCount(
 }
 
 describe('MeshMembershipStore.clearAll', () => {
-  test('deletes users, derived rows, nodes, enrollments, peers, hub_trust, and node_identity', async () => {
+  test('deletes users, derived rows, nodes, enrollments, peers, hub_trust, mesh_hubs, and node_identity', async () => {
     const { db, sqlite, close } = createMigratedAuthDb();
     try {
       const users = new UserStore(db);
@@ -41,6 +42,7 @@ describe('MeshMembershipStore.clearAll', () => {
       const sessions = new NodeSessionStore(db);
       const identity = new NodeIdentityStore(db);
       const trust = new HubTrustStore(db);
+      const hubs = new MeshHubStore(db);
 
       users.create({
         id: 'user-1',
@@ -123,6 +125,21 @@ describe('MeshMembershipStore.clearAll', () => {
         certSig: IDENTITY_SIG,
         userId: 'user-1',
       });
+      hubs.upsert(
+        {
+          hubNodeId: 'aa'.repeat(16),
+          publicUrl: 'https://hub.example',
+          name: 'stale-hub',
+          mode: 'active',
+          priority: 1,
+          writerEpoch: 1,
+          caFingerprint: null,
+          online: true,
+          lastSeenAt: 10,
+        },
+        1_000
+      );
+      expect(hubs.list()).toHaveLength(1);
 
       new MeshMembershipStore(db).clearAll();
 
@@ -136,6 +153,7 @@ describe('MeshMembershipStore.clearAll', () => {
         'enrollment_tokens',
         'peer_cache',
         'hub_trust',
+        'mesh_hubs',
         'node_identity',
       ]) {
         expect(tableCount(sqlite, table)).toBe(0);
@@ -143,6 +161,7 @@ describe('MeshMembershipStore.clearAll', () => {
       expect(users.listUsers()).toHaveLength(0);
       expect(await identity.load()).toBeNull();
       expect(trust.get('https://hub.example')).toBeNull();
+      expect(hubs.list()).toHaveLength(0);
     } finally {
       close();
     }

@@ -1,6 +1,7 @@
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
+import { MeshHubStore } from '../../../../apps/gateway/src/auth/mesh-hub-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import type { AuthenticateResult } from '../../../../apps/gateway/src/mesh/session-middleware';
 import { authenticateRequest } from '../../../../apps/gateway/src/mesh/session-middleware';
@@ -641,6 +642,22 @@ describe('POST /api/local/leave', () => {
       identity,
       now: Date.now(),
     });
+    const hubs = new MeshHubStore(ctx.db);
+    hubs.upsert(
+      {
+        hubNodeId: 'aa'.repeat(16),
+        publicUrl: 'https://hub.example',
+        name: 'stale-hub',
+        mode: 'active',
+        priority: 1,
+        writerEpoch: 1,
+        caFingerprint: null,
+        online: true,
+        lastSeenAt: 1,
+      },
+      Date.now()
+    );
+    expect(hubs.list()).toHaveLength(1);
     const env: Record<string, string> = {
       TMEX_ROLES: 'node',
       TMEX_HUB_URL: 'https://hub.example',
@@ -676,6 +693,7 @@ describe('POST /api/local/leave', () => {
     expect(restarts).toEqual([1]);
     expect(ctx.userStore.listUsers()).toHaveLength(0);
     expect(await ctx.identityStore.load()).toBeNull();
+    expect(hubs.list()).toHaveLength(0);
     expect(env.TMEX_ROLES).toBe('standalone');
     expect(env.TMEX_HUB_URL).toBe('');
     expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
