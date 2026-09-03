@@ -7,6 +7,7 @@ import {
   logout,
   meshUrl,
   readMeshState,
+  signInToNodeFromDevicesPage,
 } from './helpers/mesh';
 
 // 文案断言按浏览器语言二选一：e2e 的 Chromium 是 en-US，本地跑成中文时也不该挂。
@@ -113,8 +114,17 @@ test('mesh: after a passkey is registered, password login requires the passkey',
  * 这条用例刻意不带 `x-forwarded-for`，也刻意不给这个 context 挂虚拟认证器：浏览器直接从
  * loopback 连 entry，密码登录必须一次过，且全程不能触发任何 WebAuthn 仪式
  * （`navigator.credentials.get` 的调用次数是硬证据）。
+ *
+ * 只登 entry 证不了多少事：entry 就是 hub，`/n/<hubNodeId>` 会在本机自重写，走的还是本地那条路。
+ * 因此还要按需登录**远端 node**——这条链路是 entry → forwarder → 已认证 peer link →
+ * 远端的 `/api/auth/login`，豁免完全依赖入口给转发请求盖上 `x-tmex-client-source: local`
+ * （`forwarder.ts` 的 `filterRequestHeaders`）且目标认这枚章
+ * （`client-source.ts` 的 `waivesPasskeySecondFactor`）。任一端回退，远端就会回 `PASSKEY_REQUIRED`，
+ * 而这个 context 手上一把凭证都没有，按需登录必然失败。
  */
 test('mesh: a loopback client source waives the passkey second factor', async ({ browser }) => {
+  // 两次登录（entry + 远端 node）加一次复制轮询，90s 的默认档不够宽裕。
+  test.setTimeout(180_000);
   const local = await browser.newContext();
   await local.addInitScript(() => {
     const store = window as unknown as { __tmexPasskeyGetCalls?: number };
@@ -143,6 +153,18 @@ test('mesh: a loopback client source waives the passkey second factor', async ({
     expect((await readSubmitLabels(localPage)).join('\n')).not.toMatch(PASSKEY_CHECK_COPY);
     expect(await passkeyGetCalls(localPage)).toBe(0);
     expect(await meshNodesStatus(localPage)).toBe(200);
+
+    // 远端 node 的二次验证只有在通行密钥复制过去之后才会真的生效，否则下面那条按需登录
+    // 是空转的（目标名下没有凭证，`checkPasskeySecondFactor` 直接放行）。
+    await waitForRemotePasskeyReplication(browser);
+
+    // 跨节点按需登录：走 entry → forwarder → peer link → 远端 `/api/auth/login`。
+    await signInToNodeFromDevicesPage(localPage, state.remoteNodeId);
+    expect(await nodeLoggedIn(localPage, state.remoteNodeId)).toBe(true);
+    // 更硬的一条：远端**受保护**接口带着该 node 的会话 cookie 走 peer link 回了 200。
+    expect(await nodeApiStatus(localPage, state.remoteNodeId, '/api/devices')).toBe(200);
+    // 整条链路依旧一次仪式都没有（SPA 内部跳转，计数器跨这一步不会被重置）。
+    expect(await passkeyGetCalls(localPage)).toBe(0);
 
     // 设置 →「多节点互联」：entry 就是 hub，节点表能列出两台就说明 hub 侧也接受了这次登录
     // （豁免要在 entry 与 hub 两端一致，只要有一端仍然强制断言，这里就会退化成横幅）。
@@ -277,6 +299,76 @@ async function authModeFlag(target: Page, field: string): Promise<boolean | unde
         .then((res) => res.json())
         .then((body: Record<string, unknown>) => body[key] as boolean | undefined),
     field
+  );
+}
+
+/**
+ * 等通行密钥复制到远端 node（key log 复制有延迟，超时 20s）。
+ *
+ * 探测刻意另起一个**公网来源**的 context，而不是复用 loopback 那个：远端 `/api/auth/mode` 的
+ * `passkeySecondFactor` 是 `hasPasskeys && !waived`，从 loopback 探时入口会盖上
+ * `x-tmex-client-source: local`，字段恒为 false，「还没复制过来」与「已经豁免」分不开。
+ * 带上 XFF 入口就不盖章，读到的是远端 key log 的真实状态——这一步于是只证明「复制完成」，
+ * 盖章有没有坏留给后面那条按需登录去暴露，两个信号不互相掩盖。
+ *
+ * `/n/<id>/api/auth/mode` 属于登录前公开面（`AUTH_LOGIN_PUBLIC_PATHS`），转发也不要求
+ * 入口会话，所以这个 context 不用登录任何节点。
+ */
+async function waitForRemotePasskeyReplication(browser: Browser): Promise<void> {
+  const probe = await newForwardedContext(browser);
+  try {
+    const probePage = await probe.newPage();
+    await probePage.goto(meshUrl(state, '/login'), { waitUntil: 'domcontentloaded' });
+    await expect
+      .poll(() => remoteAuthModeFlag(probePage, state.remoteNodeId, 'passkeySecondFactor'), {
+        timeout: 20_000,
+        message: `通行密钥未复制到 ${state.remoteNodeName}，远端的二次验证还没生效`,
+      })
+      .toBe(true);
+  } finally {
+    await probe.close();
+  }
+}
+
+/** 远端 node 的 `/api/auth/mode` 某个布尔字段；请求经入口转发走 peer link。 */
+async function remoteAuthModeFlag(
+  target: Page,
+  nodeId: string,
+  field: string
+): Promise<boolean | undefined> {
+  return target.evaluate(
+    ([id, key]) =>
+      fetch(`/n/${id}/api/auth/mode`, { credentials: 'include' })
+        .then((res) => (res.ok ? res.json() : {}))
+        .then((body: Record<string, unknown>) => body[key] as boolean | undefined)
+        .catch(() => undefined),
+    [nodeId, field] as const
+  );
+}
+
+/** 经入口转发打远端某个接口的状态码：200 需要该 node 自己的会话 cookie。 */
+async function nodeApiStatus(target: Page, nodeId: string, path: string): Promise<number> {
+  return target.evaluate(
+    ([id, rest]) =>
+      fetch(`/n/${id}${rest}`, { credentials: 'include' })
+        .then((res) => res.status)
+        .catch(() => 0),
+    [nodeId, path] as const
+  );
+}
+
+/** 浏览器此刻有没有该 node 的会话 cookie（`/api/mesh/nodes` 的 `loggedIn` 就是这个）。 */
+async function nodeLoggedIn(target: Page, nodeId: string): Promise<boolean> {
+  return target.evaluate(
+    (id) =>
+      fetch('/api/mesh/nodes', { credentials: 'include' })
+        .then((res) => res.json())
+        .then(
+          (body: { nodes?: { id: string; loggedIn?: boolean }[] }) =>
+            body.nodes?.some((node) => node.id === id && node.loggedIn === true) === true
+        )
+        .catch(() => false),
+    nodeId
   );
 }
 

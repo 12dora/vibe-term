@@ -898,6 +898,35 @@ describe('hubCandidateIds / loadHubNodes', () => {
     ).rejects.toMatchObject({ code: 'PASSKEY_REQUIRED', status: 401 });
   });
 
+  test('拒登不会被后一台的连不上盖掉：抛的是写者那次鉴权失败', async () => {
+    const calls: string[] = [];
+    await expect(
+      loadHubNodes(['b', 'a'], {
+        list: async (id) => {
+          calls.push(`list:${id}`);
+          throw id === 'b'
+            ? new HubApiError('NODE_LOGIN_REQUIRED', 401)
+            : new HubApiError('hub_nodes_failed', 503);
+        },
+        login: async () => ({ ok: false, code: 'PASSKEY_REQUIRED' }),
+      })
+    ).rejects.toMatchObject({ code: 'PASSKEY_REQUIRED', status: 401 });
+    expect(calls).toEqual(['list:b', 'list:a']);
+  });
+
+  test('服务端新增的拒登码（TOTP_INVALID / RATE_LIMITED）同样按鉴权失败抛出', async () => {
+    for (const code of ['TOTP_INVALID', 'RATE_LIMITED']) {
+      await expect(
+        loadHubNodes(['b'], {
+          list: async () => {
+            throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
+          },
+          login: async () => ({ ok: false, code }),
+        })
+      ).rejects.toMatchObject({ code, status: 401 });
+    }
+  });
+
   test('登录失败码不是鉴权类（如 NETWORK_ERROR）时保留列表原错误', async () => {
     await expect(
       loadHubNodes(['b'], {

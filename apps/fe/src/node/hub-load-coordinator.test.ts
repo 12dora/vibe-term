@@ -8,6 +8,7 @@ import {
   HubLoadCoordinator,
   type HubRequest,
   classifyHubFailure,
+  isHubAuthCode,
 } from './hub-load-coordinator';
 
 function row(id: string): HubNodeRow {
@@ -68,14 +69,17 @@ function recorder(): Recorder {
     loading: false,
     failure: null,
     sink: {
-      loading: (value) => {
+      // 与 `useHubLoadCoordinator` 的接线保持一致：换目标开跑与 reset 都清掉失败态。
+      loading: (value, switched) => {
         state.events.push(`loading:${value}`);
         state.loading = value;
+        if (value && switched) state.failure = null;
       },
       reset: () => {
         state.events.push('reset');
         state.rows = null;
         state.loading = false;
+        state.failure = null;
       },
       rows: (rows) => {
         state.events.push(`rows:${rows.map((item) => item.id).join(',')}`);
@@ -256,6 +260,57 @@ describe('HubLoadCoordinator', () => {
     expect(sink.events.at(-1)).toBe('reset');
   });
 
+  test('没有可用 hub 时连上一台的失败态一起清掉', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const rejecting = deferred();
+
+    const promise = coordinator.load(rejecting.request);
+    rejecting.reject(new HubApiError('PASSKEY_REQUIRED', 401));
+    await promise;
+    expect(sink.failure?.kind).toBe('auth');
+
+    await coordinator.load(null);
+    expect(sink.failure).toBeNull();
+  });
+
+  test('换 hub 的加载一开跑就清掉上一台的失败，不把 A 的拒登挂在 B 的加载上', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const hubA = deferred();
+    const hubB = deferred();
+
+    const failed = coordinator.load(hubA.request);
+    hubA.reject(new HubApiError('PASSKEY_REQUIRED', 401));
+    await failed;
+    expect(sink.failure?.kind).toBe('auth');
+
+    const pending = coordinator.load(hubB.request);
+    expect(sink.loading).toBe(true);
+    expect(sink.failure).toBeNull();
+
+    hubB.resolve([row('b')]);
+    await pending;
+    expect(sink.failure).toBeNull();
+    expect(sink.rows?.map((item) => item.id)).toEqual(['b']);
+  });
+
+  test('同一目标的轮询保留失败态：每一拍都清一次只会让提示来回闪', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const hub = deferred();
+
+    const failed = coordinator.load(hub.request);
+    hub.reject(new HubApiError('PASSKEY_REQUIRED', 401));
+    await failed;
+
+    const poll = coordinator.load(hub.request);
+    expect(sink.failure?.code).toBe('PASSKEY_REQUIRED');
+    hub.reject(new HubApiError('PASSKEY_REQUIRED', 401));
+    await poll;
+    expect(sink.failure?.code).toBe('PASSKEY_REQUIRED');
+  });
+
   test('切到 null 之后的旧响应不再写状态', async () => {
     const sink = recorder();
     const coordinator = new HubLoadCoordinator(sink.sink);
@@ -286,6 +341,12 @@ describe('classifyHubFailure', () => {
     expect(classifyHubFailure(new HubApiError('INVALID_CREDENTIALS', 403)).kind).toBe('auth');
   });
 
+  test('后端新增的拒登码（TOTP_INVALID / DELEGATION_*）同样判成 auth', () => {
+    expect(classifyHubFailure(new HubApiError('TOTP_INVALID', 403)).kind).toBe('auth');
+    expect(classifyHubFailure(new HubApiError('BAD_SIGNATURE', 403)).kind).toBe('auth');
+    expect(classifyHubFailure(new HubApiError('DELEGATION_EXPIRED', 403)).kind).toBe('auth');
+  });
+
   test('其余错误一律 unreachable，带得出码就带上', () => {
     expect(classifyHubFailure(new HubApiError('hub_nodes_failed', 503))).toEqual({
       kind: 'unreachable',
@@ -297,5 +358,32 @@ describe('classifyHubFailure', () => {
       code: null,
       message: 'boom',
     });
+  });
+});
+
+describe('isHubAuthCode', () => {
+  test('本地 / 传输层的登录失败码不算 hub 拒登', () => {
+    expect(isHubAuthCode('NO_SESSION_KEY')).toBe(false);
+    expect(isHubAuthCode('NETWORK_ERROR')).toBe(false);
+    expect(isHubAuthCode('UNKNOWN_NODE')).toBe(false);
+    expect(isHubAuthCode('NODE_LIST_FAILED')).toBe(false);
+    expect(isHubAuthCode(undefined)).toBe(false);
+    expect(isHubAuthCode('')).toBe(false);
+  });
+
+  test('其余都是服务端下的判断，一律算拒登（含后端新增的码）', () => {
+    for (const code of [
+      'PASSKEY_REQUIRED',
+      'PASSKEY_INVALID',
+      'TOTP_REQUIRED',
+      'TOTP_INVALID',
+      'INVALID_CREDENTIALS',
+      'BAD_SIGNATURE',
+      'DELEGATION_EXPIRED',
+      'RATE_LIMITED',
+      'NODE_LOGIN_REQUIRED',
+    ]) {
+      expect(isHubAuthCode(code)).toBe(true);
+    }
   });
 });

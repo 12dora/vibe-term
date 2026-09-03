@@ -22,25 +22,54 @@ export type HubFailureReason =
   | { kind: 'unreachable'; code: string | null; message: string };
 
 export interface HubLoadSink {
-  /** 请求开始 / 结束时的 loading 翻转。 */
-  loading: (value: boolean) => void;
-  /** 没有可用 hub（未启用或定位不到）：清空列表并结束 loading。 */
+  /**
+   * 请求开始 / 结束时的 loading 翻转。`switched` 表示这一次开始的是**换了目标**的加载
+   * （切 hub、候选集变化、启停），上一台 hub 的失败态到此为止，不该压在新目标的加载上；
+   * 同一目标的轮询 / 手动刷新则保留失败态，否则每一拍都要把提示闪成另一句。
+   */
+  loading: (value: boolean, switched?: boolean) => void;
+  /** 没有可用 hub（未启用或定位不到）：清空列表、失败态并结束 loading。 */
   reset: () => void;
   rows: (rows: HubNodeRow[]) => void;
   failed: (reason: HubFailureReason) => void;
 }
 
-/** 节点登录被拒的业务码：拿到其中任何一个都说明 hub 是通的，只是这次身份没过。 */
-const HUB_AUTH_CODES = new Set([
+/**
+ * 静默登录里属于**本地 / 传输层**的结论：请求压根没走到 hub（没有会话钥、发不出去、
+ * mesh 列表里没有这台 node、列表拉不回来），谈不上「hub 拒登」。
+ */
+const LOCAL_LOGIN_FAILURE_CODES = new Set([
+  'NO_SESSION_KEY',
+  'UNKNOWN_NODE',
+  'NETWORK_ERROR',
+  'NODE_LIST_FAILED',
+]);
+
+/**
+ * 静默登录的失败码是不是 hub 的拒登结论。**用排除法**：除上面那几个本地 / 传输码，其余
+ * （`PASSKEY_*`、`TOTP_*`、`DELEGATION_*`、`RATE_LIMITED`、`INVALID_CREDENTIALS`…）都是
+ * 服务端下的判断。允许清单每漏一个后端新码，界面就把一次「hub 拒登」说成「hub 不可达」。
+ */
+export function isHubAuthCode(code: string | null | undefined): code is string {
+  return typeof code === 'string' && code !== '' && !LOCAL_LOGIN_FAILURE_CODES.has(code);
+}
+
+/**
+ * hub 列表请求（而非登录）的错误码里明确属于鉴权的那些。列表错误**不能**用排除法：
+ * `hub_nodes_failed` 这类传输失败同样带码，反过来判会把「打不通」说成「拒登」。
+ */
+const HUB_AUTH_ERROR_CODES = new Set([
+  'NODE_LOGIN_REQUIRED',
   'PASSKEY_REQUIRED',
   'PASSKEY_INVALID',
   'TOTP_REQUIRED',
-  'NODE_LOGIN_REQUIRED',
+  'TOTP_INVALID',
   'INVALID_CREDENTIALS',
+  'BAD_SIGNATURE',
 ]);
 
-export function isHubAuthCode(code: string | null | undefined): code is string {
-  return typeof code === 'string' && HUB_AUTH_CODES.has(code);
+function isHubAuthErrorCode(code: string): boolean {
+  return HUB_AUTH_ERROR_CODES.has(code) || code.startsWith('DELEGATION_');
 }
 
 /**
@@ -50,7 +79,7 @@ export function isHubAuthCode(code: string | null | undefined): code is string {
 export function classifyHubFailure(err: unknown): HubFailureReason {
   const message = errorMessage(err);
   if (err instanceof HubApiError) {
-    if (err.status === 401 || isHubAuthCode(err.code)) {
+    if (err.status === 401 || isHubAuthErrorCode(err.code)) {
       return { kind: 'auth', code: err.code, message };
     }
     return { kind: 'unreachable', code: err.code, message };
@@ -65,6 +94,8 @@ function errorMessage(err: unknown): string {
 export class HubLoadCoordinator {
   private generation = 0;
   private active = true;
+  /** 上一次 `load()` 的目标；用来区分「换了 hub」与「同一目标的轮询 / 刷新」。 */
+  private target: HubRequest | null = null;
   private inFlight: { request: HubRequest; promise: Promise<void> } | null = null;
 
   constructor(private readonly sink: HubLoadSink) {}
@@ -87,13 +118,15 @@ export class HubLoadCoordinator {
   load(request: HubRequest | null): Promise<void> {
     const current = this.inFlight;
     if (current && current.request === request) return current.promise;
+    const switched = request !== this.target;
+    this.target = request;
     const generation = ++this.generation;
     if (!request) {
       this.inFlight = null;
       if (this.active) this.sink.reset();
       return Promise.resolve();
     }
-    if (this.active) this.sink.loading(true);
+    if (this.active) this.sink.loading(true, switched);
     const promise = this.run(request, generation).finally(() => {
       if (this.inFlight?.promise === promise) this.inFlight = null;
     });

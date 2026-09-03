@@ -254,12 +254,16 @@ function isNodeLoginRequired(error: unknown): boolean {
  * 静默登录被 hub 以鉴权码拒掉时，**抛出去的必须是那次登录失败**：列表那条 401 只说明
  * 「还没登录」，把它一路抛到界面只会显示成一句「Hub 不可达」，掩盖掉真正的原因
  * （通行密钥 / TOTP 没过）。
+ *
+ * 全部候选都失败时抛**最可操作**的那一个：拒登（用户能去补验证）优先于打不通，否则
+ * 「写者拒登 → 备机 503」会被后一条盖成「Hub 不可达」。多台都拒登时以第一台（写者）为准。
  */
 export async function loadHubNodes(
   candidates: string[],
   deps: HubLoadDeps
 ): Promise<HubLoadResult> {
   let lastError: unknown = new Error('hub_unreachable');
+  let authError: HubApiError | null = null;
   for (const hubNodeId of candidates) {
     try {
       return { hubNodeId, rows: await deps.list(hubNodeId) };
@@ -270,7 +274,11 @@ export async function loadHubNodes(
         .login(hubNodeId)
         .catch((): { ok: boolean; code?: string } => ({ ok: false }));
       if (!login.ok) {
-        if (isHubAuthCode(login.code)) lastError = new HubApiError(login.code, 401);
+        if (isHubAuthCode(login.code)) {
+          const rejected = new HubApiError(login.code, 401);
+          lastError = rejected;
+          authError ??= rejected;
+        }
         continue;
       }
       try {
@@ -280,7 +288,7 @@ export async function loadHubNodes(
       }
     }
   }
-  throw lastError;
+  throw authError ?? lastError;
 }
 
 function silentNodeLogin(hubNodeId: string): Promise<{ ok: boolean }> {
@@ -756,10 +764,15 @@ function useHubLoadCoordinator(setters: HubStateSetters): HubLoadCoordinator {
   const ref = useRef<HubLoadCoordinator | null>(null);
   if (ref.current === null) {
     ref.current = new HubLoadCoordinator({
-      loading: setLoading,
+      // 换目标（切 hub / 启停）开跑时清掉上一台的失败：A 的拒登提示不该挂在 B 的加载上。
+      loading: (value, switched) => {
+        setLoading(value);
+        if (value && switched) setFailure(null);
+      },
       reset: () => {
         setHubNodes(null);
         setLoading(false);
+        setFailure(null);
       },
       rows: (rows) => {
         setHubNodes(rows);
