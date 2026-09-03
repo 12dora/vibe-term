@@ -6,9 +6,22 @@ import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 import { Skeleton } from '@tmex/ui/skeleton';
 import { Check } from 'lucide-react';
-import { Suspense, lazy, useEffect, useState } from 'react';
+import {
+  type KeyboardEvent,
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { TerminalShortcutsEditor } from './TerminalShortcutsEditor';
+import {
+  type DeferredCommit,
+  createDeferredCommit,
+  parseNumericSetting,
+} from './numeric-setting-draft';
 
 // 预览要拉起 Ghostty 的 WASM 与终端字体，是这个面板最重的一块，却和上手就要改的
 // 字号/行高/字体/快捷键毫无依赖关系：切成独立 chunk，控件先出来，预览随后补上。
@@ -70,8 +83,79 @@ function TerminalPreviewSection() {
 }
 
 /**
+ * 数字设置项：输入只改本地草稿，提交走失焦 / 回车 / 停手 250 ms 后的延时窗口
+ * （见 `numeric-setting-draft.ts`）。store 值被别处改掉时才回灌草稿——自己刚提交的那次不回灌，
+ * 否则延时提交会把用户还在敲的内容改写掉。
+ */
+function useNumericSetting(
+  value: number,
+  commit: (next: number) => void,
+  min: number,
+  max: number
+) {
+  const [draft, setDraft] = useState(() => String(value));
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const committedRef = useRef(value);
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+
+  const pendingRef = useRef<DeferredCommit<number> | null>(null);
+  if (!pendingRef.current) {
+    pendingRef.current = createDeferredCommit<number>((next) => {
+      committedRef.current = next;
+      commitRef.current(next);
+    });
+  }
+  const pending = pendingRef.current;
+
+  useEffect(() => {
+    if (value === committedRef.current) return;
+    committedRef.current = value;
+    setDraft(String(value));
+  }, [value]);
+
+  useEffect(() => () => pending.cancel(), [pending]);
+
+  const flush = useCallback(() => {
+    pending.cancel();
+    const next = parseNumericSetting(draftRef.current, min, max);
+    if (next === null) {
+      setDraft(String(committedRef.current));
+      return;
+    }
+    if (next === committedRef.current) return;
+    committedRef.current = next;
+    commitRef.current(next);
+  }, [pending, min, max]);
+
+  const onChange = useCallback(
+    (raw: string) => {
+      setDraft(raw);
+      const next = parseNumericSetting(raw, min, max);
+      if (next === null || next === committedRef.current) {
+        pending.cancel();
+        return;
+      }
+      pending.schedule(next);
+    },
+    [pending, min, max]
+  );
+
+  const onKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') flush();
+    },
+    [flush]
+  );
+
+  return { value: draft, onChange, onBlur: flush, onKeyDown };
+}
+
+/**
  * 终端设置面板（设置页 Tab 与终端页右上角 Sheet 复用同一组件）。
- * 字号/行高/字体/键盘行为即改即生效，仅保存在当前浏览器。
+ * 字体/键盘行为即改即生效；字号/行高在失焦、回车或停手后生效（见 `useNumericSetting`）。
+ * 全部仅保存在当前浏览器。
  */
 export function TerminalSettingsPanel({
   showPreview = true,
@@ -92,16 +176,18 @@ export function TerminalSettingsPanel({
   const keyboardMode = useUIStore((state) => state.keyboardBehaviorMode);
   const setKeyboardMode = useUIStore((state) => state.setKeyboardBehaviorMode);
 
-  // 本地字符串态：让数字输入框完整显示键入内容，仅当落在合法区间时才提交到 store。
-  const [fontSizeInput, setFontSizeInput] = useState(String(terminalFontSize));
-  const [lineHeightInput, setLineHeightInput] = useState(String(terminalLineHeight));
-
-  useEffect(() => {
-    setFontSizeInput(String(terminalFontSize));
-  }, [terminalFontSize]);
-  useEffect(() => {
-    setLineHeightInput(String(terminalLineHeight));
-  }, [terminalLineHeight]);
+  const fontSizeField = useNumericSetting(
+    terminalFontSize,
+    setTerminalFontSize,
+    FONT_SIZE_MIN,
+    FONT_SIZE_MAX
+  );
+  const lineHeightField = useNumericSetting(
+    terminalLineHeight,
+    setTerminalLineHeight,
+    LINE_HEIGHT_MIN,
+    LINE_HEIGHT_MAX
+  );
 
   return (
     <div className="space-y-6">
@@ -121,14 +207,10 @@ export function TerminalSettingsPanel({
             min={FONT_SIZE_MIN}
             max={FONT_SIZE_MAX}
             step={1}
-            value={fontSizeInput}
-            onChange={(event) => {
-              setFontSizeInput(event.target.value);
-              const next = Number(event.target.value);
-              if (Number.isFinite(next) && next >= FONT_SIZE_MIN && next <= FONT_SIZE_MAX) {
-                setTerminalFontSize(next);
-              }
-            }}
+            value={fontSizeField.value}
+            onChange={(event) => fontSizeField.onChange(event.target.value)}
+            onBlur={fontSizeField.onBlur}
+            onKeyDown={fontSizeField.onKeyDown}
             className="min-h-10"
           />
         </div>
@@ -144,14 +226,10 @@ export function TerminalSettingsPanel({
             min={LINE_HEIGHT_MIN}
             max={LINE_HEIGHT_MAX}
             step={0.1}
-            value={lineHeightInput}
-            onChange={(event) => {
-              setLineHeightInput(event.target.value);
-              const next = Number(event.target.value);
-              if (Number.isFinite(next) && next >= LINE_HEIGHT_MIN && next <= LINE_HEIGHT_MAX) {
-                setTerminalLineHeight(next);
-              }
-            }}
+            value={lineHeightField.value}
+            onChange={(event) => lineHeightField.onChange(event.target.value)}
+            onBlur={lineHeightField.onBlur}
+            onKeyDown={lineHeightField.onKeyDown}
             className="min-h-10"
           />
         </div>

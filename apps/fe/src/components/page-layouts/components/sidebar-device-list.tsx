@@ -4,9 +4,9 @@
 import { sortNodes, useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@tmex/api-client';
 import type { MeshNode } from '@tmex/api-client/auth/index';
-import { SortableVerticalList, useSortableRow } from '@tmex/panels/device-tree';
+import { type SortableRow, SortableVerticalList, useSortableRow } from '@tmex/panels/device-tree';
 import { useUIStore } from '@tmex/stores/react';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SideBarDeviceListForRuntime } from './sidebar-device-list-runtime';
 import { type SidebarNodeEntry, SidebarNodeSection } from './sidebar-node-section';
@@ -79,6 +79,38 @@ export function toSidebarEntries(
   return applySidebarNodeOrder(entries, order);
 }
 
+function sameRecord(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  if (a === b) return true;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((key) => Object.is(a[key], b[key]));
+}
+
+/**
+ * dnd-kit 的 `useSortable` 每渲染都返回新的 style / 手柄 props 对象（值本身没变），
+ * 分节的 memo 因此永远 bail 不掉。逐字段比一次，内容没变就沿用上一帧的引用。
+ */
+export function sameSortableRow(a: SortableRow, b: SortableRow): boolean {
+  if (a === b) return true;
+  return (
+    a.setNodeRef === b.setNodeRef &&
+    a.setDragHandleRef === b.setDragHandleRef &&
+    a.isDragging === b.isDragging &&
+    a.style.transform === b.style.transform &&
+    a.style.transition === b.style.transition &&
+    sameRecord(a.dragHandleProps, b.dragHandleProps)
+  );
+}
+
+function useStableSortableRow(id: string): SortableRow {
+  const sortable = useSortableRow(id);
+  const held = useRef(sortable);
+  if (!sameSortableRow(held.current, sortable)) {
+    held.current = sortable;
+  }
+  return held.current;
+}
+
 function SortableNodeSection({
   node,
   dragHandleLabel,
@@ -86,8 +118,9 @@ function SortableNodeSection({
   node: SidebarNodeEntry;
   dragHandleLabel: string;
 }) {
-  const sortable = useSortableRow(sidebarNodeSortableId(node.id));
-  return <SidebarNodeSection node={node} drag={{ sortable, dragHandleLabel }} />;
+  const sortable = useStableSortableRow(sidebarNodeSortableId(node.id));
+  const drag = useMemo(() => ({ sortable, dragHandleLabel }), [sortable, dragHandleLabel]);
+  return <SidebarNodeSection node={node} drag={drag} />;
 }
 
 function MeshDeviceList({ entryNodeId }: { entryNodeId: string | null }) {

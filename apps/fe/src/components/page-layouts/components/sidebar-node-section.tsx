@@ -348,37 +348,71 @@ function SidebarNodeOffline({
  * 分节头交给设备树一起渲染：可见设备数只有挂上该 node 运行时才读得到，
  * 一台都不显示时整节（含分节头）都不该出现。
  */
+export interface SidebarNodeRuntimeSectionProps {
+  node: SidebarNodeEntry;
+  drag?: SidebarNodeSortable;
+  disclosure?: { expanded: boolean; onToggle: () => void };
+}
+
+/**
+ * mesh 列表每收到一次 NODE_EVENT 都会重建整份分节条目（`patchNodesWithEvent` 无条件换对象），
+ * 默认的引用相等比较因此永远命中不了。分节渲染只读这几个字段，逐字段比即可挡住这类空转；
+ * `inventory` 只在事件真的带了新的时才换引用，按引用比是安全的。
+ */
+export function sameNodeEntry(a: SidebarNodeEntry, b: SidebarNodeEntry): boolean {
+  return (
+    a.id === b.id &&
+    a.runtimeNodeId === b.runtimeNodeId &&
+    a.name === b.name &&
+    a.online === b.online &&
+    a.loggedIn === b.loggedIn &&
+    a.isSelf === b.isSelf &&
+    a.inventory === b.inventory
+  );
+}
+
+export function sameRuntimeSectionProps(
+  prev: SidebarNodeRuntimeSectionProps,
+  next: SidebarNodeRuntimeSectionProps
+): boolean {
+  return (
+    prev.drag === next.drag &&
+    prev.disclosure === next.disclosure &&
+    sameNodeEntry(prev.node, next.node)
+  );
+}
+
 const SidebarNodeRuntimeSection = memo(function SidebarNodeRuntimeSection({
   node,
   drag,
   disclosure,
-}: {
-  node: SidebarNodeEntry;
-  drag?: SidebarNodeSortable;
-  disclosure?: { expanded: boolean; onToggle: () => void };
-}) {
+}: SidebarNodeRuntimeSectionProps) {
   const { t } = useTranslation();
+  const runtimeNodeId = node.runtimeNodeId;
+  // 恒等的 key 映射：panels 侧的设备树把它带进 `handleDeviceExpandedChange` 的依赖与两条
+  // effect 的依赖，每渲染换一个新函数会让每台 DeviceRow 的 memo 全部失效，并对每台可见设备
+  // 空跑一次 ensureDeviceSubscribed。
+  const expansionKeyFor = useCallback(
+    (deviceId: string) => `${runtimeNodeId}:${deviceId}`,
+    [runtimeNodeId]
+  );
   return (
-    <NodeRuntimeScope nodeId={node.runtimeNodeId}>
+    <NodeRuntimeScope nodeId={runtimeNodeId}>
       <SideBarDeviceListForRuntime
         section={{
-          testId: `sidebar-node-${node.runtimeNodeId}`,
+          testId: `sidebar-node-${runtimeNodeId}`,
           header: <SectionHeader node={node} drag={drag} disclosure={disclosure} />,
           keepWhenNoDevices: node.isSelf,
           containerRef: drag?.sortable.setNodeRef,
           containerStyle: drag?.sortable.style,
           containerClassName: drag?.sortable.isDragging ? 'opacity-60' : undefined,
         }}
-        expansionKeyFor={
-          node.runtimeNodeId === SELF_NODE_ID
-            ? undefined
-            : (deviceId) => `${node.runtimeNodeId}:${deviceId}`
-        }
+        expansionKeyFor={runtimeNodeId === SELF_NODE_ID ? undefined : expansionKeyFor}
         emptyLabel={t('sidebar.node.noDevices')}
       />
     </NodeRuntimeScope>
   );
-});
+}, sameRuntimeSectionProps);
 
 /**
  * 折叠着的远端在线分节：只有一行分节头，**不挂运行时**（不建 WS、不发直连协商）。

@@ -4,9 +4,16 @@ import { WeixinAccountsTab } from '@tmex/panels/settings/weixin-accounts';
 import { Card, CardContent } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Switch } from '@tmex/ui/switch';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SettingsSaveButton } from './settings-save-button';
 import type { SiteSettingsForm } from './use-site-settings-form';
+
+// 三张卡片不吃站点设置草稿，却与它同在一个 Fragment 里：草稿每敲一键都会重渲染本标签，
+// 无 props 的 memo 正好把它们挡在外面（各自内部还挂着自己的查询与列表）。
+const TelegramBots = memo(TelegramBotsTab);
+const WeixinAccounts = memo(WeixinAccountsTab);
+const Webhooks = memo(WebhooksTab);
 
 interface NotificationSettingsTabProps {
   form: SiteSettingsForm;
@@ -146,9 +153,9 @@ export function NotificationSettingsTab({ form }: NotificationSettingsTabProps) 
         </CardContent>
       </Card>
 
-      <TelegramBotsTab />
-      <WeixinAccountsTab />
-      <WebhooksTab />
+      <TelegramBots />
+      <WeixinAccounts />
+      <Webhooks />
     </>
   );
 }

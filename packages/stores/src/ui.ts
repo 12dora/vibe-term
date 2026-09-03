@@ -232,11 +232,12 @@ export interface CreateUIStoreOptions {
   disposers?: Array<() => void>;
 }
 
-// 草稿延后落盘：editor 模式每敲一个键都会 set，同步序列化 + 写盘全在输入关键路径上
+// 草稿延后落盘：editor 模式每敲一个键都会 set，同步序列化 + 写盘全在输入关键路径上。
+// 终端字号/行高同理——设置面板的数字框按住上下箭头会连续 set，落盘不该跟着抖。
 function createUIPersistStorage(options: CreateUIStoreOptions) {
   return createDeferredPersistStorage<UIPersistedState>({
     ...options.persistStorage,
-    deferredKeys: ['editorDrafts'],
+    deferredKeys: ['editorDrafts', 'terminalFontSize', 'terminalLineHeight'],
   });
 }
 

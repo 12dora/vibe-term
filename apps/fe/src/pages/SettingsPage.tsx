@@ -10,7 +10,7 @@ import {
   Settings as SettingsIcon,
   Sparkles,
 } from 'lucide-react';
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
@@ -130,16 +130,90 @@ export function settingsTabFromParam(value: string | null): SettingsTab {
   return isSettingsTab(value) ? value : 'general';
 }
 
-export default function SettingsPage() {
+/**
+ * 标签条。站点设置的草稿态每敲一键就是一次 set，标签条与它毫无关系：
+ * memo 挡在这里，七个 `TabsTrigger`（各带图标与 `t()`）才不会跟着每个字符重渲染。
+ */
+const SettingsTabBar = memo(function SettingsTabBar({
+  activeTab,
+  onSelect,
+  onWarm,
+}: {
+  activeTab: SettingsTab;
+  onSelect: (tab: SettingsTab) => void;
+  onWarm: (tab: SettingsTab) => void;
+}) {
   const { t } = useTranslation();
+  return (
+    <Tabs value={activeTab} onValueChange={(value) => onSelect(value as SettingsTab)}>
+      <TabsList className="w-full gap-1 !justify-start overflow-x-auto rounded-xl border border-border/60 p-1.5 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {SETTINGS_TAB_BAR.map((item) => {
+          const Icon = item.icon;
+          return (
+            <TabsTrigger
+              key={item.value}
+              value={item.value}
+              data-testid={`settings-tab-${item.value}`}
+              // 悬停/触摸即预热：比空闲队列更早，指针到点下之间那点时间足够把 chunk 和数据都拉回来。
+              onPointerEnter={() => onWarm(item.value)}
+              onTouchStart={() => onWarm(item.value)}
+              className={cn(pillTabTriggerClassName, 'min-w-max gap-2 px-3.5')}
+            >
+              <Icon />
+              {t(item.labelKey)}
+            </TabsTrigger>
+          );
+        })}
+      </TabsList>
+    </Tabs>
+  );
+});
+
+/**
+ * 承载站点设置草稿的那一层：**常挂**（不带 key），切标签不丢未保存的改动，
+ * 但只有真正用它的两个标签才去拉站点设置。草稿改动的重渲染就此止步于此，
+ * 不再上溯到标签条。
+ */
+function SettingsTabPanels({ activeTab }: { activeTab: SettingsTab }) {
+  const form = useSiteSettingsForm({ enabled: TABS_USING_SITE_SETTINGS.has(activeTab) });
+
+  return (
+    // 只让新挂载的面板入场，标签条本身不动（key 换了才重挂，动画才会重放）。
+    // 多数标签页返回的是 Fragment，卡片之间的间距原本由外层 gap 提供——包一层就必须
+    // 把同样的 gap 补回来，否则卡片会贴在一起。
+    <Reveal key={activeTab} className="flex min-w-0 flex-col gap-4 sm:gap-6">
+      <Suspense
+        fallback={
+          <div className="flex min-h-40 items-center justify-center text-muted-foreground">
+            <Loader2 className="size-5 animate-spin motion-reduce:animate-none" />
+          </div>
+        }
+      >
+        {activeTab === 'general' && <GeneralSettingsTab form={form} />}
+
+        {activeTab === 'devicesAndFiles' && <DevicesAndFilesTab />}
+
+        {activeTab === 'nodes' && <NodesTab />}
+
+        {activeTab === 'notifications' && <NotificationSettingsTab form={form} />}
+
+        {activeTab === 'ai' && <AISettingsTab />}
+
+        {activeTab === 'terminal' && <TerminalSettingsTab />}
+
+        {activeTab === 'remoteAccess' && <RemoteAccessTab />}
+      </Suspense>
+    </Reveal>
+  );
+}
+
+export default function SettingsPage() {
   // `?tab=` 是对外的深链（侧栏「节点」入口与老 /nodes 书签都落到这里）。
   // URL 就是唯一事实来源：另存一份 state 的话，挂载后导航到 `/settings` 或 `?tab=bogus`
   // （query 变了但组件不重挂）就会停在上一个标签，与「非法值回退到通用」的约定不符。
   // 切换标签时用 replace 写回，避免每点一次都往历史里塞一条。
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = settingsTabFromParam(searchParams.get('tab'));
-  // 表单常挂在页级（切标签不丢未保存的草稿），但只有真正用它的两个标签才去拉站点设置。
-  const form = useSiteSettingsForm({ enabled: TABS_USING_SITE_SETTINGS.has(activeTab) });
   // 一次性：挂载时按当时的标签算出预热顺序，之后切标签不重排（已发起的 chunk 不会重发）。
   const [preloadOrder] = useState(() => chunkPreloadOrder(activeTab));
   useEffect(() => startIdleChunkPreload(preloadOrder), [preloadOrder]);
@@ -151,75 +225,35 @@ export default function SettingsPage() {
   // 每次进设置页各标签只预取一次：鼠标扫过标签栏不该把请求发好几遍。
   const prefetchedTabs = useRef<Set<string>>(new Set());
 
-  const warmTab = (tab: SettingsTab) => {
-    preloadChunk(TAB_CHUNK_LOADERS[tab]);
-    if (!runtime) return;
-    prefetchTabData(nodeQueryClient(routeNodeId), tab, runtime.apiClient, prefetchedTabs.current);
-  };
+  const warmTab = useCallback(
+    (tab: SettingsTab) => {
+      preloadChunk(TAB_CHUNK_LOADERS[tab]);
+      if (!runtime) return;
+      prefetchTabData(nodeQueryClient(routeNodeId), tab, runtime.apiClient, prefetchedTabs.current);
+    },
+    [runtime, routeNodeId]
+  );
 
-  const selectTab = (value: SettingsTab) => {
-    setSearchParams(
-      (params) => {
-        params.set('tab', value);
-        return params;
-      },
-      { replace: true }
-    );
-  };
+  const selectTab = useCallback(
+    (value: SettingsTab) => {
+      setSearchParams(
+        (params) => {
+          params.set('tab', value);
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
 
   return (
     <div
       className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-3 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:gap-6 sm:p-5"
       data-testid="settings-page"
     >
-      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as SettingsTab)}>
-        <TabsList className="w-full gap-1 !justify-start overflow-x-auto rounded-xl border border-border/60 p-1.5 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {SETTINGS_TAB_BAR.map((item) => {
-            const Icon = item.icon;
-            return (
-              <TabsTrigger
-                key={item.value}
-                value={item.value}
-                data-testid={`settings-tab-${item.value}`}
-                // 悬停/触摸即预热：比空闲队列更早，指针到点下之间那点时间足够把 chunk 和数据都拉回来。
-                onPointerEnter={() => warmTab(item.value)}
-                onTouchStart={() => warmTab(item.value)}
-                className={cn(pillTabTriggerClassName, 'min-w-max gap-2 px-3.5')}
-              >
-                <Icon />
-                {t(item.labelKey)}
-              </TabsTrigger>
-            );
-          })}
-        </TabsList>
-      </Tabs>
-
-      {/* 只让新挂载的面板入场，标签条本身不动（key 换了才重挂，动画才会重放）。
-          多数标签页返回的是 Fragment，卡片之间的间距原本由外层 gap 提供——包一层就必须
-          把同样的 gap 补回来，否则卡片会贴在一起。 */}
-      <Reveal key={activeTab} className="flex min-w-0 flex-col gap-4 sm:gap-6">
-        <Suspense
-          fallback={
-            <div className="flex min-h-40 items-center justify-center text-muted-foreground">
-              <Loader2 className="size-5 animate-spin motion-reduce:animate-none" />
-            </div>
-          }
-        >
-          {activeTab === 'general' && <GeneralSettingsTab form={form} />}
-
-          {activeTab === 'devicesAndFiles' && <DevicesAndFilesTab />}
-
-          {activeTab === 'nodes' && <NodesTab />}
-
-          {activeTab === 'notifications' && <NotificationSettingsTab form={form} />}
-
-          {activeTab === 'ai' && <AISettingsTab />}
-
-          {activeTab === 'terminal' && <TerminalSettingsTab />}
-
-          {activeTab === 'remoteAccess' && <RemoteAccessTab />}
-        </Suspense>
-      </Reveal>
+      <SettingsTabBar activeTab={activeTab} onSelect={selectTab} onWarm={warmTab} />
+      <SettingsTabPanels activeTab={activeTab} />
     </div>
   );
 }

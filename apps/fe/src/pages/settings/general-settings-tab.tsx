@@ -3,9 +3,13 @@ import { I18N_MANIFEST, type LocaleCode } from '@tmex/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SettingsSaveButton } from './settings-save-button';
 import type { SiteSettingsForm } from './use-site-settings-form';
+
+// 版本卡与站点设置草稿无关：草稿每敲一键都会重渲染本标签，memo 把它挡在外面。
+const Version = memo(VersionTab);
 
 interface GeneralSettingsTabProps {
   form: SiteSettingsForm;
@@ -139,7 +143,7 @@ export function GeneralSettingsTab({ form }: GeneralSettingsTabProps) {
         </CardContent>
       </Card>
 
-      <VersionTab />
+      <Version />
     </>
   );
 }

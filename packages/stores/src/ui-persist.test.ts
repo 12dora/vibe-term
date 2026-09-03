@@ -264,6 +264,74 @@ describe('UI store 草稿持久化', () => {
   });
 });
 
+describe('终端字号 / 行高延后落盘', () => {
+  let clock: FakeTimers;
+  let counting: ReturnType<typeof countingStorage>;
+  let prefix: string;
+  let seq = 0;
+
+  beforeEach(() => {
+    clock = fakeTimers();
+    counting = countingStorage();
+    seq += 1;
+    prefix = `ui-terminal-${seq}-`;
+  });
+
+  function createStore() {
+    return createUIStore(
+      { storagePrefix: prefix },
+      { persistStorage: { storage: counting.storage, timers: clock.timers } }
+    );
+  }
+
+  test('连着调字号在去抖窗口内最多写一次', () => {
+    const store = createStore();
+    store.getState().setTerminalFontSize(13);
+    const baseline = counting.writes();
+
+    for (const size of [14, 15, 16, 17, 18]) {
+      store.getState().setTerminalFontSize(size);
+    }
+    expect(counting.writes()).toBe(baseline);
+
+    clock.run();
+    expect(counting.writes()).toBe(baseline + 1);
+    expect(createStore().getState().terminalFontSize).toBe(18);
+  });
+
+  test('行高同样延后，且与字号合并成同一次写', () => {
+    const store = createStore();
+    store.getState().setTerminalFontSize(13);
+    clock.run();
+    const baseline = counting.writes();
+
+    store.getState().setTerminalLineHeight(1.4);
+    store.getState().setTerminalFontSize(20);
+    expect(counting.writes()).toBe(baseline);
+
+    clock.run();
+    expect(counting.writes()).toBe(baseline + 1);
+
+    const reloaded = createStore().getState();
+    expect(reloaded.terminalLineHeight).toBe(1.4);
+    expect(reloaded.terminalFontSize).toBe(20);
+  });
+
+  test('字体族仍是立即落盘，并顺带把待写的字号一起写出去', () => {
+    const store = createStore();
+    store.getState().setTerminalFontSize(13);
+    clock.run();
+    const baseline = counting.writes();
+
+    store.getState().setTerminalFontSize(22);
+    expect(counting.writes()).toBe(baseline);
+
+    store.getState().setTerminalFontId('jetbrains-mono');
+    expect(counting.writes()).toBe(baseline + 1);
+    expect(createStore().getState().terminalFontSize).toBe(22);
+  });
+});
+
 describe('页面离场时 flush 草稿', () => {
   type Listener = () => void;
   const listeners = new Map<string, Listener[]>();

@@ -209,7 +209,9 @@ function SignedOutBody({ node }: { node: NodeDeviceGroupEntry }) {
   );
 }
 
-export function nodeDeviceContext(node: NodeDeviceGroupEntry): DeviceNodeContext {
+export function nodeDeviceContext(
+  node: Pick<NodeDeviceGroupEntry, 'runtimeNodeId' | 'name' | 'isSelf'>
+): DeviceNodeContext {
   return { runtimeNodeId: node.runtimeNodeId, name: node.name, isSelf: node.isSelf };
 }
 
@@ -227,7 +229,13 @@ function NodeDevicePanel({
   offline: boolean;
 }) {
   const { connection } = useGlobalDevice();
-  const runtimeNodeId = node.runtimeNodeId;
+  const { runtimeNodeId, name: nodeName, isSelf: nodeIsSelf } = node;
+  // NODE_EVENT 每来一次就换一份 entry 对象，现算的 context 会穿过设备管理面板 → 卡片网格的
+  // cardProps，把整页 `memo(SortableDeviceCard)` 全部打穿。按真正读到的三个字段记住即可。
+  const nodeContext = useMemo(
+    () => nodeDeviceContext({ runtimeNodeId, name: nodeName, isSelf: nodeIsSelf }),
+    [runtimeNodeId, nodeName, nodeIsSelf]
+  );
   const onDevicesLoaded = useCallback(
     (devices: Device[]) => writeDeviceSnapshot(runtimeNodeId, devices),
     [runtimeNodeId]
@@ -240,7 +248,7 @@ function NodeDevicePanel({
   return (
     <DeviceManagementPanel
       ref={panelRef}
-      nodeContext={nodeDeviceContext(node)}
+      nodeContext={nodeContext}
       connection={connection}
       offline={offline}
       fallbackDevices={fallbackDevices}

@@ -30,6 +30,22 @@ const PREVIEW_ANSI = [
   `${E}[7m NORMAL ${E}[0m ${E}[39m UTF-8  LF  TypeScript${E}[0m`,
 ].join('\r\n');
 
+// 预览已加载过的字体族（模块级：面板反复开合也不重走加载）。
+// 字号变化不影响哪几张字体表被加载（`fonts.load` 的字号只用于匹配 face），改字号时再
+// await 一次纯属白等一拍——同一个 fontId 只在首次真的去加载。
+const loadedPreviewFontIds = new Set<string>();
+
+async function ensurePreviewFonts(fontId: string, fontSize: number): Promise<boolean> {
+  if (loadedPreviewFontIds.has(fontId)) return true;
+  try {
+    await loadTerminalFonts(fontId, fontSize);
+  } catch {
+    return false;
+  }
+  loadedPreviewFontIds.add(fontId);
+  return true;
+}
+
 export function TerminalPreview({ className }: { className?: string }) {
   const fontId = useUIStore((state) => state.terminalFontId);
   const fontSize = useUIStore((state) => state.terminalFontSize);
@@ -77,9 +93,7 @@ export function TerminalPreview({ className }: { className?: string }) {
     reportTerminalDiagnostic(terminalDiagnosticsReporter, diagnosticArgs('mount', null));
 
     void (async () => {
-      try {
-        await loadTerminalFonts(fontId, fontSize);
-      } catch {
+      if (!(await ensurePreviewFonts(fontId, fontSize))) {
         reportTerminalDiagnostic(
           terminalDiagnosticsReporter,
           diagnosticArgs('font_load_failed', null)
