@@ -1,4 +1,5 @@
-import type { LinkStream } from '@tmex/shared/link';
+import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import type { MeshUplinkCtlMessage } from '@tmex/shared/uplink';
 
 export type MeshNodeId = string;
 
@@ -109,3 +110,38 @@ export type WsStreamOpenPayload = {
 };
 
 export type InboundRelayHandler = (stream: LinkStream, fromNodeId: string) => void;
+
+/**
+ * `UplinkPool` 消费的上行客户端公开面。`UplinkClient`（hub）与 `RelayUplinkClient`（中继）
+ * 都满足它，池子据此在两种上级之间切换而不改造 failover 机制。
+ */
+export type PooledUplink = {
+  readonly identity: MeshIdentity;
+  readonly userId: string;
+  readonly hubUrl: string;
+  readonly lastKeyLogHead: { seq: bigint; hash: Uint8Array } | null;
+  state: UplinkState;
+  link: LinkSession | null;
+  lastConnectError: { reason: string; at: number } | null;
+  onStateChange(cb: (state: UplinkState) => void): () => void;
+  setOnRelayStream(handler: InboundRelayHandler | null): void;
+  attemptConnect(signal?: AbortSignal): Promise<void>;
+  connectWithLink(link: LinkSession, signal?: AbortSignal): Promise<void>;
+  waitUntilClosed(signal?: AbortSignal): Promise<void>;
+  stop(): Promise<void>;
+  sendCtl(msg: MeshUplinkCtlMessage): void;
+  sendStatus(): void;
+  sendStatusIfChanged(): boolean;
+  openRelay(toNodeId: string): Promise<LinkStream>;
+  queryHubHead(): Promise<{ seq: bigint; hash: Uint8Array } | null>;
+  queryKeyLogAt(
+    seq: bigint,
+    timeoutMs?: number
+  ): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null>;
+  appendAndAck(
+    record: { bytes: Uint8Array; sig: Uint8Array; force?: boolean },
+    timeoutMs?: number,
+    generation?: number
+  ): Promise<{ ok: boolean; seq?: bigint; error?: string }>;
+  requestCatchUpNow(): void;
+};

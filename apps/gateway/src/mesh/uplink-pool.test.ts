@@ -10,6 +10,7 @@ import type {
   KeyLogForkEvent,
   MeshIdentity,
   MeshScheduler,
+  PooledUplink,
   UplinkState,
 } from './types';
 import type { UplinkClient, UplinkClientOptions } from './uplink-client';
@@ -508,7 +509,7 @@ describe('UplinkPool', () => {
     fingerprintPem?: (pem: string) => string;
     candidates?: () => UplinkCandidate[];
     isLocalCandidate?: (cand: UplinkCandidate) => boolean;
-    connectLocal?: (client: UplinkClient, signal: AbortSignal) => Promise<void>;
+    connectLocal?: (client: PooledUplink, signal: AbortSignal) => Promise<void>;
     onNodeList?: (list: UplinkNodeList) => void;
     onKeyLogFork?: (event: KeyLogForkEvent) => void;
     probeJitter?: number;
@@ -516,7 +517,7 @@ describe('UplinkPool', () => {
     rttProbeIntervalMs?: number;
     failbackDebounceMs?: number;
     preferNearest?: boolean | null;
-    localRoles?: { hub?: boolean; node?: boolean };
+    localRoles?: { hub?: boolean; node?: boolean; relay?: boolean };
     rttSwitchDwellMs?: number;
     versions?: Record<string, string>;
     onHubTokens?: (msg: import('@tmex/shared/uplink').HubTokensMessage) => void;

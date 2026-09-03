@@ -30,6 +30,7 @@ import {
 import { handleMeshInternalTmuxRequest, isMeshInternalPath } from './mesh-internal-tmux-routes';
 import { MeshRoutes } from './mesh-routes';
 import { isPeerInboundRequest, stripMeshPeerMarkerFromRequest } from './peer-request-marker';
+import type { RelayRoutes } from './relay-routes';
 import {
   type SessionMiddlewareDeps,
   authenticateRequest,
@@ -118,6 +119,7 @@ export class MeshHttpRuntime {
   private readonly sockets = new Set<RegisteredSocket>();
   private readonly now: () => number;
   private readonly authSurfaceOnly: boolean;
+  private relayRoutes: RelayRoutes | null = null;
 
   constructor(opts: MeshHttpRuntimeOptions) {
     this.roles = opts.roles;
@@ -186,6 +188,11 @@ export class MeshHttpRuntime {
       localAuth: opts.localAuth,
     });
     this.forwarder.setAuthRateLimits(this.auth.rateLimits);
+  }
+
+  /** 由 mesh-runtime 在装配后注入：中继模式的 `/api/mesh/relay/*`。 */
+  setRelayRoutes(routes: RelayRoutes | null): void {
+    this.relayRoutes = routes;
   }
 
   stop(): void {
@@ -426,6 +433,8 @@ export class MeshHttpRuntime {
     const authRes = await this.auth.handle(req);
     if (authRes) return authRes;
     if (this.authSurfaceOnly) return null;
+    const relayRes = await this.relayRoutes?.handle(req, path);
+    if (relayRes) return relayRes;
     const meshRes = await this.mesh.handle(req, server);
     if (meshRes !== null) return meshRes;
     return null;

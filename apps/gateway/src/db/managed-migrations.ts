@@ -44,6 +44,8 @@ const MIGRATIONS = [
   '0036_rotate_root_keep.sql',
   '0037_acme_dns_provider.sql',
   '0038_node_access_policy.sql',
+  '0039_relay.sql',
+  '0040_mesh_relay.sql',
 ] as const;
 
 export interface MaterializedMigrations {

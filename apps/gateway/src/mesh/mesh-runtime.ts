@@ -61,6 +61,12 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
+import {
+  type RegisterGatewaySessionInput,
+  type RegisterGatewaySessionResult,
+  type RegisteredGatewaySession,
+  SessionRegistry,
+} from './mesh-session-registry';
 import { NodeEventDedupe, type NodeEventProjection } from './node-event-dedupe';
 import {
   STATUS_IFACE_CACHE_TTL_MS,
@@ -71,6 +77,14 @@ import {
 } from './node-list-apply';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
 import {
+  type RelayWiring,
+  bindRelayReconcile,
+  createRelayRoutes,
+  createRelayWiring,
+  reconfigureRelayUplink,
+  relayUplinkOverrides,
+} from './relay-wiring';
+import {
   type ControlSendStatus,
   type LoadNative,
   MeshRtcSignalRouter,
@@ -80,11 +94,13 @@ import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
 import { authenticateRequest } from './session-middleware';
 import { openHttpStream, openWsStream } from './stream-targets';
 import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
-import type { UplinkWsFactory } from './uplink-client';
+import { UplinkClient, type UplinkWsFactory } from './uplink-client';
 import {
   type AttachedHub,
+  type UplinkCandidate,
   UplinkPool,
   attachedHubHost,
+  defaultProbeHealthz,
   isSelfHubCandidate,
   mergeUplinkCandidates,
   sameHubUrl,
@@ -143,175 +159,17 @@ export type CreateMeshRuntimeOptions = {
   /** 本机节点名随 hub node.list 变化时回调，用于同步 site_settings.site_name。 */
   onLocalNodeName?: (name: string) => void;
 };
-export const CONNECTION_ID_BYTES = 32;
+
 export const TLS_STATUS_POLL_MS = 10 * 60 * 1000;
 
-export function generateConnectionId(): string {
-  return encodeBase64url(crypto.getRandomValues(new Uint8Array(CONNECTION_ID_BYTES)));
-}
-
-export type RegisteredGatewaySession = {
-  connectionId: string;
-  cid?: string;
-  sid: string;
-  uid: string;
-  via: string;
-  session: GatewaySession;
-  lastVerifyAt: number;
-  pc?: { close(): void };
-};
-
-export type RegisterGatewaySessionInput = {
-  sid: string;
-  uid: string;
-  via: string;
-  session: GatewaySession;
-  connectionId?: string;
-  cid?: string;
-  pc?: { close(): void };
-};
-
-export type RegisterGatewaySessionResult =
-  | { ok: true; entry: RegisteredGatewaySession }
-  | { ok: false; code: 'DUPLICATE_CONNECTION' | 'DUPLICATE_CID' };
-
-function cidIndexKey(sid: string, via: string, cid: string): string {
-  return `${sid}\0${via}\0${cid}`;
-}
-
-function normalizeCid(value: string | undefined | null): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-export class SessionRegistry {
-  private readonly byConnection = new Map<string, RegisteredGatewaySession>();
-  private readonly bySession = new WeakMap<GatewaySession, string>();
-  private readonly connectionsBySid = new Map<string, Set<string>>();
-  private readonly byCid = new Map<string, string>();
-
-  register(entry: RegisterGatewaySessionInput): RegisterGatewaySessionResult {
-    const cid = normalizeCid(entry.cid);
-    const providedId = typeof entry.connectionId === 'string' ? entry.connectionId.trim() : '';
-    const taken = (id: string | undefined) => {
-      const e = id ? this.byConnection.get(id) : undefined;
-      return Boolean(e && e.session !== entry.session && !e.session.closed);
-    };
-    if (providedId && taken(providedId)) return { ok: false, code: 'DUPLICATE_CONNECTION' };
-    if (cid && taken(this.byCid.get(cidIndexKey(entry.sid, entry.via, cid)))) {
-      return { ok: false, code: 'DUPLICATE_CID' };
-    }
-    let connectionId = providedId;
-    if (!connectionId) {
-      do {
-        connectionId = generateConnectionId();
-      } while (this.byConnection.has(connectionId));
-    }
-    const prevSame = this.byConnection.get(connectionId);
-    if (prevSame?.session === entry.session) this.drop(prevSame);
-    const stored: RegisteredGatewaySession = {
-      connectionId,
-      sid: entry.sid,
-      uid: entry.uid,
-      via: entry.via,
-      session: entry.session,
-      lastVerifyAt: 0,
-      ...(cid ? { cid } : {}),
-      ...(entry.pc ? { pc: entry.pc } : {}),
-    };
-    this.byConnection.set(connectionId, stored);
-    this.bySession.set(entry.session, connectionId);
-    let set = this.connectionsBySid.get(entry.sid);
-    if (!set) {
-      set = new Set();
-      this.connectionsBySid.set(entry.sid, set);
-    }
-    set.add(connectionId);
-    if (cid) this.byCid.set(cidIndexKey(entry.sid, entry.via, cid), connectionId);
-    return { ok: true, entry: stored };
-  }
-
-  unregister(sid: string, session?: GatewaySession): void {
-    if (session) {
-      this.unregisterSession(session);
-      return;
-    }
-    for (const entry of this.listBySid(sid)) this.drop(entry);
-  }
-
-  unregisterSession(session: GatewaySession): void {
-    const connectionId = this.bySession.get(session);
-    if (!connectionId) return;
-    const entry = this.byConnection.get(connectionId);
-    if (entry) this.drop(entry);
-  }
-
-  get(sid: string): RegisteredGatewaySession | null {
-    const live = this.listBySid(sid);
-    return live.length === 1 ? (live[0] ?? null) : null;
-  }
-
-  getByConnectionId(connectionId: string): RegisteredGatewaySession | null {
-    const entry = this.byConnection.get(connectionId);
-    if (!entry || entry.session.closed) return null;
-    return entry;
-  }
-
-  getBySession(session: GatewaySession): RegisteredGatewaySession | null {
-    const connectionId = this.bySession.get(session);
-    return connectionId ? this.getByConnectionId(connectionId) : null;
-  }
-
-  listBySid(sid: string): RegisteredGatewaySession[] {
-    const ids = this.connectionsBySid.get(sid);
-    if (!ids) return [];
-    const out: RegisteredGatewaySession[] = [];
-    for (const id of ids) {
-      const entry = this.byConnection.get(id);
-      if (entry && !entry.session.closed) out.push(entry);
-    }
-    return out;
-  }
-
-  listByUid(uid: string): RegisteredGatewaySession[] {
-    const out: RegisteredGatewaySession[] = [];
-    for (const entry of this.byConnection.values()) {
-      if (entry.uid === uid && !entry.session.closed) out.push(entry);
-    }
-    return out;
-  }
-
-  lookup(
-    sid: string,
-    via: string,
-    connectionId?: string | null,
-    cid?: string | null
-  ): ConnectionLookupResult {
-    const nonce = normalizeCid(cid);
-    if (nonce || connectionId) {
-      const id = nonce ? this.byCid.get(cidIndexKey(sid, via, nonce)) : connectionId;
-      const entry = id ? this.getByConnectionId(id) : null;
-      return entry && entry.sid === sid && entry.via === via
-        ? { ok: true, connectionId: entry.connectionId }
-        : { ok: false, code: 'NO_CONNECTION' };
-    }
-    const matches = this.listBySid(sid).filter((entry) => entry.via === via);
-    if (matches.length === 0) return { ok: false, code: 'NO_CONNECTION' };
-    if (matches.length > 1) return { ok: false, code: 'MULTIPLE_CONNECTIONS' };
-    const only = matches[0];
-    if (!only) return { ok: false, code: 'NO_CONNECTION' };
-    return { ok: true, connectionId: only.connectionId };
-  }
-
-  private drop(entry: RegisteredGatewaySession): void {
-    this.byConnection.delete(entry.connectionId);
-    this.bySession.delete(entry.session);
-    if (entry.cid) this.byCid.delete(cidIndexKey(entry.sid, entry.via, entry.cid));
-    const set = this.connectionsBySid.get(entry.sid);
-    if (!set) return;
-    set.delete(entry.connectionId);
-    if (set.size === 0) this.connectionsBySid.delete(entry.sid);
-  }
-}
+export {
+  CONNECTION_ID_BYTES,
+  SessionRegistry,
+  generateConnectionId,
+  type RegisterGatewaySessionInput,
+  type RegisterGatewaySessionResult,
+  type RegisteredGatewaySession,
+} from './mesh-session-registry';
 
 export type MeshRuntime = {
   readonly nodeId: string;
@@ -347,6 +205,8 @@ export type MeshRuntime = {
     cb: (list: UplinkNodeList, meta: { hubNodeId: string | null; generation: number }) => void
   ): () => void;
   attachedHub(): AttachedHub | null;
+  /** 上级种类或中继目标变化后重建 uplink 池（`set-relays` 应用后自动触发）。 */
+  reconfigureUplink(): Promise<void>;
   refreshTlsAndAdvertise(): Promise<void>;
 };
 
@@ -709,6 +569,22 @@ async function stopQuietly(parts: Array<[string, () => void | Promise<void>]>): 
   }
 }
 
+function keyLogProjection(d: {
+  hubStore: MeshHubStore;
+  hub: HubRuntime | null;
+  relay: RelayWiring;
+  selfId: string;
+}): NonNullable<UserKeyService['onApplied']> {
+  return (_userId, step) => {
+    applyKeyLogHubRuntime(d.hubStore, step.record, {
+      selfId: d.selfId,
+      now: Date.now(),
+      onRetireSelf: () => d.hub?.setMode('standby'),
+    });
+    d.relay.notifyIfRelayRecord(step.record.type);
+  };
+}
+
 async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
   const { db, gateway, config } = opts;
   const userStore = new UserStore(db);
@@ -810,13 +686,8 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
         syncLocalSiteName: opts.onLocalNodeName,
       }))
     : (opts.hub ?? null);
-  keyLogService.onApplied = (_userId, step) => {
-    applyKeyLogHubRuntime(hubStore, step.record, {
-      selfId: identity.nodeIdHex,
-      now: Date.now(),
-      onRetireSelf: () => hub?.setMode('standby'),
-    });
-  };
+  const relay = createRelayWiring({ db, identity, userIdOf });
+  keyLogService.onApplied = keyLogProjection({ hubStore, hub, relay, selfId: identity.nodeIdHex });
   return {
     opts,
     db,
@@ -838,6 +709,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     signalListeners,
     hub,
     hubStore,
+    relay,
     peerHolder,
     innerSignalsHolder: { router: null } as { router: MeshRtcSignalRouter | null },
     startBrowserAcceptHolder: { fn() {} } as { fn: (rtcSession: string) => void },
@@ -997,6 +869,9 @@ function createUplinkWiring(d: MeshDeps) {
   };
   const uplinkHub = opts.uplinkHub !== undefined ? opts.uplinkHub : hub;
   const ownHubUrl = config.hubPublicUrl ?? hubEndpointUrl(config);
+  const relayOverrides = relayUplinkOverrides(d.relay, {
+    nameProvider: () => d.relay.secrets.store.localName() ?? resolveSiteName(),
+  });
   const uplink = new UplinkPool({
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
     userId: d.userIdOf,
@@ -1004,6 +879,7 @@ function createUplinkWiring(d: MeshDeps) {
     userStore,
     statusProvider: d.statusProvider,
     candidates: () => {
+      if (relayOverrides.relayMode()) return relayOverrides.candidates();
       const endpoints = d.hubStore.orderedEndpoints({
         include: (id) => meshHubNotRetired(d, id),
       });
@@ -1019,7 +895,10 @@ function createUplinkWiring(d: MeshDeps) {
     pingIntervalMs: opts.pingIntervalMs,
     preferNearest: config.uplinkPreferNearest ?? gatewayConfig.uplinkPreferNearest,
     localRoles: config.roles,
+    createClient: relayOverrides.createClient,
+    probeHealthz: relayOverrides.probeHealthz,
     isLocalCandidate: (cand) =>
+      !relayOverrides.relayMode() &&
       Boolean(uplinkHub) &&
       isSelfHubCandidate(cand, { nodeId: identity.nodeIdHex, publicUrl: ownHubUrl }),
     connectLocal: async (client, signal) => {
@@ -1076,6 +955,7 @@ function createUplinkWiring(d: MeshDeps) {
     },
   });
   bindHubUplinkHooks(hub, uplink);
+  bindRelayReconcile(d.relay, uplink, d.hubStore);
   return { uplink, ensureDc };
 }
 
@@ -1397,6 +1277,18 @@ function wireMeshHttp(
   });
   http.auth.setTlsInfo(d.opts.tlsInfo);
   http.auth.setWriterForward((req, uid) => d.hub?.forwardWrite(req, uid) ?? Promise.resolve(null));
+  http.setRelayRoutes(
+    createRelayRoutes({
+      wiring: d.relay,
+      roles: config.roles,
+      nodeSessionStore: d.nodeSessionStore,
+      trustProxy: gatewayConfig.trustProxy,
+      nodeId: identity.nodeIdHex,
+      userStore,
+      keyLogService: d.keyLogService,
+      uplink,
+    })
+  );
   d.httpHolder.runtime = http;
   setMeshAgentBridge({
     lookupNode(nodeId) {
@@ -1411,6 +1303,22 @@ function wireMeshHttp(
   });
   return http;
 }
+function createTlsRefresher(d: MeshDeps, uplink: UplinkPool): () => Promise<void> {
+  let inFlight: Promise<void> | null = null;
+  return () => {
+    if (inFlight) return inFlight;
+    inFlight = (async () => {
+      const prev = d.state.caFingerprint;
+      await d.refreshTls();
+      d.hub?.updateSelfCaFingerprint(d.state.caFingerprint);
+      if (d.state.caFingerprint !== prev) uplink.sendStatusIfChanged();
+    })().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  };
+}
+
 function assembleMeshRuntime(
   d: MeshDeps,
   w: ReturnType<typeof wireMeshEventsAndSessions>,
@@ -1420,19 +1328,7 @@ function assembleMeshRuntime(
   const { uplink, peerManager } = w;
   let stopPromise: Promise<void> | null = null;
   let tlsPoll: { clear: () => void } | null = null;
-  let tlsRefreshInFlight: Promise<void> | null = null;
-  const refreshTlsAndAdvertise = () => {
-    if (tlsRefreshInFlight) return tlsRefreshInFlight;
-    tlsRefreshInFlight = (async () => {
-      const prev = d.state.caFingerprint;
-      await d.refreshTls();
-      hub?.updateSelfCaFingerprint(d.state.caFingerprint);
-      if (d.state.caFingerprint !== prev) uplink.sendStatusIfChanged();
-    })().finally(() => {
-      tlsRefreshInFlight = null;
-    });
-    return tlsRefreshInFlight;
-  };
+  const refreshTlsAndAdvertise = createTlsRefresher(d, uplink);
   const unsubscribeHubMode = hub?.onModeChange(() => uplink.sendStatusIfChanged()) ?? null;
   return {
     nodeId: identity.nodeIdHex,
@@ -1487,6 +1383,7 @@ function assembleMeshRuntime(
     attachedHub() {
       return uplink.attachedHub();
     },
+    reconfigureUplink: () => reconfigureRelayUplink(d.relay, uplink),
     refreshTlsAndAdvertise,
     async start() {
       if (!d.userIdOf()) {
@@ -1505,6 +1402,7 @@ function assembleMeshRuntime(
       if (opts.tlsInfo) {
         await refreshTlsAndAdvertise();
       }
+      await d.relay.reconcileQuietly();
       await peerManager.start();
       uplink.start();
       kickHubPeerDiscovery(hub, uplink);

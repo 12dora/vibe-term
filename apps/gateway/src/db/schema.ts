@@ -4,3 +4,5 @@ export * from './schema/messaging';
 export * from './schema/agent';
 export * from './schema/users-auth';
 export * from './schema/mesh';
+export * from './schema/relay';
+export * from './schema/mesh-relay';

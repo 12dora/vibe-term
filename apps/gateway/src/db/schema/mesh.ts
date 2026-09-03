@@ -45,6 +45,8 @@ export const nodeIdentity = sqliteTable(
     certificateJson: text('certificate_json').notNull(),
     certSig: blob('cert_sig', { mode: 'buffer' }).notNull(),
     userId: text('user_id'),
+    uplinkKind: text('uplink_kind').$type<'hub' | 'relay'>().notNull().default('hub'),
+    name: text('name'),
   },
   (table) => [check('node_identity_singleton_check', sql`${table.id} = 1`)]
 );
