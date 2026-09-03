@@ -77,9 +77,14 @@ export class TerminalRenderCoordinator {
     this.renderNow();
   });
   private selectionFrame: number | null = null;
-  // 自上一帧渲染以来是否有应用输出写入：有则这一帧可能落在应用整屏重绘的中途，
-  // 光标状态不落笔（见 scheduleFromOutput / CanvasRendererFrame.cursorSettled）。
-  private outputSinceRender = false;
+  // 自上一帧渲染以来是否有应用输出写入。两个消费者语义不同，必须分开持有：
+  // cursorPendingOutput——这一帧可能落在应用整屏重绘中途，光标不落笔
+  // （见 scheduleFromOutput / CanvasRendererFrame.cursorSettled）；
+  // rowsPendingOutput——行模型可能已被这批输出改写，位移复用不能启用。
+  // forceFullRepaint 只解除前者：若连后者一起清，位移复用会把同一批输出里的原位
+  // 重画整批丢弃并消费掉行脏位，屏幕永久卡在上一帧（Claude Code 输入框「变绿」）。
+  private cursorPendingOutput = false;
+  private rowsPendingOutput = false;
   private cursorSettleFrame: number | null = null;
   private cursorDeferredSince = 0;
   private linkOverlayDrawnOffset = -1;
@@ -124,7 +129,8 @@ export class TerminalRenderCoordinator {
   }
 
   noteOutput(): void {
-    this.outputSinceRender = true;
+    this.cursorPendingOutput = true;
+    this.rowsPendingOutput = true;
   }
 
   // 由应用输出（write）触发的渲染。与 schedule() 的唯一区别是标记「这一帧可能是中间态」：
@@ -164,7 +170,7 @@ export class TerminalRenderCoordinator {
     this.loop.requestFullRepaint();
     // 显式的「立刻把真实状态画出来」请求（DOM 重插入、tab 切回、history 注入）：
     // 光标也必须按当刻状态落笔，不能继续挂起。
-    this.outputSinceRender = false;
+    this.cursorPendingOutput = false;
     this.renderNow();
   }
 
@@ -261,7 +267,7 @@ export class TerminalRenderCoordinator {
     const scrollbar = this.bindings.readScrollbar(this.terminalHandle);
     const fallbackRows = Math.max(1, scrollbar.len || this.host.viewportRows());
     const scrollDelta =
-      this.outputSinceRender || this.rowShiftInvalidated
+      this.rowsPendingOutput || this.rowShiftInvalidated
         ? 0
         : scrollbar.offset - this.viewportOffset;
 
@@ -271,6 +277,7 @@ export class TerminalRenderCoordinator {
     const rows = Array.from(iterateRows(this.renderState, scrollDelta));
     const meta = readRenderSnapshotMeta(this.renderState);
     this.rowShiftInvalidated = false;
+    this.rowsPendingOutput = false;
 
     this.lastCursor = meta.cursor;
     this.viewportOffset = scrollbar.offset;
@@ -335,8 +342,8 @@ export class TerminalRenderCoordinator {
   // 这一帧的光标状态是否可信：非输出触发的帧（主题/尺寸/滚动/强制全画）恒可信；
   // 输出触发的帧只有在被压过头（CURSOR_SETTLE_MAX_MS）时才兜底放行。
   private consumeCursorSettled(): boolean {
-    const fromOutput = this.outputSinceRender;
-    this.outputSinceRender = false;
+    const fromOutput = this.cursorPendingOutput;
+    this.cursorPendingOutput = false;
     if (!fromOutput) {
       this.cursorDeferredSince = 0;
       return true;
@@ -365,7 +372,7 @@ export class TerminalRenderCoordinator {
 
     this.cursorSettleFrame = requestAnimationFrame(() => {
       this.cursorSettleFrame = null;
-      if (this.outputSinceRender) {
+      if (this.cursorPendingOutput) {
         return;
       }
 
