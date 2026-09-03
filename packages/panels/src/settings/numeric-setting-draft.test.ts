@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   NUMERIC_DRAFT_COMMIT_MS,
   createDeferredCommit,
+  createNumericDraft,
   parseNumericSetting,
 } from './numeric-setting-draft';
 
@@ -111,7 +112,7 @@ describe('createDeferredCommit', () => {
     }
   });
 
-  test('cancel（卸载）丢掉待提交值', () => {
+  test('cancel 丢掉待提交值', () => {
     const clock = manualClock();
     try {
       const seen: number[] = [];
@@ -140,6 +141,108 @@ describe('createDeferredCommit', () => {
       clock.advance(NUMERIC_DRAFT_COMMIT_MS);
 
       expect(seen).toEqual([12, 18]);
+    } finally {
+      clock.restore();
+    }
+  });
+});
+
+describe('createNumericDraft', () => {
+  function harness(initial = 16, min = 8, max = 28) {
+    const committed: number[] = [];
+    const drafts: string[] = [];
+    const controller = createNumericDraft(initial, {
+      commit: (next) => committed.push(next),
+      onDraft: (raw) => drafts.push(raw),
+      min: () => min,
+      max: () => max,
+    });
+    return { controller, committed, drafts };
+  }
+
+  test('输入只动草稿，停手 250 ms 后才提交', () => {
+    const clock = manualClock();
+    try {
+      const { controller, committed, drafts } = harness();
+      controller.change('17');
+      expect(drafts).toEqual(['17']);
+      expect(committed).toEqual([]);
+      clock.advance(NUMERIC_DRAFT_COMMIT_MS);
+      expect(committed).toEqual([17]);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  test('卸载时合法的待提交值必须落地（Escape 关 Sheet 不吞改动）', () => {
+    const clock = manualClock();
+    try {
+      const { controller, committed } = harness();
+      controller.change('22');
+      clock.advance(30);
+      expect(committed).toEqual([]);
+
+      controller.teardown();
+      expect(committed).toEqual([22]);
+
+      // 落地后定时器不再重复提交
+      clock.advance(NUMERIC_DRAFT_COMMIT_MS * 4);
+      expect(committed).toEqual([22]);
+      expect(clock.armed()).toBe(0);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  test('卸载时草稿非法 / 无改动则什么都不提交', () => {
+    const clock = manualClock();
+    try {
+      const invalid = harness();
+      invalid.controller.change('99');
+      invalid.controller.teardown();
+      expect(invalid.committed).toEqual([]);
+
+      const untouched = harness();
+      untouched.controller.teardown();
+      expect(untouched.committed).toEqual([]);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  test('失焦：合法立刻提交，非法回灌已提交值', () => {
+    const clock = manualClock();
+    try {
+      const { controller, committed, drafts } = harness();
+      controller.change('20');
+      controller.commitNow();
+      expect(committed).toEqual([20]);
+      clock.advance(NUMERIC_DRAFT_COMMIT_MS * 4);
+      expect(committed).toEqual([20]);
+
+      controller.change('999');
+      controller.commitNow();
+      expect(committed).toEqual([20]);
+      expect(drafts.at(-1)).toBe('20');
+    } finally {
+      clock.restore();
+    }
+  });
+
+  test('store 值被别处改掉才回灌草稿；自己刚提交的那次不回灌', () => {
+    const clock = manualClock();
+    try {
+      const { controller, committed, drafts } = harness();
+      controller.change('18');
+      clock.advance(NUMERIC_DRAFT_COMMIT_MS);
+      expect(committed).toEqual([18]);
+
+      const beforeSync = drafts.length;
+      controller.syncFromStore(18);
+      expect(drafts.length).toBe(beforeSync);
+
+      controller.syncFromStore(12);
+      expect(drafts.at(-1)).toBe('12');
     } finally {
       clock.restore();
     }

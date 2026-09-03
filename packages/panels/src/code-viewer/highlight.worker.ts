@@ -1,7 +1,9 @@
 // 高亮 worker：把 highlight.js 整条链（内核 + 按需语言模块）挪出主线程。
+// 排队与取消语义见 `highlight-queue.ts`。
 import coreHljs from 'highlight.js/lib/core';
 import { createHighlightEngine } from './highlight-engine';
 import type { HighlightWorkerRequest, HighlightWorkerResponse } from './highlight-protocol';
+import { createHighlightQueue } from './highlight-queue';
 import { loadLanguageChunk } from './language-loaders';
 import { AUTO_DETECT_LANGUAGES } from './language-map';
 
@@ -22,9 +24,9 @@ const engine = createHighlightEngine({
 
 const scope = self as unknown as HighlightWorkerScope;
 
-scope.addEventListener('message', (event) => {
-  const { id, code, fileName } = event.data;
-  void engine.highlight(code, fileName).then(({ html }) => {
-    scope.postMessage({ id, html });
-  });
+const queue = createHighlightQueue({
+  run: ({ code, fileName }) => engine.highlight(code, fileName).then((outcome) => outcome.html),
+  emit: (response) => scope.postMessage(response),
 });
+
+scope.addEventListener('message', (event) => queue.handle(event.data));

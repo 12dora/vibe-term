@@ -3,6 +3,8 @@ import { DEFAULT_LOCALE, type LocaleCode } from '@tmex/shared';
 import i18n from 'i18next';
 import resourcesToBackend from 'i18next-resources-to-backend';
 import { initReactI18next } from 'react-i18next';
+import { changeLanguageAfterRest, createRestBundleCache } from './rest-bundle';
+import { setI18nRestPrerequisite } from './rest-prerequisite';
 
 // 各语言翻译按需动态加载：每个 locale 拆成独立 chunk，首屏只加载当前语言，
 // 不再把全部语言静态打进入口 bundle（原先静态 import I18N_RESOURCES 把 3 种语言全打进首屏）。
@@ -69,31 +71,23 @@ export const i18nReady = i18n
     },
   });
 
-const restLoads = new Map<string, Promise<void>>();
+const restCache = createRestBundleCache({
+  loaderFor: (lng) => {
+    const load = loaderFor(restModules, lng, 'rest');
+    return load ? () => translationOf(load) : undefined;
+  },
+  apply: (lng, translation) => {
+    i18n.addResourceBundle(lng, 'translation', translation, true, true);
+  },
+});
 let restRequested = false;
 
-function loadRest(lng: string): Promise<void> {
-  const cached = restLoads.get(lng);
-  if (cached) return cached;
+const loadRest = (lng: string): Promise<void> => restCache.load(lng);
 
-  const load = loaderFor(restModules, lng, 'rest');
-  const task = load
-    ? translationOf(load).then(
-        (translation) => {
-          i18n.addResourceBundle(lng, 'translation', translation, true, true);
-        },
-        () => {
-          // 弱网下 rest chunk 拉不到就保持 core：允许重试，不要把失败缓存成永久状态。
-          restLoads.delete(lng);
-        }
-      )
-    : Promise.resolve();
-
-  restLoads.set(lng, task);
-  return task;
-}
-
-/** 懒路由 / 懒面板挂载前调用：确保当前语言（及 fallback 语言）的 rest 语言包已就位。 */
+/**
+ * 懒路由 / 懒面板挂载前调用：确保当前语言（及 fallback 语言）的 rest 语言包已就位。
+ * 失败会 reject——调用方必须据此决定「继续等/报错/重试」，不能当成已就位。
+ */
 export function ensureI18nRest(): Promise<void> {
   restRequested = true;
   const current = i18n.resolvedLanguage ?? i18n.language ?? DEFAULT_LOCALE;
@@ -102,14 +96,27 @@ export function ensureI18nRest(): Promise<void> {
 }
 
 setPageModulePrerequisite(ensureI18nRest);
+setI18nRestPrerequisite(ensureI18nRest);
+
+// 切语言先备好目标语言的 rest，再真正切：反过来的话 `languageChanged` 已经发出、
+// 而新语言只有 core，已打开的设置页必然先闪一次 settings.* 裸 key。
+// 调用点散在 stores / 设置页里，统一在这里包一层，避免每个调用点各自记得先 ensure。
+type ChangeLanguage = typeof i18n.changeLanguage;
+const changeLanguageDirect = i18n.changeLanguage.bind(i18n) as ChangeLanguage;
+i18n.changeLanguage = ((lng, ...rest) => {
+  if (!restRequested || typeof lng !== 'string') {
+    return changeLanguageDirect(lng, ...rest);
+  }
+  return changeLanguageAfterRest(lng, loadRest, () => changeLanguageDirect(lng, ...rest));
+}) as ChangeLanguage;
 
 // <html lang> 跟随当前语言（index.html 静态写死 en；只影响无障碍与浏览器翻译提示）
 i18n.on('languageChanged', (lng: string) => {
   if (typeof document !== 'undefined') {
     document.documentElement.lang = lng.replace('_', '-');
   }
-  // 切语言后新语言只有 core，rest 要跟着补，否则已打开的设置页会退回裸 key。
-  if (restRequested) void loadRest(lng);
+  // 绕过上面那层包装的切换（i18next 内部改语言）兜底：rest 该补还是要补。
+  if (restRequested) void loadRest(lng).catch(() => undefined);
 });
 
 export default i18n;

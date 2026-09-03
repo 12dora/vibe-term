@@ -3,7 +3,15 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { FileEntryDto, FileRootDto, ListFilesResponse } from '@tmex/shared';
-import { armFileLeafMenu, hitFileLeaf, markOpenRow } from './file-leaf-delegates';
+import {
+  FILE_LEAF_LONG_PRESS_MOVE_PX,
+  FILE_LEAF_LONG_PRESS_MS,
+  type LeafHit,
+  createLongPress,
+  hitFileLeaf,
+  markOpenRow,
+  shouldArmLongPress,
+} from './file-leaf-delegates';
 import {
   type AttrElement,
   FILE_LEAF_PATH_ATTR,
@@ -114,43 +122,120 @@ describe('hitFileLeaf', () => {
   });
 });
 
-describe('armFileLeafMenu', () => {
-  const counter = () => {
-    let count = 0;
-    return {
-      prevent: () => {
-        count += 1;
-      },
-      get: () => count,
-    };
-  };
-
-  test('鼠标右键命中文件行：放行给 base-ui 的 Trigger', () => {
-    const c = counter();
-    const hit = hitFileLeaf(rows[3], [ROOT], lookup);
-    expect(armFileLeafMenu(hit, undefined, c.prevent)).toBe(hit);
-    expect(c.get()).toBe(0);
-  });
-
-  test('右键落在填充行（「显示其余」/空目录提示）上：挡掉，不弹上一次的菜单', () => {
-    const c = counter();
-    expect(armFileLeafMenu(null, undefined, c.prevent)).toBeNull();
-    expect(c.get()).toBe(1);
-  });
-
-  test('单指长按命中文件行放行；多指一律挡掉', () => {
+describe('shouldArmLongPress', () => {
+  test('单指命中文件行才武装长按', () => {
     const hit = hitFileLeaf(rows[7], [ROOT], lookup);
-    const single = counter();
-    expect(armFileLeafMenu(hit, 1, single.prevent)).toBe(hit);
-    expect(single.get()).toBe(0);
+    expect(shouldArmLongPress(hit, 1)).toBe(true);
+  });
 
-    const multi = counter();
-    expect(armFileLeafMenu(hit, 2, multi.prevent)).toBeNull();
-    expect(multi.get()).toBe(1);
+  test('多指 / 零指不是长按手势', () => {
+    const hit = hitFileLeaf(rows[7], [ROOT], lookup);
+    expect(shouldArmLongPress(hit, 2)).toBe(false);
+    expect(shouldArmLongPress(hit, 0)).toBe(false);
+  });
 
-    const zero = counter();
-    expect(armFileLeafMenu(hit, 0, zero.prevent)).toBeNull();
-    expect(zero.get()).toBe(1);
+  test('未命中文件行（填充行 / 空白处）不武装，手势完整留给浏览器', () => {
+    expect(shouldArmLongPress(null, 1)).toBe(false);
+  });
+});
+
+/** 手动时钟：只跑到点的定时器 */
+function manualSchedule() {
+  let now = 0;
+  let seq = 0;
+  const timers = new Map<number, { at: number; run: () => void }>();
+  return {
+    schedule: (run: () => void, ms: number) => {
+      seq += 1;
+      timers.set(seq, { at: now + ms, run });
+      return seq;
+    },
+    unschedule: (handle: unknown) => {
+      timers.delete(handle as number);
+    },
+    advance(ms: number) {
+      now += ms;
+      for (const [id, timer] of [...timers]) {
+        if (timer.at > now) continue;
+        timers.delete(id);
+        timer.run();
+      }
+    },
+    armed: () => timers.size,
+  };
+}
+
+describe('createLongPress', () => {
+  function setup() {
+    const clock = manualSchedule();
+    const fired: { payload: LeafHit; x: number; y: number }[] = [];
+    const tracker = createLongPress<LeafHit>({
+      onFire: (payload, point) => fired.push({ payload, x: point.clientX, y: point.clientY }),
+      schedule: clock.schedule,
+      unschedule: clock.unschedule,
+    });
+    return { clock, fired, tracker };
+  }
+
+  const hit = (index: number): LeafHit => hitFileLeaf(rows[index], [ROOT], lookup) as LeafHit;
+
+  test('按住 500 ms 才触发，并带回按下时的坐标与命中行', () => {
+    const { clock, fired, tracker } = setup();
+    tracker.start(hit(3), { clientX: 40, clientY: 90 });
+
+    clock.advance(FILE_LEAF_LONG_PRESS_MS - 1);
+    expect(fired).toEqual([]);
+
+    clock.advance(1);
+    expect(fired.length).toBe(1);
+    expect(fired[0]?.payload.target.entry).toBe(entries[3]);
+    expect(fired[0]?.x).toBe(40);
+    expect(fired[0]?.y).toBe(90);
+  });
+
+  test('位移超过 10 px 即取消（滚动不弹菜单）；阈值内不取消', () => {
+    const within = setup();
+    within.tracker.start(hit(1), { clientX: 0, clientY: 0 });
+    within.tracker.move({ clientX: FILE_LEAF_LONG_PRESS_MOVE_PX, clientY: 0 });
+    within.clock.advance(FILE_LEAF_LONG_PRESS_MS);
+    expect(within.fired.length).toBe(1);
+
+    const beyond = setup();
+    beyond.tracker.start(hit(1), { clientX: 0, clientY: 0 });
+    beyond.tracker.move({ clientX: 0, clientY: FILE_LEAF_LONG_PRESS_MOVE_PX + 1 });
+    expect(beyond.clock.armed()).toBe(0);
+    beyond.clock.advance(FILE_LEAF_LONG_PRESS_MS);
+    expect(beyond.fired).toEqual([]);
+  });
+
+  test('抬指 / 取消后不再触发，定时器也不留着', () => {
+    const { clock, fired, tracker } = setup();
+    tracker.start(hit(2), { clientX: 5, clientY: 5 });
+    tracker.cancel();
+    expect(clock.armed()).toBe(0);
+    clock.advance(FILE_LEAF_LONG_PRESS_MS * 3);
+    expect(fired).toEqual([]);
+  });
+
+  test('触发过一次才需要在抬指时抑制合成 mouse 序列，且只抑制一次', () => {
+    const { clock, tracker } = setup();
+    tracker.start(hit(4), { clientX: 1, clientY: 1 });
+    expect(tracker.consumeFired()).toBe(false);
+
+    clock.advance(FILE_LEAF_LONG_PRESS_MS);
+    expect(tracker.consumeFired()).toBe(true);
+    expect(tracker.consumeFired()).toBe(false);
+  });
+
+  test('重新按下会顶掉上一次的定时器，只触发一次', () => {
+    const { clock, fired, tracker } = setup();
+    tracker.start(hit(0), { clientX: 0, clientY: 0 });
+    clock.advance(FILE_LEAF_LONG_PRESS_MS - 10);
+    tracker.start(hit(1), { clientX: 0, clientY: 0 });
+    expect(clock.armed()).toBe(1);
+    clock.advance(FILE_LEAF_LONG_PRESS_MS);
+    expect(fired.length).toBe(1);
+    expect(fired[0]?.payload.target.entry).toBe(entries[1]);
   });
 });
 

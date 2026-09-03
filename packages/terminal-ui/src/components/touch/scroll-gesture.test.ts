@@ -38,7 +38,11 @@ describe('TouchScrollGesture 的 didScroll 判定', () => {
     expect(amounts).toEqual([1]);
     // viewportY 一动不动（渲染排到了下一帧），但手势必须判为已消费
     expect(terminal.buffer?.active?.viewportY).toBe(40);
-    expect(outcome).toEqual({ didScroll: true, atTopWhilePullingDown: false });
+    expect(outcome).toEqual({
+      didScroll: true,
+      atTopWhilePullingDown: false,
+      boundaryReached: false,
+    });
   });
 
   test('贴顶时 scrollLines 报告未滚动 ⇒ 不消费，交还原生（下拉刷新语义）', () => {
@@ -48,16 +52,24 @@ describe('TouchScrollGesture 的 didScroll 判定', () => {
     const outcome = gesture.applyVerticalDelta(() => terminal, -ONE_LINE_DELTA, 10, 20);
 
     expect(amounts).toEqual([-1]);
-    expect(outcome).toEqual({ didScroll: false, atTopWhilePullingDown: true });
+    expect(outcome).toEqual({
+      didScroll: false,
+      atTopWhilePullingDown: true,
+      boundaryReached: true,
+    });
   });
 
-  test('贴底时同样不消费，但不是「下拉到顶」', () => {
+  test('贴底时同样不消费，但不是「下拉到顶」；边界拒绝要标出来', () => {
     const gesture = createGesture();
     const { terminal } = reportingTerminal(false);
 
     const outcome = gesture.applyVerticalDelta(() => terminal, ONE_LINE_DELTA, 10, 20);
 
-    expect(outcome).toEqual({ didScroll: false, atTopWhilePullingDown: false });
+    expect(outcome).toEqual({
+      didScroll: false,
+      atTopWhilePullingDown: false,
+      boundaryReached: true,
+    });
   });
 
   test('不足一行的位移不调用 scrollLines', () => {
@@ -67,7 +79,12 @@ describe('TouchScrollGesture 的 didScroll 判定', () => {
     const outcome = gesture.applyVerticalDelta(() => terminal, 2, 10, 20);
 
     expect(amounts).toEqual([]);
-    expect(outcome).toEqual({ didScroll: false, atTopWhilePullingDown: false });
+    // 「还没攒够一行」不是边界拒绝
+    expect(outcome).toEqual({
+      didScroll: false,
+      atTopWhilePullingDown: false,
+      boundaryReached: false,
+    });
   });
 
   test('返回 void 的旧终端回落到 viewportY 前后差比对', () => {
@@ -85,7 +102,11 @@ describe('TouchScrollGesture 的 didScroll 判定', () => {
     const outcome = gesture.applyVerticalDelta(() => terminal, ONE_LINE_DELTA, 10, 20);
 
     expect(amounts).toEqual([1]);
-    expect(outcome).toEqual({ didScroll: true, atTopWhilePullingDown: false });
+    expect(outcome).toEqual({
+      didScroll: true,
+      atTopWhilePullingDown: false,
+      boundaryReached: false,
+    });
   });
 });
 
@@ -260,6 +281,91 @@ describe('TouchScrollGesture 的抬指惯性', () => {
 
     expect(harness.frames.pending()).toBe(0);
     expect(harness.amounts.length).toBe(duringGesture);
+  });
+
+  // 生产路径（上报/非上报都走 handleViewportGesture）：到边后终端返回 false，
+  // 惯性必须当帧停住，而不是继续排上百个空转 rAF。
+  test('handleViewportGesture 路径：边界拒绝整行位移后当帧取消惯性', () => {
+    const frames = fakeFrames();
+    const clock = fakeClock();
+    const fed: number[] = [];
+    let accept = true;
+    const terminal: TerminalScroller = {
+      scrollLines: () => true,
+      buffer: { active: { viewportY: 500 } },
+      handleViewportGesture: ({ deltaY }) => {
+        fed.push(deltaY);
+        return accept;
+      },
+    };
+    const gesture = new TouchScrollGesture({} as unknown as Element, {
+      frames: { requestFrame: frames.requestFrame, cancelFrame: frames.cancelFrame },
+      now: clock.now,
+      prefersReducedMotion: () => false,
+    });
+
+    let y = 600;
+    gesture.anchorSingle(y);
+    for (let i = 0; i < 6; i += 1) {
+      clock.advance(16);
+      y -= 40;
+      gesture.applyVerticalDelta(() => terminal, gesture.takeVerticalDelta(y), 10, y);
+    }
+    gesture.endGesture();
+    expect(frames.pending()).toBe(1);
+
+    accept = false;
+    const beforeBoundary = fed.length;
+    // 攒够一行才会喂下去；第一次被拒绝的那帧就要停
+    let guard = 0;
+    while (fed.length === beforeBoundary) {
+      expect(frames.runFrame()).toBe(true);
+      guard += 1;
+      if (guard > 10) throw new Error('惯性没有喂出整行位移');
+    }
+    expect(frames.pending()).toBe(0);
+    expect(fed.length).toBe(beforeBoundary + 1);
+  });
+
+  test('scrollLinesDirect 路径：贴底（向下）被拒绝也当帧取消惯性', () => {
+    const frames = fakeFrames();
+    const clock = fakeClock();
+    const amounts: number[] = [];
+    let accept = true;
+    const terminal: TerminalScroller = {
+      scrollLines: (amount: number) => {
+        amounts.push(amount);
+        return accept;
+      },
+      buffer: { active: { viewportY: 500 } },
+    };
+    const gesture = new TouchScrollGesture({} as unknown as Element, {
+      frames: { requestFrame: frames.requestFrame, cancelFrame: frames.cancelFrame },
+      now: clock.now,
+      prefersReducedMotion: () => false,
+    });
+
+    let y = 600;
+    gesture.anchorSingle(y);
+    for (let i = 0; i < 6; i += 1) {
+      clock.advance(16);
+      y -= 40;
+      gesture.applyVerticalDelta(() => terminal, gesture.takeVerticalDelta(y), 10, y);
+    }
+    gesture.endGesture();
+    expect(frames.pending()).toBe(1);
+
+    accept = false;
+    const beforeBoundary = amounts.length;
+    let guard = 0;
+    while (amounts.length === beforeBoundary) {
+      expect(frames.runFrame()).toBe(true);
+      guard += 1;
+      if (guard > 10) throw new Error('惯性没有喂出整行位移');
+    }
+    // 向下（正数）到底同样要停
+    expect(amounts[amounts.length - 1] as number).toBeGreaterThan(0);
+    expect(frames.pending()).toBe(0);
   });
 
   test('无 rAF 的宿主不做惯性（不同步一次性甩完）', () => {

@@ -7,7 +7,9 @@ const worker = new Worker(new URL('./highlight.worker.ts', import.meta.url).href
   type: 'module',
 });
 const inflight = new Map<number, (response: HighlightWorkerResponse) => void>();
+const responses: HighlightWorkerResponse[] = [];
 worker.addEventListener('message', (event: MessageEvent<HighlightWorkerResponse>) => {
+  responses.push(event.data);
   inflight.get(event.data.id)?.(event.data);
 });
 
@@ -16,7 +18,7 @@ afterAll(() => worker.terminate());
 function highlight(id: number, code: string, fileName: string): Promise<HighlightWorkerResponse> {
   return new Promise((resolve) => {
     inflight.set(id, resolve);
-    worker.postMessage({ id, code, fileName });
+    worker.postMessage({ type: 'highlight', id, code, fileName });
   });
 }
 
@@ -45,5 +47,28 @@ describe('高亮 worker', () => {
   test('超过 512 KiB 的已知语言不高亮', async () => {
     const response = await highlight(5, 'const a = 1;\n'.repeat(50_000), 'big.ts');
     expect(response.html).toBeNull();
+  });
+
+  test('取消排队中的请求：worker 既不执行也不回包', async () => {
+    const before = responses.length;
+    const done = new Promise<HighlightWorkerResponse>((resolve) => inflight.set(12, resolve));
+    // 10 先占住执行位，11 只能排队 —— 排队期间的取消必须让它彻底出队
+    worker.postMessage({
+      type: 'highlight',
+      id: 10,
+      code: 'const a = 1;\n'.repeat(20_000),
+      fileName: 'q.ts',
+    });
+    worker.postMessage({
+      type: 'highlight',
+      id: 11,
+      code: 'const b = 2;\n'.repeat(20_000),
+      fileName: 'q2.ts',
+    });
+    worker.postMessage({ type: 'cancel', id: 11 });
+    worker.postMessage({ type: 'highlight', id: 12, code: 'const c = 3;', fileName: 'q3.ts' });
+
+    await done;
+    expect(responses.slice(before).map((r) => r.id)).toEqual([10, 12]);
   });
 });

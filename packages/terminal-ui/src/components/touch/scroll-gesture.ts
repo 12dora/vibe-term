@@ -10,7 +10,10 @@ import type { ResolveTerminal, TerminalScroller } from './types';
 
 export interface ScrollOutcome {
   didScroll: boolean;
+  /** 已到顶还在继续下拉：交还原生（下拉刷新语义） */
   atTopWhilePullingDown: boolean;
+  /** 已经攒够整行并喂了下去、却被边界拒绝（任一方向）：惯性必须立刻停，不能继续排 rAF */
+  boundaryReached: boolean;
 }
 
 /** 惯性帧驱动；requestFrame 返回 null（无 rAF 的宿主）即视为不支持惯性。 */
@@ -189,7 +192,7 @@ export class TouchScrollGesture {
       context.clientX,
       context.clientY
     );
-    if (!outcome || outcome.atTopWhilePullingDown) {
+    if (!outcome || outcome.boundaryReached || outcome.atTopWhilePullingDown) {
       this.cancelFling();
       return;
     }
@@ -209,12 +212,13 @@ export class TouchScrollGesture {
     deltaY: number,
     clientX: number,
     clientY: number
-  ): boolean {
+  ): ScrollOutcome {
     const lineHeight = terminalLineHeight(terminal);
     this.pendingPixelDelta = accumulateScrollPixels(this.pendingPixelDelta, deltaY);
     const linesToScroll = pendingPixelsToLines(this.pendingPixelDelta, lineHeight);
+    // 还没攒够一行 ⇒ 不是边界拒绝，惯性要继续攒
     if (linesToScroll === 0 || typeof terminal.handleViewportGesture !== 'function') {
-      return false;
+      return { didScroll: false, atTopWhilePullingDown: false, boundaryReached: false };
     }
     const didScroll = terminal.handleViewportGesture({
       source: 'touch',
@@ -223,7 +227,7 @@ export class TouchScrollGesture {
       clientY,
     });
     this.pendingPixelDelta -= linesToScroll * lineHeight;
-    return didScroll;
+    return { didScroll, atTopWhilePullingDown: false, boundaryReached: !didScroll };
   }
 
   handleWheelMove(
@@ -280,10 +284,7 @@ export class TouchScrollGesture {
     this.lastScrollContext = { resolveTerminal, clientX, clientY };
     const outcome =
       typeof terminal.handleViewportGesture === 'function'
-        ? {
-            didScroll: this.feedViewportGesture(terminal, deltaY, clientX, clientY),
-            atTopWhilePullingDown: false,
-          }
+        ? this.feedViewportGesture(terminal, deltaY, clientX, clientY)
         : this.scrollLinesDirect(terminal, deltaY);
     if (outcome.didScroll) this.scrolledDuringGesture = true;
     return outcome;
@@ -294,7 +295,7 @@ export class TouchScrollGesture {
     this.pendingPixelDelta = accumulateScrollPixels(this.pendingPixelDelta, deltaY);
     const linesToScroll = pendingPixelsToLines(this.pendingPixelDelta, lineHeight);
     if (linesToScroll === 0) {
-      return { didScroll: false, atTopWhilePullingDown: false };
+      return { didScroll: false, atTopWhilePullingDown: false, boundaryReached: false };
     }
     // buffer.active.viewportY 只在渲染落地时更新，而滚动渲染已改为 rAF 合并：
     // 「本次是否真的滚动了」必须由 scrollLines 的返回值给出。旧终端（返回 void）
@@ -307,11 +308,14 @@ export class TouchScrollGesture {
       return {
         didScroll: reported,
         atTopWhilePullingDown: linesToScroll < 0 && !reported,
+        boundaryReached: !reported,
       };
     }
+    const moved = beforeViewportY !== afterViewportY;
     return {
-      didScroll: beforeViewportY !== afterViewportY,
+      didScroll: moved,
       atTopWhilePullingDown: linesToScroll < 0 && beforeViewportY <= 0 && afterViewportY <= 0,
+      boundaryReached: !moved,
     };
   }
 
@@ -348,6 +352,6 @@ export class TouchScrollGesture {
       }
     }
 
-    return { didScroll, atTopWhilePullingDown };
+    return { didScroll, atTopWhilePullingDown, boundaryReached: !didScroll };
   }
 }

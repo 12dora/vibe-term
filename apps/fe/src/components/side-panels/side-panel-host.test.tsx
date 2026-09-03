@@ -19,7 +19,10 @@ const { RuntimeProvider } = await import('@tmex/stores/react');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { SidebarProvider } = await import('@tmex/ui/sidebar');
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
-const { SidePanelBody } = await import('./side-panel-host');
+const { SidePanelBody, loadConnectDevicesPanel, loadAccountSecurityPanel } = await import(
+  './side-panel-host'
+);
+const { setI18nRestPrerequisite } = await import('@/i18n/rest-prerequisite');
 
 const PENDING = 'data-testid="side-panel-pending"';
 
@@ -46,6 +49,41 @@ async function renderLoaded(node: React.ReactNode): Promise<string> {
   }
   return html;
 }
+
+// 面板用的是 rest 语言包命名空间（connectDevices.* 等）：chunk 先到就会渲染出裸 key。
+describe('懒面板 loader 的语言包前置条件', () => {
+  const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  for (const [name, load] of [
+    ['接入设备', loadConnectDevicesPanel],
+    ['账号安全', loadAccountSecurityPanel],
+  ] as const) {
+    test(`${name}面板：rest 语言包没到就不交付组件`, async () => {
+      let release: (() => void) | null = null;
+      setI18nRestPrerequisite(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          })
+      );
+      try {
+        let delivered = false;
+        const pending = load().then((component) => {
+          delivered = true;
+          return component;
+        });
+
+        for (let i = 0; i < 20; i += 1) await tick();
+        expect(delivered).toBe(false);
+
+        (release as unknown as () => void)();
+        expect(typeof (await pending)).toBe('function');
+      } finally {
+        setI18nRestPrerequisite(null);
+      }
+    });
+  }
+});
 
 describe('SidePanelBody', () => {
   test('chunk 未到时给骨架，到了之后渲染接入指引', async () => {

@@ -76,6 +76,14 @@ describe('openFenceTail', () => {
     expect(openFenceTail('文字\n```ts\ncode')).toBeNull();
   });
 
+  test('CRLF 文本的封口行（结尾带 \\r）同样算封口', () => {
+    expect(openFenceTail('```ts\r\nconst a = 1;\r\n```\r\n')).toBeNull();
+    expect(openFenceTail('```ts\r\nx\r\n```   \r')).toBeNull();
+    expect(openFenceTail('~~~py\r\nx = 1\r\n~~~\r')).toBeNull();
+    // 未封口时仍按未封口处理，语言不带 \r
+    expect(openFenceTail('```ts\r\nconst a = 1;\r\n')?.lang).toBe('ts');
+  });
+
   test('只有围栏首行时栏内为空', () => {
     expect(openFenceTail('```ts')).toEqual({ lang: 'ts', body: '' });
     expect(openFenceTail('```ts\n')).toEqual({ lang: 'ts', body: '' });

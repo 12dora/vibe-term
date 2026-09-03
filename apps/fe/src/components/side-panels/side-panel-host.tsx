@@ -14,6 +14,7 @@
 // 这里等 `onOpenChangeComplete(false)` 再清。
 
 import { AppErrorBoundary } from '@/components/app-error-boundary';
+import { withI18nRest } from '@/i18n/rest-prerequisite';
 import { lazyChunk } from '@/lazy-chunk';
 import { Button } from '@tmex/ui/button';
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@tmex/ui/sheet';
@@ -23,12 +24,17 @@ import { useTranslation } from 'react-i18next';
 import type { SidePanelName } from './side-panel-url';
 import { useSidePanel } from './use-side-panel';
 
-const ConnectDevicesPanel = lazyChunk<Record<string, never>>(async () => {
-  return (await import('./connect-devices/connect-devices-panel')).default;
-});
-const AccountSecurityPanel = lazyChunk<Record<string, never>>(async () => {
-  return (await import('./account-security-panel')).default;
-});
+// 面板 chunk 与 rest 语言包并行加载、两者都到位才挂载：只靠 idle 预取的话，
+// 面板 chunk 先到就会把 `connectDevices.*` 这类裸 key 直接渲染出来（见 `@/i18n/rest-prerequisite`）。
+export const loadConnectDevicesPanel = withI18nRest(
+  async () => (await import('./connect-devices/connect-devices-panel')).default
+);
+export const loadAccountSecurityPanel = withI18nRest(
+  async () => (await import('./account-security-panel')).default
+);
+
+const ConnectDevicesPanel = lazyChunk<Record<string, never>>(loadConnectDevicesPanel);
+const AccountSecurityPanel = lazyChunk<Record<string, never>>(loadAccountSecurityPanel);
 
 const PANEL_TITLE_KEY = {
   connect: 'nav.connectDevices',

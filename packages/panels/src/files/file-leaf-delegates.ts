@@ -39,25 +39,84 @@ export function hitFileLeaf(
 }
 
 /**
- * 右键 / 长按是否放行给 base-ui 的 Trigger。
+ * 单指 + 命中文件行才武装长按。
  *
- * `touches` 为 undefined 表示鼠标右键；多指触摸不是长按手势，一律挡掉（base-ui 自己也只认单指，
- * 这里提前挡住是为了不留下半个已 arm 的状态）。
+ * 多指不是长按手势；未命中（加载行 / 空目录 / 「显示其余」/ 空白处）要把手势完整留给浏览器，
+ * 既不弹上一次命中的那份菜单，也不挡掉原生菜单。
  */
-export function armFileLeafMenu(
-  hit: LeafHit | null,
-  touches: number | undefined,
-  prevent: () => void
-): LeafHit | null {
-  if (touches !== undefined && touches !== 1) {
-    prevent();
-    return null;
-  }
-  if (!hit) {
-    prevent();
-    return null;
-  }
-  return hit;
+export function shouldArmLongPress(hit: LeafHit | null, touches: number): hit is LeafHit {
+  return touches === 1 && hit !== null;
+}
+
+/** 与 base-ui ContextMenuTrigger 一致的长按参数 */
+export const FILE_LEAF_LONG_PRESS_MS = 500;
+export const FILE_LEAF_LONG_PRESS_MOVE_PX = 10;
+
+export interface PointerPoint {
+  clientX: number;
+  clientY: number;
+}
+
+export interface LongPressOptions<T> {
+  onFire: (payload: T, point: PointerPoint) => void;
+  delayMs?: number;
+  moveThresholdPx?: number;
+  schedule?: (run: () => void, ms: number) => unknown;
+  unschedule?: (handle: unknown) => void;
+}
+
+export interface LongPressTracker<T> {
+  start: (payload: T, point: PointerPoint) => void;
+  move: (point: PointerPoint) => void;
+  cancel: () => void;
+  /** 读取并清掉「刚触发过」标记：抬指时据此 preventDefault，抑制合成的 mouse 序列 */
+  consumeFired: () => boolean;
+}
+
+export function createLongPress<T>({
+  onFire,
+  delayMs = FILE_LEAF_LONG_PRESS_MS,
+  moveThresholdPx = FILE_LEAF_LONG_PRESS_MOVE_PX,
+  schedule = (run, ms) => setTimeout(run, ms),
+  unschedule = (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+}: LongPressOptions<T>): LongPressTracker<T> {
+  let handle: unknown = null;
+  let origin: PointerPoint | null = null;
+  let fired = false;
+
+  const clear = (): void => {
+    if (handle !== null) unschedule(handle);
+    handle = null;
+    origin = null;
+  };
+
+  return {
+    start(payload, point) {
+      clear();
+      fired = false;
+      origin = point;
+      handle = schedule(() => {
+        const at = origin;
+        handle = null;
+        origin = null;
+        if (!at) return;
+        fired = true;
+        onFire(payload, at);
+      }, delayMs);
+    },
+    move(point) {
+      if (handle === null || !origin) return;
+      const movedX = Math.abs(point.clientX - origin.clientX);
+      const movedY = Math.abs(point.clientY - origin.clientY);
+      if (movedX > moveThresholdPx || movedY > moveThresholdPx) clear();
+    },
+    cancel: clear,
+    consumeFired() {
+      const was = fired;
+      fired = false;
+      return was;
+    },
+  };
 }
 
 /** 行原本兼任 Trigger，靠 base-ui 的 `data-popup-open` / `data-pressed` 高亮；提走后手动补上。 */

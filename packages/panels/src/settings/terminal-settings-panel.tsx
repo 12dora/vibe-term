@@ -17,11 +17,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { TerminalShortcutsEditor } from './TerminalShortcutsEditor';
-import {
-  type DeferredCommit,
-  createDeferredCommit,
-  parseNumericSetting,
-} from './numeric-setting-draft';
+import { type NumericDraftController, createNumericDraft } from './numeric-setting-draft';
 
 // 预览要拉起 Ghostty 的 WASM 与终端字体，是这个面板最重的一块，却和上手就要改的
 // 字号/行高/字体/快捷键毫无依赖关系：切成独立 chunk，控件先出来，预览随后补上。
@@ -94,62 +90,42 @@ function useNumericSetting(
   max: number
 ) {
   const [draft, setDraft] = useState(() => String(value));
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
-  const committedRef = useRef(value);
   const commitRef = useRef(commit);
   commitRef.current = commit;
+  const minRef = useRef(min);
+  minRef.current = min;
+  const maxRef = useRef(max);
+  maxRef.current = max;
 
-  const pendingRef = useRef<DeferredCommit<number> | null>(null);
-  if (!pendingRef.current) {
-    pendingRef.current = createDeferredCommit<number>((next) => {
-      committedRef.current = next;
-      commitRef.current(next);
+  const draftRef = useRef<NumericDraftController | null>(null);
+  if (!draftRef.current) {
+    draftRef.current = createNumericDraft(value, {
+      commit: (next) => commitRef.current(next),
+      onDraft: setDraft,
+      min: () => minRef.current,
+      max: () => maxRef.current,
     });
   }
-  const pending = pendingRef.current;
+  const controller = draftRef.current;
 
   useEffect(() => {
-    if (value === committedRef.current) return;
-    committedRef.current = value;
-    setDraft(String(value));
-  }, [value]);
+    controller.syncFromStore(value);
+  }, [controller, value]);
 
-  useEffect(() => () => pending.cancel(), [pending]);
+  // 卸载走 flush 而不是 cancel：Escape 关 Sheet / 路由离开时 DOM 移除不会可靠触发 blur，
+  // cancel 会把用户刚敲进去的合法字号/行高丢掉。
+  useEffect(() => () => controller.teardown(), [controller]);
 
-  const flush = useCallback(() => {
-    pending.cancel();
-    const next = parseNumericSetting(draftRef.current, min, max);
-    if (next === null) {
-      setDraft(String(committedRef.current));
-      return;
-    }
-    if (next === committedRef.current) return;
-    committedRef.current = next;
-    commitRef.current(next);
-  }, [pending, min, max]);
-
-  const onChange = useCallback(
-    (raw: string) => {
-      setDraft(raw);
-      const next = parseNumericSetting(raw, min, max);
-      if (next === null || next === committedRef.current) {
-        pending.cancel();
-        return;
-      }
-      pending.schedule(next);
-    },
-    [pending, min, max]
-  );
-
+  const onBlur = useCallback(() => controller.commitNow(), [controller]);
+  const onChange = useCallback((raw: string) => controller.change(raw), [controller]);
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === 'Enter') flush();
+      if (event.key === 'Enter') controller.commitNow();
     },
-    [flush]
+    [controller]
   );
 
-  return { value: draft, onChange, onBlur: flush, onKeyDown };
+  return { value: draft, onChange, onBlur, onKeyDown };
 }
 
 /**

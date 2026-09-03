@@ -50,18 +50,41 @@ describe('高亮请求分发', () => {
     const { worker, client } = setup();
     const seen: (string | null)[] = [];
     client.request('const a = 1;', 'a.ts', (html) => seen.push(html));
-    expect(worker.received).toEqual([{ id: 1, code: 'const a = 1;', fileName: 'a.ts' }]);
+    expect(worker.received).toEqual([
+      { type: 'highlight', id: 1, code: 'const a = 1;', fileName: 'a.ts' },
+    ]);
     worker.respond({ id: 1, html: '<span>a</span>' });
     expect(seen).toEqual(['<span>a</span>']);
   });
 
-  test('取消后的回包被丢弃', () => {
+  test('取消后的回包被丢弃，并把取消发给 worker', () => {
     const { worker, client } = setup();
     const seen: (string | null)[] = [];
     const cancel = client.request('old', 'old.ts', (html) => seen.push(html));
     cancel();
+    expect(worker.received.at(-1)).toEqual({ type: 'cancel', id: 1 });
     worker.respond({ id: 1, html: '<stale>' });
     expect(seen).toEqual([]);
+  });
+
+  test('重复取消只发一次 cancel', () => {
+    const { worker, client } = setup();
+    const cancel = client.request('old', 'old.ts', () => undefined);
+    cancel();
+    cancel();
+    expect(worker.received.filter((m) => m.type === 'cancel')).toEqual([{ type: 'cancel', id: 1 }]);
+  });
+
+  test('切文件时旧请求当场从 worker 队列撤掉，最新请求不排在它后面', () => {
+    const { worker, client } = setup();
+    const cancelOld = client.request('big-old', 'old.ts', () => undefined);
+    cancelOld();
+    client.request('new', 'new.ts', () => undefined);
+    expect(worker.received).toEqual([
+      { type: 'highlight', id: 1, code: 'big-old', fileName: 'old.ts' },
+      { type: 'cancel', id: 1 },
+      { type: 'highlight', id: 2, code: 'new', fileName: 'new.ts' },
+    ]);
   });
 
   test('切文件后旧回包不覆盖新请求', () => {

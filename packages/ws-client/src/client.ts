@@ -690,7 +690,7 @@ export class BorshWebSocketClient {
     }
     const baseIntervalMs = this.options.heartbeatIntervalMs;
     const explicitTimeoutMs = this.explicitPongTimeoutMs;
-    const baseTimeoutMs = this.options.pongTimeoutMs;
+    const baseTimeoutMs = this.options.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
     const negotiated = this.negotiatedHeartbeatIntervalMs;
     if (negotiated === null || negotiated === baseIntervalMs) {
       return { intervalMs: baseIntervalMs, pongTimeoutMs: baseTimeoutMs };

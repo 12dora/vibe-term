@@ -1,6 +1,7 @@
 // 高亮请求的主线程侧：优先丢给 worker；worker 不可用（或运行时报错）时退回主线程，
 // 但先让出一帧，保证纯文本已经上屏——hljs 的输出本身按行嵌套 span，切不开，只能整段跑。
-// 每个请求可取消——文件切换时旧请求的回包必须被丢弃。
+// 每个请求可取消：除了丢弃回包，取消还必须发给 worker，否则连切几个大文件时
+// 已作废的请求仍会在 worker 里逐个跑完，把最新文件排在后面。
 
 import type { HighlightWorkerLike, HighlightWorkerResponse } from './highlight-protocol';
 
@@ -116,12 +117,13 @@ export function createHighlightClient(options: HighlightClientOptions = {}): Hig
       pending.set(id, { code, fileName, onResult });
       const active = ensureWorker();
       if (active) {
-        active.postMessage({ id, code, fileName });
+        active.postMessage({ type: 'highlight', id, code, fileName });
       } else {
         runOnMainThread(id);
       }
       return () => {
-        pending.delete(id);
+        if (!pending.delete(id)) return;
+        worker?.postMessage({ type: 'cancel', id });
       };
     },
     dispose() {

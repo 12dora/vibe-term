@@ -118,6 +118,17 @@ describe('文件树的共享右键菜单', () => {
     expect(count(large, 'data-slot="context-menu-trigger"')).toBe(2);
   });
 
+  test('树级 Trigger 只是个空锚点，不包住文件树（否则填充行右键连原生菜单都没有）', () => {
+    const html = renderExpandedRoot(Array.from({ length: 3 }, (_, i) => fileEntry(i)));
+    const triggerTags = html.match(/<[a-z]+[^>]*data-slot="context-menu-trigger"[^>]*>/g) ?? [];
+    expect(triggerTags.length).toBe(2);
+    // 树容器（space-y-0.5）不再是 Trigger：base-ui 的 document 级监听会给 Trigger 内
+    // 所有元素 preventDefault，空目录/加载行/「显示其余」上右键会既没应用菜单也没原生菜单
+    expect(triggerTags.some((tag) => tag.includes('space-y-0.5'))).toBe(false);
+    // 锚点自身是空的
+    expect(html).toMatch(/<div[^>]*data-slot="context-menu-trigger"[^>]*><\/div>/);
+  });
+
   test('文件行不再兼任 Trigger，也不再各带一份菜单内容', () => {
     const html = renderExpandedRoot(Array.from({ length: 500 }, (_, i) => fileEntry(i)));
     const rows = html.match(/<button[^>]*data-testid="file-item-[^>]*>/g) ?? [];

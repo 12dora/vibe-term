@@ -98,6 +98,11 @@ export interface OpenFenceTail {
 const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
 
+/** CRLF 文本的行尾还带着 \r，围栏正则按 LF 写，比对前先摘掉 */
+function stripCr(line: string): string {
+  return line.endsWith('\r') ? line.slice(0, -1) : line;
+}
+
 function stripFenceIndent(line: string, indent: number): string {
   let cut = 0;
   while (cut < indent && line.charCodeAt(cut) === 32) cut += 1;
@@ -112,7 +117,7 @@ interface FenceOpen {
 }
 
 function parseFenceOpen(line: string): FenceOpen | null {
-  const opened = FENCE_OPEN.exec(line);
+  const opened = FENCE_OPEN.exec(stripCr(line));
   if (!opened) return null;
   const marker = opened[2];
   const char = marker[0];
@@ -128,7 +133,7 @@ function parseFenceOpen(line: string): FenceOpen | null {
 
 /** 同字符、且不短于开栏长度才算闭合 */
 function closesFence(line: string, fence: FenceOpen): boolean {
-  const closed = FENCE_CLOSE.exec(line);
+  const closed = FENCE_CLOSE.exec(stripCr(line));
   return closed !== null && closed[1][0] === fence.char && closed[1].length >= fence.length;
 }
 

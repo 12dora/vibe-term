@@ -56,3 +56,71 @@ export function createDeferredCommit<T>(
     cancel,
   };
 }
+
+export interface NumericDraftPorts {
+  /** 落到 store */
+  commit: (next: number) => void;
+  /** 通知宿主（React state）草稿变了 */
+  onDraft: (raw: string) => void;
+  min: () => number;
+  max: () => number;
+}
+
+export interface NumericDraftController {
+  change: (raw: string) => void;
+  /** 失焦 / 回车：合法立刻提交，非法回灌已提交值 */
+  commitNow: () => void;
+  /** store 值被别处改掉时回灌草稿；自己刚提交的那次不回灌 */
+  syncFromStore: (next: number) => void;
+  /** 卸载（Escape 关 Sheet / 路由离开）：合法的待提交值必须落地，不能丢 */
+  teardown: () => void;
+}
+
+export function createNumericDraft(
+  initial: number,
+  ports: NumericDraftPorts,
+  delayMs: number = NUMERIC_DRAFT_COMMIT_MS
+): NumericDraftController {
+  let draft = String(initial);
+  let committed = initial;
+
+  const write = (next: number): void => {
+    committed = next;
+    ports.commit(next);
+  };
+  const deferred = createDeferredCommit(write, delayMs);
+  const parse = (raw: string): number | null => parseNumericSetting(raw, ports.min(), ports.max());
+  const setDraft = (raw: string): void => {
+    draft = raw;
+    ports.onDraft(raw);
+  };
+
+  return {
+    change(raw) {
+      setDraft(raw);
+      const next = parse(raw);
+      if (next === null || next === committed) {
+        deferred.cancel();
+        return;
+      }
+      deferred.schedule(next);
+    },
+    commitNow() {
+      deferred.cancel();
+      const next = parse(draft);
+      if (next === null) {
+        setDraft(String(committed));
+        return;
+      }
+      if (next !== committed) write(next);
+    },
+    syncFromStore(next) {
+      if (next === committed) return;
+      committed = next;
+      setDraft(String(next));
+    },
+    teardown() {
+      deferred.flush();
+    },
+  };
+}
