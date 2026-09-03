@@ -2,7 +2,7 @@
 // 「操作」列会被裁掉。macOS 的浮层滚动条平时不显形，光靠 `overflow-x-auto` 用户看不出还能滚，
 // 于是这里做两件事：
 //   1. 强制一条常驻的细滚动条（webkit 与 firefox 各写一套），让「还有内容」这件事看得见；
-//   2. 把「操作」列钉在右边（`stickyActionColumn`），窄屏下不滚也点得到。
+//   2. sm 以上把「操作」列钉在右边（`stickyActionColumn`）；手机宽度下固定列会吃掉大半视口，改为整行横滚。
 
 import type { ReactNode } from 'react';
 
@@ -11,7 +11,7 @@ import type { ReactNode } from 'react';
  * （卡片底色即表格底色），左边一条细线把它和滚动区分开。
  */
 export const stickyActionColumn =
-  'sticky right-0 z-10 bg-card shadow-[inset_1px_0_0_0_var(--border)]';
+  'sm:sticky sm:right-0 sm:z-10 sm:bg-card sm:shadow-[inset_1px_0_0_0_var(--border)]';
 
 export function WideTableScroll({ children }: { children: ReactNode }) {
   return (
