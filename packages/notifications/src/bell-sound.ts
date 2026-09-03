@@ -1,6 +1,9 @@
 let audioCtx: AudioContext | null = null;
 
 export function playBellSound(): void {
+  if (typeof AudioContext === 'undefined') {
+    return;
+  }
   if (!audioCtx) {
     audioCtx = new AudioContext();
   }

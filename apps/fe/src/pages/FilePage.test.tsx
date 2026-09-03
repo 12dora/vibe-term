@@ -2,7 +2,9 @@
 // 无 DOM 环境，用 react-dom/server 静态渲染；重组件与查询层按需 mock。
 
 import { describe, expect, mock, test } from 'bun:test';
+import * as actualReactQuery from '@tanstack/react-query';
 import { installWindowStorage } from '@tmex/stores/test-utils';
+import * as actualReactI18next from 'react-i18next';
 
 installWindowStorage();
 
@@ -10,13 +12,17 @@ let statResponse: Record<string, unknown> = {};
 
 class FakeQueryClient {}
 
+// mock.module 是进程级的：同一次 bun test 里后面加载的文件也会拿到这份模块，只覆盖用到的三个
+// 导出会让别的测试报「Export named 'QueryClientProvider' not found」（Linux 上文件顺序不同就会触发）。
 mock.module('@tanstack/react-query', () => ({
+  ...actualReactQuery,
   QueryClient: FakeQueryClient,
   useQuery: () => ({ data: statResponse, isLoading: false, isError: false, error: null }),
   useQueryClient: () => ({ invalidateQueries: () => Promise.resolve() }),
 }));
 
 mock.module('react-i18next', () => ({
+  ...actualReactI18next,
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
