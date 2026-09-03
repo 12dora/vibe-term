@@ -15,7 +15,10 @@ import {
   isEmptyNotification,
 } from './legacy-event-delivery';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
-import type { TerminalOutputMetrics } from './terminal-output-metrics';
+import {
+  TERMINAL_OUTPUT_METRICS_CHECK_EVERY,
+  type TerminalOutputMetrics,
+} from './terminal-output-metrics';
 import type { DeviceConnectionEntry } from './types';
 
 export interface LegacyFeedHost {
@@ -235,8 +238,11 @@ export class LegacyFeedBroadcaster {
       canonical: canonicalObserved,
     });
     this.host.terminalOutputEventsUntilMetricsCheck -= 1;
-    if (this.host.terminalOutputEventsUntilMetricsCheck === 0) {
-      this.host.terminalOutputEventsUntilMetricsCheck = 1024;
+    if (
+      this.host.terminalOutputEventsUntilMetricsCheck <= 0 ||
+      this.host.terminalOutputMetrics.isDue(Date.now())
+    ) {
+      this.host.terminalOutputEventsUntilMetricsCheck = TERMINAL_OUTPUT_METRICS_CHECK_EVERY;
       this.host.reportTerminalOutputMetricsIfDue();
     }
     if (!legacyObserved) return;

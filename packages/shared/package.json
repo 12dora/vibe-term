@@ -14,7 +14,7 @@
     "./link": "./src/link/index.ts",
     "./uplink": "./src/uplink/codec.ts",
     "./http": "./src/http/read-body.ts",
-    "./net": "./src/net/dial-breaker.ts",
+    "./net": "./src/net/index.ts",
     "./process": "./src/process/process-identity.ts"
   },
   "scripts": {

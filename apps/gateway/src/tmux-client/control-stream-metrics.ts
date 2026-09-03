@@ -1,5 +1,15 @@
 export const CONTROL_STREAM_METRICS_INTERVAL_MS = 30_000;
 
+export function elapsedIfDue(
+  nowMs: number,
+  windowStartedAtMs: number,
+  intervalMs: number
+): number | null {
+  const elapsedMs = nowMs - windowStartedAtMs;
+  if (elapsedMs < intervalMs) return null;
+  return elapsedMs;
+}
+
 export interface ControlStreamMetricsSnapshot {
   intervalMs: number;
   rawChunks: number;
@@ -85,8 +95,8 @@ export class ControlStreamMetrics {
   }
 
   takeIfDue(nowMs: number): ControlStreamMetricsSnapshot | null {
-    const elapsedMs = nowMs - this.windowStartedAtMs;
-    if (elapsedMs < this.intervalMs) {
+    const elapsedMs = elapsedIfDue(nowMs, this.windowStartedAtMs, this.intervalMs);
+    if (elapsedMs == null) {
       return null;
     }
     const snapshot = {

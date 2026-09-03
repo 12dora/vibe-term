@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ControlStreamMetrics } from './control-stream-metrics';
+import { ControlStreamMetrics, elapsedIfDue } from './control-stream-metrics';
 
 describe('ControlStreamMetrics', () => {
   test('separates raw control traffic from parsed terminal output and control events', () => {
@@ -50,5 +50,12 @@ describe('ControlStreamMetrics', () => {
       structureChanges: 0,
       blocks: 0,
     });
+  });
+});
+
+describe('elapsedIfDue', () => {
+  test('closes the window at intervalMs with a fake clock', () => {
+    expect(elapsedIfDue(30_999, 1_000, 30_000)).toBeNull();
+    expect(elapsedIfDue(31_000, 1_000, 30_000)).toBe(30_000);
   });
 });

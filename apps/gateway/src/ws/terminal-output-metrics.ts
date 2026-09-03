@@ -1,3 +1,4 @@
+import { elapsedIfDue } from '../tmux-client/control-stream-metrics';
 import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
   GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
@@ -11,6 +12,7 @@ import {
 } from './websocket-send-guard';
 
 export const TERMINAL_OUTPUT_METRICS_INTERVAL_MS = 30_000;
+export const TERMINAL_OUTPUT_METRICS_CHECK_EVERY = 1024;
 
 export interface TerminalSourceObservation {
   legacy: boolean;
@@ -155,12 +157,16 @@ export class TerminalOutputMetrics {
     this.counters.canonicalDeliveryDropBytes += bytes;
   }
 
+  isDue(nowMs: number): boolean {
+    return elapsedIfDue(nowMs, this.windowStartedAtMs, this.intervalMs) != null;
+  }
+
   takeIfDue(
     nowMs: number,
     queues = emptyTerminalOutputQueueStats()
   ): TerminalOutputMetricsSnapshot | null {
-    const elapsedMs = nowMs - this.windowStartedAtMs;
-    if (elapsedMs < this.intervalMs) {
+    const elapsedMs = elapsedIfDue(nowMs, this.windowStartedAtMs, this.intervalMs);
+    if (elapsedMs == null) {
       return null;
     }
     const snapshot = {

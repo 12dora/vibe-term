@@ -200,6 +200,7 @@ describe('classifyWsDialFailure', () => {
       'protocol'
     );
     expect(classifyWsDialFailure(url, new Error('aborted')).kind).toBe('aborted');
+    expect(classifyWsDialFailure(url, new Error('ws-closed 1006')).kind).toBe('reset');
   });
 });
 

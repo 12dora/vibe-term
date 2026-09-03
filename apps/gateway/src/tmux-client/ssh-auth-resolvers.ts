@@ -4,15 +4,10 @@ import type { Device } from '@tmex/shared';
 import type { AgentAuthMethod, ConnectConfig, PublicKeyAuthMethod } from 'ssh2';
 
 import type { decryptWithContext } from '../crypto';
+import { type RunSyncResult, defaultRunSync } from '../tmux/run-sync';
 import { resolveSshAgentSocket, resolveSshUsername } from '../tmux/ssh-auth';
 
 type SshAuthEnv = Partial<Record<'SSH_AUTH_SOCK' | 'USER' | 'LOGNAME', string | undefined>>;
-
-interface RunSyncResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
 
 interface ResolvedSshConfigRef {
   host: string;
@@ -43,20 +38,6 @@ export interface SshConnectTarget {
 }
 
 type DecryptFn = typeof decryptWithContext;
-
-function defaultRunSync(cmd: string[]): RunSyncResult {
-  const result = Bun.spawnSync(cmd, {
-    env: process.env,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-
-  return {
-    exitCode: result.exitCode,
-    stdout: Buffer.from(result.stdout).toString('utf8'),
-    stderr: Buffer.from(result.stderr).toString('utf8'),
-  };
-}
 
 function expandHomePath(value: string, env: NodeJS.ProcessEnv): string {
   const trimmed = value.trim();

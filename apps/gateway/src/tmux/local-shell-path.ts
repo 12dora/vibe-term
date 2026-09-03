@@ -1,15 +1,11 @@
 import { existsSync } from 'node:fs';
 import { delimiter, join, win32 } from 'node:path';
 
+import { type RunSyncResult, defaultRunSync } from './run-sync';
+
 const SHELL_ENV_BEGIN_MARKER = '__TMEX_SHELL_ENV_BEGIN__';
 const SHELL_ENV_END_MARKER = '__TMEX_SHELL_ENV_END__';
 const SHELL_ENV_PROBE_COMMAND = `printf '${SHELL_ENV_BEGIN_MARKER}\\n'; /usr/bin/env; printf '${SHELL_ENV_END_MARKER}\\n'`;
-
-interface RunSyncResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
 
 interface LocalShellPathCacheDeps {
   env: NodeJS.ProcessEnv;
@@ -65,20 +61,6 @@ export function getLocalParkingCommand(platform: NodeJS.Platform = process.platf
   // psmux 的 default-shell 可由用户配置；使用 pwsh、Windows PowerShell、cmd 与
   // Git Bash 都能直接执行的命令，避免 Gateway 对 shell 做出不同判断。
   return 'ping.exe -n 31 127.0.0.1';
-}
-
-function defaultRunSync(cmd: string[]): RunSyncResult {
-  const result = Bun.spawnSync(cmd, {
-    env: process.env,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-
-  return {
-    exitCode: result.exitCode,
-    stdout: Buffer.from(result.stdout).toString('utf8'),
-    stderr: Buffer.from(result.stderr).toString('utf8'),
-  };
 }
 
 function resolveShellFromDscl(deps: LocalShellPathCacheDeps): string | null {

@@ -63,4 +63,13 @@ describe('TerminalOutputMetrics', () => {
       queues: emptyTerminalOutputQueueStats(),
     });
   });
+
+  test('isDue follows a fake clock so the window closes at 30s without 1024 events', () => {
+    const metrics = new TerminalOutputMetrics(30_000, 1_000);
+    expect(metrics.isDue(30_999)).toBe(false);
+    expect(metrics.takeIfDue(30_999)).toBeNull();
+    expect(metrics.isDue(31_000)).toBe(true);
+    expect(metrics.takeIfDue(31_000)?.intervalMs).toBe(30_000);
+    expect(metrics.isDue(31_000)).toBe(false);
+  });
 });

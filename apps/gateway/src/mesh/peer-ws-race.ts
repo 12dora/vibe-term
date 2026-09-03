@@ -1,4 +1,5 @@
 import type { LinkSession, ServerSocketAdapter, WebSocketTransportInput } from '@tmex/shared/link';
+import { waitSocketOpen } from '@tmex/shared/net';
 import type { UserStore } from '../auth/user-store';
 import { envInt } from './mesh-log';
 import { type ReachabilityFailureKind, dedupeRankedPeerEndpoints } from './peer-endpoint-backoff';
@@ -135,7 +136,7 @@ export function classifyWsDialFailure(url: string, err: unknown): WsDialError {
     errno === 'EPIPE' ||
     lower.includes('econnreset') ||
     lower.includes('reset') ||
-    lower === 'ws-closed'
+    lower.startsWith('ws-closed')
   ) {
     return new WsDialError('reset', url, err);
   }
@@ -236,44 +237,6 @@ export function formatWsDialFailure(url: string, err: unknown): string {
   return `${msg} ${url}`;
 }
 
-function waitSocketOpen(
-  ws: WebSocketTransportInput,
-  timeoutMs: number,
-  signal?: AbortSignal
-): Promise<void> {
-  if (isServerSocketAdapter(ws)) return Promise.resolve();
-  const socket = ws as WebSocket;
-  if (socket.readyState === 1) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (err?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      if (err) reject(err);
-      else resolve();
-    };
-    const onAbort = () => {
-      quiet(() => socket.close(1000, 'stopped'));
-      finish(new Error('aborted'));
-    };
-    const timer = setTimeout(() => {
-      quiet(() => socket.close(1000, 'connect-timeout'));
-      finish(new Error('connect-timeout'));
-    }, timeoutMs);
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-    signal?.addEventListener('abort', onAbort, { once: true });
-    socket.addEventListener('open', () => finish(), { once: true });
-    socket.addEventListener('close', (ev) => finish(new Error(ev.reason || 'ws-closed')), {
-      once: true,
-    });
-  });
-}
-
 export async function connectWsTransport(opts: {
   factory: (url: string) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
   url: string;
@@ -303,7 +266,7 @@ export async function connectWsTransport(opts: {
     throw opts.signal.reason ?? new Error('aborted');
   }
   try {
-    await waitSocketOpen(ws, opts.connectTimeoutMs, opts.signal);
+    await waitSocketOpen(ws, opts.connectTimeoutMs, opts.signal, 'stopped');
   } catch (err) {
     closeWsTransport(ws);
     throw err;
