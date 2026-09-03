@@ -168,6 +168,7 @@ describe('KeepAlivePaneSlot', () => {
     // 祖先用 visibility/pointer-events 藏不住，只能靠 opacity + z-index
     expect(html).toContain('z-index:1');
     expect(html).not.toContain('aria-hidden');
+    expect(html).not.toContain('data-tmex-terminal-hidden');
   });
 
   test('the hidden slot keeps its layout box but is inert', () => {
@@ -186,5 +187,7 @@ describe('KeepAlivePaneSlot', () => {
     expect(html).toContain('pointer-events:none');
     expect(html).toContain('z-index:0');
     expect(html).not.toContain('data-visible');
+    // opacity:0 的子树里 CSS 动画照跑：光标闪烁靠这个标记在样式层整条停掉
+    expect(html).toContain('data-tmex-terminal-hidden="true"');
   });
 });

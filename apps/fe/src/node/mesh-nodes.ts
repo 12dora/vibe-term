@@ -27,6 +27,7 @@ import {
   type HubRequest,
   isHubAuthCode,
 } from './hub-load-coordinator';
+import { HUB_POLL_MS, browserVisibility, startHubPolling } from './hub-polling';
 import { type MeshEventSource, type NodeEventPayload, sharedMeshEvents } from './mesh-events';
 
 // ---------------------------------------------------------------------------
@@ -502,9 +503,6 @@ export const MESH_NODES_STALE_MS = 30_000;
 /** 事件触发的补拉节流窗口：一串事件（如整片 node 同时上线）最多换来一次 REST。 */
 export const MESH_NODES_REFRESH_THROTTLE_MS = 2_000;
 
-/** hub 管理面（`/n/<hub>/api/hub/nodes`）的轮询间隔：它没有事件流，保持 30 秒。 */
-const HUB_POLL_MS = 30_000;
-
 /** 轮询回路只需要事件源的这三件事，测试注入一个假的即可。 */
 export interface MeshEventSubscriber {
   readonly connected: boolean;
@@ -531,18 +529,6 @@ export interface MeshPollingOptions {
   authRequired?: (listener: (detail: AuthRequiredDetail) => void) => () => void;
   refresh?: (api: AuthApi) => void;
   now?: () => number;
-}
-
-/** 取不到 document（SSR / 单测）时一律按「可见」处理。 */
-function browserVisibility(): NonNullable<MeshPollingOptions['visibility']> {
-  return {
-    hidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',
-    subscribe: (listener) => {
-      if (typeof document === 'undefined') return () => undefined;
-      document.addEventListener('visibilitychange', listener);
-      return () => document.removeEventListener('visibilitychange', listener);
-    },
-  };
 }
 
 let polling: { refs: number; stop: () => void } | null = null;
@@ -841,8 +827,10 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
 
   useEffect(() => {
     if (!request || pollIntervalMs <= 0) return;
-    const timer = setInterval(() => void coordinator.load(request), pollIntervalMs);
-    return () => clearInterval(timer);
+    return startHubPolling({
+      intervalMs: pollIntervalMs,
+      load: () => void coordinator.load(request),
+    });
   }, [coordinator, request, pollIntervalMs]);
 
   const refresh = useCallback(() => void coordinator.load(request), [coordinator, request]);

@@ -41,6 +41,21 @@ export function collectWrappedLogicalLine(
   return { startLine, endLine, models };
 }
 
+// 逻辑行的缓存键：滚动时每秒要为整屏逻辑行各建一次（约 120 列 × 行数），逐字符 += 会
+// 沿途产生一长串中间字符串，改用整段 join 一次成串。
+export function cacheKey(models: SelectionLineModel[]): string {
+  const parts: string[] = [];
+  for (const model of models) {
+    const chars = model.colChars;
+    const cells = new Array<string>(chars.length);
+    for (let index = 0; index < chars.length; index += 1) {
+      cells[index] = chars[index] ?? '\u0000';
+    }
+    parts.push(cells.join(''), '\u0001');
+  }
+  return parts.join('');
+}
+
 // 逻辑行文本 → 检测结果（候选，不含有效性），LRU；正则只对新出现的文本执行。
 export class LinkMatchCache {
   private readonly entries = new Map<string, WrappedMatch[]>();
@@ -48,13 +63,7 @@ export class LinkMatchCache {
   constructor(private readonly limit: number) {}
 
   detect(models: SelectionLineModel[]): WrappedMatch[] {
-    let key = '';
-    for (const model of models) {
-      for (const ch of model.colChars) {
-        key += ch ?? '\u0000';
-      }
-      key += '\u0001';
-    }
+    const key = cacheKey(models);
 
     const cached = this.entries.get(key);
     if (cached) {

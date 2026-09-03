@@ -256,6 +256,9 @@ function useDeviceLivePaneIds(deviceId: string): ReadonlySet<string> | null {
  *
  * 因此改用 opacity（合成阶段生效，后代无法反选）+ z-index（可见槽恒在最上层，
  * 顺带拿下命中测试），两者都不依赖继承。
+ *
+ * 隐藏槽另打 data-tmex-terminal-hidden：opacity:0 的子树里 CSS 动画照跑，光标闪烁靠这个
+ * 标记在样式层整条停掉（见 ghostty-terminal/cursor-layer.ts）。
  */
 export function KeepAlivePaneSlot({
   paneId,
@@ -272,6 +275,7 @@ export function KeepAlivePaneSlot({
       data-testid="terminal-keep-alive-pane"
       data-pane-id={paneId}
       data-visible={visible || undefined}
+      data-tmex-terminal-hidden={visible ? undefined : true}
       aria-hidden={visible ? undefined : true}
       style={visible ? { zIndex: 1 } : { opacity: 0, pointerEvents: 'none', zIndex: 0 }}
     >

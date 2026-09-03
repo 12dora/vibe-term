@@ -22,9 +22,31 @@ type PendingCursor = {
 };
 
 const BLINK_INTERVAL_MS = 1000;
+const BLINK_CLASS = 'tmex-cursor-blink';
+const BLINK_STYLE_ID = 'tmex-cursor-blink-style';
+
+// 闪烁交给 CSS 动画而不是 setInterval：标签页隐藏时浏览器自动暂停整条动画（1 s 的 JS
+// 定时器正卡在后台节流下限上，是不会被节流掉的），保活池里不可见的槽（祖先带
+// data-tmex-terminal-hidden）也整条停掉。周期与原先「每 1 s 翻转一次」等价，即 2 s。
+const BLINK_STYLE_TEXT = `@keyframes ${BLINK_CLASS}{0%{opacity:1}50%{opacity:0}}
+canvas.${BLINK_CLASS}{animation:${BLINK_CLASS} ${BLINK_INTERVAL_MS * 2}ms step-end infinite}
+[data-tmex-terminal-hidden] canvas.${BLINK_CLASS}{animation:none}`;
+
+function ensureBlinkStyle(doc: Document | null | undefined): void {
+  if (!doc || typeof doc.getElementById !== 'function' || !doc.head) {
+    return;
+  }
+  if (doc.getElementById(BLINK_STYLE_ID)) {
+    return;
+  }
+  const style = doc.createElement('style');
+  style.id = BLINK_STYLE_ID;
+  style.textContent = BLINK_STYLE_TEXT;
+  doc.head.appendChild(style);
+}
 
 // 光标层：独立 canvas，只擦上一次画过的那一格（位图被 resize 清空时才整层擦），
-// 位置/形状/闪烁/颜色都未变时整帧跳过。闪烁不重画，只切整层 opacity。
+// 位置/形状/闪烁/颜色都未变时整帧跳过。闪烁不重画，交给整层的 CSS 动画。
 //
 // 落定（settled）语义：一次应用整屏重绘的字节常分多个 write 到达（websocket / tmux
 // %output 分片），渲染帧因此可能落在重绘中途，此刻的光标位置只是笔尖所在（刚写完的
@@ -35,8 +57,7 @@ export class CursorLayer {
   private lastRect: DeviceRect | null = null;
   private lastColor = '';
   private pending: PendingCursor | null = null;
-  private blinkVisible = true;
-  private blinkTimer: ReturnType<typeof setInterval> | null = null;
+  private blinking = false;
   private cellWidth = 9;
   private cellHeight = 17;
   private dpr = 1;
@@ -217,22 +238,20 @@ export class CursorLayer {
     return moved && previous ? previous.y : null;
   }
 
+  // 动画声明在层叠中压过 style 属性，inline opacity 恒为 1 只作为动画停掉后的落点。
   private startBlink(): void {
-    if (this.blinkTimer) {
+    if (this.blinking) {
       return;
     }
-    this.blinkTimer = setInterval(() => {
-      this.blinkVisible = !this.blinkVisible;
-      this.canvas.style.opacity = this.blinkVisible ? '1' : '0';
-    }, BLINK_INTERVAL_MS);
+    this.blinking = true;
+    ensureBlinkStyle(this.canvas.ownerDocument);
+    this.canvas.classList?.add(BLINK_CLASS);
+    this.canvas.style.opacity = '1';
   }
 
   private stopBlink(): void {
-    if (this.blinkTimer) {
-      clearInterval(this.blinkTimer);
-      this.blinkTimer = null;
-    }
-    this.blinkVisible = true;
+    this.blinking = false;
+    this.canvas.classList?.remove(BLINK_CLASS);
     this.canvas.style.opacity = '1';
   }
 }

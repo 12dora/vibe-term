@@ -53,7 +53,7 @@ export function PageWrapper({
   return (
     <>
       <header
-        className="sticky top-0 z-10 flex h-12 md:h-16 shrink-0 items-center justify-between gap-2 bg-background/95 backdrop-blur-sm"
+        className="sticky top-0 z-10 flex h-12 md:h-16 shrink-0 items-center justify-between gap-2 bg-background"
         data-testid="mobile-topbar"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2 px-4">

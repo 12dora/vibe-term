@@ -6,6 +6,7 @@ import type { AuthApi, AuthRequiredDetail, MeshNode } from '@tmex/api-client/aut
 import { wsBorsh } from '@tmex/shared';
 import { bytesToHex, encodeBase64url, sha256 } from '@tmex/shared/auth';
 import { HubApiError, type HubNodeRow } from './hub-api';
+import { HUB_STALE_MS, startHubPolling } from './hub-polling';
 import { type NodeEventPayload, decodeMeshFrame } from './mesh-events';
 import {
   MESH_NODES_POLL_MS,
@@ -966,5 +967,109 @@ describe('hubCandidateIds / loadHubNodes', () => {
       })
     ).rejects.toMatchObject({ code: 'last' });
     expect(logins).toBe(0);
+  });
+});
+
+function hubPollingHarness() {
+  const state = {
+    loads: 0,
+    intervalMs: 0,
+    tick: null as (() => void) | null,
+    onVisibilityChange: null as (() => void) | null,
+    hidden: false,
+    now: 5_000_000,
+  };
+  const options = {
+    intervalMs: 30_000,
+    load: () => {
+      state.loads += 1;
+    },
+    schedule: (fn: () => void, ms: number) => {
+      state.intervalMs = ms;
+      state.tick = fn;
+      return () => {
+        state.tick = null;
+      };
+    },
+    visibility: {
+      hidden: () => state.hidden,
+      subscribe: (listener: () => void) => {
+        state.onVisibilityChange = listener;
+        return () => {
+          state.onVisibilityChange = null;
+        };
+      },
+    },
+    now: () => state.now,
+  };
+  return { state, options };
+}
+
+describe('startHubPolling', () => {
+  test('可见时按间隔拉取', () => {
+    const { state, options } = hubPollingHarness();
+    const stop = startHubPolling(options);
+
+    expect(state.intervalMs).toBe(30_000);
+    state.now += 30_000;
+    state.tick?.();
+    expect(state.loads).toBe(1);
+    stop();
+    expect(state.tick).toBeNull();
+    expect(state.onVisibilityChange).toBeNull();
+  });
+
+  test('页面隐藏期间跳过这一拍', () => {
+    const { state, options } = hubPollingHarness();
+    const stop = startHubPolling(options);
+
+    state.hidden = true;
+    state.now += 30_000;
+    state.tick?.();
+    state.now += 30_000;
+    state.tick?.();
+
+    expect(state.loads).toBe(0);
+    stop();
+  });
+
+  test('回到前台且数据已过期时立刻补拉', () => {
+    const { state, options } = hubPollingHarness();
+    const stop = startHubPolling(options);
+
+    state.hidden = true;
+    state.onVisibilityChange?.();
+    state.now += HUB_STALE_MS;
+    state.hidden = false;
+    state.onVisibilityChange?.();
+
+    expect(state.loads).toBe(1);
+    stop();
+  });
+
+  test('刚拉过就切回前台不重复拉', () => {
+    const { state, options } = hubPollingHarness();
+    const stop = startHubPolling(options);
+
+    state.hidden = true;
+    state.onVisibilityChange?.();
+    state.now += 1_000;
+    state.hidden = false;
+    state.onVisibilityChange?.();
+
+    expect(state.loads).toBe(0);
+    stop();
+  });
+
+  test('切走（仍隐藏）的那次 visibilitychange 不拉', () => {
+    const { state, options } = hubPollingHarness();
+    const stop = startHubPolling(options);
+
+    state.now += HUB_STALE_MS * 2;
+    state.hidden = true;
+    state.onVisibilityChange?.();
+
+    expect(state.loads).toBe(0);
+    stop();
   });
 });

@@ -59,7 +59,7 @@ export function EditorInputPanel({
     <div
       data-virtual-keyboard-avoid
       onKeyDown={handleKeyDown}
-      className="editor-mode-input bg-card/85 backdrop-blur-sm"
+      className="editor-mode-input bg-card"
     >
       {/* 移动端 editor 模式：快捷键栏在编辑器上方 */}
       {isMobile && (
