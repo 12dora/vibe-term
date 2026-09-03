@@ -9,8 +9,8 @@ import {
 } from '@tmex/api-client';
 import type { WatchRuleDto, WatchRuleSampleDto, WatchRuleStateDto } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
+import { toast } from '@tmex/ui/toast';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
 
 export type WatchQueryStatus = 'loading' | 'error' | 'ready';
 

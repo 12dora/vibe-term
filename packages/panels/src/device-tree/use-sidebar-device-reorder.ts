@@ -6,9 +6,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { reorderDevices } from '@tmex/api-client';
 import type { Device } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
+import { toast } from '@tmex/ui/toast';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
 import { reorderDevicesOptimistically } from './device-reorder';
 import { mergeReorderedVisibleIds } from './device-tree-selectors';
 
