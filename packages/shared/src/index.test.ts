@@ -18,6 +18,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'EMPTY_PANE_MODE_FLAGS',
   'GATEWAY_CAPABILITIES',
   'GATEWAY_CAPABILITY_CANONICAL_STATE_V1',
+  'GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1',
   'I18N_MANIFEST',
   'I18N_RESOURCES',
   'INSTALL_COMMAND',
@@ -79,6 +80,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'rolesFromName',
   'toBCP47',
   'validateDeviceFolderName',
+  'validateRoles',
   'writeTextToClipboard',
   'wsBorsh',
 ];

@@ -1,3 +1,4 @@
+import type { WrapEntry } from '../relay/tenant-cipher';
 import type {
   AddPasskeyPayload,
   KdfParams,
@@ -11,13 +12,11 @@ import {
   bytesEqual,
   concatBytes,
   decodeAddPasskeyPayload,
-  decodeAdmitHubPayload,
   decodeAdmitNodePayload,
   decodeAuthorization,
   decodeCertificate,
   decodeKeyLogRecord,
   decodeRemovePasskeyPayload,
-  decodeRetireHubPayload,
   decodeRevokeNodePayload,
   decodeRotateRootKeepPayload,
   decodeRotateRootPayload,
@@ -25,6 +24,9 @@ import {
   nodeIdToHex,
   sha256,
 } from './encoding';
+import { applyAdmitHub, applyRetireHub, retireHubIfAdmitted } from './key-log-hub';
+import type { StoredRelayList } from './relay-records';
+import { MIN_RELAY_RECORD_VERSION, applyRelayKeyLogRecord, cloneRelayList } from './relay-records';
 import type { RootKey } from './root-key';
 import { verifyEd25519 } from './root-key';
 
@@ -61,6 +63,9 @@ export type UserKeyState = {
   totp: SetTotpPayload | null;
   nodeCerts: Map<string, StoredNodeCert>;
   hubAuthorizations: Map<string, StoredHubAuthorization>;
+  relays: StoredRelayList | null;
+  metaKeyEpoch: number;
+  metaKeyEntries: WrapEntry[];
   head: KeyLogHead;
 };
 
@@ -77,7 +82,11 @@ export type KeyLogRecordCompatSpec = {
   allowForce: boolean;
 };
 
+export const RELAY_RECORD_TYPES = ['set-relays', 'meta-key'] as const;
+
 export const KEYLOG_RECORD_COMPAT: Readonly<Partial<Record<KeyLogType, KeyLogRecordCompatSpec>>> = {
+  'set-relays': { minVersion: MIN_RELAY_RECORD_VERSION, allowForce: false },
+  'meta-key': { minVersion: MIN_RELAY_RECORD_VERSION, allowForce: false },
   'admit-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
   'retire-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
   'rotate-root-keep': { minVersion: MIN_ROTATE_ROOT_KEEP_RECORD_VERSION, allowForce: false },
@@ -101,6 +110,8 @@ export const KEY_LOG_SIGNER_MATRIX: Record<KeyLogType, readonly KeyLogSigner[]> 
   'admit-hub': ['root', 'passkey'],
   'retire-hub': ['root', 'passkey'],
   'rotate-root-keep': ['root'],
+  'set-relays': ['root', 'passkey'],
+  'meta-key': ['root', 'passkey'],
 };
 
 export type KeyLogSignedRecord = {
@@ -148,6 +159,7 @@ export type ApplyKeyLogError =
   | 'unknown_node'
   | 'malformed_payload'
   | 'node_id_reused'
+  | 'relay_epoch_regression'
   | 'totp_required';
 
 export type ApplyKeyLogCtx = {
@@ -187,6 +199,9 @@ export function emptyUserKeyState(
     totp: null,
     nodeCerts: new Map(),
     hubAuthorizations: new Map(),
+    relays: null,
+    metaKeyEpoch: 0,
+    metaKeyEntries: [],
     head: genesisHead(),
   };
 }
@@ -356,6 +371,9 @@ function cloneState(state: UserKeyState): UserKeyState {
     totp: state.totp,
     nodeCerts: new Map(state.nodeCerts),
     hubAuthorizations: new Map(state.hubAuthorizations),
+    relays: cloneRelayList(state.relays),
+    metaKeyEpoch: state.metaKeyEpoch,
+    metaKeyEntries: state.metaKeyEntries.map((entry) => ({ ...entry })),
     head: { seq: state.head.seq, hash: new Uint8Array(state.head.hash) },
   };
 }
@@ -432,54 +450,6 @@ function applyRotateRootKeep(state: UserKeyState, record: KeyLogRecord): ApplyKe
   return { ok: true, state, effects: [] };
 }
 
-function applyAdmitHub(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogResult {
-  let payload: ReturnType<typeof decodeAdmitHubPayload>;
-  try {
-    payload = decodeAdmitHubPayload(record.payload);
-  } catch {
-    return { ok: false, error: 'malformed_payload' };
-  }
-  const hex = nodeIdToHex(payload.hub_node_id);
-  const cert = state.nodeCerts.get(hex);
-  if (!cert || cert.revoked) {
-    return { ok: false, error: 'unknown_node' };
-  }
-  const existing = state.hubAuthorizations.get(hex);
-  state.hubAuthorizations.set(hex, {
-    status: 'active',
-    publicUrl: payload.public_url ?? existing?.publicUrl ?? null,
-    priority: payload.priority ?? existing?.priority ?? null,
-    seq: record.seq,
-  });
-  return { ok: true, state, effects: [] };
-}
-
-function applyRetireHub(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogResult {
-  let payload: ReturnType<typeof decodeRetireHubPayload>;
-  try {
-    payload = decodeRetireHubPayload(record.payload);
-  } catch {
-    return { ok: false, error: 'malformed_payload' };
-  }
-  const hex = nodeIdToHex(payload.hub_node_id);
-  const existing = state.hubAuthorizations.get(hex);
-  if (!existing) {
-    return { ok: false, error: 'unknown_node' };
-  }
-  state.hubAuthorizations.set(hex, {
-    ...existing,
-    status: 'retired',
-    seq: record.seq,
-  });
-  return { ok: true, state, effects: [] };
-}
-
-function retireHubIfAdmitted(state: UserKeyState, hex: string, seq: bigint): void {
-  const existing = state.hubAuthorizations.get(hex);
-  if (!existing) return;
-  state.hubAuthorizations.set(hex, { ...existing, status: 'retired', seq });
-}
-
 async function applyAdmitNode(
   state: UserKeyState,
   record: KeyLogRecord,
@@ -553,77 +523,76 @@ async function applyAdmitNode(
   return { ok: true, state, effects: [] };
 }
 
+function applyRevokeNode(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogResult {
+  const payload = decodeRevokeNodePayload(record.payload);
+  const hex = nodeIdToHex(payload.node_id);
+  const existing = state.nodeCerts.get(hex);
+  if (!existing) {
+    return { ok: false, error: 'unknown_node' };
+  }
+  state.nodeCerts.set(hex, { ...existing, revoked: true });
+  retireHubIfAdmitted(state, hex, record.seq);
+  return {
+    ok: true,
+    state,
+    effects: [{ type: 'revokeSessionsVia', nodeId: new Uint8Array(payload.node_id) }],
+  };
+}
+
+type KeyLogApplier = (
+  state: UserKeyState,
+  record: KeyLogRecord,
+  ctx?: ApplyKeyLogCtx
+) => ApplyKeyLogResult | Promise<ApplyKeyLogResult>;
+
+const KEY_LOG_APPLIERS: Record<KeyLogType, KeyLogApplier> = {
+  'rotate-root': (state, record) => applyRootChange(state, record, false),
+  'reset-root': (state, record) => applyRootChange(state, record, true),
+  'rotate-root-keep': applyRotateRootKeep,
+  'add-passkey': (state, record) => {
+    const payload = decodeAddPasskeyPayload(record.payload);
+    state.passkeys.set(payload.credential_id, payload);
+    return { ok: true, state, effects: [] };
+  },
+  'remove-passkey': (state, record) => {
+    const payload = decodeRemovePasskeyPayload(record.payload);
+    state.passkeys.delete(payload.credential_id);
+    return {
+      ok: true,
+      state,
+      effects: [{ type: 'revokeSessionsByCredential', credentialId: payload.credential_id }],
+    };
+  },
+  'set-totp': (state, record) => {
+    state.totp = decodeSetTotpPayload(record.payload);
+    return { ok: true, state, effects: [] };
+  },
+  'clear-totp': (state) => {
+    state.totp = null;
+    return { ok: true, state, effects: [] };
+  },
+  'admit-node': applyAdmitNode,
+  'revoke-node': applyRevokeNode,
+  'admit-hub': applyAdmitHub,
+  'retire-hub': applyRetireHub,
+  'set-relays': applyRelayKeyLogRecord,
+  'meta-key': applyRelayKeyLogRecord,
+};
+
 export async function applyKeyLogRecord(
   state: UserKeyState,
   record: KeyLogRecord,
   hash: Uint8Array,
   ctx?: ApplyKeyLogCtx
 ): Promise<ApplyKeyLogResult> {
+  const applier = KEY_LOG_APPLIERS[record.type];
+  if (!applier) {
+    return { ok: false, error: 'malformed_payload' };
+  }
   const next = cloneState(state);
   let result: ApplyKeyLogResult;
   try {
-    switch (record.type) {
-      case 'rotate-root':
-        result = applyRootChange(next, record, false);
-        break;
-      case 'reset-root':
-        result = applyRootChange(next, record, true);
-        break;
-      case 'rotate-root-keep':
-        result = applyRotateRootKeep(next, record);
-        break;
-      case 'add-passkey': {
-        const payload = decodeAddPasskeyPayload(record.payload);
-        next.passkeys.set(payload.credential_id, payload);
-        result = { ok: true, state: next, effects: [] };
-        break;
-      }
-      case 'remove-passkey': {
-        const payload = decodeRemovePasskeyPayload(record.payload);
-        next.passkeys.delete(payload.credential_id);
-        result = {
-          ok: true,
-          state: next,
-          effects: [{ type: 'revokeSessionsByCredential', credentialId: payload.credential_id }],
-        };
-        break;
-      }
-      case 'set-totp':
-        next.totp = decodeSetTotpPayload(record.payload);
-        result = { ok: true, state: next, effects: [] };
-        break;
-      case 'clear-totp':
-        next.totp = null;
-        result = { ok: true, state: next, effects: [] };
-        break;
-      case 'admit-node':
-        result = await applyAdmitNode(next, record, ctx);
-        break;
-      case 'revoke-node': {
-        const payload = decodeRevokeNodePayload(record.payload);
-        const hex = nodeIdToHex(payload.node_id);
-        const existing = next.nodeCerts.get(hex);
-        if (!existing) {
-          return { ok: false, error: 'unknown_node' };
-        }
-        next.nodeCerts.set(hex, { ...existing, revoked: true });
-        retireHubIfAdmitted(next, hex, record.seq);
-        result = {
-          ok: true,
-          state: next,
-          effects: [{ type: 'revokeSessionsVia', nodeId: new Uint8Array(payload.node_id) }],
-        };
-        break;
-      }
-      case 'admit-hub':
-        result = applyAdmitHub(next, record);
-        break;
-      case 'retire-hub':
-        result = applyRetireHub(next, record);
-        break;
-      default:
-        return { ok: false, error: 'malformed_payload' };
-    }
+    result = await applier(next, record, ctx);
   } catch {
     return { ok: false, error: 'malformed_payload' };
   }

@@ -147,6 +147,7 @@ export {
   API_VERSION,
   GATEWAY_CAPABILITIES,
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1,
+  GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1,
 } from './capabilities';
 
 export * from './network';
@@ -161,5 +162,6 @@ export {
   isTmexRoleName,
   roleNameFromFlags,
   rolesFromName,
+  validateRoles,
 } from './roles';
 export * from './release/source';

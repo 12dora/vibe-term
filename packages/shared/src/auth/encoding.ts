@@ -38,6 +38,8 @@ export const KeyLogType = {
   'admit-hub': 'admit-hub',
   'retire-hub': 'retire-hub',
   'rotate-root-keep': 'rotate-root-keep',
+  'set-relays': 'set-relays',
+  'meta-key': 'meta-key',
 } as const;
 export type KeyLogType = (typeof KeyLogType)[keyof typeof KeyLogType];
 
