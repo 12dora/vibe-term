@@ -84,7 +84,7 @@
     },
     "packages/app": {
       "name": "tmex-cli",
-      "version": "1.1.21",
+      "version": "1.1.22",
       "bin": {
         "tmex": "./bin/tmex.js",
         "tmex-cli": "./bin/tmex.js",
@@ -244,7 +244,6 @@
         "clsx": "^2.1.1",
         "lucide-react": "^0.564.0",
         "sonner": "^2.0.7",
-        "tailwind-merge": "^3.4.0",
       },
       "devDependencies": {
         "@types/react": "^19.0.8",
@@ -1265,8 +1264,6 @@
     "stylis": ["stylis@4.4.0", "", {}, "sha512-5Z9ZpRzfuH6l/UAvCPAPUo3665Nk2wLaZU3x+TLHKVzIz33+sbJqbtrYoC3KD4/uVOr2Zp+L0LySezP9OHV9yA=="],
 
     "tabbable": ["tabbable@6.4.0", "", {}, "sha512-05PUHKSNE8ou2dwIxTngl4EzcnsCDZGJ/iCLtDflR/SHB/ny14rXc+qU5P4mG9JkusiV7EivzY9Mhm55AzAvCg=="],
-
-    "tailwind-merge": ["tailwind-merge@3.4.0", "", {}, "sha512-uSaO4gnW+b3Y2aWoWfFpX62vn2sR3skfhbjsEnaBI81WD1wBLlHZe5sWf0AqjksNdYTbGBEd0UasQMT3SNV15g=="],
 
     "tailwindcss": ["tailwindcss@4.1.18", "", {}, "sha512-4+Z+0yiYyEtUVCScyfHCxOYP06L5Ne+JiHhY2IjR2KWMIWhJOYZKLSGZaP5HkZ8+bY0cxfzwDE5uOmzFXyIwxw=="],
 
