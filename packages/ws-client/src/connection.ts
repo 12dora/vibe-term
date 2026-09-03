@@ -10,7 +10,6 @@ import {
 } from './client';
 import type { DirectDiagnosticsSource } from './direct/types';
 import { PaneSinkRegistry } from './pane-sink-registry';
-import { type SelectCallbacks, SelectStateMachine } from './state-machine';
 import { type GatewayTransport, WebSocketGatewayTransport } from './transport';
 
 export interface GatewayConnectionOptions {
@@ -29,7 +28,6 @@ export interface GatewayConnectionOptions {
   /** 本连接可接收的单个 WS frame 上限；顶层值优先于 clientOptions。 */
   maxFrameBytes?: number;
   clientOptions?: Partial<Omit<BorshClientOptions, 'url' | 'socketFactory'>>;
-  selectCallbacks?: SelectCallbacks;
   /**
    * 宿主持有的共享数据通道。传入后 tmux store 只消费该 typed transport；构造连接不会
    * 为 metadata/runtime 创建额外 WebSocket。
@@ -117,7 +115,6 @@ export interface GatewayConnection {
   client: BorshWebSocketClient;
   transport: GatewayTransport;
   paneSinks: PaneSinkRegistry;
-  selectMachine: SelectStateMachine;
   /** 挂载直连载体（`DirectCarrierController` 在 `sess` 首帧鉴权通过后调用）。 */
   attachDirectCarrier(carrier: DirectCarrierLike, options?: AttachDirectOptions): void;
   /** 摘掉直连，回落 primary。 */
@@ -156,7 +153,6 @@ export function createGatewayConnection(options: GatewayConnectionOptions = {}):
     socketFactory,
   });
   const paneSinks = new PaneSinkRegistry();
-  const selectMachine = new SelectStateMachine(options.selectCallbacks);
   const transport = options.transport ?? new WebSocketGatewayTransport(client);
   const ownsTransport = options.transport === undefined;
   let directRetry: (() => void) | null = null;
@@ -165,7 +161,6 @@ export function createGatewayConnection(options: GatewayConnectionOptions = {}):
     client,
     transport,
     paneSinks,
-    selectMachine,
     directDiagnostics: null,
     attachDirectCarrier(carrier, options) {
       client.attachDirectCarrier(carrier, options);
@@ -189,7 +184,6 @@ export function createGatewayConnection(options: GatewayConnectionOptions = {}):
       directRetry?.();
     },
     dispose() {
-      selectMachine.cleanupAll();
       paneSinks.reset();
       if (ownsTransport) {
         transport.disconnect();

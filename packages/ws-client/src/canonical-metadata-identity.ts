@@ -31,14 +31,13 @@ export interface MetadataLiveCaches {
   epochRecoveryDevices: Set<string>;
   terminalCursors: Map<string, wsBorsh.CanonicalTerminalCursor>;
   blockedPanes: Set<string>;
-  applyOverlay(snapshot: StateSnapshotPayload): StateSnapshotPayload;
   clearPaneStateForDevice(deviceId: string): void;
   cancelPane(deviceId: string, paneId: string): void;
   dropPendingPane(deviceId: string, paneId: string): void;
   resolvedRecovery(deviceId: string): void;
   resolvedSubscriptionRetry(): void;
   emitSnapshot(snapshot: StateSnapshotPayload): void;
-  emitPatch(deviceId: string, patch: wsBorsh.LegacyStateSnapshotDiff): void;
+  emitPatch(deviceId: string, snapshot: StateSnapshotPayload): void;
   emitMetadataGap(deviceId?: string): void;
 }
 
@@ -76,24 +75,26 @@ export function assembleDeviceMetadata(
   deviceId: string,
   metadataEpoch: Uint8Array,
   revision: bigint,
-  deviceRecords: readonly wsBorsh.SourceMetadataRecord[],
-  applyOverlay: (snapshot: StateSnapshotPayload) => StateSnapshotPayload
+  deviceRecords: readonly wsBorsh.SourceMetadataRecord[]
 ): DeviceMetadataState | null {
   const serverEpoch = deviceRecords[0]?.key.serverEpoch;
   if (!serverEpoch) return null;
-  const diff = wsBorsh.sourceMetadataPatchToLegacyDiff({
+  const projection = wsBorsh.sourceMetadataPatchToLegacyDiff({
     metadataEpoch,
     fromRevision: 0n,
     throughRevision: revision,
     upserts: [...deviceRecords],
     removals: [],
   });
+  const treeOrder = wsBorsh.createCanonicalTreeOrder(deviceRecords);
+  const projected = wsBorsh.applyLegacyStateSnapshotDiff({ deviceId, session: null }, projection);
   return {
     metadataEpoch: copyBytes(metadataEpoch),
     revision,
     serverEpoch: copyBytes(serverEpoch),
     paneEpochs: paneEpochsFromRecords(deviceRecords),
-    snapshot: applyOverlay(wsBorsh.applyLegacyStateSnapshotDiff({ deviceId, session: null }, diff)),
+    treeOrder,
+    snapshot: wsBorsh.sortSnapshotByCanonicalTreeOrder(projected, treeOrder),
   };
 }
 
@@ -155,13 +156,7 @@ export function ingestMetadataSnapshot(
 ): boolean {
   let recoveredMetadata = false;
   for (const [deviceId, deviceRecords] of groupRecordsByDevice(records)) {
-    const assembled = assembleDeviceMetadata(
-      deviceId,
-      metadataEpoch,
-      revision,
-      deviceRecords,
-      (snapshot) => caches.applyOverlay(snapshot)
-    );
+    const assembled = assembleDeviceMetadata(deviceId, metadataEpoch, revision, deviceRecords);
     if (!assembled) continue;
     const previous = caches.metadata.get(deviceId);
     if (previous && !bytesEqual(previous.serverEpoch, assembled.serverEpoch)) {
@@ -190,15 +185,18 @@ export function ingestMetadataPatch(
       continue;
     }
     const { upserts, removals } = patchRecordsForDevice(event, deviceId);
-    const diff = wsBorsh.sourceMetadataPatchToLegacyDiff({ ...event, upserts, removals });
+    const projection = wsBorsh.sourceMetadataPatchToLegacyDiff({ ...event, upserts, removals });
     for (const action of applyMetadataIdentity(state, upserts, removals)) {
       realizeIdentityAction(caches, action);
     }
+    wsBorsh.applyCanonicalTreeOrderPatch(state.treeOrder, upserts, removals);
     state.revision = event.throughRevision;
-    state.snapshot = caches.applyOverlay(
-      wsBorsh.applyLegacyStateSnapshotDiff(state.snapshot, diff)
+    // 顺序在客户端算完再下发整棵快照：消费方若自己再 apply 一次 diff，会掉回 tmux index 顺序
+    state.snapshot = wsBorsh.sortSnapshotByCanonicalTreeOrder(
+      wsBorsh.applyLegacyStateSnapshotDiff(state.snapshot, projection),
+      state.treeOrder
     );
-    caches.emitPatch(deviceId, diff);
+    caches.emitPatch(deviceId, state.snapshot);
   }
   return 'applied';
 }

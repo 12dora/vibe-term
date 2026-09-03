@@ -70,70 +70,9 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
     },
   ],
   [
-    wsBorsh.KIND_STATE_SNAPSHOT,
-    (payload, emit) => {
-      emit({ type: 'metadata-snapshot', snapshot: wsBorsh.decodeStateSnapshot(payload) });
-    },
-  ],
-  [
-    wsBorsh.KIND_STATE_SNAPSHOT_DIFF,
-    (payload, emit) => {
-      const decoded = wsBorsh.decodePayload(wsBorsh.schema.StateSnapshotDiffSchema, payload);
-      if (decoded.diffFormat !== wsBorsh.STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON) return;
-      emit({
-        type: 'metadata-patch',
-        deviceId: decoded.deviceId,
-        patch: wsBorsh.decodeLegacyStateSnapshotDiff(decoded.diffBytes),
-      });
-    },
-  ],
-  [
     wsBorsh.KIND_TMUX_EVENT,
     (payload, emit) => {
       emit({ type: 'tmux-event', event: wsBorsh.decodeTmuxEventPayload(payload) });
-    },
-  ],
-  [
-    wsBorsh.KIND_SWITCH_ACK,
-    (payload, emit) => {
-      const decoded = wsBorsh.decodePayload(wsBorsh.schema.SwitchAckSchema, payload);
-      emit({
-        type: 'selection-ack',
-        deviceId: decoded.deviceId,
-        selectToken: decoded.selectToken,
-      });
-    },
-  ],
-  [
-    wsBorsh.KIND_TERM_HISTORY,
-    (payload, emit) => {
-      const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermHistorySchema, payload);
-      emit({
-        type: 'legacy-history',
-        deviceId: decoded.deviceId,
-        paneId: decoded.paneId,
-        selectToken: decoded.selectToken,
-        data: new TextDecoder().decode(decoded.data),
-        alternateScreen: decoded.alternateScreen,
-        modes: decoded.modes,
-      });
-    },
-  ],
-  [
-    wsBorsh.KIND_LIVE_RESUME,
-    (payload, emit) => {
-      const decoded = wsBorsh.decodePayload(wsBorsh.schema.LiveResumeSchema, payload);
-      emit({ type: 'live-resume', deviceId: decoded.deviceId, selectToken: decoded.selectToken });
-    },
-  ],
-  [
-    wsBorsh.KIND_TERM_OUTPUT,
-    (payload, emit) => {
-      const decoded = wsBorsh.decodeTermOutputView(payload);
-      emit({
-        type: 'terminal-data',
-        frame: { deviceId: decoded.deviceId, paneId: decoded.paneId, data: decoded.data },
-      });
     },
   ],
   [

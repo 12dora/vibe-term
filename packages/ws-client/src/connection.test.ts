@@ -7,8 +7,6 @@ import { createSharedGatewayTransport } from './transport';
 
 function collectingSink(outputs: Uint8Array[]): PaneSink {
   return {
-    onReset() {},
-    onApplyHistory() {},
     onOutput(data) {
       outputs.push(data);
     },
@@ -26,12 +24,20 @@ describe('createGatewayConnection', () => {
     const receivedA: Uint8Array[] = [];
     a.paneSinks.registerPaneSink('dev', 'pane', collectingSink(receivedA));
 
-    b.paneSinks.dispatchPaneOutput('dev', 'pane', new Uint8Array([1]));
+    b.paneSinks.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: 'pane',
+      data: new Uint8Array([1]),
+    });
     // 输出在合并窗口到点后下发
     await flushOutputs();
     expect(receivedA.length).toBe(0);
 
-    a.paneSinks.dispatchPaneOutput('dev', 'pane', new Uint8Array([2]));
+    a.paneSinks.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: 'pane',
+      data: new Uint8Array([2]),
+    });
     await flushOutputs();
     expect(receivedA.length).toBe(1);
 
@@ -44,14 +50,6 @@ describe('createGatewayConnection', () => {
     expect(conn.client.getUrl()).toBe('ws://example.test/ws');
     conn.dispose();
     expect(conn.client.getState()).toBe('CLOSED');
-  });
-
-  test('独立 selectMachine，互不共享事务状态', () => {
-    const a = createGatewayConnection();
-    const b = createGatewayConnection();
-    expect(a.selectMachine).not.toBe(b.selectMachine);
-    a.dispose();
-    b.dispose();
   });
 
   test('dispose does not close a host-owned shared transport', () => {

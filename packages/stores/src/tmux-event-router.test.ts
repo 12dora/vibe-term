@@ -56,8 +56,6 @@ const snapshot: StateSnapshotPayload = {
 };
 
 interface HarnessOptions {
-  atomicScreen?: boolean;
-  historyRouted?: boolean;
   mountedPanes?: Array<[string, string]>;
   clipboardResult?: Promise<void>;
   /** 按尝试次数返回结果：用于「先失败、手势里重试成功」的延迟写入路径 */
@@ -92,39 +90,23 @@ function createHarness(options: HarnessOptions = {}) {
   };
   const namesOf = (name: string) => calls.filter((call) => call.name === name);
 
-  const selectMachine = {
-    dispatch: (action: unknown) => record('dispatch', action),
-    cleanup: (deviceId: string) => record('cleanup', deviceId),
-    reportTerminalProgress: (deviceId?: string) => record('reportTerminalProgress', deviceId),
-    getTransaction: () => null,
-  };
-
   const paneSinks = {
-    dispatchPaneReset: (...args: unknown[]) => record('dispatchPaneReset', ...args),
-    dispatchPaneApplyHistory: (...args: unknown[]) => record('dispatchPaneApplyHistory', ...args),
-    dispatchPaneOutput: (...args: unknown[]) => record('dispatchPaneOutput', ...args),
     dispatchPaneTerminalData: (...args: unknown[]) => record('dispatchPaneTerminalData', ...args),
     dispatchPaneScreenSnapshot: (...args: unknown[]) =>
       record('dispatchPaneScreenSnapshot', ...args),
     dispatchPaneHistoryPage: (...args: unknown[]) => record('dispatchPaneHistoryPage', ...args),
     dispatchPaneRebase: (...args: unknown[]) => record('dispatchPaneRebase', ...args),
-    dispatchPaneHistory: (...args: unknown[]) => {
-      record('dispatchPaneHistory', ...args);
-      return options.historyRouted ?? false;
-    },
-    beginPaneHistoryGate: (...args: unknown[]) => record('beginPaneHistoryGate', ...args),
     cleanupDevicePaneState: (...args: unknown[]) => record('cleanupDevicePaneState', ...args),
   };
 
   const core = {
     transport: {
-      capabilities: { atomicScreen: options.atomicScreen ?? true },
+      capabilities: { atomicScreen: true },
       send: (command: unknown) => {
         record('send', command);
         return true;
       },
     },
-    selectMachine: () => selectMachine,
     paneSinks,
     notifications: {
       info: (title: string) => record('notify:info', title),
@@ -148,10 +130,6 @@ function createHarness(options: HarnessOptions = {}) {
   } as unknown as RuntimeCore;
 
   const selection = {
-    maybeReselectCurrentPane: (deviceId: string) => record('reselect', deviceId),
-    handleDeviceStreamInterrupted: (deviceId: string) => record('streamInterrupted', deviceId),
-    observeSelectHistory: (deviceId: string) => record('observeHistory', deviceId),
-    observeSelectLiveResume: (deviceId: string) => record('observeLiveResume', deviceId),
     handleSnapshotPaneRemoval: (deviceId: string, previous: StateSnapshotPayload | undefined) =>
       record('snapshotPaneRemoval', deviceId, previous),
   } as unknown as TmuxSelectionActions;
@@ -256,31 +234,20 @@ describe('tmux transport event router', () => {
   });
 
   test('device-connected resets error state and syncs window style', () => {
-    const harness = createHarness({ atomicScreen: true });
+    const harness = createHarness();
 
     harness.route({ type: 'device-connected', deviceId: 'device-a' });
 
     expect(harness.getState().deviceConnected['device-a']).toBe(true);
     expect(harness.getState().deviceErrors['device-a']).toBeUndefined();
     expect(harness.namesOf('windowStyle').map((call) => call.args[0])).toEqual(['device-a']);
-    expect(harness.namesOf('reselect')).toHaveLength(0);
   });
 
-  test('device-connected reselects current pane when transport lacks atomic screen', () => {
-    const harness = createHarness({ atomicScreen: false });
-
-    harness.route({ type: 'device-connected', deviceId: 'device-a' });
-
-    expect(harness.namesOf('reselect').map((call) => call.args[0])).toEqual(['device-a']);
-  });
-
-  test('device-disconnected cleans select machine and pane state', () => {
+  test('device-disconnected 丢掉该设备的 pane 缓冲', () => {
     const harness = createHarness();
 
     harness.route({ type: 'device-disconnected', deviceId: 'device-a' });
 
-    // 选择机的 cleanup 现在归 handleDeviceStreamInterrupted 一处做（断开与重连中共用）
-    expect(harness.namesOf('streamInterrupted').map((call) => call.args[0])).toEqual(['device-a']);
     expect(harness.namesOf('cleanupDevicePaneState').map((call) => call.args[0])).toEqual([
       'device-a',
     ]);
@@ -363,7 +330,9 @@ describe('tmux transport event router', () => {
       },
     } as unknown as GatewayTransportEvent);
 
-    expect(harness.namesOf('streamInterrupted').map((call) => call.args[0])).toEqual(['device-a']);
+    expect(harness.namesOf('cleanupDevicePaneState').map((call) => call.args[0])).toEqual([
+      'device-a',
+    ]);
   });
 
   test('a device-event disconnect is treated as a device stream interruption', () => {
@@ -374,7 +343,9 @@ describe('tmux transport event router', () => {
       event: { type: 'disconnected', deviceId: 'device-a' },
     } as unknown as GatewayTransportEvent);
 
-    expect(harness.namesOf('streamInterrupted').map((call) => call.args[0])).toEqual(['device-a']);
+    expect(harness.namesOf('cleanupDevicePaneState').map((call) => call.args[0])).toEqual([
+      'device-a',
+    ]);
   });
 
   test('device error event records error state and toasts once per error type', () => {
@@ -398,27 +369,25 @@ describe('tmux transport event router', () => {
     ]);
   });
 
-  test('metadata snapshot then patch applies incrementally', () => {
+  test('metadata patch 直接替换成 ws-client 下发的整棵快照', () => {
     const harness = createHarness();
-
-    harness.route({ type: 'metadata-snapshot', snapshot });
-    harness.route({
-      type: 'metadata-patch',
-      deviceId: 'device-a',
-      patch: {
-        removals: [],
-        upserts: [
-          {
-            entityKind: wsBorsh.SOURCE_ENTITY_PANE,
-            nativeId: '%1',
-            parentKind: wsBorsh.SOURCE_ENTITY_WINDOW,
-            parentId: '@1',
-            fields: [[wsBorsh.SOURCE_FIELD_TITLE, 'after']],
-          },
-        ],
-      },
+    const patched = wsBorsh.applyLegacyStateSnapshotDiff(snapshot, {
+      removals: [],
+      upserts: [
+        {
+          entityKind: wsBorsh.SOURCE_ENTITY_PANE,
+          nativeId: '%1',
+          parentKind: wsBorsh.SOURCE_ENTITY_WINDOW,
+          parentId: '@1',
+          fields: [[wsBorsh.SOURCE_FIELD_TITLE, 'after']],
+        },
+      ],
     });
 
+    harness.route({ type: 'metadata-snapshot', snapshot });
+    harness.route({ type: 'metadata-patch', deviceId: 'device-a', snapshot: patched });
+
+    expect(harness.getState().snapshots['device-a']).toBe(patched);
     expect(harness.getState().snapshots['device-a']?.session?.windows[0]?.panes[0]?.title).toBe(
       'after'
     );
@@ -438,16 +407,13 @@ describe('tmux transport event router', () => {
 
   test('metadata patch reconciles the selection against the pre-patch snapshot', () => {
     const harness = createHarness();
+    const patched = wsBorsh.applyLegacyStateSnapshotDiff(snapshot, {
+      removals: [{ entityKind: wsBorsh.SOURCE_ENTITY_PANE, nativeId: '%1' }],
+      upserts: [],
+    });
 
     harness.route({ type: 'metadata-snapshot', snapshot });
-    harness.route({
-      type: 'metadata-patch',
-      deviceId: 'device-a',
-      patch: {
-        removals: [{ entityKind: wsBorsh.SOURCE_ENTITY_PANE, nativeId: '%1' }],
-        upserts: [],
-      },
-    });
+    harness.route({ type: 'metadata-patch', deviceId: 'device-a', snapshot: patched });
 
     expect(harness.getState().snapshots['device-a']?.session?.windows[0]?.panes).toEqual([]);
     expect(harness.namesOf('snapshotPaneRemoval')[1]?.args).toEqual(['device-a', snapshot]);
@@ -456,16 +422,12 @@ describe('tmux transport event router', () => {
   test('metadata patch for unknown device is ignored', () => {
     const harness = createHarness();
 
-    harness.route({
-      type: 'metadata-patch',
-      deviceId: 'device-missing',
-      patch: { removals: [], upserts: [] },
-    });
+    harness.route({ type: 'metadata-patch', deviceId: 'device-missing', snapshot });
 
     expect(harness.getState().snapshots['device-missing']).toBeUndefined();
   });
 
-  test('terminal-data routes legacy frames to the select machine and sequenced frames to sinks', () => {
+  test('terminal-data 一律路由到 pane sink', () => {
     const harness = createHarness();
 
     harness.route({
@@ -477,32 +439,15 @@ describe('tmux transport event router', () => {
       frame: { deviceId: 'device-a', paneId: '%1', data: new Uint8Array([2]), seqStart: 7n },
     });
 
-    expect(
-      harness.namesOf('dispatch').map((call) => (call.args[0] as { type: string }).type)
-    ).toEqual(['OUTPUT']);
-    expect(harness.namesOf('dispatchPaneTerminalData')).toHaveLength(1);
+    expect(harness.namesOf('dispatchPaneTerminalData')).toHaveLength(2);
   });
 
-  test('legacy-history falls back to the select machine only when unrouted', () => {
-    const unrouted = createHarness({ historyRouted: false });
-    const routed = createHarness({ historyRouted: true });
+  test('server-too-old 只记日志，不改状态', () => {
+    const harness = createHarness();
 
-    const event: GatewayTransportEvent = {
-      type: 'legacy-history',
-      deviceId: 'device-a',
-      paneId: '%1',
-      selectToken: new Uint8Array(16),
-      data: 'hello',
-      alternateScreen: false,
-      modes: 0,
-    };
-    unrouted.route(event);
-    routed.route(event);
-
-    expect(
-      unrouted.namesOf('dispatch').map((call) => (call.args[0] as { type: string }).type)
-    ).toEqual(['HISTORY']);
-    expect(routed.namesOf('dispatch')).toHaveLength(0);
+    expect(() =>
+      harness.route({ type: 'server-too-old', minVersion: '1.1.22', serverVersion: '1.1.21' })
+    ).not.toThrow();
   });
 
   test('rebase-required ignores metadata gaps and broadcasts to mounted panes', () => {
@@ -724,13 +669,8 @@ describe('tmux transport event router', () => {
     });
   });
 
-  test('terminal-progress and unknown event types are handled without throwing', () => {
+  test('unknown event types are handled without throwing', () => {
     const harness = createHarness();
-
-    harness.route({ type: 'terminal-progress', deviceId: 'device-a' });
-    expect(harness.namesOf('reportTerminalProgress').map((call) => call.args[0])).toEqual([
-      'device-a',
-    ]);
 
     expect(() =>
       harness.route({ type: 'not-a-real-event' } as unknown as GatewayTransportEvent)

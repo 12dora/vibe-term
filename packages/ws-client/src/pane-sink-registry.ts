@@ -1,16 +1,10 @@
-// per-pane 输出/历史分发注册表（分屏多 Terminal 实例的路由核心）
+// per-pane 输出/截屏/历史分发注册表（分屏多 Terminal 实例的路由核心）
 //
 // 每个 Terminal 实例挂载时以 (deviceId, paneId) 注册一个 sink，卸载时注销。
-// 选择状态机与 store 的消息处理统一通过本模块把字节流路由到对应实例：
-// - sink 未注册时缓冲有限量输出（Terminal 挂载瞬间的竞态），注册时重放；
-// - fetch-history gate：非焦点 pane 主动拉取首屏时，先缓冲 live 输出，
-//   history 应用后再 flush，保证内容顺序（带超时兜底放行）。
+// canonical feed 的 PaneData / 截屏 / 历史分页统一经本模块路由到对应实例：
+// sink 未注册时缓冲有限量输出（Terminal 挂载瞬间的竞态），注册时按「先画面基线后字节」重放。
 
 import { CanonicalLiveReplay } from './canonical-live-replay';
-// reset 来源：select = 切换/选择流程（随后会有 post-select 尺寸上报）；
-// history-refresh = 远端 resize 等触发的内容重建，不得携带本地尺寸上报，
-// 否则两个不同视口的客户端会互相抢 window 尺寸形成拉锯
-import { type PaneHistoryGateOptions, PaneHistoryGates } from './pane-history-gate';
 import { PaneOutputCoalescer, type PaneOutputCoalescerOptions } from './pane-output-coalescer';
 import type {
   GatewayPaneHistoryPage,
@@ -19,11 +13,7 @@ import type {
   GatewayTerminalData,
 } from './transport';
 
-export type PaneResetOrigin = 'select' | 'history-refresh';
-
 export interface PaneSink {
-  onReset(origin: PaneResetOrigin): void;
-  onApplyHistory(data: string, alternateScreen: boolean, modes: number): void;
   onOutput(data: Uint8Array, frame?: GatewayTerminalData): void;
   onScreenSnapshot?(snapshot: GatewayPaneScreenSnapshot): void;
   onHistoryPage?(page: GatewayPaneHistoryPage): unknown;
@@ -33,17 +23,12 @@ export interface PaneSink {
 interface PendingPaneState {
   outputs: GatewayTerminalData[];
   outputBytes: number;
-  // 缓存的 reset 连同来源一起保留：sink 未挂载时替换为最后一次 reset 的 origin（last-wins），
-  // 注册时按原样重放；丢掉 origin 会把 history-refresh 误当作 select 重放并触发本地尺寸上报
-  reset: PaneResetOrigin | null;
-  history: { data: string; alternateScreen: boolean; modes: number } | null;
   screen: GatewayPaneScreenSnapshot | null;
   historyPages: GatewayPaneHistoryPage[];
   rebase: GatewayRebaseReason | null;
 }
 
 export interface PaneSinkRegistryOptions {
-  historyGate?: PaneHistoryGateOptions;
   outputCoalescer?: PaneOutputCoalescerOptions;
   canonicalReplayMaxBytes?: number;
 }
@@ -59,7 +44,6 @@ function paneKey(deviceId: string, paneId: string): string {
 export class PaneSinkRegistry {
   private sinks = new Map<string, PaneSink>();
   private pending = new Map<string, PendingPaneState>();
-  private readonly historyGates: PaneHistoryGates;
   private readonly outputs: PaneOutputCoalescer;
   private readonly canonicalReplay: CanonicalLiveReplay;
 
@@ -68,17 +52,6 @@ export class PaneSinkRegistry {
     this.outputs = new PaneOutputCoalescer((key, frame) => {
       this.sinks.get(key)?.onOutput(frame.data, frame);
     }, options.outputCoalescer);
-    this.historyGates = new PaneHistoryGates(
-      {
-        flushFrame: (frame) => {
-          this.dispatchPaneTerminalData(frame);
-        },
-        requestRebase: (deviceId, paneId) => {
-          this.dispatchPaneRebase(deviceId, paneId, 'resource_exhausted');
-        },
-      },
-      options.historyGate
-    );
   }
 
   private getPending(key: string): PendingPaneState {
@@ -87,8 +60,6 @@ export class PaneSinkRegistry {
       state = {
         outputs: [],
         outputBytes: 0,
-        reset: null,
-        history: null,
         screen: null,
         historyPages: [],
         rebase: null,
@@ -107,19 +78,12 @@ export class PaneSinkRegistry {
     const state = this.pending.get(key);
     if (state) {
       this.pending.delete(key);
-      if (state.reset) {
-        sink.onReset(state.reset);
-      }
-      if (state.history) {
-        sink.onApplyHistory(state.history.data, state.history.alternateScreen, state.history.modes);
-      }
       if (state.rebase) sink.onRebase?.(state.rebase);
       if (state.screen) sink.onScreenSnapshot?.(state.screen);
       for (const page of state.historyPages) sink.onHistoryPage?.(page);
-      // 缓冲的 live 字节只有跟在画面基线（reset/history/screen）之后回放才有意义；
-      // 没有基线时它们是任意时刻的流中片段，写进全新空终端只会闪现陈旧乱码
-      //（canonical 路径挂载后总会重新拉快照，丢弃无损）。
-      if (state.reset || state.history || state.screen) {
+      // 缓冲的 live 字节只有跟在画面基线（截屏）之后回放才有意义；没有基线时它们是
+      // 任意时刻的流中片段，写进全新空终端只会闪现陈旧乱码（挂载后总会重新拉快照，丢弃无损）。
+      if (state.screen) {
         for (const frame of state.outputs) {
           this.outputs.push(key, frame);
         }
@@ -137,46 +101,6 @@ export class PaneSinkRegistry {
     };
   }
 
-  dispatchPaneReset(deviceId: string, paneId: string, origin: PaneResetOrigin = 'select'): void {
-    const key = paneKey(deviceId, paneId);
-    this.canonicalReplay.clearPane(deviceId, paneId);
-    this.outputs.flush(key);
-    const sink = this.sinks.get(key);
-    if (sink) {
-      sink.onReset(origin);
-      return;
-    }
-    const state = this.getPending(key);
-    state.reset = origin;
-    state.outputs = [];
-    state.outputBytes = 0;
-    state.history = null;
-    state.screen = null;
-    state.historyPages = [];
-    state.rebase = null;
-  }
-
-  dispatchPaneApplyHistory(
-    deviceId: string,
-    paneId: string,
-    data: string,
-    alternateScreen: boolean,
-    modes: number
-  ): void {
-    const key = paneKey(deviceId, paneId);
-    this.outputs.flush(key);
-    const sink = this.sinks.get(key);
-    if (sink) {
-      sink.onApplyHistory(data, alternateScreen, modes);
-      return;
-    }
-    this.getPending(key).history = { data, alternateScreen, modes };
-  }
-
-  dispatchPaneOutput(deviceId: string, paneId: string, data: Uint8Array): void {
-    this.dispatchPaneTerminalData({ deviceId, paneId, data });
-  }
-
   dispatchPaneTerminalData(frame: GatewayTerminalData): void {
     const { deviceId, paneId } = frame;
     const key = paneKey(deviceId, paneId);
@@ -187,8 +111,6 @@ export class PaneSinkRegistry {
       this.canonicalReplay.invalidatePane(deviceId, paneId, replayGap);
       if (replayGap !== 'resource_exhausted') return;
     }
-
-    if (this.historyGates.capture(frame)) return;
 
     if (this.sinks.has(key)) {
       this.outputs.push(key, frame);
@@ -213,7 +135,6 @@ export class PaneSinkRegistry {
   dispatchPaneScreenSnapshot(snapshot: GatewayPaneScreenSnapshot): void {
     const key = paneKey(snapshot.deviceId, snapshot.paneId);
     this.canonicalReplay.begin(snapshot);
-    this.historyGates.close(snapshot.deviceId, snapshot.paneId, { flush: false });
     this.outputs.flush(key);
     const sink = this.sinks.get(key);
     if (sink?.onScreenSnapshot) {
@@ -229,9 +150,6 @@ export class PaneSinkRegistry {
   dispatchPaneHistoryPage(page: GatewayPaneHistoryPage): void {
     const key = paneKey(page.deviceId, page.paneId);
     const canonicalReplay = this.canonicalReplay.historyPage(page);
-    const buffered = page.requestId
-      ? this.historyGates.take(page.deviceId, page.paneId, page.requestId)
-      : null;
     if (!canonicalReplay.valid) {
       this.dispatchPaneRebase(
         page.deviceId,
@@ -257,11 +175,6 @@ export class PaneSinkRegistry {
         state.historyPages.push(page);
       }
     }
-    if (applied && buffered) {
-      for (const frame of buffered) {
-        if (!canonicalReplay.tracked) this.dispatchPaneTerminalData(frame);
-      }
-    }
     if (applied && sink && canonicalReplay.frames.length > 0) {
       for (const frame of canonicalReplay.frames) this.outputs.push(key, frame);
       this.outputs.flush(key);
@@ -271,7 +184,6 @@ export class PaneSinkRegistry {
   dispatchPaneRebase(deviceId: string, paneId: string, reason: GatewayRebaseReason): void {
     const key = paneKey(deviceId, paneId);
     this.canonicalReplay.clearPane(deviceId, paneId);
-    this.historyGates.close(deviceId, paneId, { flush: false });
     this.outputs.flush(key);
     const sink = this.sinks.get(key);
     if (sink?.onRebase) {
@@ -284,35 +196,6 @@ export class PaneSinkRegistry {
     state.outputs = [];
     state.outputBytes = 0;
     state.rebase = reason;
-  }
-
-  // 开始 fetch-history 门控：此后该 pane 的 live 输出被缓冲，直到
-  // dispatchPaneHistory 命中 token 或超时兜底放行
-  beginPaneHistoryGate(deviceId: string, paneId: string, token: Uint8Array): void {
-    this.historyGates.begin(deviceId, paneId, token);
-  }
-
-  // KIND_TERM_HISTORY 到达时先尝试本函数；token 命中 gate 才消费（返回 true），
-  // 否则返回 false 交由选择状态机处理（select 路径）
-  dispatchPaneHistory(
-    deviceId: string,
-    paneId: string,
-    token: Uint8Array,
-    data: string,
-    alternateScreen: boolean,
-    modes: number
-  ): boolean {
-    const buffered = this.historyGates.take(deviceId, paneId, token);
-    if (!buffered) return false;
-
-    this.dispatchPaneReset(deviceId, paneId, 'history-refresh');
-    this.dispatchPaneApplyHistory(deviceId, paneId, data, alternateScreen, modes);
-    for (const frame of buffered) {
-      this.dispatchPaneTerminalData(frame);
-    }
-    // 门控放行的是一批已经攒好的字节，没有必要再等微任务边界
-    this.outputs.flush(paneKey(deviceId, paneId));
-    return true;
   }
 
   hasPaneSink(deviceId: string, paneId: string): boolean {
@@ -329,7 +212,6 @@ export class PaneSinkRegistry {
     }
     // 链路已断，在途字节是无主的流中片段：与 pending 缓冲同样直接丢弃，不再下发
     this.outputs.discardMatching((key) => key.startsWith(prefix));
-    this.historyGates.closeDevice(deviceId, { flush: false });
     this.canonicalReplay.clearDevice(deviceId);
   }
 
@@ -337,7 +219,6 @@ export class PaneSinkRegistry {
     this.sinks.clear();
     this.pending.clear();
     this.outputs.discardAll();
-    this.historyGates.closeAll({ flush: false });
     this.canonicalReplay.clear();
   }
 }
@@ -347,28 +228,6 @@ const defaultRegistry = new PaneSinkRegistry();
 
 export function registerPaneSink(deviceId: string, paneId: string, sink: PaneSink): () => void {
   return defaultRegistry.registerPaneSink(deviceId, paneId, sink);
-}
-
-export function dispatchPaneReset(
-  deviceId: string,
-  paneId: string,
-  origin: PaneResetOrigin = 'select'
-): void {
-  defaultRegistry.dispatchPaneReset(deviceId, paneId, origin);
-}
-
-export function dispatchPaneApplyHistory(
-  deviceId: string,
-  paneId: string,
-  data: string,
-  alternateScreen: boolean,
-  modes: number
-): void {
-  defaultRegistry.dispatchPaneApplyHistory(deviceId, paneId, data, alternateScreen, modes);
-}
-
-export function dispatchPaneOutput(deviceId: string, paneId: string, data: Uint8Array): void {
-  defaultRegistry.dispatchPaneOutput(deviceId, paneId, data);
 }
 
 export function dispatchPaneTerminalData(frame: GatewayTerminalData): void {
@@ -389,21 +248,6 @@ export function dispatchPaneRebase(
   reason: GatewayRebaseReason
 ): void {
   defaultRegistry.dispatchPaneRebase(deviceId, paneId, reason);
-}
-
-export function beginPaneHistoryGate(deviceId: string, paneId: string, token: Uint8Array): void {
-  defaultRegistry.beginPaneHistoryGate(deviceId, paneId, token);
-}
-
-export function dispatchPaneHistory(
-  deviceId: string,
-  paneId: string,
-  token: Uint8Array,
-  data: string,
-  alternateScreen: boolean,
-  modes: number
-): boolean {
-  return defaultRegistry.dispatchPaneHistory(deviceId, paneId, token, data, alternateScreen, modes);
 }
 
 export function hasPaneSink(deviceId: string, paneId: string): boolean {

@@ -139,7 +139,7 @@
     "reason": "hub 角色切换请求校验（G8 判定）"
   },
   "apps/gateway/src/hub/hub-runtime.ts": {
-    "fileLines": 1368,
+    "fileLines": 1317,
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/gateway/src/hub/uplink-server.ts": {
@@ -693,10 +693,6 @@
   },
   "packages/ws-client/src/canonical-state-client.ts": {
     "fileLines": 741,
-    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
-  },
-  "packages/ws-client/src/state-machine.ts": {
-    "fileLines": 782,
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "packages/ws-client/src/client.ts": {

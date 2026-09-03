@@ -76,13 +76,9 @@ export function createPaneSubscriptionManager(core: RuntimeCore): PaneSubscripti
     },
 
     requestPaneScreen(deviceId, paneId) {
-      const requestToken = generateSelectToken();
-      if (!core.transport.capabilities.atomicScreen) {
-        core.paneSinks.beginPaneHistoryGate(deviceId, paneId, requestToken);
-      }
       core.transport.send({
         type: 'request-pane-screen',
-        requestId: requestToken,
+        requestId: generateSelectToken(),
         deviceId,
         paneId,
         byteLimit: SCREEN_BYTE_LIMIT,
@@ -90,13 +86,9 @@ export function createPaneSubscriptionManager(core: RuntimeCore): PaneSubscripti
     },
 
     fetchPaneHistory(deviceId, paneId, cursor) {
-      const requestToken = generateSelectToken();
-      if (!core.transport.capabilities.cursorHistory) {
-        core.paneSinks.beginPaneHistoryGate(deviceId, paneId, requestToken);
-      }
       core.transport.send({
         type: 'request-pane-history',
-        requestId: requestToken,
+        requestId: generateSelectToken(),
         deviceId,
         paneId,
         cursor,

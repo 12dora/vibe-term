@@ -84,7 +84,6 @@ const handleDeviceError: DeviceEventHandler = (ctx, payload) => {
 };
 
 const handleDeviceDisconnected: DeviceEventHandler = (ctx, payload) => {
-  ctx.core.selectMachine().cleanup(payload.deviceId);
   ctx.setState((prev) => ({
     deviceConnected: { ...prev.deviceConnected, [payload.deviceId]: false },
   }));

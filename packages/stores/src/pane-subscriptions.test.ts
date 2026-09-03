@@ -48,14 +48,13 @@ function createHarness() {
   };
 }
 
-function recordingSink(): { sink: PaneSink; resets: string[] } {
-  const resets: string[] = [];
+function recordingSink(): { sink: PaneSink; rebases: string[] } {
+  const rebases: string[] = [];
   return {
-    resets,
+    rebases,
     sink: {
-      onReset: (origin) => resets.push(origin),
-      onApplyHistory: () => {},
       onOutput: () => {},
+      onRebase: (reason) => rebases.push(reason),
     },
   };
 }
@@ -107,7 +106,7 @@ describe('pane subscription set', () => {
   test('sink registration is independent of the subscription contribution', () => {
     const harness = createHarness();
     const tmux = harness.runtime.stores.tmux.getState();
-    const { sink, resets } = recordingSink();
+    const { sink, rebases } = recordingSink();
 
     const unregister = harness.runtime.paneSinks.registerPaneSink('device-a', '%2', sink);
     // 注册 sink 本身不下发订阅
@@ -117,8 +116,8 @@ describe('pane subscription set', () => {
     releaseHidden();
 
     // 置冷后 sink 仍在注册表里，注册表不会为它开始缓冲：投递直达 sink 而不是进 pending
-    harness.runtime.paneSinks.dispatchPaneReset('device-a', '%2', 'select');
-    expect(resets).toEqual(['select']);
+    harness.runtime.paneSinks.dispatchPaneRebase('device-a', '%2', 'pane_gap');
+    expect(rebases).toEqual(['pane_gap']);
 
     unregister();
     harness.dispose();

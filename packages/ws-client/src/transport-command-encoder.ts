@@ -1,20 +1,18 @@
 // 控制帧编码：每个命令一条 typed handler，映射表由 TS 保证对命令联合完备。
+//
+// 终端数据面（输入 / 尺寸 / 订阅 / 截屏 / 历史）已整体迁到 canonical 命令，这里只剩
+// tmux 控制面与设备连接面；canonical 覆盖的命令没有 legacy 编码器，编码它们即编程错误。
 
 import { wsBorsh } from '@tmex/shared';
 import {
   buildDeviceConnect,
   buildDeviceDisconnect,
-  buildTermInput,
-  buildTermPaste,
-  buildTermResize,
-  buildTermSyncSize,
   buildTermViewportMessage,
   buildTmuxApplyStackedLayout,
   buildTmuxBreakPane,
   buildTmuxClosePane,
   buildTmuxCloseWindow,
   buildTmuxCreateWindow,
-  buildTmuxFetchPaneHistory,
   buildTmuxFocusPane,
   buildTmuxMovePane,
   buildTmuxRenamePane,
@@ -26,13 +24,8 @@ import {
   buildTmuxSelectWindow,
   buildTmuxSetWindowStyle,
   buildTmuxSplitPane,
-  buildTmuxSubscribePanes,
 } from './message-builder';
 import type { EncodedGatewayCommand, GatewayTransportCommand } from './transport-types';
-
-export interface GatewayCommandEncodingOptions {
-  stateFeedMode?: 'canonical' | 'legacy' | 'pending';
-}
 
 export function encodeCanonicalGatewayCommand(
   command: wsBorsh.CanonicalCommand,
@@ -54,8 +47,23 @@ type GatewayCommandType = GatewayTransportCommand['type'];
 
 type CommandOf<K extends GatewayCommandType> = Extract<GatewayTransportCommand, { type: K }>;
 
+/** canonical 命令覆盖的命令类型：走 CanonicalStateClient，没有控制帧编码。 */
+export const CANONICAL_ONLY_COMMANDS = [
+  'terminal-input',
+  'terminal-paste',
+  'terminal-resize',
+  'terminal-sync-size',
+  'set-pane-subscriptions',
+  'request-pane-screen',
+  'request-pane-history',
+] as const satisfies readonly GatewayCommandType[];
+
+type CanonicalOnlyCommandType = (typeof CANONICAL_ONLY_COMMANDS)[number];
+
+type ControlCommandType = Exclude<GatewayCommandType, CanonicalOnlyCommandType>;
+
 type CommandEncoders = {
-  [K in GatewayCommandType]: (command: CommandOf<K>) => EncodedGatewayCommand;
+  [K in ControlCommandType]: (command: CommandOf<K>) => EncodedGatewayCommand;
 };
 
 const COMMAND_ENCODERS: CommandEncoders = {
@@ -63,13 +71,6 @@ const COMMAND_ENCODERS: CommandEncoders = {
   'disconnect-device': (command) => buildDeviceDisconnect(command.deviceId),
   'select-pane': (command) => buildTmuxSelect(command),
   'select-window': (command) => buildTmuxSelectWindow(command.deviceId, command.windowId),
-  'terminal-input': (command) =>
-    buildTermInput(command.deviceId, command.paneId, command.data, command.isComposing),
-  'terminal-paste': (command) => buildTermPaste(command.deviceId, command.paneId, command.data),
-  'terminal-resize': (command) =>
-    buildTermResize(command.deviceId, command.paneId, command.cols, command.rows),
-  'terminal-sync-size': (command) =>
-    buildTermSyncSize(command.deviceId, command.paneId, command.cols, command.rows),
   'terminal-viewport': (command) =>
     buildTermViewportMessage({
       deviceId: command.deviceId,
@@ -85,21 +86,6 @@ const COMMAND_ENCODERS: CommandEncoders = {
     buildTmuxRenameWindow(command.deviceId, command.windowId, command.name),
   'set-window-style': (command) => buildTmuxSetWindowStyle(command.deviceId, command.style),
   'reorder-windows': (command) => buildTmuxReorderWindows(command.deviceId, command.windowIds),
-  'set-pane-subscriptions': (command) => buildTmuxSubscribePanes(command.deviceId, command.paneIds),
-  'request-pane-screen': (command) =>
-    buildTmuxFetchPaneHistory(
-      command.deviceId,
-      command.paneId,
-      command.requestId,
-      command.byteLimit
-    ),
-  'request-pane-history': (command) =>
-    buildTmuxFetchPaneHistory(
-      command.deviceId,
-      command.paneId,
-      command.requestId,
-      command.byteLimit
-    ),
   'resize-pane-in-window': (command) =>
     buildTmuxResizePane(command.deviceId, command.paneId, {
       cols: command.cols,
@@ -119,18 +105,15 @@ const COMMAND_ENCODERS: CommandEncoders = {
 };
 
 export function encodeGatewayTransportCommand(
-  command: GatewayTransportCommand,
-  options: GatewayCommandEncodingOptions = {}
+  command: GatewayTransportCommand
 ): EncodedGatewayCommand {
-  if (command.type === 'select-pane' && options.stateFeedMode === 'canonical') {
-    return buildTmuxSelect({ ...command, wantHistory: false });
-  }
-  const encode = COMMAND_ENCODERS[command.type] as
+  const encode = (COMMAND_ENCODERS as Record<string, unknown>)[command.type] as
     | ((command: GatewayTransportCommand) => EncodedGatewayCommand)
     | undefined;
   if (!encode) {
-    // 类型层已穷尽命令联合；运行时命中说明宿主发来了本版本不认识的命令，必须失败而非静默丢弃。
-    throw new Error(`[gateway-transport] unsupported command type: ${String(command.type)}`);
+    // canonical 覆盖的命令走 canonical feed；命中这里说明 canonical 会话没建起来，
+    // 必须失败而不是静默丢弃或退回已下线的 legacy 帧。
+    throw new Error(`[gateway-transport] command has no control frame: ${String(command.type)}`);
   }
   return encode(command);
 }

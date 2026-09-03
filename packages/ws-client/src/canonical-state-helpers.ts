@@ -41,6 +41,8 @@ export interface DeviceMetadataState {
   revision: bigint;
   serverEpoch: Uint8Array;
   paneEpochs: Map<string, Uint8Array>;
+  /** 设备树的用户自定义顺序（SOURCE_FIELD_TREE_ORDER 增量维护） */
+  treeOrder: wsBorsh.CanonicalTreeOrder;
   snapshot: StateSnapshotPayload;
 }
 

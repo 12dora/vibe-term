@@ -19,21 +19,13 @@ import {
   type GatewayTerminalData,
   type GatewayTransport,
   LazyWebSocketGatewayTransport,
-  type SelectCallbacks,
-  type SelectStateMachine,
   getBorshClient,
-  getSelectStateMachine,
 } from '@tmex/ws-client';
 import {
   type PaneSink,
-  beginPaneHistoryGate,
   cleanupDevicePaneState,
-  dispatchPaneApplyHistory,
-  dispatchPaneHistory,
   dispatchPaneHistoryPage,
-  dispatchPaneOutput,
   dispatchPaneRebase,
-  dispatchPaneReset,
   dispatchPaneScreenSnapshot,
   dispatchPaneTerminalData,
   registerPaneSink,
@@ -94,28 +86,10 @@ export interface TerminalFileLinksProvider {
 export interface PaneSinkRouting {
   /** 终端组件挂载时注册 sink，返回注销函数（消费侧，与 dispatch 生产侧同一注册表） */
   registerPaneSink(deviceId: string, paneId: string, sink: PaneSink): () => void;
-  dispatchPaneReset(deviceId: string, paneId: string, origin?: 'select' | 'history-refresh'): void;
-  dispatchPaneApplyHistory(
-    deviceId: string,
-    paneId: string,
-    data: string,
-    alternateScreen: boolean,
-    modes: number
-  ): void;
-  dispatchPaneOutput(deviceId: string, paneId: string, data: Uint8Array): void;
   dispatchPaneTerminalData(frame: GatewayTerminalData): void;
   dispatchPaneScreenSnapshot(snapshot: GatewayPaneScreenSnapshot): void;
   dispatchPaneHistoryPage(page: GatewayPaneHistoryPage): void;
   dispatchPaneRebase(deviceId: string, paneId: string, reason: GatewayRebaseReason): void;
-  dispatchPaneHistory(
-    deviceId: string,
-    paneId: string,
-    token: Uint8Array,
-    data: string,
-    alternateScreen: boolean,
-    modes: number
-  ): boolean;
-  beginPaneHistoryGate(deviceId: string, paneId: string, token: Uint8Array): void;
   cleanupDevicePaneState(deviceId: string): void;
 }
 
@@ -169,7 +143,6 @@ export interface RuntimeCore {
   nodeId: string;
   client: BorshWebSocketClient;
   transport: GatewayTransport;
-  selectMachine(callbacks?: SelectCallbacks): SelectStateMachine;
   paneSinks: PaneSinkRouting;
   apiClient: ApiClient;
   notifications: NotificationSink;
@@ -264,15 +237,10 @@ const defaultBell: BellPlayer = { play: playBellSound };
 
 const defaultPaneSinks: PaneSinkRouting = {
   registerPaneSink,
-  dispatchPaneReset,
-  dispatchPaneApplyHistory,
-  dispatchPaneOutput,
   dispatchPaneTerminalData,
   dispatchPaneScreenSnapshot,
   dispatchPaneHistoryPage,
   dispatchPaneRebase,
-  dispatchPaneHistory,
-  beginPaneHistoryGate,
   cleanupDevicePaneState,
 };
 
@@ -288,30 +256,13 @@ function resolveTransport(options: AppRuntimeOptions): GatewayTransport {
   );
 }
 
-function resolveSelectMachine(conn?: GatewayConnection): RuntimeCore['selectMachine'] {
-  if (!conn) {
-    return (callbacks) => getSelectStateMachine(callbacks);
-  }
-  return (callbacks) => {
-    if (callbacks) conn.selectMachine.setCallbacks(callbacks);
-    return conn.selectMachine;
-  };
-}
-
 function connectionPaneSinks(conn: GatewayConnection): PaneSinkRouting {
   return {
     registerPaneSink: (d, p, sink) => conn.paneSinks.registerPaneSink(d, p, sink),
-    dispatchPaneReset: (d, p, o) => conn.paneSinks.dispatchPaneReset(d, p, o),
-    dispatchPaneApplyHistory: (d, p, data, alt, m) =>
-      conn.paneSinks.dispatchPaneApplyHistory(d, p, data, alt, m),
-    dispatchPaneOutput: (d, p, data) => conn.paneSinks.dispatchPaneOutput(d, p, data),
     dispatchPaneTerminalData: (frame) => conn.paneSinks.dispatchPaneTerminalData(frame),
     dispatchPaneScreenSnapshot: (snapshot) => conn.paneSinks.dispatchPaneScreenSnapshot(snapshot),
     dispatchPaneHistoryPage: (page) => conn.paneSinks.dispatchPaneHistoryPage(page),
     dispatchPaneRebase: (d, p, reason) => conn.paneSinks.dispatchPaneRebase(d, p, reason),
-    dispatchPaneHistory: (d, p, tok, data, alt, m) =>
-      conn.paneSinks.dispatchPaneHistory(d, p, tok, data, alt, m),
-    beginPaneHistoryGate: (d, p, tok) => conn.paneSinks.beginPaneHistoryGate(d, p, tok),
     cleanupDevicePaneState: (d) => conn.paneSinks.cleanupDevicePaneState(d),
   };
 }
@@ -334,7 +285,6 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
       return conn?.client ?? getBorshClient();
     },
     transport: resolveTransport(options),
-    selectMachine: resolveSelectMachine(conn),
     paneSinks: conn ? connectionPaneSinks(conn) : defaultPaneSinks,
     apiClient: options.apiClient ?? defaultApiClient,
     notifications: options.notifications ?? noopNotificationSink,

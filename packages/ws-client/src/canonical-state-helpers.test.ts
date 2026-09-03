@@ -44,7 +44,6 @@ describe('clonePendingCommand', () => {
       windowId: '@1',
       paneId: '%1',
       selectToken,
-      wantHistory: true,
     });
     if (select.type !== 'select-pane') throw new Error('select');
     expect(select.selectToken).not.toBe(selectToken);

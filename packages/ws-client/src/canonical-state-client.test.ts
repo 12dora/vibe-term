@@ -263,9 +263,14 @@ describe('CanonicalStateClient', () => {
       rows: 30,
     });
     const resize = decode(messages.at(-1) as EncodedGatewayCommand);
-    expect(resize).toHaveProperty('ResizePane');
-    if (!('ResizePane' in resize)) throw new Error('missing resize');
-    expect(resize.ResizePane).toMatchObject({ cols: 100, rows: 30 });
+    expect(resize).toHaveProperty('ResizePaneV11');
+    if (!('ResizePaneV11' in resize)) throw new Error('missing resize');
+    expect(resize.ResizePaneV11).toMatchObject({
+      cols: 100,
+      rows: 30,
+      geometryReason: wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE,
+      sizeEpoch: 1n,
+    });
 
     client.sendCommand({
       type: 'request-pane-history',
@@ -828,7 +833,52 @@ describe('CanonicalStateClient', () => {
     expect(events.filter((event) => event.type === 'metadata-snapshot')).toEqual([]);
   });
 
-  test('applies the persisted legacy tree order as a canonical metadata overlay', () => {
+  test('按 canonical TREE_ORDER 字段重排设备树', () => {
+    const { client, events } = createHarness();
+    const records = metadataRecords();
+    const session = key(wsBorsh.SOURCE_ENTITY_SESSION, '$1');
+    const secondWindow = key(wsBorsh.SOURCE_ENTITY_WINDOW, '@2');
+    records
+      .find((record) => record.key.entityKind === wsBorsh.SOURCE_ENTITY_WINDOW)
+      ?.fields.push({ field: wsBorsh.SOURCE_FIELD_TREE_ORDER, value: { U32: 1 } });
+    records.push(
+      {
+        key: secondWindow,
+        parent: session,
+        fields: [
+          { field: wsBorsh.SOURCE_FIELD_NAME, value: { String: 'second' } },
+          { field: wsBorsh.SOURCE_FIELD_INDEX, value: { U32: 1 } },
+          { field: wsBorsh.SOURCE_FIELD_TREE_ORDER, value: { U32: 0 } },
+        ],
+      },
+      {
+        key: key(wsBorsh.SOURCE_ENTITY_PANE, '%2'),
+        parent: secondWindow,
+        fields: [
+          { field: wsBorsh.SOURCE_FIELD_INDEX, value: { U32: 0 } },
+          { field: wsBorsh.SOURCE_FIELD_PANE_EPOCH, value: { Bytes16: PANE_EPOCH } },
+        ],
+      }
+    );
+    client.activate();
+    client.handleEvent({
+      SourceMetadataSnapshot: {
+        metadataEpoch: METADATA_EPOCH,
+        revision: 1n,
+        snapshotId: REQUEST_ID,
+        chunkIndex: 0,
+        totalChunks: 1,
+        records,
+      },
+    });
+
+    const snapshot = events.find((event) => event.type === 'metadata-snapshot');
+    expect(
+      snapshot?.type === 'metadata-snapshot' && snapshot.snapshot.session?.windows.map((w) => w.id)
+    ).toEqual(['@2', '@1']);
+  });
+
+  test('metadata patch 下发的整棵快照已按最新 TREE_ORDER 排好', () => {
     const { client, events } = createHarness();
     const records = metadataRecords();
     const session = key(wsBorsh.SOURCE_ENTITY_SESSION, '$1');
@@ -852,49 +902,6 @@ describe('CanonicalStateClient', () => {
       }
     );
     client.activate();
-    client.handleLegacyOverlaySnapshot(
-      wsBorsh.encodeStateSnapshot({
-        deviceId: 'device-a',
-        session: {
-          id: '$1',
-          name: 'main',
-          windows: [
-            {
-              id: '@2',
-              name: 'second',
-              index: 1,
-              active: false,
-              panes: [
-                {
-                  id: '%2',
-                  windowId: '@2',
-                  index: 0,
-                  active: false,
-                  width: 80,
-                  height: 24,
-                },
-              ],
-            },
-            {
-              id: '@1',
-              name: 'window',
-              index: 0,
-              active: true,
-              panes: [
-                {
-                  id: '%1',
-                  windowId: '@1',
-                  index: 0,
-                  active: true,
-                  width: 80,
-                  height: 24,
-                },
-              ],
-            },
-          ],
-        },
-      })
-    );
     client.handleEvent({
       SourceMetadataSnapshot: {
         metadataEpoch: METADATA_EPOCH,
@@ -905,52 +912,61 @@ describe('CanonicalStateClient', () => {
         records,
       },
     });
+    events.length = 0;
 
-    const snapshot = events.find((event) => event.type === 'metadata-snapshot');
+    client.handleEvent({
+      SourceMetadataPatch: {
+        metadataEpoch: METADATA_EPOCH,
+        fromRevision: 1n,
+        throughRevision: 2n,
+        upserts: [
+          {
+            key: key(wsBorsh.SOURCE_ENTITY_WINDOW, '@1'),
+            parent: null,
+            fields: [{ field: wsBorsh.SOURCE_FIELD_TREE_ORDER, value: { U32: 1 } }],
+          },
+          {
+            key: secondWindow,
+            parent: null,
+            fields: [{ field: wsBorsh.SOURCE_FIELD_TREE_ORDER, value: { U32: 0 } }],
+          },
+        ],
+        removals: [],
+      },
+    });
+
+    const patch = events.find((event) => event.type === 'metadata-patch');
     expect(
-      snapshot?.type === 'metadata-snapshot' && snapshot.snapshot.session?.windows.map((w) => w.id)
+      patch?.type === 'metadata-patch' && patch.snapshot.session?.windows.map((w) => w.id)
     ).toEqual(['@2', '@1']);
   });
 
-  test('uses legacy custom names only as a seed across canonical patches and full rebases', () => {
+  test('自定义名随 canonical CUSTOM_NAME 字段增删', () => {
     const { client, events } = createHarness();
     client.activate();
-    client.handleLegacyOverlaySnapshot(
-      wsBorsh.encodeStateSnapshot({
-        deviceId: 'device-a',
-        session: {
-          id: '$1',
-          name: 'main',
-          windows: [
-            {
-              id: '@1',
-              name: 'window',
-              customName: 'Legacy Window',
-              index: 0,
-              active: true,
-              panes: [
-                {
-                  id: '%1',
-                  windowId: '@1',
-                  customName: 'Legacy Pane',
-                  index: 0,
-                  active: true,
-                  width: 80,
-                  height: 24,
-                },
-              ],
-            },
-          ],
-        },
-      })
-    );
-    installMetadata(client);
-    let snapshot = events.filter((event) => event.type === 'metadata-snapshot').at(-1);
+    const namedRecords = metadataRecords();
+    namedRecords
+      .find((record) => record.key.entityKind === wsBorsh.SOURCE_ENTITY_WINDOW)
+      ?.fields.push({ field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: 'My Window' } });
+    namedRecords
+      .find((record) => record.key.entityKind === wsBorsh.SOURCE_ENTITY_PANE)
+      ?.fields.push({ field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: 'My Pane' } });
+    client.handleEvent({
+      SourceMetadataSnapshot: {
+        metadataEpoch: METADATA_EPOCH,
+        revision: 1n,
+        snapshotId: REQUEST_ID,
+        chunkIndex: 0,
+        totalChunks: 1,
+        records: namedRecords,
+      },
+    });
+    const seeded = events.filter((event) => event.type === 'metadata-snapshot').at(-1);
     expect(
-      snapshot?.type === 'metadata-snapshot' && snapshot.snapshot.session?.windows[0]
+      seeded?.type === 'metadata-snapshot' && seeded.snapshot.session?.windows[0]
     ).toMatchObject({
-      customName: 'Legacy Window',
-      panes: [{ customName: 'Legacy Pane' }],
+      customName: 'My Window',
+      panes: [{ customName: 'My Pane' }],
     });
 
     client.handleEvent({
@@ -962,80 +978,60 @@ describe('CanonicalStateClient', () => {
           {
             key: key(wsBorsh.SOURCE_ENTITY_WINDOW, '@1'),
             parent: null,
-            fields: [{ field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: 'New Window' } }],
-          },
-          {
-            key: key(wsBorsh.SOURCE_ENTITY_PANE, '%1'),
-            parent: null,
-            fields: [{ field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: 'New Pane' } }],
-          },
-        ],
-        removals: [],
-      },
-    });
-    const namedRecords = metadataRecords();
-    namedRecords
-      .find((record) => record.key.entityKind === wsBorsh.SOURCE_ENTITY_WINDOW)
-      ?.fields.push({
-        field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME,
-        value: { String: 'New Window' },
-      });
-    namedRecords
-      .find((record) => record.key.entityKind === wsBorsh.SOURCE_ENTITY_PANE)
-      ?.fields.push({ field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: 'New Pane' } });
-    client.handleEvent({
-      SourceMetadataSnapshot: {
-        metadataEpoch: METADATA_EPOCH,
-        revision: 3n,
-        snapshotId: new Uint8Array(16).fill(0x68),
-        chunkIndex: 0,
-        totalChunks: 1,
-        records: namedRecords,
-      },
-    });
-    snapshot = events.filter((event) => event.type === 'metadata-snapshot').at(-1);
-    expect(
-      snapshot?.type === 'metadata-snapshot' && snapshot.snapshot.session?.windows[0]
-    ).toMatchObject({
-      customName: 'New Window',
-      panes: [{ customName: 'New Pane' }],
-    });
-
-    client.handleEvent({
-      SourceMetadataPatch: {
-        metadataEpoch: METADATA_EPOCH,
-        fromRevision: 3n,
-        throughRevision: 4n,
-        upserts: [
-          {
-            key: key(wsBorsh.SOURCE_ENTITY_WINDOW, '@1'),
-            parent: null,
             fields: [{ field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { Unset: {} } }],
           },
           {
             key: key(wsBorsh.SOURCE_ENTITY_PANE, '%1'),
-            parent: null,
+            parent: key(wsBorsh.SOURCE_ENTITY_WINDOW, '@1'),
             fields: [{ field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { Unset: {} } }],
           },
         ],
         removals: [],
       },
     });
-    client.handleEvent({
-      SourceMetadataSnapshot: {
-        metadataEpoch: METADATA_EPOCH,
-        revision: 5n,
-        snapshotId: new Uint8Array(16).fill(0x69),
-        chunkIndex: 0,
-        totalChunks: 1,
-        records: metadataRecords(),
-      },
-    });
-    snapshot = events.filter((event) => event.type === 'metadata-snapshot').at(-1);
-    const window =
-      snapshot?.type === 'metadata-snapshot' ? snapshot.snapshot.session?.windows[0] : null;
+    const patched = events.filter((event) => event.type === 'metadata-patch').at(-1);
+    const window = patched?.type === 'metadata-patch' ? patched.snapshot.session?.windows[0] : null;
     expect(window?.customName).toBeUndefined();
     expect(window?.panes[0]?.customName).toBeUndefined();
+  });
+
+  test('resize 自增 sizeEpoch，sync 复用同一 epoch 并标记 resend', () => {
+    const { client, messages } = createHarness();
+    client.activate();
+    installMetadata(client);
+
+    const send = (type: 'terminal-resize' | 'terminal-sync-size', cols: number) =>
+      client.sendCommand({ type, deviceId: 'device-a', paneId: '%1', cols, rows: 24 });
+
+    send('terminal-sync-size', 80);
+    const first = decode(messages.at(-1) as EncodedGatewayCommand);
+    if (!('ResizePaneV11' in first)) throw new Error('missing resize');
+    // 该 pane 还没有过真实尺寸变化：补发用保留值以外的最小 epoch
+    expect(first.ResizePaneV11).toMatchObject({
+      geometryReason: wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND,
+      sizeEpoch: 1n,
+    });
+
+    send('terminal-resize', 100);
+    const change = decode(messages.at(-1) as EncodedGatewayCommand);
+    if (!('ResizePaneV11' in change)) throw new Error('missing resize');
+    expect(change.ResizePaneV11).toMatchObject({
+      geometryReason: wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE,
+      sizeEpoch: 1n,
+    });
+
+    send('terminal-sync-size', 100);
+    const resend = decode(messages.at(-1) as EncodedGatewayCommand);
+    if (!('ResizePaneV11' in resend)) throw new Error('missing resize');
+    expect(resend.ResizePaneV11).toMatchObject({
+      geometryReason: wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND,
+      sizeEpoch: 1n,
+    });
+
+    send('terminal-resize', 120);
+    const next = decode(messages.at(-1) as EncodedGatewayCommand);
+    if (!('ResizePaneV11' in next)) throw new Error('missing resize');
+    expect(next.ResizePaneV11.sizeEpoch).toBe(2n);
   });
 
   test('ignores an unsolicited content transaction', () => {

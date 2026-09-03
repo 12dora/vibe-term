@@ -46,7 +46,6 @@ interface Harness {
   errors: ToastRecord[];
   bellPlays: string[];
   navigations: string[];
-  cleanedDevices: string[];
   state(): TmuxState;
   setSettings(overrides: Partial<SiteSettings>): void;
 }
@@ -77,10 +76,6 @@ function makeHarness(hostManagedNotifications = false): Harness {
   const errors: ToastRecord[] = [];
   const bellPlays: string[] = [];
   const navigations: string[] = [];
-  const cleanedDevices: string[] = [];
-  connection.selectMachine.cleanup = (deviceId: string) => {
-    cleanedDevices.push(deviceId);
-  };
   const runtime = createAppRuntime({
     connection,
     storagePrefix: `device-events-${harnessSeq}:`,
@@ -118,7 +113,6 @@ function makeHarness(hostManagedNotifications = false): Harness {
     errors,
     bellPlays,
     navigations,
-    cleanedDevices,
     state: runtime.stores.tmux.getState,
     setSettings: (overrides) => {
       runtime.stores.site.setState({ settings: { ...BASE_SETTINGS, ...overrides } });
@@ -350,10 +344,9 @@ describe('handleDeviceEvent', () => {
     expect(h.state().deviceReconnecting['device-1']).toBeUndefined();
   });
 
-  test('disconnected 清理 select 状态并置连接位', () => {
+  test('disconnected 置连接位', () => {
     const h = makeHarness();
     handleDeviceEvent(h.ctx, deviceEvent({ type: 'disconnected' }));
-    expect(h.cleanedDevices).toEqual(['device-1']);
     expect(h.state().deviceConnected['device-1']).toBe(false);
   });
 

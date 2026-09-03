@@ -4,7 +4,6 @@ import {
   type DeferredClipboardWriter,
   type EventDevicePayload,
   createDeferredClipboardWriter,
-  wsBorsh,
 } from '@tmex/shared';
 import type { ConnectionState, GatewayTransportEvent } from '@tmex/ws-client';
 import type { PaneSubscriptionManager } from './pane-subscriptions';
@@ -86,7 +85,6 @@ function handleTransportStateChange(ctx: TmuxEventRouterContext, state: Connecti
   if (!wasReady || state === 'READY') return;
 
   for (const deviceId of ctx.getState().connectedDevices) {
-    ctx.selection.handleDeviceStreamInterrupted(deviceId);
     ctx.core.paneSinks.cleanupDevicePaneState(deviceId);
     // 网关侧的视口声明随会话一起消失：本地策略同样作废，重连前按默认 owner 上报
     ctx.setState((prev) => ({
@@ -119,8 +117,13 @@ const handlers: TmuxEventHandlers = {
     ctx.setState({ wsLatencyMs, wsLatencyRawMs });
   },
 
-  'terminal-progress': (event, ctx) => {
-    ctx.core.selectMachine().reportTerminalProgress(event.deviceId);
+  // 网关低于 canonical v1.1 门槛：状态流建不起来且不回退，store 里 stateFeedMode 记
+  // 'unsupported' 供 UI 判断，这里只留一条可诊断的日志（提示文案待 i18n key 落地）。
+  'server-too-old': (event) => {
+    console.error(
+      '[tmux] gateway too old for canonical state v1.1:',
+      `server=${event.serverVersion ?? 'unknown'} required>=${event.minVersion}`
+    );
   },
 
   'device-connected': (event, ctx) => {
@@ -130,13 +133,9 @@ const handlers: TmuxEventHandlers = {
       deviceReconnecting: { ...prev.deviceReconnecting, [event.deviceId]: undefined },
     }));
     ctx.sendWindowStyleForCurrentTheme(event.deviceId);
-    if (!ctx.core.transport.capabilities.atomicScreen) {
-      ctx.selection.maybeReselectCurrentPane(event.deviceId);
-    }
   },
 
   'device-disconnected': (event, ctx) => {
-    ctx.selection.handleDeviceStreamInterrupted(event.deviceId);
     ctx.core.paneSinks.cleanupDevicePaneState(event.deviceId);
     ctx.setState((prev) => ({
       deviceConnected: { ...prev.deviceConnected, [event.deviceId]: false },
@@ -146,16 +145,13 @@ const handlers: TmuxEventHandlers = {
 
   'device-event': (event, ctx) => {
     // 自动重连只置 deviceReconnecting（deviceConnected 仍为 true），但流确实断了：
-    // 与断开同等对待，否则重连后旧事务还挂着，maybeReselectCurrentPane 会直接早退
+    // 与断开同等对待，缓冲里的字节已经不连续，必须丢掉等各 pane 重新拉快照
     if (isDeviceStreamInterruption(event.event)) {
-      ctx.selection.handleDeviceStreamInterrupted(event.event.deviceId);
+      ctx.core.paneSinks.cleanupDevicePaneState(event.event.deviceId);
     }
     handleDeviceEvent(ctx, event.event);
     if (event.event.type === 'reconnected') {
       ctx.sendWindowStyleForCurrentTheme(event.event.deviceId);
-      if (!ctx.core.transport.capabilities.atomicScreen) {
-        ctx.selection.maybeReselectCurrentPane(event.event.deviceId);
-      }
     }
   },
 
@@ -175,14 +171,12 @@ const handlers: TmuxEventHandlers = {
     ctx.selection.handleSnapshotPaneRemoval(deviceId, previous);
   },
 
+  // patch 已在 ws-client 合并并按设备树顺序排好，这里只替换整棵快照
   'metadata-patch': (event, ctx) => {
     const previous = ctx.getState().snapshots[event.deviceId];
     if (!previous) return;
     ctx.setState((prev) => ({
-      snapshots: {
-        ...prev.snapshots,
-        [event.deviceId]: wsBorsh.applyLegacyStateSnapshotDiff(previous, event.patch),
-      },
+      snapshots: { ...prev.snapshots, [event.deviceId]: event.snapshot },
     }));
     ctx.selection.handleSnapshotPaneRemoval(event.deviceId, previous);
   },
@@ -191,54 +185,7 @@ const handlers: TmuxEventHandlers = {
     handleTmuxEvent(ctx, event.event);
   },
 
-  'selection-ack': (event, ctx) => {
-    ctx.core.selectMachine().dispatch({
-      type: 'SWITCH_ACK',
-      deviceId: event.deviceId,
-      selectToken: event.selectToken,
-    });
-  },
-
-  'legacy-history': (event, ctx) => {
-    const routed = ctx.core.paneSinks.dispatchPaneHistory(
-      event.deviceId,
-      event.paneId,
-      event.selectToken,
-      event.data,
-      event.alternateScreen,
-      event.modes
-    );
-    if (routed) return;
-    ctx.selection.observeSelectHistory(event.deviceId, event.selectToken);
-    ctx.core.selectMachine().dispatch({
-      type: 'HISTORY',
-      deviceId: event.deviceId,
-      selectToken: event.selectToken,
-      data: event.data,
-      alternateScreen: event.alternateScreen,
-      modes: event.modes,
-    });
-  },
-
-  'live-resume': (event, ctx) => {
-    ctx.selection.observeSelectLiveResume(event.deviceId, event.selectToken);
-    ctx.core.selectMachine().dispatch({
-      type: 'LIVE_RESUME',
-      deviceId: event.deviceId,
-      selectToken: event.selectToken,
-    });
-  },
-
   'terminal-data': (event, ctx) => {
-    if (event.frame.seqStart === undefined) {
-      ctx.core.selectMachine().dispatch({
-        type: 'OUTPUT',
-        deviceId: event.frame.deviceId,
-        paneId: event.frame.paneId,
-        data: event.frame.data,
-      });
-      return;
-    }
     ctx.core.paneSinks.dispatchPaneTerminalData(event.frame);
   },
 

@@ -357,7 +357,7 @@ describe('socketFactory', () => {
     socket.open();
 
     const payload = new Uint8Array(256).fill(7);
-    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_TERM_HISTORY, 9, {
+    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_DEVICE_EVENT, 9, {
       maxFrameBytes: 96,
       chunkStreamId: 3,
     });
@@ -408,7 +408,7 @@ describe('陈旧 socket 的事件隔离', () => {
     client.onStateChange((state) => states.push(state));
 
     const payload = new Uint8Array(256).fill(5);
-    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_TERM_HISTORY, 11, {
+    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_DEVICE_EVENT, 11, {
       maxFrameBytes: 96,
       chunkStreamId: 8,
     });

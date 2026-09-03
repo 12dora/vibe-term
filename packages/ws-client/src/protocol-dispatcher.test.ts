@@ -63,9 +63,9 @@ describe('ProtocolDispatcher', () => {
     const rec = createRecorder();
     const payload = new Uint8Array([7, 7]);
     rec.dispatcher.handleFrame(
-      frame(wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_OUTPUT, payload, 12))
+      frame(wsBorsh.encodeEnvelope(wsBorsh.KIND_DEVICE_EVENT, payload, 12))
     );
-    expect(rec.messages).toEqual([{ kind: wsBorsh.KIND_TERM_OUTPUT, seq: 12, payload }]);
+    expect(rec.messages).toEqual([{ kind: wsBorsh.KIND_DEVICE_EVENT, seq: 12, payload }]);
   });
 
   test('PONG 与 HELLO 分流到各自回调', () => {
@@ -106,7 +106,7 @@ describe('ProtocolDispatcher', () => {
   test('reset 后旧分片流不再重组', () => {
     const rec = createRecorder();
     const payload = new Uint8Array(200).fill(4);
-    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_TERM_HISTORY, 3, {
+    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_DEVICE_EVENT, 3, {
       maxFrameBytes: 96,
       chunkStreamId: 1,
     });
@@ -139,14 +139,14 @@ describe('ProtocolDispatcher', () => {
 
   test('业务帧 payload 借用原始帧缓冲（零拷贝）', () => {
     const rec = createRecorder();
-    const buffer = frame(wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_OUTPUT, new Uint8Array(64), 5));
+    const buffer = frame(wsBorsh.encodeEnvelope(wsBorsh.KIND_DEVICE_EVENT, new Uint8Array(64), 5));
     rec.dispatcher.handleFrame(buffer);
     expect(rec.messages[0]?.payload.buffer).toBe(buffer);
   });
 
   test('payload 长度前缀越界的帧被丢弃', () => {
     const rec = createRecorder();
-    const bytes = wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_OUTPUT, new Uint8Array([1, 2]), 6);
+    const bytes = wsBorsh.encodeEnvelope(wsBorsh.KIND_DEVICE_EVENT, new Uint8Array([1, 2]), 6);
     new DataView(bytes.buffer, bytes.byteOffset).setUint32(12, 0xffffffff, true);
     rec.dispatcher.handleFrame(frame(bytes));
     expect(rec.messages).toEqual([]);

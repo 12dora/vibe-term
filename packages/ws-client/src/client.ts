@@ -1,7 +1,7 @@
 // FE Borsh WebSocket 客户端
 // 门面：组合心跳、重连退避与协议分发，对外维持连接状态与订阅接口
 
-import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1, wsBorsh } from '@tmex/shared';
+import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@tmex/shared';
 import {
   type ActiveCarrier,
   type AttachDirectOptions,
@@ -95,7 +95,6 @@ const DEFAULT_OPTIONS: BorshClientOptions = {
   pongTimeoutMs: DEFAULT_PONG_TIMEOUT_MS,
   hiddenHeartbeatIntervalMs: DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS,
   hiddenHeartbeatTimeoutMs: DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS,
-  canonicalStateEnabled: true,
 };
 
 const VISIBILITY_RECONNECT_THROTTLE_MS = 5000;
@@ -124,8 +123,6 @@ export interface BorshClientOptions {
   maxPendingBytes?: number;
   /** 未就绪待发队列帧数上限；缺省 2048 */
   maxPendingFrames?: number;
-  /** canonical-state-v1 kill switch；缺省开启，false 时强制使用 legacy state feed。 */
-  canonicalStateEnabled?: boolean;
 }
 
 export type ConnectionState =
@@ -136,7 +133,8 @@ export type ConnectionState =
   | 'RECONNECT_BACKOFF'
   | 'CLOSED';
 
-export type StateFeedMode = 'pending' | 'legacy' | 'canonical';
+// legacy 状态流已下线；unsupported = 已连上但网关不满足 canonical v1.1 门槛，不回退
+export type StateFeedMode = 'pending' | 'canonical' | 'unsupported';
 
 export type { BorshMessage, ChunkProgress } from './protocol-dispatcher';
 
@@ -429,13 +427,13 @@ export class BorshWebSocketClient {
     this.serverCapabilities = hello.capabilities;
     this.serverVersion = hello.serverVersion;
     this.serverMaxFrameBytes = hello.maxFrameBytes;
+    // canonical v1.1 门槛（fail-closed）：能力 + 版本 + 帧上限三条全中才建会话，缺一不降级
     this.stateFeedMode =
-      this.options.canonicalStateEnabled !== false &&
-      hello.capabilities.includes(GATEWAY_CAPABILITY_CANONICAL_STATE_V1) &&
+      hello.capabilities.includes(GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1) &&
+      wsBorsh.peerSupportsCanonicalV11(hello.serverVersion) &&
       this.effectiveMaxFrameBytes >= MIN_CANONICAL_FEED_FRAME_BYTES
         ? 'canonical'
-        : 'legacy';
-
+        : 'unsupported';
     this.setState('READY');
     this.hasConnectedOnce = true;
     this.applyHeartbeatCadence();
