@@ -68,6 +68,11 @@ describe('runStreamFailover logging isolation', () => {
       closeBrowser(_target, info) {
         closed.push(info);
       },
+      closePump(target, info) {
+        target.stream?.close(info.code, info.reason);
+        target.stream = null;
+        closed.push(info);
+      },
       sendToStream() {},
       sendToBrowser(_target, frame) {
         browserFrames.push(frame);
