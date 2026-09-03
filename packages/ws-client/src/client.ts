@@ -85,9 +85,20 @@ export function normalizeNegotiatedHeartbeatIntervalMs(value: number | undefined
   return Math.round(value);
 }
 
+// 网关按 clientVersion 做 canonical v1.1 版本门（fail-closed），宿主应用启动时必须先注入真实版本。
+let defaultClientVersion = '0.0.0';
+
+export function setDefaultClientVersion(version: string): void {
+  defaultClientVersion = version;
+}
+
+export function getDefaultClientVersion(): string {
+  return defaultClientVersion;
+}
+
 const DEFAULT_OPTIONS: BorshClientOptions = {
   clientImpl: 'tmex-fe',
-  clientVersion: '0.1.0',
+  clientVersion: defaultClientVersion,
   maxFrameBytes: 1048576, // 1MB
   reconnectDelayMs: 1000,
   maxReconnectAttempts: 5,
@@ -223,8 +234,12 @@ export class BorshWebSocketClient {
     return serverSupportsTermViewport(this.serverVersion);
   }
 
+  getClientVersion(): string {
+    return this.options.clientVersion;
+  }
+
   constructor(options: Partial<BorshClientOptions> = {}) {
-    this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.options = { ...DEFAULT_OPTIONS, clientVersion: defaultClientVersion, ...options };
     this.explicitPongTimeoutMs = options.pongTimeoutMs;
     this.heartbeatIntervalPinned = options.heartbeatIntervalMs !== undefined;
     this.pending = new PendingSendQueue({

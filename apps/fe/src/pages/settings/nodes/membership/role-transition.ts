@@ -7,13 +7,16 @@
 import type { LocalRole } from '@tmex/api-client/local/types';
 import type { SetupIntent } from './intent';
 
-export type MeshRole = Exclude<LocalRole, 'standalone'>;
+// 纯 relay 没有网页与本机用户，不算 mesh 成员；relay,node 的 node 部分与普通 node 同路径。
+export type MeshRole = Exclude<LocalRole, 'standalone' | 'relay'>;
 
 /** 角色的展示文案 key：本机卡片的下拉与退出对话框共用一套，别各写各的。 */
 export const ROLE_LABEL_KEY: Record<LocalRole, string> = {
   standalone: 'nodes.machine.roleStandalone',
   node: 'nodes.machine.roleNode',
   'hub,node': 'nodes.machine.roleHub',
+  relay: 'nodes.machine.roleRelay',
+  'relay,node': 'nodes.machine.roleRelayNode',
 };
 
 export type RoleTransition =
@@ -27,7 +30,7 @@ export type RoleTransition =
   | { kind: 'switch'; from: MeshRole; path: SetupIntent };
 
 export function isMeshRole(role: LocalRole): role is MeshRole {
-  return role !== 'standalone';
+  return role !== 'standalone' && role !== 'relay';
 }
 
 export function setupPathForRole(role: MeshRole): SetupIntent {

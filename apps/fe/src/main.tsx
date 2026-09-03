@@ -9,6 +9,7 @@ import './index.css';
 
 // 浏览器 console 打印 monorepo 版本（非 production 带 _dev 后缀）
 console.info(`${PRODUCT_NAME} ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
+setDefaultClientVersion(formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__));
 
 import { isAuthTransitionActive } from '@/auth/auth-transition';
 import { createLoginRedirect } from '@/auth/login-redirect';
@@ -28,6 +29,7 @@ import { ConnectionIndicator } from '@tmex/panels';
 import { SettingsEventsInit } from '@tmex/panels/settings/events';
 import { WatchEventsInit } from '@tmex/panels/watch';
 import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
+import { setDefaultClientVersion } from '@tmex/ws-client';
 import { RuntimeProvider, useUIStore } from '@tmex/stores/react';
 import { useKeyboardAvoidance } from '@tmex/terminal-ui/hooks/use-keyboard-avoidance';
 import { applyThemePreset, isThemePreset } from '@tmex/theme';

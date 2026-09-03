@@ -1799,6 +1799,8 @@
         "roleStandalone": "独立运行",
         "roleNode": "节点",
         "roleHub": "Hub 兼节点",
+        "roleRelay": "中继",
+        "roleRelayNode": "中继兼节点",
         "localAddress": "本机地址",
         "localAddressUnset": "未设置",
         "localAddressHint": "其它节点无法加入本机。请按「角色 → Hub 兼节点」重新设置。",

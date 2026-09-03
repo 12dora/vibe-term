@@ -1065,6 +1065,8 @@
         "roleStandalone": "Standalone",
         "roleNode": "Node",
         "roleHub": "Hub and node",
+        "roleRelay": "Relay",
+        "roleRelayNode": "Relay and node",
         "localAddress": "This Machine's Address",
         "localAddressUnset": "Not set",
         "localAddressHint": "Other nodes cannot join. Set it up again under Role → Hub and node.",

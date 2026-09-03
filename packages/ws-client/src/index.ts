@@ -22,6 +22,8 @@ export {
   type PendingOverflowInfo,
   type WebSocketLike,
   type SocketFactory,
+  getDefaultClientVersion,
+  setDefaultClientVersion,
 } from './client';
 
 export {

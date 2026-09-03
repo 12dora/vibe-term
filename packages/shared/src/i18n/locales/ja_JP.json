@@ -1799,6 +1799,8 @@
         "roleStandalone": "スタンドアロン",
         "roleNode": "ノード",
         "roleHub": "ハブ兼ノード",
+        "roleRelay": "リレー",
+        "roleRelayNode": "リレー兼ノード",
         "localAddress": "このマシンのアドレス",
         "localAddressUnset": "未設定",
         "localAddressHint": "他のノードはこのマシンに参加できません。「ロール → ハブ兼ノード」で設定し直してください。",

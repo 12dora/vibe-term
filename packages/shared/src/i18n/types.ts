@@ -1633,6 +1633,8 @@ export type TranslationKey =
   | 'nodes.machine.roleStandalone'
   | 'nodes.machine.roleNode'
   | 'nodes.machine.roleHub'
+  | 'nodes.machine.roleRelay'
+  | 'nodes.machine.roleRelayNode'
   | 'nodes.machine.localAddress'
   | 'nodes.machine.localAddressUnset'
   | 'nodes.machine.localAddressHint'

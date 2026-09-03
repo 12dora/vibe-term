@@ -43,6 +43,7 @@ const TITLE_KEY: Record<LeaveDialogKind, string> = {
 const CONSEQUENCES_KEY: Record<MeshRole, string> = {
   node: 'nodes.membership.consequencesNode',
   'hub,node': 'nodes.membership.consequencesHub',
+  'relay,node': 'nodes.membership.consequencesNode',
 };
 
 export function LeaveDialog({
