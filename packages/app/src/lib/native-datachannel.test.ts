@@ -3,12 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256Hex } from './artifacts-manifest';
-import {
-  loadNodeDatachannel,
-  nativeAddonPath,
-  nativeManifestPath,
-  parseSdpFingerprint,
-} from './native-datachannel';
+import { loadNodeDatachannel, nativeAddonPath, nativeManifestPath } from './native-datachannel';
 
 const tempDirs: string[] = [];
 
@@ -79,12 +74,5 @@ describe('loadNodeDatachannel', () => {
     });
     expect(mod).toBeNull();
     expect(reasons.length).toBeGreaterThan(0);
-  });
-});
-
-describe('parseSdpFingerprint', () => {
-  test('parses a=fingerprint from SDP', () => {
-    const sdp = ['v=0', 'a=fingerprint:sha-256 AA:BB:CC:dd', 'a=ice-pwd:x'].join('\r\n');
-    expect(parseSdpFingerprint(sdp)).toEqual({ algorithm: 'sha-256', value: 'AABBCCDD' });
   });
 });

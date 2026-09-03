@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { releaseTarballName } from '../../../shared/src/release/source';
 import { t } from '../i18n';
@@ -25,10 +24,6 @@ export function parseSha256Sums(text: string, fileName: string): string | null {
 
 export function verifyTarballSha256(bytes: Uint8Array, expectedHex: string): boolean {
   return sha256Hex(bytes) === expectedHex.toLowerCase();
-}
-
-export function sha256Of(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
 }
 
 export type ReleaseIntegritySums = {

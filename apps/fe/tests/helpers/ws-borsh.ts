@@ -238,22 +238,6 @@ export function decodeTermHistory(payload: Buffer): TermHistoryPayload {
   return { deviceId, paneId, selectToken, encoding, alternateScreen, modes, data };
 }
 
-export interface TermResizePayload {
-  deviceId: string;
-  paneId: string;
-  cols: number;
-  rows: number;
-}
-
-export function decodeTermResize(payload: Buffer): TermResizePayload {
-  const c = new BorshCursor(payload);
-  const deviceId = c.readString();
-  const paneId = c.readString();
-  const cols = c.readU16();
-  const rows = c.readU16();
-  return { deviceId, paneId, cols, rows };
-}
-
 export interface SiteThemeUpdateS2CPayload {
   theme: number;
   serverTimestamp: bigint;

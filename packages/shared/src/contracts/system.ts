@@ -77,32 +77,6 @@ export interface StartUpgradeRequest {
   sha256?: string;
 }
 
-/** `PUT /api/system/upgrade/package` 成功响应 */
-export interface StagedUpgradePackageResponse {
-  version: string;
-  sha256: string;
-  bytes: number;
-}
-
-export interface RestartGatewayResponse {
-  success: boolean;
-  message: string;
-}
-
-/** 节点管理页「升级到最新」的稳定错误码 */
-export type MeshUpgradeErrorCode =
-  | 'NODE_LOGIN_REQUIRED'
-  | 'NODE_UNREACHABLE'
-  | 'UPGRADE_NOT_ALLOWED'
-  | 'UPGRADE_IN_PROGRESS'
-  | 'UPGRADE_ALREADY_LATEST'
-  | 'UPGRADE_UNSUPPORTED'
-  | 'UPGRADE_CANCEL_UNSUPPORTED'
-  | 'UPGRADE_NOT_CANCELLABLE'
-  | 'UPGRADE_NOT_RUNNING'
-  | 'RELEASE_UNAVAILABLE'
-  | 'NOT_FOUND';
-
 /**
  * 远程卸载：目标节点 `POST /api/system/uninstall` 受理后返回 `scheduled`，随后由脱离的
  * 卸载器停服务、删安装目录 / shim / 数据——之后目标离线，状态不再可查。
@@ -133,11 +107,6 @@ export type MeshUninstallErrorCode =
   | 'UPGRADE_IN_PROGRESS'
   | 'NOT_FOUND';
 
-export interface MeshUninstallError {
-  code: MeshUninstallErrorCode;
-  nodeId?: string;
-}
-
 /**
  * 入口记录的节点长事务，随 `GET /api/mesh/nodes` 每行下发（`operation`），页面刷新后据此
  * 恢复行状态。`uninstall`：requested → uninstalling（目标已受理，随后离线）→ 由入口在该
@@ -153,19 +122,6 @@ export interface MeshNodeOperation {
   startedAt: number;
   updatedAt: number;
   error: string | null;
-}
-
-/** `GET /api/mesh/upgrade/latest`：具体可安装版本，不含入口节点 hasUpdate */
-export interface MeshUpgradeLatest {
-  latestVersion: string;
-  changelog: string | null;
-  publishedAt: string | null;
-}
-
-export interface MeshUpgradeError {
-  code: MeshUpgradeErrorCode;
-  nodeId?: string;
-  version?: string;
 }
 
 /** 本机可被其他设备访问的地址线索（`GET /api/system/addresses`），供「接入更多设备」面板拼地址 */

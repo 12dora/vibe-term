@@ -12,12 +12,7 @@ import {
   nativeManifestPath,
   readInstalledNativeManifest,
 } from '../lib/native-datachannel';
-import {
-  NATIVE_ADDON_FILENAME,
-  type NativePin,
-  detectCurrentNativePin,
-  verifyNpmIntegrity,
-} from '../lib/native-manifest';
+import { type NativePin, detectCurrentNativePin, verifyNpmIntegrity } from '../lib/native-manifest';
 import { extractTarGzipFile } from '../lib/native-tarball';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
@@ -365,5 +360,3 @@ export async function runDirect(parsed: ParsedArgs, deps: RunDirectDeps = {}): P
 
   throw new Error('Usage: tmex direct enable|disable [--install-dir <path>]');
 }
-
-export const DIRECT_ADDON_FILENAME = NATIVE_ADDON_FILENAME;

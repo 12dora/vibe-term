@@ -34,20 +34,6 @@ export interface ListTelegramBotsResponse {
   bots: TelegramBotWithStats[];
 }
 
-export interface CreateTelegramBotRequest {
-  name: string;
-  token: string;
-  enabled?: boolean;
-  allowAuthRequests?: boolean;
-}
-
-export interface UpdateTelegramBotRequest {
-  name?: string;
-  token?: string;
-  enabled?: boolean;
-  allowAuthRequests?: boolean;
-}
-
 export interface ListTelegramBotChatsResponse {
   chats: TelegramBotChat[];
 }

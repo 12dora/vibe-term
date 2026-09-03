@@ -1,15 +1,6 @@
 import type { Device, EventType, SiteSettings, WebhookEvent } from '@tmex/shared';
 import type { ConnectionAlertSource } from './connection-alerts';
 
-export const DISCONNECT_ERROR_TYPES = new Set([
-  'connection_closed',
-  'network_unreachable',
-  'connection_refused',
-  'timeout',
-  'host_not_found',
-  'handshake_failed',
-]);
-
 export const BRIDGE_EVENT_SOURCES = new Set<ConnectionAlertSource>(['close', 'connect', 'probe']);
 
 const BRIDGE_EVENT_BY_ERROR_TYPE: Record<string, EventType> = {

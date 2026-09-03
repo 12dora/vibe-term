@@ -11,7 +11,6 @@ import {
   signLogin,
 } from '@tmex/shared/auth';
 import { WebSocketLink } from '@tmex/shared/link';
-import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
 import {
   KeyLogStore,
   MeshHubStore,
@@ -404,15 +403,6 @@ export async function waitUntil(
 
 export async function waitOnline(mesh: MeshRuntime, timeoutMs = 8_000): Promise<void> {
   await waitUntil(() => mesh.uplink.state === 'online' && mesh.lastNodeList !== null, timeoutMs);
-}
-
-export function notWriterBody(writerHubId: string, writerPublicUrl: string, writerEpoch: number) {
-  return {
-    code: HUB_NOT_WRITER,
-    writerHubId,
-    writerPublicUrl,
-    writerEpoch,
-  };
 }
 
 export async function callHub(

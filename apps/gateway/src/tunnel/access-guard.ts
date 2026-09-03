@@ -14,13 +14,6 @@ export type AccessEnforcement = {
   effective?: boolean;
 };
 
-export type AccessGuardOptions = {
-  snapshot?: () => AccessEnforcement;
-  fetchImpl?: TunnelFetch;
-  now?: () => number;
-  jwks?: JwksCache;
-};
-
 const DENIED = { error: { code: 'access_denied' as const } };
 
 const defaultSnapshot = (): AccessEnforcement => ({
@@ -53,28 +46,12 @@ export function setAccessGuardFetch(fn: TunnelFetch): void {
   defaultJwks.setFetchImpl(fn);
 }
 
-export function setAccessGuardNow(fn: () => number): void {
-  nowFn = fn;
-}
-
 export function resetAccessGuardForTests(): void {
   snapshotFn = defaultSnapshot;
   fetchImpl = fetch;
   nowFn = Date.now;
   defaultJwks.invalidate();
   defaultJwks.setFetchImpl(fetch);
-}
-
-export function createAccessGuard(opts: AccessGuardOptions = {}) {
-  const jwks = opts.jwks ?? new JwksCache({ fetchImpl: opts.fetchImpl, now: opts.now });
-  if (opts.fetchImpl) jwks.setFetchImpl(opts.fetchImpl);
-  return (req: Request) =>
-    enforceAccessJwt(req, {
-      snapshot: opts.snapshot ?? snapshotFn,
-      fetchImpl: opts.fetchImpl ?? fetchImpl,
-      now: opts.now ?? nowFn,
-      jwks,
-    });
 }
 
 export function accessEnforcementActive(snap: AccessEnforcement): boolean {

@@ -98,7 +98,3 @@ export interface UpdateAgentLlmSettingsRequest {
   /** 缺省表示不修改，空串表示清除 */
   braveApiKey?: string;
 }
-
-export interface UpdateAgentLlmSettingsResponse {
-  settings: AgentLlmSettingsDto;
-}

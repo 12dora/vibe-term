@@ -14,11 +14,6 @@ export interface LocalAuthStatus {
   credentialsPresent: boolean;
 }
 
-/** `POST /api/auth/local` 请求体。 */
-export interface SetLocalAuthRequest {
-  enabled: boolean;
-}
-
 /** `POST /api/auth/local/bootstrap` 请求体：在门未生效时创建第一位用户。 */
 export interface BootstrapLocalAuthRequest {
   username: string;

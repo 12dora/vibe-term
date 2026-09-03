@@ -1,5 +1,5 @@
 import { type APIRequestContext, type Page, devices, expect, test } from '@playwright/test';
-import type { KeyboardBehaviorMode } from '../src/stores/ui';
+import type { KeyboardBehaviorMode } from '@tmex/stores';
 import { createSinglePaneSession, ensureCleanSession } from './helpers/tmux';
 import { KIND, decodeEnvelope, isGatewayWsUrl } from './helpers/ws-borsh';
 

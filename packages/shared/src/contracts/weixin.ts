@@ -40,18 +40,6 @@ export interface ListWeixinAccountsResponse {
   accounts: WeixinAccountWithStats[];
 }
 
-export interface CreateWeixinAccountRequest {
-  name: string;
-  enabled?: boolean;
-  allowAuthRequests?: boolean;
-}
-
-export interface UpdateWeixinAccountRequest {
-  name?: string;
-  enabled?: boolean;
-  allowAuthRequests?: boolean;
-}
-
 export interface ListWeixinAccountUsersResponse {
   users: WeixinAccountUser[];
 }

@@ -54,7 +54,3 @@ export interface UpdateSiteSettingsRequest {
   language?: LocaleCode;
   disabledNotificationChannels?: string[];
 }
-
-export interface UpdateSiteSettingsResponse extends SiteSettingsLinkFields {
-  settings: SiteSettingsView;
-}

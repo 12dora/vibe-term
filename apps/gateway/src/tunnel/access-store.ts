@@ -101,33 +101,6 @@ export function serializeBypassAppIds(ids: string[]): string | null {
   return JSON.stringify(ids);
 }
 
-export function accessStatusFrom(
-  row: TunnelAccessPersisted,
-  opts?: { tunnelMode?: TunnelMode; tunnelHostname?: string | null }
-): TunnelAccessStatus {
-  const configured = Boolean(row.appId && row.aud && row.hostname);
-  return {
-    hasCredentials: Boolean(row.apiTokenEnc && row.accountId),
-    accountId: row.accountId,
-    teamDomain: row.teamDomain,
-    configured,
-    appId: row.appId,
-    aud: row.aud,
-    hostname: row.hostname,
-    rules: [...row.rules],
-    enforceJwt: row.enforceJwt,
-    effective: computeAccessEffective({
-      configured,
-      enforceJwt: row.enforceJwt,
-      accessHostname: row.hostname,
-      tunnelMode: opts?.tunnelMode ?? 'off',
-      tunnelHostname: opts?.tunnelHostname ?? null,
-    }),
-    bypassAppId: row.bypassAppIds[0] ?? null,
-    lastError: row.lastError,
-  };
-}
-
 export class MemoryTunnelAccessStore implements TunnelAccessStoreLike {
   private row: TunnelAccessPersisted = { ...DEFAULT_TUNNEL_ACCESS, rules: [], bypassAppIds: [] };
   private apiToken: string | null = null;

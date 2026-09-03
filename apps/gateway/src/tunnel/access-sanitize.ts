@@ -12,14 +12,6 @@ export function sanitizeAccessError(message: string): string {
   return out || 'Cloudflare API request failed';
 }
 
-export function teamDomainFromAuthDomain(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  let value = raw.trim().toLowerCase();
-  value = value.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-  if (!value) return null;
-  return value;
-}
-
 export function teamIssuer(teamDomain: string): string {
   return `https://${teamDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '')}`;
 }

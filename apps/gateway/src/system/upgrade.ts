@@ -958,10 +958,6 @@ export function parsePidFileRecord(raw: string): PidFileRecord | null {
   }
 }
 
-export function parsePidFileContents(raw: string): number | null {
-  return parsePidFileRecord(raw)?.pid ?? null;
-}
-
 /**
  * 下载 GitHub Release tarball 并解压到 stageDir（npm pack 布局：package/）。
  * 返回 CLI 入口路径 `<stageDir>/package/bin/tmex.js`。

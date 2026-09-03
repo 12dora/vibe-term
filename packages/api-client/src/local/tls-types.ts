@@ -132,6 +132,3 @@ export type TlsErrorCode =
 
 export const DEFAULT_TLS_PORT = 9443;
 export const DEFAULT_TLS_BIND_HOST = '0.0.0.0';
-
-/** 自签叶证书 398 天、ACME 90 天，都在到期前 30 天续期。 */
-export const TLS_RENEW_WINDOW_DAYS = 30;

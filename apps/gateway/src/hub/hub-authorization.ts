@@ -1,6 +1,5 @@
 import { compareSemver } from '@tmex/shared';
 import {
-  HUB_AUTH_RECORD_TYPES,
   KEYLOG_RECORD_COMPAT,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
@@ -154,10 +153,6 @@ export type HubAuthRecordCompatResult =
       allowForce: boolean;
     };
 
-export function isHubAuthRecordType(type: string): boolean {
-  return (HUB_AUTH_RECORD_TYPES as readonly string[]).includes(type);
-}
-
 export function normalizeReportedNodeVersion(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   const trimmed = raw.trim().replace(/_dev$/, '');
@@ -193,13 +188,6 @@ export function nodesBlockingMinVersion(
     });
   }
   return blocked;
-}
-
-export function nodesBlockingHubAuthRecords(
-  userStore: UserStore,
-  userId?: string | null
-): UnsupportedKeyLogNode[] {
-  return nodesBlockingMinVersion(userStore, MIN_HUB_AUTH_RECORD_VERSION, userId);
 }
 
 export function inspectHubAuthRecordCompat(

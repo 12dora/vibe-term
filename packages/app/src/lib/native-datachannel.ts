@@ -67,17 +67,6 @@ export function nativeManifestPath(nativeDir: string): string {
   return join(nativeDir, 'manifest.json');
 }
 
-export function parseSdpFingerprint(sdp: string): { algorithm: string; value: string } {
-  const match = sdp.match(/(?:^|\r?\n)a=fingerprint:([^\s]+)\s+([0-9a-f:]+)\s*$/im);
-  if (!match) {
-    throw new Error('Missing DTLS fingerprint');
-  }
-  return {
-    algorithm: match[1].toLowerCase(),
-    value: match[2].replaceAll(':', '').toUpperCase(),
-  };
-}
-
 function defaultLog(message: string): void {
   console.warn(`[tmex][native-datachannel] ${message}`);
 }

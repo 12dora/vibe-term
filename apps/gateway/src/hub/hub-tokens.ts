@@ -4,7 +4,6 @@ import {
   type HubTokenRow,
   type HubTokensMessage,
   type HubTokensRevision,
-  MIN_HUB_TOKENS_VERSION,
   UPLINK_CTL_MAX_BYTES,
   encodeHubUplinkCtl,
 } from '@tmex/shared/uplink';
@@ -17,10 +16,6 @@ export const HUB_TOKENS_FRAME_MAX_BYTES = 48 * 1024;
 
 export function peerSupportsHubTokens(version: string | null | undefined): boolean {
   return nodeVersionSupportsHubAuthRecords(version);
-}
-
-export function minHubTokensVersion(): string {
-  return MIN_HUB_TOKENS_VERSION;
 }
 
 export function tokenRecordToRow(token: EnrollmentTokenRecord): HubTokenRow {

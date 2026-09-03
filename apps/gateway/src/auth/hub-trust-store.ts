@@ -17,10 +17,6 @@ export type PutHubTrustInput = {
   createdAt?: number;
 };
 
-export function normalizeHubTrustUrl(hubUrl: string): string {
-  return canonicalHubUrl(hubUrl);
-}
-
 function toRecord(row: {
   hubUrl: string;
   caPem: string;

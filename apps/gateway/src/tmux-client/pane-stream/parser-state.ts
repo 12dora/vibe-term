@@ -6,7 +6,6 @@ export const MAX_TITLE_BYTES = 8 * 1024;
 export const MAX_DCS_PASSTHROUGH_BYTES = 64 * 1024;
 export const MAX_KITTY_PENDING_IDS = 16;
 export const MAX_CSI_BYTES = 64;
-export const TMUX_PASSTHROUGH_PREFIX = 'tmux;';
 export const TMUX_PASSTHROUGH_PREFIX_BYTES = new Uint8Array([0x74, 0x6d, 0x75, 0x78, 0x3b]);
 export const THEME_UPDATES_MODE = '2031';
 export const EMPTY_UINT8 = new Uint8Array(0);

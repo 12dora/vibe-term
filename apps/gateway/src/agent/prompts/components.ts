@@ -8,8 +8,5 @@ export const Doc: PromptComponent = ({ children }) => blocks(children);
 export const Section: PromptComponent<{ title?: string }> = ({ title, children }) =>
   (title ? `${title}\n` : '') + lines(children);
 
-/** 逐行容器。 */
-export const Lines: PromptComponent = ({ children }) => lines(children);
-
 /** 列表项：`- ` 前缀，内容无分隔拼接。 */
 export const Item: PromptComponent = ({ children }) => `- ${cat(children)}`;

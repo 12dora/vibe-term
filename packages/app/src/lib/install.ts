@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { chmod, copyFile, rm } from 'node:fs/promises';
+import { chmod, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { formatHttpEndpoint } from '../../../shared/src/network';
 import type { InstallMeta } from '../types';
 import { copyDirectory, ensureDir, pathExists, readText, writeTextAtomic } from './fs-utils';
@@ -189,66 +189,4 @@ export async function writeInstallMeta(
   meta: InstallMeta
 ): Promise<void> {
   await writeJsonFile(installLayout.metaPath, meta, 0o600);
-}
-
-export async function backupInstallArtifacts(
-  installLayout: InstallLayout,
-  backupDir: string
-): Promise<void> {
-  await ensureDir(backupDir);
-
-  if (await pathExists(installLayout.runtimeDir)) {
-    await copyDirectory(installLayout.runtimeDir, resolve(backupDir, 'runtime'));
-  }
-
-  if (await pathExists(installLayout.resourcesDir)) {
-    await copyDirectory(installLayout.resourcesDir, resolve(backupDir, 'resources'));
-  }
-
-  if (await pathExists(installLayout.runScriptPath)) {
-    await copyFile(installLayout.runScriptPath, resolve(backupDir, 'run.sh'));
-  }
-
-  if (await pathExists(installLayout.metaPath)) {
-    await copyFile(installLayout.metaPath, resolve(backupDir, 'install-meta.json'));
-  }
-
-  if (await pathExists(installLayout.cliDir)) {
-    await copyDirectory(installLayout.cliDir, resolve(backupDir, 'cli'));
-  }
-}
-
-export async function restoreInstallArtifacts(
-  installLayout: InstallLayout,
-  backupDir: string
-): Promise<void> {
-  const runtimeBackup = resolve(backupDir, 'runtime');
-  const resourcesBackup = resolve(backupDir, 'resources');
-  const runScriptBackup = resolve(backupDir, 'run.sh');
-  const metaBackup = resolve(backupDir, 'install-meta.json');
-  const cliBackup = resolve(backupDir, 'cli');
-
-  await rm(installLayout.runtimeDir, { recursive: true, force: true });
-  await rm(installLayout.resourcesDir, { recursive: true, force: true });
-  await rm(installLayout.cliDir, { recursive: true, force: true });
-
-  if (await pathExists(runtimeBackup)) {
-    await copyDirectory(runtimeBackup, installLayout.runtimeDir);
-  }
-
-  if (await pathExists(resourcesBackup)) {
-    await copyDirectory(resourcesBackup, installLayout.resourcesDir);
-  }
-
-  if (await pathExists(runScriptBackup)) {
-    await copyFile(runScriptBackup, installLayout.runScriptPath);
-  }
-
-  if (await pathExists(metaBackup)) {
-    await copyFile(metaBackup, installLayout.metaPath);
-  }
-
-  if (await pathExists(cliBackup)) {
-    await copyDirectory(cliBackup, installLayout.cliDir);
-  }
 }
