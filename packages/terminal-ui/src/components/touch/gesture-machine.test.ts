@@ -124,7 +124,9 @@ function createHarness(options: {
     : null;
 
   const terminal: TerminalScroller = {
-    scrollLines: (amount) => calls.push(`scrollLines(${amount})`),
+    scrollLines: (amount) => {
+      calls.push(`scrollLines(${amount})`);
+    },
     handleViewportGesture: (gesture) => {
       calls.push(`viewportGesture(${gesture.deltaY},${gesture.clientX},${gesture.clientY})`);
       return true;

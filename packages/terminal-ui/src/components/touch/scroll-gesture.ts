@@ -114,10 +114,19 @@ export class TouchScrollGesture {
     if (linesToScroll === 0) {
       return { didScroll: false, atTopWhilePullingDown: false };
     }
+    // buffer.active.viewportY 只在渲染落地时更新，而滚动渲染已改为 rAF 合并：
+    // 「本次是否真的滚动了」必须由 scrollLines 的返回值给出。旧终端（返回 void）
+    // 才回落到前后差比对。
     const beforeViewportY = terminal.buffer?.active?.viewportY ?? 0;
-    terminal.scrollLines(linesToScroll);
+    const reported = terminal.scrollLines(linesToScroll);
     const afterViewportY = terminal.buffer?.active?.viewportY ?? 0;
     this.pendingPixelDelta -= linesToScroll * lineHeight;
+    if (typeof reported === 'boolean') {
+      return {
+        didScroll: reported,
+        atTopWhilePullingDown: linesToScroll < 0 && !reported,
+      };
+    }
     return {
       didScroll: beforeViewportY !== afterViewportY,
       atTopWhilePullingDown: linesToScroll < 0 && beforeViewportY <= 0 && afterViewportY <= 0,

@@ -417,31 +417,44 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.renderCoordinator.schedule();
   }
 
-  scrollLines(amount: number): void {
+  // 返回视口偏移是否真的变了。滚动渲染走 rAF 合并：wheel / touchmove 事件率是
+  // 60–120Hz，同步全渲染会把一帧内除最后一次以外的结果全部作废并阻塞合成；而
+  // 「是否真的滚动了」调用方仍要同步知道（决定 preventDefault），故由两次极廉价的
+  // readScrollbar 判定，与渲染时机解耦。
+  scrollLines(amount: number): boolean {
     if (this.disposed || amount === 0) {
-      return;
+      return false;
     }
 
+    const before = this.bindings.readScrollbar(this.handles.terminal).offset;
     this.bindings.scrollViewportDelta(this.handles.terminal, amount);
-    this.renderCoordinator.renderNow();
-  }
-
-  scrollToTop(): void {
-    if (this.disposed) {
-      return;
+    if (this.bindings.readScrollbar(this.handles.terminal).offset === before) {
+      return false;
     }
 
-    this.bindings.scrollViewportTop(this.handles.terminal);
-    this.renderCoordinator.renderNow();
+    this.renderCoordinator.schedule();
+    return true;
   }
 
-  scrollToBottom(): void {
+  // 跳顶 / 跳底是一次性动作（快捷键、切 pane 后归位），不存在事件率问题，
+  // 保持同步渲染：调用方紧接着就会读 buffer.active.viewportY。
+  scrollToTop(): boolean {
+    return this.jumpViewport(() => this.bindings.scrollViewportTop(this.handles.terminal));
+  }
+
+  scrollToBottom(): boolean {
+    return this.jumpViewport(() => this.bindings.scrollViewportBottom(this.handles.terminal));
+  }
+
+  private jumpViewport(apply: () => void): boolean {
     if (this.disposed) {
-      return;
+      return false;
     }
 
-    this.bindings.scrollViewportBottom(this.handles.terminal);
+    const before = this.bindings.readScrollbar(this.handles.terminal).offset;
+    apply();
     this.renderCoordinator.renderNow();
+    return this.bindings.readScrollbar(this.handles.terminal).offset !== before;
   }
 
   exportModeSnapshot(): GhosttyTerminalModeSnapshot {
@@ -527,14 +540,15 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       return false;
     }
 
-    const metrics = this.dom.panMetrics();
-    if (!metrics || metrics.overflowX <= 0) {
-      return false;
-    }
-
+    // 纯纵向滚轮（绝大多数事件）在这里就走掉，不碰任何布局属性。
     const deltaX = gesture.deltaX ?? 0;
     const raw = deltaX !== 0 ? deltaX : gesture.shiftKey ? gesture.deltaY : 0;
     if (raw === 0) {
+      return false;
+    }
+
+    const metrics = this.dom.panMetrics();
+    if (!metrics || metrics.overflowX <= 0) {
       return false;
     }
 

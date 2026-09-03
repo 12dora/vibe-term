@@ -7,7 +7,9 @@ export interface TerminalPanMetrics {
 }
 
 export interface TerminalScroller {
-  scrollLines: (amount: number) => void;
+  /** 返回视口偏移是否真的变了；宽到 void 是为了容纳只声明 `=> void` 的兼容终端类型 */
+  // biome-ignore lint/suspicious/noConfusingVoidType: 兼容终端接口（CompatibleTerminalLike）声明的就是 void，换成 undefined 会让它不可赋值
+  scrollLines: (amount: number) => boolean | void;
   /** 未启用平移（非 follower）或终端未挂载时返回 null */
   panMetrics?: () => TerminalPanMetrics | null;
   /** 返回真正落地的位移，未消费的余量由调用方回退给 scrollback */

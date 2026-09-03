@@ -34,6 +34,10 @@ function createRootElement(options: GhosttyTerminalInitOptions): HTMLDivElement 
   root.style.position = 'absolute';
   root.style.inset = '0';
   root.style.overflow = 'hidden';
+  // 终端子树自成布局/绘制/样式隔离单元：滚动条与 canvas 层的样式写入不再让整份文档的
+  // 布局树失效，残余的强制同步布局也被限制在这棵子树内。root 本身已是 overflow:hidden
+  // 的绝对定位块，paint 隔离不改变任何可见裁剪与包含块语义。
+  root.style.contain = 'layout paint style';
   root.style.width = '100%';
   root.style.height = '100%';
   root.style.backgroundColor = options.theme.background;
@@ -154,6 +158,16 @@ export class TerminalDomSurface {
   private contentWidth = 0;
   private contentHeight = 0;
   private cursorCell: { x: number; y: number } | null = null;
+  // 布局属性缓存：滚动轨道高度与平移可滚量只随容器尺寸 / 内容表面尺寸变化，
+  // 却曾经被每个 wheel / touchmove 事件读一次，与紧邻的样式写构成强制同步布局。
+  private trackHeight: number | null = null;
+  private panOverflow: { x: number; y: number } | null = null;
+  private layoutObserver: ResizeObserver | null = null;
+  // 最近一次真正写进 thumb 的样式值：thumb.style.height 影响布局，无条件重写会让
+  // 布局树每帧失效，于是下一次读 clientHeight 必须先跑一次同步布局。
+  private lastThumbHeight = '';
+  private lastThumbTransform = '';
+  private lastThumbOpacity = '0';
 
   constructor(private readonly options: GhosttyTerminalInitOptions) {}
 
@@ -193,7 +207,52 @@ export class TerminalDomSurface {
     this.helperTextarea = textarea;
     this.scrollbarThumb = scrollbar.thumb;
     viewport.addEventListener('scroll', this.handlePanScroll, { passive: true });
+    this.observeViewportLayout(viewport);
     return screen;
+  }
+
+  // 容器尺寸变化是布局缓存唯一的外部失效源（内容表面尺寸变化走 setContentSurfaceSize）。
+  // 观察 .xterm-viewport 的内容盒：平移开启后滚动条出现/消失只改它、不改 root。
+  private observeViewportLayout(viewport: HTMLDivElement): void {
+    if (typeof ResizeObserver !== 'function') {
+      return;
+    }
+
+    this.layoutObserver = new ResizeObserver(() => {
+      this.invalidateLayoutMetrics();
+    });
+    this.layoutObserver.observe(viewport);
+  }
+
+  invalidateLayoutMetrics(): void {
+    this.trackHeight = null;
+    this.panOverflow = null;
+  }
+
+  // 0 不入缓存：首帧布局未落地时读到的 0 会永久粘住（无 ResizeObserver 的环境尤甚）。
+  private readTrackHeight(): number {
+    if (this.trackHeight !== null) {
+      return this.trackHeight;
+    }
+
+    const measured = this.viewport?.clientHeight ?? 0;
+    if (measured > 0) {
+      this.trackHeight = measured;
+    }
+    return measured;
+  }
+
+  private readPanOverflow(viewport: HTMLDivElement): { x: number; y: number } {
+    if (this.panOverflow !== null) {
+      return this.panOverflow;
+    }
+
+    const overflow = {
+      x: Math.max(0, viewport.scrollWidth - viewport.clientWidth),
+      y: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+    };
+    this.panOverflow = overflow;
+    return overflow;
   }
 
   // follower（他人拥有 PTY 尺寸）时打开：超尺寸的内容表面完整绘制，由平移视口裁剪 + 双向滚动。
@@ -203,6 +262,7 @@ export class TerminalDomSurface {
     }
 
     this.panEnabled = enabled;
+    this.invalidateLayoutMetrics();
     this.applyPanStyles();
   }
 
@@ -214,20 +274,24 @@ export class TerminalDomSurface {
   setContentSurfaceSize(width: number, height: number): void {
     this.contentWidth = width;
     this.contentHeight = height;
+    this.invalidateLayoutMetrics();
     this.applyContentSurfaceStyles();
   }
 
+  // scrollLeft/scrollTop 必须实时读（平移每一步都在变），但它们不触发布局；
+  // 触发布局的 scrollWidth/clientWidth 一类走缓存。
   panMetrics(): GhosttyPanMetrics | null {
     const viewport = this.viewport;
     if (!this.panEnabled || !viewport) {
       return null;
     }
 
+    const overflow = this.readPanOverflow(viewport);
     return {
       scrollLeft: viewport.scrollLeft,
       scrollTop: viewport.scrollTop,
-      overflowX: Math.max(0, viewport.scrollWidth - viewport.clientWidth),
-      overflowY: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+      overflowX: overflow.x,
+      overflowY: overflow.y,
     };
   }
 
@@ -411,16 +475,15 @@ export class TerminalDomSurface {
   }
 
   updateScrollbar(scrollbar: TerminalScrollbarState): void {
-    const thumb = this.scrollbarThumb;
-    if (!thumb) {
+    if (!this.scrollbarThumb) {
       return;
     }
 
     // 轨道贴在容器右缘，量的必须是可视高度：pan 开启后 .xterm-screen 是超尺寸内容表面，
     // 只有 .xterm-viewport 仍等于容器（pan 关闭时两者恒等，行为不变）。
-    const trackHeight = this.viewport?.clientHeight ?? 0;
+    const trackHeight = this.readTrackHeight();
     if (trackHeight === 0 || scrollbar.total <= scrollbar.len) {
-      thumb.style.opacity = '0';
+      this.writeThumbOpacity('0');
       return;
     }
 
@@ -429,9 +492,34 @@ export class TerminalDomSurface {
     const scrollRatio = scrollbar.offset / Math.max(1, scrollbar.total - scrollbar.len);
     const thumbTop = scrollRatio * (trackHeight - thumbHeight);
 
-    thumb.style.height = `${thumbHeight}px`;
-    thumb.style.transform = `translateY(${thumbTop}px)`;
-    thumb.style.opacity = this.scrollbarVisible ? '1' : '0';
+    this.writeThumbGeometry(`${thumbHeight}px`, `translateY(${thumbTop}px)`);
+    this.writeThumbOpacity(this.scrollbarVisible ? '1' : '0');
+  }
+
+  private writeThumbGeometry(height: string, transform: string): void {
+    const thumb = this.scrollbarThumb;
+    if (!thumb) {
+      return;
+    }
+
+    if (this.lastThumbHeight !== height) {
+      this.lastThumbHeight = height;
+      thumb.style.height = height;
+    }
+    if (this.lastThumbTransform !== transform) {
+      this.lastThumbTransform = transform;
+      thumb.style.transform = transform;
+    }
+  }
+
+  private writeThumbOpacity(opacity: string): void {
+    const thumb = this.scrollbarThumb;
+    if (!thumb || this.lastThumbOpacity === opacity) {
+      return;
+    }
+
+    this.lastThumbOpacity = opacity;
+    thumb.style.opacity = opacity;
   }
 
   // 悬停会以刷新率调用（120Hz 即每秒 120 次）：滚动条已可见时只推后到期时间戳，
@@ -447,7 +535,7 @@ export class TerminalDomSurface {
     }
 
     this.scrollbarVisible = true;
-    this.scrollbarThumb.style.opacity = '1';
+    this.writeThumbOpacity('1');
     this.armScrollbarFade(SCROLLBAR_FADE_MS);
   }
 
@@ -461,9 +549,7 @@ export class TerminalDomSurface {
       }
 
       this.scrollbarVisible = false;
-      if (this.scrollbarThumb) {
-        this.scrollbarThumb.style.opacity = '0';
-      }
+      this.writeThumbOpacity('0');
     }, delay);
   }
 
@@ -474,9 +560,7 @@ export class TerminalDomSurface {
     }
 
     this.scrollbarVisible = false;
-    if (this.scrollbarThumb) {
-      this.scrollbarThumb.style.opacity = '0';
-    }
+    this.writeThumbOpacity('0');
     this.cancelScrollbarFade();
   }
 
@@ -502,6 +586,9 @@ export class TerminalDomSurface {
 
   dispose(): void {
     this.viewport?.removeEventListener('scroll', this.handlePanScroll);
+    this.layoutObserver?.disconnect();
+    this.layoutObserver = null;
+    this.invalidateLayoutMetrics();
     this.root?.remove();
     this.root = null;
     this.viewport = null;
