@@ -3,6 +3,7 @@ import { wsBorsh } from '@tmex/shared';
 import { getSiteSettings } from '../db';
 import { t } from '../i18n';
 import type { TmuxEvent } from '../tmux-client/events';
+import { syncLegacyPaneOutputObserverCounts } from '../tmux-client/runtime/output-materialization';
 import { resolvePaneContext } from '../tmux/bell-context';
 import { switchBarrier } from './borsh/switch-barrier';
 import { classifySshError } from './error-classify';
@@ -419,6 +420,7 @@ export class LegacyFeedBroadcaster {
     for (const paneId of next) {
       if (!previous.has(paneId)) this.addLegacyPaneObserver(deviceId, paneId);
     }
+    syncLegacyPaneOutputObserverCounts(deviceId, this.legacyObserverCounts);
   }
 
   private releaseClientDeviceObservers(

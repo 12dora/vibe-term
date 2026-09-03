@@ -3,6 +3,7 @@ import { handleEsc } from './pane-stream/esc-handler';
 import { handleNormal } from './pane-stream/normal-handler';
 import { handleOsc, handleScreenTitle } from './pane-stream/osc-handlers';
 import {
+  EMPTY_UINT8,
   MAX_CSI_BYTES,
   type ParserContext,
   appendDcsRun,
@@ -49,7 +50,7 @@ export interface PaneStreamParserOptions {
 }
 
 export interface PaneStreamParser {
-  push(data: Uint8Array): Uint8Array;
+  push(data: Uint8Array, materializeOutput?: boolean): Uint8Array;
 }
 
 function dispatchPaneStreamByte(ctx: ParserContext, byte: number): void {
@@ -110,7 +111,7 @@ function consumeNormal(ctx: ParserContext, data: Uint8Array, index: number): num
     return 1;
   }
   if (byte === 0x1b && data[index + 1] === 0x5b) {
-    ctx.state.csiBytes = [];
+    ctx.state.csiLength = 0;
     ctx.state.phase = 'csi';
     return 2 + consumeCsi(ctx, data, index + 2, index);
   }
@@ -185,7 +186,7 @@ function consumeScreenTitle(ctx: ParserContext, data: Uint8Array, index: number)
 function writeCsiPrefix(ctx: ParserContext): void {
   writeByte(ctx.output, 0x1b);
   writeByte(ctx.output, 0x5b);
-  writeBytes(ctx.output, ctx.state.csiBytes);
+  writeBytes(ctx.output, ctx.state.csiBytes, ctx.state.csiLength);
 }
 
 function consumeCsi(ctx: ParserContext, data: Uint8Array, index: number, seqStart = -1): number {
@@ -196,8 +197,9 @@ function consumeCsi(ctx: ParserContext, data: Uint8Array, index: number, seqStar
     if (byte === undefined) {
       break;
     }
-    if (byte >= 0x20 && byte <= 0x3f && state.csiBytes.length < MAX_CSI_BYTES) {
-      state.csiBytes.push(byte);
+    if (byte >= 0x20 && byte <= 0x3f && state.csiLength < MAX_CSI_BYTES) {
+      state.csiBytes[state.csiLength] = byte;
+      state.csiLength += 1;
       i += 1;
       continue;
     }
@@ -210,11 +212,12 @@ function consumeCsi(ctx: ParserContext, data: Uint8Array, index: number, seqStar
       }
       maybeEmitThemeSubscription(
         state.csiBytes,
+        state.csiLength,
         byte,
         state.inTmuxPassthrough,
         ctx.options.onThemeSubscription
       );
-      state.csiBytes = [];
+      state.csiLength = 0;
       state.phase = 'normal';
       return i - index + 1;
     }
@@ -223,7 +226,7 @@ function consumeCsi(ctx: ParserContext, data: Uint8Array, index: number, seqStar
     } else {
       writeCsiPrefix(ctx);
     }
-    state.csiBytes = [];
+    state.csiLength = 0;
     state.phase = 'normal';
     ctx.processByte(byte);
     return i - index + 1;
@@ -272,15 +275,34 @@ type ScanWork = {
   passthrough: boolean;
 };
 
-function processInput(ctx: ParserContext, data: Uint8Array): void {
-  const stack: ScanWork[] = [{ data, index: 0, passthrough: false }];
-  while (stack.length > 0) {
-    const top = stack[stack.length - 1];
-    if (!top) {
-      break;
-    }
+type ParserFrame = {
+  ctx: ParserContext;
+  scanStack: ScanWork[];
+};
+
+function setScanWork(
+  stack: ScanWork[],
+  depth: number,
+  data: Uint8Array,
+  passthrough: boolean
+): void {
+  const existing = stack[depth];
+  if (existing) {
+    existing.data = data;
+    existing.index = 0;
+    existing.passthrough = passthrough;
+    return;
+  }
+  stack[depth] = { data, index: 0, passthrough };
+}
+
+function processInput(ctx: ParserContext, data: Uint8Array, stack: ScanWork[]): void {
+  setScanWork(stack, 0, data, false);
+  let depth = 1;
+  while (depth > 0) {
+    const top = stack[depth - 1] as ScanWork;
     if (top.index >= top.data.length) {
-      stack.pop();
+      depth -= 1;
       if (top.passthrough) {
         ctx.state.inTmuxPassthrough = false;
         refillIncompleteCsi(ctx);
@@ -293,25 +315,51 @@ function processInput(ctx: ParserContext, data: Uint8Array): void {
       continue;
     }
     ctx.state.inTmuxPassthrough = true;
-    stack.push({ data: inner, index: 0, passthrough: true });
+    setScanWork(stack, depth, inner, true);
+    depth += 1;
   }
+}
+
+function createParserFrame(
+  state: ReturnType<typeof createParserState>,
+  options: PaneStreamParserOptions
+): ParserFrame {
+  return {
+    ctx: {
+      state,
+      options,
+      output: null,
+      processByte(byte) {
+        dispatchPaneStreamByte(this, byte);
+      },
+      pendingPassthrough: [],
+    },
+    scanStack: [{ data: EMPTY_UINT8, index: 0, passthrough: false }],
+  };
 }
 
 export function createPaneStreamParser(options: PaneStreamParserOptions): PaneStreamParser {
   const state = createParserState();
+  const frames: ParserFrame[] = [createParserFrame(state, options)];
+  let activePushes = 0;
   return {
-    push(data) {
-      const ctx: ParserContext = {
-        state,
-        options,
-        output: createParserOutput(data.length),
-        processByte(byte) {
-          dispatchPaneStreamByte(this, byte);
-        },
-        pendingPassthrough: [],
-      };
-      processInput(ctx, data);
-      return takeOutput(ctx.output);
+    push(data, materializeOutput = true) {
+      const frame = frames[activePushes] ?? createParserFrame(state, options);
+      frames[activePushes] = frame;
+      activePushes += 1;
+      try {
+        frame.ctx.output = materializeOutput ? createParserOutput(data.length) : null;
+        processInput(frame.ctx, data, frame.scanStack);
+        return takeOutput(frame.ctx.output);
+      } finally {
+        frame.ctx.output = null;
+        frame.ctx.pendingPassthrough.length = 0;
+        for (let index = 0; index < frame.scanStack.length; index += 1) {
+          const work = frame.scanStack[index];
+          if (work) work.data = EMPTY_UINT8;
+        }
+        activePushes -= 1;
+      }
     },
   };
 }

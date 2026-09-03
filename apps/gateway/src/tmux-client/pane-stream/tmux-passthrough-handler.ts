@@ -16,8 +16,8 @@ export function refillIncompleteCsi(ctx: ParserContext): void {
   }
   writeByte(ctx.output, 0x1b);
   writeByte(ctx.output, 0x5b);
-  writeBytes(ctx.output, state.csiBytes);
-  state.csiBytes = [];
+  writeBytes(ctx.output, state.csiBytes, state.csiLength);
+  state.csiLength = 0;
   state.phase = 'normal';
 }
 

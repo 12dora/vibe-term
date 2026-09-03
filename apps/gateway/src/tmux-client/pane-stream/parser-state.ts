@@ -12,6 +12,8 @@ export const EMPTY_UINT8 = new Uint8Array(0);
 
 export const utf8Decoder = new TextDecoder();
 
+const DIRECT_COPY_MAX_BYTES = 16;
+
 export type ParserPhase =
   | 'normal'
   | 'esc'
@@ -45,7 +47,8 @@ export type ParserState = {
   titleBytes: number[];
   dcsPrefixLength: number;
   dcsBytes: number[];
-  csiBytes: number[];
+  csiBytes: Uint8Array;
+  csiLength: number;
   inTmuxPassthrough: boolean;
   warnedOscPayloadOverflow: boolean;
   warnedTitleOverflow: boolean;
@@ -57,7 +60,7 @@ export type ParserState = {
 export type ParserContext = {
   state: ParserState;
   options: PaneStreamParserOptions;
-  output: ParserOutput;
+  output: ParserOutput | null;
   processByte: (byte: number) => void;
   pendingPassthrough: Uint8Array[];
 };
@@ -79,7 +82,8 @@ function growOutput(out: ParserOutput, extra: number): void {
   out.buf = next;
 }
 
-export function writeByte(out: ParserOutput, byte: number): void {
+export function writeByte(out: ParserOutput | null, byte: number): void {
+  if (!out) return;
   if (out.len >= out.buf.length) {
     growOutput(out, 1);
   }
@@ -87,19 +91,36 @@ export function writeByte(out: ParserOutput, byte: number): void {
   out.len += 1;
 }
 
-export function writeBytes(out: ParserOutput, bytes: ArrayLike<number>): void {
-  const n = bytes.length;
+export function writeBytes(
+  out: ParserOutput | null,
+  bytes: ArrayLike<number>,
+  length = bytes.length
+): void {
+  if (!out) return;
+  const n = length;
   if (n === 0) {
     return;
   }
   if (out.len + n > out.buf.length) {
     growOutput(out, n);
   }
-  out.buf.set(bytes, out.len);
+  if (n === bytes.length) {
+    out.buf.set(bytes, out.len);
+  } else {
+    for (let index = 0; index < n; index += 1) {
+      out.buf[out.len + index] = bytes[index] as number;
+    }
+  }
   out.len += n;
 }
 
-export function writeRun(out: ParserOutput, src: Uint8Array, start: number, end: number): void {
+export function writeRun(
+  out: ParserOutput | null,
+  src: Uint8Array,
+  start: number,
+  end: number
+): void {
+  if (!out) return;
   const n = end - start;
   if (n <= 0) {
     return;
@@ -107,15 +128,25 @@ export function writeRun(out: ParserOutput, src: Uint8Array, start: number, end:
   if (out.len + n > out.buf.length) {
     growOutput(out, n);
   }
-  out.buf.set(src.subarray(start, end), out.len);
+  if (start === 0 && end === src.length) {
+    out.buf.set(src, out.len);
+  } else if (n <= DIRECT_COPY_MAX_BYTES) {
+    for (let index = start; index < end; index += 1) {
+      out.buf[out.len + index - start] = src[index] as number;
+    }
+  } else {
+    out.buf.set(src.subarray(start, end), out.len);
+  }
   out.len += n;
 }
 
-export function snapshotOutput(out: ParserOutput): number[] {
+export function snapshotOutput(out: ParserOutput | null): number[] {
+  if (!out) return [];
   return Array.from(out.buf.subarray(0, out.len));
 }
 
-export function takeOutput(out: ParserOutput): Uint8Array {
+export function takeOutput(out: ParserOutput | null): Uint8Array {
+  if (!out) return EMPTY_UINT8;
   if (out.len === 0) {
     return EMPTY_UINT8;
   }
@@ -133,7 +164,8 @@ export function createParserState(): ParserState {
     titleBytes: [],
     dcsPrefixLength: 0,
     dcsBytes: [],
-    csiBytes: [],
+    csiBytes: new Uint8Array(MAX_CSI_BYTES),
+    csiLength: 0,
     inTmuxPassthrough: false,
     warnedOscPayloadOverflow: false,
     warnedTitleOverflow: false,

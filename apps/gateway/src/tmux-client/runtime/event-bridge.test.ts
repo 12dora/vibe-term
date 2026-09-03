@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
 
+import { createControlModeSubscription } from '../control-mode-subscription';
 import type { DeviceSessionRuntimeListener } from '../device-session-runtime';
 import { MetadataProjection } from '../metadata-projection';
 import { PaneHistoryReader } from '../pane-history-reader';
@@ -8,6 +9,7 @@ import { PaneRetention } from '../pane-retention';
 import { RuntimeEventBridge, stateSnapshotsEqual } from './event-bridge';
 
 const SERVER_EPOCH = new Uint8Array(16).fill(1);
+const encoder = new TextEncoder();
 
 function snapshotPaneTitle(payload: StateSnapshotPayload | null): string | undefined {
   return payload?.session?.windows[0]?.panes[0]?.title;
@@ -149,6 +151,84 @@ describe('RuntimeEventBridge', () => {
         { deviceId: 'device-a', session: null }
       )
     ).toBe(true);
+  });
+
+  test('cold panes stop materializing while bell and notification events remain live', () => {
+    const metadata = new MetadataProjection('device-a');
+    const paneRetention = new PaneRetention({ scheduleTimers: false });
+    const historyReader = new PaneHistoryReader({
+      getPaneHistoryCaptureInfo: async () => ({ historySize: 0, cols: 80 }),
+      capturePaneHistoryRange: async () => '',
+    });
+    const outputs: string[] = [];
+    const events: string[] = [];
+    let lastSnapshot: StateSnapshotPayload | null = null;
+    const bridge = new RuntimeEventBridge({
+      metadata,
+      paneRetention,
+      getHistoryReader: () => historyReader,
+      getLastSnapshot: () => lastSnapshot,
+      setLastSnapshot: (payload) => {
+        lastSnapshot = payload;
+      },
+      broadcast: (action) => {
+        action({
+          onTerminalOutput: (_paneId, data) => outputs.push(new TextDecoder().decode(data)),
+          onEvent: (event) => events.push(event.type),
+        });
+      },
+      handleUnexpectedClose: () => undefined,
+    });
+    const options = bridge.connectionOptions({ deviceId: 'device-a' });
+    options.onSourceReady?.(SERVER_EPOCH);
+    options.onSnapshot(snapshot());
+    const subscription = createControlModeSubscription({
+      onTerminalOutput: options.onTerminalOutput,
+      onTitle: (paneId, title) => options.onSourceMetadata?.({ type: 'pane-title', paneId, title }),
+      onBell: (paneId) => options.onEvent({ type: 'bell', data: { paneId } }),
+      onNotification: (paneId, notification) =>
+        options.onEvent({ type: 'notification', data: { paneId, ...notification } }),
+      onStructureChanged: () => {},
+      onExit: () => {},
+    });
+
+    subscription.push(encoder.encode('%output %1 bootstrap\n'));
+    subscription.push(encoder.encode('%output %1 skipped\n'));
+    subscription.push(encoder.encode('%output %1 A\\007B\n'));
+    subscription.push(encoder.encode('%output %1 \\033]9;done\\007\n'));
+    expect(outputs).toEqual(['bootstrap']);
+    expect(events).toEqual(['bell', 'notification']);
+    options.onSourceReady?.(SERVER_EPOCH);
+    const staleCursor = paneRetention.getLatestCursor('%1');
+    expect(staleCursor?.terminalSeq).toBe(9n);
+    if (!staleCursor) throw new Error('expected stale cursor');
+    const coldReplay = paneRetention.readReplay('%1', staleCursor);
+    expect(coldReplay?.needsScreen).toBe(true);
+    expect(coldReplay?.gap?.reason).toBe('cache_evicted');
+
+    const paneEpoch = metadata.getPaneEpoch('%1');
+    if (!paneEpoch) throw new Error('expected pane epoch');
+    const retained: string[] = [];
+    const lease = paneRetention.attachConsumer({
+      onData: (segment) => retained.push(new TextDecoder().decode(segment.data)),
+    });
+    const applied = lease.applySubscriptions(
+      1n,
+      [{ paneId: '%1', paneEpoch, cursor: staleCursor }],
+      []
+    );
+    expect(applied.replay[0]?.needsScreen).toBe(true);
+    expect(applied.replay[0]?.gap?.reason).toBe('cache_evicted');
+    subscription.push(encoder.encode('%output %1 visible\n'));
+    expect(outputs).toEqual(['bootstrap', 'visible']);
+    expect(retained).toEqual(['visible']);
+    expect(paneRetention.getLatestCursor('%1')?.terminalSeq).toBe(16n);
+
+    lease.close();
+    subscription.dispose();
+    paneRetention.dispose();
+    metadata.dispose();
+    historyReader.dispose();
   });
 });
 

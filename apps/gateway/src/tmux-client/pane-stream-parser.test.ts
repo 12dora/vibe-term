@@ -741,3 +741,42 @@ describe('pane stream parser - chunk splits inside escapes', () => {
     expect(Array.from(output)).toEqual(Array.from(bytes(inner, 'Z')));
   });
 });
+
+describe('pane stream parser - reusable push frames', () => {
+  test('materialized output remains owned after the frame is reused', () => {
+    const parser = createPaneStreamParser({
+      onTitle: () => {},
+      onBell: () => {},
+      onNotification: () => {},
+    });
+    const first = parser.push(bytes('first'));
+    expect(new TextDecoder().decode(parser.push(bytes('second')))).toBe('second');
+    expect(new TextDecoder().decode(first)).toBe('first');
+  });
+
+  test('a callback can re-enter push without corrupting either output buffer', () => {
+    let nestedOutput: Uint8Array = new Uint8Array();
+    const parser = createPaneStreamParser({
+      onTitle: () => {},
+      onBell: () => {
+        nestedOutput = parser.push(bytes('nested'));
+      },
+      onNotification: () => {},
+    });
+
+    const outerOutput = parser.push(bytes('A', 0x07, 'B'));
+    expect(new TextDecoder().decode(outerOutput)).toBe('AB');
+    expect(new TextDecoder().decode(nestedOutput)).toBe('nested');
+  });
+
+  test('materializing after a notifications-only partial CSI preserves parser state', () => {
+    const parser = createPaneStreamParser({
+      onTitle: () => {},
+      onBell: () => {},
+      onNotification: () => {},
+    });
+
+    expect(parser.push(bytes(0x1b, '[1;3'), false)).toHaveLength(0);
+    expect(Array.from(parser.push(bytes('1mX'), true))).toEqual(Array.from(bytes(0x1b, '[1;31mX')));
+  });
+});

@@ -2,6 +2,10 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import * as db from '../db';
 import {
+  clearLegacyPaneOutputObservers,
+  isLegacyPaneOutputObserved,
+} from '../tmux-client/runtime/output-materialization';
+import {
   DeviceConnectionRegistry,
   type DeviceConnectionRegistryHost,
 } from './device-connection-registry';
@@ -198,5 +202,36 @@ describe('DeviceConnectionRegistry pending connect vs disconnect', () => {
     expect(released).toEqual(['device-race']);
     expect(registry.connections.size).toBe(0);
     expect(registry.pendingConnectionEntries.size).toBe(0);
+  });
+});
+
+describe('DeviceConnectionRegistry output observer presence', () => {
+  test('keeps connected legacy clients conservative and clears presence on disconnect', async () => {
+    const deviceId = 'device-observer-presence';
+    const entry = fakeEntry();
+    entry.runtime = { requestSnapshot() {} } as DeviceConnectionEntry['runtime'];
+    const host = {
+      canonicalSessions: new Map(),
+      async createDeviceConnectionEntry() {
+        return entry;
+      },
+      releaseConnectionEntry() {},
+      syncLegacyPaneObservers() {},
+      releaseLegacyPaneObservers() {},
+      dropViewportClaims() {},
+      sendEnvelope() {},
+    } as unknown as DeviceConnectionRegistryHost;
+    const registry = new DeviceConnectionRegistry(host);
+    const ws = createGatewaySession();
+    clearLegacyPaneOutputObservers(deviceId);
+
+    await registry.handleDeviceConnect(ws, deviceId);
+    expect(isLegacyPaneOutputObserved(deviceId, '%1')).toBe(true);
+
+    registry.handleDeviceDisconnect(ws, deviceId);
+    expect(isLegacyPaneOutputObserved(deviceId, '%1')).toBe(false);
+    registry.clearIdleReleaseTimer(entry);
+    registry.closeAll();
+    clearLegacyPaneOutputObservers(deviceId);
   });
 });

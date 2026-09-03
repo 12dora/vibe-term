@@ -7,24 +7,32 @@ import {
   KNOWN_NOTIFICATION_TYPES,
   MAX_BLOCK_BODY_LINES,
 } from './types';
-import { unescapeControlModeData } from './unescape';
+import { ControlModeUnescaper } from './unescape';
 
 const decoder = new TextDecoder();
+const MAX_INTERNED_PANE_IDS = 256;
 
 export interface NotificationParseState {
   currentBlock: ControlModeBlock | null;
   literalBlock: boolean;
   warnedUnexpectedLine: boolean;
   warnedInvalidEscape: boolean;
+  paneIds: Map<number, string>;
+  unescaper: ControlModeUnescaper;
+  onInvalidEscape: () => void;
 }
 
 export function createNotificationParseState(): NotificationParseState {
-  return {
+  const state: NotificationParseState = {
     currentBlock: null,
     literalBlock: false,
     warnedUnexpectedLine: false,
     warnedInvalidEscape: false,
+    paneIds: new Map(),
+    unescaper: new ControlModeUnescaper(),
+    onInvalidEscape: () => warnInvalidEscape(state),
   };
+  return state;
 }
 
 function warnInvalidEscape(state: NotificationParseState): void {
@@ -36,6 +44,35 @@ function warnInvalidEscape(state: NotificationParseState): void {
 
 function decodeRange(line: Uint8Array, start: number, end: number): string {
   return decoder.decode(line.subarray(start, end));
+}
+
+function parseNumericPaneId(line: Uint8Array, start: number, end: number): number | null {
+  if (line[start] !== BYTE_PERCENT || start + 1 >= end) return null;
+  if (start + 2 < end && line[start + 1] === 0x30) return null;
+  let value = 0;
+  for (let index = start + 1; index < end; index += 1) {
+    const byte = line[index] as number;
+    if (byte < 0x30 || byte > 0x39) return null;
+    value = value * 10 + byte - 0x30;
+    if (!Number.isSafeInteger(value)) return null;
+  }
+  return value;
+}
+
+function decodePaneId(
+  state: NotificationParseState,
+  line: Uint8Array,
+  start: number,
+  end: number
+): string {
+  const numericId = parseNumericPaneId(line, start, end);
+  if (numericId === null) return decodeRange(line, start, end);
+  const cached = state.paneIds.get(numericId);
+  if (cached) return cached;
+  const paneId = decodeRange(line, start, end);
+  if (state.paneIds.size >= MAX_INTERNED_PANE_IDS) state.paneIds.clear();
+  state.paneIds.set(numericId, paneId);
+  return paneId;
 }
 
 function pushBlockLine(state: NotificationParseState, text: string): void {
@@ -56,11 +93,8 @@ function handleOutputLine(
   if (paneEnd < 0) {
     return;
   }
-  const paneId = decodeRange(line, payloadStart, paneEnd);
-  callbacks.onOutput(
-    paneId,
-    unescapeControlModeData(line, paneEnd + 1, () => warnInvalidEscape(state))
-  );
+  const paneId = decodePaneId(state, line, payloadStart, paneEnd);
+  callbacks.onOutput(paneId, state.unescaper.unescape(line, paneEnd + 1, state.onInvalidEscape));
 }
 
 function handleExtendedOutputLine(
@@ -73,13 +107,10 @@ function handleExtendedOutputLine(
   if (paneEnd < 0) {
     return;
   }
-  const paneId = decodeRange(line, payloadStart, paneEnd);
+  const paneId = decodePaneId(state, line, payloadStart, paneEnd);
   for (let index = paneEnd; index + 2 < line.length; index += 1) {
     if (line[index] === BYTE_SPACE && line[index + 1] === 0x3a && line[index + 2] === BYTE_SPACE) {
-      callbacks.onOutput(
-        paneId,
-        unescapeControlModeData(line, index + 3, () => warnInvalidEscape(state))
-      );
+      callbacks.onOutput(paneId, state.unescaper.unescape(line, index + 3, state.onInvalidEscape));
       return;
     }
   }

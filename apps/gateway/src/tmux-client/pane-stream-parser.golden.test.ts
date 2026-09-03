@@ -59,7 +59,7 @@ type Trace = {
   output: number[];
 };
 
-function trace(chunks: Uint8Array[]): Trace {
+function trace(chunks: Uint8Array[], materializeOutput = true): Trace {
   const events: ParserEvent[] = [];
   const parser = createPaneStreamParser({
     onTitle: (title) => events.push({ type: 'title', title }),
@@ -72,7 +72,7 @@ function trace(chunks: Uint8Array[]): Trace {
   });
   const output: number[] = [];
   for (const chunk of chunks) {
-    output.push(...parser.push(chunk));
+    output.push(...parser.push(chunk, materializeOutput));
   }
   return { events, output };
 }
@@ -85,6 +85,9 @@ function expectGolden(input: Uint8Array, expected: Trace): void {
   const whole = trace([input]);
   expect(whole).toEqual(expected);
   expect(trace(splitEveryByte(input))).toEqual(whole);
+  const notificationsOnly = trace([input], false);
+  expect(notificationsOnly).toEqual({ events: whole.events, output: [] });
+  expect(trace(splitEveryByte(input), false)).toEqual(notificationsOnly);
 }
 
 const ST = bytes(0x1b, 0x5c);

@@ -9,6 +9,11 @@ import {
 } from './control-stream-metrics';
 import type { TmuxSourceMetadataEvent } from './events';
 import type { PaneStreamNotification, PromptMarker } from './pane-stream-parser';
+import {
+  type PaneOutputMaterializationPredicate,
+  finishPaneOutputMaterializationRequest,
+  requestPaneOutputMaterializationPredicate,
+} from './runtime/output-materialization';
 
 const STRUCTURE_RECONCILE_MS = 50;
 
@@ -45,6 +50,7 @@ export interface ControlModeSubscriptionOptions {
   metricsIntervalMs?: number;
   nowMs?: () => number;
   onMetrics?: (snapshot: ControlStreamMetricsSnapshot) => void;
+  materializeOutput?: PaneOutputMaterializationPredicate;
 }
 
 export function createControlModeSubscription(
@@ -60,6 +66,8 @@ export function createControlModeSubscription(
     : null;
   let structureTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
+  let materializeOutput = options.materializeOutput ?? null;
+  let resolverDiscoveryAttempted = materializeOutput !== null;
   const metadata = new ControlModeMetadataBridge();
   const paneParsers = new PaneParserRegistry({
     onTitle: callbacks.onTitle,
@@ -99,13 +107,27 @@ export function createControlModeSubscription(
     }
   }
 
+  function emitTerminalOutput(paneId: string, output: Uint8Array): void {
+    if (resolverDiscoveryAttempted) {
+      callbacks.onTerminalOutput(paneId, output);
+      return;
+    }
+    resolverDiscoveryAttempted = true;
+    const request = requestPaneOutputMaterializationPredicate(output);
+    try {
+      callbacks.onTerminalOutput(paneId, output);
+    } finally {
+      materializeOutput = finishPaneOutputMaterializationRequest(request);
+    }
+  }
+
   const parser = createControlModeParser({
     onOutput: (paneId, data) => {
       metrics?.recordControlOutput(data.length);
-      const output = paneParsers.get(paneId).push(data);
+      const output = paneParsers.get(paneId).push(data, materializeOutput?.(paneId) ?? true);
       if (output.length > 0) {
         metrics?.recordTerminalOutput(output.length);
-        callbacks.onTerminalOutput(paneId, output);
+        emitTerminalOutput(paneId, output);
       }
     },
     onNotification: handleNotification,

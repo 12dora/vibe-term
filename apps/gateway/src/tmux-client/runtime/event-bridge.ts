@@ -6,6 +6,17 @@ import type { TmuxSourceMetadataEvent } from '../events';
 import type { MetadataProjection, MetadataProjectionOptions } from '../metadata-projection';
 import type { PaneHistoryReader } from '../pane-history-reader';
 import type { PaneIdentity, PaneRetention } from '../pane-retention';
+import { bytesEqual } from '../retention/bytes';
+import {
+  clearSkippedPaneOutput,
+  clearSkippedPaneOutputsForDevice,
+  hasDeviceSkippedPaneOutput,
+  markSkippedPaneOutput,
+} from '../retention/skipped-output';
+import {
+  isLegacyPaneOutputObserved,
+  providePaneOutputMaterializationPredicate,
+} from './output-materialization';
 
 export interface RuntimeEventBridgeHost {
   metadata: MetadataProjection;
@@ -40,6 +51,19 @@ export class RuntimeEventBridge {
     deviceId: string;
     notifyEvent?: LifecycleEventEmitter;
   }): TmuxConnectionOptions {
+    const materializeOutput = (paneId: string): boolean => {
+      if (
+        isLegacyPaneOutputObserved(base.deviceId, paneId) ||
+        this.host.paneRetention.isPaneRetained(paneId)
+      ) {
+        return true;
+      }
+      if (!hasDeviceSkippedPaneOutput(base.deviceId, paneId)) {
+        const paneEpoch = this.host.metadata.ensurePaneEpoch(paneId);
+        if (paneEpoch) markSkippedPaneOutput(base.deviceId, paneId, paneEpoch);
+      }
+      return false;
+    };
     return {
       deviceId: base.deviceId,
       notifyEvent: base.notifyEvent,
@@ -47,8 +71,10 @@ export class RuntimeEventBridge {
         this.host.broadcast((listener) => listener.onEvent?.(event));
       },
       onTerminalOutput: (paneId, data) => {
+        providePaneOutputMaterializationPredicate(data, materializeOutput);
         const paneEpoch = this.host.metadata.ensurePaneEpoch(paneId);
         if (paneEpoch) this.host.paneRetention.ingest(paneId, paneEpoch, data);
+        clearSkippedPaneOutput(base.deviceId, paneId);
         this.host.broadcast((listener) => listener.onTerminalOutput?.(paneId, data));
       },
       onTerminalHistory: (paneId, data, alternateScreen, modes) => {
@@ -63,6 +89,10 @@ export class RuntimeEventBridge {
         this.host.broadcast((listener) => listener.onClipboardWrite?.(paneId, text));
       },
       onSourceReady: (serverEpoch) => {
+        const previousServerEpoch = this.host.metadata.serverEpoch;
+        if (!previousServerEpoch || !bytesEqual(previousServerEpoch, serverEpoch)) {
+          clearSkippedPaneOutputsForDevice(base.deviceId);
+        }
         this.host.metadata.setServerEpoch(serverEpoch);
       },
       onSourceMetadata: (event: TmuxSourceMetadataEvent) => {
@@ -111,7 +141,10 @@ export class RuntimeEventBridge {
     for (const pane of panes) historyReader.invalidatePane(pane.paneId, pane.paneEpoch);
     for (const window of previousSnapshot?.session?.windows ?? []) {
       for (const pane of window.panes) {
-        if (!currentPaneIds.has(pane.id)) historyReader.invalidatePane(pane.id);
+        if (!currentPaneIds.has(pane.id)) {
+          clearSkippedPaneOutput(payload.deviceId, pane.id);
+          historyReader.invalidatePane(pane.id);
+        }
       }
     }
   }

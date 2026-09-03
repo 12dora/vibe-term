@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { unescapeControlModeData } from './unescape';
+import { ControlModeUnescaper, unescapeControlModeData } from './unescape';
 
 const encoder = new TextEncoder();
 
@@ -75,5 +75,23 @@ describe('unescapeControlModeData', () => {
     expect(Array.from(unescapeControlModeData(line, 0))).toEqual(
       Array.from(bytes('AAAA', 0x09, 'BBBB', 0x5c, 'CCCC'))
     );
+  });
+
+  test('reuses and grows one scratch backing buffer across escaped payloads', () => {
+    const unescaper = new ControlModeUnescaper();
+    const first = unescaper.unescape(bytes('A\\033B'), 0);
+    const initialBuffer = first.buffer;
+    expect(Array.from(first)).toEqual([0x41, 0x1b, 0x42]);
+
+    const second = unescaper.unescape(bytes('C\\007D'), 0);
+    expect(second.buffer).toBe(initialBuffer);
+    expect(Array.from(second)).toEqual([0x43, 0x07, 0x44]);
+
+    const large = unescaper.unescape(bytes(`${'x'.repeat(512)}\\033`), 0);
+    expect(large.buffer).not.toBe(initialBuffer);
+    expect(large.byteLength).toBe(513);
+    const afterGrowth = unescaper.unescape(bytes('E\\011F'), 0);
+    expect(afterGrowth.buffer).toBe(large.buffer);
+    expect(Array.from(afterGrowth)).toEqual([0x45, 0x09, 0x46]);
   });
 });

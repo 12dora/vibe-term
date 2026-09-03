@@ -1,6 +1,7 @@
 import { bytesEqual, cloneIdentity, copyBytes, safeCallback } from './bytes';
 import { assembleHistoryChunks, selectHistoryRange } from './history-range';
 import type { RetentionKernel } from './kernel';
+import { hasSkippedPaneOutput } from './skipped-output';
 import type {
   PaneDataSegment,
   PaneHistoryPage,
@@ -117,7 +118,11 @@ export class PaneReplayStore {
     for (const consumer of this.kernel.consumers.values()) {
       const request = consumer.active.get(state.paneId) ?? consumer.hot.get(state.paneId);
       if (!request || !bytesEqual(request.paneEpoch, state.paneEpoch)) continue;
-      safeCallback(() => consumer.callbacks.onData(segment));
+      try {
+        consumer.callbacks.onData(segment);
+      } catch (error) {
+        console.error('[tmux-client] pane retention consumer callback failed:', error);
+      }
     }
   }
 
@@ -263,6 +268,16 @@ export class PaneReplayStore {
         ...identity,
         segments: [],
         gap: this.createGap(state, 'epoch_changed', cursor.paneEpoch, cursor.terminalSeq),
+        needsScreen: true,
+      };
+    }
+    if (hasSkippedPaneOutput(state.paneId, state.paneEpoch)) {
+      this.kernel.replayMisses += 1;
+      this.kernel.rebases += 1;
+      return {
+        ...identity,
+        segments: [],
+        gap: this.createGap(state, 'cache_evicted', cursor.paneEpoch, cursor.terminalSeq),
         needsScreen: true,
       };
     }

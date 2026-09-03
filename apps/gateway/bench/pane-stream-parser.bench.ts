@@ -1,4 +1,4 @@
-import { unescapeControlModeData } from '../src/tmux-client/control-mode/unescape';
+import { ControlModeUnescaper } from '../src/tmux-client/control-mode/unescape';
 import { createPaneStreamParser } from '../src/tmux-client/pane-stream-parser';
 
 const MIB = 1024 * 1024;
@@ -107,8 +107,9 @@ function benchParser(input: Uint8Array): () => void {
 }
 
 function benchUnescape(input: Uint8Array): () => void {
+  const unescaper = new ControlModeUnescaper();
   return () => {
-    retain(unescapeControlModeData(input, 0));
+    retain(unescaper.unescape(input, 0));
   };
 }
 

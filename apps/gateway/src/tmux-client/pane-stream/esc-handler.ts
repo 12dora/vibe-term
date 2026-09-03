@@ -19,7 +19,7 @@ export function handleEsc(ctx: ParserContext, byte: number): void {
     return;
   }
   if (byte === 0x5b) {
-    state.csiBytes = [];
+    state.csiLength = 0;
     state.phase = 'csi';
     return;
   }

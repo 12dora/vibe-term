@@ -2,7 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import type { TmuxSourceMetadataEvent } from './events';
 import type { PaneStreamNotification } from './pane-stream-parser';
 
-import { createControlModeSubscription } from './control-mode-subscription';
+import {
+  type ControlModeSubscriptionOptions,
+  createControlModeSubscription,
+} from './control-mode-subscription';
 import type { ControlStreamMetricsSnapshot } from './control-stream-metrics';
 
 const encoder = new TextEncoder();
@@ -23,7 +26,7 @@ interface Collected {
   exits: Array<string | null>;
 }
 
-function createCollector() {
+function createCollector(options: ControlModeSubscriptionOptions = {}) {
   const collected: Collected = {
     outputs: [],
     titles: [],
@@ -35,35 +38,38 @@ function createCollector() {
     structureChanges: 0,
     exits: [],
   };
-  const subscription = createControlModeSubscription({
-    onTerminalOutput: (paneId, data) => {
-      collected.outputs.push({ paneId, text: new TextDecoder().decode(data) });
+  const subscription = createControlModeSubscription(
+    {
+      onTerminalOutput: (paneId, data) => {
+        collected.outputs.push({ paneId, text: new TextDecoder().decode(data) });
+      },
+      onTitle: (paneId, title) => {
+        collected.titles.push({ paneId, title });
+      },
+      onBell: (paneId) => {
+        collected.bells.push(paneId);
+      },
+      onNotification: (paneId, notification) => {
+        collected.notifications.push({ paneId, notification });
+      },
+      onPause: (paneId) => {
+        collected.pauses.push(paneId);
+      },
+      onContinue: (paneId) => {
+        collected.continues.push(paneId);
+      },
+      onSourceMetadata: (event) => {
+        collected.metadata.push(event);
+      },
+      onStructureChanged: () => {
+        collected.structureChanges += 1;
+      },
+      onExit: (reason) => {
+        collected.exits.push(reason);
+      },
     },
-    onTitle: (paneId, title) => {
-      collected.titles.push({ paneId, title });
-    },
-    onBell: (paneId) => {
-      collected.bells.push(paneId);
-    },
-    onNotification: (paneId, notification) => {
-      collected.notifications.push({ paneId, notification });
-    },
-    onPause: (paneId) => {
-      collected.pauses.push(paneId);
-    },
-    onContinue: (paneId) => {
-      collected.continues.push(paneId);
-    },
-    onSourceMetadata: (event) => {
-      collected.metadata.push(event);
-    },
-    onStructureChanged: () => {
-      collected.structureChanges += 1;
-    },
-    onExit: (reason) => {
-      collected.exits.push(reason);
-    },
-  });
+    options
+  );
   return { subscription, collected };
 }
 
@@ -126,6 +132,45 @@ describe('control mode subscription', () => {
     expect(collected.notifications).toEqual([
       { paneId: '%1', notification: { source: 'osc9', body: 'partial' } },
     ]);
+    subscription.dispose();
+  });
+
+  test('notifications-only mode suppresses output while preserving non-output callbacks', () => {
+    const { subscription, collected } = createCollector({ materializeOutput: () => false });
+    subscription.push(
+      lines(
+        '%output %1 A\\007B',
+        '%output %1 \\033]2;pane-title\\007',
+        '%output %1 \\033]9;task-done\\007'
+      )
+    );
+    expect(collected.outputs).toEqual([]);
+    expect(collected.bells).toEqual(['%1']);
+    expect(collected.titles).toEqual([{ paneId: '%1', title: 'pane-title' }]);
+    expect(collected.notifications).toEqual([
+      { paneId: '%1', notification: { source: 'osc9', body: 'task-done' } },
+    ]);
+    subscription.dispose();
+  });
+
+  test('an unobserved pane starts materializing on the next chunk after observation', () => {
+    let observed = false;
+    const { subscription, collected } = createCollector({
+      materializeOutput: () => observed,
+    });
+    subscription.push(lines('%output %1 skipped'));
+    observed = true;
+    subscription.push(lines('%output %1 visible'));
+    expect(collected.outputs).toEqual([{ paneId: '%1', text: 'visible' }]);
+    subscription.dispose();
+  });
+
+  test('materialization decisions are independent per pane', () => {
+    const { subscription, collected } = createCollector({
+      materializeOutput: (paneId) => paneId === '%2',
+    });
+    subscription.push(lines('%output %1 skipped', '%output %2 visible'));
+    expect(collected.outputs).toEqual([{ paneId: '%2', text: 'visible' }]);
     subscription.dispose();
   });
 
