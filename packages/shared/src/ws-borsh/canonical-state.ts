@@ -1,4 +1,5 @@
 import { b } from '@zorsh/zorsh';
+import { assertCanonicalCommandSemantics } from './canonical-geometry';
 import { assertCanonicalEncoding } from './canonical-scan';
 import { assertCanonicalEventSemantics } from './canonical-state-validation';
 import {
@@ -35,6 +36,9 @@ export const SOURCE_FIELD_CURRENT_COMMAND = 11;
 export const SOURCE_FIELD_CONNECTED = 12;
 export const SOURCE_FIELD_PANE_EPOCH = 13;
 export const SOURCE_FIELD_CUSTOM_NAME = 14;
+// canonical v1.1：window / pane 在设备树里的用户自定义显示序号（0 基）。
+// 未携带该字段的实体不参与自定义排序，落在已排序实体之后并保持 tmux index 顺序。
+export const SOURCE_FIELD_TREE_ORDER = 15;
 
 export const SUBSCRIPTION_REJECTED_NOT_FOUND = 1;
 export const SUBSCRIPTION_REJECTED_RESOURCE_EXHAUSTED = 2;
@@ -120,6 +124,16 @@ export const CanonicalResizePaneSchema = b.struct({
   cols: b.u16(),
 });
 
+// canonical v1.1：在 v1 几何字段之后追加 reason + epoch，用于区分「视口真的变了」与「补发当前尺寸」。
+export const CanonicalResizePaneV11Schema = b.struct({
+  requestId: b.bytes(16),
+  pane: CanonicalPaneTargetSchema,
+  rows: b.u16(),
+  cols: b.u16(),
+  geometryReason: b.u8(),
+  sizeEpoch: b.u64(),
+});
+
 export const CanonicalRequestScreenSchema = b.struct({
   requestId: b.bytes(16),
   pane: CanonicalPaneTargetSchema,
@@ -139,6 +153,7 @@ export const CanonicalCommandSchema = b.enum({
   ResizePane: CanonicalResizePaneSchema,
   RequestScreen: CanonicalRequestScreenSchema,
   RequestHistory: CanonicalRequestHistorySchema,
+  ResizePaneV11: CanonicalResizePaneV11Schema,
 });
 
 export const CanonicalCommandEnvelopeSchema = b.struct({
@@ -290,6 +305,8 @@ export type CanonicalPaneTarget = b.infer<typeof CanonicalPaneTargetSchema>;
 export type CanonicalTerminalCursor = b.infer<typeof CanonicalTerminalCursorSchema>;
 export type CanonicalHistoryCursor = b.infer<typeof CanonicalHistoryCursorSchema>;
 export type CanonicalPaneSubscription = b.infer<typeof CanonicalPaneSubscriptionSchema>;
+export type CanonicalResizePane = b.infer<typeof CanonicalResizePaneSchema>;
+export type CanonicalResizePaneV11 = b.infer<typeof CanonicalResizePaneV11Schema>;
 export type CanonicalCommand = b.infer<typeof CanonicalCommandSchema>;
 export type CanonicalCommandEnvelope = b.infer<typeof CanonicalCommandEnvelopeSchema>;
 export type CanonicalEvent = b.infer<typeof CanonicalEventSchema>;
@@ -306,6 +323,7 @@ export function assertCanonicalPayloadBounded(payload: Uint8Array): void {
 }
 
 export function encodeCanonicalCommandPayload(command: CanonicalCommand): Uint8Array {
+  assertCanonicalCommandSemantics(command);
   const payload = CanonicalCommandEnvelopeSchema.serialize({
     protocolVersion: CANONICAL_STATE_PROTOCOL_VERSION,
     command,
@@ -330,6 +348,7 @@ export function decodeCanonicalCommandPayload(payload: Uint8Array): CanonicalCom
     throw new WsBorshError(ERROR_UNSUPPORTED_PROTOCOL, false);
   }
   assertCanonicalEncoding(CanonicalCommandEnvelopeSchema, payload);
+  assertCanonicalCommandSemantics(decoded.command);
   return decoded;
 }
 

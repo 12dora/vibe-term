@@ -746,6 +746,61 @@ PaneWire：
 - `SourceGap` 明确区分 metadata gap 与 pane sequence gap；客户端请求对应 snapshot 恢复，不要求整页刷新。
 - 每个完整 canonical Envelope 最大 32KiB；semantic chunk 的数据长度必须为 Envelope 和字段开销预留空间。
 
+### canonical v1.1（能力 `canonical-state-v1.1`）
+
+v1 小节冻结，本节只描述 v1.1 的增量。v1.1 不改 `protocolVersion`（仍为 `1`），也不改任何既有
+结构的字段顺序：增量只有「命令枚举尾部追加一个变体」和「metadata 记录的 `fields` 里新增一个字段号」，
+两者对 v1 解码方都是安全的——v1 客户端只会遇到自己不认识的 discriminator（网关不会向它发送）
+或直接忽略未知字段号。
+
+#### 能力与版本门槛
+
+- HELLO S2C `capabilities` 新增 `canonical-state-v1.1`（`packages/shared/src/capabilities.ts`）。
+- 最低对端版本 `1.1.22`（`CANONICAL_V11_MIN_PEER_VERSION`）。判定必须 **fail-closed**：
+  版本为 null、空串或无法解析一律视为不支持；唯一例外是开发态自报的 `X.Y.Z_dev`，
+  去掉 `_dev` 后按数字部分比较（`peerSupportsCanonicalV11`）。
+- `selectedVersion` 继续表示外层 WS Envelope 版本，不复用它表达 canonical 版本。
+- 网关必须记录并校验 `HELLO_C2S.clientVersion`：客户端版本不满足门槛时不得按 v1.1 语义处理它的命令。
+
+#### ResizePaneV11（命令 discriminator = 5）
+
+字段（顺序固定，只能尾部追加）：
+
+- `requestId: bytes(16)`
+- `pane: CanonicalPaneTarget`
+- `rows: u16`
+- `cols: u16`
+- `geometryReason: u8`
+- `sizeEpoch: u64`
+
+`geometryReason` 枚举：
+
+| 值 | 名称 | 含义 |
+|---:|---|---|
+| 0 | change | 浏览器/布局的视口真的变了 |
+| 1 | resend | 暖切换、重连、焦点恢复后补发当前尺寸 |
+
+语义（替代 legacy 的 `TERM_RESIZE` / `TERM_SYNC_SIZE` 之分）：
+
+- `change` 必须先自增 `sizeEpoch`；`resend` 复用上一次 `change` 的 `sizeEpoch`。
+- `sizeEpoch` 按 (会话, pane) 单调递增，取值 **从 1 起，0 为保留值**。收到 `sizeEpoch == 0`
+  或未知 `geometryReason` 一律回 `ERROR_INVALID_FRAME`（编解码两侧都校验）。
+- 网关按 epoch 丢弃过期尺寸：`sizeEpoch` 小于该 (会话, pane) 已记录值的命令直接丢弃。
+- 只有 `resend` 允许触发「不信任快照几何」（gateway `distrustLive`）；`change` 走原有去重路径。
+
+#### metadata 携带设备树顺序（字段号 15）
+
+- 新字段号 `SOURCE_FIELD_TREE_ORDER = 15`，值类型 `U32`，出现在 `WINDOW` 与 `PANE` 记录上，
+  含义是该实体在用户自定义显示顺序里的 0 基序号。
+- v1.1 网关在 metadata snapshot 和 patch 里始终携带它（有保存顺序时）；没有保存顺序的实体不带该字段。
+- patch 只携带变化字段：**不带**该字段表示顺序未变，`Unset` 表示该实体退出自定义顺序。
+- 客户端排序规则：带序号的实体按序号升序排在前，不带序号的实体保持原有顺序（即 tmux index 顺序）
+  追加在后；指向已不存在实体的序号自动失效。与被替换的 legacy `STATE_SNAPSHOT` overlay
+  （`applyDeviceTreeOverlay`）逐例等价。
+- 自定义 window / pane 名沿用既有的 `SOURCE_FIELD_CUSTOM_NAME = 14`，v1.1 不新增字段。
+
+自此 canonical 客户端不再需要 legacy `STATE_SNAPSHOT` overlay：设备树顺序与自定义名都从 metadata 通路获得。
+
 ### AGENT_SUBSCRIBE（0x0601）/ AGENT_UNSUBSCRIBE（0x0602）
 
 字段：

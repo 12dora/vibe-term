@@ -91,6 +91,7 @@ export {
   SOURCE_FIELD_CONNECTED,
   SOURCE_FIELD_PANE_EPOCH,
   SOURCE_FIELD_CUSTOM_NAME,
+  SOURCE_FIELD_TREE_ORDER,
   SUBSCRIPTION_REJECTED_NOT_FOUND,
   SUBSCRIPTION_REJECTED_RESOURCE_EXHAUSTED,
   SUBSCRIPTION_REJECTED_EPOCH_CHANGED,
@@ -110,6 +111,8 @@ export {
   type CanonicalTerminalCursor,
   type CanonicalHistoryCursor,
   type CanonicalPaneSubscription,
+  type CanonicalResizePane,
+  type CanonicalResizePaneV11,
   type CanonicalCommand,
   type CanonicalCommandEnvelope,
   type CanonicalEvent,
@@ -122,6 +125,26 @@ export {
   peekCanonicalPaneDataHeader,
   type CanonicalPaneDataHeader,
 } from './canonical-state';
+
+// ========== canonical v1.1 ==========
+export {
+  CANONICAL_GEOMETRY_REASON_CHANGE,
+  CANONICAL_GEOMETRY_REASON_RESEND,
+  CanonicalGeometryReason,
+  isCanonicalGeometryReason,
+  assertCanonicalCommandSemantics,
+} from './canonical-geometry';
+export {
+  CANONICAL_V11_MIN_PEER_VERSION,
+  peerSupportsCanonicalV11,
+} from './canonical-version';
+export {
+  type CanonicalTreeOrder,
+  createCanonicalTreeOrder,
+  applyCanonicalTreeOrderPatch,
+  sortSnapshotByCanonicalTreeOrder,
+} from './canonical-tree-order';
+
 export { decodeTmuxFetchPaneHistory, type TmuxFetchPaneHistory } from './schema';
 
 export {
