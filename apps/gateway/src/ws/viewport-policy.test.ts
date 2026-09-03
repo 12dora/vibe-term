@@ -182,7 +182,7 @@ describe('applyWinnerGeometry', () => {
     expect(applyWinnerGeometry(winner, { cols: 80, rows: 24 }, { cols: 80, rows: 24 })).toBeNull();
   });
 
-  test('applies when this window has never been resized even if the snapshot already matches', () => {
+  test('applies when this window has never been resized, but skips when the snapshot already matches', () => {
     const winner = {
       sessionId: 'a',
       claim: { paneId: '%0', cols: 80, rows: 24, visible: true, at: 1 },
@@ -193,12 +193,7 @@ describe('applyWinnerGeometry', () => {
       rows: 24,
       force: true,
     });
-    expect(applyWinnerGeometry(winner, undefined, { cols: 80, rows: 24 })).toEqual({
-      paneId: '%0',
-      cols: 80,
-      rows: 24,
-      force: true,
-    });
+    expect(applyWinnerGeometry(winner, undefined, { cols: 80, rows: 24 })).toBeNull();
   });
 
   test('forces a resize when last-applied matches but live tmux geometry has drifted', () => {

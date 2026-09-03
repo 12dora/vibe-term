@@ -149,9 +149,12 @@ export function applyWinnerGeometry(
 ): { paneId: string; cols: number; rows: number; force: boolean } | null {
   if (!winner) return null;
   const { cols, rows } = winner.claim;
-  const appliedMatches = sameViewportSize(lastApplied, cols, rows);
-  const liveMatches = live == null || sameViewportSize(live, cols, rows);
-  if (appliedMatches && liveMatches) return null;
+  // 已经是目标尺寸就不必再下发；live 未知时退回本设备上次 apply 的记录。
+  // 注意不能只看 lastApplied：切换到本设备从未 apply 过的窗口时它恒为空，
+  // 而该窗口的 live 尺寸可能与视口不符，此时必须强制下发（见 single-pane-window-switch-resize）。
+  const settled =
+    live != null ? sameViewportSize(live, cols, rows) : sameViewportSize(lastApplied, cols, rows);
+  if (settled) return null;
   return {
     paneId: winner.claim.paneId,
     cols,

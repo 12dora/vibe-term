@@ -168,7 +168,7 @@ function dispatchTmuxSelection(
         rows: requested.rows,
         visible: true,
       },
-      { applyUnknown: false, skipResize: data.wantHistory }
+      { applyUnknown: false, skipResize: data.wantHistory, distrustLive: !data.wantHistory }
     );
     selectSize = resolveSizedSelectSize(session.id, winner, requested, data.wantHistory, live);
   }
@@ -380,7 +380,7 @@ function recordViewportClaim(
     rows: number;
     visible: boolean;
   },
-  options: { applyUnknown: boolean; skipResize?: boolean }
+  options: { applyUnknown: boolean; skipResize?: boolean; distrustLive?: boolean }
 ): ViewportWinner | null {
   const entry = host.connections.get(data.deviceId);
   if (!entry) return null;
@@ -408,6 +408,7 @@ function recordViewportClaim(
     extraSession: session,
     notifyFirst,
     skipResize: options.skipResize,
+    distrustLive: options.distrustLive,
   });
 }
 
@@ -416,6 +417,8 @@ type ViewportPolicyOptions = {
   notifyFirst?: GatewaySession;
   seen?: Set<string>;
   skipResize?: boolean;
+  // 暖切换（wantHistory=false）时不信任快照几何：该窗口可能自上次快照后已在 tmux 侧漂移。
+  distrustLive?: boolean;
 };
 
 export function applyViewportPolicy(
@@ -490,7 +493,11 @@ function applyResolvedViewportPolicy(
   const lastApplied = entry.lastAppliedViewport?.get(windowId);
   const previousWinnerId = entry.lastViewportWinnerId?.get(windowId) ?? null;
   const nextWinnerId = winner?.sessionId ?? null;
-  const geometry = applyWinnerGeometry(winner, lastApplied, liveWindowGeometry(entry, windowId));
+  const geometry = applyWinnerGeometry(
+    winner,
+    lastApplied,
+    options.distrustLive ? undefined : liveWindowGeometry(entry, windowId)
+  );
   if (geometry) {
     if (!options.skipResize) {
       applyTermResizeToEntry(entry, geometry.paneId, geometry.cols, geometry.rows, {
