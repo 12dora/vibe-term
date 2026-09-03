@@ -14,10 +14,14 @@ function emit(kind: ToastKind, message: string, options?: ExternalToast): void {
   );
 }
 
-export const toast = {
+function plain(message: string, options?: ExternalToast): void {
+  emit('message', message, options);
+}
+
+export const toast = Object.assign(plain, {
   success: (message: string, options?: ExternalToast) => emit('success', message, options),
   error: (message: string, options?: ExternalToast) => emit('error', message, options),
   warning: (message: string, options?: ExternalToast) => emit('warning', message, options),
   info: (message: string, options?: ExternalToast) => emit('info', message, options),
-  message: (message: string, options?: ExternalToast) => emit('message', message, options),
-};
+  message: plain,
+});

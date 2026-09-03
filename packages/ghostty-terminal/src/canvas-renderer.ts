@@ -22,7 +22,6 @@ import {
 import { CursorLayer } from './cursor-layer';
 import type {
   GhosttyCellDimensions,
-  GhosttyColorRgb,
   GhosttyRenderCell,
   GhosttyRenderRow,
   GhosttyRenderSnapshotMeta,
