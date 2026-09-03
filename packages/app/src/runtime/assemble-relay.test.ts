@@ -1,11 +1,27 @@
-import './test-relay-env';
 import '../lib/test-master-key';
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { assembleTmex, isRelayOnly, meshShutdownNeeded } from './assemble';
 
 const dummyServer = { upgrade: () => false } as unknown as Bun.Server<unknown>;
+
+const RELAY_PUBLIC_URL = 'http://127.0.0.1:19993';
+const RELAY_ADMIN_TOKEN = 'assemble-test-relay-admin-token';
+const savedEnv = {
+  publicUrl: process.env.TMEX_RELAY_PUBLIC_URL,
+  adminToken: process.env.TMEX_RELAY_ADMIN_TOKEN,
+};
+
+beforeAll(() => {
+  process.env.TMEX_RELAY_PUBLIC_URL = RELAY_PUBLIC_URL;
+  process.env.TMEX_RELAY_ADMIN_TOKEN = RELAY_ADMIN_TOKEN;
+});
+
+afterAll(() => {
+  process.env.TMEX_RELAY_PUBLIC_URL = savedEnv.publicUrl;
+  process.env.TMEX_RELAY_ADMIN_TOKEN = savedEnv.adminToken;
+});
 
 function gatewayWith(db: GatewayRuntime['db']): GatewayRuntime {
   return {
@@ -78,7 +94,7 @@ describe('assembleTmex relay role', () => {
       expect(denied?.status).toBe(401);
       const ok = await assembled.fetch(
         new Request('http://127.0.0.1/api/relay/status', {
-          headers: { authorization: 'Bearer assemble-test-relay-admin-token' },
+          headers: { authorization: `Bearer ${RELAY_ADMIN_TOKEN}` },
         }),
         dummyServer
       );

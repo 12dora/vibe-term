@@ -1,6 +1,6 @@
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
-import { type TmexRoles, isTmexRoleName, rolesFromName } from '@tmex/shared';
+import { type TmexRoles, isTmexRoleName, rolesFromName, validateRoles } from '@tmex/shared';
 import type { HubMode } from '@tmex/shared/uplink';
 
 export type { TmexRoles };
@@ -82,9 +82,14 @@ export function parseTmexRoles(raw: string | undefined): TmexRoles {
   }
   const value = raw.trim();
   if (!isTmexRoleName(value)) {
-    throw new Error('TMEX_ROLES must be one of standalone | node | hub,node');
+    throw new Error('TMEX_ROLES must be one of standalone | node | hub,node | relay | relay,node');
   }
-  return rolesFromName(value);
+  const roles = rolesFromName(value);
+  const invalid = validateRoles(roles);
+  if (invalid) {
+    throw new Error(`TMEX_ROLES is invalid: ${invalid}`);
+  }
+  return roles;
 }
 
 export function parsePeerPort(raw: string | undefined): number {
@@ -301,6 +306,8 @@ export const config = {
   roles: parseTmexRoles(process.env.TMEX_ROLES),
   hubUrl,
   hubPublicUrl: getOptionalEnv('TMEX_HUB_PUBLIC_URL'),
+  relayPublicUrl: getOptionalEnv('TMEX_RELAY_PUBLIC_URL'),
+  relayAdminToken: getOptionalEnv('TMEX_RELAY_ADMIN_TOKEN'),
   hubMode,
   hubPriority: parseHubPriority(process.env.TMEX_HUB_PRIORITY, hubMode),
   hubWriterEpoch: parseHubWriterEpoch(process.env.TMEX_HUB_WRITER_EPOCH),

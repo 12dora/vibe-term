@@ -38,7 +38,8 @@ export function createAssembledRelay(input: {
   routeDeps: LocalRouteDeps;
 }): Promise<RelayRuntime> | null {
   if (!input.roles.relay) return null;
-  const publicUrl = gatewayConfig.relayPublicUrl;
+  // gateway config 是模块加载时的 env 快照；这里按运行时 env 优先，便于同进程内多实例测试
+  const publicUrl = process.env.TMEX_RELAY_PUBLIC_URL?.trim() || gatewayConfig.relayPublicUrl;
   if (!publicUrl) {
     throw new Error('TMEX_RELAY_PUBLIC_URL is required when TMEX_ROLES includes relay');
   }
@@ -48,7 +49,7 @@ export function createAssembledRelay(input: {
       publicUrl,
       stun: gatewayConfig.stunServers,
       turn: relayTurnConfig(),
-      adminToken: gatewayConfig.relayAdminToken,
+      adminToken: process.env.TMEX_RELAY_ADMIN_TOKEN?.trim() || gatewayConfig.relayAdminToken,
     },
     version: getBaseVersion(),
     startedAt: PROCESS_STARTED_AT,

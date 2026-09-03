@@ -28,6 +28,7 @@ import {
   applyLocalRenewal,
   authenticateRequest,
 } from '../../../../apps/gateway/src/mesh/session-middleware';
+import type { RelayRuntime, RelayServerWebSocket } from '../../../../apps/gateway/src/relay';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
@@ -224,13 +225,18 @@ function createHttpDispatch(handlers: HttpHandler[]): AssembledFetch {
 function routeWebsocket(
   gateway: GatewayRuntime,
   mesh: GatewayWsAuth | null,
-  hub: HubRuntime | null
+  hub: HubRuntime | null,
+  relay: RelayRuntime | null
 ): GatewayRuntime['websocket'] {
   const gw = gateway.websocket;
   return {
     backpressureLimit: gw.backpressureLimit,
     closeOnBackpressureLimit: gw.closeOnBackpressureLimit,
     open(ws) {
+      if (relay?.isUplinkSocket(ws)) {
+        relay.handleUplinkOpen(ws as unknown as RelayServerWebSocket);
+        return;
+      }
       if (hub?.isUplinkSocket(ws)) {
         hub.handleUplinkOpen(ws as HubServerWebSocket);
         return;
@@ -259,6 +265,10 @@ function routeWebsocket(
       }
     },
     message(ws, message) {
+      if (relay?.isUplinkSocket(ws)) {
+        relay.handleUplinkMessage(ws as unknown as RelayServerWebSocket, message);
+        return;
+      }
       if (hub?.isUplinkSocket(ws)) {
         hub.handleUplinkMessage(ws as HubServerWebSocket, message);
         return;
@@ -277,6 +287,10 @@ function routeWebsocket(
       gw.message(ws, message);
     },
     drain(ws) {
+      if (relay?.isUplinkSocket(ws)) {
+        relay.handleUplinkDrain(ws as unknown as RelayServerWebSocket);
+        return;
+      }
       if (hub?.isUplinkSocket(ws)) {
         hub.handleUplinkDrain(ws as HubServerWebSocket);
         return;
@@ -288,6 +302,10 @@ function routeWebsocket(
       gw.drain(ws);
     },
     close(ws, code, reason) {
+      if (relay?.isUplinkSocket(ws)) {
+        relay.handleUplinkClose(ws as unknown as RelayServerWebSocket, code, reason);
+        return;
+      }
       if (hub?.isUplinkSocket(ws)) {
         hub.handleUplinkClose(ws as HubServerWebSocket, code, reason);
         return;
@@ -449,17 +467,23 @@ export function buildHttpAndWs(input: {
   gateway: GatewayRuntime;
   mesh: MeshRuntime | null;
   hub: HubRuntime | null;
+  relay?: RelayRuntime | null;
   authHttp: MeshHttpRuntime | null;
   routeDeps: LocalRouteDeps;
   serveFrontend: (req: Request, staticRoot: string) => Promise<Response>;
   staticRoot: string;
 }): HttpAndWs {
   const authSurface = input.mesh ?? input.authHttp;
+  const relay = input.relay ?? null;
   let tlsHandler: TlsHandler = async () => null;
   const fetch = createHttpDispatch([
     (req) => tlsHandler(req),
     (req) => handleLocalRequest(req, input.routeDeps),
     (req) => handleSetupRequest(req, input.routeDeps),
+    (req, server) =>
+      relay
+        ? relay.handleRequest(req, server).then((r) => (r instanceof Response ? r : null))
+        : null,
     (req, server) =>
       input.hub
         ? input.hub.handleRequest(req, server).then((r) => (r instanceof Response ? r : null))
@@ -471,7 +495,8 @@ export function buildHttpAndWs(input: {
   const websocket = routeWebsocket(
     input.gateway,
     input.mesh ?? wsAuthFrom(input.authHttp),
-    input.hub
+    input.hub,
+    relay
   );
   return {
     fetch,
@@ -534,6 +559,7 @@ export function createAssembledLifecycle(input: {
   gateway: GatewayRuntime;
   authHttp: MeshHttpRuntime | null;
   hub: HubRuntime | null;
+  relay?: RelayRuntime | null;
   unsubscribeNodeList: (() => void) | undefined;
   shutdown: AssembleShutdownState;
 }): AssembledLifecycle {
@@ -550,6 +576,7 @@ export function createAssembledLifecycle(input: {
         unsubscribe = undefined;
         setHealthzTlsProvider(null);
         setSiteSettingsLinkProvider(null);
+        await tryStop(() => input.relay?.stop(), 'relay');
         await tryStop(() => input.gateway.stopAgentSessions?.(), 'agent-supervisor');
         await tryStop(() => input.mesh?.stop(), 'mesh');
         await tryStop(() => input.authHttp?.stop(), 'auth');

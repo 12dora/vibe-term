@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { validateRoles } from '@tmex/shared';
 import {
   HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS,
   originUrlFromBindHost,
@@ -21,7 +22,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   bindHost: string;
   tmuxBin: string;
   gatewayOwnerToken: string | null;
-  roles: { hub: boolean; node: boolean };
+  roles: { hub: boolean; node: boolean; relay: boolean };
   hubUrl: string | null;
   hubPublicUrl: string | null;
   hubMode: 'active' | 'standby';
@@ -55,7 +56,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         bindHost: string;
         tmuxBin: string;
         gatewayOwnerToken: string | null;
-        roles: { hub: boolean; node: boolean };
+        roles: { hub: boolean; node: boolean; relay: boolean };
         hubUrl: string | null;
         hubPublicUrl: string | null;
         hubMode: 'active' | 'standby';
@@ -200,11 +201,23 @@ describe('config.gatewayOwnerToken', () => {
 });
 
 describe('parseTmexRoles', () => {
-  test('defaults to standalone and accepts the three legal values', () => {
+  test('defaults to standalone and accepts the legal values', () => {
     expect(parseTmexRoles(undefined)).toEqual({ hub: false, node: false, relay: false });
     expect(parseTmexRoles('standalone')).toEqual({ hub: false, node: false, relay: false });
     expect(parseTmexRoles('node')).toEqual({ hub: false, node: true, relay: false });
     expect(parseTmexRoles('hub,node')).toEqual({ hub: true, node: true, relay: false });
+  });
+
+  test('accepts the relay roles', () => {
+    expect(parseTmexRoles('relay')).toEqual({ hub: false, node: false, relay: true });
+    expect(parseTmexRoles('relay,node')).toEqual({ hub: false, node: true, relay: true });
+  });
+
+  test('rejects hub combined with relay', () => {
+    expect(validateRoles({ hub: true, node: true, relay: true })).toBe(
+      'relay cannot be combined with hub'
+    );
+    expect(validateRoles({ hub: false, node: true, relay: true })).toBeNull();
   });
 
   test('rejects anything else including pure hub and reordered roles', () => {
@@ -216,9 +229,16 @@ describe('parseTmexRoles', () => {
       'standalone,node',
       'hub,node,node',
       'HUB,NODE',
+      'hub,relay',
+      'node,relay',
+      'relay,hub,node',
     ]) {
       expect(() => parseTmexRoles(raw)).toThrow('TMEX_ROLES');
     }
+  });
+
+  test('names relay in the error message', () => {
+    expect(() => parseTmexRoles('hub')).toThrow('relay | relay,node');
   });
 });
 

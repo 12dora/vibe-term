@@ -21,6 +21,7 @@ import {
   createMeshRuntime,
 } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
+import type { RelayRuntime } from '../../../../apps/gateway/src/relay';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { broadcastSettingsUpdate } from '../../../../apps/gateway/src/settings/broadcaster';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
@@ -32,6 +33,7 @@ import { loadNodeDatachannel } from '../lib/native-datachannel';
 import { type TmexRoles, parseTmexRoles } from '../lib/roles';
 import { HttpsListener } from '../tls/https-listener';
 import type { TlsService } from '../tls/tls-service';
+import { createAssembledRelay } from './assemble-relay';
 import {
   advertisedTlsInfo,
   buildHttpAndWs,
@@ -48,7 +50,7 @@ import { SETUP_RESTART_DELAY_MS, resolveSetupEnvPath } from './setup-service';
 export const SHUTDOWN_TIMEOUT_MS = 20_000;
 
 export function meshShutdownNeeded(roles: TmexRoles): boolean {
-  return roles.hub || roles.node;
+  return roles.hub || roles.node || roles.relay;
 }
 
 type AssembleTmexOptions = {
@@ -69,6 +71,7 @@ type AssembledTmex = {
   gateway: GatewayRuntime;
   mesh: MeshRuntime | null;
   hub: HubRuntime | null;
+  relay: RelayRuntime | null;
   tls: TlsService;
   httpsListener: HttpsListener;
   fetch: (
@@ -261,6 +264,7 @@ async function assemblePreflightTmex(opts: AssembleTmexOptions): Promise<Assembl
     gateway,
     mesh: null,
     hub: opts.hub ?? null,
+    relay: null,
     tls,
     httpsListener,
     fetch: (req) => handlePreflightHttp(req, getBaseVersion(), PROCESS_STARTED_AT),
@@ -296,7 +300,9 @@ async function createAssembleAuthSurface(input: {
   });
   let mesh: MeshRuntime | null = null;
   let authHttp: MeshHttpRuntime | null = null;
-  if (input.roles.node) {
+  if (isRelayOnly(input.roles)) {
+    // relay 单跑：没有用户、没有节点身份，不挂 auth surface
+  } else if (input.roles.node) {
     mesh = await createNodeMesh({
       roles: input.roles,
       gateway: input.gateway,
@@ -318,6 +324,18 @@ async function createAssembleAuthSurface(input: {
     });
   }
   return { auth, mesh, authHttp, hub: mesh?.hub ?? input.opts.hub ?? null };
+}
+
+/** `relay` 单跑（不带 node）：无前端、无用户存储、无 tmux 依赖。 */
+export function isRelayOnly(roles: TmexRoles): boolean {
+  return roles.relay && !roles.node && !roles.hub;
+}
+
+async function relayOnlyFrontend(): Promise<Response> {
+  return new Response(JSON.stringify({ error: { code: 'RELAY_NO_FRONTEND' } }), {
+    status: 404,
+    headers: { 'content-type': 'application/json' },
+  });
 }
 
 function maybeMeshHubStore(roles: TmexRoles, db: GatewayRuntime['db']): MeshHubStore | undefined {
@@ -369,7 +387,8 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
   const createGateway =
     opts.createGatewayRuntime ?? (() => createTmexGatewayRuntime(undefined, { mode: runtimeMode }));
   const createMesh = opts.createMeshRuntime ?? createMeshRuntime;
-  const serveFrontend = opts.serveFrontend ?? defaultServeFrontend;
+  const serveFrontend =
+    opts.serveFrontend ?? (isRelayOnly(roles) ? relayOnlyFrontend : defaultServeFrontend);
   const gateway = await createGateway();
   const tlsSlot: { service?: TlsService } = {};
   const meshHubStore = maybeMeshHubStore(roles, gateway.db);
@@ -410,10 +429,12 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     scheduleRestart,
     localAuthEffective,
   });
+  const relay = await createAssembledRelay({ roles, gateway, routeDeps });
   const http = buildHttpAndWs({
     gateway,
     mesh,
     hub,
+    relay,
     authHttp,
     routeDeps,
     serveFrontend,
@@ -433,6 +454,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     gateway,
     mesh,
     hub,
+    relay,
     tls: tlsLife.tls,
     httpsListener: tlsLife.httpsListener,
     fetch: http.fetch,
@@ -442,6 +464,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       gateway,
       authHttp,
       hub,
+      relay,
       unsubscribeNodeList,
       shutdown,
     }),

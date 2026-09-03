@@ -417,7 +417,10 @@ describe('mesh-http 整站门 × localAuth', () => {
 
 describe('mesh-http authSurfaceOnly', () => {
   test('不挂 /api/mesh，且构造不需要 peers/streams', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false }, skipUserBootstrap: true });
+    const mesh = await bootMesh({
+      roles: { hub: false, node: false, relay: false },
+      skipUserBootstrap: true,
+    });
     try {
       const runtime = new MeshHttpRuntime({
         roles: { hub: false, node: false, relay: false },

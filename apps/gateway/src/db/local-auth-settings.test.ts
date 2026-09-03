@@ -184,7 +184,9 @@ describe('defaultLoginEnforced', () => {
   test('hub/node 恒 true；standalone 跟随 live effective', () => {
     expect(defaultLoginEnforced({ hub: true, node: true, relay: false }, () => false)).toBe(true);
     expect(defaultLoginEnforced({ hub: false, node: true, relay: false }, () => false)).toBe(true);
-    expect(defaultLoginEnforced({ hub: false, node: false, relay: false }, () => false)).toBe(false);
+    expect(defaultLoginEnforced({ hub: false, node: false, relay: false }, () => false)).toBe(
+      false
+    );
     expect(defaultLoginEnforced({ hub: false, node: false, relay: false }, () => true)).toBe(true);
   });
 });

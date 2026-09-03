@@ -114,7 +114,10 @@ describe('session-middleware', () => {
     const mesh = await bootMesh();
     try {
       const handler = requireSession(
-        { roles: { hub: false, node: true, relay: false }, nodeSessionStore: mesh.nodeSessionStore },
+        {
+          roles: { hub: false, node: true, relay: false },
+          nodeSessionStore: mesh.nodeSessionStore,
+        },
         async () => new Response('ok')
       );
       const res = await handler(new Request('http://localhost/api/x'));
