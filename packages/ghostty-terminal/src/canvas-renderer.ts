@@ -291,7 +291,9 @@ export class CanvasRenderer {
 
     const parent = this.mainCanvas.parentElement;
     if (sharedScratch && parent && sharedScratch.canvas.parentElement === parent) {
-      sharedScratch.canvas.remove();
+      // 共享 scratch 此刻是本实例交换出来的旧主画布：位图尺寸随本实例走，不能留给别人
+      // 长期占着（大终端关掉后仍挂一张 ~10 MB 位图），直接释放，其余实例下次 blit 再懒分配。
+      dropSharedScratch();
     }
     liveRenderers = Math.max(0, liveRenderers - 1);
     if (liveRenderers === 0) {

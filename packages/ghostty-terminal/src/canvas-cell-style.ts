@@ -7,6 +7,9 @@ import type {
   GhosttyRenderSnapshotMeta,
 } from './types';
 
+// faint 组合键空间近 48 bit，truecolor 动画可无界撑大缓存；越界整表丢弃重建。
+const FAINT_CACHE_LIMIT = 8192;
+
 type SnapshotColors = GhosttyRenderSnapshotMeta['colors'];
 
 // SGR 2（faint / dim）：前景色按 50% 朝该 cell 的实际背景色混合，与 ghostty / xterm 的
@@ -132,6 +135,9 @@ export class CellStyleResolver {
     }
 
     const css = colorToCss(blendFaint(fg, bg));
+    if (this.faintCache.size >= FAINT_CACHE_LIMIT) {
+      this.faintCache.clear();
+    }
     this.faintCache.set(key, css);
     return css;
   }

@@ -123,10 +123,14 @@ export class PaneOutputCoalescer {
     for (const key of [...this.buffers.keys()]) {
       if (predicate(key)) this.buffers.delete(key);
     }
+    for (const key of [...this.lastFlushAt.keys()]) {
+      if (predicate(key)) this.lastFlushAt.delete(key);
+    }
   }
 
   discardAll(): void {
     this.buffers.clear();
+    this.lastFlushAt.clear();
   }
 
   private createBuffer(key: string, frame: GatewayTerminalData): PaneOutputBuffer {

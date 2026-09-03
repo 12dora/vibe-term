@@ -170,6 +170,7 @@ export class BorshWebSocketClient {
   /** 调用方显式给了 heartbeatIntervalMs 时不接受服务端协商值（应用侧设置优先） */
   private readonly heartbeatIntervalPinned: boolean;
   private negotiatedHeartbeatIntervalMs: number | null = null;
+  private readonly explicitPongTimeoutMs: number | undefined;
 
   // 回调
   private messageHandlers: Set<MessageHandler> = new Set();
@@ -226,6 +227,7 @@ export class BorshWebSocketClient {
 
   constructor(options: Partial<BorshClientOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.explicitPongTimeoutMs = options.pongTimeoutMs;
     this.heartbeatIntervalPinned = options.heartbeatIntervalMs !== undefined;
     this.pending = new PendingSendQueue({
       maxBytes: this.options.maxPendingBytes ?? DEFAULT_MAX_PENDING_BYTES,
@@ -687,13 +689,18 @@ export class BorshWebSocketClient {
       };
     }
     const baseIntervalMs = this.options.heartbeatIntervalMs;
-    const baseTimeoutMs = this.options.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
+    const explicitTimeoutMs = this.explicitPongTimeoutMs;
+    const baseTimeoutMs = this.options.pongTimeoutMs;
     const negotiated = this.negotiatedHeartbeatIntervalMs;
     if (negotiated === null || negotiated === baseIntervalMs) {
       return { intervalMs: baseIntervalMs, pongTimeoutMs: baseTimeoutMs };
     }
-    // timeout/interval 比值保持不变（缺省 2×）：15s ping ⇒ 30s timeout，
-    // 仍远在外部代理（Cloudflare Tunnel 约 100s）的空闲预算内。
+    // 调用方显式给的 pongTimeoutMs 是绝对上限，不随协商间隔放大；缺省超时才按
+    // timeout/interval 比值（2×）跟随：15s ping ⇒ 30s timeout，仍远在外部代理
+    //（Cloudflare Tunnel 约 100s）的空闲预算内。
+    if (explicitTimeoutMs !== undefined) {
+      return { intervalMs: negotiated, pongTimeoutMs: explicitTimeoutMs };
+    }
     const ratio = baseIntervalMs > 0 ? baseTimeoutMs / baseIntervalMs : 2;
     return {
       intervalMs: negotiated,

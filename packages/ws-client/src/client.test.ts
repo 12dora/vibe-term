@@ -1286,6 +1286,11 @@ describe('心跳间隔协商', () => {
     return { client, socket };
   }
 
+  test('调用方显式给的 pongTimeoutMs 是绝对上限，不随协商间隔放大', () => {
+    const { client } = connectWithHello(15_000, { pongTimeoutMs: 20_000 });
+    expect(client.heartbeatCadence).toEqual({ intervalMs: 15_000, pongTimeoutMs: 20_000 });
+  });
+
   test('缺省客户端采纳服务端播报的 15s，并按原比值把 PONG 超时放大到 30s', () => {
     const { client } = connectWithHello(15_000);
 
