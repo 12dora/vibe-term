@@ -15,6 +15,12 @@ import type {
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import {
+  type PollingTimingOptions,
+  createPollingHandle,
+  createStateStore,
+  startPollingLoop,
+} from './create-polling-store';
 import { sharedMeshEvents } from './mesh-events';
 import type { MeshEventSubscriber } from './mesh-nodes';
 
@@ -50,35 +56,18 @@ const EMPTY_STATE: MeshHubsState = {
   loadedAt: null,
 };
 
-let state: MeshHubsState = EMPTY_STATE;
-const listeners = new Set<() => void>();
+const store = createStateStore<MeshHubsState>(EMPTY_STATE, () => {
+  inFlight = null;
+});
+const setState = store.set;
 
-function setState(patch: Partial<MeshHubsState>): void {
-  state = { ...state, ...patch };
-  for (const listener of listeners) listener();
-}
-
-export function getMeshHubsState(): MeshHubsState {
-  return state;
-}
-
-export function subscribeMeshHubs(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
+export const getMeshHubsState = store.get;
+export const subscribeMeshHubs = store.subscribe;
 
 /** 仅测试使用：直接注入一份状态。 */
-export function setMeshHubsStateForTest(patch: Partial<MeshHubsState>): void {
-  setState(patch);
-}
+export const setMeshHubsStateForTest = store.set;
 
-export function resetMeshHubsStateForTest(): void {
-  state = EMPTY_STATE;
-  inFlight = null;
-  for (const listener of listeners) listener();
-}
+export const resetMeshHubsStateForTest = store.reset;
 
 // ---------------------------------------------------------------------------
 // 纯函数
@@ -151,31 +140,11 @@ export async function refreshMeshHubs(api: AuthApi = defaultAuthApi): Promise<vo
 // 轮询回路
 // ---------------------------------------------------------------------------
 
-export interface MeshHubsPollingOptions {
+export interface MeshHubsPollingOptions extends PollingTimingOptions {
   api?: AuthApi;
-  intervalMs?: number;
-  /** 事件补拉的节流窗口；缺省 `MESH_HUBS_REFRESH_THROTTLE_MS`，`<=0` 表示不节流。 */
-  throttleMs?: number;
-  schedule?: (fn: () => void, ms: number) => () => void;
-  delay?: (fn: () => void, ms: number) => () => void;
-  visibility?: { hidden: () => boolean; subscribe: (listener: () => void) => () => void };
   events?: MeshEventSubscriber;
   refresh?: (api: AuthApi) => void;
-  now?: () => number;
 }
-
-function browserVisibility(): NonNullable<MeshHubsPollingOptions['visibility']> {
-  return {
-    hidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',
-    subscribe: (listener) => {
-      if (typeof document === 'undefined') return () => undefined;
-      document.addEventListener('visibilitychange', listener);
-      return () => document.removeEventListener('visibilitychange', listener);
-    },
-  };
-}
-
-let polling: { refs: number; stop: () => void } | null = null;
 
 /**
  * 回路本体：
@@ -186,91 +155,34 @@ let polling: { refs: number; stop: () => void } | null = null;
  */
 function startPolling(options: MeshHubsPollingOptions): () => void {
   const api = options.api ?? defaultAuthApi;
-  const intervalMs = options.intervalMs ?? MESH_HUBS_POLL_MS;
-  const throttleMs = options.throttleMs ?? MESH_HUBS_REFRESH_THROTTLE_MS;
   const refresh = options.refresh ?? ((target: AuthApi) => void refreshMeshHubs(target));
-  const now = options.now ?? Date.now;
-  const visibility = options.visibility ?? browserVisibility();
   const events = options.events ?? sharedMeshEvents();
-  const schedule =
-    options.schedule ??
-    ((fn, ms) => {
-      const timer = setInterval(fn, ms);
-      return () => clearInterval(timer);
-    });
-  const delay =
-    options.delay ??
-    ((fn, ms) => {
-      const timer = setTimeout(fn, ms);
-      return () => clearTimeout(timer);
-    });
 
-  let lastRefreshAt = Number.NEGATIVE_INFINITY;
-  let cancelPending: (() => void) | null = null;
-
-  const runRefresh = () => {
-    lastRefreshAt = now();
-    refresh(api);
-  };
-
-  const requestRefresh = () => {
-    if (cancelPending) return;
-    const elapsed = now() - lastRefreshAt;
-    if (elapsed >= throttleMs) {
-      runRefresh();
-      return;
-    }
-    cancelPending = delay(() => {
-      cancelPending = null;
-      runRefresh();
-    }, throttleMs - elapsed);
-  };
-
-  const stopStatus = events.onStatusChange(() => {
-    if (events.connected) requestRefresh();
+  return startPollingLoop(options, {
+    defaultIntervalMs: MESH_HUBS_POLL_MS,
+    defaultThrottleMs: MESH_HUBS_REFRESH_THROTTLE_MS,
+    refresh: () => refresh(api),
+    wire: ({ requestRefresh }) => {
+      const stopStatus = events.onStatusChange(() => {
+        if (events.connected) requestRefresh();
+      });
+      const stopEvents = events.onNodeEvent((event) => {
+        if (!getMeshHubsState().hubs.some((hub) => hub.nodeId === event.nodeId)) return;
+        requestRefresh();
+      });
+      return () => {
+        stopStatus();
+        stopEvents();
+      };
+    },
   });
-  const stopEvents = events.onNodeEvent((event) => {
-    if (!state.hubs.some((hub) => hub.nodeId === event.nodeId)) return;
-    requestRefresh();
-  });
-
-  runRefresh();
-
-  const stopEventHooks = () => {
-    stopStatus();
-    stopEvents();
-    cancelPending?.();
-    cancelPending = null;
-  };
-  if (intervalMs <= 0) return stopEventHooks;
-
-  const cancelTimer = schedule(() => {
-    if (!visibility.hidden()) runRefresh();
-  }, intervalMs);
-  const unsubscribe = visibility.subscribe(() => {
-    if (!visibility.hidden()) requestRefresh();
-  });
-  return () => {
-    cancelTimer();
-    unsubscribe();
-    stopEventHooks();
-  };
 }
+
+const acquirePolling = createPollingHandle(startPolling);
 
 /** 取用宿主级**唯一**的回路，返回归还函数（幂等）。 */
 export function acquireMeshHubsPolling(options: MeshHubsPollingOptions = {}): () => void {
-  if (polling) polling.refs += 1;
-  else polling = { refs: 1, stop: startPolling(options) };
-
-  let released = false;
-  return () => {
-    if (released || !polling) return;
-    released = true;
-    polling.refs -= 1;
-    if (polling.refs > 0) return;
-    polling.stop();
-    polling = null;
-  };
+  return acquirePolling(options);
 }
 
 // ---------------------------------------------------------------------------

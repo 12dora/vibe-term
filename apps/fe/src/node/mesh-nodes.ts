@@ -20,6 +20,13 @@ import { defaultAuthApi, onAuthRequired } from '@tmex/api-client/auth/index';
 import type { MeshNodeOperation } from '@tmex/shared';
 import { bytesToHex, decodeBase64url, sha256 } from '@tmex/shared/auth';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  type PollingControls,
+  type PollingTimingOptions,
+  createPollingHandle,
+  createStateStore,
+  startPollingLoop,
+} from './create-polling-store';
 import { HubApi, HubApiError, type HubNodeRow } from './hub-api';
 import {
   type HubFailureReason,
@@ -27,7 +34,7 @@ import {
   type HubRequest,
   isHubAuthCode,
 } from './hub-load-coordinator';
-import { HUB_POLL_MS, browserVisibility, startHubPolling } from './hub-polling';
+import { HUB_POLL_MS, startHubPolling } from './hub-polling';
 import { type MeshEventSource, type NodeEventPayload, sharedMeshEvents } from './mesh-events';
 
 // ---------------------------------------------------------------------------
@@ -322,37 +329,20 @@ const EMPTY_STATE: MeshNodesState = {
   loadedAt: null,
 };
 
-let state: MeshNodesState = EMPTY_STATE;
-const listeners = new Set<() => void>();
-
-function setState(patch: Partial<MeshNodesState>): void {
-  state = { ...state, ...patch };
-  for (const listener of listeners) listener();
-}
-
-export function getMeshNodesState(): MeshNodesState {
-  return state;
-}
-
-export function subscribeMeshNodes(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-/** 仅测试使用：直接注入一份状态。 */
-export function setMeshNodesStateForTest(patch: Partial<MeshNodesState>): void {
-  setState(patch);
-}
-
-export function resetMeshNodesStateForTest(): void {
-  state = EMPTY_STATE;
+const store = createStateStore<MeshNodesState>(EMPTY_STATE, () => {
   modePromise = null;
   inFlight = null;
   trailingRequested = false;
-  for (const listener of listeners) listener();
-}
+});
+const setState = store.set;
+
+export const getMeshNodesState = store.get;
+export const subscribeMeshNodes = store.subscribe;
+
+/** 仅测试使用：直接注入一份状态。 */
+export const setMeshNodesStateForTest = store.set;
+
+export const resetMeshNodesStateForTest = store.reset;
 
 let modePromise: Promise<void> | null = null;
 
@@ -393,8 +383,9 @@ export function useSharedAuthMode(api: AuthApi = defaultAuthApi): SharedAuthMode
 }
 
 export function applyMeshNodeEvent(event: NodeEventPayload): void {
-  const next = patchNodesWithEvent(state.nodes, event);
-  if (next !== state.nodes) setState({ nodes: next });
+  const { nodes } = store.get();
+  const next = patchNodesWithEvent(nodes, event);
+  if (next !== nodes) setState({ nodes: next });
 }
 
 let inFlight: Promise<void> | null = null;
@@ -442,10 +433,11 @@ export function ensureFreshMeshNodes(api: AuthApi = defaultAuthApi): void {
 
 /** 返回列表是否真的被改动过（调用方据此决定要不要回源）。 */
 function setLoggedIn(nodeId: string, loggedIn: boolean): boolean {
-  const target = nodeId === SELF_NODE_ID ? state.entryNodeId : nodeId;
+  const snapshot = store.get();
+  const target = nodeId === SELF_NODE_ID ? snapshot.entryNodeId : nodeId;
   if (!target) return false;
   let changed = false;
-  const next = state.nodes.map((node) => {
+  const next = snapshot.nodes.map((node) => {
     if (node.id !== target || node.loggedIn === loggedIn) return node;
     changed = true;
     return { ...node, loggedIn };
@@ -463,7 +455,7 @@ export function markLoggedIn(nodeId: string): boolean {
 }
 
 export function setEntryNodeId(nodeId: string | null): void {
-  if (state.entryNodeId === nodeId) return;
+  if (store.get().entryNodeId === nodeId) return;
   setState({ entryNodeId: nodeId });
 }
 
@@ -510,28 +502,16 @@ export interface MeshEventSubscriber {
   onNodeEvent(listener: (event: NodeEventPayload) => void): () => void;
 }
 
-export interface MeshPollingOptions {
+export interface MeshPollingOptions extends PollingTimingOptions {
   api?: AuthApi;
-  intervalMs?: number;
   /** 回到前台的过期阈值；缺省 `MESH_NODES_STALE_MS`。 */
   staleMs?: number;
-  /** 事件补拉的节流窗口；缺省 `MESH_NODES_REFRESH_THROTTLE_MS`，`<=0` 表示不节流。 */
-  throttleMs?: number;
-  /** 定时器（测试注入）：返回取消函数。 */
-  schedule?: (fn: () => void, ms: number) => () => void;
-  /** 一次性延时（测试注入）：返回取消函数。 */
-  delay?: (fn: () => void, ms: number) => () => void;
-  /** 页面可见性（测试注入）。 */
-  visibility?: { hidden: () => boolean; subscribe: (listener: () => void) => () => void };
   /** 事件源（测试注入）；缺省用宿主级共享的那一份。 */
   events?: MeshEventSubscriber;
   /** 401 `NODE_LOGIN_REQUIRED` 的订阅入口（测试注入）；缺省用 api-client 的拦截器事件。 */
   authRequired?: (listener: (detail: AuthRequiredDetail) => void) => () => void;
   refresh?: (api: AuthApi) => void;
-  now?: () => number;
 }
-
-let polling: { refs: number; stop: () => void } | null = null;
 
 /**
  * 轮询回路本体：
@@ -546,109 +526,67 @@ let polling: { refs: number; stop: () => void } | null = null;
  */
 function startPolling(options: MeshPollingOptions): () => void {
   const api = options.api ?? defaultAuthApi;
-  const intervalMs = options.intervalMs ?? MESH_NODES_POLL_MS;
   const staleMs = options.staleMs ?? MESH_NODES_STALE_MS;
-  const throttleMs = options.throttleMs ?? MESH_NODES_REFRESH_THROTTLE_MS;
   const refresh = options.refresh ?? ensureFreshMeshNodes;
   const now = options.now ?? Date.now;
-  const visibility = options.visibility ?? browserVisibility();
   const events = options.events ?? sharedMeshEvents();
   const authRequired = options.authRequired ?? onAuthRequired;
-  const schedule =
-    options.schedule ??
-    ((fn, ms) => {
-      const timer = setInterval(fn, ms);
-      return () => clearInterval(timer);
-    });
-  const delay =
-    options.delay ??
-    ((fn, ms) => {
-      const timer = setTimeout(fn, ms);
-      return () => clearTimeout(timer);
-    });
-
-  let lastRefreshAt = Number.NEGATIVE_INFINITY;
-  let cancelPending: (() => void) | null = null;
-
-  const runRefresh = () => {
-    lastRefreshAt = now();
-    refresh(api);
-  };
-
-  const requestRefresh = () => {
-    if (cancelPending) return;
-    const elapsed = now() - lastRefreshAt;
-    if (elapsed >= throttleMs) {
-      runRefresh();
-      return;
-    }
-    cancelPending = delay(() => {
-      cancelPending = null;
-      runRefresh();
-    }, throttleMs - elapsed);
-  };
 
   // 已经为之补拉过的陌生 node：REST 有可能压根不返回它（如公钥无效的 node 会被投影丢掉），
   // 它每次上下线都补拉一轮就成了新的定时器。每个兜底拍才放行一次重试。
   const unknownSeen = new Set<string>();
   const authSeen = new Set<string>();
 
-  const sweep = () => {
+  const sweep = (controls: PollingControls) => {
     unknownSeen.clear();
     authSeen.clear();
-    runRefresh();
+    controls.runRefresh();
   };
 
-  const stopStatus = events.onStatusChange(() => {
-    if (events.connected) requestRefresh();
+  return startPollingLoop(options, {
+    defaultIntervalMs: MESH_NODES_POLL_MS,
+    defaultThrottleMs: MESH_NODES_REFRESH_THROTTLE_MS,
+    refresh: () => refresh(api),
+    wire: ({ requestRefresh }) => {
+      const stopStatus = events.onStatusChange(() => {
+        if (events.connected) requestRefresh();
+      });
+      const stopEvents = events.onNodeEvent((event) => {
+        // revoked 由 `patchNodesWithEvent` 就地摘行，不必回源；列表还没到时也别抢在首拉前面。
+        if (event.status === 'revoked') return;
+        const { nodes, loadedAt } = getMeshNodesState();
+        if (loadedAt === null) return;
+        if (nodes.some((node) => node.id === event.nodeId)) return;
+        if (unknownSeen.has(event.nodeId)) return;
+        unknownSeen.add(event.nodeId);
+        requestRefresh();
+      });
+      // 节点级 401 只回源、**绝不就地翻 loggedIn**：转发路径（直连/中转切换、节点侧 via 校验）
+      // 会产生会话仍有效的 401，就地登出会抽掉整个节点子树再静默登回来，表现为设备卡片闪断。
+      // REST 按 cookie 判定登录态，真实过期时 cookie 已随会话到期消失，回源一次即可反映。
+      // 同一 node 每个兜底拍只放行一次（`authSeen` 随 sweep 清空），避免持续 401 变成新的定时器。
+      const stopAuthRequired = authRequired((detail) => {
+        if (detail.scope !== 'node') return;
+        console.warn(`[mesh] node 401 node=${detail.nodeId} path=${detail.path}`);
+        if (authSeen.has(detail.nodeId)) return;
+        authSeen.add(detail.nodeId);
+        requestRefresh();
+      });
+      return () => {
+        stopStatus();
+        stopEvents();
+        stopAuthRequired();
+      };
+    },
+    tick: sweep,
+    onVisible: (controls) => {
+      const { loadedAt } = getMeshNodesState();
+      if (loadedAt === null || now() - loadedAt >= staleMs) sweep(controls);
+    },
   });
-  const stopEvents = events.onNodeEvent((event) => {
-    // revoked 由 `patchNodesWithEvent` 就地摘行，不必回源；列表还没到时也别抢在首拉前面。
-    if (event.status === 'revoked') return;
-    const { nodes, loadedAt } = getMeshNodesState();
-    if (loadedAt === null) return;
-    if (nodes.some((node) => node.id === event.nodeId)) return;
-    if (unknownSeen.has(event.nodeId)) return;
-    unknownSeen.add(event.nodeId);
-    requestRefresh();
-  });
-  // 节点级 401 只回源、**绝不就地翻 loggedIn**：转发路径（直连/中转切换、节点侧 via 校验）
-  // 会产生会话仍有效的 401，就地登出会抽掉整个节点子树再静默登回来，表现为设备卡片闪断。
-  // REST 按 cookie 判定登录态，真实过期时 cookie 已随会话到期消失，回源一次即可反映。
-  // 同一 node 每个兜底拍只放行一次（`authSeen` 随 `sweep` 清空），避免持续 401 变成新的定时器。
-  const stopAuthRequired = authRequired((detail) => {
-    if (detail.scope !== 'node') return;
-    console.warn(`[mesh] node 401 node=${detail.nodeId} path=${detail.path}`);
-    if (authSeen.has(detail.nodeId)) return;
-    authSeen.add(detail.nodeId);
-    requestRefresh();
-  });
-
-  runRefresh();
-
-  const stopEventHooks = () => {
-    stopStatus();
-    stopEvents();
-    stopAuthRequired();
-    cancelPending?.();
-    cancelPending = null;
-  };
-  if (intervalMs <= 0) return stopEventHooks;
-
-  const cancelTimer = schedule(() => {
-    if (!visibility.hidden()) sweep();
-  }, intervalMs);
-  const unsubscribe = visibility.subscribe(() => {
-    if (visibility.hidden()) return;
-    const { loadedAt } = getMeshNodesState();
-    if (loadedAt === null || now() - loadedAt >= staleMs) sweep();
-  });
-  return () => {
-    cancelTimer();
-    unsubscribe();
-    stopEventHooks();
-  };
 }
+
+const acquirePolling = createPollingHandle(startPolling);
 
 /**
  * 取用宿主级**唯一**的轮询回路，返回归还函数（幂等）。
@@ -658,18 +596,7 @@ function startPolling(options: MeshPollingOptions): () => void {
  * 决定这一轮回路的接线，后来者只加引用计数。
  */
 export function acquireMeshNodesPolling(options: MeshPollingOptions = {}): () => void {
-  if (polling) polling.refs += 1;
-  else polling = { refs: 1, stop: startPolling(options) };
-
-  let released = false;
-  return () => {
-    if (released || !polling) return;
-    released = true;
-    polling.refs -= 1;
-    if (polling.refs > 0) return;
-    polling.stop();
-    polling = null;
-  };
+  return acquirePolling(options);
 }
 
 function useMeshNodesPoller(
