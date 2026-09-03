@@ -1,7 +1,7 @@
 export {
   JSON_BODY_MAX_BYTES,
   readJsonObjectBody,
-} from '../../../../packages/shared/src/http/read-body';
+} from '@tmex/shared/http';
 
 export function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {

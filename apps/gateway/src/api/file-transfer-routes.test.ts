@@ -88,6 +88,36 @@ describe('PUT /api/files/upload/:id bounded body', () => {
     expect(readFileSync(s.tmpPath).byteLength).toBe(0);
   });
 
+  test('body exactly at remaining size → 200 with received = size', async () => {
+    const s = session(10);
+    const body = new Uint8Array(10).fill(1);
+    const res = (await dispatch(
+      new Request(`http://localhost/api/files/upload/${s.id}?offset=0`, {
+        method: 'PUT',
+        headers: { 'Content-Length': '10' },
+        body,
+      })
+    )) as Response;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: 10 });
+    expect(getUploadSession(s.id)?.received).toBe(10);
+    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from(body));
+  });
+
+  test('body one byte over remaining size without Content-Length → 413', async () => {
+    const s = session(10);
+    const res = (await dispatch(
+      new Request(`http://localhost/api/files/upload/${s.id}?offset=0`, {
+        method: 'PUT',
+        body: new Uint8Array(11).fill(1),
+      })
+    )) as Response;
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: 'too_large', code: 'too_large' });
+    expect(getUploadSession(s.id)?.received).toBe(0);
+    expect(readFileSync(s.tmpPath).byteLength).toBe(0);
+  });
+
   test('happy path: sequential chunks written asynchronously, received matches bytes', async () => {
     const s = session(6);
     const first = (await dispatch(

@@ -20,6 +20,17 @@ export async function readJsonObjectBody(
 
 export const readJsonBody = readJsonObjectBody;
 
+export type ReadBodyCappedResult = { ok: true; bytes: Uint8Array } | { ok: false };
+
+export async function readBodyCappedResult(
+  req: Request,
+  maxBytes: number
+): Promise<ReadBodyCappedResult> {
+  const bytes = await readBodyCapped(req, maxBytes);
+  if (bytes === null) return { ok: false };
+  return { ok: true, bytes };
+}
+
 export async function readBodyCapped(req: Request, maxBytes: number): Promise<Uint8Array | null> {
   const contentLength = req.headers.get('content-length');
   if (contentLength) {

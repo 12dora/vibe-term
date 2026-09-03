@@ -1,3 +1,4 @@
+import { readBodyCappedResult } from '@tmex/shared/http';
 import { config } from '../config';
 import {
   pullFileFromDevice,
@@ -21,7 +22,7 @@ import {
   parseNonNegativeSafeInt,
   streamTempFile,
 } from './file-http';
-import { cleanupDownload, cleanupUpload, rememberTransferUid } from './files';
+import { cleanupDownload, cleanupUpload, rememberTransferUid } from './file-transfer-sessions';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
 
@@ -54,36 +55,6 @@ async function handleUploadInit(req: Request): Promise<Response> {
   return json({ uploadId: session.id, chunkSize: UPLOAD_CHUNK_SIZE });
 }
 
-async function readBodyCapped(
-  req: Request,
-  cap: number
-): Promise<{ ok: true; bytes: Uint8Array } | { ok: false }> {
-  if (!req.body) return { ok: true, bytes: new Uint8Array(0) };
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value || value.byteLength === 0) continue;
-    total += value.byteLength;
-    if (total > cap) {
-      await reader.cancel().catch(() => {});
-      return { ok: false };
-    }
-    chunks.push(value);
-  }
-  if (chunks.length === 0) return { ok: true, bytes: new Uint8Array(0) };
-  if (chunks.length === 1) return { ok: true, bytes: chunks[0] };
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { ok: true, bytes: out };
-}
-
 async function handleUploadChunk(req: Request, id: string, url: URL): Promise<Response> {
   const offset = parseNonNegativeSafeInt(url.searchParams.get('offset'));
   if (offset === null) return json({ error: t('apiError.invalidRequest') }, 400);
@@ -102,7 +73,7 @@ async function handleUploadChunk(req: Request, id: string, url: URL): Promise<Re
     cap = contentLength;
   }
 
-  const body = await readBodyCapped(req, cap);
+  const body = await readBodyCappedResult(req, cap);
   if (!body.ok) return codeError('too_large');
   const res = await appendUploadChunkAsync(id, offset, body.bytes);
   if (!res.ok) {

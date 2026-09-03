@@ -1,18 +1,79 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
 import type { TelegramBotWithStats } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { Loader2, Save } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
 
-import { Button } from '@tmex/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
+import {
+  IntegrationAccountFormModal,
+  type IntegrationFormConfig,
+  nonEmptyText,
+} from './integration-account-form-modal';
 
-const FIELD_CLASS = 'min-h-10';
+function telegramUpdatePayload(name: string, token: string, allowAuthRequests: unknown) {
+  const payload: Record<string, unknown> = { name, allowAuthRequests };
+  if (token) {
+    payload.token = token;
+  }
+  return payload;
+}
+
+export const telegramBotFormConfig: IntegrationFormConfig<TelegramBotWithStats> = {
+  testIdPrefix: 'telegram-bot',
+  queryKey: ['telegram-bots'],
+  addTitleKey: 'telegram.addBot',
+  editTitleKey: 'telegram.editBot',
+  fields: [
+    {
+      kind: 'text',
+      key: 'name',
+      inputId: 'telegram-bot-name',
+      testId: 'telegram-bot-name-input',
+      labelKey: 'telegram.botName',
+      placeholderKey: 'telegram.botNamePlaceholder',
+      initialValue: (bot) => bot?.name ?? '',
+      validate: nonEmptyText,
+    },
+    {
+      kind: 'secret',
+      key: 'token',
+      inputId: 'telegram-bot-token',
+      testId: 'telegram-bot-token-input',
+      labelKey: 'telegram.botToken',
+      placeholderKey: ({ isEdit }) =>
+        isEdit ? 'telegram.tokenPlaceholder' : 'telegram.botTokenPlaceholder',
+      initialValue: () => '',
+      validate: (value, { isEdit }) => isEdit || nonEmptyText(value),
+    },
+    {
+      kind: 'toggle',
+      key: 'allowAuthRequests',
+      inputId: 'telegram-bot-allow-auth',
+      testId: 'telegram-bot-allow-auth',
+      labelKey: 'telegram.allowAuthRequests',
+      initialValue: (bot) => bot?.allowAuthRequests ?? true,
+    },
+  ],
+  buildPayload: (values, { isEdit }) =>
+    isEdit
+      ? telegramUpdatePayload(
+          String(values.name).trim(),
+          String(values.token).trim(),
+          values.allowAuthRequests
+        )
+      : {
+          name: String(values.name).trim(),
+          token: String(values.token).trim(),
+          enabled: true,
+          allowAuthRequests: values.allowAuthRequests,
+        },
+  create: {
+    path: '/api/settings/telegram/bots',
+    errorFallbackKey: 'telegram.createFailed',
+    successToastKey: 'common.success',
+  },
+  update: {
+    path: (bot) => `/api/settings/telegram/bots/${bot.id}`,
+    errorFallbackKey: 'telegram.updateFailed',
+    successToastKey: 'common.success',
+  },
+};
 
 interface TelegramBotFormModalProps {
   open: boolean;
@@ -22,166 +83,12 @@ interface TelegramBotFormModalProps {
 }
 
 export function TelegramBotFormModal({ open, onOpenChange, bot }: TelegramBotFormModalProps) {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { apiClient } = useRuntime();
-  const isEdit = Boolean(bot);
-
-  const [name, setName] = useState('');
-  const [token, setToken] = useState('');
-  const [allowAuthRequests, setAllowAuthRequests] = useState(true);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    setName(bot?.name ?? '');
-    setToken('');
-    setAllowAuthRequests(bot?.allowAuthRequests ?? true);
-  }, [open, bot]);
-
-  const createMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiClient.fetch('/api/settings/telegram/bots', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          token: token.trim(),
-          enabled: true,
-          allowAuthRequests,
-        }),
-      });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('telegram.createFailed')));
-      }
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['telegram-bots'] });
-      toast.success(t('common.success'));
-      onOpenChange(false);
-    },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : t('common.error'));
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: async () => {
-      if (!bot) {
-        throw new Error(t('telegram.updateFailed'));
-      }
-      const payload: Record<string, unknown> = {
-        name: name.trim(),
-        allowAuthRequests,
-      };
-      if (token.trim()) {
-        payload.token = token.trim();
-      }
-      const res = await apiClient.fetch(`/api/settings/telegram/bots/${bot.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('telegram.updateFailed')));
-      }
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['telegram-bots'] });
-      toast.success(t('common.success'));
-      onOpenChange(false);
-    },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : t('common.error'));
-    },
-  });
-
-  const isPending = createMutation.isPending || updateMutation.isPending;
-  const canSubmit = name.trim().length > 0 && (isEdit || token.trim().length > 0);
-
-  const handleSubmit = () => {
-    if (!canSubmit || isPending) {
-      return;
-    }
-    if (isEdit) {
-      updateMutation.mutate();
-    } else {
-      createMutation.mutate();
-    }
-  };
-
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="sm:max-w-lg"
-        data-testid={isEdit ? `telegram-bot-edit-modal-${bot?.id}` : 'telegram-bot-add-modal'}
-      >
-        <DialogHeader>
-          <DialogTitle>{isEdit ? t('telegram.editBot') : t('telegram.addBot')}</DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium" htmlFor="telegram-bot-name">
-              {t('telegram.botName')}
-            </label>
-            <Input
-              id="telegram-bot-name"
-              data-testid="telegram-bot-name-input"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder={t('telegram.botNamePlaceholder')}
-              className={FIELD_CLASS}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium" htmlFor="telegram-bot-token">
-              {t('telegram.botToken')}
-            </label>
-            <Input
-              id="telegram-bot-token"
-              data-testid="telegram-bot-token-input"
-              type="password"
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-              placeholder={
-                isEdit ? t('telegram.tokenPlaceholder') : t('telegram.botTokenPlaceholder')
-              }
-              className={FIELD_CLASS}
-            />
-          </div>
-
-          <div className="flex min-h-10 items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2.5">
-            <span className="text-sm font-medium">{t('telegram.allowAuthRequests')}</span>
-            <Switch
-              checked={allowAuthRequests}
-              data-testid="telegram-bot-allow-auth"
-              onCheckedChange={(checked) => setAllowAuthRequests(Boolean(checked))}
-            />
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
-            {t('common.cancel')}
-          </Button>
-          <Button
-            variant="secondary"
-            data-testid="telegram-bot-form-submit"
-            onClick={handleSubmit}
-            disabled={!canSubmit || isPending}
-          >
-            {isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
-            {t('common.save')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <IntegrationAccountFormModal
+      open={open}
+      onOpenChange={onOpenChange}
+      config={telegramBotFormConfig}
+      entity={bot}
+    />
   );
 }

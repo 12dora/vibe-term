@@ -1,6 +1,6 @@
 import { SetupError } from './setup-service';
 
-export { JSON_BODY_MAX_BYTES, readJsonBody } from '../../../../packages/shared/src/http/read-body';
+export { JSON_BODY_MAX_BYTES, readJsonBody } from '../../../shared/src/http/read-body';
 
 export function jsonOk(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

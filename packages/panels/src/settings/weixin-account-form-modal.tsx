@@ -1,25 +1,59 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
 import type { WeixinAccountWithStats } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { Loader2, Save } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
+import { useState } from 'react';
 
-import { Button } from '@tmex/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
-
+import {
+  IntegrationAccountFormModal,
+  type IntegrationFormConfig,
+  nonEmptyText,
+} from './integration-account-form-modal';
 import { WeixinAccountLoginModal } from './weixin-account-login-modal';
-
-const FIELD_CLASS = 'min-h-10';
 
 interface CreateAccountResponse {
   success: boolean;
   accountId: string;
 }
+
+export const weixinAccountFormConfig: IntegrationFormConfig<WeixinAccountWithStats> = {
+  testIdPrefix: 'weixin-account',
+  queryKey: ['weixin-accounts'],
+  addTitleKey: 'weixin.addAccount',
+  editTitleKey: 'weixin.editAccount',
+  fields: [
+    {
+      kind: 'text',
+      key: 'name',
+      inputId: 'weixin-account-name',
+      testId: 'weixin-account-name-input',
+      labelKey: 'weixin.accountName',
+      placeholderKey: 'weixin.accountNamePlaceholder',
+      initialValue: (account) => account?.name ?? '',
+      validate: nonEmptyText,
+    },
+    {
+      kind: 'toggle',
+      key: 'enabled',
+      inputId: 'weixin-account-enabled',
+      testId: 'weixin-account-enabled',
+      labelKey: 'weixin.enableAccount',
+      initialValue: (account) => account?.enabled ?? true,
+    },
+  ],
+  buildPayload: (values, { isEdit }) =>
+    isEdit
+      ? { name: String(values.name).trim(), enabled: values.enabled }
+      : { name: String(values.name).trim(), enabled: values.enabled, allowAuthRequests: true },
+  create: {
+    path: '/api/settings/weixin/accounts',
+    errorFallbackKey: 'weixin.createFailed',
+    successToastKey: 'weixin.accountCreated',
+    readResponse: true,
+  },
+  update: {
+    path: (account) => `/api/settings/weixin/accounts/${account.id}`,
+    errorFallbackKey: 'weixin.updateFailed',
+    successToastKey: 'weixin.accountUpdated',
+  },
+};
 
 interface WeixinAccountFormModalProps {
   open: boolean;
@@ -33,150 +67,22 @@ export function WeixinAccountFormModal({
   onOpenChange,
   account,
 }: WeixinAccountFormModalProps) {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { apiClient } = useRuntime();
-  const isEdit = Boolean(account);
-
-  const [name, setName] = useState('');
-  const [enabled, setEnabled] = useState(true);
-
   const [loginAccount, setLoginAccount] = useState<{ id: string; name: string } | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    setName(account?.name ?? '');
-    setEnabled(account?.enabled ?? true);
-  }, [open, account]);
-
-  const createMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiClient.fetch('/api/settings/weixin/accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          enabled,
-          allowAuthRequests: true,
-        }),
-      });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('weixin.createFailed')));
-      }
-      return (await res.json()) as CreateAccountResponse;
-    },
-    onSuccess: async (data) => {
-      await queryClient.invalidateQueries({ queryKey: ['weixin-accounts'] });
-      toast.success(t('weixin.accountCreated'));
-      onOpenChange(false);
-      setLoginAccount({ id: data.accountId, name: name.trim() });
-    },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : t('common.error'));
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: async () => {
-      if (!account) {
-        throw new Error(t('weixin.updateFailed'));
-      }
-      const res = await apiClient.fetch(`/api/settings/weixin/accounts/${account.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          enabled,
-        }),
-      });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('weixin.updateFailed')));
-      }
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['weixin-accounts'] });
-      toast.success(t('weixin.accountUpdated'));
-      onOpenChange(false);
-    },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : t('common.error'));
-    },
-  });
-
-  const isPending = createMutation.isPending || updateMutation.isPending;
-  const canSubmit = name.trim().length > 0;
-
-  const handleSubmit = () => {
-    if (!canSubmit || isPending) {
-      return;
-    }
-    if (isEdit) {
-      updateMutation.mutate();
-    } else {
-      createMutation.mutate();
-    }
-  };
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent
-          className="sm:max-w-lg"
-          data-testid={
-            isEdit ? `weixin-account-edit-modal-${account?.id}` : 'weixin-account-add-modal'
-          }
-        >
-          <DialogHeader>
-            <DialogTitle>{isEdit ? t('weixin.editAccount') : t('weixin.addAccount')}</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="block text-sm font-medium" htmlFor="weixin-account-name">
-                {t('weixin.accountName')}
-              </label>
-              <Input
-                id="weixin-account-name"
-                data-testid="weixin-account-name-input"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder={t('weixin.accountNamePlaceholder')}
-                className={FIELD_CLASS}
-              />
-            </div>
-
-            <div className="flex min-h-10 items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2.5">
-              <span className="text-sm font-medium">{t('weixin.enableAccount')}</span>
-              <Switch
-                checked={enabled}
-                data-testid="weixin-account-enabled"
-                onCheckedChange={(checked) => setEnabled(Boolean(checked))}
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
-              {t('common.cancel')}
-            </Button>
-            <Button
-              variant="secondary"
-              data-testid="weixin-account-form-submit"
-              onClick={handleSubmit}
-              disabled={!canSubmit || isPending}
-            >
-              {isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              {t('common.save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <IntegrationAccountFormModal
+        open={open}
+        onOpenChange={onOpenChange}
+        config={weixinAccountFormConfig}
+        entity={account}
+        onCreated={({ response, values }) => {
+          setLoginAccount({
+            id: (response as CreateAccountResponse).accountId,
+            name: String(values.name).trim(),
+          });
+        }}
+      />
 
       {loginAccount && (
         <WeixinAccountLoginModal
