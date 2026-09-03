@@ -19,10 +19,11 @@
 | `bun run bench:retention`（`apps/gateway`） | retention `ingest()` 在不同 pane 数与分段大小下的耗时 |
 | `bun run bench:frame-sizer`（`apps/gateway`） | canonical 帧尺寸计算与 `sendPaneData` |
 | `packages/ghostty-terminal/bench/render-bridge.bench.ts` | 渲染桥 `updateRenderState + iterateRows + LineModel` |
-| `packages/ghostty-terminal/bench/write-vt.bench.ts` | `writeVt` 单次调用成本（常驻 scratch vs. 每次 alloc/free） |
-| `packages/terminal-ui/bench/history-paging.bench.ts` | history 分页重排的 write 次数与耗时 |
-| `packages/shared/bench/canonical-validation.bench.ts` | canonical 编码校验开销 |
-| `packages/shared/bench/legacy-snapshot-diff.bench.ts` | legacy metadata diff 应用 |
+| `packages/ghostty-terminal/bench/canvas.bench.mjs` | canvas 渲染器 run 批绘 |
+| `apps/gateway/bench/control-output-pipeline.bench.ts` | 控制模式输出管线端到端 |
+| `apps/gateway/bench/envelope-view.bench.ts` | mesh 中继只读 kind/seq 的 view 解码 |
+| `packages/shared/bench/ws-wire-path.bench.ts` | 浏览器侧 canonical 帧解码 |
+| `packages/panels/src/files/files-tree-render.bench.tsx` | 文件树 500 行 SSR |
 
 bench 文件不是测试，`bun test` 不会发现它们，需手动跑。
 
