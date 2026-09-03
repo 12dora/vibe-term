@@ -24,15 +24,11 @@ import {
   formatRate,
   uploadFileChunked,
 } from '@tmex/api-client';
+import { prepareDownload } from '@tmex/api-client/download-transfer';
 import { parseError } from '@tmex/api-client/file-errors';
 import { readNdjsonStream } from '@tmex/api-client/ndjson-stream';
 import type { TransferOpts } from '@tmex/api-client/transfer-types';
-import type {
-  FileErrorCode,
-  UploadCommitEvent,
-  UploadInitRequest,
-  UploadInitResponse,
-} from '@tmex/shared';
+import type { UploadCommitEvent, UploadInitRequest, UploadInitResponse } from '@tmex/shared';
 import { getBulkClient } from '@tmex/ws-client';
 
 /** 本次传输实际走的通道：`direct` = 浏览器↔node 直连，`relay` = 经 hub 中转的 REST。 */
@@ -254,7 +250,7 @@ export async function downloadFileWithTransport(
     let downloadId = '';
     opts.onPath?.('direct');
     try {
-      const prepared = await prepareDownload(client, rootId, path, name, opts, (id) => {
+      const prepared = await prepareDownload(rootId, path, name, opts, client, (id) => {
         downloadId = id;
       });
       opts.onLeg?.(1, { pct: 100, detail: formatBytes(prepared.size) });
@@ -322,61 +318,4 @@ async function drainBulkDownload(
   }
   onLeg?.(2, { pct: 100, detail: detail(size) });
   return new Blob(chunks as BlobPart[]);
-}
-
-interface DownloadPrepareEvent {
-  type: 'progress' | 'done' | 'error';
-  transferred?: number;
-  pct?: number;
-  rate?: string;
-  downloadId?: string;
-  size?: number;
-  name?: string;
-  code?: FileErrorCode;
-  detail?: string;
-}
-
-async function prepareDownload(
-  client: ApiClient,
-  rootId: string,
-  path: string,
-  name: string,
-  opts: TransferPathOpts,
-  onDownloadId: (downloadId: string) => void
-): Promise<{ downloadId: string; size: number; name: string }> {
-  const { onLeg, signal } = opts;
-  onLeg?.(1, { pct: 0 });
-  const prep = await client.fetch('/api/files/download/prepare', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rootId, path }),
-    signal,
-  });
-  if (!prep.ok || !prep.body) throw await parseError(prep);
-
-  let downloadId = '';
-  let size = 0;
-  let dlName = name;
-  let prepErr: FileApiError | null = null;
-
-  await readNdjsonStream<DownloadPrepareEvent>(prep.body, (ev) => {
-    if (ev.type === 'progress') {
-      onLeg?.(1, {
-        pct: ev.pct ?? 0,
-        rate: ev.rate,
-        detail: ev.transferred != null ? formatBytes(ev.transferred) : undefined,
-      });
-    } else if (ev.type === 'done') {
-      downloadId = ev.downloadId ?? '';
-      size = ev.size ?? 0;
-      dlName = ev.name ?? name;
-      if (downloadId) onDownloadId(downloadId);
-    } else if (ev.type === 'error') {
-      prepErr = new FileApiError(500, ev.detail ?? ev.code ?? 'unknown', ev.code);
-    }
-  });
-
-  if (prepErr) throw prepErr;
-  if (!downloadId) throw new FileApiError(500, 'unknown', 'unknown');
-  return { downloadId, size, name: dlName };
 }

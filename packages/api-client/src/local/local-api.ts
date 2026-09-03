@@ -4,6 +4,7 @@
 // （baseUrl 为空），不加 `/n/<id>` 前缀。
 
 import { type ApiClient, defaultApiClient } from '../client';
+import { type JsonRequestOptions, readCodedError, requestJson } from '../json-mutation';
 import type {
   LocalDirectAction,
   LocalDirectResponse,
@@ -24,56 +25,43 @@ export class LocalApiError extends Error {
   }
 }
 
-async function readError(res: Response, fallback: string): Promise<LocalApiError> {
-  try {
-    const body = (await res.json()) as { error?: unknown };
-    const error = body.error;
-    if (error && typeof error === 'object') {
-      const { code, message } = error as { code?: unknown; message?: unknown };
-      if (typeof code === 'string') {
-        return new LocalApiError(code, typeof message === 'string' ? message : code, res.status);
-      }
-    }
-    // 反代 / 网关层可能给出 `{error: "..."}` 的老形态。
-    if (typeof error === 'string') return new LocalApiError(error, error, res.status);
-  } catch {
-    // 落到 fallback
-  }
-  return new LocalApiError(fallback, fallback, res.status);
+function readError(res: Response, fallback: string): Promise<LocalApiError> {
+  return readCodedError(
+    res,
+    fallback,
+    (code, message, status) => new LocalApiError(code, message, status)
+  );
 }
-
-const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;
 
 export class LocalApi {
   constructor(private readonly client: ApiClient = defaultApiClient) {}
 
+  private json<T>(path: string, fallback: string, options: JsonRequestOptions = {}): Promise<T> {
+    return requestJson<T>(this.client, path, {
+      ...options,
+      toError: (res) => readError(res, fallback),
+    });
+  }
+
   /** `GET /api/local/status`：mesh 下需要 self 会话，未登录返回 401。 */
   async status(): Promise<LocalStatusResponse> {
-    const res = await this.client.fetch('/api/local/status');
-    if (!res.ok) throw await readError(res, 'local_status_failed');
-    return (await res.json()) as LocalStatusResponse;
+    return this.json<LocalStatusResponse>('/api/local/status', 'local_status_failed');
   }
 
   /** `POST /api/local/direct`：安装 / 移除 / 启用 / 停用原生直连插件。 */
   async setDirect(action: LocalDirectAction): Promise<LocalDirectResponse> {
-    const res = await this.client.fetch('/api/local/direct', {
+    return this.json<LocalDirectResponse>('/api/local/direct', 'direct_failed', {
       method: 'POST',
-      headers: JSON_HEADERS,
-      body: JSON.stringify({ action }),
+      body: { action },
     });
-    if (!res.ok) throw await readError(res, 'direct_failed');
-    return (await res.json()) as LocalDirectResponse;
   }
 
   /** `POST /api/local/leave`：退出 mesh，清空本机 membership 并重启为 standalone。 */
   async leave(body: LocalLeaveRequest): Promise<LocalLeaveResponse> {
-    const res = await this.client.fetch('/api/local/leave', {
+    return this.json<LocalLeaveResponse>('/api/local/leave', 'leave_failed', {
       method: 'POST',
-      headers: JSON_HEADERS,
-      body: JSON.stringify(body),
+      body,
     });
-    if (!res.ok) throw await readError(res, 'leave_failed');
-    return (await res.json()) as LocalLeaveResponse;
   }
 }
 

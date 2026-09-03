@@ -27,6 +27,13 @@ export interface DownloadedFile {
   blob: Blob;
 }
 
+/** leg1 完成后的远端临时会话句柄。 */
+export interface PreparedDownload {
+  downloadId: string;
+  size: number;
+  name: string;
+}
+
 export async function downloadFileWithProgress(
   rootId: string,
   path: string,
@@ -85,14 +92,15 @@ export async function downloadFileWithProgress(
 
 // leg1：服务器 → tmex（rsync）。downloadId 一拿到就通过 onDownloadId 上报，
 // 保证解析中途抛错时调用方仍能回收远端会话。
-async function prepareDownload(
+// bulk 直连路径（`@tmex/panels` 的 downloadFileWithTransport）复用同一份 leg1。
+export async function prepareDownload(
   rootId: string,
   path: string,
   name: string,
   opts: TransferOpts,
   client: ApiClient,
   onDownloadId: (downloadId: string) => void
-): Promise<{ downloadId: string; size: number; name: string }> {
+): Promise<PreparedDownload> {
   const { onLeg, signal } = opts;
 
   onLeg?.(1, { pct: 0 });

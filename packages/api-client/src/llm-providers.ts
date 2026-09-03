@@ -8,7 +8,8 @@ import type {
   UpdateLlmProviderRequest,
   UpdateLlmProviderResponse,
 } from '@tmex/shared';
-import { type ApiClient, defaultApiClient, parseApiError } from './client';
+import { type ApiClient, defaultApiClient } from './client';
+import { requestJson } from './json-mutation';
 
 export const llmProvidersQueryKey = ['llm-providers'] as const;
 export const llmSettingsQueryKey = ['llm-settings'] as const;
@@ -17,22 +18,14 @@ export async function fetchLlmProviders(
   errorFallback = 'Failed to load providers',
   client: ApiClient = defaultApiClient
 ): Promise<ListLlmProvidersResponse> {
-  const res = await client.fetch('/api/llm/providers');
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, errorFallback));
-  }
-  return (await res.json()) as ListLlmProvidersResponse;
+  return requestJson<ListLlmProvidersResponse>(client, '/api/llm/providers', { errorFallback });
 }
 
 export async function fetchAgentLlmSettings(
   errorFallback = 'Failed to load LLM settings',
   client: ApiClient = defaultApiClient
 ): Promise<GetAgentLlmSettingsResponse> {
-  const res = await client.fetch('/api/llm/settings');
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, errorFallback));
-  }
-  return (await res.json()) as GetAgentLlmSettingsResponse;
+  return requestJson<GetAgentLlmSettingsResponse>(client, '/api/llm/settings', { errorFallback });
 }
 
 export async function createLlmProvider(
@@ -40,15 +33,11 @@ export async function createLlmProvider(
   errorFallback = 'Failed to create provider',
   client: ApiClient = defaultApiClient
 ): Promise<CreateLlmProviderResponse> {
-  const res = await client.fetch('/api/llm/providers', {
+  return requestJson<CreateLlmProviderResponse>(client, '/api/llm/providers', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    errorFallback,
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, errorFallback));
-  }
-  return (await res.json()) as CreateLlmProviderResponse;
 }
 
 export async function updateLlmProvider(
@@ -57,13 +46,9 @@ export async function updateLlmProvider(
   errorFallback = 'Failed to update provider',
   client: ApiClient = defaultApiClient
 ): Promise<UpdateLlmProviderResponse> {
-  const res = await client.fetch(`/api/llm/providers/${providerId}`, {
+  return requestJson<UpdateLlmProviderResponse>(client, `/api/llm/providers/${providerId}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    errorFallback,
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, errorFallback));
-  }
-  return (await res.json()) as UpdateLlmProviderResponse;
 }

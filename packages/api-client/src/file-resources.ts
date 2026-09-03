@@ -13,26 +13,28 @@ import type {
 import { type ApiClient, defaultApiClient } from './client';
 import { parseError } from './file-errors';
 import { filesApiUrl } from './file-urls';
+import { type JsonRequestOptions, requestJson, requestOk } from './json-mutation';
+
+/** 文件族一律抛 `FileApiError`（带 code），与两段式传输共用同一套解析。 */
+function fileJson<T>(
+  client: ApiClient,
+  path: string,
+  options: JsonRequestOptions = {}
+): Promise<T> {
+  return requestJson<T>(client, path, { ...options, toError: parseError });
+}
 
 export async function fetchFileRoots(
   client: ApiClient = defaultApiClient
 ): Promise<ListFileRootsResponse> {
-  const res = await client.fetch('/api/files/roots');
-  if (!res.ok) throw await parseError(res);
-  return (await res.json()) as ListFileRootsResponse;
+  return fileJson<ListFileRootsResponse>(client, '/api/files/roots');
 }
 
 export async function createFileRoot(
   body: CreateFileRootRequest,
   client: ApiClient = defaultApiClient
 ): Promise<FileRootResponse> {
-  const res = await client.fetch('/api/files/roots', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw await parseError(res);
-  return (await res.json()) as FileRootResponse;
+  return fileJson<FileRootResponse>(client, '/api/files/roots', { method: 'POST', body });
 }
 
 export async function updateFileRoot(
@@ -40,13 +42,10 @@ export async function updateFileRoot(
   body: UpdateFileRootRequest,
   client: ApiClient = defaultApiClient
 ): Promise<FileRootResponse> {
-  const res = await client.fetch(`/api/files/roots/${encodeURIComponent(id)}`, {
+  return fileJson<FileRootResponse>(client, `/api/files/roots/${encodeURIComponent(id)}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
   });
-  if (!res.ok) throw await parseError(res);
-  return (await res.json()) as FileRootResponse;
 }
 
 /** 侧栏拖拽排序：整份顺序一次提交，未列出的目录项保持相对顺序排在后面。 */
@@ -54,23 +53,20 @@ export async function reorderFileRoots(
   rootIds: string[],
   client: ApiClient = defaultApiClient
 ): Promise<ListFileRootsResponse> {
-  const res = await client.fetch('/api/files/roots/order', {
+  return fileJson<ListFileRootsResponse>(client, '/api/files/roots/order', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rootIds }),
+    body: { rootIds },
   });
-  if (!res.ok) throw await parseError(res);
-  return (await res.json()) as ListFileRootsResponse;
 }
 
 export async function deleteFileRoot(
   id: string,
   client: ApiClient = defaultApiClient
 ): Promise<void> {
-  const res = await client.fetch(`/api/files/roots/${encodeURIComponent(id)}`, {
+  await requestOk(client, `/api/files/roots/${encodeURIComponent(id)}`, {
     method: 'DELETE',
+    toError: parseError,
   });
-  if (!res.ok) throw await parseError(res);
 }
 
 export async function fetchFileList(
@@ -78,9 +74,7 @@ export async function fetchFileList(
   path?: string,
   client: ApiClient = defaultApiClient
 ): Promise<ListFilesResponse> {
-  const res = await client.fetch(filesApiUrl('list', rootId, path));
-  if (!res.ok) throw await parseError(res);
-  return (await res.json()) as ListFilesResponse;
+  return fileJson<ListFilesResponse>(client, filesApiUrl('list', rootId, path));
 }
 
 export async function fetchFileStat(
@@ -88,9 +82,7 @@ export async function fetchFileStat(
   path: string,
   client: ApiClient = defaultApiClient
 ): Promise<FileStatResponse> {
-  const res = await client.fetch(filesApiUrl('stat', rootId, path));
-  if (!res.ok) throw await parseError(res);
-  return (await res.json()) as FileStatResponse;
+  return fileJson<FileStatResponse>(client, filesApiUrl('stat', rootId, path));
 }
 
 export async function fetchFileContent(
@@ -98,9 +90,7 @@ export async function fetchFileContent(
   path: string,
   client: ApiClient = defaultApiClient
 ): Promise<FileContentResponse> {
-  const res = await client.fetch(filesApiUrl('content', rootId, path));
-  if (!res.ok) throw await parseError(res);
-  return (await res.json()) as FileContentResponse;
+  return fileJson<FileContentResponse>(client, filesApiUrl('content', rootId, path));
 }
 
 /** 图形化路径选择器：列出设备上任意目录的子目录（不受 roots 白名单约束）。 */
@@ -111,7 +101,5 @@ export async function browseDirectory(
   const search = new URLSearchParams({ deviceId: params.deviceId });
   if (params.path) search.set('path', params.path);
   if (params.hidden) search.set('hidden', '1');
-  const res = await client.fetch(`/api/files/browse?${search.toString()}`);
-  if (!res.ok) throw await parseError(res);
-  return (await res.json()) as BrowseDirectoryResponse;
+  return fileJson<BrowseDirectoryResponse>(client, `/api/files/browse?${search.toString()}`);
 }

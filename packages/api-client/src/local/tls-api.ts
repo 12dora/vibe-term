@@ -4,6 +4,7 @@
 // 因此路径经 `resolveNodeUrl(SELF_NODE_ID, ...)` 走 entry 自身，不加 `/n/<id>` 前缀。
 
 import { type ApiClient, defaultApiClient } from '../client';
+import { type JsonRequestOptions, readCodedError, requestJson } from '../json-mutation';
 import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';
 import type { TlsStatusResponse, TlsUpdateRequest } from './tls-types';
 
@@ -19,25 +20,13 @@ export class TlsApiError extends Error {
   }
 }
 
-async function readError(res: Response, fallback: string): Promise<TlsApiError> {
-  try {
-    const body = (await res.json()) as { error?: unknown };
-    const error = body.error;
-    if (error && typeof error === 'object') {
-      const { code, message } = error as { code?: unknown; message?: unknown };
-      if (typeof code === 'string') {
-        return new TlsApiError(code, typeof message === 'string' ? message : code, res.status);
-      }
-    }
-    // 反代 / 网关层可能给出 `{error: "..."}` 的老形态。
-    if (typeof error === 'string') return new TlsApiError(error, error, res.status);
-  } catch {
-    // 落到 fallback
-  }
-  return new TlsApiError(fallback, fallback, res.status);
+function readError(res: Response, fallback: string): Promise<TlsApiError> {
+  return readCodedError(
+    res,
+    fallback,
+    (code, message, status) => new TlsApiError(code, message, status)
+  );
 }
-
-const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;
 
 export const TLS_PATH = resolveNodeUrl(SELF_NODE_ID, '/api/tls');
 export const TLS_RENEW_PATH = resolveNodeUrl(SELF_NODE_ID, '/api/tls/renew');
@@ -46,11 +35,16 @@ export const TLS_CA_PATH = resolveNodeUrl(SELF_NODE_ID, '/api/tls/ca.crt');
 export class TlsApi {
   constructor(private readonly client: ApiClient = defaultApiClient) {}
 
+  private json<T>(path: string, fallback: string, options: JsonRequestOptions = {}): Promise<T> {
+    return requestJson<T>(this.client, path, {
+      ...options,
+      toError: (res) => readError(res, fallback),
+    });
+  }
+
   /** `GET /api/tls`：mesh 下需要 self 会话，未登录返回 401。 */
   async status(): Promise<TlsStatusResponse> {
-    const res = await this.client.fetch(TLS_PATH);
-    if (!res.ok) throw await readError(res, 'tls_status_failed');
-    return (await res.json()) as TlsStatusResponse;
+    return this.json<TlsStatusResponse>(TLS_PATH, 'tls_status_failed');
   }
 
   /**
@@ -58,20 +52,12 @@ export class TlsApi {
    * 两者的响应体都是 `GET /api/tls` 的形状。
    */
   async update(req: TlsUpdateRequest): Promise<TlsStatusResponse> {
-    const res = await this.client.fetch(TLS_PATH, {
-      method: 'PUT',
-      headers: JSON_HEADERS,
-      body: JSON.stringify(req),
-    });
-    if (!res.ok) throw await readError(res, 'tls_failed');
-    return (await res.json()) as TlsStatusResponse;
+    return this.json<TlsStatusResponse>(TLS_PATH, 'tls_failed', { method: 'PUT', body: req });
   }
 
   /** `POST /api/tls/renew`：none / external 下返回 409 `not_applicable`。 */
   async renew(): Promise<TlsStatusResponse> {
-    const res = await this.client.fetch(TLS_RENEW_PATH, { method: 'POST' });
-    if (!res.ok) throw await readError(res, 'tls_failed');
-    return (await res.json()) as TlsStatusResponse;
+    return this.json<TlsStatusResponse>(TLS_RENEW_PATH, 'tls_failed', { method: 'POST' });
   }
 
   /** CA 证书下载地址：交给 `<a href download>`，不经 fetch（浏览器要直接存盘）。 */

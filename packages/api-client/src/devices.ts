@@ -7,6 +7,7 @@ import type {
   UpdateDeviceRequest,
 } from '@tmex/shared';
 import { type ApiClient, defaultApiClient, parseApiError } from './client';
+import { requestJson, requestOk } from './json-mutation';
 
 export const devicesQueryKey = ['devices'] as const;
 
@@ -22,7 +23,8 @@ export interface DevicesResponse {
   devices: DeviceWithRuntime[];
 }
 
-// 多个包共享 ['devices'] 查询缓存且约定形态为 { devices }，故列表端点保留信封返回
+// 多个包共享 ['devices'] 查询缓存且约定形态为 { devices }，故列表端点保留信封返回；
+// 该端点还需透传调用方的 RequestInit（如 signal），不走 requestJson
 export async function fetchDevices(
   client: ApiClient = defaultApiClient,
   init?: RequestInit
@@ -39,16 +41,12 @@ export async function createDevice(
   errorFallback = 'Failed to create device',
   client: ApiClient = defaultApiClient
 ): Promise<Device> {
-  const res = await client.fetch('/api/devices', {
+  return requestJson<{ device: Device }, Device>(client, '/api/devices', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    errorFallback,
+    pick: (payload) => payload.device,
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, errorFallback));
-  }
-  const payload = (await res.json()) as { device: Device };
-  return payload.device;
 }
 
 export async function updateDevice(
@@ -57,16 +55,12 @@ export async function updateDevice(
   errorFallback = 'Failed to update device',
   client: ApiClient = defaultApiClient
 ): Promise<Device> {
-  const res = await client.fetch(`/api/devices/${deviceId}`, {
+  return requestJson<{ device: Device }, Device>(client, `/api/devices/${deviceId}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    errorFallback,
+    pick: (payload) => payload.device,
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, errorFallback));
-  }
-  const payload = (await res.json()) as { device: Device };
-  return payload.device;
 }
 
 // 既有调用方对删除失败一律展示固定文案，故不解析响应体中的 error 字段
@@ -75,25 +69,21 @@ export async function deleteDevice(
   errorMessage = 'Failed to delete device',
   client: ApiClient = defaultApiClient
 ): Promise<void> {
-  const res = await client.fetch(`/api/devices/${deviceId}`, { method: 'DELETE' });
-  if (!res.ok) {
-    throw new Error(errorMessage);
-  }
+  await requestOk(client, `/api/devices/${deviceId}`, {
+    method: 'DELETE',
+    toError: () => new Error(errorMessage),
+  });
 }
 
 export async function reorderDevices(
   deviceIds: string[],
   client: ApiClient = defaultApiClient
 ): Promise<DevicesResponse> {
-  const res = await client.fetch('/api/devices/order', {
+  return requestJson<DevicesResponse>(client, '/api/devices/order', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deviceIds }),
+    body: { deviceIds },
+    errorFallback: 'Failed to reorder devices',
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to reorder devices'));
-  }
-  return (await res.json()) as DevicesResponse;
 }
 
 // 连接失败（success: false）同样是 200 载荷，由调用方按 TestConnectionResult 呈现；
@@ -103,11 +93,8 @@ export async function testDeviceConnection(
   errorFallback = 'Connection test failed',
   client: ApiClient = defaultApiClient
 ): Promise<TestConnectionResult> {
-  const res = await client.fetch(`/api/devices/${deviceId}/test-connection`, {
+  return requestJson<TestConnectionResult>(client, `/api/devices/${deviceId}/test-connection`, {
     method: 'POST',
+    errorFallback,
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, errorFallback));
-  }
-  return (await res.json()) as TestConnectionResult;
 }

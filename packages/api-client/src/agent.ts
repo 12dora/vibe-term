@@ -7,7 +7,8 @@ import type {
   AgentSessionDto,
   AgentWriteMode,
 } from '@tmex/shared';
-import { type ApiClient, defaultApiClient, parseApiError } from './client';
+import { type ApiClient, defaultApiClient } from './client';
+import { requestJson, requestOk } from './json-mutation';
 
 export interface CreateAgentSessionRequest {
   /** 绑定 pane 所在的 mesh node；缺省 / null / 'self' 均表示本 gateway */
@@ -39,12 +40,14 @@ export async function fetchAgentSessions(
   options: { nodeId?: string } = {}
 ): Promise<AgentSessionDto[]> {
   const query = options.nodeId ? `?nodeId=${encodeURIComponent(options.nodeId)}` : '';
-  const res = await client.fetch(`/api/agent/sessions${query}`);
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to load agent sessions'));
-  }
-  const payload = (await res.json()) as { sessions: AgentSessionDto[] };
-  return payload.sessions;
+  return requestJson<{ sessions: AgentSessionDto[] }, AgentSessionDto[]>(
+    client,
+    `/api/agent/sessions${query}`,
+    {
+      errorFallback: 'Failed to load agent sessions',
+      pick: (payload) => payload.sessions,
+    }
+  );
 }
 
 /** 404 返回 null（session 已被别端删除），其余非 2xx 抛错 */
@@ -52,31 +55,26 @@ export async function fetchAgentSession(
   sessionId: string,
   client: ApiClient = defaultApiClient
 ): Promise<AgentSessionDto | null> {
-  const res = await client.fetch(`/api/agent/sessions/${sessionId}`);
+  const res = await requestOk(client, `/api/agent/sessions/${sessionId}`, {
+    errorFallback: 'Failed to load agent session',
+    allowStatus: [404],
+  });
   if (res.status === 404) {
     return null;
   }
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to load agent session'));
-  }
-  const payload = (await res.json()) as { session: AgentSessionDto };
-  return payload.session;
+  return ((await res.json()) as { session: AgentSessionDto }).session;
 }
 
 export async function createAgentSession(
   body: CreateAgentSessionRequest,
   client: ApiClient = defaultApiClient
 ): Promise<AgentSessionDto> {
-  const res = await client.fetch('/api/agent/sessions', {
+  return requestJson<{ session: AgentSessionDto }, AgentSessionDto>(client, '/api/agent/sessions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    errorFallback: 'Failed to create agent session',
+    pick: (payload) => payload.session,
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to create agent session'));
-  }
-  const payload = (await res.json()) as { session: AgentSessionDto };
-  return payload.session;
 }
 
 export async function updateAgentSession(
@@ -85,26 +83,26 @@ export async function updateAgentSession(
   errorFallback = 'Failed to update agent session',
   client: ApiClient = defaultApiClient
 ): Promise<AgentSessionDto> {
-  const res = await client.fetch(`/api/agent/sessions/${sessionId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, errorFallback));
-  }
-  const payload = (await res.json()) as { session: AgentSessionDto };
-  return payload.session;
+  return requestJson<{ session: AgentSessionDto }, AgentSessionDto>(
+    client,
+    `/api/agent/sessions/${sessionId}`,
+    {
+      method: 'PATCH',
+      body: patch,
+      errorFallback,
+      pick: (payload) => payload.session,
+    }
+  );
 }
 
 export async function deleteAgentSession(
   sessionId: string,
   client: ApiClient = defaultApiClient
 ): Promise<void> {
-  const res = await client.fetch(`/api/agent/sessions/${sessionId}`, { method: 'DELETE' });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to delete agent session'));
-  }
+  await requestOk(client, `/api/agent/sessions/${sessionId}`, {
+    method: 'DELETE',
+    errorFallback: 'Failed to delete agent session',
+  });
 }
 
 /** afterSeq >= 0 时按增量拉取 */
@@ -114,12 +112,14 @@ export async function fetchAgentMessages(
   client: ApiClient = defaultApiClient
 ): Promise<AgentMessageDto[]> {
   const query = afterSeq >= 0 ? `?afterSeq=${afterSeq}` : '';
-  const res = await client.fetch(`/api/agent/sessions/${sessionId}/messages${query}`);
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to load agent messages'));
-  }
-  const payload = (await res.json()) as { messages: AgentMessageDto[] };
-  return payload.messages;
+  return requestJson<{ messages: AgentMessageDto[] }, AgentMessageDto[]>(
+    client,
+    `/api/agent/sessions/${sessionId}/messages${query}`,
+    {
+      errorFallback: 'Failed to load agent messages',
+      pick: (payload) => payload.messages,
+    }
+  );
 }
 
 export interface SendAgentMessageResponse {
@@ -132,15 +132,15 @@ export async function sendAgentMessage(
   text: string,
   client: ApiClient = defaultApiClient
 ): Promise<SendAgentMessageResponse> {
-  const res = await client.fetch(`/api/agent/sessions/${sessionId}/messages`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to send message'));
-  }
-  return (await res.json()) as SendAgentMessageResponse;
+  return requestJson<SendAgentMessageResponse>(
+    client,
+    `/api/agent/sessions/${sessionId}/messages`,
+    {
+      method: 'POST',
+      body: { text },
+      errorFallback: 'Failed to send message',
+    }
+  );
 }
 
 export async function enqueueAgentMessage(
@@ -149,14 +149,11 @@ export async function enqueueAgentMessage(
   steer: boolean,
   client: ApiClient = defaultApiClient
 ): Promise<void> {
-  const res = await client.fetch(`/api/agent/sessions/${sessionId}/queue`, {
+  await requestOk(client, `/api/agent/sessions/${sessionId}/queue`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, steer }),
+    body: { text, steer },
+    errorFallback: 'Failed to queue message',
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to queue message'));
-  }
 }
 
 export async function editQueuedAgentMessage(
@@ -164,36 +161,36 @@ export async function editQueuedAgentMessage(
   text: string,
   client: ApiClient = defaultApiClient
 ): Promise<void> {
-  const res = await client.fetch(`/api/agent/queue/${itemId}`, {
+  await requestOk(client, `/api/agent/queue/${itemId}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: { text },
+    errorFallback: 'Failed to edit queued message',
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to edit queued message'));
-  }
 }
 
 export async function withdrawQueuedAgentMessage(
   itemId: string,
   client: ApiClient = defaultApiClient
 ): Promise<void> {
-  const res = await client.fetch(`/api/agent/queue/${itemId}`, { method: 'DELETE' });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to withdraw queued message'));
-  }
+  await requestOk(client, `/api/agent/queue/${itemId}`, {
+    method: 'DELETE',
+    errorFallback: 'Failed to withdraw queued message',
+  });
 }
 
 export async function stopAgentSession(
   sessionId: string,
   client: ApiClient = defaultApiClient
 ): Promise<AgentSessionDto | null> {
-  const res = await client.fetch(`/api/agent/sessions/${sessionId}/stop`, { method: 'POST' });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to stop agent session'));
-  }
-  const payload = (await res.json()) as { session: AgentSessionDto | null };
-  return payload.session;
+  return requestJson<{ session: AgentSessionDto | null }, AgentSessionDto | null>(
+    client,
+    `/api/agent/sessions/${sessionId}/stop`,
+    {
+      method: 'POST',
+      errorFallback: 'Failed to stop agent session',
+      pick: (payload) => payload.session,
+    }
+  );
 }
 
 /** 409（已被别端决定）返回 'conflict'，调用方自行刷新 pending 列表 */
@@ -203,28 +200,25 @@ export async function decideAgentConfirmation(
   reason: string | undefined,
   client: ApiClient = defaultApiClient
 ): Promise<'ok' | 'conflict'> {
-  const res = await client.fetch(`/api/agent/confirmations/${confirmationId}/decide`, {
+  const res = await requestOk(client, `/api/agent/confirmations/${confirmationId}/decide`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(reason === undefined ? { approved } : { approved, reason }),
+    body: reason === undefined ? { approved } : { approved, reason },
+    errorFallback: 'Failed to decide confirmation',
+    allowStatus: [409],
   });
-  if (res.status === 409) {
-    return 'conflict';
-  }
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to decide confirmation'));
-  }
-  return 'ok';
+  return res.status === 409 ? 'conflict' : 'ok';
 }
 
 export async function fetchAgentConfirmations(
   sessionId: string,
   client: ApiClient = defaultApiClient
 ): Promise<AgentConfirmationDto[]> {
-  const res = await client.fetch(`/api/agent/sessions/${sessionId}/confirmations`);
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to load confirmations'));
-  }
-  const payload = (await res.json()) as { confirmations: AgentConfirmationDto[] };
-  return payload.confirmations;
+  return requestJson<{ confirmations: AgentConfirmationDto[] }, AgentConfirmationDto[]>(
+    client,
+    `/api/agent/sessions/${sessionId}/confirmations`,
+    {
+      errorFallback: 'Failed to load confirmations',
+      pick: (payload) => payload.confirmations,
+    }
+  );
 }

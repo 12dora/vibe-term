@@ -8,7 +8,8 @@ import type {
   WatchRuleResponse,
   WatchRuleStateResponse,
 } from '@tmex/shared';
-import { type ApiClient, defaultApiClient, parseApiError } from './client';
+import { type ApiClient, defaultApiClient } from './client';
+import { requestJson, requestOk } from './json-mutation';
 
 export const watchRulesQueryKey = (deviceId: string, paneId: string) =>
   ['watch-rules', deviceId, paneId] as const;
@@ -21,27 +22,21 @@ export async function fetchWatchRules(
   client: ApiClient = defaultApiClient
 ): Promise<WatchRuleDto[]> {
   const params = new URLSearchParams({ deviceId, paneId });
-  const res = await client.fetch(`/api/watch/rules?${params}`);
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to load watch rules'));
-  }
-  const payload = (await res.json()) as ListWatchRulesResponse;
-  return payload.rules;
+  return requestJson<ListWatchRulesResponse, WatchRuleDto[]>(client, `/api/watch/rules?${params}`, {
+    errorFallback: 'Failed to load watch rules',
+    pick: (payload) => payload.rules,
+  });
 }
 
 export async function createWatchRule(
   body: CreateWatchRuleRequest,
   client: ApiClient = defaultApiClient
 ): Promise<WatchRuleResponse> {
-  const res = await client.fetch('/api/watch/rules', {
+  return requestJson<WatchRuleResponse>(client, '/api/watch/rules', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    errorFallback: 'Failed to create watch rule',
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to create watch rule'));
-  }
-  return (await res.json()) as WatchRuleResponse;
 }
 
 export async function updateWatchRule(
@@ -49,25 +44,21 @@ export async function updateWatchRule(
   body: UpdateWatchRuleRequest,
   client: ApiClient = defaultApiClient
 ): Promise<WatchRuleResponse> {
-  const res = await client.fetch(`/api/watch/rules/${ruleId}`, {
+  return requestJson<WatchRuleResponse>(client, `/api/watch/rules/${ruleId}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    errorFallback: 'Failed to update watch rule',
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to update watch rule'));
-  }
-  return (await res.json()) as WatchRuleResponse;
 }
 
 export async function deleteWatchRule(
   ruleId: string,
   client: ApiClient = defaultApiClient
 ): Promise<void> {
-  const res = await client.fetch(`/api/watch/rules/${ruleId}`, { method: 'DELETE' });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to delete watch rule'));
-  }
+  await requestOk(client, `/api/watch/rules/${ruleId}`, {
+    method: 'DELETE',
+    errorFallback: 'Failed to delete watch rule',
+  });
 }
 
 /** 非 2xx 返回 null（调用方按缓存缺失处理）；网络异常仍抛出 */
@@ -87,26 +78,20 @@ export async function fetchWatchRuleState(
   ruleId: string,
   client: ApiClient = defaultApiClient
 ): Promise<WatchRuleStateResponse> {
-  const res = await client.fetch(`/api/watch/rules/${ruleId}/state`);
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to load watch rule state'));
-  }
-  return (await res.json()) as WatchRuleStateResponse;
+  return requestJson<WatchRuleStateResponse>(client, `/api/watch/rules/${ruleId}/state`, {
+    errorFallback: 'Failed to load watch rule state',
+  });
 }
 
 export async function assistRegex(
   body: AssistRegexRequest,
   client: ApiClient = defaultApiClient
 ): Promise<AssistRegexResponse> {
-  const res = await client.fetch('/api/watch/assist-regex', {
+  return requestJson<AssistRegexResponse>(client, '/api/watch/assist-regex', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    errorFallback: 'Failed to generate regex',
   });
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to generate regex'));
-  }
-  return (await res.json()) as AssistRegexResponse;
 }
 
 export { parseApiError } from './client';
