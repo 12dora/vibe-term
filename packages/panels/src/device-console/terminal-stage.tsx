@@ -32,6 +32,8 @@ import {
   createKeepAliveColdScheduler,
   createKeepAlivePool,
   isKeepAlivePaneCold,
+  keepAliveLivePaneIdsFromKey,
+  keepAliveLivePaneIdsKey,
   keepAlivePaneIds,
   keepAlivePaneKey,
   markKeepAlivePaneCold,
@@ -234,15 +236,10 @@ function useOwnedKeepAlivePool(
 
 /** 快照里该设备当前存在的 pane：保活池据此卸载已被删除的隐藏实例 */
 function useDeviceLivePaneIds(deviceId: string): ReadonlySet<string> | null {
-  const snapshot = useTmuxStore((state) => state.snapshots[deviceId]);
-  return useMemo(() => {
-    if (!snapshot?.session) return null;
-    const ids = new Set<string>();
-    for (const window of snapshot.session.windows) {
-      for (const pane of window.panes) ids.add(pane.id);
-    }
-    return ids;
-  }, [snapshot]);
+  const paneIdsKey = useTmuxStore((state) =>
+    keepAliveLivePaneIdsKey(state.snapshots[deviceId]?.session?.windows)
+  );
+  return useMemo(() => keepAliveLivePaneIdsFromKey(paneIdsKey), [paneIdsKey]);
 }
 
 /**
@@ -381,6 +378,7 @@ function KeepAliveTerminalStack(props: KeepAliveStackProps) {
                 // 隐藏满宽限期的实例退出 wire 订阅（sink 仍注册，所以不会在注册表里堆缓冲），
                 // 切回时由 warm 资格的丧失自动走冷 select 重放 history
                 subscribe={visible || !isKeepAlivePaneCold(pool, paneId)}
+                renderSuspended={!visible}
                 // 隐藏实例只跟随容器尺寸对齐本地行列，不上报——否则多实例互抢整窗尺寸；
                 // 可见实例非 owner（别的客户端更大）时同样不上报，改为跟随权威尺寸本地平移
                 sizingMode={visible ? (owner ? 'report' : 'follow') : 'local'}

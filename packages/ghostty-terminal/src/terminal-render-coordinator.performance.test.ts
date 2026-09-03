@@ -4,7 +4,7 @@ import { getGhosttyBindings } from './ghostty-wasm';
 import { createRenderState, disposeRenderStateResources } from './render-state';
 import { type SelectionLineModel, serializeSelectionText } from './selection-model';
 import type { LinkUnderlineSegment } from './terminal-links';
-import { TerminalRenderCoordinator } from './terminal-render-coordinator';
+import { type RenderSnapshot, TerminalRenderCoordinator } from './terminal-render-coordinator';
 import type { GhosttySelectionRect } from './types';
 
 const COLS = 32;
@@ -41,6 +41,7 @@ async function createHarness(
   const renderState = createRenderState(bindings);
   const frames: CanvasRendererFrame[] = [];
   const linkUnderlines: LinkUnderlineSegment[][] = [];
+  const snapshots: RenderSnapshot[] = [];
   let selectionText: string | null = null;
   let selectionRects: GhosttySelectionRect[] = [];
 
@@ -61,7 +62,7 @@ async function createHarness(
     selectionText: () => selectionText,
     selectionColor: () => 'rgba(80,80,80,0.4)',
     fileLinkContext: () => null,
-    onSnapshot: () => {},
+    onSnapshot: (snapshot) => snapshots.push(snapshot),
     onSelectionText: () => {},
   });
   coordinator.attach({
@@ -81,6 +82,7 @@ async function createHarness(
     coordinator,
     frames,
     linkUnderlines,
+    snapshots,
     setSelection: (text: string | null, rects: GhosttySelectionRect[] = []) => {
       selectionText = text;
       selectionRects = rects;
@@ -96,6 +98,77 @@ async function createHarness(
 }
 
 describe('TerminalRenderCoordinator performance guards', () => {
+  test('suspension suppresses every paint task and resumes with current output and geometry', async () => {
+    const harness = await createHarness();
+    try {
+      harness.coordinator.renderNow();
+      harness.setSelection('picked', [{ row: 0, x: 1, width: 2 }]);
+      const framesBeforeSuspend = harness.frames.length;
+      const snapshotsBeforeSuspend = harness.snapshots.length;
+
+      harness.coordinator.setRenderSuspended(true);
+      harness.bindings.resizeTerminal(harness.terminal, COLS + 8, ROWS + 2, {
+        width: 8,
+        height: 16,
+      });
+      harness.coordinator.invalidateLines();
+      harness.bindings.writeVt(harness.terminal, '\x1b[2J\x1b[Hresume-output');
+      harness.coordinator.scheduleFromOutput();
+      harness.coordinator.scheduleSelectionRepaint();
+      harness.coordinator.scheduleLinkOverlayUpdate();
+      harness.coordinator.renderNow();
+
+      const pending = harness.coordinator as unknown as {
+        loop: { frame: number | null };
+        selectionFrame: number | null;
+        cursorSettleFrame: number | null;
+        linkOverlayTask: { timer: ReturnType<typeof setTimeout> | null };
+      };
+      expect(harness.frames).toHaveLength(framesBeforeSuspend);
+      expect(harness.snapshots).toHaveLength(snapshotsBeforeSuspend);
+      expect(pending.loop.frame).toBeNull();
+      expect(pending.selectionFrame).toBeNull();
+      expect(pending.cursorSettleFrame).toBeNull();
+      expect(pending.linkOverlayTask.timer).toBeNull();
+
+      harness.coordinator.setRenderSuspended(false);
+
+      const frame = harness.frames.at(-1);
+      const snapshot = harness.snapshots.at(-1);
+      expect(harness.frames).toHaveLength(framesBeforeSuspend + 1);
+      expect(frame?.forceFull).toBe(true);
+      expect(frame?.meta.cols).toBe(COLS + 8);
+      expect(frame?.meta.rows).toBe(ROWS + 2);
+      expect(frame?.selectionRects).toEqual([{ row: 0, x: 1, width: 2 }]);
+      expect(snapshot?.visibleLines.join('\n')).toContain('resume-output');
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  test('suspension preserves the viewport offset until the forced resume paint', async () => {
+    const harness = await createHarness();
+    try {
+      harness.coordinator.renderNow();
+      harness.coordinator.setRenderSuspended(true);
+      harness.bindings.scrollViewportDelta(harness.terminal, -2);
+      const expectedOffset = harness.bindings.readScrollbar(harness.terminal).offset;
+      const framesBeforeResume = harness.frames.length;
+
+      harness.coordinator.schedule();
+      harness.coordinator.renderNow();
+      expect(harness.frames).toHaveLength(framesBeforeResume);
+
+      harness.coordinator.setRenderSuspended(false);
+
+      expect(harness.frames).toHaveLength(framesBeforeResume + 1);
+      expect(harness.frames.at(-1)?.forceFull).toBe(true);
+      expect(harness.snapshots.at(-1)?.scrollbar.offset).toBe(expectedOffset);
+    } finally {
+      harness.dispose();
+    }
+  });
+
   test('scroll interleaved with output does not use shifted row reuse', async () => {
     const harness = await createHarness();
     try {

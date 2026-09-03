@@ -15,6 +15,10 @@
 // wire 订阅集合里摘掉（Ghostty 实例与 sink 都还留着，所以 sink 注册表不会开始缓冲），
 // 手机上不再为看不见的 pane 收流、渲染。再次切回时它已不算 warm，走冷 select 重放 history。
 
+import type { TmuxWindow } from '@tmex/shared';
+
+const LIVE_PANE_ID_SEPARATOR = '\u0000';
+
 /**
  * 应急开关：置 false 后保活池退化为「只挂当前路由 pane」——每次切换都重建终端、
  * 走冷 select，即 1.1.4 之前的行为。改这一行即可，其余逻辑不动。
@@ -25,6 +29,18 @@ export const KEEP_ALIVE_LIMIT = KEEP_ALIVE_ENABLED ? 3 : 1;
 
 /** 隐藏实例保持订阅的宽限期：这段时间内切回是即时的 warm 切换 */
 export const KEEP_ALIVE_COLD_DELAY_MS = 60_000;
+
+export function keepAliveLivePaneIdsKey(windows: readonly TmuxWindow[] | undefined): string | null {
+  if (!windows) return null;
+  const paneIds = windows.flatMap((window) => window.panes.map((pane) => pane.id));
+  paneIds.sort();
+  return paneIds.join(LIVE_PANE_ID_SEPARATOR);
+}
+
+export function keepAliveLivePaneIdsFromKey(key: string | null): ReadonlySet<string> | null {
+  if (key === null) return null;
+  return new Set(key ? key.split(LIVE_PANE_ID_SEPARATOR) : []);
+}
 
 export interface KeepAlivePool {
   deviceId: string | null;

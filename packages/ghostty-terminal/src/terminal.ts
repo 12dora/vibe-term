@@ -115,6 +115,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private fileLinkContext: FileLinkContext | null = null;
   private lastNotifiedSelectionText: string | null = null;
   private syncOutputFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private renderSuspended = false;
   private disposed = false;
   private disableStdin: boolean;
   private customKeyEventHandler: (event: KeyboardEvent) => boolean = () => true;
@@ -344,7 +345,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     // write 到达，rAF 到点就画会把中间态刷上屏（no-flicker TUI 表现为逐行扫描）。
     // ESU 到达的那次 write 会走正常渲染调度；只留低频兜底防应用悬挂。
     if (this.input.isSynchronizedOutputActive()) {
-      if (this.syncOutputFallbackTimer === null) {
+      if (!this.renderSuspended && this.syncOutputFallbackTimer === null) {
         this.syncOutputFallbackTimer = setTimeout(() => {
           this.syncOutputFallbackTimer = null;
           this.renderCoordinator.schedule();
@@ -354,6 +355,18 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
     this.cancelSynchronizedOutputFallback();
     this.renderCoordinator.schedule();
+  }
+
+  setRenderSuspended(suspended: boolean): void {
+    if (this.disposed || this.renderSuspended === suspended) {
+      return;
+    }
+
+    this.renderSuspended = suspended;
+    if (suspended) {
+      this.cancelSynchronizedOutputFallback();
+    }
+    this.renderCoordinator.setRenderSuspended(suspended);
   }
 
   clearMouseTrackingModes(): void {

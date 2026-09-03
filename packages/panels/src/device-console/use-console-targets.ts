@@ -7,6 +7,58 @@ import type { TmuxPane, TmuxWindow } from '@tmex/shared';
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import { useMemo } from 'react';
 
+function appendKeyPart(parts: string[], value: string | number | boolean | undefined): void {
+  const text = value === undefined ? '' : String(value);
+  parts.push(`${text.length}:${text}`);
+}
+
+export function consoleWindowsTopologyKey(
+  windows: readonly TmuxWindow[] | undefined
+): string | null {
+  if (!windows) return null;
+  const parts: string[] = [];
+  appendKeyPart(parts, windows.length);
+  for (const window of windows) {
+    appendKeyPart(parts, window.id);
+    appendKeyPart(parts, window.index);
+    appendKeyPart(parts, window.active);
+    appendKeyPart(parts, window.layout);
+    appendKeyPart(parts, window.panes.length);
+    for (const pane of window.panes) {
+      appendKeyPart(parts, pane.id);
+      appendKeyPart(parts, pane.windowId);
+      appendKeyPart(parts, pane.index);
+      appendKeyPart(parts, pane.active);
+      appendKeyPart(parts, pane.width);
+      appendKeyPart(parts, pane.height);
+      appendKeyPart(parts, pane.left);
+      appendKeyPart(parts, pane.top);
+    }
+  }
+  return parts.join('');
+}
+
+export function consoleWindowPresentationKey(
+  windows: readonly TmuxWindow[] | undefined,
+  windowId: string | undefined
+): string | null {
+  const selectedWindow = windows?.find((window) => window.id === windowId);
+  if (!selectedWindow) return null;
+  const parts: string[] = [];
+  appendKeyPart(parts, selectedWindow.id);
+  appendKeyPart(parts, selectedWindow.name);
+  appendKeyPart(parts, selectedWindow.customName);
+  appendKeyPart(parts, selectedWindow.panes.length);
+  for (const pane of selectedWindow.panes) {
+    appendKeyPart(parts, pane.id);
+    appendKeyPart(parts, pane.title);
+    appendKeyPart(parts, pane.customName);
+    appendKeyPart(parts, pane.currentCommand);
+    appendKeyPart(parts, pane.currentPath);
+  }
+  return parts.join('');
+}
+
 export interface UseConsoleTargetsOptions {
   deviceId?: string;
   windowId?: string;
@@ -31,7 +83,16 @@ export function useConsoleTargets({
   resolvedPaneId,
   devicesQueryKey,
 }: UseConsoleTargetsOptions): ConsoleTargets {
-  const snapshot = useTmuxStore((state) => (deviceId ? state.snapshots[deviceId] : undefined));
+  const runtime = useRuntime();
+  const windowsTopologyKey = useTmuxStore((state) =>
+    consoleWindowsTopologyKey(deviceId ? state.snapshots[deviceId]?.session?.windows : undefined)
+  );
+  const selectedWindowPresentationKey = useTmuxStore((state) =>
+    consoleWindowPresentationKey(
+      deviceId ? state.snapshots[deviceId]?.session?.windows : undefined,
+      windowId
+    )
+  );
   const deviceErrorMessage = useTmuxStore((state) =>
     deviceId ? state.deviceErrors?.[deviceId]?.message : undefined
   );
@@ -42,7 +103,6 @@ export function useConsoleTargets({
     deviceId ? state.deviceReconnecting?.[deviceId] : undefined
   );
 
-  const runtime = useRuntime();
   const { data: devicesData } = useQuery({
     queryKey: devicesQueryKey,
     queryFn: () => fetchDevices(runtime.apiClient),
@@ -56,12 +116,24 @@ export function useConsoleTargets({
     return devicesData?.devices.find((device) => device.id === deviceId);
   }, [deviceId, devicesData?.devices]);
 
-  const windows = snapshot?.session?.windows;
+  const windows = useMemo(() => {
+    if (!deviceId || windowsTopologyKey === null) return undefined;
+    return runtime.stores.tmux.getState().snapshots[deviceId]?.session?.windows;
+  }, [deviceId, runtime, windowsTopologyKey]);
 
   const selectedWindow = useMemo(() => {
-    if (!windowId || !windows) return undefined;
-    return windows.find((win) => win.id === windowId);
-  }, [windowId, windows]);
+    if (
+      !deviceId ||
+      !windowId ||
+      windowsTopologyKey === null ||
+      selectedWindowPresentationKey === null
+    ) {
+      return undefined;
+    }
+    return runtime.stores.tmux
+      .getState()
+      .snapshots[deviceId]?.session?.windows.find((window) => window.id === windowId);
+  }, [deviceId, runtime, selectedWindowPresentationKey, windowId, windowsTopologyKey]);
 
   const selectedPane = useMemo(() => {
     if (!resolvedPaneId || !selectedWindow) return undefined;

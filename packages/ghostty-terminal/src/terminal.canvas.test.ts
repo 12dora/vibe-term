@@ -2238,6 +2238,40 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     disposable.dispose();
   });
 
+  test('render suspension keeps writes warm and paints exactly once on resume', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const written: Array<string | Uint8Array> = [];
+    let fullRenders = 0;
+    const writeVt = bindings.writeVt;
+    bindings.writeVt = (terminal, data) => {
+      written.push(data);
+      writeVt(terminal, data);
+    };
+    const readScrollbar = bindings.readScrollbar;
+    bindings.readScrollbar = (...args: any[]) => {
+      fullRenders += 1;
+      return readScrollbar(...args);
+    };
+    const { terminal } = await setupTerminal(bindings);
+    await dom.flushAnimationFrames();
+    const rendersBeforeSuspend = fullRenders;
+
+    terminal.setRenderSuspended(true);
+    terminal.write('output while hidden');
+    terminal.refresh();
+    terminal.forceFullRepaint();
+
+    expect(written).toEqual(['output while hidden']);
+    expect(fullRenders).toBe(rendersBeforeSuspend);
+    expect(dom.pendingAnimationFrames()).toBe(0);
+
+    terminal.setRenderSuspended(false);
+
+    expect(fullRenders).toBe(rendersBeforeSuspend + 1);
+    terminal.dispose();
+  });
+
   // 拖拽热路径：每个 mousemove 曾同步跑一遍完整渲染（重扫全部行 / 重算选区文本）。
   // 现在只排一帧选区层重绘，全渲染仍由输出、自动滚动、松手等真正的内容变化驱动。
   test('拖拽中的移动只排选区帧，输出与松手仍走全渲染', async () => {
@@ -2402,6 +2436,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
       'getSelection',
       'exportModeSnapshot',
       'cellDimensions',
+      'setRenderSuspended',
     ]) {
       expect(typeof probe[method]).toBe('function');
     }

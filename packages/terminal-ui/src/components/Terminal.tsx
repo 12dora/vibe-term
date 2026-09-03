@@ -1,6 +1,6 @@
 import { FitAddon, TERMINAL_ENGINE } from 'ghostty-terminal';
 import { Loader2 } from 'lucide-react';
-import { forwardRef, useCallback, useEffect, useMemo, useRef } from 'react';
+import { forwardRef, memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SelectionToolbar } from './SelectionToolbar';
 import { useContainerResizeObserver } from './hooks/useContainerResizeObserver';
@@ -16,7 +16,20 @@ import type { TerminalProps, TerminalRef } from './types';
 import { useMobileTouch } from './useMobileTouch';
 import { useTerminalResize } from './useTerminalResize';
 
-export const Terminal = forwardRef<TerminalRef, TerminalProps>(
+export type TerminalComponentProps = TerminalProps & {
+  renderSuspended?: boolean;
+};
+
+export function terminalPropsEqual(
+  previous: Readonly<TerminalComponentProps>,
+  next: Readonly<TerminalComponentProps>
+): boolean {
+  const keys = Object.keys(previous) as Array<keyof TerminalComponentProps>;
+  if (keys.length !== Object.keys(next).length) return false;
+  return keys.every((key) => Object.is(previous[key], next[key]));
+}
+
+const TerminalView = forwardRef<TerminalRef, TerminalComponentProps>(
   (
     {
       deviceId,
@@ -30,6 +43,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       autoFocus = true,
       focused = true,
       subscribe = true,
+      renderSuspended = false,
       onResize,
       onSync,
       onResizeSettled,
@@ -40,9 +54,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     ref
   ) => {
     const { t } = useTranslation();
-
     const terminalTheme = useMemo(() => resolveTerminalThemeProp(theme), [theme]);
-
     const containerRef = useRef<HTMLDivElement>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
 
@@ -78,6 +90,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         inputMode,
         sizingMode,
         autoFocus,
+        renderSuspended,
         terminalTheme,
         prepareResources,
         runPostSelectResize,
@@ -233,4 +246,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
   }
 );
 
+TerminalView.displayName = 'Terminal';
+
+export const Terminal = memo(TerminalView, terminalPropsEqual);
 Terminal.displayName = 'Terminal';

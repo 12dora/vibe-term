@@ -3,7 +3,7 @@
 import { useBellStore } from '@tmex/notifications';
 import type { TmuxPane } from '@tmex/shared';
 import { usePaneAgentState } from '@tmex/stores/react';
-import { useCallback } from 'react';
+import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Terminal } from '../Terminal';
 import type { DropPosition, SplitPaneRect } from '../splitLayoutGeometry';
@@ -18,6 +18,8 @@ const DROP_PREVIEW_CLASS: Record<DropPosition, string> = {
   top: 'left-0 right-0 top-0 h-1/2',
   bottom: 'left-0 right-0 bottom-0 h-1/2',
 };
+
+const noopTerminalSize = (_cols: number, _rows: number): void => {};
 
 function PaneBellIcon({ paneId }: { paneId: string }) {
   const ringing = useBellStore((state) => Boolean(state.ringingPanes[paneId]));
@@ -72,7 +74,7 @@ export interface SplitPaneViewProps {
   onTitleBarPointerDown: (paneId: string, event: React.PointerEvent<HTMLDivElement>) => void;
 }
 
-export function SplitPaneView({
+function SplitPaneView({
   deviceId,
   windowId,
   pane,
@@ -184,8 +186,8 @@ export function SplitPaneView({
           autoFocus={isFocused}
           focused={isFocused}
           prepareResources={prepareResources}
-          onResize={() => {}}
-          onSync={() => {}}
+          onResize={noopTerminalSize}
+          onSync={noopTerminalSize}
         />
       </div>
       {/* 拖拽重排的落点预览：目标 pane 的半区高亮 */}
@@ -199,3 +201,8 @@ export function SplitPaneView({
     </div>
   );
 }
+
+const MemoizedSplitPaneView = memo(SplitPaneView);
+MemoizedSplitPaneView.displayName = 'SplitPaneView';
+
+export { MemoizedSplitPaneView as SplitPaneView };

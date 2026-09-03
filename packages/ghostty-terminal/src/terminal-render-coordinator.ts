@@ -87,6 +87,7 @@ export class TerminalRenderCoordinator {
   private rowsPendingOutput = false;
   private cursorSettleFrame: number | null = null;
   private cursorDeferredSince = 0;
+  private renderSuspended = false;
   private linkOverlayDrawnOffset = -1;
   private viewportOffset = 0;
   private viewportRows = DEFAULT_ROWS;
@@ -142,10 +143,27 @@ export class TerminalRenderCoordinator {
     this.loop.schedule();
   }
 
+  setRenderSuspended(suspended: boolean): void {
+    if (this.renderSuspended === suspended) {
+      return;
+    }
+
+    this.renderSuspended = suspended;
+    this.loop.setRenderSuspended(suspended);
+    if (suspended) {
+      this.cancelSelectionRepaint();
+      this.cancelCursorSettle();
+      this.linkOverlayTask.cancel();
+      return;
+    }
+
+    this.forceFullRepaint();
+  }
+
   // 选区拖拽专用：本帧只有选区矩形变了，复用上一次全渲染留下的 renderedRows / lineCache
   // 重画选区层，不碰 WASM，也不重扫任何 cell；每帧最多一次。
   scheduleSelectionRepaint(): void {
-    if (this.selectionFrame !== null) {
+    if (this.renderSuspended || this.selectionFrame !== null) {
       return;
     }
 
@@ -168,6 +186,9 @@ export class TerminalRenderCoordinator {
   // canvas 位图可能已被清空，但内核未必同步报 dirty='full'（issue #45 bug 3）。
   forceFullRepaint(): void {
     this.loop.requestFullRepaint();
+    if (this.renderSuspended) {
+      return;
+    }
     // 显式的「立刻把真实状态画出来」请求（DOM 重插入、tab 切回、history 注入）：
     // 光标也必须按当刻状态落笔，不能继续挂起。
     this.cursorPendingOutput = false;
@@ -243,6 +264,9 @@ export class TerminalRenderCoordinator {
   }
 
   scheduleLinkOverlayUpdate(): void {
+    if (this.renderSuspended) {
+      return;
+    }
     this.linkOverlayTask.schedule();
   }
 
@@ -252,7 +276,7 @@ export class TerminalRenderCoordinator {
   }
 
   renderNow(): void {
-    const renderer = this.renderer;
+    const renderer = this.rendererForPaint();
     if (!renderer) {
       return;
     }
@@ -366,7 +390,7 @@ export class TerminalRenderCoordinator {
   // 下一帧若仍无新输出，说明应用这一帧写完了，把挂起的光标状态落笔；
   // 有新输出则什么都不做——那次 write 已经排了新的渲染帧，落定判定重新来过。
   private scheduleCursorSettle(): void {
-    if (this.cursorSettleFrame !== null) {
+    if (this.renderSuspended || this.cursorSettleFrame !== null) {
       return;
     }
 
@@ -406,6 +430,10 @@ export class TerminalRenderCoordinator {
 
     cancelAnimationFrame(this.selectionFrame);
     this.selectionFrame = null;
+  }
+
+  private rendererForPaint(): CanvasRenderer | null {
+    return this.renderSuspended ? null : this.renderer;
   }
 
   private lineModelFor(row: GhosttyRenderRow): SelectionLineModel {

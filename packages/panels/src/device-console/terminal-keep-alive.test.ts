@@ -15,6 +15,8 @@ import {
   isRetainedPane,
   isWarmSelectTarget,
   keepAliveCoolingPaneIds,
+  keepAliveLivePaneIdsFromKey,
+  keepAliveLivePaneIdsKey,
   keepAlivePaneIds,
   keepAlivePaneKey,
   markKeepAlivePaneCold,
@@ -124,6 +126,37 @@ describe('stream interruption', () => {
 });
 
 describe('snapshot pane removal', () => {
+  test('metadata-only snapshot changes keep the live pane subscription key stable', () => {
+    const windows = [
+      {
+        id: '@1',
+        name: 'shell',
+        index: 0,
+        active: true,
+        panes: [
+          { id: '%2', windowId: '@1', index: 1, active: false, width: 80, height: 24 },
+          { id: '%1', windowId: '@1', index: 0, active: true, width: 80, height: 24 },
+        ],
+      },
+    ];
+    const before = keepAliveLivePaneIdsKey(windows);
+    const after = keepAliveLivePaneIdsKey([
+      {
+        ...windows[0],
+        name: 'renamed',
+        panes: windows[0].panes.map((pane) => ({
+          ...pane,
+          title: `title-${pane.id}`,
+          currentPath: '/tmp',
+          currentCommand: 'bun',
+        })),
+      },
+    ]);
+
+    expect(after).toBe(before);
+    expect([...keepAliveLivePaneIdsFromKey(after)!]).toEqual(['%1', '%2']);
+  });
+
   test('a hidden pane removed from the snapshot is unmounted and re-boots cold', () => {
     let pool = createKeepAlivePool();
     pool = retainKeepAlivePane(pool, 'dev-1', '%1');

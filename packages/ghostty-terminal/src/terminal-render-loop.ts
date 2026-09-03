@@ -3,11 +3,12 @@
 export class TerminalRenderLoop {
   private frame: number | null = null;
   private forceFullNext = false;
+  private renderSuspended = false;
 
   constructor(private readonly paint: () => void) {}
 
   schedule(): void {
-    if (this.frame !== null) {
+    if (this.renderSuspended || this.frame !== null) {
       return;
     }
 
@@ -15,6 +16,18 @@ export class TerminalRenderLoop {
       this.frame = null;
       this.paint();
     });
+  }
+
+  setRenderSuspended(suspended: boolean): boolean {
+    if (this.renderSuspended === suspended) {
+      return false;
+    }
+
+    this.renderSuspended = suspended;
+    if (suspended) {
+      this.cancelPending();
+    }
+    return true;
   }
 
   // 标记下一次渲染全画，并取消排队中的帧交由调用方同步渲染。

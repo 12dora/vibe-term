@@ -6,7 +6,7 @@ import {
   TERMINAL_ENGINE,
   createTerminalController,
 } from 'ghostty-terminal';
-import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { TerminalSurface } from '../TerminalSurface';
 import {
   type TerminalDiagnosticReporter,
@@ -46,6 +46,7 @@ export interface UseTerminalBootSurfaceOptions {
   inputMode: TerminalProps['inputMode'];
   sizingMode: TerminalSizingMode;
   autoFocus: boolean;
+  renderSuspended: boolean;
   terminalTheme: TerminalThemeColors;
   prepareResources: TerminalProps['prepareResources'];
   runPostSelectResize: () => void;
@@ -114,6 +115,16 @@ function clearE2eTerminalProbe(terminal: CompatibleTerminalLike | null): void {
   g.__tmexE2eTerminalSelectionText = null;
 }
 
+export function applyTerminalRenderSuspension(
+  terminal: CompatibleTerminalLike | null,
+  suspended: boolean
+): void {
+  const method = (
+    terminal as (CompatibleTerminalLike & { setRenderSuspended?: (value: boolean) => void }) | null
+  )?.setRenderSuspended;
+  if (typeof method === 'function') method.call(terminal, suspended);
+}
+
 interface BootRefs {
   generationHost: RefObject<HTMLDivElement | null>;
   surface: RefObject<TerminalSurface<TerminalRenderTarget> | null>;
@@ -123,6 +134,7 @@ interface BootRefs {
   deviceId: RefObject<string>;
   paneId: RefObject<string>;
   inputMode: RefObject<TerminalProps['inputMode']>;
+  renderSuspended: RefObject<boolean>;
   terminalTheme: RefObject<TerminalThemeColors>;
 }
 
@@ -243,7 +255,10 @@ function createLifecycleDeps(
     setSurface: (surface) => {
       ctx.refs.surface.current = surface;
     },
-    bindTarget: (target) => ctx.setInstance(target?.terminal ?? null),
+    bindTarget: (target) => {
+      applyTerminalRenderSuspension(target?.terminal ?? null, ctx.refs.renderSuspended.current);
+      ctx.setInstance(target?.terminal ?? null);
+    },
     setBootState: ctx.setBootState,
     reportStage: (stage, target) => report(stage, target?.terminal ?? null, target?.mount ?? null),
     startDiagnosticSamples: (target) =>
@@ -272,6 +287,7 @@ function useBootRefs(options: UseTerminalBootSurfaceOptions): BootRefs {
     deviceId: useLatestRef(options.deviceId),
     paneId: useLatestRef(options.paneId),
     inputMode: useLatestRef(options.inputMode),
+    renderSuspended: useLatestRef(options.renderSuspended),
     terminalTheme: useLatestRef(options.terminalTheme),
   };
   return useRef(created).current;
@@ -284,7 +300,7 @@ function useBootRefs(options: UseTerminalBootSurfaceOptions): BootRefs {
 export function useTerminalBootSurface(
   options: UseTerminalBootSurfaceOptions
 ): TerminalBootSurface {
-  const { autoFocus, prepareResources, terminalTheme } = options;
+  const { autoFocus, prepareResources, renderSuspended, terminalTheme } = options;
   const [instance, setInstance] = useState<CompatibleTerminalLike | null>(null);
   const [bootState, setBootState] = useState<TerminalBootState>({ status: 'loading' });
   const [retryNonce, setRetryNonce] = useState(0);
@@ -298,6 +314,10 @@ export function useTerminalBootSurface(
   const retry = useCallback(() => {
     setRetryNonce((value) => value + 1);
   }, []);
+
+  useLayoutEffect(() => {
+    applyTerminalRenderSuspension(instance, renderSuspended);
+  }, [instance, renderSuspended]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: retryNonce is an explicit failed-resource retry trigger
   useEffect(() => {
