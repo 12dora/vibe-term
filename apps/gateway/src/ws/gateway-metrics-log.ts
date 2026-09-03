@@ -103,37 +103,49 @@ export function isQuietPingSnapshot(metrics: GatewayPingMetricsSnapshot): boolea
   );
 }
 
+const TERMINAL_OUTPUT_COUNTER_FIELDS = [
+  'sourceEvents',
+  'sourceBytes',
+  'droppedEvents',
+  'droppedBytes',
+  'legacyObservedEvents',
+  'legacyObservedBytes',
+  'canonicalObservedEvents',
+  'canonicalObservedBytes',
+  'batches',
+  'batchBytes',
+  'recipientDeliveries',
+  'recipientBytes',
+  'canonicalRecipientDeliveries',
+  'canonicalRecipientBytes',
+  'canonicalDeliveryDrops',
+  'canonicalDeliveryDropBytes',
+] as const satisfies ReadonlyArray<
+  keyof Omit<TerminalOutputMetricsSnapshot, 'intervalMs' | 'queues'>
+>;
+
+function allZero(values: readonly number[]): boolean {
+  for (const value of values) {
+    if (value !== 0) return false;
+  }
+  return true;
+}
+
 export function isQuietTerminalOutputSnapshot(metrics: TerminalOutputMetricsSnapshot): boolean {
-  if (
-    metrics.sourceEvents !== 0 ||
-    metrics.sourceBytes !== 0 ||
-    metrics.droppedEvents !== 0 ||
-    metrics.droppedBytes !== 0 ||
-    metrics.legacyObservedEvents !== 0 ||
-    metrics.legacyObservedBytes !== 0 ||
-    metrics.canonicalObservedEvents !== 0 ||
-    metrics.canonicalObservedBytes !== 0 ||
-    metrics.batches !== 0 ||
-    metrics.batchBytes !== 0 ||
-    metrics.recipientDeliveries !== 0 ||
-    metrics.recipientBytes !== 0 ||
-    metrics.canonicalRecipientDeliveries !== 0 ||
-    metrics.canonicalRecipientBytes !== 0 ||
-    metrics.canonicalDeliveryDrops !== 0 ||
-    metrics.canonicalDeliveryDropBytes !== 0
-  ) {
-    return false;
-  }
+  const counters = TERMINAL_OUTPUT_COUNTER_FIELDS.map((field) => metrics[field]);
   const { batch, websocket, canonical } = metrics.queues;
-  if (batch.pendingBytes !== 0 || batch.pendingPanes !== 0) return false;
-  if (
-    websocket.queuedBytes !== 0 ||
-    websocket.backpressuredSessions !== 0 ||
-    websocket.unavailableSessions !== 0
-  ) {
-    return false;
-  }
-  return canonical.pendingPaneGaps === 0 && canonical.streamGapsPending === 0;
+  return (
+    allZero(counters) &&
+    allZero([
+      batch.pendingBytes,
+      batch.pendingPanes,
+      websocket.queuedBytes,
+      websocket.backpressuredSessions,
+      websocket.unavailableSessions,
+      canonical.pendingPaneGaps,
+      canonical.streamGapsPending,
+    ])
+  );
 }
 
 export function isQuietGatewayActivitySnapshot(metrics: GatewayActivityMetricsSnapshot): boolean {

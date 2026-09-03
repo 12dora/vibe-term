@@ -1,4 +1,20 @@
+import { type SelectedPairStats, describePair } from './ice-stats';
 import type { DirectDiagnostics, DirectIceDiagnostics } from './types';
+
+export type DirectCarrierPublishState = 'idle' | 'connecting' | 'active' | 'failed';
+
+export type DirectBreakerSnapshotFields = {
+  cooling: boolean;
+  until: number | null;
+  failures: number;
+  level: number;
+  lastFailureKind: string | null;
+};
+
+type IceConnectionFields = {
+  connectionState: string;
+  iceConnectionState: string;
+};
 
 export interface PageVisibility {
   hidden: () => boolean;
@@ -37,14 +53,60 @@ export function sameIce(a: DirectIceDiagnostics | null, b: DirectIceDiagnostics 
   );
 }
 
+export function buildDirectDiagnostics(
+  state: DirectCarrierPublishState,
+  input: {
+    route: DirectDiagnostics['route'];
+    rtt: number | null;
+    ice: DirectIceDiagnostics | null;
+    breaker: DirectBreakerSnapshotFields;
+  }
+): DirectDiagnostics {
+  const active = state === 'active';
+  return {
+    path: active ? 'direct' : 'primary',
+    route: active ? input.route : null,
+    rtt: active ? input.rtt : null,
+    ice: active || state === 'connecting' ? input.ice : null,
+    cooling: input.breaker.cooling,
+    until: input.breaker.until,
+    failures: input.breaker.failures,
+    level: input.breaker.level,
+    lastFailureKind: input.breaker.lastFailureKind,
+  };
+}
+
+export function buildIceDiagnostics(
+  pc: IceConnectionFields,
+  pair: SelectedPairStats | null
+): DirectIceDiagnostics {
+  return {
+    connectionState: pc.connectionState || null,
+    iceConnectionState: pc.iceConnectionState || null,
+    localCandidateType: pair?.localCandidateType ?? null,
+    remoteCandidateType: pair?.remoteCandidateType ?? null,
+    selectedPair: describePair(pair),
+  };
+}
+
+export function retainIceCandidateTypes(
+  pc: IceConnectionFields,
+  previous: DirectIceDiagnostics | null
+): DirectIceDiagnostics {
+  return {
+    connectionState: pc.connectionState || null,
+    iceConnectionState: pc.iceConnectionState || null,
+    localCandidateType: previous?.localCandidateType ?? null,
+    remoteCandidateType: previous?.remoteCandidateType ?? null,
+    selectedPair: previous?.selectedPair ?? null,
+  };
+}
+
 /**
  * 诊断快照是否「对订阅者无意义的变化」。RTT 只按粗粒度比较：
  * 连接态 / 候选对 / 路径 / 熔断字段变了仍立即发布。
  */
-export function sameDiagnosticsForPublish(
-  prev: DirectDiagnostics,
-  next: DirectDiagnostics
-): boolean {
+export function sameDirectDiagnostics(prev: DirectDiagnostics, next: DirectDiagnostics): boolean {
   return (
     prev.path === next.path &&
     prev.route === next.route &&
@@ -57,3 +119,5 @@ export function sameDiagnosticsForPublish(
     sameIce(prev.ice ?? null, next.ice ?? null)
   );
 }
+
+export const sameDiagnosticsForPublish = sameDirectDiagnostics;

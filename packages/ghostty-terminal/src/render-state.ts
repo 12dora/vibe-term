@@ -1,4 +1,10 @@
 import type { GhosttyBindings } from './ghostty-wasm';
+import { INTERN_LIMIT, readColorAt } from './render-state-color';
+import {
+  applyShiftDirtyDowngrade,
+  lookupShiftedPreviousRow,
+  resolveShiftBaseline,
+} from './render-state-shift';
 import type {
   GhosttyCellWidthKind,
   GhosttyColorRgb,
@@ -64,9 +70,6 @@ for (let codepoint = 0; codepoint < 128; codepoint += 1) {
   ASCII_CODEPOINTS.push([codepoint]);
 }
 
-// 内插表上限：正常终端里 style 组合与实际用色都是几十到几百量级，超出即认为
-// 出现了病态输入，整表丢弃重建，避免 Map 无界增长。
-const INTERN_LIMIT = 8192;
 const GRAPHEME_SCRATCH_CODEPOINTS = 64;
 
 // 每个 render state 一块常驻 WASM 暂存区：替代原先「每次读取 alloc/free 一次」的
@@ -215,37 +218,6 @@ function assertReadResult(result: unknown, what: string): void {
   }
 }
 
-// 颜色对象内插：同一 RGB 在整屏里成千上万次出现，按打包整数键复用同一实例，
-// 让上层可以用引用相等做「这个 cell 变了吗」的判断。
-function internColor(
-  resources: GhosttyRenderStateResources,
-  red: number,
-  green: number,
-  blue: number
-): GhosttyColorRgb {
-  const key = (red << 16) | (green << 8) | blue;
-  const cached = resources.colorCache.get(key);
-  if (cached) {
-    return cached;
-  }
-
-  if (resources.colorCache.size >= INTERN_LIMIT) {
-    resources.colorCache.clear();
-  }
-
-  const color: GhosttyColorRgb = { r: red, g: green, b: blue };
-  resources.colorCache.set(key, color);
-  return color;
-}
-
-function readColorAt(
-  resources: GhosttyRenderStateResources,
-  ptr: number,
-  view: DataView
-): GhosttyColorRgb {
-  return internColor(resources, view.getUint8(ptr), view.getUint8(ptr + 1), view.getUint8(ptr + 2));
-}
-
 function readBool(resources: GhosttyRenderStateResources, read: (ptr: number) => number): boolean {
   const scratch = ensureScratch(resources);
   assertReadResult(read(scratch.u8), 'bool');
@@ -375,7 +347,7 @@ function readCellColor(
     throw new Error(`ghostty optional color read failed with result ${result}`);
   }
 
-  return readColorAt(resources, scratch.color, bindings.view());
+  return readColorAt(resources.colorCache, scratch.color, bindings.view());
 }
 
 // style 内插：把 8 个 bool + underline 打成整数键，整屏通常只有个位数到几十种组合。
@@ -594,16 +566,28 @@ function readColors(resources: GhosttyRenderStateResources): GhosttyRenderColors
   const palette: GhosttyColorRgb[] = [];
   for (let index = 0; index < 256; index += 1) {
     palette.push(
-      readColorAt(resources, scratch.colors + scratch.colorsPaletteOffset + index * 3, view)
+      readColorAt(
+        resources.colorCache,
+        scratch.colors + scratch.colorsPaletteOffset + index * 3,
+        view
+      )
     );
   }
 
   const colors: GhosttyRenderColors = {
-    background: readColorAt(resources, scratch.colors + scratch.colorsBackgroundOffset, view),
-    foreground: readColorAt(resources, scratch.colors + scratch.colorsForegroundOffset, view),
+    background: readColorAt(
+      resources.colorCache,
+      scratch.colors + scratch.colorsBackgroundOffset,
+      view
+    ),
+    foreground: readColorAt(
+      resources.colorCache,
+      scratch.colors + scratch.colorsForegroundOffset,
+      view
+    ),
     cursor:
       view.getUint8(scratch.colors + scratch.colorsCursorHasValueOffset) !== 0
-        ? readColorAt(resources, scratch.colors + scratch.colorsCursorOffset, view)
+        ? readColorAt(resources.colorCache, scratch.colors + scratch.colorsCursorOffset, view)
         : null,
     palette,
   };
@@ -894,19 +878,13 @@ export function* iterateRows(
     return;
   }
 
-  // 上一帧完整覆盖同样几何、且配色未变，才允许把 WASM 的 dirty='full' 降级为按行重画。
-  const comparable =
-    settled !== null &&
-    settled.length === meta.rows &&
-    resources.previousCols === meta.cols &&
-    !resources.colorsChanged;
-  const shifted =
-    comparable &&
-    Number.isInteger(scrollDelta) &&
-    scrollDelta !== 0 &&
-    Math.abs(scrollDelta) < meta.rows
-      ? scrollDelta
-      : 0;
+  const { comparable, shifted } = resolveShiftBaseline(
+    settled,
+    meta,
+    resources.previousCols,
+    resources.colorsChanged,
+    scrollDelta
+  );
 
   resources.bindings.bindRenderStateRowIterator(
     resources.renderStateHandle,
@@ -922,11 +900,7 @@ export function* iterateRows(
     rowIndex < meta.rows &&
     resources.bindings.nextRenderStateRowIterator(resources.rowIteratorHandle)
   ) {
-    const previousIndex = rowIndex + shifted;
-    const previous =
-      comparable && settled && previousIndex >= 0 && previousIndex < settled.length
-        ? settled[previousIndex]
-        : null;
+    const previous = lookupShiftedPreviousRow(comparable, settled, rowIndex, shifted);
     const row = readRow(resources, rowIndex, previous, shifted !== 0 && previous !== null);
     rows.push(row);
     yield row;
@@ -942,15 +916,7 @@ export function* iterateRows(
   resources.previousCols = meta.cols;
   resources.rowsVersion = resources.snapshotVersion;
   resources.appliedScrollDelta = shifted;
-
-  if (comparable && (meta.dirty === 'full' || shifted !== 0)) {
-    const changedRows = rows.reduce((count, row) => count + (row.dirty ? 1 : 0), 0);
-    if (changedRows === 0) {
-      meta.dirty = shifted === 0 ? 'clean' : 'partial';
-    } else if (changedRows < rows.length) {
-      meta.dirty = 'partial';
-    }
-  }
+  applyShiftDirtyDowngrade(meta, comparable, shifted, rows);
 }
 
 export function disposeRenderStateResources(resources: GhosttyRenderStateResources): void {

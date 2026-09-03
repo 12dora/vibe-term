@@ -1086,7 +1086,8 @@ describe('WebSocketServer window custom names', () => {
       index: 1,
       active: false,
     });
-    setupEntry(server, snapshot, ws);
+    const entry = setupEntry(server, snapshot, ws);
+    entry.canonicalClients = new Set([ws]);
 
     server.encodeSnapshotWithOverlays(snapshot);
     server.reorderWindows('device-a', ['@1', '@2']);

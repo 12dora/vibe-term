@@ -3,6 +3,7 @@ import { GatewayActivityMetrics } from './gateway-activity-metrics';
 import {
   type GatewayMetricsHost,
   GatewayPingMetrics,
+  isQuietTerminalOutputSnapshot,
   logGatewayActivityMetricsIfDue,
   logPingMetricsIfDue,
   logTerminalOutputMetricsIfDue,
@@ -173,5 +174,50 @@ describe('ws-metrics zero-snapshot suppression', () => {
     expect(line).toBeDefined();
     expect(line).toContain('tmux_events=1');
     expect(line).not.toContain('inbound_messages=1');
+  });
+});
+
+describe('isQuietTerminalOutputSnapshot', () => {
+  function quietSnapshot() {
+    return {
+      intervalMs: 30_000,
+      sourceEvents: 0,
+      sourceBytes: 0,
+      droppedEvents: 0,
+      droppedBytes: 0,
+      legacyObservedEvents: 0,
+      legacyObservedBytes: 0,
+      canonicalObservedEvents: 0,
+      canonicalObservedBytes: 0,
+      batches: 0,
+      batchBytes: 0,
+      recipientDeliveries: 0,
+      recipientBytes: 0,
+      canonicalRecipientDeliveries: 0,
+      canonicalRecipientBytes: 0,
+      canonicalDeliveryDrops: 0,
+      canonicalDeliveryDropBytes: 0,
+      queues: emptyTerminalOutputQueueStats(),
+    };
+  }
+
+  test('all-zero counters and empty queues are quiet; limits do not count', () => {
+    const snapshot = quietSnapshot();
+    snapshot.queues.batch.pendingBytesLimit = 8;
+    snapshot.queues.websocket.queuedBytesLimit = 8;
+    expect(isQuietTerminalOutputSnapshot(snapshot)).toBe(true);
+  });
+
+  test('any counter or pending queue field breaks quiet', () => {
+    expect(isQuietTerminalOutputSnapshot({ ...quietSnapshot(), sourceEvents: 1 })).toBe(false);
+    expect(
+      isQuietTerminalOutputSnapshot({ ...quietSnapshot(), canonicalDeliveryDropBytes: 4 })
+    ).toBe(false);
+    const queued = quietSnapshot();
+    queued.queues.websocket.queuedBytes = 1;
+    expect(isQuietTerminalOutputSnapshot(queued)).toBe(false);
+    const gaps = quietSnapshot();
+    gaps.queues.canonical.pendingPaneGaps = 1;
+    expect(isQuietTerminalOutputSnapshot(gaps)).toBe(false);
   });
 });

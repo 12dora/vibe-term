@@ -1,3 +1,16 @@
+import {
+  expandNeighborRows,
+  resolveEffectiveDirty,
+  shouldDrawAllRows,
+  wantsScrollBlit,
+} from './canvas-renderer-draw-plan';
+import {
+  canvasSurfaceUnchanged,
+  colorToCss,
+  measureMaxTextRun,
+  sameSelectionRects,
+  toDeviceCell,
+} from './canvas-renderer-metrics';
 import { CursorLayer } from './cursor-layer';
 import type {
   GhosttyCellDimensions,
@@ -56,33 +69,6 @@ function colorKey(color: GhosttyColorRgb): number {
 
 function fontVariantIndex(style: GhosttyRenderCellStyle): number {
   return (style.italic ? 1 : 0) | (style.bold ? 2 : 0);
-}
-
-function sameSelectionRects(
-  left: readonly GhosttySelectionRect[],
-  right: readonly GhosttySelectionRect[]
-): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-
-  for (let index = 0; index < left.length; index += 1) {
-    const a = left[index];
-    const b = right[index];
-    if (a.row !== b.row || a.x !== b.x || a.width !== b.width) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function toDeviceCell(size: number, dpr: number): number {
-  return Math.max(1, Math.round(size * dpr));
-}
-
-function colorToCss(color: GhosttyColorRgb): string {
-  return `rgb(${color.r} ${color.g} ${color.b})`;
 }
 
 // U+2596–U+259F quadrant 块的象限组合：UL=1、UR=2、LL=4、LR=8
@@ -275,7 +261,7 @@ export class CanvasRenderer {
 
     // canvas 位图被 resize 清空 / 外部强制全画 → 必须忽略 dirty='clean' 早退，
     // 否则屏幕空白（issue #45 bug 3）。
-    const effectiveDirty = wiped || frame.forceFull === true ? 'full' : frame.meta.dirty;
+    const effectiveDirty = resolveEffectiveDirty(wiped, frame.forceFull, frame.meta.dirty);
 
     if (effectiveDirty === 'clean') {
       this.updateCursor(frame, wiped);
@@ -283,13 +269,9 @@ export class CanvasRenderer {
     }
 
     const scrollDelta = frame.scrollDelta ?? 0;
-    const wantsScrollBlit =
-      effectiveDirty === 'partial' &&
-      Number.isInteger(scrollDelta) &&
-      scrollDelta !== 0 &&
-      Math.abs(scrollDelta) < this.rows;
-    const scrollBlitted = wantsScrollBlit ? this.blitRows(scrollDelta) : false;
-    const drawAllRows = effectiveDirty === 'full' || (wantsScrollBlit && !scrollBlitted);
+    const wantsBlit = wantsScrollBlit(effectiveDirty, scrollDelta, this.rows);
+    const scrollBlitted = wantsBlit ? this.blitRows(scrollDelta) : false;
+    const drawAllRows = shouldDrawAllRows(effectiveDirty, wantsBlit, scrollBlitted);
     const dirtyRows = drawAllRows ? frame.rows : frame.rows.filter((row) => row.dirty);
 
     // 允许字形垂直溢出相邻 cell——兼容带高升部/深降部的「奇怪」Unicode（组合记号、Zalgo、
@@ -298,18 +280,7 @@ export class CanvasRenderer {
     // 2) 分两遍——先铺所有目标行背景、再画所有目标行前景。不透明背景全部先于字形落地，
     //    相邻 cell 背景便不会擦掉溢出的字形墨迹。
     // lastDrawnRows 仍只记真正脏的行（邻行重绘属实现细节）。
-    let renderRows: GhosttyRenderRow[];
-    if (drawAllRows) {
-      renderRows = frame.rows;
-    } else {
-      const ys = new Set<number>();
-      for (const row of dirtyRows) {
-        ys.add(row.y - 1);
-        ys.add(row.y);
-        ys.add(row.y + 1);
-      }
-      renderRows = frame.rows.filter((row) => ys.has(row.y));
-    }
+    const renderRows = expandNeighborRows(frame.rows, dirtyRows, drawAllRows);
 
     for (const row of renderRows) {
       this.drawRowBackground(row, frame.meta.colors);
@@ -366,14 +337,18 @@ export class CanvasRenderer {
     const deviceCellHeight = toDeviceCell(this.cellDimensions.height, dpr);
 
     if (
-      this.cols === nextCols &&
-      this.rows === nextRows &&
-      this.dpr === dpr &&
-      this.deviceCellWidth === deviceCellWidth &&
-      this.deviceCellHeight === deviceCellHeight &&
-      // 位图属性被外部改写/浏览器重置时（内容已清空），缓存几何不可信，必须走全量重建
-      this.mainCanvas.width === nextCols * deviceCellWidth &&
-      this.mainCanvas.height === nextRows * deviceCellHeight
+      canvasSurfaceUnchanged(
+        {
+          cols: this.cols,
+          rows: this.rows,
+          dpr: this.dpr,
+          deviceCellWidth: this.deviceCellWidth,
+          deviceCellHeight: this.deviceCellHeight,
+          canvasWidth: this.mainCanvas.width,
+          canvasHeight: this.mainCanvas.height,
+        },
+        { cols: nextCols, rows: nextRows, dpr, deviceCellWidth, deviceCellHeight }
+      )
     ) {
       return false;
     }
@@ -391,14 +366,11 @@ export class CanvasRenderer {
     // 升降部都不溢出，且用本引擎自报度量，跨平台自洽。
     this.mainContext.font = `${this.deviceFontSize}px ${this.fontFamily}`;
     const metrics = this.mainContext.measureText('Mg|qyÅ');
-    const advanceSampleLength = Math.max(1, Math.min(nextCols, 64));
-    const measuredAdvance =
-      this.mainContext.measureText('x'.repeat(advanceSampleLength)).width / advanceSampleLength;
-    const residual = Math.abs(measuredAdvance - deviceCellWidth);
-    this.maxTextRun =
-      Number.isFinite(residual) && residual > Number.EPSILON
-        ? Math.max(1, Math.min(nextCols, Math.floor(0.4 / residual)))
-        : nextCols;
+    this.maxTextRun = measureMaxTextRun(
+      (text) => this.mainContext.measureText(text).width,
+      nextCols,
+      deviceCellWidth
+    );
     let ascent = metrics.fontBoundingBoxAscent;
     let descent = metrics.fontBoundingBoxDescent;
     if (!(Number.isFinite(ascent) && Number.isFinite(descent) && ascent > 0)) {

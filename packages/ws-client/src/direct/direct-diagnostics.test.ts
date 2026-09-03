@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { browserVisibility, quantizedRtt, sameDiagnosticsForPublish } from './direct-diagnostics';
+import {
+  browserVisibility,
+  buildDirectDiagnostics,
+  quantizedRtt,
+  sameDiagnosticsForPublish,
+  sameDirectDiagnostics,
+} from './direct-diagnostics';
 import { type DirectDiagnostics, PRIMARY_ONLY_DIAGNOSTICS } from './types';
 
 describe('browserVisibility', () => {
@@ -54,7 +60,7 @@ describe('browserVisibility', () => {
   });
 });
 
-describe('sameDiagnosticsForPublish', () => {
+describe('sameDirectDiagnostics', () => {
   test('RTT 在 5 ms 桶内抖动视为未变；路径或 ICE 态变化则不同', () => {
     const ice = {
       connectionState: 'connected',
@@ -70,15 +76,44 @@ describe('sameDiagnosticsForPublish', () => {
       rtt: 4,
       ice,
     };
+    expect(sameDirectDiagnostics(a, { ...a, rtt: 6.4 })).toBe(true);
+    expect(sameDirectDiagnostics(a, { ...a, rtt: 12 })).toBe(false);
+    expect(sameDirectDiagnostics(a, { ...a, path: 'primary' })).toBe(false);
     expect(sameDiagnosticsForPublish(a, { ...a, rtt: 6.4 })).toBe(true);
-    expect(sameDiagnosticsForPublish(a, { ...a, rtt: 12 })).toBe(false);
-    expect(sameDiagnosticsForPublish(a, { ...a, path: 'primary' })).toBe(false);
     expect(
-      sameDiagnosticsForPublish(a, {
+      sameDirectDiagnostics(a, {
         ...a,
         ice: { ...ice, connectionState: 'connecting' },
       })
     ).toBe(false);
+  });
+
+  test('buildDirectDiagnostics 只在 active 暴露 route/rtt，connecting 仍带 ice', () => {
+    const ice = {
+      connectionState: 'connecting',
+      iceConnectionState: 'checking',
+      localCandidateType: null,
+      remoteCandidateType: null,
+      selectedPair: null,
+    };
+    const breaker = {
+      cooling: false,
+      until: null,
+      failures: 0,
+      level: 0,
+      lastFailureKind: null,
+    };
+    const idle = buildDirectDiagnostics('idle', { route: 'lan', rtt: 12, ice, breaker });
+    expect(idle.path).toBe('primary');
+    expect(idle.route).toBeNull();
+    expect(idle.ice).toBeNull();
+    expect(
+      buildDirectDiagnostics('connecting', { route: 'lan', rtt: 12, ice, breaker }).ice
+    ).toEqual(ice);
+    const active = buildDirectDiagnostics('active', { route: 'lan', rtt: 12, ice, breaker });
+    expect(active.path).toBe('direct');
+    expect(active.route).toBe('lan');
+    expect(active.rtt).toBe(12);
   });
 
   test('quantizedRtt 把 null 与非有限值收成 null', () => {

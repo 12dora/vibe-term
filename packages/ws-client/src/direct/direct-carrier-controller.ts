@@ -36,21 +36,30 @@
 import type { DirectCarrierLike } from '../carrier-switch';
 import { DirectDataChannelCarrier, type RTCDataChannelLike } from './data-channel-carrier';
 import {
+  DirectAuthorizeError,
+  DirectPrimaryWaitError,
+  type PrimaryWaitMode,
+  throwIfPrimaryWait,
+} from './direct-carrier-errors';
+import {
   type PageVisibility,
   browserVisibility,
-  sameDiagnosticsForPublish,
+  buildDirectDiagnostics,
+  buildIceDiagnostics,
+  retainIceCandidateTypes,
+  sameDirectDiagnostics,
 } from './direct-diagnostics';
 import {
   DIRECT_DIAL_BREAKER_HEALTHY_MS,
   DirectDialBreaker,
   classifyDirectDialFailure,
 } from './direct-dial-breaker';
+import { buildIceServers } from './direct-ice-servers';
 import { type DtlsFingerprint, fingerprintsEqual, parseSdpFingerprint } from './fingerprint';
 import {
   type DirectRoute,
   type SelectedPairStats,
   deriveRoute,
-  describePair,
   readSelectedPair,
 } from './ice-stats';
 import type {
@@ -70,6 +79,8 @@ import {
   type DirectIceDiagnostics,
   PRIMARY_ONLY_DIAGNOSTICS,
 } from './types';
+
+export { buildIceServers } from './direct-ice-servers';
 
 export type DirectCarrierState = 'idle' | 'connecting' | 'active' | 'failed';
 
@@ -212,34 +223,6 @@ function quietly(fn: (() => void) | null | undefined): void {
   } catch {
     // 已注销 / 已关闭
   }
-}
-
-function toStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return typeof value === 'string' && value ? [value] : [];
-  return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
-}
-
-/** `{stun, turn}` → `RTCConfiguration.iceServers`（turn 允许 string / {url|urls,…} / 数组）。 */
-export function buildIceServers(config: RtcConfigResponse | null): IceServerLike[] {
-  const servers: IceServerLike[] = [];
-  for (const url of toStringArray(config?.stun)) servers.push({ urls: url });
-  const turn = config?.turn;
-  const entries = Array.isArray(turn) ? turn : turn == null ? [] : [turn];
-  for (const entry of entries) {
-    if (typeof entry === 'string') {
-      if (entry) servers.push({ urls: entry });
-      continue;
-    }
-    if (!entry || typeof entry !== 'object') continue;
-    const rec = entry as Record<string, unknown>;
-    const urls = toStringArray(rec.urls ?? rec.url);
-    if (urls.length === 0) continue;
-    const server: IceServerLike = { urls: urls.length === 1 ? (urls[0] as string) : urls };
-    if (typeof rec.username === 'string') server.username = rec.username;
-    if (typeof rec.credential === 'string') server.credential = rec.credential;
-    servers.push(server);
-  }
-  return servers;
 }
 
 function randomSessionId(): string {
@@ -1052,13 +1035,7 @@ export class DirectCarrierController {
     if (this.attempt !== attempt) return;
     this.route = deriveRoute(pair);
     this.rttMs = pair?.rttMs ?? null;
-    this.ice = {
-      connectionState: pc.connectionState || null,
-      iceConnectionState: pc.iceConnectionState || null,
-      localCandidateType: pair?.localCandidateType ?? null,
-      remoteCandidateType: pair?.remoteCandidateType ?? null,
-      selectedPair: describePair(pair),
-    };
+    this.ice = buildIceDiagnostics(pc, pair);
     this.publish();
   }
 
@@ -1066,32 +1043,18 @@ export class DirectCarrierController {
   private refreshIceSnapshot(): void {
     const pc = this.attempt?.pc;
     if (!pc) return;
-    this.ice = {
-      connectionState: pc.connectionState || null,
-      iceConnectionState: pc.iceConnectionState || null,
-      localCandidateType: this.ice?.localCandidateType ?? null,
-      remoteCandidateType: this.ice?.remoteCandidateType ?? null,
-      selectedPair: this.ice?.selectedPair ?? null,
-    };
+    this.ice = retainIceCandidateTypes(pc, this.ice);
     this.publish();
   }
 
   private publish(): void {
-    const active = this.state === 'active';
-    const snap = this.breaker.snapshot(this.nodeId);
-    const next: DirectDiagnostics = {
-      path: active ? 'direct' : 'primary',
-      route: active ? this.route : null,
-      rtt: active ? this.rttMs : null,
-      ice: active || this.state === 'connecting' ? this.ice : null,
-      cooling: snap.cooling,
-      until: snap.until,
-      failures: snap.failures,
-      level: snap.level,
-      lastFailureKind: snap.lastFailureKind,
-    };
-    const prev = this.snapshot;
-    if (sameDiagnosticsForPublish(prev, next)) {
+    const next = buildDirectDiagnostics(this.state, {
+      route: this.route,
+      rtt: this.rttMs,
+      ice: this.ice,
+      breaker: this.breaker.snapshot(this.nodeId),
+    });
+    if (sameDirectDiagnostics(this.snapshot, next)) {
       return;
     }
     this.snapshot = next;
@@ -1146,54 +1109,5 @@ export class DirectCarrierController {
   }
 }
 
-class DirectAuthorizeError extends Error {
-  constructor(
-    message: string,
-    readonly fatal: boolean
-  ) {
-    super(message);
-    this.name = 'DirectAuthorizeError';
-  }
-}
-
-/** 等 primary 的两种姿势：等它连上（`open`）/ 等它重连过一次（`reconnect`）。 */
-type PrimaryWaitMode = 'open' | 'reconnect';
-
 /** `BorshWebSocketClient` 完成 HELLO 后的状态名。 */
 const PRIMARY_READY_STATE = 'READY';
-
-class DirectPrimaryWaitError extends Error {
-  constructor(
-    message: string,
-    readonly mode: PrimaryWaitMode
-  ) {
-    super(message);
-    this.name = 'DirectPrimaryWaitError';
-  }
-}
-
-/**
- * 只认**带明确 code** 的那两个状态：老 node 上 `/api/mesh/connection` 落到
- * `/api/mesh/*` 的 405、或路由缺失的裸 404，都不该被误判成「等 primary」而永久挂起。
- */
-async function throwIfPrimaryWait(res: Response, label: string): Promise<void> {
-  const code = await readErrorCode(res);
-  const mode: PrimaryWaitMode | null =
-    res.status === 404 && code === 'NO_CONNECTION'
-      ? 'open'
-      : res.status === 409 && code === 'MULTIPLE_CONNECTIONS'
-        ? 'reconnect'
-        : null;
-  if (mode) throw new DirectPrimaryWaitError(`${label}: ${code}`, mode);
-}
-
-async function readErrorCode(res: Response): Promise<string> {
-  try {
-    const body = (await res.json()) as { code?: unknown; error?: unknown };
-    if (typeof body?.code === 'string') return body.code;
-    if (typeof body?.error === 'string') return body.error;
-  } catch {
-    // 非 JSON 或空 body
-  }
-  return '';
-}

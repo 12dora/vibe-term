@@ -6,24 +6,16 @@ import { create } from 'zustand';
 import { createPaneSubscriptionManager } from './pane-subscriptions';
 import type { RuntimeCore } from './runtime';
 import type { SiteStore } from './site';
+import { createTmuxDeviceActions } from './tmux-device-actions';
 import { createTmuxEventRouter } from './tmux-event-router';
 import { createTmuxSelectionActions } from './tmux-selection-actions';
 import type { DeviceError, TmuxState } from './tmux-state';
 import { createTmuxViewportActions } from './tmux-viewport-actions';
 import type { UIStore } from './ui';
-import { clearViewportPolicyForDevice } from './viewport-policy';
 
 export type { DeviceInitialErrorInput, TmuxState } from './tmux-state';
 
 const CONNECT_DEDUP_WINDOW_MS = 500;
-
-/** 乐观重排：认识的 id 按请求顺序排在前面，其余条目保持原相对顺序追加在后；未知 id 丢弃 */
-function reorderById<T extends { id: string }>(items: readonly T[], ids: readonly string[]): T[] {
-  const byId = new Map(items.map((item) => [item.id, item] as const));
-  const requested = new Set(ids);
-  const known = ids.map((id) => byId.get(id)).filter((item) => item !== undefined);
-  return [...known, ...items.filter((item) => !requested.has(item.id))];
-}
 
 export interface TmuxStoreDeps {
   getUI: () => UIStore;
@@ -57,6 +49,14 @@ export function createTmuxStore(
 
   return create<TmuxState>((set, get) => {
     const selection = createTmuxSelectionActions(core, { getState: get, setState: set });
+    const device = createTmuxDeviceActions(core, {
+      getState: get,
+      setState: set,
+      shouldSkipDuplicateConnect,
+      lastConnectSentAt,
+      cancelReselect: selection.cancelReselect,
+      paneSubscriptions,
+    });
     disposers.push(() => {
       selection.dispose();
     });
@@ -169,42 +169,9 @@ export function createTmuxStore(
         core.transport.connect();
       },
 
-      connectDevice(deviceId) {
-        if (!deviceId) return;
+      connectDevice: device.connectDevice,
 
-        set((prev) => {
-          const nextConnected = new Set(prev.connectedDevices);
-          nextConnected.add(deviceId);
-          return { connectedDevices: nextConnected };
-        });
-
-        get().ensureSocketConnected();
-
-        if (shouldSkipDuplicateConnect(deviceId)) return;
-        core.transport.send({ type: 'connect-device', deviceId });
-      },
-
-      disconnectDevice(deviceId) {
-        if (!deviceId) return;
-
-        // 主动断开立即落地断开态，不等网关 device-disconnected 事件
-        set((prev) => {
-          const nextConnected = new Set(prev.connectedDevices);
-          nextConnected.delete(deviceId);
-          return {
-            connectedDevices: nextConnected,
-            deviceConnected: { ...prev.deviceConnected, [deviceId]: false },
-            deviceReconnecting: { ...prev.deviceReconnecting, [deviceId]: undefined },
-            viewportPolicy: clearViewportPolicyForDevice(prev.viewportPolicy, deviceId),
-          };
-        });
-
-        lastConnectSentAt.delete(deviceId);
-        core.selectMachine().cleanup(deviceId);
-        selection.cancelReselect(deviceId);
-        paneSubscriptions.clearDevice(deviceId);
-        core.transport.send({ type: 'disconnect-device', deviceId });
-      },
+      disconnectDevice: device.disconnectDevice,
 
       clearDeviceError(deviceId) {
         set((prev) => ({
@@ -278,23 +245,7 @@ export function createTmuxStore(
         core.transport.send({ type: 'rename-window', deviceId, windowId, name });
       },
 
-      reorderWindows(deviceId, windowIds) {
-        if (!deviceId || windowIds.length === 0) return;
-        // 乐观本地重排，立即反馈；服务端会用带 overlay 的快照重广播确认
-        set((prev) => {
-          const snapshot = prev.snapshots[deviceId];
-          const session = snapshot?.session;
-          if (!session) return {};
-          const windows = reorderById(session.windows, windowIds);
-          return {
-            snapshots: {
-              ...prev.snapshots,
-              [deviceId]: { ...snapshot, session: { ...session, windows } },
-            },
-          };
-        });
-        core.transport.send({ type: 'reorder-windows', deviceId, windowIds });
-      },
+      reorderWindows: device.reorderWindows,
 
       subscribePanes(deviceId, paneIds) {
         if (!deviceId) return;
@@ -336,24 +287,7 @@ export function createTmuxStore(
         core.transport.send({ type: 'break-pane', deviceId, paneId });
       },
 
-      reorderPanes(deviceId, windowId, paneIds) {
-        if (!deviceId || !windowId || paneIds.length === 0) return;
-        set((prev) => {
-          const snapshot = prev.snapshots[deviceId];
-          const session = snapshot?.session;
-          if (!session) return {};
-          const windows = session.windows.map((w) =>
-            w.id === windowId ? { ...w, panes: reorderById(w.panes, paneIds) } : w
-          );
-          return {
-            snapshots: {
-              ...prev.snapshots,
-              [deviceId]: { ...snapshot, session: { ...session, windows } },
-            },
-          };
-        });
-        core.transport.send({ type: 'reorder-panes', deviceId, windowId, paneIds });
-      },
+      reorderPanes: device.reorderPanes,
 
       syncThemeAfterResize(deviceId) {
         if (!deviceId) return;
