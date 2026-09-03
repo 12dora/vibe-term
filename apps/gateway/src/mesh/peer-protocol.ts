@@ -19,7 +19,6 @@ import {
   type LinkStream,
   SecureChannelLink,
   type ServerSocketAdapter,
-  WebSocketLink,
   type WebSocketTransportInput,
   byteTransportFromStream,
   secureChannelDirections,
@@ -516,13 +515,6 @@ export function wrapBunPeerSocket(ws: {
       for (const cb of drainCbs) cb();
     },
   };
-}
-
-export function openWebSocketLink(
-  socket: WebSocketTransportInput,
-  role: 'initiator' | 'acceptor'
-): LinkSession {
-  return new WebSocketLink(socket, { role });
 }
 
 export function parseOpenPayload(bytes: Uint8Array): Record<string, unknown> | null {

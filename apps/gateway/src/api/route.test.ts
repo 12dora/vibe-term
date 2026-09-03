@@ -127,9 +127,9 @@ describe('dispatchRoutes priority', () => {
   });
 
   test('later prefix route only matches leftover device paths', async () => {
-    const matched = await dispatch('GET', '/api/devices/dev-1/tree-order');
+    const matched = await dispatch('GET', '/api/devices/dev-1/unknown-subpath');
     expect(matched?.path).toBe('/api/devices/*');
-    expect(matched?.params).toEqual({ '*': 'dev-1/tree-order' });
+    expect(matched?.params).toEqual({ '*': 'dev-1/unknown-subpath' });
   });
 
   test('returns undefined when no method+path pair matches', async () => {
@@ -147,19 +147,19 @@ describe('dispatchRoutes', () => {
     const routes: ApiRoute[] = [
       {
         method: '*',
-        path: '/api/capabilities',
+        path: '/api/example',
         handler: () => null,
       },
       {
         method: 'GET',
-        path: '/api/capabilities',
+        path: '/api/example',
         handler: () => new Response('ok', { status: 200 }),
       },
     ];
-    const req = new Request('http://localhost/api/capabilities');
-    const result = dispatchRoutes(req, '/api/capabilities', routes, {
+    const req = new Request('http://localhost/api/example');
+    const result = dispatchRoutes(req, '/api/example', routes, {
       server: {} as never,
-      path: '/api/capabilities',
+      path: '/api/example',
     });
     expect(result).toBeInstanceOf(Response);
     expect((result as Response).status).toBe(200);

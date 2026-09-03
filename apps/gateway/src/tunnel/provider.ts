@@ -86,11 +86,6 @@ export function credentialsPathFor(tunnelDir: string, tunnelIdOrName: string): s
   return candidate;
 }
 
-export type CloudflaredEnv = {
-  originCert: string;
-  extra?: Record<string, string>;
-};
-
 function tunnelEnv(originCert: string, extra?: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {

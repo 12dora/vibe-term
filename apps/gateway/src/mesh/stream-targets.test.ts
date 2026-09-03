@@ -55,13 +55,13 @@ describe('http/ws stream targets', () => {
     });
     const res = await openHttpStream(a, {
       method: 'GET',
-      path: '/api/capabilities',
+      path: '/healthz',
       origin: 'http://localhost',
       auth: 'test-sid',
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { serverImpl?: string };
-    expect(body.serverImpl).toBe('tmex-gateway');
+    const body = (await res.json()) as { status?: string };
+    expect(body.status).toBe('ok');
   });
 
   test('http streams request body and maps abort to RST', async () => {
@@ -214,7 +214,7 @@ describe('http/ws stream targets', () => {
       supportsDiffSnapshot: false,
     });
     const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, helloPayload, 1);
-    const decode = spyOn(wsBorsh, 'decodeEnvelope');
+    const decode = spyOn(wsBorsh, 'decodeEnvelopeView');
     await opened.send(frame);
     const reader = opened.readable.getReader();
     const first = await reader.read();
@@ -256,7 +256,7 @@ describe('http/ws stream targets', () => {
     const opened = await openWsStream(a, sid.sid);
     const largePayload = Uint8Array.from({ length: 128 * 1024 }, (_, i) => i & 0xff);
     const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_INPUT, largePayload, 7);
-    const decode = spyOn(wsBorsh, 'decodeEnvelope');
+    const decode = spyOn(wsBorsh, 'decodeEnvelopeView');
     await opened.send(frame);
     await waitUntil(() => received.length >= 1);
     const inboundDecodes = decode.mock.calls.length;
@@ -302,7 +302,7 @@ describe('http/ws stream targets', () => {
   });
 
   test('dispatchHttp via handleApiRequest without a Bun server', async () => {
-    const res = await handleApiRequest(new Request('http://localhost/api/capabilities'));
+    const res = await handleApiRequest(new Request('http://localhost/healthz'));
     expect(res.status).toBe(200);
     const unknown = await handleApiRequest(new Request('http://localhost/api/does-not-exist'));
     expect(unknown.status).toBe(404);
@@ -553,7 +553,7 @@ describe('http/ws stream targets', () => {
     });
     const res = await openHttpStream(a, {
       method: 'GET',
-      path: '/api/capabilities',
+      path: '/api/devices',
       origin: 'http://localhost',
       auth: null,
     });

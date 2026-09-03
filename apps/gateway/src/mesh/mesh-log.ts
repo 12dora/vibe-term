@@ -29,11 +29,6 @@ export function warnLine(tag: string, msg = '', now = new Date()): void {
   console.warn(formatLogLine(tag, msg, now));
 }
 
-export function infoLine(tag: string, msg = '', now = new Date()): void {
-  if (!shouldLog('info')) return;
-  console.info(formatLogLine(tag, msg, now));
-}
-
 export function debugLine(tag: string, msg = '', now = new Date()): void {
   if (!shouldLog('debug')) return;
   console.log(formatLogLine(tag, msg, now));

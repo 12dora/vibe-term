@@ -1,5 +1,4 @@
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
-import type { UserStore } from '../auth/user-store';
+import type { LinkStream } from '@tmex/shared/link';
 
 export type MeshNodeId = string;
 
@@ -58,19 +57,7 @@ export type UplinkState = 'offline' | 'connecting' | 'online';
  */
 export type PeerTransportKind = 'ws-secure' | 'relay' | 'dc';
 
-/** Phase 3 extension point — B3-1 fills this with a DataChannel-backed LinkSession. */
-export type DataChannelLinkSlot = {
-  readonly transport: 'dc';
-  session: LinkSession | null;
-};
-
 export type PeerReach = 'lan' | 'wan' | 'relay' | null;
-
-export type EstablishedPeerLink = {
-  session: LinkSession;
-  peerNodeId: MeshNodeId;
-  transport: PeerTransportKind;
-};
 
 export type DispatchContext = {
   uid: string | null;
@@ -103,13 +90,6 @@ export class PeerHandshakeError extends Error {
     this.code = code;
   }
 }
-
-export type LookupPeerCert = Pick<UserStore, 'getCert'>;
-
-export type RelayOpenPayload = {
-  to: string;
-  from?: string;
-};
 
 export type HttpStreamOpenPayload = {
   type?: 'http';

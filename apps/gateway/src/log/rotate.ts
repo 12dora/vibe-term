@@ -324,10 +324,6 @@ export function processLogRotationInstalledForTest(): boolean {
   return installed !== null;
 }
 
-export function logGenerationPath(filePath: string, generation: number): string {
-  return generation <= 0 ? filePath : `${filePath}.${generation}`;
-}
-
 export function listLogGenerationPaths(filePath: string, generations: number): string[] {
   const paths = [filePath];
   for (let i = 1; i < generations; i++) {

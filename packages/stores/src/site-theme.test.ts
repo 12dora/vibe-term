@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import { FeatureSet } from '@tmex/api-client';
 import type { SiteSettings } from '@tmex/shared';
 import { THEME_PRESETS, THEME_PRESET_META, type ThemePreset } from '@tmex/theme';
 import { installWindowStorage } from './test-utils';
@@ -387,51 +386,6 @@ describe('useSiteStore handleSettingsUpdate', () => {
 
       expect(useSiteStore.getState().settings?.siteName).toBe('kept');
       expect(useSiteStore.getState().loading).toBe(false);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-});
-
-describe('useSiteStore capabilities', () => {
-  test('loadCapabilities 从 /api/capabilities 填充 FeatureSet', async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mock(async (url: string | URL | Request) => {
-      const u = typeof url === 'string' ? url : url.toString();
-      if (u.includes('/api/capabilities')) {
-        return new Response(
-          JSON.stringify({
-            serverImpl: 'tmex',
-            serverVersion: '0.0.0',
-            apiVersion: 1,
-            wsProtocolVersion: 1,
-            capabilities: ['tmex-ws-borsh-v1', 'tmex-agent-v1'],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } }
-        );
-      }
-      return new Response('{}', { status: 404 });
-    }) as unknown as typeof fetch;
-    try {
-      await useSiteStore.getState().loadCapabilities();
-      const caps = useSiteStore.getState().capabilities;
-      expect(caps.has('tmex-agent-v1')).toBe(true);
-      expect(caps.has('missing-cap')).toBe(false);
-      expect(caps.list().sort()).toEqual(['tmex-agent-v1', 'tmex-ws-borsh-v1']);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  test('loadCapabilities 请求失败时静默保持空集（不抛）', async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mock(
-      async () => new Response('nope', { status: 500 })
-    ) as unknown as typeof fetch;
-    try {
-      useSiteStore.setState({ capabilities: FeatureSet.empty() });
-      await useSiteStore.getState().loadCapabilities();
-      expect(useSiteStore.getState().capabilities.list()).toEqual([]);
     } finally {
       globalThis.fetch = originalFetch;
     }

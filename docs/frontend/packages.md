@@ -15,7 +15,7 @@
 | `@tmex/shared` | `packages/shared` | 跨端共享：ws-borsh schema、i18n 资源、类型、capabilities 常量 | `.`、`./i18n/resources`、`./i18n/types`、`./i18n/locales/*`（含 `manifest.json` 与 en_US/zh_CN/ja_JP） |
 | `@tmex/ui` | `packages/ui` | shadcn/base-ui 原子组件、`cn`、`useIsMobile` | `.`、`./*`（每个原子组件一个子路径） |
 | `@tmex/ws-client` | `packages/ws-client` | Borsh WebSocket 客户端、PaneSink 注册表、Select 状态机、history 门控、连接工厂 | `.`、`./*` |
-| `@tmex/api-client` | `packages/api-client` | REST 客户端（`ApiClient`）、端点函数、`FeatureSet`、分块上传/下载 | `.`、`./*` |
+| `@tmex/api-client` | `packages/api-client` | REST 客户端（`ApiClient`）、端点函数、分块上传/下载 | `.`、`./*` |
 | `@tmex/notifications` | `packages/notifications` | 通知/铃声语义接口与文案组装 | `.`、`./*` |
 | `@tmex/theme` | `packages/theme` | 主题 token、themes.css、字体清单与 woff2 产物、preset 激活 | `.`、`./fonts`、`./fonts/manifest`、`./fonts/types`、`./themes.css`、`./tokens.css`、`./tokens.generated.css`、`./resources/fonts/*`、`./*` |
 | `@tmex/stores` | `packages/stores` | zustand store 工厂 + 应用运行时工厂 | `.`、`./*`、`./react` |
@@ -87,14 +87,12 @@ runtime.notifications.success('done');
 - `@tmex/panels/agent`、`/files`、`/settings`、`/markdown`、`/code-viewer`、`/watch`、`/device-tree`、`/device-console`、`/device-management`
 - `@tmex/panels`（根出口）：轻量状态指示组件（连接指示、设备状态徽标）
 
-设置面板全量出口（`@tmex/panels/settings`）为纯再导出桶，消费方按 featureset 决定渲染
+设置面板全量出口（`@tmex/panels/settings`）为纯再导出桶，消费方按角色/设置决定渲染
 哪些 tab；打包时 rollup 按名摇树，只取用的 tab 及其子图进入对应 chunk。
 
-## capabilities 与 featureset
+## capabilities
 
-服务端能力集有两处来源，同源于 `GATEWAY_CAPABILITIES`：
-
-- WS `HELLO_S2C` 的 `capabilities` 字段 → `BorshWebSocketClient.serverCapabilities`（按连接）
-- REST `GET /api/capabilities` → `fetchCapabilities()` → site store 的 `capabilities: FeatureSet`
-
-消费方经 `FeatureSet.has()/hasAll()/hasAny()` 判定是否渲染某功能面。
+服务端能力集只有一处来源：`GATEWAY_CAPABILITIES` 经 WS `HELLO_S2C` 的 `capabilities` 字段
+→ `BorshWebSocketClient.serverCapabilities`（按连接）。目前唯一的能力字符串是 `canonical-state-v1`，
+由 ws-client 按连接决定是否走 canonical 状态流。REST `GET /api/capabilities` 与 `FeatureSet`
+已于第二十二轮删除（全仓无产品消费方）。

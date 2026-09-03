@@ -4,7 +4,6 @@ import { runtimeController } from '../control/runtime';
 import { getSiteSettings } from '../db';
 import { t } from '../i18n';
 import { getBaseVersion } from '../system/version';
-import { handleCapabilitiesApiRequest } from './capabilities';
 import { createGatewayOwnerProof } from './gateway-ownership';
 import { json, manifestJson } from './http';
 import { type ApiRoute, route } from './route';
@@ -54,14 +53,6 @@ async function handleGetManifest(method: 'GET' | 'HEAD'): Promise<Response> {
 
   return manifestJson(manifest, method);
 }
-
-export const capabilitiesRoutes: ApiRoute[] = [
-  route({
-    method: '*',
-    path: '/api/capabilities',
-    handler: (req, _params, ctx) => handleCapabilitiesApiRequest(req, ctx.path),
-  }),
-];
 
 export const tmuxTreeRoutes: ApiRoute[] = [
   route({

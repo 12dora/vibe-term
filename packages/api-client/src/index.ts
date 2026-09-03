@@ -1,7 +1,6 @@
 // Gateway REST API 客户端模块
 
 export * from './agent';
-export * from './capabilities';
 export * from './client';
 export * from './device-folders';
 export * from './devices';

@@ -22,7 +22,6 @@ import {
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
 import { handleDeviceTestConnection } from './test-connection';
-import { treeOrderRoutes } from './tree-order';
 
 async function encryptSecretFields(draft: DeviceUpdateDraft): Promise<Partial<Device>> {
   const { password, privateKey, privateKeyPassphrase, ...rest } = draft;
@@ -196,5 +195,4 @@ export const deviceRoutes: ApiRoute[] = [
     path: '/api/devices/:id/test-connection',
     handler: (_req, params) => handleTestConnection(params.id),
   }),
-  ...treeOrderRoutes,
 ];

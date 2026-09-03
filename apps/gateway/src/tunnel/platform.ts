@@ -1,5 +1,3 @@
-export type TunnelOsArch = { platform: NodeJS.Platform; arch: string };
-
 export function isTunnelPlatformSupported(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch

@@ -4,7 +4,6 @@ import {
   approveWeixinUser,
   createWeixinAccount,
   deleteWeixinAccount,
-  deleteWeixinUser,
   getSiteSettings,
   getWeixinAccountById,
   getWeixinAccountsWithStats,
@@ -199,29 +198,6 @@ async function handleApproveWeixinUser(accountId: string, userId: string): Promi
   return json({ user });
 }
 
-async function handleTestWeixinUser(accountId: string, userId: string): Promise<Response> {
-  const existing = getWeixinAccountById(accountId);
-  if (!existing) {
-    return json({ error: t('weixin.accountNotFound') }, 404);
-  }
-
-  const settings = getSiteSettings();
-  try {
-    await weixinService.sendTestMessage(
-      accountId,
-      userId,
-      t('weixin.testMessageTemplate', {
-        siteName: settings.siteName,
-        time: new Date().toLocaleString(toBCP47(settings.language)),
-      })
-    );
-  } catch (err) {
-    return json({ error: err instanceof Error ? err.message : t('weixin.testMessageFailed') }, 400);
-  }
-
-  return json({ success: true });
-}
-
 async function handleTestWeixinAccount(accountId: string): Promise<Response> {
   const existing = getWeixinAccountById(accountId);
   if (!existing) {
@@ -241,16 +217,6 @@ async function handleTestWeixinAccount(accountId: string): Promise<Response> {
     return json({ error: err instanceof Error ? err.message : t('weixin.testMessageFailed') }, 400);
   }
 
-  return json({ success: true });
-}
-
-async function handleDeleteWeixinUser(accountId: string, userId: string): Promise<Response> {
-  const existing = getWeixinAccountById(accountId);
-  if (!existing) {
-    return json({ error: t('weixin.accountNotFound') }, 404);
-  }
-  deleteWeixinUser(accountId, userId);
-  broadcastSettingsUpdate('weixin');
   return json({ success: true });
 }
 
@@ -300,17 +266,5 @@ export const weixinRoutes: ApiRoute[] = [
     path: '/api/settings/weixin/accounts/:accountId/users/:userId/approve',
     handler: (_req, params) =>
       handleApproveWeixinUser(params.accountId, decodeURIComponent(params.userId)),
-  }),
-  route({
-    method: 'POST',
-    path: '/api/settings/weixin/accounts/:accountId/users/:userId/test',
-    handler: (_req, params) =>
-      handleTestWeixinUser(params.accountId, decodeURIComponent(params.userId)),
-  }),
-  route({
-    method: 'DELETE',
-    path: '/api/settings/weixin/accounts/:accountId/users/:userId',
-    handler: (_req, params) =>
-      handleDeleteWeixinUser(params.accountId, decodeURIComponent(params.userId)),
   }),
 ];

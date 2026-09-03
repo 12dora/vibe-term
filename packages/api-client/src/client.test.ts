@@ -1,5 +1,4 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { FeatureSet } from './capabilities';
 import { ApiClient, defaultApiClient, parseApiError } from './client';
 
 describe('ApiClient', () => {
@@ -97,22 +96,5 @@ describe('parseApiError', () => {
   test('error 为对象但无 message 字段回退 fallback', async () => {
     const res = new Response(JSON.stringify({ error: { code: 'x' } }), { status: 500 });
     expect(await parseApiError(res, 'fallback')).toBe('fallback');
-  });
-});
-
-describe('FeatureSet', () => {
-  test('has/hasAll/hasAny 判定', () => {
-    const fs = new FeatureSet(['tmex-ws-borsh-v1', 'tmex-agent-v1']);
-    expect(fs.has('tmex-agent-v1')).toBe(true);
-    expect(fs.has('tmex-split-v1')).toBe(false);
-    expect(fs.hasAll('tmex-ws-borsh-v1', 'tmex-agent-v1')).toBe(true);
-    expect(fs.hasAll('tmex-ws-borsh-v1', 'tmex-split-v1')).toBe(false);
-    expect(fs.hasAny('tmex-split-v1', 'tmex-agent-v1')).toBe(true);
-    expect(fs.hasAny('tmex-split-v1')).toBe(false);
-  });
-
-  test('empty 与 list', () => {
-    expect(FeatureSet.empty().list()).toEqual([]);
-    expect(new FeatureSet(['a', 'a', 'b']).list().sort()).toEqual(['a', 'b']);
   });
 });

@@ -1,10 +1,10 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { PRODUCT_NAME, formatDisplayVersion } from '@tmex/shared';
-import { type CSSProperties, StrictMode, useEffect } from 'react';
+import { type CSSProperties, type ComponentType, StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Navigate, Outlet, RouterProvider, createBrowserRouter } from 'react-router';
-import { Toaster } from 'sonner';
-import { i18nReady } from './i18n';
+import type { ToasterProps } from 'sonner';
+import { ensureI18nRest, i18nReady } from './i18n';
 import './index.css';
 
 // 浏览器 console 打印 monorepo 版本（非 production 带 _dev 后缀）
@@ -28,7 +28,7 @@ import { ConnectionIndicator } from '@tmex/panels';
 import { SettingsEventsInit } from '@tmex/panels/settings/events';
 import { WatchEventsInit } from '@tmex/panels/watch';
 import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
-import { RuntimeProvider, useSiteStore, useUIStore } from '@tmex/stores/react';
+import { RuntimeProvider, useUIStore } from '@tmex/stores/react';
 import { useKeyboardAvoidance } from '@tmex/terminal-ui/hooks/use-keyboard-avoidance';
 import { applyThemePreset, isThemePreset } from '@tmex/theme';
 import { SidebarInset, SidebarProvider, useSidebar } from '@tmex/ui/sidebar';
@@ -101,9 +101,44 @@ function StatusBarSync() {
   return null;
 }
 
+/** Toaster 加载失败的就地重试上限；再失败就放弃（吐司弹不出来，不该拖垮整页）。 */
+const MAX_TOASTER_LOAD_RETRIES = 2;
+
+/**
+ * sonner 只在首帧之后才挂：Toaster 一个字节都不参与首屏渲染，首个 effect 里就发起 import，
+ * 早于任何用户操作与网络回包，`toast()` 不会因为订阅者未就位而丢消息。
+ */
+function useDeferredToaster(): ComponentType<ToasterProps> | null {
+  const [Toaster, setToaster] = useState<ComponentType<ToasterProps> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let attempt = 0;
+    const load = () => {
+      void import('sonner').then(
+        (module) => {
+          if (!cancelled) setToaster(() => module.Toaster);
+        },
+        () => {
+          attempt += 1;
+          if (!cancelled && attempt <= MAX_TOASTER_LOAD_RETRIES) load();
+        }
+      );
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return Toaster;
+}
+
 // Toaster 跟随 app 主题（默认未设 theme 时 sonner 固定浅色，暗色模式下卡片会是白底）。
 function ThemedToaster() {
   const theme = useUIStore((state) => state.theme);
+  const Toaster = useDeferredToaster();
+  if (!Toaster) return null;
   return (
     <Toaster
       theme={theme}
@@ -178,14 +213,9 @@ function SelfSettingsEventsInit() {
   return routeNodeId === SELF_NODE_ID ? null : <SettingsEventsInit />;
 }
 
-// 路由 node 就绪后才做的接线：事件订阅会开该 node 的 WS，能力集是该 node 的请求，
+// 路由 node 就绪后才做的接线：事件订阅会开该 node 的 WS，
 // 都必须等懒登录门闸放行（`NodeRouteGate` 内部），否则进未登录的 node 会整片 401。
 function NodeSessionInit() {
-  // 启动即拉取服务端能力集（/api/capabilities），落 site store 供按 featureset 渲染
-  const loadCapabilities = useSiteStore((state) => state.loadCapabilities);
-  useEffect(() => {
-    void loadCapabilities();
-  }, [loadCapabilities]);
   return (
     <>
       <WatchEventsInit />
@@ -334,7 +364,7 @@ if (!rootElement) {
   throw new Error('Root element not found');
 }
 
-// 当前语言（及 fallback）按需异步加载，渲染前 await 以避免首屏出现未翻译的 key。
+// 当前语言的 core 语言包按需异步加载，渲染前 await 以避免首屏出现未翻译的 key。
 // 弱网下即便 locale chunk 加载失败也必须渲染（catch 兜底），否则整页空白比未翻译更糟。
 void i18nReady
   .catch(() => undefined)
@@ -344,4 +374,10 @@ void i18nReady
         <AppRoot />
       </StrictMode>
     );
+    // 首帧之后立刻补 rest 语言包：懒面板（连接设备、安全面板、终端设置、watch 对话框）
+    // 不经路由 loader，只能靠这次预取；懒路由自己会在 loader 里 await 同一个 promise。
+    const prefetchRest = () => void ensureI18nRest();
+    if (typeof requestIdleCallback === 'function')
+      requestIdleCallback(prefetchRest, { timeout: 1000 });
+    else setTimeout(prefetchRest, 0);
   });

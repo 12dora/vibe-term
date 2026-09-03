@@ -3,8 +3,6 @@ import { desc, eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { hubRoleTransitions } from '../db/schema';
 
-export type HubRoleTransitionRow = HubRoleTransition;
-
 const IN_FLIGHT: ReadonlySet<HubRoleTransitionPhase> = new Set([
   'accepted',
   'persisting',

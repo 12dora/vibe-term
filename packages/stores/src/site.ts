@@ -1,4 +1,4 @@
-import { FeatureSet, fetchCapabilities, fetchSiteSettings } from '@tmex/api-client';
+import { fetchSiteSettings } from '@tmex/api-client';
 import { DEFAULT_LOCALE, PRODUCT_NAME, type SiteSettings, type ThemeMode } from '@tmex/shared';
 import { THEME_PRESET_META, type ThemeAppearance, type ThemePreset } from '@tmex/theme';
 import { buildSiteThemeUpdate } from '@tmex/ws-client';
@@ -11,15 +11,12 @@ import type { UIStore } from './ui';
 export interface SiteState {
   settings: SiteSettings | null;
   loading: boolean;
-  /** 服务端能力集（GET /api/capabilities）；消费方按 featureset 决定渲染，默认空集 */
-  capabilities: FeatureSet;
   /** 引导用：已有缓存直接返回，否则复用在途请求或发起一次 */
   fetchSettings: () => Promise<SiteSettings>;
   /** 不吃缓存但可复用在途请求：设置表单挂载时要新鲜数据，又不必和引导请求各发一次 */
   ensureFreshSettings: () => Promise<SiteSettings>;
   /** 一定新发一次请求：保存成功或收到 S2C 失效信号后，必须拿到变更之后的数据 */
   refreshSettings: () => Promise<SiteSettings>;
-  loadCapabilities: () => Promise<void>;
   updateTheme: (theme: ThemeMode) => void;
   setThemeFromS2C: (theme: ThemeMode) => void;
   /**
@@ -122,22 +119,12 @@ export function createSiteStore(
     return {
       settings: null,
       loading: false,
-      capabilities: FeatureSet.empty(),
 
       fetchSettings: loader.fetchSettings,
 
       ensureFreshSettings: loader.ensureFreshSettings,
 
       refreshSettings: loader.refreshSettings,
-
-      loadCapabilities: async () => {
-        try {
-          const res = await fetchCapabilities(core.apiClient);
-          set({ capabilities: new FeatureSet(res.capabilities) });
-        } catch (err) {
-          console.error('[site] failed to load capabilities:', err);
-        }
-      },
 
       updateTheme: (theme) => {
         // 本地主题变更（切外观 / 选预设）立刻成为最新事实：在途 settings 响应回来时已是旧数据，

@@ -202,11 +202,6 @@ export type AuthLoginErrorCode =
 /** `/n/:id/*` 转发链路上「该 node 未登录」的 401 报文。 */
 export const NODE_LOGIN_REQUIRED = 'NODE_LOGIN_REQUIRED';
 
-export interface NodeLoginRequiredBody {
-  code: typeof NODE_LOGIN_REQUIRED;
-  nodeId: string;
-}
-
 export type MeshNodeReach = 'lan' | 'wan' | 'relay' | null;
 export type MeshNodeTransport = 'ws-secure' | 'relay' | 'dc' | null;
 

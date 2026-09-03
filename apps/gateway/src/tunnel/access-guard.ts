@@ -39,8 +39,6 @@ export function setAccessJwtVerifier(jwks: JwksCache): void {
   defaultJwks = jwks;
 }
 
-export const guardTunnelAccess = enforceTunnelAccessJwt;
-
 export function setAccessGuardFetch(fn: TunnelFetch): void {
   fetchImpl = fn;
   defaultJwks.setFetchImpl(fn);

@@ -293,14 +293,6 @@ export function approveWeixinUser(accountId: string, userId: string): WeixinAcco
   return getWeixinUserByAccountAndUserId(accountId, userId);
 }
 
-export function deleteWeixinUser(accountId: string, userId: string): void {
-  const orm = getOrmDb();
-  orm
-    .delete(weixinAccountUsers)
-    .where(and(eq(weixinAccountUsers.accountId, accountId), eq(weixinAccountUsers.userId, userId)))
-    .run();
-}
-
 /** 标记/清除「会话过期、需重新激活」（发送失败置 true，inbound 恢复置 false）。 */
 export function setWeixinUserNeedsReactivation(
   accountId: string,
