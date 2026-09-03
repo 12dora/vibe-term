@@ -979,25 +979,25 @@ export class UplinkPool {
     void this.pinCandidateFingerprints();
   }
 
+  private applyAttachedMatch(match: Pick<AttachedHub, 'hubNodeId' | 'mode' | 'writerEpoch'>): void {
+    if (!this.attached) return;
+    this.attached.hubNodeId = match.hubNodeId;
+    this.attached.mode = match.mode;
+    this.attached.writerEpoch = match.writerEpoch;
+  }
   private refreshAttachedFromList(list: UplinkNodeList): void {
     const attached = this.attached;
     if (!attached) return;
     const recs = recordsFromNodeList(list);
     const match = recs.find((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
-    if (!match) return;
-    attached.hubNodeId = match.hubNodeId;
-    attached.mode = match.mode;
-    attached.writerEpoch = match.writerEpoch;
+    if (match) this.applyAttachedMatch(match);
   }
 
   private refreshAttachedFromCandidates(): void {
     const attached = this.attached;
     if (!attached) return;
     const match = this.candidates().find((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
-    if (!match) return;
-    attached.hubNodeId = match.hubNodeId;
-    attached.mode = match.mode;
-    attached.writerEpoch = match.writerEpoch;
+    if (match) this.applyAttachedMatch(match);
   }
 
   private async pinAdvertisedCas(list: UplinkNodeList): Promise<void> {
