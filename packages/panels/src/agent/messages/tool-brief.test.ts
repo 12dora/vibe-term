@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import type { UiToolCall } from '@tmex/stores';
 
-import { TOOL_BRIEFS, actionBrief } from './tool-brief';
+import { TOOL_BRIEFS, actionBrief, asBriefText } from './tool-brief';
 
 function call(toolName: string, input: unknown, output?: unknown): UiToolCall {
   return {
@@ -89,5 +89,50 @@ describe('actionBrief', () => {
     for (const toolName of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
       expect(actionBrief(call(toolName, { a: 1 }))).toBe('{\n  "a": 1\n}');
     }
+  });
+});
+
+describe('asBriefText', () => {
+  const shapes: unknown[] = [
+    { a: 1 },
+    { command: 'ls -al', cwd: '/home/k' },
+    { text: 'x'.repeat(500) },
+    [1, 2, 3],
+    Array.from({ length: 200 }, (_, i) => ({ index: i, note: 'n'.repeat(80) })),
+    { nested: { deep: { deeper: 'y'.repeat(300) } } },
+    { flag: true, nothing: null },
+    'plain string',
+    42,
+  ];
+
+  test('前 60 字符与完整序列化逐字相同', () => {
+    for (const value of shapes) {
+      const full = typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? '');
+      expect(asBriefText(value, 60)).toBe(full.slice(0, 60));
+    }
+  });
+
+  test('不为 60 字符预览读遍整个 input', () => {
+    let reads = 0;
+    const input: Record<string, unknown> = { head: 'h'.repeat(30) };
+    for (let i = 0; i < 100; i += 1) {
+      Object.defineProperty(input, `k${i}`, {
+        enumerable: true,
+        get: () => {
+          reads += 1;
+          return 'v'.repeat(200);
+        },
+      });
+    }
+    const brief = actionBrief(call('mcp__custom__do', input));
+    // 断言在取到 60 字符预算后停手：只读了最前面的少数几个键（下面的完整序列化会读遍所有 getter）
+    expect(reads).toBeLessThan(4);
+    expect(brief).toBe((JSON.stringify(input, null, 2) as string).slice(0, 60));
+  });
+
+  test('循环引用退化为 String(value) 而不抛错', () => {
+    const cyclic: Record<string, unknown> = { name: 'loop' };
+    cyclic.self = cyclic;
+    expect(asBriefText(cyclic, 60)).toBe('[object Object]');
   });
 });

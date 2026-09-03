@@ -21,6 +21,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -39,20 +40,24 @@ export function newShortcutId(): string {
   return `sc-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }
 
-// 按固定字段顺序归一化后比较，规避对象键顺序差异（服务端规范化 vs 前端构造）造成的假阳性。
-function normItem(item: TerminalShortcutItem): string {
-  return JSON.stringify([
-    item.id,
-    item.type,
-    item.label,
-    item.payload ?? null,
-    item.action ?? null,
-  ]);
+// 逐字段比较：只看这五个字段，规避对象键顺序差异（服务端规范化 vs 前端构造）造成的假阳性。
+// 不用 JSON.stringify——它挂在每次击键都要重算的 dirty 路径上。
+function sameShortcutItem(a: TerminalShortcutItem, b: TerminalShortcutItem): boolean {
+  return (
+    a.id === b.id &&
+    a.type === b.type &&
+    a.label === b.label &&
+    (a.payload ?? null) === (b.payload ?? null) &&
+    (a.action ?? null) === (b.action ?? null)
+  );
 }
 
 export function sameShortcutItems(a: TerminalShortcutItem[], b: TerminalShortcutItem[]): boolean {
   if (a.length !== b.length) return false;
-  return a.every((item, index) => normItem(item) === normItem(b[index]));
+  return a.every((item, index) => {
+    const other = b[index];
+    return other !== undefined && sameShortcutItem(item, other);
+  });
 }
 
 export function isShortcutDraftDirty(
@@ -202,14 +207,18 @@ function useShortcutDraft(data: TerminalShortcutSettings | undefined): ShortcutD
     setBaseline({ items: next.items, useIcons: next.useIcons });
   }, []);
 
+  // 草稿只在采纳判定里被读到：用 ref 传给 effect，避免每次击键都重跑一遍采纳逻辑。
+  const draftRef = useRef<ShortcutDraftSnapshot>({ items, useIcons });
+  draftRef.current = { items, useIcons };
+
   // 初始化，以及当用户未编辑时跟随服务器最新值（其它端保存触发的后台 refetch）。
   useEffect(() => {
     if (!data) return;
     const server: ShortcutDraftSnapshot = { items: data.items, useIcons: data.useIcons };
-    if (shouldAdoptServerShortcuts(server, baseline, { items, useIcons })) {
+    if (shouldAdoptServerShortcuts(server, baseline, draftRef.current)) {
       adopt(server);
     }
-  }, [data, baseline, items, useIcons, adopt]);
+  }, [data, baseline, adopt]);
 
   const dirty = useMemo(
     () => isShortcutDraftDirty({ items, useIcons }, baseline),

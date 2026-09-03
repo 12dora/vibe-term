@@ -15,6 +15,50 @@ export function asText(value: unknown): string {
   }
 }
 
+function briefLength(value: unknown): number {
+  return JSON.stringify(value, null, 2)?.length ?? 0;
+}
+
+// 序列化长度已够铺满预览时停手；减 2 是让出末尾的 "\n]" / "\n}"，
+// 保证保留部分与完整序列化在前 budget 个字符上逐字相同。
+function enough(value: unknown, budget: number): boolean {
+  return briefLength(value) - 2 >= budget;
+}
+
+// 深度上限只为兜住自引用结构：真实 input 到这个深度时预览预算早已铺满
+const BRIEF_MAX_DEPTH = 32;
+
+function capForBrief(value: unknown, budget: number, depth = 0): unknown {
+  if (typeof value === 'string') return value.length > budget ? value.slice(0, budget) : value;
+  if (depth >= BRIEF_MAX_DEPTH) return value;
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    for (const item of value) {
+      out.push(capForBrief(item, budget, depth + 1));
+      if (enough(out, budget)) break;
+    }
+    return out;
+  }
+  if (!isRecord(value)) return value;
+  const out: Record<string, unknown> = {};
+  // 用 Object.keys 逐个取值，避免 Object.entries 一次性读遍整个 input
+  for (const key of Object.keys(value)) {
+    out[key] = capForBrief(value[key], budget, depth + 1);
+    if (enough(out, budget)) break;
+  }
+  return out;
+}
+
+/** 摘要专用：先按预算裁剪结构再序列化，未知工具的巨型 input 不必为 60 字符预览整体展开 */
+export function asBriefText(value: unknown, max: number): string {
+  if (typeof value === 'string') return value.slice(0, max);
+  try {
+    return (JSON.stringify(capForBrief(value, max), null, 2) ?? '').slice(0, max);
+  } catch {
+    return String(value).slice(0, max);
+  }
+}
+
 type ToolInput = Record<string, unknown>;
 type BriefBuilder = (input: ToolInput, call: UiToolCall) => string;
 
@@ -56,7 +100,8 @@ export const TOOL_BRIEFS = new Map<string, BriefBuilder>([
   ['get_pane_info', () => '(pane info)'],
 ]);
 
-const fallbackBrief: BriefBuilder = (_input, call) => truncated(asText(call.input), 60, '');
+const fallbackBrief: BriefBuilder = (_input, call) =>
+  truncated(asBriefText(call.input, 60), 60, '');
 
 export function actionBrief(call: UiToolCall): string {
   const build = TOOL_BRIEFS.get(call.toolName) ?? fallbackBrief;

@@ -22,11 +22,6 @@ import { useTranslation } from 'react-i18next';
 
 import { actionBrief, asText, isRecord } from './tool-brief';
 
-export interface ToolCardConfirmation {
-  id: string;
-  toolCallId: string;
-}
-
 interface ToolCallCardProps {
   call: UiToolCall;
   confirmationId?: string;
@@ -450,6 +445,7 @@ function ToolDetailsDialog({
   label,
   open,
   onOpenChange,
+  onOpenChangeComplete,
 }: {
   call: UiToolCall;
   view: ToolView | undefined;
@@ -457,9 +453,10 @@ function ToolDetailsDialog({
   label: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onOpenChangeComplete: (open: boolean) => void;
 }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}>
       <DialogContent className="flex max-h-[80vh] max-w-2xl flex-col gap-3 overflow-hidden sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-1.5 text-sm">
@@ -481,6 +478,8 @@ export const ToolCallCard = memo(function ToolCallCard({
 }: ToolCallCardProps) {
   const { t } = useTranslation();
   const [dialogOpen, setDialogOpen] = useState(false);
+  // 卡片可能有上百张：详情 Dialog 只在打开后才挂载，关闭动画播完再卸载
+  const [dialogMounted, setDialogMounted] = useState(false);
   const status = toolCallStatus(call, confirmationId);
   const view = TOOL_VIEWS.get(call.toolName);
   const icon = view?.icon ?? FALLBACK_ICON;
@@ -499,7 +498,10 @@ export const ToolCallCard = memo(function ToolCallCard({
     >
       <button
         type="button"
-        onClick={() => setDialogOpen(true)}
+        onClick={() => {
+          setDialogMounted(true);
+          setDialogOpen(true);
+        }}
         data-testid={`agent-tool-card-${call.toolCallId}`}
         className="border-border bg-card/50 hover:bg-accent/50 flex max-w-full min-w-0 items-center gap-1.5 rounded-md border px-1.5 py-1 text-xs transition-colors"
       >
@@ -525,14 +527,19 @@ export const ToolCallCard = memo(function ToolCallCard({
         <ToolApproval call={call} confirmationId={confirmationId} onDecide={onDecide} />
       )}
 
-      <ToolDetailsDialog
-        call={call}
-        view={view}
-        icon={icon}
-        label={toolLabel}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-      />
+      {dialogMounted && (
+        <ToolDetailsDialog
+          call={call}
+          view={view}
+          icon={icon}
+          label={toolLabel}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          onOpenChangeComplete={(open) => {
+            if (!open) setDialogMounted(false);
+          }}
+        />
+      )}
     </div>
   );
 });

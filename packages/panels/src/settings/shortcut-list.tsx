@@ -48,6 +48,35 @@ function ActionBadge({ action }: { action: TerminalShortcutAction }) {
   );
 }
 
+/** label 行内编辑用本地草稿，失焦时才回写：否则每敲一个字符都要重排整张列表并重算 dirty */
+function LabelInput({
+  item,
+  onLabelChange,
+  placeholder,
+  className,
+}: {
+  item: TerminalShortcutItem;
+  onLabelChange: (id: string, label: string) => void;
+  placeholder: string;
+  className: string;
+}) {
+  const [labelDraft, setLabelDraft] = useState(item.label);
+  useEffect(() => {
+    setLabelDraft(item.label);
+  }, [item.label]);
+
+  return (
+    <Input
+      value={labelDraft}
+      onChange={(e) => setLabelDraft(e.target.value)}
+      onBlur={() => onLabelChange(item.id, labelDraft)}
+      placeholder={placeholder}
+      className={className}
+      data-testid={`shortcut-editor-label-${item.id}`}
+    />
+  );
+}
+
 function ActionRowFields({
   item,
   action,
@@ -61,12 +90,11 @@ function ActionRowFields({
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <ActionBadge action={action} />
-      <Input
-        value={item.label}
-        onChange={(e) => onLabelChange(item.id, e.target.value)}
+      <LabelInput
+        item={item}
+        onLabelChange={onLabelChange}
         placeholder={t(`settings.terminal.shortcuts.action.${action}`)}
         className="h-9 min-w-0 flex-1"
-        data-testid={`shortcut-editor-label-${item.id}`}
       />
     </div>
   );
@@ -90,12 +118,11 @@ function SendRowFields({
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
-      <Input
-        value={item.label}
-        onChange={(e) => onLabelChange(item.id, e.target.value)}
+      <LabelInput
+        item={item}
+        onLabelChange={onLabelChange}
         placeholder={t('settings.terminal.shortcuts.labelPlaceholder')}
         className="h-9 w-24 font-mono"
-        data-testid={`shortcut-editor-label-${item.id}`}
       />
       <Input
         value={payloadDraft}

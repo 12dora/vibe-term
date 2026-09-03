@@ -145,11 +145,32 @@ export function resolvePickerSelection(
   return entry?.path ?? currentPath;
 }
 
+/** 超过这个条数就给行加 content-visibility：后端硬顶 2000 条，全量铺开是 6000+ 节点 */
+export const PICKER_SKIP_RENDER_THRESHOLD = 200;
+
+const SKIPPED_ROW_STYLE = {
+  contentVisibility: 'auto',
+  containIntrinsicSize: 'auto 32px',
+} as const;
+
+interface FocusableRow {
+  focus: () => void;
+}
+
+/** 高亮跟着焦点走：按下标直接取行元素，不做全列表属性选择器扫描 */
+export function focusPickerRow(rows: Array<FocusableRow | null>, highlight: number): boolean {
+  const row = highlight >= 0 ? rows[highlight] : undefined;
+  if (!row) return false;
+  row.focus();
+  return true;
+}
+
 export interface DirectoryEntryListProps {
   entries: BrowseDirectoryEntryDto[];
   highlight: number;
   onHighlight: (index: number) => void;
   onEnter: (path: string) => void;
+  rowRefs?: { current: Array<HTMLButtonElement | null> };
 }
 
 export function DirectoryEntryList({
@@ -157,8 +178,10 @@ export function DirectoryEntryList({
   highlight,
   onHighlight,
   onEnter,
+  rowRefs,
 }: DirectoryEntryListProps) {
   const { t } = useTranslation();
+  const skipRender = entries.length > PICKER_SKIP_RENDER_THRESHOLD;
   if (entries.length === 0) {
     return (
       <div
@@ -175,6 +198,10 @@ export function DirectoryEntryList({
         <button
           key={entry.path}
           type="button"
+          ref={(node) => {
+            if (rowRefs) rowRefs.current[index] = node;
+          }}
+          style={skipRender ? SKIPPED_ROW_STYLE : undefined}
           data-picker-index={index}
           data-testid={`directory-picker-entry-${entry.name}`}
           aria-current={index === highlight ? 'true' : undefined}
@@ -318,12 +345,10 @@ export function DirectoryPickerModal({
   const navigate = (path: string) => dispatch({ type: 'navigate', path });
 
   // 高亮跟着焦点走：方向键改高亮后把焦点挪到对应条目，后续 Enter 才落在它身上。
-  const listRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  rowRefs.current.length = entries.length;
   useEffect(() => {
-    if (state.highlight < 0) return;
-    listRef.current
-      ?.querySelector<HTMLElement>(`[data-picker-index="${state.highlight}"]`)
-      ?.focus();
+    focusPickerRow(rowRefs.current, state.highlight);
   }, [state.highlight]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -384,7 +409,7 @@ export function DirectoryPickerModal({
           </div>
 
           <ScrollArea className="h-64 rounded-lg border border-border">
-            <div ref={listRef}>
+            <div>
               {query.isError ? (
                 <DirectoryPickerError
                   onRetry={() => void query.refetch()}
@@ -395,6 +420,7 @@ export function DirectoryPickerModal({
               ) : (
                 <DirectoryEntryList
                   entries={entries}
+                  rowRefs={rowRefs}
                   highlight={state.highlight}
                   onHighlight={(index) => dispatch({ type: 'highlight', index })}
                   onEnter={navigate}

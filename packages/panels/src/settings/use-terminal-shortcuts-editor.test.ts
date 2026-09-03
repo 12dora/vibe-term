@@ -41,6 +41,26 @@ describe('sameShortcutItems', () => {
     expect(sameShortcutItems(baseItems, setShortcutLabel(baseItems, 'a', 'Esc'))).toBe(false);
   });
 
+  test('五个字段逐个改动都能被识别', () => {
+    const base: TerminalShortcutItem[] = [{ id: 'x', type: 'send', label: 'ESC', payload: '\x1b' }];
+    const variants: TerminalShortcutItem[][] = [
+      [{ id: 'y', type: 'send', label: 'ESC', payload: '\x1b' }],
+      [{ id: 'x', type: 'action', action: 'paste', label: 'ESC' }],
+      [{ id: 'x', type: 'send', label: 'Esc', payload: '\x1b' }],
+      [{ id: 'x', type: 'send', label: 'ESC', payload: '\x1c' }],
+      [{ id: 'x', type: 'send', label: 'ESC', payload: '\x1b', action: 'paste' }],
+    ];
+    for (const variant of variants) {
+      expect(sameShortcutItems(base, variant)).toBe(false);
+    }
+  });
+
+  test('比较只看这五个字段，多余字段不影响判定', () => {
+    const base: TerminalShortcutItem[] = [{ id: 'x', type: 'send', label: 'ESC', payload: 'e' }];
+    const extra = [{ id: 'x', type: 'send', label: 'ESC', payload: 'e', extra: 1 }];
+    expect(sameShortcutItems(base, extra as TerminalShortcutItem[])).toBe(true);
+  });
+
   test('缺省 payload/action 与 null 等价', () => {
     const withUndefined: TerminalShortcutItem[] = [
       { id: 'x', type: 'action', action: 'paste', label: '' },
@@ -49,6 +69,26 @@ describe('sameShortcutItems', () => {
       { id: 'x', type: 'action', action: 'paste', label: '', payload: undefined },
     ];
     expect(sameShortcutItems(withUndefined, withNothing)).toBe(true);
+  });
+});
+
+describe('isShortcutDraftDirty', () => {
+  test('无基线时永不 dirty', () => {
+    expect(isShortcutDraftDirty({ items: baseItems, useIcons: false }, null)).toBe(false);
+  });
+
+  test('条目或 useIcons 任一不同即 dirty', () => {
+    const baseline = { items: baseItems, useIcons: false };
+    expect(
+      isShortcutDraftDirty({ items: baseItems.map((i) => ({ ...i })), useIcons: false }, baseline)
+    ).toBe(false);
+    expect(isShortcutDraftDirty({ items: baseItems, useIcons: true }, baseline)).toBe(true);
+    expect(
+      isShortcutDraftDirty(
+        { items: setShortcutLabel(baseItems, 'a', 'Esc'), useIcons: false },
+        baseline
+      )
+    ).toBe(true);
   });
 });
 

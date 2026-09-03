@@ -11,10 +11,12 @@ import { I18nextProvider } from 'react-i18next';
 
 import {
   DirectoryEntryList,
+  PICKER_SKIP_RENDER_THRESHOLD,
   createDirectoryPickerState,
   directoryBreadcrumbs,
   directoryBrowseQueryOptions,
   directoryPickerReducer,
+  focusPickerRow,
   moveDirectoryHighlight,
   resolvePickerInitialPath,
   resolvePickerSelection,
@@ -251,5 +253,68 @@ describe('DirectoryEntryList', () => {
     });
     expect(html).toContain('没有子目录');
     expect(html).not.toContain('directory-picker-list');
+  });
+});
+
+describe('focusPickerRow', () => {
+  function rows(count: number): Array<{ focus: () => void; focused: number } | null> {
+    return Array.from({ length: count }, () => ({
+      focused: 0,
+      focus() {
+        this.focused += 1;
+      },
+    }));
+  }
+
+  test('按下标直接聚焦对应行，不做属性选择器扫描', () => {
+    const list = rows(3);
+    expect(focusPickerRow(list, 1)).toBe(true);
+    expect(list.map((row) => row?.focused)).toEqual([0, 1, 0]);
+  });
+
+  test('无高亮、越界或行未挂载时安全退出', () => {
+    const list = rows(2);
+    expect(focusPickerRow(list, -1)).toBe(false);
+    expect(focusPickerRow(list, 5)).toBe(false);
+    expect(focusPickerRow([null, null], 0)).toBe(false);
+    expect(list.map((row) => row?.focused)).toEqual([0, 0]);
+  });
+});
+
+describe('DirectoryEntryList 大列表', () => {
+  function manyEntries(count: number) {
+    return Array.from({ length: count }, (_, index) => entry(`dir-${index}`));
+  }
+
+  test('超过阈值的列表给行加 content-visibility，阈值内不加', () => {
+    const heavy = renderList({
+      entries: manyEntries(PICKER_SKIP_RENDER_THRESHOLD + 1),
+      highlight: -1,
+      onHighlight: () => undefined,
+      onEnter: () => undefined,
+    });
+    expect(heavy).toContain('content-visibility:auto');
+    expect(heavy).toContain('contain-intrinsic-size:auto 32px');
+
+    const light = renderList({
+      entries: manyEntries(PICKER_SKIP_RENDER_THRESHOLD),
+      highlight: -1,
+      onHighlight: () => undefined,
+      onEnter: () => undefined,
+    });
+    expect(light).not.toContain('content-visibility');
+  });
+
+  test('rowRefs 按下标收集行元素', () => {
+    const rowRefs = { current: [] as Array<HTMLButtonElement | null> };
+    renderList({
+      entries: manyEntries(3),
+      highlight: -1,
+      onHighlight: () => undefined,
+      onEnter: () => undefined,
+      rowRefs,
+    });
+    // 静态渲染不挂 ref，只断言传入的容器不被组件改写
+    expect(rowRefs.current).toEqual([]);
   });
 });
