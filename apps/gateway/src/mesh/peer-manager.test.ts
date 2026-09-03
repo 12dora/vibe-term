@@ -1768,6 +1768,8 @@ describe('PeerManager', () => {
 
     const lines: string[] = [];
     const orig = console.log;
+    const prevLevel = process.env.TMEX_LOG_LEVEL;
+    process.env.TMEX_LOG_LEVEL = 'debug';
     console.log = (...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
     };
@@ -1802,6 +1804,8 @@ describe('PeerManager', () => {
       expect(queued.some((row) => row.ms === PEER_DC_UPGRADE_RETRY_DELAYS_MS[1])).toBe(false);
     } finally {
       console.log = orig;
+      if (prevLevel === undefined) delete process.env.TMEX_LOG_LEVEL;
+      else process.env.TMEX_LOG_LEVEL = prevLevel;
     }
   });
 
@@ -3085,6 +3089,98 @@ describe('PeerManager', () => {
     expect(statuses.filter((row) => row.t === 'node.status')).toHaveLength(1);
   });
 
+  test('key-log head is cached across ads until notifyKeyLogHeadChanged', async () => {
+    const { manager, scheduler, statuses, head, headCalls } = await setupStatusPeer(fixtures);
+    await waitUntil(() => statuses.some((row) => row.t === 'node.status'));
+    expect(headCalls()).toBe(1);
+    manager.refreshAdvertisedStatus();
+    await Bun.sleep(20);
+    expect(headCalls()).toBe(1);
+    expect(statuses.filter((row) => row.t === 'node.status')).toHaveLength(1);
+    head.seq = 9n;
+    head.hash = new Uint8Array(32).fill(9);
+    manager.notifyKeyLogHeadChanged();
+    scheduler.advance(KEY_LOG_STATUS_DEBOUNCE_MS);
+    await waitUntil(() => statuses.filter((row) => row.t === 'node.status').length === 2);
+    expect(headCalls()).toBe(2);
+    const latest = statuses.filter((row) => row.t === 'node.status').at(-1);
+    expect(latest?.key_log_head).toEqual({
+      seq: 9,
+      hash: encodeBase64url(head.hash),
+    });
+  });
+
+  test('fingerprint change refreshes cached interfaces before advertising status', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let generation = 1;
+    const v1 = { en0: [{ address: '10.0.0.8', family: 'IPv4', internal: false }] };
+    const v2 = { en0: [{ address: '10.0.0.9', family: 'IPv4', internal: false }] };
+    let cached: typeof v1 | typeof v2 | null = null;
+    const refresh = () => {
+      cached = generation === 1 ? v1 : v2;
+      return cached;
+    };
+    const get = () => cached ?? refresh();
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      refreshLocalInterfaces: refresh,
+      interfacesFn: get,
+      statusProvider: (): UplinkStatus => {
+        const ifaces = get();
+        const address = ifaces.en0?.[0]?.address ?? 'none';
+        return {
+          version: '1',
+          tmux: false,
+          direct_capable: false,
+          inventory: {},
+          endpoints: [`ws://${address}:1/peer`],
+        };
+      },
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    await manager.start();
+    const [local, remote] = createInMemoryLinkPair();
+    const statuses: Array<Record<string, unknown>> = [];
+    remote.ctl.onMessage((bytes) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+        if (msg.t === 'node.status') statuses.push(msg);
+      } catch {
+        /* ignore */
+      }
+    });
+    echoQuiesceCaps(remote);
+    expect(manager.adoptLink(peer.nodeId, local, 'ws-secure', self.nodeId)).toBe(local);
+    await waitUntil(() => statuses.some((row) => row.t === 'node.status'));
+    expect(statuses.at(-1)?.endpoints).toEqual(['ws://10.0.0.8:1/peer']);
+    generation = 2;
+    scheduler.tickIntervals();
+    await waitUntil(
+      () => statuses.some((row) => JSON.stringify(row.endpoints).includes('10.0.0.9')),
+      2_000
+    );
+    expect(statuses.at(-1)?.endpoints).toEqual(['ws://10.0.0.9:1/peer']);
+  });
+
   test('ws-secure races ranked endpoints: hanging first loses to a later success', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });
@@ -3712,6 +3808,7 @@ async function setupStatusPeer(fixtures: Array<{ close: () => void; stop?: () =>
     listVersion: 1,
   });
   const head = { seq: 1n, hash: new Uint8Array(32).fill(1) };
+  let headCalls = 0;
   const scheduler = new ImmediateScheduler();
   const manager = new PeerManager({
     identity: self,
@@ -3722,6 +3819,7 @@ async function setupStatusPeer(fixtures: Array<{ close: () => void; stop?: () =>
     scheduler,
     keyLogApplier: {
       async head() {
+        headCalls += 1;
         return { seq: head.seq, hash: head.hash };
       },
       async applyMany() {
@@ -3749,5 +3847,5 @@ async function setupStatusPeer(fixtures: Array<{ close: () => void; stop?: () =>
   });
   echoQuiesceCaps(remote);
   expect(manager.adoptLink(peer.nodeId, local, 'ws-secure', self.nodeId)).toBe(local);
-  return { manager, scheduler, statuses, head };
+  return { manager, scheduler, statuses, head, headCalls: () => headCalls };
 }

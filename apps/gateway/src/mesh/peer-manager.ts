@@ -149,6 +149,7 @@ export type PeerManagerOptions = {
   rtc?: RtcPeerManager;
   linkFactory?: PeerLinkFactory;
   interfacesFn?: () => Record<string, RankableIfaceAddr[] | undefined>;
+  refreshLocalInterfaces?: () => Record<string, RankableIfaceAddr[] | undefined>;
   hubHost?: string | null | (() => string | null);
   endpointBackoff?: PeerEndpointBackoff;
   dialLimiter?: DirectDialLimiter;
@@ -322,11 +323,15 @@ export class PeerManager {
   private readonly lastDirectAttempt = new Map<string, DirectAttemptRecord>();
   private readonly transportWaiters = new Map<string, TransportWaiter[]>();
   private readonly interfacesFn: () => Record<string, RankableIfaceAddr[] | undefined>;
+  private readonly refreshLocalInterfaces:
+    | (() => Record<string, RankableIfaceAddr[] | undefined>)
+    | null;
   private readonly hubHostOf: () => string | null;
   private readonly endpointBackoff: PeerEndpointBackoff;
   private readonly dialLimiter: DirectDialLimiter;
   private readonly advertisedEndpointSet = new Map<string, string>();
   private localFingerprint = '';
+  private keyLogHeadCache: { userId: string; seq: bigint; hash: Uint8Array } | null = null;
   private upgradeInflight = 0;
   private linkInfoHold = 0;
   private readonly upgradeWaiters: Array<() => void> = [];
@@ -367,6 +372,7 @@ export class PeerManager {
     this.ensureDcSession = opts.ensureDcSession ?? null;
     this.onLinkInfo = opts.onLinkInfo ?? null;
     this.interfacesFn = opts.interfacesFn ?? (() => os.networkInterfaces());
+    this.refreshLocalInterfaces = opts.refreshLocalInterfaces ?? null;
     const hubHost = opts.hubHost;
     this.hubHostOf = typeof hubHost === 'function' ? hubHost : () => hubHost ?? null;
     this.endpointBackoff =
@@ -668,6 +674,7 @@ export class PeerManager {
   }
 
   notifyKeyLogHeadChanged(): void {
+    this.keyLogHeadCache = null;
     if (this.stopped || this.keyLogStatusDebounce) return;
     this.keyLogStatusDebounce = this.scheduler.interval(() => {
       this.keyLogStatusDebounce?.clear();
@@ -1552,7 +1559,9 @@ export class PeerManager {
   }
 
   private syncLocalFingerprint(): void {
-    const next = localNetworkFingerprint(this.interfacesFn());
+    const next = localNetworkFingerprint(
+      this.refreshLocalInterfaces ? this.refreshLocalInterfaces() : this.interfacesFn()
+    );
     if (this.localFingerprint && next !== this.localFingerprint) {
       this.endpointBackoff.resetAll();
     }
@@ -2080,10 +2089,17 @@ export class PeerManager {
       push();
       return;
     }
+    const userId = this.uplink.userId;
+    const cached = this.keyLogHeadCache;
+    if (cached && cached.userId === userId) {
+      push({ seq: cached.seq, hash: cached.hash });
+      return;
+    }
     void this.keyLogApplier
-      .head(this.uplink.userId)
+      .head(userId)
       .then((head) => {
         if (this.live.get(live.peerNodeId) !== live && !live.retiring) return;
+        this.keyLogHeadCache = { userId, seq: head.seq, hash: head.hash.slice() };
         push(head);
       })
       .catch(() => undefined);

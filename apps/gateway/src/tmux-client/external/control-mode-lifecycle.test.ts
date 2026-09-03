@@ -152,4 +152,30 @@ describe('ControlModeLifecycle', () => {
     await Bun.sleep(0);
     expect(executed).toEqual(['refresh-client -A %1:continue']);
   });
+
+  test('sendHeartbeat skips when control traffic is recent and sends after silence', async () => {
+    const { host, written } = createHost();
+    const commands: string[] = [];
+    host.controlCommands = {
+      execute: async (write: (data: string) => void, command: string) => {
+        commands.push(command);
+        write(`${command}\n`);
+      },
+    } as unknown as ControlModeCommandQueue;
+    const lifecycle = new ControlModeLifecycle(host);
+    const recent = Date.now();
+    host.lastControlActivityAt = () => recent;
+    lifecycle.sendHeartbeat();
+    expect(commands).toEqual([]);
+    expect(written).toEqual([]);
+    expect(host.heartbeatPending).toBe(false);
+
+    host.lastControlActivityAt = () => recent - 30_001;
+    lifecycle.sendHeartbeat();
+    expect(commands).toEqual(['display-message -p "tmex-hb"']);
+    expect(written).toEqual(['display-message -p "tmex-hb"\n']);
+    expect(host.heartbeatPending).toBe(true);
+    expect(host.heartbeatTimeoutTimer).not.toBeNull();
+    lifecycle.stopHeartbeat();
+  });
 });

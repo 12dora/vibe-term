@@ -40,9 +40,12 @@ export interface ControlModeHost {
   heartbeatTimer: ReturnType<typeof setInterval> | null;
   heartbeatPending: boolean;
   heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | null;
+  lastControlActivityAt?: () => number;
 }
 
 export class ControlModeLifecycle {
+  private lastTerminalOutputAt = 0;
+
   constructor(private readonly host: ControlModeHost) {}
 
   async startControlClient(): Promise<void> {
@@ -115,6 +118,10 @@ export class ControlModeLifecycle {
     if (!write || host.heartbeatPending || !host.connected || host.manualDisconnect) {
       return;
     }
+    const lastActivity = Math.max(host.lastControlActivityAt?.() ?? 0, this.lastTerminalOutputAt);
+    if (lastActivity > 0 && Date.now() - lastActivity < HEARTBEAT_INTERVAL_MS) {
+      return;
+    }
     host.heartbeatPending = true;
     void host.controlCommands
       .execute((value) => write(value), 'display-message -p "tmex-hb"', {
@@ -159,6 +166,7 @@ export class ControlModeLifecycle {
     const host = this.host;
     return {
       onTerminalOutput: (paneId, data) => {
+        this.lastTerminalOutputAt = Date.now();
         host.callbacks.onTerminalOutput(paneId, data);
       },
       onTitle: (paneId, title) => {

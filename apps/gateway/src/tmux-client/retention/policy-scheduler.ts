@@ -53,7 +53,6 @@ export class RetentionPolicyScheduler {
   constructor(private readonly kernel: RetentionKernel) {}
 
   snapshotStats(): PaneRetentionStats {
-    this.sweep(this.kernel.now());
     let activePanes = 0;
     let gracePanes = 0;
     let hotPanes = 0;

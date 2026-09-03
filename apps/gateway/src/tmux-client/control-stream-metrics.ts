@@ -33,6 +33,7 @@ function emptyCounters(): Omit<ControlStreamMetricsSnapshot, 'intervalMs'> {
 
 export class ControlStreamMetrics {
   private counters = emptyCounters();
+  private lastRawAtMs = 0;
 
   constructor(
     private readonly intervalMs = CONTROL_STREAM_METRICS_INTERVAL_MS,
@@ -43,7 +44,12 @@ export class ControlStreamMetrics {
     }
   }
 
+  lastRawChunkAtMs(): number {
+    return this.lastRawAtMs;
+  }
+
   recordRawChunk(bytes: number): void {
+    this.lastRawAtMs = Date.now();
     this.counters.rawChunks += 1;
     this.counters.rawBytes += bytes;
   }

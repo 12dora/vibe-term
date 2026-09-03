@@ -30,6 +30,7 @@ import {
   attachKeyLogHeadNotify,
   createKeyLogPublisher,
   createMeshRuntime,
+  createTtlCache,
   hubRoleAdvertisement,
   isAdvertisablePeerAddress,
 } from './mesh-runtime';
@@ -1989,5 +1990,31 @@ describe('key-log head notify wiring', () => {
     );
     publisher.publish(record);
     expect(notified).toBe(1);
+  });
+});
+
+describe('createTtlCache', () => {
+  test('coalesces reads within TTL and refreshes after invalidate or expiry', () => {
+    let now = 0;
+    let generation = 1;
+    const cache = createTtlCache(
+      () => generation,
+      8_000,
+      () => now
+    );
+    expect(cache.get()).toBe(1);
+    generation = 2;
+    now = 7_999;
+    expect(cache.get()).toBe(1);
+    cache.invalidate();
+    expect(cache.get()).toBe(2);
+    generation = 3;
+    now = 8_000;
+    expect(cache.get()).toBe(2);
+    now = 16_000;
+    expect(cache.get()).toBe(3);
+    generation = 4;
+    expect(cache.refresh()).toBe(4);
+    expect(cache.get()).toBe(4);
   });
 });

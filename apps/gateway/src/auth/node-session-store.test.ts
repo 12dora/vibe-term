@@ -4,7 +4,6 @@ import { users } from '../db/schema';
 import {
   type IssueNodeSessionInput,
   NODE_SESSION_HARD_TTL_MS,
-  NODE_SESSION_RENEW_THROTTLE_MS,
   NODE_SESSION_TTL_MS,
   NodeSessionStore,
 } from './node-session-store';
@@ -111,7 +110,7 @@ describe('NodeSessionStore', () => {
     }
   });
 
-  test('sliding renewal is throttled to once per 5 minutes', () => {
+  test('sliding renewal happens only after remaining lifetime drops below half TTL', () => {
     const { store, close } = storeWithUser();
     try {
       const issued = store.issue({
@@ -122,27 +121,37 @@ describe('NodeSessionStore', () => {
         credentialId: CRED_A,
         now: 0,
       });
-      const first = store.verify(issued.sid, {
+      const beforeHalf = store.verify(issued.sid, {
         viaNodeId: 'self',
-        now: NODE_SESSION_RENEW_THROTTLE_MS + 1,
+        now: NODE_SESSION_TTL_MS / 2,
       });
-      expect(first.ok).toBe(true);
-      if (!first.ok) {
+      expect(beforeHalf.ok).toBe(true);
+      if (beforeHalf.ok) {
+        expect(beforeHalf.renewedExpiresAt).toBeUndefined();
+        expect(beforeHalf.session.expiresAt).toBe(NODE_SESSION_TTL_MS);
+      }
+
+      const pastHalf = store.verify(issued.sid, {
+        viaNodeId: 'self',
+        now: NODE_SESSION_TTL_MS / 2 + 1,
+      });
+      expect(pastHalf.ok).toBe(true);
+      if (!pastHalf.ok) {
         throw new Error('expected renew');
       }
-      if (first.renewedExpiresAt === undefined) {
+      if (pastHalf.renewedExpiresAt === undefined) {
         throw new Error('expected renewedExpiresAt');
       }
-      expect(first.renewedExpiresAt).toBe(NODE_SESSION_RENEW_THROTTLE_MS + 1 + NODE_SESSION_TTL_MS);
+      expect(pastHalf.renewedExpiresAt).toBe(NODE_SESSION_TTL_MS / 2 + 1 + NODE_SESSION_TTL_MS);
 
-      const second = store.verify(issued.sid, {
+      const shortlyAfter = store.verify(issued.sid, {
         viaNodeId: 'self',
-        now: NODE_SESSION_RENEW_THROTTLE_MS + 30_000,
+        now: NODE_SESSION_TTL_MS / 2 + 30_000,
       });
-      expect(second.ok).toBe(true);
-      if (second.ok) {
-        expect(second.renewedExpiresAt).toBeUndefined();
-        expect(second.session.expiresAt).toBe(first.renewedExpiresAt);
+      expect(shortlyAfter.ok).toBe(true);
+      if (shortlyAfter.ok) {
+        expect(shortlyAfter.renewedExpiresAt).toBeUndefined();
+        expect(shortlyAfter.session.expiresAt).toBe(pastHalf.renewedExpiresAt);
       }
     } finally {
       close();

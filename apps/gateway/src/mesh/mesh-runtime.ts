@@ -348,6 +348,35 @@ export type MeshRuntime = {
 
 export type NetworkInterfacesFn = () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
 
+export const STATUS_IFACE_CACHE_TTL_MS = 8_000;
+
+export function createTtlCache<T>(
+  read: () => T,
+  ttlMs = STATUS_IFACE_CACHE_TTL_MS,
+  now: () => number = Date.now
+): { get: () => T; refresh: () => T; invalidate: () => void } {
+  let value: T | undefined;
+  let at = Number.NEGATIVE_INFINITY;
+  let has = false;
+  const refresh = (): T => {
+    value = read();
+    at = now();
+    has = true;
+    return value;
+  };
+  return {
+    get() {
+      if (has && now() - at < ttlMs) return value as T;
+      return refresh();
+    },
+    refresh,
+    invalidate() {
+      has = false;
+      at = Number.NEGATIVE_INFINITY;
+    },
+  };
+}
+
 function stripZoneId(address: string): string {
   const cut = address.indexOf('%');
   return cut === -1 ? address : address.slice(0, cut);
@@ -960,6 +989,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
     stores.state.caFingerprint = tls.caFingerprint ?? null;
   };
   await refreshTls();
+  const ifaceCache = createTtlCache(stores.interfacesFn, STATUS_IFACE_CACHE_TTL_MS);
   const statusProvider = () => {
     const version = getDisplayVersion();
     return {
@@ -969,12 +999,21 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
       inventory: { version },
       endpoints: enumeratePeerEndpoints(
         stores.peerHolder.manager?.listenPort ?? stores.config.peerPort,
-        stores.interfacesFn()
+        ifaceCache.get()
       ),
       hub: hubRoleAdvertisement(stores.config, stores.state.caFingerprint, stores.hub),
     };
   };
-  return { ...stores, ...bindings, scheduler, statusProvider, refreshTls };
+  const refreshLocalInterfaces = () => ifaceCache.refresh();
+  return {
+    ...stores,
+    ...bindings,
+    scheduler,
+    statusProvider,
+    refreshTls,
+    refreshLocalInterfaces,
+    invalidateStatusCache: ifaceCache.invalidate,
+  };
 }
 
 type MeshDeps = Awaited<ReturnType<typeof constructMeshDeps>>;
@@ -1241,6 +1280,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
     rtc,
     linkFactory: opts.linkFactory,
     interfacesFn: d.interfacesFn,
+    refreshLocalInterfaces: d.refreshLocalInterfaces,
     hubHost: () => attachedHubHost(uplink.attachedHub(), hubEndpointUrl(config)),
     onGatewaySession: (session, auth) => sessions.register({ ...auth, session }).ok,
     onGatewaySessionClose: (session) => {

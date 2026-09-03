@@ -29,6 +29,7 @@ describe('ControlStreamMetrics', () => {
       structureChanges: 1,
       blocks: 1,
     });
+    expect(metrics.lastRawChunkAtMs()).toBeGreaterThan(0);
   });
 
   test('resets all counters after reporting', () => {

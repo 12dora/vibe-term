@@ -35,7 +35,7 @@ describe('EventLoopLagSampler', () => {
     sampler.start();
     now = 2_400;
     sampler.tick();
-    expect(sampler.snapshot()).toEqual({ lagMs: 400, maxLagMs: 400 });
+    expect(sampler.snapshot()).toEqual({ lagMs: 400, maxLagMs: 400, suspendMs: 0 });
     expect(warns).toHaveLength(1);
     expect(warns[0]).toContain('event_loop_lag');
     expect(warns[0]).toContain('lag_ms=400');
@@ -78,6 +78,58 @@ describe('EventLoopLagSampler', () => {
     expect(sampler.snapshot().lagMs).toBe(0);
     expect(sampler.snapshot().maxLagMs).toBe(0);
   });
+
+  test('classifies a wall-clock jump against a steady monotonic clock as suspend, not lag', () => {
+    const warns: string[] = [];
+    let wall = 1_000;
+    let mono = 1_000;
+    const sampler = new EventLoopLagSampler({
+      now: () => wall,
+      monotonic: () => mono,
+      tickMs: 1_000,
+      windowMs: 30_000,
+      warnMs: 250,
+      suspendDriftMs: 2_000,
+      warn: (line) => warns.push(line),
+      ...noopSchedule,
+    });
+    samplers.push(sampler);
+    sampler.start();
+    wall = 57_675;
+    mono = 2_000;
+    sampler.tick();
+    const snapshot = sampler.snapshot();
+    expect(snapshot.lagMs).toBe(0);
+    expect(snapshot.maxLagMs).toBe(0);
+    expect(snapshot.suspendMs).toBe(55_675);
+    expect(warns).toHaveLength(0);
+
+    wall = 58_400;
+    mono = 2_400;
+    sampler.tick();
+    expect(sampler.snapshot().lagMs).toBe(0);
+    expect(sampler.snapshot().maxLagMs).toBe(0);
+    expect(sampler.snapshot().suspendMs).toBe(0);
+  });
+
+  test('idles at 10s and demandFast raises the armed interval to 1Hz', () => {
+    const delays: number[] = [];
+    const sampler = new EventLoopLagSampler({
+      now: () => 0,
+      tickMs: 1_000,
+      idleTickMs: 10_000,
+      schedule: (_cb, ms) => {
+        delays.push(ms);
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      },
+      unschedule: () => {},
+    });
+    samplers.push(sampler);
+    sampler.start();
+    expect(delays).toEqual([10_000]);
+    sampler.demandFast(30_000);
+    expect(delays).toEqual([10_000, 1_000]);
+  });
 });
 
 describe('gatewayEventLoopLag lifecycle', () => {
@@ -88,7 +140,7 @@ describe('gatewayEventLoopLag lifecycle', () => {
   test('does not start a timer until startGatewayEventLoopLag', () => {
     const sampler = gatewayEventLoopLag();
     expect(sampler.running()).toBe(false);
-    expect(sampler.snapshot()).toEqual({ lagMs: 0, maxLagMs: 0 });
+    expect(sampler.snapshot()).toEqual({ lagMs: 0, maxLagMs: 0, suspendMs: 0 });
     startGatewayEventLoopLag();
     expect(sampler.running()).toBe(true);
     stopGatewayEventLoopLag();

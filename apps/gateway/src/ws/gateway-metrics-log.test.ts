@@ -1,11 +1,17 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { GatewayActivityMetrics } from './gateway-activity-metrics';
 import {
+  type GatewayMetricsHost,
   GatewayPingMetrics,
+  logGatewayActivityMetricsIfDue,
   logPingMetricsIfDue,
+  logTerminalOutputMetricsIfDue,
   recordPingProbe,
   resetPingMetricsForTest,
   setPingMetricsForTest,
 } from './gateway-metrics-log';
+import type { TerminalOutputBatcher } from './terminal-output-batcher';
+import { TerminalOutputMetrics, emptyTerminalOutputQueueStats } from './terminal-output-metrics';
 
 afterEach(() => {
   resetPingMetricsForTest();
@@ -78,5 +84,94 @@ describe('logPingMetricsIfDue', () => {
     expect(line).toContain('queued=1');
     expect(line).toContain('buffered_max_bytes=4096');
     expect(line).toContain('event_loop_lag_ms=');
+  });
+
+  test('suppresses a due all-zero ping window but still resets counters', () => {
+    const started = Date.now();
+    setPingMetricsForTest(new GatewayPingMetrics(1_000, started));
+    const logs: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((message: unknown) => {
+      if (typeof message === 'string') logs.push(message);
+    });
+    try {
+      logPingMetricsIfDue(started + 1_000);
+      expect(logs.some((entry) => entry.includes('[ws-metrics] ping '))).toBe(false);
+      recordPingProbe({ serverHandleMs: 4, path: 'bypassed', bufferedBytes: 1 });
+      logPingMetricsIfDue(started + 2_000);
+    } finally {
+      logSpy.mockRestore();
+    }
+    const line = logs.find((entry) => entry.includes('[ws-metrics] ping '));
+    expect(line).toBeDefined();
+    expect(line).toContain('probes=1');
+    expect(line).toContain('bypassed=1');
+  });
+});
+
+describe('ws-metrics zero-snapshot suppression', () => {
+  function emptyHost(overrides: Partial<GatewayMetricsHost> = {}): GatewayMetricsHost {
+    return {
+      connectedClients: new Set(),
+      connections: new Map(),
+      canonicalSessions: new Map(),
+      terminalOutputBatcher: {
+        snapshotStats: () => emptyTerminalOutputQueueStats().batch,
+      } as TerminalOutputBatcher,
+      terminalOutputMetrics: new TerminalOutputMetrics(1, 0),
+      gatewayActivityMetrics: new GatewayActivityMetrics(1, 0),
+      ...overrides,
+    };
+  }
+
+  function captureLogs(run: () => void): string[] {
+    const logs: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((message: unknown) => {
+      if (typeof message === 'string') logs.push(message);
+    });
+    try {
+      run();
+    } finally {
+      logSpy.mockRestore();
+    }
+    return logs;
+  }
+
+  test('omits terminal_output and gateway_activity when the window is quiet, then emits after traffic', async () => {
+    const terminalOutputMetrics = new TerminalOutputMetrics(1, 0);
+    const gatewayActivityMetrics = new GatewayActivityMetrics(1, 0);
+    const host = emptyHost({ terminalOutputMetrics, gatewayActivityMetrics });
+
+    const quiet = captureLogs(() => logTerminalOutputMetricsIfDue(host));
+    expect(quiet.some((line) => line.includes('[ws-metrics] terminal_output'))).toBe(false);
+    expect(quiet.some((line) => line.includes('[ws-metrics] gateway_activity'))).toBe(false);
+
+    terminalOutputMetrics.recordSource(8, { legacy: true, canonical: false });
+    gatewayActivityMetrics.recordInbound(0x0003, 12);
+    await Bun.sleep(2);
+    const busy = captureLogs(() => logTerminalOutputMetricsIfDue(host));
+    const output = busy.find((line) => line.includes('[ws-metrics] terminal_output'));
+    const activity = busy.find((line) => line.includes('[ws-metrics] gateway_activity'));
+    expect(output).toBeDefined();
+    expect(output).toContain('source_events=1');
+    expect(output).toContain('source_bytes=8');
+    expect(activity).toBeDefined();
+    expect(activity).toContain('inbound_messages=1');
+    expect(activity).toContain('inbound_bytes=12');
+  });
+
+  test('resets the activity window when a quiet snapshot is suppressed', async () => {
+    const gatewayActivityMetrics = new GatewayActivityMetrics(1, 0);
+    const host = emptyHost({
+      terminalOutputMetrics: new TerminalOutputMetrics(1, 0),
+      gatewayActivityMetrics,
+    });
+    captureLogs(() => logGatewayActivityMetricsIfDue(host));
+    gatewayActivityMetrics.recordTmuxEvent('bell', 1);
+    await Bun.sleep(2);
+    const logs = captureLogs(() => logGatewayActivityMetricsIfDue(host));
+    const line = logs.find((entry) => entry.includes('[ws-metrics] gateway_activity'));
+    expect(line).toBeDefined();
+    expect(line).toContain('tmux_events=1');
+    expect(line).not.toContain('inbound_messages=1');
   });
 });

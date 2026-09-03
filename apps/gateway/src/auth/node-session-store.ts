@@ -5,7 +5,7 @@ import type { AuthDb, DelegationMethod } from './types';
 
 export const NODE_SESSION_TTL_MS = 18 * 60 * 60 * 1000;
 export const NODE_SESSION_HARD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-export const NODE_SESSION_RENEW_THROTTLE_MS = 5 * 60 * 1000;
+export const NODE_SESSION_RENEW_THROTTLE_MS = NODE_SESSION_TTL_MS / 2;
 
 export type NodeSessionVerifyReason = 'unknown' | 'expired' | 'revoked' | 'via_mismatch';
 
@@ -100,7 +100,7 @@ export class NodeSessionStore {
       let renewedExpiresAt: number | undefined;
       let expiresAt = row.expiresAt;
       let renewedAt = row.renewedAt;
-      if (input.now - row.renewedAt > NODE_SESSION_RENEW_THROTTLE_MS) {
+      if (row.expiresAt - input.now < NODE_SESSION_TTL_MS / 2) {
         expiresAt = Math.min(input.now + NODE_SESSION_TTL_MS, row.hardExpiresAt);
         renewedAt = input.now;
         renewedExpiresAt = expiresAt;

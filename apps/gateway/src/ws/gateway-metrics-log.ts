@@ -3,11 +3,15 @@ import type { CanonicalFeedSession } from './canonical-feed-session';
 import { gatewayEventLoopLag } from './event-loop-lag';
 import {
   type GatewayActivityMetrics,
+  type GatewayActivityMetricsSnapshot,
   collectCanonicalStateMetrics,
 } from './gateway-activity-metrics';
 import type { GatewaySession } from './gateway-session';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
-import type { TerminalOutputMetrics } from './terminal-output-metrics';
+import type {
+  TerminalOutputMetrics,
+  TerminalOutputMetricsSnapshot,
+} from './terminal-output-metrics';
 import type { DeviceConnectionEntry } from './types';
 import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 import { carriersByKindLine } from './ws-backpressure-log';
@@ -88,6 +92,67 @@ export class GatewayPingMetrics {
   }
 }
 
+export function isQuietPingSnapshot(metrics: GatewayPingMetricsSnapshot): boolean {
+  return (
+    metrics.probes === 0 &&
+    metrics.bypassed === 0 &&
+    metrics.queued === 0 &&
+    metrics.bufferedMaxBytes === 0 &&
+    metrics.serverHandleMsP50 === 0 &&
+    metrics.serverHandleMsMax === 0
+  );
+}
+
+export function isQuietTerminalOutputSnapshot(metrics: TerminalOutputMetricsSnapshot): boolean {
+  if (
+    metrics.sourceEvents !== 0 ||
+    metrics.sourceBytes !== 0 ||
+    metrics.droppedEvents !== 0 ||
+    metrics.droppedBytes !== 0 ||
+    metrics.legacyObservedEvents !== 0 ||
+    metrics.legacyObservedBytes !== 0 ||
+    metrics.canonicalObservedEvents !== 0 ||
+    metrics.canonicalObservedBytes !== 0 ||
+    metrics.batches !== 0 ||
+    metrics.batchBytes !== 0 ||
+    metrics.recipientDeliveries !== 0 ||
+    metrics.recipientBytes !== 0 ||
+    metrics.canonicalRecipientDeliveries !== 0 ||
+    metrics.canonicalRecipientBytes !== 0 ||
+    metrics.canonicalDeliveryDrops !== 0 ||
+    metrics.canonicalDeliveryDropBytes !== 0
+  ) {
+    return false;
+  }
+  const { batch, websocket, canonical } = metrics.queues;
+  if (batch.pendingBytes !== 0 || batch.pendingPanes !== 0) return false;
+  if (
+    websocket.queuedBytes !== 0 ||
+    websocket.backpressuredSessions !== 0 ||
+    websocket.unavailableSessions !== 0
+  ) {
+    return false;
+  }
+  return canonical.pendingPaneGaps === 0 && canonical.streamGapsPending === 0;
+}
+
+export function isQuietGatewayActivitySnapshot(metrics: GatewayActivityMetricsSnapshot): boolean {
+  return (
+    metrics.inboundMessages === 0 &&
+    metrics.inboundBytes === 0 &&
+    metrics.inboundKinds.length === 0 &&
+    metrics.snapshots === 0 &&
+    metrics.snapshotBytes === 0 &&
+    metrics.snapshotDeliveries === 0 &&
+    metrics.terminalHistories === 0 &&
+    metrics.terminalHistoryBytes === 0 &&
+    metrics.terminalHistoryDeliveryAttempts === 0 &&
+    metrics.tmuxEvents === 0 &&
+    metrics.tmuxEventDeliveryAttempts === 0 &&
+    metrics.tmuxEventTypes.length === 0
+  );
+}
+
 function percentile50(samples: readonly number[]): number {
   if (samples.length === 0) return 0;
   const sorted = samples.slice().sort((a, b) => a - b);
@@ -110,6 +175,7 @@ export function recordPingProbe(input: {
 export function logPingMetricsIfDue(nowMs = Date.now()): void {
   const metrics = pingMetrics.takeIfDue(nowMs);
   if (!metrics) return;
+  if (isQuietPingSnapshot(metrics)) return;
   const lag = gatewayEventLoopLag().snapshot();
   console.log(
     stamp(
@@ -157,6 +223,10 @@ export function logTerminalOutputMetricsIfDue(host: GatewayMetricsHost): void {
     },
   });
   if (!metrics) {
+    return;
+  }
+  if (isQuietTerminalOutputSnapshot(metrics)) {
+    logGatewayActivityMetricsIfDue(host);
     return;
   }
   const wsTerminationReasons = Object.entries(metrics.queues.websocket.terminationsByReason)
@@ -211,6 +281,9 @@ export function logGatewayActivityMetricsIfDue(host: GatewayMetricsHost): void {
   const canonical = collectCanonicalStateMetrics(canonicalRuntimes, canonicalSessions);
   const metrics = host.gatewayActivityMetrics.takeIfDue(Date.now(), canonical);
   if (!metrics) {
+    return;
+  }
+  if (isQuietGatewayActivitySnapshot(metrics)) {
     return;
   }
   const inboundKinds =
