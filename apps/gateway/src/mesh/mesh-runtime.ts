@@ -1163,6 +1163,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
   d.peerHolder.manager = peerManager;
   uplink.onStateChange((liveState) => {
     const live = liveState === 'online';
+    if (live) peerManager.onHubSwitched();
     if (state.hubPresenceLive && !live && state.lastNodeList) {
       const reach = peerManager.listReach();
       for (const node of state.lastNodeList.nodes) {
@@ -1488,7 +1489,6 @@ function assembleMeshRuntime(
     },
     refreshTlsAndAdvertise,
     async start() {
-      await rtc.ready();
       if (!d.userIdOf()) {
         const empty = userStore.listUsers().length === 0 && userStore.listCerts().length === 0;
         if (config.roles.hub && empty) {

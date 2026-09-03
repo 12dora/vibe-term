@@ -1,6 +1,11 @@
 import type { RetentionKernel } from './kernel';
 import { MinHeap } from './min-heap';
-import type { PaneRetentionEvictionReason, PaneRetentionStats, PaneState } from './types';
+import {
+  type PaneRetentionEvictionReason,
+  type PaneRetentionStats,
+  type PaneState,
+  REPLAY_COMPACT_HEAD,
+} from './types';
 
 interface ReplayHead {
   state: PaneState;
@@ -37,8 +42,8 @@ function compareReplayHead(left: ReplayHead, right: ReplayHead): number {
   );
 }
 
-function replayHead(state: PaneState): ReplayHead | null {
-  const chunk = state.replay[0];
+function replayHead(state: PaneState, offset = 0): ReplayHead | null {
+  const chunk = state.replay[offset];
   if (!chunk) return null;
   return {
     state,
@@ -47,6 +52,17 @@ function replayHead(state: PaneState): ReplayHead | null {
     lastTouchedAt: state.lastTouchedAt,
     createOrder: state.createOrder,
   };
+}
+
+function compactReplay(state: PaneState, head: number): void {
+  if (head <= 0) return;
+  const live = state.replay.length - head;
+  if (live <= 0) {
+    state.replay.length = 0;
+    return;
+  }
+  state.replay.copyWithin(0, head);
+  state.replay.length = live;
 }
 
 export class RetentionPolicyScheduler {
@@ -108,20 +124,20 @@ export class RetentionPolicyScheduler {
   }
 
   trimPaneReplay(state: PaneState, now: number): void {
-    while (
-      state.replay.length > 0 &&
-      (state.replayBytes > this.kernel.maxReplayBytesPerPane ||
-        now - (state.replay[0]?.receivedAt ?? now) > this.kernel.replayTtlMs)
-    ) {
-      const reason: PaneRetentionEvictionReason =
-        state.replayBytes > this.kernel.maxReplayBytesPerPane ? 'replay_byte_limit' : 'replay_ttl';
-      const removed = state.replay.shift();
-      if (removed) {
-        state.replayBytes -= removed.data.byteLength;
-        this.kernel.adjustRetainedBytes(-removed.data.byteLength);
-        this.recordEviction(reason);
-      }
+    let head = 0;
+    while (head < state.replay.length) {
+      const oldest = state.replay[head];
+      if (!oldest) break;
+      const overBytes = state.replayBytes > this.kernel.maxReplayBytesPerPane;
+      const expired = now - oldest.receivedAt > this.kernel.replayTtlMs;
+      if (!overBytes && !expired) break;
+      const reason: PaneRetentionEvictionReason = overBytes ? 'replay_byte_limit' : 'replay_ttl';
+      state.replayBytes -= oldest.data.byteLength;
+      this.kernel.adjustRetainedBytes(-oldest.data.byteLength);
+      this.recordEviction(reason);
+      head += 1;
     }
+    compactReplay(state, head);
   }
 
   enforceBounds(_now: number): void {
@@ -291,26 +307,39 @@ export class RetentionPolicyScheduler {
 
   private evictOldestReplayChunks(): void {
     const heap = new MinHeap<ReplayHead>(compareReplayHead);
+    const heads = new Map<PaneState, number>();
     for (const state of this.kernel.panes.values()) {
       const head = replayHead(state);
       if (head) heap.push(head);
     }
+    const drop = (state: PaneState): number => {
+      const next = (heads.get(state) ?? 0) + 1;
+      heads.set(state, next);
+      if (next >= REPLAY_COMPACT_HEAD || next >= state.replay.length) {
+        compactReplay(state, next);
+        heads.set(state, 0);
+        return 0;
+      }
+      return next;
+    };
     while (this.kernel.retainedBytes > this.kernel.maxRetentionBytes && heap.size > 0) {
       const item = heap.pop();
       if (!item) break;
-      const chunk = item.state.replay[0];
+      const offset = heads.get(item.state) ?? 0;
+      const chunk = item.state.replay[offset];
       if (!chunk || chunk.receivedAt !== item.receivedAt) {
-        const refreshed = replayHead(item.state);
+        const refreshed = replayHead(item.state, offset);
         if (refreshed) heap.push(refreshed);
         continue;
       }
-      item.state.replay.shift();
+      const next = drop(item.state);
       item.state.replayBytes -= chunk.data.byteLength;
       this.kernel.adjustRetainedBytes(-chunk.data.byteLength);
       this.recordEviction('retention_limit_replay');
-      const next = replayHead(item.state);
-      if (next) heap.push(next);
+      const following = replayHead(item.state, next);
+      if (following) heap.push(following);
     }
+    for (const [state, head] of heads) compactReplay(state, head);
   }
 
   private paneDeadline(state: PaneState): number | null {

@@ -11,6 +11,7 @@ import { PeerHandshakeError } from '../types';
 import { DataChannelCarrier } from './data-channel-carrier';
 import { fragmentFrame } from './fragmenter';
 import type { RtcSignaling } from './ice';
+import { RtcDialBreaker } from './rtc-dial-breaker';
 import { RTC_AUTHORIZE_MAX, RtcPeerManager, SESS_CHANNEL_LABEL } from './rtc-peer-manager';
 import { type FakePeerConnection, createFakeNativeModule, pairDataChannels } from './test-fakes';
 
@@ -100,9 +101,73 @@ describe('RtcPeerManager', () => {
 
   test('available is true after native loads', async () => {
     const { left } = setup();
-    expect(left.available).toBe(false);
+    expect(left.available).toBe(true);
     expect(await left.ready()).toBe(true);
     expect(left.available).toBe(true);
+  });
+
+  test('constructor does not load native; first dial loads once; disabled never loads', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const a = seedNodeIdentity(store, 'user-1');
+    const b = seedNodeIdentity(store, 'user-1');
+    const fake = createFakeNativeModule();
+    const ice = () => ({ stun: [] as string[], turn: null });
+    let loads = 0;
+    const breaker = new RtcDialBreaker({ now: () => 0, disableAfter: 1 });
+    breaker.noteFailure(b.nodeId, 'timeout', 'pre');
+    expect(breaker.isDisabled(b.nodeId)).toBe(true);
+
+    const disabled = new RtcPeerManager({
+      loadNative: async () => {
+        loads += 1;
+        return fake.module;
+      },
+      canLoadNative: () => !breaker.isDisabled(b.nodeId),
+      iceConfigProvider: ice,
+      identity: a,
+      userStore: store,
+      handshakeTimeoutMs: 200,
+    });
+    fixtures.push({ close: () => disabled.close() });
+    expect(loads).toBe(0);
+    const [sigA] = loopbackSignaling();
+    await expect(disabled.connectToPeer(b.nodeId, sigA)).rejects.toBeInstanceOf(PeerHandshakeError);
+    expect(loads).toBe(0);
+    expect(await disabled.ready()).toBe(false);
+    expect(loads).toBe(0);
+
+    let dialLoads = 0;
+    const left = new RtcPeerManager({
+      loadNative: async () => {
+        dialLoads += 1;
+        return fake.module;
+      },
+      iceConfigProvider: ice,
+      identity: a,
+      userStore: store,
+      handshakeTimeoutMs: 2_000,
+    });
+    const right = new RtcPeerManager({
+      loadNative: async () => fake.module,
+      iceConfigProvider: ice,
+      identity: b,
+      userStore: store,
+      handshakeTimeoutMs: 2_000,
+    });
+    fixtures.push({ close: () => left.close() });
+    fixtures.push({ close: () => right.close() });
+    expect(dialLoads).toBe(0);
+    const [sigLeft, sigRight] = loopbackSignaling();
+    await Promise.all([
+      left.connectToPeer(b.nodeId, sigLeft),
+      right.connectToPeer(a.nodeId, sigRight),
+    ]);
+    expect(dialLoads).toBe(1);
+    await left.createPeerConnection('offerer');
+    expect(dialLoads).toBe(1);
   });
 
   test('createPeerConnection parses local fingerprint from SDP', async () => {

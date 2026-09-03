@@ -81,6 +81,7 @@ export type RtcPeerManagerOptions = {
   authorizeMax?: number;
   sweepIntervalMs?: number;
   liveness?: RtcLivenessOptions | false;
+  canLoadNative?: () => boolean;
 };
 
 export type CreatedPeerConnection = {
@@ -170,8 +171,10 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   private readonly authorizeMax: number;
   private readonly switcher: CarrierSwitchController | null;
   private readonly liveness: RtcLivenessOptions | false;
-  private readonly loadPromise: Promise<NodeDatachannelModule | null>;
+  private readonly canLoadNative?: () => boolean;
+  private loadPromise: Promise<NodeDatachannelModule | null> | null = null;
   private native: NodeDatachannelModule | null = null;
+  private nativeMissing = false;
   private readonly browser = new Map<string, BrowserRecord>();
   private readonly livePcs = new Set<PeerConnectionLike>();
   private probePc: PeerConnectionLike | null = null;
@@ -188,6 +191,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     this.authorizeTtlMs = opts.authorizeTtlMs ?? RTC_AUTHORIZE_TTL_MS;
     this.authorizeMax = opts.authorizeMax ?? RTC_AUTHORIZE_MAX;
     this.liveness = opts.liveness === undefined ? {} : opts.liveness;
+    this.canLoadNative = opts.canLoadNative;
     const sweepIntervalMs = opts.sweepIntervalMs ?? RTC_AUTHORIZE_SWEEP_INTERVAL_MS;
     if (sweepIntervalMs > 0) {
       this.sweepTimer = setInterval(() => this.sweepBrowser(), sweepIntervalMs);
@@ -202,18 +206,15 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     } else {
       this.switcher = null;
     }
-    this.loadPromise = this.loadNative().then((mod) => {
-      this.native = mod;
-      return mod;
-    });
   }
 
   get available(): boolean {
-    return this.native !== null;
+    if (this.nativeMissing) return false;
+    return this.nativeLoadAllowed();
   }
 
   async ready(): Promise<boolean> {
-    await this.loadPromise;
+    await this.ensureNative();
     return this.available;
   }
 
@@ -251,7 +252,10 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   }
 
   async connectToPeer(peerNodeId: string, signaling: RtcSignaling): Promise<DcPeerConnectResult> {
-    await this.ready();
+    if (!this.nativeLoadAllowed()) {
+      throw new PeerHandshakeError('protocol', 'node-datachannel is not available');
+    }
+    await this.ensureNative();
     const native = this.requireNative();
     const self = this.identity.nodeId.toLowerCase();
     const peer = peerNodeId.toLowerCase();
@@ -456,6 +460,27 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     }
     this.livePcs.clear();
     this.browser.clear();
+  }
+
+  private nativeLoadAllowed(): boolean {
+    return this.canLoadNative?.() !== false;
+  }
+
+  private ensureNative(): Promise<NodeDatachannelModule | null> {
+    if (!this.nativeLoadAllowed()) return Promise.resolve(this.native);
+    if (!this.loadPromise) {
+      this.loadPromise = this.loadNative()
+        .then((mod) => {
+          this.native = mod;
+          this.nativeMissing = mod == null;
+          return mod;
+        })
+        .catch((err) => {
+          this.nativeMissing = true;
+          throw err;
+        });
+    }
+    return this.loadPromise;
   }
 
   private requireNative(): NodeDatachannelModule {

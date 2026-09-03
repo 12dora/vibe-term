@@ -2,8 +2,8 @@ import { homedir } from 'node:os';
 import type { Device } from '@tmex/shared';
 import { config } from '../config';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
+import { logAt, shouldLog } from '../log/level';
 import { connectionAlertNotifier } from '../push/connection-alerts';
-import { isManagedExternally } from '../system/managed';
 import {
   buildLocalTmuxEnv,
   getLocalParkingCommand,
@@ -16,6 +16,8 @@ import {
   createControlModeSubscription,
 } from './control-mode-subscription';
 import type { ControlStreamMetricsSnapshot } from './control-stream-metrics';
+import { formatTmuxMetricsLine } from './tmux-metrics-line';
+export { formatTmuxMetricsLine };
 import {
   CONTROL_STDERR_TAIL_LIMIT,
   type CommandResult,
@@ -513,20 +515,10 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     let proc: ControlClientProcess | null = null;
     const controlCommands = new ControlModeCommandQueue(() => proc?.kill());
     this.controlCommands = controlCommands;
-    const metricsOptions = isManagedExternally()
+    const metricsOptions = shouldLog('debug')
       ? {
           onMetrics: (metrics: ControlStreamMetricsSnapshot) => {
-            console.log(
-              `[tmux-metrics] control_stream interval_ms=${metrics.intervalMs} ` +
-                `raw_chunks=${metrics.rawChunks} raw_bytes=${metrics.rawBytes} ` +
-                `control_outputs=${metrics.controlOutputs} ` +
-                `control_output_bytes=${metrics.controlOutputBytes} ` +
-                `terminal_outputs=${metrics.terminalOutputs} ` +
-                `terminal_output_bytes=${metrics.terminalOutputBytes} ` +
-                `titles=${metrics.titles} bells=${metrics.bells} ` +
-                `notifications=${metrics.notifications} ` +
-                `structure_changes=${metrics.structureChanges} blocks=${metrics.blocks}`
-            );
+            logAt('debug', formatTmuxMetricsLine(metrics));
           },
         }
       : undefined;

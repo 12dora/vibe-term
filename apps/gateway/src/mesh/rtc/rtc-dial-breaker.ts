@@ -17,14 +17,35 @@ export const RTC_DIAL_BREAKER_FAILS = DIAL_BREAKER_FAILS;
 export const RTC_DIAL_BREAKER_BASE_MS_DEFAULT = DIAL_BREAKER_BASE_MS;
 export const RTC_DIAL_BREAKER_MAX_MS = DIAL_BREAKER_MAX_MS;
 export const RTC_DIAL_BREAKER_HEALTHY_MS = DIAL_BREAKER_HEALTHY_MS;
+export const RTC_DIAL_DISABLE_AFTER_DEFAULT = 10;
 
 export const RTC_DIAL_BREAKER_MS_DEFAULT = RTC_DIAL_BREAKER_BASE_MS_DEFAULT;
 
-export type RtcDialBreakerDecision = DialBreakerDecision;
-export type RtcDialBreakerSnapshot = DialBreakerSnapshot;
+export const DC_REARM_SOURCES = [
+  'local-fingerprint',
+  'peer-endpoint',
+  'hub-switch',
+  'peer-reconnect',
+  'manual',
+] as const;
+export type DcRearmSource = (typeof DC_REARM_SOURCES)[number];
+
+export type RtcDialBreakerDecision = DialBreakerDecision & { disabled: boolean };
+export type RtcDialBreakerSnapshot = DialBreakerSnapshot & { disabled: boolean };
 export type RtcDialBreakerTripEvent = DialBreakerTripEvent;
 export type RtcDialBreakerResetEvent = DialBreakerResetEvent;
 export type RtcDialFailureResult = DialBreakerFailureResult;
+
+export type RtcDialBreakerDisableEvent = {
+  peer: string;
+  fails: number;
+  disableAfter: number;
+};
+
+export type RtcDialBreakerRearmEvent = {
+  peer: string;
+  source: DcRearmSource;
+};
 
 export type RtcDialBreakerOptions = {
   now?: () => number;
@@ -32,8 +53,11 @@ export type RtcDialBreakerOptions = {
   failLimit?: number;
   healthyMs?: number;
   maxMs?: number;
+  disableAfter?: number;
   onTrip?: (event: RtcDialBreakerTripEvent) => void;
   onReset?: (event: RtcDialBreakerResetEvent) => void;
+  onDisable?: (event: RtcDialBreakerDisableEvent) => void;
+  onRearm?: (event: RtcDialBreakerRearmEvent) => void;
 };
 
 const INTENTIONAL_DC_LOSS = new Set([
@@ -83,8 +107,16 @@ export function classifyRtcDialFailure(reason: string | null | undefined): strin
 
 export class RtcDialBreaker {
   private readonly inner: DialBreaker;
+  private readonly disableAfter: number;
+  private readonly onDisable?: (event: RtcDialBreakerDisableEvent) => void;
+  private readonly onRearm?: (event: RtcDialBreakerRearmEvent) => void;
+  private readonly disabled = new Set<string>();
 
   constructor(opts: RtcDialBreakerOptions = {}) {
+    this.disableAfter =
+      opts.disableAfter ?? envInt('TMEX_RTC_DIAL_DISABLE_AFTER', RTC_DIAL_DISABLE_AFTER_DEFAULT, 1);
+    this.onDisable = opts.onDisable;
+    this.onRearm = opts.onRearm;
     this.inner = new DialBreaker({
       now: opts.now,
       breakerMs:
@@ -99,11 +131,25 @@ export class RtcDialBreaker {
   }
 
   shouldTry(peer: string, now?: number): RtcDialBreakerDecision {
-    return this.inner.shouldTry(peer, now);
+    const inner = this.inner.shouldTry(peer, now);
+    const disabled = this.disabled.has(peer);
+    if (disabled) {
+      return { ...inner, allow: false, disabled: true };
+    }
+    return { ...inner, disabled: false };
   }
 
   snapshot(peer: string, now?: number): RtcDialBreakerSnapshot {
-    return this.inner.snapshot(peer, now);
+    const inner = this.inner.snapshot(peer, now);
+    return { ...inner, disabled: this.disabled.has(peer) };
+  }
+
+  isDisabled(peer: string): boolean {
+    return this.disabled.has(peer);
+  }
+
+  disabledPeers(): string[] {
+    return [...this.disabled];
   }
 
   beginAttempt(peer: string, attemptId: string): void {
@@ -111,6 +157,7 @@ export class RtcDialBreaker {
   }
 
   forceProbe(peer: string): void {
+    this.rearmDisabled(peer, 'manual');
     this.inner.forceProbe(peer);
   }
 
@@ -120,14 +167,18 @@ export class RtcDialBreaker {
     attemptId?: string,
     now?: number
   ): RtcDialFailureResult {
-    return this.inner.noteFailure(peer, kind, attemptId, now);
+    const result = this.inner.noteFailure(peer, kind, attemptId, now);
+    if (result.counted) this.maybeDisable(peer, now);
+    return result;
   }
 
   noteChannelEstablished(peer: string, attemptId?: string, now?: number): void {
+    this.disabled.delete(peer);
     this.inner.noteChannelEstablished(peer, attemptId, now);
   }
 
   noteHealthy(peer: string, now?: number): boolean {
+    this.disabled.delete(peer);
     return this.inner.noteHealthy(peer, now);
   }
 
@@ -135,8 +186,35 @@ export class RtcDialBreaker {
     this.inner.notePeerChanged(peer);
   }
 
-  reset(peer?: string): void {
+  rearmDisabled(peer: string, source: DcRearmSource): boolean {
+    if (!this.disabled.has(peer)) return false;
+    this.disabled.delete(peer);
     this.inner.reset(peer);
+    this.onRearm?.({ peer, source });
+    return true;
+  }
+
+  rearmAllDisabled(source: DcRearmSource): string[] {
+    const peers = this.disabledPeers();
+    const rearmed: string[] = [];
+    for (const peer of peers) {
+      if (this.rearmDisabled(peer, source)) rearmed.push(peer);
+    }
+    return rearmed;
+  }
+
+  reset(peer?: string): void {
+    if (peer) this.disabled.delete(peer);
+    else this.disabled.clear();
+    this.inner.reset(peer);
+  }
+
+  private maybeDisable(peer: string, now?: number): void {
+    if (this.disabled.has(peer)) return;
+    const failures = this.inner.snapshot(peer, now).failures;
+    if (failures < this.disableAfter) return;
+    this.disabled.add(peer);
+    this.onDisable?.({ peer, fails: failures, disableAfter: this.disableAfter });
   }
 }
 
@@ -159,6 +237,21 @@ export function createGatewayRtcDialBreaker(opts: RtcDialBreakerOptions = {}): R
       rtcLog('breaker reset', {
         peer: event.peer,
         healthy_ms: event.healthyMs,
+      });
+    },
+    onDisable: (event) => {
+      opts.onDisable?.(event);
+      rtcLog('breaker disabled', {
+        peer: event.peer,
+        fails: event.fails,
+        disable_after: event.disableAfter,
+      });
+    },
+    onRearm: (event) => {
+      opts.onRearm?.(event);
+      rtcLog('breaker rearm', {
+        peer: event.peer,
+        source: event.source,
       });
     },
   });

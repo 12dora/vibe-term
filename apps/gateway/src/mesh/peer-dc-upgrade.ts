@@ -4,6 +4,7 @@ import type { RtcSignalMessage } from './mesh-deps';
 import type { IncomingWakeGate, RtcWakeGate, WakeGate } from './peer-rtc-wake';
 import type { RtcSignaling, RtcWakeFields } from './rtc/ice';
 import {
+  type DcRearmSource,
   RTC_DIAL_BREAKER_HEALTHY_MS,
   type RtcDialBreaker,
   createGatewayRtcDialBreaker,
@@ -77,6 +78,41 @@ export class DcUpgradeCoordinator {
   startScan(tick: () => void): void {
     this.upgradeScan?.clear();
     this.upgradeScan = this.ports.scheduler.interval(tick, PEER_UPGRADE_SCAN_MS);
+  }
+
+  onLocalFingerprintChanged(): void {
+    this.rearmAllDisabled('local-fingerprint');
+  }
+
+  onPeerEndpointChanged(nodeId: string): void {
+    this.rearmDisabled(nodeId, 'peer-endpoint');
+  }
+
+  onHubSwitched(): void {
+    this.rearmAllDisabled('hub-switch');
+  }
+
+  onPeerReconnected(nodeId: string): void {
+    this.rearmDisabled(nodeId, 'peer-reconnect');
+  }
+
+  retryDcUpgrade(nodeId: string): void {
+    this.dcBreaker.forceProbe(nodeId);
+    this.cancelDcUpgradeRetry(nodeId);
+    this.maybeUpgrade(nodeId, { cooldown: false });
+  }
+
+  rearmDisabled(nodeId: string, source: DcRearmSource): boolean {
+    if (!this.dcBreaker.rearmDisabled(nodeId, source)) return false;
+    this.cancelDcUpgradeRetry(nodeId);
+    this.maybeUpgrade(nodeId, { cooldown: false });
+    return true;
+  }
+
+  rearmAllDisabled(source: DcRearmSource): void {
+    for (const nodeId of this.dcBreaker.disabledPeers()) {
+      this.rearmDisabled(nodeId, source);
+    }
   }
 
   clearScan(): void {
@@ -289,6 +325,10 @@ export class DcUpgradeCoordinator {
       return;
     }
     const decision = this.dcBreaker.shouldTry(nodeId);
+    if (decision.disabled) {
+      this.cancelDcUpgradeRetry(nodeId);
+      return;
+    }
     if (!decision.allow) {
       this.scheduleDcBreakerProbe(nodeId, decision.until);
       return;
@@ -351,6 +391,10 @@ export class DcUpgradeCoordinator {
   }
 
   scheduleDcBreakerProbe(nodeId: string, until: number | null): void {
+    if (this.dcBreaker.isDisabled(nodeId)) {
+      this.cancelDcUpgradeRetry(nodeId);
+      return;
+    }
     const live = this.ports.live().get(nodeId);
     if (live?.transport === 'dc') {
       this.ports.lostDirect().delete(nodeId);
@@ -388,6 +432,7 @@ export class DcUpgradeCoordinator {
         if (!this.ports.live().get(nodeId)) return;
         if (!this.ports.shouldTryDc(nodeId)) {
           const next = this.dcBreaker.shouldTry(nodeId);
+          if (next.disabled) return;
           if (next.cooling) this.scheduleDcBreakerProbe(nodeId, next.until);
           return;
         }

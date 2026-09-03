@@ -8,10 +8,12 @@ import { seedNodeIdentity, seedUser, waitUntil } from '../test-support';
 import type { UplinkStatus } from '../types';
 import { UplinkClient } from '../uplink-client';
 import {
+  DC_REARM_SOURCES,
   RTC_DIAL_BREAKER_BASE_MS_DEFAULT,
   RTC_DIAL_BREAKER_FAILS,
   RTC_DIAL_BREAKER_HEALTHY_MS,
   RTC_DIAL_BREAKER_MAX_MS,
+  RTC_DIAL_DISABLE_AFTER_DEFAULT,
   RtcDialBreaker,
   classifyRtcDialFailure,
   isIntentionalDcLoss,
@@ -168,6 +170,85 @@ describe('RtcDialBreaker', () => {
     expect(isIntentionalDcLoss('replaced')).toBe(true);
     expect(isIntentionalDcLoss('liveness-timeout')).toBe(false);
     expect(RTC_DIAL_BREAKER_BASE_MS_DEFAULT).toBe(30_000);
+    expect(RTC_DIAL_DISABLE_AFTER_DEFAULT).toBe(10);
+  });
+
+  test('enters disabled after N consecutive fully-failed rounds', () => {
+    const disables: Array<{ peer: string; fails: number }> = [];
+    const breaker = new RtcDialBreaker({
+      now: () => 1,
+      disableAfter: 4,
+      failLimit: 10,
+      onDisable: (event) => disables.push({ peer: event.peer, fails: event.fails }),
+    });
+    const peer = 'ec42f3';
+    for (let i = 0; i < 3; i += 1) {
+      breaker.noteFailure(peer, 'timeout', `f${i}`);
+      expect(breaker.isDisabled(peer)).toBe(false);
+      expect(breaker.shouldTry(peer).allow).toBe(true);
+    }
+    breaker.noteFailure(peer, 'timeout', 'f3');
+    expect(breaker.isDisabled(peer)).toBe(true);
+    expect(breaker.shouldTry(peer)).toMatchObject({ allow: false, disabled: true, failures: 4 });
+    expect(breaker.snapshot(peer).disabled).toBe(true);
+    expect(disables).toEqual([{ peer, fails: 4 }]);
+    expect(breaker.shouldTry('other').allow).toBe(true);
+  });
+
+  test('disabled stays off after cooldown until a wake source re-arms', () => {
+    let now = 10;
+    const rearms: string[] = [];
+    const breaker = new RtcDialBreaker({
+      now: () => now,
+      breakerMs: 30_000,
+      disableAfter: 3,
+      onRearm: (event) => rearms.push(event.source),
+    });
+    const peer = 'hub-a';
+    for (let i = 0; i < 3; i += 1) breaker.noteFailure(peer, 'timeout', `f${i}`);
+    expect(breaker.isDisabled(peer)).toBe(true);
+    now = 10 + 30_000;
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+    expect(breaker.shouldTry(peer).disabled).toBe(true);
+
+    expect(breaker.rearmDisabled(peer, 'local-fingerprint')).toBe(true);
+    expect(breaker.isDisabled(peer)).toBe(false);
+    expect(breaker.shouldTry(peer).allow).toBe(true);
+    expect(breaker.shouldTry(peer).failures).toBe(0);
+    expect(breaker.rearmDisabled(peer, 'peer-endpoint')).toBe(false);
+
+    for (const source of DC_REARM_SOURCES) {
+      for (let i = 0; i < 3; i += 1) breaker.noteFailure(peer, 'timeout', `${source}-${i}`);
+      expect(breaker.isDisabled(peer)).toBe(true);
+      if (source === 'local-fingerprint' || source === 'hub-switch') {
+        expect(breaker.rearmAllDisabled(source)).toEqual([peer]);
+      } else {
+        expect(breaker.rearmDisabled(peer, source)).toBe(true);
+      }
+      expect(breaker.isDisabled(peer)).toBe(false);
+      expect(breaker.shouldTry(peer).allow).toBe(true);
+    }
+    expect(rearms).toEqual([
+      'local-fingerprint',
+      'local-fingerprint',
+      'peer-endpoint',
+      'hub-switch',
+      'peer-reconnect',
+      'manual',
+    ]);
+  });
+
+  test('forceProbe rearms disabled and notePeerChanged does not', () => {
+    const breaker = new RtcDialBreaker({ now: () => 0, disableAfter: 3, breakerMs: 30_000 });
+    const peer = 'p';
+    for (let i = 0; i < 3; i += 1) breaker.noteFailure(peer, 'x', `f${i}`);
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+    breaker.notePeerChanged(peer);
+    expect(breaker.isDisabled(peer)).toBe(true);
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+    breaker.forceProbe(peer);
+    expect(breaker.isDisabled(peer)).toBe(false);
+    expect(breaker.shouldTry(peer).allow).toBe(true);
   });
 });
 
@@ -180,6 +261,7 @@ describe('PeerManager DataChannel breaker', () => {
       item?.close();
     }
     delete process.env.TMEX_RTC_DIAL_BREAKER_MS;
+    delete process.env.TMEX_RTC_DIAL_DISABLE_AFTER;
   });
 
   function dummyUplink(
@@ -233,8 +315,9 @@ describe('PeerManager DataChannel breaker', () => {
     });
   }
 
-  async function setupManager(opts?: { breakerMs?: string }) {
+  async function setupManager(opts?: { breakerMs?: string; disableAfter?: string }) {
     if (opts?.breakerMs) process.env.TMEX_RTC_DIAL_BREAKER_MS = opts.breakerMs;
+    if (opts?.disableAfter) process.env.TMEX_RTC_DIAL_DISABLE_AFTER = opts.disableAfter;
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });
     const store = new UserStore(db);
@@ -379,5 +462,25 @@ describe('PeerManager DataChannel breaker', () => {
     await Bun.sleep(50);
     await manager.getLink(peer.nodeId);
     expect(dcCalls()).toBeGreaterThan(frozen);
+  });
+
+  test('disabled DC upgrade keeps ws-secure and does not redial after cooldown', async () => {
+    const { manager, peer, dcCalls } = await setupManager({
+      breakerMs: '40',
+      disableAfter: String(RTC_DIAL_BREAKER_FAILS),
+    });
+    await tripBreaker(manager, peer.nodeId, dcCalls);
+    expect(manager.linkDetailOf(peer.nodeId).dcBreaker.disabled).toBe(true);
+    const frozen = dcCalls();
+    await dropLive(manager, peer.nodeId);
+    await Bun.sleep(50);
+    const link = await manager.getLink(peer.nodeId);
+    expect(dcCalls()).toBe(frozen);
+    expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
+    expect(link).toBeTruthy();
+    manager.forceDcProbe(peer.nodeId);
+    await waitUntil(() => dcCalls() > frozen);
+    expect(dcCalls()).toBe(frozen + 1);
+    expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
   });
 });

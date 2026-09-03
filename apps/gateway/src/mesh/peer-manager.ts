@@ -474,6 +474,11 @@ export class PeerManager extends PeerCollaboratorHost {
     };
   }
 
+  onHubSwitched(): void {
+    if (this.stopped) return;
+    this.dcUpgrade.onHubSwitched();
+  }
+
   forceDcProbe(nodeId: string): void {
     if (this.stopped) return;
     this.dcBreaker.forceProbe(nodeId);
@@ -984,6 +989,7 @@ export class PeerManager extends PeerCollaboratorHost {
     );
     if (this.localFingerprint && next !== this.localFingerprint) {
       this.endpointBackoff.resetAll();
+      this.dcUpgrade.onLocalFingerprintChanged();
     }
     this.localFingerprint = next;
   }
@@ -993,7 +999,10 @@ export class PeerManager extends PeerCollaboratorHost {
     const urls = cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : [];
     const next = canonicalEndpointSet(urls);
     const prev = this.advertisedEndpointSet.get(nodeId);
-    if (prev !== undefined && prev !== next) this.endpointBackoff.resetNode(nodeId);
+    if (prev !== undefined && prev !== next) {
+      this.endpointBackoff.resetNode(nodeId);
+      this.dcUpgrade.onPeerEndpointChanged(nodeId);
+    }
     this.advertisedEndpointSet.set(nodeId, next);
   }
 

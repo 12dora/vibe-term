@@ -8,6 +8,7 @@ export const DEFAULT_REPLAY_TTL_MS = 15_000;
 export const DEFAULT_MAX_REPLAY_BYTES_PER_PANE = 2 * 1024 * 1024;
 export const DEFAULT_MAX_CHECKPOINT_BYTES_PER_PANE = 512 * 1024;
 export const DEFAULT_MAX_RETENTION_BYTES = 64 * 1024 * 1024;
+export const REPLAY_COMPACT_HEAD = 32;
 
 export type PaneRetentionMode = 'active' | 'grace' | 'hot' | 'cold';
 export type PaneSubscriptionRejectionReason = 'not_found' | 'resource_exhausted' | 'epoch_changed';
