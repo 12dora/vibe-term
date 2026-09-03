@@ -28,6 +28,7 @@ import {
   detectFork,
   emptyUserKeyState,
   genesisHead,
+  identicalKeyLog,
   signKeyLogRecordWithRoot,
   verifyKeyLogChain,
   verifyKeyLogRecord,
@@ -1314,5 +1315,47 @@ describe('admit-node node_id reuse', () => {
     if (withHook.ok) {
       expect(withHook.state.nodeCerts.has(nodeIdToHex(cert.nodeId))).toBe(true);
     }
+  });
+});
+
+describe('identicalKeyLog', () => {
+  const bytes = encodeKeyLogRecord(
+    buildKeyLogRecord(genesisHead(), 0, {
+      uid: UID,
+      type: 'reset-root',
+      payload: new Uint8Array([1]),
+      signer: 'root',
+      credential_id: null,
+    })
+  );
+  const sig = new Uint8Array(64).fill(7);
+  const row = { seq: 1n, bytes, sig };
+
+  it('returns null for undecodable bytes', async () => {
+    expect(await identicalKeyLog(async () => [row], new Uint8Array([1, 2, 3]), sig)).toBeNull();
+  });
+
+  it('returns null when the listed row is missing or differs', async () => {
+    expect(await identicalKeyLog(async () => [], bytes, sig)).toBeNull();
+    expect(
+      await identicalKeyLog(async () => [{ ...row, bytes: new Uint8Array(bytes) }], bytes, sig)
+    ).not.toBeNull();
+    expect(
+      await identicalKeyLog(
+        async () => [{ ...row, bytes: new Uint8Array(bytes).fill(9) }],
+        bytes,
+        sig
+      )
+    ).toBeNull();
+    expect(
+      await identicalKeyLog(async () => [{ ...row, sig: new Uint8Array(64).fill(1) }], bytes, sig)
+    ).toBeNull();
+  });
+
+  it('returns seq and hash when bytes and sig match the listed row', async () => {
+    const matched = await identicalKeyLog(async () => [row], bytes, sig);
+    expect(matched).not.toBeNull();
+    expect(matched?.seq).toBe(1n);
+    expect(matched?.hash).toEqual(computeRecordHash(bytes, sig));
   });
 });

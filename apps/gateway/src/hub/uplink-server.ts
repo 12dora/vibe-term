@@ -1,7 +1,6 @@
 import os from 'node:os';
 import {
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
-  bytesEqual,
   computeRecordHash,
   decodeCertificate,
   decodeKeyLogRecord,
@@ -24,6 +23,8 @@ import {
   type HubWriteForwardMessage,
   UPLINK_CTL_MAX_HUBS,
 } from '@tmex/shared/uplink';
+import { decodeB64url } from '../../../../packages/shared/src/auth/b64url';
+import { identicalKeyLog } from '../../../../packages/shared/src/auth/key-log';
 import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
@@ -77,7 +78,6 @@ import {
   type RtcSignalMessage,
   UPLINK_CTL_MAX_BYTES,
   type UplinkCtlMessage,
-  b64urlToBytes,
   bytesToB64url,
   decodeUplinkCtl,
   encodeUplinkCtl,
@@ -1313,7 +1313,7 @@ export class UplinkServer {
     }
     let sig: Uint8Array;
     try {
-      sig = b64urlToBytes(sigB64, 64);
+      sig = decodeB64url(sigB64, 64);
     } catch {
       this.rejectAuth(link, nodeId, 'bad_sig', 'bad-sig');
       return;
@@ -1543,14 +1543,14 @@ export class UplinkServer {
     let bytes: Uint8Array;
     let sig: Uint8Array;
     try {
-      bytes = b64urlToBytes(bytesB64);
-      sig = b64urlToBytes(sigB64, 64);
+      bytes = decodeB64url(bytesB64);
+      sig = decodeB64url(sigB64, 64);
     } catch {
       live.link.close('protocol_error');
       return;
     }
     if (!this.isWriter()) {
-      const replayed = await this.identicalHeadRecord(live.userId, bytes, sig);
+      const replayed = await this.identicalListed(live.userId, bytes, sig);
       if (replayed) {
         if (id) {
           this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(replayed.seq) });
@@ -1597,7 +1597,7 @@ export class UplinkServer {
       }
       return;
     }
-    const already = await this.identicalHeadRecord(live.userId, bytes, sig);
+    const already = await this.identicalListed(live.userId, bytes, sig);
     if (already) {
       if (id) {
         this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(already.seq) });
@@ -1628,7 +1628,7 @@ export class UplinkServer {
       await this.runAppendEffects(live.userId, result);
       return;
     }
-    const replayed = await this.identicalHeadRecord(live.userId, bytes, sig);
+    const replayed = await this.identicalListed(live.userId, bytes, sig);
     if (replayed) {
       if (id) {
         this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(replayed.seq) });
@@ -1642,6 +1642,10 @@ export class UplinkServer {
     if (id) {
       this.send(live.link, { t: 'key.log.ack', id, ok: false, error: result.error });
     }
+  }
+
+  private identicalListed(userId: string, bytes: Uint8Array, sig: Uint8Array) {
+    return identicalKeyLog((seq) => this.keyLogSource.list(userId, seq), bytes, sig);
   }
 
   private replayedAppendSuccess(
@@ -1665,24 +1669,6 @@ export class UplinkServer {
     } catch {
       // effects are retried on identical-record replay
     }
-  }
-
-  private async identicalHeadRecord(
-    userId: string,
-    bytes: Uint8Array,
-    sig: Uint8Array
-  ): Promise<{ seq: bigint } | null> {
-    let seq: bigint;
-    try {
-      seq = decodeKeyLogRecord(bytes).seq;
-    } catch {
-      return null;
-    }
-    const listed = await this.keyLogSource.list(userId, seq);
-    const existing = listed.find((row) => row.seq === seq);
-    if (!existing) return null;
-    if (!bytesEqual(existing.bytes, bytes) || !bytesEqual(existing.sig, sig)) return null;
-    return { seq };
   }
 
   private handleRtcSignal(live: LiveConnection, msg: RtcSignalMessage): void {

@@ -599,19 +599,7 @@ export function resolveUserId(
   nodeIdHex: string,
   explicit?: string
 ): string | null {
-  if (explicit) return explicit;
-  const self = userStore.getCert(nodeIdHex);
-  if (self?.userId) return self.userId;
-  const ids = new Set<string>();
-  for (const user of userStore.listUsers()) {
-    if (user.id) ids.add(user.id);
-  }
-  for (const cert of userStore.listCerts()) {
-    if (cert.userId) ids.add(cert.userId);
-  }
-  if (ids.size !== 1) return null;
-  const only = ids.values().next().value;
-  return typeof only === 'string' && only.length > 0 ? only : null;
+  return resolveMeshUserId(userStore, { nodeId: nodeIdHex, explicit });
 }
 
 function hubEndpointUrl(config: MeshRuntimeConfig): string {

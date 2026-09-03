@@ -399,4 +399,37 @@ describe('hub auth record compat gate', () => {
       close();
     }
   });
+
+  test('resolveMeshUserId prefers explicit then cert then unique node row', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store, 'user-1');
+      store.create({
+        id: 'user-2',
+        username: 'bob',
+        rootPublicKey: new Uint8Array(32).fill(2),
+        rootEpoch: 1,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      expect(resolveMeshUserId(store)).toBeNull();
+      expect(resolveMeshUserId(store, { explicit: 'user-2' })).toBe('user-2');
+      const nodeId = 'aa'.repeat(16);
+      seedCert(store, 'user-1', nodeId);
+      expect(resolveMeshUserId(store, { nodeId })).toBe('user-1');
+      const nodeOnly = 'bb'.repeat(16);
+      store.createNode({
+        id: nodeOnly,
+        userId: 'user-2',
+        name: 'node-only',
+        now: 1,
+      });
+      expect(resolveMeshUserId(store, { nodeId: nodeOnly })).toBe('user-2');
+    } finally {
+      close();
+    }
+  });
 });

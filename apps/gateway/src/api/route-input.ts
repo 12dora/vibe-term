@@ -1,5 +1,7 @@
-import { decodeBase64url } from '@tmex/shared/auth';
+import { decodeB64url } from '../../../../packages/shared/src/auth/b64url';
 import { json } from './http';
+
+export { decodeB64url };
 
 export function requiredStrings<K extends string>(
   body: Record<string, unknown>,
@@ -20,20 +22,6 @@ export function requireBodyString(body: Record<string, unknown>, key: string): s
     throw new Error(`missing ${key}`);
   }
   return value;
-}
-
-export function decodeB64url(value: string, expectedLen?: number): Uint8Array {
-  if (value.length === 0) throw new Error('invalid b64url');
-  let bytes: Uint8Array;
-  try {
-    bytes = decodeBase64url(value);
-  } catch {
-    throw new Error('invalid b64url');
-  }
-  if (expectedLen !== undefined && bytes.byteLength !== expectedLen) {
-    throw new Error(`expected ${expectedLen} bytes`);
-  }
-  return bytes;
 }
 
 export function requireB64url(

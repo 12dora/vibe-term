@@ -1,6 +1,5 @@
 import {
   bytesEqual,
-  computeRecordHash,
   decodeAuthorization,
   decodeBase64url,
   decodeCertificate,
@@ -25,6 +24,7 @@ import type {
   HubTokensMessage,
   HubWriteForwardMessage,
 } from '@tmex/shared/uplink';
+import { identicalKeyLog } from '../../../../packages/shared/src/auth/key-log';
 import { json, readJsonObjectBody } from '../api/http';
 import { matchPath } from '../api/route';
 import { decodeB64url, requireB64url, validationError } from '../api/route-input';
@@ -646,7 +646,7 @@ export class HubRuntime {
     } catch (err) {
       return validationError(err);
     }
-    const already = await this.identicalForwardedKeyLog(userId, bytes, sig);
+    const already = await identicalKeyLog((seq) => this.keyLogSource.list(userId, seq), bytes, sig);
     if (already) {
       return json({ ok: true, seq: already.seq, hash: encodeBase64url(already.hash) });
     }
@@ -665,24 +665,6 @@ export class HubRuntime {
       seq: result.seq,
       hash: encodeBase64url(result.hash),
     });
-  }
-
-  private async identicalForwardedKeyLog(
-    userId: string,
-    bytes: Uint8Array,
-    sig: Uint8Array
-  ): Promise<{ seq: bigint; hash: Uint8Array } | null> {
-    let seq: bigint;
-    try {
-      seq = decodeKeyLogRecord(bytes).seq;
-    } catch {
-      return null;
-    }
-    const listed = await this.keyLogSource.list(userId, seq);
-    const existing = listed.find((row) => row.seq === seq);
-    if (!existing) return null;
-    if (!bytesEqual(existing.bytes, bytes) || !bytesEqual(existing.sig, sig)) return null;
-    return { seq, hash: computeRecordHash(existing.bytes, existing.sig) };
   }
 
   private async requireWriterOrForward(

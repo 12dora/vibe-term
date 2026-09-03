@@ -195,6 +195,30 @@ export function computeRecordHash(recordBytes: Uint8Array, sig: Uint8Array): Uin
   return sha256(concatBytes(recordBytes, sig));
 }
 
+export type IdenticalKeyLogRow = {
+  seq: bigint;
+  bytes: Uint8Array;
+  sig: Uint8Array;
+};
+
+export async function identicalKeyLog(
+  list: (seq: bigint) => Promise<readonly IdenticalKeyLogRow[]>,
+  bytes: Uint8Array,
+  sig: Uint8Array
+): Promise<{ seq: bigint; hash: Uint8Array } | null> {
+  let seq: bigint;
+  try {
+    seq = decodeKeyLogRecord(bytes).seq;
+  } catch {
+    return null;
+  }
+  const listed = await list(seq);
+  const existing = listed.find((row) => row.seq === seq);
+  if (!existing) return null;
+  if (!bytesEqual(existing.bytes, bytes) || !bytesEqual(existing.sig, sig)) return null;
+  return { seq, hash: computeRecordHash(existing.bytes, existing.sig) };
+}
+
 export function buildKeyLogRecord(
   head: KeyLogHead,
   epoch: number,
