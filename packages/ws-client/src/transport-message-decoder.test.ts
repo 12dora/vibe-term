@@ -16,14 +16,10 @@ function collect(
 }
 
 describe('decodeGatewayTransportMessage', () => {
+  // 这些 kind 号在 1.1.23 随 legacy 状态流一起删掉，常量已不存在，只能按裸数字断言。
   test('legacy 状态流 kind 已下线：不再登记解码器', () => {
     for (const kind of [
-      wsBorsh.KIND_STATE_SNAPSHOT,
-      wsBorsh.KIND_STATE_SNAPSHOT_DIFF,
-      wsBorsh.KIND_SWITCH_ACK,
-      wsBorsh.KIND_TERM_HISTORY,
-      wsBorsh.KIND_LIVE_RESUME,
-      wsBorsh.KIND_TERM_OUTPUT,
+      0x0208, 0x0209, 0x020d, 0x020e, 0x0303, 0x0304, 0x0305, 0x0306, 0x0401, 0x0402,
     ]) {
       const { handled, events } = collect(kind, new Uint8Array(0));
       expect(handled).toBe(false);
@@ -136,6 +132,40 @@ describe('decodeGatewayTransportMessage', () => {
     const event = events[0] as Extract<GatewayTransportEvent, { type: 'transport-error' }>;
     expect(event.type).toBe('transport-error');
     expect(event.error.message).toBe('boom');
+  });
+
+  test('canonical v1.1 门槛拒绝的 ERROR 转成 server-too-old', () => {
+    const { handled, events } = collect(
+      wsBorsh.KIND_ERROR,
+      wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+        refSeq: null,
+        code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
+        message: `${wsBorsh.CANONICAL_V11_REQUIRED_ERROR_PREFIX}: node 1.1.21 < 1.1.22`,
+        retryable: false,
+      })
+    );
+
+    expect(handled).toBe(true);
+    expect(events).toEqual([
+      {
+        type: 'server-too-old',
+        minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
+        serverVersion: null,
+      },
+    ]);
+  });
+
+  test('同码不同 message 的 ERROR 仍是 transport-error', () => {
+    const { events } = collect(
+      wsBorsh.KIND_ERROR,
+      wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+        refSeq: null,
+        code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
+        message: 'Unsupported protocol version',
+        retryable: false,
+      })
+    );
+    expect(events.map((event) => event.type)).toEqual(['transport-error']);
   });
 
   test('未登记的 kind 被忽略且不产生事件', () => {

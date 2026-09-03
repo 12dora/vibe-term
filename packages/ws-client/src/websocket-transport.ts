@@ -203,7 +203,14 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       }
       return;
     }
-    decodeGatewayTransportMessage(kind, payload, (event) => this.emit(event));
+    decodeGatewayTransportMessage(kind, payload, (event) => {
+      // 解码器拿不到本连接协商到的服务端版本，这里补一次（被门槛拒时通常还没收到 HELLO_S2C）。
+      if (event.type === 'server-too-old' && event.serverVersion === null) {
+        this.emit({ ...event, serverVersion: this.client.serverVersion });
+        return;
+      }
+      this.emit(event);
+    });
   }
 
   private sendReadyCommand(command: GatewayTransportCommand): ClientSendResult {

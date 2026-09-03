@@ -285,6 +285,19 @@ test('ws-borsh: focus restore resyncs one stale terminal without reintroducing r
 
     await page.waitForTimeout(1_200);
 
+    // 先做一次受控的真实尺寸变化并锁定它用掉的 epoch：随后的补发必须原样复用这个值
+    const changeCommands = () =>
+      counter.commands.resizes.filter(
+        (command) => command.reason === CANONICAL_GEOMETRY_REASON_CHANGE
+      );
+    counter.reset();
+    await page.setViewportSize({ width: 900, height: 700 });
+    await expect.poll(() => changeCommands().length, { timeout: 10_000 }).toBeGreaterThan(0);
+    await page.waitForTimeout(500);
+    const changeEpoch = changeCommands().at(-1)?.sizeEpoch;
+    expect(changeEpoch).toBeDefined();
+
+    // 只把本地模拟器改小（不动容器）：制造一个「尺寸没变但画面已陈旧」的跟随者
     await page.evaluate(() => {
       const term = (window as any).__tmexE2eXterm;
       if (!term) {
@@ -312,7 +325,7 @@ test('ws-borsh: focus restore resyncs one stale terminal without reintroducing r
       (command) => command.reason !== CANONICAL_GEOMETRY_REASON_CHANGE
     );
     expect(resends.length).toBeGreaterThanOrEqual(1);
-    for (const command of resends) expect(command.sizeEpoch > 0n).toBeTruthy();
+    for (const command of resends) expect(command.sizeEpoch).toBe(changeEpoch as bigint);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

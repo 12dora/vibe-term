@@ -48,7 +48,8 @@ export function setSiteTheme(theme: ThemeMode, timeoutMs = 15_000): Promise<void
     socket.addEventListener('open', () => {
       const hello = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
         clientImpl: 'tmex-e2e-site-theme',
-        clientVersion: '0.0.0',
+        // 网关的 canonical v1.1 版本门是 fail-closed 的：HELLO 里报低于门槛的版本会被直接拒绝关连接。
+        clientVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
         maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
         supportsCompression: false,
         supportsDiffSnapshot: false,

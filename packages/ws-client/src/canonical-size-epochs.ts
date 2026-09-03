@@ -22,6 +22,16 @@ export class CanonicalSizeEpochs {
     return this.epochs.get(paneKey(deviceId, paneId)) ?? (this.next > 0n ? this.next : 1n);
   }
 
+  /** 按命令类型取值：真实变化自增，补发复用。 */
+  forGeometry(deviceId: string, paneId: string, change: boolean): bigint {
+    return change ? this.change(deviceId, paneId) : this.resend(deviceId, paneId);
+  }
+
+  /** pane 被移除：丢掉它的条目；`next` 不回退，重新出现的同名 pane 仍拿更大的 epoch。 */
+  dropPane(deviceId: string, paneId: string): boolean {
+    return this.epochs.delete(paneKey(deviceId, paneId));
+  }
+
   keys(): IterableIterator<string> {
     return this.epochs.keys();
   }

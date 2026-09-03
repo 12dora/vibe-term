@@ -90,6 +90,9 @@ export const EnvelopeSchema = b.struct({
 ## kind 编号表（完整）
 
 > 方向：C2S=客户端到服务端，S2C=服务端到客户端，BIDI=双向。
+>
+> 1.1.23 删除 legacy 终端状态流后，本表只列**在用**的 kind；作废号段见下一节「1.1.23 移除的 kind」，
+> 这些号不得复用，网关收到时与任何未知 kind 一样回 `ERROR_UNKNOWN_KIND`。
 
 ### 会话/协商（0x0001-0x00FF）
 
@@ -122,13 +125,9 @@ export const EnvelopeSchema = b.struct({
 | 0x0205 | TMUX_CLOSE_PANE | C2S | 关闭 pane |
 | 0x0206 | TMUX_RENAME_WINDOW | C2S | 重命名 window |
 | 0x0207 | TMUX_EVENT | S2C | tmux 事件（pane-active/bell 等） |
-| 0x0208 | STATE_SNAPSHOT | S2C | tmux 状态快照 |
-| 0x0209 | STATE_SNAPSHOT_DIFF | S2C | 快照 diff（v1 保留，可忽略） |
 | 0x020A | TMUX_SET_WINDOW_STYLE | C2S | 按前端主题更新 window-style |
 | 0x020B | TMUX_REORDER_WINDOWS | C2S | 按给定顺序重排 window |
 | 0x020C | TMUX_REORDER_PANES | C2S | 按给定顺序重排 window 内 pane |
-| 0x020D | TMUX_SUBSCRIBE_PANES | C2S | 分屏：幂等全量声明额外接收输出的 pane 集合 |
-| 0x020E | TMUX_FETCH_PANE_HISTORY | C2S | 拉取非焦点 pane 首屏历史（回包复用 TERM_HISTORY） |
 | 0x020F | TMUX_RESIZE_PANE | C2S | splitter 拖拽提交的 resize-pane 绝对值 |
 | 0x0210 | TMUX_APPLY_STACKED_LAYOUT | C2S | 移动端拼接布局（resize-window + even-horizontal） |
 | 0x0211 | TMUX_SPLIT_PANE | C2S | 切分 pane |
@@ -143,20 +142,9 @@ export const EnvelopeSchema = b.struct({
 |---:|---|---|---|
 | 0x0301 | TERM_INPUT | C2S | 终端输入（bytes） |
 | 0x0302 | TERM_PASTE | C2S | 粘贴（分块发送） |
-| 0x0303 | TERM_RESIZE | C2S | resize（本地视口为源；同时记为可见 viewport claim） |
-| 0x0304 | TERM_SYNC_SIZE | C2S | 同步尺寸（语义同 TERM_RESIZE，便于区分来源） |
-| 0x0305 | TERM_OUTPUT | S2C | 终端输出（raw bytes） |
-| 0x0306 | TERM_HISTORY | S2C | 历史输出（与 selectToken 绑定） |
 | 0x0307 | CLIPBOARD_WRITE | S2C | pane 输出里解析出的 OSC52 剪贴板写入请求 |
 | 0x0308 | TERM_VIEWPORT | C2S | 客户端视口 claim（几何 + 可见性） |
 | 0x0309 | TERM_VIEWPORT_POLICY | S2C | window 尺寸策略（owner / 权威 cols×rows） |
-
-### 切换屏障（0x0400-0x04FF）
-
-| kind | 名称 | 方向 | 说明 |
-|---:|---|---|---|
-| 0x0401 | SWITCH_ACK | S2C | 选择事务 ACK（开始屏障） |
-| 0x0402 | LIVE_RESUME | S2C | 解除屏障（从此刻起 live 可直写） |
 
 ### 分片（0x0500-0x05FF）
 
@@ -206,6 +194,30 @@ export const EnvelopeSchema = b.struct({
 | 0x0A05 | ENROLL_REDEEMED | S2C | 入网码兑换结果（证书下发给入口客户端） |
 
 0x0A01 / 0x0A02 / 0x0A05 走 `/mesh/ws` 端点，0x0A03 / 0x0A04 走普通 Gateway `/ws`。
+
+## 1.1.23 移除的 kind（号段作废）
+
+legacy 终端状态流（快照 overlay、TERM_OUTPUT/HISTORY 广播、切换屏障、legacy 订阅/取历史、
+legacy 尺寸上报）在 1.1.23 整体下线，能力全部由 `CANONICAL_COMMAND` / `CANONICAL_EVENT`
+（canonical v1.1）承担。以下 kind 常量、payload schema 与编解码器均已从 `packages/shared` 删除，
+编号**永久作废、不得复用**：
+
+- `0x0208` STATE_SNAPSHOT、`0x0209` STATE_SNAPSHOT_DIFF
+  → 由 `SourceMetadataSnapshot` / `SourceMetadataPatch` 取代；
+  设备树的用户自定义顺序改由 metadata 字段 `SOURCE_FIELD_TREE_ORDER`(15) 承载，客户端自行重排。
+- `0x020D` TMUX_SUBSCRIBE_PANES → `CanonicalCommand::SetPaneSubscriptions`。
+- `0x020E` TMUX_FETCH_PANE_HISTORY → `CanonicalCommand::RequestScreen` / `RequestHistory`。
+- `0x0303` TERM_RESIZE、`0x0304` TERM_SYNC_SIZE → `CanonicalCommand::ResizePaneV11`
+  （`geometryReason` 区分 change / resend，`sizeEpoch` 单调递增）。
+- `0x0305` TERM_OUTPUT、`0x0306` TERM_HISTORY → `CanonicalEvent::PaneData` 与
+  `ScreenBegin/Chunk/Commit`、`HistoryBegin/Chunk/Commit` 事务。
+- `0x0401` SWITCH_ACK、`0x0402` LIVE_RESUME → canonical 订阅事务本身即屏障
+  （`SubscriptionApplied` + 每 pane 的 `terminalSeq` 游标），不再需要独立的屏障帧。
+
+对端版本门槛：低于 `1.1.22` 的客户端/节点无法正确消费 canonical v1.1 语义，网关在 HELLO 阶段
+**fail-closed** 拒绝——回一条 `ERROR_UNSUPPORTED_PROTOCOL`，message 以固定前缀
+`canonical-state-v1.1 required` 开头（常量 `wsBorsh.CANONICAL_V11_REQUIRED_ERROR_PREFIX`），随后关闭连接。
+客户端据此前缀把该 ERROR 翻成 `server-too-old` 并停止自动重连。
 
 ## payload schemas（完整）
 

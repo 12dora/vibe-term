@@ -131,6 +131,20 @@ test('ws-borsh: rapid window switches keep subscription generations monotonic an
       .poll(() => received.subscriptions.at(-1)?.activePaneIds ?? [], { timeout: 20_000 })
       .toContain(firstPane);
 
+    // 只看订阅集合会漏判：第一个 pane 在 60s 保活期内本来就一直在订阅里，
+    // 第二次点击没生效也照样命中。必须同时断言选中态真的落回第一个窗口。
+    await page.waitForURL((url) => url.pathname.includes(encodeURIComponent(firstPane ?? '')), {
+      timeout: 20_000,
+    });
+    await expect(page.getByTestId(`window-item-${firstWindow}`)).toHaveAttribute(
+      'data-active',
+      'true'
+    );
+    await expect(page.getByTestId(`window-item-${secondWindow}`)).not.toHaveAttribute(
+      'data-active',
+      'true'
+    );
+
     await page.waitForTimeout(1000);
 
     // 订阅代单调递增：被取消的那次不会以更旧的 generation 后到并覆盖最终订阅集合

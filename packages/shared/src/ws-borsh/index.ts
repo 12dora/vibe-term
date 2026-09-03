@@ -23,13 +23,9 @@ export {
   KIND_TMUX_CLOSE_PANE,
   KIND_TMUX_RENAME_WINDOW,
   KIND_TMUX_EVENT,
-  KIND_STATE_SNAPSHOT,
-  KIND_STATE_SNAPSHOT_DIFF,
   KIND_TMUX_SET_WINDOW_STYLE,
   KIND_TMUX_REORDER_WINDOWS,
   KIND_TMUX_REORDER_PANES,
-  KIND_TMUX_SUBSCRIBE_PANES,
-  KIND_TMUX_FETCH_PANE_HISTORY,
   KIND_TMUX_RESIZE_PANE,
   KIND_TMUX_APPLY_STACKED_LAYOUT,
   KIND_TMUX_SPLIT_PANE,
@@ -39,15 +35,9 @@ export {
   KIND_TMUX_BREAK_PANE,
   KIND_TERM_INPUT,
   KIND_TERM_PASTE,
-  KIND_TERM_RESIZE,
-  KIND_TERM_SYNC_SIZE,
-  KIND_TERM_OUTPUT,
-  KIND_TERM_HISTORY,
   KIND_CLIPBOARD_WRITE,
   KIND_TERM_VIEWPORT,
   KIND_TERM_VIEWPORT_POLICY,
-  KIND_SWITCH_ACK,
-  KIND_LIVE_RESUME,
   KIND_CHUNK,
   KIND_AGENT_SUBSCRIBE,
   KIND_AGENT_UNSUBSCRIBE,
@@ -136,6 +126,8 @@ export {
 } from './canonical-geometry';
 export {
   CANONICAL_V11_MIN_PEER_VERSION,
+  CANONICAL_V11_REQUIRED_ERROR_PREFIX,
+  isCanonicalV11RequiredError,
   peerSupportsCanonicalV11,
 } from './canonical-version';
 export {
@@ -144,8 +136,6 @@ export {
   applyCanonicalTreeOrderPatch,
   sortSnapshotByCanonicalTreeOrder,
 } from './canonical-tree-order';
-
-export { decodeTmuxFetchPaneHistory, type TmuxFetchPaneHistory } from './schema';
 
 export {
   STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON,
@@ -273,12 +263,9 @@ export {
   type DecodedEnvelope,
   encodeCanonicalEventFrame,
   encodeEnvelope,
-  encodeTermOutputFrame,
   encodePayload,
   decodeEnvelope,
   decodeEnvelopeView,
-  type TermOutputView,
-  decodeTermOutputView,
   decodePayload,
   type ChunkData,
   encodeChunk,
@@ -309,8 +296,6 @@ export {
 export {
   encodeDeviceEventPayload,
   encodeTmuxEventPayload,
-  encodeStateSnapshot,
   decodeDeviceEventPayload,
   decodeTmuxEventPayload,
-  decodeStateSnapshot,
 } from './convert';

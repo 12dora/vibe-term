@@ -387,9 +387,7 @@ export class CanonicalStateClient {
         geometryReason: change
           ? wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE
           : wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND,
-        sizeEpoch: change
-          ? this.sizeEpochs.change(command.deviceId, command.paneId)
-          : this.sizeEpochs.resend(command.deviceId, command.paneId),
+        sizeEpoch: this.sizeEpochs.forGeometry(command.deviceId, command.paneId, change),
       },
     });
   }
@@ -714,6 +712,7 @@ export class CanonicalStateClient {
       clearPaneStateForDevice: (deviceId) => this.clearPaneStateForDevice(deviceId),
       cancelPane: (deviceId, paneId) => this.content.cancelPane(deviceId, paneId),
       dropPendingPane: (deviceId, paneId) => this.pending.dropPane(deviceId, paneId),
+      dropSizeEpoch: (deviceId, paneId) => this.sizeEpochs.dropPane(deviceId, paneId),
       resolvedRecovery: (deviceId) => this.metadataRecovery.resolved(deviceId),
       resolvedSubscriptionRetry: () => this.subscriptionRetry.resolved(),
       emitSnapshot: (snapshot) => this.options.emit({ type: 'metadata-snapshot', snapshot }),

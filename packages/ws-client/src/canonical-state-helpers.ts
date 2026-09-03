@@ -43,6 +43,12 @@ export interface DeviceMetadataState {
   paneEpochs: Map<string, Uint8Array>;
   /** 设备树的用户自定义顺序（SOURCE_FIELD_TREE_ORDER 增量维护） */
   treeOrder: wsBorsh.CanonicalTreeOrder;
+  /**
+   * 未排序的 canonical 投影（tmux index 顺序），增量 diff 只作用在它上面。
+   * 顺序被 Unset 后要能退回 tmux 顺序，就不能把排序结果当作下一次 diff 的底稿。
+   */
+  baseSnapshot: StateSnapshotPayload;
+  /** baseSnapshot 按 treeOrder 排序后的展示视图；顺序为空时与 baseSnapshot 同引用 */
   snapshot: StateSnapshotPayload;
 }
 

@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
-import { CANONICAL_V11_MIN_PEER_VERSION, peerSupportsCanonicalV11 } from './canonical-version';
+import {
+  CANONICAL_V11_MIN_PEER_VERSION,
+  CANONICAL_V11_REQUIRED_ERROR_PREFIX,
+  isCanonicalV11RequiredError,
+  peerSupportsCanonicalV11,
+} from './canonical-version';
+import { ERROR_INVALID_FRAME, ERROR_UNSUPPORTED_PROTOCOL } from './errors';
 
 describe('canonical v1.1 版本门槛', () => {
   test('门槛为 1.1.22', () => {
@@ -38,5 +44,23 @@ describe('canonical v1.1 版本门槛', () => {
   test('预发布版本低于同号正式版', () => {
     expect(peerSupportsCanonicalV11('1.1.22-rc.1')).toBe(false);
     expect(peerSupportsCanonicalV11('1.1.23-rc.1')).toBe(true);
+  });
+});
+
+describe('canonical v1.1 门槛拒绝的 ERROR 帧识别', () => {
+  test('前缀即契约，网关与客户端共用同一常量', () => {
+    expect(CANONICAL_V11_REQUIRED_ERROR_PREFIX).toBe('canonical-state-v1.1 required');
+  });
+
+  test('只认 ERROR_UNSUPPORTED_PROTOCOL 且 message 以该前缀开头', () => {
+    const client = `${CANONICAL_V11_REQUIRED_ERROR_PREFIX}: client 1.1.21 < 1.1.22`;
+    const node = `${CANONICAL_V11_REQUIRED_ERROR_PREFIX}: node unknown < 1.1.22`;
+    expect(isCanonicalV11RequiredError(ERROR_UNSUPPORTED_PROTOCOL, client)).toBe(true);
+    expect(isCanonicalV11RequiredError(ERROR_UNSUPPORTED_PROTOCOL, node)).toBe(true);
+    expect(isCanonicalV11RequiredError(ERROR_UNSUPPORTED_PROTOCOL, 'Unsupported protocol')).toBe(
+      false
+    );
+    expect(isCanonicalV11RequiredError(ERROR_INVALID_FRAME, client)).toBe(false);
+    expect(isCanonicalV11RequiredError(ERROR_UNSUPPORTED_PROTOCOL, `x ${client}`)).toBe(false);
   });
 });

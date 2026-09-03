@@ -175,7 +175,8 @@ describe('canonical state capability gate', () => {
       wsBorsh.KIND_DEVICE_CONNECT,
       wsBorsh.KIND_CANONICAL_COMMAND,
     ]);
-    expect(businessKinds(socket)).not.toContain(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES);
+    // 0x020d = 已删除的 legacy TMUX_SUBSCRIBE_PANES，canonical 会话不得再发
+    expect(businessKinds(socket)).not.toContain(0x020d);
     transport.disconnect();
   });
 

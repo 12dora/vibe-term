@@ -4,38 +4,13 @@ import {
   type CanonicalEvent,
   encodeCanonicalEventPayload,
 } from './canonical-state';
-import {
-  CURRENT_VERSION,
-  DEFAULT_MAX_FRAME_BYTES,
-  encodeCanonicalEventFrame,
-  encodeEnvelope,
-  encodePayload,
-  encodeTermOutputFrame,
-} from './codec';
+import { encodeCanonicalEventFrame, encodeEnvelope } from './codec';
 import { ERROR_FRAME_TOO_LARGE, WsBorshError } from './errors';
-import { KIND_CANONICAL_EVENT, KIND_TERM_OUTPUT } from './kind';
-import { TermOutputSchema } from './schema';
+import { KIND_CANONICAL_EVENT } from './kind';
 
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
 const SERVER_EPOCH = Uint8Array.from({ length: 16 }, (_unused, index) => index);
 const PANE_EPOCH = Uint8Array.from({ length: 16 }, (_unused, index) => 0xff - index);
-
-type TermOutput = Parameters<typeof encodeTermOutputFrame>[0];
-
-function referenceTermOutput(
-  value: TermOutput,
-  seq: number,
-  flags = 0,
-  version = CURRENT_VERSION
-): Uint8Array {
-  return encodeEnvelope(
-    KIND_TERM_OUTPUT,
-    encodePayload(TermOutputSchema, value),
-    seq,
-    flags,
-    version
-  );
-}
 
 function paneDataEvent(
   data: Uint8Array,
@@ -93,74 +68,6 @@ function randomString(maxLength: number): string {
   }
   return result;
 }
-
-describe('fused TERM_OUTPUT frame encoder', () => {
-  const baseValue: TermOutput = {
-    deviceId: 'device-a',
-    paneId: '%1',
-    encoding: 1,
-    data: new Uint8Array(),
-  };
-  const emptyFrameBytes = referenceTermOutput(baseValue, 0).byteLength;
-  const frameBoundaryData = (frameBytes: number) =>
-    new Uint8Array(Math.max(0, frameBytes - emptyFrameBytes));
-  const cases: Array<[string, TermOutput]> = [
-    ['empty payload', baseValue],
-    ['one byte', { ...baseValue, data: randomBytes(1) }],
-    ['64 KiB', { ...baseValue, data: randomBytes(64 * 1024) }],
-    [
-      'non-ASCII ids',
-      { deviceId: '设备🙂-é', paneId: '%窗格-β', encoding: 0xff, data: randomBytes(257) },
-    ],
-    ['32 KiB boundary - 1', { ...baseValue, data: frameBoundaryData(32 * 1024 - 1) }],
-    ['32 KiB boundary', { ...baseValue, data: frameBoundaryData(32 * 1024) }],
-    ['32 KiB boundary + 1', { ...baseValue, data: frameBoundaryData(32 * 1024 + 1) }],
-    [
-      'maximum negotiated frame',
-      { ...baseValue, data: frameBoundaryData(DEFAULT_MAX_FRAME_BYTES) },
-    ],
-    ['first chunked byte', { ...baseValue, data: frameBoundaryData(DEFAULT_MAX_FRAME_BYTES + 1) }],
-  ];
-
-  for (const [label, value] of cases) {
-    test(`is byte-identical for ${label}`, () => {
-      expect(encodeTermOutputFrame(value, 0xffff_fffe)).toEqual(
-        referenceTermOutput(value, 0xffff_fffe)
-      );
-    });
-  }
-
-  test('is byte-identical across envelope sequence and flag boundaries', () => {
-    for (const seq of [0, 1, 0x7fff_ffff, 0xffff_ffff]) {
-      for (const [flags, version] of [
-        [0, 0],
-        [1, CURRENT_VERSION],
-        [0xffff, 0xffff],
-      ] as const) {
-        expect(encodeTermOutputFrame(baseValue, seq, flags, version)).toEqual(
-          referenceTermOutput(baseValue, seq, flags, version)
-        );
-      }
-    }
-  });
-
-  test('is byte-identical for seeded random inputs', () => {
-    for (let index = 0; index < 250; index += 1) {
-      const value: TermOutput = {
-        deviceId: randomString(24),
-        paneId: randomString(12),
-        encoding: randomU32() & 0xff,
-        data: randomBytes(randomU32() % 4097),
-      };
-      const seq = randomU32();
-      const flags = randomU32() & 0xffff;
-      const version = randomU32() & 0xffff;
-      expect(encodeTermOutputFrame(value, seq, flags, version)).toEqual(
-        referenceTermOutput(value, seq, flags, version)
-      );
-    }
-  });
-});
 
 describe('fused canonical PaneData frame encoder', () => {
   const emptyEvent = paneDataEvent(new Uint8Array());

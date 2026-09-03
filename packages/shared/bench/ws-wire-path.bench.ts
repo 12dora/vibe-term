@@ -14,11 +14,8 @@ import {
   decodeEnvelopeView,
   encodeCanonicalEventFrame,
   encodeEnvelope,
-  encodePayload,
-  encodeTermOutputFrame,
 } from '../src/ws-borsh/codec';
-import { KIND_CANONICAL_EVENT, KIND_TERM_OUTPUT } from '../src/ws-borsh/kind';
-import { TermOutputSchema } from '../src/ws-borsh/schema';
+import { KIND_CANONICAL_EVENT } from '../src/ws-borsh/kind';
 
 const ZERO_16 = new Uint8Array(16);
 const PANE = { deviceId: 'device-0001', serverEpoch: ZERO_16, paneId: '%17' };
@@ -74,19 +71,6 @@ function assertBytesEqual(left: Uint8Array, right: Uint8Array, label: string): v
   }
 }
 
-const legacyData = new Uint8Array(64 * 1024).fill(0x78);
-const legacyValue = { deviceId: PANE.deviceId, paneId: PANE.paneId, encoding: 1, data: legacyData };
-const legacyReference = () =>
-  encodeEnvelope(KIND_TERM_OUTPUT, encodePayload(TermOutputSchema, legacyValue), 0x1020_3040);
-const legacyFused = () => encodeTermOutputFrame(legacyValue, 0x1020_3040);
-assertBytesEqual(legacyReference(), legacyFused(), 'legacy fused encoder');
-compare(
-  'TERM_OUTPUT frame encode — 64 KiB data',
-  300,
-  () => legacyReference().byteLength,
-  () => legacyFused().byteLength
-);
-
 const emptyCanonicalFrame = encodeCanonicalEventFrame(paneDataEvent(new Uint8Array()), 7);
 const canonicalData = new Uint8Array(
   CANONICAL_STATE_MAX_FRAME_BYTES - emptyCanonicalFrame.byteLength
@@ -127,16 +111,16 @@ if (decodeSpeedup < 20) {
   );
 }
 
-const emptyLegacyFrame = encodeTermOutputFrame({ ...legacyValue, data: new Uint8Array() }, 9);
-const maxLegacyData = new Uint8Array(DEFAULT_MAX_FRAME_BYTES - emptyLegacyFrame.byteLength).fill(
-  0x7a
-);
-const maxLegacyFrame = encodeTermOutputFrame({ ...legacyValue, data: maxLegacyData }, 9);
+const emptyInboundFrame = encodeEnvelope(KIND_CANONICAL_EVENT, new Uint8Array(), 9);
+const maxInboundPayload = new Uint8Array(
+  DEFAULT_MAX_FRAME_BYTES - emptyInboundFrame.byteLength
+).fill(0x7a);
+const maxInboundFrame = encodeEnvelope(KIND_CANONICAL_EVENT, maxInboundPayload, 9);
 compare(
   'inbound envelope decode + owned payload — 1 MiB frame',
   30,
-  () => decodeEnvelope(maxLegacyFrame).payload.at(-1) ?? 0,
-  () => decodeEnvelopeView(maxLegacyFrame).payload.slice().at(-1) ?? 0,
+  () => decodeEnvelope(maxInboundFrame).payload.at(-1) ?? 0,
+  () => decodeEnvelopeView(maxInboundFrame).payload.slice().at(-1) ?? 0,
   '  schema + per-byte copy',
   '  view + bulk ownership copy'
 );

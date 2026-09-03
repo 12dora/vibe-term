@@ -70,6 +70,7 @@ function emptyState(overrides: Partial<DeviceMetadataState> = {}): DeviceMetadat
     serverEpoch: copyBytes(SERVER_EPOCH),
     paneEpochs: new Map([['%1', copyBytes(PANE_EPOCH)]]),
     treeOrder: wsBorsh.createCanonicalTreeOrder(),
+    baseSnapshot: { deviceId: 'device-a', session: null },
     snapshot: { deviceId: 'device-a', session: null },
     ...overrides,
   };
@@ -107,6 +108,7 @@ function fakeCaches(metadata: Map<string, DeviceMetadataState>): MetadataLiveCac
   cleared: string[];
   cancelled: string[];
   dropped: string[];
+  droppedSizeEpochs: string[];
 } {
   const snapshots: unknown[] = [];
   const patches: unknown[] = [];
@@ -114,6 +116,7 @@ function fakeCaches(metadata: Map<string, DeviceMetadataState>): MetadataLiveCac
   const cleared: string[] = [];
   const cancelled: string[] = [];
   const dropped: string[] = [];
+  const droppedSizeEpochs: string[] = [];
   return {
     metadata,
     awaitingMetadataDevices: new Set(metadata.keys()),
@@ -123,6 +126,7 @@ function fakeCaches(metadata: Map<string, DeviceMetadataState>): MetadataLiveCac
     clearPaneStateForDevice: (deviceId) => cleared.push(deviceId),
     cancelPane: (deviceId, paneId) => cancelled.push(`${deviceId}:${paneId}`),
     dropPendingPane: (deviceId, paneId) => dropped.push(`${deviceId}:${paneId}`),
+    dropSizeEpoch: (deviceId, paneId) => droppedSizeEpochs.push(`${deviceId}:${paneId}`),
     resolvedRecovery: () => {},
     resolvedSubscriptionRetry: () => {},
     emitSnapshot: (snapshot) => snapshots.push(snapshot),
@@ -134,6 +138,7 @@ function fakeCaches(metadata: Map<string, DeviceMetadataState>): MetadataLiveCac
     cleared,
     cancelled,
     dropped,
+    droppedSizeEpochs,
   };
 }
 
@@ -237,6 +242,8 @@ describe('canonical metadata identity', () => {
     expect(applied).toBe('applied');
     expect(caches.cancelled).toEqual(['device-a:%gone']);
     expect(caches.dropped).toEqual(['device-a:%gone']);
+    // pane 消失同时要剪掉它的 sizeEpoch 条目，否则账本随 pane 增删单调增长
+    expect(caches.droppedSizeEpochs).toEqual(['device-a:%gone']);
     expect(state.paneEpochs.get('%1')).toEqual(NEXT_PANE_EPOCH);
     expect(caches.blockedPanes.has(paneKey('device-a', '%1'))).toBe(true);
     expect(caches.patches).toHaveLength(1);

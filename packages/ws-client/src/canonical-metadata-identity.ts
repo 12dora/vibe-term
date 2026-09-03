@@ -34,6 +34,8 @@ export interface MetadataLiveCaches {
   clearPaneStateForDevice(deviceId: string): void;
   cancelPane(deviceId: string, paneId: string): void;
   dropPendingPane(deviceId: string, paneId: string): void;
+  /** pane 消失时丢掉它的 sizeEpoch 账本条目，否则 map 会随 pane 增删单调增长 */
+  dropSizeEpoch(deviceId: string, paneId: string): void;
   resolvedRecovery(deviceId: string): void;
   resolvedSubscriptionRetry(): void;
   emitSnapshot(snapshot: StateSnapshotPayload): void;
@@ -94,6 +96,7 @@ export function assembleDeviceMetadata(
     serverEpoch: copyBytes(serverEpoch),
     paneEpochs: paneEpochsFromRecords(deviceRecords),
     treeOrder,
+    baseSnapshot: projected,
     snapshot: wsBorsh.sortSnapshotByCanonicalTreeOrder(projected, treeOrder),
   };
 }
@@ -191,11 +194,10 @@ export function ingestMetadataPatch(
     }
     wsBorsh.applyCanonicalTreeOrderPatch(state.treeOrder, upserts, removals);
     state.revision = event.throughRevision;
+    // diff 落在未排序底稿上，展示顺序每次由底稿重算：顺序被 Unset 时才能退回 tmux index 顺序。
     // 顺序在客户端算完再下发整棵快照：消费方若自己再 apply 一次 diff，会掉回 tmux index 顺序
-    state.snapshot = wsBorsh.sortSnapshotByCanonicalTreeOrder(
-      wsBorsh.applyLegacyStateSnapshotDiff(state.snapshot, projection),
-      state.treeOrder
-    );
+    state.baseSnapshot = wsBorsh.applyLegacyStateSnapshotDiff(state.baseSnapshot, projection);
+    state.snapshot = wsBorsh.sortSnapshotByCanonicalTreeOrder(state.baseSnapshot, state.treeOrder);
     caches.emitPatch(deviceId, state.snapshot);
   }
   return 'applied';
@@ -383,6 +385,7 @@ function realizeIdentityAction(caches: MetadataLiveCaches, action: MetadataIdent
     caches.blockedPanes.delete(key);
     caches.cancelPane(action.deviceId, action.paneId);
     caches.dropPendingPane(action.deviceId, action.paneId);
+    caches.dropSizeEpoch(action.deviceId, action.paneId);
   } else if (action.kind === 'pane-epoch-changed') {
     caches.blockedPanes.add(key);
   }

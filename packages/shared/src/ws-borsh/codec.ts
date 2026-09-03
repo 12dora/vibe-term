@@ -17,8 +17,8 @@ import {
   ERROR_PAYLOAD_DECODE_FAILED,
   WsBorshError,
 } from './errors';
-import { KIND_CANONICAL_EVENT, KIND_TERM_OUTPUT } from './kind';
-import { ChunkSchema, EnvelopeSchema, type TermOutputSchema } from './schema';
+import { KIND_CANONICAL_EVENT } from './kind';
+import { ChunkSchema, EnvelopeSchema } from './schema';
 
 // ========== 常量 ==========
 
@@ -29,7 +29,6 @@ const ENVELOPE_HEADER_BYTES = 16;
 const PANE_DATA_VARIANT = 3;
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
 const utf8Encoder = new TextEncoder();
-const utf8Decoder = new TextDecoder();
 
 // ========== Flags ==========
 
@@ -121,25 +120,6 @@ function writeLengthPrefixedBytes(
   view.setUint32(offset, value.byteLength, true);
   frame.set(value, offset + 4);
   return offset + 4 + value.byteLength;
-}
-
-export function encodeTermOutputFrame(
-  value: b.infer<typeof TermOutputSchema>,
-  seq: number,
-  flags = 0,
-  version = CURRENT_VERSION
-): Uint8Array {
-  assertUnsignedNumber(value.encoding, 0xff, 'u8');
-  const deviceId = utf8Encoder.encode(value.deviceId);
-  const paneId = utf8Encoder.encode(value.paneId);
-  const payloadLength = 13 + deviceId.byteLength + paneId.byteLength + value.data.byteLength;
-  const { frame, view } = createEnvelopeFrame(KIND_TERM_OUTPUT, payloadLength, seq, flags, version);
-  let offset = ENVELOPE_HEADER_BYTES;
-  offset = writeLengthPrefixedBytes(frame, view, offset, deviceId);
-  offset = writeLengthPrefixedBytes(frame, view, offset, paneId);
-  frame[offset] = value.encoding;
-  writeLengthPrefixedBytes(frame, view, offset + 1, value.data);
-  return frame;
 }
 
 function assertCanonicalFrameBounded(frameLength: number, negotiatedMaxFrameBytes: number): void {
@@ -258,39 +238,6 @@ export function decodeEnvelopeView(data: Uint8Array): Envelope {
     seq: view.getUint32(8, true),
     payload: data.subarray(ENVELOPE_HEADER_BYTES, ENVELOPE_HEADER_BYTES + payloadLength),
   };
-}
-
-export type TermOutputView = b.infer<typeof TermOutputSchema>;
-
-export function decodeTermOutputView(payload: Uint8Array): TermOutputView {
-  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  let offset = 0;
-  const takeLength = (): number => {
-    if (offset + 4 > payload.length) {
-      throw new WsBorshError(ERROR_PAYLOAD_DECODE_FAILED, false, 'TERM_OUTPUT payload truncated');
-    }
-    const length = view.getUint32(offset, true);
-    offset += 4;
-    if (length > payload.length - offset) {
-      throw new WsBorshError(ERROR_PAYLOAD_DECODE_FAILED, false, 'TERM_OUTPUT payload truncated');
-    }
-    return length;
-  };
-  const takeString = (): string => {
-    const length = takeLength();
-    const text = utf8Decoder.decode(payload.subarray(offset, offset + length));
-    offset += length;
-    return text;
-  };
-  const deviceId = takeString();
-  const paneId = takeString();
-  const encoding = payload[offset];
-  if (encoding === undefined) {
-    throw new WsBorshError(ERROR_PAYLOAD_DECODE_FAILED, false, 'TERM_OUTPUT payload truncated');
-  }
-  offset += 1;
-  const dataLength = takeLength();
-  return { deviceId, paneId, encoding, data: payload.subarray(offset, offset + dataLength) };
 }
 
 export function decodePayload<T>(schema: Schema<T>, data: Uint8Array): T {
