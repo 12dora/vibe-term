@@ -1,22 +1,13 @@
 // 远程访问状态卡：状态与 Access 徽标、公网地址、启停 / 移除 / 连通性检查，以及可折叠的 cloudflared 日志。
 
 import type { TunnelStatusResponse } from '@tmex/shared';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
 import { Badge } from '@tmex/ui/badge';
 import { Button, buttonVariants } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { ExternalLink, Loader2, Play, Radar, Square, Trash2, Unplug } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DangerConfirmDialog } from '../components/danger-confirm-dialog';
 import { CopyButton } from '../nodes/copy-feedback';
 import { SetupNotice } from '../nodes/setup/form-parts';
 import {
@@ -364,38 +355,20 @@ function ConfirmRemoveDialog({
   onConfirm: () => void;
 }) {
   const { t } = useTranslation();
-  if (!open) return null;
   return (
-    <AlertDialog
-      open
-      onOpenChange={(next) => {
-        if (!next) onCancel();
-      }}
+    <DangerConfirmDialog
+      open={open}
+      title={t('settings.remoteAccess.confirmRemove.title')}
+      cancelLabel={t('settings.remoteAccess.confirmRemove.cancel')}
+      confirmLabel={t('settings.remoteAccess.confirmRemove.confirm')}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      testId="remote-access-confirm-remove"
+      confirmTestId="remote-access-confirm-remove-confirm"
     >
-      <AlertDialogContent data-testid="remote-access-confirm-remove">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t('settings.remoteAccess.confirmRemove.title')}</AlertDialogTitle>
-          <AlertDialogDescription>
-            <span className="block">{t('settings.remoteAccess.confirmRemove.description')}</span>
-            <span className="mt-2 block">
-              {t('settings.remoteAccess.confirmRemove.irreversible')}
-            </span>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel onClick={onCancel} data-testid="remote-access-confirm-remove-cancel">
-            {t('settings.remoteAccess.confirmRemove.cancel')}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={onConfirm}
-            data-testid="remote-access-confirm-remove-confirm"
-          >
-            {t('settings.remoteAccess.confirmRemove.confirm')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      <span className="block">{t('settings.remoteAccess.confirmRemove.description')}</span>
+      <span className="mt-2 block">{t('settings.remoteAccess.confirmRemove.irreversible')}</span>
+    </DangerConfirmDialog>
   );
 }
 

@@ -9,11 +9,9 @@ import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Loader2 } from 'lucide-react';
-import { type FormEvent, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
 import { currentHostname, navigateToLogin } from './browser-location';
-import { describeSetupError } from './error-messages';
 import {
   FormField,
   RestartPanel,
@@ -23,7 +21,7 @@ import {
   directOutcomeLabel,
 } from './form-parts';
 import { submitJoinHub } from './submit';
-import { useRestartWaiter } from './use-restart-waiter';
+import { useHubSetupSubmit } from './use-hub-setup-submit';
 import { type JoinHubValues, defaultNodeName, hasErrors, validateJoinHub } from './validation';
 
 export interface JoinHubFormProps {
@@ -53,41 +51,19 @@ export function JoinHubForm({
     directEnable: directSupported,
     insecureLocal: false,
   }));
-  const [showErrors, setShowErrors] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [result, setResult] = useState<SetupJoinResponse | null>(null);
-  const waiter = useRestartWaiter({ client });
-
   const errors = validateJoinHub(values, nodeEnv);
+  const { showErrors, submitting, submitError, result, waiter, handleSubmit } =
+    useHubSetupSubmit<SetupJoinResponse>({
+      client,
+      hasErrors: hasErrors(errors),
+      submit: () => submitJoinHub(values, nodeEnv, client),
+      successMessage: t('nodes.setup.toast.joined'),
+      onRestarted,
+    });
   const shown = showErrors ? errors : {};
-
-  useEffect(() => {
-    if (waiter.state === 'restarted') onRestarted();
-  }, [waiter.state, onRestarted]);
 
   function update(patch: Partial<JoinHubValues>): void {
     setValues((previous) => ({ ...previous, ...patch }));
-  }
-
-  async function handleSubmit(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    setShowErrors(true);
-    if (hasErrors(errors)) return;
-    setSubmitting(true);
-    setSubmitError(null);
-    try {
-      const outcome = await submitJoinHub(values, nodeEnv, client);
-      setResult(outcome.result);
-      toast.success(t('nodes.setup.toast.joined'));
-      waiter.start(outcome.previousStartedAt);
-    } catch (error) {
-      const message = describeSetupError(t, error);
-      setSubmitError(message);
-      toast.error(message);
-    } finally {
-      setSubmitting(false);
-    }
   }
 
   if (result) {

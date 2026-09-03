@@ -11,16 +11,6 @@ import type {
   TlsStatusResponse,
   TlsUpdateRequest,
 } from '@tmex/api-client/local/tls-types';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
 import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
@@ -28,6 +18,7 @@ import { Loader2, RotateCcw, Save } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { DangerConfirmDialog } from '../../components/danger-confirm-dialog';
 import { useRestartGateway } from '../restart/use-restart-now';
 import { AcmePanel } from './acme-panel';
 import { ExternalPanel } from './external-panel';
@@ -178,39 +169,24 @@ function StopListenerConfirm({
   const { t } = useTranslation();
   if (!request) return null;
   return (
-    <AlertDialog
+    <DangerConfirmDialog
       open
-      onOpenChange={(open) => {
-        if (!open) onCancel();
-      }}
+      title={t('nodes.https.confirmStop.title')}
+      cancelLabel={t('nodes.https.confirmStop.cancel')}
+      confirmLabel={t('nodes.https.confirmStop.confirm')}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      testId="https-confirm-stop"
+      confirmTestId="https-confirm-stop-confirm"
     >
-      <AlertDialogContent data-testid="https-confirm-stop">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t('nodes.https.confirmStop.title')}</AlertDialogTitle>
-          <AlertDialogDescription>
-            <span className="block">
-              {t('nodes.https.confirmStop.description', {
-                port: status?.listener.port ?? status?.tlsPort ?? '',
-                mode: t(`nodes.https.mode.${request.mode}.title`),
-              })}
-            </span>
-            <span className="mt-2 block">{t('nodes.https.confirmStop.requirement')}</span>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel onClick={onCancel} data-testid="https-confirm-stop-cancel">
-            {t('nodes.https.confirmStop.cancel')}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={onConfirm}
-            data-testid="https-confirm-stop-confirm"
-          >
-            {t('nodes.https.confirmStop.confirm')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      <span className="block">
+        {t('nodes.https.confirmStop.description', {
+          port: status?.listener.port ?? status?.tlsPort ?? '',
+          mode: t(`nodes.https.mode.${request.mode}.title`),
+        })}
+      </span>
+      <span className="mt-2 block">{t('nodes.https.confirmStop.requirement')}</span>
+    </DangerConfirmDialog>
   );
 }
 

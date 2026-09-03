@@ -1,76 +1,14 @@
-// become-hub / join-hub 两个表单共用的展示件。
+// become-hub / join-hub 两个表单共用的展示件：通用原语取自 settings/components。
 
 import { Switch } from '@tmex/ui/switch';
-import { CircleCheck, CircleX, Info, Loader2, TriangleAlert } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Notice } from '../../components/form-primitives';
 import type { RestartWaiter } from './use-restart-waiter';
 
-export type NoticeTone = 'info' | 'success' | 'warning' | 'error';
-
-const NOTICE_CLASS: Record<NoticeTone, string> = {
-  info: 'bg-muted/60 text-muted-foreground',
-  success: 'bg-primary/10 text-primary',
-  warning: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  error: 'bg-destructive/10 text-destructive',
-};
-
-const NOTICE_ICON: Record<NoticeTone, typeof Info> = {
-  info: Info,
-  success: CircleCheck,
-  warning: TriangleAlert,
-  error: CircleX,
-};
-
-export function SetupNotice({
-  tone,
-  testId,
-  children,
-}: {
-  tone: NoticeTone;
-  testId?: string;
-  children: ReactNode;
-}) {
-  const Icon = NOTICE_ICON[tone];
-  return (
-    <div
-      className={`flex items-start gap-1.5 rounded-lg p-2 text-xs ${NOTICE_CLASS[tone]}`}
-      data-testid={testId}
-    >
-      <Icon className="mt-0.5 size-3.5 shrink-0" />
-      <div className="min-w-0 space-y-1">{children}</div>
-    </div>
-  );
-}
-
-export function FormField({
-  id,
-  label,
-  hint,
-  error,
-  children,
-}: {
-  id: string;
-  label: string;
-  hint?: ReactNode;
-  error?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium" htmlFor={id}>
-        {label}
-      </label>
-      {children}
-      {hint && !error && <p className="text-xs text-muted-foreground">{hint}</p>}
-      {error && (
-        <p className="text-xs text-destructive" data-testid={`${id}-error`}>
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
+export { FormField, type NoticeTone } from '../../components/form-primitives';
+export { Notice as SetupNotice } from '../../components/form-primitives';
 
 export function SwitchRow({
   id,
@@ -134,17 +72,17 @@ export function RestartPanel({ waiter }: { waiter: RestartWaiter }) {
 
   if (waiter.state === 'restarted') {
     return (
-      <SetupNotice tone="success" testId="setup-restart-restarted">
+      <Notice tone="success" testId="setup-restart-restarted">
         {t('nodes.setup.restart.restarted')}
-      </SetupNotice>
+      </Notice>
     );
   }
 
   return (
-    <SetupNotice tone="warning" testId="setup-restart-timeout">
+    <Notice tone="warning" testId="setup-restart-timeout">
       <p>{t('nodes.setup.restart.timeout')}</p>
       <p className="font-mono">tmex restart</p>
-    </SetupNotice>
+    </Notice>
   );
 }
 

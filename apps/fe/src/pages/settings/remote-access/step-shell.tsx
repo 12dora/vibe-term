@@ -4,6 +4,7 @@ import { Badge } from '@tmex/ui/badge';
 import { Check, Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { InfoRow, type InfoRowProps } from '../components/form-primitives';
 import type { StepState } from './tunnel-model';
 import { jobStepKey } from './tunnel-model';
 
@@ -98,21 +99,6 @@ export function JobProgress({ step, testId }: { step: string | null; testId: str
   return <ProgressRow label={key ? t(key) : (step ?? t('common.loading'))} testId={testId} />;
 }
 
-export function DetailRow({
-  label,
-  testId,
-  children,
-}: {
-  label: string;
-  testId?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-      <span className="w-24 shrink-0 text-xs text-muted-foreground">{label}</span>
-      <span className="min-w-0 break-all text-xs" data-testid={testId}>
-        {children}
-      </span>
-    </div>
-  );
+export function DetailRow(props: Omit<InfoRowProps, 'labelWidth'>) {
+  return <InfoRow {...props} labelWidth="narrow" />;
 }

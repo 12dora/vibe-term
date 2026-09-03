@@ -10,19 +10,10 @@ import {
   updateDomainAccess,
 } from '@tmex/api-client';
 import type { LocalStatusResponse } from '@tmex/api-client/local/types';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
 import { Switch } from '@tmex/ui/switch';
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DangerConfirmDialog } from '../components/danger-confirm-dialog';
 import { Row } from './copy-feedback';
 
 /** 旧节点（契约补齐之前）不下发这个字段：类型上必有、运行时未必有，读不到就整行不渲染。 */
@@ -218,36 +209,22 @@ function DomainAccessConfirm({
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
-  if (!open) return null;
   return (
-    <AlertDialog open onOpenChange={(next) => !next && onCancel()}>
-      <AlertDialogContent data-testid="local-machine-domain-access-confirm">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t('nodes.machine.domainAccess.confirm.title')}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {domainAccessConfirmLines(viaDomain).map((key) => (
-              <span key={key} className="mt-1 block first:mt-0">
-                {t(key, { hosts })}
-              </span>
-            ))}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel
-            onClick={onCancel}
-            data-testid="local-machine-domain-access-confirm-cancel"
-          >
-            {t('nodes.machine.domainAccess.confirm.cancel')}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={onConfirm}
-            data-testid="local-machine-domain-access-confirm-ok"
-          >
-            {t('nodes.machine.domainAccess.confirm.confirm')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <DangerConfirmDialog
+      open={open}
+      title={t('nodes.machine.domainAccess.confirm.title')}
+      cancelLabel={t('nodes.machine.domainAccess.confirm.cancel')}
+      confirmLabel={t('nodes.machine.domainAccess.confirm.confirm')}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      testId="local-machine-domain-access-confirm"
+      confirmTestId="local-machine-domain-access-confirm-ok"
+    >
+      {domainAccessConfirmLines(viaDomain).map((key) => (
+        <span key={key} className="mt-1 block first:mt-0">
+          {t(key, { hosts })}
+        </span>
+      ))}
+    </DangerConfirmDialog>
   );
 }

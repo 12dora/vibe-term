@@ -7,7 +7,7 @@ import type { DomainAccessPolicy } from '@tmex/api-client';
 import enUS from '@tmex/shared/i18n/locales/en_US.json';
 import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
 import { installWindowStorage } from '@tmex/stores/test-utils';
-import type { DomainAccessState } from './node-detail-dialog';
+import type { DomainAccessState } from './node-detail-types';
 
 installWindowStorage();
 
@@ -16,9 +16,11 @@ const {
   DomainAccessConfirm,
   DomainAccessConfirmBody,
   NodeDetailBody,
-  createNodeDetailIo,
   domainAccessNote,
   domainAccessSwitchDisabled,
+} = await import('./node-detail-dialog');
+const {
+  createNodeDetailIo,
   hasNodeDetailChanges,
   loadDomainAccessState,
   nextNodeDetailBaseline,
@@ -26,7 +28,7 @@ const {
   planNodeDetailSave,
   saveNodeDetail,
   toggleDomainAccess,
-} = await import('./node-detail-dialog');
+} = await import('./node-detail-types');
 
 const t = (key: string, options?: Record<string, unknown>) =>
   options ? `${key}:${JSON.stringify(options)}` : key;

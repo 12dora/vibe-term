@@ -8,22 +8,13 @@ import type {
   LocalDirectResponse,
   LocalDirectStatus,
 } from '@tmex/api-client/local/types';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
 import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 import { Download, Loader2, Trash2 } from 'lucide-react';
 import { useMemo, useRef, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DangerConfirmDialog } from '../components/danger-confirm-dialog';
 import { Row } from './copy-feedback';
 
 /** 只取 `LocalApi` 的直连那一面，测试注入假实现时不必凑出整个客户端。 */
@@ -258,32 +249,18 @@ export function RemoveConfirm({
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
-  if (!open) return null;
   return (
-    <AlertDialog open onOpenChange={(next) => !next && onCancel()}>
-      <AlertDialogContent data-testid="local-machine-direct-remove-confirm">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t('nodes.machine.directRemoveConfirm.title')}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {t('nodes.machine.directRemoveConfirm.description')}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel
-            onClick={onCancel}
-            data-testid="local-machine-direct-remove-confirm-cancel"
-          >
-            {t('nodes.machine.directRemoveConfirm.cancel')}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={onConfirm}
-            data-testid="local-machine-direct-remove-confirm-ok"
-          >
-            {t('nodes.machine.directRemoveConfirm.confirm')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <DangerConfirmDialog
+      open={open}
+      title={t('nodes.machine.directRemoveConfirm.title')}
+      cancelLabel={t('nodes.machine.directRemoveConfirm.cancel')}
+      confirmLabel={t('nodes.machine.directRemoveConfirm.confirm')}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      testId="local-machine-direct-remove-confirm"
+      confirmTestId="local-machine-direct-remove-confirm-ok"
+    >
+      {t('nodes.machine.directRemoveConfirm.description')}
+    </DangerConfirmDialog>
   );
 }

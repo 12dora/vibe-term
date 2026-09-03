@@ -14,9 +14,8 @@ import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Loader2 } from 'lucide-react';
-import { type FormEvent, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
 import { currentOrigin, navigateToLogin } from './browser-location';
 import { describeSetupError } from './error-messages';
 import {
@@ -28,7 +27,7 @@ import {
   directOutcomeLabel,
 } from './form-parts';
 import { submitBecomeHub } from './submit';
-import { useRestartWaiter } from './use-restart-waiter';
+import { useHubSetupSubmit } from './use-hub-setup-submit';
 import {
   type BecomeHubValues,
   defaultHubPublicUrl,
@@ -68,19 +67,18 @@ export function BecomeHubForm({
     confirmPassword: '',
     directEnable: directSupported,
   }));
-  const [showErrors, setShowErrors] = useState(false);
   const [precheck, setPrecheck] = useState<PrecheckState>({ phase: 'idle' });
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [result, setResult] = useState<SetupHubResponse | null>(null);
-  const waiter = useRestartWaiter({ client });
 
   const errors = validateBecomeHub(values, nodeEnv);
+  const { showErrors, revealErrors, submitting, submitError, result, waiter, handleSubmit } =
+    useHubSetupSubmit<SetupHubResponse>({
+      client,
+      hasErrors: hasErrors(errors),
+      submit: () => submitBecomeHub(values, client),
+      successMessage: t('nodes.setup.toast.hubCreated'),
+      onRestarted,
+    });
   const shown = showErrors ? errors : {};
-
-  useEffect(() => {
-    if (waiter.state === 'restarted') onRestarted();
-  }, [waiter.state, onRestarted]);
 
   function update(patch: Partial<BecomeHubValues>): void {
     setValues((previous) => ({ ...previous, ...patch }));
@@ -89,7 +87,7 @@ export function BecomeHubForm({
   }
 
   async function runPrecheck(): Promise<void> {
-    setShowErrors(true);
+    revealErrors();
     if (errors.hubPublicUrl) return;
     setPrecheck({ phase: 'checking' });
     try {
@@ -97,26 +95,6 @@ export function BecomeHubForm({
       setPrecheck({ phase: 'done', data });
     } catch (error) {
       setPrecheck({ phase: 'error', message: describeSetupError(t, error) });
-    }
-  }
-
-  async function handleSubmit(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    setShowErrors(true);
-    if (hasErrors(errors)) return;
-    setSubmitting(true);
-    setSubmitError(null);
-    try {
-      const outcome = await submitBecomeHub(values, client);
-      setResult(outcome.result);
-      toast.success(t('nodes.setup.toast.hubCreated'));
-      waiter.start(outcome.previousStartedAt);
-    } catch (error) {
-      const message = describeSetupError(t, error);
-      setSubmitError(message);
-      toast.error(message);
-    } finally {
-      setSubmitting(false);
     }
   }
 

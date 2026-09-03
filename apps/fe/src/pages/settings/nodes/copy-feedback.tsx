@@ -75,12 +75,18 @@ export function CopyButton({
   );
 }
 
-/** 只读的地址 / 标识：行内等宽展示 + 一键复制。 */
-export function CopyableValue({ value, testId }: { value: string; testId: string }) {
+const VALUE_CODE_CLASS = 'min-w-0 break-all rounded bg-muted/50 px-1.5 py-0.5 text-[11px]';
+
+/** 只读的地址 / 标识：行内等宽展示 + 一键复制。`mono` 给需要强制等宽的调用点（https 区块）。 */
+export function CopyableValue({
+  value,
+  testId,
+  mono = false,
+}: { value: string; testId: string; mono?: boolean }) {
   return (
     <span className="flex min-w-0 items-center gap-1">
       <code
-        className="min-w-0 break-all rounded bg-muted/50 px-1.5 py-0.5 text-[11px]"
+        className={mono ? `${VALUE_CODE_CLASS} font-mono` : VALUE_CODE_CLASS}
         data-testid={testId}
       >
         {value}

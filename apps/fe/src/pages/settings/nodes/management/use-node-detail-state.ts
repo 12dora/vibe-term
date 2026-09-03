@@ -13,7 +13,7 @@ import {
   planNodeDetailSave,
   saveNodeDetail,
   toggleDomainAccess,
-} from './node-detail-dialog';
+} from './node-detail-types';
 
 export interface NodeDetailState {
   baseline: NodeDetailValues;
