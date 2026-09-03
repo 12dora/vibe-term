@@ -135,8 +135,8 @@ export class RtcWakeGate {
     if (this.ports.stopped()) return;
     const now = this.ports.scheduler.now();
     const gate = this.ensureIncomingWakeGate(fromNodeId);
-    const drop = (tag: string, dropped: string) =>
-      rtcLogRateLimited(`wake:${tag}:${fromNodeId}`, 'signal recv', {
+    const drop = (tag: string, dropped: string, event = 'signal recv') =>
+      rtcLogRateLimited(`wake:${tag}:${fromNodeId}`, event, {
         peer: fromNodeId,
         kind: 'wake',
         dropped,
@@ -151,7 +151,7 @@ export class RtcWakeGate {
     }
     const wake = parseRtcWakeSdp(msg.sdp);
     if (!wake || !this.acceptSignedRtcWake(fromNodeId, msg, wake)) {
-      drop('auth', 'auth');
+      drop('auth', 'auth', 'wake rejected');
       return;
     }
     gate.nextEligibleAt = now + PEER_RTC_WAKE_COOLDOWN_MS;
