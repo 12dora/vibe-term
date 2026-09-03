@@ -42,7 +42,7 @@
     "@tmex/ui": "workspace:*",
     "@tmex/ws-client": "workspace:*",
     "highlight.js": "^11.11.1",
-    "katex": "^0.17.0",
+    "katex": "^0.16.0",
     "lucide-react": "^0.564.0",
     "mermaid": "^11.15.0",
     "qrcode.react": "^4.2.0",

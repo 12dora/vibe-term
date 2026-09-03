@@ -3,7 +3,7 @@ import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react-swc';
 import { visualizer } from 'rollup-plugin-visualizer';
-import { type PluginOption, defineConfig } from 'vite';
+import { type Plugin, type PluginOption, defineConfig } from 'vite';
 
 // monorepo 版本真相源：发布的 tmex-cli（packages/app）版本。读取失败退回 0.0.0。
 function readMonorepoVersion(): string {
@@ -13,6 +13,22 @@ function readMonorepoVersion(): string {
   } catch {
     return '0.0.0';
   }
+}
+
+// KaTeX 的 @font-face 按 woff2 → woff → ttf 三格式声明，本应用要求的浏览器都支持 woff2，
+// 后两者只会白白进 dist 与 npm 包（~880 KB），这里在 CSS 阶段剔掉。
+function katexWoff2Only(): Plugin {
+  return {
+    name: 'tmex-katex-woff2-only',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('katex') || !id.endsWith('.css')) return null;
+      return {
+        code: code.replace(/,\s*url\([^)]*\.(?:woff|ttf)\)\s*format\("(?:woff|truetype)"\)/g, ''),
+        map: null,
+      };
+    },
+  };
 }
 
 export default defineConfig(({ mode }) => {
@@ -43,7 +59,7 @@ export default defineConfig(({ mode }) => {
     : [];
 
   return {
-    plugins: [tailwindcss(), react(), ...analyzePlugins],
+    plugins: [katexWoff2Only(), tailwindcss(), react(), ...analyzePlugins],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),

@@ -15,10 +15,6 @@
       "name": "@tmex/fe",
       "version": "0.1.0",
       "dependencies": {
-        "@base-ui/react": "^1.2.0",
-        "@dnd-kit/core": "^6.3.1",
-        "@dnd-kit/sortable": "^10.0.0",
-        "@dnd-kit/utilities": "^3.2.2",
         "@tanstack/react-query": "^5.66.0",
         "@tmex/api-client": "workspace:*",
         "@tmex/notifications": "workspace:*",
@@ -29,27 +25,15 @@
         "@tmex/theme": "workspace:*",
         "@tmex/ui": "workspace:*",
         "@tmex/ws-client": "workspace:*",
-        "class-variance-authority": "^0.7.1",
-        "clsx": "^2.1.1",
-        "ghostty-terminal": "workspace:*",
-        "highlight.js": "^11.11.1",
         "i18next": "^25.8.5",
         "i18next-resources-to-backend": "^1.2.1",
-        "katex": "^0.17.0",
         "lucide-react": "^0.564.0",
-        "mermaid": "^11.15.0",
         "qrcode.react": "^4.2.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
         "react-i18next": "^16.5.4",
-        "react-markdown": "^10.1.0",
         "react-router": "^7.1.5",
-        "rehype-highlight": "^7.0.2",
-        "rehype-katex": "^7.0.1",
-        "remark-gfm": "^4.0.1",
-        "remark-math": "^6.0.0",
         "sonner": "^2.0.7",
-        "tailwind-merge": "^3.4.0",
         "tailwindcss-animate": "^1.0.7",
         "zustand": "^5.0.3",
       },
@@ -150,7 +134,7 @@
         "@tmex/ui": "workspace:*",
         "@tmex/ws-client": "workspace:*",
         "highlight.js": "^11.11.1",
-        "katex": "^0.17.0",
+        "katex": "^0.16.0",
         "lucide-react": "^0.564.0",
         "mermaid": "^11.15.0",
         "qrcode.react": "^4.2.0",
@@ -1018,7 +1002,7 @@
 
     "json-schema": ["json-schema@0.4.0", "", {}, "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA=="],
 
-    "katex": ["katex@0.17.0", "", { "dependencies": { "commander": "^8.3.0" }, "bin": { "katex": "cli.js" } }, "sha512-Vdw0ATsQ9V+LuegM/BTwQqV/6cTl5lbGcIrU+BCgLxyf6bo38ybOr372tuSIxir3CN720flu1meYR6XzNMwQnw=="],
+    "katex": ["katex@0.16.47", "", { "dependencies": { "commander": "^8.3.0" }, "bin": { "katex": "cli.js" } }, "sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg=="],
 
     "khroma": ["khroma@2.1.0", "", {}, "sha512-Ls993zuzfayK269Svk9hzpeGUKob/sIgZzyHYdjQoAdQetRKpOLj+k/QQQ/6Qi0Yz65mlROrfd+Ev+1+7dz9Kw=="],
 
@@ -1394,15 +1378,9 @@
 
     "get-intrinsic/hasown": ["hasown@2.0.2", "", { "dependencies": { "function-bind": "^1.1.2" } }, "sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ=="],
 
-    "mermaid/katex": ["katex@0.16.47", "", { "dependencies": { "commander": "^8.3.0" }, "bin": { "katex": "cli.js" } }, "sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg=="],
-
-    "micromark-extension-math/katex": ["katex@0.16.47", "", { "dependencies": { "commander": "^8.3.0" }, "bin": { "katex": "cli.js" } }, "sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg=="],
-
     "parse-entities/@types/unist": ["@types/unist@2.0.11", "", {}, "sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA=="],
 
     "playwright/fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
-
-    "rehype-katex/katex": ["katex@0.16.47", "", { "dependencies": { "commander": "^8.3.0" }, "bin": { "katex": "cli.js" } }, "sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg=="],
 
     "source-map-support/source-map": ["source-map@0.6.1", "", {}, "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g=="],
 
