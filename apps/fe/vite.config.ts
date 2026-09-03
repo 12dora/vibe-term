@@ -68,6 +68,9 @@ export default defineConfig(({ mode }) => {
       port: fePort,
       host: '0.0.0.0',
     },
+    // 代码查看器的高亮 worker 用动态 import 按需拉 highlight.js 语言模块。worker 必须走 ES 格式
+    // 才允许代码分割——默认的 iife 直接拒绝分割，会把 36 个语言全内联进 worker，等于没做按需。
+    worker: { format: 'es' },
     build: {
       outDir: 'dist',
       // 生产构建默认不出 source map：~18MB 的 .map 会进 resources/fe-dist 随包分发，纯属负担

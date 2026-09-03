@@ -1,209 +1,29 @@
 // 代码/纯文本查看器：highlight.js 高亮 + 终端 seoul256 配色（hljs-terminal-theme.css）。
 // 左侧行号栏 + 右侧可横向滚动代码区，font-mono 与终端共享字体栈。
+//
+// 高亮不在渲染路径上：先把纯文本上屏，highlight.js 在 worker 里跑完再换成高亮 HTML
+// （worker 不可用时退回主线程，但先让出一帧）。语言模块按当前文件按需注册，不再全量急加载。
 
 import { cn } from '@tmex/ui';
-// 只引入常用语言子集（36 种），避免 full build（~190 种语言，约 1MB）拖大 FilePage chunk。
-// 子集已覆盖 ts/js/py/json/css/xml/bash/yaml/sql/go/rust/java/c/cpp/markdown/makefile 等；
-// 未覆盖的（dockerfile/dart/scala 等）回退到 highlightAuto，不影响可读性。
-//
-// 刻意不用 `highlight.js/lib/common`：那个入口是 CJS 构建（`lib/languages/*.js`），而 markdown
-// 预览那条链（rehype-highlight → lowlight）拿的是同一批语法的 ESM 构建（`es/languages/*.js`）。
-// rollup 跨构建格式去重不了，同时打开文件页和 markdown 预览就会下两份 hljs（各 38 个模块）。
-// 这里按 `lib/common` 的**同一套语言、同一注册顺序**（highlightAuto 的相关度排序会看注册顺序）
-// 自己拼一份：包的 exports map 把 `import` 条件指向 ESM 构建，于是两条链共用同一批模块。
-import type { LanguageFn } from 'highlight.js';
-import hljs from 'highlight.js/lib/core';
-import bash from 'highlight.js/lib/languages/bash';
-import c from 'highlight.js/lib/languages/c';
-import cpp from 'highlight.js/lib/languages/cpp';
-import csharp from 'highlight.js/lib/languages/csharp';
-import css from 'highlight.js/lib/languages/css';
-import diff from 'highlight.js/lib/languages/diff';
-import go from 'highlight.js/lib/languages/go';
-import graphql from 'highlight.js/lib/languages/graphql';
-import ini from 'highlight.js/lib/languages/ini';
-import java from 'highlight.js/lib/languages/java';
-import javascript from 'highlight.js/lib/languages/javascript';
-import json from 'highlight.js/lib/languages/json';
-import kotlin from 'highlight.js/lib/languages/kotlin';
-import less from 'highlight.js/lib/languages/less';
-import lua from 'highlight.js/lib/languages/lua';
-import makefile from 'highlight.js/lib/languages/makefile';
-import markdown from 'highlight.js/lib/languages/markdown';
-import objectivec from 'highlight.js/lib/languages/objectivec';
-import perl from 'highlight.js/lib/languages/perl';
-import php from 'highlight.js/lib/languages/php';
-import phpTemplate from 'highlight.js/lib/languages/php-template';
-import plaintext from 'highlight.js/lib/languages/plaintext';
-import python from 'highlight.js/lib/languages/python';
-import pythonRepl from 'highlight.js/lib/languages/python-repl';
-import r from 'highlight.js/lib/languages/r';
-import ruby from 'highlight.js/lib/languages/ruby';
-import rust from 'highlight.js/lib/languages/rust';
-import scss from 'highlight.js/lib/languages/scss';
-import shell from 'highlight.js/lib/languages/shell';
-import sql from 'highlight.js/lib/languages/sql';
-import swift from 'highlight.js/lib/languages/swift';
-import typescript from 'highlight.js/lib/languages/typescript';
-import vbnet from 'highlight.js/lib/languages/vbnet';
-import wasm from 'highlight.js/lib/languages/wasm';
-import xml from 'highlight.js/lib/languages/xml';
-import yaml from 'highlight.js/lib/languages/yaml';
 import { useMemo } from 'react';
 import './hljs-terminal-theme.css';
+import { HIGHLIGHT_LIMIT } from './language-map';
+import {
+  GUTTER_BLOCK_LINES,
+  countLines,
+  gutterBlockText,
+  gutterText,
+  splitCodeBlocks,
+} from './line-gutter';
+import { useHighlightedCode } from './use-highlighted-code';
 
-// 顺序与 `highlight.js/lib/common.js` 逐行一致，勿随手排序。
-const COMMON_LANGUAGES: ReadonlyArray<readonly [string, LanguageFn]> = [
-  ['xml', xml],
-  ['bash', bash],
-  ['c', c],
-  ['cpp', cpp],
-  ['csharp', csharp],
-  ['css', css],
-  ['markdown', markdown],
-  ['diff', diff],
-  ['ruby', ruby],
-  ['go', go],
-  ['graphql', graphql],
-  ['ini', ini],
-  ['java', java],
-  ['javascript', javascript],
-  ['json', json],
-  ['kotlin', kotlin],
-  ['less', less],
-  ['lua', lua],
-  ['makefile', makefile],
-  ['perl', perl],
-  ['objectivec', objectivec],
-  ['php', php],
-  ['php-template', phpTemplate],
-  ['plaintext', plaintext],
-  ['python', python],
-  ['python-repl', pythonRepl],
-  ['r', r],
-  ['rust', rust],
-  ['scss', scss],
-  ['shell', shell],
-  ['sql', sql],
-  ['swift', swift],
-  ['yaml', yaml],
-  ['typescript', typescript],
-  ['vbnet', vbnet],
-  ['wasm', wasm],
-];
+// text-[13px] leading-[1.5]，用于给屏外块估高。
+const LINE_HEIGHT_PX = 19.5;
 
-for (const [name, language] of COMMON_LANGUAGES) {
-  hljs.registerLanguage(name, language);
-}
-
-// 文件扩展名 -> highlight.js 语言名映射，覆盖常见语言。
-const EXT_TO_LANG: Record<string, string> = {
-  ts: 'typescript',
-  tsx: 'typescript',
-  cts: 'typescript',
-  mts: 'typescript',
-  js: 'javascript',
-  jsx: 'javascript',
-  cjs: 'javascript',
-  mjs: 'javascript',
-  py: 'python',
-  pyi: 'python',
-  rs: 'rust',
-  go: 'go',
-  java: 'java',
-  kt: 'kotlin',
-  c: 'c',
-  h: 'c',
-  cpp: 'cpp',
-  cc: 'cpp',
-  cxx: 'cpp',
-  hpp: 'cpp',
-  hxx: 'cpp',
-  cs: 'csharp',
-  rb: 'ruby',
-  php: 'php',
-  swift: 'swift',
-  scala: 'scala',
-  sh: 'bash',
-  bash: 'bash',
-  zsh: 'bash',
-  fish: 'bash',
-  ps1: 'powershell',
-  yaml: 'yaml',
-  yml: 'yaml',
-  json: 'json',
-  jsonc: 'json',
-  toml: 'toml',
-  ini: 'ini',
-  sql: 'sql',
-  css: 'css',
-  scss: 'scss',
-  sass: 'scss',
-  less: 'less',
-  html: 'xml',
-  htm: 'xml',
-  xml: 'xml',
-  svg: 'xml',
-  vue: 'xml',
-  md: 'markdown',
-  markdown: 'markdown',
-  mdx: 'markdown',
-  dockerfile: 'dockerfile',
-  makefile: 'makefile',
-  lua: 'lua',
-  pl: 'perl',
-  r: 'r',
-  dart: 'dart',
-  diff: 'diff',
-  patch: 'diff',
-  graphql: 'graphql',
-  gql: 'graphql',
-};
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function resolveLanguage(fileName: string): string | undefined {
-  const lower = fileName.toLowerCase();
-  // 无扩展名的特例文件（Dockerfile / Makefile）
-  if (lower === 'dockerfile' || lower.endsWith('.dockerfile')) {
-    return 'dockerfile';
-  }
-  if (lower === 'makefile') {
-    return 'makefile';
-  }
-  const dot = lower.lastIndexOf('.');
-  if (dot < 0) {
-    return undefined;
-  }
-  return EXT_TO_LANG[lower.slice(dot + 1)];
-}
-
-// highlightAuto 要拿全部语法各跑一遍，代价随体积暴涨（1 MiB 未知文本 ~7.7 s，直接冻住主线程），
-// 所以只对小文件做自动识别；已知语言的 hljs.highlight 快两个数量级（2 MiB TS ~33 ms），阈值放宽即可。
-// 网关放行的文本上限是 2 MiB，两条线以上一律渲染转义纯文本。
-const AUTO_DETECT_LIMIT = 64 * 1024;
-const HIGHLIGHT_LIMIT = 512 * 1024;
-
-function highlightCode(code: string, fileName: string): string {
-  const lang = resolveLanguage(fileName);
-  try {
-    if (lang && hljs.getLanguage(lang)) {
-      return code.length > HIGHLIGHT_LIMIT
-        ? escapeHtml(code)
-        : hljs.highlight(code, { language: lang }).value;
-    }
-    return code.length > AUTO_DETECT_LIMIT ? escapeHtml(code) : hljs.highlightAuto(code).value;
-  } catch {
-    return escapeHtml(code);
-  }
-}
+const CONTAINER_CLASS =
+  'hljs w-full overflow-x-auto font-mono text-[13px] leading-[1.5] [-webkit-overflow-scrolling:touch]';
+const GUTTER_CLASS =
+  'm-0 shrink-0 select-none border-r border-current/10 px-3 text-right opacity-40';
 
 export interface CodeViewerProps {
   code: string;
@@ -211,36 +31,64 @@ export interface CodeViewerProps {
   className?: string;
 }
 
-export function CodeViewer({ code, fileName, className }: CodeViewerProps) {
-  const html = useMemo(() => highlightCode(code, fileName), [code, fileName]);
-  const lineCount = useMemo(() => {
-    const n = code.split('\n').length;
-    // 末尾换行会多出一个空行，行号栏与代码区都按同样的行数渲染即可对齐。
-    return n;
-  }, [code]);
-
-  const lineNumbers = useMemo(
-    () => Array.from({ length: lineCount }, (_, i) => i + 1).join('\n'),
-    [lineCount]
+function CodeBlocks({ code, lineCount }: { code: string; lineCount: number }) {
+  const blocks = useMemo(() => splitCodeBlocks(code, GUTTER_BLOCK_LINES), [code]);
+  const gutterWidth = `${String(lineCount).length}ch`;
+  return (
+    <>
+      {blocks.map((block) => (
+        <div
+          key={block.startLine}
+          className="flex w-max min-w-full"
+          style={{
+            contentVisibility: 'auto',
+            containIntrinsicHeight: `auto ${(block.lineCount * LINE_HEIGHT_PX).toFixed(1)}px`,
+          }}
+        >
+          <pre
+            aria-hidden="true"
+            className={GUTTER_CLASS}
+            style={{ whiteSpace: 'pre', width: gutterWidth }}
+          >
+            {gutterBlockText(block.startLine, block.lineCount)}
+          </pre>
+          <pre className="m-0 px-3" style={{ whiteSpace: 'pre' }}>
+            {block.text}
+          </pre>
+        </div>
+      ))}
+    </>
   );
+}
+
+export function CodeViewer({ code, fileName, className }: CodeViewerProps) {
+  const html = useHighlightedCode(code, fileName);
+  const lineCount = useMemo(() => countLines(code), [code]);
+  // 超过高亮上限的文件永远是纯文本（planHighlight 判定为 plain，根本不会发高亮请求）：
+  // 按行块渲染 + content-visibility，屏外块不参与布局。
+  const blocked = code.length > HIGHLIGHT_LIMIT;
+  const lineNumbers = useMemo(() => (blocked ? '' : gutterText(lineCount)), [blocked, lineCount]);
+
+  if (blocked) {
+    return (
+      <div className={cn(CONTAINER_CLASS, 'py-2', className)}>
+        <CodeBlocks code={code} lineCount={lineCount} />
+      </div>
+    );
+  }
 
   return (
-    <div
-      className={cn(
-        'hljs flex w-full overflow-x-auto font-mono text-[13px] leading-[1.5] [-webkit-overflow-scrolling:touch]',
-        className
-      )}
-    >
-      <pre
-        aria-hidden="true"
-        className="m-0 shrink-0 select-none border-r border-current/10 px-3 py-2 text-right opacity-40"
-        style={{ whiteSpace: 'pre' }}
-      >
+    <div className={cn(CONTAINER_CLASS, 'flex', className)}>
+      <pre aria-hidden="true" className={cn(GUTTER_CLASS, 'py-2')} style={{ whiteSpace: 'pre' }}>
         {lineNumbers}
       </pre>
       <pre className="m-0 min-w-0 flex-1 px-3 py-2" style={{ whiteSpace: 'pre' }}>
-        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js 输出，内容已被其转义 */}
-        <code className="hljs bg-transparent" dangerouslySetInnerHTML={{ __html: html }} />
+        {html === null ? (
+          <code className="hljs bg-transparent">{code}</code>
+        ) : (
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js 输出，内容已被其转义
+          <code className="hljs bg-transparent" dangerouslySetInnerHTML={{ __html: html }} />
+        )}
       </pre>
     </div>
   );
