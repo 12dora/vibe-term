@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,6 +7,7 @@ import {
   type PageModule,
   type PageModuleState,
   requestPageModule,
+  setPageModulePrerequisite,
   toPageModuleError,
 } from './use-page-module';
 
@@ -112,6 +113,36 @@ describe('toPageModuleError', () => {
 
   test('stringifies other reasons', () => {
     expect(toPageModuleError({ code: 1 }).message).toBe('[object Object]');
+  });
+});
+
+describe('requestPageModule 的 i18n 前置条件', () => {
+  afterEach(() => setPageModulePrerequisite(null));
+
+  test('前置条件未就绪时不进入 ready', async () => {
+    const { states, apply } = recorder();
+    const bundle = deferred<void>();
+    setPageModulePrerequisite(() => bundle.promise);
+
+    requestPageModule(() => Promise.resolve(pageModule), apply);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(states).toEqual([]);
+
+    bundle.resolve(undefined);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(states).toEqual([{ status: 'ready', module: pageModule, error: null }]);
+  });
+
+  test('前置条件失败不拖垮页面', async () => {
+    const { states, apply } = recorder();
+    setPageModulePrerequisite(() => Promise.reject(new Error('locale chunk 404')));
+
+    requestPageModule(() => Promise.resolve(pageModule), apply);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(states).toEqual([{ status: 'ready', module: pageModule, error: null }]);
   });
 });
 

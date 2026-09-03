@@ -4,76 +4,9 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { ENDPOINT_BACKOFF_MIN_MS, PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { PEER_UPGRADE_BACKOFF_CAP_MS, PEER_UPGRADE_COOLDOWN_MS, PeerManager } from './peer-manager';
+import { dummyUplink, echoQuiesceCaps } from './peer-test-fixtures';
 import { DirectDialLimiter } from './peer-ws-race';
-import {
-  ImmediateScheduler,
-  fakeSocketPair,
-  seedNodeIdentity,
-  seedUser,
-  waitUntil,
-} from './test-support';
-import type { KeyLogApplier, UplinkStatus } from './types';
-import { UplinkClient } from './uplink-client';
-
-function dummyApplier(): KeyLogApplier {
-  return {
-    async head() {
-      return { seq: 0n, hash: new Uint8Array(32) };
-    },
-    async applyMany() {
-      return { applied: 0 };
-    },
-  };
-}
-
-function dummyUplink(
-  identity: { nodeId: string; edSecretKey: Uint8Array },
-  userStore: UserStore,
-  openRelay?: () => Promise<import('@tmex/shared/link').LinkStream>
-): UplinkClient {
-  const client = new UplinkClient({
-    hubUrl: 'https://hub.example.com',
-    identity,
-    userId: 'user-1',
-    keyLogApplier: dummyApplier(),
-    userStore,
-    statusProvider: (): UplinkStatus => ({
-      version: '1',
-      tmux: false,
-      direct_capable: false,
-      inventory: {},
-      endpoints: [],
-    }),
-    wsFactory: () => fakeSocketPair()[0],
-  });
-  if (openRelay) {
-    client.openRelay = async () => openRelay();
-    client.state = 'online';
-    client.link = createInMemoryLinkPair()[0];
-  }
-  return client;
-}
-
-function echoQuiesceCaps(session: import('@tmex/shared/link').LinkSession): void {
-  let helloReplied = false;
-  session.ctl.onMessage((bytes) => {
-    let msg: { t?: string };
-    try {
-      msg = JSON.parse(new TextDecoder().decode(bytes)) as { t?: string };
-    } catch {
-      return;
-    }
-    if (msg.t === 'link.hello' && !helloReplied) {
-      helloReplied = true;
-      session.ctl.send(
-        new TextEncoder().encode(JSON.stringify({ t: 'link.hello', caps: ['quiesce'] }))
-      );
-    }
-    if (msg.t === 'link.quiesce.probe') {
-      session.ctl.send(new TextEncoder().encode(JSON.stringify({ t: 'link.quiesce.probe.ack' })));
-    }
-  });
-}
+import { ImmediateScheduler, seedNodeIdentity, seedUser, waitUntil } from './test-support';
 
 describe('PeerManager endpoint backoff', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];

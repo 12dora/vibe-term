@@ -8,13 +8,12 @@ import {
 } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
-import type { RtcSignalMessage } from '../mesh-deps';
 import { DataChannelLink } from '../rtc/data-channel-link';
 import { DC_MAX_MESSAGE_BYTES, FRAGMENT_HEADER_SIZE } from '../rtc/fragmenter';
-import type { RtcSignaling } from '../rtc/ice';
 import type { DataChannelLike } from '../rtc/native';
 import { copyBytes, toUint8Array } from '../rtc/native';
 import { RtcPeerManager } from '../rtc/rtc-peer-manager';
+import { loopbackSignaling } from '../rtc/rtc-test-fixtures';
 import { createFakeNativeModule } from '../rtc/test-fakes';
 import { openHttpStream } from '../stream-targets';
 import { seedNodeIdentity, seedUser } from '../test-support';
@@ -266,52 +265,6 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 function muxOpFromDcChunk(chunk: Uint8Array): number | undefined {
   if (chunk.byteLength < FRAGMENT_HEADER_SIZE + 5) return undefined;
   return chunk[FRAGMENT_HEADER_SIZE + 4];
-}
-
-function loopbackSignaling(): [RtcSignaling, RtcSignaling] {
-  const aCbs: Array<(msg: RtcSignalMessage) => void> = [];
-  const bCbs: Array<(msg: RtcSignalMessage) => void> = [];
-  const aInbox: RtcSignalMessage[] = [];
-  const bInbox: RtcSignalMessage[] = [];
-
-  function deliver(
-    cbs: Array<(msg: RtcSignalMessage) => void>,
-    inbox: RtcSignalMessage[],
-    msg: RtcSignalMessage
-  ): void {
-    if (cbs.length === 0) {
-      inbox.push(msg);
-      return;
-    }
-    for (const cb of cbs) cb(msg);
-  }
-
-  function subscribe(
-    cbs: Array<(msg: RtcSignalMessage) => void>,
-    inbox: RtcSignalMessage[],
-    cb: (msg: RtcSignalMessage) => void
-  ): () => void {
-    cbs.push(cb);
-    while (inbox.length > 0) {
-      const next = inbox.shift();
-      if (next) cb(next);
-    }
-    return () => {
-      const idx = cbs.indexOf(cb);
-      if (idx >= 0) cbs.splice(idx, 1);
-    };
-  }
-
-  return [
-    {
-      send: (msg) => deliver(bCbs, bInbox, msg),
-      onMessage: (cb) => subscribe(aCbs, aInbox, cb),
-    },
-    {
-      send: (msg) => deliver(aCbs, aInbox, msg),
-      onMessage: (cb) => subscribe(bCbs, bInbox, cb),
-    },
-  ];
 }
 
 function fillPattern(bytes: Uint8Array, start = 0): Uint8Array {

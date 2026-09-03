@@ -4,9 +4,8 @@ import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import { encodeJsonBytes } from '../ctl';
 import { PeerManager } from '../peer-manager';
+import { dummyUplink, echoQuiesceCaps } from '../peer-test-fixtures';
 import { seedNodeIdentity, seedUser, waitUntil } from '../test-support';
-import type { UplinkStatus } from '../types';
-import { UplinkClient } from '../uplink-client';
 import {
   DC_REARM_SOURCES,
   RTC_DIAL_BREAKER_BASE_MS_DEFAULT,
@@ -264,57 +263,6 @@ describe('PeerManager DataChannel breaker', () => {
     delete process.env.TMEX_RTC_DIAL_DISABLE_AFTER;
   });
 
-  function dummyUplink(
-    identity: { nodeId: string; edSecretKey: Uint8Array },
-    userStore: UserStore
-  ): UplinkClient {
-    return new UplinkClient({
-      hubUrl: 'https://hub.example.com',
-      identity,
-      userId: 'user-1',
-      keyLogApplier: {
-        async head() {
-          return { seq: 0n, hash: new Uint8Array(32) };
-        },
-        async applyMany() {
-          return { applied: 0 };
-        },
-      },
-      userStore,
-      statusProvider: (): UplinkStatus => ({
-        version: '1',
-        tmux: false,
-        direct_capable: false,
-        inventory: {},
-        endpoints: [],
-      }),
-      wsFactory: () => {
-        throw new Error('no-ws');
-      },
-    });
-  }
-
-  function echoQuiesceCaps(session: import('@tmex/shared/link').LinkSession): void {
-    let helloReplied = false;
-    session.ctl.onMessage((bytes) => {
-      let msg: { t?: string };
-      try {
-        msg = JSON.parse(new TextDecoder().decode(bytes)) as { t?: string };
-      } catch {
-        return;
-      }
-      if (msg.t === 'link.hello' && !helloReplied) {
-        helloReplied = true;
-        session.ctl.send(
-          new TextEncoder().encode(JSON.stringify({ t: 'link.hello', caps: ['quiesce'] }))
-        );
-      }
-      if (msg.t === 'link.quiesce.probe') {
-        session.ctl.send(new TextEncoder().encode(JSON.stringify({ t: 'link.quiesce.probe.ack' })));
-      }
-    });
-  }
-
   async function setupManager(opts?: { breakerMs?: string; disableAfter?: string }) {
     if (opts?.breakerMs) process.env.TMEX_RTC_DIAL_BREAKER_MS = opts.breakerMs;
     if (opts?.disableAfter) process.env.TMEX_RTC_DIAL_DISABLE_AFTER = opts.disableAfter;
@@ -345,7 +293,11 @@ describe('PeerManager DataChannel breaker', () => {
     const manager = new PeerManager({
       identity: self,
       userStore: store,
-      uplink: dummyUplink(self, store),
+      uplink: dummyUplink(self, store, undefined, {
+        wsFactory: () => {
+          throw new Error('no-ws');
+        },
+      }),
       peerPort: 0,
       startServer: false,
       rtc,

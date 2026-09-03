@@ -23,6 +23,7 @@ import {
   winningDialInitiator,
 } from './peer-manager';
 import { handshakeRelay, handshakeWsDirect } from './peer-protocol';
+import { dummyUplink, echoQuiesceCaps } from './peer-test-fixtures';
 import type { RtcPeerManager } from './rtc';
 import { encodeRtcWakeSdp, peerRtcSession } from './rtc/ice';
 import type { RtcLivenessOptions } from './rtc/rtc-peer-manager';
@@ -34,13 +35,7 @@ import {
   seedUser,
   waitUntil,
 } from './test-support';
-import {
-  type KeyLogApplier,
-  type MeshScheduler,
-  NodeUnreachableError,
-  type UplinkStatus,
-} from './types';
-import { UplinkClient } from './uplink-client';
+import { type MeshScheduler, NodeUnreachableError, type UplinkStatus } from './types';
 
 function keysMatchInitiator(
   live: { sendKey: Uint8Array; recvKey: Uint8Array } | null,
@@ -71,45 +66,6 @@ async function openInitiatorWs(
     identity,
     userStore: store,
   });
-}
-
-function dummyApplier(): KeyLogApplier {
-  return {
-    async head() {
-      return { seq: 0n, hash: new Uint8Array(32) };
-    },
-    async applyMany() {
-      return { applied: 0 };
-    },
-  };
-}
-
-function dummyUplink(
-  identity: { nodeId: string; edSecretKey: Uint8Array },
-  userStore: UserStore,
-  openRelay?: () => Promise<import('@tmex/shared/link').LinkStream>
-): UplinkClient {
-  const client = new UplinkClient({
-    hubUrl: 'https://hub.example.com',
-    identity,
-    userId: 'user-1',
-    keyLogApplier: dummyApplier(),
-    userStore,
-    statusProvider: (): UplinkStatus => ({
-      version: '1',
-      tmux: false,
-      direct_capable: false,
-      inventory: {},
-      endpoints: [],
-    }),
-    wsFactory: () => fakeSocketPair()[0],
-  });
-  if (openRelay) {
-    client.openRelay = async () => openRelay();
-    client.state = 'online';
-    client.link = createInMemoryLinkPair()[0];
-  }
-  return client;
 }
 
 const SMALL_NODE_ID = new Uint8Array(16).fill(0x01);
@@ -226,27 +182,6 @@ async function setupDirectRtcPair(
   fixtures.push({ close, stop: () => managerSmall.stop() });
   fixtures.push({ close, stop: () => managerLarge.stop() });
   return { store, small, large, managerSmall, managerLarge, wakes, fake };
-}
-
-function echoQuiesceCaps(session: import('@tmex/shared/link').LinkSession): void {
-  let helloReplied = false;
-  session.ctl.onMessage((bytes) => {
-    let msg: { t?: string };
-    try {
-      msg = JSON.parse(new TextDecoder().decode(bytes)) as { t?: string };
-    } catch {
-      return;
-    }
-    if (msg.t === 'link.hello' && !helloReplied) {
-      helloReplied = true;
-      session.ctl.send(
-        new TextEncoder().encode(JSON.stringify({ t: 'link.hello', caps: ['quiesce'] }))
-      );
-    }
-    if (msg.t === 'link.quiesce.probe') {
-      session.ctl.send(new TextEncoder().encode(JSON.stringify({ t: 'link.quiesce.probe.ack' })));
-    }
-  });
 }
 
 describe('PeerManager', () => {
