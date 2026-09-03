@@ -83,7 +83,6 @@ export {
   approveWeixinUser,
   createWeixinAccount,
   deleteWeixinAccount,
-  deleteWeixinUser,
   getAllWeixinAccounts,
   getWeixinAccountById,
   getWeixinAccountsWithStats,

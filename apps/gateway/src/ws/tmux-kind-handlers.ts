@@ -4,7 +4,7 @@ import {
   type BorshKindHandler,
   decoderHandler,
   schemaHandler,
-} from './borsh-dispatcher';
+} from './borsh-kind-types';
 import { createTmuxViewportHandlers } from './tmux-viewport-handlers';
 
 function fetchPaneHistoryHandler(host: BorshDispatchHost): BorshKindHandler<unknown> {

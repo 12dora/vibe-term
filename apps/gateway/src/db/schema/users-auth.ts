@@ -133,10 +133,3 @@ export const enrollmentTokens = sqliteTable(
   },
   (table) => [uniqueIndex('enrollment_tokens_enroll_public_key_unique').on(table.enrollPublicKey)]
 );
-
-export type UserRow = typeof users.$inferSelect;
-export type UserKeyRow = typeof userKeys.$inferSelect;
-export type UserKeyLogRow = typeof userKeyLog.$inferSelect;
-export type NodeSessionRow = typeof nodeSessions.$inferSelect;
-export type NodeCertRow = typeof nodeCerts.$inferSelect;
-export type EnrollmentTokenRow = typeof enrollmentTokens.$inferSelect;

@@ -132,7 +132,3 @@ export const userHubAuthorizations = sqliteTable(
 );
 
 export type NodeRow = typeof nodes.$inferSelect;
-export type NodeIdentityRow = typeof nodeIdentity.$inferSelect;
-export type PeerCacheRow = typeof peerCache.$inferSelect;
-export type HubTrustRow = typeof hubTrust.$inferSelect;
-export type MeshHubRow = typeof meshHubs.$inferSelect;

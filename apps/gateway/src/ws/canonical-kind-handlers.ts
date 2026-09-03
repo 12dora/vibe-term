@@ -1,5 +1,5 @@
 import { wsBorsh } from '@tmex/shared';
-import { type BorshDispatchHost, type BorshKindHandler, decoderHandler } from './borsh-dispatcher';
+import { type BorshDispatchHost, type BorshKindHandler, decoderHandler } from './borsh-kind-types';
 import { decodeCanonicalCommand } from './borsh/codec-borsh';
 
 export function createCanonicalKindHandlers(

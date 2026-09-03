@@ -173,9 +173,3 @@ export const nodeAccessPolicy = sqliteTable(
   },
   (table) => [check('node_access_policy_singleton_check', sql`${table.id} = 1`)]
 );
-
-export type TlsConfigRow = typeof tlsConfig.$inferSelect;
-export type TunnelConfigRow = typeof tunnelConfig.$inferSelect;
-export type TunnelAccessRow = typeof tunnelAccess.$inferSelect;
-export type LocalAuthSettingsRow = typeof localAuthSettings.$inferSelect;
-export type NodeAccessPolicyRow = typeof nodeAccessPolicy.$inferSelect;

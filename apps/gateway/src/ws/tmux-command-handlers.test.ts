@@ -4,11 +4,8 @@ import { wsBorsh } from '@tmex/shared';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { createGatewaySession, setupConnectionEntry } from './test-helpers';
-import {
-  type TmuxCommandHost,
-  handleFetchPaneHistory,
-  handleTmuxSelect,
-} from './tmux-command-handlers';
+import { type TmuxCommandHost, handleFetchPaneHistory } from './tmux-command-handlers';
+import { handleTmuxSelect } from './tmux-selection-handlers';
 
 function makeSnapshot(): StateSnapshotPayload {
   return {

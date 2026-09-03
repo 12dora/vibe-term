@@ -1,6 +1,6 @@
 import { wsBorsh } from '@tmex/shared';
 import { agentWsHub } from '../agent/ws-hub';
-import { type BorshDispatchHost, type BorshKindHandler, schemaHandler } from './borsh-dispatcher';
+import { type BorshDispatchHost, type BorshKindHandler, schemaHandler } from './borsh-kind-types';
 
 export function createAgentKindHandlers(
   host: BorshDispatchHost

@@ -1,5 +1,5 @@
 import { wsBorsh } from '@tmex/shared';
-import { type BorshDispatchHost, type BorshKindHandler, schemaHandler } from './borsh-dispatcher';
+import { type BorshDispatchHost, type BorshKindHandler, schemaHandler } from './borsh-kind-types';
 
 export function createTmuxViewportHandlers(
   host: BorshDispatchHost
