@@ -5,6 +5,7 @@ import {
   Loader2,
   Monitor,
   Network,
+  RadioTower,
   RotateCcw,
   Server,
   Settings as SettingsIcon,
@@ -40,6 +41,7 @@ import {
   startIdleChunkPreload,
 } from './settings/chunk-preload';
 import { prefetchTabData } from './settings/data-prefetch';
+import { useRelayAvailability } from './settings/relay/relay-status-store';
 import { useSiteSettingsForm } from './settings/use-site-settings-form';
 
 // 每个标签页独立成块：进设置页只下载当前标签的代码，切换过一次后 React.lazy 缓存模块，之后切换是同步的。
@@ -57,6 +59,7 @@ const loadTerminalSettingsTab = () =>
   import('@tmex/panels/settings/terminal').then((m) => m.TerminalSettingsTab);
 const loadRemoteAccessTab = () =>
   import('./settings/remote-access/remote-access-tab').then((m) => m.RemoteAccessTab);
+const loadRelayTab = () => import('./settings/relay/relay-tab').then((m) => m.RelayTab);
 
 const GeneralSettingsTab = lazyChunk(loadGeneralSettingsTab);
 const DevicesAndFilesTab = lazyChunk(loadDevicesAndFilesTab);
@@ -65,6 +68,7 @@ const NotificationSettingsTab = lazyChunk(loadNotificationSettingsTab);
 const AISettingsTab = lazyChunk(loadAISettingsTab);
 const TerminalSettingsTab = lazyChunk(loadTerminalSettingsTab);
 const RemoteAccessTab = lazyChunk(loadRemoteAccessTab);
+const RelayTab = lazyChunk(loadRelayTab);
 
 export type SettingsTab =
   | 'general'
@@ -73,8 +77,10 @@ export type SettingsTab =
   | 'notifications'
   | 'ai'
   | 'terminal'
-  | 'remoteAccess';
+  | 'remoteAccess'
+  | 'relay';
 
+/** 每台机器都有的标签：空闲预热与 `chunkPreloadOrder` 只认这一组。 */
 const SETTINGS_TABS: SettingsTab[] = [
   'general',
   'devicesAndFiles',
@@ -85,6 +91,12 @@ const SETTINGS_TABS: SettingsTab[] = [
   'remoteAccess',
 ];
 
+/**
+ * 按角色出现的标签：`relay` 只在本机带 relay 角色时才有（门禁见 `useRelayAvailability`）。
+ * **不进** `SETTINGS_TABS`——绝大多数机器不是中继，没理由让每次进设置页都把这块 chunk 拖下来。
+ */
+const OPTIONAL_SETTINGS_TABS: SettingsTab[] = ['relay'];
+
 const TAB_CHUNK_LOADERS: Record<SettingsTab, ChunkPreloadTarget> = {
   general: loadGeneralSettingsTab,
   devicesAndFiles: loadDevicesAndFilesTab,
@@ -93,6 +105,7 @@ const TAB_CHUNK_LOADERS: Record<SettingsTab, ChunkPreloadTarget> = {
   ai: loadAISettingsTab,
   terminal: loadTerminalSettingsTab,
   remoteAccess: loadRemoteAccessTab,
+  relay: loadRelayTab,
 };
 
 /** 预热顺序：当前标签自己在加载，排除掉；其余按标签栏顺序逐个排队。 */
@@ -121,8 +134,19 @@ const SETTINGS_TAB_BAR = [
   icon: typeof SettingsIcon;
 }[];
 
+/** 中继标签排在最后：它是运营者才有的东西，不该挤到日常设置前面。 */
+const RELAY_TAB_ITEM = {
+  value: 'relay',
+  labelKey: 'relay.admin.tabLabel',
+  icon: RadioTower,
+} as const satisfies { value: SettingsTab; labelKey: string; icon: typeof SettingsIcon };
+
 function isSettingsTab(value: string | null): value is SettingsTab {
-  return value !== null && (SETTINGS_TABS as string[]).includes(value);
+  if (value === null) return false;
+  return (
+    (SETTINGS_TABS as string[]).includes(value) ||
+    (OPTIONAL_SETTINGS_TABS as string[]).includes(value)
+  );
 }
 
 /** `?tab=` 的唯一解释处：缺失或不认识一律回「通用」。 */
@@ -136,18 +160,21 @@ export function settingsTabFromParam(value: string | null): SettingsTab {
  */
 const SettingsTabBar = memo(function SettingsTabBar({
   activeTab,
+  showRelay,
   onSelect,
   onWarm,
 }: {
   activeTab: SettingsTab;
+  showRelay: boolean;
   onSelect: (tab: SettingsTab) => void;
   onWarm: (tab: SettingsTab) => void;
 }) {
   const { t } = useTranslation();
+  const items = showRelay ? [...SETTINGS_TAB_BAR, RELAY_TAB_ITEM] : SETTINGS_TAB_BAR;
   return (
     <Tabs value={activeTab} onValueChange={(value) => onSelect(value as SettingsTab)}>
       <TabsList className="w-full gap-1 !justify-start overflow-x-auto rounded-xl border border-border/60 p-1.5 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {SETTINGS_TAB_BAR.map((item) => {
+        {items.map((item) => {
           const Icon = item.icon;
           return (
             <TabsTrigger
@@ -202,6 +229,8 @@ function SettingsTabPanels({ activeTab }: { activeTab: SettingsTab }) {
         {activeTab === 'terminal' && <TerminalSettingsTab />}
 
         {activeTab === 'remoteAccess' && <RemoteAccessTab />}
+
+        {activeTab === 'relay' && <RelayTab />}
       </Suspense>
     </Reveal>
   );
@@ -220,6 +249,9 @@ export default function SettingsPage() {
 
   // 数据预取要落到这条路由 node 自己的 QueryClient 上（每个 node 一份），
   // 与 NodeRuntimeBoundary 里那个 provider 取的是同一个实例。
+  // 「中继」标签的门禁：进设置页探一次 `/api/relay/status`，404（角色缺席）就不摆这个标签。
+  const relayAvailability = useRelayAvailability();
+
   const routeNodeId = useRouteNodeId();
   const runtime = useOptionalRuntime();
   // 每次进设置页各标签只预取一次：鼠标扫过标签栏不该把请求发好几遍。
@@ -252,7 +284,12 @@ export default function SettingsPage() {
       className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-3 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:gap-6 sm:p-5"
       data-testid="settings-page"
     >
-      <SettingsTabBar activeTab={activeTab} onSelect={selectTab} onWarm={warmTab} />
+      <SettingsTabBar
+        activeTab={activeTab}
+        showRelay={relayAvailability === 'available'}
+        onSelect={selectTab}
+        onWarm={warmTab}
+      />
       <SettingsTabPanels activeTab={activeTab} />
     </div>
   );
