@@ -424,7 +424,7 @@ export async function callHub(
 type EnrollOpts = {
   name: string;
   version: string;
-  roles: { hub: boolean; node: boolean };
+  roles: { hub: boolean; node: boolean; relay: boolean };
   hubUrl: string | null;
   hubUrls?: string[];
   hubPublicUrl?: string | null;

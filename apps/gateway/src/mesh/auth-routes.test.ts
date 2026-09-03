@@ -200,7 +200,7 @@ export const dummyServer = { upgrade: () => true };
 
 // biome-ignore lint/suspicious/noExportsInTest: shared harness
 export async function bootMesh(options?: {
-  roles?: { hub: boolean; node: boolean };
+  roles?: { hub: boolean; node: boolean; relay: boolean };
   now?: () => number;
   peers?: FakePeers;
   streams?: FakeStreams;

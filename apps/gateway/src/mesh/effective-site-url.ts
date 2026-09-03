@@ -9,7 +9,7 @@ export type MeshHubUrlLookup = {
 };
 
 export type MeshSiteSettingsLinkInput = {
-  roles: { hub: boolean; node: boolean };
+  roles: { hub: boolean; node: boolean; relay: boolean };
   localNodeId: () => string | null;
   hubStore: MeshHubUrlLookup | null;
   attachedHub: () => { publicUrl: string } | null;
