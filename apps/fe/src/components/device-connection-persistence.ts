@@ -19,6 +19,7 @@ export function disconnectedDevicesKey(storagePrefix: string): string {
 
 function resolveStorage(storage?: DeviceIdStorage | null): DeviceIdStorage | null {
   if (storage) return storage;
+  if (storage === null) return null;
   try {
     return typeof localStorage === 'undefined' ? null : localStorage;
   } catch {

@@ -1,9 +1,17 @@
 // 无 DOM 环境，用 react-dom/server 静态渲染断言结构（与 device-card.test.tsx 同一套做法）。
 // 交互态（重命名 / 新建行）由外部 props 驱动的 FolderSection / FolderNameEditor 直接覆盖。
 
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import type { DeviceFolder, DeviceFolderLayout } from '@tmex/shared';
 import { renderToStaticMarkup } from 'react-dom/server';
+import * as actualReactI18next from 'react-i18next';
+
+// 本文件断言的是 i18n key（不是译文）；此前靠别的测试文件泄漏的 react-i18next mock 才通过，
+// 文件顺序一变（Linux CI）就拿到真译文。自己声明，并转发真实模块其余导出。
+mock.module('react-i18next', () => ({
+  ...actualReactI18next,
+  useTranslation: () => ({ t: (key: string) => key, i18n: actualReactI18next.getI18n?.() }),
+}));
 
 import { DeviceFolderTree } from './device-folder-tree';
 import { FolderNameEditor } from './folder-name-editor';
