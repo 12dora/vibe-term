@@ -31,7 +31,7 @@ import { weixinService } from './weixin/service';
 import { WebSocketServer } from './ws';
 import { startGatewayEventLoopLag, stopGatewayEventLoopLag } from './ws/event-loop-lag';
 import type { GatewaySocketData } from './ws/types';
-import { GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES } from './ws/websocket-send-guard';
+import { GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES } from './ws/websocket-send-guard';
 
 interface GatewayRuntimeOptions {
   runMigrationsOnStart?: boolean;
@@ -69,7 +69,7 @@ export interface GatewayRuntime {
 
 function noopWebsocket(): GatewayRuntime['websocket'] {
   return {
-    backpressureLimit: GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
+    backpressureLimit: GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES,
     closeOnBackpressureLimit: true,
     open() {},
     message() {},
@@ -215,7 +215,7 @@ export async function createGatewayRuntime(
       return json({ error: t('apiError.notFound') }, 404);
     },
     websocket: {
-      backpressureLimit: GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
+      backpressureLimit: GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES,
       closeOnBackpressureLimit: true,
       open(ws) {
         wsServer.handleOpen(ws as Bun.ServerWebSocket<GatewaySocketData>);

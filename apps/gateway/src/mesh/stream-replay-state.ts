@@ -72,7 +72,7 @@ export class StreamReplayState {
 
   private tryDecodeEnvelope(bytes: Uint8Array): wsBorsh.Envelope | null {
     try {
-      return wsBorsh.decodeEnvelope(bytes);
+      return wsBorsh.decodeEnvelopeView(bytes);
     } catch {
       return null;
     }

@@ -539,7 +539,7 @@ export async function acceptWsStream(
       if (!value) continue;
       let envelope: wsBorsh.Envelope;
       try {
-        envelope = wsBorsh.decodeEnvelope(value.bytes);
+        envelope = wsBorsh.decodeEnvelopeView(value.bytes);
       } catch {
         teardown('rst', 'invalid-ws-frame');
         return;

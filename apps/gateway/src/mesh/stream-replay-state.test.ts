@@ -682,3 +682,167 @@ describe('StreamReplayState canonical failover replay', () => {
     expect(replay.browserSignalFrames()).toHaveLength(1);
   });
 });
+
+function encodeTermOutput(data: Uint8Array, seq = 9): Uint8Array {
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_TERM_OUTPUT,
+    wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
+      deviceId: 'dev-1',
+      paneId: '%1',
+      encoding: 0,
+      data,
+    }),
+    seq
+  );
+}
+
+function replayDecisionSnapshot(replay: StreamReplayState) {
+  return {
+    devices: [...replay.devices.keys()].sort(),
+    paneSubs: [...replay.paneSubs.keys()].sort(),
+    lastSelect: [...replay.lastSelect.keys()].sort(),
+    agents: [...replay.agents.keys()].sort(),
+    canonicalGeneration: replay.canonicalSub?.generation ?? null,
+    canonicalActive: replay.canonicalSub?.activePanes.map((row) => row.pane.paneId) ?? [],
+    describe: replay.describeReplay(),
+    resumeReady: replay.isResumeReady(),
+    helloBytes: replay.hello?.byteLength ?? 0,
+    clientMaxFromHello: replay.hello
+      ? wsBorsh.decodePayload(
+          wsBorsh.schema.HelloC2SSchema,
+          wsBorsh.decodeEnvelopeView(replay.hello).payload
+        ).maxFrameBytes
+      : null,
+  };
+}
+
+describe('StreamReplayState decodeEnvelopeView', () => {
+  test('recorded frame sequence yields identical replay decisions', () => {
+    const replay = new StreamReplayState();
+    const epoch = new Uint8Array(16).fill(3);
+    const pane = { deviceId: 'dev-1', serverEpoch: epoch, paneId: '%1' };
+    const inboundNotes: Array<{ kind: number | null; deviceId?: string }> = [];
+
+    replay.noteOutbound(encodeHelloC2S(65_536));
+    replay.noteOutbound(encodeDeviceConnect('dev-1'));
+    replay.noteOutbound(encodeSubscribe('dev-1', ['%1', '%2']));
+    replay.noteOutbound(
+      wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_TMUX_SELECT,
+        wsBorsh.encodePayload(wsBorsh.schema.TmuxSelectSchema, {
+          deviceId: 'dev-1',
+          windowId: '@1',
+          paneId: '%1',
+          selectToken: new Uint8Array(16),
+          wantHistory: true,
+          cols: 120,
+          rows: 32,
+        }),
+        4
+      )
+    );
+    replay.noteOutbound(
+      wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_AGENT_SUBSCRIBE,
+        wsBorsh.encodePayload(wsBorsh.schema.AgentSubscribeSchema, { sessionId: 'ag-1' }),
+        5
+      )
+    );
+    replay.noteOutbound(
+      encodeCanonicalSubscription(2n, [{ pane, cursor: { paneEpoch: epoch, terminalSeq: 0n } }])
+    );
+    replay.noteOutbound(encodeTermOutput(new Uint8Array(32 * 1024).fill(0x41), 10));
+
+    inboundNotes.push(replay.noteInbound(encodeHelloS2C(65_536)));
+    inboundNotes.push(replay.noteInbound(encodeDeviceConnected('dev-1')));
+    inboundNotes.push(
+      replay.noteInbound(
+        encodeCanonicalEvent({
+          PaneData: {
+            pane,
+            paneEpoch: epoch,
+            seqStart: 0n,
+            seqEnd: 4n,
+            data: new Uint8Array([1, 2, 3, 4]),
+          },
+        })
+      )
+    );
+    inboundNotes.push(
+      replay.noteInbound(
+        wsBorsh.encodeEnvelope(wsBorsh.KIND_STATE_SNAPSHOT, new Uint8Array([0, 0, 0, 0]), 11)
+      )
+    );
+    inboundNotes.push(replay.noteInbound(new Uint8Array([1, 2, 3])));
+
+    expect(inboundNotes).toEqual([
+      { kind: wsBorsh.KIND_HELLO_S2C },
+      { kind: wsBorsh.KIND_DEVICE_CONNECTED, deviceId: 'dev-1' },
+      { kind: wsBorsh.KIND_CANONICAL_EVENT },
+      { kind: wsBorsh.KIND_STATE_SNAPSHOT },
+      { kind: null },
+    ]);
+    expect(replayDecisionSnapshot(replay)).toEqual({
+      devices: ['dev-1'],
+      paneSubs: [],
+      lastSelect: ['dev-1'],
+      agents: ['ag-1'],
+      canonicalGeneration: 2n,
+      canonicalActive: ['%1'],
+      describe: { mode: 'canonical', panes: '%1', cursor: '%1:4' },
+      resumeReady: true,
+      helloBytes: encodeHelloC2S(65_536).byteLength,
+      clientMaxFromHello: 65_536,
+    });
+
+    replay.noteOutbound(encodeDeviceDisconnect('dev-1'));
+    replay.noteOutbound(
+      wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_AGENT_UNSUBSCRIBE,
+        wsBorsh.encodePayload(wsBorsh.schema.AgentUnsubscribeSchema, { sessionId: 'ag-1' }),
+        12
+      )
+    );
+    expect(replay.devices.size).toBe(0);
+    expect(replay.agents.size).toBe(0);
+    expect(replay.describeReplay()).toEqual({ mode: 'canonical', panes: '-', cursor: '-' });
+  });
+
+  test('stored outbound copies survive mutation of the original buffer', () => {
+    const replay = new StreamReplayState();
+    const hello = encodeHelloC2S(32_768);
+    const connect = encodeDeviceConnect('dev-keep');
+    replay.noteOutbound(hello);
+    replay.noteOutbound(connect);
+    hello.fill(0);
+    connect.fill(0);
+    expect(replay.hello).not.toBeNull();
+    expect(wsBorsh.decodeEnvelopeView(replay.hello as Uint8Array).kind).toBe(
+      wsBorsh.KIND_HELLO_C2S
+    );
+    expect(
+      wsBorsh.decodePayload(
+        wsBorsh.schema.DeviceConnectSchema,
+        wsBorsh.decodeEnvelopeView([...replay.devices.values()][0] as Uint8Array).payload
+      ).deviceId
+    ).toBe('dev-keep');
+  });
+
+  test('decodeEnvelopeView is at least 10× faster than decodeEnvelope on a 32 KiB frame', () => {
+    const frame = encodeTermOutput(new Uint8Array(32 * 1024).fill(0x42), 1);
+    const iterations = 400;
+    for (let i = 0; i < 40; i += 1) {
+      wsBorsh.decodeEnvelope(frame);
+      wsBorsh.decodeEnvelopeView(frame);
+    }
+    const copyStart = performance.now();
+    for (let i = 0; i < iterations; i += 1) wsBorsh.decodeEnvelope(frame);
+    const copyMs = performance.now() - copyStart;
+    const viewStart = performance.now();
+    for (let i = 0; i < iterations; i += 1) wsBorsh.decodeEnvelopeView(frame);
+    const viewMs = performance.now() - viewStart;
+    expect(wsBorsh.decodeEnvelopeView(frame).kind).toBe(wsBorsh.decodeEnvelope(frame).kind);
+    expect(wsBorsh.decodeEnvelopeView(frame).seq).toBe(wsBorsh.decodeEnvelope(frame).seq);
+    expect(viewMs * 10).toBeLessThan(copyMs);
+  });
+});

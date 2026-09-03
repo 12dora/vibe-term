@@ -205,8 +205,8 @@
     "cc": 16
   },
   "apps/gateway/src/mesh/peer-manager.ts": {
-    "fileLines": 1930,
-    "reason": "共享链路生命周期状态机，S1 判定无干净拆分缝"
+    "fileLines": 1939,
+    "reason": "共享链路生命周期状态机，S1 判定无干净拆分缝；round22 加 DC 放弃态三处唤醒接线（+9 行）"
   },
   "apps/gateway/src/mesh/peer-manager.ts:applyPeerStatus": {
     "cc": 19,
