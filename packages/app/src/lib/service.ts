@@ -106,6 +106,13 @@ export function buildLaunchdPlist({
   <true/>
   <key>AbandonProcessGroup</key>
   <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TMEX_LOG_FILE</key>
+    <string>${escapeXml(join(installDir, 'tmex.log'))}</string>
+    <key>TMEX_LOG_ERR_FILE</key>
+    <string>${escapeXml(join(installDir, 'tmex.err.log'))}</string>
+  </dict>
   <key>StandardOutPath</key>
   <string>${escapeXml(join(installDir, 'tmex.log'))}</string>
   <key>StandardErrorPath</key>

@@ -1,4 +1,5 @@
 import { agentWsHub } from '../agent/ws-hub';
+import { logAt } from '../log/level';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import type { CanonicalFeedSession } from './canonical-feed-session';
@@ -7,6 +8,29 @@ import type { GatewaySession } from './gateway-session';
 import type { LegacyFeedBroadcaster } from './legacy-feed-broadcaster';
 import type { DeviceConnectionEntry } from './types';
 import { gatewayWebSocketSendGuard } from './websocket-send-guard';
+
+export function formatWsClientFields(session: GatewaySession): string {
+  const carrier = session.activeCarrier ?? session.primary;
+  const kind = carrier.logContext?.kind ?? 'unknown';
+  return `session=${session.id} carrier=${kind}`;
+}
+
+export function logWsClientConnected(session: GatewaySession): void {
+  logAt('debug', `[ws] client connected ${formatWsClientFields(session)}`);
+}
+
+export function logWsClientDisconnected(
+  session: GatewaySession,
+  code: number,
+  reason: string
+): void {
+  const level = code === 1000 || code === 1001 ? 'debug' : 'info';
+  const safeReason = reason.replace(/[\r\n]+/g, ' ');
+  logAt(
+    level,
+    `[ws] client disconnected ${formatWsClientFields(session)} code=${code} reason=${safeReason}`
+  );
+}
 
 export interface SessionCloseHost {
   onSessionClosed: ((session: GatewaySession) => void) | null;
@@ -29,7 +53,7 @@ export function closeGatewaySession(
     return;
   }
   session.closed = true;
-  console.log('[ws] client disconnected');
+  logWsClientDisconnected(session, code, reason);
   try {
     host.onSessionClosed?.(session);
   } catch {

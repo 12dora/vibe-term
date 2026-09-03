@@ -593,6 +593,8 @@ describe('RtcPeerManager', () => {
     const { left, right, a, b } = setup();
     const lines: string[] = [];
     const orig = console.log;
+    const prevLevel = process.env.TMEX_LOG_LEVEL;
+    process.env.TMEX_LOG_LEVEL = 'debug';
     console.log = (...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
     };
@@ -601,6 +603,8 @@ describe('RtcPeerManager', () => {
       await Promise.all([left.connectToPeer(b.nodeId, sigA), right.connectToPeer(a.nodeId, sigB)]);
     } finally {
       console.log = orig;
+      if (prevLevel === undefined) delete process.env.TMEX_LOG_LEVEL;
+      else process.env.TMEX_LOG_LEVEL = prevLevel;
     }
     const rtc = lines.filter((line) => line.includes('[mesh][rtc]'));
     expect(rtc.some((line) => line.includes('dial start'))).toBe(true);

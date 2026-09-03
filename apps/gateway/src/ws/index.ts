@@ -39,7 +39,7 @@ import {
 } from './gateway-metrics-log';
 import { GatewaySession } from './gateway-session';
 import { LegacyFeedBroadcaster, type LegacyFeedHost } from './legacy-feed-broadcaster';
-import { closeGatewaySession } from './session-close';
+import { closeGatewaySession, logWsClientConnected } from './session-close';
 import { type SnapshotOverlayHost, SnapshotOverlayStore } from './snapshot-overlays';
 import { TerminalOutputBatcher } from './terminal-output-batcher';
 import { TerminalOutputMetrics } from './terminal-output-metrics';
@@ -196,8 +196,8 @@ export class WebSocketServer
   }
 
   handleOpen(ws: ServerWebSocket<GatewaySocketData> | GatewaySession): void {
-    console.log('[ws] client connected');
     const session = ws instanceof GatewaySession ? ws : this.bindSocket(ws);
+    logWsClientConnected(session);
     session.onCarrierDetached = (carrier) => {
       gatewayWebSocketSendGuard.forget(carrier);
     };

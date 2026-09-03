@@ -33,6 +33,8 @@ describe('rtc-log', () => {
   test('rate-limits repeated candidate lines with the same key', () => {
     const lines: string[] = [];
     const orig = console.log;
+    const prevLevel = process.env.TMEX_LOG_LEVEL;
+    process.env.TMEX_LOG_LEVEL = 'debug';
     console.log = (...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
     };
@@ -42,6 +44,8 @@ describe('rtc-log', () => {
       rtcLogRateLimited('k2', 'signal', { peer: 'p', kind: 'candidate' }, 60_000);
     } finally {
       console.log = orig;
+      if (prevLevel === undefined) delete process.env.TMEX_LOG_LEVEL;
+      else process.env.TMEX_LOG_LEVEL = prevLevel;
     }
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('[mesh][rtc] signal');

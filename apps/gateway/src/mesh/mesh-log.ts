@@ -1,3 +1,8 @@
+import { shouldLog } from '../log/level';
+import { maybeInstallProcessLogRotation } from '../log/rotate';
+
+maybeInstallProcessLogRotation();
+
 const STAMPED_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z /;
 
 export function isoNow(date = new Date()): string {
@@ -15,15 +20,23 @@ export function stamp(line: string, now = new Date()): string {
 }
 
 export function logLine(tag: string, msg = '', now = new Date()): void {
+  if (!shouldLog('info')) return;
   console.log(formatLogLine(tag, msg, now));
 }
 
 export function warnLine(tag: string, msg = '', now = new Date()): void {
+  if (!shouldLog('warn')) return;
   console.warn(formatLogLine(tag, msg, now));
 }
 
 export function infoLine(tag: string, msg = '', now = new Date()): void {
+  if (!shouldLog('info')) return;
   console.info(formatLogLine(tag, msg, now));
+}
+
+export function debugLine(tag: string, msg = '', now = new Date()): void {
+  if (!shouldLog('debug')) return;
+  console.log(formatLogLine(tag, msg, now));
 }
 
 export function envInt(name: string, fallback: number, min = 0): number {

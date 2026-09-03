@@ -1,3 +1,4 @@
+import { type LogLevel, logAt } from '../../log/level';
 import { stamp } from '../mesh-log';
 import { maskIceAddress, maskIceCandidate, parseIceCandidateType } from './ice';
 
@@ -44,12 +45,32 @@ export function formatRtcLog(event: string, fields: Record<string, unknown> = {}
     : `${RTC_LOG_PREFIX} ${event}`;
 }
 
+const RTC_DEBUG_EVENTS = new Set<string>([
+  'dial start',
+  'signal send',
+  'signal recv',
+  'signal',
+  'datachannel created',
+  'datachannel received',
+  'gathering',
+  'selected pair',
+  'upgrade retry',
+]);
+
+export function rtcLogLevel(event: string): LogLevel {
+  return RTC_DEBUG_EVENTS.has(event) ? 'debug' : 'info';
+}
+
+function emitRtc(line: string, level: LogLevel): void {
+  logAt(level, stamp(line));
+}
+
 export function rtcLog(event: string, fields: Record<string, unknown> = {}): void {
   if (event === 'dial failed' && typeof fields.peer === 'string') {
     logDialFailed(fields.peer, fields);
     return;
   }
-  console.log(stamp(formatRtcLog(event, fields)));
+  emitRtc(formatRtcLog(event, fields), rtcLogLevel(event));
 }
 
 export function resetRtcLogStateForTest(): void {
@@ -65,7 +86,7 @@ export function flushDialFailed(peer: string, fields: Record<string, unknown> = 
   }
   const count = rec.suppressed;
   dialFailedAt.delete(peer);
-  console.log(stamp(formatRtcLog('dial failed', { peer, ...fields, count })));
+  emitRtc(formatRtcLog('dial failed', { peer, ...fields, count }), 'info');
 }
 
 function logDialFailed(peer: string, fields: Record<string, unknown>): void {
@@ -80,7 +101,7 @@ function logDialFailed(peer: string, fields: Record<string, unknown>): void {
   rec.at = now;
   rec.suppressed = 0;
   dialFailedAt.set(peer, rec);
-  console.log(stamp(formatRtcLog('dial failed', { ...fields, count })));
+  emitRtc(formatRtcLog('dial failed', { ...fields, count }), 'info');
 }
 
 export function rtcLogRateLimited(

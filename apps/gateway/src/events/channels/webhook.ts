@@ -1,6 +1,12 @@
 import type { EventType, WebhookEndpoint, WebhookEvent } from '@tmex/shared';
 import { getAllWebhookEndpoints, getSiteSettings } from '../../db';
+import { logAt } from '../../log/level';
 import type { NotificationChannel } from './types';
+
+export function webhookConfigRefreshLine(count: number): string | null {
+  if (count <= 0) return null;
+  return `[events] refreshed config: ${count} webhooks`;
+}
 
 export class WebhookChannel implements NotificationChannel {
   readonly id = 'webhook';
@@ -16,7 +22,9 @@ export class WebhookChannel implements NotificationChannel {
     this.webhooks = getAllWebhookEndpoints().filter((w) => w.enabled);
     this.lastRefresh = now;
 
-    console.log(`[events] refreshed config: ${this.webhooks.length} webhooks`);
+    const line = webhookConfigRefreshLine(this.webhooks.length);
+    if (!line) return;
+    logAt('info', line);
   }
 
   async notify(eventType: EventType, event: WebhookEvent): Promise<void> {
