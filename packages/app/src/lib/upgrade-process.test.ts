@@ -10,7 +10,9 @@ import {
   createDirectProcessControl,
   formatPidRecord,
   killPidAndWait,
-  parsePidRecord,, processCommandLine } from './upgrade-process';
+  parsePidRecord,
+  processCommandLine,
+} from './upgrade-process';
 
 const tempDirs: string[] = [];
 const livePids: number[] = [];
