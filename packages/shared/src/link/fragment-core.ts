@@ -64,6 +64,7 @@ export class FragmentAssembler {
   private timer: unknown = null;
   private readonly pending = new Map<number, Pending>();
   private readonly order: number[] = [];
+  private earliestDeadline = Number.POSITIVE_INFINITY;
   private readonly o: Opts;
 
   constructor(o: Partial<Opts> & Pick<Opts, 'maxFrameBytes' | 'maxTotal' | 'refreshDeadline'>) {
@@ -86,6 +87,7 @@ export class FragmentAssembler {
     this.pending.clear();
     this.order.length = 0;
     this.pendingBytes = 0;
+    this.earliestDeadline = Number.POSITIVE_INFINITY;
   }
 
   dispose(): void {
@@ -100,19 +102,31 @@ export class FragmentAssembler {
     this.armTimer();
   }
 
+  // 单片返回 payload 视图（与 decodeEnvelopeView 相同：调用方不得改写，也不得跨回调长期持有）。
+  // 多片在末片一次性分配输出，每片只拷一次。
   push(chunk: Uint8Array, fail: (kind: FragmentFail, message: string) => null): Uint8Array | null {
     const o = this.o;
     try {
       if (this.disposed) return null;
       const head = this.readHeader(chunk, fail);
       if (!head) return null;
-      const { frameId, idx } = head;
+      const { frameId, idx, total } = head;
       const now = o.now();
       this.expire(now);
-      const frame = this.openFrame(frameId, head.total, now);
+      const piece = chunk.subarray(FRAGMENT_HEADER_SIZE);
+      if (total === 1) {
+        if (piece.byteLength > o.maxFrameBytes) {
+          return fail('frame-too-large', `reassembled frame exceeds ${o.maxFrameBytes} bytes`);
+        }
+        if (this.pending.size > 0) this.drop(frameId);
+        return piece;
+      }
+      const frame = this.openFrame(frameId, total, now);
       if (frame.chunks[idx]) return null;
-      if (o.refreshDeadline) frame.deadline = o.now() + o.timeoutMs;
-      const piece = chunk.subarray(FRAGMENT_HEADER_SIZE).slice();
+      if (o.refreshDeadline) {
+        frame.deadline = o.now() + o.timeoutMs;
+        this.earliestDeadline = Math.min(this.earliestDeadline, frame.deadline);
+      }
       if (frame.bytes + piece.byteLength > o.maxFrameBytes) {
         this.drop(frameId);
         return fail('frame-too-large', `reassembled frame exceeds ${o.maxFrameBytes} bytes`);
@@ -169,19 +183,28 @@ export class FragmentAssembler {
     const frame = { total, received: 0, bytes: 0, chunks, deadline: now + this.o.timeoutMs };
     this.pending.set(frameId, frame);
     this.order.push(frameId);
+    this.earliestDeadline = Math.min(this.earliestDeadline, frame.deadline);
     return frame;
   }
 
   private expire(now: number): void {
-    for (const [id, frame] of this.pending) if (frame.deadline <= now) this.drop(id);
+    if (this.pending.size === 0 || now < this.earliestDeadline) return;
+    let next = Number.POSITIVE_INFINITY;
+    for (const [id, frame] of this.pending) {
+      if (frame.deadline <= now) this.drop(id);
+      else if (frame.deadline < next) next = frame.deadline;
+    }
+    this.earliestDeadline = this.pending.size === 0 ? Number.POSITIVE_INFINITY : next;
   }
 
   private drop(frameId: number): void {
     const frame = this.pending.get(frameId);
-    if (frame) this.pendingBytes -= frame.bytes;
+    if (!frame) return;
+    this.pendingBytes -= frame.bytes;
     this.pending.delete(frameId);
     const at = this.order.indexOf(frameId);
     if (at >= 0) this.order.splice(at, 1);
+    if (this.pending.size === 0) this.earliestDeadline = Number.POSITIVE_INFINITY;
   }
 
   private armTimer(): void {
@@ -189,10 +212,7 @@ export class FragmentAssembler {
     if (!setTimeoutFn || !clearTimeoutFn) return;
     this.clearTimer();
     if (this.disposed || this.pending.size === 0) return;
-    let earliest = Number.POSITIVE_INFINITY;
-    for (const frame of this.pending.values()) earliest = Math.min(earliest, frame.deadline);
-    if (earliest === Number.POSITIVE_INFINITY) return;
-    const delay = Math.max(0, earliest - this.o.now());
+    const delay = Math.max(0, this.earliestDeadline - this.o.now());
     this.timer = setTimeoutFn(() => {
       this.timer = null;
       this.sweep();

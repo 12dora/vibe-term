@@ -6,7 +6,7 @@ import {
   DC_REGULAR_QUEUE_CAP,
   DataChannelCarrier,
 } from './data-channel-carrier';
-import { FRAGMENT_HEADER_SIZE, FRAGMENT_PAYLOAD_SIZE } from './fragmenter';
+import { FRAGMENT_HEADER_SIZE, FRAGMENT_PAYLOAD_SIZE, fragmentFrame } from './fragmenter';
 import { encodeLivenessChunk, parseLivenessChunk } from './liveness';
 import { pairDataChannels } from './test-fakes';
 
@@ -145,6 +145,36 @@ describe('DataChannelCarrier', () => {
     a.sendMessageBinary(Buffer.from(bad));
     expect(closed).toBe(1);
     expect(b.closed).toBe(true);
+  });
+
+  test('inbound single-fragment frame is a view of the delivered buffer', () => {
+    const [, b] = pairDataChannels();
+    const right = new DataChannelCarrier(b);
+    let got: Uint8Array | undefined;
+    right.onMessage((bytes) => {
+      got = bytes;
+    });
+    const payload = new Uint8Array([9, 8, 7]);
+    const chunk = fragmentFrame(1, payload)[0] as Uint8Array;
+    const buf = Buffer.from(chunk);
+    b.emitMessage(buf);
+    expect(got).toEqual(payload);
+    expect(got?.buffer).toBe(buf.buffer);
+  });
+
+  test('queues inbound frames as views that remain valid after onMessage returns', () => {
+    const [, b] = pairDataChannels();
+    const right = new DataChannelCarrier(b);
+    const payload = new Uint8Array([1, 2, 3, 4]);
+    const chunk = fragmentFrame(7, payload)[0] as Uint8Array;
+    const buf = Buffer.from(chunk);
+    b.emitMessage(buf);
+    let got: Uint8Array | undefined;
+    right.onMessage((bytes) => {
+      got = bytes;
+    });
+    expect(got).toEqual(payload);
+    expect(got?.buffer).toBe(buf.buffer);
   });
 
   test('replies to liveness ping without delivering it as a session frame', () => {

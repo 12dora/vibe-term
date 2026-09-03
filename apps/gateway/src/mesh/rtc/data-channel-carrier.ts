@@ -65,7 +65,9 @@ export class DataChannelCarrier implements Carrier {
     });
     channel.onMessage((msg) => {
       if (this.closed) return;
-      const bytes = copyBytes(toUint8Array(msg));
+      // node-datachannel 0.33.1 每条二进制消息都 Napi::Buffer::Copy 出独立 Buffer，不复用；
+      // 9 字节 liveness 探针只在回调内读完，不留存。与主 ws 路径一样把视图交给下游。
+      const bytes = toUint8Array(msg);
       const livenessKind = parseLivenessChunk(bytes);
       if (livenessKind === 'ping') {
         this.sendLiveness('pong');
