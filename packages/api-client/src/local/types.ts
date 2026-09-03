@@ -1,6 +1,6 @@
 import type { TlsMode } from './tls-types';
 
-export type LocalRole = 'standalone' | 'node' | 'hub,node';
+export type LocalRole = 'standalone' | 'node' | 'hub,node' | 'relay' | 'relay,node';
 
 export interface LocalDirectStatus {
   supported: boolean;

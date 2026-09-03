@@ -34,7 +34,7 @@ import { createInstallLayout } from '../lib/install-layout';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { readInstalledNativeManifest } from '../lib/native-datachannel';
 import { detectCurrentNativePin } from '../lib/native-manifest';
-import { type TmexRoles, roleNameFromFlags } from '../lib/roles';
+import { type TmexRoleName, type TmexRoles, roleNameFromFlags } from '../lib/roles';
 import { fingerprintPublicKey } from '../lib/totp-uri';
 
 export const SETUP_RESTART_DELAY_MS = 300;
@@ -65,7 +65,7 @@ export type DirectStatus = {
 };
 
 export type LocalStatus = {
-  role: 'standalone' | 'node' | 'hub,node';
+  role: TmexRoleName;
   nodeEnv: EnvName;
   hubUrl: string | null;
   hubPublicUrl: string | null;
