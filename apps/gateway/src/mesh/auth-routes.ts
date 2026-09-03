@@ -59,6 +59,7 @@ import {
   loadAuthModeTls,
   withAuthModeInvalidation,
 } from './auth-mode-cache';
+import { AUTH_LOGIN_PUBLIC_PATHS } from './auth-public-paths';
 import { handleTotpRecordRequest } from './auth-totp-record';
 import { clientIpFromRequest } from './client-ip';
 import { isPeerRequest, waivesPasskeySecondFactor } from './client-source';
@@ -88,7 +89,7 @@ import {
 import { type AttachedHub, sameHubUrl } from './uplink-pool';
 
 export type { KeyLogHubAck };
-export { findPrimaryUser, isPasskeyAvailable };
+export { AUTH_LOGIN_PUBLIC_PATHS, findPrimaryUser, isPasskeyAvailable };
 
 export type AuthKeyLogPublisher = KeyLogPublisher;
 
@@ -141,15 +142,6 @@ export type AuthRoutesDeps = {
   localAuth?: LocalAuthStoreLike;
   forwardWriterWrite?: (req: Request, uid?: string) => Promise<Response | null>;
 };
-
-/** 与 node 相同的登录前公开面；role 无关。 */
-export const AUTH_LOGIN_PUBLIC_PATHS = new Set([
-  '/api/auth/mode',
-  '/api/auth/nodes',
-  '/api/auth/challenge',
-  '/api/auth/login',
-  '/api/auth/passkey/login/options',
-]);
 
 /** standalone 门未生效时允许无会话触达的本机登录开关。 */
 export const AUTH_LOCAL_PRESESSION_PATHS = new Set([

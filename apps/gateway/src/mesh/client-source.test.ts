@@ -104,16 +104,73 @@ describe('isTrustedLocalClient', () => {
     ).toBe(false);
   });
 
-  test('XFF private with trustProxy is trusted', () => {
+  test('public socket cannot spoof local via x-real-ip even with trustProxy', () => {
     expect(
       isTrustedLocalClient(
         makeReq({
           ip: '203.0.113.10',
           trustProxy: true,
+          headers: { 'x-real-ip': '10.0.0.8' },
+        })
+      )
+    ).toBe(false);
+  });
+
+  test('public socket cannot spoof local via XFF ending in private', () => {
+    expect(
+      isTrustedLocalClient(
+        makeReq({
+          ip: '203.0.113.10',
+          trustProxy: true,
+          headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.8' },
+        })
+      )
+    ).toBe(false);
+  });
+
+  test('loopback socket + XFF private with trustProxy is trusted', () => {
+    expect(
+      isTrustedLocalClient(
+        makeReq({
+          ip: '127.0.0.1',
+          trustProxy: true,
           headers: { 'x-forwarded-for': '192.168.1.5' },
         })
       )
     ).toBe(true);
+  });
+
+  test('loopback socket + XFF public with trustProxy is not trusted', () => {
+    expect(
+      isTrustedLocalClient(
+        makeReq({
+          ip: '127.0.0.1',
+          trustProxy: true,
+          headers: { 'x-forwarded-for': '203.0.113.10' },
+        })
+      )
+    ).toBe(false);
+  });
+
+  test('blank XFF header with trustProxy off is fail-closed', () => {
+    expect(
+      isTrustedLocalClient(
+        makeReq({
+          ip: '127.0.0.1',
+          trustProxy: false,
+          headers: { 'x-forwarded-for': '' },
+        })
+      )
+    ).toBe(false);
+    expect(
+      isTrustedLocalClient(
+        makeReq({
+          ip: '127.0.0.1',
+          trustProxy: false,
+          headers: { 'x-forwarded-for': '   ' },
+        })
+      )
+    ).toBe(false);
   });
 
   test('missing clientIp is not trusted', () => {

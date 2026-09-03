@@ -3,6 +3,7 @@ import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { WebSocketServer } from '../ws';
 import type { GatewaySession } from '../ws/gateway-session';
+import { AUTH_LOGIN_PUBLIC_PATHS } from './auth-public-paths';
 import { encodeJsonBytes, isRecord } from './ctl';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { X_TMEX_SESSION_RENEWED } from './mesh-deps';
@@ -11,7 +12,6 @@ import { X_TMEX_MESH_PEER, attachMeshPeerMarker } from './peer-request-marker';
 import { pumpToLink } from './stream-pump';
 import type { DispatchHttp, HttpStreamOpenPayload, WsStreamOpenPayload } from './types';
 
-const AUTH_SKIP_PATHS = new Set(['/api/auth/challenge', '/api/auth/login']);
 const HTTP_FORWARD_ABORT_LOG_INTERVAL_MS = 1_000;
 let lastHttpForwardAbortLogAt = 0;
 
@@ -33,7 +33,7 @@ export type StreamAuthContext = {
 
 export function isAuthSkippedPath(path: string): boolean {
   const bare = path.split('?')[0] ?? path;
-  return AUTH_SKIP_PATHS.has(bare) || bare.startsWith('/api/mesh-internal/');
+  return AUTH_LOGIN_PUBLIC_PATHS.has(bare) || bare.startsWith('/api/mesh-internal/');
 }
 
 function resolveInboundHttpUrl(path: string, query: string, origin: string): URL {
@@ -154,13 +154,14 @@ function verifyAuth(
   path: string,
   ctx: StreamAuthContext
 ): { ok: true; uid: string | null; renewedExpiresAt?: number } | { ok: false; reason: string } {
-  if (isAuthSkippedPath(path)) return { ok: true, uid: null };
-  if (!auth) return { ok: false, reason: 'missing auth' };
+  const skipped = isAuthSkippedPath(path);
+  // 公开路径无 token 直接匿名放行；带了 token 仍照常校验，让 /api/auth/mode 之类能识别已登录会话。
+  if (!auth) return skipped ? { ok: true, uid: null } : { ok: false, reason: 'missing auth' };
   const result = ctx.sessionStore.verify(auth, {
     viaNodeId: ctx.peerNodeId,
     now: ctx.now?.() ?? Date.now(),
   });
-  if (!result.ok) return { ok: false, reason: result.reason };
+  if (!result.ok) return skipped ? { ok: true, uid: null } : { ok: false, reason: result.reason };
   return {
     ok: true,
     uid: result.session.userId,

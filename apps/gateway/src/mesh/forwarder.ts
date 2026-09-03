@@ -1,6 +1,7 @@
 import { wsBorsh } from '@tmex/shared';
 import { readJsonObjectBody } from '../api/http';
 import { buildSetCookie, nodeSessionCookieName, parseCookies } from '../auth/cookies';
+import { AUTH_LOGIN_PUBLIC_PATHS } from './auth-public-paths';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
 import { CLIENT_SOURCE_LOCAL, X_TMEX_CLIENT_SOURCE, isTrustedLocalClient } from './client-source';
@@ -35,11 +36,7 @@ import { stamp } from './mesh-log';
 import { isHttps, jsonError } from './session-middleware';
 import { StreamReplayState } from './stream-replay-state';
 
-const AUTH_SKIP = new Set([
-  '/api/auth/challenge',
-  '/api/auth/login',
-  '/api/auth/passkey/login/options',
-]);
+const AUTH_SKIP = AUTH_LOGIN_PUBLIC_PATHS;
 const AUTH_CHALLENGE_PATHS = new Set(['/api/auth/challenge', '/api/auth/passkey/login/options']);
 const AUTH_LOGIN_PATH = '/api/auth/login';
 const RESPONSE_ALLOW = new Set([

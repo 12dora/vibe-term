@@ -464,6 +464,104 @@ describe('http/ws stream targets', () => {
     expect(out['x-forwarded-for']).toBeUndefined();
   });
 
+  test('acceptHttpStream 对公开登录路径允许 auth:null，并带上 x-tmex-client-source', async () => {
+    for (const path of ['/api/auth/mode', '/api/auth/passkey/login/options']) {
+      const [a, b] = createInMemoryLinkPair();
+      const dispatched = { path: null as string | null, source: null as string | null };
+      b.onStream((stream) => {
+        void acceptHttpStream(stream, {
+          peerNodeId: 'entry-1',
+          sessionStore: {
+            verify: () => {
+              throw new Error('session auth must be skipped');
+            },
+          } as unknown as NodeSessionStore,
+          async dispatchHttp(req) {
+            dispatched.path = new URL(req.url).pathname;
+            dispatched.source = req.headers.get(X_TMEX_CLIENT_SOURCE);
+            return new Response('ok');
+          },
+        });
+      });
+      const res = await openHttpStream(a, {
+        method: 'GET',
+        path,
+        origin: 'http://localhost',
+        auth: null,
+        headers: { [X_TMEX_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL },
+      });
+      expect(res.status).toBe(200);
+      expect(dispatched).toEqual({ path, source: CLIENT_SOURCE_LOCAL });
+    }
+  });
+
+  test('acceptHttpStream 公开路径带 token 仍校验会话，无效 token 退化为匿名', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new NodeSessionStore(db);
+    seedUser(new UserStore(db));
+    const sid = store.issue({
+      userId: 'user-1',
+      viaNodeId: 'entry-1',
+      sessPublicKey: new Uint8Array(32),
+      delegationMethod: 'root',
+      now: Date.now(),
+    });
+    for (const [auth, expectedUid] of [
+      [sid.sid, 'user-1'],
+      ['not-a-session', null],
+    ] as const) {
+      const [a, b] = createInMemoryLinkPair();
+      const seen = { uid: undefined as string | null | undefined };
+      b.onStream((stream) => {
+        void acceptHttpStream(stream, {
+          peerNodeId: 'entry-1',
+          sessionStore: store,
+          async dispatchHttp(_req, ctx) {
+            seen.uid = ctx.uid;
+            return new Response('ok');
+          },
+        });
+      });
+      const res = await openHttpStream(a, {
+        method: 'GET',
+        path: '/api/auth/mode',
+        origin: 'http://localhost',
+        auth,
+      });
+      expect(res.status).toBe(200);
+      expect(seen.uid).toBe(expectedUid);
+    }
+  });
+
+  test('acceptHttpStream 对非公开路径 auth:null 仍 401', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    let dispatchedPath: string | null = null;
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: {
+          verify: () => {
+            throw new Error('session auth must not run when missing');
+          },
+        } as unknown as NodeSessionStore,
+        async dispatchHttp(req) {
+          dispatchedPath = new URL(req.url).pathname;
+          return new Response('leaked', { status: 200 });
+        },
+      });
+    });
+    const res = await openHttpStream(a, {
+      method: 'GET',
+      path: '/api/capabilities',
+      origin: 'http://localhost',
+      auth: null,
+    });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'missing auth' });
+    expect(dispatchedPath).toBeNull();
+  });
+
   test('acceptHttpStream 把 x-tmex-client-source 带到 inbound peer Request', async () => {
     const [a, b] = createInMemoryLinkPair();
     const seen = { header: null as string | null, waived: false, via: '' };
