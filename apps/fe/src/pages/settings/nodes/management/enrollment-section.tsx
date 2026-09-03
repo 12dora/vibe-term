@@ -22,8 +22,8 @@ export function EnrollmentSection({
   api,
   mode,
   hubApi,
-  hubOnline,
-  hubWritable,
+  writable,
+  blockedHint,
   writerPublicUrl,
   open,
   prompt,
@@ -37,9 +37,10 @@ export function EnrollmentSection({
   api: AuthApi;
   mode: ResolvedMode;
   hubApi: HubApi | null;
-  hubOnline: boolean;
-  /** hub 是否接受管理写入（挂在 standby / writer 缺席时为 false）。 */
-  hubWritable: boolean;
+  /** 上级链路当前接受管理写入（hub 在线且可写，或已挂上中继）。 */
+  writable: boolean;
+  /** 不可写时的原因文案。 */
+  blockedHint: string;
   /** writer hub 的对外地址；拒写提示靠它指路。 */
   writerPublicUrl: string | null;
   /** 卡头「添加」按钮控制的展开态。 */
@@ -58,8 +59,6 @@ export function EnrollmentSection({
   const { t } = useTranslation();
   const create = useCreateEnrollment({ api, mode, hubApi, prompt, clearedIds, writerPublicUrl });
   const { created, hubUrl } = create;
-  const writable = hubOnline && hubWritable;
-  const blockedHint = hubWritable ? t('nodes.hubOffline') : t('nodes.hubs.standbyNotice');
 
   return (
     <>

@@ -1101,6 +1101,7 @@
       "error": "WebSocket 连接错误",
       "checkGateway": "请检查 Gateway 状态",
       "inputDropped": "连接中断，刚才的输入未能发送。连接恢复后请重新输入或粘贴。",
+      "serverTooOld": "终端连接失败：Gateway 版本过低，请升级到 {{minVersion}} 或更新版本。",
       "reconnecting": "重连中",
       "reconnect": "重新连接"
     },
@@ -2415,6 +2416,86 @@
       }
     },
     "relay": {
+      "tenant": {
+        "strip": {
+          "title": "中继",
+          "online": "在线",
+          "offline": "离线",
+          "attached": "当前挂载于此中继",
+          "detail": "{{url}}｜优先级 {{priority}}｜{{state}}",
+          "rtt": "延迟 {{ms}} ms",
+          "kicked": "令牌已作废，须重新输入口令",
+          "lastError": "最近错误：{{error}}",
+          "meta": "元数据密钥第 {{epoch}} 代",
+          "nodes": "经中继可见 {{count}} 个节点",
+          "quota": "配额 {{nodes}} 节点｜{{streams}} 流",
+          "empty": "未接入中继。"
+        },
+        "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
+        "reauth": {
+          "notice": "中继令牌已失效，须重新输入中继口令。",
+          "action": "重新输入口令"
+        },
+        "actions": {
+          "menu": "中继操作",
+          "enroll": "接入中继",
+          "migrate": "改为接入中继",
+          "add": "追加中继",
+          "reauth": "重新输入口令",
+          "rotate": "轮换元数据密钥",
+          "leave": "离开中继"
+        },
+        "dialog": {
+          "enrollTitle": "接入中继",
+          "migrateTitle": "改为接入中继",
+          "addTitle": "追加中继",
+          "reauthTitle": "重新输入中继口令",
+          "url": "中继地址",
+          "urlHint": "填中继的公网 HTTPS 地址。",
+          "password": "中继口令",
+          "passwordHint": "中继未设口令时留空。",
+          "rootPassword": "当前密码",
+          "rootPasswordHint": "接入证明须用根密钥签名，通行密钥无法代签。",
+          "migrateNotice": "接入后本机改走中继，不再连接 Hub。",
+          "submit": "接入",
+          "submitReauth": "重新接入",
+          "done": "已接入中继。"
+        },
+        "leave": {
+          "title": "离开中继？",
+          "description": "离开后本机与各节点失去上级链路，须重新接入中继或 Hub。",
+          "confirm": "离开",
+          "done": "已离开中继。"
+        },
+        "metaKey": {
+          "rotateTitle": "轮换元数据密钥？",
+          "rotateDescription": "换发新一代元数据密钥，只分发给当前成员节点。",
+          "rotateConfirm": "轮换",
+          "done": "元数据密钥已轮换。",
+          "needsRotate": "新节点的元数据密钥未下发，请用「中继操作 → 轮换元数据密钥」补发。",
+          "admitFailed": "新节点的元数据密钥下发失败：{{error}}",
+          "rotateFailed": "元数据密钥轮换失败：{{error}}"
+        },
+        "errors": {
+          "ROOT_PASSWORD_INVALID": "当前密码不正确。",
+          "RELAY_PASSWORD_INVALID": "中继口令不正确。",
+          "RELAY_NOT_CONFIGURED": "本机未接入中继。",
+          "RELAY_QUOTA_NODES": "中继的节点配额已用尽。",
+          "RELAY_UNCONFIRMED": "中继未确认这次变更，请重试。",
+          "RELAY_OFFLINE": "中继连接已断开，请稍后重试。",
+          "RELAY_UNREACHABLE": "无法连接该中继，请检查地址。",
+          "RELAY_BAD_RESPONSE": "中继返回的数据无法识别。",
+          "RELAY_ENROLL_FAILED": "中继拒绝了这次接入。",
+          "RELAY_REJECTED": "中继拒绝了这次请求。",
+          "RELAY_KEY_MISSING": "本机缺少中继密钥，须重新接入。",
+          "NO_ADMITTED_NODES": "还没有已加入的节点，无法分发密钥。",
+          "UNKNOWN_NODE": "目标节点不在成员表里。",
+          "DUPLICATE_ENROLL_PK": "该加入码已存在。",
+          "INVALID_URL": "中继地址无效。",
+          "BAD_PROOF": "接入证明校验失败，请重试。",
+          "MALFORMED": "请求内容无效。"
+        }
+      },
       "admin": {
         "tabLabel": "中继",
         "title": "中继运营",

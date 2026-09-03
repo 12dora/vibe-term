@@ -1101,6 +1101,7 @@
       "error": "WebSocket 接続エラー",
       "checkGateway": "Gateway 状態を確認してください",
       "inputDropped": "接続が中断されたため、直前の入力は送信されませんでした。再接続後にもう一度入力または貼り付けてください。",
+      "serverTooOld": "端末接続に失敗しました：Gateway のバージョンが古いため、{{minVersion}} 以降へ更新してください。",
       "reconnecting": "再接続中",
       "reconnect": "再接続"
     },
@@ -2415,6 +2416,86 @@
       }
     },
     "relay": {
+      "tenant": {
+        "strip": {
+          "title": "中継",
+          "online": "オンライン",
+          "offline": "オフライン",
+          "attached": "本機はこの中継に接続中",
+          "detail": "{{url}}｜優先度 {{priority}}｜{{state}}",
+          "rtt": "遅延 {{ms}} ms",
+          "kicked": "トークンが失効しました。中継パスワードを入力し直してください",
+          "lastError": "直近のエラー：{{error}}",
+          "meta": "メタデータ鍵 第 {{epoch}} 世代",
+          "nodes": "中継経由で {{count}} 台のノードが見えています",
+          "quota": "クォータ {{nodes}} ノード｜{{streams}} ストリーム",
+          "empty": "中継に接続していません。"
+        },
+        "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
+        "reauth": {
+          "notice": "中継トークンが失効しました。中継パスワードを入力し直してください。",
+          "action": "パスワードを再入力"
+        },
+        "actions": {
+          "menu": "中継の操作",
+          "enroll": "中継に接続",
+          "migrate": "中継接続に切り替え",
+          "add": "中継を追加",
+          "reauth": "パスワードを再入力",
+          "rotate": "メタデータ鍵をローテーション",
+          "leave": "中継から離脱"
+        },
+        "dialog": {
+          "enrollTitle": "中継に接続",
+          "migrateTitle": "中継接続に切り替え",
+          "addTitle": "中継を追加",
+          "reauthTitle": "中継パスワードの再入力",
+          "url": "中継アドレス",
+          "urlHint": "中継の公開 HTTPS アドレスを入力します。",
+          "password": "中継パスワード",
+          "passwordHint": "中継にパスワードがない場合は空欄のままにします。",
+          "rootPassword": "現在のパスワード",
+          "rootPasswordHint": "接続証明はルート鍵の署名が必要で、パスキーでは代替できません。",
+          "migrateNotice": "接続後は本機が中継を使い、Hub には接続しなくなります。",
+          "submit": "接続",
+          "submitReauth": "再接続",
+          "done": "中継に接続しました。"
+        },
+        "leave": {
+          "title": "中継から離脱しますか？",
+          "description": "離脱すると本機と各ノードは上位リンクを失い、中継か Hub に接続し直す必要があります。",
+          "confirm": "離脱",
+          "done": "中継から離脱しました。"
+        },
+        "metaKey": {
+          "rotateTitle": "メタデータ鍵をローテーションしますか？",
+          "rotateDescription": "新しい世代のメタデータ鍵を発行し、現在のメンバーノードにのみ配布します。",
+          "rotateConfirm": "ローテーション",
+          "done": "メタデータ鍵をローテーションしました。",
+          "needsRotate": "新しいノードにメタデータ鍵が配布されていません。「中継の操作 → メタデータ鍵をローテーション」で配布してください。",
+          "admitFailed": "新しいノードへのメタデータ鍵の配布に失敗しました：{{error}}",
+          "rotateFailed": "メタデータ鍵のローテーションに失敗しました：{{error}}"
+        },
+        "errors": {
+          "ROOT_PASSWORD_INVALID": "現在のパスワードが正しくありません。",
+          "RELAY_PASSWORD_INVALID": "中継パスワードが正しくありません。",
+          "RELAY_NOT_CONFIGURED": "本機は中継に接続していません。",
+          "RELAY_QUOTA_NODES": "中継のノードクォータを使い切りました。",
+          "RELAY_UNCONFIRMED": "中継がこの変更を確認していません。再試行してください。",
+          "RELAY_OFFLINE": "中継との接続が切れています。しばらくしてから再試行してください。",
+          "RELAY_UNREACHABLE": "この中継に接続できません。アドレスを確認してください。",
+          "RELAY_BAD_RESPONSE": "中継の応答を解釈できません。",
+          "RELAY_ENROLL_FAILED": "中継がこの接続を拒否しました。",
+          "RELAY_REJECTED": "中継がこの要求を拒否しました。",
+          "RELAY_KEY_MISSING": "本機に中継鍵がありません。接続し直してください。",
+          "NO_ADMITTED_NODES": "参加済みのノードがないため鍵を配布できません。",
+          "UNKNOWN_NODE": "対象のノードがメンバー一覧にありません。",
+          "DUPLICATE_ENROLL_PK": "その参加コードは既に存在します。",
+          "INVALID_URL": "中継アドレスが不正です。",
+          "BAD_PROOF": "接続証明の検証に失敗しました。再試行してください。",
+          "MALFORMED": "要求内容が不正です。"
+        }
+      },
       "admin": {
         "tabLabel": "リレー",
         "title": "リレー運用",

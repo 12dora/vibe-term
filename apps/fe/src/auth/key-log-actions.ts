@@ -273,6 +273,33 @@ export function buildSetTotpRecord(input: {
   });
 }
 
+/**
+ * 中继相关的两类记录（`set-relays` / `meta-key`，plan-00 §1.4）。
+ *
+ * payload **不由浏览器构造**：封装 `K_log` / `K_meta` 要有全体未吊销节点的 X25519 公钥与
+ * 当前世代密钥，这些只在本机节点手里，浏览器只从 `/api/mesh/relay/*` 的 prepare 端点取回
+ * 已编码好的字节，包成记录后签名。签名者与其它管理动作一致：根钥或 passkey 都行。
+ */
+export function buildSetRelaysRecord(input: {
+  head: KeyLogHead;
+  rootEpoch: number;
+  uid: string;
+  payload: Uint8Array;
+  signer: RecordSigner;
+}): Promise<KeyLogSignedRecord> {
+  return buildSignedRecord({ ...input, type: 'set-relays' });
+}
+
+export function buildMetaKeyRecord(input: {
+  head: KeyLogHead;
+  rootEpoch: number;
+  uid: string;
+  payload: Uint8Array;
+  signer: RecordSigner;
+}): Promise<KeyLogSignedRecord> {
+  return buildSignedRecord({ ...input, type: 'meta-key' });
+}
+
 export function buildClearTotpRecord(input: {
   head: KeyLogHead;
   rootEpoch: number;

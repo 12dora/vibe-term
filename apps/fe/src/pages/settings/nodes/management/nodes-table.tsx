@@ -100,6 +100,18 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
   );
 }
 
+/**
+ * 不可写时的提示。调用方给了原因就用它（中继模式下上级不是 hub，说「Hub 不可达」是错的），
+ * 否则按 hub 的两种情形分档：备 Hub 拒写 / 主 Hub 不可达。
+ */
+export function rowBlockedHint(
+  t: Translate,
+  deps: Pick<NodeActionDeps, 'hubWritable' | 'blockedHint'>
+): string {
+  if (deps.blockedHint) return deps.blockedHint;
+  return t(deps.hubWritable ? 'nodes.hubOffline' : 'nodes.hubs.standbyNotice');
+}
+
 function deriveNodeRow(row: NodeRow, t: (key: string) => string) {
   return {
     statusClass: row.online ? 'text-emerald-500' : 'text-muted-foreground',
@@ -125,11 +137,7 @@ function NodeRowView({
   const [detailOpen, setDetailOpen] = useState(false);
   const uninstalling = isUninstalling(row, uninstall.scheduledIds);
   const writable = deps.hubOnline && deps.hubWritable;
-  const disabledHint = deps.hubWritable
-    ? deps.hubOnline
-      ? undefined
-      : t('nodes.hubOffline')
-    : t('nodes.hubs.standbyNotice');
+  const disabledHint = writable ? undefined : rowBlockedHint(t, deps);
   const view = deriveNodeRow(row, t);
   const selectable = !row.isSelf && !uninstalling;
   const switching = roleSwitch.switchingIds.has(row.id);

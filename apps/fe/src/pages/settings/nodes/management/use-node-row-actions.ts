@@ -9,8 +9,11 @@ import type { RecordSigner } from '@/auth/key-log-actions';
 import { buildRevokeNodeRecord, classifyKeyLogFailure } from '@/node/enrollment';
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { NodeRow } from '@/node/mesh-nodes';
+import { getMeshRelayState, isRelayMode } from '@/node/mesh-relay';
+import { alreadyLocked, appendMetaKey } from '@/node/relay-enroll';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
+import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -63,10 +66,12 @@ export async function revokeNodeRecord(
         reason,
         signer,
       });
-      return ctx.api.appendKeyLog(
+      const appended = await ctx.api.appendKeyLog(
         { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
         { hubSync: true }
       );
+      if (appended.ok) await rotateMetaKeyAfterRevoke(ctx, row.id, signer);
+      return appended;
     });
     if (!result.ok) {
       // B2-6：hub 未确认时服务端一条都没落库（409 / 504），撤销**没有生效**。
@@ -89,6 +94,29 @@ export async function revokeNodeRecord(
       kind: 'failed',
       message: actionErrorText(ctx.t, err, { writerPublicUrl: ctx.writerPublicUrl }),
     };
+  }
+}
+
+/**
+ * 中继模式下吊销之后**必须**紧接一条 `meta-key`（新世代，只封装给剩余节点）：不换代的话，
+ * 被吊销的节点虽然连不上握手，仍能用旧 `K_meta` 解出中继转发的元数据块（plan §1.4、§1.12）。
+ *
+ * 已经在写锁里，因此传 `alreadyLocked`。换代失败不回滚吊销（记录已经落库），只警告——
+ * 恢复路径是节点页「中继 → 轮换元数据密钥」，它做的是同一件事。
+ */
+async function rotateMetaKeyAfterRevoke(
+  ctx: RevokeContext,
+  nodeIdHex: string,
+  signer: RecordSigner
+): Promise<void> {
+  if (!isRelayMode(getMeshRelayState())) return;
+  const result = await appendMetaKey(
+    { api: ctx.api, relayApi: defaultRelayTenantApi, mode: ctx.mode, lock: alreadyLocked },
+    { op: 'rotate', exclude: [nodeIdHex] },
+    signer
+  );
+  if (!result.ok) {
+    toast.warning(ctx.t('relay.tenant.metaKey.rotateFailed', { error: result.code }));
   }
 }
 

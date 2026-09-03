@@ -157,3 +157,32 @@ export class HubApi {
  * `SELF_NODE_ID` 让 `path()` 退化成入口自身的旧路径，不会指向某台猜出来的 hub。
  */
 export const defaultHubApi = new HubApi(SELF_NODE_ID);
+
+/**
+ * 中继模式下的 enrollment 通道：路径换成本机的 `/api/mesh/relay/*`（enrollment 由本机 uplink
+ * 转发到中继），`createEnrollment` / `getEnrollment` 的报文、鉴权与错误解析与 hub 完全一致，
+ * 因此直接复用 `HubApi` 的方法体，只换 `path()`。
+ *
+ * 其余方法在中继模式下**没有对应路由**：中继不提供节点列表与改名（成员表在各节点本地，
+ * 名字由节点自持）。误调一律当场报错，绝不静默打到一条不存在的路径上。
+ */
+export class RelayEnrollmentApi extends HubApi {
+  constructor(client: ApiClient = defaultApiClient) {
+    super(SELF_NODE_ID, client);
+  }
+
+  override path(suffix: string): string {
+    return `/api/mesh/relay${suffix}`;
+  }
+
+  override listNodes(): Promise<HubNodeRow[]> {
+    return Promise.reject(new HubApiError('RELAY_NO_NODE_LIST', 0));
+  }
+
+  override rename(): Promise<void> {
+    return Promise.reject(new HubApiError('RELAY_RENAME_UNSUPPORTED', 0));
+  }
+}
+
+/** 中继模式下唯一需要的那个 enrollment 通道实例（打的永远是本机）。 */
+export const defaultRelayEnrollmentApi = new RelayEnrollmentApi();

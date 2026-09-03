@@ -34,6 +34,7 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { resetMeshHubsStateForTest, setMeshHubsStateForTest } = await import('@/node/mesh-hubs');
+const { resetMeshRelayStateForTest } = await import('@/node/mesh-relay');
 const { actionErrorText } = await import('./errors');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
 const {
@@ -132,6 +133,7 @@ beforeEach(() => {
   resetEnrollmentEngineForTest();
   resetMeshNodesStateForTest();
   resetMeshHubsStateForTest();
+  resetMeshRelayStateForTest();
   setPendingStorage({
     getItem: () => null,
     setItem: () => undefined,

@@ -1101,6 +1101,7 @@
       "error": "WebSocket connection error",
       "checkGateway": "Please check Gateway status",
       "inputDropped": "Connection interrupted — your recent input could not be sent. Please type or paste it again once reconnected.",
+      "serverTooOld": "Terminal connection failed: the Gateway is too old, please upgrade it to {{minVersion}} or newer.",
       "reconnecting": "Reconnecting",
       "reconnect": "Reconnect"
     },
@@ -2420,6 +2421,86 @@
       }
     },
     "relay": {
+      "tenant": {
+        "strip": {
+          "title": "Relay",
+          "online": "Online",
+          "offline": "Offline",
+          "attached": "This machine is attached to this relay",
+          "detail": "{{url}} | priority {{priority}} | {{state}}",
+          "rtt": "Latency {{ms}} ms",
+          "kicked": "Token revoked, re-enter the relay password",
+          "lastError": "Last error: {{error}}",
+          "meta": "Metadata key epoch {{epoch}}",
+          "nodes": "{{count}} nodes visible via relay",
+          "quota": "Quota {{nodes}} nodes | {{streams}} streams",
+          "empty": "Not connected to a relay."
+        },
+        "notAttached": "No relay connected; joining and removing nodes are unavailable.",
+        "reauth": {
+          "notice": "The relay token expired. Re-enter the relay password.",
+          "action": "Re-enter Password"
+        },
+        "actions": {
+          "menu": "Relay Actions",
+          "enroll": "Connect Relay",
+          "migrate": "Switch to Relay",
+          "add": "Add Relay",
+          "reauth": "Re-enter Password",
+          "rotate": "Rotate Metadata Key",
+          "leave": "Leave Relay"
+        },
+        "dialog": {
+          "enrollTitle": "Connect Relay",
+          "migrateTitle": "Switch to Relay",
+          "addTitle": "Add Relay",
+          "reauthTitle": "Re-enter Relay Password",
+          "url": "Relay address",
+          "urlHint": "Enter the public HTTPS address of the relay.",
+          "password": "Relay password",
+          "passwordHint": "Leave empty if the relay has no password.",
+          "rootPassword": "Current password",
+          "rootPasswordHint": "The enrollment proof needs a root-key signature; a passkey cannot sign it.",
+          "migrateNotice": "After connecting, this machine uses the relay and no longer connects to a Hub.",
+          "submit": "Connect",
+          "submitReauth": "Reconnect",
+          "done": "Relay connected."
+        },
+        "leave": {
+          "title": "Leave the relay?",
+          "description": "After leaving, this machine and its nodes have no uplink until a relay or Hub is set up again.",
+          "confirm": "Leave",
+          "done": "Left the relay."
+        },
+        "metaKey": {
+          "rotateTitle": "Rotate the metadata key?",
+          "rotateDescription": "Issue a new metadata key epoch, distributed only to current member nodes.",
+          "rotateConfirm": "Rotate",
+          "done": "Metadata key rotated.",
+          "needsRotate": "The new node did not receive the metadata key. Use \"Relay Actions -> Rotate Metadata Key\".",
+          "admitFailed": "Failed to deliver the metadata key to the new node: {{error}}",
+          "rotateFailed": "Metadata key rotation failed: {{error}}"
+        },
+        "errors": {
+          "ROOT_PASSWORD_INVALID": "Current password is incorrect.",
+          "RELAY_PASSWORD_INVALID": "Relay password is incorrect.",
+          "RELAY_NOT_CONFIGURED": "This machine is not connected to a relay.",
+          "RELAY_QUOTA_NODES": "The relay node quota is used up.",
+          "RELAY_UNCONFIRMED": "The relay did not confirm this change. Try again.",
+          "RELAY_OFFLINE": "The relay connection is down. Try again later.",
+          "RELAY_UNREACHABLE": "Cannot reach this relay. Check the address.",
+          "RELAY_BAD_RESPONSE": "The relay returned data that cannot be parsed.",
+          "RELAY_ENROLL_FAILED": "The relay rejected this enrollment.",
+          "RELAY_REJECTED": "The relay rejected this request.",
+          "RELAY_KEY_MISSING": "Relay keys are missing on this machine. Connect again.",
+          "NO_ADMITTED_NODES": "No admitted nodes yet, so keys cannot be distributed.",
+          "UNKNOWN_NODE": "That node is not in the member list.",
+          "DUPLICATE_ENROLL_PK": "That join code already exists.",
+          "INVALID_URL": "The relay address is invalid.",
+          "BAD_PROOF": "The enrollment proof failed verification. Try again.",
+          "MALFORMED": "The request content is invalid."
+        }
+      },
       "admin": {
         "tabLabel": "Relay",
         "title": "Relay Operations",

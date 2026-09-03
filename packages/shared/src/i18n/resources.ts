@@ -339,7 +339,7 @@ export const I18N_RESOURCES = {
       "siteUrl": "Site URL",
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
-        "nameLinkedHint": "Linked to the node name: changing it here renames this node in the mesh.",
+        "nameLinkedHint": "Also renames this node in Mesh.",
         "nameLinkedLocked": "The current Hub is not accepting writes; renaming is unavailable.",
         "urlManagedHint": "Determined by the hub's public address; change it under Mesh settings."
       },
@@ -377,7 +377,7 @@ export const I18N_RESOURCES = {
         "reloadApp": "Reload app",
         "shortcuts": {
           "title": "Custom Shortcuts",
-          "savedOnServer": "Saved on the server and shared across all your browsers — changes take effect after you click Save.",
+          "savedOnServer": "Saved on the server and shared across browsers. Click Save to apply.",
           "preview": "Preview",
           "useIcons": "Show keys as icons",
           "useIconsDesc": "Replace key names like Ctrl/Shift/Enter with Apple-style symbols (⌃⇧⏎).",
@@ -409,9 +409,9 @@ export const I18N_RESOURCES = {
         "title": "Remote access",
         "wizardTitle": "Setup",
         "description": "Reach this machine's tmex remotely over Cloudflare Tunnel or a direct connection.",
-        "remoteNodeNotice": "Remote access is configured on the machine your browser connects to directly. Switch to that machine and open this page there.",
+        "remoteNodeNotice": "Remote access can only be configured on the node your browser connects to directly. Switch to that node first.",
         "loginRequired": "Sign in before configuring remote access.",
-        "loadFailed": "Couldn't load the remote access status. Make sure the tmex gateway is still running, then reload the page.",
+        "loadFailed": "Couldn't load the remote access status. Make sure the tmex gateway is still running and reload the page.",
         "unsupported": "No cloudflared build is available for this platform ({{platform}}), so Cloudflare Tunnel can't be used here.",
         "modeLabel": "Mode",
         "publicUrl": "Public URL",
@@ -436,7 +436,7 @@ export const I18N_RESOURCES = {
         "mode": {
           "quick": {
             "title": "Quick tunnel",
-            "description": "No Cloudflare account needed. Each start issues a new temporary URL — good for demos and troubleshooting."
+            "description": "No Cloudflare account needed. A new temporary URL is issued on start. Good for demos and troubleshooting."
           },
           "named": {
             "title": "Named tunnel",
@@ -450,7 +450,7 @@ export const I18N_RESOURCES = {
           },
           "direct": {
             "title": "Direct connection",
-            "description": "Connect over a static IP, port forwarding or a reverse proxy — no Cloudflare needed."
+            "description": "Connect over a static IP, port forwarding or a reverse proxy."
           }
         },
         "direct": {
@@ -475,7 +475,7 @@ export const I18N_RESOURCES = {
           "entryLabel": "Current entry",
           "entryHint": "The address tmex is reached at. When exposing it, point the public entry at port {{port}} on this machine, or at a reverse proxy.",
           "tls": {
-            "hint": "Always serve a direct exposure over HTTPS — plain HTTP puts passwords and session cookies on the wire.",
+            "hint": "Enable HTTPS: plain HTTP puts passwords and session credentials on the wire.",
             "link": "Set up HTTPS in node settings"
           },
           "enable": {
@@ -562,7 +562,7 @@ export const I18N_RESOURCES = {
           },
           "quick": {
             "title": "Quick tunnel",
-            "description": "On start, Cloudflare issues a temporary trycloudflare.com URL that stops working when the tunnel stops.",
+            "description": "On start, a temporary trycloudflare.com URL is issued. It stops working when the tunnel stops.",
             "started": "The quick tunnel is running. Its public URL is below."
           },
           "named": {
@@ -575,7 +575,7 @@ export const I18N_RESOURCES = {
             },
             "hostname": "Hostname",
             "hostnamePlaceholder": "tmex.example.com",
-            "hostnameHint": "Use a subdomain of a domain hosted on Cloudflare.",
+            "hostnameHint": "A subdomain hosted on Cloudflare.",
             "hostnameInvalid": "Enter a lowercase hostname such as tmex.example.com.",
             "tunnelName": "Tunnel name",
             "tunnelNamePlaceholder": "tmex",
@@ -598,7 +598,7 @@ export const I18N_RESOURCES = {
             "restartNow": "Restart now",
             "restarting": "Restarting tmex",
             "restartTimeout": "Timed out waiting for the restart. Restart tmex manually, then reload this page.",
-            "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Anyone who can bypass the tunnel and reach the local listening port directly could forge them, so restrict access to that port.",
+            "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Requests that bypass the tunnel could forge these headers, so block external access to that port.",
             "trustProxyEffective": "In effect now",
             "trustProxyState": {
               "on": "Trusted",
@@ -670,7 +670,7 @@ export const I18N_RESOURCES = {
           "exposure_ack_required": "This exposes tmex to the public internet. Confirm the risk first."
         },
         "authRequired": {
-          "notice": "Sign-in isn't enabled on this machine. Enable it before going public, or anyone could walk straight into tmex.",
+          "notice": "Warning: sign-in is not enabled. Enable it before going public, or anyone can access tmex.",
           "link": "Open multi-node settings"
         },
         "confirmRemove": {
@@ -697,7 +697,7 @@ export const I18N_RESOURCES = {
             "title": "None",
             "description": "No access protection: anyone with the address can use the tmex on this machine.",
             "warning": "No access protection: anyone with the address can use the tmex on this machine.",
-            "appRemains": "The Access app still exists. Remove it here."
+            "appRemains": "The Access app has not been removed. You can remove it here."
           },
           "login": {
             "title": "Password Login",
@@ -760,7 +760,7 @@ export const I18N_RESOURCES = {
             "hint": "Credentials are saved, but tmex has no Access application on record. If you already created one for {{hostname}} in the Cloudflare dashboard, sync it in first to avoid a duplicate."
           },
           "probe": {
-            "unknown": "Can't check Cloudflare Access for {{hostname}}: no usable Cloudflare credentials, or the lookup failed. This does not mean Access is unconfigured. Save an API token and account ID below and tmex will check again.",
+            "unknown": "Can't check Cloudflare Access for {{hostname}}: no usable credentials, or the lookup failed. This does not mean Access is unconfigured. Save an API token and account ID below and tmex will check again.",
             "covered": "Read-only check: an Access application in the Cloudflare dashboard already covers {{hostname}}. tmex doesn't manage it and the gateway won't verify the tokens it issues — use \"Sync from Cloudflare\" to bring it under tmex.",
             "absent": "Read-only check: no Access application in Cloudflare covers {{hostname}}. Add the allowed users below and apply to create one.",
             "teamDomain": "Team domain: {{teamDomain}}",
@@ -774,8 +774,8 @@ export const I18N_RESOURCES = {
             "rules": "Rules",
             "noRules": "None",
             "enforce": "Verify Access tokens at the gateway",
-            "enforceHint": "Validate Cf-Access-Jwt-Assertion on requests arriving through the tunnel and reject the ones that fail.",
-            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that reach the tunnel around Access are let through.",
+            "enforceHint": "Validate Cf-Access-Jwt-Assertion on requests arriving through the tunnel; failures are rejected.",
+            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that bypass Access are let through.",
             "remove": "Remove Access application",
             "hostnameMismatch": "This application covers a different hostname than the current tunnel, so token verification has no effect. Apply the rules again to bind it to the current hostname."
           },
@@ -811,7 +811,7 @@ export const I18N_RESOURCES = {
           "noHostname": "Its configuration has no hostname pointing at this tmex (127.0.0.1:{{port}}), so it can't be adopted. Check its ingress rules, or let tmex create its own tunnel.",
           "chooseHostname": "Choose the hostname to adopt",
           "adopt": "Adopt the existing tunnel",
-          "adoptHint": "Adopting sets this hostname as the public address and shows the tunnel's state and access control here. The tunnel process keeps running under the system service — tmex never starts, stops, or rewrites its configuration, and you can release it at any time.",
+          "adoptHint": "Adopting sets this hostname as the public address and shows the tunnel's state and access control here.",
           "dismiss": "Ignore and create a new tunnel"
         }
       },
@@ -936,10 +936,10 @@ export const I18N_RESOURCES = {
         "changelogUnavailable": "No changelog available for this version.",
         "publishedAt": "Published {{date}}",
         "upgrade": "Upgrade now",
-        "upgradeDisabledDev": "In-app update is disabled outside the production environment.",
+        "upgradeDisabledDev": "In-app update is disabled outside production.",
         "upgradeDisabledNonCli": "In-app update is only available for CLI installations.",
         "upgradeWarningTitle": "Confirm upgrade",
-        "upgradeWarningBody": "Upgrading restarts the service and will interrupt your current session. It may also affect the survival of tmux processes managed by the service. Continue?",
+        "upgradeWarningBody": "Upgrading restarts the service and interrupts your current session. It may affect tmux processes managed by the service. Continue?",
         "upgradeStarted": "Upgrade started",
         "stateDownloading": "Downloading the new version…",
         "stateExecuting": "Applying the upgrade, the service is restarting…",
@@ -1107,6 +1107,7 @@ export const I18N_RESOURCES = {
       "error": "WebSocket connection error",
       "checkGateway": "Please check Gateway status",
       "inputDropped": "Connection interrupted — your recent input could not be sent. Please type or paste it again once reconnected.",
+      "serverTooOld": "Terminal connection failed: the Gateway is too old, please upgrade it to {{minVersion}} or newer.",
       "reconnecting": "Reconnecting",
       "reconnect": "Reconnect"
     },
@@ -1655,7 +1656,7 @@ export const I18N_RESOURCES = {
       "security": {
         "title": "Account security",
         "changePassword": "Change password",
-        "changePasswordWarning": "Changing your password clears every passkey and authenticator on all devices and signs you out everywhere. You will have to set them up again.",
+        "changePasswordWarning": "Changing your password clears every passkey and authenticator on all devices and signs you out everywhere.",
         "changePasswordDone": "Password changed. Sign in again on each node.",
         "currentPassword": "Current password",
         "newPassword": "New password",
@@ -1663,8 +1664,8 @@ export const I18N_RESOURCES = {
         "passwordRequired": "Enter your password.",
         "passwordMismatch": "The new passwords do not match.",
         "totp": "Authenticator app",
-        "totpNote": "Protects your account if your password leaks. For a stronger second factor, use a passkey.",
-        "totpPasskeyNote": "Signing in with a passkey does not ask for a code.",
+        "totpNote": "Protects your account if your password leaks. For stronger two-factor authentication, use a passkey.",
+        "totpPasskeyNote": "No code is needed when signing in with a passkey.",
         "totpSet": "Set up",
         "totpReset": "Reset",
         "totpClear": "Turn off",
@@ -1675,7 +1676,7 @@ export const I18N_RESOURCES = {
         "passkeyName": "Passkey name",
         "registerPasskey": "Add passkey",
         "signWithExistingPasskey": "You can confirm with your passkey instead of typing your password.",
-        "passkeySecondFactorHint": "Once a passkey is registered, password sign-in also requires a passkey check. Sign-ins from the local machine or a LAN address skip the check; other addresses need a passkey registered. Removing all passkeys turns it off.",
+        "passkeySecondFactorHint": "Once registered, password sign-in also requires a passkey check (sign-ins from this machine or a LAN address skip it).",
         "sessionKeyNote": "Every action on this page asks for your password or a passkey.",
         "totpConfirm": "Confirm and turn on",
         "totpConfirmHint": "Enter the 6-digit code from your authenticator app.",
@@ -1783,7 +1784,7 @@ export const I18N_RESOURCES = {
           "errors": {
             "HUB_NOT_HUB": "The target does not run the hub role.",
             "HUB_NOT_AUTHORIZED": "The target hub is not authorized.",
-            "HUB_EPOCH_STALE": "The writer epoch is stale. Refresh and try again.",
+            "HUB_EPOCH_STALE": "The write epoch is stale. Refresh and try again.",
             "HUB_ROLE_BUSY": "The target already has a role switch running.",
             "HUB_ROLE_UNSUPPORTED": "The target version does not support remote switching. Upgrade it first.",
             "INVALID_REQUEST": "Invalid request.",
@@ -1839,7 +1840,7 @@ export const I18N_RESOURCES = {
         "general": "General",
         "domainAccess": {
           "label": "Allow Domain Access",
-          "description": "When off, web and API access from the public internet is refused and only hub/node mesh services stay reachable; access from the local network and this machine is unaffected. Public domains: {{hosts}}",
+          "description": "When off, web and API access from the public internet is refused (LAN and local access is unaffected); only hub/node mesh services stay reachable. Public domains: {{hosts}}",
           "noHosts": "No public domain configured yet.",
           "hostSeparator": ", ",
           "failed": "Could not save the domain access setting ({{detail}}).",
@@ -1858,8 +1859,8 @@ export const I18N_RESOURCES = {
         "changeHub": "Change hub",
         "confirm": "Leave and restart",
         "cancel": "Cancel",
-        "consequencesNode": "All mesh state on this machine (account, node identity, cached peers) is removed. This machine is revoked on the hub automatically before leaving; if that fails, the hub keeps an offline record you have to revoke there. tmex restarts and the current session ends.",
-        "consequencesHub": "This machine is the hub. Leaving removes all of its mesh state (account, node identity, cached peers), and every node that depends on it loses its hub — each one has to join another hub to come back. tmex restarts and the current session ends.",
+        "consequencesNode": "After leaving, all mesh state on this machine is removed, tmex restarts and the current session ends. This machine is revoked on the hub automatically before leaving.",
+        "consequencesHub": "This machine is the hub. Leaving removes all of its mesh state, tmex restarts and the current session ends. Every node loses its hub and has to join another hub to come back.",
         "leaveConfirm": {
           "title": "Leave the hub?",
           "description": "This machine goes back to running standalone."
@@ -1894,7 +1895,7 @@ export const I18N_RESOURCES = {
       "https": {
         "title": "HTTPS settings",
         "description": "How this machine serves HTTPS. Sign-in and passkeys only work over an HTTPS address.",
-        "hubUrlHint": "A hub's public address must use https: issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
+        "hubUrlHint": "A hub's public address must use HTTPS: issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
         "nodeRoleHint": "HTTPS is only needed while this machine acts as a hub. Nodes are reached through the hub.",
         "modeActive": "in use",
         "save": "Save",
@@ -1964,10 +1965,10 @@ export const I18N_RESOURCES = {
           "intro": "tmex keeps serving plain HTTP and the proxy in front handles TLS. Point the proxy at the plain port and let it forward the original host, protocol and client address.",
           "trustProxy": "Trust proxy headers",
           "trustProxyHint": "Turn this on only if tmex can be reached through the proxy alone.",
-          "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Anyone who can reach the plain port directly could forge them, so keep that port closed."
+          "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Direct connections could forge these headers, so block external access to that port."
         },
         "selfsigned": {
-          "intro": "For a LAN or tunnel with no public domain. The private certificate authority (CA) never leaves this machine, and certificates are valid for 398 days.",
+          "intro": "For a LAN or tunnel with no public domain. The private certificate authority (CA) is kept on this machine, and certificates are valid for 398 days.",
           "sans": "Names on the certificate",
           "sansHint": "Hostnames or IP addresses you will type in the browser, up to 20. Anything not listed keeps showing a certificate error.",
           "sansPlaceholder": "hub.lan or 192.168.1.10",
@@ -2004,11 +2005,11 @@ export const I18N_RESOURCES = {
           }
         },
         "acme": {
-          "intro": "Let's Encrypt issues a publicly trusted certificate for one domain and renews it automatically. The domain must point at this machine.",
+          "intro": "Let's Encrypt issues an HTTPS certificate for one domain and renews it automatically. The domain must point at this machine.",
           "domain": "Domain",
           "domainHint": "One hostname, no wildcards. It must already point at this machine.",
           "email": "Contact email",
-          "emailHint": "Let's Encrypt uses it for expiry warnings.",
+          "emailHint": "Used by Let's Encrypt for expiry notices.",
           "challenge": "Validation method",
           "challengeHttp": "HTTP-01",
           "challengeHttpHint": "Let's Encrypt reaches this machine on public port 80.",
@@ -2037,8 +2038,8 @@ export const I18N_RESOURCES = {
           "nextRenew": "Next renewal",
           "renewNow": "Renew now",
           "hints": {
-            "http01": "Public port 80 has to reach this machine. Behind NAT, forward it on your router.",
-            "http01Linux": "A user-level systemd service cannot bind port 80. Forward it on the router, or use DNS-01.",
+            "http01": "Public port 80 has to reach this machine. Behind NAT, set up port forwarding on your router.",
+            "http01Linux": "A user-level systemd service cannot bind port 80. Set up forwarding on the router, or use DNS-01.",
             "dns01": "The domain's DNS has to be hosted by the selected provider, with an API key that can edit its records."
           }
         },
@@ -2285,7 +2286,7 @@ export const I18N_RESOURCES = {
         "path": {
           "becomeHub": {
             "title": "Make this the hub",
-            "description": "Other machines join this one. Needs a public HTTPS address."
+            "description": "Other nodes join this one. Needs a public HTTPS address."
           },
           "joinHub": {
             "title": "Join an existing hub",
@@ -2302,7 +2303,7 @@ export const I18N_RESOURCES = {
         },
         "fields": {
           "hubPublicUrl": "Public hub address",
-          "hubPublicUrlHint": "The https address everyone will use, for example https://tmex.example.com. Every machine that joins must be able to reach it.",
+          "hubPublicUrlHint": "An externally reachable https address, for example https://tmex.example.com. Every node that joins must be able to reach it.",
           "username": "Username",
           "usernameHint": "1-64 characters: letters, digits, dot, underscore or hyphen.",
           "password": "Password",
@@ -2423,6 +2424,205 @@ export const I18N_RESOURCES = {
         "resetConfirmDescription": "All groups will be deleted and every node returns to the top level in default order.",
         "resetFailed": "Failed to reset layout",
         "resetDone": "Layout reset"
+      }
+    },
+    "relay": {
+      "tenant": {
+        "strip": {
+          "title": "Relay",
+          "online": "Online",
+          "offline": "Offline",
+          "attached": "This machine is attached to this relay",
+          "detail": "{{url}} | priority {{priority}} | {{state}}",
+          "rtt": "Latency {{ms}} ms",
+          "kicked": "Token revoked, re-enter the relay password",
+          "lastError": "Last error: {{error}}",
+          "meta": "Metadata key epoch {{epoch}}",
+          "nodes": "{{count}} nodes visible via relay",
+          "quota": "Quota {{nodes}} nodes | {{streams}} streams",
+          "empty": "Not connected to a relay."
+        },
+        "notAttached": "No relay connected; joining and removing nodes are unavailable.",
+        "reauth": {
+          "notice": "The relay token expired. Re-enter the relay password.",
+          "action": "Re-enter Password"
+        },
+        "actions": {
+          "menu": "Relay Actions",
+          "enroll": "Connect Relay",
+          "migrate": "Switch to Relay",
+          "add": "Add Relay",
+          "reauth": "Re-enter Password",
+          "rotate": "Rotate Metadata Key",
+          "leave": "Leave Relay"
+        },
+        "dialog": {
+          "enrollTitle": "Connect Relay",
+          "migrateTitle": "Switch to Relay",
+          "addTitle": "Add Relay",
+          "reauthTitle": "Re-enter Relay Password",
+          "url": "Relay address",
+          "urlHint": "Enter the public HTTPS address of the relay.",
+          "password": "Relay password",
+          "passwordHint": "Leave empty if the relay has no password.",
+          "rootPassword": "Current password",
+          "rootPasswordHint": "The enrollment proof needs a root-key signature; a passkey cannot sign it.",
+          "migrateNotice": "After connecting, this machine uses the relay and no longer connects to a Hub.",
+          "submit": "Connect",
+          "submitReauth": "Reconnect",
+          "done": "Relay connected."
+        },
+        "leave": {
+          "title": "Leave the relay?",
+          "description": "After leaving, this machine and its nodes have no uplink until a relay or Hub is set up again.",
+          "confirm": "Leave",
+          "done": "Left the relay."
+        },
+        "metaKey": {
+          "rotateTitle": "Rotate the metadata key?",
+          "rotateDescription": "Issue a new metadata key epoch, distributed only to current member nodes.",
+          "rotateConfirm": "Rotate",
+          "done": "Metadata key rotated.",
+          "needsRotate": "The new node did not receive the metadata key. Use \"Relay Actions -> Rotate Metadata Key\".",
+          "admitFailed": "Failed to deliver the metadata key to the new node: {{error}}",
+          "rotateFailed": "Metadata key rotation failed: {{error}}"
+        },
+        "errors": {
+          "ROOT_PASSWORD_INVALID": "Current password is incorrect.",
+          "RELAY_PASSWORD_INVALID": "Relay password is incorrect.",
+          "RELAY_NOT_CONFIGURED": "This machine is not connected to a relay.",
+          "RELAY_QUOTA_NODES": "The relay node quota is used up.",
+          "RELAY_UNCONFIRMED": "The relay did not confirm this change. Try again.",
+          "RELAY_OFFLINE": "The relay connection is down. Try again later.",
+          "RELAY_UNREACHABLE": "Cannot reach this relay. Check the address.",
+          "RELAY_BAD_RESPONSE": "The relay returned data that cannot be parsed.",
+          "RELAY_ENROLL_FAILED": "The relay rejected this enrollment.",
+          "RELAY_REJECTED": "The relay rejected this request.",
+          "RELAY_KEY_MISSING": "Relay keys are missing on this machine. Connect again.",
+          "NO_ADMITTED_NODES": "No admitted nodes yet, so keys cannot be distributed.",
+          "UNKNOWN_NODE": "That node is not in the member list.",
+          "DUPLICATE_ENROLL_PK": "That join code already exists.",
+          "INVALID_URL": "The relay address is invalid.",
+          "BAD_PROOF": "The enrollment proof failed verification. Try again.",
+          "MALFORMED": "The request content is invalid."
+        }
+      },
+      "admin": {
+        "tabLabel": "Relay",
+        "title": "Relay Operations",
+        "description": "This machine runs as a public relay and forwards traffic for the tenants that join it.",
+        "unavailable": "The relay role is not enabled on this machine.",
+        "unavailableHint": "The relay role is chosen at install time; this page stays empty until then.",
+        "loginRequired": "Sign in first to manage the relay.",
+        "loadFailed": "Could not load relay status: {{message}}",
+        "health": {
+          "title": "Health",
+          "state": "State",
+          "ok": "Healthy",
+          "down": "Unhealthy",
+          "unknown": "Unknown",
+          "version": "Version",
+          "uptime": "Uptime",
+          "uptimeDays": "{{d}} d {{h}} h",
+          "uptimeHours": "{{h}} h {{m}} min",
+          "uptimeMinutes": "{{m}} min"
+        },
+        "totals": {
+          "title": "Totals",
+          "tenants": "Tenants",
+          "nodesOnline": "Nodes online",
+          "streams": "Streams",
+          "inbound": "In",
+          "outbound": "Out"
+        },
+        "password": {
+          "title": "Join Password",
+          "state": "State",
+          "set": "Set",
+          "unset": "Not set",
+          "unsetWarning": "No password is set, so anyone can join this relay.",
+          "epoch": "Password epoch",
+          "minTokenEpoch": "Minimum token epoch",
+          "change": "Change Password",
+          "dialogTitle": "Change Join Password",
+          "newPassword": "New password",
+          "newPasswordHint": "At least 8 characters.",
+          "clear": "Clear password",
+          "clearHint": "Once cleared, anyone can join this relay.",
+          "modeLabel": "Existing tenants",
+          "modeKeep": "Keep existing tenants",
+          "modeKeepHint": "Existing tenants stay connected; the new password applies to new joins only.",
+          "modeKick": "Revoke old tokens",
+          "modeKickHint": "Old tokens are revoked and every tenant has to enter the password again.",
+          "tooShort": "The password needs at least 8 characters.",
+          "saved": "Join password updated.",
+          "failed": "Could not update the password: {{message}}",
+          "dialogDescription": "Set a new password, or clear it so anyone can join."
+        },
+        "quota": {
+          "title": "Default Quota",
+          "description": "Tenants without their own quota use these values.",
+          "maxNodes": "Max nodes",
+          "maxStreams": "Max streams",
+          "bandwidth": "Max bandwidth (KB/s)",
+          "unlimited": "Unlimited",
+          "unlimitedValue": "Unlimited",
+          "inherit": "Follow default",
+          "inheritBadge": "Default",
+          "summary": "{{nodes}} nodes · {{streams}} streams · {{bandwidth}}",
+          "bandwidthValue": "{{kb}} KB/s",
+          "invalidNodes": "Max nodes must be an integer of 1 or more.",
+          "invalidStreams": "Max streams must be an integer of 1 or more.",
+          "invalidBandwidth": "Max bandwidth must be an integer of 1 or more.",
+          "saved": "Default quota updated.",
+          "failed": "Could not update the quota: {{message}}"
+        },
+        "tenants": {
+          "title": "Tenants",
+          "total": "{{n}} total",
+          "empty": "No tenant has joined yet.",
+          "columns": {
+            "id": "ID",
+            "label": "Note",
+            "created": "Joined",
+            "lastSeen": "Last seen",
+            "nodes": "Nodes",
+            "streams": "Streams",
+            "traffic": "Traffic",
+            "quota": "Quota",
+            "tokenEpoch": "Token epoch",
+            "actions": "Actions"
+          },
+          "nodesValue": "{{online}} / {{total}}",
+          "trafficValue": "↑ {{out}} | ↓ {{in}}",
+          "noLabel": "No note",
+          "kicked": "Kicked",
+          "edit": "Edit",
+          "editTitle": "Edit Tenant",
+          "label": "Note",
+          "labelPlaceholder": "A name that is easy to recognize",
+          "saved": "Tenant updated.",
+          "failed": "Could not update the tenant: {{message}}",
+          "kick": "Kick",
+          "kickTitle": "Kick Tenant",
+          "kickText": "Revokes this tenant's token and drops its connections. It can join again with the password.",
+          "kickDone": "Tenant kicked.",
+          "kickFailed": "Could not kick the tenant: {{message}}",
+          "remove": "Delete",
+          "removeTitle": "Delete Tenant",
+          "removeText": "Deletes this tenant's registry and key log. This cannot be undone.",
+          "removeConfirmLabel": "Type the tenant ID to confirm",
+          "removeMismatch": "The ID does not match.",
+          "removeDone": "Tenant deleted.",
+          "removeFailed": "Could not delete the tenant: {{message}}"
+        },
+        "time": {
+          "never": "Never",
+          "justNow": "Just now",
+          "minutes": "{{n}} min ago",
+          "hours": "{{n}} h ago",
+          "days": "{{n}} d ago"
+        }
       }
     }
   }
@@ -2762,7 +2962,7 @@ export const I18N_RESOURCES = {
       "siteUrl": "站点访问 URL",
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
-        "nameLinkedHint": "与节点名称联动：这里修改会同步修改「多节点互联」里的节点名称。",
+        "nameLinkedHint": "将同步修改「多节点互联」里的节点名称。",
         "nameLinkedLocked": "当前 Hub 不可写入，暂时无法改名。",
         "urlManagedHint": "由 Hub 公开地址决定，请在「多节点互联」中修改。"
       },
@@ -2800,7 +3000,7 @@ export const I18N_RESOURCES = {
         "reloadApp": "重新加载应用",
         "shortcuts": {
           "title": "自定义快捷键",
-          "savedOnServer": "保存在服务器、多端共享——修改后需点「保存」才生效。",
+          "savedOnServer": "保存在服务器、多端共享, 点击「保存」生效。",
           "preview": "预览",
           "useIcons": "用图标展示快捷键",
           "useIconsDesc": "把 Ctrl/Shift/回车 等按键名替换为苹果风格符号（⌃⇧⏎）。",
@@ -2832,9 +3032,9 @@ export const I18N_RESOURCES = {
         "title": "远程访问",
         "wizardTitle": "配置向导",
         "description": "通过 Cloudflare Tunnel 或直接连接远程访问本机 tmex。",
-        "remoteNodeNotice": "远程访问只能在浏览器直连的那台机器上配置。请先切换到那台机器，再打开本页。",
+        "remoteNodeNotice": "远程访问只能在浏览器直连的节点配置。请先切换到该节点。",
         "loginRequired": "请先登录，再配置远程访问。",
-        "loadFailed": "读取远程访问状态失败。请确认 tmex 网关仍在运行，然后刷新页面重试。",
+        "loadFailed": "读取远程访问状态失败。请确认 tmex 网关仍在运行，并刷新页面重试。",
         "unsupported": "当前系统（{{platform}}）没有可用的 cloudflared 构建，无法使用 Cloudflare Tunnel。",
         "modeLabel": "方式",
         "publicUrl": "公网地址",
@@ -2859,7 +3059,7 @@ export const I18N_RESOURCES = {
         "mode": {
           "quick": {
             "title": "临时隧道",
-            "description": "无需 Cloudflare 账号，每次启动分配一个新的临时地址，适合演示与排查。"
+            "description": "无需 Cloudflare 账号，启动时分配新的临时地址，适合演示与排查。"
           },
           "named": {
             "title": "命名隧道",
@@ -2873,7 +3073,7 @@ export const I18N_RESOURCES = {
           },
           "direct": {
             "title": "直接连接",
-            "description": "通过固定 IP、端口映射或反向代理连接，适合无 Cloudflare 的情况。"
+            "description": "通过固定 IP、端口映射或反向代理连接。"
           }
         },
         "direct": {
@@ -2892,13 +3092,13 @@ export const I18N_RESOURCES = {
             },
             "unknown": {
               "title": "无法确认访问保护状态",
-              "description": "当前网关没有下发本机登录状态，通常是版本过旧。升级 tmex 后再试。"
+              "description": "当前网关未下发本机登录状态，通常是版本过旧。升级 tmex 后再试。"
             }
           },
           "entryLabel": "当前入口",
           "entryHint": "tmex 的访问地址。对外暴露时，需指向本机的 {{port}} 端口，或指向反向代理。",
           "tls": {
-            "hint": "直接暴露请务必启用 HTTPS：明文 HTTP 会把登录口令与会话凭证暴露在链路上。",
+            "hint": "请启用 HTTPS：明文 HTTP 会把登录口令与会话凭证暴露在链路上。",
             "link": "前往节点设置配置 HTTPS"
           },
           "enable": {
@@ -2985,7 +3185,7 @@ export const I18N_RESOURCES = {
           },
           "quick": {
             "title": "临时隧道",
-            "description": "启动后 Cloudflare 分配一个 trycloudflare.com 的临时地址，停止即失效。",
+            "description": "启动后分配一个 trycloudflare.com 的临时地址，停止即失效。",
             "started": "临时隧道已启动，公网地址如下。"
           },
           "named": {
@@ -2998,7 +3198,7 @@ export const I18N_RESOURCES = {
             },
             "hostname": "主机名",
             "hostnamePlaceholder": "tmex.example.com",
-            "hostnameHint": "填写一个已托管在 Cloudflare 的域名下的子域名。",
+            "hostnameHint": "填写一个已托管在 Cloudflare 的子域名。",
             "hostnameInvalid": "主机名格式不正确，请填写如 tmex.example.com 的小写域名。",
             "tunnelName": "隧道名称",
             "tunnelNamePlaceholder": "tmex",
@@ -3021,7 +3221,7 @@ export const I18N_RESOURCES = {
             "restartNow": "立即重启",
             "restarting": "正在重启 tmex",
             "restartTimeout": "等待重启超时。请手动重启 tmex 后刷新页面。",
-            "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。能绕过隧道直连本机监听端口的人可以伪造这两个请求头，因此请限制该端口的外部访问。",
+            "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。存在绕过隧道伪造请求头风险，建议禁止该端口的外网访问。",
             "trustProxyEffective": "当前生效",
             "trustProxyState": {
               "on": "已信任",
@@ -3093,7 +3293,7 @@ export const I18N_RESOURCES = {
           "exposure_ack_required": "该操作会把 tmex 开放到公网，请先勾选风险确认。"
         },
         "authRequired": {
-          "notice": "本机还未启用登录。开放公网访问前请先启用，否则任何人都能直接进入 tmex。",
+          "notice": "警告: 登录未启用。开放公网访问前请先启用，否则任何人都能访问 tmex。",
           "link": "前往多节点互联设置"
         },
         "confirmRemove": {
@@ -3120,7 +3320,7 @@ export const I18N_RESOURCES = {
             "title": "无",
             "description": "不设访问保护，任何人拿到地址即可使用本机 tmex。",
             "warning": "访问保护未启用：任何人拿到地址即可使用本机 tmex。",
-            "appRemains": "Access 应用仍在，可在此移除。"
+            "appRemains": "Access 应用未移除，可在此移除。"
           },
           "login": {
             "title": "账号密码",
@@ -3183,7 +3383,7 @@ export const I18N_RESOURCES = {
             "hint": "凭证已保存，但 tmex 无 Access 应用记录。如果你已在 Cloudflare 控制台为 {{hostname}} 建过应用，请先同步把它接入 tmex，避免重复创建。"
           },
           "probe": {
-            "unknown": "无法检测 {{hostname}} 的 Cloudflare Access 状态：当前没有可用的 Cloudflare 凭证，或查询 API 失败。这不代表未配置。保存下方的 API 令牌与账户 ID 后会自动重新检测。",
+            "unknown": "无法检测 {{hostname}} 的 Cloudflare Access 状态：当前没有可用的凭证，或查询 API 失败。这不代表未配置。保存下方的 API 令牌与账户 ID 后会自动重新检测。",
             "covered": "只读检测：Cloudflare 控制台上已有一个 Access 应用覆盖 {{hostname}}。该应用不由 tmex 管理，网关也不会校验它签发的令牌；点「从 Cloudflare 同步」可以把它接入 tmex。",
             "absent": "只读检测：Cloudflare 上没有覆盖 {{hostname}} 的 Access 应用。在下方填写允许访问的用户并应用，即可创建一个。",
             "teamDomain": "团队域：{{teamDomain}}",
@@ -3197,10 +3397,10 @@ export const I18N_RESOURCES = {
             "rules": "规则",
             "noRules": "无",
             "enforce": "网关校验 Access 令牌",
-            "enforceHint": "对经隧道进来的请求校验 Cf-Access-Jwt-Assertion，未通过直接拒绝。",
-            "enforceOff": "已关闭令牌校验。Cloudflare 仍会在边缘拦截未授权访问，但会放行绕过 Access 直接打到隧道的请求。",
+            "enforceHint": "对经隧道进来的请求校验 Cf-Access-Jwt-Assertion，未通过将拒绝。",
+            "enforceOff": "已关闭令牌校验。Cloudflare 仍会在边缘拦截未授权访问，但会放行绕过 Access 的请求。",
             "remove": "移除 Access 应用",
-            "hostnameMismatch": "该应用覆盖的主机名与当前隧道不一致，令牌校验不会生效。请重新应用规则，把它绑到当前主机名。"
+            "hostnameMismatch": "该应用覆盖的主机名与当前隧道不一致，令牌校验不会生效。请重新应用规则，绑定到当前主机名。"
           },
           "confirmRemove": {
             "title": "移除 Access 应用？",
@@ -3234,7 +3434,7 @@ export const I18N_RESOURCES = {
           "noHostname": "这条隧道的配置里没有指向本机 tmex（127.0.0.1:{{port}}）的主机名，因此无法接管。请检查它的 ingress 配置，或让 tmex 另建一条隧道。",
           "chooseHostname": "选择要接管的主机名",
           "adopt": "接管已有隧道",
-          "adoptHint": "接管后，自动将该主机名设为公网地址，并显示隧道状态与访问控制。隧道进程仍由系统服务运行——tmex 不会启动、停止或改写它的配置, 可随时取消接管。",
+          "adoptHint": "接管后，自动将该主机名设为公网地址，并显示隧道状态与访问控制。",
           "dismiss": "忽略并新建隧道"
         }
       },
@@ -3359,10 +3559,10 @@ export const I18N_RESOURCES = {
         "changelogUnavailable": "该版本暂无更新日志。",
         "publishedAt": "发布于 {{date}}",
         "upgrade": "立即升级",
-        "upgradeDisabledDev": "非 production 环境已禁用程序内更新。",
+        "upgradeDisabledDev": "非生产环境已禁用程序内更新。",
         "upgradeDisabledNonCli": "程序内更新仅在通过 CLI 安装时可用。",
         "upgradeWarningTitle": "确认升级",
-        "upgradeWarningBody": "升级会重启服务并中断当前访问，还可能影响该服务托管的 tmux 进程的存活。是否继续？",
+        "upgradeWarningBody": "升级会重启服务并中断当前访问，可能影响该服务托管的 tmux 进程的存活。是否继续？",
         "upgradeStarted": "升级已开始",
         "stateDownloading": "正在下载新版本…",
         "stateExecuting": "正在执行升级，服务即将重启…",
@@ -3530,6 +3730,7 @@ export const I18N_RESOURCES = {
       "error": "WebSocket 连接错误",
       "checkGateway": "请检查 Gateway 状态",
       "inputDropped": "连接中断，刚才的输入未能发送。连接恢复后请重新输入或粘贴。",
+      "serverTooOld": "终端连接失败：Gateway 版本过低，请升级到 {{minVersion}} 或更新版本。",
       "reconnecting": "重连中",
       "reconnect": "重新连接"
     },
@@ -4078,7 +4279,7 @@ export const I18N_RESOURCES = {
       "security": {
         "title": "账号安全",
         "changePassword": "修改密码",
-        "changePasswordWarning": "修改密码会清除所有设备上的通行密钥与验证器，并注销全部会话，需要重新设置。",
+        "changePasswordWarning": "修改密码将清除所有设备上的通行密钥与验证器，并注销全部会话。",
         "changePasswordDone": "密码已修改，请在各节点重新登录。",
         "currentPassword": "当前密码",
         "newPassword": "新密码",
@@ -4086,8 +4287,8 @@ export const I18N_RESOURCES = {
         "passwordRequired": "请输入密码。",
         "passwordMismatch": "两次输入的新密码不一致。",
         "totp": "验证码（TOTP）",
-        "totpNote": "可在密码泄露时保护账号；需要更强的第二因素请使用通行密钥。",
-        "totpPasskeyNote": "使用通行密钥登录时不需要验证码。",
+        "totpNote": "可在密码泄露时保护账号；需要更强的双因素验证请使用通行密钥。",
+        "totpPasskeyNote": "使用通行密钥登录时无需验证码。",
         "totpSet": "设置",
         "totpReset": "重新设置",
         "totpClear": "关闭",
@@ -4098,8 +4299,8 @@ export const I18N_RESOURCES = {
         "passkeyName": "通行密钥名称",
         "registerPasskey": "添加通行密钥",
         "signWithExistingPasskey": "可以用通行密钥确认，无需输入密码。",
-        "passkeySecondFactorHint": "注册通行密钥后，密码登录还需通过通行密钥二次验证；从本机或局域网地址登录无需二次验证，其余地址须已注册通行密钥。移除全部通行密钥即关闭。",
-        "sessionKeyNote": "本页的每个操作都会要求输入密码或使用通行密钥。",
+        "passkeySecondFactorHint": "注册后，密码登录需通过通行密钥二次验证(从本机或局域网地址登录无需二次验证)。",
+        "sessionKeyNote": "该页所有操作都会要求输入密码或使用通行密钥。",
         "totpConfirm": "确认并启用",
         "totpConfirmHint": "请输入验证器应用当前显示的 6 位验证码。",
         "totpCodeRequired": "请输入 6 位验证码。",
@@ -4206,7 +4407,7 @@ export const I18N_RESOURCES = {
           "errors": {
             "HUB_NOT_HUB": "目标未启用 Hub 角色。",
             "HUB_NOT_AUTHORIZED": "目标 Hub 未获授权。",
-            "HUB_EPOCH_STALE": "写入纪元已过期，请刷新后重试。",
+            "HUB_EPOCH_STALE": "写入 Epoch 已过期，请刷新后重试。",
             "HUB_ROLE_BUSY": "目标已有一次角色切换在进行。",
             "HUB_ROLE_UNSUPPORTED": "目标版本不支持远程切换，须先升级。",
             "INVALID_REQUEST": "请求无效。",
@@ -4262,7 +4463,7 @@ export const I18N_RESOURCES = {
         "general": "通用设置",
         "domainAccess": {
           "label": "允许域名访问",
-          "description": "关闭后，来自公网的网页与 API 访问会被拒绝，仅保留 Hub / 节点互联服务；来自局域网与本机的访问不受影响。公开域名：{{hosts}}",
+          "description": "关闭后，来自公网的网页与 API 访问会被拒绝(局域网与本机的访问不受影响)，仅保留 Hub / 节点互联服务。公开域名：{{hosts}}",
           "noHosts": "尚未配置公开域名。",
           "hostSeparator": "、",
           "failed": "域名访问设置未能保存（{{detail}}）。",
@@ -4281,8 +4482,8 @@ export const I18N_RESOURCES = {
         "changeHub": "更换 Hub",
         "confirm": "退出并重启",
         "cancel": "取消",
-        "consequencesNode": "本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除。退出前会自动在 Hub 上吊销本机；若自动吊销没成功，Hub 上会留下一条离线记录，需要你到 Hub 侧手动吊销。tmex 会重启，当前会话随之失效。",
-        "consequencesHub": "本机就是 Hub。退出后本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除，所有下级节点都会失去 Hub，必须重新加入其它 Hub 才能恢复。tmex 会重启，当前会话随之失效。",
+        "consequencesNode": "退出后, 本机的多节点互联状态将全部删除, tmex 将重启，当前会话随之失效。退出前将自动在 Hub 上吊销本机。",
+        "consequencesHub": "本机为 Hub。退出后本机的多节点互联状态将全部删除，tmex 会重启，当前会话随之失效。所有下级节点都会失去 Hub，必须重新加入其它 Hub 才能恢复。",
         "leaveConfirm": {
           "title": "退出 Hub？",
           "description": "本机将变回独立运行。"
@@ -4317,7 +4518,7 @@ export const I18N_RESOURCES = {
       "https": {
         "title": "HTTPS 设置",
         "description": "决定本机如何提供 HTTPS。登录与通行密钥只能在 HTTPS 地址下使用。",
-        "hubUrlHint": "Hub 的公开地址必须是 https：在这里签发证书，或在前面加反向代理并选「外部反向代理」。",
+        "hubUrlHint": "Hub 的公开地址必须是 HTTPS：在这里签发证书，或在前面加反向代理并选「外部反向代理」。",
         "nodeRoleHint": "只有本机作为 Hub 时才需要 HTTPS；节点经 Hub 访问，无需配置。",
         "modeActive": "生效中",
         "save": "保存",
@@ -4387,10 +4588,10 @@ export const I18N_RESOURCES = {
           "intro": "tmex 继续提供明文 HTTP，由前置代理处理 TLS。请把代理指向明文端口，并转发原始 host、协议与客户端地址。",
           "trustProxy": "信任代理请求头",
           "trustProxyHint": "仅当 tmex 只能经由代理访问时才开启。",
-          "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。能直连明文端口的人可以伪造这两个请求头，因此请关闭该端口的外部访问。"
+          "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。存在直连伪造请求头风险，建议禁止该端口的外网访问。"
         },
         "selfsigned": {
-          "intro": "适用于没有公网域名的局域网或隧道。私有证书颁发机构（CA）不会离开本机，签发的证书有效期 398 天。",
+          "intro": "适用于没有公网域名的局域网或隧道。私有证书颁发机构（CA）保存在本机，证书有效期 398 天。",
           "sans": "证书包含的名称",
           "sansHint": "浏览器里实际会输入的主机名或 IP，最多 20 个。未列出的地址仍会报证书错误。",
           "sansPlaceholder": "hub.lan 或 192.168.1.10",
@@ -4427,11 +4628,11 @@ export const I18N_RESOURCES = {
           }
         },
         "acme": {
-          "intro": "Let's Encrypt 为单个域名签发公共信任的证书，续期自动进行。域名须指向本机。",
+          "intro": "Let's Encrypt 为单个域名签发 HTTPS 证书，并自动续期。域名须指向本机。",
           "domain": "域名",
           "domainHint": "单个主机名，不支持通配符，且须已指向本机。",
           "email": "联系邮箱",
-          "emailHint": "Let's Encrypt 用它发送到期提醒。",
+          "emailHint": "Let's Encrypt 用于发送到期提醒。",
           "challenge": "验证方式",
           "challengeHttp": "HTTP-01",
           "challengeHttpHint": "Let's Encrypt 经公网 80 端口访问本机。",
@@ -4460,8 +4661,8 @@ export const I18N_RESOURCES = {
           "nextRenew": "下次续期",
           "renewNow": "立即续期",
           "hints": {
-            "http01": "公网 80 端口必须能访问到本机。在 NAT 后面时，请在路由器上做端口转发。",
-            "http01Linux": "Linux 用户级 systemd 服务无法绑定 80 端口。请在路由器上做转发，或改用 DNS-01。",
+            "http01": "公网 80 端口必须能访问到本机。NAT 时，请在路由器上设置端口转发。",
+            "http01Linux": "Linux 用户级 systemd 服务无法绑定 80 端口。请在路由器上设置转发，或改用 DNS-01。",
             "dns01": "域名的 DNS 必须托管在所选服务商，并提供可修改其记录的 API 密钥。"
           }
         },
@@ -4704,7 +4905,7 @@ export const I18N_RESOURCES = {
         "path": {
           "becomeHub": {
             "title": "把本机设为 Hub",
-            "description": "其他机器加入本机。需要一个公开的 HTTPS 地址。"
+            "description": "其他节点加入本机。需要一个公开的 HTTPS 地址。"
           },
           "joinHub": {
             "title": "加入已有 Hub",
@@ -4721,7 +4922,7 @@ export const I18N_RESOURCES = {
         },
         "fields": {
           "hubPublicUrl": "Hub 公开地址",
-          "hubPublicUrlHint": "所有人访问用的 https 地址，例如 https://tmex.example.com。要加入的机器都必须能访问它。",
+          "hubPublicUrlHint": "外部可访问的 https 地址，例如 https://tmex.example.com。所有拟加入的节点均须可正常访问。",
           "username": "用户名",
           "usernameHint": "1-64 个字符，可用字母、数字、点、下划线和连字符。",
           "password": "密码",
@@ -4841,6 +5042,205 @@ export const I18N_RESOURCES = {
         "resetConfirmDescription": "所有分组将被删除，全部节点回到最外层并按默认顺序排列。",
         "resetFailed": "恢复默认布局失败",
         "resetDone": "已恢复默认布局"
+      }
+    },
+    "relay": {
+      "tenant": {
+        "strip": {
+          "title": "中继",
+          "online": "在线",
+          "offline": "离线",
+          "attached": "当前挂载于此中继",
+          "detail": "{{url}}｜优先级 {{priority}}｜{{state}}",
+          "rtt": "延迟 {{ms}} ms",
+          "kicked": "令牌已作废，须重新输入口令",
+          "lastError": "最近错误：{{error}}",
+          "meta": "元数据密钥第 {{epoch}} 代",
+          "nodes": "经中继可见 {{count}} 个节点",
+          "quota": "配额 {{nodes}} 节点｜{{streams}} 流",
+          "empty": "未接入中继。"
+        },
+        "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
+        "reauth": {
+          "notice": "中继令牌已失效，须重新输入中继口令。",
+          "action": "重新输入口令"
+        },
+        "actions": {
+          "menu": "中继操作",
+          "enroll": "接入中继",
+          "migrate": "改为接入中继",
+          "add": "追加中继",
+          "reauth": "重新输入口令",
+          "rotate": "轮换元数据密钥",
+          "leave": "离开中继"
+        },
+        "dialog": {
+          "enrollTitle": "接入中继",
+          "migrateTitle": "改为接入中继",
+          "addTitle": "追加中继",
+          "reauthTitle": "重新输入中继口令",
+          "url": "中继地址",
+          "urlHint": "填中继的公网 HTTPS 地址。",
+          "password": "中继口令",
+          "passwordHint": "中继未设口令时留空。",
+          "rootPassword": "当前密码",
+          "rootPasswordHint": "接入证明须用根密钥签名，通行密钥无法代签。",
+          "migrateNotice": "接入后本机改走中继，不再连接 Hub。",
+          "submit": "接入",
+          "submitReauth": "重新接入",
+          "done": "已接入中继。"
+        },
+        "leave": {
+          "title": "离开中继？",
+          "description": "离开后本机与各节点失去上级链路，须重新接入中继或 Hub。",
+          "confirm": "离开",
+          "done": "已离开中继。"
+        },
+        "metaKey": {
+          "rotateTitle": "轮换元数据密钥？",
+          "rotateDescription": "换发新一代元数据密钥，只分发给当前成员节点。",
+          "rotateConfirm": "轮换",
+          "done": "元数据密钥已轮换。",
+          "needsRotate": "新节点的元数据密钥未下发，请用「中继操作 → 轮换元数据密钥」补发。",
+          "admitFailed": "新节点的元数据密钥下发失败：{{error}}",
+          "rotateFailed": "元数据密钥轮换失败：{{error}}"
+        },
+        "errors": {
+          "ROOT_PASSWORD_INVALID": "当前密码不正确。",
+          "RELAY_PASSWORD_INVALID": "中继口令不正确。",
+          "RELAY_NOT_CONFIGURED": "本机未接入中继。",
+          "RELAY_QUOTA_NODES": "中继的节点配额已用尽。",
+          "RELAY_UNCONFIRMED": "中继未确认这次变更，请重试。",
+          "RELAY_OFFLINE": "中继连接已断开，请稍后重试。",
+          "RELAY_UNREACHABLE": "无法连接该中继，请检查地址。",
+          "RELAY_BAD_RESPONSE": "中继返回的数据无法识别。",
+          "RELAY_ENROLL_FAILED": "中继拒绝了这次接入。",
+          "RELAY_REJECTED": "中继拒绝了这次请求。",
+          "RELAY_KEY_MISSING": "本机缺少中继密钥，须重新接入。",
+          "NO_ADMITTED_NODES": "还没有已加入的节点，无法分发密钥。",
+          "UNKNOWN_NODE": "目标节点不在成员表里。",
+          "DUPLICATE_ENROLL_PK": "该加入码已存在。",
+          "INVALID_URL": "中继地址无效。",
+          "BAD_PROOF": "接入证明校验失败，请重试。",
+          "MALFORMED": "请求内容无效。"
+        }
+      },
+      "admin": {
+        "tabLabel": "中继",
+        "title": "中继运营",
+        "description": "本机作为公共中继，为接入的租户转发流量。",
+        "unavailable": "本机未启用中继角色。",
+        "unavailableHint": "中继角色需在安装时选择，启用后本页才有内容。",
+        "loginRequired": "请先登录，再管理中继。",
+        "loadFailed": "中继状态加载失败：{{message}}",
+        "health": {
+          "title": "运行状态",
+          "state": "状态",
+          "ok": "正常",
+          "down": "异常",
+          "unknown": "未知",
+          "version": "版本",
+          "uptime": "已运行",
+          "uptimeDays": "{{d}} 天 {{h}} 小时",
+          "uptimeHours": "{{h}} 小时 {{m}} 分钟",
+          "uptimeMinutes": "{{m}} 分钟"
+        },
+        "totals": {
+          "title": "总量",
+          "tenants": "租户",
+          "nodesOnline": "在线节点",
+          "streams": "并发流",
+          "inbound": "接收",
+          "outbound": "发送"
+        },
+        "password": {
+          "title": "接入口令",
+          "state": "状态",
+          "set": "已设置",
+          "unset": "未设置",
+          "unsetWarning": "未设置口令，任何人都能接入本中继。",
+          "epoch": "口令代次",
+          "minTokenEpoch": "最低令牌代次",
+          "change": "修改口令",
+          "dialogTitle": "修改接入口令",
+          "newPassword": "新口令",
+          "newPasswordHint": "至少 8 个字符。",
+          "clear": "清除口令",
+          "clearHint": "清除后任何人都能接入本中继。",
+          "modeLabel": "现有租户",
+          "modeKeep": "保留现有租户",
+          "modeKeepHint": "保留现有租户，新口令只对新接入生效。",
+          "modeKick": "作废旧令牌",
+          "modeKickHint": "作废旧令牌，所有租户需重新输入口令。",
+          "tooShort": "口令至少 8 个字符。",
+          "saved": "接入口令已更新。",
+          "failed": "口令更新失败：{{message}}",
+          "dialogDescription": "设置新口令，或清除口令改为任何人可接入。"
+        },
+        "quota": {
+          "title": "默认配额",
+          "description": "未单独设置配额的租户使用这组默认值。",
+          "maxNodes": "节点数上限",
+          "maxStreams": "并发流上限",
+          "bandwidth": "带宽上限（KB/s）",
+          "unlimited": "不限速",
+          "unlimitedValue": "不限",
+          "inherit": "跟随默认",
+          "inheritBadge": "默认",
+          "summary": "{{nodes}} 节点 · {{streams}} 流 · {{bandwidth}}",
+          "bandwidthValue": "{{kb}} KB/s",
+          "invalidNodes": "节点数上限须为不小于 1 的整数。",
+          "invalidStreams": "并发流上限须为不小于 1 的整数。",
+          "invalidBandwidth": "带宽上限须为不小于 1 的整数。",
+          "saved": "默认配额已更新。",
+          "failed": "配额更新失败：{{message}}"
+        },
+        "tenants": {
+          "title": "租户",
+          "total": "共 {{n}} 个",
+          "empty": "还没有租户接入。",
+          "columns": {
+            "id": "编号",
+            "label": "备注",
+            "created": "接入时间",
+            "lastSeen": "最近活跃",
+            "nodes": "节点",
+            "streams": "并发流",
+            "traffic": "流量",
+            "quota": "配额",
+            "tokenEpoch": "令牌代次",
+            "actions": "操作"
+          },
+          "nodesValue": "{{online}} / {{total}}",
+          "trafficValue": "↑ {{out}}｜↓ {{in}}",
+          "noLabel": "未备注",
+          "kicked": "已踢出",
+          "edit": "编辑",
+          "editTitle": "编辑租户",
+          "label": "备注",
+          "labelPlaceholder": "便于识别的名称",
+          "saved": "租户已更新。",
+          "failed": "租户更新失败：{{message}}",
+          "kick": "踢出",
+          "kickTitle": "踢出租户",
+          "kickText": "作废该租户的令牌并断开连接。重新输入口令后可再次接入。",
+          "kickDone": "已踢出租户。",
+          "kickFailed": "踢出失败：{{message}}",
+          "remove": "删除",
+          "removeTitle": "删除租户",
+          "removeText": "删除该租户的注册表与密钥日志，不可撤销。",
+          "removeConfirmLabel": "输入租户编号确认",
+          "removeMismatch": "编号不一致。",
+          "removeDone": "已删除租户。",
+          "removeFailed": "删除失败：{{message}}"
+        },
+        "time": {
+          "never": "从未",
+          "justNow": "刚刚",
+          "minutes": "{{n}} 分钟前",
+          "hours": "{{n}} 小时前",
+          "days": "{{n}} 天前"
+        }
       }
     }
   }
@@ -5180,7 +5580,7 @@ export const I18N_RESOURCES = {
       "siteUrl": "サイト URL",
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
-        "nameLinkedHint": "ノード名と連動します。ここで変更すると「マルチノード連携」のノード名も変わります。",
+        "nameLinkedHint": "「マルチノード連携」のノード名も同時に変わります。",
         "nameLinkedLocked": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
         "urlManagedHint": "ハブの公開アドレスによって決まります。「マルチノード連携」で変更してください。"
       },
@@ -5218,7 +5618,7 @@ export const I18N_RESOURCES = {
         "reloadApp": "アプリを再読み込み",
         "shortcuts": {
           "title": "カスタムショートカット",
-          "savedOnServer": "サーバーに保存され、すべてのブラウザで共有されます。変更は「保存」後に反映されます。",
+          "savedOnServer": "サーバーに保存され、すべてのブラウザで共有されます。「保存」で反映されます。",
           "preview": "プレビュー",
           "useIcons": "キーをアイコンで表示",
           "useIconsDesc": "Ctrl/Shift/Enter などのキー名を Apple 風の記号（⌃⇧⏎）に置き換えます。",
@@ -5250,7 +5650,7 @@ export const I18N_RESOURCES = {
         "title": "リモートアクセス",
         "wizardTitle": "セットアップ",
         "description": "Cloudflare Tunnel または直接接続で、このマシンの tmex にリモートアクセスします。",
-        "remoteNodeNotice": "リモートアクセスは、ブラウザが直接接続しているマシンでのみ設定できます。対象のマシンに切り替えてから、このページを開いてください。",
+        "remoteNodeNotice": "リモートアクセスは、ブラウザが直接接続しているノードでのみ設定できます。先にそのノードに切り替えてください。",
         "loginRequired": "リモートアクセスを設定する前にログインしてください。",
         "loadFailed": "リモートアクセスの状態を取得できませんでした。tmex ゲートウェイが稼働しているか確認し、ページを再読み込みしてください。",
         "unsupported": "このプラットフォーム（{{platform}}）向けの cloudflared がないため、Cloudflare Tunnel は利用できません。",
@@ -5277,7 +5677,7 @@ export const I18N_RESOURCES = {
         "mode": {
           "quick": {
             "title": "一時トンネル",
-            "description": "Cloudflare アカウント不要。起動のたびに新しい一時アドレスが発行されます。デモや切り分け向けです。"
+            "description": "Cloudflare アカウント不要。起動時に新しい一時アドレスが発行されます。デモや切り分け向けです。"
           },
           "named": {
             "title": "名前付きトンネル",
@@ -5291,7 +5691,7 @@ export const I18N_RESOURCES = {
           },
           "direct": {
             "title": "直接接続",
-            "description": "固定 IP・ポート転送・リバースプロキシ経由で接続します。Cloudflare は不要です。"
+            "description": "固定 IP・ポート転送・リバースプロキシ経由で接続します。"
           }
         },
         "direct": {
@@ -5316,7 +5716,7 @@ export const I18N_RESOURCES = {
           "entryLabel": "現在の入口",
           "entryHint": "tmex のアクセスアドレスです。外部に公開する場合は、このマシンの {{port}} 番ポートまたはリバースプロキシに向けてください。",
           "tls": {
-            "hint": "直接公開するときは必ず HTTPS を使ってください。平文の HTTP ではパスワードとセッション情報が経路上に流れます。",
+            "hint": "HTTPS を有効にしてください。平文の HTTP ではパスワードとセッション情報が経路上に流れます。",
             "link": "ノード設定で HTTPS を設定する"
           },
           "enable": {
@@ -5403,7 +5803,7 @@ export const I18N_RESOURCES = {
           },
           "quick": {
             "title": "一時トンネル",
-            "description": "開始すると Cloudflare が trycloudflare.com の一時アドレスを発行します。停止すると無効になります。",
+            "description": "開始すると trycloudflare.com の一時アドレスが発行されます。停止すると無効になります。",
             "started": "一時トンネルが稼働しています。公開アドレスは次のとおりです。"
           },
           "named": {
@@ -5416,7 +5816,7 @@ export const I18N_RESOURCES = {
             },
             "hostname": "ホスト名",
             "hostnamePlaceholder": "tmex.example.com",
-            "hostnameHint": "Cloudflare で管理しているドメインのサブドメインを指定します。",
+            "hostnameHint": "Cloudflare で管理しているサブドメインを指定します。",
             "hostnameInvalid": "tmex.example.com のような小文字のホスト名を入力してください。",
             "tunnelName": "トンネル名",
             "tunnelNamePlaceholder": "tmex",
@@ -5439,7 +5839,7 @@ export const I18N_RESOURCES = {
             "restartNow": "今すぐ再起動",
             "restarting": "tmex を再起動しています",
             "restartTimeout": "再起動の待機がタイムアウトしました。tmex を手動で再起動し、ページを再読み込みしてください。",
-            "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。トンネルを迂回してローカルの待ち受けポートに直接到達できる相手はこれらを偽装できるため、そのポートへのアクセスを制限してください。",
+            "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。トンネルを迂回してヘッダーを偽装されるリスクがあるため、そのポートへの外部アクセスは禁止してください。",
             "trustProxyEffective": "現在の適用値",
             "trustProxyState": {
               "on": "信頼中",
@@ -5511,7 +5911,7 @@ export const I18N_RESOURCES = {
           "exposure_ack_required": "この操作は tmex をインターネットに公開します。先にリスクを確認してください。"
         },
         "authRequired": {
-          "notice": "このマシンではログインが有効になっていません。公開する前に有効化しないと、誰でも tmex に入れてしまいます。",
+          "notice": "警告: ログインが有効になっていません。公開する前に有効化しないと、誰でも tmex にアクセスできます。",
           "link": "マルチノード設定を開く"
         },
         "confirmRemove": {
@@ -5538,7 +5938,7 @@ export const I18N_RESOURCES = {
             "title": "なし",
             "description": "アクセス保護を設定しません。アドレスを知った人は誰でも本機の tmex を使えます。",
             "warning": "アクセス保護が無効です。アドレスを知った人は誰でも本機の tmex を使えます。",
-            "appRemains": "Access アプリはまだ残っています。ここで削除できます。"
+            "appRemains": "Access アプリは削除されていません。ここで削除できます。"
           },
           "login": {
             "title": "アカウントとパスワード",
@@ -5601,7 +6001,7 @@ export const I18N_RESOURCES = {
             "hint": "認証情報は保存済みですが、tmex 側に Access アプリケーションの記録がありません。{{hostname}} 用のアプリケーションを Cloudflare ダッシュボードで作成済みの場合は、重複を避けるため先に同期してください。"
           },
           "probe": {
-            "unknown": "{{hostname}} の Cloudflare Access 状態を確認できません。利用できる Cloudflare 認証情報がないか、照会に失敗しました。未設定という意味ではありません。下で API トークンとアカウント ID を保存すると、自動的に再確認します。",
+            "unknown": "{{hostname}} の Cloudflare Access 状態を確認できません。利用できる認証情報がないか、照会に失敗しました。未設定という意味ではありません。下で API トークンとアカウント ID を保存すると、自動的に再確認します。",
             "covered": "読み取り専用の検出結果：Cloudflare ダッシュボード上に {{hostname}} を対象とする Access アプリケーションが既にあります。これは tmex の管理外で、ゲートウェイはそのトークンを検証しません。「Cloudflare から同期」で tmex の管理下に取り込めます。",
             "absent": "読み取り専用の検出結果：{{hostname}} を対象とする Access アプリケーションは Cloudflare にありません。下で許可するユーザーを指定して適用すると作成できます。",
             "teamDomain": "チームドメイン：{{teamDomain}}",
@@ -5615,8 +6015,8 @@ export const I18N_RESOURCES = {
             "rules": "ルール",
             "noRules": "なし",
             "enforce": "ゲートウェイで Access トークンを検証",
-            "enforceHint": "トンネル経由のリクエストで Cf-Access-Jwt-Assertion を検証し、通らないものを拒否します。",
-            "enforceOff": "トークン検証は無効です。Cloudflare のエッジでは引き続き未認可のアクセスを遮断しますが、Access を迂回してトンネルに届いたリクエストは通過します。",
+            "enforceHint": "トンネル経由のリクエストで Cf-Access-Jwt-Assertion を検証し、通らないものは拒否します。",
+            "enforceOff": "トークン検証は無効です。Cloudflare のエッジでは引き続き未認可のアクセスを遮断しますが、Access を迂回したリクエストは通過します。",
             "remove": "Access アプリケーションを削除",
             "hostnameMismatch": "このアプリケーションの対象ホスト名が現在のトンネルと異なるため、トークン検証は有効になりません。ルールを適用し直して、現在のホスト名に紐づけてください。"
           },
@@ -5652,7 +6052,7 @@ export const I18N_RESOURCES = {
           "noHostname": "このトンネルの設定に、このマシンの tmex（127.0.0.1:{{port}}）を指すホスト名が見つからないため、引き継げません。ingress の設定を確認するか、tmex で別のトンネルを作成してください。",
           "chooseHostname": "引き継ぐホスト名を選択",
           "adopt": "既存のトンネルを引き継ぐ",
-          "adoptHint": "引き継ぐと、このホスト名を公開アドレスとして設定し、トンネルの状態とアクセス制御を表示します。トンネル自体はシステムサービスが実行したままで、tmex が起動・停止や設定変更を行うことはありません。引き継ぎはいつでも解除できます。",
+          "adoptHint": "引き継ぐと、このホスト名を公開アドレスとして設定し、トンネルの状態とアクセス制御を表示します。",
           "dismiss": "無視して新規作成"
         }
       },
@@ -5777,10 +6177,10 @@ export const I18N_RESOURCES = {
         "changelogUnavailable": "このバージョンの変更履歴はありません。",
         "publishedAt": "公開日 {{date}}",
         "upgrade": "今すぐ更新",
-        "upgradeDisabledDev": "production 以外の環境ではアプリ内更新は無効です。",
+        "upgradeDisabledDev": "本番環境以外ではアプリ内更新は無効です。",
         "upgradeDisabledNonCli": "アプリ内更新は CLI インストール時のみ利用できます。",
         "upgradeWarningTitle": "更新の確認",
-        "upgradeWarningBody": "更新するとサービスが再起動し、現在のセッションが中断されます。サービスが管理する tmux プロセスの存続にも影響する可能性があります。続行しますか？",
+        "upgradeWarningBody": "更新するとサービスが再起動し、現在のセッションが中断されます。サービスが管理する tmux プロセスに影響する可能性があります。続行しますか？",
         "upgradeStarted": "更新を開始しました",
         "stateDownloading": "新しいバージョンをダウンロード中…",
         "stateExecuting": "更新を適用中、サービスを再起動しています…",
@@ -5948,6 +6348,7 @@ export const I18N_RESOURCES = {
       "error": "WebSocket 接続エラー",
       "checkGateway": "Gateway 状態を確認してください",
       "inputDropped": "接続が中断されたため、直前の入力は送信されませんでした。再接続後にもう一度入力または貼り付けてください。",
+      "serverTooOld": "端末接続に失敗しました：Gateway のバージョンが古いため、{{minVersion}} 以降へ更新してください。",
       "reconnecting": "再接続中",
       "reconnect": "再接続"
     },
@@ -6496,7 +6897,7 @@ export const I18N_RESOURCES = {
       "security": {
         "title": "アカウントセキュリティ",
         "changePassword": "パスワードを変更",
-        "changePasswordWarning": "パスワードを変更すると、すべてのデバイスのパスキーと認証アプリの設定が削除され、すべてのセッションからサインアウトします。設定し直しが必要です。",
+        "changePasswordWarning": "パスワードを変更すると、すべてのデバイスのパスキーと認証アプリの設定が削除され、すべてのセッションからサインアウトします。",
         "changePasswordDone": "パスワードを変更しました。各ノードで再度サインインしてください。",
         "currentPassword": "現在のパスワード",
         "newPassword": "新しいパスワード",
@@ -6504,8 +6905,8 @@ export const I18N_RESOURCES = {
         "passwordRequired": "パスワードを入力してください。",
         "passwordMismatch": "新しいパスワードが一致しません。",
         "totp": "認証アプリ",
-        "totpNote": "パスワードが漏れた場合にアカウントを守ります。より強い二要素にはパスキーを使ってください。",
-        "totpPasskeyNote": "パスキーでサインインする場合、コードは求められません。",
+        "totpNote": "パスワードが漏れた場合にアカウントを守ります。より強い二要素認証にはパスキーを使ってください。",
+        "totpPasskeyNote": "パスキーでサインインする場合、コードは不要です。",
         "totpSet": "設定する",
         "totpReset": "再設定",
         "totpClear": "オフにする",
@@ -6516,7 +6917,7 @@ export const I18N_RESOURCES = {
         "passkeyName": "パスキーの名前",
         "registerPasskey": "パスキーを追加",
         "signWithExistingPasskey": "パスワードの代わりに、パスキーで確認できます。",
-        "passkeySecondFactorHint": "パスキーを登録すると、パスワードでのサインインにもパスキーの確認が必要になります。このマシンや LAN アドレスからのサインインでは確認は不要で、それ以外のアドレスではパスキーの登録が必要です。すべてのパスキーを削除すると無効になります。",
+        "passkeySecondFactorHint": "登録すると、パスワードでのサインインにもパスキーの確認が必要になります（このマシンや LAN アドレスからのサインインでは不要）。",
         "sessionKeyNote": "このページの操作はすべて、パスワードまたはパスキーの確認を求めます。",
         "totpConfirm": "確認して有効にする",
         "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。",
@@ -6680,7 +7081,7 @@ export const I18N_RESOURCES = {
         "general": "一般設定",
         "domainAccess": {
           "label": "ドメインアクセスを許可",
-          "description": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され、ハブ / ノード連携サービスのみが利用できます。ローカルネットワークとこのマシンからのアクセスは影響を受けません。公開ドメイン：{{hosts}}",
+          "description": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され（LAN とこのマシンからのアクセスは影響なし）、ハブ / ノード連携サービスのみが利用できます。公開ドメイン：{{hosts}}",
           "noHosts": "公開ドメインはまだ設定されていません。",
           "hostSeparator": "、",
           "failed": "ドメインアクセスの設定を保存できませんでした（{{detail}}）。",
@@ -6699,8 +7100,8 @@ export const I18N_RESOURCES = {
         "changeHub": "ハブを変更",
         "confirm": "退出して再起動",
         "cancel": "キャンセル",
-        "consequencesNode": "このマシンのメッシュ状態（アカウント、ノード ID、キャッシュ済みピア）はすべて削除されます。退出前にハブ側でこのマシンを自動的に失効させます。自動失効に失敗した場合はハブにオフラインの記録が残るため、ハブ側で手動失効が必要です。tmex は再起動し、現在のセッションは終了します。",
-        "consequencesHub": "このマシンがハブです。退出するとメッシュ状態（アカウント、ノード ID、キャッシュ済みピア）はすべて削除され、配下のノードはハブを失います。復旧には別のハブへ参加し直す必要があります。tmex は再起動し、現在のセッションは終了します。",
+        "consequencesNode": "退出すると、このマシンのマルチノード連携の状態はすべて削除され、tmex が再起動して現在のセッションは終了します。退出前にハブ側でこのマシンを自動的に失効させます。",
+        "consequencesHub": "このマシンがハブです。退出するとマルチノード連携の状態はすべて削除され、tmex が再起動して現在のセッションは終了します。配下のノードはハブを失い、復旧には別のハブへ参加し直す必要があります。",
         "leaveConfirm": {
           "title": "ハブから退出しますか？",
           "description": "このマシンはスタンドアロン動作に戻ります。"
@@ -6735,7 +7136,7 @@ export const I18N_RESOURCES = {
       "https": {
         "title": "HTTPS 設定",
         "description": "このマシンが HTTPS をどう提供するかを設定します。ログインとパスキーは HTTPS のアドレスでのみ利用できます。",
-        "hubUrlHint": "ハブの公開アドレスは https である必要があります。ここで証明書を発行するか、前段にリバースプロキシを置いて「外部リバースプロキシ」を選んでください。",
+        "hubUrlHint": "ハブの公開アドレスは HTTPS である必要があります。ここで証明書を発行するか、前段にリバースプロキシを置いて「外部リバースプロキシ」を選んでください。",
         "nodeRoleHint": "HTTPS が必要なのは、このマシンがハブとして動作する場合だけです。ノードへはハブ経由でアクセスするため、設定は不要です。",
         "modeActive": "適用中",
         "save": "保存",
@@ -6805,10 +7206,10 @@ export const I18N_RESOURCES = {
           "intro": "tmex は平文 HTTP を提供し続け、前段のプロキシが TLS を処理します。プロキシを平文ポートに向け、元のホスト・プロトコル・クライアントアドレスを転送してください。",
           "trustProxy": "プロキシヘッダーを信頼する",
           "trustProxyHint": "tmex にプロキシ経由でしか到達できない場合のみ有効にしてください。",
-          "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。平文ポートに直接到達できる相手はこれらを偽装できるため、そのポートは閉じてください。"
+          "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。直接接続でヘッダーを偽装されるリスクがあるため、そのポートへの外部アクセスは禁止してください。"
         },
         "selfsigned": {
-          "intro": "公開ドメインがない LAN やトンネル向けです。プライベート認証局（CA）はこのマシンから出ず、証明書の有効期間は 398 日です。",
+          "intro": "公開ドメインがない LAN やトンネル向けです。プライベート認証局（CA）はこのマシンに保存され、証明書の有効期間は 398 日です。",
           "sans": "証明書に含める名前",
           "sansHint": "ブラウザーで実際に入力するホスト名または IP アドレス（最大 20 件）。ここにないアドレスは証明書エラーになります。",
           "sansPlaceholder": "hub.lan または 192.168.1.10",
@@ -6845,7 +7246,7 @@ export const I18N_RESOURCES = {
           }
         },
         "acme": {
-          "intro": "Let's Encrypt は 1 つのドメインに対して一般に信頼される証明書を発行し、更新は自動で行われます。ドメインはこのマシンを指している必要があります。",
+          "intro": "Let's Encrypt は 1 つのドメインに HTTPS 証明書を発行し、自動で更新します。ドメインはこのマシンを指している必要があります。",
           "domain": "ドメイン",
           "domainHint": "ホスト名 1 つ、ワイルドカードは使えません。すでにこのマシンを指している必要があります。",
           "email": "連絡先メールアドレス",
@@ -6878,8 +7279,8 @@ export const I18N_RESOURCES = {
           "nextRenew": "次回の更新",
           "renewNow": "今すぐ更新",
           "hints": {
-            "http01": "公開ポート 80 がこのマシンに到達する必要があります。NAT 内ではルーターでポート転送を設定してください。",
-            "http01Linux": "ユーザー権限の systemd サービスはポート 80 を使えません。ルーターで転送するか、DNS-01 に切り替えてください。",
+            "http01": "公開ポート 80 がこのマシンに到達する必要があります。NAT 環境ではルーターでポート転送を設定してください。",
+            "http01Linux": "ユーザー権限の systemd サービスはポート 80 を使えません。ルーターで転送を設定するか、DNS-01 に切り替えてください。",
             "dns01": "ドメインの DNS を選択したプロバイダーで管理し、そのレコードを編集できる API キーを用意してください。"
           }
         },
@@ -7122,7 +7523,7 @@ export const I18N_RESOURCES = {
         "path": {
           "becomeHub": {
             "title": "このマシンをハブにする",
-            "description": "他のマシンがこのマシンに参加します。公開 HTTPS アドレスが必要です。"
+            "description": "他のノードがこのマシンに参加します。公開 HTTPS アドレスが必要です。"
           },
           "joinHub": {
             "title": "既存のハブに参加する",
@@ -7139,7 +7540,7 @@ export const I18N_RESOURCES = {
         },
         "fields": {
           "hubPublicUrl": "ハブの公開アドレス",
-          "hubPublicUrlHint": "全員が使う https アドレス（例：https://tmex.example.com）。参加するすべてのマシンから到達できる必要があります。",
+          "hubPublicUrlHint": "外部から到達できる https アドレス（例：https://tmex.example.com）。参加するすべてのノードから到達できる必要があります。",
           "username": "ユーザー名",
           "usernameHint": "1〜64 文字。英数字、ドット、アンダースコア、ハイフンが使えます。",
           "password": "パスワード",
@@ -7259,6 +7660,205 @@ export const I18N_RESOURCES = {
         "resetConfirmDescription": "すべてのグループを削除し、すべてのノードを既定の順序で最上位に戻します。",
         "resetFailed": "レイアウトのリセットに失敗しました",
         "resetDone": "レイアウトを既定に戻しました"
+      }
+    },
+    "relay": {
+      "tenant": {
+        "strip": {
+          "title": "中継",
+          "online": "オンライン",
+          "offline": "オフライン",
+          "attached": "本機はこの中継に接続中",
+          "detail": "{{url}}｜優先度 {{priority}}｜{{state}}",
+          "rtt": "遅延 {{ms}} ms",
+          "kicked": "トークンが失効しました。中継パスワードを入力し直してください",
+          "lastError": "直近のエラー：{{error}}",
+          "meta": "メタデータ鍵 第 {{epoch}} 世代",
+          "nodes": "中継経由で {{count}} 台のノードが見えています",
+          "quota": "クォータ {{nodes}} ノード｜{{streams}} ストリーム",
+          "empty": "中継に接続していません。"
+        },
+        "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
+        "reauth": {
+          "notice": "中継トークンが失効しました。中継パスワードを入力し直してください。",
+          "action": "パスワードを再入力"
+        },
+        "actions": {
+          "menu": "中継の操作",
+          "enroll": "中継に接続",
+          "migrate": "中継接続に切り替え",
+          "add": "中継を追加",
+          "reauth": "パスワードを再入力",
+          "rotate": "メタデータ鍵をローテーション",
+          "leave": "中継から離脱"
+        },
+        "dialog": {
+          "enrollTitle": "中継に接続",
+          "migrateTitle": "中継接続に切り替え",
+          "addTitle": "中継を追加",
+          "reauthTitle": "中継パスワードの再入力",
+          "url": "中継アドレス",
+          "urlHint": "中継の公開 HTTPS アドレスを入力します。",
+          "password": "中継パスワード",
+          "passwordHint": "中継にパスワードがない場合は空欄のままにします。",
+          "rootPassword": "現在のパスワード",
+          "rootPasswordHint": "接続証明はルート鍵の署名が必要で、パスキーでは代替できません。",
+          "migrateNotice": "接続後は本機が中継を使い、Hub には接続しなくなります。",
+          "submit": "接続",
+          "submitReauth": "再接続",
+          "done": "中継に接続しました。"
+        },
+        "leave": {
+          "title": "中継から離脱しますか？",
+          "description": "離脱すると本機と各ノードは上位リンクを失い、中継か Hub に接続し直す必要があります。",
+          "confirm": "離脱",
+          "done": "中継から離脱しました。"
+        },
+        "metaKey": {
+          "rotateTitle": "メタデータ鍵をローテーションしますか？",
+          "rotateDescription": "新しい世代のメタデータ鍵を発行し、現在のメンバーノードにのみ配布します。",
+          "rotateConfirm": "ローテーション",
+          "done": "メタデータ鍵をローテーションしました。",
+          "needsRotate": "新しいノードにメタデータ鍵が配布されていません。「中継の操作 → メタデータ鍵をローテーション」で配布してください。",
+          "admitFailed": "新しいノードへのメタデータ鍵の配布に失敗しました：{{error}}",
+          "rotateFailed": "メタデータ鍵のローテーションに失敗しました：{{error}}"
+        },
+        "errors": {
+          "ROOT_PASSWORD_INVALID": "現在のパスワードが正しくありません。",
+          "RELAY_PASSWORD_INVALID": "中継パスワードが正しくありません。",
+          "RELAY_NOT_CONFIGURED": "本機は中継に接続していません。",
+          "RELAY_QUOTA_NODES": "中継のノードクォータを使い切りました。",
+          "RELAY_UNCONFIRMED": "中継がこの変更を確認していません。再試行してください。",
+          "RELAY_OFFLINE": "中継との接続が切れています。しばらくしてから再試行してください。",
+          "RELAY_UNREACHABLE": "この中継に接続できません。アドレスを確認してください。",
+          "RELAY_BAD_RESPONSE": "中継の応答を解釈できません。",
+          "RELAY_ENROLL_FAILED": "中継がこの接続を拒否しました。",
+          "RELAY_REJECTED": "中継がこの要求を拒否しました。",
+          "RELAY_KEY_MISSING": "本機に中継鍵がありません。接続し直してください。",
+          "NO_ADMITTED_NODES": "参加済みのノードがないため鍵を配布できません。",
+          "UNKNOWN_NODE": "対象のノードがメンバー一覧にありません。",
+          "DUPLICATE_ENROLL_PK": "その参加コードは既に存在します。",
+          "INVALID_URL": "中継アドレスが不正です。",
+          "BAD_PROOF": "接続証明の検証に失敗しました。再試行してください。",
+          "MALFORMED": "要求内容が不正です。"
+        }
+      },
+      "admin": {
+        "tabLabel": "リレー",
+        "title": "リレー運用",
+        "description": "本機は公開リレーとして、参加したテナントの通信を中継します。",
+        "unavailable": "本機ではリレー役割が有効になっていません。",
+        "unavailableHint": "リレー役割はインストール時に選択します。有効になるまでこのページは空です。",
+        "loginRequired": "先にログインしてからリレーを管理してください。",
+        "loadFailed": "リレーの状態を読み込めませんでした：{{message}}",
+        "health": {
+          "title": "稼働状態",
+          "state": "状態",
+          "ok": "正常",
+          "down": "異常",
+          "unknown": "不明",
+          "version": "バージョン",
+          "uptime": "稼働時間",
+          "uptimeDays": "{{d}} 日 {{h}} 時間",
+          "uptimeHours": "{{h}} 時間 {{m}} 分",
+          "uptimeMinutes": "{{m}} 分"
+        },
+        "totals": {
+          "title": "合計",
+          "tenants": "テナント",
+          "nodesOnline": "オンラインノード",
+          "streams": "同時ストリーム",
+          "inbound": "受信",
+          "outbound": "送信"
+        },
+        "password": {
+          "title": "参加パスワード",
+          "state": "状態",
+          "set": "設定済み",
+          "unset": "未設定",
+          "unsetWarning": "パスワードが未設定のため、誰でも本リレーに参加できます。",
+          "epoch": "パスワード世代",
+          "minTokenEpoch": "最小トークン世代",
+          "change": "パスワードを変更",
+          "dialogTitle": "参加パスワードの変更",
+          "newPassword": "新しいパスワード",
+          "newPasswordHint": "8 文字以上で入力してください。",
+          "clear": "パスワードを削除",
+          "clearHint": "削除すると誰でも本リレーに参加できます。",
+          "modeLabel": "既存テナント",
+          "modeKeep": "既存テナントを維持",
+          "modeKeepHint": "既存テナントはそのまま、新しいパスワードは新規参加にのみ適用されます。",
+          "modeKick": "既存トークンを失効",
+          "modeKickHint": "既存トークンを失効し、全テナントがパスワードを再入力する必要があります。",
+          "tooShort": "パスワードは 8 文字以上で入力してください。",
+          "saved": "参加パスワードを更新しました。",
+          "failed": "パスワードを更新できませんでした：{{message}}",
+          "dialogDescription": "新しいパスワードを設定するか、削除して誰でも参加できるようにします。"
+        },
+        "quota": {
+          "title": "既定クォータ",
+          "description": "個別のクォータがないテナントはこの値を使用します。",
+          "maxNodes": "ノード数の上限",
+          "maxStreams": "同時ストリームの上限",
+          "bandwidth": "帯域の上限（KB/s）",
+          "unlimited": "無制限",
+          "unlimitedValue": "無制限",
+          "inherit": "既定に従う",
+          "inheritBadge": "既定",
+          "summary": "{{nodes}} ノード · {{streams}} ストリーム · {{bandwidth}}",
+          "bandwidthValue": "{{kb}} KB/s",
+          "invalidNodes": "ノード数の上限は 1 以上の整数で入力してください。",
+          "invalidStreams": "同時ストリームの上限は 1 以上の整数で入力してください。",
+          "invalidBandwidth": "帯域の上限は 1 以上の整数で入力してください。",
+          "saved": "既定クォータを更新しました。",
+          "failed": "クォータを更新できませんでした：{{message}}"
+        },
+        "tenants": {
+          "title": "テナント",
+          "total": "全 {{n}} 件",
+          "empty": "参加しているテナントはまだありません。",
+          "columns": {
+            "id": "ID",
+            "label": "メモ",
+            "created": "参加日時",
+            "lastSeen": "最終アクセス",
+            "nodes": "ノード",
+            "streams": "同時ストリーム",
+            "traffic": "通信量",
+            "quota": "クォータ",
+            "tokenEpoch": "トークン世代",
+            "actions": "操作"
+          },
+          "nodesValue": "{{online}} / {{total}}",
+          "trafficValue": "↑ {{out}}｜↓ {{in}}",
+          "noLabel": "メモなし",
+          "kicked": "切断済み",
+          "edit": "編集",
+          "editTitle": "テナントの編集",
+          "label": "メモ",
+          "labelPlaceholder": "識別しやすい名前",
+          "saved": "テナントを更新しました。",
+          "failed": "テナントを更新できませんでした：{{message}}",
+          "kick": "切断",
+          "kickTitle": "テナントの切断",
+          "kickText": "このテナントのトークンを失効し接続を切断します。パスワードを入力すれば再参加できます。",
+          "kickDone": "テナントを切断しました。",
+          "kickFailed": "切断できませんでした：{{message}}",
+          "remove": "削除",
+          "removeTitle": "テナントの削除",
+          "removeText": "このテナントの登録情報と鍵ログを削除します。取り消せません。",
+          "removeConfirmLabel": "確認のためテナント ID を入力",
+          "removeMismatch": "ID が一致しません。",
+          "removeDone": "テナントを削除しました。",
+          "removeFailed": "削除できませんでした：{{message}}"
+        },
+        "time": {
+          "never": "なし",
+          "justNow": "たった今",
+          "minutes": "{{n}} 分前",
+          "hours": "{{n}} 時間前",
+          "days": "{{n}} 日前"
+        }
       }
     }
   }
