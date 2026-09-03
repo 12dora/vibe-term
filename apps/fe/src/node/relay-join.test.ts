@@ -33,14 +33,12 @@ const TOKEN = new Uint8Array(32).fill(0x22);
 const ROOT = rootKeyFromSeed(new Uint8Array(32).fill(0x33));
 const HEAD_HASH = new Uint8Array(32).fill(0x44);
 
-function relayApiOf(relays: string[]): RelayTenantApi {
+function relayApiOf(relays: Array<{ url: string; tenantId: string }>): RelayTenantApi {
   return {
     joinMaterial: () =>
       Promise.resolve({
-        tenantId: 'ab'.repeat(16),
-        token: encodeBase64url(TOKEN),
         logKey: encodeBase64url(LOG_KEY),
-        relays,
+        relays: relays.map((relay) => ({ ...relay, token: encodeBase64url(TOKEN) })),
       }),
   } as unknown as RelayTenantApi;
 }
@@ -59,11 +57,11 @@ describe('createEnrollmentOnRelay', () => {
     setPendingStorage(memoryStorage());
   });
 
-  test('拼出 r3 join 串，带上 K_log / 租户令牌 / 地址表', async () => {
+  test('拼出 r3 join 串，带上 K_log 与该中继自己的租户凭据', async () => {
     const calls: unknown[] = [];
     const created = await createEnrollmentOnRelay({
       channel: channelOf(calls),
-      relayApi: relayApiOf(['https://a.example', 'https://b.example']),
+      relayApi: relayApiOf([{ url: 'https://a.example', tenantId: 'ab'.repeat(16) }]),
       uid: 'u1',
       rootEpoch: 3,
       signer: { kind: 'root', rootKey: ROOT },
@@ -75,12 +73,13 @@ describe('createEnrollmentOnRelay', () => {
 
     expect(isRelayJoinToken(created.joinToken)).toBe(true);
     const decoded = decodeRelayJoinToken(created.joinToken);
-    expect(decoded.tenantId).toBe('ab'.repeat(16));
     expect(decoded.logKey).toEqual(LOG_KEY);
-    expect(decoded.token).toEqual(TOKEN);
     expect(decoded.rootPublicKey).toEqual(ROOT.publicKey);
     expect(decoded.keyLogHeadHash).toEqual(HEAD_HASH);
-    expect(decoded.relayUrls).toEqual(['https://a.example', 'https://b.example']);
+    // enrollment 只在当前 attach 的中继上，join 串就只带这一条（含它自己的凭据）。
+    expect(decoded.relays).toEqual([
+      { url: 'https://a.example', tenantId: 'ab'.repeat(16), token: TOKEN },
+    ]);
     // join 命令用第一条地址。
     expect(created.hubPublicUrl).toBe('https://a.example');
 

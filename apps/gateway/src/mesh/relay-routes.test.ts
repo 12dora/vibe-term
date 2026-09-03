@@ -364,12 +364,16 @@ describe('RelayRoutes', () => {
         tenantId: string;
         token: string;
         logKey: string;
-        relays: string[];
+        relays: Array<{ url: string; tenantId: string; token: string }>;
       };
       expect(body.tenantId).toBe(TENANT_ID);
       expect(decodeBase64url(body.token)).toEqual(new Uint8Array(32).fill(6));
       expect(decodeBase64url(body.logKey)).toEqual(logKey);
-      expect(body.relays).toEqual([canonicalHubUrl(RELAY_URL)]);
+      // 只带持有 enrollment 的那台中继，且带上它自己的租户凭据。
+      expect(body.relays).toHaveLength(1);
+      expect(body.relays[0].url).toBe(canonicalHubUrl(RELAY_URL));
+      expect(body.relays[0].tenantId).toBe(TENANT_ID);
+      expect(decodeBase64url(body.relays[0].token)).toEqual(new Uint8Array(32).fill(6));
     } finally {
       b.close();
     }

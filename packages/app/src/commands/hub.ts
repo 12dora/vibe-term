@@ -67,7 +67,7 @@ export type HubIo = {
   restart?: (serviceName: string, installDir: string) => Promise<void>;
   auth?: LocalAuthContext;
   now?: () => number;
-  fetcher?: typeof fetch;
+  fetcher?: HubFetch;
   insecureLocal?: boolean;
   skipRestart?: boolean;
   stop?: (serviceName: string, installDir: string) => Promise<void>;
@@ -76,6 +76,8 @@ export type HubIo = {
   totpCode?: string;
   serviceManager?: ServiceManagerKind;
   confirm?: () => boolean | Promise<boolean>;
+  /** r3 加入时每个中继请求的超时（毫秒）；只在测试里下调。 */
+  relayTimeoutMs?: number;
 };
 
 export type HubListRow = {
@@ -132,7 +134,7 @@ export type PerformHubJoinInput = {
 export type PerformHubJoinDeps = {
   auth: LocalAuthContext;
   now?: () => number;
-  fetcher?: typeof fetch;
+  fetcher?: HubFetch;
 };
 
 function joinErrorMessage(error: unknown, fallback: string): string {
@@ -153,7 +155,7 @@ function toJoinError(error: unknown, fallback: JoinErrorCode): JoinError {
 
 function injectRedeemPop(fetcher: HubFetch | undefined, pop: string): HubFetch {
   const inner = fetcher ?? fetch;
-  return (async (input, init) => {
+  const withPop: HubFetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     let next = init;
     if (url.includes('/api/hub/enrollments/redeem') && typeof init?.body === 'string') {
@@ -162,11 +164,12 @@ function injectRedeemPop(fetcher: HubFetch | undefined, pop: string): HubFetch {
       next = { ...init, body: JSON.stringify(parsed) };
     }
     return inner(input, next);
-  }) as HubFetch;
+  };
+  return withPop;
 }
 
 function pinHubCa(inner: HubFetch, pem: string): HubFetch {
-  return ((input, init) => inner(input, { ...init, tls: { ca: [pem] } })) as HubFetch;
+  return (input, init) => inner(input, { ...init, tls: { ca: [pem] } });
 }
 
 function errorCode(error: unknown): string {
@@ -732,12 +735,12 @@ export async function runHubLeave(parsed: ParsedArgs, io: HubIo = {}): Promise<v
   }
   try {
     await withAuth(parsed, io, async (ctx) => {
-      const { leaveMesh } = await import('../runtime/membership-reset');
+      const { isLeavableRoleName, leaveMesh } = await import('../runtime/membership-reset');
       const { createSetupTransitionLock } = await import('../runtime/setup-service');
       const roles = await rolesForLeave(ctx);
       const fromRole = roleNameFromFlags(roles);
       await leaveMesh(
-        { expectedRole: fromRole === 'standalone' ? 'node' : fromRole },
+        { expectedRole: isLeavableRoleName(fromRole) ? fromRole : 'node' },
         {
           roles,
           nodeEnv: io.nodeEnv ?? process.env.NODE_ENV ?? 'test',

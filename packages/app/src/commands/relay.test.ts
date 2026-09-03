@@ -11,6 +11,7 @@ import {
 import { decodeRelayEnrollProof, verifyRelayEnrollProof } from '../../../shared/src/relay';
 import { parseArgs } from '../lib/args';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
+import { RELAY_RECORD_MAX_ATTEMPTS, RELAY_ROOT_ROTATED } from '../lib/relay-session';
 import { runHubUserAdd } from './hub';
 import {
   formatRelayStatusLines,
@@ -58,6 +59,10 @@ type FakeOptions = {
   status?: Record<string, unknown>[];
   enroll?: () => Response;
   leave?: Record<string, unknown>;
+  /** 依次作用于每一次 `POST /api/auth/keylog?hub=sync`；用完回落到成功。 */
+  appends?: Array<() => Response>;
+  /** 依次作用于每一次 `GET /api/auth/keylog/head` 的 rootEpoch。 */
+  headEpochs?: number[];
 };
 
 function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
@@ -66,6 +71,8 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
   if (!user) throw new Error('missing ivy');
   const statuses = options.status ?? [];
   let statusIndex = 0;
+  let appendIndex = 0;
+  let headIndex = 0;
 
   const json = (payload: unknown, init?: ResponseInit) =>
     new Response(JSON.stringify(payload), {
@@ -129,15 +136,23 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
         );
       case '/api/mesh/relay/leave/prepare':
         return json(options.leave ?? { payload: encodeBase64url(SET_RELAYS_PAYLOAD) });
-      case '/api/auth/keylog/head':
+      case '/api/auth/keylog/head': {
+        const epochs = options.headEpochs;
+        const rootEpoch = epochs?.[Math.min(headIndex, epochs.length - 1)] ?? user.rootEpoch;
+        headIndex += 1;
         return json({
           seq: user.keyLogHeadSeq,
           hash: encodeBase64url(user.keyLogHeadHash),
-          rootEpoch: user.rootEpoch,
+          rootEpoch,
           uid: user.id,
         });
-      case '/api/auth/keylog?hub=sync':
+      }
+      case '/api/auth/keylog?hub=sync': {
+        const make = options.appends?.[appendIndex];
+        appendIndex += 1;
+        if (make) return make();
         return json({ seq: user.keyLogHeadSeq + 1, hash: encodeBase64url(randomBytes(32)) });
+      }
       case '/api/mesh/relay/status': {
         const next = statuses[Math.min(statusIndex, statuses.length - 1)] ?? {
           mode: 'none',
@@ -286,6 +301,60 @@ describe('relay enroll', () => {
     );
     expect(result.online).toBe(false);
     expect(logs.at(-1)).toContain('ECONNREFUSED');
+  });
+});
+
+describe('并发追加下的 set-relays', () => {
+  const conflict = () =>
+    new Response(JSON.stringify({ code: 'seq_gap' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    });
+
+  test('浏览器抢先追加时重读 head、重取 payload 再签一次', async () => {
+    const auth = await openAuth();
+    const { calls, fetcher } = fakeGateway(auth, {
+      status: [ATTACHED_STATUS],
+      appends: [conflict],
+    });
+    const result = await runRelayEnroll(
+      parseArgs(['relay', 'enroll', RELAY_URL]),
+      RELAY_URL,
+      io(auth, fetcher, [])
+    );
+    expect(result.online).toBe(true);
+    const paths = calls.map((call) => call.path);
+    expect(paths.filter((path) => path === '/api/auth/keylog/head')).toHaveLength(2);
+    expect(paths.filter((path) => path === '/api/auth/keylog?hub=sync')).toHaveLength(2);
+    // payload 是重新问节点要的，不是拿旧的重签。
+    expect(paths.filter((path) => path === '/api/mesh/relay/enroll')).toHaveLength(2);
+  });
+
+  test('重试次数用尽后把中继的错误原样抛出', async () => {
+    const auth = await openAuth();
+    const { calls, fetcher } = fakeGateway(auth, {
+      status: [ATTACHED_STATUS],
+      appends: [conflict, conflict, conflict, conflict, conflict],
+    });
+    await expect(
+      runRelayEnroll(parseArgs(['relay', 'enroll', RELAY_URL]), RELAY_URL, io(auth, fetcher, []))
+    ).rejects.toThrow('seq_gap');
+    expect(calls.filter((call) => call.path === '/api/auth/keylog?hub=sync')).toHaveLength(
+      RELAY_RECORD_MAX_ATTEMPTS
+    );
+  });
+
+  test('根钥在中途轮换过就不再重签，直接报错', async () => {
+    const auth = await openAuth();
+    const { calls, fetcher } = fakeGateway(auth, {
+      status: [ATTACHED_STATUS],
+      appends: [conflict],
+      headEpochs: [0, 1],
+    });
+    await expect(
+      runRelayEnroll(parseArgs(['relay', 'enroll', RELAY_URL]), RELAY_URL, io(auth, fetcher, []))
+    ).rejects.toThrow(RELAY_ROOT_ROTATED);
+    expect(calls.filter((call) => call.path === '/api/auth/keylog?hub=sync')).toHaveLength(1);
   });
 });
 

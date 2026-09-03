@@ -171,22 +171,34 @@ describe('RelayTenantApi 待签 payload', () => {
 });
 
 describe('RelayTenantApi enrollment 与 join 材料', () => {
-  test('joinMaterial 直读节点侧的 camelCase 字段', async () => {
+  test('joinMaterial 直读节点侧的 camelCase 字段（每条中继自带凭据）', async () => {
     const { api, calls } = recorder([
-      ok({ tenantId: 'ab'.repeat(16), token: 'dA', logKey: 'aw', relays: ['https://r.example'] }),
+      ok({
+        logKey: 'aw',
+        relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: 'dA' }],
+        tenantId: 'ab'.repeat(16),
+        token: 'dA',
+      }),
     ]);
     expect(await api.joinMaterial()).toEqual({
-      tenantId: 'ab'.repeat(16),
-      token: 'dA',
       logKey: 'aw',
-      relays: ['https://r.example'],
+      relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: 'dA' }],
     });
     expect(calls[0].url).toBe('/api/mesh/relay/join-material');
   });
 
   test('材料不全直接报错，不静默拼一个解不开的 join 串', () => {
+    expect(() => normalizeJoinMaterial({ logKey: 'aw', relays: [] })).toThrow(RelayApiError);
     expect(() =>
-      normalizeJoinMaterial({ tenantId: 'ab'.repeat(16), token: 'dA', relays: [] })
+      normalizeJoinMaterial({
+        logKey: 'aw',
+        relays: [{ url: 'https://r.example', tenantId: 'nope', token: 'dA' }],
+      })
+    ).toThrow(RelayApiError);
+    expect(() =>
+      normalizeJoinMaterial({
+        relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: 'dA' }],
+      })
     ).toThrow(RelayApiError);
   });
 

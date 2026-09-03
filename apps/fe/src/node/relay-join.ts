@@ -1,8 +1,11 @@
 // 中继模式下的「加入码」：join 串 v3（`r3.`）与它的 enrollment 创建（plan-00 §1.5、§1.9）。
 //
 // 与 hub 模式的差别只有两处：enrollment 建在中继上（经本机 uplink 转发），join 串里除了
-// `enroll_sk ‖ root_pk ‖ head_hash` 还带上 `K_log ‖ tenant_id ‖ token ‖ 中继地址表`——
+// `enroll_sk ‖ root_pk ‖ head_hash` 还带上 `K_log` 与中继表（每条自带 `tenant_id ‖ token`）——
 // 新节点没有 hub 可问，必须自带解密密钥日志与连中继的全部材料。
+//
+// 中继表只有 join-material 给出的那一条：enrollment 只存在于当前 attach 的中继上，去别处
+// redeem 只会 404。完整的有序中继表由加入后下载的 `set-relays` 记录送达。
 //
 // `enroll_sk` 与 `K_log` 都**只**出现在内存与展示给用户的 join 串里：落盘的 pending 只有公开字段
 // （见 `enrollment.ts` 的 `PendingEnrollment`），字节缓冲用完立刻清零。
@@ -51,7 +54,11 @@ export async function createEnrollmentOnRelay(
     throw new Error('relay list is empty');
   }
   const logKey = decodeBase64url(material.logKey);
-  const token = decodeBase64url(material.token);
+  const relays = material.relays.map((relay) => ({
+    url: relay.url,
+    tenantId: relay.tenantId,
+    token: decodeBase64url(relay.token),
+  }));
   const enrollment = await createEnrollment(enrollmentSignerFrom(input.signer), {
     uid: input.uid,
     rootEpoch: input.rootEpoch,
@@ -75,9 +82,7 @@ export async function createEnrollmentOnRelay(
       rootPublicKey: input.rootPublicKey,
       keyLogHeadHash: input.keyLogHeadHash,
       logKey,
-      tenantId: material.tenantId,
-      token,
-      relayUrls: material.relays,
+      relays,
     });
     const pending: PendingEnrollment = {
       hubEnrollmentId: created.id,
@@ -89,10 +94,10 @@ export async function createEnrollmentOnRelay(
       createdAt: now,
     };
     addPendingEnrollment(pending);
-    return { pending, joinToken, hubPublicUrl: material.relays[0] };
+    return { pending, joinToken, hubPublicUrl: relays[0].url };
   } finally {
     enrollment.enrollSk.fill(0);
     logKey.fill(0);
-    token.fill(0);
+    for (const relay of relays) relay.token.fill(0);
   }
 }

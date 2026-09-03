@@ -302,19 +302,27 @@ export class RelayRoutes {
     return jsonBody({ epoch, ...this.stash(payload, { metaKey, epoch }) });
   }
 
+  /**
+   * `relay.enroll.create` 只落在当前 attach 的那台中继上，别的中继没有这条 enrollment，
+   * 新节点去那儿 redeem 只会 404。所以 join 串里的地址表只给这一台（带它自己的租户编号与令牌）；
+   * 完整的有序中继表由密钥日志里的 `set-relays` 记录在加入之后送达，failover 从那时起生效。
+   */
   private async joinMaterial(): Promise<Response> {
     if (this.mode() !== 'relay') return jsonError('RELAY_NOT_CONFIGURED', 409);
     const rows = this.deps.secrets.relayRows();
-    const first = rows[0];
-    if (!first) return jsonError('RELAY_NOT_CONFIGURED', 409);
-    const relay = await this.deps.secrets.store.getRelay(first.url);
+    const attachedUrl = this.deps.uplink.attachedHub()?.publicUrl ?? null;
+    const target = rows.find((row) => row.url === attachedUrl) ?? rows[0];
+    if (!target) return jsonError('RELAY_NOT_CONFIGURED', 409);
+    const relay = await this.deps.secrets.store.getRelay(target.url);
     const logKey = await this.deps.secrets.logKey();
     if (!relay || !logKey) return jsonError('RELAY_KEY_MISSING', 409);
+    const token = encodeBase64url(relay.token);
     return jsonBody({
-      tenantId: relay.tenantId,
-      token: encodeBase64url(relay.token),
       logKey: encodeBase64url(logKey),
-      relays: rows.map((row) => row.url),
+      relays: [{ url: target.url, tenantId: relay.tenantId, token }],
+      // 兼容字段：等同 relays[0]，供只读单租户凭据的旧调用方。
+      tenantId: relay.tenantId,
+      token,
     });
   }
 

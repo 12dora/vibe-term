@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { bytesToHex, encodeBase64url } from '../auth/encoding';
+import { bytesToHex, encodeBase64url, hexToBytes } from '../auth/encoding';
 import {
+  RELAY_JOIN_TOKEN_FIXED_BYTES,
   RELAY_JOIN_TOKEN_MAX_URLS,
   RELAY_JOIN_TOKEN_PREFIX,
+  type RelayJoinTokenEntry,
   RelayJoinTokenError,
   decodeRelayJoinToken,
   encodeRelayJoinToken,
@@ -16,7 +18,12 @@ function bytes(seed: number, len = 32): Uint8Array {
   return out;
 }
 
-const TENANT_ID = bytesToHex(bytes(9, 16));
+const TENANT_A = bytesToHex(bytes(9, 16));
+const TENANT_B = bytesToHex(bytes(90, 16));
+
+function entry(url: string, tenantId = TENANT_A, seed = 5): RelayJoinTokenEntry {
+  return { url, tenantId, token: bytes(seed) };
+}
 
 function baseInput(overrides: Partial<Parameters<typeof encodeRelayJoinToken>[0]> = {}) {
   return {
@@ -24,11 +31,34 @@ function baseInput(overrides: Partial<Parameters<typeof encodeRelayJoinToken>[0]
     rootPublicKey: bytes(2),
     keyLogHeadHash: bytes(3),
     logKey: bytes(4),
-    tenantId: TENANT_ID,
-    token: bytes(5),
-    relayUrls: ['https://relay.example.com'],
+    relays: [entry('https://relay.example.com')],
     ...overrides,
   };
+}
+
+/** 手工拼一个 body，用来构造解码侧的畸形输入。 */
+function rawToken(entries: Array<{ url: string; tenantId?: string; token?: Uint8Array }>): string {
+  const encoded = entries.map((item) => ({
+    url: new TextEncoder().encode(item.url),
+    tenantId: hexToBytes(item.tenantId ?? TENANT_A),
+    token: item.token ?? bytes(5),
+  }));
+  const size =
+    RELAY_JOIN_TOKEN_FIXED_BYTES +
+    1 +
+    encoded.reduce((sum, item) => sum + 2 + item.url.byteLength + 48, 0);
+  const raw = new Uint8Array(size);
+  raw[RELAY_JOIN_TOKEN_FIXED_BYTES] = entries.length;
+  const view = new DataView(raw.buffer);
+  let offset = RELAY_JOIN_TOKEN_FIXED_BYTES + 1;
+  for (const item of encoded) {
+    view.setUint16(offset, item.url.byteLength, true);
+    raw.set(item.url, offset + 2);
+    raw.set(item.tenantId, offset + 2 + item.url.byteLength);
+    raw.set(item.token, offset + 18 + item.url.byteLength);
+    offset += 2 + item.url.byteLength + 48;
+  }
+  return RELAY_JOIN_TOKEN_PREFIX + encodeBase64url(raw);
 }
 
 describe('normalizeRelayUrl', () => {
@@ -68,47 +98,85 @@ describe('relay join 串 v3', () => {
     expect(encodeBase64url(decoded.rootPublicKey)).toBe(encodeBase64url(bytes(2)));
     expect(encodeBase64url(decoded.keyLogHeadHash)).toBe(encodeBase64url(bytes(3)));
     expect(encodeBase64url(decoded.logKey)).toBe(encodeBase64url(bytes(4)));
-    expect(decoded.tenantId).toBe(TENANT_ID);
-    expect(encodeBase64url(decoded.token)).toBe(encodeBase64url(bytes(5)));
-    expect(decoded.relayUrls).toEqual(['https://relay.example.com']);
+    expect(decoded.relays).toHaveLength(1);
+    expect(decoded.relays[0]?.url).toBe('https://relay.example.com');
+    expect(decoded.relays[0]?.tenantId).toBe(TENANT_A);
+    expect(encodeBase64url(decoded.relays[0]?.token ?? new Uint8Array())).toBe(
+      encodeBase64url(bytes(5))
+    );
     expect(decoded.caFingerprint).toBeUndefined();
+  });
+
+  it('每条中继带自己的租户编号与令牌', () => {
+    const relays = [
+      entry('https://a.example.com', TENANT_A, 5),
+      entry('https://b.example.com:8443', TENANT_B, 7),
+    ];
+    const decoded = decodeRelayJoinToken(encodeRelayJoinToken(baseInput({ relays })));
+    expect(decoded.relays.map((item) => item.url)).toEqual([
+      'https://a.example.com',
+      'https://b.example.com:8443',
+    ]);
+    expect(decoded.relays.map((item) => item.tenantId)).toEqual([TENANT_A, TENANT_B]);
+    expect(encodeBase64url(decoded.relays[1]?.token ?? new Uint8Array())).toBe(
+      encodeBase64url(bytes(7))
+    );
   });
 
   it('round-trip 多中继 + CA 指纹', () => {
     const fingerprint = 'ab'.repeat(32);
-    const urls = ['https://a.example.com', 'https://b.example.com:8443', 'http://127.0.0.1:19883'];
+    const relays = [
+      entry('https://a.example.com'),
+      entry('https://b.example.com:8443', TENANT_B),
+      entry('http://127.0.0.1:19883'),
+    ];
     const token = encodeRelayJoinToken(
-      baseInput({ relayUrls: urls, caFingerprint: fingerprint.toUpperCase() })
+      baseInput({ relays, caFingerprint: fingerprint.toUpperCase() })
     );
     const decoded = decodeRelayJoinToken(token);
-    expect(decoded.relayUrls).toEqual(urls);
+    expect(decoded.relays.map((item) => item.url)).toEqual([
+      'https://a.example.com',
+      'https://b.example.com:8443',
+      'http://127.0.0.1:19883',
+    ]);
     expect(decoded.caFingerprint).toBe(fingerprint);
   });
 
   it('地址顺序即 failover 顺序', () => {
-    const urls = ['https://b.example.com', 'https://a.example.com'];
+    const relays = [entry('https://b.example.com'), entry('https://a.example.com')];
     expect(
-      decodeRelayJoinToken(encodeRelayJoinToken(baseInput({ relayUrls: urls }))).relayUrls
-    ).toEqual(urls);
+      decodeRelayJoinToken(encodeRelayJoinToken(baseInput({ relays }))).relays.map(
+        (item) => item.url
+      )
+    ).toEqual(['https://b.example.com', 'https://a.example.com']);
   });
 
   it('拒绝空地址表与超量地址', () => {
-    expect(() => encodeRelayJoinToken(baseInput({ relayUrls: [] }))).toThrow(RelayJoinTokenError);
-    const many = Array.from(
-      { length: RELAY_JOIN_TOKEN_MAX_URLS + 1 },
-      (_, i) => `https://r${i}.example.com`
+    expect(() => encodeRelayJoinToken(baseInput({ relays: [] }))).toThrow(RelayJoinTokenError);
+    const many = Array.from({ length: RELAY_JOIN_TOKEN_MAX_URLS + 1 }, (_, i) =>
+      entry(`https://r${i}.example.com`)
     );
-    expect(() => encodeRelayJoinToken(baseInput({ relayUrls: many }))).toThrow(RelayJoinTokenError);
+    expect(() => encodeRelayJoinToken(baseInput({ relays: many }))).toThrow(RelayJoinTokenError);
   });
 
   it('拒绝非法字段长度', () => {
     expect(() => encodeRelayJoinToken(baseInput({ enrollSk: bytes(1, 31) }))).toThrow(
       RelayJoinTokenError
     );
-    expect(() => encodeRelayJoinToken(baseInput({ token: bytes(5, 33) }))).toThrow(
-      RelayJoinTokenError
-    );
-    expect(() => encodeRelayJoinToken(baseInput({ tenantId: 'zz' }))).toThrow(RelayJoinTokenError);
+    expect(() =>
+      encodeRelayJoinToken(
+        baseInput({
+          relays: [{ url: 'https://relay.example.com', tenantId: TENANT_A, token: bytes(5, 33) }],
+        })
+      )
+    ).toThrow(RelayJoinTokenError);
+    expect(() =>
+      encodeRelayJoinToken(
+        baseInput({
+          relays: [{ url: 'https://relay.example.com', tenantId: 'zz', token: bytes(5) }],
+        })
+      )
+    ).toThrow(RelayJoinTokenError);
     expect(() => encodeRelayJoinToken(baseInput({ caFingerprint: 'nope' }))).toThrow(
       RelayJoinTokenError
     );
@@ -127,36 +195,34 @@ describe('relay join 串 v3', () => {
     );
   });
 
-  it('拒绝 n=0 与截断的地址表', () => {
-    const raw = new Uint8Array(177);
-    raw[176] = 0;
-    expect(() => decodeRelayJoinToken(RELAY_JOIN_TOKEN_PREFIX + encodeBase64url(raw))).toThrow(
+  it('拒绝 n=0 与截断的凭据', () => {
+    const empty = new Uint8Array(RELAY_JOIN_TOKEN_FIXED_BYTES + 1);
+    expect(() => decodeRelayJoinToken(RELAY_JOIN_TOKEN_PREFIX + encodeBase64url(empty))).toThrow(
       RelayJoinTokenError
     );
-    const truncated = new Uint8Array(179);
-    truncated[176] = 1;
-    truncated[177] = 40;
-    truncated[178] = 0;
-    expect(() =>
-      decodeRelayJoinToken(RELAY_JOIN_TOKEN_PREFIX + encodeBase64url(truncated))
-    ).toThrow(RelayJoinTokenError);
+    // 地址长度写对但后面的 tenant_id/token 被截掉。
+    const full = rawToken([{ url: 'https://relay.example.com' }]);
+    const raw = Buffer.from(
+      full.slice(RELAY_JOIN_TOKEN_PREFIX.length).replaceAll('-', '+').replaceAll('_', '/'),
+      'base64'
+    );
+    const cut = new Uint8Array(raw.subarray(0, raw.byteLength - 1));
+    expect(() => decodeRelayJoinToken(RELAY_JOIN_TOKEN_PREFIX + encodeBase64url(cut))).toThrow(
+      RelayJoinTokenError
+    );
   });
 
   it('拒绝表内的非 https 地址与尾部多余字节', () => {
-    const url = new TextEncoder().encode('http://relay.example.com');
-    const raw = new Uint8Array(177 + 2 + url.length);
-    raw[176] = 1;
-    new DataView(raw.buffer).setUint16(177, url.length, true);
-    raw.set(url, 179);
-    expect(() => decodeRelayJoinToken(RELAY_JOIN_TOKEN_PREFIX + encodeBase64url(raw))).toThrow(
+    expect(() => decodeRelayJoinToken(rawToken([{ url: 'http://relay.example.com' }]))).toThrow(
       RelayJoinTokenError
     );
-
-    const good = new TextEncoder().encode('https://relay.example.com');
-    const trailing = new Uint8Array(177 + 2 + good.length + 1);
-    trailing[176] = 1;
-    new DataView(trailing.buffer).setUint16(177, good.length, true);
-    trailing.set(good, 179);
+    const good = rawToken([{ url: 'https://relay.example.com' }]);
+    const raw = Buffer.from(
+      good.slice(RELAY_JOIN_TOKEN_PREFIX.length).replaceAll('-', '+').replaceAll('_', '/'),
+      'base64'
+    );
+    const trailing = new Uint8Array(raw.byteLength + 1);
+    trailing.set(raw, 0);
     expect(() => decodeRelayJoinToken(RELAY_JOIN_TOKEN_PREFIX + encodeBase64url(trailing))).toThrow(
       RelayJoinTokenError
     );

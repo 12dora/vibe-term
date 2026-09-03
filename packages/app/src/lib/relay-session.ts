@@ -11,6 +11,7 @@ import {
   signKeyLogRecordWithRoot,
 } from '../../../shared/src/auth';
 import {
+  RelayApiError,
   type RelayIo,
   asNumber,
   asText,
@@ -19,6 +20,7 @@ import {
   requestRelayJson,
 } from '../commands/relay-shared';
 import type { ParsedArgs } from '../types';
+import type { FetchLike } from './fetch-like';
 import { fetchAuthMode, loginWithRootKey } from './hub-client';
 import type { LocalAuthContext } from './local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from './password';
@@ -51,7 +53,7 @@ export type RelayTenantSession = {
   cookieHeader: string;
   userId: string;
   rootKey: RootKey;
-  fetcher?: typeof fetch;
+  fetcher?: FetchLike;
 };
 
 const PASSKEY_CLI_UNAVAILABLE =
@@ -192,31 +194,79 @@ export async function fetchKeyLogHead(
   };
 }
 
-/** 用根钥签一条 set-relays / meta-key 记录并经本机 gateway 走 hub=sync 提交。 */
+export const RELAY_RECORD_MAX_ATTEMPTS = 4;
+
+export const RELAY_ROOT_ROTATED =
+  'the root key was rotated while this command was running; run the command again with the new password';
+
+/** 「读 head → 签 → 追加」之间被别人插了一条记录：重读 head 重签即可。 */
+const RELAY_RECORD_RETRY_CODES = new Set([
+  'seq_gap',
+  'prev_hash_mismatch',
+  'epoch_mismatch',
+  'fork',
+  'KEY_LOG_FORK',
+  'SEQ_MISMATCH',
+]);
+
+function isKeyLogConflict(error: unknown): boolean {
+  return error instanceof RelayApiError && RELAY_RECORD_RETRY_CODES.has(error.code);
+}
+
+export type RelayRecordSubmission = {
+  type: 'set-relays' | 'meta-key';
+  payload: Uint8Array;
+  /**
+   * 冲突重试时重新向本机 gateway 要一份 payload：并发的那条记录可能已经改了中继表或节点集合，
+   * 拿旧 payload 重签会把别人的改动覆盖掉。
+   */
+  rebuild?: () => Promise<Uint8Array>;
+  attempts?: number;
+};
+
+/**
+ * 用根钥签一条 set-relays / meta-key 记录并经本机 gateway 走 hub=sync 提交。
+ *
+ * head 是「读-签-写」的乐观锁：并发追加会让 seq/prev_hash 对不上，这里有界重试；
+ * 但根 epoch 变了说明根钥已经换过，手里这把（本次命令开头由密码派生）再也签不出有效记录，
+ * 只能报错让用户带新密码重来。
+ */
 export async function signAndSubmitRelayRecord(
   session: RelayTenantSession,
-  input: { type: 'set-relays' | 'meta-key'; payload: Uint8Array }
+  input: RelayRecordSubmission
 ): Promise<{ seq: number | string | undefined; hash: string | undefined }> {
-  const head = await fetchKeyLogHead(session);
-  const record = buildKeyLogRecord({ seq: head.seq, hash: head.hash }, head.rootEpoch, {
-    uid: head.uid,
-    type: input.type,
-    payload: input.payload,
-    signer: 'root',
-    credential_id: null,
-  });
-  const bytes = encodeKeyLogRecord(record);
-  const sig = signKeyLogRecordWithRoot(session.rootKey, bytes);
-  const body = await relayGatewayRequest(session, {
-    path: '/api/auth/keylog?hub=sync',
-    method: 'POST',
-    body: { bytes: encodeBase64url(bytes), sig: encodeBase64url(sig) },
-    label: `${input.type} append`,
-  });
-  return {
-    seq: body.seq as number | string | undefined,
-    hash: typeof body.hash === 'string' ? body.hash : undefined,
-  };
+  const attempts = Math.max(1, input.attempts ?? RELAY_RECORD_MAX_ATTEMPTS);
+  let payload = input.payload;
+  let epoch: number | null = null;
+  for (let attempt = 0; ; attempt++) {
+    const head = await fetchKeyLogHead(session);
+    if (epoch === null) epoch = head.rootEpoch;
+    else if (head.rootEpoch !== epoch) throw new Error(RELAY_ROOT_ROTATED);
+    const record = buildKeyLogRecord({ seq: head.seq, hash: head.hash }, head.rootEpoch, {
+      uid: head.uid,
+      type: input.type,
+      payload,
+      signer: 'root',
+      credential_id: null,
+    });
+    const bytes = encodeKeyLogRecord(record);
+    const sig = signKeyLogRecordWithRoot(session.rootKey, bytes);
+    try {
+      const body = await relayGatewayRequest(session, {
+        path: '/api/auth/keylog?hub=sync',
+        method: 'POST',
+        body: { bytes: encodeBase64url(bytes), sig: encodeBase64url(sig) },
+        label: `${input.type} append`,
+      });
+      return {
+        seq: body.seq as number | string | undefined,
+        hash: typeof body.hash === 'string' ? body.hash : undefined,
+      };
+    } catch (error) {
+      if (attempt + 1 >= attempts || !isKeyLogConflict(error)) throw error;
+      if (input.rebuild) payload = await input.rebuild();
+    }
+  }
 }
 
 function relayRowFromJson(value: unknown): RelayStatusRelay {

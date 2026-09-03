@@ -180,7 +180,12 @@ async function runRelayEnrollInternal(
   return await withAuth(parsed, io, async (ctx) => {
     const session = await openRelayTenantSession(parsed, ctx, io);
     const exchange = await enrollWithRetry(session, { relayUrl, password, io });
-    await signAndSubmitRelayRecord(session, { type: 'set-relays', payload: exchange.payload });
+    await signAndSubmitRelayRecord(session, {
+      type: 'set-relays',
+      payload: exchange.payload,
+      // 并发追加时重新问节点要一份 payload：中继表/节点集合可能已经变了。
+      rebuild: async () => (await exchangeRelayEnroll(session, { relayUrl, password })).payload,
+    });
     const status = await pollRelayStatus(
       session,
       io,
@@ -226,9 +231,19 @@ export async function runRelayLeave(
       body: {},
       label: 'relay leave',
     });
+    const leavePayload = async (): Promise<Uint8Array> =>
+      setRelaysPayload(
+        await relayGatewayRequest(session, {
+          path: '/api/mesh/relay/leave/prepare',
+          method: 'POST',
+          body: {},
+          label: 'relay leave',
+        })
+      );
     await signAndSubmitRelayRecord(session, {
       type: 'set-relays',
       payload: setRelaysPayload(prepared),
+      rebuild: leavePayload,
     });
     const status = await pollRelayStatus(session, io, (current) => current.mode !== 'relay');
     relayLog(io, t(status.mode === 'relay' ? 'relay.leave.pending' : 'relay.leave.done'));

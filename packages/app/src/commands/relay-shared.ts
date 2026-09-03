@@ -1,9 +1,23 @@
+import {
+  RELAY_QUOTA_MAX_BANDWIDTH,
+  RELAY_QUOTA_MAX_NODES_LIMIT,
+  RELAY_QUOTA_MAX_STREAMS_LIMIT,
+} from '../../../../apps/gateway/src/relay/relay-quota';
+import type { FetchLike } from '../lib/fetch-like';
 import type { LocalAuthContext } from '../lib/local-auth';
+import { readBoundedResponseText } from '../lib/pem';
 import type { ParsedArgs } from '../types';
+
+/** 每次请求（含读响应体）的上限：中继接受连接却不回话时不能把 failover 卡死。 */
+export const RELAY_REQUEST_TIMEOUT_MS = 15_000;
+/** health / lookup / 错误体的响应上限。 */
+export const RELAY_RESPONSE_MAX_BYTES = 1024 * 1024;
+/** redeem 要带回整条密钥日志，单独给一个更宽的上限。 */
+export const RELAY_REDEEM_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
 
 export type RelayIo = {
   log?: (message: string) => void;
-  fetcher?: typeof fetch;
+  fetcher?: FetchLike;
   auth?: LocalAuthContext;
   env?: Record<string, string>;
   /** 本机用户密码（非交互测试用）。 */
@@ -25,6 +39,14 @@ export type RelayQuota = {
   bandwidthBytesPerSec: number | null;
 };
 
+/** 传输层失败的一种：`isRelayTransportError` 认它，可以换下一台中继重试。 */
+export class RelayTimeoutError extends Error {
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} timed out after ${timeoutMs}ms`);
+    this.name = 'RelayTimeoutError';
+  }
+}
+
 export class RelayApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -45,13 +67,19 @@ export function joinRelayUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, '')}${path}`;
 }
 
+/** 绑到 IPv6 字面量（`::`、`::1`、某个 v6 地址）的实例只在 v6 回环上可达。 */
+export function loopbackHost(env: Record<string, string | undefined>): string {
+  const bind = (env.TMEX_BIND_HOST ?? '').trim().replace(/^\[|\]$/g, '');
+  return bind.includes(':') ? '[::1]' : '127.0.0.1';
+}
+
 /** CLI 只走回环访问本机 gateway：TMEX_BIND_HOST 可能是 0.0.0.0/::，不能直接拼。 */
 export function gatewayBaseUrl(env: Record<string, string | undefined>): string {
   const port = (env.GATEWAY_PORT ?? '').trim();
   if (!port || !/^\d+$/.test(port)) {
     throw new Error('GATEWAY_PORT missing from app.env; run tmex init first');
   }
-  return `http://127.0.0.1:${port}`;
+  return `http://${loopbackHost(env)}:${port}`;
 }
 
 export function relayAdminToken(env: Record<string, string | undefined>): string {
@@ -64,8 +92,22 @@ export function relayAdminToken(env: Record<string, string | undefined>): string
   return token;
 }
 
-async function readRelayBody(response: Response): Promise<Record<string, unknown>> {
-  const text = await response.text();
+async function readRelayBody(
+  response: Response,
+  maxBytes: number,
+  label: string
+): Promise<Record<string, unknown>> {
+  let text: string;
+  try {
+    text = await readBoundedResponseText(response, maxBytes);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      message === 'ca_response_too_large'
+        ? `${label} response exceeds ${maxBytes} bytes`
+        : `${label} response could not be read: ${message}`
+    );
+  }
   if (!text) return {};
   try {
     const parsed = JSON.parse(text) as unknown;
@@ -79,12 +121,14 @@ async function readRelayBody(response: Response): Promise<Record<string, unknown
 }
 
 export async function requestRelayJson(options: {
-  fetcher?: typeof fetch;
+  fetcher?: FetchLike;
   url: string;
   method?: string;
   headers?: Record<string, string>;
   body?: unknown;
   label: string;
+  timeoutMs?: number;
+  maxBytes?: number;
 }): Promise<Record<string, unknown>> {
   const fetcher = options.fetcher ?? fetch;
   const headers: Record<string, string> = { ...options.headers };
@@ -93,21 +137,40 @@ export async function requestRelayJson(options: {
     headers['content-type'] = 'application/json';
     payload = JSON.stringify(options.body);
   }
-  const response = await fetcher(options.url, {
-    method: options.method ?? (payload ? 'POST' : 'GET'),
-    headers,
-    redirect: 'error',
-    ...(payload === undefined ? {} : { body: payload }),
-  });
-  const body = await readRelayBody(response);
-  if (!response.ok) {
-    throw new RelayApiError(
-      response.status,
-      relayErrorCode(body, response.status),
-      `${options.label} failed: HTTP ${response.status} ${relayErrorCode(body, response.status)}`
+  const timeoutMs = options.timeoutMs ?? RELAY_REQUEST_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    const response = await fetcher(options.url, {
+      method: options.method ?? (payload ? 'POST' : 'GET'),
+      headers,
+      redirect: 'error',
+      signal: controller.signal,
+      ...(payload === undefined ? {} : { body: payload }),
+    });
+    const body = await readRelayBody(
+      response,
+      options.maxBytes ?? RELAY_RESPONSE_MAX_BYTES,
+      options.label
     );
+    if (!response.ok) {
+      throw new RelayApiError(
+        response.status,
+        relayErrorCode(body, response.status),
+        `${options.label} failed: HTTP ${response.status} ${relayErrorCode(body, response.status)}`
+      );
+    }
+    return body;
+  } catch (error) {
+    if (timedOut) throw new RelayTimeoutError(options.label, timeoutMs);
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return body;
 }
 
 /** 仓库统一错误契约是 `{ error: { code, message } }`；旧路由还有 `{ error: 'CODE' }`。 */
@@ -168,15 +231,29 @@ export function parseBandwidthFlag(raw: string): number | null {
   if (!/^\d+(\.\d+)?$/.test(value)) {
     throw new Error(`invalid --bandwidth: ${raw} (use a KB/s number or "unlimited")`);
   }
-  return Math.round(Number(value) * 1024);
+  const bytes = Math.round(Number(value) * 1024);
+  // 服务端 `normalizeRelayQuota` 只收 [1, RELAY_QUOTA_MAX_BANDWIDTH] 的整数；越界会 400，
+  // 而 Infinity 经 JSON.stringify 会变成 null（= 不限速），不能让它悄悄穿过去。
+  if (!Number.isInteger(bytes) || bytes < 1 || bytes > RELAY_QUOTA_MAX_BANDWIDTH) {
+    throw new Error(
+      `invalid --bandwidth: ${raw} (1..${RELAY_QUOTA_MAX_BANDWIDTH / 1024} KB/s or "unlimited")`
+    );
+  }
+  return bytes;
 }
 
 export function parseCountFlag(raw: string, flag: string): number {
   const value = raw.trim();
+  const limit = flag === 'max-nodes' ? RELAY_QUOTA_MAX_NODES_LIMIT : RELAY_QUOTA_MAX_STREAMS_LIMIT;
   if (!/^\d+$/.test(value)) {
-    throw new Error(`invalid --${flag}: ${raw} (expected a non-negative integer)`);
+    throw new Error(`invalid --${flag}: ${raw} (expected a positive integer)`);
   }
-  return Number(value);
+  const parsed = Number(value);
+  // 与服务端 `positiveInt` 同一区间：0 与越界值服务端一律 400。
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > limit) {
+    throw new Error(`invalid --${flag}: ${raw} (expected 1..${limit})`);
+  }
+  return parsed;
 }
 
 export function formatTable(headers: string[], rows: string[][]): string[] {

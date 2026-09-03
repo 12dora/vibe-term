@@ -29,12 +29,12 @@ import { ConnectionIndicator } from '@tmex/panels';
 import { SettingsEventsInit } from '@tmex/panels/settings/events';
 import { WatchEventsInit } from '@tmex/panels/watch';
 import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
-import { setDefaultClientVersion } from '@tmex/ws-client';
 import { RuntimeProvider, useUIStore } from '@tmex/stores/react';
 import { useKeyboardAvoidance } from '@tmex/terminal-ui/hooks/use-keyboard-avoidance';
 import { applyThemePreset, isThemePreset } from '@tmex/theme';
 import { SidebarInset, SidebarProvider, useSidebar } from '@tmex/ui/sidebar';
 import { markToasterReady } from '@tmex/ui/toast';
+import { setDefaultClientVersion } from '@tmex/ws-client';
 
 function applyInitialTheme(): void {
   try {

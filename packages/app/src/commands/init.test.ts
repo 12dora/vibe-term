@@ -1,6 +1,24 @@
 import { describe, expect, test } from 'bun:test';
 import type { DirectEnableResult } from './direct';
-import { enableDirectAfterInit } from './init';
+import { enableDirectAfterInit, normalizeRelayPublicUrl } from './init';
+
+describe('normalizeRelayPublicUrl', () => {
+  test('归一化 https 地址', () => {
+    expect(normalizeRelayPublicUrl(' https://Relay.Example.com:443/ ')).toBe(
+      'https://relay.example.com'
+    );
+    expect(normalizeRelayPublicUrl('http://127.0.0.1:19883')).toBe('http://127.0.0.1:19883');
+  });
+
+  test('拒绝空值与非 https 的公网地址', () => {
+    expect(() => normalizeRelayPublicUrl('')).toThrow('cannot be empty');
+    expect(() => normalizeRelayPublicUrl('   ')).toThrow('cannot be empty');
+    expect(() => normalizeRelayPublicUrl('http://relay.example.com')).toThrow(
+      'invalid relay public URL'
+    );
+    expect(() => normalizeRelayPublicUrl('relay.example.com')).toThrow('invalid relay public URL');
+  });
+});
 
 describe('enableDirectAfterInit', () => {
   test('calls enableDirect for node role and does not throw on failure', async () => {

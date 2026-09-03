@@ -1,5 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { normalizeRelayUrl } from '../../../shared/src/relay';
 import {
   DEFAULT_SERVICE_NAME,
   defaultDatabasePath,
@@ -217,18 +218,47 @@ async function buildUplinkConfig(
   return { role, hubUrl, hubPublicUrl, relayPublicUrl, peerPort };
 }
 
+const RELAY_PUBLIC_URL_ATTEMPTS = 3;
+
+/**
+ * 中继的公开地址是节点 uplink 的目标，写坏了整台中继就没人能接入；空值/非 https 一律
+ * 在落任何配置之前就拦下（`normalizeRelayUrl` 与 join 串、`set-relays` 同一套规则）。
+ */
 async function resolveRelayPublicUrl(nonInteractive: boolean, current: string): Promise<string> {
   if (nonInteractive) {
     if (!current) {
       throw new Error('init --role relay requires --relay-public-url in non-interactive mode');
     }
-    return current;
+    return normalizeRelayPublicUrl(current);
   }
-  return await promptText(
-    { nonInteractive: false },
-    'Relay public URL (TMEX_RELAY_PUBLIC_URL)',
-    current
-  );
+  let answer = current;
+  for (let attempt = 0; attempt < RELAY_PUBLIC_URL_ATTEMPTS; attempt++) {
+    answer = await promptText(
+      { nonInteractive: false },
+      'Relay public URL (TMEX_RELAY_PUBLIC_URL)',
+      answer
+    );
+    try {
+      return normalizeRelayPublicUrl(answer);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+    }
+  }
+  throw new Error('init --role relay requires a valid https --relay-public-url');
+}
+
+export function normalizeRelayPublicUrl(raw: string): string {
+  const value = raw.trim();
+  if (!value) {
+    throw new Error('relay public URL cannot be empty');
+  }
+  try {
+    return normalizeRelayUrl(value);
+  } catch (error) {
+    throw new Error(
+      `invalid relay public URL: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 async function resolveHubPublicUrl(nonInteractive: boolean, current: string): Promise<string> {
@@ -296,11 +326,11 @@ async function checkInitDependencies(
       if (!bunRetry.ok || !bunRetry.path) {
         throw new Error(bunRetry.reason || t('bun.checkFailed'));
       }
-      return bunRetry;
+      return { ...bunRetry, path: bunRetry.path };
     }
     throw new Error(reason);
   }
-  return bun;
+  return { ...bun, path: bun.path };
 }
 
 async function startInstalledRuntime(config: InitConfig, runScriptPath: string): Promise<void> {

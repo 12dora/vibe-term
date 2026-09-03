@@ -101,16 +101,25 @@ export type RelayMetaKeyOp =
   | { op: 'admit'; node_id: string }
   | { op: 'rotate'; exclude?: string[] };
 
-/** `GET /api/mesh/relay/join-material`：拼 join 串 v3 的材料（`logKey` 即 `K_log`）。 */
-export interface RelayJoinMaterial {
+/** join 串 v3 里的一条中继：租户编号与令牌由每台中继各自签发，不能跨中继复用。 */
+export interface RelayJoinMaterialRelay {
+  url: string;
   /** 32 位小写 hex。 */
   tenantId: string;
   /** base64url，32 字节。 */
   token: string;
+}
+
+/**
+ * `GET /api/mesh/relay/join-material`：拼 join 串 v3 的材料（`logKey` 即 `K_log`）。
+ *
+ * `relays` 只含**真正持有这条 enrollment** 的中继（即当前 attach 的那台）；完整的有序中继表
+ * 由加入后下载到的 `set-relays` 记录给出。
+ */
+export interface RelayJoinMaterial {
   /** base64url，32 字节。 */
   logKey: string;
-  /** 按 priority 排好的中继地址，顺序即 join 串里的 failover 顺序。 */
-  relays: string[];
+  relays: RelayJoinMaterialRelay[];
 }
 
 /** `POST /api/mesh/relay/enrollments` 的 201（字段与 hub 的 `/api/hub/enrollments` 对齐）。 */
@@ -189,15 +198,27 @@ export function normalizeRelayStatus(
 }
 
 /** 材料不全就报错，绝不静默拼一个解不开的 join 串出去。 */
+const RELAY_TENANT_ID_HEX = /^[0-9a-f]{32}$/;
+
 export function normalizeJoinMaterial(wire: Partial<RelayJoinMaterial>): RelayJoinMaterial {
-  if (!wire.logKey || !wire.tenantId || !wire.token || !wire.relays?.length) {
+  const relays = wire.relays ?? [];
+  const usable =
+    Boolean(wire.logKey) &&
+    relays.length > 0 &&
+    relays.every(
+      (relay) =>
+        Boolean(relay?.url) && Boolean(relay?.token) && RELAY_TENANT_ID_HEX.test(relay?.tenantId)
+    );
+  if (!usable) {
     throw new RelayApiError('RELAY_JOIN_MATERIAL_INVALID', 'incomplete join material', 200);
   }
   return {
-    tenantId: wire.tenantId,
-    token: wire.token,
-    logKey: wire.logKey,
-    relays: wire.relays,
+    logKey: wire.logKey as string,
+    relays: relays.map((relay) => ({
+      url: relay.url,
+      tenantId: relay.tenantId,
+      token: relay.token,
+    })),
   };
 }
 
