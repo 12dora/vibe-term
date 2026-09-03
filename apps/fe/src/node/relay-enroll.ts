@@ -24,7 +24,7 @@ import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tena
 import { relayErrorCode } from '@tmex/api-client/relay/tenant-api';
 import { bytesEqual, decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
 import { signRelayEnrollProof } from '@tmex/shared/relay';
-import { requireRootPublicKey } from './enrollment';
+import { classifyKeyLogFailure, requireRootPublicKey } from './enrollment';
 
 /** 根密码派生出的根公钥与服务端下发的不一致：密码打错了。 */
 export const ROOT_PASSWORD_INVALID = 'ROOT_PASSWORD_INVALID';
@@ -32,8 +32,25 @@ export const ROOT_PASSWORD_INVALID = 'ROOT_PASSWORD_INVALID';
 /** 记录送出去了，但上级没确认（服务端未落库，可原样重来）。 */
 export const RELAY_UNCONFIRMED = 'RELAY_UNCONFIRMED';
 
+/** 已签好、可原样重发的密钥日志记录（公开数据：payload 里只有按节点封装过的密文）。 */
+export interface SignedRelayRecord {
+  type: 'set-relays' | 'meta-key';
+  bytes: string;
+  sig: string;
+}
+
 /** 一次中继流程的结论；`code` 直接用于查表（`relay.tenant.errors.*` → `auth.errors.*`）。 */
-export type RelayFlowResult = { ok: true } | { ok: false; code: string };
+export type RelayFlowResult =
+  | { ok: true }
+  | {
+      ok: false;
+      code: string;
+      /**
+       * 记录已经签出来但没落账，且本地 head 没动（上级未确认 / 网络断）：同一份字节仍然接得上，
+       * 调用方可以存下来稍后原样重发。`stale` / `rejected` 一律不带，重发没有意义。
+       */
+      record?: SignedRelayRecord;
+    };
 
 /** key log 写锁的注入口（`enrollment-engine.ts` 的 `withKeyLogLock` 即是这个形状）。 */
 export type KeyLogLock = <T>(run: () => Promise<T>) => Promise<T>;
@@ -72,29 +89,70 @@ export function appendRelayRecord(
   deps: RelayFlowDeps,
   input: { type: 'set-relays' | 'meta-key'; payload: string; signer: RecordSigner }
 ): Promise<RelayFlowResult> {
-  return deps.lock(async () => {
-    try {
-      const rootEpoch = requireRootEpoch(deps.mode);
-      const head = headFromResponse(await deps.api.keyLogHead());
-      const build = input.type === 'set-relays' ? buildSetRelaysRecord : buildMetaKeyRecord;
-      const record = await build({
-        head,
-        rootEpoch,
-        uid: deps.mode.uid,
-        payload: decodeBase64url(input.payload),
-        signer: input.signer,
-      });
-      const result = await deps.api.appendKeyLog(
-        { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
-        { hubSync: true }
-      );
-      if (!result.ok) return { ok: false, code: result.code };
-      if (result.hubAck === false) return { ok: false, code: result.hubError || RELAY_UNCONFIRMED };
-      return { ok: true };
-    } catch (err) {
-      return failure(err);
+  return deps.lock(() => signAndSubmit(deps, input));
+}
+
+/** 锁**内**的那一段：取 head → 签名 → 提交。调用方负责持锁。 */
+async function signAndSubmit(
+  deps: RelayFlowDeps,
+  input: { type: 'set-relays' | 'meta-key'; payload: string; signer: RecordSigner }
+): Promise<RelayFlowResult> {
+  try {
+    const rootEpoch = requireRootEpoch(deps.mode);
+    const head = headFromResponse(await deps.api.keyLogHead());
+    const build = input.type === 'set-relays' ? buildSetRelaysRecord : buildMetaKeyRecord;
+    const record = await build({
+      head,
+      rootEpoch,
+      uid: deps.mode.uid,
+      payload: decodeBase64url(input.payload),
+      signer: input.signer,
+    });
+    const signed: SignedRelayRecord = {
+      type: input.type,
+      bytes: encodeBase64url(record.bytes),
+      sig: encodeBase64url(record.sig),
+    };
+    return await submitSignedRecord(deps, signed);
+  } catch (err) {
+    return failure(err);
+  }
+}
+
+/**
+ * 把一份已签好的记录送上去。上级没确认（或网络断）时把字节原样带回来：本地 head 没动，
+ * 重发同一份仍然接得上；重新按新 head 签一个 seq 才会把上级顶成永久 `seq_gap`。
+ */
+export async function submitSignedRecord(
+  deps: RelayFlowDeps,
+  signed: SignedRelayRecord
+): Promise<RelayFlowResult> {
+  try {
+    const result = await deps.api.appendKeyLog(
+      { bytes: signed.bytes, sig: signed.sig },
+      { hubSync: true }
+    );
+    if (!result.ok) {
+      const resendable = classifyKeyLogFailure(result.code) === 'unconfirmed';
+      return { ok: false, code: result.code, ...(resendable ? { record: signed } : {}) };
     }
-  });
+    if (result.hubAck === false) {
+      return { ok: false, code: result.hubError || RELAY_UNCONFIRMED, record: signed };
+    }
+    return { ok: true };
+  } catch (err) {
+    // 请求根本没发出去 / 连接断了：本地 head 一样没动，字节可以重发。
+    const beaten = failure(err);
+    return beaten.ok ? beaten : { ...beaten, record: signed };
+  }
+}
+
+/** 重发一份存下来的记录，全程在写锁里（与 admit / revoke 抢同一个头）。 */
+export function resendRelayRecord(
+  deps: RelayFlowDeps,
+  signed: SignedRelayRecord
+): Promise<RelayFlowResult> {
+  return deps.lock(() => submitSignedRecord(deps, signed));
 }
 
 /**
@@ -103,18 +161,22 @@ export function appendRelayRecord(
  * `admit`：把当前世代的 `K_meta` 补封装给刚加入的节点；`rotate`：换一个新世代并只发给剩余节点
  * （吊销之后必须紧接一条，否则被吊销的节点还能解出后续元数据）。
  */
-export async function appendMetaKey(
+export function appendMetaKey(
   deps: RelayFlowDeps,
   op: RelayMetaKeyOp,
   signer: RecordSigner
 ): Promise<RelayFlowResult> {
-  let payload: string;
-  try {
-    payload = (await deps.relayApi.metaKeyPrepare(op)).payload;
-  } catch (err) {
-    return failure(err);
-  }
-  return appendRelayRecord(deps, { type: 'meta-key', payload, signer });
+  // `prepare` 必须与取 head / 签名 / 提交同在一把锁里：它算的是「当前世代 + 1」，
+  // 两条 admit 补发并行拿到同一个 epoch，后落账的那条必然 `relay_epoch_regression`。
+  return deps.lock(async () => {
+    let payload: string;
+    try {
+      payload = (await deps.relayApi.metaKeyPrepare(op)).payload;
+    } catch (err) {
+      return failure(err);
+    }
+    return signAndSubmit(deps, { type: 'meta-key', payload, signer });
+  });
 }
 
 export interface RelayEnrollInput {
@@ -171,17 +233,36 @@ export async function enrollRelay(
 
 /**
  * 离开中继：一条空列表的 `set-relays`，签名者可以是根密码或 passkey（与吊销同一档）。
- * 节点侧只支持整体离开，摘掉多中继里的某一条要重新走一次接入（见 F1 结果里的遗留项）。
  */
-export async function leaveRelay(
+export function leaveRelay(deps: RelayFlowDeps, signer: RecordSigner): Promise<RelayFlowResult> {
+  return prepareAndSign(deps, signer, () => deps.relayApi.leavePrepare());
+}
+
+/**
+ * 摘掉多中继里的某一条：其余中继原样保留，优先级由节点侧重排。
+ * 只剩一条时服务端回 `RELAY_LAST`，该走 `leaveRelay()`。
+ */
+export function removeRelay(
   deps: RelayFlowDeps,
+  url: string,
   signer: RecordSigner
 ): Promise<RelayFlowResult> {
-  let payload: string;
-  try {
-    payload = (await deps.relayApi.leavePrepare()).payload;
-  } catch (err) {
-    return failure(err);
-  }
-  return appendRelayRecord(deps, { type: 'set-relays', payload, signer });
+  return prepareAndSign(deps, signer, () => deps.relayApi.removePrepare(url));
+}
+
+/** `prepare → 取 head → 签名 → 提交` 全程一把锁，与 `appendMetaKey` 同一条理由。 */
+function prepareAndSign(
+  deps: RelayFlowDeps,
+  signer: RecordSigner,
+  prepare: () => Promise<{ payload: string }>
+): Promise<RelayFlowResult> {
+  return deps.lock(async () => {
+    let payload: string;
+    try {
+      payload = (await prepare()).payload;
+    } catch (err) {
+      return failure(err);
+    }
+    return signAndSubmit(deps, { type: 'set-relays', payload, signer });
+  });
 }

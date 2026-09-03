@@ -116,9 +116,26 @@ export interface RelayJoinMaterial {
 /** `POST /api/mesh/relay/enrollments` 的 201（字段与 hub 的 `/api/hub/enrollments` 对齐）。 */
 export interface RelayEnrollmentCreated {
   id: string;
-  expires_at: number;
+  /** 节点侧路由返回的是 camelCase 的 `expiresAt`。 */
+  expiresAt: number;
+  /**
+   * @deprecated 从未由服务端下发；只为让尚未跟进改名的调用方继续编译，新代码一律读 `expiresAt`。
+   */
+  expires_at?: number;
   /** 建码时刻的中继地址表；join 串里的地址以 `join-material` 为准。 */
   relays?: string[];
+}
+
+/**
+ * `GET /api/mesh/relay/enrollments/:id`。
+ *
+ * 与 hub 的同名接口**不完全同形**：证书字段一致，但节点侧这条路由用 camelCase 的 `nodeId`
+ * 与 `alreadyAdmitted`（hub 是 `node_id` / `already_admitted`）。引擎只从证书里解 node id，
+ * 两个字段目前谁都没读；写在类型里是为了别再有人照着 hub 的字段名去取。
+ */
+export interface RelayEnrollmentStatus extends HubEnrollmentStatus {
+  nodeId?: string;
+  alreadyAdmitted?: boolean;
 }
 
 /** 中继口令不对（中继 `/api/relay/enroll` 的 401 原样透传）。 */
@@ -127,6 +144,10 @@ export const RELAY_PASSWORD_INVALID = 'RELAY_PASSWORD_INVALID';
 export const RELAY_NOT_CONFIGURED = 'RELAY_NOT_CONFIGURED';
 /** 中继拒绝：该租户节点数已达配额。 */
 export const RELAY_QUOTA_NODES = 'RELAY_QUOTA_NODES';
+/** 要摘掉的中继不在本机的中继列表里。 */
+export const RELAY_NOT_FOUND = 'RELAY_NOT_FOUND';
+/** 只剩这一条中继：摘掉它等于离开，得走 `leavePrepare()`。 */
+export const RELAY_LAST = 'RELAY_LAST';
 
 /**
  * 节点没有这族路由（版本太老 / 未启用）：`/api/mesh/relay/*` 一律 404。
@@ -268,6 +289,17 @@ export class RelayTenantApi {
     });
   }
 
+  /**
+   * `POST /api/mesh/relay/remove/prepare`：摘掉多中继里的某一条，其余原样保留、优先级重排。
+   * 只剩一条时服务端回 `409 RELAY_LAST`（那种情形应当走 `leavePrepare()`）。
+   */
+  removePrepare(url: string): Promise<RelayPreparedPayload> {
+    return this.json<RelayPreparedPayload>(`${BASE}/remove/prepare`, 'relay_remove_failed', {
+      method: 'POST',
+      body: { url },
+    });
+  }
+
   /** `POST /api/mesh/relay/meta-key/prepare`：待签的 `meta-key`（admit 补发 / rotate 换代）。 */
   metaKeyPrepare(body: RelayMetaKeyOp): Promise<RelayPreparedPayload> {
     return this.json<RelayPreparedPayload>(`${BASE}/meta-key/prepare`, 'relay_meta_key_failed', {
@@ -298,9 +330,9 @@ export class RelayTenantApi {
     });
   }
 
-  /** `GET /api/mesh/relay/enrollments/:id`：与 hub 的同名接口同形，供证书轮询复用。 */
-  getEnrollment(id: string): Promise<HubEnrollmentStatus> {
-    return this.json<HubEnrollmentStatus>(
+  /** `GET /api/mesh/relay/enrollments/:id`：证书字段与 hub 同形，供证书轮询复用。 */
+  getEnrollment(id: string): Promise<RelayEnrollmentStatus> {
+    return this.json<RelayEnrollmentStatus>(
       `${BASE}/enrollments/${encodeURIComponent(id)}`,
       'relay_enrollment_status_failed'
     );

@@ -24,6 +24,8 @@ import { RelayRoutes } from './relay-routes';
 import { RelaySecrets } from './relay-secrets';
 
 const RELAY_URL = 'https://relay.example';
+const RELAY_URL_2 = 'https://relay-2.example';
+const RELAY_URL_3 = 'https://relay-3.example';
 const TENANT_ID = 'ef'.repeat(16);
 
 async function boot(opts: { fetchImpl?: typeof fetch } = {}) {
@@ -83,15 +85,18 @@ async function boot(opts: { fetchImpl?: typeof fetch } = {}) {
   return { db, close, userStore, service, identity, user, secrets, routes, call };
 }
 
-async function configureRelay(b: Awaited<ReturnType<typeof boot>>) {
+async function configureRelays(b: Awaited<ReturnType<typeof boot>>, urls: string[]) {
   const logKey = generateTenantKey();
   const metaKey = generateTenantKey();
   const applied = await b.service.signAndApply(b.user.userId, b.user.rootKey, {
     type: 'set-relays',
     payload: await buildSetRelaysPayload({
-      relays: [
-        { url: RELAY_URL, tenantId: TENANT_ID, token: new Uint8Array(32).fill(6), priority: 0 },
-      ],
+      relays: urls.map((url, index) => ({
+        url,
+        tenantId: TENANT_ID,
+        token: new Uint8Array(32).fill(6),
+        priority: index,
+      })),
       logKey,
       metaKey,
       metaEpoch: 1,
@@ -101,6 +106,10 @@ async function configureRelay(b: Awaited<ReturnType<typeof boot>>) {
   expect(applied.ok).toBe(true);
   await b.secrets.reconcile();
   return { logKey, metaKey };
+}
+
+async function configureRelay(b: Awaited<ReturnType<typeof boot>>) {
+  return configureRelays(b, [RELAY_URL]);
 }
 
 describe('RelayRoutes', () => {
@@ -282,6 +291,123 @@ describe('RelayRoutes', () => {
       });
       expect(applied.ok).toBe(true);
       expect((await b.secrets.reconcile()).kind).toBe('hub');
+    } finally {
+      b.close();
+    }
+  });
+
+  test('remove/prepare 摘掉一条中继并把优先级重排成 0..n-1', async () => {
+    const b = await boot();
+    try {
+      const { metaKey } = await configureRelays(b, [RELAY_URL, RELAY_URL_2, RELAY_URL_3]);
+      const res = await b.call('/api/mesh/relay/remove/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_2 }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { payload: string; metaEpoch: number };
+      // 世代不变：剩下的中继继续用同一把 K_meta，摘一条不是轮换。
+      expect(body.metaEpoch).toBe(1);
+      const payload = decodeSetRelaysPayload(decodeBase64url(body.payload));
+      expect(payload.relays.map((relay) => relay.url)).toEqual([
+        canonicalHubUrl(RELAY_URL),
+        canonicalHubUrl(RELAY_URL_3),
+      ]);
+      expect(payload.relays.map((relay) => relay.priority)).toEqual([0, 1]);
+      expect(payload.meta_key.epoch).toBe(1);
+      expect(payload.log_key).toHaveLength(1);
+      const unwrapped = await unwrapKeyForNode({
+        entry: wrapEntryFromBytes(payload.meta_key.entries[0]!),
+        nodeX25519Sk: b.identity.x25519PrivateKey,
+      });
+      expect(unwrapped).toEqual(metaKey);
+
+      const applied = await b.service.signAndApply(b.user.userId, b.user.rootKey, {
+        type: 'set-relays',
+        payload: decodeBase64url(body.payload),
+      });
+      expect(applied.ok).toBe(true);
+      await b.secrets.reconcile();
+      expect(b.secrets.relayRows().map((row) => row.url)).toEqual([
+        canonicalHubUrl(RELAY_URL),
+        canonicalHubUrl(RELAY_URL_3),
+      ]);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('remove/prepare 不认的地址 404，最后一条 409，hub 模式 409', async () => {
+    const b = await boot();
+    try {
+      const hubMode = await b.call('/api/mesh/relay/remove/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL }),
+      });
+      expect(hubMode.status).toBe(409);
+      expect((await hubMode.json()) as { code: string }).toMatchObject({
+        code: 'RELAY_NOT_CONFIGURED',
+      });
+
+      await configureRelay(b);
+      const last = await b.call('/api/mesh/relay/remove/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL }),
+      });
+      expect(last.status).toBe(409);
+      expect((await last.json()) as { code: string }).toMatchObject({ code: 'RELAY_LAST' });
+
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const missing = await b.call('/api/mesh/relay/remove/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_3 }),
+      });
+      expect(missing.status).toBe(404);
+      expect((await missing.json()) as { code: string }).toMatchObject({
+        code: 'RELAY_NOT_FOUND',
+      });
+
+      const bad = await b.call('/api/mesh/relay/remove/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ url: 'not a url' }),
+      });
+      expect(bad.status).toBe(400);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('enroll 透传中继 { error: { code } } 形状里的错误码', async () => {
+    const b = await boot({
+      fetchImpl: (async () =>
+        new Response(
+          JSON.stringify({ error: { code: 'RELAY_PASSWORD_INVALID', message: 'nope' } }),
+          { status: 401, headers: { 'content-type': 'application/json' } }
+        )) as unknown as typeof fetch,
+    });
+    try {
+      const material = (await (
+        await b.call('/api/mesh/relay/enroll/proof-material', {
+          method: 'POST',
+          body: JSON.stringify({ url: RELAY_URL }),
+        })
+      ).json()) as { relayHost: string; ts: number };
+      const proof = signRelayEnrollProof(b.user.rootKey, {
+        relayHost: material.relayHost,
+        ts: material.ts,
+      });
+      const res = await b.call('/api/mesh/relay/enroll', {
+        method: 'POST',
+        body: JSON.stringify({
+          url: RELAY_URL,
+          password: 'wrong',
+          proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
+        }),
+      });
+      expect(res.status).toBe(401);
+      expect((await res.json()) as { code: string }).toMatchObject({
+        code: 'RELAY_PASSWORD_INVALID',
+      });
     } finally {
       b.close();
     }

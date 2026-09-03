@@ -2,6 +2,8 @@
 // 每个动作都要 `POST /api/auth/keylog` 追加一条由根钥或 passkey 签名的记录，
 // sk_sess 一概不参与——所以每个动作都会重新要一次密码或一次 passkey 交互。
 
+import { fetchRelayMode } from '@/node/mesh-relay';
+import { rememberPendingMetaKey } from '@/node/relay-meta-key-pending';
 import type {
   AuthApi,
   AuthKdfParamsJson,
@@ -9,12 +11,16 @@ import type {
   PasskeySummary,
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi, startRegistration } from '@tmex/api-client/auth/index';
+import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import {
   type AddPasskeyPayload,
   type KdfParams,
+  type KeyLogHead,
   type KeyLogSignedRecord,
   type RootKey,
   type RotateRootKeepTotp,
+  computeRecordHash,
   decodeBase64url,
   decodeSetTotpPayload,
   deriveSeed,
@@ -30,6 +36,7 @@ import type { RecordSigner } from './key-log-actions';
 import {
   buildAddPasskeyRecord,
   buildClearTotpRecord,
+  buildMetaKeyRecord,
   buildRemovePasskeyRecord,
   buildRotateRootKeepRecord,
   buildRotateRootRecord,
@@ -91,6 +98,14 @@ export interface ChangePasswordInput {
   totpEnabled?: boolean;
   /** 根钥派生（测试注入）：拿到同一把根钥、并模拟第二次 Argon2 失败。 */
   deriveRootKey?: (password: string, kdfParams: KdfParams) => Promise<RootKey>;
+  /** 中继侧 API（测试注入）；缺省打本机 `/api/mesh/relay/*`。 */
+  relayApi?: RelayTenantApi;
+  /**
+   * key log 写锁。页面传 `withKeyLogLock`（`@/node/enrollment-engine`）——`取 head → 签名 →
+   * append` 与 admit / revoke 抢同一个头，且改密与紧随其后的 `meta-key` 必须连成一段。
+   * 缺省不加锁（与旧行为一致，供单测直接调用）。
+   */
+  lock?: <T>(run: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -136,15 +151,137 @@ export interface SignedPasswordChange {
   newKdfParams: AuthKdfParamsJson;
 }
 
+/** 改密顺带做的那条 `meta-key` 换代（非中继模式下为 `undefined`）。 */
+export type MetaKeyRotationOutcome = { ok: true } | { ok: false; code: string };
+
 export type ChangePasswordResult =
-  | (Extract<KeyLogAppendResult, { ok: true }> & SignedPasswordChange)
+  | (Extract<KeyLogAppendResult, { ok: true }> &
+      SignedPasswordChange & { metaKey?: MetaKeyRotationOutcome })
   | Extract<KeyLogAppendResult, { ok: false }>;
 
 function withSigned(
   result: KeyLogAppendResult,
-  signed: SignedPasswordChange
+  signed: SignedPasswordChange,
+  metaKey?: MetaKeyRotationOutcome
 ): ChangePasswordResult {
-  return result.ok ? { ...result, ...signed } : result;
+  if (!result.ok) return result;
+  return { ...result, ...signed, ...(metaKey ? { metaKey } : {}) };
+}
+
+/**
+ * 改密之后那一条 `meta-key`（plan §1.3：根轮换即换 `K_meta`）。
+ *
+ * **必须在 rotate 记录送出去之前就准备并签好**：`rotate-root`（全量重置）一落账就撤销全部会话，
+ * 之后任何 `/api/mesh/relay/*` 与 `/api/auth/keylog` 都是 401，再想补这一条已经没有会话了。
+ * 于是这里按「rotate 之后的头」（seq+1、prev_hash = rotate 记录的哈希）与**新** root_epoch，
+ * 用**新根钥**签好待发；rotate 一 ack 就紧接着送出去，两条记录背靠背落在链上。
+ */
+async function prepareMetaKeyAfterRotate(input: {
+  relayApi: RelayTenantApi;
+  uid: string;
+  rotated: KeyLogSignedRecord;
+  head: KeyLogHead;
+  nextRootEpoch: number;
+  newRootKey: RootKey;
+}): Promise<KeyLogSignedRecord | null> {
+  try {
+    const prepared = await input.relayApi.metaKeyPrepare({ op: 'rotate' });
+    return await buildMetaKeyRecord({
+      head: {
+        seq: input.head.seq + 1n,
+        hash: computeRecordHash(input.rotated.bytes, input.rotated.sig),
+      },
+      rootEpoch: input.nextRootEpoch,
+      uid: input.uid,
+      payload: decodeBase64url(prepared.payload),
+      signer: { kind: 'root', rootKey: input.newRootKey },
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** 送那条 `meta-key`；没落账就记欠账（节点页会一直挂告警并重试）。 */
+async function submitMetaKeyAfterRotate(
+  api: AuthApi,
+  record: KeyLogSignedRecord | null
+): Promise<MetaKeyRotationOutcome> {
+  if (!record) {
+    rememberPendingMetaKey({ id: META_KEY_AFTER_ROTATE_ID, reason: 'rotateRoot', op: ROTATE_OP });
+    return { ok: false, code: 'RELAY_META_KEY_PREPARE_FAILED' };
+  }
+  const result = await append(api, record).catch(() => ({ ok: false, code: 'NETWORK' }) as const);
+  if (result.ok && result.hubAck !== false) return { ok: true };
+  const code = result.ok ? (result.hubError ?? 'RELAY_UNCONFIRMED') : result.code;
+  rememberPendingMetaKey({
+    id: META_KEY_AFTER_ROTATE_ID,
+    reason: 'rotateRoot',
+    op: ROTATE_OP,
+    record: {
+      type: 'meta-key',
+      bytes: encodeBase64url(record.bytes),
+      sig: encodeBase64url(record.sig),
+    },
+  });
+  return { ok: false, code };
+}
+
+const META_KEY_AFTER_ROTATE_ID = 'rotate-root';
+const ROTATE_OP = { op: 'rotate' } as const;
+
+/** 改密这一段的锁内主体：取头 → 签 rotate → 预备 meta-key → 送 rotate → 送 meta-key。 */
+async function runPasswordRotation(input: {
+  api: AuthApi;
+  relayApi: RelayTenantApi;
+  relayMode: boolean;
+  request: ChangePasswordInput;
+  oldRootKey: RootKey;
+  newRootKey: RootKey;
+  newKdfParams: KdfParams;
+}): Promise<ChangePasswordResult> {
+  const { api, request } = input;
+  const headResponse = await api.keyLogHead();
+  const head = headFromResponse(headResponse);
+  const base = {
+    head,
+    rootEpoch: headResponse.rootEpoch,
+    uid: request.uid,
+    oldRootKey: input.oldRootKey,
+    newRootPublicKey: input.newRootKey.publicKey,
+    newKdfParams: input.newKdfParams,
+  };
+  const signed: SignedPasswordChange = {
+    nextRootEpoch: headResponse.rootEpoch + 1,
+    newKdfParams: kdfParamsToJson(input.newKdfParams),
+  };
+  const rotated = request.fullReset
+    ? buildRotateRootRecord(base)
+    : buildRotateRootKeepRecord({
+        ...base,
+        totp: request.totpEnabled
+          ? await rewrapTotpSecret({
+              api,
+              uid: request.uid,
+              oldSeed: input.oldRootKey.seed,
+              newSeed: input.newRootKey.seed,
+              rootEpoch: headResponse.rootEpoch,
+              recordSeq: head.seq + 1n,
+            })
+          : null,
+      });
+  const metaKeyRecord = input.relayMode
+    ? await prepareMetaKeyAfterRotate({
+        relayApi: input.relayApi,
+        uid: request.uid,
+        rotated,
+        head,
+        nextRootEpoch: signed.nextRootEpoch,
+        newRootKey: input.newRootKey,
+      })
+    : null;
+  const appended = await append(api, rotated);
+  if (!appended.ok || !input.relayMode) return withSigned(appended, signed);
+  return withSigned(appended, signed, await submitMetaKeyAfterRotate(api, metaKeyRecord));
 }
 
 /**
@@ -159,8 +296,11 @@ function withSigned(
  */
 export async function changePassword(input: ChangePasswordInput): Promise<ChangePasswordResult> {
   const api = input.api ?? defaultAuthApi;
-  const head = await api.keyLogHead();
+  const relayApi = input.relayApi ?? defaultRelayTenantApi;
   const derive = input.deriveRootKey ?? rootKeyFrom;
+  const lock = input.lock ?? ((run) => run());
+  // 「本机走不走中继」当场问网关，不看页面上那份 30 秒轮询的快照。
+  const relayMode = await fetchRelayMode(relayApi);
   const oldRootKey = await derive(input.oldPassword, kdfParamsFromJson(input.currentKdfParams));
   // 旧根钥从**派生成功的那一刻**起就归这个 try 管：第二次 Argon2（内存压力下会抛）失败时，
   // 旧实现的 `finally` 还没建立，旧根私钥就此留在堆里（见 F4-fix 评审 Major）。
@@ -168,32 +308,17 @@ export async function changePassword(input: ChangePasswordInput): Promise<Change
     const newKdfParams = generateKdfParams();
     const newRootKey = await derive(input.newPassword, newKdfParams);
     try {
-      const base = {
-        head: headFromResponse(head),
-        rootEpoch: head.rootEpoch,
-        uid: input.uid,
-        oldRootKey,
-        newRootPublicKey: newRootKey.publicKey,
-        newKdfParams,
-      };
-      const signed: SignedPasswordChange = {
-        nextRootEpoch: head.rootEpoch + 1,
-        newKdfParams: kdfParamsToJson(newKdfParams),
-      };
-      if (input.fullReset) {
-        return withSigned(await append(api, buildRotateRootRecord(base)), signed);
-      }
-      const totp = input.totpEnabled
-        ? await rewrapTotpSecret({
-            api,
-            uid: input.uid,
-            oldSeed: oldRootKey.seed,
-            newSeed: newRootKey.seed,
-            rootEpoch: head.rootEpoch,
-            recordSeq: base.head.seq + 1n,
-          })
-        : null;
-      return withSigned(await append(api, buildRotateRootKeepRecord({ ...base, totp })), signed);
+      return await lock(() =>
+        runPasswordRotation({
+          api,
+          relayApi,
+          relayMode,
+          request: input,
+          oldRootKey,
+          newRootKey,
+          newKdfParams,
+        })
+      );
     } finally {
       newRootKey.seed.fill(0);
     }

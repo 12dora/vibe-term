@@ -2382,7 +2382,8 @@ export const I18N_RESOURCES = {
           "withDetail": "{{base}} ({{detail}})",
           "unknown": "Something went wrong: {{message}}"
         }
-      }
+      },
+      "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back."
     },
     "devices": {
       "nodes": {
@@ -2456,7 +2457,9 @@ export const I18N_RESOURCES = {
           "add": "Add Relay",
           "reauth": "Re-enter Password",
           "rotate": "Rotate Metadata Key",
-          "leave": "Leave Relay"
+          "leave": "Leave Relay",
+          "removeOne": "Remove {{host}}",
+          "reauthOne": "Re-enter password for {{host}}"
         },
         "dialog": {
           "enrollTitle": "Connect Relay",
@@ -2487,7 +2490,13 @@ export const I18N_RESOURCES = {
           "done": "Metadata key rotated.",
           "needsRotate": "The new node did not receive the metadata key. Use \"Relay Actions -> Rotate Metadata Key\".",
           "admitFailed": "Failed to deliver the metadata key to the new node: {{error}}",
-          "rotateFailed": "Metadata key rotation failed: {{error}}"
+          "rotateFailed": "Metadata key rotation failed: {{error}}",
+          "pending": "{{count}} metadata key rotation(s) have not landed yet; removed nodes can still read metadata.",
+          "retry": "Retry",
+          "retryFailed": "The metadata key rotation still has not landed. Try again later.",
+          "revokePending": "The node was removed, but the metadata key rotation did not land ({{error}}). Retry on the nodes page.",
+          "revokePendingBulk": "Metadata key rotation did not land for {{count}} node(s). Retry on the nodes page.",
+          "afterPasswordChange": "The metadata key rotation has not landed yet. Sign in again and retry on the nodes page."
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "Current password is incorrect.",
@@ -2506,7 +2515,21 @@ export const I18N_RESOURCES = {
           "DUPLICATE_ENROLL_PK": "That join code already exists.",
           "INVALID_URL": "The relay address is invalid.",
           "BAD_PROOF": "The enrollment proof failed verification. Try again.",
-          "MALFORMED": "The request content is invalid."
+          "MALFORMED": "The request content is invalid.",
+          "RELAY_NOT_FOUND": "That relay is not in this machine’s relay list.",
+          "RELAY_LAST": "This is the only relay left. Use \"Leave Relay\" instead.",
+          "RELAY_META_KEY_NEEDS_SIGNER": "Verify your identity again to deliver the metadata key.",
+          "RELAY_META_KEY_PREPARE_FAILED": "This machine could not prepare a new metadata key. Try again.",
+          "RELAY_PASSWORD_REQUIRED": "This relay requires a connection password.",
+          "RELAY_RATE_LIMITED": "Too many attempts. Try again later.",
+          "RELAY_TENANT_KICKED": "The relay revoked this tenant’s token. Re-enter the relay password.",
+          "RELAY_TOKEN_INVALID": "The relay token expired. Re-enter the relay password."
+        },
+        "remove": {
+          "title": "Remove this relay?",
+          "description": "This machine stops connecting to {{url}}. The other relays keep working.",
+          "confirm": "Remove",
+          "done": "Relay removed."
         }
       },
       "admin": {
@@ -2573,9 +2596,9 @@ export const I18N_RESOURCES = {
           "inheritBadge": "Default",
           "summary": "{{nodes}} nodes · {{streams}} streams · {{bandwidth}}",
           "bandwidthValue": "{{kb}} KB/s",
-          "invalidNodes": "Max nodes must be an integer of 1 or more.",
-          "invalidStreams": "Max streams must be an integer of 1 or more.",
-          "invalidBandwidth": "Max bandwidth must be an integer of 1 or more.",
+          "invalidNodes": "Max nodes must be an integer between 1 and {{max}}.",
+          "invalidStreams": "Max streams must be an integer between 1 and {{max}}.",
+          "invalidBandwidth": "Max bandwidth must be an integer between 1 and {{max}} KB/s.",
           "saved": "Default quota updated.",
           "failed": "Could not update the quota: {{message}}"
         },
@@ -5003,7 +5026,8 @@ export const I18N_RESOURCES = {
           "withDetail": "{{base}}（{{detail}}）",
           "unknown": "出错了：{{message}}"
         }
-      }
+      },
+      "uplinkOffline": "上级链路未连接，暂时不能生成加入码。"
     },
     "devices": {
       "nodes": {
@@ -5076,7 +5100,9 @@ export const I18N_RESOURCES = {
           "add": "追加中继",
           "reauth": "重新输入口令",
           "rotate": "轮换元数据密钥",
-          "leave": "离开中继"
+          "leave": "离开中继",
+          "removeOne": "移除 {{host}}",
+          "reauthOne": "重新输入 {{host}} 的口令"
         },
         "dialog": {
           "enrollTitle": "接入中继",
@@ -5107,7 +5133,13 @@ export const I18N_RESOURCES = {
           "done": "元数据密钥已轮换。",
           "needsRotate": "新节点的元数据密钥未下发，请用「中继操作 → 轮换元数据密钥」补发。",
           "admitFailed": "新节点的元数据密钥下发失败：{{error}}",
-          "rotateFailed": "元数据密钥轮换失败：{{error}}"
+          "rotateFailed": "元数据密钥轮换失败：{{error}}",
+          "pending": "还有 {{count}} 条元数据密钥换代没送达，被移除的节点仍能解出元数据。",
+          "retry": "重试",
+          "retryFailed": "元数据密钥换代仍未送达，请稍后重试。",
+          "revokePending": "节点已移除，但元数据密钥换代没送达（{{error}}），请在节点页重试。",
+          "revokePendingBulk": "有 {{count}} 台节点的元数据密钥换代没送达，请在节点页重试。",
+          "afterPasswordChange": "元数据密钥换代尚未送达，重新登录后在节点页重试。"
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "当前密码不正确。",
@@ -5126,7 +5158,21 @@ export const I18N_RESOURCES = {
           "DUPLICATE_ENROLL_PK": "该加入码已存在。",
           "INVALID_URL": "中继地址无效。",
           "BAD_PROOF": "接入证明校验失败，请重试。",
-          "MALFORMED": "请求内容无效。"
+          "MALFORMED": "请求内容无效。",
+          "RELAY_NOT_FOUND": "这条中继不在本机的中继列表里。",
+          "RELAY_LAST": "只剩这一条中继，请改用「离开中继」。",
+          "RELAY_META_KEY_NEEDS_SIGNER": "需要重新验证身份才能补发元数据密钥。",
+          "RELAY_META_KEY_PREPARE_FAILED": "本机没能算出新的元数据密钥，请重试。",
+          "RELAY_PASSWORD_REQUIRED": "这个中继需要接入口令。",
+          "RELAY_RATE_LIMITED": "尝试过于频繁，请稍后再试。",
+          "RELAY_TENANT_KICKED": "中继已作废本租户的令牌，请重新输入口令。",
+          "RELAY_TOKEN_INVALID": "中继令牌已失效，请重新输入口令。"
+        },
+        "remove": {
+          "title": "移除这条中继？",
+          "description": "本机不再连接 {{url}}，其余中继继续可用。",
+          "confirm": "移除",
+          "done": "已移除该中继。"
         }
       },
       "admin": {
@@ -5193,9 +5239,9 @@ export const I18N_RESOURCES = {
           "inheritBadge": "默认",
           "summary": "{{nodes}} 节点 · {{streams}} 流 · {{bandwidth}}",
           "bandwidthValue": "{{kb}} KB/s",
-          "invalidNodes": "节点数上限须为不小于 1 的整数。",
-          "invalidStreams": "并发流上限须为不小于 1 的整数。",
-          "invalidBandwidth": "带宽上限须为不小于 1 的整数。",
+          "invalidNodes": "节点数上限须为 1–{{max}} 的整数。",
+          "invalidStreams": "并发流上限须为 1–{{max}} 的整数。",
+          "invalidBandwidth": "带宽上限须为 1–{{max}} 的整数（KB/s）。",
           "saved": "默认配额已更新。",
           "failed": "配额更新失败：{{message}}"
         },
@@ -7623,7 +7669,8 @@ export const I18N_RESOURCES = {
           "withDetail": "{{base}}（{{detail}}）",
           "unknown": "エラーが発生しました：{{message}}"
         }
-      }
+      },
+      "uplinkOffline": "上位リンクに接続していません。復帰するまで参加コードは作成できません。"
     },
     "devices": {
       "nodes": {
@@ -7696,7 +7743,9 @@ export const I18N_RESOURCES = {
           "add": "中継を追加",
           "reauth": "パスワードを再入力",
           "rotate": "メタデータ鍵をローテーション",
-          "leave": "中継から離脱"
+          "leave": "中継から離脱",
+          "removeOne": "{{host}} を削除",
+          "reauthOne": "{{host}} のパスワードを再入力"
         },
         "dialog": {
           "enrollTitle": "中継に接続",
@@ -7727,7 +7776,13 @@ export const I18N_RESOURCES = {
           "done": "メタデータ鍵をローテーションしました。",
           "needsRotate": "新しいノードにメタデータ鍵が配布されていません。「中継の操作 → メタデータ鍵をローテーション」で配布してください。",
           "admitFailed": "新しいノードへのメタデータ鍵の配布に失敗しました：{{error}}",
-          "rotateFailed": "メタデータ鍵のローテーションに失敗しました：{{error}}"
+          "rotateFailed": "メタデータ鍵のローテーションに失敗しました：{{error}}",
+          "pending": "メタデータ鍵のローテーションが {{count}} 件未送信です。削除したノードがまだメタデータを読めます。",
+          "retry": "再試行",
+          "retryFailed": "メタデータ鍵のローテーションはまだ送信できていません。しばらくしてから再試行してください。",
+          "revokePending": "ノードは削除しましたが、メタデータ鍵のローテーションが送信できていません（{{error}}）。ノード画面で再試行してください。",
+          "revokePendingBulk": "{{count}} 台分のメタデータ鍵のローテーションが送信できていません。ノード画面で再試行してください。",
+          "afterPasswordChange": "メタデータ鍵のローテーションは未送信です。ログインし直してノード画面で再試行してください。"
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "現在のパスワードが正しくありません。",
@@ -7746,7 +7801,21 @@ export const I18N_RESOURCES = {
           "DUPLICATE_ENROLL_PK": "その参加コードは既に存在します。",
           "INVALID_URL": "中継アドレスが不正です。",
           "BAD_PROOF": "接続証明の検証に失敗しました。再試行してください。",
-          "MALFORMED": "要求内容が不正です。"
+          "MALFORMED": "要求内容が不正です。",
+          "RELAY_NOT_FOUND": "その中継は本機の中継一覧にありません。",
+          "RELAY_LAST": "中継はこれ 1 件だけです。「中継から離脱」を使ってください。",
+          "RELAY_META_KEY_NEEDS_SIGNER": "メタデータ鍵を配布するには本人確認をやり直してください。",
+          "RELAY_META_KEY_PREPARE_FAILED": "本機が新しいメタデータ鍵を用意できませんでした。再試行してください。",
+          "RELAY_PASSWORD_REQUIRED": "この中継には接続パスワードが必要です。",
+          "RELAY_RATE_LIMITED": "試行が多すぎます。しばらくしてから再試行してください。",
+          "RELAY_TENANT_KICKED": "中継がこのテナントのトークンを失効させました。パスワードを入力し直してください。",
+          "RELAY_TOKEN_INVALID": "中継トークンが失効しました。パスワードを入力し直してください。"
+        },
+        "remove": {
+          "title": "この中継を削除しますか？",
+          "description": "本機は {{url}} に接続しなくなります。ほかの中継はそのまま使えます。",
+          "confirm": "削除",
+          "done": "中継を削除しました。"
         }
       },
       "admin": {
@@ -7813,9 +7882,9 @@ export const I18N_RESOURCES = {
           "inheritBadge": "既定",
           "summary": "{{nodes}} ノード · {{streams}} ストリーム · {{bandwidth}}",
           "bandwidthValue": "{{kb}} KB/s",
-          "invalidNodes": "ノード数の上限は 1 以上の整数で入力してください。",
-          "invalidStreams": "同時ストリームの上限は 1 以上の整数で入力してください。",
-          "invalidBandwidth": "帯域の上限は 1 以上の整数で入力してください。",
+          "invalidNodes": "ノード数の上限は 1〜{{max}} の整数で入力してください。",
+          "invalidStreams": "同時ストリームの上限は 1〜{{max}} の整数で入力してください。",
+          "invalidBandwidth": "帯域の上限は 1〜{{max}} KB/s の整数で入力してください。",
           "saved": "既定クォータを更新しました。",
           "failed": "クォータを更新できませんでした：{{message}}"
         },

@@ -21,6 +21,8 @@ import {
   appendRelayRecord,
   enrollRelay,
   leaveRelay,
+  removeRelay,
+  resendRelayRecord,
 } from './relay-enroll';
 
 // 单测用便宜的 argon2 参数（真实参数 64 MiB / t=3 太慢）。
@@ -107,7 +109,9 @@ describe('appendRelayRecord', () => {
       },
       { type: 'meta-key', payload: PAYLOAD, signer: await rootSigner() }
     );
-    expect(result).toEqual({ ok: false, code: 'RELAY_OFFLINE' });
+    expect(result).toMatchObject({ ok: false, code: 'RELAY_OFFLINE' });
+    // 上级没确认时本地 head 没动：签好的字节要原样带出来供重发。
+    expect(result.ok === false && result.record?.type).toBe('meta-key');
   });
 
   test('append 被拒时原样带出 code', async () => {
@@ -142,6 +146,34 @@ describe('appendMetaKey', () => {
     expect(result).toEqual({ ok: true });
     expect(ops).toEqual([{ op: 'rotate', exclude: ['cd'.repeat(16)] }]);
     expect(decodeKeyLogRecord(decodeBase64url(appended[0].bytes)).type).toBe('meta-key');
+  });
+
+  test('prepare 与取 head / 签名 / append 同在一把锁里', async () => {
+    // 两条 admit 补发并行时，prepare 各拿一次「当前世代 + 1」，后落账的那条必然
+    // `relay_epoch_regression`——prepare 必须进锁。
+    const order: string[] = [];
+    const relayApi = {
+      metaKeyPrepare: () => {
+        order.push('prepare');
+        return Promise.resolve({ payload: PAYLOAD, payloadHash: 'h' });
+      },
+    } as unknown as RelayTenantApi;
+    await appendMetaKey(
+      {
+        api: authApi([]),
+        relayApi,
+        mode: await modeOf(),
+        lock: async (run) => {
+          order.push('lock:in');
+          const value = await run();
+          order.push('lock:out');
+          return value;
+        },
+      },
+      { op: 'rotate' },
+      await rootSigner()
+    );
+    expect(order).toEqual(['lock:in', 'prepare', 'lock:out']);
   });
 
   test('prepare 失败时不签任何记录，错误码透传', async () => {
@@ -274,5 +306,62 @@ describe('leaveRelay', () => {
     expect(result).toEqual({ ok: true });
     expect(prepared).toBe(1);
     expect(decodeKeyLogRecord(decodeBase64url(appended[0].bytes)).type).toBe('set-relays');
+  });
+});
+
+describe('removeRelay', () => {
+  test('走 remove/prepare 并签一条 set-relays，prepare 也在锁里', async () => {
+    const appended: Appended[] = [];
+    const order: string[] = [];
+    const relayApi = {
+      removePrepare: (url: string) => {
+        order.push(`prepare:${url}`);
+        return Promise.resolve({ payload: PAYLOAD, payloadHash: 'h' });
+      },
+    } as unknown as RelayTenantApi;
+    const result = await removeRelay(
+      {
+        api: authApi(appended),
+        relayApi,
+        mode: await modeOf(),
+        lock: async (run) => {
+          order.push('lock:in');
+          const value = await run();
+          order.push('lock:out');
+          return value;
+        },
+      },
+      'https://relay-2.example',
+      await rootSigner()
+    );
+    expect(result).toEqual({ ok: true });
+    expect(order).toEqual(['lock:in', 'prepare:https://relay-2.example', 'lock:out']);
+    expect(decodeKeyLogRecord(decodeBase64url(appended[0].bytes)).type).toBe('set-relays');
+  });
+
+  test('RELAY_LAST 原样透传成 code', async () => {
+    const relayApi = {
+      removePrepare: () => Promise.reject(new RelayApiError('RELAY_LAST', 'RELAY_LAST', 409)),
+    } as unknown as RelayTenantApi;
+    const result = await removeRelay(
+      { api: authApi([]), relayApi, mode: await modeOf(), lock: alreadyLocked },
+      'https://relay.example',
+      await rootSigner()
+    );
+    expect(result).toEqual({ ok: false, code: 'RELAY_LAST' });
+  });
+});
+
+describe('resendRelayRecord', () => {
+  test('原样重发存下来的字节，不重新取 head 也不重签', async () => {
+    const appended: Appended[] = [];
+    const api = authApi(appended);
+    const signed = { type: 'meta-key' as const, bytes: 'YWJj', sig: 'ZGVm' };
+    const result = await resendRelayRecord(
+      { api, relayApi: {} as RelayTenantApi, mode: await modeOf(), lock: alreadyLocked },
+      signed
+    );
+    expect(result).toEqual({ ok: true });
+    expect(appended).toEqual([{ bytes: 'YWJj', sig: 'ZGVm', hubSync: true }]);
   });
 });

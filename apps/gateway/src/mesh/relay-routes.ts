@@ -10,7 +10,6 @@ import {
 import {
   RELAY_ENROLL_PROOF_MAX_SKEW_MS,
   generateTenantKey,
-  normalizeRelayUrl,
   verifyRelayEnrollProof,
 } from '@tmex/shared/relay';
 import { readJsonObjectBody } from '../api/http';
@@ -25,6 +24,14 @@ import {
   nextRelayPriority,
   relayPayloadHash,
 } from './relay-payloads';
+import {
+  type ParsedEnrollment,
+  normalizeUrlOrNull,
+  parseEnrollmentBody,
+  parseStoredJson,
+  readProof,
+  readRelayErrorCode,
+} from './relay-routes-input';
 import type { RelaySecrets } from './relay-secrets';
 import { RelayUplinkClient } from './relay-uplink-client';
 import {
@@ -85,6 +92,7 @@ export class RelayRoutes {
       'POST /enroll/proof-material': (r, uid) => this.proofMaterial(r, uid),
       'POST /enroll': (r, uid) => this.enroll(r, uid),
       'POST /leave/prepare': (_r, uid) => this.leavePrepare(uid),
+      'POST /remove/prepare': (r, uid) => this.removePrepare(r, uid),
       'POST /meta-key/prepare': (r, uid) => this.metaKeyPrepare(r, uid),
       'GET /join-material': () => this.joinMaterial(),
       'POST /enrollments': (r, uid) => this.createEnrollment(r, uid),
@@ -211,7 +219,7 @@ export class RelayRoutes {
       });
       const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
       if (!res.ok) {
-        const code = typeof payload?.code === 'string' ? payload.code : 'RELAY_ENROLL_FAILED';
+        const code = readRelayErrorCode(payload) ?? 'RELAY_ENROLL_FAILED';
         return { ok: false, error: code, status: res.status === 401 ? 401 : 502 };
       }
       const tenantId = typeof payload?.tenant_id === 'string' ? payload.tenant_id : '';
@@ -275,6 +283,40 @@ export class RelayRoutes {
       nodes: listRelayNodeKeys(this.deps.userStore, userId),
     });
     return jsonBody({ metaEpoch: projection.metaKeyEpoch, ...this.stash(payload, null) });
+  }
+
+  /**
+   * 摘掉多中继里的某一条：其余中继原样保留，优先级重排成 0..n-1。
+   *
+   * 与 `leave/prepare` 的区别是**必须继续分发密钥**——剩下的中继还要用同一套 `K_log` / `K_meta`，
+   * 所以这里按 enroll 的套路把当前两把密钥重新封装给全部未吊销节点，世代不变（不是轮换）。
+   * 只剩一条时不给走这条路：那等价于离开，`leave/prepare` 才是对的记录（空列表）。
+   */
+  private async removePrepare(req: Request, userId: string): Promise<Response> {
+    if (this.mode() !== 'relay') return jsonError('RELAY_NOT_CONFIGURED', 409);
+    const body = await readJsonObjectBody(req);
+    const url = normalizeUrlOrNull(body?.url);
+    if (!url) return jsonError('INVALID_URL', 400);
+    const current = mergeRelayTargets(this.deps.secrets.projection().relays, null);
+    if (!current.some((row) => row.url === url)) return jsonError('RELAY_NOT_FOUND', 404);
+    if (current.length <= 1) return jsonError('RELAY_LAST', 409);
+    const nodes = listRelayNodeKeys(this.deps.userStore, userId);
+    if (nodes.length === 0) return jsonError('NO_ADMITTED_NODES', 409);
+    const logKey = await this.deps.secrets.logKey();
+    const meta = await this.deps.secrets.currentMetaKey();
+    if (!logKey || !meta) return jsonError('RELAY_KEY_MISSING', 409);
+    const relays = current
+      .filter((row) => row.url !== url)
+      .map((row, index) => ({ ...row, priority: index }));
+    const payload = await buildSetRelaysPayload({
+      relays,
+      logKey,
+      metaKey: meta.key,
+      metaEpoch: meta.epoch,
+      nodes,
+    });
+    const prepared = this.stash(payload, { logKey, metaKey: meta.key, epoch: meta.epoch });
+    return jsonBody({ metaEpoch: meta.epoch, ...prepared });
   }
 
   private async metaKeyPrepare(req: Request, userId: string): Promise<Response> {
@@ -449,65 +491,5 @@ export class RelayRoutes {
     const hash = relayPayloadHash(payload);
     if (keys) this.deps.secrets.stashPendingKeys(hash, keys);
     return { payload: encodeBase64url(payload), payloadHash: encodeBase64url(hash) };
-  }
-}
-
-type ParsedEnrollment = {
-  enrollPk: Uint8Array;
-  authorization: Uint8Array;
-  authorizationSig: Uint8Array;
-  exp: number;
-  bodyExp?: number;
-};
-
-function parseEnrollmentBody(body: Record<string, unknown> | null): ParsedEnrollment | null {
-  if (!body) return null;
-  try {
-    const enrollPk = decodeBase64url(String(body.enroll_pk ?? ''));
-    const authorization = decodeBase64url(String(body.authorization ?? ''));
-    const authorizationSig = decodeBase64url(String(body.authorization_sig ?? ''));
-    if (enrollPk.byteLength !== 32 || authorization.byteLength === 0) return null;
-    const decoded = decodeAuthorization(authorization);
-    return {
-      enrollPk,
-      authorization,
-      authorizationSig,
-      exp: Number(decoded.exp),
-      ...(typeof body.exp === 'number' ? { bodyExp: body.exp } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function parseStoredJson(raw: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeUrlOrNull(value: unknown): string | null {
-  if (typeof value !== 'string' || !value.trim()) return null;
-  try {
-    return normalizeRelayUrl(value.trim());
-  } catch {
-    return null;
-  }
-}
-
-function readProof(value: unknown): { bytes: Uint8Array; sig: Uint8Array } | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as { bytes?: unknown; sig?: unknown };
-  if (typeof raw.bytes !== 'string' || typeof raw.sig !== 'string') return null;
-  try {
-    const bytes = decodeBase64url(raw.bytes);
-    const sig = decodeBase64url(raw.sig);
-    if (sig.byteLength !== 64 || bytes.byteLength === 0) return null;
-    return { bytes, sig };
-  } catch {
-    return null;
   }
 }

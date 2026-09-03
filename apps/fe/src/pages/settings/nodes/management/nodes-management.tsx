@@ -130,11 +130,14 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   });
 
   const refreshHubs = hubs.refresh;
+  const refreshRelay = relay.refresh;
+  // 中继链路也要跟着重拉：hub → 中继迁移之后，状态条得当场翻成中继版式，不能等下一拍轮询。
   const refreshAll = useCallback(() => {
     refreshNodes();
     hub.refresh();
     refreshHubs();
-  }, [hub, refreshHubs, refreshNodes]);
+    refreshRelay();
+  }, [hub, refreshHubs, refreshNodes, refreshRelay]);
 
   const relayActions = useRelayActions({ api, mode, prompt, onChanged: refreshAll });
 

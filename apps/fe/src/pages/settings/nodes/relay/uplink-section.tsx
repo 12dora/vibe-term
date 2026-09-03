@@ -6,6 +6,7 @@
 
 import type { MeshHubsState } from '@/node/mesh-hubs';
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
+import type { RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
 import { Button } from '@tmex/ui/button';
 import {
   DropdownMenu,
@@ -16,7 +17,7 @@ import {
 import { Network, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { HubStrip } from '../management/hub-strip';
-import { RelayStrip } from './relay-strip';
+import { RelayStrip, relayLabel } from './relay-strip';
 import type { RelayActionsController } from './use-relay-actions';
 
 export interface UplinkHubView extends Pick<MeshHubsState, 'hubs' | 'attached' | 'candidates'> {
@@ -28,6 +29,21 @@ export interface UplinkNotice {
   testId: string;
   key: string;
   params?: Record<string, string>;
+}
+
+/**
+ * 该对哪条中继重新输口令：被踢的那条才是要重新 enroll 的目标。
+ * 一条都没被踢时退回当前挂载的那条（菜单入口手动重输口令的场景）。
+ */
+export function reauthTarget(relays: RelayLinkStatus[]): string | null {
+  const kicked = relays.filter((relay) => relay.kicked === true);
+  if (kicked.length > 0) return kicked[0]?.url ?? null;
+  return relays.find((relay) => relay.attached)?.url ?? relays[0]?.url ?? null;
+}
+
+/** 被踢的中继列表；多于一条时菜单逐条列出来让用户自己选。 */
+export function kickedRelays(relays: RelayLinkStatus[]): RelayLinkStatus[] {
+  return relays.filter((relay) => relay.kicked === true);
 }
 
 /** 上级不可写时的那一句：中继模式说中继，hub 模式区分「备 Hub 拒写」与「主 Hub 不可达」。 */
@@ -89,10 +105,29 @@ export function UplinkSection({
                 type="button"
                 size="xs"
                 variant="outline"
-                onClick={() => actions.openEnroll('reauth', relay.ordered[0]?.url ?? '')}
+                onClick={() => actions.openEnroll('reauth', reauthTarget(relay.ordered) ?? '')}
                 data-testid="nodes-relay-reauth-action"
               >
                 {t('relay.tenant.reauth.action')}
+              </Button>
+            </p>
+          )}
+          {actions.metaPending.length > 0 && (
+            <p
+              className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400"
+              data-testid="nodes-relay-meta-pending"
+            >
+              <ShieldAlert className="size-3.5 shrink-0" />
+              {t('relay.tenant.metaKey.pending', { count: actions.metaPending.length })}
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={actions.busy}
+                onClick={() => void actions.retryMetaKey()}
+                data-testid="nodes-relay-meta-retry"
+              >
+                {t('relay.tenant.metaKey.retry')}
               </Button>
             </p>
           )}
@@ -144,7 +179,8 @@ export function RelayActionsMenu({
   actions: RelayActionsController;
 }) {
   const { t } = useTranslation();
-  const attachedUrl = relay.attached?.url ?? relay.ordered[0]?.url;
+  const kicked = kickedRelays(relay.ordered);
+  const attachedUrl = reauthTarget(relay.ordered);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -170,12 +206,34 @@ export function RelayActionsMenu({
             >
               {t('relay.tenant.actions.add')}
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => actions.openEnroll('reauth', attachedUrl ?? '')}
-              data-testid="nodes-relay-reauth-menu"
-            >
-              {t('relay.tenant.actions.reauth')}
-            </DropdownMenuItem>
+            {kicked.length > 1 ? (
+              kicked.map((row) => (
+                <DropdownMenuItem
+                  key={`reauth-${row.url}`}
+                  onClick={() => actions.openEnroll('reauth', row.url)}
+                  data-testid={`nodes-relay-reauth-${relayLabel(row.url)}`}
+                >
+                  {t('relay.tenant.actions.reauthOne', { host: relayLabel(row.url) })}
+                </DropdownMenuItem>
+              ))
+            ) : (
+              <DropdownMenuItem
+                onClick={() => actions.openEnroll('reauth', attachedUrl ?? '')}
+                data-testid="nodes-relay-reauth-menu"
+              >
+                {t('relay.tenant.actions.reauth')}
+              </DropdownMenuItem>
+            )}
+            {relay.ordered.length > 1 &&
+              relay.ordered.map((row) => (
+                <DropdownMenuItem
+                  key={`remove-${row.url}`}
+                  onClick={() => actions.requestConfirm('remove', row.url)}
+                  data-testid={`nodes-relay-remove-${relayLabel(row.url)}`}
+                >
+                  {t('relay.tenant.actions.removeOne', { host: relayLabel(row.url) })}
+                </DropdownMenuItem>
+              ))}
             <DropdownMenuItem
               onClick={() => actions.requestConfirm('rotate')}
               data-testid="nodes-relay-rotate"

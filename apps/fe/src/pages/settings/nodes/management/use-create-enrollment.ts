@@ -128,7 +128,12 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
     busy,
     error,
     created,
-    hubUrl: resolveHubPublicUrl(created, mode ?? {}),
+    // 中继模式下 join 命令里的地址是**中继**地址：`/api/auth/mode` 的 `hubPublicUrl` 此时为空，
+    // 拿它判定会让「接入更多设备」面板一直停在「缺少 Hub 地址」。
+    hubUrl: resolveHubPublicUrl(
+      created,
+      relay.relayMode ? { hubPublicUrl: relay.ordered[0]?.url ?? null } : (mode ?? {})
+    ),
     submit,
   };
 }

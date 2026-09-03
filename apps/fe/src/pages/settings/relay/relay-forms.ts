@@ -9,7 +9,11 @@ import type {
   RelayQuota,
   RelayTenantPatch,
 } from '@tmex/api-client/relay/admin-api';
+import { RELAY_QUOTA_LIMITS } from '@tmex/api-client/relay/admin-api';
 import { bytesToKb, kbToBytes } from './relay-format';
+
+/** 带宽字段用 KB/s 收，上限按服务端的字节上限折算。 */
+export const BANDWIDTH_KB_LIMIT = Math.floor(RELAY_QUOTA_LIMITS.bandwidthBytesPerSec / 1024);
 
 export interface QuotaDraft {
   maxNodes: string;
@@ -41,24 +45,28 @@ export function quotaToDraft(quota: RelayQuota): QuotaDraft {
   };
 }
 
-/** 正整数：允许前后空白，拒绝小数、负数、指数与空串。 */
-function positiveInteger(raw: string): number | null {
+/**
+ * 正整数且落在服务端的允许区间内：允许前后空白，拒绝小数、负数、指数与空串。
+ * 越界的值服务端一律回 `400 RELAY_BAD_QUOTA`（`relay-quota.ts` 的 `normalizeRelayQuota`），
+ * 与其让用户点了才知道，不如在字段上直接说清楚。
+ */
+function boundedInteger(raw: string, limit: number): number | null {
   const text = raw.trim();
   if (!/^\d+$/.test(text)) return null;
   const value = Number(text);
-  return Number.isSafeInteger(value) && value >= 1 ? value : null;
+  return Number.isSafeInteger(value) && value >= 1 && value <= limit ? value : null;
 }
 
 export function parseQuotaDraft(draft: QuotaDraft): QuotaParseResult {
   const errors: QuotaErrors = {};
-  const maxNodes = positiveInteger(draft.maxNodes);
+  const maxNodes = boundedInteger(draft.maxNodes, RELAY_QUOTA_LIMITS.maxNodes);
   if (maxNodes === null) errors.maxNodes = 'relay.admin.quota.invalidNodes';
-  const maxStreams = positiveInteger(draft.maxStreams);
+  const maxStreams = boundedInteger(draft.maxStreams, RELAY_QUOTA_LIMITS.maxStreams);
   if (maxStreams === null) errors.maxStreams = 'relay.admin.quota.invalidStreams';
 
   let bandwidthBytesPerSec: number | null = null;
   if (!draft.unlimited) {
-    const kb = positiveInteger(draft.bandwidthKb);
+    const kb = boundedInteger(draft.bandwidthKb, BANDWIDTH_KB_LIMIT);
     if (kb === null) errors.bandwidthKb = 'relay.admin.quota.invalidBandwidth';
     else bandwidthBytesPerSec = kbToBytes(kb);
   }

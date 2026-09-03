@@ -52,6 +52,11 @@ const CONFIRM_COPY: Record<RelayConfirmIntent, { title: string; description: str
       description: 'relay.tenant.metaKey.rotateDescription',
       ok: 'relay.tenant.metaKey.rotateConfirm',
     },
+    remove: {
+      title: 'relay.tenant.remove.title',
+      description: 'relay.tenant.remove.description',
+      ok: 'relay.tenant.remove.confirm',
+    },
   };
 
 /** 接入表单能不能提交：地址须是可信 https（回环允许 http），根密码不能空。 */
@@ -191,7 +196,9 @@ export function RelayConfirmDialog({ actions }: { actions: RelayActionsControlle
       <AlertDialogContent data-testid="nodes-relay-confirm-dialog">
         <AlertDialogHeader>
           <AlertDialogTitle>{t(copy.title)}</AlertDialogTitle>
-          <AlertDialogDescription>{t(copy.description)}</AlertDialogDescription>
+          <AlertDialogDescription>
+            {t(copy.description, { url: request.url ?? '' })}
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel

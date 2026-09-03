@@ -5,7 +5,7 @@ import type { RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { canSubmitRelayEnroll } from './relay-dialogs';
 import { RelayStrip, relayChipTitle, relayFailing, relayLabel } from './relay-strip';
-import { uplinkBlockedHint } from './uplink-section';
+import { kickedRelays, reauthTarget, uplinkBlockedHint } from './uplink-section';
 import { relayErrorText } from './use-relay-actions';
 
 const t = (key: string, options?: Record<string, unknown>) => {
@@ -100,5 +100,38 @@ describe('文案查表', () => {
     expect(uplinkBlockedHint(t, true, false)).toBe('relay.tenant.notAttached');
     expect(uplinkBlockedHint(t, false, true)).toBe('nodes.hubs.standbyNotice');
     expect(uplinkBlockedHint(t, false, false)).toBe('nodes.hubOffline');
+  });
+});
+
+describe('重新输入口令的目标', () => {
+  test('优先挑被踢的那一条，而不是列表第一条', () => {
+    const relays = [
+      link({ url: 'https://a.example', attached: true }),
+      link({ url: 'https://b.example', kicked: true }),
+    ];
+    expect(reauthTarget(relays)).toBe('https://b.example');
+    expect(kickedRelays(relays).map((row) => row.url)).toEqual(['https://b.example']);
+  });
+
+  test('多条被踢时按顺序给出全部，交给菜单逐条列', () => {
+    const relays = [
+      link({ url: 'https://a.example', kicked: true }),
+      link({ url: 'https://b.example' }),
+      link({ url: 'https://c.example', kicked: true }),
+    ];
+    expect(kickedRelays(relays).map((row) => row.url)).toEqual([
+      'https://a.example',
+      'https://c.example',
+    ]);
+    expect(reauthTarget(relays)).toBe('https://a.example');
+  });
+
+  test('一条都没被踢时退回当前挂载的那条', () => {
+    const relays = [
+      link({ url: 'https://a.example' }),
+      link({ url: 'https://b.example', attached: true }),
+    ];
+    expect(reauthTarget(relays)).toBe('https://b.example');
+    expect(reauthTarget([])).toBeNull();
   });
 });

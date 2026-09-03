@@ -11,10 +11,11 @@ import { leaseSigner, takeRememberedSigner } from '@/auth/credential-prompt';
 import { admittedNodeIdFor, withKeyLogLock } from '@/node/enrollment-engine';
 import type { RelayFlowMode } from '@/node/relay-enroll';
 import { appendMetaKey } from '@/node/relay-enroll';
+import { forgetPendingMetaKey, rememberPendingMetaKey } from '@/node/relay-meta-key-pending';
 import type { AuthApi } from '@tmex/api-client/auth/index';
-import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { relayErrorText } from './use-relay-actions';
@@ -29,18 +30,29 @@ export interface RelayAdmitFollowUpInput {
   mode: RelayFlowMode | null;
 }
 
+/**
+ * 已经处理过的 enrollment，**宿主级**而不是每个 hook 一份：设置页与「接入更多设备」面板可能
+ * 同时挂着，两份各自补发会白白多换一代密钥，而且第二份抢不到复用窗口里的签名者，
+ * 只会弹一条假告警。
+ */
+const handledAdmits = new Set<string>();
+
+/** 仅测试使用。 */
+export function resetRelayAdmitFollowUpForTest(): void {
+  handledAdmits.clear();
+}
+
 export function useRelayAdmitFollowUp(input: RelayAdmitFollowUpInput): void {
   const { t } = useTranslation();
-  // 每条 enrollment 只补发一次：`admittedIds` 是累积数组，重渲染会把整段再看一遍。
-  const handled = useRef<Set<string>>(new Set());
   const { admittedIds, api, enabled, mode } = input;
   const relayApi = input.relayApi ?? defaultRelayTenantApi;
 
   useEffect(() => {
     if (!enabled || !mode) return;
     for (const id of admittedIds) {
-      if (handled.current.has(id)) continue;
-      handled.current.add(id);
+      // 只挡住「同一条正在飞」；成败由 `relay-meta-key-pending` 记账，失败的那条会被重试回路接手。
+      if (handledAdmits.has(id)) continue;
+      handledAdmits.add(id);
       const nodeIdHex = admittedNodeIdFor(id);
       // 重发路径手上只有已签字节、没有证书，拿不到 node id：只能靠轮换补。
       if (!nodeIdHex) {
@@ -52,6 +64,12 @@ export function useRelayAdmitFollowUp(input: RelayAdmitFollowUpInput): void {
   }, [admittedIds, api, enabled, mode, relayApi, t]);
 }
 
+/**
+ * 补发一条 `meta-key {op:'admit'}`。
+ *
+ * 失败（含「复用窗口里没有签名者」）一律记进 `relay-meta-key-pending`：新节点解不出 `K_meta`
+ * 是个持续状态，一条转瞬即逝的 toast 交代不了。落账成功才把欠账划掉。
+ */
 async function distributeMetaKey(input: {
   api: AuthApi;
   relayApi: RelayTenantApi;
@@ -59,8 +77,11 @@ async function distributeMetaKey(input: {
   nodeIdHex: string;
   t: (key: string, options?: Record<string, unknown>) => string;
 }): Promise<void> {
+  const op: RelayMetaKeyOp = { op: 'admit', node_id: input.nodeIdHex };
+  const entryId = `admit:${input.nodeIdHex}`;
   const signer = takeRememberedSigner(Date.now());
   if (!signer) {
+    rememberPendingMetaKey({ id: entryId, reason: 'admit', op });
     toast.warning(input.t('relay.tenant.metaKey.needsRotate'));
     return;
   }
@@ -69,16 +90,24 @@ async function distributeMetaKey(input: {
   try {
     const result = await appendMetaKey(
       { api: input.api, relayApi: input.relayApi, mode: input.mode, lock: withKeyLogLock },
-      { op: 'admit', node_id: input.nodeIdHex },
+      op,
       signer
     );
-    if (!result.ok) {
-      toast.warning(
-        input.t('relay.tenant.metaKey.admitFailed', {
-          error: relayErrorText(input.t, result.code),
-        })
-      );
+    if (result.ok) {
+      forgetPendingMetaKey(entryId);
+      return;
     }
+    rememberPendingMetaKey({
+      id: entryId,
+      reason: 'admit',
+      op,
+      record: result.record ?? null,
+    });
+    toast.warning(
+      input.t('relay.tenant.metaKey.admitFailed', {
+        error: relayErrorText(input.t, result.code),
+      })
+    );
   } finally {
     release();
   }

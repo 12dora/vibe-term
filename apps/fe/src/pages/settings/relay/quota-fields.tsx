@@ -1,10 +1,11 @@
 // 配额三件套（节点数 / 并发流 / 带宽）的字段组：默认配额表单与单租户覆盖共用。
 
+import { RELAY_QUOTA_LIMITS } from '@tmex/api-client/relay/admin-api';
 import { Input } from '@tmex/ui/input';
 import { Switch } from '@tmex/ui/switch';
 import { useTranslation } from 'react-i18next';
 import { FormField } from '../components/form-primitives';
-import type { QuotaDraft, QuotaErrors } from './relay-forms';
+import { BANDWIDTH_KB_LIMIT, type QuotaDraft, type QuotaErrors } from './relay-forms';
 
 export interface QuotaFieldsProps {
   /** 字段 id 前缀：同一页里可能同时存在默认配额与租户配额两组。 */
@@ -22,7 +23,9 @@ export function QuotaFields({ idPrefix, draft, errors, disabled, onChange }: Quo
       <FormField
         id={`${idPrefix}-max-nodes`}
         label={t('relay.admin.quota.maxNodes')}
-        error={errors.maxNodes ? t(errors.maxNodes) : undefined}
+        error={
+          errors.maxNodes ? t(errors.maxNodes, { max: RELAY_QUOTA_LIMITS.maxNodes }) : undefined
+        }
         spacing="tight"
       >
         <Input
@@ -38,7 +41,11 @@ export function QuotaFields({ idPrefix, draft, errors, disabled, onChange }: Quo
       <FormField
         id={`${idPrefix}-max-streams`}
         label={t('relay.admin.quota.maxStreams')}
-        error={errors.maxStreams ? t(errors.maxStreams) : undefined}
+        error={
+          errors.maxStreams
+            ? t(errors.maxStreams, { max: RELAY_QUOTA_LIMITS.maxStreams })
+            : undefined
+        }
         spacing="tight"
       >
         <Input
@@ -55,7 +62,9 @@ export function QuotaFields({ idPrefix, draft, errors, disabled, onChange }: Quo
         <FormField
           id={`${idPrefix}-bandwidth`}
           label={t('relay.admin.quota.bandwidth')}
-          error={errors.bandwidthKb ? t(errors.bandwidthKb) : undefined}
+          error={
+            errors.bandwidthKb ? t(errors.bandwidthKb, { max: BANDWIDTH_KB_LIMIT }) : undefined
+          }
           spacing="tight"
         >
           <div className="flex flex-wrap items-center gap-3">
