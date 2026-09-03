@@ -157,6 +157,10 @@ describe('CarrierSwitchController', () => {
     const [local] = pairDataChannels('sess');
     const direct = new DataChannelCarrier(local) as DirectCarrier;
     const controls: Array<{ epoch: number; to: number }> = [];
+    let fallbacks = 0;
+    session.onDirectFallback = () => {
+      fallbacks += 1;
+    };
     const barrier = new CarrierSwitchController({
       sendControl(_session, kind, payload) {
         if (kind === wsBorsh.KIND_CARRIER_SWITCH) controls.push(decodeSwitch(payload));
@@ -172,6 +176,7 @@ describe('CarrierSwitchController', () => {
     expect(session.direct).toBeNull();
     expect(controls[1]?.epoch).toBe(2);
     expect(controls[1]?.to).toBe(wsBorsh.CARRIER_SWITCH_TO_PRIMARY);
+    expect(fallbacks).toBe(1);
   });
 
   test('queued-backpressure waits for drain then switches without resending', async () => {

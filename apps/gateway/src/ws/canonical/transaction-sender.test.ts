@@ -49,6 +49,48 @@ describe('canonical transaction sender', () => {
     expect(events.some((event) => 'ScreenCommit' in event)).toBe(false);
   });
 
+  test('fails a screen transaction when commit applies backpressure after live was held', () => {
+    let releasedLive = false;
+    const sender = new CanonicalTransactionSender({
+      sizer: new CanonicalFrameSizer(256),
+      sendEvent: (event) => ('ScreenCommit' in event ? 'backpressured' : true),
+      isClosed: () => false,
+      getServerEpoch: () => SERVER_EPOCH,
+    });
+
+    expect(
+      sender.sendScreenTransaction(
+        'device-a',
+        REQUEST_ID,
+        {
+          paneId: '%1',
+          paneEpoch: new Uint8Array(16).fill(0x22),
+          baseSeq: 0n,
+          rows: 24,
+          cols: 80,
+          modes: 0,
+          data: new Uint8Array(),
+          historyCursor: null,
+          capturedAt: 0,
+        },
+        {
+          splitAtBase: () => ({
+            paneId: '%1',
+            paneEpoch: new Uint8Array(16).fill(0x22),
+            seqStart: 0n,
+            seqEnd: 1n,
+            data: new Uint8Array([1]),
+          }),
+          sendLive: () => {
+            releasedLive = true;
+            return true;
+          },
+        }
+      )
+    ).toBe(false);
+    expect(releasedLive).toBe(false);
+  });
+
   test('sendFitted skips the frame-size check but still refuses a closed session', () => {
     const events: wsBorsh.CanonicalEvent[] = [];
     let closed = false;

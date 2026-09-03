@@ -14,6 +14,7 @@ import { rtcLog } from './rtc-log';
 export const DC_HIGH_WATER_BYTES = 4 * 1024 * 1024;
 export const DC_LOW_WATER_BYTES = 1 * 1024 * 1024;
 export const DC_PRIORITY_QUEUE_CAP = 16;
+export const DC_REGULAR_QUEUE_CAP = 1;
 
 type OutboundFrame = {
   parts: Uint8Array[];
@@ -33,6 +34,7 @@ export class DataChannelCarrier implements Carrier {
   private nextFrameId = 1;
   private closed = false;
   private remainder: OutboundFrame | null = null;
+  private queuedRegular: OutboundFrame | null = null;
   private readonly peer: string | undefined;
 
   constructor(channel: DataChannelLike, opts?: { reassembler?: FrameReassembler; peer?: string }) {
@@ -52,7 +54,7 @@ export class DataChannelCarrier implements Carrier {
     channel.setBufferedAmountLowThreshold(DC_LOW_WATER_BYTES);
     channel.onBufferedAmountLow(() => {
       this.flushOutbound();
-      if (this.closed || this.remainder || this.priorityQueue.length > 0) return;
+      if (this.closed || this.hasPendingWrites()) return;
       for (const cb of this.drainCbs) {
         try {
           cb();
@@ -114,6 +116,11 @@ export class DataChannelCarrier implements Carrier {
   send(bytes: Uint8Array): CarrierSendResult {
     if (this.closed || !this.channel.isOpen()) return 'closed';
     if (this.remainder || this.channel.bufferedAmount() > DC_HIGH_WATER_BYTES) {
+      if (this.queuedRegular) return 'rejected';
+      this.queuedRegular = {
+        parts: fragmentFrame(this.allocFrameId(), bytes, this.payloadSize),
+        index: 0,
+      };
       return 'backpressure';
     }
     const frameId = this.allocFrameId();
@@ -143,6 +150,7 @@ export class DataChannelCarrier implements Carrier {
   hasPendingWrites(): boolean {
     return (
       this.remainder !== null ||
+      this.queuedRegular !== null ||
       this.priorityQueue.length > 0 ||
       this.bufferedAmount() > DC_HIGH_WATER_BYTES
     );
@@ -207,6 +215,7 @@ export class DataChannelCarrier implements Carrier {
   private flushOutbound(): void {
     this.flushPriority();
     this.flushRemainder();
+    this.flushQueuedRegular();
   }
 
   private flushPriority(): void {
@@ -223,6 +232,13 @@ export class DataChannelCarrier implements Carrier {
     if (!remainder || this.closed) return;
     if (!this.flushFrame(remainder, false)) return;
     this.remainder = null;
+  }
+
+  private flushQueuedRegular(): void {
+    const queued = this.queuedRegular;
+    if (!queued || this.closed || this.remainder) return;
+    if (!this.flushFrame(queued, true)) return;
+    this.queuedRegular = null;
   }
 
   private flushFrame(frame: OutboundFrame, respectHighWater: boolean): boolean {
@@ -246,6 +262,7 @@ export class DataChannelCarrier implements Carrier {
     if (this.closed) return;
     this.closed = true;
     this.remainder = null;
+    this.queuedRegular = null;
     this.priorityQueue.length = 0;
     this.reassembler.dispose();
     try {

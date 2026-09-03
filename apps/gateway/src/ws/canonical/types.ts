@@ -51,6 +51,13 @@ export interface CanonicalFeedSessionOptions {
   initialDeviceIds?: () => Iterable<string>;
   onDeviceAttached?: (deviceId: string, runtime: CanonicalFeedRuntime) => void;
   onDeviceDetached?: (deviceId: string, runtime: CanonicalFeedRuntime) => void;
+  resizePane?: (
+    deviceId: string,
+    paneId: string,
+    cols: number,
+    rows: number,
+    runtime: CanonicalFeedRuntime
+  ) => void;
   createEpoch?: () => Uint8Array;
   maxPendingPaneGaps?: number;
 }

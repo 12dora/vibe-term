@@ -7,7 +7,7 @@ import type {
   StateSnapshotPayload,
   wsBorsh,
 } from '@tmex/shared';
-import type { ClientSendResult, ConnectionState } from './client';
+import type { ClientSendResult, ConnectionState, StateFeedMode } from './client';
 import type { MovePanePosition } from './message-builder';
 
 export interface GatewayTerminalCursor {
@@ -63,8 +63,20 @@ export type GatewayRebaseReason =
   | 'cache_evicted'
   | 'resource_exhausted';
 
+export type GatewaySubscriptionRejectionReason =
+  | 'not_found'
+  | 'resource_exhausted'
+  | 'epoch_changed';
+
+export interface GatewaySubscriptionRejection {
+  deviceId: string;
+  paneId: string;
+  reason: GatewaySubscriptionRejectionReason;
+}
+
 export type GatewayTransportEvent =
   | { type: 'connection-state'; state: ConnectionState }
+  | { type: 'state-feed-mode'; mode: StateFeedMode }
   | { type: 'latency'; latencyMs: number; rawMs: number }
   | { type: 'terminal-progress'; deviceId?: string }
   | { type: 'device-connected'; deviceId: string }
@@ -97,6 +109,7 @@ export type GatewayTransportEvent =
       generation: bigint;
       paneIds: readonly string[];
       rejectedPaneIds: readonly string[];
+      rejections?: readonly GatewaySubscriptionRejection[];
     }
   | {
       type: 'rebase-required';
@@ -248,6 +261,7 @@ export interface GatewayTransport {
   readonly latencyMs: number | null;
   readonly latencyRawMs: number | null;
   readonly serverCapabilities: readonly string[];
+  readonly stateFeedMode?: StateFeedMode;
   connect(): void;
   disconnect(): void;
   dispose(): void;

@@ -84,7 +84,9 @@ describe('ProtocolDispatcher', () => {
       capabilities: ['a', 'b'],
     });
     rec.dispatcher.handleFrame(frame(wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, hello, 2)));
-    expect(rec.hellos).toEqual([{ capabilities: ['a', 'b'], serverVersion: '0.1.0' }]);
+    expect(rec.hellos).toEqual([
+      { capabilities: ['a', 'b'], serverVersion: '0.1.0', maxFrameBytes: 1024 },
+    ]);
     expect(rec.helloFailures).toEqual([]);
   });
 
@@ -113,6 +115,20 @@ describe('ProtocolDispatcher', () => {
     for (const [index, chunk] of rest.entries()) {
       rec.dispatcher.handleFrame(frame(wsBorsh.encodeChunk(chunk, index + 2)));
     }
+    expect(rec.messages).toEqual([]);
+  });
+
+  test('拒绝用通用 CHUNK 承载 canonical event', () => {
+    const rec = createRecorder();
+    const payload = wsBorsh.encodeCanonicalEventPayload({
+      Error: { requestId: null, code: 1, message: 'x'.repeat(200), retryable: false },
+    });
+    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_CANONICAL_EVENT, 3, {
+      maxFrameBytes: 96,
+      chunkStreamId: 9,
+    });
+    rec.dispatcher.handleFrame(frame(wsBorsh.encodeChunk(split.chunks[0]!, 1)));
+    expect(rec.progress).toEqual([]);
     expect(rec.messages).toEqual([]);
   });
 

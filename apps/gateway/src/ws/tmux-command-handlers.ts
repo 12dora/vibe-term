@@ -44,7 +44,8 @@ export interface TmuxCommandHost {
   broadcastThemeChange(theme: 'dark' | 'light'): void;
   sendSnapshotToClients(
     entry: DeviceConnectionEntry,
-    payload: NonNullable<DeviceConnectionEntry['lastSnapshot']>
+    payload: NonNullable<DeviceConnectionEntry['lastSnapshot']>,
+    options?: { includeCanonical?: boolean }
   ): void;
   getCachedDeviceTreeOrder(deviceId: string): DeviceTreeOrderRecord;
   storeDeviceTreeOrder(order: DeviceTreeOrderRecord): DeviceTreeOrderRecord;
@@ -724,7 +725,7 @@ export function reorderWindows(host: TmuxCommandHost, deviceId: string, windowId
   host.broadcastSettingsUpdate('tree-order');
   const entry = host.connections.get(deviceId);
   if (!entry?.lastSnapshot) return;
-  host.sendSnapshotToClients(entry, entry.lastSnapshot);
+  host.sendSnapshotToClients(entry, entry.lastSnapshot, { includeCanonical: true });
 }
 
 export function reorderPanes(
@@ -746,7 +747,7 @@ export function reorderPanes(
   host.broadcastSettingsUpdate('tree-order');
   const entry = host.connections.get(deviceId);
   if (!entry?.lastSnapshot) return;
-  host.sendSnapshotToClients(entry, entry.lastSnapshot);
+  host.sendSnapshotToClients(entry, entry.lastSnapshot, { includeCanonical: true });
 }
 
 export function handleSubscribePanes(

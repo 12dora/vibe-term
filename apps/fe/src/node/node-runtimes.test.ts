@@ -9,7 +9,13 @@ import {
   type WebSocketLike,
   getBulkClient,
 } from '@tmex/ws-client';
-import { createAppNodeRuntimes, createNodeConnection, nodeQueryClient } from './node-runtimes';
+import {
+  CANONICAL_STATE_KILL_SWITCH_KEY,
+  canonicalStateEnabled,
+  createAppNodeRuntimes,
+  createNodeConnection,
+  nodeQueryClient,
+} from './node-runtimes';
 
 /** 直连断开提示的 i18n key：locale 里已有正式条目，测试里的假 `t` 原样返回 key。 */
 const DIRECT_FALLBACK_KEY = 'device.directFallbackToast';
@@ -19,11 +25,14 @@ interface FakeConnection extends GatewayConnection {
   mountedPanes: Set<string>;
 }
 
-function fakeConnection(mountedPanes: string[] = []): FakeConnection {
+function fakeConnection(
+  mountedPanes: string[] = [],
+  stateFeedMode: 'canonical' | 'legacy' = 'legacy'
+): FakeConnection {
   const mounted = new Set(mountedPanes);
   const connection = {
     client: {} as GatewayConnection['client'],
-    transport: {} as GatewayConnection['transport'],
+    transport: { stateFeedMode } as GatewayConnection['transport'],
     paneSinks: {
       hasPaneSink: (_deviceId: string, paneId: string) => mounted.has(paneId),
     } as unknown as GatewayConnection['paneSinks'],
@@ -129,6 +138,16 @@ function fakeRuntime(
 }
 
 describe('createNodeConnection', () => {
+  test('canonical state kill switch defaults on and accepts runtime storage overrides', () => {
+    expect(canonicalStateEnabled({ getItem: () => null })).toBe(true);
+    expect(
+      canonicalStateEnabled({
+        getItem: (key) => (key === CANONICAL_STATE_KILL_SWITCH_KEY ? '1' : null),
+      })
+    ).toBe(false);
+    expect(canonicalStateEnabled({ getItem: () => 'true' })).toBe(false);
+  });
+
   test('self 不建直连控制器，也不挂诊断源', () => {
     let created = 0;
     const connection = createNodeConnection('self', {
@@ -251,6 +270,23 @@ describe('resume 钩子（切回 primary 的补齐）', () => {
     expect(calls.mounts).toEqual([]);
     expect(calls.screens).toEqual([]);
     expect(calls.warnings.length).toBe(1);
+  });
+
+  test('canonical 回落只用 cursor 重订阅，不主动重取整屏', () => {
+    const calls: ResumeCalls = { mounts: [], releases: 0, screens: [], warnings: [] };
+    const base = fakeConnection(['%1', '%2'], 'canonical');
+    createNodeConnection('node-b', {
+      createConnection: () => base,
+      createController: () => fakeController(),
+      resolveRuntime: () => fakeRuntime(calls, { panes: ['%1', '%2'] }),
+    });
+
+    base.resumeHook?.();
+
+    expect(calls.mounts).toEqual([['device-a', '%1']]);
+    expect(calls.releases).toBe(1);
+    expect(calls.screens).toEqual([]);
+    expect(calls.warnings).toEqual([DIRECT_FALLBACK_KEY]);
   });
 
   test('runtime 还没建好时只提示，不抛错', () => {

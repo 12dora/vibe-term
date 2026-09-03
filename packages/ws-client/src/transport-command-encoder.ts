@@ -1,5 +1,6 @@
 // 控制帧编码：每个命令一条 typed handler，映射表由 TS 保证对命令联合完备。
 
+import { wsBorsh } from '@tmex/shared';
 import {
   buildDeviceConnect,
   buildDeviceDisconnect,
@@ -28,6 +29,26 @@ import {
   buildTmuxSubscribePanes,
 } from './message-builder';
 import type { EncodedGatewayCommand, GatewayTransportCommand } from './transport-types';
+
+export interface GatewayCommandEncodingOptions {
+  stateFeedMode?: 'canonical' | 'legacy' | 'pending';
+}
+
+export function encodeCanonicalGatewayCommand(
+  command: wsBorsh.CanonicalCommand,
+  effectiveMaxFrameBytes: number
+): EncodedGatewayCommand {
+  const payload = wsBorsh.encodeCanonicalCommandPayload(command);
+  const maxFrameBytes = Math.min(wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES, effectiveMaxFrameBytes);
+  if (payload.byteLength + wsBorsh.WS_ENVELOPE_WIRE_OVERHEAD_BYTES > maxFrameBytes) {
+    throw new wsBorsh.WsBorshError(
+      wsBorsh.ERROR_FRAME_TOO_LARGE,
+      false,
+      `canonical frame exceeds ${maxFrameBytes} bytes`
+    );
+  }
+  return { kind: wsBorsh.KIND_CANONICAL_COMMAND, payload };
+}
 
 type GatewayCommandType = GatewayTransportCommand['type'];
 
@@ -98,8 +119,12 @@ const COMMAND_ENCODERS: CommandEncoders = {
 };
 
 export function encodeGatewayTransportCommand(
-  command: GatewayTransportCommand
+  command: GatewayTransportCommand,
+  options: GatewayCommandEncodingOptions = {}
 ): EncodedGatewayCommand {
+  if (command.type === 'select-pane' && options.stateFeedMode === 'canonical') {
+    return buildTmuxSelect({ ...command, wantHistory: false });
+  }
   const encode = COMMAND_ENCODERS[command.type] as
     | ((command: GatewayTransportCommand) => EncodedGatewayCommand)
     | undefined;

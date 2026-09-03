@@ -539,6 +539,30 @@ describe('tmux transport event router', () => {
     ]);
   });
 
+  test('stores the observable feed mode and handles subscription rejection reasons separately', () => {
+    const harness = createHarness();
+    harness.route({ type: 'state-feed-mode', mode: 'canonical' });
+    expect(harness.getState().stateFeedMode).toBe('canonical');
+
+    harness.route({
+      type: 'subscription-applied',
+      deviceId: 'device-a',
+      generation: 2n,
+      paneIds: [],
+      rejectedPaneIds: ['%missing', '%busy', '%stale'],
+      rejections: [
+        { deviceId: 'device-a', paneId: '%missing', reason: 'not_found' },
+        { deviceId: 'device-a', paneId: '%busy', reason: 'resource_exhausted' },
+        { deviceId: 'device-a', paneId: '%stale', reason: 'epoch_changed' },
+      ],
+    });
+
+    expect(harness.namesOf('dispatchPaneRebase').map((call) => call.args)).toEqual([
+      ['device-a', '%busy', 'resource_exhausted'],
+      ['device-a', '%stale', 'epoch_changed'],
+    ]);
+  });
+
   test('clipboard-write only applies to the currently selected pane', async () => {
     const harness = createHarness();
 

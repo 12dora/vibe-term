@@ -114,8 +114,9 @@ export class CanonicalTransactionSender {
         historyCursor: checkpoint.historyCursor,
       },
     });
-    if (committed === true && heldLive) holdLive.sendLive(deviceId, heldLive);
-    return canonicalSendAccepted(committed);
+    if (committed !== true) return false;
+    if (heldLive) holdLive.sendLive(deviceId, heldLive);
+    return true;
   }
 
   sendHistoryTransaction(

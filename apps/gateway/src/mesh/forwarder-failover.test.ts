@@ -39,8 +39,11 @@ describe('runStreamFailover logging isolation', () => {
   test('throwing streamLog does not stick failingOver or skip flush', async () => {
     const pump = makePump();
     const flushed: number[] = [];
+    const browserFrames: Uint8Array[] = [];
     const closed: Array<{ code?: number; reason?: string }> = [];
     const stream = fakeStream();
+    const signal = new Uint8Array([9]);
+    pump.replay.browserSignalFrames = () => (flushed.length > 0 ? [signal] : []);
     const host: StreamFailoverHost = {
       sleep: async () => {},
       log() {
@@ -66,7 +69,9 @@ describe('runStreamFailover logging isolation', () => {
         closed.push(info);
       },
       sendToStream() {},
-      sendToBrowser() {},
+      sendToBrowser(_target, frame) {
+        browserFrames.push(frame);
+      },
       flushQueue() {
         flushed.push(1);
       },
@@ -75,6 +80,7 @@ describe('runStreamFailover logging isolation', () => {
     await runStreamFailover(host, pump, { code: 1011, reason: 'reset' });
     expect(pump.failingOver).toBe(false);
     expect(flushed).toEqual([1]);
+    expect(browserFrames).toEqual([signal]);
     expect(closed).toEqual([]);
   });
 });

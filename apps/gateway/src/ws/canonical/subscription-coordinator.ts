@@ -1,6 +1,7 @@
 import { wsBorsh } from '@tmex/shared';
 
 import type {
+  PaneReplayPlan,
   PaneSubscriptionApplyResult,
   PaneSubscriptionRequest,
 } from '../../tmux-client/pane-retention';
@@ -19,6 +20,7 @@ export interface CanonicalSubscriptionApplyResult {
   hotPanes: CanonicalPaneTarget[];
   rejected: Array<{ pane: CanonicalPaneTarget; reason: number }>;
   retainedKeys: Set<string>;
+  replay: Array<{ deviceId: string; plans: PaneReplayPlan[] }>;
 }
 
 export class CanonicalSubscriptionCoordinator {
@@ -127,6 +129,10 @@ export class CanonicalSubscriptionCoordinator {
       hotPanes: appliedHot,
       rejected,
       retainedKeys,
+      replay: applyResults.map(({ device, result }) => ({
+        deviceId: device.deviceId,
+        plans: result.replay,
+      })),
     };
   }
 }

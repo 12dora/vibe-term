@@ -269,6 +269,27 @@ describe('decodeGatewayTransportMessage', () => {
     expect(handled).toBe(true);
     expect(events).toEqual([{ type: 'rebase-required', reason: 'resource_exhausted' }]);
   });
+  test('KIND_CANONICAL_EVENT never drops an unknown pane gap reason', () => {
+    const epoch = new Uint8Array(16);
+    const payload = wsBorsh.encodeCanonicalEventPayload({
+      SourceGap: {
+        reason: 255,
+        scope: {
+          Pane: {
+            pane: { deviceId: 'dev', serverEpoch: epoch, paneId: '%1' },
+            expectedPaneEpoch: epoch,
+            availablePaneEpoch: epoch,
+            expectedSeq: 1n,
+            availableSeq: 2n,
+          },
+        },
+      },
+    });
+    const { events } = collect(wsBorsh.KIND_CANONICAL_EVENT, payload);
+    expect(events).toEqual([
+      { type: 'rebase-required', deviceId: 'dev', paneId: '%1', reason: 'pane_gap' },
+    ]);
+  });
   test('terminal-data 的 data 是 payload 视图，截断/越界 payload 抛错', () => {
     const payload = wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
       deviceId: 'dev-1',

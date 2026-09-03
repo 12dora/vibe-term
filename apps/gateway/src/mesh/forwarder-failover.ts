@@ -261,12 +261,12 @@ async function completeFailover(
       maxLagMs: lag.maxLagMs,
     })
   );
-  for (const frame of pump.replay.browserSignalFrames()) {
-    host.sendToBrowser(pump, frame);
-  }
   pump.failingOver = false;
   pump.failoverAbort = null;
   host.flushQueue(pump);
+  for (const frame of pump.replay.browserSignalFrames()) {
+    host.sendToBrowser(pump, frame);
+  }
   return true;
 }
 

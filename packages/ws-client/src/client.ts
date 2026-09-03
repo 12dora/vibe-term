@@ -1,7 +1,7 @@
 // FE Borsh WebSocket 客户端
 // 门面：组合心跳、重连退避与协议分发，对外维持连接状态与订阅接口
 
-import { wsBorsh } from '@tmex/shared';
+import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1, wsBorsh } from '@tmex/shared';
 import {
   type ActiveCarrier,
   type AttachDirectOptions,
@@ -82,9 +82,11 @@ const DEFAULT_OPTIONS: BorshClientOptions = {
   pongTimeoutMs: DEFAULT_PONG_TIMEOUT_MS,
   hiddenHeartbeatIntervalMs: DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS,
   hiddenHeartbeatTimeoutMs: DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS,
+  canonicalStateEnabled: true,
 };
 
 const VISIBILITY_RECONNECT_THROTTLE_MS = 5000;
+const MIN_CANONICAL_FEED_FRAME_BYTES = wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES;
 
 // ========== 类型定义 ==========
 
@@ -109,6 +111,8 @@ export interface BorshClientOptions {
   maxPendingBytes?: number;
   /** 未就绪待发队列帧数上限；缺省 2048 */
   maxPendingFrames?: number;
+  /** canonical-state-v1 kill switch；缺省开启，false 时强制使用 legacy state feed。 */
+  canonicalStateEnabled?: boolean;
 }
 
 export type ConnectionState =
@@ -118,6 +122,8 @@ export type ConnectionState =
   | 'READY'
   | 'RECONNECT_BACKOFF'
   | 'CLOSED';
+
+export type StateFeedMode = 'pending' | 'legacy' | 'canonical';
 
 export type { BorshMessage, ChunkProgress } from './protocol-dispatcher';
 
@@ -175,6 +181,22 @@ export class BorshWebSocketClient {
   serverCapabilities: readonly string[] = [];
   // 本连接协商到的服务端版本；未协商（含重连等待期）为 null，下一次 HELLO 重新推导
   serverVersion: string | null = null;
+  stateFeedMode: StateFeedMode = 'pending';
+  private serverMaxFrameBytes: number | null = null;
+
+  get effectiveMaxFrameBytes(): number {
+    return Math.min(
+      this.options.maxFrameBytes,
+      this.serverMaxFrameBytes ?? this.options.maxFrameBytes
+    );
+  }
+
+  get pendingCommandLimits(): { maxBytes: number; maxFrames: number } {
+    return {
+      maxBytes: this.options.maxPendingBytes ?? DEFAULT_MAX_PENDING_BYTES,
+      maxFrames: this.options.maxPendingFrames ?? DEFAULT_MAX_PENDING_FRAMES,
+    };
+  }
 
   /** 服务端是否认识 TERM_VIEWPORT（1.1.7 起）；未知版本按新版处理。 */
   get supportsTermViewport(): boolean {
@@ -337,6 +359,10 @@ export class BorshWebSocketClient {
     this.dispatcher.reset();
     this.barrier?.closeDirect();
     this.resetLatency();
+    this.serverCapabilities = [];
+    this.serverVersion = null;
+    this.serverMaxFrameBytes = null;
+    this.stateFeedMode = 'pending';
 
     if (this.ws) {
       this.ws.close();
@@ -374,6 +400,13 @@ export class BorshWebSocketClient {
   private handleHelloNegotiated(hello: NegotiatedHello): void {
     this.serverCapabilities = hello.capabilities;
     this.serverVersion = hello.serverVersion;
+    this.serverMaxFrameBytes = hello.maxFrameBytes;
+    this.stateFeedMode =
+      this.options.canonicalStateEnabled !== false &&
+      hello.capabilities.includes(GATEWAY_CAPABILITY_CANONICAL_STATE_V1) &&
+      this.effectiveMaxFrameBytes >= MIN_CANONICAL_FEED_FRAME_BYTES
+        ? 'canonical'
+        : 'legacy';
 
     this.setState('READY');
     this.hasConnectedOnce = true;
@@ -411,7 +444,10 @@ export class BorshWebSocketClient {
     this.heartbeat.stop();
     this.resetLatency();
     this.dispatcher.reset();
+    this.serverCapabilities = [];
     this.serverVersion = null;
+    this.serverMaxFrameBytes = null;
+    this.stateFeedMode = 'pending';
     // primary 断开 = 会话整体结束，直连随之关闭（设计 §3 步骤 4）；
     // 重连后是全新会话，epoch 从 0 重来。
     this.barrier?.closeDirect();
@@ -443,7 +479,10 @@ export class BorshWebSocketClient {
   // ========== 发送消息 ==========
 
   private sendHello(): void {
+    this.serverCapabilities = [];
     this.serverVersion = null;
+    this.serverMaxFrameBytes = null;
+    this.stateFeedMode = 'pending';
     const hello = {
       clientImpl: this.options.clientImpl,
       clientVersion: this.options.clientVersion,
@@ -481,9 +520,25 @@ export class BorshWebSocketClient {
 
     const seq = this.nextSeq();
 
+    if (kind === wsBorsh.KIND_CANONICAL_COMMAND) {
+      const maxFrameBytes = Math.min(
+        wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+        this.effectiveMaxFrameBytes
+      );
+      if (payload.byteLength + wsBorsh.WS_ENVELOPE_WIRE_OVERHEAD_BYTES > maxFrameBytes) {
+        throw new wsBorsh.WsBorshError(
+          wsBorsh.ERROR_FRAME_TOO_LARGE,
+          false,
+          `canonical frame exceeds ${maxFrameBytes} bytes`
+        );
+      }
+      const envelope = wsBorsh.encodeEnvelope(kind, payload, seq);
+      return this.sendRaw(envelope) ? 'sent' : 'backpressure';
+    }
+
     // 检查是否需要分片
     const chunkResult = wsBorsh.splitPayloadIntoChunks(payload, kind, seq, {
-      maxFrameBytes: this.options.maxFrameBytes,
+      maxFrameBytes: this.effectiveMaxFrameBytes,
       chunkStreamId: wsBorsh.generateChunkStreamId(),
     });
 
@@ -693,6 +748,10 @@ export class BorshWebSocketClient {
     this.clearTimers();
     this.barrier?.closeDirect();
     this.resetLatency();
+    this.serverCapabilities = [];
+    this.serverVersion = null;
+    this.serverMaxFrameBytes = null;
+    this.stateFeedMode = 'pending';
     if (this.ws) {
       this.ws.onclose = null;
       this.ws.onerror = null;

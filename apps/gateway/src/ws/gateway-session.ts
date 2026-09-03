@@ -17,6 +17,7 @@ export class GatewaySession {
   activeCarrier: Carrier;
   closed = false;
   onCarrierDetached: ((carrier: Carrier) => void) | null = null;
+  onDirectFallback: (() => void) | null = null;
   readonly viewportClaims = new Map<string, ViewportClaim>();
 
   constructor(options: {

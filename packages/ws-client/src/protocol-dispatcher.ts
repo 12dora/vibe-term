@@ -20,6 +20,7 @@ export interface ChunkProgress {
 export interface NegotiatedHello {
   capabilities: readonly string[];
   serverVersion: string;
+  maxFrameBytes: number;
 }
 
 export interface ProtocolDispatcherCallbacks {
@@ -84,6 +85,16 @@ export class ProtocolDispatcher {
 
   private handleChunk(payload: Uint8Array): void {
     const chunk = wsBorsh.decodeChunk(payload);
+    if (
+      chunk.originalKind === wsBorsh.KIND_CANONICAL_COMMAND ||
+      chunk.originalKind === wsBorsh.KIND_CANONICAL_EVENT
+    ) {
+      throw new wsBorsh.WsBorshError(
+        wsBorsh.ERROR_INVALID_FRAME,
+        false,
+        'canonical state must not use generic CHUNK'
+      );
+    }
     const reassembled = this.reassembler.addChunk(chunk);
 
     this.callbacks.onChunkProgress({
@@ -108,6 +119,7 @@ export class ProtocolDispatcher {
       this.callbacks.onHello({
         capabilities: hello.capabilities ?? [],
         serverVersion: hello.serverVersion ?? '',
+        maxFrameBytes: hello.maxFrameBytes,
       });
     } catch (err) {
       console.error('[borsh-client] Failed to decode HELLO_S2C:', err);

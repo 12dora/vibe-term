@@ -46,6 +46,7 @@ describe('tmux store shared transport adapter', () => {
     });
     const runtime = createAppRuntime({ transport, storagePrefix: 'shared-metadata:' });
     runtime.stores.tmux.getState().ensureSocketConnected();
+    expect(runtime.stores.tmux.getState().stateFeedMode).toBe('canonical');
     commands.length = 0;
 
     transport.publish({ type: 'metadata-snapshot', snapshot: initialSnapshot });

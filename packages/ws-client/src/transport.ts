@@ -6,6 +6,8 @@ export type {
   GatewayPaneHistoryPage,
   GatewayPaneScreenSnapshot,
   GatewayRebaseReason,
+  GatewaySubscriptionRejection,
+  GatewaySubscriptionRejectionReason,
   GatewayTerminalCursor,
   GatewayTerminalData,
   GatewayTransport,
@@ -18,7 +20,10 @@ export type {
   TerminalViewportPolicyEvent,
 } from './transport-types';
 
-export { encodeGatewayTransportCommand } from './transport-command-encoder';
+export {
+  encodeCanonicalGatewayCommand,
+  encodeGatewayTransportCommand,
+} from './transport-command-encoder';
 export {
   decodeGatewayTransportMessage,
   decodeNodeEventMessage,

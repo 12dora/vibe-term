@@ -4,6 +4,9 @@ import { wsBorsh } from '@tmex/shared';
 import { agentWsHub } from '../agent/ws-hub';
 import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
+import { CarrierSwitchController, type DirectCarrier } from '../mesh/rtc/carrier-switch';
+import { DataChannelCarrier } from '../mesh/rtc/data-channel-carrier';
+import { pairDataChannels } from '../mesh/rtc/test-fakes';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
@@ -1086,7 +1089,9 @@ describe('WebSocketServer window custom names', () => {
       index: 1,
       active: false,
     });
-    const entry = setupEntry(server, snapshot, ws);
+    setupEntry(server, snapshot, ws);
+    const entry = server.connections.get('device-a');
+    if (!entry) throw new Error('expected connection entry');
     entry.canonicalClients = new Set([ws]);
 
     server.encodeSnapshotWithOverlays(snapshot);
@@ -1721,6 +1726,27 @@ describe('WebSocketServer carrier drain isolation', () => {
     server.handleDrain(session, session.activeCarrier);
     expect(onDrain).toHaveBeenCalledTimes(1);
     onDrain.mockRestore();
+  });
+
+  test('real direct carrier close tells the canonical feed to rebase on primary', () => {
+    const server = new WebSocketServer() as any;
+    const session = createGatewaySession({ session: true });
+    const canonical = server.getOrCreateCanonicalSession(session);
+    const onCarrierFallback = spyOn(canonical, 'onCarrierFallback');
+    const [local] = pairDataChannels('canonical-fallback');
+    const direct = new DataChannelCarrier(local) as DirectCarrier;
+    const switcher = new CarrierSwitchController({
+      sendControl: () => 'sent',
+      deliverInbound: () => {},
+    });
+    switcher.attachDirect(session, direct);
+
+    local.close();
+
+    expect(session.direct).toBeNull();
+    expect(session.activeCarrier).toBe(session.primary);
+    expect(onCarrierFallback).toHaveBeenCalledTimes(1);
+    onCarrierFallback.mockRestore();
   });
 });
 

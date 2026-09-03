@@ -276,6 +276,249 @@ describe('pane-sink-registry', () => {
     ]);
   });
 
+  test('canonical screen commit cancels a stale legacy history gate without replaying its bytes', async () => {
+    const registry = new PaneSinkRegistry({ historyGate: { timeoutMs: 5 } });
+    const frames: GatewayTerminalData[] = [];
+    const screens: string[] = [];
+    registry.registerPaneSink('dev', '%4', {
+      onReset() {},
+      onApplyHistory() {},
+      onOutput: (_data, frame) => {
+        if (frame) frames.push(frame);
+      },
+      onScreenSnapshot: (snapshot) => screens.push(new TextDecoder().decode(snapshot.data)),
+    });
+    const paneEpoch = new Uint8Array(16).fill(5);
+    registry.beginPaneHistoryGate('dev', '%4', new Uint8Array(16).fill(2));
+    registry.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      seqStart: 0n,
+      seqEnd: 5n,
+      data: encode('stale'),
+    });
+    registry.dispatchPaneScreenSnapshot({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      baseSeq: 5n,
+      rows: 24,
+      cols: 80,
+      modes: 0,
+      data: encode('screen'),
+      historyCursor: null,
+    });
+
+    await Bun.sleep(30);
+    expect(screens).toEqual(['screen']);
+    expect(frames).toEqual([]);
+  });
+
+  test('canonical history commit closes a matching legacy gate after applying the page', async () => {
+    const registry = new PaneSinkRegistry();
+    const events: string[] = [];
+    const requestId = new Uint8Array(16).fill(2);
+    const paneEpoch = new Uint8Array(16).fill(5);
+    registry.registerPaneSink('dev', '%4', {
+      onReset() {},
+      onApplyHistory() {},
+      onHistoryPage: () => events.push('history'),
+      onOutput: () => events.push('output'),
+    });
+    registry.beginPaneHistoryGate('dev', '%4', requestId);
+    registry.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      seqStart: 5n,
+      seqEnd: 9n,
+      data: encode('live'),
+    });
+
+    registry.dispatchPaneHistoryPage({
+      requestId,
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      historyEpoch: new Uint8Array(16).fill(6),
+      lineStart: 0,
+      lineEnd: 1,
+      truncated: false,
+      data: encode('history'),
+      nextCursor: null,
+    });
+
+    expect(events).toEqual(['history']);
+    await flushOutputs();
+    expect(events).toEqual(['history', 'output']);
+  });
+
+  test('replays live bytes written since the screen after canonical history rebuilds it', async () => {
+    const registry = new PaneSinkRegistry();
+    const paneEpoch = new Uint8Array(16).fill(5);
+    const historyEpoch = new Uint8Array(16).fill(6);
+    const events: string[] = [];
+    let rendered = '';
+    registry.registerPaneSink('dev', '%4', {
+      onReset() {},
+      onApplyHistory() {},
+      onScreenSnapshot: (snapshot) => {
+        events.push('screen');
+        rendered = new TextDecoder().decode(snapshot.data);
+      },
+      onHistoryPage: (page) => {
+        events.push('history');
+        rendered = `${new TextDecoder().decode(page.data)}screen`;
+      },
+      onOutput: (data) => {
+        events.push('live');
+        rendered += new TextDecoder().decode(data);
+      },
+    });
+    registry.dispatchPaneScreenSnapshot({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      baseSeq: 0n,
+      rows: 24,
+      cols: 80,
+      modes: 0,
+      data: encode('screen'),
+      historyCursor: { paneEpoch, historyEpoch, beforeLine: 10 },
+    });
+    registry.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      seqStart: 0n,
+      seqEnd: 4n,
+      data: encode('live'),
+    });
+    await flushOutputs();
+    expect(rendered).toBe('screenlive');
+
+    registry.dispatchPaneHistoryPage({
+      requestId: new Uint8Array(16).fill(2),
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      historyEpoch,
+      lineStart: 0,
+      lineEnd: 10,
+      truncated: false,
+      data: encode('history'),
+      nextCursor: null,
+    });
+
+    expect(rendered).toBe('historyscreenlive');
+    expect(events).toEqual(['screen', 'live', 'history', 'live']);
+  });
+
+  test('does not replay canonical live bytes when the sink rejects a history page', async () => {
+    const registry = new PaneSinkRegistry();
+    const paneEpoch = new Uint8Array(16).fill(5);
+    const historyEpoch = new Uint8Array(16).fill(6);
+    let outputs = 0;
+    registry.registerPaneSink('dev', '%4', {
+      onReset() {},
+      onApplyHistory() {},
+      onScreenSnapshot() {},
+      onHistoryPage: () => false,
+      onOutput: () => {
+        outputs += 1;
+      },
+    });
+    registry.dispatchPaneScreenSnapshot({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      baseSeq: 0n,
+      rows: 24,
+      cols: 80,
+      modes: 0,
+      data: encode('screen'),
+      historyCursor: { paneEpoch, historyEpoch, beforeLine: 10 },
+    });
+    registry.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      seqStart: 0n,
+      seqEnd: 4n,
+      data: encode('live'),
+    });
+    await flushOutputs();
+    expect(outputs).toBe(1);
+
+    registry.dispatchPaneHistoryPage({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      historyEpoch,
+      lineStart: 0,
+      lineEnd: 10,
+      truncated: false,
+      data: encode('history'),
+      nextCursor: null,
+    });
+
+    expect(outputs).toBe(1);
+  });
+
+  test('rejects canonical history after the live replay budget is exhausted', async () => {
+    const registry = new PaneSinkRegistry({ canonicalReplayMaxBytes: 3 });
+    const paneEpoch = new Uint8Array(16).fill(5);
+    const historyEpoch = new Uint8Array(16).fill(6);
+    const history: string[] = [];
+    const rebases: string[] = [];
+    registry.registerPaneSink('dev', '%4', {
+      onReset() {},
+      onApplyHistory() {},
+      onOutput() {},
+      onScreenSnapshot() {},
+      onHistoryPage: () => history.push('applied'),
+      onRebase: (reason) => rebases.push(reason),
+    });
+    registry.dispatchPaneScreenSnapshot({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      baseSeq: 0n,
+      rows: 24,
+      cols: 80,
+      modes: 0,
+      data: encode('screen'),
+      historyCursor: { paneEpoch, historyEpoch, beforeLine: 10 },
+    });
+    registry.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      seqStart: 0n,
+      seqEnd: 4n,
+      data: encode('live'),
+    });
+    await flushOutputs();
+    expect(rebases).toEqual([]);
+
+    registry.dispatchPaneHistoryPage({
+      requestId: new Uint8Array(16).fill(2),
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      historyEpoch,
+      lineStart: 0,
+      lineEnd: 10,
+      truncated: false,
+      data: encode('history'),
+      nextCursor: null,
+    });
+
+    expect(history).toEqual([]);
+    expect(rebases).toEqual(['resource_exhausted']);
+  });
+
   test('history gate 超时兜底放行时同样保留 paneEpoch/seq 元数据', async () => {
     const registry = new PaneSinkRegistry({ historyGate: { timeoutMs: 5 } });
     const { sink, frames } = createFrameRecordingSink();

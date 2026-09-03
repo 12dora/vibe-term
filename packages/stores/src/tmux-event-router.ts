@@ -107,7 +107,9 @@ const handlers: TmuxEventHandlers = {
     if (event.state === 'READY') ctx.onReady();
   },
 
-  'state-feed-mode': () => {},
+  'state-feed-mode': (event, ctx) => {
+    ctx.setState({ stateFeedMode: event.mode });
+  },
 
   latency: (event, ctx) => {
     const prev = ctx.getState();
@@ -249,8 +251,16 @@ const handlers: TmuxEventHandlers = {
   },
 
   'subscription-applied': (event, ctx) => {
-    for (const paneId of event.rejectedPaneIds) {
-      ctx.core.paneSinks.dispatchPaneRebase(event.deviceId, paneId, 'resource_exhausted');
+    const rejections =
+      event.rejections ??
+      event.rejectedPaneIds.map((paneId) => ({
+        deviceId: event.deviceId,
+        paneId,
+        reason: 'resource_exhausted' as const,
+      }));
+    for (const rejection of rejections) {
+      if (rejection.reason === 'not_found') continue;
+      ctx.core.paneSinks.dispatchPaneRebase(rejection.deviceId, rejection.paneId, rejection.reason);
     }
   },
 

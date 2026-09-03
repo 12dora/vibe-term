@@ -6,6 +6,7 @@
 // - fetch-history gate：非焦点 pane 主动拉取首屏时，先缓冲 live 输出，
 //   history 应用后再 flush，保证内容顺序（带超时兜底放行）。
 
+import { CanonicalLiveReplay } from './canonical-live-replay';
 // reset 来源：select = 切换/选择流程（随后会有 post-select 尺寸上报）；
 // history-refresh = 远端 resize 等触发的内容重建，不得携带本地尺寸上报，
 // 否则两个不同视口的客户端会互相抢 window 尺寸形成拉锯
@@ -25,7 +26,7 @@ export interface PaneSink {
   onApplyHistory(data: string, alternateScreen: boolean, modes: number): void;
   onOutput(data: Uint8Array, frame?: GatewayTerminalData): void;
   onScreenSnapshot?(snapshot: GatewayPaneScreenSnapshot): void;
-  onHistoryPage?(page: GatewayPaneHistoryPage): void;
+  onHistoryPage?(page: GatewayPaneHistoryPage): unknown;
   onRebase?(reason: GatewayRebaseReason): void;
 }
 
@@ -44,6 +45,7 @@ interface PendingPaneState {
 export interface PaneSinkRegistryOptions {
   historyGate?: PaneHistoryGateOptions;
   outputCoalescer?: PaneOutputCoalescerOptions;
+  canonicalReplayMaxBytes?: number;
 }
 
 const MAX_PENDING_OUTPUT_BYTES = 2 * 1024 * 1024;
@@ -59,8 +61,10 @@ export class PaneSinkRegistry {
   private pending = new Map<string, PendingPaneState>();
   private readonly historyGates: PaneHistoryGates;
   private readonly outputs: PaneOutputCoalescer;
+  private readonly canonicalReplay: CanonicalLiveReplay;
 
   constructor(options: PaneSinkRegistryOptions = {}) {
+    this.canonicalReplay = new CanonicalLiveReplay(options.canonicalReplayMaxBytes);
     this.outputs = new PaneOutputCoalescer((key, frame) => {
       this.sinks.get(key)?.onOutput(frame.data, frame);
     }, options.outputCoalescer);
@@ -135,6 +139,7 @@ export class PaneSinkRegistry {
 
   dispatchPaneReset(deviceId: string, paneId: string, origin: PaneResetOrigin = 'select'): void {
     const key = paneKey(deviceId, paneId);
+    this.canonicalReplay.clearPane(deviceId, paneId);
     this.outputs.flush(key);
     const sink = this.sinks.get(key);
     if (sink) {
@@ -176,6 +181,13 @@ export class PaneSinkRegistry {
     const { deviceId, paneId } = frame;
     const key = paneKey(deviceId, paneId);
 
+    const replayGap = this.canonicalReplay.capture(frame);
+    if (replayGap) {
+      this.dispatchPaneRebase(deviceId, paneId, replayGap);
+      this.canonicalReplay.invalidatePane(deviceId, paneId, replayGap);
+      if (replayGap !== 'resource_exhausted') return;
+    }
+
     if (this.historyGates.capture(frame)) return;
 
     if (this.sinks.has(key)) {
@@ -190,6 +202,7 @@ export class PaneSinkRegistry {
       state.screen = null;
       state.historyPages = [];
       state.rebase = 'resource_exhausted';
+      this.canonicalReplay.invalidatePane(deviceId, paneId, 'resource_exhausted');
       return;
     }
     const pendingFrame = { ...frame, data: new Uint8Array(frame.data) };
@@ -199,6 +212,8 @@ export class PaneSinkRegistry {
 
   dispatchPaneScreenSnapshot(snapshot: GatewayPaneScreenSnapshot): void {
     const key = paneKey(snapshot.deviceId, snapshot.paneId);
+    this.canonicalReplay.begin(snapshot);
+    this.historyGates.close(snapshot.deviceId, snapshot.paneId, { flush: false });
     this.outputs.flush(key);
     const sink = this.sinks.get(key);
     if (sink?.onScreenSnapshot) {
@@ -213,24 +228,50 @@ export class PaneSinkRegistry {
 
   dispatchPaneHistoryPage(page: GatewayPaneHistoryPage): void {
     const key = paneKey(page.deviceId, page.paneId);
+    const canonicalReplay = this.canonicalReplay.historyPage(page);
+    const buffered = page.requestId
+      ? this.historyGates.take(page.deviceId, page.paneId, page.requestId)
+      : null;
+    if (!canonicalReplay.valid) {
+      this.dispatchPaneRebase(
+        page.deviceId,
+        page.paneId,
+        canonicalReplay.reason ?? 'cache_evicted'
+      );
+      return;
+    }
     this.outputs.flush(key);
     const sink = this.sinks.get(key);
+    let applied = true;
     if (sink?.onHistoryPage) {
-      sink.onHistoryPage(page);
-      return;
+      applied = sink.onHistoryPage(page) !== false;
+    } else {
+      const state = this.getPending(key);
+      if (state.historyPages.length >= MAX_PENDING_HISTORY_PAGES) {
+        state.historyPages = [];
+        state.screen = null;
+        state.rebase = 'resource_exhausted';
+        this.canonicalReplay.invalidatePane(page.deviceId, page.paneId, 'resource_exhausted');
+        applied = false;
+      } else {
+        state.historyPages.push(page);
+      }
     }
-    const state = this.getPending(key);
-    if (state.historyPages.length >= MAX_PENDING_HISTORY_PAGES) {
-      state.historyPages = [];
-      state.screen = null;
-      state.rebase = 'resource_exhausted';
-      return;
+    if (applied && buffered) {
+      for (const frame of buffered) {
+        if (!canonicalReplay.tracked) this.dispatchPaneTerminalData(frame);
+      }
     }
-    state.historyPages.push(page);
+    if (applied && sink && canonicalReplay.frames.length > 0) {
+      for (const frame of canonicalReplay.frames) this.outputs.push(key, frame);
+      this.outputs.flush(key);
+    }
   }
 
   dispatchPaneRebase(deviceId: string, paneId: string, reason: GatewayRebaseReason): void {
     const key = paneKey(deviceId, paneId);
+    this.canonicalReplay.clearPane(deviceId, paneId);
+    this.historyGates.close(deviceId, paneId, { flush: false });
     this.outputs.flush(key);
     const sink = this.sinks.get(key);
     if (sink?.onRebase) {
@@ -289,6 +330,7 @@ export class PaneSinkRegistry {
     // 链路已断，在途字节是无主的流中片段：与 pending 缓冲同样直接丢弃，不再下发
     this.outputs.discardMatching((key) => key.startsWith(prefix));
     this.historyGates.closeDevice(deviceId, { flush: false });
+    this.canonicalReplay.clearDevice(deviceId);
   }
 
   reset(): void {
@@ -296,6 +338,7 @@ export class PaneSinkRegistry {
     this.pending.clear();
     this.outputs.discardAll();
     this.historyGates.closeAll({ flush: false });
+    this.canonicalReplay.clear();
   }
 }
 

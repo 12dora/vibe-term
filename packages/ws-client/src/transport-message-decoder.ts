@@ -8,21 +8,26 @@ import type {
   GatewayTransportEventHandler,
 } from './transport-types';
 
-function rebaseReasonFromSourceGap(reason: number): GatewayRebaseReason | undefined {
+function rebaseReasonFromSourceGap(
+  reason: number,
+  fallback: GatewayRebaseReason
+): GatewayRebaseReason {
   if (reason === wsBorsh.SOURCE_GAP_REASON_METADATA_GAP) return 'metadata_gap';
   if (reason === wsBorsh.SOURCE_GAP_REASON_PANE_GAP) return 'pane_gap';
   if (reason === wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED) return 'epoch_changed';
   if (reason === wsBorsh.SOURCE_GAP_REASON_CACHE_EVICTED) return 'cache_evicted';
   if (reason === wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED) return 'resource_exhausted';
-  return undefined;
+  return fallback;
 }
 
 function emitSourceGap(
   gap: Extract<wsBorsh.CanonicalEvent, { SourceGap: unknown }>['SourceGap'],
   emit: GatewayTransportEventHandler
 ): void {
-  const reason = rebaseReasonFromSourceGap(gap.reason);
-  if (!reason) return;
+  const reason = rebaseReasonFromSourceGap(
+    gap.reason,
+    'Metadata' in gap.scope ? 'metadata_gap' : 'pane_gap'
+  );
   if ('Pane' in gap.scope) {
     emit({
       type: 'rebase-required',

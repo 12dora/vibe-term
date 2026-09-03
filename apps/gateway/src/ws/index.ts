@@ -367,8 +367,14 @@ export class WebSocketServer
         entry.canonicalClients?.delete(session);
         this.registry.scheduleConnectionEntryRelease(deviceId, entry);
       },
+      resizePane: (deviceId, paneId, cols, rows, runtime) => {
+        const entry = this.connections.get(deviceId);
+        if (!entry || entry.runtime !== runtime) return;
+        this.handleTermResize(session, deviceId, paneId, cols, rows);
+      },
     });
     this.canonicalSessions.set(session, canonical);
+    session.onDirectFallback = () => this.canonicalSessions.get(session)?.onCarrierFallback();
     return canonical;
   }
 
@@ -417,6 +423,7 @@ export class WebSocketServer
     }
     if (session.direct === carrier) {
       session.detachCarrier(carrier);
+      this.canonicalSessions.get(session)?.onCarrierFallback();
     }
   }
 

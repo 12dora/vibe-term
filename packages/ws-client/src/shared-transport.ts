@@ -1,6 +1,6 @@
 // 宿主共享数据通道的 transport：不自建 socket，收发都交给宿主，事件由宿主 publish 回灌。
 
-import type { ConnectionState } from './client';
+import type { ConnectionState, StateFeedMode } from './client';
 import type {
   GatewayTransport,
   GatewayTransportCommand,
@@ -13,6 +13,7 @@ export interface SharedGatewayTransportOptions {
   initialState?: ConnectionState;
   sourceRoute?: GatewayTransportSourceRoute;
   serverCapabilities?: readonly string[];
+  stateFeedMode?: StateFeedMode;
   serverSelection?: boolean;
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -34,7 +35,14 @@ export function createSharedGatewayTransport(
   let latencyRawMs: number | null = null;
   let disposed = false;
   let connectRequested = false;
+  let stateFeedMode = options.stateFeedMode ?? 'canonical';
   const handlers = new Set<GatewayTransportEventHandler>();
+  const capabilities = {
+    sequencedTerminal: stateFeedMode === 'canonical',
+    atomicScreen: stateFeedMode === 'canonical',
+    cursorHistory: stateFeedMode === 'canonical',
+    serverSelection: options.serverSelection ?? true,
+  };
 
   const publish = (event: GatewayTransportEvent): void => {
     if (disposed) return;
@@ -48,6 +56,12 @@ export function createSharedGatewayTransport(
     } else if (event.type === 'latency') {
       latencyMs = event.latencyMs;
       latencyRawMs = event.rawMs;
+    } else if (event.type === 'state-feed-mode') {
+      stateFeedMode = event.mode;
+      const canonical = stateFeedMode === 'canonical';
+      capabilities.sequencedTerminal = canonical;
+      capabilities.atomicScreen = canonical;
+      capabilities.cursorHistory = canonical;
     }
     for (const handler of handlers) {
       try {
@@ -61,12 +75,7 @@ export function createSharedGatewayTransport(
   return {
     kind: 'shared',
     sourceRoute: options.sourceRoute ?? 'unknown',
-    capabilities: {
-      sequencedTerminal: true,
-      atomicScreen: true,
-      cursorHistory: true,
-      serverSelection: options.serverSelection ?? true,
-    },
+    capabilities,
     get hasConnectedOnce() {
       return connectedOnce;
     },
@@ -77,6 +86,9 @@ export function createSharedGatewayTransport(
       return latencyRawMs;
     },
     serverCapabilities: options.serverCapabilities ?? [],
+    get stateFeedMode() {
+      return stateFeedMode;
+    },
     connect() {
       if (disposed || state === 'READY' || state === 'WS_CONNECTING') return;
       connectRequested = true;

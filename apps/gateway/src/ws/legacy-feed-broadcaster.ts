@@ -82,7 +82,10 @@ export class LegacyFeedBroadcaster {
   }
 
   syncLegacyPaneObservers(client: GatewaySession, deviceId: string): void {
-    const next = clientObservedPanes(client, deviceId);
+    const entry = this.host.connections.get(deviceId);
+    const next = entry?.canonicalClients?.has(client)
+      ? new Set<string>()
+      : clientObservedPanes(client, deviceId);
     const byDevice = this.clientLegacyObservers.get(client) ?? new Map<string, Set<string>>();
     const previous = byDevice.get(deviceId) ?? new Set<string>();
     this.applyObserverDiff(deviceId, previous, next);
@@ -233,11 +236,15 @@ export class LegacyFeedBroadcaster {
     this.host.terminalOutputBatcher.push(deviceId, paneId, data);
   }
 
-  sendSnapshotToClients(entry: DeviceConnectionEntry, payload: StateSnapshotPayload): void {
+  sendSnapshotToClients(
+    entry: DeviceConnectionEntry,
+    payload: StateSnapshotPayload,
+    options: { includeCanonical?: boolean } = {}
+  ): void {
     const payloadBytes = this.host.encodeSnapshotWithOverlays(payload);
     let deliveries = 0;
     for (const client of entry.clients) {
-      if (entry.canonicalClients?.has(client)) continue;
+      if (!options.includeCanonical && entry.canonicalClients?.has(client)) continue;
       if (this.host.sendChunked(client, wsBorsh.KIND_STATE_SNAPSHOT, payloadBytes)) {
         deliveries += 1;
       }

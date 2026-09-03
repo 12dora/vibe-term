@@ -176,6 +176,24 @@ describe('legacy observer wiring', () => {
     expect(push).toHaveBeenCalledTimes(1);
   });
 
+  test('canonical clients never contribute a legacy output observer', () => {
+    const server = createServer();
+    const ws = createWs();
+    const entry = setupClients(server, [ws]);
+    const push = spyPush(server);
+
+    selectPane(server, ws, '%1', '@1');
+    expect(observerCount(server, '%1')).toBe(1);
+    entry.canonicalClients = new Set([ws]);
+    server.syncLegacyPaneObservers(ws, DEVICE_ID);
+
+    expect(observerCount(server, '%1')).toBe(0);
+    selectPane(server, ws, '%1', '@1');
+    expect(observerCount(server, '%1')).toBe(0);
+    server.broadcastTerminalOutput(DEVICE_ID, '%1', new Uint8Array([2]));
+    expect(push).not.toHaveBeenCalled();
+  });
+
   test('unsubscribe drops the count and skips batching', () => {
     const server = createServer();
     const ws = createWs();

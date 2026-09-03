@@ -3,6 +3,7 @@ import { WebSocketSendGuard } from '../../ws/websocket-send-guard';
 import {
   DC_HIGH_WATER_BYTES,
   DC_PRIORITY_QUEUE_CAP,
+  DC_REGULAR_QUEUE_CAP,
   DataChannelCarrier,
 } from './data-channel-carrier';
 import { FRAGMENT_HEADER_SIZE, FRAGMENT_PAYLOAD_SIZE } from './fragmenter';
@@ -30,7 +31,7 @@ describe('DataChannelCarrier', () => {
     expect(a.sent[1]?.byteLength).toBe(FRAGMENT_HEADER_SIZE + FRAGMENT_PAYLOAD_SIZE);
   });
 
-  test('returns backpressure above 4 MiB without starting a frame and fires onDrain at low threshold', () => {
+  test('queues the backpressured frame above 4 MiB and fires onDrain after delivery', () => {
     const [a, b] = pairDataChannels();
     const carrier = new DataChannelCarrier(a);
     expect(a.lowThreshold).toBe(1024 * 1024);
@@ -43,8 +44,10 @@ describe('DataChannelCarrier', () => {
     expect(carrier.send(new Uint8Array([1]))).toBe('backpressure');
     expect(a.sent).toHaveLength(0);
     a.buffered = 10;
-    expect(carrier.hasPendingWrites()).toBe(false);
+    expect(carrier.hasPendingWrites()).toBe(true);
     a.emitLow();
+    expect(a.sent).toHaveLength(1);
+    expect(carrier.hasPendingWrites()).toBe(false);
     expect(drained).toBe(1);
     b.close();
   });
@@ -78,7 +81,7 @@ describe('DataChannelCarrier', () => {
     expect(left.hasPendingWrites()).toBe(true);
     expect(left.send(new Uint8Array([1]))).toBe('backpressure');
     a.emitLow();
-    expect(got).toEqual([large]);
+    expect(got).toEqual([large, new Uint8Array([1])]);
     expect(left.hasPendingWrites()).toBe(false);
   });
 
@@ -198,7 +201,7 @@ describe('DataChannelCarrier', () => {
 
     a.buffered = 10;
     a.emitLow();
-    expect(got).toEqual([pong]);
+    expect(got).toEqual([pong, pong]);
   });
 
   test('sendPriority rejects when the bounded priority queue is full', () => {
@@ -210,6 +213,40 @@ describe('DataChannelCarrier', () => {
     }
     expect(carrier.sendPriority(new Uint8Array([255]))).toBe('rejected');
     a.close();
+  });
+
+  test('rejects only after the accepted regular backpressure slot is full', () => {
+    const [a] = pairDataChannels();
+    const carrier = new DataChannelCarrier(a);
+    a.buffered = DC_HIGH_WATER_BYTES + 1;
+    expect(DC_REGULAR_QUEUE_CAP).toBe(1);
+    expect(carrier.send(new Uint8Array([1]))).toBe('backpressure');
+    expect(carrier.send(new Uint8Array([2]))).toBe('rejected');
+  });
+
+  test('WebSocketSendGuard backpressure means the current regular frame is delivered on drain', () => {
+    const [a, b] = pairDataChannels();
+    const left = new DataChannelCarrier(a);
+    const right = new DataChannelCarrier(b);
+    const got: Uint8Array[] = [];
+    const terminated: string[] = [];
+    right.onMessage((bytes) => got.push(bytes));
+    const guard = new WebSocketSendGuard({
+      timeoutMs: 1_000,
+      onTerminate: (reason) => terminated.push(reason),
+    });
+    left.onDrain(() => guard.handleDrain(left));
+    a.succeedsBeforeBlock = 1;
+    const first = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 20).fill(3);
+    const second = new Uint8Array([9, 8, 7]);
+
+    expect(guard.sendFramesStatus(left, [first])).toBe('sent');
+    expect(guard.sendFramesStatus(left, [second])).toBe('backpressured');
+    a.emitLow();
+
+    expect(got).toEqual([first, second]);
+    expect(terminated).toEqual([]);
+    expect(guard.isBackpressured(left)).toBe(false);
   });
 
   test('sendPriorityFrames reports sent for a queued PONG that later arrives', () => {

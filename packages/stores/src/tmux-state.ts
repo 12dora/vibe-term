@@ -1,5 +1,5 @@
 import type { StateSnapshotPayload } from '@tmex/shared';
-import type { ConnectionState, GatewayHistoryCursor } from '@tmex/ws-client';
+import type { ConnectionState, GatewayHistoryCursor, StateFeedMode } from '@tmex/ws-client';
 import type { ViewportPolicyMap } from './viewport-policy';
 
 export type SnapshotMap = Record<string, StateSnapshotPayload | undefined>;
@@ -24,6 +24,7 @@ export interface DeviceInitialErrorInput {
 
 export interface TmuxState {
   connectionState: ConnectionState;
+  stateFeedMode?: StateFeedMode;
   hasConnectedOnce: boolean;
   wsLatencyMs: number | null;
   wsLatencyRawMs: number | null;

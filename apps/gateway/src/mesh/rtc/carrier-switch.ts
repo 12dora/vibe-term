@@ -162,7 +162,8 @@ export class CarrierSwitchController {
     if (carrier && state?.direct && carrier !== state.direct) return;
     const direct = carrier ?? session.direct ?? state?.direct;
     if (!direct) return;
-    if (session.activeCarrier === direct) {
+    const wasActive = session.activeCarrier === direct;
+    if (wasActive) {
       session.switchActiveCarrier(session.primary);
     }
     session.detachCarrier(direct);
@@ -177,6 +178,7 @@ export class CarrierSwitchController {
       const payload = this.beginSwitch(state, 'primary');
       void this.sendSwitch(session, payload);
     }
+    if (wasActive) session.onDirectFallback?.();
   }
 
   private beginSwitch(state: SwitchState, to: 'direct' | 'primary'): Uint8Array {

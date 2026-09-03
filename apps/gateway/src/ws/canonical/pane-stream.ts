@@ -1,6 +1,10 @@
 import { wsBorsh } from '@tmex/shared';
 
-import type { PaneDataSegment, PaneReplayGap } from '../../tmux-client/pane-retention';
+import {
+  DEFAULT_MAX_REPLAY_BYTES_PER_PANE,
+  type PaneDataSegment,
+  type PaneReplayGap,
+} from '../../tmux-client/pane-retention';
 import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
   GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
@@ -22,8 +26,10 @@ interface PendingPaneDataBatch {
   seqEnd: bigint;
   chunks: Uint8Array[];
   length: number;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | null;
 }
+
+export const CANONICAL_MAX_HELD_PANE_BYTES = DEFAULT_MAX_REPLAY_BYTES_PER_PANE;
 
 function sourceGapReason(reason: PaneReplayGap['reason']): number {
   if (reason === 'epoch_changed') return wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED;
@@ -55,6 +61,8 @@ export interface CanonicalPaneStreamStats {
 export class CanonicalPaneStream {
   private readonly paneSendGaps = new Map<string, PaneReplayGap>();
   private readonly paneDataBatches = new Map<string, PendingPaneDataBatch>();
+  private readonly paneDataHolds = new Set<string>();
+  private readonly paneDataHoldOverflows = new Set<string>();
   private streamGapPendingReason: number | null = null;
   private paneDataDeliveries = 0;
   private paneDataBytes = 0;
@@ -91,6 +99,10 @@ export class CanonicalPaneStream {
     return this.streamGapPendingReason !== null || this.paneSendGaps.size > 0;
   }
 
+  gatedPaneCount(): number {
+    return this.paneDataHolds.size;
+  }
+
   // tmux 一次整屏重绘会以几十个独立 %output 到达；legacy 广播路径经 TerminalOutputBatcher
   // 合帧，canonical 路径若逐段直发，同样的重绘就变成几十个独立帧一路放大到客户端
   // （每帧独立编码/加密/系统调用，公网上被 RTT 摊开跨渲染帧到达，表现为逐行扫描式重绘，
@@ -99,18 +111,22 @@ export class CanonicalPaneStream {
   // 保持 pane 内事件全序。
   handlePaneData(deviceId: string, segment: PaneDataSegment): void {
     const key = paneKey(deviceId, segment.paneId);
+    const held = this.paneDataHolds.has(key);
     const pending = this.paneDataBatches.get(key);
+    if (held && this.dropHeldPaneDataOnOverflow(key, pending, segment)) return;
     if (pending) {
       if (bytesEqual(pending.paneEpoch, segment.paneEpoch) && pending.seqEnd === segment.seqStart) {
         pending.chunks.push(segment.data);
         pending.length += segment.data.byteLength;
         pending.seqEnd = segment.seqEnd;
-        if (pending.length >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) this.flushPaneDataBatch(key);
+        if (!held && pending.length >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) {
+          this.flushPaneDataBatch(key);
+        }
         return;
       }
-      this.flushPaneDataBatch(key);
+      this.flushPaneDataBatch(key, held);
     }
-    if (segment.data.byteLength >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) {
+    if (!held && segment.data.byteLength >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) {
       this.sendPaneData(deviceId, segment);
       return;
     }
@@ -122,14 +138,56 @@ export class CanonicalPaneStream {
       seqEnd: segment.seqEnd,
       chunks: [segment.data],
       length: segment.data.byteLength,
-      timer: setTimeout(() => this.flushPaneDataBatch(key), GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS),
+      timer: held
+        ? null
+        : setTimeout(() => this.flushPaneDataBatch(key), GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS),
     });
   }
 
-  flushPaneDataBatch(key: string): void {
+  private dropHeldPaneDataOnOverflow(
+    key: string,
+    pending: PendingPaneDataBatch | undefined,
+    segment: PaneDataSegment
+  ): boolean {
+    if (this.paneDataHoldOverflows.has(key)) {
+      this.recordPaneDataDrop(segment.data.byteLength);
+      return true;
+    }
+    const heldBytes = (pending?.length ?? 0) + segment.data.byteLength;
+    if (heldBytes <= CANONICAL_MAX_HELD_PANE_BYTES) return false;
+    if (pending?.timer) clearTimeout(pending.timer);
+    this.paneDataBatches.delete(key);
+    this.paneDataHoldOverflows.add(key);
+    this.recordPaneDataDrop(heldBytes);
+    this.sendOrQueueStreamGap(wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED);
+    return true;
+  }
+
+  holdPaneDataBatch(key: string): void {
+    this.paneDataHolds.add(key);
+    this.paneDataHoldOverflows.delete(key);
+    const pending = this.paneDataBatches.get(key);
+    if (!pending?.timer) return;
+    clearTimeout(pending.timer);
+    pending.timer = null;
+  }
+
+  releasePaneDataBatch(key: string): void {
+    const held = this.paneDataHolds.delete(key);
+    this.paneDataHoldOverflows.delete(key);
+    if (!held) return;
+    this.flushPaneDataBatch(key);
+  }
+
+  hasPaneDataHoldOverflow(key: string): boolean {
+    return this.paneDataHoldOverflows.has(key);
+  }
+
+  flushPaneDataBatch(key: string, force = false): void {
+    if (!force && this.paneDataHolds.has(key)) return;
     const pending = this.paneDataBatches.get(key);
     if (!pending) return;
-    clearTimeout(pending.timer);
+    if (pending.timer) clearTimeout(pending.timer);
     this.paneDataBatches.delete(key);
     const data = concatChunks(pending.chunks, pending.length);
     this.sendPaneData(pending.deviceId, {
@@ -142,18 +200,28 @@ export class CanonicalPaneStream {
   }
 
   flushPaneDataBatchesForDevice(deviceId: string): void {
+    for (const key of Array.from(this.paneDataHolds)) {
+      if (key.startsWith(`${deviceId}\0`)) this.paneDataHolds.delete(key);
+    }
+    for (const key of Array.from(this.paneDataHoldOverflows)) {
+      if (key.startsWith(`${deviceId}\0`)) this.paneDataHoldOverflows.delete(key);
+    }
     for (const key of Array.from(this.paneDataBatches.keys())) {
       if (key.startsWith(`${deviceId}\0`)) this.flushPaneDataBatch(key);
     }
   }
 
   discardPaneDataBatches(): void {
-    for (const pending of this.paneDataBatches.values()) clearTimeout(pending.timer);
+    for (const pending of this.paneDataBatches.values()) {
+      if (pending.timer) clearTimeout(pending.timer);
+    }
     this.paneDataBatches.clear();
+    this.paneDataHolds.clear();
+    this.paneDataHoldOverflows.clear();
   }
 
   handlePaneGap(deviceId: string, gap: PaneReplayGap): void {
-    this.flushPaneDataBatch(paneKey(deviceId, gap.paneId));
+    this.flushPaneDataBatch(paneKey(deviceId, gap.paneId), true);
     if (!canonicalSendAccepted(this.sendPaneGap(deviceId, gap))) {
       this.queuePaneGap(paneKey(deviceId, gap.paneId), gap);
     }
@@ -256,7 +324,7 @@ export class CanonicalPaneStream {
     availablePaneEpoch: Uint8Array,
     availableSeq: bigint
   ): void {
-    this.flushPaneDataBatch(paneKey(target.deviceId, target.paneId));
+    this.flushPaneDataBatch(paneKey(target.deviceId, target.paneId), true);
     const sent = this.options.sender.send({
       SourceGap: {
         reason: wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED,
@@ -323,10 +391,10 @@ export class CanonicalPaneStream {
     const pending = this.paneDataBatches.get(key);
     if (!pending) return null;
     if (!bytesEqual(pending.paneEpoch, paneEpoch)) {
-      this.flushPaneDataBatch(key);
+      this.flushPaneDataBatch(key, true);
       return null;
     }
-    clearTimeout(pending.timer);
+    if (pending.timer) clearTimeout(pending.timer);
     this.paneDataBatches.delete(key);
     if (pending.seqEnd <= baseSeq) return null;
     let data = concatChunks(pending.chunks, pending.length);

@@ -125,6 +125,7 @@ export function createTmuxStore(
       const initialState = core.transport.getState();
       set({
         connectionState: initialState,
+        stateFeedMode: core.transport.stateFeedMode ?? 'pending',
         hasConnectedOnce: core.transport.hasConnectedOnce,
         wsLatencyMs: core.transport.latencyMs,
         wsLatencyRawMs: core.transport.latencyRawMs ?? null,
@@ -151,6 +152,7 @@ export function createTmuxStore(
       ...createTmuxViewportActions(core, { recordTerminalSize: selection.recordTerminalSize }),
 
       connectionState: 'IDLE' as ConnectionState,
+      stateFeedMode: 'pending',
       hasConnectedOnce: false,
       wsLatencyMs: null,
       wsLatencyRawMs: null,
