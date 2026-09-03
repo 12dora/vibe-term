@@ -1,14 +1,14 @@
 {
   "apps/fe/src/components/side-panels/account-security-panel.tsx:PasskeySection": {
-    "lines": 154,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "lines": 166,
+    "reason": "同上，纯条件 JSX 表单区（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）"
   },
   "apps/fe/src/components/side-panels/account-security-panel.tsx:TotpSection": {
-    "lines": 186,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "lines": 191,
+    "reason": "纯条件 JSX 表单区，单一职责；1.1.16/1.1.18/1.1.20 的 TOTP/passkey 增量把行数推高，拆分只会把同一段条件渲染搬到另一个文件（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）"
   },
   "apps/fe/src/pages/LoginPage.tsx:LoginForm": {
-    "lines": 214,
+    "lines": 207,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/fe/src/pages/devices/use-device-folders.ts:useDeviceFolders": {
@@ -16,7 +16,7 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/fe/src/pages/settings/nodes/https/acme-panel.tsx:AcmePanel": {
-    "lines": 216,
+    "lines": 171,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/fe/src/pages/settings/nodes/https/selfsigned-panel.tsx:SelfSignedPanel": {
@@ -24,8 +24,7 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/fe/src/pages/settings/nodes/local-machine-card.tsx:LocalMachineCard": {
-    "cc": 18,
-    "lines": 178,
+    "lines": 161,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/fe/src/pages/settings/nodes/management/enrollment-section.tsx:EnrollmentSection": {
@@ -33,13 +32,13 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/fe/src/pages/settings/nodes/management/nodes-management.tsx:NodesManagement": {
+    "lines": 250,
     "cc": 18,
-    "lines": 249,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "节点管理页装配根：状态与子组件接线，无独立业务分支可抽（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）"
   },
   "apps/fe/src/pages/settings/nodes/management/nodes-table.tsx:NodeRowView": {
-    "cc": 21,
-    "lines": 127,
+    "cc": 19,
+    "lines": 123,
     "reason": "节点行纯条件 JSX，拆子组件只增行（G8 判定）"
   },
   "apps/fe/src/pages/settings/nodes/management/use-hub-role-switch.ts": {
@@ -78,17 +77,13 @@
     "lines": 140,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
-  "apps/fe/src/pages/settings/remote-access/access-step.tsx:AccessAppStatus": {
-    "lines": 143,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
-  },
   "apps/fe/src/pages/settings/remote-access/named-step.tsx:HostnameStep": {
     "lines": 137,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/fe/src/pages/settings/remote-access/status-card.tsx:TunnelStatusCard": {
     "cc": 33,
-    "lines": 210,
+    "lines": 201,
     "reason": "纯条件 JSX 状态卡，拆子组件只增行（U2 评估结论）"
   },
   "apps/fe/src/pages/settings/remote-access/tunnel-model.ts:wizardStepState": {
@@ -108,12 +103,8 @@
     "reason": "终端输入模式语义一体（S1 判定）"
   },
   "apps/gateway/src/api/tunnel-routes.ts:parseAction": {
-    "cc": 40,
+    "cc": 30,
     "reason": "动作级请求校验穷举，表驱动会掩盖必填字段"
-  },
-  "apps/gateway/src/auth/user-key-persistence.ts:persistApplied": {
-    "lines": 138,
-    "reason": "顺序持久化校验链，拆分只增行（G8 判定）"
   },
   "apps/gateway/src/auth/user-store.ts": {
     "fileLines": 960,
@@ -148,7 +139,7 @@
     "reason": "hub 角色切换请求校验（G8 判定）"
   },
   "apps/gateway/src/hub/hub-runtime.ts": {
-    "fileLines": 1399,
+    "fileLines": 1386,
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/gateway/src/hub/uplink-server.ts": {
@@ -164,7 +155,7 @@
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/gateway/src/hub/uplink-server.ts:handleKeyLogAppend": {
-    "cc": 23,
+    "cc": 22,
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/gateway/src/hub/uplink-server.ts:onCtl": {
@@ -175,16 +166,12 @@
     "lines": 154,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
-  "apps/gateway/src/mesh/auth-routes.ts": {
-    "fileLines": 998,
-    "reason": "auth 协议路由内聚体：本机登录三段（BM/BP）合入后越过 900，拆分只搬行（BQ 评估）"
-  },
   "apps/gateway/src/mesh/auth-routes.ts:handlePasskeyRegisterVerify": {
     "cc": 16,
     "reason": "安全校验顺序（S1 判定）"
   },
   "apps/gateway/src/mesh/forwarder.ts": {
-    "fileLines": 995,
+    "fileLines": 964,
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/gateway/src/mesh/forwarder.ts:forwardAuthorizedHttp": {
@@ -192,7 +179,7 @@
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/gateway/src/mesh/integration/multi-hub-harness.ts": {
-    "fileLines": 992,
+    "fileLines": 982,
     "reason": "测试夹具，非生产路径（G8 判定）"
   },
   "apps/gateway/src/mesh/integration/multi-hub-harness.ts:enrollAndStart": {
@@ -209,41 +196,29 @@
     "reason": "mesh 路由分派（G8 判定）"
   },
   "apps/gateway/src/mesh/mesh-runtime.ts": {
-    "fileLines": 1634,
+    "fileLines": 1559,
     "reason": "装配根：本轮已按职责拆函数，文件仍为组合根"
   },
-  "apps/gateway/src/mesh/mesh-runtime.ts:assembleMeshRuntime": {
-    "lines": 124,
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
-  },
   "apps/gateway/src/mesh/mesh-runtime.ts:createMeshStoresAndServices": {
-    "cc": 16,
-    "lines": 136,
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
-  },
-  "apps/gateway/src/mesh/mesh-runtime.ts:createUplinkWiring": {
-    "lines": 146,
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
-  },
-  "apps/gateway/src/mesh/mesh-runtime.ts:handleUplinkNodeList": {
-    "cc": 19,
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
+    "lines": 137,
+    "reason": "mesh 装配根，第六轮已按职责拆过一次；剩下的是依赖注入清单本身（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）",
+    "cc": 16
   },
   "apps/gateway/src/mesh/peer-manager.ts": {
-    "fileLines": 2299,
+    "fileLines": 1930,
     "reason": "共享链路生命周期状态机，S1 判定无干净拆分缝"
   },
   "apps/gateway/src/mesh/peer-manager.ts:applyPeerStatus": {
     "cc": 19,
     "reason": "共享链路生命周期状态机，S1 判定无干净拆分缝"
   },
-  "apps/gateway/src/mesh/peer-manager.ts:dial": {
-    "cc": 22,
-    "reason": "共享链路生命周期状态机，S1 判定无干净拆分缝"
-  },
   "apps/gateway/src/mesh/peer-manager.ts:handlePeerCtl": {
     "cc": 23,
     "reason": "共享链路生命周期状态机，S1 判定无干净拆分缝"
+  },
+  "apps/gateway/src/mesh/peer-ws-race.ts:classifyWsDialFailure": {
+    "cc": 35,
+    "reason": "同上：入参是错误对象、读 errno，输出接端点级退避词表（第二十一轮 EX3 §3.2，prompt-archives/2026090302-round21-perf-idle-smell）"
   },
   "apps/gateway/src/mesh/rtc/bulk.ts:pumpDownload": {
     "cc": 17,
@@ -256,6 +231,10 @@
   "apps/gateway/src/mesh/rtc/dc-handshake.ts:handshakeDataChannel": {
     "lines": 128,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+  },
+  "apps/gateway/src/mesh/rtc/rtc-dial-breaker.ts:classifyRtcDialFailure": {
+    "cc": 21,
+    "reason": "拨号失败分类扁平分派：分支顺序即优先级；与 ws/direct 两个分类器输入、输出、下游消费方各异，表驱动会掩盖优先级（第二十一轮 EX3 §3.2，prompt-archives/2026090302-round21-perf-idle-smell）"
   },
   "apps/gateway/src/mesh/session-middleware.ts:authenticateRequest": {
     "cc": 17,
@@ -278,7 +257,7 @@
     "reason": "uplink ctl 扁平分派（G8 判定）"
   },
   "apps/gateway/src/mesh/uplink-pool.ts": {
-    "fileLines": 1647,
+    "fileLines": 1597,
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/gateway/src/mesh/uplink-pool.ts:considerNearestSwitch": {
@@ -290,7 +269,7 @@
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/gateway/src/runtime.ts:createGatewayRuntime": {
-    "lines": 149,
+    "lines": 148,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/gateway/src/system/remote-upgrade-job.ts:cancelRemoteUpgradeJob": {
@@ -298,7 +277,7 @@
     "reason": "远程升级取消状态机（G8 判定）"
   },
   "apps/gateway/src/system/upgrade.ts": {
-    "fileLines": 1041,
+    "fileLines": 1037,
     "reason": "升级控制器内聚体，拆分只搬行（G8 判定）"
   },
   "apps/gateway/src/system/upgrade.ts:stagePackageLocked": {
@@ -343,11 +322,11 @@
     "reason": "外部 cloudflared 检测/评分一体（S1 判定）"
   },
   "apps/gateway/src/tunnel/manager.ts": {
-    "fileLines": 1428,
+    "fileLines": 1425,
     "reason": "动作状态机与响应契约内聚（S1 判定）"
   },
   "apps/gateway/src/tunnel/manager.ts:handleAction": {
-    "cc": 23,
+    "cc": 18,
     "reason": "动作状态机与响应契约内聚（S1 判定）"
   },
   "apps/gateway/src/tunnel/manager.ts:jobCheck": {
@@ -363,7 +342,7 @@
     "reason": "SSH 错误分类扁平分派（历轮保留）"
   },
   "apps/gateway/src/ws/tmux-kind-handlers.ts:createTmuxKindHandlers": {
-    "lines": 150,
+    "lines": 145,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/app/src/cli-auth-entry.ts:dispatchAuthCli": {
@@ -375,7 +354,7 @@
     "reason": "顺序轮询/SIGINT/准入流程（S2 判定）"
   },
   "packages/app/src/commands/hub.ts": {
-    "fileLines": 1349,
+    "fileLines": 1313,
     "reason": "CLI 参数/命令分派（G8 判定）"
   },
   "packages/app/src/lib/args.ts:resolveNestedCommand": {
@@ -386,11 +365,6 @@
     "cc": 17,
     "reason": "平台回退链（S2 判定）"
   },
-  "packages/app/src/runtime/assemble.ts:assembleTmex": {
-    "cc": 18,
-    "lines": 156,
-    "reason": "应用装配根（S2 判定）"
-  },
   "packages/ghostty-terminal/src/ghostty-wasm.ts": {
     "fileLines": 1624,
     "reason": "FFI/资源所有权边界，拆分有内存生命周期风险"
@@ -400,7 +374,7 @@
     "reason": "FFI/资源所有权边界，拆分有内存生命周期风险"
   },
   "packages/ghostty-terminal/src/render-state.ts": {
-    "fileLines": 967,
+    "fileLines": 953,
     "reason": "渲染桥内聚：脏行/调色板/缓冲复用一体"
   },
   "packages/panels/src/agent/chat-thread.tsx:ChatThread": {
@@ -412,7 +386,7 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/panels/src/device-console/use-editor-input.ts:useEditorInput": {
-    "lines": 135,
+    "lines": 127,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/panels/src/device-console/use-pane-active-follow.ts:usePaneActiveFollow": {
@@ -448,7 +422,7 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/panels/src/device-tree/sidebar-device-list.tsx:SideBarDeviceList": {
-    "lines": 239,
+    "lines": 238,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/panels/src/settings/directory-picker-modal.tsx:DirectoryPickerModal": {
@@ -557,6 +531,10 @@
     "cc": 24,
     "reason": "协议扁平分派/编解码，一分支一帧类型（G8 判定）"
   },
+  "packages/shared/src/ws-borsh/test-fakes.ts:referenceApply": {
+    "cc": 24,
+    "reason": "测试夹具的参考实现：刻意与被测实现独立编写以交叉验证，简化它就等于让它向被测实现靠拢（第二十一轮由 bench/test 两份合并而来，prompt-archives/2026090302-round21-perf-idle-smell）"
+  },
   "packages/stores/src/agent-session-crud-actions.ts:createAgentSessionCrudActions": {
     "lines": 175,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
@@ -570,11 +548,7 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/stores/src/tmux.ts:createTmuxStore": {
-    "lines": 331,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
-  },
-  "packages/stores/src/ui.ts:createUIStore": {
-    "lines": 125,
+    "lines": 277,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/terminal-ui/src/components/SplitTerminalArea.tsx:SplitTerminalArea": {
@@ -598,19 +572,19 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/terminal-ui/src/hooks/use-keyboard-avoidance.ts:<anon>": {
-    "lines": 190,
+    "lines": 185,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/terminal-ui/src/hooks/use-keyboard-avoidance.ts:useKeyboardAvoidance": {
-    "lines": 199,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
-  },
-  "packages/ui/src/components/sidebar/sidebar-provider.tsx:SidebarProvider": {
-    "lines": 143,
+    "lines": 194,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "packages/ws-client/src/direct/direct-carrier-controller.ts": {
-    "fileLines": 1118,
+    "fileLines": 1114,
     "reason": "WebRTC 直连生命周期状态机（S2 判定）"
+  },
+  "packages/ws-client/src/direct/direct-dial-breaker.ts:classifyDirectDialFailure": {
+    "cc": 16,
+    "reason": "同上：入参是字符串、可返回 null 表示不计入失败，语义与前两者相反（第二十一轮 EX3 §3.2，prompt-archives/2026090302-round21-perf-idle-smell）"
   }
 }
