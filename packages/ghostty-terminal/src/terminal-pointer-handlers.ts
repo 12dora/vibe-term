@@ -1,6 +1,6 @@
 import { hasPlatformModifier } from './selection-clipboard';
-import type { PointerEventContext } from './terminal-pointer';
-import { mouseButtonFromButtons, mouseButtonFromEvent } from './terminal-pointer';
+import type { PointerEventContext } from './terminal-pointer-shared';
+import { mouseButtonFromButtons, mouseButtonFromEvent } from './terminal-pointer-shared';
 
 export type PointerListeners = {
   click: () => void;

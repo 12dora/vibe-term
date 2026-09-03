@@ -11,6 +11,7 @@ import { createTmuxEventRouter } from './tmux-event-router';
 import { createTmuxSelectionActions } from './tmux-selection-actions';
 import type { DeviceError, TmuxState } from './tmux-state';
 import { createTmuxViewportActions } from './tmux-viewport-actions';
+import { createTmuxWindowActions } from './tmux-window-actions';
 import type { UIStore } from './ui';
 
 export type { DeviceInitialErrorInput, TmuxState } from './tmux-state';
@@ -150,6 +151,7 @@ export function createTmuxStore(
 
     return {
       ...createTmuxViewportActions(core, { recordTerminalSize: selection.recordTerminalSize }),
+      ...createTmuxWindowActions(core, { setState: set, paneSubscriptions }),
 
       connectionState: 'IDLE' as ConnectionState,
       stateFeedMode: 'pending',
@@ -204,90 +206,7 @@ export function createTmuxStore(
 
       focusPane: selection.focusPane,
 
-      sendInput(deviceId, paneId, data, isComposing = false) {
-        if (!deviceId || !paneId) return;
-        core.transport.send({ type: 'terminal-input', deviceId, paneId, data, isComposing });
-      },
-
-      paste(deviceId, paneId, data) {
-        if (!deviceId || !paneId) return;
-        core.transport.send({ type: 'terminal-paste', deviceId, paneId, data });
-      },
-
-      createWindow(deviceId, name, cwd) {
-        if (!deviceId) return;
-        core.transport.send({ type: 'create-window', deviceId, name, cwd });
-        set((prev) => ({
-          pendingCreateWindowAt: { ...prev.pendingCreateWindowAt, [deviceId]: Date.now() },
-        }));
-      },
-
-      clearPendingCreateWindow(deviceId) {
-        if (!deviceId) return;
-        set((prev) => {
-          if (prev.pendingCreateWindowAt[deviceId] === undefined) return prev;
-          const next = { ...prev.pendingCreateWindowAt };
-          delete next[deviceId];
-          return { pendingCreateWindowAt: next };
-        });
-      },
-
-      closeWindow(deviceId, windowId) {
-        if (!deviceId || !windowId) return;
-        core.transport.send({ type: 'close-window', deviceId, windowId });
-      },
-
-      closePane(deviceId, paneId) {
-        if (!deviceId || !paneId) return;
-        core.transport.send({ type: 'close-pane', deviceId, paneId });
-      },
-
-      renameWindow(deviceId, windowId, name) {
-        if (!deviceId || !windowId) return;
-        core.transport.send({ type: 'rename-window', deviceId, windowId, name });
-      },
-
       reorderWindows: device.reorderWindows,
-
-      subscribePanes(deviceId, paneIds) {
-        if (!deviceId) return;
-        paneSubscriptions.setManualSubscriptions(deviceId, paneIds);
-      },
-
-      mountPane(deviceId, paneId) {
-        if (!deviceId || !paneId) return () => {};
-        return paneSubscriptions.mountPane(deviceId, paneId);
-      },
-
-      requestPaneScreen(deviceId, paneId) {
-        if (!deviceId || !paneId) return;
-        paneSubscriptions.requestPaneScreen(deviceId, paneId);
-      },
-
-      fetchPaneHistory(deviceId, paneId, cursor = null) {
-        if (!deviceId || !paneId) return;
-        paneSubscriptions.fetchPaneHistory(deviceId, paneId, cursor);
-      },
-
-      splitPane(deviceId, paneId, direction, cwd) {
-        if (!deviceId || !paneId) return;
-        core.transport.send({ type: 'split-pane', deviceId, paneId, direction, cwd });
-      },
-
-      renamePane(deviceId, paneId, name) {
-        if (!deviceId || !paneId) return;
-        core.transport.send({ type: 'rename-pane', deviceId, paneId, name });
-      },
-
-      movePane(deviceId, srcPaneId, dstPaneId, position) {
-        if (!deviceId || !srcPaneId || !dstPaneId || srcPaneId === dstPaneId) return;
-        core.transport.send({ type: 'move-pane', deviceId, srcPaneId, dstPaneId, position });
-      },
-
-      breakPane(deviceId, paneId) {
-        if (!deviceId || !paneId) return;
-        core.transport.send({ type: 'break-pane', deviceId, paneId });
-      },
 
       reorderPanes: device.reorderPanes,
 

@@ -1,6 +1,7 @@
 // forceFullRepaint() 若同时清掉行模型的「有输出」标记，位移感知行复用会把「同一次输出里
 // 的原位重画」整批丢弃，且脏位已被消费 ⇒ 屏幕上那几行永久卡在上一帧的颜色
-// （用户报的「Claude Code 输入框文字莫名变成浅绿」）。import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+// （用户报的「Claude Code 输入框文字莫名变成浅绿」）。
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { CanvasRendererFrame } from './canvas-renderer';
 import { getGhosttyBindings } from './ghostty-wasm';
 import { createRenderState, disposeRenderStateResources } from './render-state';
