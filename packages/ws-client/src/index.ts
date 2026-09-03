@@ -44,93 +44,9 @@ export {
   type DirectCarrierLike,
 } from './carrier-switch';
 
-export {
-  DirectCarrierController,
-  buildIceServers,
-  meshConnectionPath,
-  MESH_CONNECTION_PATH,
-  SESS_CHANNEL_LABEL,
-  type DirectCarrierControllerOptions,
-  type DirectCarrierState,
-  type GatewayConnectionLike,
-} from './direct/direct-carrier-controller';
-
-export {
-  DIRECT_DIAL_BREAKER_BASE_MS,
-  DIRECT_DIAL_BREAKER_FAILS,
-  DIRECT_DIAL_BREAKER_HEALTHY_MS,
-  DIRECT_DIAL_BREAKER_MAX_MS,
-  DirectDialBreaker,
-  classifyDirectDialFailure,
-  type DirectDialBreakerDecision,
-  type DirectDialBreakerSnapshot,
-} from './direct/direct-dial-breaker';
-
-export {
-  BulkClient,
-  BulkTransferError,
-  bulkChannelLabel,
-  clearBulkClients,
-  getBulkClient,
-  iterateBulkFrames,
-  registerBulkClient,
-  BULK_CHANNEL_PREFIX,
-  BULK_FRAME_SIZE,
-  DEFAULT_BULK_OPEN_TIMEOUT_MS,
-  type BulkChannelSource,
-  type BulkClientOptions,
-  type BulkDownloadRequest,
-  type BulkResult,
-  type BulkUploadRequest,
-} from './direct/bulk-client';
-
-export {
-  DirectDataChannelCarrier,
-  DC_HIGH_WATER_BYTES,
-  DC_LOW_WATER_BYTES,
-  type CarrierSendResult,
-  type RTCDataChannelLike,
-} from './direct/data-channel-carrier';
-
-export {
-  FrameReassembler,
-  fragmentFrame,
-  FRAGMENT_HEADER_SIZE,
-  FRAGMENT_PAYLOAD_SIZE,
-} from './direct/fragmenter';
-
-export {
-  deriveRoute,
-  describePair,
-  readSelectedPair,
-  type DirectRoute,
-  type SelectedPairStats,
-} from './direct/ice-stats';
-
-export {
-  fingerprintsEqual,
-  normalizeFingerprint,
-  parseSdpFingerprint,
-  type DtlsFingerprint,
-} from './direct/fingerprint';
-
-export type {
-  DirectApiClientLike,
-  DirectSignalMessage,
-  DirectSignalingTransport,
-  RTCPeerConnectionLike,
-  RtcPeerConnectionFactory,
-} from './direct/rtc-types';
-
-export {
-  PRIMARY_ONLY_DIAGNOSTICS,
-  createStubDirectDiagnosticsSource,
-  resolveDirectDiagnostics,
-  type DirectCarrierPath,
-  type DirectDiagnostics,
-  type DirectDiagnosticsSource,
-  type DirectIceDiagnostics,
-} from './direct/types';
+// 直连（WebRTC）栈**不**从这里导出：整棵 RTC 栈约 19 KB gz，一旦进主 barrel 就钉死在
+// 首屏入口 chunk。宿主按需 `import('@tmex/ws-client/direct')`，轻量诊断契约走
+// `@tmex/ws-client/direct/types`。
 
 export {
   WebSocketGatewayTransport,

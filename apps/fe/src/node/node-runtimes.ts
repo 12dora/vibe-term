@@ -9,6 +9,10 @@
 //   并把 `BulkClient`（F3-2 的文件直传）按 nodeId 登记给文件面板。控制器拿本连接当前 socket
 //   的 client nonce（WS URL 上的 `?cid=`）去换服务端 `connectionId`（F3-5）。
 //   `self` 是浏览器直接连的 entry，没有第二跳，永远不建直连。
+// - 直连栈（`@tmex/ws-client/direct`，约 19 KB gz）**按需加载**：只有真的要给远端 node
+//   升级链路时才 `import()`。加载失败不影响 WS（只记一条日志），下一次建连再试；加载
+//   期间连接被 dispose 就直接放弃，不留悬挂的控制器。诊断源在建连的同一帧同步挂上一个
+//   占位实现（`createDeferredDiagnosticsSource`），控制器就位后转发，UI 不会错过订阅。
 // - 直连断开回落 primary 时，`setResumeSubscribedPanes` 钩子在这里接上该 node 的 pane
 //   订阅面：重发订阅 + 对挂载中的 pane 重新拉一次画面，并提示用户最近输入可能未送达。
 
@@ -28,15 +32,16 @@ import {
   normalizeNodeId,
 } from '@tmex/stores';
 import {
-  BulkClient,
-  DirectCarrierController,
-  type DirectSignalMessage,
-  type DirectSignalingTransport,
   type GatewayConnection,
   type SocketFactory,
   createGatewayConnection,
-  registerBulkClient,
 } from '@tmex/ws-client';
+import type {
+  DirectCarrierController,
+  DirectSignalMessage,
+  DirectSignalingTransport,
+} from '@tmex/ws-client/direct';
+import { createDeferredDiagnosticsSource } from '@tmex/ws-client/direct/types';
 import i18n from 'i18next';
 import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
 
@@ -102,9 +107,40 @@ export function canonicalStateEnabled(storage?: Pick<Storage, 'getItem'> | null)
   }
 }
 
+/** 懒加载的直连栈里，宿主真正要用到的三个符号。 */
+export type DirectLinkModule = Pick<
+  typeof import('@tmex/ws-client/direct'),
+  'BulkClient' | 'DirectCarrierController' | 'registerBulkClient'
+>;
+
+let directModule: Promise<DirectLinkModule | null> | null = null;
+let directLoadLogged = false;
+
+/**
+ * 按需拉直连栈。失败（发版后旧 index.html 指向的 chunk 404）只记一条日志并回 `null`——
+ * 连接留在 WS 上照常可用，缓存的 promise 一并清掉，下一次建连会重新试。
+ */
+function loadDirectModule(): Promise<DirectLinkModule | null> {
+  if (directModule) return directModule;
+  const pending: Promise<DirectLinkModule | null> = import('@tmex/ws-client/direct').catch(
+    (error: unknown) => {
+      if (directModule === pending) directModule = null;
+      if (!directLoadLogged) {
+        directLoadLogged = true;
+        console.warn('[direct] 直连栈加载失败，继续走 WS', error);
+      }
+      return null;
+    }
+  );
+  directModule = pending;
+  return pending;
+}
+
 export interface NodeDirectWiring {
   /** 自建连接（测试注入）。**必须**把第二个参数接到真 socket 的 `onclose` 上。 */
   createConnection?: (nodeId: string, onClose: (code: number) => void) => GatewayConnection;
+  /** 直连栈加载器（测试注入）；缺省按需 `import('@tmex/ws-client/direct')`。 */
+  loadDirect?: () => Promise<DirectLinkModule | null>;
   createController?: (
     nodeId: string,
     connection: GatewayConnection,
@@ -122,11 +158,12 @@ export interface NodeDirectWiring {
 }
 
 function defaultController(
+  direct: DirectLinkModule,
   nodeId: string,
   connection: GatewayConnection,
   cid: () => string | null
 ): DirectCarrierController {
-  return new DirectCarrierController({
+  return new direct.DirectCarrierController({
     nodeId,
     apiClient: createNodeApiClient(nodeId),
     signaling: meshRtcSignals.transport(),
@@ -204,6 +241,60 @@ function resumeSubscribedPanes(
   sink.warning(directFallbackText(runtime));
 }
 
+const directLinkPending = new WeakMap<GatewayConnection, Promise<void>>();
+
+/** 等这条连接的直连接线落定（加载失败、控制器为 null、建连途中被 dispose 都算落定）。 */
+export function directLinkSettled(connection: GatewayConnection): Promise<void> {
+  return directLinkPending.get(connection) ?? Promise.resolve();
+}
+
+/**
+ * 给一条已建好的远端 node 连接接上直连：诊断占位源与 resume 钩子同步挂好（UI 在同一帧就会
+ * 订阅），控制器等直连栈 chunk 到位后再建。dispose 与加载是并发的，靠 `disposed` 标志裁决：
+ * 先 dispose 的话加载完成后什么都不做，不会留下没人 stop 的 `RTCPeerConnection`。
+ */
+function attachDirectLink(
+  nodeId: string,
+  connection: GatewayConnection,
+  cid: () => string | null,
+  wiring: NodeDirectWiring
+): void {
+  const diagnostics = createDeferredDiagnosticsSource();
+  connection.directDiagnostics = diagnostics;
+  connection.setResumeSubscribedPanes(() => resumeSubscribedPanes(nodeId, connection, wiring));
+
+  let disposed = false;
+  let controller: DirectCarrierController | null = null;
+  let direct: DirectLinkModule | null = null;
+  const baseDispose = connection.dispose.bind(connection);
+  connection.dispose = () => {
+    disposed = true;
+    connection.setResumeSubscribedPanes(null);
+    diagnostics.attach(null);
+    if (controller) {
+      direct?.registerBulkClient(nodeId, null);
+      controller.stop();
+      controller = null;
+    }
+    baseDispose();
+  };
+
+  const pending = (wiring.loadDirect ?? loadDirectModule)().then((loaded) => {
+    if (!loaded || disposed) return;
+    const created = wiring.createController
+      ? wiring.createController(nodeId, connection, cid)
+      : defaultController(loaded, nodeId, connection, cid);
+    if (!created) return;
+    direct = loaded;
+    controller = created;
+    diagnostics.attach(created.diagnosticsSource);
+    // 文件面板只拿得到 nodeId，bulk 通道按 nodeId 登记（F3-2）。
+    loaded.registerBulkClient(nodeId, new loaded.BulkClient(created));
+    created.start();
+  });
+  directLinkPending.set(connection, pending);
+}
+
 /**
  * 建一个 node 的 `GatewayConnection`，非 self 的顺带起直连控制器。
  * 控制器随连接 `dispose()` 一并停掉（否则 30 s 宽限期回收后 RTCPeerConnection 会漏）。
@@ -231,23 +322,7 @@ export function createNodeConnection(
   )(nodeId, onClose);
   if (isSelfNode(nodeId)) return connection;
 
-  const controller = (wiring.createController ?? defaultController)(nodeId, connection, () =>
-    wsUrls.cid()
-  );
-  if (!controller) return connection;
-
-  connection.directDiagnostics = controller.diagnosticsSource;
-  connection.setResumeSubscribedPanes(() => resumeSubscribedPanes(nodeId, connection, wiring));
-  // 文件面板只拿得到 nodeId，bulk 通道按 nodeId 登记（F3-2）。
-  registerBulkClient(nodeId, new BulkClient(controller));
-  const baseDispose = connection.dispose.bind(connection);
-  connection.dispose = () => {
-    connection.setResumeSubscribedPanes(null);
-    registerBulkClient(nodeId, null);
-    controller.stop();
-    baseDispose();
-  };
-  controller.start();
+  attachDirectLink(nodeId, connection, () => wsUrls.cid(), wiring);
   return connection;
 }
 
@@ -259,7 +334,7 @@ export function createNodeConnection(
  */
 export function createAppNodeRuntimes(
   overrides: NodeConnectionManagerOptions = {},
-  wiring: Pick<NodeDirectWiring, 'socketFactory' | 'createController'> = {}
+  wiring: Pick<NodeDirectWiring, 'socketFactory' | 'createController' | 'loadDirect'> = {}
 ): NodeConnectionManager {
   return new NodeConnectionManager({
     // 宿主只有一个 toaster，全部 node 共用同一个通知出口（不再经全局可变默认 sink）。

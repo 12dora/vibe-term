@@ -75,6 +75,42 @@ export function createStubDirectDiagnosticsSource(): DirectDiagnosticsSource {
 
 const STUB_SOURCE = createStubDirectDiagnosticsSource();
 
+/** 可后挂真实来源的诊断源：直连栈按需加载期间先当桩用，加载完 `attach()` 接上。 */
+export interface DeferredDirectDiagnosticsSource extends DirectDiagnosticsSource {
+  /** 接上/摘掉真实诊断源；两种情况都会立刻通知一次订阅者。 */
+  attach(source: DirectDiagnosticsSource | null): void;
+}
+
+/**
+ * 直连栈是懒加载的，而 UI（设备页徽标）在建连的同一帧就用 `useSyncExternalStore` 订好了
+ * `connection.directDiagnostics`。所以建连时同步挂这个占位源：加载完成前恒为 primary，
+ * 控制器就位后 `attach()` 转发真实快照并唤醒既有订阅者。
+ */
+export function createDeferredDiagnosticsSource(): DeferredDirectDiagnosticsSource {
+  const listeners = new Set<() => void>();
+  let inner: DirectDiagnosticsSource | null = null;
+  let detachInner: (() => void) | null = null;
+  const notify = (): void => {
+    for (const listener of [...listeners]) listener();
+  };
+  return {
+    get: () => inner?.get() ?? PRIMARY_ONLY_DIAGNOSTICS,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    attach: (source) => {
+      detachInner?.();
+      detachInner = null;
+      inner = source;
+      if (source) detachInner = source.subscribe(notify);
+      notify();
+    },
+  };
+}
+
 interface MaybeDiagnosticsCarrier {
   directDiagnostics?: unknown;
 }

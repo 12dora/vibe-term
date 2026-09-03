@@ -3,17 +3,18 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { AppRuntime } from '@tmex/stores';
-import {
-  type DirectCarrierController,
-  type GatewayConnection,
-  type WebSocketLike,
-  getBulkClient,
-} from '@tmex/ws-client';
+import type { GatewayConnection, WebSocketLike } from '@tmex/ws-client';
+import type { DirectCarrierController } from '@tmex/ws-client/direct';
+import { getBulkClient } from '@tmex/ws-client/direct/bulk-client';
+import type { DirectDiagnostics } from '@tmex/ws-client/direct/types';
+import { PRIMARY_ONLY_DIAGNOSTICS, resolveDirectDiagnostics } from '@tmex/ws-client/direct/types';
 import {
   CANONICAL_STATE_KILL_SWITCH_KEY,
+  type DirectLinkModule,
   canonicalStateEnabled,
   createAppNodeRuntimes,
   createNodeConnection,
+  directLinkSettled,
   nodeQueryClient,
 } from './node-runtimes';
 
@@ -55,16 +56,45 @@ function fakeConnection(
 interface FakeController {
   starts: number;
   stops: number;
-  diagnosticsSource: { get: () => unknown; subscribe: () => () => void };
+  diagSnapshot: DirectDiagnostics;
+  emitDiag: () => void;
+  diagnosticsSource: { get: () => unknown; subscribe: (listener: () => void) => () => void };
+}
+
+/** 直连栈的最小替身：只提供宿主接线真正用到的三个符号。 */
+function fakeDirectModule(): DirectLinkModule & { registered: Array<[string, unknown]> } {
+  const registered: Array<[string, unknown]> = [];
+  return {
+    registered,
+    BulkClient: class {
+      constructor(readonly source: unknown) {}
+    } as unknown as DirectLinkModule['BulkClient'],
+    DirectCarrierController: class {
+      constructor(readonly options: unknown) {}
+    } as unknown as DirectLinkModule['DirectCarrierController'],
+    registerBulkClient: (nodeId: string, client: unknown) => {
+      registered.push([nodeId, client]);
+    },
+  };
 }
 
 function fakeController(): FakeController & DirectCarrierController {
+  const listeners = new Set<() => void>();
   const controller = {
     starts: 0,
     stops: 0,
+    diagSnapshot: { path: 'primary', route: null, rtt: null, ice: null } as DirectDiagnostics,
+    emitDiag: () => {
+      for (const listener of [...listeners]) listener();
+    },
     diagnosticsSource: {
-      get: () => ({ path: 'primary', route: null, rtt: null, ice: null }),
-      subscribe: () => () => {},
+      get: () => controller.diagSnapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
     },
     getState: () => 'idle',
     createDataChannel: () => {
@@ -148,10 +178,15 @@ describe('createNodeConnection', () => {
     expect(canonicalStateEnabled({ getItem: () => 'true' })).toBe(false);
   });
 
-  test('self 不建直连控制器，也不挂诊断源', () => {
+  test('self 不建直连控制器，也不挂诊断源，更不拉直连栈', () => {
     let created = 0;
+    let loads = 0;
     const connection = createNodeConnection('self', {
       createConnection: () => fakeConnection(),
+      loadDirect: async () => {
+        loads += 1;
+        return fakeDirectModule();
+      },
       createController: () => {
         created += 1;
         return null;
@@ -159,13 +194,19 @@ describe('createNodeConnection', () => {
     });
 
     expect(created).toBe(0);
+    expect(loads).toBe(0);
     expect(connection.directDiagnostics).toBeNull();
   });
 
   test('undefined / 空串按 self 处理，同样不建控制器', () => {
     let created = 0;
+    let loads = 0;
     const wiring = {
       createConnection: () => fakeConnection(),
+      loadDirect: async () => {
+        loads += 1;
+        return fakeDirectModule();
+      },
       createController: () => {
         created += 1;
         return null;
@@ -173,37 +214,79 @@ describe('createNodeConnection', () => {
     };
     createNodeConnection('', wiring);
     expect(created).toBe(0);
+    expect(loads).toBe(0);
   });
 
-  test('非 self 的 node 建控制器、start() 并把诊断源挂到 connection 上', () => {
+  test('非 self 的 node 才拉直连栈：建控制器、start() 并把诊断源接到 connection 上', async () => {
     const controller = fakeController();
     const nodeIds: string[] = [];
+    let loads = 0;
     const connection = createNodeConnection('node-b', {
       createConnection: () => fakeConnection(),
+      loadDirect: async () => {
+        loads += 1;
+        return fakeDirectModule();
+      },
       createController: (nodeId) => {
         nodeIds.push(nodeId);
         return controller;
       },
     });
 
+    // 加载完成前：控制器还没建，诊断源已经可订阅（UI 与建连同帧）。
+    expect(nodeIds).toEqual([]);
+    expect(controller.starts).toBe(0);
+    expect(resolveDirectDiagnostics(connection).get()).toBe(PRIMARY_ONLY_DIAGNOSTICS);
+
+    await directLinkSettled(connection);
+
+    expect(loads).toBe(1);
     expect(nodeIds).toEqual(['node-b']);
     expect(controller.starts).toBe(1);
-    expect(connection.directDiagnostics).toBe(controller.diagnosticsSource);
+    expect(resolveDirectDiagnostics(connection).get()).toBe(controller.diagSnapshot);
   });
 
-  test('按 nodeId 登记 BulkClient，dispose 时注销', () => {
+  test('加载前挂上的订阅者在控制器就位后收到通知', async () => {
+    const controller = fakeController();
+    const connection = createNodeConnection('node-b', {
+      createConnection: () => fakeConnection(),
+      loadDirect: async () => fakeDirectModule(),
+      createController: () => controller,
+    });
+
+    let notified = 0;
+    const source = resolveDirectDiagnostics(connection);
+    const unsubscribe = source.subscribe(() => {
+      notified += 1;
+    });
+
+    await directLinkSettled(connection);
+    expect(notified).toBe(1);
+
+    controller.diagSnapshot = { path: 'direct', route: null, rtt: null, ice: null };
+    controller.emitDiag();
+    expect(notified).toBe(2);
+    expect(source.get()).toBe(controller.diagSnapshot);
+
+    unsubscribe();
+    connection.dispose();
+    expect(source.get()).toBe(PRIMARY_ONLY_DIAGNOSTICS);
+  });
+
+  test('按 nodeId 登记 BulkClient，dispose 时注销', async () => {
     const controller = fakeController();
     const connection = createNodeConnection('node-bulk', {
       createConnection: () => fakeConnection(),
       createController: () => controller,
     });
 
+    await directLinkSettled(connection);
     expect(getBulkClient('node-bulk')).not.toBeNull();
     connection.dispose();
     expect(getBulkClient('node-bulk')).toBeNull();
   });
 
-  test('dispose() 先停控制器再走原始 dispose，并摘掉 resume 钩子', () => {
+  test('dispose() 先停控制器再走原始 dispose，并摘掉 resume 钩子', async () => {
     const controller = fakeController();
     const order: string[] = [];
     const base = fakeConnection();
@@ -215,9 +298,11 @@ describe('createNodeConnection', () => {
 
     const connection = createNodeConnection('node-b', {
       createConnection: () => base,
+      loadDirect: async () => fakeDirectModule(),
       createController: () => controller,
     });
     expect(base.resumeHook).not.toBeNull();
+    await directLinkSettled(connection);
     connection.dispose();
 
     expect(order).toEqual(['controller', 'connection']);
@@ -225,12 +310,69 @@ describe('createNodeConnection', () => {
     expect(base.resumeHook).toBeNull();
   });
 
-  test('控制器工厂返回 null（直连不可用）时连接照常可用', () => {
+  test('加载途中被 dispose：控制器不再创建，也没有悬挂的 bulk 登记', async () => {
+    const direct = fakeDirectModule();
+    let created = 0;
+    const base = fakeConnection();
+    const connection = createNodeConnection('node-disposed', {
+      createConnection: () => base,
+      loadDirect: async () => direct,
+      createController: () => {
+        created += 1;
+        return fakeController();
+      },
+    });
+
+    connection.dispose();
+    await directLinkSettled(connection);
+
+    expect(created).toBe(0);
+    expect(direct.registered).toEqual([]);
+    expect(getBulkClient('node-disposed')).toBeNull();
+    expect(base.resumeHook).toBeNull();
+    expect(resolveDirectDiagnostics(connection).get()).toBe(PRIMARY_ONLY_DIAGNOSTICS);
+  });
+
+  test('直连栈加载失败：连接留在 WS 上照常可用，下一次建连重试', async () => {
+    let loads = 0;
+    const first = createNodeConnection('node-chunk-404', {
+      createConnection: () => fakeConnection(),
+      loadDirect: async () => {
+        loads += 1;
+        return null;
+      },
+      createController: () => fakeController(),
+    });
+
+    await directLinkSettled(first);
+    expect(loads).toBe(1);
+    expect(getBulkClient('node-chunk-404')).toBeNull();
+    expect(resolveDirectDiagnostics(first).get()).toBe(PRIMARY_ONLY_DIAGNOSTICS);
+    expect(() => first.dispose()).not.toThrow();
+
+    const controller = fakeController();
+    const second = createNodeConnection('node-chunk-404', {
+      createConnection: () => fakeConnection(),
+      loadDirect: async () => {
+        loads += 1;
+        return fakeDirectModule();
+      },
+      createController: () => controller,
+    });
+    await directLinkSettled(second);
+
+    expect(loads).toBe(2);
+    expect(controller.starts).toBe(1);
+  });
+
+  test('控制器工厂返回 null（直连不可用）时连接照常可用', async () => {
     const connection = createNodeConnection('node-b', {
       createConnection: () => fakeConnection(),
+      loadDirect: async () => fakeDirectModule(),
       createController: () => null,
     });
-    expect(connection.directDiagnostics).toBeNull();
+    await directLinkSettled(connection);
+    expect(resolveDirectDiagnostics(connection).get()).toBe(PRIMARY_ONLY_DIAGNOSTICS);
   });
 });
 
@@ -240,6 +382,7 @@ describe('resume 钩子（切回 primary 的补齐）', () => {
     const base = fakeConnection(['%1', '%2']);
     createNodeConnection('node-b', {
       createConnection: () => base,
+      loadDirect: async () => fakeDirectModule(),
       createController: () => fakeController(),
       resolveRuntime: () => fakeRuntime(calls, { panes: ['%1', '%2', '%3'] }),
     });
@@ -262,6 +405,7 @@ describe('resume 钩子（切回 primary 的补齐）', () => {
     const base = fakeConnection();
     createNodeConnection('node-b', {
       createConnection: () => base,
+      loadDirect: async () => fakeDirectModule(),
       createController: () => fakeController(),
       resolveRuntime: () => fakeRuntime(calls, { panes: ['%1'] }),
     });
@@ -277,6 +421,7 @@ describe('resume 钩子（切回 primary 的补齐）', () => {
     const base = fakeConnection(['%1', '%2'], 'canonical');
     createNodeConnection('node-b', {
       createConnection: () => base,
+      loadDirect: async () => fakeDirectModule(),
       createController: () => fakeController(),
       resolveRuntime: () => fakeRuntime(calls, { panes: ['%1', '%2'] }),
     });
@@ -294,6 +439,7 @@ describe('resume 钩子（切回 primary 的补齐）', () => {
     const base = fakeConnection();
     createNodeConnection('node-b', {
       createConnection: () => base,
+      loadDirect: async () => fakeDirectModule(),
       createController: () => fakeController(),
       resolveRuntime: () => null,
       notifications: {
@@ -362,6 +508,7 @@ function hostManager(options: {
         return socket;
       },
       // 直连控制器与 4401 无关，且会去开真 RTCPeerConnection。
+      loadDirect: async () => null,
       createController: () => null,
     }
   );
@@ -438,7 +585,7 @@ describe('Gateway WS 的 client nonce（F3-5）', () => {
     manager.disposeAll();
   });
 
-  test('控制器拿到的 cid 就是当前 socket 那一个，随重连一起换', () => {
+  test('控制器拿到的 cid 就是当前 socket 那一个，随重连一起换', async () => {
     const sockets: FakeSocket[] = [];
     const captured: Array<() => string | null> = [];
     const connection = createNodeConnection(NODE_HEX_C, {
@@ -447,11 +594,13 @@ describe('Gateway WS 的 client nonce（F3-5）', () => {
         sockets.push(socket);
         return socket;
       },
+      loadDirect: async () => fakeDirectModule(),
       createController: (_nodeId, _connection, getCid) => {
         captured.push(getCid);
         return fakeController();
       },
     });
+    await directLinkSettled(connection);
     const cid = captured[0];
     expect(cid).toBeDefined();
 
@@ -497,6 +646,7 @@ describe('侧栏折叠 / 路由离开后的宽限释放', () => {
           sockets.push(socket);
           return socket;
         },
+        loadDirect: async () => null,
         createController: () => null,
       }
     );
