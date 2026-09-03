@@ -6,7 +6,7 @@
 
 现有 tmex 的"多设备"是 gateway 通过 SSH 主动连接远程主机（`DeviceType = local | ssh`），要求 gateway 能直达目标地址。用户当前以 Cloudflare Tunnel 暴露单机，一个域名只能对应一台机器，内网多台设备无法在单一入口管理。同时 gateway 没有任何应用层鉴权（依赖网络边界）。
 
-现状代码事实（详见 `prompt-archives/2026082701-hub-multinode-design/explore-multidevice-result.md`）：
+**设计当时（2026-08）的代码事实**，非当前实现（详见 `prompt-archives/2026082701-hub-multinode-design/explore-multidevice-result.md`）；其中的 legacy 终端消息已在 1.1.23 整体下线，改由 canonical 承担：
 
 - 浏览器 ↔ gateway 只有一条 Borsh 二进制 WebSocket，按 `deviceId` 多路复用；REST 与 WS 都在 gateway 本地解析设备并调用 runtime。浏览器终端走 `TERM_OUTPUT / TERM_HISTORY / SWITCH_ACK / LIVE_RESUME` 等旧终端消息；canonical 协议（`CANONICAL_COMMAND/EVENT`）仅服务端实现，前端未采用。
 - Borsh envelope 的 `seq` 是每个 socket 独立的计数器，接收端不校验连续性，不能用于跨传输去重。
@@ -236,7 +236,7 @@ peer_cache          node_id, name, endpoints_json, inventory_json, direct_capabl
 
 1. 直连 `sess` 通道鉴权通过后，node 向浏览器在**当前活跃载体**发送 Borsh 新 kind `CARRIER_SWITCH{epoch, to:'direct'}`，之后 node 的所有出站帧改走直连。
 2. 浏览器收到前把直连上到达的帧缓冲；收到后先排空缓冲，再把直连设为活跃接收源，并向 node 在**旧载体**发送 `CARRIER_SWITCH_ACK{epoch}`，之后浏览器出站帧改走直连；node 收到 ACK 前把直连上到达的入站帧缓冲。
-3. 直连断开：node 立即切回 primary 并发送 `CARRIER_SWITCH{epoch+1, to:'primary'}`；node→浏览器方向未送达帧由现有 `LIVE_RESUME` / `TERM_HISTORY` 补齐——浏览器收到切回通知时对已订阅 pane 触发一次 resume。浏览器→node 方向在断开瞬间已写入直连但未送达的帧**可能丢失**（与现状 WS 断线重连语义相同），不引入会话级 ACK；浏览器在切回时提示"直连已断开，最近输入可能未送达"。
+3. 直连断开：node 立即切回 primary 并发送 `CARRIER_SWITCH{epoch+1, to:'primary'}`；node→浏览器方向未送达帧由 canonical 订阅的游标续传补齐（1.1.23 前是 `LIVE_RESUME` / `TERM_HISTORY`，两个 kind 已删）——浏览器收到切回通知时对已订阅 pane 触发一次 resume。浏览器→node 方向在断开瞬间已写入直连但未送达的帧**可能丢失**（与现状 WS 断线重连语义相同），不引入会话级 ACK；浏览器在切回时提示"直连已断开，最近输入可能未送达"。
 4. primary 断开则会话整体结束，直连随之关闭。
 
 ### entry 侧路由
@@ -289,15 +289,19 @@ bulk（与现有 REST 分块协议独立）：上传 REST `init`（经 entry 转
 
 ### 角色与启动矩阵
 
-`TMEX_ROLES`：`standalone`（默认）| `node` | `hub,node`。
+`TMEX_ROLES`：`standalone`（默认）| `node` | `hub,node` | `relay` | `relay,node`。`hub` 与 `relay` 不能同机。
 
 | 角色 | 构造 | 前端 | 迁移 | tmux 检查 | supervisors |
 |---|---|---|---|---|---|
 | standalone | `GatewayRuntime` | 是 | gateway | 是 | 是 |
 | node | `GatewayRuntime` + `MeshRuntime`（`UplinkClient` + `PeerManager` + `RtcPeerManager`） | 是 | gateway | 是 | 是 |
 | hub,node | `HubRuntime` + `GatewayRuntime` + `MeshRuntime`（`InMemoryLink`） | 是 | 一次 | 是 | 是 |
+| relay | `RelayRuntime` + `GatewayRuntime`（无 mesh、无用户） | 否（一律 404） | gateway | 否 | 是 |
+| relay,node | `RelayRuntime` + `GatewayRuntime` + `MeshRuntime` | 是 | gateway | 是 | 是 |
 
-`packages/app/src/runtime/server.ts` 按角色组装：请求先经 `HubRuntime.handleRequest`（`/api/hub/enrollments/redeem`、`/hub/uplink`），再 `MeshRuntime.handleRequest`（`/api/auth/*`、`/api/mesh/*`、`/mesh/ws`、`/n/*`），未命中再交 `GatewayRuntime.handleRequest`，最后静态资源 / SPA。关停顺序：peer links → uplink → hub → gateway。
+relay 角色的协议、接口与运维见 [公共中继（relay）角色](../relay/2026090304-relay-role.md)。
+
+`packages/app/src/runtime/server.ts` 按角色组装：请求先经 `RelayRuntime.handleRequest`（`/api/relay/*`、`/relay/uplink`），再 `HubRuntime.handleRequest`（`/api/hub/enrollments/redeem`、`/hub/uplink`），再 `MeshRuntime.handleRequest`（`/api/auth/*`、`/api/mesh/*`、`/mesh/ws`、`/n/*`），未命中再交 `GatewayRuntime.handleRequest`，最后静态资源 / SPA。关停顺序：relay → peer links → uplink → hub → gateway。
 
 ### 配置
 

@@ -6,13 +6,18 @@
 
 ## 部署矩阵
 
-`TMEX_ROLES` 只能是下列三者之一，非法值启动失败。没有纯 `hub` 角色：hub 总是与本机 node 同进程。
+`TMEX_ROLES` 只能是下列五者之一，非法值启动失败。没有纯 `hub` 角色：hub 总是与本机 node 同进程。
+`hub` 与 `relay` **不能同机**（`TMEX_ROLES is invalid: relay cannot be combined with hub`）。
 
 | 角色 | 典型用途 | 启动时构造 | 登录 | 直连 addon |
 |---|---|---|---|---|
 | `standalone`（默认） | 单机，未加入 mesh | 仅 `GatewayRuntime` | 无（`GET /api/auth/mode` → `{mode:'none'}`） | 不下载 |
-| `node` | 已加入 hub 的设备 | Gateway + Mesh（真实 WSS uplink） | 有，`localUiGuard` | `init` / `upgrade` 默认尝试 |
+| `node` | 已加入 hub 或中继的设备 | Gateway + Mesh（真实 WSS uplink） | 有，`localUiGuard` | `init` / `upgrade` 默认尝试 |
 | `hub,node` | 公网入口兼本机设备 | Hub + Gateway + Mesh（进程内 uplink） | 同上 | 同上 |
+| `relay` | 只给别人转发的公共中继 | Relay + Gateway（无 mesh、无用户、无前端） | 无（管理走 `TMEX_RELAY_ADMIN_TOKEN`） | 不需要 |
+| `relay,node` | 公共中继兼本机设备 | Relay + Gateway + Mesh | 有，管理面另接受本机会话 | 同 `node` |
+
+中继角色详见 [公共中继（relay）角色](../relay/2026090304-relay-role.md)。
 
 请求顺序（mesh 角色）：`HubRuntime`（`/api/hub/*`、`/hub/uplink`）→ mesh 本地守卫 → mesh（`/api/auth/*`、`/api/mesh/*`、`/mesh/ws`、`/n/:id/*`）→ gateway → 前端 SPA（覆盖 `/login`、`/nodes`、`/n/:id/...`）。standalone 不构造 mesh，只挂轻量 `GET /api/auth/mode`。
 
@@ -35,8 +40,10 @@
 | `TMEX_HUB_PUBLIC_URL` | 空 | hub 对外 HTTPS 地址，写入 join 命令与 `/api/auth/mode.hubPublicUrl`。非交互 `init --role hub,node` **必填** `--hub-public-url` |
 | `TMEX_PEER_PORT` | `39001` | node↔node 信令监听口，只承载签名信令 |
 | `TMEX_STUN_SERVERS` | `stun:stun.l.google.com:19302` | 逗号分隔，经 `node.list` 下发给各 node 与浏览器 ICE |
+| `TMEX_RELAY_PUBLIC_URL` | 空 | **仅 relay 角色写入**，且必填。中继对外地址，uplink 认证签名绑定其 host |
+| `TMEX_RELAY_ADMIN_TOKEN` | 首启生成 | **仅 relay 角色写入**。管理令牌；缺失时首启生成一枚并写回 `app.env`，库里只存 sha256 |
 
-`init` 另支持 `--hub-url`、`--hub-public-url`、`--peer-port`、`--stun-servers`。
+`init` 另支持 `--hub-url`、`--hub-public-url`、`--peer-port`、`--stun-servers`、`--relay-public-url`。
 
 ### 需手写进 `app.env` 的键
 
