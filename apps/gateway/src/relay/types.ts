@@ -14,6 +14,13 @@ export const RELAY_STOP_DRAIN_TIMEOUT_MS = 5_000;
 export const RELAY_CTL_QUEUE_MAX = 256;
 export const RELAY_CTL_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
 export const RELAY_ENROLLMENT_MAX_TTL_MS = 24 * 60 * 60 * 1000;
+/** 每租户同时存在的「未过期未使用」enrollment 上限。 */
+export const RELAY_MAX_UNUSED_ENROLLMENTS = 32;
+/** 每租户 `relay.enroll.create` 频率闸：窗口内最多创建这么多条。 */
+export const RELAY_ENROLL_CREATE_LIMIT = 16;
+export const RELAY_ENROLL_CREATE_WINDOW_MS = 60_000;
+/** 已使用的 enrollment 行保留多久后清掉（随计量刷盘一起扫）。 */
+export const RELAY_ENROLLMENT_USED_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /** enroll 口令错误的按 IP 限速：15 分钟内 5 次失败即拒。 */
 export const RELAY_ENROLL_FAILURE_LIMIT = 5;

@@ -39,6 +39,17 @@ describe('isAccessGuardExemptPath', () => {
     expect(isAccessGuardExemptPath('/ws')).toBe(false);
     expect(isAccessGuardExemptPath('/api/auth/login')).toBe(false);
   });
+
+  test('exempts the relay machine paths but not the relay admin API', () => {
+    expect(isAccessGuardExemptPath('/relay/uplink')).toBe(true);
+    expect(isAccessGuardExemptPath('/api/relay/health')).toBe(true);
+    expect(isAccessGuardExemptPath('/api/relay/enroll')).toBe(true);
+    expect(
+      isAccessGuardExemptPath(`/api/relay/tenants/${'ab'.repeat(16)}/enrollments/redeem`)
+    ).toBe(true);
+    expect(isAccessGuardExemptPath('/api/relay/status')).toBe(false);
+    expect(isAccessGuardExemptPath('/api/relay/password')).toBe(false);
+  });
 });
 
 describe('guardEntryAccess', () => {

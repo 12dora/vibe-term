@@ -49,6 +49,18 @@ export interface RelayTenantStatus {
   reauthRequired: boolean;
   /** 中继按租户下发的配额。 */
   quota: RelayQuotaView | null;
+  /** 密钥日志同步健康度；旧节点不返回该字段。 */
+  keyLog?: RelayKeyLogHealth;
+}
+
+/**
+ * 中继上的密钥日志由同租户节点写入，被攻陷的成员可以塞进本机解不开的块。
+ * 节点不会因此卡死同步：跳过并计数，`blockedSeq` 是第一条卡住的中继 seq。
+ */
+export interface RelayKeyLogHealth {
+  skipped: number;
+  blockedSeq: string | null;
+  caughtUp: boolean;
 }
 
 /** `POST /api/mesh/relay/enroll/proof-material`：签 enroll proof 所需的材料。 */
@@ -192,6 +204,7 @@ const EMPTY_STATUS: RelayTenantStatus = {
   metaEpoch: 0,
   nodesViaRelay: 0,
   reauthRequired: false,
+  keyLog: { skipped: 0, blockedSeq: null, caughtUp: false },
 };
 
 /** 缺字段一律补默认值：旧节点没有这条路由，`mode` 之外的字段也可能是后加的。 */
@@ -215,6 +228,11 @@ export function normalizeRelayStatus(
     metaEpoch: payload.metaEpoch ?? 0,
     nodesViaRelay: payload.nodesViaRelay ?? 0,
     reauthRequired: payload.reauthRequired === true,
+    keyLog: {
+      skipped: payload.keyLog?.skipped ?? 0,
+      blockedSeq: payload.keyLog?.blockedSeq ?? null,
+      caughtUp: payload.keyLog?.caughtUp === true,
+    },
   };
 }
 

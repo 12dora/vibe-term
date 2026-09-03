@@ -1,7 +1,11 @@
-import type { RelayQuota } from '@tmex/shared/relay';
+import { RELAY_CTL_MAX_NODES, type RelayQuota } from '@tmex/shared/relay';
 import { RELAY_DEFAULT_QUOTA } from './types';
 
-export const RELAY_QUOTA_MAX_NODES_LIMIT = 4096;
+/**
+ * `relay.list` 一帧最多带 `RELAY_CTL_MAX_NODES`（256）个节点，超出的看不见也连不通，
+ * 所以节点数配额直接按清单容量封顶——配大了只会让运营者以为能装下。
+ */
+export const RELAY_QUOTA_MAX_NODES_LIMIT = RELAY_CTL_MAX_NODES;
 export const RELAY_QUOTA_MAX_STREAMS_LIMIT = 65_536;
 export const RELAY_QUOTA_MAX_BANDWIDTH = 10 * 1024 * 1024 * 1024;
 

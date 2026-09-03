@@ -1,5 +1,5 @@
 import type { RelayQuota } from '@tmex/shared/relay';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { toBuffer, toBytes } from '../auth/binary';
 import type { AuthDb } from '../auth/types';
 import { relayEnrollments, relayNodes, relayTenants } from '../db/schema';
@@ -118,12 +118,14 @@ export class RelayTenantStore {
     return created;
   }
 
-  /** 重新 enroll：换令牌、清踢出标记、刷新根 epoch，tenant_id 不变。 */
+  /**
+   * 重新 enroll：换令牌、清踢出标记，tenant_id 不变。
+   * **不动 root_epoch**——它只由 `rotate-root` 侧带记录推进（enroll 里的 epoch 是未鉴权的自称值）。
+   */
   reissueToken(input: {
     tenantId: string;
     tokenHash: string;
     tokenEpoch: number;
-    rootEpoch: number;
     now: number;
   }): void {
     this.db
@@ -131,12 +133,36 @@ export class RelayTenantStore {
       .set({
         tokenHash: input.tokenHash,
         tokenEpoch: input.tokenEpoch,
-        rootEpoch: input.rootEpoch,
         kicked: false,
         lastSeenAt: input.now,
       })
       .where(eq(relayTenants.id, input.tenantId))
       .run();
+  }
+
+  /**
+   * 根轮换：只在旧根签名的 `rotate-root*` 记录验过之后调用。
+   * `expectedRootEpoch` 是乐观并发条件——epoch 必须仍是验签时的那个，否则不写。
+   */
+  rotateRoot(input: {
+    tenantId: string;
+    expectedRootEpoch: number;
+    rootPublicKey: Uint8Array;
+    rootEpoch: number;
+  }): boolean {
+    if (input.rootEpoch <= input.expectedRootEpoch) return false;
+    const row = this.db
+      .update(relayTenants)
+      .set({ rootPublicKey: toBuffer(input.rootPublicKey), rootEpoch: input.rootEpoch })
+      .where(
+        and(
+          eq(relayTenants.id, input.tenantId),
+          eq(relayTenants.rootEpoch, input.expectedRootEpoch)
+        )
+      )
+      .returning()
+      .get();
+    return row !== undefined && row !== null;
   }
 
   setKicked(tenantId: string, kicked: boolean): void {
@@ -214,6 +240,7 @@ export class RelayTenantStore {
     return this.listNodes(tenantId).filter((node) => node.status !== 'revoked').length;
   }
 
+  /** `revoked` 是终态：任何 upsert 都不能把它抬回 pending/admitted（重放旧 admit 的入口）。 */
   upsertNode(input: {
     tenantId: string;
     nodeId: string;
@@ -223,6 +250,8 @@ export class RelayTenantStore {
     admitSeq?: number | null;
     now: number;
   }): RelayNodeRecord {
+    const existing = this.getNode(input.tenantId, input.nodeId);
+    if (existing?.status === 'revoked') return existing;
     this.db
       .insert(relayNodes)
       .values({
@@ -310,6 +339,33 @@ export class RelayTenantStore {
       .where(eq(relayEnrollments.enrollPk, toBuffer(enrollPk)))
       .get();
     return row ? toEnrollment(row) : null;
+  }
+
+  /** 未过期且未使用的 enrollment 数量：per-tenant 上限按它算。 */
+  countUnusedEnrollments(tenantId: string, now: number): number {
+    return this.db
+      .select()
+      .from(relayEnrollments)
+      .where(
+        and(
+          eq(relayEnrollments.tenantId, tenantId),
+          isNull(relayEnrollments.usedAt),
+          sql`${relayEnrollments.expiresAt} > ${now}`
+        )
+      )
+      .all().length;
+  }
+
+  /** 定期清理：已过期的、以及用掉超过保留期的行。 */
+  sweepEnrollments(now: number, usedRetentionMs: number): number {
+    const rows = this.db
+      .delete(relayEnrollments)
+      .where(
+        or(lte(relayEnrollments.expiresAt, now), lt(relayEnrollments.usedAt, now - usedRetentionMs))
+      )
+      .returning()
+      .all();
+    return rows.length;
   }
 
   consumeEnrollment(id: string, nodeId: string, now: number): boolean {

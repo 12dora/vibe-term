@@ -1,4 +1,9 @@
-import { RELAY_ENROLL_FAILURE_LIMIT, RELAY_ENROLL_FAILURE_WINDOW_MS } from './types';
+import {
+  RELAY_ENROLL_CREATE_LIMIT,
+  RELAY_ENROLL_CREATE_WINDOW_MS,
+  RELAY_ENROLL_FAILURE_LIMIT,
+  RELAY_ENROLL_FAILURE_WINDOW_MS,
+} from './types';
 
 export const RELAY_ENROLL_LIMITER_MAX_KEYS = 4096;
 
@@ -49,5 +54,46 @@ export class RelayEnrollLimiter {
 
   clear(): void {
     this.failures.clear();
+  }
+}
+
+/** 每租户 `relay.enroll.create` 频率闸：滑动窗口计数，`sweep` 回收空桶。 */
+export class RelayEnrollCreateRate {
+  private readonly marks = new Map<string, number[]>();
+
+  constructor(
+    private readonly now: () => number = Date.now,
+    private readonly limit = RELAY_ENROLL_CREATE_LIMIT,
+    private readonly windowMs = RELAY_ENROLL_CREATE_WINDOW_MS
+  ) {}
+
+  allow(tenantId: string): boolean {
+    const now = this.now();
+    const recent = this.recent(tenantId, now);
+    if (recent.length >= this.limit) {
+      this.marks.set(tenantId, recent);
+      return false;
+    }
+    recent.push(now);
+    this.marks.set(tenantId, recent);
+    return true;
+  }
+
+  sweep(): void {
+    const now = this.now();
+    for (const tenantId of [...this.marks.keys()]) this.recent(tenantId, now, true);
+  }
+
+  clear(): void {
+    this.marks.clear();
+  }
+
+  private recent(tenantId: string, now: number, persist = false): number[] {
+    const pruned = (this.marks.get(tenantId) ?? []).filter((at) => now - at < this.windowMs);
+    if (persist) {
+      if (pruned.length === 0) this.marks.delete(tenantId);
+      else this.marks.set(tenantId, pruned);
+    }
+    return pruned;
   }
 }

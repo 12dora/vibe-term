@@ -1183,6 +1183,42 @@ function wireMeshEventsAndSessions(d: MeshDeps) {
   return { uplink, peerManager, ...createRtcBrowserWiring(d, uplink, peerManager, ensureDc) };
 }
 
+/** standalone 机器也要能走中继接入；本机登录门未建好时读不到就当未生效。 */
+function relayLocalAuthEffective(http: MeshHttpRuntime): () => boolean {
+  return () => {
+    try {
+      return http.auth.isLocalAuthEffective();
+    } catch {
+      return false;
+    }
+  };
+}
+
+function wireRelayRoutes(
+  http: MeshHttpRuntime,
+  input: {
+    d: MeshDeps;
+    config: MeshDeps['config'];
+    nodeId: string;
+    userStore: UserStore;
+    uplink: UplinkPool;
+  }
+): void {
+  http.setRelayRoutes(
+    createRelayRoutes({
+      wiring: input.d.relay,
+      roles: input.config.roles,
+      nodeSessionStore: input.d.nodeSessionStore,
+      trustProxy: gatewayConfig.trustProxy,
+      localAuthEffective: relayLocalAuthEffective(http),
+      nodeId: input.nodeId,
+      userStore: input.userStore,
+      keyLogService: input.d.keyLogService,
+      uplink: input.uplink,
+    })
+  );
+}
+
 function wireMeshHttp(
   d: MeshDeps,
   w: ReturnType<typeof wireMeshEventsAndSessions>
@@ -1277,18 +1313,7 @@ function wireMeshHttp(
   });
   http.auth.setTlsInfo(d.opts.tlsInfo);
   http.auth.setWriterForward((req, uid) => d.hub?.forwardWrite(req, uid) ?? Promise.resolve(null));
-  http.setRelayRoutes(
-    createRelayRoutes({
-      wiring: d.relay,
-      roles: config.roles,
-      nodeSessionStore: d.nodeSessionStore,
-      trustProxy: gatewayConfig.trustProxy,
-      nodeId: identity.nodeIdHex,
-      userStore,
-      keyLogService: d.keyLogService,
-      uplink,
-    })
-  );
+  wireRelayRoutes(http, { d, config, nodeId: identity.nodeIdHex, userStore, uplink });
   d.httpHolder.runtime = http;
   setMeshAgentBridge({
     lookupNode(nodeId) {

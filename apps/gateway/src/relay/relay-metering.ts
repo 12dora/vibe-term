@@ -15,7 +15,9 @@ export class RelayMetering {
   constructor(
     private readonly tenants: RelayTenantStore,
     private readonly now: () => number = Date.now,
-    private readonly flushIntervalMs = RELAY_METER_FLUSH_MS
+    private readonly flushIntervalMs = RELAY_METER_FLUSH_MS,
+    /** 与计量同频的清扫钩子（过期 enrollment 等），刷盘无内容时也照跑。 */
+    private readonly onFlush?: () => void
   ) {}
 
   start(): void {
@@ -52,6 +54,11 @@ export class RelayMetering {
   }
 
   flush(): void {
+    try {
+      this.onFlush?.();
+    } catch {
+      // 清扫失败不该影响计量落库
+    }
     if (this.pending.size === 0) return;
     const now = this.now();
     const entries = [...this.pending.entries()];

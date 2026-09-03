@@ -19,9 +19,11 @@ import {
   relaySeqToWire,
 } from '@tmex/shared/relay';
 import { decodeB64url } from '../api/route-input';
+import type { AuthDb } from '../auth/types';
 import { nodeVersionMeets } from '../hub/hub-authorization';
 import type { RelayConfigStore } from './relay-config-store';
 import { RelayCtlQueue } from './relay-ctl-queue';
+import { RelayEnrollCreateRate } from './relay-enroll-limiter';
 import { pageRelayKeyLog } from './relay-key-log-service';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import { verifyRelayMemberProof } from './relay-member';
@@ -40,6 +42,7 @@ import {
 } from './relay-uplink-handlers';
 import {
   RELAY_AUTH_TIMEOUT_MS,
+  RELAY_ENROLLMENT_USED_RETENTION_MS,
   RELAY_HEARTBEAT_INTERVAL_MS,
   RELAY_HEARTBEAT_MISS_LIMIT,
   RELAY_LIST_DEBOUNCE_MS,
@@ -50,6 +53,7 @@ import {
 type PendingAuth = { nonce: Uint8Array };
 
 export type RelayUplinkServerOptions = {
+  db: AuthDb;
   tenants: RelayTenantStore;
   keyLog: RelayKeyLogStore;
   configStore: RelayConfigStore;
@@ -67,6 +71,7 @@ export type RelayUplinkServerOptions = {
 
 export class RelayUplinkServer implements RelayUplinkHost {
   readonly relayHost: string;
+  readonly db: AuthDb;
   readonly tenants: RelayTenantStore;
   readonly keyLog: RelayKeyLogStore;
   readonly registry: RelayRegistry;
@@ -88,11 +93,14 @@ export class RelayUplinkServer implements RelayUplinkHost {
   private readonly buckets = new Map<string, RelayTokenBucket>();
   private readonly closeTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly listDeps: RelayListDeps;
+  private readonly enrollCreates: RelayEnrollCreateRate;
   private listVersion = 0;
   private stopped = false;
 
   constructor(opts: RelayUplinkServerOptions) {
+    this.db = opts.db;
     this.tenants = opts.tenants;
+    this.enrollCreates = new RelayEnrollCreateRate(opts.now ?? Date.now);
     this.keyLog = opts.keyLog;
     this.configStore = opts.configStore;
     this.registry = opts.registry;
@@ -185,6 +193,32 @@ export class RelayUplinkServer implements RelayUplinkHost {
     for (const live of this.registry.listTenant(tenantId)) this.kickLink(live, reason);
   }
 
+  /**
+   * 重新签发租户令牌后调用：持旧令牌的链路立刻断开。
+   * 不这么做，被踢的一方只要连着就永远不复查令牌（reauth 也就没有「踢掉旧会话」的效果）。
+   */
+  enforceTokenReissue(tenantId: string, tokenHash: string): void {
+    for (const live of this.registry.listTenant(tenantId)) {
+      if (live.tokenHash === tokenHash) continue;
+      this.kickLink(live, 'kicked');
+    }
+  }
+
+  /** 每租户 `relay.enroll.create` 频率闸。 */
+  allowEnrollCreate(tenantId: string): boolean {
+    return this.enrollCreates.allow(tenantId);
+  }
+
+  /** 随计量刷盘跑：清掉过期 / 用旧了的 enrollment 行，并回收频率闸的空桶。 */
+  sweepEnrollments(): void {
+    try {
+      this.tenants.sweepEnrollments(this.now(), RELAY_ENROLLMENT_USED_RETENTION_MS);
+    } catch {
+      // 清理失败不该影响转发
+    }
+    this.enrollCreates.sweep();
+  }
+
   /** 改密（kick 模式）后调用：令牌 epoch 低于门槛的链路全部断开。 */
   enforceMinTokenEpoch(minTokenEpoch: number): void {
     for (const live of this.registry.all()) {
@@ -248,6 +282,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
     for (const link of [...this.accepted]) link.close('relay-stop');
     this.accepted.clear();
     this.buckets.clear();
+    this.enrollCreates.clear();
     await this.ctlQueue.drain();
   }
 
@@ -300,6 +335,11 @@ export class RelayUplinkServer implements RelayUplinkHost {
       live.link.close('relay-tenant-gone');
       return;
     }
+    // 令牌在链路存续期间可能被重新签发（reauth / 踢人）：每条消息都复查，别只在握手时看一眼
+    if (live.tokenHash !== tenant.tokenHash || tenant.kicked) {
+      this.kickLink(live, 'kicked');
+      return;
+    }
     switch (msg.t) {
       case 'ping':
         this.send(live.link, { t: 'pong' });
@@ -311,7 +351,6 @@ export class RelayUplinkServer implements RelayUplinkHost {
       case 'relay.status':
         live.statusBlob = msg.blob;
         live.statusEpoch = msg.epoch;
-        live.directCapable = msg.direct_capable;
         this.tenants.patchNode(tenant.id, live.nodeId, { lastSeenAt: this.now() });
         this.scheduleList(tenant.id);
         return;
@@ -414,12 +453,13 @@ export class RelayUplinkServer implements RelayUplinkHost {
       proof: msg.member,
       op: 'admit',
       rootPublicKey: tenant.rootPublicKey,
+      rootEpoch: tenant.rootEpoch,
       expectNodeId: msg.node_id,
       tolerantAdmit,
     });
     if (!member.ok) return { ok: false, reason: `member-${member.error}` };
     if (member.op !== 'admit') return { ok: false, reason: 'member-type_mismatch' };
-    this.tenants.upsertNode({
+    const upserted = this.tenants.upsertNode({
       tenantId: tenant.id,
       nodeId: msg.node_id,
       edPk: member.edPk,
@@ -428,6 +468,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
       admitSeq: Number(member.seq),
       now: this.now(),
     });
+    if (upserted.status !== 'admitted') return { ok: false, reason: 'revoked' };
     return { ok: true, edPk: member.edPk };
   }
 
@@ -443,6 +484,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
       nodeId: msg.node_id,
       link,
       tokenEpoch: tenant.tokenEpoch,
+      tokenHash: tenant.tokenHash,
       protoVersion: msg.proto,
       clientVersion: msg.client_version,
     });

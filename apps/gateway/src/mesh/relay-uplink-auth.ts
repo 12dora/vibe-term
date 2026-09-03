@@ -91,6 +91,28 @@ export type RelayEnrollCreateInput = {
 
 export type RelayEnrollAck = { ok: boolean; error?: string };
 
+/** `relay.enroll.create` 的等待表：建/落 ack/断链清空三件事凑一起，省得散在 uplink 客户端里。 */
+export class RelayEnrollChannel {
+  private readonly waiters = new Map<string, (ack: RelayEnrollAck) => void>();
+
+  constructor(private readonly send: (msg: RelayCtlMessage) => void) {}
+
+  create(input: RelayEnrollCreateInput, timeoutMs: number): Promise<RelayEnrollAck> {
+    return sendRelayEnrollCreate(input, { send: this.send, waiters: this.waiters, timeoutMs });
+  }
+
+  settle(msg: Extract<RelayCtlMessage, { t: 'relay.enroll.ack' }>): void {
+    const waiter = this.waiters.get(msg.id);
+    this.waiters.delete(msg.id);
+    waiter?.({ ok: msg.ok, ...(msg.error ? { error: msg.error } : {}) });
+  }
+
+  reset(error: string): void {
+    for (const waiter of this.waiters.values()) waiter({ ok: false, error });
+    this.waiters.clear();
+  }
+}
+
 /** `relay.enroll.create` + 等 ack；离线或超时都返回失败而不抛。 */
 export function sendRelayEnrollCreate(
   input: RelayEnrollCreateInput,

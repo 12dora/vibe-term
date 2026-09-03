@@ -33,6 +33,7 @@ describe('relay.status 明文块', () => {
     name: 'macbook',
     version: '1.1.23',
     tmux: true,
+    direct_capable: true,
     inventory: { sessions: [{ name: 'main' }] },
     endpoints: [{ host: '10.0.0.2', port: 9663 }],
   };
@@ -46,6 +47,7 @@ describe('relay.status 明文块', () => {
       name: '',
       version: '1.1.23',
       tmux: false,
+      direct_capable: false,
       inventory: undefined,
       endpoints: undefined,
     };
@@ -53,6 +55,7 @@ describe('relay.status 明文块', () => {
       name: '',
       version: '1.1.23',
       tmux: false,
+      direct_capable: false,
       inventory: null,
       endpoints: null,
     });

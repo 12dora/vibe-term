@@ -28,7 +28,9 @@ const RELAY_URL_2 = 'https://relay-2.example';
 const RELAY_URL_3 = 'https://relay-3.example';
 const TENANT_ID = 'ef'.repeat(16);
 
-async function boot(opts: { fetchImpl?: typeof fetch } = {}) {
+async function boot(
+  opts: { fetchImpl?: typeof fetch; standalone?: boolean; localAuthEffective?: boolean } = {}
+) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
   const nodeSessionStore = new NodeSessionStore(db);
@@ -51,8 +53,11 @@ async function boot(opts: { fetchImpl?: typeof fetch } = {}) {
   });
   const routes = new RelayRoutes({
     session: {
-      roles: { hub: false, node: true, relay: false },
+      roles: opts.standalone
+        ? { hub: false, node: false, relay: false }
+        : { hub: false, node: true, relay: false },
       nodeSessionStore,
+      ...(opts.standalone ? { localAuthEffective: () => opts.localAuthEffective !== false } : {}),
     },
     nodeId: identity.nodeIdHex,
     userStore,
@@ -514,6 +519,31 @@ describe('RelayRoutes', () => {
         body: JSON.stringify({}),
       });
       expect(res.status).toBe(503);
+    } finally {
+      b.close();
+    }
+  });
+});
+
+describe('standalone 机器的中继接入', () => {
+  test('本机登录门生效时 standalone 也能读 /api/mesh/relay/status（否则永远 401）', async () => {
+    const b = await boot({ standalone: true });
+    try {
+      const res = await b.call('/api/mesh/relay/status');
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { mode: string };
+      // standalone 还没接中继：mode 为 none，但路由本身必须可达
+      expect(body.mode).toBe('none');
+    } finally {
+      b.close();
+    }
+  });
+
+  test('本机登录门未生效时仍然 401（没有用户就没有可签的根）', async () => {
+    const b = await boot({ standalone: true, localAuthEffective: false });
+    try {
+      const res = await b.call('/api/mesh/relay/status');
+      expect(res.status).toBe(401);
     } finally {
       b.close();
     }

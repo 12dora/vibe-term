@@ -207,7 +207,10 @@ describe('RelayUplinkClient', () => {
     fixtures.push({ close: b.close });
     const [clientWs, serverWs] = fakeSocketPair();
     const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
-    const lists: Array<{ nodes: Array<{ id: string; name: string }> }> = [];
+    const lists: Array<{
+      version: number;
+      nodes: Array<{ id: string; name: string; direct_capable: boolean }>;
+    }> = [];
     const client = new RelayUplinkClient({
       hubUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
@@ -232,6 +235,7 @@ describe('RelayUplinkClient', () => {
         name: 'node-b',
         version: '1.1.23',
         tmux: true,
+        direct_capable: true,
         inventory: { devices: [2] },
         endpoints: ['ws://10.0.0.2:39001/peer'],
       }),
@@ -247,16 +251,10 @@ describe('RelayUplinkClient', () => {
           id: b.peer.nodeIdHex,
           online: true,
           status: 'admitted',
-          direct_capable: true,
           epoch: 1,
           blob: peerBlob,
         },
-        {
-          id: b.identity.nodeIdHex,
-          online: true,
-          status: 'admitted',
-          direct_capable: true,
-        },
+        { id: b.identity.nodeIdHex, online: true, status: 'admitted' },
       ],
     });
     await waitUntil(() => lists.length > 0);
@@ -265,6 +263,23 @@ describe('RelayUplinkClient', () => {
     const cached = b.userStore.getPeer(b.peer.nodeIdHex);
     expect(cached?.name).toBe('node-b');
     expect(cached?.endpointsJson).toBe(JSON.stringify(['ws://10.0.0.2:39001/peer']));
+    // direct_capable 现在只在 K_meta 封里，明文清单不再带
+    expect(cached?.directCapable).toBe(true);
+    expect(lists[0]?.nodes[0]?.direct_capable).toBe(true);
+    expect(client.nodesViaRelay).toBe(1);
+
+    // 迟到的旧清单不能把新清单覆盖掉（解 blob 是异步的，处理必须串行 + 按版本丢弃）
+    server.send({
+      t: 'relay.list',
+      version: 3,
+      key_log_head_seq: 2,
+      rtc: { stun: [], turn: null },
+      nodes: [],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(lists).toHaveLength(1);
+    expect(lists[0]?.version).toBe(7);
+    expect(client.listVersion).toBe(7);
     expect(client.nodesViaRelay).toBe(1);
   });
 

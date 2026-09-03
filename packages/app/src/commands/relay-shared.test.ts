@@ -31,8 +31,8 @@ describe('gateway loopback host', () => {
 describe('relay quota flags', () => {
   test('matches the server range for counts', () => {
     expect(parseCountFlag('4', 'max-nodes')).toBe(4);
-    expect(() => parseCountFlag('0', 'max-nodes')).toThrow('1..4096');
-    expect(() => parseCountFlag('4097', 'max-nodes')).toThrow('1..4096');
+    expect(() => parseCountFlag('0', 'max-nodes')).toThrow('1..256');
+    expect(() => parseCountFlag('257', 'max-nodes')).toThrow('1..256');
     expect(() => parseCountFlag('0', 'max-streams')).toThrow('1..65536');
     expect(() => parseCountFlag('65537', 'max-streams')).toThrow('1..65536');
     expect(() => parseCountFlag('-1', 'max-nodes')).toThrow('positive integer');

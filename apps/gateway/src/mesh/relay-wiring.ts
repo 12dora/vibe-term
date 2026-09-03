@@ -160,6 +160,11 @@ export function createRelayRoutes(input: {
   roles: MeshRoles;
   nodeSessionStore: NodeSessionStore;
   trustProxy?: boolean;
+  /**
+   * standalone 机器（还没有 node 角色）也必须能走接入流程——那正是它变成中继租户节点的路径。
+   * 不传这个，`standaloneOpenBypass` 会给出一个没有 userId 的「放行」，所有 `/api/mesh/relay/*` 一律 401。
+   */
+  localAuthEffective?: () => boolean;
   nodeId: string;
   userStore: UserStore;
   keyLogService: UserKeyService;
@@ -170,6 +175,7 @@ export function createRelayRoutes(input: {
       roles: input.roles,
       nodeSessionStore: input.nodeSessionStore,
       ...(input.trustProxy !== undefined ? { trustProxy: input.trustProxy } : {}),
+      ...(input.localAuthEffective ? { localAuthEffective: input.localAuthEffective } : {}),
     },
     nodeId: input.nodeId,
     userStore: input.userStore,

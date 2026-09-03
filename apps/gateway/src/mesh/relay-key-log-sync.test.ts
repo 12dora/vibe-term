@@ -4,6 +4,7 @@ import {
   encodeAdmitNodePayload,
   encodeBase64url,
   encodeKeyLogRecord,
+  encodeRotateRootKeepPayload,
   encodeSetTotpPayload,
   genesisHead,
   randomBytes,
@@ -43,6 +44,21 @@ function totpRecordBytes(seq: bigint): Uint8Array {
   return encodeKeyLogRecord(record);
 }
 
+function rotateRecordBytes(seq: bigint): Uint8Array {
+  const record = buildKeyLogRecord({ seq: seq - 1n, hash: genesisHead().hash }, 1, {
+    uid: 'user-1',
+    type: 'rotate-root-keep',
+    payload: encodeRotateRootKeepPayload({
+      root_public_key: new Uint8Array(32).fill(8),
+      kdf_params: { salt: new Uint8Array(16), memory_kib: 8, iterations: 1, parallelism: 1 },
+      totp: null,
+    }),
+    signer: 'root',
+    credential_id: null,
+  });
+  return encodeKeyLogRecord(record);
+}
+
 function admitRecordBytes(seq: bigint): Uint8Array {
   const record = buildKeyLogRecord({ seq: seq - 1n, hash: genesisHead().hash }, 1, {
     uid: 'user-1',
@@ -63,6 +79,7 @@ type Harness = {
   sync: RelayKeyLogSync;
   sent: RelayCtlMessage[];
   applied: Array<{ bytes: Uint8Array; sig: Uint8Array }>;
+  synced: () => number;
   setHead: (seq: bigint) => void;
 };
 
@@ -73,6 +90,7 @@ function harness(
   const sent: RelayCtlMessage[] = [];
   const applied: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
   let head = localSeq;
+  let syncedCount = 0;
   const applier: KeyLogApplier = {
     async head() {
       return { seq: head, hash: new Uint8Array(32) };
@@ -83,10 +101,11 @@ function harness(
       head += BigInt(records.length);
       return { applied: records.length };
     },
-    async list(_userId, fromSeq) {
-      return stored
+    async list(_userId, fromSeq, _signal, limit) {
+      const rows = stored
         .filter((row) => row.seq >= fromSeq)
         .map((row) => ({ seq: row.seq, bytes: row.bytes, sig: new Uint8Array(64).fill(9) }));
+      return limit === undefined ? rows : rows.slice(0, limit);
     },
   };
   const sync = new RelayKeyLogSync({
@@ -100,6 +119,9 @@ function harness(
       },
       logKey: async () => LOG_KEY,
       memberFor: (record) => relayMemberFromRecord(record),
+      onSynced: () => {
+        syncedCount += 1;
+      },
     },
     applier,
     timeoutMs: 200,
@@ -108,6 +130,7 @@ function harness(
     sync,
     sent,
     applied,
+    synced: () => syncedCount,
     setHead: (seq) => {
       head = seq;
     },
@@ -239,5 +262,72 @@ describe('RelayKeyLogSync', () => {
     await waitUntil(() => h.applied.length === 1);
     expect(h.applied[0]?.bytes).toEqual(bytes);
     expect(h.sync.remoteHead).toBe(2n);
+  });
+});
+
+describe('RelayKeyLogSync 健壮性', () => {
+  test('rotate-root 记录也带明文 sidecar，中继才跟得上根公钥', () => {
+    const member = relayMemberFromRecord({
+      bytes: rotateRecordBytes(2n),
+      sig: new Uint8Array(64).fill(1),
+    });
+    expect(member?.op).toBe('rotate-root');
+  });
+
+  test('解不开的记录被跳过而不是永远堵住同步', async () => {
+    const h = harness(1n);
+    h.sync.noteRemoteHead(3n);
+    await waitUntil(() => h.sent.some((msg) => msg.t === 'relay.keylog.req'));
+    h.sync.handleRes({
+      t: 'relay.keylog.res',
+      records: [
+        {
+          seq: relaySeqToWire(2n),
+          // 别的租户密钥封的块：本节点永远解不开
+          blob: await sealRelayKeyLogRecord(generateTenantKey(), {
+            bytes: totpRecordBytes(2n),
+            sig: new Uint8Array(64),
+          }),
+        },
+      ],
+    });
+    await waitUntil(() => h.sync.skipped > 0, 2_000);
+    expect(h.sync.blockedSeq).toBe(2n);
+    expect(h.applied).toHaveLength(0);
+    // 没追平就不能报「同步完成」
+    expect(h.sync.caughtUp).toBe(false);
+    expect(h.synced()).toBe(0);
+    // 重连清掉卡点，允许再试一次
+    h.sync.reset();
+    expect(h.sync.blockedSeq).toBeNull();
+  });
+
+  test('上传缺失记录分页进行，超过一页也能全部推上去', async () => {
+    const total = 80;
+    const stored = Array.from({ length: total }, (_, i) => ({
+      seq: BigInt(i + 2),
+      bytes: totpRecordBytes(BigInt(i + 2)),
+    }));
+    const h = harness(BigInt(total + 1), stored);
+    h.sync.noteRemoteHead(1n);
+    const appends = (): Extract<RelayCtlMessage, { t: 'relay.keylog.append' }>[] =>
+      h.sent.filter((msg) => msg.t === 'relay.keylog.append') as Extract<
+        RelayCtlMessage,
+        { t: 'relay.keylog.append' }
+      >[];
+    for (let i = 0; i < total; i++) {
+      await waitUntil(() => appends().length === i + 1, 2_000);
+      const msg = appends()[i];
+      if (!msg) throw new Error('missing append');
+      h.sync.handleAck({
+        t: 'relay.keylog.ack',
+        id: msg.id,
+        ok: true,
+        seq: relaySeqToWire(BigInt(i + 2)),
+      });
+    }
+    await waitUntil(() => h.sync.remoteHead === BigInt(total + 1), 2_000);
+    await waitUntil(() => h.synced() > 0, 2_000);
+    expect(h.sync.caughtUp).toBe(true);
   });
 });

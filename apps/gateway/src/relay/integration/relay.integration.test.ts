@@ -310,3 +310,45 @@ describe('relay r3 join path', () => {
     }
   });
 });
+
+describe('relay root rotation', () => {
+  test('根轮换后中继换到新根公钥；旧根 enroll 落到新租户，新根签的加入照常', async () => {
+    const h = await boot();
+    const tenant = await h.createTenant('rotor');
+    await tenant.enroll();
+    const tenantId = tenant.tenantId();
+    const oldRoot = tenant.rootKey;
+    const epochBefore = h.relay.runtime.tenants.get(tenantId)?.rootEpoch ?? 0;
+
+    const next = await tenant.rotateRoot();
+    const stored = h.relay.runtime.tenants.get(tenantId);
+    expect(stored?.rootEpoch).toBe(epochBefore + 1);
+    expect(encodeBase64url(stored?.rootPublicKey ?? new Uint8Array())).toBe(
+      encodeBase64url(next.publicKey)
+    );
+
+    // 旧根持有者再 enroll：公钥不再命中原租户，只能开一个空的新租户
+    const proof = signRelayEnrollProof(oldRoot, {
+      relayHost: new URL(RELAY_TEST_PUBLIC_URL).host,
+      ts: Date.now(),
+    });
+    const res = await h.relay.fetch('/api/relay/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        root_public_key: encodeBase64url(oldRoot.publicKey),
+        root_epoch: 0,
+        proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const enrolled = (await res.json()) as { tenant_id: string };
+    expect(enrolled.tenant_id).not.toBe(tenantId);
+    expect(h.relay.runtime.tenants.listNodes(enrolled.tenant_id)).toEqual([]);
+    expect(h.relay.runtime.keyLog.head(enrolled.tenant_id)).toBe(0n);
+
+    // 新根签发的 enrollment / admit-node 全程照常
+    const joined = await tenant.joinNode('rotor-b');
+    expect(h.relay.runtime.tenants.getNode(tenantId, joined.nodeId)?.status).toBe('admitted');
+  }, 40_000);
+});

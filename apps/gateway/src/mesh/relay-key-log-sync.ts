@@ -16,13 +16,26 @@ import { stamp } from './mesh-log';
 import type { KeyLogApplier, MeshScheduler } from './types';
 
 export const RELAY_KEYLOG_ACK_TIMEOUT_MS = 10_000;
+/** 上传缺失记录时的分页大小；本地日志可能远长于一页。 */
+export const RELAY_KEYLOG_PUSH_PAGE = 64;
+/** 单次追平的分页上限，防止 seq 被伪造成天文数字时空转。 */
+export const RELAY_KEYLOG_MAX_PAGES = 4096;
+
+const RELAY_MEMBER_OPS: Record<string, RelayKeylogMember['op']> = {
+  'admit-node': 'admit',
+  'revoke-node': 'revoke',
+  'rotate-root': 'rotate-root',
+  'rotate-root-keep': 'rotate-root',
+  'reset-root': 'rotate-root',
+};
 
 export type RelayKeyLogRecord = RelayKeyLogEntry;
+type RelayApplyPageOutcome = { applied: number; skipped: number; maxSeq: bigint };
 export type RelayKeyLogAck = { ok: boolean; seq?: bigint; error?: string; head?: bigint };
 
 /**
- * admit-node / revoke-node 记录额外附带明文，供中继重建准入注册表；
- * 其它类型不给（中继看不到 payload）。revoke 只有 root 签名在中继侧才被采信。
+ * admit-node / revoke-node / 根轮换记录额外附带明文，供中继重建准入注册表与跟上根公钥；
+ * 其它类型不给（中继看不到 payload）。revoke 与根轮换只有 root 签名在中继侧才被采信。
  */
 export function relayMemberFromRecord(record: RelayKeyLogRecord): RelayKeylogMember | undefined {
   let type: string;
@@ -31,7 +44,7 @@ export function relayMemberFromRecord(record: RelayKeyLogRecord): RelayKeylogMem
   } catch {
     return undefined;
   }
-  const op = type === 'admit-node' ? 'admit' : type === 'revoke-node' ? 'revoke' : null;
+  const op = RELAY_MEMBER_OPS[type];
   if (!op) return undefined;
   return { op, bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) };
 }
@@ -61,6 +74,12 @@ export type RelayKeyLogSyncOptions = {
  */
 export class RelayKeyLogSync {
   remoteHead: bigint | null = null;
+  /** 拉下来但解不开 / 应用不了的记录数（诊断用，前端展示）。 */
+  skipped = 0;
+  /** 第一条卡住的中继 seq；非 null 表示本地日志永远追不平它之后的内容。 */
+  blockedSeq: bigint | null = null;
+  /** 上一轮追平是否真的追平了（`onSynced` 只在追平时触发）。 */
+  caughtUp = false;
 
   private readonly host: RelayKeyLogSyncHost;
   private readonly applier: KeyLogApplier;
@@ -81,6 +100,9 @@ export class RelayKeyLogSync {
 
   reset(reason = 'reconnect'): void {
     this.remoteHead = null;
+    // 重连后重试一次：卡住的原因可能是密钥还没到（`set-relays` / `meta-key` 迟到）
+    this.blockedSeq = null;
+    this.caughtUp = false;
     const req = this.pendingReq;
     this.pendingReq = null;
     req?.reject(new Error(reason));
@@ -127,9 +149,12 @@ export class RelayKeyLogSync {
     }
     const generation = this.host.generation();
     this.enqueue(async () => {
-      const applied = await this.applyPage(msg.records, generation);
-      if (!applied) this.noteRemoteHead(highest);
-      else if (this.remoteHead === null || highest > this.remoteHead) this.remoteHead = highest;
+      const outcome = await this.applyPage(msg.records, generation);
+      if (outcome.applied > 0 && (this.remoteHead === null || highest > this.remoteHead)) {
+        this.remoteHead = highest;
+        return;
+      }
+      if (outcome.applied === 0) this.noteRemoteHead(highest);
     });
   }
 
@@ -225,15 +250,25 @@ export class RelayKeyLogSync {
     }
     let local = await this.applier.head(userId);
     if (generation !== this.host.generation()) return;
-    if (local.seq < remote) {
+    if (local.seq < remote && this.blockedSeq !== local.seq + 1n) {
       await this.pullPages(generation, userId, local.seq, remote);
       local = await this.applier.head(userId);
     }
     if (generation !== this.host.generation()) return;
-    if (local.seq > remote) await this.pushMissing(generation, userId, remote);
-    this.host.onSynced?.();
+    if (local.seq > (this.remoteHead ?? remote)) {
+      await this.pushMissing(generation, userId, this.remoteHead ?? remote);
+      local = await this.applier.head(userId);
+    }
+    if (generation !== this.host.generation()) return;
+    this.caughtUp = local.seq === (this.remoteHead ?? remote);
+    // 只有真的两边一致才算同步完成：卡住的日志不该让上层以为一切正常
+    if (this.caughtUp) this.host.onSynced?.();
   }
 
+  /**
+   * 一页一页拉到追平为止。**解不开 / 验不过的记录不再卡死整条同步**：
+   * 记一笔跳过并把游标推过这一页继续（本地 head 推不动——链是连续的——但至少不会永远重试同一页）。
+   */
   private async pullPages(
     generation: number,
     userId: string,
@@ -244,67 +279,95 @@ export class RelayKeyLogSync {
     let guard = 0;
     while (cursor < target && generation === this.host.generation()) {
       guard += 1;
-      if (guard > 256) return;
+      if (guard > RELAY_KEYLOG_MAX_PAGES) return;
       const rows = await this.request(cursor + 1n, RELAY_KEYLOG_PAGE_DEFAULT_LIMIT);
       if (rows.length === 0) return;
-      const applied = await this.applyPage(rows, generation);
-      if (!applied) return;
+      const outcome = await this.applyPage(rows, generation);
+      if (generation !== this.host.generation()) return;
       const head = await this.applier.head(userId);
-      if (head.seq <= cursor) {
+      if (head.seq > cursor) {
+        cursor = head.seq;
+        continue;
+      }
+      if (outcome.skipped === 0) {
         console.warn(stamp('[relay] key-log catch-up stalled: head did not advance'));
         return;
       }
-      cursor = head.seq;
+      if (this.blockedSeq === null) this.blockedSeq = cursor + 1n;
+      console.warn(
+        stamp(
+          `[relay] key-log skipping unusable records from seq=${String(cursor + 1n)} skipped=${this.skipped}`
+        )
+      );
+      cursor = outcome.maxSeq > cursor ? outcome.maxSeq : cursor + 1n;
     }
   }
 
   private async applyPage(
     rows: readonly RelayKeyLogRecordWire[],
     generation: number
-  ): Promise<boolean> {
+  ): Promise<RelayApplyPageOutcome> {
+    const idle: RelayApplyPageOutcome = { applied: 0, skipped: 0, maxSeq: 0n };
     const key = await this.host.logKey();
-    if (!key || generation !== this.host.generation()) return false;
+    if (!key || generation !== this.host.generation()) return idle;
     const sorted = [...rows].sort((a, b) => {
       const as = relaySeqFromWire(a.seq);
       const bs = relaySeqFromWire(b.seq);
       return as < bs ? -1 : as > bs ? 1 : 0;
     });
     const records: RelayKeyLogRecord[] = [];
+    let skipped = 0;
+    let maxSeq = 0n;
     for (const row of sorted) {
+      const seq = relaySeqFromWire(row.seq);
+      if (seq > maxSeq) maxSeq = seq;
       try {
         records.push(await openRelayKeyLogRecord(key, row.blob));
       } catch {
+        // 解不开就跳过这一条：中继上的密文由（可能已被攻陷的）同租户节点写入，不能让它堵死同步
         console.warn(stamp(`[relay] key-log blob undecryptable seq=${String(row.seq)}`));
-        return false;
+        skipped += 1;
+        this.skipped += 1;
+        break;
       }
     }
-    if (records.length === 0) return false;
+    if (records.length === 0) return { applied: 0, skipped, maxSeq };
     const result = await this.applier.applyMany(this.host.userId(), records);
     if (result.error) {
       console.warn(
         stamp(`[relay] key-log applyMany rejected err=${result.error} applied=${result.applied}`)
       );
-      return result.applied > 0;
+      const rejected = records.length - result.applied;
+      this.skipped += rejected;
+      return { applied: result.applied, skipped: skipped + rejected, maxSeq };
     }
-    return true;
+    return { applied: result.applied, skipped, maxSeq };
   }
 
+  /** 分页上传：本地日志可能有几千条，一次性 list 出来会把整条链读进内存。 */
   private async pushMissing(generation: number, userId: string, remote: bigint): Promise<void> {
-    const rows = (await this.applier.list?.(userId, remote + 1n)) ?? [];
-    for (const row of rows) {
+    let cursor = remote;
+    for (let page = 0; page < RELAY_KEYLOG_MAX_PAGES; page += 1) {
       if (generation !== this.host.generation()) return;
-      if (row.seq <= remote) continue;
-      const ack = await this.appendAndAck(
-        { bytes: row.bytes, sig: row.sig },
-        this.timeoutMs,
-        generation
-      );
-      if (!ack.ok) {
-        if (ack.head !== undefined) this.remoteHead = ack.head;
-        console.warn(stamp(`[relay] key-log append rejected err=${ack.error ?? 'unknown'}`));
-        return;
+      const rows =
+        (await this.applier.list?.(userId, cursor + 1n, undefined, RELAY_KEYLOG_PUSH_PAGE)) ?? [];
+      if (rows.length === 0) return;
+      for (const row of rows) {
+        if (generation !== this.host.generation()) return;
+        if (row.seq <= cursor) continue;
+        const ack = await this.appendAndAck(
+          { bytes: row.bytes, sig: row.sig },
+          this.timeoutMs,
+          generation
+        );
+        if (!ack.ok) {
+          if (ack.head !== undefined) this.remoteHead = ack.head;
+          console.warn(stamp(`[relay] key-log append rejected err=${ack.error ?? 'unknown'}`));
+          return;
+        }
+        cursor = row.seq;
+        if (ack.seq !== undefined) this.remoteHead = ack.seq;
       }
-      if (ack.seq !== undefined) this.remoteHead = ack.seq;
     }
   }
 

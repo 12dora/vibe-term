@@ -41,20 +41,13 @@ const RELAY_CTL_SAMPLES: RelayCtlMessage[] = [
   { t: 'auth.ok', tenant_id: TENANT, key_log_head_seq: 12, rtc: RTC },
   { t: 'ping' },
   { t: 'pong' },
-  { t: 'relay.status', blob: ENVELOPE, epoch: 4, direct_capable: true },
+  { t: 'relay.status', blob: ENVELOPE, epoch: 4 },
   {
     t: 'relay.list',
     version: 3,
     nodes: [
-      {
-        id: NODE_A,
-        online: true,
-        status: 'admitted',
-        direct_capable: true,
-        epoch: 4,
-        blob: ENVELOPE,
-      },
-      { id: NODE_B, online: false, status: 'pending', direct_capable: false },
+      { id: NODE_A, online: true, status: 'admitted', epoch: 4, blob: ENVELOPE },
+      { id: NODE_B, online: false, status: 'pending' },
     ],
     rtc: RTC,
     key_log_head_seq: 12,
@@ -152,7 +145,7 @@ describe('relay ctl 防御性校验', () => {
         JSON.stringify({
           t: 'relay.list',
           version: 1,
-          nodes: [{ id: NODE_A, online: true, status: 'ghost', direct_capable: true }],
+          nodes: [{ id: NODE_A, online: true, status: 'ghost' }],
           rtc: RTC,
           key_log_head_seq: 1,
         })
@@ -170,9 +163,9 @@ describe('relay ctl 防御性校验', () => {
       { v: 1, n: ENVELOPE.n },
       'nope',
     ]) {
-      expect(() =>
-        decodeRelayCtl(JSON.stringify({ t: 'relay.status', blob, epoch: 1, direct_capable: true }))
-      ).toThrow(RelayCtlError);
+      expect(() => decodeRelayCtl(JSON.stringify({ t: 'relay.status', blob, epoch: 1 }))).toThrow(
+        RelayCtlError
+      );
     }
   });
 
@@ -204,9 +197,7 @@ describe('relay ctl 防御性校验', () => {
       )
     ).toThrow(RelayCtlError);
     expect(() =>
-      decodeRelayCtl(
-        JSON.stringify({ t: 'relay.status', blob: ENVELOPE, epoch: -1, direct_capable: true })
-      )
+      decodeRelayCtl(JSON.stringify({ t: 'relay.status', blob: ENVELOPE, epoch: -1 }))
     ).toThrow(RelayCtlError);
   });
 
@@ -230,5 +221,104 @@ describe('seq 编解码', () => {
     expect(() => relaySeqFromWire(-1)).toThrow(RelayCtlError);
     expect(() => relaySeqFromWire('99999999999999999999999')).toThrow(RelayCtlError);
     expect(() => relaySeqFromWire('abc')).toThrow(RelayCtlError);
+  });
+});
+
+describe('变长签名与根轮换 sidecar', () => {
+  const longSig = encodeBase64url(new Uint8Array(300).fill(7));
+
+  it('member.sig 可以是变长的 passkey 断言（不再强制 64 字节）', () => {
+    const msg = decodeRelayCtl(
+      JSON.stringify({
+        t: 'relay.keylog.append',
+        id: 'r1',
+        seq: 1,
+        blob: ENVELOPE,
+        member: { op: 'admit', bytes: encodeBase64url(new Uint8Array(64).fill(2)), sig: longSig },
+      })
+    );
+    expect(msg.t === 'relay.keylog.append' && msg.member?.sig).toBe(longSig);
+  });
+
+  it('relay.auth 的 member.sig 与 relay.enroll.create 的 authorization_sig 同样放开', () => {
+    const auth = decodeRelayCtl(
+      JSON.stringify({
+        t: 'relay.auth',
+        tenant_id: TENANT,
+        token: B32,
+        node_id: NODE_A,
+        sig: B64,
+        proto: 1,
+        client_version: '1.1.23',
+        member: { bytes: encodeBase64url(new Uint8Array(10).fill(1)), sig: longSig },
+      })
+    );
+    expect(auth.t === 'relay.auth' && auth.member?.sig).toBe(longSig);
+    const created = decodeRelayCtl(
+      JSON.stringify({
+        t: 'relay.enroll.create',
+        id: 'enr-1',
+        enroll_pk: B32,
+        authorization: encodeBase64url(new Uint8Array(40).fill(3)),
+        authorization_sig: longSig,
+        exp: 1_700_000_600_000,
+      })
+    );
+    expect(created.t === 'relay.enroll.create' && created.authorization_sig).toBe(longSig);
+  });
+
+  it('member.op 认识 rotate-root，其它值仍然拒绝', () => {
+    const msg = decodeRelayCtl(
+      JSON.stringify({
+        t: 'relay.keylog.append',
+        id: 'r2',
+        seq: 2,
+        blob: ENVELOPE,
+        member: { op: 'rotate-root', bytes: encodeBase64url(new Uint8Array(64)), sig: B64 },
+      })
+    );
+    expect(msg.t === 'relay.keylog.append' && msg.member?.op).toBe('rotate-root');
+    expect(() =>
+      decodeRelayCtl(
+        JSON.stringify({
+          t: 'relay.keylog.append',
+          id: 'r3',
+          seq: 3,
+          blob: ENVELOPE,
+          member: { op: 'reset', bytes: B64, sig: B64 },
+        })
+      )
+    ).toThrow(RelayCtlError);
+  });
+
+  it('relay.status / relay.list 不再带明文 direct_capable', () => {
+    const status = decodeRelayCtl(
+      JSON.stringify({ t: 'relay.status', blob: ENVELOPE, epoch: 4, direct_capable: true })
+    );
+    expect(status).not.toHaveProperty('direct_capable');
+    const list = decodeRelayCtl(
+      JSON.stringify({
+        t: 'relay.list',
+        version: 1,
+        nodes: [{ id: NODE_A, online: true, status: 'admitted', direct_capable: true }],
+        rtc: RTC,
+        key_log_head_seq: 1,
+      })
+    );
+    expect(list.t === 'relay.list' && list.nodes[0]).not.toHaveProperty('direct_capable');
+  });
+
+  it('member_error 随 ack 往返', () => {
+    const ack = decodeRelayCtl(
+      JSON.stringify({
+        t: 'relay.keylog.ack',
+        id: 'r1',
+        ok: true,
+        seq: 1,
+        member_ignored: true,
+        member_error: 'seq_mismatch',
+      })
+    );
+    expect(ack.t === 'relay.keylog.ack' && ack.member_error).toBe('seq_mismatch');
   });
 });

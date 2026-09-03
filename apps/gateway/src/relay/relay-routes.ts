@@ -85,7 +85,13 @@ async function checkEnrollPassword(
   return relayError(RelayErrorCode.passwordInvalid, 401);
 }
 
-/** 同一根公钥重复 enroll = 重新签发令牌（被踢后重输口令的路径），tenant_id 不变。 */
+/**
+ * 同一根公钥重复 enroll = 重新签发令牌（被踢后重输口令的路径），tenant_id 不变。
+ *
+ * 匹配的是**当前**根公钥：根轮换之后旧根持有者的 pk 不再命中任何租户，于是被当成一个新租户
+ * （拿不到原租户的注册表与日志）。`root_epoch` 只由 `rotate-root` 侧带记录推进，
+ * 这里的自称值只用于建租户时的初值。
+ */
 function issueTenantToken(
   deps: RelayPublicRoutesDeps,
   parsed: ParsedEnroll,
@@ -97,13 +103,9 @@ function issueTenantToken(
   const tenantId = existing?.id ?? generateRelayTenantId();
   const tokenHash = sha256Hex(token);
   if (existing) {
-    deps.tenants.reissueToken({
-      tenantId,
-      tokenHash,
-      tokenEpoch,
-      rootEpoch: parsed.rootEpoch,
-      now,
-    });
+    deps.tenants.reissueToken({ tenantId, tokenHash, tokenEpoch, now });
+    // 旧令牌的链路必须立刻断开，否则「重新 enroll」踢不掉任何东西
+    deps.uplink.enforceTokenReissue(tenantId, tokenHash);
   } else {
     deps.tenants.create({
       id: tenantId,

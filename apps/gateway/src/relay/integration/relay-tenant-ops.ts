@@ -1,4 +1,5 @@
 import {
+  type RootKey,
   buildKeyLogRecord,
   createEnrollment,
   createNodeCertificate,
@@ -9,7 +10,10 @@ import {
   encodeBase64url,
   encodeKeyLogRecord,
   encodeRevokeNodePayload,
+  encodeRotateRootKeepPayload,
   hexToBytes,
+  randomBytes,
+  rootKeyFromSeed,
   signEd25519,
   signKeyLogRecordWithRoot,
   verifyKeyLogChain,
@@ -76,10 +80,43 @@ export async function submitPrepared(
   }
 }
 
+/**
+ * 根轮换（`rotate-root-keep`，旧根签名）。节点侧上传时会带 `member.op = 'rotate-root'` 明文，
+ * 中继据此把租户根公钥/epoch 换掉——否则轮换之后中继会一直用旧公钥验成员记录。
+ */
+export async function rotateTenantRoot(
+  harness: RelayMeshHarness,
+  tenant: RelayTenant
+): Promise<RootKey> {
+  const next = rootKeyFromSeed(randomBytes(32));
+  const applied = await submitRecord(
+    tenant,
+    tenant.owner,
+    'rotate-root-keep',
+    encodeRotateRootKeepPayload({
+      root_public_key: next.publicKey,
+      kdf_params: { salt: randomBytes(16), memory_kib: 19_456, iterations: 2, parallelism: 1 },
+      totp: null,
+    })
+  );
+  if (applied.status !== 200) {
+    throw new Error(`rotate-root-keep ${applied.status}: ${await applied.text()}`);
+  }
+  tenant.rootKey = next;
+  tenant.rootPublicKey = next.publicKey;
+  tenant.rootEpoch += 1;
+  const tenantId = tenant.tenantId();
+  await waitUntil(
+    () => harness.relay.runtime.tenants.get(tenantId)?.rootEpoch === tenant.rootEpoch,
+    8_000
+  );
+  return next;
+}
+
 export async function submitRecord(
   tenant: RelayTenant,
   node: RelayMeshNode,
-  type: 'set-relays' | 'meta-key' | 'admit-node' | 'revoke-node',
+  type: 'set-relays' | 'meta-key' | 'admit-node' | 'revoke-node' | 'rotate-root-keep',
   payload: Uint8Array
 ): Promise<Response> {
   const head = await node.json<{ seq: number | string; hash: string; rootEpoch: number }>(

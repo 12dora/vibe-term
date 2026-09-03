@@ -13,11 +13,15 @@ export const RELAY_STATUS_MAX_NAME_LEN = 256;
 
 export type RelayOpenStream = { to: string };
 
-/** `relay.status` 信封里的明文：中继看不到，只有同租户节点解得开。 */
+/**
+ * `relay.status` 信封里的明文：中继看不到，只有同租户节点解得开。
+ * `direct_capable`（能否直连）也在封里——它是节点的网络指纹，属于元数据，不给中继。
+ */
 export type RelayStatusBlob = {
   name: string;
   version: string;
   tmux: boolean;
+  direct_capable: boolean;
   inventory: unknown;
   endpoints: unknown;
 };
@@ -66,7 +70,11 @@ export function encodeRelayStatusBlob(blob: RelayStatusBlob): Uint8Array {
   if (typeof blob?.name !== 'string' || blob.name.length > RELAY_STATUS_MAX_NAME_LEN) {
     throw new RelayCtlError('invalid status name');
   }
-  if (typeof blob.version !== 'string' || typeof blob.tmux !== 'boolean') {
+  if (
+    typeof blob.version !== 'string' ||
+    typeof blob.tmux !== 'boolean' ||
+    typeof blob.direct_capable !== 'boolean'
+  ) {
     throw new RelayCtlError('invalid status blob');
   }
   if (Array.isArray(blob.endpoints) && blob.endpoints.length > RELAY_STATUS_MAX_ENDPOINTS) {
@@ -77,6 +85,7 @@ export function encodeRelayStatusBlob(blob: RelayStatusBlob): Uint8Array {
       name: blob.name,
       version: blob.version,
       tmux: blob.tmux,
+      direct_capable: blob.direct_capable,
       inventory: blob.inventory ?? null,
       endpoints: blob.endpoints ?? null,
     },
@@ -92,7 +101,11 @@ export function decodeRelayStatusBlob(bytes: Uint8Array): RelayStatusBlob {
   if (typeof name !== 'string' || name.length > RELAY_STATUS_MAX_NAME_LEN) {
     throw new RelayCtlError('invalid status name');
   }
-  if (typeof version !== 'string' || typeof parsed.tmux !== 'boolean') {
+  if (
+    typeof version !== 'string' ||
+    typeof parsed.tmux !== 'boolean' ||
+    typeof parsed.direct_capable !== 'boolean'
+  ) {
     throw new RelayCtlError('invalid status blob');
   }
   if (Array.isArray(parsed.endpoints) && parsed.endpoints.length > RELAY_STATUS_MAX_ENDPOINTS) {
@@ -102,6 +115,7 @@ export function decodeRelayStatusBlob(bytes: Uint8Array): RelayStatusBlob {
     name,
     version,
     tmux: parsed.tmux,
+    direct_capable: parsed.direct_capable,
     inventory: parsed.inventory ?? null,
     endpoints: parsed.endpoints ?? null,
   };

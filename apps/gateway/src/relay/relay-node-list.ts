@@ -22,7 +22,11 @@ export function buildRelayList(
   tenantId: string,
   withBlobs: boolean
 ): RelayCtlMessage {
-  const rows = deps.tenants.listNodes(tenantId).slice(0, RELAY_CTL_MAX_NODES);
+  // 先滤掉 revoked 再截断：否则一堆吊销行会把还活着的节点挤出 256 条的窗口
+  const rows = deps.tenants
+    .listNodes(tenantId)
+    .filter((row) => row.status !== 'revoked')
+    .slice(0, RELAY_CTL_MAX_NODES);
   const nodes: RelayListNode[] = rows.map((row) => {
     const live = deps.registry.get(tenantId, row.nodeId);
     const blob = withBlobs ? live?.statusBlob : null;
@@ -30,7 +34,6 @@ export function buildRelayList(
       id: row.nodeId,
       online: Boolean(live),
       status: row.status,
-      direct_capable: live?.directCapable ?? false,
       ...(blob ? { epoch: live?.statusEpoch ?? 0, blob } : {}),
     };
   });

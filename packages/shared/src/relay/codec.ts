@@ -41,6 +41,8 @@ export const RELAY_CTL_MAX_NODES = 256;
 export const RELAY_CTL_MAX_STUN = 8;
 export const RELAY_CTL_MAX_CERT_BYTES = 2048;
 export const RELAY_CTL_MAX_MEMBER_BYTES = 8 * 1024;
+/** 签名字段上限：根签名恒 64 B，passkey 签名是变长 Borsh `PasskeyAssertion`。 */
+export const RELAY_CTL_MAX_SIG_BYTES = 4 * 1024;
 export const RELAY_KEYLOG_PAGE_DEFAULT_LIMIT = 32;
 export const RELAY_KEYLOG_PAGE_MAX_LIMIT = 64;
 export const RELAY_CTL_MAX_U64 = 18446744073709551615n;
@@ -60,7 +62,7 @@ export type RelayNodeStatus = 'pending' | 'admitted' | 'revoked';
 export type RelayKickReason = 'password_rotated' | 'kicked' | 'revoked';
 export type RelayRtcFrom = 'browser' | 'node';
 export type RelayMemberProof = { bytes: string; sig: string };
-export type RelayKeylogMemberOp = 'admit' | 'revoke';
+export type RelayKeylogMemberOp = 'admit' | 'revoke' | 'rotate-root';
 export type RelayKeylogMember = { op: RelayKeylogMemberOp; bytes: string; sig: string };
 export type RelayQuota = {
   maxNodes: number;
@@ -71,7 +73,6 @@ export type RelayListNode = {
   id: string;
   online: boolean;
   status: RelayNodeStatus;
-  direct_capable: boolean;
   epoch?: number;
   blob?: RelayEnvelope;
 };
@@ -92,7 +93,7 @@ export type RelayCtlMessage =
   | { t: 'auth.ok'; tenant_id: string; key_log_head_seq: RelaySeqWire; rtc: RelayRtcConfig }
   | { t: 'ping' }
   | { t: 'pong' }
-  | { t: 'relay.status'; blob: RelayEnvelope; epoch: number; direct_capable: boolean }
+  | { t: 'relay.status'; blob: RelayEnvelope; epoch: number }
   | {
       t: 'relay.list';
       version: number;
@@ -115,6 +116,8 @@ export type RelayCtlMessage =
       error?: string;
       head?: RelaySeqWire;
       member_ignored?: boolean;
+      /** 成员明文被丢弃的原因（诊断用；日志本身照旧落库）。 */
+      member_error?: string;
     }
   | { t: 'relay.keylog.req'; from_seq: RelaySeqWire; limit?: number }
   | { t: 'relay.keylog.res'; records: RelayKeyLogRecordWire[]; has_more?: boolean }
@@ -294,7 +297,7 @@ function memberProof(obj: Record<string, unknown>, key: string): RelayMemberProo
   if (!isRecord(value)) fail(`invalid ${key}`);
   return {
     bytes: b64(value, 'bytes', undefined, RELAY_CTL_MAX_MEMBER_BYTES),
-    sig: b64(value, 'sig', 64),
+    sig: b64(value, 'sig', undefined, RELAY_CTL_MAX_SIG_BYTES),
   };
 }
 
@@ -303,11 +306,11 @@ function keylogMember(obj: Record<string, unknown>, key: string): RelayKeylogMem
   if (value === undefined || value === null) return undefined;
   if (!isRecord(value)) fail(`invalid ${key}`);
   const op = value.op;
-  if (op !== 'admit' && op !== 'revoke') fail(`invalid ${key}.op`);
+  if (op !== 'admit' && op !== 'revoke' && op !== 'rotate-root') fail(`invalid ${key}.op`);
   return {
     op,
     bytes: b64(value, 'bytes', undefined, RELAY_CTL_MAX_MEMBER_BYTES),
-    sig: b64(value, 'sig', 64),
+    sig: b64(value, 'sig', undefined, RELAY_CTL_MAX_SIG_BYTES),
   };
 }
 
@@ -326,7 +329,6 @@ function listNodes(obj: Record<string, unknown>): RelayListNode[] {
       id: hexId(item, 'id'),
       online: bool(item, 'online'),
       status,
-      direct_capable: bool(item, 'direct_capable'),
       ...(epoch !== undefined ? { epoch } : {}),
       ...(item.blob === undefined || item.blob === null ? {} : { blob: envelope(item, 'blob') }),
     };
@@ -362,6 +364,7 @@ function parseKeylogAck(obj: Record<string, unknown>): RelayCtlMessage {
   const head = optSeq(obj, 'head');
   const error = optStr(obj, 'error');
   const memberIgnored = optBool(obj, 'member_ignored');
+  const memberError = optStr(obj, 'member_error');
   return {
     t: 'relay.keylog.ack',
     id: str(obj, 'id'),
@@ -370,6 +373,7 @@ function parseKeylogAck(obj: Record<string, unknown>): RelayCtlMessage {
     ...(error !== undefined ? { error } : {}),
     ...(head !== undefined ? { head } : {}),
     ...(memberIgnored !== undefined ? { member_ignored: memberIgnored } : {}),
+    ...(memberError !== undefined ? { member_error: memberError } : {}),
   };
 }
 
@@ -399,7 +403,6 @@ const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
     t: 'relay.status',
     blob: envelope(obj, 'blob'),
     epoch: uint(obj, 'epoch'),
-    direct_capable: bool(obj, 'direct_capable'),
   }),
   'relay.list': (obj) => ({
     t: 'relay.list',
@@ -448,7 +451,7 @@ const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
     id: str(obj, 'id'),
     enroll_pk: b64(obj, 'enroll_pk', 32),
     authorization: b64(obj, 'authorization', undefined, RELAY_CTL_MAX_MEMBER_BYTES),
-    authorization_sig: b64(obj, 'authorization_sig', 64),
+    authorization_sig: b64(obj, 'authorization_sig', undefined, RELAY_CTL_MAX_SIG_BYTES),
     exp: uint(obj, 'exp'),
   }),
   'relay.enroll.ack': (obj) => {

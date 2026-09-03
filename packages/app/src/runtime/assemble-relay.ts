@@ -1,6 +1,6 @@
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
-import { getMeshRequestContext } from '../../../../apps/gateway/src/mesh/mesh-deps';
+import { clientIpFromRequest } from '../../../../apps/gateway/src/mesh/client-ip';
 import { type RelayRuntime, createRelayRuntime } from '../../../../apps/gateway/src/relay';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
@@ -57,6 +57,7 @@ export function createAssembledRelay(input: {
       ? { isLocalUserAuthenticated: (req: Request) => input.routeDeps.authenticate(req).ok }
       : {}),
     ...(readNodeEnv() === 'production' ? { patchEnv: patchRelayEnv } : {}),
-    clientIp: (req: Request) => getMeshRequestContext(req).clientIp ?? '',
+    // 反代后面 socket IP 全是代理自己：限速必须按 trusted-proxy 解析出的真实客户端 IP
+    clientIp: (req: Request) => clientIpFromRequest(req) ?? '',
   });
 }

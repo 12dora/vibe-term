@@ -70,9 +70,23 @@ export function isViaDomain(effectiveUrl: URL, hosts: readonly string[]): boolea
   return normalized !== hostname && set.has(hostname);
 }
 
+const SERVICE_EXACT_PATHS = new Set([
+  '/hub/uplink',
+  '/relay/uplink',
+  '/healthz',
+  '/api/relay/health',
+]);
+/** 中继 redeem（POST）与 authorization 查询（GET）：加入方还没有任何浏览器会话。 */
+const RELAY_ENROLLMENT_PATH = /^\/api\/relay\/tenants\/[^/]+\/enrollments\/[^/]+$/;
+const HUB_ENROLLMENT_PATH = /^\/api\/hub\/enrollments\/[^/]+$/;
+
+function isServiceGetPath(pathname: string): boolean {
+  if (pathname === '/api/hub/status') return true;
+  return HUB_ENROLLMENT_PATH.test(pathname);
+}
+
 export function isServicePath(method: string, pathname: string): boolean {
-  if (pathname === '/hub/uplink') return true;
-  if (pathname === '/healthz') return true;
+  if (SERVICE_EXACT_PATHS.has(pathname)) return true;
   if (
     pathname === '/.well-known/acme-challenge' ||
     pathname.startsWith('/.well-known/acme-challenge/')
@@ -80,10 +94,10 @@ export function isServicePath(method: string, pathname: string): boolean {
     return true;
   }
   const verb = method.toUpperCase();
-  if (verb === 'POST' && pathname === '/api/hub/enrollments/redeem') return true;
-  if (verb === 'GET' && pathname === '/api/hub/status') return true;
-  if (verb === 'GET' && /^\/api\/hub\/enrollments\/[^/]+$/.test(pathname)) return true;
-  return false;
+  if (verb !== 'GET' && verb !== 'POST') return false;
+  if (RELAY_ENROLLMENT_PATH.test(pathname)) return true;
+  if (verb === 'GET') return isServiceGetPath(pathname);
+  return pathname === '/api/relay/enroll' || pathname === '/api/hub/enrollments/redeem';
 }
 
 export function isJsonDeniedPath(pathname: string): boolean {

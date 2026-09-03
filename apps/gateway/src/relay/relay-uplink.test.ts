@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
 import type { LinkStream } from '@tmex/shared/link';
 import { type RelayEnvelope, relaySeqToWire } from '@tmex/shared/relay';
-import { type RelayHarness, type RelayNodeClient, bootRelayHarness } from './relay-test-harness';
+import {
+  type RelayHarness,
+  type RelayNodeClient,
+  bootRelayHarness,
+  enrollRelayRoot,
+} from './relay-test-harness';
 
 let harness: RelayHarness | null = null;
 
@@ -129,12 +134,11 @@ describe('relay list and status', () => {
     const clientB = await tenant.connect(b);
     await clientB.inbox.takeOf('auth.ok');
     const blob = envelope('status-a');
-    clientA.send({ t: 'relay.status', blob, epoch: 7, direct_capable: true });
+    clientA.send({ t: 'relay.status', blob, epoch: 7 });
     const list = await clientB.inbox.takeOf('relay.list', 2_000);
     if (list.t !== 'relay.list') throw new Error('expected relay.list');
     const entry = list.nodes.find((n) => n.id === a.nodeId);
     expect(entry?.online).toBe(true);
-    expect(entry?.direct_capable).toBe(true);
     expect(entry?.epoch).toBe(7);
     expect(entry?.blob).toEqual(blob);
   });
@@ -201,16 +205,8 @@ describe('relay key log', () => {
     await clientA.inbox.takeOf('auth.ok');
     const clientB = await tenant.connect(b);
     await clientB.inbox.takeOf('auth.ok');
-    const revoke = tenant.revokeRecord(b.nodeId);
-    clientA.send({
-      t: 'relay.keylog.append',
-      id: 'rev',
-      seq: 1,
-      blob: envelope('revoke'),
-      member: { op: 'revoke', bytes: revoke.bytes, sig: revoke.sig },
-    });
-    const ack = await clientA.inbox.takeOf('relay.keylog.ack');
-    expect(ack.t === 'relay.keylog.ack' && ack.ok).toBe(true);
+    const ack = await tenant.appendMember(clientA, 'revoke', tenant.revokeRecord(b.nodeId));
+    expect(ack.ok).toBe(true);
     const kicked = await clientB.inbox.takeOf('relay.kicked');
     expect(kicked.t === 'relay.kicked' && kicked.reason).toBe('revoked');
     expect(relay.runtime.tenants.getNode(tenant.id, b.nodeId)?.status).toBe('revoked');
@@ -226,18 +222,144 @@ describe('relay key log', () => {
     const clientB = await tenant.connect(b);
     await clientB.inbox.takeOf('auth.ok');
     const revoke = tenant.revokeRecord(b.nodeId, 'passkey');
-    clientA.send({
-      t: 'relay.keylog.append',
-      id: 'rev2',
-      seq: 1,
-      blob: envelope('revoke'),
-      member: { op: 'revoke', bytes: revoke.bytes, sig: revoke.sig },
-    });
-    const ack = await clientA.inbox.takeOf('relay.keylog.ack');
-    if (ack.t !== 'relay.keylog.ack') throw new Error('expected ack');
+    // 真实的变长 passkey 断言（不是 64 个零字节）必须能过编解码，但中继一律不采信
+    expect(revoke.sig.length).toBeGreaterThan(100);
+    const ack = await tenant.appendMember(clientA, 'revoke', revoke);
     expect(ack.ok).toBe(true);
     expect(ack.member_ignored).toBe(true);
+    expect(ack.member_error).toBe('passkey_unverifiable');
     expect(relay.runtime.tenants.getNode(tenant.id, b.nodeId)?.status).toBe('admitted');
+  });
+
+  test('member 明文必须是本次 seq 的那条记录：错位的 admit 一律忽略', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const a = tenant.addNode();
+    const client = await tenant.connect(a);
+    await client.inbox.takeOf('auth.ok');
+    // a.admit 的记录 seq 是 1，这里把它挂到 seq=1 之外的位置
+    client.send({
+      t: 'relay.keylog.append',
+      id: 'mismatch',
+      seq: 1,
+      blob: envelope('x'),
+    });
+    await client.inbox.takeOf('relay.keylog.ack');
+    client.send({
+      t: 'relay.keylog.append',
+      id: 'mismatch-2',
+      seq: 2,
+      blob: envelope('y'),
+      member: { op: 'admit', bytes: a.admit.bytes, sig: a.admit.sig },
+    });
+    const ack = await client.inbox.takeOf('relay.keylog.ack');
+    if (ack.t !== 'relay.keylog.ack') throw new Error('expected ack');
+    expect(ack.ok).toBe(true);
+    expect(ack.member_error).toBe('seq_mismatch');
+  });
+
+  test('被吊销的节点不会被重放的 admit 抬回来（root 与 passkey 两条路都不行）', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const a = tenant.addNode();
+    const b = tenant.addNode();
+    const clientA = await tenant.connect(a);
+    await clientA.inbox.takeOf('auth.ok');
+    const clientB = await tenant.connect(b);
+    await clientB.inbox.takeOf('auth.ok');
+    await tenant.appendMember(clientA, 'revoke', tenant.revokeRecord(b.nodeId));
+    expect(relay.runtime.tenants.getNode(tenant.id, b.nodeId)?.status).toBe('revoked');
+
+    // 重放 b 自己的 admit-node（根签名、格式完好），挂在下一条 seq 上
+    const head = Number(relay.runtime.tenants.get(tenant.id)?.keyLogHeadSeq ?? 0n);
+    clientA.send({
+      t: 'relay.keylog.append',
+      id: 'replay',
+      seq: head + 1,
+      blob: envelope('replay'),
+      member: { op: 'admit', bytes: b.admit.bytes, sig: b.admit.sig },
+    });
+    const replayAck = await clientA.inbox.takeOf('relay.keylog.ack');
+    if (replayAck.t !== 'relay.keylog.ack') throw new Error('expected ack');
+    expect(replayAck.ok).toBe(true);
+    expect(replayAck.member_ignored).toBe(true);
+    expect(relay.runtime.tenants.getNode(tenant.id, b.nodeId)?.status).toBe('revoked');
+
+    // passkey 签名的 admit（中继验不了、只靠令牌信任）同样不能翻案
+    const passkeyAdmit = tenant.addNode({ admitSigner: 'passkey' });
+    const forged = { ...passkeyAdmit.admit };
+    clientA.send({
+      t: 'relay.keylog.append',
+      id: 'forged',
+      seq: forged.seq,
+      blob: envelope('forged'),
+      member: { op: 'admit', bytes: forged.bytes, sig: forged.sig },
+    });
+    await clientA.inbox.takeOf('relay.keylog.ack');
+    expect(relay.runtime.tenants.getNode(tenant.id, b.nodeId)?.status).toBe('revoked');
+    // 被吊销的节点重连也一样：带着自己的 admit 也进不来
+    const reconnect = await tenant.connect(b);
+    expect(await closed(reconnect)).toBe('revoked');
+  });
+
+  test('日志行与 head 同事务：head 冲突时不会留下半条记录', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    await client.inbox.takeOf('auth.ok');
+    client.send({ t: 'relay.keylog.append', id: 'ok1', seq: 1, blob: envelope('one') });
+    await client.inbox.takeOf('relay.keylog.ack');
+    // 直接把 head 抬高，模拟并发写：本次 append 必须整体回滚
+    relay.runtime.tenants.setKeyLogHead(tenant.id, 5n);
+    client.send({ t: 'relay.keylog.append', id: 'ok2', seq: 2, blob: envelope('two') });
+    const ack = await client.inbox.takeOf('relay.keylog.ack');
+    if (ack.t !== 'relay.keylog.ack') throw new Error('expected ack');
+    expect(ack.ok).toBe(false);
+    expect(ack.error).toBe('SEQ_MISMATCH');
+    expect(relay.runtime.keyLog.list(tenant.id, 2n, 10)).toEqual([]);
+  });
+
+  test('根轮换：新根签的 admit 通过，旧根签的被拒', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const owner = tenant.addNode();
+    const client = await tenant.connect(owner);
+    await client.inbox.takeOf('auth.ok');
+    const rotate = tenant.rotateRootRecord();
+    const rotateAck = await tenant.appendMember(client, 'rotate-root', rotate);
+    expect(rotateAck.ok).toBe(true);
+    expect(rotateAck.member_ignored).toBeUndefined();
+    const stored = relay.runtime.tenants.get(tenant.id);
+    expect(stored?.rootEpoch).toBe(1);
+
+    // 轮换之后仍用旧根签的 admit：epoch 对不上，直接忽略
+    const staleNode = tenant.addNode();
+    const stale = await tenant.appendMember(client, 'admit', staleNode.admit);
+    expect(stale.member_error).toBe('epoch_mismatch');
+    expect(relay.runtime.tenants.getNode(tenant.id, staleNode.nodeId)).toBeNull();
+
+    // 轮换后用新根签的 admit：正常通过
+    rotate.apply();
+    const fresh = tenant.addNode();
+    const freshAck = await tenant.appendMember(client, 'admit', fresh.admit);
+    expect(freshAck.ok).toBe(true);
+    expect(freshAck.member_ignored).toBeUndefined();
+    expect(relay.runtime.tenants.getNode(tenant.id, fresh.nodeId)?.status).toBe('admitted');
+  });
+
+  test('根轮换后旧根 enroll 落到新租户，拿不到原租户的注册表', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const owner = tenant.addNode();
+    const client = await tenant.connect(owner);
+    await client.inbox.takeOf('auth.ok');
+    const oldRoot = tenant.root;
+    await tenant.appendMember(client, 'rotate-root', tenant.rotateRootRecord());
+    const reEnrolled = await enrollRelayRoot(relay, oldRoot);
+    expect(reEnrolled.tenant_id).not.toBe(tenant.id);
+    expect(relay.runtime.tenants.listNodes(reEnrolled.tenant_id)).toEqual([]);
+    expect(relay.runtime.tenants.get(tenant.id)?.rootEpoch).toBe(1);
   });
 
   test('key logs of two tenants are independent', async () => {

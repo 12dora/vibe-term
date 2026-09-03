@@ -136,10 +136,13 @@ export class RelayRuntime {
     this.keyLog = new RelayKeyLogStore(opts.db);
     this.configStore = new RelayConfigStore(opts.db);
     this.registry = new RelayRegistry();
-    this.metering = new RelayMetering(this.tenants, this.now, opts.meterFlushIntervalMs);
+    this.metering = new RelayMetering(this.tenants, this.now, opts.meterFlushIntervalMs, () =>
+      this.uplink.sweepEnrollments()
+    );
     this.limiter = new RelayEnrollLimiter(this.now);
     this.adminAuth = adminAuth;
     this.uplink = new RelayUplinkServer({
+      db: opts.db,
       tenants: this.tenants,
       keyLog: this.keyLog,
       configStore: this.configStore,

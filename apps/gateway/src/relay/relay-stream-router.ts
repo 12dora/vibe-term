@@ -47,26 +47,25 @@ export async function acceptRelayStream(
     return;
   }
   const quota = ctx.quotaFor(live.tenantId);
-  if (ctx.registry.streamCount(live.tenantId) >= quota.maxStreams) {
+  // 先占位再 await：openStream 是异步的，检查放在它后面会让并发 OPEN 一起穿过配额
+  if (!ctx.registry.reserveStream(live.tenantId, quota.maxStreams)) {
     stream.reset('quota-streams');
     return;
   }
-  let outbound: LinkStream;
-  try {
-    outbound = await target.link.openStream(te.encode(JSON.stringify({ to, from: live.nodeId })));
-  } catch {
-    stream.reset('open-failed');
-    return;
-  }
-  live.streams += 1;
-  target.streams += 1;
   let released = false;
   const release = (): void => {
     if (released) return;
     released = true;
-    live.streams = Math.max(0, live.streams - 1);
-    target.streams = Math.max(0, target.streams - 1);
+    ctx.registry.releaseStream(live.tenantId);
   };
+  let outbound: LinkStream;
+  try {
+    outbound = await target.link.openStream(te.encode(JSON.stringify({ to, from: live.nodeId })));
+  } catch {
+    release();
+    stream.reset('open-failed');
+    return;
+  }
   pumpRelayPair(ctx, live.tenantId, stream, outbound, release);
 }
 

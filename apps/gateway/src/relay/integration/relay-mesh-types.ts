@@ -88,9 +88,11 @@ export type RelayTenant = {
   submitPrepared(res: Response, type: 'set-relays' | 'meta-key'): Promise<void>;
   submitRecord(
     node: RelayMeshNode,
-    type: 'set-relays' | 'meta-key' | 'admit-node' | 'revoke-node',
+    type: 'set-relays' | 'meta-key' | 'admit-node' | 'revoke-node' | 'rotate-root-keep',
     payload: Uint8Array
   ): Promise<Response>;
+  /** 旧根签一条 `rotate-root-keep` 并等中继跟上；返回新的根钥。 */
+  rotateRoot(): Promise<RootKey>;
 };
 
 export type RelayMeshHarness = {

@@ -19,19 +19,19 @@ import { parseOpenPayload } from './peer-protocol';
 import { RelayKeyLogSync, relayMemberFromRecord } from './relay-key-log-sync';
 import {
   acceptRelayEnrollRedeemed,
+  acceptRelayRtcSignal,
   buildRelayStatusMessage,
+  emitRelayRtcSignal,
   relayListToNodeList,
-  relayRtcToSignal,
   relayStatusBlobOf,
-  sealRelayRtcSignal,
 } from './relay-node-list';
 import type { RelaySecrets } from './relay-secrets';
 import {
   type RelayAuthContext,
   type RelayEnrollAck,
+  RelayEnrollChannel,
   type RelayEnrollCreateInput,
   buildRelayAuth,
-  sendRelayEnrollCreate,
 } from './relay-uplink-auth';
 import { defaultRelayWsFactory, openRelayLink } from './relay-uplink-http';
 import type {
@@ -92,6 +92,9 @@ export class RelayUplinkClient {
   tenantId: string | null = null;
   listVersion = 0;
   nodesViaRelay = 0;
+  /** `relay.list` 串行化：blob 多的大清单解密慢，晚到的旧版本不能覆盖新版本。 */
+  private listChain: Promise<void> = Promise.resolve();
+  private readonly enroll: RelayEnrollChannel;
 
   private readonly opts: RelayUplinkClientOptions;
   private readonly relayHost: string;
@@ -121,6 +124,7 @@ export class RelayUplinkClient {
     this.userIdOf = typeof uid === 'function' ? uid : () => uid;
     this.scheduler = opts.scheduler ?? defaultScheduler();
     this.wsFactory = opts.wsFactory ?? defaultRelayWsFactory(opts.tlsCa);
+    this.enroll = new RelayEnrollChannel((msg) => this.rawSend(msg));
     this.keyLog = new RelayKeyLogSync({
       host: {
         generation: () => this.connectGeneration,
@@ -221,7 +225,7 @@ export class RelayUplinkClient {
   /** 与 hub 客户端同签名；这里把 hub 控制面消息翻译成 relay/v1。 */
   sendCtl(msg: UplinkCtlMessage): void {
     if (msg.t === 'rtc.signal') {
-      void this.sendRtcSignal(msg);
+      void emitRelayRtcSignal(msg, this.opts.secrets, (out) => this.rawSend(out));
       return;
     }
     if (msg.t === 'key.log.append') {
@@ -293,14 +297,8 @@ export class RelayUplinkClient {
     if (this.state !== 'online' || !this.isAuthenticated()) {
       return Promise.resolve({ ok: false, error: 'RELAY_OFFLINE' });
     }
-    return sendRelayEnrollCreate(input, {
-      send: (msg) => this.rawSend(msg),
-      waiters: this.enrollWaiters,
-      timeoutMs,
-    });
+    return this.enroll.create(input, timeoutMs);
   }
-
-  private readonly enrollWaiters = new Map<string, (ack: RelayEnrollAck) => void>();
 
   private isAuthenticated(): boolean {
     return (
@@ -378,12 +376,15 @@ export class RelayUplinkClient {
   }
 
   private handleAuthedCtl(msg: RelayCtlMessage): void {
-    if (msg.t === 'relay.list') void this.handleList(msg);
+    if (msg.t === 'relay.list') this.enqueueList(msg);
     else if (msg.t === 'relay.keylog.res') this.keyLog.handleRes(msg);
     else if (msg.t === 'relay.keylog.ack') this.keyLog.handleAck(msg);
     else if (msg.t === 'relay.keylog.push') this.keyLog.handlePush(msg);
-    else if (msg.t === 'relay.rtc') void this.handleRtc(msg);
-    else if (msg.t === 'relay.enroll.ack') this.settleEnrollAck(msg);
+    else if (msg.t === 'relay.rtc') {
+      void acceptRelayRtcSignal(msg, this.opts.secrets, (signal) =>
+        this.opts.onRtcSignal?.(signal)
+      );
+    } else if (msg.t === 'relay.enroll.ack') this.enroll.settle(msg);
     else if (msg.t === 'enroll.redeemed') this.handleEnrollRedeemed(msg);
     else if (msg.t === 'relay.quota') {
       const { maxNodes, maxStreams, bandwidthBytesPerSec } = msg;
@@ -394,12 +395,6 @@ export class RelayUplinkClient {
       this.opts.onKicked?.(msg.reason);
       this.tearDownLink(`kicked:${msg.reason}`);
     }
-  }
-
-  private settleEnrollAck(msg: Extract<RelayCtlMessage, { t: 'relay.enroll.ack' }>): void {
-    const waiter = this.enrollWaiters.get(msg.id);
-    this.enrollWaiters.delete(msg.id);
-    waiter?.({ ok: msg.ok, ...(msg.error ? { error: msg.error } : {}) });
   }
 
   private handleEnrollRedeemed(msg: Extract<RelayCtlMessage, { t: 'enroll.redeemed' }>): void {
@@ -509,6 +504,19 @@ export class RelayUplinkClient {
     }
   }
 
+  /** 按到达顺序串行处理，且丢掉版本不比已应用的新的清单。 */
+  private enqueueList(msg: Extract<RelayCtlMessage, { t: 'relay.list' }>): void {
+    const generation = this.connectGeneration;
+    this.listChain = this.listChain
+      .then(() => {
+        if (generation !== this.connectGeneration || msg.version < this.listVersion) return;
+        return this.handleList(msg);
+      })
+      .catch((err) => {
+        console.warn(stamp(`[relay] node list failed err=${errMessage(err)}`));
+      });
+  }
+
   private async handleList(msg: Extract<RelayCtlMessage, { t: 'relay.list' }>): Promise<void> {
     this.listVersion = msg.version;
     this.rtcConfig = msg.rtc;
@@ -519,23 +527,16 @@ export class RelayUplinkClient {
       secrets: this.opts.secrets,
       now: this.scheduler.now(),
     });
+    if (msg.version < this.listVersion) return;
     this.nodesViaRelay = list.nodes.length;
     this.keyLog.noteRemoteHead(relaySeqFromWire(msg.key_log_head_seq));
     this.opts.onNodeList?.(list);
   }
 
-  private async handleRtc(msg: Extract<RelayCtlMessage, { t: 'relay.rtc' }>): Promise<void> {
-    const signal = await relayRtcToSignal(msg, this.opts.secrets);
-    if (signal) this.opts.onRtcSignal?.(signal);
-  }
-
-  private async sendRtcSignal(msg: Extract<UplinkCtlMessage, { t: 'rtc.signal' }>): Promise<void> {
-    try {
-      const out = await sealRelayRtcSignal(msg, this.opts.secrets);
-      if (out) this.rawSend(out);
-    } catch (err) {
-      console.warn(stamp(`[relay] rtc seal failed err=${errMessage(err)}`));
-    }
+  /** 密钥日志同步的健康度：跳过的记录数与第一条卡住的中继 seq。 */
+  keyLogHealth(): { skipped: number; blockedSeq: string | null; caughtUp: boolean } {
+    const { skipped, blockedSeq, caughtUp } = this.keyLog;
+    return { skipped, blockedSeq: blockedSeq === null ? null : blockedSeq.toString(), caughtUp };
   }
 
   private startHeartbeat(link: LinkSession, generation: number): void {
@@ -571,8 +572,7 @@ export class RelayUplinkClient {
     this.authPhase = 'idle';
     this.authenticatedGeneration = 0;
     this.lastStatusJson = '';
-    for (const waiter of this.enrollWaiters.values()) waiter({ ok: false, error: 'RELAY_OFFLINE' });
-    this.enrollWaiters.clear();
+    this.enroll.reset('RELAY_OFFLINE');
     if (this.state === 'online') this.setState('connecting');
   }
 

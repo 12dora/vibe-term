@@ -32,13 +32,7 @@ type ListEntry = UplinkNodeList['nodes'][number];
 async function openStatusBlob(
   node: RelayListNode,
   secrets: RelaySecrets
-): Promise<{
-  name: string;
-  version: string;
-  tmux: boolean;
-  inventory: unknown;
-  endpoints: unknown;
-} | null> {
+): Promise<RelayStatusBlob | null> {
   if (!node.blob) return null;
   const epoch = node.epoch ?? node.blob.epoch;
   if (epoch === undefined) return null;
@@ -52,6 +46,7 @@ async function openStatusBlob(
   }
 }
 
+/** 解不开状态块时只能吃本地 `peer_cache`：`direct_capable` 也在封里，中继不再明文带。 */
 function entryFromCache(node: RelayListNode, ctx: RelayListContext): ListEntry {
   const peer = ctx.userStore.getPeer(node.id);
   return {
@@ -60,7 +55,7 @@ function entryFromCache(node: RelayListNode, ctx: RelayListContext): ListEntry {
     online: node.online,
     endpoints: safeJson(peer?.endpointsJson, []),
     inventory: safeJson(peer?.inventoryJson, null),
-    direct_capable: node.direct_capable,
+    direct_capable: peer?.directCapable ?? false,
     version: null,
   };
 }
@@ -88,7 +83,7 @@ export async function relayListToNodeList(
       name: blob.name || node.id,
       endpointsJson: jsonText(blob.endpoints),
       inventoryJson: jsonText(blob.inventory),
-      directCapable: node.direct_capable,
+      directCapable: blob.direct_capable,
       lastSeenAt: ctx.now,
       listVersion: msg.version,
     });
@@ -98,7 +93,7 @@ export async function relayListToNodeList(
       online: node.online,
       endpoints: blob.endpoints,
       inventory: blob.inventory,
-      direct_capable: node.direct_capable,
+      direct_capable: blob.direct_capable,
       version: blob.version || null,
     });
   }
@@ -135,6 +130,30 @@ export async function relayRtcToSignal(
   }
 }
 
+/** 收到中继的 `relay.rtc`：解密后交给既有 RTC 路由；解不开就丢（旧世代 / 不属于本租户）。 */
+export async function acceptRelayRtcSignal(
+  msg: Extract<RelayCtlMessage, { t: 'relay.rtc' }>,
+  secrets: RelaySecrets,
+  onSignal: (signal: Extract<UplinkCtlMessage, { t: 'rtc.signal' }>) => void
+): Promise<void> {
+  const signal = await relayRtcToSignal(msg, secrets);
+  if (signal) onSignal(signal);
+}
+
+/** 本机 `rtc.signal` → 封装后发给中继；封不上（无 K_meta）就静默丢弃。 */
+export async function emitRelayRtcSignal(
+  msg: Extract<UplinkCtlMessage, { t: 'rtc.signal' }>,
+  secrets: RelaySecrets,
+  send: (out: Extract<RelayCtlMessage, { t: 'relay.rtc' }>) => void
+): Promise<void> {
+  try {
+    const out = await sealRelayRtcSignal(msg, secrets);
+    if (out) send(out);
+  } catch (err) {
+    console.warn(stamp(`[relay] rtc seal failed err=${err instanceof Error ? err.message : err}`));
+  }
+}
+
 export async function sealRelayRtcSignal(
   msg: Extract<UplinkCtlMessage, { t: 'rtc.signal' }>,
   secrets: RelaySecrets
@@ -168,6 +187,7 @@ export function relayStatusBlobOf(status: UplinkStatus, name: string): RelayStat
     name,
     version: status.version,
     tmux: status.tmux,
+    direct_capable: status.direct_capable,
     inventory: status.inventory,
     endpoints: status.endpoints,
   };
@@ -184,12 +204,7 @@ export async function buildRelayStatusMessage(
   const blob = relayStatusBlobOf(status, name);
   const sealed = await sealEnvelope(meta.key, 'status', encodeRelayStatusBlob(blob), meta.epoch);
   return {
-    msg: {
-      t: 'relay.status',
-      blob: sealed,
-      epoch: meta.epoch,
-      direct_capable: status.direct_capable,
-    },
+    msg: { t: 'relay.status', blob: sealed, epoch: meta.epoch },
     json: jsonStable(blob),
   };
 }

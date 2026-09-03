@@ -136,6 +136,8 @@ export class RelayRoutes {
       nodesViaRelay: client?.nodesViaRelay ?? 0,
       reauthRequired: rows.some((row) => row.kicked),
       quota: client?.quota ?? null,
+      // 中继上的密钥日志由同租户节点写入；解不开的记录会被跳过，这里把健康度暴露给前端
+      keyLog: client?.keyLogHealth() ?? { skipped: 0, blockedSeq: null, caughtUp: false },
     });
   }
 
