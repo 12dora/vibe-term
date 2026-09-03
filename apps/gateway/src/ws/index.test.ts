@@ -8,7 +8,6 @@ import { CarrierSwitchController, type DirectCarrier } from '../mesh/rtc/carrier
 import { DataChannelCarrier } from '../mesh/rtc/data-channel-carrier';
 import { pairDataChannels } from '../mesh/rtc/test-fakes';
 import { sessionStateStore } from './borsh/session-state';
-import { switchBarrier } from './borsh/switch-barrier';
 import { logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
 import { WebSocketServer, payloadNeedsChunking } from './index';
 import { TerminalOutputMetrics } from './terminal-output-metrics';
@@ -44,7 +43,7 @@ describe('WebSocketServer client diagnostics', () => {
     const clientImpl = `tmex-fe-${'x'.repeat(100)}`;
     const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl,
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
       supportsCompression: false,
       supportsDiffSnapshot: false,
@@ -159,7 +158,6 @@ describe('WebSocketServer connection entry dedup', () => {
 
     const entry = await server.getOrCreateConnectionEntry('device-c', ws);
     entry.clients.add(ws);
-    ws.data.borshState.selectedPanes['device-c'] = '%1';
 
     server.handleDeviceDisconnect(ws, 'device-c');
 
@@ -315,13 +313,6 @@ describe('WebSocketServer snapshot recovery', () => {
     try {
       server.refreshSnapshotPolling('device-watchdog');
       expect(setIntervalSpy).not.toHaveBeenCalled();
-
-      ws.data.borshState.selectedPanes['device-watchdog'] = '%1';
-      server.refreshSnapshotPolling('device-watchdog');
-      expect(setIntervalSpy).not.toHaveBeenCalled();
-
-      ws.data.borshState.selectedPanes['device-watchdog'] = null;
-      server.refreshSnapshotPolling('device-watchdog');
       expect(entry.snapshotPollTimer).toBeNull();
     } finally {
       if (entry.snapshotPollTimer) {
@@ -329,137 +320,6 @@ describe('WebSocketServer snapshot recovery', () => {
       }
       setIntervalSpy.mockRestore();
     }
-  });
-});
-
-describe('WebSocketServer slow consumer isolation', () => {
-  test('drops output for panes with no selected or subscribed client before batching', () => {
-    const server = new WebSocketServer() as any;
-    const ws = createBorshTestWs({
-      send() {
-        return 1;
-      },
-    });
-    ws.data.borshState.selectedPanes['device-interest'] = '%2';
-    setupConnectionEntry(server, { deviceId: 'device-interest', ws });
-    const push = spyOn(server.terminalOutputBatcher, 'push');
-
-    server.broadcastTerminalOutput('device-interest', '%1', new Uint8Array([1]));
-    expect(push).not.toHaveBeenCalled();
-
-    ws.data.borshState.subscribedPanes['device-interest'] = new Set(['%1']);
-    server.broadcastTerminalOutput('device-interest', '%1', new Uint8Array([2]));
-    expect(push).toHaveBeenCalledTimes(1);
-    server.terminalOutputBatcher.discardDevice('device-interest');
-    push.mockRestore();
-  });
-
-  test('checks pane interest without allocating a client array per output event', () => {
-    const server = new WebSocketServer() as any;
-    const ws = createBorshTestWs({
-      send() {
-        return 1;
-      },
-    });
-    ws.data.borshState.selectedPanes['device-interest'] = '%1';
-    setupConnectionEntry(server, { deviceId: 'device-interest', ws });
-    const from = spyOn(Array, 'from');
-
-    server.broadcastTerminalOutput('device-interest', '%1', new Uint8Array([1]));
-
-    expect(from).not.toHaveBeenCalled();
-    from.mockRestore();
-    server.terminalOutputBatcher.discardDevice('device-interest');
-  });
-
-  test('coalesces pending pane output before encoding it for clients', () => {
-    const server = new WebSocketServer() as any;
-    const frames: Uint8Array[] = [];
-    const ws = createBorshTestWs({
-      send(frame) {
-        frames.push(frame);
-        return frame.length;
-      },
-    });
-    ws.data.borshState.selectedPanes['device-batch'] = '%1';
-    setupConnectionEntry(server, { deviceId: 'device-batch', ws });
-
-    server.broadcastTerminalOutput('device-batch', '%1', new Uint8Array([1, 2]));
-    server.broadcastTerminalOutput('device-batch', '%1', new Uint8Array([3]));
-
-    expect(frames).toHaveLength(0);
-    server.terminalOutputBatcher.flushDevice('device-batch');
-    expect(frames).toHaveLength(1);
-
-    const envelope = wsBorsh.decodeEnvelope(frames[0] as Uint8Array);
-    const payload = wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, envelope.payload);
-    expect(Array.from(payload.data)).toEqual([1, 2, 3]);
-  });
-
-  test('shares one immutable fused frame across clients with the same sequence', () => {
-    const server = new WebSocketServer() as any;
-    const first = createBorshTestWs();
-    const second = createBorshTestWs();
-    first.data.borshState.selectedPanes['device-shared'] = '%1';
-    second.data.borshState.selectedPanes['device-shared'] = '%1';
-    setupConnectionEntry(server, {
-      deviceId: 'device-shared',
-      clients: new Set([first, second]),
-    });
-
-    server.broadcastTerminalOutput('device-shared', '%1', new Uint8Array([1, 2, 3]));
-    server.terminalOutputBatcher.flushDevice('device-shared');
-
-    expect(first.sent).toHaveLength(1);
-    expect(second.sent).toHaveLength(1);
-    expect(first.sent[0]).toBe(second.sent[0]);
-
-    second.data.borshState.seqGen();
-    server.broadcastTerminalOutput('device-shared', '%1', new Uint8Array([4]));
-    server.terminalOutputBatcher.flushDevice('device-shared');
-    expect(first.sent[1]).not.toBe(second.sent[1]);
-  });
-
-  test('stops encoding live output while blocked and resyncs after a skipped frame drains', () => {
-    const server = new WebSocketServer() as any;
-    let sendCalls = 0;
-    let terminateCalls = 0;
-    const sent: Uint8Array[] = [];
-    const ws = createBorshTestWs({
-      send(bytes) {
-        sendCalls += 1;
-        sent.push(bytes.slice());
-        return sendCalls === 1 ? -1 : bytes.byteLength;
-      },
-      terminate() {
-        terminateCalls += 1;
-      },
-    });
-    ws.data.borshState.selectedPanes['device-slow'] = '%1';
-    setupConnectionEntry(server, { deviceId: 'device-slow', ws });
-
-    server.broadcastTerminalOutput('device-slow', '%1', new Uint8Array([1]));
-    server.terminalOutputBatcher.flushDevice('device-slow');
-    server.broadcastTerminalOutput('device-slow', '%1', new Uint8Array([2]));
-    server.terminalOutputBatcher.flushDevice('device-slow');
-
-    expect(sendCalls).toBe(1);
-    expect(terminateCalls).toBe(0);
-
-    server.handleDrain(ws);
-
-    expect(terminateCalls).toBe(0);
-    const gap = sent.find((frame) => {
-      try {
-        const env = wsBorsh.decodeEnvelopeView(frame);
-        if (env.kind !== wsBorsh.KIND_CANONICAL_EVENT) return false;
-        const event = wsBorsh.decodeCanonicalEventPayload(env.payload).event;
-        return 'SourceGap' in event && 'Stream' in event.SourceGap.scope;
-      } catch {
-        return false;
-      }
-    });
-    expect(gap).toBeDefined();
   });
 });
 
@@ -488,43 +348,6 @@ describe('WebSocketServer frame sizing', () => {
       expect(frame.byteLength).toBeLessThanOrEqual(128);
       expect(wsBorsh.decodeEnvelope(frame).kind).toBe(wsBorsh.KIND_CHUNK);
     }
-  });
-
-  test('fused terminal output preserves generic chunk framing and sequence semantics', () => {
-    const server = new WebSocketServer() as any;
-    const sent: Uint8Array[] = [];
-    const ws = createBorshTestWs({
-      send(frame) {
-        sent.push(frame.slice());
-        return frame.byteLength;
-      },
-    });
-    ws.data.borshState.maxFrameBytes = 128;
-    const data = new Uint8Array(512).fill(0x7a);
-
-    const payloadBytes = server.sendTermOutput(ws, '设备-a', '%窗格-1', data);
-
-    expect(payloadBytes).toBeGreaterThan(data.byteLength);
-    expect(sent.length).toBeGreaterThan(1);
-    const reassembler = new wsBorsh.ChunkReassembler();
-    let reassembled: wsBorsh.ReassembledMessage | null = null;
-    for (const [index, frame] of sent.entries()) {
-      expect(frame.byteLength).toBeLessThanOrEqual(128);
-      const envelope = wsBorsh.decodeEnvelope(frame);
-      expect(envelope.kind).toBe(wsBorsh.KIND_CHUNK);
-      expect(envelope.seq).toBe(index + 2);
-      const chunk = wsBorsh.decodeChunk(envelope.payload);
-      expect(chunk.originalSeq).toBe(1);
-      reassembled = reassembler.addChunk(chunk) ?? reassembled;
-    }
-    expect(reassembled?.kind).toBe(wsBorsh.KIND_TERM_OUTPUT);
-    const output = wsBorsh.decodePayload(
-      wsBorsh.schema.TermOutputSchema,
-      reassembled?.payload ?? new Uint8Array()
-    );
-    expect(output.deviceId).toBe('设备-a');
-    expect(output.paneId).toBe('%窗格-1');
-    expect(output.data).toEqual(data);
   });
 });
 
@@ -665,7 +488,6 @@ describe('WebSocketServer tmux select guards', () => {
   test('rejects invalid pane selects without mutating selected panes', () => {
     const server = new WebSocketServer() as any;
     const ws = createBorshWs();
-    ws.data.borshState.selectedPanes['device-a'] = '%1';
     const recorder = createRuntimeRecorder();
     const entry = setupEntry(server, ws, recorder.runtime);
 
@@ -682,7 +504,6 @@ describe('WebSocketServer tmux select guards', () => {
 
     expect(recorder.selectPaneCalls).toEqual([]);
     expect(recorder.requestSnapshotCalls).toBe(1);
-    expect(ws.data.borshState.selectedPanes['device-a']).toBe('%1');
     expect(ws.sent).toHaveLength(0);
   });
 
@@ -705,7 +526,6 @@ describe('WebSocketServer tmux select guards', () => {
 
     expect(recorder.selectPaneCalls).toEqual([]);
     expect(recorder.requestSnapshotCalls).toBe(1);
-    expect(ws.data.borshState.selectedPanes['device-a']).toBeUndefined();
     expect(ws.sent).toHaveLength(0);
   });
 
@@ -731,57 +551,10 @@ describe('WebSocketServer tmux select guards', () => {
     ]);
     expect(recorder.resizePaneCalls).toEqual([]);
     expect(recorder.requestSnapshotCalls).toBe(0);
-    expect(ws.data.borshState.selectedPanes['device-a']).toBe('%1');
-    expect(ws.sent.length).toBeGreaterThanOrEqual(1);
-  });
-
-  test('flushes old pane output before starting a new select transaction', () => {
-    const server = new WebSocketServer() as any;
-    const ws = createBorshWs();
-    ws.data.borshState.selectedPanes['device-a'] = '%1';
-    const recorder = createRuntimeRecorder();
-    const entry = setupEntry(server, ws, recorder.runtime);
-
-    server.broadcastTerminalOutput('device-a', '%1', new Uint8Array([7, 8]));
-    server.handleTmuxSelect(ws, {
-      deviceId: 'device-a',
-      windowId: '@2',
-      paneId: '%2',
-      selectToken: new Uint8Array(16).fill(2),
-      wantHistory: true,
-      cols: null,
-      rows: null,
-    });
-    clearPolling(entry);
-
+    // legacy SWITCH_ACK 已下线：select 只回视口策略帧
     expect(ws.sent.map((frame: Uint8Array) => wsBorsh.decodeEnvelope(frame).kind)).toEqual([
-      wsBorsh.KIND_TERM_OUTPUT,
-      wsBorsh.KIND_SWITCH_ACK,
+      wsBorsh.KIND_TERM_VIEWPORT_POLICY,
     ]);
-    const outputEnvelope = wsBorsh.decodeEnvelope(ws.sent[0]);
-    const output = wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, outputEnvelope.payload);
-    expect(output.paneId).toBe('%1');
-    expect(Array.from(output.data)).toEqual([7, 8]);
-    switchBarrier.cleanupClient(ws);
-  });
-
-  test('flushes subscribed pane output before replacing the subscription set', () => {
-    const server = new WebSocketServer() as any;
-    const ws = createBorshWs();
-    ws.data.borshState.subscribedPanes['device-a'] = new Set(['%1']);
-    const recorder = createRuntimeRecorder();
-    const entry = setupEntry(server, ws, recorder.runtime);
-
-    server.broadcastTerminalOutput('device-a', '%1', new Uint8Array([9]));
-    server.handleSubscribePanes(ws, 'device-a', ['%2']);
-    clearPolling(entry);
-
-    expect(ws.sent).toHaveLength(1);
-    const outputEnvelope = wsBorsh.decodeEnvelope(ws.sent[0]);
-    const output = wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, outputEnvelope.payload);
-    expect(output.paneId).toBe('%1');
-    expect(Array.from(output.data)).toEqual([9]);
-    expect([...ws.data.borshState.subscribedPanes['device-a']]).toEqual(['%2']);
   });
 });
 
@@ -977,7 +750,7 @@ describe('WebSocketServer bell extension', () => {
   });
 });
 
-describe('WebSocketServer window custom names', () => {
+describe('WebSocketServer 自定义名与设备树顺序（canonical metadata）', () => {
   function makeSnapshot(windowIds: string[]): StateSnapshotPayload {
     return {
       deviceId: 'device-a',
@@ -1005,131 +778,123 @@ describe('WebSocketServer window custom names', () => {
     };
   }
 
-  function createBorshWs() {
-    return createBorshTestWs();
+  type NameCall = ['window' | 'pane', string, string | null];
+  type OrderCall = { windows: string[]; panes: Record<string, string[]> };
+
+  function createProjectionRuntime() {
+    const calls = {
+      names: [] as NameCall[],
+      orders: [] as OrderCall[],
+    };
+    const runtime = {
+      requestSnapshot() {},
+      setCustomName(kind: 'window' | 'pane', nativeId: string, name: string | null) {
+        calls.names.push([kind, nativeId, name]);
+      },
+      setTreeOrder(order: OrderCall) {
+        calls.orders.push({
+          windows: [...order.windows],
+          panes: Object.fromEntries(
+            Object.entries(order.panes).map(([id, panes]) => [id, [...panes]])
+          ),
+        });
+      },
+    };
+    return { calls, runtime };
   }
 
-  function decodeLastSnapshot(ws: any): StateSnapshotPayload {
-    const envelope = wsBorsh.decodeEnvelope(ws.sent[ws.sent.length - 1]);
-    expect(envelope.kind).toBe(wsBorsh.KIND_STATE_SNAPSHOT);
-    return wsBorsh.decodeStateSnapshot(envelope.payload);
-  }
-
-  function setupEntry(server: any, snapshot: StateSnapshotPayload | null, ws: any) {
-    setupConnectionEntry(server, { ws, lastSnapshot: snapshot });
-  }
-
-  test('rename stores overlay and rebroadcasts snapshot with customName', () => {
+  test('rename 写入 overlay 并推给 canonical metadata 投影', () => {
     const server = new WebSocketServer() as any;
-    const ws = createBorshWs();
-    setupEntry(server, makeSnapshot(['@1', '@2']), ws);
+    const ws = createBorshTestWs();
+    const { calls, runtime } = createProjectionRuntime();
+    setupConnectionEntry(server, { ws, runtime, lastSnapshot: makeSnapshot(['@1', '@2']) });
 
     server.renameWindow('device-a', '@1', '  My Window  ');
+    server.renamePane('device-a', '%0', ' Pane One ');
 
-    const snapshot = decodeLastSnapshot(ws);
-    expect(snapshot.session?.windows[0].customName).toBe('My Window');
-    expect(snapshot.session?.windows[1].customName).toBeUndefined();
-    // lastSnapshot 保持原始数据，不被 overlay 污染
-    expect(
-      server.connections.get('device-a').lastSnapshot.session.windows[0].customName
-    ).toBeUndefined();
+    expect(server.windowCustomNames.get('device-a')?.get('@1')).toBe('My Window');
+    expect(server.paneCustomNames.get('device-a')?.get('%0')).toBe('Pane One');
+    expect(calls.names).toEqual([
+      ['window', '@1', 'My Window'],
+      ['pane', '%0', 'Pane One'],
+    ]);
+    // legacy STATE_SNAPSHOT overlay 已下线：不再向客户端补发快照
+    expect(ws.sent).toHaveLength(0);
   });
 
-  test('empty name clears the overlay', () => {
+  test('快照不再包含的窗口/窗格：stale 自定义名被回收', () => {
     const server = new WebSocketServer() as any;
-    const ws = createBorshWs();
-    setupEntry(server, makeSnapshot(['@1']), ws);
+    const ws = createBorshTestWs();
+    const { runtime } = createProjectionRuntime();
+    setupConnectionEntry(server, { ws, runtime, lastSnapshot: makeSnapshot(['@1', '@2']) });
+
+    server.renameWindow('device-a', '@1', 'Keep');
+    server.renameWindow('device-a', '@2', 'Gone');
+    server.renamePane('device-a', '%1', 'GonePane');
+
+    server.installStateSnapshot('device-a', makeSnapshot(['@1']));
+
+    expect(server.windowCustomNames.get('device-a')?.has('@1')).toBe(true);
+    expect(server.windowCustomNames.get('device-a')?.has('@2')).toBe(false);
+    expect(server.paneCustomNames.get('device-a')?.has('%1')).toBe(false);
+  });
+
+  test('空名清除 overlay 并向投影写 null', () => {
+    const server = new WebSocketServer() as any;
+    const ws = createBorshTestWs();
+    const { calls, runtime } = createProjectionRuntime();
+    setupConnectionEntry(server, { ws, runtime, lastSnapshot: makeSnapshot(['@1']) });
 
     server.renameWindow('device-a', '@1', 'Custom');
     server.renameWindow('device-a', '@1', '   ');
 
-    const snapshot = decodeLastSnapshot(ws);
-    expect(snapshot.session?.windows[0].customName).toBeUndefined();
     expect(server.windowCustomNames.get('device-a')?.has('@1')).toBe(false);
+    expect(calls.names[1]).toEqual(['window', '@1', null]);
   });
 
-  test('overlay name is truncated to 64 characters', () => {
+  test('自定义名截断到 64 字符', () => {
     const server = new WebSocketServer() as any;
-    const ws = createBorshWs();
-    setupEntry(server, makeSnapshot(['@1']), ws);
+    const ws = createBorshTestWs();
+    const { calls, runtime } = createProjectionRuntime();
+    setupConnectionEntry(server, { ws, runtime, lastSnapshot: makeSnapshot(['@1']) });
 
     server.renameWindow('device-a', '@1', 'x'.repeat(100));
 
-    const snapshot = decodeLastSnapshot(ws);
-    expect(snapshot.session?.windows[0].customName).toBe('x'.repeat(64));
+    expect(calls.names).toEqual([['window', '@1', 'x'.repeat(64)]]);
   });
 
-  test('stale window entries are pruned when snapshot no longer contains them', () => {
-    const server = new WebSocketServer() as any;
-    const ws = createBorshWs();
-    setupEntry(server, makeSnapshot(['@1', '@2']), ws);
-
-    server.renameWindow('device-a', '@1', 'Keep');
-    server.renameWindow('device-a', '@2', 'Gone');
-
-    server.broadcastStateSnapshot('device-a', makeSnapshot(['@1']));
-
-    const snapshot = decodeLastSnapshot(ws);
-    expect(snapshot.session?.windows).toHaveLength(1);
-    expect(snapshot.session?.windows[0].customName).toBe('Keep');
-    expect(server.windowCustomNames.get('device-a')?.has('@2')).toBe(false);
-  });
-
-  test('overlay survives connection entry recreation and applies on device connect', async () => {
+  test('新建连接时把 overlay 里的顺序与自定义名灌进运行时投影', async () => {
+    const { calls, runtime } = createProjectionRuntime();
     const server = new WebSocketServer({
       deps: {
+        loadDeviceTreeOrder: (deviceId: string) => ({
+          deviceId,
+          windows: ['@2', '@1'],
+          panes: { '@1': ['%1', '%0'] },
+        }),
         acquireRuntime: async () =>
           ({
+            ...runtime,
             async connect() {},
             subscribe() {
               return () => {};
             },
-            requestSnapshot() {},
             disconnect() {},
           }) as any,
         releaseRuntime: () => {},
       },
-    }) as any;
-    const ws = createBorshWs();
-    sessionStateStore.create(ws);
-    setupEntry(server, makeSnapshot(['@1']), ws);
-
-    server.renameWindow('device-a', '@1', 'Persisted');
-
-    // 模拟所有 client 断开后 entry 销毁、随后重连
-    server.connections.delete('device-a');
-    await server.handleDeviceConnect(ws, 'device-a');
-    server.broadcastStateSnapshot('device-a', makeSnapshot(['@1']));
-
-    const snapshot = decodeLastSnapshot(ws);
-    expect(snapshot.session?.windows[0].customName).toBe('Persisted');
-  });
-
-  test('reuses the loaded tree order across repeated snapshots for one device', () => {
-    let loadCalls = 0;
-    const server = new WebSocketServer({
-      deps: {
-        loadDeviceTreeOrder: (deviceId: string) => {
-          loadCalls += 1;
-          return {
-            deviceId,
-            windows: ['@2', '@1'],
-            panes: {},
-          };
-        },
-      },
     } as any) as any;
-    const snapshot = makeSnapshot(['@1', '@2']);
+    const ws = createBorshTestWs({ session: true });
+    server.windowCustomNames.set('device-a', new Map([['@1', 'Persisted']]));
 
-    const first = wsBorsh.decodeStateSnapshot(server.encodeSnapshotWithOverlays(snapshot));
-    const second = wsBorsh.decodeStateSnapshot(server.encodeSnapshotWithOverlays(snapshot));
+    await server.handleDeviceConnect(ws, 'device-a');
 
-    expect(first.session?.windows.map((window) => window.id)).toEqual(['@2', '@1']);
-    expect(second.session?.windows.map((window) => window.id)).toEqual(['@2', '@1']);
-    expect(loadCalls).toBe(1);
+    expect(calls.orders).toEqual([{ windows: ['@2', '@1'], panes: { '@1': ['%1', '%0'] } }]);
+    expect(calls.names).toEqual([['window', '@1', 'Persisted']]);
+    server.closeAll();
   });
 
-  test('keeps cached window and pane order coherent after writes', () => {
+  test('同一设备的树顺序只从 deps 读一次并在重排后推给投影', () => {
     let loadCalls = 0;
     const savedWindows: string[][] = [];
     const savedPanes: Array<[string, string[]]> = [];
@@ -1137,11 +902,7 @@ describe('WebSocketServer window custom names', () => {
       deps: {
         loadDeviceTreeOrder: (deviceId: string) => {
           loadCalls += 1;
-          return {
-            deviceId,
-            windows: ['@2', '@1'],
-            panes: { '@1': ['%2', '%0'] },
-          };
+          return { deviceId, windows: ['@2', '@1'], panes: { '@1': ['%1', '%0'] } };
         },
         saveWindowOrder: (_deviceId: string, windowIds: string[]) => {
           savedWindows.push([...windowIds]);
@@ -1151,41 +912,25 @@ describe('WebSocketServer window custom names', () => {
         },
       },
     } as any) as any;
-    const ws = createBorshWs();
-    const snapshot = makeSnapshot(['@1', '@2']);
-    const session = snapshot.session;
-    if (!session) {
-      throw new Error('expected test snapshot session');
-    }
-    session.windows[0].panes.push({
-      ...session.windows[0].panes[0],
-      id: '%2',
-      index: 1,
-      active: false,
-    });
-    setupEntry(server, snapshot, ws);
-    const entry = server.connections.get('device-a');
-    if (!entry) throw new Error('expected connection entry');
-    entry.canonicalClients = new Set([ws]);
+    const ws = createBorshTestWs();
+    const { calls, runtime } = createProjectionRuntime();
+    setupConnectionEntry(server, { ws, runtime, lastSnapshot: makeSnapshot(['@1', '@2']) });
 
-    server.encodeSnapshotWithOverlays(snapshot);
     server.reorderWindows('device-a', ['@1', '@2']);
+    server.reorderPanes('device-a', '@1', ['%0', '%1']);
 
-    const afterWindows = decodeLastSnapshot(ws);
-    expect(afterWindows.session?.windows.map((window) => window.id)).toEqual(['@1', '@2']);
-    expect(afterWindows.session?.windows[0].panes.map((pane) => pane.id)).toEqual(['%2', '%0']);
-
-    server.reorderPanes('device-a', '@1', ['%0', '%2']);
-
-    const afterPanes = decodeLastSnapshot(ws);
-    expect(afterPanes.session?.windows.map((window) => window.id)).toEqual(['@1', '@2']);
-    expect(afterPanes.session?.windows[0].panes.map((pane) => pane.id)).toEqual(['%0', '%2']);
     expect(loadCalls).toBe(1);
     expect(savedWindows).toEqual([['@1', '@2']]);
-    expect(savedPanes).toEqual([['@1', ['%0', '%2']]]);
+    expect(savedPanes).toEqual([['@1', ['%0', '%1']]]);
+    expect(calls.orders).toEqual([
+      { windows: ['@1', '@2'], panes: { '@1': ['%1', '%0'] } },
+      { windows: ['@1', '@2'], panes: { '@1': ['%0', '%1'] } },
+    ]);
+    // legacy STATE_SNAPSHOT overlay 已下线
+    expect(ws.sent).toHaveLength(0);
   });
 
-  test('reloads tree order after the device connection is released', () => {
+  test('连接释放后重新加载树顺序', () => {
     let loadCalls = 0;
     const server = new WebSocketServer({
       deps: {
@@ -1196,13 +941,12 @@ describe('WebSocketServer window custom names', () => {
         releaseRuntime: () => {},
       },
     } as any) as any;
-    const ws = createBorshWs();
-    const snapshot = makeSnapshot(['@1']);
-    setupEntry(server, snapshot, ws);
+    const ws = createBorshTestWs();
+    setupConnectionEntry(server, { ws, lastSnapshot: makeSnapshot(['@1']) });
 
-    server.encodeSnapshotWithOverlays(snapshot);
+    server.getCachedDeviceTreeOrder('device-a');
     server.releaseConnectionEntry('device-a', server.connections.get('device-a'));
-    server.encodeSnapshotWithOverlays(snapshot);
+    server.getCachedDeviceTreeOrder('device-a');
 
     expect(loadCalls).toBe(2);
   });
@@ -1625,29 +1369,48 @@ describe('WebSocketServer resize × theme dedup', () => {
     expect(recorder.signalThemeChangeCalls).toEqual([]);
   });
 
-  test('handleTermResize skips when single-pane window already at requested size', () => {
+  function resize(
+    server: any,
+    session: ReturnType<typeof createGatewaySession>,
+    paneId: string,
+    cols: number,
+    rows: number,
+    sizeEpoch = 1n,
+    reason: number = wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE
+  ) {
+    server.handleCanonicalResize(session, {
+      deviceId: 'device-a',
+      paneId,
+      cols,
+      rows,
+      reason,
+      sizeEpoch,
+    });
+  }
+
+  test('canonical resize skips when single-pane window already at requested size', () => {
     const server = new WebSocketServer() as any;
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
-    server.handleTermResize(createGatewaySession(), 'device-a', '%0', 80, 24);
+    resize(server, createGatewaySession(), '%0', 80, 24);
 
     expect(recorder.resizePaneCalls).toEqual([]);
   });
 
-  test('handleTermResize resizes when requested size differs from snapshot', () => {
+  test('canonical resize resizes when requested size differs from snapshot', () => {
     const server = new WebSocketServer() as any;
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
-    server.handleTermResize(createGatewaySession(), 'device-a', '%0', 100, 30);
+    resize(server, createGatewaySession(), '%0', 100, 30);
 
     expect(recorder.resizePaneCalls).toEqual([['%0', 100, 30]]);
   });
 
   // 回归：切换到另一个单 pane window 时，即使本 device 刚 resize 过相同 cols/rows，
   // 目标 window 尺寸不同就必须下发 resize（旧 per-device 缓存会把它吞掉）
-  test('handleTermResize resizes another window even after same cols/rows on this device', () => {
+  test('canonical resize resizes another window even after same cols/rows on this device', () => {
     const server = new WebSocketServer() as any;
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime, [
@@ -1672,13 +1435,13 @@ describe('WebSocketServer resize × theme dedup', () => {
     ]);
 
     const session = createGatewaySession();
-    server.handleTermResize(session, 'device-a', '%0', 120, 30);
-    server.handleTermResize(session, 'device-a', '%1', 120, 30);
+    resize(server, session, '%0', 120, 30);
+    resize(server, session, '%1', 120, 30, 2n);
 
     expect(recorder.resizePaneCalls).toEqual([['%1', 120, 30]]);
   });
 
-  test('handleTermResize skips multi-pane window already at layout size', () => {
+  test('canonical resize skips multi-pane window already at layout size', () => {
     const server = new WebSocketServer() as any;
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime, [
@@ -1696,20 +1459,20 @@ describe('WebSocketServer resize × theme dedup', () => {
     ]);
 
     const session = createGatewaySession();
-    server.handleTermResize(session, 'device-a', '%0', 120, 30);
+    resize(server, session, '%0', 120, 30);
     expect(recorder.resizeWindowCalls).toEqual([]);
 
-    server.handleTermResize(session, 'device-a', '%0', 100, 40);
+    resize(server, session, '%0', 100, 40, 2n);
     expect(recorder.resizeWindowCalls).toEqual([['@1', 100, 40]]);
     expect(recorder.resizePaneCalls).toEqual([]);
   });
 
-  test('handleTermResize falls back to resizePane for pane missing from snapshot', () => {
+  test('canonical resize falls back to resizePane for pane missing from snapshot', () => {
     const server = new WebSocketServer() as any;
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
-    server.handleTermResize(createGatewaySession(), 'device-a', '%9', 80, 24);
+    resize(server, createGatewaySession(), '%9', 80, 24);
 
     expect(recorder.resizePaneCalls).toEqual([['%9', 80, 24]]);
   });
@@ -1834,7 +1597,7 @@ describe('WebSocketServer.attachStreamSession', () => {
 
     const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl: 'stream-session',
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
       supportsCompression: false,
       supportsDiffSnapshot: false,
@@ -1853,7 +1616,7 @@ describe('WebSocketServer.attachStreamSession', () => {
 function encodeHelloFrame(clientImpl: string): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
     clientImpl,
-    clientVersion: 'test',
+    clientVersion: '1.1.23',
     maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
     supportsCompression: false,
     supportsDiffSnapshot: false,
@@ -1872,7 +1635,6 @@ describe('WebSocketServer session/carrier close semantics', () => {
     server.getOrCreateCanonicalSession(session);
     const entry = setupConnectionEntry(server, { deviceId: 'dev-close', ws: session });
     const removeClient = spyOn(agentWsHub, 'removeClient');
-    const cleanupBarrier = spyOn(switchBarrier, 'cleanupClient');
 
     server.closeSession(session, 1012, 'Gateway runtime restarting');
 
@@ -1888,9 +1650,7 @@ describe('WebSocketServer session/carrier close semantics', () => {
     expect(sessionStateStore.get(session)).toBeUndefined();
     expect(entry.clients.has(session)).toBe(false);
     expect(removeClient).toHaveBeenCalledWith(session);
-    expect(cleanupBarrier).toHaveBeenCalledWith(session);
     removeClient.mockRestore();
-    cleanupBarrier.mockRestore();
   });
 
   test('handleCarrierClose of an already-closed session is a no-op', () => {
@@ -2012,7 +1772,6 @@ describe('WebSocketServer session/carrier close semantics', () => {
         connectedClients: server.connectedClients,
         connections: server.connections,
         canonicalSessions: server.canonicalSessions,
-        terminalOutputBatcher: server.terminalOutputBatcher,
         terminalOutputMetrics: new TerminalOutputMetrics(1, 0),
         gatewayActivityMetrics: server.gatewayActivityMetrics,
       });
@@ -2029,39 +1788,5 @@ describe('WebSocketServer session/carrier close semantics', () => {
     expect(metricsLog).toContain('ws_unavailable_carriers=0');
     expect(metricsLog).not.toContain('ws_backpressured_sessions=');
     expect(metricsLog).not.toContain('ws_unavailable_sessions=');
-  });
-});
-
-describe('LegacyFeedBroadcaster pane observer counts', () => {
-  test('skips batching when nobody observes and returns counts to zero after disconnect', () => {
-    const server = new WebSocketServer() as any;
-    const ws = createBorshTestWs({
-      send() {
-        return 1;
-      },
-    });
-    setupConnectionEntry(server, { deviceId: 'device-obs', ws });
-    const push = spyOn(server.terminalOutputBatcher, 'push');
-    const feed = server.feed;
-
-    server.broadcastTerminalOutput('device-obs', '%1', new Uint8Array([1]));
-    expect(push).not.toHaveBeenCalled();
-    expect(feed.legacyPaneObserverCount('device-obs', '%1')).toBe(0);
-
-    ws.data.borshState.selectedPanes['device-obs'] = '%1';
-    feed.syncLegacyPaneObservers(ws, 'device-obs');
-    expect(feed.legacyPaneObserverCount('device-obs', '%1')).toBe(1);
-
-    server.broadcastTerminalOutput('device-obs', '%1', new Uint8Array([2]));
-    expect(push).toHaveBeenCalledTimes(1);
-
-    feed.releaseLegacyPaneObservers(ws, 'device-obs');
-    expect(feed.legacyPaneObserverCount('device-obs', '%1')).toBe(0);
-
-    server.broadcastTerminalOutput('device-obs', '%1', new Uint8Array([3]));
-    expect(push).toHaveBeenCalledTimes(1);
-
-    server.terminalOutputBatcher.discardDevice('device-obs');
-    push.mockRestore();
   });
 });

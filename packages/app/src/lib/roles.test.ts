@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { parseTmexRoles as parseGatewayTmexRoles } from '../../../../apps/gateway/src/config';
 import { parseTmexRoleName, parseTmexRoles } from './roles';
 
-const STANDALONE = { hub: false, node: false };
-const NODE = { hub: false, node: true };
-const HUB_NODE = { hub: true, node: true };
+const STANDALONE = { hub: false, node: false, relay: false };
+const NODE = { hub: false, node: true, relay: false };
+const HUB_NODE = { hub: true, node: true, relay: false };
 
 describe('app parseTmexRoles wrapper', () => {
   test('undefined / empty / whitespace normalize to standalone', () => {

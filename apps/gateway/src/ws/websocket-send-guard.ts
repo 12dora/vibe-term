@@ -397,14 +397,8 @@ export class WebSocketSendGuard {
 function isScreenReconstructibleTerminalFrame(frame: string | BufferSource): boolean {
   try {
     const envelope = wsBorsh.decodeEnvelopeView(toUint8Array(frame));
-    if (envelope.kind === wsBorsh.KIND_TERM_OUTPUT) return true;
-    if (envelope.kind === wsBorsh.KIND_CANONICAL_EVENT) {
-      return wsBorsh.peekCanonicalPaneDataHeader(envelope.payload) !== null;
-    }
-    if (envelope.kind === wsBorsh.KIND_CHUNK) {
-      return wsBorsh.decodeChunk(envelope.payload).originalKind === wsBorsh.KIND_TERM_OUTPUT;
-    }
-    return false;
+    if (envelope.kind !== wsBorsh.KIND_CANONICAL_EVENT) return false;
+    return wsBorsh.peekCanonicalPaneDataHeader(envelope.payload) !== null;
   } catch {
     return false;
   }

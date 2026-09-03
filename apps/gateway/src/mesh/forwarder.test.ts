@@ -610,6 +610,150 @@ describe('forwarder', () => {
     }
   });
 
+  test('对端节点低于 canonical v1.1 门槛时向浏览器报错并断流', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const { ws, closed } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const sent: Uint8Array[] = [];
+      ws.send = (frame: Uint8Array) => {
+        sent.push(frame);
+        return frame.byteLength;
+      };
+      streams.lastWs?.pushFromRemote(encodeHelloS2CFrame('1.1.21'));
+
+      expect(sent).toHaveLength(1);
+      const env = wsBorsh.decodeEnvelope(sent[0] as Uint8Array);
+      expect(env.kind).toBe(wsBorsh.KIND_ERROR);
+      const error = wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, env.payload);
+      expect(error.code).toBe(wsBorsh.ERROR_UNSUPPORTED_PROTOCOL);
+      expect(error.message).toContain('canonical-state-v1.1 required');
+      expect(error.retryable).toBe(false);
+      expect(closed()?.code).toBe(1002);
+      // 拒绝路径必须把上游 mesh 流也断掉，否则远端 GatewaySession 一直挂着。
+      expect(streams.lastWs?.closedOnce).toBe(true);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('对端节点满足门槛时正常转发 HELLO_S2C', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const { ws, closed } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const sent: Uint8Array[] = [];
+      ws.send = (frame: Uint8Array) => {
+        sent.push(frame);
+        return frame.byteLength;
+      };
+      const hello = encodeHelloS2CFrame('1.1.22');
+      streams.lastWs?.pushFromRemote(hello);
+
+      expect(sent).toEqual([hello]);
+      expect(closed()).toBeUndefined();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('切换后的新流不答 HELLO 时报错断流，不补订阅也不冲队列', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    answerHelloOnNewStreams(streams, (index) =>
+      index === 0 ? encodeHelloS2CFrame('1.1.23') : null
+    );
+    const origGetLink = peers.getLink.bind(peers);
+    let blockLink = false;
+    let releaseLink: (() => void) | undefined;
+    peers.getLink = async (nodeId: string) => {
+      if (blockLink) {
+        await new Promise<void>((resolve) => {
+          releaseLink = resolve;
+        });
+      }
+      return origGetLink(nodeId);
+    };
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws, closed } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const sent: Uint8Array[] = [];
+      ws.send = (frame: Uint8Array) => {
+        sent.push(frame);
+        return frame.byteLength;
+      };
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      mesh.runtime.handleWebSocket.message(
+        ws,
+        encodeCanonicalSub(1n, '%1', 2, new Uint8Array(16).fill(5))
+      );
+      blockLink = true;
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => releaseLink !== undefined, 2_000);
+      const queued = new Uint8Array([0xa1, 0xa2]);
+      mesh.runtime.handleWebSocket.message(ws, queued);
+      releaseLink?.();
+      await waitUntil(() => closed() !== undefined, 2_000);
+
+      expect(closed()).toEqual({ code: 1002, reason: 'node-too-old' });
+      const errors = decodeErrorFrames(sent);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.code).toBe(wsBorsh.ERROR_UNSUPPORTED_PROTOCOL);
+      expect(errors[0]?.message).toContain('canonical-state-v1.1 required');
+      const second = streams.wsOpens[1]?.ws;
+      expect(second?.closedOnce).toBe(true);
+      // 只补发了 HELLO：订阅没重放，排队的浏览器帧也没冲进去。
+      expect(second?.sent).toHaveLength(1);
+      expect(isHelloC2S(second?.sent[0] as Uint8Array)).toBe(true);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('切换后的新流回了坏 HELLO 时不沿用上一条流的版本判定', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    answerHelloOnNewStreams(streams, (index) =>
+      index === 0 ? encodeHelloS2CFrame('1.1.23') : malformedHelloS2CFrame()
+    );
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws, closed } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const sent: Uint8Array[] = [];
+      ws.send = (frame: Uint8Array) => {
+        sent.push(frame);
+        return frame.byteLength;
+      };
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => closed() !== undefined, 2_000);
+
+      expect(closed()).toEqual({ code: 1002, reason: 'node-too-old' });
+      const errors = decodeErrorFrames(sent);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.message).toContain('node unknown');
+      expect(streams.wsOpens[1]?.ws.closedOnce).toBe(true);
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('/n/:id/ws without cookie closes 4401', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
@@ -708,7 +852,7 @@ describe('forwarder', () => {
     }
   });
 
-  test('upstream WS abort fails over to another link, replays subscribe, keeps browser open', async () => {
+  test('upstream WS abort fails over to another link, replays canonical subscription, keeps browser open', async () => {
     const dcLink = { id: 'dc' } as unknown as LinkSession;
     const relayLink = { id: 'relay' } as unknown as LinkSession;
     const peers = new FakePeers();
@@ -751,7 +895,8 @@ describe('forwarder', () => {
       } as MeshServerWebSocket;
       mesh.runtime.handleWebSocket.open(ws);
       const hello = encodeHelloFrame();
-      const subscribe = encodeSubscribeFrame('dev-1', ['%1', '%2']);
+      const epoch = new Uint8Array(16).fill(5);
+      const subscribe = encodeCanonicalSub(1n, '%1', 2, epoch);
       mesh.runtime.handleWebSocket.message(ws, hello);
       mesh.runtime.handleWebSocket.message(ws, subscribe);
       expect(streams.wsOpens).toHaveLength(1);
@@ -761,6 +906,7 @@ describe('forwarder', () => {
 
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => streams.wsOpens.length === 2, 2_000);
       expect(browserClosed).toBeUndefined();
@@ -769,9 +915,9 @@ describe('forwarder', () => {
       expect(streams.wsOpens[1]?.auth).toBe('remote-sid');
       const replayed = streams.wsOpens[1]?.ws.sent ?? [];
       expect(replayed[0]).toEqual(hello);
-      expect(replayed.some((frame) => bytesEqual(frame, subscribe))).toBe(true);
+      expect(decodeCanonicalSubs(replayed).map((row) => row.paneIds)).toContainEqual(['%1']);
       expect(logs.some((line) => line.includes('[mesh][stream] failover'))).toBe(true);
-      expect(logs.some((line) => /from=dc to=relay resumed=2/.test(line))).toBe(true);
+      expect(logs.some((line) => /from=dc to=relay resumed=1/.test(line))).toBe(true);
       expect(
         logs.some((line) => line.includes('failover_start') && line.includes('cause=stream_close'))
       ).toBe(true);
@@ -781,73 +927,6 @@ describe('forwarder', () => {
 
       streams.wsOpens[1]?.ws.pushFromRemote(new Uint8Array([9, 9]));
       expect(sent.at(-1)).toEqual(new Uint8Array([9, 9]));
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('legacy failover waits for DEVICE_CONNECTED and snapshot before replaying subscribe', async () => {
-    const dcLink = { id: 'dc' } as unknown as LinkSession;
-    const relayLink = { id: 'relay' } as unknown as LinkSession;
-    const peers = new FakePeers();
-    peers.links.set(OTHER, dcLink);
-    peers.transport.set(OTHER, 'dc');
-    const streams = new FakeStreams();
-    const logs: string[] = [];
-    const mesh = await bootMesh({
-      peers,
-      streams,
-      streamLog: (line) => logs.push(line),
-    });
-    try {
-      const { ws } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
-      const hello = encodeHelloFrame();
-      const connect = encodeDeviceConnectFrame('dev-1', 2);
-      const subscribe = encodeSubscribeFrame('dev-1', ['%1']);
-      const select = encodeSelectFrame('dev-1', '%1', 4);
-      mesh.runtime.handleWebSocket.message(ws, hello);
-      mesh.runtime.handleWebSocket.message(ws, connect);
-      mesh.runtime.handleWebSocket.message(ws, subscribe);
-      mesh.runtime.handleWebSocket.message(ws, select);
-      streams.lastWs?.pushFromRemote(encodeHelloS2CFrame());
-      streams.lastWs?.pushFromRemote(encodeDeviceConnectedFrame('dev-1'));
-      streams.lastWs?.pushFromRemote(encodeStateSnapshotFrame());
-
-      peers.links.set(OTHER, relayLink);
-      peers.transport.set(OTHER, 'relay');
-      streams.lastWs?.close(1011, 'reset');
-      await waitUntil(() => streams.wsOpens.length === 2, 2_000);
-      const replayed = streams.wsOpens[1]?.ws;
-      expect(replayed).toBeDefined();
-      await waitUntil(() => (replayed?.sent.length ?? 0) >= 1, 2_000);
-      replayed?.pushFromRemote(encodeHelloS2CFrame());
-      await waitUntil(() => (replayed?.sent.length ?? 0) >= 2, 2_000);
-      expect(sentKinds(replayed?.sent ?? [])).toEqual([
-        wsBorsh.KIND_HELLO_C2S,
-        wsBorsh.KIND_DEVICE_CONNECT,
-      ]);
-      replayed?.pushFromRemote(encodeDeviceConnectedFrame('dev-1'));
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      expect(sentKinds(replayed?.sent ?? []).includes(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES)).toBe(
-        false
-      );
-      replayed?.pushFromRemote(encodeStateSnapshotFrame());
-      await waitUntil(
-        () => sentKinds(replayed?.sent ?? []).includes(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES),
-        2_000
-      );
-      expect(sentKinds(replayed?.sent ?? [])).toEqual([
-        wsBorsh.KIND_HELLO_C2S,
-        wsBorsh.KIND_DEVICE_CONNECT,
-        wsBorsh.KIND_TMUX_SUBSCRIBE_PANES,
-        wsBorsh.KIND_TMUX_SELECT,
-        wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY,
-      ]);
-      const fetched = decodeFetchPaneHistory(replayed?.sent ?? []);
-      expect(fetched).toEqual([{ deviceId: 'dev-1', paneId: '%1' }]);
-      expect(
-        logs.some((line) => /from=dc to=relay resumed=1 mode=legacy panes=%1 cursor=-/.test(line))
-      ).toBe(true);
     } finally {
       mesh.close();
     }
@@ -896,6 +975,7 @@ describe('forwarder', () => {
       );
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => streams.wsOpens.length === 2, 2_000);
       const replayed = streams.wsOpens[1]?.ws.sent ?? [];
@@ -967,6 +1047,7 @@ describe('forwarder', () => {
       );
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => streams.wsOpens.length === 2, 2_000);
       const replayed = streams.wsOpens[1]?.ws.sent ?? [];
@@ -1015,6 +1096,7 @@ describe('forwarder', () => {
       blockLink = true;
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => releaseLink !== undefined, 2_000);
       mesh.runtime.handleWebSocket.message(ws, encodeCanonicalSub(4n, '%2', 5, epoch));
@@ -1083,6 +1165,7 @@ describe('forwarder', () => {
       peers.failGetLink = 2;
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => streams.wsOpens.length === 2, 2_000);
       expect(closed()).toBeUndefined();
@@ -1136,6 +1219,7 @@ describe('forwarder', () => {
       blockLink = true;
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => releaseLink !== undefined, 2_000);
       const queued = new Uint8Array([0xff, 0xfe, 0xfd, 0xfc, 0x01]);
@@ -1211,6 +1295,7 @@ describe('forwarder', () => {
       blockLink = true;
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
+      answerHelloOnNewStreams(streams);
       streams.lastWs?.close(1011, 'reset');
       await waitUntil(() => releaseLink !== undefined, 2_000);
       const queued: Uint8Array[] = [];
@@ -1253,6 +1338,7 @@ describe('forwarder', () => {
       const first = streams.lastWs;
       expect(first).not.toBeNull();
       if (!first) throw new Error('expected upstream ws');
+      answerHelloOnNewStreams(streams);
       first.sendError = new Error('write-closed');
       peers.links.set(OTHER, relayLink);
       peers.transport.set(OTHER, 'relay');
@@ -1723,7 +1809,7 @@ describe('forwardAuthorizedHttp multi-MiB raw body over in-memory link', () => {
 function encodeHelloFrame(): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
     clientImpl: 'failover-test',
-    clientVersion: 'test',
+    clientVersion: '1.1.23',
     maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
     supportsCompression: false,
     supportsDiffSnapshot: false,
@@ -1731,14 +1817,14 @@ function encodeHelloFrame(): Uint8Array {
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, payload, 1);
 }
 
-function encodeHelloS2CFrame(): Uint8Array {
+function encodeHelloS2CFrame(serverVersion = '1.1.23'): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
     serverImpl: 'tmex-gateway',
-    serverVersion: 'test',
+    serverVersion,
     selectedVersion: wsBorsh.CURRENT_VERSION,
     maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
     heartbeatIntervalMs: 15_000,
-    capabilities: [],
+    capabilities: ['canonical-state-v1', 'canonical-state-v1.1'],
   });
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, payload, 1);
 }
@@ -1756,34 +1842,6 @@ function encodeDeviceConnectedFrame(deviceId: string): Uint8Array {
     wsBorsh.KIND_DEVICE_CONNECTED,
     wsBorsh.encodePayload(wsBorsh.schema.DeviceConnectedSchema, { deviceId }),
     2
-  );
-}
-
-function encodeStateSnapshotFrame(): Uint8Array {
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_STATE_SNAPSHOT, new Uint8Array(), 3);
-}
-
-function encodeSubscribeFrame(deviceId: string, paneIds: string[]): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, {
-    deviceId,
-    paneIds,
-  });
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES, payload, 2);
-}
-
-function encodeSelectFrame(deviceId: string, paneId: string, seq: number): Uint8Array {
-  return wsBorsh.encodeEnvelope(
-    wsBorsh.KIND_TMUX_SELECT,
-    wsBorsh.encodePayload(wsBorsh.schema.TmuxSelectSchema, {
-      deviceId,
-      windowId: null,
-      paneId,
-      selectToken: new Uint8Array(16),
-      wantHistory: true,
-      cols: 120,
-      rows: 32,
-    }),
-    seq
   );
 }
 
@@ -1822,21 +1880,6 @@ function decodeCanonicalSubs(
         generation: sub.generation,
         paneIds: [...sub.activePanes, ...sub.hotPanes].map((row) => row.pane.paneId),
       });
-    } catch {
-      // ignore
-    }
-  }
-  return out;
-}
-
-function decodeFetchPaneHistory(frames: Uint8Array[]): Array<{ deviceId: string; paneId: string }> {
-  const out: Array<{ deviceId: string; paneId: string }> = [];
-  for (const frame of frames) {
-    try {
-      const env = wsBorsh.decodeEnvelope(frame);
-      if (env.kind !== wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY) continue;
-      const payload = wsBorsh.decodePayload(wsBorsh.schema.TmuxFetchPaneHistorySchema, env.payload);
-      out.push({ deviceId: payload.deviceId, paneId: payload.paneId });
     } catch {
       // ignore
     }
@@ -1890,6 +1933,50 @@ function trackAbort(controller: AbortController): {
     return remove(type, listener, opts);
   }) as typeof signal.removeEventListener;
   return tracked;
+}
+
+/**
+ * 让此后新开的转发流像真节点一样应答 HELLO_S2C：失败切换的 canonical v1.1 版本门要求。
+ * `reply` 按开流序号给出应答帧，返回 null 表示这条流不答 HELLO。
+ */
+function answerHelloOnNewStreams(
+  streams: FakeStreams,
+  reply: (index: number) => Uint8Array | null = () => encodeHelloS2CFrame('1.1.23')
+): void {
+  let index = 0;
+  const open = streams.openWsStream.bind(streams);
+  streams.openWsStream = async (link: LinkSession, auth: string, cid?: string) => {
+    const stream = (await open(link, auth, cid)) as FakeWs;
+    const answer = reply(index);
+    index += 1;
+    const send = stream.send.bind(stream);
+    stream.send = (bytes: Uint8Array) => {
+      const result = send(bytes);
+      if (answer && isHelloC2S(bytes)) stream.pushFromRemote(answer);
+      return result;
+    };
+    return stream;
+  };
+}
+
+function malformedHelloS2CFrame(): Uint8Array {
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, new Uint8Array([0xff, 0x00]), 1);
+}
+
+function decodeErrorFrames(frames: Uint8Array[]) {
+  return frames.flatMap((frame) => {
+    const env = wsBorsh.decodeEnvelope(frame);
+    if (env.kind !== wsBorsh.KIND_ERROR) return [];
+    return [wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, env.payload)];
+  });
+}
+
+function isHelloC2S(bytes: Uint8Array): boolean {
+  try {
+    return wsBorsh.decodeEnvelopeView(bytes).kind === wsBorsh.KIND_HELLO_C2S;
+  } catch {
+    return false;
+  }
 }
 
 async function beginBlockedFailover(): Promise<{

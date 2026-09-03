@@ -12,6 +12,7 @@
     "./i18n/locales/zh_CN.json": "./src/i18n/locales/zh_CN.json",
     "./i18n/locales/ja_JP.json": "./src/i18n/locales/ja_JP.json",
     "./link": "./src/link/index.ts",
+    "./relay": "./src/relay/index.ts",
     "./uplink": "./src/uplink/codec.ts",
     "./http": "./src/http/read-body.ts",
     "./net": "./src/net/index.ts",

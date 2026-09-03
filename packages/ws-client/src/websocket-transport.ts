@@ -2,7 +2,12 @@
 
 import { wsBorsh } from '@tmex/shared';
 import { CanonicalStateClient } from './canonical-state-client';
-import { clonePendingCommand, isOrderedInput, mergeSendResult } from './canonical-state-helpers';
+import {
+  clonePendingCommand,
+  estimateCommandBytes,
+  isOrderedInput,
+  mergeSendResult,
+} from './canonical-state-helpers';
 import type {
   BorshWebSocketClient,
   ClientSendResult,
@@ -23,21 +28,6 @@ import type {
 interface PendingTransportCommand {
   command: GatewayTransportCommand;
   bytes: number;
-}
-
-const LEGACY_STATE_KINDS = new Set([
-  wsBorsh.KIND_STATE_SNAPSHOT,
-  wsBorsh.KIND_STATE_SNAPSHOT_DIFF,
-  wsBorsh.KIND_SWITCH_ACK,
-  wsBorsh.KIND_TERM_HISTORY,
-  wsBorsh.KIND_LIVE_RESUME,
-  wsBorsh.KIND_TERM_OUTPUT,
-]);
-
-// TERM_RESIZE / TERM_SYNC_SIZE 没有 canonical 等价物：后者是「焦点恢复补一次尺寸、
-// 不引发 resize 循环」。两者在网关都进同一套 viewport 仲裁，但线协议必须保持区分。
-function isLegacySizeCommand(command: GatewayTransportCommand): boolean {
-  return command.type === 'terminal-resize' || command.type === 'terminal-sync-size';
 }
 
 function onDocumentVisible(resume: () => void): () => void {
@@ -92,14 +82,6 @@ export class WebSocketGatewayTransport implements GatewayTransport {
     this.disposers = [
       client.onStateChange((state) => this.handleStateChange(state)),
       client.onLatency((latencyMs, rawMs) => this.emit({ type: 'latency', latencyMs, rawMs })),
-      client.onChunkProgress(({ originalKind }) => {
-        if (
-          originalKind === wsBorsh.KIND_TERM_HISTORY ||
-          originalKind === wsBorsh.KIND_TERM_OUTPUT
-        ) {
-          this.emit({ type: 'terminal-progress' });
-        }
-      }),
       client.onMessage((message) => this.handleMessage(message.kind, message.payload)),
       client.onError((error) => this.emit({ type: 'transport-error', error })),
       client.onPendingOverflow((info) => this.emit({ type: 'pending-overflow', ...info })),
@@ -181,10 +163,14 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       this.syncFeedMode(this.client.stateFeedMode);
       if (this.client.stateFeedMode === 'canonical') this.canonical.activate();
       else {
+        // 网关太旧：canonical 会话建不起来，legacy 状态流又已下线，只能报错等宿主升级。
         this.canonical.suspend();
-        for (const command of this.canonical.takePendingCommands()) {
-          this.sendReadyCommand(command);
-        }
+        this.canonical.takePendingCommands();
+        this.emit({
+          type: 'server-too-old',
+          minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
+          serverVersion: this.client.serverVersion,
+        });
       }
       this.flushPendingCommands();
     } else {
@@ -205,49 +191,38 @@ export class WebSocketGatewayTransport implements GatewayTransport {
   }
 
   private handleMessage(kind: number, payload: Uint8Array): void {
-    if (this.client.stateFeedMode === 'canonical') {
-      if (kind === wsBorsh.KIND_CANONICAL_EVENT) {
-        try {
-          this.canonical.handleEventPayload(payload);
-        } catch (error) {
-          this.emit({
-            type: 'transport-error',
-            error: error instanceof Error ? error : new Error(String(error)),
-          });
-          this.emit({ type: 'rebase-required', reason: 'pane_gap' });
-        }
-        return;
+    if (kind === wsBorsh.KIND_CANONICAL_EVENT && this.client.stateFeedMode === 'canonical') {
+      try {
+        this.canonical.handleEventPayload(payload);
+      } catch (error) {
+        this.emit({
+          type: 'transport-error',
+          error: error instanceof Error ? error : new Error(String(error)),
+        });
+        this.emit({ type: 'rebase-required', reason: 'pane_gap' });
       }
-      if (kind === wsBorsh.KIND_STATE_SNAPSHOT) {
-        try {
-          this.canonical.handleLegacyOverlaySnapshot(payload);
-        } catch (error) {
-          this.emit({
-            type: 'transport-error',
-            error: error instanceof Error ? error : new Error(String(error)),
-          });
-        }
-        return;
-      }
-      if (LEGACY_STATE_KINDS.has(kind)) return;
+      return;
     }
-    decodeGatewayTransportMessage(kind, payload, (event) => this.emit(event));
+    decodeGatewayTransportMessage(kind, payload, (event) => {
+      // 解码器拿不到本连接协商到的服务端版本，这里补一次（被门槛拒时通常还没收到 HELLO_S2C）。
+      if (event.type === 'server-too-old' && event.serverVersion === null) {
+        this.emit({ ...event, serverVersion: this.client.serverVersion });
+        return;
+      }
+      this.emit(event);
+    });
   }
 
   private sendReadyCommand(command: GatewayTransportCommand): ClientSendResult {
     try {
       let result: ClientSendResult = 'sent';
-      if (this.client.stateFeedMode === 'canonical' && !isLegacySizeCommand(command)) {
-        if (command.type === 'disconnect-device') {
-          result = this.canonical.removeDevice(command.deviceId);
-        } else {
-          const canonical = this.canonical.sendCommand(command);
-          if (canonical !== null) return canonical;
-        }
+      if (command.type === 'disconnect-device') {
+        result = this.canonical.removeDevice(command.deviceId);
+      } else {
+        const canonical = this.canonical.sendCommand(command);
+        if (canonical !== null) return canonical;
       }
-      const message = encodeGatewayTransportCommand(command, {
-        stateFeedMode: this.client.stateFeedMode,
-      });
+      const message = encodeGatewayTransportCommand(command);
       return mergeSendResult(result, this.client.send(message.kind, message.payload));
     } catch (error) {
       this.emit({
@@ -260,9 +235,9 @@ export class WebSocketGatewayTransport implements GatewayTransport {
 
   private enqueueCommand(command: GatewayTransportCommand): ClientSendResult {
     if (isOrderedInput(command) && this.pendingInputAborted) return 'overflow';
-    let encoded: ReturnType<typeof encodeGatewayTransportCommand>;
+    let measured: { kind: number; bytes: number };
     try {
-      encoded = encodeGatewayTransportCommand(command);
+      measured = this.measureCommand(command);
     } catch (error) {
       this.emit({
         type: 'transport-error',
@@ -270,7 +245,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       });
       return 'overflow';
     }
-    const bytes = encoded.payload.byteLength;
+    const bytes = measured.bytes;
     const limits = this.client.pendingCommandLimits;
     if (
       this.pendingCommands.length < limits.maxFrames &&
@@ -300,13 +275,22 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       this.pendingOverflowOpen = true;
       this.emit({
         type: 'pending-overflow',
-        kind: encoded.kind,
+        kind: measured.kind,
         pendingFrames: this.pendingCommands.length,
         pendingBytes: this.pendingBytes,
         droppedFrames,
       });
     }
     return 'overflow';
+  }
+
+  /** 未就绪时的记账用量：canonical 覆盖的命令没有控制帧，按 canonical 载荷估算。 */
+  private measureCommand(command: GatewayTransportCommand): { kind: number; bytes: number } {
+    if (this.canonical.handles(command)) {
+      return { kind: wsBorsh.KIND_CANONICAL_COMMAND, bytes: estimateCommandBytes(command) };
+    }
+    const encoded = encodeGatewayTransportCommand(command);
+    return { kind: encoded.kind, bytes: encoded.payload.byteLength };
   }
 
   private flushPendingCommands(): void {

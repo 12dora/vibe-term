@@ -2,10 +2,11 @@
 // 重命名与「允许域名访问」都收进详情框（「更多」），表里不再有行内输入框。
 // hub 不可达时详情里的改名与吊销禁用——它们走 hub 控制面；升级只依赖入口 → 目标的 peer link，
 // 因此**不**跟 hub 在线绑定，只看目标是否在线、是否已登录。
-// 表格本体铺在「节点管理」卡片里，只留一层浅边框做横向滚动容器。
+// 表格本体铺在「节点管理」卡片里，横向滚动壳与「操作」列的钉边都在 components/wide-table。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
+import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Checkbox } from '@tmex/ui/checkbox';
 import {
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { WideTableScroll, stickyActionColumn } from '../../components/wide-table';
 import { hubDetailText, hubModeLabel } from './hub-strip';
 import { NodeDetailDialog } from './node-detail-dialog';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
@@ -46,7 +48,7 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
     selection.selectableCount > 0 && selection.ids.size >= selection.selectableCount;
   const toggleLabel = t(allSelected ? 'nodes.selection.clearAll' : 'nodes.selection.selectAll');
   return (
-    <section className="overflow-x-auto rounded-lg border border-border/60">
+    <WideTableScroll>
       <table className="w-full min-w-[54rem] text-xs" data-testid="nodes-table">
         <thead className="text-muted-foreground">
           <tr className="border-b border-border">
@@ -73,7 +75,7 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
             <Th>{t('nodes.columns.direct')}</Th>
             <Th>{t('nodes.columns.login')}</Th>
             <Th>{t('nodes.columns.fingerprint')}</Th>
-            <Th>{t('nodes.columns.actions')}</Th>
+            <Th className={stickyActionColumn}>{t('nodes.columns.actions')}</Th>
           </tr>
         </thead>
         <tbody>
@@ -96,8 +98,20 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
           )}
         </tbody>
       </table>
-    </section>
+    </WideTableScroll>
   );
+}
+
+/**
+ * 不可写时的提示。调用方给了原因就用它（中继模式下上级不是 hub，说「Hub 不可达」是错的），
+ * 否则按 hub 的两种情形分档：备 Hub 拒写 / 主 Hub 不可达。
+ */
+export function rowBlockedHint(
+  t: Translate,
+  deps: Pick<NodeActionDeps, 'hubWritable' | 'blockedHint'>
+): string {
+  if (deps.blockedHint) return deps.blockedHint;
+  return t(deps.hubWritable ? 'nodes.hubOffline' : 'nodes.hubs.standbyNotice');
 }
 
 function deriveNodeRow(row: NodeRow, t: (key: string) => string) {
@@ -125,11 +139,7 @@ function NodeRowView({
   const [detailOpen, setDetailOpen] = useState(false);
   const uninstalling = isUninstalling(row, uninstall.scheduledIds);
   const writable = deps.hubOnline && deps.hubWritable;
-  const disabledHint = deps.hubWritable
-    ? deps.hubOnline
-      ? undefined
-      : t('nodes.hubOffline')
-    : t('nodes.hubs.standbyNotice');
+  const disabledHint = writable ? undefined : rowBlockedHint(t, deps);
   const view = deriveNodeRow(row, t);
   const selectable = !row.isSelf && !uninstalling;
   const switching = roleSwitch.switchingIds.has(row.id);
@@ -187,7 +197,7 @@ function NodeRowView({
       <Td>
         <code className="font-mono text-[11px] text-muted-foreground">{row.fingerprint}</code>
       </Td>
-      <Td>
+      <Td className={stickyActionColumn}>
         <div className="flex items-center gap-1">
           <UpgradeButton row={row} upgrade={deps.upgrade} blocked={uninstalling} />
           <UpgradeCancelButton row={row} upgrade={deps.upgrade} />
@@ -447,12 +457,16 @@ function upgradeTitle(
   return version ? t('nodes.upgrade.hint', { version }) : undefined;
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="whitespace-nowrap px-3 py-2 text-left font-medium">{children}</th>;
+function Th({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <th className={cn('whitespace-nowrap px-3 py-2 text-left font-medium', className)}>
+      {children}
+    </th>
+  );
 }
 
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="whitespace-nowrap px-3 py-2 align-middle">{children}</td>;
+function Td({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <td className={cn('whitespace-nowrap px-3 py-2 align-middle', className)}>{children}</td>;
 }
 
 function Tag({ children, title }: { children: React.ReactNode; title?: string }) {

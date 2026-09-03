@@ -5,7 +5,11 @@ import {
   ensureCleanSession,
   getPaneSize,
 } from './helpers/tmux';
-import { KIND, decodeEnvelope, isGatewayWsUrl } from './helpers/ws-borsh';
+import {
+  CANONICAL_GEOMETRY_REASON_CHANGE,
+  type CanonicalCommandCollector,
+  attachCanonicalCommandCollector,
+} from './helpers/ws-borsh';
 
 async function readTerminalSize(page: Page): Promise<{
   cols: number;
@@ -33,38 +37,31 @@ async function readTerminalPaneMatchState(page: Page, paneId: string): Promise<s
   return terminalKey === paneKey ? 'match' : `terminal=${terminalKey};pane=${paneKey}`;
 }
 
+// legacy 的 TERM_RESIZE / TERM_SYNC_SIZE 两个 kind 已下线，两类语义现在由
+// canonical ResizePaneV11 的 geometryReason 区分：change = 真实视口变化，
+// resend = 焦点恢复/暖切换补发。
 function attachResizeFrameCounter(page: Page): {
   reset: () => void;
   read: () => { resize: number; sync: number };
+  commands: CanonicalCommandCollector;
 } {
-  const counts = { resize: 0, sync: 0 };
-
-  page.on('websocket', (ws) => {
-    if (!isGatewayWsUrl(ws.url())) return;
-    ws.on('framesent', ({ payload }) => {
-      const envelope = decodeEnvelope(payload as Buffer);
-      if (!envelope) return;
-      if (envelope.kind === KIND.TERM_RESIZE) {
-        counts.resize += 1;
-      }
-      if (envelope.kind === KIND.TERM_SYNC_SIZE) {
-        counts.sync += 1;
-      }
-    });
-  });
-
+  const commands = attachCanonicalCommandCollector(page);
   return {
     reset() {
-      counts.resize = 0;
-      counts.sync = 0;
+      commands.reset();
     },
     read() {
-      return { ...counts };
+      const { change, resend } = commands.counts();
+      return { resize: change, sync: resend };
     },
+    commands,
   };
 }
 
-test('ws-borsh: resize does not spam TERM_RESIZE frames', async ({ page, request }) => {
+test('ws-borsh: resize does not spam canonical geometry-change commands', async ({
+  page,
+  request,
+}) => {
   const sessionName = `tmex-e2e-resize-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
@@ -76,30 +73,28 @@ test('ws-borsh: resize does not spam TERM_RESIZE frames', async ({ page, request
   const created = (await createRes.json()) as { device: { id: string } };
   const deviceId = created.device.id;
 
-  let resizeCount = 0;
-
-  page.on('websocket', (ws) => {
-    if (!isGatewayWsUrl(ws.url())) return;
-    ws.on('framesent', ({ payload }) => {
-      const envelope = decodeEnvelope(payload as Buffer);
-      if (!envelope) return;
-      if (envelope.kind === KIND.TERM_RESIZE) {
-        resizeCount += 1;
-      }
-    });
-  });
+  const counter = attachResizeFrameCounter(page);
 
   try {
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('device-page')).toBeVisible();
     await expect(page.getByTestId('terminal-shortcuts-strip')).toBeVisible();
 
-    resizeCount = 0;
+    counter.reset();
 
     await page.setViewportSize({ width: 900, height: 700 });
     await page.waitForTimeout(800);
 
-    expect(resizeCount <= 3).toBeTruthy();
+    expect(counter.read().resize <= 3).toBeTruthy();
+
+    // 真实尺寸变化必须自增 sizeEpoch，网关才能丢弃过期尺寸
+    const changeEpochs = counter.commands.resizes
+      .filter((command) => command.reason === CANONICAL_GEOMETRY_REASON_CHANGE)
+      .map((command) => command.sizeEpoch);
+    for (let index = 1; index < changeEpochs.length; index += 1) {
+      expect(changeEpochs[index] > changeEpochs[index - 1]).toBeTruthy();
+    }
+    for (const epoch of changeEpochs) expect(epoch > 0n).toBeTruthy();
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
@@ -227,7 +222,7 @@ test('ws-borsh: remote tmux resize does not trigger resize echo from another bro
   }
 });
 
-test('ws-borsh: focus restore does not emit TERM_SYNC_SIZE when terminal size is already current', async ({
+test('ws-borsh: focus restore emits no geometry command when terminal size is already current', async ({
   page,
   request,
 }) => {
@@ -290,6 +285,19 @@ test('ws-borsh: focus restore resyncs one stale terminal without reintroducing r
 
     await page.waitForTimeout(1_200);
 
+    // 先做一次受控的真实尺寸变化并锁定它用掉的 epoch：随后的补发必须原样复用这个值
+    const changeCommands = () =>
+      counter.commands.resizes.filter(
+        (command) => command.reason === CANONICAL_GEOMETRY_REASON_CHANGE
+      );
+    counter.reset();
+    await page.setViewportSize({ width: 900, height: 700 });
+    await expect.poll(() => changeCommands().length, { timeout: 10_000 }).toBeGreaterThan(0);
+    await page.waitForTimeout(500);
+    const changeEpoch = changeCommands().at(-1)?.sizeEpoch;
+    expect(changeEpoch).toBeDefined();
+
+    // 只把本地模拟器改小（不动容器）：制造一个「尺寸没变但画面已陈旧」的跟随者
     await page.evaluate(() => {
       const term = (window as any).__tmexE2eXterm;
       if (!term) {
@@ -312,6 +320,12 @@ test('ws-borsh: focus restore resyncs one stale terminal without reintroducing r
     expect(counts.sync).toBeGreaterThanOrEqual(1);
     expect(counts.resize).toBe(0);
     expect(counts.sync).toBeLessThanOrEqual(2);
+    // 补发复用当前 epoch（不自增），否则网关会把它当成新的视口声明
+    const resends = counter.commands.resizes.filter(
+      (command) => command.reason !== CANONICAL_GEOMETRY_REASON_CHANGE
+    );
+    expect(resends.length).toBeGreaterThanOrEqual(1);
+    for (const command of resends) expect(command.sizeEpoch).toBe(changeEpoch as bigint);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

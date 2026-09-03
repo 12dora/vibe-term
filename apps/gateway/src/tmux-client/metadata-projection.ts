@@ -31,10 +31,39 @@ import {
   keyId,
   stringValue,
   toWireRecord,
+  u32Value,
   valueEqual,
 } from './metadata/types';
 
 export type { MetadataProjectionOptions, MetadataProjectionPatch, MetadataProjectionSnapshot };
+
+export interface DeviceTreeOrderInput {
+  windows: readonly string[];
+  panes: Readonly<Record<string, readonly string[]>>;
+}
+
+function treeOrderPaneKey(windowId: string, paneId: string): string {
+  return `${windowId}\0${paneId}`;
+}
+
+function indexById(ids: readonly string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  ids.forEach((id, index) => {
+    if (!out.has(id)) out.set(id, index);
+  });
+  return out;
+}
+
+function indexPanesById(panes: Readonly<Record<string, readonly string[]>>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [windowId, paneIds] of Object.entries(panes)) {
+    paneIds.forEach((paneId, index) => {
+      const key = treeOrderPaneKey(windowId, paneId);
+      if (!out.has(key)) out.set(key, index);
+    });
+  }
+  return out;
+}
 
 export class MetadataProjection {
   private metadataEpochValue: Uint8Array;
@@ -47,6 +76,8 @@ export class MetadataProjection {
   private unknownPaneBytes = 0;
   private readonly windowCustomNames = new Map<string, string>();
   private readonly paneCustomNames = new Map<string, string>();
+  private treeOrderWindows = new Map<string, number>();
+  private treeOrderPanes = new Map<string, number>();
   private established = false;
   private disposed = false;
   private readonly deviceName: string;
@@ -70,6 +101,9 @@ export class MetadataProjection {
       getServerEpoch: () => this.serverEpochValue,
       getWindowCustomName: (windowId) => this.windowCustomNames.get(windowId),
       getPaneCustomName: (paneId) => this.paneCustomNames.get(paneId),
+      getWindowTreeOrder: (windowId) => this.treeOrderWindows.get(windowId),
+      getPaneTreeOrder: (windowId, paneId) =>
+        this.treeOrderPanes.get(treeOrderPaneKey(windowId, paneId)),
       ensurePaneEpoch: (paneId) => this.ensurePaneEpoch(paneId),
       takeUnknownPaneHints: (paneId) => {
         const hints = this.unknownPaneHints.get(paneId);
@@ -203,6 +237,49 @@ export class MetadataProjection {
     this.revisionValue = nextRevision;
     this.setRecordField(record, wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value, nextRevision);
     this.patchBuffer.finishMutation();
+  }
+
+  /**
+   * 设备树自定义显示顺序：以 SOURCE_FIELD_TREE_ORDER 字段随 canonical metadata 下发。
+   * 退出自定义顺序的实体写 Unset，消费方据此回落到 tmux index 顺序。
+   */
+  setTreeOrder(order: DeviceTreeOrderInput): void {
+    if (this.disposed) return;
+    this.treeOrderWindows = indexById(order.windows);
+    this.treeOrderPanes = indexPanesById(order.panes);
+    if (!this.established) return;
+
+    const changes: Array<[ProjectedRecord, MetadataValue | null]> = [];
+    for (const record of this.records.values()) {
+      const next = this.treeOrderValueOf(record);
+      if (
+        valueEqual(record.fields.get(wsBorsh.SOURCE_FIELD_TREE_ORDER)?.value, next ?? undefined)
+      ) {
+        continue;
+      }
+      changes.push([record, next]);
+    }
+    if (changes.length === 0) return;
+
+    const nextRevision = this.revisionValue + 1n;
+    this.patchBuffer.beginDirtyRevision(this.revisionValue);
+    this.revisionValue = nextRevision;
+    for (const [record, value] of changes) {
+      this.setRecordField(record, wsBorsh.SOURCE_FIELD_TREE_ORDER, value, nextRevision);
+    }
+    this.patchBuffer.finishMutation();
+  }
+
+  private treeOrderValueOf(record: ProjectedRecord): MetadataValue | null {
+    if (record.key.entityKind === wsBorsh.SOURCE_ENTITY_WINDOW) {
+      const index = this.treeOrderWindows.get(record.key.nativeId);
+      return index === undefined ? null : u32Value(index);
+    }
+    if (record.key.entityKind !== wsBorsh.SOURCE_ENTITY_PANE || !record.parent) return null;
+    const index = this.treeOrderPanes.get(
+      treeOrderPaneKey(record.parent.nativeId, record.key.nativeId)
+    );
+    return index === undefined ? null : u32Value(index);
   }
 
   flushPending(): void {

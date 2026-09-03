@@ -2,10 +2,6 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import * as db from '../db';
 import {
-  clearLegacyPaneOutputObservers,
-  isLegacyPaneOutputObserved,
-} from '../tmux-client/runtime/output-materialization';
-import {
   DeviceConnectionRegistry,
   type DeviceConnectionRegistryHost,
 } from './device-connection-registry';
@@ -118,7 +114,6 @@ describe('DeviceConnectionRegistry reconnect exhaustion', () => {
 
     const registry = new DeviceConnectionRegistry(host);
     const ws = createGatewaySession();
-    ws.borshState.selectedPanes['dev-dead'] = '%0';
     const dead = fakeEntry();
     dead.clients.add(ws);
     registry.connections.set('dev-dead', dead);
@@ -205,33 +200,39 @@ describe('DeviceConnectionRegistry pending connect vs disconnect', () => {
   });
 });
 
-describe('DeviceConnectionRegistry output observer presence', () => {
-  test('keeps connected legacy clients conservative and clears presence on disconnect', async () => {
-    const deviceId = 'device-observer-presence';
+describe('DeviceConnectionRegistry 断开清理', () => {
+  test('断开设备时清掉该会话的视口声明与尺寸 epoch', async () => {
+    const deviceId = 'device-cleanup';
     const entry = fakeEntry();
     entry.runtime = { requestSnapshot() {} } as DeviceConnectionEntry['runtime'];
+    const dropped: Array<[string, string | undefined]> = [];
     const host = {
       canonicalSessions: new Map(),
       async createDeviceConnectionEntry() {
         return entry;
       },
       releaseConnectionEntry() {},
-      syncLegacyPaneObservers() {},
-      releaseLegacyPaneObservers() {},
-      dropViewportClaims() {},
+      dropViewportClaims(_session: unknown, id?: string) {
+        dropped.push(['claims', id]);
+      },
+      dropPaneSizeEpochs(_session: unknown, id?: string) {
+        dropped.push(['epochs', id]);
+      },
       sendEnvelope() {},
     } as unknown as DeviceConnectionRegistryHost;
     const registry = new DeviceConnectionRegistry(host);
     const ws = createGatewaySession();
-    clearLegacyPaneOutputObservers(deviceId);
 
     await registry.handleDeviceConnect(ws, deviceId);
-    expect(isLegacyPaneOutputObserved(deviceId, '%1')).toBe(true);
+    expect(entry.clients.has(ws)).toBe(true);
 
     registry.handleDeviceDisconnect(ws, deviceId);
-    expect(isLegacyPaneOutputObserved(deviceId, '%1')).toBe(false);
+    expect(entry.clients.has(ws)).toBe(false);
+    expect(dropped).toEqual([
+      ['claims', deviceId],
+      ['epochs', deviceId],
+    ]);
     registry.clearIdleReleaseTimer(entry);
     registry.closeAll();
-    clearLegacyPaneOutputObservers(deviceId);
   });
 });

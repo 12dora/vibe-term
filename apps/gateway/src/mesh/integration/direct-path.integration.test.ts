@@ -203,7 +203,7 @@ describe('direct path integration', () => {
       gateway,
       userId: boot.userId,
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://hub.example',
         peerPort: 39001,
@@ -249,7 +249,7 @@ describe('direct path integration', () => {
     await waitUntil(() => openedSessions.length >= 2, 3_000);
     const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl: 'direct-path-test',
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
       supportsCompression: false,
       supportsDiffSnapshot: false,
@@ -499,7 +499,7 @@ describe('direct path integration', () => {
       gateway,
       userId: boot.userId,
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://hub.example',
         peerPort: 39011,
@@ -568,7 +568,7 @@ describe('direct path integration', () => {
       gateway,
       userId: boot.userId,
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://hub.example',
         peerPort: 39012,
@@ -604,7 +604,7 @@ describe('direct path integration', () => {
     const session = openedSessions[0] as GatewaySession;
     const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl: 'direct-path-test',
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
       supportsCompression: false,
       supportsDiffSnapshot: false,
@@ -763,7 +763,7 @@ describe('direct path integration', () => {
       gateway: gatewayA,
       userId: boot.userId,
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://hub.example',
         peerPort: 39001,
@@ -863,7 +863,7 @@ describe('direct path integration', () => {
       gateway: fakeGateway(dbB),
       userId: boot.userId,
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://hub.example',
         peerPort: 39002,
         stunServers: [],
@@ -929,7 +929,7 @@ describe('direct path integration', () => {
       gateway: fakeGateway(db),
       userId: boot.userId,
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://hub.example',
         peerPort: 39021,
@@ -1039,7 +1039,7 @@ describe('direct path integration', () => {
       },
       userId: boot.userId,
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://hub.example',
         peerPort: 39022,
         stunServers: [],

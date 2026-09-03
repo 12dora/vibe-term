@@ -15,7 +15,6 @@ export interface TmuxDeviceActionsDeps {
   setState: TmuxSetState;
   shouldSkipDuplicateConnect: (deviceId: string) => boolean;
   lastConnectSentAt: Map<string, number>;
-  cancelReselect: (deviceId: string) => void;
   paneSubscriptions: Pick<PaneSubscriptionManager, 'clearDevice'>;
 }
 
@@ -63,8 +62,6 @@ export function createTmuxDeviceActions(
       });
 
       deps.lastConnectSentAt.delete(deviceId);
-      core.selectMachine().cleanup(deviceId);
-      deps.cancelReselect(deviceId);
       deps.paneSubscriptions.clearDevice(deviceId);
       core.transport.send({ type: 'disconnect-device', deviceId });
     },

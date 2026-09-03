@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256Hex } from '../lib/artifacts-manifest';
+import type { FetchLike } from '../lib/fetch-like';
 import { pathExists } from '../lib/fs-utils';
 import { createInstallLayout } from '../lib/install-layout';
 import {
@@ -65,7 +66,7 @@ async function serveTarball(bytes: Uint8Array): Promise<{ url: string; stop: () 
     hostname: '127.0.0.1',
     port: 0,
     fetch() {
-      return new Response(bytes, {
+      return new Response(new Uint8Array(bytes), {
         headers: { 'content-type': 'application/octet-stream' },
       });
     },
@@ -169,7 +170,7 @@ describe('enableDirect / disableDirect', () => {
     const result = await enableDirect({
       installDir,
       pin: fakePin('https://example.test/addon.tgz', integrityOf(tarball)),
-      fetchImpl: async () => new Response(tarball),
+      fetchImpl: async () => new Response(new Uint8Array(tarball)),
     });
     expect(result.ok).toBe(true);
     const layout = createInstallLayout(installDir);
@@ -219,7 +220,7 @@ describe('enableDirect / disableDirect', () => {
     const installDir = await makeInstallDir();
     const controller = new AbortController();
     let fetchSawAborted = false;
-    const fetchImpl: typeof fetch = async (_url, init) => {
+    const fetchImpl: FetchLike = async (_url, init) => {
       const signal = init?.signal;
       await new Promise<void>((_resolve, reject) => {
         const fail = () => {
@@ -262,7 +263,7 @@ describe('enableDirect / disableDirect', () => {
     const result = await enableDirect({
       installDir,
       pin: fakePin('https://example.test/addon.tgz', integrityOf(tarball)),
-      fetchImpl: async () => new Response(tarball),
+      fetchImpl: async () => new Response(new Uint8Array(tarball)),
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -288,7 +289,7 @@ describe('enableDirect / disableDirect', () => {
     const result = await enableDirect({
       installDir,
       pin: fakePin('https://example.test/addon.tgz', integrityOf(tarball)),
-      fetchImpl: async () => new Response(tarball),
+      fetchImpl: async () => new Response(new Uint8Array(tarball)),
     });
     expect(result.ok).toBe(true);
     expect(Buffer.from(await readFile(nativeAddonPath(layout.nativeDir))).equals(addon)).toBe(true);

@@ -230,6 +230,28 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
       'password updated for {{username}} (keep): existing sign-in methods remain',
     'hub.user.passwd.doneFullReset':
       'password updated for {{username}} (full-reset): passkeys, two-step verification, and sessions were removed',
+
+    'relay.passwd.modeKick':
+      'kick mode: every tenant using the old relay password is disconnected and must re-run tmex relay reauth',
+    'relay.passwd.modeKeep':
+      'keep mode: tenants already enrolled stay connected; the new password only applies to new enrollments',
+    'relay.passwd.updated': 'relay password updated (password epoch {{epoch}})',
+    'relay.passwd.cleared':
+      'relay password cleared; enrollment no longer asks for one (epoch {{epoch}})',
+    'relay.kick.done': 'tenant {{tenantId}} kicked; its token is void until it re-enrolls',
+    'relay.remove.confirm':
+      'Remove tenant {{tenantId}} together with its registry and key log? This cannot be undone',
+    'relay.remove.done': 'tenant {{tenantId}} removed',
+    'relay.label.set': 'tenant {{tenantId}} labelled {{label}}',
+    'relay.label.cleared': 'tenant {{tenantId}} label cleared',
+    'relay.quota.default': 'default quota: {{quota}}',
+    'relay.quota.tenant': 'tenant {{tenantId}} quota: {{quota}}',
+    'relay.enroll.passwordRequired': 'this relay requires a password',
+    'relay.enroll.done': 'attached to relay {{url}} (tenant {{tenantId}})',
+    'relay.enroll.pending':
+      'set-relays was accepted but the relay is not attached yet: {{url}} {{error}}',
+    'relay.leave.done': 'left the relay; this node has no upstream until you join a hub or a relay',
+    'relay.leave.pending': 'set-relays was accepted but the relay uplink is still attached',
   },
   'zh-CN': {
     'cli.error.unknownCommand': '未知命令：{{command}}',
@@ -440,6 +462,24 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.user.passwd.doneKeep': '已更新 {{username}} 的密码（保留）：现有登录方式保持不变。',
     'hub.user.passwd.doneFullReset':
       '已更新 {{username}} 的密码（全量重置）：已移除通行密钥、两步验证并注销全部会话。',
+
+    'relay.passwd.modeKick':
+      '踢出模式：所有还在用旧口令的租户会被断开，需要重新执行 tmex relay reauth',
+    'relay.passwd.modeKeep': '保留模式：已接入的租户继续在线，新口令只对新的接入生效',
+    'relay.passwd.updated': '中继口令已更新（口令世代 {{epoch}}）',
+    'relay.passwd.cleared': '已清除中继口令，接入不再需要口令（世代 {{epoch}}）',
+    'relay.kick.done': '已踢出租户 {{tenantId}}，其令牌在重新接入前失效',
+    'relay.remove.confirm': '删除租户 {{tenantId}} 及其注册表与密钥日志？该操作不可撤销',
+    'relay.remove.done': '已删除租户 {{tenantId}}',
+    'relay.label.set': '已把租户 {{tenantId}} 的备注设为 {{label}}',
+    'relay.label.cleared': '已清除租户 {{tenantId}} 的备注',
+    'relay.quota.default': '默认配额：{{quota}}',
+    'relay.quota.tenant': '租户 {{tenantId}} 配额：{{quota}}',
+    'relay.enroll.passwordRequired': '该中继需要口令',
+    'relay.enroll.done': '已接入中继 {{url}}（租户 {{tenantId}}）',
+    'relay.enroll.pending': 'set-relays 已提交，但中继尚未挂上：{{url}} {{error}}',
+    'relay.leave.done': '已离开中继；在接入 hub 或中继前该节点没有上级',
+    'relay.leave.pending': 'set-relays 已提交，但中继上行仍处于挂载状态',
   },
 };
 

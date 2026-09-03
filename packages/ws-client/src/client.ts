@@ -1,13 +1,16 @@
 // FE Borsh WebSocket 客户端
 // 门面：组合心跳、重连退避与协议分发，对外维持连接状态与订阅接口
 
-import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1, wsBorsh } from '@tmex/shared';
+import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@tmex/shared';
 import {
   type ActiveCarrier,
   type AttachDirectOptions,
   CarrierSwitchBarrier,
   type DirectCarrierLike,
 } from './carrier-switch';
+import { getDefaultClientVersion, setDefaultClientVersion } from './client-version';
+import { notifyHandlers } from './handler-fanout';
+import { resolveHeartbeatCadence } from './heartbeat-cadence';
 import { type HeartbeatCadence, HeartbeatController } from './heartbeat-controller';
 import {
   DEFAULT_MAX_PENDING_BYTES,
@@ -21,6 +24,7 @@ import {
   type NegotiatedHello,
   ProtocolDispatcher,
 } from './protocol-dispatcher';
+import { isProtocolFatalError } from './protocol-fatal';
 import { ReconnectController } from './reconnect-controller';
 import { serverSupportsTermViewport } from './server-features';
 
@@ -87,7 +91,7 @@ export function normalizeNegotiatedHeartbeatIntervalMs(value: number | undefined
 
 const DEFAULT_OPTIONS: BorshClientOptions = {
   clientImpl: 'tmex-fe',
-  clientVersion: '0.1.0',
+  clientVersion: getDefaultClientVersion(),
   maxFrameBytes: 1048576, // 1MB
   reconnectDelayMs: 1000,
   maxReconnectAttempts: 5,
@@ -95,7 +99,6 @@ const DEFAULT_OPTIONS: BorshClientOptions = {
   pongTimeoutMs: DEFAULT_PONG_TIMEOUT_MS,
   hiddenHeartbeatIntervalMs: DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS,
   hiddenHeartbeatTimeoutMs: DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS,
-  canonicalStateEnabled: true,
 };
 
 const VISIBILITY_RECONNECT_THROTTLE_MS = 5000;
@@ -124,8 +127,6 @@ export interface BorshClientOptions {
   maxPendingBytes?: number;
   /** 未就绪待发队列帧数上限；缺省 2048 */
   maxPendingFrames?: number;
-  /** canonical-state-v1 kill switch；缺省开启，false 时强制使用 legacy state feed。 */
-  canonicalStateEnabled?: boolean;
 }
 
 export type ConnectionState =
@@ -136,8 +137,10 @@ export type ConnectionState =
   | 'RECONNECT_BACKOFF'
   | 'CLOSED';
 
-export type StateFeedMode = 'pending' | 'legacy' | 'canonical';
+// legacy 状态流已下线；unsupported = 已连上但网关不满足 canonical v1.1 门槛，不回退
+export type StateFeedMode = 'pending' | 'canonical' | 'unsupported';
 
+export { getDefaultClientVersion, setDefaultClientVersion };
 export type { BorshMessage, ChunkProgress } from './protocol-dispatcher';
 
 export type MessageHandler = (message: BorshMessage) => void;
@@ -184,6 +187,10 @@ export class BorshWebSocketClient {
   private visibilityHandler: (() => void) | null = null;
   private lastVisibilityReconnectAt = 0;
 
+  // 协议级不可重试错误（对端版本低于 canonical v1.1 门槛）：重连只会原样再被拒一次，
+  // 只有宿主升级或调用方显式 connect()/reconnect() 才有意义，故就地熄火。
+  private protocolFatal = false;
+
   // 直连载体（F3-1）：懒建，未挂载直连时整条路径与之前完全一致
   private barrier: CarrierSwitchBarrier | null = null;
   private carrierChangeHandlers: Set<(active: ActiveCarrier) => void> = new Set();
@@ -225,8 +232,12 @@ export class BorshWebSocketClient {
     return serverSupportsTermViewport(this.serverVersion);
   }
 
+  getClientVersion(): string {
+    return this.options.clientVersion;
+  }
+
   constructor(options: Partial<BorshClientOptions> = {}) {
-    this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.options = { ...DEFAULT_OPTIONS, clientVersion: getDefaultClientVersion(), ...options };
     this.explicitPongTimeoutMs = options.pongTimeoutMs;
     this.heartbeatIntervalPinned = options.heartbeatIntervalMs !== undefined;
     this.pending = new PendingSendQueue({
@@ -268,13 +279,7 @@ export class BorshWebSocketClient {
     console.log(`[borsh-client] State: ${this.state} -> ${newState}`);
     this.state = newState;
 
-    for (const handler of this.stateChangeHandlers) {
-      try {
-        handler(newState);
-      } catch (err) {
-        console.error('[borsh-client] State change handler error:', err);
-      }
-    }
+    notifyHandlers(this.stateChangeHandlers, newState, 'state change');
 
     // 进入 READY 时发送队列
     if (newState === 'READY') {
@@ -325,6 +330,7 @@ export class BorshWebSocketClient {
   // ========== 连接管理 ==========
 
   connect(): void {
+    this.protocolFatal = false;
     this.setupVisibilityListener();
 
     if (this.ws?.readyState === WS_OPEN || this.ws?.readyState === WS_CONNECTING) {
@@ -384,10 +390,7 @@ export class BorshWebSocketClient {
     this.dispatcher.reset();
     this.barrier?.closeDirect();
     this.resetLatency();
-    this.serverCapabilities = [];
-    this.serverVersion = null;
-    this.serverMaxFrameBytes = null;
-    this.stateFeedMode = 'pending';
+    this.resetNegotiatedServerState();
 
     if (this.ws) {
       this.ws.close();
@@ -403,23 +406,15 @@ export class BorshWebSocketClient {
   // ========== 消息处理 ==========
 
   private dispatchMessage(message: BorshMessage): void {
-    for (const handler of this.messageHandlers) {
-      try {
-        handler(message);
-      } catch (err) {
-        console.error('[borsh-client] Message handler error:', err);
-      }
+    if (isProtocolFatalError(message.kind, message.payload)) {
+      this.protocolFatal = true;
+      this.reconnector.cancel();
     }
+    notifyHandlers(this.messageHandlers, message, 'message');
   }
 
   private dispatchChunkProgress(progress: ChunkProgress): void {
-    for (const handler of this.chunkProgressHandlers) {
-      try {
-        handler(progress);
-      } catch (err) {
-        console.error('[borsh-client] Chunk progress handler error:', err);
-      }
-    }
+    notifyHandlers(this.chunkProgressHandlers, progress, 'chunk progress');
   }
 
   private handleHelloNegotiated(hello: NegotiatedHello): void {
@@ -429,13 +424,13 @@ export class BorshWebSocketClient {
     this.serverCapabilities = hello.capabilities;
     this.serverVersion = hello.serverVersion;
     this.serverMaxFrameBytes = hello.maxFrameBytes;
+    // canonical v1.1 门槛（fail-closed）：能力 + 版本 + 帧上限三条全中才建会话，缺一不降级
     this.stateFeedMode =
-      this.options.canonicalStateEnabled !== false &&
-      hello.capabilities.includes(GATEWAY_CAPABILITY_CANONICAL_STATE_V1) &&
+      hello.capabilities.includes(GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1) &&
+      wsBorsh.peerSupportsCanonicalV11(hello.serverVersion) &&
       this.effectiveMaxFrameBytes >= MIN_CANONICAL_FEED_FRAME_BYTES
         ? 'canonical'
-        : 'legacy';
-
+        : 'unsupported';
     this.setState('READY');
     this.hasConnectedOnce = true;
     this.applyHeartbeatCadence();
@@ -463,6 +458,14 @@ export class BorshWebSocketClient {
     }
   }
 
+  /** 丢弃上一次 HELLO 的协商结果：连接重建前后都必须回到未协商态。 */
+  private resetNegotiatedServerState(): void {
+    this.serverCapabilities = [];
+    this.serverVersion = null;
+    this.serverMaxFrameBytes = null;
+    this.stateFeedMode = 'pending';
+  }
+
   private resetLatency(): void {
     this.latencyMs = null;
     this.latencyRawMs = null;
@@ -473,15 +476,17 @@ export class BorshWebSocketClient {
     this.negotiatedHeartbeatIntervalMs = null;
     this.resetLatency();
     this.dispatcher.reset();
-    this.serverCapabilities = [];
-    this.serverVersion = null;
-    this.serverMaxFrameBytes = null;
-    this.stateFeedMode = 'pending';
+    this.resetNegotiatedServerState();
     // primary 断开 = 会话整体结束，直连随之关闭（设计 §3 步骤 4）；
     // 重连后是全新会话，epoch 从 0 重来。
     this.barrier?.closeDirect();
 
     if (this.state === 'CLOSED') {
+      return;
+    }
+
+    if (this.protocolFatal) {
+      this.setState('CLOSED');
       return;
     }
 
@@ -496,22 +501,13 @@ export class BorshWebSocketClient {
   private handleError(error: Error): void {
     console.error('[borsh-client] Error:', error);
 
-    for (const handler of this.errorHandlers) {
-      try {
-        handler(error);
-      } catch (err) {
-        console.error('[borsh-client] Error handler error:', err);
-      }
-    }
+    notifyHandlers(this.errorHandlers, error, 'error');
   }
 
   // ========== 发送消息 ==========
 
   private sendHello(): void {
-    this.serverCapabilities = [];
-    this.serverVersion = null;
-    this.serverMaxFrameBytes = null;
-    this.stateFeedMode = 'pending';
+    this.resetNegotiatedServerState();
     const hello = {
       clientImpl: this.options.clientImpl,
       clientVersion: this.options.clientVersion,
@@ -679,33 +675,17 @@ export class BorshWebSocketClient {
 
   // ========== 心跳 ==========
 
-  /** 无 document（非浏览器宿主）一律按前台快节奏，避免误判成后台。 */
   private resolveHeartbeatCadence(): HeartbeatCadence {
-    const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-    if (hidden) {
-      return {
-        intervalMs: this.options.hiddenHeartbeatIntervalMs ?? DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS,
-        pongTimeoutMs: this.options.hiddenHeartbeatTimeoutMs ?? DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS,
-      };
-    }
-    const baseIntervalMs = this.options.heartbeatIntervalMs;
-    const explicitTimeoutMs = this.explicitPongTimeoutMs;
-    const baseTimeoutMs = this.options.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
-    const negotiated = this.negotiatedHeartbeatIntervalMs;
-    if (negotiated === null || negotiated === baseIntervalMs) {
-      return { intervalMs: baseIntervalMs, pongTimeoutMs: baseTimeoutMs };
-    }
-    // 调用方显式给的 pongTimeoutMs 是绝对上限，不随协商间隔放大；缺省超时才按
-    // timeout/interval 比值（2×）跟随：15s ping ⇒ 30s timeout，仍远在外部代理
-    //（Cloudflare Tunnel 约 100s）的空闲预算内。
-    if (explicitTimeoutMs !== undefined) {
-      return { intervalMs: negotiated, pongTimeoutMs: explicitTimeoutMs };
-    }
-    const ratio = baseIntervalMs > 0 ? baseTimeoutMs / baseIntervalMs : 2;
-    return {
-      intervalMs: negotiated,
-      pongTimeoutMs: Math.round(negotiated * ratio),
-    };
+    return resolveHeartbeatCadence({
+      hidden: typeof document !== 'undefined' && document.visibilityState === 'hidden',
+      intervalMs: this.options.heartbeatIntervalMs,
+      timeoutMs: this.options.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS,
+      hiddenIntervalMs:
+        this.options.hiddenHeartbeatIntervalMs ?? DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS,
+      hiddenTimeoutMs: this.options.hiddenHeartbeatTimeoutMs ?? DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS,
+      explicitTimeoutMs: this.explicitPongTimeoutMs,
+      negotiatedIntervalMs: this.negotiatedHeartbeatIntervalMs,
+    });
   }
 
   private applyHeartbeatCadence(): void {
@@ -757,6 +737,7 @@ export class BorshWebSocketClient {
       this.heartbeat.clearPongTimeout();
 
       if (this.state === 'CLOSED') {
+        if (this.protocolFatal) return;
         const now = Date.now();
         if (now - this.lastVisibilityReconnectAt < VISIBILITY_RECONNECT_THROTTLE_MS) return;
         this.lastVisibilityReconnectAt = now;
@@ -791,10 +772,7 @@ export class BorshWebSocketClient {
     this.clearTimers();
     this.barrier?.closeDirect();
     this.resetLatency();
-    this.serverCapabilities = [];
-    this.serverVersion = null;
-    this.serverMaxFrameBytes = null;
-    this.stateFeedMode = 'pending';
+    this.resetNegotiatedServerState();
     if (this.ws) {
       this.ws.onclose = null;
       this.ws.onerror = null;

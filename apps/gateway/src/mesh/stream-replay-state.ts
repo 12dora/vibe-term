@@ -1,18 +1,54 @@
 import { wsBorsh } from '@tmex/shared';
-import { envInt } from './mesh-log';
+import { ERROR_CANONICAL_V11_REQUIRED, peerNodeTooOldMessage } from '../ws/canonical-gate';
+import { ViewportReplayCache } from './stream-replay-state-viewport';
 
-export const FAILOVER_HISTORY_BYTES_PER_PANE_DEFAULT = 256 * 1024;
-export const FAILOVER_HISTORY_BYTES_TOTAL = 1024 * 1024;
-export const FAILOVER_HISTORY_BYTES_FLOOR = 16 * 1024;
-
-export type LegacyReplayStats = {
-  replayBytes: number;
-  historyPanes: number;
-  skippedPanes: string[];
-  gapPanes: string[];
+export type InboundReplayNote = {
+  kind: number | null;
+  deviceId?: string;
+  /** HELLO_S2C 帧上附带：对端节点是否达不到 canonical v1.1 门槛。 */
+  peerUnsupported?: boolean;
 };
 
-export type InboundReplayNote = { kind: number | null; deviceId?: string };
+export interface StaleNodeStreamPump {
+  id: string;
+  nodeId: string;
+  replay: StreamReplayState;
+}
+
+/**
+ * 对端节点低于 canonical v1.1 门槛（含 HELLO 未答/解不出版本）：不回退 legacy 状态流，
+ * 直接向浏览器发 ERROR，并整条拆掉（上游流 + 在途流 + 浏览器）。返回是否已拒绝。
+ */
+export function rejectStaleNodeStream<P extends StaleNodeStreamPump>(
+  unsupported: boolean | undefined,
+  pump: P,
+  io: {
+    log(line: string): void;
+    sendToBrowser(pump: P, bytes: Uint8Array): void;
+    closePump(pump: P, info: { code?: number; reason?: string }): void;
+  }
+): boolean {
+  if (!unsupported) return false;
+  const message = peerNodeTooOldMessage(pump.replay.peerVersion);
+  io.log(`[mesh][stream] stream=${pump.id} node=${pump.nodeId} rejected: ${message}`);
+  try {
+    io.sendToBrowser(
+      pump,
+      wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_ERROR,
+        wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+          refSeq: null,
+          code: ERROR_CANONICAL_V11_REQUIRED,
+          message,
+          retryable: false,
+        }),
+        1
+      )
+    );
+  } catch {}
+  io.closePump(pump, { code: 1002, reason: 'node-too-old' });
+  return true;
+}
 
 type PendingScreenTransaction = {
   pane: wsBorsh.CanonicalPaneTarget;
@@ -27,9 +63,9 @@ export class StreamReplayState {
   helloForwarded = false;
   readonly devices = new Map<string, Uint8Array>();
   readonly connectedForwarded = new Set<string>();
-  readonly paneSubs = new Map<string, Uint8Array>();
-  readonly lastSelect = new Map<string, Uint8Array>();
   readonly agents = new Map<string, Uint8Array>();
+  /** 对端节点在 HELLO_S2C 里播报的版本；低于 canonical v1.1 门槛时整条流不可用。 */
+  peerVersion: string | null = null;
   canonicalSub: {
     generation: bigint;
     activePanes: wsBorsh.CanonicalPaneSubscription[];
@@ -41,29 +77,19 @@ export class StreamReplayState {
     { paneEpoch: Uint8Array; terminalSeq: bigint; pane: wsBorsh.CanonicalPaneTarget }
   >();
   private readonly canonicalTargets = new Map<string, wsBorsh.CanonicalPaneSubscription>();
+  private readonly viewport = new ViewportReplayCache();
   private readonly screenTransactions = new Map<string, PendingScreenTransaction>();
   private outboundSeq = 1;
   private clientMaxFrameBytes = wsBorsh.DEFAULT_MAX_FRAME_BYTES;
   private serverMaxFrameBytes = wsBorsh.DEFAULT_MAX_FRAME_BYTES;
   private readonly resumeDevices = new Set<string>();
-  private resumeSnapshot = false;
   private resumeGeneration: bigint | null = null;
   private canonicalResourceGapQueued = false;
-  private lastLegacyReplay: LegacyReplayStats = {
-    replayBytes: 0,
-    historyPanes: 0,
-    skippedPanes: [],
-    gapPanes: [],
-  };
   private lastBrowserSignals: Uint8Array[] = [];
 
-  legacyReplayStats(): LegacyReplayStats {
-    return {
-      replayBytes: this.lastLegacyReplay.replayBytes,
-      historyPanes: this.lastLegacyReplay.historyPanes,
-      skippedPanes: [...this.lastLegacyReplay.skippedPanes],
-      gapPanes: [...this.lastLegacyReplay.gapPanes],
-    };
+  /** fail-closed：版本未知或过旧都视为不支持 canonical v1.1。 */
+  peerSupportsCanonical(): boolean {
+    return wsBorsh.peerSupportsCanonicalV11(this.peerVersion);
   }
 
   browserSignalFrames(): Uint8Array[] {
@@ -98,24 +124,8 @@ export class StreamReplayState {
         case wsBorsh.KIND_DEVICE_DISCONNECT: {
           const payload = wsBorsh.decodePayload(wsBorsh.schema.DeviceDisconnectSchema, env.payload);
           this.devices.delete(payload.deviceId);
-          this.paneSubs.delete(payload.deviceId);
-          this.lastSelect.delete(payload.deviceId);
           this.connectedForwarded.delete(payload.deviceId);
           this.removeCanonicalDevice(payload.deviceId);
-          return;
-        }
-        case wsBorsh.KIND_TMUX_SUBSCRIBE_PANES: {
-          const payload = wsBorsh.decodePayload(
-            wsBorsh.schema.TmuxSubscribePanesSchema,
-            env.payload
-          );
-          if (payload.paneIds.length === 0) this.paneSubs.delete(payload.deviceId);
-          else this.paneSubs.set(payload.deviceId, bytes.slice());
-          return;
-        }
-        case wsBorsh.KIND_TMUX_SELECT: {
-          const payload = wsBorsh.decodePayload(wsBorsh.schema.TmuxSelectSchema, env.payload);
-          this.lastSelect.set(payload.deviceId, bytes.slice());
           return;
         }
         case wsBorsh.KIND_AGENT_SUBSCRIBE: {
@@ -132,7 +142,6 @@ export class StreamReplayState {
           const command = wsBorsh.decodeCanonicalCommandPayload(env.payload).command;
           if ('SetPaneSubscriptions' in command) {
             const value = command.SetPaneSubscriptions;
-            this.paneSubs.clear();
             this.canonicalSub = {
               generation: value.generation,
               activePanes: value.activePanes,
@@ -140,8 +149,13 @@ export class StreamReplayState {
               seq: env.seq,
             };
             this.reconcilePaneCursors(value.activePanes, value.hotPanes);
+            return;
           }
+          if ('ResizePaneV11' in command) this.viewport.noteResize(command.ResizePaneV11, env.seq);
+          return;
         }
+        default:
+          this.viewport.noteFrame(env, bytes);
       }
     } catch {}
   }
@@ -153,8 +167,12 @@ export class StreamReplayState {
       try {
         const payload = wsBorsh.decodePayload(wsBorsh.schema.HelloS2CSchema, env.payload);
         this.serverMaxFrameBytes = payload.maxFrameBytes;
-      } catch {}
-      return { kind: env.kind };
+        this.peerVersion = payload.serverVersion;
+      } catch {
+        // 解不出 HELLO 就当版本未知：fail-closed，不能继承上一条流的判定。
+        this.peerVersion = null;
+      }
+      return { kind: env.kind, peerUnsupported: !this.peerSupportsCanonical() };
     }
     if (env.kind === wsBorsh.KIND_DEVICE_CONNECTED) {
       try {
@@ -164,10 +182,6 @@ export class StreamReplayState {
       } catch {
         return { kind: env.kind };
       }
-    }
-    if (env.kind === wsBorsh.KIND_STATE_SNAPSHOT || env.kind === wsBorsh.KIND_CHUNK) {
-      if (this.resumeDevices.size > 0) this.resumeSnapshot = true;
-      return { kind: env.kind };
     }
     if (env.kind !== wsBorsh.KIND_CANONICAL_EVENT) return { kind: env.kind };
     try {
@@ -182,8 +196,9 @@ export class StreamReplayState {
   }
 
   beginResume(): void {
+    // 新流要重新握手：版本判定不能沿用上一条流的结果。
+    this.peerVersion = null;
     this.resumeDevices.clear();
-    this.resumeSnapshot = false;
     this.resumeGeneration = null;
     this.lastBrowserSignals = [];
     this.canonicalResourceGapQueued = false;
@@ -193,14 +208,6 @@ export class StreamReplayState {
   isResumeReady(): boolean {
     for (const deviceId of this.devices.keys()) {
       if (!this.resumeDevices.has(deviceId)) return false;
-    }
-    if (
-      !this.canonicalSub &&
-      this.devices.size > 0 &&
-      this.paneSubs.size > 0 &&
-      !this.resumeSnapshot
-    ) {
-      return false;
     }
     return true;
   }
@@ -216,11 +223,13 @@ export class StreamReplayState {
     const canonical = this.buildCanonicalResume();
     return [
       ...(canonical ? [canonical] : []),
-      ...(this.canonicalSub ? [] : this.paneSubs.values()),
-      ...this.lastSelect.values(),
-      ...this.buildLegacyHistoryRequests(),
+      ...this.viewport.replayFrames(),
       ...this.agents.values(),
     ];
+  }
+
+  viewportReplayFrames(): Uint8Array[] {
+    return this.viewport.replayFrames();
   }
 
   markCanonicalResumeSent(): void {
@@ -298,60 +307,30 @@ export class StreamReplayState {
 
   describeReplay(): { mode: string; panes: string; cursor: string } {
     const rows = this.canonicalRows();
-    if (rows) {
-      return {
-        mode: 'canonical',
-        panes: rows.map((row) => row.pane.paneId).join(',') || '-',
-        cursor:
-          rows
-            .map((row) => {
-              const cursor = this.paneCursors.get(
-                paneCursorKey(row.pane.deviceId, row.pane.paneId)
-              );
-              return `${row.pane.paneId}:${cursor ? cursor.terminalSeq : '-'}`;
-            })
-            .join(',') || '-',
-      };
-    }
-    const paneIds = this.paneSubPayloads().flatMap((row) => row?.paneIds ?? []);
+    if (!rows) return { mode: 'none', panes: '-', cursor: '-' };
     return {
-      mode: paneIds.length > 0 ? 'legacy' : 'none',
-      panes: paneIds.join(',') || '-',
-      cursor: '-',
+      mode: 'canonical',
+      panes: rows.map((row) => row.pane.paneId).join(',') || '-',
+      cursor:
+        rows
+          .map((row) => {
+            const cursor = this.paneCursors.get(paneCursorKey(row.pane.deviceId, row.pane.paneId));
+            return `${row.pane.paneId}:${cursor ? cursor.terminalSeq : '-'}`;
+          })
+          .join(',') || '-',
     };
   }
 
   resumedPaneCount(): number {
     const rows = this.canonicalRows();
-    if (rows) {
-      return new Set(rows.map((row) => paneCursorKey(row.pane.deviceId, row.pane.paneId))).size;
-    }
-    let count = 0;
-    for (const row of this.paneSubPayloads()) count += row ? row.paneIds.length : 1;
-    return count;
+    if (!rows) return 0;
+    return new Set(rows.map((row) => paneCursorKey(row.pane.deviceId, row.pane.paneId))).size;
   }
 
   private canonicalRows(): wsBorsh.CanonicalPaneSubscription[] | null {
     return this.canonicalSub
       ? [...this.canonicalSub.activePanes, ...this.canonicalSub.hotPanes]
       : null;
-  }
-
-  private paneSubPayloads(): Array<{ deviceId: string; paneIds: string[] } | null> {
-    const out: Array<{ deviceId: string; paneIds: string[] } | null> = [];
-    for (const frame of this.paneSubs.values()) {
-      const env = this.tryDecodeEnvelope(frame);
-      if (!env) {
-        out.push(null);
-        continue;
-      }
-      try {
-        out.push(wsBorsh.decodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, env.payload));
-      } catch {
-        out.push(null);
-      }
-    }
-    return out;
   }
 
   private noteCanonicalEvent(event: wsBorsh.CanonicalEvent): void {
@@ -566,6 +545,7 @@ export class StreamReplayState {
   }
 
   private removeCanonicalDevice(deviceId: string): void {
+    this.viewport.removeDevice(deviceId);
     if (this.canonicalSub) {
       this.canonicalSub = {
         ...this.canonicalSub,
@@ -582,47 +562,6 @@ export class StreamReplayState {
     for (const [requestId, pending] of this.screenTransactions) {
       if (pending.pane.deviceId === deviceId) this.screenTransactions.delete(requestId);
     }
-  }
-
-  private buildLegacyHistoryRequests(): Uint8Array[] {
-    if (this.canonicalSub) {
-      this.lastLegacyReplay = { replayBytes: 0, historyPanes: 0, skippedPanes: [], gapPanes: [] };
-      return [];
-    }
-    const perPane = envInt(
-      'TMEX_FAILOVER_HISTORY_BYTES_PER_PANE',
-      FAILOVER_HISTORY_BYTES_PER_PANE_DEFAULT
-    );
-    const panes = collectUniquePanes(this.paneSubPayloads());
-    const frames: Uint8Array[] = [];
-    const signals: Uint8Array[] = [];
-    const gapPanes: string[] = [];
-    let remaining = FAILOVER_HISTORY_BYTES_TOTAL;
-    let remainingCount = panes.length;
-    let replayBytes = 0;
-    for (const pane of panes) {
-      const byteLimit = allocateHistoryByteLimit(remaining, remainingCount, perPane);
-      remainingCount -= 1;
-      this.outboundSeq += 1;
-      if (byteLimit == null) {
-        gapPanes.push(pane.paneId);
-        signals.push(encodePaneResourceGap(pane.deviceId, pane.paneId, this.outboundSeq));
-        continue;
-      }
-      frames.push(
-        encodeLegacyHistoryRequest(pane.deviceId, pane.paneId, byteLimit, this.outboundSeq)
-      );
-      remaining -= byteLimit;
-      replayBytes += byteLimit;
-    }
-    this.lastLegacyReplay = {
-      replayBytes,
-      historyPanes: frames.length,
-      skippedPanes: [],
-      gapPanes,
-    };
-    this.lastBrowserSignals = signals;
-    return frames;
   }
 
   private buildCanonicalResume(): Uint8Array | null {
@@ -749,78 +688,4 @@ function samePaneTarget(
 
 function clonePaneTarget(pane: wsBorsh.CanonicalPaneTarget): wsBorsh.CanonicalPaneTarget {
   return { deviceId: pane.deviceId, serverEpoch: pane.serverEpoch.slice(), paneId: pane.paneId };
-}
-
-function collectUniquePanes(
-  rows: Array<{ deviceId: string; paneIds: string[] } | null>
-): Array<{ deviceId: string; paneId: string }> {
-  const out: Array<{ deviceId: string; paneId: string }> = [];
-  const seen = new Set<string>();
-  for (const row of rows) {
-    if (!row) continue;
-    for (const paneId of row.paneIds) {
-      const key = paneCursorKey(row.deviceId, paneId);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ deviceId: row.deviceId, paneId });
-    }
-  }
-  return out;
-}
-
-export function allocateHistoryByteLimit(
-  remaining: number,
-  remainingCount: number,
-  perPane: number
-): number | null {
-  if (remainingCount <= 0 || remaining < FAILOVER_HISTORY_BYTES_FLOOR || perPane <= 0) return null;
-  const share = Math.floor(remaining / remainingCount);
-  const cap = Math.min(perPane, share);
-  if (cap >= FAILOVER_HISTORY_BYTES_FLOOR) return cap;
-  if (remaining >= FAILOVER_HISTORY_BYTES_FLOOR) {
-    return Math.min(perPane, FAILOVER_HISTORY_BYTES_FLOOR);
-  }
-  return null;
-}
-
-function encodeLegacyHistoryRequest(
-  deviceId: string,
-  paneId: string,
-  byteLimit: number,
-  seq: number
-): Uint8Array {
-  const requestToken = new Uint8Array(16);
-  crypto.getRandomValues(requestToken);
-  return wsBorsh.encodeEnvelope(
-    wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY,
-    wsBorsh.encodePayload(wsBorsh.schema.TmuxFetchPaneHistorySchema, {
-      deviceId,
-      paneId,
-      requestToken,
-      byteLimit,
-    }),
-    seq
-  );
-}
-
-function encodePaneResourceGap(deviceId: string, paneId: string, seq: number): Uint8Array {
-  const zero = new Uint8Array(16);
-  return wsBorsh.encodeEnvelope(
-    wsBorsh.KIND_CANONICAL_EVENT,
-    wsBorsh.encodeCanonicalEventPayload({
-      SourceGap: {
-        reason: wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED,
-        scope: {
-          Pane: {
-            pane: { deviceId, serverEpoch: zero, paneId },
-            expectedPaneEpoch: zero,
-            availablePaneEpoch: zero,
-            expectedSeq: 0n,
-            availableSeq: 0n,
-          },
-        },
-      },
-    }),
-    seq
-  );
 }

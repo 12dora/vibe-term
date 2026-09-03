@@ -139,7 +139,7 @@
       "siteUrl": "站点访问 URL",
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
-        "nameLinkedHint": "与节点名称联动：这里修改会同步修改「多节点互联」里的节点名称。",
+        "nameLinkedHint": "将同步修改「多节点互联」里的节点名称。",
         "nameLinkedLocked": "当前 Hub 不可写入，暂时无法改名。",
         "urlManagedHint": "由 Hub 公开地址决定，请在「多节点互联」中修改。"
       },
@@ -170,7 +170,7 @@
         "savedInBrowser": "这些设置仅保存在当前浏览器中。",
         "shortcuts": {
           "title": "自定义快捷键",
-          "savedOnServer": "保存在服务器、多端共享——修改后需点「保存」才生效。",
+          "savedOnServer": "保存在服务器、多端共享, 点击「保存」生效。",
           "preview": "预览",
           "useIcons": "用图标展示快捷键",
           "useIconsDesc": "把 Ctrl/Shift/回车 等按键名替换为苹果风格符号（⌃⇧⏎）。",
@@ -202,9 +202,9 @@
         "title": "远程访问",
         "wizardTitle": "配置向导",
         "description": "通过 Cloudflare Tunnel 或直接连接远程访问本机 tmex。",
-        "remoteNodeNotice": "远程访问只能在浏览器直连的那台机器上配置。请先切换到那台机器，再打开本页。",
+        "remoteNodeNotice": "远程访问只能在浏览器直连的节点配置。请先切换到该节点。",
         "loginRequired": "请先登录，再配置远程访问。",
-        "loadFailed": "读取远程访问状态失败。请确认 tmex 网关仍在运行，然后刷新页面重试。",
+        "loadFailed": "读取远程访问状态失败。请确认 tmex 网关仍在运行，并刷新页面重试。",
         "unsupported": "当前系统（{{platform}}）没有可用的 cloudflared 构建，无法使用 Cloudflare Tunnel。",
         "modeLabel": "方式",
         "publicUrl": "公网地址",
@@ -229,7 +229,7 @@
         "mode": {
           "quick": {
             "title": "临时隧道",
-            "description": "无需 Cloudflare 账号，每次启动分配一个新的临时地址，适合演示与排查。"
+            "description": "无需 Cloudflare 账号，启动时分配新的临时地址，适合演示与排查。"
           },
           "named": {
             "title": "命名隧道",
@@ -243,7 +243,7 @@
           },
           "direct": {
             "title": "直接连接",
-            "description": "通过固定 IP、端口映射或反向代理连接，适合无 Cloudflare 的情况。"
+            "description": "通过固定 IP、端口映射或反向代理连接。"
           }
         },
         "direct": {
@@ -262,13 +262,13 @@
             },
             "unknown": {
               "title": "无法确认访问保护状态",
-              "description": "当前网关没有下发本机登录状态，通常是版本过旧。升级 tmex 后再试。"
+              "description": "当前网关未下发本机登录状态，通常是版本过旧。升级 tmex 后再试。"
             }
           },
           "entryLabel": "当前入口",
           "entryHint": "tmex 的访问地址。对外暴露时，需指向本机的 {{port}} 端口，或指向反向代理。",
           "tls": {
-            "hint": "直接暴露请务必启用 HTTPS：明文 HTTP 会把登录口令与会话凭证暴露在链路上。",
+            "hint": "请启用 HTTPS：明文 HTTP 会把登录口令与会话凭证暴露在链路上。",
             "link": "前往节点设置配置 HTTPS"
           },
           "enable": {
@@ -355,7 +355,7 @@
           },
           "quick": {
             "title": "临时隧道",
-            "description": "启动后 Cloudflare 分配一个 trycloudflare.com 的临时地址，停止即失效。",
+            "description": "启动后分配一个 trycloudflare.com 的临时地址，停止即失效。",
             "started": "临时隧道已启动，公网地址如下。"
           },
           "named": {
@@ -368,7 +368,7 @@
             },
             "hostname": "主机名",
             "hostnamePlaceholder": "tmex.example.com",
-            "hostnameHint": "填写一个已托管在 Cloudflare 的域名下的子域名。",
+            "hostnameHint": "填写一个已托管在 Cloudflare 的子域名。",
             "hostnameInvalid": "主机名格式不正确，请填写如 tmex.example.com 的小写域名。",
             "tunnelName": "隧道名称",
             "tunnelNamePlaceholder": "tmex",
@@ -391,7 +391,7 @@
             "restartNow": "立即重启",
             "restarting": "正在重启 tmex",
             "restartTimeout": "等待重启超时。请手动重启 tmex 后刷新页面。",
-            "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。能绕过隧道直连本机监听端口的人可以伪造这两个请求头，因此请限制该端口的外部访问。",
+            "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。存在绕过隧道伪造请求头风险，建议禁止该端口的外网访问。",
             "trustProxyEffective": "当前生效",
             "trustProxyState": {
               "on": "已信任",
@@ -463,7 +463,7 @@
           "exposure_ack_required": "该操作会把 tmex 开放到公网，请先勾选风险确认。"
         },
         "authRequired": {
-          "notice": "本机还未启用登录。开放公网访问前请先启用，否则任何人都能直接进入 tmex。",
+          "notice": "警告: 登录未启用。开放公网访问前请先启用，否则任何人都能访问 tmex。",
           "link": "前往多节点互联设置"
         },
         "confirmRemove": {
@@ -490,7 +490,7 @@
             "title": "无",
             "description": "不设访问保护，任何人拿到地址即可使用本机 tmex。",
             "warning": "访问保护未启用：任何人拿到地址即可使用本机 tmex。",
-            "appRemains": "Access 应用仍在，可在此移除。"
+            "appRemains": "Access 应用未移除，可在此移除。"
           },
           "login": {
             "title": "账号密码",
@@ -553,7 +553,7 @@
             "hint": "凭证已保存，但 tmex 无 Access 应用记录。如果你已在 Cloudflare 控制台为 {{hostname}} 建过应用，请先同步把它接入 tmex，避免重复创建。"
           },
           "probe": {
-            "unknown": "无法检测 {{hostname}} 的 Cloudflare Access 状态：当前没有可用的 Cloudflare 凭证，或查询 API 失败。这不代表未配置。保存下方的 API 令牌与账户 ID 后会自动重新检测。",
+            "unknown": "无法检测 {{hostname}} 的 Cloudflare Access 状态：当前没有可用的凭证，或查询 API 失败。这不代表未配置。保存下方的 API 令牌与账户 ID 后会自动重新检测。",
             "covered": "只读检测：Cloudflare 控制台上已有一个 Access 应用覆盖 {{hostname}}。该应用不由 tmex 管理，网关也不会校验它签发的令牌；点「从 Cloudflare 同步」可以把它接入 tmex。",
             "absent": "只读检测：Cloudflare 上没有覆盖 {{hostname}} 的 Access 应用。在下方填写允许访问的用户并应用，即可创建一个。",
             "teamDomain": "团队域：{{teamDomain}}",
@@ -567,10 +567,10 @@
             "rules": "规则",
             "noRules": "无",
             "enforce": "网关校验 Access 令牌",
-            "enforceHint": "对经隧道进来的请求校验 Cf-Access-Jwt-Assertion，未通过直接拒绝。",
-            "enforceOff": "已关闭令牌校验。Cloudflare 仍会在边缘拦截未授权访问，但会放行绕过 Access 直接打到隧道的请求。",
+            "enforceHint": "对经隧道进来的请求校验 Cf-Access-Jwt-Assertion，未通过将拒绝。",
+            "enforceOff": "已关闭令牌校验。Cloudflare 仍会在边缘拦截未授权访问，但会放行绕过 Access 的请求。",
             "remove": "移除 Access 应用",
-            "hostnameMismatch": "该应用覆盖的主机名与当前隧道不一致，令牌校验不会生效。请重新应用规则，把它绑到当前主机名。"
+            "hostnameMismatch": "该应用覆盖的主机名与当前隧道不一致，令牌校验不会生效。请重新应用规则，绑定到当前主机名。"
           },
           "confirmRemove": {
             "title": "移除 Access 应用？",
@@ -604,7 +604,7 @@
           "noHostname": "这条隧道的配置里没有指向本机 tmex（127.0.0.1:{{port}}）的主机名，因此无法接管。请检查它的 ingress 配置，或让 tmex 另建一条隧道。",
           "chooseHostname": "选择要接管的主机名",
           "adopt": "接管已有隧道",
-          "adoptHint": "接管后，自动将该主机名设为公网地址，并显示隧道状态与访问控制。隧道进程仍由系统服务运行——tmex 不会启动、停止或改写它的配置, 可随时取消接管。",
+          "adoptHint": "接管后，自动将该主机名设为公网地址，并显示隧道状态与访问控制。",
           "dismiss": "忽略并新建隧道"
         }
       },
@@ -729,10 +729,10 @@
         "changelogUnavailable": "该版本暂无更新日志。",
         "publishedAt": "发布于 {{date}}",
         "upgrade": "立即升级",
-        "upgradeDisabledDev": "非 production 环境已禁用程序内更新。",
+        "upgradeDisabledDev": "非生产环境已禁用程序内更新。",
         "upgradeDisabledNonCli": "程序内更新仅在通过 CLI 安装时可用。",
         "upgradeWarningTitle": "确认升级",
-        "upgradeWarningBody": "升级会重启服务并中断当前访问，还可能影响该服务托管的 tmux 进程的存活。是否继续？",
+        "upgradeWarningBody": "升级会重启服务并中断当前访问，可能影响该服务托管的 tmux 进程的存活。是否继续？",
         "upgradeStarted": "升级已开始",
         "stateDownloading": "正在下载新版本…",
         "stateExecuting": "正在执行升级，服务即将重启…",
@@ -1044,7 +1044,7 @@
           "errors": {
             "HUB_NOT_HUB": "目标未启用 Hub 角色。",
             "HUB_NOT_AUTHORIZED": "目标 Hub 未获授权。",
-            "HUB_EPOCH_STALE": "写入纪元已过期，请刷新后重试。",
+            "HUB_EPOCH_STALE": "写入 Epoch 已过期，请刷新后重试。",
             "HUB_ROLE_BUSY": "目标已有一次角色切换在进行。",
             "HUB_ROLE_UNSUPPORTED": "目标版本不支持远程切换，须先升级。",
             "INVALID_REQUEST": "请求无效。",
@@ -1065,6 +1065,8 @@
         "roleStandalone": "独立运行",
         "roleNode": "节点",
         "roleHub": "Hub 兼节点",
+        "roleRelay": "中继",
+        "roleRelayNode": "中继兼节点",
         "localAddress": "本机地址",
         "localAddressUnset": "未设置",
         "localAddressHint": "其它节点无法加入本机。请按「角色 → Hub 兼节点」重新设置。",
@@ -1100,7 +1102,7 @@
         "general": "通用设置",
         "domainAccess": {
           "label": "允许域名访问",
-          "description": "关闭后，来自公网的网页与 API 访问会被拒绝，仅保留 Hub / 节点互联服务；来自局域网与本机的访问不受影响。公开域名：{{hosts}}",
+          "description": "关闭后，来自公网的网页与 API 访问会被拒绝(局域网与本机的访问不受影响)，仅保留 Hub / 节点互联服务。公开域名：{{hosts}}",
           "noHosts": "尚未配置公开域名。",
           "hostSeparator": "、",
           "failed": "域名访问设置未能保存（{{detail}}）。",
@@ -1119,8 +1121,8 @@
         "changeHub": "更换 Hub",
         "confirm": "退出并重启",
         "cancel": "取消",
-        "consequencesNode": "本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除。退出前会自动在 Hub 上吊销本机；若自动吊销没成功，Hub 上会留下一条离线记录，需要你到 Hub 侧手动吊销。tmex 会重启，当前会话随之失效。",
-        "consequencesHub": "本机就是 Hub。退出后本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除，所有下级节点都会失去 Hub，必须重新加入其它 Hub 才能恢复。tmex 会重启，当前会话随之失效。",
+        "consequencesNode": "退出后, 本机的多节点互联状态将全部删除, tmex 将重启，当前会话随之失效。退出前将自动在 Hub 上吊销本机。",
+        "consequencesHub": "本机为 Hub。退出后本机的多节点互联状态将全部删除，tmex 会重启，当前会话随之失效。所有下级节点都会失去 Hub，必须重新加入其它 Hub 才能恢复。",
         "leaveConfirm": {
           "title": "退出 Hub？",
           "description": "本机将变回独立运行。"
@@ -1155,8 +1157,8 @@
       "https": {
         "title": "HTTPS 设置",
         "description": "决定本机如何提供 HTTPS。登录与通行密钥只能在 HTTPS 地址下使用。",
-        "hubUrlHint": "Hub 的公开地址必须是 https：在这里签发证书，或在前面加反向代理并选「外部反向代理」。",
-        "nodeRoleHint": "只有本机作为 Hub 时才需要 HTTPS；节点经 Hub 访问，无需配置。",
+        "hubUrlHint": "Hub 的公开地址必须是 HTTPS：在这里签发证书，或在前面加反向代理并选「外部反向代理」。",
+        "nodeRoleHint": "只有本机作为上级时才需要 HTTPS；节点经上级访问，无需配置。",
         "modeActive": "生效中",
         "save": "保存",
         "saved": "HTTPS 设置已保存",
@@ -1225,10 +1227,10 @@
           "intro": "tmex 继续提供明文 HTTP，由前置代理处理 TLS。请把代理指向明文端口，并转发原始 host、协议与客户端地址。",
           "trustProxy": "信任代理请求头",
           "trustProxyHint": "仅当 tmex 只能经由代理访问时才开启。",
-          "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。能直连明文端口的人可以伪造这两个请求头，因此请关闭该端口的外部访问。"
+          "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。存在直连伪造请求头风险，建议禁止该端口的外网访问。"
         },
         "selfsigned": {
-          "intro": "适用于没有公网域名的局域网或隧道。私有证书颁发机构（CA）不会离开本机，签发的证书有效期 398 天。",
+          "intro": "适用于没有公网域名的局域网或隧道。私有证书颁发机构（CA）保存在本机，证书有效期 398 天。",
           "sans": "证书包含的名称",
           "sansHint": "浏览器里实际会输入的主机名或 IP，最多 20 个。未列出的地址仍会报证书错误。",
           "sansPlaceholder": "hub.lan 或 192.168.1.10",
@@ -1265,11 +1267,11 @@
           }
         },
         "acme": {
-          "intro": "Let's Encrypt 为单个域名签发公共信任的证书，续期自动进行。域名须指向本机。",
+          "intro": "Let's Encrypt 为单个域名签发 HTTPS 证书，并自动续期。域名须指向本机。",
           "domain": "域名",
           "domainHint": "单个主机名，不支持通配符，且须已指向本机。",
           "email": "联系邮箱",
-          "emailHint": "Let's Encrypt 用它发送到期提醒。",
+          "emailHint": "Let's Encrypt 用于发送到期提醒。",
           "challenge": "验证方式",
           "challengeHttp": "HTTP-01",
           "challengeHttpHint": "Let's Encrypt 经公网 80 端口访问本机。",
@@ -1298,8 +1300,8 @@
           "nextRenew": "下次续期",
           "renewNow": "立即续期",
           "hints": {
-            "http01": "公网 80 端口必须能访问到本机。在 NAT 后面时，请在路由器上做端口转发。",
-            "http01Linux": "Linux 用户级 systemd 服务无法绑定 80 端口。请在路由器上做转发，或改用 DNS-01。",
+            "http01": "公网 80 端口必须能访问到本机。NAT 时，请在路由器上设置端口转发。",
+            "http01Linux": "Linux 用户级 systemd 服务无法绑定 80 端口。请在路由器上设置转发，或改用 DNS-01。",
             "dns01": "域名的 DNS 必须托管在所选服务商，并提供可修改其记录的 API 密钥。"
           }
         },
@@ -1542,7 +1544,7 @@
         "path": {
           "becomeHub": {
             "title": "把本机设为 Hub",
-            "description": "其他机器加入本机。需要一个公开的 HTTPS 地址。"
+            "description": "其他节点加入本机。需要一个公开的 HTTPS 地址。"
           },
           "joinHub": {
             "title": "加入已有 Hub",
@@ -1559,7 +1561,7 @@
         },
         "fields": {
           "hubPublicUrl": "Hub 公开地址",
-          "hubPublicUrlHint": "所有人访问用的 https 地址，例如 https://tmex.example.com。要加入的机器都必须能访问它。",
+          "hubPublicUrlHint": "外部可访问的 https 地址，例如 https://tmex.example.com。所有拟加入的节点均须可正常访问。",
           "username": "用户名",
           "usernameHint": "1-64 个字符，可用字母、数字、点、下划线和连字符。",
           "password": "密码",
@@ -1636,7 +1638,8 @@
           "withDetail": "{{base}}（{{detail}}）",
           "unknown": "出错了：{{message}}"
         }
-      }
+      },
+      "uplinkOffline": "上级链路未连接，暂时不能生成加入码。"
     },
     "devices": {
       "nodes": {
@@ -1679,6 +1682,228 @@
         "resetConfirmDescription": "所有分组将被删除，全部节点回到最外层并按默认顺序排列。",
         "resetFailed": "恢复默认布局失败",
         "resetDone": "已恢复默认布局"
+      }
+    },
+    "relay": {
+      "tenant": {
+        "strip": {
+          "title": "中继",
+          "online": "在线",
+          "offline": "离线",
+          "attached": "当前挂载于此中继",
+          "detail": "{{url}}｜优先级 {{priority}}｜{{state}}",
+          "rtt": "延迟 {{ms}} ms",
+          "kicked": "令牌已作废，须重新输入口令",
+          "lastError": "最近错误：{{error}}",
+          "meta": "元数据密钥第 {{epoch}} 代",
+          "nodes": "经中继可见 {{count}} 个节点",
+          "quota": "配额 {{nodes}} 节点｜{{streams}} 流",
+          "empty": "未接入中继。"
+        },
+        "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
+        "reauth": {
+          "notice": "中继令牌已失效，须重新输入中继口令。",
+          "action": "重新输入口令"
+        },
+        "actions": {
+          "menu": "中继操作",
+          "enroll": "接入中继",
+          "migrate": "改为接入中继",
+          "add": "追加中继",
+          "reauth": "重新输入口令",
+          "rotate": "轮换元数据密钥",
+          "leave": "离开中继",
+          "removeOne": "移除 {{host}}",
+          "reauthOne": "重新输入 {{host}} 的口令"
+        },
+        "dialog": {
+          "enrollTitle": "接入中继",
+          "migrateTitle": "改为接入中继",
+          "addTitle": "追加中继",
+          "reauthTitle": "重新输入中继口令",
+          "url": "中继地址",
+          "urlHint": "填中继的公网 HTTPS 地址。",
+          "password": "中继口令",
+          "passwordHint": "中继未设口令时留空。",
+          "rootPassword": "当前密码（本机账号密码）",
+          "rootPasswordHint": "接入必须用密码签名，通行密钥无法代签。",
+          "migrateNotice": "接入后本机改走中继，不再连接 Hub。",
+          "reauthNotice": "中继口令已变更，重新输入以恢复接入。",
+          "submit": "接入",
+          "submitReauth": "重新接入",
+          "done": "已接入中继。"
+        },
+        "leave": {
+          "title": "离开中继？",
+          "description": "离开后本机与各节点失去上级链路，须重新接入中继或 Hub。",
+          "confirm": "离开",
+          "done": "已离开中继。"
+        },
+        "metaKey": {
+          "rotateTitle": "轮换元数据密钥？",
+          "rotateDescription": "换发新一代元数据密钥，只分发给当前成员节点。",
+          "rotateConfirm": "轮换",
+          "done": "元数据密钥已轮换。",
+          "needsRotate": "新节点的元数据密钥未下发，请用「中继操作 → 轮换元数据密钥」补发。",
+          "admitFailed": "新节点的元数据密钥下发失败：{{error}}",
+          "rotateFailed": "元数据密钥轮换失败：{{error}}",
+          "pending": "还有 {{count}} 条元数据密钥换代没送达，被移除的节点仍能解出元数据。",
+          "retry": "重试",
+          "retryFailed": "元数据密钥换代仍未送达，请稍后重试。",
+          "revokePending": "节点已移除，但元数据密钥换代没送达（{{error}}），请在节点页重试。",
+          "revokePendingBulk": "有 {{count}} 台节点的元数据密钥换代没送达，请在节点页重试。",
+          "afterPasswordChange": "元数据密钥换代尚未送达，重新登录后在节点页重试。"
+        },
+        "errors": {
+          "ROOT_PASSWORD_INVALID": "当前密码不正确。",
+          "RELAY_PASSWORD_INVALID": "中继口令不正确。",
+          "RELAY_NOT_CONFIGURED": "本机未接入中继。",
+          "RELAY_QUOTA_NODES": "中继的节点配额已用尽。",
+          "RELAY_UNCONFIRMED": "中继未确认这次变更，请重试。",
+          "RELAY_OFFLINE": "中继连接已断开，请稍后重试。",
+          "RELAY_UNREACHABLE": "无法连接该中继，请检查地址。",
+          "RELAY_BAD_RESPONSE": "中继返回的数据无法识别。",
+          "RELAY_ENROLL_FAILED": "中继拒绝了这次接入。",
+          "RELAY_REJECTED": "中继拒绝了这次请求。",
+          "RELAY_KEY_MISSING": "本机缺少中继密钥，须重新接入。",
+          "NO_ADMITTED_NODES": "还没有已加入的节点，无法分发密钥。",
+          "UNKNOWN_NODE": "目标节点不在成员表里。",
+          "DUPLICATE_ENROLL_PK": "该加入码已存在。",
+          "INVALID_URL": "中继地址无效。",
+          "BAD_PROOF": "接入证明校验失败，请重试。",
+          "MALFORMED": "请求内容无效。",
+          "RELAY_NOT_FOUND": "这条中继不在本机的中继列表里。",
+          "RELAY_LAST": "只剩这一条中继，请改用「离开中继」。",
+          "RELAY_META_KEY_NEEDS_SIGNER": "须重新验证身份才能补发元数据密钥。",
+          "RELAY_META_KEY_PREPARE_FAILED": "本机没能算出新的元数据密钥，请重试。",
+          "RELAY_PASSWORD_REQUIRED": "这个中继须提供接入口令。",
+          "RELAY_RATE_LIMITED": "尝试过于频繁，请稍后再试。",
+          "RELAY_TENANT_KICKED": "中继已作废本租户的令牌，请重新输入口令。",
+          "RELAY_TOKEN_INVALID": "中继令牌已失效，请重新输入口令。"
+        },
+        "remove": {
+          "title": "移除这条中继？",
+          "description": "本机不再连接 {{url}}，其余中继继续可用。",
+          "confirm": "移除",
+          "done": "已移除该中继。"
+        }
+      },
+      "admin": {
+        "tabLabel": "中继",
+        "title": "中继运营",
+        "description": "本机作为公共中继，为接入的租户转发流量。",
+        "unavailable": "本机未启用中继角色。",
+        "unavailableHint": "中继角色须在安装时选择，启用后本页才有内容。",
+        "loginRequired": "请先登录，再管理中继。",
+        "loadFailed": "中继状态加载失败：{{message}}",
+        "epochValue": "第 {{epoch}} 代",
+        "health": {
+          "title": "运行状态",
+          "state": "状态",
+          "ok": "正常",
+          "down": "异常",
+          "unknown": "未知",
+          "version": "版本",
+          "uptime": "已运行",
+          "uptimeDays": "{{d}} 天 {{h}} 小时",
+          "uptimeHours": "{{h}} 小时 {{m}} 分钟",
+          "uptimeMinutes": "{{m}} 分钟"
+        },
+        "totals": {
+          "title": "总量",
+          "tenants": "租户",
+          "nodesOnline": "在线节点",
+          "streams": "并发流",
+          "traffic": "中转流量"
+        },
+        "password": {
+          "title": "接入口令",
+          "state": "状态",
+          "set": "已设置",
+          "unset": "未设置",
+          "unsetWarning": "未设置口令，任何人都能接入本中继。",
+          "epoch": "口令",
+          "minTokenEpoch": "令牌下限",
+          "change": "修改口令",
+          "dialogTitle": "修改接入口令",
+          "newPassword": "新口令",
+          "newPasswordHint": "至少 8 个字符。",
+          "clear": "清除口令",
+          "clearHint": "清除后任何人都能接入本中继。",
+          "modeLabel": "现有租户",
+          "modeKeep": "保留现有租户",
+          "modeKeepHint": "新口令只对新接入生效。",
+          "modeKick": "作废旧令牌",
+          "modeKickHint": "所有租户须重新输入口令。",
+          "tooShort": "口令至少 8 个字符。",
+          "saved": "接入口令已更新。",
+          "failed": "口令更新失败：{{message}}",
+          "dialogDescription": "设置新口令，或清除口令改为任何人可接入。"
+        },
+        "quota": {
+          "title": "默认配额",
+          "description": "未单独设置配额的租户使用这组默认值。",
+          "maxNodes": "节点数上限",
+          "maxStreams": "并发流上限",
+          "bandwidth": "带宽上限（KB/s）",
+          "unlimited": "不限速",
+          "unlimitedValue": "不限",
+          "inherit": "跟随默认",
+          "inheritBadge": "默认",
+          "summary": "{{nodes}} 节点 · {{streams}} 流 · {{bandwidth}}",
+          "bandwidthValue": "{{kb}} KB/s",
+          "invalidNodes": "节点数上限须为 1–{{max}} 的整数。",
+          "invalidStreams": "并发流上限须为 1–{{max}} 的整数。",
+          "invalidBandwidth": "带宽上限须为 1–{{max}} 的整数（KB/s）。",
+          "saved": "默认配额已更新。",
+          "failed": "配额更新失败：{{message}}"
+        },
+        "tenants": {
+          "title": "租户",
+          "total": "共 {{n}} 个",
+          "empty": "还没有租户接入。",
+          "columns": {
+            "id": "编号",
+            "label": "备注",
+            "created": "接入时间",
+            "lastSeen": "最近活跃",
+            "nodes": "节点",
+            "streams": "并发流",
+            "traffic": "流量",
+            "quota": "配额",
+            "tokenEpoch": "令牌",
+            "actions": "操作"
+          },
+          "nodesValue": "{{online}} / {{total}}",
+          "nodesRevoked": "已吊销 {{count}}",
+          "noLabel": "未备注",
+          "kicked": "已踢出",
+          "edit": "编辑",
+          "editTitle": "编辑租户",
+          "label": "备注",
+          "labelPlaceholder": "便于识别的名称",
+          "saved": "租户已更新。",
+          "failed": "租户更新失败：{{message}}",
+          "kick": "踢出",
+          "kickTitle": "踢出租户",
+          "kickText": "作废该租户的令牌并断开连接。重新输入口令后可再次接入。",
+          "kickDone": "已踢出租户。",
+          "kickFailed": "踢出失败：{{message}}",
+          "remove": "删除",
+          "removeTitle": "删除租户",
+          "removeText": "删除该租户的注册表与密钥日志，不可撤销。",
+          "removeConfirmLabel": "输入租户编号确认",
+          "removeMismatch": "编号不一致。",
+          "removeDone": "已删除租户。",
+          "removeFailed": "删除失败：{{message}}"
+        },
+        "time": {
+          "never": "从未",
+          "justNow": "刚刚",
+          "minutes": "{{n}} 分钟前",
+          "hours": "{{n}} 小时前",
+          "days": "{{n}} 天前"
+        }
       }
     }
   }

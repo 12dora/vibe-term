@@ -333,7 +333,7 @@
       "siteUrl": "Site URL",
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
-        "nameLinkedHint": "Linked to the node name: changing it here renames this node in the mesh.",
+        "nameLinkedHint": "Also renames this node in Mesh.",
         "nameLinkedLocked": "The current Hub is not accepting writes; renaming is unavailable.",
         "urlManagedHint": "Determined by the hub's public address; change it under Mesh settings."
       },
@@ -371,7 +371,7 @@
         "reloadApp": "Reload app",
         "shortcuts": {
           "title": "Custom Shortcuts",
-          "savedOnServer": "Saved on the server and shared across all your browsers — changes take effect after you click Save.",
+          "savedOnServer": "Saved on the server and shared across browsers. Click Save to apply.",
           "preview": "Preview",
           "useIcons": "Show keys as icons",
           "useIconsDesc": "Replace key names like Ctrl/Shift/Enter with Apple-style symbols (⌃⇧⏎).",
@@ -403,9 +403,9 @@
         "title": "Remote access",
         "wizardTitle": "Setup",
         "description": "Reach this machine's tmex remotely over Cloudflare Tunnel or a direct connection.",
-        "remoteNodeNotice": "Remote access is configured on the machine your browser connects to directly. Switch to that machine and open this page there.",
+        "remoteNodeNotice": "Remote access can only be configured on the node your browser connects to directly. Switch to that node first.",
         "loginRequired": "Sign in before configuring remote access.",
-        "loadFailed": "Couldn't load the remote access status. Make sure the tmex gateway is still running, then reload the page.",
+        "loadFailed": "Couldn't load the remote access status. Make sure the tmex gateway is still running and reload the page.",
         "unsupported": "No cloudflared build is available for this platform ({{platform}}), so Cloudflare Tunnel can't be used here.",
         "modeLabel": "Mode",
         "publicUrl": "Public URL",
@@ -430,7 +430,7 @@
         "mode": {
           "quick": {
             "title": "Quick tunnel",
-            "description": "No Cloudflare account needed. Each start issues a new temporary URL — good for demos and troubleshooting."
+            "description": "No Cloudflare account needed. A new temporary URL is issued on start. Good for demos and troubleshooting."
           },
           "named": {
             "title": "Named tunnel",
@@ -444,7 +444,7 @@
           },
           "direct": {
             "title": "Direct connection",
-            "description": "Connect over a static IP, port forwarding or a reverse proxy — no Cloudflare needed."
+            "description": "Connect over a static IP, port forwarding or a reverse proxy."
           }
         },
         "direct": {
@@ -469,7 +469,7 @@
           "entryLabel": "Current entry",
           "entryHint": "The address tmex is reached at. When exposing it, point the public entry at port {{port}} on this machine, or at a reverse proxy.",
           "tls": {
-            "hint": "Always serve a direct exposure over HTTPS — plain HTTP puts passwords and session cookies on the wire.",
+            "hint": "Enable HTTPS: plain HTTP puts passwords and session credentials on the wire.",
             "link": "Set up HTTPS in node settings"
           },
           "enable": {
@@ -556,7 +556,7 @@
           },
           "quick": {
             "title": "Quick tunnel",
-            "description": "On start, Cloudflare issues a temporary trycloudflare.com URL that stops working when the tunnel stops.",
+            "description": "On start, a temporary trycloudflare.com URL is issued. It stops working when the tunnel stops.",
             "started": "The quick tunnel is running. Its public URL is below."
           },
           "named": {
@@ -569,7 +569,7 @@
             },
             "hostname": "Hostname",
             "hostnamePlaceholder": "tmex.example.com",
-            "hostnameHint": "Use a subdomain of a domain hosted on Cloudflare.",
+            "hostnameHint": "A subdomain hosted on Cloudflare.",
             "hostnameInvalid": "Enter a lowercase hostname such as tmex.example.com.",
             "tunnelName": "Tunnel name",
             "tunnelNamePlaceholder": "tmex",
@@ -592,7 +592,7 @@
             "restartNow": "Restart now",
             "restarting": "Restarting tmex",
             "restartTimeout": "Timed out waiting for the restart. Restart tmex manually, then reload this page.",
-            "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Anyone who can bypass the tunnel and reach the local listening port directly could forge them, so restrict access to that port.",
+            "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Requests that bypass the tunnel could forge these headers, so block external access to that port.",
             "trustProxyEffective": "In effect now",
             "trustProxyState": {
               "on": "Trusted",
@@ -664,7 +664,7 @@
           "exposure_ack_required": "This exposes tmex to the public internet. Confirm the risk first."
         },
         "authRequired": {
-          "notice": "Sign-in isn't enabled on this machine. Enable it before going public, or anyone could walk straight into tmex.",
+          "notice": "Warning: sign-in is not enabled. Enable it before going public, or anyone can access tmex.",
           "link": "Open multi-node settings"
         },
         "confirmRemove": {
@@ -691,7 +691,7 @@
             "title": "None",
             "description": "No access protection: anyone with the address can use the tmex on this machine.",
             "warning": "No access protection: anyone with the address can use the tmex on this machine.",
-            "appRemains": "The Access app still exists. Remove it here."
+            "appRemains": "The Access app has not been removed. You can remove it here."
           },
           "login": {
             "title": "Password Login",
@@ -754,7 +754,7 @@
             "hint": "Credentials are saved, but tmex has no Access application on record. If you already created one for {{hostname}} in the Cloudflare dashboard, sync it in first to avoid a duplicate."
           },
           "probe": {
-            "unknown": "Can't check Cloudflare Access for {{hostname}}: no usable Cloudflare credentials, or the lookup failed. This does not mean Access is unconfigured. Save an API token and account ID below and tmex will check again.",
+            "unknown": "Can't check Cloudflare Access for {{hostname}}: no usable credentials, or the lookup failed. This does not mean Access is unconfigured. Save an API token and account ID below and tmex will check again.",
             "covered": "Read-only check: an Access application in the Cloudflare dashboard already covers {{hostname}}. tmex doesn't manage it and the gateway won't verify the tokens it issues — use \"Sync from Cloudflare\" to bring it under tmex.",
             "absent": "Read-only check: no Access application in Cloudflare covers {{hostname}}. Add the allowed users below and apply to create one.",
             "teamDomain": "Team domain: {{teamDomain}}",
@@ -768,8 +768,8 @@
             "rules": "Rules",
             "noRules": "None",
             "enforce": "Verify Access tokens at the gateway",
-            "enforceHint": "Validate Cf-Access-Jwt-Assertion on requests arriving through the tunnel and reject the ones that fail.",
-            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that reach the tunnel around Access are let through.",
+            "enforceHint": "Validate Cf-Access-Jwt-Assertion on requests arriving through the tunnel; failures are rejected.",
+            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that bypass Access are let through.",
             "remove": "Remove Access application",
             "hostnameMismatch": "This application covers a different hostname than the current tunnel, so token verification has no effect. Apply the rules again to bind it to the current hostname."
           },
@@ -805,7 +805,7 @@
           "noHostname": "Its configuration has no hostname pointing at this tmex (127.0.0.1:{{port}}), so it can't be adopted. Check its ingress rules, or let tmex create its own tunnel.",
           "chooseHostname": "Choose the hostname to adopt",
           "adopt": "Adopt the existing tunnel",
-          "adoptHint": "Adopting sets this hostname as the public address and shows the tunnel's state and access control here. The tunnel process keeps running under the system service — tmex never starts, stops, or rewrites its configuration, and you can release it at any time.",
+          "adoptHint": "Adopting sets this hostname as the public address and shows the tunnel's state and access control here.",
           "dismiss": "Ignore and create a new tunnel"
         }
       },
@@ -930,10 +930,10 @@
         "changelogUnavailable": "No changelog available for this version.",
         "publishedAt": "Published {{date}}",
         "upgrade": "Upgrade now",
-        "upgradeDisabledDev": "In-app update is disabled outside the production environment.",
+        "upgradeDisabledDev": "In-app update is disabled outside production.",
         "upgradeDisabledNonCli": "In-app update is only available for CLI installations.",
         "upgradeWarningTitle": "Confirm upgrade",
-        "upgradeWarningBody": "Upgrading restarts the service and will interrupt your current session. It may also affect the survival of tmux processes managed by the service. Continue?",
+        "upgradeWarningBody": "Upgrading restarts the service and interrupts your current session. It may affect tmux processes managed by the service. Continue?",
         "upgradeStarted": "Upgrade started",
         "stateDownloading": "Downloading the new version…",
         "stateExecuting": "Applying the upgrade, the service is restarting…",
@@ -1101,6 +1101,7 @@
       "error": "WebSocket connection error",
       "checkGateway": "Please check Gateway status",
       "inputDropped": "Connection interrupted — your recent input could not be sent. Please type or paste it again once reconnected.",
+      "serverTooOld": "Terminal connection failed: the Gateway is too old, please upgrade it to {{minVersion}} or newer.",
       "reconnecting": "Reconnecting",
       "reconnect": "Reconnect"
     },
@@ -1649,7 +1650,7 @@
       "security": {
         "title": "Account security",
         "changePassword": "Change password",
-        "changePasswordWarning": "Changing your password clears every passkey and authenticator on all devices and signs you out everywhere. You will have to set them up again.",
+        "changePasswordWarning": "Changing your password clears every passkey and authenticator on all devices and signs you out everywhere.",
         "changePasswordDone": "Password changed. Sign in again on each node.",
         "currentPassword": "Current password",
         "newPassword": "New password",
@@ -1657,8 +1658,8 @@
         "passwordRequired": "Enter your password.",
         "passwordMismatch": "The new passwords do not match.",
         "totp": "Authenticator app",
-        "totpNote": "Protects your account if your password leaks. For a stronger second factor, use a passkey.",
-        "totpPasskeyNote": "Signing in with a passkey does not ask for a code.",
+        "totpNote": "Protects your account if your password leaks. For stronger two-factor authentication, use a passkey.",
+        "totpPasskeyNote": "No code is needed when signing in with a passkey.",
         "totpSet": "Set up",
         "totpReset": "Reset",
         "totpClear": "Turn off",
@@ -1669,7 +1670,7 @@
         "passkeyName": "Passkey name",
         "registerPasskey": "Add passkey",
         "signWithExistingPasskey": "You can confirm with your passkey instead of typing your password.",
-        "passkeySecondFactorHint": "Once a passkey is registered, password sign-in also requires a passkey check. Sign-ins from the local machine or a LAN address skip the check; other addresses need a passkey registered. Removing all passkeys turns it off.",
+        "passkeySecondFactorHint": "Once registered, password sign-in also requires a passkey check (sign-ins from this machine or a LAN address skip it).",
         "sessionKeyNote": "Every action on this page asks for your password or a passkey.",
         "totpConfirm": "Confirm and turn on",
         "totpConfirmHint": "Enter the 6-digit code from your authenticator app.",
@@ -1777,7 +1778,7 @@
           "errors": {
             "HUB_NOT_HUB": "The target does not run the hub role.",
             "HUB_NOT_AUTHORIZED": "The target hub is not authorized.",
-            "HUB_EPOCH_STALE": "The writer epoch is stale. Refresh and try again.",
+            "HUB_EPOCH_STALE": "The write epoch is stale. Refresh and try again.",
             "HUB_ROLE_BUSY": "The target already has a role switch running.",
             "HUB_ROLE_UNSUPPORTED": "The target version does not support remote switching. Upgrade it first.",
             "INVALID_REQUEST": "Invalid request.",
@@ -1798,6 +1799,8 @@
         "roleStandalone": "Standalone",
         "roleNode": "Node",
         "roleHub": "Hub and node",
+        "roleRelay": "Relay",
+        "roleRelayNode": "Relay and node",
         "localAddress": "This Machine's Address",
         "localAddressUnset": "Not set",
         "localAddressHint": "Other nodes cannot join. Set it up again under Role → Hub and node.",
@@ -1833,7 +1836,7 @@
         "general": "General",
         "domainAccess": {
           "label": "Allow Domain Access",
-          "description": "When off, web and API access from the public internet is refused and only hub/node mesh services stay reachable; access from the local network and this machine is unaffected. Public domains: {{hosts}}",
+          "description": "When off, web and API access from the public internet is refused (LAN and local access is unaffected); only hub/node mesh services stay reachable. Public domains: {{hosts}}",
           "noHosts": "No public domain configured yet.",
           "hostSeparator": ", ",
           "failed": "Could not save the domain access setting ({{detail}}).",
@@ -1852,8 +1855,8 @@
         "changeHub": "Change hub",
         "confirm": "Leave and restart",
         "cancel": "Cancel",
-        "consequencesNode": "All mesh state on this machine (account, node identity, cached peers) is removed. This machine is revoked on the hub automatically before leaving; if that fails, the hub keeps an offline record you have to revoke there. tmex restarts and the current session ends.",
-        "consequencesHub": "This machine is the hub. Leaving removes all of its mesh state (account, node identity, cached peers), and every node that depends on it loses its hub — each one has to join another hub to come back. tmex restarts and the current session ends.",
+        "consequencesNode": "After leaving, all mesh state on this machine is removed, tmex restarts and the current session ends. This machine is revoked on the hub automatically before leaving.",
+        "consequencesHub": "This machine is the hub. Leaving removes all of its mesh state, tmex restarts and the current session ends. Every node loses its hub and has to join another hub to come back.",
         "leaveConfirm": {
           "title": "Leave the hub?",
           "description": "This machine goes back to running standalone."
@@ -1888,8 +1891,8 @@
       "https": {
         "title": "HTTPS settings",
         "description": "How this machine serves HTTPS. Sign-in and passkeys only work over an HTTPS address.",
-        "hubUrlHint": "A hub's public address must use https: issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
-        "nodeRoleHint": "HTTPS is only needed while this machine acts as a hub. Nodes are reached through the hub.",
+        "hubUrlHint": "A hub's public address must use HTTPS: issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
+        "nodeRoleHint": "HTTPS is only needed while this machine acts as an upstream. Nodes are reached through their upstream.",
         "modeActive": "in use",
         "save": "Save",
         "saved": "HTTPS settings saved",
@@ -1958,10 +1961,10 @@
           "intro": "tmex keeps serving plain HTTP and the proxy in front handles TLS. Point the proxy at the plain port and let it forward the original host, protocol and client address.",
           "trustProxy": "Trust proxy headers",
           "trustProxyHint": "Turn this on only if tmex can be reached through the proxy alone.",
-          "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Anyone who can reach the plain port directly could forge them, so keep that port closed."
+          "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Direct connections could forge these headers, so block external access to that port."
         },
         "selfsigned": {
-          "intro": "For a LAN or tunnel with no public domain. The private certificate authority (CA) never leaves this machine, and certificates are valid for 398 days.",
+          "intro": "For a LAN or tunnel with no public domain. The private certificate authority (CA) is kept on this machine, and certificates are valid for 398 days.",
           "sans": "Names on the certificate",
           "sansHint": "Hostnames or IP addresses you will type in the browser, up to 20. Anything not listed keeps showing a certificate error.",
           "sansPlaceholder": "hub.lan or 192.168.1.10",
@@ -1998,11 +2001,11 @@
           }
         },
         "acme": {
-          "intro": "Let's Encrypt issues a publicly trusted certificate for one domain and renews it automatically. The domain must point at this machine.",
+          "intro": "Let's Encrypt issues an HTTPS certificate for one domain and renews it automatically. The domain must point at this machine.",
           "domain": "Domain",
           "domainHint": "One hostname, no wildcards. It must already point at this machine.",
           "email": "Contact email",
-          "emailHint": "Let's Encrypt uses it for expiry warnings.",
+          "emailHint": "Used by Let's Encrypt for expiry notices.",
           "challenge": "Validation method",
           "challengeHttp": "HTTP-01",
           "challengeHttpHint": "Let's Encrypt reaches this machine on public port 80.",
@@ -2031,8 +2034,8 @@
           "nextRenew": "Next renewal",
           "renewNow": "Renew now",
           "hints": {
-            "http01": "Public port 80 has to reach this machine. Behind NAT, forward it on your router.",
-            "http01Linux": "A user-level systemd service cannot bind port 80. Forward it on the router, or use DNS-01.",
+            "http01": "Public port 80 has to reach this machine. Behind NAT, set up port forwarding on your router.",
+            "http01Linux": "A user-level systemd service cannot bind port 80. Set up forwarding on the router, or use DNS-01.",
             "dns01": "The domain's DNS has to be hosted by the selected provider, with an API key that can edit its records."
           }
         },
@@ -2279,7 +2282,7 @@
         "path": {
           "becomeHub": {
             "title": "Make this the hub",
-            "description": "Other machines join this one. Needs a public HTTPS address."
+            "description": "Other nodes join this one. Needs a public HTTPS address."
           },
           "joinHub": {
             "title": "Join an existing hub",
@@ -2296,7 +2299,7 @@
         },
         "fields": {
           "hubPublicUrl": "Public hub address",
-          "hubPublicUrlHint": "The https address everyone will use, for example https://tmex.example.com. Every machine that joins must be able to reach it.",
+          "hubPublicUrlHint": "An externally reachable https address, for example https://tmex.example.com. Every node that joins must be able to reach it.",
           "username": "Username",
           "usernameHint": "1-64 characters: letters, digits, dot, underscore or hyphen.",
           "password": "Password",
@@ -2373,7 +2376,8 @@
           "withDetail": "{{base}} ({{detail}})",
           "unknown": "Something went wrong: {{message}}"
         }
-      }
+      },
+      "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back."
     },
     "devices": {
       "nodes": {
@@ -2417,6 +2421,228 @@
         "resetConfirmDescription": "All groups will be deleted and every node returns to the top level in default order.",
         "resetFailed": "Failed to reset layout",
         "resetDone": "Layout reset"
+      }
+    },
+    "relay": {
+      "tenant": {
+        "strip": {
+          "title": "Relay",
+          "online": "Online",
+          "offline": "Offline",
+          "attached": "This machine is attached to this relay",
+          "detail": "{{url}} | priority {{priority}} | {{state}}",
+          "rtt": "Latency {{ms}} ms",
+          "kicked": "Token revoked, re-enter the relay password",
+          "lastError": "Last error: {{error}}",
+          "meta": "Metadata key gen {{epoch}}",
+          "nodes": "{{count}} nodes visible via relay",
+          "quota": "Quota {{nodes}} nodes | {{streams}} streams",
+          "empty": "Not connected to a relay."
+        },
+        "notAttached": "No relay connected; joining and removing nodes are unavailable.",
+        "reauth": {
+          "notice": "The relay token expired. Re-enter the relay password.",
+          "action": "Re-enter Password"
+        },
+        "actions": {
+          "menu": "Relay Actions",
+          "enroll": "Connect Relay",
+          "migrate": "Switch to Relay",
+          "add": "Add Relay",
+          "reauth": "Re-enter Password",
+          "rotate": "Rotate Metadata Key",
+          "leave": "Leave Relay",
+          "removeOne": "Remove {{host}}",
+          "reauthOne": "Re-enter password for {{host}}"
+        },
+        "dialog": {
+          "enrollTitle": "Connect Relay",
+          "migrateTitle": "Switch to Relay",
+          "addTitle": "Add Relay",
+          "reauthTitle": "Re-enter Relay Password",
+          "url": "Relay address",
+          "urlHint": "Enter the public HTTPS address of the relay.",
+          "password": "Relay password",
+          "passwordHint": "Leave empty if the relay has no password.",
+          "rootPassword": "Current password (this machine's account password)",
+          "rootPasswordHint": "Joining must be signed with the password; a passkey cannot sign it.",
+          "migrateNotice": "After connecting, this machine uses the relay and no longer connects to a Hub.",
+          "reauthNotice": "The relay password changed. Enter the new one to restore the link.",
+          "submit": "Connect",
+          "submitReauth": "Reconnect",
+          "done": "Relay connected."
+        },
+        "leave": {
+          "title": "Leave the relay?",
+          "description": "After leaving, this machine and its nodes have no uplink until a relay or Hub is set up again.",
+          "confirm": "Leave",
+          "done": "Left the relay."
+        },
+        "metaKey": {
+          "rotateTitle": "Rotate the metadata key?",
+          "rotateDescription": "Issue a new metadata key epoch, distributed only to current member nodes.",
+          "rotateConfirm": "Rotate",
+          "done": "Metadata key rotated.",
+          "needsRotate": "The new node did not receive the metadata key. Use \"Relay Actions -> Rotate Metadata Key\".",
+          "admitFailed": "Failed to deliver the metadata key to the new node: {{error}}",
+          "rotateFailed": "Metadata key rotation failed: {{error}}",
+          "pending": "{{count}} metadata key rotation(s) have not landed yet; removed nodes can still read metadata.",
+          "retry": "Retry",
+          "retryFailed": "The metadata key rotation still has not landed. Try again later.",
+          "revokePending": "The node was removed, but the metadata key rotation did not land ({{error}}). Retry on the nodes page.",
+          "revokePendingBulk": "Metadata key rotation did not land for {{count}} node(s). Retry on the nodes page.",
+          "afterPasswordChange": "The metadata key rotation has not landed yet. Sign in again and retry on the nodes page."
+        },
+        "errors": {
+          "ROOT_PASSWORD_INVALID": "Current password is incorrect.",
+          "RELAY_PASSWORD_INVALID": "Relay password is incorrect.",
+          "RELAY_NOT_CONFIGURED": "This machine is not connected to a relay.",
+          "RELAY_QUOTA_NODES": "The relay node quota is used up.",
+          "RELAY_UNCONFIRMED": "The relay did not confirm this change. Try again.",
+          "RELAY_OFFLINE": "The relay connection is down. Try again later.",
+          "RELAY_UNREACHABLE": "Cannot reach this relay. Check the address.",
+          "RELAY_BAD_RESPONSE": "The relay returned data that cannot be parsed.",
+          "RELAY_ENROLL_FAILED": "The relay rejected this enrollment.",
+          "RELAY_REJECTED": "The relay rejected this request.",
+          "RELAY_KEY_MISSING": "Relay keys are missing on this machine. Connect again.",
+          "NO_ADMITTED_NODES": "No admitted nodes yet, so keys cannot be distributed.",
+          "UNKNOWN_NODE": "That node is not in the member list.",
+          "DUPLICATE_ENROLL_PK": "That join code already exists.",
+          "INVALID_URL": "The relay address is invalid.",
+          "BAD_PROOF": "The enrollment proof failed verification. Try again.",
+          "MALFORMED": "The request content is invalid.",
+          "RELAY_NOT_FOUND": "That relay is not in this machine’s relay list.",
+          "RELAY_LAST": "This is the only relay left. Use \"Leave Relay\" instead.",
+          "RELAY_META_KEY_NEEDS_SIGNER": "Verify your identity again to deliver the metadata key.",
+          "RELAY_META_KEY_PREPARE_FAILED": "This machine could not prepare a new metadata key. Try again.",
+          "RELAY_PASSWORD_REQUIRED": "This relay requires a connection password.",
+          "RELAY_RATE_LIMITED": "Too many attempts. Try again later.",
+          "RELAY_TENANT_KICKED": "The relay revoked this tenant’s token. Re-enter the relay password.",
+          "RELAY_TOKEN_INVALID": "The relay token expired. Re-enter the relay password."
+        },
+        "remove": {
+          "title": "Remove this relay?",
+          "description": "This machine stops connecting to {{url}}. The other relays keep working.",
+          "confirm": "Remove",
+          "done": "Relay removed."
+        }
+      },
+      "admin": {
+        "tabLabel": "Relay",
+        "title": "Relay Operations",
+        "description": "This machine runs as a public relay and forwards traffic for the tenants that join it.",
+        "unavailable": "The relay role is not enabled on this machine.",
+        "unavailableHint": "The relay role is chosen at install time; this page stays empty until then.",
+        "loginRequired": "Sign in first to manage the relay.",
+        "loadFailed": "Could not load relay status: {{message}}",
+        "epochValue": "Gen {{epoch}}",
+        "health": {
+          "title": "Health",
+          "state": "State",
+          "ok": "Healthy",
+          "down": "Unhealthy",
+          "unknown": "Unknown",
+          "version": "Version",
+          "uptime": "Uptime",
+          "uptimeDays": "{{d}} d {{h}} h",
+          "uptimeHours": "{{h}} h {{m}} min",
+          "uptimeMinutes": "{{m}} min"
+        },
+        "totals": {
+          "title": "Totals",
+          "tenants": "Tenants",
+          "nodesOnline": "Nodes online",
+          "streams": "Streams",
+          "traffic": "Relayed traffic"
+        },
+        "password": {
+          "title": "Join Password",
+          "state": "State",
+          "set": "Set",
+          "unset": "Not set",
+          "unsetWarning": "No password is set, so anyone can join this relay.",
+          "epoch": "Password",
+          "minTokenEpoch": "Token floor",
+          "change": "Change Password",
+          "dialogTitle": "Change Join Password",
+          "newPassword": "New password",
+          "newPasswordHint": "At least 8 characters.",
+          "clear": "Clear password",
+          "clearHint": "Once cleared, anyone can join this relay.",
+          "modeLabel": "Existing tenants",
+          "modeKeep": "Keep existing tenants",
+          "modeKeepHint": "The new password applies to new joins only.",
+          "modeKick": "Revoke old tokens",
+          "modeKickHint": "Every tenant has to enter the password again.",
+          "tooShort": "The password needs at least 8 characters.",
+          "saved": "Join password updated.",
+          "failed": "Could not update the password: {{message}}",
+          "dialogDescription": "Set a new password, or clear it so anyone can join."
+        },
+        "quota": {
+          "title": "Default Quota",
+          "description": "Tenants without their own quota use these values.",
+          "maxNodes": "Max nodes",
+          "maxStreams": "Max streams",
+          "bandwidth": "Max bandwidth (KB/s)",
+          "unlimited": "Unlimited",
+          "unlimitedValue": "Unlimited",
+          "inherit": "Follow default",
+          "inheritBadge": "Default",
+          "summary": "{{nodes}} nodes · {{streams}} streams · {{bandwidth}}",
+          "bandwidthValue": "{{kb}} KB/s",
+          "invalidNodes": "Max nodes must be an integer between 1 and {{max}}.",
+          "invalidStreams": "Max streams must be an integer between 1 and {{max}}.",
+          "invalidBandwidth": "Max bandwidth must be an integer between 1 and {{max}} KB/s.",
+          "saved": "Default quota updated.",
+          "failed": "Could not update the quota: {{message}}"
+        },
+        "tenants": {
+          "title": "Tenants",
+          "total": "{{n}} total",
+          "empty": "No tenant has joined yet.",
+          "columns": {
+            "id": "ID",
+            "label": "Note",
+            "created": "Joined",
+            "lastSeen": "Last seen",
+            "nodes": "Nodes",
+            "streams": "Streams",
+            "traffic": "Traffic",
+            "quota": "Quota",
+            "tokenEpoch": "Token",
+            "actions": "Actions"
+          },
+          "nodesValue": "{{online}} / {{total}}",
+          "nodesRevoked": "{{count}} revoked",
+          "noLabel": "No note",
+          "kicked": "Kicked",
+          "edit": "Edit",
+          "editTitle": "Edit Tenant",
+          "label": "Note",
+          "labelPlaceholder": "A name that is easy to recognize",
+          "saved": "Tenant updated.",
+          "failed": "Could not update the tenant: {{message}}",
+          "kick": "Kick",
+          "kickTitle": "Kick Tenant",
+          "kickText": "Revokes this tenant's token and drops its connections. It can join again with the password.",
+          "kickDone": "Tenant kicked.",
+          "kickFailed": "Could not kick the tenant: {{message}}",
+          "remove": "Delete",
+          "removeTitle": "Delete Tenant",
+          "removeText": "Deletes this tenant's registry and key log. This cannot be undone.",
+          "removeConfirmLabel": "Type the tenant ID to confirm",
+          "removeMismatch": "The ID does not match.",
+          "removeDone": "Tenant deleted.",
+          "removeFailed": "Could not delete the tenant: {{message}}"
+        },
+        "time": {
+          "never": "Never",
+          "justNow": "Just now",
+          "minutes": "{{n}} min ago",
+          "hours": "{{n}} h ago",
+          "days": "{{n}} d ago"
+        }
       }
     }
   }

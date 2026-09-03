@@ -9,6 +9,8 @@ export * from './files';
 export * from './format';
 export * from './llm-providers';
 export * from './node-url';
+export * from './relay/admin-api';
+export * from './relay/tenant-api';
 export * from './site';
 export * from './domain-access';
 export * from './terminal-shortcuts';

@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import { sessionStateStore } from './borsh/session-state';
-import { switchBarrier } from './borsh/switch-barrier';
 import { createGatewaySession, setupConnectionEntry } from './test-helpers';
-import { type TmuxCommandHost, handleFetchPaneHistory } from './tmux-command-handlers';
+import type { TmuxCommandHost } from './tmux-command-handlers';
+import { handleCanonicalResize } from './tmux-geometry-handlers';
 import { handleTmuxSelect } from './tmux-selection-handlers';
 
 function makeSnapshot(): StateSnapshotPayload {
@@ -67,15 +67,11 @@ function createHost() {
   const connections = new Map();
   const host = {
     connections,
-    terminalOutputBatcher: {
-      flushDevice(deviceId: string) {
-        flushCalls.push(deviceId);
-      },
-    },
     sendError() {},
     sendEnvelope() {},
-    syncLegacyPaneObservers() {},
-    refreshSnapshotPolling() {},
+    refreshSnapshotPolling(deviceId: string) {
+      flushCalls.push(deviceId);
+    },
   } as unknown as TmuxCommandHost;
 
   return {
@@ -112,7 +108,6 @@ describe('handleTmuxSelect wantHistory', () => {
     expect(fixture.selectPaneCalls).toEqual([{ windowId: '@1', paneId: '%1' }]);
     expect(fixture.focusPaneCalls).toEqual([]);
     expect(fixture.selectPaneWithSizeCalls).toEqual([]);
-    switchBarrier.cleanupClient(ws);
     sessionStateStore.delete(ws);
   });
 
@@ -138,11 +133,12 @@ describe('handleTmuxSelect wantHistory', () => {
     expect(fixture.selectPaneCalls).toEqual([]);
     expect(fixture.selectPaneWithSizeCalls).toEqual([]);
     expect(fixture.resizePaneCalls).toEqual([]);
-    switchBarrier.cleanupClient(ws);
     sessionStateStore.delete(ws);
   });
 
-  test('wantHistory:false 带与快照相同的尺寸时仍 resize（tmux 可能已漂移）', () => {
+  // canonical v1.1：只有 ResizePaneV11(geometryReason=resend) 才不信任快照几何，
+  // TMUX_SELECT 一律走去重（canonical 客户端的 wantHistory 恒为 false）。
+  test('wantHistory:false 带与快照相同的尺寸时不 resize；随后的 resend 强制下发', () => {
     const ws = createGatewaySession({ session: true });
     const fixture = createHost();
     setupConnectionEntry(
@@ -161,10 +157,20 @@ describe('handleTmuxSelect wantHistory', () => {
     });
 
     expect(fixture.focusPaneCalls).toEqual([{ windowId: '@1', paneId: '%1' }]);
-    expect(fixture.resizePaneCalls).toEqual([{ paneId: '%1', cols: 80, rows: 24 }]);
+    expect(fixture.resizePaneCalls).toEqual([]);
     expect(fixture.selectPaneCalls).toEqual([]);
     expect(fixture.selectPaneWithSizeCalls).toEqual([]);
-    switchBarrier.cleanupClient(ws);
+
+    handleCanonicalResize(fixture.host, ws, {
+      deviceId: 'device-a',
+      paneId: '%1',
+      cols: 80,
+      rows: 24,
+      reason: wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND,
+      sizeEpoch: 1n,
+    });
+
+    expect(fixture.resizePaneCalls).toEqual([{ paneId: '%1', cols: 80, rows: 24 }]);
     sessionStateStore.delete(ws);
   });
 
@@ -190,7 +196,6 @@ describe('handleTmuxSelect wantHistory', () => {
     expect(fixture.resizePaneCalls).toEqual([{ paneId: '%1', cols: 100, rows: 30 }]);
     expect(fixture.selectPaneCalls).toEqual([]);
     expect(fixture.selectPaneWithSizeCalls).toEqual([]);
-    switchBarrier.cleanupClient(ws);
     sessionStateStore.delete(ws);
   });
 
@@ -218,76 +223,6 @@ describe('handleTmuxSelect wantHistory', () => {
     expect(fixture.selectPaneCalls).toEqual([]);
     expect(fixture.resizePaneCalls).toEqual([]);
     expect(fixture.focusPaneCalls).toEqual([]);
-    switchBarrier.cleanupClient(ws);
     sessionStateStore.delete(ws);
-  });
-});
-
-describe('handleFetchPaneHistory byteLimit', () => {
-  const TOKEN = new Uint8Array(16).fill(9);
-
-  function createHistoryHost(data: string) {
-    const fetchCalls: Array<{ paneId: string; byteLimit?: number }> = [];
-    const chunks: Uint8Array[] = [];
-    const runtime = {
-      fetchPaneHistory(paneId: string, byteLimit?: number) {
-        fetchCalls.push({ paneId, byteLimit });
-        return Promise.resolve({
-          data,
-          alternateScreen: false,
-          modes: 0,
-        });
-      },
-    };
-    const connections = new Map();
-    const host = {
-      connections,
-      sendChunked(_session: unknown, kind: number, payload: Uint8Array) {
-        expect(kind).toBe(wsBorsh.KIND_TERM_HISTORY);
-        chunks.push(payload);
-        return true;
-      },
-    } as unknown as TmuxCommandHost;
-    return { host, connections, runtime, fetchCalls, chunks };
-  }
-
-  test('passes byteLimit into fetch and hard-truncates the encoded tail', async () => {
-    const ws = createGatewaySession({ session: true });
-    const body = `HEAD${'X'.repeat(40)}TAIL`;
-    const fixture = createHistoryHost(body);
-    setupConnectionEntry(
-      { connections: fixture.connections },
-      { ws, runtime: fixture.runtime, lastSnapshot: makeSnapshot() }
-    );
-
-    handleFetchPaneHistory(fixture.host, ws, 'device-a', '%1', TOKEN, 8);
-    await Bun.sleep(0);
-    await Bun.sleep(0);
-
-    expect(fixture.fetchCalls).toEqual([{ paneId: '%1', byteLimit: 8 }]);
-    expect(fixture.chunks).toHaveLength(1);
-    const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermHistorySchema, fixture.chunks[0]!);
-    const text = new TextDecoder().decode(decoded.data);
-    expect(text.endsWith('TAIL')).toBe(true);
-    expect(decoded.data.byteLength).toBeLessThanOrEqual(8);
-    expect(text.includes('HEAD')).toBe(false);
-  });
-
-  test('legacy requests without byteLimit still fetch and send history', async () => {
-    const ws = createGatewaySession({ session: true });
-    const fixture = createHistoryHost('full-screen');
-    setupConnectionEntry(
-      { connections: fixture.connections },
-      { ws, runtime: fixture.runtime, lastSnapshot: makeSnapshot() }
-    );
-
-    handleFetchPaneHistory(fixture.host, ws, 'device-a', '%1', TOKEN);
-    await Bun.sleep(0);
-    await Bun.sleep(0);
-
-    expect(fixture.fetchCalls[0]?.paneId).toBe('%1');
-    expect(fixture.chunks).toHaveLength(1);
-    const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermHistorySchema, fixture.chunks[0]!);
-    expect(new TextDecoder().decode(decoded.data)).toBe('full-screen');
   });
 });

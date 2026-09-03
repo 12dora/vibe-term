@@ -399,34 +399,8 @@ else
   fail "3d create local device on node-b (${dev_json})"
 fi
 
-tree_json=""
-tree_rc=1
-for _ in $(seq 1 20); do
-  set +e
-  tree_json="$(driver files.ts tmux-tree --base-url https://hub.tmex.test --cookie-file /out/cookies-hub.json \
-    --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}")"
-  tree_rc=$?
-  set -e
-  if echo "${tree_json}" | grep -q '"id":'; then
-    break
-  fi
-  sleep 1
-done
-printf '%s\n' "${tree_json}" | tee "${OUT}/tmux-tree-b.json"
-if [[ "${tree_rc}" -eq 0 ]] && echo "${tree_json}" | grep -q "${DEVICE_B_ID}"; then
-  pass "3e tmux tree lists device"
-else
-  fail "3e tmux tree lists device (${tree_json})"
-fi
-TREE_PANE="$(docker exec tmex-e2e-driver bun -e '
-  const j = await Bun.file("/out/tmux-tree-b.json").json();
-  const pane = j.devices?.[0]?.session?.windows?.[0]?.panes?.[0]?.id;
-  if (pane) process.stdout.write(pane);
-' || true)"
-if [[ -n "${TREE_PANE}" ]]; then
-  PANE_B="${TREE_PANE}"
-fi
-log "using pane ${PANE_B}"
+# pane 兜底：terminal.ts 优先用 STATE_SNAPSHOT 里的活动 pane，这里只提供种子值
+log "seed pane ${PANE_B}"
 
 set +e
 driver nodes.ts wait-reach --base-url https://hub.tmex.test --cookie-file /out/cookies-hub.json \

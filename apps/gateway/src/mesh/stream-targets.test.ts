@@ -169,7 +169,7 @@ describe('http/ws stream targets', () => {
     const opened = await openWsStream(a, sid.sid);
     const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl: 'mesh-test',
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
       supportsCompression: false,
       supportsDiffSnapshot: false,
@@ -208,7 +208,7 @@ describe('http/ws stream targets', () => {
     const opened = await openWsStream(a, sid.sid);
     const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl: 'mesh-decode-once',
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
       supportsCompression: false,
       supportsDiffSnapshot: false,
@@ -807,7 +807,7 @@ describe('http/ws stream targets', () => {
     const opened = await openWsStream(a, issued.sid);
     const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl: 'mesh-test',
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
       supportsCompression: false,
       supportsDiffSnapshot: false,
@@ -1139,7 +1139,7 @@ describe('LinkStreamCarrier with attachStreamSession', () => {
     })();
     const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl: 'stream',
-      clientVersion: 'test',
+      clientVersion: '1.1.23',
       maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
       supportsCompression: false,
       supportsDiffSnapshot: false,

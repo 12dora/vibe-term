@@ -1,20 +1,18 @@
 import type { ThemeMode } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
-import { truncateUtf8Tail } from '../bytes';
 import type { DeviceTreeOrderRecord } from '../db';
 import type { SettingsNamespace } from '../settings/broadcaster';
-import { MAX_PANE_HISTORY_CAPTURE_BYTES } from '../tmux-client/control-mode-capture';
 import { isTmuxPaneId } from '../tmux-client/snapshot-format';
 import type { GatewaySession } from './gateway-session';
-import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import { canSelectPane, canSelectWindow } from './tmux-selection-handlers';
 import type { DeviceConnectionEntry, WebSocketServerDeps } from './types';
 
 export { handleTmuxSelect, handleTmuxSelectWindow } from './tmux-selection-handlers';
+export type { CanonicalResizeIntent } from './tmux-geometry-handlers';
 export {
+  dropPaneSizeEpochs,
   dropViewportClaims,
+  handleCanonicalResize,
   handleResizePaneById,
-  handleTermResize,
   handleTermViewport,
   reconcileDeviceViewportSnapshot,
 } from './tmux-geometry-handlers';
@@ -25,7 +23,6 @@ export interface TmuxCommandHost {
   readonly paneCustomNames: Map<string, Map<string, string>>;
   readonly currentTheme: ThemeMode | null;
   readonly lastBroadcastTheme: Map<string, 'dark' | 'light'>;
-  readonly terminalOutputBatcher: TerminalOutputBatcher;
   readonly deps: WebSocketServerDeps;
   sendError(
     session: GatewaySession,
@@ -35,18 +32,11 @@ export interface TmuxCommandHost {
     retryable: boolean
   ): void;
   sendEnvelope(session: GatewaySession, kind: number, payload: Uint8Array): void;
-  sendChunked(session: GatewaySession, kind: number, payload: Uint8Array): boolean;
   refreshSnapshotPolling(deviceId: string): void;
   broadcastSettingsUpdate(namespace: SettingsNamespace): void;
   broadcastThemeChange(theme: 'dark' | 'light'): void;
-  sendSnapshotToClients(
-    entry: DeviceConnectionEntry,
-    payload: NonNullable<DeviceConnectionEntry['lastSnapshot']>,
-    options?: { includeCanonical?: boolean }
-  ): void;
   getCachedDeviceTreeOrder(deviceId: string): DeviceTreeOrderRecord;
   storeDeviceTreeOrder(order: DeviceTreeOrderRecord): DeviceTreeOrderRecord;
-  syncLegacyPaneObservers(session: GatewaySession, deviceId: string): void;
 }
 
 export function handleTermInput(
@@ -118,11 +108,7 @@ export function renamePane(
   }
 
   host.connections.get(deviceId)?.runtime.setCustomName?.('pane', paneId, trimmed || null);
-
   host.broadcastSettingsUpdate('tree-order');
-  const entry = host.connections.get(deviceId);
-  if (!entry?.lastSnapshot) return;
-  host.sendSnapshotToClients(entry, entry.lastSnapshot);
 }
 
 export function handleBreakPane(host: TmuxCommandHost, deviceId: string, paneId: string): void {
@@ -170,11 +156,7 @@ export function renameWindow(
   }
 
   host.connections.get(deviceId)?.runtime.setCustomName?.('window', windowId, trimmed || null);
-
   host.broadcastSettingsUpdate('tree-order');
-  const entry = host.connections.get(deviceId);
-  if (!entry?.lastSnapshot) return;
-  host.sendSnapshotToClients(entry, entry.lastSnapshot);
 }
 
 export function getCustomNames(
@@ -218,9 +200,6 @@ export function reorderWindows(host: TmuxCommandHost, deviceId: string, windowId
     panes: currentOrder.panes,
   });
   host.broadcastSettingsUpdate('tree-order');
-  const entry = host.connections.get(deviceId);
-  if (!entry?.lastSnapshot) return;
-  host.sendSnapshotToClients(entry, entry.lastSnapshot, { includeCanonical: true });
 }
 
 export function reorderPanes(
@@ -240,76 +219,6 @@ export function reorderPanes(
     },
   });
   host.broadcastSettingsUpdate('tree-order');
-  const entry = host.connections.get(deviceId);
-  if (!entry?.lastSnapshot) return;
-  host.sendSnapshotToClients(entry, entry.lastSnapshot, { includeCanonical: true });
-}
-
-export function handleSubscribePanes(
-  host: TmuxCommandHost,
-  session: GatewaySession,
-  deviceId: string,
-  paneIds: string[]
-): void {
-  const entry = host.connections.get(deviceId);
-  if (!entry) return;
-
-  const knownPaneIds = new Set(
-    entry.lastSnapshot?.session?.windows.flatMap((window) => window.panes.map((pane) => pane.id)) ??
-      []
-  );
-  const accepted = new Set<string>();
-  for (const paneId of paneIds) {
-    if (isTmuxPaneId(paneId) && knownPaneIds.has(paneId)) {
-      accepted.add(paneId);
-    }
-  }
-
-  host.terminalOutputBatcher.flushDevice(deviceId);
-  if (accepted.size > 0) {
-    session.borshState.subscribedPanes[deviceId] = accepted;
-  } else {
-    delete session.borshState.subscribedPanes[deviceId];
-  }
-  host.syncLegacyPaneObservers(session, deviceId);
-  host.refreshSnapshotPolling(deviceId);
-}
-
-export function handleFetchPaneHistory(
-  host: TmuxCommandHost,
-  session: GatewaySession,
-  deviceId: string,
-  paneId: string,
-  requestToken: Uint8Array,
-  byteLimit?: number | null
-): void {
-  const entry = host.connections.get(deviceId);
-  if (!entry || !isTmuxPaneId(paneId)) return;
-  const limit =
-    byteLimit != null && Number.isSafeInteger(byteLimit) && byteLimit > 0
-      ? Math.min(byteLimit, MAX_PANE_HISTORY_CAPTURE_BYTES)
-      : MAX_PANE_HISTORY_CAPTURE_BYTES;
-
-  void entry.runtime
-    .fetchPaneHistory(paneId, limit)
-    .then((captured) => {
-      if (!captured) return;
-      const encoded = new TextEncoder().encode(captured.data);
-      const data = encoded.byteLength <= limit ? encoded : truncateUtf8Tail(encoded, limit);
-      const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.TermHistorySchema, {
-        deviceId,
-        paneId,
-        selectToken: requestToken,
-        encoding: 1,
-        alternateScreen: captured.alternateScreen,
-        modes: captured.modes,
-        data,
-      });
-      host.sendChunked(session, wsBorsh.KIND_TERM_HISTORY, payloadBytes);
-    })
-    .catch((error) => {
-      console.warn(`[ws] fetch pane history failed on ${deviceId}/${paneId}:`, error);
-    });
 }
 
 export function handleApplyStackedLayout(
@@ -365,7 +274,6 @@ export function handleSplitPane(
 
 export function handleFocusPane(
   host: TmuxCommandHost,
-  session: GatewaySession,
   deviceId: string,
   windowId: string,
   paneId: string
@@ -374,8 +282,6 @@ export function handleFocusPane(
   if (!entry) return;
   if (!canSelectPane(entry, deviceId, windowId, paneId)) return;
 
-  session.borshState.selectedPanes[deviceId] = paneId;
-  host.syncLegacyPaneObservers(session, deviceId);
   host.refreshSnapshotPolling(deviceId);
   entry.runtime.focusPane(windowId, paneId);
 }

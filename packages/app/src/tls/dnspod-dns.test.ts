@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import type { FetchLike } from '../lib/fetch-like';
 import { DnspodDnsClient } from './dnspod-dns';
 
 describe('DnspodDnsClient', () => {
   test('walks labels to find a zone and creates/deletes TXT records', async () => {
     const calls: Array<{ url: string; method: string; body: string; ua: string | null }> = [];
-    const fetchImpl: typeof fetch = async (input, init) => {
+    const fetchImpl: FetchLike = async (input, init) => {
       const url = String(input);
       const method = init?.method ?? 'GET';
       const ua = new Headers(init?.headers).get('user-agent');
@@ -65,7 +66,7 @@ describe('DnspodDnsClient', () => {
   });
 
   test('falls back to Domain.List when Info misses every suffix', async () => {
-    const fetchImpl: typeof fetch = async (input, init) => {
+    const fetchImpl: FetchLike = async (input, init) => {
       const url = String(input);
       const params = new URLSearchParams(String(init?.body ?? ''));
       if (url.endsWith('/Domain.Info')) {

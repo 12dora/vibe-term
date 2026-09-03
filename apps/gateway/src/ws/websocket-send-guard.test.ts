@@ -50,16 +50,7 @@ function isStreamPaneGap(frame: Uint8Array): boolean {
   }
 }
 
-function termOutputFrame(
-  seq: number,
-  data = new Uint8Array([seq & 0xff])
-): Uint8Array<ArrayBuffer> {
-  return new Uint8Array(
-    wsBorsh.encodeTermOutputFrame({ deviceId: 'device-a', paneId: '%1', encoding: 1, data }, seq)
-  );
-}
-
-function paneDataFrame(seq: number): Uint8Array<ArrayBuffer> {
+function paneDataFrame(seq: number, data = new Uint8Array([seq & 0xff])): Uint8Array<ArrayBuffer> {
   return new Uint8Array(
     wsBorsh.encodeCanonicalEventFrame(
       {
@@ -71,8 +62,8 @@ function paneDataFrame(seq: number): Uint8Array<ArrayBuffer> {
           },
           paneEpoch: new Uint8Array(16).fill(2),
           seqStart: 0n,
-          seqEnd: 1n,
-          data: new Uint8Array([seq & 0xff]),
+          seqEnd: BigInt(data.byteLength),
+          data,
         },
       },
       seq
@@ -102,7 +93,7 @@ describe('WebSocketSendGuard', () => {
 
     expect(guard.sendFramesStatus(target.carrier, [new Uint8Array([1])])).toBe('backpressured');
     expect(guard.isBackpressured(target.carrier)).toBe(true);
-    expect(guard.sendFrames(target.carrier, [termOutputFrame(2)])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [paneDataFrame(2)])).toBe(false);
 
     guard.handleDrain(target.carrier);
     expect(target.terminateCalls()).toBe(0);
@@ -133,7 +124,7 @@ describe('WebSocketSendGuard', () => {
 
     expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
     for (let i = 0; i < 12; i += 1) {
-      expect(guard.sendFrames(target.carrier, [termOutputFrame(i + 2)])).toBe(false);
+      expect(guard.sendFrames(target.carrier, [paneDataFrame(i + 2)])).toBe(false);
     }
     expect(target.sendCalls()).toBe(1);
 
@@ -154,7 +145,7 @@ describe('WebSocketSendGuard', () => {
     const target = createCarrier(['backpressure', 'sent']);
 
     expect(
-      guard.sendFrames(target.carrier, [new Uint8Array([1]), termOutputFrame(2), paneDataFrame(3)])
+      guard.sendFrames(target.carrier, [new Uint8Array([1]), paneDataFrame(2), paneDataFrame(3)])
     ).toBe(false);
     expect(target.sendCalls()).toBe(1);
 
@@ -191,7 +182,7 @@ describe('WebSocketSendGuard', () => {
     const control = new Uint8Array(wsBorsh.encodeEnvelope(wsBorsh.KIND_PONG, new Uint8Array(), 2));
 
     expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
-    expect(guard.sendFrames(target.carrier, [termOutputFrame(1), control])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [paneDataFrame(1), control])).toBe(false);
     guard.handleDrain(target.carrier);
 
     expect(target.terminateCalls()).toBe(1);
@@ -208,7 +199,7 @@ describe('WebSocketSendGuard', () => {
     const target = createCarrier(['backpressure', 'rejected']);
 
     expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
-    expect(guard.sendFrames(target.carrier, [termOutputFrame(2)])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [paneDataFrame(2)])).toBe(false);
     guard.handleDrain(target.carrier);
 
     expect(target.terminateCalls()).toBe(1);
@@ -336,13 +327,8 @@ describe('WebSocketSendGuard', () => {
       const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
       const target = createCarrier(['backpressure']);
       const frame = wsBorsh.encodeEnvelope(
-        wsBorsh.KIND_TERM_OUTPUT,
-        wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
-          deviceId: 'd',
-          paneId: '%1',
-          encoding: 0,
-          data: new Uint8Array([1, 2, 3]),
-        }),
+        wsBorsh.KIND_TMUX_EVENT,
+        wsBorsh.encodeTmuxEventPayload({ deviceId: 'd', type: 'bell', data: {} }),
         1
       );
       expect(guard.sendFrames(target.carrier, [new Uint8Array(frame)])).toBe(false);
@@ -350,7 +336,7 @@ describe('WebSocketSendGuard', () => {
       console.warn = orig;
     }
     const entry = lines.find((line) => line.includes('backpressure enter'));
-    expect(entry).toContain('frame_kind=0305');
+    expect(entry).toContain(`frame_kind=${wsBorsh.KIND_TMUX_EVENT.toString(16).padStart(4, '0')}`);
   });
 
   test('logs backpressure entry, skip, drain, and resync with carrier kind', () => {
@@ -368,7 +354,7 @@ describe('WebSocketSendGuard', () => {
         cid: 'tab-a',
         nodeId: 'node-1',
       };
-      const skipped = termOutputFrame(2, new Uint8Array([3, 4, 5]));
+      const skipped = paneDataFrame(2, new Uint8Array([3, 4, 5]));
       expect(guard.sendFrames(target.carrier, [new Uint8Array([1, 2])])).toBe(false);
       expect(guard.sendFrames(target.carrier, [skipped])).toBe(false);
       guard.handleDrain(target.carrier);
@@ -393,7 +379,7 @@ describe('WebSocketSendGuard', () => {
     expect(entry).toContain('buffered_before=37');
     expect(drain).toContain('skipped_frames=1');
     expect(drain).toContain(
-      `skipped_bytes=${termOutputFrame(2, new Uint8Array([3, 4, 5])).byteLength}`
+      `skipped_bytes=${paneDataFrame(2, new Uint8Array([3, 4, 5])).byteLength}`
     );
     expect(drain).toContain('resync=1');
   });

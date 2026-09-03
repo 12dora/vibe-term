@@ -47,12 +47,10 @@ export function formatFailoverDone(fields: {
   to: string;
   resumed: number;
   replayMode: string;
-  replayBytes: number;
 }): string {
   return (
     `[mesh][stream] failover_done stream=${fields.pumpId} duration_ms=${fields.durationMs} ` +
-    `to=${fields.to} resumed=${fields.resumed} replay_mode=${fields.replayMode} ` +
-    `replay_bytes=${fields.replayBytes}`
+    `to=${fields.to} resumed=${fields.resumed} replay_mode=${fields.replayMode}`
   );
 }
 
@@ -63,7 +61,6 @@ export function formatFailoverSummary(fields: {
   closeReason?: string;
   from: string;
   to: string;
-  replayBytes: number;
   eventLoopLagMs: number;
   maxLagMs: number;
 }): string {
@@ -71,6 +68,6 @@ export function formatFailoverSummary(fields: {
   return (
     `[mesh][stream] failover_summary stream=${fields.pumpId} duration_ms=${fields.durationMs} ` +
     `cause=${fields.cause} close_reason=${closeReason} from=${fields.from} to=${fields.to} ` +
-    `replay_bytes=${fields.replayBytes} event_loop_lag_ms=${fields.eventLoopLagMs} max_lag_ms=${fields.maxLagMs}`
+    `event_loop_lag_ms=${fields.eventLoopLagMs} max_lag_ms=${fields.maxLagMs}`
   );
 }

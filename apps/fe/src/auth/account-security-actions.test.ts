@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { clearPendingMetaKeysForTest, listPendingMetaKeys } from '@/node/relay-meta-key-pending';
 import { ApiClient } from '@tmex/api-client';
 import { AuthApi } from '@tmex/api-client/auth/index';
+import { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import {
   bytesEqual,
+  computeRecordHash,
   decodeBase64url,
   decodeKeyLogRecord,
   decodeRotateRootKeepPayload,
@@ -51,9 +54,44 @@ interface TotpRecordFixture {
   payload: string;
 }
 
+const META_PAYLOAD = new Uint8Array([9, 8, 7, 6]);
+
+/** 中继侧 API 的替身：`status` 说本机走中继，`meta-key/prepare` 回一段固定 payload。 */
+function mockRelayApi(options: { mode?: 'relay' | 'hub'; prepareStatus?: number } = {}): {
+  relayApi: RelayTenantApi;
+  prepareCalls: number;
+} {
+  const counters = { prepareCalls: 0 };
+  const client = new ApiClient('', (url) => {
+    if (url === '/api/mesh/relay/status') {
+      return Promise.resolve(Response.json({ mode: options.mode ?? 'relay', relays: [] }));
+    }
+    if (url === '/api/mesh/relay/meta-key/prepare') {
+      counters.prepareCalls += 1;
+      if (options.prepareStatus) {
+        return Promise.resolve(
+          Response.json({ code: 'RELAY_NOT_CONFIGURED' }, { status: options.prepareStatus })
+        );
+      }
+      return Promise.resolve(
+        Response.json({ epoch: 2, payload: encodeBase64url(META_PAYLOAD), payloadHash: 'zz' })
+      );
+    }
+    return Promise.resolve(new Response('not found', { status: 404 }));
+  });
+  return {
+    relayApi: new RelayTenantApi(client),
+    get prepareCalls() {
+      return counters.prepareCalls;
+    },
+  };
+}
+
 function mockApi(
   options: {
     keylogStatus?: number;
+    /** 第 n 次 `POST /api/auth/keylog` 的状态码；缺省沿用 `keylogStatus`。 */
+    keylogStatuses?: number[];
     totpRecord?: TotpRecordFixture;
     totpRecordError?: { status: number; code: string };
   } = {}
@@ -82,7 +120,8 @@ function mockApi(
     if (url === '/api/auth/keylog') {
       const body = JSON.parse(String(init?.body)) as { bytes: string; sig: string };
       posted.push({ bytes: decodeBase64url(body.bytes), sig: decodeBase64url(body.sig) });
-      return Promise.resolve(new Response('', { status: options.keylogStatus ?? 200 }));
+      const status = options.keylogStatuses?.[posted.length - 1] ?? options.keylogStatus ?? 200;
+      return Promise.resolve(new Response('', { status }));
     }
     return Promise.resolve(new Response('not found', { status: 404 }));
   });
@@ -136,6 +175,93 @@ describe('changePassword', () => {
     // 新根公钥必须由「新密码 + payload 里的新 kdf 参数」重新派生得到。
     const newSeed = await deriveSeed('new-secret', payload.kdf_params);
     expect(bytesEqual(payload.root_public_key, rootKeyFromSeed(newSeed).publicKey)).toBe(true);
+  }, 20000);
+
+  test('中继模式：rotate 之后紧接一条 meta-key，由新根钥签、接在 rotate 的哈希上', async () => {
+    clearPendingMetaKeysForTest();
+    const { api, posted } = mockApi();
+    const relay = mockRelayApi();
+    const result = await changePassword({
+      api,
+      relayApi: relay.relayApi,
+      uid: UID,
+      oldPassword: 'old-secret',
+      newPassword: 'new-secret',
+      currentKdfParams: KDF_JSON,
+    });
+    expect(result).toMatchObject({ ok: true, metaKey: { ok: true } });
+    expect(relay.prepareCalls).toBe(1);
+    expect(posted).toHaveLength(2);
+
+    const rotate = decodeKeyLogRecord(posted[0].bytes);
+    expect(rotate.type).toBe('rotate-root-keep');
+    expect(rotate.seq).toBe(BigInt(HEAD_SEQ) + 1n);
+
+    const meta = decodeKeyLogRecord(posted[1].bytes);
+    expect(meta.type).toBe('meta-key');
+    // 紧挨着：seq 加一、prev_hash 就是 rotate 那条记录的哈希、root_epoch 已经是新的。
+    expect(meta.seq).toBe(BigInt(HEAD_SEQ) + 2n);
+    expect(meta.root_epoch).toBe(EPOCH + 1);
+    expect(bytesEqual(meta.prev_hash, computeRecordHash(posted[0].bytes, posted[0].sig))).toBe(
+      true
+    );
+    expect(meta.payload).toEqual(META_PAYLOAD);
+
+    // 签名者是**轮换之后**那把根钥（rotate payload 里的新根公钥）。
+    const newRootPublicKey = decodeRotateRootKeepPayload(rotate.payload).root_public_key;
+    const verified = await verifyKeyLogRecord(posted[1].bytes, posted[1].sig, {
+      head: {
+        seq: BigInt(HEAD_SEQ) + 1n,
+        hash: computeRecordHash(posted[0].bytes, posted[0].sig),
+      },
+      rootEpoch: EPOCH + 1,
+      rootPublicKey: newRootPublicKey,
+      resolvePasskey: () => null,
+    });
+    expect(verified.ok).toBe(true);
+    expect(listPendingMetaKeys()).toHaveLength(0);
+  }, 20000);
+
+  test('中继模式：meta-key 没送出去时不算成功，欠账留给节点页重试', async () => {
+    clearPendingMetaKeysForTest();
+    // 第二条（meta-key）撞 401：`rotate-root` 会当场撤销全部会话，这是全量重置的必然结局。
+    const { api, posted } = mockApi({ keylogStatuses: [200, 401] });
+    const relay = mockRelayApi();
+    const result = await changePassword({
+      api,
+      relayApi: relay.relayApi,
+      uid: UID,
+      oldPassword: 'old-secret',
+      newPassword: 'new-secret',
+      currentKdfParams: KDF_JSON,
+      fullReset: true,
+    });
+    expect(result).toMatchObject({ ok: true, metaKey: { ok: false } });
+    expect(posted).toHaveLength(2);
+    const pending = listPendingMetaKeys();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.reason).toBe('rotateRoot');
+    // 字节留着：head 没动，重新登录后原样重发即可落账。
+    expect(pending[0]?.record?.type).toBe('meta-key');
+    clearPendingMetaKeysForTest();
+  }, 20000);
+
+  test('非中继模式一条 meta-key 都不发', async () => {
+    clearPendingMetaKeysForTest();
+    const { api, posted } = mockApi();
+    const relay = mockRelayApi({ mode: 'hub' });
+    const result = await changePassword({
+      api,
+      relayApi: relay.relayApi,
+      uid: UID,
+      oldPassword: 'old-secret',
+      newPassword: 'new-secret',
+      currentKdfParams: KDF_JSON,
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect((result as { metaKey?: unknown }).metaKey).toBeUndefined();
+    expect(relay.prepareCalls).toBe(0);
+    expect(posted).toHaveLength(1);
   }, 20000);
 });
 

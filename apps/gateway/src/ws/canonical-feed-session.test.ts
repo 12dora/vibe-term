@@ -20,7 +20,7 @@ import type { CanonicalSendResult } from './canonical/types';
 import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
   GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
-} from './terminal-output-batcher';
+} from './terminal-output-batching';
 import { createFakeCarrier } from './test-helpers';
 import { WebSocketSendGuard } from './websocket-send-guard';
 
@@ -621,13 +621,20 @@ describe('canonical feed session', () => {
 
   test('routes resize through the session viewport arbiter when provided', async () => {
     const runtime = new FakeRuntime();
-    const resizes: Array<[string, string, number, number]> = [];
+    const resizes: Array<[string, string, number, number, number, bigint]> = [];
     const session = new CanonicalFeedSession({
       maxFrameBytes: 512,
       sendEvent: () => true,
       resolveRuntime: async () => runtime,
-      resizePane: (deviceId, paneId, cols, rows) => {
-        resizes.push([deviceId, paneId, cols, rows]);
+      resizePane: (intent) => {
+        resizes.push([
+          intent.deviceId,
+          intent.paneId,
+          intent.cols,
+          intent.rows,
+          intent.reason,
+          intent.sizeEpoch,
+        ]);
       },
     });
 
@@ -640,7 +647,30 @@ describe('canonical feed session', () => {
       },
     });
 
-    expect(resizes).toEqual([['device-a', '%1', 100, 30]]);
+    // v1 ResizePane 归一为 change + epoch 0
+    expect(resizes).toEqual([
+      ['device-a', '%1', 100, 30, wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE, 0n],
+    ]);
+
+    await session.handleCommand({
+      ResizePaneV11: {
+        requestId: REQUEST_ID,
+        pane: target(),
+        cols: 120,
+        rows: 40,
+        geometryReason: wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND,
+        sizeEpoch: 7n,
+      },
+    });
+
+    expect(resizes[1]).toEqual([
+      'device-a',
+      '%1',
+      120,
+      40,
+      wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND,
+      7n,
+    ]);
     expect(runtime.resizes).toEqual([]);
     session.close();
   });

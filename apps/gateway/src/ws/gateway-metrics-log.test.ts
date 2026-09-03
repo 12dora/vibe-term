@@ -11,7 +11,6 @@ import {
   resetPingMetricsForTest,
   setPingMetricsForTest,
 } from './gateway-metrics-log';
-import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import { TerminalOutputMetrics, emptyTerminalOutputQueueStats } from './terminal-output-metrics';
 
 afterEach(() => {
@@ -115,9 +114,6 @@ describe('ws-metrics zero-snapshot suppression', () => {
       connectedClients: new Set(),
       connections: new Map(),
       canonicalSessions: new Map(),
-      terminalOutputBatcher: {
-        snapshotStats: () => emptyTerminalOutputQueueStats().batch,
-      } as TerminalOutputBatcher,
       terminalOutputMetrics: new TerminalOutputMetrics(1, 0),
       gatewayActivityMetrics: new GatewayActivityMetrics(1, 0),
       ...overrides,
@@ -146,7 +142,7 @@ describe('ws-metrics zero-snapshot suppression', () => {
     expect(quiet.some((line) => line.includes('[ws-metrics] terminal_output'))).toBe(false);
     expect(quiet.some((line) => line.includes('[ws-metrics] gateway_activity'))).toBe(false);
 
-    terminalOutputMetrics.recordSource(8, { legacy: true, canonical: false });
+    terminalOutputMetrics.recordSource(8, { canonical: true });
     gatewayActivityMetrics.recordInbound(0x0003, 12);
     await Bun.sleep(2);
     const busy = captureLogs(() => logTerminalOutputMetricsIfDue(host));
@@ -185,14 +181,8 @@ describe('isQuietTerminalOutputSnapshot', () => {
       sourceBytes: 0,
       droppedEvents: 0,
       droppedBytes: 0,
-      legacyObservedEvents: 0,
-      legacyObservedBytes: 0,
       canonicalObservedEvents: 0,
       canonicalObservedBytes: 0,
-      batches: 0,
-      batchBytes: 0,
-      recipientDeliveries: 0,
-      recipientBytes: 0,
       canonicalRecipientDeliveries: 0,
       canonicalRecipientBytes: 0,
       canonicalDeliveryDrops: 0,
@@ -203,7 +193,6 @@ describe('isQuietTerminalOutputSnapshot', () => {
 
   test('all-zero counters and empty queues are quiet; limits do not count', () => {
     const snapshot = quietSnapshot();
-    snapshot.queues.batch.pendingBytesLimit = 8;
     snapshot.queues.websocket.queuedBytesLimit = 8;
     expect(isQuietTerminalOutputSnapshot(snapshot)).toBe(true);
   });

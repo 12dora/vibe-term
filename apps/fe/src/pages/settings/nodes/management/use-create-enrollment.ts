@@ -11,9 +11,12 @@ import {
   isTrustedHubUrl,
   requireRootPublicKey,
 } from '@/node/enrollment';
-import type { HubApi } from '@/node/hub-api';
+import { type HubApi, defaultRelayEnrollmentApi } from '@/node/hub-api';
+import { useMeshRelay } from '@/node/mesh-relay';
+import { createEnrollmentOnRelay } from '@/node/relay-join';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
+import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { actionErrorText } from './errors';
@@ -48,6 +51,10 @@ export interface CreateEnrollmentState {
 
 export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnrollmentState {
   const { api, mode, hubApi, prompt, writerPublicUrl = null } = input;
+  // 中继模式下加入码走 `/api/mesh/relay/*` 并拼 join 串 v3：这里自己读上级形态，
+  // 设置页与「接入更多设备」面板都不必各传一遍。
+  const relay = useMeshRelay();
+  const hubChannel = relay.relayMode ? null : hubApi;
   const clearedIds = input.clearedIds ?? NO_CLEARED_IDS;
   const { t } = useTranslation();
   const [name, setName] = useState('');
@@ -75,7 +82,7 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
       setError(t('auth.errors.UNKNOWN_USER'));
       return;
     }
-    if (!hubApi) {
+    if (!relay.relayMode && !hubChannel) {
       setError(t('nodes.hubOffline'));
       return;
     }
@@ -88,15 +95,21 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
       const signer = await prompt.request({ purpose: 'enroll' });
       if (!signer) return;
       const head = await api.keyLogHead();
-      const outcome = await createEnrollmentOnHub({
-        hubApi,
+      const shared = {
         uid: mode.uid,
         rootEpoch,
         signer,
         rootPublicKey,
         keyLogHeadHash: headFromResponse(head).hash,
         name,
-      });
+      };
+      const outcome = hubChannel
+        ? await createEnrollmentOnHub({ ...shared, hubApi: hubChannel })
+        : await createEnrollmentOnRelay({
+            ...shared,
+            channel: defaultRelayEnrollmentApi,
+            relayApi: defaultRelayTenantApi,
+          });
       setCreated(outcome);
       setName('');
     } catch (err) {
@@ -107,7 +120,7 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
     } finally {
       setBusy(false);
     }
-  }, [api, hubApi, mode, name, prompt, t, writerPublicUrl]);
+  }, [api, hubChannel, mode, name, prompt, relay.relayMode, t, writerPublicUrl]);
 
   return {
     name,
@@ -115,7 +128,12 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
     busy,
     error,
     created,
-    hubUrl: resolveHubPublicUrl(created, mode ?? {}),
+    // 中继模式下 join 命令里的地址是**中继**地址：`/api/auth/mode` 的 `hubPublicUrl` 此时为空，
+    // 拿它判定会让「接入更多设备」面板一直停在「缺少 Hub 地址」。
+    hubUrl: resolveHubPublicUrl(
+      created,
+      relay.relayMode ? { hubPublicUrl: relay.ordered[0]?.url ?? null } : (mode ?? {})
+    ),
     submit,
   };
 }

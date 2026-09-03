@@ -34,7 +34,7 @@ import {
 } from './mesh-deps';
 import { stamp } from './mesh-log';
 import { isHttps, jsonError } from './session-middleware';
-import { StreamReplayState } from './stream-replay-state';
+import { StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
 
 const AUTH_SKIP = AUTH_LOGIN_PUBLIC_PATHS;
 const AUTH_CHALLENGE_PATHS = new Set(['/api/auth/challenge', '/api/auth/passkey/login/options']);
@@ -128,7 +128,7 @@ function rewriteRequest(req: Request, rewrite: string): Request {
 export class Forwarder {
   private readonly pumps = new Map<MeshServerWebSocket, ForwardPump>();
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-  private readonly log: (line: string) => void;
+  readonly log: (line: string) => void;
   private authRateLimits: AuthRateLimits | null;
 
   constructor(private readonly deps: ForwarderDeps) {
@@ -189,15 +189,7 @@ export class Forwarder {
       return;
     }
     pump.browserClosed = true;
-    pump.failoverAbort?.abort();
-    pump.helloWait?.();
-    pump.helloWait = null;
-    pump.resumeWait?.();
-    pump.resumeWait = null;
-    const inflight = pump.inflight;
-    pump.inflight = null;
-    inflight?.close(code, reason);
-    pump.stream?.close(code, reason);
+    this.closePump(pump, { code, reason });
   }
 
   attachForwardPump(ws: MeshServerWebSocket, stream: OpenedWsStream): void {
@@ -392,18 +384,18 @@ export class Forwarder {
     if (noted.kind === wsBorsh.KIND_HELLO_S2C) {
       pump.helloWait?.();
       pump.helloWait = null;
+      if (rejectStaleNodeStream(noted.peerUnsupported, pump, this)) return;
       if (pump.replay.helloForwarded) return;
       pump.replay.helloForwarded = true;
     }
-    if (noted.kind === wsBorsh.KIND_DEVICE_CONNECTED) {
-      const deviceId = noted.deviceId;
-      if (deviceId && pump.replay.connectedForwarded.has(deviceId)) return;
-      if (deviceId) pump.replay.connectedForwarded.add(deviceId);
+    if (noted.kind === wsBorsh.KIND_DEVICE_CONNECTED && noted.deviceId) {
+      if (pump.replay.connectedForwarded.has(noted.deviceId)) return;
+      pump.replay.connectedForwarded.add(noted.deviceId);
     }
     this.sendToBrowser(pump, bytes);
   }
 
-  private sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void {
+  sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void {
     if (pump.browserClosed) return;
     if (pump.browserPaused) {
       if (!holdInbound(pump, bytes)) this.failPump(pump, STREAM_QUEUE_OVERFLOW_REASON);
@@ -446,7 +438,7 @@ export class Forwarder {
         streams: this.deps.streams,
         bindStream: (p, stream, transport) => this.bindStream(p as ForwardPump, stream, transport),
         discardStream: (p, stream) => this.discardStream(p as ForwardPump, stream),
-        closeBrowser: (p, closeInfo) => this.closeBrowser(p as ForwardPump, closeInfo),
+        closePump: (p, closeInfo) => this.closePump(p as ForwardPump, closeInfo),
         sendToStream: (p, stream, bytes) => this.sendToStream(p as ForwardPump, stream, bytes),
         sendToBrowser: (p, bytes) => this.sendToBrowser(p as ForwardPump, bytes),
         flushQueue: (p) => this.flushQueue(p as ForwardPump),
@@ -489,7 +481,11 @@ export class Forwarder {
   }
 
   private failPump(pump: ForwardPump, reason: string): void {
-    if (pump.browserClosed) return;
+    this.closePump(pump, { code: 1011, reason });
+  }
+
+  /** 整条转发流拆解：先断上游（当前流 + 在途流），再断浏览器，避免留下无主的 mesh 流。 */
+  closePump(pump: ForwardPump, info: { code?: number; reason?: string }): void {
     pump.failoverAbort?.abort();
     pump.helloWait?.();
     pump.helloWait = null;
@@ -497,9 +493,11 @@ export class Forwarder {
     pump.resumeWait = null;
     const inflight = pump.inflight;
     pump.inflight = null;
-    inflight?.close(1011, reason);
-    pump.stream?.close(1011, reason);
-    this.closeBrowser(pump, { code: 1011, reason });
+    inflight?.close(info.code, info.reason);
+    pump.stream?.close(info.code, info.reason);
+    pump.stream = null;
+    pump.streamAlive = false;
+    this.closeBrowser(pump, info);
   }
 
   private discardStream(pump: ForwardPump, stream: OpenedWsStream): void {
@@ -513,7 +511,7 @@ export class Forwarder {
     } catch {}
   }
 
-  private closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void {
+  closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void {
     if (pump.browserClosed) return;
     pump.browserClosed = true;
     this.pumps.delete(pump.ws);

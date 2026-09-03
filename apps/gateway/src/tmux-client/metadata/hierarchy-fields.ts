@@ -1,6 +1,6 @@
 import { wsBorsh } from '@tmex/shared';
 
-import { type MetadataValue, type PaneFieldHints, stringValue, u16Value } from './types';
+import { type MetadataValue, type PaneFieldHints, stringValue, u16Value, u32Value } from './types';
 
 export function pickFallbackName(
   preferred: string | undefined,
@@ -31,6 +31,14 @@ export function setDefinedU16Field(
   value: number | undefined
 ): void {
   if (value !== undefined) fields.set(field, u16Value(value));
+}
+
+export function setDefinedU32Field(
+  fields: Map<number, MetadataValue>,
+  field: number,
+  value: number | undefined
+): void {
+  if (value !== undefined) fields.set(field, u32Value(value));
 }
 
 export function applyPaneHints(

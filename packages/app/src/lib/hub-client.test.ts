@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { encodeBase64url, randomBytes, rootKeyFromSeed } from '../../../shared/src/auth';
+import type { FetchLike } from './fetch-like';
 import {
   REDEEM_NETWORK_RETRY_LIMIT,
   assertHubJoinUrl,
@@ -42,14 +43,14 @@ describe('assertHubJoinUrl', () => {
 
 describe('createHubFetcher', () => {
   test('returns inner fetch when no pinned CA exists', () => {
-    const inner: typeof fetch = async () => new Response('{}');
+    const inner: FetchLike = async () => new Response('{}');
     const fetcher = createHubFetcher({ get: () => null }, 'https://hub.example', inner);
     expect(fetcher).toBe(inner);
   });
 
   test('pins tls.ca for subsequent hub fetches', async () => {
     const seen: unknown[] = [];
-    const inner: typeof fetch = async (_input, init) => {
+    const inner: FetchLike = async (_input, init) => {
       seen.push((init as { tls?: unknown } | undefined)?.tls);
       return new Response('{}');
     };
@@ -64,7 +65,7 @@ describe('createHubFetcher', () => {
 
   test('looks up trust by canonical hub URL', async () => {
     const keys: string[] = [];
-    const inner: typeof fetch = async () => new Response('{}');
+    const inner: FetchLike = async () => new Response('{}');
     const fetcher = createHubFetcher(
       {
         get(hubUrl) {
@@ -82,7 +83,7 @@ describe('createHubFetcher', () => {
 
 describe('fetchAuthMode', () => {
   test('parses passkeySecondFactor as boolean and defaults to false', async () => {
-    const fetcher: typeof fetch = async () =>
+    const fetcher: FetchLike = async () =>
       Response.json({
         mode: 'mesh',
         nodeId: 'self',
@@ -103,7 +104,7 @@ describe('fetchAuthMode', () => {
 describe('hub-client fetch policy', () => {
   test('all hub fetches set redirect: error', async () => {
     const redirects: Array<RequestRedirect | undefined> = [];
-    const fetcher: typeof fetch = async (_url, init) => {
+    const fetcher: FetchLike = async (_url, init) => {
       redirects.push(init?.redirect);
       return new Response(
         JSON.stringify({
@@ -121,7 +122,7 @@ describe('hub-client fetch policy', () => {
 
   test('redeemEnrollment retries network errors before a response is read', async () => {
     let attempts = 0;
-    const fetcher: typeof fetch = async (_url, init) => {
+    const fetcher: FetchLike = async (_url, init) => {
       expect(init?.redirect).toBe('error');
       attempts += 1;
       if (attempts < REDEEM_NETWORK_RETRY_LIMIT) {
@@ -154,7 +155,7 @@ describe('hub-client fetch policy', () => {
 
   test('redeemEnrollment does not retry HTTP errors after a response is read', async () => {
     let attempts = 0;
-    const fetcher: typeof fetch = async () => {
+    const fetcher: FetchLike = async () => {
       attempts += 1;
       return new Response(JSON.stringify({ error: 'reused' }), { status: 400 });
     };
@@ -174,7 +175,7 @@ describe('hub-client fetch policy', () => {
     const sig = new Uint8Array(64).fill(3);
     const bodies: string[] = [];
     let attempts = 0;
-    const fetcher: typeof fetch = async (_url, init) => {
+    const fetcher: FetchLike = async (_url, init) => {
       attempts += 1;
       bodies.push(String(init?.body ?? ''));
       if (attempts === 1) {
@@ -215,7 +216,7 @@ function loginFetcher(options: {
   loginStatus?: number;
   nodeId?: string;
   onLogin?: (req: RequestInit | undefined) => void;
-}): typeof fetch {
+}): FetchLike {
   const nonce = encodeBase64url(randomBytes(32));
   const nodePk = encodeBase64url(randomBytes(32));
   return async (_url, init) => {
@@ -313,7 +314,7 @@ describe('loginWithRootKey session extraction', () => {
 
   test('postEnrollment sends the session cookie the gateway accepts', async () => {
     const cookies: string[] = [];
-    const fetcher: typeof fetch = async (input, init) => {
+    const fetcher: FetchLike = async (input, init) => {
       const url = String(input);
       if (url.endsWith('/api/hub/enrollments')) {
         cookies.push(String(init?.headers && new Headers(init.headers).get('cookie')));

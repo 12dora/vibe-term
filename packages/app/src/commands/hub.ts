@@ -15,8 +15,6 @@ import {
   bytesEqual,
   canonicalHubUrl,
   createNodeCertificate,
-  decodeAdmitNodePayload,
-  decodeAuthorization,
   decodeBase64url,
   decodeCertificate,
   decodeJoinToken,
@@ -30,6 +28,7 @@ import {
   signEd25519,
   verifyKeyLogChain,
 } from '../../../shared/src/auth';
+import { isRelayJoinToken } from '../../../shared/src/relay';
 import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
@@ -46,6 +45,7 @@ import { applyHubUserPasswd, mapPasswdApplyError } from '../lib/hub-user-passwd'
 import { applyHubModeEnvKeys, parseHubPeerIds } from '../lib/install';
 import { createInstallLayout } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
+import { joinUserKeyService, makeReplayPasskeyVerifier } from '../lib/keylog-passkey-replay';
 import { type LocalAuthContext, loadInstallEnv } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { parseAndValidateCaPem, readBoundedResponseText } from '../lib/pem';
@@ -57,6 +57,7 @@ import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
 import type { InstallMeta } from '../types';
+import { assertChainUids, assertResponseCertsMatchProjections } from './hub-join-verify';
 import { withAuth } from './with-auth';
 
 export type HubIo = {
@@ -67,7 +68,7 @@ export type HubIo = {
   restart?: (serviceName: string, installDir: string) => Promise<void>;
   auth?: LocalAuthContext;
   now?: () => number;
-  fetcher?: typeof fetch;
+  fetcher?: HubFetch;
   insecureLocal?: boolean;
   skipRestart?: boolean;
   stop?: (serviceName: string, installDir: string) => Promise<void>;
@@ -76,6 +77,8 @@ export type HubIo = {
   totpCode?: string;
   serviceManager?: ServiceManagerKind;
   confirm?: () => boolean | Promise<boolean>;
+  /** r3 加入时每个中继请求的超时（毫秒）；只在测试里下调。 */
+  relayTimeoutMs?: number;
 };
 
 export type HubListRow = {
@@ -132,7 +135,7 @@ export type PerformHubJoinInput = {
 export type PerformHubJoinDeps = {
   auth: LocalAuthContext;
   now?: () => number;
-  fetcher?: typeof fetch;
+  fetcher?: HubFetch;
 };
 
 function joinErrorMessage(error: unknown, fallback: string): string {
@@ -153,7 +156,7 @@ function toJoinError(error: unknown, fallback: JoinErrorCode): JoinError {
 
 function injectRedeemPop(fetcher: HubFetch | undefined, pop: string): HubFetch {
   const inner = fetcher ?? fetch;
-  return (async (input, init) => {
+  const withPop: HubFetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     let next = init;
     if (url.includes('/api/hub/enrollments/redeem') && typeof init?.body === 'string') {
@@ -162,11 +165,12 @@ function injectRedeemPop(fetcher: HubFetch | undefined, pop: string): HubFetch {
       next = { ...init, body: JSON.stringify(parsed) };
     }
     return inner(input, next);
-  }) as HubFetch;
+  };
+  return withPop;
 }
 
 function pinHubCa(inner: HubFetch, pem: string): HubFetch {
-  return ((input, init) => inner(input, { ...init, tls: { ca: [pem] } })) as HubFetch;
+  return (input, init) => inner(input, { ...init, tls: { ca: [pem] } });
 }
 
 function errorCode(error: unknown): string {
@@ -288,7 +292,7 @@ async function resolveServiceName(parsed: ParsedArgs, installDir: string): Promi
   return serviceName;
 }
 
-async function maybeRestart(
+export async function maybeRestart(
   parsed: ParsedArgs,
   io: HubIo | undefined,
   installDir: string
@@ -571,12 +575,17 @@ export async function runHubJoin(
   userId: string;
   hubUrl: string;
 }> {
-  if (!urlRaw) {
-    throw new Error('hub join requires <https-url>');
-  }
   const token = asString(parsed.flags.token);
   if (!token) {
     throw new Error('hub join requires --token');
+  }
+  if (isRelayJoinToken(token)) {
+    const { runRelayJoin } = await import('./relay-join');
+    const relay = await runRelayJoin(parsed, urlRaw, token, io);
+    return { userId: relay.userId, hubUrl: relay.relayUrl };
+  }
+  if (!urlRaw) {
+    throw new Error('hub join requires <https-url>');
   }
   const insecureLocal = parsed.flags['insecure-local'] === true || io.insecureLocal === true;
   const name = asString(parsed.flags.name) || 'node';
@@ -659,7 +668,12 @@ async function commitVerifiedJoin(
     bytes: decodeBase64url(item.bytes),
     sig: decodeBase64url(item.sig),
   }));
-  const preview = await verifyKeyLogChain(records, input.expectedRootPublicKey);
+  // 链上可能有 passkey 签名的记录，而本机此刻还没有这个用户（UserStore 里没有凭据），
+  // 只能用链自身投影出来的凭据表验签；`commitJoin` 内部会再回放一遍，同样需要它。
+  const verifyPasskeyAssertion = makeReplayPasskeyVerifier(records);
+  const preview = await verifyKeyLogChain(records, input.expectedRootPublicKey, undefined, {
+    verifyPasskeyAssertion,
+  });
   if (!preview.ok) {
     throw new Error(`key log rejected: ${preview.error}`);
   }
@@ -678,7 +692,7 @@ async function commitVerifiedJoin(
 
   const loaded = await ctx.identityStore.load();
   const admitted = input.admittedCert;
-  const committed = await ctx.userKeys.commitJoin({
+  const committed = await joinUserKeyService(ctx, records).commitJoin({
     records,
     expectedRootPublicKey: input.expectedRootPublicKey,
     anchorHash: input.anchorHash,
@@ -714,69 +728,6 @@ async function commitVerifiedJoin(
     : {};
 }
 
-function assertChainUids(records: Array<{ bytes: Uint8Array }>, genesisUid: string): void {
-  for (const item of records) {
-    const decoded = decodeKeyLogRecord(item.bytes);
-    if (decoded.uid !== genesisUid) {
-      throw new Error('join uid mismatch');
-    }
-    if (decoded.type !== 'admit-node') continue;
-    const payload = decodeAdmitNodePayload(decoded.payload);
-    const authorization = decodeAuthorization(payload.authorization_bytes);
-    const certificate = decodeCertificate(payload.certificate_bytes);
-    if (authorization.uid !== genesisUid || certificate.uid !== genesisUid) {
-      throw new Error('join uid mismatch');
-    }
-  }
-}
-
-function assertResponseCertsMatchProjections(
-  redeemed: RedeemResponse,
-  state: {
-    nodeCerts: Map<
-      string,
-      {
-        certificateBytes: Uint8Array;
-        certSig: Uint8Array;
-        authorizationBytes: Uint8Array;
-        authorizationSig: Uint8Array;
-        revoked: boolean;
-      }
-    >;
-  },
-  userId: string
-): void {
-  if (redeemed.node_certs.length === 0) return;
-  if (redeemed.node_certs.length !== state.nodeCerts.size) {
-    throw new Error('node_certs mismatch');
-  }
-  for (const cert of redeemed.node_certs) {
-    const projected = state.nodeCerts.get(cert.node_id);
-    if (!projected) {
-      throw new Error('node_certs mismatch');
-    }
-    if ((cert.user_id || userId) !== userId) {
-      throw new Error('node_certs mismatch');
-    }
-    if (!bytesEqual(decodeBase64url(cert.certificate), projected.certificateBytes)) {
-      throw new Error('node_certs mismatch');
-    }
-    if (!bytesEqual(decodeBase64url(cert.cert_sig), projected.certSig)) {
-      throw new Error('node_certs mismatch');
-    }
-    if (!bytesEqual(decodeBase64url(cert.authorization), projected.authorizationBytes)) {
-      throw new Error('node_certs mismatch');
-    }
-    if (!bytesEqual(decodeBase64url(cert.authorization_sig), projected.authorizationSig)) {
-      throw new Error('node_certs mismatch');
-    }
-    const revoked = cert.revoked_log_seq != null;
-    if (revoked !== projected.revoked) {
-      throw new Error('node_certs mismatch');
-    }
-  }
-}
-
 export async function runHubLeave(parsed: ParsedArgs, io: HubIo = {}): Promise<void> {
   let installDir = io.auth?.installDir ?? '';
   if (!installDir && !io.auth) {
@@ -790,12 +741,12 @@ export async function runHubLeave(parsed: ParsedArgs, io: HubIo = {}): Promise<v
   }
   try {
     await withAuth(parsed, io, async (ctx) => {
-      const { leaveMesh } = await import('../runtime/membership-reset');
+      const { isLeavableRoleName, leaveMesh } = await import('../runtime/membership-reset');
       const { createSetupTransitionLock } = await import('../runtime/setup-service');
       const roles = await rolesForLeave(ctx);
       const fromRole = roleNameFromFlags(roles);
       await leaveMesh(
-        { expectedRole: fromRole === 'standalone' ? 'node' : fromRole },
+        { expectedRole: isLeavableRoleName(fromRole) ? fromRole : 'node' },
         {
           roles,
           nodeEnv: io.nodeEnv ?? process.env.NODE_ENV ?? 'test',

@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as stream from 'stream';
+import type { DataChannel } from './index';
 
 /**
  * Turns a node-datachannel DataChannel into a real Node.js stream, complete with buffering,
@@ -10,10 +10,10 @@ import * as stream from 'stream';
  * the protocol level, and is preserved here throughout.
  */
 export default class DataChannelStream extends stream.Duplex {
-  private _rawChannel: any;
+  private _rawChannel: DataChannel;
   private _readActive: boolean;
 
-  constructor(rawChannel: any, streamOptions?: Omit<stream.DuplexOptions, 'objectMode'>) {
+  constructor(rawChannel: DataChannel, streamOptions?: Omit<stream.DuplexOptions, 'objectMode'>) {
     super({
       allowHalfOpen: false, // Default to autoclose on end().
       ...streamOptions,
@@ -23,7 +23,7 @@ export default class DataChannelStream extends stream.Duplex {
     this._rawChannel = rawChannel;
     this._readActive = true;
 
-    rawChannel.onMessage((msg: any) => {
+    rawChannel.onMessage((msg: string | Buffer | ArrayBuffer) => {
       if (!this._readActive) return; // If the buffer is full, drop messages.
 
       // If the push is rejected, we pause reading until the next call to _read().
@@ -52,8 +52,8 @@ export default class DataChannelStream extends stream.Duplex {
     this._readActive = true;
   }
 
-  _write(chunk, _encoding, callback): void {
-    let sentOk;
+  _write(chunk: unknown, _encoding: BufferEncoding, callback: (err?: Error | null) => void): void {
+    let sentOk: boolean;
 
     try {
       if (Buffer.isBuffer(chunk)) {
@@ -61,11 +61,12 @@ export default class DataChannelStream extends stream.Duplex {
       } else if (typeof chunk === 'string') {
         sentOk = this._rawChannel.sendMessage(chunk);
       } else {
-        const typeName = chunk.constructor.name || typeof chunk;
+        const typeName = chunk == null ? typeof chunk : chunk.constructor.name || typeof chunk;
         throw new Error(`Cannot write ${typeName} to DataChannel stream`);
       }
     } catch (err) {
-      return callback(err);
+      callback(err instanceof Error ? err : new Error(String(err)));
+      return;
     }
 
     if (sentOk) {
@@ -75,12 +76,12 @@ export default class DataChannelStream extends stream.Duplex {
     }
   }
 
-  _final(callback): void {
+  _final(callback: (err?: Error | null) => void): void {
     if (!this.allowHalfOpen) this.destroy();
     callback(null);
   }
 
-  _destroy(maybeErr, callback): void {
+  _destroy(maybeErr: Error | null, callback: (err?: Error | null) => void): void {
     // When the stream is destroyed, we close the DataChannel.
     this._rawChannel.close();
     callback(maybeErr);

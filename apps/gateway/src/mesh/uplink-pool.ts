@@ -1,6 +1,6 @@
 import { X509Certificate, createHash } from 'node:crypto';
 import { canonicalHubUrl, hubHostFromUrl } from '@tmex/shared/auth';
-import type { LinkStream } from '@tmex/shared/link';
+import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import type {
   HubAdvertisement,
   HubAttachmentsMessage,
@@ -22,6 +22,7 @@ import type {
   KeyLogForkEvent,
   MeshIdentity,
   MeshScheduler,
+  PooledUplink,
   UplinkState,
   UplinkStatus,
 } from './types';
@@ -98,7 +99,7 @@ export type UplinkPoolCtlSource = {
   generation: number;
 };
 
-export type CreatePooledUplink = (opts: UplinkClientOptions) => UplinkClient;
+export type CreatePooledUplink = (opts: UplinkClientOptions) => PooledUplink;
 
 export type UplinkPoolOptions = {
   identity: MeshIdentity;
@@ -116,7 +117,7 @@ export type UplinkPoolOptions = {
   fetchCaPem?: (publicUrl: string) => Promise<string>;
   fingerprintPem?: (pem: string) => string;
   isLocalCandidate?: (cand: UplinkCandidate) => boolean;
-  connectLocal?: (client: UplinkClient, signal: AbortSignal) => Promise<void>;
+  connectLocal?: (client: PooledUplink, signal: AbortSignal) => Promise<void>;
   probeJitter?: number;
   failbackDebounceMs?: number;
   probeNowDebounceMs?: number;
@@ -124,7 +125,7 @@ export type UplinkPoolOptions = {
   enablePeriodicRttProbe?: boolean;
   /** `null` = auto (on when >1 authorized hub is known). `false` forces off. */
   preferNearest?: boolean | null;
-  localRoles?: { hub?: boolean; node?: boolean };
+  localRoles?: { hub?: boolean; node?: boolean; relay?: boolean };
   rttSwitchDwellMs?: number;
   onNodeList?: (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void;
   onRtcSignal?: (msg: UplinkRtcSignal) => void;
@@ -445,8 +446,8 @@ export class UplinkPool {
   private readonly rttSwitchDwellMs: number;
   private lastRttSwitchAt = 0;
 
-  private live: UplinkClient | null = null;
-  private pending: UplinkClient | null = null;
+  private live: PooledUplink | null = null;
+  private pending: PooledUplink | null = null;
   private attached: AttachedHub | null = null;
   private generation = 0;
   private switchToken = 0;
@@ -553,7 +554,7 @@ export class UplinkPool {
     return this.generation;
   }
 
-  liveClient(): UplinkClient | null {
+  liveClient(): PooledUplink | null {
     return this.live;
   }
 
@@ -600,10 +601,7 @@ export class UplinkPool {
     this.loop = this.run(this.stopAbort.signal);
   }
 
-  async connectWithLink(
-    link: Parameters<UplinkClient['connectWithLink']>[0],
-    signal?: AbortSignal
-  ): Promise<void> {
+  async connectWithLink(link: LinkSession, signal?: AbortSignal): Promise<void> {
     const client = this.requireLive();
     await client.connectWithLink(link, signal);
   }
@@ -713,7 +711,7 @@ export class UplinkPool {
     }
   }
 
-  private requireLive(): UplinkClient {
+  private requireLive(): PooledUplink {
     const live = this.live;
     if (!live) throw new Error('uplink is not online');
     return live;
@@ -776,7 +774,7 @@ export class UplinkPool {
   }
 
   private async connectCandidate(
-    client: UplinkClient,
+    client: PooledUplink,
     cand: UplinkCandidate,
     signal: AbortSignal
   ): Promise<void> {
@@ -853,11 +851,11 @@ export class UplinkPool {
     }
   }
 
-  private spawn(cand: UplinkCandidate): UplinkClient {
+  private spawn(cand: UplinkCandidate): PooledUplink {
     const pin = this.opts.hubTrust.get(cand.publicUrl);
     const tlsCa = pin?.caPem ? [pin.caPem] : null;
     const wsFactory = this.opts.wsFactory ?? defaultWsFactory(tlsCa);
-    const slot: { client: UplinkClient | null } = { client: null };
+    const slot: { client: PooledUplink | null } = { client: null };
     const sourceOf = (): UplinkPoolCtlSource => ({
       hubNodeId: this.attached?.hubNodeId ?? cand.hubNodeId ?? '',
       generation: this.generation,
@@ -914,7 +912,7 @@ export class UplinkPool {
     return client;
   }
 
-  private async promote(client: UplinkClient, cand: UplinkCandidate, token: number): Promise<void> {
+  private async promote(client: PooledUplink, cand: UplinkCandidate, token: number): Promise<void> {
     if (!this.isSwitchCurrent(token)) {
       await client.stop();
       return;
@@ -948,7 +946,7 @@ export class UplinkPool {
   }
 
   private dispatchNodeList(
-    client: UplinkClient,
+    client: PooledUplink,
     list: UplinkNodeList,
     hubNodeId: string | null
   ): void {
@@ -1055,7 +1053,7 @@ export class UplinkPool {
     }
   }
 
-  private async waitActiveSession(origin: UplinkClient, signal: AbortSignal): Promise<void> {
+  private async waitActiveSession(origin: PooledUplink, signal: AbortSignal): Promise<void> {
     let current = origin;
     while (this.live && !signal.aborted) {
       current = this.live;
@@ -1064,7 +1062,7 @@ export class UplinkPool {
     }
   }
 
-  private async waitWhileLive(client: UplinkClient, signal: AbortSignal): Promise<void> {
+  private async waitWhileLive(client: PooledUplink, signal: AbortSignal): Promise<void> {
     if (this.live !== client || signal.aborted) return;
     await new Promise<void>((resolve) => {
       let settled = false;
@@ -1087,7 +1085,7 @@ export class UplinkPool {
     });
   }
 
-  private clearLive(client: UplinkClient): void {
+  private clearLive(client: PooledUplink): void {
     if (this.live !== client) return;
     this.live = null;
     this.unbindLiveState();
@@ -1099,7 +1097,7 @@ export class UplinkPool {
     this.emitState('offline');
   }
 
-  private bindLiveState(client: UplinkClient): void {
+  private bindLiveState(client: PooledUplink): void {
     this.unbindLiveState();
     this.liveStateOff = client.onStateChange((state) => {
       if (this.live === client) this.emitState(state);

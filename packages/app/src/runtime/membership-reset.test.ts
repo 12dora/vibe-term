@@ -5,10 +5,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
 import { MeshMembershipStore } from '../../../../apps/gateway/src/auth/mesh-membership-store';
+import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import {
   enrollmentTokens,
   hubTrust,
+  meshRelays,
+  meshSecrets,
   nodeCerts,
   nodeIdentity,
   nodeSessions,
@@ -92,6 +95,36 @@ async function seedMembership(auth: LocalAuthContext): Promise<void> {
   });
 }
 
+/** 造出「已接入中继」的落库状态：目标行 + K_log / K_meta + uplink_kind。 */
+async function seedRelayAttachment(auth: LocalAuthContext): Promise<void> {
+  const store = new MeshRelayStore(auth.db);
+  await store.replaceRelays(
+    [
+      {
+        url: 'https://relay.example',
+        tenantId: 'ab'.repeat(16),
+        token: Uint8Array.from({ length: 32 }, () => 7),
+        priority: 0,
+      },
+    ],
+    1_700_000_000_000
+  );
+  await store.putSecret(
+    'log',
+    0,
+    Uint8Array.from({ length: 32 }, () => 1),
+    1_700_000_000_000
+  );
+  await store.putSecret(
+    'meta',
+    1,
+    Uint8Array.from({ length: 32 }, () => 2),
+    1_700_000_000_000
+  );
+  store.setUplinkKind('relay');
+  store.setLocalName('studio');
+}
+
 async function baseDeps(overrides: Partial<SetupServiceDeps> = {}): Promise<SetupServiceDeps> {
   const dir = await tempDir();
   const envPath = join(dir, 'app.env');
@@ -103,7 +136,7 @@ async function baseDeps(overrides: Partial<SetupServiceDeps> = {}): Promise<Setu
   const auth = overrides.auth ?? (await openAuth());
   await seedMembership(auth);
   return {
-    roles: { hub: false, node: true },
+    roles: { hub: false, node: true, relay: false },
     nodeEnv: 'test',
     auth,
     envPath,
@@ -150,14 +183,50 @@ describe('leaveMesh', () => {
     expect(envText).toContain('TMEX_HUB_PUBLIC_URL=\n');
   });
 
+  test('relay,node 可以退出：中继令牌与租户密钥一并清空', async () => {
+    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    await seedRelayAttachment(deps.auth);
+    expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(1);
+    const result = await leaveMesh({ expectedRole: 'relay,node' }, deps);
+    expect(result).toEqual({ ok: true, fromRole: 'relay,node', restarting: true });
+    // 租户令牌 / K_log / K_meta 一条都不能留在盘上
+    expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(meshSecrets).all()).toHaveLength(0);
+    // uplink_kind / name 随 node_identity 整行删除
+    expect(deps.auth.db.select().from(nodeIdentity).all()).toHaveLength(0);
+    expect(deps.auth.userStore.listUsers()).toHaveLength(0);
+    expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('standalone');
+  });
+
+  test('纯 relay 没有成员身份：400 not_member 且不清库', async () => {
+    const deps = await baseDeps({ roles: { hub: false, node: false, relay: true } });
+    await seedRelayAttachment(deps.auth);
+    const err = await leaveMesh({ expectedRole: 'relay,node' }, deps).catch((error) => error);
+    expect(err).toBeInstanceOf(SetupError);
+    expect((err as SetupError).code).toBe('not_member');
+    expect((err as SetupError).httpStatus).toBe(400);
+    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
+    expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(1);
+    expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('node');
+  });
+
+  test('relay,node 报成 node 时仍是 409 role_mismatch', async () => {
+    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    await seedRelayAttachment(deps.auth);
+    const err = await leaveMesh({ expectedRole: 'node' }, deps).catch((error) => error);
+    expect((err as SetupError).code).toBe('role_mismatch');
+    expect((err as SetupError).httpStatus).toBe(409);
+    expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(1);
+  });
+
   test('hub,node expectedRole matches and returns fromRole', async () => {
-    const deps = await baseDeps({ roles: { hub: true, node: true } });
+    const deps = await baseDeps({ roles: { hub: true, node: true, relay: false } });
     const result = await leaveMesh({ expectedRole: 'hub,node' }, deps);
     expect(result.fromRole).toBe('hub,node');
   });
 
   test('standalone is 400 not_member', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: false } });
+    const deps = await baseDeps({ roles: { hub: false, node: false, relay: false } });
     const err = await leaveMesh({ expectedRole: 'node' }, deps).catch((error) => error);
     expect(err).toBeInstanceOf(SetupError);
     expect((err as SetupError).code).toBe('not_member');
@@ -166,7 +235,7 @@ describe('leaveMesh', () => {
   });
 
   test('wrong expectedRole is 409 role_mismatch and does not wipe', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: true } });
+    const deps = await baseDeps({ roles: { hub: false, node: true, relay: false } });
     const err = await leaveMesh({ expectedRole: 'hub,node' }, deps).catch((error) => error);
     expect(err).toBeInstanceOf(SetupError);
     expect((err as SetupError).code).toBe('role_mismatch');

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type APIRequestContext, type Page, expect, test } from '@playwright/test';
+import { setSiteTheme } from './helpers/site-theme';
 import { createTwoPaneSession, ensureCleanSession, tmux } from './helpers/tmux';
 
 // mode 2031 主题通知 e2e：pane 内 fake TUI（scripts/spike-theme/dump-tui.py，spike 阶段
@@ -68,7 +69,7 @@ test('theme-notify-2031: 订阅 pane 收到 997 通知，idle shell pane 零污�
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 
   try {
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await viewer.goto(`/devices/${deviceId}`);
     await expect(viewer.getByTestId('device-page')).toBeVisible();
     await expect(viewer.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
@@ -115,7 +116,7 @@ test('theme-notify-2031: 订阅 pane 收到 997 通知，idle shell pane 零污�
     await page.close();
     await viewerContext.close();
     await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     ensureCleanSession(sessionName);
     rmSync(workDir, { recursive: true, force: true });
   }

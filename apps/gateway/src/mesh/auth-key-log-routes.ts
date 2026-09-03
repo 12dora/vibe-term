@@ -1,5 +1,6 @@
 import {
   type Delegation,
+  RELAY_RECORD_TYPES,
   applyKeyLogRecord,
   bytesEqual,
   computeRecordHash,
@@ -112,6 +113,64 @@ export type AuthKeyLogHost = {
   getForwardWriterWrite: () => ((req: Request, uid?: string) => Promise<Response | null>) | null;
 };
 
+/**
+ * `set-relays` / `meta-key` 定义的是上级本身：首次接中继时还没有中继可问，被踢之后旧令牌已死，
+ * hub → 中继迁移更不该要求旧 hub 认得这个类型。这两类记录一律本地优先落账。
+ */
+const UPLINK_DEFINING_RECORDS: ReadonlySet<string> = new Set<string>(RELAY_RECORD_TYPES);
+
+export function definesUplink(bytes: Uint8Array): boolean {
+  try {
+    return UPLINK_DEFINING_RECORDS.has(decodeKeyLogRecord(bytes).type);
+  } catch {
+    return false;
+  }
+}
+
+export type KeyLogAppendPlan = {
+  /** 本地日志权威：先落账再尽力推给上级，不等上级确认。 */
+  localFirst: boolean;
+  /** 是否把记录发给当前上级（迁移中的 set-relays 不能回灌旧 hub）。 */
+  publish: boolean;
+};
+
+/**
+ * 中继模式下本地成员表/密钥日志是权威，中继注册表只是可重建缓存，因此 `hub=sync` 永远不等中继确认。
+ * hub 模式只有 `set-relays` / `meta-key` 走本地优先。
+ */
+export function planKeyLogAppend(input: {
+  relayMode: boolean;
+  bytes: Uint8Array;
+}): KeyLogAppendPlan {
+  const defining = definesUplink(input.bytes);
+  return { localFirst: input.relayMode || defining, publish: input.relayMode || !defining };
+}
+
+async function readKeyLogAppend(
+  req: Request
+): Promise<{ bytes: Uint8Array; sig: Uint8Array; force: boolean } | null> {
+  const body = await readJsonObjectBody(req);
+  const fields = body && requiredStrings(body, ['bytes', 'sig']);
+  if (!fields) return null;
+  try {
+    return {
+      bytes: decodeBase64url(fields.bytes),
+      sig: decodeBase64url(fields.sig),
+      force: req.headers.get('x-tmex-force-keylog') === '1',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isRotateRootKeepRecord(bytes: Uint8Array): boolean {
+  try {
+    return decodeKeyLogRecord(bytes).type === 'rotate-root-keep';
+  } catch {
+    return false;
+  }
+}
+
 export class AuthKeyLogRoutes {
   constructor(
     private readonly deps: AuthRoutesDeps,
@@ -140,32 +199,49 @@ export class AuthKeyLogRoutes {
       if (forwarded) return forwarded;
       return this.hubNotWriterResponse();
     }
-    const body = await readJsonObjectBody(req);
-    const fields = body && requiredStrings(body, ['bytes', 'sig']);
-    if (!fields) return jsonError('MALFORMED', 400);
-    let bytes: Uint8Array;
-    let sig: Uint8Array;
-    try {
-      bytes = decodeBase64url(fields.bytes);
-      sig = decodeBase64url(fields.sig);
-    } catch {
-      return jsonError('MALFORMED', 400);
+    const record = await readKeyLogAppend(req);
+    if (!record) return jsonError('MALFORMED', 400);
+    return this.appendKeyLog(req, userId, record);
+  }
+
+  private async appendKeyLog(
+    req: Request,
+    userId: string,
+    record: { bytes: Uint8Array; sig: Uint8Array; force: boolean }
+  ): Promise<Response> {
+    const plan = planKeyLogAppend({ relayMode: this.inRelayMode(userId), bytes: record.bytes });
+    if (!plan.localFirst) {
+      const blocked = this.refuseIfAttachedNotWriter();
+      if (blocked) return blocked;
     }
-    const blocked = this.refuseIfAttachedNotWriter();
-    if (blocked) return blocked;
-    const compat = this.refuseUnsupportedHubAuthRecord(req, userId, bytes, sig);
+    const compat = this.refuseUnsupportedHubAuthRecord(req, userId, record.bytes, record.sig);
     if (compat) return compat;
     const hubSync = this.usesHubSync(req);
-    if (hubSync) {
-      const force = req.headers.get('x-tmex-force-keylog') === '1';
-      return this.handleKeyLogHubSync(userId, bytes, sig, force);
+    if (hubSync && !plan.localFirst) {
+      return this.handleKeyLogHubSync(userId, record.bytes, record.sig, record.force);
     }
+    return this.applyKeyLogLocally(userId, record, { hubSync, plan });
+  }
+
+  /** 本地先落账（验签/链校验照旧），再尽力把记录推给上级；上级不可达不算失败。 */
+  private async applyKeyLogLocally(
+    userId: string,
+    record: { bytes: Uint8Array; sig: Uint8Array },
+    opts: { hubSync: boolean; plan: KeyLogAppendPlan }
+  ): Promise<Response> {
+    const { bytes, sig } = record;
+    const done = (seq: number | bigint, hash: Uint8Array): Response =>
+      this.keyLogSuccess(seq, hash, {
+        hubSync: opts.hubSync,
+        hubAck: opts.hubSync,
+        localApply: opts.plan.localFirst,
+      });
     const applied = await this.deps.keyLogService.apply(userId, { bytes, sig });
     if (!applied.ok) {
       const replayed = this.identicalAppliedRecord(userId, bytes, sig);
       if (replayed) {
         this.deps.onKeyLogEffects?.(userId, []);
-        return this.keyLogSuccess(replayed.seq, replayed.hash, false);
+        return done(replayed.seq, replayed.hash);
       }
       if (applied.error === 'fork') {
         return jsonError('KEY_LOG_FORK', 409);
@@ -173,12 +249,14 @@ export class AuthKeyLogRoutes {
       return jsonError(applied.error, 400);
     }
     this.deps.onKeyLogEffects?.(userId, applied.effects);
-    try {
-      await this.deps.publisher.publish({ bytes, sig });
-    } catch {
-      // local apply is authoritative; hub fan-out is best-effort
+    if (opts.plan.publish) {
+      try {
+        await this.deps.publisher.publish({ bytes, sig });
+      } catch {
+        // local apply is authoritative; uplink fan-out is best-effort
+      }
     }
-    return this.keyLogSuccess(applied.seq, applied.hash, false);
+    return done(applied.seq, applied.hash);
   }
 
   resolveHub(): { nodeId: string | null; publicUrl: string | null } {
@@ -202,6 +280,15 @@ export class AuthKeyLogRoutes {
       nodeId: meta?.nodeId ?? null,
       publicUrl: meta?.publicUrl ?? this.deps.hubPublicUrl ?? null,
     };
+  }
+
+  /** 上级是中继：已应用的密钥日志里有非空中继列表就算数（比 node_identity 早一步生效）。 */
+  private inRelayMode(userId: string): boolean {
+    try {
+      return (this.deps.keyLogService.currentState(userId).relays?.relays.length ?? 0) > 0;
+    } catch {
+      return false;
+    }
   }
 
   private usesHubSync(req: Request): boolean {
@@ -234,7 +321,7 @@ export class AuthKeyLogRoutes {
       const replayed = this.identicalAppliedRecord(userId, bytes, sig);
       if (replayed) {
         this.deps.onKeyLogEffects?.(userId, []);
-        return this.keyLogSuccess(replayed.seq, replayed.hash, true, true);
+        return this.keyLogSuccess(replayed.seq, replayed.hash, { hubSync: true, hubAck: true });
       }
       if (applied.error === 'fork') {
         return jsonError('KEY_LOG_FORK', 409);
@@ -242,7 +329,7 @@ export class AuthKeyLogRoutes {
       return jsonError(applied.error, 400);
     }
     this.deps.onKeyLogEffects?.(userId, applied.effects);
-    return this.keyLogSuccess(applied.seq, applied.hash, true, true);
+    return this.keyLogSuccess(applied.seq, applied.hash, { hubSync: true, hubAck: true });
   }
 
   private async previewKeyLog(
@@ -360,24 +447,17 @@ export class AuthKeyLogRoutes {
   private keyLogSuccess(
     seq: number | bigint,
     hash: Uint8Array,
-    hubSync: boolean,
-    hubAck?: boolean,
-    hubError?: string
+    opts: { hubSync: boolean; hubAck?: boolean; hubError?: string; localApply?: boolean }
   ): Response {
     this.host.invalidateAuthModeCache();
-    if (!hubSync) {
-      return jsonBody({
-        ok: true,
-        seq,
-        hash: encodeBase64url(hash),
-      });
-    }
+    const base = { ok: true, seq, hash: encodeBase64url(hash) };
+    if (!opts.hubSync) return jsonBody(base);
     return jsonBody({
-      ok: true,
-      seq,
-      hash: encodeBase64url(hash),
-      hubAck: hubAck === true,
-      ...(hubError ? { hubError } : {}),
+      ...base,
+      hubAck: opts.hubAck === true,
+      ...(opts.hubError ? { hubError: opts.hubError } : {}),
+      // 中继模式（或换上级的记录）不等上级确认：本地日志即权威，随后由密钥日志同步补推
+      ...(opts.localApply ? { localApply: true } : {}),
     });
   }
 
@@ -390,6 +470,9 @@ export class AuthKeyLogRoutes {
     if (this.identicalAppliedRecord(userId, bytes, sig)) {
       return null;
     }
+    // 中继模式下 `nodes` 版本注册表永远是空的（只有 hub 侧会写），一律判「节点过旧」会把根轮换
+    // 彻底堵死。而中继在 relay.auth 上强制 client_version ≥ 1.1.23，已经严于这条记录要求的 1.1.16。
+    if (isRotateRootKeepRecord(bytes) && this.inRelayMode(userId)) return null;
     const compat = applyForcedKeyLogCompat(
       inspectHubAuthRecordCompat(this.deps.userStore, bytes, userId),
       req.headers.get('x-tmex-force-keylog') === '1'

@@ -35,6 +35,7 @@ import {
 import { encrypt } from '../crypto';
 import { toBuffer } from './binary';
 import type { KeyLogStore } from './key-log-store';
+import { projectRelayKeyLogState } from './mesh-relay-store';
 import { type NodeIdentityKeys, selfSignedNodeCertificate } from './node-identity-service';
 import type { SaveNodeIdentityInput } from './node-identity-store';
 import type { NodeSessionStore } from './node-session-store';
@@ -207,9 +208,7 @@ export class UserKeyService {
       if (rec) {
         try {
           totp = totpPayloadFromKeyLogRecord(decodeKeyLogRecord(rec.bytes));
-        } catch {
-          totp = null;
-        }
+        } catch {}
       }
     }
     const hubAuthorizations = new Map<string, StoredHubAuthorization>();
@@ -247,6 +246,7 @@ export class UserKeyService {
       nodeCerts,
       hubAuthorizations,
       head: { seq: BigInt(user.keyLogHeadSeq), hash: user.keyLogHeadHash },
+      ...projectRelayKeyLogState(this.db, userId),
     };
   }
 

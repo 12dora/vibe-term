@@ -266,7 +266,7 @@ export async function bootHubAndLeaf(): Promise<LargePushPair> {
   const c = await enrollAndStart(parent, {
     name: 'node-c',
     version: 'ver-c',
-    roles: { hub: false, node: true },
+    roles: { hub: false, node: true, relay: false },
     hubUrl: HUB_A_URL,
     uplinkHub: null,
     wsFactory: router.factory,

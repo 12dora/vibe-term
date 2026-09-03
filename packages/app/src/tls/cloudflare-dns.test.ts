@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import type { FetchLike } from '../lib/fetch-like';
 import { CloudflareDnsClient } from './cloudflare-dns';
 
 describe('CloudflareDnsClient', () => {
   test('walks labels to find a zone and creates/deletes TXT records', async () => {
     const calls: Array<{ url: string; method: string; body: unknown; auth: string | null }> = [];
-    const fetchImpl: typeof fetch = async (input, init) => {
+    const fetchImpl: FetchLike = async (input, init) => {
       const url = String(input);
       const method = init?.method ?? 'GET';
       const auth = new Headers(init?.headers).get('authorization');

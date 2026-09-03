@@ -424,7 +424,7 @@ export async function callHub(
 type EnrollOpts = {
   name: string;
   version: string;
-  roles: { hub: boolean; node: boolean };
+  roles: { hub: boolean; node: boolean; relay: boolean };
   hubUrl: string | null;
   hubUrls?: string[];
   hubPublicUrl?: string | null;
@@ -501,7 +501,7 @@ export async function bootHubA(
     gateway: fakeGateway(db, 'a'),
     userId: boot.userId,
     config: {
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       hubUrl: null,
       hubPublicUrl: HUB_A_URL,
       hubMode: 'active',
@@ -723,7 +723,7 @@ export async function bootAbcdTopology(): Promise<MultiHubTopology> {
   const b = await enrollAndStart(parent, {
     name: 'node-b',
     version: 'ver-b',
-    roles: { hub: true, node: true },
+    roles: { hub: true, node: true, relay: false },
     hubUrl: HUB_A_URL,
     hubPublicUrl: HUB_B_URL,
     hubMode: 'standby',
@@ -742,7 +742,7 @@ export async function bootAbcdTopology(): Promise<MultiHubTopology> {
   const c = await enrollAndStart(parent, {
     name: 'node-c',
     version: 'ver-c',
-    roles: { hub: false, node: true },
+    roles: { hub: false, node: true, relay: false },
     hubUrl: HUB_A_URL,
     uplinkHub: null,
     wsFactory: router.factory,
@@ -751,7 +751,7 @@ export async function bootAbcdTopology(): Promise<MultiHubTopology> {
   const d = await enrollAndStart(parent, {
     name: 'node-d',
     version: 'ver-d',
-    roles: { hub: false, node: true },
+    roles: { hub: false, node: true, relay: false },
     hubUrl: HUB_A_URL,
     hubUrls: [HUB_B_URL],
     uplinkHub: null,

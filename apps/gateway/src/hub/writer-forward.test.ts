@@ -124,7 +124,6 @@ describe('writer-forward', () => {
       '/api/hub/enrollments',
       '/api/hub/enrollments/redeem',
       '/api/hub/nodes/n1/rename',
-      '/api/hub/nodes/n1/revoke',
       '/api/auth/keylog?hub=sync',
     ];
     for (const path of routes) {

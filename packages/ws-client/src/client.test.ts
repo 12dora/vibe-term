@@ -357,7 +357,7 @@ describe('socketFactory', () => {
     socket.open();
 
     const payload = new Uint8Array(256).fill(7);
-    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_TERM_HISTORY, 9, {
+    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_DEVICE_EVENT, 9, {
       maxFrameBytes: 96,
       chunkStreamId: 3,
     });
@@ -408,7 +408,7 @@ describe('陈旧 socket 的事件隔离', () => {
     client.onStateChange((state) => states.push(state));
 
     const payload = new Uint8Array(256).fill(5);
-    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_TERM_HISTORY, 11, {
+    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_DEVICE_EVENT, 11, {
       maxFrameBytes: 96,
       chunkStreamId: 8,
     });
@@ -485,6 +485,81 @@ describe('重连接线', () => {
     (sockets[0] as FakeSocket).simulateClose();
     expect(client.getState()).toBe('RECONNECT_BACKOFF');
 
+    await until(() => sockets.length === 2);
+    client.disconnect();
+  });
+
+  test('canonical v1.1 门槛拒绝后不再自动重连', async () => {
+    const sockets: FakeSocket[] = [];
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 1,
+      maxReconnectAttempts: 5,
+    });
+
+    client.connect();
+    const socket = sockets[0] as FakeSocket;
+    socket.open();
+    socket.deliver(
+      wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_ERROR,
+        wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+          refSeq: 1,
+          code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
+          message: `${wsBorsh.CANONICAL_V11_REQUIRED_ERROR_PREFIX}: client 1.1.21 < 1.1.22`,
+          retryable: false,
+        }),
+        2
+      )
+    );
+    socket.simulateClose();
+
+    expect(client.getState()).toBe('CLOSED');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sockets).toHaveLength(1);
+
+    // 宿主显式重连仍然放行（升级后由调用方主动重来）
+    client.connect();
+    expect(sockets).toHaveLength(2);
+    client.disconnect();
+  });
+
+  test('普通 ERROR 不影响自动重连', async () => {
+    const sockets: FakeSocket[] = [];
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 1,
+      maxReconnectAttempts: 2,
+    });
+
+    client.connect();
+    const socket = sockets[0] as FakeSocket;
+    socket.open();
+    socket.deliver(
+      wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_ERROR,
+        wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+          refSeq: 1,
+          code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
+          message: 'Unsupported protocol version',
+          retryable: false,
+        }),
+        2
+      )
+    );
+    socket.simulateClose();
+
+    expect(client.getState()).toBe('RECONNECT_BACKOFF');
     await until(() => sockets.length === 2);
     client.disconnect();
   });

@@ -149,6 +149,18 @@ describe('isServicePath / isJsonDeniedPath', () => {
     expect(isServicePath('GET', '/api/devices')).toBe(false);
   });
 
+  test('中继的机器路径同样放行，管理面不放行', () => {
+    const tenant = 'ab'.repeat(16);
+    expect(isServicePath('GET', '/relay/uplink')).toBe(true);
+    expect(isServicePath('GET', '/api/relay/health')).toBe(true);
+    expect(isServicePath('POST', '/api/relay/enroll')).toBe(true);
+    expect(isServicePath('POST', `/api/relay/tenants/${tenant}/enrollments/redeem`)).toBe(true);
+    expect(isServicePath('GET', `/api/relay/tenants/${tenant}/enrollments/abc`)).toBe(true);
+    expect(isServicePath('GET', '/api/relay/status')).toBe(false);
+    expect(isServicePath('POST', '/api/relay/password')).toBe(false);
+    expect(isServicePath('PATCH', `/api/relay/tenants/${tenant}`)).toBe(false);
+  });
+
   test('json denied paths', () => {
     expect(isJsonDeniedPath('/api/x')).toBe(true);
     expect(isJsonDeniedPath('/api/local/status')).toBe(true);

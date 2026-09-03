@@ -322,7 +322,7 @@ describe('mesh phase-2 integration', () => {
       gateway,
       userId: boot.userId,
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://hub.example',
         peerPort: 39001,
@@ -511,7 +511,7 @@ describe('mesh phase-2 integration', () => {
       gateway,
       ...(opts?.passUserId === false ? {} : { userId: a.boot.userId }),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://hub.example',
         peerPort: 39002,
         stunServers: [],
@@ -694,25 +694,19 @@ describe('mesh phase-2 integration', () => {
         reason: 'lost',
       })
     );
-    const revoked = await a.mesh.hub?.handleRequest(
-      (() => {
-        const req = new Request(`http://hub/api/hub/nodes/${b.mesh.nodeId}/revoke`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            cookie: b.cookie,
-          },
-          body: JSON.stringify({
-            bytes: encodeBase64url(signed.bytes),
-            sig: encodeBase64url(signed.sig),
-          }),
-        });
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      dummyServer
-    );
-    expect(revoked?.status).toBe(200);
+    // 撤销的产品路径是 key-log：entry 节点 POST /api/auth/keylog?hub=sync，
+    // 先等 hub ack 再本地 append，hub 侧的 append effects 负责踢连接与广播。
+    const revoked = await callMesh(a.mesh, 'http://entry/api/auth/keylog?hub=sync', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cookie: b.cookie,
+      body: JSON.stringify({
+        bytes: encodeBase64url(signed.bytes),
+        sig: encodeBase64url(signed.sig),
+      }),
+    });
+    expect(revoked.status).toBe(200);
+    expect(await revoked.json()).toMatchObject({ ok: true, hubAck: true });
     expect(a.userStore.getCert(b.mesh.nodeId)?.revokedLogSeq).not.toBeNull();
 
     const now = Date.now();
@@ -814,7 +808,7 @@ describe('mesh phase-2 integration', () => {
       wsBorsh.KIND_HELLO_C2S,
       wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
         clientImpl: 'test',
-        clientVersion: '1',
+        clientVersion: '1.1.23',
         maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
         supportsCompression: false,
         supportsDiffSnapshot: false,
@@ -918,25 +912,19 @@ describe('mesh phase-2 integration', () => {
         reason: 'lost',
       })
     );
-    const revoked = await a.mesh.hub?.handleRequest(
-      (() => {
-        const req = new Request(`http://hub/api/hub/nodes/${b.mesh.nodeId}/revoke`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            cookie: b.cookie,
-          },
-          body: JSON.stringify({
-            bytes: encodeBase64url(signed.bytes),
-            sig: encodeBase64url(signed.sig),
-          }),
-        });
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      dummyServer
-    );
-    expect(revoked?.status).toBe(200);
+    // 撤销的产品路径是 key-log：entry 节点 POST /api/auth/keylog?hub=sync，
+    // 先等 hub ack 再本地 append，hub 侧的 append effects 负责踢连接与广播。
+    const revoked = await callMesh(a.mesh, 'http://entry/api/auth/keylog?hub=sync', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cookie: b.cookie,
+      body: JSON.stringify({
+        bytes: encodeBase64url(signed.bytes),
+        sig: encodeBase64url(signed.sig),
+      }),
+    });
+    expect(revoked.status).toBe(200);
+    expect(await revoked.json()).toMatchObject({ ok: true, hubAck: true });
     await waitUntil(() => b.mesh.uplink.state !== 'online', 5_000);
     await waitUntil(() => a.mesh.peers.getLive(b.mesh.nodeId) === null, 5_000);
     const again = await callMesh(a.mesh, `http://entry/n/${b.mesh.nodeId}/api/devices`, {
@@ -1307,7 +1295,7 @@ describe('mesh phase-2 integration', () => {
       gateway: fakeGateway(nodeA.db, { devicesBody: { devices: [{ id: 'dev-a' }] } }),
       userId: hub.boot.userId,
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://hub.example',
         peerPort: 39013,
         stunServers: [],

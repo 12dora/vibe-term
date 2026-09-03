@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1, wsBorsh } from '@tmex/shared';
+import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@tmex/shared';
 import { BorshWebSocketClient, type WebSocketLike } from './client';
 import { WebSocketGatewayTransport } from './websocket-transport';
 
@@ -35,12 +35,18 @@ class FakeSocket implements WebSocketLike {
   }
 }
 
-function hello(capabilities: string[], maxFrameBytes = 1024 * 1024): Uint8Array {
+const CANONICAL = [GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1];
+
+function hello(
+  capabilities: string[],
+  maxFrameBytes = 1024 * 1024,
+  serverVersion = '1.2.0'
+): Uint8Array {
   return wsBorsh.encodeEnvelope(
     wsBorsh.KIND_HELLO_S2C,
     wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
       serverImpl: 'tmex-gateway',
-      serverVersion: '1.2.0',
+      serverVersion,
       selectedVersion: 1,
       maxFrameBytes,
       heartbeatIntervalMs: 60_000,
@@ -50,21 +56,24 @@ function hello(capabilities: string[], maxFrameBytes = 1024 * 1024): Uint8Array 
   );
 }
 
-function createHarness(canonicalStateEnabled = true) {
+function createHarness() {
   const socket = new FakeSocket();
   const client = new BorshWebSocketClient({
     url: 'ws://example.test/ws',
     socketFactory: () => socket,
     heartbeatIntervalMs: 60_000,
-    canonicalStateEnabled,
   });
   const transport = new WebSocketGatewayTransport(client);
   const events: string[] = [];
+  const tooOld: Array<{ minVersion: string; serverVersion: string | null }> = [];
   transport.onEvent((event) => {
     if (event.type === 'state-feed-mode') events.push(event.mode);
+    if (event.type === 'server-too-old') {
+      tooOld.push({ minVersion: event.minVersion, serverVersion: event.serverVersion });
+    }
   });
   transport.connect();
-  return { socket, client, transport, events };
+  return { socket, client, transport, events, tooOld };
 }
 
 function stubDocument(): {
@@ -151,7 +160,7 @@ describe('canonical state capability gate', () => {
       })
     ).toBe('queued');
     socket.open();
-    socket.deliver(hello([GATEWAY_CAPABILITY_CANONICAL_STATE_V1]));
+    socket.deliver(hello(CANONICAL));
 
     expect(client.stateFeedMode).toBe('canonical');
     expect(transport.stateFeedMode).toBe('canonical');
@@ -166,12 +175,13 @@ describe('canonical state capability gate', () => {
       wsBorsh.KIND_DEVICE_CONNECT,
       wsBorsh.KIND_CANONICAL_COMMAND,
     ]);
-    expect(businessKinds(socket)).not.toContain(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES);
+    // 0x020d = 已删除的 legacy TMUX_SUBSCRIBE_PANES，canonical 会话不得再发
+    expect(businessKinds(socket)).not.toContain(0x020d);
     transport.disconnect();
   });
 
-  test('keeps the legacy subscription path when the capability is absent', () => {
-    const { socket, client, transport, events } = createHarness();
+  test('缺 canonical-state-v1.1 能力时不降级，只报 server-too-old', () => {
+    const { socket, client, transport, events, tooOld } = createHarness();
     transport.send({
       type: 'set-pane-subscriptions',
       deviceId: 'device-a',
@@ -181,30 +191,30 @@ describe('canonical state capability gate', () => {
     socket.open();
     socket.deliver(hello([]));
 
-    expect(client.stateFeedMode).toBe('legacy');
+    expect(client.stateFeedMode).toBe('unsupported');
     expect(transport.capabilities.atomicScreen).toBe(false);
-    expect(events).toEqual(['legacy']);
-    expect(businessKinds(socket)).toEqual([wsBorsh.KIND_TMUX_SUBSCRIBE_PANES]);
+    expect(events).toEqual(['unsupported']);
+    expect(tooOld).toEqual([
+      { minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION, serverVersion: '1.2.0' },
+    ]);
+    // legacy 订阅帧已下线：没有任何业务帧发出去
+    expect(businessKinds(socket)).toEqual([]);
     transport.disconnect();
   });
 
-  test('the client option forces legacy even when the server advertises canonical state', () => {
-    const { socket, client, transport } = createHarness(false);
-    transport.send({
-      type: 'set-pane-subscriptions',
-      deviceId: 'device-a',
-      generation: 1n,
-      paneIds: ['%1'],
-    });
+  test('服务端版本低于 1.1.22 时即使播报能力也拒建 canonical 会话', () => {
+    const { socket, client, transport, tooOld } = createHarness();
     socket.open();
-    socket.deliver(hello([GATEWAY_CAPABILITY_CANONICAL_STATE_V1]));
+    socket.deliver(hello(CANONICAL, 1024 * 1024, '1.1.21'));
 
-    expect(client.stateFeedMode).toBe('legacy');
-    expect(businessKinds(socket)).toEqual([wsBorsh.KIND_TMUX_SUBSCRIBE_PANES]);
+    expect(client.stateFeedMode).toBe('unsupported');
+    expect(tooOld).toEqual([
+      { minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION, serverVersion: '1.1.21' },
+    ]);
     transport.disconnect();
   });
 
-  test('keeps the latest legacy subscription intent when a reconnect upgrades to canonical', () => {
+  test('重连升级到 canonical 时沿用最近一次订阅意图', () => {
     const sockets = [new FakeSocket(), new FakeSocket()];
     let socketIndex = 0;
     const client = new BorshWebSocketClient({
@@ -231,7 +241,7 @@ describe('canonical state capability gate', () => {
 
     client.reconnect();
     sockets[1]?.open();
-    sockets[1]?.deliver(hello([GATEWAY_CAPABILITY_CANONICAL_STATE_V1]));
+    sockets[1]?.deliver(hello(CANONICAL));
 
     const canonicalFrame = sockets[1]?.sent
       .map((frame) => wsBorsh.decodeEnvelope(frame))
@@ -263,7 +273,7 @@ describe('canonical state capability gate', () => {
       })
     ).toBe('overflow');
     socket.open();
-    socket.deliver(hello([GATEWAY_CAPABILITY_CANONICAL_STATE_V1]));
+    socket.deliver(hello(CANONICAL));
 
     const canonicalFrame = socket.sent
       .map((frame) => wsBorsh.decodeEnvelope(frame))
@@ -278,9 +288,7 @@ describe('canonical state capability gate', () => {
   test('canonical frames use the effective max directly and never generic CHUNK', () => {
     const { socket, client, transport } = createHarness();
     socket.open();
-    socket.deliver(
-      hello([GATEWAY_CAPABILITY_CANONICAL_STATE_V1], wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES)
-    );
+    socket.deliver(hello(CANONICAL, wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES));
     const small = wsBorsh.encodeCanonicalCommandPayload({
       SetPaneSubscriptions: { generation: 9n, activePanes: [], hotPanes: [] },
     });
@@ -297,12 +305,13 @@ describe('canonical state capability gate', () => {
     transport.disconnect();
   });
 
-  test('canonical mode still emits TERM_RESIZE / TERM_SYNC_SIZE so sync stays distinct from resize', () => {
+  test('尺寸命令不再走 legacy kind：没有 metadata 时排队等 canonical 目标', () => {
     const { socket, client, transport } = createHarness();
     socket.open();
-    socket.deliver(hello([GATEWAY_CAPABILITY_CANONICAL_STATE_V1]));
+    socket.deliver(hello(CANONICAL));
     expect(client.stateFeedMode).toBe('canonical');
 
+    // 还没收到该设备的 canonical metadata：两条尺寸命令都进 canonical 待发队列
     expect(
       transport.send({
         type: 'terminal-resize',
@@ -311,7 +320,7 @@ describe('canonical state capability gate', () => {
         cols: 100,
         rows: 30,
       })
-    ).toBe('sent');
+    ).toBe('queued');
     expect(
       transport.send({
         type: 'terminal-sync-size',
@@ -320,25 +329,20 @@ describe('canonical state capability gate', () => {
         cols: 90,
         rows: 24,
       })
-    ).toBe('sent');
+    ).toBe('queued');
 
-    expect(businessKinds(socket)).toEqual([
-      wsBorsh.KIND_CANONICAL_COMMAND,
-      wsBorsh.KIND_TERM_RESIZE,
-      wsBorsh.KIND_TERM_SYNC_SIZE,
-    ]);
+    expect(businessKinds(socket)).toEqual([wsBorsh.KIND_CANONICAL_COMMAND]);
     transport.disconnect();
   });
 
-  test('falls back to legacy when the negotiated frame limit cannot sustain a canonical feed', () => {
-    const { socket, client, transport } = createHarness();
+  test('协商到的帧上限撑不起 canonical feed 时同样判定为 unsupported', () => {
+    const { socket, client, transport, tooOld } = createHarness();
     socket.open();
-    socket.deliver(
-      hello([GATEWAY_CAPABILITY_CANONICAL_STATE_V1], wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES - 1)
-    );
+    socket.deliver(hello(CANONICAL, wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES - 1));
 
-    expect(client.stateFeedMode).toBe('legacy');
+    expect(client.stateFeedMode).toBe('unsupported');
     expect(transport.capabilities.atomicScreen).toBe(false);
+    expect(tooOld).toHaveLength(1);
     expect(businessKinds(socket)).toEqual([]);
     transport.disconnect();
   });

@@ -9,6 +9,7 @@ import './index.css';
 
 // 浏览器 console 打印 monorepo 版本（非 production 带 _dev 后缀）
 console.info(`${PRODUCT_NAME} ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
+setDefaultClientVersion(formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__));
 
 import { isAuthTransitionActive } from '@/auth/auth-transition';
 import { createLoginRedirect } from '@/auth/login-redirect';
@@ -33,6 +34,7 @@ import { useKeyboardAvoidance } from '@tmex/terminal-ui/hooks/use-keyboard-avoid
 import { applyThemePreset, isThemePreset } from '@tmex/theme';
 import { SidebarInset, SidebarProvider, useSidebar } from '@tmex/ui/sidebar';
 import { markToasterReady } from '@tmex/ui/toast';
+import { setDefaultClientVersion } from '@tmex/ws-client';
 
 function applyInitialTheme(): void {
   try {

@@ -15,7 +15,7 @@ import {
   STREAM_FAILOVER_RESUME_WAIT_MS,
   type StreamOpener,
 } from './mesh-deps';
-import type { StreamReplayState } from './stream-replay-state';
+import { type StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
 
 export type ForwardPump = {
   id: string;
@@ -44,7 +44,8 @@ export type StreamFailoverHost = {
   streams: StreamOpener;
   bindStream(pump: ForwardPump, stream: OpenedWsStream, transport: PeerTransportKind | null): void;
   discardStream(pump: ForwardPump, stream: OpenedWsStream): void;
-  closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void;
+  /** 整条拆解（上游流 + 在途流 + 浏览器）：failover 的所有终止路径都走它。 */
+  closePump(pump: ForwardPump, info: { code?: number; reason?: string }): void;
   sendToStream(pump: ForwardPump, stream: OpenedWsStream, bytes: Uint8Array): void;
   sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void;
   flushQueue(pump: ForwardPump): void;
@@ -116,9 +117,9 @@ export async function runStreamFailover(
         return;
       }
     }
-    host.closeBrowser(pump, { code: 1011, reason: 'failover-exhausted' });
+    host.closePump(pump, { code: 1011, reason: 'failover-exhausted' });
   } catch {
-    if (!pump.browserClosed) host.closeBrowser(pump, { code: 1011, reason: 'failover-error' });
+    if (!pump.browserClosed) host.closePump(pump, { code: 1011, reason: 'failover-error' });
   } finally {
     if (pump.failingOver) {
       pump.failingOver = false;
@@ -220,10 +221,22 @@ async function completeFailover(
     host.discardStream(pump, stream);
     return true;
   }
-  if (!pump.streamAlive || pump.stream !== stream) return false;
+  // 新流没答 HELLO / 答的 HELLO 解不出版本：不能盲续（订阅、队列都会打到一条身份未知的流上）。
+  if (!waits.helloOk) {
+    rejectStaleNodeStream(true, pump, {
+      log: (line) => safeLog(host, line),
+      sendToBrowser: (target, bytes) => host.sendToBrowser(target, bytes),
+      closePump: (target, closeInfo) => host.closePump(target, closeInfo),
+    });
+    return true;
+  }
+  // 这条流不再是要续的那条（已断 / 已被新流顶掉）：放弃它之前先关掉，别留给下一轮。
+  if (!pump.streamAlive || pump.stream !== stream) {
+    host.discardStream(pump, stream);
+    return false;
+  }
   const resumed = pump.replay.resumedPaneCount();
   const desc = pump.replay.describeReplay();
-  const replayBytes = pump.replay.legacyReplayStats().replayBytes;
   const durationMs = Date.now() - startedAt;
   const to = pump.boundTransport ?? 'none';
   let lag = { lagMs: 0, maxLagMs: 0 };
@@ -244,7 +257,6 @@ async function completeFailover(
       to,
       resumed,
       replayMode: desc.mode,
-      replayBytes,
     })
   );
   safeLog(
@@ -256,7 +268,6 @@ async function completeFailover(
       closeReason,
       from,
       to,
-      replayBytes,
       eventLoopLagMs: lag.lagMs,
       maxLagMs: lag.maxLagMs,
     })
@@ -275,7 +286,7 @@ async function replaySubscription(
   pump: ForwardPump,
   stream: OpenedWsStream,
   signal: AbortSignal
-): Promise<{ helloWaitMs: number; resumeWaitMs: number; resumed: number }> {
+): Promise<{ helloWaitMs: number; resumeWaitMs: number; resumed: number; helloOk: boolean }> {
   pump.replay.beginResume();
   const wait = async (key: 'helloWait' | 'resumeWait', ms: number, before?: () => void) => {
     const t0 = Date.now();
@@ -290,8 +301,13 @@ async function replaySubscription(
   let helloWaitMs = 0;
   let resumeWaitMs = 0;
   const hello = pump.replay.hello;
-  if (hello)
+  if (hello) {
     helloWaitMs = await wait('helloWait', 2_000, () => host.sendToStream(pump, stream, hello));
+    // beginResume 已把 peerVersion 清空：这里为真只可能是本条流刚播报了达标版本。
+    if (!pump.replay.peerSupportsCanonical()) {
+      return { helloWaitMs, resumeWaitMs, resumed: 0, helloOk: false };
+    }
+  }
   const sendAll = (frames: Uint8Array[]): void => {
     for (const frame of frames) {
       if (pumpDead(pump, signal)) return;
@@ -304,5 +320,5 @@ async function replaySubscription(
   }
   sendAll(pump.replay.buildPostConnectFrames());
   if (!pumpDead(pump, signal)) pump.replay.markCanonicalResumeSent();
-  return { helloWaitMs, resumeWaitMs, resumed: pump.replay.resumedPaneCount() };
+  return { helloWaitMs, resumeWaitMs, resumed: pump.replay.resumedPaneCount(), helloOk: true };
 }

@@ -1,13 +1,11 @@
 // WebSocket Borsh 转换层单元测试
 
 import { describe, expect, it } from 'bun:test';
-import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '../index';
+import type { EventDevicePayload, EventTmuxPayload } from '../index';
 import {
   decodeDeviceEventPayload,
-  decodeStateSnapshot,
   decodeTmuxEventPayload,
   encodeDeviceEventPayload,
-  encodeStateSnapshot,
   encodeTmuxEventPayload,
 } from './convert';
 import * as schema from './schema';
@@ -117,140 +115,6 @@ describe('convert', () => {
       });
 
       expect(() => decodeTmuxEventPayload(encoded)).toThrow('Unknown tmux event type: 255');
-    });
-  });
-
-  describe('StateSnapshot', () => {
-    it('应该正确编解码 StateSnapshot', () => {
-      const payload: StateSnapshotPayload = {
-        deviceId: 'device-1',
-        session: {
-          id: '$0',
-          name: 'main',
-          windows: [
-            {
-              id: '@1',
-              name: 'window-1',
-              index: 0,
-              active: true,
-              panes: [
-                {
-                  id: '%1',
-                  windowId: '@1',
-                  index: 0,
-                  title: 'bash',
-                  active: true,
-                  width: 80,
-                  height: 24,
-                  currentPath: '/home/user',
-                },
-              ],
-            },
-          ],
-        },
-      };
-
-      const encoded = encodeStateSnapshot(payload);
-      const decoded = decodeStateSnapshot(encoded);
-
-      expect(decoded.deviceId).toBe(payload.deviceId);
-      expect(decoded.session).not.toBeNull();
-      if (decoded.session) {
-        expect(decoded.session.id).toBe('$0');
-        expect(decoded.session.name).toBe('main');
-        expect(decoded.session.windows).toHaveLength(1);
-        expect(decoded.session.windows[0].id).toBe('@1');
-        expect(decoded.session.windows[0].panes).toHaveLength(1);
-        expect(decoded.session.windows[0].panes[0].id).toBe('%1');
-        expect(decoded.session.windows[0].panes[0].title).toBe('bash');
-        expect(decoded.session.windows[0].panes[0].currentPath).toBe('/home/user');
-      }
-    });
-
-    it('应该正确处理空 session', () => {
-      const payload: StateSnapshotPayload = {
-        deviceId: 'device-1',
-        session: null,
-      };
-
-      const encoded = encodeStateSnapshot(payload);
-      const decoded = decodeStateSnapshot(encoded);
-
-      expect(decoded.deviceId).toBe(payload.deviceId);
-      expect(decoded.session).toBeNull();
-    });
-
-    it('应该正确处理不含 title 的 pane', () => {
-      const payload: StateSnapshotPayload = {
-        deviceId: 'device-1',
-        session: {
-          id: '$0',
-          name: 'main',
-          windows: [
-            {
-              id: '@1',
-              name: 'window-1',
-              index: 0,
-              active: true,
-              panes: [
-                {
-                  id: '%1',
-                  windowId: '@1',
-                  index: 0,
-                  active: true,
-                  width: 80,
-                  height: 24,
-                },
-              ],
-            },
-          ],
-        },
-      };
-
-      const encoded = encodeStateSnapshot(payload);
-      const decoded = decodeStateSnapshot(encoded);
-
-      expect(decoded.session).not.toBeNull();
-      if (decoded.session) {
-        expect(decoded.session.windows[0].panes[0].title).toBeUndefined();
-      }
-    });
-
-    it('应该正确处理不含 currentPath 的 pane（向后兼容）', () => {
-      const payload: StateSnapshotPayload = {
-        deviceId: 'device-1',
-        session: {
-          id: '$0',
-          name: 'main',
-          windows: [
-            {
-              id: '@1',
-              name: 'window-1',
-              index: 0,
-              active: true,
-              panes: [
-                {
-                  id: '%1',
-                  windowId: '@1',
-                  index: 0,
-                  title: 'bash',
-                  active: true,
-                  width: 80,
-                  height: 24,
-                },
-              ],
-            },
-          ],
-        },
-      };
-
-      const encoded = encodeStateSnapshot(payload);
-      const decoded = decodeStateSnapshot(encoded);
-
-      expect(decoded.session).not.toBeNull();
-      if (decoded.session) {
-        expect(decoded.session.windows[0].panes[0].currentPath).toBeUndefined();
-      }
     });
   });
 });

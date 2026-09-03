@@ -55,7 +55,6 @@ export function createTmuxStore(
       setState: set,
       shouldSkipDuplicateConnect,
       lastConnectSentAt,
-      cancelReselect: selection.cancelReselect,
       paneSubscriptions,
     });
     disposers.push(() => {
@@ -84,29 +83,6 @@ export function createTmuxStore(
     const setupTransportHandlers = (): void => {
       if (initialized) return;
       initialized = true;
-
-      // 选择状态机的输出/历史统一经 pane-sink-registry 按 (deviceId, paneId) 路由到
-      // 各 Terminal 实例（分屏多实例）；回调一次性设置，Terminal 只注册/注销 sink
-      core.selectMachine({
-        onResetTerminal: (deviceId, paneId) => {
-          core.paneSinks.dispatchPaneReset(deviceId, paneId);
-        },
-        onApplyHistory: (deviceId, paneId, data, alternateScreen, modes) => {
-          core.paneSinks.dispatchPaneApplyHistory(deviceId, paneId, data, alternateScreen, modes);
-        },
-        onFlushBuffer: (deviceId, paneId, buffer) => {
-          for (const chunk of buffer) {
-            core.paneSinks.dispatchPaneOutput(deviceId, paneId, chunk);
-          }
-        },
-        onOutput: (deviceId, paneId, data) => {
-          core.paneSinks.dispatchPaneOutput(deviceId, paneId, data);
-        },
-        onSelectFailed: selection.handleSelectFailed,
-        onRebaseRequired: (deviceId, paneId, reason) => {
-          core.paneSinks.dispatchPaneRebase(deviceId, paneId, reason);
-        },
-      });
 
       const routeEvent = createTmuxEventRouter(
         {

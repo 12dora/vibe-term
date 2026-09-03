@@ -1,7 +1,7 @@
 import { type APIRequestContext, type Page, devices, expect, test } from '@playwright/test';
 import type { KeyboardBehaviorMode } from '@tmex/stores';
 import { createSinglePaneSession, ensureCleanSession } from './helpers/tmux';
-import { KIND, decodeEnvelope, isGatewayWsUrl } from './helpers/ws-borsh';
+import { attachCanonicalCommandCollector } from './helpers/ws-borsh';
 
 // Android 形态：非 iOS UA + 触屏，needsManualKeyboardAvoidance 才会启用避让
 test.use({ ...devices['Pixel 5'] });
@@ -59,17 +59,9 @@ async function bootstrap(
   const created = (await createRes.json()) as { device: { id: string } };
   const deviceId = created.device.id;
 
-  let resizeFrames = 0;
-  page.on('websocket', (ws) => {
-    if (!isGatewayWsUrl(ws.url())) return;
-    ws.on('framesent', ({ payload }) => {
-      const envelope = decodeEnvelope(payload as Buffer);
-      if (!envelope) return;
-      if (envelope.kind === KIND.TERM_RESIZE || envelope.kind === KIND.TERM_SYNC_SIZE) {
-        resizeFrames += 1;
-      }
-    });
-  });
+  // 尺寸命令走 canonical ResizePaneV11：change 与 resend 都算一次尺寸上报
+  const resizeCommands = attachCanonicalCommandCollector(page);
+  const resizeFrames = (): number => resizeCommands.resizes.length;
 
   await page.addInitScript(VISUAL_VIEWPORT_MOCK);
   await page.addInitScript((behaviorMode) => {
@@ -122,9 +114,9 @@ async function bootstrap(
   return {
     deviceId,
     sessionName,
-    resizeFrames: () => resizeFrames,
+    resizeFrames,
     resetResizeFrames: () => {
-      resizeFrames = 0;
+      resizeCommands.reset();
     },
     readState,
     focusTerminal,

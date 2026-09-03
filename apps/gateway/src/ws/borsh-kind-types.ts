@@ -21,35 +21,15 @@ export interface BorshDispatchHost {
   handleSetWindowStyle(deviceId: string, style: string): void;
   reorderWindows(deviceId: string, windowIds: string[]): void;
   reorderPanes(deviceId: string, windowId: string, paneIds: string[]): void;
-  handleSubscribePanes(session: GatewaySession, deviceId: string, paneIds: string[]): void;
-  handleFetchPaneHistory(
-    session: GatewaySession,
-    deviceId: string,
-    paneId: string,
-    requestToken: Uint8Array,
-    byteLimit?: number | null
-  ): void;
   handleResizePaneById(deviceId: string, paneId: string, cols?: number, rows?: number): void;
   handleApplyStackedLayout(deviceId: string, windowId: string, cols: number, rows: number): void;
   handleSplitPane(deviceId: string, paneId: string, direction: number, cwd?: string): void;
-  handleFocusPane(
-    session: GatewaySession,
-    deviceId: string,
-    windowId: string,
-    paneId: string
-  ): void;
+  handleFocusPane(deviceId: string, windowId: string, paneId: string): void;
   renamePane(deviceId: string, paneId: string, name: string): void;
   handleMovePane(deviceId: string, srcPaneId: string, dstPaneId: string, position: number): void;
   handleBreakPane(deviceId: string, paneId: string): void;
   handleTermInput(deviceId: string, paneId: string, data: string): void;
   handleTermPaste(deviceId: string, paneId: string, data: string): void;
-  handleTermResize(
-    session: GatewaySession,
-    deviceId: string,
-    paneId: string,
-    cols: number,
-    rows: number
-  ): void;
   handleTermViewport(
     session: GatewaySession,
     decoded: wsBorsh.b.infer<typeof wsBorsh.schema.TermViewportSchema>

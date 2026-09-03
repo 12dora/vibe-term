@@ -28,18 +28,6 @@ export function createTmuxViewportHandlers(
       }),
     ],
     [
-      wsBorsh.KIND_TERM_RESIZE,
-      schemaHandler(wsBorsh.schema.TermResizeSchema, (ws, decoded) => {
-        host.handleTermResize(ws, decoded.deviceId, decoded.paneId, decoded.cols, decoded.rows);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TERM_SYNC_SIZE,
-      schemaHandler(wsBorsh.schema.TermSyncSizeSchema, (ws, decoded) => {
-        host.handleTermResize(ws, decoded.deviceId, decoded.paneId, decoded.cols, decoded.rows);
-      }),
-    ],
-    [
       wsBorsh.KIND_TERM_VIEWPORT,
       schemaHandler(wsBorsh.schema.TermViewportSchema, (ws, decoded) => {
         host.handleTermViewport(ws, decoded);

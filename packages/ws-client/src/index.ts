@@ -22,6 +22,8 @@ export {
   type PendingOverflowInfo,
   type WebSocketLike,
   type SocketFactory,
+  getDefaultClientVersion,
+  setDefaultClientVersion,
 } from './client';
 
 export {
@@ -73,31 +75,7 @@ export {
   type SharedGatewayTransportOptions,
 } from './transport';
 
-export {
-  PaneSinkRegistry,
-  type PaneSink,
-  type PaneResetOrigin,
-} from './pane-sink-registry';
-
-export {
-  SelectStateMachine,
-  getSelectStateMachine,
-  type SelectTransactionState,
-  type SelectTransaction,
-  type OutputGateState,
-  type OutputGate,
-  type SelectStartEvent,
-  type SwitchAckEvent,
-  type HistoryEvent,
-  type LiveResumeEvent,
-  type OutputEvent,
-  type SelectFailedEvent,
-  type SelectEvent,
-  type SelectCallbacks,
-  type SelectFailureReason,
-  type SelectTimerScheduler,
-  type SelectStateMachineOptions,
-} from './state-machine';
+export { PaneSinkRegistry, type PaneSink } from './pane-sink-registry';
 
 export {
   generateSelectToken,
@@ -112,8 +90,6 @@ export {
   buildTmuxSetWindowStyle,
   buildTmuxReorderWindows,
   buildTmuxReorderPanes,
-  buildTmuxSubscribePanes,
-  buildTmuxFetchPaneHistory,
   buildTmuxResizePane,
   buildTmuxApplyStackedLayout,
   buildTmuxSplitPane,
@@ -122,10 +98,6 @@ export {
   buildTmuxMovePane,
   buildTmuxBreakPane,
   type MovePanePosition,
-  buildTermInput,
-  buildTermPaste,
-  buildTermResize,
-  buildTermSyncSize,
   buildTermViewportMessage,
   buildAgentSubscribe,
   buildAgentUnsubscribe,

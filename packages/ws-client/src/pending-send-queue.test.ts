@@ -92,7 +92,7 @@ describe('PendingSendQueue', () => {
     const queue = new PendingSendQueue({ maxBytes: 20, maxFrames: 2 });
     queue.enqueue(wsBorsh.KIND_TERM_INPUT, payload(4, 1));
     queue.enqueue(wsBorsh.KIND_TERM_INPUT, payload(4, 2));
-    const overflow = queue.enqueue(wsBorsh.KIND_TERM_RESIZE, payload(4, 9));
+    const overflow = queue.enqueue(wsBorsh.KIND_TMUX_SELECT, payload(4, 9));
     expect(overflow.status).toBe('overflow');
     expect(queue.frameCount).toBe(2);
     expect(queue.drain().map((frame) => frame.kind)).toEqual([

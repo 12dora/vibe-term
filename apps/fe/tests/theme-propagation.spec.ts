@@ -1,5 +1,6 @@
 import { type Page, expect, test } from '@playwright/test';
 import { createLocalDevice } from './helpers/device';
+import { setSiteTheme } from './helpers/site-theme';
 import { createSinglePaneSession, ensureCleanSession, tmux } from './helpers/tmux';
 import { KIND, decodeEnvelope, decodeSiteThemeUpdateS2C, isGatewayWsUrl } from './helpers/ws-borsh';
 
@@ -15,8 +16,6 @@ const LIGHT_BG = '#e1e1e1';
 async function setThemeViaUI(page: Page, theme: 'dark' | 'light'): Promise<void> {
   // 侧边栏主题菜单的 Light/Dark 项走 useSiteStore.selectThemePreset → updateTheme → C2S WS →
   // gateway handleSiteThemeUpdate → S2C 广播 KIND_SITE_THEME_UPDATE + setWindowStyle + stdin。
-  // HTTP API 路径（POST /api/settings/theme）只调 broadcastThemeChange（stdin + window-style），
-  // 不发 S2C WS 广播，前端不会收到通知。故主题 e2e 必须走 UI 菜单。
   const isDark = await page.evaluate(() => document.documentElement.classList.contains('dark'));
   const wantDark = theme === 'dark';
   if (isDark === wantDark) return;
@@ -71,7 +70,7 @@ test('theme: single page — toggle dark/light flips xterm background color', as
   const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-single-${Date.now()}`);
 
   try {
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('device-page')).toBeVisible();
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
@@ -95,7 +94,7 @@ test('theme: single page — toggle dark/light flips xterm background color', as
       .toBe(true);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     ensureCleanSession(sessionName);
   }
 });
@@ -107,7 +106,7 @@ test('theme: gateway updates tmux window-style to match site theme', async ({ pa
   const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-wstyle-${Date.now()}`);
 
   try {
-    await request.post('/api/settings/theme', { data: { theme: 'light' } });
+    await setSiteTheme('light');
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('device-page')).toBeVisible();
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
@@ -127,7 +126,7 @@ test('theme: gateway updates tmux window-style to match site theme', async ({ pa
       )
       .toBe(true);
 
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await page.waitForTimeout(2_000);
 
     await expect
@@ -145,7 +144,7 @@ test('theme: gateway updates tmux window-style to match site theme', async ({ pa
       .toBe(true);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     ensureCleanSession(sessionName);
   }
 });
@@ -165,7 +164,7 @@ test('theme: cross-page — A toggles theme, B syncs within 1s via WS broadcast'
   const receiverB = attachSiteThemeReceiver(pageB);
 
   try {
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await Promise.all([pageA.goto(`/devices/${deviceId}`), pageB.goto(`/devices/${deviceId}`)]);
     await Promise.all([
       expect(pageA.getByTestId('device-page')).toBeVisible(),
@@ -202,7 +201,7 @@ test('theme: cross-page — A toggles theme, B syncs within 1s via WS broadcast'
     await pageA.close();
     await contextB.close();
     await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     ensureCleanSession(sessionName);
   }
 });
@@ -238,7 +237,7 @@ test('theme: rapid theme toggle × browser resize keeps pane cols/rows stable', 
 
   try {
     await page.setViewportSize({ width: 1200, height: 800 });
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('device-page')).toBeVisible();
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
@@ -257,11 +256,11 @@ test('theme: rapid theme toggle × browser resize keeps pane cols/rows stable', 
 
     const paneBefore = getPaneSize();
 
-    // HTTP API 路径触发 handleSiteThemeChange（window-style）+ broadcastThemeChange（stdin），
-    // 不发 S2C WS 广播。resize 互踩测试只关心 pane 尺寸稳定性，不依赖前端主题同步。
+    // 这里不经 UI 直接发 C2S 帧：resize 互踩测试只关心 pane 尺寸稳定性，
+    // 不依赖页面自身发起主题切换。
     for (let i = 0; i < 4; i++) {
       const theme = i % 2 === 0 ? 'light' : 'dark';
-      await request.post('/api/settings/theme', { data: { theme } });
+      await setSiteTheme(theme);
       await page.waitForTimeout(50);
       await page.setViewportSize({
         width: 1200 + (i % 2 === 0 ? -20 : 20),
@@ -276,14 +275,14 @@ test('theme: rapid theme toggle × browser resize keeps pane cols/rows stable', 
     expect(Math.abs(paneAfter.cols - paneBefore.cols)).toBeLessThan(2);
     expect(Math.abs(paneAfter.rows - paneBefore.rows)).toBeLessThan(2);
 
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await page.goto(`/devices/${deviceId}`);
     await expect
       .poll(async () => expectBg(await readTerminalBackground(page), DARK_BG), { timeout: 10_000 })
       .toBe(true);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     ensureCleanSession(sessionName);
   }
 });

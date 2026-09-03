@@ -35,7 +35,7 @@ function upgradeSpy() {
 
 describe('mesh-http', () => {
   test('standalone localUiGuard always passes', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       expect(mesh.runtime.localUiGuard(new Request('http://localhost/api/devices'))).toBeNull();
       expect(mesh.runtime.localUiGuard(new Request('http://localhost/login'))).toBeNull();
@@ -287,7 +287,7 @@ describe('mesh-http', () => {
 
 describe('mesh-http 整站门 × localAuth', () => {
   test('standalone 未生效：API / UI / WS / local 端点全部放行', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       const store = new MemoryLocalAuthStore();
       mesh.runtime.auth.setLocalAuthStore(store);
@@ -311,7 +311,7 @@ describe('mesh-http 整站门 × localAuth', () => {
   });
 
   test('standalone 生效：API 与未登录 WS 拒绝；登录流与 /login 仍公开', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       const store = new MemoryLocalAuthStore();
       store.setEnabled(true);
@@ -361,7 +361,7 @@ describe('mesh-http 整站门 × localAuth', () => {
   });
 
   test('standalone 运行时开关：开启不卡住当前请求，关闭立即恢复开放', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
     try {
       const store = new MemoryLocalAuthStore();
       mesh.runtime.auth.setLocalAuthStore(store);
@@ -417,10 +417,13 @@ describe('mesh-http 整站门 × localAuth', () => {
 
 describe('mesh-http authSurfaceOnly', () => {
   test('不挂 /api/mesh，且构造不需要 peers/streams', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false }, skipUserBootstrap: true });
+    const mesh = await bootMesh({
+      roles: { hub: false, node: false, relay: false },
+      skipUserBootstrap: true,
+    });
     try {
       const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: false },
+        roles: { hub: false, node: false, relay: false },
         nodeId: 'aa'.repeat(16),
         nodePk: Uint8Array.from({ length: 32 }, () => 9),
         userStore: mesh.userStore,

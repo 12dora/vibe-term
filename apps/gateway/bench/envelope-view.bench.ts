@@ -6,17 +6,9 @@ import { wsBorsh } from '@tmex/shared';
 const PAYLOAD = 32 * 1024;
 const ITERATIONS = 2_000;
 
-function encodeTermOutput(bytes: number): Uint8Array {
-  return wsBorsh.encodeEnvelope(
-    wsBorsh.KIND_TERM_OUTPUT,
-    wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
-      deviceId: 'device-00000000-0000-0000-0000-000000000001',
-      paneId: '%12',
-      encoding: 0,
-      data: new Uint8Array(bytes).fill(0x41),
-    }),
-    1
-  );
+// 本 bench 只量 envelope 头部解析，payload 用等长的原始字节即可（内容不参与）。
+function encodeFrame(bytes: number): Uint8Array {
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_CANONICAL_EVENT, new Uint8Array(bytes).fill(0x41), 1);
 }
 
 function measure(label: string, iterations: number, run: () => void): number {
@@ -29,10 +21,8 @@ function measure(label: string, iterations: number, run: () => void): number {
   return perOpUs;
 }
 
-const frame = encodeTermOutput(PAYLOAD);
-console.log(
-  `TERM_OUTPUT frame ${frame.byteLength} B, payload ${PAYLOAD} B, ${ITERATIONS} iterations`
-);
+const frame = encodeFrame(PAYLOAD);
+console.log(`PaneData frame ${frame.byteLength} B, payload ${PAYLOAD} B, ${ITERATIONS} iterations`);
 const copy = measure('decodeEnvelope (copy)', ITERATIONS, () => {
   wsBorsh.decodeEnvelope(frame);
 });

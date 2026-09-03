@@ -34,19 +34,11 @@ export const KIND = {
   TMUX_SELECT: 0x0201,
   TMUX_CREATE_WINDOW: 0x0203,
   TMUX_EVENT: 0x0207,
-  STATE_SNAPSHOT: 0x0208,
-
-  TERM_INPUT: 0x0301,
-  TERM_PASTE: 0x0302,
-  TERM_RESIZE: 0x0303,
-  TERM_SYNC_SIZE: 0x0304,
-  TERM_OUTPUT: 0x0305,
-  TERM_HISTORY: 0x0306,
-
-  SWITCH_ACK: 0x0401,
-  LIVE_RESUME: 0x0402,
 
   CHUNK: 0x0501,
+
+  CANONICAL_COMMAND: 0x0901,
+  CANONICAL_EVENT: 0x0902,
 
   TMUX_SET_WINDOW_STYLE: 0x020a,
   SITE_THEME_UPDATE: 0x0801,
@@ -148,29 +140,12 @@ class BorshCursor {
   }
 }
 
-export interface TermInputPayload {
-  deviceId: string;
-  paneId: string;
-  encoding: number;
-  data: Buffer;
-  isComposing: boolean;
-}
-
-export function decodeTermInput(payload: Buffer): TermInputPayload {
-  const c = new BorshCursor(payload);
-  const deviceId = c.readString();
-  const paneId = c.readString();
-  const encoding = c.readU8();
-  const data = c.readVecBytes();
-  const isComposing = c.readBool();
-  return { deviceId, paneId, encoding, data, isComposing };
-}
-
 export interface TmuxSelectPayload {
   deviceId: string;
   windowId: string | null;
   paneId: string | null;
   selectToken: Buffer;
+  /** wire 字段保留，canonical 下恒 false（历史只走 canonical RequestHistory） */
   wantHistory: boolean;
   cols: number | null;
   rows: number | null;
@@ -186,58 +161,6 @@ export function decodeTmuxSelect(payload: Buffer): TmuxSelectPayload {
   const cols = c.readOptionU16();
   const rows = c.readOptionU16();
   return { deviceId, windowId, paneId, selectToken, wantHistory, cols, rows };
-}
-
-export interface SwitchAckPayload {
-  deviceId: string;
-  windowId: string;
-  paneId: string;
-  selectToken: Buffer;
-}
-
-export function decodeSwitchAck(payload: Buffer): SwitchAckPayload {
-  const c = new BorshCursor(payload);
-  const deviceId = c.readString();
-  const windowId = c.readString();
-  const paneId = c.readString();
-  const selectToken = c.readFixedBytes(16);
-  return { deviceId, windowId, paneId, selectToken };
-}
-
-export interface LiveResumePayload {
-  deviceId: string;
-  paneId: string;
-  selectToken: Buffer;
-}
-
-export function decodeLiveResume(payload: Buffer): LiveResumePayload {
-  const c = new BorshCursor(payload);
-  const deviceId = c.readString();
-  const paneId = c.readString();
-  const selectToken = c.readFixedBytes(16);
-  return { deviceId, paneId, selectToken };
-}
-
-export interface TermHistoryPayload {
-  deviceId: string;
-  paneId: string;
-  selectToken: Buffer;
-  encoding: number;
-  alternateScreen: boolean;
-  modes: number;
-  data: Buffer;
-}
-
-export function decodeTermHistory(payload: Buffer): TermHistoryPayload {
-  const c = new BorshCursor(payload);
-  const deviceId = c.readString();
-  const paneId = c.readString();
-  const selectToken = c.readFixedBytes(16);
-  const encoding = c.readU8();
-  const alternateScreen = c.readBool();
-  const modes = c.readU8();
-  const data = c.readVecBytes();
-  return { deviceId, paneId, selectToken, encoding, alternateScreen, modes, data };
 }
 
 export interface SiteThemeUpdateS2CPayload {
@@ -261,39 +184,53 @@ function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
 
+export interface CanonicalScreenPhase {
+  phase: 'begin' | 'commit';
+  requestId: string;
+}
+
+export interface CanonicalSubscriptionApplied {
+  generation: bigint;
+  activePaneIds: string[];
+}
+
 export interface PaneFeedCollector {
   selectTokenByPane: Map<string, string>;
-  barrierKindsByToken: Map<string, number[]>;
-  historyTextByToken: Map<string, string>;
   canonicalScreenTextByPane: Map<string, string>;
   canonicalOutputTextByPane: Map<string, string>;
+  /** 每个 pane 的 canonical 首屏事务相位序列，用来断言 Begin→Commit 的顺序 */
+  screenPhasesByPane: Map<string, CanonicalScreenPhase[]>;
+  /** SubscriptionApplied 按到达顺序：generation 必须单调递增 */
+  subscriptions: CanonicalSubscriptionApplied[];
   sawCanonicalEvent: boolean;
   paneContent(paneId: string): string;
+  screenCommitted(paneId: string): boolean;
   handleOutbound(kind: number, payloadBytes: Uint8Array): void;
   handleInbound(kind: number, payloadBytes: Uint8Array): void;
 }
 
-/** 同时收 legacy TERM_HISTORY / 屏障帧和 canonical Screen/PaneData，按当前生效 feed 断言。 */
+/** canonical 状态流的接收面：首屏事务、PaneData、订阅代。legacy 状态流已于 1.1.23 下线。 */
 export function createPaneFeedCollector(): PaneFeedCollector {
   const selectTokenByPane = new Map<string, string>();
-  const barrierKindsByToken = new Map<string, number[]>();
-  const historyTextByToken = new Map<string, string>();
   const canonicalScreenTextByPane = new Map<string, string>();
   const canonicalOutputTextByPane = new Map<string, string>();
+  const screenPhasesByPane = new Map<string, CanonicalScreenPhase[]>();
+  const subscriptions: CanonicalSubscriptionApplied[] = [];
   const screenByRequest = new Map<string, { paneId: string; chunks: Uint8Array[] }>();
   const collector: PaneFeedCollector = {
     selectTokenByPane,
-    barrierKindsByToken,
-    historyTextByToken,
     canonicalScreenTextByPane,
     canonicalOutputTextByPane,
+    screenPhasesByPane,
+    subscriptions,
     sawCanonicalEvent: false,
     paneContent(paneId) {
-      const token = selectTokenByPane.get(paneId);
-      const history = token ? (historyTextByToken.get(token) ?? '') : '';
       const screen = canonicalScreenTextByPane.get(paneId) ?? '';
       const output = canonicalOutputTextByPane.get(paneId) ?? '';
-      return `${history}${screen}${output}`;
+      return `${screen}${output}`;
+    },
+    screenCommitted(paneId) {
+      return (screenPhasesByPane.get(paneId) ?? []).some((entry) => entry.phase === 'commit');
     },
     handleOutbound(kind, payloadBytes) {
       if (kind !== wsBorsh.KIND_TMUX_SELECT) return;
@@ -302,32 +239,15 @@ export function createPaneFeedCollector(): PaneFeedCollector {
       selectTokenByPane.set(decoded.paneId, bytesToHex(decoded.selectToken));
     },
     handleInbound(kind, payloadBytes) {
-      if (kind === wsBorsh.KIND_CANONICAL_EVENT) {
-        handleCanonicalEvent(payloadBytes);
-        return;
-      }
-      if (kind === wsBorsh.KIND_SWITCH_ACK) {
-        const decoded = wsBorsh.decodePayload(wsBorsh.schema.SwitchAckSchema, payloadBytes);
-        pushBarrier(bytesToHex(decoded.selectToken), kind);
-        return;
-      }
-      if (kind === wsBorsh.KIND_LIVE_RESUME) {
-        const decoded = wsBorsh.decodePayload(wsBorsh.schema.LiveResumeSchema, payloadBytes);
-        pushBarrier(bytesToHex(decoded.selectToken), kind);
-        return;
-      }
-      if (kind !== wsBorsh.KIND_TERM_HISTORY) return;
-      const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermHistorySchema, payloadBytes);
-      const tokenHex = bytesToHex(decoded.selectToken);
-      historyTextByToken.set(tokenHex, decodeUtf8(decoded.data));
-      pushBarrier(tokenHex, kind);
+      if (kind !== wsBorsh.KIND_CANONICAL_EVENT) return;
+      handleCanonicalEvent(payloadBytes);
     },
   };
 
-  function pushBarrier(tokenHex: string, kind: number): void {
-    const list = barrierKindsByToken.get(tokenHex) ?? [];
-    list.push(kind);
-    barrierKindsByToken.set(tokenHex, list);
+  function pushPhase(paneId: string, phase: 'begin' | 'commit', requestId: string): void {
+    const list = screenPhasesByPane.get(paneId) ?? [];
+    list.push({ phase, requestId });
+    screenPhasesByPane.set(paneId, list);
   }
 
   function handleCanonicalEvent(payload: Uint8Array): void {
@@ -340,7 +260,9 @@ export function createPaneFeedCollector(): PaneFeedCollector {
     collector.sawCanonicalEvent = true;
     if ('ScreenBegin' in event) {
       const begin = event.ScreenBegin;
-      screenByRequest.set(bytesToHex(begin.requestId), { paneId: begin.pane.paneId, chunks: [] });
+      const requestId = bytesToHex(begin.requestId);
+      screenByRequest.set(requestId, { paneId: begin.pane.paneId, chunks: [] });
+      pushPhase(begin.pane.paneId, 'begin', requestId);
       return;
     }
     if ('ScreenChunk' in event) {
@@ -350,12 +272,22 @@ export function createPaneFeedCollector(): PaneFeedCollector {
     }
     if ('ScreenCommit' in event) {
       const commit = event.ScreenCommit;
-      const pending = screenByRequest.get(bytesToHex(commit.requestId));
+      const requestId = bytesToHex(commit.requestId);
+      const pending = screenByRequest.get(requestId);
       if (!pending) return;
       canonicalScreenTextByPane.set(
         pending.paneId,
         pending.chunks.map((chunk) => decodeUtf8(chunk)).join('')
       );
+      pushPhase(pending.paneId, 'commit', requestId);
+      return;
+    }
+    if ('SubscriptionApplied' in event) {
+      const applied = event.SubscriptionApplied;
+      subscriptions.push({
+        generation: applied.generation,
+        activePaneIds: applied.activePanes.map((pane) => pane.paneId),
+      });
       return;
     }
     if ('PaneData' in event) {
@@ -368,11 +300,10 @@ export function createPaneFeedCollector(): PaneFeedCollector {
   return collector;
 }
 
-export function attachPaneFeedCollector(page: import('@playwright/test').Page): PaneFeedCollector {
-  const collector = createPaneFeedCollector();
+/** 帧解码 + CHUNK 重组：canonical 载荷（首屏、粘贴）会分片，逐帧解码会漏。 */
+function createFrameDecoder(): (payload: unknown) => { kind: number; payload: Uint8Array } | null {
   const reassembler = new wsBorsh.ChunkReassembler();
-
-  const decodeFrame = (payload: unknown): { kind: number; payload: Uint8Array } | null => {
+  return (payload) => {
     if (typeof payload === 'string') return null;
     const bytes =
       payload instanceof Buffer ? new Uint8Array(payload) : new Uint8Array(payload as ArrayBuffer);
@@ -387,6 +318,11 @@ export function attachPaneFeedCollector(page: import('@playwright/test').Page): 
       return null;
     }
   };
+}
+
+export function attachPaneFeedCollector(page: import('@playwright/test').Page): PaneFeedCollector {
+  const collector = createPaneFeedCollector();
+  const decodeFrame = createFrameDecoder();
 
   page.on('websocket', (socket) => {
     if (!isGatewayWsUrl(socket.url())) return;
@@ -397,6 +333,101 @@ export function attachPaneFeedCollector(page: import('@playwright/test').Page): 
     socket.on('framereceived', (frame) => {
       const decoded = decodeFrame(frame.payload);
       if (decoded) collector.handleInbound(decoded.kind, decoded.payload);
+    });
+  });
+
+  return collector;
+}
+
+/** canonical v1.1 的 geometryReason：0 = 真实视口变化，1 = 焦点恢复/暖切换补发。 */
+export const CANONICAL_GEOMETRY_REASON_CHANGE = 0;
+export const CANONICAL_GEOMETRY_REASON_RESEND = 1;
+
+export interface CanonicalResizeCommand {
+  deviceId: string;
+  paneId: string;
+  cols: number;
+  rows: number;
+  reason: number;
+  sizeEpoch: bigint;
+}
+
+export interface CanonicalInputCommand {
+  deviceId: string;
+  paneId: string;
+  data: Buffer;
+}
+
+export interface CanonicalCommandCollector {
+  resizes: CanonicalResizeCommand[];
+  inputs: CanonicalInputCommand[];
+  /** 按 geometryReason 分类的尺寸命令计数（替代 legacy 的 TERM_RESIZE / TERM_SYNC_SIZE 计数） */
+  counts(): { change: number; resend: number };
+  reset(): void;
+  handleOutbound(kind: number, payloadBytes: Uint8Array): void;
+}
+
+/** 浏览器发出的 canonical 命令：尺寸（ResizePaneV11）与终端输入（TerminalInput）。 */
+export function createCanonicalCommandCollector(): CanonicalCommandCollector {
+  const collector: CanonicalCommandCollector = {
+    resizes: [],
+    inputs: [],
+    counts() {
+      return {
+        change: collector.resizes.filter((r) => r.reason === CANONICAL_GEOMETRY_REASON_CHANGE)
+          .length,
+        resend: collector.resizes.filter((r) => r.reason === CANONICAL_GEOMETRY_REASON_RESEND)
+          .length,
+      };
+    },
+    reset() {
+      collector.resizes.length = 0;
+      collector.inputs.length = 0;
+    },
+    handleOutbound(kind, payloadBytes) {
+      if (kind !== wsBorsh.KIND_CANONICAL_COMMAND) return;
+      let command: ReturnType<typeof wsBorsh.decodeCanonicalCommandPayload>['command'];
+      try {
+        command = wsBorsh.decodeCanonicalCommandPayload(payloadBytes).command;
+      } catch {
+        return;
+      }
+      if ('ResizePaneV11' in command) {
+        const resize = command.ResizePaneV11;
+        collector.resizes.push({
+          deviceId: resize.pane.deviceId,
+          paneId: resize.pane.paneId,
+          cols: resize.cols,
+          rows: resize.rows,
+          reason: resize.geometryReason,
+          sizeEpoch: resize.sizeEpoch,
+        });
+        return;
+      }
+      if ('TerminalInput' in command) {
+        const input = command.TerminalInput;
+        collector.inputs.push({
+          deviceId: input.pane.deviceId,
+          paneId: input.pane.paneId,
+          data: Buffer.from(input.data),
+        });
+      }
+    },
+  };
+  return collector;
+}
+
+export function attachCanonicalCommandCollector(
+  page: import('@playwright/test').Page
+): CanonicalCommandCollector {
+  const collector = createCanonicalCommandCollector();
+  const decodeFrame = createFrameDecoder();
+
+  page.on('websocket', (socket) => {
+    if (!isGatewayWsUrl(socket.url())) return;
+    socket.on('framesent', (frame) => {
+      const decoded = decodeFrame(frame.payload);
+      if (decoded) collector.handleOutbound(decoded.kind, decoded.payload);
     });
   });
 

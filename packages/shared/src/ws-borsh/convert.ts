@@ -8,15 +8,8 @@ import type {
   TmuxBellEventData,
   TmuxEventType,
   TmuxNotificationEventData,
-  TmuxPane,
-  TmuxSession,
-  TmuxWindow,
 } from '../contracts/tmux';
-import type {
-  EventDevicePayload,
-  EventTmuxPayload,
-  StateSnapshotPayload,
-} from '../contracts/websocket';
+import type { EventDevicePayload, EventTmuxPayload } from '../contracts/websocket';
 import * as schema from './schema';
 
 function invertTagMap<T extends string>(tags: Record<T, number>): Record<number, T> {
@@ -231,52 +224,6 @@ function encodeEventData(type: TmuxEventType, data: unknown): Uint8Array {
   return codec.encode(data);
 }
 
-export function encodeStateSnapshot(payload: StateSnapshotPayload): Uint8Array {
-  const wireData: b.infer<typeof schema.StateSnapshotSchema> = {
-    deviceId: payload.deviceId,
-    session: payload.session ? encodeSessionWire(payload.session) : null,
-  };
-
-  return schema.StateSnapshotSchema.serialize(wireData);
-}
-
-function encodeSessionWire(session: TmuxSession): b.infer<typeof schema.SessionWireSchema> {
-  return {
-    id: session.id,
-    name: session.name,
-    windows: session.windows.map(encodeWindowWire),
-  };
-}
-
-function encodeWindowWire(window: TmuxWindow): b.infer<typeof schema.WindowWireSchema> {
-  return {
-    id: window.id,
-    name: window.name,
-    customName: window.customName ?? null,
-    index: window.index,
-    active: window.active,
-    layout: window.layout ?? null,
-    panes: window.panes.map(encodePaneWire),
-  };
-}
-
-function encodePaneWire(pane: TmuxPane): b.infer<typeof schema.PaneWireSchema> {
-  return {
-    id: pane.id,
-    windowId: pane.windowId,
-    index: pane.index,
-    title: pane.title ?? null,
-    customName: pane.customName ?? null,
-    active: pane.active,
-    width: pane.width,
-    height: pane.height,
-    currentPath: pane.currentPath ?? null,
-    currentCommand: pane.currentCommand ?? null,
-    left: pane.left ?? null,
-    top: pane.top ?? null,
-  };
-}
-
 // ========== Wire -> Domain 解码 ==========
 
 export function decodeDeviceEventPayload(data: Uint8Array): EventDevicePayload {
@@ -317,50 +264,4 @@ function decodeEventData(type: TmuxEventType, data: Uint8Array): unknown {
   } catch {
     return {};
   }
-}
-
-export function decodeStateSnapshot(data: Uint8Array): StateSnapshotPayload {
-  const wire = schema.StateSnapshotSchema.deserialize(data);
-
-  return {
-    deviceId: wire.deviceId,
-    session: wire.session ? decodeSessionWire(wire.session) : null,
-  };
-}
-
-function decodeSessionWire(wire: b.infer<typeof schema.SessionWireSchema>): TmuxSession {
-  return {
-    id: wire.id,
-    name: wire.name,
-    windows: wire.windows.map(decodeWindowWire),
-  };
-}
-
-function decodeWindowWire(wire: b.infer<typeof schema.WindowWireSchema>): TmuxWindow {
-  return {
-    id: wire.id,
-    name: wire.name,
-    customName: wire.customName ?? undefined,
-    index: wire.index,
-    active: wire.active,
-    layout: wire.layout ?? undefined,
-    panes: wire.panes.map(decodePaneWire),
-  };
-}
-
-function decodePaneWire(wire: b.infer<typeof schema.PaneWireSchema>): TmuxPane {
-  return {
-    id: wire.id,
-    windowId: wire.windowId,
-    index: wire.index,
-    title: wire.title ?? undefined,
-    customName: wire.customName ?? undefined,
-    active: wire.active,
-    width: wire.width,
-    height: wire.height,
-    currentPath: wire.currentPath ?? undefined,
-    currentCommand: wire.currentCommand ?? undefined,
-    left: wire.left ?? undefined,
-    top: wire.top ?? undefined,
-  };
 }

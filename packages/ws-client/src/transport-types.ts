@@ -1,12 +1,7 @@
 // Gateway transport 的对外契约：事件、命令与能力声明。
 // 编码器 / 解码器 / 具体 transport 实现共用本模块，避免相互 import 成环。
 
-import type {
-  EventDevicePayload,
-  EventTmuxPayload,
-  StateSnapshotPayload,
-  wsBorsh,
-} from '@tmex/shared';
+import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@tmex/shared';
 import type { ClientSendResult, ConnectionState, StateFeedMode } from './client';
 import type { MovePanePosition } from './message-builder';
 
@@ -47,6 +42,7 @@ export interface GatewayPaneHistoryPage {
   nextCursor: GatewayHistoryCursor | null;
 }
 
+/** canonical PaneData 帧。游标字段只在从注册表内部合成的补发帧上缺省。 */
 export interface GatewayTerminalData {
   deviceId: string;
   paneId: string;
@@ -78,28 +74,15 @@ export type GatewayTransportEvent =
   | { type: 'connection-state'; state: ConnectionState }
   | { type: 'state-feed-mode'; mode: StateFeedMode }
   | { type: 'latency'; latencyMs: number; rawMs: number }
-  | { type: 'terminal-progress'; deviceId?: string }
+  // 网关不满足 canonical v1.1 门槛：不降级，只上报让宿主提示升级
+  | { type: 'server-too-old'; minVersion: string; serverVersion: string | null }
   | { type: 'device-connected'; deviceId: string }
   | { type: 'device-disconnected'; deviceId: string }
   | { type: 'device-event'; event: EventDevicePayload }
   | { type: 'metadata-snapshot'; snapshot: StateSnapshotPayload }
-  | {
-      type: 'metadata-patch';
-      deviceId: string;
-      patch: wsBorsh.LegacyStateSnapshotDiff;
-    }
+  // canonical metadata patch 已在客户端合并并按设备树顺序排好，消费方直接替换整棵快照
+  | { type: 'metadata-patch'; deviceId: string; snapshot: StateSnapshotPayload }
   | { type: 'tmux-event'; event: EventTmuxPayload }
-  | { type: 'selection-ack'; deviceId: string; selectToken: Uint8Array }
-  | {
-      type: 'legacy-history';
-      deviceId: string;
-      paneId: string;
-      selectToken: Uint8Array;
-      data: string;
-      alternateScreen: boolean;
-      modes: number;
-    }
-  | { type: 'live-resume'; deviceId: string; selectToken: Uint8Array }
   | { type: 'terminal-data'; frame: GatewayTerminalData }
   | { type: 'screen-snapshot'; snapshot: GatewayPaneScreenSnapshot }
   | { type: 'history-page'; page: GatewayPaneHistoryPage }
@@ -164,7 +147,6 @@ export type GatewayTransportCommand =
       windowId: string;
       paneId: string;
       selectToken: Uint8Array;
-      wantHistory: boolean;
       cols?: number;
       rows?: number;
     }

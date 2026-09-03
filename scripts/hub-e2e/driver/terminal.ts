@@ -59,7 +59,7 @@ const baseUrl = requireArg(args, 'base-url');
 const cookies = (await loadLoginState(requireArg(args, 'cookie-file'))).cookieHeader;
 const nodeId = requireArg(args, 'node-id');
 const deviceId = requireArg(args, 'device-id');
-const paneId = requireArg(args, 'pane-id');
+const paneId = typeof args['pane-id'] === 'string' ? args['pane-id'] : '';
 const captureSeq = args['capture-seq'] === true || args['capture-seq'] === 'true';
 const marker = typeof args.marker === 'string' ? args.marker : '';
 if (!captureSeq && !marker) {
@@ -100,11 +100,125 @@ let helloOk = false;
 let connected = false;
 let snapshotPane: string | null = null;
 let snapshotWindow: string | null = null;
+let paneServerEpoch: Uint8Array | null = null;
+let subscriptionGeneration = 0n;
+let maxScreenBytes = 64 * 1024;
+const screenBuffers = new Map<string, Uint8Array>();
 
 function send(kind: number, payload: Uint8Array): void {
   const frame = wsBorsh.encodeEnvelope(kind, payload, seq);
   seq += 1;
   ws.send(frame);
+}
+
+function newRequestId(): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(16));
+}
+
+function sendCanonical(command: wsBorsh.CanonicalCommand): void {
+  send(wsBorsh.KIND_CANONICAL_COMMAND, wsBorsh.encodeCanonicalCommandPayload(command));
+}
+
+/** 幂等全量订阅声明：generation 单调递增，网关按最新一代裁剪。 */
+function sendSubscriptions(panes: wsBorsh.CanonicalPaneSubscription[]): void {
+  subscriptionGeneration += 1n;
+  sendCanonical({
+    SetPaneSubscriptions: {
+      generation: subscriptionGeneration,
+      activePanes: panes,
+      hotPanes: [],
+    },
+  });
+}
+
+function paneTarget(): wsBorsh.CanonicalPaneTarget | null {
+  if (!snapshotPane || !paneServerEpoch) return null;
+  return { deviceId, serverEpoch: paneServerEpoch, paneId: snapshotPane };
+}
+
+/** canonical 首屏事务：ScreenBegin 给总长，ScreenChunk 按 offset 填，ScreenCommit 收口。 */
+function handleScreenEvent(event: wsBorsh.CanonicalEvent): void {
+  if ('ScreenBegin' in event) {
+    const begin = event.ScreenBegin;
+    screenBuffers.set(bytesKey(begin.requestId), new Uint8Array(begin.totalBytes));
+    return;
+  }
+  if ('ScreenChunk' in event) {
+    const chunk = event.ScreenChunk;
+    const buffer = screenBuffers.get(bytesKey(chunk.requestId));
+    if (buffer && chunk.offset + chunk.data.byteLength <= buffer.byteLength) {
+      buffer.set(chunk.data, chunk.offset);
+    }
+    return;
+  }
+  if ('ScreenCommit' in event) {
+    const key = bytesKey(event.ScreenCommit.requestId);
+    const buffer = screenBuffers.get(key);
+    screenBuffers.delete(key);
+    if (buffer) historyChunks.push(decodeText(buffer));
+  }
+}
+
+function handleCanonicalEvent(payload: Uint8Array): void {
+  let event: wsBorsh.CanonicalEvent;
+  try {
+    event = wsBorsh.decodeCanonicalEventPayload(payload).event;
+  } catch (err) {
+    process.stderr.write(`canonical decode failed: ${String(err)}\n`);
+    return;
+  }
+  if ('FeedReady' in event) {
+    maxScreenBytes = event.FeedReady.maxScreenBytes;
+    return;
+  }
+  if ('SourceMetadataSnapshot' in event) {
+    applyMetadataRecords(event.SourceMetadataSnapshot.records);
+    return;
+  }
+  if ('SourceMetadataPatch' in event) {
+    applyMetadataRecords(event.SourceMetadataPatch.upserts);
+    return;
+  }
+  if ('PaneData' in event) {
+    outputChunks.push(decodeText(event.PaneData.data));
+    return;
+  }
+  handleScreenEvent(event);
+}
+
+/** 从 metadata 记录里挑出第一个带 pane 的 window（tmux index 顺序即记录顺序）。 */
+function applyMetadataRecords(records: readonly wsBorsh.SourceMetadataRecord[]): void {
+  if (snapshotPane) return;
+  const windowOrder: string[] = [];
+  const panesByWindow = new Map<string, Array<{ paneId: string; serverEpoch: Uint8Array }>>();
+  for (const record of records) {
+    if (record.key.deviceId !== deviceId) continue;
+    if (record.key.entityKind === wsBorsh.SOURCE_ENTITY_WINDOW) {
+      windowOrder.push(record.key.nativeId);
+      continue;
+    }
+    if (record.key.entityKind !== wsBorsh.SOURCE_ENTITY_PANE) continue;
+    const windowId = record.parent?.nativeId;
+    if (!windowId) continue;
+    const group = panesByWindow.get(windowId) ?? [];
+    group.push({ paneId: record.key.nativeId, serverEpoch: record.key.serverEpoch });
+    panesByWindow.set(windowId, group);
+  }
+  for (const windowId of windowOrder) {
+    const pane = panesByWindow.get(windowId)?.[0];
+    if (!pane) continue;
+    snapshotWindow = windowId;
+    snapshotPane = pane.paneId;
+    paneServerEpoch = pane.serverEpoch;
+    process.stderr.write(`metadata window=${windowId} pane=${pane.paneId}\n`);
+    return;
+  }
+}
+
+function bytesKey(bytes: Uint8Array): string {
+  let key = '';
+  for (const byte of bytes) key += byte.toString(16).padStart(2, '0');
+  return key;
 }
 
 function decodeText(data: Uint8Array): string {
@@ -159,40 +273,15 @@ ws.onmessage = (ev) => {
   if (envelope.kind === wsBorsh.KIND_DEVICE_CONNECTED) {
     connected = true;
   }
-  if (envelope.kind === wsBorsh.KIND_STATE_SNAPSHOT) {
-    try {
-      const snap = wsBorsh.decodePayload(wsBorsh.schema.StateSnapshotSchema, envelope.payload) as {
-        session?: { windows?: Array<{ id: string; panes?: Array<{ id: string }> }> } | null;
-      };
-      const windows = snap.session?.windows ?? [];
-      const windowWithPane =
-        windows.find((window) => (window.panes?.length ?? 0) > 0) ?? windows[0] ?? null;
-      snapshotWindow = windowWithPane?.id ?? null;
-      snapshotPane = windowWithPane?.panes?.[0]?.id ?? null;
-      process.stderr.write(
-        `snapshot window=${snapshotWindow ?? 'null'} pane=${snapshotPane ?? 'null'}\n`
-      );
-    } catch (err) {
-      process.stderr.write(`snapshot decode failed: ${String(err)}\n`);
-    }
-  }
-  if (envelope.kind === wsBorsh.KIND_TERM_OUTPUT || envelope.kind === wsBorsh.KIND_TERM_HISTORY) {
-    try {
-      const isHistory = envelope.kind === wsBorsh.KIND_TERM_HISTORY;
-      const schema = isHistory ? wsBorsh.schema.TermHistorySchema : wsBorsh.schema.TermOutputSchema;
-      const payload = wsBorsh.decodePayload(schema, envelope.payload) as { data: Uint8Array };
-      const text = decodeText(payload.data);
-      if (isHistory) historyChunks.push(text);
-      else outputChunks.push(text);
-    } catch (err) {
-      process.stderr.write(`term decode failed: ${String(err)}\n`);
-    }
+  if (envelope.kind === wsBorsh.KIND_CANONICAL_EVENT) {
+    handleCanonicalEvent(envelope.payload);
   }
 };
 
 const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
   clientImpl: 'tmex-e2e',
-  clientVersion: '1.0.2',
+  // 网关的 canonical v1.1 版本门是 fail-closed 的，低于门槛直接被拒并关连接
+  clientVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
   maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
   supportsCompression: false,
   supportsDiffSnapshot: false,
@@ -203,6 +292,9 @@ const helloDeadline = Date.now() + 8_000;
 while (!helloOk && Date.now() < helloDeadline) await sleep(50);
 if (!helloOk) throw new Error('no HELLO_S2C');
 
+// 先发一条空订阅打开 canonical 状态流（与前端一致），随后 DEVICE_CONNECT 才会推 metadata 快照
+sendSubscriptions([]);
+
 const connect = buildDeviceConnect(deviceId);
 send(connect.kind, connect.payload);
 
@@ -212,13 +304,19 @@ while (!connected && Date.now() < connectDeadline) await sleep(50);
 const snapDeadline = Date.now() + 8_000;
 while (!snapshotPane && Date.now() < snapDeadline) await sleep(50);
 const activePane = snapshotPane || paneId;
+if (!activePane) {
+  throw new Error('no pane in canonical metadata and no --pane-id fallback');
+}
 process.stderr.write(`using pane=${activePane} connected=${connected}\n`);
 
-const sub = wsBorsh.encodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, {
-  deviceId,
-  paneIds: [activePane],
-});
-send(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES, sub);
+const target = paneTarget();
+if (target) {
+  sendSubscriptions([{ pane: target, cursor: null }]);
+  // 首屏走 canonical 事务（取代 legacy TERM_HISTORY），落进 historyChunks 供 seq 归因
+  sendCanonical({
+    RequestScreen: { requestId: newRequestId(), pane: target, byteLimit: maxScreenBytes },
+  });
+}
 
 if (snapshotWindow) {
   const select = buildTmuxSelect({

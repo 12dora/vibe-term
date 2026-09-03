@@ -20,15 +20,16 @@ export class WebSocketServerTmuxFacade {
     tmuxCommands.handleTermInput(this, deviceId, paneId, data);
   }
 
-  handleTermResize(
+  handleCanonicalResize(
     this: TmuxCommandHost,
     session: GatewaySession,
-    deviceId: string,
-    paneId: string,
-    cols: number,
-    rows: number
+    intent: tmuxCommands.CanonicalResizeIntent
   ): void {
-    tmuxCommands.handleTermResize(this, session, deviceId, paneId, cols, rows);
+    tmuxCommands.handleCanonicalResize(this, session, intent);
+  }
+
+  dropPaneSizeEpochs(this: TmuxCommandHost, session: GatewaySession, deviceId?: string): void {
+    tmuxCommands.dropPaneSizeEpochs(session, deviceId);
   }
 
   handleTermViewport(
@@ -108,26 +109,6 @@ export class WebSocketServerTmuxFacade {
     tmuxCommands.reorderPanes(this, deviceId, windowId, paneIds);
   }
 
-  handleSubscribePanes(
-    this: TmuxCommandHost,
-    ws: GatewaySession,
-    deviceId: string,
-    paneIds: string[]
-  ): void {
-    tmuxCommands.handleSubscribePanes(this, ws, deviceId, paneIds);
-  }
-
-  handleFetchPaneHistory(
-    this: TmuxCommandHost,
-    ws: GatewaySession,
-    deviceId: string,
-    paneId: string,
-    requestToken: Uint8Array,
-    byteLimit?: number | null
-  ): void {
-    tmuxCommands.handleFetchPaneHistory(this, ws, deviceId, paneId, requestToken, byteLimit);
-  }
-
   handleResizePaneById(
     this: TmuxCommandHost,
     deviceId: string,
@@ -158,14 +139,8 @@ export class WebSocketServerTmuxFacade {
     tmuxCommands.handleSplitPane(this, deviceId, paneId, direction, cwd);
   }
 
-  handleFocusPane(
-    this: TmuxCommandHost,
-    ws: GatewaySession,
-    deviceId: string,
-    windowId: string,
-    paneId: string
-  ): void {
-    tmuxCommands.handleFocusPane(this, ws, deviceId, windowId, paneId);
+  handleFocusPane(this: TmuxCommandHost, deviceId: string, windowId: string, paneId: string): void {
+    tmuxCommands.handleFocusPane(this, deviceId, windowId, paneId);
   }
 
   onStateSnapshotInstalled(this: TmuxCommandHost, deviceId: string): void {

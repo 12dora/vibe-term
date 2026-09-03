@@ -68,7 +68,7 @@ export const userKeyLog = sqliteTable(
     uniqueIndex('user_key_log_user_id_seq_unique').on(table.userId, table.seq),
     check(
       'user_key_log_type_check',
-      sql`${table.type} in ('add-passkey', 'remove-passkey', 'rotate-root', 'set-totp', 'clear-totp', 'admit-node', 'revoke-node', 'reset-root', 'admit-hub', 'retire-hub', 'rotate-root-keep')`
+      sql`${table.type} in ('add-passkey', 'remove-passkey', 'rotate-root', 'set-totp', 'clear-totp', 'admit-node', 'revoke-node', 'reset-root', 'admit-hub', 'retire-hub', 'rotate-root-keep', 'set-relays', 'meta-key')`
     ),
   ]
 );

@@ -30,18 +30,21 @@ export interface TmuxSelectParams {
   windowId?: string;
   paneId?: string;
   selectToken: Uint8Array;
-  wantHistory: boolean;
   cols?: number;
   rows?: number;
 }
 
+/**
+ * TMUX_SELECT 只驱动 tmux 侧的焦点。画面由 canonical 的截屏/历史事务重建，
+ * 因此 `wantHistory` 恒为 false（该字段随 legacy 历史流一起失去意义，只为兼容 wire 布局保留）。
+ */
 export function buildTmuxSelect(params: TmuxSelectParams): { kind: number; payload: Uint8Array } {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.TmuxSelectSchema, {
     deviceId: params.deviceId,
     windowId: params.windowId ?? null,
     paneId: params.paneId ?? null,
     selectToken: params.selectToken,
-    wantHistory: params.wantHistory,
+    wantHistory: false,
     cols: params.cols ?? null,
     rows: params.rows ?? null,
   });
@@ -142,69 +145,6 @@ export function buildTmuxReorderPanes(
   return { kind: wsBorsh.KIND_TMUX_REORDER_PANES, payload };
 }
 
-export function buildTermInput(
-  deviceId: string,
-  paneId: string,
-  data: string,
-  isComposing = false
-): { kind: number; payload: Uint8Array } {
-  const encoder = new TextEncoder();
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.TermInputSchema, {
-    deviceId,
-    paneId,
-    encoding: 2, // utf8-bytes
-    data: encoder.encode(data),
-    isComposing,
-  });
-  return { kind: wsBorsh.KIND_TERM_INPUT, payload };
-}
-
-export function buildTermPaste(
-  deviceId: string,
-  paneId: string,
-  data: string
-): { kind: number; payload: Uint8Array } {
-  const encoder = new TextEncoder();
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.TermPasteSchema, {
-    deviceId,
-    paneId,
-    encoding: 2, // utf8-bytes
-    data: encoder.encode(data),
-    isComposing: false,
-  });
-  return { kind: wsBorsh.KIND_TERM_PASTE, payload };
-}
-
-export function buildTermResize(
-  deviceId: string,
-  paneId: string,
-  cols: number,
-  rows: number
-): { kind: number; payload: Uint8Array } {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.TermResizeSchema, {
-    deviceId,
-    paneId,
-    cols,
-    rows,
-  });
-  return { kind: wsBorsh.KIND_TERM_RESIZE, payload };
-}
-
-export function buildTermSyncSize(
-  deviceId: string,
-  paneId: string,
-  cols: number,
-  rows: number
-): { kind: number; payload: Uint8Array } {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.TermSyncSizeSchema, {
-    deviceId,
-    paneId,
-    cols,
-    rows,
-  });
-  return { kind: wsBorsh.KIND_TERM_SYNC_SIZE, payload };
-}
-
 export function buildTermViewportMessage(params: {
   deviceId: string;
   paneId: string;
@@ -220,34 +160,6 @@ export function buildTermViewportMessage(params: {
     visible: params.visible,
   });
   return { kind: wsBorsh.KIND_TERM_VIEWPORT, payload };
-}
-
-// ========== 分屏（split screen） ==========
-
-export function buildTmuxSubscribePanes(
-  deviceId: string,
-  paneIds: string[]
-): { kind: number; payload: Uint8Array } {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, {
-    deviceId,
-    paneIds,
-  });
-  return { kind: wsBorsh.KIND_TMUX_SUBSCRIBE_PANES, payload };
-}
-
-export function buildTmuxFetchPaneHistory(
-  deviceId: string,
-  paneId: string,
-  requestToken: Uint8Array,
-  byteLimit?: number | null
-): { kind: number; payload: Uint8Array } {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.TmuxFetchPaneHistorySchema, {
-    deviceId,
-    paneId,
-    requestToken,
-    byteLimit: byteLimit ?? null,
-  });
-  return { kind: wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY, payload };
 }
 
 export function buildTmuxResizePane(

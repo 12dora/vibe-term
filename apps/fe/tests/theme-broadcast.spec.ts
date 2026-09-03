@@ -1,14 +1,14 @@
 import { type Page, expect, test } from '@playwright/test';
 import { createLocalDevice } from './helpers/device';
+import { readSiteTheme, setSiteTheme } from './helpers/site-theme';
 import { createSinglePaneSession, ensureCleanSession } from './helpers/tmux';
 import { KIND, decodeEnvelope, decodeSiteThemeUpdateS2C, isGatewayWsUrl } from './helpers/ws-borsh';
 
 // 跨设备主题广播 e2e：并发 last-writer-wins + 离线 fallback。
 // T10 实现 WS 广播 KIND_SITE_THEME_UPDATE；T11 实现前端 useSiteStore.setThemeFromS2C；
 // 离线时 updateTheme 只写 localStorage + 本地 state，不发 C2S，重连后由 S2C 同步。
-// 注意：HTTP API 路径（POST /api/settings/theme）不发 S2C WS 广播，前端不会收到通知。
-// 故主题切换必须走 UI（侧边栏主题菜单 → useSiteStore.selectThemePreset/updateTheme →
-// C2S WS → S2C 广播）。
+// 站点外观只有 WS C2S KIND_SITE_THEME_UPDATE 一条上行通道：页面里走 UI（侧边栏主题菜单 →
+// useSiteStore.selectThemePreset/updateTheme），setup/cleanup 走 helpers/site-theme 的同一条帧。
 
 test.use({ viewport: { width: 1280, height: 800 } });
 
@@ -74,7 +74,7 @@ test('theme-broadcast: concurrent last-writer-wins — two pages toggle differen
   const pageB = await contextB.newPage();
 
   try {
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await Promise.all([pageA.goto(`/devices/${deviceId}`), pageB.goto(`/devices/${deviceId}`)]);
     await Promise.all([
       expect(pageA.getByTestId('device-page')).toBeVisible(),
@@ -98,8 +98,8 @@ test('theme-broadcast: concurrent last-writer-wins — two pages toggle differen
     const bgB = await readTerminalBackground(pageB);
     expect(normalizeColor(bgA)).toBe(normalizeColor(bgB));
 
-    const finalTheme = await request.get('/api/settings/theme').then((r) => r.json());
-    const finalBg = (finalTheme as { theme: string }).theme === 'light' ? LIGHT_BG : DARK_BG;
+    const finalTheme = await readSiteTheme(request);
+    const finalBg = finalTheme === 'light' ? LIGHT_BG : DARK_BG;
     await expect
       .poll(async () => expectBg(await readTerminalBackground(pageA), finalBg), { timeout: 10_000 })
       .toBe(true);
@@ -110,7 +110,7 @@ test('theme-broadcast: concurrent last-writer-wins — two pages toggle differen
     await pageA.close();
     await contextB.close();
     await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     ensureCleanSession(sessionName);
   }
 });
@@ -130,7 +130,7 @@ test('theme-broadcast: offline fallback — toggle while offline, sync after rec
   const receiverB = attachSiteThemeReceiver(pageB);
 
   try {
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await Promise.all([pageA.goto(`/devices/${deviceId}`), pageB.goto(`/devices/${deviceId}`)]);
     await Promise.all([
       expect(pageA.getByTestId('device-page')).toBeVisible(),
@@ -170,7 +170,7 @@ test('theme-broadcast: offline fallback — toggle while offline, sync after rec
     await pageA.close();
     await contextB.close();
     await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     ensureCleanSession(sessionName);
   }
 });
@@ -188,7 +188,7 @@ test('theme-broadcast: serverTimestamp strictly monotonic across rapid toggles',
   const receiver = attachSiteThemeReceiver(page);
 
   try {
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('device-page')).toBeVisible();
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
@@ -214,7 +214,7 @@ test('theme-broadcast: serverTimestamp strictly monotonic across rapid toggles',
   } finally {
     await page.close();
     await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
+    await setSiteTheme('dark');
     ensureCleanSession(sessionName);
   }
 });

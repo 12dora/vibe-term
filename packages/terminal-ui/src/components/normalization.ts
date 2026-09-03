@@ -5,12 +5,6 @@ export function normalizeHistoryForTerminal(data: string): string {
   return trimmed.replace(/\n/g, '\r\n');
 }
 
-const ALT_SCREEN_HISTORY_PREAMBLE = '\x1b[?1049h\x1b[H\x1b[2J';
-
-export function wrapAlternateScreenHistory(data: string): string {
-  return ALT_SCREEN_HISTORY_PREAMBLE + normalizeHistoryForTerminal(data);
-}
-
 // 补 CR 的常驻暂存区：live 输出每帧都要走一遍，逐帧新建缓冲会把 GC 压力堆到渲染线程上。
 // 超过上限的一次性大载荷（history 重排的快照正文可达 MB 级）单独分配，避免把常驻缓冲永久撑大。
 const NORMALIZE_SCRATCH_MAX_BYTES = 256 * 1024;

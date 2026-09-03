@@ -2,6 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
+declare global {
+  namespace NodeJS {
+    interface ProcessReport {
+      /** Node 20.13+ 才有的开关，@types/node 18 里还缺；生成 report 时用来跳过网络接口枚举。 */
+      excludeNetwork: boolean;
+    }
+  }
+}
+
 export const NATIVE_DATACHANNEL_VERSION = '0.33.1';
 export const NATIVE_NAPI_VERSION = 8;
 export const NATIVE_ADDON_FILENAME = 'node_datachannel.node';

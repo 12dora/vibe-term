@@ -13,6 +13,7 @@ import {
   useEnrollmentEngine,
   useEnrollmentEngineState,
 } from '@/node/enrollment-engine';
+import { defaultRelayEnrollmentApi } from '@/node/hub-api';
 import type { HubFailureReason } from '@/node/hub-load-coordinator';
 import { useMeshHubs } from '@/node/mesh-hubs';
 import {
@@ -22,6 +23,7 @@ import {
   useHubNode,
   useMeshNodes,
 } from '@/node/mesh-nodes';
+import { useMeshRelay } from '@/node/mesh-relay';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
@@ -35,9 +37,12 @@ import {
 import { CircleArrowUp, Ellipsis, Plus, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
+import { RelayConfirmDialog, RelayEnrollDialog } from '../relay/relay-dialogs';
+import { UplinkSection, uplinkBlockedHint } from '../relay/uplink-section';
+import { useRelayActions } from '../relay/use-relay-actions';
+import { useRelayAdmitFollowUp } from '../relay/use-relay-admit-follow-up';
 import { EnrollmentSection } from './enrollment-section';
 import { HubRoleDialog } from './hub-role-dialog';
-import { HubStrip } from './hub-strip';
 import { NodesTable } from './nodes-table';
 import {
   type NodeSelection,
@@ -95,8 +100,9 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   }, [refreshNodes]);
 
   const hub = useHubNode(nodes, { hubNodeId: rawMode.hubNodeId ?? null });
-  // hub 集合的轮询归本页所有：整个宿主只有节点管理页要看主 / 备与挂载关系。
+  // hub 集合与中继链路的轮询都归本页所有：整个宿主只有节点管理页要看上级链路的全貌。
   const hubs = useMeshHubs({ owner: true });
+  const relay = useMeshRelay({ owner: true });
   const rows = useMemo(
     () => mergeNodes(nodes, hub.hubNodes, { entryNodeId, hubNodeId: hub.hubNodeId }),
     [nodes, hub.hubNodes, hub.hubNodeId, entryNodeId]
@@ -124,11 +130,16 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   });
 
   const refreshHubs = hubs.refresh;
+  const refreshRelay = relay.refresh;
+  // 中继链路也要跟着重拉：hub → 中继迁移之后，状态条得当场翻成中继版式，不能等下一拍轮询。
   const refreshAll = useCallback(() => {
     refreshNodes();
     hub.refresh();
     refreshHubs();
-  }, [hub, refreshHubs, refreshNodes]);
+    refreshRelay();
+  }, [hub, refreshHubs, refreshNodes, refreshRelay]);
+
+  const relayActions = useRelayActions({ api, mode, prompt, onChanged: refreshAll });
 
   // 升级状态机独立于 enrollment / rename / revoke：它走入口 → 目标的 peer link，hub 离线也能用。
   // 传 rows 是为了刷新后能按行回读升级状态——状态只活在 React 里，页面一刷新就得重新问一遍。
@@ -137,8 +148,9 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   // 挂在 standby 上（或一台 writer 都没有）时，管理写入会被 hub 以 `HUB_NOT_WRITER` 拒绝：
   // 先禁掉动作并给一行说明，比让用户点完再吃一条报错强。升级不走 hub 控制面，保持可用。
   // 主 hub 掉线时「hub 不可达」与这一条说的是同一件事，只留更具体的那一条。
-  const writable = hub.online && !hubs.writesBlocked;
-  const blockedHint = hubs.writesBlocked ? t('nodes.hubs.standbyNotice') : t('nodes.hubOffline');
+  // 中继模式下上级不是 hub：可写与否只看有没有挂上中继，hub 的主备 / writer 一概不适用。
+  const writable = relay.relayMode ? relay.writable : hub.online && !hubs.writesBlocked;
+  const blockedHint = uplinkBlockedHint(t, relay.relayMode, hubs.writesBlocked);
   const hubNotice = useMemo(() => hubFailureNotice(hub.failure), [hub.failure]);
 
   const uninstall = useNodeUninstall(
@@ -193,15 +205,23 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   const [enrollOpen, setEnrollOpen] = useState(false);
   // 监听回路、admit 流水线与过期清理都在宿主级单例引擎里：侧滑面板同时开着时也只有一份，
   // 同一张证书绝不会被签成两条 `admit-node`（见 `enrollment-engine.ts` 顶部）。
+  // 中继模式下 enrollment 建在中继上，证书也从 `/api/mesh/relay/enrollments/:id` 回读。
+  const enrollChannel = relay.relayMode ? defaultRelayEnrollmentApi : hub.hubApi;
   const { confirmManually } = useEnrollmentEngine({
     api,
     mode,
-    hubApi: hub.hubApi,
+    hubApi: enrollChannel,
     prompt,
     onDone: refreshAll,
     t,
   });
   const engine = useEnrollmentEngineState();
+  useRelayAdmitFollowUp({
+    enabled: relay.relayMode,
+    admittedIds: engine.admittedIds,
+    api,
+    mode,
+  });
 
   if (!mode) {
     return (
@@ -261,39 +281,20 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
       </CardHeader>
 
       <CardContent className="flex flex-col gap-3">
-        <HubStrip
-          hubs={hubs.hubs}
-          attachedHubId={hubs.attached?.hubNodeId ?? null}
-          writerHubId={hubs.writerHubId}
-          candidates={hubs.candidates}
+        <UplinkSection
+          relay={relay}
+          hubs={hubs}
+          hubOnline={hub.online}
+          hubNotice={hubNotice}
+          actions={relayActions}
         />
-
-        {!hub.online && !hubs.writesBlocked && (
-          <p
-            className="flex items-center gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
-            data-testid={hubNotice.testId}
-          >
-            <ShieldAlert className="size-3.5 shrink-0" />
-            {t(hubNotice.key, hubNotice.params)}
-          </p>
-        )}
-
-        {hubs.writesBlocked && (
-          <p
-            className="flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
-            data-testid="nodes-hub-standby"
-          >
-            <ShieldAlert className="size-3.5 shrink-0" />
-            {t('nodes.hubs.standbyNotice')}
-          </p>
-        )}
 
         <EnrollmentSection
           api={api}
           mode={mode}
-          hubApi={hub.hubApi}
-          hubOnline={hub.online}
-          hubWritable={!hubs.writesBlocked}
+          hubApi={enrollChannel}
+          writable={writable}
+          blockedHint={blockedHint}
           writerPublicUrl={hubs.writerPublicUrl}
           open={enrollOpen}
           prompt={prompt}
@@ -308,8 +309,9 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
         <NodesTable
           rows={rows}
           hubApi={hub.hubApi}
-          hubOnline={hub.online}
-          hubWritable={!hubs.writesBlocked}
+          hubOnline={writable}
+          hubWritable={relay.relayMode || !hubs.writesBlocked}
+          blockedHint={blockedHint}
           writerPublicUrl={hubs.writerPublicUrl}
           hubDetails={hubDetails}
           mode={mode}
@@ -324,6 +326,8 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
 
         <UninstallDialog uninstall={uninstall} />
         <HubRoleDialog roleSwitch={roleSwitch} />
+        <RelayEnrollDialog actions={relayActions} />
+        <RelayConfirmDialog actions={relayActions} />
         {prompt.dialog}
       </CardContent>
     </Card>

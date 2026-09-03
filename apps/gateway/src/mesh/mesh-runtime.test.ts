@@ -83,7 +83,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -114,7 +114,7 @@ describe('createMeshRuntime', () => {
         db,
         gateway: fakeGateway(db),
         config: {
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           hubUrl: 'HTTPS://Hub.Example:443/',
           peerPort: 0,
           stunServers: [],
@@ -150,7 +150,7 @@ describe('createMeshRuntime', () => {
         db,
         gateway: fakeGateway(db),
         config: {
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           hubUrl: 'HTTPS://Hub.Example:443/',
           peerPort: 0,
           stunServers: [],
@@ -173,7 +173,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -214,7 +214,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://127.0.0.1',
         peerPort: 0,
@@ -248,7 +248,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -287,7 +287,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -325,7 +325,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -346,7 +346,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -365,7 +365,7 @@ describe('createMeshRuntime', () => {
       db: emptyDb.db,
       gateway: fakeGateway(emptyDb.db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -409,7 +409,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -431,7 +431,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://127.0.0.1',
         peerPort: 0,
@@ -477,7 +477,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -541,7 +541,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -562,7 +562,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://127.0.0.1',
         peerPort: 0,
@@ -625,7 +625,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -737,7 +737,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -834,7 +834,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -964,7 +964,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -1044,7 +1044,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -1138,7 +1138,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -1202,7 +1202,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 39001,
         stunServers: [],
@@ -1278,7 +1278,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -1405,7 +1405,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: false, node: true },
+        roles: { hub: false, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         peerPort: 0,
         stunServers: [],
@@ -1477,7 +1477,7 @@ describe('createMeshRuntime', () => {
     expect(
       hubRoleAdvertisement(
         {
-          roles: { hub: true, node: true },
+          roles: { hub: true, node: true, relay: false },
           hubUrl: 'http://127.0.0.1:9',
           hubPublicUrl: 'https://hub.example',
           hubMode: 'standby',
@@ -1498,7 +1498,7 @@ describe('createMeshRuntime', () => {
     expect(
       hubRoleAdvertisement(
         {
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           hubUrl: 'http://127.0.0.1:9',
           peerPort: 0,
           stunServers: [],
@@ -1509,7 +1509,7 @@ describe('createMeshRuntime', () => {
     expect(
       hubRoleAdvertisement(
         {
-          roles: { hub: true, node: true },
+          roles: { hub: true, node: true, relay: false },
           hubUrl: 'http://127.0.0.1:9',
           hubPublicUrl: 'https://hub.example',
           hubMode: 'active',
@@ -1541,7 +1541,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         hubPublicUrl: 'https://hub.example',
         hubMode: 'standby',
@@ -1587,7 +1587,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         hubPublicUrl: 'https://hub.example',
         hubMode: 'active',
@@ -1631,7 +1631,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         hubPublicUrl: 'https://hub.example',
         hubMode: 'standby',
@@ -1682,7 +1682,7 @@ describe('createMeshRuntime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: 'http://127.0.0.1:9',
         hubPublicUrl: 'https://hub.example',
         hubMode: 'active',

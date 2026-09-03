@@ -1,3 +1,4 @@
+import type { FetchLike } from '../lib/fetch-like';
 import '../lib/test-master-key';
 import { describe, expect, test } from 'bun:test';
 import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
@@ -513,13 +514,13 @@ describe('resolveTxtOverHttps', () => {
           { type: 5, data: 'cname.example.com.' },
         ],
       });
-    }) as typeof fetch;
+    }) as FetchLike;
     expect(await resolveTxtOverHttps('_acme-challenge.example.com', fetchImpl)).toEqual([['abc']]);
   });
 
   test('rejects on non-2xx', async () => {
     const { resolveTxtOverHttps } = await import('./acme-service');
-    const fetchImpl = (async () => new Response('x', { status: 502 })) as typeof fetch;
+    const fetchImpl = (async () => new Response('x', { status: 502 })) as FetchLike;
     await expect(resolveTxtOverHttps('h', fetchImpl)).rejects.toThrow('doh 502');
   });
 });

@@ -1,3 +1,4 @@
+import type { FetchLike } from '../lib/fetch-like';
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
@@ -75,12 +76,12 @@ async function baseDeps(
   await writeFile(envPath, 'GATEWAY_PORT=21111\nOTHER=keep\n', 'utf8');
   const auth = overrides.auth ?? (await openAuth());
   return {
-    roles: { hub: false, node: false },
+    roles: { hub: false, node: false, relay: false },
     nodeEnv: 'test',
     auth,
     hubUrl: null,
     hubPublicUrl: null,
-    fetch: (async () => new Response('nope', { status: 404 })) as typeof fetch,
+    fetch: (async () => new Response('nope', { status: 404 })) as FetchLike,
     enableDirect: async () => ({
       ok: true,
       platformId: 'darwin-arm64',
@@ -270,14 +271,14 @@ describe('becomeHub', () => {
         ...auth,
         userStore: {
           getByUsername: () => null,
-        } as LocalAuthContext['userStore'],
+        } as unknown as LocalAuthContext['userStore'],
         userKeys: {
           bootstrapUserWithSelfAdmit: async () => {
-            const error = new Error('UNIQUE constraint failed: users.username');
-            (error as { code: string }).code = 'SQLITE_CONSTRAINT_UNIQUE';
-            throw error;
+            throw Object.assign(new Error('UNIQUE constraint failed: users.username'), {
+              code: 'SQLITE_CONSTRAINT_UNIQUE',
+            });
           },
-        } as LocalAuthContext['userKeys'],
+        } as unknown as LocalAuthContext['userKeys'],
       },
     });
     await expect(
@@ -674,7 +675,7 @@ describe('precheckHubUrl', () => {
   test('reachable + isSelf when healthz matches startedAt', async () => {
     const deps = await baseDeps({
       startedAt: 42,
-      fetch: (async () => Response.json({ status: 'ok', startedAt: 42 })) as typeof fetch,
+      fetch: (async () => Response.json({ status: 'ok', startedAt: 42 })) as FetchLike,
     });
     expect(await precheckHubUrl('https://hub.example.com', deps)).toEqual({
       reachable: true,
@@ -692,7 +693,7 @@ describe('precheckHubUrl', () => {
       fetch: (async (_input: unknown, init?: RequestInit) => {
         seenInit = init;
         return Response.json({ status: 'ok', startedAt: 42 });
-      }) as typeof fetch,
+      }) as FetchLike,
     });
     await precheckHubUrl('https://hub.example.com', deps);
     expect((seenInit as { tls?: { ca?: string[] } }).tls?.ca?.[0]).toContain('BEGIN CERTIFICATE');
@@ -701,7 +702,7 @@ describe('precheckHubUrl', () => {
   test('reachable but not self when startedAt differs', async () => {
     const deps = await baseDeps({
       startedAt: 42,
-      fetch: (async () => Response.json({ status: 'ok', startedAt: 99 })) as typeof fetch,
+      fetch: (async () => Response.json({ status: 'ok', startedAt: 99 })) as FetchLike,
     });
     expect(await precheckHubUrl('https://hub.example.com', deps)).toEqual({
       reachable: true,
@@ -715,7 +716,7 @@ describe('precheckHubUrl', () => {
     const deps = await baseDeps({
       fetch: (async () => {
         throw new Error('connection refused');
-      }) as typeof fetch,
+      }) as FetchLike,
     });
     const result = await precheckHubUrl('https://hub.example.com', deps);
     expect(result.reachable).toBe(false);
@@ -736,7 +737,7 @@ describe('precheckHubUrl', () => {
 describe('direct status and setLocalDirect', () => {
   test('getLocalStatus maps supported/installed/capable/version/platform', async () => {
     const deps = await baseDeps({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       nodeEnv: 'production',
       hubUrl: 'https://hub.example.com',
       hubPublicUrl: 'https://pub.example.com',
@@ -870,7 +871,8 @@ describe('direct status and setLocalDirect', () => {
         }
         signal?.addEventListener('abort', fail, { once: true });
       });
-    }) as typeof fetch;
+      throw new Error('unreachable');
+    }) as FetchLike;
     const pin: NativePin = {
       platformId: 'darwin-arm64',
       npmPackage: '@node-datachannel/darwin-arm64',

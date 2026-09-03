@@ -18,7 +18,10 @@ import {
 } from './release-fetch';
 
 function jsonResponse(status: number, body: string | Uint8Array): Response {
-  return new Response(body, { status, headers: { 'Content-Type': 'application/json' } });
+  return new Response(typeof body === 'string' ? body : new Uint8Array(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 describe('versionFromTagName', () => {

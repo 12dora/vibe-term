@@ -23,6 +23,17 @@ export type NestedCommandName =
   | 'hub.allow'
   | 'hub.disallow'
   | 'mesh.reset-root'
+  | 'relay.status'
+  | 'relay.tenants'
+  | 'relay.passwd'
+  | 'relay.kick'
+  | 'relay.remove'
+  | 'relay.quota'
+  | 'relay.label'
+  | 'relay.enroll'
+  | 'relay.reauth'
+  | 'relay.leave'
+  | 'relay.list'
   | 'enroll'
   | 'direct'
   | 'unknown';
@@ -87,6 +98,62 @@ export function parseArgs(argv: string[]): ParsedArgs {
   };
 }
 
+const TOP_LEVEL_COMMANDS: Record<string, NestedCommandName> = {
+  init: 'init',
+  doctor: 'doctor',
+  upgrade: 'upgrade',
+  uninstall: 'uninstall',
+  enroll: 'enroll',
+  direct: 'direct',
+};
+
+const HUB_SUBCOMMANDS: Record<string, NestedCommandName> = {
+  join: 'hub.join',
+  leave: 'hub.leave',
+  standby: 'hub.standby',
+  promote: 'hub.promote',
+  demote: 'hub.demote',
+  list: 'hub.list',
+  allow: 'hub.allow',
+  disallow: 'hub.disallow',
+};
+
+const HUB_USER_SUBCOMMANDS: Record<string, NestedCommandName> = {
+  add: 'hub.user.add',
+  passwd: 'hub.user.passwd',
+  totp: 'hub.user.totp',
+  reset: 'hub.user.reset',
+};
+
+const RELAY_SUBCOMMANDS: Record<string, NestedCommandName> = {
+  status: 'relay.status',
+  tenants: 'relay.tenants',
+  passwd: 'relay.passwd',
+  kick: 'relay.kick',
+  remove: 'relay.remove',
+  quota: 'relay.quota',
+  label: 'relay.label',
+  enroll: 'relay.enroll',
+  reauth: 'relay.reauth',
+  leave: 'relay.leave',
+  list: 'relay.list',
+};
+
+const MESH_SUBCOMMANDS: Record<string, NestedCommandName> = {
+  'reset-root': 'mesh.reset-root',
+};
+
+function group(
+  table: Record<string, NestedCommandName>,
+  parsed: ParsedArgs,
+  raw: string,
+  depth: number
+): NestedCommand {
+  const name = table[parsed.positionals[depth - 1] ?? ''];
+  if (!name) return { name: 'unknown', rest: parsed.positionals, raw };
+  return { name, rest: parsed.positionals.slice(depth), raw };
+}
+
 export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
   const command = parsed.command;
   if (
@@ -99,114 +166,30 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
     return { name: 'help', rest: parsed.positionals, raw: command };
   }
 
-  if (command === 'init') return { name: 'init', rest: parsed.positionals, raw: command };
-  if (command === 'doctor') return { name: 'doctor', rest: parsed.positionals, raw: command };
-  if (command === 'upgrade') return { name: 'upgrade', rest: parsed.positionals, raw: command };
-  if (command === 'uninstall') return { name: 'uninstall', rest: parsed.positionals, raw: command };
-  if (command === 'enroll') return { name: 'enroll', rest: parsed.positionals, raw: command };
-  if (command === 'direct') return { name: 'direct', rest: parsed.positionals, raw: command };
+  const topLevel = TOP_LEVEL_COMMANDS[command];
+  if (topLevel) return { name: topLevel, rest: parsed.positionals, raw: command };
 
   if (command === 'hub') {
-    const [head, second, third, ...tail] = parsed.positionals;
-    if (head === 'leave') {
-      return {
-        name: 'hub.leave',
-        rest: second ? ([second, third, ...tail].filter(Boolean) as string[]) : tail,
-        raw: command,
-      };
-    }
-    if (head === 'standby') {
-      return {
-        name: 'hub.standby',
-        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    if (head === 'promote') {
-      return {
-        name: 'hub.promote',
-        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    if (head === 'demote') {
-      return {
-        name: 'hub.demote',
-        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    if (head === 'list') {
-      return {
-        name: 'hub.list',
-        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    if (head === 'allow') {
-      return {
-        name: 'hub.allow',
-        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    if (head === 'disallow') {
-      return {
-        name: 'hub.disallow',
-        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    if (head === 'join') {
-      return {
-        name: 'hub.join',
-        rest: [second, third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    if (head === 'user' && second === 'add') {
-      return {
-        name: 'hub.user.add',
-        rest: [third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    if (head === 'user' && second === 'passwd') {
-      return {
-        name: 'hub.user.passwd',
-        rest: [third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    if (head === 'user' && second === 'totp') {
-      return {
-        name: 'hub.user.totp',
-        rest: [third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    if (head === 'user' && second === 'reset') {
-      return {
-        name: 'hub.user.reset',
-        rest: [third, ...tail].filter((item): item is string => Boolean(item)),
-        raw: command,
-      };
-    }
-    return { name: 'unknown', rest: parsed.positionals, raw: command };
+    if (parsed.positionals[0] === 'user') return group(HUB_USER_SUBCOMMANDS, parsed, command, 2);
+    return group(HUB_SUBCOMMANDS, parsed, command, 1);
   }
-
-  if (command === 'mesh') {
-    const [head, ...rest] = parsed.positionals;
-    if (head === 'reset-root') {
-      return { name: 'mesh.reset-root', rest, raw: command };
-    }
-    return { name: 'unknown', rest: parsed.positionals, raw: command };
-  }
+  if (command === 'relay') return group(RELAY_SUBCOMMANDS, parsed, command, 1);
+  if (command === 'mesh') return group(MESH_SUBCOMMANDS, parsed, command, 1);
 
   return { name: 'unknown', rest: parsed.positionals, raw: command };
 }
 
 const GLOBAL_FLAGS = new Set(['lang', 'help', 'h', 'bun-path']);
+
+const RELAY_ADMIN_FLAGS = new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']);
+
+const RELAY_TENANT_FLAGS = new Set([
+  ...GLOBAL_FLAGS,
+  'install-dir',
+  'service-name',
+  'password',
+  'username',
+]);
 
 const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   help: GLOBAL_FLAGS,
@@ -226,6 +209,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'role',
     'hub-url',
     'hub-public-url',
+    'relay-public-url',
     'peer-port',
     'stun-servers',
     'no-service',
@@ -284,6 +268,23 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   'hub.user.totp': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
   'hub.user.reset': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
   'mesh.reset-root': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+  'relay.status': RELAY_ADMIN_FLAGS,
+  'relay.tenants': RELAY_ADMIN_FLAGS,
+  'relay.passwd': new Set([...RELAY_ADMIN_FLAGS, 'clear', 'kick', 'keep']),
+  'relay.kick': RELAY_ADMIN_FLAGS,
+  'relay.remove': new Set([...RELAY_ADMIN_FLAGS, 'yes']),
+  'relay.quota': new Set([
+    ...RELAY_ADMIN_FLAGS,
+    'max-nodes',
+    'max-streams',
+    'bandwidth',
+    'inherit',
+  ]),
+  'relay.label': RELAY_ADMIN_FLAGS,
+  'relay.enroll': RELAY_TENANT_FLAGS,
+  'relay.reauth': RELAY_TENANT_FLAGS,
+  'relay.leave': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
+  'relay.list': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']),
 };
 
 export function assertKnownFlags(parsed: ParsedArgs): void {

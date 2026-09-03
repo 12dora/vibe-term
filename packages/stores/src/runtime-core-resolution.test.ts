@@ -5,11 +5,10 @@ import {
   type GatewayConnection,
   LazyWebSocketGatewayTransport,
   type PaneSink,
-  type SelectCallbacks,
   createGatewayConnection,
   createSharedGatewayTransport,
 } from '@tmex/ws-client';
-import { dispatchPaneOutput, registerPaneSink } from '@tmex/ws-client/pane-sink-registry';
+import { dispatchPaneTerminalData, registerPaneSink } from '@tmex/ws-client/pane-sink-registry';
 import type { HostServices, TerminalFileLinksProvider } from './runtime';
 
 // runtime.ts 在模块求值时把 playBellSound 固化进 defaultBell，必须先于首次求值替换，
@@ -32,14 +31,11 @@ function makeConnection(): GatewayConnection {
 
 function collectingSink(events: string[]): PaneSink {
   return {
-    onReset: (origin) => {
-      events.push(`reset:${origin}`);
-    },
-    onApplyHistory: (data) => {
-      events.push(`history:${data}`);
-    },
     onOutput: (data) => {
       events.push(`output:${data.length}`);
+    },
+    onRebase: (reason) => {
+      events.push(`rebase:${reason}`);
     },
   };
 }
@@ -92,40 +88,10 @@ describe('client 解析优先级', () => {
   });
 });
 
-describe('selectMachine 解析优先级', () => {
-  test('有连接时复用连接的状态机，并按需注入回调', () => {
-    const connection = makeConnection();
-    const received: SelectCallbacks[] = [];
-    connection.selectMachine.setCallbacks = (callbacks: SelectCallbacks) => {
-      received.push(callbacks);
-    };
-    const core = resolveRuntimeCore({ connection });
-
-    expect(core.selectMachine()).toBe(connection.selectMachine);
-    expect(received).toHaveLength(0);
-
-    const callbacks: SelectCallbacks = {};
-    expect(core.selectMachine(callbacks)).toBe(connection.selectMachine);
-    expect(received).toEqual([callbacks]);
-  });
-
-  // 注：模块级 getSelectStateMachine 会被同进程其它测试文件 mock，这里只断言「不走连接分支」
-  test('无连接时回落到模块级工厂，而不是任何连接的状态机', () => {
-    const connection = makeConnection();
-    const received: SelectCallbacks[] = [];
-    connection.selectMachine.setCallbacks = (callbacks: SelectCallbacks) => {
-      received.push(callbacks);
-    };
-    const machine = resolveRuntimeCore().selectMachine({});
-    expect(machine).not.toBe(connection.selectMachine);
-    expect(received).toHaveLength(0);
-  });
-});
-
 describe('paneSinks 解析优先级', () => {
   test('无连接时直接绑模块级注册表', () => {
     expect(resolveRuntimeCore().paneSinks.registerPaneSink).toBe(registerPaneSink);
-    expect(resolveRuntimeCore().paneSinks.dispatchPaneOutput).toBe(dispatchPaneOutput);
+    expect(resolveRuntimeCore().paneSinks.dispatchPaneTerminalData).toBe(dispatchPaneTerminalData);
   });
 
   test('有连接时全部转发到连接自己的注册表', () => {
@@ -136,30 +102,34 @@ describe('paneSinks 解析优先级', () => {
     expect(core.paneSinks.registerPaneSink).not.toBe(registerPaneSink);
     const unregister = core.paneSinks.registerPaneSink('dev', '%1', collectingSink(events));
 
-    core.paneSinks.dispatchPaneReset('dev', '%1', 'select');
-    core.paneSinks.dispatchPaneOutput('dev', '%1', new Uint8Array([1, 2]));
-    core.paneSinks.dispatchPaneApplyHistory('dev', '%1', 'hist', false, 0);
-    expect(events).toEqual(['reset:select', 'output:2', 'history:hist']);
+    core.paneSinks.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: '%1',
+      data: new Uint8Array([1, 2]),
+    });
+    core.paneSinks.dispatchPaneRebase('dev', '%1', 'pane_gap');
+    expect(events).toEqual(['output:2', 'rebase:pane_gap']);
 
     // 模块级注册表未被污染：同名 pane 在默认注册表上无 sink
-    dispatchPaneOutput('dev', '%1', new Uint8Array([9]));
-    expect(events).toHaveLength(3);
+    dispatchPaneTerminalData({ deviceId: 'dev', paneId: '%1', data: new Uint8Array([9]) });
+    expect(events).toHaveLength(2);
 
     unregister();
   });
 
-  test('history gate 与 cleanup 同样落在连接的注册表上', () => {
+  test('cleanup 落在连接自己的注册表上', () => {
     const connection = makeConnection();
     const core = resolveRuntimeCore({ connection });
-    const token = new Uint8Array([7, 7]);
+    const events: string[] = [];
 
-    expect(core.paneSinks.dispatchPaneHistory('dev', '%1', token, 'a', false, 0)).toBe(false);
-    core.paneSinks.beginPaneHistoryGate('dev', '%1', token);
-    expect(core.paneSinks.dispatchPaneHistory('dev', '%1', token, 'a', false, 0)).toBe(true);
-
-    core.paneSinks.beginPaneHistoryGate('dev', '%1', token);
+    core.paneSinks.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: '%1',
+      data: new Uint8Array([1]),
+    });
     core.paneSinks.cleanupDevicePaneState('dev');
-    expect(core.paneSinks.dispatchPaneHistory('dev', '%1', token, 'a', false, 0)).toBe(false);
+    core.paneSinks.registerPaneSink('dev', '%1', collectingSink(events));
+    expect(events).toEqual([]);
   });
 });
 

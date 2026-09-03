@@ -10,6 +10,7 @@ import type { LocalAuthContext } from '../lib/local-auth';
 import { openLocalAuth } from '../lib/local-auth';
 import { handleLocalRequest } from './local-routes';
 import type { LocalRouteDeps } from './local-routes';
+import type { DirectStatus } from './setup-service';
 import {
   type SetupServiceDeps,
   createSetupTransitionLock,
@@ -35,7 +36,7 @@ function failAuth(): AuthenticateResult {
 function deps(overrides: Partial<LocalRouteDeps> = {}): LocalRouteDeps {
   const env: Record<string, string> = {};
   const base: SetupServiceDeps = {
-    roles: { hub: false, node: false },
+    roles: { hub: false, node: false, relay: false },
     nodeEnv: 'test',
     auth: {} as SetupServiceDeps['auth'],
     envPath: '/tmp/app.env',
@@ -141,7 +142,7 @@ describe('GET /api/local/status', () => {
       await handleLocalRequest(
         new Request('http://127.0.0.1/api/local/status'),
         deps({
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           authenticate: failAuth,
         })
       )
@@ -155,7 +156,7 @@ describe('GET /api/local/status', () => {
       await handleLocalRequest(
         new Request('http://127.0.0.1/api/local/status'),
         deps({
-          roles: { hub: true, node: true },
+          roles: { hub: true, node: true, relay: false },
           hubPublicUrl: 'https://hub.example',
           authenticate: okAuth,
         })
@@ -177,9 +178,7 @@ describe('GET /api/local/status', () => {
       )
     );
     expect(status).toBe(200);
-    expect(
-      (body as { direct: { enabled: boolean; installed: boolean; capable: boolean } }).direct
-    ).toEqual({
+    expect((body as { direct: DirectStatus }).direct).toEqual({
       supported: true,
       installed: true,
       enabled: false,
@@ -515,7 +514,7 @@ describe('POST /api/local/direct', () => {
           body: JSON.stringify({ action: 'remove' }),
         }),
         deps({
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           authenticate: failAuth,
         })
       )
@@ -555,7 +554,7 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
       delegationMethod: 'root',
       now: Date.now(),
     });
-    const roles = { hub: true, node: true };
+    const roles = { hub: true, node: true, relay: false };
     return {
       sid: issued.sid,
       routeDeps: deps({
@@ -616,7 +615,7 @@ describe('POST /api/local/leave', () => {
       await handleLocalRequest(
         leaveRequest({ expectedRole: 'node' }),
         deps({
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           authenticate: failAuth,
         })
       )
@@ -669,7 +668,7 @@ describe('POST /api/local/leave', () => {
       await handleLocalRequest(
         leaveRequest({ expectedRole: 'node' }),
         deps({
-          roles: { hub: false, node: true },
+          roles: { hub: false, node: true, relay: false },
           auth: ctx,
           authenticate: okAuth,
           scheduleRestart: () => {
@@ -697,5 +696,47 @@ describe('POST /api/local/leave', () => {
     expect(env.TMEX_ROLES).toBe('standalone');
     expect(env.TMEX_HUB_URL).toBe('');
     expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
+  });
+
+  test('relay,node 被接受（不再 409 role_mismatch）', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        leaveRequest({ expectedRole: 'relay,node' }),
+        deps({ roles: { hub: false, node: true, relay: true }, authenticate: failAuth })
+      )
+    );
+    // 走到鉴权才停下 = expectedRole 这一关已经过了
+    expect(status).toBe(401);
+    expect(body).toEqual({ error: { code: 'unauthorized', message: 'login required' } });
+  });
+
+  test('纯 relay 没有成员身份：400 not_member，且不查会话', async () => {
+    let authenticated = 0;
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        leaveRequest({ expectedRole: 'relay,node' }),
+        deps({
+          roles: { hub: false, node: false, relay: true },
+          authenticate: () => {
+            authenticated += 1;
+            return failAuth();
+          },
+        })
+      )
+    );
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe('not_member');
+    expect(authenticated).toBe(0);
+  });
+
+  test('expectedRole 是 relay 时仍然 409 role_mismatch', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        leaveRequest({ expectedRole: 'relay' }),
+        deps({ roles: { hub: false, node: true, relay: true }, authenticate: okAuth })
+      )
+    );
+    expect(status).toBe(409);
+    expect((body as { error: { code: string } }).error.code).toBe('role_mismatch');
   });
 });

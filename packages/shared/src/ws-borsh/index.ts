@@ -23,13 +23,9 @@ export {
   KIND_TMUX_CLOSE_PANE,
   KIND_TMUX_RENAME_WINDOW,
   KIND_TMUX_EVENT,
-  KIND_STATE_SNAPSHOT,
-  KIND_STATE_SNAPSHOT_DIFF,
   KIND_TMUX_SET_WINDOW_STYLE,
   KIND_TMUX_REORDER_WINDOWS,
   KIND_TMUX_REORDER_PANES,
-  KIND_TMUX_SUBSCRIBE_PANES,
-  KIND_TMUX_FETCH_PANE_HISTORY,
   KIND_TMUX_RESIZE_PANE,
   KIND_TMUX_APPLY_STACKED_LAYOUT,
   KIND_TMUX_SPLIT_PANE,
@@ -39,15 +35,9 @@ export {
   KIND_TMUX_BREAK_PANE,
   KIND_TERM_INPUT,
   KIND_TERM_PASTE,
-  KIND_TERM_RESIZE,
-  KIND_TERM_SYNC_SIZE,
-  KIND_TERM_OUTPUT,
-  KIND_TERM_HISTORY,
   KIND_CLIPBOARD_WRITE,
   KIND_TERM_VIEWPORT,
   KIND_TERM_VIEWPORT_POLICY,
-  KIND_SWITCH_ACK,
-  KIND_LIVE_RESUME,
   KIND_CHUNK,
   KIND_AGENT_SUBSCRIBE,
   KIND_AGENT_UNSUBSCRIBE,
@@ -91,6 +81,7 @@ export {
   SOURCE_FIELD_CONNECTED,
   SOURCE_FIELD_PANE_EPOCH,
   SOURCE_FIELD_CUSTOM_NAME,
+  SOURCE_FIELD_TREE_ORDER,
   SUBSCRIPTION_REJECTED_NOT_FOUND,
   SUBSCRIPTION_REJECTED_RESOURCE_EXHAUSTED,
   SUBSCRIPTION_REJECTED_EPOCH_CHANGED,
@@ -110,6 +101,8 @@ export {
   type CanonicalTerminalCursor,
   type CanonicalHistoryCursor,
   type CanonicalPaneSubscription,
+  type CanonicalResizePane,
+  type CanonicalResizePaneV11,
   type CanonicalCommand,
   type CanonicalCommandEnvelope,
   type CanonicalEvent,
@@ -122,7 +115,27 @@ export {
   peekCanonicalPaneDataHeader,
   type CanonicalPaneDataHeader,
 } from './canonical-state';
-export { decodeTmuxFetchPaneHistory, type TmuxFetchPaneHistory } from './schema';
+
+// ========== canonical v1.1 ==========
+export {
+  CANONICAL_GEOMETRY_REASON_CHANGE,
+  CANONICAL_GEOMETRY_REASON_RESEND,
+  CanonicalGeometryReason,
+  isCanonicalGeometryReason,
+  assertCanonicalCommandSemantics,
+} from './canonical-geometry';
+export {
+  CANONICAL_V11_MIN_PEER_VERSION,
+  CANONICAL_V11_REQUIRED_ERROR_PREFIX,
+  isCanonicalV11RequiredError,
+  peerSupportsCanonicalV11,
+} from './canonical-version';
+export {
+  type CanonicalTreeOrder,
+  createCanonicalTreeOrder,
+  applyCanonicalTreeOrderPatch,
+  sortSnapshotByCanonicalTreeOrder,
+} from './canonical-tree-order';
 
 export {
   STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON,
@@ -250,12 +263,9 @@ export {
   type DecodedEnvelope,
   encodeCanonicalEventFrame,
   encodeEnvelope,
-  encodeTermOutputFrame,
   encodePayload,
   decodeEnvelope,
   decodeEnvelopeView,
-  type TermOutputView,
-  decodeTermOutputView,
   decodePayload,
   type ChunkData,
   encodeChunk,
@@ -286,8 +296,6 @@ export {
 export {
   encodeDeviceEventPayload,
   encodeTmuxEventPayload,
-  encodeStateSnapshot,
   decodeDeviceEventPayload,
   decodeTmuxEventPayload,
-  decodeStateSnapshot,
 } from './convert';

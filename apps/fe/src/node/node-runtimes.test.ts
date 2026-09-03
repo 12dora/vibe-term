@@ -9,9 +9,7 @@ import { getBulkClient } from '@tmex/ws-client/direct/bulk-client';
 import type { DirectDiagnostics } from '@tmex/ws-client/direct/types';
 import { PRIMARY_ONLY_DIAGNOSTICS, resolveDirectDiagnostics } from '@tmex/ws-client/direct/types';
 import {
-  CANONICAL_STATE_KILL_SWITCH_KEY,
   type DirectLinkModule,
-  canonicalStateEnabled,
   createAppNodeRuntimes,
   createNodeConnection,
   directLinkSettled,
@@ -26,18 +24,14 @@ interface FakeConnection extends GatewayConnection {
   mountedPanes: Set<string>;
 }
 
-function fakeConnection(
-  mountedPanes: string[] = [],
-  stateFeedMode: 'canonical' | 'legacy' = 'legacy'
-): FakeConnection {
+function fakeConnection(mountedPanes: string[] = []): FakeConnection {
   const mounted = new Set(mountedPanes);
   const connection = {
     client: {} as GatewayConnection['client'],
-    transport: { stateFeedMode } as GatewayConnection['transport'],
+    transport: { stateFeedMode: 'canonical' } as GatewayConnection['transport'],
     paneSinks: {
       hasPaneSink: (_deviceId: string, paneId: string) => mounted.has(paneId),
     } as unknown as GatewayConnection['paneSinks'],
-    selectMachine: {} as GatewayConnection['selectMachine'],
     directDiagnostics: null,
     attachDirectCarrier: () => {},
     detachDirectCarrier: () => {},
@@ -168,16 +162,6 @@ function fakeRuntime(
 }
 
 describe('createNodeConnection', () => {
-  test('canonical state kill switch defaults on and accepts runtime storage overrides', () => {
-    expect(canonicalStateEnabled({ getItem: () => null })).toBe(true);
-    expect(
-      canonicalStateEnabled({
-        getItem: (key) => (key === CANONICAL_STATE_KILL_SWITCH_KEY ? '1' : null),
-      })
-    ).toBe(false);
-    expect(canonicalStateEnabled({ getItem: () => 'true' })).toBe(false);
-  });
-
   test('self 不建直连控制器，也不挂诊断源，更不拉直连栈', () => {
     let created = 0;
     let loads = 0;
@@ -377,7 +361,7 @@ describe('createNodeConnection', () => {
 });
 
 describe('resume 钩子（切回 primary 的补齐）', () => {
-  test('重发订阅 + 对挂载中的 pane 重取整屏 + 提示最近输入可能未送达', () => {
+  test('重发订阅 + 不主动重取整屏 + 提示最近输入可能未送达', () => {
     const calls: ResumeCalls = { mounts: [], releases: 0, screens: [], warnings: [] };
     const base = fakeConnection(['%1', '%2']);
     createNodeConnection('node-b', {
@@ -392,11 +376,8 @@ describe('resume 钩子（切回 primary 的补齐）', () => {
     // 订阅重发一次（mount + 立即 release，集合不变但 generation 递增）
     expect(calls.mounts).toEqual([['device-a', '%1']]);
     expect(calls.releases).toBe(1);
-    // 只对挂载中的 pane 重取画面，%3 没挂载不请求
-    expect(calls.screens).toEqual([
-      ['device-a', '%1'],
-      ['device-a', '%2'],
-    ]);
+    // canonical 重订阅自带 cursor，精确补流，不再整屏重取
+    expect(calls.screens).toEqual([]);
     expect(calls.warnings).toEqual([DIRECT_FALLBACK_KEY]);
   });
 
@@ -414,24 +395,6 @@ describe('resume 钩子（切回 primary 的补齐）', () => {
     expect(calls.mounts).toEqual([]);
     expect(calls.screens).toEqual([]);
     expect(calls.warnings.length).toBe(1);
-  });
-
-  test('canonical 回落只用 cursor 重订阅，不主动重取整屏', () => {
-    const calls: ResumeCalls = { mounts: [], releases: 0, screens: [], warnings: [] };
-    const base = fakeConnection(['%1', '%2'], 'canonical');
-    createNodeConnection('node-b', {
-      createConnection: () => base,
-      loadDirect: async () => fakeDirectModule(),
-      createController: () => fakeController(),
-      resolveRuntime: () => fakeRuntime(calls, { panes: ['%1', '%2'] }),
-    });
-
-    base.resumeHook?.();
-
-    expect(calls.mounts).toEqual([['device-a', '%1']]);
-    expect(calls.releases).toBe(1);
-    expect(calls.screens).toEqual([]);
-    expect(calls.warnings).toEqual([DIRECT_FALLBACK_KEY]);
   });
 
   test('runtime 还没建好时只提示，不抛错', () => {

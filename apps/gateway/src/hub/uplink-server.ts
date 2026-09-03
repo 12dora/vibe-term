@@ -108,6 +108,7 @@ export {
   HUB_KEY_LOG_REQ_STATE_MAX,
   KeyLogReqLimiter,
 } from './uplink-rate-limit';
+import { type UplinkTimer, UplinkTimerSet, drainWithTimeout } from './uplink-server-timers';
 
 export type RegisterRtcSessionInput = {
   userId: string;
@@ -179,7 +180,7 @@ type LiveConnection = {
   generation: number;
   misses: number;
   awaitingPong: boolean;
-  heartbeat: ReturnType<typeof setInterval> | null;
+  heartbeat: UplinkTimer | null;
 };
 
 const textDecoder = new TextDecoder();
@@ -245,7 +246,8 @@ export class UplinkServer {
   private attachmentRevision = 0;
   private readonly attachmentAssembler = new AttachmentSnapshotAssembler();
   private readonly writeForwardCache = new WriteForwardIdempotencyCache();
-  private attachmentKeepalive: ReturnType<typeof setInterval> | null = null;
+  private readonly timers = new UplinkTimerSet();
+  private attachmentKeepalive: UplinkTimer | null = null;
   private readonly attachmentKeepaliveMs: number;
   private readonly crossHubStreams = new Map<string, Set<LinkStream>>();
   private readonly tokenAckWaiters = new Map<
@@ -261,7 +263,7 @@ export class UplinkServer {
   private readonly pending = new WeakMap<LinkSession, PendingAuth>();
   private readonly live = new Map<LinkSession, LiveConnection>();
   private readonly accepted = new Set<LinkSession>();
-  private readonly authTimers = new Map<LinkSession, ReturnType<typeof setTimeout>>();
+  private readonly authTimers = new Map<LinkSession, UplinkTimer>();
   private readonly ctlQueues = new WeakMap<LinkSession, CtlQueueState>();
   private readonly rtcSessions = new Map<string, RtcSessionRegistration>();
   private listVersion = 0;
@@ -532,10 +534,10 @@ export class UplinkServer {
     }
     if (waitMs <= 0) return [];
     const deadline = this.now() + waitMs;
-    while (this.now() < deadline) {
+    while (!this.stopped && this.now() < deadline) {
       const waiter = this.tokenAckWaiters.get(id);
       if (!waiter || waiter.pending.size === 0) break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await this.timers.sleep(20);
     }
     const waiter = this.tokenAckWaiters.get(id);
     this.tokenAckWaiters.delete(id);
@@ -1131,6 +1133,11 @@ export class UplinkServer {
     this.authRejectByAddr.clear();
     this.registry.closeAll('hub-stop');
     await this.drainInflight();
+    this.timers.dispose(); // 兜底：登记过的定时器一次清干净，之后再也挂不上新的
+  }
+
+  get pendingTimerCount(): number {
+    return this.timers.size;
   }
 
   private trackCtl(work: Promise<void>): void {
@@ -1143,22 +1150,8 @@ export class UplinkServer {
   private async drainInflight(): Promise<void> {
     const pending = [...this.inflightCtl];
     if (pending.length === 0) return;
-    let timedOut = false;
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        timedOut = true;
-        resolve();
-      }, HUB_STOP_DRAIN_TIMEOUT_MS);
-      void Promise.allSettled(pending).then(() => {
-        if (!timedOut) {
-          clearTimeout(timer);
-          resolve();
-        }
-      });
-    });
-    if (timedOut) {
-      console.warn('[hub] uplink stop drain timed out; continuing');
-    }
+    const drained = await drainWithTimeout(pending, this.timers, HUB_STOP_DRAIN_TIMEOUT_MS);
+    if (!drained) console.warn('[hub] uplink stop drain timed out; continuing');
   }
 
   get keyLogReqBucketCount(): number {
@@ -1784,23 +1777,28 @@ export class UplinkServer {
 
   private startHeartbeat(live: LiveConnection): void {
     this.clearHeartbeat(live);
-    live.heartbeat = setInterval(() => {
-      this.beat(live);
-    }, this.heartbeatIntervalMs);
+    live.heartbeat = this.timers.interval(
+      'heartbeat',
+      () => this.beat(live),
+      this.heartbeatIntervalMs
+    );
   }
 
   private startAttachmentKeepalive(): void {
     this.clearAttachmentKeepalive();
     if (this.attachmentKeepaliveMs <= 0) return;
-    this.attachmentKeepalive = setInterval(() => {
-      if (this.stopped) return;
-      this.publishLocalAttachments();
-    }, this.attachmentKeepaliveMs);
+    this.attachmentKeepalive = this.timers.interval(
+      'attachment keepalive',
+      () => {
+        if (this.stopped) return;
+        this.publishLocalAttachments();
+      },
+      this.attachmentKeepaliveMs
+    );
   }
 
   private clearAttachmentKeepalive(): void {
-    if (this.attachmentKeepalive === null) return;
-    clearInterval(this.attachmentKeepalive);
+    this.attachmentKeepalive?.clear();
     this.attachmentKeepalive = null;
   }
 
@@ -1822,28 +1820,30 @@ export class UplinkServer {
   }
 
   private clearHeartbeat(live: LiveConnection): void {
-    if (live.heartbeat !== null) {
-      clearInterval(live.heartbeat);
-      live.heartbeat = null;
-    }
+    live.heartbeat?.clear();
+    live.heartbeat = null;
   }
 
   private armAuthTimer(link: LinkSession): void {
     this.clearAuthTimer(link);
-    const timer = setTimeout(() => {
-      this.authTimers.delete(link);
-      if (!this.live.has(link) && this.accepted.has(link)) {
-        this.pending.delete(link);
-        this.rejectAuth(link, undefined, 'timeout', 'auth-timeout');
-      }
-    }, this.authTimeoutMs);
-    this.authTimers.set(link, timer);
+    const timer = this.timers.timeout(
+      'auth timeout',
+      () => {
+        this.authTimers.delete(link);
+        if (!this.live.has(link) && this.accepted.has(link)) {
+          this.pending.delete(link);
+          this.rejectAuth(link, undefined, 'timeout', 'auth-timeout');
+        }
+      },
+      this.authTimeoutMs
+    );
+    if (timer) this.authTimers.set(link, timer);
   }
 
   private clearAuthTimer(link: LinkSession): void {
     const timer = this.authTimers.get(link);
     if (timer !== undefined) {
-      clearTimeout(timer);
+      timer.clear();
       this.authTimers.delete(link);
     }
   }

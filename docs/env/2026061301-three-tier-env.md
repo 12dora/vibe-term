@@ -20,6 +20,7 @@ tmex 此前只有两个事实上的 `NODE_ENV` 取值（`development` / `product
 | test | `test` | 仓库根 `test.env`（+ `test.env.local`），接线键由各测试入口注入 | preload / 应用 `loadEnv()` |
 | production | `production` | 安装版 `app.env`（`buildAppEnvValues`，7 个核心键）+ `run.sh` export 的 `TMEX_FE_DIST_DIR`/`TMEX_MIGRATIONS_DIR` | `run.sh` 经 shell 注入 |
 
+- `buildAppEnvValues` 只在 `TMEX_ROLES` 含 `relay` 时额外写入 `TMEX_RELAY_PUBLIC_URL`（必填，中继对外地址）与 `TMEX_RELAY_ADMIN_TOKEN`（缺失时首启生成）；其它角色的 `app.env` 不含这两个键。中继角色首启若自行生成了管理令牌，**只有 production 会写回 `app.env`**，dev / test 只在启动日志里打印一次（见 [公共中继（relay）角色](../relay/2026090304-relay-role.md)）。
 - `development.env` / `test.env` 提交进库（仅含开发/测试用公开值，dev master key 本就公开）；`*.env.local` 忽略，供个人临时覆盖。
 - 可选 `TMEX_*` 调优项（throttle / tmux / ssh-reconnect / language）在 `apps/gateway/src/config.ts` 均有默认值，**这些默认值即生产行为**。生产 `app.env` 保持精简，不扩容；老安装无需迁移。
 

@@ -1,50 +1,12 @@
-// 快照删除当前选中 pane 时的选择面收尾：取消事务/重试 + 清空 selectedPanes。
+// 快照删除当前选中 pane 时的选择面收尾：清空 selectedPanes。
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload, TmuxPane, TmuxWindow } from '@tmex/shared';
-import type {
-  GatewayTransportCommand,
-  GatewayTransportEvent,
-  SelectCallbacks,
-} from '@tmex/ws-client';
+import type { GatewayTransportCommand, GatewayTransportEvent } from '@tmex/ws-client';
 import type { RuntimeCore } from './runtime';
 import type { SiteStore } from './site';
 import { createTmuxStore } from './tmux';
 import type { UIStore } from './ui';
-
-function installFakeTimers() {
-  const timers = new Map<number, { fn: () => void; delay: number }>();
-  const realSetTimeout = globalThis.setTimeout;
-  const realClearTimeout = globalThis.clearTimeout;
-  let nextId = 1;
-
-  globalThis.setTimeout = ((fn: () => void, delay?: number) => {
-    const id = nextId++;
-    timers.set(id, { fn, delay: delay ?? 0 });
-    return id;
-  }) as unknown as typeof setTimeout;
-
-  globalThis.clearTimeout = ((id?: number) => {
-    if (id !== undefined) timers.delete(id);
-  }) as unknown as typeof clearTimeout;
-
-  return {
-    advance(ms: number): void {
-      for (const [id, timer] of [...timers]) {
-        if (timer.delay > ms) continue;
-        timers.delete(id);
-        timer.fn();
-      }
-    },
-    get pending(): number {
-      return timers.size;
-    },
-    restore(): void {
-      globalThis.setTimeout = realSetTimeout;
-      globalThis.clearTimeout = realClearTimeout;
-    },
-  };
-}
 
 function pane(id: string): TmuxPane {
   return { id, windowId: '@1', index: 0, active: true, width: 80, height: 24 };
@@ -57,24 +19,11 @@ function snapshotWith(panes: TmuxPane[]): StateSnapshotPayload {
 
 function createHarness() {
   const commands: GatewayTransportCommand[] = [];
-  const abandoned: Array<[string, string]> = [];
   let emit: ((event: GatewayTransportEvent) => void) | null = null;
-  let selectCallbacks: SelectCallbacks = {};
-
-  const selectMachine = {
-    dispatch: () => {},
-    cleanup: () => {},
-    getTransaction: () => null,
-    reportTerminalProgress: () => {},
-    abandonPane: (deviceId: string, paneId: string) => {
-      abandoned.push([deviceId, paneId]);
-      return true;
-    },
-  };
 
   const core = {
     transport: {
-      capabilities: { atomicScreen: false, cursorHistory: false },
+      capabilities: { atomicScreen: true, cursorHistory: true },
       send: (command: GatewayTransportCommand) => {
         commands.push(command);
         return true;
@@ -91,16 +40,9 @@ function createHarness() {
       hasConnectedOnce: false,
       latencyMs: null,
     },
-    selectMachine: (callbacks?: SelectCallbacks) => {
-      if (callbacks) selectCallbacks = callbacks;
-      return selectMachine;
-    },
     paneSinks: {
-      dispatchPaneReset: () => {},
-      dispatchPaneApplyHistory: () => {},
-      dispatchPaneOutput: () => {},
+      dispatchPaneTerminalData: () => {},
       cleanupDevicePaneState: () => {},
-      beginPaneHistoryGate: () => {},
     },
     notifications: { info: () => {}, success: () => {}, warning: () => {}, error: () => {} },
     bell: { play: () => {} },
@@ -122,12 +64,8 @@ function createHarness() {
   return {
     store,
     commands,
-    abandoned,
     publish(event: GatewayTransportEvent): void {
       emit?.(event);
-    },
-    failSelect(): void {
-      selectCallbacks.onSelectFailed?.('device-a', 'ack_timeout');
     },
     dispose(): void {
       for (const dispose of disposers) dispose();
@@ -136,17 +74,7 @@ function createHarness() {
 }
 
 describe('snapshot removal of the selected pane', () => {
-  let timers: ReturnType<typeof installFakeTimers>;
-
-  beforeEach(() => {
-    timers = installFakeTimers();
-  });
-
-  afterEach(() => {
-    timers.restore();
-  });
-
-  test('clears the selection and cancels the transaction once the pane leaves the snapshot', () => {
+  test('clears the selection once the pane leaves the snapshot', () => {
     const harness = createHarness();
     harness.publish({
       type: 'metadata-snapshot',
@@ -157,7 +85,6 @@ describe('snapshot removal of the selected pane', () => {
     harness.publish({ type: 'metadata-snapshot', snapshot: snapshotWith([pane('%1')]) });
 
     expect(harness.store.getState().selectedPanes['device-a']).toBeUndefined();
-    expect(harness.abandoned).toEqual([['device-a', '%2']]);
     harness.dispose();
   });
 
@@ -173,7 +100,6 @@ describe('snapshot removal of the selected pane', () => {
       windowId: '@1',
       paneId: '%9',
     });
-    expect(harness.abandoned).toEqual([]);
     harness.dispose();
   });
 
@@ -204,29 +130,6 @@ describe('snapshot removal of the selected pane', () => {
       windowId: '@1',
       paneId: '%2',
     });
-    expect(harness.abandoned).toEqual([]);
-    harness.dispose();
-  });
-
-  test('cancels the pending reselect retry so no select-pane targets the dead pane', () => {
-    const harness = createHarness();
-    harness.publish({
-      type: 'metadata-snapshot',
-      snapshot: snapshotWith([pane('%1'), pane('%2')]),
-    });
-    harness.store.getState().selectPane('device-a', '@1', '%2');
-
-    // select 失败排队一次 250ms 重试，随后快照确认 pane 已消失
-    harness.failSelect();
-    expect(timers.pending).toBe(1);
-    harness.commands.length = 0;
-
-    harness.publish({ type: 'metadata-snapshot', snapshot: snapshotWith([pane('%1')]) });
-    expect(timers.pending).toBe(0);
-    timers.advance(1000);
-
-    expect(harness.commands.filter((command) => command.type === 'select-pane')).toEqual([]);
-    expect(harness.store.getState().selectedPanes['device-a']).toBeUndefined();
     harness.dispose();
   });
 });

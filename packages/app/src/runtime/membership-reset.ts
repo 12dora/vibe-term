@@ -14,7 +14,15 @@ import {
   writeStagedEnv,
 } from './setup-service';
 
-export type MeshRoleName = Exclude<TmexRoleName, 'standalone'>;
+/**
+ * 能「退出 mesh」的角色：必须带 node 才有成员身份。
+ * 纯 `relay` 只是替别的租户转发，本机没有用户/证书/密钥日志，没有可退的成员身份。
+ */
+export type MeshRoleName = Exclude<TmexRoleName, 'standalone' | 'relay'>;
+
+export function isLeavableRoleName(value: unknown): value is MeshRoleName {
+  return value === 'node' || value === 'hub,node' || value === 'relay,node';
+}
 
 export type LeaveMeshInput = {
   expectedRole: MeshRoleName;
@@ -107,8 +115,8 @@ export async function leaveMesh(
 ): Promise<LeaveMeshResult> {
   return await withSetupTransition(deps, async () => {
     const fromRole = roleNameFromFlags(deps.roles);
-    if (fromRole === 'standalone') {
-      throw new SetupError('not_member', 'not a mesh member', 400);
+    if (!isLeavableRoleName(fromRole)) {
+      throw new SetupError('not_member', `${fromRole} has no mesh membership to leave`, 400);
     }
     if (input.expectedRole !== fromRole) {
       throw new SetupError(

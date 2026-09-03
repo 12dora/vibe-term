@@ -21,6 +21,11 @@ export interface NodeActionDeps {
    * hub 集合未知（旧入口、首屏未加载）时恒为 `true`，单 hub 用户没有任何变化。
    */
   hubWritable: boolean;
+  /**
+   * 不可写时的原因文案。中继模式下上级不是 hub，两条 hub 专属提示都不适用，
+   * 由页面直接给出正确的那一句；缺省（hub 模式）时由表格自己按 hub 状态分档。
+   */
+  blockedHint?: string;
   /** writer hub 的对外地址；拒写提示靠它指路。 */
   writerPublicUrl: string | null;
   /** hub 集合（按 nodeId 索引）：表内 hub 徽标的悬浮详情从这里取。 */

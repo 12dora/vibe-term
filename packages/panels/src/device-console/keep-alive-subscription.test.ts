@@ -43,15 +43,15 @@ function createStageHarness() {
   let pool = createKeepAlivePool();
   const mounted = new Map<string, () => void>();
   const sinks = new Map<string, () => void>();
-  const resets = new Map<string, string[]>();
+  const snapshotsSeen = new Map<string, number>();
 
   function paneSink(paneId: string): PaneSink {
-    const seen: string[] = [];
-    resets.set(paneId, seen);
+    snapshotsSeen.set(paneId, 0);
     return {
-      onReset: (origin) => seen.push(origin),
-      onApplyHistory: () => {},
       onOutput: () => {},
+      onScreenSnapshot: () => {
+        snapshotsSeen.set(paneId, (snapshotsSeen.get(paneId) ?? 0) + 1);
+      },
     };
   }
 
@@ -103,10 +103,20 @@ function createStageHarness() {
     pool(): KeepAlivePool {
       return pool;
     },
-    /** sink 是否仍注册：置冷的 pane 收到 reset 就证明注册表没有把它当成「无 sink」缓冲 */
+    /** sink 是否仍注册：置冷的 pane 收到 canonical 首屏就证明注册表没有把它当成「无 sink」缓冲 */
     sinkReceives(paneId: string): boolean {
-      runtime.paneSinks.dispatchPaneReset('device-a', paneId, 'select');
-      return (resets.get(paneId)?.length ?? 0) > 0;
+      runtime.paneSinks.dispatchPaneScreenSnapshot({
+        deviceId: 'device-a',
+        paneId,
+        paneEpoch: new Uint8Array(16),
+        baseSeq: 0n,
+        rows: 24,
+        cols: 80,
+        modes: 0,
+        data: new Uint8Array(),
+        historyCursor: null,
+      });
+      return (snapshotsSeen.get(paneId) ?? 0) > 0;
     },
     lastSubscriptionSet(): string[] | undefined {
       return commands
@@ -162,7 +172,7 @@ describe('keep-alive wire subscriptions', () => {
 
     stage.show('%1');
     expect(stage.lastSubscriptionSet()).toEqual(['%1', '%2']);
-    // 退订期间的输出补不回来：必须冷 select（wantHistory:true）
+    // 退订期间的输出补不回来：必须冷 select（重订阅后由 canonical 首屏重建画面）
     expect(stage.pool().visibleIsWarm).toBe(false);
     expect(isKeepAlivePaneCold(stage.pool(), '%1')).toBe(false);
 

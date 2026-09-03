@@ -16,9 +16,9 @@ import {
   sameStringList,
   shouldSkipSubscriptionSend,
 } from './canonical-metadata-identity';
-import { CanonicalMetadataOverlay } from './canonical-metadata-overlay';
 import { CanonicalMetadataRecovery } from './canonical-metadata-recovery';
 import { CanonicalPendingCommands } from './canonical-pending-commands';
+import { CanonicalSizeEpochs } from './canonical-size-epochs';
 import {
   type CanonicalEvent,
   type DesiredSubscriptions,
@@ -77,7 +77,7 @@ export class CanonicalStateClient {
   private readonly epochRecoveryDevices = new Set<string>();
   private readonly content: CanonicalContentTransactions;
   private readonly contentRetry: CanonicalContentRetry;
-  private readonly overlays = new CanonicalMetadataOverlay();
+  private readonly sizeEpochs = new CanonicalSizeEpochs();
   private readonly metadataRecovery: CanonicalMetadataRecovery;
   private readonly subscriptionRetry: CanonicalSubscriptionRetry;
   private readonly pending: CanonicalPendingCommands;
@@ -175,7 +175,7 @@ export class CanonicalStateClient {
     this.terminalCursors.clear();
     this.blockedPanes.clear();
     this.epochRecoveryDevices.clear();
-    this.overlays.clear();
+    this.sizeEpochs.clear();
     this.pending.clear();
     this.contentRetry.dispose();
   }
@@ -206,7 +206,6 @@ export class CanonicalStateClient {
       this.metadata.delete(command.deviceId);
       this.awaitingMetadataDevices.delete(command.deviceId);
       this.epochRecoveryDevices.delete(command.deviceId);
-      this.overlays.remove(command.deviceId);
       this.metadataRecovery.resolved(command.deviceId);
       this.clearPaneStateForDevice(command.deviceId);
       this.pending.dropDevice(command.deviceId);
@@ -219,7 +218,6 @@ export class CanonicalStateClient {
     this.metadata.delete(deviceId);
     this.awaitingMetadataDevices.delete(deviceId);
     this.epochRecoveryDevices.delete(deviceId);
-    this.overlays.remove(deviceId);
     this.metadataRecovery.resolved(deviceId);
     this.clearPaneStateForDevice(deviceId);
     this.pending.dropDevice(deviceId);
@@ -243,15 +241,6 @@ export class CanonicalStateClient {
       return;
     }
     this.handleEvent(wsBorsh.decodeCanonicalEventPayload(payload).event);
-  }
-
-  handleLegacyOverlaySnapshot(payload: Uint8Array): void {
-    const snapshot = wsBorsh.decodeStateSnapshot(payload);
-    this.overlays.capture(snapshot);
-    const state = this.metadata.get(snapshot.deviceId);
-    if (!state) return;
-    state.snapshot = this.overlays.apply(state.snapshot);
-    this.options.emit({ type: 'metadata-snapshot', snapshot: state.snapshot });
   }
 
   handleEvent(event: CanonicalEvent): void {
@@ -388,9 +377,18 @@ export class CanonicalStateClient {
   ): ClientSendResult {
     const pane = this.resolveTarget(command.deviceId, command.paneId);
     if (!pane) return this.deferTargetCommand(command, allowQueue);
-    const requestId = this.nextId();
+    const change = command.type === 'terminal-resize';
     return this.send({
-      ResizePane: { requestId, pane, rows: command.rows, cols: command.cols },
+      ResizePaneV11: {
+        requestId: this.nextId(),
+        pane,
+        rows: command.rows,
+        cols: command.cols,
+        geometryReason: change
+          ? wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE
+          : wsBorsh.CANONICAL_GEOMETRY_REASON_RESEND,
+        sizeEpoch: this.sizeEpochs.forGeometry(command.deviceId, command.paneId, change),
+      },
     });
   }
 
@@ -711,15 +709,15 @@ export class CanonicalStateClient {
       epochRecoveryDevices: this.epochRecoveryDevices,
       terminalCursors: this.terminalCursors,
       blockedPanes: this.blockedPanes,
-      applyOverlay: (snapshot) => this.overlays.apply(snapshot),
       clearPaneStateForDevice: (deviceId) => this.clearPaneStateForDevice(deviceId),
       cancelPane: (deviceId, paneId) => this.content.cancelPane(deviceId, paneId),
       dropPendingPane: (deviceId, paneId) => this.pending.dropPane(deviceId, paneId),
+      dropSizeEpoch: (deviceId, paneId) => this.sizeEpochs.dropPane(deviceId, paneId),
       resolvedRecovery: (deviceId) => this.metadataRecovery.resolved(deviceId),
       resolvedSubscriptionRetry: () => this.subscriptionRetry.resolved(),
       emitSnapshot: (snapshot) => this.options.emit({ type: 'metadata-snapshot', snapshot }),
-      emitPatch: (deviceId, patch) =>
-        this.options.emit({ type: 'metadata-patch', deviceId, patch }),
+      emitPatch: (deviceId, snapshot) =>
+        this.options.emit({ type: 'metadata-patch', deviceId, snapshot }),
       emitMetadataGap: (deviceId) => this.emitMetadataGap(deviceId),
     };
   }
@@ -727,6 +725,7 @@ export class CanonicalStateClient {
   private clearPaneStateForDevice(deviceId: string): void {
     deletePrefixedPaneKeys(this.terminalCursors, deviceId);
     deletePrefixedPaneKeys(this.blockedPanes, deviceId);
+    deletePrefixedPaneKeys(this.sizeEpochs, deviceId);
   }
 
   private resetConnectionAssemblies(): void {

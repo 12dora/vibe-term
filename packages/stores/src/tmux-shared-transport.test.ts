@@ -53,7 +53,7 @@ describe('tmux store shared transport adapter', () => {
     transport.publish({
       type: 'metadata-patch',
       deviceId: 'device-a',
-      patch: {
+      snapshot: wsBorsh.applyLegacyStateSnapshotDiff(initialSnapshot, {
         removals: [],
         upserts: [
           {
@@ -64,7 +64,7 @@ describe('tmux store shared transport adapter', () => {
             fields: [[wsBorsh.SOURCE_FIELD_TITLE, 'after']],
           },
         ],
-      },
+      }),
     });
 
     const pane =

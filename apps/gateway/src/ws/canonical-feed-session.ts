@@ -23,6 +23,7 @@ import {
 } from './canonical/bytes';
 import { CanonicalFrameSizer } from './canonical/frame-sizer';
 import { CanonicalPaneStream } from './canonical/pane-stream';
+import { applyCanonicalResize, normalizeResizeCommand } from './canonical/resize';
 import { CanonicalSubscriptionCoordinator } from './canonical/subscription-coordinator';
 import { CanonicalTransactionSender } from './canonical/transaction-sender';
 import {
@@ -36,6 +37,7 @@ import {
   type CanonicalFeedSessionOptions,
   type CanonicalFeedSessionStats,
   type CanonicalPaneTarget,
+  type CanonicalResizeRequest,
   type ResolvedTarget,
   type ScreenJob,
   canonicalSendAccepted,
@@ -47,6 +49,7 @@ export {
   CANONICAL_MAX_PENDING_PANE_GAPS,
   CANONICAL_MAX_SCREEN_BYTES,
   type CanonicalFeedRuntime,
+  type CanonicalResizeRequest,
   type CanonicalFeedSessionOptions,
   type CanonicalFeedSessionStats,
   type CanonicalSendResult,
@@ -141,8 +144,8 @@ export class CanonicalFeedSession {
         await this.handleSetPaneSubscriptions(command.SetPaneSubscriptions);
       } else if ('TerminalInput' in command) {
         await this.handleTerminalInput(command.TerminalInput);
-      } else if ('ResizePane' in command) {
-        await this.handleResizePane(command.ResizePane);
+      } else if ('ResizePane' in command || 'ResizePaneV11' in command) {
+        await this.handleResizePane(command);
       } else if ('RequestScreen' in command) {
         await this.handleRequestScreen(command.RequestScreen);
       } else if ('RequestHistory' in command) {
@@ -435,34 +438,21 @@ export class CanonicalFeedSession {
     target.device.runtime.sendInputBytes(target.pane.paneId, command.data);
   }
 
-  private async handleResizePane(command: {
-    requestId: Uint8Array;
-    pane: CanonicalPaneTarget;
-    rows: number;
-    cols: number;
-  }): Promise<void> {
-    const target = await this.resolveTarget(command.pane, command.requestId);
+  private async handleResizePane(command: CanonicalCommand): Promise<void> {
+    const resize = normalizeResizeCommand(command);
+    if (!resize) return;
+    const target = await this.resolveTarget(resize.pane, resize.requestId);
     if (!target) return;
-    if (command.rows < 2 || command.cols < 2) {
+    if (resize.rows < 2 || resize.cols < 2) {
       this.sender.sendError(
-        command.requestId,
+        resize.requestId,
         wsBorsh.ERROR_INVALID_FRAME,
         'invalid pane size',
         false
       );
       return;
     }
-    if (this.options.resizePane) {
-      this.options.resizePane(
-        target.device.deviceId,
-        target.pane.paneId,
-        command.cols,
-        command.rows,
-        target.device.runtime
-      );
-    } else {
-      target.device.runtime.resizePane(target.pane.paneId, command.cols, command.rows);
-    }
+    applyCanonicalResize(resize, target, this.options.resizePane);
   }
 
   private async handleRequestScreen(command: {

@@ -34,7 +34,9 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 
 - tmux 会话和 pane 的真实生命周期。
 - 终端输出收集、输入转发和设备连接管理。
-- `TERM_HISTORY`、`TERM_OUTPUT`、`TERM_RESIZE`、`TERM_SYNC_SIZE` 等 ws-borsh 协议事件。
+- canonical 数据面：`PaneData`、`Screen*` / `History*` 事务、`ResizePaneV11` 等 ws-borsh 消息。
+  （1.1.23 之前这里是 `TERM_HISTORY` / `TERM_OUTPUT` / `TERM_RESIZE` / `TERM_SYNC_SIZE`，
+  这四个 kind 已随整条 legacy 状态流删除，见 [ws-borsh v1 规范](../ws-protocol/2026021402-ws-borsh-v1-spec.md)。）
 
 ### Ghostty wasm 负责什么
 

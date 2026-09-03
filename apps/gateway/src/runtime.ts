@@ -24,7 +24,6 @@ import { telegramService } from './telegram/service';
 import { tmuxRuntimeRegistry } from './tmux-client/registry';
 import { primeLocalShellPath } from './tmux/local-shell-path';
 import { registerSnapshotLookup } from './tmux/snapshot-directory';
-import { registerThemeBroadcaster } from './tmux/theme-broadcaster';
 import { tunnelManager } from './tunnel/manager';
 import { watchService } from './watch/service';
 import { weixinService } from './weixin/service';
@@ -160,14 +159,6 @@ export async function createGatewayRuntime(
     void eventNotifier.notify(eventType, event);
   });
   registerSnapshotLookup((deviceId) => wsServer.getLastSnapshot(deviceId));
-  registerThemeBroadcaster(
-    (theme) => {
-      wsServer.scheduleTmuxThemeApply(theme);
-    },
-    (theme) => {
-      wsServer.broadcastSiteThemeUpdateS2C(theme);
-    }
-  );
   registerSettingsBroadcaster((namespace) => wsServer.broadcastSettingsUpdate(namespace));
   registerEventNotifyBroadcaster((eventType, event) =>
     wsServer.broadcastEventNotify(eventType, event)
@@ -250,7 +241,6 @@ export async function createGatewayRuntime(
       stopGatewayEventLoopLag();
       connectionAlertNotifier.setBroadcaster(null);
       connectionAlertNotifier.setEventEmitter(null);
-      registerThemeBroadcaster(null);
       registerSettingsBroadcaster(null);
       registerEventNotifyBroadcaster(null);
       registerTreeOverlayBridge(null);

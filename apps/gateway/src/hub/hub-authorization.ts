@@ -3,6 +3,7 @@ import {
   KEYLOG_RECORD_COMPAT,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
+  RELAY_RECORD_TYPES,
   decodeAdmitHubPayload,
   decodeKeyLogRecord,
   decodeRetireHubPayload,
@@ -153,6 +154,10 @@ export type HubAuthRecordCompatResult =
       allowForce: boolean;
     };
 
+function isRelayRecordType(type: string): boolean {
+  return (RELAY_RECORD_TYPES as readonly string[]).includes(type);
+}
+
 export function normalizeReportedNodeVersion(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   const trimmed = raw.trim().replace(/_dev$/, '');
@@ -203,6 +208,10 @@ export function inspectHubAuthRecordCompat(
   }
   const spec = KEYLOG_RECORD_COMPAT[type as keyof typeof KEYLOG_RECORD_COMPAT];
   if (!spec) return { ok: true };
+  // 版本来自 `nodes` 注册表，而注册表只有 hub 侧会写（redeem 与 uplink 认证）。中继租户是纯节点，
+  // 那张表永远为空，一律判「过旧」会把 set-relays / meta-key 这两类节点侧记录全部堵死。
+  // 因此注册表为空时只放行中继记录；hub-auth 与 rotate-root-keep 仍然 fail-closed。
+  if (isRelayRecordType(type) && userStore.listNodes().length === 0) return { ok: true };
   const nodes = nodesBlockingMinVersion(userStore, spec.minVersion, userId);
   if (nodes.length === 0) return { ok: true };
   return {

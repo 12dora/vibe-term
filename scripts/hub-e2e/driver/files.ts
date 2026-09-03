@@ -31,18 +31,6 @@ if (cmd === 'create-device') {
   process.exit(0);
 }
 
-if (cmd === 'tmux-tree') {
-  const deviceId = requireArg(args, 'device-id');
-  const { res, json, text } = await apiFetch(
-    baseUrl,
-    `${prefix('/api/tmux/tree')}?deviceId=${encodeURIComponent(deviceId)}`,
-    { cookies }
-  );
-  if (!res.ok) throw new Error(`tmux-tree ${res.status}: ${text}`);
-  process.stdout.write(`${JSON.stringify(json)}\n`);
-  process.exit(0);
-}
-
 if (cmd === 'create-root') {
   const deviceId = requireArg(args, 'device-id');
   const path = requireArg(args, 'path');
@@ -116,6 +104,6 @@ if (cmd === 'get') {
 }
 
 process.stderr.write(
-  'usage: files.ts <create-device|tmux-tree|create-root|list|content|raw|sha256|get> --base-url --cookie-file [--node-id]\n'
+  'usage: files.ts <create-device|create-root|list|content|raw|sha256|get> --base-url --cookie-file [--node-id]\n'
 );
 process.exit(2);

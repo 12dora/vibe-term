@@ -16,6 +16,7 @@ import {
   useEnrollmentEngine,
   useEnrollmentEngineState,
 } from '@/node/enrollment-engine';
+import { defaultRelayEnrollmentApi } from '@/node/hub-api';
 import {
   getMeshNodesState,
   refreshMeshNodes,
@@ -23,11 +24,13 @@ import {
   useHubNode,
   useSharedAuthMode,
 } from '@/node/mesh-nodes';
+import { useMeshRelay } from '@/node/mesh-relay';
 import { PLACEHOLDER_KDF, type ResolvedMode } from '@/pages/settings/nodes/management/types';
 import {
   type CreateEnrollmentState,
   useCreateEnrollment,
 } from '@/pages/settings/nodes/management/use-create-enrollment';
+import { useRelayAdmitFollowUp } from '@/pages/settings/nodes/relay/use-relay-admit-follow-up';
 import type { AuthKdfParamsJson, MeshNode } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
@@ -135,7 +138,7 @@ export function joinTokenTtlMinutes(pending: PendingEnrollment): number {
 export interface JoinEnrollment {
   /** 本机是否已加入多节点互联；否则不能在此生成加入码。 */
   meshEnabled: boolean;
-  /** hub 管理面是否可用（探测成功）。 */
+  /** 上级管理面是否可用：hub 模式看探测结果，中继模式看有没有挂上中继。 */
   hubOnline: boolean;
   create: CreateEnrollmentState;
   /** 本次面板会话创建的那条 enrollment；只跟踪它，不展示全局待确认列表。 */
@@ -292,19 +295,30 @@ export function useJoinEnrollment(): JoinEnrollment {
   });
 
   const { t } = useTranslation();
+  // 中继模式下 enrollment 建在中继上、证书从 `/api/mesh/relay/enrollments/:id` 回读：
+  // 中继的 `enroll.redeemed` 没有 `entry_sid`，推不到浏览器，只能靠这条通道轮询。
+  const relay = useMeshRelay();
+  const enrollChannel = relay.relayMode ? defaultRelayEnrollmentApi : hub.hubApi;
   const { confirmManually } = useEnrollmentEngine({
     api,
     mode,
-    hubApi: hub.hubApi,
+    hubApi: enrollChannel,
     prompt,
     onDone: refreshAfterAdmit,
     t,
   });
   const engine = useEnrollmentEngineState();
+  // admit 之后补发当前世代的 K_meta；宿主级去重，设置页同时开着也只会补一次。
+  useRelayAdmitFollowUp({
+    enabled: relay.relayMode,
+    admittedIds: engine.admittedIds,
+    api,
+    mode,
+  });
   const create = useCreateEnrollment({
     api,
     mode,
-    hubApi: hub.hubApi,
+    hubApi: enrollChannel,
     prompt,
     clearedIds: engine.clearedIds,
   });
@@ -324,7 +338,7 @@ export function useJoinEnrollment(): JoinEnrollment {
 
   return {
     meshEnabled,
-    hubOnline: hub.online,
+    hubOnline: relay.relayMode ? relay.writable : hub.online,
     create,
     session,
     engine,
@@ -384,7 +398,7 @@ export function JoinTokenFields({ enrollment }: { enrollment: JoinEnrollment }) 
           type="button"
           size="sm"
           disabled={create.busy || !enrollment.hubOnline}
-          title={enrollment.hubOnline ? undefined : t('nodes.hubOffline')}
+          title={enrollment.hubOnline ? undefined : t('nodes.uplinkOffline')}
           onClick={() => void create.submit()}
           data-testid="connect-join-generate"
         >

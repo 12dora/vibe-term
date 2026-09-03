@@ -6,13 +6,18 @@
 
 ## 部署矩阵
 
-`TMEX_ROLES` 只能是下列三者之一，非法值启动失败。没有纯 `hub` 角色：hub 总是与本机 node 同进程。
+`TMEX_ROLES` 只能是下列五者之一，非法值启动失败。没有纯 `hub` 角色：hub 总是与本机 node 同进程。
+`hub` 与 `relay` **不能同机**（`TMEX_ROLES is invalid: relay cannot be combined with hub`）。
 
 | 角色 | 典型用途 | 启动时构造 | 登录 | 直连 addon |
 |---|---|---|---|---|
 | `standalone`（默认） | 单机，未加入 mesh | 仅 `GatewayRuntime` | 无（`GET /api/auth/mode` → `{mode:'none'}`） | 不下载 |
-| `node` | 已加入 hub 的设备 | Gateway + Mesh（真实 WSS uplink） | 有，`localUiGuard` | `init` / `upgrade` 默认尝试 |
+| `node` | 已加入 hub 或中继的设备 | Gateway + Mesh（真实 WSS uplink） | 有，`localUiGuard` | `init` / `upgrade` 默认尝试 |
 | `hub,node` | 公网入口兼本机设备 | Hub + Gateway + Mesh（进程内 uplink） | 同上 | 同上 |
+| `relay` | 只给别人转发的公共中继 | Relay + Gateway（无 mesh、无用户、无前端） | 无（管理走 `TMEX_RELAY_ADMIN_TOKEN`） | 不需要 |
+| `relay,node` | 公共中继兼本机设备 | Relay + Gateway + Mesh | 有，管理面另接受本机会话 | 同 `node` |
+
+中继角色详见 [公共中继（relay）角色](../relay/2026090304-relay-role.md)。
 
 请求顺序（mesh 角色）：`HubRuntime`（`/api/hub/*`、`/hub/uplink`）→ mesh 本地守卫 → mesh（`/api/auth/*`、`/api/mesh/*`、`/mesh/ws`、`/n/:id/*`）→ gateway → 前端 SPA（覆盖 `/login`、`/nodes`、`/n/:id/...`）。standalone 不构造 mesh，只挂轻量 `GET /api/auth/mode`。
 
@@ -35,8 +40,10 @@
 | `TMEX_HUB_PUBLIC_URL` | 空 | hub 对外 HTTPS 地址，写入 join 命令与 `/api/auth/mode.hubPublicUrl`。非交互 `init --role hub,node` **必填** `--hub-public-url` |
 | `TMEX_PEER_PORT` | `39001` | node↔node 信令监听口，只承载签名信令 |
 | `TMEX_STUN_SERVERS` | `stun:stun.l.google.com:19302` | 逗号分隔，经 `node.list` 下发给各 node 与浏览器 ICE |
+| `TMEX_RELAY_PUBLIC_URL` | 空 | **仅 relay 角色写入**，且必填。中继对外地址，uplink 认证签名绑定其 host |
+| `TMEX_RELAY_ADMIN_TOKEN` | 首启生成 | **仅 relay 角色写入**。管理令牌；缺失时首启生成一枚并写回 `app.env`，库里只存 sha256 |
 
-`init` 另支持 `--hub-url`、`--hub-public-url`、`--peer-port`、`--stun-servers`。
+`init` 另支持 `--hub-url`、`--hub-public-url`、`--peer-port`、`--stun-servers`、`--relay-public-url`。
 
 ### 需手写进 `app.env` 的键
 
@@ -229,7 +236,7 @@ ICE 顺序（自动）：同内网 host → IPv6 → IPv4 STUN → TURN → hub 
 
 设备页（非 `self`）两枚徽标：浏览器↔node 路径（`lan` / `v6` / `v4-p2p` / `turn` / `relay` 与 RTT）和 entry↔node 的 `reach`。直连断开时切回 primary，并对已订阅 pane 做一次 resume；浏览器→node 方向在断开瞬间可能丢最近输入，界面提示「直连已断开，最近输入可能未送达」。
 
-**entry↔目标 node 的转发流（`/n/:id/ws` 与幂等 HTTP）同样会 failover。** 打开的 pane 订阅绑定在当前 peer link（`dc` / `ws-secure` / `relay`）上；DataChannel 断开后，entry 保持浏览器侧 WebSocket 不关，在当前最优链路上重开同一逻辑流，并回放 HELLO、已连接 device、pane 订阅。**canonical 订阅**（`SetPaneSubscriptions`）带上最后收到的 `PaneData.terminalSeq` 游标，新链路上按游标精确续传。**legacy 订阅**（`TMUX_SUBSCRIBE_PANES`）协议没有 cursor：回放 subscribe 之后会对每个已订阅 pane 发 `TMUX_FETCH_PANE_HISTORY`，用 `TERM_HISTORY` 快照重建终端视图，再接上 live `TERM_OUTPUT`；旧 session 死亡到新订阅完成之间的输出不会按字节精确续传。failover 期间到达的浏览器帧会排队，canonical 的 generation 会抬到回放帧之后，避免同 generation 冲突。若短时间内没有任何备用链路，entry 按有界退避重试并保持浏览器连接；用尽后才关掉浏览器 WS，由前端走既有重连。日志：`[mesh][stream] failover stream=… from=dc to=relay|ws-secure resumed=<n panes>`。GET/HEAD 在拿到响应头之前也会按同样策略换链路重试。
+**entry↔目标 node 的转发流（`/n/:id/ws` 与幂等 HTTP）同样会 failover。** 打开的 pane 订阅绑定在当前 peer link（`dc` / `ws-secure` / `relay`）上；DataChannel 断开后，entry 保持浏览器侧 WebSocket 不关，在当前最优链路上重开同一逻辑流，并回放 HELLO、已连接 device、pane 订阅。**canonical 订阅**（`SetPaneSubscriptions`）带上最后收到的 `PaneData.terminalSeq` 游标，新链路上按游标精确续传；游标失效或数据已被逐出时才发 `SourceGap` 并重推整屏。1.1.23 起只有这一条回放路径：legacy 订阅（`TMUX_SUBSCRIBE_PANES` + `TMUX_FETCH_PANE_HISTORY` → `TERM_HISTORY` → `TERM_OUTPUT`）已随整条 legacy 状态流删除，**对端低于 1.1.22 时不再降级回放，直接判定该 peer 不可用**（能力 `canonical-state-v1.1` + 版本门槛，见 `docs/ws-protocol/2026021403-ws-state-machines.md`）。failover 期间到达的浏览器帧会排队，canonical 的 generation 会抬到回放帧之后，避免同 generation 冲突。若短时间内没有任何备用链路，entry 按有界退避重试并保持浏览器连接；用尽后才关掉浏览器 WS，由前端走既有重连。日志：`[mesh][stream] failover stream=… from=dc to=relay|ws-secure resumed=<n panes>`。GET/HEAD 在拿到响应头之前也会按同样策略换链路重试。
 
 node↔node DataChannel 另有应用层存活探测：空闲时每 `RTC_LIVENESS_INTERVAL_MS`（默认 3 s）发一帧 ping/pong；任意入站流量都会重置计时。连续 `RTC_LIVENESS_TIMEOUT_MS`（默认 10 s）无入站则关闭该 DC/PeerConnection，`transport` 从 `dc` 回落（既有 carrier-switch / `getLink` 路径），日志为 `[mesh][rtc] liveness timeout peer=… idle_ms=…`。不要只等 ICE `disconnected`→`closed`（实测约 35 s）。浏览器 `sess` 载体识别并回复 ping，但不主动探测（浏览器侧尚未发 ping）。回连走既有 RTC wake 冷却（`PEER_RTC_WAKE_COOLDOWN_MS`，5 s），避免直连抖动时打爆信令。
 

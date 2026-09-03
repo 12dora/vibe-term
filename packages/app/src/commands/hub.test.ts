@@ -263,7 +263,8 @@ describe('hub user commands', () => {
     auth.userKeys.signAndApply = (async () => ({
       ok: false as const,
       error: 'HUB_TIMEOUT',
-    })) as typeof auth.userKeys.signAndApply;
+      // 真实链路上 hub 转发会带回这个码，服务层的返回类型没有覆盖它
+    })) as unknown as typeof auth.userKeys.signAndApply;
     setLang('zh-CN');
     await expect(
       runHubUserPasswd(parsed, 'bob', {

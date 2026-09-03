@@ -19,6 +19,8 @@ export class GatewaySession {
   onCarrierDetached: ((carrier: Carrier) => void) | null = null;
   onDirectFallback: (() => void) | null = null;
   readonly viewportClaims = new Map<string, ViewportClaim>();
+  /** canonical v1.1 尺寸 epoch：`deviceId\0paneId` → 已接受的最大 sizeEpoch，用于丢弃过期尺寸。 */
+  readonly paneSizeEpochs = new Map<string, bigint>();
 
   constructor(options: {
     id?: string;

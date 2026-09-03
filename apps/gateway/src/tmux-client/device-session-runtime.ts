@@ -7,6 +7,7 @@ import type { AtomicPaneCapture } from './control-mode-capture';
 import type { TmuxEvent } from './events';
 import { LocalExternalTmuxConnection } from './local-external-connection';
 import {
+  type DeviceTreeOrderInput,
   MetadataProjection,
   type MetadataProjectionPatch,
   type MetadataProjectionSnapshot,
@@ -314,6 +315,10 @@ export class DeviceSessionRuntime {
 
   setCustomName(kind: 'window' | 'pane', nativeId: string, name: string | null): void {
     this.metadataProjection.setCustomName(kind, nativeId, name);
+  }
+
+  setTreeOrder(order: DeviceTreeOrderInput): void {
+    this.metadataProjection.setTreeOrder(order);
   }
 
   sendInput(paneId: string, data: string): void {

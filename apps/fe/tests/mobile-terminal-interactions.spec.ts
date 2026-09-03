@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createTwoPaneSession, ensureCleanSession, tmux } from './helpers/tmux';
-import { KIND, decodeEnvelope, decodeTermInput, isGatewayWsUrl } from './helpers/ws-borsh';
+import { attachCanonicalCommandCollector } from './helpers/ws-borsh';
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
@@ -97,17 +97,14 @@ test('mobile: editor interactions keep focus and send ws messages', async ({ pag
   const created = (await createRes.json()) as { device: { id: string } };
   const deviceId = created.device.id;
 
-  const sentInputs: Array<{ deviceId: string; data: string }> = [];
-
-  page.on('websocket', (ws) => {
-    if (!isGatewayWsUrl(ws.url())) return;
-    ws.on('framesent', ({ payload }) => {
-      const envelope = decodeEnvelope(payload as Buffer);
-      if (!envelope || envelope.kind !== KIND.TERM_INPUT) return;
-      const decoded = decodeTermInput(envelope.payload);
-      sentInputs.push({ deviceId: decoded.deviceId, data: decoded.data.toString('utf8') });
-    });
-  });
+  // 终端输入走 canonical TerminalInput；组合中（isComposing）的输入在客户端就被拦下，
+  // 线上看到的每一条都是已提交的输入。
+  const commands = attachCanonicalCommandCollector(page);
+  const sentInputs = (): Array<{ deviceId: string; data: string }> =>
+    commands.inputs.map((input) => ({
+      deviceId: input.deviceId,
+      data: input.data.toString('utf8'),
+    }));
 
   try {
     await page.goto(`/devices/${deviceId}`);
@@ -129,7 +126,7 @@ test('mobile: editor interactions keep focus and send ws messages', async ({ pag
     await expect(editorInput).toBeFocused();
     await expect
       .poll(() => {
-        return sentInputs.some((msg) => msg.deviceId === deviceId && msg.data === '\u0003');
+        return sentInputs().some((msg) => msg.deviceId === deviceId && msg.data === '\u0003');
       })
       .toBeTruthy();
 
@@ -138,7 +135,7 @@ test('mobile: editor interactions keep focus and send ws messages', async ({ pag
     await expect(editorInput).toHaveValue('');
     await expect
       .poll(() => {
-        return sentInputs.some((msg) => msg.deviceId === deviceId && msg.data === 'echo hello\r');
+        return sentInputs().some((msg) => msg.deviceId === deviceId && msg.data === 'echo hello\r');
       })
       .toBeTruthy();
   } finally {
@@ -168,21 +165,14 @@ test('mobile: direct input falls back to compositionend data for ime symbols', a
   const created = (await createRes.json()) as { device: { id: string } };
   const deviceId = created.device.id;
 
-  const sentInputs: Array<{ deviceId: string; data: string; isComposing: boolean }> = [];
-
-  page.on('websocket', (ws) => {
-    if (!isGatewayWsUrl(ws.url())) return;
-    ws.on('framesent', ({ payload }) => {
-      const envelope = decodeEnvelope(payload as Buffer);
-      if (!envelope || envelope.kind !== KIND.TERM_INPUT) return;
-      const decoded = decodeTermInput(envelope.payload);
-      sentInputs.push({
-        deviceId: decoded.deviceId,
-        data: decoded.data.toString('utf8'),
-        isComposing: decoded.isComposing,
-      });
-    });
-  });
+  // 终端输入走 canonical TerminalInput；组合中（isComposing）的输入在客户端就被拦下，
+  // 线上看到的每一条都是已提交的输入。
+  const commands = attachCanonicalCommandCollector(page);
+  const sentInputs = (): Array<{ deviceId: string; data: string }> =>
+    commands.inputs.map((input) => ({
+      deviceId: input.deviceId,
+      data: input.data.toString('utf8'),
+    }));
 
   try {
     await page.addInitScript(() => {
@@ -215,11 +205,7 @@ test('mobile: direct input falls back to compositionend data for ime symbols', a
     });
 
     await expect
-      .poll(() =>
-        sentInputs.some(
-          (msg) => msg.deviceId === deviceId && msg.isComposing === false && msg.data.includes('；')
-        )
-      )
+      .poll(() => sentInputs().some((msg) => msg.deviceId === deviceId && msg.data.includes('；')))
       .toBeTruthy();
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
@@ -248,21 +234,14 @@ test('mobile: cancelled ime composition should not send fallback text', async ({
   const created = (await createRes.json()) as { device: { id: string } };
   const deviceId = created.device.id;
 
-  const sentInputs: Array<{ deviceId: string; data: string; isComposing: boolean }> = [];
-
-  page.on('websocket', (ws) => {
-    if (!isGatewayWsUrl(ws.url())) return;
-    ws.on('framesent', ({ payload }) => {
-      const envelope = decodeEnvelope(payload as Buffer);
-      if (!envelope || envelope.kind !== KIND.TERM_INPUT) return;
-      const decoded = decodeTermInput(envelope.payload);
-      sentInputs.push({
-        deviceId: decoded.deviceId,
-        data: decoded.data.toString('utf8'),
-        isComposing: decoded.isComposing,
-      });
-    });
-  });
+  // 终端输入走 canonical TerminalInput；组合中（isComposing）的输入在客户端就被拦下，
+  // 线上看到的每一条都是已提交的输入。
+  const commands = attachCanonicalCommandCollector(page);
+  const sentInputs = (): Array<{ deviceId: string; data: string }> =>
+    commands.inputs.map((input) => ({
+      deviceId: input.deviceId,
+      data: input.data.toString('utf8'),
+    }));
 
   try {
     await page.addInitScript(() => {
@@ -304,7 +283,7 @@ test('mobile: cancelled ime composition should not send fallback text', async ({
     });
 
     await page.waitForTimeout(250);
-    const leakedChars = sentInputs.filter((msg) => msg.deviceId === deviceId && msg.data === 'n');
+    const leakedChars = sentInputs().filter((msg) => msg.deviceId === deviceId && msg.data === 'n');
     expect(leakedChars).toHaveLength(0);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);

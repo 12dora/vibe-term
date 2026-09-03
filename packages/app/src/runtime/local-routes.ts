@@ -1,8 +1,7 @@
 import type { AuthenticateResult } from '../../../../apps/gateway/src/mesh/session-middleware';
 import type { TlsMode } from '../../../../apps/gateway/src/tls/types';
-import { isStandaloneRoles } from '../lib/roles';
 import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
-import { type MeshRoleName, leaveMesh } from './membership-reset';
+import { isLeavableRoleName, leaveMesh } from './membership-reset';
 import {
   type DirectSetResult,
   type LocalStatus,
@@ -33,12 +32,9 @@ function defaultDomainAccess(): DomainAccessStatus {
   return { allowed: true, viaDomain: false, hosts: [] };
 }
 
-function isMeshRoleName(value: unknown): value is MeshRoleName {
-  return value === 'node' || value === 'hub,node';
-}
-
 async function handleLeave(req: Request, deps: LocalRouteDeps): Promise<Response> {
-  if (isStandaloneRoles(deps.roles)) {
+  // 纯 relay 只替别的租户转发，本机没有用户/证书/密钥日志，没有可退的成员身份
+  if (!deps.roles.node) {
     return jsonErr('not_member', 'not a mesh member', 400);
   }
   const auth = deps.authenticate(req);
@@ -50,7 +46,7 @@ async function handleLeave(req: Request, deps: LocalRouteDeps): Promise<Response
   }
   const body = await readJsonBody(req);
   const expectedRole = body?.expectedRole;
-  if (!isMeshRoleName(expectedRole)) {
+  if (!isLeavableRoleName(expectedRole)) {
     return jsonErr('role_mismatch', 'expectedRole must match current role', 409);
   }
   try {

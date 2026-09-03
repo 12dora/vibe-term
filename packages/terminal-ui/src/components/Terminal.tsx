@@ -120,7 +120,6 @@ const TerminalView = forwardRef<TerminalRef, TerminalComponentProps>(
       instance,
       surfaceRef,
       containerRef,
-      runPostSelectResize,
       subscribe,
     });
 

@@ -5,13 +5,13 @@ import { wsBorsh } from '@tmex/shared';
 import { createGatewaySession } from '../test-helpers';
 import { createBorshSessionState, encodePayloadFrames } from './codec-borsh';
 import { sessionStateStore } from './session-state';
-import { switchBarrier } from './switch-barrier';
 
 describe('borsh codec', () => {
   it('应该创建 BorshSessionState', () => {
     const state = createBorshSessionState();
     expect(state.negotiated).toBe(false);
     expect(state.clientImpl).toBeNull();
+    expect(state.clientVersion).toBeNull();
     expect(state.maxFrameBytes).toBe(wsBorsh.DEFAULT_MAX_FRAME_BYTES);
     expect(state.seqGen()).toBe(1);
     expect(state.seqGen()).toBe(2);
@@ -107,7 +107,7 @@ describe('borsh codec', () => {
   it('chunked encodePayloadFrames 把原始 seq 写入 chunk，后续 seq 用于各帧', () => {
     let seq = 5;
     const frames = encodePayloadFrames(
-      wsBorsh.KIND_TERM_OUTPUT,
+      wsBorsh.KIND_CANONICAL_EVENT,
       new Uint8Array(200),
       () => seq++,
       64
@@ -121,7 +121,7 @@ describe('borsh codec', () => {
     expect(first.seq).toBe(6);
     const chunk = wsBorsh.decodeChunk(first.payload);
     expect(chunk.originalSeq).toBe(5);
-    expect(chunk.originalKind).toBe(wsBorsh.KIND_TERM_OUTPUT);
+    expect(chunk.originalKind).toBe(wsBorsh.KIND_CANONICAL_EVENT);
   });
 });
 
@@ -153,54 +153,6 @@ describe('session state store', () => {
     expect(updated?.state).toBe('CONNECTING');
   });
 
-  it('应该管理选择事务', () => {
-    const session = createGatewaySession();
-    sessionStateStore.create(session);
-
-    const deviceId = 'device-1';
-    const windowId = '@1';
-    const paneId = '%2';
-    const selectToken = new Uint8Array(16).fill(0xab);
-
-    const started = sessionStateStore.startSelectTransaction(
-      session,
-      deviceId,
-      windowId,
-      paneId,
-      selectToken
-    );
-    expect(started).toBe(true);
-
-    const ctx = sessionStateStore.getOrCreateSelectTransaction(session, deviceId);
-    expect(ctx?.state).toBe('SELECTING');
-    expect(ctx?.windowId).toBe(windowId);
-    expect(ctx?.paneId).toBe(paneId);
-
-    sessionStateStore.transitionSelectState(session, deviceId, 'ACKED');
-    expect(ctx?.state).toBe('ACKED');
-  });
-
-  it('应该缓冲输出', () => {
-    const session = createGatewaySession();
-    sessionStateStore.create(session);
-
-    const deviceId = 'device-1';
-
-    sessionStateStore.startOutputBuffering(session, deviceId);
-    expect(sessionStateStore.isBuffering(session, deviceId)).toBe(true);
-
-    const data1 = new Uint8Array([1, 2, 3]);
-    const data2 = new Uint8Array([4, 5, 6]);
-    sessionStateStore.bufferOutput(session, deviceId, data1);
-    sessionStateStore.bufferOutput(session, deviceId, data2);
-
-    const buffered = sessionStateStore.stopOutputBuffering(session, deviceId);
-    expect(buffered.length).toBe(2);
-    expect(buffered[0]).toEqual(data1);
-    expect(buffered[1]).toEqual(data2);
-    expect(sessionStateStore.isBuffering(session, deviceId)).toBe(false);
-  });
-
   it('两套 seq 在 attach 第二载体后都不重置', () => {
     const session = createGatewaySession({ session: true });
     expect(session.borshState.seqGen()).toBe(1);
@@ -214,189 +166,5 @@ describe('session state store', () => {
     expect(session.borshState.seqGen()).toBe(3);
     expect(session.state.wsConnection.seq).toBe(9);
     expect(sessionStateStore.incrementSeq(session)).toBe(10);
-  });
-});
-
-describe('switch barrier', () => {
-  it('应该管理事务生命周期', () => {
-    const session = createGatewaySession({ session: true });
-
-    const deviceId = 'device-1';
-    const windowId = '@1';
-    const paneId = '%2';
-    const selectToken = crypto.getRandomValues(new Uint8Array(16));
-
-    const started = switchBarrier.startTransaction(
-      session,
-      {
-        deviceId,
-        windowId,
-        paneId,
-        selectToken,
-        wantHistory: false,
-        cols: null,
-        rows: null,
-      },
-      {
-        onAckSent: () => {},
-      }
-    );
-    expect(started).toBe(true);
-
-    const token = switchBarrier.getSelectToken(session, deviceId);
-    expect(token).toEqual(selectToken);
-
-    expect(switchBarrier.validateToken(session, deviceId, selectToken)).toBe(true);
-
-    const invalidToken = crypto.getRandomValues(new Uint8Array(16));
-    expect(switchBarrier.validateToken(session, deviceId, invalidToken)).toBe(false);
-
-    switchBarrier.cleanupClient(session);
-  });
-
-  it('重复 TERM_HISTORY 不应重复发包', () => {
-    const session = createGatewaySession({ session: true });
-
-    const deviceId = 'device-history';
-    const selectToken = crypto.getRandomValues(new Uint8Array(16));
-
-    expect(
-      switchBarrier.startTransaction(session, {
-        deviceId,
-        windowId: '@1',
-        paneId: '%1',
-        selectToken,
-        wantHistory: true,
-        cols: null,
-        rows: null,
-      })
-    ).toBe(true);
-
-    switchBarrier.sendSwitchAck(session, deviceId);
-    switchBarrier.sendTermHistory(
-      session,
-      deviceId,
-      '%1',
-      new TextEncoder().encode('READY_MARKER\n'),
-      false,
-      0
-    );
-    const firstCount = session.sent.length;
-
-    switchBarrier.sendTermHistory(
-      session,
-      deviceId,
-      '%1',
-      new TextEncoder().encode('READY_MARKER\n'),
-      false,
-      0
-    );
-
-    expect(session.sent.length).toBe(firstCount);
-    switchBarrier.cleanupClient(session);
-  });
-
-  it('不同 session 的事务互不干扰', () => {
-    const ws1 = createGatewaySession({ session: true });
-    const ws2 = createGatewaySession({ session: true });
-
-    const deviceId = 'device-1';
-    const token1 = crypto.getRandomValues(new Uint8Array(16));
-    const token2 = crypto.getRandomValues(new Uint8Array(16));
-
-    expect(
-      switchBarrier.startTransaction(ws1, {
-        deviceId,
-        windowId: '@1',
-        paneId: '%1',
-        selectToken: token1,
-        wantHistory: false,
-        cols: null,
-        rows: null,
-      })
-    ).toBe(true);
-
-    expect(
-      switchBarrier.startTransaction(ws2, {
-        deviceId,
-        windowId: '@1',
-        paneId: '%2',
-        selectToken: token2,
-        wantHistory: false,
-        cols: null,
-        rows: null,
-      })
-    ).toBe(true);
-
-    expect(switchBarrier.validateToken(ws1, deviceId, token1)).toBe(true);
-    expect(switchBarrier.validateToken(ws2, deviceId, token2)).toBe(true);
-    expect(switchBarrier.validateToken(ws1, deviceId, token2)).toBe(false);
-
-    switchBarrier.cleanupClient(ws1);
-    switchBarrier.cleanupClient(ws2);
-  });
-
-  it('carrier 切换后 pending 事务仍在同一 session 上', () => {
-    const session = createGatewaySession({ session: true });
-    const direct = createGatewaySession().primary;
-    const deviceId = 'device-switch';
-    const token = crypto.getRandomValues(new Uint8Array(16));
-
-    expect(
-      switchBarrier.startTransaction(session, {
-        deviceId,
-        windowId: '@1',
-        paneId: '%1',
-        selectToken: token,
-        wantHistory: false,
-        cols: null,
-        rows: null,
-      })
-    ).toBe(true);
-
-    session.attachCarrier(direct, 'direct');
-    session.switchActiveCarrier(direct);
-
-    expect(switchBarrier.validateToken(session, deviceId, token)).toBe(true);
-    switchBarrier.cleanupClient(session);
-  });
-
-  it('history 超时且 sendLiveResume 提前 return 时应兜底解除门控', () => {
-    const session = createGatewaySession({ session: true });
-
-    const deviceId = 'device-gate-leak';
-    const selectToken = crypto.getRandomValues(new Uint8Array(16));
-
-    expect(
-      switchBarrier.startTransaction(session, {
-        deviceId,
-        windowId: '@1',
-        paneId: '%1',
-        selectToken,
-        wantHistory: true,
-        cols: null,
-        rows: null,
-      })
-    ).toBe(true);
-
-    switchBarrier.sendSwitchAck(session, deviceId);
-    expect(sessionStateStore.isBuffering(session, deviceId)).toBe(true);
-
-    session.borshState = undefined as never;
-
-    (
-      switchBarrier as unknown as {
-        handleTimeout: (
-          target: typeof session,
-          id: string,
-          stage: 'ack' | 'history',
-          token: Uint8Array
-        ) => void;
-      }
-    ).handleTimeout(session, deviceId, 'history', selectToken);
-
-    expect(sessionStateStore.isBuffering(session, deviceId)).toBe(false);
-
-    switchBarrier.cleanupClient(session);
   });
 });

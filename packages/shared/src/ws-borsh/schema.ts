@@ -139,42 +139,6 @@ export const TmuxEventSchema = b.struct({
 
 // ========== 分屏（split screen） ==========
 
-// 幂等全量声明：除焦点 pane（selectedPanes）外还要接收输出的 pane 集合
-export const TmuxSubscribePanesSchema = b.struct({
-  deviceId: b.string(),
-  paneIds: b.vec(b.string()),
-});
-
-// 拉取非焦点 pane 的首屏历史；回包复用 KIND_TERM_HISTORY，selectToken = requestToken
-export const TmuxFetchPaneHistoryLegacySchema = b.struct({
-  deviceId: b.string(),
-  paneId: b.string(),
-  requestToken: b.bytes(16),
-});
-
-export const TmuxFetchPaneHistorySchema = b.struct({
-  deviceId: b.string(),
-  paneId: b.string(),
-  requestToken: b.bytes(16),
-  byteLimit: OptionU32Schema,
-});
-
-export type TmuxFetchPaneHistory = {
-  deviceId: string;
-  paneId: string;
-  requestToken: Uint8Array;
-  byteLimit: number | null;
-};
-
-export function decodeTmuxFetchPaneHistory(data: Uint8Array): TmuxFetchPaneHistory {
-  try {
-    return TmuxFetchPaneHistorySchema.deserialize(data);
-  } catch {
-    const legacy = TmuxFetchPaneHistoryLegacySchema.deserialize(data);
-    return { ...legacy, byteLimit: null };
-  }
-}
-
 // splitter 拖拽提交：resize-pane 绝对值（cols/rows 至少一个）
 export const TmuxResizePaneSchema = b.struct({
   deviceId: b.string(),
@@ -246,15 +210,6 @@ export const TermPasteSchema = b.struct({
   isComposing: b.bool(),
 });
 
-export const TermResizeSchema = b.struct({
-  deviceId: b.string(),
-  paneId: b.string(),
-  cols: b.u16(),
-  rows: b.u16(),
-});
-
-export const TermSyncSizeSchema = TermResizeSchema;
-
 // C2S：客户端上报当前 pane 视口几何与可见性（声明式 claim）
 export const TermViewportSchema = b.struct({
   deviceId: b.string(),
@@ -274,45 +229,12 @@ export const TermViewportPolicySchema = b.struct({
   rows: b.u16(),
 });
 
-export const TermOutputSchema = b.struct({
-  deviceId: b.string(),
-  paneId: b.string(),
-  encoding: b.u8(),
-  data: b.bytes(),
-});
-
-export const TermHistorySchema = b.struct({
-  deviceId: b.string(),
-  paneId: b.string(),
-  selectToken: b.bytes(16),
-  encoding: b.u8(),
-  alternateScreen: b.bool(),
-  // pane 终端模式位图（见 pane-modes.ts）：capture 快照不含 DECSET，鼠标模式随 history 下发
-  modes: b.u8(),
-  data: b.bytes(),
-});
-
 // ========== 剪贴板 ==========
 
 export const ClipboardWriteSchema = b.struct({
   deviceId: b.string(),
   paneId: b.string(),
   text: b.string(),
-});
-
-// ========== 切换屏障 ==========
-
-export const SwitchAckSchema = b.struct({
-  deviceId: b.string(),
-  windowId: b.string(),
-  paneId: b.string(),
-  selectToken: b.bytes(16),
-});
-
-export const LiveResumeSchema = b.struct({
-  deviceId: b.string(),
-  paneId: b.string(),
-  selectToken: b.bytes(16),
 });
 
 // ========== 分片 ==========
@@ -324,52 +246,6 @@ export const ChunkSchema = b.struct({
   totalChunks: b.u16(),
   chunkIndex: b.u16(),
   data: b.bytes(),
-});
-
-// ========== State Snapshot ==========
-
-export const PaneWireSchema = b.struct({
-  id: b.string(),
-  windowId: b.string(),
-  index: b.u16(),
-  title: OptionStringSchema,
-  customName: OptionStringSchema,
-  active: b.bool(),
-  width: b.u16(),
-  height: b.u16(),
-  currentPath: OptionStringSchema,
-  currentCommand: OptionStringSchema,
-  left: OptionU16Schema,
-  top: OptionU16Schema,
-});
-
-export const WindowWireSchema = b.struct({
-  id: b.string(),
-  name: b.string(),
-  customName: OptionStringSchema,
-  index: b.u16(),
-  active: b.bool(),
-  layout: OptionStringSchema,
-  panes: b.vec(PaneWireSchema),
-});
-
-export const SessionWireSchema = b.struct({
-  id: b.string(),
-  name: b.string(),
-  windows: b.vec(WindowWireSchema),
-});
-
-export const StateSnapshotSchema = b.struct({
-  deviceId: b.string(),
-  session: b.option(SessionWireSchema),
-});
-
-export const StateSnapshotDiffSchema = b.struct({
-  deviceId: b.string(),
-  baseRevision: b.u32(),
-  revision: b.u32(),
-  diffFormat: b.u8(),
-  diffBytes: b.bytes(),
 });
 
 // ========== Agent ==========

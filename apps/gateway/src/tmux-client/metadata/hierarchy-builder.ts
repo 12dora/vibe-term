@@ -11,6 +11,7 @@ import {
   pickFallbackName,
   setDefinedStringField,
   setDefinedU16Field,
+  setDefinedU32Field,
   setTruthyStringField,
 } from './hierarchy-fields';
 import {
@@ -32,6 +33,8 @@ export interface MetadataHierarchyHost {
   getServerEpoch(): Uint8Array | null;
   getWindowCustomName(windowId: string): string | undefined;
   getPaneCustomName(paneId: string): string | undefined;
+  getWindowTreeOrder(windowId: string): number | undefined;
+  getPaneTreeOrder(windowId: string, paneId: string): number | undefined;
   ensurePaneEpoch(paneId: string): Uint8Array | null;
   takeUnknownPaneHints(paneId: string): PaneFieldHints | undefined;
 }
@@ -102,6 +105,11 @@ export class MetadataHierarchyBuilder {
       wsBorsh.SOURCE_FIELD_CUSTOM_NAME,
       pickFallbackName(this.host.getWindowCustomName(window.id), window.customName)
     );
+    setDefinedU32Field(
+      record.fields,
+      wsBorsh.SOURCE_FIELD_TREE_ORDER,
+      this.host.getWindowTreeOrder(window.id)
+    );
     return record;
   }
 
@@ -133,6 +141,11 @@ export class MetadataHierarchyBuilder {
       record.fields,
       wsBorsh.SOURCE_FIELD_CUSTOM_NAME,
       pickFallbackName(this.host.getPaneCustomName(pane.id), pane.customName)
+    );
+    setDefinedU32Field(
+      record.fields,
+      wsBorsh.SOURCE_FIELD_TREE_ORDER,
+      this.host.getPaneTreeOrder(windowKey.nativeId, pane.id)
     );
     applyPaneHints(record.fields, this.host.takeUnknownPaneHints(pane.id));
     return record;

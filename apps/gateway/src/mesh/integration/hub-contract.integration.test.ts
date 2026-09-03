@@ -183,7 +183,7 @@ describe('hub contract production wiring', () => {
       gateway: fakeGateway(db),
       userId: boot.userId,
       config: {
-        roles: { hub: true, node: true },
+        roles: { hub: true, node: true, relay: false },
         hubUrl: null,
         hubPublicUrl: 'http://hub.example',
         peerPort: 0,

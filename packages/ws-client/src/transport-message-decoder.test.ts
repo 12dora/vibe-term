@@ -15,9 +15,18 @@ function collect(
   return { handled, events };
 }
 
-const token = new Uint8Array(16).fill(3);
-
 describe('decodeGatewayTransportMessage', () => {
+  // 这些 kind 号在 1.1.23 随 legacy 状态流一起删掉，常量已不存在，只能按裸数字断言。
+  test('legacy 状态流 kind 已下线：不再登记解码器', () => {
+    for (const kind of [
+      0x0208, 0x0209, 0x020d, 0x020e, 0x0303, 0x0304, 0x0305, 0x0306, 0x0401, 0x0402,
+    ]) {
+      const { handled, events } = collect(kind, new Uint8Array(0));
+      expect(handled).toBe(false);
+      expect(events).toEqual([]);
+    }
+  });
+
   test('device-connected / device-disconnected', () => {
     const connected = collect(
       wsBorsh.KIND_DEVICE_CONNECTED,
@@ -31,73 +40,6 @@ describe('decodeGatewayTransportMessage', () => {
       wsBorsh.encodePayload(wsBorsh.schema.DeviceDisconnectedSchema, { deviceId: 'dev-1' })
     );
     expect(disconnected.events).toEqual([{ type: 'device-disconnected', deviceId: 'dev-1' }]);
-  });
-
-  test('terminal-data 保留原始字节', () => {
-    const data = new Uint8Array([1, 2, 3, 4]);
-    const { events } = collect(
-      wsBorsh.KIND_TERM_OUTPUT,
-      wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
-        deviceId: 'dev-1',
-        paneId: '%1',
-        encoding: 0,
-        data,
-      })
-    );
-
-    expect(events).toEqual([
-      { type: 'terminal-data', frame: { deviceId: 'dev-1', paneId: '%1', data } },
-    ]);
-  });
-
-  test('legacy-history 把字节解码成文本', () => {
-    const { events } = collect(
-      wsBorsh.KIND_TERM_HISTORY,
-      wsBorsh.encodePayload(wsBorsh.schema.TermHistorySchema, {
-        deviceId: 'dev-1',
-        paneId: '%2',
-        selectToken: token,
-        encoding: 0,
-        alternateScreen: true,
-        modes: 5,
-        data: new TextEncoder().encode('hello 历史'),
-      })
-    );
-
-    expect(events).toEqual([
-      {
-        type: 'legacy-history',
-        deviceId: 'dev-1',
-        paneId: '%2',
-        selectToken: token,
-        data: 'hello 历史',
-        alternateScreen: true,
-        modes: 5,
-      },
-    ]);
-  });
-
-  test('selection-ack / live-resume 携带 selectToken', () => {
-    const ack = collect(
-      wsBorsh.KIND_SWITCH_ACK,
-      wsBorsh.encodePayload(wsBorsh.schema.SwitchAckSchema, {
-        deviceId: 'dev-1',
-        windowId: '@1',
-        paneId: '%1',
-        selectToken: token,
-      })
-    );
-    expect(ack.events).toEqual([{ type: 'selection-ack', deviceId: 'dev-1', selectToken: token }]);
-
-    const resume = collect(
-      wsBorsh.KIND_LIVE_RESUME,
-      wsBorsh.encodePayload(wsBorsh.schema.LiveResumeSchema, {
-        deviceId: 'dev-1',
-        paneId: '%1',
-        selectToken: token,
-      })
-    );
-    expect(resume.events).toEqual([{ type: 'live-resume', deviceId: 'dev-1', selectToken: token }]);
   });
 
   test('terminal-viewport-policy', () => {
@@ -175,36 +117,6 @@ describe('decodeGatewayTransportMessage', () => {
     }
   });
 
-  test('metadata-patch 仅接受 absolute-json 格式', () => {
-    const diff = { upserts: [], removals: [{ entityKind: 3, nativeId: '%1' }] };
-    const diffBytes = wsBorsh.encodeLegacyStateSnapshotDiff(diff);
-
-    const accepted = collect(
-      wsBorsh.KIND_STATE_SNAPSHOT_DIFF,
-      wsBorsh.encodePayload(wsBorsh.schema.StateSnapshotDiffSchema, {
-        deviceId: 'dev-1',
-        baseRevision: 1,
-        revision: 2,
-        diffFormat: wsBorsh.STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON,
-        diffBytes,
-      })
-    );
-    expect(accepted.events).toEqual([{ type: 'metadata-patch', deviceId: 'dev-1', patch: diff }]);
-
-    const ignored = collect(
-      wsBorsh.KIND_STATE_SNAPSHOT_DIFF,
-      wsBorsh.encodePayload(wsBorsh.schema.StateSnapshotDiffSchema, {
-        deviceId: 'dev-1',
-        baseRevision: 1,
-        revision: 2,
-        diffFormat: wsBorsh.STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON + 1,
-        diffBytes,
-      })
-    );
-    expect(ignored.handled).toBe(true);
-    expect(ignored.events).toEqual([]);
-  });
-
   test('KIND_ERROR 转成 transport-error', () => {
     const { events } = collect(
       wsBorsh.KIND_ERROR,
@@ -220,6 +132,40 @@ describe('decodeGatewayTransportMessage', () => {
     const event = events[0] as Extract<GatewayTransportEvent, { type: 'transport-error' }>;
     expect(event.type).toBe('transport-error');
     expect(event.error.message).toBe('boom');
+  });
+
+  test('canonical v1.1 门槛拒绝的 ERROR 转成 server-too-old', () => {
+    const { handled, events } = collect(
+      wsBorsh.KIND_ERROR,
+      wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+        refSeq: null,
+        code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
+        message: `${wsBorsh.CANONICAL_V11_REQUIRED_ERROR_PREFIX}: node 1.1.21 < 1.1.22`,
+        retryable: false,
+      })
+    );
+
+    expect(handled).toBe(true);
+    expect(events).toEqual([
+      {
+        type: 'server-too-old',
+        minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
+        serverVersion: null,
+      },
+    ]);
+  });
+
+  test('同码不同 message 的 ERROR 仍是 transport-error', () => {
+    const { events } = collect(
+      wsBorsh.KIND_ERROR,
+      wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+        refSeq: null,
+        code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
+        message: 'Unsupported protocol version',
+        retryable: false,
+      })
+    );
+    expect(events.map((event) => event.type)).toEqual(['transport-error']);
   });
 
   test('未登记的 kind 被忽略且不产生事件', () => {
@@ -289,21 +235,5 @@ describe('decodeGatewayTransportMessage', () => {
     expect(events).toEqual([
       { type: 'rebase-required', deviceId: 'dev', paneId: '%1', reason: 'pane_gap' },
     ]);
-  });
-  test('terminal-data 的 data 是 payload 视图，截断/越界 payload 抛错', () => {
-    const payload = wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
-      deviceId: 'dev-1',
-      paneId: '%1',
-      encoding: 0,
-      data: new Uint8Array(32).fill(7),
-    });
-    const { events } = collect(wsBorsh.KIND_TERM_OUTPUT, payload);
-    const frame = (events[0] as Extract<GatewayTransportEvent, { type: 'terminal-data' }>).frame;
-    expect(frame.data.buffer).toBe(payload.buffer);
-
-    expect(() => collect(wsBorsh.KIND_TERM_OUTPUT, payload.subarray(0, 10))).toThrow();
-    const oversize = new Uint8Array(payload);
-    new DataView(oversize.buffer).setUint32(oversize.length - 36, 0xffffffff, true);
-    expect(() => collect(wsBorsh.KIND_TERM_OUTPUT, oversize)).toThrow();
   });
 });

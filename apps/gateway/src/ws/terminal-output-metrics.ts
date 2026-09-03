@@ -1,11 +1,5 @@
 import { elapsedIfDue } from '../tmux-client/control-stream-metrics';
 import {
-  GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
-  GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
-  GATEWAY_TERM_OUTPUT_BATCH_TOTAL_MAX_BYTES,
-  type TerminalOutputBatcherStats,
-} from './terminal-output-batcher';
-import {
   GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
   GATEWAY_WS_BACKPRESSURE_TIMEOUT_MS,
   type WebSocketSendGuardStats,
@@ -15,7 +9,6 @@ export const TERMINAL_OUTPUT_METRICS_INTERVAL_MS = 30_000;
 export const TERMINAL_OUTPUT_METRICS_CHECK_EVERY = 1024;
 
 export interface TerminalSourceObservation {
-  legacy: boolean;
   canonical: boolean;
 }
 
@@ -26,7 +19,6 @@ export interface CanonicalTerminalQueueStats {
 }
 
 export interface TerminalOutputQueueStats {
-  batch: TerminalOutputBatcherStats;
   websocket: WebSocketSendGuardStats;
   canonical: CanonicalTerminalQueueStats;
 }
@@ -37,14 +29,8 @@ export interface TerminalOutputMetricsSnapshot {
   sourceBytes: number;
   droppedEvents: number;
   droppedBytes: number;
-  legacyObservedEvents: number;
-  legacyObservedBytes: number;
   canonicalObservedEvents: number;
   canonicalObservedBytes: number;
-  batches: number;
-  batchBytes: number;
-  recipientDeliveries: number;
-  recipientBytes: number;
   canonicalRecipientDeliveries: number;
   canonicalRecipientBytes: number;
   canonicalDeliveryDrops: number;
@@ -60,14 +46,8 @@ function emptyCounters(): TerminalOutputCounters {
     sourceBytes: 0,
     droppedEvents: 0,
     droppedBytes: 0,
-    legacyObservedEvents: 0,
-    legacyObservedBytes: 0,
     canonicalObservedEvents: 0,
     canonicalObservedBytes: 0,
-    batches: 0,
-    batchBytes: 0,
-    recipientDeliveries: 0,
-    recipientBytes: 0,
     canonicalRecipientDeliveries: 0,
     canonicalRecipientBytes: 0,
     canonicalDeliveryDrops: 0,
@@ -77,13 +57,6 @@ function emptyCounters(): TerminalOutputCounters {
 
 export function emptyTerminalOutputQueueStats(): TerminalOutputQueueStats {
   return {
-    batch: {
-      pendingPanes: 0,
-      pendingBytes: 0,
-      pendingBytesLimit: GATEWAY_TERM_OUTPUT_BATCH_TOTAL_MAX_BYTES,
-      perPaneBytesLimit: GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
-      deadlineMs: GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
-    },
     websocket: {
       sessions: 0,
       backpressuredSessions: 0,
@@ -123,28 +96,13 @@ export class TerminalOutputMetrics {
   recordSource(bytes: number, observed: TerminalSourceObservation): void {
     this.counters.sourceEvents += 1;
     this.counters.sourceBytes += bytes;
-    if (observed.legacy) {
-      this.counters.legacyObservedEvents += 1;
-      this.counters.legacyObservedBytes += bytes;
-    }
     if (observed.canonical) {
       this.counters.canonicalObservedEvents += 1;
       this.counters.canonicalObservedBytes += bytes;
+      return;
     }
-    if (!observed.legacy && !observed.canonical) {
-      this.counters.droppedEvents += 1;
-      this.counters.droppedBytes += bytes;
-    }
-  }
-
-  recordBatch(bytes: number): void {
-    this.counters.batches += 1;
-    this.counters.batchBytes += bytes;
-  }
-
-  recordRecipient(bytes: number): void {
-    this.counters.recipientDeliveries += 1;
-    this.counters.recipientBytes += bytes;
+    this.counters.droppedEvents += 1;
+    this.counters.droppedBytes += bytes;
   }
 
   recordCanonicalRecipient(bytes: number, delivered: boolean): void {

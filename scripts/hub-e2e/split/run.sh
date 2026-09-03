@@ -813,29 +813,12 @@ else
   fail "A6 create local device on node-a (${dev_a_json})"
 fi
 
-tree_a=""
-if [[ -n "${DEVICE_A_ID}" ]]; then
-  for _ in $(seq 1 20); do
-    set +e
-    tree_a="$(driver files.ts tmux-tree --base-url "${HUB_PUBLIC_URL}" --cookie-file /out/cookies-hub.json \
-      --node-id "${NODE_A_ID}" --device-id "${DEVICE_A_ID}")"
-    set -e
-    if echo "${tree_a}" | grep -q '"id":'; then
-      break
-    fi
-    sleep 1
-  done
-fi
-printf '%s\n' "${tree_a}" | tee "${OUT}/tmux-tree-a.json"
-PANE_A="$(jread /out/tmux-tree-a.json 'j.devices?.[0]?.session?.windows?.[0]?.panes?.[0]?.id' || true)"
-log "pane-a ${PANE_A}"
-
 MARKER_A="TMEX_SPLIT_A_MARKER"
 term_a_rc=1
-if [[ -n "${DEVICE_A_ID}" && -n "${PANE_A}" ]]; then
+if [[ -n "${DEVICE_A_ID}" ]]; then
   set +e
   driver terminal.ts --base-url "${HUB_PUBLIC_URL}" --cookie-file /out/cookies-hub.json \
-    --node-id "${NODE_A_ID}" --device-id "${DEVICE_A_ID}" --pane-id "${PANE_A}" --marker "${MARKER_A}" --timeout 25000
+    --node-id "${NODE_A_ID}" --device-id "${DEVICE_A_ID}" --marker "${MARKER_A}" --timeout 25000
   term_a_rc=$?
   set -e
 fi
@@ -942,25 +925,6 @@ else
   fail "B4 create local device on hub container (${dev_h_json})"
 fi
 
-tree_h=""
-for _ in $(seq 1 20); do
-  set +e
-  tree_h="$(driver files.ts tmux-tree --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}")"
-  set -e
-  if echo "${tree_h}" | grep -q '"id":'; then
-    break
-  fi
-  sleep 1
-done
-printf '%s\n' "${tree_h}" | tee "${OUT}/tmux-tree-hub.json"
-PANE_H="$(jread /out/tmux-tree-hub.json 'j.devices?.[0]?.session?.windows?.[0]?.panes?.[0]?.id' || true)"
-if [[ -n "${PANE_H}" ]]; then
-  pass "B5 tmux tree on hub via node-a"
-else
-  fail "B5 tmux tree on hub via node-a (${tree_h})"
-fi
-
 REACH_B="$(docker exec tmex-split-driver bun -e '
   const j = await Bun.file("/out/mesh-nodes-entry.json").json();
   const n = (j.nodes ?? []).find((x) => x.isHub === true);
@@ -972,7 +936,7 @@ printf '%s\n' "${REACH_B}" > "${OUT}/reach-hub-from-a.txt"
 MARKER_B="TMEX_SPLIT_B_MARKER"
 set +e
 driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-  --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --pane-id "${PANE_H}" --marker "${MARKER_B}" --timeout 25000
+  --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --marker "${MARKER_B}" --timeout 25000
 term_b_rc=$?
 set -e
 if [[ "${term_b_rc}" -eq 0 ]]; then
@@ -1010,24 +974,10 @@ else
   fail "C1 node-a sees node-b reach=lan within 90s"
 fi
 
-tree_b=""
-for _ in $(seq 1 15); do
-  set +e
-  tree_b="$(driver files.ts tmux-tree --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}")"
-  set -e
-  if echo "${tree_b}" | grep -q '"id":'; then
-    break
-  fi
-  sleep 1
-done
-printf '%s\n' "${tree_b}" | tee "${OUT}/tmux-tree-b.json"
-PANE_B="$(jread /out/tmux-tree-b.json 'j.devices?.[0]?.session?.windows?.[0]?.panes?.[0]?.id' || true)"
-
 MARKER_C="TMEX_SPLIT_C_LAN"
 set +e
 driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-  --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --pane-id "${PANE_B}" --marker "${MARKER_C}" --timeout 25000
+  --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --marker "${MARKER_C}" --timeout 25000
 term_c_rc=$?
 set -e
 if [[ "${term_c_rc}" -eq 0 ]]; then
@@ -1043,7 +993,7 @@ sleep 2
 MARKER_CD="TMEX_SPLIT_C_HUBDOWN"
 set +e
 driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-  --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --pane-id "${PANE_B}" --marker "${MARKER_CD}" --timeout 25000
+  --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --marker "${MARKER_CD}" --timeout 25000
 term_cd_rc=$?
 list2_json="$(driver files.ts list --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
   --node-id "${NODE_B_ID}" --root-id "${ROOT_ID}" --path /e2e)"
@@ -1110,7 +1060,7 @@ driver nodes.ts wait-hub-online --base-url "${HUB_PUBLIC_URL}" --cookie-file /ou
 re_up_rc=$?
 env_a="$(docker exec tmex-split-node-a bash -lc 'grep -E "TMEX_HUB_URL|TMEX_ROLES" /var/lib/tmex/app.env')"
 term_e_json="$(driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-  --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --pane-id "${PANE_H}" --marker TMEX_SPLIT_E_A --timeout 25000)"
+  --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --marker TMEX_SPLIT_E_A --timeout 25000)"
 term_e_rc=$?
 set -e
 printf '%s\n' "${env_a}" | tee "${OUT}/node-a-env-after-restart.txt"
@@ -1215,35 +1165,15 @@ write_mesh_path() {
   ' 2>/dev/null || true
 }
 
-refresh_pane() {
-  local tid="$1"
-  local did="$2"
-  local json="$3"
-  local tree=""
-  local i
-  for i in $(seq 1 20); do
-    set +e
-    tree="$(driver files.ts tmux-tree --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-      --node-id "${tid}" --device-id "${did}")"
-    set -e
-    if echo "${tree}" | grep -q '"id":'; then
-      break
-    fi
-    sleep 1
-  done
-  printf '%s\n' "${tree}" | tee "${OUT}/$(basename "${json}")" >/dev/null
-  jread "${json}" 'j.devices?.[0]?.session?.windows?.[0]?.panes?.[0]?.id'
-}
-
 # run_direct_scenarios <kind>
 # kind=lan → L1..L8 against node-b over docker lan (REQUIRED; host ICE / UDP)
 # kind=hub → D1-D3/H1-H3/I1-I2 against hub (WAN; FAIL with evidence if UDP blocked)
 run_direct_scenarios() {
   local kind="$1"
   local d1 d2 d3 h1 h2 h3 i1 i2 fallback_transport=relay
-  local target target_id device_id pane_id
+  local target target_id device_id
   local mesh_json path_json
-  local tree_json seq_json seq_err seq_ready seq_input
+  local seq_json seq_err seq_ready seq_input
   local bulk_sha_file bulk_dc_json bulk_relay_json root_json_file
   local enable_log
   local got_dc=0
@@ -1263,10 +1193,8 @@ run_direct_scenarios() {
       target=hub
       target_id="${HUB_NODE_ID}"
       device_id="${DEVICE_H_ID}"
-      pane_id="${PANE_H:-}"
       mesh_json=/out/mesh-nodes-direct.json
       path_json=/out/direct-path.json
-      tree_json=/out/tmux-tree-hub.json
       seq_json=/out/seq-capture.json
       seq_err=/out/seq-capture.err
       seq_ready=/out/seq-ready.json
@@ -1291,10 +1219,8 @@ run_direct_scenarios() {
       target=node-b
       target_id="${NODE_B_ID}"
       device_id="${DEVICE_B_ID}"
-      pane_id="${PANE_B:-}"
       mesh_json=/out/mesh-nodes-direct-lan.json
       path_json=/out/direct-path-lan.json
-      tree_json=/out/tmux-tree-b.json
       seq_json=/out/seq-capture-lan.json
       seq_err=/out/seq-capture-lan.err
       seq_ready=/out/seq-ready-lan.json
@@ -1395,13 +1321,6 @@ run_direct_scenarios() {
     fail "${d1}" "a=${dc_a_rc} t=${dc_t_rc} ${PATH_D}"
   fi
 
-  pane_id="$(refresh_pane "${target_id}" "${device_id}" "${tree_json}" || true)"
-  if [[ "${kind}" == "hub" ]]; then
-    PANE_H="${pane_id}"
-  else
-    PANE_B="${pane_id}"
-  fi
-
   set +e
   driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
     --name "${target_id}" --transport dc --timeout 90000
@@ -1424,7 +1343,7 @@ run_direct_scenarios() {
 
   set +e
   driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --node-id "${target_id}" --device-id "${device_id}" --pane-id "${pane_id}" --marker "${marker}" --timeout 25000
+    --node-id "${target_id}" --device-id "${device_id}" --marker "${marker}" --timeout 25000
   local term_d_rc=$?
   driver nodes.ts mesh-list --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
     > "${OUT}/$(basename "${mesh_json}")"
@@ -1452,17 +1371,11 @@ run_direct_scenarios() {
 
   ensure_udp_drop_tool
   target_ensure_tmux "${target}"
-  pane_id="$(refresh_pane "${target_id}" "${device_id}" "${tree_json}" || true)"
-  if [[ "${kind}" == "hub" ]]; then
-    PANE_H="${pane_id}"
-  else
-    PANE_B="${pane_id}"
-  fi
   printf '%s\n' 'for i in $(seq 1 400); do echo SEQ_$i; sleep 0.02; done' > "${OUT}/seq-producer.txt"
   rm -f "${OUT}/$(basename "${seq_ready}")"
   set +e
   driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --node-id "${target_id}" --device-id "${device_id}" --pane-id "${pane_id}" \
+    --node-id "${target_id}" --device-id "${device_id}" \
     --capture-seq --expect-count 400 --seq-prefix SEQ_ \
     --input-file "${seq_input}" --ready-file "${seq_ready}" --timeout 90000 \
     > "${OUT}/$(basename "${seq_json}")" 2> "${OUT}/$(basename "${seq_err}")" &

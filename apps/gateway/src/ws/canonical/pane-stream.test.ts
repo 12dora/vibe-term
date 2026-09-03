@@ -4,7 +4,7 @@ import { wsBorsh } from '@tmex/shared';
 import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
   GATEWAY_TERM_OUTPUT_COOLDOWN_MAX_KEYS,
-} from '../terminal-output-batcher';
+} from '../terminal-output-batching';
 import { CanonicalFrameSizer } from './frame-sizer';
 import { CanonicalPaneStream } from './pane-stream';
 import { CanonicalTransactionSender } from './transaction-sender';

@@ -10,7 +10,7 @@ function flushAsync(): Promise<void> {
 function encodeHelloFrame() {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
     clientImpl: 'inbound-frame-test',
-    clientVersion: '0.0.1',
+    clientVersion: '1.1.23',
     maxFrameBytes: 65_536,
     supportsCompression: false,
     supportsDiffSnapshot: false,

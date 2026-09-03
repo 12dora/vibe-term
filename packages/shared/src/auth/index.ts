@@ -160,6 +160,7 @@ export type { WebCryptoEd25519KeyPair } from './webcrypto-ed25519';
 export {
   HUB_AUTH_RECORD_TYPES,
   KEYLOG_RECORD_COMPAT,
+  RELAY_RECORD_TYPES,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   KEY_LOG_SIGNER_MATRIX,
   MIN_HUB_AUTH_RECORD_VERSION,
@@ -256,3 +257,32 @@ export {
 export type { UplinkAuth } from './uplink-auth';
 
 export { canonicalHubUrl } from './hub-url';
+
+export {
+  MIN_RELAY_RECORD_VERSION,
+  MetaKeyPayloadSchema,
+  RELAY_RECORD_MAX_RELAYS,
+  RELAY_RECORD_MAX_URL_LEN,
+  RELAY_RECORD_MAX_WRAP_ENTRIES,
+  RelayListMode,
+  RelayTargetSchema,
+  RelayWrapEntrySchema,
+  SetRelaysPayloadSchema,
+  applyRelayKeyLogRecord,
+  cloneRelayList,
+  decodeMetaKeyPayload,
+  decodeSetRelaysPayload,
+  encodeMetaKeyPayload,
+  encodeSetRelaysPayload,
+  wrapEntryFromBytes,
+  wrapEntryToBytes,
+} from './relay-records';
+export type {
+  MetaKeyPayload,
+  RelayListMode as RelayListModeName,
+  RelayTargetPayload,
+  RelayWrapEntryBytes,
+  SetRelaysPayload,
+  StoredRelayList,
+  StoredRelayTarget,
+} from './relay-records';

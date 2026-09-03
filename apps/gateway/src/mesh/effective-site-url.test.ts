@@ -91,7 +91,7 @@ describe('createMeshSiteSettingsLink', () => {
       },
     ]);
     const hubLink = createMeshSiteSettingsLink({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       localNodeId: () => WRITER,
       hubStore: store,
       attachedHub: () => ({ publicUrl: 'https://attached.example' }),
@@ -102,7 +102,7 @@ describe('createMeshSiteSettingsLink', () => {
     expect(hubLink.effectiveSiteUrl()).toBe('https://hub.example/');
 
     const nodeLink = createMeshSiteSettingsLink({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       localNodeId: () => NODE,
       hubStore: store,
       attachedHub: () => ({ publicUrl: 'https://attached.example' }),
@@ -114,7 +114,7 @@ describe('createMeshSiteSettingsLink', () => {
 
   test('pure node returns null when hub URL is unknown so callers fall back to stored site_url', () => {
     const nodeLink = createMeshSiteSettingsLink({
-      roles: { hub: false, node: true },
+      roles: { hub: false, node: true, relay: false },
       localNodeId: () => NODE,
       hubStore: null,
       attachedHub: () => null,
@@ -126,7 +126,7 @@ describe('createMeshSiteSettingsLink', () => {
 
   test('standalone flags are unlinked', () => {
     const link = createMeshSiteSettingsLink({
-      roles: { hub: false, node: false },
+      roles: { hub: false, node: false, relay: false },
       localNodeId: () => NODE,
       hubStore: null,
       attachedHub: () => ({ publicUrl: 'https://hub.example' }),
@@ -155,7 +155,7 @@ describe('createMeshSiteSettingsLink', () => {
       },
     ]);
     const standby = createMeshSiteSettingsLink({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       localNodeId: () => STANDBY,
       hubStore: store,
       attachedHub: () => null,
@@ -182,7 +182,7 @@ describe('createMeshSiteSettingsLink', () => {
       },
     ]);
     const standby = createMeshSiteSettingsLink({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       localNodeId: () => STANDBY,
       hubStore: store,
       attachedHub: () => null,
@@ -209,7 +209,7 @@ describe('createMeshSiteSettingsLink', () => {
       },
     ]);
     const standby = createMeshSiteSettingsLink({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       localNodeId: () => STANDBY,
       hubStore: store,
       attachedHub: () => null,
@@ -236,7 +236,7 @@ describe('createMeshSiteSettingsLink', () => {
       },
     ]);
     const writer = createMeshSiteSettingsLink({
-      roles: { hub: true, node: true },
+      roles: { hub: true, node: true, relay: false },
       localNodeId: () => WRITER,
       hubStore: store,
       attachedHub: () => null,

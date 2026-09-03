@@ -28,6 +28,17 @@ export const AUTH_COMMANDS = new Set([
   'hub.allow',
   'hub.disallow',
   'mesh.reset-root',
+  'relay.status',
+  'relay.tenants',
+  'relay.passwd',
+  'relay.kick',
+  'relay.remove',
+  'relay.quota',
+  'relay.label',
+  'relay.enroll',
+  'relay.reauth',
+  'relay.leave',
+  'relay.list',
   'enroll',
 ]);
 
@@ -159,8 +170,10 @@ function installSignalForwarding(child: ChildProcess): () => void {
   });
 
   return () => {
+    // @types/bun 把 process.off 收窄成只接受 'memoryPressure'，用 EventEmitter 视图取回原始签名
+    const emitter: NodeJS.EventEmitter = process;
     for (const [signal, handler] of handlers) {
-      process.off(signal, handler);
+      emitter.off(signal, handler);
     }
   };
 }
