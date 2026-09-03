@@ -1,3 +1,5 @@
+import { parseWindowLayoutSize } from './frame-utils';
+import type { DeviceConnectionEntry } from './types';
 // 视口仲裁：一个 tmux 窗口只有一份 PTY 几何。可见客户端中列数最小者持有整窗尺寸，
 // 避免窄屏溢出；更大的客户端跟随该尺寸。不可见声明不参与。
 // 并列取更小行数，再平取更小 sessionId。
@@ -188,4 +190,20 @@ export function notifyClaimants<
     claim.sentPolicy = next;
     send(session, claim);
   }
+}
+
+// 从 tmux-command-handlers 迁入：视口仲裁需要读取当前快照里的窗口几何。
+export function liveWindowGeometry(
+  entry: DeviceConnectionEntry,
+  windowId: string
+): { cols: number; rows: number } | undefined {
+  const window = entry.lastSnapshot?.session?.windows.find(
+    (candidate) => candidate.id === windowId
+  );
+  if (!window?.panes.length) return undefined;
+  if (window.panes.length > 1) {
+    return parseWindowLayoutSize(window.layout) ?? undefined;
+  }
+  const pane = window.panes[0];
+  return pane ? { cols: pane.width, rows: pane.height } : undefined;
 }
