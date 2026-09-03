@@ -1,4 +1,4 @@
-import { isLoopbackClientIp } from '../db/local-auth-settings';
+import { isLoopbackClientIp } from './address-class';
 import { resolveClientIp } from './client-ip';
 import { isLocalClientSource } from './domain-access-policy';
 import { MESH_VIA_SELF, getMeshRequestContext } from './mesh-deps';

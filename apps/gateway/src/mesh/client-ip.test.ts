@@ -145,6 +145,37 @@ describe('resolveClientIp', () => {
         trustProxy: true,
       })
     ).toBe('::1');
+    expect(
+      resolveClientIp({
+        socketIp: SOCKET,
+        headers: headers({ 'x-real-ip': 'fe80::1%en0' }),
+        trustProxy: true,
+      })
+    ).toBe('fe80::1');
+  });
+
+  test('trusted: leading zeros, appended ports and garbage are not IP literals', () => {
+    expect(
+      resolveClientIp({
+        socketIp: SOCKET,
+        headers: headers({ 'x-real-ip': '127.000.000.001' }),
+        trustProxy: true,
+      })
+    ).toBe(SOCKET);
+    expect(
+      resolveClientIp({
+        socketIp: SOCKET,
+        headers: headers({ 'x-forwarded-for': '127.0.0.1:8080' }),
+        trustProxy: true,
+      })
+    ).toBe(SOCKET);
+    expect(
+      resolveClientIp({
+        socketIp: SOCKET,
+        headers: headers({ 'cf-connecting-ip': '' }),
+        trustProxy: true,
+      })
+    ).toBe(SOCKET);
   });
 });
 

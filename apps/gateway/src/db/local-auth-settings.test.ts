@@ -154,12 +154,20 @@ describe('isLoopbackClientIp', () => {
     expect(isLoopbackClientIp('::1')).toBe(true);
     expect(isLoopbackClientIp('::ffff:127.0.0.1')).toBe(true);
     expect(isLoopbackClientIp('localhost')).toBe(true);
+    expect(isLoopbackClientIp('[::1]')).toBe(true);
+    expect(isLoopbackClientIp('::1%lo0')).toBe(true);
+    expect(isLoopbackClientIp('127.000.000.001')).toBe(true);
+    expect(isLoopbackClientIp('::ffff:127.0.0.1%en0')).toBe(true);
   });
 
   test('公网与 peer 不是本机', () => {
     expect(isLoopbackClientIp('8.8.8.8')).toBe(false);
     expect(isLoopbackClientIp('10.0.0.9')).toBe(false);
     expect(isLoopbackClientIp('peer:aa')).toBe(false);
+    expect(isLoopbackClientIp('::ffff:7f00:1')).toBe(false);
+    expect(isLoopbackClientIp('0:0:0:0:0:0:0:1')).toBe(false);
+    expect(isLoopbackClientIp('127.0.0.1:8080')).toBe(false);
+    expect(isLoopbackClientIp('LOCAL')).toBe(false);
   });
 });
 

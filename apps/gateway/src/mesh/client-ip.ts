@@ -1,4 +1,4 @@
-import { isLoopbackClientIp } from '../db/local-auth-settings';
+import { isLoopbackClientIp, parseIpLiteral } from './address-class';
 import { getMeshRequestContext } from './mesh-deps';
 
 export type ClientIpInput = {
@@ -6,8 +6,6 @@ export type ClientIpInput = {
   headers: Headers;
   trustProxy: boolean;
 };
-
-const IPV4_RE = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
 export function resolveClientIp(input: ClientIpInput): string | undefined {
   const socket = trimOrUndef(input.socketIp);
@@ -64,38 +62,4 @@ function headerValue(headers: Headers, name: string): string | undefined {
 function trimOrUndef(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
-}
-
-function parseIpLiteral(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  let host = raw.trim();
-  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
-  const zone = host.indexOf('%');
-  if (zone >= 0) host = host.slice(0, zone);
-  if (!host) return undefined;
-  if (IPV4_RE.test(host)) return host;
-  const mapped = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
-  if (mapped?.[1] && IPV4_RE.test(mapped[1])) return host.toLowerCase();
-  if (isIpv6(host)) return host.toLowerCase();
-  return undefined;
-}
-
-function isIpv6(host: string): boolean {
-  if (!/^[0-9a-fA-F:]+$/.test(host)) return false;
-  const sides = host.split('::');
-  if (sides.length > 2) return false;
-  const parseSide = (side: string): string[] | null => {
-    if (side === '') return [];
-    const groups = side.split(':');
-    if (groups.some((g) => !g || g.length > 4 || !/^[0-9a-fA-F]+$/.test(g))) return null;
-    return groups;
-  };
-  if (sides.length === 2) {
-    const left = parseSide(sides[0] ?? '');
-    const right = parseSide(sides[1] ?? '');
-    if (!left || !right) return false;
-    return left.length + right.length <= 7;
-  }
-  const groups = parseSide(host);
-  return groups != null && groups.length === 8;
 }

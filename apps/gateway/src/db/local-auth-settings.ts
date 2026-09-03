@@ -85,17 +85,6 @@ export function standaloneClosedModeFields() {
   };
 }
 
-export function isLoopbackClientIp(ip: string | null | undefined): boolean {
-  if (ip == null || ip === '' || ip === 'local') return true;
-  if (ip.startsWith('peer:')) return false;
-  const host = unwrapHost(ip);
-  if (host === 'localhost') return true;
-  if (host === '::1') return true;
-  const mapped = unwrapIpv4Mapped(host);
-  if (mapped && isLoopbackIpv4(mapped)) return true;
-  return isLoopbackIpv4(host);
-}
-
 export type LocalAuthToggleOk = { ok: true; enabled: boolean };
 export type LocalAuthDenied = { ok: false; code: string; status: number };
 export type LocalAuthToggleDecision = LocalAuthToggleOk | LocalAuthDenied;
@@ -163,29 +152,4 @@ export function readLocalAuthEffective(): boolean {
   }
 }
 
-function unwrapHost(raw: string): string {
-  let host = raw.trim().toLowerCase();
-  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
-  const zone = host.indexOf('%');
-  if (zone >= 0) host = host.slice(0, zone);
-  return host;
-}
-
-function unwrapIpv4Mapped(host: string): string | null {
-  const dotted = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
-  if (dotted) return dotted[1] ?? null;
-  return null;
-}
-
-function isLoopbackIpv4(host: string): boolean {
-  const parts = host.split('.');
-  if (parts.length !== 4) return false;
-  const a = Number(parts[0]);
-  if (!Number.isInteger(a) || a !== 127) return false;
-  for (const p of parts) {
-    if (!/^\d{1,3}$/.test(p)) return false;
-    const n = Number(p);
-    if (!Number.isInteger(n) || n < 0 || n > 255) return false;
-  }
-  return true;
-}
+export { isLoopbackClientIp } from '../mesh/address-class';

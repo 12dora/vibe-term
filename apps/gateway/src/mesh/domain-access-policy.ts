@@ -1,7 +1,12 @@
-import { classifyRemoteAddress, isCgnatIpv4 } from './address-class';
+import {
+  classifyRemoteAddress,
+  isCgnatIpv4,
+  isIpAddressLiteral,
+  isLoopbackHostLiteral,
+  looksLikeIpv6,
+} from './address-class';
 import { resolveClientIp } from './client-ip';
 
-const IPV4_RE = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 const DEFAULT_PORTS = new Set(['80', '443']);
 
 export type DomainAccessDecision = 'allow' | 'deny-json' | 'deny-text';
@@ -31,10 +36,7 @@ export function normalizeHost(authority: string): string {
 export function isIpLiteral(host: string): boolean {
   const hostname = stripBrackets(hostnameOf(normalizeHost(host) || host.toLowerCase()));
   if (!hostname) return false;
-  if (IPV4_RE.test(hostname)) return true;
-  const mapped = hostname.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
-  if (mapped?.[1] && IPV4_RE.test(mapped[1])) return true;
-  return looksLikeIpv6(hostname);
+  return isIpAddressLiteral(hostname);
 }
 
 export function isLocalName(host: string): boolean {
@@ -42,7 +44,7 @@ export function isLocalName(host: string): boolean {
   if (!hostname) return false;
   if (hostname === 'localhost' || hostname.endsWith('.localhost')) return true;
   if (hostname === 'local' || hostname.endsWith('.local')) return true;
-  return isLoopbackHostname(hostname);
+  return isLoopbackHostLiteral(hostname);
 }
 
 export function collectConfiguredHosts(sources: Iterable<string | null | undefined>): string[] {
@@ -164,34 +166,4 @@ function splitHostPort(authority: string): { hostname: string; port: string | nu
 function stripBrackets(host: string): string {
   if (host.startsWith('[') && host.endsWith(']')) return host.slice(1, -1);
   return host;
-}
-
-function looksLikeIpv6(host: string): boolean {
-  if (/^::ffff:\d{1,3}(?:\.\d{1,3}){3}$/i.test(host)) return true;
-  if (!/^[0-9a-fA-F:]+$/.test(host)) return false;
-  const sides = host.split('::');
-  if (sides.length > 2) return false;
-  const parseSide = (side: string): string[] | null => {
-    if (side === '') return [];
-    const groups = side.split(':');
-    if (groups.some((g) => !g || g.length > 4 || !/^[0-9a-fA-F]+$/.test(g))) return null;
-    return groups;
-  };
-  if (sides.length === 2) {
-    const left = parseSide(sides[0] ?? '');
-    const right = parseSide(sides[1] ?? '');
-    if (!left || !right) return false;
-    return left.length + right.length <= 7;
-  }
-  const groups = parseSide(host);
-  return groups != null && groups.length === 8;
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  if (hostname === '::1') return true;
-  const mapped = hostname.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
-  const ipv4 = mapped?.[1] ?? (IPV4_RE.test(hostname) ? hostname : null);
-  if (!ipv4) return false;
-  const first = Number(ipv4.split('.')[0]);
-  return first === 127;
 }

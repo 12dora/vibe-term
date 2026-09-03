@@ -6,6 +6,11 @@ export const RTT_EVENT_MIN_INTERVAL_MS = 10_000;
 
 export type AddressClass = 'lan' | 'wan';
 
+const IPV4_DOTTED_RE =
+  /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const IPV4_MAPPED_DOTTED_RE = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
+const IPV4_MAPPED_HEX_RE = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i;
+
 /** 有实测 peer 路径即为可达；`wan` 与 `lan` 同等视为在线。 */
 export function isPeerReachable(reach: PeerReach | undefined): boolean {
   return reach === 'lan' || reach === 'wan' || reach === 'relay';
@@ -64,14 +69,19 @@ export function addressFromIceCandidate(candidate: string | null | undefined): s
   return match?.[1] ?? null;
 }
 
+function stripIpDecorations(host: string): string {
+  let h = host;
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  const zone = h.indexOf('%');
+  if (zone >= 0) h = h.slice(0, zone);
+  return h;
+}
+
 function normalizeHost(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   let host = raw.trim();
   if (!host || host === 'unknown') return null;
-  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
-  const zone = host.indexOf('%');
-  if (zone >= 0) host = host.slice(0, zone);
-  host = host.toLowerCase();
+  host = stripIpDecorations(host).toLowerCase();
   return host || null;
 }
 
@@ -140,9 +150,9 @@ export function localNetworkFingerprint(
 }
 
 function unwrapIpv4Mapped(host: string): string | null {
-  const dotted = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
-  if (dotted) return dotted[1];
-  const hex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  const dotted = host.match(IPV4_MAPPED_DOTTED_RE);
+  if (dotted?.[1]) return dotted[1];
+  const hex = host.match(IPV4_MAPPED_HEX_RE);
   if (!hex) return null;
   const hi = Number.parseInt(hex[1] ?? '', 16);
   const lo = Number.parseInt(hex[2] ?? '', 16);
@@ -348,4 +358,91 @@ export function parseIpv6Words(address: string): number[] | null {
   const missing = 8 - left.length - right.length;
   if (missing < 0) return null;
   return [...left, ...Array(missing).fill(0), ...right];
+}
+
+export function isIpv4DottedLiteral(host: string): boolean {
+  return IPV4_DOTTED_RE.test(host);
+}
+
+/**
+ * 纯 IPv6 字面量（不含点分 mapped）。压缩形式要求 `::` 真正省略了至少一组，
+ * 因此 `1:2:3:4:5:6:7:8::` 为否——与 `parseIpv6Words` 接受 missing=0 不同。
+ */
+export function isIpv6Literal(host: string): boolean {
+  if (!/^[0-9a-fA-F:]+$/.test(host)) return false;
+  const sides = host.split('::');
+  if (sides.length > 2) return false;
+  const parseSide = (side: string): string[] | null => {
+    if (side === '') return [];
+    const groups = side.split(':');
+    if (groups.some((g) => !g || g.length > 4 || !/^[0-9a-fA-F]+$/.test(g))) return null;
+    return groups;
+  };
+  if (sides.length === 2) {
+    const left = parseSide(sides[0] ?? '');
+    const right = parseSide(sides[1] ?? '');
+    if (!left || !right) return false;
+    return left.length + right.length <= 7;
+  }
+  const groups = parseSide(host);
+  return groups != null && groups.length === 8;
+}
+
+/** IPv6 或 `::ffff:` + 1–3 位十进制 octet 的 mapped 形式（octet 合法性另判）。 */
+export function looksLikeIpv6(host: string): boolean {
+  if (IPV4_MAPPED_DOTTED_RE.test(host)) return true;
+  return isIpv6Literal(host);
+}
+
+export function isIpAddressLiteral(host: string): boolean {
+  return isIpv4DottedLiteral(host) || looksLikeIpv6(host);
+}
+
+/**
+ * 域名策略用的回环判定：只认 `::1` 与 IPV4_DOTTED_RE 下的 127/8（含 dotted mapped）。
+ * 前导零、hex mapped、展开的 `0:0:0:0:0:0:0:1` 均为否。
+ */
+export function isLoopbackHostLiteral(hostname: string): boolean {
+  if (hostname === '::1') return true;
+  const mapped = hostname.match(IPV4_MAPPED_DOTTED_RE);
+  const ipv4 = mapped?.[1] ?? (isIpv4DottedLiteral(hostname) ? hostname : null);
+  if (!ipv4) return false;
+  const first = Number(ipv4.split('.')[0]);
+  return first === 127;
+}
+
+function isLoopbackIpv4(host: string): boolean {
+  const o = parseIpv4(host);
+  return o != null && o[0] === 127;
+}
+
+function unwrapHost(raw: string): string {
+  return stripIpDecorations(raw.trim().toLowerCase());
+}
+
+/**
+ * 缺失 / `local` 视为本机（兼容未拿到 socket IP 的本机入口）；`peer:` 前缀一律否。
+ * mapped 只认 dotted `::ffff:127.x.x.x`，与 `classifyRemoteAddress` 的 hex mapped 解包不同。
+ */
+export function isLoopbackClientIp(ip: string | null | undefined): boolean {
+  if (ip == null || ip === '' || ip === 'local') return true;
+  if (ip.startsWith('peer:')) return false;
+  const host = unwrapHost(ip);
+  if (host === 'localhost') return true;
+  if (host === '::1') return true;
+  const mapped = host.match(IPV4_MAPPED_DOTTED_RE);
+  if (mapped?.[1] && isLoopbackIpv4(mapped[1])) return true;
+  return isLoopbackIpv4(host);
+}
+
+/** 从转发头取出 IP 字面量；非法值返回 undefined。IPv4 保持原样，IPv6 小写。 */
+export function parseIpLiteral(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const host = stripIpDecorations(raw.trim());
+  if (!host) return undefined;
+  if (isIpv4DottedLiteral(host)) return host;
+  const mapped = host.match(IPV4_MAPPED_DOTTED_RE);
+  if (mapped?.[1] && isIpv4DottedLiteral(mapped[1])) return host.toLowerCase();
+  if (isIpv6Literal(host)) return host.toLowerCase();
+  return undefined;
 }

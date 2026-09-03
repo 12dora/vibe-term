@@ -8,10 +8,17 @@ import {
   hasLocalCgnatAddress,
   hostFromWsUrl,
   isCgnatIpv4,
+  isIpAddressLiteral,
+  isIpv4DottedLiteral,
+  isIpv6Literal,
   isIpv6SiteLocal,
   isIpv6Ula,
+  isLoopbackClientIp,
+  isLoopbackHostLiteral,
   isPeerReachable,
   localNetworkFingerprint,
+  looksLikeIpv6,
+  parseIpLiteral,
   parseIpv6Words,
   rankPeerEndpoints,
   rttChangedMaterially,
@@ -275,5 +282,237 @@ describe('rankPeerEndpoints', () => {
         en0: [lan],
       })
     ).toEqual(['ws://10.0.0.1:39001/peer', 'ws://hub.example.com:39001/peer']);
+  });
+});
+
+describe('unified IP classifier (per-caller semantics)', () => {
+  test.each([
+    ['127.0.0.1', 'lan'],
+    ['127.1.2.3', 'lan'],
+    ['[127.0.0.1]', 'lan'],
+    ['127.0.0.1%en0', 'lan'],
+    ['127.000.000.001', 'lan'],
+    ['::1', 'lan'],
+    ['[::1]', 'lan'],
+    ['::1%lo0', 'lan'],
+    ['[::1%lo0]', 'lan'],
+    ['0:0:0:0:0:0:0:1', 'lan'],
+    ['localhost', 'lan'],
+    ['LOCALHOST', 'lan'],
+    ['[localhost]', 'lan'],
+    ['::ffff:127.0.0.1', 'lan'],
+    ['::FFFF:127.0.0.1', 'lan'],
+    ['[::ffff:127.0.0.1]', 'lan'],
+    ['::ffff:127.0.0.1%en0', 'lan'],
+    ['::ffff:7f00:1', 'lan'],
+    ['::ffff:7f00:0001', 'lan'],
+    ['10.0.0.1', 'lan'],
+    ['[10.0.0.1]', 'lan'],
+    ['10.255.255.254', 'lan'],
+    ['172.16.0.1', 'lan'],
+    ['172.31.255.1', 'lan'],
+    ['192.168.1.1', 'lan'],
+    ['::ffff:10.1.2.3', 'lan'],
+    ['::ffff:c0a8:0101', 'lan'],
+    ['::ffff:ac10:0001', 'lan'],
+    ['169.254.1.1', 'lan'],
+    ['fe80::1', 'lan'],
+    ['fe80::1%en0', 'lan'],
+    ['[fe80::1%en0]', 'lan'],
+    ['fc00::1', 'lan'],
+    ['fd12:3456:789a::1', 'lan'],
+    [null, 'wan'],
+    [undefined, 'wan'],
+    ['', 'wan'],
+    ['   ', 'wan'],
+    ['unknown', 'wan'],
+    ['example.com', 'wan'],
+    ['not-an-ip', 'wan'],
+    ['peer:aa', 'wan'],
+    ['local', 'wan'],
+    ['127.0.0.1:8080', 'wan'],
+    ['localhost:8080', 'wan'],
+    ['::ffff:127.999.1.1', 'wan'],
+    ['172.15.0.1', 'wan'],
+    ['172.32.0.1', 'wan'],
+    ['11.0.0.1', 'wan'],
+    ['192.169.0.1', 'wan'],
+    ['100.64.0.1', 'wan'],
+    ['100.64.1.2', 'wan'],
+    ['100.127.255.255', 'wan'],
+    ['::ffff:100.64.1.2', 'wan'],
+    ['203.0.113.10', 'wan'],
+    ['8.8.8.8', 'wan'],
+    ['2001:db8::1', 'wan'],
+    ['::ffff:203.0.113.10', 'wan'],
+    ['fec0::1', 'wan'],
+    ['999.999.999.999', 'wan'],
+    ['01.2.3.4', 'wan'],
+    ['1:2:3:4:5:6:7:8::', 'wan'],
+    [':::1', 'wan'],
+  ] as const)('classifyRemoteAddress(%j) → %s', (input, expected) => {
+    expect(classifyRemoteAddress(input)).toBe(expected);
+  });
+
+  test.each([
+    [undefined, true],
+    [null, true],
+    ['', true],
+    ['local', true],
+    ['127.0.0.1', true],
+    ['127.0.0.2', true],
+    ['127.1.2.3', true],
+    ['[127.0.0.1]', true],
+    ['127.0.0.1%en0', true],
+    ['127.000.000.001', true],
+    ['::1', true],
+    ['[::1]', true],
+    ['::1%lo0', true],
+    ['[::1%lo0]', true],
+    ['localhost', true],
+    ['LOCALHOST', true],
+    ['::ffff:127.0.0.1', true],
+    ['::FFFF:127.0.0.1', true],
+    ['[::ffff:127.0.0.1]', true],
+    ['::ffff:127.0.0.1%en0', true],
+    ['::ffff:127.1.2.3', true],
+    ['   ', false],
+    ['LOCAL', false],
+    ['unknown', false],
+    ['8.8.8.8', false],
+    ['10.0.0.9', false],
+    ['192.168.1.1', false],
+    ['peer:aa', false],
+    ['peer:127.0.0.1', false],
+    ['0:0:0:0:0:0:0:1', false],
+    ['::ffff:7f00:1', false],
+    ['::ffff:7f00:0001', false],
+    ['127.0.0.1:8080', false],
+    ['localhost:8080', false],
+    ['::ffff:127.999.1.1', false],
+    ['100.64.1.2', false],
+    ['fe80::1', false],
+    ['example.com', false],
+    ['not-an-ip', false],
+    ['999.999.999.999', false],
+  ] as const)('isLoopbackClientIp(%j) → %s', (input, expected) => {
+    expect(isLoopbackClientIp(input)).toBe(expected);
+  });
+
+  test.each([
+    ['::1', true],
+    ['127.0.0.1', true],
+    ['127.1.2.3', true],
+    ['::ffff:127.0.0.1', true],
+    ['::ffff:127.999.1.1', true],
+    ['127.000.000.001', false],
+    ['0:0:0:0:0:0:0:1', false],
+    ['::ffff:7f00:1', false],
+    ['127.0.0.1:8080', false],
+    ['10.0.0.1', false],
+    ['192.168.1.1', false],
+    ['localhost', false],
+    ['8.8.8.8', false],
+    ['', false],
+    ['not-an-ip', false],
+  ] as const)('isLoopbackHostLiteral(%j) → %s', (input, expected) => {
+    expect(isLoopbackHostLiteral(input)).toBe(expected);
+  });
+
+  test.each([
+    ['127.0.0.1', '127.0.0.1'],
+    ['8.8.8.8', '8.8.8.8'],
+    ['[127.0.0.1]', '127.0.0.1'],
+    ['2001:db8::1', '2001:db8::1'],
+    ['[2001:db8::2]', '2001:db8::2'],
+    ['::1', '::1'],
+    ['::1%lo0', '::1'],
+    ['[::1%lo0]', '::1'],
+    ['::ffff:203.0.113.5', '::ffff:203.0.113.5'],
+    ['::FFFF:203.0.113.5', '::ffff:203.0.113.5'],
+    ['::ffff:c0a8:0101', '::ffff:c0a8:0101'],
+    ['fe80::1%en0', 'fe80::1'],
+    [undefined, undefined],
+    ['', undefined],
+    ['not-an-ip', undefined],
+    ['unknown', undefined],
+    ['999.999.999.999', undefined],
+    ['127.000.000.001', undefined],
+    ['01.2.3.4', undefined],
+    ['127.0.0.1:8080', undefined],
+    ['::ffff:127.999.1.1', undefined],
+    ['1:2:3:4:5:6:7:8::', undefined],
+    [':::1', undefined],
+    ['localhost', undefined],
+    ['example.com', undefined],
+  ] as const)('parseIpLiteral(%j) → %j', (input, expected) => {
+    expect(parseIpLiteral(input)).toBe(expected);
+  });
+
+  test.each([
+    ['192.168.1.5', true],
+    ['127.0.0.1', true],
+    ['::1', true],
+    ['2001:db8::1', true],
+    ['::ffff:127.0.0.1', true],
+    ['::ffff:c0a8:0101', true],
+    ['::ffff:999.1.1.1', true],
+    ['1:2:3:4:5:6:7:8', true],
+    ['localhost', false],
+    ['tmex.example.com', false],
+    ['127.000.000.001', false],
+    ['127.0.0.1:8080', false],
+    ['1:2:3:4:5:6:7:8::', false],
+    ['', false],
+    ['not-an-ip', false],
+  ] as const)('isIpAddressLiteral(%j) → %s', (input, expected) => {
+    expect(isIpAddressLiteral(input)).toBe(expected);
+  });
+
+  test.each([
+    ['::1', true],
+    ['2001:db8::1', true],
+    ['fe80::1', true],
+    ['::ffff:c0a8:0101', true],
+    ['1:2:3:4:5:6:7:8', true],
+    ['::', true],
+    ['::ffff:10.1.2.3', false],
+    ['1:2:3:4:5:6:7:8::', false],
+    ['127.0.0.1', false],
+    ['', false],
+    ['gggg::1', false],
+  ] as const)('isIpv6Literal(%j) → %s', (input, expected) => {
+    expect(isIpv6Literal(input)).toBe(expected);
+  });
+
+  test('looksLikeIpv6 accepts dotted mapped even when octets are out of range', () => {
+    expect(looksLikeIpv6('::ffff:10.1.2.3')).toBe(true);
+    expect(looksLikeIpv6('::ffff:999.1.1.1')).toBe(true);
+    expect(looksLikeIpv6('2001:db8::1')).toBe(true);
+    expect(looksLikeIpv6('127.0.0.1')).toBe(false);
+    expect(looksLikeIpv6('1:2:3:4:5:6:7:8::')).toBe(false);
+  });
+
+  test('isIpv4DottedLiteral rejects leading zeros that parseIpv4 still classifies', () => {
+    expect(isIpv4DottedLiteral('127.0.0.1')).toBe(true);
+    expect(isIpv4DottedLiteral('127.000.000.001')).toBe(false);
+    expect(isIpv4DottedLiteral('01.2.3.4')).toBe(false);
+    expect(classifyRemoteAddress('127.000.000.001')).toBe('lan');
+    expect(isLoopbackClientIp('127.000.000.001')).toBe(true);
+  });
+
+  test('CGNAT is wan for classifyRemoteAddress but true for isCgnatIpv4', () => {
+    expect(classifyRemoteAddress('100.64.1.2')).toBe('wan');
+    expect(isCgnatIpv4('100.64.1.2')).toBe(true);
+    expect(isCgnatIpv4('::ffff:100.64.1.2')).toBe(true);
+    expect(isLoopbackClientIp('100.64.1.2')).toBe(false);
+    expect(isLoopbackHostLiteral('100.64.1.2')).toBe(false);
+  });
+
+  test('hex mapped loopback is lan for classify but not isLoopbackClientIp', () => {
+    expect(classifyRemoteAddress('::ffff:7f00:1')).toBe('lan');
+    expect(isLoopbackClientIp('::ffff:7f00:1')).toBe(false);
+    expect(isLoopbackHostLiteral('::ffff:7f00:1')).toBe(false);
+    expect(parseIpLiteral('::ffff:7f00:1')).toBe('::ffff:7f00:1');
   });
 });

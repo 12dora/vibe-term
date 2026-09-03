@@ -174,6 +174,10 @@ describe('isLocalClientSource', () => {
     expect(isLocalClientSource('100.64.1.2')).toBe(true);
     expect(isLocalClientSource('::ffff:127.0.0.1')).toBe(true);
     expect(isLocalClientSource('::ffff:100.64.1.2')).toBe(true);
+    expect(isLocalClientSource('::ffff:c0a8:0101')).toBe(true);
+    expect(isLocalClientSource('::ffff:7f00:1')).toBe(true);
+    expect(isLocalClientSource('[::1]')).toBe(true);
+    expect(isLocalClientSource('fe80::1%en0')).toBe(true);
   });
 
   test('public, missing and unparsable addresses are not local', () => {
@@ -183,6 +187,9 @@ describe('isLocalClientSource', () => {
     expect(isLocalClientSource('203.0.113.10')).toBe(false);
     expect(isLocalClientSource('8.8.8.8')).toBe(false);
     expect(isLocalClientSource('2001:db8::1')).toBe(false);
+    expect(isLocalClientSource('127.0.0.1:8080')).toBe(false);
+    expect(isLocalClientSource('not-an-ip')).toBe(false);
+    expect(isLocalClientSource('::ffff:127.999.1.1')).toBe(false);
   });
 });
 
