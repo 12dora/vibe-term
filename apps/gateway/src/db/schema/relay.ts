@@ -31,6 +31,7 @@ export const relayTenants = sqliteTable('relay_tenants', {
   keyLogHeadSeq: integer('key_log_head_seq').notNull().default(0),
   kdfParamsJson: text('kdf_params_json'),
   sealedPack: blob('sealed_pack', { mode: 'buffer' }),
+  sealedPackUpdatedAt: integer('sealed_pack_updated_at'),
 });
 
 export const relayNodes = sqliteTable(

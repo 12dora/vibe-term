@@ -20,7 +20,12 @@ import type { RelayMetering } from './relay-metering';
 import { type RelayListDeps, encodeRelayList } from './relay-node-list';
 import { type RelaySleep, RelayTokenBucket, effectiveRelayQuota } from './relay-quota';
 import { relayQuotaCtl } from './relay-quota-ctl';
-import type { RelayLiveNode, RelayRegistry } from './relay-registry';
+import {
+  type RelayLiveNode,
+  type RelayRegistry,
+  noteRelayPing,
+  noteRelayPong,
+} from './relay-registry';
 import { acceptRelayStream } from './relay-stream-router';
 import type { RelayTenantStore } from './relay-tenant-store';
 import { handleRelayAuth, liveAuthStillValid } from './relay-uplink-auth';
@@ -116,6 +121,10 @@ export class RelayUplinkServer implements RelayUplinkHost {
         return this.listVersion;
       },
     };
+  }
+
+  openSocketCount(): number {
+    return this.accepted.size;
   }
 
   accept(link: LinkSession): void {
@@ -341,8 +350,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
         this.send(live.link, { t: 'pong' });
         return;
       case 'pong':
-        live.awaitingPong = false;
-        live.misses = 0;
+        noteRelayPong(live, this.now());
         return;
       case 'relay.status':
         live.statusBlob = msg.blob;
@@ -450,6 +458,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
       return;
     }
     live.awaitingPong = true;
+    noteRelayPing(live, this.now());
     this.send(live.link, { t: 'ping' });
   }
 

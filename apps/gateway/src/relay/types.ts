@@ -21,6 +21,8 @@ export const RELAY_ENROLL_CREATE_LIMIT = 16;
 export const RELAY_ENROLL_CREATE_WINDOW_MS = 60_000;
 /** 已使用的 enrollment 行保留多久后清掉（随计量刷盘一起扫）。 */
 export const RELAY_ENROLLMENT_USED_RETENTION_MS = 24 * 60 * 60 * 1000;
+export const RELAY_METRICS_INTERVAL_MS = 5_000;
+export const RELAY_METRICS_HISTORY_LIMIT = 60;
 
 /** enroll 口令错误的按 IP 限速：15 分钟内 5 次失败即拒。 */
 export const RELAY_ENROLL_FAILURE_LIMIT = 5;
@@ -62,6 +64,7 @@ export type RelayTenantRecord = {
   keyLogHeadSeq: bigint;
   kdfParamsJson: string | null;
   sealedPack: Uint8Array | null;
+  sealedPackUpdatedAt: number | null;
 };
 
 export type RelayNodeStatusValue = 'pending' | 'admitted' | 'revoked';

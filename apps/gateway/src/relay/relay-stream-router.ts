@@ -52,11 +52,14 @@ export async function acceptRelayStream(
     stream.reset('quota-streams');
     return;
   }
+  const sourceId = live.nodeId;
+  ctx.registry.reserveMemberPair(live.tenantId, sourceId, to);
   let released = false;
   const release = (): void => {
     if (released) return;
     released = true;
     ctx.registry.releaseStream(live.tenantId);
+    ctx.registry.releaseMemberPair(live.tenantId, sourceId, to);
   };
   let outbound: LinkStream;
   try {
@@ -66,12 +69,14 @@ export async function acceptRelayStream(
     stream.reset('open-failed');
     return;
   }
-  pumpRelayPair(ctx, live.tenantId, stream, outbound, release);
+  pumpRelayPair(ctx, live.tenantId, sourceId, to, stream, outbound, release);
 }
 
 function pumpRelayPair(
   ctx: RelayStreamContext,
   tenantId: string,
+  sourceId: string,
+  targetId: string,
   a: LinkStream,
   b: LinkStream,
   release: () => void
@@ -95,14 +100,16 @@ function pumpRelayPair(
   a.onAbort(abortBoth);
   b.onAbort(abortBoth);
   void Promise.all([
-    pumpMetered(ctx, tenantId, a, b, abortBoth),
-    pumpMetered(ctx, tenantId, b, a, abortBoth),
+    pumpMetered(ctx, tenantId, sourceId, targetId, a, b, abortBoth),
+    pumpMetered(ctx, tenantId, targetId, sourceId, b, a, abortBoth),
   ]).then(release, release);
 }
 
 async function pumpMetered(
   ctx: RelayStreamContext,
   tenantId: string,
+  fromNodeId: string,
+  toNodeId: string,
   src: LinkStream,
   dst: LinkStream,
   onError: () => void
@@ -115,11 +122,13 @@ async function pumpMetered(
       if (!value) continue;
       const bytes = value.bytes;
       if (bytes.byteLength > 0) {
-        // 读到即记账（转发前），一份中转字节在 in / out 各记一次
+        // 读到即记账（转发前）。租户 in/out 各记一次；成员按方向：源 bytesIn、目标 bytesOut。
         ctx.metering.record(tenantId, {
           bytesIn: bytes.byteLength,
           bytesOut: bytes.byteLength,
         });
+        ctx.metering.recordMember(tenantId, fromNodeId, { bytesIn: bytes.byteLength });
+        ctx.metering.recordMember(tenantId, toNodeId, { bytesOut: bytes.byteLength });
         await ctx.bucketFor(tenantId).take(bytes.byteLength);
       }
       if (bytes.byteLength > 0 || value.head) {

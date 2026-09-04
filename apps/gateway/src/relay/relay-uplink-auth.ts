@@ -174,6 +174,7 @@ function finishAuth(
     tokenHash: fresh.tokenHash,
     protoVersion: msg.proto,
     clientVersion: msg.client_version,
+    connectedAt: now,
   });
   if (replaced) replaced.link.close('relay-replaced');
   host.tenants.patchNode(fresh.id, msg.node_id, {

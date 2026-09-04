@@ -72,6 +72,44 @@ describe('RelayAdminApi 读接口', () => {
     expect(await api.health()).toEqual(health);
     expect(calls[0]?.url).toBe('/api/relay/health');
   });
+
+  test('GET /api/relay/metrics 原样返回，members:false 带 query', async () => {
+    const metrics = {
+      schemaVersion: 1 as const,
+      sampledAt: 1,
+      intervalMs: 5000,
+      uptimeMs: 10,
+      version: '1.1.23',
+      process: {
+        memory: { rssBytes: 1, heapTotalBytes: 1, heapUsedBytes: 1, externalBytes: 0 },
+        cpu: { utilizationPct: null },
+        loadAvg: null,
+        eventLoop: { lagMs: 0, maxLagMs: 0 },
+        openSockets: 0,
+        authenticatedLinks: 0,
+      },
+      totals: {
+        tenants: 0,
+        members: 0,
+        membersOnline: 0,
+        activeStreams: 0,
+        bytesIn: 0,
+        bytesOut: 0,
+        bytesInPerSec: 0,
+        bytesOutPerSec: 0,
+        framesInPerSec: 0,
+        framesOutPerSec: 0,
+      },
+      tenants: [],
+      members: [],
+      history: { intervalMs: 5000, samples: [] },
+    };
+    const { api, calls } = recorder([ok(metrics), ok(metrics)]);
+    expect(await api.metrics()).toEqual(metrics);
+    expect(calls[0]?.url).toBe('/api/relay/metrics');
+    await api.metrics({ members: false });
+    expect(calls[1]?.url).toBe('/api/relay/metrics?members=0');
+  });
 });
 
 describe('RelayAdminApi 写接口', () => {

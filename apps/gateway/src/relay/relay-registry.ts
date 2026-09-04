@@ -16,6 +16,10 @@ export type RelayLiveNode = {
   misses: number;
   awaitingPong: boolean;
   heartbeat: ReturnType<typeof setInterval> | null;
+  connectedAt: number;
+  pingAt: number | null;
+  rttMs: number | null;
+  reconnects: number;
 };
 
 export type RelayRegisterInput = {
@@ -26,7 +30,24 @@ export type RelayRegisterInput = {
   tokenHash: string;
   protoVersion: number;
   clientVersion: string;
+  connectedAt?: number;
 };
+
+export function memberKey(tenantId: string, nodeId: string): string {
+  return `${tenantId}\0${nodeId}`;
+}
+
+export function noteRelayPing(live: RelayLiveNode, now: number): void {
+  live.pingAt = now;
+}
+
+export function noteRelayPong(live: RelayLiveNode, now: number): void {
+  live.awaitingPong = false;
+  live.misses = 0;
+  if (live.pingAt == null) return;
+  live.rttMs = Math.max(0, now - live.pingAt);
+  live.pingAt = null;
+}
 
 /** 内存注册表：租户 → 节点 → 活链路。持久化的成员关系在 `relay_nodes`。 */
 export class RelayRegistry {
@@ -35,11 +56,18 @@ export class RelayRegistry {
   private readonly byLink = new Map<LinkSession, RelayLiveNode>();
   /** 每租户「逻辑流」计数：一条中转流只算一次（源 + 目标共用一份额度）。 */
   private readonly tenantStreams = new Map<string, number>();
+  /** 每成员当前参与的逻辑流数（一条中转流在源、目标上各 +1）。 */
+  private readonly memberStreams = new Map<string, number>();
+  /** 进程内重连次数，断线后仍保留。 */
+  private readonly reconnects = new Map<string, number>();
+  private readonly seen = new Set<string>();
 
   put(input: RelayRegisterInput): { live: RelayLiveNode; replaced: RelayLiveNode | null } {
     const previous = this.get(input.tenantId, input.nodeId) ?? null;
     if (previous) this.removeLink(previous.link);
     this.generation += 1;
+    const key = memberKey(input.tenantId, input.nodeId);
+    const reconnects = this.nextReconnects(key, previous !== null);
     const live: RelayLiveNode = {
       tenantId: input.tenantId,
       nodeId: input.nodeId,
@@ -54,6 +82,10 @@ export class RelayRegistry {
       misses: 0,
       awaitingPong: false,
       heartbeat: null,
+      connectedAt: input.connectedAt ?? Date.now(),
+      pingAt: null,
+      rttMs: null,
+      reconnects,
     };
     const tenant = this.byTenant.get(input.tenantId) ?? new Map<string, RelayLiveNode>();
     tenant.set(input.nodeId, live);
@@ -110,6 +142,24 @@ export class RelayRegistry {
     else this.tenantStreams.set(tenantId, used - 1);
   }
 
+  memberStreamCount(tenantId: string, nodeId: string): number {
+    return this.memberStreams.get(memberKey(tenantId, nodeId)) ?? 0;
+  }
+
+  reserveMemberPair(tenantId: string, sourceId: string, targetId: string): void {
+    this.bumpMemberStream(tenantId, sourceId, 1);
+    this.bumpMemberStream(tenantId, targetId, 1);
+  }
+
+  releaseMemberPair(tenantId: string, sourceId: string, targetId: string): void {
+    this.bumpMemberStream(tenantId, sourceId, -1);
+    this.bumpMemberStream(tenantId, targetId, -1);
+  }
+
+  reconnectsOf(tenantId: string, nodeId: string): number {
+    return this.reconnects.get(memberKey(tenantId, nodeId)) ?? 0;
+  }
+
   removeLink(link: LinkSession): RelayLiveNode | undefined {
     const live = this.byLink.get(link);
     if (!live) return undefined;
@@ -130,5 +180,23 @@ export class RelayRegistry {
     this.byTenant.clear();
     this.byLink.clear();
     this.tenantStreams.clear();
+    this.memberStreams.clear();
+    this.reconnects.clear();
+    this.seen.clear();
+  }
+
+  private nextReconnects(key: string, replacing: boolean): number {
+    const prior = this.reconnects.get(key) ?? 0;
+    const reconnects = replacing || this.seen.has(key) ? prior + 1 : 0;
+    this.seen.add(key);
+    this.reconnects.set(key, reconnects);
+    return reconnects;
+  }
+
+  private bumpMemberStream(tenantId: string, nodeId: string, delta: number): void {
+    const key = memberKey(tenantId, nodeId);
+    const next = (this.memberStreams.get(key) ?? 0) + delta;
+    if (next <= 0) this.memberStreams.delete(key);
+    else this.memberStreams.set(key, next);
   }
 }
