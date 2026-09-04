@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { isStandaloneDisplay, shouldOpenSidebarOnLaunch } from './standalone';
+import {
+  SHEET_CONTENT_SELECTOR,
+  isStandaloneDisplay,
+  releaseFocusInsideSheet,
+  shouldOpenSidebarOnLaunch,
+} from './standalone';
 
 const mediaWindow = (matches: boolean) => ({
   matchMedia: (query: string) => ({ matches: matches && query === '(display-mode: standalone)' }),
@@ -122,5 +127,47 @@ describe('StandaloneLanding 的落地判定', () => {
     const landing = mountLanding('/', false);
     landing.runEffect(true);
     expect(landing.opened).toBe(0);
+  });
+});
+
+// 抽屉一打开，Base UI 就把焦点移到里面第一个可聚焦元素——侧边栏顶上的「关闭侧边栏」。
+// 自动弹出时这一下必须收回来，否则 PWA 冷启动后左上角一直挂着一圈焦点环。
+function fakeNode(insideSheet: boolean) {
+  let blurred = false;
+  return {
+    closest: (selector: string) => (insideSheet && selector === SHEET_CONTENT_SELECTOR ? {} : null),
+    blur: () => {
+      blurred = true;
+    },
+    get blurred() {
+      return blurred;
+    },
+  };
+}
+
+describe('releaseFocusInsideSheet', () => {
+  test('焦点落在抽屉里 → 收回来', () => {
+    const node = fakeNode(true);
+    expect(releaseFocusInsideSheet(node)).toBe(true);
+    expect(node.blurred).toBe(true);
+  });
+
+  test('焦点在抽屉外（用户自己点的）→ 一动不动', () => {
+    const node = fakeNode(false);
+    expect(releaseFocusInsideSheet(node)).toBe(false);
+    expect(node.blurred).toBe(false);
+  });
+
+  test('没有焦点 / 拿到的不是元素时安全返回', () => {
+    for (const node of [null, undefined, {}, 'body']) {
+      expect(releaseFocusInsideSheet(node)).toBe(false);
+    }
+  });
+});
+
+// 侧边栏抽屉的容器选择器与 packages/ui 的 SheetContent 对齐，改名会让上面的收回逻辑静默失效。
+describe('SHEET_CONTENT_SELECTOR', () => {
+  test('指向 SheetContent 的 data-slot', () => {
+    expect(SHEET_CONTENT_SELECTOR).toBe('[data-slot="sheet-content"]');
   });
 });

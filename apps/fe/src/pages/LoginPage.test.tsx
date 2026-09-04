@@ -55,21 +55,35 @@ const { MemoryRouter } = await import('react-router');
 const {
   default: LoginPage,
   attemptPasskeyLogin,
+  loginPreflight,
+  missingRequiredCredentials,
   passkeyAffordance,
   passkeyBlockReason,
+  resolveLoginUid,
   runPasskeyLogin,
 } = await import('./LoginPage');
 type Phase = Parameters<Parameters<typeof runPasskeyLogin>[0]['setPhase']>[0];
+
+const KDF_PARAMS = {
+  salt: 'AAAAAAAAAAAAAAAAAAAAAA',
+  memory_kib: 65536,
+  iterations: 3,
+  parallelism: 1,
+};
 
 const BASE: AuthModeResponse = {
   mode: 'mesh',
   nodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
   uid: 'user-1',
   username: 'alice',
-  kdfParams: { salt: 'AAAAAAAAAAAAAAAAAAAAAA', memory_kib: 65536, iterations: 3, parallelism: 1 },
+  kdfParams: KDF_PARAMS,
   passkeysForThisOrigin: false,
   passkeyAvailable: false,
 };
+
+function usernameField(html: string): string {
+  return html.match(/<input[^>]*data-testid="login-username"[^>]*>/)?.[0] ?? '';
+}
 
 function render(mode: AuthModeResponse): string {
   return renderToStaticMarkup(
@@ -90,7 +104,15 @@ describe('LoginPage', () => {
     expect(html).toContain('data-testid="brand"');
     expect(html).toContain('data-testid="login-username"');
     expect(html).toContain('data-testid="login-password"');
-    expect(html).toContain('value="alice"');
+  });
+
+  test('用户名框永远不预填，浏览器自己的自动填充照旧可用', () => {
+    for (const mode of [BASE, { ...BASE, username: BASE.uid }, { ...BASE, username: null }]) {
+      const field = usernameField(render(mode));
+      expect(field).toContain('value=""');
+      expect(field).toContain('autoComplete="username"');
+    }
+    expect(render(BASE)).not.toContain('value="alice"');
   });
 
   test('未开 TOTP 时不渲染验证码输入框，开了才渲染六个格子', () => {
@@ -140,6 +162,85 @@ describe('LoginPage', () => {
     const html = render(BASE);
     expect(html).not.toContain('data-testid="login-targets"');
     expect(html).not.toContain('data-testid="login-progress"');
+  });
+});
+
+describe('resolveLoginUid', () => {
+  const uid = '3f1c9a2e4b5d6f708192a3b4c5d6e7f8';
+
+  test('用户名留空（默认形态）时用 mode.uid', () => {
+    expect(resolveLoginUid({ uid, username: 'alice' }, '')).toBe(uid);
+  });
+
+  test('mode.username 为空 / 就是那串 uid 时，输入什么都按 uid 走', () => {
+    expect(resolveLoginUid({ uid, username: null }, 'alice')).toBe(uid);
+    expect(resolveLoginUid({ uid, username: '' }, 'alice')).toBe(uid);
+    expect(resolveLoginUid({ uid, username: uid }, 'alice')).toBe(uid);
+  });
+
+  test('输入的就是 mode 返回的用户名时换成 uid', () => {
+    expect(resolveLoginUid({ uid, username: 'alice' }, 'alice')).toBe(uid);
+  });
+
+  test('输入了另一个真实用户名时按用户名走（留给多用户）', () => {
+    expect(resolveLoginUid({ uid, username: 'alice' }, 'bob')).toBe('bob');
+  });
+
+  test('mode 没给 uid 时只能用输入的用户名', () => {
+    expect(resolveLoginUid({ uid: null, username: 'alice' }, 'alice')).toBe('alice');
+    expect(resolveLoginUid({ uid: null, username: null }, '')).toBe('');
+  });
+});
+
+describe('missingRequiredCredentials', () => {
+  const uid = '3f1c9a2e4b5d6f708192a3b4c5d6e7f8';
+
+  test('uid 已知时用户名可以留空，密码仍然必填', () => {
+    expect(missingRequiredCredentials({ uid }, '', 'pw')).toBe(false);
+    expect(missingRequiredCredentials({ uid }, '', '')).toBe(true);
+  });
+
+  test('uid 与用户名都没有 → 身份确实缺失，拦下并提示', () => {
+    expect(missingRequiredCredentials({ uid: null }, '', 'pw')).toBe(true);
+    expect(missingRequiredCredentials({ uid: null }, 'alice', 'pw')).toBe(false);
+  });
+});
+
+describe('loginPreflight', () => {
+  const input = { username: '', password: 'pw', totp: '' };
+
+  test('用户名留空但 uid 已知时放行，并带出 KDF 参数', () => {
+    const result = loginPreflight(BASE, input);
+    expect(result).toEqual({ ok: true, kdfParams: KDF_PARAMS });
+  });
+
+  test('缺密码 / 身份都缺 → 必填提示', () => {
+    expect(loginPreflight(BASE, { ...input, password: '' })).toEqual({
+      ok: false,
+      errorKey: 'auth.login.credentialsRequired',
+    });
+    expect(loginPreflight({ ...BASE, uid: null }, input)).toEqual({
+      ok: false,
+      errorKey: 'auth.login.credentialsRequired',
+    });
+  });
+
+  test('开了 TOTP 但验证码不满六位 → 验证码提示', () => {
+    expect(loginPreflight({ ...BASE, totpEnabled: true }, { ...input, totp: '123' })).toEqual({
+      ok: false,
+      errorKey: 'auth.login.totpRequired',
+    });
+    expect(loginPreflight({ ...BASE, totpEnabled: true }, { ...input, totp: '123456' })).toEqual({
+      ok: true,
+      kdfParams: KDF_PARAMS,
+    });
+  });
+
+  test('没有主用户（kdfParams 缺失）与密码错是同一句，不泄露账号是否存在', () => {
+    expect(loginPreflight({ ...BASE, kdfParams: null }, input)).toEqual({
+      ok: false,
+      errorKey: 'auth.errors.invalidCredentials',
+    });
   });
 });
 

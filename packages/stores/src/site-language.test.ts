@@ -9,9 +9,17 @@ import { installWindowStorage } from './test-utils';
 installWindowStorage();
 
 const changeLanguage = mock((_lng: string) => Promise.resolve());
-mock.module('i18next', () => ({ default: { changeLanguage, t: (k: string) => k } }));
+// 可变桩：site.ts 的失败兜底会读 resolvedLanguage/language 决定「保持当前语言」
+const i18nextStub: {
+  changeLanguage: typeof changeLanguage;
+  t: (key: string) => string;
+  resolvedLanguage?: string;
+  language?: string;
+} = { changeLanguage, t: (key: string) => key };
+mock.module('i18next', () => ({ default: i18nextStub }));
 
 const { createAppRuntime } = await import('./app-runtime');
+const { SITE_LANGUAGE_CACHE_KEY } = await import('./site-language-cache');
 
 const SETTINGS: SiteSettings = {
   siteName: 'tmex',
@@ -31,6 +39,7 @@ const SETTINGS: SiteSettings = {
 };
 
 let originalFetch: typeof globalThis.fetch;
+let originalConsoleError: typeof console.error;
 let restoreDocument: (() => void) | null = null;
 let runtimeIndex = 0;
 
@@ -80,6 +89,9 @@ describe('createSiteStore controlsBrowserPrefs', () => {
       );
     }) as unknown as typeof globalThis.fetch;
     installDocumentStub();
+    localStorage.removeItem(SITE_LANGUAGE_CACHE_KEY);
+    i18nextStub.resolvedLanguage = undefined;
+    i18nextStub.language = undefined;
   });
 
   afterEach(() => {
@@ -111,6 +123,84 @@ describe('createSiteStore controlsBrowserPrefs', () => {
     runtime.stores.site.getState().handleSettingsUpdate('site');
     await flushAsync();
     expect(runtime.stores.site.getState().settings?.language).toBe('zh_CN');
+    expect(changeLanguage).not.toHaveBeenCalled();
+  });
+
+  test('宿主 runtime 成功取数后把语言写进浏览器级缓存', async () => {
+    const runtime = makeRuntime();
+    await runtime.stores.site.getState().fetchSettings();
+    expect(localStorage.getItem(SITE_LANGUAGE_CACHE_KEY)).toBe('zh_CN');
+  });
+
+  test('远端 node 的 runtime 不写浏览器级语言缓存', async () => {
+    const runtime = makeRuntime(false);
+    await runtime.stores.site.getState().fetchSettings();
+    expect(localStorage.getItem(SITE_LANGUAGE_CACHE_KEY)).toBeNull();
+  });
+});
+
+// 取数失败（401 未登录 / 网络抖动 / 中继抖动）走兜底提交，此前它会把 DEFAULT_SETTINGS.language
+// （en_US）落进 store 并切 i18next，等于主动把中文界面掀成英文，直到设置页某次请求成功。
+describe('createSiteStore 取数失败不降级语言', () => {
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response('Unauthorized', { status: 401 }))
+    ) as unknown as typeof globalThis.fetch;
+    installDocumentStub();
+    localStorage.removeItem(SITE_LANGUAGE_CACHE_KEY);
+    changeLanguage.mockClear();
+    i18nextStub.resolvedLanguage = undefined;
+    i18nextStub.language = undefined;
+    originalConsoleError = console.error;
+    console.error = mock(() => {});
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+    restoreDocument?.();
+    restoreDocument = null;
+  });
+
+  test('失败兜底不调用 changeLanguage', async () => {
+    const runtime = makeRuntime();
+    await runtime.stores.site.getState().fetchSettings();
+    expect(changeLanguage).not.toHaveBeenCalled();
+  });
+
+  test('失败兜底沿用缓存里的站点语言，而不是 en_US 默认值', async () => {
+    localStorage.setItem(SITE_LANGUAGE_CACHE_KEY, 'zh_CN');
+    const runtime = makeRuntime();
+    const settings = await runtime.stores.site.getState().fetchSettings();
+
+    expect(settings.language).toBe('zh_CN');
+    expect(runtime.stores.site.getState().settings?.language).toBe('zh_CN');
+  });
+
+  test('无缓存时沿用 i18next 当前语言', async () => {
+    i18nextStub.resolvedLanguage = 'ja_JP';
+    const runtime = makeRuntime();
+    const settings = await runtime.stores.site.getState().fetchSettings();
+
+    expect(settings.language).toBe('ja_JP');
+  });
+
+  test('缓存与当前语言都拿不到才落 en_US，且非语言默认值照常补齐', async () => {
+    const runtime = makeRuntime();
+    const settings = await runtime.stores.site.getState().fetchSettings();
+
+    expect(settings.language).toBe('en_US');
+    expect(settings.theme).toBe('dark');
+    expect(runtime.stores.site.getState().loading).toBe(false);
+  });
+
+  test('远端 node 的 runtime 失败兜底不读浏览器级缓存', async () => {
+    localStorage.setItem(SITE_LANGUAGE_CACHE_KEY, 'zh_CN');
+    const runtime = makeRuntime(false);
+    const settings = await runtime.stores.site.getState().fetchSettings();
+
+    expect(settings.language).toBe('en_US');
     expect(changeLanguage).not.toHaveBeenCalled();
   });
 });

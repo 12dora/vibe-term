@@ -1,8 +1,9 @@
 import { setPageModulePrerequisite } from '@/use-page-module';
-import { DEFAULT_LOCALE, type LocaleCode } from '@tmex/shared';
+import { DEFAULT_LOCALE } from '@tmex/shared';
 import i18n from 'i18next';
 import resourcesToBackend from 'i18next-resources-to-backend';
 import { initReactI18next } from 'react-i18next';
+import { resolveInitialLanguage } from './initial-language';
 import { changeLanguageAfterRest, createRestBundleCache } from './rest-bundle';
 import { setI18nRestPrerequisite } from './rest-prerequisite';
 
@@ -35,13 +36,9 @@ async function translationOf(load: () => Promise<LocaleModule>): Promise<Record<
   return content.translation ?? {};
 }
 
-// Detect browser language
-function detectBrowserLocale(): LocaleCode {
-  const browserLang = navigator.language;
-  if (browserLang.startsWith('zh')) return 'zh_CN';
-  if (browserLang.startsWith('ja')) return 'ja_JP';
-  return DEFAULT_LOCALE;
-}
+// 首屏语言在 init 前定下来：i18nReady 拉的就是它的 core chunk，main.tsx await 完直接以该语言渲染，
+// 登录页也不例外——不存在「先英文、进设置页才变中文」的中间态。
+const initialLanguage = resolveInitialLanguage();
 
 // init 是异步的（要拉取当前语言 chunk）；main.tsx 在首次渲染前 await 此 promise 以避免未翻译闪烁。
 export const i18nReady = i18n
@@ -54,7 +51,7 @@ export const i18nReady = i18n
   )
   .use(initReactI18next)
   .init({
-    lng: detectBrowserLocale(),
+    lng: initialLanguage,
     fallbackLng: DEFAULT_LOCALE,
     ns: ['translation'],
     defaultNS: 'translation',

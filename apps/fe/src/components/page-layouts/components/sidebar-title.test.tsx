@@ -7,9 +7,10 @@ import { installWindowStorage } from '@tmex/stores/test-utils';
 
 installWindowStorage();
 
-// SidebarProvider 在构造 state 时就读 matchMedia；这里只需要一个稳定的桌面端读数。
+// SidebarProvider 在构造 state 时就读 matchMedia；`matches` 即「桌面端」。
+let desktopViewport = true;
 (globalThis.window as unknown as { matchMedia: unknown }).matchMedia = () => ({
-  matches: true,
+  matches: desktopViewport,
   addEventListener: () => undefined,
   removeEventListener: () => undefined,
 });
@@ -48,6 +49,19 @@ function render(mode: AuthModeResponse | null): string {
   );
 }
 
+function renderMobile(mode: AuthModeResponse): string {
+  desktopViewport = false;
+  try {
+    return render(mode);
+  } finally {
+    desktopViewport = true;
+  }
+}
+
+function tagOf(html: string, testId: string): string {
+  return html.match(new RegExp(`<[a-z]+[^>]*data-testid="${testId}"[^>]*>`))?.[0] ?? '';
+}
+
 describe('SidebarTitle', () => {
   test('渲染品牌块（logo + 站点名），链接回首页', () => {
     const html = render(MESH_MODE);
@@ -79,6 +93,23 @@ describe('SidebarTitle', () => {
       expect(html).toContain(`aria-label="${label}"`);
     }
     expect(html.split('data-slot="tooltip-trigger"').length - 1).toBe(2);
+  });
+});
+
+describe('图标入口的焦点环', () => {
+  // 抽屉打开时 Base UI 会把焦点移到里面第一个可聚焦元素（手机端就是「关闭侧边栏」）。
+  // 焦点环只能给键盘操作，否则 PWA 冷启动后左上角一直挂着一圈描边。
+  const focusRing = ['outline-none', 'focus-visible:ring-2', 'focus-visible:ring-ring'];
+
+  test('设置入口只在 focus-visible 时出环', () => {
+    const tag = tagOf(render(MESH_MODE), 'sidebar-settings');
+    for (const cls of focusRing) expect(tag).toContain(cls);
+  });
+
+  test('手机端的关闭按钮同样只在 focus-visible 时出环', () => {
+    const tag = tagOf(renderMobile(MESH_MODE), 'mobile-sidebar-close');
+    expect(tag).not.toBe('');
+    for (const cls of focusRing) expect(tag).toContain(cls);
   });
 });
 
