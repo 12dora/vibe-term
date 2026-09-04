@@ -146,7 +146,7 @@ function SortableTh({
     <th
       className={`px-3 py-2 font-normal ${align === 'right' ? 'text-right' : 'text-left'}`}
       scope="col"
-      aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+      aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}
     >
       <button
         type="button"

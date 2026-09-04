@@ -457,7 +457,7 @@ describe('接入节点表', () => {
       expect(html).toContain(`data-testid="relay-members-sort-${key}"`);
     }
     expect(html).toContain('aria-sort="descending"');
-    expect(html).toContain('aria-sort="none"');
+    expect(html.match(/aria-sort=/g)?.length).toBe(1);
   });
 });
 

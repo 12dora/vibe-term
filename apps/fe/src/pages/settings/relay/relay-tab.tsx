@@ -134,8 +134,9 @@ function RelayTabBody({
 
   // 相对时间以「这份数据是什么时候拉到的」为基准：每一拍推进一次，中间不必逐秒重渲染。
   const now = relay.loadedAt ?? Date.now();
-  // 刷新后租户没了就当没选：不必再拿一个 effect 去同步。
+  // 刷新后租户没了就当没选，并把 id 一起清掉：同一 id 日后再出现不该悄悄恢复过滤。
   const selectedTenant = status.tenants.find((row) => row.id === selectedTenantId) ?? null;
+  if (selectedTenantId !== null && selectedTenant === null) setSelectedTenantId(null);
   const clearSelection = () => setSelectedTenantId(null);
 
   return (

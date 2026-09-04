@@ -220,6 +220,14 @@ describe('degradedError', () => {
     expect(
       degradedError(status({ process: { ...status().process, lastError: '   ' } }))
     ).toBeNull();
+    expect(
+      degradedError(
+        status({
+          process: { ...status().process, lastError: '   ' },
+          connector: connector({ lastError: 'failed to dial edge' }),
+        })
+      )
+    ).toBe('failed to dial edge');
     const long = 'x'.repeat(400);
     const truncated = degradedError(status({ process: { ...status().process, lastError: long } }));
     expect(truncated).toBe(`${'x'.repeat(200)}…`);

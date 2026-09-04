@@ -50,7 +50,9 @@ export function connectorState(status: TunnelStatusResponse): ConnectorState {
 const DEGRADED_ERROR_MAX = 200;
 
 export function degradedError(status: TunnelStatusResponse): string | null {
-  const text = (status.process.lastError ?? status.connector?.lastError ?? '').trim();
+  const text = [status.process.lastError, status.connector?.lastError]
+    .map((value) => (value ?? '').trim())
+    .find((value) => value !== '');
   if (!text) return null;
   return text.length > DEGRADED_ERROR_MAX ? `${text.slice(0, DEGRADED_ERROR_MAX)}…` : text;
 }
