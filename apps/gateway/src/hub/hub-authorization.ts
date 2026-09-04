@@ -4,6 +4,7 @@ import {
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
   RELAY_RECORD_TYPES,
+  RENAME_NODE_RECORD_TYPES,
   decodeAdmitHubPayload,
   decodeKeyLogRecord,
   decodeRetireHubPayload,
@@ -154,8 +155,12 @@ export type HubAuthRecordCompatResult =
       allowForce: boolean;
     };
 
-function isRelayRecordType(type: string): boolean {
-  return (RELAY_RECORD_TYPES as readonly string[]).includes(type);
+/** 节点侧记录：中继两类 + rename-node。中继租户没有 `nodes` 注册表，只能按空表放行。 */
+function isNodeSideRecordType(type: string): boolean {
+  return (
+    (RELAY_RECORD_TYPES as readonly string[]).includes(type) ||
+    (RENAME_NODE_RECORD_TYPES as readonly string[]).includes(type)
+  );
 }
 
 export function normalizeReportedNodeVersion(raw: string | null | undefined): string | null {
@@ -210,8 +215,8 @@ export function inspectHubAuthRecordCompat(
   if (!spec) return { ok: true };
   // 版本来自 `nodes` 注册表，而注册表只有 hub 侧会写（redeem 与 uplink 认证）。中继租户是纯节点，
   // 那张表永远为空，一律判「过旧」会把 set-relays / meta-key 这两类节点侧记录全部堵死。
-  // 因此注册表为空时只放行中继记录；hub-auth 与 rotate-root-keep 仍然 fail-closed。
-  if (isRelayRecordType(type) && userStore.listNodes().length === 0) return { ok: true };
+  // 因此注册表为空时只放行节点侧记录（中继两类 + rename-node）；hub-auth 与 rotate-root-keep 仍然 fail-closed。
+  if (isNodeSideRecordType(type) && userStore.listNodes().length === 0) return { ok: true };
   const nodes = nodesBlockingMinVersion(userStore, spec.minVersion, userId);
   if (nodes.length === 0) return { ok: true };
   return {
