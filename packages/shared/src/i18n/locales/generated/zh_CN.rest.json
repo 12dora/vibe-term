@@ -758,6 +758,109 @@
         "terminalHint": "或通过终端升级：tmex upgrade"
       }
     },
+    "messaging": {
+      "command": {
+        "help": {
+          "description": "列出可用命令。"
+        },
+        "status": {
+          "description": "显示本机节点状态。"
+        },
+        "nodes": {
+          "description": "列出互联节点。"
+        },
+        "devices": {
+          "description": "列出本机设备。"
+        },
+        "windows": {
+          "description": "列出设备上的 tmux 窗口。"
+        },
+        "panes": {
+          "description": "列出设备上的终端。"
+        },
+        "tail": {
+          "description": "读取终端最近输出。"
+        },
+        "run": {
+          "description": "向终端发送命令。"
+        },
+        "approve": {
+          "description": "批准待确认的智能体操作。"
+        },
+        "deny": {
+          "description": "拒绝待确认的智能体操作。"
+        }
+      },
+      "help": {
+        "title": "可用命令"
+      },
+      "status": {
+        "name": "节点",
+        "version": "版本",
+        "roles": "角色",
+        "uplink": "上行",
+        "uplinkNone": "无",
+        "uplinkHub": "Hub",
+        "uplinkRelay": "中继",
+        "uplinkUnknown": "未知",
+        "attached": "已连接",
+        "detached": "未连接",
+        "attachedUnknown": "未知"
+      },
+      "nodes": {
+        "standalone": "本机未加入多节点互联。",
+        "title": "节点",
+        "online": "在线",
+        "offline": "离线",
+        "current": "本机",
+        "unknownVersion": "未知版本"
+      },
+      "devices": {
+        "empty": "没有设备。",
+        "connected": "已连接",
+        "disconnected": "未连接"
+      },
+      "windows": {
+        "empty": "没有窗口。"
+      },
+      "panes": {
+        "empty": "没有终端。"
+      },
+      "tail": {
+        "empty": "（无输出）"
+      },
+      "run": {
+        "sent": "已发送。"
+      },
+      "approve": {
+        "ok": "已批准。"
+      },
+      "deny": {
+        "ok": "已拒绝。"
+      },
+      "error": {
+        "unknownCommand": "未知命令。发送 help 查看可用命令。",
+        "remoteNodeUnsupported": "命令只能在托管该 Bot 的节点上执行，无法在远程节点运行。",
+        "unknownDevice": "找不到设备「{{input}}」。",
+        "ambiguousDevice": "设备「{{input}}」不唯一：{{candidates}}。",
+        "unknownPane": "找不到终端「{{input}}」。",
+        "ambiguousPane": "终端「{{input}}」不唯一：{{candidates}}。",
+        "unknownWindow": "找不到窗口「{{input}}」。",
+        "ambiguousWindow": "窗口「{{input}}」不唯一：{{candidates}}。",
+        "deviceDisconnected": "设备未连接。",
+        "missingArg": "缺少参数：{{name}}。",
+        "invalidLines": "行数须为 1–200。",
+        "missingTail": "run 须在 -- 之后提供要发送的文本。",
+        "nodeUnknown": "找不到节点「{{input}}」。",
+        "nodeAmbiguous": "节点「{{input}}」不唯一：{{candidates}}。",
+        "nodeOffline": "节点「{{input}}」离线。",
+        "confirmationNotFound": "找不到待确认项。",
+        "confirmationAlreadyDecided": "该确认项已处理。",
+        "confirmationUnavailable": "确认服务不可用。",
+        "captureFailed": "读取终端输出失败。",
+        "sendFailed": "发送输入失败。"
+      }
+    },
     "telegram": {
       "title": "Telegram Bot 管理",
       "botName": "Bot 名称",
@@ -767,6 +870,9 @@
       "addBot": "新增 Bot",
       "editBot": "编辑 Bot",
       "allowAuthRequests": "允许申请授权",
+      "allowCommands": "允许聊天指令",
+      "allowCommandsHelp": "已授权会话可在本机终端输入指令并批准智能体操作。",
+      "commandsBadge": "聊天指令",
       "pendingChats": "待授权",
       "chats": "已授权",
       "noPendingChats": "暂无待授权 chat",
@@ -813,6 +919,9 @@
       "editAccount": "编辑账号",
       "enableAccount": "启用账号",
       "allowAuthRequests": "允许授权申请",
+      "allowCommands": "允许聊天指令",
+      "allowCommandsHelp": "已授权会话可在本机终端输入指令并批准智能体操作。",
+      "commandsBadge": "聊天指令",
       "scanToLogin": "扫码登录",
       "relogin": "重新登录（重新扫码）",
       "loggedIn": "已登录",
@@ -994,6 +1103,7 @@
       "self": "当前",
       "hub": "Hub",
       "loggedIn": "已登录",
+      "hubConnecting": "正在连接 Hub…",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
       "hubLoginRejected": "Hub 拒绝了本次登录（{{code}}）：请重新登录后再试。",
       "hubs": {
@@ -1381,7 +1491,8 @@
       "status": {
         "online": "在线",
         "offline": "离线",
-        "revoked": "已移除"
+        "revoked": "已移除",
+        "pending": "待批准"
       },
       "reach": {
         "lan": "局域网",
@@ -1396,7 +1507,13 @@
         "revoke": "移除",
         "refresh": "刷新",
         "copy": "复制",
-        "copied": "已复制"
+        "copied": "已复制",
+        "admit": "批准加入"
+      },
+      "admit": {
+        "blocked": "须先批准加入，才能管理这台节点。",
+        "unavailable": "Hub 未下发批准所需材料，请刷新后重试。",
+        "failed": "批准失败：{{error}}"
       },
       "detail": {
         "description": "查看节点信息，修改名称与域名访问策略。",
@@ -1486,7 +1603,8 @@
         "retryHub": "重试",
         "missingHubUrl": "Hub 未设置公开地址，无法生成加入命令。",
         "missingRelayUrl": "中继地址不可用，无法生成加入命令。",
-        "staleRecord": "账号信息已变化，请重新确认。"
+        "staleRecord": "账号信息已变化，请重新确认。",
+        "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。"
       },
       "rename": {
         "save": "保存",

@@ -93,6 +93,7 @@ export function LocalUplinkTabs({
             status={status}
             hubs={uplink.hubs}
             hubOnline={uplink.hub.online}
+            hubLoading={uplink.hub.loading}
             hubFailure={uplink.hub.failure}
             relayMode={relay.relayMode}
             standalone={standalone}

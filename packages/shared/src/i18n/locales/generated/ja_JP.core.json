@@ -250,9 +250,11 @@
         "agent_error": "エージェントエラー",
         "watch_triggered": "ターミナルモニター発動",
         "watch_model_unavailable": "ターミナルモニターのモデル利用不可",
-        "watch_rule_error": "ターミナルモニターのルールエラー"
+        "watch_rule_error": "ターミナルモニターのルールエラー",
+        "device_connection_error": "デバイス接続エラー"
       },
       "site": "サイト",
+      "node": "ノード",
       "device": "デバイス",
       "window": "ウィンドウ",
       "pane": "ターミナル",

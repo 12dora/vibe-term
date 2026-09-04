@@ -3,10 +3,17 @@ import { getSiteSettings } from '../../db';
 import { telegramService } from '../../telegram/service';
 import {
   buildBellRawView,
+  buildConnectionErrorText,
+  buildCredentialWarningText,
   buildGenericRawView,
   buildNotificationRawView,
+  isCredentialWarningEvent,
 } from './notification-format';
-import { type NotificationChannel, PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS } from './types';
+import {
+  DEVICE_CONNECTION_ERROR_EVENT,
+  type NotificationChannel,
+  PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS,
+} from './types';
 
 function escapeTelegramHtmlText(input: string): string {
   return input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -35,6 +42,22 @@ export class TelegramChannel implements NotificationChannel {
     }
 
     if (!settings.enableNotificationPush) {
+      return;
+    }
+
+    if (eventType === DEVICE_CONNECTION_ERROR_EVENT) {
+      await telegramService.sendToAuthorizedChats({
+        text: escapeTelegramHtmlText(buildConnectionErrorText(event)),
+        parseMode: 'HTML',
+      });
+      return;
+    }
+
+    if (isCredentialWarningEvent(event)) {
+      await telegramService.sendToAuthorizedChats({
+        text: escapeTelegramHtmlText(buildCredentialWarningText(event)),
+        parseMode: 'HTML',
+      });
       return;
     }
 

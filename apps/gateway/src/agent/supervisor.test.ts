@@ -18,6 +18,7 @@ import {
   updateAgentSession,
 } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
+import { eventNotifier } from '../events';
 import { notifyNodeOffline } from './node-offline-bus';
 import { AgentRun, type AgentRunDeps, type AgentStopReason } from './run';
 import {
@@ -270,22 +271,32 @@ describe('AgentSupervisor - 互斥与基本流程', () => {
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
     await harness.supervisor.start();
 
-    const text = 'token is ghp_0123456789abcdefghijABCDEFGHIJ0123 please use it';
-    const result = harness.supervisor.submitUserMessage(harness.session.id, text);
-    if (result.kind !== 'message') throw new Error('expected message');
-    const record = result.record;
-    // 内容原样落库，未被消毒
-    expect(record.content).toEqual({ role: 'user', content: text });
+    const notifyCalls: Array<{ eventType: string; payload?: Record<string, unknown> }> = [];
+    const originalNotify = eventNotifier.notify.bind(eventNotifier);
+    eventNotifier.notify = (async (eventType, event) => {
+      notifyCalls.push({ eventType, payload: event.payload as Record<string, unknown> });
+    }) as typeof eventNotifier.notify;
 
-    const warnings = harness.broadcasts.filter(
-      (b) => b.eventType === wsBorsh.AGENT_EVENT_CREDENTIAL_WARNING
-    );
-    expect(warnings).toHaveLength(1);
-    const payload = warnings[0].payload as { messageId: string; types: string[] };
-    expect(payload.messageId).toBe(record.id);
-    expect(payload.types).toContain('api-token');
+    try {
+      const text = 'token is ghp_0123456789abcdefghijABCDEFGHIJ0123 please use it';
+      const result = harness.supervisor.submitUserMessage(harness.session.id, text);
+      if (result.kind !== 'message') throw new Error('expected message');
+      const record = result.record;
+      expect(record.content).toEqual({ role: 'user', content: text });
 
-    await harness.waitForIdle();
+      const warnings = harness.broadcasts.filter(
+        (b) => b.eventType === wsBorsh.AGENT_EVENT_CREDENTIAL_WARNING
+      );
+      expect(warnings).toHaveLength(1);
+      const payload = warnings[0].payload as { messageId: string; types: string[] };
+      expect(payload.messageId).toBe(record.id);
+      expect(payload.types).toContain('api-token');
+
+      await harness.waitForIdle();
+      expect(notifyCalls.some((call) => call.payload?.kind === 'credential_warning')).toBe(true);
+    } finally {
+      eventNotifier.notify = originalNotify;
+    }
   });
 
   test('普通用户消息不广播 CREDENTIAL_WARNING', async () => {

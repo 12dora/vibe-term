@@ -1,5 +1,6 @@
 import { readJsonObjectBody } from '@tmex/shared/http';
 import { type HttpMethod, matchPath, methodMatches } from '../api/route';
+import { respondRelayEnrollmentCreate } from './relay-enroll-create';
 import { RelayErrorCode, relayError } from './relay-http';
 import {
   applyRelayKeyLogAppend,
@@ -49,6 +50,25 @@ async function handlePack(
   const body = await readJsonObjectBody(req);
   if (!body) return relayError(RelayErrorCode.invalidBody, 400);
   return applyRelayPackUpload(ctx.deps, tenantParam(params), presented, body);
+}
+
+async function handleEnrollmentCreate(
+  ctx: RelayPublicDispatchCtx,
+  req: Request,
+  params: Record<string, string>
+): Promise<Response> {
+  const tenant = authenticateRelayTenant(ctx.deps, req, tenantParam(params));
+  if (tenant instanceof Response) return tenant;
+  const body = await readJsonObjectBody(req);
+  return respondRelayEnrollmentCreate(
+    {
+      tenants: ctx.deps.tenants,
+      now: ctx.deps.now,
+      allowEnrollCreate: (id) => ctx.deps.uplink.allowEnrollCreate(id),
+    },
+    tenant,
+    body
+  );
 }
 
 async function handleKeyLog(
@@ -101,6 +121,11 @@ const RELAY_PUBLIC_ROUTES: readonly PublicRoute[] = [
     pattern: '/api/relay/tenants/:tenantId/keylog',
     methods: '*',
     handle: handleKeyLog,
+  },
+  {
+    pattern: '/api/relay/tenants/:tenantId/enrollments',
+    methods: 'POST',
+    handle: handleEnrollmentCreate,
   },
   {
     pattern: '/api/relay/tenants/:tenantId/enrollments/redeem',

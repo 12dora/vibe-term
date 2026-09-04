@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@tmex/ui/dialog';
 import { Input } from '@tmex/ui/input';
@@ -26,6 +27,8 @@ interface IntegrationFieldBase<TEntity> {
   inputId: string;
   testId: string;
   labelKey: string;
+  /** 补充说明，渲染在标签下方一行 */
+  descriptionKey?: string;
   initialValue: (entity: TEntity | undefined) => IntegrationFieldValue;
   validate?: (value: IntegrationFieldValue, ctx: IntegrationFormContext) => boolean;
 }
@@ -119,6 +122,58 @@ export function IntegrationFormFields<TEntity>({
   );
 }
 
+/**
+ * 开关字段。`id` 落在 Base UI Switch 内部那个真正的 checkbox 上，因此 `<label htmlFor>` 点一下
+ * 就能切；`role="switch"` 的那层是另一个元素，可访问名与说明只能靠 `aria-labelledby` /
+ * `aria-describedby` 显式接上。
+ */
+function renderToggleField<TEntity>(
+  field: IntegrationField<TEntity>,
+  value: IntegrationFieldValue,
+  setValue: (key: string, next: IntegrationFieldValue) => void,
+  t: TFunction
+) {
+  const labelId = `${field.inputId}-label`;
+  const descriptionId = field.descriptionKey ? `${field.inputId}-description` : undefined;
+  return (
+    <div
+      key={field.key}
+      className={cn(
+        'flex min-h-10 justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2.5',
+        field.descriptionKey ? 'items-start' : 'items-center'
+      )}
+    >
+      <div className="min-w-0">
+        <label
+          id={labelId}
+          htmlFor={field.inputId}
+          className="block text-sm font-medium cursor-pointer"
+        >
+          {t(field.labelKey)}
+        </label>
+        {field.descriptionKey && (
+          <p
+            id={descriptionId}
+            className="mt-1 text-xs leading-snug text-muted-foreground"
+            data-testid={`${field.testId}-help`}
+          >
+            {t(field.descriptionKey)}
+          </p>
+        )}
+      </div>
+      <Switch
+        id={field.inputId}
+        checked={Boolean(value)}
+        data-testid={field.testId}
+        aria-labelledby={labelId}
+        aria-describedby={descriptionId}
+        className={cn('shrink-0', field.descriptionKey && 'mt-0.5')}
+        onCheckedChange={(checked) => setValue(field.key, Boolean(checked))}
+      />
+    </div>
+  );
+}
+
 function renderField<TEntity>(
   field: IntegrationField<TEntity>,
   value: IntegrationFieldValue,
@@ -127,19 +182,7 @@ function renderField<TEntity>(
   t: TFunction
 ) {
   if (field.kind === 'toggle') {
-    return (
-      <div
-        key={field.key}
-        className="flex min-h-10 items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2.5"
-      >
-        <span className="text-sm font-medium">{t(field.labelKey)}</span>
-        <Switch
-          checked={Boolean(value)}
-          data-testid={field.testId}
-          onCheckedChange={(checked) => setValue(field.key, Boolean(checked))}
-        />
-      </div>
-    );
+    return renderToggleField(field, value, setValue, t);
   }
 
   return (

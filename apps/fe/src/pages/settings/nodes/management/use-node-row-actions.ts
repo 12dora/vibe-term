@@ -6,6 +6,7 @@
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { headFromResponse } from '@/auth/key-log-actions';
 import type { RecordSigner } from '@/auth/key-log-actions';
+import { type AdmitPendingResult, admitPendingNode } from '@/node/admit-pending-node';
 import { buildRevokeNodeRecord, classifyKeyLogFailure } from '@/node/enrollment';
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { NodeRow } from '@/node/mesh-nodes';
@@ -18,7 +19,7 @@ import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { encodeBase64url } from '@tmex/shared/auth';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { actionErrorText } from './errors';
@@ -250,6 +251,94 @@ export function useNodeRowActions(
   }, [api, mode, onChanged, prompt, row, t, writerPublicUrl]);
 
   return { busy, rename, revoke };
+}
+
+/** 「批准加入」需要的那几项依赖（与吊销同源，只是不需要 hub 通道）。 */
+export type AdmitNodeDeps = Pick<
+  NodeActionDeps,
+  'api' | 'mode' | 'prompt' | 'writerPublicUrl' | 'onChanged'
+>;
+
+/**
+ * 批准的结论 → 一条提示；返回是否需要刷新列表。
+ *
+ * 「Hub 未确认」是**警告**不是失败：服务端一条都没落库，原样重发即可（见 `submitAdmitRecord`），
+ * 提示里不能说成失败，否则用户会以为要重来一遍加入流程。
+ */
+export function reportAdmitResult(
+  t: Translate,
+  result: AdmitPendingResult,
+  writerPublicUrl: string | null
+): boolean {
+  switch (result.kind) {
+    case 'admitted':
+      toast.success(t('nodes.enrollment.admitted'));
+      return true;
+    case 'cancelled':
+      return false;
+    case 'no-material':
+      toast.error(t('nodes.admit.unavailable'));
+      return false;
+    case 'unconfirmed':
+      toast.warning(t('nodes.enrollment.hubNotConfirmed'));
+      return false;
+    case 'stale':
+      toast.error(t('nodes.enrollment.staleRecord'));
+      return false;
+    case 'error':
+      toast.error(
+        t('nodes.admit.failed', {
+          error: actionErrorText(t, { code: result.code }, { writerPublicUrl }),
+        })
+      );
+      return false;
+    default:
+      toast.error(t('nodes.admit.failed', { error: result.message }));
+      return false;
+  }
+}
+
+/**
+ * 待批准行的「批准加入」。凭据进 5 分钟复用窗口（`purpose: 'admit'`）：与自动 admit 共用，
+ * 连批几台只需确认一次。
+ *
+ * 凭据对话框与 key log 写锁都要等，期间 Hub 轮询可能把这一行改掉或整张表清空；因此把
+ * 「最新的行 + 挂载状态」放进 ref，交给 `admitPendingNode` 在每次 await 之后复核
+ * （与 enrollment 引擎复核权威 pending store 是同一条约束）。
+ */
+export function useAdmitNode(
+  row: NodeRow,
+  { api, mode, prompt, writerPublicUrl, onChanged }: AdmitNodeDeps
+): { busy: boolean; admit: () => Promise<void> } {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const rowRef = useRef(row);
+  rowRef.current = row;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const stillValid = useCallback((enrollmentId: string) => {
+    if (!mountedRef.current) return false;
+    const latest = rowRef.current;
+    return latest.pending === true && latest.admitMaterial?.enrollmentId === enrollmentId;
+  }, []);
+
+  const admit = useCallback(async () => {
+    setBusy(true);
+    try {
+      const result = await admitPendingNode(rowRef.current, { api, mode, prompt, stillValid });
+      if (reportAdmitResult(t, result, writerPublicUrl)) onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }, [api, mode, onChanged, prompt, stillValid, t, writerPublicUrl]);
+
+  return { busy, admit };
 }
 
 export interface BulkRevokeDeps {

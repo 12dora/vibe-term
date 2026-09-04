@@ -5,6 +5,7 @@ export interface TelegramBotConfig {
   name: string;
   enabled: boolean;
   allowAuthRequests: boolean;
+  allowCommands: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -24,6 +25,7 @@ export interface TelegramBotChat {
   chatId: string;
   chatType: TelegramChatType;
   displayName: string;
+  userId: string | null;
   status: TelegramChatStatus;
   appliedAt: string;
   authorizedAt: string | null;

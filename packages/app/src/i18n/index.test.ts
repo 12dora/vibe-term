@@ -49,6 +49,17 @@ describe('i18n', () => {
     expect(zh).not.toContain('你');
   });
 
+  test('hub.join.admitPending exists in both languages and zh-CN avoids 你', () => {
+    setLang('en');
+    expect(t('hub.join.admitPending')).toMatch(/waiting for approval/i);
+    setLang('zh-CN');
+    const zh = t('hub.join.admitPending');
+    expect(zh).toContain('已加入');
+    expect(zh).toContain('批准');
+    expect(zh).not.toContain('你');
+    expect(zh).not.toContain('您');
+  });
+
   test('passwd hub errors exist in both languages and zh-CN avoids 你/您', () => {
     const keys = [
       'hub.user.passwd.hubTimeout',

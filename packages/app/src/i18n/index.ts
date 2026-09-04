@@ -179,6 +179,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
 
     'hub.join.replacedStale':
       'Replaced local account "{{username}}" from a previous hub; key log, passkeys, TOTP, sessions, and old node certs were wiped.',
+    'hub.join.admitPending': 'Joined; waiting for approval from a signed-in browser',
 
     'hub.standby.missingPublicUrl': 'hub standby requires --public-url',
     'hub.standby.notJoined': 'this node is not joined (no node_identity); run tmex hub join first',
@@ -417,6 +418,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
 
     'hub.join.replacedStale':
       '已替换本机账号「{{username}}」的旧 hub 状态；密钥日志、通行密钥、TOTP、会话与旧节点证书已清除。',
+    'hub.join.admitPending': '已加入，等待已登录的浏览器批准',
 
     'hub.standby.missingPublicUrl': 'hub standby 需要 --public-url',
     'hub.standby.notJoined': '本机尚未加入 mesh（缺少 node_identity）。请先执行 tmex hub join。',

@@ -1,12 +1,14 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import type { SiteSettings, WebhookEvent } from '@tmex/shared';
 import {
   EVENT_EMOJI,
   buildBellRawView,
+  buildCredentialWarningText,
   buildGenericRawView,
   buildNotificationRawView,
   buildPaneMetaLines,
   buildTerminalTopbarLabel,
+  setNotificationNodeNameProvider,
 } from './notification-format';
 
 const SETTINGS = { language: 'en_US' } as SiteSettings;
@@ -31,10 +33,14 @@ function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
 }
 
 describe('notification-format raw views', () => {
-  test('EVENT_EMOJI covers the 14 event types', () => {
+  afterEach(() => {
+    setNotificationNodeNameProvider(null);
+  });
+
+  test('EVENT_EMOJI covers the 15 event types', () => {
     expect(EVENT_EMOJI.terminal_bell).toBe('🔔');
     expect(EVENT_EMOJI.watch_triggered).toBe('👁️');
-    expect(Object.keys(EVENT_EMOJI)).toHaveLength(14);
+    expect(Object.keys(EVENT_EMOJI)).toHaveLength(15);
   });
 
   test('buildTerminalTopbarLabel uses window/pane index when present', () => {
@@ -67,5 +73,58 @@ describe('notification-format raw views', () => {
     const withMessage = buildGenericRawView(makeEvent(), SETTINGS).lines.length;
     const empty = buildGenericRawView(makeEvent({ payload: { message: '' } }), SETTINGS);
     expect(empty.lines.length).toBe(withMessage - 1);
+  });
+
+  test('standalone (no mesh identity) does not add a node line', () => {
+    setNotificationNodeNameProvider(() => null);
+    const event = makeEvent();
+    expect(buildBellRawView(event).paneMetaLines.some((line) => line.includes('studio'))).toBe(
+      false
+    );
+    expect(
+      buildNotificationRawView(event).paneMetaLines.some((line) => line.includes('studio'))
+    ).toBe(false);
+    expect(buildGenericRawView(event, SETTINGS).lines.some((line) => line.includes('studio'))).toBe(
+      false
+    );
+  });
+
+  test('mesh identity adds a node line to bell, notification and generic views', () => {
+    setNotificationNodeNameProvider(() => 'studio');
+    const event = makeEvent();
+    expect(buildBellRawView(event).paneMetaLines.some((line) => line.includes('studio'))).toBe(
+      true
+    );
+    expect(
+      buildNotificationRawView(event).paneMetaLines.some((line) => line.includes('studio'))
+    ).toBe(true);
+    const generic = buildGenericRawView(event, SETTINGS).lines;
+    const siteIndex = generic.findIndex((line) => line.includes('tmex & co'));
+    const nodeIndex = generic.findIndex((line) => line.includes('studio'));
+    expect(nodeIndex).toBeGreaterThan(siteIndex);
+  });
+
+  test('node label prefers payload nodeName then nodeId over local identity', () => {
+    setNotificationNodeNameProvider(() => 'studio');
+    const named = makeEvent({
+      payload: { nodeName: 'remote-box', nodeId: 'ab'.repeat(16), message: 'x' },
+    });
+    expect(
+      buildGenericRawView(named, SETTINGS).lines.some((line) => line.includes('remote-box'))
+    ).toBe(true);
+    expect(buildGenericRawView(named, SETTINGS).lines.some((line) => line.includes('studio'))).toBe(
+      false
+    );
+    expect(buildCredentialWarningText(named)).toContain('remote-box');
+    expect(buildCredentialWarningText(named)).not.toContain('studio');
+
+    const idOnly = makeEvent({ payload: { nodeId: 'cd'.repeat(16), message: 'x' } });
+    expect(
+      buildGenericRawView(idOnly, SETTINGS).lines.some((line) => line.includes('cd'.repeat(16)))
+    ).toBe(true);
+    expect(buildCredentialWarningText(idOnly)).toContain('cd'.repeat(16));
+    expect(buildBellRawView(named).paneMetaLines.some((line) => line.includes('remote-box'))).toBe(
+      true
+    );
   });
 });

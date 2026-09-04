@@ -233,6 +233,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'install-dir',
     'token',
     'password',
+    'totp',
     'name',
     'insecure-local',
     'no-restart',

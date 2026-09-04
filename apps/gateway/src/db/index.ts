@@ -75,6 +75,7 @@ export {
   getTelegramChatByBotAndChatId,
   listAuthorizedTelegramChatsByBot,
   listTelegramChatsByBot,
+  pendingTelegramUserIdForUpsert,
   updateTelegramBot,
 } from './telegram';
 

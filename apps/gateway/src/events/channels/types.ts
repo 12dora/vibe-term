@@ -18,3 +18,10 @@ export const PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS: ReadonlySet<EventType> = new
   'tmux_window_close',
   'tmux_pane_close',
 ]);
+
+// 设备连接错误走 EventNotifier，但不进生命周期 skip 名单，以便 Telegram/微信
+// 受 enableNotificationPush / disabledNotificationChannels 门控。契约 EventType
+// 尚未收录该值（G1a 并行改 contracts），推送路径用断言接入。
+export const DEVICE_CONNECTION_ERROR_EVENT: EventType = 'device_connection_error';
+
+export const CREDENTIAL_WARNING_KIND = 'credential_warning';

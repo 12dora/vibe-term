@@ -19,6 +19,7 @@ export function createTelegramBot(configRecord: TelegramBotConfigRecord): void {
       tokenEnc: configRecord.tokenEnc,
       enabled: configRecord.enabled,
       allowAuthRequests: configRecord.allowAuthRequests,
+      allowCommands: configRecord.allowCommands,
       lastUpdateId: configRecord.lastUpdateId,
       createdAt: configRecord.createdAt,
       updatedAt: configRecord.updatedAt,
@@ -75,6 +76,7 @@ export function getTelegramBotsWithStats(): TelegramBotWithStats[] {
       name: bot.name,
       enabled: bot.enabled,
       allowAuthRequests: bot.allowAuthRequests,
+      allowCommands: bot.allowCommands,
       createdAt: bot.createdAt,
       updatedAt: bot.updatedAt,
       pendingCount: counter.pending,
@@ -88,7 +90,7 @@ export function updateTelegramBot(
   updates: Partial<
     Pick<
       TelegramBotConfigRecord,
-      'name' | 'tokenEnc' | 'enabled' | 'allowAuthRequests' | 'lastUpdateId'
+      'name' | 'tokenEnc' | 'enabled' | 'allowAuthRequests' | 'allowCommands' | 'lastUpdateId'
     >
   >
 ): TelegramBotConfigRecord | null {
@@ -108,6 +110,9 @@ export function updateTelegramBot(
   }
   if (updates.allowAuthRequests !== undefined) {
     setValues.allowAuthRequests = updates.allowAuthRequests;
+  }
+  if (updates.allowCommands !== undefined) {
+    setValues.allowCommands = updates.allowCommands;
   }
   if (updates.lastUpdateId !== undefined) {
     setValues.lastUpdateId = updates.lastUpdateId;
@@ -151,12 +156,25 @@ export function getTelegramChatByBotAndChatId(
   return toTelegramChat(row);
 }
 
+/**
+ * 已授权行禁止改 user_id（防群成员 /start 接管）。仅 pending 可写入本次 from.id。
+ * 历史 authorized + user_id IS NULL 的群须删除后再绑定，不能靠 /start 认领。
+ */
+export function pendingTelegramUserIdForUpsert(
+  existing: TelegramBotChat | null,
+  incoming: string | null | undefined
+): string | null | undefined {
+  if (existing?.status === 'authorized') return undefined;
+  return incoming;
+}
+
 export function createOrUpdatePendingTelegramChat(params: {
   botId: string;
   chatId: string;
   chatType: TelegramChatType;
   displayName: string;
   appliedAt: string;
+  userId?: string | null;
 }): TelegramBotChat {
   const existing = getTelegramChatByBotAndChatId(params.botId, params.chatId);
   if (!existing && getTelegramChatCount(params.botId) >= 8) {
@@ -165,6 +183,8 @@ export function createOrUpdatePendingTelegramChat(params: {
 
   const now = new Date().toISOString();
   const orm = getOrmDb();
+
+  const userId = pendingTelegramUserIdForUpsert(existing, params.userId);
 
   if (!existing) {
     orm
@@ -175,6 +195,7 @@ export function createOrUpdatePendingTelegramChat(params: {
         chatId: params.chatId,
         chatType: params.chatType,
         displayName: params.displayName,
+        userId: userId ?? null,
         status: 'pending',
         appliedAt: params.appliedAt,
         authorizedAt: null,
@@ -197,6 +218,7 @@ export function createOrUpdatePendingTelegramChat(params: {
       .set({
         chatType: params.chatType,
         displayName: params.displayName,
+        ...(userId !== undefined ? { userId } : {}),
         appliedAt: params.appliedAt,
         status: 'pending',
         updatedAt: now,

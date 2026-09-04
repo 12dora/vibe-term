@@ -124,6 +124,11 @@ export interface AppRuntimeOptions {
   };
   /** 终端文件链接面；缺省走 gateway 文件 API 与 /file/:ref 路由 */
   terminalFileLinks?: TerminalFileLinksProvider;
+  /**
+   * nodeId → 展示名。stores 里只有编号，提示语要点名哪台机器就得由宿主查节点目录；
+   * 查不到（或宿主没接）返回 null，由调用方退回编号前缀。
+   */
+  resolveNodeName?: (nodeId: string) => string | null;
 }
 
 /** 已解析的 UI 能力开关 */
@@ -154,6 +159,7 @@ export interface RuntimeCore {
   controlsBrowserPrefs: boolean;
   features: RuntimeFeatures;
   terminalFileLinks?: TerminalFileLinksProvider;
+  resolveNodeName?: (nodeId: string) => string | null;
 }
 
 async function browserReadClipboard(): Promise<string> {
@@ -295,6 +301,7 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
     controlsBrowserPrefs: options.controlsBrowserPrefs ?? true,
     features: resolveFeatures(options.features),
     terminalFileLinks: options.terminalFileLinks,
+    resolveNodeName: options.resolveNodeName,
   };
 }
 

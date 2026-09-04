@@ -10,7 +10,7 @@ import type { HubMode, MeshHubEndpoint } from '@tmex/api-client/auth/index';
 import type { LocalRole, LocalStatusResponse } from '@tmex/api-client/local/types';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
-import { Repeat, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { Loader2, Repeat, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CopyableValue, Row } from '../copy-feedback';
@@ -89,6 +89,8 @@ export interface HubUplinkPanelProps {
   hubs: MeshHubsState & { writesBlocked: boolean };
   /** hub 管理面是否应答（`useHubNode`）；中继模式与 standalone 下不看。 */
   hubOnline: boolean;
+  /** 首次探测是否仍在飞（含 401 → 静默登录 → 重试）；只用来区分「还没结论」与「连不上」。 */
+  hubLoading: boolean;
   hubFailure: HubFailureReason | null;
   /** 本机走中继：这里只给一句说明，改回 Hub 要先在中继那边离开。 */
   relayMode: boolean;
@@ -161,6 +163,7 @@ function HubMembershipRows({
   status,
   hubs,
   hubOnline,
+  hubLoading,
   hubFailure,
   changeHubDisabled,
   onChangeHub,
@@ -201,6 +204,7 @@ function HubMembershipRows({
       {meshRole && (
         <HubUplinkNotices
           hubOnline={hubOnline}
+          hubLoading={hubLoading}
           writesBlocked={hubs.writesBlocked}
           hubFailure={hubFailure}
         />
@@ -209,13 +213,21 @@ function HubMembershipRows({
   );
 }
 
-/** 上级 hub 的两条提示：主 hub 打不通 / 拒登，以及挂在 standby 上导致的拒写。 */
-function HubUplinkNotices({
+/**
+ * 上级 hub 的提示分档：拒写 → 拒登 / 打不通 → 首次探测在飞。
+ *
+ * 「还没探过」与「探过、连不上」必须分开：`online` 的初值就是 false，把它当成打不通的话，
+ * 每次进节点管理都会先闪一条红条，等第一次 `GET /api/hub/nodes`（可能先 401、静默登录再重试）
+ * 回来才消失。所以红条只认已经落地的 `hubFailure`，在飞时只给一句灰字。
+ */
+export function HubUplinkNotices({
   hubOnline,
+  hubLoading,
   writesBlocked,
   hubFailure,
 }: {
   hubOnline: boolean;
+  hubLoading: boolean;
   writesBlocked: boolean;
   hubFailure: HubFailureReason | null;
 }) {
@@ -233,16 +245,31 @@ function HubUplinkNotices({
     );
   }
   if (hubOnline) return null;
-  const notice = hubFailureNotice(hubFailure);
-  return (
-    <p
-      className="flex items-center gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
-      data-testid={notice.testId}
-    >
-      <ShieldAlert className="size-3.5 shrink-0" />
-      {t(notice.key, notice.params)}
-    </p>
-  );
+  if (hubFailure) {
+    const notice = hubFailureNotice(hubFailure);
+    return (
+      <p
+        className="flex items-center gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
+        data-testid={notice.testId}
+      >
+        <ShieldAlert className="size-3.5 shrink-0" />
+        {t(notice.key, notice.params)}
+      </p>
+    );
+  }
+  // 行数与红条一致，出结论时不跳版。
+  if (hubLoading) {
+    return (
+      <p
+        className="flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
+        data-testid="nodes-hub-connecting"
+      >
+        <Loader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+        {t('nodes.hubConnecting')}
+      </p>
+    );
+  }
+  return null;
 }
 
 /** 别人访问本机 hub 用的地址；没设置时说清后果，指回角色设置。 */

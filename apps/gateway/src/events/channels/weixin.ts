@@ -3,10 +3,17 @@ import { getSiteSettings } from '../../db';
 import { weixinService } from '../../weixin/service';
 import {
   buildBellRawView,
+  buildConnectionErrorText,
+  buildCredentialWarningText,
   buildGenericRawView,
   buildNotificationRawView,
+  isCredentialWarningEvent,
 } from './notification-format';
-import { type NotificationChannel, PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS } from './types';
+import {
+  DEVICE_CONNECTION_ERROR_EVENT,
+  type NotificationChannel,
+  PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS,
+} from './types';
 
 /**
  * 微信 (iLink) 渠道：纯文本推送（无 HTML）。
@@ -31,6 +38,16 @@ export class WeixinChannel implements NotificationChannel {
     }
 
     if (!settings.enableNotificationPush) {
+      return;
+    }
+
+    if (eventType === DEVICE_CONNECTION_ERROR_EVENT) {
+      await weixinService.sendToAuthorizedUsers({ text: buildConnectionErrorText(event) });
+      return;
+    }
+
+    if (isCredentialWarningEvent(event)) {
+      await weixinService.sendToAuthorizedUsers({ text: buildCredentialWarningText(event) });
       return;
     }
 

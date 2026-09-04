@@ -43,7 +43,6 @@ import {
   redeemEnrollment,
 } from '../lib/hub-client';
 import { requestEnrollmentByPassword, wipeRootKey } from '../lib/hub-password-join';
-import { publishHubJoinSelfAdmit } from '../lib/hub-password-self-admit';
 import { applyHubUserPasswd, mapPasswdApplyError } from '../lib/hub-user-passwd';
 import { applyHubModeEnvKeys, parseHubPeerIds } from '../lib/install';
 import { createInstallLayout } from '../lib/install-layout';
@@ -60,6 +59,7 @@ import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
 import type { InstallMeta } from '../types';
+import { publishHubJoinAdmitForCli, resolveJoinTotpCode } from './hub-join-totp';
 import { assertChainUids, assertResponseCertsMatchProjections } from './hub-join-verify';
 import { withAuth } from './with-auth';
 
@@ -115,7 +115,9 @@ export type JoinErrorCode =
   | 'node_revoked'
   | 'node_exists'
   | 'hub_unreachable'
-  | 'join_failed';
+  | 'join_failed'
+  | 'totp_required'
+  | 'totp_invalid';
 
 export class JoinError extends Error {
   readonly code: JoinErrorCode;
@@ -577,6 +579,7 @@ export async function runHubJoin(
 ): Promise<{
   userId: string;
   hubUrl: string;
+  admitPending?: boolean;
 }> {
   const tokenFlag = asString(parsed.flags.token);
   if (tokenFlag && parsed.flags.password !== undefined) {
@@ -631,16 +634,16 @@ export async function runHubJoin(
           fetcher: io.fetcher,
         }
       );
-      if (passwordRootKey) {
-        await publishHubJoinSelfAdmit({
-          auth: ctx,
-          hubUrl: joined.hubUrl,
-          userId: joined.userId,
-          rootKey: passwordRootKey,
-          fetcher: io.fetcher,
-          now: io.now,
-        });
-      }
+      const admitPending = await publishHubJoinAdmitForCli({
+        rootKey: passwordRootKey,
+        auth: ctx,
+        hubUrl: joined.hubUrl,
+        userId: joined.userId,
+        fetcher: io.fetcher,
+        now: io.now,
+        totpCode: resolveJoinTotpCode(parsed, io),
+        onPending: () => log(io, t('hub.join.admitPending')),
+      });
       if (joined.replacedStaleUsername) {
         log(io, t('hub.join.replacedStale', { username: joined.replacedStaleUsername }));
       }
@@ -663,7 +666,11 @@ export async function runHubJoin(
       const peerPort =
         ctx.env.TMEX_PEER_PORT || process.env.TMEX_PEER_PORT || String(DEFAULT_PEER_PORT);
       log(io, `allow inbound TMEX_PEER_PORT (${peerPort}) on the LAN firewall for direct links`);
-      return { userId: joined.userId, hubUrl: joined.hubUrl };
+      return {
+        userId: joined.userId,
+        hubUrl: joined.hubUrl,
+        ...(admitPending ? { admitPending: true } : {}),
+      };
     } finally {
       wipeRootKey(passwordRootKey);
     }

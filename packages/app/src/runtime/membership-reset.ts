@@ -134,9 +134,33 @@ async function quiesceBestEffort(deps: SetupServiceDeps): Promise<void> {
   }
 }
 
-function clearMembershipForTarget(store: MeshMembershipStore, targetRole: LeaveTargetRole): void {
+function localRootPublicKey(
+  userStore: {
+    getById(id: string): { rootPublicKey: Uint8Array } | null;
+  },
+  identityUserId: string | null
+): Uint8Array | null {
+  if (!identityUserId) {
+    console.warn('[membership-reset] skip tenant deletion: node_identity.userId is empty');
+    return null;
+  }
+  const user = userStore.getById(identityUserId);
+  if (!user) {
+    console.warn(`[membership-reset] skip tenant deletion: user ${identityUserId} not found`);
+    return null;
+  }
+  return user.rootPublicKey;
+}
+
+function clearMembershipForTarget(
+  store: MeshMembershipStore,
+  targetRole: LeaveTargetRole,
+  rootPublicKey: Uint8Array | null
+): void {
   if (targetRole === 'relay') {
-    store.clearMeshMembership();
+    store.clearMeshMembership(
+      rootPublicKey ? { removeRelayTenantRootPublicKey: rootPublicKey } : undefined
+    );
     return;
   }
   store.clearAll();
@@ -169,7 +193,13 @@ export async function leaveMesh(
     const staged = await stageLeaveEnv(deps, targetRole);
     try {
       await quiesceBestEffort(deps);
-      clearMembershipForTarget(new MeshMembershipStore(deps.auth.db), targetRole);
+      // 本机幽灵租户的在线 uplink：membership-reset 够不到 RelayRuntime；leave 随后立刻重启，连接随进程断开。
+      const identity = targetRole === 'relay' ? await deps.auth.identityStore.load() : null;
+      const rootPublicKey =
+        targetRole === 'relay'
+          ? localRootPublicKey(deps.auth.userStore, identity?.userId ?? null)
+          : null;
+      clearMembershipForTarget(new MeshMembershipStore(deps.auth.db), targetRole, rootPublicKey);
     } catch (error) {
       await removeStagedEnv(deps, staged.stagedPath);
       throw error;

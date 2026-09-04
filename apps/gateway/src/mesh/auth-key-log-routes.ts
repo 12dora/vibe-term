@@ -163,14 +163,6 @@ async function readKeyLogAppend(
   }
 }
 
-function isRotateRootKeepRecord(bytes: Uint8Array): boolean {
-  try {
-    return decodeKeyLogRecord(bytes).type === 'rotate-root-keep';
-  } catch {
-    return false;
-  }
-}
-
 export class AuthKeyLogRoutes {
   constructor(
     private readonly deps: AuthRoutesDeps,
@@ -470,11 +462,11 @@ export class AuthKeyLogRoutes {
     if (this.identicalAppliedRecord(userId, bytes, sig)) {
       return null;
     }
-    // 中继模式下 `nodes` 版本注册表永远是空的（只有 hub 侧会写），一律判「节点过旧」会把根轮换
-    // 彻底堵死。而中继在 relay.auth 上强制 client_version ≥ 1.1.23，已经严于这条记录要求的 1.1.16。
-    if (isRotateRootKeepRecord(bytes) && this.inRelayMode(userId)) return null;
     const compat = applyForcedKeyLogCompat(
-      inspectHubAuthRecordCompat(this.deps.userStore, bytes, userId),
+      inspectHubAuthRecordCompat(this.deps.userStore, bytes, userId, {
+        relayMode: this.inRelayMode(userId),
+        localNodeId: this.deps.nodeId,
+      }),
       req.headers.get('x-tmex-force-keylog') === '1'
     );
     if (compat.ok) return null;

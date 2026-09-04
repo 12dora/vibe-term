@@ -30,6 +30,7 @@ import {
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
 import type { HubPeerFetch } from '../hub/hub-peer-poller';
 import type { HubTlsInfoProvider } from '../hub/hub-runtime';
+import { setMessagingMeshRuntime } from '../messaging/runtime-hooks';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
 import type { GatewaySession } from '../ws/gateway-session';
@@ -1349,7 +1350,7 @@ function assembleMeshRuntime(
   let tlsPoll: { clear: () => void } | null = null;
   const refreshTlsAndAdvertise = createTlsRefresher(d, uplink);
   const unsubscribeHubMode = hub?.onModeChange(() => uplink.sendStatusIfChanged()) ?? null;
-  return {
+  const runtime: MeshRuntime = {
     nodeId: identity.nodeIdHex,
     identity,
     hub,
@@ -1435,6 +1436,7 @@ function assembleMeshRuntime(
         unsubscribeHubMode?.();
         d.nodeEventDedupe.clear();
         setMeshAgentBridge(null);
+        setMessagingMeshRuntime(null);
         await stopQuietly([
           ['peer', () => peerManager.stop()],
           ['uplink', () => uplink.stop()],
@@ -1448,6 +1450,8 @@ function assembleMeshRuntime(
       return stopPromise;
     },
   };
+  setMessagingMeshRuntime(() => runtime);
+  return runtime;
 }
 
 export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise<MeshRuntime> {

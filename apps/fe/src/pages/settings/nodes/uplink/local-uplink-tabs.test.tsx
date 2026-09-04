@@ -283,6 +283,7 @@ describe('中继模式下的 Hub tab', () => {
         status={status('node')}
         hubs={{ ...EMPTY_HUBS, writesBlocked: false }}
         hubOnline={false}
+        hubLoading={false}
         hubFailure={null}
         relayMode
         standalone={false}

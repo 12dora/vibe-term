@@ -2,6 +2,7 @@ import type { FetchLike } from '../lib/fetch-like';
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
+import { randomBytes, rootKeyFromSeed } from '../../../shared/src/auth';
 import { JoinError } from '../commands/hub';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { openLocalAuth } from '../lib/local-auth';
@@ -343,6 +344,82 @@ describe('POST /api/setup/join', () => {
     expect(status).toBe(200);
     expect(issued).toBe('issued-token');
     expect((body as { ok: boolean; username: string }).username).toBe('alice');
+  });
+
+  test('password join forwards totpCode to self-admit', async () => {
+    let seen: string | undefined;
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/join', {
+          hubUrl: 'https://hub.example.com',
+          method: 'password',
+          password: 'tmex-test-pass',
+          name: 'studio',
+          totpCode: '123456',
+          directEnable: false,
+        }),
+        deps({
+          requestEnrollmentByPassword: async () => ({
+            token: 'issued-token',
+            hubUrl: 'https://hub.example.com',
+            caFingerprint: null,
+            rootKey: rootKeyFromSeed(randomBytes(32)),
+          }),
+          publishHubJoinSelfAdmit: async (input) => {
+            seen = input.totpCode;
+            return { appended: true, admitPending: false };
+          },
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect(seen).toBe('123456');
+    expect((body as { admitPending?: boolean }).admitPending).toBeUndefined();
+  });
+
+  test('password join returns admitPending when self-admit is skipped', async () => {
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/join', {
+          hubUrl: 'https://hub.example.com',
+          method: 'password',
+          password: 'tmex-test-pass',
+          name: 'studio',
+          directEnable: false,
+        }),
+        deps({
+          requestEnrollmentByPassword: async () => ({
+            token: 'issued-token',
+            hubUrl: 'https://hub.example.com',
+            caFingerprint: null,
+            rootKey: rootKeyFromSeed(randomBytes(32)),
+          }),
+          publishHubJoinSelfAdmit: async () => ({ appended: false, admitPending: true }),
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect((body as { admitPending?: boolean }).admitPending).toBe(true);
+  });
+
+  test('invalid totpCode is 400', async () => {
+    for (const totpCode of ['12', 'abcdef', '12345678901', 123456]) {
+      const { status, body } = await jsonOf(
+        await handleSetupRequest(
+          post('/api/setup/join', {
+            hubUrl: 'https://hub.example.com',
+            method: 'password',
+            password: 'tmex-test-pass',
+            name: 'studio',
+            totpCode,
+            directEnable: false,
+          }),
+          deps()
+        )
+      );
+      expect(status).toBe(400);
+      expect((body as { error: { code: string } }).error.code).toBe('invalid_body');
+    }
   });
 
   test('token and password together are 400', async () => {

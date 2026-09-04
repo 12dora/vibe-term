@@ -139,4 +139,23 @@ describe('WeixinChannel gating & formatting', () => {
       updateSiteSettings({ enableNotificationPush: false });
     });
   });
+
+  test('sends device_connection_error when notification push is enabled', async () => {
+    await withMockSend(async (calls) => {
+      updateSiteSettings({ enableNotificationPush: true });
+      await weixinChannel.notify(
+        'device_connection_error' as WebhookEvent['eventType'],
+        makeEvent({
+          eventType: 'device_connection_error' as WebhookEvent['eventType'],
+          device: { id: 'dev-1', name: 'mac', type: 'ssh', host: '10.0.0.1' },
+          payload: { message: 'auth failed', category: 'auth_failed' },
+        })
+      );
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.text).toContain('mac');
+      expect(calls[0]?.text).toContain('auth failed');
+      expect(calls[0]?.text).not.toContain('<a href');
+      updateSiteSettings({ enableNotificationPush: false });
+    });
+  });
 });

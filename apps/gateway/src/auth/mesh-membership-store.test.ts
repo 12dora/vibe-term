@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { RelayConfigStore } from '../relay/relay-config-store';
+import { RelayKeyLogStore } from '../relay/relay-key-log-store';
 import { RelayTenantStore } from '../relay/relay-tenant-store';
 import { HubTrustStore } from './hub-trust-store';
 import { KeyLogStore } from './key-log-store';
@@ -234,6 +235,84 @@ describe('MeshMembershipStore.clearAll', () => {
       expect(tableCount(sqlite, 'users')).toBe(0);
       expect(tableCount(sqlite, 'relay_config')).toBe(1);
       expect(tableCount(sqlite, 'relay_tenants')).toBe(1);
+    } finally {
+      close();
+    }
+  });
+
+  test('clearMeshMembership deletes matching relay tenant and cascades; keeps foreign', async () => {
+    const { db, sqlite, close } = createMigratedAuthDb();
+    try {
+      const users = new UserStore(db);
+      users.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: ROOT_PK,
+        rootEpoch: 0,
+        kdfParamsJson: '{"kdf":"argon2id"}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: HEAD_HASH,
+        now: 1_000,
+      });
+      new RelayConfigStore(db).ensure(1_000);
+      const tenants = new RelayTenantStore(db);
+      const matchingId = 'cd'.repeat(16);
+      const foreignId = 'ab'.repeat(16);
+      tenants.create({
+        id: matchingId,
+        rootPublicKey: ROOT_PK,
+        rootEpoch: 0,
+        tokenHash: 'aa'.repeat(32),
+        tokenEpoch: 0,
+        now: 1_000,
+      });
+      tenants.create({
+        id: foreignId,
+        rootPublicKey: Uint8Array.from({ length: 32 }, () => 3),
+        rootEpoch: 0,
+        tokenHash: 'bb'.repeat(32),
+        tokenEpoch: 0,
+        now: 1_000,
+      });
+      for (const tenantId of [matchingId, foreignId]) {
+        tenants.upsertNode({
+          tenantId,
+          nodeId: `node-${tenantId.slice(0, 4)}`,
+          edPk: Uint8Array.from({ length: 32 }, () => 1),
+          x25519Pk: Uint8Array.from({ length: 32 }, () => 2),
+          status: 'admitted',
+          now: 1_000,
+        });
+        tenants.createEnrollment({
+          id: `enroll-${tenantId.slice(0, 8)}`,
+          tenantId,
+          enrollPk: Uint8Array.from({ length: 32 }, (_, i) => (i + tenantId.charCodeAt(0)) % 256),
+          authorizationBytes: AUTH_BYTES,
+          authorizationSig: AUTH_SIG,
+          expiresAt: 9_999,
+          now: 1_000,
+        });
+        new RelayKeyLogStore(db).append({
+          tenantId,
+          seq: 1n,
+          envelope: { v: 1, n: 'n', ct: 'ct' },
+          now: 1_000,
+        });
+      }
+      new MeshMembershipStore(db).clearMeshMembership({
+        removeRelayTenantRootPublicKey: ROOT_PK,
+      });
+      expect(tableCount(sqlite, 'users')).toBe(0);
+      expect(tableCount(sqlite, 'relay_config')).toBe(1);
+      expect(tableCount(sqlite, 'relay_tenants')).toBe(1);
+      expect(tenants.get(matchingId)).toBeNull();
+      expect(tenants.get(foreignId)?.id).toBe(foreignId);
+      expect(tenants.listNodes(matchingId)).toHaveLength(0);
+      expect(tenants.listNodes(foreignId)).toHaveLength(1);
+      expect(tenants.getEnrollmentById(`enroll-${matchingId.slice(0, 8)}`)).toBeNull();
+      expect(tenants.getEnrollmentById(`enroll-${foreignId.slice(0, 8)}`)).not.toBeNull();
+      expect(new RelayKeyLogStore(db).listAll(matchingId)).toHaveLength(0);
+      expect(new RelayKeyLogStore(db).listAll(foreignId)).toHaveLength(1);
     } finally {
       close();
     }

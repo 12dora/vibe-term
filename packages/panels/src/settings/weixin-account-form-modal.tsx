@@ -37,11 +37,29 @@ export const weixinAccountFormConfig: IntegrationFormConfig<WeixinAccountWithSta
       labelKey: 'weixin.enableAccount',
       initialValue: (account) => account?.enabled ?? true,
     },
+    {
+      kind: 'toggle',
+      key: 'allowCommands',
+      inputId: 'weixin-account-allow-commands',
+      testId: 'weixin-account-allow-commands',
+      labelKey: 'weixin.allowCommands',
+      descriptionKey: 'weixin.allowCommandsHelp',
+      initialValue: (account) => account?.allowCommands ?? false,
+    },
   ],
   buildPayload: (values, { isEdit }) =>
     isEdit
-      ? { name: String(values.name).trim(), enabled: values.enabled }
-      : { name: String(values.name).trim(), enabled: values.enabled, allowAuthRequests: true },
+      ? {
+          name: String(values.name).trim(),
+          enabled: values.enabled,
+          allowCommands: values.allowCommands,
+        }
+      : {
+          name: String(values.name).trim(),
+          enabled: values.enabled,
+          allowAuthRequests: true,
+          allowCommands: values.allowCommands,
+        },
   create: {
     path: '/api/settings/weixin/accounts',
     errorFallbackKey: 'weixin.createFailed',

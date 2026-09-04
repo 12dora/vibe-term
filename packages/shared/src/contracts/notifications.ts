@@ -9,6 +9,7 @@ export type EventType =
   | 'tmux_pane_close'
   | 'device_tmux_missing'
   | 'device_disconnect'
+  | 'device_connection_error'
   | 'session_created'
   | 'session_closed'
   | 'agent_confirmation_pending'

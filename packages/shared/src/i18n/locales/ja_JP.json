@@ -959,6 +959,109 @@
         "terminalHint": "またはターミナルから更新：tmex upgrade"
       }
     },
+    "messaging": {
+      "command": {
+        "help": {
+          "description": "利用できるコマンドを表示します。"
+        },
+        "status": {
+          "description": "本機ノードの状態を表示します。"
+        },
+        "nodes": {
+          "description": "メッシュのノードを一覧します。"
+        },
+        "devices": {
+          "description": "本機のデバイスを一覧します。"
+        },
+        "windows": {
+          "description": "デバイスの tmux ウィンドウを一覧します。"
+        },
+        "panes": {
+          "description": "デバイスのペインを一覧します。"
+        },
+        "tail": {
+          "description": "ペインの直近の出力を表示します。"
+        },
+        "run": {
+          "description": "ペインにコマンドを送ります。"
+        },
+        "approve": {
+          "description": "保留中のエージェント確認を承認します。"
+        },
+        "deny": {
+          "description": "保留中のエージェント確認を拒否します。"
+        }
+      },
+      "help": {
+        "title": "コマンド"
+      },
+      "status": {
+        "name": "ノード",
+        "version": "バージョン",
+        "roles": "ロール",
+        "uplink": "アップリンク",
+        "uplinkNone": "なし",
+        "uplinkHub": "Hub",
+        "uplinkRelay": "中継",
+        "uplinkUnknown": "不明",
+        "attached": "接続済み",
+        "detached": "未接続",
+        "attachedUnknown": "不明"
+      },
+      "nodes": {
+        "standalone": "本機はマルチノードに参加していません。",
+        "title": "ノード",
+        "online": "オンライン",
+        "offline": "オフライン",
+        "current": "本機",
+        "unknownVersion": "不明なバージョン"
+      },
+      "devices": {
+        "empty": "デバイスはありません。",
+        "connected": "接続済み",
+        "disconnected": "未接続"
+      },
+      "windows": {
+        "empty": "ウィンドウはありません。"
+      },
+      "panes": {
+        "empty": "ペインはありません。"
+      },
+      "tail": {
+        "empty": "（出力なし）"
+      },
+      "run": {
+        "sent": "送信しました。"
+      },
+      "approve": {
+        "ok": "承認しました。"
+      },
+      "deny": {
+        "ok": "拒否しました。"
+      },
+      "error": {
+        "unknownCommand": "未知のコマンドです。help で一覧を表示できます。",
+        "remoteNodeUnsupported": "コマンドは Bot をホストするノードでのみ実行でき、リモートノードでは実行できません。",
+        "unknownDevice": "デバイス「{{input}}」が見つかりません。",
+        "ambiguousDevice": "デバイス「{{input}}」が一意ではありません：{{candidates}}。",
+        "unknownPane": "ペイン「{{input}}」が見つかりません。",
+        "ambiguousPane": "ペイン「{{input}}」が一意ではありません：{{candidates}}。",
+        "unknownWindow": "ウィンドウ「{{input}}」が見つかりません。",
+        "ambiguousWindow": "ウィンドウ「{{input}}」が一意ではありません：{{candidates}}。",
+        "deviceDisconnected": "デバイスは接続されていません。",
+        "missingArg": "引数が不足しています：{{name}}。",
+        "invalidLines": "行数は 1–200 である必要があります。",
+        "missingTail": "run は -- の後に送信テキストが必要です。",
+        "nodeUnknown": "ノード「{{input}}」が見つかりません。",
+        "nodeAmbiguous": "ノード「{{input}}」が一意ではありません：{{candidates}}。",
+        "nodeOffline": "ノード「{{input}}」はオフラインです。",
+        "confirmationNotFound": "保留中の確認が見つかりません。",
+        "confirmationAlreadyDecided": "この確認は処理済みです。",
+        "confirmationUnavailable": "確認サービスを利用できません。",
+        "captureFailed": "ペイン出力の読み取りに失敗しました。",
+        "sendFailed": "入力の送信に失敗しました。"
+      }
+    },
     "telegram": {
       "title": "Telegram Bot 管理",
       "botName": "Bot 名",
@@ -968,6 +1071,9 @@
       "addBot": "Bot を追加",
       "editBot": "Bot を編集",
       "allowAuthRequests": "認証リクエストを許可",
+      "allowCommands": "チャットコマンドを許可",
+      "allowCommandsHelp": "承認済みのチャットが本機のターミナルにコマンドを入力し、エージェント操作を承認できます。",
+      "commandsBadge": "チャットコマンド",
       "pendingChats": "承認待ち",
       "chats": "承認済み",
       "noPendingChats": "承認待ちのチャットはありません",
@@ -1014,6 +1120,9 @@
       "editAccount": "アカウントを編集",
       "enableAccount": "アカウントを有効化",
       "allowAuthRequests": "認証リクエストを許可",
+      "allowCommands": "チャットコマンドを許可",
+      "allowCommandsHelp": "承認済みのチャットが本機のターミナルにコマンドを入力し、エージェント操作を承認できます。",
+      "commandsBadge": "チャットコマンド",
       "scanToLogin": "スキャンしてログイン",
       "relogin": "再ログイン（再スキャン）",
       "loggedIn": "ログイン済み",
@@ -1215,9 +1324,11 @@
         "agent_error": "エージェントエラー",
         "watch_triggered": "ターミナルモニター発動",
         "watch_model_unavailable": "ターミナルモニターのモデル利用不可",
-        "watch_rule_error": "ターミナルモニターのルールエラー"
+        "watch_rule_error": "ターミナルモニターのルールエラー",
+        "device_connection_error": "デバイス接続エラー"
       },
       "site": "サイト",
+      "node": "ノード",
       "device": "デバイス",
       "window": "ウィンドウ",
       "pane": "ターミナル",
@@ -1732,6 +1843,7 @@
       "self": "現在",
       "hub": "ハブ",
       "loggedIn": "サインイン済み",
+      "hubConnecting": "ハブに接続しています…",
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
       "hubLoginRejected": "ハブがこのサインインを拒否しました（{{code}}）。サインインし直してからお試しください。",
       "hubs": {
@@ -2119,7 +2231,8 @@
       "status": {
         "online": "オンライン",
         "offline": "オフライン",
-        "revoked": "削除済み"
+        "revoked": "削除済み",
+        "pending": "承認待ち"
       },
       "reach": {
         "lan": "ローカル",
@@ -2134,7 +2247,13 @@
         "revoke": "削除",
         "refresh": "更新",
         "copy": "コピー",
-        "copied": "コピーしました"
+        "copied": "コピーしました",
+        "admit": "参加を承認"
+      },
+      "admit": {
+        "blocked": "先に参加を承認してください。",
+        "unavailable": "承認に必要な情報が Hub から届いていません。更新してからもう一度お試しください。",
+        "failed": "承認に失敗しました：{{error}}"
       },
       "detail": {
         "description": "ノードの情報を確認し、名前とドメインアクセスの設定を変更します。",
@@ -2224,7 +2343,8 @@
         "retryHub": "再試行",
         "missingHubUrl": "ハブに公開アドレスが設定されていないため、参加コマンドを作成できません。",
         "missingRelayUrl": "中継アドレスを取得できないため、参加コマンドを作成できません。",
-        "staleRecord": "その間にアカウント情報が変わりました。もう一度承認してください。"
+        "staleRecord": "その間にアカウント情報が変わりました。もう一度承認してください。",
+        "relayNoneAccepted": "中継が参加コードを受け付けませんでした。中継の接続を確認してからもう一度お試しください。"
       },
       "rename": {
         "save": "保存",

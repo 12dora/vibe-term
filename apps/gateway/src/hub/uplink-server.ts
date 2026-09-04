@@ -1548,10 +1548,8 @@ export class UplinkServer {
         if (id) {
           this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(replayed.seq) });
         }
-        await this.runAppendEffects(
-          live.userId,
-          this.replayedAppendSuccess(bytes, sig, replayed.seq)
-        );
+        const replayedOk = this.replayedAppendSuccess(bytes, sig, replayed.seq);
+        await this.runAppendEffects(live.userId, replayedOk);
         return;
       }
       const forwarded = this.forwardAppend ? await this.forwardAppend({ bytes, sig, force }) : null;
@@ -1599,7 +1597,9 @@ export class UplinkServer {
       return;
     }
     const compat = applyForcedKeyLogCompat(
-      inspectHubAuthRecordCompat(this.userStore, bytes, live.userId),
+      inspectHubAuthRecordCompat(this.userStore, bytes, live.userId, {
+        localNodeId: this.hubNodeId(),
+      }),
       force
     );
     if (!compat.ok) {

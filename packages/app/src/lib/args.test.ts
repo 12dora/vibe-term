@@ -70,6 +70,20 @@ describe('resolveNestedCommand', () => {
     ).not.toThrow();
   });
 
+  test('accepts hub join --totp', () => {
+    const parsed = parseArgs([
+      'hub',
+      'join',
+      'https://hub.example',
+      '--password',
+      'secret',
+      '--totp',
+      '123456',
+    ]);
+    expect(parsed.flags.totp).toBe('123456');
+    expect(() => assertKnownFlags(parsed)).not.toThrow();
+  });
+
   test('parses hub join/leave --no-restart as a boolean flag', () => {
     const join = parseArgs([
       'hub',
@@ -250,6 +264,8 @@ describe('cli help', () => {
     expect(cliHelpText('zh-CN')).toContain('同时移除所有通行密钥、两步验证并注销全部会话');
     expect(help).toContain('tmex hub join');
     expect(help).toContain('--password');
+    expect(help).toContain('--totp');
+    expect(help).toContain('TMEX_TOTP');
     expect(help).toContain('tmex relay join');
     expect(help).toContain('tmex hub standby --public-url');
     expect(help).toContain('tmex hub promote');

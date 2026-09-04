@@ -6,7 +6,7 @@
 // 才能发起续跑（见 appendApprovalResponsesIfReady）。
 
 import { wsBorsh } from '@tmex/shared';
-import { getDeviceById, getSiteSettings } from '../db';
+import { getDeviceById } from '../db';
 import {
   type AgentConfirmationRecord,
   type AgentMessageRecord,
@@ -27,8 +27,9 @@ import {
   updateAgentSession,
   updateQueuedAgentMessage,
 } from '../db/agent';
+import { eventNotifier } from '../events';
+import { CREDENTIAL_WARNING_KIND } from '../events/channels/types';
 import { t } from '../i18n';
-import { telegramService } from '../telegram/service';
 import {
   type ApprovalConfirmation,
   buildApprovalResponseParts,
@@ -39,6 +40,7 @@ import { registerDeviceCloseListener } from './device-close-bus';
 import { registerNodeOfflineListener } from './node-offline-bus';
 import { type AgentStopReason, NODE_OFFLINE_ERROR } from './outcome-resolver';
 import { AgentRun, type AgentRunDeps } from './run';
+import { notifyAgentEvent } from './run-notify';
 import { detectSecrets } from './secret-scan';
 import { type AgentWsHub, agentWsHub } from './ws-hub';
 
@@ -384,20 +386,12 @@ export class AgentSupervisor {
   }
 
   private async pushCredentialWarning(session: AgentSessionRecord, types: string[]): Promise<void> {
-    try {
-      const settings = getSiteSettings();
-      if (!settings.enableNotificationPush) {
-        return;
-      }
-      const text = t('telegram.agentCredentialWarning', {
-        siteName: settings.siteName,
-        sessionTitle: session.title,
-        types: types.join(', '),
-      });
-      await telegramService.sendToAuthorizedChats({ text });
-    } catch (error) {
-      console.error('[agent-supervisor] credential warning push failed:', error);
-    }
+    await notifyAgentEvent({
+      notify: (eventType, event) => eventNotifier.notify(eventType, event),
+      session,
+      eventType: 'agent_error',
+      payload: { kind: CREDENTIAL_WARNING_KIND, types },
+    });
   }
 
   async stopSession(sessionId: string): Promise<void> {

@@ -12,7 +12,7 @@ import {
   nodeIdToHex,
 } from '@tmex/shared/auth';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
-import type { UserStore } from '../auth/user-store';
+import { HUB_META_PEER_ID, type UserStore } from '../auth/user-store';
 
 export type HubAuthorizationSource = 'signed-active' | 'signed-retired' | 'env' | 'self' | 'none';
 export type HubAuthListColumn = 'signed' | 'env' | 'self' | 'no';
@@ -155,12 +155,41 @@ export type HubAuthRecordCompatResult =
       allowForce: boolean;
     };
 
-/** 节点侧记录：中继两类 + rename-node。中继租户没有 `nodes` 注册表，只能按空表放行。 */
+export type HubAuthCompatOptions = {
+  relayMode?: boolean;
+  /** 本机节点编号：本机版本即当前版本，永不阻塞。 */
+  localNodeId?: string | null;
+};
+
+/** 节点侧记录：中继两类 + rename-node。空 peer cache 时仅这三类可 bootstrap 豁免。 */
 function isNodeSideRecordType(type: string): boolean {
   return (
     (RELAY_RECORD_TYPES as readonly string[]).includes(type) ||
     (RENAME_NODE_RECORD_TYPES as readonly string[]).includes(type)
   );
+}
+
+function listActivePeers(userStore: UserStore) {
+  return userStore.listPeers().filter((peer) => peer.nodeId !== HUB_META_PEER_ID);
+}
+
+function lookupCompatNode(
+  userStore: UserStore,
+  nodeId: string,
+  relayMode: boolean
+): { name: string; version: string | null; cached: boolean } {
+  if (!relayMode) {
+    const node = userStore.getNode(nodeId);
+    if (node) return { name: node.name ?? nodeId, version: node.version ?? null, cached: true };
+  }
+  const peer = userStore.getPeer(nodeId);
+  if (!peer) return { name: nodeId, version: null, cached: false };
+  return { name: peer.name, version: peer.version, cached: true };
+}
+
+function hasKnownMembers(userStore: UserStore, relayMode: boolean): boolean {
+  if (listActivePeers(userStore).length > 0) return true;
+  return !relayMode && userStore.listNodes().length > 0;
 }
 
 export function normalizeReportedNodeVersion(raw: string | null | undefined): string | null {
@@ -183,18 +212,22 @@ export function nodeVersionSupportsHubAuthRecords(raw: string | null | undefined
 export function nodesBlockingMinVersion(
   userStore: UserStore,
   minVersion: string,
-  userId?: string | null
+  userId?: string | null,
+  opts?: HubAuthCompatOptions
 ): UnsupportedKeyLogNode[] {
+  const relayMode = opts?.relayMode === true;
+  const skipUncached = relayMode && listActivePeers(userStore).length > 0;
   const blocked: UnsupportedKeyLogNode[] = [];
   const certs = userId ? userStore.listCertsByUser(userId) : userStore.listCerts();
   for (const cert of certs) {
-    if (cert.revokedLogSeq != null) continue;
-    const node = userStore.getNode(cert.nodeId);
-    if (nodeVersionMeets(node?.version, minVersion)) continue;
+    if (cert.revokedLogSeq != null || cert.nodeId === opts?.localNodeId) continue;
+    const looked = lookupCompatNode(userStore, cert.nodeId, relayMode);
+    if (skipUncached && !looked.cached) continue;
+    if (nodeVersionMeets(looked.version, minVersion)) continue;
     blocked.push({
       id: cert.nodeId,
-      name: node?.name ?? cert.nodeId,
-      version: node?.version ?? null,
+      name: looked.name,
+      version: looked.version,
     });
   }
   return blocked;
@@ -203,7 +236,8 @@ export function nodesBlockingMinVersion(
 export function inspectHubAuthRecordCompat(
   userStore: UserStore,
   recordBytes: Uint8Array,
-  userId?: string | null
+  userId?: string | null,
+  opts?: HubAuthCompatOptions
 ): HubAuthRecordCompatResult {
   let type: string;
   try {
@@ -213,11 +247,13 @@ export function inspectHubAuthRecordCompat(
   }
   const spec = KEYLOG_RECORD_COMPAT[type as keyof typeof KEYLOG_RECORD_COMPAT];
   if (!spec) return { ok: true };
-  // 版本来自 `nodes` 注册表，而注册表只有 hub 侧会写（redeem 与 uplink 认证）。中继租户是纯节点，
-  // 那张表永远为空，一律判「过旧」会把 set-relays / meta-key 这两类节点侧记录全部堵死。
-  // 因此注册表为空时只放行节点侧记录（中继两类 + rename-node）；hub-auth 与 rotate-root-keep 仍然 fail-closed。
-  if (isNodeSideRecordType(type) && userStore.listNodes().length === 0) return { ok: true };
-  const nodes = nodesBlockingMinVersion(userStore, spec.minVersion, userId);
+  const relayMode = opts?.relayMode === true;
+  // 版本来源：hub 侧 nodes.version，纯节点与中继模式退到 peer_cache.version；
+  // 尚无任何已知成员时只豁免节点侧三类记录（首台 bootstrap），hub-auth 与 rotate-root-keep 仍 fail-closed。
+  if (isNodeSideRecordType(type) && !hasKnownMembers(userStore, relayMode)) {
+    return { ok: true };
+  }
+  const nodes = nodesBlockingMinVersion(userStore, spec.minVersion, userId, opts);
   if (nodes.length === 0) return { ok: true };
   return {
     ok: false,

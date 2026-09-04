@@ -4,8 +4,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { MeshHubsState } from '@/node/mesh-hubs';
 import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
+import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  HubUplinkNotices,
   MachineHubList,
   hubFailureNotice,
   orderHubs,
@@ -168,5 +170,62 @@ describe('合并后的 Hub 列表', () => {
     expect(html).toContain('data-testid="local-machine-hub-offline-h2"');
     expect(html).not.toContain('data-testid="local-machine-hub-offline-h1"');
     expect(chipTag(html, 'h2')).toContain('data-hub-online="false"');
+  });
+});
+
+describe('上级 hub 的提示分档', () => {
+  function notices(overrides: Partial<Parameters<typeof HubUplinkNotices>[0]> = {}): string {
+    return renderToStaticMarkup(
+      <HubUplinkNotices
+        hubOnline={false}
+        hubLoading={false}
+        writesBlocked={false}
+        hubFailure={null}
+        {...overrides}
+      />
+    );
+  }
+
+  const AUTH = { kind: 'auth', code: 'PASSKEY_REQUIRED', message: 'denied' } as const;
+  const UNREACHABLE = { kind: 'unreachable', code: null, message: 'boom' } as const;
+
+  test('还没探过 hub：一条提示都不出，尤其不出「连不上」', () => {
+    expect(notices()).toBe('');
+  });
+
+  test('首次探测在飞：只给一句灰字，不出红条', () => {
+    const html = notices({ hubLoading: true });
+    expect(html).toContain('data-testid="nodes-hub-connecting"');
+    expect(html).toContain('nodes.hubConnecting');
+    expect(html).not.toContain('nodes-hub-offline');
+    expect(html).toContain('text-muted-foreground');
+    expect(zhCN.translation.nodes.hubConnecting).toBe('正在连接 Hub…');
+  });
+
+  test('探测落地才出红条：打不通与拒登分成两条', () => {
+    const offline = notices({ hubFailure: UNREACHABLE });
+    expect(offline).toContain('data-testid="nodes-hub-offline"');
+    expect(offline).toContain('text-destructive');
+    const rejected = notices({ hubFailure: AUTH });
+    expect(rejected).toContain('data-testid="nodes-hub-login-rejected"');
+    expect(rejected).not.toContain('nodes-hub-offline');
+  });
+
+  test('失败之后的重试仍在飞：留住红条，不闪成「正在连接」', () => {
+    const html = notices({ hubLoading: true, hubFailure: UNREACHABLE });
+    expect(html).toContain('data-testid="nodes-hub-offline"');
+    expect(html).not.toContain('nodes-hub-connecting');
+  });
+
+  test('列表已经拉到：后台刷新与残留失败都不再打扰', () => {
+    expect(notices({ hubOnline: true, hubLoading: true })).toBe('');
+    expect(notices({ hubOnline: true, hubFailure: UNREACHABLE })).toBe('');
+  });
+
+  test('挂在备 hub 上的拒写提示压过其余所有分档', () => {
+    const html = notices({ writesBlocked: true, hubLoading: true, hubFailure: AUTH });
+    expect(html).toContain('data-testid="nodes-hub-standby"');
+    expect(html).not.toContain('nodes-hub-connecting');
+    expect(html).not.toContain('nodes-hub-login-rejected');
   });
 });

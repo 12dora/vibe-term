@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import {
   enrollmentTokens,
   hubTrust,
@@ -18,7 +19,13 @@ import {
   userKeys,
   users,
 } from '../db/schema';
+import { toBuffer } from './binary';
 import type { AuthDb } from './types';
+
+export type ClearMeshMembershipOptions = {
+  /** 与即将离开的本机用户根公钥匹配的中继租户；同事务删除，级联清 nodes / enrollments / key_log。 */
+  removeRelayTenantRootPublicKey?: Uint8Array;
+};
 
 function wipeMeshMembership(db: AuthDb): void {
   db.delete(userKeyLog).run();
@@ -45,12 +52,20 @@ function wipeRelayOperatorState(db: AuthDb): void {
   db.delete(relayConfig).run();
 }
 
+function wipeMatchingRelayTenant(db: AuthDb, rootPublicKey: Uint8Array): void {
+  db.delete(relayTenants)
+    .where(eq(relayTenants.rootPublicKey, toBuffer(rootPublicKey)))
+    .run();
+}
+
 export class MeshMembershipStore {
   constructor(private readonly db: AuthDb) {}
 
-  clearMeshMembership(): void {
+  clearMeshMembership(options?: ClearMeshMembershipOptions): void {
     this.db.transaction((tx) => {
       wipeMeshMembership(tx);
+      const root = options?.removeRelayTenantRootPublicKey;
+      if (root && root.byteLength > 0) wipeMatchingRelayTenant(tx, root);
     });
   }
 

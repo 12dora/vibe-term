@@ -253,6 +253,8 @@ const AUTH_LOGIN_ERROR_BY_CODE: Record<string, string> = {
     'This account requires passkey second-factor for password sign-in; CLI password login is unavailable. Use the web UI to sign in.',
   PASSKEY_INVALID: 'Passkey second-factor verification failed.',
   INVALID_CREDENTIALS: 'Invalid credentials.',
+  TOTP_REQUIRED: 'TOTP code is required.',
+  TOTP_INVALID: 'TOTP code is invalid.',
 };
 
 function authLoginError(status: number, body: Record<string, unknown>): Error {

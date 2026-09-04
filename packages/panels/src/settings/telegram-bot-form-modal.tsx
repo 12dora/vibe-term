@@ -6,8 +6,13 @@ import {
   nonEmptyText,
 } from './integration-account-form-modal';
 
-function telegramUpdatePayload(name: string, token: string, allowAuthRequests: unknown) {
-  const payload: Record<string, unknown> = { name, allowAuthRequests };
+function telegramUpdatePayload(
+  name: string,
+  token: string,
+  allowAuthRequests: unknown,
+  allowCommands: unknown
+) {
+  const payload: Record<string, unknown> = { name, allowAuthRequests, allowCommands };
   if (token) {
     payload.token = token;
   }
@@ -49,19 +54,30 @@ export const telegramBotFormConfig: IntegrationFormConfig<TelegramBotWithStats> 
       labelKey: 'telegram.allowAuthRequests',
       initialValue: (bot) => bot?.allowAuthRequests ?? true,
     },
+    {
+      kind: 'toggle',
+      key: 'allowCommands',
+      inputId: 'telegram-bot-allow-commands',
+      testId: 'telegram-bot-allow-commands',
+      labelKey: 'telegram.allowCommands',
+      descriptionKey: 'telegram.allowCommandsHelp',
+      initialValue: (bot) => bot?.allowCommands ?? false,
+    },
   ],
   buildPayload: (values, { isEdit }) =>
     isEdit
       ? telegramUpdatePayload(
           String(values.name).trim(),
           String(values.token).trim(),
-          values.allowAuthRequests
+          values.allowAuthRequests,
+          values.allowCommands
         )
       : {
           name: String(values.name).trim(),
           token: String(values.token).trim(),
           enabled: true,
           allowAuthRequests: values.allowAuthRequests,
+          allowCommands: values.allowCommands,
         },
   create: {
     path: '/api/settings/telegram/bots',

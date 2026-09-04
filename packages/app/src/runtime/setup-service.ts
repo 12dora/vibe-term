@@ -15,6 +15,7 @@ import {
   type PerformHubJoinInput,
   performHubJoin as defaultPerformHubJoin,
 } from '../commands/hub';
+import { joinErrorHttpStatus, publishPasswordJoinAdmitIfNeeded } from '../commands/hub-join-totp';
 import {
   readEnvFile as defaultReadEnvFile,
   resolveEnvWriteTarget,
@@ -25,7 +26,7 @@ import {
   requestEnrollmentByPassword as defaultRequestEnrollmentByPassword,
   wipeRootKey,
 } from '../lib/hub-password-join';
-import { publishHubJoinSelfAdmit } from '../lib/hub-password-self-admit';
+import type { PublishHubJoinSelfAdmitInput } from '../lib/hub-password-self-admit';
 import { createInstallLayout } from '../lib/install-layout';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { readInstalledNativeManifest } from '../lib/native-datachannel';
@@ -145,6 +146,7 @@ export type JoinHubInput = {
   name: string;
   directEnable: boolean;
   insecureLocal?: boolean;
+  totpCode?: string;
 };
 
 export type JoinHubResult = {
@@ -154,6 +156,7 @@ export type JoinHubResult = {
   direct: SetupDirectOutcome;
   directError: string | null;
   restarting: true;
+  admitPending?: boolean;
 };
 
 export type PrecheckResult = {
@@ -183,6 +186,9 @@ export type SetupServiceDeps = SetupEnvHost & {
     deps: PerformHubJoinDeps
   ) => ReturnType<typeof defaultPerformHubJoin>;
   requestEnrollmentByPassword?: typeof defaultRequestEnrollmentByPassword;
+  publishHubJoinSelfAdmit?: (
+    input: PublishHubJoinSelfAdmitInput
+  ) => Promise<{ appended: boolean; admitPending: boolean }>;
   now?: () => number;
   startedAt?: number;
   quiesceMesh?: () => Promise<void> | void;
@@ -216,24 +222,10 @@ export function mapDirectEnableFailure(
   return new SetupError('direct_download_failed', result.reason, 502);
 }
 
-function joinHttpStatus(code: JoinError['code']): number {
-  switch (code) {
-    case 'invalid_token':
-    case 'invalid_url':
-    case 'join_failed':
-      return 400;
-    case 'node_revoked':
-    case 'node_exists':
-      return 409;
-    case 'hub_unreachable':
-      return 502;
-  }
-}
-
 function asSetupJoinError(error: unknown): SetupError {
   if (error instanceof SetupError) return error;
   if (error instanceof JoinError) {
-    return new SetupError(error.code, error.message, joinHttpStatus(error.code));
+    return new SetupError(error.code, error.message, joinErrorHttpStatus(error.code));
   }
   const message = error instanceof Error ? error.message : String(error);
   return new SetupError('join_failed', message, 400);
@@ -515,8 +507,9 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
 
     const perform = deps.performHubJoin ?? defaultPerformHubJoin;
     let token = tokenValue;
-    let passwordRootKey: Parameters<typeof publishHubJoinSelfAdmit>[0]['rootKey'] | undefined;
+    let passwordRootKey: PublishHubJoinSelfAdmitInput['rootKey'] | undefined;
     let joined: Awaited<ReturnType<typeof defaultPerformHubJoin>>;
+    let admitPending = false;
     try {
       if (method === 'password') {
         const request = deps.requestEnrollmentByPassword ?? defaultRequestEnrollmentByPassword;
@@ -545,16 +538,16 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
           fetcher: deps.fetch,
         }
       );
-      if (passwordRootKey) {
-        await publishHubJoinSelfAdmit({
-          auth: deps.auth,
-          hubUrl: joined.hubUrl,
-          userId: joined.userId,
-          rootKey: passwordRootKey,
-          fetcher: deps.fetch,
-          now: deps.now,
-        });
-      }
+      admitPending = await publishPasswordJoinAdmitIfNeeded({
+        rootKey: passwordRootKey,
+        auth: deps.auth,
+        hubUrl: joined.hubUrl,
+        userId: joined.userId,
+        fetcher: deps.fetch,
+        now: deps.now,
+        totpCode: input.totpCode,
+        publish: deps.publishHubJoinSelfAdmit,
+      });
     } catch (error) {
       await removeStagedEnv(deps, stagedPath);
       throw asSetupJoinError(error);
@@ -584,6 +577,7 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
       direct: direct.direct,
       directError: direct.directError,
       restarting: true as const,
+      ...(admitPending ? { admitPending: true as const } : {}),
     };
   });
 }

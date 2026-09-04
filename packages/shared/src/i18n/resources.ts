@@ -965,6 +965,109 @@ export const I18N_RESOURCES = {
         "terminalHint": "Or upgrade from a terminal: tmex upgrade"
       }
     },
+    "messaging": {
+      "command": {
+        "help": {
+          "description": "List available commands."
+        },
+        "status": {
+          "description": "Show local node status."
+        },
+        "nodes": {
+          "description": "List mesh nodes."
+        },
+        "devices": {
+          "description": "List local devices."
+        },
+        "windows": {
+          "description": "List tmux windows on a device."
+        },
+        "panes": {
+          "description": "List panes on a device."
+        },
+        "tail": {
+          "description": "Show recent pane output."
+        },
+        "run": {
+          "description": "Send a command to a pane."
+        },
+        "approve": {
+          "description": "Approve a pending agent confirmation."
+        },
+        "deny": {
+          "description": "Deny a pending agent confirmation."
+        }
+      },
+      "help": {
+        "title": "Commands"
+      },
+      "status": {
+        "name": "Node",
+        "version": "Version",
+        "roles": "Roles",
+        "uplink": "Uplink",
+        "uplinkNone": "none",
+        "uplinkHub": "Hub",
+        "uplinkRelay": "relay",
+        "uplinkUnknown": "unknown",
+        "attached": "attached",
+        "detached": "not attached",
+        "attachedUnknown": "unknown"
+      },
+      "nodes": {
+        "standalone": "This machine is not part of a mesh.",
+        "title": "Nodes",
+        "online": "online",
+        "offline": "offline",
+        "current": "local",
+        "unknownVersion": "unknown version"
+      },
+      "devices": {
+        "empty": "No devices.",
+        "connected": "connected",
+        "disconnected": "disconnected"
+      },
+      "windows": {
+        "empty": "No windows."
+      },
+      "panes": {
+        "empty": "No panes."
+      },
+      "tail": {
+        "empty": "(no output)"
+      },
+      "run": {
+        "sent": "Sent."
+      },
+      "approve": {
+        "ok": "Approved."
+      },
+      "deny": {
+        "ok": "Denied."
+      },
+      "error": {
+        "unknownCommand": "Unknown command. Send help to list commands.",
+        "remoteNodeUnsupported": "Commands run only on the node that hosts this bot, not on remote nodes.",
+        "unknownDevice": "Device \"{{input}}\" not found.",
+        "ambiguousDevice": "Device \"{{input}}\" is ambiguous: {{candidates}}.",
+        "unknownPane": "Pane \"{{input}}\" not found.",
+        "ambiguousPane": "Pane \"{{input}}\" is ambiguous: {{candidates}}.",
+        "unknownWindow": "Window \"{{input}}\" not found.",
+        "ambiguousWindow": "Window \"{{input}}\" is ambiguous: {{candidates}}.",
+        "deviceDisconnected": "Device is not connected.",
+        "missingArg": "Missing argument: {{name}}.",
+        "invalidLines": "Line count must be 1–200.",
+        "missingTail": "run requires text after --.",
+        "nodeUnknown": "Node \"{{input}}\" not found.",
+        "nodeAmbiguous": "Node \"{{input}}\" is ambiguous: {{candidates}}.",
+        "nodeOffline": "Node \"{{input}}\" is offline.",
+        "confirmationNotFound": "Pending confirmation not found.",
+        "confirmationAlreadyDecided": "This confirmation was already decided.",
+        "confirmationUnavailable": "Confirmation service is unavailable.",
+        "captureFailed": "Failed to read pane output.",
+        "sendFailed": "Failed to send input."
+      }
+    },
     "telegram": {
       "title": "Telegram Bot Management",
       "botName": "Bot Name",
@@ -974,6 +1077,9 @@ export const I18N_RESOURCES = {
       "addBot": "Add Bot",
       "editBot": "Edit Bot",
       "allowAuthRequests": "Allow Authorization Requests",
+      "allowCommands": "Allow Chat Commands",
+      "allowCommandsHelp": "Authorized chats can type into terminals on this machine and approve agent actions.",
+      "commandsBadge": "Chat Commands",
       "pendingChats": "Pending Authorization",
       "chats": "Authorized Chats",
       "noPendingChats": "No pending chats",
@@ -1020,6 +1126,9 @@ export const I18N_RESOURCES = {
       "editAccount": "Edit Account",
       "enableAccount": "Enable Account",
       "allowAuthRequests": "Allow Authorization Requests",
+      "allowCommands": "Allow Chat Commands",
+      "allowCommandsHelp": "Authorized chats can type into terminals on this machine and approve agent actions.",
+      "commandsBadge": "Chat Commands",
       "scanToLogin": "Scan to Log In",
       "relogin": "Re-login (Re-scan)",
       "loggedIn": "Logged in",
@@ -1221,9 +1330,11 @@ export const I18N_RESOURCES = {
         "agent_error": "Agent Error",
         "watch_triggered": "Terminal Monitor Triggered",
         "watch_model_unavailable": "Terminal Monitor Model Unavailable",
-        "watch_rule_error": "Terminal Monitor Rule Error"
+        "watch_rule_error": "Terminal Monitor Rule Error",
+        "device_connection_error": "Device Connection Error"
       },
       "site": "Site",
+      "node": "Node",
       "device": "Device",
       "window": "Window",
       "pane": "Terminal",
@@ -1738,6 +1849,7 @@ export const I18N_RESOURCES = {
       "self": "Current",
       "hub": "Hub",
       "loggedIn": "Signed in",
+      "hubConnecting": "Connecting to Hub…",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
       "hubLoginRejected": "The hub rejected this sign-in ({{code}}). Sign in again, then retry.",
       "hubs": {
@@ -2125,7 +2237,8 @@ export const I18N_RESOURCES = {
       "status": {
         "online": "Online",
         "offline": "Offline",
-        "revoked": "Removed"
+        "revoked": "Removed",
+        "pending": "Pending"
       },
       "reach": {
         "lan": "Local network",
@@ -2140,7 +2253,13 @@ export const I18N_RESOURCES = {
         "revoke": "Remove",
         "refresh": "Refresh",
         "copy": "Copy",
-        "copied": "Copied"
+        "copied": "Copied",
+        "admit": "Admit"
+      },
+      "admit": {
+        "blocked": "Admit this node before managing it.",
+        "unavailable": "Hub did not send the material needed to admit this node. Refresh and try again.",
+        "failed": "Admit failed: {{error}}"
       },
       "detail": {
         "description": "Node details; rename it or change its domain access policy.",
@@ -2231,7 +2350,8 @@ export const I18N_RESOURCES = {
         "retryHub": "Retry",
         "missingHubUrl": "The hub has no public address, so the join command cannot be built.",
         "missingRelayUrl": "The relay address is unavailable, so the join command cannot be built.",
-        "staleRecord": "Your account changed in the meantime. Approve again."
+        "staleRecord": "Your account changed in the meantime. Approve again.",
+        "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again."
       },
       "rename": {
         "save": "Save",
@@ -3749,6 +3869,109 @@ export const I18N_RESOURCES = {
         "terminalHint": "或通过终端升级：tmex upgrade"
       }
     },
+    "messaging": {
+      "command": {
+        "help": {
+          "description": "列出可用命令。"
+        },
+        "status": {
+          "description": "显示本机节点状态。"
+        },
+        "nodes": {
+          "description": "列出互联节点。"
+        },
+        "devices": {
+          "description": "列出本机设备。"
+        },
+        "windows": {
+          "description": "列出设备上的 tmux 窗口。"
+        },
+        "panes": {
+          "description": "列出设备上的终端。"
+        },
+        "tail": {
+          "description": "读取终端最近输出。"
+        },
+        "run": {
+          "description": "向终端发送命令。"
+        },
+        "approve": {
+          "description": "批准待确认的智能体操作。"
+        },
+        "deny": {
+          "description": "拒绝待确认的智能体操作。"
+        }
+      },
+      "help": {
+        "title": "可用命令"
+      },
+      "status": {
+        "name": "节点",
+        "version": "版本",
+        "roles": "角色",
+        "uplink": "上行",
+        "uplinkNone": "无",
+        "uplinkHub": "Hub",
+        "uplinkRelay": "中继",
+        "uplinkUnknown": "未知",
+        "attached": "已连接",
+        "detached": "未连接",
+        "attachedUnknown": "未知"
+      },
+      "nodes": {
+        "standalone": "本机未加入多节点互联。",
+        "title": "节点",
+        "online": "在线",
+        "offline": "离线",
+        "current": "本机",
+        "unknownVersion": "未知版本"
+      },
+      "devices": {
+        "empty": "没有设备。",
+        "connected": "已连接",
+        "disconnected": "未连接"
+      },
+      "windows": {
+        "empty": "没有窗口。"
+      },
+      "panes": {
+        "empty": "没有终端。"
+      },
+      "tail": {
+        "empty": "（无输出）"
+      },
+      "run": {
+        "sent": "已发送。"
+      },
+      "approve": {
+        "ok": "已批准。"
+      },
+      "deny": {
+        "ok": "已拒绝。"
+      },
+      "error": {
+        "unknownCommand": "未知命令。发送 help 查看可用命令。",
+        "remoteNodeUnsupported": "命令只能在托管该 Bot 的节点上执行，无法在远程节点运行。",
+        "unknownDevice": "找不到设备「{{input}}」。",
+        "ambiguousDevice": "设备「{{input}}」不唯一：{{candidates}}。",
+        "unknownPane": "找不到终端「{{input}}」。",
+        "ambiguousPane": "终端「{{input}}」不唯一：{{candidates}}。",
+        "unknownWindow": "找不到窗口「{{input}}」。",
+        "ambiguousWindow": "窗口「{{input}}」不唯一：{{candidates}}。",
+        "deviceDisconnected": "设备未连接。",
+        "missingArg": "缺少参数：{{name}}。",
+        "invalidLines": "行数须为 1–200。",
+        "missingTail": "run 须在 -- 之后提供要发送的文本。",
+        "nodeUnknown": "找不到节点「{{input}}」。",
+        "nodeAmbiguous": "节点「{{input}}」不唯一：{{candidates}}。",
+        "nodeOffline": "节点「{{input}}」离线。",
+        "confirmationNotFound": "找不到待确认项。",
+        "confirmationAlreadyDecided": "该确认项已处理。",
+        "confirmationUnavailable": "确认服务不可用。",
+        "captureFailed": "读取终端输出失败。",
+        "sendFailed": "发送输入失败。"
+      }
+    },
     "telegram": {
       "title": "Telegram Bot 管理",
       "botName": "Bot 名称",
@@ -3758,6 +3981,9 @@ export const I18N_RESOURCES = {
       "addBot": "新增 Bot",
       "editBot": "编辑 Bot",
       "allowAuthRequests": "允许申请授权",
+      "allowCommands": "允许聊天指令",
+      "allowCommandsHelp": "已授权会话可在本机终端输入指令并批准智能体操作。",
+      "commandsBadge": "聊天指令",
       "pendingChats": "待授权",
       "chats": "已授权",
       "noPendingChats": "暂无待授权 chat",
@@ -3804,6 +4030,9 @@ export const I18N_RESOURCES = {
       "editAccount": "编辑账号",
       "enableAccount": "启用账号",
       "allowAuthRequests": "允许授权申请",
+      "allowCommands": "允许聊天指令",
+      "allowCommandsHelp": "已授权会话可在本机终端输入指令并批准智能体操作。",
+      "commandsBadge": "聊天指令",
       "scanToLogin": "扫码登录",
       "relogin": "重新登录（重新扫码）",
       "loggedIn": "已登录",
@@ -4005,9 +4234,11 @@ export const I18N_RESOURCES = {
         "agent_error": "智能体错误",
         "watch_triggered": "终端监控触发",
         "watch_model_unavailable": "终端监控模型不可用",
-        "watch_rule_error": "终端监控规则错误"
+        "watch_rule_error": "终端监控规则错误",
+        "device_connection_error": "设备连接异常"
       },
       "site": "站点",
+      "node": "节点",
       "device": "设备",
       "window": "窗口",
       "pane": "终端",
@@ -4522,6 +4753,7 @@ export const I18N_RESOURCES = {
       "self": "当前",
       "hub": "Hub",
       "loggedIn": "已登录",
+      "hubConnecting": "正在连接 Hub…",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
       "hubLoginRejected": "Hub 拒绝了本次登录（{{code}}）：请重新登录后再试。",
       "hubs": {
@@ -4909,7 +5141,8 @@ export const I18N_RESOURCES = {
       "status": {
         "online": "在线",
         "offline": "离线",
-        "revoked": "已移除"
+        "revoked": "已移除",
+        "pending": "待批准"
       },
       "reach": {
         "lan": "局域网",
@@ -4924,7 +5157,13 @@ export const I18N_RESOURCES = {
         "revoke": "移除",
         "refresh": "刷新",
         "copy": "复制",
-        "copied": "已复制"
+        "copied": "已复制",
+        "admit": "批准加入"
+      },
+      "admit": {
+        "blocked": "须先批准加入，才能管理这台节点。",
+        "unavailable": "Hub 未下发批准所需材料，请刷新后重试。",
+        "failed": "批准失败：{{error}}"
       },
       "detail": {
         "description": "查看节点信息，修改名称与域名访问策略。",
@@ -5014,7 +5253,8 @@ export const I18N_RESOURCES = {
         "retryHub": "重试",
         "missingHubUrl": "Hub 未设置公开地址，无法生成加入命令。",
         "missingRelayUrl": "中继地址不可用，无法生成加入命令。",
-        "staleRecord": "账号信息已变化，请重新确认。"
+        "staleRecord": "账号信息已变化，请重新确认。",
+        "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。"
       },
       "rename": {
         "save": "保存",
@@ -6528,6 +6768,109 @@ export const I18N_RESOURCES = {
         "terminalHint": "またはターミナルから更新：tmex upgrade"
       }
     },
+    "messaging": {
+      "command": {
+        "help": {
+          "description": "利用できるコマンドを表示します。"
+        },
+        "status": {
+          "description": "本機ノードの状態を表示します。"
+        },
+        "nodes": {
+          "description": "メッシュのノードを一覧します。"
+        },
+        "devices": {
+          "description": "本機のデバイスを一覧します。"
+        },
+        "windows": {
+          "description": "デバイスの tmux ウィンドウを一覧します。"
+        },
+        "panes": {
+          "description": "デバイスのペインを一覧します。"
+        },
+        "tail": {
+          "description": "ペインの直近の出力を表示します。"
+        },
+        "run": {
+          "description": "ペインにコマンドを送ります。"
+        },
+        "approve": {
+          "description": "保留中のエージェント確認を承認します。"
+        },
+        "deny": {
+          "description": "保留中のエージェント確認を拒否します。"
+        }
+      },
+      "help": {
+        "title": "コマンド"
+      },
+      "status": {
+        "name": "ノード",
+        "version": "バージョン",
+        "roles": "ロール",
+        "uplink": "アップリンク",
+        "uplinkNone": "なし",
+        "uplinkHub": "Hub",
+        "uplinkRelay": "中継",
+        "uplinkUnknown": "不明",
+        "attached": "接続済み",
+        "detached": "未接続",
+        "attachedUnknown": "不明"
+      },
+      "nodes": {
+        "standalone": "本機はマルチノードに参加していません。",
+        "title": "ノード",
+        "online": "オンライン",
+        "offline": "オフライン",
+        "current": "本機",
+        "unknownVersion": "不明なバージョン"
+      },
+      "devices": {
+        "empty": "デバイスはありません。",
+        "connected": "接続済み",
+        "disconnected": "未接続"
+      },
+      "windows": {
+        "empty": "ウィンドウはありません。"
+      },
+      "panes": {
+        "empty": "ペインはありません。"
+      },
+      "tail": {
+        "empty": "（出力なし）"
+      },
+      "run": {
+        "sent": "送信しました。"
+      },
+      "approve": {
+        "ok": "承認しました。"
+      },
+      "deny": {
+        "ok": "拒否しました。"
+      },
+      "error": {
+        "unknownCommand": "未知のコマンドです。help で一覧を表示できます。",
+        "remoteNodeUnsupported": "コマンドは Bot をホストするノードでのみ実行でき、リモートノードでは実行できません。",
+        "unknownDevice": "デバイス「{{input}}」が見つかりません。",
+        "ambiguousDevice": "デバイス「{{input}}」が一意ではありません：{{candidates}}。",
+        "unknownPane": "ペイン「{{input}}」が見つかりません。",
+        "ambiguousPane": "ペイン「{{input}}」が一意ではありません：{{candidates}}。",
+        "unknownWindow": "ウィンドウ「{{input}}」が見つかりません。",
+        "ambiguousWindow": "ウィンドウ「{{input}}」が一意ではありません：{{candidates}}。",
+        "deviceDisconnected": "デバイスは接続されていません。",
+        "missingArg": "引数が不足しています：{{name}}。",
+        "invalidLines": "行数は 1–200 である必要があります。",
+        "missingTail": "run は -- の後に送信テキストが必要です。",
+        "nodeUnknown": "ノード「{{input}}」が見つかりません。",
+        "nodeAmbiguous": "ノード「{{input}}」が一意ではありません：{{candidates}}。",
+        "nodeOffline": "ノード「{{input}}」はオフラインです。",
+        "confirmationNotFound": "保留中の確認が見つかりません。",
+        "confirmationAlreadyDecided": "この確認は処理済みです。",
+        "confirmationUnavailable": "確認サービスを利用できません。",
+        "captureFailed": "ペイン出力の読み取りに失敗しました。",
+        "sendFailed": "入力の送信に失敗しました。"
+      }
+    },
     "telegram": {
       "title": "Telegram Bot 管理",
       "botName": "Bot 名",
@@ -6537,6 +6880,9 @@ export const I18N_RESOURCES = {
       "addBot": "Bot を追加",
       "editBot": "Bot を編集",
       "allowAuthRequests": "認証リクエストを許可",
+      "allowCommands": "チャットコマンドを許可",
+      "allowCommandsHelp": "承認済みのチャットが本機のターミナルにコマンドを入力し、エージェント操作を承認できます。",
+      "commandsBadge": "チャットコマンド",
       "pendingChats": "承認待ち",
       "chats": "承認済み",
       "noPendingChats": "承認待ちのチャットはありません",
@@ -6583,6 +6929,9 @@ export const I18N_RESOURCES = {
       "editAccount": "アカウントを編集",
       "enableAccount": "アカウントを有効化",
       "allowAuthRequests": "認証リクエストを許可",
+      "allowCommands": "チャットコマンドを許可",
+      "allowCommandsHelp": "承認済みのチャットが本機のターミナルにコマンドを入力し、エージェント操作を承認できます。",
+      "commandsBadge": "チャットコマンド",
       "scanToLogin": "スキャンしてログイン",
       "relogin": "再ログイン（再スキャン）",
       "loggedIn": "ログイン済み",
@@ -6784,9 +7133,11 @@ export const I18N_RESOURCES = {
         "agent_error": "エージェントエラー",
         "watch_triggered": "ターミナルモニター発動",
         "watch_model_unavailable": "ターミナルモニターのモデル利用不可",
-        "watch_rule_error": "ターミナルモニターのルールエラー"
+        "watch_rule_error": "ターミナルモニターのルールエラー",
+        "device_connection_error": "デバイス接続エラー"
       },
       "site": "サイト",
+      "node": "ノード",
       "device": "デバイス",
       "window": "ウィンドウ",
       "pane": "ターミナル",
@@ -7301,6 +7652,7 @@ export const I18N_RESOURCES = {
       "self": "現在",
       "hub": "ハブ",
       "loggedIn": "サインイン済み",
+      "hubConnecting": "ハブに接続しています…",
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
       "hubLoginRejected": "ハブがこのサインインを拒否しました（{{code}}）。サインインし直してからお試しください。",
       "hubs": {
@@ -7688,7 +8040,8 @@ export const I18N_RESOURCES = {
       "status": {
         "online": "オンライン",
         "offline": "オフライン",
-        "revoked": "削除済み"
+        "revoked": "削除済み",
+        "pending": "承認待ち"
       },
       "reach": {
         "lan": "ローカル",
@@ -7703,7 +8056,13 @@ export const I18N_RESOURCES = {
         "revoke": "削除",
         "refresh": "更新",
         "copy": "コピー",
-        "copied": "コピーしました"
+        "copied": "コピーしました",
+        "admit": "参加を承認"
+      },
+      "admit": {
+        "blocked": "先に参加を承認してください。",
+        "unavailable": "承認に必要な情報が Hub から届いていません。更新してからもう一度お試しください。",
+        "failed": "承認に失敗しました：{{error}}"
       },
       "detail": {
         "description": "ノードの情報を確認し、名前とドメインアクセスの設定を変更します。",
@@ -7793,7 +8152,8 @@ export const I18N_RESOURCES = {
         "retryHub": "再試行",
         "missingHubUrl": "ハブに公開アドレスが設定されていないため、参加コマンドを作成できません。",
         "missingRelayUrl": "中継アドレスを取得できないため、参加コマンドを作成できません。",
-        "staleRecord": "その間にアカウント情報が変わりました。もう一度承認してください。"
+        "staleRecord": "その間にアカウント情報が変わりました。もう一度承認してください。",
+        "relayNoneAccepted": "中継が参加コードを受け付けませんでした。中継の接続を確認してからもう一度お試しください。"
       },
       "rename": {
         "save": "保存",

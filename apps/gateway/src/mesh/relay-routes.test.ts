@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   bytesToHex,
   canonicalHubUrl,
+  createEnrollment,
   decodeBase64url,
   decodeMetaKeyPayload,
   decodeSetRelaysPayload,
@@ -35,6 +36,7 @@ async function boot(
     standalone?: boolean;
     localAuthEffective?: boolean;
     dial?: RelayDialContext;
+    enrollmentFanoutTimeoutMs?: number;
   } = {}
 ) {
   const { db, close } = createMigratedAuthDb();
@@ -76,6 +78,9 @@ async function boot(
     },
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
     ...(opts.dial ? { dial: opts.dial } : {}),
+    ...(opts.enrollmentFanoutTimeoutMs !== undefined
+      ? { enrollmentFanoutTimeoutMs: opts.enrollmentFanoutTimeoutMs }
+      : {}),
   });
   const session = nodeSessionStore.issue({
     userId: user.userId,
@@ -517,15 +522,159 @@ describe('RelayRoutes', () => {
     }
   });
 
-  test('enrollments 在离线时 503', async () => {
-    const b = await boot();
+  test('enrollments fans out to every configured relay', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown>; token: string | null }> = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      calls.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+        token: headers.get('x-tmex-relay-token'),
+      });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const b = await boot({ fetchImpl });
     try {
-      await configureRelay(b);
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const enrollment = await createEnrollment(b.user.rootKey, {
+        uid: b.user.userId,
+        rootEpoch: b.user.rootEpoch,
+        now: Date.now(),
+        ttlMs: 600_000,
+      });
       const res = await b.call('/api/mesh/relay/enrollments', {
         method: 'POST',
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          enroll_pk: encodeBase64url(enrollment.enrollPk),
+          authorization: encodeBase64url(enrollment.authorizationBytes),
+          authorization_sig: encodeBase64url(enrollment.authorizationSig),
+        }),
       });
-      expect(res.status).toBe(503);
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        ok: true;
+        id: string;
+        expiresAt: number;
+        relays: Array<{
+          url: string;
+          tenantId: string;
+          token?: string;
+          accepted: boolean;
+          error?: string;
+        }>;
+      };
+      expect(body.ok).toBe(true);
+      expect(body.relays).toHaveLength(2);
+      expect(body.relays.every((row) => row.accepted && row.token)).toBe(true);
+      expect(body.relays.map((row) => row.url)).toEqual([
+        canonicalHubUrl(RELAY_URL),
+        canonicalHubUrl(RELAY_URL_2),
+      ]);
+      expect(calls).toHaveLength(2);
+      expect(calls.map((call) => call.url).sort()).toEqual(
+        [
+          `${canonicalHubUrl(RELAY_URL)}/api/relay/tenants/${TENANT_ID}/enrollments`,
+          `${canonicalHubUrl(RELAY_URL_2)}/api/relay/tenants/${TENANT_ID}/enrollments`,
+        ].sort()
+      );
+      expect(calls.every((call) => call.body.id === body.id)).toBe(true);
+      expect(b.userStore.getEnrollmentTokenById(body.id)?.expiresAt).toBe(body.expiresAt);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('enrollments keeps the local token when one relay times out', async () => {
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('relay-2')) {
+        return await new Promise<Response>((_resolve, reject) => {
+          const abort = () => reject(new DOMException('The operation was aborted.', 'AbortError'));
+          if (init?.signal?.aborted) {
+            abort();
+            return;
+          }
+          init?.signal?.addEventListener('abort', abort, { once: true });
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const b = await boot({ fetchImpl, enrollmentFanoutTimeoutMs: 40 });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const enrollment = await createEnrollment(b.user.rootKey, {
+        uid: b.user.userId,
+        rootEpoch: b.user.rootEpoch,
+        now: Date.now(),
+        ttlMs: 600_000,
+      });
+      const res = await b.call('/api/mesh/relay/enrollments', {
+        method: 'POST',
+        body: JSON.stringify({
+          enroll_pk: encodeBase64url(enrollment.enrollPk),
+          authorization: encodeBase64url(enrollment.authorizationBytes),
+          authorization_sig: encodeBase64url(enrollment.authorizationSig),
+        }),
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        id: string;
+        relays: Array<{ url: string; accepted: boolean; token?: string; error?: string }>;
+      };
+      const accepted = body.relays.find((row) => row.accepted);
+      const timedOut = body.relays.find((row) => !row.accepted);
+      expect(accepted?.url).toBe(canonicalHubUrl(RELAY_URL));
+      expect(accepted?.token).toBeTruthy();
+      expect(timedOut?.url).toBe(canonicalHubUrl(RELAY_URL_2));
+      expect(timedOut?.error).toBe('timeout');
+      expect(timedOut && 'token' in timedOut && timedOut.token).toBeFalsy();
+      expect(b.userStore.getEnrollmentTokenById(body.id)?.expiresAt).toBeGreaterThan(Date.now());
+    } finally {
+      b.close();
+    }
+  });
+
+  test('enrollments invalidates the local token when every relay rejects', async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ error: { code: 'ENROLLMENT_QUOTA' } }), {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch;
+    const b = await boot({ fetchImpl });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const enrollment = await createEnrollment(b.user.rootKey, {
+        uid: b.user.userId,
+        rootEpoch: b.user.rootEpoch,
+        now: Date.now(),
+        ttlMs: 600_000,
+      });
+      const before = Date.now();
+      const res = await b.call('/api/mesh/relay/enrollments', {
+        method: 'POST',
+        body: JSON.stringify({
+          enroll_pk: encodeBase64url(enrollment.enrollPk),
+          authorization: encodeBase64url(enrollment.authorizationBytes),
+          authorization_sig: encodeBase64url(enrollment.authorizationSig),
+        }),
+      });
+      expect(res.status).toBe(502);
+      const body = (await res.json()) as {
+        code: string;
+        relays: Array<{ accepted: boolean; error?: string }>;
+      };
+      expect(body.code).toBe('RELAY_ENROLL_FANOUT_FAILED');
+      expect(body.relays.every((row) => !row.accepted && row.error === 'ENROLLMENT_QUOTA')).toBe(
+        true
+      );
+      const stored = b.userStore.getEnrollmentTokenByEnrollPublicKey(enrollment.enrollPk);
+      expect(stored).not.toBeNull();
+      expect(stored?.expiresAt).toBeLessThanOrEqual(before + 5_000);
     } finally {
       b.close();
     }

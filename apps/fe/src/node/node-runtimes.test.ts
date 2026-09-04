@@ -2,12 +2,14 @@
 // 切回 primary 时补齐已订阅 pane，dispose 时一并停掉。
 
 import { describe, expect, test } from 'bun:test';
-import type { AppRuntime } from '@tmex/stores';
+import type { MeshNode } from '@tmex/api-client/auth/index';
+import type { AppRuntime, AppRuntimeOptions } from '@tmex/stores';
 import type { GatewayConnection, WebSocketLike } from '@tmex/ws-client';
 import type { DirectCarrierController } from '@tmex/ws-client/direct';
 import { getBulkClient } from '@tmex/ws-client/direct/bulk-client';
 import type { DirectDiagnostics } from '@tmex/ws-client/direct/types';
 import { PRIMARY_ONLY_DIAGNOSTICS, resolveDirectDiagnostics } from '@tmex/ws-client/direct/types';
+import { resetMeshNodesStateForTest, setMeshNodesStateForTest } from './mesh-nodes';
 import {
   type DirectLinkModule,
   createAppNodeRuntimes,
@@ -655,6 +657,58 @@ describe('QueryClient 随 runtime 一起回收', () => {
     const after = nodeQueryClient(NODE_HEX_C);
     expect(after).not.toBe(before);
     expect(after.getQueryData(['probe'])).toBeUndefined();
+    manager.disposeAll();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nodeId → 展示名：包内提示语（如「终端连接失败：节点 xxx 版本过低」）只有编号，
+// 宿主要把节点目录的查名函数接进每个 runtime。
+// ---------------------------------------------------------------------------
+
+describe('createAppNodeRuntimes：把 mesh 节点目录的查名函数接进 runtime', () => {
+  function meshNode(id: string, name: string): MeshNode {
+    return {
+      id,
+      name,
+      publicKey: '',
+      online: true,
+      reach: 'lan',
+      version: null,
+      direct_capable: false,
+      inventory: null,
+      loggedIn: false,
+    } as MeshNode;
+  }
+
+  test('注入的 resolveNodeName 每次现查 store，self 按 entry 自身解析', () => {
+    let injected: AppRuntimeOptions | null = null;
+    const manager = createAppNodeRuntimes({
+      createConnection: () => fakeConnection(),
+      createApiClient: () => ({}) as never,
+      createRuntime: (options) => {
+        injected = options;
+        return { dispose: () => {} } as unknown as AppRuntime;
+      },
+    });
+
+    manager.get(NODE_HEX_C);
+    const resolve = (injected as AppRuntimeOptions | null)?.resolveNodeName;
+    expect(typeof resolve).toBe('function');
+
+    // 建 runtime 那一刻列表还没拉到：查不到就返回 null，由包内退回编号前缀。
+    resetMeshNodesStateForTest();
+    expect(resolve?.(NODE_HEX_C)).toBeNull();
+
+    setMeshNodesStateForTest({
+      entryNodeId: 'entry-node',
+      nodes: [meshNode(NODE_HEX_C, 'demo-app'), meshNode('entry-node', 'entry-box')],
+    });
+    expect(resolve?.(NODE_HEX_C)).toBe('demo-app');
+    expect(resolve?.('self')).toBe('entry-box');
+    expect(resolve?.('e'.repeat(32))).toBeNull();
+
+    resetMeshNodesStateForTest();
     manager.disposeAll();
   });
 });

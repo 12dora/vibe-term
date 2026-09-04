@@ -154,6 +154,7 @@ describe('isServicePath / isJsonDeniedPath', () => {
     expect(isServicePath('GET', '/relay/uplink')).toBe(true);
     expect(isServicePath('GET', '/api/relay/health')).toBe(true);
     expect(isServicePath('POST', '/api/relay/enroll')).toBe(true);
+    expect(isServicePath('POST', `/api/relay/tenants/${tenant}/enrollments`)).toBe(true);
     expect(isServicePath('POST', `/api/relay/tenants/${tenant}/enrollments/redeem`)).toBe(true);
     expect(isServicePath('GET', `/api/relay/tenants/${tenant}/enrollments/abc`)).toBe(true);
     expect(isServicePath('GET', '/api/relay/status')).toBe(false);

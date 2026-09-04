@@ -40,12 +40,14 @@ type WeixinAccountCreateDraft = {
   name: string;
   enabled: boolean;
   allowAuthRequests: boolean;
+  allowCommands: boolean;
 };
 
 type WeixinAccountUpdateDraft = {
   name?: string;
   enabled?: boolean;
   allowAuthRequests?: boolean;
+  allowCommands?: boolean;
 };
 
 const WEIXIN_CREATE_FIELDS: ConfigFieldSpec<unknown>[] = [
@@ -57,12 +59,19 @@ const WEIXIN_CREATE_FIELDS: ConfigFieldSpec<unknown>[] = [
     onAbsent: { default: true },
     nullIsAbsent: true,
   },
+  {
+    name: 'allowCommands',
+    parse: parseFlag,
+    onAbsent: { default: false },
+    nullIsAbsent: true,
+  },
 ];
 
 const WEIXIN_UPDATE_FIELDS: ConfigFieldSpec<unknown>[] = [
   { name: 'name', parse: parseAccountName },
   { name: 'enabled', parse: parseFlag },
   { name: 'allowAuthRequests', parse: parseFlag },
+  { name: 'allowCommands', parse: parseFlag },
 ];
 
 async function handleGetWeixinAccounts(): Promise<Response> {
@@ -88,6 +97,7 @@ async function handleCreateWeixinAccount(req: Request): Promise<Response> {
     name: parsed.fields.name,
     enabled: parsed.fields.enabled,
     allowAuthRequests: parsed.fields.allowAuthRequests,
+    allowCommands: parsed.fields.allowCommands,
     loggedIn: false,
     weixinUin: null,
     botTokenEnc: null,

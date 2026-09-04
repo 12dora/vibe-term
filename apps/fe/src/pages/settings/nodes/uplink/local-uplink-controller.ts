@@ -13,7 +13,12 @@ import {
   usePasskeys,
 } from '@/auth/credential-prompt';
 import { type UseMeshHubsResult, useMeshHubs } from '@/node/mesh-hubs';
-import { type HubNodeState, refreshMeshNodes, useHubNode, useMeshNodes } from '@/node/mesh-nodes';
+import {
+  type HubNodeState,
+  ensureFreshMeshNodes,
+  useHubNode,
+  useMeshNodes,
+} from '@/node/mesh-nodes';
 import { type UseMeshRelayResult, useMeshRelay } from '@/node/mesh-relay';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
@@ -81,9 +86,12 @@ export function useLocalUplinkController(
   const refreshHubs = hubs.refresh;
   const refreshRelay = relay.refresh;
   // 中继链路也要跟着重拉：hub → 中继迁移之后，状态条得当场翻成中继版式，不能等下一拍轮询。
+  //
+  // 节点列表与 hub 管理面都走「一定比现在更新」的那条入口：`refreshAll` 是变更之后的刷新，
+  // 复用在飞的那次请求只会拿回变更前的旧快照（待批准行不消失、新成员不出现）。
   const refreshAll = useCallback(() => {
     if (!meshEnabled) return;
-    void refreshMeshNodes(api);
+    ensureFreshMeshNodes(api);
     refreshHub();
     refreshHubs();
     refreshRelay();

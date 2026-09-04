@@ -669,6 +669,74 @@ describe('joinHub', () => {
       )
     ).rejects.toMatchObject({ code: 'node_revoked', httpStatus: 409 });
   });
+
+  test('maps totp_required onto HTTP 400', async () => {
+    const { JoinError } = await import('../commands/hub');
+    const { randomBytes, rootKeyFromSeed } = await import('../../../shared/src/auth');
+    const deps = await baseDeps({
+      requestEnrollmentByPassword: async () => ({
+        token: 'issued-token',
+        hubUrl: 'https://hub.example.com',
+        caFingerprint: null,
+        rootKey: rootKeyFromSeed(randomBytes(32)),
+      }),
+      performHubJoin: async () => ({
+        userId: 'uid-1',
+        username: 'bob',
+        hubUrl: 'https://hub.example.com',
+      }),
+      publishHubJoinSelfAdmit: async () => {
+        throw new JoinError('totp_required', 'TOTP code is required');
+      },
+    });
+    await expect(
+      joinHub(
+        {
+          hubUrl: 'https://hub.example.com',
+          method: 'password',
+          password: 'tmex-test-pass',
+          name: 'studio',
+          directEnable: false,
+        },
+        deps
+      )
+    ).rejects.toMatchObject({ code: 'totp_required', httpStatus: 400 });
+  });
+
+  test('password join with totpCode reaches self-admit', async () => {
+    const { randomBytes, rootKeyFromSeed } = await import('../../../shared/src/auth');
+    let seen: string | undefined;
+    const deps = await baseDeps({
+      requestEnrollmentByPassword: async () => ({
+        token: 'issued-token',
+        hubUrl: 'https://hub.example.com',
+        caFingerprint: null,
+        rootKey: rootKeyFromSeed(randomBytes(32)),
+      }),
+      performHubJoin: async () => ({
+        userId: 'uid-1',
+        username: 'bob',
+        hubUrl: 'https://hub.example.com',
+      }),
+      publishHubJoinSelfAdmit: async (input) => {
+        seen = input.totpCode;
+        return { appended: true, admitPending: false };
+      },
+    });
+    const result = await joinHub(
+      {
+        hubUrl: 'https://hub.example.com',
+        method: 'password',
+        password: 'tmex-test-pass',
+        name: 'studio',
+        directEnable: false,
+        totpCode: '999000',
+      },
+      deps
+    );
+    expect(seen).toBe('999000');
+    expect(result.admitPending).toBeUndefined();
+  });
 });
 
 describe('precheckHubUrl', () => {

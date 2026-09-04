@@ -76,8 +76,8 @@ const SERVICE_EXACT_PATHS = new Set([
   '/healthz',
   '/api/relay/health',
 ]);
-/** 中继 redeem（POST）与 authorization 查询（GET）：加入方还没有任何浏览器会话。 */
-const RELAY_ENROLLMENT_PATH = /^\/api\/relay\/tenants\/[^/]+\/enrollments\/[^/]+$/;
+/** 中继 enrollment 创建（POST 集合）、redeem（POST）与 authorization 查询（GET）：凭租户令牌，无浏览器会话。 */
+const RELAY_ENROLLMENT_PATH = /^\/api\/relay\/tenants\/[^/]+\/enrollments(?:\/[^/]+)?$/;
 const HUB_ENROLLMENT_PATH = /^\/api\/hub\/enrollments\/[^/]+$/;
 // 密码加入的第一步：加入方尚未登录就要取租户的 KDF 参数。
 const RELAY_TENANT_KDF_PATH = /^\/api\/relay\/tenants\/[^/]+\/kdf$/;

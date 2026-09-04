@@ -97,6 +97,8 @@ export class HubLoadCoordinator {
   /** 上一次 `load()` 的目标；用来区分「换了 hub」与「同一目标的轮询 / 刷新」。 */
   private target: HubRequest | null = null;
   private inFlight: { request: HubRequest; promise: Promise<void> } | null = null;
+  /** 已排队的尾随刷新；期间重复调用 `refresh()` 只合并成同一次。 */
+  private trailing: Promise<void> | null = null;
 
   constructor(private readonly sink: HubLoadSink) {}
 
@@ -109,6 +111,7 @@ export class HubLoadCoordinator {
   dispose(): void {
     this.active = false;
     this.inFlight = null;
+    this.trailing = null;
   }
 
   /**
@@ -132,6 +135,26 @@ export class HubLoadCoordinator {
     });
     this.inFlight = { request, promise };
     return promise;
+  }
+
+  /**
+   * 「一定要拿到比现在更新的一份列表」。变更（批准 / 吊销 / 切换）之后的刷新**只能**走这里：
+   * `load()` 遇到在飞的同一个请求会直接复用它，而那次请求可能早于变更就发出去了，
+   * 复用它拿回的仍是变更前的旧快照（待批准行不消失、新成员不出现）。
+   * 这里改成排一次尾随请求，等在飞的落地后再发一次；期间重复调用合并成同一次。
+   */
+  refresh(request: HubRequest | null): Promise<void> {
+    const current = this.inFlight;
+    if (!current || current.request !== request) return this.load(request);
+    if (this.trailing) return this.trailing;
+    const trailing = current.promise.then(() => {
+      if (this.trailing === trailing) this.trailing = null;
+      // 排队期间换了 hub（或停用）：补这一拍只会把新目标的结果顶成过期响应。
+      if (!this.active || this.target !== request) return;
+      return this.load(request);
+    });
+    this.trailing = trailing;
+    return trailing;
   }
 
   private async run(request: HubRequest, generation: number): Promise<void> {

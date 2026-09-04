@@ -5,6 +5,7 @@ export interface WeixinAccountConfig {
   name: string;
   enabled: boolean;
   allowAuthRequests: boolean;
+  allowCommands: boolean;
   /** 是否已扫码登录（持有 iLink 凭证）。 */
   loggedIn: boolean;
   createdAt: string;
