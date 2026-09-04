@@ -24,6 +24,7 @@ import {
 import { defaultScheduler, encodeJsonBytes, isRecord, jsonStable, parseSeq } from './ctl';
 import { jsonText } from './json-text';
 import type { RtcSignalMessage } from './mesh-deps';
+import { stamp } from './mesh-log';
 import {
   DcUpgradeCoordinator,
   PeerCollaboratorHost,
@@ -1127,7 +1128,15 @@ export class PeerManager extends PeerCollaboratorHost {
       }
       this.rememberKeys(result.session, result.sendKey, result.recvKey);
       this.track(result.session, result.peerNodeId, 'relay', from || result.peerNodeId, gen);
-    } catch {
+    } catch (err) {
+      const reason =
+        err instanceof Error
+          ? err.message
+              .replace(/[\r\n\t]+/g, ' ')
+              .trim()
+              .slice(0, 240) || err.name
+          : 'unknown';
+      console.warn(stamp(`[mesh][relay] accept failed node=${from} reason=${reason}`));
       quiet(() => stream.reset('handshake-failed'));
     }
   }

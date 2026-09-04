@@ -411,6 +411,49 @@ describe('RelayUplinkClient', () => {
     ).toBe(true);
   });
 
+  test('显式 dial 不随后续 env 变化而改写', async () => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const [clientWs] = fakeSocketPair();
+    const prevRoles = process.env.TMEX_ROLES;
+    const prevUrl = process.env.TMEX_RELAY_PUBLIC_URL;
+    const prevPort = process.env.GATEWAY_PORT;
+    const dialed: string[] = [];
+    const client = new RelayUplinkClient({
+      hubUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      dial: { roles: { relay: true }, relayPublicUrl: RELAY_URL, gatewayPort: 19993 },
+      connectTimeoutMs: 50,
+      wsFactory: (url) => {
+        dialed.push(url);
+        return clientWs;
+      },
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    process.env.TMEX_ROLES = 'node';
+    process.env.TMEX_RELAY_PUBLIC_URL = 'https://other.example';
+    process.env.GATEWAY_PORT = '1';
+    try {
+      const connecting = client.attemptConnect();
+      await waitUntil(() => dialed.length > 0);
+      clientWs.close();
+      await connecting.catch(() => undefined);
+      expect(dialed).toEqual(['ws://127.0.0.1:19993/relay/uplink']);
+    } finally {
+      if (prevRoles === undefined) delete process.env.TMEX_ROLES;
+      else process.env.TMEX_ROLES = prevRoles;
+      if (prevUrl === undefined) delete process.env.TMEX_RELAY_PUBLIC_URL;
+      else process.env.TMEX_RELAY_PUBLIC_URL = prevUrl;
+      if (prevPort === undefined) delete process.env.GATEWAY_PORT;
+      else process.env.GATEWAY_PORT = prevPort;
+    }
+  });
+
   test('relay.quota.currentNodes 写入客户端', async () => {
     const b = await bootRelayNode();
     fixtures.push({ close: b.close });

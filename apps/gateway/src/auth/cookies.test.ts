@@ -45,4 +45,10 @@ describe('buildSetCookie / buildClearCookie', () => {
       'tmex_s_self=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0'
     );
   });
+
+  test('clear cookie appends Secure when requested', () => {
+    expect(buildClearCookie('tmex_s_self', { secure: true })).toBe(
+      'tmex_s_self=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure'
+    );
+  });
 });

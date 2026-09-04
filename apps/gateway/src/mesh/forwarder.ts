@@ -1,6 +1,12 @@
-import { wsBorsh } from '@tmex/shared';
+import { type NodeUnreachableReason, wsBorsh } from '@tmex/shared';
+import { LinkError } from '@tmex/shared/link';
 import { readJsonObjectBody } from '../api/http';
-import { buildSetCookie, nodeSessionCookieName, parseCookies } from '../auth/cookies';
+import {
+  buildClearCookie,
+  buildSetCookie,
+  nodeSessionCookieName,
+  parseCookies,
+} from '../auth/cookies';
 import { AUTH_LOGIN_PUBLIC_PATHS } from './auth-public-paths';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
@@ -35,6 +41,15 @@ import {
 import { stamp } from './mesh-log';
 import { isHttps, jsonError } from './session-middleware';
 import { StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
+import { NodeUnreachableError, PeerHandshakeError } from './types';
+
+const RELAY_RESET_REASONS = new Set<string>([
+  'self-target',
+  'unknown-target',
+  'offline',
+  'quota-streams',
+  'open-failed',
+]);
 
 const AUTH_SKIP = AUTH_LOGIN_PUBLIC_PATHS;
 const AUTH_CHALLENGE_PATHS = new Set(['/api/auth/challenge', '/api/auth/passkey/login/options']);
@@ -251,8 +266,11 @@ export class Forwarder {
         streamBody,
         abort
       );
-    } catch {
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    } catch (err) {
+      return jsonError('NODE_UNREACHABLE', 503, {
+        nodeId,
+        reason: abort.aborted ? 'timeout' : safeUnreachableReason(err),
+      });
     }
   }
 
@@ -312,7 +330,15 @@ export class Forwarder {
         if (!retryable) break;
       }
     }
-    const extra: Record<string, unknown> = { nodeId: input.nodeId };
+    const extra: Record<string, unknown> = {
+      nodeId: input.nodeId,
+      reason:
+        lastError !== undefined
+          ? safeUnreachableReason(lastError)
+          : abort.aborted
+            ? 'timeout'
+            : 'no_link',
+    };
     if (rawBody && lastError !== undefined) {
       extra.error = lastError instanceof Error ? lastError.message : String(lastError);
     }
@@ -567,6 +593,7 @@ export class Forwarder {
     const retryable = IDEMPOTENT_HTTP.has(req.method);
     const body = retryable ? null : req.body;
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+    let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (signal.aborted) break;
       if (attempt > 0) {
@@ -590,11 +617,20 @@ export class Forwarder {
         );
         await this.recordForwardedLoginFailure(gated, rest, upstream);
         return upstream;
-      } catch {
+      } catch (err) {
+        lastError = err;
         if (!retryable) break;
       }
     }
-    return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    return jsonError('NODE_UNREACHABLE', 503, {
+      nodeId,
+      reason:
+        lastError !== undefined
+          ? safeUnreachableReason(lastError)
+          : signal.aborted
+            ? 'timeout'
+            : 'no_link',
+    });
   }
 
   private async gateForwardedAuth(
@@ -650,17 +686,41 @@ export class Forwarder {
       });
       return upgraded
         ? undefined
-        : jsonError('UNAUTHORIZED', 401, { code: 'NODE_LOGIN_REQUIRED', nodeId });
+        : expireNodeCookieOn(
+            req,
+            nodeId,
+            jsonError('UNAUTHORIZED', 401, { code: 'NODE_LOGIN_REQUIRED', nodeId })
+          );
     }
-    if (req.signal.aborted) return jsonError('NODE_UNREACHABLE', 503, { nodeId });
-    const link = await this.deps.peers.getLink(nodeId).catch(() => null);
-    if (!link || req.signal.aborted) return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    if (req.signal.aborted) {
+      return jsonError('NODE_UNREACHABLE', 503, { nodeId, reason: 'timeout' });
+    }
+    let linkError: unknown;
+    const link = await this.deps.peers.getLink(nodeId).catch((err) => {
+      linkError = err;
+      return null;
+    });
+    if (!link || req.signal.aborted) {
+      return jsonError('NODE_UNREACHABLE', 503, {
+        nodeId,
+        reason: req.signal.aborted ? 'timeout' : safeUnreachableReason(linkError),
+      });
+    }
     const cid = new URL(req.url).searchParams.get('cid')?.trim() || undefined;
-    const stream = await this.deps.streams.openWsStream(link, auth, cid).catch(() => null);
-    if (!stream) return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    let streamError: unknown;
+    const stream = await this.deps.streams.openWsStream(link, auth, cid).catch((err) => {
+      streamError = err;
+      return null;
+    });
+    if (!stream) {
+      return jsonError('NODE_UNREACHABLE', 503, {
+        nodeId,
+        reason: safeUnreachableReason(streamError),
+      });
+    }
     if (req.signal.aborted) {
       stream.close();
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+      return jsonError('NODE_UNREACHABLE', 503, { nodeId, reason: 'timeout' });
     }
     const token = crypto.randomUUID();
     pendingStreams.set(token, stream);
@@ -839,6 +899,7 @@ async function applyAuthPolicy(
   }
   for (const name of DROP_ON_401_REWRITE) headers.delete(name);
   headers.set('content-type', 'application/json');
+  expireNodeCookie(req, headers, nodeId);
   return new Response(JSON.stringify(body), { status: 401, headers });
 }
 
@@ -853,6 +914,49 @@ function appendNodeCookie(
     'set-cookie',
     buildSetCookie(nodeSessionCookieName(nodeId), sid, { maxAgeSec, secure: isHttps(req) })
   );
+}
+
+function expireNodeCookie(req: Request, headers: Headers, nodeId: string): void {
+  headers.append(
+    'set-cookie',
+    buildClearCookie(nodeSessionCookieName(nodeId), { secure: isHttps(req) })
+  );
+}
+
+function expireNodeCookieOn(req: Request, nodeId: string, res: Response): Response {
+  const headers = new Headers(res.headers);
+  expireNodeCookie(req, headers, nodeId);
+  return new Response(res.body, { status: res.status, headers });
+}
+
+export function safeUnreachableReason(err: unknown): NodeUnreachableReason {
+  if (err instanceof PeerHandshakeError) {
+    return err.code === 'timeout' ? 'timeout' : 'handshake_failed';
+  }
+  if (err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+    return 'timeout';
+  }
+  const token = unreachableToken(err);
+  if (RELAY_RESET_REASONS.has(token)) {
+    return `relay_reset:${token}` as NodeUnreachableReason;
+  }
+  if (token === 'not admitted' || token === 'not_admitted' || token === 'revoked') {
+    return 'not_admitted';
+  }
+  if (token === 'timeout' || token === 'connect-timeout' || token === 'handshake-timeout') {
+    return 'timeout';
+  }
+  if (token === 'handshake_failed' || token === 'handshake-failed') {
+    return 'handshake_failed';
+  }
+  return 'no_link';
+}
+
+function unreachableToken(err: unknown): string {
+  if (err instanceof LinkError && err.code === 'rst') return err.message.trim();
+  if (err instanceof NodeUnreachableError) return err.message.trim();
+  if (err instanceof Error) return err.message.trim();
+  return '';
 }
 
 function filterRequestHeaders(req: Request): Record<string, string> {

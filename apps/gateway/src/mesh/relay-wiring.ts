@@ -7,6 +7,7 @@ import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
 import type { MeshRoles } from './mesh-deps';
 import { stamp } from './mesh-log';
+import { type RelayDialContext, relayDialContextFromEnv } from './relay-dial';
 import { RelayRoutes } from './relay-routes';
 import { RelaySecrets } from './relay-secrets';
 import { RelayUplinkClient } from './relay-uplink-client';
@@ -105,9 +106,10 @@ export type RelayUplinkOverrides = {
 /** 中继模式下替换池子的候选来源、客户端构造与健康探测。 */
 export function relayUplinkOverrides(
   wiring: RelayWiring,
-  opts: { nameProvider: () => string }
+  opts: { nameProvider: () => string; dial?: RelayDialContext }
 ): RelayUplinkOverrides {
   const relayMode = () => wiring.secrets.uplinkKind() === 'relay';
+  const dial = opts.dial ?? relayDialContextFromEnv();
   return {
     relayMode,
     candidates: () =>
@@ -138,11 +140,12 @@ export function relayUplinkOverrides(
             ...(o.scheduler ? { scheduler: o.scheduler } : {}),
             ...(o.pingIntervalMs !== undefined ? { pingIntervalMs: o.pingIntervalMs } : {}),
             onKicked: () => markRelayKicked(wiring, o.hubUrl),
+            dial,
           })
         : new UplinkClient(o),
     probeHealthz: (publicUrl, tlsCa, timeoutMs) =>
       relayMode()
-        ? probeRelayHealth(publicUrl, tlsCa, timeoutMs)
+        ? probeRelayHealth(publicUrl, tlsCa, timeoutMs, dial)
         : defaultProbeHealthz(publicUrl, tlsCa, timeoutMs),
   };
 }

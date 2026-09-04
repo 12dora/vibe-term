@@ -30,6 +30,7 @@ export function buildSetCookie(
   return options.secure ? `${cookie}; Secure` : cookie;
 }
 
-export function buildClearCookie(name: string): string {
-  return `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+export function buildClearCookie(name: string, options?: { secure?: boolean }): string {
+  const cookie = `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  return options?.secure ? `${cookie}; Secure` : cookie;
 }
