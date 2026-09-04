@@ -60,7 +60,7 @@
         "remoteLink": "Open remote access settings"
       },
       "computer": {
-        "intro": "After installing tmex on another server or computer, there are two ways to connect: join an existing relay (Hub), or make this machine the relay so other machines can join it.",
+        "intro": "After installing tmex on another server or computer, let it join the network this machine is on, or make this machine the Hub.",
         "install": {
           "title": "Install tmex",
           "description": "Run the install script on the target machine (installs Bun automatically; Linux needs tmux ≥ 3.0). The terminal prints the access address when done.",
@@ -69,17 +69,13 @@
         },
         "mode": {
           "title": "Choose how to connect",
-          "join": "Join an existing relay",
-          "host": "Use this machine as the relay"
+          "join": "Add a machine",
+          "host": "Make this machine the Hub"
         },
         "join": {
-          "hub": {
-            "title": "Prepare the relay server",
-            "description": "Relay (Hub) needs a public HTTPS address; if none, set one up via \"Use this machine as the relay\"."
-          },
           "token": {
             "title": "Generate a join token",
-            "description": "In the relay's tmex open Settings → Multi-node Mesh → Node management, click Add → Generate join token, then copy the join command. The token is valid for 10 minutes.",
+            "description": "On a machine that already joined, open Settings → Multi-node Mesh → Node management, click Add → Generate join token, then copy the join command. The token is valid for 10 minutes.",
             "label": "Join token (valid for {{minutes}} minutes)",
             "link": "Open multi-node mesh settings",
             "meshDescription": "Generate a join token here, then copy the command in the next step. The token is valid for 10 minutes.",
@@ -94,9 +90,30 @@
           },
           "confirm": {
             "title": "Confirm the join",
-            "description": "Back on the relay's Node management page, click Confirm join. The new machine appears in the device list after it restarts.",
+            "description": "Back on the Node management page, click Confirm join. The new machine appears in the device list after it restarts.",
             "meshDescription": "Once the new machine runs the command, confirm the join here. It appears in the device list after it restarts.",
             "done": "The new machine has joined; it appears in the device list after it restarts."
+          },
+          "uplink": {
+            "title": "Gather the connection details",
+            "hubDescription": "The new machine needs the Hub address and this account’s password.",
+            "relayDescription": "The new machine needs the relay address, the tenant ID and this account’s password.",
+            "unknownDescription": "This machine is not part of a multi-node mesh yet. Set it up first.",
+            "missingUrl": "The uplink address of this machine is unknown, so no address can be shown.",
+            "hubUrl": "Hub address",
+            "relayUrl": "Relay address",
+            "tenantId": "Tenant ID"
+          },
+          "password": {
+            "title": "Join from the new machine",
+            "hubDescription": "On the new machine open Settings → Multi-node Mesh, choose \"Join an existing Hub\", and enter the Hub address and password.",
+            "relayDescription": "On the new machine open Settings → Multi-node Mesh, choose \"Join a relay\", and enter the relay address, tenant ID and password.",
+            "command": "Or run this in the new machine’s terminal",
+            "tenantPlaceholder": "<tenant-id>"
+          },
+          "advanced": {
+            "title": "Use a join token (advanced)",
+            "description": "When typing a password on the new machine is impractical, use a join token issued here. It is valid for 10 minutes."
           }
         },
         "host": {
@@ -106,27 +123,27 @@
             "link": "Open remote access settings",
             "status": {
               "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})",
-              "quick": "This is a temporary tunnel ({{url}}). Its address changes, so it is not suitable as a relay address — use a named tunnel or a direct connection instead.",
+              "quick": "This is a temporary tunnel ({{url}}). Its address changes, so it is not suitable as a Hub address — use a named tunnel or a direct connection instead.",
               "hubUrl": "Public address already available: {{url}}"
             }
           },
           "hub": {
-            "title": "Make it the relay",
+            "title": "Make it the Hub",
             "description": "Open Settings → Multi-node Mesh, choose \"Make this machine the Hub\", enter the address from the previous step as the Hub public URL, create the first account and restart.",
             "warning": "The Hub public URL cannot be changed afterwards. Decide on the final domain first.",
             "link": "Open multi-node mesh settings",
             "status": {
               "self": "This machine is already the Hub. Public address: {{url}}",
-              "node": "This machine has already joined another relay ({{url}}), so it cannot be a relay itself.",
+              "node": "This machine already joined {{url}} as a node, so it cannot be a Hub.",
               "mismatch": "The Hub public URL does not match the current tunnel hostname; other machines may fail to connect."
             },
             "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL."
           },
           "invite": {
             "title": "Connect other machines",
-            "description": "After installing tmex on other machines, follow \"Join an existing relay\" using a join token generated on this machine.",
-            "ready": "After installing tmex on another machine, switch to \"Join an existing relay\" to generate a join token here.",
-            "gotoJoin": "Generate a join token"
+            "description": "After installing tmex on other machines, follow the \"Add a machine\" steps.",
+            "ready": "After installing tmex on another machine, switch to \"Add a machine\" and follow the steps.",
+            "gotoJoin": "See the join steps"
           }
         }
       }
@@ -1472,7 +1489,8 @@
       },
       "rename": {
         "save": "Save",
-        "done": "Renamed"
+        "done": "Renamed",
+        "cancelled": "Cancelled."
       },
       "revoke": {
         "confirmText": "Remove node “{{name}}”? It loses access immediately and has to be added again from scratch.",
@@ -1561,7 +1579,7 @@
       "setup": {
         "title": "Set up this machine",
         "intro": "This machine is not connected to any other yet. Choose how to set it up.",
-        "introDetail": "Either way, tmex saves the change and restarts once.",
+        "introDetail": "Whichever you pick, the configuration is saved and tmex restarts once.",
         "path": {
           "becomeHub": {
             "title": "Make this the hub",
@@ -1574,6 +1592,10 @@
           "becomeRelay": {
             "title": "Use This Machine as the Relay",
             "description": "This machine gives nodes a public entry point. A public HTTPS address is required."
+          },
+          "joinRelay": {
+            "title": "Join a relay",
+            "description": "This machine joins an existing relay as a node. Needs the relay address and tenant ID."
           }
         },
         "becomeHub": {
@@ -1582,7 +1604,10 @@
         },
         "joinHub": {
           "title": "Join an existing hub",
-          "description": "Registers this machine with the hub, then restarts tmex as a node."
+          "description": "Registers this machine with the hub, then restarts tmex as a node.",
+          "passwordDescription": "Register this machine with the Hub using its address and the account password, then restart tmex as a node.",
+          "useToken": "Use a join token instead",
+          "usePassword": "Use a password instead"
         },
         "fields": {
           "hubPublicUrl": "Public hub address",
@@ -1610,7 +1635,18 @@
           "relayPassword": "Relay Password",
           "relayPasswordHint": "Tenants must present it to connect; leave empty and anyone can connect.",
           "relayAlsoNode": "Also Run as a Node",
-          "relayAlsoNodeHint": "Keep the web UI and an account alongside the relay; turn off for a relay-only machine."
+          "relayAlsoNodeHint": "Keep the web UI and an account alongside the relay; turn off for a relay-only machine.",
+          "joinPassword": "Account password",
+          "joinPasswordHint": "The sign-in password of the existing account; this machine keeps using that account and does not store the password.",
+          "relayUrl": "Relay address",
+          "relayUrlHint": "The https address of the relay, e.g. https://relay.example.com.",
+          "relayUrlPlaceholder": "https://relay.example.com",
+          "tenantId": "Tenant ID",
+          "tenantIdHint": "32 hex characters. Copy it from a machine already connected: Settings → Multi-node Mesh → This machine → Connect to relay.",
+          "caFingerprint": "CA fingerprint",
+          "caFingerprintHint": "Only needed for relays with a self-signed certificate; leave empty to use system-trusted certificates.",
+          "directEnableRelayHint": "Let nodes talk directly instead of going through the relay. Setup continues even if it fails.",
+          "directUnsupportedRelayHint": "{{platform}} does not support direct connections; traffic goes through the relay."
         },
         "precheck": {
           "button": "Test address",
@@ -1623,7 +1659,8 @@
           "becomeHub": "Create account and restart",
           "joinHub": "Join and restart",
           "pending": "Working…",
-          "becomeRelay": "Save and Restart"
+          "becomeRelay": "Save and Restart",
+          "joinRelay": "Join and restart"
         },
         "result": {
           "title": "Setup complete",
@@ -1643,7 +1680,10 @@
           "relayNodeDescription": "The relay is configured and tmex is restarting as relay and node.",
           "relayPublicUrl": "Relay Public Address",
           "relayPassword": "Relay Password",
-          "relayWebGone": "The web UI is about to become unavailable. Manage the relay from a terminal on this machine:"
+          "relayWebGone": "The web UI is about to become unavailable. Manage the relay from a terminal on this machine:",
+          "relayJoinDescription": "This machine joined the relay; tmex is restarting.",
+          "relayUrl": "Relay address",
+          "tenantId": "Tenant ID"
         },
         "restart": {
           "waiting": "Waiting for tmex to come back… {{seconds}}s",
@@ -1653,7 +1693,8 @@
         "toast": {
           "hubCreated": "Hub created — tmex is restarting",
           "joined": "Joined the hub — tmex is restarting",
-          "relayCreated": "Relay configured, tmex is restarting"
+          "relayCreated": "Relay configured, tmex is restarting",
+          "relayJoined": "Joined the relay; tmex is restarting"
         },
         "errors": {
           "not_standalone": "This machine is already set up.",
@@ -1675,7 +1716,11 @@
           "direct_failed": "Could not enable direct connections.",
           "withDetail": "{{base}} ({{detail}})",
           "unknown": "Something went wrong: {{message}}",
-          "invalid_role": "Invalid role."
+          "invalid_role": "Invalid role.",
+          "invalid_body": "The request is missing required fields.",
+          "invalid_password": "Enter the account password.",
+          "invalid_tenant_id": "Invalid tenant ID: expected 32 hex characters.",
+          "invalid_ca_fingerprint": "Invalid CA fingerprint: expected 64 hex characters."
         },
         "becomeRelay": {
           "title": "Use This Machine as the Relay",
@@ -1691,6 +1736,12 @@
           "title": "Switch to relay only?",
           "description": "After the restart this machine serves no web UI, the relay is managed from the command line, and the role cannot be changed back from the web.",
           "confirm": "Continue"
+        },
+        "joinRelay": {
+          "title": "Join an existing relay",
+          "description": "Join an existing tenant with the relay address, tenant ID and account password, then restart tmex as a node.",
+          "advanced": "Advanced options",
+          "hideAdvanced": "Hide advanced options"
         }
       },
       "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back."
@@ -1753,7 +1804,9 @@
           "meta": "Metadata key gen {{epoch}}",
           "nodes": "{{count}} nodes visible via relay",
           "quota": "Quota {{nodes}} nodes | {{streams}} streams",
-          "empty": "Not connected to a relay."
+          "empty": "Not connected to a relay.",
+          "tenantId": "Tenant ID",
+          "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password."
         },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
         "reauth": {
@@ -1808,6 +1861,14 @@
           "revokePending": "The node was removed, but the metadata key rotation did not land ({{error}}). Retry on the nodes page.",
           "revokePendingBulk": "Metadata key rotation did not land for {{count}} node(s). Retry on the nodes page.",
           "afterPasswordChange": "The metadata key rotation has not landed yet. Sign in again and retry on the nodes page."
+        },
+        "pack": {
+          "pending": "The relay's password-join credential is out of date. Other machines cannot join with a password.",
+          "retry": "Re-enter Password",
+          "done": "Password-join credential updated.",
+          "retryFailed": "Could not update the password-join credential. Try again later.",
+          "needsPassword": "Updating the password-join credential requires the password; a passkey cannot sign it.",
+          "staleWarning": "The password-join credential was not updated. Re-enter the password before another machine joins with a password."
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "Current password is incorrect.",

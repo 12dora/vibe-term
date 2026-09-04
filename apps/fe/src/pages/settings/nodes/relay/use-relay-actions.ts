@@ -10,18 +10,15 @@ import type { RecordSigner } from '@/auth/key-log-actions';
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { RelayFlowDeps, RelayFlowMode, RelayFlowResult } from '@/node/relay-enroll';
 import { appendMetaKey, enrollRelay, leaveRelay, removeRelay } from '@/node/relay-enroll';
-import {
-  type PendingMetaKey,
-  listPendingMetaKeys,
-  retryPendingMetaKeys,
-  subscribePendingMetaKeys,
-} from '@/node/relay-meta-key-pending';
+import { forgetRelayPackDebt, rememberRelayPackDebt } from '@/node/relay-meta-key-pending';
+import { refreshRelayPack } from '@/node/relay-pack';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { type RelayPendingController, useRelayPending } from './use-relay-pending';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -43,7 +40,7 @@ export interface RelayConfirmRequest {
   url?: string;
 }
 
-export interface RelayActionsController {
+export interface RelayActionsController extends RelayPendingController {
   /** 当前打开的接入对话框；`url` 是预填地址（`reauth` / `migrate` 时锁定）。 */
   enroll: { intent: RelayEnrollIntent; url: string } | null;
   confirm: RelayConfirmRequest | null;
@@ -56,10 +53,6 @@ export interface RelayActionsController {
   dismissConfirm: () => void;
   submitEnroll: (form: RelayEnrollForm) => Promise<void>;
   runConfirm: () => Promise<void>;
-  /** 还没落账的 `meta-key` 换代；非空时页面必须一直挂着告警。 */
-  metaPending: PendingMetaKey[];
-  /** 手动重试欠账（需要一次凭据）。 */
-  retryMetaKey: () => Promise<void>;
 }
 
 export interface RelayActionsDeps {
@@ -131,14 +124,29 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
       setBusy(true);
       setError(null);
       try {
+        // 接入成功那一刻手里还有根种子：顺手把密封包封给这台中继，否则它上面一份都没有，
+        // 别的机器无法用「租户编号 + 密码」加入。失败不回滚接入，只记欠账并提示。
+        let packRefreshed = true;
         const result = await enrollRelay(flowDeps, {
           url: form.url.trim(),
           password: form.password ? form.password : null,
           rootPassword: form.rootPassword,
+          afterEnroll: async (rootKey) => {
+            packRefreshed = await refreshRelayPack({
+              rootSeed: rootKey.seed,
+              api: deps.api,
+              relayApi,
+            });
+          },
         });
         if (!result.ok) {
           setError(relayErrorText(t, result.code));
           return;
+        }
+        if (packRefreshed) forgetRelayPackDebt();
+        else {
+          rememberRelayPackDebt();
+          toast.warning(t('relay.tenant.pack.staleWarning'));
         }
         toast.success(t('relay.tenant.dialog.done'));
         setEnroll(null);
@@ -147,7 +155,7 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
         setBusy(false);
       }
     },
-    [flowDeps, onChanged, t]
+    [deps.api, flowDeps, onChanged, relayApi, t]
   );
 
   const { prompt } = deps;
@@ -170,30 +178,14 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
     }
   }, [confirm, flowDeps, onChanged, prompt, t]);
 
-  const metaPending = useSyncExternalStore(
-    subscribePendingMetaKeys,
-    listPendingMetaKeys,
-    listPendingMetaKeys
-  );
-
-  const retryMetaKey = useCallback(async () => {
-    if (!flowDeps) return;
-    setBusy(true);
-    try {
-      const left = await prompt.withSigner((signer) => retryPendingMetaKeys(flowDeps, signer), {
-        purpose: 'revoke',
-      });
-      if (left === null) return;
-      if (left === 0) {
-        toast.success(t('relay.tenant.metaKey.done'));
-        onChanged();
-        return;
-      }
-      toast.error(t('relay.tenant.metaKey.retryFailed'));
-    } finally {
-      setBusy(false);
-    }
-  }, [flowDeps, onChanged, prompt, t]);
+  const pending = useRelayPending({
+    api: deps.api,
+    relayApi,
+    flowDeps,
+    prompt,
+    onChanged,
+    setBusy,
+  });
 
   return {
     enroll,
@@ -206,8 +198,7 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
     dismissConfirm,
     submitEnroll,
     runConfirm,
-    metaPending,
-    retryMetaKey,
+    ...pending,
   };
 }
 

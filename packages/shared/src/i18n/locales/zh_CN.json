@@ -126,7 +126,7 @@
         "remoteLink": "前往远程访问设置"
       },
       "computer": {
-        "intro": "在另一台服务器或电脑上安装 tmex 后，有两种接入方式：加入已有中继（Hub），或把本机设为中继让其他机器接入。",
+        "intro": "在另一台服务器或电脑上安装 tmex 后，可以让它加入本机所在的网络，也可以把本机设为 Hub。",
         "install": {
           "title": "安装 tmex",
           "description": "在目标机器上执行安装脚本（自动安装 Bun，Linux 需 tmux ≥ 3.0）。安装完成后终端会输出访问地址。",
@@ -135,17 +135,13 @@
         },
         "mode": {
           "title": "选择接入方式",
-          "join": "加入已有中继",
-          "host": "本机作为中继"
+          "join": "让新机器加入",
+          "host": "把本机设为 Hub"
         },
         "join": {
-          "hub": {
-            "title": "准备中继服务器",
-            "description": "中继（Hub）需有公网 HTTPS 地址；没有则先按「本机作为中继」配置一台。"
-          },
           "token": {
             "title": "生成加入码",
-            "description": "在中继的 tmex 中打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」，复制加入命令。加入码 10 分钟内有效。",
+            "description": "在已加入的机器上打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」，复制加入命令。加入码 10 分钟内有效。",
             "label": "加入码（有效期 {{minutes}} 分钟）",
             "link": "前往多节点互联设置",
             "meshDescription": "在此生成加入码并复制下一步的命令。加入码 10 分钟内有效。",
@@ -160,9 +156,30 @@
           },
           "confirm": {
             "title": "确认加入",
-            "description": "回到中继的节点管理页，点「确认加入」。新机器重启后即出现在设备列表。",
+            "description": "回到节点管理页，点「确认加入」。新机器重启后即出现在设备列表。",
             "meshDescription": "新机器执行命令后在此确认加入，重启后即出现在设备列表。",
             "done": "新机器已加入，重启后出现在设备列表。"
+          },
+          "uplink": {
+            "title": "准备接入信息",
+            "hubDescription": "新机器需要 Hub 地址与本账号的密码。",
+            "relayDescription": "新机器需要中继地址、租户编号与本账号的密码。",
+            "unknownDescription": "本机尚未加入多节点互联，请先完成本机设置。",
+            "missingUrl": "本机的上级地址未知，无法给出接入地址。",
+            "hubUrl": "Hub 地址",
+            "relayUrl": "中继地址",
+            "tenantId": "租户编号"
+          },
+          "password": {
+            "title": "在新机器上加入",
+            "hubDescription": "在新机器上打开「设置 → 多节点互联」，选「加入已有 Hub」，填 Hub 地址与密码。",
+            "relayDescription": "在新机器上打开「设置 → 多节点互联」，选「加入中继」，填中继地址、租户编号与密码。",
+            "command": "也可以在新机器的终端直接执行",
+            "tenantPlaceholder": "<租户编号>"
+          },
+          "advanced": {
+            "title": "使用加入码（高级）",
+            "description": "新机器不便输入密码时改用加入码：在本机签发，10 分钟内有效。"
           }
         },
         "host": {
@@ -172,27 +189,27 @@
             "link": "前往远程访问设置",
             "status": {
               "named": "已配置 Cloudflare Tunnel：{{url}}（{{state}}）",
-              "quick": "当前是临时隧道 {{url}}，地址会变化，不适合作为中继地址；请改用命名隧道或直接连接。",
+              "quick": "当前是临时隧道 {{url}}，地址会变化，不适合作为 Hub 地址；请改用命名隧道或直接连接。",
               "hubUrl": "已有公开地址：{{url}}"
             }
           },
           "hub": {
-            "title": "设为中继",
+            "title": "设为 Hub",
             "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」，将上一步的地址填入「Hub 公开地址」，创建首个账号并重启。",
             "warning": "Hub 公开地址设定后不可修改，请先确定最终域名。",
             "link": "前往多节点互联设置",
             "status": {
               "self": "本机已是 Hub，公开地址：{{url}}",
-              "node": "本机已作为节点加入其他中继（{{url}}），不能再作为中继。",
+              "node": "本机已作为节点加入 {{url}}，不能再作为 Hub。",
               "mismatch": "Hub 公开地址与当前隧道主机名不一致，其他机器可能无法接入。"
             },
             "hintUseEntry": "把上一步的地址 {{url}} 填入「Hub 公开地址」。"
           },
           "invite": {
             "title": "接入其他机器",
-            "description": "在其他机器上安装 tmex 后，按「加入已有中继」的步骤，用本机生成的加入码接入。",
-            "ready": "其他机器安装 tmex 后，切到「加入已有中继」在此生成加入码即可。",
-            "gotoJoin": "去生成加入码"
+            "description": "在其他机器上安装 tmex 后，按「让新机器加入」的步骤接入。",
+            "ready": "其他机器安装 tmex 后，切到「让新机器加入」照着做即可。",
+            "gotoJoin": "去看加入步骤"
           }
         }
       }
@@ -2209,7 +2226,8 @@
       },
       "rename": {
         "save": "保存",
-        "done": "已重命名"
+        "done": "已重命名",
+        "cancelled": "已取消。"
       },
       "revoke": {
         "confirmText": "移除节点「{{name}}」？该节点会立即失去访问权限，需要重新添加。",
@@ -2295,7 +2313,7 @@
       "setup": {
         "title": "设置本机",
         "intro": "本机尚未与其他机器互联，请选择设置方式。",
-        "introDetail": "两种方式都会保存配置并重启一次 tmex。",
+        "introDetail": "任选一种，保存配置后 tmex 会重启一次。",
         "path": {
           "becomeHub": {
             "title": "把本机设为 Hub",
@@ -2308,6 +2326,10 @@
           "becomeRelay": {
             "title": "本机作为中继",
             "description": "本机为各节点提供公网入口。需要一个公开的 HTTPS 地址。"
+          },
+          "joinRelay": {
+            "title": "加入中继",
+            "description": "本机作为节点接入已有中继。需要中继地址与租户编号。"
           }
         },
         "becomeHub": {
@@ -2316,7 +2338,10 @@
         },
         "joinHub": {
           "title": "加入已有 Hub",
-          "description": "把本机注册到 Hub，然后以节点身份重启 tmex。"
+          "description": "把本机注册到 Hub，然后以节点身份重启 tmex。",
+          "passwordDescription": "用 Hub 地址与账号密码把本机注册到 Hub，然后以节点身份重启 tmex。",
+          "useToken": "改用加入码",
+          "usePassword": "改用密码"
         },
         "fields": {
           "hubPublicUrl": "Hub 公开地址",
@@ -2344,7 +2369,18 @@
           "relayPassword": "接入口令",
           "relayPasswordHint": "租户接入本中继时须出示；留空则任何人都可接入。",
           "relayAlsoNode": "本机也作为节点",
-          "relayAlsoNodeHint": "本机提供中继的同时保留网页与账号；关闭即为纯中继。"
+          "relayAlsoNodeHint": "本机提供中继的同时保留网页与账号；关闭即为纯中继。",
+          "joinPassword": "账号密码",
+          "joinPasswordHint": "已有账号的登录密码，加入后本机沿用同一账号。密码不会保存在本机。",
+          "relayUrl": "中继地址",
+          "relayUrlHint": "中继的 https 地址，例如 https://relay.example.com。",
+          "relayUrlPlaceholder": "https://relay.example.com",
+          "tenantId": "租户编号",
+          "tenantIdHint": "32 位十六进制。在已接入的机器上打开「设置 → 多节点互联 → 本机 → 接入中继」即可复制。",
+          "caFingerprint": "CA 指纹",
+          "caFingerprintHint": "仅自签证书的中继需要；留空表示使用系统信任的证书。",
+          "directEnableRelayHint": "让节点之间直接通信，而不经中继转发。即使失败也不影响本次设置。",
+          "directUnsupportedRelayHint": "{{platform}} 不支持直连，流量将经中继转发。"
         },
         "precheck": {
           "button": "测试地址",
@@ -2357,7 +2393,8 @@
           "becomeHub": "创建账号并重启",
           "joinHub": "加入并重启",
           "pending": "处理中…",
-          "becomeRelay": "保存并重启"
+          "becomeRelay": "保存并重启",
+          "joinRelay": "加入并重启"
         },
         "result": {
           "title": "设置完成",
@@ -2377,7 +2414,10 @@
           "relayNodeDescription": "中继已设置，tmex 正在以中继兼节点身份重启。",
           "relayPublicUrl": "中继公网地址",
           "relayPassword": "接入口令",
-          "relayWebGone": "网页即将不可用。后续管理请在本机终端执行："
+          "relayWebGone": "网页即将不可用。后续管理请在本机终端执行：",
+          "relayJoinDescription": "本机已加入中继，tmex 正在重启。",
+          "relayUrl": "中继地址",
+          "tenantId": "租户编号"
         },
         "restart": {
           "waiting": "等待 tmex 恢复…… {{seconds}} 秒",
@@ -2387,7 +2427,8 @@
         "toast": {
           "hubCreated": "Hub 已创建，tmex 正在重启",
           "joined": "已加入 Hub，tmex 正在重启",
-          "relayCreated": "中继已设置，tmex 正在重启"
+          "relayCreated": "中继已设置，tmex 正在重启",
+          "relayJoined": "已加入中继，tmex 正在重启"
         },
         "errors": {
           "not_standalone": "本机已完成设置。",
@@ -2409,7 +2450,11 @@
           "direct_failed": "直连启用失败。",
           "withDetail": "{{base}}（{{detail}}）",
           "unknown": "出错了：{{message}}",
-          "invalid_role": "角色不合法。"
+          "invalid_role": "角色不合法。",
+          "invalid_body": "请求缺少必要字段。",
+          "invalid_password": "请输入账号密码。",
+          "invalid_tenant_id": "租户编号不合法：应为 32 位十六进制。",
+          "invalid_ca_fingerprint": "CA 指纹不合法：应为 64 位十六进制。"
         },
         "becomeRelay": {
           "title": "本机作为中继",
@@ -2425,6 +2470,12 @@
           "title": "切换到纯中继？",
           "description": "重启后本机不再提供网页，中继只能用命令行管理，网页里也无法改回其它角色。",
           "confirm": "继续"
+        },
+        "joinRelay": {
+          "title": "加入已有中继",
+          "description": "用中继地址、租户编号与账号密码接入已有租户，然后以节点身份重启 tmex。",
+          "advanced": "高级选项",
+          "hideAdvanced": "收起高级选项"
         }
       },
       "uplinkOffline": "上级链路未连接，暂时不能生成加入码。"
@@ -2486,7 +2537,9 @@
           "meta": "元数据密钥第 {{epoch}} 代",
           "nodes": "经中继可见 {{count}} 个节点",
           "quota": "配额 {{nodes}} 节点｜{{streams}} 流",
-          "empty": "未接入中继。"
+          "empty": "未接入中继。",
+          "tenantId": "租户编号",
+          "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。"
         },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
         "reauth": {
@@ -2541,6 +2594,14 @@
           "revokePending": "节点已移除，但元数据密钥换代没送达（{{error}}），请在节点页重试。",
           "revokePendingBulk": "有 {{count}} 台节点的元数据密钥换代没送达，请在节点页重试。",
           "afterPasswordChange": "元数据密钥换代尚未送达，重新登录后在节点页重试。"
+        },
+        "pack": {
+          "pending": "中继上的密码加入凭据未更新，其它机器暂时无法用密码加入。",
+          "retry": "重新输入密码",
+          "done": "密码加入凭据已更新。",
+          "retryFailed": "密码加入凭据更新失败，请稍后重试。",
+          "needsPassword": "更新密码加入凭据须用密码，通行密钥无法代签。",
+          "staleWarning": "密码加入凭据未更新，其它机器用密码加入前须重新输入密码。"
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "当前密码不正确。",

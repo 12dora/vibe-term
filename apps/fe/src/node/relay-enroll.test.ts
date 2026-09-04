@@ -266,6 +266,74 @@ describe('enrollRelay', () => {
     expect(appended).toHaveLength(0);
   });
 
+  test('afterEnroll 在 set-relays 落账后、根钥清零前跑，拿到的是活的根种子', async () => {
+    const appended: Appended[] = [];
+    const mode = await modeOf();
+    const relayApi = {
+      proofMaterial: () =>
+        Promise.resolve({
+          url: 'https://r.example',
+          relayHost: 'r.example',
+          ts: 1_700_000_000_000,
+          maxSkewMs: 300_000,
+          rootPublicKey: mode.rootPublicKey,
+          rootEpoch: 3,
+        }),
+      enroll: () =>
+        Promise.resolve({
+          tenantId: 'cd'.repeat(16),
+          token: 'dA',
+          passwordEpoch: 1,
+          payload: PAYLOAD,
+          payloadHash: 'h',
+        }),
+    } as unknown as RelayTenantApi;
+    const seen: { records: number; live: boolean }[] = [];
+    const result = await enrollRelay(
+      { api: authApi(appended), relayApi, mode, lock: alreadyLocked },
+      {
+        url: 'https://r.example',
+        rootPassword: 'pw',
+        afterEnroll: (rootKey) =>
+          void seen.push({
+            records: appended.length,
+            live: rootKey.seed.some((byte) => byte !== 0),
+          }),
+      }
+    );
+    expect(result).toEqual({ ok: true });
+    expect(seen).toEqual([{ records: 1, live: true }]);
+  });
+
+  test('接入失败时不跑 afterEnroll', async () => {
+    const mode = await modeOf();
+    const relayApi = {
+      proofMaterial: () =>
+        Promise.resolve({
+          url: 'https://r.example',
+          relayHost: 'r.example',
+          ts: 1_700_000_000_000,
+          maxSkewMs: 300_000,
+          rootPublicKey: mode.rootPublicKey,
+          rootEpoch: 3,
+        }),
+      enroll: () => Promise.reject(new RelayApiError('RELAY_QUOTA_NODES', 'full', 409)),
+    } as unknown as RelayTenantApi;
+    let ran = 0;
+    const result = await enrollRelay(
+      { api: authApi([]), relayApi, mode, lock: alreadyLocked },
+      {
+        url: 'https://r.example',
+        rootPassword: 'pw',
+        afterEnroll: () => {
+          ran += 1;
+        },
+      }
+    );
+    expect(result).toEqual({ ok: false, code: 'RELAY_QUOTA_NODES' });
+    expect(ran).toBe(0);
+  });
+
   test('中继口令错时把 code 带出来', async () => {
     const mode = await modeOf();
     const relayApi = {

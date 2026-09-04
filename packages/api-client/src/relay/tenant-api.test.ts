@@ -247,3 +247,34 @@ describe('RelayTenantApi enrollment 与 join 材料', () => {
     expect(status.status).toBe('redeemed');
   });
 });
+
+describe('RelayTenantApi 密封包', () => {
+  test('uploadPack 一次把逐台密封的包送到 /pack', async () => {
+    const { api, calls } = recorder([ok({ ok: true, results: [] })]);
+    const body = {
+      packs: [
+        { url: 'https://a.example', sealed_pack: 'AAAA' },
+        { url: 'https://b.example', sealed_pack: 'CCCC' },
+      ],
+      kdf_params: { salt: 'BBBB', memory_kib: 65536, iterations: 3, parallelism: 1 },
+      root_epoch: 2,
+      head_seq: 7,
+    };
+    expect(await api.uploadPack(body)).toEqual({ ok: true, results: [] });
+    expect(calls[0].url).toBe('/api/mesh/relay/pack');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(bodyOf(calls[0])).toEqual(body);
+  });
+
+  test('一台中继都没转发成功时把 code 带出来', async () => {
+    const { api } = recorder([fail(502, 'RELAY_PACK_FORWARD_FAILED')]);
+    await expect(
+      api.uploadPack({
+        packs: [{ url: 'https://a.example', sealed_pack: 'AAAA' }],
+        kdf_params: { salt: 'BBBB', memory_kib: 65536, iterations: 3, parallelism: 1 },
+        root_epoch: 0,
+        head_seq: '0',
+      })
+    ).rejects.toMatchObject({ code: 'RELAY_PACK_FORWARD_FAILED' });
+  });
+});

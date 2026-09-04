@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { clearPendingMetaKeysForTest, listPendingMetaKeys } from '@/node/relay-meta-key-pending';
+import {
+  clearPendingMetaKeysForTest,
+  clearRelayPackDebtForTest,
+  listPendingMetaKeys,
+  relayPackDebt,
+} from '@/node/relay-meta-key-pending';
 import { ApiClient } from '@tmex/api-client';
 import { AuthApi } from '@tmex/api-client/auth/index';
+import type { RelayPackUpload } from '@tmex/api-client/relay/tenant-api';
 import { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import {
   bytesEqual,
@@ -21,6 +27,7 @@ import {
   verifyKeyLogRecord,
 } from '@tmex/shared/auth';
 import { totpCode } from '@tmex/shared/auth';
+import { openRelayPack } from '@tmex/shared/relay';
 import {
   beginTotpSetup,
   changePassword,
@@ -56,13 +63,23 @@ interface TotpRecordFixture {
 
 const META_PAYLOAD = new Uint8Array([9, 8, 7, 6]);
 
-/** 中继侧 API 的替身：`status` 说本机走中继，`meta-key/prepare` 回一段固定 payload。 */
-function mockRelayApi(options: { mode?: 'relay' | 'hub'; prepareStatus?: number } = {}): {
+const RELAY_TENANT_ID = 'ab'.repeat(16);
+const RELAY_URL = 'https://r.example';
+
+/**
+ * 中继侧 API 的替身：`status` 说本机走中继，`meta-key/prepare` 回一段固定 payload，
+ * `join-material` / `pack` 支撑改密之后的密封包重封。
+ */
+function mockRelayApi(
+  options: { mode?: 'relay' | 'hub'; prepareStatus?: number; packStatus?: number } = {}
+): {
   relayApi: RelayTenantApi;
   prepareCalls: number;
+  packs: RelayPackUpload[];
 } {
   const counters = { prepareCalls: 0 };
-  const client = new ApiClient('', (url) => {
+  const packs: RelayPackUpload[] = [];
+  const client = new ApiClient('', (url, init) => {
     if (url === '/api/mesh/relay/status') {
       return Promise.resolve(Response.json({ mode: options.mode ?? 'relay', relays: [] }));
     }
@@ -77,10 +94,34 @@ function mockRelayApi(options: { mode?: 'relay' | 'hub'; prepareStatus?: number 
         Response.json({ epoch: 2, payload: encodeBase64url(META_PAYLOAD), payloadHash: 'zz' })
       );
     }
+    if (url === '/api/mesh/relay/join-material') {
+      return Promise.resolve(
+        Response.json({
+          logKey: encodeBase64url(new Uint8Array(32).fill(0x11)),
+          relays: [
+            {
+              url: RELAY_URL,
+              tenantId: RELAY_TENANT_ID,
+              token: encodeBase64url(new Uint8Array(32).fill(0x22)),
+            },
+          ],
+        })
+      );
+    }
+    if (url === '/api/mesh/relay/pack') {
+      if (options.packStatus) {
+        return Promise.resolve(
+          Response.json({ code: 'RELAY_PACK_FORWARD_FAILED' }, { status: options.packStatus })
+        );
+      }
+      packs.push(JSON.parse(String(init?.body)) as RelayPackUpload);
+      return Promise.resolve(Response.json({ ok: true }));
+    }
     return Promise.resolve(new Response('not found', { status: 404 }));
   });
   return {
     relayApi: new RelayTenantApi(client),
+    packs,
     get prepareCalls() {
       return counters.prepareCalls;
     },
@@ -246,6 +287,79 @@ describe('changePassword', () => {
     clearPendingMetaKeysForTest();
   }, 20000);
 
+  test('常规改密：用新根种子 / 新 kdf 参数 / 新 epoch 重封密封包并销掉欠账', async () => {
+    clearPendingMetaKeysForTest();
+    clearRelayPackDebtForTest();
+    const { api, posted } = mockApi();
+    const relay = mockRelayApi();
+    const result = await changePassword({
+      api,
+      relayApi: relay.relayApi,
+      uid: UID,
+      oldPassword: 'old-secret',
+      newPassword: 'new-secret',
+      currentKdfParams: KDF_JSON,
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(relay.packs).toHaveLength(1);
+    const body = relay.packs[0];
+    expect(body.root_epoch).toBe(EPOCH + 1);
+    expect(body.packs.map((row) => row.url)).toEqual([RELAY_URL]);
+    expect(relayPackDebt()).toBe(false);
+
+    // kdf 参数与密封包都必须对得上 rotate 记录里签下的那一份新根身份。
+    const rotate = decodeKeyLogRecord(posted[0].bytes);
+    const payload = decodeRotateRootKeepPayload(rotate.payload);
+    expect(body.kdf_params.salt).toBe(encodeBase64url(payload.kdf_params.salt));
+    const newSeed = await deriveSeed('new-secret', payload.kdf_params);
+    const opened = await openRelayPack({
+      rootSeed: newSeed,
+      tenantId: RELAY_TENANT_ID,
+      rootPublicKey: payload.root_public_key,
+      rootEpoch: EPOCH + 1,
+      sealedPack: decodeBase64url(body.packs[0].sealed_pack),
+    });
+    expect(opened.token).toEqual(new Uint8Array(32).fill(0x22));
+  }, 20000);
+
+  test('常规改密时密封包没送上去：记一笔欠账，等重新输密码补', async () => {
+    clearPendingMetaKeysForTest();
+    clearRelayPackDebtForTest();
+    const { api } = mockApi();
+    const relay = mockRelayApi({ packStatus: 502 });
+    await changePassword({
+      api,
+      relayApi: relay.relayApi,
+      uid: UID,
+      oldPassword: 'old-secret',
+      newPassword: 'new-secret',
+      currentKdfParams: KDF_JSON,
+    });
+    expect(relay.packs).toHaveLength(0);
+    expect(relayPackDebt()).toBe(true);
+    clearRelayPackDebtForTest();
+  }, 20000);
+
+  test('全量重置：会话当场作废，密封包只能记欠账，一个请求都不发', async () => {
+    clearPendingMetaKeysForTest();
+    clearRelayPackDebtForTest();
+    const { api } = mockApi();
+    const relay = mockRelayApi();
+    await changePassword({
+      api,
+      relayApi: relay.relayApi,
+      uid: UID,
+      oldPassword: 'old-secret',
+      newPassword: 'new-secret',
+      currentKdfParams: KDF_JSON,
+      fullReset: true,
+    });
+    expect(relay.packs).toHaveLength(0);
+    expect(relayPackDebt()).toBe(true);
+    clearPendingMetaKeysForTest();
+    clearRelayPackDebtForTest();
+  }, 20000);
+
   test('非中继模式一条 meta-key 都不发', async () => {
     clearPendingMetaKeysForTest();
     const { api, posted } = mockApi();
@@ -262,6 +376,9 @@ describe('changePassword', () => {
     expect((result as { metaKey?: unknown }).metaKey).toBeUndefined();
     expect(relay.prepareCalls).toBe(0);
     expect(posted).toHaveLength(1);
+    // hub 模式没有密封包这回事。
+    expect(relay.packs).toHaveLength(0);
+    expect(relayPackDebt()).toBe(false);
   }, 20000);
 });
 

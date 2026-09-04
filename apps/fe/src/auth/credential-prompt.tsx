@@ -8,6 +8,7 @@
 // passkey 选项只在「后端说本环境能用 passkey」且「当前 origin 确实有已注册凭证」时出现：
 // 拿别的 origin 的凭证发起仪式必然 `NotAllowedError`，给用户一个注定失败的按钮比不给更糟。
 
+import { refreshRelayPackForSigner } from '@/node/relay-pack';
 import type { AuthApi, AuthKdfParamsJson, PasskeySummary } from '@tmex/api-client/auth/index';
 import { WebAuthnError, defaultAuthApi } from '@tmex/api-client/auth/index';
 import { bytesEqual, decodeBase64url } from '@tmex/shared/auth';
@@ -198,7 +199,11 @@ export async function runWithChoice<T>(
     if (rootPublicKey && signer.kind === 'root') {
       if (!bytesEqual(signer.rootKey.publicKey, rootPublicKey)) throw new WrongPasswordError();
     }
-    return fn(signer);
+    const value = await fn(signer);
+    // 根签的记录多半动了密钥日志头：趁根种子还在手里把中继密封包重封到新头。
+    // 非中继模式与 passkey 路径都是空转（passkey 断言给不出种子，KEK 派生不了）。
+    await refreshRelayPackForSigner(signer);
+    return value;
   });
 }
 

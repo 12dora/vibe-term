@@ -164,6 +164,74 @@ export async function retryPendingMetaKey(
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// 密封包欠账
+// ---------------------------------------------------------------------------
+
+export const RELAY_PACK_DEBT_STORAGE_KEY = 'tmex.relay.packDebt';
+
+/**
+ * 密封包没能重封（根轮换之后最典型：`rotate-root` 一落账全部会话即失效，这台浏览器连
+ * `/api/mesh/relay/*` 都打不通；中继侧的根轮换 sidecar 还会把旧密封包清空）。
+ *
+ * 存的只是一个「还欠一次」的标记：重封要用根种子，而根种子绝不落任何存储，用户下次回来得
+ * 重新输一遍密码。UX 与元数据密钥欠账同一套——页面挂告警 + 一个重试按钮。
+ */
+let packDebt = false;
+let packDebtLoaded = false;
+const packDebtListeners = new Set<() => void>();
+
+function loadPackDebt(): void {
+  if (packDebtLoaded) return;
+  packDebtLoaded = true;
+  try {
+    packDebt = storage()?.getItem(RELAY_PACK_DEBT_STORAGE_KEY) === '1';
+  } catch {
+    packDebt = false;
+  }
+}
+
+function setPackDebt(next: boolean): void {
+  loadPackDebt();
+  if (packDebt === next) return;
+  packDebt = next;
+  try {
+    const store = storage();
+    if (!store) return;
+    if (packDebt) store.setItem(RELAY_PACK_DEBT_STORAGE_KEY, '1');
+    else store.removeItem(RELAY_PACK_DEBT_STORAGE_KEY);
+  } catch {
+    // 隐私模式下 sessionStorage 会抛；内存态仍然有效。
+  } finally {
+    for (const listener of [...packDebtListeners]) listener();
+  }
+}
+
+export function relayPackDebt(): boolean {
+  loadPackDebt();
+  return packDebt;
+}
+
+export function subscribeRelayPackDebt(listener: () => void): () => void {
+  packDebtListeners.add(listener);
+  return () => {
+    packDebtListeners.delete(listener);
+  };
+}
+
+export function rememberRelayPackDebt(): void {
+  setPackDebt(true);
+}
+
+export function forgetRelayPackDebt(): void {
+  setPackDebt(false);
+}
+
+export function clearRelayPackDebtForTest(): void {
+  packDebtLoaded = true;
+  setPackDebt(false);
+}
+
 /** 依次重试全部欠账（key log 是一条链，必须串行）。返回仍然欠着的条数。 */
 export async function retryPendingMetaKeys(
   deps: RelayFlowDeps,

@@ -136,6 +136,36 @@ export interface RelayJoinMaterial {
   relays: RelayJoinMaterialRelay[];
 }
 
+/**
+ * 一台中继对应的一块密封包。
+ *
+ * 每台中继各自签发租户编号与令牌，密封包的 KEK（info = tenant_id）、明文里的令牌与 AAD
+ * 全都绑在**那一台**上，绝不能跨中继复用——所以是一台一块，不是一块广播。
+ */
+export interface RelayPackEntry {
+  url: string;
+  /** base64url(`nonce(12) ‖ AES-256-GCM(ct‖tag)`)。 */
+  sealed_pack: string;
+}
+
+/**
+ * `POST /api/mesh/relay/pack` 的请求体：密封包由**持有根种子的一方**（浏览器 / CLI）算好，
+ * 节点只负责带着各自的租户令牌逐台转发。
+ */
+export interface RelayPackUpload {
+  packs: RelayPackEntry[];
+  kdf_params: { salt: string; memory_kib: number; iterations: number; parallelism: number };
+  root_epoch: number;
+  /** 超出安全整数时用十进制字符串。 */
+  head_seq: number | string;
+}
+
+/** `POST /api/mesh/relay/pack` 的 200：逐台中继的转发结果（至少一台成功才算 200）。 */
+export interface RelayPackUploadResult {
+  ok: true;
+  results?: { url: string; ok: boolean; status: number; code?: string }[];
+}
+
 /** `POST /api/mesh/relay/enrollments` 的 201（字段与 hub 的 `/api/hub/enrollments` 对齐）。 */
 export interface RelayEnrollmentCreated {
   id: string;
@@ -366,6 +396,17 @@ export class RelayTenantApi {
     exp: number;
   }): Promise<RelayEnrollmentCreated> {
     return this.json<RelayEnrollmentCreated>(`${BASE}/enrollments`, 'relay_enrollment_failed', {
+      method: 'POST',
+      body,
+    });
+  }
+
+  /**
+   * `POST /api/mesh/relay/pack`：把密封包交给本机节点，由它转发到各中继。
+   * 一台都没转发成功时服务端回 502 `RELAY_PACK_FORWARD_FAILED`。
+   */
+  uploadPack(body: RelayPackUpload): Promise<RelayPackUploadResult> {
+    return this.json<RelayPackUploadResult>(`${BASE}/pack`, 'relay_pack_upload_failed', {
       method: 'POST',
       body,
     });

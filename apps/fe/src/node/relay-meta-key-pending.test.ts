@@ -7,11 +7,16 @@ import { encodeBase64url } from '@tmex/shared/auth';
 import type { RelayFlowDeps } from './relay-enroll';
 import {
   clearPendingMetaKeysForTest,
+  clearRelayPackDebtForTest,
   forgetPendingMetaKey,
+  forgetRelayPackDebt,
   listPendingMetaKeys,
+  relayPackDebt,
   rememberPendingMetaKey,
+  rememberRelayPackDebt,
   retryPendingMetaKey,
   retryPendingMetaKeys,
+  subscribeRelayPackDebt,
 } from './relay-meta-key-pending';
 
 type Appended = { bytes: string; sig: string };
@@ -98,5 +103,33 @@ describe('relay meta-key 欠账', () => {
     expect(result).toEqual({ ok: false, code: 'RELAY_META_KEY_NEEDS_SIGNER' });
     expect(appended).toHaveLength(0);
     expect(listPendingMetaKeys()).toHaveLength(1);
+  });
+});
+
+describe('relay 密封包欠账', () => {
+  beforeEach(() => clearRelayPackDebtForTest());
+
+  test('记账 / 销账，并且只在真正变化时通知订阅者', () => {
+    let notified = 0;
+    const stop = subscribeRelayPackDebt(() => {
+      notified += 1;
+    });
+    expect(relayPackDebt()).toBe(false);
+    rememberRelayPackDebt();
+    rememberRelayPackDebt();
+    expect(relayPackDebt()).toBe(true);
+    expect(notified).toBe(1);
+    forgetRelayPackDebt();
+    expect(relayPackDebt()).toBe(false);
+    expect(notified).toBe(2);
+    stop();
+  });
+
+  test('欠账只是一个布尔标记，不携带任何密钥材料', () => {
+    rememberRelayPackDebt();
+    expect(relayPackDebt()).toBe(true);
+    // 没有 sessionStorage 的环境（bun test）退化成内存态，语义不变。
+    forgetRelayPackDebt();
+    expect(relayPackDebt()).toBe(false);
   });
 });
