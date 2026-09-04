@@ -107,7 +107,7 @@ export class RelayRoutes {
       'POST /leave/prepare': (_r, uid) => this.leavePrepare(uid),
       'POST /remove/prepare': (r, uid) => this.removePrepare(r, uid),
       'POST /meta-key/prepare': (r, uid) => this.metaKeyPrepare(r, uid),
-      'GET /join-material': () => this.joinMaterial(),
+      'GET /join-material': (r) => this.joinMaterial(r),
       'POST /enrollments': (r, uid) => this.createEnrollment(r, uid),
       'POST /pack': (r) =>
         handleMeshRelayPack(
@@ -370,20 +370,31 @@ export class RelayRoutes {
    * 新节点去那儿 redeem 只会 404。所以 join 串里的地址表只给这一台（带它自己的租户编号与令牌）；
    * 完整的有序中继表由密钥日志里的 `set-relays` 记录在加入之后送达，failover 从那时起生效。
    */
-  private async joinMaterial(): Promise<Response> {
+  /**
+   * 默认只给当前 attach 的那一台（enrollment 只落在它上面，r3 串只能列它）；
+   * `?scope=all` 给全表——密封包要按每台中继各自的租户编号与令牌分别封装。
+   */
+  private async joinMaterial(req: Request): Promise<Response> {
     if (this.mode() !== 'relay') return jsonError('RELAY_NOT_CONFIGURED', 409);
     const rows = this.deps.secrets.relayRows();
     const attachedUrl = this.deps.uplink.attachedHub()?.publicUrl ?? null;
-    const target = rows.find((row) => row.url === attachedUrl) ?? rows[0];
-    if (!target) return jsonError('RELAY_NOT_CONFIGURED', 409);
-    const relay = await this.deps.secrets.store.getRelay(target.url);
+    const all = new URL(req.url).searchParams.get('scope') === 'all';
+    const attached = rows.find((row) => row.url === attachedUrl) ?? rows[0];
+    if (!attached) return jsonError('RELAY_NOT_CONFIGURED', 409);
+    const targets = all ? [attached, ...rows.filter((row) => row.url !== attached.url)] : [attached];
     const logKey = await this.deps.secrets.logKey();
-    if (!relay || !logKey) return jsonError('RELAY_KEY_MISSING', 409);
-    const token = encodeBase64url(relay.token);
-    return jsonBody({
-      logKey: encodeBase64url(logKey),
-      relays: [{ url: target.url, tenantId: relay.tenantId, token }],
-    });
+    if (!logKey) return jsonError('RELAY_KEY_MISSING', 409);
+    const relays: Array<{ url: string; tenantId: string; token: string }> = [];
+    for (const target of targets) {
+      const relay = await this.deps.secrets.store.getRelay(target.url);
+      if (!relay) {
+        if (!all) return jsonError('RELAY_KEY_MISSING', 409);
+        continue;
+      }
+      relays.push({ url: target.url, tenantId: relay.tenantId, token: encodeBase64url(relay.token) });
+    }
+    if (relays.length === 0) return jsonError('RELAY_KEY_MISSING', 409);
+    return jsonBody({ logKey: encodeBase64url(logKey), relays });
   }
 
   private async createEnrollment(req: Request, userId: string): Promise<Response> {

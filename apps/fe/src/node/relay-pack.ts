@@ -111,7 +111,7 @@ async function sealPacksFor(input: {
 async function sealAndUpload(input: RefreshRelayPackInput): Promise<void> {
   const api = input.api ?? defaultAuthApi;
   const relayApi = input.relayApi ?? defaultRelayTenantApi;
-  const material = await relayApi.joinMaterial();
+  const material = await relayApi.joinMaterial({ scope: 'all' });
   const wanted = input.urls && input.urls.length > 0 ? new Set(input.urls) : null;
   const relays = wanted ? material.relays.filter((row) => wanted.has(row.url)) : material.relays;
   if (relays.length === 0) throw new Error('relay join material has no matching relay');

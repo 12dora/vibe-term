@@ -380,9 +380,10 @@ export class RelayTenantApi {
   }
 
   /** `GET /api/mesh/relay/join-material`：join 串 v3 的材料（仅中继模式）。 */
-  async joinMaterial(): Promise<RelayJoinMaterial> {
+  async joinMaterial(options: { scope?: 'attached' | 'all' } = {}): Promise<RelayJoinMaterial> {
+    const query = options.scope === 'all' ? '?scope=all' : '';
     const wire = await this.json<Partial<RelayJoinMaterial>>(
-      `${BASE}/join-material`,
+      `${BASE}/join-material${query}`,
       'relay_join_material_failed'
     );
     return normalizeJoinMaterial(wire);
