@@ -3,6 +3,7 @@ import { DOMAIN_CERTIFICATE, encodeCertificate, hexToBytes } from '@tmex/shared/
 import {
   parseJson,
   pickMeshNodeName,
+  pickSelfDisplayName,
   projectMeshListNode,
   projectNode,
   upsertById,
@@ -72,6 +73,47 @@ describe('node-list-projection', () => {
       })
     ).toBe('home');
     expect(pickMeshNodeName({ id: 'bb', isSelf: false, listedName: 'studio' })).toBe('studio');
+  });
+
+  test('pickSelfDisplayName order is listed → registry → identity → site', () => {
+    const id = 'aa'.repeat(16);
+    expect(
+      pickSelfDisplayName({
+        id,
+        listedName: 'listed',
+        registryName: 'registry',
+        identityName: 'identity',
+        siteName: 'site',
+      })
+    ).toBe('listed');
+    expect(
+      pickSelfDisplayName({
+        id,
+        listedName: 'self',
+        registryName: 'registry',
+        identityName: 'identity',
+        siteName: 'site',
+      })
+    ).toBe('registry');
+    expect(
+      pickSelfDisplayName({
+        id,
+        listedName: id,
+        registryName: '  ',
+        identityName: 'identity',
+        siteName: 'site',
+      })
+    ).toBe('identity');
+    expect(
+      pickSelfDisplayName({
+        id,
+        listedName: 'self',
+        registryName: id,
+        identityName: null,
+        siteName: 'studio',
+      })
+    ).toBe('studio');
+    expect(pickSelfDisplayName({ id, listedName: 'self', siteName: id })).toBeNull();
   });
 
   test('wan reach is online and includes transport plus rttMs', () => {

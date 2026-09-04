@@ -25,7 +25,7 @@ import { UserStore } from '../auth/user-store';
 import { MESH_VIA_SELF, setMeshRequestContext } from './mesh-deps';
 import type { RelayDialContext } from './relay-dial';
 import { buildSetRelaysPayload, listRelayNodeKeys } from './relay-payloads';
-import { RelayRoutes } from './relay-routes';
+import { RelayRoutes, type RelayUplinkView } from './relay-routes';
 import { RelaySecrets } from './relay-secrets';
 
 const RELAY_URL = 'https://relay.example';
@@ -40,6 +40,7 @@ async function boot(
     localAuthEffective?: boolean;
     dial?: RelayDialContext;
     enrollmentFanoutTimeoutMs?: number;
+    uplink?: Partial<RelayUplinkView>;
   } = {}
 ) {
   const { db, close } = createMigratedAuthDb();
@@ -78,6 +79,8 @@ async function boot(
       liveClient: () => null,
       attachedHub: () => null,
       reconfigure: async () => {},
+      candidates: () => [],
+      ...opts.uplink,
     },
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
     ...(opts.dial ? { dial: opts.dial } : {}),
@@ -163,11 +166,57 @@ describe('RelayRoutes', () => {
           attached: false,
           rttMs: null,
           lastError: null,
+          lastErrorAt: null,
           kicked: false,
         },
       ] as never);
       expect(after.reauthRequired).toBe(false);
       expect(after.readmitPending).toBe(0);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('status 未挂上的中继行暴露 candidate lastError', async () => {
+    const url = canonicalHubUrl(RELAY_URL);
+    const url2 = canonicalHubUrl(RELAY_URL_2);
+    const b = await boot({
+      uplink: {
+        attachedHub: () => ({
+          hubNodeId: null,
+          publicUrl: url,
+          mode: 'active',
+          writerEpoch: 0,
+          since: 1,
+        }),
+        liveClient: () => ({ lastConnectError: { reason: 'bad-token', at: 99 } }) as never,
+        candidates: () => [
+          { publicUrl: url, lastError: 'stale-pool', lastErrorAt: 1 },
+          { publicUrl: url2, lastError: 'member-epoch_mismatch', lastErrorAt: 42 },
+        ],
+      },
+    });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const body = (await (await b.call('/api/mesh/relay/status')).json()) as {
+        relays: Array<{
+          url: string;
+          attached: boolean;
+          lastError: string | null;
+          lastErrorAt: number | null;
+        }>;
+      };
+      expect(
+        body.relays.map((row) => ({
+          url: row.url,
+          attached: row.attached,
+          lastError: row.lastError,
+          lastErrorAt: row.lastErrorAt,
+        }))
+      ).toEqual([
+        { url, attached: true, lastError: 'bad-token', lastErrorAt: 99 },
+        { url: url2, attached: false, lastError: 'member-epoch_mismatch', lastErrorAt: 42 },
+      ]);
     } finally {
       b.close();
     }

@@ -1264,8 +1264,10 @@ describe('UplinkPool', () => {
       const a = pool.candidates().find((row) => row.publicUrl === 'https://a.example');
       const b = pool.candidates().find((row) => row.publicUrl === 'https://b.example');
       expect(a?.lastError).toBe('connect-failed');
+      expect(a?.lastErrorAt).toBeGreaterThan(0);
       expect(a?.lastAttemptAt).toBeGreaterThan(0);
       expect(b?.lastError).toBeNull();
+      expect(b?.lastErrorAt).toBeNull();
       expect(b?.lastAttemptAt).toBeGreaterThan(0);
       expect(
         lines.some((row) =>

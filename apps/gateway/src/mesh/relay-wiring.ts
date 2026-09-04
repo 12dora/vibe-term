@@ -185,6 +185,7 @@ export function createRelayRoutes(input: {
       liveClient: () => input.uplink.liveClient(),
       attachedHub: () => input.uplink.attachedHub(),
       reconfigure: () => reconfigureUplinkPool(input.uplink),
+      candidates: () => input.uplink.candidates(),
     },
   });
 }

@@ -42,6 +42,7 @@ import {
   readRelayErrorCode,
 } from './relay-routes-input';
 import type { RelaySecrets } from './relay-secrets';
+import { type RelayStatusCandidate, buildRelayStatusRow } from './relay-status-row';
 import { RelayUplinkClient } from './relay-uplink-client';
 import {
   type SessionMiddlewareDeps,
@@ -60,6 +61,7 @@ export type RelayUplinkView = {
   liveClient(): PooledUplink | null;
   attachedHub(): AttachedHub | null;
   reconfigure(): Promise<void>;
+  candidates(): RelayStatusCandidate[];
 };
 
 export type RelayRoutesDeps = {
@@ -143,23 +145,18 @@ export class RelayRoutes {
   private async status(userId: string): Promise<Response> {
     const mode = this.mode();
     const client = this.relayClient();
+    const live = this.deps.uplink.liveClient();
     const attached = this.deps.uplink.attachedHub();
     const rows = this.deps.secrets.relayRows();
     const uid = userId || this.deps.secrets.userId();
     const readmitPending = uid ? (await this.readmitPrepareFor(uid)).entries.length : 0;
+    const candidates = this.deps.uplink.candidates();
     return jsonBody({
       mode,
       tenantId: this.deps.secrets.tenantId(),
-      relays: rows.map((row) => ({
-        url: row.url,
-        priority: row.priority,
-        online: attached?.publicUrl === row.url && client?.state === 'online',
-        attached: attached?.publicUrl === row.url,
-        rttMs: attached?.publicUrl === row.url ? (client?.rttMs ?? null) : null,
-        lastError:
-          attached?.publicUrl === row.url ? (client?.lastConnectError?.reason ?? null) : null,
-        kicked: row.kicked,
-      })),
+      relays: rows.map((row) =>
+        buildRelayStatusRow(row, attached?.publicUrl ?? null, client, live, candidates)
+      ),
       metaEpoch: this.deps.secrets.currentMetaEpoch(),
       nodesViaRelay: client?.nodesViaRelay ?? 0,
       reauthRequired: rows.some((row) => row.kicked),

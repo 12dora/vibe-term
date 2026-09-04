@@ -76,6 +76,7 @@ import {
   createTtlCache,
   meshHubNotRetired,
 } from './node-list-apply';
+import { pickSelfDisplayName } from './node-list-projection';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
 import {
   bindRelayReconcile,
@@ -865,7 +866,7 @@ function createUplinkWiring(d: MeshDeps) {
   const uplinkHub = opts.uplinkHub !== undefined ? opts.uplinkHub : hub;
   const ownHubUrl = config.hubPublicUrl ?? hubEndpointUrl(config);
   const relayOverrides = relayUplinkOverrides(d.relay, {
-    nameProvider: () => d.relay.secrets.store.localName() ?? resolveSiteName(),
+    nameProvider: () => selfDisplayNameOf(d) ?? '',
   });
   const uplink = new UplinkPool({
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
@@ -1280,17 +1281,7 @@ function wireMeshHttp(
       }
       return rows;
     },
-    selfName: () => {
-      const listed = state.lastNodeList?.nodes.find((node) => node.id === identity.nodeIdHex)?.name;
-      if (listed && listed !== identity.nodeIdHex && listed !== 'self') return listed;
-      const row = userStore.getNode(identity.nodeIdHex);
-      if (row?.name && row.name !== identity.nodeIdHex) return row.name;
-      if (config.roles.hub) {
-        const site = resolveSiteName();
-        if (site) return site;
-      }
-      return listed && listed !== 'self' ? listed : null;
-    },
+    selfName: () => selfDisplayNameOf(d),
     primaryUserId: d.userIdOf() || undefined,
     hubPublicUrl: hubEndpointUrl(config),
     hubStore: d.hubStore,
@@ -1466,4 +1457,16 @@ function resolveSiteName(): string {
     if (saved) return saved;
   } catch {}
   return gatewayConfig.siteNameDefault?.trim() ?? '';
+}
+
+function selfDisplayNameOf(d: MeshDeps): string | null {
+  const id = d.identity.nodeIdHex;
+  const listed = d.state.lastNodeList?.nodes.find((node) => node.id === id)?.name;
+  return pickSelfDisplayName({
+    id,
+    listedName: listed,
+    registryName: d.userStore.getNode(id)?.name,
+    identityName: d.relay.secrets.store.localName(),
+    siteName: resolveSiteName(),
+  });
 }
