@@ -18,6 +18,7 @@ const NO_UPLINK = {
   metaEpoch: 0,
   nodesViaRelay: 0,
   reauthRequired: false,
+  readmitPending: 0,
   writable: true,
   kicked: false,
   loading: false,
@@ -38,6 +39,7 @@ const IDLE_ACTIONS: RelayActionsController = {
   dismissConfirm: () => undefined,
   submitEnroll: () => Promise.resolve(),
   runConfirm: () => Promise.resolve(),
+  readmitMembers: () => Promise.resolve(),
   metaPending: [],
   retryMetaKey: () => Promise.resolve(),
   packPending: false,
@@ -141,5 +143,30 @@ describe('接入本机中继', () => {
     expect(html).toContain('data-testid="local-uplink-relay-standalone"');
     expect(html).toContain('data-testid="relay-setup-slot"');
     expect(html).not.toContain('data-testid="local-relay-service"');
+  });
+});
+
+describe('成员待重新确认', () => {
+  const RELAY_MODE = { ...NO_UPLINK, mode: 'relay', relayMode: true } satisfies UseMeshRelayResult;
+
+  test('有旧根签的成员：给出告警与「重新确认成员」按钮', () => {
+    const html = render({ relay: { ...RELAY_MODE, readmitPending: 2 } });
+    expect(html).toContain('data-testid="nodes-relay-readmit"');
+    expect(html).toContain('data-testid="nodes-relay-readmit-action"');
+    expect(html).toContain('nodes.readmit.notice');
+    expect(html).toContain('nodes.readmit.action');
+  });
+
+  test('没有陈旧成员时不出现', () => {
+    const html = render({ relay: RELAY_MODE });
+    expect(html).not.toContain('data-testid="nodes-relay-readmit"');
+  });
+
+  test('动作进行中时按钮禁用', () => {
+    const html = render({
+      relay: { ...RELAY_MODE, readmitPending: 1 },
+      actions: { ...IDLE_ACTIONS, busy: true },
+    });
+    expect(html).toMatch(/nodes-relay-readmit-action"[^>]*disabled/);
   });
 });

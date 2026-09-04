@@ -143,7 +143,7 @@ function SelfRelayEntry({
   );
 }
 
-/** 中继模式下的三条提示：令牌失效、元数据密钥欠账、没挂上任何一条中继。 */
+/** 中继模式下的四条提示：令牌失效、成员待重新确认、元数据密钥欠账、没挂上任何一条中继。 */
 function RelayNotices({
   relay,
   actions,
@@ -169,6 +169,25 @@ function RelayNotices({
             data-testid="nodes-relay-reauth-action"
           >
             {t('relay.tenant.reauth.action')}
+          </Button>
+        </p>
+      )}
+      {relay.readmitPending > 0 && (
+        <p
+          className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400"
+          data-testid="nodes-relay-readmit"
+        >
+          <ShieldAlert className="size-3.5 shrink-0" />
+          {t('nodes.readmit.notice', { count: relay.readmitPending })}
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={actions.busy}
+            onClick={() => void actions.readmitMembers()}
+            data-testid="nodes-relay-readmit-action"
+          >
+            {t('nodes.readmit.action')}
           </Button>
         </p>
       )}

@@ -6,9 +6,11 @@ import type { AuthApi } from '@tmex/api-client/auth/index';
 import { RelayApiError } from '@tmex/api-client/relay/admin-api';
 import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import {
+  DOMAIN_AUTHORIZATION,
   decodeBase64url,
   decodeKeyLogRecord,
   deriveSeed,
+  encodeAuthorization,
   encodeBase64url,
   rootKeyFromSeed,
   verifyEd25519,
@@ -431,5 +433,116 @@ describe('resendRelayRecord', () => {
     );
     expect(result).toEqual({ ok: true });
     expect(appended).toEqual([{ bytes: 'YWJj', sig: 'ZGVm', hubSync: true }]);
+  });
+});
+
+describe('接入时补签成员', () => {
+  function readmitEntry() {
+    return {
+      nodeId: 'ab'.repeat(8),
+      name: 'node-1',
+      admitSeq: 3,
+      admitRootEpoch: 1,
+      authorization_bytes: encodeBase64url(
+        encodeAuthorization({
+          domain: DOMAIN_AUTHORIZATION,
+          uid: 'u1',
+          enroll_pk: new Uint8Array(32).fill(9),
+          exp: 1_700_000_000_000n,
+          root_epoch: 1,
+          signer: 'root',
+          credential_id: null,
+        })
+      ),
+      certificate_bytes: encodeBase64url(new Uint8Array([1, 2, 3])),
+      cert_sig: encodeBase64url(new Uint8Array(64).fill(4)),
+    };
+  }
+
+  function enrollApi(
+    mode: { rootPublicKey: string },
+    overrides: Partial<Record<'readmitRequired', number>> = {},
+    readmitPrepare?: () => Promise<{ rootEpoch: number; entries: unknown[] }>
+  ): RelayTenantApi {
+    return {
+      proofMaterial: () =>
+        Promise.resolve({
+          url: 'https://r.example',
+          relayHost: 'r.example',
+          ts: 1_700_000_000_000,
+          maxSkewMs: 300_000,
+          rootPublicKey: mode.rootPublicKey,
+          rootEpoch: 3,
+        }),
+      enroll: () =>
+        Promise.resolve({
+          tenantId: 'cd'.repeat(16),
+          token: 'dA',
+          passwordEpoch: 1,
+          payload: PAYLOAD,
+          payloadHash: 'h',
+          readmitRequired: overrides.readmitRequired ?? 0,
+        }),
+      readmitPrepare:
+        readmitPrepare ?? (() => Promise.resolve({ rootEpoch: 3, entries: [readmitEntry()] })),
+    } as unknown as RelayTenantApi;
+  }
+
+  test('readmitRequired > 0：先落 readmit-node，再落 set-relays', async () => {
+    const appended: Appended[] = [];
+    const mode = await modeOf();
+    const result = await enrollRelay(
+      {
+        api: authApi(appended),
+        relayApi: enrollApi(mode, { readmitRequired: 1 }),
+        mode,
+        lock: alreadyLocked,
+      },
+      { url: 'https://r.example', rootPassword: 'pw' }
+    );
+    expect(result).toEqual({ ok: true });
+    expect(appended.map((row) => decodeKeyLogRecord(decodeBase64url(row.bytes)).type)).toEqual([
+      'readmit-node',
+      'set-relays',
+    ]);
+  });
+
+  test('readmitRequired 为 0 时不问 prepare', async () => {
+    const appended: Appended[] = [];
+    const mode = await modeOf();
+    let asked = 0;
+    const relayApi = enrollApi(mode, { readmitRequired: 0 }, () => {
+      asked += 1;
+      return Promise.resolve({ rootEpoch: 3, entries: [] });
+    });
+    const result = await enrollRelay(
+      { api: authApi(appended), relayApi, mode, lock: alreadyLocked },
+      { url: 'https://r.example', rootPassword: 'pw' }
+    );
+    expect(result).toEqual({ ok: true });
+    expect(asked).toBe(0);
+    expect(appended).toHaveLength(1);
+  });
+
+  test('补签失败：不提交 set-relays，结论里带上补签进度', async () => {
+    const appended: Appended[] = [];
+    const mode = await modeOf();
+    const result = await enrollRelay(
+      {
+        api: authApi(appended, { ok: false, code: 'KEY_LOG_FORK' }),
+        relayApi: enrollApi(mode, { readmitRequired: 1 }),
+        mode,
+        lock: alreadyLocked,
+      },
+      { url: 'https://r.example', rootPassword: 'pw' }
+    );
+    expect(result).toEqual({
+      ok: false,
+      code: 'KEY_LOG_FORK',
+      readmit: { signed: 0, failed: 1 },
+    });
+    expect(appended.map((row) => decodeKeyLogRecord(decodeBase64url(row.bytes)).type)).toEqual([
+      'readmit-node',
+    ]);
   });
 });

@@ -26,6 +26,8 @@ import type { RootKey } from '@tmex/shared/auth';
 import { bytesEqual, decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
 import { signRelayEnrollProof } from '@tmex/shared/relay';
 import { classifyKeyLogFailure, requireRootPublicKey } from './enrollment';
+import type { ReadmitResult } from './readmit-members';
+import { readmitStaleMembers } from './readmit-members';
 
 /** 根密码派生出的根公钥与服务端下发的不一致：密码打错了。 */
 export const ROOT_PASSWORD_INVALID = 'ROOT_PASSWORD_INVALID';
@@ -51,6 +53,8 @@ export type RelayFlowResult =
        * 调用方可以存下来稍后原样重发。`stale` / `rejected` 一律不带，重发没有意义。
        */
       record?: SignedRelayRecord;
+      /** 卡在「重新确认成员」这一步：`set-relays` 一条都没签。 */
+      readmit?: Pick<ReadmitResult, 'signed' | 'failed'>;
     };
 
 /** key log 写锁的注入口（`enrollment-engine.ts` 的 `withKeyLogLock` 即是这个形状）。 */
@@ -226,6 +230,10 @@ export async function enrollRelay(
       password: input.password ?? null,
       proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
     });
+    // 历史成员的 `admit-node` 是旧根签的，中继只认当前根：必须先逐台补签 `readmit-node`，
+    // 一条没成就别提交 `set-relays`——链路先切过去，那些节点反而立刻掉线。
+    const stale = await readmitIfRequired(deps, enrolled.readmitRequired ?? 0, rootKey);
+    if (stale) return stale;
     const result = await appendRelayRecord(deps, {
       type: 'set-relays',
       payload: enrolled.payload,
@@ -238,6 +246,28 @@ export async function enrollRelay(
   } finally {
     rootKey?.seed.fill(0);
   }
+}
+
+/** 有陈旧成员就先补签，失败时把结论原样带出去（调用方据此中止接入）。 */
+async function readmitIfRequired(
+  deps: RelayFlowDeps,
+  required: number,
+  rootKey: RootKey
+): Promise<RelayFlowResult | null> {
+  if (required <= 0) return null;
+  const readmit = await readmitStaleMembers({
+    api: deps.api,
+    relayApi: deps.relayApi,
+    mode: deps.mode,
+    lock: deps.lock,
+    signer: { kind: 'root', rootKey },
+  });
+  if (!readmit.code) return null;
+  return {
+    ok: false,
+    code: readmit.code,
+    readmit: { signed: readmit.signed, failed: readmit.failed },
+  };
 }
 
 /**

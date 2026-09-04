@@ -46,6 +46,7 @@ const EMPTY_STATE: MeshRelayState = {
   metaEpoch: 0,
   nodesViaRelay: 0,
   reauthRequired: false,
+  readmitPending: 0,
   loading: false,
   error: null,
   loadedAt: null,
