@@ -60,77 +60,120 @@
         "remoteLink": "前往远程访问设置"
       },
       "computer": {
-        "intro": "在另一台服务器或电脑上安装 tmex 后，可以让它加入本机所在的网络，也可以把本机设为 Hub。",
+        "intro": "为另一台服务器或电脑选择接入方式。",
+        "path": {
+          "title": "选择接入方式",
+          "relay": "经中继",
+          "hub": "经 Hub",
+          "ssh": "SSH 直连",
+          "hint": {
+            "relay": "中继：节点在 NAT 后，只需一个公网汇合点。",
+            "hub": "Hub：需要集中管理账号与节点。",
+            "ssh": "SSH 直连：新机器可直接 SSH 到达，无需安装 tmex。"
+          },
+          "tip": {
+            "relay": "中继只转发加密流量，不保存账号与密钥。节点各自连上中继，在公网汇合，适合都在 NAT 或防火墙后的机器。",
+            "hub": "Hub 是信任中心，保存账号、节点成员与加入审批，需要一个固定的公网 HTTPS 地址。",
+            "ssh": "新机器不运行 tmex，由本机经 SSH 连接，作为设备出现在设备列表。"
+          }
+        },
+        "side": {
+          "relay": {
+            "join": "加入已有中继",
+            "host": "本机自建中继"
+          },
+          "hub": {
+            "join": "加入已有 Hub",
+            "host": "本机设为 Hub"
+          }
+        },
         "install": {
           "title": "安装 tmex",
-          "description": "在目标机器上执行安装脚本（自动安装 Bun，Linux 需 tmux ≥ 3.0）。安装完成后终端会输出访问地址。",
+          "description": "在新机器上执行安装脚本。Linux 需 tmux 3.0 或更高版本。",
           "command": "安装命令",
-          "pathHint": "安装脚本会提供 tmex 命令。若提示找不到命令，重新打开终端或执行："
-        },
-        "mode": {
-          "title": "选择接入方式",
-          "join": "让新机器加入",
-          "host": "把本机设为 Hub"
+          "pathHint": "提示找不到 tmex 命令时，重开终端或执行："
         },
         "join": {
+          "uplink": {
+            "title": "准备接入信息",
+            "relayDescription": "新机器需要中继地址、租户编号与接入密码。",
+            "hubDescription": "新机器需要 Hub 地址与账号密码。",
+            "relayUrl": "中继地址",
+            "hubUrl": "Hub 地址",
+            "tenantId": "租户编号",
+            "relayMissing": "向中继运营者索取中继地址与接入密码。",
+            "hubMissing": "向 Hub 管理员索取 Hub 地址。",
+            "tenantMissing": "租户编号由中继运营者在中继管理中创建。",
+            "link": "前往多节点互联设置"
+          },
+          "password": {
+            "title": "在新机器上加入",
+            "relayDescription": "在新机器上打开「设置 → 多节点互联 → 加入中继」，填中继地址、租户编号与接入密码。",
+            "hubDescription": "在新机器上打开「设置 → 多节点互联 → 加入已有 Hub」，填 Hub 地址与账号密码。",
+            "command": "也可以在新机器的终端执行",
+            "tenantPlaceholder": "<租户编号>"
+          },
+          "advanced": {
+            "title": "加入码（高级）",
+            "description": "新机器不便输入密码时改用加入码，10 分钟内有效。"
+          },
           "token": {
             "title": "生成加入码",
-            "description": "在已加入的机器上打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」，复制加入命令。加入码 10 分钟内有效。",
+            "description": "在已接入的机器上打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」。",
+            "meshDescription": "在此生成加入码，10 分钟内有效。",
             "label": "加入码（有效期 {{minutes}} 分钟）",
             "link": "前往多节点互联设置",
-            "meshDescription": "在此生成加入码并复制下一步的命令。加入码 10 分钟内有效。",
             "unavailable": "本机未加入多节点互联，无法在此生成加入码。"
           },
           "run": {
             "title": "在新机器上加入",
-            "description": "在新机器的终端执行加入命令（以下为示例，请以复制的命令为准）：",
+            "description": "在新机器的终端执行加入命令，以下为示例：",
             "ready": "在新机器的终端执行以下命令：",
             "tokenPlaceholder": "<加入码>",
             "namePlaceholder": "<节点名称>"
           },
           "confirm": {
             "title": "确认加入",
-            "description": "回到节点管理页，点「确认加入」。新机器重启后即出现在设备列表。",
-            "meshDescription": "新机器执行命令后在此确认加入，重启后即出现在设备列表。",
+            "description": "回到节点管理页确认加入，新机器重启后出现在设备列表。",
+            "meshDescription": "新机器执行命令后在此确认加入，重启后出现在设备列表。",
             "done": "新机器已加入，重启后出现在设备列表。"
-          },
-          "uplink": {
-            "title": "准备接入信息",
-            "hubDescription": "新机器需要 Hub 地址与本账号的密码。",
-            "relayDescription": "新机器需要中继地址、租户编号与本账号的密码。",
-            "unknownDescription": "本机尚未加入多节点互联，请先完成本机设置。",
-            "missingUrl": "本机的上级地址未知，无法给出接入地址。",
-            "hubUrl": "Hub 地址",
-            "relayUrl": "中继地址",
-            "tenantId": "租户编号"
+          }
+        },
+        "relayHost": {
+          "setup": {
+            "title": "本机设为中继",
+            "description": "打开「设置 → 多节点互联」，选择「本机作为中继」。中继需要固定的公网 HTTPS 地址。",
+            "link": "前往多节点互联设置",
+            "urlLabel": "中继地址",
+            "missingUrl": "中继地址未知，其他机器无法加入。"
           },
           "password": {
-            "title": "在新机器上加入",
-            "hubDescription": "在新机器上打开「设置 → 多节点互联」，选「加入已有 Hub」，填 Hub 地址与密码。",
-            "relayDescription": "在新机器上打开「设置 → 多节点互联」，选「加入中继」，填中继地址、租户编号与密码。",
-            "command": "也可以在新机器的终端直接执行",
-            "tenantPlaceholder": "<租户编号>"
+            "title": "设置接入密码",
+            "description": "打开「中继管理 → ⋯ → 修改接入密码」。租户凭接入密码加入本机中继。",
+            "link": "前往中继管理",
+            "done": "接入密码已设置。"
           },
-          "advanced": {
-            "title": "使用加入码（高级）",
-            "description": "新机器不便输入密码时改用加入码：在本机签发，10 分钟内有效。"
+          "invite": {
+            "title": "让新机器加入",
+            "description": "在新机器上安装 tmex，按「加入已有中继」的步骤接入。",
+            "gotoJoin": "查看加入步骤"
           }
         },
         "host": {
           "entry": {
             "title": "配置公网入口",
-            "description": "打开「设置 → 远程访问」：选择 Cloudflare Tunnel（命名隧道）可直接获得固定 HTTPS 地址；选择直接连接则需自行准备固定的 HTTPS 入口。",
+            "description": "打开「设置 → 远程访问」：Cloudflare Tunnel（命名隧道）提供固定 HTTPS 地址，直接连接需自备固定 HTTPS 入口。",
             "link": "前往远程访问设置",
             "status": {
               "named": "已配置 Cloudflare Tunnel：{{url}}（{{state}}）",
-              "quick": "当前是临时隧道 {{url}}，地址会变化，不适合作为 Hub 地址；请改用命名隧道或直接连接。",
+              "quick": "当前是临时隧道 {{url}}，地址会变化，不能作为 Hub 地址。",
               "hubUrl": "已有公开地址：{{url}}"
             }
           },
           "hub": {
-            "title": "设为 Hub",
-            "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」，将上一步的地址填入「Hub 公开地址」，创建首个账号并重启。",
-            "warning": "Hub 公开地址设定后不可修改，请先确定最终域名。",
+            "title": "本机设为 Hub",
+            "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」，填入上一步的地址，创建首个账号并重启。",
+            "warning": "Hub 公开地址设定后不可修改，先确定最终域名。",
             "link": "前往多节点互联设置",
             "status": {
               "self": "本机已是 Hub，公开地址：{{url}}",
@@ -140,11 +183,18 @@
             "hintUseEntry": "把上一步的地址 {{url}} 填入「Hub 公开地址」。"
           },
           "invite": {
-            "title": "接入其他机器",
-            "description": "在其他机器上安装 tmex 后，按「让新机器加入」的步骤接入。",
-            "ready": "其他机器安装 tmex 后，切到「让新机器加入」照着做即可。",
-            "gotoJoin": "去看加入步骤"
+            "title": "让新机器加入",
+            "description": "在新机器上安装 tmex，按「加入已有 Hub」的步骤接入。",
+            "ready": "本机已是 Hub，切到「加入已有 Hub」继续。",
+            "gotoJoin": "查看加入步骤"
           }
+        },
+        "ssh": {
+          "description": "本机经 SSH 连接新机器，新机器无需安装 tmex。",
+          "title": "添加 SSH 设备",
+          "stepDescription": "在设备对话框中把类型选为 SSH，填写主机地址与登录方式。",
+          "button": "添加设备",
+          "note": "设备保存后即出现在设备列表。"
         }
       }
     },
@@ -236,6 +286,7 @@
           "error": "异常"
         },
         "degradedNotice": "隧道进程运行中，但无边缘连接，公网地址当前不可达。",
+        "degradedHint": "cloudflared 连不上 Cloudflare 边缘（TCP/UDP 7844）。请检查代理或防火墙是否放行 *.argotunnel.com 与 *.cftunnel.com。",
         "connector": {
           "label": "连接器",
           "connected": "{{n}} 条边缘连接",
@@ -1227,15 +1278,13 @@
         "relayLeaveFirst": "要改回 Hub，先离开中继。",
         "details": {
           "title": "连接详情",
-          "metaEpoch": "元数据密钥代数",
-          "nodesViaRelay": "经中继可见节点",
-          "quota": "节点配额",
+          "nodesViaRelay": "可访问节点",
+          "quotaNodes": "节点",
+          "quotaStreams": "并发流",
+          "quotaBandwidth": "带宽",
           "quotaValue": "{{used}} / {{total}}",
-          "streams": "并发流上限",
-          "keyLog": "密钥日志",
-          "keyLogCaughtUp": "已追平",
-          "keyLogBlocked": "卡在第 {{seq}} 条",
-          "nodeId": "本机节点编号",
+          "quotaUnlimited": "不限",
+          "nodeId": "本机编号",
           "hubs": "Hub 明细"
         },
         "direct": "直连插件",
@@ -1283,7 +1332,7 @@
         "relayServiceAddress": "中继公网地址",
         "relayServiceAddressUnsetHint": "其它机器无法接入本机中继。请按「更改角色 → 中继兼节点」重新设置。",
         "relayServiceEnroll": "接入本机中继",
-        "relayServiceEnrollHint": "本机尚未接入自己的中继。接入时须再次输入刚设置的接入口令。"
+        "relayServiceEnrollHint": "本机尚未接入自己的中继。接入时须再次输入刚设置的接入密码。"
       },
       "membership": {
         "changeHub": "更换 Hub",
@@ -2032,6 +2081,10 @@
           "title": "接入节点",
           "total": "共 {{n}} 个",
           "empty": "还没有节点接入。",
+          "noMatch": "没有匹配的节点。",
+          "searchPlaceholder": "搜索节点",
+          "stateFilter": "状态",
+          "all": "全部",
           "online": "在线",
           "offline": "离线",
           "unnamed": "未命名",
@@ -2051,43 +2104,60 @@
         "strip": {
           "online": "在线",
           "offline": "离线",
-          "attached": "当前挂载于此中继",
           "rtt": "延迟 {{ms}} ms",
-          "kicked": "令牌已作废，须重新输入口令",
-          "lastError": "最近错误：{{error}}",
+          "kicked": "令牌已作废，须重新输入接入密码",
+          "error": "错误：{{message}}",
           "empty": "未接入中继。",
           "tenantId": "租户编号",
           "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。"
         },
+        "linkErrors": {
+          "connect-failed": "无法连接中继",
+          "connect-timeout": "连接超时",
+          "auth-timeout": "认证超时",
+          "auth-rejected": "中继拒绝了本机凭据",
+          "heartbeat-lost": "心跳中断，正在重连",
+          "kicked": "令牌已失效，须重新输入接入密码",
+          "dns": "域名无法解析",
+          "refused": "连接被拒绝",
+          "tls": "TLS 握手失败",
+          "protocol": "协议不兼容，请升级中继或本机",
+          "unknown": "连接失败"
+        },
+        "switch": {
+          "title": "切换到 {{host}}？",
+          "description": "本机将改为经此中继连接，其余节点不受影响。",
+          "confirm": "切换",
+          "done": "已切换到 {{host}}。"
+        },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
         "reauth": {
-          "notice": "中继令牌已失效，须重新输入中继口令。",
-          "action": "重新输入口令"
+          "notice": "中继令牌已失效，须重新输入接入密码。",
+          "action": "重新输入接入密码"
         },
         "actions": {
-          "menu": "中继操作",
+          "menu": "更多",
           "enroll": "接入中继",
           "migrate": "改为接入中继",
           "add": "追加中继",
-          "reauth": "重新输入口令",
-          "rotate": "轮换元数据密钥",
+          "reauth": "重新输入接入密码",
           "leave": "离开中继",
           "removeOne": "移除 {{host}}",
-          "reauthOne": "重新输入 {{host}} 的口令"
+          "reauthOne": "重新输入 {{host}} 的接入密码"
         },
         "dialog": {
           "enrollTitle": "接入中继",
           "migrateTitle": "改为接入中继",
           "addTitle": "追加中继",
-          "reauthTitle": "重新输入中继口令",
+          "reauthTitle": "重新输入接入密码",
           "url": "中继地址",
           "urlHint": "填中继的公网 HTTPS 地址。",
-          "password": "中继口令",
-          "passwordHint": "中继未设口令时留空。",
+          "password": "接入密码",
+          "passwordHint": "中继未设接入密码时留空。",
           "rootPassword": "当前密码（本机账号密码）",
           "rootPasswordHint": "接入必须用密码签名，通行密钥无法代签。",
           "migrateNotice": "接入后本机改走中继，不再连接 Hub。",
-          "reauthNotice": "中继口令已变更，重新输入以恢复接入。",
+          "reauthNotice": "接入密码已变更，重新输入以恢复接入。",
           "submit": "接入",
           "submitReauth": "重新接入",
           "done": "已接入中继。"
@@ -2099,19 +2169,15 @@
           "done": "已离开中继。"
         },
         "metaKey": {
-          "rotateTitle": "轮换元数据密钥？",
-          "rotateDescription": "换发新一代元数据密钥，只分发给当前成员节点。",
-          "rotateConfirm": "轮换",
-          "done": "元数据密钥已轮换。",
-          "needsRotate": "新节点的元数据密钥未下发，请用「中继操作 → 轮换元数据密钥」补发。",
-          "admitFailed": "新节点的元数据密钥下发失败：{{error}}",
-          "rotateFailed": "元数据密钥轮换失败：{{error}}",
-          "pending": "还有 {{count}} 条元数据密钥换代没送达，被移除的节点仍能解出元数据。",
+          "done": "成员密钥已更新。",
+          "needsRotate": "新节点的成员密钥未送达，请在提示条上重试。",
+          "admitFailed": "新节点的成员密钥下发失败：{{error}}",
+          "pending": "成员密钥更新尚未送达（{{count}} 条）。",
           "retry": "重试",
-          "retryFailed": "元数据密钥换代仍未送达，请稍后重试。",
-          "revokePending": "节点已移除，但元数据密钥换代没送达（{{error}}），请在节点页重试。",
-          "revokePendingBulk": "有 {{count}} 台节点的元数据密钥换代没送达，请在节点页重试。",
-          "afterPasswordChange": "元数据密钥换代尚未送达，重新登录后在节点页重试。"
+          "retryFailed": "成员密钥更新仍未送达，请稍后重试。",
+          "revokePending": "节点已移除，但成员密钥更新没送达（{{error}}），请在节点页重试。",
+          "revokePendingBulk": "有 {{count}} 台节点的成员密钥更新没送达，请在节点页重试。",
+          "afterPasswordChange": "成员密钥更新尚未送达，重新登录后在节点页重试。"
         },
         "pack": {
           "pending": "中继上的密码加入凭据未更新，其它机器暂时无法用密码加入。",
@@ -2123,7 +2189,7 @@
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "当前密码不正确。",
-          "RELAY_PASSWORD_INVALID": "中继口令不正确。",
+          "RELAY_PASSWORD_INVALID": "接入密码不正确。",
           "RELAY_NOT_CONFIGURED": "本机未接入中继。",
           "RELAY_QUOTA_NODES": "中继的节点配额已用尽。",
           "RELAY_UNCONFIRMED": "中继未确认这次变更，请重试。",
@@ -2141,12 +2207,16 @@
           "MALFORMED": "请求内容无效。",
           "RELAY_NOT_FOUND": "这条中继不在本机的中继列表里。",
           "RELAY_LAST": "只剩这一条中继，请改用「离开中继」。",
-          "RELAY_META_KEY_NEEDS_SIGNER": "须重新验证身份才能补发元数据密钥。",
-          "RELAY_META_KEY_PREPARE_FAILED": "本机没能算出新的元数据密钥，请重试。",
-          "RELAY_PASSWORD_REQUIRED": "这个中继须提供接入口令。",
+          "RELAY_META_KEY_NEEDS_SIGNER": "须重新验证身份才能补发成员密钥。",
+          "RELAY_META_KEY_PREPARE_FAILED": "本机没能算出新的成员密钥，请重试。",
+          "RELAY_PASSWORD_REQUIRED": "这个中继须提供接入密码。",
           "RELAY_RATE_LIMITED": "尝试过于频繁，请稍后再试。",
-          "RELAY_TENANT_KICKED": "中继已作废本租户的令牌，请重新输入口令。",
-          "RELAY_TOKEN_INVALID": "中继令牌已失效，请重新输入口令。"
+          "RELAY_TENANT_KICKED": "中继已作废本租户的令牌，请重新输入接入密码。",
+          "RELAY_TOKEN_INVALID": "中继令牌已失效，请重新输入接入密码。",
+          "RELAY_UNKNOWN": "这条中继不在本机的中继列表里。",
+          "RELAY_KICKED": "该中继已作废本租户的令牌，须先重新输入接入密码。",
+          "RELAY_ALREADY_ATTACHED": "本机已经挂在这条中继上。",
+          "RELAY_SWITCH_FAILED": "切换中继失败，请稍后重试。"
         },
         "remove": {
           "title": "移除这条中继？",
@@ -2156,7 +2226,7 @@
         }
       },
       "admin": {
-        "tabLabel": "中继",
+        "tabLabel": "中继管理",
         "title": "中继运营",
         "description": "本机作为公共中继，为接入的租户转发流量。",
         "unavailable": "本机未启用中继角色。",
@@ -2164,6 +2234,7 @@
         "loginRequired": "请先登录，再管理中继。",
         "loadFailed": "中继状态加载失败：{{message}}",
         "epochValue": "第 {{epoch}} 代",
+        "more": "更多",
         "health": {
           "title": "运行状态",
           "state": "状态",
@@ -2185,31 +2256,31 @@
           "traffic": "中转流量"
         },
         "password": {
-          "title": "接入口令",
+          "title": "接入密码",
           "state": "状态",
           "set": "已设置",
           "unset": "未设置",
-          "unsetWarning": "未设置口令，任何人都能接入本中继。",
-          "epoch": "口令",
-          "minTokenEpoch": "令牌下限",
-          "change": "修改口令",
-          "dialogTitle": "修改接入口令",
-          "newPassword": "新口令",
+          "unsetWarning": "未设置接入密码，任何人都能接入本中继。",
+          "epoch": "密码代次",
+          "change": "修改接入密码",
+          "dialogTitle": "修改接入密码",
+          "newPassword": "新密码",
           "newPasswordHint": "至少 8 个字符。",
-          "clear": "清除口令",
+          "clear": "清除密码",
           "clearHint": "清除后任何人都能接入本中继。",
           "modeLabel": "现有租户",
           "modeKeep": "保留现有租户",
-          "modeKeepHint": "新口令只对新接入生效。",
+          "modeKeepHint": "新密码只对新接入生效。",
           "modeKick": "作废旧令牌",
-          "modeKickHint": "所有租户须重新输入口令。",
-          "tooShort": "口令至少 8 个字符。",
-          "saved": "接入口令已更新。",
-          "failed": "口令更新失败：{{message}}",
-          "dialogDescription": "设置新口令，或清除口令改为任何人可接入。"
+          "modeKickHint": "所有租户须重新输入密码。",
+          "tooShort": "密码至少 8 个字符。",
+          "saved": "接入密码已更新。",
+          "failed": "密码更新失败：{{message}}",
+          "dialogDescription": "设置新密码，或清除密码改为任何人可接入。"
         },
         "quota": {
           "title": "默认配额",
+          "menuItem": "默认配额…",
           "description": "未单独设置配额的租户使用这组默认值。",
           "maxNodes": "节点数上限",
           "maxStreams": "并发流上限",
@@ -2230,6 +2301,8 @@
           "title": "租户",
           "total": "共 {{n}} 个",
           "empty": "还没有租户接入。",
+          "clearSelection": "全部",
+          "selectHint": "只看该租户的接入节点",
           "columns": {
             "id": "编号",
             "label": "备注",

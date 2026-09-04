@@ -132,91 +132,141 @@ export const I18N_RESOURCES = {
         "remoteLink": "Open remote access settings"
       },
       "computer": {
-        "intro": "After installing tmex on another server or computer, let it join the network this machine is on, or make this machine the Hub.",
+        "intro": "Choose how another server or computer connects.",
+        "path": {
+          "title": "Choose a connection method",
+          "relay": "Via relay",
+          "hub": "Via Hub",
+          "ssh": "Direct SSH",
+          "hint": {
+            "relay": "Relay: nodes sit behind NAT and only need a public meeting point.",
+            "hub": "Hub: accounts and nodes are managed centrally.",
+            "ssh": "Direct SSH: the new machine is reachable over SSH; tmex is not installed."
+          },
+          "tip": {
+            "relay": "A relay only forwards encrypted traffic and holds no accounts or keys. Each node connects to it and meets on the public internet, which suits machines behind NAT or a firewall.",
+            "hub": "The Hub is the trust center: it holds accounts, node membership and join approvals, and needs a fixed public HTTPS address.",
+            "ssh": "The new machine does not run tmex. This machine connects over SSH and it appears in the device list."
+          }
+        },
+        "side": {
+          "relay": {
+            "join": "Join an existing relay",
+            "host": "Run a relay here"
+          },
+          "hub": {
+            "join": "Join an existing Hub",
+            "host": "Make this machine the Hub"
+          }
+        },
         "install": {
           "title": "Install tmex",
-          "description": "Run the install script on the target machine (installs Bun automatically; Linux needs tmux ≥ 3.0). The terminal prints the access address when done.",
+          "description": "Run the install script on the new machine. Linux needs tmux 3.0 or later.",
           "command": "Install command",
-          "pathHint": "The install script provides the tmex command. If it is not found, reopen the terminal or run:"
-        },
-        "mode": {
-          "title": "Choose how to connect",
-          "join": "Add a machine",
-          "host": "Make this machine the Hub"
+          "pathHint": "If the tmex command is not found, reopen the terminal or run:"
         },
         "join": {
+          "uplink": {
+            "title": "Gather the connection details",
+            "relayDescription": "The new machine needs the relay address, the tenant ID and the access password.",
+            "hubDescription": "The new machine needs the Hub address and the account password.",
+            "relayUrl": "Relay address",
+            "hubUrl": "Hub address",
+            "tenantId": "Tenant ID",
+            "relayMissing": "Ask the relay operator for the relay address and access password.",
+            "hubMissing": "Ask the Hub administrator for the Hub address.",
+            "tenantMissing": "The tenant ID is created by the relay operator in relay management.",
+            "link": "Open multi-node mesh settings"
+          },
+          "password": {
+            "title": "Join from the new machine",
+            "relayDescription": "On the new machine open Settings → Multi-node Mesh → \"Join a relay\", then enter the relay address, tenant ID and access password.",
+            "hubDescription": "On the new machine open Settings → Multi-node Mesh → \"Join an existing hub\", then enter the Hub address and account password.",
+            "command": "Or run this in the new machine's terminal",
+            "tenantPlaceholder": "<tenant-id>"
+          },
+          "advanced": {
+            "title": "Join token (advanced)",
+            "description": "When typing a password on the new machine is impractical, use a join token. It is valid for 10 minutes."
+          },
           "token": {
             "title": "Generate a join token",
-            "description": "On a machine that already joined, open Settings → Multi-node Mesh → Node management, click Add → Generate join token, then copy the join command. The token is valid for 10 minutes.",
+            "description": "On a connected machine open Settings → Multi-node Mesh → Node management, then click Add → Generate join token.",
+            "meshDescription": "Generate a join token here. It is valid for 10 minutes.",
             "label": "Join token (valid for {{minutes}} minutes)",
             "link": "Open multi-node mesh settings",
-            "meshDescription": "Generate a join token here, then copy the command in the next step. The token is valid for 10 minutes.",
             "unavailable": "This machine is not part of a multi-node mesh, so a join token cannot be generated here."
           },
           "run": {
             "title": "Join from the new machine",
-            "description": "Run the join command in the new machine's terminal (example below; use the command you copied):",
+            "description": "Run the join command in the new machine's terminal. Example:",
             "ready": "Run this command in the new machine's terminal:",
             "tokenPlaceholder": "<join-token>",
             "namePlaceholder": "<node-name>"
           },
           "confirm": {
             "title": "Confirm the join",
-            "description": "Back on the Node management page, click Confirm join. The new machine appears in the device list after it restarts.",
+            "description": "Confirm the join on the Node management page. The new machine appears in the device list after it restarts.",
             "meshDescription": "Once the new machine runs the command, confirm the join here. It appears in the device list after it restarts.",
-            "done": "The new machine has joined; it appears in the device list after it restarts."
-          },
-          "uplink": {
-            "title": "Gather the connection details",
-            "hubDescription": "The new machine needs the Hub address and this account’s password.",
-            "relayDescription": "The new machine needs the relay address, the tenant ID and this account’s password.",
-            "unknownDescription": "This machine is not part of a multi-node mesh yet. Set it up first.",
-            "missingUrl": "The uplink address of this machine is unknown, so no address can be shown.",
-            "hubUrl": "Hub address",
-            "relayUrl": "Relay address",
-            "tenantId": "Tenant ID"
+            "done": "The new machine joined; it appears in the device list after it restarts."
+          }
+        },
+        "relayHost": {
+          "setup": {
+            "title": "Make this machine a relay",
+            "description": "Open Settings → Multi-node Mesh and choose \"Use This Machine as the Relay\". A relay needs a fixed public HTTPS address.",
+            "link": "Open multi-node mesh settings",
+            "urlLabel": "Relay address",
+            "missingUrl": "The relay address is unknown, so other machines cannot join."
           },
           "password": {
-            "title": "Join from the new machine",
-            "hubDescription": "On the new machine open Settings → Multi-node Mesh, choose \"Join an existing Hub\", and enter the Hub address and password.",
-            "relayDescription": "On the new machine open Settings → Multi-node Mesh, choose \"Join a relay\", and enter the relay address, tenant ID and password.",
-            "command": "Or run this in the new machine’s terminal",
-            "tenantPlaceholder": "<tenant-id>"
+            "title": "Set the access password",
+            "description": "Open \"Relay Management → ⋯ → Change Access Password\". Tenants join this relay with that password.",
+            "link": "Open relay management",
+            "done": "The access password is set."
           },
-          "advanced": {
-            "title": "Use a join token (advanced)",
-            "description": "When typing a password on the new machine is impractical, use a join token issued here. It is valid for 10 minutes."
+          "invite": {
+            "title": "Connect the new machine",
+            "description": "Install tmex on the new machine, then follow the \"Join an existing relay\" steps.",
+            "gotoJoin": "See the join steps"
           }
         },
         "host": {
           "entry": {
             "title": "Set up a public entry",
-            "description": "Open Settings → Remote access: Cloudflare Tunnel (named tunnel) gives you a fixed HTTPS address; Direct connection requires a fixed HTTPS entry you provide yourself.",
+            "description": "Open Settings → Remote access: a Cloudflare named tunnel gives a fixed HTTPS address; a direct connection needs a fixed HTTPS entry of your own.",
             "link": "Open remote access settings",
             "status": {
               "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})",
-              "quick": "This is a temporary tunnel ({{url}}). Its address changes, so it is not suitable as a Hub address — use a named tunnel or a direct connection instead.",
+              "quick": "This is a temporary tunnel ({{url}}). Its address changes, so it cannot serve as the Hub address.",
               "hubUrl": "Public address already available: {{url}}"
             }
           },
           "hub": {
-            "title": "Make it the Hub",
-            "description": "Open Settings → Multi-node Mesh, choose \"Make this machine the Hub\", enter the address from the previous step as the Hub public URL, create the first account and restart.",
-            "warning": "The Hub public URL cannot be changed afterwards. Decide on the final domain first.",
+            "title": "Make this machine the Hub",
+            "description": "Open Settings → Multi-node Mesh, choose \"Make this the hub\", enter the address from the previous step, create the first account and restart.",
+            "warning": "The Hub public URL cannot be changed later. Decide on the final domain first.",
             "link": "Open multi-node mesh settings",
             "status": {
-              "self": "This machine is already the Hub. Public address: {{url}}",
-              "node": "This machine already joined {{url}} as a node, so it cannot be a Hub.",
+              "self": "This machine is the Hub. Public address: {{url}}",
+              "node": "This machine joined {{url}} as a node, so it cannot be a Hub.",
               "mismatch": "The Hub public URL does not match the current tunnel hostname; other machines may fail to connect."
             },
             "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL."
           },
           "invite": {
-            "title": "Connect other machines",
-            "description": "After installing tmex on other machines, follow the \"Add a machine\" steps.",
-            "ready": "After installing tmex on another machine, switch to \"Add a machine\" and follow the steps.",
+            "title": "Connect the new machine",
+            "description": "Install tmex on the new machine, then follow the \"Join an existing Hub\" steps.",
+            "ready": "This machine is the Hub. Switch to \"Join an existing Hub\" to continue.",
             "gotoJoin": "See the join steps"
           }
+        },
+        "ssh": {
+          "description": "This machine connects to the new machine over SSH; tmex is not installed there.",
+          "title": "Add an SSH device",
+          "stepDescription": "In the device dialog set the type to SSH, then enter the host address and sign-in method.",
+          "button": "Add device",
+          "note": "The device appears in the device list once saved."
         }
       }
     },
@@ -446,6 +496,7 @@ export const I18N_RESOURCES = {
           "error": "Failed"
         },
         "degradedNotice": "The tunnel process is running but has no edge connections; the public URL is unreachable.",
+        "degradedHint": "cloudflared cannot reach the Cloudflare edge (TCP/UDP 7844). Check that the proxy or firewall allows *.argotunnel.com and *.cftunnel.com.",
         "connector": {
           "label": "Connector",
           "connected": "Edge connections: {{n}}",
@@ -1976,15 +2027,13 @@ export const I18N_RESOURCES = {
         "relayLeaveFirst": "Leave the relay first to go back to a Hub.",
         "details": {
           "title": "Connection details",
-          "metaEpoch": "Metadata key generation",
-          "nodesViaRelay": "Nodes visible via relay",
-          "quota": "Node quota",
+          "nodesViaRelay": "Reachable Nodes",
+          "quotaNodes": "Nodes",
+          "quotaStreams": "Streams",
+          "quotaBandwidth": "Bandwidth",
           "quotaValue": "{{used}} / {{total}}",
-          "streams": "Stream limit",
-          "keyLog": "Key log",
-          "keyLogCaughtUp": "Caught up",
-          "keyLogBlocked": "Blocked at {{seq}}",
-          "nodeId": "This machine's node ID",
+          "quotaUnlimited": "Unlimited",
+          "nodeId": "This machine's ID",
           "hubs": "Hub details"
         },
         "direct": "Direct connection add-on",
@@ -2032,7 +2081,7 @@ export const I18N_RESOURCES = {
         "relayServiceAddress": "Relay Public Address",
         "relayServiceAddressUnsetHint": "Other machines cannot reach this relay. Set it up again under \"Change role → Relay and node\".",
         "relayServiceEnroll": "Connect to This Relay",
-        "relayServiceEnrollHint": "This machine has not connected to its own relay yet. The relay password just set must be entered again."
+        "relayServiceEnrollHint": "This machine has not connected to its own relay yet. The access password just set must be entered again."
       },
       "membership": {
         "changeHub": "Change hub",
@@ -2786,6 +2835,10 @@ export const I18N_RESOURCES = {
           "title": "Connected Nodes",
           "total": "{{n}} total",
           "empty": "No nodes connected yet.",
+          "noMatch": "No nodes match.",
+          "searchPlaceholder": "Search nodes",
+          "stateFilter": "State",
+          "all": "All",
           "online": "Online",
           "offline": "Offline",
           "unnamed": "Unnamed",
@@ -2805,43 +2858,60 @@ export const I18N_RESOURCES = {
         "strip": {
           "online": "Online",
           "offline": "Offline",
-          "attached": "This machine is attached to this relay",
           "rtt": "Latency {{ms}} ms",
-          "kicked": "Token revoked, re-enter the relay password",
-          "lastError": "Last error: {{error}}",
+          "kicked": "Token revoked, re-enter the access password",
+          "error": "Error: {{message}}",
           "empty": "Not connected to a relay.",
           "tenantId": "Tenant ID",
           "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password."
         },
+        "linkErrors": {
+          "connect-failed": "Cannot reach the relay",
+          "connect-timeout": "Connection timed out",
+          "auth-timeout": "Authentication timed out",
+          "auth-rejected": "The relay rejected this machine's credentials",
+          "heartbeat-lost": "Heartbeat lost, reconnecting",
+          "kicked": "Token revoked, re-enter the access password",
+          "dns": "Domain name cannot be resolved",
+          "refused": "Connection refused",
+          "tls": "TLS handshake failed",
+          "protocol": "Incompatible protocol, upgrade the relay or this machine",
+          "unknown": "Connection failed"
+        },
+        "switch": {
+          "title": "Switch to {{host}}?",
+          "description": "This machine will connect through this relay. Other nodes are unaffected.",
+          "confirm": "Switch",
+          "done": "Switched to {{host}}."
+        },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
         "reauth": {
-          "notice": "The relay token expired. Re-enter the relay password.",
-          "action": "Re-enter Password"
+          "notice": "The relay token expired. Re-enter the access password.",
+          "action": "Re-enter Access Password"
         },
         "actions": {
-          "menu": "Relay Actions",
+          "menu": "More",
           "enroll": "Connect Relay",
           "migrate": "Switch to Relay",
           "add": "Add Relay",
-          "reauth": "Re-enter Password",
-          "rotate": "Rotate Metadata Key",
+          "reauth": "Re-enter Access Password",
           "leave": "Leave Relay",
           "removeOne": "Remove {{host}}",
-          "reauthOne": "Re-enter password for {{host}}"
+          "reauthOne": "Re-enter access password for {{host}}"
         },
         "dialog": {
           "enrollTitle": "Connect Relay",
           "migrateTitle": "Switch to Relay",
           "addTitle": "Add Relay",
-          "reauthTitle": "Re-enter Relay Password",
+          "reauthTitle": "Re-enter Access Password",
           "url": "Relay address",
           "urlHint": "Enter the public HTTPS address of the relay.",
-          "password": "Relay password",
-          "passwordHint": "Leave empty if the relay has no password.",
+          "password": "Access password",
+          "passwordHint": "Leave empty if the relay has no access password.",
           "rootPassword": "Current password (this machine's account password)",
           "rootPasswordHint": "Joining must be signed with the password; a passkey cannot sign it.",
           "migrateNotice": "After connecting, this machine uses the relay and no longer connects to a Hub.",
-          "reauthNotice": "The relay password changed. Enter the new one to restore the link.",
+          "reauthNotice": "The access password changed. Enter the new one to restore the link.",
           "submit": "Connect",
           "submitReauth": "Reconnect",
           "done": "Relay connected."
@@ -2853,19 +2923,15 @@ export const I18N_RESOURCES = {
           "done": "Left the relay."
         },
         "metaKey": {
-          "rotateTitle": "Rotate the metadata key?",
-          "rotateDescription": "Issue a new metadata key epoch, distributed only to current member nodes.",
-          "rotateConfirm": "Rotate",
-          "done": "Metadata key rotated.",
-          "needsRotate": "The new node did not receive the metadata key. Use \"Relay Actions -> Rotate Metadata Key\".",
-          "admitFailed": "Failed to deliver the metadata key to the new node: {{error}}",
-          "rotateFailed": "Metadata key rotation failed: {{error}}",
-          "pending": "{{count}} metadata key rotation(s) have not landed yet; removed nodes can still read metadata.",
+          "done": "Member key updated.",
+          "needsRotate": "The new node did not receive the member key. Retry from the notice.",
+          "admitFailed": "Failed to deliver the member key to the new node: {{error}}",
+          "pending": "Member key update has not landed yet ({{count}}).",
           "retry": "Retry",
-          "retryFailed": "The metadata key rotation still has not landed. Try again later.",
-          "revokePending": "The node was removed, but the metadata key rotation did not land ({{error}}). Retry on the nodes page.",
-          "revokePendingBulk": "Metadata key rotation did not land for {{count}} node(s). Retry on the nodes page.",
-          "afterPasswordChange": "The metadata key rotation has not landed yet. Sign in again and retry on the nodes page."
+          "retryFailed": "The member key update still has not landed. Try again later.",
+          "revokePending": "The node was removed, but the member key update did not land ({{error}}). Retry on the nodes page.",
+          "revokePendingBulk": "The member key update did not land for {{count}} node(s). Retry on the nodes page.",
+          "afterPasswordChange": "The member key update has not landed yet. Sign in again and retry on the nodes page."
         },
         "pack": {
           "pending": "The relay's password-join credential is out of date. Other machines cannot join with a password.",
@@ -2877,7 +2943,7 @@ export const I18N_RESOURCES = {
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "Current password is incorrect.",
-          "RELAY_PASSWORD_INVALID": "Relay password is incorrect.",
+          "RELAY_PASSWORD_INVALID": "Access password is incorrect.",
           "RELAY_NOT_CONFIGURED": "This machine is not connected to a relay.",
           "RELAY_QUOTA_NODES": "The relay node quota is used up.",
           "RELAY_UNCONFIRMED": "The relay did not confirm this change. Try again.",
@@ -2895,12 +2961,16 @@ export const I18N_RESOURCES = {
           "MALFORMED": "The request content is invalid.",
           "RELAY_NOT_FOUND": "That relay is not in this machine’s relay list.",
           "RELAY_LAST": "This is the only relay left. Use \"Leave Relay\" instead.",
-          "RELAY_META_KEY_NEEDS_SIGNER": "Verify your identity again to deliver the metadata key.",
-          "RELAY_META_KEY_PREPARE_FAILED": "This machine could not prepare a new metadata key. Try again.",
-          "RELAY_PASSWORD_REQUIRED": "This relay requires a connection password.",
+          "RELAY_META_KEY_NEEDS_SIGNER": "Verify your identity again to deliver the member key.",
+          "RELAY_META_KEY_PREPARE_FAILED": "This machine could not prepare a new member key. Try again.",
+          "RELAY_PASSWORD_REQUIRED": "This relay requires an access password.",
           "RELAY_RATE_LIMITED": "Too many attempts. Try again later.",
-          "RELAY_TENANT_KICKED": "The relay revoked this tenant’s token. Re-enter the relay password.",
-          "RELAY_TOKEN_INVALID": "The relay token expired. Re-enter the relay password."
+          "RELAY_TENANT_KICKED": "The relay revoked this tenant’s token. Re-enter the access password.",
+          "RELAY_TOKEN_INVALID": "The relay token expired. Re-enter the access password.",
+          "RELAY_UNKNOWN": "That relay is not in this machine’s relay list.",
+          "RELAY_KICKED": "That relay revoked this tenant’s token. Re-enter the access password first.",
+          "RELAY_ALREADY_ATTACHED": "This machine is already attached to that relay.",
+          "RELAY_SWITCH_FAILED": "Could not switch relays. Try again later."
         },
         "remove": {
           "title": "Remove this relay?",
@@ -2910,7 +2980,7 @@ export const I18N_RESOURCES = {
         }
       },
       "admin": {
-        "tabLabel": "Relay",
+        "tabLabel": "Relay Management",
         "title": "Relay Operations",
         "description": "This machine runs as a public relay and forwards traffic for the tenants that join it.",
         "unavailable": "The relay role is not enabled on this machine.",
@@ -2918,6 +2988,7 @@ export const I18N_RESOURCES = {
         "loginRequired": "Sign in first to manage the relay.",
         "loadFailed": "Could not load relay status: {{message}}",
         "epochValue": "Gen {{epoch}}",
+        "more": "More",
         "health": {
           "title": "Health",
           "state": "State",
@@ -2939,15 +3010,14 @@ export const I18N_RESOURCES = {
           "traffic": "Relayed traffic"
         },
         "password": {
-          "title": "Join Password",
+          "title": "Access Password",
           "state": "State",
           "set": "Set",
           "unset": "Not set",
-          "unsetWarning": "No password is set, so anyone can join this relay.",
-          "epoch": "Password",
-          "minTokenEpoch": "Token floor",
-          "change": "Change Password",
-          "dialogTitle": "Change Join Password",
+          "unsetWarning": "No access password is set, so anyone can join this relay.",
+          "epoch": "Password generation",
+          "change": "Change Access Password",
+          "dialogTitle": "Change Access Password",
           "newPassword": "New password",
           "newPasswordHint": "At least 8 characters.",
           "clear": "Clear password",
@@ -2958,12 +3028,13 @@ export const I18N_RESOURCES = {
           "modeKick": "Revoke old tokens",
           "modeKickHint": "Every tenant has to enter the password again.",
           "tooShort": "The password needs at least 8 characters.",
-          "saved": "Join password updated.",
+          "saved": "Access password updated.",
           "failed": "Could not update the password: {{message}}",
           "dialogDescription": "Set a new password, or clear it so anyone can join."
         },
         "quota": {
           "title": "Default Quota",
+          "menuItem": "Default Quota…",
           "description": "Tenants without their own quota use these values.",
           "maxNodes": "Max nodes",
           "maxStreams": "Max streams",
@@ -2984,6 +3055,8 @@ export const I18N_RESOURCES = {
           "title": "Tenants",
           "total": "{{n}} total",
           "empty": "No tenant has joined yet.",
+          "clearSelection": "All",
+          "selectHint": "Show only this tenant’s nodes",
           "columns": {
             "id": "ID",
             "label": "Note",
@@ -3158,77 +3231,120 @@ export const I18N_RESOURCES = {
         "remoteLink": "前往远程访问设置"
       },
       "computer": {
-        "intro": "在另一台服务器或电脑上安装 tmex 后，可以让它加入本机所在的网络，也可以把本机设为 Hub。",
+        "intro": "为另一台服务器或电脑选择接入方式。",
+        "path": {
+          "title": "选择接入方式",
+          "relay": "经中继",
+          "hub": "经 Hub",
+          "ssh": "SSH 直连",
+          "hint": {
+            "relay": "中继：节点在 NAT 后，只需一个公网汇合点。",
+            "hub": "Hub：需要集中管理账号与节点。",
+            "ssh": "SSH 直连：新机器可直接 SSH 到达，无需安装 tmex。"
+          },
+          "tip": {
+            "relay": "中继只转发加密流量，不保存账号与密钥。节点各自连上中继，在公网汇合，适合都在 NAT 或防火墙后的机器。",
+            "hub": "Hub 是信任中心，保存账号、节点成员与加入审批，需要一个固定的公网 HTTPS 地址。",
+            "ssh": "新机器不运行 tmex，由本机经 SSH 连接，作为设备出现在设备列表。"
+          }
+        },
+        "side": {
+          "relay": {
+            "join": "加入已有中继",
+            "host": "本机自建中继"
+          },
+          "hub": {
+            "join": "加入已有 Hub",
+            "host": "本机设为 Hub"
+          }
+        },
         "install": {
           "title": "安装 tmex",
-          "description": "在目标机器上执行安装脚本（自动安装 Bun，Linux 需 tmux ≥ 3.0）。安装完成后终端会输出访问地址。",
+          "description": "在新机器上执行安装脚本。Linux 需 tmux 3.0 或更高版本。",
           "command": "安装命令",
-          "pathHint": "安装脚本会提供 tmex 命令。若提示找不到命令，重新打开终端或执行："
-        },
-        "mode": {
-          "title": "选择接入方式",
-          "join": "让新机器加入",
-          "host": "把本机设为 Hub"
+          "pathHint": "提示找不到 tmex 命令时，重开终端或执行："
         },
         "join": {
+          "uplink": {
+            "title": "准备接入信息",
+            "relayDescription": "新机器需要中继地址、租户编号与接入密码。",
+            "hubDescription": "新机器需要 Hub 地址与账号密码。",
+            "relayUrl": "中继地址",
+            "hubUrl": "Hub 地址",
+            "tenantId": "租户编号",
+            "relayMissing": "向中继运营者索取中继地址与接入密码。",
+            "hubMissing": "向 Hub 管理员索取 Hub 地址。",
+            "tenantMissing": "租户编号由中继运营者在中继管理中创建。",
+            "link": "前往多节点互联设置"
+          },
+          "password": {
+            "title": "在新机器上加入",
+            "relayDescription": "在新机器上打开「设置 → 多节点互联 → 加入中继」，填中继地址、租户编号与接入密码。",
+            "hubDescription": "在新机器上打开「设置 → 多节点互联 → 加入已有 Hub」，填 Hub 地址与账号密码。",
+            "command": "也可以在新机器的终端执行",
+            "tenantPlaceholder": "<租户编号>"
+          },
+          "advanced": {
+            "title": "加入码（高级）",
+            "description": "新机器不便输入密码时改用加入码，10 分钟内有效。"
+          },
           "token": {
             "title": "生成加入码",
-            "description": "在已加入的机器上打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」，复制加入命令。加入码 10 分钟内有效。",
+            "description": "在已接入的机器上打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」。",
+            "meshDescription": "在此生成加入码，10 分钟内有效。",
             "label": "加入码（有效期 {{minutes}} 分钟）",
             "link": "前往多节点互联设置",
-            "meshDescription": "在此生成加入码并复制下一步的命令。加入码 10 分钟内有效。",
             "unavailable": "本机未加入多节点互联，无法在此生成加入码。"
           },
           "run": {
             "title": "在新机器上加入",
-            "description": "在新机器的终端执行加入命令（以下为示例，请以复制的命令为准）：",
+            "description": "在新机器的终端执行加入命令，以下为示例：",
             "ready": "在新机器的终端执行以下命令：",
             "tokenPlaceholder": "<加入码>",
             "namePlaceholder": "<节点名称>"
           },
           "confirm": {
             "title": "确认加入",
-            "description": "回到节点管理页，点「确认加入」。新机器重启后即出现在设备列表。",
-            "meshDescription": "新机器执行命令后在此确认加入，重启后即出现在设备列表。",
+            "description": "回到节点管理页确认加入，新机器重启后出现在设备列表。",
+            "meshDescription": "新机器执行命令后在此确认加入，重启后出现在设备列表。",
             "done": "新机器已加入，重启后出现在设备列表。"
-          },
-          "uplink": {
-            "title": "准备接入信息",
-            "hubDescription": "新机器需要 Hub 地址与本账号的密码。",
-            "relayDescription": "新机器需要中继地址、租户编号与本账号的密码。",
-            "unknownDescription": "本机尚未加入多节点互联，请先完成本机设置。",
-            "missingUrl": "本机的上级地址未知，无法给出接入地址。",
-            "hubUrl": "Hub 地址",
-            "relayUrl": "中继地址",
-            "tenantId": "租户编号"
+          }
+        },
+        "relayHost": {
+          "setup": {
+            "title": "本机设为中继",
+            "description": "打开「设置 → 多节点互联」，选择「本机作为中继」。中继需要固定的公网 HTTPS 地址。",
+            "link": "前往多节点互联设置",
+            "urlLabel": "中继地址",
+            "missingUrl": "中继地址未知，其他机器无法加入。"
           },
           "password": {
-            "title": "在新机器上加入",
-            "hubDescription": "在新机器上打开「设置 → 多节点互联」，选「加入已有 Hub」，填 Hub 地址与密码。",
-            "relayDescription": "在新机器上打开「设置 → 多节点互联」，选「加入中继」，填中继地址、租户编号与密码。",
-            "command": "也可以在新机器的终端直接执行",
-            "tenantPlaceholder": "<租户编号>"
+            "title": "设置接入密码",
+            "description": "打开「中继管理 → ⋯ → 修改接入密码」。租户凭接入密码加入本机中继。",
+            "link": "前往中继管理",
+            "done": "接入密码已设置。"
           },
-          "advanced": {
-            "title": "使用加入码（高级）",
-            "description": "新机器不便输入密码时改用加入码：在本机签发，10 分钟内有效。"
+          "invite": {
+            "title": "让新机器加入",
+            "description": "在新机器上安装 tmex，按「加入已有中继」的步骤接入。",
+            "gotoJoin": "查看加入步骤"
           }
         },
         "host": {
           "entry": {
             "title": "配置公网入口",
-            "description": "打开「设置 → 远程访问」：选择 Cloudflare Tunnel（命名隧道）可直接获得固定 HTTPS 地址；选择直接连接则需自行准备固定的 HTTPS 入口。",
+            "description": "打开「设置 → 远程访问」：Cloudflare Tunnel（命名隧道）提供固定 HTTPS 地址，直接连接需自备固定 HTTPS 入口。",
             "link": "前往远程访问设置",
             "status": {
               "named": "已配置 Cloudflare Tunnel：{{url}}（{{state}}）",
-              "quick": "当前是临时隧道 {{url}}，地址会变化，不适合作为 Hub 地址；请改用命名隧道或直接连接。",
+              "quick": "当前是临时隧道 {{url}}，地址会变化，不能作为 Hub 地址。",
               "hubUrl": "已有公开地址：{{url}}"
             }
           },
           "hub": {
-            "title": "设为 Hub",
-            "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」，将上一步的地址填入「Hub 公开地址」，创建首个账号并重启。",
-            "warning": "Hub 公开地址设定后不可修改，请先确定最终域名。",
+            "title": "本机设为 Hub",
+            "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」，填入上一步的地址，创建首个账号并重启。",
+            "warning": "Hub 公开地址设定后不可修改，先确定最终域名。",
             "link": "前往多节点互联设置",
             "status": {
               "self": "本机已是 Hub，公开地址：{{url}}",
@@ -3238,11 +3354,18 @@ export const I18N_RESOURCES = {
             "hintUseEntry": "把上一步的地址 {{url}} 填入「Hub 公开地址」。"
           },
           "invite": {
-            "title": "接入其他机器",
-            "description": "在其他机器上安装 tmex 后，按「让新机器加入」的步骤接入。",
-            "ready": "其他机器安装 tmex 后，切到「让新机器加入」照着做即可。",
-            "gotoJoin": "去看加入步骤"
+            "title": "让新机器加入",
+            "description": "在新机器上安装 tmex，按「加入已有 Hub」的步骤接入。",
+            "ready": "本机已是 Hub，切到「加入已有 Hub」继续。",
+            "gotoJoin": "查看加入步骤"
           }
+        },
+        "ssh": {
+          "description": "本机经 SSH 连接新机器，新机器无需安装 tmex。",
+          "title": "添加 SSH 设备",
+          "stepDescription": "在设备对话框中把类型选为 SSH，填写主机地址与登录方式。",
+          "button": "添加设备",
+          "note": "设备保存后即出现在设备列表。"
         }
       }
     },
@@ -3472,6 +3595,7 @@ export const I18N_RESOURCES = {
           "error": "异常"
         },
         "degradedNotice": "隧道进程运行中，但无边缘连接，公网地址当前不可达。",
+        "degradedHint": "cloudflared 连不上 Cloudflare 边缘（TCP/UDP 7844）。请检查代理或防火墙是否放行 *.argotunnel.com 与 *.cftunnel.com。",
         "connector": {
           "label": "连接器",
           "connected": "{{n}} 条边缘连接",
@@ -5002,15 +5126,13 @@ export const I18N_RESOURCES = {
         "relayLeaveFirst": "要改回 Hub，先离开中继。",
         "details": {
           "title": "连接详情",
-          "metaEpoch": "元数据密钥代数",
-          "nodesViaRelay": "经中继可见节点",
-          "quota": "节点配额",
+          "nodesViaRelay": "可访问节点",
+          "quotaNodes": "节点",
+          "quotaStreams": "并发流",
+          "quotaBandwidth": "带宽",
           "quotaValue": "{{used}} / {{total}}",
-          "streams": "并发流上限",
-          "keyLog": "密钥日志",
-          "keyLogCaughtUp": "已追平",
-          "keyLogBlocked": "卡在第 {{seq}} 条",
-          "nodeId": "本机节点编号",
+          "quotaUnlimited": "不限",
+          "nodeId": "本机编号",
           "hubs": "Hub 明细"
         },
         "direct": "直连插件",
@@ -5058,7 +5180,7 @@ export const I18N_RESOURCES = {
         "relayServiceAddress": "中继公网地址",
         "relayServiceAddressUnsetHint": "其它机器无法接入本机中继。请按「更改角色 → 中继兼节点」重新设置。",
         "relayServiceEnroll": "接入本机中继",
-        "relayServiceEnrollHint": "本机尚未接入自己的中继。接入时须再次输入刚设置的接入口令。"
+        "relayServiceEnrollHint": "本机尚未接入自己的中继。接入时须再次输入刚设置的接入密码。"
       },
       "membership": {
         "changeHub": "更换 Hub",
@@ -5807,6 +5929,10 @@ export const I18N_RESOURCES = {
           "title": "接入节点",
           "total": "共 {{n}} 个",
           "empty": "还没有节点接入。",
+          "noMatch": "没有匹配的节点。",
+          "searchPlaceholder": "搜索节点",
+          "stateFilter": "状态",
+          "all": "全部",
           "online": "在线",
           "offline": "离线",
           "unnamed": "未命名",
@@ -5826,43 +5952,60 @@ export const I18N_RESOURCES = {
         "strip": {
           "online": "在线",
           "offline": "离线",
-          "attached": "当前挂载于此中继",
           "rtt": "延迟 {{ms}} ms",
-          "kicked": "令牌已作废，须重新输入口令",
-          "lastError": "最近错误：{{error}}",
+          "kicked": "令牌已作废，须重新输入接入密码",
+          "error": "错误：{{message}}",
           "empty": "未接入中继。",
           "tenantId": "租户编号",
           "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。"
         },
+        "linkErrors": {
+          "connect-failed": "无法连接中继",
+          "connect-timeout": "连接超时",
+          "auth-timeout": "认证超时",
+          "auth-rejected": "中继拒绝了本机凭据",
+          "heartbeat-lost": "心跳中断，正在重连",
+          "kicked": "令牌已失效，须重新输入接入密码",
+          "dns": "域名无法解析",
+          "refused": "连接被拒绝",
+          "tls": "TLS 握手失败",
+          "protocol": "协议不兼容，请升级中继或本机",
+          "unknown": "连接失败"
+        },
+        "switch": {
+          "title": "切换到 {{host}}？",
+          "description": "本机将改为经此中继连接，其余节点不受影响。",
+          "confirm": "切换",
+          "done": "已切换到 {{host}}。"
+        },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
         "reauth": {
-          "notice": "中继令牌已失效，须重新输入中继口令。",
-          "action": "重新输入口令"
+          "notice": "中继令牌已失效，须重新输入接入密码。",
+          "action": "重新输入接入密码"
         },
         "actions": {
-          "menu": "中继操作",
+          "menu": "更多",
           "enroll": "接入中继",
           "migrate": "改为接入中继",
           "add": "追加中继",
-          "reauth": "重新输入口令",
-          "rotate": "轮换元数据密钥",
+          "reauth": "重新输入接入密码",
           "leave": "离开中继",
           "removeOne": "移除 {{host}}",
-          "reauthOne": "重新输入 {{host}} 的口令"
+          "reauthOne": "重新输入 {{host}} 的接入密码"
         },
         "dialog": {
           "enrollTitle": "接入中继",
           "migrateTitle": "改为接入中继",
           "addTitle": "追加中继",
-          "reauthTitle": "重新输入中继口令",
+          "reauthTitle": "重新输入接入密码",
           "url": "中继地址",
           "urlHint": "填中继的公网 HTTPS 地址。",
-          "password": "中继口令",
-          "passwordHint": "中继未设口令时留空。",
+          "password": "接入密码",
+          "passwordHint": "中继未设接入密码时留空。",
           "rootPassword": "当前密码（本机账号密码）",
           "rootPasswordHint": "接入必须用密码签名，通行密钥无法代签。",
           "migrateNotice": "接入后本机改走中继，不再连接 Hub。",
-          "reauthNotice": "中继口令已变更，重新输入以恢复接入。",
+          "reauthNotice": "接入密码已变更，重新输入以恢复接入。",
           "submit": "接入",
           "submitReauth": "重新接入",
           "done": "已接入中继。"
@@ -5874,19 +6017,15 @@ export const I18N_RESOURCES = {
           "done": "已离开中继。"
         },
         "metaKey": {
-          "rotateTitle": "轮换元数据密钥？",
-          "rotateDescription": "换发新一代元数据密钥，只分发给当前成员节点。",
-          "rotateConfirm": "轮换",
-          "done": "元数据密钥已轮换。",
-          "needsRotate": "新节点的元数据密钥未下发，请用「中继操作 → 轮换元数据密钥」补发。",
-          "admitFailed": "新节点的元数据密钥下发失败：{{error}}",
-          "rotateFailed": "元数据密钥轮换失败：{{error}}",
-          "pending": "还有 {{count}} 条元数据密钥换代没送达，被移除的节点仍能解出元数据。",
+          "done": "成员密钥已更新。",
+          "needsRotate": "新节点的成员密钥未送达，请在提示条上重试。",
+          "admitFailed": "新节点的成员密钥下发失败：{{error}}",
+          "pending": "成员密钥更新尚未送达（{{count}} 条）。",
           "retry": "重试",
-          "retryFailed": "元数据密钥换代仍未送达，请稍后重试。",
-          "revokePending": "节点已移除，但元数据密钥换代没送达（{{error}}），请在节点页重试。",
-          "revokePendingBulk": "有 {{count}} 台节点的元数据密钥换代没送达，请在节点页重试。",
-          "afterPasswordChange": "元数据密钥换代尚未送达，重新登录后在节点页重试。"
+          "retryFailed": "成员密钥更新仍未送达，请稍后重试。",
+          "revokePending": "节点已移除，但成员密钥更新没送达（{{error}}），请在节点页重试。",
+          "revokePendingBulk": "有 {{count}} 台节点的成员密钥更新没送达，请在节点页重试。",
+          "afterPasswordChange": "成员密钥更新尚未送达，重新登录后在节点页重试。"
         },
         "pack": {
           "pending": "中继上的密码加入凭据未更新，其它机器暂时无法用密码加入。",
@@ -5898,7 +6037,7 @@ export const I18N_RESOURCES = {
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "当前密码不正确。",
-          "RELAY_PASSWORD_INVALID": "中继口令不正确。",
+          "RELAY_PASSWORD_INVALID": "接入密码不正确。",
           "RELAY_NOT_CONFIGURED": "本机未接入中继。",
           "RELAY_QUOTA_NODES": "中继的节点配额已用尽。",
           "RELAY_UNCONFIRMED": "中继未确认这次变更，请重试。",
@@ -5916,12 +6055,16 @@ export const I18N_RESOURCES = {
           "MALFORMED": "请求内容无效。",
           "RELAY_NOT_FOUND": "这条中继不在本机的中继列表里。",
           "RELAY_LAST": "只剩这一条中继，请改用「离开中继」。",
-          "RELAY_META_KEY_NEEDS_SIGNER": "须重新验证身份才能补发元数据密钥。",
-          "RELAY_META_KEY_PREPARE_FAILED": "本机没能算出新的元数据密钥，请重试。",
-          "RELAY_PASSWORD_REQUIRED": "这个中继须提供接入口令。",
+          "RELAY_META_KEY_NEEDS_SIGNER": "须重新验证身份才能补发成员密钥。",
+          "RELAY_META_KEY_PREPARE_FAILED": "本机没能算出新的成员密钥，请重试。",
+          "RELAY_PASSWORD_REQUIRED": "这个中继须提供接入密码。",
           "RELAY_RATE_LIMITED": "尝试过于频繁，请稍后再试。",
-          "RELAY_TENANT_KICKED": "中继已作废本租户的令牌，请重新输入口令。",
-          "RELAY_TOKEN_INVALID": "中继令牌已失效，请重新输入口令。"
+          "RELAY_TENANT_KICKED": "中继已作废本租户的令牌，请重新输入接入密码。",
+          "RELAY_TOKEN_INVALID": "中继令牌已失效，请重新输入接入密码。",
+          "RELAY_UNKNOWN": "这条中继不在本机的中继列表里。",
+          "RELAY_KICKED": "该中继已作废本租户的令牌，须先重新输入接入密码。",
+          "RELAY_ALREADY_ATTACHED": "本机已经挂在这条中继上。",
+          "RELAY_SWITCH_FAILED": "切换中继失败，请稍后重试。"
         },
         "remove": {
           "title": "移除这条中继？",
@@ -5931,7 +6074,7 @@ export const I18N_RESOURCES = {
         }
       },
       "admin": {
-        "tabLabel": "中继",
+        "tabLabel": "中继管理",
         "title": "中继运营",
         "description": "本机作为公共中继，为接入的租户转发流量。",
         "unavailable": "本机未启用中继角色。",
@@ -5939,6 +6082,7 @@ export const I18N_RESOURCES = {
         "loginRequired": "请先登录，再管理中继。",
         "loadFailed": "中继状态加载失败：{{message}}",
         "epochValue": "第 {{epoch}} 代",
+        "more": "更多",
         "health": {
           "title": "运行状态",
           "state": "状态",
@@ -5960,31 +6104,31 @@ export const I18N_RESOURCES = {
           "traffic": "中转流量"
         },
         "password": {
-          "title": "接入口令",
+          "title": "接入密码",
           "state": "状态",
           "set": "已设置",
           "unset": "未设置",
-          "unsetWarning": "未设置口令，任何人都能接入本中继。",
-          "epoch": "口令",
-          "minTokenEpoch": "令牌下限",
-          "change": "修改口令",
-          "dialogTitle": "修改接入口令",
-          "newPassword": "新口令",
+          "unsetWarning": "未设置接入密码，任何人都能接入本中继。",
+          "epoch": "密码代次",
+          "change": "修改接入密码",
+          "dialogTitle": "修改接入密码",
+          "newPassword": "新密码",
           "newPasswordHint": "至少 8 个字符。",
-          "clear": "清除口令",
+          "clear": "清除密码",
           "clearHint": "清除后任何人都能接入本中继。",
           "modeLabel": "现有租户",
           "modeKeep": "保留现有租户",
-          "modeKeepHint": "新口令只对新接入生效。",
+          "modeKeepHint": "新密码只对新接入生效。",
           "modeKick": "作废旧令牌",
-          "modeKickHint": "所有租户须重新输入口令。",
-          "tooShort": "口令至少 8 个字符。",
-          "saved": "接入口令已更新。",
-          "failed": "口令更新失败：{{message}}",
-          "dialogDescription": "设置新口令，或清除口令改为任何人可接入。"
+          "modeKickHint": "所有租户须重新输入密码。",
+          "tooShort": "密码至少 8 个字符。",
+          "saved": "接入密码已更新。",
+          "failed": "密码更新失败：{{message}}",
+          "dialogDescription": "设置新密码，或清除密码改为任何人可接入。"
         },
         "quota": {
           "title": "默认配额",
+          "menuItem": "默认配额…",
           "description": "未单独设置配额的租户使用这组默认值。",
           "maxNodes": "节点数上限",
           "maxStreams": "并发流上限",
@@ -6005,6 +6149,8 @@ export const I18N_RESOURCES = {
           "title": "租户",
           "total": "共 {{n}} 个",
           "empty": "还没有租户接入。",
+          "clearSelection": "全部",
+          "selectHint": "只看该租户的接入节点",
           "columns": {
             "id": "编号",
             "label": "备注",
@@ -6179,91 +6325,141 @@ export const I18N_RESOURCES = {
         "remoteLink": "リモートアクセス設定を開く"
       },
       "computer": {
-        "intro": "別のサーバーやパソコンに tmex をインストールしたら、本機のネットワークに参加させるか、本機を Hub にします。",
+        "intro": "別のサーバーやパソコンの接続方法を選択します。",
+        "path": {
+          "title": "接続方法を選択",
+          "relay": "中継経由",
+          "hub": "Hub 経由",
+          "ssh": "SSH 直結",
+          "hint": {
+            "relay": "中継：ノードが NAT 内にあり、公開の合流点だけが必要な場合。",
+            "hub": "Hub：アカウントとノードを集中管理する場合。",
+            "ssh": "SSH 直結：新しいマシンに SSH で直接届き、tmex の導入が不要な場合。"
+          },
+          "tip": {
+            "relay": "中継は暗号化された通信を転送するだけで、アカウントや鍵は保持しません。各ノードが中継に接続して公開ネットワーク上で合流するため、NAT やファイアウォールの内側にあるマシンに向いています。",
+            "hub": "Hub は信頼の中心で、アカウント、ノードの所属、参加の承認を保持します。固定の公開 HTTPS アドレスが必要です。",
+            "ssh": "新しいマシンでは tmex を動かさず、本機が SSH で接続してデバイス一覧に表示されます。"
+          }
+        },
+        "side": {
+          "relay": {
+            "join": "既存の中継に参加",
+            "host": "本機を中継にする"
+          },
+          "hub": {
+            "join": "既存の Hub に参加",
+            "host": "本機を Hub にする"
+          }
+        },
         "install": {
           "title": "tmex をインストール",
-          "description": "対象のマシンでインストールスクリプトを実行します（Bun は自動でインストールされます。Linux では tmux 3.0 以上が必要です）。完了するとターミナルにアクセスアドレスが表示されます。",
+          "description": "新しいマシンでインストールスクリプトを実行します。Linux では tmux 3.0 以上が必要です。",
           "command": "インストールコマンド",
-          "pathHint": "インストールスクリプトが tmex コマンドを用意します。コマンドが見つからない場合は、ターミナルを開き直すか次を実行します："
-        },
-        "mode": {
-          "title": "接続方法を選択",
-          "join": "新しいマシンを追加",
-          "host": "本機を Hub にする"
+          "pathHint": "tmex コマンドが見つからない場合は、ターミナルを開き直すか次を実行します："
         },
         "join": {
+          "uplink": {
+            "title": "接続情報を用意",
+            "relayDescription": "新しいマシンには中継アドレス、テナント ID、中継の接続パスワードが必要です。",
+            "hubDescription": "新しいマシンには Hub のアドレスとアカウントのパスワードが必要です。",
+            "relayUrl": "中継アドレス",
+            "hubUrl": "Hub のアドレス",
+            "tenantId": "テナント ID",
+            "relayMissing": "中継の運営者に中継アドレスと接続パスワードを問い合わせます。",
+            "hubMissing": "Hub の管理者に Hub のアドレスを問い合わせます。",
+            "tenantMissing": "テナント ID は中継の運営者が中継管理で作成します。",
+            "link": "マルチノード連携設定を開く"
+          },
+          "password": {
+            "title": "新しいマシンで参加",
+            "relayDescription": "新しいマシンで「設定 → マルチノード連携 → 中継に参加する」を開き、中継アドレス、テナント ID、接続パスワードを入力します。",
+            "hubDescription": "新しいマシンで「設定 → マルチノード連携 → 既存のハブに参加する」を開き、Hub のアドレスとアカウントのパスワードを入力します。",
+            "command": "新しいマシンのターミナルで次を実行することもできます",
+            "tenantPlaceholder": "<テナント ID>"
+          },
+          "advanced": {
+            "title": "参加コード（詳細）",
+            "description": "新しいマシンでパスワードを入力しづらい場合は参加コードを使います。有効期限は 10 分です。"
+          },
           "token": {
             "title": "参加コードを作成",
-            "description": "参加済みのマシンで「設定 → マルチノード連携 → ノード管理」を開き、「追加」→「参加コードを作成」をクリックして参加コマンドをコピーします。参加コードの有効期限は 10 分です。",
+            "description": "参加済みのマシンで「設定 → マルチノード連携 → ノード管理」を開き、「追加」→「参加コードを作成」をクリックします。",
+            "meshDescription": "ここで参加コードを作成します。有効期限は 10 分です。",
             "label": "参加コード（有効期限 {{minutes}} 分）",
             "link": "マルチノード連携設定を開く",
-            "meshDescription": "ここで参加コードを作成し、次の手順のコマンドをコピーします。参加コードの有効期限は 10 分です。",
             "unavailable": "本機はマルチノード連携に参加していないため、ここでは参加コードを作成できません。"
           },
           "run": {
             "title": "新しいマシンで参加",
-            "description": "新しいマシンのターミナルで参加コマンドを実行します（以下は例です。コピーしたコマンドを使用してください）：",
+            "description": "新しいマシンのターミナルで参加コマンドを実行します。以下は例です：",
             "ready": "新しいマシンのターミナルで次のコマンドを実行します：",
             "tokenPlaceholder": "<参加コード>",
             "namePlaceholder": "<ノード名>"
           },
           "confirm": {
             "title": "参加を承認",
-            "description": "ノード管理ページに戻り、「承認」をクリックします。新しいマシンは再起動後にデバイス一覧に表示されます。",
+            "description": "ノード管理ページで参加を承認します。新しいマシンは再起動後にデバイス一覧に表示されます。",
             "meshDescription": "新しいマシンでコマンドを実行したら、ここで参加を承認します。再起動後にデバイス一覧に表示されます。",
             "done": "新しいマシンが参加しました。再起動後にデバイス一覧に表示されます。"
-          },
-          "uplink": {
-            "title": "接続情報を用意",
-            "hubDescription": "新しいマシンには Hub のアドレスと本アカウントのパスワードが必要です。",
-            "relayDescription": "新しいマシンには中継アドレス、テナント ID、本アカウントのパスワードが必要です。",
-            "unknownDescription": "本機はまだマルチノード連携に参加していません。先に本機を設定してください。",
-            "missingUrl": "本機の上位アドレスが不明なため、接続先を表示できません。",
-            "hubUrl": "Hub のアドレス",
-            "relayUrl": "中継アドレス",
-            "tenantId": "テナント ID"
+          }
+        },
+        "relayHost": {
+          "setup": {
+            "title": "本機を中継にする",
+            "description": "「設定 → マルチノード連携」を開き、「本機を中継にする」を選択します。中継には固定の公開 HTTPS アドレスが必要です。",
+            "link": "マルチノード連携設定を開く",
+            "urlLabel": "中継アドレス",
+            "missingUrl": "中継アドレスが不明なため、他のマシンは参加できません。"
           },
           "password": {
-            "title": "新しいマシンで参加",
-            "hubDescription": "新しいマシンで「設定 → マルチノード連携」を開き、「既存のハブに参加する」を選び、Hub のアドレスとパスワードを入力します。",
-            "relayDescription": "新しいマシンで「設定 → マルチノード連携」を開き、「中継に参加する」を選び、中継アドレス、テナント ID、パスワードを入力します。",
-            "command": "新しいマシンのターミナルで次を実行することもできます",
-            "tenantPlaceholder": "<テナント ID>"
+            "title": "接続パスワードを設定",
+            "description": "「中継管理 → ⋯ → 接続パスワードを変更」を開きます。テナントはこのパスワードで本機の中継に参加します。",
+            "link": "中継管理を開く",
+            "done": "接続パスワードは設定済みです。"
           },
-          "advanced": {
-            "title": "参加コードを使う（詳細）",
-            "description": "新しいマシンでパスワードを入力しづらい場合は、本機が発行する参加コードを使います。有効期限は 10 分です。"
+          "invite": {
+            "title": "新しいマシンを参加させる",
+            "description": "新しいマシンに tmex をインストールし、「既存の中継に参加」の手順で接続します。",
+            "gotoJoin": "参加手順を見る"
           }
         },
         "host": {
           "entry": {
             "title": "公開エントリを用意",
-            "description": "「設定 → リモートアクセス」を開きます。Cloudflare Tunnel（名前付きトンネル）なら固定の HTTPS アドレスが得られ、直接接続なら固定の HTTPS 入口を自分で用意する必要があります。",
+            "description": "「設定 → リモートアクセス」を開きます。Cloudflare Tunnel（名前付きトンネル）なら固定の HTTPS アドレスが得られ、直接接続では固定の HTTPS 入口を自分で用意します。",
             "link": "リモートアクセス設定を開く",
             "status": {
               "named": "Cloudflare Tunnel を設定済みです：{{url}}（{{state}}）",
-              "quick": "現在は一時トンネル {{url}} です。アドレスが変わるため Hub のアドレスには使えません。名前付きトンネルまたは直接接続に変更してください。",
+              "quick": "現在は一時トンネル {{url}} です。アドレスが変わるため Hub のアドレスには使えません。",
               "hubUrl": "公開アドレスがあります：{{url}}"
             }
           },
           "hub": {
-            "title": "Hub に設定",
-            "description": "「設定 → マルチノード連携」を開き、「このマシンをハブにする」を選択します。前の手順のアドレスを「ハブの公開アドレス」に入力し、最初のアカウントを作成して再起動します。",
-            "warning": "ハブの公開アドレスは設定後に変更できません。最終的なドメインを先に確定してください。",
+            "title": "本機を Hub にする",
+            "description": "「設定 → マルチノード連携」を開き、「このマシンをハブにする」を選択します。前の手順のアドレスを入力し、最初のアカウントを作成して再起動します。",
+            "warning": "Hub の公開アドレスは後から変更できません。最終的なドメインを先に確定します。",
             "link": "マルチノード連携設定を開く",
             "status": {
-              "self": "本機はすでにハブです。公開アドレス：{{url}}",
-              "node": "本機はすでにノードとして {{url}} に参加しているため、Hub にはできません。",
-              "mismatch": "ハブの公開アドレスが現在のトンネルのホスト名と一致しません。他のマシンが接続できない可能性があります。"
+              "self": "本機は Hub です。公開アドレス：{{url}}",
+              "node": "本機はノードとして {{url}} に参加しているため、Hub にはできません。",
+              "mismatch": "Hub の公開アドレスが現在のトンネルのホスト名と一致しません。他のマシンが接続できない可能性があります。"
             },
             "hintUseEntry": "前の手順のアドレス {{url}} を「ハブの公開アドレス」に入力します。"
           },
           "invite": {
-            "title": "他のマシンを接続",
-            "description": "他のマシンに tmex をインストールしたら、「新しいマシンを追加」の手順に従って接続します。",
-            "ready": "他のマシンに tmex をインストールしたら、「新しいマシンを追加」に切り替えて手順に従ってください。",
+            "title": "新しいマシンを参加させる",
+            "description": "新しいマシンに tmex をインストールし、「既存の Hub に参加」の手順で接続します。",
+            "ready": "本機は Hub です。「既存の Hub に参加」に切り替えて続けます。",
             "gotoJoin": "参加手順を見る"
           }
+        },
+        "ssh": {
+          "description": "本機が SSH で新しいマシンに接続します。新しいマシンに tmex は不要です。",
+          "title": "SSH デバイスを追加",
+          "stepDescription": "デバイスのダイアログで種類を SSH にし、ホストのアドレスとログイン方法を入力します。",
+          "button": "デバイスを追加",
+          "note": "保存するとデバイス一覧に表示されます。"
         }
       }
     },
@@ -6493,6 +6689,7 @@ export const I18N_RESOURCES = {
           "error": "異常"
         },
         "degradedNotice": "トンネルのプロセスは稼働中ですが、エッジ接続がなく、公開アドレスに到達できません。",
+        "degradedHint": "cloudflared が Cloudflare エッジ（TCP/UDP 7844）に到達できません。プロキシまたはファイアウォールが *.argotunnel.com と *.cftunnel.com を許可しているか確認してください。",
         "connector": {
           "label": "コネクタ",
           "connected": "エッジ接続 {{n}} 本",
@@ -8023,15 +8220,13 @@ export const I18N_RESOURCES = {
         "relayLeaveFirst": "Hub に戻すには、先に中継から離脱してください。",
         "details": {
           "title": "接続の詳細",
-          "metaEpoch": "メタデータ鍵の世代",
-          "nodesViaRelay": "中継経由で見えるノード",
-          "quota": "ノードのクォータ",
+          "nodesViaRelay": "到達可能ノード",
+          "quotaNodes": "ノード",
+          "quotaStreams": "同時ストリーム",
+          "quotaBandwidth": "帯域",
           "quotaValue": "{{used}} / {{total}}",
-          "streams": "同時ストリーム上限",
-          "keyLog": "鍵ログ",
-          "keyLogCaughtUp": "追随済み",
-          "keyLogBlocked": "{{seq}} で停止",
-          "nodeId": "本機のノード ID",
+          "quotaUnlimited": "無制限",
+          "nodeId": "本機の ID",
           "hubs": "Hub の詳細"
         },
         "direct": "ダイレクト接続アドオン",
@@ -8079,7 +8274,7 @@ export const I18N_RESOURCES = {
         "relayServiceAddress": "中継の公開アドレス",
         "relayServiceAddressUnsetHint": "他のマシンは本機の中継に接続できません。「ロールを変更 → リレー兼ノード」で設定し直してください。",
         "relayServiceEnroll": "本機の中継に接続",
-        "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続には設定した接続パスワードを再入力します。"
+        "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続には設定した接続パスワードをもう一度入力します。"
       },
       "membership": {
         "changeHub": "ハブを変更",
@@ -8828,6 +9023,10 @@ export const I18N_RESOURCES = {
           "title": "接続ノード",
           "total": "全 {{n}} 件",
           "empty": "接続中のノードはありません。",
+          "noMatch": "一致するノードはありません。",
+          "searchPlaceholder": "ノードを検索",
+          "stateFilter": "状態",
+          "all": "すべて",
           "online": "オンライン",
           "offline": "オフライン",
           "unnamed": "名称未設定",
@@ -8847,43 +9046,60 @@ export const I18N_RESOURCES = {
         "strip": {
           "online": "オンライン",
           "offline": "オフライン",
-          "attached": "本機はこの中継に接続中",
           "rtt": "遅延 {{ms}} ms",
-          "kicked": "トークンが失効しました。中継パスワードを入力し直してください",
-          "lastError": "直近のエラー：{{error}}",
+          "kicked": "トークンが失効しました。接続パスワードを入力し直してください",
+          "error": "エラー：{{message}}",
           "empty": "中継に接続していません。",
           "tenantId": "テナント ID",
           "tenantIdHint": "別のマシンは中継アドレス、テナント ID、アカウントのパスワードで同じテナントに参加できます。"
         },
+        "linkErrors": {
+          "connect-failed": "中継に接続できません",
+          "connect-timeout": "接続がタイムアウトしました",
+          "auth-timeout": "認証がタイムアウトしました",
+          "auth-rejected": "中継が本機の資格情報を拒否しました",
+          "heartbeat-lost": "ハートビートが途絶えました。再接続中",
+          "kicked": "トークンが失効しました。接続パスワードを入力し直してください",
+          "dns": "ドメイン名を解決できません",
+          "refused": "接続が拒否されました",
+          "tls": "TLS ハンドシェイクに失敗しました",
+          "protocol": "プロトコルが非互換です。中継か本機を更新してください",
+          "unknown": "接続に失敗しました"
+        },
+        "switch": {
+          "title": "{{host}} に切り替えますか？",
+          "description": "本機はこの中継経由で接続します。他のノードには影響しません。",
+          "confirm": "切り替え",
+          "done": "{{host}} に切り替えました。"
+        },
         "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
         "reauth": {
-          "notice": "中継トークンが失効しました。中継パスワードを入力し直してください。",
-          "action": "パスワードを再入力"
+          "notice": "中継トークンが失効しました。接続パスワードを入力し直してください。",
+          "action": "接続パスワードを再入力"
         },
         "actions": {
-          "menu": "中継の操作",
+          "menu": "その他",
           "enroll": "中継に接続",
           "migrate": "中継接続に切り替え",
           "add": "中継を追加",
-          "reauth": "パスワードを再入力",
-          "rotate": "メタデータ鍵をローテーション",
+          "reauth": "接続パスワードを再入力",
           "leave": "中継から離脱",
           "removeOne": "{{host}} を削除",
-          "reauthOne": "{{host}} のパスワードを再入力"
+          "reauthOne": "{{host}} の接続パスワードを再入力"
         },
         "dialog": {
           "enrollTitle": "中継に接続",
           "migrateTitle": "中継接続に切り替え",
           "addTitle": "中継を追加",
-          "reauthTitle": "中継パスワードの再入力",
+          "reauthTitle": "接続パスワードの再入力",
           "url": "中継アドレス",
           "urlHint": "中継の公開 HTTPS アドレスを入力します。",
-          "password": "中継パスワード",
-          "passwordHint": "中継にパスワードがない場合は空欄のままにします。",
+          "password": "接続パスワード",
+          "passwordHint": "中継に接続パスワードがない場合は空欄のままにします。",
           "rootPassword": "現在のパスワード（本機アカウントのパスワード）",
           "rootPasswordHint": "参加はパスワードで署名する必要があり、パスキーでは代替できません。",
           "migrateNotice": "接続後は本機が中継を使い、Hub には接続しなくなります。",
-          "reauthNotice": "中継のパスワードが変更されました。再入力して接続を回復してください。",
+          "reauthNotice": "接続パスワードが変更されました。再入力して接続を回復してください。",
           "submit": "接続",
           "submitReauth": "再接続",
           "done": "中継に接続しました。"
@@ -8895,19 +9111,15 @@ export const I18N_RESOURCES = {
           "done": "中継から離脱しました。"
         },
         "metaKey": {
-          "rotateTitle": "メタデータ鍵をローテーションしますか？",
-          "rotateDescription": "新しい世代のメタデータ鍵を発行し、現在のメンバーノードにのみ配布します。",
-          "rotateConfirm": "ローテーション",
-          "done": "メタデータ鍵をローテーションしました。",
-          "needsRotate": "新しいノードにメタデータ鍵が配布されていません。「中継の操作 → メタデータ鍵をローテーション」で配布してください。",
-          "admitFailed": "新しいノードへのメタデータ鍵の配布に失敗しました：{{error}}",
-          "rotateFailed": "メタデータ鍵のローテーションに失敗しました：{{error}}",
-          "pending": "メタデータ鍵のローテーションが {{count}} 件未送信です。削除したノードがまだメタデータを読めます。",
+          "done": "メンバー鍵を更新しました。",
+          "needsRotate": "新しいノードにメンバー鍵が届いていません。通知バーから再試行してください。",
+          "admitFailed": "新しいノードへのメンバー鍵の配布に失敗しました：{{error}}",
+          "pending": "メンバー鍵の更新が未送信です（{{count}} 件）。",
           "retry": "再試行",
-          "retryFailed": "メタデータ鍵のローテーションはまだ送信できていません。しばらくしてから再試行してください。",
-          "revokePending": "ノードは削除しましたが、メタデータ鍵のローテーションが送信できていません（{{error}}）。ノード画面で再試行してください。",
-          "revokePendingBulk": "{{count}} 台分のメタデータ鍵のローテーションが送信できていません。ノード画面で再試行してください。",
-          "afterPasswordChange": "メタデータ鍵のローテーションは未送信です。ログインし直してノード画面で再試行してください。"
+          "retryFailed": "メンバー鍵の更新はまだ送信できていません。しばらくしてから再試行してください。",
+          "revokePending": "ノードは削除しましたが、メンバー鍵の更新が送信できていません（{{error}}）。ノード画面で再試行してください。",
+          "revokePendingBulk": "{{count}} 台分のメンバー鍵の更新が送信できていません。ノード画面で再試行してください。",
+          "afterPasswordChange": "メンバー鍵の更新は未送信です。ログインし直してノード画面で再試行してください。"
         },
         "pack": {
           "pending": "中継のパスワード参加用資格情報が未更新です。他のマシンはパスワードで参加できません。",
@@ -8919,7 +9131,7 @@ export const I18N_RESOURCES = {
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "現在のパスワードが正しくありません。",
-          "RELAY_PASSWORD_INVALID": "中継パスワードが正しくありません。",
+          "RELAY_PASSWORD_INVALID": "接続パスワードが正しくありません。",
           "RELAY_NOT_CONFIGURED": "本機は中継に接続していません。",
           "RELAY_QUOTA_NODES": "中継のノードクォータを使い切りました。",
           "RELAY_UNCONFIRMED": "中継がこの変更を確認していません。再試行してください。",
@@ -8937,12 +9149,16 @@ export const I18N_RESOURCES = {
           "MALFORMED": "要求内容が不正です。",
           "RELAY_NOT_FOUND": "その中継は本機の中継一覧にありません。",
           "RELAY_LAST": "中継はこれ 1 件だけです。「中継から離脱」を使ってください。",
-          "RELAY_META_KEY_NEEDS_SIGNER": "メタデータ鍵を配布するには本人確認をやり直してください。",
-          "RELAY_META_KEY_PREPARE_FAILED": "本機が新しいメタデータ鍵を用意できませんでした。再試行してください。",
+          "RELAY_META_KEY_NEEDS_SIGNER": "メンバー鍵を配布するには本人確認をやり直してください。",
+          "RELAY_META_KEY_PREPARE_FAILED": "本機が新しいメンバー鍵を用意できませんでした。再試行してください。",
           "RELAY_PASSWORD_REQUIRED": "この中継には接続パスワードが必要です。",
           "RELAY_RATE_LIMITED": "試行が多すぎます。しばらくしてから再試行してください。",
-          "RELAY_TENANT_KICKED": "中継がこのテナントのトークンを失効させました。パスワードを入力し直してください。",
-          "RELAY_TOKEN_INVALID": "中継トークンが失効しました。パスワードを入力し直してください。"
+          "RELAY_TENANT_KICKED": "中継がこのテナントのトークンを失効させました。接続パスワードを入力し直してください。",
+          "RELAY_TOKEN_INVALID": "中継トークンが失効しました。接続パスワードを入力し直してください。",
+          "RELAY_UNKNOWN": "その中継は本機の中継一覧にありません。",
+          "RELAY_KICKED": "その中継はこのテナントのトークンを失効させました。先に接続パスワードを入力し直してください。",
+          "RELAY_ALREADY_ATTACHED": "本機は既にその中継に接続しています。",
+          "RELAY_SWITCH_FAILED": "中継を切り替えられませんでした。しばらくしてから再試行してください。"
         },
         "remove": {
           "title": "この中継を削除しますか？",
@@ -8952,7 +9168,7 @@ export const I18N_RESOURCES = {
         }
       },
       "admin": {
-        "tabLabel": "リレー",
+        "tabLabel": "中継管理",
         "title": "リレー運用",
         "description": "本機は公開リレーとして、参加したテナントの通信を中継します。",
         "unavailable": "本機ではリレー役割が有効になっていません。",
@@ -8960,6 +9176,7 @@ export const I18N_RESOURCES = {
         "loginRequired": "先にログインしてからリレーを管理してください。",
         "loadFailed": "リレーの状態を読み込めませんでした：{{message}}",
         "epochValue": "第 {{epoch}} 世代",
+        "more": "その他",
         "health": {
           "title": "稼働状態",
           "state": "状態",
@@ -8981,15 +9198,14 @@ export const I18N_RESOURCES = {
           "traffic": "中継トラフィック"
         },
         "password": {
-          "title": "参加パスワード",
+          "title": "接続パスワード",
           "state": "状態",
           "set": "設定済み",
           "unset": "未設定",
-          "unsetWarning": "パスワードが未設定のため、誰でも本リレーに参加できます。",
-          "epoch": "パスワード",
-          "minTokenEpoch": "トークン下限",
-          "change": "パスワードを変更",
-          "dialogTitle": "参加パスワードの変更",
+          "unsetWarning": "接続パスワードが未設定のため、誰でも本リレーに参加できます。",
+          "epoch": "パスワード世代",
+          "change": "接続パスワードを変更",
+          "dialogTitle": "接続パスワードの変更",
           "newPassword": "新しいパスワード",
           "newPasswordHint": "8 文字以上で入力してください。",
           "clear": "パスワードを削除",
@@ -9000,12 +9216,13 @@ export const I18N_RESOURCES = {
           "modeKick": "既存トークンを失効",
           "modeKickHint": "全テナントがパスワードを再入力する必要があります。",
           "tooShort": "パスワードは 8 文字以上で入力してください。",
-          "saved": "参加パスワードを更新しました。",
+          "saved": "接続パスワードを更新しました。",
           "failed": "パスワードを更新できませんでした：{{message}}",
           "dialogDescription": "新しいパスワードを設定するか、削除して誰でも参加できるようにします。"
         },
         "quota": {
           "title": "既定クォータ",
+          "menuItem": "既定クォータ…",
           "description": "個別のクォータがないテナントはこの値を使用します。",
           "maxNodes": "ノード数の上限",
           "maxStreams": "同時ストリームの上限",
@@ -9026,6 +9243,8 @@ export const I18N_RESOURCES = {
           "title": "テナント",
           "total": "全 {{n}} 件",
           "empty": "参加しているテナントはまだありません。",
+          "clearSelection": "すべて",
+          "selectHint": "このテナントのノードのみ表示",
           "columns": {
             "id": "ID",
             "label": "メモ",

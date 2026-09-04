@@ -60,91 +60,141 @@
         "remoteLink": "Open remote access settings"
       },
       "computer": {
-        "intro": "After installing tmex on another server or computer, let it join the network this machine is on, or make this machine the Hub.",
+        "intro": "Choose how another server or computer connects.",
+        "path": {
+          "title": "Choose a connection method",
+          "relay": "Via relay",
+          "hub": "Via Hub",
+          "ssh": "Direct SSH",
+          "hint": {
+            "relay": "Relay: nodes sit behind NAT and only need a public meeting point.",
+            "hub": "Hub: accounts and nodes are managed centrally.",
+            "ssh": "Direct SSH: the new machine is reachable over SSH; tmex is not installed."
+          },
+          "tip": {
+            "relay": "A relay only forwards encrypted traffic and holds no accounts or keys. Each node connects to it and meets on the public internet, which suits machines behind NAT or a firewall.",
+            "hub": "The Hub is the trust center: it holds accounts, node membership and join approvals, and needs a fixed public HTTPS address.",
+            "ssh": "The new machine does not run tmex. This machine connects over SSH and it appears in the device list."
+          }
+        },
+        "side": {
+          "relay": {
+            "join": "Join an existing relay",
+            "host": "Run a relay here"
+          },
+          "hub": {
+            "join": "Join an existing Hub",
+            "host": "Make this machine the Hub"
+          }
+        },
         "install": {
           "title": "Install tmex",
-          "description": "Run the install script on the target machine (installs Bun automatically; Linux needs tmux ≥ 3.0). The terminal prints the access address when done.",
+          "description": "Run the install script on the new machine. Linux needs tmux 3.0 or later.",
           "command": "Install command",
-          "pathHint": "The install script provides the tmex command. If it is not found, reopen the terminal or run:"
-        },
-        "mode": {
-          "title": "Choose how to connect",
-          "join": "Add a machine",
-          "host": "Make this machine the Hub"
+          "pathHint": "If the tmex command is not found, reopen the terminal or run:"
         },
         "join": {
+          "uplink": {
+            "title": "Gather the connection details",
+            "relayDescription": "The new machine needs the relay address, the tenant ID and the access password.",
+            "hubDescription": "The new machine needs the Hub address and the account password.",
+            "relayUrl": "Relay address",
+            "hubUrl": "Hub address",
+            "tenantId": "Tenant ID",
+            "relayMissing": "Ask the relay operator for the relay address and access password.",
+            "hubMissing": "Ask the Hub administrator for the Hub address.",
+            "tenantMissing": "The tenant ID is created by the relay operator in relay management.",
+            "link": "Open multi-node mesh settings"
+          },
+          "password": {
+            "title": "Join from the new machine",
+            "relayDescription": "On the new machine open Settings → Multi-node Mesh → \"Join a relay\", then enter the relay address, tenant ID and access password.",
+            "hubDescription": "On the new machine open Settings → Multi-node Mesh → \"Join an existing hub\", then enter the Hub address and account password.",
+            "command": "Or run this in the new machine's terminal",
+            "tenantPlaceholder": "<tenant-id>"
+          },
+          "advanced": {
+            "title": "Join token (advanced)",
+            "description": "When typing a password on the new machine is impractical, use a join token. It is valid for 10 minutes."
+          },
           "token": {
             "title": "Generate a join token",
-            "description": "On a machine that already joined, open Settings → Multi-node Mesh → Node management, click Add → Generate join token, then copy the join command. The token is valid for 10 minutes.",
+            "description": "On a connected machine open Settings → Multi-node Mesh → Node management, then click Add → Generate join token.",
+            "meshDescription": "Generate a join token here. It is valid for 10 minutes.",
             "label": "Join token (valid for {{minutes}} minutes)",
             "link": "Open multi-node mesh settings",
-            "meshDescription": "Generate a join token here, then copy the command in the next step. The token is valid for 10 minutes.",
             "unavailable": "This machine is not part of a multi-node mesh, so a join token cannot be generated here."
           },
           "run": {
             "title": "Join from the new machine",
-            "description": "Run the join command in the new machine's terminal (example below; use the command you copied):",
+            "description": "Run the join command in the new machine's terminal. Example:",
             "ready": "Run this command in the new machine's terminal:",
             "tokenPlaceholder": "<join-token>",
             "namePlaceholder": "<node-name>"
           },
           "confirm": {
             "title": "Confirm the join",
-            "description": "Back on the Node management page, click Confirm join. The new machine appears in the device list after it restarts.",
+            "description": "Confirm the join on the Node management page. The new machine appears in the device list after it restarts.",
             "meshDescription": "Once the new machine runs the command, confirm the join here. It appears in the device list after it restarts.",
-            "done": "The new machine has joined; it appears in the device list after it restarts."
-          },
-          "uplink": {
-            "title": "Gather the connection details",
-            "hubDescription": "The new machine needs the Hub address and this account’s password.",
-            "relayDescription": "The new machine needs the relay address, the tenant ID and this account’s password.",
-            "unknownDescription": "This machine is not part of a multi-node mesh yet. Set it up first.",
-            "missingUrl": "The uplink address of this machine is unknown, so no address can be shown.",
-            "hubUrl": "Hub address",
-            "relayUrl": "Relay address",
-            "tenantId": "Tenant ID"
+            "done": "The new machine joined; it appears in the device list after it restarts."
+          }
+        },
+        "relayHost": {
+          "setup": {
+            "title": "Make this machine a relay",
+            "description": "Open Settings → Multi-node Mesh and choose \"Use This Machine as the Relay\". A relay needs a fixed public HTTPS address.",
+            "link": "Open multi-node mesh settings",
+            "urlLabel": "Relay address",
+            "missingUrl": "The relay address is unknown, so other machines cannot join."
           },
           "password": {
-            "title": "Join from the new machine",
-            "hubDescription": "On the new machine open Settings → Multi-node Mesh, choose \"Join an existing Hub\", and enter the Hub address and password.",
-            "relayDescription": "On the new machine open Settings → Multi-node Mesh, choose \"Join a relay\", and enter the relay address, tenant ID and password.",
-            "command": "Or run this in the new machine’s terminal",
-            "tenantPlaceholder": "<tenant-id>"
+            "title": "Set the access password",
+            "description": "Open \"Relay Management → ⋯ → Change Access Password\". Tenants join this relay with that password.",
+            "link": "Open relay management",
+            "done": "The access password is set."
           },
-          "advanced": {
-            "title": "Use a join token (advanced)",
-            "description": "When typing a password on the new machine is impractical, use a join token issued here. It is valid for 10 minutes."
+          "invite": {
+            "title": "Connect the new machine",
+            "description": "Install tmex on the new machine, then follow the \"Join an existing relay\" steps.",
+            "gotoJoin": "See the join steps"
           }
         },
         "host": {
           "entry": {
             "title": "Set up a public entry",
-            "description": "Open Settings → Remote access: Cloudflare Tunnel (named tunnel) gives you a fixed HTTPS address; Direct connection requires a fixed HTTPS entry you provide yourself.",
+            "description": "Open Settings → Remote access: a Cloudflare named tunnel gives a fixed HTTPS address; a direct connection needs a fixed HTTPS entry of your own.",
             "link": "Open remote access settings",
             "status": {
               "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})",
-              "quick": "This is a temporary tunnel ({{url}}). Its address changes, so it is not suitable as a Hub address — use a named tunnel or a direct connection instead.",
+              "quick": "This is a temporary tunnel ({{url}}). Its address changes, so it cannot serve as the Hub address.",
               "hubUrl": "Public address already available: {{url}}"
             }
           },
           "hub": {
-            "title": "Make it the Hub",
-            "description": "Open Settings → Multi-node Mesh, choose \"Make this machine the Hub\", enter the address from the previous step as the Hub public URL, create the first account and restart.",
-            "warning": "The Hub public URL cannot be changed afterwards. Decide on the final domain first.",
+            "title": "Make this machine the Hub",
+            "description": "Open Settings → Multi-node Mesh, choose \"Make this the hub\", enter the address from the previous step, create the first account and restart.",
+            "warning": "The Hub public URL cannot be changed later. Decide on the final domain first.",
             "link": "Open multi-node mesh settings",
             "status": {
-              "self": "This machine is already the Hub. Public address: {{url}}",
-              "node": "This machine already joined {{url}} as a node, so it cannot be a Hub.",
+              "self": "This machine is the Hub. Public address: {{url}}",
+              "node": "This machine joined {{url}} as a node, so it cannot be a Hub.",
               "mismatch": "The Hub public URL does not match the current tunnel hostname; other machines may fail to connect."
             },
             "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL."
           },
           "invite": {
-            "title": "Connect other machines",
-            "description": "After installing tmex on other machines, follow the \"Add a machine\" steps.",
-            "ready": "After installing tmex on another machine, switch to \"Add a machine\" and follow the steps.",
+            "title": "Connect the new machine",
+            "description": "Install tmex on the new machine, then follow the \"Join an existing Hub\" steps.",
+            "ready": "This machine is the Hub. Switch to \"Join an existing Hub\" to continue.",
             "gotoJoin": "See the join steps"
           }
+        },
+        "ssh": {
+          "description": "This machine connects to the new machine over SSH; tmex is not installed there.",
+          "title": "Add an SSH device",
+          "stepDescription": "In the device dialog set the type to SSH, then enter the host address and sign-in method.",
+          "button": "Add device",
+          "note": "The device appears in the device list once saved."
         }
       }
     },
@@ -236,6 +286,7 @@
           "error": "Failed"
         },
         "degradedNotice": "The tunnel process is running but has no edge connections; the public URL is unreachable.",
+        "degradedHint": "cloudflared cannot reach the Cloudflare edge (TCP/UDP 7844). Check that the proxy or firewall allows *.argotunnel.com and *.cftunnel.com.",
         "connector": {
           "label": "Connector",
           "connected": "Edge connections: {{n}}",
@@ -1227,15 +1278,13 @@
         "relayLeaveFirst": "Leave the relay first to go back to a Hub.",
         "details": {
           "title": "Connection details",
-          "metaEpoch": "Metadata key generation",
-          "nodesViaRelay": "Nodes visible via relay",
-          "quota": "Node quota",
+          "nodesViaRelay": "Reachable Nodes",
+          "quotaNodes": "Nodes",
+          "quotaStreams": "Streams",
+          "quotaBandwidth": "Bandwidth",
           "quotaValue": "{{used}} / {{total}}",
-          "streams": "Stream limit",
-          "keyLog": "Key log",
-          "keyLogCaughtUp": "Caught up",
-          "keyLogBlocked": "Blocked at {{seq}}",
-          "nodeId": "This machine's node ID",
+          "quotaUnlimited": "Unlimited",
+          "nodeId": "This machine's ID",
           "hubs": "Hub details"
         },
         "direct": "Direct connection add-on",
@@ -1283,7 +1332,7 @@
         "relayServiceAddress": "Relay Public Address",
         "relayServiceAddressUnsetHint": "Other machines cannot reach this relay. Set it up again under \"Change role → Relay and node\".",
         "relayServiceEnroll": "Connect to This Relay",
-        "relayServiceEnrollHint": "This machine has not connected to its own relay yet. The relay password just set must be entered again."
+        "relayServiceEnrollHint": "This machine has not connected to its own relay yet. The access password just set must be entered again."
       },
       "membership": {
         "changeHub": "Change hub",
@@ -2037,6 +2086,10 @@
           "title": "Connected Nodes",
           "total": "{{n}} total",
           "empty": "No nodes connected yet.",
+          "noMatch": "No nodes match.",
+          "searchPlaceholder": "Search nodes",
+          "stateFilter": "State",
+          "all": "All",
           "online": "Online",
           "offline": "Offline",
           "unnamed": "Unnamed",
@@ -2056,43 +2109,60 @@
         "strip": {
           "online": "Online",
           "offline": "Offline",
-          "attached": "This machine is attached to this relay",
           "rtt": "Latency {{ms}} ms",
-          "kicked": "Token revoked, re-enter the relay password",
-          "lastError": "Last error: {{error}}",
+          "kicked": "Token revoked, re-enter the access password",
+          "error": "Error: {{message}}",
           "empty": "Not connected to a relay.",
           "tenantId": "Tenant ID",
           "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password."
         },
+        "linkErrors": {
+          "connect-failed": "Cannot reach the relay",
+          "connect-timeout": "Connection timed out",
+          "auth-timeout": "Authentication timed out",
+          "auth-rejected": "The relay rejected this machine's credentials",
+          "heartbeat-lost": "Heartbeat lost, reconnecting",
+          "kicked": "Token revoked, re-enter the access password",
+          "dns": "Domain name cannot be resolved",
+          "refused": "Connection refused",
+          "tls": "TLS handshake failed",
+          "protocol": "Incompatible protocol, upgrade the relay or this machine",
+          "unknown": "Connection failed"
+        },
+        "switch": {
+          "title": "Switch to {{host}}?",
+          "description": "This machine will connect through this relay. Other nodes are unaffected.",
+          "confirm": "Switch",
+          "done": "Switched to {{host}}."
+        },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
         "reauth": {
-          "notice": "The relay token expired. Re-enter the relay password.",
-          "action": "Re-enter Password"
+          "notice": "The relay token expired. Re-enter the access password.",
+          "action": "Re-enter Access Password"
         },
         "actions": {
-          "menu": "Relay Actions",
+          "menu": "More",
           "enroll": "Connect Relay",
           "migrate": "Switch to Relay",
           "add": "Add Relay",
-          "reauth": "Re-enter Password",
-          "rotate": "Rotate Metadata Key",
+          "reauth": "Re-enter Access Password",
           "leave": "Leave Relay",
           "removeOne": "Remove {{host}}",
-          "reauthOne": "Re-enter password for {{host}}"
+          "reauthOne": "Re-enter access password for {{host}}"
         },
         "dialog": {
           "enrollTitle": "Connect Relay",
           "migrateTitle": "Switch to Relay",
           "addTitle": "Add Relay",
-          "reauthTitle": "Re-enter Relay Password",
+          "reauthTitle": "Re-enter Access Password",
           "url": "Relay address",
           "urlHint": "Enter the public HTTPS address of the relay.",
-          "password": "Relay password",
-          "passwordHint": "Leave empty if the relay has no password.",
+          "password": "Access password",
+          "passwordHint": "Leave empty if the relay has no access password.",
           "rootPassword": "Current password (this machine's account password)",
           "rootPasswordHint": "Joining must be signed with the password; a passkey cannot sign it.",
           "migrateNotice": "After connecting, this machine uses the relay and no longer connects to a Hub.",
-          "reauthNotice": "The relay password changed. Enter the new one to restore the link.",
+          "reauthNotice": "The access password changed. Enter the new one to restore the link.",
           "submit": "Connect",
           "submitReauth": "Reconnect",
           "done": "Relay connected."
@@ -2104,19 +2174,15 @@
           "done": "Left the relay."
         },
         "metaKey": {
-          "rotateTitle": "Rotate the metadata key?",
-          "rotateDescription": "Issue a new metadata key epoch, distributed only to current member nodes.",
-          "rotateConfirm": "Rotate",
-          "done": "Metadata key rotated.",
-          "needsRotate": "The new node did not receive the metadata key. Use \"Relay Actions -> Rotate Metadata Key\".",
-          "admitFailed": "Failed to deliver the metadata key to the new node: {{error}}",
-          "rotateFailed": "Metadata key rotation failed: {{error}}",
-          "pending": "{{count}} metadata key rotation(s) have not landed yet; removed nodes can still read metadata.",
+          "done": "Member key updated.",
+          "needsRotate": "The new node did not receive the member key. Retry from the notice.",
+          "admitFailed": "Failed to deliver the member key to the new node: {{error}}",
+          "pending": "Member key update has not landed yet ({{count}}).",
           "retry": "Retry",
-          "retryFailed": "The metadata key rotation still has not landed. Try again later.",
-          "revokePending": "The node was removed, but the metadata key rotation did not land ({{error}}). Retry on the nodes page.",
-          "revokePendingBulk": "Metadata key rotation did not land for {{count}} node(s). Retry on the nodes page.",
-          "afterPasswordChange": "The metadata key rotation has not landed yet. Sign in again and retry on the nodes page."
+          "retryFailed": "The member key update still has not landed. Try again later.",
+          "revokePending": "The node was removed, but the member key update did not land ({{error}}). Retry on the nodes page.",
+          "revokePendingBulk": "The member key update did not land for {{count}} node(s). Retry on the nodes page.",
+          "afterPasswordChange": "The member key update has not landed yet. Sign in again and retry on the nodes page."
         },
         "pack": {
           "pending": "The relay's password-join credential is out of date. Other machines cannot join with a password.",
@@ -2128,7 +2194,7 @@
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "Current password is incorrect.",
-          "RELAY_PASSWORD_INVALID": "Relay password is incorrect.",
+          "RELAY_PASSWORD_INVALID": "Access password is incorrect.",
           "RELAY_NOT_CONFIGURED": "This machine is not connected to a relay.",
           "RELAY_QUOTA_NODES": "The relay node quota is used up.",
           "RELAY_UNCONFIRMED": "The relay did not confirm this change. Try again.",
@@ -2146,12 +2212,16 @@
           "MALFORMED": "The request content is invalid.",
           "RELAY_NOT_FOUND": "That relay is not in this machine’s relay list.",
           "RELAY_LAST": "This is the only relay left. Use \"Leave Relay\" instead.",
-          "RELAY_META_KEY_NEEDS_SIGNER": "Verify your identity again to deliver the metadata key.",
-          "RELAY_META_KEY_PREPARE_FAILED": "This machine could not prepare a new metadata key. Try again.",
-          "RELAY_PASSWORD_REQUIRED": "This relay requires a connection password.",
+          "RELAY_META_KEY_NEEDS_SIGNER": "Verify your identity again to deliver the member key.",
+          "RELAY_META_KEY_PREPARE_FAILED": "This machine could not prepare a new member key. Try again.",
+          "RELAY_PASSWORD_REQUIRED": "This relay requires an access password.",
           "RELAY_RATE_LIMITED": "Too many attempts. Try again later.",
-          "RELAY_TENANT_KICKED": "The relay revoked this tenant’s token. Re-enter the relay password.",
-          "RELAY_TOKEN_INVALID": "The relay token expired. Re-enter the relay password."
+          "RELAY_TENANT_KICKED": "The relay revoked this tenant’s token. Re-enter the access password.",
+          "RELAY_TOKEN_INVALID": "The relay token expired. Re-enter the access password.",
+          "RELAY_UNKNOWN": "That relay is not in this machine’s relay list.",
+          "RELAY_KICKED": "That relay revoked this tenant’s token. Re-enter the access password first.",
+          "RELAY_ALREADY_ATTACHED": "This machine is already attached to that relay.",
+          "RELAY_SWITCH_FAILED": "Could not switch relays. Try again later."
         },
         "remove": {
           "title": "Remove this relay?",
@@ -2161,7 +2231,7 @@
         }
       },
       "admin": {
-        "tabLabel": "Relay",
+        "tabLabel": "Relay Management",
         "title": "Relay Operations",
         "description": "This machine runs as a public relay and forwards traffic for the tenants that join it.",
         "unavailable": "The relay role is not enabled on this machine.",
@@ -2169,6 +2239,7 @@
         "loginRequired": "Sign in first to manage the relay.",
         "loadFailed": "Could not load relay status: {{message}}",
         "epochValue": "Gen {{epoch}}",
+        "more": "More",
         "health": {
           "title": "Health",
           "state": "State",
@@ -2190,15 +2261,14 @@
           "traffic": "Relayed traffic"
         },
         "password": {
-          "title": "Join Password",
+          "title": "Access Password",
           "state": "State",
           "set": "Set",
           "unset": "Not set",
-          "unsetWarning": "No password is set, so anyone can join this relay.",
-          "epoch": "Password",
-          "minTokenEpoch": "Token floor",
-          "change": "Change Password",
-          "dialogTitle": "Change Join Password",
+          "unsetWarning": "No access password is set, so anyone can join this relay.",
+          "epoch": "Password generation",
+          "change": "Change Access Password",
+          "dialogTitle": "Change Access Password",
           "newPassword": "New password",
           "newPasswordHint": "At least 8 characters.",
           "clear": "Clear password",
@@ -2209,12 +2279,13 @@
           "modeKick": "Revoke old tokens",
           "modeKickHint": "Every tenant has to enter the password again.",
           "tooShort": "The password needs at least 8 characters.",
-          "saved": "Join password updated.",
+          "saved": "Access password updated.",
           "failed": "Could not update the password: {{message}}",
           "dialogDescription": "Set a new password, or clear it so anyone can join."
         },
         "quota": {
           "title": "Default Quota",
+          "menuItem": "Default Quota…",
           "description": "Tenants without their own quota use these values.",
           "maxNodes": "Max nodes",
           "maxStreams": "Max streams",
@@ -2235,6 +2306,8 @@
           "title": "Tenants",
           "total": "{{n}} total",
           "empty": "No tenant has joined yet.",
+          "clearSelection": "All",
+          "selectHint": "Show only this tenant’s nodes",
           "columns": {
             "id": "ID",
             "label": "Note",
