@@ -71,18 +71,25 @@ export async function applyAuthPolicy(
 }
 
 /**
- * 只清理「请求带了、而目标节点判为无效」的 cookie。请求没带 cookie 的 401（登录前并发发出的
- * 请求）不能清：它的响应可能晚于登录的 Set-Cookie 到达，把刚签发的会话删掉。
+ * 只清理「请求带了、而目标节点的会话校验明确判为无效」的 cookie（stream-targets 的 verifyAuth
+ * 原因）。请求没带 cookie 的 401（登录前并发发出的请求）不能清：它的响应可能晚于登录的
+ * Set-Cookie 到达，把刚签发的会话删掉；目标上其它按入口会话鉴权的 401（如 /api/mesh/connection）
+ * 也不是会话失效，同样不能清。
  */
 function shouldExpirePresentedCookie(
   presented: string | undefined,
   body: Record<string, unknown>
 ): boolean {
   if (!presented) return false;
-  return body.error !== MISSING_AUTH_ERROR;
+  return typeof body.error === 'string' && REJECTED_SESSION_REASONS.has(body.error);
 }
 
-const MISSING_AUTH_ERROR = 'missing auth';
+const REJECTED_SESSION_REASONS: ReadonlySet<string> = new Set([
+  'via_mismatch',
+  'expired',
+  'revoked',
+  'unknown',
+]);
 
 export async function peekJsonCode(response: Response): Promise<string> {
   try {

@@ -57,6 +57,41 @@ describe('applyAuthPolicy', () => {
     expect(res?.headers.get('set-cookie')).toBeNull();
   });
 
+  test('带了 cookie 但 401 不是会话校验原因（目标按入口会话鉴权的接口）也不清', async () => {
+    const upstream = new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: OTHER }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+    const res = await applyAuthPolicy(
+      new Request(`http://localhost/n/${OTHER}/api/mesh/connection`, {
+        headers: { cookie: `tmex_s_${OTHER}=fresh` },
+      }),
+      headersFrom(upstream),
+      upstream,
+      OTHER
+    );
+    expect(res?.status).toBe(401);
+    expect(res?.headers.get('set-cookie')).toBeNull();
+  });
+
+  for (const reason of ['expired', 'revoked', 'unknown']) {
+    test(`目标判 ${reason} 的会话要清`, async () => {
+      const upstream = new Response(JSON.stringify({ error: reason }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      });
+      const res = await applyAuthPolicy(
+        new Request(`http://localhost/n/${OTHER}/api/devices`, {
+          headers: { cookie: `tmex_s_${OTHER}=stale` },
+        }),
+        headersFrom(upstream),
+        upstream,
+        OTHER
+      );
+      expect(res?.headers.get('set-cookie') ?? '').toContain('Max-Age=0');
+    });
+  }
+
   test('带了 cookie 但目标说 missing auth（cookie 未被转发）也不清', async () => {
     const upstream = new Response(JSON.stringify({ error: 'missing auth' }), {
       status: 401,
