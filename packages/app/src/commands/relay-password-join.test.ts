@@ -66,6 +66,16 @@ describe('performRelayPasswordJoin', () => {
       )
     ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'join_failed' });
   });
+
+  test('rejects an invalid relay url', async () => {
+    const auth = await openAuth();
+    await expect(
+      performRelayPasswordJoin(
+        { relayUrl: 'not-a-url', tenantId: TENANT_ID, password: PASSWORD },
+        { auth }
+      )
+    ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'invalid_url' });
+  });
 });
 
 describe('runRelayPasswordJoin', () => {

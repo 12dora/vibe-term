@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import {
   decodeAuthorization,
   decodeBase64url,
@@ -209,6 +209,22 @@ describe('relay redeem', () => {
     expect(body.key_log).toEqual([]);
     const pushed = await client.inbox.takeOf('enroll.redeemed');
     expect(pushed.t === 'enroll.redeemed' && pushed.node_id).toBe(second.nodeId);
+  });
+
+  test('HTTP redeem notifies quota for the tenant', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const first = tenant.addNode();
+    const client = await tenant.connect(first);
+    await client.inbox.takeOf('auth.ok');
+    const second = tenant.addNode();
+    await tenant.createEnrollment(second, client);
+    const notifyQuota = spyOn(relay.runtime.uplink, 'notifyQuota');
+    const res = await tenant.redeem(second);
+    expect(res.status).toBe(200);
+    expect(notifyQuota).toHaveBeenCalledTimes(1);
+    expect(notifyQuota).toHaveBeenCalledWith(tenant.id);
+    notifyQuota.mockRestore();
   });
 
   test('exposes the stored authorization by enroll_pk so the joining node learns the uid', async () => {

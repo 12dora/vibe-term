@@ -1,4 +1,3 @@
-import { readJsonObjectBody } from '@tmex/shared/http';
 import { type ServerSocketAdapter, WebSocketLink } from '@tmex/shared/link';
 import { matchPath } from '../api/route';
 import type { AuthDb } from '../auth/types';
@@ -22,22 +21,10 @@ import { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError } from './relay-http';
 import { RelayKeyLogStore } from './relay-key-log-store';
 import { RelayMetering } from './relay-metering';
-import {
-  applyRelayKeyLogAppend,
-  applyRelayPackUpload,
-  handleRelayKeyLogPage,
-  handleRelayTenantKdf,
-} from './relay-pack-http';
+import { dispatchRelayPublic } from './relay-public-routes';
 import type { RelaySleep } from './relay-quota';
 import { RelayRegistry } from './relay-registry';
-import {
-  type RelayPublicRoutesDeps,
-  authenticateRelayTenant,
-  handleRelayEnroll,
-  handleRelayEnrollmentLookup,
-  handleRelayRedeem,
-  relayHealth,
-} from './relay-routes';
+import type { RelayPublicRoutesDeps } from './relay-routes';
 import { RelayTenantStore } from './relay-tenant-store';
 import { RelayUplinkServer } from './relay-uplink-server';
 import {
@@ -205,69 +192,19 @@ export class RelayRuntime {
     return (await this.routePublic(req, path)) ?? (await this.routeAdmin(req, path));
   }
 
-  private async routePublic(req: Request, path: string): Promise<Response | undefined> {
-    if (matchPath(path, '/api/relay/health')) {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        return relayError(RelayErrorCode.methodNotAllowed, 405);
-      }
-      return relayHealth({
+  private routePublic(req: Request, path: string): Promise<Response> | Response | undefined {
+    return dispatchRelayPublic(
+      {
+        deps: this.publicDeps,
         version: this.version,
-        tenants: this.tenants.count(),
-        nodesOnline: this.registry.onlineCount(),
         startedAt: this.startedAt,
-        now: this.now(),
-      });
-    }
-    if (matchPath(path, '/api/relay/enroll')) {
-      if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
-      return handleRelayEnroll(this.publicDeps, req);
-    }
-    const kdf = matchPath(path, '/api/relay/tenants/:tenantId/kdf');
-    if (kdf) {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        return relayError(RelayErrorCode.methodNotAllowed, 405);
-      }
-      return handleRelayTenantKdf(this.publicDeps, req, decodeURIComponent(kdf.tenantId));
-    }
-    const pack = matchPath(path, '/api/relay/tenants/:tenantId/pack');
-    if (pack) {
-      if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
-      const tenantId = decodeURIComponent(pack.tenantId);
-      const tenant = authenticateRelayTenant(this.publicDeps, req, tenantId);
-      if (tenant instanceof Response) return tenant;
-      const body = await readJsonObjectBody(req);
-      if (!body) return relayError(RelayErrorCode.invalidBody, 400);
-      return applyRelayPackUpload(this.publicDeps, tenant, body);
-    }
-    const keylog = matchPath(path, '/api/relay/tenants/:tenantId/keylog');
-    if (keylog) {
-      const tenantId = decodeURIComponent(keylog.tenantId);
-      const tenant = authenticateRelayTenant(this.publicDeps, req, tenantId);
-      if (tenant instanceof Response) return tenant;
-      if (req.method === 'GET' || req.method === 'HEAD') {
-        return handleRelayKeyLogPage(this.publicDeps, tenant, req);
-      }
-      if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
-      const body = await readJsonObjectBody(req);
-      if (!body) return relayError(RelayErrorCode.invalidBody, 400);
-      return applyRelayKeyLogAppend(this.publicDeps, tenant, body);
-    }
-    const redeem = matchPath(path, '/api/relay/tenants/:tenantId/enrollments/redeem');
-    if (redeem) {
-      if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
-      return handleRelayRedeem(this.publicDeps, req, decodeURIComponent(redeem.tenantId));
-    }
-    const lookup = matchPath(path, '/api/relay/tenants/:tenantId/enrollments/:enrollPk');
-    if (lookup) {
-      if (req.method !== 'GET') return relayError(RelayErrorCode.methodNotAllowed, 405);
-      return handleRelayEnrollmentLookup(
-        this.publicDeps,
-        req,
-        decodeURIComponent(lookup.tenantId),
-        decodeURIComponent(lookup.enrollPk)
-      );
-    }
-    return undefined;
+        tenantCount: () => this.tenants.count(),
+        nodesOnline: () => this.registry.onlineCount(),
+        now: this.now,
+      },
+      req,
+      path
+    );
   }
 
   private async routeAdmin(req: Request, path: string): Promise<Response> {

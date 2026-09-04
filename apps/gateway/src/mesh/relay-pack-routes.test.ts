@@ -104,4 +104,65 @@ describe('handleMeshRelayPack', () => {
     expect(res.status).toBe(409);
     expect(((await res.json()) as { code: string }).code).toBe('RELAY_NOT_CONFIGURED');
   });
+
+  test('returns 404 when urls match no configured relay', async () => {
+    const secrets = {
+      relayRows: () => [
+        { url: 'https://relay-a.example', tenantId: 'aa'.repeat(16), priority: 0, kicked: false },
+      ],
+      store: { getRelay: async () => null },
+    } as unknown as RelaySecrets;
+    const res = await handleMeshRelayPack(
+      { secrets },
+      new Request('http://self/api/mesh/relay/pack', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(packBody({ urls: ['https://other.example'] })),
+      })
+    );
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { code: string }).code).toBe('RELAY_NOT_FOUND');
+  });
+
+  test('reports RELAY_KEY_MISSING and 502 when every target fails', async () => {
+    const secrets = {
+      relayRows: () => [
+        { url: 'https://relay-a.example', tenantId: 'aa'.repeat(16), priority: 0, kicked: false },
+        { url: 'https://relay-b.example', tenantId: 'bb'.repeat(16), priority: 1, kicked: false },
+      ],
+      store: {
+        getRelay: async (url: string) =>
+          url.includes('relay-a')
+            ? null
+            : {
+                url,
+                tenantId: 'bb'.repeat(16),
+                token: new Uint8Array(32).fill(7),
+              },
+      },
+    } as unknown as RelaySecrets;
+    const res = await handleMeshRelayPack(
+      {
+        secrets,
+        fetchImpl: (async () => {
+          throw new Error('offline');
+        }) as unknown as typeof fetch,
+      },
+      new Request('http://self/api/mesh/relay/pack', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(packBody()),
+      })
+    );
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as {
+      code: string;
+      results: Array<{ ok: boolean; code?: string }>;
+    };
+    expect(body.code).toBe('RELAY_PACK_FORWARD_FAILED');
+    expect(body.results.map((item) => item.code)).toEqual([
+      'RELAY_KEY_MISSING',
+      'RELAY_UNREACHABLE',
+    ]);
+  });
 });

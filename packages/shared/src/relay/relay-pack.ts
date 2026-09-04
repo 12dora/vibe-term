@@ -99,8 +99,17 @@ function derivePackKek(rootSeed: Uint8Array, tenantId: Uint8Array): Uint8Array {
   return hkdf(sha256, rootSeed, te.encode(RELAY_PACK_HKDF_SALT), tenantId, RELAY_PACK_KEK_LENGTH);
 }
 
+function wipe(bytes: Uint8Array | undefined): void {
+  bytes?.fill(0);
+}
+
 async function importAesKey(key: Uint8Array, usages: KeyUsage[]): Promise<CryptoKey> {
-  return crypto.subtle.importKey('raw', asBufferSource(key), { name: 'AES-GCM' }, false, usages);
+  const raw = asBufferSource(key);
+  try {
+    return await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, usages);
+  } finally {
+    wipe(raw);
+  }
 }
 
 async function aesGcmSeal(
@@ -110,17 +119,22 @@ async function aesGcmSeal(
   aad: Uint8Array
 ): Promise<Uint8Array> {
   const cryptoKey = await importAesKey(key, ['encrypt']);
-  const sealed = await crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: asBufferSource(nonce),
-      additionalData: asBufferSource(aad),
-      tagLength: GCM_TAG_BITS,
-    },
-    cryptoKey,
-    asBufferSource(plaintext)
-  );
-  return new Uint8Array(sealed);
+  const pt = asBufferSource(plaintext);
+  try {
+    const sealed = await crypto.subtle.encrypt(
+      {
+        name: 'AES-GCM',
+        iv: asBufferSource(nonce),
+        additionalData: asBufferSource(aad),
+        tagLength: GCM_TAG_BITS,
+      },
+      cryptoKey,
+      pt
+    );
+    return new Uint8Array(sealed);
+  } finally {
+    wipe(pt);
+  }
 }
 
 async function aesGcmOpen(
@@ -183,34 +197,40 @@ function decodePlaintext(bytes: Uint8Array): RelayPackPlaintext {
 
 /** `sealed_pack` 线格式：`nonce(12) ‖ AES-256-GCM(ct‖tag)`。 */
 export async function sealRelayPack(input: SealRelayPackInput): Promise<Uint8Array> {
-  const tenantId = tenantIdBytes(input.tenantId);
-  const plaintext = encodePlaintext({
-    v: input.plaintext.v ?? RELAY_PACK_VERSION,
-    log_key: input.plaintext.log_key,
-    token: input.plaintext.token,
-    head_seq:
-      typeof input.plaintext.head_seq === 'bigint'
-        ? input.plaintext.head_seq
-        : BigInt(input.plaintext.head_seq),
-    head_hash: input.plaintext.head_hash,
-    issued_at:
-      typeof input.plaintext.issued_at === 'bigint'
-        ? input.plaintext.issued_at
-        : BigInt(input.plaintext.issued_at),
-  });
-  const aad = relayPackAad({
-    tenantId: input.tenantId,
-    rootPublicKey: input.rootPublicKey,
-    rootEpoch: input.rootEpoch,
-  });
-  const kek = derivePackKek(input.rootSeed, tenantId);
-  const nonce = randomBytes(RELAY_PACK_NONCE_LENGTH);
+  const seed = new Uint8Array(input.rootSeed);
+  let kek: Uint8Array | undefined;
+  let encoded: Uint8Array | undefined;
   try {
-    const ct = await aesGcmSeal(kek, nonce, plaintext, aad);
+    const tenantId = tenantIdBytes(input.tenantId);
+    encoded = encodePlaintext({
+      v: input.plaintext.v ?? RELAY_PACK_VERSION,
+      log_key: input.plaintext.log_key,
+      token: input.plaintext.token,
+      head_seq:
+        typeof input.plaintext.head_seq === 'bigint'
+          ? input.plaintext.head_seq
+          : BigInt(input.plaintext.head_seq),
+      head_hash: input.plaintext.head_hash,
+      issued_at:
+        typeof input.plaintext.issued_at === 'bigint'
+          ? input.plaintext.issued_at
+          : BigInt(input.plaintext.issued_at),
+    });
+    const aad = relayPackAad({
+      tenantId: input.tenantId,
+      rootPublicKey: input.rootPublicKey,
+      rootEpoch: input.rootEpoch,
+    });
+    kek = derivePackKek(seed, tenantId);
+    const nonce = randomBytes(RELAY_PACK_NONCE_LENGTH);
+    const ct = await aesGcmSeal(kek, nonce, encoded, aad);
     return concatBytes(nonce, ct);
   } finally {
-    kek.fill(0);
-    plaintext.fill(0);
+    wipe(seed);
+    wipe(kek);
+    wipe(encoded);
+    wipe(input.plaintext.log_key);
+    wipe(input.plaintext.token);
   }
 }
 
@@ -235,17 +255,27 @@ export async function openRelayPack(input: {
   });
   const nonce = input.sealedPack.subarray(0, RELAY_PACK_NONCE_LENGTH);
   const ct = input.sealedPack.subarray(RELAY_PACK_NONCE_LENGTH);
-  const kek = derivePackKek(input.rootSeed, tenantId);
-  let plain: Uint8Array;
+  const seed = new Uint8Array(input.rootSeed);
+  const kek = derivePackKek(seed, tenantId);
+  let plain: Uint8Array | undefined;
   try {
     plain = await aesGcmOpen(kek, nonce, ct, aad);
   } finally {
-    kek.fill(0);
+    wipe(seed);
+    wipe(kek);
   }
   try {
-    return decodePlaintext(plain);
+    const decoded = decodePlaintext(plain);
+    return {
+      v: decoded.v,
+      log_key: new Uint8Array(decoded.log_key),
+      token: new Uint8Array(decoded.token),
+      head_seq: decoded.head_seq,
+      head_hash: new Uint8Array(decoded.head_hash),
+      issued_at: decoded.issued_at,
+    };
   } finally {
-    plain.fill(0);
+    wipe(plain);
   }
 }
 
@@ -258,34 +288,21 @@ export function kdfParamsToWire(params: KdfParams): RelayPackKdfJson {
   };
 }
 
+function kdfIntInRange(value: unknown, min: number, max: number): number | null {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+    return null;
+  }
+  return value;
+}
+
 export function kdfParamsFromWire(value: unknown): KdfParams | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const rec = value as Record<string, unknown>;
   if (typeof rec.salt !== 'string') return null;
-  if (
-    typeof rec.memory_kib !== 'number' ||
-    !Number.isInteger(rec.memory_kib) ||
-    rec.memory_kib < 8 ||
-    rec.memory_kib > 4_194_304
-  ) {
-    return null;
-  }
-  if (
-    typeof rec.iterations !== 'number' ||
-    !Number.isInteger(rec.iterations) ||
-    rec.iterations < 1 ||
-    rec.iterations > 64
-  ) {
-    return null;
-  }
-  if (
-    typeof rec.parallelism !== 'number' ||
-    !Number.isInteger(rec.parallelism) ||
-    rec.parallelism < 1 ||
-    rec.parallelism > 16
-  ) {
-    return null;
-  }
+  const memoryKib = kdfIntInRange(rec.memory_kib, 8, 4_194_304);
+  const iterations = kdfIntInRange(rec.iterations, 1, 64);
+  const parallelism = kdfIntInRange(rec.parallelism, 1, 16);
+  if (memoryKib === null || iterations === null || parallelism === null) return null;
   let salt: Uint8Array;
   try {
     salt = decodeBase64url(rec.salt);
@@ -295,8 +312,8 @@ export function kdfParamsFromWire(value: unknown): KdfParams | null {
   if (salt.byteLength !== RELAY_PACK_KDF_SALT_LENGTH) return null;
   return {
     salt,
-    memory_kib: rec.memory_kib,
-    iterations: rec.iterations,
-    parallelism: rec.parallelism,
+    memory_kib: memoryKib,
+    iterations,
+    parallelism,
   };
 }

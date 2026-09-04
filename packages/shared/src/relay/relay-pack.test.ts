@@ -55,6 +55,11 @@ describe('sealRelayPack / openRelayPack', () => {
     const seed = randomBytes(32);
     const rootPk = randomBytes(32);
     const body = plaintext();
+    const expected = {
+      log_key: new Uint8Array(body.log_key),
+      token: new Uint8Array(body.token),
+      head_hash: new Uint8Array(body.head_hash),
+    };
     const sealed = await sealRelayPack({
       rootSeed: seed,
       tenantId: TENANT_ID,
@@ -72,11 +77,33 @@ describe('sealRelayPack / openRelayPack', () => {
       sealedPack: sealed,
     });
     expect(opened.v).toBe(1);
-    expect(opened.log_key).toEqual(body.log_key);
-    expect(opened.token).toEqual(body.token);
+    expect(opened.log_key).toEqual(expected.log_key);
+    expect(opened.token).toEqual(expected.token);
     expect(opened.head_seq).toBe(4n);
-    expect(opened.head_hash).toEqual(body.head_hash);
+    expect(opened.head_hash).toEqual(expected.head_hash);
     expect(opened.issued_at).toBe(1_700_000_000_000n);
+  });
+
+  it('seal 结束后清零传入的明文密钥缓冲', async () => {
+    const logKey = randomBytes(32);
+    const token = randomBytes(32);
+    expect(logKey.some((b) => b !== 0)).toBe(true);
+    expect(token.some((b) => b !== 0)).toBe(true);
+    await sealRelayPack({
+      rootSeed: randomBytes(32),
+      tenantId: TENANT_ID,
+      rootPublicKey: randomBytes(32),
+      rootEpoch: 0,
+      plaintext: {
+        log_key: logKey,
+        token,
+        head_seq: 1n,
+        head_hash: randomBytes(32),
+        issued_at: 1n,
+      },
+    });
+    expect(logKey.every((b) => b === 0)).toBe(true);
+    expect(token.every((b) => b === 0)).toBe(true);
   });
 
   it('AAD 不符则拒绝', async () => {
@@ -190,5 +217,30 @@ describe('kdfParams wire', () => {
         parallelism: 1,
       })
     ).toBeNull();
+    expect(
+      kdfParamsFromWire({
+        salt: encodeBase64url(randomBytes(16)),
+        memory_kib: 8,
+        iterations: 0,
+        parallelism: 1,
+      })
+    ).toBeNull();
+    expect(
+      kdfParamsFromWire({
+        salt: encodeBase64url(randomBytes(16)),
+        memory_kib: 8,
+        iterations: 1,
+        parallelism: 17,
+      })
+    ).toBeNull();
+    const ok = kdfParamsFromWire({
+      salt: encodeBase64url(randomBytes(16)),
+      memory_kib: 8,
+      iterations: 1,
+      parallelism: 1,
+    });
+    expect(ok?.memory_kib).toBe(8);
+    expect(ok?.iterations).toBe(1);
+    expect(ok?.parallelism).toBe(1);
   });
 });

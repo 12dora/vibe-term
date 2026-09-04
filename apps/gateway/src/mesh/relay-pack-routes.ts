@@ -28,6 +28,56 @@ export type MeshRelayPackBody = {
   urls?: string[];
 };
 
+type PackForwardResult = { url: string; ok: boolean; status: number; code?: string };
+
+function selectPackTargets<T extends { url: string }>(rows: T[], urls: string[] | undefined): T[] {
+  if (!urls) return rows;
+  const wanted = new Set(urls);
+  return rows.filter((row) => wanted.has(row.url));
+}
+
+async function readForwardErrorCode(res: Response): Promise<string | undefined> {
+  try {
+    const errBody = (await res.json()) as { error?: { code?: string }; code?: string };
+    return errBody.error?.code ?? errBody.code;
+  } catch {
+    return `HTTP_${res.status}`;
+  }
+}
+
+async function forwardPackToRelay(input: {
+  url: string;
+  tenantId: string;
+  token: Uint8Array;
+  payload: string;
+  doFetch: typeof fetch;
+  dial: RelayDialContext;
+}): Promise<PackForwardResult> {
+  const dialUrl = resolveRelayDialUrl(input.url, input.dial);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), RELAY_PACK_FORWARD_TIMEOUT_MS);
+  try {
+    const res = await input.doFetch(
+      `${dialUrl.replace(/\/+$/, '')}/api/relay/tenants/${input.tenantId}/pack`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-tmex-relay-token': encodeBase64url(input.token),
+        },
+        body: input.payload,
+        signal: ac.signal,
+      }
+    );
+    const code = res.ok ? undefined : await readForwardErrorCode(res);
+    return { url: input.url, ok: res.ok, status: res.status, ...(code ? { code } : {}) };
+  } catch {
+    return { url: input.url, ok: false, status: 0, code: 'RELAY_UNREACHABLE' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** FE / CLI 在持有根种子时密封后提交；节点把密封包转发到已配置的中继。 */
 export function parseMeshRelayPackBody(
   body: Record<string, unknown> | null
@@ -75,8 +125,7 @@ export async function handleMeshRelayPack(
   if (!parsed) return jsonError('MALFORMED', 400);
   const rows = deps.secrets.relayRows();
   if (rows.length === 0) return jsonError('RELAY_NOT_CONFIGURED', 409);
-  const wanted = parsed.urls ? new Set(parsed.urls) : null;
-  const targets = wanted ? rows.filter((row) => wanted.has(row.url)) : rows;
+  const targets = selectPackTargets(rows, parsed.urls);
   if (targets.length === 0) return jsonError('RELAY_NOT_FOUND', 404);
   const doFetch = deps.fetchImpl ?? fetch;
   const dial = deps.dial ?? relayDialContextFromEnv();
@@ -86,46 +135,26 @@ export async function handleMeshRelayPack(
     root_epoch: parsed.root_epoch,
     head_seq: parsed.head_seq,
   });
-  const results: Array<{ url: string; ok: boolean; status: number; code?: string }> = [];
+  const results: PackForwardResult[] = [];
   for (const row of targets) {
     const relay = await deps.secrets.store.getRelay(row.url);
     if (!relay) {
       results.push({ url: row.url, ok: false, status: 0, code: 'RELAY_KEY_MISSING' });
       continue;
     }
-    const dialUrl = resolveRelayDialUrl(row.url, dial);
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), RELAY_PACK_FORWARD_TIMEOUT_MS);
-    try {
-      const res = await doFetch(
-        `${dialUrl.replace(/\/+$/, '')}/api/relay/tenants/${relay.tenantId}/pack`,
-        {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-tmex-relay-token': encodeBase64url(relay.token),
-          },
-          body: payload,
-          signal: ac.signal,
-        }
-      );
-      let code: string | undefined;
-      if (!res.ok) {
-        try {
-          const errBody = (await res.json()) as { error?: { code?: string }; code?: string };
-          code = errBody.error?.code ?? errBody.code;
-        } catch {
-          code = `HTTP_${res.status}`;
-        }
-      }
-      results.push({ url: row.url, ok: res.ok, status: res.status, ...(code ? { code } : {}) });
-    } catch {
-      results.push({ url: row.url, ok: false, status: 0, code: 'RELAY_UNREACHABLE' });
-    } finally {
-      clearTimeout(timer);
-    }
+    results.push(
+      await forwardPackToRelay({
+        url: row.url,
+        tenantId: relay.tenantId,
+        token: relay.token,
+        payload,
+        doFetch,
+        dial,
+      })
+    );
   }
-  const ok = results.some((item) => item.ok);
-  if (!ok) return jsonError('RELAY_PACK_FORWARD_FAILED', 502, { results });
+  if (!results.some((item) => item.ok)) {
+    return jsonError('RELAY_PACK_FORWARD_FAILED', 502, { results });
+  }
   return jsonBody({ ok: true, results });
 }
