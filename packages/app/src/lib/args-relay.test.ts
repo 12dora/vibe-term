@@ -18,6 +18,7 @@ describe('relay command parsing', () => {
     expect(nested(['relay', 'quota', 'default']).name).toBe('relay.quota');
     expect(nested(['relay', 'label', 'abc', 'text']).name).toBe('relay.label');
     expect(nested(['relay', 'enroll', 'https://r.example']).name).toBe('relay.enroll');
+    expect(nested(['relay', 'join', 'https://r.example']).name).toBe('relay.join');
     expect(nested(['relay', 'reauth', 'https://r.example']).name).toBe('relay.reauth');
     expect(nested(['relay', 'leave']).name).toBe('relay.leave');
     expect(nested(['relay', 'list']).name).toBe('relay.list');
@@ -75,6 +76,11 @@ describe('relay flag allowlists', () => {
     expect(() =>
       assertKnownFlags(parseArgs(['relay', 'enroll', 'https://r.example', '--username', 'ivy']))
     ).not.toThrow();
+    expect(() =>
+      assertKnownFlags(
+        parseArgs(['relay', 'join', 'https://r.example', '--tenant', 'abc', '--password', 'p'])
+      )
+    ).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['relay', 'list', '--json']))).not.toThrow();
   });
 
@@ -98,7 +104,7 @@ describe('relay flag allowlists', () => {
 });
 
 describe('relay commands run on the Bun auth runtime', () => {
-  test('all eleven relay commands are auth commands', () => {
+  test('all twelve relay commands are auth commands', () => {
     for (const name of [
       'status',
       'tenants',
@@ -108,6 +114,7 @@ describe('relay commands run on the Bun auth runtime', () => {
       'quota',
       'label',
       'enroll',
+      'join',
       'reauth',
       'leave',
       'list',

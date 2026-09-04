@@ -60,6 +60,16 @@ describe('resolveNestedCommand', () => {
     expect(parsed.flags.name).toBe('n1');
   });
 
+  test('accepts hub join --password', () => {
+    const parsed = parseArgs(['hub', 'join', 'https://hub.example', '--password', 'secret']);
+    expect(resolveNestedCommand(parsed).name).toBe('hub.join');
+    expect(parsed.flags.password).toBe('secret');
+    expect(() => assertKnownFlags(parsed)).not.toThrow();
+    expect(() =>
+      assertKnownFlags(parseArgs(['hub', 'join', 'https://hub.example', '--password']))
+    ).not.toThrow();
+  });
+
   test('parses hub join/leave --no-restart as a boolean flag', () => {
     const join = parseArgs([
       'hub',
@@ -239,6 +249,8 @@ describe('cli help', () => {
     );
     expect(cliHelpText('zh-CN')).toContain('同时移除所有通行密钥、两步验证并注销全部会话');
     expect(help).toContain('tmex hub join');
+    expect(help).toContain('--password');
+    expect(help).toContain('tmex relay join');
     expect(help).toContain('tmex hub standby --public-url');
     expect(help).toContain('tmex hub promote');
     expect(help).toContain('tmex hub demote');

@@ -250,6 +250,40 @@ export async function removeStagedEnv(
   await remove(stagedPath).catch(() => undefined);
 }
 
+export function parseJoinHubCredentials(input: {
+  token?: string;
+  password?: string;
+  method?: 'token' | 'password';
+}): {
+  method: 'token' | 'password';
+  token: string;
+  password: string;
+} {
+  const token = typeof input.token === 'string' ? input.token : '';
+  const password = typeof input.password === 'string' ? input.password : '';
+  if (token && password) {
+    throw new SetupError('invalid_body', 'token and password are mutually exclusive', 400);
+  }
+  if (!token && !password) {
+    throw new SetupError('invalid_body', 'token or password is required', 400);
+  }
+  const method: 'token' | 'password' =
+    input.method === 'password'
+      ? 'password'
+      : input.method === 'token'
+        ? 'token'
+        : password && !token
+          ? 'password'
+          : 'token';
+  if (method === 'password' && !password) {
+    throw new SetupError('invalid_password', 'mesh account password is required', 400);
+  }
+  if (method === 'token' && !token) {
+    throw new SetupError('invalid_token', 'join token is required', 400);
+  }
+  return { method, token, password };
+}
+
 export function newStagedEnvPath(envPath: string): string {
   return join(
     dirname(envPath),

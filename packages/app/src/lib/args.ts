@@ -34,6 +34,7 @@ export type NestedCommandName =
   | 'relay.reauth'
   | 'relay.leave'
   | 'relay.list'
+  | 'relay.join'
   | 'enroll'
   | 'direct'
   | 'unknown';
@@ -134,6 +135,7 @@ const RELAY_SUBCOMMANDS: Record<string, NestedCommandName> = {
   quota: 'relay.quota',
   label: 'relay.label',
   enroll: 'relay.enroll',
+  join: 'relay.join',
   reauth: 'relay.reauth',
   leave: 'relay.leave',
   list: 'relay.list',
@@ -230,6 +232,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     ...GLOBAL_FLAGS,
     'install-dir',
     'token',
+    'password',
     'name',
     'insecure-local',
     'no-restart',
@@ -282,6 +285,16 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   ]),
   'relay.label': RELAY_ADMIN_FLAGS,
   'relay.enroll': RELAY_TENANT_FLAGS,
+  'relay.join': new Set([
+    ...GLOBAL_FLAGS,
+    'install-dir',
+    'service-name',
+    'tenant',
+    'password',
+    'name',
+    'ca-fingerprint',
+    'no-restart',
+  ]),
   'relay.reauth': RELAY_TENANT_FLAGS,
   'relay.leave': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
   'relay.list': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']),

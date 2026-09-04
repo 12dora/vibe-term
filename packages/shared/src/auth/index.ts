@@ -297,3 +297,20 @@ export type {
 } from './relay-records';
 
 export { applyRenameNode } from './rename-node-record';
+
+export {
+  DOMAIN_HUB_ENROLL,
+  HUB_ENROLL_PROOF_MAX_SKEW_MS,
+  HubEnrollProofSchema,
+  decodeHubEnrollProof,
+  encodeHubEnrollProof,
+  signHubEnrollProof,
+  verifyHubEnrollProof,
+} from './hub-enroll-proof';
+export type {
+  HubEnrollProof,
+  HubEnrollProofSigner,
+  SignedHubEnrollProof,
+  VerifyHubEnrollProofError,
+  VerifyHubEnrollProofResult,
+} from './hub-enroll-proof';

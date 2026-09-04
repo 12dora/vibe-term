@@ -41,6 +41,7 @@ import {
   isNetworkFetchError,
   redeemEnrollment,
 } from '../lib/hub-client';
+import { requestEnrollmentByPassword } from '../lib/hub-password-join';
 import { applyHubUserPasswd, mapPasswdApplyError } from '../lib/hub-user-passwd';
 import { applyHubModeEnvKeys, parseHubPeerIds } from '../lib/install';
 import { createInstallLayout } from '../lib/install-layout';
@@ -575,13 +576,16 @@ export async function runHubJoin(
   userId: string;
   hubUrl: string;
 }> {
-  const token = asString(parsed.flags.token);
-  if (!token) {
-    throw new Error('hub join requires --token');
+  const tokenFlag = asString(parsed.flags.token);
+  if (tokenFlag && parsed.flags.password !== undefined) {
+    throw new Error('hub join --token and --password are mutually exclusive');
   }
-  if (isRelayJoinToken(token)) {
+  if (!tokenFlag && parsed.flags.password === undefined) {
+    throw new Error('hub join requires --token or --password');
+  }
+  if (tokenFlag && isRelayJoinToken(tokenFlag)) {
     const { runRelayJoin } = await import('./relay-join');
-    const relay = await runRelayJoin(parsed, urlRaw, token, io);
+    const relay = await runRelayJoin(parsed, urlRaw, tokenFlag, io);
     return { userId: relay.userId, hubUrl: relay.relayUrl };
   }
   if (!urlRaw) {
@@ -589,6 +593,20 @@ export async function runHubJoin(
   }
   const insecureLocal = parsed.flags['insecure-local'] === true || io.insecureLocal === true;
   const name = asString(parsed.flags.name) || 'node';
+  const token =
+    tokenFlag ??
+    (
+      await requestEnrollmentByPassword({
+        hubUrl: urlRaw,
+        password: await resolvePassword({
+          password: asString(parsed.flags.password),
+        }),
+        fetcher: io.fetcher,
+        insecureLocal,
+        nodeEnv: io.nodeEnv ?? process.env.NODE_ENV,
+        now: io.now,
+      })
+    ).token;
 
   return await withAuth(parsed, io, async (ctx) => {
     const joined = await performHubJoin(

@@ -34,6 +34,7 @@ describe('i18n', () => {
     setLang('zh-CN');
     expect(t('cli.help')).toBe(cliHelpText('zh-CN'));
     expect(t('cli.help')).toContain('tmex hub join');
+    expect(t('cli.help')).toContain('tmex relay join');
     expect(t('cli.help')).toContain('--no-restart');
     expect(t('cli.help')).toContain('同时移除所有通行密钥、两步验证并注销全部会话');
   });

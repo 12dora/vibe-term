@@ -95,7 +95,9 @@ export interface SetupHubResponse {
 
 export interface SetupJoinRequest {
   hubUrl: string;
-  token: string;
+  token?: string;
+  password?: string;
+  method?: 'token' | 'password';
   name: string;
   directEnable: boolean;
   insecureLocal?: boolean;
@@ -128,6 +130,25 @@ export interface SetupRelayResponse {
   hasPassword: boolean;
   restarting: true;
   fingerprint?: string;
+}
+
+export interface SetupRelayJoinRequest {
+  relayUrl: string;
+  tenantId: string;
+  password: string;
+  name: string;
+  caFingerprint?: string;
+  directEnable?: boolean;
+}
+
+export interface SetupRelayJoinResponse {
+  ok: true;
+  relayUrl: string;
+  tenantId: string;
+  username: string;
+  direct: SetupDirectOutcome;
+  directError: string | null;
+  restarting: true;
 }
 
 export interface ApiErrorBody {

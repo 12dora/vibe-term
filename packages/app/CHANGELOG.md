@@ -4,6 +4,11 @@ _2026-09-04_
 
 ## English
 
+### New
+
+- A machine can join an existing Hub mesh with the Hub URL and the mesh account password (`tmex hub join <url> --password`, or setup `method: 'password'`). No join token is typed; the client derives the root key, creates a normal enrollment, and the Hub accepts `POST /api/hub/enrollments/by-password`.
+- A machine can join an existing relay tenant the same way from setup or `tmex relay join <url> --tenant <id> [--password]`.
+
 ### Fixes
 
 - The terminal's minimum peer version is now 1.1.23, the version that actually speaks the current state stream — 1.1.22 was never interoperable. When a peer is too old, the message now says which side it is: the node (named by id) and its version, the Gateway and its version, or this page, which just needs a reload. The notice also stops repeating on every reconnect.
@@ -11,6 +16,11 @@ _2026-09-04_
 ---
 
 ## 中文
+
+### 新增
+
+- 可用 Hub 地址与 mesh 账户密码加入既有 Hub（`tmex hub join <url> --password`，或 setup `method: 'password'`），不必再输入加入码。客户端派生根钥并创建普通 enrollment，Hub 以 `POST /api/hub/enrollments/by-password` 验收。
+- 同样可用中继地址、租户编号与密码加入既有租户（setup 或 `tmex relay join <url> --tenant <id> [--password]`）。
 
 ### 修复
 

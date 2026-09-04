@@ -137,6 +137,33 @@ describe('SetupApi.joinHub', () => {
       .catch((e) => e);
     expect((err as SetupApiError).code).toBe('node_revoked');
   });
+
+  test('password method 透传 method 与 password', async () => {
+    const { client, calls } = recorder([
+      Response.json({
+        ok: true,
+        hubUrl: 'https://hub.example.com',
+        username: 'alice',
+        direct: 'skipped',
+        directError: null,
+        restarting: true,
+      }),
+    ]);
+    await new SetupApi(client).joinHub({
+      hubUrl: 'https://hub.example.com',
+      method: 'password',
+      password: 'tmex-test-pass',
+      name: 'studio',
+      directEnable: false,
+    });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      hubUrl: 'https://hub.example.com',
+      method: 'password',
+      password: 'tmex-test-pass',
+      name: 'studio',
+      directEnable: false,
+    });
+  });
 });
 
 describe('SetupApi.setupRelay', () => {
@@ -179,6 +206,36 @@ describe('SetupApi.setupRelay', () => {
       .catch((e) => e);
     expect((err as SetupApiError).code).toBe('not_standalone');
     expect((err as SetupApiError).status).toBe(409);
+  });
+});
+
+describe('SetupApi.relayJoin', () => {
+  test('POST /api/setup/relay-join 透传请求体', async () => {
+    const { client, calls } = recorder([
+      Response.json({
+        ok: true,
+        relayUrl: 'https://relay.example',
+        tenantId: 'tenant-1',
+        username: 'alice',
+        direct: 'skipped',
+        directError: null,
+        restarting: true,
+      }),
+    ]);
+    const out = await new SetupApi(client).relayJoin({
+      relayUrl: 'https://relay.example',
+      tenantId: 'tenant-1',
+      password: 'tmex-test-pass',
+      name: 'studio',
+    });
+    expect(out.tenantId).toBe('tenant-1');
+    expect(calls[0].url).toBe('/api/setup/relay-join');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      relayUrl: 'https://relay.example',
+      tenantId: 'tenant-1',
+      password: 'tmex-test-pass',
+      name: 'studio',
+    });
   });
 });
 

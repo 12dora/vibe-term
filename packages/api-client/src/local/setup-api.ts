@@ -10,6 +10,8 @@ import type {
   SetupJoinRequest,
   SetupJoinResponse,
   SetupPrecheckResponse,
+  SetupRelayJoinRequest,
+  SetupRelayJoinResponse,
   SetupRelayRequest,
   SetupRelayResponse,
 } from './types';
@@ -110,6 +112,16 @@ export class SetupApi {
     });
     if (!res.ok) throw await readError(res, 'setup_join_failed');
     return (await res.json()) as SetupJoinResponse;
+  }
+
+  async relayJoin(req: SetupRelayJoinRequest): Promise<SetupRelayJoinResponse> {
+    const res = await this.client.fetch('/api/setup/relay-join', {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) throw await readError(res, 'setup_relay_join_failed');
+    return (await res.json()) as SetupRelayJoinResponse;
   }
 
   async setupRelay(req: SetupRelayRequest): Promise<SetupRelayResponse> {

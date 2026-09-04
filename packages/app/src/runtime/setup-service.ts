@@ -21,6 +21,7 @@ import {
   stringifyEnv,
 } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
+import { requestEnrollmentByPassword as defaultRequestEnrollmentByPassword } from '../lib/hub-password-join';
 import { createInstallLayout } from '../lib/install-layout';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { readInstalledNativeManifest } from '../lib/native-datachannel';
@@ -37,6 +38,7 @@ import {
   errorCause,
   isUniqueConstraintFailure,
   newStagedEnvPath,
+  parseJoinHubCredentials,
   patchOwnedEnvKeys,
   promoteStagedEnv,
   readExistingEnv,
@@ -133,7 +135,9 @@ export type BecomeHubResult = {
 
 export type JoinHubInput = {
   hubUrl: string;
-  token: string;
+  token?: string;
+  password?: string;
+  method?: 'token' | 'password';
   name: string;
   directEnable: boolean;
   insecureLocal?: boolean;
@@ -174,6 +178,7 @@ export type SetupServiceDeps = SetupEnvHost & {
     input: PerformHubJoinInput,
     deps: PerformHubJoinDeps
   ) => ReturnType<typeof defaultPerformHubJoin>;
+  requestEnrollmentByPassword?: typeof defaultRequestEnrollmentByPassword;
   now?: () => number;
   startedAt?: number;
   quiesceMesh?: () => Promise<void> | void;
@@ -463,9 +468,7 @@ export async function becomeHub(
 
 export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Promise<JoinHubResult> {
   assertStandalone(deps.roles);
-  if (typeof input.token !== 'string' || input.token.length === 0) {
-    throw new SetupError('invalid_token', 'join token is required', 400);
-  }
+  const { method, token: tokenValue, password: passwordValue } = parseJoinHubCredentials(input);
   if (typeof input.name !== 'string' || input.name.trim().length === 0) {
     throw new SetupError('join_failed', 'node name is required', 400);
   }
@@ -507,12 +510,26 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
     }
 
     const perform = deps.performHubJoin ?? defaultPerformHubJoin;
+    let token = tokenValue;
     let joined: Awaited<ReturnType<typeof defaultPerformHubJoin>>;
     try {
+      if (method === 'password') {
+        const request = deps.requestEnrollmentByPassword ?? defaultRequestEnrollmentByPassword;
+        token = (
+          await request({
+            hubUrl: input.hubUrl,
+            password: passwordValue,
+            fetcher: deps.fetch,
+            insecureLocal: input.insecureLocal,
+            nodeEnv: deps.nodeEnv,
+            now: deps.now,
+          })
+        ).token;
+      }
       joined = await perform(
         {
           hubUrl: input.hubUrl,
-          token: input.token,
+          token,
           name: input.name.trim(),
           insecureLocal: input.insecureLocal,
           nodeEnv: deps.nodeEnv,

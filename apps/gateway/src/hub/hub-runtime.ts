@@ -33,6 +33,7 @@ import type { AuthDb } from '../auth/types';
 import { type UserRecord, UserStore } from '../auth/user-store';
 import { applyForcedKeyLogCompat, inspectHubAuthRecordCompat } from './hub-authorization';
 import { decodeCertificateIdentityKeys, parseKdfParams } from './hub-cert-keys';
+import { createEnrollmentFromAuth, handleHubPasswordEnroll } from './hub-password-enroll';
 import { type HubPeerFetch, HubPeerPoller } from './hub-peer-poller';
 import {
   type UplinkNodeList,
@@ -207,12 +208,12 @@ export class BunServerWsAdapter implements ServerSocketAdapter {
 
 export class HubRuntime {
   private readonly db: AuthDb;
-  private readonly userStore: UserStore;
+  readonly userStore: UserStore;
   private readonly keyLogSource: HubKeyLogSource;
   private readonly authenticate: HubAuthenticate;
-  private readonly now: () => number;
-  private readonly config: HubRuntimeConfig;
-  private readonly tlsInfo: HubTlsInfoProvider | undefined;
+  readonly now: () => number;
+  readonly config: HubRuntimeConfig;
+  readonly tlsInfo: HubTlsInfoProvider | undefined;
   readonly registry: NodeRegistry;
   readonly uplink: UplinkServer;
   readonly meshHubs: MeshHubStore;
@@ -767,6 +768,10 @@ export class HubRuntime {
           return blocked ?? this.handleCreateEnrollment(req, a);
         })
       ) ??
+      hit('/api/hub/enrollments/by-password', 'POST', async () => {
+        const blocked = await this.requireWriterOrForward(req);
+        return blocked ?? handleHubPasswordEnroll(this, req);
+      }) ??
       hit('/api/hub/enrollments/:id', 'GET', (p) =>
         this.withAuth(req, (a) => this.handleGetEnrollment(decodeURIComponent(p.id), a))
       ) ??
@@ -890,72 +895,10 @@ export class HubRuntime {
   }
 
   private async handleCreateEnrollment(req: Request, auth: HubAuthResult): Promise<Response> {
-    const body = await readJsonObjectBody(req);
-    if (!body) return json({ error: 'invalid_body' }, 400);
-    const user = this.userStore.getById(auth.userId);
-    if (!user) return json({ error: 'user_not_found' }, 404);
-    let enrollPk: Uint8Array;
-    let authorizationBytes: Uint8Array;
-    let authorizationSig: Uint8Array;
-    try {
-      enrollPk = requireB64url(body, 'enroll_pk', 32);
-      authorizationBytes = requireB64url(body, 'authorization');
-      authorizationSig = requireB64url(body, 'authorization_sig');
-    } catch (err) {
-      return validationError(err);
-    }
-    let authorization: ReturnType<typeof decodeAuthorization>;
-    try {
-      authorization = decodeAuthorization(authorizationBytes);
-    } catch {
-      return json({ error: 'bad_authorization' }, 400);
-    }
-    const authErr = await this.verifyEnrollmentAuthorization(
-      user,
-      enrollPk,
-      authorizationBytes,
-      authorizationSig,
-      authorization
-    );
-    if (authErr) return json({ error: authErr }, 400);
-    const now = this.now();
-    const authExp = Number(authorization.exp);
-    const bodyExp = typeof body.exp === 'number' ? body.exp : authExp;
-    const expiresAt = Math.min(authExp, bodyExp);
-    if (!Number.isFinite(expiresAt) || expiresAt <= now) return json({ error: 'expired' }, 400);
-    if (this.userStore.getEnrollmentTokenByEnrollPublicKey(enrollPk)) {
-      return json({ error: 'duplicate_enroll_pk' }, 409);
-    }
-    const payload: StoredEnrollmentPayload = {
-      authorization_b64: encodeBase64url(authorizationBytes),
-      entry_node_id: auth.entryNodeId,
-      ...(auth.sid && { entry_sid: auth.sid }),
-    };
-    const token = this.userStore.createEnrollmentToken({
-      id: crypto.randomUUID(),
-      userId: user.id,
-      enrollPublicKey: enrollPk,
-      authorizationJson: JSON.stringify(payload),
-      authorizationSig,
-      expiresAt,
-    });
-    const replicatedTo = await this.publishEnrollmentToken(token);
-    const tls = (await this.tlsInfo?.()) ?? { caFingerprint: null, caPem: null };
-    return json(
-      {
-        ok: true,
-        id: token.id,
-        expires_at: expiresAt,
-        public_url: this.config.publicUrl,
-        ca_fingerprint: tls.caFingerprint,
-        ca_cert_pem: tls.caPem,
-        replicatedTo,
-      },
-      201
-    );
+    return createEnrollmentFromAuth(this, req, auth);
   }
 
-  private async publishEnrollmentToken(
+  async publishEnrollmentToken(
     token: ReturnType<UserStore['createEnrollmentToken']>
   ): Promise<string[]> {
     const revision = this.userStore.nextEnrollmentTokenRevision(this.uplink.writerEpoch());
@@ -966,7 +909,7 @@ export class HubRuntime {
     );
   }
 
-  private async verifyEnrollmentAuthorization(
+  async verifyEnrollmentAuthorization(
     user: UserRecord,
     enrollPk: Uint8Array,
     authorizationBytes: Uint8Array,

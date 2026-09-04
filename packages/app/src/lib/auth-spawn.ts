@@ -36,6 +36,7 @@ export const AUTH_COMMANDS = new Set([
   'relay.quota',
   'relay.label',
   'relay.enroll',
+  'relay.join',
   'relay.reauth',
   'relay.leave',
   'relay.list',
