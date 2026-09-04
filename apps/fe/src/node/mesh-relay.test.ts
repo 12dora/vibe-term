@@ -52,6 +52,20 @@ function apiOf(impl: () => Promise<RelayTenantStatus>): RelayTenantApi {
   return { status: impl } as unknown as RelayTenantApi;
 }
 
+function apiWith(parts: Partial<Record<'status' | 'switchRelay', unknown>>): RelayTenantApi {
+  return parts as unknown as RelayTenantApi;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('mesh-relay 纯函数', () => {
   test('attached / ordered / writable / kicked', () => {
     const snapshot = {
@@ -157,6 +171,88 @@ describe('switchMeshRelay', () => {
     } as unknown as RelayTenantApi;
 
     await expect(switchMeshRelay('https://b.example', api)).rejects.toThrow();
+    expect(attachedRelay(getMeshRelayState())?.url).toBe('https://a.example');
+  });
+});
+
+describe('切换与轮询交错', () => {
+  const ON_A = () => status({ relays: [link('https://a.example', { attached: true })] });
+  const ON_B = () => status({ relays: [link('https://b.example', { attached: true })] });
+
+  beforeEach(() => {
+    resetMeshRelayStateForTest();
+  });
+
+  test('切换之前发出的 /status 回来得晚，也不能把链路扳回旧的那条', async () => {
+    const stale = deferred<RelayTenantStatus>();
+    const api = apiWith({
+      status: () => stale.promise,
+      switchRelay: () => Promise.resolve(ON_B()),
+    });
+
+    const polling = refreshMeshRelay(api);
+    await switchMeshRelay('https://b.example', api);
+    stale.resolve(ON_A());
+    await polling;
+
+    expect(attachedRelay(getMeshRelayState())?.url).toBe('https://b.example');
+  });
+
+  test('切换之前那次 /status 失败，错误也不落进已经切好的这一份', async () => {
+    const stale = deferred<RelayTenantStatus>();
+    const api = apiWith({
+      status: () => stale.promise,
+      switchRelay: () => Promise.resolve(ON_B()),
+    });
+
+    const polling = refreshMeshRelay(api);
+    await switchMeshRelay('https://b.example', api);
+    stale.reject(new Error('boom'));
+    await polling;
+
+    const state = getMeshRelayState();
+    expect(state.error).toBeNull();
+    expect(state.loading).toBe(false);
+    expect(attachedRelay(state)?.url).toBe('https://b.example');
+  });
+
+  test('切换之后的刷新自己发一次，不复用切换前那次在途请求', async () => {
+    const stale = deferred<RelayTenantStatus>();
+    let calls = 0;
+    const api = apiWith({
+      status: () => {
+        calls += 1;
+        return calls === 1 ? stale.promise : Promise.resolve(ON_B());
+      },
+      switchRelay: () => Promise.resolve(ON_B()),
+    });
+
+    const polling = refreshMeshRelay(api);
+    await switchMeshRelay('https://b.example', api);
+    await refreshMeshRelay(api);
+    expect(calls).toBe(2);
+
+    stale.resolve(ON_A());
+    await polling;
+    expect(attachedRelay(getMeshRelayState())?.url).toBe('https://b.example');
+  });
+
+  test('没切换时同一拍里的重复刷新仍然只打一次', async () => {
+    const pending = deferred<RelayTenantStatus>();
+    let calls = 0;
+    const api = apiWith({
+      status: () => {
+        calls += 1;
+        return pending.promise;
+      },
+    });
+
+    const first = refreshMeshRelay(api);
+    const second = refreshMeshRelay(api);
+    pending.resolve(ON_A());
+    await Promise.all([first, second]);
+
+    expect(calls).toBe(1);
     expect(attachedRelay(getMeshRelayState())?.url).toBe('https://a.example');
   });
 });

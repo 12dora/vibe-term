@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@tmex/ui/alert-dialog';
+import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { relayLabel } from './relay-rows';
 import type { RelaySwitchController } from './use-relay-switch';
@@ -44,6 +45,7 @@ export function RelaySwitchDialog({ controller }: { controller: RelaySwitchContr
     <AlertDialog
       open
       onOpenChange={(next: boolean) => {
+        // 在途期间 `dismiss` 自己会拒；这里同样不放行，Esc / 点外面都关不掉。
         if (!next) controller.dismiss();
       }}
     >
@@ -53,7 +55,11 @@ export function RelaySwitchDialog({ controller }: { controller: RelaySwitchContr
           <AlertDialogDescription>{t(copy.descriptionKey)}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel onClick={controller.dismiss} data-testid="nodes-relay-switch-cancel">
+          <AlertDialogCancel
+            disabled={controller.busy}
+            onClick={controller.dismiss}
+            data-testid="nodes-relay-switch-cancel"
+          >
             {t('common.cancel')}
           </AlertDialogCancel>
           <AlertDialogAction
@@ -61,6 +67,7 @@ export function RelaySwitchDialog({ controller }: { controller: RelaySwitchContr
             onClick={() => void controller.confirm()}
             data-testid="nodes-relay-switch-ok"
           >
+            {controller.busy && <Loader2 className="animate-spin motion-reduce:animate-none" />}
             {t(copy.confirmKey)}
           </AlertDialogAction>
         </AlertDialogFooter>
