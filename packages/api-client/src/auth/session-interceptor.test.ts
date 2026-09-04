@@ -88,6 +88,18 @@ describe('session interceptor', () => {
     expect(navigated).toEqual([]);
   });
 
+  test('本机代访上级中继被拒（RELAY_* 码）的 401 既不派发也不跳转', async () => {
+    const { events, navigated } = setup();
+    const client = clientReturning(
+      () => new Response(JSON.stringify({ code: 'RELAY_BAD_PROOF' }), { status: 401 })
+    );
+    await client.fetch('/api/mesh/relay/enroll');
+    await flush();
+
+    expect(events).toEqual([]);
+    expect(navigated).toEqual([]);
+  });
+
   test('仪式之外的 auth 端点 401 仍然跳登录页', async () => {
     const { navigated } = setup();
     const client = clientReturning(() => new Response('{}', { status: 401 }));

@@ -116,6 +116,10 @@ const LOGIN_CEREMONY_PATHS = new Set([
   '/api/auth/passkey/login/options',
 ]);
 
+function isRelayRejection(code: unknown): boolean {
+  return typeof code === 'string' && code.startsWith('RELAY_');
+}
+
 function isLoginCeremonyPath(path: string): boolean {
   return LOGIN_CEREMONY_PATHS.has(urlPathname(path));
 }
@@ -173,6 +177,9 @@ export async function handleUnauthorized(res: Response, path: string): Promise<v
   }
   // 登录仪式自身的 401：这次尝试的结论归调用方处理，绝不能当成「当前会话失效」。
   if (isLoginCeremonyPath(path)) return;
+  // 本机代为访问上级中继时把中继的拒绝原样透传（`RELAY_BAD_PROOF` 等）：那是中继不认凭据，
+  // 本机会话仍然有效，不能把整页踢去登录页。
+  if (isRelayRejection(body.code)) return;
   emit({ nodeId: SELF_NODE_ID, scope: 'global', path });
   goToLogin();
 }
