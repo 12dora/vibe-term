@@ -2118,3 +2118,140 @@ describe('GET /api/hub/status', () => {
     }
   });
 });
+
+describe('GET /api/hub/nodes admission_status', () => {
+  type HubNodeListRow = {
+    id: string;
+    status: string;
+    admission_status: 'pending' | 'admitted' | 'revoked';
+    enrollment_id?: string;
+    authorization?: string;
+    authorization_sig?: string;
+    certificate?: string;
+    cert_sig?: string;
+  };
+
+  async function listNodes(
+    userStore: ReturnType<typeof createHubTestStack>['userStore'],
+    keyLogSource: ReturnType<typeof createHubTestStack>['keyLogSource'],
+    db: ReturnType<typeof createMigratedAuthDb>['db'],
+    userId: string
+  ): Promise<HubNodeListRow[]> {
+    const hub = new HubRuntime({
+      db,
+      userStore,
+      keyLogSource,
+      config: { publicUrl: 'https://hub.example', stun: [] },
+      authenticate: () => ({ userId, entryNodeId: 'entry' }),
+    });
+    const listed = await hub.handleRequest(new Request('http://hub/api/hub/nodes'), dummyServer);
+    expect(listed?.status).toBe(200);
+    const body = (await listed?.json()) as { nodes: HubNodeListRow[] };
+    hub.stop();
+    return body.nodes;
+  }
+
+  test('redeemed enrollment without node_certs is pending and includes admit material', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const now = Date.now();
+      const ed = generateEd25519KeyPair();
+      const x = generateX25519KeyPair();
+      const enroll = generateEd25519KeyPair();
+      const cert = createNodeCertificate(enroll.secretKey, {
+        uid: user.id,
+        edPk: ed.publicKey,
+        x25519Pk: x.publicKey,
+        enrollPk: enroll.publicKey,
+        now,
+      });
+      const nodeId = nodeIdToHex(cert.nodeId);
+      const authorization = randomBytes(32);
+      const authorizationSig = randomBytes(64);
+      userStore.createNode({
+        id: nodeId,
+        userId: user.id,
+        name: 'pending-node',
+        status: 'enrolled',
+        version: null,
+        now,
+      });
+      userStore.createEnrollmentToken({
+        id: 'enroll-pending-1',
+        userId: user.id,
+        enrollPublicKey: enroll.publicKey,
+        authorizationJson: JSON.stringify({
+          authorization_b64: encodeBase64url(authorization),
+          entry_node_id: 'self',
+        }),
+        authorizationSig,
+        expiresAt: now + 60_000,
+      });
+      userStore.consumeEnrollmentToken(enroll.publicKey, {
+        nodeId,
+        now,
+        authorizationJson: JSON.stringify({
+          authorization_b64: encodeBase64url(authorization),
+          entry_node_id: 'self',
+          certificate_b64: encodeBase64url(cert.certificateBytes),
+          cert_sig_b64: encodeBase64url(cert.certSig),
+          node_id: nodeId,
+        }),
+      });
+
+      const nodes = await listNodes(userStore, keyLogSource, db, user.id);
+      const row = nodes.find((n) => n.id === nodeId);
+      expect(row?.status).toBe('enrolled');
+      expect(row?.admission_status).toBe('pending');
+      expect(row?.enrollment_id).toBe('enroll-pending-1');
+      expect(row?.authorization).toBe(encodeBase64url(authorization));
+      expect(row?.authorization_sig).toBe(encodeBase64url(authorizationSig));
+      expect(row?.certificate).toBe(encodeBase64url(cert.certificateBytes));
+      expect(row?.cert_sig).toBe(encodeBase64url(cert.certSig));
+    } finally {
+      close();
+    }
+  });
+
+  test('live node_certs row is admitted', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const node = seedAdmittedNode(userStore, user.id, { name: 'live' });
+      const nodes = await listNodes(userStore, keyLogSource, db, user.id);
+      const row = nodes.find((n) => n.id === node.nodeId);
+      expect(row?.admission_status).toBe('admitted');
+      expect(row?.enrollment_id).toBeUndefined();
+      expect(row?.certificate).toBe(encodeBase64url(node.certBytes));
+      expect(row?.cert_sig).toBe(encodeBase64url(node.certSig));
+    } finally {
+      close();
+    }
+  });
+
+  test('revoked node or cert is revoked', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const revoked = seedAdmittedNode(userStore, user.id, { name: 'gone', revoked: true });
+      const certRevoked = seedCertOnly(userStore, user.id, { revoked: true });
+      userStore.createNode({
+        id: certRevoked.nodeId,
+        userId: user.id,
+        name: 'cert-revoked',
+        status: 'enrolled',
+        version: null,
+        now: Date.now(),
+      });
+      const nodes = await listNodes(userStore, keyLogSource, db, user.id);
+      expect(nodes.find((n) => n.id === revoked.nodeId)?.admission_status).toBe('revoked');
+      expect(nodes.find((n) => n.id === certRevoked.nodeId)?.admission_status).toBe('revoked');
+    } finally {
+      close();
+    }
+  });
+});

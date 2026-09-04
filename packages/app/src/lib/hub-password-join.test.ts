@@ -57,6 +57,39 @@ describe('resolveHubJoinToken', () => {
 });
 
 describe('requestEnrollmentByPassword', () => {
+  test('still enrolls when the hub has TOTP or passkey enabled', async () => {
+    const kdf = generateKdfParams();
+    kdf.memory_kib = 8;
+    kdf.iterations = 1;
+    const material = await requestEnrollmentByPassword({
+      hubUrl: 'https://hub.example',
+      password: PASSWORD,
+      now: () => 1_700_000_000_000,
+      fetcher: async (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/mode')) {
+          return Response.json({
+            uid: UID,
+            kdfParams: kdfJson(kdf),
+            rootEpoch: 0,
+            totpEnabled: true,
+            passkeySecondFactor: true,
+          });
+        }
+        if (url.endsWith('/api/hub/enrollments/by-password')) {
+          return Response.json({
+            ok: true,
+            id: 'enroll-2fa',
+            key_log_head_hash: encodeBase64url(HEAD),
+          });
+        }
+        return new Response('nope', { status: 404 });
+      },
+    });
+    expect(material.enrollmentId).toBe('enroll-2fa');
+    expect(material.token.length).toBeGreaterThan(10);
+  });
+
   test('exchanges password for a join token', async () => {
     const kdf = generateKdfParams();
     kdf.memory_kib = 8;

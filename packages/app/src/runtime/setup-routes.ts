@@ -3,6 +3,7 @@ import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
 import { handleRelayJoinRequest } from './relay-join-routes';
 import { becomeRelay } from './relay-setup-service';
 import { type SetupServiceDeps, becomeHub, joinHub, precheckHubUrl } from './setup-service';
+import { SetupError } from './setup-shared';
 
 const SETUP_PATHS = new Set([
   '/api/setup/precheck',
@@ -15,6 +16,18 @@ const SETUP_PATHS = new Set([
 function readString(body: Record<string, unknown>, key: string): string {
   const value = body[key];
   return typeof value === 'string' ? value : '';
+}
+
+const TOTP_CODE_RE = /^\d{6,10}$/;
+
+function readOptionalTotpCode(body: Record<string, unknown>): string | undefined {
+  if (!Object.hasOwn(body, 'totpCode') || body.totpCode == null || body.totpCode === '') {
+    return undefined;
+  }
+  if (typeof body.totpCode !== 'string' || !TOTP_CODE_RE.test(body.totpCode)) {
+    throw new SetupError('invalid_body', 'totpCode must be 6-10 digits', 400);
+  }
+  return body.totpCode;
 }
 
 async function dispatchSetupAction(
@@ -74,6 +87,7 @@ async function dispatchSetupAction(
         name: readString(body, 'name'),
         directEnable: body.directEnable === true,
         insecureLocal: body.insecureLocal === true,
+        totpCode: readOptionalTotpCode(body),
       },
       deps
     )

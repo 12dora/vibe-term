@@ -377,4 +377,29 @@ describe('loginWithRootKey session extraction', () => {
       })
     ).rejects.toThrow(/Invalid credentials/i);
   });
+
+  test('maps TOTP_REQUIRED / TOTP_INVALID to clear errors', async () => {
+    await expect(
+      loginWithRootKey({
+        baseUrl: 'https://hub.example',
+        rootKey,
+        uid: 'u1',
+        fetcher: loginFetcher({
+          loginStatus: 401,
+          loginBody: { code: 'TOTP_REQUIRED' },
+        }),
+      })
+    ).rejects.toThrow(/TOTP code is required/i);
+    await expect(
+      loginWithRootKey({
+        baseUrl: 'https://hub.example',
+        rootKey,
+        uid: 'u1',
+        fetcher: loginFetcher({
+          loginStatus: 401,
+          loginBody: { error: 'TOTP_INVALID' },
+        }),
+      })
+    ).rejects.toThrow(/TOTP code is invalid/i);
+  });
 });

@@ -829,27 +829,14 @@ export class HubRuntime {
     const nodes = this.userStore
       .listNodes()
       .filter((n) => n.userId === auth.userId)
-      .map((n) => {
-        const cert = this.userStore.getCert(n.id);
-        const redeemed = parseStoredEnrollment(
-          this.userStore.getEnrollmentTokenByNodeId(n.id)?.authorizationJson ?? ''
-        );
-        const certificate =
-          redeemed?.certificate_b64 ?? (cert ? encodeBase64url(cert.certificateBytes) : undefined);
-        const certSig =
-          redeemed?.cert_sig_b64 ?? (cert ? encodeBase64url(cert.certSig) : undefined);
-        return {
-          id: n.id,
-          name: n.name,
-          status: n.status,
+      .map((n) =>
+        presentHubNodeRow({
+          node: n,
+          cert: this.userStore.getCert(n.id),
+          token: this.userStore.getEnrollmentTokenByNodeId(n.id),
           online: Boolean(this.registry.get(n.id)?.authenticated),
-          version: n.version,
-          last_seen_at: n.lastSeenAt,
-          direct_capable: n.directCapable,
-          ...(certificate ? { certificate } : {}),
-          ...(certSig ? { cert_sig: certSig } : {}),
-        };
-      });
+        })
+      );
     return json({ nodes });
   }
 
@@ -1200,6 +1187,65 @@ function redeemInTransaction(
   return {
     replacedExisting: Boolean(existing),
     alreadyAdmitted: existingCert?.revokedLogSeq === null,
+  };
+}
+
+type HubAdmissionStatus = 'pending' | 'admitted' | 'revoked';
+
+function deriveAdmissionStatus(
+  nodeStatus: string,
+  cert: { revokedLogSeq: number | null } | null
+): HubAdmissionStatus {
+  if (nodeStatus === 'revoked' || cert?.revokedLogSeq != null) return 'revoked';
+  if (cert) return 'admitted';
+  return 'pending';
+}
+
+function pendingAdmitMaterial(
+  token: { id: string; authorizationSig: Uint8Array } | null | undefined,
+  stored: StoredEnrollmentPayload | null
+): Record<string, unknown> {
+  if (!token || !stored?.certificate_b64 || !stored.cert_sig_b64) return {};
+  return {
+    enrollment_id: token.id,
+    authorization: stored.authorization_b64,
+    authorization_sig: encodeBase64url(token.authorizationSig),
+  };
+}
+
+function presentHubNodeRow(input: {
+  node: {
+    id: string;
+    name: string;
+    status: string;
+    version: string | null;
+    lastSeenAt: number | null;
+    directCapable: boolean;
+  };
+  cert: { certificateBytes: Uint8Array; certSig: Uint8Array; revokedLogSeq: number | null } | null;
+  token: { id: string; authorizationJson: string; authorizationSig: Uint8Array } | null;
+  online: boolean;
+}): Record<string, unknown> {
+  const stored = parseStoredEnrollment(input.token?.authorizationJson ?? '');
+  const admission_status = deriveAdmissionStatus(input.node.status, input.cert);
+  const certificate =
+    stored?.certificate_b64 ??
+    (input.cert ? encodeBase64url(input.cert.certificateBytes) : undefined);
+  const certSig =
+    stored?.cert_sig_b64 ?? (input.cert ? encodeBase64url(input.cert.certSig) : undefined);
+  const n = input.node;
+  return {
+    id: n.id,
+    name: n.name,
+    status: n.status,
+    admission_status,
+    online: input.online,
+    version: n.version,
+    last_seen_at: n.lastSeenAt,
+    direct_capable: n.directCapable,
+    ...(certificate ? { certificate } : {}),
+    ...(certSig ? { cert_sig: certSig } : {}),
+    ...(admission_status === 'pending' ? pendingAdmitMaterial(input.token, stored) : {}),
   };
 }
 
