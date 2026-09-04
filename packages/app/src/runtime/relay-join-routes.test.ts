@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readEnvFile } from '../lib/env-file';
 import type { LocalAuthContext } from '../lib/local-auth';
+import { RelayPasswordJoinError } from '../lib/relay-password-join-flow';
+import { mapError } from './http';
 import { handleRelayJoinRequest } from './relay-join-routes';
 import { type SetupServiceDeps, createSetupTransitionLock } from './setup-service';
 import { resetProcessSetupLockForTests } from './setup-shared';
@@ -98,4 +100,84 @@ describe('handleRelayJoinRequest', () => {
     expect(res.status).toBe(200);
     expect((await readEnvFile(envPath)).TMEX_ROLES).toBe('relay,node');
   });
+});
+
+const JOIN_BODY = {
+  relayUrl: 'https://relay.example',
+  tenantId: 'abc',
+  password: 'tmex-test-pass',
+  name: 'studio',
+};
+
+async function joinErrorResponse(code: string, message: string): Promise<Response> {
+  const base = await deps();
+  try {
+    return await handleRelayJoinRequest(JOIN_BODY, {
+      ...base,
+      performRelayPasswordJoin: async () => {
+        throw new RelayPasswordJoinError(code, message);
+      },
+    });
+  } catch (error) {
+    return mapError(error);
+  }
+}
+
+describe('handleRelayJoinRequest error mapping', () => {
+  const cases: Array<{ code: string; message: string; status: number; out: string }> = [
+    {
+      code: 'relay_password_invalid',
+      message: 'HTTP 401 RELAY_BAD_PROOF',
+      status: 401,
+      out: 'relay_password_invalid',
+    },
+    {
+      code: 'relay_tenant_unknown',
+      message: 'HTTP 404 RELAY_TENANT_NOT_FOUND',
+      status: 404,
+      out: 'relay_tenant_unknown',
+    },
+    {
+      code: 'relay_pack_invalid',
+      message: 'pack authentication failed',
+      status: 409,
+      out: 'relay_pack_invalid',
+    },
+    {
+      code: 'head_hash_mismatch',
+      message: 'head mismatch',
+      status: 409,
+      out: 'relay_pack_invalid',
+    },
+    {
+      code: 'relay_unreachable',
+      message: 'connection refused',
+      status: 502,
+      out: 'relay_unreachable',
+    },
+    {
+      code: 'local_user_exists',
+      message: 'already has a mesh user',
+      status: 409,
+      out: 'local_user_exists',
+    },
+    {
+      code: 'relay_not_authorized',
+      message: '该中继不在根签名的中继列表里',
+      status: 403,
+      out: 'relay_not_authorized',
+    },
+    { code: 'join_failed', message: 'key log rejected', status: 400, out: 'join_failed' },
+    { code: 'invalid_url', message: 'bad url', status: 400, out: 'join_failed' },
+  ];
+
+  for (const row of cases) {
+    test(`${row.code} → HTTP ${row.status} ${row.out}`, async () => {
+      const res = await joinErrorResponse(row.code, row.message);
+      expect(res.status).toBe(row.status);
+      const body = (await res.json()) as { error: { code: string; message: string } };
+      expect(body.error.code).toBe(row.out);
+      expect(body.error.message).toBe(row.message);
+    });
+  }
 });

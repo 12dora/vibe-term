@@ -143,7 +143,7 @@ describe('relay password join', () => {
         )
       ).rejects.toMatchObject({
         name: 'RelayPasswordJoinError',
-        code: 'head_hash_mismatch',
+        code: 'relay_pack_invalid',
       });
     } finally {
       created.close();

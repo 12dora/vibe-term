@@ -1,6 +1,7 @@
 import {
   ENROLLMENT_TTL_MS,
   type KdfParams,
+  type RootKey,
   canonicalHubUrl,
   createEnrollment,
   decodeBase64url,
@@ -31,6 +32,8 @@ export type EnrollmentByPasswordMaterial = {
   enrollmentId?: string;
   hubUrl: string;
   caFingerprint: string | null;
+  /** 调用方在自承认完成后必须 `wipeRootKey`。测试替身可省略。 */
+  rootKey?: RootKey;
 };
 
 function joinUrl(base: string, path: string): string {
@@ -184,12 +187,16 @@ function wipeEnrollmentSecrets(
   enrollment.enrollSk.fill(0);
 }
 
+export function wipeRootKey(rootKey: { seed: Uint8Array } | undefined): void {
+  rootKey?.seed.fill(0);
+}
+
 function joinTokenFromCreated(
   created: Record<string, unknown>,
   modeBody: Record<string, unknown>,
   enrollment: Awaited<ReturnType<typeof createEnrollment>>,
-  rootKey: { publicKey: Uint8Array; seed: Uint8Array }
-): { token: string; enrollmentId?: string; caFingerprint: string | null } {
+  rootKey: RootKey
+): { token: string; enrollmentId?: string; caFingerprint: string | null; rootKey: RootKey } {
   const headHashRaw = created.key_log_head_hash;
   const caFingerprint =
     hexFingerprint(created.ca_fingerprint) ?? hexFingerprint(modeBody.caFingerprint);
@@ -205,11 +212,12 @@ function joinTokenFromCreated(
     throw new JoinError('join_failed', 'password enrollment missing key_log_head_hash');
   }
   const token = encodeJoinToken(enrollment.enrollSk, rootKey.publicKey, headHash, caFingerprint);
-  wipeEnrollmentSecrets(rootKey, enrollment);
+  enrollment.enrollSk.fill(0);
   return {
     token,
     enrollmentId: typeof created.id === 'string' ? created.id : undefined,
     caFingerprint,
+    rootKey,
   };
 }
 
@@ -273,5 +281,6 @@ export async function resolveHubJoinToken(input: {
     nodeEnv: input.nodeEnv,
     now: input.now,
   });
+  wipeRootKey(material.rootKey);
   return material.token;
 }

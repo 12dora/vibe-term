@@ -5,7 +5,7 @@ import { ensureNodeIdentity } from './node-identity-service';
 import { NodeIdentityStore } from './node-identity-store';
 import { NodeSessionStore } from './node-session-store';
 import { createMigratedAuthDb } from './test-db';
-import { buildSelfAdmitAndMetaKey } from './user-key-self-admit';
+import { buildSelfAdmitAndMetaKey, buildSelfAdmitRecord } from './user-key-self-admit';
 import { UserKeyService } from './user-key-service';
 import { UserStore } from './user-store';
 
@@ -40,6 +40,34 @@ describe('buildSelfAdmitAndMetaKey', () => {
       expect(state.metaKeyEpoch).toBe(built.metaEpoch);
       expect(state.nodeCerts.has(identity.nodeIdHex)).toBe(true);
       expect(built.metaKey.byteLength).toBe(32);
+    } finally {
+      close();
+    }
+  });
+
+  test('buildSelfAdmitRecord signs only admit-node', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      const keyLogStore = new KeyLogStore(db);
+      const service = new UserKeyService({
+        db,
+        userStore,
+        keyLogStore,
+        nodeSessionStore: new NodeSessionStore(db),
+      });
+      const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+      const boot = await service.bootstrapUser({ username: 'joiner', password: 'pw' });
+      const admit = await buildSelfAdmitRecord({
+        service,
+        userId: boot.userId,
+        identity,
+        rootKey: boot.rootKey,
+      });
+      expect(decodeKeyLogRecord(admit.bytes).type).toBe('admit-node');
+      const applied = await service.apply(boot.userId, admit);
+      expect(applied.ok).toBe(true);
+      expect(service.currentState(boot.userId).nodeCerts.has(identity.nodeIdHex)).toBe(true);
     } finally {
       close();
     }

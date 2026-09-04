@@ -84,14 +84,14 @@ export function pinHead(
 ): void {
   if (records.length < Number(seq) || seq < 1n) {
     throw new RelayPasswordJoinError(
-      'head_hash_mismatch',
+      'relay_pack_invalid',
       `key log is shorter than the sealed pack head (have ${records.length}, need seq ${String(seq)})`
     );
   }
   const pinned = records[Number(seq) - 1];
   if (!pinned || !bytesEqual(computeRecordHash(pinned.bytes, pinned.sig), hash)) {
     throw new RelayPasswordJoinError(
-      'head_hash_mismatch',
+      'relay_pack_invalid',
       'key log record at the sealed pack head does not match head_hash'
     );
   }
@@ -106,7 +106,7 @@ export function relaysForPersist(
     (row) => row.url === joined.url && row.tenantId.toLowerCase() === joined.tenantId.toLowerCase()
   );
   if (!match) {
-    throw new RelayPasswordJoinError('join_failed', '该中继不在根签名的中继列表里');
+    throw new RelayPasswordJoinError('relay_not_authorized', '该中继不在根签名的中继列表里');
   }
   return rows.map((row, index) => ({
     ...row,

@@ -56,7 +56,7 @@ describe('performRelayPasswordJoin', () => {
     ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'local_user_exists' });
   });
 
-  test('maps a missing pack / unknown tenant into join_failed', async () => {
+  test('maps a missing pack / unknown tenant into relay_tenant_unknown', async () => {
     const auth = await openAuth();
     const fetcher: FetchLike = async () =>
       new Response(
@@ -71,7 +71,7 @@ describe('performRelayPasswordJoin', () => {
         { relayUrl: RELAY_URL, tenantId: TENANT_ID, password: PASSWORD },
         { auth, fetcher }
       )
-    ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'join_failed' });
+    ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'relay_tenant_unknown' });
   });
 
   test('rejects an invalid relay url', async () => {

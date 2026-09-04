@@ -15,7 +15,7 @@ describe('pinHead', () => {
       pinHead([{ bytes, sig }], 1n, randomBytes(32));
       throw new Error('expected pinHead to throw');
     } catch (error) {
-      expect(error).toMatchObject({ name: 'RelayPasswordJoinError', code: 'head_hash_mismatch' });
+      expect(error).toMatchObject({ name: 'RelayPasswordJoinError', code: 'relay_pack_invalid' });
     }
   });
 
@@ -38,7 +38,7 @@ describe('relaysForPersist', () => {
     } catch (error) {
       expect(error).toMatchObject({
         name: 'RelayPasswordJoinError',
-        code: 'join_failed',
+        code: 'relay_not_authorized',
         message: '该中继不在根签名的中继列表里',
       });
     }

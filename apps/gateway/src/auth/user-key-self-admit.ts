@@ -3,6 +3,7 @@ import {
   buildKeyLogRecord,
   computeRecordHash,
   decodeCertificate,
+  decodeKeyLogRecord,
   encodeAdmitNodePayload,
   encodeKeyLogRecord,
   encodeMetaKeyPayload,
@@ -39,14 +40,20 @@ function admittedNodeKeys(state: UserKeyState, extra?: RelayNodeKey): RelayNodeK
   return out;
 }
 
-/** 在已回放的链上连续签 `admit-node` + 换代 `meta-key`，由调用方 `applyMany` 一次提交。 */
-export async function buildSelfAdmitAndMetaKey(input: {
+function decodeAdmitSeq(bytes: Uint8Array): bigint {
+  return decodeKeyLogRecord(bytes).seq;
+}
+
+export type SelfAdmitInput = {
   service: UserKeyService;
   userId: string;
   identity: NodeIdentityKeys;
   rootKey: RootKey;
   now?: number;
-}): Promise<SelfAdmitMetaResult> {
+};
+
+/** 在 `service.currentState` 的链头上签一条根签名 `admit-node`。 */
+export async function buildSelfAdmitRecord(input: SelfAdmitInput): Promise<ApplyKeyLogInput> {
   const now = input.now ?? Date.now();
   const state = input.service.currentState(input.userId);
   const admitPayload = await selfSignedNodeCertificate(input.identity, input.rootKey, {
@@ -62,9 +69,17 @@ export async function buildSelfAdmitAndMetaKey(input: {
     credential_id: null,
   });
   const admitBytes = encodeKeyLogRecord(admitRecord);
-  const admitSig = signKeyLogRecordWithRoot(input.rootKey, admitBytes);
-  const admit: ApplyKeyLogInput = { bytes: admitBytes, sig: admitSig };
-  const admitHash = computeRecordHash(admitBytes, admitSig);
+  return { bytes: admitBytes, sig: signKeyLogRecordWithRoot(input.rootKey, admitBytes) };
+}
+
+/** 在已回放的链上连续签 `admit-node` + 换代 `meta-key`，由调用方 `applyMany` 一次提交。 */
+export async function buildSelfAdmitAndMetaKey(
+  input: SelfAdmitInput
+): Promise<SelfAdmitMetaResult> {
+  const admit = await buildSelfAdmitRecord(input);
+  const state = input.service.currentState(input.userId);
+  const admitHash = computeRecordHash(admit.bytes, admit.sig);
+  const admitSeq = decodeAdmitSeq(admit.bytes);
 
   const metaKey = generateTenantKey();
   const metaEpoch = state.metaKeyEpoch + 1;
@@ -77,7 +92,7 @@ export async function buildSelfAdmitAndMetaKey(input: {
     epoch: metaEpoch,
     entries: wraps.map(wrapEntryToBytes),
   });
-  const metaRecord = buildKeyLogRecord({ seq: admitRecord.seq, hash: admitHash }, state.rootEpoch, {
+  const metaRecord = buildKeyLogRecord({ seq: admitSeq, hash: admitHash }, state.rootEpoch, {
     uid: input.userId,
     type: 'meta-key',
     payload: metaPayload,

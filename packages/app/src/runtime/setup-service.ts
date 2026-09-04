@@ -21,7 +21,11 @@ import {
   stringifyEnv,
 } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
-import { requestEnrollmentByPassword as defaultRequestEnrollmentByPassword } from '../lib/hub-password-join';
+import {
+  requestEnrollmentByPassword as defaultRequestEnrollmentByPassword,
+  wipeRootKey,
+} from '../lib/hub-password-join';
+import { publishHubJoinSelfAdmit } from '../lib/hub-password-self-admit';
 import { createInstallLayout } from '../lib/install-layout';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { readInstalledNativeManifest } from '../lib/native-datachannel';
@@ -511,20 +515,21 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
 
     const perform = deps.performHubJoin ?? defaultPerformHubJoin;
     let token = tokenValue;
+    let passwordRootKey: Parameters<typeof publishHubJoinSelfAdmit>[0]['rootKey'] | undefined;
     let joined: Awaited<ReturnType<typeof defaultPerformHubJoin>>;
     try {
       if (method === 'password') {
         const request = deps.requestEnrollmentByPassword ?? defaultRequestEnrollmentByPassword;
-        token = (
-          await request({
-            hubUrl: input.hubUrl,
-            password: passwordValue,
-            fetcher: deps.fetch,
-            insecureLocal: input.insecureLocal,
-            nodeEnv: deps.nodeEnv,
-            now: deps.now,
-          })
-        ).token;
+        const material = await request({
+          hubUrl: input.hubUrl,
+          password: passwordValue,
+          fetcher: deps.fetch,
+          insecureLocal: input.insecureLocal,
+          nodeEnv: deps.nodeEnv,
+          now: deps.now,
+        });
+        token = material.token;
+        passwordRootKey = material.rootKey;
       }
       joined = await perform(
         {
@@ -540,9 +545,21 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
           fetcher: deps.fetch,
         }
       );
+      if (passwordRootKey) {
+        await publishHubJoinSelfAdmit({
+          auth: deps.auth,
+          hubUrl: joined.hubUrl,
+          userId: joined.userId,
+          rootKey: passwordRootKey,
+          fetcher: deps.fetch,
+          now: deps.now,
+        });
+      }
     } catch (error) {
       await removeStagedEnv(deps, stagedPath);
       throw asSetupJoinError(error);
+    } finally {
+      wipeRootKey(passwordRootKey);
     }
 
     try {
