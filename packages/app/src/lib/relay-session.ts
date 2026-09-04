@@ -6,6 +6,7 @@ import {
   buildKeyLogRecord,
   decodeBase64url,
   deriveTotpKey,
+  encodeAdmitNodePayload,
   encodeBase64url,
   encodeKeyLogRecord,
   signKeyLogRecordWithRoot,
@@ -44,6 +45,7 @@ export type RelayStatusResponse = {
   metaEpoch: number;
   nodesViaRelay: number;
   reauthRequired: boolean;
+  readmitPending: number;
   raw: Record<string, unknown>;
 };
 
@@ -214,7 +216,7 @@ function isKeyLogConflict(error: unknown): boolean {
 }
 
 export type RelayRecordSubmission = {
-  type: 'set-relays' | 'meta-key';
+  type: 'set-relays' | 'meta-key' | 'readmit-node';
   payload: Uint8Array;
   /**
    * 冲突重试时重新向本机 gateway 要一份 payload：并发的那条记录可能已经改了中继表或节点集合，
@@ -291,8 +293,79 @@ export function parseRelayStatus(body: Record<string, unknown>): RelayStatusResp
     metaEpoch: asNumber(body.metaEpoch),
     nodesViaRelay: asNumber(body.nodesViaRelay),
     reauthRequired: body.reauthRequired === true,
+    readmitPending: asNumber(body.readmitPending),
     raw: body,
   };
+}
+
+export type ReadmitPrepareEntry = {
+  nodeId: string;
+  name: string;
+  admitSeq: number;
+  admitRootEpoch: number;
+  authorization_bytes: string;
+  certificate_bytes: string;
+  cert_sig: string;
+};
+
+function parseReadmitPrepare(body: Record<string, unknown>): {
+  rootEpoch: number;
+  entries: ReadmitPrepareEntry[];
+} {
+  const raw = Array.isArray(body.entries) ? body.entries : [];
+  const entries: ReadmitPrepareEntry[] = [];
+  for (const item of raw) {
+    const row = (item ?? {}) as Record<string, unknown>;
+    const nodeId = asText(row.nodeId);
+    const authorization = asText(row.authorization_bytes);
+    const certificate = asText(row.certificate_bytes);
+    const certSig = asText(row.cert_sig);
+    if (!nodeId || !authorization || !certificate || !certSig) {
+      throw new Error('relay readmit/prepare returned a malformed entry');
+    }
+    entries.push({
+      nodeId,
+      name: asText(row.name) || nodeId,
+      admitSeq: asNumber(row.admitSeq),
+      admitRootEpoch: asNumber(row.admitRootEpoch),
+      authorization_bytes: authorization,
+      certificate_bytes: certificate,
+      cert_sig: certSig,
+    });
+  }
+  return { rootEpoch: asNumber(body.rootEpoch), entries };
+}
+
+/**
+ * 根轮换后历史 `admit-node` 对中继无效。在 `set-relays` 之前把未吊销成员按当前根重签 `readmit-node`。
+ */
+export async function reaffirmStaleMembers(
+  session: RelayTenantSession
+): Promise<{ count: number; rootEpoch: number }> {
+  const prepared = parseReadmitPrepare(
+    await relayGatewayRequest(session, {
+      path: '/api/mesh/relay/readmit/prepare',
+      label: 'relay readmit prepare',
+    })
+  );
+  for (const entry of prepared.entries) {
+    try {
+      const authorizationBytes = decodeBase64url(entry.authorization_bytes);
+      await signAndSubmitRelayRecord(session, {
+        type: 'readmit-node',
+        payload: encodeAdmitNodePayload({
+          authorization_bytes: authorizationBytes,
+          authorization_sig: session.rootKey.sign(authorizationBytes),
+          certificate_bytes: decodeBase64url(entry.certificate_bytes),
+          cert_sig: decodeBase64url(entry.cert_sig),
+        }),
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`failed to re-affirm member ${entry.nodeId}: ${reason}`);
+    }
+  }
+  return { count: prepared.entries.length, rootEpoch: prepared.rootEpoch };
 }
 
 export async function fetchRelayStatus(session: RelayTenantSession): Promise<RelayStatusResponse> {

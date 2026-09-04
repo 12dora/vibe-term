@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   bytesEqual,
+  encodeAdmitNodePayload,
   encodeRenameNodePayload,
   encodeRotateRootKeepPayload,
   generateKdfParams,
@@ -126,5 +127,20 @@ describe('KeyLogStore', () => {
     const parsed = JSON.parse(json) as { node_id: string; name: string };
     expect(parsed.name).toBe('studio');
     expect(parsed.node_id.length).toBeGreaterThan(0);
+  });
+
+  test('projectPayloadJson decodes readmit-node as admit-node payload', () => {
+    const json = projectPayloadJson(
+      'readmit-node',
+      encodeAdmitNodePayload({
+        authorization_bytes: new Uint8Array([1, 2, 3]),
+        authorization_sig: new Uint8Array(64).fill(2),
+        certificate_bytes: new Uint8Array([4, 5]),
+        cert_sig: new Uint8Array(64).fill(3),
+      })
+    );
+    const parsed = JSON.parse(json) as { authorization_bytes: string; cert_sig: string };
+    expect(parsed.authorization_bytes.length).toBeGreaterThan(0);
+    expect(parsed.cert_sig.length).toBeGreaterThan(0);
   });
 });

@@ -198,20 +198,8 @@ function projectRecord(
       );
       if (row) userStore.deleteKey(row.id);
     },
-    'admit-node': () => {
-      const payload = decodeAdmitNodePayload(record.payload);
-      const certificate = decodeCertificate(payload.certificate_bytes);
-      userStore.upsertCert({
-        nodeId: nodeIdToHex(certificate.node_id),
-        userId,
-        admitRecordSeq: seq,
-        certificateBytes: payload.certificate_bytes,
-        certSig: payload.cert_sig,
-        authorizationBytes: payload.authorization_bytes,
-        authorizationSig: payload.authorization_sig,
-        revokedLogSeq: null,
-      });
-    },
+    'admit-node': () => persistAdmitNode(stores, userId, record, seq),
+    'readmit-node': () => persistReadmitNode(stores, userId, record, seq),
     'revoke-node': () => {
       const hex = nodeIdToHex(decodeRevokeNodePayload(record.payload).node_id);
       userStore.markCertRevoked(hex, seq);
@@ -263,6 +251,58 @@ function projectRecord(
     'rename-node': () => persistRenameNode(stores, record),
   };
   byType[record.type]?.();
+}
+
+function persistAdmitNode(
+  stores: AuthStores,
+  userId: string,
+  record: KeyLogRecord,
+  seq: number
+): void {
+  const payload = decodeAdmitNodePayload(record.payload);
+  const certificate = decodeCertificate(payload.certificate_bytes);
+  stores.userStore.upsertCert({
+    nodeId: nodeIdToHex(certificate.node_id),
+    userId,
+    admitRecordSeq: seq,
+    certificateBytes: payload.certificate_bytes,
+    certSig: payload.cert_sig,
+    authorizationBytes: payload.authorization_bytes,
+    authorizationSig: payload.authorization_sig,
+    revokedLogSeq: null,
+  });
+}
+
+function persistReadmitNode(
+  stores: AuthStores,
+  userId: string,
+  record: KeyLogRecord,
+  seq: number
+): void {
+  let payload: ReturnType<typeof decodeAdmitNodePayload>;
+  try {
+    payload = decodeAdmitNodePayload(record.payload);
+  } catch {
+    return;
+  }
+  let certificate: ReturnType<typeof decodeCertificate>;
+  try {
+    certificate = decodeCertificate(payload.certificate_bytes);
+  } catch {
+    return;
+  }
+  const existing = stores.userStore.getCert(nodeIdToHex(certificate.node_id));
+  if (!existing || existing.userId !== userId) return;
+  stores.userStore.upsertCert({
+    nodeId: existing.nodeId,
+    userId: existing.userId,
+    admitRecordSeq: seq,
+    certificateBytes: existing.certificateBytes,
+    certSig: existing.certSig,
+    authorizationBytes: payload.authorization_bytes,
+    authorizationSig: payload.authorization_sig,
+    revokedLogSeq: existing.revokedLogSeq,
+  });
 }
 
 function persistRenameNode(stores: AuthStores, record: KeyLogRecord): void {

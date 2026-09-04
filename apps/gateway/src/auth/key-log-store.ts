@@ -124,6 +124,7 @@ function decodePayload(type: string, payload: Uint8Array): unknown {
     case 'clear-totp':
       return decodeClearTotpPayload(payload);
     case 'admit-node':
+    case 'readmit-node':
       return decodeAdmitNodePayload(payload);
     case 'revoke-node':
       return decodeRevokeNodePayload(payload);

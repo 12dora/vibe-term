@@ -5,6 +5,7 @@ import {
   MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   buildAdmitHubPayload,
   buildKeyLogRecord,
+  encodeAdmitNodePayload,
   encodeKeyLogRecord,
   encodeRenameNodePayload,
   encodeRotateRootKeepPayload,
@@ -70,11 +71,18 @@ function rotateRootKeepRecord(): Uint8Array {
   );
 }
 
-function relayRecord(type: 'set-relays' | 'meta-key' | 'rename-node'): Uint8Array {
+function relayRecord(type: 'set-relays' | 'meta-key' | 'rename-node' | 'readmit-node'): Uint8Array {
   const payload =
     type === 'rename-node'
       ? encodeRenameNodePayload({ node_id: new Uint8Array(16).fill(1), name: 'studio' })
-      : new Uint8Array(4);
+      : type === 'readmit-node'
+        ? encodeAdmitNodePayload({
+            authorization_bytes: new Uint8Array(4),
+            authorization_sig: new Uint8Array(64),
+            certificate_bytes: new Uint8Array(4),
+            cert_sig: new Uint8Array(64),
+          })
+        : new Uint8Array(4);
   return encodeKeyLogRecord(
     buildKeyLogRecord(genesisHead(), 0, {
       uid: 'user-1',
@@ -359,6 +367,9 @@ describe('hub auth record compat gate', () => {
       });
       expect(
         inspectHubAuthRecordCompat(store, relayRecord('rename-node'), 'user-1', relay)
+      ).toEqual({ ok: true });
+      expect(
+        inspectHubAuthRecordCompat(store, relayRecord('readmit-node'), 'user-1', relay)
       ).toEqual({ ok: true });
       expect(inspectHubAuthRecordCompat(store, admitHubRecord(), 'user-1', relay).ok).toBe(false);
       expect(inspectHubAuthRecordCompat(store, rotateRootKeepRecord(), 'user-1', relay).ok).toBe(

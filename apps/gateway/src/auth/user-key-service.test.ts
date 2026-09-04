@@ -334,6 +334,59 @@ describe('UserKeyService', () => {
     }
   });
 
+  test('readmit-node after rotate-root-keep updates admit_record_seq and authorization', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, userStore } = createService(db);
+      const boot = await service.bootstrapUser({ username: 'readmit', password: 'pw' });
+      const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+      const admit = await selfSignedNodeCertificate(identity, boot.rootKey, {
+        uid: boot.userId,
+        rootEpoch: boot.rootEpoch,
+        now: Date.now(),
+      });
+      expect(
+        (
+          await service.signAndApply(boot.userId, boot.rootKey, {
+            type: 'admit-node',
+            payload: encodeAdmitNodePayload(admit),
+          })
+        ).ok
+      ).toBe(true);
+      expect(userStore.getCert(identity.nodeIdHex)?.admitRecordSeq).toBe(2);
+      const newRoot = rootKeyFromSeed(new Uint8Array(32).fill(11));
+      expect(
+        (
+          await service.signAndApply(boot.userId, boot.rootKey, {
+            type: 'rotate-root-keep',
+            payload: encodeRotateRootKeepPayload({
+              root_public_key: newRoot.publicKey,
+              kdf_params: generateKdfParams(),
+              totp: null,
+            }),
+          })
+        ).ok
+      ).toBe(true);
+      const newAuthSig = newRoot.sign(admit.authorization_bytes);
+      const readmitted = await service.signAndApply(boot.userId, newRoot, {
+        type: 'readmit-node',
+        payload: encodeAdmitNodePayload({
+          authorization_bytes: admit.authorization_bytes,
+          authorization_sig: newAuthSig,
+          certificate_bytes: admit.certificate_bytes,
+          cert_sig: admit.cert_sig,
+        }),
+      });
+      expect(readmitted.ok).toBe(true);
+      const after = userStore.getCert(identity.nodeIdHex);
+      expect(after?.admitRecordSeq).toBeGreaterThan(2);
+      expect(after?.authorizationSig).toEqual(newAuthSig);
+      expect(after?.certificateBytes).toEqual(admit.certificate_bytes);
+    } finally {
+      close();
+    }
+  });
+
   test('admit-hub persists projection; retire-hub marks retired; revoke-node retires hub', async () => {
     const { db, close } = createMigratedAuthDb();
     try {

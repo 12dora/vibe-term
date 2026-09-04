@@ -169,10 +169,12 @@ export {
   KEYLOG_RECORD_COMPAT,
   RELAY_RECORD_TYPES,
   RENAME_NODE_RECORD_TYPES,
+  READMIT_NODE_RECORD_TYPES,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   KEY_LOG_SIGNER_MATRIX,
   MIN_HUB_AUTH_RECORD_VERSION,
   MIN_RENAME_NODE_RECORD_VERSION,
+  MIN_READMIT_NODE_RECORD_VERSION,
   MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   ROTATE_ROOT_KEEP_RECORD_TYPES,
   applyKeyLogRecord,
@@ -297,6 +299,7 @@ export type {
 } from './relay-records';
 
 export { applyRenameNode } from './rename-node-record';
+export { applyReadmitNode } from './readmit-node-record';
 
 export {
   DOMAIN_HUB_ENROLL,

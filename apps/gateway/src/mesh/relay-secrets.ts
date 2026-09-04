@@ -84,6 +84,10 @@ export class RelaySecrets {
     return this.store.listRelayRows()[0]?.tenantId ?? null;
   }
 
+  userId(): string {
+    return this.userIdOf();
+  }
+
   /** 供 `/api/mesh/relay/enroll` 与 `meta-key/prepare` 暂存尚未签名落账的新密钥。 */
   stashPendingKeys(payloadHash: Uint8Array, keys: PendingRelayKeys): string {
     const id = encodeBase64url(payloadHash);

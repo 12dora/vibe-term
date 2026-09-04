@@ -25,6 +25,7 @@ import {
   sha256,
 } from './encoding';
 import { applyAdmitHub, applyRetireHub, retireHubIfAdmitted } from './key-log-hub';
+import { applyReadmitNode } from './readmit-node-record';
 import type { StoredRelayList } from './relay-records';
 import { MIN_RELAY_RECORD_VERSION, applyRelayKeyLogRecord, cloneRelayList } from './relay-records';
 import { applyRenameNode } from './rename-node-record';
@@ -78,6 +79,8 @@ export const MIN_HUB_AUTH_RECORD_VERSION = '1.1.13';
 export const MIN_ROTATE_ROOT_KEEP_RECORD_VERSION = '1.1.16';
 /** 写入 `rename-node` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
 export const MIN_RENAME_NODE_RECORD_VERSION = '1.1.24';
+/** 写入 `readmit-node` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
+export const MIN_READMIT_NODE_RECORD_VERSION = '1.1.26';
 export const KEYLOG_TYPE_UNSUPPORTED_BY_NODES = 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES';
 export const HUB_AUTH_RECORD_TYPES = ['admit-hub', 'retire-hub'] as const;
 export const ROTATE_ROOT_KEEP_RECORD_TYPES = ['rotate-root-keep'] as const;
@@ -89,11 +92,13 @@ export type KeyLogRecordCompatSpec = {
 
 export const RELAY_RECORD_TYPES = ['set-relays', 'meta-key'] as const;
 export const RENAME_NODE_RECORD_TYPES = ['rename-node'] as const;
+export const READMIT_NODE_RECORD_TYPES = ['readmit-node'] as const;
 
 export const KEYLOG_RECORD_COMPAT: Readonly<Partial<Record<KeyLogType, KeyLogRecordCompatSpec>>> = {
   'set-relays': { minVersion: MIN_RELAY_RECORD_VERSION, allowForce: false },
   'meta-key': { minVersion: MIN_RELAY_RECORD_VERSION, allowForce: false },
   'rename-node': { minVersion: MIN_RENAME_NODE_RECORD_VERSION, allowForce: false },
+  'readmit-node': { minVersion: MIN_READMIT_NODE_RECORD_VERSION, allowForce: false },
   'admit-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
   'retire-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
   'rotate-root-keep': { minVersion: MIN_ROTATE_ROOT_KEEP_RECORD_VERSION, allowForce: false },
@@ -120,6 +125,7 @@ export const KEY_LOG_SIGNER_MATRIX: Record<KeyLogType, readonly KeyLogSigner[]> 
   'set-relays': ['root', 'passkey'],
   'meta-key': ['root', 'passkey'],
   'rename-node': ['root', 'passkey'],
+  'readmit-node': ['root', 'passkey'],
 };
 
 export type KeyLogSignedRecord = {
@@ -168,7 +174,9 @@ export type ApplyKeyLogError =
   | 'malformed_payload'
   | 'node_id_reused'
   | 'relay_epoch_regression'
-  | 'totp_required';
+  | 'totp_required'
+  | 'node_revoked'
+  | 'certificate_mismatch';
 
 export type ApplyKeyLogCtx = {
   verifyPasskeyAssertion?: VerifyPasskeyAssertion;
@@ -589,6 +597,7 @@ const KEY_LOG_APPLIERS: Record<KeyLogType, KeyLogApplier> = {
   'set-relays': applyRelayKeyLogRecord,
   'meta-key': applyRelayKeyLogRecord,
   'rename-node': applyRenameNode,
+  'readmit-node': applyReadmitNode,
 };
 
 export async function applyKeyLogRecord(

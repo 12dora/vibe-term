@@ -10,6 +10,7 @@ import {
   fetchRelayStatusLocal,
   openRelayTenantSession,
   pollRelayStatus,
+  reaffirmStaleMembers,
   relayGatewayRequest,
   signAndSubmitRelayRecord,
 } from '../lib/relay-session';
@@ -183,6 +184,10 @@ async function runRelayEnrollInternal(
   return await withAuth(parsed, io, async (ctx) => {
     const session = await openRelayTenantSession(parsed, ctx, io);
     const exchange = await enrollWithRetry(session, { relayUrl, password, io });
+    const readmit = await reaffirmStaleMembers(session);
+    if (readmit.count > 0) {
+      relayLog(io, `re-affirmed ${readmit.count} member(s) under root epoch ${readmit.rootEpoch}`);
+    }
     await signAndSubmitRelayRecord(session, {
       type: 'set-relays',
       payload: exchange.payload,

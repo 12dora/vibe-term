@@ -2,13 +2,20 @@ import { describe, expect, test } from 'bun:test';
 import {
   type KeyLogRecord,
   type UserKeyState,
+  createEnrollment,
+  createNodeCertificate,
   emptyUserKeyState,
   encodeAddPasskeyPayload,
+  encodeAdmitNodePayload,
   encodeBase64url,
   encodeRenameNodePayload,
   encodeRotateRootKeepPayload,
+  generateEd25519KeyPair,
   generateKdfParams,
+  generateX25519KeyPair,
   hexToBytes,
+  nodeIdToHex,
+  rootKeyFromSeed,
 } from '@tmex/shared/auth';
 import { eq } from 'drizzle-orm';
 import { nodeIdentity } from '../db/schema';
@@ -521,6 +528,60 @@ describe('user-key-persistence', () => {
         .query(`SELECT type FROM user_key_log WHERE user_id = 'user-1' AND seq = 9`)
         .get() as { type: string };
       expect(row.type).toBe('rename-node');
+    } finally {
+      close();
+    }
+  });
+
+  test('persistApplied readmit-node updates admit_record_seq and authorization, keeps cert and name', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const stores = openStores(db);
+      seedUser(stores.userStore);
+      const root = rootKeyFromSeed(new Uint8Array(32).fill(3));
+      const enroll = await createEnrollment(root, { uid: 'user-1', rootEpoch: 1, now: 1 });
+      const cert = createNodeCertificate(enroll.enrollSk, {
+        uid: 'user-1',
+        edPk: generateEd25519KeyPair().publicKey,
+        x25519Pk: generateX25519KeyPair().publicKey,
+        enrollPk: enroll.enrollPk,
+        now: 1,
+      });
+      const nodeId = nodeIdToHex(cert.nodeId);
+      const admitPayload = encodeAdmitNodePayload({
+        authorization_bytes: enroll.authorizationBytes,
+        authorization_sig: enroll.authorizationSig,
+        certificate_bytes: cert.certificateBytes,
+        cert_sig: cert.certSig,
+      });
+      persistApplied(
+        stores,
+        'user-1',
+        makeStep('user-1', 'admit-node', { seq: 2n, payload: admitPayload }),
+        2_000
+      );
+      stores.userStore.createNode({ id: nodeId, userId: 'user-1', name: 'studio', now: 2_000 });
+      const newSig = root.sign(enroll.authorizationBytes);
+      persistApplied(
+        stores,
+        'user-1',
+        makeStep('user-1', 'readmit-node', {
+          seq: 8n,
+          payload: encodeAdmitNodePayload({
+            authorization_bytes: enroll.authorizationBytes,
+            authorization_sig: newSig,
+            certificate_bytes: cert.certificateBytes,
+            cert_sig: cert.certSig,
+          }),
+        }),
+        3_000
+      );
+      const row = stores.userStore.getCert(nodeId);
+      expect(row?.admitRecordSeq).toBe(8);
+      expect(row?.authorizationSig).toEqual(newSig);
+      expect(row?.certificateBytes).toEqual(cert.certificateBytes);
+      expect(row?.certSig).toEqual(cert.certSig);
+      expect(stores.userStore.getNode(nodeId)?.name).toBe('studio');
     } finally {
       close();
     }

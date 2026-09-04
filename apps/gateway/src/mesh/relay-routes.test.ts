@@ -7,7 +7,10 @@ import {
   decodeMetaKeyPayload,
   decodeSetRelaysPayload,
   encodeBase64url,
+  encodeRotateRootKeepPayload,
+  generateKdfParams,
   hubHostFromUrl,
+  rootKeyFromSeed,
   wrapEntryFromBytes,
 } from '@tmex/shared/auth';
 import { generateTenantKey, signRelayEnrollProof, unwrapKeyForNode } from '@tmex/shared/relay';
@@ -147,6 +150,7 @@ describe('RelayRoutes', () => {
         metaEpoch: number;
         relays: Array<{ url: string; priority: number; kicked: boolean }>;
         reauthRequired: boolean;
+        readmitPending: number;
       };
       expect(after.mode).toBe('relay');
       expect(after.tenantId).toBe(TENANT_ID);
@@ -163,6 +167,98 @@ describe('RelayRoutes', () => {
         },
       ] as never);
       expect(after.reauthRequired).toBe(false);
+      expect(after.readmitPending).toBe(0);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('readmit/prepare lists stale certs and enroll reports readmitRequired', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+      });
+      return new Response(
+        JSON.stringify({
+          tenant_id: TENANT_ID,
+          token: encodeBase64url(new Uint8Array(32).fill(8)),
+          password_epoch: 1,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+    const b = await boot({ fetchImpl });
+    try {
+      const fresh = (await (await b.call('/api/mesh/relay/readmit/prepare')).json()) as {
+        rootEpoch: number;
+        entries: unknown[];
+      };
+      expect(fresh.entries).toEqual([]);
+      const statusFresh = (await (await b.call('/api/mesh/relay/status')).json()) as {
+        readmitPending: number;
+      };
+      expect(statusFresh.readmitPending).toBe(0);
+
+      const newRoot = rootKeyFromSeed(new Uint8Array(32).fill(12));
+      const rotated = await b.service.signAndApply(b.user.userId, b.user.rootKey, {
+        type: 'rotate-root-keep',
+        payload: encodeRotateRootKeepPayload({
+          root_public_key: newRoot.publicKey,
+          kdf_params: generateKdfParams(),
+          totp: null,
+        }),
+      });
+      expect(rotated.ok).toBe(true);
+      const user = b.userStore.getById(b.user.userId);
+      if (!user) throw new Error('missing user');
+      const prepared = (await (await b.call('/api/mesh/relay/readmit/prepare')).json()) as {
+        rootEpoch: number;
+        entries: Array<{
+          nodeId: string;
+          admitSeq: number;
+          admitRootEpoch: number;
+          authorization_bytes: string;
+          certificate_bytes: string;
+          cert_sig: string;
+        }>;
+      };
+      expect(prepared.rootEpoch).toBe(user.rootEpoch);
+      expect(prepared.entries).toHaveLength(1);
+      expect(prepared.entries[0]?.nodeId).toBe(b.identity.nodeIdHex);
+      expect(prepared.entries[0]?.admitRootEpoch).toBeLessThan(prepared.rootEpoch);
+      const statusStale = (await (await b.call('/api/mesh/relay/status')).json()) as {
+        readmitPending: number;
+      };
+      expect(statusStale.readmitPending).toBe(1);
+
+      const material = (await (
+        await b.call('/api/mesh/relay/enroll/proof-material', {
+          method: 'POST',
+          body: JSON.stringify({ url: RELAY_URL }),
+        })
+      ).json()) as { relayHost: string; ts: number };
+      const proof = signRelayEnrollProof(newRoot, {
+        relayHost: material.relayHost,
+        ts: material.ts,
+      });
+      const enrolled = await b.call('/api/mesh/relay/enroll', {
+        method: 'POST',
+        body: JSON.stringify({
+          url: RELAY_URL,
+          proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
+        }),
+      });
+      expect(enrolled.status).toBe(200);
+      const body = (await enrolled.json()) as { readmitRequired: number };
+      expect(body.readmitRequired).toBe(1);
+
+      b.userStore.markCertRevoked(b.identity.nodeIdHex, 9);
+      const afterRevoke = (await (await b.call('/api/mesh/relay/readmit/prepare')).json()) as {
+        entries: unknown[];
+      };
+      expect(afterRevoke.entries).toEqual([]);
     } finally {
       b.close();
     }

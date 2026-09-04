@@ -64,7 +64,7 @@ async function proofFromSeq(
 function recordAdmitsNode(bytes: Uint8Array, nodeId: string): boolean {
   try {
     const record = decodeKeyLogRecord(bytes);
-    if (record.type !== 'admit-node') return false;
+    if (record.type !== 'admit-node' && record.type !== 'readmit-node') return false;
     const payload = decodeAdmitNodePayload(record.payload);
     return nodeIdToHex(decodeCertificate(payload.certificate_bytes).node_id) === nodeId;
   } catch {

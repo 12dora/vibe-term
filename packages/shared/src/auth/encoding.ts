@@ -41,6 +41,7 @@ export const KeyLogType = {
   'set-relays': 'set-relays',
   'meta-key': 'meta-key',
   'rename-node': 'rename-node',
+  'readmit-node': 'readmit-node',
 } as const;
 export type KeyLogType = (typeof KeyLogType)[keyof typeof KeyLogType];
 

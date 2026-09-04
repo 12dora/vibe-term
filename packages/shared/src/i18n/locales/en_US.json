@@ -2621,7 +2621,19 @@
           "blocked": "Another setup path has been submitted. Wait for this machine to restart."
         }
       },
-      "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back."
+      "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back.",
+      "readmit": {
+        "notice": "{{count}} node(s) still have member records signed by an old root key and must be re-affirmed.",
+        "action": "Re-affirm Members",
+        "done": "Re-affirmed member records for {{count}} node(s).",
+        "none": "No member records need re-affirming.",
+        "failed": "Re-affirming members failed: {{error}}",
+        "errors": {
+          "READMIT_PREPARE_FAILED": "This machine could not list the members to re-affirm. Try again later.",
+          "READMIT_ROOT_REQUIRED": "These member records can only be re-affirmed with the current password.",
+          "READMIT_MALFORMED": "The member record is invalid and cannot be re-affirmed."
+        }
+      }
     },
     "devices": {
       "nodes": {

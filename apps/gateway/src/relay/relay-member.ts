@@ -81,7 +81,7 @@ function decodeProof(proof: RelayMemberProofInput): { bytes: Uint8Array; sig: Ui
 }
 
 function typeMatches(recordType: string, op: RelayKeylogMemberOp): boolean {
-  if (op === 'admit') return recordType === 'admit-node';
+  if (op === 'admit') return recordType === 'admit-node' || recordType === 'readmit-node';
   if (op === 'revoke') return recordType === 'revoke-node';
   return ROTATE_TYPES.has(recordType);
 }

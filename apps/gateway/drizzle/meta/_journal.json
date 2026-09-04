@@ -316,6 +316,13 @@
       "when": 1789298400000,
       "tag": "0044_messaging_commands",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1789384800000,
+      "tag": "0045_readmit_node_keylog",
+      "breakpoints": true
     }
   ]
 }

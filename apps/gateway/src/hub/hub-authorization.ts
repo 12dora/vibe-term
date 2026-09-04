@@ -3,6 +3,7 @@ import {
   KEYLOG_RECORD_COMPAT,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
+  READMIT_NODE_RECORD_TYPES,
   RELAY_RECORD_TYPES,
   RENAME_NODE_RECORD_TYPES,
   decodeAdmitHubPayload,
@@ -161,11 +162,12 @@ export type HubAuthCompatOptions = {
   localNodeId?: string | null;
 };
 
-/** 节点侧记录：中继两类 + rename-node。空 peer cache 时仅这三类可 bootstrap 豁免。 */
+/** 节点侧记录：中继两类 + rename-node + readmit-node。空 peer cache 时仅这些可 bootstrap 豁免。 */
 function isNodeSideRecordType(type: string): boolean {
   return (
     (RELAY_RECORD_TYPES as readonly string[]).includes(type) ||
-    (RENAME_NODE_RECORD_TYPES as readonly string[]).includes(type)
+    (RENAME_NODE_RECORD_TYPES as readonly string[]).includes(type) ||
+    (READMIT_NODE_RECORD_TYPES as readonly string[]).includes(type)
   );
 }
 
@@ -249,7 +251,7 @@ export function inspectHubAuthRecordCompat(
   if (!spec) return { ok: true };
   const relayMode = opts?.relayMode === true;
   // 版本来源：hub 侧 nodes.version，纯节点与中继模式退到 peer_cache.version；
-  // 尚无任何已知成员时只豁免节点侧三类记录（首台 bootstrap），hub-auth 与 rotate-root-keep 仍 fail-closed。
+  // 尚无任何已知成员时只豁免节点侧记录（首台 bootstrap），hub-auth 与 rotate-root-keep 仍 fail-closed。
   if (isNodeSideRecordType(type) && !hasKnownMembers(userStore, relayMode)) {
     return { ok: true };
   }

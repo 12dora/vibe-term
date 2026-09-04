@@ -2,6 +2,7 @@ import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import {
+  decodeAdmitNodePayload,
   decodeBase64url,
   decodeKeyLogRecord,
   encodeBase64url,
@@ -64,6 +65,7 @@ type FakeOptions = {
   appends?: Array<() => Response>;
   /** 依次作用于每一次 `GET /api/auth/keylog/head` 的 rootEpoch。 */
   headEpochs?: number[];
+  readmitPrepare?: Record<string, unknown>;
 };
 
 function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
@@ -74,6 +76,8 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
   let statusIndex = 0;
   let appendIndex = 0;
   let headIndex = 0;
+  let headSeq = user.keyLogHeadSeq;
+  let headHash = encodeBase64url(user.keyLogHeadHash);
 
   const json = (payload: unknown, init?: ResponseInit) =>
     new Response(JSON.stringify(payload), {
@@ -135,6 +139,8 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
             payloadHash: encodeBase64url(randomBytes(32)),
           })
         );
+      case '/api/mesh/relay/readmit/prepare':
+        return json(options.readmitPrepare ?? { rootEpoch: user.rootEpoch, entries: [] });
       case '/api/mesh/relay/leave/prepare':
         return json(options.leave ?? { payload: encodeBase64url(SET_RELAYS_PAYLOAD) });
       case '/api/auth/keylog/head': {
@@ -142,8 +148,8 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
         const rootEpoch = epochs?.[Math.min(headIndex, epochs.length - 1)] ?? user.rootEpoch;
         headIndex += 1;
         return json({
-          seq: user.keyLogHeadSeq,
-          hash: encodeBase64url(user.keyLogHeadHash),
+          seq: headSeq,
+          hash: headHash,
           rootEpoch,
           uid: user.id,
         });
@@ -152,7 +158,9 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
         const make = options.appends?.[appendIndex];
         appendIndex += 1;
         if (make) return make();
-        return json({ seq: user.keyLogHeadSeq + 1, hash: encodeBase64url(randomBytes(32)) });
+        headSeq += 1;
+        headHash = encodeBase64url(randomBytes(32));
+        return json({ seq: headSeq, hash: headHash });
       }
       case '/api/mesh/relay/status': {
         const headerBag = init?.headers as Headers | Record<string, string> | undefined;
@@ -278,6 +286,86 @@ describe('relay enroll', () => {
     expect(new Uint8Array(record.prev_hash)).toEqual(new Uint8Array(user.keyLogHeadHash));
     expect(new Uint8Array(record.payload)).toEqual(SET_RELAYS_PAYLOAD);
     expect(verifyEd25519(sig, bytes, user.rootPublicKey)).toBe(true);
+  });
+
+  test('enroll re-affirms stale members before set-relays', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const authorization = randomBytes(32);
+    const certificate = randomBytes(16);
+    const certSig = randomBytes(64);
+    const { calls, fetcher, user } = fakeGateway(auth, {
+      status: [ATTACHED_STATUS],
+      readmitPrepare: {
+        rootEpoch: 4,
+        entries: [
+          {
+            nodeId: 'ab'.repeat(16),
+            name: 'studio',
+            admitSeq: 2,
+            admitRootEpoch: 1,
+            authorization_bytes: encodeBase64url(authorization),
+            certificate_bytes: encodeBase64url(certificate),
+            cert_sig: encodeBase64url(certSig),
+          },
+        ],
+      },
+    });
+    await runRelayEnroll(
+      parseArgs(['relay', 'enroll', RELAY_URL]),
+      RELAY_URL,
+      io(auth, fetcher, logs)
+    );
+    expect(logs.some((line) => line.includes('re-affirmed 1 member(s) under root epoch 4'))).toBe(
+      true
+    );
+    const appends = calls.filter((call) => call.path === '/api/auth/keylog?hub=sync');
+    expect(appends).toHaveLength(2);
+    const first = decodeKeyLogRecord(decodeBase64url(String(appends[0]?.body?.bytes)));
+    const second = decodeKeyLogRecord(decodeBase64url(String(appends[1]?.body?.bytes)));
+    expect(first.type).toBe('readmit-node');
+    expect(second.type).toBe('set-relays');
+    expect(first.seq + 1n).toBe(second.seq);
+    const payload = decodeAdmitNodePayload(first.payload);
+    expect(payload.authorization_bytes).toEqual(authorization);
+    expect(payload.certificate_bytes).toEqual(certificate);
+    expect(verifyEd25519(payload.authorization_sig, authorization, user.rootPublicKey)).toBe(true);
+  });
+
+  test('enroll aborts set-relays when a readmit-node append fails', async () => {
+    const auth = await openAuth();
+    const { calls, fetcher } = fakeGateway(auth, {
+      status: [ATTACHED_STATUS],
+      readmitPrepare: {
+        rootEpoch: 4,
+        entries: [
+          {
+            nodeId: 'cd'.repeat(16),
+            name: 'box',
+            admitSeq: 2,
+            admitRootEpoch: 1,
+            authorization_bytes: encodeBase64url(randomBytes(8)),
+            certificate_bytes: encodeBase64url(randomBytes(8)),
+            cert_sig: encodeBase64url(randomBytes(64)),
+          },
+        ],
+      },
+      appends: [
+        () =>
+          new Response(JSON.stringify({ error: 'bad_authorization_sig' }), {
+            status: 400,
+            headers: { 'content-type': 'application/json' },
+          }),
+      ],
+    });
+    await expect(
+      runRelayEnroll(parseArgs(['relay', 'enroll', RELAY_URL]), RELAY_URL, io(auth, fetcher, []))
+    ).rejects.toThrow(/failed to re-affirm member/);
+    const appends = calls.filter((call) => call.path === '/api/auth/keylog?hub=sync');
+    expect(appends).toHaveLength(1);
+    expect(decodeKeyLogRecord(decodeBase64url(String(appends[0]?.body?.bytes))).type).toBe(
+      'readmit-node'
+    );
   });
 
   test('a relay that is not healthy stops before touching the local gateway', async () => {
@@ -447,6 +535,7 @@ describe('formatting helpers', () => {
       metaEpoch: 0,
       nodesViaRelay: 0,
       reauthRequired: true,
+      readmitPending: 0,
       raw: {},
     });
     expect(lines).toContain('no relays configured');
