@@ -65,11 +65,21 @@ function createHarness() {
   });
   const transport = new WebSocketGatewayTransport(client);
   const events: string[] = [];
-  const tooOld: Array<{ minVersion: string; serverVersion: string | null }> = [];
+  const tooOld: Array<{
+    side: string;
+    minVersion: string;
+    version: string | null;
+    nodeId?: string | null;
+  }> = [];
   transport.onEvent((event) => {
     if (event.type === 'state-feed-mode') events.push(event.mode);
     if (event.type === 'server-too-old') {
-      tooOld.push({ minVersion: event.minVersion, serverVersion: event.serverVersion });
+      tooOld.push({
+        side: event.side,
+        minVersion: event.minVersion,
+        version: event.version,
+        nodeId: event.nodeId,
+      });
     }
   });
   transport.connect();
@@ -195,22 +205,92 @@ describe('canonical state capability gate', () => {
     expect(transport.capabilities.atomicScreen).toBe(false);
     expect(events).toEqual(['unsupported']);
     expect(tooOld).toEqual([
-      { minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION, serverVersion: '1.2.0' },
+      {
+        side: 'gateway',
+        minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
+        version: '1.2.0',
+        nodeId: null,
+      },
     ]);
     // legacy 订阅帧已下线：没有任何业务帧发出去
     expect(businessKinds(socket)).toEqual([]);
     transport.disconnect();
   });
 
-  test('服务端版本低于 1.1.22 时即使播报能力也拒建 canonical 会话', () => {
+  test('服务端版本低于 1.1.23 时即使播报能力也拒建 canonical 会话', () => {
     const { socket, client, transport, tooOld } = createHarness();
     socket.open();
-    socket.deliver(hello(CANONICAL, 1024 * 1024, '1.1.21'));
+    socket.deliver(hello(CANONICAL, 1024 * 1024, '1.1.22'));
 
     expect(client.stateFeedMode).toBe('unsupported');
     expect(tooOld).toEqual([
-      { minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION, serverVersion: '1.1.21' },
+      {
+        side: 'gateway',
+        minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
+        version: '1.1.22',
+        nodeId: null,
+      },
     ]);
+    transport.disconnect();
+  });
+
+  test('同一网关重连后不再重复弹「版本过低」，升级到 canonical 后重新计数', () => {
+    const sockets = [new FakeSocket(), new FakeSocket(), new FakeSocket()];
+    let socketIndex = 0;
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => sockets[socketIndex++] as FakeSocket,
+      heartbeatIntervalMs: 60_000,
+    });
+    const transport = new WebSocketGatewayTransport(client);
+    const tooOld: Array<string | null> = [];
+    transport.onEvent((event) => {
+      if (event.type === 'server-too-old') tooOld.push(event.version);
+    });
+    transport.connect();
+    sockets[0]?.open();
+    sockets[0]?.deliver(hello([], 1024 * 1024, '1.1.22'));
+    client.reconnect();
+    sockets[1]?.open();
+    sockets[1]?.deliver(hello([], 1024 * 1024, '1.1.22'));
+    expect(tooOld).toEqual(['1.1.22']);
+
+    // 对端升级到位后重新协商成 canonical：去重记忆清空，之后再退化仍会提示
+    client.reconnect();
+    sockets[2]?.open();
+    sockets[2]?.deliver(hello(CANONICAL));
+    expect(tooOld).toEqual(['1.1.22']);
+    transport.disconnect();
+  });
+
+  test('ERROR 帧里的节点编号与版本原样上报，不被入口网关自身的版本覆盖', () => {
+    const { socket, transport } = createHarness();
+    const tooOld: Array<{ side: string; version: string | null; nodeId?: string | null }> = [];
+    transport.onEvent((event) => {
+      if (event.type === 'server-too-old') {
+        tooOld.push({ side: event.side, version: event.version, nodeId: event.nodeId });
+      }
+    });
+    socket.open();
+    socket.deliver(hello(CANONICAL));
+    socket.deliver(
+      wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_ERROR,
+        wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+          refSeq: null,
+          code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
+          message: wsBorsh.formatCanonicalV11RequiredError({
+            side: 'node',
+            nodeId: 'a1b2c3d4e5f6',
+            version: '1.1.22',
+          }),
+          retryable: false,
+        }),
+        2
+      )
+    );
+
+    expect(tooOld).toEqual([{ side: 'node', version: '1.1.22', nodeId: 'a1b2c3d4e5f6' }]);
     transport.disconnect();
   });
 

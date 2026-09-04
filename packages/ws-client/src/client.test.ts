@@ -511,7 +511,7 @@ describe('重连接线', () => {
         wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
           refSeq: 1,
           code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
-          message: `${wsBorsh.CANONICAL_V11_REQUIRED_ERROR_PREFIX}: client 1.1.21 < 1.1.22`,
+          message: wsBorsh.formatCanonicalV11RequiredError({ side: 'client', version: '1.1.21' }),
           retryable: false,
         }),
         2

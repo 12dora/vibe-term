@@ -2,7 +2,12 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@tmex/shared';
 import { runMigrations } from '../db/migrate';
-import { ERROR_CANONICAL_V11_REQUIRED } from './canonical-gate';
+import {
+  CANONICAL_V11_REQUIRED_PREFIX,
+  ERROR_CANONICAL_V11_REQUIRED,
+  clientTooOldMessage,
+  peerNodeTooOldMessage,
+} from './canonical-gate';
 import { WebSocketServer } from './index';
 import { createBorshTestWs, createGatewaySession, setupConnectionEntry } from './test-helpers';
 
@@ -25,11 +30,11 @@ function decodeSent(ws: ReturnType<typeof createBorshTestWs>) {
 }
 
 describe('HELLO canonical v1.1 版本门槛', () => {
-  test('客户端 >= 1.1.22：协商成功并播报 canonical-state-v1.1 能力', async () => {
+  test('客户端 >= 1.1.23：协商成功并播报 canonical-state-v1.1 能力', async () => {
     const server = new WebSocketServer() as any;
     const ws = createBorshTestWs();
     server.handleOpen(ws);
-    await server.handleBorshMessage(ws, wsBorsh.KIND_HELLO_C2S, 1, helloPayload('1.1.22'));
+    await server.handleBorshMessage(ws, wsBorsh.KIND_HELLO_C2S, 1, helloPayload('1.1.23'));
 
     const frames = decodeSent(ws);
     expect(frames).toHaveLength(1);
@@ -40,16 +45,16 @@ describe('HELLO canonical v1.1 版本门槛', () => {
     );
     expect(hello.capabilities).toContain(GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1);
     expect(ws.borshState.negotiated).toBe(true);
-    expect(ws.borshState.clientVersion).toBe('1.1.22');
+    expect(ws.borshState.clientVersion).toBe('1.1.23');
     expect(ws.closed).toBe(false);
     server.closeSession(ws, 1000, 'test cleanup');
   });
 
-  test('客户端 < 1.1.22：ERROR + 关闭会话，不回退 legacy', async () => {
+  test('客户端 < 1.1.23：ERROR + 关闭会话，不回退 legacy', async () => {
     const server = new WebSocketServer() as any;
     const ws = createBorshTestWs();
     server.handleOpen(ws);
-    await server.handleBorshMessage(ws, wsBorsh.KIND_HELLO_C2S, 7, helloPayload('1.1.21'));
+    await server.handleBorshMessage(ws, wsBorsh.KIND_HELLO_C2S, 7, helloPayload('1.1.22'));
 
     const frames = decodeSent(ws);
     expect(frames[0]?.kind).toBe(wsBorsh.KIND_ERROR);
@@ -60,14 +65,18 @@ describe('HELLO canonical v1.1 版本门槛', () => {
     expect(error.code).toBe(ERROR_CANONICAL_V11_REQUIRED);
     expect(error.code).toBe(wsBorsh.ERROR_UNSUPPORTED_PROTOCOL);
     expect(error.refSeq).toBe(7);
-    expect(error.message).toContain('canonical-state-v1.1 required');
+    // message 即契约：前端按它解析出「谁太旧 + 版本」，这里逐字比对
+    expect(error.message).toBe(
+      wsBorsh.formatCanonicalV11RequiredError({ side: 'client', version: '1.1.22' })
+    );
+    expect(error.message).toBe('canonical-state-v1.1 required: client 1.1.22 < 1.1.23');
     expect(error.retryable).toBe(false);
     expect(ws.borshState.negotiated).toBe(false);
     expect(ws.closed).toBe(true);
   });
 
   test('无法解析的 clientVersion 一律 fail-closed', async () => {
-    for (const version of ['', 'test', '1.1', 'v1.1.22']) {
+    for (const version of ['', 'test', '1.1', 'v1.1.23']) {
       const server = new WebSocketServer() as any;
       const ws = createBorshTestWs();
       server.handleOpen(ws);
@@ -75,6 +84,30 @@ describe('HELLO canonical v1.1 版本门槛', () => {
       expect(decodeSent(ws)[0]?.kind).toBe(wsBorsh.KIND_ERROR);
       expect(ws.closed).toBe(true);
     }
+  });
+});
+
+describe('canonical v1.1 拒绝 message 契约', () => {
+  test('两条 message 都由共享模块拼装，前端可解析回 side / 节点 / 版本', () => {
+    expect(CANONICAL_V11_REQUIRED_PREFIX).toBe(wsBorsh.CANONICAL_V11_REQUIRED_ERROR_PREFIX);
+    expect(clientTooOldMessage('1.1.22')).toBe(
+      'canonical-state-v1.1 required: client 1.1.22 < 1.1.23'
+    );
+    expect(peerNodeTooOldMessage('node-a', null)).toBe(
+      'canonical-state-v1.1 required: node node-a version unknown < 1.1.23'
+    );
+    expect(
+      wsBorsh.parseCanonicalV11RequiredError(
+        ERROR_CANONICAL_V11_REQUIRED,
+        peerNodeTooOldMessage('node-a', '1.1.22_dev')
+      )
+    ).toEqual({ side: 'node', nodeId: 'node-a', version: '1.1.22_dev' });
+    expect(
+      wsBorsh.parseCanonicalV11RequiredError(
+        ERROR_CANONICAL_V11_REQUIRED,
+        clientTooOldMessage(null)
+      )
+    ).toEqual({ side: 'client', nodeId: null, version: null });
   });
 });
 

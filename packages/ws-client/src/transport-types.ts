@@ -5,6 +5,8 @@ import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from 
 import type { ClientSendResult, ConnectionState, StateFeedMode } from './client';
 import type { MovePanePosition } from './message-builder';
 
+export type ServerTooOldSide = 'gateway' | 'node' | 'client';
+
 export interface GatewayTerminalCursor {
   paneEpoch: Uint8Array;
   terminalSeq: bigint;
@@ -74,8 +76,17 @@ export type GatewayTransportEvent =
   | { type: 'connection-state'; state: ConnectionState }
   | { type: 'state-feed-mode'; mode: StateFeedMode }
   | { type: 'latency'; latencyMs: number; rawMs: number }
-  // 网关不满足 canonical v1.1 门槛：不降级，只上报让宿主提示升级
-  | { type: 'server-too-old'; minVersion: string; serverVersion: string | null }
+  // 有一端不满足 canonical v1.1 门槛：不降级，只上报让宿主提示升级。
+  // side 指明太旧的是哪一端（gateway = 直连的网关，node = 入口转发到的远端节点，
+  // client = 本页面），version 是那一端自报的版本，nodeId 只在 node 侧有值——
+  // 被拒的转发流对端未必是当前 runtime 的 node，只能由网关在 ERROR 里点名。
+  | {
+      type: 'server-too-old';
+      side: ServerTooOldSide;
+      minVersion: string;
+      version: string | null;
+      nodeId?: string | null;
+    }
   | { type: 'device-connected'; deviceId: string }
   | { type: 'device-disconnected'; deviceId: string }
   | { type: 'device-event'; event: EventDevicePayload }

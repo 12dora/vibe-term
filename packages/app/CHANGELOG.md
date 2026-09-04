@@ -1,3 +1,23 @@
+# 1.1.24
+
+_2026-09-04_
+
+## English
+
+### Fixes
+
+- The terminal's minimum peer version is now 1.1.23, the version that actually speaks the current state stream — 1.1.22 was never interoperable. When a peer is too old, the message now says which side it is: the node (named by id) and its version, the Gateway and its version, or this page, which just needs a reload. The notice also stops repeating on every reconnect.
+
+---
+
+## 中文
+
+### 修复
+
+- 终端的最低对端版本改为 1.1.23——真正能跑当前状态流的是这一版，1.1.22 从来就互通不了。对端过旧时提示会说明是哪一端：节点（点名节点编号）及其版本、Gateway 及其版本，或本页面（刷新即可）。该提示也不再随每次重连重复弹出。
+
+---
+
 # 1.1.23
 
 _2026-09-04_

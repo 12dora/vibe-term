@@ -86,8 +86,9 @@ tmux 的当前 pane、携带视口尺寸参与几何仲裁），不属于被删�
 - **history 很大**：首屏与历史都按 `ScreenChunk` / `HistoryChunk` 分片，且不经通用 `CHUNK` 通道。
 - **设备断线/重连**：视为新 feed，客户端重发订阅集合，服务端回最新 metadata snapshot 与
   `SubscriptionApplied`；server/pane epoch 变化则发 `SourceGap` 并重推整屏。
-- **网关过旧**：对端不满足 canonical v1.1 门槛（能力 `canonical-state-v1.1` + 版本 ≥ 1.1.22）时
-  **不回退**，`stateFeedMode = 'unsupported'` 并提示用户升级。
+- **对端过旧**：对端不满足 canonical v1.1 门槛（能力 `canonical-state-v1.1` + 版本 ≥ 1.1.23）时
+  **不回退**，`stateFeedMode = 'unsupported'` 并提示升级；提示按 `server-too-old` 事件里的
+  `side` 分流（入口网关 / 被拒节点 / 本页面），节点侧点名 ERROR message 里带的节点编号。
 
 ## 5. 验收用例（e2e）
 

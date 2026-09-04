@@ -16,7 +16,7 @@
 > **1.1.23 起 legacy 状态流整体下线**：`SWITCH_ACK` / `TERM_HISTORY` / `LIVE_RESUME` / `TERM_OUTPUT` /
 > `STATE_SNAPSHOT(_DIFF)` / `TERM_RESIZE` / `TERM_SYNC_SIZE` / `TMUX_FETCH_PANE_HISTORY` 全部删除，
 > 对应的 `SelectStateMachine`、`pane-history-gate`、`SwitchBarrier` 也一并删除。对端不满足
-> canonical v1.1 门槛（能力 `canonical-state-v1.1` + 版本 ≥ 1.1.22）时**不回退**，直接判定
+> canonical v1.1 门槛（能力 `canonical-state-v1.1` + 版本 ≥ 1.1.23）时**不回退**，直接判定
 > `stateFeedMode = 'unsupported'` 并提示用户升级。切换语义见
 > `docs/terminal/2026021404-terminal-switch-barrier-design.md`。
 

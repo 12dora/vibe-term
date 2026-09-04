@@ -144,7 +144,7 @@ describe('StreamReplayState canonical v1.1 对端门槛', () => {
     expect(replay.peerSupportsCanonical()).toBe(false);
   });
 
-  test('对端版本 >= 1.1.22 才放行', () => {
+  test('对端版本 >= 1.1.23 才放行', () => {
     const supported = new StreamReplayState();
     expect(supported.noteInbound(encodeHelloS2C(65_536, '1.1.23'))).toEqual({
       kind: wsBorsh.KIND_HELLO_S2C,

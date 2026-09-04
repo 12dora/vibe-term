@@ -651,7 +651,7 @@ describe('forwarder', () => {
         sent.push(frame);
         return frame.byteLength;
       };
-      const hello = encodeHelloS2CFrame('1.1.22');
+      const hello = encodeHelloS2CFrame('1.1.23');
       streams.lastWs?.pushFromRemote(hello);
 
       expect(sent).toEqual([hello]);
@@ -747,7 +747,10 @@ describe('forwarder', () => {
       expect(closed()).toEqual({ code: 1002, reason: 'node-too-old' });
       const errors = decodeErrorFrames(sent);
       expect(errors).toHaveLength(1);
-      expect(errors[0]?.message).toContain('node unknown');
+      // message 点名被拒的节点：浏览器只有靠它才知道是哪一个节点太旧
+      expect(errors[0]?.message).toBe(
+        `canonical-state-v1.1 required: node ${OTHER} version unknown < ${wsBorsh.CANONICAL_V11_MIN_PEER_VERSION}`
+      );
       expect(streams.wsOpens[1]?.ws.closedOnce).toBe(true);
     } finally {
       mesh.close();

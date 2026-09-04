@@ -124,13 +124,17 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
     wsBorsh.KIND_ERROR,
     (payload, emit) => {
       const decoded = wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, payload);
-      // 网关按 canonical v1.1 门槛拒绝本端时不回 HELLO_S2C，只有这条 ERROR；
-      // 翻成 server-too-old 才能弹出「升级」提示，否则终端只是一直空白。
-      if (wsBorsh.isCanonicalV11RequiredError(decoded.code, decoded.message)) {
+      // 网关按 canonical v1.1 门槛拒绝时不回 HELLO_S2C，只有这条 ERROR；翻成 server-too-old
+      // 才能弹出「升级」提示，否则终端只是一直空白。message 里已带上是哪一端太旧、
+      // 哪个节点与其版本。
+      const tooOld = wsBorsh.parseCanonicalV11RequiredError(decoded.code, decoded.message);
+      if (tooOld) {
         emit({
           type: 'server-too-old',
+          side: tooOld.side,
           minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
-          serverVersion: null,
+          version: tooOld.version,
+          nodeId: tooOld.nodeId,
         });
         return;
       }

@@ -1,5 +1,6 @@
 // gateway transport 事件路由：按事件类型分发到独立 handler，替代单个大 switch。
 
+import { SELF_NODE_ID } from '@tmex/api-client';
 import {
   type DeferredClipboardWriter,
   type EventDevicePayload,
@@ -34,6 +35,25 @@ type TmuxEventHandlers = {
     ctx: TmuxEventRouterContext
   ) => void;
 };
+
+/**
+ * 「版本过低」提示按太旧的那一端选词：远端节点要点名是哪个节点——被拒的转发流对端未必
+ * 是本 runtime 的 node，优先用网关在 ERROR 里点名的 nodeId，拿不到才退回本 runtime 的
+ * nodeId（stores 只有编号没有名称，取前 8 位显示）。入口网关报 Gateway 版本，
+ * 本页面则只需刷新。
+ */
+function tooOldMessage(event: EventOfType<'server-too-old'>, ctx: TmuxEventRouterContext): string {
+  const t = ctx.core.t;
+  if (event.side === 'client') return t('websocket.clientTooOld');
+  const params = {
+    version: event.version ?? t('websocket.unknownVersion'),
+    minVersion: event.minVersion,
+  };
+  if (event.side === 'gateway') return t('websocket.gatewayTooOld', params);
+  const nodeId = event.nodeId ?? ctx.core.nodeId;
+  if (!nodeId || nodeId === SELF_NODE_ID) return t('websocket.nodeTooOldUnnamed', params);
+  return t('websocket.nodeTooOld', { ...params, name: nodeId.slice(0, 8) });
+}
 
 // 远端（OSC52）发起的复制没有用户激活，iOS Safari 会拒绝写剪贴板：交给延迟写入器挂起，
 // 等下一次真实手势重试。writer 按 router 上下文缓存，挂起状态才能跨事件存活。
@@ -117,16 +137,14 @@ const handlers: TmuxEventHandlers = {
     ctx.setState({ wsLatencyMs, wsLatencyRawMs });
   },
 
-  // 网关低于 canonical v1.1 门槛：状态流建不起来且不回退，store 里 stateFeedMode 记
+  // 某一端低于 canonical v1.1 门槛：状态流建不起来且不回退，store 里 stateFeedMode 记
   // 'unsupported' 供 UI 判断，另外弹一次提示——否则终端只会一直空白，用户无从判断原因。
   'server-too-old': (event, ctx) => {
     console.error(
-      '[tmux] gateway too old for canonical state v1.1:',
-      `server=${event.serverVersion ?? 'unknown'} required>=${event.minVersion}`
+      '[tmux] peer too old for canonical state v1.1:',
+      `side=${event.side} node=${event.nodeId ?? '-'} version=${event.version ?? 'unknown'} required>=${event.minVersion}`
     );
-    ctx.core.notifications.error(
-      ctx.core.t('websocket.serverTooOld', { minVersion: event.minVersion })
-    );
+    ctx.core.notifications.error(tooOldMessage(event, ctx));
   },
 
   'device-connected': (event, ctx) => {

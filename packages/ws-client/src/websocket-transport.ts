@@ -23,6 +23,7 @@ import type {
   GatewayTransportCommand,
   GatewayTransportEvent,
   GatewayTransportEventHandler,
+  ServerTooOldSide,
 } from './transport-types';
 
 interface PendingTransportCommand {
@@ -55,6 +56,8 @@ export class WebSocketGatewayTransport implements GatewayTransport {
     cursorHistory: false,
     serverSelection: true,
   };
+
+  private reportedTooOld: string | null = null;
 
   private readonly handlers = new Set<GatewayTransportEventHandler>();
   private readonly disposers: Array<() => void>;
@@ -161,16 +164,14 @@ export class WebSocketGatewayTransport implements GatewayTransport {
   private handleStateChange(state: ConnectionState): void {
     if (state === 'READY') {
       this.syncFeedMode(this.client.stateFeedMode);
-      if (this.client.stateFeedMode === 'canonical') this.canonical.activate();
-      else {
+      if (this.client.stateFeedMode === 'canonical') {
+        this.canonical.activate();
+        this.reportedTooOld = null;
+      } else {
         // 网关太旧：canonical 会话建不起来，legacy 状态流又已下线，只能报错等宿主升级。
         this.canonical.suspend();
         this.canonical.takePendingCommands();
-        this.emit({
-          type: 'server-too-old',
-          minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
-          serverVersion: this.client.serverVersion,
-        });
+        this.emitServerTooOld({ side: 'gateway', version: this.client.serverVersion });
       }
       this.flushPendingCommands();
     } else {
@@ -178,6 +179,27 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       this.syncFeedMode('pending');
     }
     this.emit({ type: 'connection-state', state });
+  }
+
+  /**
+   * 同一端、同一版本只提示一次：READY + unsupported 每次重连（含切标签页唤醒的惰性重连）
+   * 都会再走一遍，不去重会连弹。对端升级后会重新协商成 canonical，届时清掉这里的记忆。
+   */
+  private emitServerTooOld(peer: {
+    side: ServerTooOldSide;
+    version: string | null;
+    nodeId?: string | null;
+  }): void {
+    const key = `${peer.side}:${peer.nodeId ?? ''}:${peer.version ?? ''}`;
+    if (this.reportedTooOld === key) return;
+    this.reportedTooOld = key;
+    this.emit({
+      type: 'server-too-old',
+      side: peer.side,
+      minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
+      version: peer.version,
+      nodeId: peer.nodeId ?? null,
+    });
   }
 
   private syncFeedMode(mode: StateFeedMode): void {
@@ -204,9 +226,12 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       return;
     }
     decodeGatewayTransportMessage(kind, payload, (event) => {
-      // 解码器拿不到本连接协商到的服务端版本，这里补一次（被门槛拒时通常还没收到 HELLO_S2C）。
-      if (event.type === 'server-too-old' && event.serverVersion === null) {
-        this.emit({ ...event, serverVersion: this.client.serverVersion });
+      if (event.type === 'server-too-old') {
+        this.emitServerTooOld({
+          side: event.side,
+          version: event.version,
+          nodeId: event.nodeId ?? null,
+        });
         return;
       }
       this.emit(event);

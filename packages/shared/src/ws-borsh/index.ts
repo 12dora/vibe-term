@@ -127,7 +127,12 @@ export {
 export {
   CANONICAL_V11_MIN_PEER_VERSION,
   CANONICAL_V11_REQUIRED_ERROR_PREFIX,
+  CANONICAL_V11_UNKNOWN,
+  type CanonicalV11PeerSide,
+  type CanonicalV11RequiredErrorInfo,
+  formatCanonicalV11RequiredError,
   isCanonicalV11RequiredError,
+  parseCanonicalV11RequiredError,
   peerSupportsCanonicalV11,
 } from './canonical-version';
 export {
