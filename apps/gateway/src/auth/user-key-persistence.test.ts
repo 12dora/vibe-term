@@ -5,8 +5,10 @@ import {
   emptyUserKeyState,
   encodeAddPasskeyPayload,
   encodeBase64url,
+  encodeRenameNodePayload,
   encodeRotateRootKeepPayload,
   generateKdfParams,
+  hexToBytes,
 } from '@tmex/shared/auth';
 import { eq } from 'drizzle-orm';
 import { nodeIdentity } from '../db/schema';
@@ -26,6 +28,7 @@ import { UserStore } from './user-store';
 
 function openStores(db: ReturnType<typeof createMigratedAuthDb>['db']) {
   return {
+    db,
     userStore: new UserStore(db),
     keyLogStore: new KeyLogStore(db),
     nodeSessionStore: new NodeSessionStore(db),
@@ -447,6 +450,77 @@ describe('user-key-persistence', () => {
         n += 1;
       });
       expect(n).toBe(1);
+    } finally {
+      close();
+    }
+  });
+
+  test('persistApplied rename-node updates nodes.name, peer_cache.name and self identity', () => {
+    const { db, sqlite, close } = createMigratedAuthDb();
+    try {
+      const stores = openStores(db);
+      seedUser(stores.userStore);
+      const peerId = 'aa'.repeat(16);
+      const selfId = 'bb'.repeat(16);
+      stores.userStore.createNode({
+        id: peerId,
+        userId: 'user-1',
+        name: 'old-peer',
+        now: 1_000,
+      });
+      stores.userStore.upsertPeer({
+        nodeId: peerId,
+        name: 'old-peer',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+      });
+      persistEncryptedIdentity(db, {
+        nodeId: selfId,
+        hubUrl: null,
+        privateKey: 'enc-ed',
+        x25519PrivateKey: 'enc-x',
+        certificateJson: '{}',
+        certSig: new Uint8Array([1]),
+        userId: 'user-1',
+      });
+
+      persistApplied(
+        stores,
+        'user-1',
+        makeStep('user-1', 'rename-node', {
+          payload: encodeRenameNodePayload({ node_id: hexToBytes(peerId), name: '  studio  ' }),
+        }),
+        2_000
+      );
+      expect(stores.userStore.getNode(peerId)?.name).toBe('studio');
+      expect(stores.userStore.getPeer(peerId)?.name).toBe('studio');
+      expect(db.select().from(nodeIdentity).get()?.name).toBeNull();
+
+      persistApplied(
+        stores,
+        'user-1',
+        makeStep('user-1', 'rename-node', {
+          seq: 5n,
+          payload: encodeRenameNodePayload({ node_id: hexToBytes(selfId), name: 'home' }),
+        }),
+        3_000
+      );
+      expect(db.select().from(nodeIdentity).get()?.name).toBe('home');
+      expect(stores.userStore.getPeer(selfId)?.name).toBe('home');
+
+      sqlite
+        .query(
+          `INSERT INTO user_key_log (seq, user_id, prev_hash, hash, root_epoch, type, record_bytes, sig, payload_json, created_at)
+           VALUES (9, 'user-1', X'00', X'00', 1, 'rename-node', X'00', X'00', '{}', 1)`
+        )
+        .run();
+      const row = sqlite
+        .query(`SELECT type FROM user_key_log WHERE user_id = 'user-1' AND seq = 9`)
+        .get() as { type: string };
+      expect(row.type).toBe('rename-node');
     } finally {
       close();
     }

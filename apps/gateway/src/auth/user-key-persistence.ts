@@ -6,14 +6,17 @@ import {
   decodeBase64url,
   decodeCertificate,
   decodeRemovePasskeyPayload,
+  decodeRenameNodePayload,
   decodeRetireHubPayload,
   decodeRevokeNodePayload,
   decodeRotateRootKeepPayload,
   encodeBase64url,
   nodeIdToHex,
+  normalizeNodeName,
 } from '@tmex/shared/auth';
 import { eq } from 'drizzle-orm';
 import { nodeIdentity } from '../db/schema';
+import { patchNode } from '../hub/node-persistence';
 import { toBuffer } from './binary';
 import { type KeyLogStore, projectPayloadJson } from './key-log-store';
 import type { NodeSessionStore } from './node-session-store';
@@ -23,6 +26,7 @@ import type { UserStore } from './user-store';
 const IDENTITY_ROW_ID = 1;
 
 export type AuthStores = {
+  db: AuthDb;
   userStore: UserStore;
   keyLogStore: KeyLogStore;
   nodeSessionStore: NodeSessionStore;
@@ -65,6 +69,7 @@ export function createTxStores(
 ): AuthStores {
   const db = tx as AuthDb;
   return {
+    db,
     userStore: new (userStore.constructor as typeof UserStore)(db),
     keyLogStore: new (keyLogStore.constructor as typeof KeyLogStore)(db),
     nodeSessionStore: new (nodeSessionStore.constructor as typeof NodeSessionStore)(db),
@@ -136,7 +141,7 @@ export function persistApplied(
     now,
   });
   userStore.setKeyLogHead(userId, { seq: Number(next.head.seq), hash: next.head.hash, now });
-  projectRecord(userStore, userId, record, seq, now);
+  projectRecord(stores, userId, record, seq, now);
   applyEffects(stores, userId, effects, now);
   if (
     record.type === 'rotate-root' ||
@@ -149,12 +154,13 @@ export function persistApplied(
 }
 
 function projectRecord(
-  userStore: UserStore,
+  stores: AuthStores,
   userId: string,
   record: KeyLogRecord,
   seq: number,
   now: number
 ): void {
+  const { userStore } = stores;
   if (record.type === 'rotate-root' || record.type === 'reset-root') {
     userStore.deleteKeysByUser(userId);
     userStore.setTotpRecordSeq(userId, null, now);
@@ -254,8 +260,41 @@ function projectRecord(
         updatedSeq: seq,
       });
     },
+    'rename-node': () => persistRenameNode(stores, record),
   };
   byType[record.type]?.();
+}
+
+function persistRenameNode(stores: AuthStores, record: KeyLogRecord): void {
+  let payload: ReturnType<typeof decodeRenameNodePayload>;
+  try {
+    payload = decodeRenameNodePayload(record.payload);
+  } catch {
+    return;
+  }
+  const name = normalizeNodeName(payload.name);
+  if (!name) return;
+  const nodeId = nodeIdToHex(payload.node_id);
+  patchNode(stores.db, nodeId, { name });
+  const peer = stores.userStore.getPeer(nodeId);
+  stores.userStore.upsertPeer({
+    nodeId,
+    name,
+    endpointsJson: peer?.endpointsJson ?? '[]',
+    inventoryJson: peer?.inventoryJson ?? '{}',
+    directCapable: peer?.directCapable ?? false,
+    lastSeenAt: peer?.lastSeenAt ?? null,
+    listVersion: peer?.listVersion ?? 0,
+    version: peer?.version,
+  });
+  const identity = stores.db
+    .select()
+    .from(nodeIdentity)
+    .where(eq(nodeIdentity.id, IDENTITY_ROW_ID))
+    .get();
+  if (identity?.nodeId === nodeId) {
+    stores.db.update(nodeIdentity).set({ name }).where(eq(nodeIdentity.id, IDENTITY_ROW_ID)).run();
+  }
 }
 
 function applyEffects(

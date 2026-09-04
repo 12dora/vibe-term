@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   bytesEqual,
+  encodeRenameNodePayload,
   encodeRotateRootKeepPayload,
   generateKdfParams,
   genesisHead,
@@ -112,5 +113,18 @@ describe('KeyLogStore', () => {
     expect(parsed.totp?.seq).toBe(9);
     expect(parsed.totp?.payload.alg).toBe('A256GCM');
     expect(projectPayloadJson('rotate-root-keep', new Uint8Array([1, 2, 3]))).toBe('{}');
+  });
+
+  test('projectPayloadJson decodes rename-node', () => {
+    const json = projectPayloadJson(
+      'rename-node',
+      encodeRenameNodePayload({
+        node_id: Uint8Array.from({ length: 16 }, () => 0xab),
+        name: 'studio',
+      })
+    );
+    const parsed = JSON.parse(json) as { node_id: string; name: string };
+    expect(parsed.name).toBe('studio');
+    expect(parsed.node_id.length).toBeGreaterThan(0);
   });
 });
