@@ -6,7 +6,6 @@
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Checkbox } from '@tmex/ui/checkbox';
 import {
@@ -25,6 +24,8 @@ import { useTranslation } from 'react-i18next';
 import { WideTableScroll, stickyActionColumn } from '../../components/wide-table';
 import { hubDetailText, hubModeLabel } from '../uplink/hub-strip';
 import { NodeDetailDialog } from './node-detail-dialog';
+import { PendingNodeRow } from './pending-node-row';
+import { Tag, Td, Th, rowBlockedHint } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 import { upgradeBlockReason } from './upgrade-batch';
 import type { HubRoleSwitchController } from './use-hub-role-switch';
@@ -79,16 +80,20 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <NodeRowView
-              key={row.id}
-              row={row}
-              selection={selection}
-              uninstall={uninstall}
-              roleSwitch={roleSwitch}
-              {...deps}
-            />
-          ))}
+          {rows.map((row) =>
+            row.pending ? (
+              <PendingNodeRow key={row.id} row={row} {...deps} />
+            ) : (
+              <NodeRowView
+                key={row.id}
+                row={row}
+                selection={selection}
+                uninstall={uninstall}
+                roleSwitch={roleSwitch}
+                {...deps}
+              />
+            )
+          )}
           {rows.length === 0 && (
             <tr>
               <td colSpan={10} className="tmex-fade px-3 py-6 text-center text-muted-foreground">
@@ -100,18 +105,6 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
       </table>
     </WideTableScroll>
   );
-}
-
-/**
- * 不可写时的提示。调用方给了原因就用它（中继模式下上级不是 hub，说「Hub 不可达」是错的），
- * 否则按 hub 的两种情形分档：备 Hub 拒写 / 主 Hub 不可达。
- */
-export function rowBlockedHint(
-  t: Translate,
-  deps: Pick<NodeActionDeps, 'hubWritable' | 'blockedHint'>
-): string {
-  if (deps.blockedHint) return deps.blockedHint;
-  return t(deps.hubWritable ? 'nodes.hubOffline' : 'nodes.hubs.standbyNotice');
 }
 
 function deriveNodeRow(row: NodeRow, t: (key: string) => string) {
@@ -455,29 +448,6 @@ function upgradeTitle(
 ): string | undefined {
   if (error) return error;
   return version ? t('nodes.upgrade.hint', { version }) : undefined;
-}
-
-function Th({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <th className={cn('whitespace-nowrap px-3 py-2 text-left font-medium', className)}>
-      {children}
-    </th>
-  );
-}
-
-function Td({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <td className={cn('whitespace-nowrap px-3 py-2 align-middle', className)}>{children}</td>;
-}
-
-function Tag({ children, title }: { children: React.ReactNode; title?: string }) {
-  return (
-    <span
-      className="rounded border border-border px-1 py-px text-[10px] text-muted-foreground"
-      title={title}
-    >
-      {children}
-    </span>
-  );
 }
 
 /**

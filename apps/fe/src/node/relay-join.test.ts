@@ -13,7 +13,7 @@ import { decodeRelayJoinToken, isRelayJoinToken } from '@tmex/shared/relay';
 import type { PendingStorage } from './enrollment';
 import { listPendingEnrollments, setPendingStorage } from './enrollment';
 import type { HubApi } from './hub-api';
-import { createEnrollmentOnRelay } from './relay-join';
+import { RELAY_ENROLLMENT_NO_RELAY, createEnrollmentOnRelay } from './relay-join';
 
 function memoryStorage(): PendingStorage {
   const map = new Map<string, string>();
@@ -33,24 +33,50 @@ const TOKEN = new Uint8Array(32).fill(0x22);
 const ROOT = rootKeyFromSeed(new Uint8Array(32).fill(0x33));
 const HEAD_HASH = new Uint8Array(32).fill(0x44);
 
-function relayApiOf(relays: Array<{ url: string; tenantId: string }>): RelayTenantApi {
-  return {
-    joinMaterial: () =>
-      Promise.resolve({
+function relayApiOf(
+  relays: Array<{ url: string; tenantId: string }>,
+  all: Array<{ url: string; tenantId: string }> = relays
+): RelayTenantApi & { scopes: string[] } {
+  const scopes: string[] = [];
+  const api = {
+    scopes,
+    joinMaterial: (options: { scope?: string } = {}) => {
+      scopes.push(options.scope ?? 'attached');
+      const rows = options.scope === 'all' ? all : relays;
+      return Promise.resolve({
         logKey: encodeBase64url(LOG_KEY),
-        relays: relays.map((relay) => ({ ...relay, token: encodeBase64url(TOKEN) })),
-      }),
-  } as unknown as RelayTenantApi;
+        relays: rows.map((relay) => ({ ...relay, token: encodeBase64url(TOKEN) })),
+      });
+    },
+  };
+  return api as unknown as RelayTenantApi & { scopes: string[] };
 }
 
-function channelOf(calls: unknown[]): HubApi {
+function channelOf(calls: unknown[], created: Record<string, unknown> = {}): HubApi {
   return {
     createEnrollment: (body: unknown) => {
       calls.push(body);
-      return Promise.resolve({ ok: true, id: 'enr-1', expires_at: 1_700_000_600_000 });
+      return Promise.resolve({
+        ok: true,
+        id: 'enr-1',
+        expires_at: 1_700_000_600_000,
+        ...created,
+      });
     },
   } as unknown as HubApi;
 }
+
+const SHARED = {
+  uid: 'u1',
+  rootEpoch: 3,
+  signer: { kind: 'root', rootKey: ROOT } as const,
+  rootPublicKey: ROOT.publicKey,
+  keyLogHeadHash: HEAD_HASH,
+  now: 1_700_000_000_000,
+};
+
+const RELAY_A = { url: 'https://a.example', tenantId: 'ab'.repeat(16) };
+const RELAY_B = { url: 'https://b.example', tenantId: 'cd'.repeat(16) };
 
 describe('createEnrollmentOnRelay', () => {
   beforeEach(() => {
@@ -117,5 +143,98 @@ describe('createEnrollmentOnRelay', () => {
       })
     ).rejects.toThrow('relay list is empty');
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('createEnrollmentOnRelay 的 fan-out 结果', () => {
+  beforeEach(() => {
+    setPendingStorage(memoryStorage());
+  });
+
+  test('只把 accepted 的中继写进 join 串', async () => {
+    const created = await createEnrollmentOnRelay({
+      channel: channelOf([], {
+        relays: [
+          { ...RELAY_A, token: encodeBase64url(TOKEN), accepted: true },
+          { ...RELAY_B, accepted: false, error: 'timeout' },
+        ],
+      }),
+      relayApi: relayApiOf([RELAY_A], [RELAY_A, RELAY_B]),
+      ...SHARED,
+    });
+
+    expect(decodeRelayJoinToken(created.joinToken).relays).toEqual([
+      { url: RELAY_A.url, tenantId: RELAY_A.tenantId, token: TOKEN },
+    ]);
+    expect(created.hubPublicUrl).toBe(RELAY_A.url);
+  });
+
+  test('accepted 的那条没带令牌时按地址回查 join-material', async () => {
+    const created = await createEnrollmentOnRelay({
+      channel: channelOf([], {
+        relays: [{ ...RELAY_B, accepted: true }],
+      }),
+      relayApi: relayApiOf([RELAY_B]),
+      ...SHARED,
+    });
+    expect(decodeRelayJoinToken(created.joinToken).relays).toEqual([
+      { url: RELAY_B.url, tenantId: RELAY_B.tenantId, token: TOKEN },
+    ]);
+  });
+
+  test('一台都没接受：报错并带上逐台原因', async () => {
+    const failure = await createEnrollmentOnRelay({
+      channel: channelOf([], {
+        relays: [
+          { ...RELAY_A, accepted: false, error: 'timeout' },
+          { ...RELAY_B, accepted: false, error: 'RELAY_QUOTA_NODES' },
+        ],
+      }),
+      relayApi: relayApiOf([RELAY_A]),
+      ...SHARED,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error & { code?: string }).code).toBe(RELAY_ENROLLMENT_NO_RELAY);
+    expect((failure as Error).message).toContain('timeout');
+    expect((failure as Error).message).toContain('RELAY_QUOTA_NODES');
+  });
+
+  test('旧形态的地址表：全部当作已接受，令牌从 scope=all 取', async () => {
+    const relayApi = relayApiOf([RELAY_A], [RELAY_A, RELAY_B]);
+    const created = await createEnrollmentOnRelay({
+      channel: channelOf([], { relays: [RELAY_A.url, RELAY_B.url] }),
+      relayApi,
+      ...SHARED,
+    });
+
+    expect(relayApi.scopes).toEqual(['attached', 'all']);
+    expect(decodeRelayJoinToken(created.joinToken).relays.map((relay) => relay.url)).toEqual([
+      RELAY_A.url,
+      RELAY_B.url,
+    ]);
+  });
+
+  test('旧形态的地址表没超出手头这一份时不再多问一次', async () => {
+    const relayApi = relayApiOf([RELAY_A]);
+    await createEnrollmentOnRelay({
+      channel: channelOf([], { relays: [RELAY_A.url] }),
+      relayApi,
+      ...SHARED,
+    });
+    expect(relayApi.scopes).toEqual(['attached']);
+  });
+
+  test('旧节点根本不下发 relays：维持原样，只带当前 attach 的那一台', async () => {
+    const relayApi = relayApiOf([RELAY_A], [RELAY_A, RELAY_B]);
+    const created = await createEnrollmentOnRelay({
+      channel: channelOf([]),
+      relayApi,
+      ...SHARED,
+    });
+    expect(relayApi.scopes).toEqual(['attached']);
+    expect(decodeRelayJoinToken(created.joinToken).relays.map((relay) => relay.url)).toEqual([
+      RELAY_A.url,
+    ]);
   });
 });

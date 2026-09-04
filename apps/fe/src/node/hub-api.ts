@@ -8,6 +8,18 @@ import { type ApiClient, SELF_NODE_ID, defaultApiClient, resolveNodeUrl } from '
 import type { HubEnrollmentStatus } from '@tmex/api-client/auth/index';
 import type { HubRoleRequest, HubRoleTransition } from '@tmex/shared';
 
+/**
+ * key log 里这台 node 的接纳状态（`nodes.status` 之外的派生字段）。
+ * `pending`：Hub 已发出证书，本地密钥日志还没有对应的 `admit-node`——它还不是 mesh 成员。
+ */
+export type HubAdmissionStatus = 'pending' | 'admitted' | 'revoked';
+
+const ADMISSION_STATUSES: ReadonlySet<string> = new Set([
+  'pending',
+  'admitted',
+  'revoked',
+] satisfies HubAdmissionStatus[]);
+
 /** `GET /n/<hub>/api/hub/nodes` 的单行（见 `apps/gateway/src/hub/hub-runtime.ts`）。 */
 export interface HubNodeRow {
   id: string;
@@ -18,16 +30,65 @@ export interface HubNodeRow {
   version: string | null;
   last_seen_at: number | null;
   direct_capable: boolean;
+  /** 旧 Hub 不下发这一段，缺失即 `admitted`（老行为不变）。 */
+  admission_status?: HubAdmissionStatus;
+  /** 待批准行的 enrollment 编号；`admit-node` 的重发对账按它记。 */
+  enrollment_id?: string;
+  /** base64url(borsh(EnrollAuthorization))：待批准行才有，签 `admit-node` 要用。 */
+  authorization?: string;
+  /** base64url，64 字节。与 `authorization` 同批下发。 */
+  authorization_sig?: string;
   /** base64url(borsh(Certificate))：已 admit 的 node 才有。 */
   certificate?: string;
   /** base64url，64 字节。与 `certificate` 同批下发。 */
   cert_sig?: string;
 }
 
+/** 未知值与缺失一律当 `admitted`：新字段不能让旧 Hub 的整张表变成「待批准」。 */
+export function hubAdmissionStatus(row: Pick<HubNodeRow, 'admission_status'>): HubAdmissionStatus {
+  const value = row.admission_status;
+  return value && ADMISSION_STATUSES.has(value) ? value : 'admitted';
+}
+
+/** 空串与非字符串一律抹成 `undefined`：畸形材料留到签名那一步才炸没有任何好处。 */
+function textField(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/** 归一化节点表：补齐 `admission_status`，并只留下字符串形态的 admit 材料。 */
+export function normalizeHubNodeRows(rows: HubNodeRow[]): HubNodeRow[] {
+  return rows.map((row) => ({
+    ...row,
+    admission_status: hubAdmissionStatus(row),
+    enrollment_id: textField(row.enrollment_id),
+    authorization: textField(row.authorization),
+    authorization_sig: textField(row.authorization_sig),
+    certificate: textField(row.certificate),
+    cert_sig: textField(row.cert_sig),
+  }));
+}
+
+/**
+ * `POST /api/mesh/relay/enrollments` 的逐台中继结果：enrollment 会 fan-out 到全部已授权中继，
+ * 只有 `accepted` 的那几台真的能 redeem。旧节点不下发这一段（或只给 `string[]` 地址表）。
+ */
+export interface EnrollmentRelayResult {
+  url: string;
+  /** 32 位小写 hex；这一台自己签发的租户编号。 */
+  tenantId: string;
+  /** base64url，32 字节；只有 `accepted` 的那几台带。 */
+  token?: string;
+  accepted: boolean;
+  /** 未接受的原因（超时 / 配额 / 拒绝）。 */
+  error?: string;
+}
+
 export interface HubEnrollmentCreated {
   ok: boolean;
   id: string;
   expires_at: number;
+  /** 中继模式专有：enrollment 的 fan-out 结果；hub 模式不下发。 */
+  relays?: string[] | EnrollmentRelayResult[];
   /** hub 的对外可达地址；join 命令**只能**用它。 */
   public_url?: string;
   /** self-signed CA 的 SPKI sha256 hex；拼进 join 串 v2 段。 */
@@ -91,7 +152,7 @@ export class HubApi {
     const res = await this.client.fetch(this.path('/nodes'));
     if (!res.ok) throw await readError(res, 'hub_nodes_failed');
     const body = (await res.json()) as { nodes?: HubNodeRow[] };
-    return body.nodes ?? [];
+    return normalizeHubNodeRows(body.nodes ?? []);
   }
 
   async rename(nodeId: string, name: string): Promise<void> {

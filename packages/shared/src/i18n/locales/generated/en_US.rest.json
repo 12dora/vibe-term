@@ -1491,7 +1491,8 @@
       "status": {
         "online": "Online",
         "offline": "Offline",
-        "revoked": "Removed"
+        "revoked": "Removed",
+        "pending": "Pending"
       },
       "reach": {
         "lan": "Local network",
@@ -1506,7 +1507,13 @@
         "revoke": "Remove",
         "refresh": "Refresh",
         "copy": "Copy",
-        "copied": "Copied"
+        "copied": "Copied",
+        "admit": "Admit"
+      },
+      "admit": {
+        "blocked": "Admit this node before managing it.",
+        "unavailable": "Hub did not send the material needed to admit this node. Refresh and try again.",
+        "failed": "Admit failed: {{error}}"
       },
       "detail": {
         "description": "Node details; rename it or change its domain access policy.",
@@ -1597,7 +1604,8 @@
         "retryHub": "Retry",
         "missingHubUrl": "The hub has no public address, so the join command cannot be built.",
         "missingRelayUrl": "The relay address is unavailable, so the join command cannot be built.",
-        "staleRecord": "Your account changed in the meantime. Approve again."
+        "staleRecord": "Your account changed in the meantime. Approve again.",
+        "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again."
       },
       "rename": {
         "save": "Save",

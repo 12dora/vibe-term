@@ -2237,7 +2237,8 @@ export const I18N_RESOURCES = {
       "status": {
         "online": "Online",
         "offline": "Offline",
-        "revoked": "Removed"
+        "revoked": "Removed",
+        "pending": "Pending"
       },
       "reach": {
         "lan": "Local network",
@@ -2252,7 +2253,13 @@ export const I18N_RESOURCES = {
         "revoke": "Remove",
         "refresh": "Refresh",
         "copy": "Copy",
-        "copied": "Copied"
+        "copied": "Copied",
+        "admit": "Admit"
+      },
+      "admit": {
+        "blocked": "Admit this node before managing it.",
+        "unavailable": "Hub did not send the material needed to admit this node. Refresh and try again.",
+        "failed": "Admit failed: {{error}}"
       },
       "detail": {
         "description": "Node details; rename it or change its domain access policy.",
@@ -2343,7 +2350,8 @@ export const I18N_RESOURCES = {
         "retryHub": "Retry",
         "missingHubUrl": "The hub has no public address, so the join command cannot be built.",
         "missingRelayUrl": "The relay address is unavailable, so the join command cannot be built.",
-        "staleRecord": "Your account changed in the meantime. Approve again."
+        "staleRecord": "Your account changed in the meantime. Approve again.",
+        "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again."
       },
       "rename": {
         "save": "Save",
@@ -5133,7 +5141,8 @@ export const I18N_RESOURCES = {
       "status": {
         "online": "在线",
         "offline": "离线",
-        "revoked": "已移除"
+        "revoked": "已移除",
+        "pending": "待批准"
       },
       "reach": {
         "lan": "局域网",
@@ -5148,7 +5157,13 @@ export const I18N_RESOURCES = {
         "revoke": "移除",
         "refresh": "刷新",
         "copy": "复制",
-        "copied": "已复制"
+        "copied": "已复制",
+        "admit": "批准加入"
+      },
+      "admit": {
+        "blocked": "须先批准加入，才能管理这台节点。",
+        "unavailable": "Hub 未下发批准所需材料，请刷新后重试。",
+        "failed": "批准失败：{{error}}"
       },
       "detail": {
         "description": "查看节点信息，修改名称与域名访问策略。",
@@ -5238,7 +5253,8 @@ export const I18N_RESOURCES = {
         "retryHub": "重试",
         "missingHubUrl": "Hub 未设置公开地址，无法生成加入命令。",
         "missingRelayUrl": "中继地址不可用，无法生成加入命令。",
-        "staleRecord": "账号信息已变化，请重新确认。"
+        "staleRecord": "账号信息已变化，请重新确认。",
+        "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。"
       },
       "rename": {
         "save": "保存",
@@ -8024,7 +8040,8 @@ export const I18N_RESOURCES = {
       "status": {
         "online": "オンライン",
         "offline": "オフライン",
-        "revoked": "削除済み"
+        "revoked": "削除済み",
+        "pending": "承認待ち"
       },
       "reach": {
         "lan": "ローカル",
@@ -8039,7 +8056,13 @@ export const I18N_RESOURCES = {
         "revoke": "削除",
         "refresh": "更新",
         "copy": "コピー",
-        "copied": "コピーしました"
+        "copied": "コピーしました",
+        "admit": "参加を承認"
+      },
+      "admit": {
+        "blocked": "先に参加を承認してください。",
+        "unavailable": "承認に必要な情報が Hub から届いていません。更新してからもう一度お試しください。",
+        "failed": "承認に失敗しました：{{error}}"
       },
       "detail": {
         "description": "ノードの情報を確認し、名前とドメインアクセスの設定を変更します。",
@@ -8129,7 +8152,8 @@ export const I18N_RESOURCES = {
         "retryHub": "再試行",
         "missingHubUrl": "ハブに公開アドレスが設定されていないため、参加コマンドを作成できません。",
         "missingRelayUrl": "中継アドレスを取得できないため、参加コマンドを作成できません。",
-        "staleRecord": "その間にアカウント情報が変わりました。もう一度承認してください。"
+        "staleRecord": "その間にアカウント情報が変わりました。もう一度承認してください。",
+        "relayNoneAccepted": "中継が参加コードを受け付けませんでした。中継の接続を確認してからもう一度お試しください。"
       },
       "rename": {
         "save": "保存",

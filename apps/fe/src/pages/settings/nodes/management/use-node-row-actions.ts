@@ -6,6 +6,7 @@
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { headFromResponse } from '@/auth/key-log-actions';
 import type { RecordSigner } from '@/auth/key-log-actions';
+import { type AdmitPendingResult, admitPendingNode } from '@/node/admit-pending-node';
 import { buildRevokeNodeRecord, classifyKeyLogFailure } from '@/node/enrollment';
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { NodeRow } from '@/node/mesh-nodes';
@@ -250,6 +251,75 @@ export function useNodeRowActions(
   }, [api, mode, onChanged, prompt, row, t, writerPublicUrl]);
 
   return { busy, rename, revoke };
+}
+
+/** 「批准加入」需要的那几项依赖（与吊销同源，只是不需要 hub 通道）。 */
+export type AdmitNodeDeps = Pick<
+  NodeActionDeps,
+  'api' | 'mode' | 'prompt' | 'writerPublicUrl' | 'onChanged'
+>;
+
+/**
+ * 批准的结论 → 一条提示；返回是否需要刷新列表。
+ *
+ * 「Hub 未确认」是**警告**不是失败：服务端一条都没落库，原样重发即可（见 `submitAdmitRecord`），
+ * 提示里不能说成失败，否则用户会以为要重来一遍加入流程。
+ */
+export function reportAdmitResult(
+  t: Translate,
+  result: AdmitPendingResult,
+  writerPublicUrl: string | null
+): boolean {
+  switch (result.kind) {
+    case 'admitted':
+      toast.success(t('nodes.enrollment.admitted'));
+      return true;
+    case 'cancelled':
+      return false;
+    case 'no-material':
+      toast.error(t('nodes.admit.unavailable'));
+      return false;
+    case 'unconfirmed':
+      toast.warning(t('nodes.enrollment.hubNotConfirmed'));
+      return false;
+    case 'stale':
+      toast.error(t('nodes.enrollment.staleRecord'));
+      return false;
+    case 'error':
+      toast.error(
+        t('nodes.admit.failed', {
+          error: actionErrorText(t, { code: result.code }, { writerPublicUrl }),
+        })
+      );
+      return false;
+    default:
+      toast.error(t('nodes.admit.failed', { error: result.message }));
+      return false;
+  }
+}
+
+/**
+ * 待批准行的「批准加入」。凭据进 5 分钟复用窗口（`purpose: 'admit'`）：与自动 admit 共用，
+ * 连批几台只需确认一次。
+ */
+export function useAdmitNode(
+  row: NodeRow,
+  { api, mode, prompt, writerPublicUrl, onChanged }: AdmitNodeDeps
+): { busy: boolean; admit: () => Promise<void> } {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+
+  const admit = useCallback(async () => {
+    setBusy(true);
+    try {
+      const result = await admitPendingNode(row, { api, mode, prompt });
+      if (reportAdmitResult(t, result, writerPublicUrl)) onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }, [api, mode, onChanged, prompt, row, t, writerPublicUrl]);
+
+  return { busy, admit };
 }
 
 export interface BulkRevokeDeps {

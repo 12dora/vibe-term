@@ -19,7 +19,10 @@ import { isUninstalling } from './use-node-uninstall';
 
 /** 可勾选的行：入口自身不能选（它自己既不能被移除也不能被卸载），正在卸载的行也锁住。 */
 export function selectableRows(rows: NodeRow[], scheduledIds: ReadonlySet<string>): NodeRow[] {
-  return rows.filter((row) => !row.isSelf && !isUninstalling(row, scheduledIds));
+  // 待批准行还不是成员：升级 / 移除 / 卸载都打不到它，勾选只会让批量动作凭空多出失败项。
+  return rows.filter(
+    (row) => !row.isSelf && row.pending !== true && !isUninstalling(row, scheduledIds)
+  );
 }
 
 export function toggleSelection(ids: ReadonlySet<string>, nodeId: string): ReadonlySet<string> {

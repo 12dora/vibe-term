@@ -2231,7 +2231,8 @@
       "status": {
         "online": "在线",
         "offline": "离线",
-        "revoked": "已移除"
+        "revoked": "已移除",
+        "pending": "待批准"
       },
       "reach": {
         "lan": "局域网",
@@ -2246,7 +2247,13 @@
         "revoke": "移除",
         "refresh": "刷新",
         "copy": "复制",
-        "copied": "已复制"
+        "copied": "已复制",
+        "admit": "批准加入"
+      },
+      "admit": {
+        "blocked": "须先批准加入，才能管理这台节点。",
+        "unavailable": "Hub 未下发批准所需材料，请刷新后重试。",
+        "failed": "批准失败：{{error}}"
       },
       "detail": {
         "description": "查看节点信息，修改名称与域名访问策略。",
@@ -2336,7 +2343,8 @@
         "retryHub": "重试",
         "missingHubUrl": "Hub 未设置公开地址，无法生成加入命令。",
         "missingRelayUrl": "中继地址不可用，无法生成加入命令。",
-        "staleRecord": "账号信息已变化，请重新确认。"
+        "staleRecord": "账号信息已变化，请重新确认。",
+        "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。"
       },
       "rename": {
         "save": "保存",

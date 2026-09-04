@@ -1,3 +1,4 @@
+import { RELAY_ENROLLMENT_NO_RELAY } from '@/node/relay-join';
 import { HUB_NOT_WRITER } from '@tmex/api-client/auth/index';
 
 export interface ActionErrorContext {
@@ -16,6 +17,8 @@ export function actionErrorText(
   if (code === HUB_NOT_WRITER && context.writerPublicUrl) {
     return t('nodes.hubs.notWriter', { url: context.writerPublicUrl });
   }
+  // fan-out 一台都没成：这一条不在 `auth.errors` 表里，且原始 message 是给日志看的。
+  if (code === RELAY_ENROLLMENT_NO_RELAY) return t('nodes.enrollment.relayNoneAccepted');
   if (code) return t(`auth.errors.${code}`, { defaultValue: code });
   return err instanceof Error ? err.message : String(err);
 }

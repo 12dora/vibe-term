@@ -11,14 +11,9 @@ import type {
   AuthApi,
   AuthModeResponse,
   AuthRequiredDetail,
-  HubMode,
   MeshNode,
-  MeshNodeReach,
-  MeshNodeTransport,
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi, onAuthRequired } from '@tmex/api-client/auth/index';
-import type { MeshNodeOperation } from '@tmex/shared';
-import { bytesToHex, decodeBase64url, sha256 } from '@tmex/shared/auth';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   type PollingControls,
@@ -41,19 +36,13 @@ import { type MeshEventSource, type NodeEventPayload, sharedMeshEvents } from '.
 // 纯函数
 // ---------------------------------------------------------------------------
 
-/** 公钥指纹：sha256(pk) 的前 16 个十六进制字符（8 字节）。畸形 base64url 返回空串。 */
-export function publicKeyFingerprint(publicKeyB64url: string): string {
-  try {
-    return bytesToHex(sha256(decodeBase64url(publicKeyB64url))).slice(0, 16);
-  } catch {
-    return '';
-  }
-}
-
-/** mesh 列表里的 node id → 运行时 / 路由用的 nodeId（entry 自身退化成 `self`，保持旧路由）。 */
-export function toRuntimeNodeId(nodeId: string, entryNodeId: string | null): string {
-  return entryNodeId && nodeId === entryNodeId ? SELF_NODE_ID : nodeId;
-}
+export {
+  mergeNodes,
+  publicKeyFingerprint,
+  sortNodes,
+  toRuntimeNodeId,
+} from './merge-nodes';
+export type { MergeContext, NodeRow, PendingAdmitMaterial } from './merge-nodes';
 
 /** NODE_EVENT 投影到列表：只改已知 node 的在线态 / 到达路径 / inventory，不新增行。 */
 export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload): MeshNode[] {
@@ -101,110 +90,6 @@ function versionOf(inventory: unknown): string | null {
   if (!inventory || typeof inventory !== 'object') return null;
   const value = (inventory as { version?: unknown }).version;
   return typeof value === 'string' ? value : null;
-}
-
-/**
- * entry 自身排第一，其余按名称排序（在线优先）。
- *
- * store 里的 `nodes` 保持 `/api/mesh/nodes` 的原始顺序（NODE_EVENT 投影也只就地改字段），
- * 展示顺序一律由消费方现算：设置页经 `mergeNodes`，侧边栏经 `toSidebarEntries`，
- * 两处都走这个函数，缺省顺序才不会两边不一致。
- */
-export function sortNodes(nodes: MeshNode[], entryNodeId: string | null): MeshNode[] {
-  return [...nodes].sort((a, b) => {
-    const aSelf = entryNodeId != null && a.id === entryNodeId;
-    const bSelf = entryNodeId != null && b.id === entryNodeId;
-    if (aSelf !== bSelf) return aSelf ? -1 : 1;
-    if (a.online !== b.online) return a.online ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-  });
-}
-
-/** 合并后的一行：mesh 视图（在线/到达/登录）+ hub 视图（心跳、状态、证书）。 */
-export interface NodeRow {
-  id: string;
-  /** 路由 / 运行时用的 id：entry 自身为 `self`。 */
-  runtimeNodeId: string;
-  name: string;
-  publicKey: string;
-  fingerprint: string;
-  online: boolean;
-  reach: MeshNodeReach;
-  /** peer link 的实际承载；未知为 `null`。 */
-  transport: MeshNodeTransport;
-  /** entry ↔ node 的 ping/pong 往返毫秒数；未测得为 `null`。 */
-  rttMs: number | null;
-  version: string | null;
-  directCapable: boolean;
-  loggedIn: boolean;
-  inventory: unknown;
-  isSelf: boolean;
-  isHub: boolean;
-  /** hub 机的主 / 备身份；非 hub、旧后端不下发、以及不关心这一段的构造方为空。 */
-  hubMode?: HubMode | null;
-  /** hub 侧 `last_seen_at`（毫秒）；hub 不可达时为 `null`。 */
-  lastSeenAt: number | null;
-  /** hub 侧 `nodes.status`；hub 不可达时为 `null`。 */
-  status: string | null;
-  certificate: string | null;
-  certSig: string | null;
-  /**
-   * 入口记录的进行中长事务（远程卸载 / 主备切换）；`mergeNodes` 恒填，缺省为 `null`。
-   * 声明成可选是为了不逼着每个手写 `NodeRow` 的测试夹具补这一项。
-   */
-  operation?: MeshNodeOperation | null;
-}
-
-function reachOf(reach: string | null | undefined): MeshNodeReach {
-  return reach === 'lan' || reach === 'wan' || reach === 'relay' ? reach : null;
-}
-
-function transportOf(transport: string | null | undefined): MeshNodeTransport {
-  return transport === 'ws-secure' || transport === 'relay' || transport === 'dc'
-    ? transport
-    : null;
-}
-
-function rttOf(rttMs: number | null | undefined): number | null {
-  return typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs >= 0 ? rttMs : null;
-}
-
-/**
- * 合并 mesh 列表与 hub 列表。mesh 列表是**权威成员集**（未 admit / 已 revoke 的不出现），
- * hub 只补充心跳与状态；hub 不可达时全部补充字段为 `null`，UI 据此禁用管理动作。
- */
-export function mergeNodes(
-  meshNodes: MeshNode[],
-  hubNodes: HubNodeRow[] | null,
-  context: { entryNodeId: string | null; hubNodeId: string | null }
-): NodeRow[] {
-  const hubById = new Map((hubNodes ?? []).map((row) => [row.id, row]));
-  return sortNodes(meshNodes, context.entryNodeId).map((node) => {
-    const hub = hubById.get(node.id) ?? null;
-    return {
-      id: node.id,
-      runtimeNodeId: toRuntimeNodeId(node.id, context.entryNodeId),
-      name: hub?.name ?? node.name,
-      publicKey: node.publicKey,
-      fingerprint: publicKeyFingerprint(node.publicKey),
-      online: node.online,
-      reach: reachOf(node.reach),
-      transport: transportOf(node.transport),
-      rttMs: rttOf(node.rttMs),
-      version: node.version ?? hub?.version ?? null,
-      directCapable: node.direct_capable || (hub?.direct_capable ?? false),
-      loggedIn: node.loggedIn,
-      inventory: node.inventory ?? null,
-      isSelf: context.entryNodeId != null && node.id === context.entryNodeId,
-      isHub: node.isHub === true || (context.hubNodeId != null && node.id === context.hubNodeId),
-      hubMode: node.hubMode ?? null,
-      lastSeenAt: hub?.last_seen_at ?? null,
-      status: hub?.status ?? null,
-      certificate: hub?.certificate ?? null,
-      certSig: hub?.cert_sig ?? null,
-      operation: node.operation ?? null,
-    };
-  });
 }
 
 /**
