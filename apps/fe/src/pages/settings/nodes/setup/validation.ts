@@ -147,16 +147,29 @@ export function validateBecomeRelay(
   return errors;
 }
 
+/** 加入方式：默认用 mesh 账户密码，加入码退居备用。 */
+export type JoinMethod = 'password' | 'token';
+
 export interface JoinHubValues {
+  method: JoinMethod;
   hubUrl: string;
   token: string;
+  /** mesh 账户密码，`method === 'password'` 时使用。 */
+  password: string;
   name: string;
   directEnable: boolean;
   insecureLocal: boolean;
 }
 
-export type JoinHubField = 'hubUrl' | 'token' | 'name';
+export type JoinHubField = 'hubUrl' | 'token' | 'password' | 'name';
 export type JoinHubErrors = Partial<Record<JoinHubField, string>>;
+
+/** 节点名：非空且不超过 64 个字符。 */
+function nodeNameError(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > MAX_NAME_LENGTH) return `${ERROR_PREFIX}invalid_name`;
+  return null;
+}
 
 export function validateJoinHub(values: JoinHubValues, nodeEnv: NodeEnv): JoinHubErrors {
   const errors: JoinHubErrors = {};
@@ -168,13 +181,60 @@ export function validateJoinHub(values: JoinHubValues, nodeEnv: NodeEnv): JoinHu
     errors.hubUrl = `${ERROR_PREFIX}insecure_local_required`;
   }
 
-  if (!isValidJoinToken(normalizeToken(values.token))) {
+  if (values.method === 'password') {
+    // 长度不在这里卡：账号是在别处建的，本机无从得知当时的规则，错了由 Hub 回 401。
+    if (!values.password) errors.password = `${ERROR_PREFIX}invalid_password`;
+  } else if (!isValidJoinToken(normalizeToken(values.token))) {
     errors.token = `${ERROR_PREFIX}invalid_token`;
   }
 
-  const name = values.name.trim();
-  if (!name || name.length > MAX_NAME_LENGTH) {
-    errors.name = `${ERROR_PREFIX}invalid_name`;
+  const nameError = nodeNameError(values.name);
+  if (nameError) errors.name = nameError;
+
+  return errors;
+}
+
+/** 中继签发的租户编号：16 字节，十六进制展示。 */
+const TENANT_ID_PATTERN = /^[0-9a-fA-F]{32}$/;
+/** 自签中继的 CA SPKI 指纹，与 join 串第二段同一形态。 */
+const CA_FINGERPRINT_PATTERN = /^[0-9a-fA-F]{64}$/;
+
+export function normalizeTenantId(raw: string): string {
+  return raw.replace(/\s+/g, '').toLowerCase();
+}
+
+export interface JoinRelayValues {
+  relayUrl: string;
+  tenantId: string;
+  password: string;
+  name: string;
+  /** 自签中继才要；留空表示信任系统根证书。 */
+  caFingerprint: string;
+  directEnable: boolean;
+}
+
+export type JoinRelayField = 'relayUrl' | 'tenantId' | 'password' | 'name' | 'caFingerprint';
+export type JoinRelayErrors = Partial<Record<JoinRelayField, string>>;
+
+export function validateJoinRelay(values: JoinRelayValues, nodeEnv: NodeEnv): JoinRelayErrors {
+  const errors: JoinRelayErrors = {};
+
+  if (classifyRelayUrl(values.relayUrl, nodeEnv) === 'invalid') {
+    errors.relayUrl = `${ERROR_PREFIX}invalid_url`;
+  }
+
+  if (!TENANT_ID_PATTERN.test(normalizeTenantId(values.tenantId))) {
+    errors.tenantId = `${ERROR_PREFIX}invalid_tenant_id`;
+  }
+
+  if (!values.password) errors.password = `${ERROR_PREFIX}invalid_password`;
+
+  const nameError = nodeNameError(values.name);
+  if (nameError) errors.name = nameError;
+
+  const fingerprint = values.caFingerprint.trim();
+  if (fingerprint && !CA_FINGERPRINT_PATTERN.test(fingerprint)) {
+    errors.caFingerprint = `${ERROR_PREFIX}invalid_ca_fingerprint`;
   }
 
   return errors;
@@ -207,6 +267,8 @@ export function defaultNodeName(hostname: string | null): string {
 
 const KNOWN_ERROR_CODES = new Set([
   'not_standalone',
+  'invalid_body',
+  'invalid_password',
   'invalid_url',
   'invalid_role',
   'invalid_username',

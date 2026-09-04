@@ -249,20 +249,35 @@ describe('routeSetupIntent', () => {
     expect(routeSetupIntent({ path: 'become-relay' }, false).relayRole).toBe('relay,node');
   });
 
+  test('join-relay：同样不进 Hub 向导，落在中继 tab', () => {
+    expect(routeSetupIntent({ path: 'join-relay' }, false)).toEqual({
+      wizardPath: null,
+      relayRole: 'relay,node',
+      requestedTab: 'relay',
+    });
+  });
+
   test('刚设置完中继：即便没有记号也落在中继 tab', () => {
     expect(routeSetupIntent(null, true).requestedTab).toBe('relay');
   });
 });
 
 describe('NodesTab standalone 的中继表单', () => {
-  test('中继 tab 里直接摆出「本机作为中继」表单', () => {
+  test('中继 tab 里并排摆出「加入已有中继」与「本机作为中继」两块', () => {
     localStatus = status();
     // tab 的初值由 localStorage 记忆推导（`useState` 初始化里读，SSR 也会跑）。
     globalThis.localStorage.setItem('tmex.nodes.uplink-tab', 'relay');
     const html = render({ ...MESH_MODE, mode: 'none' });
     globalThis.localStorage.removeItem('tmex.nodes.uplink-tab');
     expect(html).toContain('data-testid="local-uplink-relay-standalone"');
+    expect(html).toContain('data-testid="setup-relay-choice-join"');
+    expect(html).toContain('data-testid="setup-join-relay-form"');
+    expect(html).toContain('data-testid="setup-relay-choice-host"');
     expect(html).toContain('data-testid="setup-become-relay-form"');
+    // 加入在前，作为中继在后。
+    expect(html.indexOf('setup-relay-choice-join')).toBeLessThan(
+      html.indexOf('setup-relay-choice-host')
+    );
     // 默认中继兼节点：账号字段在，纯中继的警示不在。
     expect(html).toContain('id="setup-relay-username"');
     expect(html).not.toContain('data-testid="setup-relay-pure-notice"');

@@ -4,8 +4,9 @@ import { describe, expect, test } from 'bun:test';
 import type { RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { kickedRelays, reauthTarget, uplinkBlockedHint } from '../uplink/relay-targets';
-import { canSubmitRelayEnroll } from './relay-dialogs';
+import { RelayPackPendingNotice, canSubmitRelayEnroll } from './relay-dialogs';
 import { RelayStrip, relayChipTitle, relayFailing, relayLabel } from './relay-strip';
+import type { RelayActionsController } from './use-relay-actions';
 import { relayErrorText } from './use-relay-actions';
 
 const t = (key: string, options?: Record<string, unknown>) => {
@@ -72,6 +73,26 @@ describe('RelayStrip 渲染', () => {
     expect(full).toContain('relay.example.com:8443');
     expect(full).toContain('data-relay-attached="true"');
   });
+
+  test('租户编号可复制并配一句说明；未接入时整格不出现', () => {
+    const withTenant = renderToStaticMarkup(
+      <RelayStrip
+        relays={[link({ attached: true })]}
+        metaEpoch={1}
+        nodesViaRelay={1}
+        tenantId="aabbccddeeff00112233445566778899"
+      />
+    );
+    expect(withTenant).toContain('data-testid="nodes-relay-tenant-id"');
+    expect(withTenant).toContain('aabbccddeeff00112233445566778899');
+    expect(withTenant).toContain('data-testid="nodes-relay-tenant-id-copy"');
+    expect(withTenant).toContain('relay.tenant.strip.tenantIdHint');
+
+    const without = renderToStaticMarkup(
+      <RelayStrip relays={[link()]} metaEpoch={1} nodesViaRelay={1} tenantId={null} />
+    );
+    expect(without).not.toContain('data-testid="nodes-relay-tenant-id"');
+  });
 });
 
 describe('接入表单校验', () => {
@@ -133,5 +154,37 @@ describe('重新输入口令的目标', () => {
     ];
     expect(reauthTarget(relays)).toBe('https://b.example');
     expect(reauthTarget([])).toBeNull();
+  });
+});
+
+describe('密封包欠账告警', () => {
+  function actions(overrides: Partial<RelayActionsController> = {}): RelayActionsController {
+    return {
+      enroll: null,
+      confirm: null,
+      busy: false,
+      error: null,
+      openEnroll: () => undefined,
+      closeEnroll: () => undefined,
+      requestConfirm: () => undefined,
+      dismissConfirm: () => undefined,
+      submitEnroll: () => Promise.resolve(),
+      runConfirm: () => Promise.resolve(),
+      metaPending: [],
+      retryMetaKey: () => Promise.resolve(),
+      packPending: false,
+      retryPack: () => Promise.resolve(),
+      ...overrides,
+    };
+  }
+
+  test('没欠账时什么都不渲染，欠着时给一行告警加重试按钮', () => {
+    expect(renderToStaticMarkup(<RelayPackPendingNotice actions={actions()} />)).toBe('');
+    const html = renderToStaticMarkup(
+      <RelayPackPendingNotice actions={actions({ packPending: true })} />
+    );
+    expect(html).toContain('data-testid="nodes-relay-pack-pending"');
+    expect(html).toContain('relay.tenant.pack.pending');
+    expect(html).toContain('data-testid="nodes-relay-pack-retry"');
   });
 });

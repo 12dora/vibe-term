@@ -183,7 +183,7 @@ describe('移动设备页的地址选择与二维码', () => {
 });
 
 describe('ComputerGuide', () => {
-  test('安装步骤给出安装命令与 PATH 兜底命令，默认展开「加入已有中继」四步', () => {
+  test('安装步骤给出安装命令与 PATH 兜底命令，默认展开「让新机器加入」两步 + 加入码折叠区', () => {
     const html = render(<ComputerGuide />);
     expect(html).toContain('data-testid="connect-step-install"');
     expect(html).toContain('data-testid="command-block-install"');
@@ -192,9 +192,11 @@ describe('ComputerGuide', () => {
     expect(html).toContain('export PATH=');
     expect(html).toContain('data-testid="connect-mode-join"');
     expect(html).toContain('data-testid="connect-mode-host"');
-    for (const step of ['hub', 'token', 'run', 'confirm']) {
+    for (const step of ['uplink', 'password', 'token', 'run', 'confirm']) {
       expect(html).toContain(`data-testid="connect-step-join-${step}"`);
     }
+    expect(html).toContain('data-testid="connect-join-token-advanced"');
+    expect(html).toContain('data-testid="command-block-join-password"');
     expect(html).toContain('data-testid="command-block-join"');
     expect(html).toContain('href="/settings?tab=nodes"');
     // 「选择接入方式」的按钮在卡片里、分支面板在卡片外，但同属一个 Tabs 根。

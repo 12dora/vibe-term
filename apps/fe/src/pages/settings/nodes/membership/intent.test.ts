@@ -58,6 +58,12 @@ describe('setup intent 记号', () => {
     expect(takeSetupIntent(storage)).toEqual({ path: 'become-hub' });
   });
 
+  test('join-relay 往返', () => {
+    const storage = memoryStorage();
+    writeSetupIntent({ path: 'join-relay' }, storage);
+    expect(takeSetupIntent(storage)).toEqual({ path: 'join-relay' });
+  });
+
   test('become-relay 连目标角色一起往返', () => {
     for (const role of ['relay', 'relay,node'] as const) {
       const storage = memoryStorage();

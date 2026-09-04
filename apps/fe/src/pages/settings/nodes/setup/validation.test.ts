@@ -3,6 +3,7 @@ import {
   type BecomeHubValues,
   type BecomeRelayValues,
   type JoinHubValues,
+  type JoinRelayValues,
   classifyHubUrl,
   classifyRelayUrl,
   defaultHubPublicUrl,
@@ -10,11 +11,13 @@ import {
   defaultRelayPublicUrl,
   hasErrors,
   isValidJoinToken,
+  normalizeTenantId,
   normalizeToken,
   setupErrorKey,
   validateBecomeHub,
   validateBecomeRelay,
   validateJoinHub,
+  validateJoinRelay,
 } from './validation';
 
 function relayValues(overrides: Partial<BecomeRelayValues> = {}): BecomeRelayValues {
@@ -43,8 +46,10 @@ function becomeValues(overrides: Partial<BecomeHubValues> = {}): BecomeHubValues
 
 function joinValues(overrides: Partial<JoinHubValues> = {}): JoinHubValues {
   return {
+    method: 'token',
     hubUrl: 'https://tmex.example.com',
     token: 'a'.repeat(128),
+    password: '',
     name: 'studio',
     directEnable: true,
     insecureLocal: false,
@@ -318,5 +323,92 @@ describe('defaultRelayPublicUrl', () => {
 describe('setupErrorKey 认识中继角色错误码', () => {
   test('invalid_role', () => {
     expect(setupErrorKey('invalid_role')).toBe('nodes.setup.errors.invalid_role');
+  });
+});
+
+describe('validateJoinHub 的两种加入方式', () => {
+  test('密码方式只校验密码，加入码留空也放行', () => {
+    const errors = validateJoinHub(
+      joinValues({ method: 'password', token: '', password: 'p' }),
+      'production'
+    );
+    expect(hasErrors(errors)).toBe(false);
+  });
+
+  test('密码方式下密码为空要报错', () => {
+    const errors = validateJoinHub(
+      joinValues({ method: 'password', token: '', password: '' }),
+      'production'
+    );
+    expect(errors.password).toBe('nodes.setup.errors.invalid_password');
+    expect(errors.token).toBeUndefined();
+  });
+
+  test('加入码方式下密码为空不报错，加入码非法照旧报错', () => {
+    const errors = validateJoinHub(joinValues({ method: 'token', token: 'nope' }), 'production');
+    expect(errors.token).toBe('nodes.setup.errors.invalid_token');
+    expect(errors.password).toBeUndefined();
+  });
+});
+
+function joinRelayValues(overrides: Partial<JoinRelayValues> = {}): JoinRelayValues {
+  return {
+    relayUrl: 'https://relay.example.com',
+    tenantId: 'aabbccddeeff00112233445566778899',
+    password: 'hunter2hunter2',
+    name: 'studio',
+    caFingerprint: '',
+    directEnable: true,
+    ...overrides,
+  };
+}
+
+describe('validateJoinRelay', () => {
+  test('合法输入没有错误', () => {
+    expect(hasErrors(validateJoinRelay(joinRelayValues(), 'production'))).toBe(false);
+  });
+
+  test('租户编号必须是 32 位十六进制（大小写与空白都容忍）', () => {
+    expect(
+      validateJoinRelay(
+        joinRelayValues({ tenantId: ' AABBCCDDEEFF00112233445566778899 ' }),
+        'production'
+      ).tenantId
+    ).toBeUndefined();
+    expect(validateJoinRelay(joinRelayValues({ tenantId: 'abc' }), 'production').tenantId).toBe(
+      'nodes.setup.errors.invalid_tenant_id'
+    );
+  });
+
+  test('密码与名称必填，地址按中继规则判定', () => {
+    const errors = validateJoinRelay(
+      joinRelayValues({ password: '', name: '   ', relayUrl: 'ftp://relay' }),
+      'production'
+    );
+    expect(errors.password).toBe('nodes.setup.errors.invalid_password');
+    expect(errors.name).toBe('nodes.setup.errors.invalid_name');
+    expect(errors.relayUrl).toBe('nodes.setup.errors.invalid_url');
+  });
+
+  test('CA 指纹留空合法，填了就必须是 64 位十六进制', () => {
+    expect(
+      validateJoinRelay(joinRelayValues({ caFingerprint: 'f'.repeat(64) }), 'production')
+        .caFingerprint
+    ).toBeUndefined();
+    expect(
+      validateJoinRelay(joinRelayValues({ caFingerprint: 'f'.repeat(63) }), 'production')
+        .caFingerprint
+    ).toBe('nodes.setup.errors.invalid_ca_fingerprint');
+  });
+
+  test('normalizeTenantId 去空白并转小写', () => {
+    expect(normalizeTenantId(' AB CD ')).toBe('abcd');
+  });
+});
+
+describe('setupErrorKey 认识密码加入的错误码', () => {
+  test('invalid_password / invalid_body', () => {
+    expect(setupErrorKey('invalid_password')).toBe('nodes.setup.errors.invalid_password');
+    expect(setupErrorKey('invalid_body')).toBe('nodes.setup.errors.invalid_body');
   });
 });

@@ -14,8 +14,8 @@ import { HttpsSection } from './https/https-section';
 import { LocalMachineCard } from './local-machine-card';
 import { NodesManagement } from './management/nodes-management';
 import { type SetupIntentRecord, takeSetupIntent } from './membership/intent';
-import { BecomeRelayForm } from './setup/become-relay-form';
 import { takeSelfRelayFollowUp } from './setup/self-relay-followup';
+import { StandaloneRelaySetup } from './setup/standalone-relay-setup';
 import { useLocalUplinkController } from './uplink/local-uplink-controller';
 import type { UplinkTab } from './uplink/uplink-tab-preference';
 import { useLocalStatus } from './use-local-status';
@@ -33,11 +33,13 @@ export function routeSetupIntent(
   intent: SetupIntentRecord | null,
   selfRelayFollowUp: boolean
 ): SetupIntentRouting {
-  const relay = intent?.path === 'become-relay';
-  const wantsRelayTab = relay || selfRelayFollowUp;
+  const becomeRelay = intent?.path === 'become-relay';
+  // 中继两条路径的表单都住在中继 tab 里，不进 Hub 向导。
+  const relayPath = becomeRelay || intent?.path === 'join-relay';
+  const wantsRelayTab = relayPath || selfRelayFollowUp;
   return {
-    wizardPath: intent && !relay ? (intent.path as 'become-hub' | 'join-hub') : null,
-    relayRole: (relay ? intent.role : null) ?? 'relay,node',
+    wizardPath: intent && !relayPath ? (intent.path as 'become-hub' | 'join-hub') : null,
+    relayRole: (becomeRelay ? intent.role : null) ?? 'relay,node',
     requestedTab: wantsRelayTab ? 'relay' : intent ? 'hub' : null,
   };
 }
@@ -88,7 +90,7 @@ export function NodesTab() {
           selfRelayFollowUp={selfRelayFollowUp}
           relaySetup={
             standalone && local.status ? (
-              <BecomeRelayForm localStatus={local.status} initialRole={routing.relayRole} />
+              <StandaloneRelaySetup localStatus={local.status} initialRole={routing.relayRole} />
             ) : null
           }
         />

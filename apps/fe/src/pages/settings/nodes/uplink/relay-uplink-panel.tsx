@@ -59,6 +59,7 @@ export function RelayUplinkPanel({
             metaEpoch={relay.metaEpoch}
             nodesViaRelay={relay.nodesViaRelay}
             quota={relay.quota}
+            tenantId={relay.tenantId}
           />
           <RelayNotices relay={relay} actions={actions} />
           {!relay.unsupported && <RelayActionButtons relay={relay} actions={actions} />}

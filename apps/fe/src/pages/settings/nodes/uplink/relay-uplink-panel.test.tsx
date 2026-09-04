@@ -40,6 +40,8 @@ const IDLE_ACTIONS: RelayActionsController = {
   runConfirm: () => Promise.resolve(),
   metaPending: [],
   retryMetaKey: () => Promise.resolve(),
+  packPending: false,
+  retryPack: () => Promise.resolve(),
 };
 
 function service(overrides: Partial<LocalRelayStatus> = {}): LocalRelayStatus {

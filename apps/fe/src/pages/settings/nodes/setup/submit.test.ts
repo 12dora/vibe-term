@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { ApiClient } from '@tmex/api-client';
 import { SetupApiError } from '@tmex/api-client/local/setup-api';
-import { submitBecomeHub, submitBecomeRelay, submitJoinHub } from './submit';
+import { submitBecomeHub, submitBecomeRelay, submitJoinHub, submitJoinRelay } from './submit';
+import type { JoinHubValues, JoinRelayValues } from './validation';
 
 type Call = { url: string; body: unknown };
 
@@ -102,9 +103,11 @@ describe('submitBecomeHub', () => {
 });
 
 describe('submitJoinHub', () => {
-  const values = {
+  const values: JoinHubValues = {
+    method: 'token',
     hubUrl: ' https://tmex.example.com ',
     token: 'abc\ndef',
+    password: '',
     name: ' 书房 ',
     directEnable: true,
     insecureLocal: true,
@@ -127,10 +130,37 @@ describe('submitJoinHub', () => {
     expect(calls.map((c) => c.url)).toEqual(['/healthz', '/api/setup/join']);
     expect(calls[1].body).toEqual({
       hubUrl: 'https://tmex.example.com',
+      method: 'token',
       token: 'abcdef',
       name: '书房',
       directEnable: true,
       insecureLocal: true,
+    });
+  });
+
+  test('密码方式只发 password，不带 token', async () => {
+    const { client, calls } = scripted({
+      '/healthz': Response.json({ startedAt: 7 }),
+      '/api/setup/join': Response.json({
+        ok: true,
+        hubUrl: 'https://tmex.example.com',
+        username: 'alice',
+        direct: 'skipped',
+        directError: null,
+        restarting: true,
+      }),
+    });
+    await submitJoinHub(
+      { ...values, method: 'password', password: 'hunter2hunter2' },
+      'production',
+      client
+    );
+    expect(calls[1].body).toEqual({
+      hubUrl: 'https://tmex.example.com',
+      method: 'password',
+      password: 'hunter2hunter2',
+      name: '书房',
+      directEnable: true,
     });
   });
 
@@ -222,5 +252,53 @@ describe('submitBecomeRelay', () => {
       relayPublicUrl: 'https://relay.example.com',
       relayPassword: null,
     });
+  });
+});
+
+describe('submitJoinRelay', () => {
+  const values: JoinRelayValues = {
+    relayUrl: ' https://relay.example.com ',
+    tenantId: ' AABBCCDDEEFF00112233445566778899 ',
+    password: 'hunter2hunter2',
+    name: ' 书房 ',
+    caFingerprint: '',
+    directEnable: true,
+  };
+
+  const relayJoinResponse = () =>
+    Response.json({
+      ok: true,
+      relayUrl: 'https://relay.example.com',
+      tenantId: 'aabbccddeeff00112233445566778899',
+      username: 'alice',
+      direct: 'enabled',
+      directError: null,
+      restarting: true,
+    });
+
+  test('地址与租户编号归一化，指纹为空时不发该字段', async () => {
+    const { client, calls } = scripted({
+      '/healthz': Response.json({ startedAt: 11 }),
+      '/api/setup/relay-join': relayJoinResponse(),
+    });
+    const outcome = await submitJoinRelay(values, client);
+    expect(outcome.previousStartedAt).toBe(11);
+    expect(calls.map((c) => c.url)).toEqual(['/healthz', '/api/setup/relay-join']);
+    expect(calls[1].body).toEqual({
+      relayUrl: 'https://relay.example.com',
+      tenantId: 'aabbccddeeff00112233445566778899',
+      password: 'hunter2hunter2',
+      name: '书房',
+      directEnable: true,
+    });
+  });
+
+  test('填了 CA 指纹就带上，并转成小写', async () => {
+    const { client, calls } = scripted({
+      '/healthz': Response.json({ startedAt: 11 }),
+      '/api/setup/relay-join': relayJoinResponse(),
+    });
+    await submitJoinRelay({ ...values, caFingerprint: ` ${'A'.repeat(64)} ` }, client);
+    expect((calls[1].body as { caFingerprint: string }).caFingerprint).toBe('a'.repeat(64));
   });
 });

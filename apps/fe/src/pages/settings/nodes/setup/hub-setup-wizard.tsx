@@ -1,4 +1,5 @@
-// standalone 实例的设置向导：三条互斥路径——把本机变成 hub、加入已有 hub、把本机变成中继。
+// standalone 实例的设置向导：四条互斥路径——把本机变成 Hub、加入已有 Hub、加入已有中继、
+// 把本机变成中继。
 //
 // 三条路径都会写 env 并重启网关，因此向导只在 `role === 'standalone'` 下出现；
 // 一旦成功，本页所在的 SPA 会在重启完成后整页跳到 `/login`（纯中继除外：那一档没有网页）。
@@ -7,13 +8,14 @@ import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { LocalStatusResponse } from '@tmex/api-client/local/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Reveal } from '@tmex/ui/motion';
-import { Radio, Server, Share2 } from 'lucide-react';
+import { Radio, Server, Share2, Waypoints } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SetupIntent } from '../membership/intent';
 import { BecomeHubForm } from './become-hub-form';
 import { BecomeRelayForm } from './become-relay-form';
 import { JoinHubForm } from './join-hub-form';
+import { JoinRelayForm } from './join-relay-form';
 
 export type SetupPath = SetupIntent;
 
@@ -59,7 +61,7 @@ export function HubSetupWizard({
         <CardContent className="space-y-3">
           <p className="text-xs text-muted-foreground">{t('nodes.setup.introDetail')}</p>
           <div
-            className="grid gap-3 sm:grid-cols-3"
+            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
             role="radiogroup"
             aria-label={t('nodes.setup.title')}
           >
@@ -78,6 +80,14 @@ export function HubSetupWizard({
               description={t('nodes.setup.path.joinHub.description')}
               selected={path === 'join-hub'}
               onSelect={() => setPath('join-hub')}
+            />
+            <PathCard
+              testId="setup-path-join-relay"
+              icon={<Waypoints className="size-4" />}
+              title={t('nodes.setup.path.joinRelay.title')}
+              description={t('nodes.setup.path.joinRelay.description')}
+              selected={path === 'join-relay'}
+              onSelect={() => setPath('join-relay')}
             />
             <PathCard
               testId="setup-path-become-relay"
@@ -99,6 +109,13 @@ export function HubSetupWizard({
               localStatus={localStatus}
               client={client}
               origin={origin}
+              {...(onRestarted ? { onRestarted } : {})}
+            />
+          ) : path === 'join-relay' ? (
+            <JoinRelayForm
+              localStatus={localStatus}
+              client={client}
+              hostname={hostname}
               {...(onRestarted ? { onRestarted } : {})}
             />
           ) : path === 'become-relay' ? (

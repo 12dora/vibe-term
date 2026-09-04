@@ -8,13 +8,16 @@ import { SetupApi, readHealthStartedAt } from '@tmex/api-client/local/setup-api'
 import type {
   SetupHubResponse,
   SetupJoinResponse,
+  SetupRelayJoinResponse,
   SetupRelayResponse,
 } from '@tmex/api-client/local/types';
 import {
   type BecomeHubValues,
   type BecomeRelayValues,
   type JoinHubValues,
+  type JoinRelayValues,
   type NodeEnv,
+  normalizeTenantId,
   normalizeToken,
 } from './validation';
 
@@ -46,11 +49,32 @@ export async function submitJoinHub(
   const previousStartedAt = await readHealthStartedAt(client);
   const result = await new SetupApi(client).joinHub({
     hubUrl: values.hubUrl.trim(),
-    token: normalizeToken(values.token),
+    method: values.method,
+    // 两者互斥：后端见到同时带 token 与 password 会直接 400，只发当前方式那一个。
+    ...(values.method === 'password'
+      ? { password: values.password }
+      : { token: normalizeToken(values.token) }),
     name: values.name.trim(),
     directEnable: values.directEnable,
     // production 下后端会忽略该字段，索性不发，避免日志里出现误导性的 true。
     ...(nodeEnv === 'production' ? {} : { insecureLocal: values.insecureLocal }),
+  });
+  return { previousStartedAt, result };
+}
+
+export async function submitJoinRelay(
+  values: JoinRelayValues,
+  client: ApiClient = defaultApiClient
+): Promise<SubmitOutcome<SetupRelayJoinResponse>> {
+  const previousStartedAt = await readHealthStartedAt(client);
+  const caFingerprint = values.caFingerprint.trim().toLowerCase();
+  const result = await new SetupApi(client).relayJoin({
+    relayUrl: values.relayUrl.trim(),
+    tenantId: normalizeTenantId(values.tenantId),
+    password: values.password,
+    name: values.name.trim(),
+    ...(caFingerprint ? { caFingerprint } : {}),
+    directEnable: values.directEnable,
   });
   return { previousStartedAt, result };
 }

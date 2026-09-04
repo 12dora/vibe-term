@@ -1,7 +1,9 @@
 // 吊销之后那条 `meta-key` 换代：模式判定的权威来源、失败时的欠账与结论。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
+import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { RecordSigner } from '@/auth/key-log-actions';
+import type { NodeRow } from '@/node/mesh-nodes';
 import { setMeshRelayStateForTest } from '@/node/mesh-relay';
 import { clearPendingMetaKeysForTest, listPendingMetaKeys } from '@/node/relay-meta-key-pending';
 import { ApiClient } from '@tmex/api-client';
@@ -15,7 +17,8 @@ import {
   rootKeyFromSeed,
 } from '@tmex/shared/auth';
 import type { ResolvedMode } from './types';
-import { revokeNodeRecord } from './use-node-row-actions';
+import type { NodeActionDeps } from './types';
+import { revokeNodeRecord, useNodeRowActions } from './use-node-row-actions';
 
 const KDF_JSON = {
   salt: encodeBase64url(new Uint8Array(16).fill(0x05)),
@@ -136,5 +139,89 @@ describe('revokeNodeRecord 之后的 meta-key 换代', () => {
     expect(pending[0]?.op).toEqual({ op: 'rotate', exclude: [NODE_ID] });
     // 本地 head 没动：签好的字节留着，重发即可落账。
     expect(pending[0]?.record?.type).toBe('meta-key');
+  }, 20000);
+});
+
+// ---------------------------------------------------------------------------
+// 改名：hub 模式打控制面，中继模式签 rename-node
+// ---------------------------------------------------------------------------
+
+const { renderToStaticMarkup } = await import('react-dom/server');
+const { createElement } = await import('react');
+
+const ROW = { id: NODE_ID, name: 'n1' } as NodeRow;
+
+function promptStub(signer: RecordSigner): CredentialPromptHandle {
+  return {
+    request: () => Promise.resolve(signer),
+    withSigner: (<T>(fn: (s: RecordSigner) => Promise<T> | T) =>
+      Promise.resolve(fn(signer))) as CredentialPromptHandle['withSigner'],
+    forget: () => undefined,
+    dialog: null,
+    passkeys: [],
+  };
+}
+
+/** 静态渲染一次探针，取出 hook 的 rename。 */
+function renameOf(deps: NodeActionDeps): (name: string) => Promise<void> {
+  let captured: ((name: string) => Promise<void>) | null = null;
+  function Probe() {
+    captured = useNodeRowActions(ROW, deps).rename;
+    return null;
+  }
+  renderToStaticMarkup(createElement(Probe));
+  if (!captured) throw new Error('probe did not render');
+  return captured;
+}
+
+function renameDeps(
+  appended: Appended[],
+  signer: RecordSigner,
+  hubRenames: string[]
+): NodeActionDeps {
+  return {
+    hubApi: {
+      rename: (id: string, name: string) => {
+        hubRenames.push(`${id}:${name}`);
+        return Promise.resolve();
+      },
+    },
+    mode: { uid: 'user-1', rootEpoch: 0, kdfParams: KDF_JSON } as unknown as ResolvedMode,
+    api: authApi(appended),
+    prompt: promptStub(signer),
+    onChanged: () => undefined,
+    writerPublicUrl: null,
+  } as unknown as NodeActionDeps;
+}
+
+describe('useNodeRowActions 的改名', () => {
+  const realFetch = globalThis.fetch;
+
+  function stubRelayMode(mode: 'relay' | 'hub'): void {
+    globalThis.fetch = ((input: string) =>
+      String(input).includes('/api/mesh/relay/status')
+        ? Promise.resolve(Response.json({ mode, relays: [] }))
+        : Promise.resolve(new Response('{}', { status: 404 }))) as typeof fetch;
+  }
+
+  test('hub 模式仍打 hub 控制面，不签任何记录', async () => {
+    stubRelayMode('hub');
+    const appended: Appended[] = [];
+    const hubRenames: string[] = [];
+    await renameOf(renameDeps(appended, await rootSigner(), hubRenames))('studio');
+    globalThis.fetch = realFetch;
+    expect(hubRenames).toEqual([`${NODE_ID}:studio`]);
+    expect(appended).toHaveLength(0);
+  }, 20000);
+
+  test('中继模式签 rename-node 记录，不碰 hub 控制面', async () => {
+    stubRelayMode('relay');
+    const appended: Appended[] = [];
+    const hubRenames: string[] = [];
+    await renameOf(renameDeps(appended, await rootSigner(), hubRenames))('studio');
+    globalThis.fetch = realFetch;
+    expect(hubRenames).toEqual([]);
+    expect(appended).toHaveLength(1);
+    expect(decodeKeyLogRecord(decodeBase64url(appended[0].bytes)).type).toBe('rename-node');
   }, 20000);
 });

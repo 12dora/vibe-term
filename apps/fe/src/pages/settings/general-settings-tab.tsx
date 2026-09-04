@@ -144,6 +144,8 @@ export function GeneralSettingsTab({ form }: GeneralSettingsTabProps) {
       </Card>
 
       <Version />
+      {/* 中继模式下改名要签一条密钥日志记录，凭据对话框挂在这里。 */}
+      {form.renameDialog}
     </>
   );
 }
