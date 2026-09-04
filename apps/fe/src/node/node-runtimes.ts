@@ -44,6 +44,7 @@ import type {
 import { createDeferredDiagnosticsSource } from '@tmex/ws-client/direct/types';
 import i18n from 'i18next';
 import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
+import { resolveMeshNodeName } from './node-names';
 
 /**
  * `/mesh/ws` 的 `RTC_SIGNAL` 只有**一个** handler 槽（见 `mesh-events.ts` 的注释），
@@ -322,6 +323,9 @@ export function createAppNodeRuntimes(
   return new NodeConnectionManager({
     // 宿主只有一个 toaster，全部 node 共用同一个通知出口（不再经全局可变默认 sink）。
     notifications: sonnerNotificationSink,
+    // 包内提示语只有 nodeId，点名哪台机器要查宿主的节点目录；每次调用现查 store，
+    // 建 runtime 那一刻列表可能还没拉到。
+    runtimeOptions: () => ({ resolveNodeName: resolveMeshNodeName }),
     // manager 把关闭码回调递进来，直接转给底层连接：4401 由 manager 统一处理。
     createConnection: (nodeId, onClose) => createNodeConnection(nodeId, { ...wiring, onClose }),
     // 引用计数归零、runtime 真正回收时一并释放该 node 的查询缓存。

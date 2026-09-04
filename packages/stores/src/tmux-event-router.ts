@@ -39,7 +39,8 @@ type TmuxEventHandlers = {
 /**
  * 「版本过低」提示按太旧的那一端选词：远端节点要点名是哪个节点——被拒的转发流对端未必
  * 是本 runtime 的 node，优先用网关在 ERROR 里点名的 nodeId，拿不到才退回本 runtime 的
- * nodeId（stores 只有编号没有名称，取前 8 位显示）。入口网关报 Gateway 版本，
+ * nodeId。名称由宿主注入的 `resolveNodeName` 查节点目录得到；宿主没接或目录里没有这一行
+ * 时才退回旧行为（编号前 8 位；`self` / 无编号则不点名）。入口网关报 Gateway 版本，
  * 本页面则只需刷新。
  */
 function tooOldMessage(event: EventOfType<'server-too-old'>, ctx: TmuxEventRouterContext): string {
@@ -51,6 +52,8 @@ function tooOldMessage(event: EventOfType<'server-too-old'>, ctx: TmuxEventRoute
   };
   if (event.side === 'gateway') return t('websocket.gatewayTooOld', params);
   const nodeId = event.nodeId ?? ctx.core.nodeId;
+  const name = nodeId ? ctx.core.resolveNodeName?.(nodeId)?.trim() : null;
+  if (name) return t('websocket.nodeTooOld', { ...params, name });
   if (!nodeId || nodeId === SELF_NODE_ID) return t('websocket.nodeTooOldUnnamed', params);
   return t('websocket.nodeTooOld', { ...params, name: nodeId.slice(0, 8) });
 }

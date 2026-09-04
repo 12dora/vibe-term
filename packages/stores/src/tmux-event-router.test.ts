@@ -63,6 +63,8 @@ interface HarnessOptions {
   clipboardResult?: Promise<void>;
   /** 按尝试次数返回结果：用于「先失败、手势里重试成功」的延迟写入路径 */
   clipboardAttempt?: (attempt: number) => Promise<void>;
+  /** 宿主注入的 nodeId → 展示名解析；缺省不接（等价于旧行为） */
+  resolveNodeName?: (nodeId: string) => string | null;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -134,6 +136,7 @@ function createHarness(options: HarnessOptions = {}) {
       },
     },
     features: { hostManagedNotifications: false },
+    ...(options.resolveNodeName ? { resolveNodeName: options.resolveNodeName } : {}),
   } as unknown as RuntimeCore;
 
   const selection = {
@@ -485,6 +488,64 @@ describe('tmux transport event router', () => {
     expect(harness.namesOf('t').at(-1)?.args).toEqual([
       'websocket.nodeTooOld',
       { version: '1.1.22', minVersion: '1.1.23', name: 'abcdef01' },
+    ]);
+  });
+
+  test('server-too-old：宿主接了解析器时点名节点展示名', () => {
+    const asked: string[] = [];
+    const harness = createHarness({
+      nodeId: 'ffffffff0000',
+      resolveNodeName: (nodeId) => {
+        asked.push(nodeId);
+        return nodeId === 'abcdef0123456789' ? 'demo-app' : null;
+      },
+    });
+
+    harness.route({
+      type: 'server-too-old',
+      side: 'node',
+      minVersion: '1.1.23',
+      version: '1.1.22',
+      nodeId: 'abcdef0123456789',
+    });
+    // 被拒的是 ERROR 点名的那台，不是本 runtime 的 node
+    expect(asked).toEqual(['abcdef0123456789']);
+    expect(harness.namesOf('t').at(-1)?.args).toEqual([
+      'websocket.nodeTooOld',
+      { version: '1.1.22', minVersion: '1.1.23', name: 'demo-app' },
+    ]);
+  });
+
+  test('server-too-old：解析器查不到名字时退回编号前缀', () => {
+    const harness = createHarness({ nodeId: 'ffffffff0000', resolveNodeName: () => null });
+
+    harness.route({
+      type: 'server-too-old',
+      side: 'node',
+      minVersion: '1.1.23',
+      version: '1.1.22',
+      nodeId: 'abcdef0123456789',
+    });
+    expect(harness.namesOf('t').at(-1)?.args).toEqual([
+      'websocket.nodeTooOld',
+      { version: '1.1.22', minVersion: '1.1.23', name: 'abcdef01' },
+    ]);
+  });
+
+  test('server-too-old：解析器能认出 self runtime 的 node 时也点名', () => {
+    const harness = createHarness({
+      resolveNodeName: (nodeId) => (nodeId === SELF_NODE_ID ? 'demo-app' : null),
+    });
+
+    harness.route({
+      type: 'server-too-old',
+      side: 'node',
+      minVersion: '1.1.23',
+      version: '1.1.22',
+    });
+    expect(harness.namesOf('t').at(-1)?.args).toEqual([
+      'websocket.nodeTooOld',
+      { version: '1.1.22', minVersion: '1.1.23', name: 'demo-app' },
     ]);
   });
 
