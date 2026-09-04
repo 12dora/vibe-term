@@ -303,6 +303,19 @@ export async function fetchRelayStatus(session: RelayTenantSession): Promise<Rel
   return parseRelayStatus(body);
 }
 
+/** 本机回环 GET status：不带 node-session。401 时由调用方退回登录路径。 */
+export async function fetchRelayStatusLocal(input: {
+  baseUrl: string;
+  fetcher?: FetchLike;
+}): Promise<RelayStatusResponse> {
+  const body = await requestRelayJson({
+    fetcher: input.fetcher,
+    url: joinRelayUrl(input.baseUrl, '/api/mesh/relay/status'),
+    label: 'relay status',
+  });
+  return parseRelayStatus(body);
+}
+
 export async function pollRelayStatus(
   session: RelayTenantSession,
   io: RelayIo,

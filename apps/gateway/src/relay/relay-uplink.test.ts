@@ -46,6 +46,7 @@ describe('relay uplink auth', () => {
     expect(ok.t === 'auth.ok' && ok.key_log_head_seq).toBe(0);
     const quota = await client.inbox.takeOf('relay.quota');
     expect(quota.t === 'relay.quota' && quota.maxNodes).toBe(16);
+    expect(quota.t === 'relay.quota' && quota.currentNodes).toBe(1);
     const list = await client.inbox.takeOf('relay.list');
     expect(list.t === 'relay.list' && list.nodes.map((n) => n.id)).toEqual([node.nodeId]);
     expect(relay.runtime.tenants.getNode(tenant.id, node.nodeId)?.status).toBe('admitted');

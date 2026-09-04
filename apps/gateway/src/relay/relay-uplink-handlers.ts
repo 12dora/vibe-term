@@ -24,6 +24,7 @@ export type RelayUplinkHost = {
   sendTo(tenantId: string, nodeId: string, msg: RelayCtlMessage): boolean;
   scheduleList(tenantId: string): void;
   disconnectNode(tenantId: string, nodeId: string, reason: 'revoked'): void;
+  notifyQuota(tenantId: string): void;
   /** 每租户 `relay.enroll.create` 频率闸；超了返回 false。 */
   allowEnrollCreate(tenantId: string): boolean;
 };
@@ -69,6 +70,9 @@ export function handleRelayKeyLogAppend(
   });
   if (outcome.revokedNodeId) {
     host.disconnectNode(tenant.id, outcome.revokedNodeId, 'revoked');
+  }
+  if (msg.member && !outcome.memberIgnored) {
+    host.notifyQuota(tenant.id);
   }
   for (const peer of host.registry.listTenant(tenant.id)) {
     if (peer.nodeId === live.nodeId) continue;

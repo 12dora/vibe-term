@@ -57,6 +57,7 @@ type Call = { path: string; method: string; body: Record<string, unknown> | unde
 type FakeOptions = {
   health?: Record<string, unknown>;
   status?: Record<string, unknown>[];
+  rejectUnauthedStatus?: boolean;
   enroll?: () => Response;
   leave?: Record<string, unknown>;
   /** 依次作用于每一次 `POST /api/auth/keylog?hub=sync`；用完回落到成功。 */
@@ -154,6 +155,16 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
         return json({ seq: user.keyLogHeadSeq + 1, hash: encodeBase64url(randomBytes(32)) });
       }
       case '/api/mesh/relay/status': {
+        const headerBag = init?.headers as Headers | Record<string, string> | undefined;
+        const cookie =
+          headerBag instanceof Headers
+            ? headerBag.get('cookie')
+            : typeof headerBag?.cookie === 'string'
+              ? headerBag.cookie
+              : '';
+        if (options.rejectUnauthedStatus && !cookie) {
+          return json({ code: 'UNAUTHORIZED' }, { status: 401 });
+        }
         const next = statuses[Math.min(statusIndex, statuses.length - 1)] ?? {
           mode: 'none',
           relays: [],
@@ -366,6 +377,7 @@ describe('relay leave', () => {
     const result = await runRelayLeave(parseArgs(['relay', 'leave']), io(auth, fetcher, logs));
     expect(result.mode).toBe('none');
     const paths = calls.map((call) => call.path);
+    expect(paths).toContain('/api/auth/login');
     expect(paths).toContain('/api/mesh/relay/leave/prepare');
     const append = calls.find((call) => call.path === '/api/auth/keylog?hub=sync');
     expect(decodeKeyLogRecord(decodeBase64url(String(append?.body?.bytes))).type).toBe(
@@ -402,6 +414,27 @@ describe('relay list', () => {
     const { fetcher } = fakeGateway(auth, { status: [ATTACHED_STATUS] });
     await runRelayList(parseArgs(['relay', 'list', '--json']), io(auth, fetcher, logs));
     expect(JSON.parse(logs.join('\n')).mode).toBe('relay');
+  });
+
+  test('loopback list 不打开 node-session', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const { calls, fetcher } = fakeGateway(auth, { status: [ATTACHED_STATUS] });
+    await runRelayList(parseArgs(['relay', 'list']), io(auth, fetcher, logs));
+    expect(calls.some((call) => call.path === '/api/auth/login')).toBe(false);
+    expect(logs[0]).toBe('mode: relay');
+  });
+
+  test('status 401 时回退到 node-session', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const { calls, fetcher } = fakeGateway(auth, {
+      status: [ATTACHED_STATUS],
+      rejectUnauthedStatus: true,
+    });
+    await runRelayList(parseArgs(['relay', 'list']), io(auth, fetcher, logs));
+    expect(calls.some((call) => call.path === '/api/auth/login')).toBe(true);
+    expect(logs[0]).toBe('mode: relay');
   });
 });
 

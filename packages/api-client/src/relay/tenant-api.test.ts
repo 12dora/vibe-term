@@ -68,6 +68,11 @@ describe('RelayTenantApi 状态', () => {
     expect(normalizeRelayStatus({ reauthRequired: true }).reauthRequired).toBe(true);
     const quota = { maxNodes: 8, maxStreams: 16, bandwidthBytesPerSec: null };
     expect(normalizeRelayStatus({ quota }).quota).toEqual(quota);
+    expect(
+      normalizeRelayStatus({
+        quota: { ...quota, currentNodes: 2 },
+      }).quota?.currentNodes
+    ).toBe(2);
   });
 
   test('路由不存在时抛 404，isRelayRoutesMissing 认得出来', async () => {

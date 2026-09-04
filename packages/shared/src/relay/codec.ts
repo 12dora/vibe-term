@@ -68,6 +68,8 @@ export type RelayQuota = {
   maxNodes: number;
   maxStreams: number;
   bandwidthBytesPerSec: number | null;
+  /** 当前占用（pending + admitted）；旧中继不下发。 */
+  currentNodes?: number;
 };
 export type RelayListNode = {
   id: string;
@@ -475,11 +477,13 @@ const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
     if (bandwidth !== null && (typeof bandwidth !== 'number' || bandwidth < 0)) {
       fail('invalid bandwidthBytesPerSec');
     }
+    const currentNodes = optUint(obj, 'currentNodes');
     return {
       t: 'relay.quota',
       maxNodes: uint(obj, 'maxNodes'),
       maxStreams: uint(obj, 'maxStreams'),
       bandwidthBytesPerSec: bandwidth === null ? null : (bandwidth as number),
+      ...(currentNodes !== undefined ? { currentNodes } : {}),
     };
   },
   'relay.kicked': (obj) => {

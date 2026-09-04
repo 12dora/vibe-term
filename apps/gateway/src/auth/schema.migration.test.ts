@@ -140,4 +140,19 @@ describe('hub auth schema migration', () => {
       close();
     }
   });
+
+  test('0041 adds nullable version on peer_cache', () => {
+    const { sqlite, close } = createMigratedAuthDb();
+    try {
+      const columns = sqlite.query('PRAGMA table_info(peer_cache)').all() as Array<{
+        name: string;
+        notnull: number;
+      }>;
+      const version = columns.find((column) => column.name === 'version');
+      expect(version).toBeTruthy();
+      expect(version?.notnull).toBe(0);
+    } finally {
+      close();
+    }
+  });
 });

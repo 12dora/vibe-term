@@ -18,7 +18,8 @@ import { NodeSessionStore } from '../auth/node-session-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserKeyService } from '../auth/user-key-service';
 import { UserStore } from '../auth/user-store';
-import { MESH_VIA_SELF } from './mesh-deps';
+import { MESH_VIA_SELF, setMeshRequestContext } from './mesh-deps';
+import type { RelayDialContext } from './relay-dial';
 import { buildSetRelaysPayload, listRelayNodeKeys } from './relay-payloads';
 import { RelayRoutes } from './relay-routes';
 import { RelaySecrets } from './relay-secrets';
@@ -29,7 +30,12 @@ const RELAY_URL_3 = 'https://relay-3.example';
 const TENANT_ID = 'ef'.repeat(16);
 
 async function boot(
-  opts: { fetchImpl?: typeof fetch; standalone?: boolean; localAuthEffective?: boolean } = {}
+  opts: {
+    fetchImpl?: typeof fetch;
+    standalone?: boolean;
+    localAuthEffective?: boolean;
+    dial?: RelayDialContext;
+  } = {}
 ) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
@@ -69,6 +75,7 @@ async function boot(
       reconfigure: async () => {},
     },
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+    ...(opts.dial ? { dial: opts.dial } : {}),
   });
   const session = nodeSessionStore.issue({
     userId: user.userId,
@@ -492,13 +499,13 @@ describe('RelayRoutes', () => {
       expect((await b.call('/api/mesh/relay/join-material')).status).toBe(409);
       const { logKey } = await configureRelay(b);
       const body = (await (await b.call('/api/mesh/relay/join-material')).json()) as {
-        tenantId: string;
-        token: string;
         logKey: string;
         relays: Array<{ url: string; tenantId: string; token: string }>;
+        tenantId?: string;
+        token?: string;
       };
-      expect(body.tenantId).toBe(TENANT_ID);
-      expect(decodeBase64url(body.token)).toEqual(new Uint8Array(32).fill(6));
+      expect(body.tenantId).toBeUndefined();
+      expect(body.token).toBeUndefined();
       expect(decodeBase64url(body.logKey)).toEqual(logKey);
       // 只带持有 enrollment 的那台中继，且带上它自己的租户凭据。
       expect(body.relays).toHaveLength(1);
@@ -519,6 +526,79 @@ describe('RelayRoutes', () => {
         body: JSON.stringify({}),
       });
       expect(res.status).toBe(503);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('可信本机 GET /status 免密，公网与 peer 转发仍 401', async () => {
+    const b = await boot();
+    try {
+      const local = new Request('http://localhost/api/mesh/relay/status');
+      setMeshRequestContext(local, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+      const localRes = await b.routes.handle(local, '/api/mesh/relay/status');
+      expect(localRes?.status).toBe(200);
+
+      const spoofed = new Request('http://localhost/api/mesh/relay/status', {
+        headers: { 'x-tmex-client-source': 'local' },
+      });
+      setMeshRequestContext(spoofed, { via: MESH_VIA_SELF, clientIp: '203.0.113.10' });
+      expect((await b.routes.handle(spoofed, '/api/mesh/relay/status'))?.status).toBe(401);
+
+      const peer = new Request('http://localhost/api/mesh/relay/status', {
+        headers: { 'x-tmex-client-source': 'local' },
+      });
+      setMeshRequestContext(peer, { via: 'ab'.repeat(16), clientIp: 'peer:entry' });
+      expect((await b.routes.handle(peer, '/api/mesh/relay/status'))?.status).toBe(401);
+
+      const leave = new Request('http://localhost/api/mesh/relay/leave/prepare', {
+        method: 'POST',
+      });
+      setMeshRequestContext(leave, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+      expect((await b.routes.handle(leave, '/api/mesh/relay/leave/prepare'))?.status).toBe(401);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('本机中继角色 enroll HTTP 改写到回环，proof 仍绑公网 host', async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          tenant_id: TENANT_ID,
+          token: encodeBase64url(new Uint8Array(32).fill(8)),
+          password_epoch: 1,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+    const b = await boot({
+      fetchImpl,
+      dial: { roles: { relay: true }, relayPublicUrl: RELAY_URL, gatewayPort: 19993 },
+    });
+    try {
+      const material = (await (
+        await b.call('/api/mesh/relay/enroll/proof-material', {
+          method: 'POST',
+          body: JSON.stringify({ url: RELAY_URL }),
+        })
+      ).json()) as { relayHost: string; ts: number };
+      expect(material.relayHost).toBe(hubHostFromUrl(RELAY_URL));
+      const proof = signRelayEnrollProof(b.user.rootKey, {
+        relayHost: material.relayHost,
+        ts: material.ts,
+      });
+      const res = await b.call('/api/mesh/relay/enroll', {
+        method: 'POST',
+        body: JSON.stringify({
+          url: RELAY_URL,
+          proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(calls).toEqual(['http://127.0.0.1:19993/api/relay/enroll']);
     } finally {
       b.close();
     }

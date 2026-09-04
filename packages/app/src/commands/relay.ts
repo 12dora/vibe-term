@@ -6,6 +6,7 @@ import {
   type RelayStatusResponse,
   type RelayTenantSession,
   fetchRelayStatus,
+  fetchRelayStatusLocal,
   openRelayTenantSession,
   pollRelayStatus,
   relayGatewayRequest,
@@ -19,6 +20,7 @@ import {
   asNumber,
   asText,
   formatTable,
+  gatewayBaseUrl,
   joinRelayUrl,
   printJson,
   relayLog,
@@ -274,15 +276,29 @@ export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
 }
 
 export async function runRelayList(parsed: ParsedArgs, io: RelayIo = {}): Promise<void> {
+  const env = io.env ?? process.env;
+  try {
+    const status = await fetchRelayStatusLocal({
+      baseUrl: gatewayBaseUrl(env),
+      fetcher: io.fetcher,
+    });
+    printRelayList(parsed, io, status);
+    return;
+  } catch (error) {
+    if (!(error instanceof RelayApiError) || error.status !== 401) throw error;
+  }
   await withAuth(parsed, io, async (ctx) => {
     const session = await openRelayTenantSession(parsed, ctx, io);
-    const status = await fetchRelayStatus(session);
-    if (wantsJson(parsed)) {
-      printJson(io, status.raw);
-      return;
-    }
-    for (const line of formatRelayStatusLines(status)) {
-      relayLog(io, line);
-    }
+    printRelayList(parsed, io, await fetchRelayStatus(session));
   });
+}
+
+function printRelayList(parsed: ParsedArgs, io: RelayIo, status: RelayStatusResponse): void {
+  if (wantsJson(parsed)) {
+    printJson(io, status.raw);
+    return;
+  }
+  for (const line of formatRelayStatusLines(status)) {
+    relayLog(io, line);
+  }
 }

@@ -56,7 +56,7 @@ function entryFromCache(node: RelayListNode, ctx: RelayListContext): ListEntry {
     endpoints: safeJson(peer?.endpointsJson, []),
     inventory: safeJson(peer?.inventoryJson, null),
     direct_capable: peer?.directCapable ?? false,
-    version: null,
+    version: peer?.version ?? null,
   };
 }
 
@@ -86,6 +86,7 @@ export async function relayListToNodeList(
       directCapable: blob.direct_capable,
       lastSeenAt: ctx.now,
       listVersion: msg.version,
+      version: blob.version || null,
     });
     nodes.push({
       id: node.id,

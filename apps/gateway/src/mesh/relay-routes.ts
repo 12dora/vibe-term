@@ -16,6 +16,8 @@ import { readJsonObjectBody } from '../api/http';
 import type { UserKeyService } from '../auth';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { UserStore } from '../auth/user-store';
+import { isTrustedLocalClient } from './client-source';
+import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
 import {
   buildMetaKeyPayload,
   buildSetRelaysPayload,
@@ -62,10 +64,17 @@ export type RelayRoutesDeps = {
   uplink: RelayUplinkView;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  dial?: RelayDialContext;
 };
 
 type PreparedPayload = { payload: string; payloadHash: string };
 type RelayRouteHandler = (req: Request, userId: string) => Promise<Response> | Response;
+
+export function isLocalRelayStatusRequest(req: Request, path = new URL(req.url).pathname): boolean {
+  return (
+    req.method === 'GET' && path === `${RELAY_ROUTE_PREFIX}/status` && isTrustedLocalClient(req)
+  );
+}
 
 /** 租户侧中继接口；本机 node-session 鉴权，与其它 `/api/mesh/*` 路由一致。 */
 export class RelayRoutes {
@@ -81,6 +90,9 @@ export class RelayRoutes {
     const route = `${req.method} ${path.slice(RELAY_ROUTE_PREFIX.length)}`;
     const handler = this.route(route);
     if (!handler) return Promise.resolve(jsonError('method_not_allowed', 405));
+    if (isLocalRelayStatusRequest(req, path)) {
+      return Promise.resolve(handler(req, ''));
+    }
     return requireSession(this.deps.session, (r, auth) =>
       auth.userId ? handler(r, auth.userId) : jsonError('UNAUTHORIZED', 401)
     )(req);
@@ -127,7 +139,7 @@ export class RelayRoutes {
         priority: row.priority,
         online: attached?.publicUrl === row.url && client?.state === 'online',
         attached: attached?.publicUrl === row.url,
-        rttMs: null,
+        rttMs: attached?.publicUrl === row.url ? (client?.rttMs ?? null) : null,
         lastError:
           attached?.publicUrl === row.url ? (client?.lastConnectError?.reason ?? null) : null,
         kicked: row.kicked,
@@ -202,10 +214,11 @@ export class RelayRoutes {
     | { ok: false; error: string; status: number }
   > {
     const doFetch = this.deps.fetchImpl ?? fetch;
+    const dialUrl = resolveRelayDialUrl(url, this.deps.dial ?? relayDialContextFromEnv());
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), RELAY_ENROLL_FETCH_TIMEOUT_MS);
     try {
-      const res = await doFetch(`${url.replace(/\/+$/, '')}/api/relay/enroll`, {
+      const res = await doFetch(`${dialUrl.replace(/\/+$/, '')}/api/relay/enroll`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         signal: ac.signal,
@@ -364,9 +377,6 @@ export class RelayRoutes {
     return jsonBody({
       logKey: encodeBase64url(logKey),
       relays: [{ url: target.url, tenantId: relay.tenantId, token }],
-      // 兼容字段：等同 relays[0]，供只读单租户凭据的旧调用方。
-      tenantId: relay.tenantId,
-      token,
     });
   }
 

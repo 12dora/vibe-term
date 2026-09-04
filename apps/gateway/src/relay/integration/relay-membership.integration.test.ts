@@ -19,6 +19,7 @@ import {
   redeemAtRelay,
   waitUntil,
 } from './relay-mesh-harness';
+import { primaryJoinRelay } from './relay-tenant-ops';
 
 const HUB_A_URL = 'http://relay-migration-hub.test';
 
@@ -165,9 +166,7 @@ describe('relay quotas', () => {
     });
     expect(patched.status).toBe(200);
 
-    const material = await tenant.owner.json<{ tenantId: string; token: string }>(
-      '/api/mesh/relay/join-material'
-    );
+    const material = primaryJoinRelay(await tenant.owner.json('/api/mesh/relay/join-material'));
     const now = Date.now();
     const enrollment = await createEnrollment(tenant.rootKey, {
       uid: tenant.userId,

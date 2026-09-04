@@ -40,6 +40,7 @@ type StatusBody = {
   }>;
   totals: {
     tenants: number;
+    nodes: number;
     nodesOnline: number;
     streams: number;
     bytesIn: number;
@@ -136,6 +137,7 @@ describe('relay admin status', () => {
     expect(typeof row?.createdAt).toBe('number');
     expect(body.totals).toEqual({
       tenants: 1,
+      nodes: 1,
       nodesOnline: 1,
       streams: 0,
       bytesIn: 40,

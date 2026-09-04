@@ -31,6 +31,7 @@ import type { RelayMetering } from './relay-metering';
 import { type RelayListDeps, encodeRelayList } from './relay-node-list';
 import { constantTimeEqual, sha256Hex } from './relay-password';
 import { type RelaySleep, RelayTokenBucket, effectiveRelayQuota } from './relay-quota';
+import { relayQuotaCtl } from './relay-quota-ctl';
 import type { RelayLiveNode, RelayRegistry } from './relay-registry';
 import { acceptRelayStream } from './relay-stream-router';
 import type { RelayTenantStore } from './relay-tenant-store';
@@ -174,7 +175,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
   notifyQuota(tenantId: string): void {
     const quota = this.quotaFor(tenantId);
     this.buckets.get(tenantId)?.setRate(quota.bandwidthBytesPerSec);
-    this.broadcast(tenantId, { t: 'relay.quota', ...quota });
+    this.broadcast(tenantId, relayQuotaCtl(quota, this.tenants.countActiveNodes(tenantId)));
   }
 
   broadcast(tenantId: string, msg: RelayCtlMessage): void {
@@ -502,7 +503,10 @@ export class RelayUplinkServer implements RelayUplinkHost {
       key_log_head_seq: relaySeqToWire(this.tenants.get(tenant.id)?.keyLogHeadSeq ?? 0n),
       rtc: this.rtcConfig(),
     });
-    this.send(link, { t: 'relay.quota', ...this.quotaFor(tenant.id) });
+    this.send(
+      link,
+      relayQuotaCtl(this.quotaFor(tenant.id), this.tenants.countActiveNodes(tenant.id))
+    );
     this.scheduleList(tenant.id);
   }
 

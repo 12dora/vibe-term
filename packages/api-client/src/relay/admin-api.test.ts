@@ -45,6 +45,7 @@ const STATUS: RelayStatusResponse = {
       createdAt: 1_700_000_000_000,
       lastSeenAt: 1_700_000_600_000,
       nodes: 3,
+      nodesRevoked: 0,
       nodesOnline: 2,
       streams: 4,
       bytesIn: 1024,
@@ -54,7 +55,7 @@ const STATUS: RelayStatusResponse = {
       kicked: false,
     },
   ],
-  totals: { tenants: 1, nodesOnline: 2, streams: 4, bytesIn: 1024, bytesOut: 2048 },
+  totals: { tenants: 1, nodes: 3, nodesOnline: 2, streams: 4, bytesIn: 1024, bytesOut: 2048 },
 };
 
 describe('RelayAdminApi 读接口', () => {

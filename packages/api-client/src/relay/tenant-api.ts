@@ -33,6 +33,8 @@ export interface RelayQuotaView {
   maxNodes: number;
   maxStreams: number;
   bandwidthBytesPerSec: number | null;
+  /** 当前占用（pending + admitted）；旧中继不下发。 */
+  currentNodes?: number;
 }
 
 /** `GET /api/mesh/relay/status`。 */

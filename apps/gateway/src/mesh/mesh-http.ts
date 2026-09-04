@@ -30,7 +30,7 @@ import {
 import { handleMeshInternalTmuxRequest, isMeshInternalPath } from './mesh-internal-tmux-routes';
 import { MeshRoutes } from './mesh-routes';
 import { isPeerInboundRequest, stripMeshPeerMarkerFromRequest } from './peer-request-marker';
-import type { RelayRoutes } from './relay-routes';
+import { type RelayRoutes, isLocalRelayStatusRequest } from './relay-routes';
 import {
   type SessionMiddlewareDeps,
   authenticateRequest,
@@ -408,6 +408,9 @@ export class MeshHttpRuntime {
       return null;
     }
     if (path.startsWith('/api/')) {
+      if (isLocalRelayStatusRequest(req, path)) {
+        return null;
+      }
       const auth = authenticateRequest(req, this.sessionDeps);
       if (!auth.ok) {
         return jsonError('UNAUTHORIZED', 401);
