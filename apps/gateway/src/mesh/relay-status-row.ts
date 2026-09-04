@@ -1,3 +1,4 @@
+import { classifyRelayLinkError } from './relay-link-error';
 import type { RelayUplinkClient } from './relay-uplink-client';
 import type { PooledUplink } from './types';
 
@@ -32,11 +33,12 @@ export function relayLinkError(input: {
 export function buildRelayStatusRow(
   row: { url: string; priority: number; kicked: boolean },
   attachedUrl: string | null,
-  client: RelayUplinkClient | null,
-  live: PooledUplink | null,
+  client: Pick<RelayUplinkClient, 'state' | 'rttMs'> | null,
+  live: Pick<PooledUplink, 'lastConnectError'> | null,
   candidates: RelayStatusCandidate[]
 ) {
   const attached = attachedUrl === row.url;
+  const online = attached && client?.state === 'online';
   const cand = candidates.find((entry) => entry.publicUrl === row.url);
   const err = relayLinkError({
     attached,
@@ -46,14 +48,17 @@ export function buildRelayStatusRow(
       lastErrorAt: cand?.lastErrorAt ?? null,
     },
   });
+  const code = online ? null : classifyRelayLinkError(err.lastError);
+  const current = online || code === null;
   return {
     url: row.url,
     priority: row.priority,
-    online: attached && client?.state === 'online',
+    online,
     attached,
     rttMs: attached ? (client?.rttMs ?? null) : null,
-    lastError: err.lastError,
-    lastErrorAt: err.lastErrorAt,
+    lastError: current ? null : err.lastError,
+    lastErrorCode: current ? null : code,
+    lastErrorAt: current ? null : err.lastErrorAt,
     kicked: row.kicked,
   };
 }

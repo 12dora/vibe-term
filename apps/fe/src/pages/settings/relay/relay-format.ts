@@ -101,9 +101,13 @@ export function epochText(t: Translate, epoch: number): string {
 // 运行指标（`GET /api/relay/metrics`）的展示格式化
 // ---------------------------------------------------------------------------
 
-/** 速率。非有限值按 0 计，负数同理——指标是差分算出来的，跨采样重启时可能为负。 */
+/**
+ * 速率。非有限值按 0 计，负数同理——指标是差分算出来的，跨采样重启时可能为负。
+ * 先收到两位小数再交给 `formatRate`：1 KB 以下它直接摆原值，不收就会出 `12.345678 B/s`。
+ */
 export function formatBytesPerSec(bytesPerSec: number): string {
-  return formatRate(Number.isFinite(bytesPerSec) && bytesPerSec > 0 ? bytesPerSec : 0);
+  const value = Number.isFinite(bytesPerSec) && bytesPerSec > 0 ? bytesPerSec : 0;
+  return formatRate(Math.round(value * 100) / 100);
 }
 
 /** 帧率。四位数以上收成 k，避免磁贴里的大数把标签挤掉。 */

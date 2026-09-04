@@ -134,12 +134,20 @@ const SETTINGS_TAB_BAR = [
   icon: typeof SettingsIcon;
 }[];
 
-/** 中继标签排在最后：它是运营者才有的东西，不该挤到日常设置前面。 */
+/** 中继标签只在本机带中继角色时出现，紧挨「多节点互联」右侧：两者说的是同一件事。 */
 const RELAY_TAB_ITEM = {
   value: 'relay',
   labelKey: 'relay.admin.tabLabel',
   icon: RadioTower,
 } as const satisfies { value: SettingsTab; labelKey: string; icon: typeof SettingsIcon };
+
+type SettingsTabBarItem = (typeof SETTINGS_TAB_BAR)[number] | typeof RELAY_TAB_ITEM;
+
+export function settingsTabBarItems(showRelay: boolean): SettingsTabBarItem[] {
+  if (!showRelay) return [...SETTINGS_TAB_BAR];
+  const at = SETTINGS_TAB_BAR.findIndex((item) => item.value === 'nodes') + 1;
+  return [...SETTINGS_TAB_BAR.slice(0, at), RELAY_TAB_ITEM, ...SETTINGS_TAB_BAR.slice(at)];
+}
 
 function isSettingsTab(value: string | null): value is SettingsTab {
   if (value === null) return false;
@@ -170,11 +178,11 @@ const SettingsTabBar = memo(function SettingsTabBar({
   onWarm: (tab: SettingsTab) => void;
 }) {
   const { t } = useTranslation();
-  const items = showRelay ? [...SETTINGS_TAB_BAR, RELAY_TAB_ITEM] : SETTINGS_TAB_BAR;
+  const items = settingsTabBarItems(showRelay);
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  // 标签条在窄屏下是横向滚动的：深链进来（如 `?tab=relay`，它还排在最后）时它停在最左，
-  // 选中态整个在视口外，用户看不出自己在哪一页。选中的标签变了就把它滚进来。
+  // 标签条在窄屏下是横向滚动的：深链进来时它停在最左，选中态整个在视口外，
+  // 用户看不出自己在哪一页。选中的标签变了就把它滚进来。
   // 中继标签是门禁结论回来之后才挂上的，结论没回来时先不找。
   useEffect(() => {
     if (activeTab === 'relay' && !showRelay) return;

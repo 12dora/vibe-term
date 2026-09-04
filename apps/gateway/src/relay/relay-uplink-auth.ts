@@ -3,7 +3,6 @@ import type { LinkSession } from '@tmex/shared/link';
 import {
   RELAY_PROTO_VERSION,
   type RelayCtlMessage,
-  type RelayQuota,
   type RelayRtcConfig,
   relaySeqToWire,
 } from '@tmex/shared/relay';
@@ -13,7 +12,6 @@ import type { RelayConfigStore } from './relay-config-store';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import { verifyRelayMemberProof } from './relay-member';
 import { constantTimeEqual, sha256Hex } from './relay-password';
-import { relayQuotaCtl } from './relay-quota-ctl';
 import type { RelayLiveNode, RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
 import type { RelayTenantRecord } from './types';
@@ -32,7 +30,7 @@ export type RelayAuthHost = {
   reject(link: LinkSession, reason: string): void;
   send(link: LinkSession, msg: RelayCtlMessage): void;
   startHeartbeat(live: RelayLiveNode): void;
-  quotaFor(tenantId: string): RelayQuota;
+  notifyQuota(tenantId: string): void;
   scheduleList(tenantId: string): void;
   rtcConfig(): RelayRtcConfig;
 };
@@ -190,6 +188,6 @@ function finishAuth(
     key_log_head_seq: relaySeqToWire(host.tenants.get(fresh.id)?.keyLogHeadSeq ?? 0n),
     rtc: host.rtcConfig(),
   });
-  host.send(link, relayQuotaCtl(host.quotaFor(fresh.id), host.tenants.countActiveNodes(fresh.id)));
+  host.notifyQuota(fresh.id);
   host.scheduleList(fresh.id);
 }

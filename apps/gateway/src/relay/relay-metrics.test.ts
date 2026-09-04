@@ -273,6 +273,37 @@ describe('RelayMetricsCollector', () => {
     }
   });
 
+  test('tenants.quota 为生效配额，并带 usage / 令牌桶速率', () => {
+    const fx = fakeCollector();
+    try {
+      const tenantId = seedTenant(fx.tenants, fx.clock.now);
+      seedNode(fx.tenants, tenantId, 'node-1', fx.clock.now);
+      fx.collector.start();
+      fx.metering.record(tenantId, { bytesIn: 10_000, bytesOut: 5_000 });
+      fx.metering.recordAdmitted(tenantId, 8_000);
+      fx.clock.now += 5_000;
+      fx.tick();
+      const snap = fx.collector.snapshot();
+      const tenant = snap.tenants.find((row) => row.id === tenantId);
+      expect(tenant?.quota).toEqual({
+        maxNodes: 16,
+        maxStreams: 64,
+        bandwidthBytesPerSec: null,
+      });
+      expect(tenant?.usage).toEqual({
+        currentNodes: 1,
+        currentStreams: 0,
+        bytesInPerSec: 2_000,
+        bytesOutPerSec: 1_000,
+        bandwidthBytesPerSec: 1_600,
+      });
+      expect(snap.totals.bandwidthBytesPerSec).toBe(1_600);
+    } finally {
+      fx.collector.stop();
+      fx.close();
+    }
+  });
+
   test('loadavg 全 0 时返回 null', () => {
     const fx = fakeCollector({ loadAvg: [0, 0, 0] });
     try {
@@ -365,7 +396,11 @@ describe('GET /api/relay/metrics', () => {
     const res = await harness.adminFetch('/api/relay/metrics');
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      totals: { members: number; membersOnline: number };
+      totals: { members: number; membersOnline: number; bandwidthBytesPerSec: number };
+      tenants: Array<{
+        quota: { maxNodes: number; maxStreams: number; bandwidthBytesPerSec: number | null };
+        usage: { currentNodes: number; currentStreams: number; bandwidthBytesPerSec: number };
+      }>;
       members: Array<{
         nodeId: string;
         online: boolean;
@@ -376,6 +411,17 @@ describe('GET /api/relay/metrics', () => {
     };
     expect(body.totals.members).toBe(1);
     expect(body.totals.membersOnline).toBe(1);
+    expect(body.totals.bandwidthBytesPerSec).toBe(0);
+    expect(body.tenants[0]?.quota).toEqual({
+      maxNodes: 16,
+      maxStreams: 64,
+      bandwidthBytesPerSec: null,
+    });
+    expect(body.tenants[0]?.usage).toMatchObject({
+      currentNodes: 1,
+      currentStreams: 0,
+      bandwidthBytesPerSec: 0,
+    });
     const member = body.members.find((row) => row.nodeId === node.nodeId);
     expect(member?.online).toBe(true);
     expect(member?.reconnects).toBe(1);

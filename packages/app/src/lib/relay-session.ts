@@ -36,6 +36,8 @@ export type RelayStatusRelay = {
   attached: boolean;
   rttMs: number | null;
   lastError: string | null;
+  lastErrorCode: string | null;
+  lastErrorAt: number | null;
   kicked: boolean;
 };
 
@@ -281,6 +283,8 @@ function relayRowFromJson(value: unknown): RelayStatusRelay {
     attached: raw.attached === true,
     rttMs: typeof raw.rttMs === 'number' ? raw.rttMs : null,
     lastError: typeof raw.lastError === 'string' ? raw.lastError : null,
+    lastErrorCode: typeof raw.lastErrorCode === 'string' ? raw.lastErrorCode : null,
+    lastErrorAt: typeof raw.lastErrorAt === 'number' ? raw.lastErrorAt : null,
     kicked: raw.kicked === true,
   };
 }

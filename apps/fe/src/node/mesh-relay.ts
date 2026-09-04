@@ -55,6 +55,7 @@ const EMPTY_STATE: MeshRelayState = {
 
 const store = createStateStore<MeshRelayState>(EMPTY_STATE, () => {
   inFlight = null;
+  generation += 1;
 });
 
 export const getMeshRelayState = store.get;
@@ -119,16 +120,25 @@ export function orderedRelays(snapshot: MeshRelayState): RelayLinkStatus[] {
 // 拉取
 // ---------------------------------------------------------------------------
 
-let inFlight: Promise<void> | null = null;
+/**
+ * 链路视图的代数。切换中继（以及归零）都会 +1，在此之前发出的 `/status` 一律作废：
+ * 它带回的是切换前那条 attached，落进 store 就会把刚切好的高亮扳回去，一扳就是一整拍。
+ */
+let generation = 0;
+
+let inFlight: { promise: Promise<void>; generation: number } | null = null;
 
 export async function refreshMeshRelay(api: RelayTenantApi = defaultRelayTenantApi): Promise<void> {
   // 退出 mesh 期间本机会话已被清空，再拉 `/api/mesh/*` 只会稳定拿 401。
   if (isAuthTransitionActive()) return;
-  if (inFlight) return inFlight;
+  // 只复用同一代的在途请求：切换之后的刷新必须自己发一次，否则等于什么都没刷。
+  if (inFlight && inFlight.generation === generation) return inFlight.promise;
+  const started = generation;
   store.set({ loading: true });
-  inFlight = (async () => {
+  const promise = (async () => {
     try {
       const status = await api.status();
+      if (started !== generation) return;
       store.set({
         ...status,
         loading: false,
@@ -137,6 +147,7 @@ export async function refreshMeshRelay(api: RelayTenantApi = defaultRelayTenantA
         loadedAt: Date.now(),
       });
     } catch (err) {
+      if (started !== generation) return;
       // 路由不存在不是错误：把它记成「本版本没有中继」，UI 一行提示都不出。
       if (isRelayRoutesMissing(err)) {
         store.set({ ...EMPTY_STATE, unsupported: true, loadedAt: Date.now() });
@@ -145,10 +156,26 @@ export async function refreshMeshRelay(api: RelayTenantApi = defaultRelayTenantA
       // 失败保留上一份链路：一次网络抖动不该把已经展示出来的中继列表抹掉。
       store.set({ loading: false, error: err instanceof Error ? err.message : String(err) });
     } finally {
-      inFlight = null;
+      if (inFlight?.generation === started) inFlight = null;
     }
   })();
-  return inFlight;
+  inFlight = { promise, generation: started };
+  return promise;
+}
+
+/**
+ * 切到另一条已配置的中继（make-before-break）。
+ *
+ * `POST /switch` 直接回一份新状态，就地落进 store：等 30 秒轮询那一拍，界面在切完之后
+ * 还会指着旧的那条。失败原样抛出，由调用方查错误表。
+ */
+export async function switchMeshRelay(
+  url: string,
+  api: RelayTenantApi = defaultRelayTenantApi
+): Promise<void> {
+  const status = await api.switchRelay(url);
+  generation += 1;
+  store.set({ ...status, loading: false, error: null, unsupported: false, loadedAt: Date.now() });
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +243,8 @@ export interface UseMeshRelayResult extends MeshRelayState {
   writable: boolean;
   kicked: boolean;
   refresh: () => void;
+  /** 切到另一条已配置的中继；失败原样抛出。 */
+  switchRelay: (url: string) => Promise<void>;
 }
 
 export function useMeshRelay(options: UseMeshRelayOptions = {}): UseMeshRelayResult {
@@ -230,6 +259,8 @@ export function useMeshRelay(options: UseMeshRelayOptions = {}): UseMeshRelayRes
     if (!enabled) return;
     void refreshMeshRelay(api);
   }, [api, enabled]);
+
+  const switchRelay = useCallback((url: string) => switchMeshRelay(url, api), [api]);
 
   const polls = enabled && owner;
   useEffect(() => {
@@ -250,5 +281,6 @@ export function useMeshRelay(options: UseMeshRelayOptions = {}): UseMeshRelayRes
     writable: relayWritable(snapshot),
     kicked: relayKicked(snapshot),
     refresh,
+    switchRelay,
   };
 }

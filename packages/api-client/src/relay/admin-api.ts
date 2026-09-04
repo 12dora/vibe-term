@@ -107,12 +107,18 @@ export interface RelayTenantPatch {
   label?: string | null;
 }
 
+export type RelayApiErrorDetails = {
+  lastError?: string | null;
+  lastErrorCode?: string | null;
+};
+
 /** 契约错误体 `{ error: { code, message } }` 解出来的类型化错误。 */
 export class RelayApiError extends Error {
   constructor(
     readonly code: string,
     message: string,
-    readonly status: number
+    readonly status: number,
+    readonly details?: RelayApiErrorDetails
   ) {
     super(message);
     this.name = 'RelayApiError';

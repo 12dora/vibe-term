@@ -55,12 +55,15 @@ describe('「中继」标签的门禁', () => {
     expect(render()).not.toContain('data-testid="settings-tab-relay"');
   });
 
-  test('可用时标签出现，且排在「AI」之后（最末一位）', () => {
+  test('可用时标签出现，紧挨「多节点互联」右侧', () => {
     setRelayAdminStateForTest({ availability: 'available' });
     const html = render();
     expect(html).toContain('data-testid="settings-tab-relay"');
     expect(html).toContain('relay.admin.tabLabel');
-    expect(html.indexOf('settings-tab-relay')).toBeGreaterThan(html.indexOf('settings-tab-ai'));
+    expect(html.indexOf('settings-tab-relay')).toBeGreaterThan(html.indexOf('settings-tab-nodes'));
+    expect(html.indexOf('settings-tab-relay')).toBeLessThan(
+      html.indexOf('settings-tab-notifications')
+    );
   });
 
   test('未登录（401）同样不摆标签', () => {

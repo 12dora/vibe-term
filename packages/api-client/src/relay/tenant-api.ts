@@ -23,11 +23,40 @@ export interface RelayLinkStatus {
   /** 本机 uplink 当前挂在这一条上。 */
   attached: boolean;
   rttMs?: number | null;
+  /** 当前（未恢复的）连接错误原文；在线时为 `null`。 */
   lastError?: string | null;
+  /** `lastError` 归一化后的稳定错误码，前端据此查 i18n；在线时为 `null`。 */
+  lastErrorCode?: RelayLinkErrorCode | null;
   /** 最近一次连接失败的时间戳（毫秒）。未失败为 `null`。 */
   lastErrorAt?: number | null;
   /** 中继侧作废了本租户令牌（改密踢人 / 运营者手动踢）。 */
   kicked?: boolean;
+}
+
+/** 中继链路错误的稳定分类（由网关按原始错误归一化）。 */
+export type RelayLinkErrorCode =
+  | 'connect-failed'
+  | 'connect-timeout'
+  | 'auth-timeout'
+  | 'auth-rejected'
+  | 'heartbeat-lost'
+  | 'kicked'
+  | 'dns'
+  | 'refused'
+  | 'tls'
+  | 'protocol'
+  | 'unknown';
+
+/** 中继按租户实时下发的用量（与 `RelayQuotaView` 同源，约 5 s 一拍）。 */
+export interface RelayQuotaUsage {
+  currentNodes: number;
+  currentStreams: number;
+  bytesInPerSec: number;
+  bytesOutPerSec: number;
+  /** 令牌桶放行的字节速率，与配额上限同口径。旧中继不下发。 */
+  bandwidthBytesPerSec?: number;
+  /** 采样时间（毫秒）。 */
+  sampledAt: number;
 }
 
 /** 中继下发的配额；未接入或旧中继时为 `null`。 */
@@ -37,6 +66,8 @@ export interface RelayQuotaView {
   bandwidthBytesPerSec: number | null;
   /** 当前占用（pending + admitted）；旧中继不下发。 */
   currentNodes?: number;
+  /** 实时用量；旧中继不下发时为 `null`。 */
+  usage?: RelayQuotaUsage | null;
 }
 
 /** `GET /api/mesh/relay/status`。 */
@@ -230,6 +261,14 @@ export const RELAY_QUOTA_NODES = 'RELAY_QUOTA_NODES';
 export const RELAY_NOT_FOUND = 'RELAY_NOT_FOUND';
 /** 只剩这一条中继：摘掉它等于离开，得走 `leavePrepare()`。 */
 export const RELAY_LAST = 'RELAY_LAST';
+/** 切换目标不在本机已配置的中继列表里。 */
+export const RELAY_UNKNOWN = 'RELAY_UNKNOWN';
+/** 目标中继已作废本租户令牌。 */
+export const RELAY_KICKED = 'RELAY_KICKED';
+/** 本机 uplink 已经挂在目标中继上。 */
+export const RELAY_ALREADY_ATTACHED = 'RELAY_ALREADY_ATTACHED';
+/** 切换超时或新链路未能上线。 */
+export const RELAY_SWITCH_FAILED = 'RELAY_SWITCH_FAILED';
 
 /**
  * 节点没有这族路由（版本太老 / 未启用）：`/api/mesh/relay/*` 一律 404。
@@ -275,7 +314,12 @@ export function normalizeRelayStatus(
 ): RelayTenantStatus {
   if (!payload) return EMPTY_STATUS;
   return {
-    quota: payload.quota ?? null,
+    quota: payload.quota
+      ? {
+          ...payload.quota,
+          usage: payload.quota.usage ?? null,
+        }
+      : null,
     mode: payload.mode ?? 'none',
     tenantId: payload.tenantId ?? null,
     relays: (payload.relays ?? []).map((row) => ({
@@ -284,8 +328,9 @@ export function normalizeRelayStatus(
       online: row.online === true,
       attached: row.attached === true,
       rttMs: row.rttMs ?? null,
-      lastError: row.lastError ?? null,
-      lastErrorAt: row.lastErrorAt ?? null,
+      lastError: row.online === true ? null : (row.lastError ?? null),
+      lastErrorCode: row.online === true ? null : (row.lastErrorCode ?? null),
+      lastErrorAt: row.online === true ? null : (row.lastErrorAt ?? null),
       kicked: row.kicked === true,
     })),
     metaEpoch: payload.metaEpoch ?? 0,
@@ -337,10 +382,15 @@ export function normalizeJoinMaterial(wire: Partial<RelayJoinMaterial>): RelayJo
 async function readError(res: Response, fallback: string): Promise<RelayApiError> {
   const clone = res.clone();
   try {
-    const body = (await clone.json()) as { code?: unknown; reason?: unknown };
+    const body = (await clone.json()) as {
+      code?: unknown;
+      reason?: unknown;
+      lastError?: unknown;
+      lastErrorCode?: unknown;
+    };
     if (typeof body.code === 'string') {
       const reason = typeof body.reason === 'string' ? `${body.code}: ${body.reason}` : body.code;
-      return new RelayApiError(body.code, reason, res.status);
+      return new RelayApiError(body.code, reason, res.status, detailsFromBody(body));
     }
   } catch {
     // 落到通用契约
@@ -350,6 +400,19 @@ async function readError(res: Response, fallback: string): Promise<RelayApiError
     fallback,
     (code, message, status) => new RelayApiError(code, message, status)
   );
+}
+
+function detailsFromBody(body: { lastError?: unknown; lastErrorCode?: unknown }) {
+  const lastError = readOptionalString(body.lastError);
+  const lastErrorCode = readOptionalString(body.lastErrorCode);
+  if (lastError === undefined && lastErrorCode === undefined) return undefined;
+  return { lastError, lastErrorCode };
+}
+
+function readOptionalString(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return typeof value === 'string' ? value : undefined;
 }
 
 const BASE = '/api/mesh/relay';
@@ -371,6 +434,17 @@ export class RelayTenantApi {
       'relay_status_failed'
     );
     return normalizeRelayStatus(payload);
+  }
+
+  /**
+   * `POST /api/mesh/relay/switch`：把本机 uplink 切到已配置的另一条中继（make-before-break），
+   * 并把它记为首选，重启后仍优先。未配置 / 已被踢的地址回 404 / 409。
+   */
+  switchRelay(url: string): Promise<RelayTenantStatus> {
+    return this.json<Partial<RelayTenantStatus>>(`${BASE}/switch`, 'relay_switch_failed', {
+      method: 'POST',
+      body: { url },
+    }).then(normalizeRelayStatus);
   }
 
   /**

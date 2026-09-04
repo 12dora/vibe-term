@@ -100,6 +100,7 @@ describe('RelayAdminApi 读接口', () => {
         bytesOutPerSec: 0,
         framesInPerSec: 0,
         framesOutPerSec: 0,
+        bandwidthBytesPerSec: 0,
       },
       tenants: [],
       members: [],

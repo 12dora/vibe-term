@@ -11,6 +11,7 @@ import {
 } from '../auth/mesh-relay-store';
 import type { AuthDb } from '../auth/types';
 import { stamp } from './mesh-log';
+import { readPreferredRelayUrl, writePreferredRelayUrl } from './relay-preferred';
 
 export const RELAY_PENDING_KEY_TTL_MS = 10 * 60 * 1000;
 export const RELAY_PENDING_KEY_LIMIT = 8;
@@ -78,6 +79,14 @@ export class RelaySecrets {
 
   relayRows(): StoredMeshRelayRow[] {
     return this.store.listRelayRows();
+  }
+
+  preferredRelayUrl(): string | null {
+    return readPreferredRelayUrl(this.db);
+  }
+
+  setPreferredRelayUrl(url: string): void {
+    writePreferredRelayUrl(this.db, url);
   }
 
   tenantId(): string | null {

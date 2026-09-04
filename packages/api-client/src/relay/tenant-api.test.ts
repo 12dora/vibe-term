@@ -58,6 +58,7 @@ describe('RelayTenantApi 状态', () => {
         attached: false,
         rttMs: null,
         lastError: null,
+        lastErrorCode: null,
         lastErrorAt: null,
         kicked: false,
       },
@@ -66,6 +67,33 @@ describe('RelayTenantApi 状态', () => {
     expect(status.nodesViaRelay).toBe(0);
     expect(status.reauthRequired).toBe(false);
     expect(status.quota).toBeNull();
+  });
+
+  test('switchRelay 走 POST /api/mesh/relay/switch', async () => {
+    const { api, calls } = recorder([ok({ mode: 'relay', tenantId: 'ab'.repeat(16), relays: [] })]);
+    const status = await api.switchRelay('https://b.example');
+    expect(calls[0].url).toBe('/api/mesh/relay/switch');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(bodyOf(calls[0])).toEqual({ url: 'https://b.example' });
+    expect(status.mode).toBe('relay');
+  });
+
+  test('switchRelay 502 保留 lastError / lastErrorCode', async () => {
+    const { api } = recorder([
+      fail(502, 'RELAY_SWITCH_FAILED', {
+        lastError: 'heartbeat-timeout',
+        lastErrorCode: 'heartbeat-lost',
+      }),
+    ]);
+    const error = await api.switchRelay('https://b.example').catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(RelayApiError);
+    const typed = error as RelayApiError;
+    expect(typed.code).toBe('RELAY_SWITCH_FAILED');
+    expect(typed.status).toBe(502);
+    expect(typed.details).toEqual({
+      lastError: 'heartbeat-timeout',
+      lastErrorCode: 'heartbeat-lost',
+    });
   });
 
   test('normalizeRelayStatus 对空响应给出 none 模式', () => {
@@ -92,10 +120,36 @@ describe('RelayTenantApi 状态', () => {
       attached: false,
       rttMs: null,
       lastError: 'client-too-old',
+      lastErrorCode: null,
       lastErrorAt: 7,
       kicked: false,
     });
-    expect(normalizeRelayStatus({ quota }).quota).toEqual(quota);
+    expect(normalizeRelayStatus({ quota }).quota).toEqual({ ...quota, usage: null });
+    expect(
+      normalizeRelayStatus({
+        quota: {
+          ...quota,
+          usage: {
+            currentNodes: 1,
+            currentStreams: 0,
+            bytesInPerSec: 2,
+            bytesOutPerSec: 1,
+            sampledAt: 9,
+          },
+        },
+      }).quota?.usage
+    ).toEqual({
+      currentNodes: 1,
+      currentStreams: 0,
+      bytesInPerSec: 2,
+      bytesOutPerSec: 1,
+      sampledAt: 9,
+    });
+    expect(
+      normalizeRelayStatus({
+        relays: [{ url: 'https://r.example', online: true, lastError: 'connect-failed' } as never],
+      }).relays[0].lastError
+    ).toBeNull();
     expect(
       normalizeRelayStatus({
         quota: { ...quota, currentNodes: 2 },

@@ -179,7 +179,10 @@ export class RelayRuntime {
       now: this.now,
       startedAt: this.startedAt,
       version: this.version,
+      quotaFor: (tenantId) => this.uplink.quotaFor(tenantId),
+      onSample: () => this.uplink.pushQuotaUsageIfChanged(),
     });
+    this.uplink.bindTenantRates((tenantId) => this.metrics.tenantRates(tenantId));
     this.adminDeps = {
       tenants: this.tenants,
       keyLog: this.keyLog,

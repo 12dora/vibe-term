@@ -34,6 +34,7 @@ export type {
   RelayMemberProof,
   RelayNodeStatus,
   RelayQuota,
+  RelayQuotaUsage,
   RelayRtcConfig,
   RelayRtcFrom,
   RelaySeqWire,

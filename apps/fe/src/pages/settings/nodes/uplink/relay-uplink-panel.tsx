@@ -1,7 +1,9 @@
 // 「连接」段的中继形态：链路行、一摞提醒、按风险分级的三组操作。
 //
-// 操作分三级：主按钮「追加中继」是常用且无损的；重输口令 / 轮换密钥 / 逐条移除收进次级菜单，
+// 操作分三级：主按钮「追加中继」是常用且无损的；重新输入接入密码 / 逐条移除收进「更多」，
 // 它们低频且各自带确认；「离开中继」单独摆在右侧的危险区，它会让本机与各节点一起失去上级。
+//
+// 多条中继时切换不在菜单里：链路行本身就是选择器，点哪条就切到哪条。
 
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
 import { Button } from '@tmex/ui/button';
@@ -16,7 +18,9 @@ import { useTranslation } from 'react-i18next';
 import { Notice, NoticeAction } from '../card-parts';
 import { relayNotices } from '../relay/relay-notices';
 import { RelayRows } from '../relay/relay-rows';
+import { RelaySwitchDialog } from '../relay/relay-switch-dialog';
 import type { RelayActionsController } from '../relay/use-relay-actions';
+import { useRelaySwitch } from '../relay/use-relay-switch';
 import { type RelayMenuAction, reauthTarget, relayActionMenu } from './relay-targets';
 
 /**
@@ -60,9 +64,12 @@ export function RelayUplinkPanel({
   showLeaveFirstHint = true,
 }: RelayUplinkPanelProps) {
   const { t } = useTranslation();
+  const { refresh } = relay;
+  const switching = useRelaySwitch({ onChanged: refresh });
   return (
     <div className="flex flex-col gap-3" data-testid="local-uplink-relay-panel">
-      <RelayRows relays={relay.ordered} />
+      <RelayRows relays={relay.ordered} onSelect={switching.request} />
+      <RelaySwitchDialog controller={switching} />
       <RelayNoticeList relay={relay} actions={actions} />
       {!relay.unsupported && (
         <>
@@ -134,8 +141,7 @@ function RelayActionRow({
   const { t } = useTranslation();
   const menu = relayActionMenu(relay.ordered);
   const run = (item: RelayMenuAction) => {
-    if (item.kind === 'reauth') actions.openEnroll('reauth', item.url ?? '');
-    else if (item.kind === 'rotate') actions.requestConfirm('rotate');
+    if (item.kind === 'reauth') actions.openEnroll('reauth', item.url);
     else actions.requestConfirm('remove', item.url);
   };
   return (

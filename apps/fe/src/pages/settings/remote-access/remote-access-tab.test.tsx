@@ -388,7 +388,24 @@ describe('无边缘连接（degraded）', () => {
     status = configured('named', 'degraded', {
       connector: connector({ readyConnections: 0, lastError: 'failed to dial edge' }),
     });
-    expect(render()).toContain('failed to dial edge');
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-degraded-error"');
+    expect(html).toContain('failed to dial edge');
+  });
+
+  test('确证零连接时补一条排查指引；探不到连接数时不给', () => {
+    status = configured('named', 'running', {
+      connector: connector({ readyConnections: 0 }),
+    });
+    const zero = render();
+    expect(zero).toContain('data-testid="remote-access-degraded-hint"');
+    expect(zero).toContain('settings.remoteAccess.degradedHint');
+
+    // 进程自报 degraded，但连接器没给出连接数：只说结论，不指向 7844。
+    status = configured('named', 'degraded');
+    const unknown = render();
+    expect(unknown).toContain('settings.remoteAccess.degradedNotice');
+    expect(unknown).not.toContain('data-testid="remote-access-degraded-hint"');
   });
 
   test('接管来的隧道零连接时也降级', () => {

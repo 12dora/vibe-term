@@ -1,214 +1,156 @@
-// 「服务器或电脑」页：安装 → 选接入方式 → 两条分支各自的分步指引。
-// 分支步骤接着前两步继续编号，读起来是一条连续的流程。
+// 「服务器或电脑」页：先选接入方式（经中继 / 经 Hub / SSH 直连），再按所选路径给分步指引。
+// 默认选中的路径由本机现状推导，用户改过之后就以他的选择为准。
+// 每条路径的步骤自成一套编号：一级选择永远是第 1 步。
 
-import { useSharedAuthMode } from '@/node/mesh-nodes';
-import { TUNNEL_STATUS_QUERY_KEY, fetchSelfTunnelStatus } from '@/pages/settings/status-queries';
-import { useQuery } from '@tanstack/react-query';
-import { INSTALL_COMMAND } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
+import { IconTooltip } from '@tmex/ui/icon-tooltip';
 import { Tabs, TabsContent } from '@tmex/ui/tabs';
+import { Info } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CommandBlock } from './command-block';
-import { BRANCH_STEP_OFFSET, JoinSteps } from './computer-join-guide';
-import { GuideLink, GuideNote, GuideStep } from './guide-step';
+import { JoinSteps } from './computer-join-guide';
+import {
+  type ConnectPath,
+  type ConnectSide,
+  defaultConnectPath,
+  defaultConnectSide,
+} from './connect-path';
+import { GuideStep } from './guide-step';
 import { GuideTabList } from './guide-tabs';
-import { type EntryStatus, type HubStatus, entryStatus, hubStatus } from './host-status';
+import { HostSteps } from './hub-host-steps';
+import { InstallStep } from './install-step';
+import { RelayHostSteps } from './relay-host-steps';
+import { SshSteps } from './ssh-steps';
+import { type ConnectMachine, useConnectMachine } from './use-connect-machine';
 
-type Mode = 'join' | 'host';
+const PREFIX = 'connectDevices.computer';
+const PATHS: ConnectPath[] = ['relay', 'hub', 'ssh'];
+/** 选择接入方式固定占第 1 步，需要装 tmex 的路径把安装排在第 2 步。 */
+const INSTALL_STEP_INDEX = 2;
 
-const MODES: Mode[] = ['join', 'host'];
-const PATH_COMMAND = 'export PATH="$HOME/.local/bin:$PATH"';
-
-/** 三步各自的现状：隧道状态给公网入口，`/api/auth/mode` 给中继角色。两路都没到就按「什么都没配」渲染静态文案。 */
-function useHostStatus(): { entry: EntryStatus; hub: HubStatus } {
-  const { mode } = useSharedAuthMode();
-  const tunnel = useQuery({
-    queryKey: TUNNEL_STATUS_QUERY_KEY,
-    queryFn: fetchSelfTunnelStatus,
-    staleTime: 10_000,
-    retry: false,
-  });
-  const entry = entryStatus(tunnel.data, mode?.mode === 'mesh' ? mode.hubPublicUrl : null);
-  return { entry, hub: hubStatus(mode, entry) };
-}
-
-function HostEntryStep({ entry }: { entry: EntryStatus }) {
+function PathHints() {
   const { t } = useTranslation();
-  const prefix = 'connectDevices.computer.host.entry';
-  const link = (
-    <GuideLink to="/settings?tab=remoteAccess" testId="connect-host-entry-link">
-      {t(`${prefix}.link`)}
-    </GuideLink>
-  );
-  if (entry.kind === 'none') {
-    return (
-      <GuideStep
-        index={BRANCH_STEP_OFFSET}
-        testId="connect-step-host-entry"
-        title={t(`${prefix}.title`)}
-        description={t(`${prefix}.description`)}
-      >
-        {link}
-      </GuideStep>
-    );
-  }
-  const state = entry.degraded ? 'degraded' : entry.running ? 'running' : 'stopped';
-  const running = t(`settings.remoteAccess.state.${state}`);
   return (
-    <GuideStep
-      index={BRANCH_STEP_OFFSET}
-      state="done"
-      testId="connect-step-host-entry"
-      title={t(`${prefix}.title`)}
-    >
-      <GuideNote testId="connect-host-entry-status">
-        {entry.kind === 'hubUrl'
-          ? t(`${prefix}.status.hubUrl`, { url: entry.url })
-          : t(`${prefix}.status.named`, { url: entry.url, state: running })}
-      </GuideNote>
-      {entry.kind === 'quick' && (
-        <GuideNote tone="warning" testId="connect-host-entry-quick">
-          {t(`${prefix}.status.quick`, { url: entry.url })}
-        </GuideNote>
-      )}
-      {link}
-    </GuideStep>
-  );
-}
-
-function HostHubStep({ entry, hub }: { entry: EntryStatus; hub: HubStatus }) {
-  const { t } = useTranslation();
-  const prefix = 'connectDevices.computer.host.hub';
-  const link = (
-    <GuideLink to="/settings?tab=nodes" testId="connect-host-hub-link">
-      {t(`${prefix}.link`)}
-    </GuideLink>
-  );
-  const url = hub.url ?? t('common.unknown');
-  if (hub.role !== 'standalone') {
-    return (
-      <GuideStep
-        index={BRANCH_STEP_OFFSET + 1}
-        state={hub.role === 'self' ? 'done' : 'todo'}
-        testId="connect-step-host-hub"
-        title={t(`${prefix}.title`)}
-      >
-        <GuideNote testId="connect-host-hub-status">
-          {t(`${prefix}.status.${hub.role}`, { url })}
-        </GuideNote>
-        {hub.mismatch && (
-          <GuideNote tone="warning" testId="connect-host-hub-mismatch">
-            {t(`${prefix}.status.mismatch`)}
-          </GuideNote>
-        )}
-        {hub.role === 'self' && link}
-      </GuideStep>
-    );
-  }
-  return (
-    <GuideStep
-      index={BRANCH_STEP_OFFSET + 1}
-      testId="connect-step-host-hub"
-      title={t(`${prefix}.title`)}
-      description={t(`${prefix}.description`)}
-    >
-      {entry.hostname && (
-        <GuideNote testId="connect-host-hub-hint">
-          {t(`${prefix}.hintUseEntry`, { url: entry.url })}
-        </GuideNote>
-      )}
-      <GuideNote tone="warning" testId="connect-host-hub-warning">
-        {t(`${prefix}.warning`)}
-      </GuideNote>
-      {link}
-    </GuideStep>
-  );
-}
-
-function HostInviteStep({ isHub, onSwitchToJoin }: { isHub: boolean; onSwitchToJoin: () => void }) {
-  const { t } = useTranslation();
-  const prefix = 'connectDevices.computer.host.invite';
-  return (
-    <GuideStep
-      index={BRANCH_STEP_OFFSET + 2}
-      testId="connect-step-host-invite"
-      title={t(`${prefix}.title`)}
-      description={t(isHub ? `${prefix}.ready` : `${prefix}.description`)}
-    >
-      {isHub && (
-        <Button
-          size="xs"
-          variant="outline"
-          data-testid="connect-host-goto-join"
-          onClick={onSwitchToJoin}
+    <ul className="space-y-1">
+      {PATHS.map((path) => (
+        <li
+          key={path}
+          className="flex items-start gap-1 text-xs text-muted-foreground"
+          data-testid={`connect-path-hint-${path}`}
         >
-          {t(`${prefix}.gotoJoin`)}
-        </Button>
-      )}
+          <span className="min-w-0">{t(`${PREFIX}.path.hint.${path}`)}</span>
+          <IconTooltip label={t(`${PREFIX}.path.tip.${path}`)} side="top" className="mt-0.5">
+            <Info className="size-3.5 text-muted-foreground/70" />
+          </IconTooltip>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function PathChoiceStep() {
+  const { t } = useTranslation();
+  return (
+    <GuideStep index={1} testId="connect-step-path" title={t(`${PREFIX}.path.title`)}>
+      <GuideTabList
+        fullWidth
+        options={PATHS.map((value) => ({
+          value,
+          label: t(`${PREFIX}.path.${value}`),
+          testId: `connect-path-${value}`,
+        }))}
+      />
+      <PathHints />
     </GuideStep>
   );
 }
 
-export function HostSteps({ onSwitchToJoin }: { onSwitchToJoin: () => void }) {
-  const { entry, hub } = useHostStatus();
+/** 二级选择：加入现成的上级，还是先把本机搭成上级。 */
+function SideTabs({
+  path,
+  side,
+  onSide,
+  children,
+}: {
+  path: 'relay' | 'hub';
+  side: ConnectSide;
+  onSide: (next: ConnectSide) => void;
+  children: React.ReactNode;
+}) {
+  const { t } = useTranslation();
+  const sides: ConnectSide[] = ['join', 'host'];
   return (
-    <>
-      <HostEntryStep entry={entry} />
-      <HostHubStep entry={entry} hub={hub} />
-      <HostInviteStep isHub={hub.role === 'self'} onSwitchToJoin={onSwitchToJoin} />
-    </>
+    <Tabs className="gap-2" value={side} onValueChange={(next) => onSide(next as ConnectSide)}>
+      <GuideTabList
+        variant="line"
+        options={sides.map((value) => ({
+          value,
+          label: t(`${PREFIX}.side.${path}.${value}`),
+          testId: `connect-side-${path}-${value}`,
+        }))}
+      />
+      {children}
+    </Tabs>
+  );
+}
+
+export function RelayPath({ machine }: { machine: ConnectMachine }) {
+  const [chosen, setChosen] = useState<ConnectSide | null>(null);
+  const side = chosen ?? defaultConnectSide('relay', machine);
+  return (
+    <SideTabs path="relay" side={side} onSide={setChosen}>
+      <TabsContent value="join" className="space-y-2">
+        <InstallStep index={INSTALL_STEP_INDEX} />
+        <JoinSteps variant="relay" machine={machine} />
+      </TabsContent>
+      <TabsContent value="host" className="space-y-2">
+        <RelayHostSteps machine={machine} onSwitchToJoin={() => setChosen('join')} />
+      </TabsContent>
+    </SideTabs>
+  );
+}
+
+export function HubPath({ machine }: { machine: ConnectMachine }) {
+  const [chosen, setChosen] = useState<ConnectSide | null>(null);
+  const side = chosen ?? defaultConnectSide('hub', machine);
+  return (
+    <SideTabs path="hub" side={side} onSide={setChosen}>
+      <TabsContent value="join" className="space-y-2">
+        <InstallStep index={INSTALL_STEP_INDEX} />
+        <JoinSteps variant="hub" machine={machine} />
+      </TabsContent>
+      <TabsContent value="host" className="space-y-2">
+        <HostSteps onSwitchToJoin={() => setChosen('join')} />
+      </TabsContent>
+    </SideTabs>
   );
 }
 
 export function ComputerGuide() {
   const { t } = useTranslation();
-  const [mode, setMode] = useState<Mode>('join');
+  const machine = useConnectMachine();
+  const [chosen, setChosen] = useState<ConnectPath | null>(null);
+  const path = chosen ?? defaultConnectPath(machine);
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">{t('connectDevices.computer.intro')}</p>
-      <div className="space-y-2">
-        <GuideStep
-          index={1}
-          testId="connect-step-install"
-          title={t('connectDevices.computer.install.title')}
-          description={t('connectDevices.computer.install.description')}
-        >
-          <CommandBlock
-            value={INSTALL_COMMAND}
-            testId="install"
-            label={t('connectDevices.computer.install.command')}
-          />
-          <p className="text-xs text-muted-foreground">
-            {t('connectDevices.computer.install.pathHint')}
-          </p>
-          <CommandBlock value={PATH_COMMAND} testId="path" />
-        </GuideStep>
-        {/* Tabs 根同时罩住「选择接入方式」这一步与它下面的分支步骤：
-            按钮在卡片里、面板在卡片外，靠同一个根拿到 tab / tabpanel 关联。 */}
-        <Tabs className="gap-2" value={mode} onValueChange={(next) => setMode(next as Mode)}>
-          <GuideStep
-            index={2}
-            testId="connect-step-mode"
-            title={t('connectDevices.computer.mode.title')}
-          >
-            <GuideTabList
-              options={MODES.map((value) => ({
-                value,
-                label: t(`connectDevices.computer.mode.${value}`),
-                testId: `connect-mode-${value}`,
-              }))}
-            />
-          </GuideStep>
-          <TabsContent value="join" className="space-y-2">
-            <JoinSteps />
-          </TabsContent>
-          <TabsContent value="host" className="space-y-2">
-            <HostSteps onSwitchToJoin={() => setMode('join')} />
-          </TabsContent>
-        </Tabs>
-      </div>
+      <p className="text-xs text-muted-foreground">{t(`${PREFIX}.intro`)}</p>
+      <Tabs
+        className="gap-2"
+        value={path}
+        onValueChange={(next) => setChosen(next as ConnectPath)}
+        data-testid="connect-computer-paths"
+      >
+        <PathChoiceStep />
+        <TabsContent value="relay" className="space-y-2">
+          <RelayPath machine={machine} />
+        </TabsContent>
+        <TabsContent value="hub" className="space-y-2">
+          <HubPath machine={machine} />
+        </TabsContent>
+        <TabsContent value="ssh" className="space-y-2">
+          <SshSteps />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

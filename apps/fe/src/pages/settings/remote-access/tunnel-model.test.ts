@@ -10,6 +10,7 @@ import {
   accessPill,
   checkNotice,
   connectorState,
+  degradedError,
   describeTunnelError,
   effectiveMode,
   effectivePath,
@@ -179,6 +180,57 @@ describe('connectorState', () => {
     const legacy = status();
     const { connector: _connector, ...rest } = legacy;
     expect(connectorState(rest as TunnelStatusResponse)).toBe('unprobed');
+  });
+
+  test('端点应答但没给出连接数：只算「无法探测」，不宣告零连接', () => {
+    expect(connectorState(status({ connector: connector({ readyConnections: null }) }))).toBe(
+      'unknown'
+    );
+    expect(
+      connectorState(
+        status({ connector: connector({ readyConnections: undefined as unknown as number }) })
+      )
+    ).toBe('unknown');
+    expect(connectorState(status({ connector: connector({ readyConnections: Number.NaN }) }))).toBe(
+      'unknown'
+    );
+    expect(connectorState(status({ connector: connector({ readyConnections: -1 }) }))).toBe(
+      'unknown'
+    );
+  });
+});
+
+describe('degradedError', () => {
+  test('进程错误优先于连接器错误，都没有时为 null', () => {
+    expect(degradedError(status())).toBeNull();
+    expect(
+      degradedError(
+        status({
+          process: { ...status().process, lastError: 'exit code 1' },
+          connector: connector({ lastError: 'failed to dial edge' }),
+        })
+      )
+    ).toBe('exit code 1');
+    expect(
+      degradedError(status({ connector: connector({ lastError: 'failed to dial edge' }) }))
+    ).toBe('failed to dial edge');
+  });
+
+  test('空白错误当没有；超长错误截断并补省略号', () => {
+    expect(
+      degradedError(status({ process: { ...status().process, lastError: '   ' } }))
+    ).toBeNull();
+    expect(
+      degradedError(
+        status({
+          process: { ...status().process, lastError: '   ' },
+          connector: connector({ lastError: 'failed to dial edge' }),
+        })
+      )
+    ).toBe('failed to dial edge');
+    const long = 'x'.repeat(400);
+    const truncated = degradedError(status({ process: { ...status().process, lastError: long } }));
+    expect(truncated).toBe(`${'x'.repeat(200)}…`);
   });
 });
 

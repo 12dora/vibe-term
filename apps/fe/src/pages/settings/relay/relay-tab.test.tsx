@@ -1,4 +1,4 @@
-// 「中继」标签的四种收尾（未启用 / 未登录 / 加载失败 / 有数据）。
+// 「中继管理」标签的四种收尾（未启用 / 未登录 / 加载失败 / 有数据）。
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 NodesTab 测试同一套做法），
 // 因此只断言结构与 testId，不驱动交互。
 
@@ -105,7 +105,7 @@ describe('RelayTab 的收尾状态', () => {
 });
 
 describe('RelayTab 的正文', () => {
-  test('指标面板 + 口令卡 + 默认配额表单 + 租户卡都在', () => {
+  test('指标面板 + 页头菜单 + 租户卡都在，口令卡与配额卡已撤掉', () => {
     setRelayAdminStateForTest({
       availability: 'available',
       status: status([tenant()]),
@@ -116,15 +116,20 @@ describe('RelayTab 的正文', () => {
     expect(html).toContain('data-testid="settings-relay-tab"');
     // 运行状态与总量已并入指标面板；指标还没拉到时那一块先摆骨架。
     expect(html).toContain('data-testid="relay-metrics-panel-skeleton"');
-    expect(html).not.toContain('data-testid="relay-health-card"');
-    expect(html).not.toContain('data-testid="relay-totals-card"');
-    expect(html).toContain('data-testid="relay-password-card"');
-    expect(html).toContain('data-testid="relay-default-quota-card"');
+    expect(html).toContain('data-testid="relay-admin-menu"');
+    expect(html).toContain('data-testid="relay-tenants-menu"');
+    expect(html).not.toContain('data-testid="relay-password-card"');
+    expect(html).not.toContain('data-testid="relay-default-quota-card"');
     expect(html).toContain('data-testid="relay-tenants-card"');
     expect(html).toContain('data-testid="relay-tenants-table"');
   });
 
-  test('指标拉到后：面板取代骨架，趋势与接入节点表都在', () => {
+  test('指标还没拉到时不摆接入节点卡（空表会被误读成没有节点）', () => {
+    setRelayAdminStateForTest({ availability: 'available', status: status([tenant()]) });
+    expect(render()).not.toContain('data-testid="relay-members-card"');
+  });
+
+  test('指标拉到后：面板取代骨架，趋势与接入节点卡各就各位', () => {
     setRelayMetricsStateForTest({ data: metrics(), loadedAt: 1_700_000_600_000 });
     setRelayAdminStateForTest({ availability: 'available', status: status([tenant()]) });
     const html = render();
@@ -132,16 +137,35 @@ describe('RelayTab 的正文', () => {
     expect(html).not.toContain('data-testid="relay-metrics-panel-skeleton"');
     expect(html).toContain('data-testid="relay-metrics-tiles"');
     expect(html).toContain('data-testid="relay-metrics-trends"');
-    expect(html).toContain('data-testid="relay-members-card"');
+    // 接入节点卡摆在租户卡之后，不再嵌在指标面板里。
+    expect(html.indexOf('relay-members-card')).toBeGreaterThan(html.indexOf('relay-tenants-card'));
+    expect(html).toContain('data-testid="relay-members-search"');
+    expect(html).toContain('data-testid="relay-members-state-filter"');
   });
 
-  test('没有口令时头部卡摆出警告', () => {
+  test('没有密码时页头摆警告', () => {
     const base = status([]);
     setRelayAdminStateForTest({
       availability: 'available',
       status: { ...base, config: { ...base.config, hasPassword: false } },
     });
     expect(render()).toContain('data-testid="relay-password-unset-warning"');
+  });
+
+  test('有密码时不摆警告', () => {
+    setRelayAdminStateForTest({ availability: 'available', status: status([]) });
+    expect(render()).not.toContain('data-testid="relay-password-unset-warning"');
+  });
+
+  test('租户行可选：默认未选中，键盘也够得着', () => {
+    const row = tenant();
+    setRelayAdminStateForTest({ availability: 'available', status: status([row]) });
+    const html = render();
+    expect(html).toContain('aria-selected="false"');
+    expect(html).toContain('tabindex="0"');
+    expect(html).toContain('relay.admin.tenants.selectHint');
+    // 没有选中租户时租户卡不摆「全部」
+    expect(html).not.toContain('data-testid="relay-tenants-clear-selection"');
   });
 
   test('租户行：短编号、在线数、跟随默认的徽标与三个动作', () => {
@@ -224,14 +248,16 @@ describe('RelayTab 的 api 注入', () => {
     expect(getRelayMetricsState().data).not.toBeNull();
   });
 
-  test('标签把自己的 api 传给指标面板，而不是让它回落到默认单例', () => {
+  test('标签自己持有采样回路并用注入的 api，不回落到默认单例', () => {
     // 无 DOM 测试环境跑不了 effect，拿不到面板真正发出的请求；
     // 这条接线只能在源码层面钉住（做法同 i18n core-coverage 测试）。
     const source = readFileSync(join(import.meta.dir, 'relay-tab.tsx'), 'utf8');
-    expect(source).toContain('<RelayMetricsPanel api={api} />');
+    expect(source).toContain('useRelayMetrics({ api })');
     expect(source).toContain(
       '<RelayTabBody controller={controller} status={relay.status} api={api} />'
     );
+    // 回路只该起一条：面板与接入节点卡都读这一份快照。
+    expect(source.match(/useRelayMetrics\(/g)).toHaveLength(1);
   });
 
   test('注入的 api 照旧驱动状态与写操作', async () => {

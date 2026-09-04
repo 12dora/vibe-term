@@ -124,6 +124,51 @@ describe('relay ctl 编解码', () => {
       bandwidthBytesPerSec: null,
     });
   });
+
+  it('relay.quota.usage 可选且向下兼容', () => {
+    const withUsage: RelayCtlMessage = {
+      t: 'relay.quota',
+      maxNodes: 8,
+      maxStreams: 32,
+      bandwidthBytesPerSec: 1024,
+      currentNodes: 2,
+      usage: {
+        currentNodes: 2,
+        currentStreams: 3,
+        bytesInPerSec: 10.5,
+        bytesOutPerSec: 4,
+        bandwidthBytesPerSec: 14.5,
+        sampledAt: 1_700_000_000_000,
+      },
+    };
+    expect(decodeRelayCtl(encodeRelayCtl(withUsage))).toEqual(withUsage);
+    const withoutBandwidth = JSON.stringify({
+      t: 'relay.quota',
+      maxNodes: 8,
+      maxStreams: 32,
+      bandwidthBytesPerSec: null,
+      usage: {
+        currentNodes: 1,
+        currentStreams: 0,
+        bytesInPerSec: 0,
+        bytesOutPerSec: 0,
+        sampledAt: 9,
+      },
+    });
+    expect(decodeRelayCtl(withoutBandwidth)).toEqual({
+      t: 'relay.quota',
+      maxNodes: 8,
+      maxStreams: 32,
+      bandwidthBytesPerSec: null,
+      usage: {
+        currentNodes: 1,
+        currentStreams: 0,
+        bytesInPerSec: 0,
+        bytesOutPerSec: 0,
+        sampledAt: 9,
+      },
+    });
+  });
 });
 
 describe('relay ctl 防御性校验', () => {

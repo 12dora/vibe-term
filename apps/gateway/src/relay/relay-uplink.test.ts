@@ -47,9 +47,57 @@ describe('relay uplink auth', () => {
     const quota = await client.inbox.takeOf('relay.quota');
     expect(quota.t === 'relay.quota' && quota.maxNodes).toBe(16);
     expect(quota.t === 'relay.quota' && quota.currentNodes).toBe(1);
+    expect(quota.t === 'relay.quota' && quota.usage).toMatchObject({
+      currentNodes: 1,
+      currentStreams: 0,
+      bytesInPerSec: 0,
+      bytesOutPerSec: 0,
+      bandwidthBytesPerSec: 0,
+    });
+    expect(quota.t === 'relay.quota' && typeof quota.usage?.sampledAt).toBe('number');
     const list = await client.inbox.takeOf('relay.list');
     expect(list.t === 'relay.list' && list.nodes.map((n) => n.id)).toEqual([node.nodeId]);
     expect(relay.runtime.tenants.getNode(tenant.id, node.nodeId)?.status).toBe('admitted');
+  });
+
+  test('metrics 采样后向在线成员推变化后的用量', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    await client.inbox.takeOf('auth.ok');
+    await client.inbox.takeOf('relay.quota');
+    await client.inbox.takeOf('relay.list');
+    relay.runtime.metering.record(tenant.id, { bytesIn: 10_000, bytesOut: 5_000 });
+    relay.runtime.metering.recordAdmitted(tenant.id, 8_000);
+    relay.advance(5_000);
+    relay.runtime.metrics.sample();
+    const quota = await client.inbox.takeOf('relay.quota');
+    expect(quota.t === 'relay.quota' && quota.usage).toMatchObject({
+      currentNodes: 1,
+      currentStreams: 0,
+      bytesInPerSec: 2_000,
+      bytesOutPerSec: 1_000,
+      bandwidthBytesPerSec: 1_600,
+    });
+  });
+
+  test('删除租户清掉 lastUsagePush；stop 清空整表', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    await client.inbox.takeOf('auth.ok');
+    await client.inbox.takeOf('relay.quota');
+    const cache = (relay.runtime.uplink as unknown as { lastUsagePush: Map<string, string> })
+      .lastUsagePush;
+    expect(cache.has(tenant.id)).toBe(true);
+    const res = await relay.adminFetch(`/api/relay/tenants/${tenant.id}`, { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(cache.has(tenant.id)).toBe(false);
+    expect(cache.size).toBe(0);
+    await relay.runtime.uplink.stop();
+    expect(cache.size).toBe(0);
   });
 
   test('rejects an unknown node with no member proof', async () => {

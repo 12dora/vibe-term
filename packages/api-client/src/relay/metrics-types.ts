@@ -28,6 +28,8 @@ export type RelayMetricsTotals = {
   bytesOutPerSec: number;
   framesInPerSec: number;
   framesOutPerSec: number;
+  /** 令牌桶放行的字节速率；旧中继不下发。 */
+  bandwidthBytesPerSec?: number;
 };
 
 export type RelayMetricsTenant = {
@@ -50,6 +52,13 @@ export type RelayMetricsTenant = {
     maxStreams: number;
     bandwidthBytesPerSec: number | null;
   } | null;
+  usage?: {
+    currentNodes: number;
+    currentStreams: number;
+    bytesInPerSec: number;
+    bytesOutPerSec: number;
+    bandwidthBytesPerSec: number;
+  };
 };
 
 export type RelayMetricsMember = {

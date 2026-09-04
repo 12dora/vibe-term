@@ -130,6 +130,7 @@ async function pumpMetered(
         ctx.metering.recordMember(tenantId, fromNodeId, { bytesIn: bytes.byteLength });
         ctx.metering.recordMember(tenantId, toNodeId, { bytesOut: bytes.byteLength });
         await ctx.bucketFor(tenantId).take(bytes.byteLength);
+        ctx.metering.recordAdmitted(tenantId, bytes.byteLength);
       }
       if (bytes.byteLength > 0 || value.head) {
         await dst.write(bytes, value.head ? { head: true } : undefined);

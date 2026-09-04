@@ -296,9 +296,30 @@ describe('LocalMachineCard 的四段版式', () => {
     const html = render(meshStatus('node'), MESH_MODE);
     expect(html).toContain('data-testid="local-uplink-relay-panel"');
     expect(html).toContain('data-testid="nodes-relay-row-relay.example.com"');
+    // 一行只剩地址与一枚状态徽标：延迟进徽标，「当前挂载于此中继」那句已经删掉
+    expect(html).toContain('data-testid="nodes-relay-host-relay.example.com"');
+    expect(html).toContain('data-testid="nodes-relay-status-relay.example.com"');
+    expect(html).not.toContain('relay.tenant.strip.attached');
+    // 只有一条中继：不可选，也就没有切换按钮
+    expect(html).not.toContain('data-testid="nodes-relay-switch-relay.example.com"');
     expect(html).not.toContain('data-testid="local-uplink-hub-panel"');
     expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayConnected"');
     expect(html).toContain('nodes.machine.status.relayConnectedRtt');
+  });
+
+  test('两条中继：非当前那条给出切换入口，当前那条标 aria-current', () => {
+    setMeshRelayStateForTest({
+      mode: 'relay',
+      relays: [
+        { url: 'https://relay.example.com', priority: 1, online: true, attached: true, rttMs: 45 },
+        { url: 'https://backup.example.com', priority: 2, online: true, attached: false },
+      ],
+      loadedAt: 1,
+    });
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain('data-testid="nodes-relay-switch-backup.example.com"');
+    expect(html).not.toContain('data-testid="nodes-relay-switch-relay.example.com"');
+    expect(html).toContain('aria-current="true"');
   });
 
   test('中继兼节点：多出一段「中继服务」，地址可复制、口令状态成徽标', () => {

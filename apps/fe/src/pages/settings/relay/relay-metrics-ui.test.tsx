@@ -17,8 +17,10 @@ const {
   metricSeries,
   relayTrendSeries,
   rttLevel,
-  sortMembers,
   totalMemberReconnects,
+  filterMembers,
+  sortMembersBy,
+  toggleMemberSort,
 } = await import('./relay-metrics-model');
 const { relayMetricsFixture, relayMetricsMember, relayMetricsSample } = await import(
   './relay-metrics-fixture'
@@ -29,9 +31,14 @@ const { RelayCompactTiles, RelayFullTiles, RelayTilesSkeleton, ThroughputTile } 
 const { RelayTrendsCard } = await import('./relay-metrics-trends');
 const { RelayMembersTable } = await import('./relay-metrics-members');
 const { RelayMetricsPanel, RelayMetricsHeaderStrip } = await import('./relay-metrics-panel');
-const { resetRelayMetricsStateForTest, setRelayMetricsStateForTest } = await import(
-  './relay-metrics-store'
-);
+const { resetRelayMetricsStateForTest, setRelayMetricsStateForTest, useRelayMetrics } =
+  await import('./relay-metrics-store');
+const { DEFAULT_MEMBER_SORT } = await import('./relay-metrics-model');
+
+/** 面板不再自己持有采样回路：测试用这个壳把 store 快照喂进去（静态渲染跑不了 effect）。 */
+function MetricsPanelHost() {
+  return <RelayMetricsPanel metrics={useRelayMetrics({ enabled: false })} />;
+}
 
 afterEach(() => {
   resetRelayMetricsStateForTest();
@@ -104,20 +111,120 @@ describe('成员统计', () => {
     expect(totalMemberReconnects([])).toBe(0);
   });
 
-  test('排序：在线优先，其次按速率降序', () => {
-    const rows = sortMembers([
-      relayMetricsMember({ nodeId: 'slow', bytesInPerSec: 1, bytesOutPerSec: 1 }),
-      relayMetricsMember({ nodeId: 'offline', online: false, bytesOutPerSec: 999_999 }),
-      relayMetricsMember({ nodeId: 'fast', bytesInPerSec: 100, bytesOutPerSec: 100 }),
-    ]);
-    expect(rows.map((row) => row.nodeId)).toEqual(['fast', 'slow', 'offline']);
-  });
-
   test('标题取名字，没名字取节点号前 8 位', () => {
     expect(memberTitle(relayMetricsMember({ name: ' 北京 ' }))).toBe('北京');
     expect(memberTitle(relayMetricsMember({ name: null, nodeId: 'aabbccddeeff' }))).toBe(
       'aabbccdd'
     );
+  });
+});
+
+describe('filterMembers', () => {
+  const members = [
+    relayMetricsMember({ nodeId: 'aaaa1111', name: '北京', tenantId: 't1' }),
+    relayMetricsMember({ nodeId: 'bbbb2222', name: null, tenantId: 't2', online: false }),
+  ];
+
+  test('空条件放行全部', () => {
+    expect(filterMembers(members, { query: '', state: 'all', tenantId: null })).toHaveLength(2);
+  });
+
+  test('按租户过滤', () => {
+    const rows = filterMembers(members, { query: '', state: 'all', tenantId: 't2' });
+    expect(rows.map((row) => row.nodeId)).toEqual(['bbbb2222']);
+  });
+
+  test('按在线状态过滤', () => {
+    expect(
+      filterMembers(members, { query: '', state: 'online', tenantId: null }).map((r) => r.nodeId)
+    ).toEqual(['aaaa1111']);
+    expect(
+      filterMembers(members, { query: '', state: 'offline', tenantId: null }).map((r) => r.nodeId)
+    ).toEqual(['bbbb2222']);
+  });
+
+  test('检索命中节点名 / 节点号 / 租户号，大小写与前后空白都不计较', () => {
+    const q = (query: string) =>
+      filterMembers(members, { query, state: 'all', tenantId: null }).map((row) => row.nodeId);
+    expect(q(' 北京 ')).toEqual(['aaaa1111']);
+    expect(q('BBBB')).toEqual(['bbbb2222']);
+    expect(q('T1')).toEqual(['aaaa1111']);
+    expect(q('nothing')).toEqual([]);
+  });
+
+  test('条件叠加：租户 + 状态 + 关键词', () => {
+    expect(filterMembers(members, { query: 'bbbb', state: 'online', tenantId: 't2' })).toHaveLength(
+      0
+    );
+  });
+});
+
+describe('sortMembersBy', () => {
+  const a = relayMetricsMember({ nodeId: 'n1', name: 'alpha', rttMs: 50, activeStreams: 1 });
+  const b = relayMetricsMember({ nodeId: 'n2', name: 'bravo', rttMs: 10, activeStreams: 5 });
+  const off = relayMetricsMember({
+    nodeId: 'n3',
+    name: 'charlie',
+    online: false,
+    rttMs: 999,
+    activeStreams: 0,
+    connectedAt: null,
+  });
+
+  const ids = (key: Parameters<typeof toggleMemberSort>[1], direction: 'asc' | 'desc') =>
+    sortMembersBy([b, off, a], { key, direction }).map((row) => row.nodeId);
+
+  test('默认按节点名升序，降序即翻面', () => {
+    expect(ids('node', 'asc')).toEqual(['n1', 'n2', 'n3']);
+    expect(ids('node', 'desc')).toEqual(['n3', 'n2', 'n1']);
+  });
+
+  test('数值列按值排', () => {
+    expect(ids('streams', 'desc')).toEqual(['n2', 'n1', 'n3']);
+  });
+
+  test('状态列：升序在线在前', () => {
+    expect(ids('state', 'asc')).toEqual(['n1', 'n2', 'n3']);
+  });
+
+  test('缺值恒排在最后，升降序都一样（离线成员的延迟不算数）', () => {
+    expect(ids('rtt', 'asc')).toEqual(['n2', 'n1', 'n3']);
+    expect(ids('rtt', 'desc')).toEqual(['n1', 'n2', 'n3']);
+    expect(ids('connected', 'desc')[2]).toBe('n3');
+  });
+
+  test('同值时按节点号稳定收尾', () => {
+    const same = [
+      relayMetricsMember({ nodeId: 'z', name: 'same' }),
+      relayMetricsMember({ nodeId: 'a', name: 'same' }),
+    ];
+    expect(sortMembersBy(same, { key: 'node', direction: 'desc' }).map((r) => r.nodeId)).toEqual([
+      'a',
+      'z',
+    ]);
+  });
+
+  test('不改原数组', () => {
+    const input = [b, a];
+    sortMembersBy(input, { key: 'node', direction: 'asc' });
+    expect(input.map((row) => row.nodeId)).toEqual(['n2', 'n1']);
+  });
+});
+
+describe('toggleMemberSort', () => {
+  test('换列回到升序，同列翻面', () => {
+    expect(toggleMemberSort({ key: 'node', direction: 'asc' }, 'rate')).toEqual({
+      key: 'rate',
+      direction: 'asc',
+    });
+    expect(toggleMemberSort({ key: 'rate', direction: 'asc' }, 'rate')).toEqual({
+      key: 'rate',
+      direction: 'desc',
+    });
+    expect(toggleMemberSort({ key: 'rate', direction: 'desc' }, 'rate')).toEqual({
+      key: 'rate',
+      direction: 'asc',
+    });
   });
 });
 
@@ -294,10 +401,15 @@ describe('趋势卡', () => {
 });
 
 describe('接入节点表', () => {
-  test('在线行在前，离线行的延迟出破折号', () => {
+  test('按传入顺序摆行，离线行的延迟出破折号', () => {
     const data = relayMetricsFixture();
     const html = renderToStaticMarkup(
-      <RelayMembersTable members={data.members} now={data.sampledAt} />
+      <RelayMembersTable
+        members={data.members}
+        now={data.sampledAt}
+        sort={DEFAULT_MEMBER_SORT}
+        onSort={() => undefined}
+      />
     );
     const online = html.indexOf('data-testid="relay-member-row-aabbccddeeff0011"');
     const offline = html.indexOf('data-testid="relay-member-row-ffeeddccbbaa9988"');
@@ -311,20 +423,53 @@ describe('接入节点表', () => {
   });
 
   test('一个成员都没有时出空态', () => {
-    const html = renderToStaticMarkup(<RelayMembersTable members={[]} now={0} />);
+    const html = renderToStaticMarkup(
+      <RelayMembersTable members={[]} now={0} sort={DEFAULT_MEMBER_SORT} onSort={() => undefined} />
+    );
+    expect(html).toContain('data-testid="relay-members-empty"');
     expect(html).toContain('relay.metrics.members.empty');
+  });
+
+  test('筛没了时换一句「没有匹配」', () => {
+    const html = renderToStaticMarkup(
+      <RelayMembersTable
+        members={[]}
+        now={0}
+        sort={DEFAULT_MEMBER_SORT}
+        onSort={() => undefined}
+        filtered
+      />
+    );
+    expect(html).toContain('data-testid="relay-members-no-match"');
+    expect(html).toContain('relay.metrics.members.noMatch');
+  });
+
+  test('表头可点，当前排序列带方向标注', () => {
+    const html = renderToStaticMarkup(
+      <RelayMembersTable
+        members={[]}
+        now={0}
+        sort={{ key: 'rate', direction: 'desc' }}
+        onSort={() => undefined}
+      />
+    );
+    for (const key of ['node', 'state', 'rtt', 'streams', 'rate', 'reconnects', 'connected']) {
+      expect(html).toContain(`data-testid="relay-members-sort-${key}"`);
+    }
+    expect(html).toContain('aria-sort="descending"');
+    expect(html.match(/aria-sort=/g)?.length).toBe(1);
   });
 });
 
 describe('RelayMetricsPanel', () => {
   test('还没拉到且没出错：摆骨架', () => {
-    const html = renderToStaticMarkup(<RelayMetricsPanel />);
+    const html = renderToStaticMarkup(<MetricsPanelHost />);
     expect(html).toContain('data-testid="relay-metrics-panel-skeleton"');
   });
 
   test('一次都没拉到过就失败：一行提示 + 重试', () => {
     setRelayMetricsStateForTest({ lastError: 'ECONNREFUSED' });
-    const html = renderToStaticMarkup(<RelayMetricsPanel />);
+    const html = renderToStaticMarkup(<MetricsPanelHost />);
     expect(html).toContain('data-testid="relay-metrics-load-error"');
     expect(html).toContain('data-testid="relay-metrics-load-error-retry"');
     expect(html).toContain('relay.metrics.refreshFailed');
@@ -332,17 +477,24 @@ describe('RelayMetricsPanel', () => {
 
   test('角色缺席：整块不渲染', () => {
     setRelayMetricsStateForTest({ availability: 'unavailable' });
-    expect(renderToStaticMarkup(<RelayMetricsPanel />)).toBe('');
+    expect(renderToStaticMarkup(<MetricsPanelHost />)).toBe('');
   });
 
   test('拉到过又失败：正文照旧，另加一条「已过期」与重试', () => {
     setRelayMetricsStateForTest({ data: relayMetricsFixture(), lastError: 'timeout' });
-    const html = renderToStaticMarkup(<RelayMetricsPanel />);
+    const html = renderToStaticMarkup(<MetricsPanelHost />);
     expect(html).toContain('data-testid="relay-metrics-panel"');
     expect(html).toContain('data-testid="relay-metrics-tiles"');
     expect(html).toContain('data-testid="relay-metrics-error"');
     expect(html).toContain('relay.metrics.stale');
     expect(html).toContain('data-stale=""');
+  });
+
+  test('接入节点表已挪出面板，由中继管理页单独摆一张卡', () => {
+    setRelayMetricsStateForTest({ data: relayMetricsFixture() });
+    const html = renderToStaticMarkup(<MetricsPanelHost />);
+    expect(html).not.toContain('data-testid="relay-members-card"');
+    expect(html).not.toContain('data-testid="relay-members-table"');
   });
 });
 

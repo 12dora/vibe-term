@@ -42,7 +42,9 @@ import {
   readRelayErrorCode,
 } from './relay-routes-input';
 import type { RelaySecrets } from './relay-secrets';
-import { type RelayStatusCandidate, buildRelayStatusRow } from './relay-status-row';
+import { buildRelayStatusRow } from './relay-status-row';
+import { handleRelaySwitch } from './relay-switch-route';
+import type { RelayUplinkView } from './relay-switch-route';
 import { RelayUplinkClient } from './relay-uplink-client';
 import {
   type SessionMiddlewareDeps,
@@ -50,19 +52,12 @@ import {
   jsonError,
   requireSession,
 } from './session-middleware';
-import type { PooledUplink } from './types';
-import type { AttachedHub } from './uplink-pool';
+
+export { RELAY_SWITCH_TIMEOUT_MS, type RelayUplinkView } from './relay-switch-route';
 
 export const RELAY_ROUTE_PREFIX = '/api/mesh/relay';
 export const RELAY_ENROLL_FETCH_TIMEOUT_MS = 15_000;
 export const RELAY_ENROLLMENT_ACK_TIMEOUT_MS = 10_000;
-
-export type RelayUplinkView = {
-  liveClient(): PooledUplink | null;
-  attachedHub(): AttachedHub | null;
-  reconfigure(): Promise<void>;
-  candidates(): RelayStatusCandidate[];
-};
 
 export type RelayRoutesDeps = {
   session: SessionMiddlewareDeps;
@@ -75,6 +70,7 @@ export type RelayRoutesDeps = {
   now?: () => number;
   dial?: RelayDialContext;
   enrollmentFanoutTimeoutMs?: number;
+  switchTimeoutMs?: number;
 };
 
 type PreparedPayload = { payload: string; payloadHash: string };
@@ -111,6 +107,7 @@ export class RelayRoutes {
   private route(key: string): RelayRouteHandler | null {
     const table: Record<string, RelayRouteHandler> = {
       'GET /status': (_r, uid) => this.status(uid),
+      'POST /switch': (r, uid) => handleRelaySwitch(this.deps, r, () => this.status(uid)),
       'GET /readmit/prepare': (_r, uid) => this.readmitPrepare(uid),
       'POST /enroll/proof-material': (r, uid) => this.proofMaterial(r, uid),
       'POST /enroll': (r, uid) => this.enroll(r, uid),

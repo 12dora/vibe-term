@@ -23,6 +23,7 @@ export interface RelayController {
   quota: RelayAction;
   tenant: RelayAction;
   passwordOpen: boolean;
+  quotaOpen: boolean;
   editing: RelayTenantSummary | null;
   kicking: RelayTenantSummary | null;
   removing: RelayTenantSummary | null;
@@ -30,6 +31,8 @@ export interface RelayController {
   busyTenantId: string | null;
   openPassword: () => void;
   closePassword: () => void;
+  openQuota: () => void;
+  closeQuota: () => void;
   openEditor: (tenant: RelayTenantSummary) => void;
   closeEditor: () => void;
   openKick: (tenant: RelayTenantSummary) => void;
@@ -51,6 +54,7 @@ export function useRelayController(api: RelayAdminApi, t: Translate): RelayContr
   const tenant = useRelayAction();
 
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [quotaOpen, setQuotaOpen] = useState(false);
   const [editing, setEditing] = useState<RelayTenantSummary | null>(null);
   const [kicking, setKicking] = useState<RelayTenantSummary | null>(null);
   const [removing, setRemoving] = useState<RelayTenantSummary | null>(null);
@@ -76,6 +80,7 @@ export function useRelayController(api: RelayAdminApi, t: Translate): RelayContr
 
   const submitDefaultQuota = async (next: RelayQuota) => {
     if (await quota.run(() => api.updateDefaultQuota(next))) {
+      setQuotaOpen(false);
       toast.success(t('relay.admin.quota.saved'));
       refresh();
     }
@@ -120,6 +125,7 @@ export function useRelayController(api: RelayAdminApi, t: Translate): RelayContr
     quota,
     tenant,
     passwordOpen,
+    quotaOpen,
     editing,
     kicking,
     removing,
@@ -128,6 +134,11 @@ export function useRelayController(api: RelayAdminApi, t: Translate): RelayContr
     closePassword: () => {
       setPasswordOpen(false);
       password.reset();
+    },
+    openQuota: () => setQuotaOpen(true),
+    closeQuota: () => {
+      setQuotaOpen(false);
+      quota.reset();
     },
     openEditor: setEditing,
     closeEditor: () => {
