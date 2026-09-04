@@ -1,3 +1,39 @@
+# 1.1.30
+
+_2026-09-05_
+
+## English
+
+### Changes
+
+- Settings → Relay Management (renamed from "Relay", now placed right after Multi-node Mesh): rates show at most two decimals; the access password moved into the page's overflow menu and the default quota into the tenants card's overflow menu (both open dialogs); the tenants table now sits above the connected-nodes table and selecting a tenant filters its nodes; the connected-nodes table gains search, column sorting (default: node name) and an online/offline filter. "Access passphrase" is now "access password"; the internal "token floor" row is gone.
+- Settings → Multi-node Mesh → This machine: relay rows are a compact address pill plus one status badge (latency when online, Offline otherwise); with two or more relays, clicking another relay switches to it after confirmation (new `POST /api/mesh/relay/switch`, the chosen relay is remembered as preferred). Connection details drop the metadata-key epoch and key-log rows and the "rotate metadata key" action; all three quotas (nodes, streams, bandwidth) show live usage; "Nodes via relay" is now "Reachable nodes" and the machine id sits right below the tenant id.
+- Relay link errors are shown only while the link is offline and are translated from a stable error code (`lastErrorCode`); a link that reconnected no longer displays a stale "last error". The relay pushes live tenant usage to its members every 5 s; `GET /api/relay/metrics` returns effective quotas, per-tenant usage and the token-bucket bandwidth rate.
+- Connect Devices → Server or computer: rewritten as three paths — via relay (join an existing one or run one here), via Hub (join or become one) and direct SSH (no tmex on the new machine) — with a one-line explanation of each and a default path derived from this machine's setup.
+- Remote access: "No edge connections" is only reported when cloudflared actually reports zero ready connections, and the notice now says what to check (proxy/firewall on port 7844 for `*.argotunnel.com`).
+
+### Fixes
+
+- A relay rejecting this machine's credentials while adding a relay (`RELAY_*` 401) no longer logs the whole page out.
+
+---
+
+## 中文
+
+### 变更
+
+- 设置 → 中继管理（原「中继」，移到多节点互联右侧）：速率最多两位小数；接入密码收进页面右上角菜单、默认配额收进租户卡右上角菜单（均为弹窗）；租户表移到接入节点表上方，选中租户即筛出其节点；接入节点表支持检索、列排序（默认按节点名）与在线/离线筛选。「接入口令」统一改为「接入密码」，删除内部的「令牌下限」行。
+- 设置 → 多节点互联 → 本机：中继行改为地址 pill + 单枚状态徽标（在线显示延迟，否则显示离线）；两条以上中继时点击其他中继经确认后切换（新增 `POST /api/mesh/relay/switch`，所选中继记为首选）。连接详情删除元数据密钥代数、密钥日志与「轮换元数据密钥」；节点、并发流、带宽三档配额均显示实时用量；「经中继可见节点」改为「可访问节点」，本机编号紧随租户编号。
+- 中继链路错误只在离线时显示，并按稳定错误码（`lastErrorCode`）翻译；重连成功后不再残留「最近错误」。中继每 5 秒向成员推送租户实时用量；`GET /api/relay/metrics` 返回生效配额、租户用量与令牌桶带宽速率。
+- 接入设备 → 服务器或电脑：重写为三条路径——经中继（加入已有 / 本机自建）、经 Hub（加入 / 本机设为）、SSH 直连（新机器无需安装 tmex），附一句话说明，并按本机现状选默认路径。
+- 远程访问：只有 cloudflared 确实报告 0 条就绪连接时才显示「无边缘连接」，提示改为可操作（检查代理 / 防火墙对 `*.argotunnel.com` 7844 端口的放行）。
+
+### 修复
+
+- 追加中继时被中继拒绝凭据（`RELAY_*` 401）不再把整页踢去登录页。
+
+---
+
 # 1.1.29
 
 _2026-09-04_
