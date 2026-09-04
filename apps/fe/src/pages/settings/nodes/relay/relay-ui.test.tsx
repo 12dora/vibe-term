@@ -1,12 +1,17 @@
-// 中继 UI 的纯逻辑：chip 文案、提交前校验、错误查表、不可写提示、静态渲染下的链路条。
+// 中继 UI 的纯逻辑与链路行：行内文案、提醒次序、次级菜单条目、提交前校验、错误查表。
 
 import { describe, expect, test } from 'bun:test';
 import type { RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { kickedRelays, reauthTarget, uplinkBlockedHint } from '../uplink/relay-targets';
-import { RelayPackPendingNotice, canSubmitRelayEnroll } from './relay-dialogs';
-import { RelayStrip, relayChipTitle, relayFailing, relayLabel } from './relay-strip';
-import type { RelayActionsController } from './use-relay-actions';
+import {
+  kickedRelays,
+  reauthTarget,
+  relayActionMenu,
+  uplinkBlockedHint,
+} from '../uplink/relay-targets';
+import { canSubmitRelayEnroll } from './relay-dialogs';
+import { relayNotices } from './relay-notices';
+import { RelayRows, relayFailing, relayLabel } from './relay-rows';
 import { relayErrorText } from './use-relay-actions';
 import { readmitErrorText } from './use-relay-readmit';
 
@@ -28,8 +33,8 @@ function link(overrides: Partial<RelayLinkStatus> = {}): RelayLinkStatus {
   };
 }
 
-describe('relay-strip 纯函数', () => {
-  test('chip 正文取主机名，畸形地址原样显示', () => {
+describe('relay 行的纯函数', () => {
+  test('行首正文取主机名，畸形地址原样显示', () => {
     expect(relayLabel('https://relay.example.com:8443')).toBe('relay.example.com:8443');
     expect(relayLabel('not a url')).toBe('not a url');
   });
@@ -39,60 +44,81 @@ describe('relay-strip 纯函数', () => {
     expect(relayFailing(link({ kicked: true }))).toBe(true);
     expect(relayFailing(link({ lastError: 'ECONNRESET' }))).toBe(true);
   });
+});
 
-  test('悬浮详情按需补挂载 / 延迟 / 被踢 / 最近错误四行', () => {
-    const title = relayChipTitle(
-      t,
-      link({ attached: true, rttMs: 42, kicked: true, lastError: 'boom' })
+describe('RelayRows 渲染', () => {
+  test('没有中继时只给一行「未接入」', () => {
+    const html = renderToStaticMarkup(<RelayRows relays={[]} />);
+    expect(html).toContain('data-testid="nodes-relay-empty"');
+    expect(html).not.toContain('data-testid="nodes-relay-rows"');
+  });
+
+  test('在线态、延迟与当前挂载都在行内，不再藏进悬浮详情', () => {
+    const html = renderToStaticMarkup(<RelayRows relays={[link({ attached: true, rttMs: 42 })]} />);
+    expect(html).toContain('data-testid="nodes-relay-row-relay.example.com:8443"');
+    expect(html).toContain('data-relay-attached="true"');
+    expect(html).toContain('data-relay-online="true"');
+    expect(html).toContain('data-testid="nodes-relay-online-relay.example.com:8443"');
+    expect(html).toContain('relay.tenant.strip.rtt');
+    expect(html).toContain('data-testid="nodes-relay-attached-relay.example.com:8443"');
+    // `｜` 拼接的 title 详情已经没有了
+    expect(html).not.toContain('relay.tenant.strip.detail');
+    expect(html).not.toContain('title=');
+  });
+
+  test('被踢与最近错误各占一行红字', () => {
+    const html = renderToStaticMarkup(
+      <RelayRows relays={[link({ kicked: true, lastError: 'ECONNRESET', online: false })]} />
     );
-    const lines = title.split('\n');
-    expect(lines).toHaveLength(5);
-    expect(lines[1]).toBe('relay.tenant.strip.attached');
-    expect(lines[2]).toContain('42');
-    expect(lines[3]).toBe('relay.tenant.strip.kicked');
-    expect(lines[4]).toContain('boom');
+    expect(html).toContain('data-testid="nodes-relay-kicked-relay.example.com:8443"');
+    expect(html).toContain('data-testid="nodes-relay-error-relay.example.com:8443"');
+    expect(html).toContain('data-relay-failing="true"');
+    expect(html).toContain('relay.tenant.strip.offline');
+  });
+
+  test('延迟未知时不摆那一格', () => {
+    const html = renderToStaticMarkup(<RelayRows relays={[link()]} />);
+    expect(html).not.toContain('data-testid="nodes-relay-rtt-relay.example.com:8443"');
   });
 });
 
-describe('RelayStrip 渲染', () => {
-  test('没有中继时给一行「未接入」，有配额时多一格', () => {
-    const empty = renderToStaticMarkup(
-      <RelayStrip relays={[]} metaEpoch={0} nodesViaRelay={0} quota={null} />
-    );
-    expect(empty).toContain('nodes-relay-empty');
-    expect(empty).not.toContain('nodes-relay-quota');
+describe('中继提醒的次序与内容', () => {
+  const idle = {
+    kicked: false,
+    readmitPending: 0,
+    metaPending: 0,
+    packPending: false,
+    writable: true,
+  };
 
-    const full = renderToStaticMarkup(
-      <RelayStrip
-        relays={[link({ attached: true })]}
-        metaEpoch={3}
-        nodesViaRelay={2}
-        quota={{ maxNodes: 8, maxStreams: 16, bandwidthBytesPerSec: null }}
-      />
-    );
-    expect(full).toContain('nodes-relay-quota');
-    expect(full).toContain('relay.example.com:8443');
-    expect(full).toContain('data-relay-attached="true"');
+  test('一切正常时一条都不出', () => {
+    expect(relayNotices(idle)).toEqual([]);
   });
 
-  test('租户编号可复制并配一句说明；未接入时整格不出现', () => {
-    const withTenant = renderToStaticMarkup(
-      <RelayStrip
-        relays={[link({ attached: true })]}
-        metaEpoch={1}
-        nodesViaRelay={1}
-        tenantId="aabbccddeeff00112233445566778899"
-      />
-    );
-    expect(withTenant).toContain('data-testid="nodes-relay-tenant-id"');
-    expect(withTenant).toContain('aabbccddeeff00112233445566778899');
-    expect(withTenant).toContain('data-testid="nodes-relay-tenant-id-copy"');
-    expect(withTenant).toContain('relay.tenant.strip.tenantIdHint');
+  test('五种情况按固定次序摆开，各带一个动作', () => {
+    const notices = relayNotices({
+      kicked: false,
+      readmitPending: 2,
+      metaPending: 1,
+      packPending: true,
+      writable: false,
+    });
+    expect(notices.map((notice) => notice.kind)).toEqual([
+      'readmit',
+      'metaPending',
+      'packPending',
+      'notAttached',
+    ]);
+    expect(notices[0]?.params).toEqual({ count: 2 });
+    expect(notices[0]?.action?.testId).toBe('nodes-relay-readmit-action');
+    // 未挂载那一条只陈述事实，处理办法在下面的操作区
+    expect(notices[3]?.action).toBeUndefined();
+  });
 
-    const without = renderToStaticMarkup(
-      <RelayStrip relays={[link()]} metaEpoch={1} nodesViaRelay={1} tenantId={null} />
-    );
-    expect(without).not.toContain('data-testid="nodes-relay-tenant-id"');
+  test('令牌失效时不再补一条更笼统的「未挂载」', () => {
+    const notices = relayNotices({ ...idle, kicked: true, writable: false });
+    expect(notices.map((notice) => notice.kind)).toEqual(['kicked']);
+    expect(notices[0]?.tone).toBe('danger');
   });
 });
 
@@ -171,35 +197,39 @@ describe('重新输入口令的目标', () => {
   });
 });
 
-describe('密封包欠账告警', () => {
-  function actions(overrides: Partial<RelayActionsController> = {}): RelayActionsController {
-    return {
-      enroll: null,
-      confirm: null,
-      busy: false,
-      error: null,
-      openEnroll: () => undefined,
-      closeEnroll: () => undefined,
-      requestConfirm: () => undefined,
-      dismissConfirm: () => undefined,
-      submitEnroll: () => Promise.resolve(),
-      runConfirm: () => Promise.resolve(),
-      readmitMembers: () => Promise.resolve(),
-      metaPending: [],
-      retryMetaKey: () => Promise.resolve(),
-      packPending: false,
-      retryPack: () => Promise.resolve(),
-      ...overrides,
-    };
-  }
+describe('次级菜单的条目', () => {
+  test('只有一条中继：重输口令 + 轮换，不给「移除」', () => {
+    const items = relayActionMenu([link({ url: 'https://a.example', attached: true })]);
+    expect(items.map((item) => item.kind)).toEqual(['reauth', 'rotate']);
+    expect(items[0]?.testId).toBe('nodes-relay-reauth-menu');
+    expect(items[0]?.url).toBe('https://a.example');
+  });
 
-  test('没欠账时什么都不渲染，欠着时给一行告警加重试按钮', () => {
-    expect(renderToStaticMarkup(<RelayPackPendingNotice actions={actions()} />)).toBe('');
-    const html = renderToStaticMarkup(
-      <RelayPackPendingNotice actions={actions({ packPending: true })} />
-    );
-    expect(html).toContain('data-testid="nodes-relay-pack-pending"');
-    expect(html).toContain('relay.tenant.pack.pending');
-    expect(html).toContain('data-testid="nodes-relay-pack-retry"');
+  test('多条中继：逐条给出移除入口', () => {
+    const items = relayActionMenu([
+      link({ url: 'https://a.example', attached: true }),
+      link({ url: 'https://b.example', priority: 2 }),
+    ]);
+    expect(items.map((item) => item.testId)).toEqual([
+      'nodes-relay-reauth-menu',
+      'nodes-relay-rotate',
+      'nodes-relay-remove-a.example',
+      'nodes-relay-remove-b.example',
+    ]);
+  });
+
+  test('多条被踢：逐条给出重输口令，不再合并成一个入口', () => {
+    const items = relayActionMenu([
+      link({ url: 'https://a.example', kicked: true }),
+      link({ url: 'https://b.example', kicked: true, priority: 2 }),
+    ]);
+    expect(items.map((item) => item.testId)).toEqual([
+      'nodes-relay-reauth-a.example',
+      'nodes-relay-reauth-b.example',
+      'nodes-relay-rotate',
+      'nodes-relay-remove-a.example',
+      'nodes-relay-remove-b.example',
+    ]);
+    expect(items[0]?.params).toEqual({ host: 'a.example' });
   });
 });

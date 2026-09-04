@@ -1,6 +1,6 @@
 // 设置页「节点」标签：按运行模式分派。
 //
-// 本机区块自带「接入 Hub / 接入中继」两个 tab：standalone 下 Hub tab 里就是开启 hub 的向导，
+// 本机卡按「连接 → 中继服务 → 网络」三段摆开：standalone 下「连接」段就是四条路径的设置向导，
 // mesh 下是当前 Hub / 中继链路与对应的操作。standalone 另加 HTTPS 区块，mesh 再加节点管理。
 // 与站点设置表单完全无关：角色 / 直连 / TLS 都是运行态与安装态，不走 `/api/settings/site`。
 
@@ -13,35 +13,24 @@ import { useEffect, useState } from 'react';
 import { HttpsSection } from './https/https-section';
 import { LocalMachineCard } from './local-machine-card';
 import { NodesManagement } from './management/nodes-management';
-import { type SetupIntentRecord, takeSetupIntent } from './membership/intent';
+import { type SetupIntent, type SetupIntentRecord, takeSetupIntent } from './membership/intent';
 import { takeSelfRelayFollowUp } from './setup/self-relay-followup';
 import { SetupTransitionProvider } from './setup/setup-transition';
-import { StandaloneRelaySetup } from './setup/standalone-relay-setup';
 import { useLocalUplinkController } from './uplink/local-uplink-controller';
-import type { UplinkTab } from './uplink/uplink-tab-preference';
 import { useLocalStatus } from './use-local-status';
 
 export interface SetupIntentRouting {
-  /** Hub 向导要预选的路径；中继那一档的表单住在中继 tab 里，不走向导。 */
-  wizardPath: 'become-hub' | 'join-hub' | null;
+  /** 向导要预选的路径；四条路径都住在同一个向导里。 */
+  wizardPath: SetupIntent | null;
+  /** 「本机作为中继」表单的预选角色。 */
   relayRole: SetupRelayRole;
-  /** 打开时强制切到的上级链路 tab。 */
-  requestedTab: UplinkTab | null;
 }
 
-/** 把跨重启记号翻成「预选哪条向导、开哪个 tab、中继表单预选哪个角色」。 */
-export function routeSetupIntent(
-  intent: SetupIntentRecord | null,
-  selfRelayFollowUp: boolean
-): SetupIntentRouting {
-  const becomeRelay = intent?.path === 'become-relay';
-  // 中继两条路径的表单都住在中继 tab 里，不进 Hub 向导。
-  const relayPath = becomeRelay || intent?.path === 'join-relay';
-  const wantsRelayTab = relayPath || selfRelayFollowUp;
+/** 把跨重启记号翻成「预选哪条路径、中继表单预选哪个角色」。 */
+export function routeSetupIntent(intent: SetupIntentRecord | null): SetupIntentRouting {
   return {
-    wizardPath: intent && !relayPath ? (intent.path as 'become-hub' | 'join-hub') : null,
-    relayRole: (becomeRelay ? intent.role : null) ?? 'relay,node',
-    requestedTab: wantsRelayTab ? 'relay' : intent ? 'hub' : null,
+    wizardPath: intent?.path ?? null,
+    relayRole: (intent?.path === 'become-relay' ? intent.role : null) ?? 'relay,node',
   };
 }
 
@@ -68,14 +57,14 @@ export function NodesTab() {
     if (takeSelfRelayFollowUp()) setSelfRelayFollowUp(true);
   }, [loaded, standalone]);
 
-  const routing = routeSetupIntent(intent, selfRelayFollowUp);
+  const routing = routeSetupIntent(intent);
 
   // `/api/auth/mode` 要读 TLS 与证书，慢起来是几百毫秒起步：先按真实版式摆骨架，
   // 别让整页空着转圈。模式相关的区块一律等模式落定再挂（见下方 standalone 分支）。
   if (!loaded) return <NodesTabSkeleton />;
 
   return (
-    // 设置路径与角色选择器共享一份「已提交」状态：后端只放行一条，界面必须同步锁上。
+    // 设置路径与角色菜单共享一份「已提交」状态：后端只放行一条，界面必须同步锁上。
     <SetupTransitionProvider>
       <div className="flex w-full flex-col gap-4" data-testid="settings-nodes-tab">
         {/* 三块区域按阅读顺序错开入场；延迟档位手写在这里，列表短到不需要 <Stagger>。 */}
@@ -85,17 +74,12 @@ export function NodesTab() {
             status={local.status}
             loading={local.loading}
             loginRequired={local.loginRequired}
+            error={local.error}
             uplink={uplink}
             onRefresh={local.refresh}
-            onSelectSetupPath={setIntent}
             wizardPath={routing.wizardPath}
-            requestedUplinkTab={routing.requestedTab}
+            wizardRelayRole={routing.relayRole}
             selfRelayFollowUp={selfRelayFollowUp}
-            relaySetup={
-              standalone && local.status ? (
-                <StandaloneRelaySetup localStatus={local.status} initialRole={routing.relayRole} />
-              ) : null
-            }
           />
         </Reveal>
 

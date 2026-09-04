@@ -1,28 +1,26 @@
-// 本机卡「接入 Hub」面板：本机的两个地址、当前挂载的 Hub、Hub 列表与两条上级提示。
+// 「连接」段的 Hub 形态：本机对外地址（hub 兼节点）、当前挂载的 Hub、Hub 列表与上级提示。
 //
-// standalone 下换成开启 Hub 的向导；本机已经接入中继时这里只留一句说明——同一台机器不会
-// 同时挂 Hub 和中继，摆一份可操作的 Hub 版式只会让人以为能两边都连。
+// 优先级、写入纪元、授权来源与最近失败原因一律不在这里出现：它们全都收进「连接详情」，
+// 这一段只回答「现在连着谁、能不能写」。
 
 import type { HubFailureReason } from '@/node/hub-load-coordinator';
 import type { MeshHubsState } from '@/node/mesh-hubs';
 import { writerHub } from '@/node/mesh-hubs';
-import type { HubMode, MeshHubEndpoint } from '@tmex/api-client/auth/index';
+import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
 import type { LocalRole, LocalStatusResponse } from '@tmex/api-client/local/types';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
-import { Loader2, Repeat, ShieldAlert, TriangleAlert } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { Repeat, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Notice } from '../card-parts';
 import { CopyableValue, Row } from '../copy-feedback';
-import type { SetupIntent } from '../membership/intent';
-import { HubSetupWizard } from '../setup/hub-setup-wizard';
 import {
   HubModeTag,
   candidateFailure,
-  hubChipTitle,
   hubLabel,
   hubModeLabel,
   indexCandidates,
+  normalizeHubUrl,
 } from './hub-strip';
 
 /** hub 管理面不可用时那一行提示的文案位置。 */
@@ -74,6 +72,14 @@ export function resolveAttachedHub(
   return self ? { kind: 'hub', hub: self, isSelf: true } : { kind: 'none' };
 }
 
+/** 当前挂载的那台 hub 的往返延迟；候选记录里没有（旧后端 / 还没探过）时为 `null`。 */
+export function attachedHubRtt(snapshot: MeshHubsState): number | null {
+  const url = snapshot.attached?.publicUrl;
+  if (!url) return null;
+  const rtt = indexCandidates(snapshot.candidates).get(normalizeHubUrl(url))?.rttMs;
+  return typeof rtt === 'number' ? rtt : null;
+}
+
 /** 列表次序：writer 打头，其余按优先级——用户先看的是「谁收写入」。 */
 export function orderHubs(hubs: MeshHubEndpoint[], writerHubId: string | null): MeshHubEndpoint[] {
   return [...hubs].sort((a, b) => {
@@ -87,77 +93,16 @@ export interface HubUplinkPanelProps {
   selfNodeId: string | null;
   status: LocalStatusResponse;
   hubs: MeshHubsState & { writesBlocked: boolean };
-  /** hub 管理面是否应答（`useHubNode`）；中继模式与 standalone 下不看。 */
+  /** hub 管理面是否应答（`useHubNode`）。 */
   hubOnline: boolean;
   /** 首次探测是否仍在飞（含 401 → 静默登录 → 重试）；只用来区分「还没结论」与「连不上」。 */
   hubLoading: boolean;
   hubFailure: HubFailureReason | null;
-  /** 本机走中继：这里只给一句说明，改回 Hub 要先在中继那边离开。 */
-  relayMode: boolean;
-  standalone: boolean;
   changeHubDisabled: boolean;
   onChangeHub: () => void;
-  /** standalone 下预选的向导路径；换一条要换 key 重新挂。 */
-  wizardPath: SetupIntent | null;
 }
 
-export function HubUplinkPanel(props: HubUplinkPanelProps) {
-  const { t } = useTranslation();
-  if (props.relayMode) {
-    return (
-      <p
-        className="flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
-        data-testid="local-uplink-hub-blocked"
-      >
-        <ShieldAlert className="size-3.5 shrink-0" />
-        {t('nodes.machine.uplinkHubBlocked')}
-      </p>
-    );
-  }
-  if (props.standalone) return <HubSetupSlot status={props.status} wizardPath={props.wizardPath} />;
-  return <HubMembershipRows {...props} />;
-}
-
-/** 角色选择器在卡片上半部分，选完要把向导带进视野，否则看着像什么都没发生。 */
-function HubSetupSlot({
-  status,
-  wizardPath,
-}: {
-  status: LocalStatusResponse;
-  wizardPath: SetupIntent | null;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (wizardPath) ref.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-  }, [wizardPath]);
-  return (
-    <div ref={ref}>
-      {/* `initialPath` 只在首次挂载时生效，改路径必须换 key 重新挂一次。 */}
-      <HubSetupWizard key={wizardPath ?? 'default'} localStatus={status} initialPath={wizardPath} />
-    </div>
-  );
-}
-
-/**
- * 本机的两个地址：
- * - 「本机地址」= `hubPublicUrl`，只有 hub 角色才有，是别人访问本机的地址；
- * - 「当前 Hub」= 真正挂载的那台 hub。`/api/local/status` 的 `hubUrl` 只是入会时写死的拨号种子，
- *   主备切换后早已不是当前挂载的那台，界面上不展示它，只用来判断这一行要不要渲染。
- */
-/**
- * 本机的主 / 备身份：`/api/local/status` 不下发 hubMode，只能从 hub 集合里按自身 nodeId 取。
- * 集合里没有本机（旧入口、集合还没拉到）时返回 `null`，不做任何猜测。
- */
-function selfHubMode(
-  hubs: MeshHubsState,
-  localRole: LocalRole,
-  selfNodeId: string | null
-): HubMode | null {
-  if (localRole !== 'hub,node') return null;
-  return hubs.hubs.find((hub) => hub.nodeId && hub.nodeId === selfNodeId)?.mode ?? null;
-}
-
-function HubMembershipRows({
+export function HubUplinkPanel({
   localRole,
   selfNodeId,
   status,
@@ -168,21 +113,12 @@ function HubMembershipRows({
   changeHubDisabled,
   onChangeHub,
 }: HubUplinkPanelProps) {
-  const { t } = useTranslation();
   const meshRole = localRole === 'node' || localRole === 'hub,node';
-  const localHubMode = selfHubMode(hubs, localRole, selfNodeId);
   const attached: AttachedHubView = meshRole
     ? resolveAttachedHub(hubs, selfNodeId)
     : { kind: 'none' };
   return (
-    <div className="flex flex-col gap-3">
-      {localHubMode && (
-        <Row label={t('nodes.hubs.machineRole')}>
-          <span className="text-xs" data-testid="local-machine-hub-mode">
-            {hubModeLabel(t, localHubMode)}
-          </span>
-        </Row>
-      )}
+    <div className="flex flex-col gap-3" data-testid="local-uplink-hub-panel">
       {localRole === 'hub,node' && <LocalAddressRow publicUrl={status.hubPublicUrl} />}
       {meshRole && (attached.kind !== 'none' || status.hubUrl) && (
         <CurrentHubRow
@@ -235,44 +171,32 @@ export function HubUplinkNotices({
   // 主 hub 掉线时「hub 不可达」与「备 hub 拒写」说的是同一件事，只留更具体的那一条。
   if (writesBlocked) {
     return (
-      <p
-        className="flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
-        data-testid="nodes-hub-standby"
-      >
-        <ShieldAlert className="size-3.5 shrink-0" />
+      <Notice tone="muted" testId="nodes-hub-standby">
         {t('nodes.hubs.standbyNotice')}
-      </p>
+      </Notice>
     );
   }
   if (hubOnline) return null;
   if (hubFailure) {
     const notice = hubFailureNotice(hubFailure);
     return (
-      <p
-        className="flex items-center gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
-        data-testid={notice.testId}
-      >
-        <ShieldAlert className="size-3.5 shrink-0" />
+      <Notice tone="danger" testId={notice.testId}>
         {t(notice.key, notice.params)}
-      </p>
+      </Notice>
     );
   }
   // 行数与红条一致，出结论时不跳版。
   if (hubLoading) {
     return (
-      <p
-        className="flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
-        data-testid="nodes-hub-connecting"
-      >
-        <Loader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+      <Notice tone="muted" testId="nodes-hub-connecting" spinner>
         {t('nodes.hubConnecting')}
-      </p>
+      </Notice>
     );
   }
   return null;
 }
 
-/** 别人访问本机 hub 用的地址；没设置时说清后果，指回角色设置。 */
+/** 别人访问本机 hub 用的地址；没设置时说清后果，指回角色菜单。 */
 function LocalAddressRow({ publicUrl }: { publicUrl: string | null }) {
   const { t } = useTranslation();
   return (
@@ -280,14 +204,23 @@ function LocalAddressRow({ publicUrl }: { publicUrl: string | null }) {
       {publicUrl ? (
         <CopyableValue value={publicUrl} testId="local-machine-local-address" />
       ) : (
-        <span className="flex flex-wrap items-center gap-2 text-xs">
-          <span data-testid="local-machine-local-address-unset">
-            {t('nodes.machine.localAddressUnset')}
-          </span>
-          <span className="text-muted-foreground">{t('nodes.machine.localAddressHint')}</span>
-        </span>
+        <UnsetAddress
+          hint={t('nodes.machine.localAddressHint')}
+          testId="local-machine-local-address"
+        />
       )}
     </Row>
+  );
+}
+
+/** 地址还没配好：先说「未设置」，再一句说清后果与去哪儿改。中继服务那一段共用它。 */
+export function UnsetAddress({ hint, testId }: { hint: string; testId: string }) {
+  const { t } = useTranslation();
+  return (
+    <span className="flex flex-wrap items-center gap-2 text-xs">
+      <span data-testid={`${testId}-unset`}>{t('nodes.machine.localAddressUnset')}</span>
+      <span className="text-muted-foreground">{hint}</span>
+    </span>
   );
 }
 
@@ -358,8 +291,8 @@ function CurrentHubRow({
 }
 
 /**
- * Hub 列表：一台一枚 chip。写入归属、挂载关系与最近一次连接失败都收进悬浮详情，
- * chip 本体只留「名字 + 主 / 备 + 离线」——这一份列表同时顶替了原来的 Hub 集群条。
+ * Hub 列表：一台一枚 chip，只留「名字 + 主 / 备 + 离线 + 连不上的警示」。
+ * 优先级、纪元、授权与最近错误都在「连接详情」里逐条摆出来，不再塞进悬浮详情。
  */
 export function MachineHubList({
   hubs,
@@ -383,7 +316,7 @@ export function MachineHubList({
             hub={hub}
             attached={hub.nodeId === attachedHubId}
             writer={hub.nodeId === writerHubId}
-            failure={candidateFailure(hub, byUrl)}
+            failing={candidateFailure(hub, byUrl) !== null}
           />
         ))}
       </span>
@@ -395,12 +328,12 @@ function MachineHubChip({
   hub,
   attached,
   writer,
-  failure,
+  failing,
 }: {
   hub: MeshHubEndpoint;
   attached: boolean;
   writer: boolean;
-  failure: MeshHubsState['candidates'][number] | null;
+  failing: boolean;
 }) {
   const { t } = useTranslation();
   const offline = hub.online === false;
@@ -410,13 +343,12 @@ function MachineHubChip({
         'inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]',
         attached ? 'border-primary/50 bg-primary/5' : 'border-border/60'
       )}
-      title={hubChipTitle(t, hub, attached, failure, writer)}
       data-testid={`local-machine-hub-item-${hub.nodeId}`}
       data-hub-mode={hub.mode}
       data-hub-online={offline ? 'false' : 'true'}
       data-hub-attached={attached ? 'true' : 'false'}
       data-hub-writer={writer ? 'true' : 'false'}
-      data-hub-failing={failure ? 'true' : 'false'}
+      data-hub-failing={failing ? 'true' : 'false'}
     >
       <span className="truncate font-medium">{hubLabel(hub)}</span>
       <span className="text-muted-foreground">{hubModeLabel(t, hub.mode)}</span>
@@ -428,7 +360,7 @@ function MachineHubChip({
           {t('nodes.hubs.offline')}
         </span>
       )}
-      {failure && (
+      {failing && (
         <TriangleAlert
           className="size-3 shrink-0 text-amber-500"
           data-testid={`local-machine-hub-warning-${hub.nodeId}`}

@@ -2647,9 +2647,9 @@ export const I18N_RESOURCES = {
           "hide": "Hide password"
         },
         "pureRelayConfirm": {
-          "title": "Switch to relay only?",
+          "title": "Make this a relay-only machine?",
           "description": "After the restart this machine serves no web UI, the relay is managed from the command line, and the role cannot be changed back from the web.",
-          "confirm": "Continue"
+          "confirm": "Create and restart"
         },
         "joinRelay": {
           "title": "Join an existing relay",
@@ -5658,9 +5658,9 @@ export const I18N_RESOURCES = {
           "hide": "隐藏口令"
         },
         "pureRelayConfirm": {
-          "title": "切换到纯中继？",
+          "title": "设为纯中继？",
           "description": "重启后本机不再提供网页，中继只能用命令行管理，网页里也无法改回其它角色。",
-          "confirm": "继续"
+          "confirm": "创建并重启"
         },
         "joinRelay": {
           "title": "加入已有中继",
@@ -8668,9 +8668,9 @@ export const I18N_RESOURCES = {
           "hide": "パスワードを非表示"
         },
         "pureRelayConfirm": {
-          "title": "中継のみに切り替えますか？",
+          "title": "中継のみのマシンにしますか？",
           "description": "再起動後、本機は Web を提供せず、中継はコマンドラインでのみ管理します。Web から他の役割に戻すこともできません。",
-          "confirm": "続行"
+          "confirm": "作成して再起動"
         },
         "joinRelay": {
           "title": "既存の中継に参加する",

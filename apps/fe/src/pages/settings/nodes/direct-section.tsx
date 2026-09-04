@@ -11,6 +11,7 @@ import type {
 import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@tmex/ui/tooltip';
 import { Download, Loader2, Trash2 } from 'lucide-react';
 import { useMemo, useRef, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -187,46 +188,32 @@ export function DirectSection({
   return (
     <>
       <Row label={t('nodes.machine.direct')}>
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge
-              variant="outline"
-              data-testid="local-machine-direct-status"
-              data-direct-state={badge.state}
-            >
-              {badge.text}
-            </Badge>
-            <Button
-              type="button"
-              size="xs"
-              variant={installed ? 'destructive' : 'outline'}
-              disabled={!supported || busy}
-              onClick={() => onAction(primary)}
-              data-testid={`local-machine-direct-${primary}`}
-            >
-              {pending === primary ? <Loader2 className="animate-spin" /> : <PrimaryIcon />}
-              {t(installed ? 'nodes.machine.directRemove' : 'nodes.machine.directInstall')}
-            </Button>
-            <label
-              className="flex items-center gap-1.5 text-xs text-muted-foreground"
-              htmlFor="local-machine-direct-switch"
-            >
-              {t('nodes.machine.directEnable')}
-              <Switch
-                id="local-machine-direct-switch"
-                size="sm"
-                checked={installed && enabled}
-                disabled={!supported || !installed || busy}
-                onCheckedChange={(checked) => onAction(checked ? 'enable' : 'disable')}
-                data-testid="local-machine-direct-switch"
-              />
-            </label>
-          </div>
-          {supported && !installed && (
-            <span className="text-xs text-muted-foreground" data-testid="local-machine-direct-hint">
-              {t('nodes.machine.directSwitchHint')}
-            </span>
-          )}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Badge
+            variant="outline"
+            data-testid="local-machine-direct-status"
+            data-direct-state={badge.state}
+          >
+            {badge.text}
+          </Badge>
+          <DirectSwitch
+            supported={supported}
+            installed={installed}
+            enabled={enabled}
+            busy={busy}
+            onAction={onAction}
+          />
+          <Button
+            type="button"
+            size="xs"
+            variant={installed ? 'ghost' : 'outline'}
+            disabled={!supported || busy}
+            onClick={() => onAction(primary)}
+            data-testid={`local-machine-direct-${primary}`}
+          >
+            {pending === primary ? <Loader2 className="animate-spin" /> : <PrimaryIcon />}
+            {t(installed ? 'nodes.machine.directRemove' : 'nodes.machine.directInstall')}
+          </Button>
         </div>
       </Row>
 
@@ -239,12 +226,63 @@ export function DirectSection({
   );
 }
 
+/**
+ * 启用开关。未安装时开关本身是禁用的，禁用态的控件不派发指针事件，说明只能挂在外层的
+ * 触发器上——这也正好把原来那句常驻的「请先安装插件」从版面上撤掉。
+ */
+function DirectSwitch({
+  supported,
+  installed,
+  enabled,
+  busy,
+  onAction,
+}: {
+  supported: boolean;
+  installed: boolean;
+  enabled: boolean;
+  busy: boolean;
+  onAction: (action: LocalDirectAction) => void;
+}) {
+  const { t } = useTranslation();
+  const control = (
+    <label
+      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+      htmlFor="local-machine-direct-switch"
+    >
+      {t('nodes.machine.directEnable')}
+      <Switch
+        id="local-machine-direct-switch"
+        size="sm"
+        checked={installed && enabled}
+        disabled={!supported || !installed || busy}
+        onCheckedChange={(checked) => onAction(checked ? 'enable' : 'disable')}
+        data-testid="local-machine-direct-switch"
+      />
+    </label>
+  );
+  if (!supported || installed) return control;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        className="inline-flex"
+        render={<span data-testid="local-machine-direct-hint" />}
+      >
+        {control}
+      </TooltipTrigger>
+      <TooltipContent>{t('nodes.machine.directNeedsInstall')}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function RemoveConfirm({
   open,
+  relayMode = false,
   onConfirm,
   onCancel,
 }: {
   open: boolean;
+  /** 走中继的机器不能被告知「会话会继续经 Hub 中转」：它根本没有 Hub。 */
+  relayMode?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -260,7 +298,11 @@ export function RemoveConfirm({
       testId="local-machine-direct-remove-confirm"
       confirmTestId="local-machine-direct-remove-confirm-ok"
     >
-      {t('nodes.machine.directRemoveConfirm.description')}
+      {t(
+        relayMode
+          ? 'nodes.machine.directRemoveConfirm.descriptionRelay'
+          : 'nodes.machine.directRemoveConfirm.description'
+      )}
     </DangerConfirmDialog>
   );
 }

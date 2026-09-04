@@ -1,14 +1,17 @@
-// 「接入 Hub」面板的两块纯逻辑与合并后的 Hub 列表：挂载解析、列表次序、chip 诊断、上级提示分档。
+// 「连接」段 Hub 形态的纯逻辑与版式：挂载解析、延迟取值、列表次序、chip、提示分档。
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与本目录其余测试同一套做法）。
 
 import { describe, expect, test } from 'bun:test';
 import type { MeshHubsState } from '@/node/mesh-hubs';
 import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
+import type { LocalRole, LocalStatusResponse } from '@tmex/api-client/local/types';
 import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   HubUplinkNotices,
+  HubUplinkPanel,
   MachineHubList,
+  attachedHubRtt,
   hubFailureNotice,
   orderHubs,
   resolveAttachedHub,
@@ -37,6 +40,42 @@ function hubsState(overrides: Partial<MeshHubsState> = {}): MeshHubsState {
     loadedAt: 1,
     ...overrides,
   } as MeshHubsState;
+}
+
+function status(role: LocalRole): LocalStatusResponse {
+  return {
+    role,
+    nodeEnv: 'production',
+    hubUrl: role === 'node' ? 'https://hub.example' : null,
+    hubPublicUrl: role === 'hub,node' ? 'https://hub.example' : null,
+    direct: {
+      supported: true,
+      installed: true,
+      enabled: true,
+      capable: true,
+      version: null,
+      platform: 'darwin-arm64',
+    },
+    tls: { mode: 'none', listenerRunning: false, tlsPort: null },
+    domainAccess: { allowed: true, viaDomain: false, hosts: [] },
+    relay: null,
+  };
+}
+
+function renderPanel(role: LocalRole, hubs: MeshHubsState, selfNodeId = 'me'): string {
+  return renderToStaticMarkup(
+    <HubUplinkPanel
+      localRole={role}
+      selfNodeId={selfNodeId}
+      status={status(role)}
+      hubs={{ ...hubs, writesBlocked: false }}
+      hubOnline
+      hubLoading={false}
+      hubFailure={null}
+      changeHubDisabled={false}
+      onChangeHub={() => undefined}
+    />
+  );
 }
 
 function chipTag(html: string, nodeId: string): string {
@@ -107,6 +146,41 @@ describe('当前挂载的 Hub', () => {
   });
 });
 
+describe('attachedHubRtt', () => {
+  test('取挂载地址对应候选的延迟；地址只差斜杠也认', () => {
+    const snapshot = hubsState({
+      attached: {
+        hubNodeId: 'h1',
+        publicUrl: 'https://h1.example/',
+        mode: 'active',
+        writerEpoch: 1,
+        since: 1,
+      },
+      candidates: [
+        { publicUrl: 'https://h1.example', lastError: null, lastAttemptAt: 1, rttMs: 37 },
+      ],
+    });
+    expect(attachedHubRtt(snapshot)).toBe(37);
+  });
+
+  test('没挂载 / 旧后端不下发候选：延迟未知', () => {
+    expect(attachedHubRtt(hubsState())).toBeNull();
+    expect(
+      attachedHubRtt(
+        hubsState({
+          attached: {
+            hubNodeId: 'h1',
+            publicUrl: 'https://h1.example',
+            mode: 'active',
+            writerEpoch: 1,
+            since: 1,
+          },
+        })
+      )
+    ).toBeNull();
+  });
+});
+
 describe('orderHubs', () => {
   test('writer 打头，其余按优先级', () => {
     const rows = [
@@ -118,19 +192,104 @@ describe('orderHubs', () => {
   });
 });
 
+describe('Hub 形态的版式', () => {
+  test('纯 node：当前 Hub 一行 + 更换 Hub，不摆本机地址', () => {
+    const row = hub({ nodeId: 'h1', name: 'hub-a' });
+    const html = renderPanel(
+      'node',
+      hubsState({
+        hubs: [row],
+        attached: {
+          hubNodeId: 'h1',
+          publicUrl: row.publicUrl,
+          mode: 'active',
+          writerEpoch: 1,
+          since: 1,
+        },
+        writerHubId: 'h1',
+      })
+    );
+    expect(html).toContain('data-testid="local-uplink-hub-panel"');
+    expect(html).toContain('data-testid="local-machine-attached-hub"');
+    expect(html).toContain('>hub-a<');
+    expect(html).toContain('data-testid="local-machine-change-hub"');
+    expect(html).not.toContain('nodes.machine.localAddress"');
+    // 单台 hub 不摆列表
+    expect(html).not.toContain('data-testid="local-machine-hub-list"');
+  });
+
+  test('hub 兼节点：本机地址可复制，挂在自己身上不重复地址，也没有换 hub 入口', () => {
+    const self = hub({ nodeId: 'me', name: 'hub-self', mode: 'standby' });
+    const html = renderPanel('hub,node', hubsState({ hubs: [self], writerHubId: 'me' }));
+    expect(html).toContain('data-testid="local-machine-local-address"');
+    expect(html).toContain('nodes.machine.self');
+    expect(html).toContain('data-testid="local-machine-attached-hub-mode"');
+    expect(html).toContain('nodes.hubs.standby');
+    expect(html).not.toContain('data-testid="local-machine-attached-hub-url"');
+    expect(html).not.toContain('data-testid="local-machine-change-hub"');
+  });
+
+  test('hub 兼节点但没有公开地址：说未设置并指回角色菜单', () => {
+    const html = renderToStaticMarkup(
+      <HubUplinkPanel
+        localRole="hub,node"
+        selfNodeId="me"
+        status={{ ...status('hub,node'), hubPublicUrl: null }}
+        hubs={{ ...hubsState(), writesBlocked: false }}
+        hubOnline
+        hubLoading={false}
+        hubFailure={null}
+        changeHubDisabled={false}
+        onChangeHub={() => undefined}
+      />
+    );
+    expect(html).toContain('data-testid="local-machine-local-address-unset"');
+    expect(html).toContain('nodes.machine.localAddressHint');
+    expect(zhCN.translation.nodes.machine.localAddressHint).toContain('更改角色');
+  });
+
+  test('没挂上任何 Hub：说未连接，仍可更换 Hub', () => {
+    const html = renderPanel('node', hubsState());
+    expect(html).toContain('data-testid="local-machine-hub-disconnected"');
+    expect(html).toContain('data-testid="local-machine-change-hub"');
+  });
+
+  test('挂在备 Hub 上：同一行补出当前写者', () => {
+    const writer = hub({ nodeId: 'h1', name: 'hub-a', writerEpoch: 3 });
+    const standby = hub({ nodeId: 'h2', name: 'hub-b', mode: 'standby', priority: 1 });
+    const html = renderPanel(
+      'node',
+      hubsState({
+        hubs: [writer, standby],
+        attached: {
+          hubNodeId: 'h2',
+          publicUrl: standby.publicUrl,
+          mode: 'standby',
+          writerEpoch: 1,
+          since: 1,
+        },
+        writerHubId: 'h1',
+      })
+    );
+    expect(html).toContain('data-testid="local-machine-writer-hub"');
+    expect(html).toContain('data-testid="local-machine-hub-list"');
+  });
+});
+
 describe('合并后的 Hub 列表', () => {
   const hubs = [hub({ nodeId: 'h1' }), hub({ nodeId: 'h2', mode: 'standby' })];
 
-  test('一枚 chip 同时带出挂载 / writer / 在线态，写入归属只进悬浮详情', () => {
+  test('chip 只留名字 / 主备 / 在线态，详情不再塞进悬浮提示', () => {
     const html = renderToStaticMarkup(
       <MachineHubList hubs={hubs} attachedHubId="h2" writerHubId="h1" />
     );
     expect(html).toContain('data-testid="local-machine-hub-list"');
     expect(chipTag(html, 'h1')).toContain('data-hub-writer="true"');
     expect(chipTag(html, 'h1')).toContain('data-hub-attached="false"');
-    expect(chipTag(html, 'h1')).toContain('nodes.hubs.writer');
     expect(chipTag(html, 'h2')).toContain('data-hub-attached="true"');
     expect(chipTag(html, 'h2')).toContain('data-hub-mode="standby"');
+    expect(html).not.toContain('title=');
+    expect(html).not.toContain('nodes.hubs.detail');
   });
 
   test('连不上的那台带警告图标，别的不带', () => {
@@ -147,15 +306,6 @@ describe('合并后的 Hub 列表', () => {
     expect(html).toContain('data-testid="local-machine-hub-warning-h2"');
     expect(html).not.toContain('data-testid="local-machine-hub-warning-h1"');
     expect(chipTag(html, 'h2')).toContain('data-hub-failing="true"');
-    expect(chipTag(html, 'h2')).toContain('nodes.hubs.lastError');
-    expect(chipTag(html, 'h1')).toContain('data-hub-failing="false"');
-  });
-
-  test('旧后端不下发 candidates：不出现任何警告', () => {
-    const html = renderToStaticMarkup(
-      <MachineHubList hubs={hubs} attachedHubId="h1" writerHubId="h1" />
-    );
-    expect(html).not.toContain('local-machine-hub-warning');
     expect(chipTag(html, 'h1')).toContain('data-hub-failing="false"');
   });
 

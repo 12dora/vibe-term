@@ -1898,9 +1898,9 @@
           "hide": "Hide password"
         },
         "pureRelayConfirm": {
-          "title": "Switch to relay only?",
+          "title": "Make this a relay-only machine?",
           "description": "After the restart this machine serves no web UI, the relay is managed from the command line, and the role cannot be changed back from the web.",
-          "confirm": "Continue"
+          "confirm": "Create and restart"
         },
         "joinRelay": {
           "title": "Join an existing relay",

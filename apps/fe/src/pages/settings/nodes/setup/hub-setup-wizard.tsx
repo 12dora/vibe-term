@@ -5,7 +5,7 @@
 // 一旦成功，本页所在的 SPA 会在重启完成后整页跳到 `/login`（纯中继除外：那一档没有网页）。
 
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import type { LocalStatusResponse } from '@tmex/api-client/local/types';
+import type { LocalStatusResponse, SetupRelayRole } from '@tmex/api-client/local/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Reveal } from '@tmex/ui/motion';
 import { Radio, Server, Share2, Waypoints } from 'lucide-react';
@@ -23,8 +23,10 @@ export type SetupPath = SetupIntent;
 export interface HubSetupWizardProps {
   localStatus: LocalStatusResponse | null;
   client?: ApiClient;
-  /** 预选路径；默认不选，先让用户读完两条路径的说明。 */
+  /** 预选路径；默认不选，先让用户读完四条路径的说明。 */
   initialPath?: SetupPath | null;
+  /** 「本机作为中继」表单的预选角色（跨重启记号带来的）。 */
+  initialRelayRole?: SetupRelayRole;
   origin?: string | null;
   hostname?: string | null;
   onRestarted?: () => void;
@@ -34,6 +36,7 @@ export function HubSetupWizard({
   localStatus,
   client = defaultApiClient,
   initialPath = null,
+  initialRelayRole,
   origin,
   hostname,
   onRestarted,
@@ -126,10 +129,14 @@ export function HubSetupWizard({
               {...(onRestarted ? { onRestarted } : {})}
             />
           ) : path === 'become-relay' ? (
+            /* 跨重启记号可能晚于本机状态才读到：`initialRole` 只在挂载时进 `useState`，
+               必须换 key 重挂，否则恢复出来的「纯中继」会被默认的「中继兼节点」吞掉。 */
             <BecomeRelayForm
+              key={initialRelayRole ?? 'relay,node'}
               localStatus={localStatus}
               client={client}
               origin={origin}
+              {...(initialRelayRole ? { initialRole: initialRelayRole } : {})}
               {...(onRestarted ? { onRestarted } : {})}
             />
           ) : (

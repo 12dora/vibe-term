@@ -79,6 +79,22 @@ describe('HubSetupWizard', () => {
     expect(html).toContain('data-testid="setup-become-relay-form"');
     expect(html).not.toContain('data-testid="setup-become-hub-form"');
     expect(html).toContain('data-testid="setup-path-become-relay" data-selected="true"');
+    // 默认中继兼节点：建账号，不出纯中继告警
+    expect(html).toContain('id="setup-relay-username"');
+    expect(html).not.toContain('data-testid="setup-relay-pure-notice"');
+  });
+
+  test('跨重启记号恢复出来的「纯中继」赢过默认的「中继兼节点」', () => {
+    const html = renderToStaticMarkup(
+      <HubSetupWizard
+        localStatus={status()}
+        initialPath="become-relay"
+        initialRelayRole="relay"
+        origin={null}
+      />
+    );
+    expect(html).toContain('data-testid="setup-relay-pure-notice"');
+    expect(html).not.toContain('id="setup-relay-username"');
   });
 
   test('选中 become-hub 时渲染对应表单且该卡片高亮', () => {
@@ -179,6 +195,19 @@ describe('BecomeRelayForm', () => {
     expect(html).toContain('nodes.setup.becomeRelay.pureNotice');
     expect(html).not.toContain('id="setup-relay-username"');
     expect(html).not.toContain('id="setup-relay-confirm-password"');
+  });
+
+  test('纯中继的确认框默认关着，提交时才弹', () => {
+    const html = renderToStaticMarkup(
+      <BecomeRelayForm localStatus={status()} origin={null} initialRole="relay" />
+    );
+    expect(html).not.toContain('data-testid="setup-pure-relay-confirm"');
+  });
+
+  test('直连提示用中继版文案，不提 Hub 中转', () => {
+    const html = renderToStaticMarkup(<BecomeRelayForm localStatus={status()} origin={null} />);
+    expect(html).toContain('nodes.setup.fields.directEnableRelayHint');
+    expect(html).not.toContain('nodes.setup.fields.directEnableHint');
   });
 
   test('https origin 预填公网地址；production 下 http origin 不预填', () => {

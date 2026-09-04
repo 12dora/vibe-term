@@ -1894,9 +1894,9 @@
           "hide": "隐藏口令"
         },
         "pureRelayConfirm": {
-          "title": "切换到纯中继？",
+          "title": "设为纯中继？",
           "description": "重启后本机不再提供网页，中继只能用命令行管理，网页里也无法改回其它角色。",
-          "confirm": "继续"
+          "confirm": "创建并重启"
         },
         "joinRelay": {
           "title": "加入已有中继",

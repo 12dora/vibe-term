@@ -24,7 +24,7 @@ import {
   DialogTitle,
 } from '@tmex/ui/dialog';
 import { Input } from '@tmex/ui/input';
-import { Loader2, ShieldAlert } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
@@ -220,33 +220,5 @@ export function RelayConfirmDialog({ actions }: { actions: RelayActionsControlle
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
-}
-
-/**
- * 密封包欠账告警：中继上的密封包没能重封（改密之后最典型），别的机器暂时无法用
- * 「租户编号 + 密码」加入。重封须用密码，通行密钥给不出根种子。
- */
-export function RelayPackPendingNotice({ actions }: { actions: RelayActionsController }) {
-  const { t } = useTranslation();
-  if (!actions.packPending) return null;
-  return (
-    <p
-      className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400"
-      data-testid="nodes-relay-pack-pending"
-    >
-      <ShieldAlert className="size-3.5 shrink-0" />
-      {t('relay.tenant.pack.pending')}
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        disabled={actions.busy}
-        onClick={() => void actions.retryPack()}
-        data-testid="nodes-relay-pack-retry"
-      >
-        {t('relay.tenant.pack.retry')}
-      </Button>
-    </p>
   );
 }
