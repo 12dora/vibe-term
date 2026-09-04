@@ -11,6 +11,7 @@ import { CardTitle } from '@tmex/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -136,17 +137,19 @@ export function LocalMachineMenuList({
 }) {
   return (
     <>
-      <DropdownMenuLabel>{labels.changeRole}</DropdownMenuLabel>
-      {roles.map((target) => (
-        <DropdownMenuItem
-          key={target}
-          disabled={roleLocked}
-          onClick={() => onSelectRole(target)}
-          data-testid={`local-machine-role-${target}`}
-        >
-          {roleLabel(target)}
-        </DropdownMenuItem>
-      ))}
+      <DropdownMenuGroup>
+        <DropdownMenuLabel>{labels.changeRole}</DropdownMenuLabel>
+        {roles.map((target) => (
+          <DropdownMenuItem
+            key={target}
+            disabled={roleLocked}
+            onClick={() => onSelectRole(target)}
+            data-testid={`local-machine-role-${target}`}
+          >
+            {roleLabel(target)}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuGroup>
       <DropdownMenuSeparator />
       <DropdownMenuItem
         variant="destructive"
