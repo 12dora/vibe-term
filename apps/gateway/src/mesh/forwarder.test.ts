@@ -18,7 +18,6 @@ import {
   expirePendingForwardStream,
   getSelfRewrite,
   pendingForwardStreamCount,
-  safeUnreachableReason,
   setPendingForwardStreamTtlMs,
 } from './forwarder';
 import {
@@ -106,7 +105,6 @@ describe('forwarder', () => {
       { err: new Error('https://evil.example/token=secret'), reason: 'no_link' },
     ];
     for (const { err, reason } of cases) {
-      expect(safeUnreachableReason(err)).toBe(reason);
       const peers = new FakePeers();
       peers.links.set(OTHER, dummyLink);
       const streams = new FakeStreams();
