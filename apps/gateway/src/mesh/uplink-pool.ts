@@ -36,6 +36,7 @@ import {
 } from './uplink-client';
 import { type UrlDiag, emptyUplinkDiag, mergeUplinkDiag } from './uplink-pool-diag';
 import { defaultFetchCaPem, defaultProbeHealthz } from './uplink-pool-http';
+import { runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
 
 export {
   CA_BOOTSTRAP_MAX_BYTES,
@@ -441,7 +442,7 @@ export class UplinkPool {
   private lastRttSwitchAt = 0;
 
   private live: PooledUplink | null = null;
-  private pending: PooledUplink | null = null;
+  pending: PooledUplink | null = null;
   private attached: AttachedHub | null = null;
   private generation = 0;
   private switchToken = 0;
@@ -665,45 +666,12 @@ export class UplinkPool {
     this.scheduleProbe(this.probeNowDebounceMs);
   }
 
-  async switchTo(publicUrl: string): Promise<void> {
-    const target = this.candidates().find((row) => sameHubUrl(row.publicUrl, publicUrl));
-    if (!target) throw new Error(`unknown hub url: ${publicUrl}`);
-    if (
-      this.attached &&
-      sameHubUrl(this.attached.publicUrl, publicUrl) &&
-      this.live?.state === 'online'
-    ) {
-      return;
-    }
-    const signal = this.stopAbort?.signal;
-    if (!signal || signal.aborted) throw new Error('aborted');
-    const cands = this.candidates();
-    const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, publicUrl));
-    const transport = this.isLocalTransport(target) ? 'memory' : 'ws';
-    this.noteAttempt(target);
-    this.logCandidateEvent(target, idx, transport, this.lastErrorOf(target), 'try', {
-      total: cands.length,
-    });
-    const token = this.beginSwitch();
-    const client = this.spawn(target);
-    this.pending = client;
-    try {
-      await this.connectCandidate(client, target, signal);
-      if (!this.isSwitchCurrent(token)) {
-        if (this.pending === client) this.pending = null;
-        await client.stop();
-        return;
-      }
-      await this.promote(client, target, token);
-    } catch (err) {
-      const msg = errMessage(err);
-      this.noteFailure(target, msg);
-      this.logCandidateFailed(target, msg, 1, idx, transport);
-      this.logMissingCaPin(target, err);
-      if (this.pending === client) this.pending = null;
-      await client.stop();
-      throw err;
-    }
+  async switchTo(publicUrl: string, signal?: AbortSignal): Promise<void> {
+    return runUplinkSwitch(this, publicUrl, signal);
+  }
+
+  stopSignal(): AbortSignal | null {
+    return this.stopAbort?.signal ?? null;
   }
 
   private requireLive(): PooledUplink {
@@ -755,20 +723,20 @@ export class UplinkPool {
     }
   }
 
-  private beginSwitch(): number {
+  beginSwitch(): number {
     this.switchToken += 1;
     return this.switchToken;
   }
 
-  private isSwitchCurrent(token: number): boolean {
+  isSwitchCurrent(token: number): boolean {
     return token === this.switchToken && !this.stopAbort?.signal.aborted;
   }
 
-  private isLocalTransport(cand: UplinkCandidate): boolean {
+  isLocalTransport(cand: UplinkCandidate): boolean {
     return this.opts.isLocalCandidate?.(cand) === true && Boolean(this.opts.connectLocal);
   }
 
-  private async connectCandidate(
+  async connectCandidate(
     client: PooledUplink,
     cand: UplinkCandidate,
     signal: AbortSignal
@@ -816,7 +784,8 @@ export class UplinkPool {
           }
           deadline.abort();
           await this.promote(client, cand, token);
-          await this.waitActiveSession(this.live ?? client, signal);
+          const reason = await this.waitActiveSession(this.live ?? client, signal);
+          if (reason) this.noteFailure(cand, reason);
           return true;
         } catch (err) {
           failures += 1;
@@ -834,6 +803,7 @@ export class UplinkPool {
       await sleeper.catch(() => {});
       if (this.pending === client) this.pending = null;
       if (this.live === client) {
+        this.persistTerminalError(client, cand.publicUrl);
         this.clearLive(client);
       }
       if (this.live !== client) {
@@ -846,7 +816,7 @@ export class UplinkPool {
     }
   }
 
-  private spawn(cand: UplinkCandidate): PooledUplink {
+  spawn(cand: UplinkCandidate): PooledUplink {
     const pin = this.opts.hubTrust.get(cand.publicUrl);
     const tlsCa = pin?.caPem ? [pin.caPem] : null;
     const wsFactory = this.opts.wsFactory ?? defaultWsFactory(tlsCa);
@@ -907,7 +877,7 @@ export class UplinkPool {
     return client;
   }
 
-  private async promote(client: PooledUplink, cand: UplinkCandidate, token: number): Promise<void> {
+  async promote(client: PooledUplink, cand: UplinkCandidate, token: number): Promise<void> {
     if (!this.isSwitchCurrent(token)) {
       await client.stop();
       return;
@@ -1049,13 +1019,25 @@ export class UplinkPool {
     }
   }
 
-  private async waitActiveSession(origin: PooledUplink, signal: AbortSignal): Promise<void> {
+  private async waitActiveSession(
+    origin: PooledUplink,
+    signal: AbortSignal
+  ): Promise<string | null> {
     let current = origin;
+    let reason: string | null = null;
     while (this.live && !signal.aborted) {
       current = this.live;
       await this.waitWhileLive(current, signal);
+      reason = terminalErrorOf(current);
       if (this.live === current) break;
     }
+    return reason;
+  }
+
+  private persistTerminalError(client: PooledUplink, publicUrl: string): void {
+    const reason = terminalErrorOf(client);
+    if (!reason) return;
+    this.noteFailure({ publicUrl }, reason);
   }
 
   private async waitWhileLive(client: PooledUplink, signal: AbortSignal): Promise<void> {
@@ -1415,11 +1397,11 @@ export class UplinkPool {
     this.patchDiag(publicUrl, { rttMs: ewma, rttAt: this.scheduler.now(), rttSamples: samples });
   }
 
-  private noteAttempt(cand: UplinkCandidate): void {
+  noteAttempt(cand: UplinkCandidate): void {
     this.patchDiag(cand.publicUrl, { lastAttemptAt: this.scheduler.now() });
   }
 
-  private noteFailure(cand: UplinkCandidate, msg: string): void {
+  noteFailure(cand: Pick<UplinkCandidate, 'publicUrl'>, msg: string): void {
     const at = this.scheduler.now();
     this.patchDiag(cand.publicUrl, { lastError: msg, lastErrorAt: at, lastAttemptAt: at });
   }
@@ -1429,11 +1411,11 @@ export class UplinkPool {
     this.patchDiag(cand.publicUrl, { lastError: null, lastErrorAt: null });
   }
 
-  private lastErrorOf(cand: UplinkCandidate): string | null {
+  lastErrorOf(cand: UplinkCandidate): string | null {
     return this.diagByUrl.get(normalizeHubEndpointUrl(cand.publicUrl))?.lastError ?? null;
   }
 
-  private logCandidateFailed(
+  logCandidateFailed(
     cand: UplinkCandidate,
     msg: string,
     fails: number,
@@ -1443,7 +1425,7 @@ export class UplinkPool {
     this.logCandidateEvent(cand, index, transport, msg, 'failed', { fails });
   }
 
-  private logCandidateEvent(
+  logCandidateEvent(
     cand: UplinkCandidate,
     index: number,
     transport: string,
@@ -1485,7 +1467,7 @@ export class UplinkPool {
     );
   }
 
-  private logMissingCaPin(cand: UplinkCandidate, err: unknown): void {
+  logMissingCaPin(cand: UplinkCandidate, err: unknown): void {
     if (!isTlsCertificateError(err)) return;
     if (this.opts.hubTrust.get(cand.publicUrl)) return;
     const advertised = cand.caFingerprint?.trim() ?? '';
@@ -1554,7 +1536,7 @@ function defaultWsFactory(tlsCa: string[] | null): UplinkWsFactory {
   };
 }
 
-function anyAbort(a: AbortSignal, b: AbortSignal): AbortSignal {
+export function anyAbort(a: AbortSignal, b: AbortSignal): AbortSignal {
   const out = new AbortController();
   const abort = () => {
     if (!out.signal.aborted) out.abort();

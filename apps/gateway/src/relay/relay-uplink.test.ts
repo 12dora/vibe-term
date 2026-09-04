@@ -82,6 +82,24 @@ describe('relay uplink auth', () => {
     });
   });
 
+  test('删除租户清掉 lastUsagePush；stop 清空整表', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    await client.inbox.takeOf('auth.ok');
+    await client.inbox.takeOf('relay.quota');
+    const cache = (relay.runtime.uplink as unknown as { lastUsagePush: Map<string, string> })
+      .lastUsagePush;
+    expect(cache.has(tenant.id)).toBe(true);
+    const res = await relay.adminFetch(`/api/relay/tenants/${tenant.id}`, { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(cache.has(tenant.id)).toBe(false);
+    expect(cache.size).toBe(0);
+    await relay.runtime.uplink.stop();
+    expect(cache.size).toBe(0);
+  });
+
   test('rejects an unknown node with no member proof', async () => {
     const relay = await boot();
     const tenant = await relay.createTenant();

@@ -193,7 +193,7 @@ export function createRelayRoutes(input: {
       attachedHub: () => input.uplink.attachedHub(),
       reconfigure: () => reconfigureUplinkPool(input.uplink),
       candidates: () => input.uplink.candidates(),
-      switchTo: (url) => input.uplink.switchTo(url),
+      switchTo: (url, signal) => input.uplink.switchTo(url, signal),
     },
   });
 }

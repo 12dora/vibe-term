@@ -209,6 +209,11 @@ export class RelayUplinkServer implements RelayUplinkHost {
     return bucket;
   }
 
+  /** 租户删除时丢掉用量推送指纹，避免 Map 随创建/删除无限增长。 */
+  forgetTenant(tenantId: string): void {
+    this.lastUsagePush.delete(tenantId);
+  }
+
   /** 配额变更后立刻把新值推给该租户在线节点，并重置带宽桶速率。 */
   notifyQuota(tenantId: string): void {
     const quota = this.quotaFor(tenantId);
@@ -339,6 +344,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
     for (const link of [...this.accepted]) link.close('relay-stop');
     this.accepted.clear();
     this.buckets.clear();
+    this.lastUsagePush.clear();
     this.enrollCreates.clear();
     await this.ctlQueue.drain();
   }

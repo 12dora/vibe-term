@@ -78,6 +78,24 @@ describe('RelayTenantApi 状态', () => {
     expect(status.mode).toBe('relay');
   });
 
+  test('switchRelay 502 保留 lastError / lastErrorCode', async () => {
+    const { api } = recorder([
+      fail(502, 'RELAY_SWITCH_FAILED', {
+        lastError: 'heartbeat-timeout',
+        lastErrorCode: 'heartbeat-lost',
+      }),
+    ]);
+    const error = await api.switchRelay('https://b.example').catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(RelayApiError);
+    const typed = error as RelayApiError;
+    expect(typed.code).toBe('RELAY_SWITCH_FAILED');
+    expect(typed.status).toBe(502);
+    expect(typed.details).toEqual({
+      lastError: 'heartbeat-timeout',
+      lastErrorCode: 'heartbeat-lost',
+    });
+  });
+
   test('normalizeRelayStatus 对空响应给出 none 模式', () => {
     expect(normalizeRelayStatus(null).mode).toBe('none');
     expect(normalizeRelayStatus({ reauthRequired: true }).reauthRequired).toBe(true);

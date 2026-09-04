@@ -169,6 +169,8 @@ type FakeBehavior = {
   failTimes?: number;
   hang?: boolean;
   gate?: { wait: () => Promise<void> };
+  /** 忽略 abort/stop，等门打开后仍标成 online——用来测超时后不得 promote。 */
+  lateConnect?: { wait: () => Promise<void> };
   error?: string;
 };
 
@@ -260,6 +262,9 @@ class FakeUplink {
         signal?.addEventListener('abort', onAbort, { once: true });
       });
     }
+    if (this.sharedFail.lateConnect) {
+      await this.sharedFail.lateConnect.wait();
+    }
     if (this.sharedFail.gate) {
       const aborted = new Promise<void>((_resolve, reject) => {
         const onAbort = () => {
@@ -324,6 +329,14 @@ class FakeUplink {
   drop(): void {
     this.link = null;
     this.closeResolve?.({ reason: 'dropped' });
+    this.closeResolve = null;
+    this.setState('offline');
+  }
+
+  terminate(reason: string): void {
+    this.lastConnectError = { reason, at: 1 };
+    this.link = null;
+    this.closeResolve?.({ reason });
     this.closeResolve = null;
     this.setState('offline');
   }
@@ -1074,10 +1087,65 @@ describe('UplinkPool', () => {
     await second;
     expect(pool.attachedHub()?.publicUrl).toBe('https://c.example');
     releaseA();
-    await first.catch(() => {});
+    await expect(first).rejects.toThrow('superseded');
     await waitMicro();
     expect(pool.attachedHub()?.publicUrl).toBe('https://c.example');
     expect(created.filter((row) => row.hubUrl === 'https://c.example').at(-1)?.stopped).toBe(false);
+  });
+
+  test('switchTo 超时后迟到的连接不得 promote', async () => {
+    let releaseLate: () => void = () => {};
+    const late = new Promise<void>((resolve) => {
+      releaseLate = resolve;
+    });
+    const behavior: Record<string, FakeBehavior> = {
+      'https://a.example': { failTimes: 3 },
+    };
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior,
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    behavior['https://a.example'] = { lateConnect: { wait: () => late } };
+    const ac = new AbortController();
+    const pending = pool.switchTo('https://a.example', ac.signal);
+    await waitMicro();
+    ac.abort();
+    await waitMicro();
+    releaseLate();
+    await expect(pending).rejects.toThrow(/connect-timeout|superseded|aborted/);
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+  });
+
+  test('在线链路 heartbeat-lost / kicked 写入 per-URL 诊断', async () => {
+    const behavior: Record<string, FakeBehavior> = { 'https://a.example': {} };
+    const { pool, created } = boot({ urls: ['https://a.example'], behavior });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    behavior['https://a.example'] = { hang: true };
+    created[0]?.terminate('missed-pong');
+    await waitMicro();
+    expect(pool.attachedHub()).toBeNull();
+    expect(pool.candidates().find((row) => row.publicUrl === 'https://a.example')?.lastError).toBe(
+      'missed-pong'
+    );
+    await pool.stop();
+
+    const kicked: Record<string, FakeBehavior> = { 'https://b.example': {} };
+    const second = boot({ urls: ['https://b.example'], behavior: kicked });
+    second.pool.start();
+    await waitMicro();
+    kicked['https://b.example'] = { hang: true };
+    second.created[0]?.terminate('kicked:password_rotated');
+    await waitMicro();
+    expect(
+      second.pool.candidates().find((row) => row.publicUrl === 'https://b.example')?.lastError
+    ).toBe('kicked:password_rotated');
+    await second.pool.stop();
   });
 
   test('overlapping probe ticks are in-flight-guarded and the period is jittered ±20%', async () => {

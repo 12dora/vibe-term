@@ -19,8 +19,11 @@ const NULL_REASONS = /^(stopped|aborted)$/i;
 /** 先匹配更具体的原因，再落到宽泛类（timeout / protocol）。 */
 const RULES: Array<[RegExp, RelayLinkErrorCode]> = [
   [/\bmember-/, 'auth-rejected'],
-  [/^kicked(?::|$)|(?:^|[\s:_-])tenant-kicked(?:$|[\s:_-])|^revoked$/, 'kicked'],
-  [/\b(?:missed-pong|ping-failed)\b/, 'heartbeat-lost'],
+  [
+    /(?:^|[\s:_-])(?:kicked|tenant-kicked|revoked|password_rotated|relay-kicked|relay-revoked|relay-password_rotated|relay-tenant-gone)(?:$|[\s:_-])/,
+    'kicked',
+  ],
+  [/\b(?:missed-pong|ping-failed|heartbeat[-_]timeout|heartbeat[-_]lost)\b/, 'heartbeat-lost'],
   [/\bauth-timeout\b/, 'auth-timeout'],
   [
     /\b(?:connect-timeout|etimedout|timed out)\b|(?:^|[\s:_-])timeout(?:$|[\s:_-])/,
@@ -28,7 +31,7 @@ const RULES: Array<[RegExp, RelayLinkErrorCode]> = [
   ],
   [/\bconnect-failed\b/, 'connect-failed'],
   [
-    /\b(?:auth_rejected|bad-token|token-epoch|unauthorized|unauthenticated|bad-sig|bad-nonce|bad-cert)\b/,
+    /\b(?:auth_rejected|bad-token|token-epoch|unauthorized|unauthenticated|bad-sig|bad-nonce|bad-cert|unknown-tenant)\b/,
     'auth-rejected',
   ],
   [
@@ -44,7 +47,7 @@ const RULES: Array<[RegExp, RelayLinkErrorCode]> = [
     'tls',
   ],
   [
-    /\b(?:protocol|proto-unsupported|client-too-old|ws-closed|link-closed|invalid frame|bad upgrade)\b/,
+    /\b(?:protocol(?:[_-]error)?|proto-unsupported|client-too-old|ws-closed|link-closed|invalid frame|bad upgrade|relay-replaced|relay-stop)\b/,
     'protocol',
   ],
 ];

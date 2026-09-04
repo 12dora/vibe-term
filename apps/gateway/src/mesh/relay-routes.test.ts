@@ -27,6 +27,7 @@ import type { RelayDialContext } from './relay-dial';
 import { buildSetRelaysPayload, listRelayNodeKeys } from './relay-payloads';
 import { RelayRoutes, type RelayUplinkView } from './relay-routes';
 import { RelaySecrets } from './relay-secrets';
+import { waitUntil } from './test-support';
 
 const RELAY_URL = 'https://relay.example';
 const RELAY_URL_2 = 'https://relay-2.example';
@@ -40,6 +41,7 @@ async function boot(
     localAuthEffective?: boolean;
     dial?: RelayDialContext;
     enrollmentFanoutTimeoutMs?: number;
+    switchTimeoutMs?: number;
     uplink?: Partial<RelayUplinkView>;
   } = {}
 ) {
@@ -88,6 +90,7 @@ async function boot(
     ...(opts.enrollmentFanoutTimeoutMs !== undefined
       ? { enrollmentFanoutTimeoutMs: opts.enrollmentFanoutTimeoutMs }
       : {}),
+    ...(opts.switchTimeoutMs !== undefined ? { switchTimeoutMs: opts.switchTimeoutMs } : {}),
   });
   const session = nodeSessionStore.issue({
     userId: user.userId,
@@ -218,6 +221,37 @@ describe('RelayRoutes', () => {
       ).toEqual([
         { url, attached: true, lastError: 'bad-token', lastErrorAt: 99 },
         { url: url2, attached: false, lastError: 'member-epoch_mismatch', lastErrorAt: 42 },
+      ]);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('status 对未挂上的行把 heartbeat-lost / kicked 标成稳定码', async () => {
+    const url = canonicalHubUrl(RELAY_URL);
+    const url2 = canonicalHubUrl(RELAY_URL_2);
+    const b = await boot({
+      uplink: {
+        attachedHub: () => null,
+        liveClient: () => null,
+        candidates: () => [
+          { publicUrl: url, lastError: 'missed-pong', lastErrorAt: 5 },
+          { publicUrl: url2, lastError: 'kicked:password_rotated', lastErrorAt: 6 },
+        ],
+      },
+    });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const body = (await (await b.call('/api/mesh/relay/status')).json()) as {
+        relays: Array<{ url: string; lastError: string | null; lastErrorCode: string | null }>;
+      };
+      expect(body.relays).toEqual([
+        expect.objectContaining({ url, lastError: 'missed-pong', lastErrorCode: 'heartbeat-lost' }),
+        expect.objectContaining({
+          url: url2,
+          lastError: 'kicked:password_rotated',
+          lastErrorCode: 'kicked',
+        }),
       ]);
     } finally {
       b.close();
@@ -1022,6 +1056,113 @@ describe('POST /api/mesh/relay/switch', () => {
         lastErrorCode: 'connect-timeout',
       });
       expect(b.secrets.preferredRelayUrl()).toBeNull();
+    } finally {
+      b.close();
+    }
+  });
+
+  test('超时后连接成功也不得写入首选', async () => {
+    const url2 = canonicalHubUrl(RELAY_URL_2);
+    let attached = {
+      hubNodeId: null as string | null,
+      publicUrl: canonicalHubUrl(RELAY_URL),
+      mode: 'active' as const,
+      writerEpoch: 0,
+      since: 1,
+    };
+    let live: { state: 'online' | 'offline' } | null = { state: 'online' };
+    const b = await boot({
+      switchTimeoutMs: 20,
+      uplink: {
+        attachedHub: () => attached,
+        liveClient: () => live as never,
+        switchTo: async (target, signal) => {
+          await new Promise<void>((resolve) => {
+            const done = () => resolve();
+            if (signal?.aborted) {
+              done();
+              return;
+            }
+            signal?.addEventListener('abort', done, { once: true });
+          });
+          attached = { ...attached, publicUrl: target };
+          live = { state: 'online' };
+        },
+      },
+    });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const res = await b.call('/api/mesh/relay/switch', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_2 }),
+      });
+      expect(res.status).toBe(502);
+      expect(await res.json()).toMatchObject({
+        code: 'RELAY_SWITCH_FAILED',
+        lastError: 'connect-timeout',
+        lastErrorCode: 'connect-timeout',
+      });
+      expect(attached.publicUrl).toBe(url2);
+      expect(b.secrets.preferredRelayUrl()).toBeNull();
+    } finally {
+      b.close();
+    }
+  });
+
+  test('被并发切换取代的请求不得写成首选', async () => {
+    const url = canonicalHubUrl(RELAY_URL);
+    const url2 = canonicalHubUrl(RELAY_URL_2);
+    const url3 = canonicalHubUrl(RELAY_URL_3);
+    let attachedUrl = url;
+    let live: { state: 'online' | 'offline' } | null = { state: 'online' };
+    let releaseFirst: () => void = () => {};
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstStarted = false;
+    const b = await boot({
+      uplink: {
+        attachedHub: () => ({
+          hubNodeId: null,
+          publicUrl: attachedUrl,
+          mode: 'active' as const,
+          writerEpoch: 0,
+          since: 1,
+        }),
+        liveClient: () => live as never,
+        switchTo: async (target) => {
+          if (!firstStarted) {
+            firstStarted = true;
+            await firstGate;
+            throw new Error('superseded');
+          }
+          attachedUrl = target;
+          live = { state: 'online' };
+        },
+      },
+    });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2, RELAY_URL_3]);
+      const first = b.call('/api/mesh/relay/switch', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_2 }),
+      });
+      await waitUntil(() => firstStarted);
+      const second = await b.call('/api/mesh/relay/switch', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_3 }),
+      });
+      expect(second.status).toBe(200);
+      expect(b.secrets.preferredRelayUrl()).toBe(url3);
+      releaseFirst();
+      const firstRes = await first;
+      expect(firstRes.status).toBe(502);
+      expect(await firstRes.json()).toMatchObject({
+        code: 'RELAY_SWITCH_FAILED',
+        lastError: 'superseded',
+      });
+      expect(b.secrets.preferredRelayUrl()).toBe(url3);
+      expect(attachedUrl).toBe(url3);
     } finally {
       b.close();
     }

@@ -382,10 +382,15 @@ export function normalizeJoinMaterial(wire: Partial<RelayJoinMaterial>): RelayJo
 async function readError(res: Response, fallback: string): Promise<RelayApiError> {
   const clone = res.clone();
   try {
-    const body = (await clone.json()) as { code?: unknown; reason?: unknown };
+    const body = (await clone.json()) as {
+      code?: unknown;
+      reason?: unknown;
+      lastError?: unknown;
+      lastErrorCode?: unknown;
+    };
     if (typeof body.code === 'string') {
       const reason = typeof body.reason === 'string' ? `${body.code}: ${body.reason}` : body.code;
-      return new RelayApiError(body.code, reason, res.status);
+      return new RelayApiError(body.code, reason, res.status, detailsFromBody(body));
     }
   } catch {
     // 落到通用契约
@@ -395,6 +400,19 @@ async function readError(res: Response, fallback: string): Promise<RelayApiError
     fallback,
     (code, message, status) => new RelayApiError(code, message, status)
   );
+}
+
+function detailsFromBody(body: { lastError?: unknown; lastErrorCode?: unknown }) {
+  const lastError = readOptionalString(body.lastError);
+  const lastErrorCode = readOptionalString(body.lastErrorCode);
+  if (lastError === undefined && lastErrorCode === undefined) return undefined;
+  return { lastError, lastErrorCode };
+}
+
+function readOptionalString(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return typeof value === 'string' ? value : undefined;
 }
 
 const BASE = '/api/mesh/relay';

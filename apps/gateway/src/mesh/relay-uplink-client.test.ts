@@ -375,6 +375,33 @@ describe('RelayUplinkClient', () => {
     expect(client.state).not.toBe('online');
   });
 
+  test('远端关闭保留 close reason', async () => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const [clientWs, serverWs] = fakeSocketPair();
+    const serverLink = new WebSocketLink(serverWs, { role: 'acceptor' });
+    const server = fakeRelayServer(serverLink, 2);
+    const client = new RelayUplinkClient({
+      hubUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const connecting = client.attemptConnect();
+    await waitUntil(() => client.link !== null);
+    server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+    await connecting;
+    serverLink.close('heartbeat-timeout');
+    await waitUntil(() => client.lastConnectError?.reason === 'heartbeat-timeout');
+    expect(client.lastConnectError?.reason).toBe('heartbeat-timeout');
+    expect(client.state).not.toBe('online');
+  });
+
   test('本机中继角色把公网 URL 改写成回环拨号，签名仍绑公网 host', async () => {
     const b = await bootRelayNode();
     fixtures.push({ close: b.close });

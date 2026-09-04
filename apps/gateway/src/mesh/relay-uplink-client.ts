@@ -1,7 +1,6 @@
 import { hubHostFromUrl } from '@tmex/shared/auth';
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import {
-  RELAY_PROTO_VERSION,
   type RelayCtlMessage,
   type RelayKickReason,
   type RelayQuota,
@@ -9,7 +8,6 @@ import {
   decodeRelayCtl,
   encodeRelayCtl,
   encodeRelayOpenStream,
-  relaySeqFromWire,
 } from '@tmex/shared/relay';
 import type { UserStore } from '../auth/user-store';
 import { getDisplayVersion } from '../system/version';
@@ -23,22 +21,22 @@ import {
   resolveRelayDialUrl,
 } from './relay-dial';
 import { RelayKeyLogSync, relayMemberFromRecord } from './relay-key-log-sync';
-import {
-  acceptRelayEnrollRedeemed,
-  acceptRelayRtcSignal,
-  buildRelayStatusMessage,
-  emitRelayRtcSignal,
-  relayListToNodeList,
-  relayStatusBlobOf,
-} from './relay-node-list';
+import { emitRelayRtcSignal, relayStatusBlobOf } from './relay-node-list';
 import type { RelaySecrets } from './relay-secrets';
 import {
-  type RelayAuthContext,
   type RelayEnrollAck,
   RelayEnrollChannel,
   type RelayEnrollCreateInput,
-  buildRelayAuth,
 } from './relay-uplink-auth';
+import {
+  type AuthPhase,
+  type RelayUplinkCtlHost,
+  acceptRelayAuthOk,
+  acceptRelayChallenge,
+  authenticateRelayLink,
+  dispatchRelayAuthedCtl,
+  sendRelayStatusNow,
+} from './relay-uplink-ctl';
 import { RelayUplinkHeartbeat } from './relay-uplink-heartbeat';
 import { defaultRelayWsFactory, openRelayLink } from './relay-uplink-http';
 import type {
@@ -83,13 +81,11 @@ export type RelayUplinkClientOptions = {
   dial?: RelayDialContext;
 };
 
-type AuthPhase = 'idle' | 'awaiting-challenge' | 'challenge-accepted';
-
 /**
  * 中继上行客户端；对 `UplinkPool` 暴露与 `UplinkClient` 相同的公开面
  * （`PooledUplinkClient`），内部把 hub 的明文控制面换成 `relay/v1` 密文协议。
  */
-export class RelayUplinkClient {
+export class RelayUplinkClient implements RelayUplinkCtlHost {
   readonly identity: MeshIdentity;
   readonly hubUrl: string;
   link: LinkSession | null = null;
@@ -101,25 +97,25 @@ export class RelayUplinkClient {
   listVersion = 0;
   nodesViaRelay = 0;
   /** `relay.list` 串行化：blob 多的大清单解密慢，晚到的旧版本不能覆盖新版本。 */
-  private listChain: Promise<void> = Promise.resolve();
-  private readonly enroll: RelayEnrollChannel;
+  listChain: Promise<void> = Promise.resolve();
+  readonly enroll: RelayEnrollChannel;
 
   private readonly opts: RelayUplinkClientOptions;
-  private readonly relayHost: string;
+  readonly relayHost: string;
   private readonly userIdOf: () => string;
-  private readonly scheduler: MeshScheduler;
+  readonly scheduler: MeshScheduler;
   private readonly heartbeat: RelayUplinkHeartbeat;
-  private readonly keyLog: RelayKeyLogSync;
+  readonly keyLog: RelayKeyLogSync;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private relayHandler: InboundRelayHandler | null = null;
   private loop: Promise<void> | null = null;
   private stopAbort: AbortController | null = null;
-  private connectGeneration = 0;
-  private authenticatedGeneration = 0;
-  private authPhase: AuthPhase = 'idle';
-  private authWaiter: { resolve: () => void; reject: (err: Error) => void } | null = null;
-  private lastStatusJson = '';
-  private rtcConfig: RelayRtcConfig = { stun: [], turn: null };
+  connectGeneration = 0;
+  authenticatedGeneration = 0;
+  authPhase: AuthPhase = 'idle';
+  authWaiter: { resolve: () => void; reject: (err: Error) => void } | null = null;
+  lastStatusJson = '';
+  rtcConfig: RelayRtcConfig = { stun: [], turn: null };
 
   constructor(opts: RelayUplinkClientOptions) {
     this.opts = opts;
@@ -169,6 +165,51 @@ export class RelayUplinkClient {
   get rttMs(): number | null {
     return this.heartbeat.rttMs;
   }
+  get secrets(): RelaySecrets {
+    return this.opts.secrets;
+  }
+  get userStore() {
+    return this.opts.userStore;
+  }
+  get applier() {
+    return this.opts.keyLogApplier;
+  }
+  get clientVersion(): string {
+    return this.opts.clientVersion ?? getDisplayVersion();
+  }
+  get authTimeoutMs(): number {
+    return this.opts.authTimeoutMs ?? UPLINK_AUTH_TIMEOUT_MS;
+  }
+  get statusProvider() {
+    return this.opts.statusProvider;
+  }
+  get onNodeList() {
+    return this.opts.onNodeList;
+  }
+  get onRtcSignal() {
+    return this.opts.onRtcSignal;
+  }
+  get onEnrollRedeemed() {
+    return this.opts.onEnrollRedeemed;
+  }
+  get onQuota() {
+    return this.opts.onQuota;
+  }
+  get onKicked() {
+    return this.opts.onKicked;
+  }
+
+  nodeName(): string {
+    return this.opts.nameProvider?.() ?? '';
+  }
+
+  markUnkicked(): void {
+    try {
+      this.opts.secrets.store.markKicked(this.hubUrl, false);
+    } catch {
+      /* 行可能刚被 set-relays 换掉 */
+    }
+  }
 
   onStateChange(cb: (state: UplinkState) => void): () => void {
     this.stateListeners.push(cb);
@@ -210,11 +251,11 @@ export class RelayUplinkClient {
     const generation = ++this.connectGeneration;
     this.link = link;
     this.bindLink(link, generation);
-    await this.authenticate(link, effective, generation);
+    await authenticateRelayLink(this, link, effective, generation);
     if (effective.aborted || generation !== this.connectGeneration) throw new Error('aborted');
     this.lastConnectError = null;
     this.setState('online');
-    await this.sendStatusNow();
+    await sendRelayStatusNow(this);
     this.heartbeat.start(
       link,
       () => generation === this.connectGeneration && this.state === 'online'
@@ -262,14 +303,14 @@ export class RelayUplinkClient {
   }
 
   sendStatus(): void {
-    void this.sendStatusNow();
+    void sendRelayStatusNow(this);
   }
 
   sendStatusIfChanged(): boolean {
     if (this.state !== 'online' || !this.link) return false;
-    const blob = relayStatusBlobOf(this.opts.statusProvider(), this.nameOf());
+    const blob = relayStatusBlobOf(this.opts.statusProvider(), this.nodeName());
     if (jsonStable(blob) === this.lastStatusJson) return false;
-    void this.sendStatusNow();
+    void sendRelayStatusNow(this);
     return true;
   }
 
@@ -322,13 +363,13 @@ export class RelayUplinkClient {
     return this.enroll.create(input, timeoutMs);
   }
 
-  private isAuthenticated(): boolean {
+  isAuthenticated(): boolean {
     return (
       this.authenticatedGeneration === this.connectGeneration && this.authenticatedGeneration > 0
     );
   }
 
-  private rawSend(msg: RelayCtlMessage): void {
+  rawSend(msg: RelayCtlMessage): void {
     const link = this.link;
     if (!link) throw new Error('uplink-offline');
     link.ctl.send(encodeRelayCtl(msg));
@@ -377,15 +418,21 @@ export class RelayUplinkClient {
       const from = typeof open?.from === 'string' ? open.from : '';
       if (open?.to === this.identity.nodeId && from) this.relayHandler?.(stream, from);
     });
+    void link.closed.then((info) => {
+      if (generation !== this.connectGeneration) return;
+      const reason = info.reason?.trim() || 'link-closed';
+      if (/^(stopped|aborted)$/i.test(reason)) return;
+      this.tearDownLink(reason);
+    });
   }
 
   private handleCtl(msg: RelayCtlMessage, generation: number): void {
     if (msg.t === 'auth.challenge') {
-      void this.acceptChallenge(msg.nonce, generation);
+      void acceptRelayChallenge(this, msg.nonce, generation);
       return;
     }
     if (msg.t === 'auth.ok') {
-      this.acceptAuthOk(msg, generation);
+      acceptRelayAuthOk(this, msg, generation);
       return;
     }
     if (msg.t === 'pong') {
@@ -397,171 +444,7 @@ export class RelayUplinkClient {
       return;
     }
     if (this.authenticatedGeneration !== generation) return;
-    this.handleAuthedCtl(msg);
-  }
-
-  private handleAuthedCtl(msg: RelayCtlMessage): void {
-    if (msg.t === 'relay.list') this.enqueueList(msg);
-    else if (msg.t === 'relay.keylog.res') this.keyLog.handleRes(msg);
-    else if (msg.t === 'relay.keylog.ack') this.keyLog.handleAck(msg);
-    else if (msg.t === 'relay.keylog.push') this.keyLog.handlePush(msg);
-    else if (msg.t === 'relay.rtc') {
-      void acceptRelayRtcSignal(msg, this.opts.secrets, (signal) =>
-        this.opts.onRtcSignal?.(signal)
-      );
-    } else if (msg.t === 'relay.enroll.ack') this.enroll.settle(msg);
-    else if (msg.t === 'enroll.redeemed') this.handleEnrollRedeemed(msg);
-    else if (msg.t === 'relay.quota') {
-      const { maxNodes, maxStreams, bandwidthBytesPerSec, currentNodes, usage } = msg;
-      this.quota = {
-        maxNodes,
-        maxStreams,
-        bandwidthBytesPerSec,
-        ...(currentNodes !== undefined ? { currentNodes } : {}),
-        ...(usage ? { usage } : {}),
-      };
-      this.opts.onQuota?.(this.quota);
-    } else if (msg.t === 'relay.kicked') {
-      this.kickedReason = msg.reason;
-      this.opts.onKicked?.(msg.reason);
-      this.tearDownLink(`kicked:${msg.reason}`);
-    }
-  }
-
-  private handleEnrollRedeemed(msg: Extract<RelayCtlMessage, { t: 'enroll.redeemed' }>): void {
-    const redeemed = acceptRelayEnrollRedeemed(this.opts.userStore, msg, this.scheduler.now());
-    if (redeemed) this.opts.onEnrollRedeemed?.(redeemed);
-  }
-
-  private acceptAuthOk(msg: Extract<RelayCtlMessage, { t: 'auth.ok' }>, generation: number): void {
-    if (this.authPhase !== 'challenge-accepted' || generation !== this.connectGeneration) return;
-    this.authPhase = 'idle';
-    this.authenticatedGeneration = generation;
-    this.tenantId = msg.tenant_id;
-    this.rtcConfig = msg.rtc;
-    this.kickedReason = null;
-    try {
-      this.opts.secrets.store.markKicked(this.hubUrl, false);
-    } catch {
-      /* 行可能刚被 set-relays 换掉 */
-    }
-    this.authWaiter?.resolve();
-    this.keyLog.noteRemoteHead(relaySeqFromWire(msg.key_log_head_seq));
-  }
-
-  private async acceptChallenge(nonceB64: string, generation: number): Promise<void> {
-    if (this.authPhase !== 'awaiting-challenge' || generation !== this.connectGeneration) return;
-    const built = await buildRelayAuth(this.authContext(), nonceB64);
-    if (!built.ok) {
-      this.authWaiter?.reject(new Error(built.error));
-      return;
-    }
-    if (generation !== this.connectGeneration) return;
-    this.authPhase = 'challenge-accepted';
-    try {
-      this.rawSend(built.msg);
-    } catch (err) {
-      this.authWaiter?.reject(err instanceof Error ? err : new Error('auth-send-failed'));
-    }
-  }
-
-  private authContext(): RelayAuthContext {
-    return {
-      identity: this.identity,
-      relayUrl: this.hubUrl,
-      relayHost: this.relayHost,
-      clientVersion: this.opts.clientVersion ?? getDisplayVersion(),
-      secrets: this.opts.secrets,
-      userStore: this.opts.userStore,
-      applier: this.opts.keyLogApplier,
-      userId: this.userId,
-    };
-  }
-
-  private authenticate(link: LinkSession, signal: AbortSignal, generation: number): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.authPhase = 'awaiting-challenge';
-      const timeoutMs = this.opts.authTimeoutMs ?? UPLINK_AUTH_TIMEOUT_MS;
-      const timer = setTimeout(() => finish(new Error('auth-timeout')), timeoutMs);
-      const finish = (err?: Error) => {
-        if (!this.authWaiter) return;
-        this.authWaiter = null;
-        clearTimeout(timer);
-        signal.removeEventListener('abort', onAbort);
-        if (err) {
-          this.authPhase = 'idle';
-          try {
-            link.close(err.message);
-          } catch {
-            /* already closed */
-          }
-          reject(err);
-        } else resolve();
-      };
-      const onAbort = () => finish(new Error('aborted'));
-      if (signal.aborted) {
-        clearTimeout(timer);
-        this.authPhase = 'idle';
-        reject(new Error('aborted'));
-        return;
-      }
-      signal.addEventListener('abort', onAbort, { once: true });
-      this.authWaiter = { resolve: () => finish(), reject: (err) => finish(err) };
-      void link.closed.then((info) => {
-        if (this.authWaiter && generation === this.connectGeneration) {
-          finish(new Error(info.reason || 'link-closed'));
-        }
-      });
-    });
-  }
-
-  private nameOf(): string {
-    return this.opts.nameProvider?.() ?? '';
-  }
-
-  private async sendStatusNow(): Promise<void> {
-    if (this.state !== 'online' || !this.link || !this.isAuthenticated()) return;
-    try {
-      const built = await buildRelayStatusMessage(
-        this.opts.secrets,
-        this.opts.statusProvider(),
-        this.nameOf()
-      );
-      if (!built) return;
-      this.rawSend(built.msg);
-      this.lastStatusJson = built.json;
-    } catch (err) {
-      console.warn(stamp(`[relay] status seal failed err=${errMessage(err)}`));
-    }
-  }
-
-  /** 按到达顺序串行处理，且丢掉版本不比已应用的新的清单。 */
-  private enqueueList(msg: Extract<RelayCtlMessage, { t: 'relay.list' }>): void {
-    const generation = this.connectGeneration;
-    this.listChain = this.listChain
-      .then(() => {
-        if (generation !== this.connectGeneration || msg.version < this.listVersion) return;
-        return this.handleList(msg);
-      })
-      .catch((err) => {
-        console.warn(stamp(`[relay] node list failed err=${errMessage(err)}`));
-      });
-  }
-
-  private async handleList(msg: Extract<RelayCtlMessage, { t: 'relay.list' }>): Promise<void> {
-    this.listVersion = msg.version;
-    this.rtcConfig = msg.rtc;
-    const list = await relayListToNodeList(msg, {
-      selfNodeId: this.identity.nodeId,
-      userId: this.userId,
-      userStore: this.opts.userStore,
-      secrets: this.opts.secrets,
-      now: this.scheduler.now(),
-    });
-    if (msg.version < this.listVersion) return;
-    this.nodesViaRelay = list.nodes.length;
-    this.keyLog.noteRemoteHead(relaySeqFromWire(msg.key_log_head_seq));
-    this.opts.onNodeList?.(list);
+    dispatchRelayAuthedCtl(this, msg);
   }
 
   /** 密钥日志同步的健康度：跳过的记录数与第一条卡住的中继 seq。 */
@@ -580,7 +463,7 @@ export class RelayUplinkClient {
     if (this.state === 'online') this.setState('connecting');
   }
 
-  private tearDownLink(reason: string): void {
+  tearDownLink(reason: string): void {
     this.resetConnectionState(reason);
     const link = this.link;
     this.link = null;

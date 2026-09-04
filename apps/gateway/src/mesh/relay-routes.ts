@@ -23,7 +23,6 @@ import {
   collectJoinMaterialRelays,
   fanOutEnrollmentCreate,
 } from './relay-enrollment-fanout';
-import { classifyRelayLinkError } from './relay-link-error';
 import { handleMeshRelayPack } from './relay-pack-routes';
 import {
   buildMetaKeyPayload,
@@ -43,7 +42,9 @@ import {
   readRelayErrorCode,
 } from './relay-routes-input';
 import type { RelaySecrets } from './relay-secrets';
-import { type RelayStatusCandidate, buildRelayStatusRow } from './relay-status-row';
+import { buildRelayStatusRow } from './relay-status-row';
+import { handleRelaySwitch } from './relay-switch-route';
+import type { RelayUplinkView } from './relay-switch-route';
 import { RelayUplinkClient } from './relay-uplink-client';
 import {
   type SessionMiddlewareDeps,
@@ -51,21 +52,12 @@ import {
   jsonError,
   requireSession,
 } from './session-middleware';
-import type { PooledUplink } from './types';
-import { type AttachedHub, sameHubUrl } from './uplink-pool';
+
+export { RELAY_SWITCH_TIMEOUT_MS, type RelayUplinkView } from './relay-switch-route';
 
 export const RELAY_ROUTE_PREFIX = '/api/mesh/relay';
 export const RELAY_ENROLL_FETCH_TIMEOUT_MS = 15_000;
 export const RELAY_ENROLLMENT_ACK_TIMEOUT_MS = 10_000;
-export const RELAY_SWITCH_TIMEOUT_MS = 10_000;
-
-export type RelayUplinkView = {
-  liveClient(): PooledUplink | null;
-  attachedHub(): AttachedHub | null;
-  reconfigure(): Promise<void>;
-  candidates(): RelayStatusCandidate[];
-  switchTo(url: string): Promise<void>;
-};
 
 export type RelayRoutesDeps = {
   session: SessionMiddlewareDeps;
@@ -78,6 +70,7 @@ export type RelayRoutesDeps = {
   now?: () => number;
   dial?: RelayDialContext;
   enrollmentFanoutTimeoutMs?: number;
+  switchTimeoutMs?: number;
 };
 
 type PreparedPayload = { payload: string; payloadHash: string };
@@ -114,7 +107,7 @@ export class RelayRoutes {
   private route(key: string): RelayRouteHandler | null {
     const table: Record<string, RelayRouteHandler> = {
       'GET /status': (_r, uid) => this.status(uid),
-      'POST /switch': (r, uid) => this.switchRelay(r, uid),
+      'POST /switch': (r, uid) => handleRelaySwitch(this.deps, r, () => this.status(uid)),
       'GET /readmit/prepare': (_r, uid) => this.readmitPrepare(uid),
       'POST /enroll/proof-material': (r, uid) => this.proofMaterial(r, uid),
       'POST /enroll': (r, uid) => this.enroll(r, uid),
@@ -144,71 +137,6 @@ export class RelayRoutes {
   private relayClient(): RelayUplinkClient | null {
     const live = this.deps.uplink.liveClient();
     return live instanceof RelayUplinkClient ? live : null;
-  }
-
-  private async switchRelay(req: Request, userId: string): Promise<Response> {
-    const body = await readJsonObjectBody(req);
-    const url = normalizeUrlOrNull(body?.url);
-    if (!url) return jsonError('INVALID_URL', 400);
-    const row = this.deps.secrets.relayRows().find((entry) => sameHubUrl(entry.url, url));
-    if (!row) return jsonError('RELAY_UNKNOWN', 404);
-    if (row.kicked) return jsonError('RELAY_KICKED', 409);
-    const attached = this.deps.uplink.attachedHub();
-    const live = this.deps.uplink.liveClient();
-    if (attached && sameHubUrl(attached.publicUrl, url) && live?.state === 'online') {
-      return jsonError('RELAY_ALREADY_ATTACHED', 409);
-    }
-    const switched = await this.runSwitch(url);
-    if (!switched.ok) {
-      return jsonError('RELAY_SWITCH_FAILED', 502, {
-        lastError: switched.lastError,
-        lastErrorCode: switched.lastErrorCode,
-      });
-    }
-    try {
-      this.deps.secrets.setPreferredRelayUrl(url);
-    } catch {
-      /* 首选只影响下次启动顺序，切换本身已经成功 */
-    }
-    return this.status(userId);
-  }
-
-  private async runSwitch(
-    url: string
-  ): Promise<{ ok: true } | { ok: false; lastError: string; lastErrorCode: string }> {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), RELAY_SWITCH_TIMEOUT_MS);
-    try {
-      await Promise.race([
-        this.deps.uplink.switchTo(url),
-        new Promise<never>((_, reject) => {
-          ac.signal.addEventListener('abort', () => reject(new Error('connect-timeout')), {
-            once: true,
-          });
-        }),
-      ]);
-      if (this.deps.uplink.liveClient()?.state !== 'online') {
-        return this.switchFailed(new Error('connect-failed'));
-      }
-      return { ok: true };
-    } catch (err) {
-      return this.switchFailed(err);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  private switchFailed(err: unknown): {
-    ok: false;
-    lastError: string;
-    lastErrorCode: string;
-  } {
-    const lastError = err instanceof Error && err.message ? err.message : 'connect-failed';
-    return {
-      ok: false,
-      lastError,
-      lastErrorCode: classifyRelayLinkError(lastError) ?? 'unknown',
-    };
   }
 
   private async status(userId: string): Promise<Response> {
