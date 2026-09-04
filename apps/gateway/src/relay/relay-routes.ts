@@ -320,6 +320,7 @@ export async function handleRelayRedeem(
     node_id: nodeId,
   });
   deps.uplink.scheduleList(tenant.id);
+  deps.uplink.notifyQuota(tenant.id);
   return relayJson({
     tenant_id: tenant.id,
     relays: [deps.publicUrl],

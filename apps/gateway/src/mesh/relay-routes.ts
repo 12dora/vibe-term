@@ -18,6 +18,7 @@ import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { UserStore } from '../auth/user-store';
 import { isTrustedLocalClient } from './client-source';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
+import { handleMeshRelayPack } from './relay-pack-routes';
 import {
   buildMetaKeyPayload,
   buildSetRelaysPayload,
@@ -108,6 +109,11 @@ export class RelayRoutes {
       'POST /meta-key/prepare': (r, uid) => this.metaKeyPrepare(r, uid),
       'GET /join-material': () => this.joinMaterial(),
       'POST /enrollments': (r, uid) => this.createEnrollment(r, uid),
+      'POST /pack': (r) =>
+        handleMeshRelayPack(
+          { secrets: this.deps.secrets, fetchImpl: this.deps.fetchImpl, dial: this.deps.dial },
+          r
+        ),
     };
     const direct = table[key];
     if (direct) return direct;
