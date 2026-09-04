@@ -250,9 +250,11 @@
         "agent_error": "智能体错误",
         "watch_triggered": "终端监控触发",
         "watch_model_unavailable": "终端监控模型不可用",
-        "watch_rule_error": "终端监控规则错误"
+        "watch_rule_error": "终端监控规则错误",
+        "device_connection_error": "设备连接异常"
       },
       "site": "站点",
+      "node": "节点",
       "device": "设备",
       "window": "窗口",
       "pane": "终端",

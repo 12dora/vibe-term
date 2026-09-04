@@ -92,6 +92,15 @@ export function parseTmexRoles(raw: string | undefined): TmexRoles {
   return roles;
 }
 
+/** `relay` 单跑（不带 node）：无用户、无设备、不应拉起即时通讯轮询。 */
+export function isRelayOnly(roles: TmexRoles): boolean {
+  return roles.relay && !roles.node && !roles.hub;
+}
+
+export function resolveLiveRoles(env: NodeJS.ProcessEnv = process.env): TmexRoles {
+  return parseTmexRoles(env.TMEX_ROLES);
+}
+
 export function parsePeerPort(raw: string | undefined): number {
   const value = (raw ?? '39001').trim() || '39001';
   if (!/^\d+$/.test(value)) {

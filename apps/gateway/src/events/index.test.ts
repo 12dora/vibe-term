@@ -359,6 +359,48 @@ describe('ws-broadcast channel 经注册桥转发', () => {
       updateSiteSettings({ enableNotificationPush: original.enableNotificationPush });
     }
   });
+
+  test('device_connection_error reaches telegram and weixin under enableNotificationPush', async () => {
+    const telegramCalls: string[] = [];
+    const weixinCalls: string[] = [];
+    const originalTelegramSend = telegramService.sendToAuthorizedChats;
+    const originalWeixinSend = weixinService.sendToAuthorizedUsers;
+    telegramService.sendToAuthorizedChats = async ({ text }) => {
+      telegramCalls.push(text);
+    };
+    weixinService.sendToAuthorizedUsers = async ({ text }) => {
+      weixinCalls.push(text);
+    };
+    const original = getSiteSettings();
+    try {
+      updateSiteSettings({ enableNotificationPush: true });
+      const notifier = new EventNotifier();
+      await notifier.notify('device_connection_error' as EventType, {
+        ...baseEvent,
+        device: { id: 'device-conn-err', name: 'dev-err', type: 'ssh', host: '10.0.0.1' },
+        payload: { message: 'auth failed', category: 'auth_failed' },
+      });
+      expect(telegramCalls).toHaveLength(1);
+      expect(weixinCalls).toHaveLength(1);
+      expect(telegramCalls[0]).toContain('dev-err');
+      expect(weixinCalls[0]).toContain('dev-err');
+
+      telegramCalls.length = 0;
+      weixinCalls.length = 0;
+      updateSiteSettings({ enableNotificationPush: false });
+      await notifier.notify('device_connection_error' as EventType, {
+        ...baseEvent,
+        device: { id: 'device-conn-err-off', name: 'dev-err', type: 'ssh', host: '10.0.0.1' },
+        payload: { message: 'auth failed', category: 'auth_failed' },
+      });
+      expect(telegramCalls).toHaveLength(0);
+      expect(weixinCalls).toHaveLength(0);
+    } finally {
+      telegramService.sendToAuthorizedChats = originalTelegramSend;
+      weixinService.sendToAuthorizedUsers = originalWeixinSend;
+      updateSiteSettings({ enableNotificationPush: original.enableNotificationPush });
+    }
+  });
 });
 
 describe('EventNotifier telegram bell settings & html formatting', () => {

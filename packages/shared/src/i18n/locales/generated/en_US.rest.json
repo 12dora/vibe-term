@@ -758,6 +758,109 @@
         "terminalHint": "Or upgrade from a terminal: tmex upgrade"
       }
     },
+    "messaging": {
+      "command": {
+        "help": {
+          "description": "List available commands."
+        },
+        "status": {
+          "description": "Show local node status."
+        },
+        "nodes": {
+          "description": "List mesh nodes."
+        },
+        "devices": {
+          "description": "List local devices."
+        },
+        "windows": {
+          "description": "List tmux windows on a device."
+        },
+        "panes": {
+          "description": "List panes on a device."
+        },
+        "tail": {
+          "description": "Show recent pane output."
+        },
+        "run": {
+          "description": "Send a command to a pane."
+        },
+        "approve": {
+          "description": "Approve a pending agent confirmation."
+        },
+        "deny": {
+          "description": "Deny a pending agent confirmation."
+        }
+      },
+      "help": {
+        "title": "Commands"
+      },
+      "status": {
+        "name": "Node",
+        "version": "Version",
+        "roles": "Roles",
+        "uplink": "Uplink",
+        "uplinkNone": "none",
+        "uplinkHub": "Hub",
+        "uplinkRelay": "relay",
+        "uplinkUnknown": "unknown",
+        "attached": "attached",
+        "detached": "not attached",
+        "attachedUnknown": "unknown"
+      },
+      "nodes": {
+        "standalone": "This machine is not part of a mesh.",
+        "title": "Nodes",
+        "online": "online",
+        "offline": "offline",
+        "current": "local",
+        "unknownVersion": "unknown version"
+      },
+      "devices": {
+        "empty": "No devices.",
+        "connected": "connected",
+        "disconnected": "disconnected"
+      },
+      "windows": {
+        "empty": "No windows."
+      },
+      "panes": {
+        "empty": "No panes."
+      },
+      "tail": {
+        "empty": "(no output)"
+      },
+      "run": {
+        "sent": "Sent."
+      },
+      "approve": {
+        "ok": "Approved."
+      },
+      "deny": {
+        "ok": "Denied."
+      },
+      "error": {
+        "unknownCommand": "Unknown command. Send help to list commands.",
+        "remoteNodeUnsupported": "Commands run only on the node that hosts this bot, not on remote nodes.",
+        "unknownDevice": "Device \"{{input}}\" not found.",
+        "ambiguousDevice": "Device \"{{input}}\" is ambiguous: {{candidates}}.",
+        "unknownPane": "Pane \"{{input}}\" not found.",
+        "ambiguousPane": "Pane \"{{input}}\" is ambiguous: {{candidates}}.",
+        "unknownWindow": "Window \"{{input}}\" not found.",
+        "ambiguousWindow": "Window \"{{input}}\" is ambiguous: {{candidates}}.",
+        "deviceDisconnected": "Device is not connected.",
+        "missingArg": "Missing argument: {{name}}.",
+        "invalidLines": "Line count must be 1–200.",
+        "missingTail": "run requires text after --.",
+        "nodeUnknown": "Node \"{{input}}\" not found.",
+        "nodeAmbiguous": "Node \"{{input}}\" is ambiguous: {{candidates}}.",
+        "nodeOffline": "Node \"{{input}}\" is offline.",
+        "confirmationNotFound": "Pending confirmation not found.",
+        "confirmationAlreadyDecided": "This confirmation was already decided.",
+        "confirmationUnavailable": "Confirmation service is unavailable.",
+        "captureFailed": "Failed to read pane output.",
+        "sendFailed": "Failed to send input."
+      }
+    },
     "telegram": {
       "title": "Telegram Bot Management",
       "botName": "Bot Name",
@@ -767,6 +870,9 @@
       "addBot": "Add Bot",
       "editBot": "Edit Bot",
       "allowAuthRequests": "Allow Authorization Requests",
+      "allowCommands": "Allow Chat Commands",
+      "allowCommandsHelp": "Authorized chats can type into terminals on this machine and approve agent actions.",
+      "commandsBadge": "Chat Commands",
       "pendingChats": "Pending Authorization",
       "chats": "Authorized Chats",
       "noPendingChats": "No pending chats",
@@ -813,6 +919,9 @@
       "editAccount": "Edit Account",
       "enableAccount": "Enable Account",
       "allowAuthRequests": "Allow Authorization Requests",
+      "allowCommands": "Allow Chat Commands",
+      "allowCommandsHelp": "Authorized chats can type into terminals on this machine and approve agent actions.",
+      "commandsBadge": "Chat Commands",
       "scanToLogin": "Scan to Log In",
       "relogin": "Re-login (Re-scan)",
       "loggedIn": "Logged in",

@@ -2,7 +2,7 @@ import { agentSupervisor } from './agent/supervisor';
 import { type SystemApiHandler, handleApiRequest } from './api';
 import { json } from './api/http';
 import type { AuthDb } from './auth/types';
-import { config } from './config';
+import { config, isRelayOnly, resolveLiveRoles } from './config';
 import { runtimeController } from './control/runtime';
 import {
   ensureDefaultLocalDeviceSeeded,
@@ -78,20 +78,49 @@ function noopWebsocket(): GatewayRuntime['websocket'] {
   };
 }
 
-async function startLiveGatewayServices(): Promise<void> {
-  startGatewayEventLoopLag();
-  await telegramService.refresh();
-  await weixinService.refresh();
-  await pushSupervisor.start();
-  await agentSupervisor.start();
-  await watchService.start();
-  await tunnelManager.start();
+export type LiveGatewayStartDeps = {
+  roles?: ReturnType<typeof resolveLiveRoles>;
+  startLag?: () => void;
+  refreshTelegram?: () => Promise<void>;
+  refreshWeixin?: () => Promise<void>;
+  startPush?: () => Promise<void>;
+  startAgent?: () => Promise<void>;
+  startWatch?: () => Promise<void>;
+  startTunnel?: () => Promise<void>;
+  sendOnline?: () => Promise<void>;
+};
+
+async function sendGatewayOnlineMessages(): Promise<void> {
   try {
     const settings = getSiteSettings();
     await telegramService.sendGatewayOnlineMessage(settings.siteName);
     await weixinService.sendGatewayOnlineMessage(settings.siteName);
   } catch (err) {
     console.error('[gateway] failed to push startup message:', err);
+  }
+}
+
+export function shouldStartMessagingServices(
+  roles: ReturnType<typeof resolveLiveRoles> = resolveLiveRoles()
+): boolean {
+  return !isRelayOnly(roles);
+}
+
+export async function startLiveGatewayServices(deps: LiveGatewayStartDeps = {}): Promise<void> {
+  const messaging = shouldStartMessagingServices(deps.roles ?? resolveLiveRoles());
+  (deps.startLag ?? startGatewayEventLoopLag)();
+  if (messaging) {
+    await (deps.refreshTelegram ?? (() => telegramService.refresh()))();
+    await (deps.refreshWeixin ?? (() => weixinService.refresh()))();
+  }
+  await (deps.startPush ?? (() => pushSupervisor.start()))();
+  await (deps.startAgent ?? (() => agentSupervisor.start()))();
+  if (messaging) {
+    await (deps.startWatch ?? (() => watchService.start()))();
+  }
+  await (deps.startTunnel ?? (() => tunnelManager.start()))();
+  if (messaging) {
+    await (deps.sendOnline ?? sendGatewayOnlineMessages)();
   }
 }
 
@@ -155,9 +184,9 @@ export async function createGatewayRuntime(
   connectionAlertNotifier.setBroadcaster((deviceId, payload) => {
     wsServer.broadcastDeviceError(deviceId, payload);
   });
-  connectionAlertNotifier.setEventEmitter((eventType, event) => {
-    void eventNotifier.notify(eventType, event);
-  });
+  connectionAlertNotifier.setEventEmitter((eventType, event) =>
+    eventNotifier.notify(eventType, event)
+  );
   registerSnapshotLookup((deviceId) => wsServer.getLastSnapshot(deviceId));
   registerSettingsBroadcaster((namespace) => wsServer.broadcastSettingsUpdate(namespace));
   registerEventNotifyBroadcaster((eventType, event) =>

@@ -41,7 +41,7 @@ function makeNotifier() {
   const notifier = new ConnectionAlertNotifier();
   const persisted: Array<{ deviceId: string; message: string; type: string }> = [];
   const broadcasts: Array<{ deviceId: string; errorType?: string }> = [];
-  const telegrams: string[] = [];
+  const events: Array<{ eventType: string; event: Record<string, unknown> }> = [];
 
   notifier.setSettingsProvider(() => makeSettings());
   notifier.setPersister((deviceId, message, type) => {
@@ -50,11 +50,11 @@ function makeNotifier() {
   notifier.setBroadcaster((deviceId, payload) => {
     broadcasts.push({ deviceId, errorType: payload.errorType });
   });
-  notifier.setTelegramSender(async (text) => {
-    telegrams.push(text);
+  notifier.setEventEmitter((eventType, event) => {
+    events.push({ eventType, event: event as unknown as Record<string, unknown> });
   });
 
-  return { notifier, persisted, broadcasts, telegrams };
+  return { notifier, persisted, broadcasts, events };
 }
 
 describe('ConnectionAlertNotifier', () => {
@@ -64,7 +64,7 @@ describe('ConnectionAlertNotifier', () => {
     notifier = makeNotifier();
   });
 
-  test('classifies auth error and persists + broadcasts + sends telegram', async () => {
+  test('classifies auth error and persists + broadcasts + emits connection error event', async () => {
     const device = makeDevice('d1');
     const err = new Error('All configured authentication methods failed');
     const result = await notifier.notifier.notify({ device, error: err, source: 'connect' });
@@ -74,10 +74,12 @@ describe('ConnectionAlertNotifier', () => {
     expect(notifier.persisted[0].type).toBe('auth_failed');
     expect(notifier.broadcasts).toHaveLength(1);
     expect(notifier.broadcasts[0].errorType).toBe('auth_failed');
-    expect(notifier.telegrams).toHaveLength(1);
+    const push = notifier.events.filter((e) => e.eventType === 'device_connection_error');
+    expect(push).toHaveLength(1);
+    expect((push[0]?.event.payload as { errorType?: string }).errorType).toBe('auth_failed');
   });
 
-  test('throttles telegram within same deviceId:errorType for 5 minutes', async () => {
+  test('throttles connection error notify within same deviceId:errorType for 5 minutes', async () => {
     const device = makeDevice('d1');
     const err = new Error('Permission denied');
 
@@ -85,12 +87,14 @@ describe('ConnectionAlertNotifier', () => {
     await notifier.notifier.notify({ device, error: err, source: 'connect' });
     await notifier.notifier.notify({ device, error: err, source: 'connect' });
 
-    expect(notifier.telegrams).toHaveLength(1);
+    expect(notifier.events.filter((e) => e.eventType === 'device_connection_error')).toHaveLength(
+      1
+    );
     expect(notifier.broadcasts).toHaveLength(3);
     expect(notifier.persisted).toHaveLength(3);
   });
 
-  test('errorType switch re-sends telegram immediately', async () => {
+  test('errorType switch re-emits connection error immediately', async () => {
     const device = makeDevice('d1');
 
     await notifier.notifier.notify({
@@ -104,7 +108,9 @@ describe('ConnectionAlertNotifier', () => {
       source: 'connect',
     });
 
-    expect(notifier.telegrams).toHaveLength(2);
+    expect(notifier.events.filter((e) => e.eventType === 'device_connection_error')).toHaveLength(
+      2
+    );
   });
 
   test('per-device throttle is independent', async () => {
@@ -115,10 +121,12 @@ describe('ConnectionAlertNotifier', () => {
     await notifier.notifier.notify({ device: a, error: err, source: 'connect' });
     await notifier.notifier.notify({ device: b, error: err, source: 'connect' });
 
-    expect(notifier.telegrams).toHaveLength(2);
+    expect(notifier.events.filter((e) => e.eventType === 'device_connection_error')).toHaveLength(
+      2
+    );
   });
 
-  test('silentTelegram suppresses telegram but still persists + broadcasts', async () => {
+  test('silentTelegram suppresses connection error event but still persists + broadcasts', async () => {
     const device = makeDevice('d1');
     const err = new Error('ECONNREFUSED');
 
@@ -129,7 +137,9 @@ describe('ConnectionAlertNotifier', () => {
       silentTelegram: true,
     });
 
-    expect(notifier.telegrams).toHaveLength(0);
+    expect(notifier.events.filter((e) => e.eventType === 'device_connection_error')).toHaveLength(
+      0
+    );
     expect(notifier.persisted).toHaveLength(1);
     expect(notifier.broadcasts).toHaveLength(1);
   });
@@ -173,12 +183,11 @@ describe('ConnectionAlertNotifier', () => {
 
 describe('ConnectionAlertNotifier event bridge', () => {
   function makeBridgedNotifier() {
-    const base = makeNotifier();
-    const events: Array<{ eventType: string; event: Record<string, unknown> }> = [];
-    base.notifier.setEventEmitter((eventType, event) => {
-      events.push({ eventType, event: event as unknown as Record<string, unknown> });
-    });
-    return { ...base, events };
+    return makeNotifier();
+  }
+
+  function lifecycleOf(events: Array<{ eventType: string; event: Record<string, unknown> }>) {
+    return events.filter((e) => e.eventType !== 'device_connection_error');
   }
 
   test('maps connection-level errors to device_disconnect with full event shape', async () => {
@@ -186,9 +195,9 @@ describe('ConnectionAlertNotifier event bridge', () => {
     const device = makeDevice('d1');
     await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
 
-    expect(events).toHaveLength(1);
-    expect(events[0].eventType).toBe('device_disconnect');
-    const event = events[0].event as {
+    expect(events.map((e) => e.eventType)).toContain('device_disconnect');
+    expect(events.some((e) => e.eventType === 'device_connection_error')).toBe(true);
+    const event = events.find((e) => e.eventType === 'device_disconnect')?.event as {
       site: { name: string; url: string };
       device: { id: string; name: string };
       tmux: { sessionName?: string };
@@ -207,7 +216,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
       error: new Error('remote tmux unavailable: not installed'),
       source: 'probe',
     });
-    expect(events.map((e) => e.eventType)).toEqual(['device_tmux_missing']);
+    expect(lifecycleOf(events).map((e) => e.eventType)).toEqual(['device_tmux_missing']);
   });
 
   test.each([
@@ -219,7 +228,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
   ])('maps %s to %s', async (raw, expected) => {
     const { notifier, events } = makeBridgedNotifier();
     await notifier.notify({ device: makeDevice('d1'), error: new Error(raw), source: 'connect' });
-    expect(events.map((e) => e.eventType)).toEqual([expected]);
+    expect(lifecycleOf(events).map((e) => e.eventType)).toEqual([expected]);
   });
 
   test('auth/config/unknown errors do not bridge', async () => {
@@ -227,7 +236,10 @@ describe('ConnectionAlertNotifier event bridge', () => {
     for (const raw of ['permission denied', 'ssh_config_ref_not_supported', 'weird failure']) {
       await notifier.notify({ device: makeDevice('d1'), error: new Error(raw), source: 'close' });
     }
-    expect(events).toHaveLength(0);
+    expect(lifecycleOf(events)).toHaveLength(0);
+    expect(events.filter((e) => e.eventType === 'device_connection_error').length).toBeGreaterThan(
+      0
+    );
   });
 
   test('runtime source is gated off', async () => {
@@ -237,7 +249,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
       error: new Error('ssh_connection_closed'),
       source: 'runtime',
     });
-    expect(events).toHaveLength(0);
+    expect(lifecycleOf(events)).toHaveLength(0);
   });
 
   test('throttles repeated events per device+type within the window', async () => {
@@ -245,7 +257,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
     const device = makeDevice('d1');
     await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
     await notifier.notify({ device, error: new Error('connection closed'), source: 'close' });
-    expect(events).toHaveLength(1);
+    expect(lifecycleOf(events)).toHaveLength(1);
 
     // 不同事件类型与不同设备不受影响
     await notifier.notify({
@@ -258,7 +270,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
       error: new Error('ssh_connection_closed'),
       source: 'close',
     });
-    expect(events.map((e) => e.eventType)).toEqual([
+    expect(lifecycleOf(events).map((e) => e.eventType)).toEqual([
       'device_disconnect',
       'device_tmux_missing',
       'device_disconnect',
@@ -271,7 +283,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
     await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
     notifier.clear(device.id);
     await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
-    expect(events).toHaveLength(2);
+    expect(lifecycleOf(events)).toHaveLength(2);
   });
 
   test('skips device_disconnect when the connection already emitted session_closed', async () => {
@@ -282,7 +294,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
       source: 'close',
       sessionClosedEmitted: true,
     });
-    expect(events).toHaveLength(0);
+    expect(lifecycleOf(events)).toHaveLength(0);
 
     // device_tmux_missing 不受该守卫影响
     await notifier.notify({
@@ -291,7 +303,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
       source: 'probe',
       sessionClosedEmitted: true,
     });
-    expect(events.map((e) => e.eventType)).toEqual(['device_tmux_missing']);
+    expect(lifecycleOf(events).map((e) => e.eventType)).toEqual(['device_tmux_missing']);
   });
 
   // 抑制信号必须来自连接实例的显式标志：持久化的 tmuxAvailable 状态位被
@@ -307,7 +319,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
       source: 'runtime',
       silentTelegram: true,
     });
-    expect(events).toHaveLength(0);
+    expect(lifecycleOf(events)).toHaveLength(0);
     // 随后连接关闭：session 并未 gone（sessionClosedEmitted=false），必须发出 device_disconnect
     await notifier.notify({
       device,
@@ -315,7 +327,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
       source: 'close',
       sessionClosedEmitted: false,
     });
-    expect(events.map((e) => e.eventType)).toEqual(['device_disconnect']);
+    expect(lifecycleOf(events).map((e) => e.eventType)).toEqual(['device_disconnect']);
   });
 
   test('emits device_disconnect for a brand-new device failing to connect (no prior runtime status)', async () => {
@@ -325,7 +337,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
       error: new Error('ECONNREFUSED 10.0.0.9:22'),
       source: 'connect',
     });
-    expect(events.map((e) => e.eventType)).toEqual(['device_disconnect']);
+    expect(lifecycleOf(events).map((e) => e.eventType)).toEqual(['device_disconnect']);
   });
 
   test('settings provider failure does not consume the bridge throttle window', async () => {
@@ -344,7 +356,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
 
     settingsBroken = false;
     await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
-    expect(events.map((e) => e.eventType)).toEqual(['device_disconnect']);
+    expect(lifecycleOf(events).map((e) => e.eventType)).toEqual(['device_disconnect']);
   });
 
   test('successful emit lazily sweeps expired bridge throttle keys for the same device only', async () => {
@@ -361,7 +373,7 @@ describe('ConnectionAlertNotifier event bridge', () => {
       source: 'close',
     });
 
-    expect(events).toHaveLength(1);
+    expect(lifecycleOf(events)).toHaveLength(1);
     expect(bridgeMap.has('d1:device_disconnect')).toBe(true);
     expect(bridgeMap.has('d1:device_tmux_missing')).toBe(false);
     expect(bridgeMap.has('d2:device_disconnect')).toBe(true);

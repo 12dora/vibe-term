@@ -250,9 +250,11 @@
         "agent_error": "Agent Error",
         "watch_triggered": "Terminal Monitor Triggered",
         "watch_model_unavailable": "Terminal Monitor Model Unavailable",
-        "watch_rule_error": "Terminal Monitor Rule Error"
+        "watch_rule_error": "Terminal Monitor Rule Error",
+        "device_connection_error": "Device Connection Error"
       },
       "site": "Site",
+      "node": "Node",
       "device": "Device",
       "window": "Window",
       "pane": "Terminal",

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import type { SiteSettings, WebhookEvent } from '@tmex/shared';
 import {
   EVENT_EMOJI,
@@ -7,6 +7,7 @@ import {
   buildNotificationRawView,
   buildPaneMetaLines,
   buildTerminalTopbarLabel,
+  setNotificationNodeNameProvider,
 } from './notification-format';
 
 const SETTINGS = { language: 'en_US' } as SiteSettings;
@@ -31,6 +32,10 @@ function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
 }
 
 describe('notification-format raw views', () => {
+  afterEach(() => {
+    setNotificationNodeNameProvider(null);
+  });
+
   test('EVENT_EMOJI covers the 14 event types', () => {
     expect(EVENT_EMOJI.terminal_bell).toBe('🔔');
     expect(EVENT_EMOJI.watch_triggered).toBe('👁️');
@@ -67,5 +72,34 @@ describe('notification-format raw views', () => {
     const withMessage = buildGenericRawView(makeEvent(), SETTINGS).lines.length;
     const empty = buildGenericRawView(makeEvent({ payload: { message: '' } }), SETTINGS);
     expect(empty.lines.length).toBe(withMessage - 1);
+  });
+
+  test('standalone (no mesh identity) does not add a node line', () => {
+    setNotificationNodeNameProvider(() => null);
+    const event = makeEvent();
+    expect(buildBellRawView(event).paneMetaLines.some((line) => line.includes('studio'))).toBe(
+      false
+    );
+    expect(
+      buildNotificationRawView(event).paneMetaLines.some((line) => line.includes('studio'))
+    ).toBe(false);
+    expect(buildGenericRawView(event, SETTINGS).lines.some((line) => line.includes('studio'))).toBe(
+      false
+    );
+  });
+
+  test('mesh identity adds a node line to bell, notification and generic views', () => {
+    setNotificationNodeNameProvider(() => 'studio');
+    const event = makeEvent();
+    expect(buildBellRawView(event).paneMetaLines.some((line) => line.includes('studio'))).toBe(
+      true
+    );
+    expect(
+      buildNotificationRawView(event).paneMetaLines.some((line) => line.includes('studio'))
+    ).toBe(true);
+    const generic = buildGenericRawView(event, SETTINGS).lines;
+    const siteIndex = generic.findIndex((line) => line.includes('tmex & co'));
+    const nodeIndex = generic.findIndex((line) => line.includes('studio'));
+    expect(nodeIndex).toBeGreaterThan(siteIndex);
   });
 });

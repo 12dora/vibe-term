@@ -6,8 +6,8 @@ import type {
   WebhookEvent,
 } from '@tmex/shared';
 import { getSiteSettings, updateDeviceRuntimeStatus } from '../db';
+import { DEVICE_CONNECTION_ERROR_EVENT } from '../events/channels/types';
 import { t } from '../i18n';
-import { telegramService } from '../telegram/service';
 import { classifySshError } from '../ws/error-classify';
 import {
   buildConnectionBridgeEvent,
@@ -21,7 +21,7 @@ export type ConnectionAlertSource = 'connect' | 'runtime' | 'close' | 'probe';
 export type ConnectionEventEmitter = (
   eventType: EventType,
   event: Omit<WebhookEvent, 'eventType' | 'timestamp'>
-) => void;
+) => void | Promise<void>;
 
 export interface ConnectionAlertInput {
   device: Device;
@@ -42,8 +42,6 @@ export interface ClassifiedConnectionAlert {
 }
 
 export type ConnectionAlertBroadcaster = (deviceId: string, payload: EventDevicePayload) => void;
-
-export type TelegramSender = (text: string) => Promise<void>;
 
 const NOTIFY_THROTTLE_MS = 5 * 60 * 1000;
 
@@ -78,8 +76,6 @@ export class ConnectionAlertNotifier {
       lastErrorType: errorType,
     });
   };
-  private telegramSender: TelegramSender = (text) =>
-    telegramService.sendToAuthorizedChats({ text });
 
   setBroadcaster(broadcaster: ConnectionAlertBroadcaster | null): void {
     this.broadcaster = broadcaster;
@@ -99,9 +95,8 @@ export class ConnectionAlertNotifier {
     this.persister = persister;
   }
 
-  setTelegramSender(sender: TelegramSender): void {
-    this.telegramSender = sender;
-  }
+  /** 连接错误已改走 EventNotifier；保留该方法以免调用方编译失败。 */
+  setTelegramSender(_sender: (text: string) => Promise<void>): void {}
 
   async notify(alert: ConnectionAlertInput): Promise<ClassifiedConnectionAlert> {
     const {
@@ -149,11 +144,17 @@ export class ConnectionAlertNotifier {
       }
     }
 
-    if (!silentTelegram && this.shouldSendTelegram(device.id, classified.type)) {
-      await this.sendTelegram(device, classified.type, friendlyMessage, rawMessage);
+    if (!silentTelegram && this.shouldNotifyPush(device.id, classified.type)) {
+      await this.emitConnectionError(device, classified.type, friendlyMessage, rawMessage);
     }
 
-    this.maybeEmitEvent(device, source, classified.type, friendlyMessage, sessionClosedEmitted);
+    await this.maybeEmitEvent(
+      device,
+      source,
+      classified.type,
+      friendlyMessage,
+      sessionClosedEmitted
+    );
 
     return {
       errorType: classified.type,
@@ -176,13 +177,13 @@ export class ConnectionAlertNotifier {
     }
   }
 
-  private maybeEmitEvent(
+  private async maybeEmitEvent(
     device: Device,
     source: ConnectionAlertSource,
     errorType: string,
     friendlyMessage: string,
     sessionClosedEmitted: boolean
-  ): void {
+  ): Promise<void> {
     if (!this.eventEmitter) return;
     const eventType = resolveConnectionBridgeEvent(source, errorType, sessionClosedEmitted);
     if (!eventType) return;
@@ -200,7 +201,10 @@ export class ConnectionAlertNotifier {
       return;
     }
     try {
-      this.eventEmitter(eventType, buildConnectionBridgeEvent(device, settings, friendlyMessage));
+      await this.eventEmitter(
+        eventType,
+        buildConnectionBridgeEvent(device, settings, friendlyMessage)
+      );
     } catch (emitErr) {
       console.error('[conn-alert] event emit failed:', emitErr);
       return;
@@ -209,7 +213,7 @@ export class ConnectionAlertNotifier {
     sweepExpiredThrottleKeys(this.bridgeThrottleMap, device.id, key, now, NOTIFY_THROTTLE_MS);
   }
 
-  private shouldSendTelegram(deviceId: string, errorType: string): boolean {
+  private shouldNotifyPush(deviceId: string, errorType: string): boolean {
     const key = `${deviceId}:${errorType}`;
     const now = Date.now();
     const last = this.throttleMap.get(key) ?? 0;
@@ -229,12 +233,13 @@ export class ConnectionAlertNotifier {
     return true;
   }
 
-  private async sendTelegram(
+  private async emitConnectionError(
     device: Device,
     errorType: string,
     friendlyMessage: string,
     rawMessage: string
   ): Promise<void> {
+    if (!this.eventEmitter) return;
     let settings: SiteSettings;
     try {
       settings = this.settingsProvider();
@@ -244,19 +249,21 @@ export class ConnectionAlertNotifier {
     }
 
     const categoryKey = `deviceStatus.errorBadge.${toBadgeKey(errorType)}`;
-    const translatedCategory = t(categoryKey, { defaultValue: errorType });
-    const text = t('telegram.deviceConnectionError', {
-      siteName: settings.siteName,
-      deviceName: device.name,
-      host: device.host ?? '-',
-      category: translatedCategory,
-      error: friendlyMessage || rawMessage,
-    });
-
+    const category = t(categoryKey, { defaultValue: errorType });
     try {
-      await this.telegramSender(text);
+      await this.eventEmitter(DEVICE_CONNECTION_ERROR_EVENT, {
+        site: { name: settings.siteName, url: settings.siteUrl },
+        device: { id: device.id, name: device.name, type: device.type, host: device.host },
+        tmux: { sessionName: device.session?.trim() || 'tmex' },
+        payload: {
+          message: friendlyMessage || rawMessage,
+          errorType,
+          category,
+          rawMessage,
+        },
+      });
     } catch (notifyErr) {
-      console.error('[conn-alert] telegram send failed:', notifyErr);
+      console.error('[conn-alert] connection error notify failed:', notifyErr);
     }
   }
 }
