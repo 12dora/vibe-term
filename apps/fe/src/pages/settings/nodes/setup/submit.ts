@@ -5,9 +5,14 @@
 
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import { SetupApi, readHealthStartedAt } from '@tmex/api-client/local/setup-api';
-import type { SetupHubResponse, SetupJoinResponse } from '@tmex/api-client/local/types';
+import type {
+  SetupHubResponse,
+  SetupJoinResponse,
+  SetupRelayResponse,
+} from '@tmex/api-client/local/types';
 import {
   type BecomeHubValues,
+  type BecomeRelayValues,
   type JoinHubValues,
   type NodeEnv,
   normalizeToken,
@@ -46,6 +51,28 @@ export async function submitJoinHub(
     directEnable: values.directEnable,
     // production 下后端会忽略该字段，索性不发，避免日志里出现误导性的 true。
     ...(nodeEnv === 'production' ? {} : { insecureLocal: values.insecureLocal }),
+  });
+  return { previousStartedAt, result };
+}
+
+export async function submitBecomeRelay(
+  values: BecomeRelayValues,
+  client: ApiClient = defaultApiClient
+): Promise<SubmitOutcome<SetupRelayResponse>> {
+  const previousStartedAt = await readHealthStartedAt(client);
+  const password = values.relayPassword.trim();
+  const result = await new SetupApi(client).setupRelay({
+    role: values.alsoNode ? 'relay,node' : 'relay',
+    relayPublicUrl: values.relayPublicUrl.trim(),
+    // 空串是「不设口令」，与「没填这个字段」是同一件事：统一发 null，别让后端猜。
+    relayPassword: password === '' ? null : password,
+    ...(values.alsoNode
+      ? {
+          username: values.username.trim(),
+          password: values.password,
+          directEnable: values.directEnable,
+        }
+      : {}),
   });
   return { previousStartedAt, result };
 }

@@ -2,6 +2,7 @@
 //
 // 默认「保留」——改口令多数时候只是换一把新的，不该顺手把在线租户全踢下线。
 
+import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
 import { Button } from '@tmex/ui/button';
 import {
   Dialog,
@@ -11,7 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
 import { Switch } from '@tmex/ui/switch';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -73,14 +73,12 @@ export function PasswordDialogBody({
           error={invalid ? t(invalid) : undefined}
           spacing="tight"
         >
-          <Input
+          <PasswordFieldWithGenerate
             id="relay-password-new"
-            type="password"
-            autoComplete="new-password"
             value={draft.password}
             disabled={busy}
-            onChange={(event) => onChange({ password: event.target.value })}
-            data-testid="relay-password-new"
+            defaultGenerate
+            onChange={(next) => onChange({ password: next })}
           />
         </FormField>
       )}

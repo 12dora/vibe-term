@@ -55,7 +55,7 @@ const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@
 const { setPendingStorage, clearPendingEnrollments, addPendingEnrollment } = await import(
   '@/node/enrollment'
 );
-const { NodesTab } = await import('./nodes-tab');
+const { NodesTab, routeSetupIntent } = await import('./nodes-tab');
 
 const MESH_MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -218,6 +218,62 @@ describe('NodesTab 角色切换向导', () => {
     expect(html).toContain('data-selected="false"');
     expect(html).not.toContain('data-testid="setup-join-hub-form"');
     expect(html).not.toContain('data-testid="setup-become-hub-form"');
+  });
+});
+
+describe('routeSetupIntent', () => {
+  test('没有记号：什么都不预选', () => {
+    expect(routeSetupIntent(null, false)).toEqual({
+      wizardPath: null,
+      relayRole: 'relay,node',
+      requestedTab: null,
+    });
+  });
+
+  test('hub 两条路径：预选向导并落在 Hub tab', () => {
+    expect(routeSetupIntent({ path: 'become-hub' }, false)).toEqual({
+      wizardPath: 'become-hub',
+      relayRole: 'relay,node',
+      requestedTab: 'hub',
+    });
+    expect(routeSetupIntent({ path: 'join-hub' }, false).wizardPath).toBe('join-hub');
+  });
+
+  test('become-relay：不进 Hub 向导，直接落在中继 tab 并带上角色', () => {
+    expect(routeSetupIntent({ path: 'become-relay', role: 'relay' }, false)).toEqual({
+      wizardPath: null,
+      relayRole: 'relay',
+      requestedTab: 'relay',
+    });
+    // 老记号没带角色时退回中继兼节点。
+    expect(routeSetupIntent({ path: 'become-relay' }, false).relayRole).toBe('relay,node');
+  });
+
+  test('刚设置完中继：即便没有记号也落在中继 tab', () => {
+    expect(routeSetupIntent(null, true).requestedTab).toBe('relay');
+  });
+});
+
+describe('NodesTab standalone 的中继表单', () => {
+  test('中继 tab 里直接摆出「本机作为中继」表单', () => {
+    localStatus = status();
+    // tab 的初值由 localStorage 记忆推导（`useState` 初始化里读，SSR 也会跑）。
+    globalThis.localStorage.setItem('tmex.nodes.uplink-tab', 'relay');
+    const html = render({ ...MESH_MODE, mode: 'none' });
+    globalThis.localStorage.removeItem('tmex.nodes.uplink-tab');
+    expect(html).toContain('data-testid="local-uplink-relay-standalone"');
+    expect(html).toContain('data-testid="setup-become-relay-form"');
+    // 默认中继兼节点：账号字段在，纯中继的警示不在。
+    expect(html).toContain('id="setup-relay-username"');
+    expect(html).not.toContain('data-testid="setup-relay-pure-notice"');
+  });
+
+  test('mesh 下不摆中继设置表单', () => {
+    localStatus = status({ role: 'relay,node' });
+    globalThis.localStorage.setItem('tmex.nodes.uplink-tab', 'relay');
+    const html = render(MESH_MODE);
+    globalThis.localStorage.removeItem('tmex.nodes.uplink-tab');
+    expect(html).not.toContain('data-testid="setup-become-relay-form"');
   });
 });
 

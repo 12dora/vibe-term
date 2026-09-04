@@ -4,6 +4,7 @@
 // 前端先拦一遍只是为了少一次往返，后端仍是权威。
 
 import type { LocalStatusResponse } from '@tmex/api-client/local/types';
+import { normalizeRelayUrl } from '@tmex/shared/relay';
 
 export type NodeEnv = LocalStatusResponse['nodeEnv'];
 
@@ -89,6 +90,63 @@ export function validateBecomeHub(values: BecomeHubValues, nodeEnv: NodeEnv): Be
   return errors;
 }
 
+export interface BecomeRelayValues {
+  relayPublicUrl: string;
+  /** 空串 = 不设口令，任何人都能接入。 */
+  relayPassword: string;
+  /** 本机同时作为节点（`relay,node`）。 */
+  alsoNode: boolean;
+  username: string;
+  password: string;
+  confirmPassword: string;
+  directEnable: boolean;
+}
+
+export type BecomeRelayField = 'relayPublicUrl' | 'username' | 'password' | 'confirmPassword';
+export type BecomeRelayErrors = Partial<Record<BecomeRelayField, string>>;
+
+/**
+ * 中继公网地址：规则与 CLI 的 `normalizeRelayUrl` 一致（https，回环允许 http），
+ * 再叠一条 production 下禁止 http——生产实例的中继地址是给外部租户拨的，回环没有意义。
+ */
+export function classifyRelayUrl(raw: string, nodeEnv: NodeEnv): UrlVerdict {
+  const trimmed = raw.trim();
+  let canonical: string;
+  try {
+    canonical = normalizeRelayUrl(trimmed);
+  } catch {
+    return 'invalid';
+  }
+  if (new URL(canonical).protocol === 'https:') return 'ok';
+  return nodeEnv === 'production' ? 'invalid' : 'insecure';
+}
+
+export function validateBecomeRelay(
+  values: BecomeRelayValues,
+  nodeEnv: NodeEnv
+): BecomeRelayErrors {
+  const errors: BecomeRelayErrors = {};
+
+  if (classifyRelayUrl(values.relayPublicUrl, nodeEnv) === 'invalid') {
+    errors.relayPublicUrl = `${ERROR_PREFIX}invalid_url`;
+  }
+
+  // 纯中继不建账号：没有网页，也就没有登录这回事。
+  if (!values.alsoNode) return errors;
+
+  if (!USERNAME_PATTERN.test(values.username.trim())) {
+    errors.username = `${ERROR_PREFIX}invalid_username`;
+  }
+  if (values.password.length < MIN_PASSWORD_LENGTH) {
+    errors.password = `${ERROR_PREFIX}weak_password`;
+  }
+  if (values.confirmPassword !== values.password) {
+    errors.confirmPassword = `${ERROR_PREFIX}password_mismatch`;
+  }
+
+  return errors;
+}
+
 export interface JoinHubValues {
   hubUrl: string;
   token: string;
@@ -132,6 +190,12 @@ export function defaultHubPublicUrl(origin: string | null, nodeEnv: NodeEnv): st
   return classifyHubUrl(origin, nodeEnv) === 'invalid' ? '' : origin;
 }
 
+/** 中继公网地址同理：当前页面地址本身合法时才预填。 */
+export function defaultRelayPublicUrl(origin: string | null, nodeEnv: NodeEnv): string {
+  if (!origin) return '';
+  return classifyRelayUrl(origin, nodeEnv) === 'invalid' ? '' : origin;
+}
+
 /** 节点名默认取浏览器地址栏的主机名。 */
 export function defaultNodeName(hostname: string | null): string {
   return (hostname ?? '').trim().slice(0, MAX_NAME_LENGTH) || 'node';
@@ -144,6 +208,7 @@ export function defaultNodeName(hostname: string | null): string {
 const KNOWN_ERROR_CODES = new Set([
   'not_standalone',
   'invalid_url',
+  'invalid_role',
   'invalid_username',
   'weak_password',
   'user_exists',

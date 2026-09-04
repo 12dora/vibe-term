@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ApiClient } from '@tmex/api-client';
 import { SetupApiError } from '@tmex/api-client/local/setup-api';
-import { submitBecomeHub, submitJoinHub } from './submit';
+import { submitBecomeHub, submitBecomeRelay, submitJoinHub } from './submit';
 
 type Call = { url: string; body: unknown };
 
@@ -148,5 +148,79 @@ describe('submitJoinHub', () => {
     });
     await submitJoinHub(values, 'production', client);
     expect(calls[1].body).not.toHaveProperty('insecureLocal');
+  });
+});
+
+describe('submitBecomeRelay', () => {
+  const relayResponse = Response.json({
+    ok: true,
+    role: 'relay,node',
+    relayPublicUrl: 'https://relay.example.com',
+    hasPassword: true,
+    restarting: true,
+    fingerprint: 'fp',
+  });
+
+  test('中继兼节点：账号三件一起发，地址与口令做 trim', async () => {
+    const { client, calls } = scripted({
+      '/healthz': Response.json({ startedAt: 77 }),
+      '/api/setup/relay': relayResponse,
+    });
+
+    const outcome = await submitBecomeRelay(
+      {
+        relayPublicUrl: '  https://relay.example.com  ',
+        relayPassword: '  s3cret-token  ',
+        alsoNode: true,
+        username: ' alice ',
+        password: 'hunter2hunter2',
+        confirmPassword: 'hunter2hunter2',
+        directEnable: true,
+      },
+      client
+    );
+
+    expect(outcome.previousStartedAt).toBe(77);
+    expect(calls.map((c) => c.url)).toEqual(['/healthz', '/api/setup/relay']);
+    expect(calls[1].body).toEqual({
+      role: 'relay,node',
+      relayPublicUrl: 'https://relay.example.com',
+      relayPassword: 's3cret-token',
+      username: 'alice',
+      password: 'hunter2hunter2',
+      directEnable: true,
+    });
+  });
+
+  test('纯中继：不发账号字段；空口令发 null', async () => {
+    const { client, calls } = scripted({
+      '/healthz': Response.json({ startedAt: 1 }),
+      '/api/setup/relay': Response.json({
+        ok: true,
+        role: 'relay',
+        relayPublicUrl: 'https://relay.example.com',
+        hasPassword: false,
+        restarting: true,
+      }),
+    });
+
+    await submitBecomeRelay(
+      {
+        relayPublicUrl: 'https://relay.example.com',
+        relayPassword: '   ',
+        alsoNode: false,
+        username: 'ignored',
+        password: 'ignored-password',
+        confirmPassword: 'ignored-password',
+        directEnable: true,
+      },
+      client
+    );
+
+    expect(calls[1].body).toEqual({
+      role: 'relay',
+      relayPublicUrl: 'https://relay.example.com',
+      relayPassword: null,
+    });
   });
 });

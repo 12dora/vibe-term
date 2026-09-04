@@ -1065,7 +1065,7 @@
         "roleStandalone": "スタンドアロン",
         "roleNode": "ノード",
         "roleHub": "ハブ兼ノード",
-        "roleRelay": "リレー",
+        "roleRelay": "中継のみ（Web なし）",
         "roleRelayNode": "リレー兼ノード",
         "localAddress": "このマシンのアドレス",
         "localAddressUnset": "未設定",
@@ -1119,7 +1119,12 @@
           }
         },
         "accountSecurity": "アカウントセキュリティ",
-        "loginRequired": "サインインするとこのマシンの状態を表示します。"
+        "loginRequired": "サインインするとこのマシンの状態を表示します。",
+        "relayServiceAddress": "中継の公開アドレス",
+        "relayServiceStats": "中継の利用状況",
+        "relayServiceCounts": "テナント {{tenants}} · オンライン {{online}} · ノード {{nodes}}",
+        "relayServiceEnroll": "本機の中継に接続",
+        "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続には設定した接続パスワードを再入力します。"
       },
       "membership": {
         "changeHub": "ハブを変更",
@@ -1156,7 +1161,13 @@
           "setupInProgress": "別の設定変更が進行中です。しばらくしてからやり直してください。",
           "envWriteFailed": "設定を書き込めませんでした。",
           "unauthorized": "先にサインインしてください。"
-        }
+        },
+        "leaveToRelayConfirm": {
+          "title": "所属する mesh から抜けますか？",
+          "description": "本機は mesh から抜けます。中継サービスと接続中のテナントは保持されます。"
+        },
+        "consequencesRelayKeepService": "本機のノード ID と相互接続の状態はすべて削除され、tmex が再起動して現在のセッションは失効します。中継サービス、テナント、運用ログは保持されます。",
+        "consequencesRelayReset": "中継サービス、テナント、運用ログはすべて削除され、復元できません。本機のノード ID と相互接続の状態も削除され、tmex が再起動して現在のセッションは失効します。"
       },
       "https": {
         "title": "HTTPS 設定",
@@ -1553,6 +1564,10 @@
           "joinHub": {
             "title": "既存のハブに参加する",
             "description": "このマシンはノードになります。ハブが発行した参加コードが必要です。"
+          },
+          "becomeRelay": {
+            "title": "本機を中継にする",
+            "description": "本機が各ノードの公開入口になります。公開 HTTPS アドレスが必要です。"
           }
         },
         "becomeHub": {
@@ -1583,7 +1598,13 @@
           "directEnableHint": "ハブを経由せず、ノード同士が直接通信します。失敗してもセットアップは続行します。",
           "directUnsupportedHint": "{{platform}} ではダイレクト接続を利用できません。通信はハブ経由になります。",
           "insecureLocal": "このマシンで http:// のハブを許可する",
-          "insecureLocalHint": "開発・テスト用途のみです。"
+          "insecureLocalHint": "開発・テスト用途のみです。",
+          "relayPublicUrl": "中継の公開アドレス",
+          "relayPublicUrlHint": "外部から到達できる https アドレス（例: https://relay.example.com）。接続するすべてのノードから到達できる必要があります。",
+          "relayPassword": "接続パスワード",
+          "relayPasswordHint": "テナントが本中継に接続する際に必要です。空欄なら誰でも接続できます。",
+          "relayAlsoNode": "本機をノードとしても使う",
+          "relayAlsoNodeHint": "中継と同時に Web とアカウントを保持します。オフにすると中継のみになります。"
         },
         "precheck": {
           "button": "アドレスを確認",
@@ -1595,7 +1616,8 @@
         "submit": {
           "becomeHub": "アカウントを作成して再起動",
           "joinHub": "参加して再起動",
-          "pending": "処理中…"
+          "pending": "処理中…",
+          "becomeRelay": "保存して再起動"
         },
         "result": {
           "title": "セットアップ完了",
@@ -1610,7 +1632,12 @@
             "enabled": "有効",
             "skipped": "スキップ",
             "failed": "失敗（{{error}}）——通信はハブ経由になります。後で再試行できます"
-          }
+          },
+          "relayDescription": "中継を設定し、tmex を再起動しています。再起動後は Web が利用できません。",
+          "relayNodeDescription": "中継を設定し、中継兼ノードとして tmex を再起動しています。",
+          "relayPublicUrl": "中継の公開アドレス",
+          "relayPassword": "接続パスワード",
+          "relayWebGone": "まもなく Web が利用できなくなります。以降は本機のターミナルで管理します:"
         },
         "restart": {
           "waiting": "tmex の復帰を待っています… {{seconds}} 秒",
@@ -1619,7 +1646,8 @@
         },
         "toast": {
           "hubCreated": "ハブを作成しました。tmex が再起動しています",
-          "joined": "ハブに参加しました。tmex が再起動しています"
+          "joined": "ハブに参加しました。tmex が再起動しています",
+          "relayCreated": "中継を設定しました。tmex を再起動しています"
         },
         "errors": {
           "not_standalone": "このマシンは設定済みです。",
@@ -1640,7 +1668,23 @@
           "direct_download_failed": "ダイレクト接続アドオンをダウンロードできませんでした。",
           "direct_failed": "ダイレクト接続を有効にできませんでした。",
           "withDetail": "{{base}}（{{detail}}）",
-          "unknown": "エラーが発生しました：{{message}}"
+          "unknown": "エラーが発生しました：{{message}}",
+          "invalid_role": "役割が不正です。"
+        },
+        "becomeRelay": {
+          "title": "本機を中継にする",
+          "description": "中継の公開アドレスと接続パスワードを設定し、中継として tmex を再起動します。",
+          "pureNotice": "中継のみの構成では再起動後に Web が提供されず、コマンドラインで管理します。"
+        },
+        "password": {
+          "generate": "生成",
+          "show": "パスワードを表示",
+          "hide": "パスワードを非表示"
+        },
+        "pureRelayConfirm": {
+          "title": "中継のみに切り替えますか？",
+          "description": "再起動後、本機は Web を提供せず、中継はコマンドラインでのみ管理します。Web から他の役割に戻すこともできません。",
+          "confirm": "続行"
         }
       },
       "uplinkOffline": "上位リンクに接続していません。復帰するまで参加コードは作成できません。"

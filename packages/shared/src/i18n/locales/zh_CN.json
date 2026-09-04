@@ -1803,7 +1803,7 @@
         "roleStandalone": "独立运行",
         "roleNode": "节点",
         "roleHub": "Hub 兼节点",
-        "roleRelay": "中继",
+        "roleRelay": "纯中继（无网页）",
         "roleRelayNode": "中继兼节点",
         "localAddress": "本机地址",
         "localAddressUnset": "未设置",
@@ -1857,7 +1857,12 @@
           }
         },
         "accountSecurity": "账号安全",
-        "loginRequired": "登录后查看本机状态。"
+        "loginRequired": "登录后查看本机状态。",
+        "relayServiceAddress": "中继公网地址",
+        "relayServiceStats": "中继用量",
+        "relayServiceCounts": "租户 {{tenants}} · 在线 {{online}} · 节点 {{nodes}}",
+        "relayServiceEnroll": "接入本机中继",
+        "relayServiceEnrollHint": "本机尚未接入自己的中继。接入时须再次输入刚设置的接入口令。"
       },
       "membership": {
         "changeHub": "更换 Hub",
@@ -1894,7 +1899,13 @@
           "setupInProgress": "另一项设置正在进行，请稍后重试。",
           "envWriteFailed": "写入配置失败。",
           "unauthorized": "请先登录。"
-        }
+        },
+        "leaveToRelayConfirm": {
+          "title": "退出所属 mesh？",
+          "description": "本机退出所属 mesh，中继服务与已接入租户保留。"
+        },
+        "consequencesRelayKeepService": "本机的节点身份与多节点互联状态全部删除，tmex 会重启，当前会话随之失效。中继服务、已接入租户与运营日志保留。",
+        "consequencesRelayReset": "中继服务、已接入租户与运营日志全部清除，不可恢复。本机的节点身份与多节点互联状态一并删除，tmex 会重启，当前会话随之失效。"
       },
       "https": {
         "title": "HTTPS 设置",
@@ -2291,6 +2302,10 @@
           "joinHub": {
             "title": "加入已有 Hub",
             "description": "本机成为一个节点。需要 Hub 提供的加入码。"
+          },
+          "becomeRelay": {
+            "title": "本机作为中继",
+            "description": "本机为各节点提供公网入口。需要一个公开的 HTTPS 地址。"
           }
         },
         "becomeHub": {
@@ -2321,7 +2336,13 @@
           "directEnableHint": "让节点之间直接通信，而不经 Hub 中转。即使失败也不影响本次设置。",
           "directUnsupportedHint": "{{platform}} 不支持直连，流量将经 Hub 中转。",
           "insecureLocal": "允许本机使用 http:// 的 Hub",
-          "insecureLocalHint": "仅用于开发与测试。"
+          "insecureLocalHint": "仅用于开发与测试。",
+          "relayPublicUrl": "中继公网地址",
+          "relayPublicUrlHint": "外部可访问的 https 地址，例如 https://relay.example.com。所有拟接入的节点均须可正常访问。",
+          "relayPassword": "接入口令",
+          "relayPasswordHint": "租户接入本中继时须出示；留空则任何人都可接入。",
+          "relayAlsoNode": "本机也作为节点",
+          "relayAlsoNodeHint": "本机提供中继的同时保留网页与账号；关闭即为纯中继。"
         },
         "precheck": {
           "button": "测试地址",
@@ -2333,7 +2354,8 @@
         "submit": {
           "becomeHub": "创建账号并重启",
           "joinHub": "加入并重启",
-          "pending": "处理中…"
+          "pending": "处理中…",
+          "becomeRelay": "保存并重启"
         },
         "result": {
           "title": "设置完成",
@@ -2348,7 +2370,12 @@
             "enabled": "已启用",
             "skipped": "已跳过",
             "failed": "失败（{{error}}）——流量将经 Hub 中转，可稍后重试"
-          }
+          },
+          "relayDescription": "中继已设置，tmex 正在重启。重启后本机不再提供网页。",
+          "relayNodeDescription": "中继已设置，tmex 正在以中继兼节点身份重启。",
+          "relayPublicUrl": "中继公网地址",
+          "relayPassword": "接入口令",
+          "relayWebGone": "网页即将不可用。后续管理请在本机终端执行："
         },
         "restart": {
           "waiting": "等待 tmex 恢复…… {{seconds}} 秒",
@@ -2357,7 +2384,8 @@
         },
         "toast": {
           "hubCreated": "Hub 已创建，tmex 正在重启",
-          "joined": "已加入 Hub，tmex 正在重启"
+          "joined": "已加入 Hub，tmex 正在重启",
+          "relayCreated": "中继已设置，tmex 正在重启"
         },
         "errors": {
           "not_standalone": "本机已完成设置。",
@@ -2378,7 +2406,23 @@
           "direct_download_failed": "直连插件下载失败。",
           "direct_failed": "直连启用失败。",
           "withDetail": "{{base}}（{{detail}}）",
-          "unknown": "出错了：{{message}}"
+          "unknown": "出错了：{{message}}",
+          "invalid_role": "角色不合法。"
+        },
+        "becomeRelay": {
+          "title": "本机作为中继",
+          "description": "设置中继公网地址与接入口令，然后以中继身份重启 tmex。",
+          "pureNotice": "纯中继重启后不再提供网页，只能用命令行管理。"
+        },
+        "password": {
+          "generate": "生成",
+          "show": "显示口令",
+          "hide": "隐藏口令"
+        },
+        "pureRelayConfirm": {
+          "title": "切换到纯中继？",
+          "description": "重启后本机不再提供网页，中继只能用命令行管理，网页里也无法改回其它角色。",
+          "confirm": "继续"
         }
       },
       "uplinkOffline": "上级链路未连接，暂时不能生成加入码。"

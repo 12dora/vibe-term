@@ -1809,7 +1809,7 @@ export const I18N_RESOURCES = {
         "roleStandalone": "Standalone",
         "roleNode": "Node",
         "roleHub": "Hub and node",
-        "roleRelay": "Relay",
+        "roleRelay": "Relay only (no web UI)",
         "roleRelayNode": "Relay and node",
         "localAddress": "This Machine's Address",
         "localAddressUnset": "Not set",
@@ -1863,7 +1863,12 @@ export const I18N_RESOURCES = {
           }
         },
         "accountSecurity": "Account security",
-        "loginRequired": "Sign in to see this machine's status."
+        "loginRequired": "Sign in to see this machine's status.",
+        "relayServiceAddress": "Relay Public Address",
+        "relayServiceStats": "Relay Usage",
+        "relayServiceCounts": "{{tenants}} tenants · {{online}} online · {{nodes}} nodes",
+        "relayServiceEnroll": "Connect to This Relay",
+        "relayServiceEnrollHint": "This machine has not connected to its own relay yet. The relay password just set must be entered again."
       },
       "membership": {
         "changeHub": "Change hub",
@@ -1900,7 +1905,13 @@ export const I18N_RESOURCES = {
           "setupInProgress": "Another setup change is in progress. Try again in a moment.",
           "envWriteFailed": "Could not write the configuration.",
           "unauthorized": "Sign in first."
-        }
+        },
+        "leaveToRelayConfirm": {
+          "title": "Leave the current mesh?",
+          "description": "This machine leaves its mesh; the relay service and its tenants are kept."
+        },
+        "consequencesRelayKeepService": "This machine's node identity and mesh state are deleted, tmex restarts and the current session ends. The relay service, its tenants and the operator log are kept.",
+        "consequencesRelayReset": "The relay service, its tenants and the operator log are erased and cannot be recovered. This machine's node identity and mesh state are deleted as well, tmex restarts and the current session ends."
       },
       "https": {
         "title": "HTTPS settings",
@@ -2301,6 +2312,10 @@ export const I18N_RESOURCES = {
           "joinHub": {
             "title": "Join an existing hub",
             "description": "This machine becomes a node. You need a join code from the hub."
+          },
+          "becomeRelay": {
+            "title": "Use This Machine as the Relay",
+            "description": "This machine gives nodes a public entry point. A public HTTPS address is required."
           }
         },
         "becomeHub": {
@@ -2331,7 +2346,13 @@ export const I18N_RESOURCES = {
           "directEnableHint": "Lets nodes talk to each other directly instead of through the hub. Setup continues even if this fails.",
           "directUnsupportedHint": "Direct connections are not available on {{platform}}; traffic goes through the hub.",
           "insecureLocal": "Allow an http:// hub on this machine",
-          "insecureLocalHint": "Development and testing only."
+          "insecureLocalHint": "Development and testing only.",
+          "relayPublicUrl": "Relay Public Address",
+          "relayPublicUrlHint": "An externally reachable https address, e.g. https://relay.example.com. Every node that will connect must be able to reach it.",
+          "relayPassword": "Relay Password",
+          "relayPasswordHint": "Tenants must present it to connect; leave empty and anyone can connect.",
+          "relayAlsoNode": "Also Run as a Node",
+          "relayAlsoNodeHint": "Keep the web UI and an account alongside the relay; turn off for a relay-only machine."
         },
         "precheck": {
           "button": "Test address",
@@ -2343,7 +2364,8 @@ export const I18N_RESOURCES = {
         "submit": {
           "becomeHub": "Create account and restart",
           "joinHub": "Join and restart",
-          "pending": "Working…"
+          "pending": "Working…",
+          "becomeRelay": "Save and Restart"
         },
         "result": {
           "title": "Setup complete",
@@ -2358,7 +2380,12 @@ export const I18N_RESOURCES = {
             "enabled": "on",
             "skipped": "skipped",
             "failed": "failed ({{error}}) — traffic goes through the hub; you can retry later"
-          }
+          },
+          "relayDescription": "The relay is configured and tmex is restarting. The web UI is gone after the restart.",
+          "relayNodeDescription": "The relay is configured and tmex is restarting as relay and node.",
+          "relayPublicUrl": "Relay Public Address",
+          "relayPassword": "Relay Password",
+          "relayWebGone": "The web UI is about to become unavailable. Manage the relay from a terminal on this machine:"
         },
         "restart": {
           "waiting": "Waiting for tmex to come back… {{seconds}}s",
@@ -2367,7 +2394,8 @@ export const I18N_RESOURCES = {
         },
         "toast": {
           "hubCreated": "Hub created — tmex is restarting",
-          "joined": "Joined the hub — tmex is restarting"
+          "joined": "Joined the hub — tmex is restarting",
+          "relayCreated": "Relay configured, tmex is restarting"
         },
         "errors": {
           "not_standalone": "This machine is already set up.",
@@ -2388,7 +2416,23 @@ export const I18N_RESOURCES = {
           "direct_download_failed": "Could not download the direct connection add-on.",
           "direct_failed": "Could not enable direct connections.",
           "withDetail": "{{base}} ({{detail}})",
-          "unknown": "Something went wrong: {{message}}"
+          "unknown": "Something went wrong: {{message}}",
+          "invalid_role": "Invalid role."
+        },
+        "becomeRelay": {
+          "title": "Use This Machine as the Relay",
+          "description": "Set the relay public address and password, then restart tmex as a relay.",
+          "pureNotice": "A relay-only machine serves no web UI after the restart and is managed from the command line."
+        },
+        "password": {
+          "generate": "Generate",
+          "show": "Show password",
+          "hide": "Hide password"
+        },
+        "pureRelayConfirm": {
+          "title": "Switch to relay only?",
+          "description": "After the restart this machine serves no web UI, the relay is managed from the command line, and the role cannot be changed back from the web.",
+          "confirm": "Continue"
         }
       },
       "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back."
@@ -4466,7 +4510,7 @@ export const I18N_RESOURCES = {
         "roleStandalone": "独立运行",
         "roleNode": "节点",
         "roleHub": "Hub 兼节点",
-        "roleRelay": "中继",
+        "roleRelay": "纯中继（无网页）",
         "roleRelayNode": "中继兼节点",
         "localAddress": "本机地址",
         "localAddressUnset": "未设置",
@@ -4520,7 +4564,12 @@ export const I18N_RESOURCES = {
           }
         },
         "accountSecurity": "账号安全",
-        "loginRequired": "登录后查看本机状态。"
+        "loginRequired": "登录后查看本机状态。",
+        "relayServiceAddress": "中继公网地址",
+        "relayServiceStats": "中继用量",
+        "relayServiceCounts": "租户 {{tenants}} · 在线 {{online}} · 节点 {{nodes}}",
+        "relayServiceEnroll": "接入本机中继",
+        "relayServiceEnrollHint": "本机尚未接入自己的中继。接入时须再次输入刚设置的接入口令。"
       },
       "membership": {
         "changeHub": "更换 Hub",
@@ -4557,7 +4606,13 @@ export const I18N_RESOURCES = {
           "setupInProgress": "另一项设置正在进行，请稍后重试。",
           "envWriteFailed": "写入配置失败。",
           "unauthorized": "请先登录。"
-        }
+        },
+        "leaveToRelayConfirm": {
+          "title": "退出所属 mesh？",
+          "description": "本机退出所属 mesh，中继服务与已接入租户保留。"
+        },
+        "consequencesRelayKeepService": "本机的节点身份与多节点互联状态全部删除，tmex 会重启，当前会话随之失效。中继服务、已接入租户与运营日志保留。",
+        "consequencesRelayReset": "中继服务、已接入租户与运营日志全部清除，不可恢复。本机的节点身份与多节点互联状态一并删除，tmex 会重启，当前会话随之失效。"
       },
       "https": {
         "title": "HTTPS 设置",
@@ -4954,6 +5009,10 @@ export const I18N_RESOURCES = {
           "joinHub": {
             "title": "加入已有 Hub",
             "description": "本机成为一个节点。需要 Hub 提供的加入码。"
+          },
+          "becomeRelay": {
+            "title": "本机作为中继",
+            "description": "本机为各节点提供公网入口。需要一个公开的 HTTPS 地址。"
           }
         },
         "becomeHub": {
@@ -4984,7 +5043,13 @@ export const I18N_RESOURCES = {
           "directEnableHint": "让节点之间直接通信，而不经 Hub 中转。即使失败也不影响本次设置。",
           "directUnsupportedHint": "{{platform}} 不支持直连，流量将经 Hub 中转。",
           "insecureLocal": "允许本机使用 http:// 的 Hub",
-          "insecureLocalHint": "仅用于开发与测试。"
+          "insecureLocalHint": "仅用于开发与测试。",
+          "relayPublicUrl": "中继公网地址",
+          "relayPublicUrlHint": "外部可访问的 https 地址，例如 https://relay.example.com。所有拟接入的节点均须可正常访问。",
+          "relayPassword": "接入口令",
+          "relayPasswordHint": "租户接入本中继时须出示；留空则任何人都可接入。",
+          "relayAlsoNode": "本机也作为节点",
+          "relayAlsoNodeHint": "本机提供中继的同时保留网页与账号；关闭即为纯中继。"
         },
         "precheck": {
           "button": "测试地址",
@@ -4996,7 +5061,8 @@ export const I18N_RESOURCES = {
         "submit": {
           "becomeHub": "创建账号并重启",
           "joinHub": "加入并重启",
-          "pending": "处理中…"
+          "pending": "处理中…",
+          "becomeRelay": "保存并重启"
         },
         "result": {
           "title": "设置完成",
@@ -5011,7 +5077,12 @@ export const I18N_RESOURCES = {
             "enabled": "已启用",
             "skipped": "已跳过",
             "failed": "失败（{{error}}）——流量将经 Hub 中转，可稍后重试"
-          }
+          },
+          "relayDescription": "中继已设置，tmex 正在重启。重启后本机不再提供网页。",
+          "relayNodeDescription": "中继已设置，tmex 正在以中继兼节点身份重启。",
+          "relayPublicUrl": "中继公网地址",
+          "relayPassword": "接入口令",
+          "relayWebGone": "网页即将不可用。后续管理请在本机终端执行："
         },
         "restart": {
           "waiting": "等待 tmex 恢复…… {{seconds}} 秒",
@@ -5020,7 +5091,8 @@ export const I18N_RESOURCES = {
         },
         "toast": {
           "hubCreated": "Hub 已创建，tmex 正在重启",
-          "joined": "已加入 Hub，tmex 正在重启"
+          "joined": "已加入 Hub，tmex 正在重启",
+          "relayCreated": "中继已设置，tmex 正在重启"
         },
         "errors": {
           "not_standalone": "本机已完成设置。",
@@ -5041,7 +5113,23 @@ export const I18N_RESOURCES = {
           "direct_download_failed": "直连插件下载失败。",
           "direct_failed": "直连启用失败。",
           "withDetail": "{{base}}（{{detail}}）",
-          "unknown": "出错了：{{message}}"
+          "unknown": "出错了：{{message}}",
+          "invalid_role": "角色不合法。"
+        },
+        "becomeRelay": {
+          "title": "本机作为中继",
+          "description": "设置中继公网地址与接入口令，然后以中继身份重启 tmex。",
+          "pureNotice": "纯中继重启后不再提供网页，只能用命令行管理。"
+        },
+        "password": {
+          "generate": "生成",
+          "show": "显示口令",
+          "hide": "隐藏口令"
+        },
+        "pureRelayConfirm": {
+          "title": "切换到纯中继？",
+          "description": "重启后本机不再提供网页，中继只能用命令行管理，网页里也无法改回其它角色。",
+          "confirm": "继续"
         }
       },
       "uplinkOffline": "上级链路未连接，暂时不能生成加入码。"
@@ -7118,7 +7206,7 @@ export const I18N_RESOURCES = {
         "roleStandalone": "スタンドアロン",
         "roleNode": "ノード",
         "roleHub": "ハブ兼ノード",
-        "roleRelay": "リレー",
+        "roleRelay": "中継のみ（Web なし）",
         "roleRelayNode": "リレー兼ノード",
         "localAddress": "このマシンのアドレス",
         "localAddressUnset": "未設定",
@@ -7172,7 +7260,12 @@ export const I18N_RESOURCES = {
           }
         },
         "accountSecurity": "アカウントセキュリティ",
-        "loginRequired": "サインインするとこのマシンの状態を表示します。"
+        "loginRequired": "サインインするとこのマシンの状態を表示します。",
+        "relayServiceAddress": "中継の公開アドレス",
+        "relayServiceStats": "中継の利用状況",
+        "relayServiceCounts": "テナント {{tenants}} · オンライン {{online}} · ノード {{nodes}}",
+        "relayServiceEnroll": "本機の中継に接続",
+        "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続には設定した接続パスワードを再入力します。"
       },
       "membership": {
         "changeHub": "ハブを変更",
@@ -7209,7 +7302,13 @@ export const I18N_RESOURCES = {
           "setupInProgress": "別の設定変更が進行中です。しばらくしてからやり直してください。",
           "envWriteFailed": "設定を書き込めませんでした。",
           "unauthorized": "先にサインインしてください。"
-        }
+        },
+        "leaveToRelayConfirm": {
+          "title": "所属する mesh から抜けますか？",
+          "description": "本機は mesh から抜けます。中継サービスと接続中のテナントは保持されます。"
+        },
+        "consequencesRelayKeepService": "本機のノード ID と相互接続の状態はすべて削除され、tmex が再起動して現在のセッションは失効します。中継サービス、テナント、運用ログは保持されます。",
+        "consequencesRelayReset": "中継サービス、テナント、運用ログはすべて削除され、復元できません。本機のノード ID と相互接続の状態も削除され、tmex が再起動して現在のセッションは失効します。"
       },
       "https": {
         "title": "HTTPS 設定",
@@ -7606,6 +7705,10 @@ export const I18N_RESOURCES = {
           "joinHub": {
             "title": "既存のハブに参加する",
             "description": "このマシンはノードになります。ハブが発行した参加コードが必要です。"
+          },
+          "becomeRelay": {
+            "title": "本機を中継にする",
+            "description": "本機が各ノードの公開入口になります。公開 HTTPS アドレスが必要です。"
           }
         },
         "becomeHub": {
@@ -7636,7 +7739,13 @@ export const I18N_RESOURCES = {
           "directEnableHint": "ハブを経由せず、ノード同士が直接通信します。失敗してもセットアップは続行します。",
           "directUnsupportedHint": "{{platform}} ではダイレクト接続を利用できません。通信はハブ経由になります。",
           "insecureLocal": "このマシンで http:// のハブを許可する",
-          "insecureLocalHint": "開発・テスト用途のみです。"
+          "insecureLocalHint": "開発・テスト用途のみです。",
+          "relayPublicUrl": "中継の公開アドレス",
+          "relayPublicUrlHint": "外部から到達できる https アドレス（例: https://relay.example.com）。接続するすべてのノードから到達できる必要があります。",
+          "relayPassword": "接続パスワード",
+          "relayPasswordHint": "テナントが本中継に接続する際に必要です。空欄なら誰でも接続できます。",
+          "relayAlsoNode": "本機をノードとしても使う",
+          "relayAlsoNodeHint": "中継と同時に Web とアカウントを保持します。オフにすると中継のみになります。"
         },
         "precheck": {
           "button": "アドレスを確認",
@@ -7648,7 +7757,8 @@ export const I18N_RESOURCES = {
         "submit": {
           "becomeHub": "アカウントを作成して再起動",
           "joinHub": "参加して再起動",
-          "pending": "処理中…"
+          "pending": "処理中…",
+          "becomeRelay": "保存して再起動"
         },
         "result": {
           "title": "セットアップ完了",
@@ -7663,7 +7773,12 @@ export const I18N_RESOURCES = {
             "enabled": "有効",
             "skipped": "スキップ",
             "failed": "失敗（{{error}}）——通信はハブ経由になります。後で再試行できます"
-          }
+          },
+          "relayDescription": "中継を設定し、tmex を再起動しています。再起動後は Web が利用できません。",
+          "relayNodeDescription": "中継を設定し、中継兼ノードとして tmex を再起動しています。",
+          "relayPublicUrl": "中継の公開アドレス",
+          "relayPassword": "接続パスワード",
+          "relayWebGone": "まもなく Web が利用できなくなります。以降は本機のターミナルで管理します:"
         },
         "restart": {
           "waiting": "tmex の復帰を待っています… {{seconds}} 秒",
@@ -7672,7 +7787,8 @@ export const I18N_RESOURCES = {
         },
         "toast": {
           "hubCreated": "ハブを作成しました。tmex が再起動しています",
-          "joined": "ハブに参加しました。tmex が再起動しています"
+          "joined": "ハブに参加しました。tmex が再起動しています",
+          "relayCreated": "中継を設定しました。tmex を再起動しています"
         },
         "errors": {
           "not_standalone": "このマシンは設定済みです。",
@@ -7693,7 +7809,23 @@ export const I18N_RESOURCES = {
           "direct_download_failed": "ダイレクト接続アドオンをダウンロードできませんでした。",
           "direct_failed": "ダイレクト接続を有効にできませんでした。",
           "withDetail": "{{base}}（{{detail}}）",
-          "unknown": "エラーが発生しました：{{message}}"
+          "unknown": "エラーが発生しました：{{message}}",
+          "invalid_role": "役割が不正です。"
+        },
+        "becomeRelay": {
+          "title": "本機を中継にする",
+          "description": "中継の公開アドレスと接続パスワードを設定し、中継として tmex を再起動します。",
+          "pureNotice": "中継のみの構成では再起動後に Web が提供されず、コマンドラインで管理します。"
+        },
+        "password": {
+          "generate": "生成",
+          "show": "パスワードを表示",
+          "hide": "パスワードを非表示"
+        },
+        "pureRelayConfirm": {
+          "title": "中継のみに切り替えますか？",
+          "description": "再起動後、本機は Web を提供せず、中継はコマンドラインでのみ管理します。Web から他の役割に戻すこともできません。",
+          "confirm": "続行"
         }
       },
       "uplinkOffline": "上位リンクに接続していません。復帰するまで参加コードは作成できません。"

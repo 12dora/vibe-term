@@ -1,18 +1,27 @@
 // 跨重启的「下一步开哪条向导」记号。
 //
 // 退出 mesh 会重写 env 并重启网关，页面必须整页刷新（鉴权模式变了，SPA 内部状态保不住）。
-// 刷新之后组件树全新，只能靠 sessionStorage 把意图带过去。这里**只放路径名**，不放任何秘密。
+// 刷新之后组件树全新，只能靠 sessionStorage 把意图带过去。这里**只放路径名与目标角色**，
+// 不放任何秘密。
 //
 // 记号带写入时间并且**有保质期**：退出请求可能以「不确定」的方式失败（网关先应用了改动才
 // 崩掉／代理超时），这时记号既不能立刻清掉（重启真的发生了就该接力），也不能永远留着
 // ——否则几天后一次无关的「退出 mesh」会把这条陈旧记号消费掉，莫名其妙地打开旧向导。
+
+import type { SetupRelayRole } from '@tmex/api-client/local/types';
 
 export const SETUP_INTENT_KEY = 'tmex.setup.intent';
 
 /** 记号保质期：一次退出 + 重启的量级是几十秒，10 分钟已经足够宽松。 */
 export const SETUP_INTENT_TTL_MS = 10 * 60 * 1000;
 
-export type SetupIntent = 'become-hub' | 'join-hub';
+export type SetupIntent = 'become-hub' | 'join-hub' | 'become-relay';
+
+/** `become-relay` 还要记住目标是纯中继还是中继兼节点，重启后表单直接预选。 */
+export interface SetupIntentRecord {
+  path: SetupIntent;
+  role?: SetupRelayRole;
+}
 
 export interface IntentStorage {
   getItem(key: string): string | null;
@@ -20,9 +29,8 @@ export interface IntentStorage {
   removeItem(key: string): void;
 }
 
-/** 落盘格式：路径 + 写入时刻。 */
-interface StoredIntent {
-  path: SetupIntent;
+/** 落盘格式：路径 + 写入时刻（+ 可选目标角色）。老记录没有 `role`，照样能读。 */
+interface StoredIntent extends SetupIntentRecord {
   at: number;
 }
 
@@ -36,7 +44,11 @@ export function browserIntentStorage(): IntentStorage | null {
 }
 
 function isSetupIntent(value: unknown): value is SetupIntent {
-  return value === 'become-hub' || value === 'join-hub';
+  return value === 'become-hub' || value === 'join-hub' || value === 'become-relay';
+}
+
+function isRelayRole(value: unknown): value is SetupRelayRole {
+  return value === 'relay' || value === 'relay,node';
 }
 
 function parseStored(raw: string | null): StoredIntent | null {
@@ -49,18 +61,18 @@ function parseStored(raw: string | null): StoredIntent | null {
     return null;
   }
   if (!parsed || typeof parsed !== 'object') return null;
-  const { path, at } = parsed as { path?: unknown; at?: unknown };
+  const { path, at, role } = parsed as { path?: unknown; at?: unknown; role?: unknown };
   if (!isSetupIntent(path) || typeof at !== 'number' || !Number.isFinite(at)) return null;
-  return { path, at };
+  return isRelayRole(role) ? { path, at, role } : { path, at };
 }
 
 export function writeSetupIntent(
-  intent: SetupIntent,
+  intent: SetupIntentRecord,
   storage: IntentStorage | null = browserIntentStorage(),
   now: number = Date.now()
 ): void {
   try {
-    const record: StoredIntent = { path: intent, at: now };
+    const record: StoredIntent = { ...intent, at: now };
     storage?.setItem(SETUP_INTENT_KEY, JSON.stringify(record));
   } catch {
     // 写不进去只意味着重启后要用户自己点一次路径，不值得打断退出流程。
@@ -79,7 +91,7 @@ export function clearSetupIntent(storage: IntentStorage | null = browserIntentSt
 export function takeSetupIntent(
   storage: IntentStorage | null = browserIntentStorage(),
   now: number = Date.now()
-): SetupIntent | null {
+): SetupIntentRecord | null {
   let raw: string | null = null;
   try {
     raw = storage?.getItem(SETUP_INTENT_KEY) ?? null;
@@ -92,5 +104,6 @@ export function takeSetupIntent(
   // 时钟回拨（at 在未来）同样不可信，按过期处理。
   const age = now - stored.at;
   if (age < 0 || age > SETUP_INTENT_TTL_MS) return null;
-  return stored.path;
+  const { at: _at, ...record } = stored;
+  return record;
 }

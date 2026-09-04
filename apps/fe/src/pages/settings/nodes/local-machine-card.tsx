@@ -28,17 +28,19 @@ import {
   useDirectMutations,
 } from './direct-section';
 import { DomainAccessRow, domainAccessApi, readDomainAccess } from './domain-access-row';
-import type { SetupIntent } from './membership/intent';
+import type { SetupIntentRecord } from './membership/intent';
 import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
 import { ROLE_LABEL_KEY, classifyRoleChange } from './membership/role-transition';
-import { useLeaveMesh } from './membership/use-leave-mesh';
+import { type LeaveMesh, useLeaveMesh } from './membership/use-leave-mesh';
 import {
   type RestartGateway,
   type RestartState,
   useRestartGateway,
 } from './restart/use-restart-now';
+import { PureRelayConfirm } from './setup/pure-relay-confirm';
 import type { LocalUplinkController } from './uplink/local-uplink-controller';
 import { LocalUplinkTabs } from './uplink/local-uplink-tabs';
+import type { UplinkTab } from './uplink/uplink-tab-preference';
 
 export interface LocalMachineCardProps {
   mode: AuthModeResponse | null;
@@ -52,22 +54,33 @@ export interface LocalMachineCardProps {
   /** 直连状态变更 / 重启完成后重新拉 `local-status`。 */
   onRefresh: () => void;
   /** standalone 下切角色不调任何接口，只让上层把对应的向导路径展开。 */
-  onSelectSetupPath?: (path: SetupIntent) => void;
-  /** standalone 下已选中的 Hub 向导路径。 */
-  wizardPath?: SetupIntent | null;
+  onSelectSetupPath?: (intent: SetupIntentRecord) => void;
+  /** standalone 下已选中的向导路径。 */
+  wizardPath?: SetupIntentRecord['path'] | null;
   /** standalone 下「本机作为中继」表单的插槽。 */
   relaySetup?: ReactNode;
+  /** 打开时强制切到的上级链路 tab（角色下拉选中继、跨重启记号）。 */
+  requestedUplinkTab?: UplinkTab | null;
+  /** 中继角色下「接入本机中继」的提示。 */
+  selfRelayFollowUp?: boolean;
 }
 
-/** 后端只认这三个角色串（`packages/app/src/lib/roles.ts`）。 */
-const SELECTABLE_ROLES: LocalRole[] = ['standalone', 'node', 'hub,node'];
+/** 后端认的五个角色串（`packages/shared/src/roles.ts`）。 */
+export const SELECTABLE_ROLES: LocalRole[] = [
+  'standalone',
+  'node',
+  'hub,node',
+  'relay,node',
+  'relay',
+];
 
 /** 「更换 Hub」：角色不变，退出后直接展开加入向导。 */
 const CHANGE_HUB_REQUEST: LeaveDialogRequest = {
   kind: 'change-hub',
   from: 'node',
   target: 'node',
-  intent: 'join-hub',
+  targetRole: 'standalone',
+  intent: { path: 'join-hub' },
 };
 
 /**
@@ -77,27 +90,46 @@ const CHANGE_HUB_REQUEST: LeaveDialogRequest = {
 function useRoleSwitch(
   status: LocalStatusResponse | null,
   busy: boolean,
-  onSelectSetupPath?: (path: SetupIntent) => void
+  onSelectSetupPath?: (intent: SetupIntentRecord) => void
 ) {
   const [request, setRequest] = useState<LeaveDialogRequest | null>(null);
+  // 纯中继重启后网页就没了，网页里也改不回来：展开表单之前先确认一次。
+  const [pendingPureRelay, setPendingPureRelay] = useState<SetupIntentRecord | null>(null);
   const select = useCallback(
     (next: LocalRole) => {
       if (!status || busy) return;
       const transition = classifyRoleChange(status.role, next);
-      if (transition.kind === 'none') return;
+      if (transition.kind === 'none' || transition.kind === 'unsupported') return;
       if (transition.kind === 'setup') {
-        onSelectSetupPath?.(transition.path);
+        if (transition.intent.role === 'relay') setPendingPureRelay(transition.intent);
+        else onSelectSetupPath?.(transition.intent);
         return;
       }
       setRequest(
         transition.kind === 'leave'
-          ? { kind: 'leave', from: transition.from, target: next, intent: null }
-          : { kind: 'switch', from: transition.from, target: next, intent: transition.path }
+          ? {
+              kind: 'leave',
+              from: transition.from,
+              target: next,
+              targetRole: transition.targetRole,
+              intent: null,
+            }
+          : {
+              kind: 'switch',
+              from: transition.from,
+              target: next,
+              targetRole: transition.targetRole,
+              intent: transition.intent,
+            }
       );
     },
     [busy, onSelectSetupPath, status]
   );
-  return { request, setRequest, select };
+  const confirmPureRelay = useCallback(() => {
+    if (pendingPureRelay) onSelectSetupPath?.(pendingPureRelay);
+    setPendingPureRelay(null);
+  }, [onSelectSetupPath, pendingPureRelay]);
+  return { request, setRequest, select, pendingPureRelay, setPendingPureRelay, confirmPureRelay };
 }
 
 export function LocalMachineCard({
@@ -112,6 +144,8 @@ export function LocalMachineCard({
   onSelectSetupPath,
   wizardPath = null,
   relaySetup = null,
+  requestedUplinkTab = null,
+  selfRelayFollowUp = false,
 }: LocalMachineCardProps) {
   const { t } = useTranslation();
   const meshEnabled = mode?.mode === 'mesh';
@@ -187,6 +221,8 @@ export function LocalMachineCard({
               onChangeHub={() => role.setRequest(CHANGE_HUB_REQUEST)}
               wizardPath={wizardPath}
               relaySetup={relaySetup}
+              requestedTab={requestedUplinkTab}
+              selfRelayFollowUp={selfRelayFollowUp}
             />
 
             <DirectSection
@@ -233,20 +269,46 @@ export function LocalMachineCard({
         onCancel={mutations.cancelRemove}
       />
 
+      <RoleDialogs role={role} leave={leave} />
+      {leave.dialog}
+      {uplink.prompt.dialog}
+    </Card>
+  );
+}
+
+/** 角色切换牵出的两个确认框：纯中继的事前确认，与退出 / 切换的进度对话框。 */
+function RoleDialogs({
+  role,
+  leave,
+}: {
+  role: ReturnType<typeof useRoleSwitch>;
+  leave: LeaveMesh;
+}) {
+  return (
+    <>
+      <PureRelayConfirm
+        open={role.pendingPureRelay !== null}
+        onConfirm={role.confirmPureRelay}
+        onCancel={() => role.setPendingPureRelay(null)}
+      />
       <LeaveDialog
         request={role.request}
         leave={leave}
         onConfirm={() => {
-          if (role.request) leave.run({ from: role.request.from, intent: role.request.intent });
+          if (role.request) {
+            leave.run({
+              from: role.request.from,
+              targetRole: role.request.targetRole,
+              intent: role.request.intent,
+            });
+          }
         }}
         onCancel={() => {
           role.setRequest(null);
           leave.reset();
         }}
       />
-      {leave.dialog}
-      {uplink.prompt.dialog}
-    </Card>
+    </>
   );
 }
 

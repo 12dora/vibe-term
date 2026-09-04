@@ -30,6 +30,10 @@ export interface LocalUplinkTabsProps {
   wizardPath: SetupIntent | null;
   /** standalone 下「本机作为中继」表单的插槽。 */
   relaySetup?: ReactNode;
+  /** 上层要求切到的 tab（角色下拉选了中继、跨重启记号）；变一次生效一次。 */
+  requestedTab?: UplinkTab | null;
+  /** 刚设置完中继兼节点：中继 tab 上把「接入本机中继」顶到眼前。 */
+  selfRelayFollowUp?: boolean;
 }
 
 export function LocalUplinkTabs({
@@ -41,6 +45,8 @@ export function LocalUplinkTabs({
   onChangeHub,
   wizardPath,
   relaySetup,
+  requestedTab = null,
+  selfRelayFollowUp = false,
 }: LocalUplinkTabsProps) {
   const { t } = useTranslation();
   const { relay } = uplink;
@@ -52,6 +58,12 @@ export function LocalUplinkTabs({
   if (seenMode !== uplinkMode) {
     setSeenMode(uplinkMode);
     setChosen(null);
+  }
+  // 上层的请求只在「刚提出来」那一刻覆盖选择，之后用户照样能自己切回去。
+  const [seenRequest, setSeenRequest] = useState(requestedTab);
+  if (seenRequest !== requestedTab) {
+    setSeenRequest(requestedTab);
+    if (requestedTab) setChosen(requestedTab);
   }
   const active = chosen ?? deriveUplinkTab(uplinkMode, remembered);
 
@@ -94,6 +106,9 @@ export function LocalUplinkTabs({
             relay={relay}
             actions={uplink.relayActions}
             standalone={standalone}
+            localRole={status.role}
+            relayService={status.relay}
+            selfRelayFollowUp={selfRelayFollowUp}
             relaySetup={relaySetup}
           />
         </TabsContent>

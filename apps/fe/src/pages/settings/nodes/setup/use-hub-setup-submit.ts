@@ -19,6 +19,11 @@ export interface HubSetupSubmitOptions<T> {
   successMessage: string;
   /** 重启完成后的动作，默认整页跳登录页。 */
   onRestarted: () => void;
+  /**
+   * 提交成功后是否等网关回来。纯中继重启后没有网页可回，等下去只会等到超时告警，
+   * 因此那条路径直接不等（默认等）。
+   */
+  waitForRestart?: boolean;
 }
 
 export interface HubSetupSubmitHandle<T> {
@@ -38,6 +43,7 @@ export function useHubSetupSubmit<T>({
   submit,
   successMessage,
   onRestarted,
+  waitForRestart = true,
 }: HubSetupSubmitOptions<T>): HubSetupSubmitHandle<T> {
   const { t } = useTranslation();
   const [showErrors, setShowErrors] = useState(false);
@@ -60,7 +66,7 @@ export function useHubSetupSubmit<T>({
       const outcome = await submit();
       setResult(outcome.result);
       toast.success(successMessage);
-      waiter.start(outcome.previousStartedAt);
+      if (waitForRestart) waiter.start(outcome.previousStartedAt);
     } catch (error) {
       const message = describeSetupError(t, error);
       setSubmitError(message);

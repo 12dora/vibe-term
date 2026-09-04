@@ -1,17 +1,34 @@
 import { describe, expect, test } from 'bun:test';
 import {
   type BecomeHubValues,
+  type BecomeRelayValues,
   type JoinHubValues,
   classifyHubUrl,
+  classifyRelayUrl,
   defaultHubPublicUrl,
   defaultNodeName,
+  defaultRelayPublicUrl,
   hasErrors,
   isValidJoinToken,
   normalizeToken,
   setupErrorKey,
   validateBecomeHub,
+  validateBecomeRelay,
   validateJoinHub,
 } from './validation';
+
+function relayValues(overrides: Partial<BecomeRelayValues> = {}): BecomeRelayValues {
+  return {
+    relayPublicUrl: 'https://relay.example.com',
+    relayPassword: 'generated-password',
+    alsoNode: true,
+    username: 'alice',
+    password: 'hunter2hunter2',
+    confirmPassword: 'hunter2hunter2',
+    directEnable: true,
+    ...overrides,
+  };
+}
 
 function becomeValues(overrides: Partial<BecomeHubValues> = {}): BecomeHubValues {
   return {
@@ -224,5 +241,82 @@ describe('isValidJoinToken', () => {
     expect(isValidJoinToken(`.${fingerprint}`)).toBe(false);
     expect(isValidJoinToken(`${base64url}.`)).toBe(false);
     expect(isValidJoinToken(`${base64url}.${'g'.repeat(64)}`)).toBe(false);
+  });
+});
+
+describe('classifyRelayUrl', () => {
+  test('https 永远可用，非法串一律 invalid', () => {
+    expect(classifyRelayUrl('https://relay.example.com', 'production')).toBe('ok');
+    expect(classifyRelayUrl('  https://relay.example.com/base/  ', 'production')).toBe('ok');
+    expect(classifyRelayUrl('', 'production')).toBe('invalid');
+    expect(classifyRelayUrl('relay.example.com', 'production')).toBe('invalid');
+    expect(classifyRelayUrl('ftp://relay.example.com', 'production')).toBe('invalid');
+  });
+
+  test('回环 http 只在非 production 下放行', () => {
+    expect(classifyRelayUrl('http://127.0.0.1:9663', 'development')).toBe('insecure');
+    expect(classifyRelayUrl('http://localhost:9663', 'test')).toBe('insecure');
+    expect(classifyRelayUrl('http://127.0.0.1:9663', 'production')).toBe('invalid');
+  });
+
+  test('非回环 http 任何环境都不行', () => {
+    expect(classifyRelayUrl('http://relay.example.com', 'development')).toBe('invalid');
+  });
+});
+
+describe('validateBecomeRelay', () => {
+  test('合法输入无错', () => {
+    expect(validateBecomeRelay(relayValues(), 'production')).toEqual({});
+  });
+
+  test('地址非法时报 invalid_url', () => {
+    expect(validateBecomeRelay(relayValues({ relayPublicUrl: 'nope' }), 'production')).toEqual({
+      relayPublicUrl: 'nodes.setup.errors.invalid_url',
+    });
+  });
+
+  test('接入口令留空不是错误：等于任何人都能接入', () => {
+    expect(validateBecomeRelay(relayValues({ relayPassword: '' }), 'production')).toEqual({});
+  });
+
+  test('中继兼节点：账号三件与 become-hub 同规则', () => {
+    expect(
+      validateBecomeRelay(
+        relayValues({ username: 'bad name', password: 'short', confirmPassword: 'other' }),
+        'production'
+      )
+    ).toEqual({
+      username: 'nodes.setup.errors.invalid_username',
+      password: 'nodes.setup.errors.weak_password',
+      confirmPassword: 'nodes.setup.errors.password_mismatch',
+    });
+  });
+
+  test('纯中继不建账号：账号字段全空也不报错', () => {
+    expect(
+      validateBecomeRelay(
+        relayValues({ alsoNode: false, username: '', password: '', confirmPassword: '' }),
+        'production'
+      )
+    ).toEqual({});
+  });
+});
+
+describe('defaultRelayPublicUrl', () => {
+  test('只有当前地址本身合法时才预填', () => {
+    expect(defaultRelayPublicUrl('https://relay.example.com', 'production')).toBe(
+      'https://relay.example.com'
+    );
+    expect(defaultRelayPublicUrl('http://localhost:19663', 'production')).toBe('');
+    expect(defaultRelayPublicUrl('http://localhost:19663', 'development')).toBe(
+      'http://localhost:19663'
+    );
+    expect(defaultRelayPublicUrl(null, 'production')).toBe('');
+  });
+});
+
+describe('setupErrorKey 认识中继角色错误码', () => {
+  test('invalid_role', () => {
+    expect(setupErrorKey('invalid_role')).toBe('nodes.setup.errors.invalid_role');
   });
 });

@@ -3,6 +3,7 @@
 // 对应 CLI 的 `init --role hub,node` + `hub user add`（见 docs/hub/2026082800-hub-node-operations.md
 // 「首次搭 hub」）。HTTPS 由反代 / Cloudflare Tunnel 提供，本批次不内建。
 
+import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import { SetupApi } from '@tmex/api-client/local/setup-api';
 import type {
@@ -182,13 +183,10 @@ export function BecomeHubForm({
             hint={t('nodes.setup.fields.passwordHint')}
             error={shown.password && t(shown.password)}
           >
-            <Input
+            <PasswordFieldWithGenerate
               id="setup-password"
-              type="password"
               value={values.password}
-              onChange={(event) => update({ password: event.target.value })}
-              autoComplete="new-password"
-              className="min-h-10"
+              onChange={(next) => update({ password: next })}
             />
           </FormField>
 

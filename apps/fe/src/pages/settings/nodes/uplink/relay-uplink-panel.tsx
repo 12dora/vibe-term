@@ -5,10 +5,13 @@
 // 摆一堆点了就报「未接入中继」的按钮。
 
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
+import type { LocalRelayStatus, LocalRole } from '@tmex/api-client/local/types';
 import { Button } from '@tmex/ui/button';
 import { ShieldAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { CopyableValue, Row } from '../copy-feedback';
+import { isRelayRole } from '../membership/role-transition';
 import { RelayStrip, relayLabel } from '../relay/relay-strip';
 import type { RelayActionsController } from '../relay/use-relay-actions';
 import { kickedRelays, reauthTarget } from './relay-targets';
@@ -17,7 +20,13 @@ export interface RelayUplinkPanelProps {
   relay: UseMeshRelayResult;
   actions: RelayActionsController;
   standalone: boolean;
-  /** standalone 下的「本机作为中继 / 用密码加入」表单插槽。 */
+  /** 本机角色：含 relay 时先摆一行本机中继的运营快照。 */
+  localRole?: LocalRole;
+  /** `/api/local/status` 里的本机中继快照；非中继角色为 null。 */
+  relayService?: LocalRelayStatus | null;
+  /** 刚设置完中继兼节点：把「接入本机中继」顶到眼前。 */
+  selfRelayFollowUp?: boolean;
+  /** standalone 下的「本机作为中继」表单插槽。 */
   relaySetup?: ReactNode;
 }
 
@@ -25,6 +34,9 @@ export function RelayUplinkPanel({
   relay,
   actions,
   standalone,
+  localRole,
+  relayService = null,
+  selfRelayFollowUp = false,
   relaySetup,
 }: RelayUplinkPanelProps) {
   const { t } = useTranslation();
@@ -36,8 +48,10 @@ export function RelayUplinkPanel({
       </div>
     );
   }
+  const operator = localRole && isRelayRole(localRole) ? relayService : null;
   return (
     <div className="flex flex-col gap-3" data-testid="local-uplink-relay-panel">
+      {operator && <RelayServiceSummary service={operator} />}
       {relay.relayMode ? (
         <>
           <RelayStrip
@@ -50,8 +64,79 @@ export function RelayUplinkPanel({
           {!relay.unsupported && <RelayActionButtons relay={relay} actions={actions} />}
         </>
       ) : (
-        <RelayEntry relay={relay} actions={actions} />
+        <>
+          {operator && relay.mode === 'none' && (
+            <SelfRelayEntry service={operator} actions={actions} highlighted={selfRelayFollowUp} />
+          )}
+          <RelayEntry relay={relay} actions={actions} />
+        </>
       )}
+    </div>
+  );
+}
+
+/** 本机自己就是中继：公网地址、租户 / 在线 / 节点计数、口令是否设置。 */
+function RelayServiceSummary({ service }: { service: LocalRelayStatus }) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="local-relay-service">
+      <Row label={t('nodes.machine.relayServiceAddress')}>
+        {service.publicUrl ? (
+          <CopyableValue value={service.publicUrl} testId="local-relay-service-url" />
+        ) : (
+          <span className="text-xs text-muted-foreground" data-testid="local-relay-service-unset">
+            {t('nodes.machine.localAddressUnset')}
+          </span>
+        )}
+      </Row>
+      <Row label={t('nodes.machine.relayServiceStats')}>
+        <span className="text-xs" data-testid="local-relay-service-stats">
+          {t('nodes.machine.relayServiceCounts', {
+            tenants: service.tenantCount,
+            online: service.nodesOnline,
+            nodes: service.currentNodes,
+          })}
+        </span>
+      </Row>
+      <Row label={t('relay.admin.password.title')}>
+        <span className="text-xs" data-testid="local-relay-service-password">
+          {t(service.hasPassword ? 'relay.admin.password.set' : 'relay.admin.password.unset')}
+        </span>
+      </Row>
+    </div>
+  );
+}
+
+/** 本机是中继但还没以租户身份接上自己：给一个预填好地址的接入入口。 */
+function SelfRelayEntry({
+  service,
+  actions,
+  highlighted,
+}: {
+  service: LocalRelayStatus;
+  actions: RelayActionsController;
+  highlighted: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className={`flex flex-col gap-2 rounded-lg p-2 text-xs ${
+        highlighted ? 'bg-primary/10 text-primary' : 'bg-muted/60 text-muted-foreground'
+      }`}
+      data-testid="nodes-relay-self-entry"
+    >
+      <span>{t('nodes.machine.relayServiceEnrollHint')}</span>
+      <span>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          onClick={() => actions.openEnroll('enroll', service.publicUrl ?? '')}
+          data-testid="nodes-relay-enroll-self"
+        >
+          {t('nodes.machine.relayServiceEnroll')}
+        </Button>
+      </span>
     </div>
   );
 }

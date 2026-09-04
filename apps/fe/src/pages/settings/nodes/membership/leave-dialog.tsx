@@ -4,7 +4,7 @@
 // 当前会话立刻失效。因此确认文案必须把后果讲全，进度也留在同一个对话框里——退出期间
 // 页面其它部分已经没有意义了。
 
-import type { LocalRole } from '@tmex/api-client/local/types';
+import type { LocalLeaveTargetRole, LocalRole } from '@tmex/api-client/local/types';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,7 +17,7 @@ import {
 } from '@tmex/ui/alert-dialog';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { SetupIntent } from './intent';
+import type { SetupIntentRecord } from './intent';
 import { type MeshRole, ROLE_LABEL_KEY } from './role-transition';
 import type { LeaveMesh } from './use-leave-mesh';
 
@@ -28,8 +28,10 @@ export interface LeaveDialogRequest {
   from: MeshRole;
   /** 目标角色，用于「切换到 X」的文案。 */
   target: LocalRole;
+  /** 退到哪：`relay` 只清 mesh 成员身份，中继运营状态保留。 */
+  targetRole: LocalLeaveTargetRole;
   /** 重启后要展开的向导路径；纯粹退出为 null。 */
-  intent: SetupIntent | null;
+  intent: SetupIntentRecord | null;
 }
 
 const TITLE_KEY: Record<LeaveDialogKind, string> = {
@@ -38,13 +40,26 @@ const TITLE_KEY: Record<LeaveDialogKind, string> = {
   'change-hub': 'nodes.membership.changeHubConfirm.title',
 };
 
-// 后果按角色分：纯 node 关心「旧 hub 上那条记录怎么办」，hub 兼节点关心「下级节点会掉线」。
-// 混着讲的话，对 hub 来说是纯粹的谎话（本机就是 hub，没有别的 hub 留记录）。
-const CONSEQUENCES_KEY: Record<MeshRole, string> = {
-  node: 'nodes.membership.consequencesNode',
-  'hub,node': 'nodes.membership.consequencesHub',
-  'relay,node': 'nodes.membership.consequencesNode',
-};
+/** 只退 mesh、保留中继运营状态：标题与说明都与「变回独立运行」完全不同。 */
+export function leaveDialogTitleKey(request: LeaveDialogRequest): string {
+  if (request.kind === 'leave' && request.targetRole === 'relay') {
+    return 'nodes.membership.leaveToRelayConfirm.title';
+  }
+  return TITLE_KEY[request.kind];
+}
+
+// 后果按角色分：纯 node 关心「旧 hub 上那条记录怎么办」，hub 兼节点关心「下级节点会掉线」，
+// 中继兼节点还要讲清中继服务与租户是留是删。混着讲对哪一方都是谎话。
+export function leaveDialogConsequencesKey(request: LeaveDialogRequest): string {
+  if (request.from === 'relay,node') {
+    return request.targetRole === 'relay'
+      ? 'nodes.membership.consequencesRelayKeepService'
+      : 'nodes.membership.consequencesRelayReset';
+  }
+  return request.from === 'hub,node'
+    ? 'nodes.membership.consequencesHub'
+    : 'nodes.membership.consequencesNode';
+}
 
 export function LeaveDialog({
   request,
@@ -74,16 +89,12 @@ export function LeaveDialog({
     >
       <AlertDialogContent data-testid="membership-leave-dialog">
         <AlertDialogHeader>
-          <AlertDialogTitle>{t(TITLE_KEY[request.kind])}</AlertDialogTitle>
+          <AlertDialogTitle>{t(leaveDialogTitleKey(request))}</AlertDialogTitle>
           <AlertDialogDescription>
             <span className="block">
-              {request.kind === 'switch'
-                ? t('nodes.membership.switchConfirm.description', {
-                    role: t(ROLE_LABEL_KEY[request.target]),
-                  })
-                : t(`nodes.membership.${camel(request.kind)}Confirm.description`)}
+              {t(descriptionKey(request), descriptionOptions(request, t))}
             </span>
-            <span className="mt-2 block">{t(CONSEQUENCES_KEY[request.from])}</span>
+            <span className="mt-2 block">{t(leaveDialogConsequencesKey(request))}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -185,6 +196,17 @@ function LeaveProgress({ leave }: { leave: LeaveMesh }) {
   );
 }
 
-function camel(kind: LeaveDialogKind): string {
-  return kind === 'change-hub' ? 'changeHub' : kind;
+function descriptionKey(request: LeaveDialogRequest): string {
+  if (request.kind === 'leave' && request.targetRole === 'relay') {
+    return 'nodes.membership.leaveToRelayConfirm.description';
+  }
+  const camel = request.kind === 'change-hub' ? 'changeHub' : request.kind;
+  return `nodes.membership.${camel}Confirm.description`;
+}
+
+function descriptionOptions(
+  request: LeaveDialogRequest,
+  t: (key: string) => string
+): Record<string, string> | undefined {
+  return request.kind === 'switch' ? { role: t(ROLE_LABEL_KEY[request.target]) } : undefined;
 }

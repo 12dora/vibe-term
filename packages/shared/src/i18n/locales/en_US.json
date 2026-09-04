@@ -1803,7 +1803,7 @@
         "roleStandalone": "Standalone",
         "roleNode": "Node",
         "roleHub": "Hub and node",
-        "roleRelay": "Relay",
+        "roleRelay": "Relay only (no web UI)",
         "roleRelayNode": "Relay and node",
         "localAddress": "This Machine's Address",
         "localAddressUnset": "Not set",
@@ -1857,7 +1857,12 @@
           }
         },
         "accountSecurity": "Account security",
-        "loginRequired": "Sign in to see this machine's status."
+        "loginRequired": "Sign in to see this machine's status.",
+        "relayServiceAddress": "Relay Public Address",
+        "relayServiceStats": "Relay Usage",
+        "relayServiceCounts": "{{tenants}} tenants · {{online}} online · {{nodes}} nodes",
+        "relayServiceEnroll": "Connect to This Relay",
+        "relayServiceEnrollHint": "This machine has not connected to its own relay yet. The relay password just set must be entered again."
       },
       "membership": {
         "changeHub": "Change hub",
@@ -1894,7 +1899,13 @@
           "setupInProgress": "Another setup change is in progress. Try again in a moment.",
           "envWriteFailed": "Could not write the configuration.",
           "unauthorized": "Sign in first."
-        }
+        },
+        "leaveToRelayConfirm": {
+          "title": "Leave the current mesh?",
+          "description": "This machine leaves its mesh; the relay service and its tenants are kept."
+        },
+        "consequencesRelayKeepService": "This machine's node identity and mesh state are deleted, tmex restarts and the current session ends. The relay service, its tenants and the operator log are kept.",
+        "consequencesRelayReset": "The relay service, its tenants and the operator log are erased and cannot be recovered. This machine's node identity and mesh state are deleted as well, tmex restarts and the current session ends."
       },
       "https": {
         "title": "HTTPS settings",
@@ -2295,6 +2306,10 @@
           "joinHub": {
             "title": "Join an existing hub",
             "description": "This machine becomes a node. You need a join code from the hub."
+          },
+          "becomeRelay": {
+            "title": "Use This Machine as the Relay",
+            "description": "This machine gives nodes a public entry point. A public HTTPS address is required."
           }
         },
         "becomeHub": {
@@ -2325,7 +2340,13 @@
           "directEnableHint": "Lets nodes talk to each other directly instead of through the hub. Setup continues even if this fails.",
           "directUnsupportedHint": "Direct connections are not available on {{platform}}; traffic goes through the hub.",
           "insecureLocal": "Allow an http:// hub on this machine",
-          "insecureLocalHint": "Development and testing only."
+          "insecureLocalHint": "Development and testing only.",
+          "relayPublicUrl": "Relay Public Address",
+          "relayPublicUrlHint": "An externally reachable https address, e.g. https://relay.example.com. Every node that will connect must be able to reach it.",
+          "relayPassword": "Relay Password",
+          "relayPasswordHint": "Tenants must present it to connect; leave empty and anyone can connect.",
+          "relayAlsoNode": "Also Run as a Node",
+          "relayAlsoNodeHint": "Keep the web UI and an account alongside the relay; turn off for a relay-only machine."
         },
         "precheck": {
           "button": "Test address",
@@ -2337,7 +2358,8 @@
         "submit": {
           "becomeHub": "Create account and restart",
           "joinHub": "Join and restart",
-          "pending": "Working…"
+          "pending": "Working…",
+          "becomeRelay": "Save and Restart"
         },
         "result": {
           "title": "Setup complete",
@@ -2352,7 +2374,12 @@
             "enabled": "on",
             "skipped": "skipped",
             "failed": "failed ({{error}}) — traffic goes through the hub; you can retry later"
-          }
+          },
+          "relayDescription": "The relay is configured and tmex is restarting. The web UI is gone after the restart.",
+          "relayNodeDescription": "The relay is configured and tmex is restarting as relay and node.",
+          "relayPublicUrl": "Relay Public Address",
+          "relayPassword": "Relay Password",
+          "relayWebGone": "The web UI is about to become unavailable. Manage the relay from a terminal on this machine:"
         },
         "restart": {
           "waiting": "Waiting for tmex to come back… {{seconds}}s",
@@ -2361,7 +2388,8 @@
         },
         "toast": {
           "hubCreated": "Hub created — tmex is restarting",
-          "joined": "Joined the hub — tmex is restarting"
+          "joined": "Joined the hub — tmex is restarting",
+          "relayCreated": "Relay configured, tmex is restarting"
         },
         "errors": {
           "not_standalone": "This machine is already set up.",
@@ -2382,7 +2410,23 @@
           "direct_download_failed": "Could not download the direct connection add-on.",
           "direct_failed": "Could not enable direct connections.",
           "withDetail": "{{base}} ({{detail}})",
-          "unknown": "Something went wrong: {{message}}"
+          "unknown": "Something went wrong: {{message}}",
+          "invalid_role": "Invalid role."
+        },
+        "becomeRelay": {
+          "title": "Use This Machine as the Relay",
+          "description": "Set the relay public address and password, then restart tmex as a relay.",
+          "pureNotice": "A relay-only machine serves no web UI after the restart and is managed from the command line."
+        },
+        "password": {
+          "generate": "Generate",
+          "show": "Show password",
+          "hide": "Hide password"
+        },
+        "pureRelayConfirm": {
+          "title": "Switch to relay only?",
+          "description": "After the restart this machine serves no web UI, the relay is managed from the command line, and the role cannot be changed back from the web.",
+          "confirm": "Continue"
         }
       },
       "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back."

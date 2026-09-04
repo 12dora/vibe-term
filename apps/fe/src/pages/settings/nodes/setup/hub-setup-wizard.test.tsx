@@ -9,6 +9,7 @@ installWindowStorage();
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { HubSetupWizard } = await import('./hub-setup-wizard');
 const { BecomeHubForm } = await import('./become-hub-form');
+const { BecomeRelayForm } = await import('./become-relay-form');
 const { JoinHubForm } = await import('./join-hub-form');
 const { FormField } = await import('./form-parts');
 
@@ -28,6 +29,7 @@ function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusRespon
     },
     tls: { mode: 'none', listenerRunning: false, tlsPort: null },
     domainAccess: { allowed: true, viaDomain: false, hosts: [] },
+    relay: null,
     ...overrides,
   };
 }
@@ -48,15 +50,27 @@ describe('HubSetupWizard', () => {
     );
   });
 
-  test('standalone 渲染两条路径且默认都未选中，不渲染任何表单', () => {
+  test('standalone 渲染三条路径且默认都未选中，不渲染任何表单', () => {
     const html = renderToStaticMarkup(<HubSetupWizard localStatus={status()} />);
     expect(html).toContain('data-testid="hub-setup-wizard"');
     expect(html).toContain('data-testid="setup-path-become-hub"');
     expect(html).toContain('data-testid="setup-path-join-hub"');
+    expect(html).toContain('data-testid="setup-path-become-relay"');
     expect(html).toContain('data-testid="setup-path-become-hub" data-selected="false"');
     expect(html).toContain('data-testid="setup-path-join-hub" data-selected="false"');
+    expect(html).toContain('data-testid="setup-path-become-relay" data-selected="false"');
     expect(html).not.toContain('data-testid="setup-become-hub-form"');
     expect(html).not.toContain('data-testid="setup-join-hub-form"');
+    expect(html).not.toContain('data-testid="setup-become-relay-form"');
+  });
+
+  test('选中 become-relay 时渲染中继表单', () => {
+    const html = renderToStaticMarkup(
+      <HubSetupWizard localStatus={status()} initialPath="become-relay" origin={null} />
+    );
+    expect(html).toContain('data-testid="setup-become-relay-form"');
+    expect(html).not.toContain('data-testid="setup-become-hub-form"');
+    expect(html).toContain('data-testid="setup-path-become-relay" data-selected="true"');
   });
 
   test('选中 become-hub 时渲染对应表单且该卡片高亮', () => {
@@ -132,6 +146,44 @@ describe('BecomeHubForm', () => {
     expect(html).toContain('data-testid="setup-direct-enable"');
     expect(html).toContain('disabled=""');
     expect(html).toContain('nodes.setup.fields.directUnsupportedHint');
+  });
+});
+
+describe('BecomeRelayForm', () => {
+  test('默认中继兼节点：口令字段带生成按钮，账号三件与直连开关都在', () => {
+    const html = renderToStaticMarkup(<BecomeRelayForm localStatus={status()} origin={null} />);
+    expect(html).toContain('id="setup-relay-public-url"');
+    expect(html).toContain('data-testid="setup-relay-password-generate"');
+    expect(html).toContain('data-testid="setup-relay-also-node"');
+    expect(html).toContain('id="setup-relay-username"');
+    expect(html).toContain('data-testid="setup-relay-account-password-generate"');
+    expect(html).toContain('id="setup-relay-confirm-password"');
+    expect(html).toContain('data-testid="setup-relay-direct-enable"');
+    expect(html).toContain('data-testid="setup-become-relay-submit"');
+    expect(html).not.toContain('data-testid="setup-relay-pure-notice"');
+  });
+
+  test('纯中继：不建账号，改为提示网页会消失', () => {
+    const html = renderToStaticMarkup(
+      <BecomeRelayForm localStatus={status()} origin={null} initialRole="relay" />
+    );
+    expect(html).toContain('data-testid="setup-relay-pure-notice"');
+    expect(html).toContain('nodes.setup.becomeRelay.pureNotice');
+    expect(html).not.toContain('id="setup-relay-username"');
+    expect(html).not.toContain('id="setup-relay-confirm-password"');
+  });
+
+  test('https origin 预填公网地址；production 下 http origin 不预填', () => {
+    expect(
+      renderToStaticMarkup(
+        <BecomeRelayForm localStatus={status()} origin="https://relay.example.com" />
+      )
+    ).toContain('value="https://relay.example.com"');
+    expect(
+      renderToStaticMarkup(
+        <BecomeRelayForm localStatus={status()} origin="http://localhost:19663" />
+      )
+    ).not.toContain('value="http://localhost:19663"');
   });
 });
 
