@@ -69,6 +69,15 @@ describe('RelayTenantApi 状态', () => {
     expect(status.quota).toBeNull();
   });
 
+  test('switchRelay 走 POST /api/mesh/relay/switch', async () => {
+    const { api, calls } = recorder([ok({ mode: 'relay', tenantId: 'ab'.repeat(16), relays: [] })]);
+    const status = await api.switchRelay('https://b.example');
+    expect(calls[0].url).toBe('/api/mesh/relay/switch');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(bodyOf(calls[0])).toEqual({ url: 'https://b.example' });
+    expect(status.mode).toBe('relay');
+  });
+
   test('normalizeRelayStatus 对空响应给出 none 模式', () => {
     expect(normalizeRelayStatus(null).mode).toBe('none');
     expect(normalizeRelayStatus({ reauthRequired: true }).reauthRequired).toBe(true);
@@ -100,7 +109,27 @@ describe('RelayTenantApi 状态', () => {
     expect(normalizeRelayStatus({ quota }).quota).toEqual({ ...quota, usage: null });
     expect(
       normalizeRelayStatus({
-        relays: [{ url: 'https://r.example', online: true, lastError: 'connect-failed' }],
+        quota: {
+          ...quota,
+          usage: {
+            currentNodes: 1,
+            currentStreams: 0,
+            bytesInPerSec: 2,
+            bytesOutPerSec: 1,
+            sampledAt: 9,
+          },
+        },
+      }).quota?.usage
+    ).toEqual({
+      currentNodes: 1,
+      currentStreams: 0,
+      bytesInPerSec: 2,
+      bytesOutPerSec: 1,
+      sampledAt: 9,
+    });
+    expect(
+      normalizeRelayStatus({
+        relays: [{ url: 'https://r.example', online: true, lastError: 'connect-failed' } as never],
       }).relays[0].lastError
     ).toBeNull();
     expect(

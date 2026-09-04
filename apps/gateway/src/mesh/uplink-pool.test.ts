@@ -677,6 +677,23 @@ describe('UplinkPool', () => {
     expect(standby?.stopped).toBe(true);
   });
 
+  test('promote 成功后清掉该 URL 的 lastError', async () => {
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { failTimes: 3 } },
+    });
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.candidates().find((row) => row.publicUrl === 'https://a.example')?.lastError).toBe(
+      'connect-failed'
+    );
+    await pool.switchTo('https://a.example');
+    const recovered = pool.candidates().find((row) => row.publicUrl === 'https://a.example');
+    expect(recovered?.lastError).toBeNull();
+    expect(recovered?.lastErrorAt).toBeNull();
+  });
+
   test('generation guard drops node.list from a superseded link', async () => {
     const lists: Array<{ url: string; generation: number }> = [];
     const { pool, created } = boot({

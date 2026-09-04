@@ -927,6 +927,7 @@ export class UplinkPool {
     };
     this.emitAttached(this.attached);
     this.emitState(client.state);
+    this.noteSuccess(cand);
     client.sendStatusIfChanged();
     this.syncProbe();
     this.syncRttProbe();
@@ -1421,6 +1422,11 @@ export class UplinkPool {
   private noteFailure(cand: UplinkCandidate, msg: string): void {
     const at = this.scheduler.now();
     this.patchDiag(cand.publicUrl, { lastError: msg, lastErrorAt: at, lastAttemptAt: at });
+  }
+
+  private noteSuccess(cand: UplinkCandidate): void {
+    this.lastConnectError = null;
+    this.patchDiag(cand.publicUrl, { lastError: null, lastErrorAt: null });
   }
 
   private lastErrorOf(cand: UplinkCandidate): string | null {

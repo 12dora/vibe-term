@@ -25,7 +25,7 @@ export interface RelayQuotaRow {
 /** 带宽用量：网关补上 `bandwidthBytesPerSec` 时以它为准，否则取收发里大的那一头。 */
 function bandwidthUsed(usage: RelayQuotaView['usage']): number | null {
   if (!usage) return null;
-  const combined = (usage as { bandwidthBytesPerSec?: number }).bandwidthBytesPerSec;
+  const combined = usage.bandwidthBytesPerSec;
   if (typeof combined === 'number') return combined;
   return Math.max(usage.bytesInPerSec, usage.bytesOutPerSec);
 }

@@ -80,6 +80,7 @@ async function boot(
       attachedHub: () => null,
       reconfigure: async () => {},
       candidates: () => [],
+      switchTo: async () => {},
       ...opts.uplink,
     },
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
@@ -166,6 +167,7 @@ describe('RelayRoutes', () => {
           attached: false,
           rttMs: null,
           lastError: null,
+          lastErrorCode: null,
           lastErrorAt: null,
           kicked: false,
         },
@@ -893,6 +895,133 @@ describe('RelayRoutes', () => {
       });
       expect(res.status).toBe(200);
       expect(calls).toEqual(['http://127.0.0.1:19993/api/relay/enroll']);
+    } finally {
+      b.close();
+    }
+  });
+});
+
+describe('POST /api/mesh/relay/switch', () => {
+  test('切到已配置的另一条中继并记下首选', async () => {
+    const url = canonicalHubUrl(RELAY_URL);
+    const url2 = canonicalHubUrl(RELAY_URL_2);
+    const switched: string[] = [];
+    let live: { state: 'online' | 'offline' } | null = {
+      state: 'online',
+    };
+    let attached = {
+      hubNodeId: null as string | null,
+      publicUrl: url,
+      mode: 'active' as const,
+      writerEpoch: 0,
+      since: 1,
+    };
+    const b = await boot({
+      uplink: {
+        attachedHub: () => attached,
+        liveClient: () => live as never,
+        switchTo: async (target) => {
+          switched.push(target);
+          attached = { ...attached, publicUrl: target };
+          live = { state: 'online' };
+        },
+      },
+    });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const res = await b.call('/api/mesh/relay/switch', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_2 }),
+      });
+      expect(res.status).toBe(200);
+      expect(switched).toEqual([url2]);
+      expect(b.secrets.preferredRelayUrl()).toBe(url2);
+      const body = (await res.json()) as { relays: Array<{ url: string }> };
+      expect(body.relays.map((row) => row.url)).toEqual([url, url2]);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('未配置的地址回 404 RELAY_UNKNOWN', async () => {
+    const b = await boot();
+    try {
+      await configureRelay(b);
+      const res = await b.call('/api/mesh/relay/switch', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_2 }),
+      });
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({ code: 'RELAY_UNKNOWN' });
+    } finally {
+      b.close();
+    }
+  });
+
+  test('已被踢的中继回 409 RELAY_KICKED', async () => {
+    const b = await boot();
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      b.secrets.store.markKicked(canonicalHubUrl(RELAY_URL_2), true);
+      const res = await b.call('/api/mesh/relay/switch', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_2 }),
+      });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: 'RELAY_KICKED' });
+    } finally {
+      b.close();
+    }
+  });
+
+  test('已经挂在目标上时回 409 RELAY_ALREADY_ATTACHED', async () => {
+    const url = canonicalHubUrl(RELAY_URL);
+    const b = await boot({
+      uplink: {
+        attachedHub: () => ({
+          hubNodeId: null,
+          publicUrl: url,
+          mode: 'active',
+          writerEpoch: 0,
+          since: 1,
+        }),
+        liveClient: () => ({ state: 'online', lastConnectError: null }) as never,
+      },
+    });
+    try {
+      await configureRelay(b);
+      const res = await b.call('/api/mesh/relay/switch', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL }),
+      });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: 'RELAY_ALREADY_ATTACHED' });
+    } finally {
+      b.close();
+    }
+  });
+
+  test('切换失败回 502 RELAY_SWITCH_FAILED 并带分类错误', async () => {
+    const b = await boot({
+      uplink: {
+        switchTo: async () => {
+          throw new Error('connect-timeout');
+        },
+      },
+    });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const res = await b.call('/api/mesh/relay/switch', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_2 }),
+      });
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({
+        code: 'RELAY_SWITCH_FAILED',
+        lastError: 'connect-timeout',
+        lastErrorCode: 'connect-timeout',
+      });
+      expect(b.secrets.preferredRelayUrl()).toBeNull();
     } finally {
       b.close();
     }

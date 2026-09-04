@@ -1,7 +1,9 @@
 import { loadavg } from 'node:os';
 import type { LinkSession } from '@tmex/shared/link';
+import type { RelayQuota } from '@tmex/shared/relay';
 import { gatewayEventLoopLag } from '../ws/event-loop-lag';
 import type { RelayMetering, RelayUsageDelta } from './relay-metering';
+import { defaultRelayQuota } from './relay-quota';
 import { type RelayLiveNode, type RelayRegistry, memberKey } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
 import { RELAY_METRICS_HISTORY_LIMIT, RELAY_METRICS_INTERVAL_MS } from './types';
@@ -31,6 +33,7 @@ export type RelayMetricsTotals = {
   bytesOutPerSec: number;
   framesInPerSec: number;
   framesOutPerSec: number;
+  bandwidthBytesPerSec: number;
 };
 
 export type RelayMetricsTenant = {
@@ -49,7 +52,14 @@ export type RelayMetricsTenant = {
     maxNodes: number;
     maxStreams: number;
     bandwidthBytesPerSec: number | null;
-  } | null;
+  };
+  usage: {
+    currentNodes: number;
+    currentStreams: number;
+    bytesInPerSec: number;
+    bytesOutPerSec: number;
+    bandwidthBytesPerSec: number;
+  };
 };
 
 export type RelayMetricsMember = {
@@ -114,6 +124,8 @@ export type RelayMetricsCollectorOptions = {
   eventLoop?: () => { lagMs: number; maxLagMs: number };
   setIntervalFn?: (cb: () => void, ms: number) => ReturnType<typeof setInterval>;
   clearIntervalFn?: (id: ReturnType<typeof setInterval>) => void;
+  quotaFor?: (tenantId: string) => RelayQuota;
+  onSample?: () => void;
 };
 
 type MuxCounters = {
@@ -125,6 +137,12 @@ type MuxCounters = {
   unacked: number;
 };
 
+type TenantByteRates = {
+  bytesInPerSec: number;
+  bytesOutPerSec: number;
+  bandwidthBytesPerSec: number;
+};
+
 type LiveCounters = {
   bytesIn: number;
   bytesOut: number;
@@ -132,7 +150,9 @@ type LiveCounters = {
   framesOut: number;
   membersOnline: number;
   activeStreams: number;
+  admitted: number;
   tenantBytes: Map<string, RelayUsageDelta>;
+  tenantAdmitted: Map<string, number>;
   memberBytes: Map<string, RelayUsageDelta>;
 };
 
@@ -141,7 +161,8 @@ type RateSnapshot = {
   bytesOutPerSec: number;
   framesInPerSec: number;
   framesOutPerSec: number;
-  tenants: Map<string, { bytesInPerSec: number; bytesOutPerSec: number }>;
+  bandwidthBytesPerSec: number;
+  tenants: Map<string, TenantByteRates>;
   members: Map<string, { bytesInPerSec: number; bytesOutPerSec: number }>;
   cpuUtilizationPct: number | null;
 };
@@ -160,6 +181,7 @@ const EMPTY_RATES: RateSnapshot = {
   bytesOutPerSec: 0,
   framesInPerSec: 0,
   framesOutPerSec: 0,
+  bandwidthBytesPerSec: 0,
   tenants: new Map(),
   members: new Map(),
   cpuUtilizationPct: null,
@@ -223,16 +245,38 @@ function aggregateMux(registry: RelayRegistry, retired: MuxCounters): MuxCounter
 function rateMap(
   current: Map<string, RelayUsageDelta>,
   previous: Map<string, RelayUsageDelta>,
+  admitted: Map<string, number>,
+  prevAdmitted: Map<string, number>,
+  elapsedMs: number
+): Map<string, TenantByteRates> {
+  const out = new Map<string, TenantByteRates>();
+  const keys = new Set([...current.keys(), ...admitted.keys()]);
+  for (const key of keys) {
+    const curr = current.get(key);
+    const prev = previous.get(key);
+    out.set(key, {
+      bytesInPerSec: perSec(counterDelta(curr?.bytesIn ?? 0, prev?.bytesIn ?? 0), elapsedMs),
+      bytesOutPerSec: perSec(counterDelta(curr?.bytesOut ?? 0, prev?.bytesOut ?? 0), elapsedMs),
+      bandwidthBytesPerSec: perSec(
+        counterDelta(admitted.get(key) ?? 0, prevAdmitted.get(key) ?? 0),
+        elapsedMs
+      ),
+    });
+  }
+  return out;
+}
+
+function memberRateMap(
+  current: Map<string, RelayUsageDelta>,
+  previous: Map<string, RelayUsageDelta>,
   elapsedMs: number
 ): Map<string, { bytesInPerSec: number; bytesOutPerSec: number }> {
   const out = new Map<string, { bytesInPerSec: number; bytesOutPerSec: number }>();
   for (const [key, curr] of current) {
     const prev = previous.get(key);
-    const prevIn = prev?.bytesIn ?? 0;
-    const prevOut = prev?.bytesOut ?? 0;
     out.set(key, {
-      bytesInPerSec: perSec(counterDelta(curr.bytesIn, prevIn), elapsedMs),
-      bytesOutPerSec: perSec(counterDelta(curr.bytesOut, prevOut), elapsedMs),
+      bytesInPerSec: perSec(counterDelta(curr.bytesIn, prev?.bytesIn ?? 0), elapsedMs),
+      bytesOutPerSec: perSec(counterDelta(curr.bytesOut, prev?.bytesOut ?? 0), elapsedMs),
     });
   }
   return out;
@@ -254,6 +298,8 @@ export class RelayMetricsCollector {
   private readonly eventLoop: () => { lagMs: number; maxLagMs: number };
   private readonly setIntervalFn: (cb: () => void, ms: number) => ReturnType<typeof setInterval>;
   private readonly clearIntervalFn: (id: ReturnType<typeof setInterval>) => void;
+  private readonly quotaFor: (tenantId: string) => RelayQuota;
+  private readonly onSample: (() => void) | undefined;
   private timer: ReturnType<typeof setInterval> | null = null;
   private prevAt = 0;
   private prevCpu: NodeJS.CpuUsage | null = null;
@@ -279,6 +325,9 @@ export class RelayMetricsCollector {
     this.eventLoop = opts.eventLoop ?? (() => gatewayEventLoopLag().snapshot());
     this.setIntervalFn = opts.setIntervalFn ?? ((cb, ms) => setInterval(cb, ms));
     this.clearIntervalFn = opts.clearIntervalFn ?? ((id) => clearInterval(id));
+    this.quotaFor =
+      opts.quotaFor ?? ((tenantId) => this.tenants.get(tenantId)?.quota ?? defaultRelayQuota());
+    this.onSample = opts.onSample;
   }
 
   start(): void {
@@ -310,8 +359,15 @@ export class RelayMetricsCollector {
       bytesOutPerSec: perSec(counterDelta(live.bytesOut, prev?.bytesOut ?? 0), elapsedMs),
       framesInPerSec: perSec(counterDelta(live.framesIn, prev?.framesIn ?? 0), elapsedMs),
       framesOutPerSec: perSec(counterDelta(live.framesOut, prev?.framesOut ?? 0), elapsedMs),
-      tenants: rateMap(live.tenantBytes, prev?.tenantBytes ?? new Map(), elapsedMs),
-      members: rateMap(live.memberBytes, prev?.memberBytes ?? new Map(), elapsedMs),
+      bandwidthBytesPerSec: perSec(counterDelta(live.admitted, prev?.admitted ?? 0), elapsedMs),
+      tenants: rateMap(
+        live.tenantBytes,
+        prev?.tenantBytes ?? new Map(),
+        live.tenantAdmitted,
+        prev?.tenantAdmitted ?? new Map(),
+        elapsedMs
+      ),
+      members: memberRateMap(live.memberBytes, prev?.memberBytes ?? new Map(), elapsedMs),
       cpuUtilizationPct: cpuPct,
     };
     this.prevAt = at;
@@ -333,7 +389,22 @@ export class RelayMetricsCollector {
     };
     this.samples.push(sample);
     while (this.samples.length > this.historyLimit) this.samples.shift();
+    try {
+      this.onSample?.();
+    } catch {
+      /* 用量推送失败不能打断采样 */
+    }
     return sample;
+  }
+
+  tenantRates(tenantId: string): TenantByteRates {
+    return (
+      this.rates.tenants.get(tenantId) ?? {
+        bytesInPerSec: 0,
+        bytesOutPerSec: 0,
+        bandwidthBytesPerSec: 0,
+      }
+    );
   }
 
   snapshot(): RelayMetricsResponse {
@@ -370,10 +441,12 @@ export class RelayMetricsCollector {
     const mux = aggregateMux(this.registry, this.retired);
     const live = this.metering.liveTotalsSnapshot();
     const tenantBytes = new Map<string, RelayUsageDelta>();
+    const tenantAdmitted = new Map<string, number>();
     const memberBytes = new Map<string, RelayUsageDelta>();
     let activeStreams = 0;
     for (const tenant of this.tenants.list()) {
       tenantBytes.set(tenant.id, this.metering.liveTenantSnapshot(tenant.id));
+      tenantAdmitted.set(tenant.id, this.metering.liveAdmittedSnapshot(tenant.id));
       activeStreams += this.registry.streamCount(tenant.id);
       for (const node of this.tenants.listNodes(tenant.id)) {
         memberBytes.set(
@@ -395,7 +468,9 @@ export class RelayMetricsCollector {
       framesOut: mux.framesOut,
       membersOnline: this.registry.onlineCount(),
       activeStreams,
+      admitted: this.metering.liveAdmittedTotalsSnapshot(),
       tenantBytes,
+      tenantAdmitted,
       memberBytes,
     };
   }
@@ -441,6 +516,7 @@ export class RelayMetricsCollector {
       bytesOutPerSec: this.rates.bytesOutPerSec,
       framesInPerSec: this.rates.framesInPerSec,
       framesOutPerSec: this.rates.framesOutPerSec,
+      bandwidthBytesPerSec: this.rates.bandwidthBytesPerSec,
     };
   }
 
@@ -463,7 +539,14 @@ export class RelayMetricsCollector {
           sizeBytes: tenant.sealedPack?.byteLength ?? 0,
           updatedAt: tenant.sealedPackUpdatedAt,
         },
-        quota: tenant.quota,
+        quota: this.quotaFor(tenant.id),
+        usage: {
+          currentNodes: this.tenants.countActiveNodes(tenant.id),
+          currentStreams: this.registry.streamCount(tenant.id),
+          bytesInPerSec: tenantRates?.bytesInPerSec ?? 0,
+          bytesOutPerSec: tenantRates?.bytesOutPerSec ?? 0,
+          bandwidthBytesPerSec: tenantRates?.bandwidthBytesPerSec ?? 0,
+        },
       };
     });
   }

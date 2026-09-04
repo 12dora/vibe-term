@@ -171,11 +171,13 @@ describe('RelayUplinkClient', () => {
       wsFactory: () => clientWs,
     });
     fixtures.push({ close: () => {}, stop: () => client.stop() });
+    client.lastConnectError = { reason: 'connect-failed', at: 1 };
     const connecting = client.attemptConnect();
     await waitUntil(() => client.link !== null);
     server.send({ t: 'auth.challenge', nonce: encodeBase64url(nonce) });
     await connecting;
     expect(client.state).toBe('online');
+    expect(client.lastConnectError).toBeNull();
 
     const auth = server.received.find((msg) => msg.t === 'relay.auth');
     if (auth?.t !== 'relay.auth') throw new Error('missing relay.auth');
@@ -487,6 +489,52 @@ describe('RelayUplinkClient', () => {
       maxStreams: 64,
       bandwidthBytesPerSec: null,
       currentNodes: 4,
+    });
+  });
+
+  test('relay.quota.usage 写入客户端', async () => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const [clientWs, serverWs] = fakeSocketPair();
+    const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
+    const client = new RelayUplinkClient({
+      hubUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const connecting = client.attemptConnect();
+    await waitUntil(() => client.link !== null);
+    server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+    await connecting;
+    const usage = {
+      currentNodes: 2,
+      currentStreams: 3,
+      bytesInPerSec: 100,
+      bytesOutPerSec: 40,
+      bandwidthBytesPerSec: 140,
+      sampledAt: 9,
+    };
+    server.send({
+      t: 'relay.quota',
+      maxNodes: 16,
+      maxStreams: 64,
+      bandwidthBytesPerSec: 1024,
+      currentNodes: 2,
+      usage,
+    });
+    await waitUntil(() => client.quota?.usage?.sampledAt === 9);
+    expect(client.quota).toEqual({
+      maxNodes: 16,
+      maxStreams: 64,
+      bandwidthBytesPerSec: 1024,
+      currentNodes: 2,
+      usage,
     });
   });
 });

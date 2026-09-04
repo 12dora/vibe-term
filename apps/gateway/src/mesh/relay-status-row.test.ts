@@ -48,7 +48,42 @@ describe('buildRelayStatusRow', () => {
       attached: false,
       online: false,
       lastError: 'client-too-old',
+      lastErrorCode: 'protocol',
       lastErrorAt: 7,
+    });
+  });
+
+  test('online row 强制清空 lastError / lastErrorCode', () => {
+    const row = buildRelayStatusRow(
+      { url: 'https://a.example', priority: 0, kicked: false },
+      'https://a.example',
+      { state: 'online', rttMs: 12 },
+      { lastConnectError: { reason: 'connect-failed', at: 9 } },
+      [{ publicUrl: 'https://a.example', lastError: 'stale-pool', lastErrorAt: 1 }]
+    );
+    expect(row).toMatchObject({
+      online: true,
+      attached: true,
+      rttMs: 12,
+      lastError: null,
+      lastErrorCode: null,
+      lastErrorAt: null,
+    });
+  });
+
+  test('stopped / aborted 不当成当前错误', () => {
+    const row = buildRelayStatusRow(
+      { url: 'https://a.example', priority: 0, kicked: false },
+      'https://a.example',
+      { state: 'offline', rttMs: null },
+      { lastConnectError: { reason: 'stopped', at: 3 } },
+      []
+    );
+    expect(row).toMatchObject({
+      online: false,
+      lastError: null,
+      lastErrorCode: null,
+      lastErrorAt: null,
     });
   });
 });

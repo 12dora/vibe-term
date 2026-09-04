@@ -6,6 +6,7 @@ import {
   type RelayCtlMessage,
   type RelayKickReason,
   type RelayQuota,
+  type RelayQuotaUsage,
   type RelayRtcConfig,
   decodeRelayCtl,
   encodeRelayCtl,
@@ -19,7 +20,7 @@ import type { RelayKeyLogStore } from './relay-key-log-store';
 import type { RelayMetering } from './relay-metering';
 import { type RelayListDeps, encodeRelayList } from './relay-node-list';
 import { type RelaySleep, RelayTokenBucket, effectiveRelayQuota } from './relay-quota';
-import { relayQuotaCtl } from './relay-quota-ctl';
+import { relayQuotaCtl, relayQuotaUsageFingerprint } from './relay-quota-ctl';
 import {
   type RelayLiveNode,
   type RelayRegistry,
@@ -63,6 +64,11 @@ export type RelayUplinkServerOptions = {
   minClientVersion?: string;
   /** 测试钩子：precondition 通过之后、注册 live 连接之前。 */
   authBarrier?: () => Promise<void>;
+  tenantRates?: (tenantId: string) => {
+    bytesInPerSec: number;
+    bytesOutPerSec: number;
+    bandwidthBytesPerSec: number;
+  };
 };
 
 export class RelayUplinkServer implements RelayUplinkHost {
@@ -93,6 +99,14 @@ export class RelayUplinkServer implements RelayUplinkHost {
   private readonly enrollCreates: RelayEnrollCreateRate;
   private listVersion = 0;
   private stopped = false;
+  private tenantRates:
+    | ((tenantId: string) => {
+        bytesInPerSec: number;
+        bytesOutPerSec: number;
+        bandwidthBytesPerSec: number;
+      })
+    | undefined;
+  private readonly lastUsagePush = new Map<string, string>();
 
   constructor(opts: RelayUplinkServerOptions) {
     this.db = opts.db;
@@ -111,6 +125,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
     this.listDebounceMs = opts.listDebounceMs ?? RELAY_LIST_DEBOUNCE_MS;
     this.minClientVersion = opts.minClientVersion ?? MIN_RELAY_CLIENT_VERSION;
     this.authBarrier = opts.authBarrier;
+    this.tenantRates = opts.tenantRates;
     this.relayHost = hubHostFromUrl(opts.config.publicUrl);
     this.listDeps = {
       tenants: this.tenants,
@@ -152,12 +167,34 @@ export class RelayUplinkServer implements RelayUplinkHost {
     return { stun: [...this.config.stun], turn: this.config.turn ?? null };
   }
 
+  bindTenantRates(
+    tenantRates: (tenantId: string) => {
+      bytesInPerSec: number;
+      bytesOutPerSec: number;
+      bandwidthBytesPerSec: number;
+    }
+  ): void {
+    this.tenantRates = tenantRates;
+  }
+
   quotaFor(tenantId: string): RelayQuota {
     const tenant = this.tenants.get(tenantId);
     return effectiveRelayQuota(
       tenant?.quota ?? null,
       this.configStore.ensure(this.now()).defaultQuota
     );
+  }
+
+  quotaUsage(tenantId: string): RelayQuotaUsage {
+    const rates = this.tenantRates?.(tenantId);
+    return {
+      currentNodes: this.tenants.countActiveNodes(tenantId),
+      currentStreams: this.registry.streamCount(tenantId),
+      bytesInPerSec: rates?.bytesInPerSec ?? 0,
+      bytesOutPerSec: rates?.bytesOutPerSec ?? 0,
+      bandwidthBytesPerSec: rates?.bandwidthBytesPerSec ?? 0,
+      sampledAt: this.now(),
+    };
   }
 
   bucketFor(tenantId: string): RelayTokenBucket {
@@ -176,7 +213,21 @@ export class RelayUplinkServer implements RelayUplinkHost {
   notifyQuota(tenantId: string): void {
     const quota = this.quotaFor(tenantId);
     this.buckets.get(tenantId)?.setRate(quota.bandwidthBytesPerSec);
-    this.broadcast(tenantId, relayQuotaCtl(quota, this.tenants.countActiveNodes(tenantId)));
+    const usage = this.quotaUsage(tenantId);
+    this.lastUsagePush.set(tenantId, relayQuotaUsageFingerprint(usage));
+    this.broadcast(tenantId, relayQuotaCtl(quota, usage.currentNodes, usage));
+  }
+
+  /** 采样拍：用量有变才推；刚接入的租户由 `notifyQuota` / auth 首推兜底。 */
+  pushQuotaUsageIfChanged(): void {
+    for (const tenant of this.tenants.list()) {
+      if (this.registry.listTenant(tenant.id).length === 0) continue;
+      const usage = this.quotaUsage(tenant.id);
+      const fingerprint = relayQuotaUsageFingerprint(usage);
+      if (this.lastUsagePush.get(tenant.id) === fingerprint) continue;
+      this.lastUsagePush.set(tenant.id, fingerprint);
+      this.broadcast(tenant.id, relayQuotaCtl(this.quotaFor(tenant.id), usage.currentNodes, usage));
+    }
   }
 
   broadcast(tenantId: string, msg: RelayCtlMessage): void {
@@ -407,7 +458,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
         reject: (target, reason) => this.reject(target, reason),
         send: (target, ctl) => this.send(target, ctl),
         startHeartbeat: (live) => this.startHeartbeat(live),
-        quotaFor: (tenantId) => this.quotaFor(tenantId),
+        notifyQuota: (tenantId) => this.notifyQuota(tenantId),
         scheduleList: (tenantId) => this.scheduleList(tenantId),
         rtcConfig: () => this.rtcConfig(),
       },

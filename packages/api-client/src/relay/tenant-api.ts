@@ -53,6 +53,8 @@ export interface RelayQuotaUsage {
   currentStreams: number;
   bytesInPerSec: number;
   bytesOutPerSec: number;
+  /** 令牌桶放行的字节速率，与配额上限同口径。旧中继不下发。 */
+  bandwidthBytesPerSec?: number;
   /** 采样时间（毫秒）。 */
   sampledAt: number;
 }
@@ -259,6 +261,14 @@ export const RELAY_QUOTA_NODES = 'RELAY_QUOTA_NODES';
 export const RELAY_NOT_FOUND = 'RELAY_NOT_FOUND';
 /** 只剩这一条中继：摘掉它等于离开，得走 `leavePrepare()`。 */
 export const RELAY_LAST = 'RELAY_LAST';
+/** 切换目标不在本机已配置的中继列表里。 */
+export const RELAY_UNKNOWN = 'RELAY_UNKNOWN';
+/** 目标中继已作废本租户令牌。 */
+export const RELAY_KICKED = 'RELAY_KICKED';
+/** 本机 uplink 已经挂在目标中继上。 */
+export const RELAY_ALREADY_ATTACHED = 'RELAY_ALREADY_ATTACHED';
+/** 切换超时或新链路未能上线。 */
+export const RELAY_SWITCH_FAILED = 'RELAY_SWITCH_FAILED';
 
 /**
  * 节点没有这族路由（版本太老 / 未启用）：`/api/mesh/relay/*` 一律 404。
@@ -304,7 +314,12 @@ export function normalizeRelayStatus(
 ): RelayTenantStatus {
   if (!payload) return EMPTY_STATUS;
   return {
-    quota: payload.quota ? { ...payload.quota, usage: payload.quota.usage ?? null } : null,
+    quota: payload.quota
+      ? {
+          ...payload.quota,
+          usage: payload.quota.usage ?? null,
+        }
+      : null,
     mode: payload.mode ?? 'none',
     tenantId: payload.tenantId ?? null,
     relays: (payload.relays ?? []).map((row) => ({

@@ -25,6 +25,8 @@ export class RelayMetering {
   private readonly liveTotals: RelayUsageDelta = { bytesIn: 0, bytesOut: 0 };
   private readonly liveTenants = new Map<string, RelayUsageDelta>();
   private readonly liveMembers = new Map<string, RelayUsageDelta>();
+  private liveAdmittedTotals = 0;
+  private readonly liveAdmitted = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -62,6 +64,20 @@ export class RelayMetering {
     this.liveTenants.set(tenantId, addDelta(live, usage));
   }
 
+  recordAdmitted(tenantId: string, bytes: number): void {
+    if (bytes <= 0) return;
+    this.liveAdmittedTotals += bytes;
+    this.liveAdmitted.set(tenantId, (this.liveAdmitted.get(tenantId) ?? 0) + bytes);
+  }
+
+  liveAdmittedTotalsSnapshot(): number {
+    return this.liveAdmittedTotals;
+  }
+
+  liveAdmittedSnapshot(tenantId: string): number {
+    return this.liveAdmitted.get(tenantId) ?? 0;
+  }
+
   recordMember(tenantId: string, nodeId: string, delta: Partial<RelayUsageDelta>): void {
     const bytesIn = delta.bytesIn ?? 0;
     const bytesOut = delta.bytesOut ?? 0;
@@ -94,6 +110,7 @@ export class RelayMetering {
   forgetTenant(tenantId: string): void {
     this.pending.delete(tenantId);
     this.liveTenants.delete(tenantId);
+    this.liveAdmitted.delete(tenantId);
     const prefix = `${tenantId}\0`;
     for (const key of this.liveMembers.keys()) {
       if (key.startsWith(prefix)) this.liveMembers.delete(key);

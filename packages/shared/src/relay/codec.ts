@@ -64,12 +64,24 @@ export type RelayRtcFrom = 'browser' | 'node';
 export type RelayMemberProof = { bytes: string; sig: string };
 export type RelayKeylogMemberOp = 'admit' | 'revoke' | 'rotate-root';
 export type RelayKeylogMember = { op: RelayKeylogMemberOp; bytes: string; sig: string };
+export type RelayQuotaUsage = {
+  currentNodes: number;
+  currentStreams: number;
+  bytesInPerSec: number;
+  bytesOutPerSec: number;
+  /** 令牌桶放行的字节速率；旧中继不下发。 */
+  bandwidthBytesPerSec?: number;
+  sampledAt: number;
+};
+
 export type RelayQuota = {
   maxNodes: number;
   maxStreams: number;
   bandwidthBytesPerSec: number | null;
   /** 当前占用（pending + admitted）；旧中继不下发。 */
   currentNodes?: number;
+  /** 实时用量；旧中继不下发。 */
+  usage?: RelayQuotaUsage;
 };
 export type RelayListNode = {
   id: string;
@@ -203,6 +215,31 @@ function uint(obj: Record<string, unknown>, key: string): number {
 function optUint(obj: Record<string, unknown>, key: string): number | undefined {
   if (obj[key] === undefined || obj[key] === null) return undefined;
   return uint(obj, key);
+}
+
+function nonNegNum(obj: Record<string, unknown>, key: string): number {
+  const value = obj[key];
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) fail(`invalid ${key}`);
+  return value;
+}
+
+function parseQuotaUsage(value: unknown): RelayQuotaUsage | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) fail('invalid usage');
+  const bandwidth = value.bandwidthBytesPerSec;
+  if (bandwidth !== undefined && bandwidth !== null) {
+    if (typeof bandwidth !== 'number' || !Number.isFinite(bandwidth) || bandwidth < 0) {
+      fail('invalid usage.bandwidthBytesPerSec');
+    }
+  }
+  return {
+    currentNodes: uint(value, 'currentNodes'),
+    currentStreams: uint(value, 'currentStreams'),
+    bytesInPerSec: nonNegNum(value, 'bytesInPerSec'),
+    bytesOutPerSec: nonNegNum(value, 'bytesOutPerSec'),
+    sampledAt: uint(value, 'sampledAt'),
+    ...(typeof bandwidth === 'number' ? { bandwidthBytesPerSec: bandwidth } : {}),
+  };
 }
 
 export function relaySeqToWire(seq: bigint | number): RelaySeqWire {
@@ -478,12 +515,14 @@ const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
       fail('invalid bandwidthBytesPerSec');
     }
     const currentNodes = optUint(obj, 'currentNodes');
+    const usage = parseQuotaUsage(obj.usage);
     return {
       t: 'relay.quota',
       maxNodes: uint(obj, 'maxNodes'),
       maxStreams: uint(obj, 'maxStreams'),
       bandwidthBytesPerSec: bandwidth === null ? null : (bandwidth as number),
       ...(currentNodes !== undefined ? { currentNodes } : {}),
+      ...(usage ? { usage } : {}),
     };
   },
   'relay.kicked': (obj) => {

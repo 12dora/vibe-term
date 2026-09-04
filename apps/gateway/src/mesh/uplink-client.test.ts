@@ -477,6 +477,33 @@ describe('UplinkClient', () => {
     expect(scheduler.sleeps).toBeGreaterThanOrEqual(1);
   });
 
+  test('successful connectWithLink clears lastConnectError', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.lastConnectError = { reason: 'refused', at: 1 };
+    const firstLink = new WebSocketLink(clientWs, { role: 'initiator' });
+    const first = client.connectWithLink(firstLink);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await first;
+    expect(client.state).toBe('online');
+    expect(client.lastConnectError).toBeNull();
+  });
+
   test('logs online and offline state transitions', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

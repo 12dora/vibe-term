@@ -269,6 +269,7 @@ export class UplinkClient {
     if (effective.aborted || generation !== this.connectGeneration) {
       throw new Error('aborted');
     }
+    this.lastConnectError = null;
     this.setState('online');
     this.sendStatus();
     this.startHeartbeat(link, generation);

@@ -132,3 +132,25 @@ describe('relayUplinkOverrides dial', () => {
     expect(seen).toEqual(['http://127.0.0.1:19111/api/relay/health']);
   });
 });
+
+describe('relayUplinkOverrides candidates', () => {
+  test('启动时把首选中继排到最前', () => {
+    const wiring = {
+      secrets: {
+        uplinkKind: () => 'relay' as const,
+        relayRows: () => [
+          { url: 'https://a.example', priority: 0 },
+          { url: 'https://b.example', priority: 1 },
+          { url: 'https://c.example', priority: 2 },
+        ],
+        preferredRelayUrl: () => 'https://c.example',
+      },
+    } as unknown as RelayWiring;
+    const overrides = relayUplinkOverrides(wiring, { nameProvider: () => 'n' });
+    expect(overrides.candidates().map((row) => row.publicUrl)).toEqual([
+      'https://c.example',
+      'https://a.example',
+      'https://b.example',
+    ]);
+  });
+});

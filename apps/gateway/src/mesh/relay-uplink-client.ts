@@ -196,7 +196,7 @@ export class RelayUplinkClient {
     try {
       await this.connectOnce(effective);
     } catch (err) {
-      this.tearDownLink('connect-failed');
+      this.tearDownLink(connectFailureReason(err));
       this.setState('offline');
       throw err;
     }
@@ -212,6 +212,7 @@ export class RelayUplinkClient {
     this.bindLink(link, generation);
     await this.authenticate(link, effective, generation);
     if (effective.aborted || generation !== this.connectGeneration) throw new Error('aborted');
+    this.lastConnectError = null;
     this.setState('online');
     await this.sendStatusNow();
     this.heartbeat.start(
@@ -411,12 +412,13 @@ export class RelayUplinkClient {
     } else if (msg.t === 'relay.enroll.ack') this.enroll.settle(msg);
     else if (msg.t === 'enroll.redeemed') this.handleEnrollRedeemed(msg);
     else if (msg.t === 'relay.quota') {
-      const { maxNodes, maxStreams, bandwidthBytesPerSec, currentNodes } = msg;
+      const { maxNodes, maxStreams, bandwidthBytesPerSec, currentNodes, usage } = msg;
       this.quota = {
         maxNodes,
         maxStreams,
         bandwidthBytesPerSec,
         ...(currentNodes !== undefined ? { currentNodes } : {}),
+        ...(usage ? { usage } : {}),
       };
       this.opts.onQuota?.(this.quota);
     } else if (msg.t === 'relay.kicked') {
@@ -596,4 +598,11 @@ export class RelayUplinkClient {
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function connectFailureReason(err: unknown): string {
+  const msg = err instanceof Error ? err.message.trim() : '';
+  if (!msg) return 'connect-failed';
+  if (msg === 'aborted' || (msg.length <= 64 && /^[a-z0-9_.:-]+$/i.test(msg))) return msg;
+  return 'connect-failed';
 }

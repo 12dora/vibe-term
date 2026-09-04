@@ -8,6 +8,7 @@ import type { UserStore } from '../auth/user-store';
 import type { MeshRoles } from './mesh-deps';
 import { stamp } from './mesh-log';
 import { type RelayDialContext, relayDialContextFromEnv } from './relay-dial';
+import { orderRelaysByPreferred } from './relay-preferred';
 import { RelayRoutes } from './relay-routes';
 import { RelaySecrets } from './relay-secrets';
 import { RelayUplinkClient } from './relay-uplink-client';
@@ -113,7 +114,10 @@ export function relayUplinkOverrides(
   return {
     relayMode,
     candidates: () =>
-      wiring.secrets.relayRows().map((row) => ({
+      orderRelaysByPreferred(
+        wiring.secrets.relayRows(),
+        wiring.secrets.preferredRelayUrl?.() ?? null
+      ).map((row) => ({
         hubNodeId: null,
         publicUrl: row.url,
         mode: 'active' as HubMode,
@@ -189,6 +193,7 @@ export function createRelayRoutes(input: {
       attachedHub: () => input.uplink.attachedHub(),
       reconfigure: () => reconfigureUplinkPool(input.uplink),
       candidates: () => input.uplink.candidates(),
+      switchTo: (url) => input.uplink.switchTo(url),
     },
   });
 }
