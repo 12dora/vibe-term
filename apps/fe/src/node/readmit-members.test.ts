@@ -1,4 +1,4 @@
-// 重新确认成员：签名者由授权字节决定、逐条串行、首条失败即停、空列表是无操作。
+// 重新确认成员：根钥重新编码授权、通行密钥只能重签自己那条、逐条串行、首条失败即停、空列表是无操作。
 
 import { describe, expect, test } from 'bun:test';
 import type { RecordSigner } from '@/auth/key-log-actions';
@@ -8,6 +8,7 @@ import type { RelayReadmitEntry, RelayTenantApi } from '@tmex/api-client/relay/t
 import {
   DOMAIN_AUTHORIZATION,
   decodeAdmitNodePayload,
+  decodeAuthorization,
   decodeBase64url,
   decodeKeyLogRecord,
   decodePasskeyAssertion,
@@ -131,6 +132,13 @@ describe('readmitStaleMembers', () => {
     expect(payload.cert_sig).toEqual(new Uint8Array(64).fill(4));
     const pk = (await rootKey()).publicKey;
     expect(verifyEd25519(payload.authorization_sig, payload.authorization_bytes, pk)).toBe(true);
+    // 授权被重新编码到当前 epoch：绑定（uid / enroll_pk）原样，签名者写死 root。
+    const reissued = decodeAuthorization(payload.authorization_bytes);
+    expect(reissued.root_epoch).toBe(4);
+    expect(reissued.signer).toBe('root');
+    expect(reissued.credential_id).toBe(null);
+    expect(reissued.uid).toBe('u1');
+    expect(reissued.enroll_pk).toEqual(new Uint8Array(32).fill(9));
 
     // 头是逐条重取的：两条记录的 seq 必须连着走。
     const second = decodeKeyLogRecord(decodeBase64url(appended[1].bytes));
@@ -239,6 +247,49 @@ describe('readmitStaleMembers', () => {
       decodeKeyLogRecord(decodeBase64url(appended[0].bytes)).payload
     );
     expect(decodePasskeyAssertion(payload.authorization_sig).credential_id).toBe('cred-1');
+  });
+
+  test('当初用通行密钥授权的成员，可以用当前根密码重新确认', async () => {
+    const appended: Appended[] = [];
+    const seen: Uint8Array[] = [];
+    const result = await readmitStaleMembers({
+      api: authApi(appended),
+      relayApi: relayApi([
+        entry({ authorization_bytes: encodeBase64url(authorization('passkey', 'cred-1')) }),
+      ]),
+      mode: MODE,
+      lock: (run) => run(),
+      signer: await rootSigner(),
+    });
+
+    expect(result).toEqual({ signed: 1, failed: 0, code: null });
+    // 那把通行密钥没被碰过：丢了也不影响。
+    expect(seen).toHaveLength(0);
+    const payload = decodeAdmitNodePayload(
+      decodeKeyLogRecord(decodeBase64url(appended[0].bytes)).payload
+    );
+    const reissued = decodeAuthorization(payload.authorization_bytes);
+    expect(reissued.signer).toBe('root');
+    expect(reissued.credential_id).toBe(null);
+    expect(reissued.root_epoch).toBe(4);
+    expect(reissued.enroll_pk).toEqual(new Uint8Array(32).fill(9));
+    const pk = (await rootKey()).publicKey;
+    expect(verifyEd25519(payload.authorization_sig, payload.authorization_bytes, pk)).toBe(true);
+  });
+
+  test('换了一把通行密钥：报 ROOT_REQUIRED，不签记录', async () => {
+    const appended: Appended[] = [];
+    const result = await readmitStaleMembers({
+      api: authApi(appended),
+      relayApi: relayApi([
+        entry({ authorization_bytes: encodeBase64url(authorization('passkey', 'cred-1')) }),
+      ]),
+      mode: MODE,
+      lock: (run) => run(),
+      signer: passkeySigner('cred-2', []),
+    });
+    expect(result).toEqual({ signed: 0, failed: 1, code: READMIT_ROOT_REQUIRED });
+    expect(appended).toHaveLength(0);
   });
 
   test('授权字节畸形：报 MALFORMED，不签记录', async () => {

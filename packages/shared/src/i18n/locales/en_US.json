@@ -2631,7 +2631,8 @@
         "errors": {
           "READMIT_PREPARE_FAILED": "This machine could not list the members to re-affirm. Try again later.",
           "READMIT_ROOT_REQUIRED": "These member records can only be re-affirmed with the current password.",
-          "READMIT_MALFORMED": "The member record is invalid and cannot be re-affirmed."
+          "READMIT_MALFORMED": "The member record is invalid and cannot be re-affirmed.",
+          "READMIT_PENDING": "The relay still reports members awaiting re-affirmation. Try again later."
         }
       }
     },

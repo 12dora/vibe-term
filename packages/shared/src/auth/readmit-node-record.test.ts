@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  decodeAuthorization,
   encodeAddPasskeyPayload,
   encodeAdmitNodePayload,
+  encodeAuthorization,
   encodeKeyLogRecord,
+  encodePasskeyAssertion,
   encodeRevokeNodePayload,
   encodeRotateRootKeepPayload,
   nodeIdToHex,
@@ -16,6 +19,7 @@ import {
   verifyKeyLogRecord,
 } from './key-log';
 import type { UserKeyState } from './key-log';
+import { buildRootReadmitAuthorization } from './readmit-node-record';
 import { generateEd25519KeyPair, generateX25519KeyPair, rootKeyFromSeed } from './root-key';
 
 const UID = 'user-1';
@@ -254,5 +258,210 @@ describe('readmit-node', () => {
         })
       )
     ).toEqual({ ok: false, error: 'certificate_mismatch' });
+  });
+});
+
+const ADD_PASSKEY = encodeAddPasskeyPayload({
+  credential_id: 'cred-1',
+  public_key: new Uint8Array(8).fill(9),
+  rp_id: 'example.com',
+  origin: 'https://example.com',
+  counter: 0,
+  transports: [],
+  backup_eligible: false,
+  backup_state: false,
+  device_type: 'singleDevice',
+  name: 'key',
+});
+
+async function admitPasskeyNode(state: UserKeyState, signer: ReturnType<typeof root>) {
+  const assertion = encodePasskeyAssertion({
+    credential_id: 'cred-1',
+    client_data_json: new Uint8Array([1, 2, 3]),
+    authenticator_data: new Uint8Array([4, 5, 6]),
+    signature: new Uint8Array([7, 8, 9]),
+  });
+  const enroll = await createEnrollment(
+    { credentialId: 'cred-1', sign: () => assertion },
+    { uid: UID, rootEpoch: state.rootEpoch, now: 1 }
+  );
+  const ed = generateEd25519KeyPair();
+  const x = generateX25519KeyPair();
+  const cert = createNodeCertificate(enroll.enrollSk, {
+    uid: UID,
+    edPk: ed.publicKey,
+    x25519Pk: x.publicKey,
+    enrollPk: enroll.enrollPk,
+    now: 1,
+  });
+  const record = buildKeyLogRecord(state.head, state.rootEpoch, {
+    uid: UID,
+    type: 'admit-node',
+    payload: encodeAdmitNodePayload({
+      authorization_bytes: enroll.authorizationBytes,
+      authorization_sig: enroll.authorizationSig,
+      certificate_bytes: cert.certificateBytes,
+      cert_sig: cert.certSig,
+    }),
+    signer: 'root',
+    credential_id: null,
+  });
+  const bytes = encodeKeyLogRecord(record);
+  const sig = signKeyLogRecordWithRoot(signer, bytes);
+  const verified = await verifyKeyLogRecord(bytes, sig, {
+    head: state.head,
+    rootEpoch: state.rootEpoch,
+    rootPublicKey: state.rootPublicKey,
+    resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
+  });
+  expect(verified.ok).toBe(true);
+  if (!verified.ok) throw new Error(verified.error);
+  const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
+    verifyPasskeyAssertion: async () => true,
+  });
+  expect(applied.ok).toBe(true);
+  if (!applied.ok) throw new Error(applied.error);
+  return {
+    state: applied.state,
+    enroll,
+    cert,
+    hex: nodeIdToHex(cert.nodeId),
+  };
+}
+
+describe('buildRootReadmitAuthorization', () => {
+  it('passkey 承认的成员可由当前根重新确认', async () => {
+    const r = root(1);
+    const added = await signAndApply(emptyUserKeyState(r.publicKey), r, 'add-passkey', ADD_PASSKEY);
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    const admitted = await admitPasskeyNode(added.state, r);
+    expect(decodeAuthorization(admitted.enroll.authorizationBytes).signer).toBe('passkey');
+
+    const rawResign = await signAndApply(
+      admitted.state,
+      r,
+      'readmit-node',
+      encodeAdmitNodePayload({
+        authorization_bytes: admitted.enroll.authorizationBytes,
+        authorization_sig: r.sign(admitted.enroll.authorizationBytes),
+        certificate_bytes: admitted.cert.certificateBytes,
+        cert_sig: admitted.cert.certSig,
+      })
+    );
+    expect(rawResign).toEqual({ ok: false, error: 'bad_authorization_sig' });
+
+    const rebuilt = buildRootReadmitAuthorization({
+      authorizationBytes: admitted.enroll.authorizationBytes,
+      rootEpoch: admitted.state.rootEpoch,
+      rootKey: r,
+    });
+    const auth = decodeAuthorization(rebuilt.authorization_bytes);
+    expect(auth.signer).toBe('root');
+    expect(auth.credential_id).toBeNull();
+    expect(auth.uid).toBe(UID);
+    expect(auth.enroll_pk).toEqual(admitted.enroll.enrollPk);
+    expect(auth.root_epoch).toBe(admitted.state.rootEpoch);
+
+    const applied = await signAndApply(
+      admitted.state,
+      r,
+      'readmit-node',
+      encodeAdmitNodePayload({
+        authorization_bytes: rebuilt.authorization_bytes,
+        authorization_sig: rebuilt.authorization_sig,
+        certificate_bytes: admitted.cert.certificateBytes,
+        cert_sig: admitted.cert.certSig,
+      })
+    );
+    expect(applied.ok).toBe(true);
+    if (!applied.ok) return;
+    const stored = applied.state.nodeCerts.get(admitted.hex);
+    expect(stored?.certificateBytes).toEqual(admitted.cert.certificateBytes);
+    expect(stored?.authorizationBytes).toEqual(rebuilt.authorization_bytes);
+    expect(stored?.authorizationSig).toEqual(rebuilt.authorization_sig);
+    expect(stored?.revoked).toBe(false);
+  });
+
+  it('root 承认的成员可由当前根重新确认', async () => {
+    const r = root(1);
+    const admitted = await admitNode(emptyUserKeyState(r.publicKey), r);
+    const next = root(2);
+    const rotated = await signAndApply(
+      admitted.state,
+      r,
+      'rotate-root-keep',
+      encodeRotateRootKeepPayload({
+        root_public_key: next.publicKey,
+        kdf_params: {
+          salt: new Uint8Array(16).fill(5),
+          memory_kib: 65536,
+          iterations: 3,
+          parallelism: 1,
+        },
+        totp: null,
+      })
+    );
+    expect(rotated.ok).toBe(true);
+    if (!rotated.ok) return;
+    const rebuilt = buildRootReadmitAuthorization({
+      authorizationBytes: admitted.enroll.authorizationBytes,
+      rootEpoch: rotated.state.rootEpoch,
+      rootKey: next,
+    });
+    const auth = decodeAuthorization(rebuilt.authorization_bytes);
+    expect(auth.signer).toBe('root');
+    expect(auth.credential_id).toBeNull();
+    expect(auth.root_epoch).toBe(rotated.state.rootEpoch);
+    expect(auth.enroll_pk).toEqual(admitted.enroll.enrollPk);
+    const applied = await signAndApply(
+      rotated.state,
+      next,
+      'readmit-node',
+      encodeAdmitNodePayload({
+        authorization_bytes: rebuilt.authorization_bytes,
+        authorization_sig: rebuilt.authorization_sig,
+        certificate_bytes: admitted.cert.certificateBytes,
+        cert_sig: admitted.cert.certSig,
+      })
+    );
+    expect(applied.ok).toBe(true);
+    if (!applied.ok) return;
+    const stored = applied.state.nodeCerts.get(admitted.hex);
+    expect(stored?.certificateBytes).toEqual(admitted.cert.certificateBytes);
+    expect(stored?.authorizationBytes).toEqual(rebuilt.authorization_bytes);
+    expect(stored?.authorizationSig).toEqual(rebuilt.authorization_sig);
+  });
+
+  it('篡改 enroll_pk 被拒绝', async () => {
+    const r = root(1);
+    const admitted = await admitNode(emptyUserKeyState(r.publicKey), r);
+    const rebuilt = buildRootReadmitAuthorization({
+      authorizationBytes: admitted.enroll.authorizationBytes,
+      rootEpoch: admitted.state.rootEpoch,
+      rootKey: r,
+    });
+    const decoded = decodeAuthorization(rebuilt.authorization_bytes);
+    const tamperedBytes = encodeAuthorization({
+      ...decoded,
+      enroll_pk: new Uint8Array(32).fill(9),
+    });
+    const tampered = await signAndApply(
+      admitted.state,
+      r,
+      'readmit-node',
+      encodeAdmitNodePayload({
+        authorization_bytes: tamperedBytes,
+        authorization_sig: r.sign(tamperedBytes),
+        certificate_bytes: admitted.cert.certificateBytes,
+        cert_sig: admitted.cert.certSig,
+      })
+    );
+    expect(tampered.ok).toBe(false);
+    if (!tampered.ok) {
+      expect(tampered.error === 'bad_cert_sig' || tampered.error === 'enroll_pk_mismatch').toBe(
+        true
+      );
+    }
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
+  MIN_READMIT_NODE_RECORD_VERSION,
   MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   buildAdmitHubPayload,
   buildKeyLogRecord,
@@ -368,9 +369,18 @@ describe('hub auth record compat gate', () => {
       expect(
         inspectHubAuthRecordCompat(store, relayRecord('rename-node'), 'user-1', relay)
       ).toEqual({ ok: true });
-      expect(
-        inspectHubAuthRecordCompat(store, relayRecord('readmit-node'), 'user-1', relay)
-      ).toEqual({ ok: true });
+      const readmitEmpty = inspectHubAuthRecordCompat(
+        store,
+        relayRecord('readmit-node'),
+        'user-1',
+        relay
+      );
+      expect(readmitEmpty.ok).toBe(false);
+      if (!readmitEmpty.ok) {
+        expect(readmitEmpty.minVersion).toBe(MIN_READMIT_NODE_RECORD_VERSION);
+        expect(readmitEmpty.allowForce).toBe(false);
+        expect(readmitEmpty.nodes).toEqual([{ id: SELF, name: SELF, version: null }]);
+      }
       expect(inspectHubAuthRecordCompat(store, admitHubRecord(), 'user-1', relay).ok).toBe(false);
       expect(inspectHubAuthRecordCompat(store, rotateRootKeepRecord(), 'user-1', relay).ok).toBe(
         false
@@ -384,6 +394,75 @@ describe('hub auth record compat gate', () => {
         expect(blocked.minVersion).toBe('1.1.23');
         expect(blocked.nodes.map((n) => n.id).sort()).toEqual([PEER, SELF].sort());
       }
+    } finally {
+      close();
+    }
+  });
+
+  test('relay mode readmit-node: empty peer cache but certs exist is blocked', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      seedCert(store, 'user-1', SELF);
+      seedCert(store, 'user-1', PEER);
+      const relay = { relayMode: true } as const;
+      expect(inspectHubAuthRecordCompat(store, relayRecord('set-relays'), 'user-1', relay)).toEqual(
+        {
+          ok: true,
+        }
+      );
+      const blocked = inspectHubAuthRecordCompat(
+        store,
+        relayRecord('readmit-node'),
+        'user-1',
+        relay
+      );
+      expect(blocked.ok).toBe(false);
+      if (!blocked.ok) {
+        expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+        expect(blocked.minVersion).toBe(MIN_READMIT_NODE_RECORD_VERSION);
+        expect(blocked.allowForce).toBe(false);
+        expect(blocked.nodes.map((n) => n.id).sort()).toEqual([PEER, SELF].sort());
+        expect(blocked.nodes.every((n) => n.version === null)).toBe(true);
+      }
+    } finally {
+      close();
+    }
+  });
+
+  test('relay mode readmit-node: one cached and one uncached cert is blocked', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      seedCert(store, 'user-1', SELF);
+      seedCert(store, 'user-1', PEER);
+      seedPeer(store, PEER, 'ok', '1.1.26');
+      const relay = { relayMode: true } as const;
+      expect(inspectHubAuthRecordCompat(store, relayRecord('set-relays'), 'user-1', relay)).toEqual(
+        {
+          ok: true,
+        }
+      );
+      const blocked = inspectHubAuthRecordCompat(
+        store,
+        relayRecord('readmit-node'),
+        'user-1',
+        relay
+      );
+      expect(blocked.ok).toBe(false);
+      if (!blocked.ok) {
+        expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+        expect(blocked.minVersion).toBe(MIN_READMIT_NODE_RECORD_VERSION);
+        expect(blocked.allowForce).toBe(false);
+        expect(blocked.nodes).toEqual([{ id: SELF, name: SELF, version: null }]);
+      }
+
+      seedPeer(store, SELF, 'self', '1.1.26');
+      expect(
+        inspectHubAuthRecordCompat(store, relayRecord('readmit-node'), 'user-1', relay)
+      ).toEqual({ ok: true });
     } finally {
       close();
     }

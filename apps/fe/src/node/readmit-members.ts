@@ -6,14 +6,15 @@
 // 记录本身也落在当前 epoch 上。
 //
 // 两个硬性质：
-// - **授权的签名者由授权字节自己决定**：`Authorization.signer` 是 `root` 就只能用根钥签，
-//   是 `passkey` 就只能用**授权里写着的那把**通行密钥断言——换一把验不过（见 `applyAdmitNode`）。
+// - **手里握着根钥就一律重新编码一份 root-signed 授权**（同 uid / enroll_pk，换成当前 epoch）：
+//   当初用通行密钥授权的成员，那把密钥丢了也要能用当前密码重新确认。只有签名者是通行密钥时
+//   才走断言，且必须是**授权里写着的那把**——换一把验不过（见 `applyAdmitNode`）。
 // - `取 head → 签名 → append` 逐条串行，全程在 key log 写锁里；凭据交互放在锁**外**，
 //   免得对话框挂着的时候把 admit / revoke 一起堵住。
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { leaseSigner } from '@/auth/credential-prompt';
-import { type RecordSigner, buildSignedRecord, enrollmentSignerFrom } from '@/auth/key-log-actions';
+import { type RecordSigner, buildSignedRecord, signWithPasskey } from '@/auth/key-log-actions';
 import { headFromResponse } from '@/auth/key-log-actions';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
@@ -21,6 +22,7 @@ import type { RelayReadmitEntry, RelayTenantApi } from '@tmex/api-client/relay/t
 import { relayErrorCode } from '@tmex/api-client/relay/tenant-api';
 import type { Authorization } from '@tmex/shared/auth';
 import {
+  buildRootReadmitAuthorization,
   decodeAuthorization,
   decodeBase64url,
   encodeAdmitNodePayload,
@@ -33,11 +35,14 @@ export const READMIT_CANCELLED = 'READMIT_CANCELLED';
 /** 本机没能列出待重新确认的成员。 */
 export const READMIT_PREPARE_FAILED = 'READMIT_PREPARE_FAILED';
 
-/** 这条授权是根签的，只能用当前密码重新确认（通行密钥给不出根签名）。 */
+/** 手里这把通行密钥重签不了该条授权，只能用当前密码重新确认。 */
 export const READMIT_ROOT_REQUIRED = 'READMIT_ROOT_REQUIRED';
 
 /** 服务端给的材料解不开（授权 / 证书字节畸形）。 */
 export const READMIT_MALFORMED = 'READMIT_MALFORMED';
+
+/** 补签跑完了，中继却仍报告有陈旧成员：`set-relays` 不能提交（见 `relay-enroll.ts`）。 */
+export const READMIT_PENDING = 'READMIT_PENDING';
 
 /** 记录送出去了但上级没确认；本地 head 没动，重来一次即可。 */
 const READMIT_UNCONFIRMED = 'RELAY_UNCONFIRMED';
@@ -121,10 +126,11 @@ async function signOne(
   signer: RecordSigner
 ): Promise<string | null> {
   try {
-    const payload = await buildReadmitPayload(entry, signer);
+    const rootEpoch = requireRootEpoch(deps.mode);
+    const payload = await buildReadmitPayload(entry, signer, rootEpoch);
     const record = await buildSignedRecord({
       head: headFromResponse(await deps.api.keyLogHead()),
-      rootEpoch: requireRootEpoch(deps.mode),
+      rootEpoch,
       uid: deps.mode.uid,
       type: 'readmit-node',
       payload,
@@ -142,48 +148,76 @@ async function signOne(
   }
 }
 
-/** payload 与 `admit-node` 同形：证书原样带回，只有授权签名是新签的。 */
+interface DecodedEntry {
+  authorizationBytes: Uint8Array;
+  authorization: Authorization;
+  certificateBytes: Uint8Array;
+  certSig: Uint8Array;
+}
+
+/** 授权重签的结果：根钥换一份新编码的授权字节，通行密钥沿用原字节。 */
+interface SignedAuthorization {
+  authorization_bytes: Uint8Array;
+  authorization_sig: Uint8Array;
+}
+
+/** payload 与 `admit-node` 同形：证书原样带回，只有授权部分是新签的。 */
 async function buildReadmitPayload(
   entry: RelayReadmitEntry,
-  signer: RecordSigner
+  signer: RecordSigner,
+  rootEpoch: number
 ): Promise<Uint8Array> {
-  let authorizationBytes: Uint8Array;
-  let authorization: Authorization;
-  let certificateBytes: Uint8Array;
-  let certSig: Uint8Array;
-  try {
-    authorizationBytes = decodeBase64url(entry.authorization_bytes);
-    authorization = decodeAuthorization(authorizationBytes);
-    certificateBytes = decodeBase64url(entry.certificate_bytes);
-    certSig = decodeBase64url(entry.cert_sig);
-  } catch {
-    throw new ReadmitError(READMIT_MALFORMED);
-  }
-  const authorizationSigner = signerForAuthorization(authorization, signer);
-  const authorizationSig = await Promise.resolve(
-    enrollmentSignerFrom(authorizationSigner).sign(authorizationBytes)
-  );
+  const decoded = decodeEntry(entry);
+  const authorized = await signAuthorization(decoded, signer, rootEpoch);
   return encodeAdmitNodePayload({
-    authorization_bytes: authorizationBytes,
-    authorization_sig: authorizationSig,
-    certificate_bytes: certificateBytes,
-    cert_sig: certSig,
+    authorization_bytes: authorized.authorization_bytes,
+    authorization_sig: authorized.authorization_sig,
+    certificate_bytes: decoded.certificateBytes,
+    cert_sig: decoded.certSig,
   });
 }
 
-/**
- * 授权签名者由授权字节自己指定：根签的只能用根钥，通行密钥签的只能用**同一个** credential
- * （断言的 challenge 是 `sha256(授权字节)`，与建号时那次逐字一致）。
- */
-function signerForAuthorization(authorization: Authorization, signer: RecordSigner): RecordSigner {
-  if (authorization.signer === 'root') {
-    if (signer.kind !== 'root') throw new ReadmitError(READMIT_ROOT_REQUIRED);
-    return signer;
+function decodeEntry(entry: RelayReadmitEntry): DecodedEntry {
+  try {
+    const authorizationBytes = decodeBase64url(entry.authorization_bytes);
+    return {
+      authorizationBytes,
+      authorization: decodeAuthorization(authorizationBytes),
+      certificateBytes: decodeBase64url(entry.certificate_bytes),
+      certSig: decodeBase64url(entry.cert_sig),
+    };
+  } catch {
+    throw new ReadmitError(READMIT_MALFORMED);
   }
-  const credentialId = authorization.credential_id;
-  if (!credentialId) throw new ReadmitError(READMIT_MALFORMED);
-  if (signer.kind === 'passkey' && signer.credentialId === credentialId) return signer;
-  return { kind: 'passkey', credentialId };
+}
+
+/**
+ * 根钥在手就重新编码一份 root-signed 授权（uid / enroll_pk / exp 原样，epoch 换成当前的）：
+ * 原授权是哪把钥匙签的都不影响，当初用通行密钥授权、后来那把密钥丢了的成员也能救回来。
+ *
+ * 通行密钥只能重签**它自己签过的**那条授权：断言的 challenge 是 `sha256(授权字节)`，
+ * 换一把 credential 验不过，只能改用当前密码。
+ */
+async function signAuthorization(
+  entry: DecodedEntry,
+  signer: RecordSigner,
+  rootEpoch: number
+): Promise<SignedAuthorization> {
+  if (signer.kind === 'root') {
+    return buildRootReadmitAuthorization({
+      authorizationBytes: entry.authorizationBytes,
+      rootEpoch,
+      rootKey: signer.rootKey,
+    });
+  }
+  const { signer: authorizedBy, credential_id: credentialId } = entry.authorization;
+  if (authorizedBy !== 'passkey' || credentialId !== signer.credentialId) {
+    throw new ReadmitError(READMIT_ROOT_REQUIRED);
+  }
+  return {
+    authorization_bytes: entry.authorizationBytes,
+    authorization_sig: await signWithPasskey(signer, entry.authorizationBytes),
+  };
 }
 
 function failureCode(err: unknown): string {

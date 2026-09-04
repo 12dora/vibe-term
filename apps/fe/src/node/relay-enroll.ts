@@ -27,7 +27,7 @@ import { bytesEqual, decodeBase64url, encodeBase64url } from '@tmex/shared/auth'
 import { signRelayEnrollProof } from '@tmex/shared/relay';
 import { classifyKeyLogFailure, requireRootPublicKey } from './enrollment';
 import type { ReadmitResult } from './readmit-members';
-import { readmitStaleMembers } from './readmit-members';
+import { READMIT_PENDING, readmitStaleMembers } from './readmit-members';
 
 /** 根密码派生出的根公钥与服务端下发的不一致：密码打错了。 */
 export const ROOT_PASSWORD_INVALID = 'ROOT_PASSWORD_INVALID';
@@ -199,14 +199,14 @@ export interface RelayEnrollInput {
 }
 
 /**
- * 接入中继：`proof-material` → 根钥签 proof → `enroll` → 签 `set-relays` → 提交。
+ * 接入中继：补签历史成员 → `proof-material` → 根钥签 proof → `enroll` → 签 `set-relays` → 提交。
  *
  * 同一条路径同时服务四件事：首次接入、hub → 中继迁移、追加第二个中继（priority 顺延）、
  * 令牌被踢后重新输入口令——差别只在节点侧算出来的 `set-relays` payload 里，浏览器这边一模一样。
  *
  * 根公钥对拍放在**发出任何请求之前**：密码打错时若照签不误，中继会拿这把假根公钥开一个新租户。
  * 根钥 seed 在 `finally` 里清零：proof、记录与 `afterEnroll`（刷新密封包）都跑完之后它没有
- * 任何后续用途。
+ * 任何后续用途。根密码只问一次：补签与 `set-relays` 共用同一把派生出来的根钥。
  */
 export async function enrollRelay(
   deps: RelayFlowDeps,
@@ -219,28 +219,7 @@ export async function enrollRelay(
     if (!bytesEqual(rootKey.publicKey, expected)) {
       return { ok: false, code: ROOT_PASSWORD_INVALID };
     }
-    const material = await deps.relayApi.proofMaterial(input.url);
-    const proof = signRelayEnrollProof(rootKey, {
-      relayHost: material.relayHost,
-      ts: material.ts,
-    });
-    const enrolled = await deps.relayApi.enroll({
-      // 地址用节点归一化过的那个：签名绑定在它派生出的 host 上。
-      url: material.url,
-      password: input.password ?? null,
-      proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
-    });
-    // 历史成员的 `admit-node` 是旧根签的，中继只认当前根：必须先逐台补签 `readmit-node`，
-    // 一条没成就别提交 `set-relays`——链路先切过去，那些节点反而立刻掉线。
-    const stale = await readmitIfRequired(deps, enrolled.readmitRequired ?? 0, rootKey);
-    if (stale) return stale;
-    const result = await appendRelayRecord(deps, {
-      type: 'set-relays',
-      payload: enrolled.payload,
-      signer: { kind: 'root', rootKey },
-    });
-    if (result.ok) await input.afterEnroll?.(rootKey);
-    return result;
+    return await enrollWithRootKey(deps, input, rootKey);
   } catch (err) {
     return failure(err);
   } finally {
@@ -248,26 +227,54 @@ export async function enrollRelay(
   }
 }
 
-/** 有陈旧成员就先补签，失败时把结论原样带出去（调用方据此中止接入）。 */
-async function readmitIfRequired(
+/**
+ * 根钥校验通过之后的三步。顺序是硬要求：远端 `enroll` 一落地就换发租户令牌并踢掉所有持旧
+ * 令牌的链路（不可逆），补签放在它后面，任何一次可预期的失败（版本门禁、通行密钥、上级超时）
+ * 都会留下「旧令牌已作废、`set-relays` 又没落账」的死状态。所以先在本机把 `readmit-node`
+ * 全部签完——没有陈旧成员时 prepare 回空表，这一步是无操作。
+ */
+async function enrollWithRootKey(
   deps: RelayFlowDeps,
-  required: number,
+  input: RelayEnrollInput,
   rootKey: RootKey
-): Promise<RelayFlowResult | null> {
-  if (required <= 0) return null;
+): Promise<RelayFlowResult> {
+  const signer: RecordSigner = { kind: 'root', rootKey };
   const readmit = await readmitStaleMembers({
     api: deps.api,
     relayApi: deps.relayApi,
     mode: deps.mode,
     lock: deps.lock,
-    signer: { kind: 'root', rootKey },
+    signer,
   });
-  if (!readmit.code) return null;
-  return {
-    ok: false,
-    code: readmit.code,
-    readmit: { signed: readmit.signed, failed: readmit.failed },
-  };
+  if (readmit.code) return readmitFailure(readmit.code, readmit.signed, readmit.failed);
+  const enrolled = await enrollRemote(deps, input, rootKey);
+  // 远端的 `readmitRequired` 只当事后复核：本机刚补签完还剩，说明两边看到的成员不一致，
+  // 这时候切链路会把那些节点直接踢下线。
+  const pending = enrolled.readmitRequired ?? 0;
+  if (pending > 0) return readmitFailure(READMIT_PENDING, readmit.signed, pending);
+  const result = await appendRelayRecord(deps, {
+    type: 'set-relays',
+    payload: enrolled.payload,
+    signer,
+  });
+  if (result.ok) await input.afterEnroll?.(rootKey);
+  return result;
+}
+
+/** 换发租户令牌那一步：拿归一化地址与时间戳，签 proof，换回 `set-relays` 的 payload。 */
+async function enrollRemote(deps: RelayFlowDeps, input: RelayEnrollInput, rootKey: RootKey) {
+  const material = await deps.relayApi.proofMaterial(input.url);
+  const proof = signRelayEnrollProof(rootKey, { relayHost: material.relayHost, ts: material.ts });
+  return await deps.relayApi.enroll({
+    // 地址用节点归一化过的那个：签名绑定在它派生出的 host 上。
+    url: material.url,
+    password: input.password ?? null,
+    proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
+  });
+}
+
+function readmitFailure(code: string, signed: number, failed: number): RelayFlowResult {
+  return { ok: false, code, readmit: { signed, failed } };
 }
 
 /**

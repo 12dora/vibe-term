@@ -2637,7 +2637,8 @@ export const I18N_RESOURCES = {
         "errors": {
           "READMIT_PREPARE_FAILED": "This machine could not list the members to re-affirm. Try again later.",
           "READMIT_ROOT_REQUIRED": "These member records can only be re-affirmed with the current password.",
-          "READMIT_MALFORMED": "The member record is invalid and cannot be re-affirmed."
+          "READMIT_MALFORMED": "The member record is invalid and cannot be re-affirmed.",
+          "READMIT_PENDING": "The relay still reports members awaiting re-affirmation. Try again later."
         }
       }
     },
@@ -5549,7 +5550,8 @@ export const I18N_RESOURCES = {
         "errors": {
           "READMIT_PREPARE_FAILED": "本机没能列出待重新确认的成员，请稍后重试。",
           "READMIT_ROOT_REQUIRED": "这些成员记录只能用当前密码重新确认。",
-          "READMIT_MALFORMED": "成员记录的内容无效，无法重新确认。"
+          "READMIT_MALFORMED": "成员记录的内容无效，无法重新确认。",
+          "READMIT_PENDING": "中继仍报告有成员未重新确认，请稍后重试。"
         }
       }
     },
@@ -8460,7 +8462,8 @@ export const I18N_RESOURCES = {
         "errors": {
           "READMIT_PREPARE_FAILED": "再確認が必要なメンバーを取得できませんでした。しばらくしてから再試行してください。",
           "READMIT_ROOT_REQUIRED": "これらのメンバー記録は現在のパスワードでのみ再確認できます。",
-          "READMIT_MALFORMED": "メンバー記録の内容が不正なため再確認できません。"
+          "READMIT_MALFORMED": "メンバー記録の内容が不正なため再確認できません。",
+          "READMIT_PENDING": "リレーは再確認待ちのメンバーが残っていると報告しています。しばらくしてから再試行してください。"
         }
       }
     },

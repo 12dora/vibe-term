@@ -160,14 +160,15 @@ export type HubAuthCompatOptions = {
   relayMode?: boolean;
   /** 本机节点编号：本机版本即当前版本，永不阻塞。 */
   localNodeId?: string | null;
+  /** 为 true 时中继模式也不跳过未进入 peer_cache 的证书（readmit-node fail-closed）。 */
+  failClosedUncached?: boolean;
 };
 
-/** 节点侧记录：中继两类 + rename-node + readmit-node。空 peer cache 时仅这些可 bootstrap 豁免。 */
+/** 节点侧记录：中继两类 + rename-node。空 peer cache 时仅这些可 bootstrap 豁免。readmit-node 要求已有证书，不豁免。 */
 function isNodeSideRecordType(type: string): boolean {
   return (
     (RELAY_RECORD_TYPES as readonly string[]).includes(type) ||
-    (RENAME_NODE_RECORD_TYPES as readonly string[]).includes(type) ||
-    (READMIT_NODE_RECORD_TYPES as readonly string[]).includes(type)
+    (RENAME_NODE_RECORD_TYPES as readonly string[]).includes(type)
   );
 }
 
@@ -218,7 +219,8 @@ export function nodesBlockingMinVersion(
   opts?: HubAuthCompatOptions
 ): UnsupportedKeyLogNode[] {
   const relayMode = opts?.relayMode === true;
-  const skipUncached = relayMode && listActivePeers(userStore).length > 0;
+  const skipUncached =
+    relayMode && !opts?.failClosedUncached && listActivePeers(userStore).length > 0;
   const blocked: UnsupportedKeyLogNode[] = [];
   const certs = userId ? userStore.listCertsByUser(userId) : userStore.listCerts();
   for (const cert of certs) {
@@ -251,11 +253,15 @@ export function inspectHubAuthRecordCompat(
   if (!spec) return { ok: true };
   const relayMode = opts?.relayMode === true;
   // 版本来源：hub 侧 nodes.version，纯节点与中继模式退到 peer_cache.version；
-  // 尚无任何已知成员时只豁免节点侧记录（首台 bootstrap），hub-auth 与 rotate-root-keep 仍 fail-closed。
+  // 尚无任何已知成员时只豁免节点侧记录（首台 bootstrap），hub-auth、rotate-root-keep、readmit-node 仍 fail-closed。
   if (isNodeSideRecordType(type) && !hasKnownMembers(userStore, relayMode)) {
     return { ok: true };
   }
-  const nodes = nodesBlockingMinVersion(userStore, spec.minVersion, userId, opts);
+  const failClosedUncached = (READMIT_NODE_RECORD_TYPES as readonly string[]).includes(type);
+  const nodes = nodesBlockingMinVersion(userStore, spec.minVersion, userId, {
+    ...opts,
+    failClosedUncached,
+  });
   if (nodes.length === 0) return { ok: true };
   return {
     ok: false,

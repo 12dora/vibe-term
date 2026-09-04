@@ -2,9 +2,12 @@ import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import {
+  DOMAIN_AUTHORIZATION,
   decodeAdmitNodePayload,
+  decodeAuthorization,
   decodeBase64url,
   decodeKeyLogRecord,
+  encodeAuthorization,
   encodeBase64url,
   randomBytes,
   verifyEd25519,
@@ -201,6 +204,24 @@ function io(auth: LocalAuthContext, fetcher: typeof fetch, logs: string[]): Rela
   };
 }
 
+function sampleAuthorization(uid: string, signer: 'root' | 'passkey'): Uint8Array {
+  return encodeAuthorization({
+    domain: DOMAIN_AUTHORIZATION,
+    uid,
+    enroll_pk: randomBytes(32),
+    exp: 1n,
+    root_epoch: 0,
+    signer,
+    credential_id: signer === 'passkey' ? 'cred-1' : null,
+  });
+}
+
+function pathIndex(paths: string[], path: string): number {
+  const index = paths.indexOf(path);
+  expect(index).toBeGreaterThan(-1);
+  return index;
+}
+
 const ATTACHED_STATUS = {
   mode: 'relay',
   tenantId: 'd'.repeat(32),
@@ -211,10 +232,10 @@ const ATTACHED_STATUS = {
 };
 
 describe('relay enroll', () => {
-  test('health → proof → enroll → signed set-relays → status poll', async () => {
+  test('health → readmit → proof → enroll → signed set-relays → status poll', async () => {
     const auth = await openAuth();
     const logs: string[] = [];
-    const { calls, fetcher, user } = fakeGateway(auth, {
+    const { calls, fetcher } = fakeGateway(auth, {
       status: [{ mode: 'hub', relays: [] }, ATTACHED_STATUS],
     });
     const result = await runRelayEnroll(
@@ -226,10 +247,14 @@ describe('relay enroll', () => {
     expect(result.online).toBe(true);
     const paths = calls.map((call) => call.path);
     expect(paths[0]).toBe('/api/relay/health');
-    expect(paths).toContain('/api/mesh/relay/enroll/proof-material');
-    expect(paths).toContain('/api/mesh/relay/enroll');
+    const prepareIdx = pathIndex(paths, '/api/mesh/relay/readmit/prepare');
+    const proofIdx = pathIndex(paths, '/api/mesh/relay/enroll/proof-material');
+    const enrollIdx = pathIndex(paths, '/api/mesh/relay/enroll');
+    const appendIdx = pathIndex(paths, '/api/auth/keylog?hub=sync');
+    expect(prepareIdx).toBeLessThan(proofIdx);
+    expect(proofIdx).toBeLessThan(enrollIdx);
+    expect(enrollIdx).toBeLessThan(appendIdx);
     expect(paths).toContain('/api/auth/keylog/head');
-    expect(paths).toContain('/api/auth/keylog?hub=sync');
     expect(paths.filter((path) => path === '/api/mesh/relay/status')).toHaveLength(2);
     expect(logs.at(-1)).toContain(RELAY_URL);
   });
@@ -288,10 +313,14 @@ describe('relay enroll', () => {
     expect(verifyEd25519(sig, bytes, user.rootPublicKey)).toBe(true);
   });
 
-  test('enroll re-affirms stale members before set-relays', async () => {
+  test('enroll re-affirms stale members before enroll and set-relays', async () => {
     const auth = await openAuth();
     const logs: string[] = [];
-    const authorization = randomBytes(32);
+    const passkeyAuth = sampleAuthorization(
+      auth.userStore.getByUsername('ivy')?.id ?? '',
+      'passkey'
+    );
+    const rootAuth = sampleAuthorization(auth.userStore.getByUsername('ivy')?.id ?? '', 'root');
     const certificate = randomBytes(16);
     const certSig = randomBytes(64);
     const { calls, fetcher, user } = fakeGateway(auth, {
@@ -304,7 +333,16 @@ describe('relay enroll', () => {
             name: 'studio',
             admitSeq: 2,
             admitRootEpoch: 1,
-            authorization_bytes: encodeBase64url(authorization),
+            authorization_bytes: encodeBase64url(passkeyAuth),
+            certificate_bytes: encodeBase64url(certificate),
+            cert_sig: encodeBase64url(certSig),
+          },
+          {
+            nodeId: 'cd'.repeat(16),
+            name: 'box',
+            admitSeq: 3,
+            admitRootEpoch: 1,
+            authorization_bytes: encodeBase64url(rootAuth),
             certificate_bytes: encodeBase64url(certificate),
             cert_sig: encodeBase64url(certSig),
           },
@@ -316,24 +354,44 @@ describe('relay enroll', () => {
       RELAY_URL,
       io(auth, fetcher, logs)
     );
-    expect(logs.some((line) => line.includes('re-affirmed 1 member(s) under root epoch 4'))).toBe(
+    expect(logs.some((line) => line.includes('re-affirmed 2 member(s) under root epoch 4'))).toBe(
       true
     );
+    const paths = calls.map((call) => call.path);
+    const prepareIdx = pathIndex(paths, '/api/mesh/relay/readmit/prepare');
+    const firstAppendIdx = pathIndex(paths, '/api/auth/keylog?hub=sync');
+    const proofIdx = pathIndex(paths, '/api/mesh/relay/enroll/proof-material');
+    const enrollIdx = pathIndex(paths, '/api/mesh/relay/enroll');
+    expect(prepareIdx).toBeLessThan(firstAppendIdx);
+    expect(firstAppendIdx).toBeLessThan(proofIdx);
+    expect(proofIdx).toBeLessThan(enrollIdx);
     const appends = calls.filter((call) => call.path === '/api/auth/keylog?hub=sync');
-    expect(appends).toHaveLength(2);
+    expect(appends).toHaveLength(3);
     const first = decodeKeyLogRecord(decodeBase64url(String(appends[0]?.body?.bytes)));
     const second = decodeKeyLogRecord(decodeBase64url(String(appends[1]?.body?.bytes)));
+    const third = decodeKeyLogRecord(decodeBase64url(String(appends[2]?.body?.bytes)));
     expect(first.type).toBe('readmit-node');
-    expect(second.type).toBe('set-relays');
-    expect(first.seq + 1n).toBe(second.seq);
-    const payload = decodeAdmitNodePayload(first.payload);
-    expect(payload.authorization_bytes).toEqual(authorization);
-    expect(payload.certificate_bytes).toEqual(certificate);
-    expect(verifyEd25519(payload.authorization_sig, authorization, user.rootPublicKey)).toBe(true);
+    expect(second.type).toBe('readmit-node');
+    expect(third.type).toBe('set-relays');
+    for (const record of [first, second]) {
+      const payload = decodeAdmitNodePayload(record.payload);
+      const rebuilt = decodeAuthorization(payload.authorization_bytes);
+      expect(rebuilt.signer).toBe('root');
+      expect(rebuilt.credential_id).toBeNull();
+      expect(rebuilt.root_epoch).toBe(4);
+      expect(rebuilt.uid).toBe(user.id);
+      expect(payload.certificate_bytes).toEqual(certificate);
+      expect(
+        verifyEd25519(payload.authorization_sig, payload.authorization_bytes, user.rootPublicKey)
+      ).toBe(true);
+    }
+    expect(decodeAdmitNodePayload(first.payload).authorization_bytes).not.toEqual(passkeyAuth);
   });
 
   test('enroll aborts set-relays when a readmit-node append fails', async () => {
     const auth = await openAuth();
+    const user = auth.userStore.getByUsername('ivy');
+    if (!user) throw new Error('missing ivy');
     const { calls, fetcher } = fakeGateway(auth, {
       status: [ATTACHED_STATUS],
       readmitPrepare: {
@@ -344,7 +402,7 @@ describe('relay enroll', () => {
             name: 'box',
             admitSeq: 2,
             admitRootEpoch: 1,
-            authorization_bytes: encodeBase64url(randomBytes(8)),
+            authorization_bytes: encodeBase64url(sampleAuthorization(user.id, 'passkey')),
             certificate_bytes: encodeBase64url(randomBytes(8)),
             cert_sig: encodeBase64url(randomBytes(64)),
           },
@@ -366,6 +424,33 @@ describe('relay enroll', () => {
     expect(decodeKeyLogRecord(decodeBase64url(String(appends[0]?.body?.bytes))).type).toBe(
       'readmit-node'
     );
+    expect(calls.some((call) => call.path === '/api/mesh/relay/enroll')).toBe(false);
+    expect(calls.some((call) => call.path === '/api/mesh/relay/enroll/proof-material')).toBe(false);
+  });
+
+  test('enroll aborts set-relays when readmitRequired remains after enroll', async () => {
+    const auth = await openAuth();
+    const { calls, fetcher } = fakeGateway(auth, {
+      status: [ATTACHED_STATUS],
+      enroll: () =>
+        new Response(
+          JSON.stringify({
+            tenantId: 'd'.repeat(32),
+            token: encodeBase64url(randomBytes(32)),
+            passwordEpoch: 1,
+            metaEpoch: 1,
+            payload: encodeBase64url(SET_RELAYS_PAYLOAD),
+            payloadHash: encodeBase64url(randomBytes(32)),
+            readmitRequired: 2,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        ),
+    });
+    await expect(
+      runRelayEnroll(parseArgs(['relay', 'enroll', RELAY_URL]), RELAY_URL, io(auth, fetcher, []))
+    ).rejects.toThrow(/still need re-affirming after enroll \(2\)/);
+    expect(calls.some((call) => call.path === '/api/mesh/relay/enroll')).toBe(true);
+    expect(calls.some((call) => call.path === '/api/auth/keylog?hub=sync')).toBe(false);
   });
 
   test('a relay that is not healthy stops before touching the local gateway', async () => {

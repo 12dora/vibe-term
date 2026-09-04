@@ -2627,7 +2627,8 @@
         "errors": {
           "READMIT_PREPARE_FAILED": "本机没能列出待重新确认的成员，请稍后重试。",
           "READMIT_ROOT_REQUIRED": "这些成员记录只能用当前密码重新确认。",
-          "READMIT_MALFORMED": "成员记录的内容无效，无法重新确认。"
+          "READMIT_MALFORMED": "成员记录的内容无效，无法重新确认。",
+          "READMIT_PENDING": "中继仍报告有成员未重新确认，请稍后重试。"
         }
       }
     },

@@ -299,7 +299,7 @@ export type {
 } from './relay-records';
 
 export { applyRenameNode } from './rename-node-record';
-export { applyReadmitNode } from './readmit-node-record';
+export { applyReadmitNode, buildRootReadmitAuthorization } from './readmit-node-record';
 
 export {
   DOMAIN_HUB_ENROLL,

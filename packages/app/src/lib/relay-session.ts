@@ -4,6 +4,7 @@ import { users } from '../../../../apps/gateway/src/db/schema';
 import {
   type RootKey,
   buildKeyLogRecord,
+  buildRootReadmitAuthorization,
   decodeBase64url,
   deriveTotpKey,
   encodeAdmitNodePayload,
@@ -337,7 +338,7 @@ function parseReadmitPrepare(body: Record<string, unknown>): {
 }
 
 /**
- * 根轮换后历史 `admit-node` 对中继无效。在 `set-relays` 之前把未吊销成员按当前根重签 `readmit-node`。
+ * 根轮换后历史 `admit-node` 对中继无效。在远端 enroll / `set-relays` 之前把未吊销成员按当前根重编码 `readmit-node`。
  */
 export async function reaffirmStaleMembers(
   session: RelayTenantSession
@@ -350,12 +351,16 @@ export async function reaffirmStaleMembers(
   );
   for (const entry of prepared.entries) {
     try {
-      const authorizationBytes = decodeBase64url(entry.authorization_bytes);
+      const rebuilt = buildRootReadmitAuthorization({
+        authorizationBytes: decodeBase64url(entry.authorization_bytes),
+        rootEpoch: prepared.rootEpoch,
+        rootKey: session.rootKey,
+      });
       await signAndSubmitRelayRecord(session, {
         type: 'readmit-node',
         payload: encodeAdmitNodePayload({
-          authorization_bytes: authorizationBytes,
-          authorization_sig: session.rootKey.sign(authorizationBytes),
+          authorization_bytes: rebuilt.authorization_bytes,
+          authorization_sig: rebuilt.authorization_sig,
           certificate_bytes: decodeBase64url(entry.certificate_bytes),
           cert_sig: decodeBase64url(entry.cert_sig),
         }),

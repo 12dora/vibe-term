@@ -2372,6 +2372,7 @@ export type TranslationKey =
   | 'nodes.readmit.errors.READMIT_PREPARE_FAILED'
   | 'nodes.readmit.errors.READMIT_ROOT_REQUIRED'
   | 'nodes.readmit.errors.READMIT_MALFORMED'
+  | 'nodes.readmit.errors.READMIT_PENDING'
   | 'devices'
   | 'devices.nodes'
   | 'devices.nodes.status'

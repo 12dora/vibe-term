@@ -4,11 +4,33 @@ import {
   decodeAdmitNodePayload,
   decodeAuthorization,
   decodeCertificate,
+  encodeAuthorization,
   nodeIdToHex,
   sha256,
 } from './encoding';
 import type { ApplyKeyLogCtx, ApplyKeyLogResult, UserKeyState } from './key-log';
-import { verifyEd25519 } from './root-key';
+import { type RootKey, verifyEd25519 } from './root-key';
+
+export function buildRootReadmitAuthorization(input: {
+  authorizationBytes: Uint8Array;
+  rootEpoch: number;
+  rootKey: RootKey;
+}): { authorization_bytes: Uint8Array; authorization_sig: Uint8Array } {
+  const existing = decodeAuthorization(input.authorizationBytes);
+  const authorization_bytes = encodeAuthorization({
+    domain: existing.domain,
+    uid: existing.uid,
+    enroll_pk: existing.enroll_pk,
+    exp: existing.exp,
+    root_epoch: input.rootEpoch,
+    signer: 'root',
+    credential_id: null,
+  });
+  return {
+    authorization_bytes,
+    authorization_sig: input.rootKey.sign(authorization_bytes),
+  };
+}
 
 type AdmitMaterial = {
   payload: ReturnType<typeof decodeAdmitNodePayload>;

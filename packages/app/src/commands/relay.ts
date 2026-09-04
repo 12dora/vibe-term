@@ -96,6 +96,7 @@ type EnrollExchange = {
   tenantId: string;
   token: string;
   payload: Uint8Array;
+  readmitRequired: number;
 };
 
 async function exchangeRelayEnroll(
@@ -129,6 +130,7 @@ async function exchangeRelayEnroll(
     tenantId: asText(body.tenantId) || asText(body.tenant_id),
     token: asText(body.token),
     payload: setRelaysPayload(body),
+    readmitRequired: asNumber(body.readmitRequired, asNumber(body.readmit_required)),
   };
 }
 
@@ -183,10 +185,13 @@ async function runRelayEnrollInternal(
 
   return await withAuth(parsed, io, async (ctx) => {
     const session = await openRelayTenantSession(parsed, ctx, io);
-    const exchange = await enrollWithRetry(session, { relayUrl, password, io });
     const readmit = await reaffirmStaleMembers(session);
     if (readmit.count > 0) {
       relayLog(io, `re-affirmed ${readmit.count} member(s) under root epoch ${readmit.rootEpoch}`);
+    }
+    const exchange = await enrollWithRetry(session, { relayUrl, password, io });
+    if (exchange.readmitRequired > 0) {
+      throw new Error(t('relay.enroll.readmitPending', { count: exchange.readmitRequired }));
     }
     await signAndSubmitRelayRecord(session, {
       type: 'set-relays',

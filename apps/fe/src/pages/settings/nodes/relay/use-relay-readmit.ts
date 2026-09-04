@@ -1,6 +1,6 @@
 // 「重新确认成员」：把旧根签的成员记录用当前根重签一遍（`readmit-node`）。
 //
-// 接入流程里这一步由 `enrollRelay` 自己顺手做掉（`set-relays` 之前），这里是中继状态卡片上的
+// 接入流程里这一步由 `enrollRelay` 自己顺手做掉（远端换发令牌之前），这里是中继状态卡片上的
 // 手动入口——根轮换发生在接入之后时，只能靠它把新出现的陈旧成员补上。
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
