@@ -8,7 +8,6 @@
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { RecordSigner } from '@/auth/key-log-actions';
 import { withKeyLogLock } from '@/node/enrollment-engine';
-import { attachedRelay, getMeshRelayState, subscribeMeshRelay } from '@/node/mesh-relay';
 import type { RelayFlowDeps, RelayFlowMode, RelayFlowResult } from '@/node/relay-enroll';
 import { appendMetaKey, enrollRelay, leaveRelay, removeRelay } from '@/node/relay-enroll';
 import {
@@ -20,7 +19,7 @@ import {
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
@@ -171,7 +170,11 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
     }
   }, [confirm, flowDeps, onChanged, prompt, t]);
 
-  const metaPending = useAutoRetryMetaKey(flowDeps, onChanged);
+  const metaPending = useSyncExternalStore(
+    subscribePendingMetaKeys,
+    listPendingMetaKeys,
+    listPendingMetaKeys
+  );
 
   const retryMetaKey = useCallback(async () => {
     if (!flowDeps) return;
@@ -230,33 +233,4 @@ const DONE_KEYS: Record<RelayConfirmIntent, string> = {
 
 function doneKeyOf(intent: RelayConfirmIntent): string {
   return DONE_KEYS[intent];
-}
-
-/**
- * 欠账的自动重发：只在**挂上中继**且手上还留着已签字节时做（没字节的必须重新要凭据）。
- * 同一批 id 只自动试一次，失败后由告警条上的「重试」按钮接手，避免打进死循环。
- */
-function useAutoRetryMetaKey(deps: RelayFlowDeps | null, onSettled: () => void): PendingMetaKey[] {
-  const pending = useSyncExternalStore(
-    subscribePendingMetaKeys,
-    listPendingMetaKeys,
-    listPendingMetaKeys
-  );
-  const relay = useSyncExternalStore(subscribeMeshRelay, getMeshRelayState, getMeshRelayState);
-  const attached = attachedRelay(relay) !== null;
-  const ids = pending.map((row) => row.id).join(',');
-  const attempted = useRef('');
-
-  useEffect(() => {
-    if (!deps || !attached || ids === '') return;
-    const key = `${attached}:${ids}`;
-    if (attempted.current === key) return;
-    if (!listPendingMetaKeys().some((row) => row.record)) return;
-    attempted.current = key;
-    void retryPendingMetaKeys(deps).then((left) => {
-      if (left === 0) onSettled();
-    });
-  }, [attached, deps, ids, onSettled]);
-
-  return pending;
 }

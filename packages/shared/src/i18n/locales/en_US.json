@@ -2202,8 +2202,10 @@
         "expired": "This join code expired. Create a new one.",
         "noCertificateYet": "The new node has not answered yet. Try again in a moment.",
         "hubNotConfirmed": "The hub did not confirm, so nothing was saved. Retry to send it again.",
+        "relayNotConfirmed": "The relay did not confirm, so nothing was saved. Retry to send it again.",
         "retryHub": "Retry",
         "missingHubUrl": "The hub has no public address, so the join command cannot be built.",
+        "missingRelayUrl": "The relay address is unavailable, so the join command cannot be built.",
         "staleRecord": "Your account changed in the meantime. Approve again."
       },
       "rename": {
@@ -2603,6 +2605,7 @@
         "totals": {
           "title": "Totals",
           "tenants": "Tenants",
+          "nodes": "Nodes in use",
           "nodesOnline": "Nodes online",
           "streams": "Streams",
           "traffic": "Relayed traffic"

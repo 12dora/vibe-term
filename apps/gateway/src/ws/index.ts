@@ -758,14 +758,6 @@ export class WebSocketServer
     this.theme.handleSiteThemeUpdate(ws, decoded);
   }
 
-  scheduleTmuxThemeApply(theme: ThemeMode): void {
-    this.theme.scheduleTmuxThemeApply(theme);
-  }
-
-  broadcastSiteThemeUpdateS2C(theme: ThemeMode): void {
-    this.theme.broadcastSiteThemeUpdateS2C(theme);
-  }
-
   broadcastSettingsUpdate(namespace: SettingsNamespace): void {
     this.theme.broadcastSettingsUpdate(namespace);
   }

@@ -46,6 +46,8 @@ export interface CreateEnrollmentState {
   created: CreatedEnrollment | null;
   /** join 命令里的 hub 对外地址；缺失或不可信时为 `null`，此时不能编命令。 */
   hubUrl: string | null;
+  /** 本机走中继：上级相关的提示文案要换成中继口径。 */
+  relayMode: boolean;
   submit: () => Promise<void>;
 }
 
@@ -134,6 +136,7 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
       created,
       relay.relayMode ? { hubPublicUrl: relay.ordered[0]?.url ?? null } : (mode ?? {})
     ),
+    relayMode: relay.relayMode,
     submit,
   };
 }

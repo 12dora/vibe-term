@@ -66,6 +66,10 @@ export function RelayTotalsCard({ totals }: { totals: RelayTotals }) {
       <InfoRow label={t('relay.admin.totals.tenants')} testId="relay-totals-tenants">
         {totals.tenants}
       </InfoRow>
+      {/* 「占用」是配额口径（pending + 已加入），与「在线」不是一个数。 */}
+      <InfoRow label={t('relay.admin.totals.nodes')} testId="relay-totals-nodes-used">
+        {totals.nodes}
+      </InfoRow>
       <InfoRow label={t('relay.admin.totals.nodesOnline')} testId="relay-totals-nodes">
         {totals.nodesOnline}
       </InfoRow>

@@ -9,7 +9,7 @@
 >
 > - Gateway canonical feed：`apps/gateway/src/ws/canonical-feed-session.ts`、`apps/gateway/src/ws/canonical/`。
 > - FE canonical 状态流：`packages/ws-client/src/canonical-state-client.ts`、`pane-sink-registry.ts`。
-> - e2e：`apps/fe/tests/ws-borsh-switch-barrier.spec.ts`（已改写为 canonical 首屏事务 + 订阅代断言）。
+> - e2e：`apps/fe/tests/ws-borsh-pane-switch.spec.ts`（已改写为 canonical 首屏事务 + 订阅代断言）。
 >
 > 状态机全貌见 `docs/ws-protocol/2026021403-ws-state-machines.md` 第 3、4 节。
 
@@ -92,7 +92,7 @@ tmux 的当前 pane、携带视口尺寸参与几何仲裁），不属于被删�
 
 ## 5. 验收用例（e2e）
 
-`apps/fe/tests/ws-borsh-switch-barrier.spec.ts`：
+`apps/fe/tests/ws-borsh-pane-switch.spec.ts`：
 
 1. 跨 window 切换后，`TMUX_SELECT` 仍携带本地 cols/rows；目标 pane 的首屏事务 Begin/Commit 成对且
    requestId 一致；目标 pane 进入最新订阅集合。

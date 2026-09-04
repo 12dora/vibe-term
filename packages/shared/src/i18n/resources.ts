@@ -2208,8 +2208,10 @@ export const I18N_RESOURCES = {
         "expired": "This join code expired. Create a new one.",
         "noCertificateYet": "The new node has not answered yet. Try again in a moment.",
         "hubNotConfirmed": "The hub did not confirm, so nothing was saved. Retry to send it again.",
+        "relayNotConfirmed": "The relay did not confirm, so nothing was saved. Retry to send it again.",
         "retryHub": "Retry",
         "missingHubUrl": "The hub has no public address, so the join command cannot be built.",
+        "missingRelayUrl": "The relay address is unavailable, so the join command cannot be built.",
         "staleRecord": "Your account changed in the meantime. Approve again."
       },
       "rename": {
@@ -2609,6 +2611,7 @@ export const I18N_RESOURCES = {
         "totals": {
           "title": "Totals",
           "tenants": "Tenants",
+          "nodes": "Nodes in use",
           "nodesOnline": "Nodes online",
           "streams": "Streams",
           "traffic": "Relayed traffic"
@@ -4908,8 +4911,10 @@ export const I18N_RESOURCES = {
         "expired": "加入码已过期，请重新生成。",
         "noCertificateYet": "新节点尚未响应，请稍后重试。",
         "hubNotConfirmed": "Hub 未确认，本次没有写入任何内容，可直接重试。",
+        "relayNotConfirmed": "中继未确认，本次没有写入任何内容，可直接重试。",
         "retryHub": "重试",
         "missingHubUrl": "Hub 未设置公开地址，无法生成加入命令。",
+        "missingRelayUrl": "中继地址不可用，无法生成加入命令。",
         "staleRecord": "账号信息已变化，请重新确认。"
       },
       "rename": {
@@ -5305,6 +5310,7 @@ export const I18N_RESOURCES = {
         "totals": {
           "title": "总量",
           "tenants": "租户",
+          "nodes": "节点占用",
           "nodesOnline": "在线节点",
           "streams": "并发流",
           "traffic": "中转流量"
@@ -7604,8 +7610,10 @@ export const I18N_RESOURCES = {
         "expired": "参加コードの有効期限が切れました。新しく作成してください。",
         "noCertificateYet": "新しいノードからまだ応答がありません。しばらくしてからお試しください。",
         "hubNotConfirmed": "ハブが確認しなかったため、何も保存されていません。もう一度お試しください。",
+        "relayNotConfirmed": "中継が確認しなかったため、何も保存されていません。もう一度お試しください。",
         "retryHub": "再試行",
         "missingHubUrl": "ハブに公開アドレスが設定されていないため、参加コマンドを作成できません。",
+        "missingRelayUrl": "中継アドレスを取得できないため、参加コマンドを作成できません。",
         "staleRecord": "その間にアカウント情報が変わりました。もう一度承認してください。"
       },
       "rename": {
@@ -8001,6 +8009,7 @@ export const I18N_RESOURCES = {
         "totals": {
           "title": "合計",
           "tenants": "テナント",
+          "nodes": "使用中ノード",
           "nodesOnline": "オンラインノード",
           "streams": "同時ストリーム",
           "traffic": "中継トラフィック"
