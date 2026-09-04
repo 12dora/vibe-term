@@ -74,6 +74,8 @@ const IDLE_RELAY_ACTIONS: RelayActionsController = {
   runConfirm: () => Promise.resolve(),
   metaPending: [],
   retryMetaKey: () => Promise.resolve(),
+  packPending: false,
+  retryPack: () => Promise.resolve(),
 };
 
 const MESH_MODE: AuthModeResponse = {

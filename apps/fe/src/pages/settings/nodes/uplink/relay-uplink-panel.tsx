@@ -12,6 +12,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CopyableValue, Row } from '../copy-feedback';
 import { isRelayRole } from '../membership/role-transition';
+import { RelayPackPendingNotice } from '../relay/relay-dialogs';
 import { RelayStrip, relayLabel } from '../relay/relay-strip';
 import type { RelayActionsController } from '../relay/use-relay-actions';
 import { kickedRelays, reauthTarget } from './relay-targets';
@@ -190,6 +191,7 @@ function RelayNotices({
           </Button>
         </p>
       )}
+      <RelayPackPendingNotice actions={actions} />
       {!relay.writable && !relay.kicked && (
         <p
           className="flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
