@@ -465,6 +465,7 @@ export class AuthKeyLogRoutes {
     const compat = applyForcedKeyLogCompat(
       inspectHubAuthRecordCompat(this.deps.userStore, bytes, userId, {
         relayMode: this.inRelayMode(userId),
+        localNodeId: this.deps.nodeId,
       }),
       req.headers.get('x-tmex-force-keylog') === '1'
     );

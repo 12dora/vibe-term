@@ -157,6 +157,8 @@ export type HubAuthRecordCompatResult =
 
 export type HubAuthCompatOptions = {
   relayMode?: boolean;
+  /** 本机节点编号：本机版本即当前版本，永不阻塞。 */
+  localNodeId?: string | null;
 };
 
 /** 节点侧记录：中继两类 + rename-node。空 peer cache 时仅这三类可 bootstrap 豁免。 */
@@ -218,7 +220,7 @@ export function nodesBlockingMinVersion(
   const blocked: UnsupportedKeyLogNode[] = [];
   const certs = userId ? userStore.listCertsByUser(userId) : userStore.listCerts();
   for (const cert of certs) {
-    if (cert.revokedLogSeq != null) continue;
+    if (cert.revokedLogSeq != null || cert.nodeId === opts?.localNodeId) continue;
     const looked = lookupCompatNode(userStore, cert.nodeId, relayMode);
     if (skipUncached && !looked.cached) continue;
     if (nodeVersionMeets(looked.version, minVersion)) continue;

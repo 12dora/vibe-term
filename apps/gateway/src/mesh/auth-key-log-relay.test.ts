@@ -466,7 +466,7 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
     }
   });
 
-  test('中继模式 rotate-root-keep：旧 peer / 空缓存拦截，全员达标放行', async () => {
+  test('中继模式 rotate-root-keep：旧 peer 拦截，全员达标放行', async () => {
     const b = await boot({ publisher: offlinePublisher() });
     try {
       await attachRelay(b);
@@ -476,12 +476,6 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
           kdf_params: generateKdfParams(),
           totp: null,
         });
-      const empty = await postRecord(b, { type: 'rotate-root-keep', payload: keepPayload() });
-      expect(empty.status).toBe(409);
-      expect(((await empty.json()) as { code: string }).code).toBe(
-        KEYLOG_TYPE_UNSUPPORTED_BY_NODES
-      );
-
       const token = new Uint8Array(32).fill(2);
       expect(
         (await postRecord(b, { type: 'set-relays', payload: await setRelaysPayload(b, { token }) }))
