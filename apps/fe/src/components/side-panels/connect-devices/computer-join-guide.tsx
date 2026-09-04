@@ -54,13 +54,18 @@ function UplinkMissing({ uplink }: { uplink: JoinUplink }) {
   );
 }
 
+/** 中继路径要地址和租户编号齐了才算备齐：`tmex relay join` 两个都是必填。 */
+export function uplinkReady(uplink: JoinUplink): boolean {
+  return uplink.url !== null && (uplink.kind === 'hub' || uplink.tenantId !== null);
+}
+
 function UplinkStep({ uplink, index }: { uplink: JoinUplink; index: number }) {
   const { t } = useTranslation();
   const relay = uplink.kind === 'relay';
   return (
     <GuideStep
       index={index}
-      state={uplink.url ? 'done' : 'todo'}
+      state={uplinkReady(uplink) ? 'done' : 'todo'}
       testId="connect-step-join-uplink"
       title={t(`${PREFIX}.uplink.title`)}
       description={t(
@@ -182,9 +187,12 @@ function TokenAdvanced({ enrollment }: { enrollment: ReturnType<typeof useJoinEn
   );
 }
 
-/** 加入码由上级签发：中继路径下本机必须自己就挂在中继上，否则这块不出现。 */
+/**
+ * 加入码只能由本机当前的上级签发：签发通道认的是本机真实的 uplink 模式，
+ * 与所选路径对不上时签出来的凭据指向另一条链路，这块整个不出现。
+ */
 export function canIssueJoinToken(variant: JoinVariant, machine: ConnectMachine): boolean {
-  return variant === 'hub' ? true : machine.relayMode;
+  return variant === 'relay' ? machine.relayMode : !machine.relayMode;
 }
 
 export function JoinSteps({

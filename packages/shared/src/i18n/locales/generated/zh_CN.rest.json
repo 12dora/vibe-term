@@ -69,11 +69,11 @@
           "hint": {
             "relay": "中继：节点在 NAT 后，只需一个公网汇合点。",
             "hub": "Hub：需要集中管理账号与节点。",
-            "ssh": "SSH 直连：新机器可直接 SSH 到达，无需安装 tmex。"
+            "ssh": "SSH 直连：本机可通过 SSH 访问新机器，无需安装 tmex。"
           },
           "tip": {
-            "relay": "中继只转发加密流量，不保存账号与密钥。节点各自连上中继，在公网汇合，适合都在 NAT 或防火墙后的机器。",
-            "hub": "Hub 是信任中心，保存账号、节点成员与加入审批，需要一个固定的公网 HTTPS 地址。",
+            "relay": "中继只转发加密流量，不保存账号与密钥。适合都在 NAT 或防火墙后的机器。",
+            "hub": "Hub 是信任中心，保存账号与节点成员，需要固定的公网 HTTPS 地址。",
             "ssh": "新机器不运行 tmex，由本机经 SSH 连接，作为设备出现在设备列表。"
           }
         },
@@ -103,13 +103,13 @@
             "tenantId": "租户编号",
             "relayMissing": "向中继运营者索取中继地址与接入密码。",
             "hubMissing": "向 Hub 管理员索取 Hub 地址。",
-            "tenantMissing": "租户编号由中继运营者在中继管理中创建。",
+            "tenantMissing": "租户编号在本机接入中继后生成。",
             "link": "前往多节点互联设置"
           },
           "password": {
             "title": "在新机器上加入",
-            "relayDescription": "在新机器上打开「设置 → 多节点互联 → 加入中继」，填中继地址、租户编号与接入密码。",
-            "hubDescription": "在新机器上打开「设置 → 多节点互联 → 加入已有 Hub」，填 Hub 地址与账号密码。",
+            "relayDescription": "在新机器上打开「设置 → 多节点互联 → 加入中继」。",
+            "hubDescription": "在新机器上打开「设置 → 多节点互联 → 加入已有 Hub」。",
             "command": "也可以在新机器的终端执行",
             "tenantPlaceholder": "<租户编号>"
           },
@@ -119,7 +119,7 @@
           },
           "token": {
             "title": "生成加入码",
-            "description": "在已接入的机器上打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」。",
+            "description": "在已接入的机器上打开「节点管理」，点「添加」→「生成加入码」。",
             "meshDescription": "在此生成加入码，10 分钟内有效。",
             "label": "加入码（有效期 {{minutes}} 分钟）",
             "link": "前往多节点互联设置",
@@ -142,7 +142,8 @@
         "relayHost": {
           "setup": {
             "title": "本机设为中继",
-            "description": "打开「设置 → 多节点互联」，选择「本机作为中继」。中继需要固定的公网 HTTPS 地址。",
+            "description": "打开「设置 → 多节点互联」，选择「本机作为中继」。",
+            "requirement": "中继需要固定的公网 HTTPS 地址。",
             "link": "前往多节点互联设置",
             "urlLabel": "中继地址",
             "missingUrl": "中继地址未知，其他机器无法加入。"
@@ -153,16 +154,24 @@
             "link": "前往中继管理",
             "done": "接入密码已设置。"
           },
+          "enroll": {
+            "title": "接入本机中继",
+            "description": "打开「设置 → 多节点互联」，点「接入本机中继」，输入接入密码。",
+            "link": "前往多节点互联设置",
+            "command": "也可以在本机终端执行",
+            "tenantId": "租户编号"
+          },
           "invite": {
             "title": "让新机器加入",
             "description": "在新机器上安装 tmex，按「加入已有中继」的步骤接入。",
+            "blocked": "完成上一步后，本机才能给出租户编号。",
             "gotoJoin": "查看加入步骤"
           }
         },
         "host": {
           "entry": {
             "title": "配置公网入口",
-            "description": "打开「设置 → 远程访问」：Cloudflare Tunnel（命名隧道）提供固定 HTTPS 地址，直接连接需自备固定 HTTPS 入口。",
+            "description": "打开「设置 → 远程访问」，为本机配置固定的公网 HTTPS 入口。",
             "link": "前往远程访问设置",
             "status": {
               "named": "已配置 Cloudflare Tunnel：{{url}}（{{state}}）",
@@ -172,7 +181,7 @@
           },
           "hub": {
             "title": "本机设为 Hub",
-            "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」，填入上一步的地址，创建首个账号并重启。",
+            "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」。",
             "warning": "Hub 公开地址设定后不可修改，先确定最终域名。",
             "link": "前往多节点互联设置",
             "status": {
@@ -180,7 +189,7 @@
               "node": "本机已作为节点加入 {{url}}，不能再作为 Hub。",
               "mismatch": "Hub 公开地址与当前隧道主机名不一致，其他机器可能无法接入。"
             },
-            "hintUseEntry": "把上一步的地址 {{url}} 填入「Hub 公开地址」。"
+            "hintUseEntry": "把上一步的地址 {{url}} 填入「Hub 公开地址」，创建首个账号后重启。"
           },
           "invite": {
             "title": "让新机器加入",

@@ -15,6 +15,8 @@ export interface ConnectStatus {
   relayAttached: boolean;
   /** 本机走中继模式。 */
   relayMode: boolean;
+  /** 本机所在的租户；本机不是中继租户时为 null。 */
+  tenantId: string | null;
   /** 本机已加入多节点互联。 */
   meshEnabled: boolean;
 }
@@ -35,8 +37,10 @@ export function defaultConnectPath(status: ConnectStatus): ConnectPath {
 
 /** 已有可加入的上级就先给「加入」，否则先教怎么把本机搭起来。 */
 export function defaultConnectSide(path: ConnectPath, status: ConnectStatus): ConnectSide {
+  // 中继侧只认稳定的租户接入模式：服务角色说明不了本机自己接没接上，
+  // attached 又会随一次断线抖成 false。
   if (path === 'relay') {
-    return isRelayRole(status.role) || status.relayAttached ? 'join' : 'host';
+    return status.relayMode && status.tenantId !== null ? 'join' : 'host';
   }
   if (path === 'hub') {
     return isHubRole(status.role) || (status.meshEnabled && !status.relayMode) ? 'join' : 'host';

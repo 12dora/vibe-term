@@ -24,7 +24,9 @@ const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { resetMeshRelayStateForTest, setMeshRelayStateForTest } = await import('@/node/mesh-relay');
 const { resetEnrollmentEngineForTest } = await import('@/node/enrollment-engine');
-const { JoinSteps, canIssueJoinToken, resolveJoinUplink } = await import('./computer-join-guide');
+const { JoinSteps, canIssueJoinToken, resolveJoinUplink, uplinkReady } = await import(
+  './computer-join-guide'
+);
 const { passwordJoinCommand, relayJoinCommand } = await import('./join-command-preview');
 
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
@@ -142,8 +144,24 @@ describe('canIssueJoinToken', () => {
     expect(canIssueJoinToken('relay', machine({ role: 'relay' }))).toBe(false);
   });
 
-  test('Hub 路径一律给出加入码区（未组网时里面自会说明）', () => {
+  test('Hub 路径：本机没走中继时给出加入码区（未组网时里面自会说明）', () => {
     expect(canIssueJoinToken('hub', machine())).toBe(true);
+    expect(canIssueJoinToken('hub', HUB_MACHINE)).toBe(true);
+  });
+
+  test('本机走中继却选了 Hub 路径：签出来的凭据指向中继，整块不给', () => {
+    expect(canIssueJoinToken('hub', RELAY_MACHINE)).toBe(false);
+  });
+});
+
+describe('uplinkReady', () => {
+  test('Hub 只要地址，中继还要租户编号', () => {
+    expect(uplinkReady(resolveJoinUplink('hub', HUB_MACHINE))).toBe(true);
+    expect(uplinkReady(resolveJoinUplink('relay', RELAY_MACHINE))).toBe(true);
+    expect(
+      uplinkReady(resolveJoinUplink('relay', machine({ role: 'relay', relayUrl: RELAY_URL })))
+    ).toBe(false);
+    expect(uplinkReady(resolveJoinUplink('hub', machine()))).toBe(false);
   });
 });
 
@@ -214,13 +232,20 @@ describe('JoinSteps', () => {
     expect(html).toContain('data-testid="connect-join-token-advanced"');
   });
 
-  test('本机是中继但没有租户编号：地址照给，租户编号只留说明', () => {
+  test('本机是中继但没有租户编号：地址照给，这步仍是待办', () => {
     const relayHost = machine({ role: 'relay', relayUrl: RELAY_URL, relayPublicUrl: RELAY_URL });
     const html = render(<JoinSteps variant="relay" machine={relayHost} />);
     expect(html).toContain('data-testid="command-block-join-uplink-url"');
     expect(html).not.toContain('data-testid="command-block-join-tenant-id"');
     expect(html).toContain('data-testid="connect-join-tenant-missing"');
+    // 租户编号是 relay join 的必填项：缺它就不能打勾。
+    expect(html).not.toContain('data-step-state="done"');
     // 本机自己签不出中继加入码：折叠区整块不出现。
+    expect(html).not.toContain('data-testid="connect-join-token-advanced"');
+  });
+
+  test('本机走中继却看 Hub 路径：加入码折叠区不出现', () => {
+    const html = render(<JoinSteps variant="hub" machine={RELAY_MACHINE} />);
     expect(html).not.toContain('data-testid="connect-join-token-advanced"');
   });
 

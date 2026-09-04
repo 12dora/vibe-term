@@ -135,11 +135,11 @@
           "hint": {
             "relay": "Relay: nodes sit behind NAT and only need a public meeting point.",
             "hub": "Hub: accounts and nodes are managed centrally.",
-            "ssh": "Direct SSH: the new machine is reachable over SSH; tmex is not installed."
+            "ssh": "Direct SSH: this machine reaches the new machine over SSH; tmex is not installed."
           },
           "tip": {
-            "relay": "A relay only forwards encrypted traffic and holds no accounts or keys. Each node connects to it and meets on the public internet, which suits machines behind NAT or a firewall.",
-            "hub": "The Hub is the trust center: it holds accounts, node membership and join approvals, and needs a fixed public HTTPS address.",
+            "relay": "A relay only forwards encrypted traffic and holds no accounts or keys. It suits machines behind NAT or a firewall.",
+            "hub": "The Hub is the trust center for accounts and node membership, and needs a fixed public HTTPS address.",
             "ssh": "The new machine does not run tmex. This machine connects over SSH and it appears in the device list."
           }
         },
@@ -169,13 +169,13 @@
             "tenantId": "Tenant ID",
             "relayMissing": "Ask the relay operator for the relay address and access password.",
             "hubMissing": "Ask the Hub administrator for the Hub address.",
-            "tenantMissing": "The tenant ID is created by the relay operator in relay management.",
+            "tenantMissing": "The tenant ID is issued once this machine connects to the relay.",
             "link": "Open multi-node mesh settings"
           },
           "password": {
             "title": "Join from the new machine",
-            "relayDescription": "On the new machine open Settings → Multi-node Mesh → \"Join a relay\", then enter the relay address, tenant ID and access password.",
-            "hubDescription": "On the new machine open Settings → Multi-node Mesh → \"Join an existing hub\", then enter the Hub address and account password.",
+            "relayDescription": "On the new machine open Settings → Multi-node Mesh → \"Join a relay\".",
+            "hubDescription": "On the new machine open Settings → Multi-node Mesh → \"Join an existing hub\".",
             "command": "Or run this in the new machine's terminal",
             "tenantPlaceholder": "<tenant-id>"
           },
@@ -185,7 +185,7 @@
           },
           "token": {
             "title": "Generate a join token",
-            "description": "On a connected machine open Settings → Multi-node Mesh → Node management, then click Add → Generate join token.",
+            "description": "On a connected machine open Node management, then click Add → Generate join token.",
             "meshDescription": "Generate a join token here. It is valid for 10 minutes.",
             "label": "Join token (valid for {{minutes}} minutes)",
             "link": "Open multi-node mesh settings",
@@ -208,7 +208,8 @@
         "relayHost": {
           "setup": {
             "title": "Make this machine a relay",
-            "description": "Open Settings → Multi-node Mesh and choose \"Use This Machine as the Relay\". A relay needs a fixed public HTTPS address.",
+            "description": "Open Settings → Multi-node Mesh and choose \"Use This Machine as the Relay\".",
+            "requirement": "A relay needs a fixed public HTTPS address.",
             "link": "Open multi-node mesh settings",
             "urlLabel": "Relay address",
             "missingUrl": "The relay address is unknown, so other machines cannot join."
@@ -219,16 +220,24 @@
             "link": "Open relay management",
             "done": "The access password is set."
           },
+          "enroll": {
+            "title": "Connect to This Relay",
+            "description": "Open Settings → Multi-node Mesh, click \"Connect to This Relay\" and enter the access password.",
+            "link": "Open multi-node mesh settings",
+            "command": "Or run this in this machine's terminal",
+            "tenantId": "Tenant ID"
+          },
           "invite": {
             "title": "Connect the new machine",
             "description": "Install tmex on the new machine, then follow the \"Join an existing relay\" steps.",
+            "blocked": "The tenant ID is available once the previous step is done.",
             "gotoJoin": "See the join steps"
           }
         },
         "host": {
           "entry": {
             "title": "Set up a public entry",
-            "description": "Open Settings → Remote access: a Cloudflare named tunnel gives a fixed HTTPS address; a direct connection needs a fixed HTTPS entry of your own.",
+            "description": "Open Settings → Remote access and set up a fixed public HTTPS entry for this machine.",
             "link": "Open remote access settings",
             "status": {
               "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})",
@@ -238,7 +247,7 @@
           },
           "hub": {
             "title": "Make this machine the Hub",
-            "description": "Open Settings → Multi-node Mesh, choose \"Make this the hub\", enter the address from the previous step, create the first account and restart.",
+            "description": "Open Settings → Multi-node Mesh and choose \"Make this the hub\".",
             "warning": "The Hub public URL cannot be changed later. Decide on the final domain first.",
             "link": "Open multi-node mesh settings",
             "status": {
@@ -246,7 +255,7 @@
               "node": "This machine joined {{url}} as a node, so it cannot be a Hub.",
               "mismatch": "The Hub public URL does not match the current tunnel hostname; other machines may fail to connect."
             },
-            "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL."
+            "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL, create the first account and restart."
           },
           "invite": {
             "title": "Connect the new machine",

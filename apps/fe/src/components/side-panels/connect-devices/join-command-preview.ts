@@ -57,3 +57,9 @@ export function relayJoinCommand(input: {
   const tenant = input.tenantId ?? input.tenantPlaceholder;
   return `tmex relay join ${shellQuote(url)} --tenant ${shellQuote(tenant)}`;
 }
+
+/** 本机以租户身份接进一条中继的命令；地址未知时填示例地址，形状仍然正确。 */
+export function relayEnrollCommand(relayUrl: string | null): string {
+  const url = isTrustedHubUrl(relayUrl) ? (relayUrl as string) : EXAMPLE_RELAY_URL;
+  return `tmex relay enroll ${shellQuote(url)}`;
+}

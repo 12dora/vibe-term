@@ -249,7 +249,7 @@ describe('ComputerGuide 的路径选择', () => {
     const html = render(<ComputerGuide />);
     expect(html).toContain('data-testid="connect-side-relay-join"');
     expect(html).toContain('data-testid="connect-side-relay-host"');
-    for (const step of ['setup', 'password', 'invite']) {
+    for (const step of ['setup', 'password', 'enroll', 'invite']) {
       expect(html).toContain(`data-testid="connect-step-relay-${step}"`);
     }
     expect(html).not.toContain('data-testid="connect-step-install"');
@@ -293,17 +293,19 @@ describe('ComputerGuide 的路径选择', () => {
 });
 
 describe('本机自建中继的三步', () => {
-  test('本机还不是中继：两步待办，给出多节点互联入口', () => {
+  test('本机还不是中继：四步待办，给出多节点互联入口', () => {
     const html = render(<RelayHostSteps machine={machine()} onSwitchToJoin={() => undefined} />);
     expect(html).toContain('connectDevices.computer.relayHost.setup.description');
+    expect(html).toContain('data-testid="connect-relay-setup-requirement"');
     expect(html).toContain('data-testid="connect-relay-setup-link"');
     expect(html).toContain('href="/settings?tab=nodes"');
     // 还不是中继：不给中继管理的死链。
     expect(html).not.toContain('data-testid="connect-relay-password-link"');
     expect(html).not.toContain('data-step-state="done"');
-    expect(html.split('data-step-state="todo"').length - 1).toBe(3);
+    expect(html.split('data-step-state="todo"').length - 1).toBe(4);
     expect(stepIndex(html, 'connect-step-relay-setup')).toBe('2');
-    expect(stepIndex(html, 'connect-step-relay-invite')).toBe('4');
+    expect(stepIndex(html, 'connect-step-relay-enroll')).toBe('4');
+    expect(stepIndex(html, 'connect-step-relay-invite')).toBe('5');
   });
 
   test('本机已是中继但没设接入密码：第一步打勾，第二步给中继管理入口', () => {
@@ -320,7 +322,7 @@ describe('本机自建中继的三步', () => {
     expect(html).toContain('href="/settings?tab=relay"');
   });
 
-  test('中继与接入密码都就绪：前两步打勾，给出去加入的按钮', () => {
+  test('中继与接入密码都就绪、本机还没接进去：给出「接入本机中继」这一步，先不放去加入', () => {
     const html = render(
       <RelayHostSteps
         machine={machine({ role: 'relay', relayPublicUrl: RELAY_URL, relayHasPassword: true })}
@@ -329,6 +331,32 @@ describe('本机自建中继的三步', () => {
     );
     expect(html.split('data-step-state="done"').length - 1).toBe(2);
     expect(html).toContain('data-testid="connect-relay-password-done"');
+    expect(html).toContain('connectDevices.computer.relayHost.enroll.description');
+    expect(html).toContain('data-testid="connect-relay-enroll-link"');
+    expect(html).toContain(`tmex relay enroll &#x27;${RELAY_URL}&#x27;`);
+    // 没有租户编号，加入步骤给不出可执行的命令。
+    expect(html).toContain('connectDevices.computer.relayHost.invite.blocked');
+    expect(html).not.toContain('data-testid="connect-relay-goto-join"');
+  });
+
+  test('本机已接入自己的中继：三步打勾，租户编号可复制，可直接去加入', () => {
+    const html = render(
+      <RelayHostSteps
+        machine={machine({
+          role: 'relay,node',
+          relayPublicUrl: RELAY_URL,
+          relayHasPassword: true,
+          relayMode: true,
+          relayAttached: true,
+          tenantId: TENANT,
+        })}
+        onSwitchToJoin={() => undefined}
+      />
+    );
+    expect(html.split('data-step-state="done"').length - 1).toBe(3);
+    expect(html).toContain('data-testid="command-block-relay-tenant-id"');
+    expect(html).toContain(TENANT);
+    expect(html).toContain('connectDevices.computer.relayHost.invite.description');
     expect(html).toContain('data-testid="connect-relay-goto-join"');
   });
 
@@ -397,6 +425,11 @@ describe('本机设为 Hub 的三步', () => {
     expect(html).not.toContain('data-testid="connect-host-hub-link"');
     expect(html).not.toContain('data-testid="connect-host-goto-join"');
     expect(html).toContain('connectDevices.computer.host.invite.description');
+    // 上级 Hub 的地址不是本机的公网入口：本机没有隧道，入口这步仍是待办。
+    expect(html).toContain('connectDevices.computer.host.entry.description');
+    expect(html).not.toContain('data-testid="connect-host-entry-status"');
+    expect(html).not.toContain('connectDevices.computer.host.entry.status.hubUrl');
+    expect(html).not.toContain('data-step-state="done"');
   });
 });
 

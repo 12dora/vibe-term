@@ -9,8 +9,17 @@ import {
   isRelayRole,
 } from './connect-path';
 
+const TENANT = 'aabbccddeeff00112233445566778899';
+
 function status(over: Partial<ConnectStatus> = {}): ConnectStatus {
-  return { role: null, relayAttached: false, relayMode: false, meshEnabled: false, ...over };
+  return {
+    role: null,
+    relayAttached: false,
+    relayMode: false,
+    tenantId: null,
+    meshEnabled: false,
+    ...over,
+  };
 }
 
 describe('角色判定', () => {
@@ -51,12 +60,32 @@ describe('defaultConnectPath', () => {
 });
 
 describe('defaultConnectSide', () => {
-  test('中继：已有中继可加入就先给加入，否则先教自建', () => {
-    expect(defaultConnectSide('relay', status({ relayAttached: true, relayMode: true }))).toBe(
-      'join'
-    );
-    expect(defaultConnectSide('relay', status({ role: 'relay' }))).toBe('join');
+  test('中继：本机已作为租户接入就先给加入，否则先教自建', () => {
+    expect(
+      defaultConnectSide(
+        'relay',
+        status({ relayAttached: true, relayMode: true, tenantId: TENANT })
+      )
+    ).toBe('join');
     expect(defaultConnectSide('relay', status())).toBe('host');
+  });
+
+  test('中继：链路一时断开不改判，租户模式仍算已有中继', () => {
+    expect(
+      defaultConnectSide(
+        'relay',
+        status({ relayMode: true, tenantId: TENANT, relayAttached: false })
+      )
+    ).toBe('join');
+  });
+
+  test('中继：服务角色建好但本机还没接进去，仍从自建教起', () => {
+    expect(defaultConnectSide('relay', status({ role: 'relay,node' }))).toBe('host');
+    expect(defaultConnectSide('relay', status({ role: 'relay', relayAttached: true }))).toBe(
+      'host'
+    );
+    // 模式对上但租户编号还没下来：命令仍拼不出来，不能先给加入。
+    expect(defaultConnectSide('relay', status({ relayMode: true }))).toBe('host');
   });
 
   test('Hub：本机是 Hub 或已接入 Hub 就先给加入', () => {

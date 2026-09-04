@@ -141,11 +141,11 @@ export const I18N_RESOURCES = {
           "hint": {
             "relay": "Relay: nodes sit behind NAT and only need a public meeting point.",
             "hub": "Hub: accounts and nodes are managed centrally.",
-            "ssh": "Direct SSH: the new machine is reachable over SSH; tmex is not installed."
+            "ssh": "Direct SSH: this machine reaches the new machine over SSH; tmex is not installed."
           },
           "tip": {
-            "relay": "A relay only forwards encrypted traffic and holds no accounts or keys. Each node connects to it and meets on the public internet, which suits machines behind NAT or a firewall.",
-            "hub": "The Hub is the trust center: it holds accounts, node membership and join approvals, and needs a fixed public HTTPS address.",
+            "relay": "A relay only forwards encrypted traffic and holds no accounts or keys. It suits machines behind NAT or a firewall.",
+            "hub": "The Hub is the trust center for accounts and node membership, and needs a fixed public HTTPS address.",
             "ssh": "The new machine does not run tmex. This machine connects over SSH and it appears in the device list."
           }
         },
@@ -175,13 +175,13 @@ export const I18N_RESOURCES = {
             "tenantId": "Tenant ID",
             "relayMissing": "Ask the relay operator for the relay address and access password.",
             "hubMissing": "Ask the Hub administrator for the Hub address.",
-            "tenantMissing": "The tenant ID is created by the relay operator in relay management.",
+            "tenantMissing": "The tenant ID is issued once this machine connects to the relay.",
             "link": "Open multi-node mesh settings"
           },
           "password": {
             "title": "Join from the new machine",
-            "relayDescription": "On the new machine open Settings → Multi-node Mesh → \"Join a relay\", then enter the relay address, tenant ID and access password.",
-            "hubDescription": "On the new machine open Settings → Multi-node Mesh → \"Join an existing hub\", then enter the Hub address and account password.",
+            "relayDescription": "On the new machine open Settings → Multi-node Mesh → \"Join a relay\".",
+            "hubDescription": "On the new machine open Settings → Multi-node Mesh → \"Join an existing hub\".",
             "command": "Or run this in the new machine's terminal",
             "tenantPlaceholder": "<tenant-id>"
           },
@@ -191,7 +191,7 @@ export const I18N_RESOURCES = {
           },
           "token": {
             "title": "Generate a join token",
-            "description": "On a connected machine open Settings → Multi-node Mesh → Node management, then click Add → Generate join token.",
+            "description": "On a connected machine open Node management, then click Add → Generate join token.",
             "meshDescription": "Generate a join token here. It is valid for 10 minutes.",
             "label": "Join token (valid for {{minutes}} minutes)",
             "link": "Open multi-node mesh settings",
@@ -214,7 +214,8 @@ export const I18N_RESOURCES = {
         "relayHost": {
           "setup": {
             "title": "Make this machine a relay",
-            "description": "Open Settings → Multi-node Mesh and choose \"Use This Machine as the Relay\". A relay needs a fixed public HTTPS address.",
+            "description": "Open Settings → Multi-node Mesh and choose \"Use This Machine as the Relay\".",
+            "requirement": "A relay needs a fixed public HTTPS address.",
             "link": "Open multi-node mesh settings",
             "urlLabel": "Relay address",
             "missingUrl": "The relay address is unknown, so other machines cannot join."
@@ -225,16 +226,24 @@ export const I18N_RESOURCES = {
             "link": "Open relay management",
             "done": "The access password is set."
           },
+          "enroll": {
+            "title": "Connect to This Relay",
+            "description": "Open Settings → Multi-node Mesh, click \"Connect to This Relay\" and enter the access password.",
+            "link": "Open multi-node mesh settings",
+            "command": "Or run this in this machine's terminal",
+            "tenantId": "Tenant ID"
+          },
           "invite": {
             "title": "Connect the new machine",
             "description": "Install tmex on the new machine, then follow the \"Join an existing relay\" steps.",
+            "blocked": "The tenant ID is available once the previous step is done.",
             "gotoJoin": "See the join steps"
           }
         },
         "host": {
           "entry": {
             "title": "Set up a public entry",
-            "description": "Open Settings → Remote access: a Cloudflare named tunnel gives a fixed HTTPS address; a direct connection needs a fixed HTTPS entry of your own.",
+            "description": "Open Settings → Remote access and set up a fixed public HTTPS entry for this machine.",
             "link": "Open remote access settings",
             "status": {
               "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})",
@@ -244,7 +253,7 @@ export const I18N_RESOURCES = {
           },
           "hub": {
             "title": "Make this machine the Hub",
-            "description": "Open Settings → Multi-node Mesh, choose \"Make this the hub\", enter the address from the previous step, create the first account and restart.",
+            "description": "Open Settings → Multi-node Mesh and choose \"Make this the hub\".",
             "warning": "The Hub public URL cannot be changed later. Decide on the final domain first.",
             "link": "Open multi-node mesh settings",
             "status": {
@@ -252,7 +261,7 @@ export const I18N_RESOURCES = {
               "node": "This machine joined {{url}} as a node, so it cannot be a Hub.",
               "mismatch": "The Hub public URL does not match the current tunnel hostname; other machines may fail to connect."
             },
-            "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL."
+            "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL, create the first account and restart."
           },
           "invite": {
             "title": "Connect the new machine",
@@ -3240,11 +3249,11 @@ export const I18N_RESOURCES = {
           "hint": {
             "relay": "中继：节点在 NAT 后，只需一个公网汇合点。",
             "hub": "Hub：需要集中管理账号与节点。",
-            "ssh": "SSH 直连：新机器可直接 SSH 到达，无需安装 tmex。"
+            "ssh": "SSH 直连：本机可通过 SSH 访问新机器，无需安装 tmex。"
           },
           "tip": {
-            "relay": "中继只转发加密流量，不保存账号与密钥。节点各自连上中继，在公网汇合，适合都在 NAT 或防火墙后的机器。",
-            "hub": "Hub 是信任中心，保存账号、节点成员与加入审批，需要一个固定的公网 HTTPS 地址。",
+            "relay": "中继只转发加密流量，不保存账号与密钥。适合都在 NAT 或防火墙后的机器。",
+            "hub": "Hub 是信任中心，保存账号与节点成员，需要固定的公网 HTTPS 地址。",
             "ssh": "新机器不运行 tmex，由本机经 SSH 连接，作为设备出现在设备列表。"
           }
         },
@@ -3274,13 +3283,13 @@ export const I18N_RESOURCES = {
             "tenantId": "租户编号",
             "relayMissing": "向中继运营者索取中继地址与接入密码。",
             "hubMissing": "向 Hub 管理员索取 Hub 地址。",
-            "tenantMissing": "租户编号由中继运营者在中继管理中创建。",
+            "tenantMissing": "租户编号在本机接入中继后生成。",
             "link": "前往多节点互联设置"
           },
           "password": {
             "title": "在新机器上加入",
-            "relayDescription": "在新机器上打开「设置 → 多节点互联 → 加入中继」，填中继地址、租户编号与接入密码。",
-            "hubDescription": "在新机器上打开「设置 → 多节点互联 → 加入已有 Hub」，填 Hub 地址与账号密码。",
+            "relayDescription": "在新机器上打开「设置 → 多节点互联 → 加入中继」。",
+            "hubDescription": "在新机器上打开「设置 → 多节点互联 → 加入已有 Hub」。",
             "command": "也可以在新机器的终端执行",
             "tenantPlaceholder": "<租户编号>"
           },
@@ -3290,7 +3299,7 @@ export const I18N_RESOURCES = {
           },
           "token": {
             "title": "生成加入码",
-            "description": "在已接入的机器上打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」。",
+            "description": "在已接入的机器上打开「节点管理」，点「添加」→「生成加入码」。",
             "meshDescription": "在此生成加入码，10 分钟内有效。",
             "label": "加入码（有效期 {{minutes}} 分钟）",
             "link": "前往多节点互联设置",
@@ -3313,7 +3322,8 @@ export const I18N_RESOURCES = {
         "relayHost": {
           "setup": {
             "title": "本机设为中继",
-            "description": "打开「设置 → 多节点互联」，选择「本机作为中继」。中继需要固定的公网 HTTPS 地址。",
+            "description": "打开「设置 → 多节点互联」，选择「本机作为中继」。",
+            "requirement": "中继需要固定的公网 HTTPS 地址。",
             "link": "前往多节点互联设置",
             "urlLabel": "中继地址",
             "missingUrl": "中继地址未知，其他机器无法加入。"
@@ -3324,16 +3334,24 @@ export const I18N_RESOURCES = {
             "link": "前往中继管理",
             "done": "接入密码已设置。"
           },
+          "enroll": {
+            "title": "接入本机中继",
+            "description": "打开「设置 → 多节点互联」，点「接入本机中继」，输入接入密码。",
+            "link": "前往多节点互联设置",
+            "command": "也可以在本机终端执行",
+            "tenantId": "租户编号"
+          },
           "invite": {
             "title": "让新机器加入",
             "description": "在新机器上安装 tmex，按「加入已有中继」的步骤接入。",
+            "blocked": "完成上一步后，本机才能给出租户编号。",
             "gotoJoin": "查看加入步骤"
           }
         },
         "host": {
           "entry": {
             "title": "配置公网入口",
-            "description": "打开「设置 → 远程访问」：Cloudflare Tunnel（命名隧道）提供固定 HTTPS 地址，直接连接需自备固定 HTTPS 入口。",
+            "description": "打开「设置 → 远程访问」，为本机配置固定的公网 HTTPS 入口。",
             "link": "前往远程访问设置",
             "status": {
               "named": "已配置 Cloudflare Tunnel：{{url}}（{{state}}）",
@@ -3343,7 +3361,7 @@ export const I18N_RESOURCES = {
           },
           "hub": {
             "title": "本机设为 Hub",
-            "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」，填入上一步的地址，创建首个账号并重启。",
+            "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」。",
             "warning": "Hub 公开地址设定后不可修改，先确定最终域名。",
             "link": "前往多节点互联设置",
             "status": {
@@ -3351,7 +3369,7 @@ export const I18N_RESOURCES = {
               "node": "本机已作为节点加入 {{url}}，不能再作为 Hub。",
               "mismatch": "Hub 公开地址与当前隧道主机名不一致，其他机器可能无法接入。"
             },
-            "hintUseEntry": "把上一步的地址 {{url}} 填入「Hub 公开地址」。"
+            "hintUseEntry": "把上一步的地址 {{url}} 填入「Hub 公开地址」，创建首个账号后重启。"
           },
           "invite": {
             "title": "让新机器加入",
@@ -6334,11 +6352,11 @@ export const I18N_RESOURCES = {
           "hint": {
             "relay": "中継：ノードが NAT 内にあり、公開の合流点だけが必要な場合。",
             "hub": "Hub：アカウントとノードを集中管理する場合。",
-            "ssh": "SSH 直結：新しいマシンに SSH で直接届き、tmex の導入が不要な場合。"
+            "ssh": "SSH 直結：本機が SSH で新しいマシンに接続し、tmex の導入が不要な場合。"
           },
           "tip": {
-            "relay": "中継は暗号化された通信を転送するだけで、アカウントや鍵は保持しません。各ノードが中継に接続して公開ネットワーク上で合流するため、NAT やファイアウォールの内側にあるマシンに向いています。",
-            "hub": "Hub は信頼の中心で、アカウント、ノードの所属、参加の承認を保持します。固定の公開 HTTPS アドレスが必要です。",
+            "relay": "中継は暗号化された通信を転送するだけで、アカウントや鍵は保持しません。NAT やファイアウォールの内側にあるマシンに向いています。",
+            "hub": "Hub は信頼の中心で、アカウントとノードの所属を保持します。固定の公開 HTTPS アドレスが必要です。",
             "ssh": "新しいマシンでは tmex を動かさず、本機が SSH で接続してデバイス一覧に表示されます。"
           }
         },
@@ -6368,13 +6386,13 @@ export const I18N_RESOURCES = {
             "tenantId": "テナント ID",
             "relayMissing": "中継の運営者に中継アドレスと接続パスワードを問い合わせます。",
             "hubMissing": "Hub の管理者に Hub のアドレスを問い合わせます。",
-            "tenantMissing": "テナント ID は中継の運営者が中継管理で作成します。",
+            "tenantMissing": "テナント ID は本機が中継に接続すると発行されます。",
             "link": "マルチノード連携設定を開く"
           },
           "password": {
             "title": "新しいマシンで参加",
-            "relayDescription": "新しいマシンで「設定 → マルチノード連携 → 中継に参加する」を開き、中継アドレス、テナント ID、接続パスワードを入力します。",
-            "hubDescription": "新しいマシンで「設定 → マルチノード連携 → 既存のハブに参加する」を開き、Hub のアドレスとアカウントのパスワードを入力します。",
+            "relayDescription": "新しいマシンで「設定 → マルチノード連携 → 中継に参加する」を開きます。",
+            "hubDescription": "新しいマシンで「設定 → マルチノード連携 → 既存のハブに参加する」を開きます。",
             "command": "新しいマシンのターミナルで次を実行することもできます",
             "tenantPlaceholder": "<テナント ID>"
           },
@@ -6384,7 +6402,7 @@ export const I18N_RESOURCES = {
           },
           "token": {
             "title": "参加コードを作成",
-            "description": "参加済みのマシンで「設定 → マルチノード連携 → ノード管理」を開き、「追加」→「参加コードを作成」をクリックします。",
+            "description": "参加済みのマシンで「ノード管理」を開き、「追加」→「参加コードを作成」をクリックします。",
             "meshDescription": "ここで参加コードを作成します。有効期限は 10 分です。",
             "label": "参加コード（有効期限 {{minutes}} 分）",
             "link": "マルチノード連携設定を開く",
@@ -6407,7 +6425,8 @@ export const I18N_RESOURCES = {
         "relayHost": {
           "setup": {
             "title": "本機を中継にする",
-            "description": "「設定 → マルチノード連携」を開き、「本機を中継にする」を選択します。中継には固定の公開 HTTPS アドレスが必要です。",
+            "description": "「設定 → マルチノード連携」を開き、「本機を中継にする」を選択します。",
+            "requirement": "中継には固定の公開 HTTPS アドレスが必要です。",
             "link": "マルチノード連携設定を開く",
             "urlLabel": "中継アドレス",
             "missingUrl": "中継アドレスが不明なため、他のマシンは参加できません。"
@@ -6418,16 +6437,24 @@ export const I18N_RESOURCES = {
             "link": "中継管理を開く",
             "done": "接続パスワードは設定済みです。"
           },
+          "enroll": {
+            "title": "本機の中継に接続",
+            "description": "「設定 → マルチノード連携」を開き、「本機の中継に接続」をクリックして接続パスワードを入力します。",
+            "link": "マルチノード連携設定を開く",
+            "command": "本機のターミナルで次を実行することもできます",
+            "tenantId": "テナント ID"
+          },
           "invite": {
             "title": "新しいマシンを参加させる",
             "description": "新しいマシンに tmex をインストールし、「既存の中継に参加」の手順で接続します。",
+            "blocked": "前の手順を完了すると、本機のテナント ID が得られます。",
             "gotoJoin": "参加手順を見る"
           }
         },
         "host": {
           "entry": {
             "title": "公開エントリを用意",
-            "description": "「設定 → リモートアクセス」を開きます。Cloudflare Tunnel（名前付きトンネル）なら固定の HTTPS アドレスが得られ、直接接続では固定の HTTPS 入口を自分で用意します。",
+            "description": "「設定 → リモートアクセス」を開き、本機に固定の公開 HTTPS 入口を用意します。",
             "link": "リモートアクセス設定を開く",
             "status": {
               "named": "Cloudflare Tunnel を設定済みです：{{url}}（{{state}}）",
@@ -6437,7 +6464,7 @@ export const I18N_RESOURCES = {
           },
           "hub": {
             "title": "本機を Hub にする",
-            "description": "「設定 → マルチノード連携」を開き、「このマシンをハブにする」を選択します。前の手順のアドレスを入力し、最初のアカウントを作成して再起動します。",
+            "description": "「設定 → マルチノード連携」を開き、「このマシンをハブにする」を選択します。",
             "warning": "Hub の公開アドレスは後から変更できません。最終的なドメインを先に確定します。",
             "link": "マルチノード連携設定を開く",
             "status": {
@@ -6445,7 +6472,7 @@ export const I18N_RESOURCES = {
               "node": "本機はノードとして {{url}} に参加しているため、Hub にはできません。",
               "mismatch": "Hub の公開アドレスが現在のトンネルのホスト名と一致しません。他のマシンが接続できない可能性があります。"
             },
-            "hintUseEntry": "前の手順のアドレス {{url}} を「ハブの公開アドレス」に入力します。"
+            "hintUseEntry": "前の手順のアドレス {{url}} を「ハブの公開アドレス」に入力し、最初のアカウントを作成して再起動します。"
           },
           "invite": {
             "title": "新しいマシンを参加させる",

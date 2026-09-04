@@ -20,7 +20,12 @@ function useHostStatus(): { entry: EntryStatus; hub: HubStatus } {
     staleTime: 10_000,
     retry: false,
   });
-  const entry = entryStatus(tunnel.data, mode?.mode === 'mesh' ? mode.hubPublicUrl : null);
+  // `hubPublicUrl` 只有在本机就是 Hub 时才是本机的公网入口；普通节点那是上级的地址。
+  const selfHubUrl =
+    mode?.mode === 'mesh' && mode.hubNodeId && mode.hubNodeId === mode.nodeId
+      ? mode.hubPublicUrl
+      : null;
+  const entry = entryStatus(tunnel.data, selfHubUrl);
   return { entry, hub: hubStatus(mode, entry) };
 }
 

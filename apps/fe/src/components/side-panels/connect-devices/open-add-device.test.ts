@@ -1,8 +1,10 @@
-// 「添加 SSH 设备」按钮的打开时机：设备页还没挂上时先等注册表，等到了立刻开对话框。
+// 「添加 SSH 设备」按钮的打开时机：先登记等待器再导航，设备页挂上后立刻开对话框。
+// 等待器不挂在侧栏组件的生命周期上——导航本身就会把侧栏卸载。
 
 import { describe, expect, test } from 'bun:test';
 import type { AddDeviceTarget } from '@/pages/devices/add-device-targets';
 import { type AddDeviceTargetSource, openSelfAddDevice } from './open-add-device';
+import { startAddDeviceFlow } from './ssh-steps';
 
 function target(over: Partial<AddDeviceTarget> = {}): AddDeviceTarget {
   return {
@@ -84,6 +86,16 @@ describe('openSelfAddDevice', () => {
     expect(opened).toBe(0);
   });
 
+  test('再点一次按钮：撤掉上一个等待器，只留一个', async () => {
+    const store = source();
+    let opened = 0;
+    openSelfAddDevice({ source: store });
+    openSelfAddDevice({ source: store });
+    expect(store.subscribers).toBe(1);
+    store.publish([target({ open: () => opened++ })]);
+    expect(opened).toBe(1);
+  });
+
   test('等不到就放弃，不把订阅留在后面', async () => {
     const store = source();
     let opened = 0;
@@ -92,5 +104,28 @@ describe('openSelfAddDevice', () => {
     expect(store.subscribers).toBe(0);
     store.publish([target({ open: () => opened++ })]);
     expect(opened).toBe(0);
+  });
+});
+
+describe('startAddDeviceFlow', () => {
+  test('先登记等待器再导航：侧栏随导航卸载，设备页稍后登记仍会打开对话框', async () => {
+    const store = source();
+    let opened = 0;
+    let subscribersAtNavigate = -1;
+    // 导航发生时等待器必须已经在位——之后本组件就被卸载，再没有机会登记。
+    startAddDeviceFlow(
+      () => {
+        subscribersAtNavigate = store.subscribers;
+      },
+      { source: store }
+    );
+    expect(subscribersAtNavigate).toBe(1);
+    // 侧栏退场（卸载不做任何清理），设备页 chunk 稍后才把自己登记进来。
+    await tick();
+    await tick();
+    expect(store.subscribers).toBe(1);
+    store.publish([target({ open: () => opened++ })]);
+    expect(opened).toBe(1);
+    expect(store.subscribers).toBe(0);
   });
 });
