@@ -61,6 +61,7 @@ export function LocalMachineBody(props: LocalMachineBodyProps) {
           onChangeHub={props.onChangeHub}
           wizardPath={props.wizardPath}
           wizardRelayRole={props.wizardRelayRole}
+          selfRelayFollowUp={props.selfRelayFollowUp}
         />
       </CardSection>
 
@@ -69,12 +70,7 @@ export function LocalMachineBody(props: LocalMachineBodyProps) {
           title={t('nodes.machine.sections.relayService')}
           testId="local-machine-relay-service"
         >
-          <RelayServiceSection
-            service={service}
-            showSelfEnroll={uplink.relay.mode === 'none'}
-            highlightSelfEnroll={props.selfRelayFollowUp}
-            onEnrollSelf={(url) => uplink.relayActions.openEnroll('enroll', url)}
-          />
+          <RelayServiceSection service={service} />
         </CardSection>
       )}
 

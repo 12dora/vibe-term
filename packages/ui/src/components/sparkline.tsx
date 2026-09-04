@@ -176,7 +176,7 @@ export function Sparkline({
       role={ariaLabel ? 'img' : undefined}
       aria-label={ariaLabel}
       aria-hidden={ariaLabel ? undefined : true}
-      className={cn('block overflow-visible', className)}
+      className={cn('block max-w-full overflow-visible', className)}
       {...props}
     >
       {empty ? (

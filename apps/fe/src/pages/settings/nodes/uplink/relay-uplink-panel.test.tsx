@@ -10,6 +10,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { RelayActionsController } from '../relay/use-relay-actions';
 import { type RelayMenuAction, relayActionMenu } from './relay-targets';
 import { RelayActionsMenuList, RelayUplinkPanel } from './relay-uplink-panel';
+import { SelfRelayEntry } from './uplink-section';
 
 function link(overrides: Partial<RelayLinkStatus> = {}): RelayLinkStatus {
   return {
@@ -101,6 +102,59 @@ describe('中继链路与操作', () => {
     expect(html).not.toContain('data-testid="nodes-relay-tenant-id"');
     expect(html).not.toContain('data-testid="nodes-relay-meta"');
     expect(html).not.toContain('data-testid="nodes-relay-quota"');
+  });
+});
+
+describe('接入本机中继的入口', () => {
+  // 中继角色（`relay` / `relay,node`）还没以租户身份接上自己的中继时，「连接」段只有这一块：
+  // 一句陈述加一个预填好地址的按钮。全卡只此一处，链路面板里绝不重复。
+  function entry(props: Partial<Parameters<typeof SelfRelayEntry>[0]> = {}): string {
+    return renderToStaticMarkup(
+      <SelfRelayEntry
+        relay={{
+          ...RELAY_MODE,
+          mode: 'hub',
+          relayMode: false,
+          relays: [],
+          ordered: [],
+          attached: null,
+        }}
+        publicUrl="https://relay.example.com"
+        highlight={false}
+        onOpen={() => undefined}
+        {...props}
+      />
+    );
+  }
+
+  test('一句陈述 + 一个 CTA，没有 Hub 的任何说法', () => {
+    const html = entry();
+    expect(html).toContain('data-testid="nodes-relay-self-entry"');
+    expect(html).toContain('data-testid="nodes-relay-enroll-self"');
+    expect(html).toContain('nodes.machine.relayServiceEnrollHint');
+    expect(html).toContain('nodes.machine.relayServiceEnroll');
+    expect(html).not.toContain('relay.tenant.actions.migrate');
+    expect(html).not.toContain('relay.tenant.dialog.migrateNotice');
+  });
+
+  test('CTA 带着本机中继的公网地址：点下去就是预填好的那条', () => {
+    expect(entry()).toContain('data-relay-url="https://relay.example.com"');
+    // 地址还没配好时也不拦着：对话框里自己填
+    expect(entry({ publicUrl: null })).toContain('data-relay-url=""');
+  });
+
+  test('刚设置完时高亮，平时是灰底', () => {
+    expect(entry({ highlight: true })).toContain('bg-primary/10');
+    expect(entry()).toContain('bg-muted/60');
+  });
+
+  test('旧节点没有这族路由时整块不出现', () => {
+    expect(entry({ relay: { ...RELAY_MODE, unsupported: true } })).toBe('');
+  });
+
+  test('接上之后是链路面板的活，面板里没有这个 CTA', () => {
+    expect(render()).not.toContain('data-testid="nodes-relay-self-entry"');
+    expect(render()).not.toContain('data-testid="nodes-relay-enroll-self"');
   });
 });
 

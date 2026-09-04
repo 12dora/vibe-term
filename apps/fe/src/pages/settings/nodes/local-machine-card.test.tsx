@@ -145,6 +145,24 @@ function meshStatus(role: LocalRole): LocalStatusResponse {
   };
 }
 
+/** 中继兼节点：本机跑着中继，`relay` 段齐全。 */
+function relayNodeStatus(): LocalStatusResponse {
+  return {
+    ...meshStatus('relay,node'),
+    relay: {
+      publicUrl: 'https://relay.example.com',
+      hasPassword: true,
+      tenantCount: 0,
+      nodesOnline: 0,
+      currentNodes: 0,
+    },
+  };
+}
+
+function occurrences(html: string, needle: string): number {
+  return html.split(needle).length - 1;
+}
+
 function tagOf(html: string, testId: string): string {
   const tag = new RegExp(`<[a-z]+[^>]*data-testid="${testId}"[^>]*>`).exec(html);
   if (!tag) throw new Error(`missing element: ${testId}`);
@@ -334,6 +352,80 @@ describe('LocalMachineCard 的四段版式', () => {
     expect(html).toContain('data-testid="local-relay-service-unset"');
     expect(html).toContain('nodes.machine.relayServiceAddressUnsetHint');
     expect(zhCN.translation.nodes.machine.relayServiceAddressUnsetHint).toContain('中继兼节点');
+  });
+
+  test('中继角色还没接入自己的中继：连接段只有一条陈述加一个 CTA，没有 Hub 的任何说法', () => {
+    // 现网复现：后端把这台机器的 `mode` 报成 `hub`（`relays: []`），hub 候选里还有一条
+    // `http://127.0.0.1` 的占位——旧版式据此摆出「改为接入中继」和「不再连接 Hub」。
+    setMeshRelayStateForTest({ mode: 'hub', relays: [], loadedAt: 1 });
+    setMeshHubsStateForTest({
+      candidates: [{ publicUrl: 'http://127.0.0.1', lastError: null, lastAttemptAt: null }],
+      loadedAt: 1,
+    });
+    const html = render(relayNodeStatus(), MESH_MODE);
+
+    expect(html).toContain('data-testid="nodes-relay-self-entry"');
+    expect(occurrences(html, 'data-testid="nodes-relay-enroll-self"')).toBe(1);
+    expect(html).toContain('nodes.machine.relayServiceEnrollHint');
+    // 预填的是本机自己那台中继的地址，不是别人的
+    expect(html).toContain('data-relay-url="https://relay.example.com"');
+    // hub 时代的入口与提示一个都不剩
+    expect(html).not.toContain('data-testid="local-uplink-hub-panel"');
+    expect(html).not.toContain('data-testid="nodes-relay-enroll"');
+    expect(html).not.toContain('data-testid="nodes-relay-entry-hint"');
+    expect(html).not.toContain('relay.tenant.actions.migrate');
+    expect(html).not.toContain('relay.tenant.dialog.migrateNotice');
+    expect(html).not.toContain('data-testid="local-machine-change-hub"');
+    expect(html).not.toContain('data-testid="local-machine-hub-disconnected"');
+  });
+
+  test('中继角色的状态徽标只说中继，且未接入是灰字不是红字', () => {
+    setMeshRelayStateForTest({ mode: 'hub', relays: [], loadedAt: 1 });
+    const html = render(relayNodeStatus(), MESH_MODE);
+    const tag = tagOf(html, 'local-machine-status');
+    expect(tag).toContain('data-status-state="relayDisconnected"');
+    // 灰字档（outline）而不是红字档（destructive）：刚建好还没接入是预期状态
+    expect(tag).toContain('data-variant="outline"');
+    expect(tag).not.toContain('data-variant="destructive"');
+    expect(html).toContain('nodes.machine.status.relayDisconnected');
+    expect(html).not.toContain('nodes.machine.status.hubDisconnected');
+  });
+
+  test('纯中继同样不摆 Hub 的话', () => {
+    setMeshRelayStateForTest({ mode: 'hub', relays: [], loadedAt: 1 });
+    const html = render({ ...relayNodeStatus(), role: 'relay' }, MESH_MODE);
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayDisconnected"');
+    expect(html).toContain('data-testid="nodes-relay-self-entry"');
+    expect(html).not.toContain('data-testid="local-uplink-hub-panel"');
+  });
+
+  test('中继角色接上自己的中继之后：换回链路面板，CTA 不再出现', () => {
+    setMeshRelayStateForTest({
+      mode: 'relay',
+      relays: [
+        { url: 'https://relay.example.com', priority: 1, online: true, attached: true, rttMs: 30 },
+      ],
+      loadedAt: 1,
+    });
+    const html = render(relayNodeStatus(), MESH_MODE);
+    expect(html).toContain('data-testid="local-uplink-relay-panel"');
+    expect(html).toContain('data-testid="nodes-relay-row-relay.example.com"');
+    expect(html).toContain('data-testid="nodes-relay-add"');
+    expect(occurrences(html, 'data-testid="nodes-relay-enroll-self"')).toBe(0);
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayConnected"');
+    expect(html).toContain('nodes.machine.status.relayConnectedRtt');
+    // 中继服务段照旧
+    expect(html).toContain('data-testid="local-machine-relay-service"');
+  });
+
+  test('挂着的那条中继离线：不算已连接', () => {
+    setMeshRelayStateForTest({
+      mode: 'relay',
+      relays: [{ url: 'https://relay.example.com', priority: 1, online: false, attached: true }],
+      loadedAt: 1,
+    });
+    const html = render(relayNodeStatus(), MESH_MODE);
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayDisconnected"');
   });
 
   test('普通节点即便接在中继上也没有中继服务段', () => {

@@ -1988,8 +1988,8 @@
           "activeStreams": "活跃流",
           "throughput": "吞吐",
           "throughputSub": "↑ {{out}} · ↓ {{in}}",
-          "bytesIn": "入向速率",
-          "bytesOut": "出向速率",
+          "bytesIn": "入站速率",
+          "bytesOut": "出站速率",
           "frames": "帧速率",
           "framesSub": "↑ {{out}} · ↓ {{in}}",
           "rtt": "延迟",
@@ -2000,17 +2000,23 @@
           "eventLoopHint": "事件循环延迟，超过 100 ms 说明转发已排队。",
           "memory": "内存",
           "memorySub": "堆 {{heap}}",
-          "heap": "堆内存",
-          "heapSub": "共 {{total}}",
+          "memoryHeapSub": "堆 {{heap}} / {{total}}",
           "cpu": "CPU",
           "sockets": "连接数",
           "socketsSub": "已认证 {{authenticated}}",
+          "reconnects": "重连",
+          "reconnectsSub": "自启动累计",
+          "reconnectsHint": "各接入节点重连次数之和。",
           "uptime": "运行时长",
           "throughputTotal": "累计 {{total}}",
-          "traffic": "中转流量",
+          "traffic": "累计流量",
           "trafficSub": "自启动累计",
           "trafficHint": "中继每转发一帧都同时计进收发两侧，此处只计一次。",
           "tenants": "租户"
+        },
+        "groups": {
+          "traffic": "流量",
+          "process": "进程"
         },
         "trends": {
           "title": "趋势",
@@ -2019,8 +2025,8 @@
           "streams": "活跃流",
           "eventLoop": "事件循环延迟",
           "range": "峰值 {{max}} · 谷值 {{min}}",
-          "legendIn": "入向",
-          "legendOut": "出向"
+          "legendIn": "入站",
+          "legendOut": "出站"
         },
         "members": {
           "title": "接入节点",

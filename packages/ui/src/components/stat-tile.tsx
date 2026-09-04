@@ -25,7 +25,7 @@ export interface StatTileProps extends Omit<React.ComponentProps<'div'>, 'title'
   /** 副行：一句更细的补充（如 ↑ 12.3 KB/s · ↓ 4.1 KB/s）。 */
   sub?: React.ReactNode;
   tone?: StatTileTone;
-  /** 右侧（窄屏下移到底部）的迷你折线槽位。 */
+  /** 右侧的迷你折线槽位：宽度不够时先被挤扁，`sm` 以下直接不画。 */
   sparkline?: React.ReactNode;
   /** 首次加载：数值与副行换成骨架。 */
   loading?: boolean;
@@ -63,9 +63,10 @@ export function StatTile({
       {...props}
     >
       <CardContent className="flex min-w-0 items-end justify-between gap-2">
-        <div className="min-w-0 flex-1">
+        {/* 不设 min-w-0：文字列的最小宽度由标签与数值撑出来，空间不够时先挤折线，数值永不被截断。 */}
+        <div className="flex-1">
           <div
-            className="truncate text-[10px] font-medium tracking-wider text-muted-foreground uppercase"
+            className="text-[10px] leading-tight font-medium tracking-wider text-muted-foreground uppercase"
             data-slot="stat-tile-label"
           >
             {label}
@@ -76,7 +77,7 @@ export function StatTile({
             <div className="mt-0.5 flex items-baseline gap-1">
               <span
                 className={cn(
-                  'truncate text-xl leading-tight font-semibold tabular-nums',
+                  'text-xl leading-tight font-semibold whitespace-nowrap tabular-nums',
                   VALUE_TONE_CLASS[tone]
                 )}
                 data-slot="stat-tile-value"
@@ -104,7 +105,10 @@ export function StatTile({
           )}
         </div>
         {sparkline && !loading && (
-          <div className="shrink-0 self-end" data-slot="stat-tile-sparkline">
+          <div
+            className="hidden min-w-0 max-w-[40%] shrink self-end sm:block"
+            data-slot="stat-tile-sparkline"
+          >
             {sparkline}
           </div>
         )}

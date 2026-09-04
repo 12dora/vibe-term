@@ -5,6 +5,7 @@ import type { RelayMetricsResponse } from '@tmex/api-client/relay/metrics-types'
 import { Skeleton } from '@tmex/ui/skeleton';
 import { Sparkline } from '@tmex/ui/sparkline';
 import { StatTile } from '@tmex/ui/stat-tile';
+import type * as React from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   formatBytesPerSec,
@@ -22,6 +23,7 @@ import {
   maxMemberRttMs,
   medianMemberRttMs,
   rttLevel,
+  totalMemberReconnects,
 } from './relay-metrics-model';
 
 export interface MetricsTileProps {
@@ -73,7 +75,7 @@ export function ActiveStreamsTile({ data, trends, stale }: MetricsTileProps) {
 }
 
 /**
- * `showTotal` 是紧凑区的取法：那里没有单独的「中转流量」格子，
+ * `showTotal` 是紧凑区的取法：那里没有单独的「累计流量」格子，
  * 累计量就挂在吞吐格的副行上，免得只剩瞬时速率、看不出转了多少。
  */
 export function ThroughputTile({
@@ -219,31 +221,34 @@ export function EventLoopTile({ data, trends, stale }: MetricsTileProps) {
   );
 }
 
-export function MemoryTile({ data, stale, className }: MetricsTileProps & { className?: string }) {
+/**
+ * 常驻内存（RSS）。`showHeapTotal` 是完整排的取法：那里没有单独的堆格子，
+ * 堆的已用 / 总量一并挂在副行上；紧凑排位置窄，只留已用量。
+ */
+export function MemoryTile({
+  data,
+  stale,
+  className,
+  showHeapTotal = false,
+}: MetricsTileProps & { className?: string; showHeapTotal?: boolean }) {
   const { t } = useTranslation();
   const { memory } = data.process;
+  const heap = formatBytes(memory.heapUsedBytes);
   return (
     <StatTile
       label={t('relay.metrics.tiles.memory')}
       value={formatBytes(memory.rssBytes)}
-      sub={t('relay.metrics.tiles.memorySub', { heap: formatBytes(memory.heapUsedBytes) })}
+      sub={
+        showHeapTotal
+          ? t('relay.metrics.tiles.memoryHeapSub', {
+              heap,
+              total: formatBytes(memory.heapTotalBytes),
+            })
+          : t('relay.metrics.tiles.memorySub', { heap })
+      }
       stale={stale}
       className={className}
       data-testid="relay-metric-memory"
-    />
-  );
-}
-
-export function HeapTile({ data, stale }: MetricsTileProps) {
-  const { t } = useTranslation();
-  const { memory } = data.process;
-  return (
-    <StatTile
-      label={t('relay.metrics.tiles.heap')}
-      value={formatBytes(memory.heapUsedBytes)}
-      sub={t('relay.metrics.tiles.heapSub', { total: formatBytes(memory.heapTotalBytes) })}
-      stale={stale}
-      data-testid="relay-metric-heap"
     />
   );
 }
@@ -264,7 +269,7 @@ export function CpuTile({ data, stale, className }: MetricsTileProps & { classNa
 }
 
 /**
- * 累计中转流量。中继每转发一帧都同时计进 `bytesIn` 与 `bytesOut`，两个计数逐字节相等，
+ * 累计转发流量。中继每转发一帧都同时计进 `bytesIn` 与 `bytesOut`，两个计数逐字节相等，
  * 摆两列只会让人以为统计坏了——沿用旧「总量」卡的口径，只出一个数（见 relay-format 的 trafficText）。
  */
 export function TrafficTile({ data, stale }: MetricsTileProps) {
@@ -291,6 +296,23 @@ export function SocketsTile({ data, stale }: MetricsTileProps) {
       sub={t('relay.metrics.tiles.socketsSub', { authenticated: authenticatedLinks })}
       stale={stale}
       data-testid="relay-metric-sockets"
+    />
+  );
+}
+
+/** 各成员重连次数之和：单看在线数看不出链路在反复抖动，这一格才看得出来。 */
+export function ReconnectsTile({ data, stale }: MetricsTileProps) {
+  const { t } = useTranslation();
+  const total = totalMemberReconnects(data.members);
+  return (
+    <StatTile
+      label={t('relay.metrics.tiles.reconnects')}
+      value={total}
+      sub={t('relay.metrics.tiles.reconnectsSub')}
+      hint={t('relay.metrics.tiles.reconnectsHint')}
+      tone={total === 0 ? 'muted' : 'default'}
+      stale={stale}
+      data-testid="relay-metric-reconnects"
     />
   );
 }
@@ -328,26 +350,52 @@ export function RelayCompactTiles(props: MetricsTileProps) {
   );
 }
 
-/** 中继标签上的完整排。 */
-export function RelayFullTiles(props: MetricsTileProps) {
+/**
+ * 完整排的栅格：1280px 视口下面板本身只有 ~880px，六列会把「1.20 MB/s」这类读数压掉，
+ * 六列因此留给 2xl。列数只取 6 的因数（每组六格），否则末行会缺角。
+ */
+const FULL_TILE_GRID = 'grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6';
+
+function TileGroup({
+  title,
+  testId,
+  children,
+}: {
+  title: string;
+  testId: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div
-      className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"
-      data-testid="relay-metrics-tiles"
-    >
-      <MembersOnlineTile {...props} />
-      <ActiveStreamsTile {...props} />
-      <BytesInTile {...props} />
-      <BytesOutTile {...props} />
-      <FramesTile {...props} />
-      <TrafficTile {...props} />
-      <LatencyTile {...props} />
-      <EventLoopTile {...props} />
-      <MemoryTile {...props} />
-      <HeapTile {...props} />
-      <CpuTile {...props} />
-      <SocketsTile {...props} />
-      <UptimeTile {...props} />
+    <section className="flex flex-col gap-2" data-testid={testId}>
+      <h4 className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+        {title}
+      </h4>
+      <div className={FULL_TILE_GRID}>{children}</div>
+    </section>
+  );
+}
+
+/** 中继标签上的完整排：转发量一组、本机负载一组，各六格。 */
+export function RelayFullTiles(props: MetricsTileProps) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-4" data-testid="relay-metrics-tiles">
+      <TileGroup title={t('relay.metrics.groups.traffic')} testId="relay-metrics-group-traffic">
+        <MembersOnlineTile {...props} />
+        <ActiveStreamsTile {...props} />
+        <BytesInTile {...props} />
+        <BytesOutTile {...props} />
+        <FramesTile {...props} />
+        <TrafficTile {...props} />
+      </TileGroup>
+      <TileGroup title={t('relay.metrics.groups.process')} testId="relay-metrics-group-process">
+        <LatencyTile {...props} />
+        <EventLoopTile {...props} />
+        <MemoryTile {...props} showHeapTotal />
+        <CpuTile {...props} />
+        <SocketsTile {...props} />
+        <ReconnectsTile {...props} />
+      </TileGroup>
     </div>
   );
 }

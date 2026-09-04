@@ -2748,17 +2748,23 @@
           "eventLoopHint": "Event loop lag; above 100 ms forwarding is queueing.",
           "memory": "Memory",
           "memorySub": "heap {{heap}}",
-          "heap": "Heap",
-          "heapSub": "of {{total}}",
+          "memoryHeapSub": "heap {{heap}} of {{total}}",
           "cpu": "CPU",
           "sockets": "Sockets",
           "socketsSub": "{{authenticated}} authenticated",
+          "reconnects": "Reconnects",
+          "reconnectsSub": "since start",
+          "reconnectsHint": "Reconnects summed across joined nodes.",
           "uptime": "Uptime",
           "throughputTotal": "{{total}} total",
           "traffic": "Relayed Traffic",
           "trafficSub": "since start",
           "trafficHint": "Each forwarded frame counts on both sides; it is counted once here.",
           "tenants": "Tenants"
+        },
+        "groups": {
+          "traffic": "Traffic",
+          "process": "Process"
         },
         "trends": {
           "title": "Trends",

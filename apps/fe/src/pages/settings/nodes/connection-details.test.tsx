@@ -158,4 +158,22 @@ describe('连接详情', () => {
   test('没有 Hub 集合时整块不出现', () => {
     expect(render()).not.toContain('data-testid="local-machine-hub-details"');
   });
+
+  test('中继角色还没接入：mode 报成 hub、只剩一条占位候选，也不摆 Hub 的优先级与纪元', () => {
+    // 现网的 `relay,node` 刚建好时就是这副样子：`/api/mesh/relay/status` 说 `hub`，
+    // `/api/mesh/hubs` 给一条 `http://127.0.0.1` 的占位候选，集合本身是空的。
+    const html = render(
+      { ...NO_RELAY, mode: 'hub' },
+      {
+        ...NO_HUBS,
+        candidates: [{ publicUrl: 'http://127.0.0.1', lastError: null, lastAttemptAt: null }],
+      }
+    );
+    expect(html).not.toContain('data-testid="local-machine-hub-details"');
+    expect(html).not.toContain('nodes.hubs.priority');
+    expect(html).not.toContain('nodes.hubs.epoch');
+    expect(html).not.toContain('127.0.0.1');
+    // 剩下的只有本机节点编号
+    expect(html).toContain('data-testid="local-machine-node-id"');
+  });
 });

@@ -27,13 +27,19 @@ export interface MachineStatusBadge {
 export interface MachineStatusInput {
   standalone: boolean;
   /**
+   * 本机自己在跑中继（`relay` / `relay,node`）。这类机器的上级只可能是中继：
+   * 后端在它还没以租户身份接入时把 `mode` 报成 `hub`，照 hub 那一档判会说出「未连接 Hub」——
+   * 一句它永远不该听到的话。
+   */
+  relayRole: boolean;
+  /**
    * `/api/local/status` 已经回来了。没回来（或失败）时本机角色未知：除了 `/api/auth/mode`
    * 直接给出的 standalone，其余一律不下结论——拿上级链路的快照去猜会说出「未连接 Hub」
    * 这种看着像故障的话。
    */
   roleKnown: boolean;
   relayMode: boolean;
-  /** 中继模式下挂上了某一条中继。 */
+  /** 挂上了某一条中继，且那条中继在线。 */
   relayAttached: boolean;
   /** 中继令牌被作废，须重新输入口令。 */
   relayKicked: boolean;
@@ -54,6 +60,24 @@ function connected(
   return { state, tone: 'ok', key: `${key}Rtt`, params: { ms: Math.round(rttMs) } };
 }
 
+/**
+ * 中继那一档。「没挂上」的轻重取决于是否接入过：中继角色刚建好还没接入自己的中继是**预期状态**
+ * （纯中继甚至永远不会接入），红字会让人以为坏了；接入过（已是中继模式）却掉线则是故障。
+ */
+function relayBadge(input: MachineStatusInput): MachineStatusBadge {
+  if (input.relayKicked) {
+    return { state: 'relayKicked', tone: 'warn', key: 'nodes.machine.status.relayKicked' };
+  }
+  if (input.relayAttached) {
+    return connected('relayConnected', 'nodes.machine.status.relayConnected', input.rttMs);
+  }
+  return {
+    state: 'relayDisconnected',
+    tone: input.relayRole && !input.relayMode ? 'muted' : 'warn',
+    key: 'nodes.machine.status.relayDisconnected',
+  };
+}
+
 export function machineStatusBadge(input: MachineStatusInput): MachineStatusBadge {
   if (input.standalone) {
     return { state: 'standalone', tone: 'muted', key: 'nodes.machine.status.standalone' };
@@ -61,19 +85,7 @@ export function machineStatusBadge(input: MachineStatusInput): MachineStatusBadg
   if (!input.roleKnown) {
     return { state: 'unknown', tone: 'muted', key: 'nodes.machine.status.unknown' };
   }
-  if (input.relayMode) {
-    if (input.relayKicked) {
-      return { state: 'relayKicked', tone: 'warn', key: 'nodes.machine.status.relayKicked' };
-    }
-    if (input.relayAttached) {
-      return connected('relayConnected', 'nodes.machine.status.relayConnected', input.rttMs);
-    }
-    return {
-      state: 'relayDisconnected',
-      tone: 'warn',
-      key: 'nodes.machine.status.relayDisconnected',
-    };
-  }
+  if (input.relayRole || input.relayMode) return relayBadge(input);
   if (input.hubAttached) {
     return connected('hubConnected', 'nodes.machine.status.hubConnected', input.rttMs);
   }

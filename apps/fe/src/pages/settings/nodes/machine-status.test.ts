@@ -5,6 +5,7 @@ import { SELECTABLE_ROLES, machineStatusBadge, roleMenuTargets } from './machine
 
 const BASE = {
   standalone: false,
+  relayRole: false,
   roleKnown: true,
   relayMode: false,
   relayAttached: false,
@@ -78,6 +79,66 @@ describe('machineStatusBadge', () => {
     expect(machineStatusBadge(BASE).tone).toBe('warn');
     expect(machineStatusBadge({ ...BASE, relayMode: true }).tone).toBe('warn');
     expect(machineStatusBadge({ ...BASE, hubLoading: true }).tone).toBe('muted');
+  });
+});
+
+describe('machineStatusBadge：中继角色只看中继链路', () => {
+  // 本机自己在跑中继时，后端在它还没以租户身份接入前把 `mode` 报成 `hub`，
+  // hub 的候选里还有一条 `http://127.0.0.1` 的占位——照 hub 那一档判就会说「未连接 Hub」。
+  const RELAY_ROLE = { ...BASE, relayRole: true };
+
+  test('mode 报成 hub、hub 快照说挂上了：仍然只说中继，一个字都不提 Hub', () => {
+    const badge = machineStatusBadge({ ...RELAY_ROLE, hubAttached: true, rttMs: 12 });
+    expect(badge.state).toBe('relayDisconnected');
+    expect(badge.key).toBe('nodes.machine.status.relayDisconnected');
+  });
+
+  test('hub 首次探测在飞也不借用「连接中」', () => {
+    expect(machineStatusBadge({ ...RELAY_ROLE, hubLoading: true }).state).toBe('relayDisconnected');
+  });
+
+  test('从未接入（mode=none/hub）是灰字，不是红字：刚建好就是这样', () => {
+    expect(machineStatusBadge({ ...RELAY_ROLE, relayMode: false })).toEqual({
+      state: 'relayDisconnected',
+      tone: 'muted',
+      key: 'nodes.machine.status.relayDisconnected',
+    });
+  });
+
+  test('接入过（mode=relay）却没挂上是警示档：这是掉线', () => {
+    expect(machineStatusBadge({ ...RELAY_ROLE, relayMode: true })).toEqual({
+      state: 'relayDisconnected',
+      tone: 'warn',
+      key: 'nodes.machine.status.relayDisconnected',
+    });
+  });
+
+  test('挂上且在线：已连接中继，有延迟就带上延迟', () => {
+    expect(
+      machineStatusBadge({ ...RELAY_ROLE, relayMode: true, relayAttached: true, rttMs: 8.6 })
+    ).toEqual({
+      state: 'relayConnected',
+      tone: 'ok',
+      key: 'nodes.machine.status.relayConnectedRtt',
+      params: { ms: 9 },
+    });
+    expect(machineStatusBadge({ ...RELAY_ROLE, relayMode: true, relayAttached: true }).key).toBe(
+      'nodes.machine.status.relayConnected'
+    );
+  });
+
+  test('令牌失效仍是警示档：那不是「刚建好」，是要人动手', () => {
+    const badge = machineStatusBadge({ ...RELAY_ROLE, relayMode: true, relayKicked: true });
+    expect(badge.state).toBe('relayKicked');
+    expect(badge.tone).toBe('warn');
+  });
+
+  test('普通节点走中继时没挂上仍是警示档', () => {
+    expect(machineStatusBadge({ ...BASE, relayMode: true }).tone).toBe('warn');
+  });
+
+  test('角色未知压过一切：不拿中继角色猜', () => {
+    expect(machineStatusBadge({ ...RELAY_ROLE, roleKnown: false }).state).toBe('unknown');
   });
 });
 

@@ -2000,17 +2000,23 @@
           "eventLoopHint": "イベントループ遅延です。100 ms を超えると転送が滞留しています。",
           "memory": "メモリ",
           "memorySub": "ヒープ {{heap}}",
-          "heap": "ヒープ",
-          "heapSub": "全 {{total}}",
+          "memoryHeapSub": "ヒープ {{heap}} / {{total}}",
           "cpu": "CPU",
           "sockets": "ソケット",
           "socketsSub": "認証済み {{authenticated}}",
+          "reconnects": "再接続",
+          "reconnectsSub": "起動からの累計",
+          "reconnectsHint": "接続中ノードの再接続回数の合計です。",
           "uptime": "稼働時間",
           "throughputTotal": "累計 {{total}}",
           "traffic": "中継トラフィック",
           "trafficSub": "起動からの累計",
           "trafficHint": "転送フレームは送受信の両方に計上されるため、ここでは一度だけ数えます。",
           "tenants": "テナント"
+        },
+        "groups": {
+          "traffic": "トラフィック",
+          "process": "プロセス"
         },
         "trends": {
           "title": "トレンド",

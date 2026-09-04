@@ -18,6 +18,7 @@ const {
   relayTrendSeries,
   rttLevel,
   sortMembers,
+  totalMemberReconnects,
 } = await import('./relay-metrics-model');
 const { relayMetricsFixture, relayMetricsMember, relayMetricsSample } = await import(
   './relay-metrics-fixture'
@@ -93,6 +94,16 @@ describe('成员统计', () => {
     expect(maxMemberRttMs(members)).toBeNull();
   });
 
+  test('重连次数求和，离线成员也算', () => {
+    expect(
+      totalMemberReconnects([
+        relayMetricsMember({ nodeId: 'a', reconnects: 2 }),
+        relayMetricsMember({ nodeId: 'b', reconnects: 3, online: false }),
+      ])
+    ).toBe(5);
+    expect(totalMemberReconnects([])).toBe(0);
+  });
+
   test('排序：在线优先，其次按速率降序', () => {
     const rows = sortMembers([
       relayMetricsMember({ nodeId: 'slow', bytesInPerSec: 1, bytesOutPerSec: 1 }),
@@ -142,7 +153,7 @@ describe('磁贴排', () => {
   const data = relayMetricsFixture();
   const trends = relayTrendSeries(data);
 
-  test('完整排把十三格都摆出来', () => {
+  test('完整排把十二格分两组摆出来', () => {
     const html = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
     for (const id of [
       'members-online',
@@ -154,13 +165,30 @@ describe('磁贴排', () => {
       'rtt',
       'event-loop',
       'memory',
-      'heap',
       'cpu',
       'sockets',
-      'uptime',
+      'reconnects',
     ]) {
       expect(html).toContain(`data-testid="relay-metric-${id}"`);
     }
+    expect(html).toContain('data-testid="relay-metrics-group-traffic"');
+    expect(html).toContain('data-testid="relay-metrics-group-process"');
+    expect(html).toContain('relay.metrics.groups.traffic');
+    expect(html).toContain('relay.metrics.groups.process');
+  });
+
+  test('完整排不再摆运行时长与独立堆格：前者在头部条，后者并进内存格', () => {
+    const html = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
+    expect(html).not.toContain('data-testid="relay-metric-uptime"');
+    expect(html).not.toContain('data-testid="relay-metric-heap"');
+    expect(html).toContain('relay.metrics.tiles.memoryHeapSub');
+    expect(html).not.toContain('relay.metrics.tiles.memorySub');
+  });
+
+  test('紧凑排的内存格只报堆已用量，副行不塞总量', () => {
+    const html = renderToStaticMarkup(<RelayCompactTiles data={data} trends={trends} />);
+    expect(html).toContain('relay.metrics.tiles.memorySub');
+    expect(html).not.toContain('relay.metrics.tiles.memoryHeapSub');
   });
 
   test('紧凑排只出七格，吞吐格带折线', () => {
@@ -172,7 +200,7 @@ describe('磁贴排', () => {
     expect(html).toContain('data-slot="sparkline"');
   });
 
-  test('累计中转流量：完整排单独一格，只出一个数（收发两侧同值）', () => {
+  test('累计流量：完整排单独一格，只出一个数（收发两侧同值）', () => {
     const html = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
     expect(html).toContain('data-testid="relay-metric-traffic"');
     // totals.bytesOut = 10 MiB；in / out 逐字节相等，只摆一次
@@ -213,13 +241,12 @@ describe('磁贴排', () => {
     expect(compact).toContain('grid grid-cols-2 gap-2 sm:grid-cols-3');
     expect(compact).not.toContain('grid grid-cols-3 gap-2"');
 
+    // 完整排：每组六格，列数只取 6 的因数（1/2/3/6），行才不会缺角；六列留给 2xl
     const full = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
-    expect(full).toContain('grid-cols-1');
-    expect(full).toContain('sm:grid-cols-2');
-    expect(full).toContain('md:grid-cols-3');
-    expect(full).toContain('lg:grid-cols-4');
-    expect(full).toContain('xl:grid-cols-6');
-    expect(full).not.toContain('grid grid-cols-2 gap-3');
+    expect(full).toContain('grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6');
+    expect(full).not.toContain(' xl:grid-cols-6');
+    expect(full).not.toContain('md:grid-cols-3');
+    expect(full).not.toContain('lg:grid-cols-4');
 
     const skeleton = renderToStaticMarkup(<RelayTilesSkeleton count={4} />);
     expect(skeleton).toContain('grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4');

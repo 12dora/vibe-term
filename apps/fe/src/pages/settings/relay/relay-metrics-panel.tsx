@@ -80,7 +80,7 @@ function RelayMetricsPanelSkeleton() {
   return (
     <div className="flex flex-col gap-4" data-testid="relay-metrics-panel-skeleton">
       <Skeleton className="h-4 w-64" />
-      <RelayTilesSkeleton count={8} />
+      <RelayTilesSkeleton count={12} />
       <Skeleton className="h-64 w-full rounded-xl" />
     </div>
   );

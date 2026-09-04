@@ -69,6 +69,14 @@ export function maxMemberRttMs(members: readonly RelayMetricsMember[]): number |
   return online.length === 0 ? null : Math.max(...online);
 }
 
+/** 全部成员的重连次数之和；离线成员也算进去，断线本身就是要看的量。 */
+export function totalMemberReconnects(members: readonly RelayMetricsMember[]): number {
+  return members.reduce(
+    (sum, member) => sum + (Number.isFinite(member.reconnects) ? member.reconnects : 0),
+    0
+  );
+}
+
 /** 在线优先，其次按流量降序，最后按名字稳定排序。 */
 export function sortMembers(members: readonly RelayMetricsMember[]): RelayMetricsMember[] {
   return [...members].sort((a, b) => {

@@ -27,10 +27,10 @@ import {
 import { domainAccessApi, readDomainAccess } from './domain-access-row';
 import { LocalMachineBody } from './local-machine-body';
 import { LocalMachineHeader } from './local-machine-header';
-import { machineStatusBadge } from './machine-status';
+import { type MachineStatusBadge, machineStatusBadge } from './machine-status';
 import type { SetupIntent } from './membership/intent';
 import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
-import { classifyRoleChange } from './membership/role-transition';
+import { classifyRoleChange, isRelayRole } from './membership/role-transition';
 import { useLeaveMesh } from './membership/use-leave-mesh';
 import { useRestartGateway } from './restart/use-restart-now';
 import { useSetupCommitted } from './setup/setup-transition';
@@ -66,6 +66,35 @@ const CHANGE_HUB_REQUEST: LeaveDialogRequest = {
   targetRole: 'standalone',
   intent: { path: 'join-hub' },
 };
+
+/**
+ * 卡头那枚徽标：本机角色与上级链路快照拼出来的一档。
+ *
+ * 中继角色（`relay` / `relay,node`）的上级只可能是中继：后端在它还没以租户身份接入时把
+ * `mode` 报成 `hub`，hub 候选里还带一条本机占位地址——照 hub 那一档判会说出「未连接 Hub」，
+ * 一句它永远不该听到的话。因此延迟与「连上没有」一律只看中继链路。
+ */
+function machineBadge(
+  meshEnabled: boolean,
+  status: LocalStatusResponse | null,
+  uplink: LocalUplinkController,
+  selfNodeId: string | null
+): MachineStatusBadge {
+  const relayRole = status !== null && isRelayRole(status.role);
+  const attachedRelay = uplink.relay.attached;
+  const relayLink = relayRole || uplink.relay.relayMode;
+  return machineStatusBadge({
+    standalone: !meshEnabled,
+    relayRole,
+    roleKnown: status !== null,
+    relayMode: uplink.relay.relayMode,
+    relayAttached: attachedRelay?.online === true,
+    relayKicked: uplink.relay.kicked,
+    hubAttached: resolveAttachedHub(uplink.hubs, selfNodeId).kind !== 'none',
+    hubLoading: uplink.hub.loading,
+    rttMs: relayLink ? (attachedRelay?.rttMs ?? null) : attachedHubRtt(uplink.hubs),
+  });
+}
 
 /**
  * 角色切换：目标角色都要先退出当前 mesh，因此统一落到一份「待确认的退出请求」上，
@@ -162,18 +191,7 @@ export function LocalMachineCard({
   });
 
   const domainApi = useMemo(() => domainAccessApi(client), [client]);
-  const badge = machineStatusBadge({
-    standalone: !meshEnabled,
-    roleKnown: status !== null,
-    relayMode: uplink.relay.relayMode,
-    relayAttached: uplink.relay.attached !== null,
-    relayKicked: uplink.relay.kicked,
-    hubAttached: resolveAttachedHub(uplink.hubs, mode?.nodeId ?? null).kind !== 'none',
-    hubLoading: uplink.hub.loading,
-    rttMs: uplink.relay.relayMode
-      ? (uplink.relay.attached?.rttMs ?? null)
-      : attachedHubRtt(uplink.hubs),
-  });
+  const badge = machineBadge(meshEnabled, status, uplink, mode?.nodeId ?? null);
 
   return (
     <Card data-testid="local-machine-card">

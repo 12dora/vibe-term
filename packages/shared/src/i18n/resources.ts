@@ -2754,17 +2754,23 @@ export const I18N_RESOURCES = {
           "eventLoopHint": "Event loop lag; above 100 ms forwarding is queueing.",
           "memory": "Memory",
           "memorySub": "heap {{heap}}",
-          "heap": "Heap",
-          "heapSub": "of {{total}}",
+          "memoryHeapSub": "heap {{heap}} of {{total}}",
           "cpu": "CPU",
           "sockets": "Sockets",
           "socketsSub": "{{authenticated}} authenticated",
+          "reconnects": "Reconnects",
+          "reconnectsSub": "since start",
+          "reconnectsHint": "Reconnects summed across joined nodes.",
           "uptime": "Uptime",
           "throughputTotal": "{{total}} total",
           "traffic": "Relayed Traffic",
           "trafficSub": "since start",
           "trafficHint": "Each forwarded frame counts on both sides; it is counted once here.",
           "tenants": "Tenants"
+        },
+        "groups": {
+          "traffic": "Traffic",
+          "process": "Process"
         },
         "trends": {
           "title": "Trends",
@@ -5757,8 +5763,8 @@ export const I18N_RESOURCES = {
           "activeStreams": "活跃流",
           "throughput": "吞吐",
           "throughputSub": "↑ {{out}} · ↓ {{in}}",
-          "bytesIn": "入向速率",
-          "bytesOut": "出向速率",
+          "bytesIn": "入站速率",
+          "bytesOut": "出站速率",
           "frames": "帧速率",
           "framesSub": "↑ {{out}} · ↓ {{in}}",
           "rtt": "延迟",
@@ -5769,17 +5775,23 @@ export const I18N_RESOURCES = {
           "eventLoopHint": "事件循环延迟，超过 100 ms 说明转发已排队。",
           "memory": "内存",
           "memorySub": "堆 {{heap}}",
-          "heap": "堆内存",
-          "heapSub": "共 {{total}}",
+          "memoryHeapSub": "堆 {{heap}} / {{total}}",
           "cpu": "CPU",
           "sockets": "连接数",
           "socketsSub": "已认证 {{authenticated}}",
+          "reconnects": "重连",
+          "reconnectsSub": "自启动累计",
+          "reconnectsHint": "各接入节点重连次数之和。",
           "uptime": "运行时长",
           "throughputTotal": "累计 {{total}}",
-          "traffic": "中转流量",
+          "traffic": "累计流量",
           "trafficSub": "自启动累计",
           "trafficHint": "中继每转发一帧都同时计进收发两侧，此处只计一次。",
           "tenants": "租户"
+        },
+        "groups": {
+          "traffic": "流量",
+          "process": "进程"
         },
         "trends": {
           "title": "趋势",
@@ -5788,8 +5800,8 @@ export const I18N_RESOURCES = {
           "streams": "活跃流",
           "eventLoop": "事件循环延迟",
           "range": "峰值 {{max}} · 谷值 {{min}}",
-          "legendIn": "入向",
-          "legendOut": "出向"
+          "legendIn": "入站",
+          "legendOut": "出站"
         },
         "members": {
           "title": "接入节点",
@@ -8784,17 +8796,23 @@ export const I18N_RESOURCES = {
           "eventLoopHint": "イベントループ遅延です。100 ms を超えると転送が滞留しています。",
           "memory": "メモリ",
           "memorySub": "ヒープ {{heap}}",
-          "heap": "ヒープ",
-          "heapSub": "全 {{total}}",
+          "memoryHeapSub": "ヒープ {{heap}} / {{total}}",
           "cpu": "CPU",
           "sockets": "ソケット",
           "socketsSub": "認証済み {{authenticated}}",
+          "reconnects": "再接続",
+          "reconnectsSub": "起動からの累計",
+          "reconnectsHint": "接続中ノードの再接続回数の合計です。",
           "uptime": "稼働時間",
           "throughputTotal": "累計 {{total}}",
           "traffic": "中継トラフィック",
           "trafficSub": "起動からの累計",
           "trafficHint": "転送フレームは送受信の両方に計上されるため、ここでは一度だけ数えます。",
           "tenants": "テナント"
+        },
+        "groups": {
+          "traffic": "トラフィック",
+          "process": "プロセス"
         },
         "trends": {
           "title": "トレンド",
