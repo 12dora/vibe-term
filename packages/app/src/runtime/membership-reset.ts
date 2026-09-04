@@ -134,9 +134,21 @@ async function quiesceBestEffort(deps: SetupServiceDeps): Promise<void> {
   }
 }
 
-function clearMembershipForTarget(store: MeshMembershipStore, targetRole: LeaveTargetRole): void {
+function localRootPublicKey(userStore: {
+  listUsers(): Array<{ rootPublicKey: Uint8Array }>;
+}): Uint8Array | null {
+  return userStore.listUsers()[0]?.rootPublicKey ?? null;
+}
+
+function clearMembershipForTarget(
+  store: MeshMembershipStore,
+  targetRole: LeaveTargetRole,
+  rootPublicKey: Uint8Array | null
+): void {
   if (targetRole === 'relay') {
-    store.clearMeshMembership();
+    store.clearMeshMembership(
+      rootPublicKey ? { removeRelayTenantRootPublicKey: rootPublicKey } : undefined
+    );
     return;
   }
   store.clearAll();
@@ -169,7 +181,9 @@ export async function leaveMesh(
     const staged = await stageLeaveEnv(deps, targetRole);
     try {
       await quiesceBestEffort(deps);
-      clearMembershipForTarget(new MeshMembershipStore(deps.auth.db), targetRole);
+      // 本机幽灵租户的在线 uplink：membership-reset 够不到 RelayRuntime；leave 随后立刻重启，连接随进程断开。
+      const rootPublicKey = targetRole === 'relay' ? localRootPublicKey(deps.auth.userStore) : null;
+      clearMembershipForTarget(new MeshMembershipStore(deps.auth.db), targetRole, rootPublicKey);
     } catch (error) {
       await removeStagedEnv(deps, staged.stagedPath);
       throw error;

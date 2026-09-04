@@ -18,12 +18,16 @@ import {
   nodes,
   peerCache,
   relayConfig,
+  relayEnrollments,
+  relayKeyLog,
+  relayNodes,
   relayTenants,
   userKeyLog,
   userKeys,
   users,
 } from '../../../../apps/gateway/src/db/schema';
 import { RelayConfigStore } from '../../../../apps/gateway/src/relay/relay-config-store';
+import { RelayKeyLogStore } from '../../../../apps/gateway/src/relay/relay-key-log-store';
 import { RelayTenantStore } from '../../../../apps/gateway/src/relay/relay-tenant-store';
 import { readEnvFile } from '../lib/env-file';
 import type { LocalAuthContext } from '../lib/local-auth';
@@ -129,15 +133,63 @@ async function seedRelayAttachment(auth: LocalAuthContext): Promise<void> {
   store.setLocalName('studio');
 }
 
-function seedRelayOperator(auth: LocalAuthContext): void {
-  new RelayConfigStore(auth.db).ensure(1_700_000_000_000);
-  new RelayTenantStore(auth.db).create({
-    id: 'ab'.repeat(16),
-    rootPublicKey: Uint8Array.from({ length: 32 }, () => 3),
+const FOREIGN_TENANT_ID = 'ab'.repeat(16);
+const MATCHING_TENANT_ID = 'cd'.repeat(16);
+
+function seedRelayOperatorTenant(
+  auth: LocalAuthContext,
+  input: { id: string; rootPublicKey: Uint8Array; withChildren?: boolean }
+): void {
+  const tenants = new RelayTenantStore(auth.db);
+  tenants.create({
+    id: input.id,
+    rootPublicKey: input.rootPublicKey,
     rootEpoch: 0,
     tokenHash: 'aa'.repeat(32),
     tokenEpoch: 0,
     now: 1_700_000_000_000,
+  });
+  if (!input.withChildren) return;
+  tenants.upsertNode({
+    tenantId: input.id,
+    nodeId: `node-${input.id.slice(0, 8)}`,
+    edPk: Uint8Array.from({ length: 32 }, () => 1),
+    x25519Pk: Uint8Array.from({ length: 32 }, () => 2),
+    status: 'admitted',
+    now: 1_700_000_000_000,
+  });
+  tenants.createEnrollment({
+    id: `enroll-${input.id.slice(0, 8)}`,
+    tenantId: input.id,
+    enrollPk: Uint8Array.from({ length: 32 }, (_, i) => (i + input.id.charCodeAt(0)) % 256),
+    authorizationBytes: Uint8Array.from({ length: 40 }, () => 6),
+    authorizationSig: Uint8Array.from({ length: 64 }, () => 3),
+    expiresAt: 9_999_999_999,
+    now: 1_700_000_000_000,
+  });
+  new RelayKeyLogStore(auth.db).append({
+    tenantId: input.id,
+    seq: 1n,
+    envelope: { v: 1, n: 'n', ct: 'ct' },
+    now: 1_700_000_000_000,
+  });
+}
+
+function seedRelayOperator(
+  auth: LocalAuthContext,
+  extra?: { matchingRootPublicKey?: Uint8Array; withChildren?: boolean }
+): void {
+  new RelayConfigStore(auth.db).ensure(1_700_000_000_000);
+  seedRelayOperatorTenant(auth, {
+    id: FOREIGN_TENANT_ID,
+    rootPublicKey: Uint8Array.from({ length: 32 }, () => 3),
+    withChildren: extra?.withChildren,
+  });
+  if (!extra?.matchingRootPublicKey) return;
+  seedRelayOperatorTenant(auth, {
+    id: MATCHING_TENANT_ID,
+    rootPublicKey: extra.matchingRootPublicKey,
+    withChildren: extra.withChildren,
   });
 }
 
@@ -356,7 +408,13 @@ describe('leaveMesh', () => {
   test('relay,node → relay keeps operator state and relay env keys', async () => {
     const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
     await seedRelayAttachment(deps.auth);
-    seedRelayOperator(deps.auth);
+    const localRoot = deps.auth.userStore.getByUsername('alice')?.rootPublicKey;
+    if (!localRoot) throw new Error('expected alice');
+    seedRelayOperator(deps.auth, { matchingRootPublicKey: localRoot, withChildren: true });
+    expect(deps.auth.db.select().from(relayTenants).all()).toHaveLength(2);
+    expect(deps.auth.db.select().from(relayNodes).all()).toHaveLength(2);
+    expect(deps.auth.db.select().from(relayEnrollments).all()).toHaveLength(2);
+    expect(deps.auth.db.select().from(relayKeyLog).all()).toHaveLength(2);
     const result = await leaveMesh({ expectedRole: 'relay,node', targetRole: 'relay' }, deps);
     expect(result).toEqual({
       ok: true,
@@ -368,7 +426,30 @@ describe('leaveMesh', () => {
     expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(0);
     expect(deps.auth.db.select().from(nodeIdentity).all()).toHaveLength(0);
     expect(deps.auth.db.select().from(relayConfig).all()).toHaveLength(1);
-    expect(deps.auth.db.select().from(relayTenants).all()).toHaveLength(1);
+    const remaining = deps.auth.db.select().from(relayTenants).all();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.id).toBe(FOREIGN_TENANT_ID);
+    expect(
+      deps.auth.db
+        .select()
+        .from(relayNodes)
+        .all()
+        .map((row) => row.tenantId)
+    ).toEqual([FOREIGN_TENANT_ID]);
+    expect(
+      deps.auth.db
+        .select()
+        .from(relayEnrollments)
+        .all()
+        .map((row) => row.tenantId)
+    ).toEqual([FOREIGN_TENANT_ID]);
+    expect(
+      deps.auth.db
+        .select()
+        .from(relayKeyLog)
+        .all()
+        .map((row) => row.tenantId)
+    ).toEqual([FOREIGN_TENANT_ID]);
     const env = await readEnvFile(deps.envPath);
     expect(env.TMEX_ROLES).toBe('relay');
     expect(env.TMEX_HUB_URL).toBe('');

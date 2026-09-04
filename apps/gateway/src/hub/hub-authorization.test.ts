@@ -6,6 +6,7 @@ import {
   buildAdmitHubPayload,
   buildKeyLogRecord,
   encodeKeyLogRecord,
+  encodeRenameNodePayload,
   encodeRotateRootKeepPayload,
   generateKdfParams,
   genesisHead,
@@ -69,16 +70,33 @@ function rotateRootKeepRecord(): Uint8Array {
   );
 }
 
-function relayRecord(type: 'set-relays' | 'meta-key'): Uint8Array {
+function relayRecord(type: 'set-relays' | 'meta-key' | 'rename-node'): Uint8Array {
+  const payload =
+    type === 'rename-node'
+      ? encodeRenameNodePayload({ node_id: new Uint8Array(16).fill(1), name: 'studio' })
+      : new Uint8Array(4);
   return encodeKeyLogRecord(
     buildKeyLogRecord(genesisHead(), 0, {
       uid: 'user-1',
       type,
-      payload: new Uint8Array(4),
+      payload,
       signer: 'root',
       credential_id: null,
     })
   );
+}
+
+function seedPeer(store: UserStore, nodeId: string, name: string, version: string | null): void {
+  store.upsertPeer({
+    nodeId,
+    name,
+    endpointsJson: '[]',
+    inventoryJson: '{}',
+    directCapable: false,
+    lastSeenAt: 1,
+    listVersion: 1,
+    version,
+  });
 }
 
 function admitHubRecord(): Uint8Array {
@@ -332,24 +350,86 @@ describe('hub auth record compat gate', () => {
       const store = new UserStore(db);
       seedUser(store);
       seedCert(store, 'user-1', SELF);
-      // 纯节点没有 nodes 注册表：set-relays / meta-key 放行
-      expect(inspectHubAuthRecordCompat(store, relayRecord('set-relays'), 'user-1')).toEqual({
+      const relay = { relayMode: true } as const;
+      expect(inspectHubAuthRecordCompat(store, relayRecord('set-relays'), 'user-1', relay)).toEqual(
+        { ok: true }
+      );
+      expect(inspectHubAuthRecordCompat(store, relayRecord('meta-key'), 'user-1', relay)).toEqual({
         ok: true,
       });
-      expect(inspectHubAuthRecordCompat(store, relayRecord('meta-key'), 'user-1')).toEqual({
-        ok: true,
-      });
-      // 同一张空表下 hub-auth 记录照旧被拒
-      expect(inspectHubAuthRecordCompat(store, admitHubRecord(), 'user-1').ok).toBe(false);
+      expect(
+        inspectHubAuthRecordCompat(store, relayRecord('rename-node'), 'user-1', relay)
+      ).toEqual({ ok: true });
+      expect(inspectHubAuthRecordCompat(store, admitHubRecord(), 'user-1', relay).ok).toBe(false);
+      expect(inspectHubAuthRecordCompat(store, rotateRootKeepRecord(), 'user-1', relay).ok).toBe(
+        false
+      );
 
-      // 一旦有了注册表（hub 侧），中继记录也回到版本门禁
       store.createNode({ id: PEER, userId: 'user-1', name: 'old', version: '1.1.22', now: 1 });
       seedCert(store, 'user-1', PEER);
       const blocked = inspectHubAuthRecordCompat(store, relayRecord('set-relays'), 'user-1');
       expect(blocked.ok).toBe(false);
       if (!blocked.ok) {
         expect(blocked.minVersion).toBe('1.1.23');
-        expect(blocked.nodes.map((n) => n.id).sort()).toEqual([PEER, SELF].sort());
+        expect(blocked.nodes.map((n) => n.id)).toEqual([PEER]);
+      }
+    } finally {
+      close();
+    }
+  });
+
+  test('relay mode blocks old or unversioned peers and allows current peers', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      seedCert(store, 'user-1', SELF);
+      seedCert(store, 'user-1', PEER);
+      seedPeer(store, PEER, 'old', '1.1.15');
+      const relay = { relayMode: true } as const;
+      const blocked = inspectHubAuthRecordCompat(store, rotateRootKeepRecord(), 'user-1', relay);
+      expect(blocked.ok).toBe(false);
+      if (!blocked.ok) {
+        expect(blocked.minVersion).toBe(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION);
+        expect(blocked.allowForce).toBe(false);
+        expect(blocked.nodes).toEqual([{ id: PEER, name: 'old', version: '1.1.15' }]);
+      }
+
+      seedPeer(store, PEER, 'ok', '1.1.16');
+      expect(inspectHubAuthRecordCompat(store, rotateRootKeepRecord(), 'user-1', relay)).toEqual({
+        ok: true,
+      });
+      const relaysOld = inspectHubAuthRecordCompat(
+        store,
+        relayRecord('set-relays'),
+        'user-1',
+        relay
+      );
+      expect(relaysOld.ok).toBe(false);
+      seedPeer(store, PEER, 'ok', '1.1.23');
+      expect(inspectHubAuthRecordCompat(store, relayRecord('set-relays'), 'user-1', relay)).toEqual(
+        {
+          ok: true,
+        }
+      );
+
+      seedPeer(store, PEER, 'missing', null);
+      const missing = inspectHubAuthRecordCompat(store, rotateRootKeepRecord(), 'user-1', relay);
+      expect(missing.ok).toBe(false);
+      if (!missing.ok) {
+        expect(missing.nodes).toEqual([{ id: PEER, name: 'missing', version: null }]);
+      }
+
+      seedPeer(store, PEER, 'weird', 'ver-b');
+      const unparseable = inspectHubAuthRecordCompat(
+        store,
+        rotateRootKeepRecord(),
+        'user-1',
+        relay
+      );
+      expect(unparseable.ok).toBe(false);
+      if (!unparseable.ok) {
+        expect(unparseable.nodes).toEqual([{ id: PEER, name: 'weird', version: 'ver-b' }]);
       }
     } finally {
       close();

@@ -8,12 +8,16 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
+  KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
+  MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   buildKeyLogRecord,
   canonicalHubUrl,
   encodeBase64url,
   encodeClearTotpPayload,
   encodeKeyLogRecord,
   encodeRevokeNodePayload,
+  encodeRotateRootKeepPayload,
+  generateKdfParams,
   hexToBytes,
   signKeyLogRecordWithRoot,
 } from '@tmex/shared/auth';
@@ -38,8 +42,9 @@ const RELAY_URL = 'https://relay.example';
 const RELAY_URL_2 = 'https://relay2.example';
 const TENANT_ID = 'ab'.repeat(16);
 const PASSWORD = 'relay-pass-1234';
-/** 记录类型门禁按 `nodes.version` 判定；中继记录要求全员 ≥ 1.1.23。 */
+/** 首次接入仍走 hub 模式的 `nodes.version`；中继记录要求全员 ≥ 1.1.23。 */
 const NODE_VERSION = '1.1.23';
+const PEER_ID = 'bb'.repeat(16);
 
 type PublisherSpy = AuthKeyLogPublisher & {
   readonly published: Array<{ bytes: Uint8Array; sig: Uint8Array }>;
@@ -161,7 +166,7 @@ type Booted = Awaited<ReturnType<typeof boot>>;
 async function postRecord(
   b: Booted,
   input: {
-    type: 'set-relays' | 'meta-key' | 'clear-totp' | 'revoke-node';
+    type: 'set-relays' | 'meta-key' | 'clear-totp' | 'revoke-node' | 'rotate-root-keep';
     payload: Uint8Array;
   }
 ): Promise<Response> {
@@ -456,6 +461,77 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
       // 推给中继的那一条就是这条吊销记录（RelayKeyLogSync 会给它挂 member 证明）
       expect(b.publisher.published).toHaveLength(1);
       expect(b.userStore.getCert(b.identity.nodeIdHex)?.revokedLogSeq).not.toBeNull();
+    } finally {
+      b.close();
+    }
+  });
+
+  test('中继模式 rotate-root-keep：旧 peer / 空缓存拦截，全员达标放行', async () => {
+    const b = await boot({ publisher: offlinePublisher() });
+    try {
+      await attachRelay(b);
+      const keepPayload = () =>
+        encodeRotateRootKeepPayload({
+          root_public_key: new Uint8Array(32).fill(4),
+          kdf_params: generateKdfParams(),
+          totp: null,
+        });
+      const empty = await postRecord(b, { type: 'rotate-root-keep', payload: keepPayload() });
+      expect(empty.status).toBe(409);
+      expect(((await empty.json()) as { code: string }).code).toBe(
+        KEYLOG_TYPE_UNSUPPORTED_BY_NODES
+      );
+
+      const token = new Uint8Array(32).fill(2);
+      expect(
+        (await postRecord(b, { type: 'set-relays', payload: await setRelaysPayload(b, { token }) }))
+          .status
+      ).toBe(200);
+      await b.settle();
+
+      b.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: b.user.userId,
+        admitRecordSeq: 1,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(8),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(8),
+      });
+      b.userStore.upsertPeer({
+        nodeId: PEER_ID,
+        name: 'old',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+        version: '1.1.15',
+      });
+      const oldPeer = await postRecord(b, { type: 'rotate-root-keep', payload: keepPayload() });
+      expect(oldPeer.status).toBe(409);
+      const oldBody = (await oldPeer.json()) as {
+        code: string;
+        minVersion: string;
+        nodes: Array<{ id: string; name: string; version: string | null }>;
+      };
+      expect(oldBody.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+      expect(oldBody.minVersion).toBe(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION);
+      expect(oldBody.nodes).toEqual([{ id: PEER_ID, name: 'old', version: '1.1.15' }]);
+
+      b.userStore.upsertPeer({
+        nodeId: PEER_ID,
+        name: 'ok',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 2,
+        listVersion: 2,
+        version: '1.1.16',
+      });
+      expect(
+        (await postRecord(b, { type: 'rotate-root-keep', payload: keepPayload() })).status
+      ).toBe(200);
     } finally {
       b.close();
     }
