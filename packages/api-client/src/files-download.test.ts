@@ -7,8 +7,14 @@ function ndjson(lines: object[]): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
+function bytesBody(body: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(body.byteLength);
+  copy.set(body);
+  return copy.buffer;
+}
+
 function streamResponse(body: Uint8Array, init?: ResponseInit): Response {
-  return new Response(body, {
+  return new Response(bytesBody(body), {
     status: 200,
     headers: { 'Content-Type': 'application/x-ndjson' },
     ...init,
@@ -53,7 +59,7 @@ describe('downloadFileWithProgress transport', () => {
           );
         }
         if (input.endsWith('/api/files/download/dl-1/content')) {
-          return new Response(contentBytes, {
+          return new Response(bytesBody(contentBytes), {
             status: 200,
             headers: { 'Content-Length': String(contentBytes.byteLength) },
           });

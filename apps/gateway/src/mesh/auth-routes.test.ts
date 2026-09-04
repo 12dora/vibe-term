@@ -33,7 +33,7 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import { UserKeyService } from '../auth/user-key-service';
 import { UserStore } from '../auth/user-store';
 import { MemoryLocalAuthStore } from '../db/local-auth-settings';
-import type { AuthKeyLogPublisher } from './auth-routes';
+import { type AuthKeyLogPublisher, authModeDisplayUsername } from './auth-routes';
 import {
   CHALLENGE_RATE_LIMIT,
   LOGIN_RATE_WINDOW_MS,
@@ -512,6 +512,32 @@ describe('auth-routes', () => {
     } finally {
       standalone.close();
     }
+  });
+
+  test('GET /api/auth/mode 把标识符当作用户名时返回 null', async () => {
+    const mesh = await bootMesh();
+    try {
+      mesh.userStore.updateUsername(mesh.boot.userId, mesh.boot.userId, Date.now());
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/mode', {
+        headers: { origin: 'http://localhost:19663' },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { username: string | null; uid: string };
+      expect(body.uid).toBe(mesh.boot.userId);
+      expect(body.username).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('authModeDisplayUsername 过滤 uid / UUID / 32-hex', () => {
+    const user = (username: string, id = '11111111-2222-4333-8444-555555555555') =>
+      ({ id, username }) as Parameters<typeof authModeDisplayUsername>[0];
+    expect(authModeDisplayUsername(null)).toBeNull();
+    expect(authModeDisplayUsername(user('alice'))).toBe('alice');
+    expect(authModeDisplayUsername(user('11111111-2222-4333-8444-555555555555'))).toBeNull();
+    expect(authModeDisplayUsername(user('550e8400-e29b-41d4-a716-446655440000'))).toBeNull();
+    expect(authModeDisplayUsername(user('ab'.repeat(16)))).toBeNull();
   });
 
   test('GET /api/auth/mode standalone+effective 返回 mesh 载荷与 localAuth', async () => {

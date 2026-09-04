@@ -1,18 +1,11 @@
 // 无 DOM 环境，用 react-dom/server 静态渲染断言结构（与 device-card.test.tsx 同一套做法）。
 // 交互态（重命名 / 新建行）由外部 props 驱动的 FolderSection / FolderNameEditor 直接覆盖。
 
-import { describe, expect, mock, test } from 'bun:test';
-import type { DeviceFolder, DeviceFolderLayout } from '@tmex/shared';
+import { describe, expect, test } from 'bun:test';
+import { type DeviceFolder, type DeviceFolderLayout, I18N_RESOURCES } from '@tmex/shared';
+import i18next from 'i18next';
 import { renderToStaticMarkup } from 'react-dom/server';
-import * as actualReactI18next from 'react-i18next';
-
-// 本文件断言的是 i18n key（不是译文）；此前靠别的测试文件泄漏的 react-i18next mock 才通过，
-// 文件顺序一变（Linux CI）就拿到真译文。自己声明，并转发真实模块其余导出。
-mock.module('react-i18next', () => ({
-  ...actualReactI18next,
-  useTranslation: () => ({ t: (key: string) => key, i18n: actualReactI18next.getI18n?.() }),
-}));
-
+import { I18nextProvider } from 'react-i18next';
 import { DeviceFolderTree } from './device-folder-tree';
 import { FolderNameEditor } from './folder-name-editor';
 import { FolderSection } from './folder-section';
@@ -22,6 +15,19 @@ import {
   dropZoneId,
   folderContainerId,
 } from './folder-tree-model';
+
+const i18n = i18next.createInstance();
+await i18n.init({
+  lng: 'zh_CN',
+  fallbackLng: 'zh_CN',
+  resources: I18N_RESOURCES,
+  interpolation: { escapeValue: false },
+  react: { useSuspense: false },
+});
+
+function renderMarkup(node: React.ReactElement): string {
+  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
+}
 
 function folder(id: string, sortOrder: number): DeviceFolder {
   return {
@@ -44,7 +50,7 @@ const LAYOUT: DeviceFolderLayout = {
 function renderTree(
   overrides: Partial<React.ComponentProps<typeof DeviceFolderTree>> = {}
 ): string {
-  return renderToStaticMarkup(
+  return renderMarkup(
     <DeviceFolderTree
       layout={LAYOUT}
       implicitRootNodeIds={['self']}
@@ -102,7 +108,7 @@ describe('DeviceFolderTree', () => {
     const n2 = html.slice(html.indexOf('data-testid="rendered-n2"'));
     expect(n2).toContain('data-testid="device-folder-handle-n2"');
     expect(html).not.toContain('device-folder-move-out-');
-    expect(html).not.toContain('devices.folders.moveToRoot');
+    expect(html).not.toContain(i18n.t('devices.folders.moveToRoot'));
   });
 
   test('隐式根节点排在显式 placement 之后', () => {
@@ -121,7 +127,7 @@ describe('DeviceFolderTree', () => {
   test('不再有「移到最外层」落点条：整棵树自己就是根落点区', () => {
     const html = renderTree();
     expect(html).not.toContain('data-testid="device-folder-drop-root"');
-    expect(html).not.toContain('devices.folders.dropToRoot');
+    expect(html).not.toContain(i18n.t('devices.folders.dropToRoot'));
     // `data-drop-zone` 与 `useDroppable` 由 `useDropZone` 一并给出：
     // 树容器上没这个属性就说明根落点区压根没注册，节点也就再没有办法拖回最外层。
     expect(tagOf(html, 'data-testid="device-folder-tree"')).toContain(
@@ -146,7 +152,7 @@ describe('DeviceFolderTree', () => {
   test('分组菜单里没有「新建子分组」', () => {
     const html = renderTree();
     expect(html).not.toContain('device-folder-new-sub-');
-    expect(html).not.toContain('devices.folders.newSubfolder');
+    expect(html).not.toContain(i18n.t('devices.folders.newSubfolder'));
   });
 
   test('nodeDraggable 返回 false 的节点不套拖拽把手', () => {
@@ -154,7 +160,7 @@ describe('DeviceFolderTree', () => {
     const index = html.indexOf('data-testid="device-folder-item-node:self"');
     const slice = html.slice(index);
     expect(slice).toContain('data-testid="rendered-self"');
-    expect(slice).not.toContain('devices.folders.dragHandle');
+    expect(slice).not.toContain(i18n.t('devices.folders.dragHandle'));
   });
 
   test('初始就收起的分组不挂载内容，并标记 aria-hidden', () => {
@@ -176,7 +182,7 @@ describe('DeviceFolderTree', () => {
 
 describe('FolderSection', () => {
   function renderSection(overrides: Partial<React.ComponentProps<typeof FolderSection>> = {}) {
-    return renderToStaticMarkup(
+    return renderMarkup(
       <FolderSection
         folder={folder('a', 0)}
         itemCount={3}
@@ -207,7 +213,7 @@ describe('FolderSection', () => {
   test('重命名态：名称换成就地输入框，折叠按钮与菜单让位', () => {
     const html = renderSection({ renaming: true });
     expect(html).toContain('data-testid="device-folder-rename-input"');
-    expect(html).toContain('devices.folders.namePlaceholder');
+    expect(html).toContain(i18n.t('devices.folders.namePlaceholder'));
     expect(html).not.toContain('data-testid="device-folder-toggle-a"');
     expect(html).not.toContain('data-testid="device-folder-menu-a"');
   });
@@ -220,7 +226,7 @@ describe('FolderSection', () => {
 
 describe('FolderNameEditor', () => {
   test('新建行带 device-folder-new 的 testid 与占位文案', () => {
-    const html = renderToStaticMarkup(
+    const html = renderMarkup(
       <FolderNameEditor
         testId="device-folder-new"
         onSubmit={() => undefined}
@@ -228,12 +234,12 @@ describe('FolderNameEditor', () => {
       />
     );
     expect(html).toContain('data-testid="device-folder-new"');
-    expect(html).toContain('devices.folders.namePlaceholder');
+    expect(html).toContain(i18n.t('devices.folders.namePlaceholder'));
     expect(html).not.toContain('data-testid="device-folder-new-error"');
   });
 
   test('重命名时用现有名字预填', () => {
-    const html = renderToStaticMarkup(
+    const html = renderMarkup(
       <FolderNameEditor
         testId="device-folder-rename-input"
         initialName="书房"

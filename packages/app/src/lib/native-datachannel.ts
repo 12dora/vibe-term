@@ -132,7 +132,7 @@ export async function loadNodeDatachannel(
   process.env.TMEX_NATIVE_DIR = options.nativeDir;
 
   try {
-    const imported = await import('../vendor/node-datachannel/index.ts');
+    const imported = await import('../vendor/node-datachannel/index');
     return {
       PeerConnection: imported.PeerConnection as NodeDatachannelModule['PeerConnection'],
       cleanup: imported.cleanup,

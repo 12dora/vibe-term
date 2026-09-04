@@ -62,7 +62,11 @@ describe('default HostServices (browser)', () => {
       configurable: true,
     });
 
-    const helpers: Array<{ remove: ReturnType<typeof mock>; select: ReturnType<typeof mock> }> = [];
+    const helpers: Array<{
+      value: string;
+      remove: ReturnType<typeof mock>;
+      select: ReturnType<typeof mock>;
+    }> = [];
     const appendChild = mock((node: { remove: () => void }) => node);
     const createElement = mock((tag: string) => {
       expect(tag).toBe('textarea');

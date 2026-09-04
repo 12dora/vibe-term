@@ -195,8 +195,11 @@ describe('relay stream quota', () => {
     await clientA.inbox.takeOf('auth.ok');
     const clientB = await tenant.connect(b);
     await clientB.inbox.takeOf('auth.ok');
+    const readers: ReadableStreamDefaultReader[] = [];
     clientB.onStream((stream) => {
-      void stream.readable.getReader().read();
+      const reader = stream.readable.getReader();
+      readers.push(reader);
+      void reader.read().catch(() => undefined);
     });
     const patched = await relay.adminFetch(`/api/relay/tenants/${tenant.id}`, {
       method: 'PATCH',
@@ -214,6 +217,7 @@ describe('relay stream quota', () => {
     ).length;
     expect(relay.runtime.registry.streamCount(tenant.id)).toBeLessThanOrEqual(2);
     expect(rejected).toBeGreaterThanOrEqual(4);
+    await Promise.all(readers.map((reader) => reader.cancel().catch(() => undefined)));
   });
 });
 

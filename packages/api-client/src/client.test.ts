@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { ApiClient, defaultApiClient, parseApiError } from './client';
+import { ApiClient, type FetchLike, defaultApiClient, parseApiError } from './client';
 
 describe('ApiClient', () => {
   test('默认实例 baseUrl 为空（相对路径，同源）', () => {
@@ -30,8 +30,14 @@ describe('ApiClient', () => {
 
   test('缺省 transport 在每次调用时 late-bound 读取 globalThis.fetch', async () => {
     const original = globalThis.fetch;
-    const first = mock(() => Promise.resolve(new Response('1', { status: 201 })));
-    const second = mock(() => Promise.resolve(new Response('2', { status: 202 })));
+    const first = mock(
+      (async (_input: string, _init?: RequestInit) =>
+        new Response('1', { status: 201 })) satisfies FetchLike
+    );
+    const second = mock(
+      (async (_input: string, _init?: RequestInit) =>
+        new Response('2', { status: 202 })) satisfies FetchLike
+    );
     try {
       globalThis.fetch = first as unknown as typeof fetch;
       const client = new ApiClient('');
