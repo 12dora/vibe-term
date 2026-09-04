@@ -1,3 +1,45 @@
+# 1.1.25
+
+_2026-09-04_
+
+## English
+
+### New
+
+- **Chat commands.** Telegram bots and Weixin accounts share one command layer. Turn on “Allow chat commands” for a bot, and authorized chats can run `help`, `status`, `nodes`, `devices`, `windows`, `panes`, `tail`, `run`, `approve` and `deny` on the node that hosts the bot. Command parsing, node targeting, output chunking and permissions live in one place, so adding another platform (e.g. DingTalk) only needs an adapter. Commands run on the local node; `--node <name>` on a remote node returns a clear “not supported” reply. In Telegram groups only the user who bound the chat may issue commands.
+- **Hub password join with TOTP.** `tmex hub join <url> --password --totp <code>` (or `TMEX_TOTP`, or `totpCode` in the Connect-to-Hub form). Passkey-only accounts no longer fail: the node joins and waits as “Pending” in Node management, where a signed-in browser can admit it with one click.
+- **Enrollment fan-out.** A relay join code is now registered on every configured relay, and only relays that accepted it are encoded into the code; sealed packs are uploaded to every relay.
+- **Docker node image.** `scripts/docker-node/` builds a container that installs with the CLI (`--no-service`) and can be upgraded from the web UI like any other node.
+
+### Fixes
+
+- Node management no longer flashes “Cannot connect to Hub” while the first Hub probe (and silent login) is still running; it shows “Connecting to Hub…” instead.
+- The “node too old” terminal notice names the node (e.g. `demo-app`) instead of an id prefix.
+- Leaving a `relay,node` machine back to relay-only removes the machine’s own tenant from its relay instead of leaving a ghost.
+- Version gates now read peer versions on plain nodes and in relay mode (`peer_cache.version`), never block on the local node’s own certificate, and no longer bypass `rotate-root-keep` in relay mode.
+- A relay-only process no longer starts Telegram/Weixin polling; device connection alerts reach Weixin too and respect per-bot notification settings; agent notifications name the node and link to `/n/<node>/…` for remote sessions.
+
+---
+
+## 中文
+
+### 新增
+
+- **聊天指令。**Telegram 机器人与微信账号共用一套指令层。给机器人打开「允许聊天指令」后，已授权会话可在托管该机器人的节点上执行 `help`、`status`、`nodes`、`devices`、`windows`、`panes`、`tail`、`run`、`approve`、`deny`。解析、节点定位、分段与权限集中在一处，后续接入钉钉等平台只需实现适配器。指令只在本机节点执行，`--node <名字>` 指向远端节点时会明确回复不支持。Telegram 群聊中只有完成绑定的那位用户可以下指令。
+- **Hub 密码加入支持 TOTP。**`tmex hub join <url> --password --totp <code>`（或环境变量 `TMEX_TOTP`、「接入 Hub」表单里的验证码）。仅通行密钥的账号不再失败：节点先加入并在节点管理里显示「待批准」，已登录的浏览器可一键批准。
+- **加入码扇出。**中继加入码现在会登记到所有已配置的中继，只把接受了的中继编进加入码；密封包也会上传到每一台中继。
+- **Docker 节点镜像。**`scripts/docker-node/` 构建的容器用 CLI（`--no-service`）安装，可像普通节点一样从网页升级。
+
+### 修复
+
+- 节点管理在首次探测 Hub（含静默登录）期间不再误报「无法连接到 Hub」，改为显示「正在连接 Hub…」。
+- 「节点版本过低」的终端提示显示节点名（如 `demo-app`）而不是编号前缀。
+- `relay,node` 退回纯中继时会删除本机在自己中继上的租户，不再留下幽灵租户。
+- 版本门在纯节点与中继模式下改读对端版本（`peer_cache.version`），不再因本机自身证书阻塞，也不再在中继模式下绕过 `rotate-root-keep`。
+- 纯中继进程不再启动 Telegram/微信轮询；设备连接告警也会发到微信并遵守每个机器人的通知设置；agent 通知带节点名，远端会话链接指向 `/n/<节点>/…`。
+
+---
+
 # 1.1.24
 
 _2026-09-04_
