@@ -1,6 +1,13 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { isRelayOnly, parseTmexRoles } from './config';
+import { getMessagingRuntimeHooks, resetMessagingRuntime } from './messaging/context';
+import { setMessagingMeshRuntime } from './messaging/runtime-hooks';
 import { shouldStartMessagingServices, startLiveGatewayServices } from './runtime';
+
+afterEach(() => {
+  resetMessagingRuntime();
+  setMessagingMeshRuntime(null);
+});
 
 describe('relay-only messaging gate', () => {
   test('isRelayOnly is true only for pure relay', () => {
@@ -69,5 +76,75 @@ describe('relay-only messaging gate', () => {
       'tunnel',
       'online',
     ]);
+  });
+
+  test('startLiveGatewayServices registers messaging hooks before telegram refresh', async () => {
+    const seen: string[] = [];
+    await startLiveGatewayServices({
+      roles: parseTmexRoles('node'),
+      startLag: () => {
+        seen.push('lag');
+      },
+      refreshTelegram: async () => {
+        const hooks = getMessagingRuntimeHooks();
+        expect(typeof hooks.getUplinkStatus).toBe('function');
+        expect(typeof hooks.listMeshNodes).toBe('function');
+        expect(typeof hooks.getDeviceTree).toBe('function');
+        expect(typeof hooks.capturePane).toBe('function');
+        expect(typeof hooks.sendKeys).toBe('function');
+        expect(typeof hooks.decideConfirmation).toBe('function');
+        seen.push('telegram-refresh');
+      },
+      refreshWeixin: async () => {
+        seen.push('weixin-refresh');
+      },
+      startPush: async () => {
+        seen.push('push');
+      },
+      startAgent: async () => {
+        seen.push('agent');
+      },
+      startWatch: async () => {
+        seen.push('watch');
+      },
+      startTunnel: async () => {
+        seen.push('tunnel');
+      },
+      sendOnline: async () => {
+        seen.push('online');
+      },
+    });
+    expect(seen[0]).toBe('lag');
+    expect(seen[1]).toBe('telegram-refresh');
+    const hooks = getMessagingRuntimeHooks();
+    expect(hooks.getDeviceTree).toBeDefined();
+    expect(hooks.capturePane).toBeDefined();
+    expect(hooks.sendKeys).toBeDefined();
+    expect(hooks.decideConfirmation).toBeDefined();
+    expect(hooks.getUplinkStatus).toBeDefined();
+    expect(hooks.listMeshNodes).toBeDefined();
+  });
+
+  test('relay-only still registers hooks while skipping telegram/weixin', async () => {
+    await startLiveGatewayServices({
+      roles: parseTmexRoles('relay'),
+      startLag: () => {},
+      refreshTelegram: async () => {
+        throw new Error('telegram must not start');
+      },
+      refreshWeixin: async () => {
+        throw new Error('weixin must not start');
+      },
+      startPush: async () => {},
+      startAgent: async () => {},
+      startWatch: async () => {
+        throw new Error('watch must not start');
+      },
+      startTunnel: async () => {},
+      sendOnline: async () => {
+        throw new Error('online must not start');
+      },
+    });
+    expect(typeof getMessagingRuntimeHooks().decideConfirmation).toBe('function');
   });
 });

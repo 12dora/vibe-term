@@ -17,6 +17,8 @@ import { registerEventNotifyBroadcaster } from './events/broadcaster';
 import { sweepOrphanTransferTemps } from './files/transfer-session';
 import { t } from './i18n';
 import { type DispatchContext, requestDispatchContext } from './mesh/types';
+import { registerMessagingRuntime, resetMessagingRuntime } from './messaging/context';
+import { createMessagingRuntimeHooks, setMessagingMeshRuntime } from './messaging/runtime-hooks';
 import { connectionAlertNotifier } from './push/connection-alerts';
 import { pushSupervisor } from './push/supervisor';
 import { registerSettingsBroadcaster, registerTreeOverlayBridge } from './settings/broadcaster';
@@ -109,6 +111,7 @@ export function shouldStartMessagingServices(
 export async function startLiveGatewayServices(deps: LiveGatewayStartDeps = {}): Promise<void> {
   const messaging = shouldStartMessagingServices(deps.roles ?? resolveLiveRoles());
   (deps.startLag ?? startGatewayEventLoopLag)();
+  registerMessagingRuntime(createMessagingRuntimeHooks());
   if (messaging) {
     await (deps.refreshTelegram ?? (() => telegramService.refresh()))();
     await (deps.refreshWeixin ?? (() => weixinService.refresh()))();
@@ -268,6 +271,8 @@ export async function createGatewayRuntime(
     },
     async stop() {
       stopGatewayEventLoopLag();
+      resetMessagingRuntime();
+      setMessagingMeshRuntime(null);
       connectionAlertNotifier.setBroadcaster(null);
       connectionAlertNotifier.setEventEmitter(null);
       registerSettingsBroadcaster(null);
