@@ -23,6 +23,14 @@ export interface LocalDomainAccessStatus {
   hosts: string[];
 }
 
+export interface LocalRelayStatus {
+  publicUrl: string | null;
+  hasPassword: boolean;
+  tenantCount: number;
+  nodesOnline: number;
+  currentNodes: number;
+}
+
 export interface LocalStatusResponse {
   role: LocalRole;
   nodeEnv: 'development' | 'test' | 'production';
@@ -31,6 +39,7 @@ export interface LocalStatusResponse {
   direct: LocalDirectStatus;
   tls: LocalTlsStatus;
   domainAccess: LocalDomainAccessStatus;
+  relay: LocalRelayStatus | null;
 }
 
 export type LocalDirectAction = 'install' | 'remove' | 'enable' | 'disable';
@@ -46,13 +55,17 @@ export interface LocalDirectResponse {
 /** 能退出 mesh 的角色：必须带 node 才有成员身份，纯 `relay` 不算。 */
 export type LocalMeshRole = Exclude<LocalRole, 'standalone' | 'relay'>;
 
+export type LocalLeaveTargetRole = 'standalone' | 'relay';
+
 export interface LocalLeaveRequest {
   expectedRole: LocalMeshRole;
+  targetRole?: LocalLeaveTargetRole;
 }
 
 export interface LocalLeaveResponse {
   ok: true;
   fromRole: LocalMeshRole;
+  targetRole: LocalLeaveTargetRole;
   restarting: true;
 }
 
@@ -95,6 +108,26 @@ export interface SetupJoinResponse {
   direct: SetupDirectOutcome;
   directError: string | null;
   restarting: true;
+}
+
+export type SetupRelayRole = 'relay' | 'relay,node';
+
+export interface SetupRelayRequest {
+  role: SetupRelayRole;
+  relayPublicUrl: string;
+  relayPassword?: string | null;
+  username?: string;
+  password?: string;
+  directEnable?: boolean;
+}
+
+export interface SetupRelayResponse {
+  ok: true;
+  role: SetupRelayRole;
+  relayPublicUrl: string;
+  hasPassword: boolean;
+  restarting: true;
+  fingerprint?: string;
 }
 
 export interface ApiErrorBody {

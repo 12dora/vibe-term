@@ -1,5 +1,6 @@
 import { isStandaloneRoles } from '../lib/roles';
 import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
+import { becomeRelay } from './relay-setup-service';
 import { type SetupServiceDeps, becomeHub, joinHub, precheckHubUrl } from './setup-service';
 
 function readString(body: Record<string, unknown>, key: string): string {
@@ -12,7 +13,12 @@ export async function handleSetupRequest(
   deps: SetupServiceDeps
 ): Promise<Response | null> {
   const path = new URL(req.url).pathname;
-  if (path !== '/api/setup/precheck' && path !== '/api/setup/hub' && path !== '/api/setup/join') {
+  if (
+    path !== '/api/setup/precheck' &&
+    path !== '/api/setup/hub' &&
+    path !== '/api/setup/join' &&
+    path !== '/api/setup/relay'
+  ) {
     return null;
   }
   if (!isStandaloneRoles(deps.roles)) {
@@ -35,6 +41,26 @@ export async function handleSetupRequest(
       const result = await becomeHub(
         {
           hubPublicUrl: readString(body, 'hubPublicUrl'),
+          username: readString(body, 'username'),
+          password: readString(body, 'password'),
+          directEnable: body.directEnable === true,
+        },
+        deps
+      );
+      return jsonOk(result);
+    }
+    if (path === '/api/setup/relay') {
+      const relayPassword = body.relayPassword;
+      const result = await becomeRelay(
+        {
+          role: readString(body, 'role') as 'relay' | 'relay,node',
+          relayPublicUrl: readString(body, 'relayPublicUrl'),
+          relayPassword:
+            relayPassword === null
+              ? null
+              : typeof relayPassword === 'string'
+                ? relayPassword
+                : undefined,
           username: readString(body, 'username'),
           password: readString(body, 'password'),
           directEnable: body.directEnable === true,

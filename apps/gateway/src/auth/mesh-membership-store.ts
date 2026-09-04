@@ -9,31 +9,61 @@ import {
   nodeSessions,
   nodes,
   peerCache,
+  relayConfig,
+  relayEnrollments,
+  relayKeyLog,
+  relayNodes,
+  relayTenants,
   userKeyLog,
   userKeys,
   users,
 } from '../db/schema';
 import type { AuthDb } from './types';
 
+function wipeMeshMembership(db: AuthDb): void {
+  db.delete(userKeyLog).run();
+  db.delete(userKeys).run();
+  db.delete(nodeSessions).run();
+  db.delete(nodeCerts).run();
+  db.delete(nodes).run();
+  db.delete(enrollmentTokens).run();
+  db.delete(peerCache).run();
+  db.delete(hubTrust).run();
+  db.delete(meshHubs).run();
+  // 中继租户令牌与 K_log / K_meta 不能在退出后留在盘上
+  db.delete(meshRelays).run();
+  db.delete(meshSecrets).run();
+  db.delete(nodeIdentity).run();
+  db.delete(users).run();
+}
+
+function wipeRelayOperatorState(db: AuthDb): void {
+  db.delete(relayKeyLog).run();
+  db.delete(relayEnrollments).run();
+  db.delete(relayNodes).run();
+  db.delete(relayTenants).run();
+  db.delete(relayConfig).run();
+}
+
 export class MeshMembershipStore {
   constructor(private readonly db: AuthDb) {}
 
+  clearMeshMembership(): void {
+    this.db.transaction((tx) => {
+      wipeMeshMembership(tx);
+    });
+  }
+
+  clearRelayOperatorState(): void {
+    this.db.transaction((tx) => {
+      wipeRelayOperatorState(tx);
+    });
+  }
+
   clearAll(): void {
     this.db.transaction((tx) => {
-      tx.delete(userKeyLog).run();
-      tx.delete(userKeys).run();
-      tx.delete(nodeSessions).run();
-      tx.delete(nodeCerts).run();
-      tx.delete(nodes).run();
-      tx.delete(enrollmentTokens).run();
-      tx.delete(peerCache).run();
-      tx.delete(hubTrust).run();
-      tx.delete(meshHubs).run();
-      // 中继租户令牌与 K_log / K_meta 不能在退出后留在盘上
-      tx.delete(meshRelays).run();
-      tx.delete(meshSecrets).run();
-      tx.delete(nodeIdentity).run();
-      tx.delete(users).run();
+      wipeMeshMembership(tx);
+      wipeRelayOperatorState(tx);
     });
   }
 }

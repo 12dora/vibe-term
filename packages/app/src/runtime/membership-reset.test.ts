@@ -17,10 +17,14 @@ import {
   nodeSessions,
   nodes,
   peerCache,
+  relayConfig,
+  relayTenants,
   userKeyLog,
   userKeys,
   users,
 } from '../../../../apps/gateway/src/db/schema';
+import { RelayConfigStore } from '../../../../apps/gateway/src/relay/relay-config-store';
+import { RelayTenantStore } from '../../../../apps/gateway/src/relay/relay-tenant-store';
 import { readEnvFile } from '../lib/env-file';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { openLocalAuth } from '../lib/local-auth';
@@ -125,12 +129,32 @@ async function seedRelayAttachment(auth: LocalAuthContext): Promise<void> {
   store.setLocalName('studio');
 }
 
+function seedRelayOperator(auth: LocalAuthContext): void {
+  new RelayConfigStore(auth.db).ensure(1_700_000_000_000);
+  new RelayTenantStore(auth.db).create({
+    id: 'ab'.repeat(16),
+    rootPublicKey: Uint8Array.from({ length: 32 }, () => 3),
+    rootEpoch: 0,
+    tokenHash: 'aa'.repeat(32),
+    tokenEpoch: 0,
+    now: 1_700_000_000_000,
+  });
+}
+
 async function baseDeps(overrides: Partial<SetupServiceDeps> = {}): Promise<SetupServiceDeps> {
   const dir = await tempDir();
   const envPath = join(dir, 'app.env');
   await writeFile(
     envPath,
-    'TMEX_ROLES=node\nTMEX_HUB_URL=https://hub.example\nTMEX_HUB_PUBLIC_URL=https://stale.example\nOTHER=keep\n',
+    [
+      'TMEX_ROLES=node',
+      'TMEX_HUB_URL=https://hub.example',
+      'TMEX_HUB_PUBLIC_URL=https://stale.example',
+      'TMEX_RELAY_PUBLIC_URL=https://stale-relay.example',
+      'TMEX_RELAY_ADMIN_TOKEN=stale-token',
+      'OTHER=keep',
+      '',
+    ].join('\n'),
     'utf8'
   );
   const auth = overrides.auth ?? (await openAuth());
@@ -156,7 +180,12 @@ describe('leaveMesh', () => {
       },
     });
     const result = await leaveMesh({ expectedRole: 'node' }, deps);
-    expect(result).toEqual({ ok: true, fromRole: 'node', restarting: true });
+    expect(result).toEqual({
+      ok: true,
+      fromRole: 'node',
+      targetRole: 'standalone',
+      restarting: true,
+    });
     expect(restarts).toEqual([1]);
     expect(deps.auth.userStore.listUsers()).toHaveLength(0);
     expect(deps.auth.userStore.listNodes()).toHaveLength(0);
@@ -177,10 +206,14 @@ describe('leaveMesh', () => {
     expect(env.TMEX_ROLES).toBe('standalone');
     expect(env.TMEX_HUB_URL).toBe('');
     expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
+    expect(env.TMEX_RELAY_PUBLIC_URL).toBeUndefined();
+    expect(env.TMEX_RELAY_ADMIN_TOKEN).toBeUndefined();
     expect(env.OTHER).toBe('keep');
     const envText = await readFile(deps.envPath, 'utf8');
     expect(envText).toContain('TMEX_HUB_URL=\n');
     expect(envText).toContain('TMEX_HUB_PUBLIC_URL=\n');
+    expect(envText).not.toContain('TMEX_RELAY_PUBLIC_URL');
+    expect(envText).not.toContain('TMEX_RELAY_ADMIN_TOKEN');
   });
 
   test('relay,node 可以退出：中继令牌与租户密钥一并清空', async () => {
@@ -188,7 +221,12 @@ describe('leaveMesh', () => {
     await seedRelayAttachment(deps.auth);
     expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(1);
     const result = await leaveMesh({ expectedRole: 'relay,node' }, deps);
-    expect(result).toEqual({ ok: true, fromRole: 'relay,node', restarting: true });
+    expect(result).toEqual({
+      ok: true,
+      fromRole: 'relay,node',
+      targetRole: 'standalone',
+      restarting: true,
+    });
     // 租户令牌 / K_log / K_meta 一条都不能留在盘上
     expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(0);
     expect(deps.auth.db.select().from(meshSecrets).all()).toHaveLength(0);
@@ -313,5 +351,72 @@ describe('leaveMesh', () => {
     expect(result.ok).toBe(true);
     expect(called).toBe(1);
     expect(deps.auth.userStore.listUsers()).toHaveLength(0);
+  });
+
+  test('relay,node → relay keeps operator state and relay env keys', async () => {
+    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    await seedRelayAttachment(deps.auth);
+    seedRelayOperator(deps.auth);
+    const result = await leaveMesh({ expectedRole: 'relay,node', targetRole: 'relay' }, deps);
+    expect(result).toEqual({
+      ok: true,
+      fromRole: 'relay,node',
+      targetRole: 'relay',
+      restarting: true,
+    });
+    expect(deps.auth.userStore.listUsers()).toHaveLength(0);
+    expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(nodeIdentity).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(relayConfig).all()).toHaveLength(1);
+    expect(deps.auth.db.select().from(relayTenants).all()).toHaveLength(1);
+    const env = await readEnvFile(deps.envPath);
+    expect(env.TMEX_ROLES).toBe('relay');
+    expect(env.TMEX_HUB_URL).toBe('');
+    expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
+    expect(env.TMEX_RELAY_PUBLIC_URL).toBe('https://stale-relay.example');
+    expect(env.TMEX_RELAY_ADMIN_TOKEN).toBe('stale-token');
+  });
+
+  test('relay,node → standalone clears operator state and relay env keys', async () => {
+    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    seedRelayOperator(deps.auth);
+    const result = await leaveMesh({ expectedRole: 'relay,node', targetRole: 'standalone' }, deps);
+    expect(result.targetRole).toBe('standalone');
+    expect(deps.auth.db.select().from(relayConfig).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(relayTenants).all()).toHaveLength(0);
+    const env = await readEnvFile(deps.envPath);
+    expect(env.TMEX_ROLES).toBe('standalone');
+    expect(env.TMEX_RELAY_PUBLIC_URL).toBeUndefined();
+    expect(env.TMEX_RELAY_ADMIN_TOKEN).toBeUndefined();
+  });
+
+  test('node → relay is 400 invalid_target', async () => {
+    const deps = await baseDeps({ roles: { hub: false, node: true, relay: false } });
+    const err = await leaveMesh({ expectedRole: 'node', targetRole: 'relay' }, deps).catch(
+      (error) => error
+    );
+    expect(err).toBeInstanceOf(SetupError);
+    expect((err as SetupError).code).toBe('invalid_target');
+    expect((err as SetupError).httpStatus).toBe(400);
+    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
+    expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('node');
+  });
+
+  test('hub,node → relay is 400 invalid_target', async () => {
+    const deps = await baseDeps({ roles: { hub: true, node: true, relay: false } });
+    const err = await leaveMesh({ expectedRole: 'hub,node', targetRole: 'relay' }, deps).catch(
+      (error) => error
+    );
+    expect((err as SetupError).code).toBe('invalid_target');
+    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
+  });
+
+  test('unknown targetRole is 400 invalid_target', async () => {
+    const deps = await baseDeps();
+    const err = await leaveMesh(
+      { expectedRole: 'node', targetRole: 'hub,node' as 'standalone' },
+      deps
+    ).catch((error) => error);
+    expect((err as SetupError).code).toBe('invalid_target');
   });
 });

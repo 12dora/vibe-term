@@ -1,7 +1,7 @@
 import type { AuthenticateResult } from '../../../../apps/gateway/src/mesh/session-middleware';
 import type { TlsMode } from '../../../../apps/gateway/src/tls/types';
 import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
-import { isLeavableRoleName, leaveMesh } from './membership-reset';
+import { isLeavableRoleName, leaveMesh, parseLeaveTargetRole } from './membership-reset';
 import {
   type DirectSetResult,
   type LocalStatus,
@@ -50,7 +50,8 @@ async function handleLeave(req: Request, deps: LocalRouteDeps): Promise<Response
     return jsonErr('role_mismatch', 'expectedRole must match current role', 409);
   }
   try {
-    const result = await leaveMesh({ expectedRole }, deps);
+    const targetRole = parseLeaveTargetRole(body?.targetRole);
+    const result = await leaveMesh({ expectedRole, targetRole }, deps);
     return jsonOk(result);
   } catch (error) {
     return mapError(error, 'leave_failed');

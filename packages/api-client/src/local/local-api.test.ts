@@ -30,6 +30,7 @@ const STATUS: LocalStatusResponse = {
   },
   tls: { mode: 'none', listenerRunning: false, tlsPort: null },
   domainAccess: { allowed: true, viaDomain: false, hosts: [] },
+  relay: null,
 };
 
 function errorBody(code: string, message: string, status: number): Response {
@@ -43,6 +44,7 @@ describe('LocalApi.status', () => {
     expect(calls[0].url).toBe('/api/local/status');
     expect(calls[0].init).toBeUndefined();
     expect(status).toEqual(STATUS);
+    expect(status.relay).toBeNull();
   });
 
   test('401 抛出带 code / message 的 LocalApiError', async () => {
@@ -133,15 +135,18 @@ describe('LocalApi.setDirect', () => {
 describe('LocalApi.leave', () => {
   test('POST /api/local/leave 带 expectedRole JSON body', async () => {
     const { api, calls } = recorder([
-      new Response(JSON.stringify({ ok: true, fromRole: 'node', restarting: true }), {
-        status: 200,
-      }),
+      new Response(
+        JSON.stringify({ ok: true, fromRole: 'node', targetRole: 'standalone', restarting: true }),
+        {
+          status: 200,
+        }
+      ),
     ]);
     const out = await api.leave({ expectedRole: 'node' });
     expect(calls[0].url).toBe('/api/local/leave');
     expect(calls[0].init?.method).toBe('POST');
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ expectedRole: 'node' });
-    expect(out).toEqual({ ok: true, fromRole: 'node', restarting: true });
+    expect(out).toEqual({ ok: true, fromRole: 'node', targetRole: 'standalone', restarting: true });
   });
 
   test('401 unauthorized 带出契约 code', async () => {
@@ -150,5 +155,20 @@ describe('LocalApi.leave', () => {
     expect(err).toBeInstanceOf(LocalApiError);
     expect(err.code).toBe('unauthorized');
     expect(err.status).toBe(401);
+  });
+
+  test('透传 targetRole', async () => {
+    const { api, calls } = recorder([
+      new Response(
+        JSON.stringify({ ok: true, fromRole: 'relay,node', targetRole: 'relay', restarting: true }),
+        { status: 200 }
+      ),
+    ]);
+    const out = await api.leave({ expectedRole: 'relay,node', targetRole: 'relay' });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      expectedRole: 'relay,node',
+      targetRole: 'relay',
+    });
+    expect(out.targetRole).toBe('relay');
   });
 });

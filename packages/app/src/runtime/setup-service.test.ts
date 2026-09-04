@@ -760,6 +760,7 @@ describe('direct status and setLocalDirect', () => {
         platform: 'darwin-arm64',
       },
       tls: { mode: 'none' },
+      relay: null,
     });
   });
 
@@ -972,5 +973,28 @@ describe('direct status and setLocalDirect', () => {
     });
     expect(removed).toBe(0);
     expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('false');
+  });
+
+  test('getLocalStatus relay block is null unless roles.relay', async () => {
+    const deps = await baseDeps({
+      roles: { hub: false, node: true, relay: true },
+      relayStatus: async () => ({
+        publicUrl: 'https://relay.example',
+        hasPassword: true,
+        tenantCount: 2,
+        nodesOnline: 3,
+        currentNodes: 5,
+      }),
+    });
+    const status = await getLocalStatus(deps);
+    expect(status.role).toBe('relay,node');
+    expect(status.relay).toEqual({
+      publicUrl: 'https://relay.example',
+      hasPassword: true,
+      tenantCount: 2,
+      nodesOnline: 3,
+      currentNodes: 5,
+    });
+    expect(JSON.stringify(status)).not.toContain('token');
   });
 });

@@ -82,7 +82,12 @@ function post(path: string, body: unknown): Request {
 describe('setup routes gating', () => {
   test('mesh returns 404 not_standalone for all setup paths', async () => {
     const mesh = deps({ roles: { hub: true, node: true, relay: false } });
-    for (const path of ['/api/setup/precheck', '/api/setup/hub', '/api/setup/join']) {
+    for (const path of [
+      '/api/setup/precheck',
+      '/api/setup/hub',
+      '/api/setup/join',
+      '/api/setup/relay',
+    ]) {
       const { status, body } = await jsonOf(
         await handleSetupRequest(post(path, { url: 'https://h.example' }), mesh)
       );
@@ -304,5 +309,41 @@ describe('POST /api/setup/join', () => {
       code: 'hub_unreachable',
       message: 'down',
     });
+  });
+});
+
+describe('POST /api/setup/relay', () => {
+  test('standalone relay role returns contract body without admin token', async () => {
+    const auth = await openAuth();
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/relay', {
+          role: 'relay',
+          relayPublicUrl: 'https://relay.example',
+          relayPassword: 'tenant-pass',
+        }),
+        deps({ auth })
+      )
+    );
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      role: 'relay',
+      relayPublicUrl: 'https://relay.example',
+      hasPassword: true,
+      restarting: true,
+    });
+    expect(JSON.stringify(body)).not.toMatch(/admin/i);
+  });
+
+  test('invalid url is 400', async () => {
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/relay', { role: 'relay', relayPublicUrl: 'ftp://relay.example' }),
+        deps()
+      )
+    );
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe('invalid_url');
   });
 });

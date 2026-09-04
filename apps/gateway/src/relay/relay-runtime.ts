@@ -125,6 +125,7 @@ export class RelayRuntime {
   private readonly now: () => number;
   private readonly startedAt: number;
   private readonly version: string;
+  private readonly publicUrl: string;
   private readonly publicDeps: RelayPublicRoutesDeps;
   private readonly adminDeps: RelayAdminDeps;
 
@@ -132,6 +133,7 @@ export class RelayRuntime {
     this.now = opts.now ?? Date.now;
     this.startedAt = opts.startedAt ?? this.now();
     this.version = opts.version ?? opts.config.version ?? 'unknown';
+    this.publicUrl = opts.config.publicUrl;
     this.tenants = new RelayTenantStore(opts.db);
     this.keyLog = new RelayKeyLogStore(opts.db);
     this.configStore = new RelayConfigStore(opts.db);
@@ -251,6 +253,28 @@ export class RelayRuntime {
       case 'tenant-delete':
         return handleRelayTenantDelete(this.adminDeps, route.tenantId);
     }
+  }
+
+  snapshotForLocalStatus(): {
+    publicUrl: string | null;
+    hasPassword: boolean;
+    tenantCount: number;
+    nodesOnline: number;
+    currentNodes: number;
+  } {
+    const config = this.configStore.ensure(this.now());
+    let currentNodes = 0;
+    for (const tenant of this.tenants.list()) {
+      currentNodes += this.tenants.countActiveNodes(tenant.id);
+    }
+    const publicUrl = this.publicUrl.trim();
+    return {
+      publicUrl: publicUrl.length > 0 ? publicUrl : null,
+      hasPassword: config.passwordHash != null && config.passwordHash.length > 0,
+      tenantCount: this.tenants.count(),
+      nodesOnline: this.registry.onlineCount(),
+      currentNodes,
+    };
   }
 
   isUplinkSocket(ws: { data?: { kind?: string } }): boolean {
