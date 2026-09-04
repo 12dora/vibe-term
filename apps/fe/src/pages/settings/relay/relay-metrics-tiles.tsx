@@ -242,7 +242,7 @@ export function MemoryTile({
         showHeapTotal
           ? t('relay.metrics.tiles.memoryHeapSub', {
               heap,
-              total: formatBytes(memory.heapTotalBytes),
+              total: formatBytes(Math.max(memory.heapTotalBytes, memory.heapUsedBytes)),
             })
           : t('relay.metrics.tiles.memorySub', { heap })
       }
@@ -354,7 +354,7 @@ export function RelayCompactTiles(props: MetricsTileProps) {
  * 完整排的栅格：1280px 视口下面板本身只有 ~880px，六列会把「1.20 MB/s」这类读数压掉，
  * 六列因此留给 2xl。列数只取 6 的因数（每组六格），否则末行会缺角。
  */
-const FULL_TILE_GRID = 'grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6';
+const FULL_TILE_GRID = 'grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6';
 
 function TileGroup({
   title,
