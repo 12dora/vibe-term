@@ -25,7 +25,13 @@ const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const ConnectDevicesPanel = (await import('./connect-devices-panel')).default;
 const { AddressChoiceList, MobilePlatformSteps, ScanBlock } = await import('./mobile-guide');
-const { ComputerGuide, HostSteps } = await import('./computer-guide');
+const { ComputerGuide } = await import('./computer-guide');
+const { HostSteps } = await import('./hub-host-steps');
+const { RelayHostSteps } = await import('./relay-host-steps');
+const { SshSteps } = await import('./ssh-steps');
+const { JoinSteps } = await import('./computer-join-guide');
+const { resetMeshRelayStateForTest, setMeshRelayStateForTest } = await import('@/node/mesh-relay');
+type ConnectMachine = Parameters<typeof RelayHostSteps>[0]['machine'];
 const { ADMITTED_SESSION_TTL_MS, JoinConfirmStatus, isSessionValid, joinTokenTtlMinutes } =
   await import('./join-token');
 type JoinSession = Parameters<typeof isSessionValid>[0];
@@ -53,8 +59,54 @@ const MESH_MODE: AuthModeResponse = {
 
 afterEach(() => {
   resetMeshNodesStateForTest();
+  resetMeshRelayStateForTest();
   resetEnrollmentEngineForTest();
 });
+
+function machine(over: Partial<ConnectMachine> = {}): ConnectMachine {
+  return {
+    role: null,
+    relayAttached: false,
+    relayMode: false,
+    meshEnabled: false,
+    mode: null,
+    relayUrl: null,
+    tenantId: null,
+    hubUrl: null,
+    relayPublicUrl: null,
+    relayHasPassword: false,
+    ...over,
+  };
+}
+
+/** 步骤圆点里的编号：静态标记里就是 marker span 的文本。 */
+function stepIndex(html: string, testId: string): string | null {
+  const match = new RegExp(`data-testid="${testId}-marker"[^>]*>([^<]*)<`).exec(html);
+  return match ? match[1] : null;
+}
+
+const RELAY_URL = 'https://relay.example.com';
+const TENANT = 'aabbccddeeff00112233445566778899';
+
+function attachRelay(): void {
+  setMeshNodesStateForTest({ mode: MESH_MODE, modeLoaded: true, entryNodeId: ENTRY });
+  setMeshRelayStateForTest({
+    mode: 'relay',
+    tenantId: TENANT,
+    relays: [
+      {
+        url: RELAY_URL,
+        priority: 1,
+        online: true,
+        attached: true,
+        rttMs: null,
+        lastError: null,
+        kicked: false,
+      },
+    ],
+    loadedAt: 1,
+  });
+}
 
 function render(node: React.ReactNode): string {
   const runtime = appNodeRuntimes.get('self').runtime;
@@ -182,30 +234,127 @@ describe('移动设备页的地址选择与二维码', () => {
   });
 });
 
-describe('ComputerGuide', () => {
-  test('安装步骤给出安装命令与 PATH 兜底命令，默认展开「让新机器加入」两步 + 加入码折叠区', () => {
+describe('ComputerGuide 的路径选择', () => {
+  test('三条路径都在第一步给出，附一行说明', () => {
     const html = render(<ComputerGuide />);
-    expect(html).toContain('data-testid="connect-step-install"');
-    expect(html).toContain('data-testid="command-block-install"');
-    expect(html).toContain('data-testid="command-block-install-copy"');
-    expect(html).toContain(INSTALL_COMMAND);
-    expect(html).toContain('export PATH=');
-    expect(html).toContain('data-testid="connect-mode-join"');
-    expect(html).toContain('data-testid="connect-mode-host"');
-    for (const step of ['uplink', 'password', 'token', 'run', 'confirm']) {
-      expect(html).toContain(`data-testid="connect-step-join-${step}"`);
+    expect(html).toContain('data-testid="connect-step-path"');
+    for (const path of ['relay', 'hub', 'ssh']) {
+      expect(html).toContain(`data-testid="connect-path-${path}"`);
+      expect(html).toContain(`data-testid="connect-path-hint-${path}"`);
+      expect(html).toContain(`connectDevices.computer.path.hint.${path}`);
     }
-    expect(html).toContain('data-testid="connect-join-token-advanced"');
-    expect(html).toContain('data-testid="command-block-join-password"');
-    expect(html).toContain('data-testid="command-block-join"');
-    expect(html).toContain('href="/settings?tab=nodes"');
-    // 「选择接入方式」的按钮在卡片里、分支面板在卡片外，但同属一个 Tabs 根。
-    expect(html.split('role="tablist"').length - 1).toBe(1);
-    expect(html.split('role="tabpanel"').length - 1).toBe(1);
-    expect(html).not.toContain('data-testid="connect-step-host-entry"');
   });
 
-  test('「本机作为中继」分支：什么都没配时给出三步静态文案与两个设置入口', () => {
+  test('未组网：默认落在「经中继 → 本机自建中继」，不出现安装步骤', () => {
+    const html = render(<ComputerGuide />);
+    expect(html).toContain('data-testid="connect-side-relay-join"');
+    expect(html).toContain('data-testid="connect-side-relay-host"');
+    for (const step of ['setup', 'password', 'invite']) {
+      expect(html).toContain(`data-testid="connect-step-relay-${step}"`);
+    }
+    expect(html).not.toContain('data-testid="connect-step-install"');
+    expect(html).not.toContain('data-testid="connect-step-join-uplink"');
+    // 未选中的路径不进 DOM。
+    expect(html).not.toContain('data-testid="connect-step-host-entry"');
+    expect(html).not.toContain('data-testid="connect-step-ssh-add"');
+  });
+
+  test('本机已接入 Hub：默认落在「经 Hub → 加入已有 Hub」，安装是第 2 步', () => {
+    setMeshNodesStateForTest({ mode: MESH_MODE, modeLoaded: true, entryNodeId: ENTRY });
+    const html = render(<ComputerGuide />);
+    expect(html).toContain('data-testid="connect-side-hub-join"');
+    expect(html).toContain('data-testid="connect-step-install"');
+    expect(html).toContain('data-testid="command-block-install"');
+    expect(html).toContain(INSTALL_COMMAND);
+    expect(html).toContain('export PATH=');
+    expect(stepIndex(html, 'connect-step-install')).toBe('2');
+    expect(stepIndex(html, 'connect-step-join-password')).toBe('4');
+    expect(html).toContain('connectDevices.computer.join.uplink.hubUrl');
+    expect(html).toContain(HUB_URL);
+    expect(html).toContain('data-testid="connect-join-token-advanced"');
+  });
+
+  test('本机走中继：默认落在「经中继 → 加入已有中继」，给中继地址与租户编号', () => {
+    attachRelay();
+    const html = render(<ComputerGuide />);
+    expect(html).toContain('data-testid="connect-step-install"');
+    expect(html).toContain('connectDevices.computer.join.uplink.relayUrl');
+    expect(html).toContain(RELAY_URL);
+    expect(html).toContain('data-testid="command-block-join-tenant-id"');
+    expect(html).toContain(`tmex relay join &#x27;${RELAY_URL}&#x27; --tenant ${TENANT}`);
+  });
+
+  test('一级 tab 之下再套一层二级 tab，两层各只挂当前面板', () => {
+    const html = render(<ComputerGuide />);
+    expect(html.split('role="tablist"').length - 1).toBe(2);
+    expect(html.split('role="tab"').length - 1).toBe(5);
+    expect(html.split('role="tabpanel"').length - 1).toBe(2);
+  });
+});
+
+describe('本机自建中继的三步', () => {
+  test('本机还不是中继：两步待办，给出多节点互联入口', () => {
+    const html = render(<RelayHostSteps machine={machine()} onSwitchToJoin={() => undefined} />);
+    expect(html).toContain('connectDevices.computer.relayHost.setup.description');
+    expect(html).toContain('data-testid="connect-relay-setup-link"');
+    expect(html).toContain('href="/settings?tab=nodes"');
+    // 还不是中继：不给中继管理的死链。
+    expect(html).not.toContain('data-testid="connect-relay-password-link"');
+    expect(html).not.toContain('data-step-state="done"');
+    expect(html.split('data-step-state="todo"').length - 1).toBe(3);
+    expect(stepIndex(html, 'connect-step-relay-setup')).toBe('2');
+    expect(stepIndex(html, 'connect-step-relay-invite')).toBe('4');
+  });
+
+  test('本机已是中继但没设接入密码：第一步打勾，第二步给中继管理入口', () => {
+    const html = render(
+      <RelayHostSteps
+        machine={machine({ role: 'relay,node', relayPublicUrl: RELAY_URL })}
+        onSwitchToJoin={() => undefined}
+      />
+    );
+    expect(html.split('data-step-state="done"').length - 1).toBe(1);
+    expect(html).toContain('data-testid="command-block-relay-public-url"');
+    expect(html).toContain(RELAY_URL);
+    expect(html).toContain('data-testid="connect-relay-password-link"');
+    expect(html).toContain('href="/settings?tab=relay"');
+  });
+
+  test('中继与接入密码都就绪：前两步打勾，给出去加入的按钮', () => {
+    const html = render(
+      <RelayHostSteps
+        machine={machine({ role: 'relay', relayPublicUrl: RELAY_URL, relayHasPassword: true })}
+        onSwitchToJoin={() => undefined}
+      />
+    );
+    expect(html.split('data-step-state="done"').length - 1).toBe(2);
+    expect(html).toContain('data-testid="connect-relay-password-done"');
+    expect(html).toContain('data-testid="connect-relay-goto-join"');
+  });
+
+  test('已是中继却没有对外地址：明确说别的机器加不进来', () => {
+    const html = render(
+      <RelayHostSteps machine={machine({ role: 'relay' })} onSwitchToJoin={() => undefined} />
+    );
+    expect(html).toContain('data-testid="connect-relay-missing-url"');
+    expect(html).toContain('connectDevices.computer.relayHost.setup.missingUrl');
+  });
+});
+
+describe('SSH 直连', () => {
+  test('一句说明 + 一步添加设备，编号接在选择之后', () => {
+    const html = render(<SshSteps />);
+    expect(html).toContain('data-testid="connect-ssh-intro"');
+    expect(html).toContain('connectDevices.computer.ssh.description');
+    expect(html).toContain('data-testid="connect-step-ssh-add"');
+    expect(html).toContain('data-testid="connect-ssh-add"');
+    expect(html).toContain('data-testid="connect-ssh-note"');
+    expect(stepIndex(html, 'connect-step-ssh-add')).toBe('2');
+  });
+});
+
+describe('本机设为 Hub 的三步', () => {
+  test('什么都没配时给出三步静态文案与两个设置入口', () => {
     const html = render(<HostSteps onSwitchToJoin={() => undefined} />);
     for (const step of ['entry', 'hub', 'invite']) {
       expect(html).toContain(`data-testid="connect-step-host-${step}"`);
@@ -220,16 +369,16 @@ describe('ComputerGuide', () => {
     expect(html.split('data-step-state="todo"').length - 1).toBe(3);
     expect(html).not.toContain('data-step-state="done"');
     expect(html).not.toContain('data-testid="connect-host-goto-join"');
+    expect(stepIndex(html, 'connect-step-host-entry')).toBe('2');
   });
 
-  test('本机已是 Hub：入口与中继两步打勾，给出公开地址并可直接去生成加入码', () => {
+  test('本机已是 Hub：入口与 Hub 两步打勾，给出公开地址并可直接去加入', () => {
     setMeshNodesStateForTest({
       mode: { ...MESH_MODE, hubNodeId: ENTRY },
       modeLoaded: true,
       entryNodeId: ENTRY,
     });
     const html = render(<HostSteps onSwitchToJoin={() => undefined} />);
-    expect(html).toContain('data-step-state="done"');
     expect(html.split('data-step-state="done"').length - 1).toBe(2);
     // 没有隧道但已有 Hub 公开地址（直接连接）：入口这步按已配置算。
     expect(html).toContain('data-testid="connect-host-entry-status"');
@@ -237,53 +386,48 @@ describe('ComputerGuide', () => {
     expect(html).toContain('data-testid="connect-host-hub-status"');
     expect(html).toContain('connectDevices.computer.host.hub.status.self');
     expect(html).not.toContain('data-testid="connect-host-hub-warning"');
-    expect(html).not.toContain('connectDevices.computer.host.hub.description');
     expect(html).toContain('data-testid="connect-host-goto-join"');
     expect(html).toContain('connectDevices.computer.host.invite.ready');
   });
 
-  test('本机只是节点：中继这步说明不能再当中继，且不给多节点互联入口', () => {
+  test('本机只是节点：说明不能再当 Hub，且不给多节点互联入口', () => {
     setMeshNodesStateForTest({ mode: MESH_MODE, modeLoaded: true, entryNodeId: ENTRY });
     const html = render(<HostSteps onSwitchToJoin={() => undefined} />);
     expect(html).toContain('connectDevices.computer.host.hub.status.node');
     expect(html).not.toContain('data-testid="connect-host-hub-link"');
-    expect(html).not.toContain('data-testid="connect-host-hub-warning"');
     expect(html).not.toContain('data-testid="connect-host-goto-join"');
     expect(html).toContain('connectDevices.computer.host.invite.description');
   });
 });
 
-describe('JoinSteps 的加入码', () => {
+describe('加入码折叠区', () => {
   // i18n 未初始化，`t()` 原样返回 key：占位符断言直接用 key 字符串。
   const TOKEN_KEY = 'connectDevices.computer.join.run.tokenPlaceholder';
   const NAME_KEY = 'connectDevices.computer.join.run.namePlaceholder';
 
   test('未加入 mesh：说明无法在此生成，命令块给示例地址的预览', () => {
-    const html = render(<ComputerGuide />);
+    const html = render(<JoinSteps variant="hub" machine={machine()} />);
     expect(html).toContain('data-testid="connect-join-token-unavailable"');
     expect(html).toContain('connectDevices.computer.join.token.unavailable');
     expect(html).toContain('connectDevices.computer.join.token.description');
     expect(html).not.toContain('data-testid="connect-join-generate"');
-    expect(html).not.toContain('data-testid="connect-join-name"');
     expect(html).toContain('tmex.example.com');
     expect(html).toContain(`--token ${TOKEN_KEY} --name ${NAME_KEY}`);
     expect(html).toContain('connectDevices.computer.join.run.description');
-    expect(html).not.toContain('connectDevices.computer.join.run.ready');
-    // 还没有加入码：不该出现「等待新节点加入」。
     expect(html).not.toContain('data-testid="connect-join-pending"');
   });
 
   test('mesh 模式：给出节点名输入与生成按钮，预览命令用 hub 的公开地址', () => {
     setMeshNodesStateForTest({ mode: MESH_MODE, modeLoaded: true, entryNodeId: ENTRY });
-    const html = render(<ComputerGuide />);
+    const html = render(
+      <JoinSteps variant="hub" machine={machine({ meshEnabled: true, hubUrl: HUB_URL })} />
+    );
     expect(html).toContain('data-testid="connect-join-name"');
     expect(html).toContain('data-testid="connect-join-generate"');
     expect(html).toContain('nodes.enrollment.create');
     expect(html).toContain('connectDevices.computer.join.token.meshDescription');
-    expect(html).not.toContain('data-testid="connect-join-token-unavailable"');
     expect(html).toContain('hub.example.com');
     expect(html).toContain(`--token ${TOKEN_KEY} --name ${NAME_KEY}`);
-    expect(html).not.toContain('tmex.example.com');
     // hub 管理面还没探测成功（静态渲染不跑 effect）：按钮禁用而不是消失。
     expect(html).toContain('disabled=""');
   });
@@ -294,7 +438,7 @@ describe('JoinSteps 的加入码', () => {
       modeLoaded: true,
       entryNodeId: ENTRY,
     });
-    const html = render(<ComputerGuide />);
+    const html = render(<JoinSteps variant="hub" machine={machine({ meshEnabled: true })} />);
     expect(html).toContain('data-testid="connect-join-no-url"');
     expect(html).toContain('nodes.enrollment.missingHubUrl');
     expect(html).not.toContain('data-testid="connect-join-generate"');
