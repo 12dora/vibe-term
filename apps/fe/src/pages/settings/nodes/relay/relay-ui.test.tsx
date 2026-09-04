@@ -3,9 +3,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { kickedRelays, reauthTarget, uplinkBlockedHint } from '../uplink/relay-targets';
 import { canSubmitRelayEnroll } from './relay-dialogs';
 import { RelayStrip, relayChipTitle, relayFailing, relayLabel } from './relay-strip';
-import { kickedRelays, reauthTarget, uplinkBlockedHint } from './uplink-section';
 import { relayErrorText } from './use-relay-actions';
 
 const t = (key: string, options?: Record<string, unknown>) => {

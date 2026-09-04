@@ -1,12 +1,11 @@
-// 本机区块：角色、两个地址（本机对外地址 / 当前挂载的 Hub）、直连插件与通用设置。
+// 本机区块：角色、上级链路两个 tab（接入 Hub / 接入中继）、直连插件与通用设置。
 // 直连的四个动作都只动磁盘与 env，运行中的
 // RTC 管理器无法热加载，后端恒返回 `restartRequired: true`——这里必须给出「立即重启」并等服务
 // 回来，否则用户会以为操作没生效。
 
 import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
-import { type MeshHubsState, useMeshHubs, writerHub } from '@/node/mesh-hubs';
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import type { AuthModeResponse, MeshHubEndpoint } from '@tmex/api-client/auth/index';
+import type { AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultLocalApi } from '@tmex/api-client/local/local-api';
 import type {
   LocalDirectStatus,
@@ -16,11 +15,11 @@ import type {
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
-import { Loader2, Repeat, RotateCcw } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import { Loader2, RotateCcw } from 'lucide-react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { CopyableValue, Row } from './copy-feedback';
+import { Row } from './copy-feedback';
 import {
   type DirectApi,
   DirectSection,
@@ -29,7 +28,6 @@ import {
   useDirectMutations,
 } from './direct-section';
 import { DomainAccessRow, domainAccessApi, readDomainAccess } from './domain-access-row';
-import { HubModeTag, hubLabel, hubModeLabel } from './management/hub-strip';
 import type { SetupIntent } from './membership/intent';
 import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
 import { ROLE_LABEL_KEY, classifyRoleChange } from './membership/role-transition';
@@ -39,6 +37,8 @@ import {
   type RestartState,
   useRestartGateway,
 } from './restart/use-restart-now';
+import type { LocalUplinkController } from './uplink/local-uplink-controller';
+import { LocalUplinkTabs } from './uplink/local-uplink-tabs';
 
 export interface LocalMachineCardProps {
   mode: AuthModeResponse | null;
@@ -47,10 +47,16 @@ export interface LocalMachineCardProps {
   loginRequired: boolean;
   api?: DirectApi;
   client?: ApiClient;
+  /** 上级链路（hub 集合 / 中继链路 / 中继动作）的唯一所有者，由 `NodesTab` 建好传下来。 */
+  uplink: LocalUplinkController;
   /** 直连状态变更 / 重启完成后重新拉 `local-status`。 */
   onRefresh: () => void;
   /** standalone 下切角色不调任何接口，只让上层把对应的向导路径展开。 */
   onSelectSetupPath?: (path: SetupIntent) => void;
+  /** standalone 下已选中的 Hub 向导路径。 */
+  wizardPath?: SetupIntent | null;
+  /** standalone 下「本机作为中继」表单的插槽。 */
+  relaySetup?: ReactNode;
 }
 
 /** 后端只认这三个角色串（`packages/app/src/lib/roles.ts`）。 */
@@ -101,8 +107,11 @@ export function LocalMachineCard({
   loginRequired,
   api = defaultLocalApi,
   client = defaultApiClient,
+  uplink,
   onRefresh,
   onSelectSetupPath,
+  wizardPath = null,
+  relaySetup = null,
 }: LocalMachineCardProps) {
   const { t } = useTranslation();
   const meshEnabled = mode?.mode === 'mesh';
@@ -163,37 +172,21 @@ export function LocalMachineCard({
           <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
         ) : status && direct ? (
           <>
-            <Row label={t('nodes.machine.role')}>
-              <Select
-                value={status.role}
-                onValueChange={(next) => next && role.select(next as LocalRole)}
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="w-48"
-                  disabled={leave.busy}
-                  data-testid="local-machine-role"
-                >
-                  <SelectValue>{t(ROLE_LABEL_KEY[status.role])}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {SELECTABLE_ROLES.map((item) => (
-                    <SelectItem key={item} value={item} data-testid={`local-machine-role-${item}`}>
-                      {t(ROLE_LABEL_KEY[item])}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Row>
+            <RoleRow
+              current={status.role}
+              disabled={leave.busy}
+              onSelect={(next) => role.select(next)}
+            />
 
-            <MachineHubRows
-              role={status.role}
+            <LocalUplinkTabs
+              status={status}
               selfNodeId={mode?.nodeId ?? null}
-              enabled={meshEnabled}
-              hubUrl={status.hubUrl}
-              hubPublicUrl={status.hubPublicUrl}
+              standalone={!meshEnabled}
+              uplink={uplink}
               changeHubDisabled={leave.busy}
               onChangeHub={() => role.setRequest(CHANGE_HUB_REQUEST)}
+              wizardPath={wizardPath}
+              relaySetup={relaySetup}
             />
 
             <DirectSection
@@ -252,222 +245,42 @@ export function LocalMachineCard({
         }}
       />
       {leave.dialog}
+      {uplink.prompt.dialog}
     </Card>
   );
 }
 
-/** 「当前 Hub」这一行要摆的东西：集合里的那一行 / 只知道地址 / 压根没连上。 */
-export type AttachedHubView =
-  | { kind: 'hub'; hub: MeshHubEndpoint; isSelf: boolean }
-  | { kind: 'url'; url: string }
-  | { kind: 'none' };
-
-/**
- * 本机挂载的那台 hub。**只认 uplink 的挂载事实**（`attached`）：`hubUrl` 是入会时写死的种子，
- * 主备切换或退出之后早已不是当前挂载的那台，拿它充数会让一台没连上的机器显示得像连着。
- *
- * 集合里查不到挂载的那一行（刚切过去、集合还没拉到）时退回挂载信息自带的地址；
- * 没有 uplink 的 hub 兼节点就是挂在自己身上，取集合里的本机那一行。
- */
-function resolveAttachedHub(snapshot: MeshHubsState, selfNodeId: string | null): AttachedHubView {
-  const attached = snapshot.attached;
-  if (attached?.hubNodeId) {
-    const row = snapshot.hubs.find((hub) => hub.nodeId === attached.hubNodeId);
-    if (row) return { kind: 'hub', hub: row, isSelf: row.nodeId === selfNodeId };
-    return attached.publicUrl ? { kind: 'url', url: attached.publicUrl } : { kind: 'none' };
-  }
-  const self = selfNodeId ? snapshot.hubs.find((hub) => hub.nodeId === selfNodeId) : undefined;
-  return self ? { kind: 'hub', hub: self, isSelf: true } : { kind: 'none' };
-}
-
-/** 列表次序：writer 打头，其余按优先级——用户先看的是「谁收写入」。 */
-function orderHubs(hubs: MeshHubEndpoint[], writerHubId: string | null): MeshHubEndpoint[] {
-  return [...hubs].sort((a, b) => {
-    const rank = (hub: MeshHubEndpoint) => (hub.nodeId === writerHubId ? 0 : 1);
-    return rank(a) - rank(b) || a.priority - b.priority;
-  });
-}
-
-/**
- * 本机的两个地址：
- * - 「本机地址」= `hubPublicUrl`，只有 hub 角色才有，是别人访问本机的地址；
- * - 「当前 Hub」= 真正挂载的那台 hub。`/api/local/status` 的 `hubUrl` 只是入会时写死的拨号种子，
- *   主备切换后早已不是当前挂载的那台，界面上不展示它，只用来判断这一行要不要渲染。
- */
-function MachineHubRows({
-  role,
-  selfNodeId,
-  enabled,
-  hubUrl,
-  hubPublicUrl,
-  changeHubDisabled,
-  onChangeHub,
+/** 角色下拉：后端只认 `SELECTABLE_ROLES` 里的角色串。 */
+function RoleRow({
+  current,
+  disabled,
+  onSelect,
 }: {
-  role: LocalRole;
-  selfNodeId: string | null;
-  enabled: boolean;
-  hubUrl: string | null;
-  hubPublicUrl: string | null;
-  changeHubDisabled: boolean;
-  onChangeHub: () => void;
+  current: LocalRole;
+  disabled: boolean;
+  onSelect: (role: LocalRole) => void;
 }) {
   const { t } = useTranslation();
-  const meshRole = role === 'node' || role === 'hub,node';
-  const snapshot = useMeshHubs({ enabled: enabled && meshRole });
-  // 本机的主 / 备身份：`/api/local/status` 不下发 hubMode，只能从 hub 集合里按自身 nodeId 取。
-  // 集合里没有本机（旧入口、集合还没拉到）时整行不渲染，不做任何猜测。
-  const localHubMode =
-    role === 'hub,node'
-      ? (snapshot.hubs.find((hub) => hub.nodeId && hub.nodeId === selfNodeId)?.mode ?? null)
-      : null;
-  const attached: AttachedHubView = meshRole
-    ? resolveAttachedHub(snapshot, selfNodeId)
-    : { kind: 'none' };
   return (
-    <>
-      {localHubMode && (
-        <Row label={t('nodes.hubs.machineRole')}>
-          <span className="text-xs" data-testid="local-machine-hub-mode">
-            {hubModeLabel(t, localHubMode)}
-          </span>
-        </Row>
-      )}
-      {role === 'hub,node' && <LocalAddressRow publicUrl={hubPublicUrl} />}
-      {meshRole && (attached.kind !== 'none' || hubUrl) && (
-        <CurrentHubRow
-          attached={attached}
-          writer={writerHub(snapshot)}
-          {...(role === 'node'
-            ? { changeHub: { disabled: changeHubDisabled, onChange: onChangeHub } }
-            : {})}
-        />
-      )}
-      {meshRole && snapshot.hubs.length >= 2 && (
-        <HubListRow hubs={orderHubs(snapshot.hubs, snapshot.writerHubId)} />
-      )}
-    </>
-  );
-}
-
-/** 别人访问本机 hub 用的地址；没设置时说清后果，指回角色设置。 */
-function LocalAddressRow({ publicUrl }: { publicUrl: string | null }) {
-  const { t } = useTranslation();
-  return (
-    <Row label={t('nodes.machine.localAddress')}>
-      {publicUrl ? (
-        <CopyableValue value={publicUrl} testId="local-machine-local-address" />
-      ) : (
-        <span className="flex flex-wrap items-center gap-2 text-xs">
-          <span data-testid="local-machine-local-address-unset">
-            {t('nodes.machine.localAddressUnset')}
-          </span>
-          <span className="text-muted-foreground">{t('nodes.machine.localAddressHint')}</span>
-        </span>
-      )}
-    </Row>
-  );
-}
-
-function CurrentHubRow({
-  attached,
-  writer,
-  changeHub,
-}: {
-  attached: AttachedHubView;
-  writer: MeshHubEndpoint | null;
-  changeHub?: { disabled: boolean; onChange: () => void };
-}) {
-  const { t } = useTranslation();
-  // 挂在备 hub 上时写入其实落在别处，同一行补出 writer，省得用户去 hub 管理面对照。
-  const elsewhere =
-    attached.kind === 'hub' && writer && writer.nodeId !== attached.hub.nodeId ? writer : null;
-  return (
-    <Row label={t('nodes.machine.currentHub')}>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {attached.kind === 'hub' && (
-          <>
-            <span
-              className="flex items-center gap-1.5 text-xs"
-              data-testid="local-machine-attached-hub"
-            >
-              <span className="font-medium">
-                {attached.isSelf ? t('nodes.machine.self') : hubLabel(attached.hub)}
-              </span>
-              <HubModeTag mode={attached.hub.mode} testId="local-machine-attached-hub-mode" />
-            </span>
-            {!attached.isSelf && (
-              <CopyableValue
-                value={attached.hub.publicUrl}
-                testId="local-machine-attached-hub-url"
-              />
-            )}
-          </>
-        )}
-        {attached.kind === 'url' && (
-          <CopyableValue value={attached.url} testId="local-machine-attached-hub-url" />
-        )}
-        {attached.kind === 'none' && (
-          <span className="text-xs" data-testid="local-machine-hub-disconnected">
-            {t('nodes.machine.hubDisconnected')}
-          </span>
-        )}
-        {elsewhere && (
-          <span className="text-xs text-muted-foreground" data-testid="local-machine-writer-hub">
-            {t('nodes.machine.writerHub', { name: hubLabel(elsewhere) })}
-          </span>
-        )}
-        {changeHub && (
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            disabled={changeHub.disabled}
-            onClick={changeHub.onChange}
-            data-testid="local-machine-change-hub"
-          >
-            <Repeat />
-            {t('nodes.membership.changeHub')}
-          </Button>
-        )}
-      </div>
-    </Row>
-  );
-}
-
-function HubListRow({ hubs }: { hubs: MeshHubEndpoint[] }) {
-  const { t } = useTranslation();
-  return (
-    <Row label={t('nodes.machine.hubList')}>
-      <span className="flex flex-wrap items-center gap-1.5" data-testid="local-machine-hub-list">
-        {hubs.map((hub) => (
-          <MachineHubChip key={hub.nodeId} hub={hub} />
-        ))}
-      </span>
-    </Row>
-  );
-}
-
-function MachineHubChip({ hub }: { hub: MeshHubEndpoint }) {
-  const { t } = useTranslation();
-  const offline = hub.online === false;
-  return (
-    <span
-      className="inline-flex max-w-full items-center gap-1 rounded-full border border-border/60 px-2 py-0.5 text-[11px]"
-      data-testid={`local-machine-hub-item-${hub.nodeId}`}
-      data-hub-mode={hub.mode}
-      data-hub-online={offline ? 'false' : 'true'}
-    >
-      <span className="truncate font-medium">{hubLabel(hub)}</span>
-      <span className="text-muted-foreground">{hubModeLabel(t, hub.mode)}</span>
-      {offline && (
-        <span
-          className="text-muted-foreground"
-          data-testid={`local-machine-hub-offline-${hub.nodeId}`}
+    <Row label={t('nodes.machine.role')}>
+      <Select value={current} onValueChange={(next) => next && onSelect(next as LocalRole)}>
+        <SelectTrigger
+          size="sm"
+          className="w-48"
+          disabled={disabled}
+          data-testid="local-machine-role"
         >
-          {t('nodes.hubs.offline')}
-        </span>
-      )}
-    </span>
+          <SelectValue>{t(ROLE_LABEL_KEY[current])}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {SELECTABLE_ROLES.map((item) => (
+            <SelectItem key={item} value={item} data-testid={`local-machine-role-${item}`}>
+              {t(ROLE_LABEL_KEY[item])}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Row>
   );
 }
 

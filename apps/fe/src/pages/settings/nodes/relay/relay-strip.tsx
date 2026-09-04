@@ -1,5 +1,5 @@
 // 中继链路条：一条中继一枚 chip，正文只写主机名，在线态、挂载关系与最近错误分别落在
-// 状态点、图标与悬浮详情里——与 `HubStrip` 同一套版式，中继模式下顶替它出现。
+// 状态点、图标与悬浮详情里——与本机卡的 Hub 列表同一套版式，中继 tab 下顶替它出现。
 
 import type { RelayLinkStatus, RelayQuotaView } from '@tmex/api-client/relay/tenant-api';
 import { cn } from '@tmex/ui';

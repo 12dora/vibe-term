@@ -84,6 +84,7 @@ function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusRespon
     },
     tls: { mode: 'none', listenerRunning: false, tlsPort: null },
     domainAccess: { allowed: true, viaDomain: false, hosts: [] },
+    relay: null,
     ...overrides,
   };
 }

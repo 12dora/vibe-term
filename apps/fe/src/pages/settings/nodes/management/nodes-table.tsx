@@ -23,7 +23,7 @@ import {
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WideTableScroll, stickyActionColumn } from '../../components/wide-table';
-import { hubDetailText, hubModeLabel } from './hub-strip';
+import { hubDetailText, hubModeLabel } from '../uplink/hub-strip';
 import { NodeDetailDialog } from './node-detail-dialog';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 import { upgradeBlockReason } from './upgrade-batch';

@@ -4,6 +4,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-hubs';
+import { resetMeshRelayStateForTest } from '@/node/mesh-relay';
 import { ApiClient, type DomainAccessPolicy } from '@tmex/api-client';
 import type {
   AuthModeResponse,
@@ -35,6 +36,7 @@ import {
   domainAccessConfirmLines,
 } from './domain-access-row';
 import { LocalMachineCard } from './local-machine-card';
+import { useLocalUplinkController } from './uplink/local-uplink-controller';
 
 const MESH_MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -64,6 +66,7 @@ function status(direct: Partial<LocalDirectStatus> = {}): LocalStatusResponse {
     },
     tls: { mode: 'none', listenerRunning: false, tlsPort: null },
     domainAccess: { allowed: true, viaDomain: false, hosts: [] },
+    relay: null,
   };
 }
 
@@ -73,19 +76,35 @@ const idleApi: DirectApi = {
 
 afterEach(() => {
   resetMeshHubsStateForTest();
+  resetMeshRelayStateForTest();
 });
+
+/** 上级链路 owner 现在建在 `NodesTab` 里，本机卡只收快照：测试里用同一个 hook 现搭一份。 */
+function Harness({
+  local,
+  mode,
+}: {
+  local: LocalStatusResponse | null;
+  mode: AuthModeResponse | null;
+}) {
+  const uplink = useLocalUplinkController({ mode });
+  return (
+    <LocalMachineCard
+      mode={mode}
+      status={local}
+      loading={false}
+      loginRequired={false}
+      api={idleApi}
+      uplink={uplink}
+      onRefresh={() => undefined}
+    />
+  );
+}
 
 function render(local: LocalStatusResponse | null, mode: AuthModeResponse | null = null): string {
   return renderToStaticMarkup(
     <MemoryRouter>
-      <LocalMachineCard
-        mode={mode}
-        status={local}
-        loading={false}
-        loginRequired={false}
-        api={idleApi}
-        onRefresh={() => undefined}
-      />
+      <Harness local={local} mode={mode} />
     </MemoryRouter>
   );
 }

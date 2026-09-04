@@ -1,7 +1,7 @@
-// Hub 集群条：一台 hub 一枚 chip，正文只写「名字 + 主 / 备」，在线态、写入归属与挂载关系
-// 分别落在状态点、图标与悬浮详情里。
+// Hub chip 的共用零件：主 / 备文案、悬浮详情、候选地址诊断。
 //
-// 只有两台及以上 hub 才渲染：单 hub 用户（绝大多数）看到的版式与多 hub 之前完全一致。
+// chip 本体由本机卡的「接入 Hub」面板渲染（`hub-uplink-panel.tsx`），节点表与节点详情
+// 只借这里的文案函数。
 
 import type { MeshHubCandidate } from '@/node/mesh-hubs';
 import type {
@@ -10,8 +10,6 @@ import type {
   HubMode,
   MeshHubEndpoint,
 } from '@tmex/api-client/auth/index';
-import { cn } from '@tmex/ui';
-import { Link2, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
@@ -113,79 +111,4 @@ export function hubChipTitle(
     );
   }
   return lines.join('\n');
-}
-
-export function HubStrip({
-  hubs,
-  attachedHubId,
-  writerHubId,
-  candidates = [],
-}: {
-  hubs: MeshHubEndpoint[];
-  attachedHubId: string | null;
-  writerHubId: string | null;
-  candidates?: MeshHubCandidate[];
-}) {
-  const { t } = useTranslation();
-  const byUrl = indexCandidates(candidates);
-  if (hubs.length < 2) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-1.5" data-testid="nodes-hub-strip">
-      <span className="text-[11px] text-muted-foreground">{t('nodes.hubs.title')}</span>
-      {hubs.map((hub) => (
-        <HubChip
-          key={hub.nodeId}
-          hub={hub}
-          attached={hub.nodeId === attachedHubId}
-          writer={hub.nodeId === writerHubId}
-          failure={candidateFailure(hub, byUrl)}
-        />
-      ))}
-    </div>
-  );
-}
-
-function HubChip({
-  hub,
-  attached,
-  writer,
-  failure,
-}: {
-  hub: MeshHubEndpoint;
-  attached: boolean;
-  writer: boolean;
-  failure: MeshHubCandidate | null;
-}) {
-  const { t } = useTranslation();
-  return (
-    <span
-      className={cn(
-        'inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]',
-        attached ? 'border-primary/50 bg-primary/5' : 'border-border/60'
-      )}
-      title={hubChipTitle(t, hub, attached, failure, writer)}
-      data-testid={`nodes-hub-chip-${hub.nodeId}`}
-      data-hub-mode={hub.mode}
-      data-hub-attached={attached ? 'true' : 'false'}
-      data-hub-writer={writer ? 'true' : 'false'}
-      data-hub-failing={failure ? 'true' : 'false'}
-    >
-      <span
-        className={cn(
-          'size-1.5 shrink-0 rounded-full',
-          hub.online === false ? 'bg-muted-foreground/40' : 'bg-emerald-500'
-        )}
-      />
-      <span className="truncate font-medium">{hubLabel(hub)}</span>
-      <span className="text-muted-foreground">{hubModeLabel(t, hub.mode)}</span>
-      {failure && (
-        <TriangleAlert
-          className="size-3 shrink-0 text-amber-500"
-          data-testid={`nodes-hub-warning-${hub.nodeId}`}
-          aria-hidden
-        />
-      )}
-      {attached && <Link2 className="size-3 shrink-0 text-primary" aria-hidden />}
-    </span>
-  );
 }

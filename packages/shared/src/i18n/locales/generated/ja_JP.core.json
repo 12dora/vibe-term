@@ -227,7 +227,11 @@
       "error": "WebSocket 接続エラー",
       "checkGateway": "Gateway 状態を確認してください",
       "inputDropped": "接続が中断されたため、直前の入力は送信されませんでした。再接続後にもう一度入力または貼り付けてください。",
-      "serverTooOld": "端末接続に失敗しました：Gateway のバージョンが古いため、{{minVersion}} 以降へ更新してください。",
+      "gatewayTooOld": "端末接続に失敗しました：Gateway のバージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
+      "nodeTooOld": "端末接続に失敗しました：ノード {{name}} の tmex バージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
+      "nodeTooOldUnnamed": "端末接続に失敗しました：ノードの tmex バージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
+      "clientTooOld": "端末接続に失敗しました：ページのバージョンが古いため、再読み込みしてください。",
+      "unknownVersion": "不明",
       "reconnecting": "再接続中",
       "reconnect": "再接続"
     },

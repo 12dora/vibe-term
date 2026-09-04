@@ -1,26 +1,28 @@
 // 设置页「节点」标签：按运行模式分派。
 //
-// standalone → HTTPS 区块 + 开启 hub 向导（做 hub / 加入 hub）；mesh → 本机区块 + HTTPS 区块 + 完整节点管理。
+// 本机区块自带「接入 Hub / 接入中继」两个 tab：standalone 下 Hub tab 里就是开启 hub 的向导，
+// mesh 下是当前 Hub / 中继链路与对应的操作。standalone 另加 HTTPS 区块，mesh 再加节点管理。
 // 与站点设置表单完全无关：角色 / 直连 / TLS 都是运行态与安装态，不走 `/api/settings/site`。
 
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { Reveal } from '@tmex/ui/motion';
 import { Skeleton } from '@tmex/ui/skeleton';
 import { Loader2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { HttpsSection } from './https/https-section';
 import { LocalMachineCard } from './local-machine-card';
 import { NodesManagement } from './management/nodes-management';
 import { type SetupIntent, takeSetupIntent } from './membership/intent';
-import { HubSetupWizard } from './setup/hub-setup-wizard';
+import { useLocalUplinkController } from './uplink/local-uplink-controller';
 import { useLocalStatus } from './use-local-status';
 
 export function NodesTab() {
   const { mode, loaded } = useSharedAuthMode();
   const local = useLocalStatus();
   const [wizardPath, setWizardPath] = useState<SetupIntent | null>(null);
-  const wizardRef = useRef<HTMLDivElement | null>(null);
   const standalone = mode?.mode !== 'mesh';
+  // 上级链路的唯一 owner：本机卡与节点管理页共用同一份 hub 集合 / 中继链路 / 凭据对话框。
+  const uplink = useLocalUplinkController({ mode });
 
   // 退出 mesh 会重启网关并整页刷新回到本页：按退出前记下的意图直接展开对应向导。
   // 记号读一次就清掉，用户再刷新一次不该又被劫持到同一条路径。
@@ -29,11 +31,6 @@ export function NodesTab() {
     const intent = takeSetupIntent();
     if (intent) setWizardPath(intent);
   }, [loaded, standalone]);
-
-  // 角色选择器在页面上半部分，选完要把下面的向导带进视野，否则看着像什么都没发生。
-  useEffect(() => {
-    if (wizardPath) wizardRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-  }, [wizardPath]);
 
   // `/api/auth/mode` 要读 TLS 与证书，慢起来是几百毫秒起步：先按真实版式摆骨架，
   // 别让整页空着转圈。模式相关的区块一律等模式落定再挂（见下方 standalone 分支）。
@@ -48,27 +45,18 @@ export function NodesTab() {
           status={local.status}
           loading={local.loading}
           loginRequired={local.loginRequired}
+          uplink={uplink}
           onRefresh={local.refresh}
           onSelectSetupPath={setWizardPath}
+          wizardPath={wizardPath}
         />
       </Reveal>
 
-      {/* HTTPS 是安装态，与角色无关：standalone 摆在向导前面（做 hub 需要一个 https 公开地址），
-          mesh 下摆在本机区块后面。 */}
+      {/* HTTPS 是安装态，与角色无关：standalone 下做 hub 需要一个 https 公开地址，多给一行提示。 */}
       {standalone ? (
-        <>
-          <Reveal delayMs={60}>
-            <HttpsSection showHubUrlHint />
-          </Reveal>
-          {/* `initialPath` 只在首次挂载时生效，改路径必须换 key 重新挂一次。 */}
-          <div ref={wizardRef}>
-            <HubSetupWizard
-              key={wizardPath ?? 'default'}
-              localStatus={local.status}
-              initialPath={wizardPath}
-            />
-          </div>
-        </>
+        <Reveal delayMs={60}>
+          <HttpsSection showHubUrlHint />
+        </Reveal>
       ) : (
         <>
           {/* 纯 node 不需要自己的 HTTPS：外部访问走 hub。
@@ -88,7 +76,7 @@ export function NodesTab() {
           )}
           {mode && (
             <Reveal delayMs={120}>
-              <NodesManagement mode={mode} />
+              <NodesManagement mode={mode} uplink={uplink} />
             </Reveal>
           )}
         </>
