@@ -12,8 +12,12 @@ import {
 import { decodeRelayJoinToken, isRelayJoinToken } from '@tmex/shared/relay';
 import type { PendingStorage } from './enrollment';
 import { listPendingEnrollments, setPendingStorage } from './enrollment';
-import type { HubApi } from './hub-api';
-import { RELAY_ENROLLMENT_NO_RELAY, createEnrollmentOnRelay } from './relay-join';
+import { type HubApi, HubApiError } from './hub-api';
+import {
+  RELAY_ENROLLMENT_NO_RELAY,
+  RELAY_ENROLL_FANOUT_FAILED,
+  createEnrollmentOnRelay,
+} from './relay-join';
 
 function memoryStorage(): PendingStorage {
   const map = new Map<string, string>();
@@ -182,7 +186,24 @@ describe('createEnrollmentOnRelay 的 fan-out 结果', () => {
     ]);
   });
 
-  test('一台都没接受：报错并带上逐台原因', async () => {
+  test('真实契约：网关 fan-out 全败时直接 502，错误码原样传出去', async () => {
+    const channel = {
+      createEnrollment: () => Promise.reject(new HubApiError(RELAY_ENROLL_FANOUT_FAILED, 502)),
+    } as unknown as HubApi;
+
+    const failure = await createEnrollmentOnRelay({
+      channel,
+      relayApi: relayApiOf([RELAY_A]),
+      ...SHARED,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(HubApiError);
+    expect((failure as HubApiError).code).toBe(RELAY_ENROLL_FANOUT_FAILED);
+    expect((failure as HubApiError).status).toBe(502);
+  });
+
+  // 旧网关会以 201 带回全部 `accepted: false`；新网关走不到这里（上面那条 502）。
+  test('旧网关的 201 全拒：本地判出一台都没接受，报错并带上逐台原因', async () => {
     const failure = await createEnrollmentOnRelay({
       channel: channelOf([], {
         relays: [

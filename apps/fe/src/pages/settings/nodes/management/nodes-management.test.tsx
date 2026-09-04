@@ -394,6 +394,16 @@ describe('actionErrorText 的 HUB_NOT_WRITER', () => {
       'auth.errors.MALFORMED'
     );
   });
+
+  test('中继 fan-out 全败：网关的 502 与本地判定给同一句提示', () => {
+    // 真实契约走的是网关这一条（`apps/gateway/src/mesh/relay-routes.ts` 的 502）。
+    expect(actionErrorText(t, { code: 'RELAY_ENROLL_FANOUT_FAILED' })).toBe(
+      'nodes.enrollment.relayNoneAccepted'
+    );
+    expect(actionErrorText(t, { code: 'RELAY_ENROLLMENT_NO_RELAY' })).toBe(
+      'nodes.enrollment.relayNoneAccepted'
+    );
+  });
 });
 
 describe('节点表的升级按钮（注入升级控制器）', () => {

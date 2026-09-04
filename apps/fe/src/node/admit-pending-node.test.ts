@@ -140,4 +140,109 @@ describe('admitPendingNode', () => {
       await admitPendingNode({ admitMaterial: MATERIAL }, { api, mode: MODE, prompt })
     ).toEqual({ kind: 'failed', message: 'connection reset' });
   });
+
+  test('提交阶段断网：字节已暂存，按 Hub 未确认处理而不是失败', async () => {
+    const { prompt } = fakePrompt('root');
+    const api = {
+      keyLogHead: () =>
+        Promise.resolve({ seq: '5', hash: encodeBase64url(new Uint8Array(32).fill(9)) }),
+      appendKeyLog: () => Promise.reject(new Error('network timeout')),
+    } as unknown as AuthApi;
+
+    expect(
+      await admitPendingNode({ admitMaterial: MATERIAL }, { api, mode: MODE, prompt })
+    ).toEqual({ kind: 'unconfirmed' });
+    // 那份字节留着，下一次原样重发。
+    expect(listUnconfirmedRecordIds()).toEqual(['enr-1']);
+  });
+
+  test('重发路径断网：同样是未确认，绝不重签', async () => {
+    const { prompt, calls } = fakePrompt('root');
+    let fail = false;
+    const api = {
+      keyLogHead: () =>
+        Promise.resolve({ seq: '5', hash: encodeBase64url(new Uint8Array(32).fill(9)) }),
+      appendKeyLog: () =>
+        fail
+          ? Promise.reject(new Error('network timeout'))
+          : Promise.resolve({ ok: false as const, code: 'HUB_TIMEOUT' }),
+    } as unknown as AuthApi;
+    const row = { admitMaterial: MATERIAL };
+
+    expect(await admitPendingNode(row, { api, mode: MODE, prompt })).toEqual({
+      kind: 'unconfirmed',
+    });
+    fail = true;
+    expect(await admitPendingNode(row, { api, mode: MODE, prompt })).toEqual({
+      kind: 'unconfirmed',
+    });
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe('admitPendingNode 的行复核', () => {
+  beforeEach(() => clearUnconfirmedRecords());
+
+  test('凭据对话框期间这一行被 Hub 轮询改掉：静默取消，什么都不写', async () => {
+    const { api, sent } = fakeApi([]);
+    const { prompt } = fakePrompt('root');
+
+    const result = await admitPendingNode(
+      { admitMaterial: MATERIAL },
+      { api, mode: MODE, prompt, stillValid: () => false }
+    );
+
+    expect(result).toEqual({ kind: 'cancelled' });
+    expect(sent).toHaveLength(0);
+  });
+
+  test('凭据回来时还在，进写锁后才失效：同样静默取消', async () => {
+    const { api, sent } = fakeApi([]);
+    const { prompt } = fakePrompt('root');
+    let checks = 0;
+
+    const result = await admitPendingNode(
+      { admitMaterial: MATERIAL },
+      {
+        api,
+        mode: MODE,
+        prompt,
+        stillValid: () => {
+          checks += 1;
+          return checks === 1;
+        },
+      }
+    );
+
+    expect(result).toEqual({ kind: 'cancelled' });
+    expect(checks).toBe(2);
+    expect(sent).toHaveLength(0);
+  });
+
+  test('重发路径同样复核：行没了就不再提交那份字节', async () => {
+    const { api, sent } = fakeApi([{ ok: false, code: 'HUB_TIMEOUT' }]);
+    const { prompt } = fakePrompt('root');
+    const row = { admitMaterial: MATERIAL };
+
+    expect(await admitPendingNode(row, { api, mode: MODE, prompt })).toEqual({
+      kind: 'unconfirmed',
+    });
+    expect(
+      await admitPendingNode(row, { api, mode: MODE, prompt, stillValid: () => false })
+    ).toEqual({ kind: 'cancelled' });
+    expect(sent).toHaveLength(1);
+  });
+
+  test('复核通过时照常批准', async () => {
+    const { api, sent } = fakeApi([{ ok: true, hubAck: true }]);
+    const { prompt } = fakePrompt('root');
+
+    const result = await admitPendingNode(
+      { admitMaterial: MATERIAL },
+      { api, mode: MODE, prompt, stillValid: (id) => id === 'enr-1' }
+    );
+
+    expect(result).toEqual({ kind: 'admitted' });
+    expect(sent).toHaveLength(1);
+  });
 });

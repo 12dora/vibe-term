@@ -23,6 +23,13 @@ import type { EnrollmentRelayResult, HubApi } from './hub-api';
 /** 建好的 enrollment 一台中继都没收下：加入码发不出去，界面按这个码给提示。 */
 export const RELAY_ENROLLMENT_NO_RELAY = 'RELAY_ENROLLMENT_NO_RELAY';
 
+/**
+ * 网关侧同一件事的错误码：fan-out 一台都没接受时 `POST /api/mesh/relay/enrollments` 直接
+ * 502 `RELAY_ENROLL_FANOUT_FAILED`（见 `apps/gateway/src/mesh/relay-routes.ts`），
+ * 因此 `createEnrollmentOnRelay` 根本走不到下面那条本地判定。界面对两者给同一句提示。
+ */
+export const RELAY_ENROLL_FANOUT_FAILED = 'RELAY_ENROLL_FANOUT_FAILED';
+
 export interface CreateRelayEnrollmentInput {
   /** enrollment 通道：中继模式下是 `RelayEnrollmentApi`（路径指向 `/api/mesh/relay/*`）。 */
   channel: HubApi;

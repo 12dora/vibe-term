@@ -127,6 +127,20 @@ describe('mergeNodes 的待批准行', () => {
     expect(rows.map((row) => row.name)).toEqual(['hub-aaaa', 'alpha', 'zulu']);
   });
 
+  test('hub 返回两条同 ID 的待批准：只留第一条，不产生重复 React key', () => {
+    const rows = mergeNodes(
+      [],
+      [
+        hubRow(PENDING_ID, { admission_status: 'pending', name: 'laptop', ...MATERIAL }),
+        hubRow(PENDING_ID, { admission_status: 'pending', name: 'laptop-dup' }),
+      ],
+      CONTEXT
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe('laptop');
+    expect(rows[0].admitMaterial).not.toBeNull();
+  });
+
   test('hub 列表为 null（不可达）时不产生任何待批准行', () => {
     const rows = mergeNodes([meshNode(ENTRY, 'entry')], null, CONTEXT);
     expect(rows).toHaveLength(1);

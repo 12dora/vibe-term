@@ -18,8 +18,8 @@ import {
 } from '@/node/enrollment-engine';
 import { defaultRelayEnrollmentApi } from '@/node/hub-api';
 import {
+  ensureFreshMeshNodes,
   getMeshNodesState,
-  refreshMeshNodes,
   subscribeMeshNodes,
   useHubNode,
   useSharedAuthMode,
@@ -51,8 +51,11 @@ import { GuideLink } from './guide-step';
 /** hub 只靠 `/api/auth/mode` 的 `hubNodeId` 定位，不必把 mesh 列表也拉进侧滑面板。 */
 const NO_MESH_NODES: MeshNode[] = [];
 
-/** admit 成功后拉一次成员集：面板自己没有列表，但侧栏与设备页共用这份 store。 */
-const refreshAfterAdmit = () => void refreshMeshNodes();
+/**
+ * admit 成功后拉一次成员集：面板自己没有列表，但侧栏与设备页共用这份 store。
+ * 走 `ensureFreshMeshNodes`：admit 之前发出的那次请求即便还在飞，也拿不到刚加入的成员。
+ */
+const refreshAfterAdmit = () => ensureFreshMeshNodes();
 
 /**
  * 本次面板会话跟踪的那条 enrollment。**全是公开数据，绝不含加入码或私钥**。

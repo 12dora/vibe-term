@@ -51,7 +51,7 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
       <Td>—</Td>
       <Td>—</Td>
       <Td className={stickyActionColumn}>
-        <div className="flex items-center gap-1">
+        <div className="flex items-start gap-1">
           <AdmitButton row={row} writable={writable} {...deps} />
           <Button type="button" size="xs" variant="outline" disabled title={blocked}>
             <Ellipsis />
@@ -67,7 +67,13 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
   );
 }
 
-/** 「批准加入」：签一条 `admit-node`。Hub 不收写入、或材料不全时禁用并说明原因。 */
+/**
+ * 「批准加入」：签一条 `admit-node`。Hub 不收写入、或材料不全时禁用并说明原因。
+ *
+ * 原因**必须可见**：禁用按钮既聚焦不了（`focusableWhenDisabled=false`）也接不住悬浮
+ * （`disabled:pointer-events-none`），只挂 `title` 等于谁都读不到。因此在按钮下方渲染一行
+ * 弱化说明，并用 `aria-describedby` 关联给屏幕阅读器。
+ */
 function AdmitButton({
   row,
   writable,
@@ -77,19 +83,32 @@ function AdmitButton({
   const { busy, admit } = useAdmitNode(row, deps);
   const label = t('nodes.actions.admit');
   const blocked = admitBlockedHint(t, row, writable, deps);
+  const hintId = blocked === null ? undefined : `nodes-admit-hint-${row.id}`;
 
   return (
-    <Button
-      type="button"
-      size="xs"
-      disabled={busy || blocked !== null}
-      title={blocked ?? label}
-      onClick={() => void admit()}
-      data-testid={`nodes-admit-${row.id}`}
-    >
-      {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Check />}
-      {label}
-    </Button>
+    <div className="flex flex-col items-start gap-1">
+      <Button
+        type="button"
+        size="xs"
+        disabled={busy || blocked !== null}
+        title={blocked ?? label}
+        aria-describedby={hintId}
+        onClick={() => void admit()}
+        data-testid={`nodes-admit-${row.id}`}
+      >
+        {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Check />}
+        {label}
+      </Button>
+      {blocked !== null && (
+        <span
+          id={hintId}
+          data-testid="pending-node-admit-hint"
+          className="max-w-56 text-[11px] leading-snug text-muted-foreground"
+        >
+          {blocked}
+        </span>
+      )}
+    </div>
   );
 }
 

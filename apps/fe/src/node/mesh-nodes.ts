@@ -645,7 +645,8 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
     });
   }, [coordinator, request, pollIntervalMs]);
 
-  const refresh = useCallback(() => void coordinator.load(request), [coordinator, request]);
+  // 变更之后的刷新必须比当前在飞的那一次更新，否则批准 / 吊销的结果会被旧响应盖回去。
+  const refresh = useCallback(() => void coordinator.refresh(request), [coordinator, request]);
   const effectiveHubId = activeHubId ?? resolved;
   const hubApi = useMemo(
     () => (effectiveHubId ? new HubApi(effectiveHubId) : null),

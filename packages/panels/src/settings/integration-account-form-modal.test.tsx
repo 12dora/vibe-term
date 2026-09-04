@@ -145,8 +145,8 @@ describe('开关字段的补充说明', () => {
     },
   ];
 
-  test('配了 descriptionKey 才渲染说明行', () => {
-    const withHelp = renderToStaticMarkup(
+  function renderToggleFields(): string {
+    return renderToStaticMarkup(
       <I18nextProvider i18n={i18n}>
         <IntegrationFormFields
           fields={toggleFields}
@@ -156,10 +156,38 @@ describe('开关字段的补充说明', () => {
         />
       </I18nextProvider>
     );
+  }
+
+  test('配了 descriptionKey 才渲染说明行', () => {
+    const withHelp = renderToggleFields();
     expect(withHelp).toContain('data-testid="demo-allow-commands-help"');
     expect(renderFields(integrationInitialValues(demoFields, undefined), false)).not.toContain(
       'data-testid="demo-enabled-help"'
     );
+  });
+
+  test('标签指向开关内部那个 checkbox：点标签即可切换', () => {
+    const html = renderToggleFields();
+    // Base UI 把 `id` 落在真正的 checkbox 上，`<label for>` 因此能原生切换它。
+    expect(html).toContain('<label id="demo-allow-commands-label" for="demo-allow-commands"');
+    expect(html).toContain('<input id="demo-allow-commands"');
+    expect(html).toContain('type="checkbox"');
+  });
+
+  test('开关有可访问名与说明：aria-labelledby / aria-describedby 都接上了', () => {
+    const html = renderToggleFields();
+    const toggle = inputTag(html, 'demo-allow-commands');
+    expect(toggle).toContain('role="switch"');
+    expect(toggle).toContain('aria-labelledby="demo-allow-commands-label"');
+    expect(toggle).toContain('aria-describedby="demo-allow-commands-description"');
+    expect(html).toContain('id="demo-allow-commands-description"');
+  });
+
+  test('没有说明的开关不留下空的 aria-describedby', () => {
+    const html = renderFields(integrationInitialValues(demoFields, undefined), false);
+    const toggle = inputTag(html, 'demo-enabled');
+    expect(toggle).toContain('aria-labelledby="demo-enabled-label"');
+    expect(toggle).not.toContain('aria-describedby');
   });
 
   test('两个渠道的「允许聊天指令」开关都带说明', () => {

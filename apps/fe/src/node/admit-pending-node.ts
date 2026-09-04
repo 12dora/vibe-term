@@ -27,6 +27,13 @@ export interface AdmitPendingContext {
   /** 签 `admit-node` 所需的用户身份；`ResolvedMode` 天然满足。 */
   mode: Pick<AuthModeResponse, 'rootEpoch'> & { uid: string };
   prompt: CredentialPromptHandle;
+  /**
+   * 每次 await 之后的复核：这一行是否仍然挂着、仍是 pending、`enrollmentId` 与材料是否还是
+   * 点击时那一份。凭据对话框与写锁都要等，期间 Hub 轮询可能已经把这一行改掉或移除，
+   * 拿旧材料继续签就是一次用户看不见的后台写入（或稳定的 `node_id_reused`）。
+   * 缺省（测试与非 React 入口）恒为有效。
+   */
+  stillValid?: (enrollmentId: string) => boolean;
 }
 
 export type AdmitPendingResult =
@@ -47,11 +54,15 @@ export async function admitPendingNode(
 ): Promise<AdmitPendingResult> {
   const material = row.admitMaterial;
   if (!material) return { kind: 'no-material' };
+  const id = material.enrollmentId;
+  const valid = () => ctx.stillValid?.(id) ?? true;
   // 上一次没被 Hub 确认：那份字节仍然接得上，重签只会按已推进的 head 造出新 seq。
-  const stored = unconfirmedRecord(material.enrollmentId);
+  const stored = unconfirmedRecord(id);
   if (stored) {
-    return await guard(() =>
-      withKeyLogLock(() => submitAdmitRecord(ctx.api, material.enrollmentId, stored))
+    return await guard(id, () =>
+      withKeyLogLock(async () =>
+        valid() ? await submitAdmitRecord(ctx.api, id, stored) : CANCELLED
+      )
     );
   }
   let signer: RecordSigner | null;
@@ -61,13 +72,27 @@ export async function admitPendingNode(
     return failure(err);
   }
   if (!signer) return { kind: 'cancelled' };
-  return await guard(() => withKeyLogLock(() => appendAdmit(material, signer, ctx)));
+  if (!valid()) return CANCELLED;
+  return await guard(id, () =>
+    withKeyLogLock(async () => (valid() ? await appendAdmit(material, signer, ctx) : CANCELLED))
+  );
 }
 
-async function guard(run: () => Promise<AdmitPendingResult>): Promise<AdmitPendingResult> {
+const CANCELLED = { kind: 'cancelled' } as const;
+
+/**
+ * 异常收口。**关键**：`submitAdmitRecord` 是先暂存字节再发请求，因此提交阶段抛出的超时 / 断网
+ * 说明「服务端落没落库未知」，而字节还留着——这与「Hub 未确认」是同一种处境，必须提示重发，
+ * 说成失败会让用户重来一遍加入流程。只有取 head / 解码 / 签名阶段（尚无暂存）才是真失败。
+ */
+async function guard(
+  enrollmentId: string,
+  run: () => Promise<AdmitPendingResult>
+): Promise<AdmitPendingResult> {
   try {
     return await run();
   } catch (err) {
+    if (unconfirmedRecord(enrollmentId)) return { kind: 'unconfirmed' };
     return failure(err);
   }
 }

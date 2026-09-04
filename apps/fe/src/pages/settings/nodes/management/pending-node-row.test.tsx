@@ -132,6 +132,23 @@ describe('待批准行', () => {
     expect(html).toContain('nodes.admit.unavailable');
   });
 
+  test('禁用原因渲染成可见说明，并用 aria-describedby 关联到按钮', () => {
+    const html = render(pendingRow({ admitMaterial: null }));
+    const hint = tagOf(html, 'pending-node-admit-hint');
+    expect(hint).toContain(`id="nodes-admit-hint-${PENDING_ID}"`);
+    expect(tagOf(html, `nodes-admit-${PENDING_ID}`)).toContain(
+      `aria-describedby="nodes-admit-hint-${PENDING_ID}"`
+    );
+    // 说明文字本身可见（不是只挂在 title 上）。
+    expect(html.slice(html.indexOf(hint))).toContain('nodes.admit.unavailable</span>');
+  });
+
+  test('可以批准时不渲染多余的说明，也不留下空的 aria-describedby', () => {
+    const html = render(pendingRow());
+    expect(html).not.toContain('pending-node-admit-hint');
+    expect(tagOf(html, `nodes-admit-${PENDING_ID}`)).not.toContain('aria-describedby');
+  });
+
   test('名字为空时不至于渲染出空标题', () => {
     const html = render(pendingRow({ name: PENDING_ID.slice(0, 8) }));
     expect(html).toContain(PENDING_ID.slice(0, 8));

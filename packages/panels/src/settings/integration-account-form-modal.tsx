@@ -122,12 +122,19 @@ export function IntegrationFormFields<TEntity>({
   );
 }
 
+/**
+ * 开关字段。`id` 落在 Base UI Switch 内部那个真正的 checkbox 上，因此 `<label htmlFor>` 点一下
+ * 就能切；`role="switch"` 的那层是另一个元素，可访问名与说明只能靠 `aria-labelledby` /
+ * `aria-describedby` 显式接上。
+ */
 function renderToggleField<TEntity>(
   field: IntegrationField<TEntity>,
   value: IntegrationFieldValue,
   setValue: (key: string, next: IntegrationFieldValue) => void,
   t: TFunction
 ) {
+  const labelId = `${field.inputId}-label`;
+  const descriptionId = field.descriptionKey ? `${field.inputId}-description` : undefined;
   return (
     <div
       key={field.key}
@@ -137,9 +144,16 @@ function renderToggleField<TEntity>(
       )}
     >
       <div className="min-w-0">
-        <div className="text-sm font-medium">{t(field.labelKey)}</div>
+        <label
+          id={labelId}
+          htmlFor={field.inputId}
+          className="block text-sm font-medium cursor-pointer"
+        >
+          {t(field.labelKey)}
+        </label>
         {field.descriptionKey && (
           <p
+            id={descriptionId}
             className="mt-1 text-xs leading-snug text-muted-foreground"
             data-testid={`${field.testId}-help`}
           >
@@ -148,8 +162,11 @@ function renderToggleField<TEntity>(
         )}
       </div>
       <Switch
+        id={field.inputId}
         checked={Boolean(value)}
         data-testid={field.testId}
+        aria-labelledby={labelId}
+        aria-describedby={descriptionId}
         className={cn('shrink-0', field.descriptionKey && 'mt-0.5')}
         onCheckedChange={(checked) => setValue(field.key, Boolean(checked))}
       />

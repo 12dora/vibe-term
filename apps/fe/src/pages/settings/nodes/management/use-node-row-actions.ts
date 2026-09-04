@@ -19,7 +19,7 @@ import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { encodeBase64url } from '@tmex/shared/auth';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { actionErrorText } from './errors';
@@ -301,6 +301,10 @@ export function reportAdmitResult(
 /**
  * 待批准行的「批准加入」。凭据进 5 分钟复用窗口（`purpose: 'admit'`）：与自动 admit 共用，
  * 连批几台只需确认一次。
+ *
+ * 凭据对话框与 key log 写锁都要等，期间 Hub 轮询可能把这一行改掉或整张表清空；因此把
+ * 「最新的行 + 挂载状态」放进 ref，交给 `admitPendingNode` 在每次 await 之后复核
+ * （与 enrollment 引擎复核权威 pending store 是同一条约束）。
  */
 export function useAdmitNode(
   row: NodeRow,
@@ -308,16 +312,31 @@ export function useAdmitNode(
 ): { busy: boolean; admit: () => Promise<void> } {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
+  const rowRef = useRef(row);
+  rowRef.current = row;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const stillValid = useCallback((enrollmentId: string) => {
+    if (!mountedRef.current) return false;
+    const latest = rowRef.current;
+    return latest.pending === true && latest.admitMaterial?.enrollmentId === enrollmentId;
+  }, []);
 
   const admit = useCallback(async () => {
     setBusy(true);
     try {
-      const result = await admitPendingNode(row, { api, mode, prompt });
+      const result = await admitPendingNode(rowRef.current, { api, mode, prompt, stillValid });
       if (reportAdmitResult(t, result, writerPublicUrl)) onChanged();
     } finally {
       setBusy(false);
     }
-  }, [api, mode, onChanged, prompt, row, t, writerPublicUrl]);
+  }, [api, mode, onChanged, prompt, stillValid, t, writerPublicUrl]);
 
   return { busy, admit };
 }

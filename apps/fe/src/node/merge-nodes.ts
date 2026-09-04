@@ -184,12 +184,20 @@ function hubColumns(
   };
 }
 
-/** 只有 hub 列表里才有的待批准行；mesh 里已经有的同一台绝不重复列出。 */
+/**
+ * 只有 hub 列表里才有的待批准行；mesh 里已经有的同一台绝不重复列出。
+ * 同 ID 只保留第一条：异常 / 过渡期的 hub 响应里出现两条同 ID pending 时，
+ * 渲染出重复 React key 会让 busy 状态串行复用，还会给出两个可点的批准按钮。
+ */
 function pendingRows(hubNodes: HubNodeRow[] | null, meshIds: ReadonlySet<string>): NodeRow[] {
-  return (hubNodes ?? [])
-    .filter((row) => hubAdmissionStatus(row) === 'pending' && !meshIds.has(row.id))
-    .map(toPendingRow)
-    .sort((a, b) => compareNames(a.name, b.name));
+  const seen = new Set<string>();
+  const rows: NodeRow[] = [];
+  for (const row of hubNodes ?? []) {
+    if (hubAdmissionStatus(row) !== 'pending' || meshIds.has(row.id) || seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(toPendingRow(row));
+  }
+  return rows.sort((a, b) => compareNames(a.name, b.name));
 }
 
 function toPendingRow(row: HubNodeRow): NodeRow {

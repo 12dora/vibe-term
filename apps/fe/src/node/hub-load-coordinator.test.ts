@@ -311,6 +311,114 @@ describe('HubLoadCoordinator', () => {
     expect(sink.failure?.code).toBe('PASSKEY_REQUIRED');
   });
 
+  test('变更后的 refresh 不被在飞的请求满足：等它落地再补一次', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const hub = deferred();
+
+    // 变更前发出的那一轮轮询还没回来。
+    const poll = coordinator.load(hub.request);
+    expect(hub.calls).toBe(1);
+
+    // 批准成功后的刷新：不能复用这一次（它拿回的还是变更前的快照）。
+    const trailing = coordinator.refresh(hub.request);
+    expect(hub.calls).toBe(1);
+
+    hub.resolve([row('pending')]);
+    await poll;
+    await flush();
+    // 尾随那一次已经开跑。
+    expect(hub.calls).toBe(2);
+    hub.resolve([row('admitted')]);
+    await trailing;
+    expect(sink.rows?.map((item) => item.id)).toEqual(['admitted']);
+  });
+
+  test('尾随刷新重复触发只合并成一次', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const hub = deferred();
+
+    const poll = coordinator.load(hub.request);
+    const first = coordinator.refresh(hub.request);
+    const second = coordinator.refresh(hub.request);
+    expect(second).toBe(first);
+
+    hub.resolve([row('a')]);
+    await poll;
+    await flush();
+    expect(hub.calls).toBe(2);
+    hub.resolve([row('b')]);
+    await first;
+    expect(sink.rows?.map((item) => item.id)).toEqual(['b']);
+  });
+
+  test('没有在飞的请求时 refresh 就是一次普通加载', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const hub = deferred();
+
+    const promise = coordinator.refresh(hub.request);
+    expect(hub.calls).toBe(1);
+    hub.resolve([row('hub')]);
+    await promise;
+    expect(sink.rows?.map((item) => item.id)).toEqual(['hub']);
+  });
+
+  test('在飞的那次失败了，尾随刷新照样补发', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const hub = deferred();
+
+    const poll = coordinator.load(hub.request);
+    const trailing = coordinator.refresh(hub.request);
+    hub.reject(new Error('hub unreachable'));
+    await poll;
+    await flush();
+    expect(hub.calls).toBe(2);
+    hub.resolve([row('back')]);
+    await trailing;
+    expect(sink.rows?.map((item) => item.id)).toEqual(['back']);
+  });
+
+  test('尾随刷新排队期间换了 hub：不再补发上一台的那一拍', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const hubA = deferred();
+    const hubB = deferred();
+
+    const poll = coordinator.load(hubA.request);
+    const trailing = coordinator.refresh(hubA.request);
+    const switched = coordinator.load(hubB.request);
+
+    hubA.resolve([row('a')]);
+    await poll;
+    await trailing;
+    await flush();
+    expect(hubA.calls).toBe(1);
+
+    hubB.resolve([row('b')]);
+    await switched;
+    expect(sink.rows?.map((item) => item.id)).toEqual(['b']);
+  });
+
+  test('卸载后排着的尾随刷新不再发出', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const hub = deferred();
+
+    const poll = coordinator.load(hub.request);
+    const trailing = coordinator.refresh(hub.request);
+    coordinator.dispose();
+    hub.resolve([row('late')]);
+    await poll;
+    await trailing;
+    await flush();
+
+    expect(hub.calls).toBe(1);
+    expect(sink.rows).toBeNull();
+  });
+
   test('切到 null 之后的旧响应不再写状态', async () => {
     const sink = recorder();
     const coordinator = new HubLoadCoordinator(sink.sink);
