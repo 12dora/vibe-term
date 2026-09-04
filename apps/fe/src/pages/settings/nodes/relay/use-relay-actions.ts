@@ -1,4 +1,4 @@
-// 中继的三个租户侧动作：接入（含迁移 / 追加 / 重新输入口令）、离开、轮换元数据密钥。
+// 中继的三个租户侧动作：接入（含迁移 / 追加 / 重新输入接入密码）、离开、移除某一条。
 //
 // 接入必须走根密码（proof 只能由根钥签，见 `relay-enroll.ts`），因此它有自己的表单对话框；
 // 另两个只签一条密钥日志记录，凭据走与吊销同一套 `prompt.withSigner`（根密码或通行密钥皆可）。
@@ -9,7 +9,7 @@ import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { RecordSigner } from '@/auth/key-log-actions';
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { RelayFlowDeps, RelayFlowMode, RelayFlowResult } from '@/node/relay-enroll';
-import { appendMetaKey, enrollRelay, leaveRelay, removeRelay } from '@/node/relay-enroll';
+import { enrollRelay, leaveRelay, removeRelay } from '@/node/relay-enroll';
 import { forgetRelayPackDebt, rememberRelayPackDebt } from '@/node/relay-meta-key-pending';
 import type { RelayPackRefreshResult } from '@/node/relay-pack';
 import { refreshRelayPack } from '@/node/relay-pack';
@@ -27,8 +27,8 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 /** 接入对话框的四种来意；四者走同一条 `enrollRelay`，差别只在标题与预填地址。 */
 export type RelayEnrollIntent = 'enroll' | 'migrate' | 'add' | 'reauth';
 
-/** 需要二次确认的三个动作。 */
-export type RelayConfirmIntent = 'leave' | 'rotate' | 'remove';
+/** 需要二次确认的两个动作。 */
+export type RelayConfirmIntent = 'leave' | 'remove';
 
 export interface RelayEnrollForm {
   url: string;
@@ -226,7 +226,6 @@ function runConfirmAction(
   request: RelayConfirmRequest,
   signer: RecordSigner
 ): Promise<RelayFlowResult> {
-  if (request.intent === 'rotate') return appendMetaKey(deps, { op: 'rotate' }, signer);
   if (request.intent === 'remove') {
     return request.url
       ? removeRelay(deps, request.url, signer)
@@ -236,7 +235,6 @@ function runConfirmAction(
 }
 
 const DONE_KEYS: Record<RelayConfirmIntent, string> = {
-  rotate: 'relay.tenant.metaKey.done',
   remove: 'relay.tenant.remove.done',
   leave: 'relay.tenant.leave.done',
 };

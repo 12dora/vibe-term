@@ -151,6 +151,20 @@ export async function refreshMeshRelay(api: RelayTenantApi = defaultRelayTenantA
   return inFlight;
 }
 
+/**
+ * 切到另一条已配置的中继（make-before-break）。
+ *
+ * `POST /switch` 直接回一份新状态，就地落进 store：等 30 秒轮询那一拍，界面在切完之后
+ * 还会指着旧的那条。失败原样抛出，由调用方查错误表。
+ */
+export async function switchMeshRelay(
+  url: string,
+  api: RelayTenantApi = defaultRelayTenantApi
+): Promise<void> {
+  const status = await api.switchRelay(url);
+  store.set({ ...status, loading: false, error: null, unsupported: false, loadedAt: Date.now() });
+}
+
 // ---------------------------------------------------------------------------
 // 轮询回路
 // ---------------------------------------------------------------------------
@@ -216,6 +230,8 @@ export interface UseMeshRelayResult extends MeshRelayState {
   writable: boolean;
   kicked: boolean;
   refresh: () => void;
+  /** 切到另一条已配置的中继；失败原样抛出。 */
+  switchRelay: (url: string) => Promise<void>;
 }
 
 export function useMeshRelay(options: UseMeshRelayOptions = {}): UseMeshRelayResult {
@@ -230,6 +246,8 @@ export function useMeshRelay(options: UseMeshRelayOptions = {}): UseMeshRelayRes
     if (!enabled) return;
     void refreshMeshRelay(api);
   }, [api, enabled]);
+
+  const switchRelay = useCallback((url: string) => switchMeshRelay(url, api), [api]);
 
   const polls = enabled && owner;
   useEffect(() => {
@@ -250,5 +268,6 @@ export function useMeshRelay(options: UseMeshRelayOptions = {}): UseMeshRelayRes
     writable: relayWritable(snapshot),
     kicked: relayKicked(snapshot),
     refresh,
+    switchRelay,
   };
 }

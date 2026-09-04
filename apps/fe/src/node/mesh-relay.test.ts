@@ -13,6 +13,7 @@ import {
   relayWritable,
   resetMeshRelayStateForTest,
   setMeshRelayStateForTest,
+  switchMeshRelay,
 } from './mesh-relay';
 
 // store 是宿主级单例，同一进程里的其它测试文件也读它：每个用例跑完必须归零。
@@ -122,5 +123,40 @@ describe('refreshMeshRelay', () => {
     const state = getMeshRelayState();
     expect(state.relays).toHaveLength(1);
     expect(state.error).toBe('boom');
+  });
+});
+
+describe('switchMeshRelay', () => {
+  beforeEach(() => {
+    resetMeshRelayStateForTest();
+  });
+
+  test('把 /switch 回来的那份状态就地写进 store，不等下一拍轮询', async () => {
+    setMeshRelayStateForTest(status({ relays: [link('https://a.example', { attached: true })] }));
+    const calls: string[] = [];
+    const api = {
+      switchRelay: (url: string) => {
+        calls.push(url);
+        return Promise.resolve(status({ relays: [link('https://b.example', { attached: true })] }));
+      },
+    } as unknown as RelayTenantApi;
+
+    await switchMeshRelay('https://b.example', api);
+
+    expect(calls).toEqual(['https://b.example']);
+    const state = getMeshRelayState();
+    expect(attachedRelay(state)?.url).toBe('https://b.example');
+    expect(state.error).toBeNull();
+    expect(state.loadedAt).not.toBeNull();
+  });
+
+  test('失败原样抛出，链路不动', async () => {
+    setMeshRelayStateForTest(status({ relays: [link('https://a.example', { attached: true })] }));
+    const api = {
+      switchRelay: () => Promise.reject(new RelayApiError('RELAY_KICKED', 'kicked', 409)),
+    } as unknown as RelayTenantApi;
+
+    await expect(switchMeshRelay('https://b.example', api)).rejects.toThrow();
+    expect(attachedRelay(getMeshRelayState())?.url).toBe('https://a.example');
   });
 });

@@ -55,11 +55,6 @@ const CONFIRM_COPY: Record<RelayConfirmIntent, { title: string; description: str
       description: 'relay.tenant.leave.description',
       ok: 'relay.tenant.leave.confirm',
     },
-    rotate: {
-      title: 'relay.tenant.metaKey.rotateTitle',
-      description: 'relay.tenant.metaKey.rotateDescription',
-      ok: 'relay.tenant.metaKey.rotateConfirm',
-    },
     remove: {
       title: 'relay.tenant.remove.title',
       description: 'relay.tenant.remove.description',
@@ -210,7 +205,7 @@ export function RelayConfirmDialog({ actions }: { actions: RelayActionsControlle
             {t('common.cancel')}
           </AlertDialogCancel>
           <AlertDialogAction
-            variant={request.intent === 'rotate' ? undefined : 'destructive'}
+            variant="destructive"
             disabled={actions.busy}
             onClick={() => void actions.runConfirm()}
             data-testid="nodes-relay-confirm-ok"

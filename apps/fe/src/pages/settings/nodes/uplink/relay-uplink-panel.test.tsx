@@ -20,6 +20,7 @@ function link(overrides: Partial<RelayLinkStatus> = {}): RelayLinkStatus {
     attached: true,
     rttMs: null,
     lastError: null,
+    lastErrorCode: null,
     kicked: false,
     ...overrides,
   };
@@ -44,6 +45,7 @@ const RELAY_MODE = {
   loadedAt: 1,
   unsupported: false,
   refresh: () => undefined,
+  switchRelay: () => Promise.resolve(),
 } satisfies UseMeshRelayResult;
 
 const IDLE_ACTIONS: RelayActionsController = {
@@ -78,9 +80,19 @@ describe('中继链路与操作', () => {
     expect(html).toContain('data-testid="nodes-relay-add"');
     expect(html).toContain('data-testid="nodes-relay-menu"');
     expect(html).toContain('data-testid="nodes-relay-leave"');
-    // 重输口令 / 轮换 / 移除都收进菜单，明面上不再摆一排按钮
-    expect(html).not.toContain('data-testid="nodes-relay-rotate"');
+    // 重新输入接入密码 / 移除都收进「更多」，明面上不再摆一排按钮
     expect(html).not.toContain('data-testid="nodes-relay-reauth-menu"');
+    // 「轮换元数据密钥」整条动作已经删掉
+    expect(html).not.toContain('data-testid="nodes-relay-rotate"');
+    expect(html).not.toContain('relay.tenant.actions.rotate');
+  });
+
+  test('只有一条中继时链路行不可选；多条时非当前那条是可点的按钮', () => {
+    expect(render()).not.toContain('data-testid="nodes-relay-switch-');
+    const two = [link(), link({ url: 'https://b.example', attached: false, priority: 2 })];
+    const html = render({ relay: { ...RELAY_MODE, relays: two, ordered: two } });
+    expect(html).toContain('data-testid="nodes-relay-switch-b.example"');
+    expect(html).toContain('aria-current="true"');
   });
 
   test('「要改回 Hub 先离开中继」只是一句灰字提示，可以关掉', () => {
@@ -230,11 +242,10 @@ describe('次级菜单的渲染', () => {
     }>[];
     expect(rendered.map((item) => item.props['data-testid'])).toEqual([
       'nodes-relay-reauth-menu',
-      'nodes-relay-rotate',
       'nodes-relay-remove-a.example',
       'nodes-relay-remove-b.example',
     ]);
-    rendered[3]?.props.onClick?.();
+    rendered[2]?.props.onClick?.();
     expect(picked[0]?.url).toBe('https://b.example');
   });
 });

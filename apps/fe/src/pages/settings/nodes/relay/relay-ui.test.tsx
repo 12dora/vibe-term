@@ -1,6 +1,8 @@
-// 中继 UI 的纯逻辑与链路行：行内文案、提醒次序、次级菜单条目、提交前校验、错误查表。
+// 中继 UI 的纯逻辑与链路行：行内文案、错误码查表、配额分档、提醒次序、次级菜单条目、
+// 提交前校验、切换对话框的文案路由。
 
 import { describe, expect, test } from 'bun:test';
+import { RelayApiError } from '@tmex/api-client/relay/admin-api';
 import type { RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
@@ -11,9 +13,12 @@ import {
 } from '../uplink/relay-targets';
 import { canSubmitRelayEnroll } from './relay-dialogs';
 import { relayNotices } from './relay-notices';
-import { RelayRows, relayFailing, relayLabel } from './relay-rows';
+import { relayQuotaRows } from './relay-quota';
+import { RelayRows, relayFailing, relayLabel, relayLinkErrorKey } from './relay-rows';
+import { relaySwitchDialogCopy } from './relay-switch-dialog';
 import { relayErrorText } from './use-relay-actions';
 import { readmitErrorText } from './use-relay-readmit';
+import { relaySwitchErrorText } from './use-relay-switch';
 
 const t = (key: string, options?: Record<string, unknown>) => {
   if (options && 'defaultValue' in options) return String(options.defaultValue);
@@ -28,6 +33,7 @@ function link(overrides: Partial<RelayLinkStatus> = {}): RelayLinkStatus {
     attached: false,
     rttMs: null,
     lastError: null,
+    lastErrorCode: null,
     kicked: false,
     ...overrides,
   };
@@ -39,46 +45,221 @@ describe('relay 行的纯函数', () => {
     expect(relayLabel('not a url')).toBe('not a url');
   });
 
-  test('被踢或最近有错都算需要提醒', () => {
+  test('被踢，或掉线且有错，才算需要提醒', () => {
     expect(relayFailing(link())).toBe(false);
     expect(relayFailing(link({ kicked: true }))).toBe(true);
-    expect(relayFailing(link({ lastError: 'ECONNRESET' }))).toBe(true);
+    expect(relayFailing(link({ online: false, lastErrorCode: 'dns' }))).toBe(true);
+    // 在线时后端已把错误清空；万一没清，行内也不报错
+    expect(relayFailing(link({ online: true, lastError: 'ECONNRESET' }))).toBe(false);
+  });
+});
+
+describe('链路错误的查表', () => {
+  test('每个错误码各有一条文案', () => {
+    const codes = [
+      'connect-failed',
+      'connect-timeout',
+      'auth-timeout',
+      'auth-rejected',
+      'heartbeat-lost',
+      'kicked',
+      'dns',
+      'refused',
+      'tls',
+      'protocol',
+      'unknown',
+    ] as const;
+    for (const code of codes) {
+      expect(relayLinkErrorKey(link({ online: false, lastErrorCode: code }))).toBe(
+        `relay.tenant.linkErrors.${code}`
+      );
+    }
+  });
+
+  test('只有原始错误串（或不认得的码）时一律归到 unknown，绝不上屏', () => {
+    expect(relayLinkErrorKey(link({ online: false, lastError: 'ECONNRESET' }))).toBe(
+      'relay.tenant.linkErrors.unknown'
+    );
+    expect(
+      relayLinkErrorKey(
+        link({ online: false, lastErrorCode: 'whatever' as never, lastError: 'boom' })
+      )
+    ).toBe('relay.tenant.linkErrors.unknown');
+  });
+
+  test('在线，或掉线但没有错，都不出错误行', () => {
+    expect(relayLinkErrorKey(link({ online: true, lastErrorCode: 'dns' }))).toBeNull();
+    expect(relayLinkErrorKey(link({ online: false }))).toBeNull();
   });
 });
 
 describe('RelayRows 渲染', () => {
+  const HOST = 'relay.example.com:8443';
+  const OTHER = link({ url: 'https://b.example', priority: 2 });
+
   test('没有中继时只给一行「未接入」', () => {
     const html = renderToStaticMarkup(<RelayRows relays={[]} />);
     expect(html).toContain('data-testid="nodes-relay-empty"');
     expect(html).not.toContain('data-testid="nodes-relay-rows"');
   });
 
-  test('在线态、延迟与当前挂载都在行内，不再藏进悬浮详情', () => {
+  test('一行只剩地址与一枚状态徽标：延迟进徽标，「当前挂载于此中继」整句删掉', () => {
     const html = renderToStaticMarkup(<RelayRows relays={[link({ attached: true, rttMs: 42 })]} />);
-    expect(html).toContain('data-testid="nodes-relay-row-relay.example.com:8443"');
+    expect(html).toContain(`data-testid="nodes-relay-row-${HOST}"`);
     expect(html).toContain('data-relay-attached="true"');
     expect(html).toContain('data-relay-online="true"');
-    expect(html).toContain('data-testid="nodes-relay-online-relay.example.com:8443"');
+    expect(html).toContain(`data-testid="nodes-relay-host-${HOST}"`);
+    expect(html).toContain(`data-testid="nodes-relay-status-${HOST}"`);
     expect(html).toContain('relay.tenant.strip.rtt');
-    expect(html).toContain('data-testid="nodes-relay-attached-relay.example.com:8443"');
-    // `｜` 拼接的 title 详情已经没有了
-    expect(html).not.toContain('relay.tenant.strip.detail');
-    expect(html).not.toContain('title=');
+    expect(html).not.toContain('relay.tenant.strip.attached');
+    // 外面那圈方框没有了
+    expect(html).not.toContain('ring-border/60');
   });
 
-  test('被踢与最近错误各占一行红字', () => {
+  test('在线但延迟未知时徽标说「在线」', () => {
+    const html = renderToStaticMarkup(<RelayRows relays={[link({ attached: true })]} />);
+    expect(html).toContain('relay.tenant.strip.online');
+    expect(html).not.toContain('relay.tenant.strip.rtt');
+  });
+
+  test('被踢与错误各占一行红字，错误只查表不印原串', () => {
     const html = renderToStaticMarkup(
-      <RelayRows relays={[link({ kicked: true, lastError: 'ECONNRESET', online: false })]} />
+      <RelayRows
+        relays={[link({ kicked: true, online: false, lastErrorCode: 'kicked', lastError: 'boom' })]}
+      />
     );
-    expect(html).toContain('data-testid="nodes-relay-kicked-relay.example.com:8443"');
-    expect(html).toContain('data-testid="nodes-relay-error-relay.example.com:8443"');
+    expect(html).toContain(`data-testid="nodes-relay-kicked-${HOST}"`);
+    expect(html).toContain(`data-testid="nodes-relay-error-${HOST}"`);
     expect(html).toContain('data-relay-failing="true"');
     expect(html).toContain('relay.tenant.strip.offline');
+    expect(html).not.toContain('boom');
   });
 
-  test('延迟未知时不摆那一格', () => {
-    const html = renderToStaticMarkup(<RelayRows relays={[link()]} />);
-    expect(html).not.toContain('data-testid="nodes-relay-rtt-relay.example.com:8443"');
+  test('在线的那条不出错误行', () => {
+    const html = renderToStaticMarkup(
+      <RelayRows relays={[link({ online: true, lastError: 'ECONNRESET' })]} />
+    );
+    expect(html).not.toContain(`data-testid="nodes-relay-error-${HOST}"`);
+  });
+
+  test('只有一条中继：行不可选，没有按钮语义', () => {
+    const html = renderToStaticMarkup(
+      <RelayRows relays={[link({ attached: true })]} onSelect={() => undefined} />
+    );
+    expect(html).not.toContain('data-testid="nodes-relay-switch-');
+    expect(html).not.toContain('aria-current');
+    expect(html).not.toContain('<button');
+  });
+
+  test('两条以上：当前那条标 aria-current，其余是可点的按钮', () => {
+    const html = renderToStaticMarkup(
+      <RelayRows relays={[link({ attached: true }), OTHER]} onSelect={() => undefined} />
+    );
+    expect(html).toContain('aria-current="true"');
+    expect(html).toContain('data-testid="nodes-relay-switch-b.example"');
+    expect(html).not.toContain(`data-testid="nodes-relay-switch-${HOST}"`);
+    expect(html).toContain('ring-primary');
+  });
+
+  test('没传 onSelect 时哪条都不可选', () => {
+    const html = renderToStaticMarkup(<RelayRows relays={[link({ attached: true }), OTHER]} />);
+    expect(html).not.toContain('data-testid="nodes-relay-switch-b.example"');
+    expect(html).not.toContain('aria-current');
+  });
+});
+
+describe('切换中继的对话框文案', () => {
+  test('主机名进标题，说明与确认是固定的一句', () => {
+    const copy = relaySwitchDialogCopy('https://b.example:8443/');
+    expect(copy.titleKey).toBe('relay.tenant.switch.title');
+    expect(copy.params).toEqual({ host: 'b.example:8443' });
+    expect(copy.descriptionKey).toBe('relay.tenant.switch.description');
+    expect(copy.confirmKey).toBe('relay.tenant.switch.confirm');
+  });
+
+  test('失败文案：认得的 code 逐条翻译，其余归到「切换失败」', () => {
+    const table = (key: string, options?: Record<string, unknown>) => {
+      if (key === 'relay.tenant.errors.RELAY_KICKED') return '令牌已失效。';
+      return String(options?.defaultValue ?? key);
+    };
+    expect(relaySwitchErrorText(table, new RelayApiError('RELAY_KICKED', 'kicked', 409))).toBe(
+      '令牌已失效。'
+    );
+    expect(relaySwitchErrorText(table, new Error('boom'))).toBe('RELAY_SWITCH_FAILED');
+  });
+});
+
+describe('三档配额', () => {
+  const quota = {
+    maxNodes: 8,
+    maxStreams: 16,
+    bandwidthBytesPerSec: 1024 * 1024,
+    currentNodes: 5,
+  };
+
+  test('有实时用量：节点取 usage、并发流与带宽都给出用量与进度', () => {
+    const rows = relayQuotaRows({
+      ...quota,
+      usage: {
+        currentNodes: 6,
+        currentStreams: 4,
+        bytesInPerSec: 2048,
+        bytesOutPerSec: 4096,
+        sampledAt: 1,
+      },
+    });
+    expect(rows.map((row) => row.kind)).toEqual(['nodes', 'streams', 'bandwidth']);
+    expect(rows[0]?.usedText).toBe('6');
+    expect(rows[0]?.percent).toBe(75);
+    expect(rows[1]?.usedText).toBe('4');
+    expect(rows[2]?.usedText).toBe('4.00 KB/s');
+    expect(rows[2]?.limitText).toBe('1.00 MB/s');
+  });
+
+  test('网关补上合计带宽时以它为准', () => {
+    const rows = relayQuotaRows({
+      ...quota,
+      usage: {
+        currentNodes: 1,
+        currentStreams: 1,
+        bytesInPerSec: 2048,
+        bytesOutPerSec: 4096,
+        bandwidthBytesPerSec: 6144,
+        sampledAt: 1,
+      } as never,
+    });
+    expect(rows[2]?.usedText).toBe('6.00 KB/s');
+  });
+
+  test('旧中继不下发用量：只剩上限，也没有进度条', () => {
+    const rows = relayQuotaRows({ ...quota, usage: null });
+    expect(rows[0]?.usedText).toBe('5');
+    expect(rows[1]?.usedText).toBeNull();
+    expect(rows[1]?.percent).toBeNull();
+    expect(rows[2]?.usedText).toBeNull();
+    expect(rows[2]?.percent).toBeNull();
+  });
+
+  test('带宽无上限：给「不限」的 key，不摆进度条', () => {
+    const rows = relayQuotaRows({ ...quota, bandwidthBytesPerSec: null, usage: null });
+    expect(rows[2]?.limitKey).toBe('nodes.machine.details.quotaUnlimited');
+    expect(rows[2]?.limitText).toBeNull();
+    expect(rows[2]?.percent).toBeNull();
+  });
+
+  test('用量超过上限时进度封在 100%', () => {
+    const rows = relayQuotaRows({
+      ...quota,
+      maxNodes: 2,
+      usage: {
+        currentNodes: 9,
+        currentStreams: 0,
+        bytesInPerSec: 0,
+        bytesOutPerSec: 0,
+        sampledAt: 1,
+      },
+    });
+    expect(rows[0]?.percent).toBe(100);
   });
 });
 
@@ -164,7 +345,7 @@ describe('文案查表', () => {
   });
 });
 
-describe('重新输入口令的目标', () => {
+describe('重新输入接入密码的目标', () => {
   test('优先挑被踢的那一条，而不是列表第一条', () => {
     const relays = [
       link({ url: 'https://a.example', attached: true }),
@@ -198,9 +379,9 @@ describe('重新输入口令的目标', () => {
 });
 
 describe('次级菜单的条目', () => {
-  test('只有一条中继：重输口令 + 轮换，不给「移除」', () => {
+  test('只有一条中继：只给重新输入接入密码，不给「移除」', () => {
     const items = relayActionMenu([link({ url: 'https://a.example', attached: true })]);
-    expect(items.map((item) => item.kind)).toEqual(['reauth', 'rotate']);
+    expect(items.map((item) => item.kind)).toEqual(['reauth']);
     expect(items[0]?.testId).toBe('nodes-relay-reauth-menu');
     expect(items[0]?.url).toBe('https://a.example');
   });
@@ -212,13 +393,12 @@ describe('次级菜单的条目', () => {
     ]);
     expect(items.map((item) => item.testId)).toEqual([
       'nodes-relay-reauth-menu',
-      'nodes-relay-rotate',
       'nodes-relay-remove-a.example',
       'nodes-relay-remove-b.example',
     ]);
   });
 
-  test('多条被踢：逐条给出重输口令，不再合并成一个入口', () => {
+  test('多条被踢：逐条给出重新输入接入密码，不再合并成一个入口', () => {
     const items = relayActionMenu([
       link({ url: 'https://a.example', kicked: true }),
       link({ url: 'https://b.example', kicked: true, priority: 2 }),
@@ -226,7 +406,6 @@ describe('次级菜单的条目', () => {
     expect(items.map((item) => item.testId)).toEqual([
       'nodes-relay-reauth-a.example',
       'nodes-relay-reauth-b.example',
-      'nodes-relay-rotate',
       'nodes-relay-remove-a.example',
       'nodes-relay-remove-b.example',
     ]);
