@@ -50,6 +50,7 @@ const MIGRATIONS = [
   '0042_rename_node_keylog.sql',
   '0043_relay_pack.sql',
   '0044_messaging_commands.sql',
+  '0045_readmit_node_keylog.sql',
 ] as const;
 
 export interface MaterializedMigrations {

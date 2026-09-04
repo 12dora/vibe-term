@@ -136,7 +136,8 @@ export type KeyLogAppendPlan = {
 
 /**
  * 中继模式下本地成员表/密钥日志是权威，中继注册表只是可重建缓存，因此 `hub=sync` 永远不等中继确认。
- * hub 模式只有 `set-relays` / `meta-key` 走本地优先。
+ * hub 模式只有 `set-relays` / `meta-key` 走本地优先。`readmit-node` 与 `admit-node` 一样：
+ * 任意模式都 publish；hub 模式走 writer（`localFirst: false`）。
  */
 export function planKeyLogAppend(input: {
   relayMode: boolean;

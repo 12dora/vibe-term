@@ -173,6 +173,24 @@ describe('relay key log blob', () => {
       sig: new Uint8Array(64).fill(1),
     });
     expect(member?.op).toBe('admit');
+    const readmit = buildKeyLogRecord({ seq: 2n, hash: genesisHead().hash }, 1, {
+      uid: 'user-1',
+      type: 'readmit-node',
+      payload: encodeAdmitNodePayload({
+        authorization_bytes: new Uint8Array(8).fill(4),
+        authorization_sig: new Uint8Array(64).fill(5),
+        certificate_bytes: new Uint8Array(8).fill(6),
+        cert_sig: new Uint8Array(64).fill(7),
+      }),
+      signer: 'root',
+      credential_id: null,
+    });
+    expect(
+      relayMemberFromRecord({
+        bytes: encodeKeyLogRecord(readmit),
+        sig: new Uint8Array(64).fill(1),
+      })?.op
+    ).toBe('admit');
   });
 });
 

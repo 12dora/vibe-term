@@ -248,6 +248,8 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'relay.quota.default': 'default quota: {{quota}}',
     'relay.quota.tenant': 'tenant {{tenantId}} quota: {{quota}}',
     'relay.enroll.passwordRequired': 'this relay requires a password',
+    'relay.enroll.readmitPending':
+      'members still need re-affirming after enroll ({{count}}); aborting before set-relays',
     'relay.enroll.done': 'attached to relay {{url}} (tenant {{tenantId}})',
     'relay.enroll.pending':
       'set-relays was accepted but the relay is not attached yet: {{url}} {{error}}',
@@ -478,6 +480,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'relay.quota.default': '默认配额：{{quota}}',
     'relay.quota.tenant': '租户 {{tenantId}} 配额：{{quota}}',
     'relay.enroll.passwordRequired': '该中继需要口令',
+    'relay.enroll.readmitPending': '接入后仍有 {{count}} 个成员待重新确认，已中止 set-relays',
     'relay.enroll.done': '已接入中继 {{url}}（租户 {{tenantId}}）',
     'relay.enroll.pending': 'set-relays 已提交，但中继尚未挂上：{{url}} {{error}}',
     'relay.leave.done': '已离开中继；在接入 hub 或中继前该节点没有上级',

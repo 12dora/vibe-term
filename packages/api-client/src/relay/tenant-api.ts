@@ -53,6 +53,8 @@ export interface RelayTenantStatus {
   quota: RelayQuotaView | null;
   /** 密钥日志同步健康度；旧节点不返回该字段。 */
   keyLog?: RelayKeyLogHealth;
+  /** 成员记录还是旧根签的节点数：中继只认当前根，这些成员接不上，须重新确认。 */
+  readmitPending: number;
 }
 
 /**
@@ -108,6 +110,30 @@ export interface RelayEnrollResponse extends RelayPreparedPayload {
   /** 租户令牌（base64url，32 字节）；浏览器不用它签任何东西，材料已在 payload 里。 */
   token: string;
   passwordEpoch: number;
+  /**
+   * 成员记录是旧根签的节点数。大于 0 时必须先逐台补签 `readmit-node`，再提交 `set-relays`，
+   * 否则这些历史成员在中继上一律 `member-epoch_mismatch`。旧节点不下发该字段。
+   */
+  readmitRequired?: number;
+}
+
+/** `GET /api/mesh/relay/readmit/prepare` 里的一台待重新确认的成员（二进制字段为 base64url）。 */
+export interface RelayReadmitEntry {
+  /** 32 位小写 hex。 */
+  nodeId: string;
+  name: string | null;
+  /** 当前那条 `admit-node` / `readmit-node` 的 seq；超出安全整数时为十进制字符串。 */
+  admitSeq: number | string;
+  admitRootEpoch: number;
+  authorization_bytes: string;
+  certificate_bytes: string;
+  cert_sig: string;
+}
+
+/** `GET /api/mesh/relay/readmit/prepare`：没有陈旧成员时 `entries` 为空。 */
+export interface RelayReadmitPrepare {
+  rootEpoch: number;
+  entries: RelayReadmitEntry[];
 }
 
 /** `POST /api/mesh/relay/meta-key/prepare` 的请求体。 */
@@ -238,6 +264,7 @@ const EMPTY_STATUS: RelayTenantStatus = {
   nodesViaRelay: 0,
   reauthRequired: false,
   keyLog: { skipped: 0, blockedSeq: null, caughtUp: false },
+  readmitPending: 0,
 };
 
 /** 缺字段一律补默认值：旧节点没有这条路由，`mode` 之外的字段也可能是后加的。 */
@@ -266,6 +293,7 @@ export function normalizeRelayStatus(
       blockedSeq: payload.keyLog?.blockedSeq ?? null,
       caughtUp: payload.keyLog?.caughtUp === true,
     },
+    readmitPending: payload.readmitPending ?? 0,
   };
 }
 
@@ -340,6 +368,14 @@ export class RelayTenantApi {
       'relay_status_failed'
     );
     return normalizeRelayStatus(payload);
+  }
+
+  /**
+   * `GET /api/mesh/relay/readmit/prepare`：列出成员记录还是旧根签的节点。
+   * hub 模式与中继模式都可用——迁移时要在还挂着 hub 的时候先补签。
+   */
+  readmitPrepare(): Promise<RelayReadmitPrepare> {
+    return this.json<RelayReadmitPrepare>(`${BASE}/readmit/prepare`, 'relay_readmit_failed');
   }
 
   /** `POST /api/mesh/relay/enroll/proof-material`：拿 `relayHost` 与 `ts` 去签 proof。 */

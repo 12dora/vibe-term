@@ -207,6 +207,7 @@ describe('keyLogRecord schema', () => {
       'set-relays',
       'meta-key',
       'rename-node',
+      'readmit-node',
     ] as const;
     for (let i = 0; i < types.length; i++) {
       const bytes = encodeKeyLogRecord({ ...value, type: types[i] });

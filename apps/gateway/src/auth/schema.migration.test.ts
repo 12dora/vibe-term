@@ -156,6 +156,38 @@ describe('hub auth schema migration', () => {
     }
   });
 
+  test('0045 allows readmit-node on user_key_log type check', () => {
+    const { sqlite, close } = createMigratedAuthDb();
+    try {
+      sqlite
+        .query(
+          `INSERT INTO users (id, username, root_public_key, root_epoch, kdf_params_json, key_log_head_seq, key_log_head_hash, created_at, updated_at)
+           VALUES ('u1', 'alice', X'00', 1, '{}', 0, X'00', 1, 1)`
+        )
+        .run();
+      sqlite
+        .query(
+          `INSERT INTO user_key_log (seq, user_id, prev_hash, hash, root_epoch, type, record_bytes, sig, payload_json, created_at)
+           VALUES (1, 'u1', X'00', X'00', 1, 'readmit-node', X'00', X'00', '{}', 1)`
+        )
+        .run();
+      const row = sqlite
+        .query(`SELECT type FROM user_key_log WHERE user_id = 'u1' AND seq = 1`)
+        .get() as { type: string };
+      expect(row.type).toBe('readmit-node');
+      expect(() =>
+        sqlite
+          .query(
+            `INSERT INTO user_key_log (seq, user_id, prev_hash, hash, root_epoch, type, record_bytes, sig, payload_json, created_at)
+             VALUES (2, 'u1', X'00', X'00', 1, 'not-a-type', X'00', X'00', '{}', 1)`
+          )
+          .run()
+      ).toThrow();
+    } finally {
+      close();
+    }
+  });
+
   test('0043 adds nullable kdf_params_json / sealed_pack on relay_tenants', () => {
     const { sqlite, close } = createMigratedAuthDb();
     try {

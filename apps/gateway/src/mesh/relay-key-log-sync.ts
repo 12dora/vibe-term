@@ -23,6 +23,7 @@ export const RELAY_KEYLOG_MAX_PAGES = 4096;
 
 const RELAY_MEMBER_OPS: Record<string, RelayKeylogMember['op']> = {
   'admit-node': 'admit',
+  'readmit-node': 'admit',
   'revoke-node': 'revoke',
   'rotate-root': 'rotate-root',
   'rotate-root-keep': 'rotate-root',

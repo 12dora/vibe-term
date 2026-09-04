@@ -8,6 +8,7 @@ import { RelayPackPendingNotice, canSubmitRelayEnroll } from './relay-dialogs';
 import { RelayStrip, relayChipTitle, relayFailing, relayLabel } from './relay-strip';
 import type { RelayActionsController } from './use-relay-actions';
 import { relayErrorText } from './use-relay-actions';
+import { readmitErrorText } from './use-relay-readmit';
 
 const t = (key: string, options?: Record<string, unknown>) => {
   if (options && 'defaultValue' in options) return String(options.defaultValue);
@@ -117,6 +118,19 @@ describe('文案查表', () => {
     expect(relayErrorText(table, 'WHATEVER')).toBe('WHATEVER');
   });
 
+  test('重新确认成员：本族的 key 优先，再退回中继与通用表', () => {
+    const table = (key: string, options?: Record<string, unknown>) => {
+      if (key === 'nodes.readmit.errors.READMIT_ROOT_REQUIRED') return '只能用当前密码。';
+      if (key === 'relay.tenant.errors.RELAY_OFFLINE') return '中继连接已断开。';
+      if (key === 'auth.errors.KEY_LOG_FORK') return '密钥日志分叉。';
+      return String(options?.defaultValue ?? key);
+    };
+    expect(readmitErrorText(table, 'READMIT_ROOT_REQUIRED')).toBe('只能用当前密码。');
+    expect(readmitErrorText(table, 'RELAY_OFFLINE')).toBe('中继连接已断开。');
+    expect(readmitErrorText(table, 'KEY_LOG_FORK')).toBe('密钥日志分叉。');
+    expect(readmitErrorText(table, 'WHATEVER')).toBe('WHATEVER');
+  });
+
   test('不可写提示按上级形态分档', () => {
     expect(uplinkBlockedHint(t, true, false)).toBe('relay.tenant.notAttached');
     expect(uplinkBlockedHint(t, false, true)).toBe('nodes.hubs.standbyNotice');
@@ -170,6 +184,7 @@ describe('密封包欠账告警', () => {
       dismissConfirm: () => undefined,
       submitEnroll: () => Promise.resolve(),
       runConfirm: () => Promise.resolve(),
+      readmitMembers: () => Promise.resolve(),
       metaPending: [],
       retryMetaKey: () => Promise.resolve(),
       packPending: false,

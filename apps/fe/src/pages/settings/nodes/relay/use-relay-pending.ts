@@ -22,6 +22,7 @@ import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { useCallback, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { useRelayReadmit } from './use-relay-readmit';
 
 export interface RelayPendingController {
   /** 还没落账的 `meta-key` 换代；非空时页面必须一直挂着告警。 */
@@ -32,6 +33,8 @@ export interface RelayPendingController {
   packPending: boolean;
   /** 手动重封密封包（须用密码，通行密钥给不出根种子）。 */
   retryPack: () => Promise<void>;
+  /** 用当前根重新确认旧根签的成员记录（`readmit-node`）。 */
+  readmitMembers: () => Promise<void>;
 }
 
 export interface RelayPendingDeps {
@@ -110,5 +113,7 @@ export function useRelayPending(deps: RelayPendingDeps): RelayPendingController 
     }
   }, [api, onChanged, packDebt, prompt, relayApi, setBusy, t]);
 
-  return { metaPending, retryMetaKey, packPending, retryPack };
+  const readmitMembers = useRelayReadmit({ flowDeps, prompt, onChanged, setBusy });
+
+  return { metaPending, retryMetaKey, packPending, retryPack, readmitMembers };
 }

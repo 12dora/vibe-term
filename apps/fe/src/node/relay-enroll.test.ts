@@ -6,14 +6,17 @@ import type { AuthApi } from '@tmex/api-client/auth/index';
 import { RelayApiError } from '@tmex/api-client/relay/admin-api';
 import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import {
+  DOMAIN_AUTHORIZATION,
   decodeBase64url,
   decodeKeyLogRecord,
   deriveSeed,
+  encodeAuthorization,
   encodeBase64url,
   rootKeyFromSeed,
   verifyEd25519,
 } from '@tmex/shared/auth';
 import { decodeRelayEnrollProof } from '@tmex/shared/relay';
+import { READMIT_PENDING } from './readmit-members';
 import {
   ROOT_PASSWORD_INVALID,
   alreadyLocked,
@@ -58,6 +61,9 @@ function authApi(appended: Appended[], result: unknown = { ok: true, hubAck: tru
 }
 
 const PAYLOAD = encodeBase64url(new Uint8Array([1, 2, 3]));
+
+/** 没有陈旧成员：接入流程照样会问一次 prepare，回空表即无操作。 */
+const noStaleMembers = () => Promise.resolve({ rootEpoch: 3, entries: [] });
 
 async function rootSigner(password = 'pw'): Promise<RecordSigner> {
   return { kind: 'root', rootKey: await rootKeyOf(password) };
@@ -208,6 +214,7 @@ describe('enrollRelay', () => {
           rootEpoch: 3,
         });
       },
+      readmitPrepare: noStaleMembers,
       enroll: (body: unknown) => {
         calls.enroll = body;
         return Promise.resolve({
@@ -279,6 +286,7 @@ describe('enrollRelay', () => {
           rootPublicKey: mode.rootPublicKey,
           rootEpoch: 3,
         }),
+      readmitPrepare: noStaleMembers,
       enroll: () =>
         Promise.resolve({
           tenantId: 'cd'.repeat(16),
@@ -317,6 +325,7 @@ describe('enrollRelay', () => {
           rootPublicKey: mode.rootPublicKey,
           rootEpoch: 3,
         }),
+      readmitPrepare: noStaleMembers,
       enroll: () => Promise.reject(new RelayApiError('RELAY_QUOTA_NODES', 'full', 409)),
     } as unknown as RelayTenantApi;
     let ran = 0;
@@ -346,6 +355,7 @@ describe('enrollRelay', () => {
           rootPublicKey: mode.rootPublicKey,
           rootEpoch: 3,
         }),
+      readmitPrepare: noStaleMembers,
       enroll: () =>
         Promise.reject(new RelayApiError('RELAY_PASSWORD_INVALID', 'bad password', 401)),
     } as unknown as RelayTenantApi;
@@ -431,5 +441,191 @@ describe('resendRelayRecord', () => {
     );
     expect(result).toEqual({ ok: true });
     expect(appended).toEqual([{ bytes: 'YWJj', sig: 'ZGVm', hubSync: true }]);
+  });
+});
+
+describe('接入时补签成员', () => {
+  function readmitEntry() {
+    return {
+      nodeId: 'ab'.repeat(8),
+      name: 'node-1',
+      admitSeq: 3,
+      admitRootEpoch: 1,
+      authorization_bytes: encodeBase64url(
+        encodeAuthorization({
+          domain: DOMAIN_AUTHORIZATION,
+          uid: 'u1',
+          enroll_pk: new Uint8Array(32).fill(9),
+          exp: 1_700_000_000_000n,
+          root_epoch: 1,
+          signer: 'root',
+          credential_id: null,
+        })
+      ),
+      certificate_bytes: encodeBase64url(new Uint8Array([1, 2, 3])),
+      cert_sig: encodeBase64url(new Uint8Array(64).fill(4)),
+    };
+  }
+
+  function enrollApi(
+    mode: { rootPublicKey: string },
+    options: {
+      readmitRequired?: number;
+      readmitPrepare?: () => Promise<{ rootEpoch: number; entries: unknown[] }>;
+      trace?: string[];
+    } = {}
+  ): RelayTenantApi {
+    const trace = options.trace ?? [];
+    return {
+      proofMaterial: () => {
+        trace.push('proof-material');
+        return Promise.resolve({
+          url: 'https://r.example',
+          relayHost: 'r.example',
+          ts: 1_700_000_000_000,
+          maxSkewMs: 300_000,
+          rootPublicKey: mode.rootPublicKey,
+          rootEpoch: 3,
+        });
+      },
+      enroll: () => {
+        trace.push('enroll');
+        return Promise.resolve({
+          tenantId: 'cd'.repeat(16),
+          token: 'dA',
+          passwordEpoch: 1,
+          payload: PAYLOAD,
+          payloadHash: 'h',
+          readmitRequired: options.readmitRequired ?? 0,
+        });
+      },
+      readmitPrepare: () => {
+        trace.push('readmit-prepare');
+        const fallback = () => Promise.resolve({ rootEpoch: 3, entries: [readmitEntry()] });
+        return (options.readmitPrepare ?? fallback)();
+      },
+    } as unknown as RelayTenantApi;
+  }
+
+  test('补签在换发令牌之前：先 readmit-node 落账，才去 proof-material / enroll', async () => {
+    const appended: Appended[] = [];
+    const trace: string[] = [];
+    const mode = await modeOf();
+    const result = await enrollRelay(
+      { api: authApi(appended), relayApi: enrollApi(mode, { trace }), mode, lock: alreadyLocked },
+      { url: 'https://r.example', rootPassword: 'pw' }
+    );
+    expect(result).toEqual({ ok: true });
+    expect(trace).toEqual(['readmit-prepare', 'proof-material', 'enroll']);
+    expect(appended.map((row) => decodeKeyLogRecord(decodeBase64url(row.bytes)).type)).toEqual([
+      'readmit-node',
+      'set-relays',
+    ]);
+  });
+
+  test('没有陈旧成员：prepare 回空表，直接接入', async () => {
+    const appended: Appended[] = [];
+    const trace: string[] = [];
+    const mode = await modeOf();
+    const relayApi = enrollApi(mode, {
+      trace,
+      readmitPrepare: () => Promise.resolve({ rootEpoch: 3, entries: [] }),
+    });
+    const result = await enrollRelay(
+      { api: authApi(appended), relayApi, mode, lock: alreadyLocked },
+      { url: 'https://r.example', rootPassword: 'pw' }
+    );
+    expect(result).toEqual({ ok: true });
+    expect(trace).toEqual(['readmit-prepare', 'proof-material', 'enroll']);
+    expect(appended.map((row) => decodeKeyLogRecord(decodeBase64url(row.bytes)).type)).toEqual([
+      'set-relays',
+    ]);
+  });
+
+  test('补签失败：不碰远端 enroll，结论里带上补签进度', async () => {
+    const appended: Appended[] = [];
+    const trace: string[] = [];
+    const mode = await modeOf();
+    const result = await enrollRelay(
+      {
+        api: authApi(appended, { ok: false, code: 'KEY_LOG_FORK' }),
+        relayApi: enrollApi(mode, { trace }),
+        mode,
+        lock: alreadyLocked,
+      },
+      { url: 'https://r.example', rootPassword: 'pw' }
+    );
+    expect(result).toEqual({
+      ok: false,
+      code: 'KEY_LOG_FORK',
+      readmit: { signed: 0, failed: 1 },
+    });
+    // 令牌没被换发：旧链路仍然可用，用户改完再来一次即可。
+    expect(trace).toEqual(['readmit-prepare']);
+    expect(appended.map((row) => decodeKeyLogRecord(decodeBase64url(row.bytes)).type)).toEqual([
+      'readmit-node',
+    ]);
+  });
+
+  test('prepare 失败：不碰远端 enroll', async () => {
+    const appended: Appended[] = [];
+    const trace: string[] = [];
+    const relayApi = enrollApi(await modeOf(), {
+      trace,
+      readmitPrepare: () => Promise.reject(new RelayApiError('RELAY_NOT_CONFIGURED', 'x', 409)),
+    });
+    const result = await enrollRelay(
+      { api: authApi(appended), relayApi, mode: await modeOf(), lock: alreadyLocked },
+      { url: 'https://r.example', rootPassword: 'pw' }
+    );
+    expect(result).toEqual({
+      ok: false,
+      code: 'RELAY_NOT_CONFIGURED',
+      readmit: { signed: 0, failed: 0 },
+    });
+    expect(trace).toEqual(['readmit-prepare']);
+    expect(appended).toHaveLength(0);
+  });
+
+  test('enroll 事后仍报 readmitRequired：不提交 set-relays', async () => {
+    const appended: Appended[] = [];
+    const trace: string[] = [];
+    const mode = await modeOf();
+    const relayApi = enrollApi(mode, { trace, readmitRequired: 2 });
+    const result = await enrollRelay(
+      { api: authApi(appended), relayApi, mode, lock: alreadyLocked },
+      { url: 'https://r.example', rootPassword: 'pw' }
+    );
+    expect(result).toEqual({
+      ok: false,
+      code: READMIT_PENDING,
+      readmit: { signed: 1, failed: 2 },
+    });
+    expect(trace).toEqual(['readmit-prepare', 'proof-material', 'enroll']);
+    expect(appended.map((row) => decodeKeyLogRecord(decodeBase64url(row.bytes)).type)).toEqual([
+      'readmit-node',
+    ]);
+  });
+
+  test('afterEnroll 不跑：卡在补签这一步时密封包也不刷新', async () => {
+    const mode = await modeOf();
+    let ran = 0;
+    const result = await enrollRelay(
+      {
+        api: authApi([], { ok: false, code: 'KEY_LOG_FORK' }),
+        relayApi: enrollApi(mode),
+        mode,
+        lock: alreadyLocked,
+      },
+      {
+        url: 'https://r.example',
+        rootPassword: 'pw',
+        afterEnroll: () => {
+          ran += 1;
+        },
+      }
+    );
+    expect(result.ok).toBe(false);
+    expect(ran).toBe(0);
   });
 });

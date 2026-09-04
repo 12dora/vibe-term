@@ -32,6 +32,7 @@ import {
   nextRelayPriority,
   relayPayloadHash,
 } from './relay-payloads';
+import { buildReadmitPrepare } from './relay-readmit';
 import {
   type ParsedEnrollment,
   normalizeUrlOrNull,
@@ -107,7 +108,8 @@ export class RelayRoutes {
 
   private route(key: string): RelayRouteHandler | null {
     const table: Record<string, RelayRouteHandler> = {
-      'GET /status': () => this.status(),
+      'GET /status': (_r, uid) => this.status(uid),
+      'GET /readmit/prepare': (_r, uid) => this.readmitPrepare(uid),
       'POST /enroll/proof-material': (r, uid) => this.proofMaterial(r, uid),
       'POST /enroll': (r, uid) => this.enroll(r, uid),
       'POST /leave/prepare': (_r, uid) => this.leavePrepare(uid),
@@ -138,11 +140,13 @@ export class RelayRoutes {
     return live instanceof RelayUplinkClient ? live : null;
   }
 
-  private status(): Response {
+  private async status(userId: string): Promise<Response> {
     const mode = this.mode();
     const client = this.relayClient();
     const attached = this.deps.uplink.attachedHub();
     const rows = this.deps.secrets.relayRows();
+    const uid = userId || this.deps.secrets.userId();
+    const readmitPending = uid ? (await this.readmitPrepareFor(uid)).entries.length : 0;
     return jsonBody({
       mode,
       tenantId: this.deps.secrets.tenantId(),
@@ -159,9 +163,28 @@ export class RelayRoutes {
       metaEpoch: this.deps.secrets.currentMetaEpoch(),
       nodesViaRelay: client?.nodesViaRelay ?? 0,
       reauthRequired: rows.some((row) => row.kicked),
+      readmitPending,
       quota: client?.quota ?? null,
       // 中继上的密钥日志由同租户节点写入；解不开的记录会被跳过，这里把健康度暴露给前端
       keyLog: client?.keyLogHealth() ?? { skipped: 0, blockedSeq: null, caughtUp: false },
+    });
+  }
+
+  private async readmitPrepare(userId: string): Promise<Response> {
+    if (!this.deps.userStore.getById(userId)) return jsonError('UNKNOWN_USER', 404);
+    return jsonBody(await this.readmitPrepareFor(userId));
+  }
+
+  private async readmitPrepareFor(userId: string) {
+    const user = this.deps.userStore.getById(userId);
+    if (!user) return { rootEpoch: 0, entries: [] };
+    const rows = await this.deps.keyLogService.list(userId, 1n);
+    const bySeq = new Map(rows.map((row) => [Number(row.seq), row.bytes]));
+    return buildReadmitPrepare({
+      userStore: this.deps.userStore,
+      userId,
+      rootEpoch: user.rootEpoch,
+      recordBytesAt: (seq) => bySeq.get(seq) ?? null,
     });
   }
 
@@ -290,11 +313,13 @@ export class RelayRoutes {
     });
     const payload = await buildSetRelaysPayload({ relays, logKey, metaKey, metaEpoch, nodes });
     const prepared = this.stash(payload, { logKey, metaKey, epoch: metaEpoch });
+    const readmit = await this.readmitPrepareFor(userId);
     return jsonBody({
       tenantId: target.tenantId,
       token: encodeBase64url(target.token),
       passwordEpoch: target.passwordEpoch,
       metaEpoch,
+      readmitRequired: readmit.entries.length,
       ...prepared,
     });
   }

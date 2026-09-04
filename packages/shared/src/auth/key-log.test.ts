@@ -22,6 +22,7 @@ import {
   KEYLOG_RECORD_COMPAT,
   KEY_LOG_SIGNER_MATRIX,
   MIN_HUB_AUTH_RECORD_VERSION,
+  MIN_READMIT_NODE_RECORD_VERSION,
   MIN_RENAME_NODE_RECORD_VERSION,
   MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   applyKeyLogRecord,
@@ -765,6 +766,7 @@ describe('signer matrix', () => {
     expect(KEY_LOG_SIGNER_MATRIX['admit-hub']).toEqual(['root', 'passkey']);
     expect(KEY_LOG_SIGNER_MATRIX['retire-hub']).toEqual(['root', 'passkey']);
     expect(KEY_LOG_SIGNER_MATRIX['rename-node']).toEqual(['root', 'passkey']);
+    expect(KEY_LOG_SIGNER_MATRIX['readmit-node']).toEqual(['root', 'passkey']);
     expect(MIN_HUB_AUTH_RECORD_VERSION).toBe('1.1.13');
     expect(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION).toBe('1.1.16');
     expect(KEYLOG_RECORD_COMPAT['admit-hub']?.minVersion).toBe(MIN_HUB_AUTH_RECORD_VERSION);
@@ -779,6 +781,11 @@ describe('signer matrix', () => {
       allowForce: false,
     });
     expect(MIN_RENAME_NODE_RECORD_VERSION).toBe('1.1.24');
+    expect(KEYLOG_RECORD_COMPAT['readmit-node']).toEqual({
+      minVersion: MIN_READMIT_NODE_RECORD_VERSION,
+      allowForce: false,
+    });
+    expect(MIN_READMIT_NODE_RECORD_VERSION).toBe('1.1.26');
   });
 
   it('rejects passkey-signed rotate-root before verifying the assertion', async () => {

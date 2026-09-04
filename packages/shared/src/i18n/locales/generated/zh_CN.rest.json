@@ -1877,7 +1877,20 @@
           "blocked": "另一条设置路径已提交，请等待本机重启完成。"
         }
       },
-      "uplinkOffline": "上级链路未连接，暂时不能生成加入码。"
+      "uplinkOffline": "上级链路未连接，暂时不能生成加入码。",
+      "readmit": {
+        "notice": "有 {{count}} 台节点的成员记录是旧根签的，需要重新确认。",
+        "action": "重新确认成员",
+        "done": "已重新确认 {{count}} 台节点的成员记录。",
+        "none": "没有需要重新确认的成员。",
+        "failed": "重新确认成员失败：{{error}}",
+        "errors": {
+          "READMIT_PREPARE_FAILED": "本机没能列出待重新确认的成员，请稍后重试。",
+          "READMIT_ROOT_REQUIRED": "这些成员记录只能用当前密码重新确认。",
+          "READMIT_MALFORMED": "成员记录的内容无效，无法重新确认。",
+          "READMIT_PENDING": "中继仍报告有成员未重新确认，请稍后重试。"
+        }
+      }
     },
     "devices": {
       "nodes": {

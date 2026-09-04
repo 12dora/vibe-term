@@ -20,6 +20,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { type RelayPendingController, useRelayPending } from './use-relay-pending';
+import { readmitErrorText } from './use-relay-readmit';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -74,6 +75,13 @@ export function relayErrorText(t: Translate, code: string): string {
   const text = t(key, { defaultValue: '' });
   if (text) return text;
   return t(`auth.errors.${code}`, { defaultValue: code });
+}
+
+/** 接入失败的行内文案：卡在补签成员那一步时点明是哪一步失败的。 */
+function enrollErrorText(t: Translate, result: { code: string; readmit?: unknown }): string {
+  return result.readmit
+    ? t('nodes.readmit.failed', { error: readmitErrorText(t, result.code) })
+    : relayErrorText(t, result.code);
 }
 
 function report(t: Translate, result: RelayFlowResult, doneKey: string): boolean {
@@ -155,7 +163,7 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
           },
         });
         if (!result.ok) {
-          setError(relayErrorText(t, result.code));
+          setError(enrollErrorText(t, result));
           return;
         }
         if (!settlePackDebt(packRef.result)) toast.warning(t('relay.tenant.pack.staleWarning'));
