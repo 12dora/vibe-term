@@ -8,7 +8,6 @@ import {
   AUTH_LOGIN_PATH,
   AUTH_SKIP,
   applyAuthPolicy,
-  expireNodeCookieOn,
   peekJsonCode,
 } from './forwarder-auth-policy';
 import { type ForwardPump as FailoverPump, runStreamFailover } from './forwarder-failover';
@@ -622,11 +621,7 @@ export class Forwarder {
       });
       return upgraded
         ? undefined
-        : expireNodeCookieOn(
-            req,
-            nodeId,
-            jsonError('UNAUTHORIZED', 401, { code: 'NODE_LOGIN_REQUIRED', nodeId })
-          );
+        : jsonError('UNAUTHORIZED', 401, { code: 'NODE_LOGIN_REQUIRED', nodeId });
     }
     if (req.signal.aborted) {
       return nodeUnreachableResponse(nodeId, true);

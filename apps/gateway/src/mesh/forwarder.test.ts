@@ -282,7 +282,7 @@ describe('forwarder', () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const streams = new FakeStreams();
-    streams.nextResponse = new Response(JSON.stringify({ error: 'missing auth' }), {
+    streams.nextResponse = new Response(JSON.stringify({ error: 'via_mismatch' }), {
       status: 401,
       headers: { 'content-type': 'application/json' },
     });
@@ -290,13 +290,15 @@ describe('forwarder', () => {
     try {
       const res = asResponse(
         await mesh.runtime.handleRequest(
-          new Request(`http://localhost/n/${OTHER}/api/devices`),
+          new Request(`http://localhost/n/${OTHER}/api/devices`, {
+            headers: { cookie: `tmex_s_${OTHER}=stale` },
+          }),
           dummyServer
         )
       );
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({
-        error: 'missing auth',
+        error: 'via_mismatch',
         code: 'NODE_LOGIN_REQUIRED',
         nodeId: OTHER,
       });
@@ -873,7 +875,7 @@ describe('forwarder', () => {
     }
   });
 
-  test('/n/:id/ws 4401 HTTP fallback (upgrade refused) expires tmex_s_<target>', async () => {
+  test('/n/:id/ws 4401 HTTP fallback (upgrade refused) never touches tmex_s_<target>', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const mesh = await bootMesh({ peers });
@@ -888,12 +890,7 @@ describe('forwarder', () => {
         code: 'NODE_LOGIN_REQUIRED',
         nodeId: OTHER,
       });
-      const cookie = res.headers.get('set-cookie') ?? '';
-      expect(cookie).toContain(`tmex_s_${OTHER}=`);
-      expect(cookie).toContain('Path=/');
-      expect(cookie).toContain('HttpOnly');
-      expect(cookie).toContain('SameSite=Lax');
-      expect(cookie).toContain('Max-Age=0');
+      expect(res.headers.get('set-cookie')).toBeNull();
     } finally {
       mesh.close();
     }

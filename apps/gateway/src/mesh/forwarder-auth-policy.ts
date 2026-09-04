@@ -36,16 +36,16 @@ export async function applyAuthPolicy(
 ): Promise<Response | null> {
   const parsed = parseSetSessionHeader(upstream.headers.get(X_TMEX_SET_SESSION) ?? '');
   const secure = isHttps(req);
+  const presented = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
   if (parsed) {
     appendNodeSessionCookie(headers, nodeId, parsed.sid, { maxAgeSec: parsed.maxAgeSec, secure });
   }
   const renewed = upstream.headers.get(X_TMEX_SESSION_RENEWED);
   if (renewed) {
     headers.set(X_TMEX_SESSION_RENEWED, renewed);
-    const sid = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
     const expiresAt = Number(renewed);
-    if (sid && Number.isFinite(expiresAt)) {
-      appendNodeSessionCookie(headers, nodeId, sid, {
+    if (presented && Number.isFinite(expiresAt)) {
+      appendNodeSessionCookie(headers, nodeId, presented, {
         maxAgeSec: Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)),
         secure,
       });
@@ -64,15 +64,25 @@ export async function applyAuthPolicy(
   }
   for (const name of DROP_ON_401_REWRITE) headers.delete(name);
   headers.set('content-type', 'application/json');
-  clearNodeSessionCookie(headers, nodeId, { secure });
+  if (shouldExpirePresentedCookie(presented, body)) {
+    clearNodeSessionCookie(headers, nodeId, { secure });
+  }
   return new Response(JSON.stringify(body), { status: 401, headers });
 }
 
-export function expireNodeCookieOn(req: Request, nodeId: string, res: Response): Response {
-  const headers = new Headers(res.headers);
-  clearNodeSessionCookie(headers, nodeId, { secure: isHttps(req) });
-  return new Response(res.body, { status: res.status, headers });
+/**
+ * 只清理「请求带了、而目标节点判为无效」的 cookie。请求没带 cookie 的 401（登录前并发发出的
+ * 请求）不能清：它的响应可能晚于登录的 Set-Cookie 到达，把刚签发的会话删掉。
+ */
+function shouldExpirePresentedCookie(
+  presented: string | undefined,
+  body: Record<string, unknown>
+): boolean {
+  if (!presented) return false;
+  return body.error !== MISSING_AUTH_ERROR;
 }
+
+const MISSING_AUTH_ERROR = 'missing auth';
 
 export async function peekJsonCode(response: Response): Promise<string> {
   try {

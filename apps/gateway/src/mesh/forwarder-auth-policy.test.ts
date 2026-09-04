@@ -1,11 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  AUTH_LOGIN_PATH,
-  AUTH_SKIP,
-  applyAuthPolicy,
-  expireNodeCookieOn,
-  peekJsonCode,
-} from './forwarder-auth-policy';
+import { AUTH_LOGIN_PATH, AUTH_SKIP, applyAuthPolicy, peekJsonCode } from './forwarder-auth-policy';
 import { AUTH_401_BODY_LIMIT, X_TMEX_SESSION_RENEWED, X_TMEX_SET_SESSION } from './mesh-deps';
 
 const OTHER = 'bb'.repeat(16);
@@ -21,7 +15,33 @@ function headersFrom(upstream: Response): Headers {
 }
 
 describe('applyAuthPolicy', () => {
-  test('401 JSON 补上 NODE_LOGIN_REQUIRED 并清 cookie', async () => {
+  test('带了 cookie 却被判无效的 401：补上 NODE_LOGIN_REQUIRED 并清 cookie', async () => {
+    const upstream = new Response(JSON.stringify({ error: 'via_mismatch' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+    const res = await applyAuthPolicy(
+      new Request(`http://localhost/n/${OTHER}/api/devices`, {
+        headers: { cookie: `tmex_s_${OTHER}=stale` },
+      }),
+      headersFrom(upstream),
+      upstream,
+      OTHER
+    );
+    expect(res).not.toBeNull();
+    expect(res?.status).toBe(401);
+    expect(await res?.json()).toEqual({
+      error: 'via_mismatch',
+      code: 'NODE_LOGIN_REQUIRED',
+      nodeId: OTHER,
+    });
+    const cookie = res?.headers.get('set-cookie') ?? '';
+    expect(cookie).toContain(`tmex_s_${OTHER}=`);
+    expect(cookie).toContain('Max-Age=0');
+    expect(cookie.includes('Secure')).toBe(false);
+  });
+
+  test('请求没带 cookie 的 401 不清 cookie：登录前并发发出的请求不能删掉刚签发的会话', async () => {
     const upstream = new Response(JSON.stringify({ error: 'missing auth' }), {
       status: 401,
       headers: { 'content-type': 'application/json' },
@@ -32,17 +52,26 @@ describe('applyAuthPolicy', () => {
       upstream,
       OTHER
     );
-    expect(res).not.toBeNull();
     expect(res?.status).toBe(401);
-    expect(await res?.json()).toEqual({
-      error: 'missing auth',
-      code: 'NODE_LOGIN_REQUIRED',
-      nodeId: OTHER,
+    expect(await res?.json()).toMatchObject({ code: 'NODE_LOGIN_REQUIRED', nodeId: OTHER });
+    expect(res?.headers.get('set-cookie')).toBeNull();
+  });
+
+  test('带了 cookie 但目标说 missing auth（cookie 未被转发）也不清', async () => {
+    const upstream = new Response(JSON.stringify({ error: 'missing auth' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
     });
-    const cookie = res?.headers.get('set-cookie') ?? '';
-    expect(cookie).toContain(`tmex_s_${OTHER}=`);
-    expect(cookie).toContain('Max-Age=0');
-    expect(cookie.includes('Secure')).toBe(false);
+    const res = await applyAuthPolicy(
+      new Request(`http://localhost/n/${OTHER}/api/devices`, {
+        headers: { cookie: `tmex_s_${OTHER}=fresh` },
+      }),
+      headersFrom(upstream),
+      upstream,
+      OTHER
+    );
+    expect(res?.status).toBe(401);
+    expect(res?.headers.get('set-cookie')).toBeNull();
   });
 
   test('skip401Rewrite 时登录 401 不改写、不发清 cookie', async () => {
@@ -164,26 +193,6 @@ describe('applyAuthPolicy', () => {
     expect(res?.status).toBe(401);
     expect(res?.headers.get('set-cookie')).toBeNull();
     expect(await res?.json()).toMatchObject({ code: 'NODE_LOGIN_REQUIRED', nodeId: 'self=' });
-  });
-});
-
-describe('expireNodeCookieOn', () => {
-  test('规范 id 清 cookie；非规范 id 不发 Set-Cookie', async () => {
-    const canonical = expireNodeCookieOn(
-      new Request(`http://localhost/n/${OTHER}/ws`),
-      OTHER,
-      new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED' }), { status: 401 })
-    );
-    expect(canonical.status).toBe(401);
-    expect(canonical.headers.get('set-cookie') ?? '').toContain(`tmex_s_${OTHER}=`);
-    expect(await canonical.json()).toEqual({ code: 'NODE_LOGIN_REQUIRED' });
-
-    const malformed = expireNodeCookieOn(
-      new Request('http://localhost/n/self%3D/ws'),
-      'self=',
-      new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED' }), { status: 401 })
-    );
-    expect(malformed.headers.get('set-cookie')).toBeNull();
   });
 });
 
