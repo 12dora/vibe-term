@@ -181,8 +181,11 @@ export class RelayTenantStore {
     sealedPack: Uint8Array;
     expectedRootEpoch: number;
     headSeq: bigint;
-  }): 'ok' | 'not_found' | 'epoch' | 'head_ahead' {
-    let result: 'ok' | 'not_found' | 'epoch' | 'head_ahead' = 'not_found';
+    tokenHash: string;
+    minTokenEpoch: number;
+  }): 'ok' | 'not_found' | 'epoch' | 'head_ahead' | 'kicked' | 'unauthorized' {
+    let result: 'ok' | 'not_found' | 'epoch' | 'head_ahead' | 'kicked' | 'unauthorized' =
+      'not_found';
     this.db.transaction(() => {
       const row = this.db
         .select()
@@ -191,6 +194,14 @@ export class RelayTenantStore {
         .get();
       if (!row) {
         result = 'not_found';
+        return;
+      }
+      if (row.kicked) {
+        result = 'kicked';
+        return;
+      }
+      if (row.tokenHash !== input.tokenHash || row.tokenEpoch < input.minTokenEpoch) {
+        result = 'unauthorized';
         return;
       }
       if (row.rootEpoch !== input.expectedRootEpoch) {

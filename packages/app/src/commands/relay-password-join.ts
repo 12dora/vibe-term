@@ -1,5 +1,3 @@
-import { readEnvFile, writeEnvFile } from '../lib/env-file';
-import { withEnvLock } from '../lib/env-mutation';
 import { resolvePassword } from '../lib/password';
 import {
   RelayPasswordJoinError,
@@ -7,9 +5,9 @@ import {
   performRelayPasswordJoin,
 } from '../lib/relay-password-join';
 import { asString } from '../lib/validate';
+import { applyRelayPasswordJoinEnv, commitRelayPasswordJoinEnv } from '../runtime/setup-shared';
 import type { ParsedArgs } from '../types';
 import { type HubIo, maybeRestart } from './hub';
-import { relayJoinRoleName } from './relay-join';
 import { withAuth } from './with-auth';
 
 export {
@@ -23,13 +21,7 @@ export type {
 } from '../lib/relay-password-join';
 
 async function writeRelayNodeEnv(envPath: string): Promise<void> {
-  await withEnvLock(async () => {
-    const env = await readEnvFile(envPath);
-    env.TMEX_ROLES = relayJoinRoleName(env.TMEX_ROLES);
-    env.TMEX_HUB_URL = '';
-    env.TMEX_HUB_PUBLIC_URL = '';
-    await writeEnvFile(envPath, env);
-  });
+  await commitRelayPasswordJoinEnv({ envPath });
 }
 
 function joinUrlFromParsed(parsed: ParsedArgs): string {
@@ -74,9 +66,10 @@ export async function runRelayPasswordJoin(
     if (ctx.envPath) {
       await writeRelayNodeEnv(ctx.envPath);
     } else {
-      process.env.TMEX_ROLES = relayJoinRoleName(
-        ctx.env?.TMEX_ROLES ?? process.env.TMEX_ROLES ?? undefined
-      );
+      const next = applyRelayPasswordJoinEnv({
+        TMEX_ROLES: ctx.env?.TMEX_ROLES ?? process.env.TMEX_ROLES ?? '',
+      });
+      process.env.TMEX_ROLES = next.TMEX_ROLES;
       process.env.TMEX_HUB_URL = '';
       process.env.TMEX_HUB_PUBLIC_URL = '';
     }

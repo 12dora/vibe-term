@@ -54,6 +54,8 @@ export type RelayRuntimeOptions = {
   authTimeoutMs?: number;
   listDebounceMs?: number;
   minClientVersion?: string;
+  /** 测试钩子：precondition 通过之后、注册 live 连接之前。 */
+  authBarrier?: () => Promise<void>;
   log?: (line: string) => void;
 };
 
@@ -153,6 +155,7 @@ export class RelayRuntime {
       authTimeoutMs: opts.authTimeoutMs,
       listDebounceMs: opts.listDebounceMs,
       minClientVersion: opts.minClientVersion,
+      authBarrier: opts.authBarrier,
     });
     this.publicDeps = {
       tenants: this.tenants,

@@ -10,6 +10,12 @@ import {
 import { RELAY_ADMIN_TOKEN_BYTES, RELAY_TENANT_ID_BYTES, RELAY_TOKEN_BYTES } from './types';
 
 export const RELAY_PASSWORD_SALT_LENGTH = 16;
+/** 非空中继接入口令的最短长度；空字符串表示关闭口令，仍允许。 */
+export const RELAY_PASSWORD_MIN_LENGTH = 8;
+
+export function relayPasswordTooShort(password: string): boolean {
+  return password.length > 0 && password.length < RELAY_PASSWORD_MIN_LENGTH;
+}
 
 export type RelayArgon2idParams = {
   memoryKib?: number;

@@ -1,5 +1,6 @@
 import { bytesEqual, encodeBase64url } from '@tmex/shared/auth';
 import {
+  RELAY_KEYLOG_SEQ_MISMATCH,
   RELAY_PACK_MAX_BYTES,
   type RelayKeylogMember,
   kdfParamsFromWire,
@@ -8,11 +9,13 @@ import {
   relaySeqToWire,
 } from '@tmex/shared/relay';
 import { decodeB64url } from '../api/route-input';
+import type { RelayConfigStore } from './relay-config-store';
 import type { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError, relayJson, relayNoStore } from './relay-http';
 import { appendRelayKeyLog, pageRelayKeyLog } from './relay-key-log-service';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import { parseRelayEnvelopeJson } from './relay-key-log-store';
+import { sha256Hex } from './relay-password';
 import type { RelayTenantStore } from './relay-tenant-store';
 import type { RelayUplinkServer } from './relay-uplink-server';
 import type { RelayTenantRecord } from './types';
@@ -23,6 +26,7 @@ const KDF_JSON_MAX = 512;
 export type RelayPackHttpDeps = {
   tenants: RelayTenantStore;
   keyLog: RelayKeyLogStore;
+  configStore: RelayConfigStore;
   limiter: RelayEnrollLimiter;
   uplink: RelayUplinkServer;
   now: () => number;
@@ -123,11 +127,9 @@ export function handleRelayJoin(
   });
 }
 
-export function applyRelayPackUpload(
-  deps: RelayPackHttpDeps,
-  tenant: RelayTenantRecord,
+function parsePackUploadBody(
   body: Record<string, unknown>
-): Response {
+): { sealedPack: Uint8Array; kdfJson: string; rootEpoch: number; headSeq: bigint } | Response {
   let sealedPack: Uint8Array;
   try {
     if (typeof body.sealed_pack !== 'string' || !body.sealed_pack) {
@@ -154,17 +156,40 @@ export function applyRelayPackUpload(
   }
   const kdfJson = JSON.stringify(kdfParamsToWire(kdf));
   if (kdfJson.length > KDF_JSON_MAX) return relayError(RelayErrorCode.invalidBody, 400);
-  const stored = deps.tenants.putPack({
-    tenantId: tenant.id,
-    kdfParamsJson: kdfJson,
-    sealedPack,
-    expectedRootEpoch: rootEpoch,
-    headSeq,
-  });
+  return { sealedPack, kdfJson, rootEpoch, headSeq };
+}
+
+function packStoreResponse(
+  stored: 'ok' | 'not_found' | 'epoch' | 'head_ahead' | 'kicked' | 'unauthorized'
+): Response {
   if (stored === 'not_found') return relayError(RelayErrorCode.tenantNotFound, 404);
+  if (stored === 'kicked') return relayError(RelayErrorCode.tenantKicked, 401);
+  if (stored === 'unauthorized') return relayError(RelayErrorCode.tokenInvalid, 401);
   if (stored === 'epoch') return relayError(RelayErrorCode.packEpoch, 409);
   if (stored === 'head_ahead') return relayError(RelayErrorCode.packHeadAhead, 409);
   return relayJson({ ok: true });
+}
+
+export function applyRelayPackUpload(
+  deps: RelayPackHttpDeps,
+  tenantId: string,
+  presentedToken: string | null,
+  body: Record<string, unknown>
+): Response {
+  if (!presentedToken) return relayError(RelayErrorCode.unauthorized, 401);
+  const parsed = parsePackUploadBody(body);
+  if (parsed instanceof Response) return parsed;
+  return packStoreResponse(
+    deps.tenants.putPack({
+      tenantId,
+      kdfParamsJson: parsed.kdfJson,
+      sealedPack: parsed.sealedPack,
+      expectedRootEpoch: parsed.rootEpoch,
+      headSeq: parsed.headSeq,
+      tokenHash: sha256Hex(presentedToken),
+      minTokenEpoch: deps.configStore.ensure(deps.now()).minTokenEpoch,
+    })
+  );
 }
 
 export function handleRelayKeyLogPage(
@@ -189,11 +214,50 @@ export function handleRelayKeyLogPage(
   });
 }
 
+function keyLogAppendFailure(outcome: { error: string; head: bigint }): Response {
+  if (outcome.error === 'TENANT_KICKED') return relayError(RelayErrorCode.tenantKicked, 401);
+  if (outcome.error === 'UNAUTHORIZED') return relayError(RelayErrorCode.tokenInvalid, 401);
+  return relayJson(
+    {
+      error: {
+        code:
+          outcome.error === RELAY_KEYLOG_SEQ_MISMATCH
+            ? RELAY_KEYLOG_SEQ_MISMATCH
+            : RelayErrorCode.invalidBody,
+        message: outcome.error,
+        head: relaySeqToWire(outcome.head),
+      },
+    },
+    409
+  );
+}
+
+function finishKeyLogAppend(
+  deps: RelayPackHttpDeps,
+  tenantId: string,
+  outcome: Extract<ReturnType<typeof appendRelayKeyLog>, { ok: true }>
+): Response {
+  if (outcome.revokedNodeId) {
+    deps.uplink.disconnectNode(tenantId, outcome.revokedNodeId, 'revoked');
+  }
+  if (!outcome.memberIgnored) deps.uplink.notifyQuota(tenantId);
+  deps.uplink.scheduleList(tenantId);
+  return relayJson({
+    ok: true,
+    seq: relaySeqToWire(outcome.seq),
+    head: relaySeqToWire(outcome.head),
+    ...(outcome.memberIgnored ? { member_ignored: true } : {}),
+    ...(outcome.memberError ? { member_error: outcome.memberError } : {}),
+  });
+}
+
 export function applyRelayKeyLogAppend(
   deps: RelayPackHttpDeps,
-  tenant: RelayTenantRecord,
+  tenantId: string,
+  presentedToken: string | null,
   body: Record<string, unknown>
 ): Response {
+  if (!presentedToken) return relayError(RelayErrorCode.unauthorized, 401);
   const blob =
     typeof body.blob === 'string'
       ? parseRelayEnvelopeJson(body.blob)
@@ -204,6 +268,8 @@ export function applyRelayKeyLogAppend(
       ? (body.member as Record<string, unknown>)
       : null
   );
+  const tenant = deps.tenants.get(tenantId);
+  if (!tenant) return relayError(RelayErrorCode.tenantNotFound, 404);
   const outcome = appendRelayKeyLog(
     { db: deps.uplink.db, tenants: deps.tenants, keyLog: deps.keyLog, now: deps.now },
     tenant,
@@ -213,30 +279,12 @@ export function applyRelayKeyLogAppend(
       seq: body.seq as number | string,
       blob,
       ...(member ? { member } : {}),
+    },
+    {
+      tokenHash: sha256Hex(presentedToken),
+      minTokenEpoch: deps.configStore.ensure(deps.now()).minTokenEpoch,
     }
   );
-  if (!outcome.ok) {
-    return relayJson(
-      {
-        error: {
-          code: RelayErrorCode.invalidBody,
-          message: outcome.error,
-          head: relaySeqToWire(outcome.head),
-        },
-      },
-      409
-    );
-  }
-  if (outcome.revokedNodeId) {
-    deps.uplink.disconnectNode(tenant.id, outcome.revokedNodeId, 'revoked');
-  }
-  if (!outcome.memberIgnored) deps.uplink.notifyQuota(tenant.id);
-  deps.uplink.scheduleList(tenant.id);
-  return relayJson({
-    ok: true,
-    seq: relaySeqToWire(outcome.seq),
-    head: relaySeqToWire(outcome.head),
-    ...(outcome.memberIgnored ? { member_ignored: true } : {}),
-    ...(outcome.memberError ? { member_error: outcome.memberError } : {}),
-  });
+  if (!outcome.ok) return keyLogAppendFailure(outcome);
+  return finishKeyLogAppend(deps, tenantId, outcome);
 }

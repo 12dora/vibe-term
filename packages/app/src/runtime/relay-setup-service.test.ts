@@ -190,6 +190,16 @@ describe('becomeRelay', () => {
         deps
       )
     ).rejects.toMatchObject({ code: 'weak_password', httpStatus: 400 });
+    await expect(
+      becomeRelay(
+        {
+          role: 'relay',
+          relayPublicUrl: 'https://relay.example',
+          relayPassword: 'short',
+        },
+        deps
+      )
+    ).rejects.toMatchObject({ code: 'weak_password', httpStatus: 400 });
   });
 
   test('loopback http is allowed in test', async () => {

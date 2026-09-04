@@ -24,9 +24,16 @@ export class HubEnrollLimiter {
 
   isLimited(ip: string, uid: string): boolean {
     const t = this.now();
-    const failKey = failKeyOf(ip, uid);
     if (
-      this.countIn(this.failures, failKey, t, HUB_ENROLL_FAIL_WINDOW_MS) >= HUB_ENROLL_FAIL_LIMIT
+      this.countIn(this.failures, failIpKey(ip), t, HUB_ENROLL_FAIL_WINDOW_MS) >=
+      HUB_ENROLL_FAIL_LIMIT
+    ) {
+      return true;
+    }
+    if (
+      uid &&
+      this.countIn(this.failures, failUidKey(uid), t, HUB_ENROLL_FAIL_WINDOW_MS) >=
+        HUB_ENROLL_FAIL_LIMIT
     ) {
       return true;
     }
@@ -38,16 +45,49 @@ export class HubEnrollLimiter {
   }
 
   recordFailure(ip: string, uid: string): void {
-    this.recordInto(this.failures, failKeyOf(ip, uid), HUB_ENROLL_FAIL_WINDOW_MS);
+    if (ip) this.recordInto(this.failures, failIpKey(ip), HUB_ENROLL_FAIL_WINDOW_MS);
+    if (uid) this.recordInto(this.failures, failUidKey(uid), HUB_ENROLL_FAIL_WINDOW_MS);
+  }
+
+  /** 成功上限的同步占位：persist 之前调用，失败再 `releaseSuccess`。 */
+  tryReserveSuccess(uid: string): boolean {
+    if (!uid) return true;
+    const t = this.now();
+    if (
+      this.countIn(this.failures, failUidKey(uid), t, HUB_ENROLL_FAIL_WINDOW_MS) >=
+      HUB_ENROLL_FAIL_LIMIT
+    ) {
+      return false;
+    }
+    if (
+      this.countIn(this.successes, successKeyOf(uid), t, HUB_ENROLL_SUCCESS_WINDOW_MS) >=
+      HUB_ENROLL_SUCCESS_LIMIT
+    ) {
+      return false;
+    }
+    this.recordInto(this.successes, successKeyOf(uid), HUB_ENROLL_SUCCESS_WINDOW_MS);
+    return true;
+  }
+
+  releaseSuccess(uid: string): void {
+    if (!uid) return;
+    const key = successKeyOf(uid);
+    const times = this.successes.get(key);
+    if (!times || times.length === 0) return;
+    times.pop();
+    if (times.length === 0) this.successes.delete(key);
+    else this.successes.set(key, times);
   }
 
   recordSuccess(uid: string): void {
-    if (!uid) return;
-    this.recordInto(this.successes, successKeyOf(uid), HUB_ENROLL_SUCCESS_WINDOW_MS);
+    this.tryReserveSuccess(uid);
   }
 
   failureCount(ip: string, uid: string): number {
-    return this.countIn(this.failures, failKeyOf(ip, uid), this.now(), HUB_ENROLL_FAIL_WINDOW_MS);
+    if (uid) {
+      return this.countIn(this.failures, failUidKey(uid), this.now(), HUB_ENROLL_FAIL_WINDOW_MS);
+    }
+    return this.countIn(this.failures, failIpKey(ip), this.now(), HUB_ENROLL_FAIL_WINDOW_MS);
   }
 
   successCount(uid: string): number {
@@ -73,12 +113,7 @@ export class HubEnrollLimiter {
     const next = prune(store.get(key) ?? [], t, windowMs);
     next.push(t);
     store.set(key, next);
-    while (this.failures.size + this.successes.size > this.maxKeys) {
-      const oldest = this.failures.keys().next().value ?? this.successes.keys().next().value;
-      if (oldest === undefined) break;
-      this.failures.delete(oldest);
-      this.successes.delete(oldest);
-    }
+    this.evictExpiredOnly();
   }
 
   private countIn(store: WindowedHits, key: string, now: number, windowMs: number): number {
@@ -96,10 +131,21 @@ export class HubEnrollLimiter {
       else store.set(key, next);
     }
   }
+
+  /** 只删窗口已过期的桶；仍在窗口内或已触达上限的桶永不驱逐。 */
+  private evictExpiredOnly(): void {
+    if (this.failures.size + this.successes.size <= this.maxKeys) return;
+    this.sweep(this.failures, HUB_ENROLL_FAIL_WINDOW_MS);
+    this.sweep(this.successes, HUB_ENROLL_SUCCESS_WINDOW_MS);
+  }
 }
 
-function failKeyOf(ip: string, uid: string): string {
-  return `fail:${ip}:${uid}`;
+function failIpKey(ip: string): string {
+  return `fail:ip:${ip}`;
+}
+
+function failUidKey(uid: string): string {
+  return `fail:uid:${uid}`;
 }
 
 function successKeyOf(uid: string): string {

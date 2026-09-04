@@ -5,6 +5,7 @@ import {
   hubHostFromUrl,
   verifyHubEnrollProof,
 } from '@tmex/shared/auth';
+import type { HubNotWriterError } from '@tmex/shared/uplink';
 import { json, readJsonObjectBody } from '../api/http';
 import { requireB64url, validationError } from '../api/route-input';
 import type { UserRecord, UserStore } from '../auth/user-store';
@@ -19,6 +20,12 @@ export type HubPasswordEnrollHost = {
   tlsInfo?: () =>
     | { caFingerprint: string | null; caPem: string | null }
     | Promise<{ caFingerprint: string | null; caPem: string | null }>;
+  uplink: {
+    isWriter(): boolean;
+    hubNodeId(): string | undefined;
+    notWriterError(): HubNotWriterError;
+  };
+  forwardWrite(req: Request, uid?: string | null): Promise<Response | null>;
   verifyEnrollmentAuthorization(
     user: UserRecord,
     enrollPk: Uint8Array,
@@ -163,6 +170,76 @@ export async function handleHubPasswordEnroll(
   const limiter = enrollLimiterOf(host);
   const accepted = acceptPasswordEnroll(host, body, ip, limiter);
   if (accepted instanceof Response) return accepted;
+  if (!host.uplink.isWriter()) {
+    return forwardVerifiedPasswordEnroll(host, req, body, accepted, ip, limiter);
+  }
+  return persistAcceptedPasswordEnroll(host, body, accepted, ip, limiter);
+}
+
+/** 写者处理 standby 已验 proof 的转发帧：跳过 host-bound proof，仍验 enrollment authorization。 */
+export async function handleForwardedHubPasswordEnroll(
+  host: HubPasswordEnrollHost,
+  req: Request,
+  fromHubId: string
+): Promise<Response> {
+  const body = await readJsonObjectBody(req);
+  if (!body) return json({ error: 'invalid_body' }, 400);
+  const marker = typeof body.proof_verified_by === 'string' ? body.proof_verified_by : '';
+  if (!marker || marker !== fromHubId) return json({ error: 'unauthorized' }, 401);
+  const parsed = parseEnrollmentFields(body);
+  if (parsed instanceof Response) return parsed;
+  const user = host.userStore.getById(parsed.authorization.uid);
+  if (!user) return json({ error: 'invalid_proof' }, 401);
+  const limiter = enrollLimiterOf(host);
+  const ip = typeof body.client_ip === 'string' && body.client_ip ? body.client_ip : 'unknown';
+  return persistAcceptedPasswordEnroll(
+    host,
+    body,
+    { user, ...parsed, proofUid: user.id },
+    ip,
+    limiter,
+    { skipIpLimiter: true }
+  );
+}
+
+async function forwardVerifiedPasswordEnroll(
+  host: HubPasswordEnrollHost,
+  req: Request,
+  body: Record<string, unknown>,
+  accepted: PasswordEnrollAccepted,
+  ip: string,
+  limiter: HubEnrollLimiter
+): Promise<Response> {
+  const forwarded = await host.forwardWrite(
+    new Request(req.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...body,
+        proof_verified_by:
+          host.uplink.hubNodeId() ?? host.config.hubNodeId ?? host.config.nodeId ?? '',
+        client_ip: ip,
+      }),
+    }),
+    accepted.proofUid
+  );
+  if (!forwarded) return json(host.uplink.notWriterError(), 409);
+  if (forwarded.status === 201) limiter.recordSuccess(accepted.proofUid);
+  else if (forwarded.status >= 400) limiter.recordFailure(ip, accepted.proofUid);
+  return forwarded;
+}
+
+async function persistAcceptedPasswordEnroll(
+  host: HubPasswordEnrollHost,
+  body: Record<string, unknown>,
+  accepted: PasswordEnrollAccepted,
+  ip: string,
+  limiter: HubEnrollLimiter,
+  opts?: { skipIpLimiter?: boolean }
+): Promise<Response> {
+  if (!limiter.tryReserveSuccess(accepted.proofUid)) {
+    return json({ error: 'rate_limited' }, 429);
+  }
   const created = await persistEnrollment(host, {
     user: accepted.user,
     enrollPk: accepted.enrollPk,
@@ -173,8 +250,11 @@ export async function handleHubPasswordEnroll(
     entryNodeId: null,
     joinMaterial: true,
   });
-  if (created.status === 201) limiter.recordSuccess(accepted.proofUid);
-  else if (created.status >= 400) limiter.recordFailure(ip, accepted.proofUid);
+  if (created.status === 201) return created;
+  limiter.releaseSuccess(accepted.proofUid);
+  if (created.status >= 400 && !opts?.skipIpLimiter) {
+    limiter.recordFailure(ip, accepted.proofUid);
+  }
   return created;
 }
 

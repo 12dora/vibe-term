@@ -9,6 +9,10 @@ import {
   hubHostFromUrl,
   signHubEnrollProof,
 } from '../../../shared/src/auth';
+import {
+  KdfParamsBudgetError,
+  assertKdfParamsWithinBudget,
+} from '../../../shared/src/auth/root-key';
 import { JoinError } from '../commands/hub';
 import { type HubFetch, assertHubJoinUrl, isNetworkFetchError } from './hub-client';
 import { deriveRootKey } from './password';
@@ -122,6 +126,14 @@ function modeIdentity(modeBody: Record<string, unknown>): {
   const kdfParams = asKdf(modeBody.kdfParams);
   if (!uid || !kdfParams) {
     throw new JoinError('join_failed', 'unable to resolve hub uid and kdf params');
+  }
+  try {
+    assertKdfParamsWithinBudget(kdfParams);
+  } catch (error) {
+    throw new JoinError(
+      'join_failed',
+      error instanceof KdfParamsBudgetError ? error.message : 'kdf params exceed client budget'
+    );
   }
   const rootEpoch =
     typeof modeBody.rootEpoch === 'number' && Number.isFinite(modeBody.rootEpoch)

@@ -545,6 +545,58 @@ describe('relay kick', () => {
     const blocked = await tenant.connect(node);
     expect(await closed(blocked)).toBe('tenant-kicked');
   });
+
+  test('kick between auth precondition and registration is rejected', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const enteredAt = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const relay = await boot({
+      authBarrier: async () => {
+        entered();
+        await gate;
+      },
+    });
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const connecting = tenant.connect(node);
+    await enteredAt;
+    await relay.adminFetch(`/api/relay/tenants/${tenant.id}/kick`, { method: 'POST' });
+    release();
+    expect(await closed(await connecting)).toBe('tenant-kicked');
+  });
+
+  test('token reissue between auth precondition and registration is rejected', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const enteredAt = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const relay = await boot({
+      authBarrier: async () => {
+        entered();
+        await gate;
+      },
+    });
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const connecting = tenant.connect(node);
+    await enteredAt;
+    const res = await relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'new-secret-word', mode: 'kick' }),
+    });
+    expect(res.status).toBe(200);
+    release();
+    expect(await closed(await connecting)).toBe('token-epoch');
+  });
 });
 
 describe('relay enrollment ctl', () => {

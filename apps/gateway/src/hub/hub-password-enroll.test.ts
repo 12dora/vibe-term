@@ -286,8 +286,9 @@ describe('POST /api/hub/enrollments/by-password', () => {
   test('standby returns 409 HUB_NOT_WRITER', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
+      const now = 1_000;
       const { userStore, keyLogSource } = createHubTestStack(db);
-      const user = seedUser(userStore);
+      const user = seedUser(userStore, { now });
       seedAdmittedNode(userStore, user.id, { name: 'entry' });
       const hub = new HubRuntime({
         db,
@@ -303,6 +304,7 @@ describe('POST /api/hub/enrollments/by-password', () => {
           authorizedHubIds: [WRITER_HUB],
         },
         authenticate: () => null,
+        now: () => now,
       });
       const enrollment = await createEnrollment(user.root, {
         uid: user.id,
@@ -327,6 +329,63 @@ describe('POST /api/hub/enrollments/by-password', () => {
       expect(res?.status).toBe(409);
       const body = (await res?.json()) as { code: string };
       expect(body.code).toBe(HUB_NOT_WRITER);
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('writer accepts a forwarded by-password frame verified by standby', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const now = 2_000_000;
+      const fingerprint = 'ab'.repeat(32);
+      const pem = '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----';
+      const { hub, user } = await startHub(db, () => now, {
+        tlsInfo: () => ({ caFingerprint: fingerprint, caPem: pem }),
+      });
+      const enrollment = await createEnrollment(user.root, {
+        uid: user.id,
+        rootEpoch: 0,
+        now,
+        ttlMs: 10_000,
+      });
+      const signed = signHubEnrollProof(user.root, {
+        hubHost: hubHostFromUrl('https://standby.example'),
+        uid: user.id,
+        enrollPk: enrollment.enrollPk,
+        ts: now,
+      });
+      const payload = JSON.parse(passwordBody(enrollment, signed, now + 10_000)) as Record<
+        string,
+        unknown
+      >;
+      payload.proof_verified_by = STANDBY_HUB;
+      payload.client_ip = '203.0.113.9';
+      const ack = await hub.executeForwardedWrite(STANDBY_HUB, {
+        t: 'hub.write-forward',
+        id: 'pw-fwd-1',
+        method: 'POST',
+        path: '/api/hub/enrollments/by-password',
+        body: JSON.stringify(payload),
+      });
+      expect(ack.status).toBe(201);
+      const body = JSON.parse(ack.body ?? '{}') as {
+        ok: boolean;
+        id: string;
+        public_url: string;
+        ca_fingerprint: string;
+        ca_cert_pem: string;
+        key_log_head_hash: string;
+        root_public_key: string;
+      };
+      expect(body.ok).toBe(true);
+      expect(body.public_url).toBe('https://hub.example');
+      expect(body.ca_fingerprint).toBe(fingerprint);
+      expect(body.ca_cert_pem).toBe(pem);
+      expect(body.key_log_head_hash).toBe(encodeBase64url(new Uint8Array(32)));
+      expect(body.root_public_key).toBe(encodeBase64url(user.root.publicKey));
+      expect(typeof body.id).toBe('string');
       hub.stop();
     } finally {
       close();

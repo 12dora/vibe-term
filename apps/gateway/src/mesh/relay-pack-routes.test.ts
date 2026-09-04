@@ -165,4 +165,52 @@ describe('handleMeshRelayPack', () => {
       'RELAY_UNREACHABLE',
     ]);
   });
+
+  test('forwards each packs[] entry to its own relay url', async () => {
+    const posted: Array<{ url: string; sealed: string }> = [];
+    const packA = encodeBase64url(randomBytes(48));
+    const packB = encodeBase64url(randomBytes(48));
+    const secrets = {
+      relayRows: () => [
+        { url: 'https://relay-a.example', tenantId: 'aa'.repeat(16), priority: 0, kicked: false },
+        { url: 'https://relay-b.example', tenantId: 'bb'.repeat(16), priority: 1, kicked: false },
+      ],
+      store: {
+        getRelay: async (url: string) => ({
+          url,
+          tenantId: url.includes('relay-a') ? 'aa'.repeat(16) : 'bb'.repeat(16),
+          token: new Uint8Array(32).fill(7),
+        }),
+      },
+    } as unknown as RelaySecrets;
+    const res = await handleMeshRelayPack(
+      {
+        secrets,
+        fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const href = String(input);
+          const body = JSON.parse(String(init?.body ?? '{}')) as { sealed_pack: string };
+          posted.push({ url: href, sealed: body.sealed_pack });
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }) as typeof fetch,
+      },
+      new Request('http://self/api/mesh/relay/pack', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kdf_params: KDF,
+          root_epoch: 0,
+          head_seq: 3,
+          packs: [
+            { url: 'https://relay-a.example', sealed_pack: packA },
+            { url: 'https://relay-b.example', sealed_pack: packB },
+          ],
+        }),
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(posted).toHaveLength(2);
+    expect(posted[0]?.url).toContain('/api/relay/tenants/');
+    expect(posted.find((item) => item.url.includes('relay-a'))?.sealed).toBe(packA);
+    expect(posted.find((item) => item.url.includes('relay-b'))?.sealed).toBe(packB);
+  });
 });

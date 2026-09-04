@@ -8,6 +8,7 @@ import {
   handleRelayTenantKdf,
 } from './relay-pack-http';
 import {
+  RELAY_TOKEN_HEADER,
   type RelayPublicRoutesDeps,
   authenticateRelayTenant,
   handleRelayEnroll,
@@ -44,11 +45,10 @@ async function handlePack(
   req: Request,
   params: Record<string, string>
 ): Promise<Response> {
-  const tenant = authenticateRelayTenant(ctx.deps, req, tenantParam(params));
-  if (tenant instanceof Response) return tenant;
+  const presented = req.headers.get(RELAY_TOKEN_HEADER)?.trim() ?? null;
   const body = await readJsonObjectBody(req);
   if (!body) return relayError(RelayErrorCode.invalidBody, 400);
-  return applyRelayPackUpload(ctx.deps, tenant, body);
+  return applyRelayPackUpload(ctx.deps, tenantParam(params), presented, body);
 }
 
 async function handleKeyLog(
@@ -56,15 +56,17 @@ async function handleKeyLog(
   req: Request,
   params: Record<string, string>
 ): Promise<Response> {
-  const tenant = authenticateRelayTenant(ctx.deps, req, tenantParam(params));
-  if (tenant instanceof Response) return tenant;
+  const tenantId = tenantParam(params);
   if (req.method === 'GET' || req.method === 'HEAD') {
+    const tenant = authenticateRelayTenant(ctx.deps, req, tenantId);
+    if (tenant instanceof Response) return tenant;
     return handleRelayKeyLogPage(ctx.deps, tenant, req);
   }
   if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
+  const presented = req.headers.get(RELAY_TOKEN_HEADER)?.trim() ?? null;
   const body = await readJsonObjectBody(req);
   if (!body) return relayError(RelayErrorCode.invalidBody, 400);
-  return applyRelayKeyLogAppend(ctx.deps, tenant, body);
+  return applyRelayKeyLogAppend(ctx.deps, tenantId, presented, body);
 }
 
 const RELAY_PUBLIC_ROUTES: readonly PublicRoute[] = [

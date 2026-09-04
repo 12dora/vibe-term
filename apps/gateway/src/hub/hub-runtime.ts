@@ -33,7 +33,11 @@ import type { AuthDb } from '../auth/types';
 import { type UserRecord, UserStore } from '../auth/user-store';
 import { applyForcedKeyLogCompat, inspectHubAuthRecordCompat } from './hub-authorization';
 import { decodeCertificateIdentityKeys, parseKdfParams } from './hub-cert-keys';
-import { createEnrollmentFromAuth, handleHubPasswordEnroll } from './hub-password-enroll';
+import {
+  createEnrollmentFromAuth,
+  handleForwardedHubPasswordEnroll,
+  handleHubPasswordEnroll,
+} from './hub-password-enroll';
 import { type HubPeerFetch, HubPeerPoller } from './hub-peer-poller';
 import {
   type UplinkNodeList,
@@ -576,6 +580,9 @@ export class HubRuntime {
     const ctx = this.forwardedWriteCtx(fromHubId, msg);
     return (
       (await this.dispatchForwardedRedeem(ctx)) ??
+      (ctx.path === '/api/hub/enrollments/by-password' && ctx.req.method === 'POST'
+        ? await handleForwardedHubPasswordEnroll(this, ctx.req, fromHubId)
+        : undefined) ??
       (await this.dispatchForwardedCreateEnrollment(ctx)) ??
       (await this.dispatchForwardedRename(ctx)) ??
       (await this.dispatchForwardedKeyLogPost(ctx)) ??
@@ -768,10 +775,7 @@ export class HubRuntime {
           return blocked ?? this.handleCreateEnrollment(req, a);
         })
       ) ??
-      hit('/api/hub/enrollments/by-password', 'POST', async () => {
-        const blocked = await this.requireWriterOrForward(req);
-        return blocked ?? handleHubPasswordEnroll(this, req);
-      }) ??
+      hit('/api/hub/enrollments/by-password', 'POST', () => handleHubPasswordEnroll(this, req)) ??
       hit('/api/hub/enrollments/:id', 'GET', (p) =>
         this.withAuth(req, (a) => this.handleGetEnrollment(decodeURIComponent(p.id), a))
       ) ??

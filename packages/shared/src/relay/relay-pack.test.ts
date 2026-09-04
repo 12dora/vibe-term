@@ -243,4 +243,31 @@ describe('kdfParams wire', () => {
     expect(ok?.iterations).toBe(1);
     expect(ok?.parallelism).toBe(1);
   });
+
+  it('rejects params above the client budget', () => {
+    expect(
+      kdfParamsFromWire({
+        salt: encodeBase64url(randomBytes(16)),
+        memory_kib: 262_145,
+        iterations: 1,
+        parallelism: 1,
+      })
+    ).toBeNull();
+    expect(
+      kdfParamsFromWire({
+        salt: encodeBase64url(randomBytes(16)),
+        memory_kib: 8,
+        iterations: 11,
+        parallelism: 1,
+      })
+    ).toBeNull();
+    expect(
+      kdfParamsFromWire({
+        salt: encodeBase64url(randomBytes(16)),
+        memory_kib: 8,
+        iterations: 1,
+        parallelism: 5,
+      })
+    ).toBeNull();
+  });
 });

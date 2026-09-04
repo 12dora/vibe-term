@@ -15,17 +15,54 @@ import type { FetchLike } from './fetch-like';
 import type { LocalAuthContext } from './local-auth';
 import { type RelayTenantSession, fetchKeyLogHead, relayGatewayRequest } from './relay-session';
 
-async function sealPackFromLocal(
+type SealedRelayPack = {
+  url: string;
+  tenantId: string;
+  token: Uint8Array;
+  sealed: Uint8Array;
+};
+
+async function sealPackForRelay(input: {
+  rootKey: RootKey;
+  rootPublicKey: Uint8Array;
+  rootEpoch: number;
+  tenantId: string;
+  token: Uint8Array;
+  logKey: Uint8Array;
+  headSeq: bigint;
+  headHash: Uint8Array;
+}): Promise<Uint8Array> {
+  const tokenCopy = new Uint8Array(input.token);
+  const logCopy = new Uint8Array(input.logKey);
+  try {
+    return await sealRelayPack({
+      rootSeed: input.rootKey.seed,
+      tenantId: input.tenantId,
+      rootPublicKey: input.rootPublicKey,
+      rootEpoch: input.rootEpoch,
+      plaintext: {
+        log_key: logCopy,
+        token: tokenCopy,
+        head_seq: input.headSeq,
+        head_hash: input.headHash,
+        issued_at: BigInt(Date.now()),
+      },
+    });
+  } finally {
+    tokenCopy.fill(0);
+    logCopy.fill(0);
+  }
+}
+
+async function sealPacksFromLocal(
   ctx: LocalAuthContext,
   rootKey: RootKey,
   userId: string
 ): Promise<{
-  tenantId: string;
-  sealed: Uint8Array;
   kdfParams: KdfParams;
   rootEpoch: number;
   headSeq: bigint;
-  relays: { url: string; tenantId: string; token: Uint8Array }[];
+  packs: SealedRelayPack[];
 } | null> {
   const store = new MeshRelayStore(ctx.db);
   const rows = store.listRelayRows();
@@ -34,72 +71,62 @@ async function sealPackFromLocal(
   const logKey = await store.getSecret('log', RELAY_LOG_KEY_EPOCH);
   const head = ctx.keyLogStore.head(userId);
   if (!user || !logKey || !head) return null;
-  const relays: { url: string; tenantId: string; token: Uint8Array }[] = [];
-  for (const row of rows) {
-    const relay = await store.getRelay(row.url);
-    if (relay) relays.push({ url: relay.url, tenantId: relay.tenantId, token: relay.token });
-  }
-  const primary = relays[0];
-  if (!primary) return null;
   const kdfParams = kdfParamsFromJson(user.kdfParamsJson);
-  const tokenCopy = new Uint8Array(primary.token);
-  const logCopy = new Uint8Array(logKey);
+  const packs: SealedRelayPack[] = [];
   try {
-    const sealed = await sealRelayPack({
-      rootSeed: rootKey.seed,
-      tenantId: primary.tenantId,
-      rootPublicKey: user.rootPublicKey,
-      rootEpoch: user.rootEpoch,
-      plaintext: {
-        log_key: logCopy,
-        token: tokenCopy,
-        head_seq: head.seq,
-        head_hash: head.hash,
-        issued_at: BigInt(Date.now()),
-      },
-    });
-    return {
-      tenantId: primary.tenantId,
-      sealed,
-      kdfParams,
-      rootEpoch: user.rootEpoch,
-      headSeq: head.seq,
-      relays,
-    };
+    for (const row of rows) {
+      const relay = await store.getRelay(row.url);
+      if (!relay) continue;
+      const sealed = await sealPackForRelay({
+        rootKey,
+        rootPublicKey: user.rootPublicKey,
+        rootEpoch: user.rootEpoch,
+        tenantId: relay.tenantId,
+        token: relay.token,
+        logKey,
+        headSeq: head.seq,
+        headHash: head.hash,
+      });
+      packs.push({
+        url: relay.url,
+        tenantId: relay.tenantId,
+        token: relay.token,
+        sealed,
+      });
+    }
   } finally {
-    tokenCopy.fill(0);
-    logCopy.fill(0);
     logKey.fill(0);
   }
+  if (packs.length === 0) return null;
+  return { kdfParams, rootEpoch: user.rootEpoch, headSeq: head.seq, packs };
 }
 
-async function postPackToRelays(input: {
-  relays: { url: string; tenantId: string; token: Uint8Array }[];
-  sealed: Uint8Array;
+async function postPacksToRelays(input: {
+  packs: SealedRelayPack[];
   kdfParams: KdfParams;
   rootEpoch: number;
   headSeq: bigint;
   fetcher?: FetchLike;
 }): Promise<void> {
-  const body = {
-    sealed_pack: encodeBase64url(input.sealed),
-    kdf_params: kdfParamsToWire(input.kdfParams),
-    root_epoch: input.rootEpoch,
-    head_seq:
-      Number(input.headSeq) <= Number.MAX_SAFE_INTEGER
-        ? Number(input.headSeq)
-        : input.headSeq.toString(),
-  };
+  const headSeq =
+    Number(input.headSeq) <= Number.MAX_SAFE_INTEGER
+      ? Number(input.headSeq)
+      : input.headSeq.toString();
   let lastError: unknown;
   let ok = false;
-  for (const relay of input.relays) {
+  for (const pack of input.packs) {
     try {
       await requestRelayJson({
         fetcher: input.fetcher,
-        url: joinRelayUrl(relay.url, `/api/relay/tenants/${relay.tenantId}/pack`),
+        url: joinRelayUrl(pack.url, `/api/relay/tenants/${pack.tenantId}/pack`),
         method: 'POST',
-        headers: { 'x-tmex-relay-token': encodeBase64url(relay.token) },
-        body,
+        headers: { 'x-tmex-relay-token': encodeBase64url(pack.token) },
+        body: {
+          sealed_pack: encodeBase64url(pack.sealed),
+          kdf_params: kdfParamsToWire(input.kdfParams),
+          root_epoch: input.rootEpoch,
+          head_seq: headSeq,
+        },
         label: 'relay pack upload',
       });
       ok = true;
@@ -110,20 +137,20 @@ async function postPackToRelays(input: {
   if (!ok && lastError) throw lastError;
 }
 
-/** 本机已接入中继时：用当前根种子密封并直接打各中继的 `/pack`（enroll / 改密）。 */
+/** 本机已接入中继时：按每台中继各自的 tenant/token 密封并 POST `/pack`。 */
 export async function uploadRelayPackFromLocal(input: {
   ctx: LocalAuthContext;
   rootKey: RootKey;
   userId: string;
   fetcher?: FetchLike;
 }): Promise<boolean> {
-  const sealed = await sealPackFromLocal(input.ctx, input.rootKey, input.userId);
+  const sealed = await sealPacksFromLocal(input.ctx, input.rootKey, input.userId);
   if (!sealed) return false;
   try {
-    await postPackToRelays({ ...sealed, fetcher: input.fetcher });
+    await postPacksToRelays({ ...sealed, fetcher: input.fetcher });
     return true;
   } finally {
-    sealed.sealed.fill(0);
+    for (const pack of sealed.packs) pack.sealed.fill(0);
   }
 }
 
@@ -139,45 +166,51 @@ export async function sealAndUploadRelayPack(input: {
     label: 'relay join material',
   });
   const relays = Array.isArray(material.relays) ? material.relays : [];
-  const primary = relays[0] as { url?: string; tenantId?: string; token?: string } | undefined;
-  const tenantId = typeof primary?.tenantId === 'string' ? primary.tenantId : '';
-  const tokenRaw = typeof primary?.token === 'string' ? primary.token : '';
   const logKeyRaw = typeof material.logKey === 'string' ? material.logKey : '';
-  if (!tenantId || !tokenRaw || !logKeyRaw) {
+  if (!logKeyRaw || relays.length === 0) {
     throw new Error('relay join-material missing tenant token or log key');
   }
   const head = await fetchKeyLogHead(input.session);
-  const token = decodeBase64url(tokenRaw);
   const logKey = decodeBase64url(logKeyRaw);
-  let sealed: Uint8Array;
+  const packs: { url: string; sealed_pack: string }[] = [];
   try {
-    sealed = await sealRelayPack({
-      rootSeed: input.rootKey.seed,
-      tenantId,
-      rootPublicKey: input.rootKey.publicKey,
-      rootEpoch: head.rootEpoch,
-      plaintext: {
-        log_key: logKey,
-        token,
-        head_seq: head.seq,
-        head_hash: head.hash,
-        issued_at: BigInt(Date.now()),
-      },
-    });
+    for (const raw of relays) {
+      const row = raw as { url?: string; tenantId?: string; token?: string };
+      if (typeof row.url !== 'string' || typeof row.tenantId !== 'string') continue;
+      if (typeof row.token !== 'string' || !row.token) continue;
+      if (input.urls && !input.urls.includes(row.url)) continue;
+      const token = decodeBase64url(row.token);
+      try {
+        const sealed = await sealPackForRelay({
+          rootKey: input.rootKey,
+          rootPublicKey: input.rootKey.publicKey,
+          rootEpoch: head.rootEpoch,
+          tenantId: row.tenantId,
+          token,
+          logKey,
+          headSeq: head.seq,
+          headHash: head.hash,
+        });
+        packs.push({ url: row.url, sealed_pack: encodeBase64url(sealed) });
+      } finally {
+        token.fill(0);
+      }
+    }
   } finally {
     logKey.fill(0);
-    token.fill(0);
+  }
+  if (packs.length === 0) {
+    throw new Error('relay join-material missing tenant token or log key');
   }
   await relayGatewayRequest(input.session, {
     path: '/api/mesh/relay/pack',
     method: 'POST',
     body: {
-      sealed_pack: encodeBase64url(sealed),
       kdf_params: kdfParamsToWire(input.kdfParams),
       root_epoch: head.rootEpoch,
       head_seq:
         Number(head.seq) <= Number.MAX_SAFE_INTEGER ? Number(head.seq) : head.seq.toString(),
-      ...(input.urls ? { urls: input.urls } : {}),
+      packs,
     },
     label: 'relay pack upload',
   });

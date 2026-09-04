@@ -59,10 +59,11 @@ export class RelayEnrollLimiter {
     const pruned = (this.failures.get(key) ?? []).filter((at) => now - at < this.windowMs);
     pruned.push(now);
     this.failures.set(key, pruned);
-    while (this.failures.size > this.maxKeys) {
-      const oldest = this.failures.keys().next().value;
-      if (oldest === undefined) break;
-      this.failures.delete(oldest);
+    if (this.failures.size <= this.maxKeys) return;
+    for (const [bucket, times] of this.failures) {
+      const live = times.filter((at) => now - at < this.windowMs);
+      if (live.length === 0) this.failures.delete(bucket);
+      else this.failures.set(bucket, live);
     }
   }
 }

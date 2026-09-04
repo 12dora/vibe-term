@@ -11,6 +11,9 @@ import {
   ARGON2ID_ITERATIONS,
   ARGON2ID_MEMORY_KIB,
   ARGON2ID_PARALLELISM,
+  KDF_BUDGET_MEMORY_KIB_MAX,
+  KdfParamsBudgetError,
+  assertKdfParamsWithinBudget,
   deriveSeed,
   generateEd25519KeyPair,
   generateKdfParams,
@@ -87,6 +90,39 @@ describe('canonical password → seed → root pk → delegation signature', () 
     },
     { timeout: 15_000 }
   );
+});
+
+describe('assertKdfParamsWithinBudget', () => {
+  it('accepts the protocol defaults and rejects over-budget params', () => {
+    expect(() => assertKdfParamsWithinBudget(generateKdfParams())).not.toThrow();
+    expect(() =>
+      assertKdfParamsWithinBudget({
+        salt: new Uint8Array(16).fill(1),
+        memory_kib: KDF_BUDGET_MEMORY_KIB_MAX + 1,
+        iterations: 1,
+        parallelism: 1,
+      })
+    ).toThrow(KdfParamsBudgetError);
+    expect(() =>
+      assertKdfParamsWithinBudget({
+        salt: new Uint8Array(15).fill(1),
+        memory_kib: 8,
+        iterations: 1,
+        parallelism: 1,
+      })
+    ).toThrow(KdfParamsBudgetError);
+  });
+
+  it('deriveSeed refuses over-budget params before Argon2', async () => {
+    await expect(
+      deriveSeed('tmex-test', {
+        salt: new Uint8Array(16).fill(1),
+        memory_kib: KDF_BUDGET_MEMORY_KIB_MAX + 1,
+        iterations: 1,
+        parallelism: 1,
+      })
+    ).rejects.toBeInstanceOf(KdfParamsBudgetError);
+  });
 });
 
 describe('Ed25519 / X25519 wrappers', () => {

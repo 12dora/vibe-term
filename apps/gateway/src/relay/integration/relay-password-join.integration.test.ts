@@ -206,4 +206,48 @@ describe('relay password join', () => {
       'RELAY_PACK_EPOCH_MISMATCH'
     );
   }, 30_000);
+
+  test('a rejected admit append leaves no local user', async () => {
+    const h = await boot();
+    const tenant = await h.createTenant('alpha', { password: 'relay-pass' });
+    await tenant.enroll();
+    await uploadPack(h, tenant);
+    const previous = globalThis.fetch;
+    let posts = 0;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const href =
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const method = init?.method ?? (init?.body ? 'POST' : 'GET');
+      if (href.includes('/keylog') && method === 'POST') {
+        posts += 1;
+        if (posts === 1) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED', message: 'nope' } }), {
+              status: 401,
+              headers: { 'content-type': 'application/json' },
+            })
+          );
+        }
+      }
+      return previous(input as RequestInfo, init);
+    }) as typeof fetch;
+    const created = createMigratedAuthDb();
+    const auth = await createAuthContextFromDb(created.db, { close: created.close });
+    try {
+      await expect(
+        performRelayPasswordJoin(
+          {
+            relayUrl: RELAY_TEST_PUBLIC_URL,
+            tenantId: tenant.tenantId(),
+            password: NODE_PASSWORD,
+          },
+          { auth }
+        )
+      ).rejects.toBeInstanceOf(RelayPasswordJoinError);
+      expect(auth.userStore.listUsers()).toHaveLength(0);
+    } finally {
+      globalThis.fetch = previous;
+      created.close();
+    }
+  }, 30_000);
 });

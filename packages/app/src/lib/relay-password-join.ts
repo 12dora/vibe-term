@@ -26,6 +26,7 @@ export type RelayPasswordJoinDeps = {
   now?: () => number;
   fetcher?: FetchLike;
   timeoutMs?: number;
+  afterUnpack?: (pack: Awaited<ReturnType<typeof joinKdfProofAndPack>>) => void | Promise<void>;
 };
 
 export type RelayPasswordJoinResult = {
@@ -109,12 +110,14 @@ export async function performRelayPasswordJoin(
   });
   const transport = { relayUrl, tenantId, fetcher, timeoutMs: deps.timeoutMs };
   let pack: Awaited<ReturnType<typeof joinKdfProofAndPack>> | undefined;
+  let metaKey: Uint8Array | undefined;
   try {
     pack = await joinKdfProofAndPack({
       ...transport,
       password: input.password,
       now: deps.now?.() ?? Date.now(),
     });
+    await deps.afterUnpack?.(pack);
     const log = await joinDownloadVerifyReplay(transport, pack);
     const admit = await joinSelfAdmitAndPersist({
       auth: deps.auth,
@@ -123,13 +126,15 @@ export async function performRelayPasswordJoin(
       log,
       name: input.name,
     });
+    metaKey = admit.metaKey;
     await joinUploadAndEnv({ auth: deps.auth, transport, pack, log, admit, pin });
-    pack.pack.log_key.fill(0);
-    pack.pack.token.fill(0);
     return { userId: log.genesisUid, relayUrl, tenantId };
   } catch (error) {
     throw wrapJoinError(error);
   } finally {
+    pack?.pack.log_key.fill(0);
+    pack?.pack.token.fill(0);
     pack?.rootKey.seed.fill(0);
+    metaKey?.fill(0);
   }
 }

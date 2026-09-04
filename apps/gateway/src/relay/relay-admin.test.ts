@@ -286,6 +286,15 @@ describe('relay admin mutations', () => {
     expect(body.config.minTokenEpoch).toBe(2);
   });
 
+  test('rejects a password shorter than 8 characters when non-empty', async () => {
+    const relay = await boot();
+    const res = await relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'short', mode: 'keep' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   test('rejects a password body without a mode', async () => {
     const relay = await boot();
     const res = await relay.adminFetch('/api/relay/password', {

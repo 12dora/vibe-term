@@ -1,6 +1,6 @@
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { buildSelfAdmitAndMetaKey } from '../../../../apps/gateway/src/auth/user-key-self-admit';
-import { relayMemberFromRecord } from '../../../../apps/gateway/src/mesh/relay-key-log-sync';
+import type { UserKeyService } from '../../../../apps/gateway/src/auth/user-key-service';
 import {
   bytesEqual,
   computeRecordHash,
@@ -10,13 +10,13 @@ import {
   hubHostFromUrl,
   verifyKeyLogChain,
 } from '../../../shared/src/auth';
-import type { KdfParams, RootKey } from '../../../shared/src/auth';
+import type { KdfParams, RootKey, UserKeyState } from '../../../shared/src/auth';
+import { assertKdfParamsWithinBudget } from '../../../shared/src/auth/root-key';
 import type { RelayPackPlaintext } from '../../../shared/src/relay';
 import {
   kdfParamsFromWire,
   kdfParamsToWire,
   openRelayPack,
-  sealRelayKeyLogRecord,
   sealRelayPack,
   signRelayEnrollProof,
 } from '../../../shared/src/relay';
@@ -31,6 +31,7 @@ import type { LocalAuthContext } from './local-auth';
 import { deriveRootKey } from './password';
 import { storeRelayCaPin } from './relay-ca';
 import { openRelayKeyLogPage, parseRelayKeyLogPage } from './relay-keylog';
+import { type AppendPairResult, appendAdmitThenMetaRetrying } from './relay-password-join-append';
 import { persistRelayUplink } from './relay-store';
 
 export class RelayPasswordJoinError extends Error {
@@ -61,6 +62,7 @@ export type JoinPackPhase = {
 export type JoinLogPhase = {
   records: Awaited<ReturnType<typeof openRelayKeyLogPage>>;
   genesisUid: string;
+  state: UserKeyState;
 };
 
 export type JoinAdmitPhase = {
@@ -68,6 +70,7 @@ export type JoinAdmitPhase = {
   appliedSeq: number;
   appliedHash: Uint8Array;
   rootEpoch: number;
+  metaKey: Uint8Array;
 };
 
 function tenantHeaders(token: Uint8Array): Record<string, string> {
@@ -99,10 +102,20 @@ export function relaysForPersist(
   joined: { url: string; tenantId: string; token: Uint8Array }
 ) {
   const rows = [...(stateRelays ?? [])].sort((a, b) => a.priority - b.priority);
-  if (!rows.some((row) => row.url === joined.url)) {
-    rows.unshift({ ...joined, priority: 0 });
+  const match = rows.find(
+    (row) => row.url === joined.url && row.tenantId.toLowerCase() === joined.tenantId.toLowerCase()
+  );
+  if (!match) {
+    throw new RelayPasswordJoinError('join_failed', '该中继不在根签名的中继列表里');
   }
-  return rows.map((row, index) => ({ ...row, priority: index }));
+  return rows.map((row, index) => ({
+    ...row,
+    token:
+      row.url === joined.url && row.tenantId.toLowerCase() === joined.tenantId.toLowerCase()
+        ? joined.token
+        : row.token,
+    priority: index,
+  }));
 }
 
 async function downloadKeyLog(input: {
@@ -135,35 +148,6 @@ async function downloadKeyLog(input: {
     if (!Number.isFinite(fromSeq) || fromSeq <= 0) break;
   }
   return openRelayKeyLogPage(input.logKey, items);
-}
-
-async function appendRecordsToRelay(input: {
-  relayUrl: string;
-  tenantId: string;
-  token: Uint8Array;
-  logKey: Uint8Array;
-  records: { bytes: Uint8Array; sig: Uint8Array }[];
-  fetcher?: FetchLike;
-  timeoutMs?: number;
-}): Promise<void> {
-  for (const record of input.records) {
-    const seq = decodeKeyLogRecord(record.bytes).seq;
-    const blob = await sealRelayKeyLogRecord(input.logKey, record);
-    const member = relayMemberFromRecord(record);
-    await requestRelayJson({
-      fetcher: input.fetcher,
-      url: joinRelayUrl(input.relayUrl, `/api/relay/tenants/${input.tenantId}/keylog`),
-      method: 'POST',
-      headers: tenantHeaders(input.token),
-      body: {
-        seq: Number(seq) <= Number.MAX_SAFE_INTEGER ? Number(seq) : seq.toString(),
-        blob,
-        ...(member ? { member } : {}),
-      },
-      label: 'relay key log append',
-      timeoutMs: input.timeoutMs,
-    });
-  }
 }
 
 async function uploadPack(input: {
@@ -237,6 +221,7 @@ export async function joinKdfProofAndPack(
     if (!kdfParams) {
       throw new RelayPasswordJoinError('join_failed', 'relay kdf params are malformed');
     }
+    assertKdfParamsWithinBudget(kdfParams);
     rootKey = await deriveRootKey(input.password, kdfParams);
     if (!rootKey) {
       throw new RelayPasswordJoinError('join_failed', 'failed to derive root key');
@@ -299,10 +284,50 @@ export async function joinDownloadVerifyReplay(
     throw new RelayPasswordJoinError('join_failed', `key log rejected: ${verified.error}`);
   }
   const genesisUid = decodeKeyLogRecord(records[0]?.bytes ?? new Uint8Array()).uid;
-  return { records, genesisUid };
+  return { records, genesisUid, state: verified.state };
 }
 
-/** 本机自承认、落库中继 uplink。 */
+function stubKeyService(state: UserKeyState): UserKeyService {
+  return { currentState: () => state } as unknown as UserKeyService;
+}
+
+async function buildAdmitAndMeta(input: {
+  auth: LocalAuthContext;
+  pack: JoinPackPhase;
+  log: JoinLogPhase;
+}): Promise<Awaited<ReturnType<typeof buildSelfAdmitAndMetaKey>> & { nodeId: string }> {
+  const identity = await ensureNodeIdentity(input.auth.identityStore);
+  const built = await buildSelfAdmitAndMetaKey({
+    service: stubKeyService(input.log.state),
+    userId: input.log.genesisUid,
+    identity,
+    rootKey: input.pack.rootKey,
+    now: input.pack.now,
+  });
+  return { ...built, nodeId: identity.nodeIdHex };
+}
+
+function mapAppendFailure(result: AppendPairResult, nodeId: string): void {
+  if (result.ok) return;
+  if (result.kind === 'seq_mismatch') {
+    throw new RelayPasswordJoinError('join_failed', 'SEQ_MISMATCH');
+  }
+  if (result.kind === 'member_ignored') {
+    throw new RelayPasswordJoinError('join_failed', 'relay rejected the admit-node member sidecar');
+  }
+  if (result.kind === 'admit_failed') {
+    const message =
+      result.error instanceof Error ? result.error.message : 'admit-node append failed';
+    throw new RelayPasswordJoinError('join_failed', message);
+  }
+  const detail = result.error instanceof Error ? result.error.message : 'meta-key append failed';
+  throw new RelayPasswordJoinError(
+    'join_failed',
+    `admit-node was accepted by the relay but meta-key append failed; node ${nodeId} may remain pending on the relay (${detail})`
+  );
+}
+
+/** 先把 admit-node / meta-key 追加到中继，成功后才提交本机状态。 */
 export async function joinSelfAdmitAndPersist(input: {
   auth: LocalAuthContext;
   transport: JoinTransport;
@@ -311,12 +336,38 @@ export async function joinSelfAdmitAndPersist(input: {
   name?: string;
 }): Promise<JoinAdmitPhase> {
   const identity = await ensureNodeIdentity(input.auth.identityStore);
-  const committed = await joinUserKeyService(input.auth, input.log.records).commitJoin({
-    records: input.log.records,
+  let log = input.log;
+  let built = await buildAdmitAndMeta({ auth: input.auth, pack: input.pack, log });
+  let firstLoad = true;
+  const remote = await appendAdmitThenMetaRetrying({
+    relayUrl: input.transport.relayUrl,
+    tenantId: input.transport.tenantId,
+    token: input.pack.pack.token,
+    logKey: input.pack.pack.log_key,
+    fetcher: input.transport.fetcher,
+    timeoutMs: input.transport.timeoutMs,
+    load: async () => {
+      if (!firstLoad) {
+        log = await joinDownloadVerifyReplay(input.transport, input.pack);
+        built = await buildAdmitAndMeta({ auth: input.auth, pack: input.pack, log });
+      }
+      firstLoad = false;
+      const admit = built.records[0] ?? built.admit;
+      const meta = built.records[1] ?? built.admit;
+      return {
+        admit,
+        meta,
+        nodeId: built.nodeId,
+      };
+    },
+  });
+  mapAppendFailure(remote, remote.nodeId);
+  const committed = await joinUserKeyService(input.auth, log.records).commitJoin({
+    records: log.records,
     expectedRootPublicKey: input.pack.rootKey.publicKey,
     anchorHash: input.pack.pack.head_hash,
-    username: input.log.genesisUid,
-    expectedUserId: input.log.genesisUid,
+    username: log.genesisUid,
+    expectedUserId: log.genesisUid,
     identity: {
       nodeId: identity.nodeIdHex,
       hubUrl: null,
@@ -326,24 +377,17 @@ export async function joinSelfAdmitAndPersist(input: {
         x25519PublicKey: encodeBase64url(identity.x25519PublicKey),
       }),
       certSig: new Uint8Array(0),
-      userId: input.log.genesisUid,
+      userId: log.genesisUid,
     },
   });
   if (!committed.ok) {
     throw new RelayPasswordJoinError('join_failed', `key log rejected: ${committed.error}`);
   }
-  const built = await buildSelfAdmitAndMetaKey({
-    service: input.auth.userKeys,
-    userId: input.log.genesisUid,
-    identity,
-    rootKey: input.pack.rootKey,
-    now: input.pack.now,
-  });
-  const applied = await input.auth.userKeys.applyMany(input.log.genesisUid, built.records);
+  const applied = await input.auth.userKeys.applyMany(log.genesisUid, built.records);
   if (!applied.ok) {
     throw new RelayPasswordJoinError('join_failed', `self-admit failed: ${applied.error}`);
   }
-  const state = input.auth.userKeys.currentState(input.log.genesisUid);
+  const state = input.auth.userKeys.currentState(log.genesisUid);
   await persistRelayUplink(input.auth, {
     relays: relaysForPersist(state.relays?.relays, {
       url: input.transport.relayUrl,
@@ -355,12 +399,12 @@ export async function joinSelfAdmitAndPersist(input: {
     name: input.name ?? 'node',
     now: input.pack.now,
   });
-  built.metaKey.fill(0);
   return {
     builtRecords: built.records,
     appliedSeq: applied.seq,
     appliedHash: applied.hash,
     rootEpoch: state.rootEpoch,
+    metaKey: built.metaKey,
   };
 }
 
@@ -373,15 +417,6 @@ export async function joinUploadAndEnv(input: {
   admit: JoinAdmitPhase;
   pin: { caPem: string; fingerprint: string } | null;
 }): Promise<void> {
-  await appendRecordsToRelay({
-    relayUrl: input.transport.relayUrl,
-    tenantId: input.transport.tenantId,
-    token: input.pack.pack.token,
-    logKey: input.pack.pack.log_key,
-    records: input.admit.builtRecords,
-    fetcher: input.transport.fetcher,
-    timeoutMs: input.transport.timeoutMs,
-  });
   const head = input.auth.keyLogStore.head(input.log.genesisUid);
   await uploadPack({
     relayUrl: input.transport.relayUrl,

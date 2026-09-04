@@ -118,9 +118,28 @@ describe('requestEnrollmentByPassword', () => {
     ).rejects.toMatchObject({ code: 'join_failed' } satisfies Partial<JoinError>);
   });
 
-  test('empty password is rejected', async () => {
+  test('rejects kdf params outside the client budget', async () => {
     await expect(
-      requestEnrollmentByPassword({ hubUrl: 'https://hub.example', password: '' })
+      requestEnrollmentByPassword({
+        hubUrl: 'https://hub.example',
+        password: PASSWORD,
+        fetcher: async (input) => {
+          const url = String(input);
+          if (url.endsWith('/api/auth/mode')) {
+            return Response.json({
+              uid: UID,
+              kdfParams: {
+                salt: encodeBase64url(new Uint8Array(16).fill(1)),
+                memory_kib: 262_145,
+                iterations: 1,
+                parallelism: 1,
+              },
+              rootEpoch: 0,
+            });
+          }
+          return new Response('nope', { status: 404 });
+        },
+      })
     ).rejects.toMatchObject({ code: 'join_failed' });
   });
 });

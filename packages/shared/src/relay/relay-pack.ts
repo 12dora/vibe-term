@@ -9,6 +9,11 @@ import {
   hexToBytes,
   randomBytes,
 } from '../auth/encoding';
+import {
+  KDF_BUDGET_ITERATIONS_MAX,
+  KDF_BUDGET_MEMORY_KIB_MAX,
+  KDF_BUDGET_PARALLELISM_MAX,
+} from '../auth/root-key';
 
 export const RELAY_PACK_VERSION = 1;
 export const RELAY_PACK_HKDF_SALT = 'tmex-relay-pack/v1';
@@ -299,9 +304,9 @@ export function kdfParamsFromWire(value: unknown): KdfParams | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const rec = value as Record<string, unknown>;
   if (typeof rec.salt !== 'string') return null;
-  const memoryKib = kdfIntInRange(rec.memory_kib, 8, 4_194_304);
-  const iterations = kdfIntInRange(rec.iterations, 1, 64);
-  const parallelism = kdfIntInRange(rec.parallelism, 1, 16);
+  const memoryKib = kdfIntInRange(rec.memory_kib, 8, KDF_BUDGET_MEMORY_KIB_MAX);
+  const iterations = kdfIntInRange(rec.iterations, 1, KDF_BUDGET_ITERATIONS_MAX);
+  const parallelism = kdfIntInRange(rec.parallelism, 1, KDF_BUDGET_PARALLELISM_MAX);
   if (memoryKib === null || iterations === null || parallelism === null) return null;
   let salt: Uint8Array;
   try {

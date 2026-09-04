@@ -3,7 +3,7 @@ import type { RelayConfigStore } from './relay-config-store';
 import { RelayErrorCode, relayError, relayJson } from './relay-http';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import type { RelayMetering } from './relay-metering';
-import { hashRelayPassword } from './relay-password';
+import { hashRelayPassword, relayPasswordTooShort } from './relay-password';
 import { normalizeRelayQuota } from './relay-quota';
 import type { RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
@@ -75,6 +75,9 @@ export async function handleRelayPassword(deps: RelayAdminDeps, req: Request): P
   if (mode !== 'kick' && mode !== 'keep') return relayError(RelayErrorCode.invalidBody, 400);
   const password = body.password;
   if (password !== null && (typeof password !== 'string' || password.length === 0)) {
+    return relayError(RelayErrorCode.invalidBody, 400);
+  }
+  if (typeof password === 'string' && relayPasswordTooShort(password)) {
     return relayError(RelayErrorCode.invalidBody, 400);
   }
   const passwordHash = password === null ? null : await hashRelayPassword(password);

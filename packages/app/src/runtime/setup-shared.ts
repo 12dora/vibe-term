@@ -6,9 +6,11 @@ import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import {
   readEnvFile as defaultReadEnvFile,
   writeEnvFile as defaultWriteEnvFile,
+  resolveEnvWriteTarget,
+  stringifyEnv,
 } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
-import { type TmexRoles, isStandaloneRoles } from '../lib/roles';
+import { type TmexRoles, isStandaloneRoles, parseTmexRoles, roleNameFromFlags } from '../lib/roles';
 
 export const USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -289,4 +291,46 @@ export function newStagedEnvPath(envPath: string): string {
     dirname(envPath),
     `${basename(envPath)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
   );
+}
+
+/** 密码加入中继后的角色：本机已是 relay 则 `relay,node`，否则 `node`。 */
+export function relayPasswordJoinRoleName(current: string | undefined): string {
+  let roles: TmexRoles;
+  try {
+    roles = parseTmexRoles(current);
+  } catch {
+    roles = { hub: false, node: false, relay: false };
+  }
+  return roleNameFromFlags({ hub: false, node: true, relay: roles.relay });
+}
+
+export function applyRelayPasswordJoinEnv(
+  existing: Record<string, string>
+): Record<string, string> {
+  return {
+    ...existing,
+    TMEX_ROLES: relayPasswordJoinRoleName(existing.TMEX_ROLES),
+    TMEX_HUB_URL: '',
+    TMEX_HUB_PUBLIC_URL: '',
+  };
+}
+
+export async function commitRelayPasswordJoinEnv(deps: SetupEnvHost): Promise<void> {
+  let envTarget: string;
+  try {
+    envTarget = await resolveEnvWriteTarget(deps.envPath);
+  } catch (error) {
+    throw wrapJoinEnvWriteError(error);
+  }
+  const stagedPath = newStagedEnvPath(envTarget);
+  try {
+    await withEnvLock(async () => {
+      const existing = await readExistingEnv(deps);
+      await writeStagedEnv(deps, stagedPath, stringifyEnv(applyRelayPasswordJoinEnv(existing)));
+      await promoteStagedEnv(deps, stagedPath, envTarget);
+    });
+  } catch (error) {
+    await removeStagedEnv(deps, stagedPath);
+    throw wrapJoinEnvWriteError(error);
+  }
 }

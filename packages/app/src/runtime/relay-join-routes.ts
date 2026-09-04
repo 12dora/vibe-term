@@ -5,6 +5,7 @@ import {
   SetupError,
   assertSetupUrl,
   assertStandalone,
+  commitRelayPasswordJoinEnv,
   patchOwnedEnvKeys,
   withSetupTransition,
 } from './setup-shared';
@@ -58,6 +59,7 @@ export async function handleRelayJoinRequest(
         fetcher: deps.fetch,
       }
     );
+    await commitRelayPasswordJoinEnv(deps);
     const direct = await maybeEnableDirect(body.directEnable === true, deps);
     if (direct.direct === 'enabled') {
       await patchOwnedEnvKeys(deps, { [DIRECT_ENABLED_KEY]: 'true' });

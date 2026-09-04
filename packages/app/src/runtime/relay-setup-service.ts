@@ -1,6 +1,9 @@
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { RelayConfigStore } from '../../../../apps/gateway/src/relay/relay-config-store';
-import { hashRelayPassword } from '../../../../apps/gateway/src/relay/relay-password';
+import {
+  hashRelayPassword,
+  relayPasswordTooShort,
+} from '../../../../apps/gateway/src/relay/relay-password';
 import { RelayJoinTokenError, normalizeRelayUrl } from '../../../../packages/shared/src/relay';
 import { generateRelayAdminToken } from '../lib/install';
 import { fingerprintPublicKey } from '../lib/totp-uri';
@@ -57,7 +60,11 @@ function assertRelayPublicUrl(raw: string): string {
 function normalizeRelayPassword(value: string | null | undefined): string | null {
   if (value == null) return null;
   const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  if (trimmed.length === 0) return null;
+  if (relayPasswordTooShort(trimmed)) {
+    throw new SetupError('weak_password', 'password must be at least 8 characters', 400);
+  }
+  return trimmed;
 }
 
 async function persistRelayPassword(
