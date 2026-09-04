@@ -10,6 +10,7 @@ import {
 import {
   type RelayAdminDeps,
   handleRelayConfigPatch,
+  handleRelayMetrics,
   handleRelayPassword,
   handleRelayTenantDelete,
   handleRelayTenantKick,
@@ -21,6 +22,7 @@ import { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError } from './relay-http';
 import { RelayKeyLogStore } from './relay-key-log-store';
 import { RelayMetering } from './relay-metering';
+import { RelayMetricsCollector } from './relay-metrics';
 import { dispatchRelayPublic } from './relay-public-routes';
 import type { RelaySleep } from './relay-quota';
 import { RelayRegistry } from './relay-registry';
@@ -116,6 +118,7 @@ export class RelayRuntime {
   readonly configStore: RelayConfigStore;
   readonly registry: RelayRegistry;
   readonly metering: RelayMetering;
+  readonly metrics: RelayMetricsCollector;
   readonly uplink: RelayUplinkServer;
   readonly limiter: RelayEnrollLimiter;
   readonly adminAuth: RelayAdminAuth;
@@ -168,16 +171,27 @@ export class RelayRuntime {
       now: this.now,
       clientIp: opts.clientIp ?? (() => ''),
     };
+    this.metrics = new RelayMetricsCollector({
+      tenants: this.tenants,
+      registry: this.registry,
+      metering: this.metering,
+      openSockets: () => this.uplink.openSocketCount(),
+      now: this.now,
+      startedAt: this.startedAt,
+      version: this.version,
+    });
     this.adminDeps = {
       tenants: this.tenants,
       keyLog: this.keyLog,
       configStore: this.configStore,
       registry: this.registry,
       metering: this.metering,
+      metrics: this.metrics,
       uplink: this.uplink,
       now: this.now,
     };
     this.metering.start();
+    this.metrics.start();
   }
 
   async handleRequest(req: Request, server: RelayUpgradeServer): Promise<Response | undefined> {
@@ -220,6 +234,8 @@ export class RelayRuntime {
     switch (route.kind) {
       case 'status':
         return relayStatusPayload(this.adminDeps);
+      case 'metrics':
+        return handleRelayMetrics(this.adminDeps, req);
       case 'password':
         return handleRelayPassword(this.adminDeps, req);
       case 'config':
@@ -278,19 +294,23 @@ export class RelayRuntime {
   }
 
   async stop(): Promise<void> {
+    this.metrics.stop();
     await this.uplink.stop();
     this.metering.stop();
   }
 }
 
 type AdminRoute =
-  | { kind: 'status' | 'password' | 'config' }
+  | { kind: 'status' | 'metrics' | 'password' | 'config' }
   | { kind: 'tenant-patch' | 'tenant-kick' | 'tenant-delete'; tenantId: string };
 
 function matchAdminRoute(req: Request, path: string): AdminRoute | Response | null {
   const wrongMethod = relayError(RelayErrorCode.methodNotAllowed, 405);
   if (matchPath(path, '/api/relay/status')) {
     return req.method === 'GET' ? { kind: 'status' } : wrongMethod;
+  }
+  if (matchPath(path, '/api/relay/metrics')) {
+    return req.method === 'GET' ? { kind: 'metrics' } : wrongMethod;
   }
   if (matchPath(path, '/api/relay/password')) {
     return req.method === 'POST' ? { kind: 'password' } : wrongMethod;

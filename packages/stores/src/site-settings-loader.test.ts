@@ -33,6 +33,7 @@ interface Harness {
   loader: SiteSettingsLoader;
   pending: Deferred[];
   commits: SiteSettings[];
+  fallbackCommits: SiteSettings[];
   loadings: boolean[];
   current: () => SiteSettings | null;
 }
@@ -40,6 +41,7 @@ interface Harness {
 function createHarness(): Harness {
   const pending: Deferred[] = [];
   const commits: SiteSettings[] = [];
+  const fallbackCommits: SiteSettings[] = [];
   const loadings: boolean[] = [];
   let settings: SiteSettings | null = null;
 
@@ -54,10 +56,16 @@ function createHarness(): Harness {
       settings = next;
       commits.push(next);
     },
+    commitFallback: (next) => {
+      settings = next;
+      commits.push(next);
+      fallbackCommits.push(next);
+      return next;
+    },
     fallback: FALLBACK,
   });
 
-  return { loader, pending, commits, loadings, current: () => settings };
+  return { loader, pending, commits, fallbackCommits, loadings, current: () => settings };
 }
 
 function flushAsync(): Promise<void> {
@@ -159,6 +167,46 @@ describe('createSiteSettingsLoader 失败处理', () => {
     expect(b).toBe(a);
     expect(h.current()?.siteName).toBe('fallback');
     expect(h.commits).toHaveLength(1);
+  });
+
+  test('兜底走 commitFallback 而非 commit：失败不得沿用成功路径的语言同步', async () => {
+    const h = createHarness();
+    const boot = h.loader.fetchSettings();
+    h.pending[0]?.reject(new Error('boom'));
+    await expect(boot).resolves.toMatchObject({ siteName: 'fallback' });
+
+    expect(h.fallbackCommits).toHaveLength(1);
+    expect(h.fallbackCommits[0]).toBe(FALLBACK);
+  });
+
+  test('兜底提交返回真正落库的那份，而不是原始兜底值', async () => {
+    const commits: SiteSettings[] = [];
+    let settings: SiteSettings | null = null;
+    const pending: Deferred[] = [];
+    const loader = createSiteSettingsLoader({
+      request: () =>
+        new Promise<SiteSettings>((resolve, reject) => {
+          pending.push({ resolve, reject });
+        }),
+      current: () => settings,
+      setLoading: () => {},
+      commit: (next) => {
+        settings = next;
+        commits.push(next);
+      },
+      // 站点 store 会把语言改成「当前已解析的那个」再落库
+      commitFallback: (next) => {
+        const patched: SiteSettings = { ...next, language: 'zh_CN' };
+        settings = patched;
+        return patched;
+      },
+      fallback: FALLBACK,
+    });
+
+    const boot = loader.fetchSettings();
+    pending[0]?.reject(new Error('boom'));
+    await expect(boot).resolves.toMatchObject({ language: 'zh_CN' });
+    expect(commits).toHaveLength(0);
   });
 
   test('fetch 与 ensureFresh 混合搭车失败时行为一致：前者兜底、后者抛出', async () => {

@@ -12,8 +12,13 @@ import type {
 } from '@tmex/api-client/local/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
-import { useState } from 'react';
+import { type FormEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import {
+  type BecomeRelayGateEvent,
+  becomeRelayGate,
+  pureRelaySubmitPlan,
+} from './become-relay-gate';
 import { currentOrigin, navigateToLogin } from './browser-location';
 import {
   FormField,
@@ -23,6 +28,7 @@ import {
   SetupSubmitRow,
   SwitchRow,
 } from './form-parts';
+import { PureRelayConfirm } from './pure-relay-confirm';
 import { writeSelfRelayFollowUp } from './self-relay-followup';
 import { submitBecomeRelay } from './submit';
 import { useHubSetupSubmit } from './use-hub-setup-submit';
@@ -78,26 +84,46 @@ export function BecomeRelayForm({
     initialValues({ origin, nodeEnv, initialRole, directSupported })
   );
 
+  // 纯中继一提交就没有网页可回，也无法在网页里改回来：这一档必须先确认。
+  const [confirmingPure, setConfirmingPure] = useState(false);
+
   const errors = validateBecomeRelay(values, nodeEnv);
-  const { showErrors, submitting, submitError, result, waiter, blocked, handleSubmit } =
-    useHubSetupSubmit<SetupRelayResponse>({
-      client,
-      hasErrors: hasErrors(errors),
-      uplink: 'relay',
-      submit: async () => {
-        const outcome = await submitBecomeRelay(values, client);
-        // 中继起来之后本机还要以租户身份接一次自己的中继：留个记号，重启后把入口顶到眼前。
-        if (values.alsoNode) writeSelfRelayFollowUp();
-        return outcome;
-      },
-      successMessage: t('nodes.setup.toast.relayCreated'),
-      onRestarted,
-      waitForRestart: values.alsoNode,
-    });
+  const {
+    showErrors,
+    revealErrors,
+    submitting,
+    submitError,
+    result,
+    waiter,
+    blocked,
+    handleSubmit,
+  } = useHubSetupSubmit<SetupRelayResponse>({
+    client,
+    hasErrors: hasErrors(errors),
+    uplink: 'relay',
+    submit: async () => {
+      const outcome = await submitBecomeRelay(values, client);
+      // 中继起来之后本机还要以租户身份接一次自己的中继：留个记号，重启后把入口顶到眼前。
+      if (values.alsoNode) writeSelfRelayFollowUp();
+      return outcome;
+    },
+    successMessage: t('nodes.setup.toast.relayCreated'),
+    onRestarted,
+    waitForRestart: values.alsoNode,
+  });
   const shown = showErrors ? errors : {};
 
   function update(patch: Partial<BecomeRelayValues>): void {
     setValues((previous) => ({ ...previous, ...patch }));
+  }
+
+  /** 闸门说提交就提交；说确认就先开确认框（`becomeRelayGate`）。 */
+  function step(event: BecomeRelayGateEvent, formEvent?: FormEvent): void {
+    const next = becomeRelayGate(event);
+    setConfirmingPure(next.confirming);
+    if (!next.submit) return;
+    // 确认框里点「创建并重启」时没有真实表单事件，补一个空的。
+    void handleSubmit(formEvent ?? ({ preventDefault: () => undefined } as FormEvent));
   }
 
   if (result) return <BecomeRelayResult result={result} waiter={waiter} />;
@@ -109,44 +135,15 @@ export function BecomeRelayForm({
         <CardDescription>{t('nodes.setup.becomeRelay.description')}</CardDescription>
       </CardHeader>
       <CardContent>
-        <form className="space-y-6" onSubmit={(event) => void handleSubmit(event)}>
-          <FormField
-            id="setup-relay-public-url"
-            label={t('nodes.setup.fields.relayPublicUrl')}
-            hint={t('nodes.setup.fields.relayPublicUrlHint')}
-            error={shown.relayPublicUrl && t(shown.relayPublicUrl)}
-          >
-            <Input
-              id="setup-relay-public-url"
-              value={values.relayPublicUrl}
-              onChange={(event) => update({ relayPublicUrl: event.target.value })}
-              placeholder={t('nodes.setup.fields.urlPlaceholder')}
-              autoComplete="url"
-              className="min-h-10"
-            />
-          </FormField>
-
-          <FormField
-            id="setup-relay-password"
-            label={t('nodes.setup.fields.relayPassword')}
-            hint={t('nodes.setup.fields.relayPasswordHint')}
-            error={shown.relayPassword && t(shown.relayPassword)}
-          >
-            <PasswordFieldWithGenerate
-              id="setup-relay-password"
-              value={values.relayPassword}
-              onChange={(next) => update({ relayPassword: next })}
-              defaultGenerate
-            />
-          </FormField>
-
-          <SwitchRow
-            id="setup-relay-also-node"
-            label={t('nodes.setup.fields.relayAlsoNode')}
-            hint={t('nodes.setup.fields.relayAlsoNodeHint')}
-            checked={values.alsoNode}
-            onCheckedChange={(checked) => update({ alsoNode: checked })}
-          />
+        <form
+          className="space-y-6"
+          onSubmit={(event) => {
+            event.preventDefault();
+            revealErrors();
+            step({ kind: 'submit', plan: pureRelaySubmitPlan(values, nodeEnv) }, event);
+          }}
+        >
+          <RelayServiceFields values={values} shown={shown} onChange={update} />
 
           {values.alsoNode ? (
             <RelayAccountFields
@@ -176,7 +173,67 @@ export function BecomeRelayForm({
           />
         </form>
       </CardContent>
+
+      <PureRelayConfirm
+        open={confirmingPure}
+        onConfirm={() => step({ kind: 'confirm' })}
+        onCancel={() => step({ kind: 'cancel' })}
+      />
     </Card>
+  );
+}
+
+/** 中继服务本身的三项：对外地址、接入口令、要不要同时当节点。 */
+function RelayServiceFields({
+  values,
+  shown,
+  onChange,
+}: {
+  values: BecomeRelayValues;
+  shown: Partial<Record<string, string>>;
+  onChange: (patch: Partial<BecomeRelayValues>) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <FormField
+        id="setup-relay-public-url"
+        label={t('nodes.setup.fields.relayPublicUrl')}
+        hint={t('nodes.setup.fields.relayPublicUrlHint')}
+        error={shown.relayPublicUrl && t(shown.relayPublicUrl)}
+      >
+        <Input
+          id="setup-relay-public-url"
+          value={values.relayPublicUrl}
+          onChange={(event) => onChange({ relayPublicUrl: event.target.value })}
+          placeholder={t('nodes.setup.fields.urlPlaceholder')}
+          autoComplete="url"
+          className="min-h-10"
+        />
+      </FormField>
+
+      <FormField
+        id="setup-relay-password"
+        label={t('nodes.setup.fields.relayPassword')}
+        hint={t('nodes.setup.fields.relayPasswordHint')}
+        error={shown.relayPassword && t(shown.relayPassword)}
+      >
+        <PasswordFieldWithGenerate
+          id="setup-relay-password"
+          value={values.relayPassword}
+          onChange={(next) => onChange({ relayPassword: next })}
+          defaultGenerate
+        />
+      </FormField>
+
+      <SwitchRow
+        id="setup-relay-also-node"
+        label={t('nodes.setup.fields.relayAlsoNode')}
+        hint={t('nodes.setup.fields.relayAlsoNodeHint')}
+        checked={values.alsoNode}
+        onCheckedChange={(checked) => onChange({ alsoNode: checked })}
+      />
+    </>
   );
 }
 
@@ -245,8 +302,8 @@ function RelayAccountFields({
         label={t('nodes.setup.fields.directEnable')}
         hint={
           directSupported
-            ? t('nodes.setup.fields.directEnableHint')
-            : t('nodes.setup.fields.directUnsupportedHint', { platform })
+            ? t('nodes.setup.fields.directEnableRelayHint')
+            : t('nodes.setup.fields.directUnsupportedRelayHint', { platform })
         }
         checked={values.directEnable && directSupported}
         disabled={!directSupported}

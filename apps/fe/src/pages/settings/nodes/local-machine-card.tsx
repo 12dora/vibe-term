@@ -1,9 +1,9 @@
-// 本机区块：角色、上级链路两个 tab（接入 Hub / 接入中继）、直连插件与通用设置。
-// 直连的四个动作都只动磁盘与 env，运行中的
-// RTC 管理器无法热加载，后端恒返回 `restartRequired: true`——这里必须给出「立即重启」并等服务
-// 回来，否则用户会以为操作没生效。
+// 本机卡：卡头（角色 + 唯一状态徽标 + 操作菜单）+ 连接 / 中继服务 / 网络三段正文。
+//
+// 直连的四个动作都只动磁盘与 env，运行中的 RTC 管理器无法热加载，后端恒返回
+// `restartRequired: true`——网络那一段必须给出「立即重启」并等服务回来，否则用户会以为
+// 操作没生效。
 
-import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultLocalApi } from '@tmex/api-client/local/local-api';
@@ -11,69 +11,52 @@ import type {
   LocalDirectStatus,
   LocalRole,
   LocalStatusResponse,
+  SetupRelayRole,
 } from '@tmex/api-client/local/types';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
-import { Loader2, RotateCcw } from 'lucide-react';
-import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import { Card, CardContent, CardHeader } from '@tmex/ui/card';
+import { Loader2 } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router';
-import { Row } from './copy-feedback';
+import { Notice, NoticeAction } from './card-parts';
 import {
   type DirectApi,
-  DirectSection,
   RemoveConfirm,
   describeDirectError,
   useDirectMutations,
 } from './direct-section';
-import { DomainAccessRow, domainAccessApi, readDomainAccess } from './domain-access-row';
-import type { SetupIntentRecord } from './membership/intent';
+import { domainAccessApi, readDomainAccess } from './domain-access-row';
+import { LocalMachineBody } from './local-machine-body';
+import { LocalMachineHeader } from './local-machine-header';
+import { type MachineStatusBadge, machineStatusBadge } from './machine-status';
+import type { SetupIntent } from './membership/intent';
 import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
-import { ROLE_LABEL_KEY, classifyRoleChange } from './membership/role-transition';
-import { type LeaveMesh, useLeaveMesh } from './membership/use-leave-mesh';
-import {
-  type RestartGateway,
-  type RestartState,
-  useRestartGateway,
-} from './restart/use-restart-now';
-import { PureRelayConfirm } from './setup/pure-relay-confirm';
+import { classifyRoleChange, isRelayRole } from './membership/role-transition';
+import { useLeaveMesh } from './membership/use-leave-mesh';
+import { useRestartGateway } from './restart/use-restart-now';
 import { useSetupCommitted } from './setup/setup-transition';
+import { attachedHubRtt, resolveAttachedHub } from './uplink/hub-uplink-panel';
 import type { LocalUplinkController } from './uplink/local-uplink-controller';
-import { LocalUplinkTabs } from './uplink/local-uplink-tabs';
-import type { UplinkTab } from './uplink/uplink-tab-preference';
 
 export interface LocalMachineCardProps {
   mode: AuthModeResponse | null;
   status: LocalStatusResponse | null;
   loading: boolean;
   loginRequired: boolean;
+  /** `/api/local/status` 的非 401 失败：空着一张卡说不清任何事，必须给出原因与重试。 */
+  error?: string | null;
   api?: DirectApi;
   client?: ApiClient;
   /** 上级链路（hub 集合 / 中继链路 / 中继动作）的唯一所有者，由 `NodesTab` 建好传下来。 */
   uplink: LocalUplinkController;
   /** 直连状态变更 / 重启完成后重新拉 `local-status`。 */
   onRefresh: () => void;
-  /** standalone 下切角色不调任何接口，只让上层把对应的向导路径展开。 */
-  onSelectSetupPath?: (intent: SetupIntentRecord) => void;
   /** standalone 下已选中的向导路径。 */
-  wizardPath?: SetupIntentRecord['path'] | null;
-  /** standalone 下「本机作为中继」表单的插槽。 */
-  relaySetup?: ReactNode;
-  /** 打开时强制切到的上级链路 tab（角色下拉选中继、跨重启记号）。 */
-  requestedUplinkTab?: UplinkTab | null;
+  wizardPath?: SetupIntent | null;
+  /** standalone 下「本机作为中继」表单的预选角色。 */
+  wizardRelayRole?: SetupRelayRole;
   /** 中继角色下「接入本机中继」的提示。 */
   selfRelayFollowUp?: boolean;
 }
-
-/** 后端认的五个角色串（`packages/shared/src/roles.ts`）。 */
-export const SELECTABLE_ROLES: LocalRole[] = [
-  'standalone',
-  'node',
-  'hub,node',
-  'relay,node',
-  'relay',
-];
 
 /** 「更换 Hub」：角色不变，退出后直接展开加入向导。 */
 const CHANGE_HUB_REQUEST: LeaveDialogRequest = {
@@ -85,27 +68,46 @@ const CHANGE_HUB_REQUEST: LeaveDialogRequest = {
 };
 
 /**
- * 角色切换：standalone → mesh 只展开向导；mesh 侧的两种目标都要先退出当前 mesh，
- * 因此统一落到一份「待确认的退出请求」上，由 `LeaveDialog` 接手。
+ * 卡头那枚徽标：本机角色与上级链路快照拼出来的一档。
+ *
+ * 中继角色（`relay` / `relay,node`）的上级只可能是中继：后端在它还没以租户身份接入时把
+ * `mode` 报成 `hub`，hub 候选里还带一条本机占位地址——照 hub 那一档判会说出「未连接 Hub」，
+ * 一句它永远不该听到的话。因此延迟与「连上没有」一律只看中继链路。
  */
-function useRoleSwitch(
+function machineBadge(
+  meshEnabled: boolean,
   status: LocalStatusResponse | null,
-  busy: boolean,
-  onSelectSetupPath?: (intent: SetupIntentRecord) => void
-) {
+  uplink: LocalUplinkController,
+  selfNodeId: string | null
+): MachineStatusBadge {
+  const relayRole = status !== null && isRelayRole(status.role);
+  const attachedRelay = uplink.relay.attached;
+  const relayLink = relayRole || uplink.relay.relayMode;
+  return machineStatusBadge({
+    standalone: !meshEnabled,
+    relayRole,
+    roleKnown: status !== null,
+    relayMode: uplink.relay.relayMode,
+    relayAttached: attachedRelay?.online === true,
+    relayKicked: uplink.relay.kicked,
+    hubAttached: resolveAttachedHub(uplink.hubs, selfNodeId).kind !== 'none',
+    hubLoading: uplink.hub.loading,
+    rttMs: relayLink ? (attachedRelay?.rttMs ?? null) : attachedHubRtt(uplink.hubs),
+  });
+}
+
+/**
+ * 角色切换：目标角色都要先退出当前 mesh，因此统一落到一份「待确认的退出请求」上，
+ * 由 `LeaveDialog` 接手。standalone 不走这里——那台机器的下一步全在设置向导里。
+ */
+function useRoleSwitch(status: LocalStatusResponse | null, busy: boolean) {
   const [request, setRequest] = useState<LeaveDialogRequest | null>(null);
-  // 纯中继重启后网页就没了，网页里也改不回来：展开表单之前先确认一次。
-  const [pendingPureRelay, setPendingPureRelay] = useState<SetupIntentRecord | null>(null);
   const select = useCallback(
     (next: LocalRole) => {
       if (!status || busy) return;
       const transition = classifyRoleChange(status.role, next);
-      if (transition.kind === 'none' || transition.kind === 'unsupported') return;
-      if (transition.kind === 'setup') {
-        if (transition.intent.role === 'relay') setPendingPureRelay(transition.intent);
-        else onSelectSetupPath?.(transition.intent);
-        return;
-      }
+      // 只有 mesh → 别的角色会走到这里；其余分类（无变化 / 纯中继 / standalone 起步）不接。
+      if (transition.kind !== 'leave' && transition.kind !== 'switch') return;
       setRequest(
         transition.kind === 'leave'
           ? {
@@ -124,13 +126,23 @@ function useRoleSwitch(
             }
       );
     },
-    [busy, onSelectSetupPath, status]
+    [busy, status]
   );
-  const confirmPureRelay = useCallback(() => {
-    if (pendingPureRelay) onSelectSetupPath?.(pendingPureRelay);
-    setPendingPureRelay(null);
-  }, [onSelectSetupPath, pendingPureRelay]);
-  return { request, setRequest, select, pendingPureRelay, setPendingPureRelay, confirmPureRelay };
+  return { request, setRequest, select };
+}
+
+/**
+ * 动作的返回体就是权威结果，先盖在拉到的状态上：重新拉 `local-status` 是异步的，
+ * 不盖的话开关会在这段时间里停在旧值。下一份状态到达（引用变了）即撤销。
+ */
+function useAppliedDirect(fetched: LocalDirectStatus | null) {
+  const [applied, setApplied] = useState<Partial<LocalDirectStatus> | null>(null);
+  const [seen, setSeen] = useState(fetched);
+  if (seen !== fetched) {
+    setSeen(fetched);
+    setApplied(null);
+  }
+  return { direct: fetched && applied ? { ...fetched, ...applied } : fetched, setApplied };
 }
 
 export function LocalMachineCard({
@@ -138,37 +150,24 @@ export function LocalMachineCard({
   status,
   loading,
   loginRequired,
+  error = null,
   api = defaultLocalApi,
   client = defaultApiClient,
   uplink,
   onRefresh,
-  onSelectSetupPath,
   wizardPath = null,
-  relaySetup = null,
-  requestedUplinkTab = null,
+  wizardRelayRole = 'relay,node',
   selfRelayFollowUp = false,
 }: LocalMachineCardProps) {
   const { t } = useTranslation();
   const meshEnabled = mode?.mode === 'mesh';
-  // 账号安全改成右侧滑出面板，链接只换查询串，留在当前页面。
-  const { hrefFor: panelHref } = useSidePanel();
   const [restartRequired, setRestartRequired] = useState(false);
   const [directError, setDirectError] = useState<string | null>(null);
   const leave = useLeaveMesh({ mode, client });
-  const role = useRoleSwitch(status, leave.busy, onSelectSetupPath);
+  const role = useRoleSwitch(status, leave.busy);
   // 某条设置路径已提交、正在等重启：换角色只会得到 409，锁上。
   const setupCommitted = useSetupCommitted();
-
-  // 动作的返回体就是权威结果，先盖在拉到的状态上：重新拉 `local-status` 是异步的，
-  // 不盖的话开关会在这段时间里停在旧值。下一份状态到达（引用变了）即撤销。
-  const fetched: LocalDirectStatus | null = status?.direct ?? null;
-  const [applied, setApplied] = useState<Partial<LocalDirectStatus> | null>(null);
-  const [seen, setSeen] = useState(fetched);
-  if (seen !== fetched) {
-    setSeen(fetched);
-    setApplied(null);
-  }
-  const direct = fetched && applied ? { ...fetched, ...applied } : fetched;
+  const { direct, setApplied } = useAppliedDirect(status?.direct ?? null);
 
   // 重启成功后插件已经加载，横幅必须先撤掉，否则用户会以为还要再重启一次。
   const onRestarted = useCallback(() => {
@@ -187,112 +186,80 @@ export function LocalMachineCard({
       });
       if (result.restartRequired) setRestartRequired(true);
     },
-    onError: (error) => setDirectError(describeDirectError(t, error)),
+    onError: (failure) => setDirectError(describeDirectError(t, failure)),
     onRefresh,
   });
 
-  const busy = mutations.busy || restart.waiting;
-  const domainAccess = readDomainAccess(status);
   const domainApi = useMemo(() => domainAccessApi(client), [client]);
+  const badge = machineBadge(meshEnabled, status, uplink, mode?.nodeId ?? null);
 
   return (
     <Card data-testid="local-machine-card">
       <CardHeader>
-        <CardTitle>{t('nodes.machine.title')}</CardTitle>
+        <LocalMachineHeader
+          role={status?.role ?? null}
+          status={badge}
+          meshEnabled={meshEnabled}
+          roleLocked={leave.busy || setupCommitted}
+          onSelectRole={role.select}
+          onLeave={() => role.select('standalone')}
+        />
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+      <CardContent className="flex flex-col gap-5">
+        {error && !loginRequired && (
+          <Notice
+            tone="danger"
+            testId="local-machine-error"
+            action={
+              <NoticeAction
+                label={t('common.retry')}
+                testId="local-machine-retry"
+                onClick={onRefresh}
+              />
+            }
+          >
+            {t('nodes.machine.loadFailed', { detail: error })}
+          </Notice>
+        )}
         {loginRequired ? (
           <p className="text-xs text-muted-foreground" data-testid="local-machine-login-required">
             {t('nodes.machine.loginRequired')}
           </p>
-        ) : loading ? (
+        ) : loading && !status ? (
           <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
         ) : status && direct ? (
-          <>
-            <RoleRow
-              current={status.role}
-              disabled={leave.busy || setupCommitted}
-              onSelect={(next) => role.select(next)}
-            />
-
-            <LocalUplinkTabs
-              status={status}
-              selfNodeId={mode?.nodeId ?? null}
-              standalone={!meshEnabled}
-              uplink={uplink}
-              changeHubDisabled={leave.busy}
-              onChangeHub={() => role.setRequest(CHANGE_HUB_REQUEST)}
-              wizardPath={wizardPath}
-              relaySetup={relaySetup}
-              requestedTab={requestedUplinkTab}
-              selfRelayFollowUp={selfRelayFollowUp}
-            />
-
-            <DirectSection
-              direct={direct}
-              busy={busy}
-              pending={mutations.pending}
-              error={directError}
-              onAction={(action) => {
-                if (action !== 'remove') setDirectError(null);
-                mutations.dispatch(action);
-              }}
-            />
-
-            {restartRequired && <RestartBanner restart={restart} busy={busy} />}
-
-            {domainAccess && (
-              <>
-                <p className="pt-1 text-xs font-medium" data-testid="local-machine-general-heading">
-                  {t('nodes.machine.general')}
-                </p>
-                <DomainAccessRow policy={domainAccess} api={domainApi} onRefresh={onRefresh} />
-              </>
-            )}
-          </>
+          <LocalMachineBody
+            mode={mode}
+            status={status}
+            direct={direct}
+            uplink={uplink}
+            standalone={!meshEnabled}
+            wizardPath={wizardPath}
+            wizardRelayRole={wizardRelayRole}
+            selfRelayFollowUp={selfRelayFollowUp}
+            changeHubDisabled={leave.busy}
+            onChangeHub={() => role.setRequest(CHANGE_HUB_REQUEST)}
+            directBusy={mutations.busy || restart.waiting}
+            directPending={mutations.pending}
+            directError={directError}
+            onDirectAction={(action) => {
+              if (action !== 'remove') setDirectError(null);
+              mutations.dispatch(action);
+            }}
+            restartRequired={restartRequired}
+            restart={restart}
+            domainAccess={readDomainAccess(status)}
+            domainApi={domainApi}
+            onRefresh={onRefresh}
+          />
         ) : null}
-
-        {meshEnabled && (
-          <div className="flex flex-wrap items-center gap-3 pt-1 text-xs">
-            <Link
-              to={panelHref('security')}
-              state={SIDE_PANEL_LINK_STATE}
-              className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              data-testid="local-machine-account-security"
-            >
-              {t('nodes.machine.accountSecurity')}
-            </Link>
-          </div>
-        )}
       </CardContent>
 
       <RemoveConfirm
         open={mutations.confirmingRemove}
+        relayMode={uplink.relay.relayMode}
         onConfirm={mutations.confirmRemove}
         onCancel={mutations.cancelRemove}
-      />
-
-      <RoleDialogs role={role} leave={leave} />
-      {leave.dialog}
-      {uplink.prompt.dialog}
-    </Card>
-  );
-}
-
-/** 角色切换牵出的两个确认框：纯中继的事前确认，与退出 / 切换的进度对话框。 */
-function RoleDialogs({
-  role,
-  leave,
-}: {
-  role: ReturnType<typeof useRoleSwitch>;
-  leave: LeaveMesh;
-}) {
-  return (
-    <>
-      <PureRelayConfirm
-        open={role.pendingPureRelay !== null}
-        onConfirm={role.confirmPureRelay}
-        onCancel={() => role.setPendingPureRelay(null)}
       />
       <LeaveDialog
         request={role.request}
@@ -311,70 +278,8 @@ function RoleDialogs({
           leave.reset();
         }}
       />
-    </>
-  );
-}
-
-/** 角色下拉：后端只认 `SELECTABLE_ROLES` 里的角色串。 */
-function RoleRow({
-  current,
-  disabled,
-  onSelect,
-}: {
-  current: LocalRole;
-  disabled: boolean;
-  onSelect: (role: LocalRole) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <Row label={t('nodes.machine.role')}>
-      <Select value={current} onValueChange={(next) => next && onSelect(next as LocalRole)}>
-        <SelectTrigger
-          size="sm"
-          className="w-48"
-          disabled={disabled}
-          data-testid="local-machine-role"
-        >
-          <SelectValue>{t(ROLE_LABEL_KEY[current])}</SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {SELECTABLE_ROLES.map((item) => (
-            <SelectItem key={item} value={item} data-testid={`local-machine-role-${item}`}>
-              {t(ROLE_LABEL_KEY[item])}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </Row>
-  );
-}
-
-const RESTART_TEXT_KEY: Partial<Record<RestartState, string>> = {
-  waiting: 'nodes.machine.restarting',
-  timeout: 'nodes.machine.restartTimeout',
-};
-
-function RestartBanner({ restart, busy }: { restart: RestartGateway; busy: boolean }) {
-  const { t } = useTranslation();
-  return (
-    <div
-      className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/50 p-2 text-xs"
-      data-testid="local-machine-restart-required"
-    >
-      <span className="text-muted-foreground">
-        {t(RESTART_TEXT_KEY[restart.state] ?? 'nodes.machine.directRestartRequired')}
-      </span>
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        disabled={busy}
-        onClick={() => void restart.run()}
-        data-testid="local-machine-restart-now"
-      >
-        {restart.waiting ? <Loader2 className="animate-spin" /> : <RotateCcw />}
-        {t('nodes.machine.restartNow')}
-      </Button>
-    </div>
+      {leave.dialog}
+      {uplink.prompt.dialog}
+    </Card>
   );
 }

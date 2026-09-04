@@ -8,6 +8,16 @@
 
 import { type ApiClient, defaultApiClient } from '../client';
 import { type JsonRequestOptions, readCodedError, requestJson, requestOk } from '../json-mutation';
+import type { RelayMetricsResponse } from './metrics-types';
+
+export type {
+  RelayMetricsMember,
+  RelayMetricsProcess,
+  RelayMetricsResponse,
+  RelayMetricsSample,
+  RelayMetricsTenant,
+  RelayMetricsTotals,
+} from './metrics-types';
 
 /** 配额三元组；`bandwidthBytesPerSec` 为 `null` 表示不限速。 */
 export interface RelayQuota {
@@ -154,6 +164,17 @@ export class RelayAdminApi {
   /** `GET /api/relay/health`：无鉴权的健康探针。 */
   health(): Promise<RelayHealthResponse> {
     return this.json<RelayHealthResponse>('/api/relay/health', 'relay_health_failed');
+  }
+
+  /**
+   * `GET /api/relay/metrics`：进程/吞吐/成员运营指标。
+   * `members: false` 时请求 `?members=0`，响应省略 `members` 数组。
+   */
+  metrics(opts: { members: false }): Promise<Omit<RelayMetricsResponse, 'members'>>;
+  metrics(opts?: { members?: boolean }): Promise<RelayMetricsResponse>;
+  metrics(opts?: { members?: boolean }): Promise<RelayMetricsResponse> {
+    const query = opts?.members === false ? '?members=0' : '';
+    return this.json<RelayMetricsResponse>(`/api/relay/metrics${query}`, 'relay_metrics_failed');
   }
 
   /** `POST /api/relay/password`：设置或清除接入口令。 */

@@ -188,6 +188,7 @@ export function applyRelayPackUpload(
       headSeq: parsed.headSeq,
       tokenHash: sha256Hex(presentedToken),
       minTokenEpoch: deps.configStore.ensure(deps.now()).minTokenEpoch,
+      now: deps.now(),
     })
   );
 }

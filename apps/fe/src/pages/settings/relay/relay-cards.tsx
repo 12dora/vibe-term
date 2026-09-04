@@ -1,18 +1,13 @@
-// 中继运营面的头部三卡：健康、总量、接入口令。
+// 中继运营面的接入口令卡。运行状态与总量已并入指标面板（relay-metrics-panel）。
 
-import { formatBytes } from '@tmex/api-client/format';
-import type {
-  RelayConfigSummary,
-  RelayHealthResponse,
-  RelayTotals,
-} from '@tmex/api-client/relay/admin-api';
+import type { RelayConfigSummary } from '@tmex/api-client/relay/admin-api';
 import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { KeyRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { InfoRow, Notice } from '../components/form-primitives';
-import { bandwidthText, epochText, uptimeText } from './relay-format';
+import { bandwidthText, epochText } from './relay-format';
 
 function SectionCard({
   title,
@@ -33,54 +28,6 @@ function SectionCard({
       </CardHeader>
       <CardContent className="flex flex-col gap-1.5">{children}</CardContent>
     </Card>
-  );
-}
-
-export function RelayHealthCard({ health }: { health: RelayHealthResponse | null }) {
-  const { t } = useTranslation();
-  return (
-    <SectionCard title={t('relay.admin.health.title')} testId="relay-health-card">
-      <InfoRow label={t('relay.admin.health.state')} testId="relay-health-state">
-        {health === null ? (
-          t('relay.admin.health.unknown')
-        ) : (
-          <Badge variant={health.ok ? 'default' : 'destructive'}>
-            {t(health.ok ? 'relay.admin.health.ok' : 'relay.admin.health.down')}
-          </Badge>
-        )}
-      </InfoRow>
-      <InfoRow label={t('relay.admin.health.version')} testId="relay-health-version">
-        {health?.version ?? '—'}
-      </InfoRow>
-      <InfoRow label={t('relay.admin.health.uptime')} testId="relay-health-uptime">
-        {health === null ? '—' : uptimeText(t, health.uptimeMs)}
-      </InfoRow>
-    </SectionCard>
-  );
-}
-
-export function RelayTotalsCard({ totals }: { totals: RelayTotals }) {
-  const { t } = useTranslation();
-  return (
-    <SectionCard title={t('relay.admin.totals.title')} testId="relay-totals-card">
-      <InfoRow label={t('relay.admin.totals.tenants')} testId="relay-totals-tenants">
-        {totals.tenants}
-      </InfoRow>
-      {/* 「占用」是配额口径（pending + 已加入），与「在线」不是一个数。 */}
-      <InfoRow label={t('relay.admin.totals.nodes')} testId="relay-totals-nodes-used">
-        {totals.nodes}
-      </InfoRow>
-      <InfoRow label={t('relay.admin.totals.nodesOnline')} testId="relay-totals-nodes">
-        {totals.nodesOnline}
-      </InfoRow>
-      <InfoRow label={t('relay.admin.totals.streams')} testId="relay-totals-streams">
-        {totals.streams}
-      </InfoRow>
-      {/* 中继每转发一帧都同时计进 in 和 out，两个数逐字节相等——只摆一个「中转流量」。 */}
-      <InfoRow label={t('relay.admin.totals.traffic')} testId="relay-totals-traffic">
-        {formatBytes(totals.bytesOut)}
-      </InfoRow>
-    </SectionCard>
   );
 }
 

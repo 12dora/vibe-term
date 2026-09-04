@@ -1,7 +1,7 @@
 import { type Browser, type BrowserContext, type Page, expect, test } from '@playwright/test';
 import { createSinglePaneSession, ensureCleanSession, getPaneSize } from './helpers/tmux';
 
-// 多客户端视口策略：最大可见客户端持有整窗尺寸；小客户端跟随权威几何并本地平移。
+// 多客户端视口策略：最小可见客户端持有整窗尺寸；更大的客户端跟随权威几何并本地平移。
 
 async function readTerminalSize(page: Page): Promise<{ cols: number; rows: number } | null> {
   return page.evaluate(() => {
@@ -74,7 +74,7 @@ async function createDevice(request: any, sessionName: string): Promise<string> 
   return created.device.id;
 }
 
-test('viewport-policy: a smaller second client does not shrink the tmux window and pans locally', async ({
+test('viewport-policy: the smallest visible client owns the window; the larger client follows and pans', async ({
   browser,
   request,
 }) => {
@@ -87,35 +87,34 @@ test('viewport-policy: a smaller second client does not shrink the tmux window a
     clients = await openTwoClients(browser, deviceId);
     const { pageA, pageB } = clients;
 
-    // 大客户端 A 是 owner：整窗与 A 的本地几何一致
-    await expect.poll(() => matchState(pageA, paneId), { timeout: 20_000 }).toBe('match');
-    const sizeA = (await readTerminalSize(pageA))!;
-
-    // 小客户端 B 打开后整窗不得缩小；B 的模拟器跟随权威几何并进入平移视口
-    await pageB.waitForTimeout(1_500);
-    expect(getPaneSize(paneId)).toEqual(sizeA);
-    // 先确认 B 已知自己是 follower（平移视口打开），再看本地几何是否收敛到权威尺寸
-    await expect
-      .poll(async () => (await readPanState(pageB))?.enabled ?? null, { timeout: 10_000 })
-      .toBe(true);
-    await expect.poll(() => matchState(pageB, paneId), { timeout: 20_000 }).toBe('match');
-    const pan = (await readPanState(pageB))!;
-    expect(pan.overflowX).toBeGreaterThan(0);
-
-    // A 隐藏（切到后台）→ B 成为 owner，整窗收敛到 B 的容器尺寸，平移关闭
-    await setDocumentHidden(pageA, true);
+    // 小客户端 B 是 owner：整窗收敛到 B 的本地几何，B 不平移
     await expect
       .poll(async () => (await readPanState(pageB))?.enabled ?? null, { timeout: 10_000 })
       .toBe(false);
     await expect.poll(() => matchState(pageB, paneId), { timeout: 20_000 }).toBe('match');
     const sizeB = (await readTerminalSize(pageB))!;
-    expect(sizeB.cols).toBeLessThan(sizeA.cols);
 
-    // A 回到前台 → 重新成为 owner
-    await setDocumentHidden(pageA, false);
-    await expect.poll(() => getPaneSize(paneId).cols, { timeout: 20_000 }).toBe(sizeA.cols);
+    // 大客户端 A 是 follower：跟随权威几何并进入平移视口
     await expect
-      .poll(async () => (await readPanState(pageB))?.enabled ?? null, { timeout: 10_000 })
+      .poll(async () => (await readPanState(pageA))?.enabled ?? null, { timeout: 10_000 })
+      .toBe(true);
+    await expect.poll(() => matchState(pageA, paneId), { timeout: 20_000 }).toBe('match');
+    expect(getPaneSize(paneId)).toEqual(sizeB);
+
+    // B 隐藏（切到后台）→ A 成为 owner，整窗放大到 A 的容器尺寸，平移关闭
+    await setDocumentHidden(pageB, true);
+    await expect
+      .poll(async () => (await readPanState(pageA))?.enabled ?? null, { timeout: 10_000 })
+      .toBe(false);
+    await expect.poll(() => matchState(pageA, paneId), { timeout: 20_000 }).toBe('match');
+    const sizeA = (await readTerminalSize(pageA))!;
+    expect(sizeA.cols).toBeGreaterThan(sizeB.cols);
+
+    // B 回到前台 → 重新成为 owner，整窗缩回 B 的尺寸
+    await setDocumentHidden(pageB, false);
+    await expect.poll(() => getPaneSize(paneId).cols, { timeout: 20_000 }).toBe(sizeB.cols);
+    await expect
+      .poll(async () => (await readPanState(pageA))?.enabled ?? null, { timeout: 10_000 })
       .toBe(true);
   } finally {
     await clients?.contextA.close();
@@ -136,22 +135,22 @@ test('viewport-policy: closing the owner hands the window size to the remaining 
 
   try {
     clients = await openTwoClients(browser, deviceId);
-    const { contextA, pageA, pageB } = clients;
-    await expect.poll(() => matchState(pageA, paneId), { timeout: 20_000 }).toBe('match');
-    const sizeA = (await readTerminalSize(pageA))!;
+    const { contextB, pageA, pageB } = clients;
+    await expect.poll(() => matchState(pageB, paneId), { timeout: 20_000 }).toBe('match');
+    const sizeB = (await readTerminalSize(pageB))!;
     await expect
-      .poll(async () => (await readPanState(pageB))?.enabled ?? null, { timeout: 10_000 })
+      .poll(async () => (await readPanState(pageA))?.enabled ?? null, { timeout: 10_000 })
       .toBe(true);
 
-    await contextA.close();
+    await contextB.close();
 
     await expect
-      .poll(async () => (await readPanState(pageB))?.enabled ?? null, { timeout: 10_000 })
+      .poll(async () => (await readPanState(pageA))?.enabled ?? null, { timeout: 10_000 })
       .toBe(false);
-    await expect.poll(() => matchState(pageB, paneId), { timeout: 20_000 }).toBe('match');
-    expect(getPaneSize(paneId).cols).toBeLessThan(sizeA.cols);
+    await expect.poll(() => matchState(pageA, paneId), { timeout: 20_000 }).toBe('match');
+    expect(getPaneSize(paneId).cols).toBeGreaterThan(sizeB.cols);
   } finally {
-    await clients?.contextB.close();
+    await clients?.contextA.close();
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
   }

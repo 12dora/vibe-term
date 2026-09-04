@@ -1,17 +1,22 @@
 import { wsBorsh } from '@tmex/shared';
 import { readJsonObjectBody } from '../api/http';
-import { buildSetCookie, nodeSessionCookieName, parseCookies } from '../auth/cookies';
-import { AUTH_LOGIN_PUBLIC_PATHS } from './auth-public-paths';
+import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
-import { CLIENT_SOURCE_LOCAL, X_TMEX_CLIENT_SOURCE, isTrustedLocalClient } from './client-source';
+import {
+  AUTH_CHALLENGE_PATHS,
+  AUTH_LOGIN_PATH,
+  AUTH_SKIP,
+  applyAuthPolicy,
+  peekJsonCode,
+} from './forwarder-auth-policy';
 import { type ForwardPump as FailoverPump, runStreamFailover } from './forwarder-failover';
+import { copyUpstreamHeaders, filterRequestHeaders } from './forwarder-headers';
+import { parseNodePrefix } from './forwarder-path';
+import { nodeUnreachableResponse } from './forwarder-unreachable';
 import { buildJsonStreamBody } from './json-stream-body';
 import {
-  AUTH_401_BODY_LIMIT,
   HTTP_FAILOVER_MAX_ATTEMPTS,
-  MESH_ALLOWED_MIME,
-  MESH_FORWARD_CSP,
   MESH_FORWARD_WS_KIND,
   MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
@@ -26,45 +31,12 @@ import {
   STREAM_QUEUE_MAX_FRAMES,
   STREAM_QUEUE_OVERFLOW_REASON,
   type StreamOpener,
-  X_TMEX_SESSION_RENEWED,
-  X_TMEX_SET_SESSION,
   getMeshRequestContext,
-  parseSetSessionHeader,
   setMeshRequestContext,
 } from './mesh-deps';
 import { stamp } from './mesh-log';
-import { isHttps, jsonError } from './session-middleware';
+import { jsonError } from './session-middleware';
 import { StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
-
-const AUTH_SKIP = AUTH_LOGIN_PUBLIC_PATHS;
-const AUTH_CHALLENGE_PATHS = new Set(['/api/auth/challenge', '/api/auth/passkey/login/options']);
-const AUTH_LOGIN_PATH = '/api/auth/login';
-const RESPONSE_ALLOW = new Set([
-  'content-length',
-  'content-range',
-  'accept-ranges',
-  'cache-control',
-  'etag',
-  'last-modified',
-]);
-const DROP_ON_401_REWRITE = new Set([
-  'content-length',
-  'content-range',
-  'etag',
-  'content-disposition',
-]);
-const DROP_REQUEST_HEADERS = new Set([
-  'cookie',
-  'authorization',
-  'host',
-  'connection',
-  'upgrade',
-  'cf-connecting-ip',
-  'cf-access-jwt-assertion',
-  'cf-access-authenticated-user-email',
-  'cf-ray',
-  X_TMEX_CLIENT_SOURCE,
-]);
 
 type ForwarderDeps = {
   nodeId: string;
@@ -95,12 +67,6 @@ const IDEMPOTENT_HTTP = new Set(['GET', 'HEAD']);
 
 export function getSelfRewrite(req: Request): string | null {
   return getMeshRequestContext(req).selfRewrite ?? null;
-}
-
-function parseNodePrefix(pathname: string): { nodeId: string; rest: string } | null {
-  const match = pathname.match(/^\/n\/([^/]+)(\/.*)?$/);
-  if (!match) return null;
-  return { nodeId: decodeURIComponent(match[1] ?? ''), rest: match[2] || '/' };
 }
 
 export function rewriteSelf(req: Request, localNodeId: string): Request | null {
@@ -251,8 +217,8 @@ export class Forwarder {
         streamBody,
         abort
       );
-    } catch {
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    } catch (err) {
+      return nodeUnreachableResponse(nodeId, abort.aborted, err);
     }
   }
 
@@ -312,11 +278,14 @@ export class Forwarder {
         if (!retryable) break;
       }
     }
-    const extra: Record<string, unknown> = { nodeId: input.nodeId };
-    if (rawBody && lastError !== undefined) {
-      extra.error = lastError instanceof Error ? lastError.message : String(lastError);
-    }
-    return jsonError('NODE_UNREACHABLE', 503, extra);
+    return nodeUnreachableResponse(
+      input.nodeId,
+      abort.aborted,
+      lastError,
+      rawBody && lastError !== undefined
+        ? { error: lastError instanceof Error ? lastError.message : String(lastError) }
+        : undefined
+    );
   }
 
   private async openAuthorizedAttempt(
@@ -567,6 +536,7 @@ export class Forwarder {
     const retryable = IDEMPOTENT_HTTP.has(req.method);
     const body = retryable ? null : req.body;
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+    let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (signal.aborted) break;
       if (attempt > 0) {
@@ -590,11 +560,12 @@ export class Forwarder {
         );
         await this.recordForwardedLoginFailure(gated, rest, upstream);
         return upstream;
-      } catch {
+      } catch (err) {
+        lastError = err;
         if (!retryable) break;
       }
     }
-    return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    return nodeUnreachableResponse(nodeId, signal.aborted, lastError);
   }
 
   private async gateForwardedAuth(
@@ -652,15 +623,29 @@ export class Forwarder {
         ? undefined
         : jsonError('UNAUTHORIZED', 401, { code: 'NODE_LOGIN_REQUIRED', nodeId });
     }
-    if (req.signal.aborted) return jsonError('NODE_UNREACHABLE', 503, { nodeId });
-    const link = await this.deps.peers.getLink(nodeId).catch(() => null);
-    if (!link || req.signal.aborted) return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    if (req.signal.aborted) {
+      return nodeUnreachableResponse(nodeId, true);
+    }
+    let linkError: unknown;
+    const link = await this.deps.peers.getLink(nodeId).catch((err) => {
+      linkError = err;
+      return null;
+    });
+    if (!link || req.signal.aborted) {
+      return nodeUnreachableResponse(nodeId, req.signal.aborted, linkError);
+    }
     const cid = new URL(req.url).searchParams.get('cid')?.trim() || undefined;
-    const stream = await this.deps.streams.openWsStream(link, auth, cid).catch(() => null);
-    if (!stream) return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    let streamError: unknown;
+    const stream = await this.deps.streams.openWsStream(link, auth, cid).catch((err) => {
+      streamError = err;
+      return null;
+    });
+    if (!stream) {
+      return nodeUnreachableResponse(nodeId, false, streamError);
+    }
     if (req.signal.aborted) {
       stream.close();
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+      return nodeUnreachableResponse(nodeId, true);
     }
     const token = crypto.randomUUID();
     pendingStreams.set(token, stream);
@@ -772,142 +757,6 @@ function enqueueFrame(pump: ForwardPump, bytes: Uint8Array): boolean {
   return true;
 }
 
-function copyUpstreamHeaders(upstream: Response): Headers {
-  const headers = new Headers();
-  let contentType = '';
-  let contentDisposition: string | null = null;
-  upstream.headers.forEach((value, key) => {
-    const lower = key.toLowerCase();
-    if (lower === X_TMEX_SET_SESSION) return;
-    if (lower === 'content-type') {
-      contentType = value;
-      return;
-    }
-    if (lower === 'content-disposition') {
-      contentDisposition = value;
-      return;
-    }
-    if (RESPONSE_ALLOW.has(lower) || lower.startsWith('x-tmex-')) headers.set(key, value);
-  });
-  const mime = baseMime(contentType);
-  if (mime && MESH_ALLOWED_MIME.has(mime)) {
-    headers.set('content-type', contentType || mime);
-    if (contentDisposition) headers.set('content-disposition', contentDisposition);
-  } else {
-    headers.set('content-type', 'application/octet-stream');
-    headers.set('content-disposition', 'attachment');
-  }
-  headers.set('content-security-policy', MESH_FORWARD_CSP);
-  headers.set('x-content-type-options', 'nosniff');
-  return headers;
-}
-
-async function applyAuthPolicy(
-  req: Request,
-  headers: Headers,
-  upstream: Response,
-  nodeId: string,
-  skip401Rewrite = false
-): Promise<Response | null> {
-  const parsed = parseSetSessionHeader(upstream.headers.get(X_TMEX_SET_SESSION) ?? '');
-  if (parsed) appendNodeCookie(req, headers, nodeId, parsed.sid, parsed.maxAgeSec);
-  const renewed = upstream.headers.get(X_TMEX_SESSION_RENEWED);
-  if (renewed) {
-    headers.set(X_TMEX_SESSION_RENEWED, renewed);
-    const sid = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
-    const expiresAt = Number(renewed);
-    if (sid && Number.isFinite(expiresAt)) {
-      appendNodeCookie(
-        req,
-        headers,
-        nodeId,
-        sid,
-        Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
-      );
-    }
-  }
-  if (upstream.status !== 401 || skip401Rewrite) return null;
-  const raw = await readBodyLimited(upstream, AUTH_401_BODY_LIMIT);
-  let body: Record<string, unknown> = { code: 'NODE_LOGIN_REQUIRED', nodeId };
-  try {
-    const parsedBody = JSON.parse(raw) as unknown;
-    if (typeof parsedBody === 'object' && parsedBody !== null && !Array.isArray(parsedBody)) {
-      body = { ...(parsedBody as Record<string, unknown>), code: 'NODE_LOGIN_REQUIRED', nodeId };
-    }
-  } catch {
-    if (raw) body.message = raw;
-  }
-  for (const name of DROP_ON_401_REWRITE) headers.delete(name);
-  headers.set('content-type', 'application/json');
-  return new Response(JSON.stringify(body), { status: 401, headers });
-}
-
-function appendNodeCookie(
-  req: Request,
-  headers: Headers,
-  nodeId: string,
-  sid: string,
-  maxAgeSec: number
-): void {
-  headers.append(
-    'set-cookie',
-    buildSetCookie(nodeSessionCookieName(nodeId), sid, { maxAgeSec, secure: isHttps(req) })
-  );
-}
-
-function filterRequestHeaders(req: Request): Record<string, string> {
-  const out: Record<string, string> = {};
-  req.headers.forEach((value, key) => {
-    const lower = key.toLowerCase();
-    if (
-      DROP_REQUEST_HEADERS.has(lower) ||
-      lower.startsWith('proxy-') ||
-      lower.startsWith('x-forwarded-')
-    ) {
-      return;
-    }
-    out[key] = value;
-  });
-  if (isTrustedLocalClient(req)) {
-    out[X_TMEX_CLIENT_SOURCE] = CLIENT_SOURCE_LOCAL;
-  }
-  return out;
-}
-
-function baseMime(contentType: string): string {
-  return contentType.trim().toLowerCase().split(';')[0]?.trim() ?? '';
-}
-
-async function readBodyLimited(response: Response, limit: number): Promise<string> {
-  const reader = response.body?.getReader();
-  if (!reader) return '';
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value?.byteLength) continue;
-      const take = Math.min(value.byteLength, limit - total);
-      if (take <= 0) {
-        await reader.cancel();
-        break;
-      }
-      chunks.push(take < value.byteLength ? value.subarray(0, take) : value);
-      total += take;
-      if (take < value.byteLength) {
-        await reader.cancel();
-        break;
-      }
-    }
-  } catch {
-    try {
-      await reader.cancel();
-    } catch {}
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks, total));
-}
-
 async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0) return;
   if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
@@ -936,19 +785,6 @@ function countStreamBytes(
       },
     })
   );
-}
-
-async function peekJsonCode(response: Response): Promise<string> {
-  try {
-    const parsed = (await response.json()) as unknown;
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return '';
-    const rec = parsed as { code?: unknown; error?: unknown };
-    if (typeof rec.code === 'string') return rec.code;
-    if (typeof rec.error === 'string') return rec.error;
-    return '';
-  } catch {
-    return '';
-  }
 }
 
 function toBytes(message: unknown): Uint8Array | null {

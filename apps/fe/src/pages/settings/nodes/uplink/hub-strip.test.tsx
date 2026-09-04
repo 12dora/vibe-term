@@ -1,12 +1,14 @@
-// Hub chip 的候选诊断与悬浮详情：连不上的那台要能被认出来，最近一次尝试与错误都写进 title。
+// Hub chip 的共用零件：候选诊断的归一与匹配、主 / 备文案、授权来源文案。
+// 详情文案本身由「连接详情」逐字段摆出来（见 `connection-details.test.tsx`），这里只测纯函数。
 
 import { describe, expect, test } from 'bun:test';
-import type { MeshHubCandidate } from '@/node/mesh-hubs';
 import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
 import {
-  CANDIDATE_ERROR_MAX,
   candidateFailure,
-  hubChipTitle,
+  hubAuthorizationText,
+  hubDetailText,
+  hubLabel,
+  hubModeLabel,
   indexCandidates,
   normalizeHubUrl,
 } from './hub-strip';
@@ -45,63 +47,29 @@ describe('候选地址的归一与匹配', () => {
   });
 });
 
-describe('chip 的悬浮详情', () => {
-  test('写入归属只进悬浮详情，不占 chip 正文', () => {
-    expect(hubChipTitle(t, hub({ nodeId: 'h1' }), false, null, true)).toContain(
-      'nodes.hubs.writer'
+describe('共用文案', () => {
+  test('短名优先取名字，没有名字时用 nodeId 前 8 位', () => {
+    expect(hubLabel(hub({ nodeId: 'h1', name: 'hub-a' }))).toBe('hub-a');
+    expect(hubLabel(hub({ nodeId: '0123456789abcdef', name: undefined }))).toBe('01234567');
+  });
+
+  test('主 / 备各有文案，旧后端不下发 mode 时退回通用的 Hub', () => {
+    expect(hubModeLabel(t, 'active')).toBe('nodes.hubs.active');
+    expect(hubModeLabel(t, 'standby')).toBe('nodes.hubs.standby');
+    expect(hubModeLabel(t, null)).toBe('nodes.hub');
+  });
+
+  test('授权来源逐档翻译；旧后端不下发时不出这一行', () => {
+    expect(hubAuthorizationText(t, hub({ nodeId: 'h1', authorization: 'signed' }))).toContain(
+      'nodes.hubs.authorization.signed'
     );
-    expect(hubChipTitle(t, hub({ nodeId: 'h1' }), false, null, false)).not.toContain(
-      'nodes.hubs.writer'
-    );
+    expect(hubAuthorizationText(t, hub({ nodeId: 'h1' }))).toBeNull();
   });
 
-  test('没有失败记录时只有原来那一行', () => {
-    const title = hubChipTitle(t, hub({ nodeId: 'h1' }), false, null);
-    expect(title).toContain('nodes.hubs.detail');
-    expect(title).not.toContain('nodes.hubs.lastError');
-  });
-
-  test('有失败记录时补「最近尝试」与「最近错误」两行，错误截断', () => {
-    const failure: MeshHubCandidate = {
-      publicUrl: 'https://h1.example',
-      lastError: 'x'.repeat(400),
-      lastAttemptAt: 1700000000000,
-    };
-    const lines = hubChipTitle(t, hub({ nodeId: 'h1' }), false, failure).split('\n');
-    expect(lines).toHaveLength(3);
-    expect(lines[1]).toContain('nodes.hubs.lastAttempt');
-    expect(lines[2]).toContain('nodes.hubs.lastError');
-    expect(JSON.parse(lines[2].slice(lines[2].indexOf(':') + 1)).error).toHaveLength(
-      CANDIDATE_ERROR_MAX
-    );
-  });
-
-  test('带授权来源时多出一行，且排在失败诊断之前', () => {
-    const signed = hubChipTitle(t, hub({ nodeId: 'h1', authorization: 'signed' }), false, null);
-    expect(signed.split('\n')[1]).toBe(
-      'nodes.hubs.authorization.label:{"value":"nodes.hubs.authorization.signed"}'
-    );
-    const env = hubChipTitle(t, hub({ nodeId: 'h1', authorization: 'env' }), false, {
-      publicUrl: 'https://h1.example',
-      lastError: 'boom',
-      lastAttemptAt: 1,
-    }).split('\n');
-    expect(env).toHaveLength(4);
-    expect(env[1]).toContain('nodes.hubs.authorization.env');
-    expect(env[2]).toContain('nodes.hubs.lastAttempt');
-  });
-
-  test('旧后端不下发 authorization：不多出这一行', () => {
-    const title = hubChipTitle(t, hub({ nodeId: 'h1' }), false, null);
-    expect(title).not.toContain('nodes.hubs.authorization');
-  });
-
-  test('从未尝试过的候选：时间显示为破折号', () => {
-    const title = hubChipTitle(t, hub({ nodeId: 'h1' }), false, {
-      publicUrl: 'https://h1.example',
-      lastError: 'boom',
-      lastAttemptAt: null,
-    });
-    expect(title).toContain('"time":"—"');
+  test('节点表借用的详情文案仍带地址 / 优先级 / 纪元 / 在线态', () => {
+    const detail = hubDetailText(t, hub({ nodeId: 'h1', online: false }), false);
+    expect(detail).toContain('nodes.hubs.detail');
+    expect(detail).toContain('nodes.hubs.offline');
+    expect(hubDetailText(t, hub({ nodeId: 'h1' }), true)).toContain('nodes.hubs.attached');
   });
 });

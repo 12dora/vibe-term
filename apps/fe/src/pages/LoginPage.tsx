@@ -26,7 +26,7 @@ import {
 } from '@/auth/session-login';
 import { useAuthMode } from '@/auth/use-session-key';
 import { Brand } from '@/components/brand';
-import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
+import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi, isWebAuthnAvailable, requireRootEpoch } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
@@ -183,11 +183,47 @@ function PasskeyRow({
   );
 }
 
-// `login.uid` / `delegation.uid` / k_totp 的 HKDF info 用的都是 **user id**，
-// 输入框里的是用户名——只有在与 mode 返回的用户名一致时才能安全地换成 uid。
-function resolveLoginUid(mode: AuthModeResponse, username: string): string {
-  if (mode.uid && (!mode.username || username === mode.username)) return mode.uid;
-  return username;
+// `login.uid` / `delegation.uid` / k_totp 的 HKDF info 用的都是 **user id**，输入框里的是用户名。
+// 用户名框没有默认值（`tmex relay join` 建出来的账号，用户名就是那串 uid，填进去只会吓人），
+// 所以留空是常态：此时按 mode 给的 uid 走。只有确实输了一个**别的**名字才按名字走。
+export function resolveLoginUid(
+  mode: Pick<AuthModeResponse, 'uid' | 'username'>,
+  username: string
+): string {
+  if (!mode.uid) return username;
+  if (!username || !mode.username || mode.username === mode.uid) return mode.uid;
+  return username === mode.username ? mode.uid : username;
+}
+
+/** 提交前的必填校验：uid 已知时用户名可以留空，密码永远必填。 */
+export function missingRequiredCredentials(
+  mode: Pick<AuthModeResponse, 'uid'>,
+  username: string,
+  password: string
+): boolean {
+  if (!password) return true;
+  return !username && !mode.uid;
+}
+
+/** 提交前的本地校验结果：过了就把派生密码要用的 KDF 参数一并带出来（省一次收窄）。 */
+export type LoginPreflight =
+  | { ok: false; errorKey: string }
+  | { ok: true; kdfParams: AuthKdfParamsJson };
+
+/** 本地就能判定的失败一律不发请求，只回文案 key。 */
+export function loginPreflight(
+  mode: Pick<AuthModeResponse, 'uid' | 'totpEnabled' | 'kdfParams'>,
+  input: { username: string; password: string; totp: string }
+): LoginPreflight {
+  if (missingRequiredCredentials(mode, input.username, input.password)) {
+    return { ok: false, errorKey: 'auth.login.credentialsRequired' };
+  }
+  if (mode.totpEnabled && input.totp.length !== 6) {
+    return { ok: false, errorKey: 'auth.login.totpRequired' };
+  }
+  // 「没有主用户」与「密码不对」在界面上必须是同一句：别把账号是否存在漏出去。
+  if (!mode.kdfParams) return { ok: false, errorKey: 'auth.errors.invalidCredentials' };
+  return { ok: true, kdfParams: mode.kdfParams };
 }
 
 function LoginForm({ mode, api }: LoginFormProps) {
@@ -199,7 +235,8 @@ function LoginForm({ mode, api }: LoginFormProps) {
   /** `?node=` 是「去登录这一台」的显式入口（多半来自「登录此节点」按钮），必须等它完成。 */
   const targetNode = params.get('node');
 
-  const [username, setUsername] = useState(mode.username ?? '');
+  // 永远不预填：mesh 里 `username` 可能就是那串 uid（join 时按 key-log 创世 uid 建的账号）。
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [totp, setTotp] = useState('');
   const [busy, setBusy] = useState(false);
@@ -247,17 +284,9 @@ function LoginForm({ mode, api }: LoginFormProps) {
       event.preventDefault();
       if (busy) return;
       setError(null);
-      if (!username || !password) {
-        setError(t('auth.login.credentialsRequired'));
-        return;
-      }
-      if (mode.totpEnabled && totp.length !== 6) {
-        setError(t('auth.login.totpRequired'));
-        return;
-      }
-      if (!mode.kdfParams) {
-        // 「没有主用户」与「密码不对」在界面上必须是同一句：别把账号是否存在漏出去。
-        setError(t('auth.errors.invalidCredentials'));
+      const preflight = loginPreflight(mode, { username, password, totp });
+      if (!preflight.ok) {
+        setError(t(preflight.errorKey));
         return;
       }
       setBusy(true);
@@ -267,7 +296,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
         const rootEpoch = requireRootEpoch(mode);
         await establishSessionFromPassword({
           password,
-          kdfParams: mode.kdfParams,
+          kdfParams: preflight.kdfParams,
           uid: resolveUid(),
           entryNodeId: mode.nodeId,
           rootEpoch,

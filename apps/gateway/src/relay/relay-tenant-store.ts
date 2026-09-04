@@ -32,6 +32,7 @@ function toTenant(row: TenantRow): RelayTenantRecord {
     keyLogHeadSeq: BigInt(row.keyLogHeadSeq),
     kdfParamsJson: row.kdfParamsJson,
     sealedPack: row.sealedPack ? toBytes(row.sealedPack) : null,
+    sealedPackUpdatedAt: row.sealedPackUpdatedAt,
   };
 }
 
@@ -160,6 +161,7 @@ export class RelayTenantStore {
         rootEpoch: input.rootEpoch,
         kdfParamsJson: null,
         sealedPack: null,
+        sealedPackUpdatedAt: null,
       })
       .where(
         and(
@@ -183,6 +185,7 @@ export class RelayTenantStore {
     headSeq: bigint;
     tokenHash: string;
     minTokenEpoch: number;
+    now: number;
   }): 'ok' | 'not_found' | 'epoch' | 'head_ahead' | 'kicked' | 'unauthorized' {
     let result: 'ok' | 'not_found' | 'epoch' | 'head_ahead' | 'kicked' | 'unauthorized' =
       'not_found';
@@ -217,6 +220,7 @@ export class RelayTenantStore {
         .set({
           kdfParamsJson: input.kdfParamsJson,
           sealedPack: toBuffer(input.sealedPack),
+          sealedPackUpdatedAt: input.now,
         })
         .where(eq(relayTenants.id, input.tenantId))
         .run();

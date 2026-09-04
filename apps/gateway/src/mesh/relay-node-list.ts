@@ -70,6 +70,7 @@ export async function relayListToNodeList(
 ): Promise<UplinkNodeList> {
   const nodes: ListEntry[] = [];
   for (const node of msg.nodes) {
+    if (node.status !== 'admitted') continue;
     if (node.id === ctx.selfNodeId) continue;
     const cert = ctx.userStore.getCert(node.id);
     if (!cert || !ctx.userId || cert.userId !== ctx.userId || cert.revokedLogSeq != null) continue;

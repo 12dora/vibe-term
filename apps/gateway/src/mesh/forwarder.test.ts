@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
-import type { LinkSession } from '@tmex/shared/link';
+import { type NodeUnreachableReason, wsBorsh } from '@tmex/shared';
+import { LinkError, type LinkSession } from '@tmex/shared/link';
 import {
   FakePeers,
   FakeStreams,
@@ -34,6 +34,7 @@ import {
 } from './mesh-deps';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
 import { waitUntil } from './test-support';
+import { NodeUnreachableError, PeerHandshakeError } from './types';
 
 const OTHER = 'bb'.repeat(16);
 const dummyLink = {} as LinkSession;
@@ -79,9 +80,52 @@ describe('forwarder', () => {
       expect(await res.json()).toEqual({
         code: 'NODE_UNREACHABLE',
         nodeId: 'deadbeefdeadbeefdeadbeefdeadbeef',
+        reason: 'no_link',
       });
     } finally {
       mesh.close();
+    }
+  });
+
+  test('NODE_UNREACHABLE reason 来自错误类别，不泄漏原文', async () => {
+    const cases: Array<{ err: unknown; reason: NodeUnreachableReason }> = [
+      { err: new NodeUnreachableError(OTHER, 'not admitted'), reason: 'not_admitted' },
+      { err: new NodeUnreachableError(OTHER, 'revoked'), reason: 'not_admitted' },
+      {
+        err: new PeerHandshakeError('unknown', `no node_certs for ${OTHER}`),
+        reason: 'handshake_failed',
+      },
+      { err: new PeerHandshakeError('timeout', 'handshake timeout'), reason: 'timeout' },
+      { err: new LinkError('rst', 'quota-streams'), reason: 'relay_reset:quota-streams' },
+      { err: new LinkError('rst', 'self-target'), reason: 'relay_reset:self-target' },
+      { err: new LinkError('rst', 'unknown-target'), reason: 'relay_reset:unknown-target' },
+      { err: new LinkError('rst', 'offline'), reason: 'relay_reset:offline' },
+      { err: new LinkError('rst', 'open-failed'), reason: 'relay_reset:open-failed' },
+      { err: new DOMException('The operation was aborted.', 'AbortError'), reason: 'timeout' },
+      { err: new Error('https://evil.example/token=secret'), reason: 'no_link' },
+    ];
+    for (const { err, reason } of cases) {
+      const peers = new FakePeers();
+      peers.links.set(OTHER, dummyLink);
+      const streams = new FakeStreams();
+      streams.httpOpenError = err instanceof Error ? err : new Error(String(err));
+      const mesh = await bootMesh({ peers, streams });
+      try {
+        const res = asResponse(
+          await mesh.runtime.handleRequest(
+            new Request(`http://localhost/n/${OTHER}/api/ping`, { method: 'POST' }),
+            dummyServer
+          )
+        );
+        expect(res.status).toBe(503);
+        expect(await res.json()).toEqual({
+          code: 'NODE_UNREACHABLE',
+          nodeId: OTHER,
+          reason,
+        });
+      } finally {
+        mesh.close();
+      }
     }
   });
 
@@ -228,6 +272,7 @@ describe('forwarder', () => {
       );
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({ code: 'INVALID_CREDENTIALS' });
+      expect(res.headers.get('set-cookie')).toBeNull();
     } finally {
       mesh.close();
     }
@@ -237,7 +282,7 @@ describe('forwarder', () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const streams = new FakeStreams();
-    streams.nextResponse = new Response(JSON.stringify({ error: 'missing auth' }), {
+    streams.nextResponse = new Response(JSON.stringify({ error: 'via_mismatch' }), {
       status: 401,
       headers: { 'content-type': 'application/json' },
     });
@@ -245,16 +290,56 @@ describe('forwarder', () => {
     try {
       const res = asResponse(
         await mesh.runtime.handleRequest(
-          new Request(`http://localhost/n/${OTHER}/api/devices`),
+          new Request(`http://localhost/n/${OTHER}/api/devices`, {
+            headers: { cookie: `tmex_s_${OTHER}=stale` },
+          }),
           dummyServer
         )
       );
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({
-        error: 'missing auth',
+        error: 'via_mismatch',
         code: 'NODE_LOGIN_REQUIRED',
         nodeId: OTHER,
       });
+      const cookie = res.headers.get('set-cookie') ?? '';
+      expect(cookie).toContain(`tmex_s_${OTHER}=`);
+      expect(cookie).toContain('Path=/');
+      expect(cookie).toContain('HttpOnly');
+      expect(cookie).toContain('SameSite=Lax');
+      expect(cookie).toContain('Max-Age=0');
+      expect(cookie.includes('Secure')).toBe(false);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('401 via_mismatch expires the stale per-node cookie with login attributes', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponse = new Response(JSON.stringify({ error: 'via_mismatch' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`https://entry.example/n/${OTHER}/api/devices`, {
+            headers: { cookie: `tmex_s_${OTHER}=stale-sid` },
+          }),
+          dummyServer
+        )
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
+        error: 'via_mismatch',
+        code: 'NODE_LOGIN_REQUIRED',
+        nodeId: OTHER,
+      });
+      const cookie = res.headers.get('set-cookie') ?? '';
+      expect(cookie).toBe(`tmex_s_${OTHER}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure`);
     } finally {
       mesh.close();
     }
@@ -785,6 +870,51 @@ describe('forwarder', () => {
       } as MeshServerWebSocket;
       mesh.runtime.handleWebSocket.open(ws);
       expect(closed).toBe(WS_CLOSE_LOGIN_REQUIRED);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('/n/:id/ws 4401 HTTP fallback (upgrade refused) never touches tmex_s_<target>', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const mesh = await bootMesh({ peers });
+    try {
+      const res = asResponse(
+        await mesh.runtime.handleRequest(new Request(`http://localhost/n/${OTHER}/ws`), {
+          upgrade: () => false,
+        })
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toMatchObject({
+        code: 'NODE_LOGIN_REQUIRED',
+        nodeId: OTHER,
+      });
+      expect(res.headers.get('set-cookie')).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('/n/:id/ws 4401 HTTP fallback does not emit Set-Cookie for non-canonical node ids', async () => {
+    const mesh = await bootMesh({ peers: new FakePeers() });
+    const refused = { upgrade: () => false };
+    try {
+      const cases = [
+        'http://localhost/n/self%3D/ws',
+        'http://localhost/n/aa%3Btmex_s_self/ws',
+        'http://localhost/n/aa%00bb/ws',
+        'http://localhost/n/aa%1bbb/ws',
+        `http://localhost/n/${OTHER.toUpperCase()}/ws`,
+        'http://localhost/n/deadbeef/ws',
+      ];
+      for (const url of cases) {
+        const res = asResponse(await mesh.runtime.handleRequest(new Request(url), refused));
+        expect(res.status).toBe(401);
+        expect(res.headers.get('set-cookie')).toBeNull();
+        const body = (await res.json()) as { code: string };
+        expect(body.code).toBe('NODE_LOGIN_REQUIRED');
+      }
     } finally {
       mesh.close();
     }
@@ -1415,6 +1545,48 @@ describe('forwarder', () => {
       mesh.close();
     }
   });
+
+  test('abort during openHttpStream is classified as timeout, not lastError', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    let started = false;
+    streams.openHttpStream = async (_link, _open, _body, signal) => {
+      started = true;
+      await new Promise<void>((_, reject) => {
+        const fail = () => reject(new Error('link lost'));
+        if (signal.aborted) {
+          fail();
+          return;
+        }
+        signal.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const ac = new AbortController();
+      const pending = mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/api/ping`, {
+          method: 'POST',
+          body: 'x',
+          signal: ac.signal,
+        }),
+        dummyServer
+      );
+      await waitUntil(() => started);
+      ac.abort();
+      const res = asResponse(await pending);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        code: 'NODE_UNREACHABLE',
+        nodeId: OTHER,
+        reason: 'timeout',
+      });
+    } finally {
+      mesh.close();
+    }
+  });
 });
 
 describe('forwardAuthorizedHttp', () => {
@@ -1460,8 +1632,55 @@ describe('forwardAuthorizedHttp', () => {
       { nodeId: OTHER, method: 'POST', path: '/api/system/upgrade', body: { version: '9.9.9' } }
     );
     expect(postRes.status).toBe(503);
-    expect(await postRes.json()).toEqual({ code: 'NODE_UNREACHABLE', nodeId: OTHER });
+    expect(await postRes.json()).toEqual({
+      code: 'NODE_UNREACHABLE',
+      nodeId: OTHER,
+      reason: 'no_link',
+    });
     expect(opens).toBe(1);
+  });
+
+  test('abort during openHttpStream is classified as timeout, not lastError', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    let started = false;
+    streams.openHttpStream = async (_link, _open, _body, signal) => {
+      started = true;
+      await new Promise<void>((_, reject) => {
+        const fail = () => reject(new Error('link lost'));
+        if (signal.aborted) {
+          fail();
+          return;
+        }
+        signal.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams,
+      sleep: async () => {},
+    });
+    const ac = new AbortController();
+    const pending = forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+        method: 'POST',
+        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        signal: ac.signal,
+      }),
+      { nodeId: OTHER, method: 'POST', path: '/api/system/upgrade', body: { version: '9.9.9' } }
+    );
+    await waitUntil(() => started);
+    ac.abort();
+    const res = await pending;
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      code: 'NODE_UNREACHABLE',
+      nodeId: OTHER,
+      reason: 'timeout',
+    });
   });
 
   test('sends the stored target-node session as stream auth', async () => {
@@ -1627,6 +1846,7 @@ describe('forwardAuthorizedHttp', () => {
       expect(await res.json()).toEqual({
         code: 'NODE_UNREACHABLE',
         nodeId: OTHER,
+        reason: 'no_link',
         error: 'websocket send discarded',
       });
       expect(warnings.some((line) => line.includes('[mesh][forward] raw-body push aborted'))).toBe(

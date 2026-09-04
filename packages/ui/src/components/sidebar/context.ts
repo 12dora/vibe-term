@@ -6,6 +6,10 @@ export type SidebarContextProps = {
   setOpen: (open: boolean) => void;
   openMobile: boolean;
   setOpenMobile: (open: boolean) => void;
+  /** 替用户自动弹出移动端抽屉：这一次不移动焦点（PWA 冷启动落在首页时用）。 */
+  openMobileWithoutFocus: () => void;
+  /** 移动端抽屉的 `initialFocus`：`false` = 这次打开不移动焦点，`undefined` = Base UI 默认。 */
+  mobileInitialFocus: false | undefined;
   isMobile: boolean;
   toggleSidebar: () => void;
   isResizing: boolean;

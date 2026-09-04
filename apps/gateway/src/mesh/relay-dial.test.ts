@@ -3,6 +3,7 @@ import {
   type RelayDialContext,
   isLoopbackRelayDial,
   relayDialContextFromEnv,
+  relayDialContextFromRuntime,
   relayTlsCaForDial,
   resolveRelayDialUrl,
 } from './relay-dial';
@@ -72,5 +73,20 @@ describe('relayDialContextFromEnv', () => {
 
   test('非法角色不当成中继', () => {
     expect(relayDialContextFromEnv({ TMEX_ROLES: 'nope' }).roles.relay).toBe(false);
+  });
+
+  test('runtime 快照与 env 同源时形状一致', () => {
+    const fromEnv = relayDialContextFromEnv({
+      TMEX_ROLES: 'relay,node',
+      TMEX_RELAY_PUBLIC_URL: ' https://relay.example ',
+      GATEWAY_PORT: '19993',
+    });
+    expect(
+      relayDialContextFromRuntime({
+        roles: { relay: true },
+        relayPublicUrl: ' https://relay.example ',
+        gatewayPort: 19993,
+      })
+    ).toEqual(fromEnv);
   });
 });

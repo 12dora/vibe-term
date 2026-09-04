@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next';
 import type { DeviceConnectionAdapter } from '../device-connection';
 import { DeviceDialog } from './device-dialog';
 import { DeviceGrid } from './device-grid';
+import { describeDeviceLoadError, deviceLoadErrorMessageKey } from './device-load-error';
 import type { DeviceNodeContext } from './device-node-context';
 import { OPEN_ADD_DEVICE_EVENT } from './events';
 import { useDeviceManagementState } from './use-device-management-state';
@@ -58,16 +59,30 @@ export interface DeviceManagementPanelProps {
   ref?: Ref<DeviceManagementPanelHandle>;
 }
 
-function NoticeCard({ text, failed }: { text: string; failed: boolean }) {
+function NoticeCard({ text }: { text: string }) {
   return (
     <Card size="sm" className="tmex-reveal">
-      <CardContent
-        className={cn(
-          'py-10 text-center text-sm',
-          failed ? 'text-destructive' : 'text-muted-foreground'
-        )}
-      >
-        {text}
+      <CardContent className="py-10 text-center text-sm text-muted-foreground">{text}</CardContent>
+    </Card>
+  );
+}
+
+/** 加载失败的一张卡：文案按失败性质分档，节点打不通时优先用后端给的原因串。 */
+function LoadErrorCard({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  const { t } = useTranslation();
+  const info = describeDeviceLoadError(error);
+  const text = info.reason
+    ? t('device.loadFailedUnreachableReason', { reason: info.reason })
+    : t(deviceLoadErrorMessageKey(info.kind));
+  return (
+    <Card size="sm" className="tmex-reveal">
+      <CardContent className="space-y-3 py-10 text-center" data-testid="devices-load-error">
+        <p className="text-sm text-destructive" data-error-kind={info.kind}>
+          {text}
+        </p>
+        <Button variant="outline" size="sm" data-testid="devices-load-retry" onClick={onRetry}>
+          {t('common.retry')}
+        </Button>
       </CardContent>
     </Card>
   );
@@ -139,11 +154,10 @@ export function DeviceManagementPanel({
         </p>
       )}
 
-      {state.status !== 'ready' ? (
-        <NoticeCard
-          failed={state.status === 'error'}
-          text={state.status === 'error' ? t('device.loadFailed') : t('common.loading')}
-        />
+      {state.status === 'error' ? (
+        <LoadErrorCard error={state.error} onRetry={state.retry} />
+      ) : state.status !== 'ready' ? (
+        <NoticeCard text={t('common.loading')} />
       ) : !empty ? (
         <DeviceGrid
           state={state}

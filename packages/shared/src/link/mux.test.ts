@@ -656,4 +656,39 @@ describe('link mux', () => {
       console.warn = orig;
     }
   });
+
+  it('stats() counts frames/bytes and open streams on sendFrame/handleFrame', async () => {
+    const [initiator, acceptor] = createInMemoryLinkPair();
+    const a = initiator as LinkMux;
+    const b = acceptor as LinkMux;
+    expect(a.stats()).toEqual({
+      framesIn: 0,
+      framesOut: 0,
+      bytesIn: 0,
+      bytesOut: 0,
+      openStreams: 0,
+      unacked: 0,
+    });
+    const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
+    const out = await a.openStream(new Uint8Array([9, 9]));
+    const incoming = await incomingP;
+    expect(a.stats().openStreams).toBe(1);
+    expect(b.stats().openStreams).toBe(1);
+    expect(a.stats().framesOut).toBeGreaterThan(0);
+    expect(b.stats().framesIn).toBeGreaterThan(0);
+    const payload = new Uint8Array(32).fill(3);
+    await out.write(payload);
+    expect(a.stats().unacked).toBeGreaterThan(0);
+    const reader = incoming.readable.getReader();
+    const chunk = await reader.read();
+    expect(chunk.value?.bytes.byteLength).toBe(32);
+    expect(a.stats().bytesOut).toBeGreaterThan(a.stats().framesOut);
+    expect(b.stats().bytesIn).toBeGreaterThan(0);
+    incoming.reset('done');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(a.stats().openStreams).toBe(0);
+    expect(b.stats().openStreams).toBe(0);
+    a.close();
+    b.close();
+  });
 });

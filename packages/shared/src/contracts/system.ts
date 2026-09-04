@@ -94,6 +94,27 @@ export interface StartUninstallRequest {
   mode?: 'full';
 }
 
+/**
+ * 入口转发 `503 NODE_UNREACHABLE` 的安全原因。只允许这一组字面量，避免把堆栈、
+ * 主机名或令牌带回浏览器。`relay_reset:*` 对应中继 RST 原因（见 relay-stream-router）。
+ */
+export type NodeUnreachableReason =
+  | 'not_admitted'
+  | 'no_link'
+  | 'handshake_failed'
+  | 'timeout'
+  | 'relay_reset:self-target'
+  | 'relay_reset:unknown-target'
+  | 'relay_reset:offline'
+  | 'relay_reset:quota-streams'
+  | 'relay_reset:open-failed';
+
+export interface NodeUnreachableErrorBody {
+  code: 'NODE_UNREACHABLE';
+  nodeId: string;
+  reason?: NodeUnreachableReason;
+}
+
 /** 节点管理页「卸载 tmex」的稳定错误码 */
 export type MeshUninstallErrorCode =
   | 'NODE_LOGIN_REQUIRED'

@@ -268,6 +268,9 @@
       "createFailed": "创建设备失败",
       "updateFailed": "更新设备失败",
       "loadFailed": "加载设备列表失败",
+      "loadFailedLoginRequired": "加载设备列表失败：该节点需重新登录",
+      "loadFailedUnreachable": "加载设备列表失败：节点不可达",
+      "loadFailedUnreachableReason": "加载设备列表失败：节点不可达（{{reason}}）",
       "localDevice": "本地设备",
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "修改设备",
@@ -1847,7 +1850,6 @@
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
       "hubLoginRejected": "Hub 拒绝了本次登录（{{code}}）：请重新登录后再试。",
       "hubs": {
-        "title": "Hub 集群",
         "active": "主 Hub",
         "standby": "备 Hub",
         "writer": "当前接受管理写入",
@@ -1857,7 +1859,6 @@
         "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
         "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
         "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
-        "machineRole": "Hub 角色",
         "lastAttempt": "最近尝试：{{time}}",
         "lastError": "最近错误：{{error}}",
         "authorization": {
@@ -1924,7 +1925,9 @@
             "hubsUnreachable": "读不到 Hub 列表，入口暂时不可达。",
             "unexpected": "切换中断，请刷新核对。"
           }
-        }
+        },
+        "priority": "优先级",
+        "epoch": "写入纪元"
       },
       "machine": {
         "title": "本机",
@@ -1934,18 +1937,50 @@
         "roleHub": "Hub 兼节点",
         "roleRelay": "纯中继（无网页）",
         "roleRelayNode": "中继兼节点",
+        "menu": {
+          "label": "更多操作",
+          "changeRole": "更改角色",
+          "leave": "离开…"
+        },
+        "status": {
+          "standalone": "独立运行",
+          "unknown": "状态未知",
+          "hubConnected": "已连接 Hub",
+          "hubConnectedRtt": "已连接 Hub · {{ms}} ms",
+          "hubDisconnected": "未连接 Hub",
+          "connecting": "连接中",
+          "relayConnected": "已连接中继",
+          "relayConnectedRtt": "已连接中继 · {{ms}} ms",
+          "relayDisconnected": "未连接中继",
+          "relayKicked": "中继令牌已失效"
+        },
+        "sections": {
+          "uplink": "连接",
+          "relayService": "中继服务",
+          "network": "网络"
+        },
         "localAddress": "本机地址",
         "localAddressUnset": "未设置",
-        "localAddressHint": "其它节点无法加入本机。请按「角色 → Hub 兼节点」重新设置。",
+        "localAddressHint": "其它节点无法加入本机。请按「更改角色 → Hub 兼节点」重新设置。",
         "currentHub": "当前 Hub",
         "hubDisconnected": "未连接",
         "writerHub": "写者：{{name}}",
         "hubList": "Hub 列表",
         "self": "本机",
-        "uplinkTabHub": "接入 Hub",
-        "uplinkTabRelay": "接入中继",
-        "uplinkHubBlocked": "本机当前接入中继；要改回 Hub，先在「接入中继」里离开中继。",
-        "uplinkRelayStandalone": "中继提供公网入口，本机与各节点经它互联，无需公网地址。",
+        "relayLeaveFirst": "要改回 Hub，先离开中继。",
+        "details": {
+          "title": "连接详情",
+          "metaEpoch": "元数据密钥代数",
+          "nodesViaRelay": "经中继可见节点",
+          "quota": "节点配额",
+          "quotaValue": "{{used}} / {{total}}",
+          "streams": "并发流上限",
+          "keyLog": "密钥日志",
+          "keyLogCaughtUp": "已追平",
+          "keyLogBlocked": "卡在第 {{seq}} 条",
+          "nodeId": "本机节点编号",
+          "hubs": "Hub 明细"
+        },
         "direct": "直连插件",
         "directUnsupported": "本平台不支持",
         "directInstalled": "已安装",
@@ -1956,11 +1991,12 @@
         "directRemove": "删除插件",
         "directRemoveConfirm": {
           "title": "删除直连插件？",
-          "description": "会话会继续经 Hub 中转，你可以随时重新安装。",
+          "description": "会话会继续经 Hub 中转，可随时重新安装。",
           "confirm": "删除",
-          "cancel": "取消"
+          "cancel": "取消",
+          "descriptionRelay": "会话会继续经中继转发，可随时重新安装。"
         },
-        "directSwitchHint": "请先安装插件。",
+        "directNeedsInstall": "须先安装插件。",
         "directRestartRequired": "重启 tmex 后生效。",
         "directFailed": "直连插件操作失败。",
         "directErrorUnsupported": "本平台没有可用的直连插件。",
@@ -1970,10 +2006,9 @@
         "restartNow": "立即重启",
         "restarting": "正在重启……",
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
-        "general": "通用设置",
         "domainAccess": {
           "label": "允许域名访问",
-          "description": "关闭后，来自公网的网页与 API 访问会被拒绝(局域网与本机的访问不受影响)，仅保留 Hub / 节点互联服务。公开域名：{{hosts}}",
+          "description": "关闭后拒绝来自公网的网页与 API 访问，局域网、本机与节点互联不受影响。公开域名：{{hosts}}",
           "noHosts": "尚未配置公开域名。",
           "hostSeparator": "、",
           "failed": "域名访问设置未能保存（{{detail}}）。",
@@ -1987,9 +2022,9 @@
         },
         "accountSecurity": "账号安全",
         "loginRequired": "登录后查看本机状态。",
+        "loadFailed": "读取本机状态失败：{{detail}}",
         "relayServiceAddress": "中继公网地址",
-        "relayServiceStats": "中继用量",
-        "relayServiceCounts": "租户 {{tenants}} · 在线 {{online}} · 节点 {{nodes}}",
+        "relayServiceAddressUnsetHint": "其它机器无法接入本机中继。请按「更改角色 → 中继兼节点」重新设置。",
         "relayServiceEnroll": "接入本机中继",
         "relayServiceEnrollHint": "本机尚未接入自己的中继。接入时须再次输入刚设置的接入口令。"
       },
@@ -2603,9 +2638,9 @@
           "hide": "隐藏口令"
         },
         "pureRelayConfirm": {
-          "title": "切换到纯中继？",
+          "title": "设为纯中继？",
           "description": "重启后本机不再提供网页，中继只能用命令行管理，网页里也无法改回其它角色。",
-          "confirm": "继续"
+          "confirm": "创建并重启"
         },
         "joinRelay": {
           "title": "加入已有中继",
@@ -2676,19 +2711,93 @@
       }
     },
     "relay": {
+      "metrics": {
+        "title": "运行指标",
+        "description": "中继的转发量与本机负载，每 5 秒采样一次。",
+        "console": "打开中继控制台",
+        "refreshFailed": "指标更新失败：{{message}}",
+        "stale": "数据已过期",
+        "empty": "还没有采样数据。",
+        "header": {
+          "running": "运行中",
+          "stopped": "未采样",
+          "version": "版本 {{version}}",
+          "uptime": "已运行 {{duration}}",
+          "tenants": "{{n}} 个租户"
+        },
+        "tiles": {
+          "membersOnline": "在线节点",
+          "membersOnlineSub": "共 {{total}} 个",
+          "activeStreams": "活跃流",
+          "throughput": "吞吐",
+          "throughputSub": "↑ {{out}} · ↓ {{in}}",
+          "bytesIn": "入站速率",
+          "bytesOut": "出站速率",
+          "frames": "帧速率",
+          "framesSub": "↑ {{out}} · ↓ {{in}}",
+          "rtt": "延迟",
+          "rttSub": "最高 {{max}}",
+          "rttHint": "在线节点 RTT 的中位数。",
+          "eventLoop": "事件循环",
+          "eventLoopSub": "峰值 {{max}}",
+          "eventLoopHint": "事件循环延迟，超过 100 ms 说明转发已排队。",
+          "memory": "内存",
+          "memorySub": "堆 {{heap}}",
+          "memoryHeapSub": "堆 {{heap}} / {{total}}",
+          "cpu": "CPU",
+          "sockets": "连接数",
+          "socketsSub": "已认证 {{authenticated}}",
+          "reconnects": "重连",
+          "reconnectsSub": "自启动累计",
+          "reconnectsHint": "各接入节点重连次数之和。",
+          "uptime": "运行时长",
+          "throughputTotal": "累计 {{total}}",
+          "traffic": "累计流量",
+          "trafficSub": "自启动累计",
+          "trafficHint": "中继每转发一帧都同时计进收发两侧，此处只计一次。",
+          "tenants": "租户"
+        },
+        "groups": {
+          "traffic": "流量",
+          "process": "进程"
+        },
+        "trends": {
+          "title": "趋势",
+          "window": "近 {{duration}}",
+          "throughput": "吞吐",
+          "streams": "活跃流",
+          "eventLoop": "事件循环延迟",
+          "range": "峰值 {{max}} · 谷值 {{min}}",
+          "legendIn": "入站",
+          "legendOut": "出站"
+        },
+        "members": {
+          "title": "接入节点",
+          "total": "共 {{n}} 个",
+          "empty": "还没有节点接入。",
+          "online": "在线",
+          "offline": "离线",
+          "unnamed": "未命名",
+          "never": "未连接",
+          "columns": {
+            "node": "节点",
+            "state": "状态",
+            "rtt": "延迟",
+            "streams": "活跃流",
+            "rate": "速率",
+            "reconnects": "重连",
+            "connected": "连接于"
+          }
+        }
+      },
       "tenant": {
         "strip": {
-          "title": "中继",
           "online": "在线",
           "offline": "离线",
           "attached": "当前挂载于此中继",
-          "detail": "{{url}}｜优先级 {{priority}}｜{{state}}",
           "rtt": "延迟 {{ms}} ms",
           "kicked": "令牌已作废，须重新输入口令",
           "lastError": "最近错误：{{error}}",
-          "meta": "元数据密钥第 {{epoch}} 代",
-          "nodes": "经中继可见 {{count}} 个节点",
-          "quota": "配额 {{nodes}} 节点｜{{streams}} 流",
           "empty": "未接入中继。",
           "tenantId": "租户编号",
           "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。"

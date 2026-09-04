@@ -109,12 +109,15 @@ export function peekLoginUid(body: Record<string, unknown>): string {
     return '';
   }
 }
+const IDENTIFIER_USERNAME_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{32}$/i;
 
-export type PublicAuthNode = {
-  id: string;
-  name: string;
-  online: boolean;
-};
+export function authModeDisplayUsername(user: UserRecord | null): string | null {
+  const username = user?.username ?? null;
+  if (!username || username === user?.id || IDENTIFIER_USERNAME_RE.test(username)) return null;
+  return username;
+}
+export type PublicAuthNode = { id: string; name: string; online: boolean };
 
 export type AuthRoutesDeps = {
   roles: MeshRoles;
@@ -140,7 +143,6 @@ export type AuthRoutesDeps = {
   forwardWriterWrite?: (req: Request, uid?: string) => Promise<Response | null>;
 };
 
-/** standalone 门未生效时允许无会话触达的本机登录开关。 */
 export const AUTH_LOCAL_PRESESSION_PATHS = new Set([
   '/api/auth/local',
   '/api/auth/local/bootstrap',
@@ -151,10 +153,7 @@ export function isAuthPublicPath(
   opts: { standalone: boolean; localAuthEffective: boolean }
 ): boolean {
   if (AUTH_LOGIN_PUBLIC_PATHS.has(path)) return true;
-  if (opts.standalone && !opts.localAuthEffective && AUTH_LOCAL_PRESESSION_PATHS.has(path)) {
-    return true;
-  }
-  return false;
+  return opts.standalone && !opts.localAuthEffective && AUTH_LOCAL_PRESESSION_PATHS.has(path);
 }
 
 export class AuthRoutes {
@@ -285,6 +284,7 @@ export class AuthRoutes {
     return jsonBody({
       ...shared,
       ...fields,
+      username: authModeDisplayUsername(snapshot.user),
       rootPublicKey: auth.ok && auth.userId ? fields.rootPublicKey : null,
     });
   }

@@ -339,6 +339,18 @@ export function markLoggedIn(nodeId: string): boolean {
   return setLoggedIn(nodeId, true);
 }
 
+/**
+ * 该 node 的会话确认作废（401 `NODE_LOGIN_REQUIRED` 之后连静默重登都没成功）时标未登录，
+ * 让「用到才登录」的门闸退回登录入口。
+ *
+ * **只允许 `node-session-recovery` 在重登失败后调用**：光有一次 401 不足以判会话没了
+ * （转发路径本身会产生会话仍有效的 401），就地登出会抽掉整棵 node 子树再静默登回来，
+ * 表现为设备卡片闪断。
+ */
+export function markLoggedOut(nodeId: string): boolean {
+  return setLoggedIn(nodeId, false);
+}
+
 export function setEntryNodeId(nodeId: string | null): void {
   if (store.get().entryNodeId === nodeId) return;
   setState({ entryNodeId: nodeId });

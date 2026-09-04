@@ -1,6 +1,6 @@
 // Hub chip 的共用零件：主 / 备文案、悬浮详情、候选地址诊断。
 //
-// chip 本体由本机卡的「接入 Hub」面板渲染（`hub-uplink-panel.tsx`），节点表与节点详情
+// chip 本体由本机卡「连接」段的 Hub 形态渲染（`hub-uplink-panel.tsx`），节点表与节点详情
 // 只借这里的文案函数。
 
 import type { MeshHubCandidate } from '@/node/mesh-hubs';
@@ -51,7 +51,7 @@ export function HubModeTag({ mode, testId }: { mode: HubMode | null; testId?: st
   );
 }
 
-/** uplink 候选地址的错误提示上限：title 里塞一整段栈没有意义，只留够定位的一截。 */
+/** uplink 候选地址的错误提示上限：塞一整段栈没有意义，只留够定位的一截。 */
 export const CANDIDATE_ERROR_MAX = 160;
 
 /** 归一化对外地址：只差一个末尾斜杠的两个地址指的是同一台 hub。 */
@@ -86,29 +86,4 @@ const AUTHORIZATION_KEYS: Record<HubAuthorizationKind, string> = {
 export function hubAuthorizationText(t: Translate, hub: MeshHubEndpoint): string | null {
   const key = hub.authorization ? AUTHORIZATION_KEYS[hub.authorization] : undefined;
   return key ? t('nodes.hubs.authorization.label', { value: t(key) }) : null;
-}
-
-/**
- * chip 的悬浮详情：地址那一行 + 写入归属 + 授权来源，最近连不上时再补「最近尝试 / 最近错误」两行。
- * chip 本体只留「名字 + 主 / 备」，写入与挂载这类次要信息一律收进 title。
- */
-export function hubChipTitle(
-  t: Translate,
-  hub: MeshHubEndpoint,
-  attached: boolean,
-  failure: MeshHubCandidate | null,
-  writer = false
-): string {
-  const lines = [hubDetailText(t, hub, attached)];
-  if (writer) lines.push(t('nodes.hubs.writer'));
-  const authorization = hubAuthorizationText(t, hub);
-  if (authorization) lines.push(authorization);
-  if (failure) {
-    const at = failure.lastAttemptAt ? new Date(failure.lastAttemptAt).toLocaleString() : '—';
-    lines.push(t('nodes.hubs.lastAttempt', { time: at }));
-    lines.push(
-      t('nodes.hubs.lastError', { error: (failure.lastError ?? '').slice(0, CANDIDATE_ERROR_MAX) })
-    );
-  }
-  return lines.join('\n');
 }

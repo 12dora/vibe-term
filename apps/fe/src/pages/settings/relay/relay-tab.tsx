@@ -15,7 +15,8 @@ import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';
 import { DefaultQuotaCard } from './default-quota-card';
 import { PasswordDialog } from './password-dialog';
-import { RelayHealthCard, RelayPasswordCard, RelayTotalsCard } from './relay-cards';
+import { RelayPasswordCard } from './relay-cards';
+import { RelayMetricsPanel } from './relay-metrics-panel';
 import { DeleteTenantConfirm, KickTenantConfirm } from './tenant-confirms';
 import { TenantEditorDialog } from './tenant-editor-dialog';
 import { TenantTable } from './tenant-table';
@@ -70,7 +71,7 @@ export function RelayTab({ api = defaultRelayAdminApi }: RelayTabProps = {}) {
   return (
     <div className="flex w-full flex-col gap-4" data-testid="settings-relay-tab">
       <RelayTabHeader controller={controller} />
-      <RelayTabBody controller={controller} status={relay.status} />
+      <RelayTabBody controller={controller} status={relay.status} api={api} />
       <RelayTabDialogs controller={controller} status={relay.status} />
     </div>
   );
@@ -110,7 +111,8 @@ function RelayTabHeader({ controller }: { controller: RelayController }) {
 function RelayTabBody({
   controller,
   status,
-}: { controller: RelayController; status: RelayStatusResponse }) {
+  api,
+}: { controller: RelayController; status: RelayStatusResponse; api: RelayAdminApi }) {
   const { t } = useTranslation();
   const { relay, quota } = controller;
   // 相对时间以「这份数据是什么时候拉到的」为基准：每一拍推进一次，中间不必逐秒重渲染。
@@ -118,13 +120,13 @@ function RelayTabBody({
 
   return (
     <>
-      <Reveal className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <RelayHealthCard health={relay.health} />
-        <RelayTotalsCard totals={status.totals} />
-        <RelayPasswordCard config={status.config} onChange={controller.openPassword} />
+      <Reveal>
+        {/* 指标与状态/写操作共用同一个注入的 api：多实例宿主与测试都不该退回默认 client。 */}
+        <RelayMetricsPanel api={api} />
       </Reveal>
 
-      <Reveal delayMs={60}>
+      <Reveal delayMs={60} className="grid items-start gap-4 lg:grid-cols-2">
+        <RelayPasswordCard config={status.config} onChange={controller.openPassword} />
         <DefaultQuotaCard
           quota={status.config.defaultQuota}
           busy={quota.busy}

@@ -112,19 +112,14 @@ class MuxStream implements LinkStream {
           this.outController = controller;
         },
         pull: () => {
-          if (this.dead) {
-            return Promise.reject(this.abortError ?? this.deadError());
-          }
+          if (this.dead) return Promise.reject(this.abortError ?? this.deadError());
           if (this.recvBuf.length > 0 || this.recvClosed) {
             this.flushReadable();
             return;
           }
           return new Promise<void>((resolve, reject) => {
             this.pullWaiter = () => {
-              if (this.dead) {
-                reject(this.abortError ?? this.deadError());
-                return;
-              }
+              if (this.dead) return reject(this.abortError ?? this.deadError());
               this.flushReadable();
               resolve();
             };
@@ -142,9 +137,8 @@ class MuxStream implements LinkStream {
 
   write(bytes: Uint8Array, opts?: WriteOptions): Promise<void> {
     if (this.dead) return Promise.reject(this.deadError());
-    if (this.sendClosed) {
+    if (this.sendClosed)
       return Promise.reject(new LinkError('closed', 'stream send direction is closed'));
-    }
     const run = this.writeChain.then(() => this.writeInternal(bytes, opts));
     this.writeChain = run.then(
       () => undefined,
@@ -154,13 +148,9 @@ class MuxStream implements LinkStream {
   }
 
   end(): Promise<void> {
-    if (this.isCtl) {
-      throw new LinkError('protocol', 'ctl stream cannot END');
-    }
+    if (this.isCtl) throw new LinkError('protocol', 'ctl stream cannot END');
     if (this.dead) return Promise.resolve();
-    if (this.sendClosed) {
-      return this.endPromise ?? Promise.resolve();
-    }
+    if (this.sendClosed) return this.endPromise ?? Promise.resolve();
     this.sendClosed = true;
     const run = this.writeChain.then(() => this.sendEnd());
     this.writeChain = run.then(
@@ -172,9 +162,7 @@ class MuxStream implements LinkStream {
   }
 
   reset(reason?: string): void {
-    if (this.isCtl) {
-      throw new LinkError('protocol', 'ctl stream cannot RST');
-    }
+    if (this.isCtl) throw new LinkError('protocol', 'ctl stream cannot RST');
     if (this.dead) return;
     this.mux.resetStream(this, reason);
   }
@@ -193,23 +181,17 @@ class MuxStream implements LinkStream {
   }
 
   async waitForSendCredit(): Promise<void> {
-    if (this.dead) {
-      throw this.deadError();
-    }
+    if (this.dead) throw this.deadError();
     if (this.sendWindow > 0) return;
     await new Promise<void>((resolve, reject) => {
       this.waiters.push({ resolve, reject });
     });
-    if (this.dead) {
-      throw this.deadError();
-    }
+    if (this.dead) throw this.deadError();
   }
 
   onIncomingData(bytes: Uint8Array, head: boolean): void {
     if (this.dead || this.recvClosed) {
-      if (!this.isCtl && !this.dead) {
-        this.mux.resetUnknown(this.id);
-      }
+      if (!this.isCtl && !this.dead) this.mux.resetUnknown(this.id);
       return;
     }
     if (bytes.byteLength > this.recvAdvertised) {
@@ -250,9 +232,7 @@ class MuxStream implements LinkStream {
     this.waiters = [];
     this.recvBuf = [];
     this.wakePull();
-    if (info.reason !== 'end') {
-      this.fireAbort();
-    }
+    if (info.reason !== 'end') this.fireAbort();
     this.settleClosed(info);
   }
 
@@ -408,6 +388,7 @@ export class LinkMux implements LinkSession {
   private nextStreamId: number;
   private remoteMaxStreamId = 0;
   private unacked = 0;
+  private readonly io = { framesIn: 0, framesOut: 0, bytesIn: 0, bytesOut: 0 };
   private closedFlag = false;
   private resolveClosed!: (info: LinkCloseInfo) => void;
   private handling = false;
@@ -493,9 +474,7 @@ export class LinkMux implements LinkSession {
     flags?: number;
     payload?: Uint8Array;
   }): Promise<void> {
-    if (this.closedFlag) {
-      return Promise.reject(new LinkError('closed', this.closeReason));
-    }
+    if (this.closedFlag) return Promise.reject(new LinkError('closed', this.closeReason));
     let encoded: Uint8Array;
     try {
       encoded = encodeFrame(frame);
@@ -504,6 +483,8 @@ export class LinkMux implements LinkSession {
       this.protocolError(message);
       return Promise.reject(err instanceof Error ? err : new LinkError('protocol', message));
     }
+    this.io.framesOut += 1;
+    this.io.bytesOut += encoded.byteLength;
     try {
       return Promise.resolve(this.transport.send(encoded)).then(
         () => undefined,
@@ -518,6 +499,14 @@ export class LinkMux implements LinkSession {
       this.close(message);
       return Promise.reject(err instanceof Error ? err : new LinkError('closed', message));
     }
+  }
+
+  stats() {
+    return {
+      ...this.io,
+      openStreams: Math.max(0, this.streams.size - (this.streams.has(CTL_STREAM_ID) ? 1 : 0)),
+      unacked: this.unacked,
+    };
   }
 
   addUnacked(n: number): void {
@@ -662,6 +651,8 @@ export class LinkMux implements LinkSession {
   }
 
   private handleFrame(frame: Frame): void {
+    this.io.framesIn += 1;
+    this.io.bytesIn += frame.payload.byteLength;
     const { streamId, op } = frame;
     if (op === FrameOp.OPEN) {
       this.handleOpen(frame);

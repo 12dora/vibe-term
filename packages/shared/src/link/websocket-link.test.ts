@@ -289,6 +289,29 @@ describe('WebSocketLink', () => {
     a.close();
   });
 
+  it('stats() delegates to the inner mux', async () => {
+    const [wsA, wsB] = serverSocketPair();
+    const a = new WebSocketLink(wsA, { role: 'initiator' });
+    const b = new WebSocketLink(wsB, { role: 'acceptor' });
+    expect(a.stats()).toEqual({
+      framesIn: 0,
+      framesOut: 0,
+      bytesIn: 0,
+      bytesOut: 0,
+      openStreams: 0,
+      unacked: 0,
+    });
+    const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
+    const out = await a.openStream(new Uint8Array([1]));
+    await incomingP;
+    expect(a.stats().openStreams).toBe(1);
+    expect(a.stats().framesOut).toBeGreaterThan(0);
+    expect(b.stats().framesIn).toBeGreaterThan(0);
+    expect(b.stats().openStreams).toBe(1);
+    a.close();
+    void out;
+  });
+
   it('closes the LinkSession when the server socket send returns 0', async () => {
     const [wsA, wsB] = serverSocketPair();
     let sends = 0;

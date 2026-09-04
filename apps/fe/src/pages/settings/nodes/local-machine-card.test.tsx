@@ -1,16 +1,12 @@
-// 本机区块的直连插件区：四种状态的静态渲染，加上安装 / 删除 / 启停的动作流。
-// 无 DOM 测试环境，渲染用 react-dom/server，交互行为直接驱动 `DirectMutationController`
-// （它就是为了脱离 DOM 可测才被拆成可订阅控制器的）。
+// 本机卡的四段版式：卡头（角色 + 唯一状态徽标 + 菜单）、连接、中继服务、网络，
+// 外加直连动作流与域名访问控制器的纯逻辑。
+// 无 DOM 测试环境，渲染用 react-dom/server，交互行为直接驱动对应的可订阅控制器。
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-hubs';
-import { resetMeshRelayStateForTest } from '@/node/mesh-relay';
+import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
 import { ApiClient, type DomainAccessPolicy } from '@tmex/api-client';
-import type {
-  AuthModeResponse,
-  MeshAttachedHub,
-  MeshHubEndpoint,
-} from '@tmex/api-client/auth/index';
+import type { AuthModeResponse, MeshHubEndpoint } from '@tmex/api-client/auth/index';
 import { LocalApiError } from '@tmex/api-client/local/local-api';
 import type {
   LocalDirectAction,
@@ -19,7 +15,6 @@ import type {
   LocalRole,
   LocalStatusResponse,
 } from '@tmex/api-client/local/types';
-import enUS from '@tmex/shared/i18n/locales/en_US.json';
 import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
@@ -35,8 +30,7 @@ import {
   domainAccessApi,
   domainAccessConfirmLines,
 } from './domain-access-row';
-import { LocalMachineCard, SELECTABLE_ROLES } from './local-machine-card';
-import { ROLE_LABEL_KEY } from './membership/role-transition';
+import { LocalMachineCard } from './local-machine-card';
 import { useLocalUplinkController } from './uplink/local-uplink-controller';
 
 const MESH_MODE: AuthModeResponse = {
@@ -84,9 +78,11 @@ afterEach(() => {
 function Harness({
   local,
   mode,
+  error,
 }: {
   local: LocalStatusResponse | null;
   mode: AuthModeResponse | null;
+  error?: string | null;
 }) {
   const uplink = useLocalUplinkController({ mode });
   return (
@@ -95,6 +91,7 @@ function Harness({
       status={local}
       loading={false}
       loginRequired={false}
+      error={error ?? null}
       api={idleApi}
       uplink={uplink}
       onRefresh={() => undefined}
@@ -102,10 +99,38 @@ function Harness({
   );
 }
 
-function render(local: LocalStatusResponse | null, mode: AuthModeResponse | null = null): string {
+function render(
+  local: LocalStatusResponse | null,
+  mode: AuthModeResponse | null = null,
+  error: string | null = null
+): string {
   return renderToStaticMarkup(
     <MemoryRouter>
-      <Harness local={local} mode={mode} />
+      <Harness local={local} mode={mode} error={error} />
+    </MemoryRouter>
+  );
+}
+
+/** 三条「角色还不知道」的分支：加载中、未登录、读取失败。 */
+function renderUnknownRole(branch: 'loading' | 'loginRequired' | 'error'): string {
+  function Unknown() {
+    const uplink = useLocalUplinkController({ mode: MESH_MODE });
+    return (
+      <LocalMachineCard
+        mode={MESH_MODE}
+        status={null}
+        loading={branch === 'loading'}
+        loginRequired={branch === 'loginRequired'}
+        error={branch === 'error' ? 'fetch failed' : null}
+        api={idleApi}
+        uplink={uplink}
+        onRefresh={() => undefined}
+      />
+    );
+  }
+  return renderToStaticMarkup(
+    <MemoryRouter>
+      <Unknown />
     </MemoryRouter>
   );
 }
@@ -118,6 +143,24 @@ function meshStatus(role: LocalRole): LocalStatusResponse {
     hubUrl: role === 'node' ? 'https://hub.example' : null,
     hubPublicUrl: role === 'hub,node' ? 'https://hub.example' : null,
   };
+}
+
+/** 中继兼节点：本机跑着中继，`relay` 段齐全。 */
+function relayNodeStatus(): LocalStatusResponse {
+  return {
+    ...meshStatus('relay,node'),
+    relay: {
+      publicUrl: 'https://relay.example.com',
+      hasPassword: true,
+      tenantCount: 0,
+      nodesOnline: 0,
+      currentNodes: 0,
+    },
+  };
+}
+
+function occurrences(html: string, needle: string): number {
+  return html.split(needle).length - 1;
 }
 
 function tagOf(html: string, testId: string): string {
@@ -144,7 +187,7 @@ describe('LocalMachineCard 直连状态渲染', () => {
     return /data-direct-state="([a-z-]+)"/.exec(tag)?.[1] ?? '';
   }
 
-  test('平台不支持：只有不支持徽章，按钮与开关都禁用', () => {
+  test('平台不支持：只有不支持徽章，按钮与开关都禁用，也不提示去安装', () => {
     const html = render(status({ supported: false, platform: 'linux-riscv64' }));
     expect(directState(html)).toBe('unsupported');
     expect(html).toContain('nodes.machine.directUnsupported');
@@ -153,43 +196,36 @@ describe('LocalMachineCard 直连状态渲染', () => {
       disabled: true,
       checked: false,
     });
-    // 不支持时装不上，别再提示「先去安装」
     expect(html).not.toContain('data-testid="local-machine-direct-hint"');
   });
 
-  test('支持但未安装：安装按钮可用，开关禁用并给出提示', () => {
+  test('支持但未安装：安装按钮可用，开关禁用并挂上说明气泡', () => {
     const html = render(status({ installed: false }));
     expect(directState(html)).toBe('not-installed');
-    expect(html).toContain('nodes.machine.directNotInstalled');
     expect(html).toContain('data-testid="local-machine-direct-install"');
     expect(html).not.toContain('data-testid="local-machine-direct-remove"');
-    expect(buttonDisabled(html, 'local-machine-direct-install')).toBe(false);
     expect(switchState(html, 'local-machine-direct-switch')).toEqual({
       disabled: true,
       checked: false,
     });
+    // 常驻的「请先安装插件」那一行已经换成禁用态的气泡触发器
     expect(html).toContain('data-testid="local-machine-direct-hint"');
+    expect(html).not.toContain('nodes.machine.directSwitchHint');
   });
 
-  test('已安装且启用：版本徽章 + 删除按钮 + 打开的开关，不再另起一行开关', () => {
+  test('已安装且启用：版本徽章 + 删除按钮 + 打开的开关，没有气泡触发器', () => {
     const html = render(
       status({ installed: true, enabled: true, capable: true, version: '0.4.2' })
     );
     expect(directState(html)).toBe('installed');
     expect(html).toContain('nodes.machine.directInstalledVersion');
-    expect(html).toContain('nodes.machine.directEnable');
     expect(html).toContain('data-testid="local-machine-direct-remove"');
     expect(html).not.toContain('data-testid="local-machine-direct-install"');
-    expect(buttonDisabled(html, 'local-machine-direct-remove')).toBe(false);
     expect(switchState(html, 'local-machine-direct-switch')).toEqual({
       disabled: false,
       checked: true,
     });
     expect(html).not.toContain('data-testid="local-machine-direct-hint"');
-    // 「本平台支持 / 已启用 / 已关闭」三枚徽章已并进这一枚 + 开关
-    expect(html).not.toContain('nodes.machine.directSupported');
-    expect(html).not.toContain('nodes.machine.directActive');
-    expect(html).not.toContain('nodes.machine.directDisabled');
   });
 
   test('已安装但关闭：徽章仍是已安装，开关可用且处于关闭态', () => {
@@ -203,19 +239,287 @@ describe('LocalMachineCard 直连状态渲染', () => {
     });
   });
 
-  test('未安装时没有版本文案，安装后徽章跟着版本走', () => {
-    expect(render(status({ installed: false, version: null }))).not.toContain(
-      'nodes.machine.directInstalledVersion'
-    );
-    expect(render(status({ installed: true, version: null }))).toContain(
-      '>nodes.machine.directInstalled<'
-    );
-  });
-
-  test('没有状态时不渲染直连区', () => {
+  test('没有状态时不渲染任何一段正文', () => {
     const html = render(null);
     expect(html).toContain('data-testid="local-machine-card"');
-    expect(html).not.toContain('data-testid="local-machine-direct-switch"');
+    expect(html).not.toContain('data-testid="local-machine-network"');
+    expect(html).not.toContain('data-testid="local-machine-uplink"');
+  });
+});
+
+describe('LocalMachineCard 的四段版式', () => {
+  test('standalone：卡头只有一枚「独立运行」徽标，没有角色徽标与菜单', () => {
+    const html = render(status(), null);
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="standalone"');
+    expect(html).toContain('nodes.machine.status.standalone');
+    expect(html).not.toContain('data-testid="local-machine-role"');
+    expect(html).not.toContain('data-testid="local-machine-menu"');
+    // 连接段就是四条路径的设置向导
+    expect(html).toContain('data-testid="local-machine-uplink"');
+    expect(html).toContain('data-testid="hub-setup-wizard"');
+    expect(html).toContain('data-testid="local-machine-network"');
+    // 两个上级 tab 与「通用设置」标题都没有了
+    expect(html).not.toContain('data-testid="local-uplink-tabs"');
+    expect(html).not.toContain('nodes.machine.general');
+  });
+
+  test('mesh：卡头给角色徽标 + 状态徽标 + 操作菜单', () => {
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-role"');
+    expect(html).toContain('nodes.machine.roleNode');
+    expect(html).toContain('data-testid="local-machine-menu"');
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="hubDisconnected"');
+  });
+
+  test('mesh 的 hub 形态：连接段是 Hub 面板，没有中继服务段', () => {
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain('data-testid="local-uplink-hub-panel"');
+    expect(html).toContain('data-testid="nodes-relay-enroll"');
+    expect(html).not.toContain('data-testid="local-machine-relay-service"');
+    expect(html).not.toContain('data-testid="local-uplink-relay-panel"');
+  });
+
+  test('中继模式：连接段换成中继面板，Hub 面板整块不出现', () => {
+    setMeshRelayStateForTest({
+      mode: 'relay',
+      relays: [
+        {
+          url: 'https://relay.example.com',
+          priority: 1,
+          online: true,
+          attached: true,
+          rttMs: 45,
+        },
+      ],
+      loadedAt: 1,
+    });
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain('data-testid="local-uplink-relay-panel"');
+    expect(html).toContain('data-testid="nodes-relay-row-relay.example.com"');
+    expect(html).not.toContain('data-testid="local-uplink-hub-panel"');
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayConnected"');
+    expect(html).toContain('nodes.machine.status.relayConnectedRtt');
+  });
+
+  test('中继兼节点：多出一段「中继服务」，地址可复制、口令状态成徽标', () => {
+    const local: LocalStatusResponse = {
+      ...meshStatus('relay,node'),
+      relay: {
+        publicUrl: 'https://relay.example.com',
+        hasPassword: true,
+        tenantCount: 3,
+        nodesOnline: 5,
+        currentNodes: 7,
+      },
+    };
+    const html = render(local, MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-relay-service"');
+    expect(html).toContain('data-testid="local-relay-service-url"');
+    expect(html).toContain('relay.admin.password.set');
+    // 一行式的「租户 x · 在线 y · 节点 z」已经删掉，指标由中继服务的瓦片负责
+    expect(html).not.toContain('nodes.machine.relayServiceCounts');
+  });
+
+  test('中继兼节点还没接上自己的中继：给出专用接入入口', () => {
+    const local: LocalStatusResponse = {
+      ...meshStatus('relay,node'),
+      relay: {
+        publicUrl: 'https://relay.example.com',
+        hasPassword: false,
+        tenantCount: 0,
+        nodesOnline: 0,
+        currentNodes: 0,
+      },
+    };
+    const html = render(local, MESH_MODE);
+    expect(html).toContain('data-testid="nodes-relay-self-entry"');
+    expect(html).toContain('data-testid="nodes-relay-enroll-self"');
+    expect(html).toContain('relay.admin.password.unset');
+  });
+
+  test('中继角色但没有公网地址：说未设置并指回角色菜单，不复用 Hub 的说法', () => {
+    const local: LocalStatusResponse = {
+      ...meshStatus('relay,node'),
+      relay: {
+        publicUrl: null,
+        hasPassword: false,
+        tenantCount: 0,
+        nodesOnline: 0,
+        currentNodes: 0,
+      },
+    };
+    const html = render(local, MESH_MODE);
+    expect(html).toContain('data-testid="local-relay-service-unset"');
+    expect(html).toContain('nodes.machine.relayServiceAddressUnsetHint');
+    expect(zhCN.translation.nodes.machine.relayServiceAddressUnsetHint).toContain('中继兼节点');
+  });
+
+  test('中继角色还没接入自己的中继：连接段只有一条陈述加一个 CTA，没有 Hub 的任何说法', () => {
+    // 现网复现：后端把这台机器的 `mode` 报成 `hub`（`relays: []`），hub 候选里还有一条
+    // `http://127.0.0.1` 的占位——旧版式据此摆出「改为接入中继」和「不再连接 Hub」。
+    setMeshRelayStateForTest({ mode: 'hub', relays: [], loadedAt: 1 });
+    setMeshHubsStateForTest({
+      candidates: [{ publicUrl: 'http://127.0.0.1', lastError: null, lastAttemptAt: null }],
+      loadedAt: 1,
+    });
+    const html = render(relayNodeStatus(), MESH_MODE);
+
+    expect(html).toContain('data-testid="nodes-relay-self-entry"');
+    expect(occurrences(html, 'data-testid="nodes-relay-enroll-self"')).toBe(1);
+    expect(html).toContain('nodes.machine.relayServiceEnrollHint');
+    // 预填的是本机自己那台中继的地址，不是别人的
+    expect(html).toContain('data-relay-url="https://relay.example.com"');
+    // hub 时代的入口与提示一个都不剩
+    expect(html).not.toContain('data-testid="local-uplink-hub-panel"');
+    expect(html).not.toContain('data-testid="nodes-relay-enroll"');
+    expect(html).not.toContain('data-testid="nodes-relay-entry-hint"');
+    expect(html).not.toContain('relay.tenant.actions.migrate');
+    expect(html).not.toContain('relay.tenant.dialog.migrateNotice');
+    expect(html).not.toContain('data-testid="local-machine-change-hub"');
+    expect(html).not.toContain('data-testid="local-machine-hub-disconnected"');
+  });
+
+  test('中继角色的状态徽标只说中继，且未接入是灰字不是红字', () => {
+    setMeshRelayStateForTest({ mode: 'hub', relays: [], loadedAt: 1 });
+    const html = render(relayNodeStatus(), MESH_MODE);
+    const tag = tagOf(html, 'local-machine-status');
+    expect(tag).toContain('data-status-state="relayDisconnected"');
+    // 灰字档（outline）而不是红字档（destructive）：刚建好还没接入是预期状态
+    expect(tag).toContain('data-variant="outline"');
+    expect(tag).not.toContain('data-variant="destructive"');
+    expect(html).toContain('nodes.machine.status.relayDisconnected');
+    expect(html).not.toContain('nodes.machine.status.hubDisconnected');
+  });
+
+  test('纯中继同样不摆 Hub 的话', () => {
+    setMeshRelayStateForTest({ mode: 'hub', relays: [], loadedAt: 1 });
+    const html = render({ ...relayNodeStatus(), role: 'relay' }, MESH_MODE);
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayDisconnected"');
+    expect(html).toContain('data-testid="nodes-relay-self-entry"');
+    expect(html).not.toContain('data-testid="local-uplink-hub-panel"');
+  });
+
+  test('中继角色接上自己的中继之后：换回链路面板，CTA 不再出现', () => {
+    setMeshRelayStateForTest({
+      mode: 'relay',
+      relays: [
+        { url: 'https://relay.example.com', priority: 1, online: true, attached: true, rttMs: 30 },
+      ],
+      loadedAt: 1,
+    });
+    const html = render(relayNodeStatus(), MESH_MODE);
+    expect(html).toContain('data-testid="local-uplink-relay-panel"');
+    expect(html).toContain('data-testid="nodes-relay-row-relay.example.com"');
+    expect(html).toContain('data-testid="nodes-relay-add"');
+    expect(occurrences(html, 'data-testid="nodes-relay-enroll-self"')).toBe(0);
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayConnected"');
+    expect(html).toContain('nodes.machine.status.relayConnectedRtt');
+    // 中继服务段照旧
+    expect(html).toContain('data-testid="local-machine-relay-service"');
+  });
+
+  test('挂着的那条中继离线：不算已连接', () => {
+    setMeshRelayStateForTest({
+      mode: 'relay',
+      relays: [{ url: 'https://relay.example.com', priority: 1, online: false, attached: true }],
+      loadedAt: 1,
+    });
+    const html = render(relayNodeStatus(), MESH_MODE);
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayDisconnected"');
+  });
+
+  test('普通节点即便接在中继上也没有中继服务段', () => {
+    setMeshRelayStateForTest({ mode: 'relay', relays: [], loadedAt: 1 });
+    expect(render(meshStatus('node'), MESH_MODE)).not.toContain(
+      'data-testid="local-machine-relay-service"'
+    );
+  });
+});
+
+describe('LocalMachineCard 的状态徽标', () => {
+  function stateOf(html: string): string {
+    return /data-status-state="([a-zA-Z]+)"/.exec(tagOf(html, 'local-machine-status'))?.[1] ?? '';
+  }
+
+  test('挂上 Hub 就是「已连接 Hub」，没挂上是「未连接 Hub」', () => {
+    const hub: MeshHubEndpoint = {
+      nodeId: 'h1',
+      publicUrl: 'https://h1.example',
+      name: 'hub-a',
+      mode: 'active',
+      priority: 0,
+      writerEpoch: 1,
+      online: true,
+    };
+    setMeshHubsStateForTest({
+      hubs: [hub],
+      attached: {
+        hubNodeId: 'h1',
+        publicUrl: hub.publicUrl,
+        mode: 'active',
+        writerEpoch: 1,
+        since: 1,
+      },
+      writerHubId: 'h1',
+      loadedAt: 1,
+    });
+    expect(stateOf(render(meshStatus('node'), MESH_MODE))).toBe('hubConnected');
+    resetMeshHubsStateForTest();
+    expect(stateOf(render(meshStatus('node'), MESH_MODE))).toBe('hubDisconnected');
+  });
+
+  test('中继令牌失效时状态徽标直接说失效', () => {
+    setMeshRelayStateForTest({
+      mode: 'relay',
+      relays: [
+        { url: 'https://r.example', priority: 1, online: true, attached: true, kicked: true },
+      ],
+      loadedAt: 1,
+    });
+    expect(stateOf(render(meshStatus('node'), MESH_MODE))).toBe('relayKicked');
+  });
+});
+
+describe('LocalMachineCard 在角色未知时的卡头', () => {
+  // mesh 下 `/api/local/status` 还没回来 / 401 / 失败：角色未知，菜单里每一项都算不出目标，
+  // `useRoleSwitch` 也会直接返回——摆一个点了没反应的菜单比没有菜单更糟。
+  for (const branch of ['loading', 'loginRequired', 'error'] as const) {
+    test(`${branch}：只给一枚「状态未知」徽标，没有角色徽标也没有菜单`, () => {
+      const html = renderUnknownRole(branch);
+      expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="unknown"');
+      expect(html).toContain('nodes.machine.status.unknown');
+      expect(html).not.toContain('data-testid="local-machine-role"');
+      expect(html).not.toContain('data-testid="local-machine-menu"');
+      expect(html).not.toContain('nodes.machine.roleStandalone');
+    });
+  }
+
+  test('状态回来之后角色徽标与菜单才出现', () => {
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-role"');
+    expect(html).toContain('data-testid="local-machine-menu"');
+    expect(tagOf(html, 'local-machine-status')).not.toContain('data-status-state="unknown"');
+  });
+
+  test('纯中继没有网页可操作：即便角色已知也不摆菜单', () => {
+    const html = render(meshStatus('relay'), MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-role"');
+    expect(html).not.toContain('data-testid="local-machine-menu"');
+  });
+});
+
+describe('LocalMachineCard 的读取失败', () => {
+  test('非 401 失败：给出原因与重试，而不是空着一张卡', () => {
+    const html = render(null, MESH_MODE, 'fetch failed');
+    expect(html).toContain('data-testid="local-machine-error"');
+    expect(html).toContain('nodes.machine.loadFailed');
+    expect(html).toContain('data-testid="local-machine-retry"');
+  });
+
+  test('状态照常拿到时不出错误行', () => {
+    expect(render(meshStatus('node'), MESH_MODE)).not.toContain(
+      'data-testid="local-machine-error"'
+    );
   });
 });
 
@@ -405,319 +709,17 @@ describe('describeDirectError', () => {
   });
 });
 
-describe('LocalMachineCard 角色与 Hub 归属', () => {
-  test('角色渲染成下拉而不是只读徽章，值就是当前角色', () => {
-    const html = render(meshStatus('node'), MESH_MODE);
-    const tag = tagOf(html, 'local-machine-role');
-    expect(tag).toContain('data-slot="select-trigger"');
-    expect(html).toContain('nodes.machine.roleNode');
-    // 隐藏的原生 input 带着当前值，提交/回填都以它为准
-    expect(html).toContain('value="node"');
-  });
-
-  test('角色下拉给全五个角色，纯中继写明没有网页', () => {
-    // Select 的选项只在展开时才渲染，静态版式里看不到：直接断言候选列表与文案。
-    expect(SELECTABLE_ROLES).toEqual(['standalone', 'node', 'hub,node', 'relay,node', 'relay']);
-    for (const role of SELECTABLE_ROLES) expect(ROLE_LABEL_KEY[role]).toBeString();
-    expect(zhCN.translation.nodes.machine.roleRelay).toContain('无网页');
-    expect(zhCN.translation.nodes.machine.roleRelayNode).toBe('中继兼节点');
-  });
-
-  test('中继兼节点：角色下拉照样显示当前角色', () => {
-    const html = render(meshStatus('relay,node'), MESH_MODE);
-    expect(html).toContain('value="relay,node"');
-    expect(html).toContain('nodes.machine.roleRelayNode');
-  });
-
-  test('纯 node：「当前 Hub」这一行带上「更换 Hub」，不再另起一行加入地址', () => {
-    const html = render(meshStatus('node'), MESH_MODE);
-    expect(html).toContain('nodes.machine.currentHub');
-    expect(html).toContain('data-testid="local-machine-change-hub"');
-    expect(html).toContain('nodes.membership.changeHub');
-    expect(buttonDisabled(html, 'local-machine-change-hub')).toBe(false);
-    expect(html).not.toContain('nodes.machine.hubUrl');
-    expect(html).not.toContain('nodes.machine.localAddress');
-  });
-
-  test('hub 兼节点：本机地址只读，没有换 hub 入口', () => {
-    const html = render(meshStatus('hub,node'), MESH_MODE);
-    expect(html).toContain('nodes.machine.localAddress');
-    expect(html).toContain('data-testid="local-machine-local-address"');
-    expect(html).not.toContain('data-testid="local-machine-change-hub"');
-    // 角色下拉照样可用
-    expect(html).toContain('data-testid="local-machine-role"');
-  });
-
-  test('hub 兼节点但没有公开地址：说未设置并指回角色设置', () => {
-    const html = render({ ...meshStatus('hub,node'), hubPublicUrl: null }, MESH_MODE);
-    expect(html).toContain('data-testid="local-machine-local-address-unset"');
-    expect(html).toContain('nodes.machine.localAddressHint');
-    expect(html).not.toContain('data-testid="local-machine-local-address"');
-  });
-
-  test('standalone：没有地址行，也没有换 hub 入口', () => {
-    const html = render(status(), null);
-    expect(html).not.toContain('nodes.machine.localAddress');
-    expect(html).not.toContain('nodes.machine.currentHub');
-    expect(html).not.toContain('data-testid="local-machine-change-hub"');
-    expect(html).toContain('nodes.machine.roleStandalone');
-  });
-
-  test('mesh 下只留账号安全入口，指向右侧面板而不是已删除的整页', () => {
-    const html = render(meshStatus('node'), MESH_MODE);
-    expect(html).toContain('data-testid="local-machine-account-security"');
-    expect(html).toContain('href="/?panel=security"');
-    expect(html).not.toContain('href="/account/security"');
-    expect(html).not.toContain('href="/nodes"');
-    expect(html).not.toContain('nodes.machine.openNodesPage');
-  });
-
-  test('没有确认请求时不渲染退出对话框', () => {
-    expect(render(meshStatus('node'), MESH_MODE)).not.toContain(
-      'data-testid="membership-leave-dialog"'
+describe('删除直连插件的后果按上级形态分档', () => {
+  test('hub 与中继各有一句，不再对中继节点说「经 Hub 中转」', () => {
+    expect(zhCN.translation.nodes.machine.directRemoveConfirm.description).toContain('Hub');
+    expect(zhCN.translation.nodes.machine.directRemoveConfirm.descriptionRelay).toContain('中继');
+    expect(zhCN.translation.nodes.machine.directRemoveConfirm.descriptionRelay).not.toContain(
+      'Hub'
     );
   });
 });
 
-describe('LocalMachineCard 的本机 Hub 主 / 备身份', () => {
-  const HUB_MODE_ROW = 'data-testid="local-machine-hub-mode"';
-
-  test('hub 集合里认得出本机时显示主 / 备', () => {
-    setMeshHubsStateForTest({
-      hubs: [
-        {
-          nodeId: MESH_MODE.nodeId,
-          publicUrl: 'https://hub.example',
-          mode: 'standby',
-          priority: 1,
-          writerEpoch: 0,
-        },
-      ],
-      loadedAt: 1,
-    });
-    const html = render(meshStatus('hub,node'), MESH_MODE);
-    expect(html).toContain(HUB_MODE_ROW);
-    expect(html).toContain('nodes.hubs.standby');
-  });
-
-  test('集合里没有本机、或本机不是 hub 时整行不渲染', () => {
-    setMeshHubsStateForTest({
-      hubs: [
-        {
-          nodeId: '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f',
-          publicUrl: 'https://other.example',
-          mode: 'active',
-          priority: 0,
-          writerEpoch: 1,
-        },
-      ],
-      loadedAt: 1,
-    });
-    expect(render(meshStatus('hub,node'), MESH_MODE)).not.toContain(HUB_MODE_ROW);
-    resetMeshHubsStateForTest();
-    expect(render(meshStatus('node'), MESH_MODE)).not.toContain(HUB_MODE_ROW);
-  });
-});
-
-describe('LocalMachineCard 的多 hub 归属', () => {
-  const ATTACHED_ROW = 'data-testid="local-machine-attached-hub"';
-  const HUB_LIST_ROW = 'data-testid="local-machine-hub-list"';
-  const WRITER_SUFFIX = 'data-testid="local-machine-writer-hub"';
-  const JOIN_SEED_ROW = 'data-testid="local-machine-join-seed"';
-
-  function hubRow(overrides: Partial<MeshHubEndpoint> & { nodeId: string }): MeshHubEndpoint {
-    return {
-      publicUrl: `https://${overrides.nodeId}.example`,
-      mode: 'active',
-      priority: 0,
-      writerEpoch: 1,
-      ...overrides,
-    };
-  }
-
-  function attachedTo(hub: MeshHubEndpoint): MeshAttachedHub {
-    return {
-      hubNodeId: hub.nodeId,
-      publicUrl: hub.publicUrl,
-      mode: hub.mode,
-      writerEpoch: hub.writerEpoch,
-      since: 1,
-    };
-  }
-
-  test('挂在 writer 上：名字 + 主 Hub 徽标 + 可复制地址，不补写者', () => {
-    const hub = hubRow({ nodeId: 'h1', name: 'hub-a', writerEpoch: 2 });
-    setMeshHubsStateForTest({
-      hubs: [hub],
-      attached: attachedTo(hub),
-      writerHubId: 'h1',
-      loadedAt: 1,
-    });
-    const html = render(meshStatus('node'), MESH_MODE);
-    expect(html).toContain(ATTACHED_ROW);
-    expect(html).toContain('nodes.machine.currentHub');
-    expect(html).toContain('>hub-a<');
-    expect(tagOf(html, 'local-machine-attached-hub-mode')).toContain('data-hub-mode="active"');
-    expect(html).toContain('nodes.hubs.active');
-    expect(html).toContain('>https://h1.example<');
-    expect(html).not.toContain(WRITER_SUFFIX);
-    // 只有一台 hub 时不摆列表：单 hub 用户的版式与之前一致
-    expect(html).not.toContain(HUB_LIST_ROW);
-  });
-
-  test('挂在备 Hub 上：同一行补出当前写者', () => {
-    const writer = hubRow({ nodeId: 'h1', name: 'hub-a', writerEpoch: 3 });
-    const standby = hubRow({ nodeId: 'h2', name: 'hub-b', mode: 'standby', priority: 1 });
-    setMeshHubsStateForTest({
-      hubs: [writer, standby],
-      attached: attachedTo(standby),
-      writerHubId: 'h1',
-      loadedAt: 1,
-    });
-    const html = render(meshStatus('node'), MESH_MODE);
-    expect(html).toContain(ATTACHED_ROW);
-    expect(html).toContain('>hub-b<');
-    expect(tagOf(html, 'local-machine-attached-hub-mode')).toContain('data-hub-mode="standby"');
-    expect(html).toContain(WRITER_SUFFIX);
-    expect(html).toContain('nodes.machine.writerHub');
-  });
-
-  test('两台 hub：列表 writer 打头，离线那台带离线标记', () => {
-    const writer = hubRow({ nodeId: 'h1', name: 'hub-a', writerEpoch: 3 });
-    const standby = hubRow({
-      nodeId: 'h2',
-      name: 'hub-b',
-      mode: 'standby',
-      priority: -1,
-      online: false,
-    });
-    setMeshHubsStateForTest({
-      hubs: [standby, writer],
-      attached: attachedTo(writer),
-      writerHubId: 'h1',
-      loadedAt: 1,
-    });
-    const html = render(meshStatus('node'), MESH_MODE);
-    expect(html).toContain(HUB_LIST_ROW);
-    expect(html).toContain('nodes.machine.hubList');
-    // 优先级更高的备 hub 也要排在 writer 后面
-    expect(html.indexOf('local-machine-hub-item-h1')).toBeLessThan(
-      html.indexOf('local-machine-hub-item-h2')
-    );
-    expect(tagOf(html, 'local-machine-hub-item-h2')).toContain('data-hub-online="false"');
-    expect(html).toContain('data-testid="local-machine-hub-offline-h2"');
-    expect(html).not.toContain('data-testid="local-machine-hub-offline-h1"');
-    expect(tagOf(html, 'local-machine-hub-item-h1')).toContain('data-hub-online="true"');
-  });
-
-  test('hub 兼节点且自己就是 writer：当前 Hub 显示本机', () => {
-    setMeshHubsStateForTest({
-      hubs: [hubRow({ nodeId: MESH_MODE.nodeId, name: 'hub-a', writerEpoch: 2 })],
-      attached: null,
-      writerHubId: MESH_MODE.nodeId,
-      loadedAt: 1,
-    });
-    const html = render(meshStatus('hub,node'), MESH_MODE);
-    expect(html).toContain(ATTACHED_ROW);
-    expect(html).toContain('nodes.machine.self');
-    expect(html).not.toContain('>hub-a<');
-    // 挂在自己身上时不重复地址，本机地址那一行已经给过
-    expect(html).not.toContain('data-testid="local-machine-attached-hub-url"');
-    expect(html).not.toContain(WRITER_SUFFIX);
-    // 主 / 备身份那一行照旧
-    expect(html).toContain('data-testid="local-machine-hub-mode"');
-  });
-
-  test('没挂上任何 Hub：当前 Hub 显示未连接，不展示入会种子，仍可更换 Hub', () => {
-    const html = render(meshStatus('node'), MESH_MODE);
-    expect(html).not.toContain(ATTACHED_ROW);
-    expect(html).not.toContain(HUB_LIST_ROW);
-    expect(html).toContain('nodes.machine.currentHub');
-    // 入会种子不能冒充「当前 Hub」：那台机器可能早就不在了
-    expect(html).toContain('data-testid="local-machine-hub-disconnected"');
-    expect(html).toContain('nodes.machine.hubDisconnected');
-    expect(html).not.toContain(JOIN_SEED_ROW);
-    expect(html).not.toContain('nodes.machine.joinSeed');
-    expect(html).toContain('data-testid="local-machine-change-hub"');
-  });
-
-  test('集合里没有挂载的那一行时用 attached 的地址，而不是入会种子', () => {
-    setMeshHubsStateForTest({
-      hubs: [hubRow({ nodeId: 'h1', name: 'hub-a' })],
-      attached: {
-        hubNodeId: 'h9',
-        publicUrl: 'https://hub-new.example',
-        mode: 'active',
-        writerEpoch: 4,
-        since: 1,
-      },
-      writerHubId: 'h1',
-      loadedAt: 1,
-    });
-    const html = render(meshStatus('node'), MESH_MODE);
-    expect(html).toContain('data-testid="local-machine-attached-hub-url"');
-    expect(html).toContain('>https://hub-new.example<');
-    expect(html).not.toContain('nodes.machine.hubDisconnected');
-    // 种子与它不是同一台，但界面上不再出现种子
-    expect(html).not.toContain(JOIN_SEED_ROW);
-  });
-
-  test('挂载信息连地址都没有：仍判未连接', () => {
-    setMeshHubsStateForTest({
-      hubs: [hubRow({ nodeId: 'h1', name: 'hub-a' })],
-      attached: {
-        hubNodeId: 'h9',
-        publicUrl: '',
-        mode: 'active',
-        writerEpoch: 4,
-        since: 1,
-      },
-      writerHubId: 'h1',
-      loadedAt: 1,
-    });
-    const html = render(meshStatus('node'), MESH_MODE);
-    expect(html).toContain('data-testid="local-machine-hub-disconnected"');
-  });
-
-  test('种子与挂载地址不一致也不展示入会种子，当前 Hub 只反映实际挂靠', () => {
-    const hub = hubRow({ nodeId: 'h1', name: 'hub-a', publicUrl: 'https://hub-b.example' });
-    setMeshHubsStateForTest({
-      hubs: [hub],
-      attached: attachedTo(hub),
-      writerHubId: 'h1',
-      loadedAt: 1,
-    });
-    // meshStatus('node') 的种子是 https://hub.example，与挂载的 hub-b 不是同一台
-    const moved = render(meshStatus('node'), MESH_MODE);
-    expect(moved).not.toContain(JOIN_SEED_ROW);
-    expect(moved).not.toContain('nodes.machine.joinSeed');
-    expect(moved).not.toContain('https://hub.example<');
-    expect(moved).toContain(ATTACHED_ROW);
-    expect(moved).toContain('>hub-a<');
-
-    const same = hubRow({ nodeId: 'h1', name: 'hub-a', publicUrl: 'https://hub.example/' });
-    setMeshHubsStateForTest({
-      hubs: [same],
-      attached: attachedTo(same),
-      writerHubId: 'h1',
-      loadedAt: 1,
-    });
-    expect(render(meshStatus('node'), MESH_MODE)).not.toContain(JOIN_SEED_ROW);
-  });
-
-  test('地址行的三语键：本机地址 / 当前 Hub', () => {
-    expect(zhCN.translation.nodes.machine.localAddress).toBe('本机地址');
-    expect(enUS.translation.nodes.machine.localAddress).toBe("This Machine's Address");
-    expect(zhCN.translation.nodes.machine.currentHub).toBe('当前 Hub');
-    expect(zhCN.translation.nodes.machine.hubDisconnected).toBe('未连接');
-    expect(enUS.translation.nodes.machine.hubDisconnected).toBe('Not connected');
-    expect(zhCN.translation.nodes.machine.hubList).toBe('Hub 列表');
-    expect(zhCN.translation.nodes.machine.self).toBe('本机');
-    expect(zhCN.translation.nodes.machine.writerHub).toContain('写者');
-  });
-});
-
-describe('LocalMachineCard 的通用设置：允许域名访问', () => {
+describe('LocalMachineCard 的允许域名访问', () => {
   const ROW = 'data-testid="local-machine-domain-access-switch"';
 
   function withDomainAccess(policy: DomainAccessPolicy | undefined): LocalStatusResponse {
@@ -728,25 +730,39 @@ describe('LocalMachineCard 的通用设置：允许域名访问', () => {
     return rest as LocalStatusResponse;
   }
 
-  test('旧节点不下发该字段时整块不渲染', () => {
+  test('旧节点不下发该字段时整行不渲染，但「网络」段还在', () => {
     const html = render(withDomainAccess(undefined), MESH_MODE);
     expect(html).not.toContain(ROW);
-    expect(html).not.toContain('nodes.machine.general');
+    expect(html).toContain('data-testid="local-machine-network"');
   });
 
-  test('有公开域名：通用设置标题 + 开关 + 说明', () => {
+  test('有公开域名：开关与标签同一行，说明另起一行，不再单起「通用设置」标题', () => {
     const html = render(
       withDomainAccess({ allowed: true, viaDomain: false, hosts: ['tmex.example.com'] }),
       MESH_MODE
     );
-    expect(html).toContain('data-testid="local-machine-general-heading"');
-    expect(html).toContain('nodes.machine.general');
     expect(html).toContain('nodes.machine.domainAccess.label');
     expect(html).toContain('nodes.machine.domainAccess.description');
+    expect(html).not.toContain('data-testid="local-machine-general-heading"');
     expect(switchState(html, 'local-machine-domain-access-switch')).toEqual({
       disabled: false,
       checked: true,
     });
+    // 开关在标签行内（与直连插件同一套版式），说明落在该行之后
+    const label = html.indexOf('nodes.machine.domainAccess.label');
+    const toggle = html.indexOf('data-testid="local-machine-domain-access-switch"');
+    const hint = html.indexOf('data-testid="local-machine-domain-access-hint"');
+    expect(label).toBeLessThan(toggle);
+    expect(toggle).toBeLessThan(hint);
+  });
+
+  test('说明只有一句，不再是带括号的长句', () => {
+    const zh = zhCN.translation.nodes.machine.domainAccess.description;
+    expect(zh).toBe(
+      '关闭后拒绝来自公网的网页与 API 访问，局域网、本机与节点互联不受影响。公开域名：{{hosts}}'
+    );
+    expect(zh).not.toContain('（');
+    expect(zh).not.toContain('(');
   });
 
   test('没有公开域名：说清尚未配置并禁用开关', () => {
@@ -778,7 +794,7 @@ describe('LocalMachineCard 的通用设置：允许域名访问', () => {
 });
 
 describe('DomainAccessController', () => {
-  function harness(outcome: (allowed: boolean) => DomainAccessPolicy | Error) {
+  function harnessDomain(outcome: (allowed: boolean) => DomainAccessPolicy | Error) {
     const calls: boolean[] = [];
     const results: DomainAccessPolicy[] = [];
     let refreshes = 0;
@@ -807,7 +823,7 @@ describe('DomainAccessController', () => {
   });
 
   test('开启不需要确认，直接写', async () => {
-    const h = harness(() => policy(true));
+    const h = harnessDomain(() => policy(true));
     await h.controller.request(true);
     expect(h.calls).toEqual([true]);
     expect(h.results).toEqual([policy(true)]);
@@ -816,7 +832,7 @@ describe('DomainAccessController', () => {
   });
 
   test('关闭先确认：确认前不发请求', async () => {
-    const h = harness(() => policy(false));
+    const h = harnessDomain(() => policy(false));
     await h.controller.request(false);
     expect(h.controller.snapshot().confirming).toBe(true);
     expect(h.calls).toEqual([]);
@@ -828,7 +844,7 @@ describe('DomainAccessController', () => {
   });
 
   test('取消确认不发请求', async () => {
-    const h = harness(() => policy(false));
+    const h = harnessDomain(() => policy(false));
     await h.controller.request(false);
     h.controller.cancel();
     await h.controller.confirm();
@@ -838,7 +854,7 @@ describe('DomainAccessController', () => {
 
   test('失败时留下错误，不刷新状态', async () => {
     const failure = new Error('domain_access_update_failed');
-    const h = harness(() => failure);
+    const h = harnessDomain(() => failure);
     await h.controller.request(true);
     expect(h.controller.snapshot().error).toBe(failure);
     expect(h.controller.snapshot().pending).toBe(false);

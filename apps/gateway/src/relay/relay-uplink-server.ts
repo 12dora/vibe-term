@@ -20,7 +20,12 @@ import type { RelayMetering } from './relay-metering';
 import { type RelayListDeps, encodeRelayList } from './relay-node-list';
 import { type RelaySleep, RelayTokenBucket, effectiveRelayQuota } from './relay-quota';
 import { relayQuotaCtl } from './relay-quota-ctl';
-import type { RelayLiveNode, RelayRegistry } from './relay-registry';
+import {
+  type RelayLiveNode,
+  type RelayRegistry,
+  noteRelayPing,
+  noteRelayPong,
+} from './relay-registry';
 import { acceptRelayStream } from './relay-stream-router';
 import type { RelayTenantStore } from './relay-tenant-store';
 import { handleRelayAuth, liveAuthStillValid } from './relay-uplink-auth';
@@ -116,6 +121,10 @@ export class RelayUplinkServer implements RelayUplinkHost {
         return this.listVersion;
       },
     };
+  }
+
+  openSocketCount(): number {
+    return this.accepted.size;
   }
 
   accept(link: LinkSession): void {
@@ -223,6 +232,10 @@ export class RelayUplinkServer implements RelayUplinkHost {
   disconnectNode(tenantId: string, nodeId: string, reason: RelayKickReason): void {
     const live = this.registry.get(tenantId, nodeId);
     if (live) this.kickLink(live, reason);
+    if (reason === 'revoked') {
+      this.metering.forgetMember(tenantId, nodeId);
+      this.registry.forgetMember(tenantId, nodeId);
+    }
   }
 
   /** ctl 发送是异步排空的，立刻 close 会把 `relay.kicked` 丢掉，所以下一个宏任务再断。 */
@@ -341,8 +354,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
         this.send(live.link, { t: 'pong' });
         return;
       case 'pong':
-        live.awaitingPong = false;
-        live.misses = 0;
+        noteRelayPong(live, this.now());
         return;
       case 'relay.status':
         live.statusBlob = msg.blob;
@@ -444,12 +456,15 @@ export class RelayUplinkServer implements RelayUplinkHost {
       this.clearHeartbeat(live);
       return;
     }
-    if (live.awaitingPong) live.misses += 1;
-    if (live.misses >= this.heartbeatMissLimit) {
-      live.link.close('heartbeat-timeout');
+    if (live.awaitingPong) {
+      live.misses += 1;
+      if (live.misses >= this.heartbeatMissLimit) {
+        live.link.close('heartbeat-timeout');
+      }
       return;
     }
     live.awaitingPong = true;
+    noteRelayPing(live, this.now());
     this.send(live.link, { t: 'ping' });
   }
 

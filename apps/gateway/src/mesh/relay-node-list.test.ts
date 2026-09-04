@@ -70,4 +70,68 @@ describe('relayListToNodeList', () => {
       close();
     }
   });
+
+  test('pending / revoked 成员不进入可达节点列表', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      userStore.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 0,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const admitted = 'ab'.repeat(16);
+      const pending = 'cd'.repeat(16);
+      const revoked = 'ef'.repeat(16);
+      for (const nodeId of [admitted, pending, revoked]) {
+        userStore.upsertCert({
+          nodeId,
+          userId: 'user-1',
+          admitRecordSeq: 1,
+          certificateBytes: new Uint8Array(8),
+          certSig: new Uint8Array(64),
+          authorizationBytes: new Uint8Array(8),
+          authorizationSig: new Uint8Array(64),
+        });
+        userStore.upsertPeer({
+          nodeId,
+          name: nodeId,
+          endpointsJson: '[]',
+          inventoryJson: '{}',
+          directCapable: false,
+          lastSeenAt: 1,
+          listVersion: 1,
+          version: '1.1.22',
+        });
+      }
+      const listed = await relayListToNodeList(
+        {
+          t: 'relay.list',
+          version: 3,
+          nodes: [
+            { id: admitted, online: true, status: 'admitted' },
+            { id: pending, online: true, status: 'pending' },
+            { id: revoked, online: false, status: 'revoked' },
+          ],
+          rtc: { stun: [], turn: null },
+          key_log_head_seq: 0,
+        },
+        {
+          selfNodeId: '11'.repeat(16),
+          userId: 'user-1',
+          userStore,
+          secrets: { metaKey: async () => null } as unknown as RelaySecrets,
+          now: 2,
+        }
+      );
+      expect(listed.nodes.map((n) => n.id)).toEqual([admitted]);
+    } finally {
+      close();
+    }
+  });
 });

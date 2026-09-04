@@ -11,6 +11,12 @@ export interface SiteSettingsLoaderOptions {
   setLoading: (loading: boolean) => void;
   /** 落库并做语言 / 主题同步 */
   commit: (settings: SiteSettings) => void;
+  /**
+   * 取数失败时落兜底值，返回真正落库的那份。与 commit 分开是因为失败不得把 UI 语言掀回默认值：
+   * 401（未登录）/ 网络抖动都会走到这里，提交 DEFAULT_SETTINGS.language 就等于
+   * 把中文界面主动切成英文，直到设置页某次请求成功才能改回来。
+   */
+  commitFallback: (settings: SiteSettings) => SiteSettings;
   /** 取数失败时的兜底设置 */
   fallback: SiteSettings;
 }
@@ -49,6 +55,13 @@ export function createSiteSettingsLoader(options: SiteSettingsLoaderOptions): Si
     }
     options.commit(settings);
     return settings;
+  }
+
+  function commitFallbackIfCurrent(requestGeneration: number): SiteSettings {
+    if (requestGeneration !== generation) {
+      return options.current() ?? options.fallback;
+    }
+    return options.commitFallback(options.fallback);
   }
 
   function release(requestGeneration: number): void {
@@ -101,7 +114,7 @@ export function createSiteSettingsLoader(options: SiteSettingsLoaderOptions): Si
         return await entry.promise;
       } catch {
         // 失败已由所有者记过日志；引导路径不抛，落兜底值让 UI 起得来
-        return options.current() ?? commitIfCurrent(entry.generation, options.fallback);
+        return options.current() ?? commitFallbackIfCurrent(entry.generation);
       }
     },
 

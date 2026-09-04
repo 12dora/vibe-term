@@ -1,10 +1,21 @@
 import { fetchSiteSettings } from '@tmex/api-client';
-import { DEFAULT_LOCALE, PRODUCT_NAME, type SiteSettings, type ThemeMode } from '@tmex/shared';
+import {
+  DEFAULT_LOCALE,
+  type LocaleCode,
+  PRODUCT_NAME,
+  type SiteSettings,
+  type ThemeMode,
+} from '@tmex/shared';
 import { THEME_PRESET_META, type ThemeAppearance, type ThemePreset } from '@tmex/theme';
 import { buildSiteThemeUpdate } from '@tmex/ws-client';
 import i18next from 'i18next';
 import { create } from 'zustand';
 import type { RuntimeCore } from './runtime';
+import {
+  isLocaleCode,
+  readCachedSiteLanguage,
+  writeCachedSiteLanguage,
+} from './site-language-cache';
 import { createSiteSettingsLoader } from './site-settings-loader';
 import type { UIStore } from './ui';
 
@@ -47,6 +58,60 @@ const DEFAULT_SETTINGS: SiteSettings = {
   disabledNotificationChannels: [],
   updatedAt: new Date(0).toISOString(),
 };
+
+interface SettingsCommitters {
+  /** 取数成功：落库并做语言 / 主题同步 */
+  commitSettings: (settings: SiteSettings) => void;
+  /** 取数失败：落兜底值，返回真正落库的那份 */
+  commitFallbackSettings: (settings: SiteSettings) => SiteSettings;
+}
+
+interface SettingsCommitDeps {
+  /** 宿主 / self 的 runtime 才允许改浏览器级偏好（语言是 i18next 单例） */
+  controlsBrowserPrefs: boolean;
+  set: (patch: Partial<SiteState>) => void;
+  syncTheme: (theme: ThemeMode) => void;
+}
+
+function currentBrowserLanguage(): LocaleCode | null {
+  const active = i18next.resolvedLanguage ?? i18next.language;
+  return isLocaleCode(active) ? active : null;
+}
+
+// 取数失败（401 未登录 / 网络抖动 / 中继抖动）只补齐非语言默认值：
+// 语言沿用当前已解析的那个，绝不回落 DEFAULT_SETTINGS.language，否则中文界面会被主动掀成英文。
+function resolveFallbackLanguage(
+  fallback: SiteSettings,
+  controlsBrowserPrefs: boolean
+): LocaleCode {
+  if (!controlsBrowserPrefs) {
+    return fallback.language;
+  }
+  return readCachedSiteLanguage() ?? currentBrowserLanguage() ?? fallback.language;
+}
+
+function createSettingsCommitters(deps: SettingsCommitDeps): SettingsCommitters {
+  return {
+    commitSettings: (settings) => {
+      deps.set({ settings, loading: false });
+      // i18next 是浏览器级单例：远端 node 的 runtime 拉到自己的站点设置后不得改全局语言，
+      // 否则进入 /n/<id>/... 子树就会把整页 UI 切成那台 node 的语言。缓存同理只写宿主语言，
+      // 下次首屏（含登录页）据此直接起中文，不再先闪一屏 en_US。
+      if (deps.controlsBrowserPrefs) {
+        writeCachedSiteLanguage(settings.language);
+        void i18next.changeLanguage(settings.language);
+      }
+      deps.syncTheme(settings.theme);
+    },
+    commitFallbackSettings: (settings) => {
+      const language = resolveFallbackLanguage(settings, deps.controlsBrowserPrefs);
+      const next: SiteSettings = { ...settings, language };
+      deps.set({ settings: next, loading: false });
+      deps.syncTheme(next.theme);
+      return next;
+    },
+  };
+}
 
 export function createSiteStore(
   core: Pick<RuntimeCore, 'client' | 'apiClient' | 'storagePrefix' | 'controlsBrowserPrefs'>,
@@ -98,21 +163,18 @@ export function createSiteStore(
 
   return create<SiteState>((set, get) => {
     // fetchSettings / refreshSettings / handleSettingsUpdate 全部经此提交，语言开关只需守这一处。
-    function commitSettings(settings: SiteSettings): void {
-      set({ settings, loading: false });
-      // i18next 是浏览器级单例：远端 node 的 runtime 拉到自己的站点设置后不得改全局语言，
-      // 否则进入 /n/<id>/... 子树就会把整页 UI 切成那台 node 的语言。
-      if (core.controlsBrowserPrefs) {
-        void i18next.changeLanguage(settings.language);
-      }
-      syncThemeToUIStore(settings.theme);
-    }
+    const { commitSettings, commitFallbackSettings } = createSettingsCommitters({
+      controlsBrowserPrefs: core.controlsBrowserPrefs,
+      set,
+      syncTheme: syncThemeToUIStore,
+    });
 
     const loader = createSiteSettingsLoader({
       request: () => fetchSiteSettings(core.apiClient),
       current: () => get().settings,
       setLoading: (loading) => set({ loading }),
       commit: commitSettings,
+      commitFallback: commitFallbackSettings,
       fallback: DEFAULT_SETTINGS,
     });
 

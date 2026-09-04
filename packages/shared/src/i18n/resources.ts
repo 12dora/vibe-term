@@ -274,6 +274,9 @@ export const I18N_RESOURCES = {
       "createFailed": "Failed to create device",
       "updateFailed": "Failed to update device",
       "loadFailed": "Failed to load devices",
+      "loadFailedLoginRequired": "Failed to load devices: sign in to this node again",
+      "loadFailedUnreachable": "Failed to load devices: node unreachable",
+      "loadFailedUnreachableReason": "Failed to load devices: node unreachable ({{reason}})",
       "localDevice": "Local Device",
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "Modify Device",
@@ -1853,7 +1856,6 @@ export const I18N_RESOURCES = {
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
       "hubLoginRejected": "The hub rejected this sign-in ({{code}}). Sign in again, then retry.",
       "hubs": {
-        "title": "Hub Cluster",
         "active": "Primary Hub",
         "standby": "Standby Hub",
         "writer": "Currently accepting management writes",
@@ -1863,7 +1865,6 @@ export const I18N_RESOURCES = {
         "detail": "{{url}} | priority {{priority}} | epoch {{epoch}} | {{state}}",
         "standbyNotice": "The primary hub is unreachable, running on a standby hub. Adding, renaming and removing nodes are unavailable.",
         "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
-        "machineRole": "Hub Role",
         "lastAttempt": "Last attempt: {{time}}",
         "lastError": "Last error: {{error}}",
         "authorization": {
@@ -1930,7 +1931,9 @@ export const I18N_RESOURCES = {
             "hubsUnreachable": "Could not read the hub list. The entry is temporarily unreachable.",
             "unexpected": "The switch was interrupted. Refresh to check."
           }
-        }
+        },
+        "priority": "Priority",
+        "epoch": "Writer epoch"
       },
       "machine": {
         "title": "This machine",
@@ -1940,18 +1943,50 @@ export const I18N_RESOURCES = {
         "roleHub": "Hub and node",
         "roleRelay": "Relay only (no web UI)",
         "roleRelayNode": "Relay and node",
+        "menu": {
+          "label": "More actions",
+          "changeRole": "Change role",
+          "leave": "Leave…"
+        },
+        "status": {
+          "standalone": "Standalone",
+          "unknown": "Status unknown",
+          "hubConnected": "Connected to Hub",
+          "hubConnectedRtt": "Connected to Hub · {{ms}} ms",
+          "hubDisconnected": "Not connected to a Hub",
+          "connecting": "Connecting",
+          "relayConnected": "Connected to relay",
+          "relayConnectedRtt": "Connected to relay · {{ms}} ms",
+          "relayDisconnected": "Not connected to a relay",
+          "relayKicked": "Relay token expired"
+        },
+        "sections": {
+          "uplink": "Connection",
+          "relayService": "Relay service",
+          "network": "Network"
+        },
         "localAddress": "This Machine's Address",
         "localAddressUnset": "Not set",
-        "localAddressHint": "Other nodes cannot join. Set it up again under Role → Hub and node.",
+        "localAddressHint": "Other nodes cannot join. Set it up again under \"Change role → Hub and node\".",
         "currentHub": "Current Hub",
         "hubDisconnected": "Not connected",
         "writerHub": "Writer: {{name}}",
         "hubList": "Hubs",
         "self": "This Machine",
-        "uplinkTabHub": "Connect to Hub",
-        "uplinkTabRelay": "Connect to relay",
-        "uplinkHubBlocked": "This machine is connected to a relay. To go back to a Hub, leave the relay under \"Connect to relay\" first.",
-        "uplinkRelayStandalone": "A relay provides the public entry point; this machine and its nodes connect through it without a public address.",
+        "relayLeaveFirst": "Leave the relay first to go back to a Hub.",
+        "details": {
+          "title": "Connection details",
+          "metaEpoch": "Metadata key generation",
+          "nodesViaRelay": "Nodes visible via relay",
+          "quota": "Node quota",
+          "quotaValue": "{{used}} / {{total}}",
+          "streams": "Stream limit",
+          "keyLog": "Key log",
+          "keyLogCaughtUp": "Caught up",
+          "keyLogBlocked": "Blocked at {{seq}}",
+          "nodeId": "This machine's node ID",
+          "hubs": "Hub details"
+        },
         "direct": "Direct connection add-on",
         "directUnsupported": "Not supported on this platform",
         "directInstalled": "Installed",
@@ -1962,11 +1997,12 @@ export const I18N_RESOURCES = {
         "directRemove": "Remove add-on",
         "directRemoveConfirm": {
           "title": "Remove the direct connection add-on?",
-          "description": "Sessions keep working through the hub. You can install it again at any time.",
+          "description": "Sessions keep working through the hub. It can be installed again at any time.",
           "confirm": "Remove",
-          "cancel": "Cancel"
+          "cancel": "Cancel",
+          "descriptionRelay": "Sessions keep working through the relay. It can be installed again at any time."
         },
-        "directSwitchHint": "Install the add-on first.",
+        "directNeedsInstall": "Install the add-on first.",
         "directRestartRequired": "Restart tmex to apply this change.",
         "directFailed": "Could not update the direct connection add-on.",
         "directErrorUnsupported": "This platform has no direct connection add-on.",
@@ -1976,10 +2012,9 @@ export const I18N_RESOURCES = {
         "restartNow": "Restart now",
         "restarting": "Restarting…",
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
-        "general": "General",
         "domainAccess": {
           "label": "Allow Domain Access",
-          "description": "When off, web and API access from the public internet is refused (LAN and local access is unaffected); only hub/node mesh services stay reachable. Public domains: {{hosts}}",
+          "description": "When off, web and API access from the public internet is refused; LAN, local and node-mesh traffic is unaffected. Public domains: {{hosts}}",
           "noHosts": "No public domain configured yet.",
           "hostSeparator": ", ",
           "failed": "Could not save the domain access setting ({{detail}}).",
@@ -1993,9 +2028,9 @@ export const I18N_RESOURCES = {
         },
         "accountSecurity": "Account security",
         "loginRequired": "Sign in to see this machine's status.",
+        "loadFailed": "Could not read this machine's status ({{detail}}).",
         "relayServiceAddress": "Relay Public Address",
-        "relayServiceStats": "Relay Usage",
-        "relayServiceCounts": "{{tenants}} tenants · {{online}} online · {{nodes}} nodes",
+        "relayServiceAddressUnsetHint": "Other machines cannot reach this relay. Set it up again under \"Change role → Relay and node\".",
         "relayServiceEnroll": "Connect to This Relay",
         "relayServiceEnrollHint": "This machine has not connected to its own relay yet. The relay password just set must be entered again."
       },
@@ -2613,9 +2648,9 @@ export const I18N_RESOURCES = {
           "hide": "Hide password"
         },
         "pureRelayConfirm": {
-          "title": "Switch to relay only?",
+          "title": "Make this a relay-only machine?",
           "description": "After the restart this machine serves no web UI, the relay is managed from the command line, and the role cannot be changed back from the web.",
-          "confirm": "Continue"
+          "confirm": "Create and restart"
         },
         "joinRelay": {
           "title": "Join an existing relay",
@@ -2687,19 +2722,93 @@ export const I18N_RESOURCES = {
       }
     },
     "relay": {
+      "metrics": {
+        "title": "Metrics",
+        "description": "Relay throughput and host load, sampled every 5 seconds.",
+        "console": "Open Relay Console",
+        "refreshFailed": "Metrics update failed: {{message}}",
+        "stale": "Data is stale",
+        "empty": "No samples yet.",
+        "header": {
+          "running": "Running",
+          "stopped": "Not sampling",
+          "version": "Version {{version}}",
+          "uptime": "Up {{duration}}",
+          "tenants": "{{n}} tenants"
+        },
+        "tiles": {
+          "membersOnline": "Nodes Online",
+          "membersOnlineSub": "of {{total}}",
+          "activeStreams": "Active Streams",
+          "throughput": "Throughput",
+          "throughputSub": "↑ {{out}} · ↓ {{in}}",
+          "bytesIn": "Inbound",
+          "bytesOut": "Outbound",
+          "frames": "Frame Rate",
+          "framesSub": "↑ {{out}} · ↓ {{in}}",
+          "rtt": "Latency",
+          "rttSub": "max {{max}}",
+          "rttHint": "Median RTT across online nodes.",
+          "eventLoop": "Event Loop",
+          "eventLoopSub": "peak {{max}}",
+          "eventLoopHint": "Event loop lag; above 100 ms forwarding is queueing.",
+          "memory": "Memory",
+          "memorySub": "heap {{heap}}",
+          "memoryHeapSub": "heap {{heap}} of {{total}}",
+          "cpu": "CPU",
+          "sockets": "Sockets",
+          "socketsSub": "{{authenticated}} authenticated",
+          "reconnects": "Reconnects",
+          "reconnectsSub": "since start",
+          "reconnectsHint": "Reconnects summed across joined nodes.",
+          "uptime": "Uptime",
+          "throughputTotal": "{{total}} total",
+          "traffic": "Relayed Traffic",
+          "trafficSub": "since start",
+          "trafficHint": "Each forwarded frame counts on both sides; it is counted once here.",
+          "tenants": "Tenants"
+        },
+        "groups": {
+          "traffic": "Traffic",
+          "process": "Process"
+        },
+        "trends": {
+          "title": "Trends",
+          "window": "Last {{duration}}",
+          "throughput": "Throughput",
+          "streams": "Active Streams",
+          "eventLoop": "Event Loop Lag",
+          "range": "peak {{max}} · low {{min}}",
+          "legendIn": "In",
+          "legendOut": "Out"
+        },
+        "members": {
+          "title": "Connected Nodes",
+          "total": "{{n}} total",
+          "empty": "No nodes connected yet.",
+          "online": "Online",
+          "offline": "Offline",
+          "unnamed": "Unnamed",
+          "never": "Never",
+          "columns": {
+            "node": "Node",
+            "state": "State",
+            "rtt": "Latency",
+            "streams": "Streams",
+            "rate": "Rate",
+            "reconnects": "Reconnects",
+            "connected": "Connected"
+          }
+        }
+      },
       "tenant": {
         "strip": {
-          "title": "Relay",
           "online": "Online",
           "offline": "Offline",
           "attached": "This machine is attached to this relay",
-          "detail": "{{url}} | priority {{priority}} | {{state}}",
           "rtt": "Latency {{ms}} ms",
           "kicked": "Token revoked, re-enter the relay password",
           "lastError": "Last error: {{error}}",
-          "meta": "Metadata key gen {{epoch}}",
-          "nodes": "{{count}} nodes visible via relay",
-          "quota": "Quota {{nodes}} nodes | {{streams}} streams",
           "empty": "Not connected to a relay.",
           "tenantId": "Tenant ID",
           "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password."
@@ -3191,6 +3300,9 @@ export const I18N_RESOURCES = {
       "createFailed": "创建设备失败",
       "updateFailed": "更新设备失败",
       "loadFailed": "加载设备列表失败",
+      "loadFailedLoginRequired": "加载设备列表失败：该节点需重新登录",
+      "loadFailedUnreachable": "加载设备列表失败：节点不可达",
+      "loadFailedUnreachableReason": "加载设备列表失败：节点不可达（{{reason}}）",
       "localDevice": "本地设备",
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "修改设备",
@@ -4770,7 +4882,6 @@ export const I18N_RESOURCES = {
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
       "hubLoginRejected": "Hub 拒绝了本次登录（{{code}}）：请重新登录后再试。",
       "hubs": {
-        "title": "Hub 集群",
         "active": "主 Hub",
         "standby": "备 Hub",
         "writer": "当前接受管理写入",
@@ -4780,7 +4891,6 @@ export const I18N_RESOURCES = {
         "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
         "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
         "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
-        "machineRole": "Hub 角色",
         "lastAttempt": "最近尝试：{{time}}",
         "lastError": "最近错误：{{error}}",
         "authorization": {
@@ -4847,7 +4957,9 @@ export const I18N_RESOURCES = {
             "hubsUnreachable": "读不到 Hub 列表，入口暂时不可达。",
             "unexpected": "切换中断，请刷新核对。"
           }
-        }
+        },
+        "priority": "优先级",
+        "epoch": "写入纪元"
       },
       "machine": {
         "title": "本机",
@@ -4857,18 +4969,50 @@ export const I18N_RESOURCES = {
         "roleHub": "Hub 兼节点",
         "roleRelay": "纯中继（无网页）",
         "roleRelayNode": "中继兼节点",
+        "menu": {
+          "label": "更多操作",
+          "changeRole": "更改角色",
+          "leave": "离开…"
+        },
+        "status": {
+          "standalone": "独立运行",
+          "unknown": "状态未知",
+          "hubConnected": "已连接 Hub",
+          "hubConnectedRtt": "已连接 Hub · {{ms}} ms",
+          "hubDisconnected": "未连接 Hub",
+          "connecting": "连接中",
+          "relayConnected": "已连接中继",
+          "relayConnectedRtt": "已连接中继 · {{ms}} ms",
+          "relayDisconnected": "未连接中继",
+          "relayKicked": "中继令牌已失效"
+        },
+        "sections": {
+          "uplink": "连接",
+          "relayService": "中继服务",
+          "network": "网络"
+        },
         "localAddress": "本机地址",
         "localAddressUnset": "未设置",
-        "localAddressHint": "其它节点无法加入本机。请按「角色 → Hub 兼节点」重新设置。",
+        "localAddressHint": "其它节点无法加入本机。请按「更改角色 → Hub 兼节点」重新设置。",
         "currentHub": "当前 Hub",
         "hubDisconnected": "未连接",
         "writerHub": "写者：{{name}}",
         "hubList": "Hub 列表",
         "self": "本机",
-        "uplinkTabHub": "接入 Hub",
-        "uplinkTabRelay": "接入中继",
-        "uplinkHubBlocked": "本机当前接入中继；要改回 Hub，先在「接入中继」里离开中继。",
-        "uplinkRelayStandalone": "中继提供公网入口，本机与各节点经它互联，无需公网地址。",
+        "relayLeaveFirst": "要改回 Hub，先离开中继。",
+        "details": {
+          "title": "连接详情",
+          "metaEpoch": "元数据密钥代数",
+          "nodesViaRelay": "经中继可见节点",
+          "quota": "节点配额",
+          "quotaValue": "{{used}} / {{total}}",
+          "streams": "并发流上限",
+          "keyLog": "密钥日志",
+          "keyLogCaughtUp": "已追平",
+          "keyLogBlocked": "卡在第 {{seq}} 条",
+          "nodeId": "本机节点编号",
+          "hubs": "Hub 明细"
+        },
         "direct": "直连插件",
         "directUnsupported": "本平台不支持",
         "directInstalled": "已安装",
@@ -4879,11 +5023,12 @@ export const I18N_RESOURCES = {
         "directRemove": "删除插件",
         "directRemoveConfirm": {
           "title": "删除直连插件？",
-          "description": "会话会继续经 Hub 中转，你可以随时重新安装。",
+          "description": "会话会继续经 Hub 中转，可随时重新安装。",
           "confirm": "删除",
-          "cancel": "取消"
+          "cancel": "取消",
+          "descriptionRelay": "会话会继续经中继转发，可随时重新安装。"
         },
-        "directSwitchHint": "请先安装插件。",
+        "directNeedsInstall": "须先安装插件。",
         "directRestartRequired": "重启 tmex 后生效。",
         "directFailed": "直连插件操作失败。",
         "directErrorUnsupported": "本平台没有可用的直连插件。",
@@ -4893,10 +5038,9 @@ export const I18N_RESOURCES = {
         "restartNow": "立即重启",
         "restarting": "正在重启……",
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
-        "general": "通用设置",
         "domainAccess": {
           "label": "允许域名访问",
-          "description": "关闭后，来自公网的网页与 API 访问会被拒绝(局域网与本机的访问不受影响)，仅保留 Hub / 节点互联服务。公开域名：{{hosts}}",
+          "description": "关闭后拒绝来自公网的网页与 API 访问，局域网、本机与节点互联不受影响。公开域名：{{hosts}}",
           "noHosts": "尚未配置公开域名。",
           "hostSeparator": "、",
           "failed": "域名访问设置未能保存（{{detail}}）。",
@@ -4910,9 +5054,9 @@ export const I18N_RESOURCES = {
         },
         "accountSecurity": "账号安全",
         "loginRequired": "登录后查看本机状态。",
+        "loadFailed": "读取本机状态失败：{{detail}}",
         "relayServiceAddress": "中继公网地址",
-        "relayServiceStats": "中继用量",
-        "relayServiceCounts": "租户 {{tenants}} · 在线 {{online}} · 节点 {{nodes}}",
+        "relayServiceAddressUnsetHint": "其它机器无法接入本机中继。请按「更改角色 → 中继兼节点」重新设置。",
         "relayServiceEnroll": "接入本机中继",
         "relayServiceEnrollHint": "本机尚未接入自己的中继。接入时须再次输入刚设置的接入口令。"
       },
@@ -5526,9 +5670,9 @@ export const I18N_RESOURCES = {
           "hide": "隐藏口令"
         },
         "pureRelayConfirm": {
-          "title": "切换到纯中继？",
+          "title": "设为纯中继？",
           "description": "重启后本机不再提供网页，中继只能用命令行管理，网页里也无法改回其它角色。",
-          "confirm": "继续"
+          "confirm": "创建并重启"
         },
         "joinRelay": {
           "title": "加入已有中继",
@@ -5599,19 +5743,93 @@ export const I18N_RESOURCES = {
       }
     },
     "relay": {
+      "metrics": {
+        "title": "运行指标",
+        "description": "中继的转发量与本机负载，每 5 秒采样一次。",
+        "console": "打开中继控制台",
+        "refreshFailed": "指标更新失败：{{message}}",
+        "stale": "数据已过期",
+        "empty": "还没有采样数据。",
+        "header": {
+          "running": "运行中",
+          "stopped": "未采样",
+          "version": "版本 {{version}}",
+          "uptime": "已运行 {{duration}}",
+          "tenants": "{{n}} 个租户"
+        },
+        "tiles": {
+          "membersOnline": "在线节点",
+          "membersOnlineSub": "共 {{total}} 个",
+          "activeStreams": "活跃流",
+          "throughput": "吞吐",
+          "throughputSub": "↑ {{out}} · ↓ {{in}}",
+          "bytesIn": "入站速率",
+          "bytesOut": "出站速率",
+          "frames": "帧速率",
+          "framesSub": "↑ {{out}} · ↓ {{in}}",
+          "rtt": "延迟",
+          "rttSub": "最高 {{max}}",
+          "rttHint": "在线节点 RTT 的中位数。",
+          "eventLoop": "事件循环",
+          "eventLoopSub": "峰值 {{max}}",
+          "eventLoopHint": "事件循环延迟，超过 100 ms 说明转发已排队。",
+          "memory": "内存",
+          "memorySub": "堆 {{heap}}",
+          "memoryHeapSub": "堆 {{heap}} / {{total}}",
+          "cpu": "CPU",
+          "sockets": "连接数",
+          "socketsSub": "已认证 {{authenticated}}",
+          "reconnects": "重连",
+          "reconnectsSub": "自启动累计",
+          "reconnectsHint": "各接入节点重连次数之和。",
+          "uptime": "运行时长",
+          "throughputTotal": "累计 {{total}}",
+          "traffic": "累计流量",
+          "trafficSub": "自启动累计",
+          "trafficHint": "中继每转发一帧都同时计进收发两侧，此处只计一次。",
+          "tenants": "租户"
+        },
+        "groups": {
+          "traffic": "流量",
+          "process": "进程"
+        },
+        "trends": {
+          "title": "趋势",
+          "window": "近 {{duration}}",
+          "throughput": "吞吐",
+          "streams": "活跃流",
+          "eventLoop": "事件循环延迟",
+          "range": "峰值 {{max}} · 谷值 {{min}}",
+          "legendIn": "入站",
+          "legendOut": "出站"
+        },
+        "members": {
+          "title": "接入节点",
+          "total": "共 {{n}} 个",
+          "empty": "还没有节点接入。",
+          "online": "在线",
+          "offline": "离线",
+          "unnamed": "未命名",
+          "never": "未连接",
+          "columns": {
+            "node": "节点",
+            "state": "状态",
+            "rtt": "延迟",
+            "streams": "活跃流",
+            "rate": "速率",
+            "reconnects": "重连",
+            "connected": "连接于"
+          }
+        }
+      },
       "tenant": {
         "strip": {
-          "title": "中继",
           "online": "在线",
           "offline": "离线",
           "attached": "当前挂载于此中继",
-          "detail": "{{url}}｜优先级 {{priority}}｜{{state}}",
           "rtt": "延迟 {{ms}} ms",
           "kicked": "令牌已作废，须重新输入口令",
           "lastError": "最近错误：{{error}}",
-          "meta": "元数据密钥第 {{epoch}} 代",
-          "nodes": "经中继可见 {{count}} 个节点",
-          "quota": "配额 {{nodes}} 节点｜{{streams}} 流",
           "empty": "未接入中继。",
           "tenantId": "租户编号",
           "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。"
@@ -6103,6 +6321,9 @@ export const I18N_RESOURCES = {
       "createFailed": "デバイスの作成に失敗しました",
       "updateFailed": "デバイスの更新に失敗しました",
       "loadFailed": "デバイス一覧の読み込みに失敗しました",
+      "loadFailedLoginRequired": "デバイス一覧の読み込みに失敗しました：このノードへの再サインインが必要です",
+      "loadFailedUnreachable": "デバイス一覧の読み込みに失敗しました：ノードに到達できません",
+      "loadFailedUnreachableReason": "デバイス一覧の読み込みに失敗しました：ノードに到達できません（{{reason}}）",
       "localDevice": "ローカルデバイス",
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "デバイスを変更",
@@ -7682,7 +7903,6 @@ export const I18N_RESOURCES = {
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
       "hubLoginRejected": "ハブがこのサインインを拒否しました（{{code}}）。サインインし直してからお試しください。",
       "hubs": {
-        "title": "ハブクラスター",
         "active": "メインハブ",
         "standby": "予備ハブ",
         "writer": "現在、管理操作の書き込みを受け付けています",
@@ -7692,7 +7912,6 @@ export const I18N_RESOURCES = {
         "detail": "{{url}}｜優先度 {{priority}}｜エポック {{epoch}}｜{{state}}",
         "standbyNotice": "メインハブに接続できないため予備ハブを使用中です。追加・名前変更・削除などの管理操作はできません。",
         "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
-        "machineRole": "ハブの役割",
         "lastAttempt": "最終試行：{{time}}",
         "lastError": "最終エラー：{{error}}",
         "authorization": {
@@ -7759,7 +7978,9 @@ export const I18N_RESOURCES = {
             "hubsUnreachable": "ハブ一覧を取得できません。入口に一時的に接続できません。",
             "unexpected": "切り替えが中断しました。更新して確認してください。"
           }
-        }
+        },
+        "priority": "優先度",
+        "epoch": "書き込みエポック"
       },
       "machine": {
         "title": "このマシン",
@@ -7769,18 +7990,50 @@ export const I18N_RESOURCES = {
         "roleHub": "ハブ兼ノード",
         "roleRelay": "中継のみ（Web なし）",
         "roleRelayNode": "リレー兼ノード",
+        "menu": {
+          "label": "その他の操作",
+          "changeRole": "ロールを変更",
+          "leave": "離脱…"
+        },
+        "status": {
+          "standalone": "スタンドアロン",
+          "unknown": "状態不明",
+          "hubConnected": "Hub に接続済み",
+          "hubConnectedRtt": "Hub に接続済み · {{ms}} ms",
+          "hubDisconnected": "Hub に未接続",
+          "connecting": "接続中",
+          "relayConnected": "中継に接続済み",
+          "relayConnectedRtt": "中継に接続済み · {{ms}} ms",
+          "relayDisconnected": "中継に未接続",
+          "relayKicked": "中継トークンが失効"
+        },
+        "sections": {
+          "uplink": "接続",
+          "relayService": "中継サービス",
+          "network": "ネットワーク"
+        },
         "localAddress": "このマシンのアドレス",
         "localAddressUnset": "未設定",
-        "localAddressHint": "他のノードはこのマシンに参加できません。「ロール → ハブ兼ノード」で設定し直してください。",
+        "localAddressHint": "他のノードはこのマシンに参加できません。「ロールを変更 → ハブ兼ノード」で設定し直してください。",
         "currentHub": "現在のハブ",
         "hubDisconnected": "未接続",
         "writerHub": "ライター：{{name}}",
         "hubList": "Hub 一覧",
         "self": "このマシン",
-        "uplinkTabHub": "Hub に接続",
-        "uplinkTabRelay": "中継に接続",
-        "uplinkHubBlocked": "本機は現在中継に接続しています。Hub に戻すには、先に「中継に接続」で中継から離脱してください。",
-        "uplinkRelayStandalone": "中継が公開の入口を提供し、本機と各ノードはそこを経由して接続します。公開アドレスは不要です。",
+        "relayLeaveFirst": "Hub に戻すには、先に中継から離脱してください。",
+        "details": {
+          "title": "接続の詳細",
+          "metaEpoch": "メタデータ鍵の世代",
+          "nodesViaRelay": "中継経由で見えるノード",
+          "quota": "ノードのクォータ",
+          "quotaValue": "{{used}} / {{total}}",
+          "streams": "同時ストリーム上限",
+          "keyLog": "鍵ログ",
+          "keyLogCaughtUp": "追随済み",
+          "keyLogBlocked": "{{seq}} で停止",
+          "nodeId": "本機のノード ID",
+          "hubs": "Hub の詳細"
+        },
         "direct": "ダイレクト接続アドオン",
         "directUnsupported": "このプラットフォームでは非対応",
         "directInstalled": "インストール済み",
@@ -7793,9 +8046,10 @@ export const I18N_RESOURCES = {
           "title": "ダイレクト接続アドオンを削除しますか？",
           "description": "セッションはハブ経由で継続します。いつでも再インストールできます。",
           "confirm": "削除",
-          "cancel": "キャンセル"
+          "cancel": "キャンセル",
+          "descriptionRelay": "セッションは中継経由で継続します。いつでも再インストールできます。"
         },
-        "directSwitchHint": "先にアドオンをインストールしてください。",
+        "directNeedsInstall": "先にアドオンをインストールしてください。",
         "directRestartRequired": "tmex を再起動すると反映されます。",
         "directFailed": "ダイレクト接続アドオンを更新できませんでした。",
         "directErrorUnsupported": "このプラットフォーム向けのダイレクト接続アドオンはありません。",
@@ -7805,10 +8059,9 @@ export const I18N_RESOURCES = {
         "restartNow": "今すぐ再起動",
         "restarting": "再起動しています…",
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
-        "general": "一般設定",
         "domainAccess": {
           "label": "ドメインアクセスを許可",
-          "description": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され（LAN とこのマシンからのアクセスは影響なし）、ハブ / ノード連携サービスのみが利用できます。公開ドメイン：{{hosts}}",
+          "description": "オフにすると公開インターネットからのウェブと API アクセスを拒否します。LAN・本機・ノード間の通信は影響を受けません。公開ドメイン：{{hosts}}",
           "noHosts": "公開ドメインはまだ設定されていません。",
           "hostSeparator": "、",
           "failed": "ドメインアクセスの設定を保存できませんでした（{{detail}}）。",
@@ -7822,9 +8075,9 @@ export const I18N_RESOURCES = {
         },
         "accountSecurity": "アカウントセキュリティ",
         "loginRequired": "サインインするとこのマシンの状態を表示します。",
+        "loadFailed": "本機の状態を取得できませんでした（{{detail}}）。",
         "relayServiceAddress": "中継の公開アドレス",
-        "relayServiceStats": "中継の利用状況",
-        "relayServiceCounts": "テナント {{tenants}} · オンライン {{online}} · ノード {{nodes}}",
+        "relayServiceAddressUnsetHint": "他のマシンは本機の中継に接続できません。「ロールを変更 → リレー兼ノード」で設定し直してください。",
         "relayServiceEnroll": "本機の中継に接続",
         "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続には設定した接続パスワードを再入力します。"
       },
@@ -8438,9 +8691,9 @@ export const I18N_RESOURCES = {
           "hide": "パスワードを非表示"
         },
         "pureRelayConfirm": {
-          "title": "中継のみに切り替えますか？",
+          "title": "中継のみのマシンにしますか？",
           "description": "再起動後、本機は Web を提供せず、中継はコマンドラインでのみ管理します。Web から他の役割に戻すこともできません。",
-          "confirm": "続行"
+          "confirm": "作成して再起動"
         },
         "joinRelay": {
           "title": "既存の中継に参加する",
@@ -8511,19 +8764,93 @@ export const I18N_RESOURCES = {
       }
     },
     "relay": {
+      "metrics": {
+        "title": "稼働メトリクス",
+        "description": "中継の転送量と本機の負荷を 5 秒ごとに取得します。",
+        "console": "中継コンソールを開く",
+        "refreshFailed": "メトリクスの更新に失敗しました：{{message}}",
+        "stale": "データが古くなっています",
+        "empty": "まだサンプルがありません。",
+        "header": {
+          "running": "稼働中",
+          "stopped": "取得なし",
+          "version": "バージョン {{version}}",
+          "uptime": "稼働 {{duration}}",
+          "tenants": "テナント {{n}} 件"
+        },
+        "tiles": {
+          "membersOnline": "オンラインノード",
+          "membersOnlineSub": "全 {{total}} 件",
+          "activeStreams": "アクティブストリーム",
+          "throughput": "スループット",
+          "throughputSub": "↑ {{out}} · ↓ {{in}}",
+          "bytesIn": "受信レート",
+          "bytesOut": "送信レート",
+          "frames": "フレームレート",
+          "framesSub": "↑ {{out}} · ↓ {{in}}",
+          "rtt": "遅延",
+          "rttSub": "最大 {{max}}",
+          "rttHint": "オンラインノードの RTT の中央値です。",
+          "eventLoop": "イベントループ",
+          "eventLoopSub": "ピーク {{max}}",
+          "eventLoopHint": "イベントループ遅延です。100 ms を超えると転送が滞留しています。",
+          "memory": "メモリ",
+          "memorySub": "ヒープ {{heap}}",
+          "memoryHeapSub": "ヒープ {{heap}} / {{total}}",
+          "cpu": "CPU",
+          "sockets": "ソケット",
+          "socketsSub": "認証済み {{authenticated}}",
+          "reconnects": "再接続",
+          "reconnectsSub": "起動からの累計",
+          "reconnectsHint": "接続中ノードの再接続回数の合計です。",
+          "uptime": "稼働時間",
+          "throughputTotal": "累計 {{total}}",
+          "traffic": "中継トラフィック",
+          "trafficSub": "起動からの累計",
+          "trafficHint": "転送フレームは送受信の両方に計上されるため、ここでは一度だけ数えます。",
+          "tenants": "テナント"
+        },
+        "groups": {
+          "traffic": "トラフィック",
+          "process": "プロセス"
+        },
+        "trends": {
+          "title": "トレンド",
+          "window": "直近 {{duration}}",
+          "throughput": "スループット",
+          "streams": "アクティブストリーム",
+          "eventLoop": "イベントループ遅延",
+          "range": "ピーク {{max}} · 最小 {{min}}",
+          "legendIn": "受信",
+          "legendOut": "送信"
+        },
+        "members": {
+          "title": "接続ノード",
+          "total": "全 {{n}} 件",
+          "empty": "接続中のノードはありません。",
+          "online": "オンライン",
+          "offline": "オフライン",
+          "unnamed": "名称未設定",
+          "never": "未接続",
+          "columns": {
+            "node": "ノード",
+            "state": "状態",
+            "rtt": "遅延",
+            "streams": "ストリーム",
+            "rate": "レート",
+            "reconnects": "再接続",
+            "connected": "接続時刻"
+          }
+        }
+      },
       "tenant": {
         "strip": {
-          "title": "中継",
           "online": "オンライン",
           "offline": "オフライン",
           "attached": "本機はこの中継に接続中",
-          "detail": "{{url}}｜優先度 {{priority}}｜{{state}}",
           "rtt": "遅延 {{ms}} ms",
           "kicked": "トークンが失効しました。中継パスワードを入力し直してください",
           "lastError": "直近のエラー：{{error}}",
-          "meta": "メタデータ鍵 第 {{epoch}} 世代",
-          "nodes": "中継経由で {{count}} 台のノードが見えています",
-          "quota": "クォータ {{nodes}} ノード｜{{streams}} ストリーム",
           "empty": "中継に接続していません。",
           "tenantId": "テナント ID",
           "tenantIdHint": "別のマシンは中継アドレス、テナント ID、アカウントのパスワードで同じテナントに参加できます。"

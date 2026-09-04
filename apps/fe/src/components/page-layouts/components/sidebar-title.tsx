@@ -9,9 +9,11 @@ import { useTranslation } from 'react-i18next';
 import { NavLink } from './nav-link';
 import { ThemeMenu } from './theme-menu';
 
-/** 顶部动作按钮统一尺寸：最多三个（延迟、主题、设置），必须挤进一行。 */
+// 顶部动作按钮统一尺寸：最多三个（延迟、主题、设置），必须挤进一行。
+// 焦点环只给键盘操作：抽屉打开时焦点会被移到这一行的第一个按钮上，`:focus` 的默认描边
+// 会在触摸打开后一直挂着。
 const ACTION_BUTTON_CLASS =
-  'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground';
+  'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 export function SidebarTitle() {
   const { t } = useTranslation();

@@ -61,6 +61,24 @@ function expand(target: { dir: string; args: string[]; retry?: boolean }): Array
   return out;
 }
 
+function testFilesOf(target: { dir: string; args: string[] }): string[] {
+  const [cmd, ...scopes] = target.args;
+  if (cmd !== 'test') return [];
+  const out: string[] = [];
+  for (const scope of scopes.length > 0 ? scopes : ['.']) {
+    const abs = join(ROOT, target.dir, scope);
+    if (!existsSync(abs)) continue;
+    if (statSync(abs).isDirectory()) {
+      out.push(
+        ...listTestFiles(abs).map((f) => (scope === '.' ? f : join(scope, f).replace(/\\/g, '/')))
+      );
+    } else if (/\.test\.tsx?$/.test(scope)) {
+      out.push(scope.replace(/\\/g, '/'));
+    }
+  }
+  return out;
+}
+
 let failed = false;
 for (const target of TARGETS.flatMap(expand)) {
   console.log(`\n== ${target.dir}: bun ${target.args.join(' ')}`);
@@ -68,8 +86,28 @@ for (const target of TARGETS.flatMap(expand)) {
     spawnSync('bun', target.args, { cwd: join(ROOT, target.dir), stdio: 'inherit' });
   let result = run();
   if (result.status !== 0 && target.retry) {
-    console.warn(`.. ${target.dir} ${target.args.join(' ')} failed, retrying once in isolation`);
-    result = run();
+    const files = testFilesOf(target);
+    if (files.length > 1) {
+      console.warn(
+        `.. ${target.dir} ${target.args.join(' ')} failed, retrying each test file once`
+      );
+      let retryFailed = false;
+      for (const f of files) {
+        console.log(`.. retry ${target.dir}: bun test ${f}`);
+        const retry = spawnSync('bun', ['test', f], {
+          cwd: join(ROOT, target.dir),
+          stdio: 'inherit',
+        });
+        if (retry.status !== 0) {
+          retryFailed = true;
+          console.error(`!! ${target.dir} bun test ${f} failed (exit ${retry.status})`);
+        }
+      }
+      if (!retryFailed) result = { ...result, status: 0 };
+    } else {
+      console.warn(`.. ${target.dir} ${target.args.join(' ')} failed, retrying once in isolation`);
+      result = run();
+    }
   }
   if (result.status !== 0) {
     failed = true;

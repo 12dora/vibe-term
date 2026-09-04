@@ -144,7 +144,7 @@ describe('NodesTab standalone', () => {
 });
 
 describe('NodesTab mesh', () => {
-  test('渲染本机区块 + 节点管理，本机区块给出账号安全与节点页入口', () => {
+  test('渲染本机区块 + 节点管理，账号安全收进本机卡的操作菜单', () => {
     localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
     const html = render(MESH_MODE);
     expect(html).toContain('data-testid="local-machine-card"');
@@ -153,11 +153,10 @@ describe('NodesTab mesh', () => {
     expect(html).toContain('data-testid="https-section"');
     expect(html).not.toContain('data-testid="https-hub-url-hint"');
     expect(html).not.toContain('data-testid="hub-setup-wizard"');
-    expect(html).toContain('panel=security');
+    // 菜单走 portal，静态渲染只看得到触发器（菜单内容见 local-machine-header.test.tsx）
+    expect(html).toContain('data-testid="local-machine-menu"');
     expect(html).not.toContain('href="/account/security"');
-    // `/nodes` 整页已移除，本机区块不再给它入口
     expect(html).not.toContain('href="/nodes"');
-    expect(html).not.toContain('nodes.machine.openNodesPage');
     // compact：页级标题与管理主体自带的账号安全入口都不出现
     expect(html).not.toContain('data-testid="nodes-account-security"');
   });
@@ -223,71 +222,42 @@ describe('NodesTab 角色切换向导', () => {
 
 describe('routeSetupIntent', () => {
   test('没有记号：什么都不预选', () => {
-    expect(routeSetupIntent(null, false)).toEqual({
-      wizardPath: null,
-      relayRole: 'relay,node',
-      requestedTab: null,
-    });
+    expect(routeSetupIntent(null)).toEqual({ wizardPath: null, relayRole: 'relay,node' });
   });
 
-  test('hub 两条路径：预选向导并落在 Hub tab', () => {
-    expect(routeSetupIntent({ path: 'become-hub' }, false)).toEqual({
-      wizardPath: 'become-hub',
-      relayRole: 'relay,node',
-      requestedTab: 'hub',
-    });
-    expect(routeSetupIntent({ path: 'join-hub' }, false).wizardPath).toBe('join-hub');
+  test('四条路径都进同一个向导', () => {
+    expect(routeSetupIntent({ path: 'become-hub' }).wizardPath).toBe('become-hub');
+    expect(routeSetupIntent({ path: 'join-hub' }).wizardPath).toBe('join-hub');
+    expect(routeSetupIntent({ path: 'join-relay' }).wizardPath).toBe('join-relay');
+    expect(routeSetupIntent({ path: 'become-relay' }).wizardPath).toBe('become-relay');
   });
 
-  test('become-relay：不进 Hub 向导，直接落在中继 tab 并带上角色', () => {
-    expect(routeSetupIntent({ path: 'become-relay', role: 'relay' }, false)).toEqual({
-      wizardPath: null,
+  test('become-relay 带上角色；老记号没带角色时退回中继兼节点', () => {
+    expect(routeSetupIntent({ path: 'become-relay', role: 'relay' })).toEqual({
+      wizardPath: 'become-relay',
       relayRole: 'relay',
-      requestedTab: 'relay',
     });
-    // 老记号没带角色时退回中继兼节点。
-    expect(routeSetupIntent({ path: 'become-relay' }, false).relayRole).toBe('relay,node');
-  });
-
-  test('join-relay：同样不进 Hub 向导，落在中继 tab', () => {
-    expect(routeSetupIntent({ path: 'join-relay' }, false)).toEqual({
-      wizardPath: null,
-      relayRole: 'relay,node',
-      requestedTab: 'relay',
-    });
-  });
-
-  test('刚设置完中继：即便没有记号也落在中继 tab', () => {
-    expect(routeSetupIntent(null, true).requestedTab).toBe('relay');
+    expect(routeSetupIntent({ path: 'become-relay' }).relayRole).toBe('relay,node');
   });
 });
 
-describe('NodesTab standalone 的中继表单', () => {
-  test('中继 tab 里并排摆出「加入已有中继」与「本机作为中继」两块', () => {
+describe('NodesTab standalone 的中继路径', () => {
+  test('中继两条路径就在同一个向导里，不再另摆一份重复表单', () => {
     localStatus = status();
-    // tab 的初值由 localStorage 记忆推导（`useState` 初始化里读，SSR 也会跑）。
-    globalThis.localStorage.setItem('tmex.nodes.uplink-tab', 'relay');
     const html = render({ ...MESH_MODE, mode: 'none' });
-    globalThis.localStorage.removeItem('tmex.nodes.uplink-tab');
-    expect(html).toContain('data-testid="local-uplink-relay-standalone"');
-    expect(html).toContain('data-testid="setup-relay-choice-join"');
-    expect(html).toContain('data-testid="setup-join-relay-form"');
-    expect(html).toContain('data-testid="setup-relay-choice-host"');
-    expect(html).toContain('data-testid="setup-become-relay-form"');
-    // 加入在前，作为中继在后。
-    expect(html.indexOf('setup-relay-choice-join')).toBeLessThan(
-      html.indexOf('setup-relay-choice-host')
-    );
-    // 默认中继兼节点：账号字段在，纯中继的警示不在。
-    expect(html).toContain('id="setup-relay-username"');
-    expect(html).not.toContain('data-testid="setup-relay-pure-notice"');
+    expect(html).toContain('data-testid="setup-path-join-relay"');
+    expect(html).toContain('data-testid="setup-path-become-relay"');
+    // 重复的 standalone 中继表单已经删掉
+    expect(html).not.toContain('data-testid="setup-relay-choices"');
+    expect(html).not.toContain('data-testid="setup-relay-choice-join"');
+    expect(html).not.toContain('data-testid="setup-become-relay-form"');
+    expect(html).not.toContain('data-testid="local-uplink-relay-standalone"');
   });
 
-  test('mesh 下不摆中继设置表单', () => {
+  test('mesh 下不摆任何设置向导', () => {
     localStatus = status({ role: 'relay,node' });
-    globalThis.localStorage.setItem('tmex.nodes.uplink-tab', 'relay');
     const html = render(MESH_MODE);
-    globalThis.localStorage.removeItem('tmex.nodes.uplink-tab');
+    expect(html).not.toContain('data-testid="hub-setup-wizard"');
     expect(html).not.toContain('data-testid="setup-become-relay-form"');
   });
 });

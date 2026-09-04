@@ -9,6 +9,19 @@ export type RelayDialContext = {
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 
+export function relayDialContextFromRuntime(input: {
+  roles: { relay?: boolean };
+  relayPublicUrl?: string | null;
+  gatewayPort: number;
+}): RelayDialContext {
+  const publicUrl = input.relayPublicUrl?.trim();
+  return {
+    roles: { relay: Boolean(input.roles.relay) },
+    relayPublicUrl: publicUrl ? publicUrl : null,
+    gatewayPort: input.gatewayPort,
+  };
+}
+
 export function relayDialContextFromEnv(env: NodeJS.ProcessEnv = process.env): RelayDialContext {
   let roles = { relay: false };
   try {
@@ -22,12 +35,11 @@ export function relayDialContextFromEnv(env: NodeJS.ProcessEnv = process.env): R
   } catch {
     gatewayPort = 0;
   }
-  const publicUrl = env.TMEX_RELAY_PUBLIC_URL?.trim();
-  return {
+  return relayDialContextFromRuntime({
     roles,
-    relayPublicUrl: publicUrl ? publicUrl : null,
+    relayPublicUrl: env.TMEX_RELAY_PUBLIC_URL,
     gatewayPort,
-  };
+  });
 }
 
 export function isLoopbackRelayDial(url: string): boolean {

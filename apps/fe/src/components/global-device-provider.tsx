@@ -1,5 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
-import { type ApiClient, type DevicesResponse, fetchDevices } from '@tmex/api-client';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  type ApiClient,
+  type DevicesResponse,
+  devicesQueryKey,
+  fetchDevices,
+} from '@tmex/api-client';
 import type { DeviceConnectionAdapter } from '@tmex/panels';
 import { type AppRuntime, type HostServices, hostAppPath } from '@tmex/stores';
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
@@ -32,6 +37,8 @@ import {
   reconcileDeviceSubscriptions,
 } from './device-intent-store';
 import { DeviceStatusStore } from './device-status-store';
+
+import { handleNodeApiError, noteNodeQuerySuccess } from '@/node/node-session-recovery';
 
 export type { DeviceIdStorage } from './device-connection-persistence';
 export {
@@ -302,11 +309,34 @@ function useEnsureDeviceSubscribed(
  */
 export function devicesQueryOptions(apiClient: ApiClient, offline: boolean) {
   return {
-    queryKey: ['devices'] as const,
+    queryKey: devicesQueryKey,
     queryFn: ({ signal }: { signal?: AbortSignal }) => fetchDevices(apiClient, { signal }),
     enabled: !offline,
     throwOnError: false as const,
   };
+}
+
+/**
+ * 设备列表撞上 401 `NODE_LOGIN_REQUIRED` 时补一次该 node 的静默重登，成功就立刻回源。
+ *
+ * 这条查询是每个 node 运行时都有的一条（面板与本 provider 共用同一份缓存），把自愈接在
+ * 这里，整棵子树的每 node 请求都跟着受益。次数由 `node-session-recovery` 记账：一轮失效
+ * 只重登一次，`dataUpdatedAt` 前进（= 又成功拉到一份列表）才解除。
+ *
+ * 解除的判据必须是 `dataUpdatedAt` 而不是 `data !== undefined`：后台刷新失败时 react-query
+ * 留着上一次的数据，只看有无数据会让记账再也解不开。
+ */
+function useNodeSessionRecovery(nodeId: string, error: unknown, dataUpdatedAt: number): void {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    noteNodeQuerySuccess(nodeId, dataUpdatedAt);
+  }, [dataUpdatedAt, nodeId]);
+  useEffect(() => {
+    if (!error) return;
+    void handleNodeApiError(nodeId, error, {
+      onRecovered: () => void queryClient.invalidateQueries({ queryKey: devicesQueryKey }),
+    });
+  }, [error, nodeId, queryClient]);
 }
 
 interface GlobalDeviceProviderProps {
@@ -324,7 +354,12 @@ export function GlobalDeviceProvider({ children, offline = false }: GlobalDevice
   const { connectedDevices } = slices;
   const { connectTmuxDevice, disconnectTmuxDevice } = actions;
 
-  const { data: devicesData } = useQuery(devicesQueryOptions(runtime.apiClient, offline));
+  const {
+    data: devicesData,
+    error: devicesError,
+    dataUpdatedAt: devicesUpdatedAt,
+  } = useQuery(devicesQueryOptions(runtime.apiClient, offline));
+  useNodeSessionRecovery(runtime.nodeId, devicesError, devicesUpdatedAt);
 
   const ensureDeviceSubscribed = useEnsureDeviceSubscribed(runtime, intentStore);
 

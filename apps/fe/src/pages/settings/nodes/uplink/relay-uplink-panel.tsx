@@ -1,150 +1,84 @@
-// 本机卡「接入中继」面板：中继链路条、三条状态提示，以及一排摆在明面上的中继操作。
+// 「连接」段的中继形态：链路行、一摞提醒、按风险分级的三组操作。
 //
-// 操作不再收进图标菜单：接中继、重输口令、离开中继都是低频但后果明确的动作，藏进菜单
-// 只会让人找不到。非中继模式下只留一个入口（迁移 / 接入），免得在一台还没接中继的机器上
-// 摆一堆点了就报「未接入中继」的按钮。
+// 操作分三级：主按钮「追加中继」是常用且无损的；重输口令 / 轮换密钥 / 逐条移除收进次级菜单，
+// 它们低频且各自带确认；「离开中继」单独摆在右侧的危险区，它会让本机与各节点一起失去上级。
 
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
-import type { LocalRelayStatus, LocalRole } from '@tmex/api-client/local/types';
 import { Button } from '@tmex/ui/button';
-import { ShieldAlert } from 'lucide-react';
-import type { ReactNode } from 'react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@tmex/ui/dropdown-menu';
+import { Ellipsis } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { CopyableValue, Row } from '../copy-feedback';
-import { isRelayRole } from '../membership/role-transition';
-import { RelayPackPendingNotice } from '../relay/relay-dialogs';
-import { RelayStrip, relayLabel } from '../relay/relay-strip';
+import { Notice, NoticeAction } from '../card-parts';
+import { relayNotices } from '../relay/relay-notices';
+import { RelayRows } from '../relay/relay-rows';
 import type { RelayActionsController } from '../relay/use-relay-actions';
-import { kickedRelays, reauthTarget } from './relay-targets';
+import { type RelayMenuAction, reauthTarget, relayActionMenu } from './relay-targets';
+
+/**
+ * 次级菜单的内容。单独导出且**不带 hook**：Base UI 的菜单走 portal，静态渲染什么都不输出，
+ * 单测只能把它当普通函数调用再对元素树断言（与 `BulkActionsMenuList` 同一套做法）。
+ */
+export function RelayActionsMenuList({
+  items,
+  label,
+  onSelect,
+}: {
+  items: RelayMenuAction[];
+  label: (item: RelayMenuAction) => string;
+  onSelect: (item: RelayMenuAction) => void;
+}) {
+  return (
+    <>
+      {items.map((item) => (
+        <DropdownMenuItem
+          key={item.testId}
+          onClick={() => onSelect(item)}
+          data-testid={item.testId}
+        >
+          {label(item)}
+        </DropdownMenuItem>
+      ))}
+    </>
+  );
+}
 
 export interface RelayUplinkPanelProps {
   relay: UseMeshRelayResult;
   actions: RelayActionsController;
-  standalone: boolean;
-  /** 本机角色：含 relay 时先摆一行本机中继的运营快照。 */
-  localRole?: LocalRole;
-  /** `/api/local/status` 里的本机中继快照；非中继角色为 null。 */
-  relayService?: LocalRelayStatus | null;
-  /** 刚设置完中继兼节点：把「接入本机中继」顶到眼前。 */
-  selfRelayFollowUp?: boolean;
-  /** standalone 下的「本机作为中继」表单插槽。 */
-  relaySetup?: ReactNode;
+  /** hub 时代的机器改回 Hub 前必须先离开中继：这句提示挂在操作下方。 */
+  showLeaveFirstHint?: boolean;
 }
 
 export function RelayUplinkPanel({
   relay,
   actions,
-  standalone,
-  localRole,
-  relayService = null,
-  selfRelayFollowUp = false,
-  relaySetup,
+  showLeaveFirstHint = true,
 }: RelayUplinkPanelProps) {
   const { t } = useTranslation();
-  if (standalone) {
-    return (
-      <div className="flex flex-col gap-3" data-testid="local-uplink-relay-standalone">
-        <p className="text-xs text-muted-foreground">{t('nodes.machine.uplinkRelayStandalone')}</p>
-        {relaySetup}
-      </div>
-    );
-  }
-  const operator = localRole && isRelayRole(localRole) ? relayService : null;
   return (
     <div className="flex flex-col gap-3" data-testid="local-uplink-relay-panel">
-      {operator && <RelayServiceSummary service={operator} />}
-      {relay.relayMode ? (
+      <RelayRows relays={relay.ordered} />
+      <RelayNoticeList relay={relay} actions={actions} />
+      {!relay.unsupported && (
         <>
-          <RelayStrip
-            relays={relay.ordered}
-            metaEpoch={relay.metaEpoch}
-            nodesViaRelay={relay.nodesViaRelay}
-            quota={relay.quota}
-            tenantId={relay.tenantId}
-          />
-          <RelayNotices relay={relay} actions={actions} />
-          {!relay.unsupported && <RelayActionButtons relay={relay} actions={actions} />}
-        </>
-      ) : (
-        <>
-          {operator && relay.mode === 'none' && (
-            <SelfRelayEntry service={operator} actions={actions} highlighted={selfRelayFollowUp} />
+          <RelayActionRow relay={relay} actions={actions} />
+          {showLeaveFirstHint && (
+            <p className="text-[11px] text-muted-foreground" data-testid="nodes-relay-leave-first">
+              {t('nodes.machine.relayLeaveFirst')}
+            </p>
           )}
-          <RelayEntry relay={relay} actions={actions} />
         </>
       )}
     </div>
   );
 }
 
-/** 本机自己就是中继：公网地址、租户 / 在线 / 节点计数、口令是否设置。 */
-function RelayServiceSummary({ service }: { service: LocalRelayStatus }) {
-  const { t } = useTranslation();
-  return (
-    <div className="flex flex-col gap-1.5" data-testid="local-relay-service">
-      <Row label={t('nodes.machine.relayServiceAddress')}>
-        {service.publicUrl ? (
-          <CopyableValue value={service.publicUrl} testId="local-relay-service-url" />
-        ) : (
-          <span className="text-xs text-muted-foreground" data-testid="local-relay-service-unset">
-            {t('nodes.machine.localAddressUnset')}
-          </span>
-        )}
-      </Row>
-      <Row label={t('nodes.machine.relayServiceStats')}>
-        <span className="text-xs" data-testid="local-relay-service-stats">
-          {t('nodes.machine.relayServiceCounts', {
-            tenants: service.tenantCount,
-            online: service.nodesOnline,
-            nodes: service.currentNodes,
-          })}
-        </span>
-      </Row>
-      <Row label={t('relay.admin.password.title')}>
-        <span className="text-xs" data-testid="local-relay-service-password">
-          {t(service.hasPassword ? 'relay.admin.password.set' : 'relay.admin.password.unset')}
-        </span>
-      </Row>
-    </div>
-  );
-}
-
-/** 本机是中继但还没以租户身份接上自己：给一个预填好地址的接入入口。 */
-function SelfRelayEntry({
-  service,
-  actions,
-  highlighted,
-}: {
-  service: LocalRelayStatus;
-  actions: RelayActionsController;
-  highlighted: boolean;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div
-      className={`flex flex-col gap-2 rounded-lg p-2 text-xs ${
-        highlighted ? 'bg-primary/10 text-primary' : 'bg-muted/60 text-muted-foreground'
-      }`}
-      data-testid="nodes-relay-self-entry"
-    >
-      <span>{t('nodes.machine.relayServiceEnrollHint')}</span>
-      <span>
-        <Button
-          type="button"
-          size="xs"
-          variant="outline"
-          onClick={() => actions.openEnroll('enroll', service.publicUrl ?? '')}
-          data-testid="nodes-relay-enroll-self"
-        >
-          {t('nodes.machine.relayServiceEnroll')}
-        </Button>
-      </span>
-    </div>
-  );
-}
-
-/** 中继模式下的四条提示：令牌失效、成员待重新确认、元数据密钥欠账、没挂上任何一条中继。 */
-function RelayNotices({
+function RelayNoticeList({
   relay,
   actions,
 }: {
@@ -152,80 +86,45 @@ function RelayNotices({
   actions: RelayActionsController;
 }) {
   const { t } = useTranslation();
+  const notices = relayNotices({
+    kicked: relay.kicked,
+    readmitPending: relay.readmitPending,
+    metaPending: actions.metaPending.length,
+    packPending: actions.packPending,
+    writable: relay.writable,
+  });
+  const run = (kind: string) => {
+    if (kind === 'kicked') actions.openEnroll('reauth', reauthTarget(relay.ordered) ?? '');
+    else if (kind === 'readmit') void actions.readmitMembers();
+    else if (kind === 'metaPending') void actions.retryMetaKey();
+    else if (kind === 'packPending') void actions.retryPack();
+  };
   return (
     <>
-      {relay.kicked && (
-        <p
-          className="flex items-center gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
-          data-testid="nodes-relay-reauth"
+      {notices.map((notice) => (
+        <Notice
+          key={notice.kind}
+          tone={notice.tone}
+          testId={notice.testId}
+          action={
+            notice.action ? (
+              <NoticeAction
+                label={t(notice.action.key)}
+                testId={notice.action.testId}
+                disabled={actions.busy && notice.kind !== 'kicked'}
+                onClick={() => run(notice.kind)}
+              />
+            ) : undefined
+          }
         >
-          <ShieldAlert className="size-3.5 shrink-0" />
-          {t('relay.tenant.reauth.notice')}
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => actions.openEnroll('reauth', reauthTarget(relay.ordered) ?? '')}
-            data-testid="nodes-relay-reauth-action"
-          >
-            {t('relay.tenant.reauth.action')}
-          </Button>
-        </p>
-      )}
-      {relay.readmitPending > 0 && (
-        <p
-          className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400"
-          data-testid="nodes-relay-readmit"
-        >
-          <ShieldAlert className="size-3.5 shrink-0" />
-          {t('nodes.readmit.notice', { count: relay.readmitPending })}
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            disabled={actions.busy}
-            onClick={() => void actions.readmitMembers()}
-            data-testid="nodes-relay-readmit-action"
-          >
-            {t('nodes.readmit.action')}
-          </Button>
-        </p>
-      )}
-      {actions.metaPending.length > 0 && (
-        <p
-          className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400"
-          data-testid="nodes-relay-meta-pending"
-        >
-          <ShieldAlert className="size-3.5 shrink-0" />
-          {t('relay.tenant.metaKey.pending', { count: actions.metaPending.length })}
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            disabled={actions.busy}
-            onClick={() => void actions.retryMetaKey()}
-            data-testid="nodes-relay-meta-retry"
-          >
-            {t('relay.tenant.metaKey.retry')}
-          </Button>
-        </p>
-      )}
-      <RelayPackPendingNotice actions={actions} />
-      {!relay.writable && !relay.kicked && (
-        <p
-          className="flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
-          data-testid="nodes-relay-detached"
-        >
-          <ShieldAlert className="size-3.5 shrink-0" />
-          {t('relay.tenant.notAttached')}
-        </p>
-      )}
+          {t(notice.key, notice.params)}
+        </Notice>
+      ))}
     </>
   );
 }
 
-/** 已接入中继时的一排操作；「离开中继」单独隔开，与前面几个不是一个量级。 */
-function RelayActionButtons({
+function RelayActionRow({
   relay,
   actions,
 }: {
@@ -233,8 +132,12 @@ function RelayActionButtons({
   actions: RelayActionsController;
 }) {
   const { t } = useTranslation();
-  const kicked = kickedRelays(relay.ordered);
-  const attachedUrl = reauthTarget(relay.ordered);
+  const menu = relayActionMenu(relay.ordered);
+  const run = (item: RelayMenuAction) => {
+    if (item.kind === 'reauth') actions.openEnroll('reauth', item.url ?? '');
+    else if (item.kind === 'rotate') actions.requestConfirm('rotate');
+    else actions.requestConfirm('remove', item.url);
+  };
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button
@@ -246,52 +149,21 @@ function RelayActionButtons({
       >
         {t('relay.tenant.actions.add')}
       </Button>
-      {kicked.length > 1 ? (
-        kicked.map((row) => (
-          <Button
-            key={`reauth-${row.url}`}
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => actions.openEnroll('reauth', row.url)}
-            data-testid={`nodes-relay-reauth-${relayLabel(row.url)}`}
-          >
-            {t('relay.tenant.actions.reauthOne', { host: relayLabel(row.url) })}
-          </Button>
-        ))
-      ) : (
-        <Button
-          type="button"
-          size="xs"
-          variant="outline"
-          onClick={() => actions.openEnroll('reauth', attachedUrl ?? '')}
-          data-testid="nodes-relay-reauth-menu"
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={<Button type="button" size="xs" variant="ghost" data-testid="nodes-relay-menu" />}
         >
-          {t('relay.tenant.actions.reauth')}
-        </Button>
-      )}
-      {relay.ordered.length > 1 &&
-        relay.ordered.map((row) => (
-          <Button
-            key={`remove-${row.url}`}
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => actions.requestConfirm('remove', row.url)}
-            data-testid={`nodes-relay-remove-${relayLabel(row.url)}`}
-          >
-            {t('relay.tenant.actions.removeOne', { host: relayLabel(row.url) })}
-          </Button>
-        ))}
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        onClick={() => actions.requestConfirm('rotate')}
-        data-testid="nodes-relay-rotate"
-      >
-        {t('relay.tenant.actions.rotate')}
-      </Button>
+          <Ellipsis />
+          {t('relay.tenant.actions.menu')}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-44">
+          <RelayActionsMenuList
+            items={menu}
+            label={(item) => t(item.key, item.params)}
+            onSelect={run}
+          />
+        </DropdownMenuContent>
+      </DropdownMenu>
       <span className="ml-auto">
         <Button
           type="button"
@@ -304,42 +176,5 @@ function RelayActionButtons({
         </Button>
       </span>
     </div>
-  );
-}
-
-/** 还没接中继：hub 模式给迁移入口，没有上级时给接入入口，各配一句说明。 */
-function RelayEntry({
-  relay,
-  actions,
-}: {
-  relay: UseMeshRelayResult;
-  actions: RelayActionsController;
-}) {
-  const { t } = useTranslation();
-  const migrate = relay.mode === 'hub';
-  if (relay.unsupported) {
-    return (
-      <p className="text-xs text-muted-foreground" data-testid="nodes-relay-unsupported">
-        {t('relay.tenant.strip.empty')}
-      </p>
-    );
-  }
-  return (
-    <>
-      <p className="text-xs text-muted-foreground">
-        {t(migrate ? 'relay.tenant.dialog.migrateNotice' : 'relay.tenant.strip.empty')}
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          size="xs"
-          variant="outline"
-          onClick={() => actions.openEnroll(migrate ? 'migrate' : 'enroll')}
-          data-testid="nodes-relay-enroll"
-        >
-          {t(migrate ? 'relay.tenant.actions.migrate' : 'relay.tenant.actions.enroll')}
-        </Button>
-      </div>
-    </>
   );
 }

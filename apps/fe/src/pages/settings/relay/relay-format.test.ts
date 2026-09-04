@@ -4,7 +4,13 @@ import {
   bandwidthText,
   bytesToKb,
   epochText,
+  formatBytesPerSec,
+  formatDuration,
+  formatFramesPerSec,
+  formatMs,
+  formatPercent,
   kbToBytes,
+  median,
   quotaSummary,
   relativeTimeText,
   shortTenantId,
@@ -120,5 +126,86 @@ describe('trafficText', () => {
 describe('epochText', () => {
   test('代次统一走「第 N 代」', () => {
     expect(epochText(t, 3)).toBe('relay.admin.epochValue({"epoch":3})');
+  });
+});
+
+describe('formatBytesPerSec', () => {
+  test('按字节量级换算并补 /s', () => {
+    expect(formatBytesPerSec(512)).toBe('512 B/s');
+    expect(formatBytesPerSec(2048)).toBe('2.00 KB/s');
+  });
+
+  test('负数与非有限值按 0 计（差分跨重启会变负）', () => {
+    expect(formatBytesPerSec(-1)).toBe('0 B/s');
+    expect(formatBytesPerSec(Number.NaN)).toBe('0 B/s');
+  });
+});
+
+describe('formatFramesPerSec', () => {
+  test('小数保留一位，百位以上取整，万以上收成 k', () => {
+    expect(formatFramesPerSec(3.14)).toBe('3.1');
+    expect(formatFramesPerSec(250.6)).toBe('251');
+    expect(formatFramesPerSec(12_500)).toBe('12.5k');
+  });
+
+  test('非有限值与负数按 0 计', () => {
+    expect(formatFramesPerSec(Number.NaN)).toBe('0.0');
+    expect(formatFramesPerSec(-5)).toBe('0.0');
+  });
+});
+
+describe('formatDuration', () => {
+  test('只出两级，最小到秒', () => {
+    expect(formatDuration(45_000)).toBe('45s');
+    expect(formatDuration(90_000)).toBe('1m 30s');
+    expect(formatDuration(3 * 3_600_000 + 12 * 60_000)).toBe('3h 12m');
+    expect(formatDuration(4 * 86_400_000 + 6 * 3_600_000)).toBe('4d 6h');
+  });
+
+  test('零与非法值不出负数', () => {
+    expect(formatDuration(0)).toBe('0s');
+    expect(formatDuration(-1)).toBe('0s');
+    expect(formatDuration(Number.NaN)).toBe('0s');
+  });
+});
+
+describe('formatMs', () => {
+  test('毫秒级保留一位，百毫秒以上取整，秒级换算成秒', () => {
+    expect(formatMs(3.24)).toBe('3.2 ms');
+    expect(formatMs(142.6)).toBe('143 ms');
+    expect(formatMs(1500)).toBe('1.5 s');
+    expect(formatMs(12_000)).toBe('12 s');
+  });
+
+  test('null 与非有限值出破折号', () => {
+    expect(formatMs(null)).toBe('—');
+    expect(formatMs(Number.NaN)).toBe('—');
+  });
+});
+
+describe('formatPercent', () => {
+  test('十以上取整，十以下保留一位，超界收敛到 0–100', () => {
+    expect(formatPercent(12.5)).toBe('13%');
+    expect(formatPercent(4.24)).toBe('4.2%');
+    expect(formatPercent(140)).toBe('100%');
+    expect(formatPercent(-3)).toBe('0.0%');
+  });
+
+  test('拿不到占用时出破折号', () => {
+    expect(formatPercent(null)).toBe('—');
+  });
+});
+
+describe('median', () => {
+  test('奇偶个数分别取中位与中间两个的平均', () => {
+    expect(median([3, 1, 2])).toBe(2);
+    expect(median([4, 1, 2, 3])).toBe(2.5);
+  });
+
+  test('跳过 null 与非有限值；全空回 null', () => {
+    expect(median([null, 5, null])).toBe(5);
+    expect(median([])).toBeNull();
+    expect(median([null, null])).toBeNull();
+    expect(median([Number.NaN])).toBeNull();
   });
 });
