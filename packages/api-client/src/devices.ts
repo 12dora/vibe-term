@@ -6,7 +6,7 @@ import type {
   TestConnectionResult,
   UpdateDeviceRequest,
 } from '@tmex/shared';
-import { type ApiClient, defaultApiClient, parseApiError } from './client';
+import { type ApiClient, defaultApiClient, toApiError } from './client';
 import { requestJson, requestOk } from './json-mutation';
 
 export const devicesQueryKey = ['devices'] as const;
@@ -31,7 +31,9 @@ export async function fetchDevices(
 ): Promise<DevicesResponse> {
   const res = await client.fetch('/api/devices', init);
   if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to load devices'));
+    // 类型化错误：面板要按 `NODE_LOGIN_REQUIRED` / `NODE_UNREACHABLE` 分别提示，
+    // 宿主还要据此补一次该 node 的静默重登（见 apps/fe 的 node-session-recovery）。
+    throw await toApiError(res, 'Failed to load devices');
   }
   return (await res.json()) as DevicesResponse;
 }

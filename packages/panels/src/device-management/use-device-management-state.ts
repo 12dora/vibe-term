@@ -38,7 +38,7 @@ export function useDeviceManagementState({
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
   const hydrateDeviceErrors = useTmuxStore((state) => state.hydrateDeviceErrors);
 
-  const { data, isError } = useQuery({
+  const { data, isError, error, refetch } = useQuery({
     queryKey: devicesQueryKey,
     queryFn: () => fetchDevices(runtime.apiClient),
     throwOnError: false,
@@ -132,8 +132,16 @@ export function useDeviceManagementState({
     [deviceIds, reorderMutate, reorderDisabled]
   );
 
+  // 错误对象要留给面板：`NODE_LOGIN_REQUIRED` / `NODE_UNREACHABLE` 各有各的提示，
+  // 一律显示成「加载设备列表失败」等于把真正的原因藏起来。
+  const retry = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+
   return {
     status,
+    error: isError ? error : null,
+    retry,
     devices: loaded ?? NO_DEVICES,
     deviceIds,
     reorderDisabled,
