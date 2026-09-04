@@ -8,12 +8,20 @@ function isGroupChat(chatType: string): boolean {
   return chatType === 'group' || chatType === 'supergroup';
 }
 
+/** 私聊 chat.id === from.id，不校验绑定 user_id。 */
+export function isTelegramPrivateConversation(chatId: string, fromId: string | null): boolean {
+  return fromId != null && chatId === fromId;
+}
+
 function authorizeTelegram(actor: CommandActor): AuthDecision {
   const bot = getTelegramBotById(actor.accountId);
   if (!bot?.allowCommands) return { ok: false, silent: true };
   const chat = getTelegramChatByBotAndChatId(actor.accountId, actor.conversationId);
   if (!chat || chat.status !== 'authorized') return { ok: false, silent: true };
-  if (isGroupChat(chat.chatType)) {
+  if (
+    isGroupChat(chat.chatType) &&
+    !isTelegramPrivateConversation(actor.conversationId, actor.userId)
+  ) {
     if (!chat.userId || !actor.userId || chat.userId !== actor.userId) {
       return { ok: false, silent: true };
     }

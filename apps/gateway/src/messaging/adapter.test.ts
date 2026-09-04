@@ -37,6 +37,30 @@ describe('telegram adapter', () => {
     expect(chunks.every((chunk) => chunk.length <= 4000)).toBe(true);
     expect(chunks.join('')).toBe('x'.repeat(5000));
   });
+
+  test('chunks tail output before escaping so entities are never split', () => {
+    const inner = 4000 - 11;
+    const count = Math.floor(inner / 4) + 8;
+    const body = `${'<'.repeat(count)}&${'<'.repeat(count)}`;
+    const chunks = renderTelegramHtml(
+      { sections: [{ title: 'tail', code: true, lines: [body] }] },
+      4000
+    );
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.length <= 4000)).toBe(true);
+    const inners: string[] = [];
+    for (const chunk of chunks) {
+      const match = chunk.match(/<pre>([\s\S]*)<\/pre>/);
+      if (!match?.[1]) continue;
+      const innerText = match[1];
+      expect(innerText).not.toContain('<');
+      expect(innerText).not.toContain('>');
+      expect(innerText).not.toMatch(/&(?:lt|amp|gt)?$/);
+      expect(innerText.replaceAll('&lt;', '').replaceAll('&amp;', '')).not.toContain('&');
+      inners.push(innerText);
+    }
+    expect(inners.join('')).toBe(escapeHtml(body));
+  });
 });
 
 describe('weixin adapter', () => {

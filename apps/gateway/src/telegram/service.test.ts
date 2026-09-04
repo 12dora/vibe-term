@@ -5,6 +5,7 @@ import {
   approveTelegramChat,
   createOrUpdatePendingTelegramChat,
   createTelegramBot,
+  getTelegramChatByBotAndChatId,
   updateTelegramBot,
 } from '../db';
 import { getDb as getOrmDb } from '../db/client';
@@ -158,5 +159,119 @@ describe('TelegramService.handleIncomingText', () => {
       },
     });
     expect(replies.length).toBeGreaterThan(0);
+  });
+
+  test('authorized group /start does not rebind user_id', async () => {
+    const botId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    createTelegramBot({
+      id: botId,
+      name: 'takeover',
+      tokenEnc: 'enc',
+      enabled: true,
+      allowAuthRequests: true,
+      allowCommands: true,
+      lastUpdateId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    createOrUpdatePendingTelegramChat({
+      botId,
+      chatId: '-400',
+      chatType: 'group',
+      displayName: 'ops',
+      appliedAt: now,
+      userId: '42',
+    });
+    approveTelegramChat(botId, '-400');
+    const replies: string[] = [];
+    await new TelegramService().handleIncomingText({
+      botId,
+      text: '/start',
+      chatId: '-400',
+      chatType: 'group',
+      fromId: '99',
+      title: 'ops',
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+    expect(replies.length).toBe(1);
+    expect(getTelegramChatByBotAndChatId(botId, '-400')?.userId).toBe('42');
+    const commandReplies: string[] = [];
+    await new TelegramService().handleIncomingText({
+      botId,
+      text: 'help',
+      chatId: '-400',
+      chatType: 'group',
+      fromId: '99',
+      reply: async (text) => {
+        commandReplies.push(text);
+      },
+    });
+    expect(commandReplies).toEqual([]);
+    await new TelegramService().handleIncomingText({
+      botId,
+      text: 'help',
+      chatId: '-400',
+      chatType: 'group',
+      fromId: '42',
+      reply: async (text) => {
+        commandReplies.push(text);
+      },
+    });
+    expect(commandReplies.length).toBeGreaterThan(0);
+  });
+
+  test('legacy authorized group with null user_id stays unbound on /start', async () => {
+    const botId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    createTelegramBot({
+      id: botId,
+      name: 'legacy',
+      tokenEnc: 'enc',
+      enabled: true,
+      allowAuthRequests: true,
+      allowCommands: true,
+      lastUpdateId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    createOrUpdatePendingTelegramChat({
+      botId,
+      chatId: '-500',
+      chatType: 'supergroup',
+      displayName: 'ops',
+      appliedAt: now,
+      userId: null,
+    });
+    approveTelegramChat(botId, '-500');
+    expect(getTelegramChatByBotAndChatId(botId, '-500')?.userId).toBeNull();
+    const replies: string[] = [];
+    await new TelegramService().handleIncomingText({
+      botId,
+      text: '/start',
+      chatId: '-500',
+      chatType: 'supergroup',
+      fromId: '77',
+      title: 'ops',
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+    expect(replies.length).toBe(1);
+    expect(getTelegramChatByBotAndChatId(botId, '-500')?.userId).toBeNull();
+    expect(getTelegramChatByBotAndChatId(botId, '-500')?.status).toBe('authorized');
+    await new TelegramService().handleIncomingText({
+      botId,
+      text: 'help',
+      chatId: '-500',
+      chatType: 'supergroup',
+      fromId: '77',
+      reply: async (text) => {
+        replies.push(text);
+      },
+    });
+    expect(replies.length).toBe(1);
   });
 });

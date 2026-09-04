@@ -2691,6 +2691,41 @@ describe('UplinkServer multi-hub', () => {
     }
   });
 
+  test('hub own cert with null/old nodes.version does not block key.log.append', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const self = seedAdmittedNode(userStore, user.id, { name: 'hub-self' });
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: { publicUrl: 'https://hub.example', nodeId: self.nodeId, hubNodeId: self.nodeId },
+      });
+      const node = await authNode(server, userStore, user.id, { version: '1.1.24' });
+      const rec = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'rotate-root-keep',
+        encodeRotateRootKeepPayload({
+          root_public_key: new Uint8Array(32).fill(9),
+          kdf_params: generateKdfParams(),
+          totp: null,
+        })
+      );
+      sendCtl(node.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(rec.bytes),
+        sig: encodeBase64url(rec.sig),
+        id: 'self-null',
+      });
+      const ack = await takeUntil(node.inbox, 'key.log.ack');
+      expect(ack).toMatchObject({ t: 'key.log.ack', id: 'self-null', ok: true });
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
   test('非当前写者的 hub.tokens upsert 丢弃', async () => {
     const { db, close } = createMigratedAuthDb();
     try {

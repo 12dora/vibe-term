@@ -500,4 +500,69 @@ describe('leaveMesh', () => {
     ).catch((error) => error);
     expect((err as SetupError).code).toBe('invalid_target');
   });
+
+  test('leave to relay deletes the identity user tenant, not listUsers()[0]', async () => {
+    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    await seedRelayAttachment(deps.auth);
+    const aliceRoot = deps.auth.userStore.getByUsername('alice')?.rootPublicKey;
+    if (!aliceRoot) throw new Error('expected alice');
+    const decoyRoot = Uint8Array.from({ length: 32 }, () => 5);
+    deps.auth.userStore.create({
+      id: 'decoy-user',
+      username: 'decoy',
+      rootPublicKey: decoyRoot,
+      rootEpoch: 0,
+      kdfParamsJson: JSON.stringify({ kdf: 'argon2id' }),
+      keyLogHeadSeq: 0,
+      keyLogHeadHash: new Uint8Array(32),
+      now: 1_700_000_000_000,
+    });
+    seedRelayOperator(deps.auth, { matchingRootPublicKey: aliceRoot, withChildren: true });
+    seedRelayOperatorTenant(deps.auth, {
+      id: '11'.repeat(16),
+      rootPublicKey: decoyRoot,
+      withChildren: true,
+    });
+    const identity = await deps.auth.identityStore.load();
+    if (!identity) throw new Error('expected identity');
+    await deps.auth.identityStore.save({ ...identity, userId: 'decoy-user' });
+    expect(deps.auth.userStore.listUsers()[0]?.username).toBe('alice');
+
+    await leaveMesh({ expectedRole: 'relay,node', targetRole: 'relay' }, deps);
+    const remaining = deps.auth.db
+      .select()
+      .from(relayTenants)
+      .all()
+      .map((row) => row.id);
+    expect(remaining.sort()).toEqual([FOREIGN_TENANT_ID, MATCHING_TENANT_ID].sort());
+    expect(remaining).not.toContain('11'.repeat(16));
+  });
+
+  test('leave to relay skips tenant deletion when identity user is missing', async () => {
+    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    await seedRelayAttachment(deps.auth);
+    const aliceRoot = deps.auth.userStore.getByUsername('alice')?.rootPublicKey;
+    if (!aliceRoot) throw new Error('expected alice');
+    seedRelayOperator(deps.auth, { matchingRootPublicKey: aliceRoot, withChildren: true });
+    const identity = await deps.auth.identityStore.load();
+    if (!identity) throw new Error('expected identity');
+    await deps.auth.identityStore.save({ ...identity, userId: 'missing-user' });
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map(String).join(' '));
+    };
+    try {
+      await leaveMesh({ expectedRole: 'relay,node', targetRole: 'relay' }, deps);
+    } finally {
+      console.warn = orig;
+    }
+    expect(warns.some((line) => line.includes('skip tenant deletion'))).toBe(true);
+    const remaining = deps.auth.db
+      .select()
+      .from(relayTenants)
+      .all()
+      .map((row) => row.id);
+    expect(remaining.sort()).toEqual([FOREIGN_TENANT_ID, MATCHING_TENANT_ID].sort());
+  });
 });

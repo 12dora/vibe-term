@@ -152,4 +152,19 @@ describe('POST /api/relay/tenants/:id/enrollments', () => {
     }
     expect(limited).toBe(2);
   });
+
+  test('fractional exp is 400 RELAY_INVALID_BODY', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const joiner = tenant.addNode();
+    const res = await relay.tenantFetch(
+      `/api/relay/tenants/${tenant.id}/enrollments`,
+      tenant.token,
+      { method: 'POST', body: enrollCreateBody(relay, joiner, 'frac-exp', { exp: 300000.5 }) }
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      'RELAY_INVALID_BODY'
+    );
+  });
 });

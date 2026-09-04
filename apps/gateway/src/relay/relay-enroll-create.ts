@@ -127,7 +127,7 @@ export function applyRelayEnrollCreate(
 function parseEnrollCreateBody(body: Record<string, unknown>): RelayEnrollCreateFields | null {
   const id = body.id;
   if (typeof id !== 'string' || id.length === 0 || id.length > ENROLL_CREATE_ID_MAX) return null;
-  if (typeof body.exp !== 'number' || !Number.isFinite(body.exp)) return null;
+  if (typeof body.exp !== 'number' || !Number.isSafeInteger(body.exp)) return null;
   try {
     return {
       id,

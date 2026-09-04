@@ -84,6 +84,57 @@ describe('authorizeMessagingActor', () => {
     deleteTelegramBot(botId);
   });
 
+  test('telegram private chat without user_id still authorizes; legacy group does not', () => {
+    const botId = crypto.randomUUID();
+    createTelegramBot({
+      id: botId,
+      name: 'priv',
+      tokenEnc: 'enc',
+      enabled: true,
+      allowAuthRequests: true,
+      allowCommands: true,
+      lastUpdateId: null,
+      createdAt: now(),
+      updatedAt: now(),
+    });
+    createOrUpdatePendingTelegramChat({
+      botId,
+      chatId: '888',
+      chatType: 'private',
+      displayName: 'me',
+      appliedAt: now(),
+      userId: null,
+    });
+    approveTelegramChat(botId, '888');
+    expect(
+      authorizeMessagingActor({
+        platform: 'telegram',
+        accountId: botId,
+        conversationId: '888',
+        userId: '888',
+      })
+    ).toEqual({ ok: true });
+
+    createOrUpdatePendingTelegramChat({
+      botId,
+      chatId: '-888',
+      chatType: 'group',
+      displayName: 'g',
+      appliedAt: now(),
+      userId: null,
+    });
+    approveTelegramChat(botId, '-888');
+    expect(
+      authorizeMessagingActor({
+        platform: 'telegram',
+        accountId: botId,
+        conversationId: '-888',
+        userId: '1',
+      })
+    ).toEqual({ ok: false, silent: true });
+    deleteTelegramBot(botId);
+  });
+
   test('weixin requires authorized user and allowCommands', () => {
     const accountId = crypto.randomUUID();
     createWeixinAccount({

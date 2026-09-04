@@ -156,6 +156,18 @@ export function getTelegramChatByBotAndChatId(
   return toTelegramChat(row);
 }
 
+/**
+ * 已授权行禁止改 user_id（防群成员 /start 接管）。仅 pending 可写入本次 from.id。
+ * 历史 authorized + user_id IS NULL 的群须删除后再绑定，不能靠 /start 认领。
+ */
+export function pendingTelegramUserIdForUpsert(
+  existing: TelegramBotChat | null,
+  incoming: string | null | undefined
+): string | null | undefined {
+  if (existing?.status === 'authorized') return undefined;
+  return incoming;
+}
+
 export function createOrUpdatePendingTelegramChat(params: {
   botId: string;
   chatId: string;
@@ -172,7 +184,7 @@ export function createOrUpdatePendingTelegramChat(params: {
   const now = new Date().toISOString();
   const orm = getOrmDb();
 
-  const userId = params.userId === undefined ? undefined : params.userId;
+  const userId = pendingTelegramUserIdForUpsert(existing, params.userId);
 
   if (!existing) {
     orm
@@ -196,7 +208,6 @@ export function createOrUpdatePendingTelegramChat(params: {
       .set({
         chatType: params.chatType,
         displayName: params.displayName,
-        ...(userId !== undefined ? { userId } : {}),
         updatedAt: now,
       })
       .where(eq(telegramBotChats.id, existing.id))

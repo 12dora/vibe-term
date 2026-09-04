@@ -1711,6 +1711,63 @@ describe('HubRuntime HTTP', () => {
     }
   });
 
+  test('forwarded key-log skips the hub own cert with a null/old nodes.version', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const self = seedAdmittedNode(userStore, user.id, { name: 'hub-self', version: '1.1.12' });
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: {
+          publicUrl: 'https://hub.example',
+          stun: [],
+          nodeId: self.nodeId,
+          hubNodeId: self.nodeId,
+        },
+        authenticate: () => ({ userId: user.id, entryNodeId: 'entry' }),
+      });
+      const rec = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'rotate-root-keep',
+        encodeRotateRootKeepPayload({
+          root_public_key: new Uint8Array(32).fill(9),
+          kdf_params: generateKdfParams(),
+          totp: null,
+        })
+      );
+      expect(inspectHubAuthRecordCompat(userStore, rec.bytes, user.id).ok).toBe(false);
+      expect(
+        inspectHubAuthRecordCompat(userStore, rec.bytes, user.id, { localNodeId: self.nodeId })
+      ).toEqual({ ok: true });
+      try {
+        const ack = await hub.executeForwardedWrite('aa'.repeat(16), {
+          t: 'hub.write-forward',
+          id: 'self-old',
+          method: 'POST',
+          path: '/api/auth/keylog',
+          uid: user.id,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            bytes: encodeBase64url(rec.bytes),
+            sig: encodeBase64url(rec.sig),
+          }),
+        });
+        expect(ack.status).not.toBe(409);
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain('BigInt');
+      }
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
   test('passkey signer 的 enrollment 通过 WebAuthn assertion 校验', async () => {
     const { db, close } = createMigratedAuthDb();
     try {

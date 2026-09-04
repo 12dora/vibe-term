@@ -3,6 +3,7 @@ import type { SiteSettings, WebhookEvent } from '@tmex/shared';
 import {
   EVENT_EMOJI,
   buildBellRawView,
+  buildCredentialWarningText,
   buildGenericRawView,
   buildNotificationRawView,
   buildPaneMetaLines,
@@ -101,5 +102,29 @@ describe('notification-format raw views', () => {
     const siteIndex = generic.findIndex((line) => line.includes('tmex & co'));
     const nodeIndex = generic.findIndex((line) => line.includes('studio'));
     expect(nodeIndex).toBeGreaterThan(siteIndex);
+  });
+
+  test('node label prefers payload nodeName then nodeId over local identity', () => {
+    setNotificationNodeNameProvider(() => 'studio');
+    const named = makeEvent({
+      payload: { nodeName: 'remote-box', nodeId: 'ab'.repeat(16), message: 'x' },
+    });
+    expect(
+      buildGenericRawView(named, SETTINGS).lines.some((line) => line.includes('remote-box'))
+    ).toBe(true);
+    expect(buildGenericRawView(named, SETTINGS).lines.some((line) => line.includes('studio'))).toBe(
+      false
+    );
+    expect(buildCredentialWarningText(named)).toContain('remote-box');
+    expect(buildCredentialWarningText(named)).not.toContain('studio');
+
+    const idOnly = makeEvent({ payload: { nodeId: 'cd'.repeat(16), message: 'x' } });
+    expect(
+      buildGenericRawView(idOnly, SETTINGS).lines.some((line) => line.includes('cd'.repeat(16)))
+    ).toBe(true);
+    expect(buildCredentialWarningText(idOnly)).toContain('cd'.repeat(16));
+    expect(buildBellRawView(named).paneMetaLines.some((line) => line.includes('remote-box'))).toBe(
+      true
+    );
   });
 });

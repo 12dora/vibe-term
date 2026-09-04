@@ -649,7 +649,9 @@ export class HubRuntime {
       return json({ ok: true, seq: already.seq, hash: encodeBase64url(already.hash) });
     }
     const compat = applyForcedKeyLogCompat(
-      inspectHubAuthRecordCompat(this.userStore, bytes, userId),
+      inspectHubAuthRecordCompat(this.userStore, bytes, userId, {
+        localNodeId: this.config.nodeId ?? this.config.hubNodeId,
+      }),
       req.headers.get('x-tmex-force-keylog') === '1'
     );
     if (!compat.ok) {

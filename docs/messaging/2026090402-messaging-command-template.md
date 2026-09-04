@@ -69,7 +69,8 @@ Bot 凭证和会话授权都是节点本地表，没有可用于远程节点的�
 
 - `telegram_bots.allow_commands` / `weixin_accounts.allow_commands`，默认 0。创建 / 更新 API 校验布尔值 `allowCommands`。
 - 命令（含 `help`）要求：会话已授权 **且** `allowCommands`。未授权、待授权、或开关关闭：**静默**（不回复），`/start` 绑定除外。
-- Telegram 群聊：`/start` 把 `from.id` 写入 `telegram_bot_chats.user_id`；命令只接受同一 `from.id`。历史群绑定若 `user_id` 为空，须再发一次 `/start` 才能用命令。
+- Telegram 群聊：`/start` 只在 pending 行写入 `from.id`；已授权行不得改 `user_id`。命令只接受同一 `from.id`。私聊（`chat.id === from.id`）不校验 `user_id`。
+- 迁移 0044 之前授权的群聊 `user_id` 为空：命令静默拒绝。须在设置中删除该绑定，再 `/start` 并由管理员审批；不能靠再发 `/start` 认领。
 - `execute` / `approve` 与 `read` 共用这一开关（前端开关后续任务再加）。
 
 ## i18n

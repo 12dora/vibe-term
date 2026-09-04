@@ -75,14 +75,23 @@ export function resolveNotificationNodeName(): string | null {
   return (nodeNameProvider ?? defaultNotificationNodeName)();
 }
 
-function nodeLabelLine(): string | null {
-  const name = resolveNotificationNodeName();
+function payloadNodeLabel(event?: WebhookEvent): string | null {
+  const payload = event?.payload;
+  const nodeName = typeof payload?.nodeName === 'string' ? payload.nodeName.trim() : '';
+  if (nodeName) return nodeName;
+  const nodeId = typeof payload?.nodeId === 'string' ? payload.nodeId.trim() : '';
+  if (nodeId) return nodeId;
+  return null;
+}
+
+function nodeLabelLine(event?: WebhookEvent): string | null {
+  const name = payloadNodeLabel(event) ?? resolveNotificationNodeName();
   if (!name) return null;
   return `${t('notification.node', { defaultValue: 'Node' })}：${name}`;
 }
 
-function withNodeLine(lines: string[]): string[] {
-  const nodeLine = nodeLabelLine();
+function withNodeLine(lines: string[], event: WebhookEvent): string[] {
+  const nodeLine = nodeLabelLine(event);
   return nodeLine ? [nodeLine, ...lines] : lines;
 }
 
@@ -127,7 +136,7 @@ export function buildBellRawView(event: WebhookEvent): BellRawView {
       siteName: event.site.name,
       terminalTopbarLabel: buildTerminalTopbarLabel(event),
     }),
-    paneMetaLines: withNodeLine(buildPaneMetaLines(event)),
+    paneMetaLines: withNodeLine(buildPaneMetaLines(event), event),
     paneUrl: normalizeHttpUrl(buildPaneUrl(event)),
     viewLinkLabel: t('notification.telegramBell.viewLink'),
   };
@@ -145,7 +154,7 @@ export function buildNotificationRawView(event: WebhookEvent): NotificationRawVi
   return {
     title: typeof event.payload?.title === 'string' ? event.payload.title : '',
     body: typeof event.payload?.message === 'string' ? event.payload.message : '',
-    paneMetaLines: withNodeLine(buildPaneMetaLines(event)),
+    paneMetaLines: withNodeLine(buildPaneMetaLines(event), event),
     footer: `from ${event.site.name}: ${buildTerminalTopbarLabel(event)}`,
     paneUrl: normalizeHttpUrl(buildPaneUrl(event)),
   };
@@ -187,7 +196,7 @@ export function buildCredentialWarningText(event: WebhookEvent): string {
       types,
     }),
   ];
-  const nodeLine = nodeLabelLine();
+  const nodeLine = nodeLabelLine(event);
   if (nodeLine) lines.push(nodeLine);
   return lines.join('\n');
 }
@@ -204,7 +213,7 @@ export function buildGenericRawView(event: WebhookEvent, settings: SiteSettings)
     `${EVENT_EMOJI[event.eventType] ?? '📢'} ${eventTypeLabel}`,
     `${t('notification.site')}：${event.site.name}`,
   ];
-  const nodeLine = nodeLabelLine();
+  const nodeLine = nodeLabelLine(event);
   if (nodeLine) lines.push(nodeLine);
   lines.push(
     `${t('notification.time')}：${new Date(event.timestamp).toLocaleString(toBCP47(settings.language))}`,

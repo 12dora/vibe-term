@@ -53,6 +53,21 @@ function isUnreachableError(error: string): boolean {
   return error === 'timeout' || error === 'RELAY_UNREACHABLE';
 }
 
+/** 旧版 attached 中继没有新 HTTP collection 路由时，回退到 uplink `relay.enroll.create`。 */
+function isMissingHttpRouteError(error: string): boolean {
+  return (
+    error === 'RELAY_NOT_FOUND' ||
+    error === 'RELAY_METHOD_NOT_ALLOWED' ||
+    error === 'HTTP_404' ||
+    error === 'HTTP_405'
+  );
+}
+
+function shouldFallbackToUplink(error: string, attached: boolean): boolean {
+  if (isUnreachableError(error)) return true;
+  return attached && isMissingHttpRouteError(error);
+}
+
 async function postEnrollmentHttp(input: {
   url: string;
   tenantId: string;
@@ -122,7 +137,8 @@ async function createOnOneRelay(input: {
     };
   }
   const uplinkCreate = input.uplinkCreate;
-  if (uplinkCreate && isUnreachableError(http.error) && input.attachedUrl === input.row.url) {
+  const attached = input.attachedUrl === input.row.url;
+  if (uplinkCreate && attached && shouldFallbackToUplink(http.error, true)) {
     const ack = await uplinkCreate();
     if (ack.ok) {
       return {
