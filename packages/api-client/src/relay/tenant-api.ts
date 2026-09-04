@@ -23,11 +23,38 @@ export interface RelayLinkStatus {
   /** 本机 uplink 当前挂在这一条上。 */
   attached: boolean;
   rttMs?: number | null;
+  /** 当前（未恢复的）连接错误原文；在线时为 `null`。 */
   lastError?: string | null;
+  /** `lastError` 归一化后的稳定错误码，前端据此查 i18n；在线时为 `null`。 */
+  lastErrorCode?: RelayLinkErrorCode | null;
   /** 最近一次连接失败的时间戳（毫秒）。未失败为 `null`。 */
   lastErrorAt?: number | null;
   /** 中继侧作废了本租户令牌（改密踢人 / 运营者手动踢）。 */
   kicked?: boolean;
+}
+
+/** 中继链路错误的稳定分类（由网关按原始错误归一化）。 */
+export type RelayLinkErrorCode =
+  | 'connect-failed'
+  | 'connect-timeout'
+  | 'auth-timeout'
+  | 'auth-rejected'
+  | 'heartbeat-lost'
+  | 'kicked'
+  | 'dns'
+  | 'refused'
+  | 'tls'
+  | 'protocol'
+  | 'unknown';
+
+/** 中继按租户实时下发的用量（与 `RelayQuotaView` 同源，约 5 s 一拍）。 */
+export interface RelayQuotaUsage {
+  currentNodes: number;
+  currentStreams: number;
+  bytesInPerSec: number;
+  bytesOutPerSec: number;
+  /** 采样时间（毫秒）。 */
+  sampledAt: number;
 }
 
 /** 中继下发的配额；未接入或旧中继时为 `null`。 */
@@ -37,6 +64,8 @@ export interface RelayQuotaView {
   bandwidthBytesPerSec: number | null;
   /** 当前占用（pending + admitted）；旧中继不下发。 */
   currentNodes?: number;
+  /** 实时用量；旧中继不下发时为 `null`。 */
+  usage?: RelayQuotaUsage | null;
 }
 
 /** `GET /api/mesh/relay/status`。 */
@@ -275,7 +304,7 @@ export function normalizeRelayStatus(
 ): RelayTenantStatus {
   if (!payload) return EMPTY_STATUS;
   return {
-    quota: payload.quota ?? null,
+    quota: payload.quota ? { ...payload.quota, usage: payload.quota.usage ?? null } : null,
     mode: payload.mode ?? 'none',
     tenantId: payload.tenantId ?? null,
     relays: (payload.relays ?? []).map((row) => ({
@@ -284,8 +313,9 @@ export function normalizeRelayStatus(
       online: row.online === true,
       attached: row.attached === true,
       rttMs: row.rttMs ?? null,
-      lastError: row.lastError ?? null,
-      lastErrorAt: row.lastErrorAt ?? null,
+      lastError: row.online === true ? null : (row.lastError ?? null),
+      lastErrorCode: row.online === true ? null : (row.lastErrorCode ?? null),
+      lastErrorAt: row.online === true ? null : (row.lastErrorAt ?? null),
       kicked: row.kicked === true,
     })),
     metaEpoch: payload.metaEpoch ?? 0,
@@ -371,6 +401,17 @@ export class RelayTenantApi {
       'relay_status_failed'
     );
     return normalizeRelayStatus(payload);
+  }
+
+  /**
+   * `POST /api/mesh/relay/switch`：把本机 uplink 切到已配置的另一条中继（make-before-break），
+   * 并把它记为首选，重启后仍优先。未配置 / 已被踢的地址回 404 / 409。
+   */
+  switchRelay(url: string): Promise<RelayTenantStatus> {
+    return this.json<Partial<RelayTenantStatus>>(`${BASE}/switch`, 'relay_switch_failed', {
+      method: 'POST',
+      body: { url },
+    }).then(normalizeRelayStatus);
   }
 
   /**

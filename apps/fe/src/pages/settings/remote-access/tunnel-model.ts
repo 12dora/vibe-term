@@ -40,7 +40,19 @@ export function connectorState(status: TunnelStatusResponse): ConnectorState {
   if (connector.reachable === null) return connector.checkedAt === null ? 'unprobed' : 'unknown';
   // 探不到 metrics 端点只说明本机读不到这份指标，边缘连接可能好好的：一律「无法探测」。
   if (!connector.reachable) return 'unknown';
-  return (connector.readyConnections ?? 0) > 0 ? 'connected' : 'noConnections';
+  const ready = connector.readyConnections;
+  // 端点应答了却没给出连接数，说不上是「零连接」：宣告断线要有确凿的 0。
+  if (typeof ready !== 'number' || !Number.isFinite(ready) || ready < 0) return 'unknown';
+  return ready > 0 ? 'connected' : 'noConnections';
+}
+
+/** 降级警示里的错误明细：日志行可能很长，卡片上只留够定位问题的开头。 */
+const DEGRADED_ERROR_MAX = 200;
+
+export function degradedError(status: TunnelStatusResponse): string | null {
+  const text = (status.process.lastError ?? status.connector?.lastError ?? '').trim();
+  if (!text) return null;
+  return text.length > DEGRADED_ERROR_MAX ? `${text.slice(0, DEGRADED_ERROR_MAX)}…` : text;
 }
 
 /** 进程 / 系统服务还活着（`degraded` 也算活着，只是没有边缘连接）。 */

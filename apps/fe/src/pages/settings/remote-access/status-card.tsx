@@ -23,6 +23,7 @@ import {
   type TunnelPill,
   checkNotice,
   connectorState,
+  degradedError,
   describeTunnelError,
   isExposureAckError,
   logTail,
@@ -291,16 +292,26 @@ function StatusHeader({
 }
 
 /**
- * 进程在跑但没有边缘连接：公网地址此时是断的。进程与连接器各自的最近一条错误都值钱，
- * 拼在第二行给用户一个直接的排查线索。
+ * 进程在跑但没有边缘连接：公网地址此时是断的。确证零连接时补一条排查指引——本机代理 / 防火墙
+ * 挡掉 7844 是最常见的成因；进程与连接器各自的最近一条错误接在末尾，作为直接线索。
  */
 function DegradedNotice({ status }: { status: TunnelStatusResponse }) {
   const { t } = useTranslation();
-  const detail = status.process.lastError ?? status.connector?.lastError ?? null;
+  const detail = degradedError(status);
   return (
     <SetupNotice tone="warning" testId="remote-access-degraded">
       <p>{t('settings.remoteAccess.degradedNotice')}</p>
-      {detail && <p className="break-all">{detail}</p>}
+      {connectorState(status) === 'noConnections' && (
+        <p data-testid="remote-access-degraded-hint">{t('settings.remoteAccess.degradedHint')}</p>
+      )}
+      {detail && (
+        <p
+          className="break-all font-mono text-muted-foreground"
+          data-testid="remote-access-degraded-error"
+        >
+          {detail}
+        </p>
+      )}
     </SetupNotice>
   );
 }

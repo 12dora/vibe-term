@@ -58,6 +58,7 @@ describe('RelayTenantApi 状态', () => {
         attached: false,
         rttMs: null,
         lastError: null,
+        lastErrorCode: null,
         lastErrorAt: null,
         kicked: false,
       },
@@ -92,10 +93,16 @@ describe('RelayTenantApi 状态', () => {
       attached: false,
       rttMs: null,
       lastError: 'client-too-old',
+      lastErrorCode: null,
       lastErrorAt: 7,
       kicked: false,
     });
-    expect(normalizeRelayStatus({ quota }).quota).toEqual(quota);
+    expect(normalizeRelayStatus({ quota }).quota).toEqual({ ...quota, usage: null });
+    expect(
+      normalizeRelayStatus({
+        relays: [{ url: 'https://r.example', online: true, lastError: 'connect-failed' }],
+      }).relays[0].lastError
+    ).toBeNull();
     expect(
       normalizeRelayStatus({
         quota: { ...quota, currentNodes: 2 },
