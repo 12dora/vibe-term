@@ -22,7 +22,8 @@ export function Sidebar({
   variant?: 'sidebar' | 'floating' | 'inset';
   collapsible?: 'offcanvas' | 'icon' | 'none';
 }) {
-  const { isMobile, state, openMobile, setOpenMobile, isResizing } = useSidebar();
+  const { isMobile, state, openMobile, setOpenMobile, mobileInitialFocus, isResizing } =
+    useSidebar();
 
   if (collapsible === 'none') {
     return (
@@ -58,6 +59,7 @@ export function Sidebar({
           }
           side={side}
           animation="top-down"
+          initialFocus={mobileInitialFocus}
         >
           <SheetHeader className="sr-only">
             <SheetTitle>Sidebar</SheetTitle>

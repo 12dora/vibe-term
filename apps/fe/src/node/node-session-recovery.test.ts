@@ -12,8 +12,12 @@ const { ApiError, NODE_UNREACHABLE } = await import('@tmex/api-client');
 const { getMeshNodesState, resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import(
   './mesh-nodes'
 );
-const { handleNodeApiError, resetNodeSessionRecovery, resetNodeSessionRecoveryForTest } =
-  await import('./node-session-recovery');
+const {
+  handleNodeApiError,
+  needsUserSignIn,
+  noteNodeQuerySuccess,
+  resetNodeSessionRecoveryForTest,
+} = await import('./node-session-recovery');
 
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
 const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
@@ -136,40 +140,112 @@ describe('handleNodeApiError', () => {
     };
 
     await handleNodeApiError(NODE_A, loginRequired(), { login });
-    resetNodeSessionRecovery(NODE_A);
+    noteNodeQuerySuccess(NODE_A, 2000);
     await handleNodeApiError(NODE_A, loginRequired(), { login });
 
     expect(logins).toBe(2);
   });
 
-  test('重登被凭证类原因拒掉：标未登录，界面退回登录入口', async () => {
+  test('缓存态 → 401 → 重登 → 回源仍失败：不再重登，也不空转', async () => {
     seedLoggedInNode();
-    const outcome = await handleNodeApiError(NODE_A, loginRequired(), {
-      login: () => Promise.resolve({ ok: false, code: 'NO_SESSION_KEY' }),
-    });
+    let logins = 0;
+    const login = () => {
+      logins += 1;
+      return Promise.resolve({ ok: true });
+    };
 
-    expect(outcome).toBe('failed');
+    // 缓存里已有一份列表（后台刷新失败时 react-query 会一直留着它）。
+    noteNodeQuerySuccess(NODE_A, 1000);
+    expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('recovered');
+
+    // 回源那一次仍然 401：dataUpdatedAt 没有前进，记账不该解除。
+    noteNodeQuerySuccess(NODE_A, 1000);
+    expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('skipped');
+    expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('skipped');
+    expect(logins).toBe(1);
+
+    // 直到真的又拉到一份新列表，下一轮失效才重新自愈。
+    noteNodeQuerySuccess(NODE_A, 2000);
+    expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('recovered');
+    expect(logins).toBe(2);
+  });
+
+  test('留着旧数据（dataUpdatedAt 不变）不算成功，重复上报也不解除记账', async () => {
+    seedLoggedInNode();
+    let logins = 0;
+    const login = () => {
+      logins += 1;
+      return Promise.resolve({ ok: true });
+    };
+
+    noteNodeQuerySuccess(NODE_A, 1000);
+    await handleNodeApiError(NODE_A, loginRequired(), { login });
+    for (let i = 0; i < 3; i += 1) noteNodeQuerySuccess(NODE_A, 1000);
+    expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('skipped');
+    expect(logins).toBe(1);
+  });
+
+  test.each([
+    ['NO_SESSION_KEY'],
+    ['PASSKEY_REQUIRED'],
+    ['TOTP_REQUIRED'],
+    ['NODE_PK_MISMATCH'],
+    ['INVALID_CREDENTIALS'],
+    ['PASSKEY_INVALID'],
+  ])('需要用户介入的 %s：标未登录并保留记账', async (code) => {
+    seedLoggedInNode();
+    let logins = 0;
+    const login = () => {
+      logins += 1;
+      return Promise.resolve({ ok: false, code });
+    };
+
+    expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('failed');
     expect(loggedInOf(NODE_A)).toBe(false);
+    // 用户没做任何事之前重发也不该再撞一次登录端点。
+    expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('skipped');
+    expect(logins).toBe(1);
   });
 
-  test('网络类失败不动登录态：一次 401 不足以判会话作废', async () => {
-    seedLoggedInNode();
-    const outcome = await handleNodeApiError(NODE_A, loginRequired(), {
-      login: () => Promise.resolve({ ok: false, code: 'NETWORK_ERROR' }),
-    });
+  test.each([['NETWORK_ERROR'], ['NODE_LIST_FAILED'], ['RATE_LIMITED'], ['SOME_NEW_CODE']])(
+    '临时失败 %s：不动登录态，用户重试还能再登一次',
+    async (code) => {
+      seedLoggedInNode();
+      let logins = 0;
+      const login = () => {
+        logins += 1;
+        return Promise.resolve({ ok: false, code });
+      };
 
-    expect(outcome).toBe('failed');
+      expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('failed');
+      expect(loggedInOf(NODE_A)).toBe(true);
+      // 面板上的「重试」会重发请求、再撞 401：这一次必须还能重登，不能被记账挡死。
+      expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('failed');
+      expect(logins).toBe(2);
+    }
+  );
+
+  test('重登实现抛错时也给结论，且记账当场解除', async () => {
+    seedLoggedInNode();
+    let logins = 0;
+    const login = () => {
+      logins += 1;
+      return Promise.reject(new Error('boom'));
+    };
+
+    expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('failed');
     expect(loggedInOf(NODE_A)).toBe(true);
+    expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('failed');
+    expect(logins).toBe(2);
   });
 
-  test('重登实现抛错时也给结论，不留在途记录', async () => {
-    seedLoggedInNode();
-    const outcome = await handleNodeApiError(NODE_A, loginRequired(), {
-      login: () => Promise.reject(new Error('boom')),
-    });
-
-    expect(outcome).toBe('failed');
-    expect(loggedInOf(NODE_A)).toBe(true);
+  test('needsUserSignIn 只认凭证 / 二次验证类的码', () => {
+    expect(needsUserSignIn('NO_SESSION_KEY')).toBe(true);
+    expect(needsUserSignIn('DELEGATION_EXPIRED')).toBe(true);
+    expect(needsUserSignIn('RATE_LIMITED')).toBe(false);
+    expect(needsUserSignIn('CHALLENGE_EXPIRED')).toBe(false);
+    expect(needsUserSignIn('UNKNOWN_NODE')).toBe(false);
+    expect(needsUserSignIn(undefined)).toBe(false);
   });
 
   test('其它失败与 entry 自身一律不管', async () => {

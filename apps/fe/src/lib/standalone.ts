@@ -35,27 +35,3 @@ export function shouldOpenSidebarOnLaunch(input: SidebarLaunchInput): boolean {
   if (!input.isMobile || !input.standalone) return false;
   return input.launchPathname === '/' || input.launchPathname === '';
 }
-
-/** 移动端侧边栏抽屉的容器（Base UI Sheet 的 popup）。 */
-export const SHEET_CONTENT_SELECTOR = '[data-slot="sheet-content"]';
-
-type FocusableNode = {
-  closest?: (selector: string) => unknown;
-  blur?: () => void;
-};
-
-/**
- * 自动弹出的抽屉不该把焦点带走。Base UI 的 Dialog 打开时会把焦点移到第一个可聚焦元素——
- * 侧边栏里就是「关闭侧边栏」，于是 PWA 冷启动后左上角一直挂着一圈焦点环。
- *
- * 只在焦点确实落进抽屉里时收回（`blur()` 之后 activeElement 回到 `document.body`：抽屉是
- * modal，`focusout` 的 relatedTarget 为空，Base UI 既不会关掉它也不会把焦点抢回去）；
- * 落在别处的焦点一律不动，用户自己点出来的焦点管理照旧。
- */
-export function releaseFocusInsideSheet(node: unknown): boolean {
-  const candidate = node as FocusableNode | null | undefined;
-  if (typeof candidate?.closest !== 'function') return false;
-  if (!candidate.closest(SHEET_CONTENT_SELECTOR)) return false;
-  candidate.blur?.();
-  return true;
-}

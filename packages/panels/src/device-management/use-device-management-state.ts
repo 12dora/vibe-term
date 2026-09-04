@@ -21,6 +21,46 @@ const STAGGER_FALLBACK_MS = 1500;
 
 const NO_DEVICES: Device[] = [];
 
+/**
+ * 首屏逐项入场。只做拿到的第一批设备，动画跑完就摘掉 stagger 类：之后 refetch / 重排 /
+ * 状态更新都不再重放（DOM 节点被移动时 CSS 动画会重新触发，摘掉类是唯一稳妥的办法）。
+ */
+function useStaggeredEntrance(loaded: Device[] | undefined) {
+  const initialBatchRef = useRef<ReadonlySet<string> | null>(null);
+  if (initialBatchRef.current === null && loaded) {
+    initialBatchRef.current = new Set(loaded.map((device) => device.id));
+  }
+  const initialBatch = initialBatchRef.current;
+  const [entered, setEntered] = useState(false);
+  const enteredCountRef = useRef(0);
+
+  useEffect(() => {
+    if (!initialBatch || entered) return;
+    if (initialBatch.size === 0) {
+      setEntered(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setEntered(true), STAGGER_FALLBACK_MS);
+    return () => window.clearTimeout(timer);
+  }, [initialBatch, entered]);
+
+  const onAnimationEnd = useCallback(() => {
+    if (!initialBatch || entered) return;
+    enteredCountRef.current += 1;
+    if (enteredCountRef.current >= initialBatch.size) setEntered(true);
+  }, [initialBatch, entered]);
+
+  const staggerStyle = useCallback(
+    (deviceId: string, index: number) =>
+      !entered && initialBatch?.has(deviceId)
+        ? staggerItemStyle(Math.min(index, STAGGER_MAX_INDEX))
+        : undefined,
+    [entered, initialBatch]
+  );
+
+  return { entered, onAnimationEnd, staggerStyle };
+}
+
 export function useDeviceManagementState({
   devicesQueryKey,
   offline,
@@ -62,36 +102,7 @@ export function useDeviceManagementState({
     return list ? sortDevices(list, language) : undefined;
   }, [data?.devices, offline, fallbackDevices, language]);
 
-  // 逐项入场只做首屏那一批，动画跑完就摘掉 stagger 类：之后 refetch / 重排 / 状态更新都不再
-  // 重放（DOM 节点被移动时 CSS 动画会重新触发，摘掉类是唯一稳妥的办法）。
-  const initialBatchRef = useRef<ReadonlySet<string> | null>(null);
-  if (initialBatchRef.current === null && loaded) {
-    initialBatchRef.current = new Set(loaded.map((device) => device.id));
-  }
-  const initialBatch = initialBatchRef.current;
-  const [entered, setEntered] = useState(false);
-  const enteredCountRef = useRef(0);
-  useEffect(() => {
-    if (!initialBatch || entered) return;
-    if (initialBatch.size === 0) {
-      setEntered(true);
-      return;
-    }
-    const timer = window.setTimeout(() => setEntered(true), STAGGER_FALLBACK_MS);
-    return () => window.clearTimeout(timer);
-  }, [initialBatch, entered]);
-  const onAnimationEnd = useCallback(() => {
-    if (!initialBatch || entered) return;
-    enteredCountRef.current += 1;
-    if (enteredCountRef.current >= initialBatch.size) setEntered(true);
-  }, [initialBatch, entered]);
-  const staggerStyle = useCallback(
-    (deviceId: string, index: number) =>
-      !entered && initialBatch?.has(deviceId)
-        ? staggerItemStyle(Math.min(index, STAGGER_MAX_INDEX))
-        : undefined,
-    [entered, initialBatch]
-  );
+  const { entered, onAnimationEnd, staggerStyle } = useStaggeredEntrance(loaded);
 
   const reorderMutation = useMutation({
     mutationFn: (deviceIds: string[]) => reorderDevices(deviceIds, runtime.apiClient),

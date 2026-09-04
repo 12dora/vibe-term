@@ -14,6 +14,13 @@ import {
   SidebarWidthContext,
   type SidebarWidthContextProps,
 } from './context';
+import {
+  CLOSED_MOBILE_SIDEBAR,
+  type MobileSidebarState,
+  autoOpenMobileSidebar,
+  mobileSheetInitialFocus,
+  setMobileSidebarOpen,
+} from './mobile-open';
 import { readSidebarStorage, removeSidebarStorage, writeSidebarStorage } from './storage';
 import {
   clampSidebarWidth,
@@ -72,6 +79,32 @@ function useSidebarWidthState(): SidebarWidthContextProps {
   );
 }
 
+/**
+ * 移动端抽屉这一份状态。除了开关，还记着「这次是替用户自动弹出的」——那一次不该移动焦点，
+ * 否则 PWA 冷启动后焦点落在抽屉里的「关闭侧边栏」上，左上角一直挂着一圈焦点环。
+ */
+function useMobileSidebarState() {
+  const [mobile, setMobile] = React.useState<MobileSidebarState>(CLOSED_MOBILE_SIDEBAR);
+
+  const setOpenMobile = React.useCallback((value: boolean | ((open: boolean) => boolean)) => {
+    setMobile((current) =>
+      setMobileSidebarOpen(current, typeof value === 'function' ? value(current.open) : value)
+    );
+  }, []);
+
+  const openMobileWithoutFocus = React.useCallback(() => setMobile(autoOpenMobileSidebar), []);
+
+  return React.useMemo(
+    () => ({
+      openMobile: mobile.open,
+      setOpenMobile,
+      openMobileWithoutFocus,
+      mobileInitialFocus: mobileSheetInitialFocus(mobile),
+    }),
+    [mobile, setOpenMobile, openMobileWithoutFocus]
+  );
+}
+
 export function SidebarProvider({
   defaultOpen = true,
   open: openProp,
@@ -86,7 +119,7 @@ export function SidebarProvider({
   onOpenChange?: (open: boolean) => void;
 }) {
   const isMobile = useIsMobile();
-  const [openMobile, setOpenMobile] = React.useState(false);
+  const mobile = useMobileSidebarState();
 
   const widthContextValue = useSidebarWidthState();
   const width = widthContextValue.width;
@@ -109,8 +142,8 @@ export function SidebarProvider({
 
   // Helper to toggle the sidebar.
   const toggleSidebar = React.useCallback(() => {
-    return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open);
-  }, [isMobile, setOpen]);
+    return isMobile ? mobile.setOpenMobile((open) => !open) : setOpen((open) => !open);
+  }, [isMobile, setOpen, mobile.setOpenMobile]);
 
   // Adds a keyboard shortcut to toggle the sidebar.
   React.useEffect(() => {
@@ -142,13 +175,12 @@ export function SidebarProvider({
       open,
       setOpen,
       isMobile,
-      openMobile,
-      setOpenMobile,
+      ...mobile,
       toggleSidebar,
       isResizing,
       setIsResizing,
     }),
-    [state, open, setOpen, isMobile, openMobile, toggleSidebar, isResizing]
+    [state, open, setOpen, isMobile, mobile, toggleSidebar, isResizing]
   );
 
   return (

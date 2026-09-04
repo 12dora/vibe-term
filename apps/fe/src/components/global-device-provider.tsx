@@ -38,7 +38,7 @@ import {
 } from './device-intent-store';
 import { DeviceStatusStore } from './device-status-store';
 
-import { handleNodeApiError, resetNodeSessionRecovery } from '@/node/node-session-recovery';
+import { handleNodeApiError, noteNodeQuerySuccess } from '@/node/node-session-recovery';
 
 export type { DeviceIdStorage } from './device-connection-persistence';
 export {
@@ -321,13 +321,16 @@ export function devicesQueryOptions(apiClient: ApiClient, offline: boolean) {
  *
  * 这条查询是每个 node 运行时都有的一条（面板与本 provider 共用同一份缓存），把自愈接在
  * 这里，整棵子树的每 node 请求都跟着受益。次数由 `node-session-recovery` 记账：一轮失效
- * 只重登一次，拉到列表才解除，401 → 重登 → 401 不会变成死循环。
+ * 只重登一次，`dataUpdatedAt` 前进（= 又成功拉到一份列表）才解除。
+ *
+ * 解除的判据必须是 `dataUpdatedAt` 而不是 `data !== undefined`：后台刷新失败时 react-query
+ * 留着上一次的数据，只看有无数据会让记账再也解不开。
  */
-function useNodeSessionRecovery(nodeId: string, error: unknown, loaded: boolean): void {
+function useNodeSessionRecovery(nodeId: string, error: unknown, dataUpdatedAt: number): void {
   const queryClient = useQueryClient();
   useEffect(() => {
-    if (loaded) resetNodeSessionRecovery(nodeId);
-  }, [loaded, nodeId]);
+    noteNodeQuerySuccess(nodeId, dataUpdatedAt);
+  }, [dataUpdatedAt, nodeId]);
   useEffect(() => {
     if (!error) return;
     void handleNodeApiError(nodeId, error, {
@@ -351,10 +354,12 @@ export function GlobalDeviceProvider({ children, offline = false }: GlobalDevice
   const { connectedDevices } = slices;
   const { connectTmuxDevice, disconnectTmuxDevice } = actions;
 
-  const { data: devicesData, error: devicesError } = useQuery(
-    devicesQueryOptions(runtime.apiClient, offline)
-  );
-  useNodeSessionRecovery(runtime.nodeId, devicesError, devicesData !== undefined);
+  const {
+    data: devicesData,
+    error: devicesError,
+    dataUpdatedAt: devicesUpdatedAt,
+  } = useQuery(devicesQueryOptions(runtime.apiClient, offline));
+  useNodeSessionRecovery(runtime.nodeId, devicesError, devicesUpdatedAt);
 
   const ensureDeviceSubscribed = useEnsureDeviceSubscribed(runtime, intentStore);
 
