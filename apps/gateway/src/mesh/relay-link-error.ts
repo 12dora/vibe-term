@@ -29,7 +29,7 @@ const RULES: Array<[RegExp, RelayLinkErrorCode]> = [
     /\b(?:connect-timeout|etimedout|timed out)\b|(?:^|[\s:_-])timeout(?:$|[\s:_-])/,
     'connect-timeout',
   ],
-  [/\bconnect-failed\b/, 'connect-failed'],
+  [/\bconnect-failed\b|failed to connect|connection .* failed/, 'connect-failed'],
   [
     /\b(?:auth_rejected|bad-token|token-epoch|unauthorized|unauthenticated|bad-sig|bad-nonce|bad-cert|unknown-tenant)\b/,
     'auth-rejected',

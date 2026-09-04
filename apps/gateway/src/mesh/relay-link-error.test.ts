@@ -9,6 +9,10 @@ const CASES: Array<[string | null | undefined, RelayLinkErrorCode | null]> = [
   ['stopped', null],
   ['aborted', null],
   ['connect-failed', 'connect-failed'],
+  [
+    "WebSocket connection to 'ws://127.0.0.1:19864/relay/uplink' failed: Failed to connect",
+    'connect-failed',
+  ],
   ['connect-timeout', 'connect-timeout'],
   ['timeout', 'connect-timeout'],
   ['ETIMEDOUT', 'connect-timeout'],
