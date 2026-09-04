@@ -38,6 +38,10 @@ function bodyOf(call: Call): unknown {
   return JSON.parse(String(call.init?.body));
 }
 
+/** 32 字节 base64url（无填充）= 43 个字符。 */
+const LOG_KEY_B64 = 'A'.repeat(43);
+const TOKEN_B64 = 'B'.repeat(43);
+
 describe('RelayTenantApi 状态', () => {
   test('status 走 /api/mesh/relay/status 并补齐缺省字段', async () => {
     const { api, calls } = recorder([
@@ -200,29 +204,45 @@ describe('RelayTenantApi enrollment 与 join 材料', () => {
   test('joinMaterial 直读节点侧的 camelCase 字段（每条中继自带凭据）', async () => {
     const { api, calls } = recorder([
       ok({
-        logKey: 'aw',
-        relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: 'dA' }],
+        logKey: LOG_KEY_B64,
+        relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: TOKEN_B64 }],
         tenantId: 'ab'.repeat(16),
-        token: 'dA',
+        token: TOKEN_B64,
       }),
     ]);
     expect(await api.joinMaterial()).toEqual({
-      logKey: 'aw',
-      relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: 'dA' }],
+      logKey: LOG_KEY_B64,
+      relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: TOKEN_B64 }],
     });
     expect(calls[0].url).toBe('/api/mesh/relay/join-material');
   });
 
   test('材料不全直接报错，不静默拼一个解不开的 join 串', () => {
-    expect(() => normalizeJoinMaterial({ logKey: 'aw', relays: [] })).toThrow(RelayApiError);
+    expect(() => normalizeJoinMaterial({ logKey: LOG_KEY_B64, relays: [] })).toThrow(RelayApiError);
     expect(() =>
       normalizeJoinMaterial({
-        logKey: 'aw',
-        relays: [{ url: 'https://r.example', tenantId: 'nope', token: 'dA' }],
+        logKey: LOG_KEY_B64,
+        relays: [{ url: 'https://r.example', tenantId: 'nope', token: TOKEN_B64 }],
       })
     ).toThrow(RelayApiError);
     expect(() =>
       normalizeJoinMaterial({
+        relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: TOKEN_B64 }],
+      })
+    ).toThrow(RelayApiError);
+  });
+
+  test('K_log 与令牌必须是 32 字节的 base64url：长度不对当场报错', () => {
+    // 畸形值放行的话，要一路带到密封那一步才抛，那时 K_log 已经解出来在堆里了。
+    expect(() =>
+      normalizeJoinMaterial({
+        logKey: 'aw',
+        relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: TOKEN_B64 }],
+      })
+    ).toThrow(RelayApiError);
+    expect(() =>
+      normalizeJoinMaterial({
+        logKey: LOG_KEY_B64,
         relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: 'dA' }],
       })
     ).toThrow(RelayApiError);

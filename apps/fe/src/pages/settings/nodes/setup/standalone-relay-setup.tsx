@@ -42,7 +42,13 @@ export function StandaloneRelaySetup({ localStatus, initialRole }: StandaloneRel
         <JoinRelayForm localStatus={localStatus} />
       </SetupChoice>
       <SetupChoice testId="setup-relay-choice-host" title={t('nodes.setup.path.becomeRelay.title')}>
-        <BecomeRelayForm localStatus={localStatus} {...(initialRole ? { initialRole } : {})} />
+        {/* 跨重启记号可能晚于本机状态才读到：`initialRole` 只在挂载时进 `useState`，
+            必须换 key 重挂，否则恢复出来的「纯中继」会被默认的「中继兼节点」吞掉。 */}
+        <BecomeRelayForm
+          key={initialRole ?? 'relay,node'}
+          localStatus={localStatus}
+          {...(initialRole ? { initialRole } : {})}
+        />
       </SetupChoice>
     </div>
   );

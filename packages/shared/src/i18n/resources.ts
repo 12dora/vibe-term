@@ -1925,7 +1925,9 @@ export const I18N_RESOURCES = {
         },
         "leaveToRelayConfirm": {
           "title": "Leave the current mesh?",
-          "description": "This machine leaves its mesh; the relay service and its tenants are kept."
+          "description": "This machine leaves its mesh; the relay service and its tenants are kept.",
+          "webGone": "After the restart this machine serves no web UI; the relay is managed from the command line.",
+          "restore": "To get the web UI back, run this on the machine to set it up as relay and node again."
         },
         "consequencesRelayKeepService": "This machine's node identity and mesh state are deleted, tmex restarts and the current session ends. The relay service, its tenants and the operator log are kept.",
         "consequencesRelayReset": "The relay service, its tenants and the operator log are erased and cannot be recovered. This machine's node identity and mesh state are deleted as well, tmex restarts and the current session ends."
@@ -2464,7 +2466,21 @@ export const I18N_RESOURCES = {
           "invalid_body": "The request is missing required fields.",
           "invalid_password": "Enter the account password.",
           "invalid_tenant_id": "Invalid tenant ID: expected 32 hex characters.",
-          "invalid_ca_fingerprint": "Invalid CA fingerprint: expected 64 hex characters."
+          "invalid_ca_fingerprint": "Invalid CA fingerprint: expected 64 hex characters.",
+          "setup_committed": "Setup is committed and this machine is restarting. Wait for the restart to finish.",
+          "setup_in_progress": "Another setup is already running. Try again in a moment.",
+          "relay": {
+            "join_failed": "The relay rejected this request.",
+            "hub_unreachable": "Could not reach the relay. Check the address and make sure the relay is running.",
+            "node_revoked": "This machine was removed from the relay. Reset it before joining again.",
+            "node_exists": "Another machine is already registered on the relay under this identity."
+          },
+          "relay_password_invalid": "That password is not correct. Check it and try again.",
+          "relay_tenant_unknown": "The relay does not know that tenant ID. Check the ID and try again.",
+          "relay_pack_invalid": "The join material on the relay is unusable. Sign in on a machine that already joined to refresh it.",
+          "relay_unreachable": "Could not reach the relay. Check the address and make sure the relay is running.",
+          "relay_not_authorized": "The relay rejected this join request: this machine is not authorized.",
+          "local_user_exists": "That username is already taken on this machine."
         },
         "becomeRelay": {
           "title": "Use This Machine as the Relay",
@@ -2486,6 +2502,9 @@ export const I18N_RESOURCES = {
           "description": "Join an existing tenant with the relay address, tenant ID and account password, then restart tmex as a node.",
           "advanced": "Advanced options",
           "hideAdvanced": "Hide advanced options"
+        },
+        "transition": {
+          "blocked": "Another setup path has been submitted. Wait for this machine to restart."
         }
       },
       "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back."
@@ -4690,7 +4709,9 @@ export const I18N_RESOURCES = {
         },
         "leaveToRelayConfirm": {
           "title": "退出所属 mesh？",
-          "description": "本机退出所属 mesh，中继服务与已接入租户保留。"
+          "description": "本机退出所属 mesh，中继服务与已接入租户保留。",
+          "webGone": "重启后本机不再提供网页，中继改用命令行管理。",
+          "restore": "要恢复网页，在本机执行下面的命令重新设置为中继兼节点。"
         },
         "consequencesRelayKeepService": "本机的节点身份与多节点互联状态全部删除，tmex 会重启，当前会话随之失效。中继服务、已接入租户与运营日志保留。",
         "consequencesRelayReset": "中继服务、已接入租户与运营日志全部清除，不可恢复。本机的节点身份与多节点互联状态一并删除，tmex 会重启，当前会话随之失效。"
@@ -5225,7 +5246,21 @@ export const I18N_RESOURCES = {
           "invalid_body": "请求缺少必要字段。",
           "invalid_password": "请输入账号密码。",
           "invalid_tenant_id": "租户编号不合法：应为 32 位十六进制。",
-          "invalid_ca_fingerprint": "CA 指纹不合法：应为 64 位十六进制。"
+          "invalid_ca_fingerprint": "CA 指纹不合法：应为 64 位十六进制。",
+          "setup_committed": "设置已提交，本机正在重启。请等待重启完成。",
+          "setup_in_progress": "另一项设置正在进行，请稍后重试。",
+          "relay": {
+            "join_failed": "中继拒绝了本次加入请求。",
+            "hub_unreachable": "无法连接到中继。请检查地址，并确认中继正在运行。",
+            "node_revoked": "本机已被中继移除。请先重置本机，再重新加入。",
+            "node_exists": "中继上已有另一台机器占用了本机的身份。"
+          },
+          "relay_password_invalid": "账号密码不对。请核对后重试。",
+          "relay_tenant_unknown": "中继上没有这个租户编号。请核对租户编号。",
+          "relay_pack_invalid": "中继上的加入材料无法使用。请在已加入的机器上重新登录以补上材料。",
+          "relay_unreachable": "无法连接到中继。请检查地址，并确认中继正在运行。",
+          "relay_not_authorized": "中继拒绝了本次加入请求：本机未获授权。",
+          "local_user_exists": "本机已存在同名用户。"
         },
         "becomeRelay": {
           "title": "本机作为中继",
@@ -5247,6 +5282,9 @@ export const I18N_RESOURCES = {
           "description": "用中继地址、租户编号与账号密码接入已有租户，然后以节点身份重启 tmex。",
           "advanced": "高级选项",
           "hideAdvanced": "收起高级选项"
+        },
+        "transition": {
+          "blocked": "另一条设置路径已提交，请等待本机重启完成。"
         }
       },
       "uplinkOffline": "上级链路未连接，暂时不能生成加入码。"
@@ -7450,7 +7488,9 @@ export const I18N_RESOURCES = {
         },
         "leaveToRelayConfirm": {
           "title": "所属する mesh から抜けますか？",
-          "description": "本機は mesh から抜けます。中継サービスと接続中のテナントは保持されます。"
+          "description": "本機は mesh から抜けます。中継サービスと接続中のテナントは保持されます。",
+          "webGone": "再起動後、本機は Web を提供せず、中継はコマンドラインで管理します。",
+          "restore": "Web を戻すには、本機で次のコマンドを実行して中継兼ノードとして設定し直してください。"
         },
         "consequencesRelayKeepService": "本機のノード ID と相互接続の状態はすべて削除され、tmex が再起動して現在のセッションは失効します。中継サービス、テナント、運用ログは保持されます。",
         "consequencesRelayReset": "中継サービス、テナント、運用ログはすべて削除され、復元できません。本機のノード ID と相互接続の状態も削除され、tmex が再起動して現在のセッションは失効します。"
@@ -7985,7 +8025,21 @@ export const I18N_RESOURCES = {
           "invalid_body": "リクエストに必要な項目がありません。",
           "invalid_password": "アカウントのパスワードを入力してください。",
           "invalid_tenant_id": "テナント ID が不正です。32 桁の 16 進数で入力してください。",
-          "invalid_ca_fingerprint": "CA フィンガープリントが不正です。64 桁の 16 進数で入力してください。"
+          "invalid_ca_fingerprint": "CA フィンガープリントが不正です。64 桁の 16 進数で入力してください。",
+          "setup_committed": "設定は確定済みで、本機は再起動中です。完了までお待ちください。",
+          "setup_in_progress": "別の設定が進行中です。しばらくしてからやり直してください。",
+          "relay": {
+            "join_failed": "中継が参加要求を拒否しました。",
+            "hub_unreachable": "中継に接続できません。アドレスと、中継が動作しているかを確認してください。",
+            "node_revoked": "この機体は中継から削除されています。再度参加する前にリセットしてください。",
+            "node_exists": "この機体の識別情報は、中継上で別のマシンに使われています。"
+          },
+          "relay_password_invalid": "パスワードが正しくありません。確認してからやり直してください。",
+          "relay_tenant_unknown": "中継にそのテナント ID は存在しません。ID をご確認ください。",
+          "relay_pack_invalid": "中継上の参加情報が使えません。既に参加済みのマシンでログインし直して更新してください。",
+          "relay_unreachable": "中継に接続できません。アドレスと、中継が動作しているかを確認してください。",
+          "relay_not_authorized": "中継が参加要求を拒否しました：本機は許可されていません。",
+          "local_user_exists": "このマシンには同じユーザー名が既に存在します。"
         },
         "becomeRelay": {
           "title": "本機を中継にする",
@@ -8007,6 +8061,9 @@ export const I18N_RESOURCES = {
           "description": "中継アドレス、テナント ID、アカウントのパスワードで既存のテナントに接続し、ノードとして tmex を再起動します。",
           "advanced": "詳細設定",
           "hideAdvanced": "詳細設定を閉じる"
+        },
+        "transition": {
+          "blocked": "別の設定経路が送信済みです。本機の再起動が終わるまでお待ちください。"
         }
       },
       "uplinkOffline": "上位リンクに接続していません。復帰するまで参加コードは作成できません。"

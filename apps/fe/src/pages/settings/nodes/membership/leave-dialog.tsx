@@ -40,11 +40,17 @@ const TITLE_KEY: Record<LeaveDialogKind, string> = {
   'change-hub': 'nodes.membership.changeHubConfirm.title',
 };
 
+/**
+ * 退成纯中继：重启后网页整个消失，与角色下拉里选「纯中继」是同一档破坏性，
+ * 因此确认框必须给出同样的告警（网页没了、只剩 CLI、怎么改回来）。
+ */
+export function isLeaveToPureRelay(request: LeaveDialogRequest): boolean {
+  return request.kind === 'leave' && request.targetRole === 'relay';
+}
+
 /** 只退 mesh、保留中继运营状态：标题与说明都与「变回独立运行」完全不同。 */
 export function leaveDialogTitleKey(request: LeaveDialogRequest): string {
-  if (request.kind === 'leave' && request.targetRole === 'relay') {
-    return 'nodes.membership.leaveToRelayConfirm.title';
-  }
+  if (isLeaveToPureRelay(request)) return 'nodes.membership.leaveToRelayConfirm.title';
   return TITLE_KEY[request.kind];
 }
 
@@ -97,6 +103,8 @@ export function LeaveDialog({
             <span className="mt-2 block">{t(leaveDialogConsequencesKey(request))}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
+
+        {isLeaveToPureRelay(request) && <PureRelayWarning />}
 
         {warning && (
           <p
@@ -196,8 +204,24 @@ function LeaveProgress({ leave }: { leave: LeaveMesh }) {
   );
 }
 
+/** 与「切换到纯中继」同一套告警：网页消失、只剩命令行、以及怎么把网页要回来。 */
+function PureRelayWarning() {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="space-y-1 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
+      data-testid="membership-leave-pure-relay-warning"
+    >
+      <p>{t('nodes.membership.leaveToRelayConfirm.webGone')}</p>
+      <p className="font-mono">tmex relay status</p>
+      <p>{t('nodes.membership.leaveToRelayConfirm.restore')}</p>
+      <p className="font-mono">tmex init --role relay,node</p>
+    </div>
+  );
+}
+
 function descriptionKey(request: LeaveDialogRequest): string {
-  if (request.kind === 'leave' && request.targetRole === 'relay') {
+  if (isLeaveToPureRelay(request)) {
     return 'nodes.membership.leaveToRelayConfirm.description';
   }
   const camel = request.kind === 'change-hub' ? 'changeHub' : request.kind;

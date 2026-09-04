@@ -1919,7 +1919,9 @@
         },
         "leaveToRelayConfirm": {
           "title": "Leave the current mesh?",
-          "description": "This machine leaves its mesh; the relay service and its tenants are kept."
+          "description": "This machine leaves its mesh; the relay service and its tenants are kept.",
+          "webGone": "After the restart this machine serves no web UI; the relay is managed from the command line.",
+          "restore": "To get the web UI back, run this on the machine to set it up as relay and node again."
         },
         "consequencesRelayKeepService": "This machine's node identity and mesh state are deleted, tmex restarts and the current session ends. The relay service, its tenants and the operator log are kept.",
         "consequencesRelayReset": "The relay service, its tenants and the operator log are erased and cannot be recovered. This machine's node identity and mesh state are deleted as well, tmex restarts and the current session ends."
@@ -2458,7 +2460,21 @@
           "invalid_body": "The request is missing required fields.",
           "invalid_password": "Enter the account password.",
           "invalid_tenant_id": "Invalid tenant ID: expected 32 hex characters.",
-          "invalid_ca_fingerprint": "Invalid CA fingerprint: expected 64 hex characters."
+          "invalid_ca_fingerprint": "Invalid CA fingerprint: expected 64 hex characters.",
+          "setup_committed": "Setup is committed and this machine is restarting. Wait for the restart to finish.",
+          "setup_in_progress": "Another setup is already running. Try again in a moment.",
+          "relay": {
+            "join_failed": "The relay rejected this request.",
+            "hub_unreachable": "Could not reach the relay. Check the address and make sure the relay is running.",
+            "node_revoked": "This machine was removed from the relay. Reset it before joining again.",
+            "node_exists": "Another machine is already registered on the relay under this identity."
+          },
+          "relay_password_invalid": "That password is not correct. Check it and try again.",
+          "relay_tenant_unknown": "The relay does not know that tenant ID. Check the ID and try again.",
+          "relay_pack_invalid": "The join material on the relay is unusable. Sign in on a machine that already joined to refresh it.",
+          "relay_unreachable": "Could not reach the relay. Check the address and make sure the relay is running.",
+          "relay_not_authorized": "The relay rejected this join request: this machine is not authorized.",
+          "local_user_exists": "That username is already taken on this machine."
         },
         "becomeRelay": {
           "title": "Use This Machine as the Relay",
@@ -2480,6 +2496,9 @@
           "description": "Join an existing tenant with the relay address, tenant ID and account password, then restart tmex as a node.",
           "advanced": "Advanced options",
           "hideAdvanced": "Hide advanced options"
+        },
+        "transition": {
+          "blocked": "Another setup path has been submitted. Wait for this machine to restart."
         }
       },
       "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back."

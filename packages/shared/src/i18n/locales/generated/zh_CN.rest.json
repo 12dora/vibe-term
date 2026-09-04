@@ -1181,7 +1181,9 @@
         },
         "leaveToRelayConfirm": {
           "title": "退出所属 mesh？",
-          "description": "本机退出所属 mesh，中继服务与已接入租户保留。"
+          "description": "本机退出所属 mesh，中继服务与已接入租户保留。",
+          "webGone": "重启后本机不再提供网页，中继改用命令行管理。",
+          "restore": "要恢复网页，在本机执行下面的命令重新设置为中继兼节点。"
         },
         "consequencesRelayKeepService": "本机的节点身份与多节点互联状态全部删除，tmex 会重启，当前会话随之失效。中继服务、已接入租户与运营日志保留。",
         "consequencesRelayReset": "中继服务、已接入租户与运营日志全部清除，不可恢复。本机的节点身份与多节点互联状态一并删除，tmex 会重启，当前会话随之失效。"
@@ -1716,7 +1718,21 @@
           "invalid_body": "请求缺少必要字段。",
           "invalid_password": "请输入账号密码。",
           "invalid_tenant_id": "租户编号不合法：应为 32 位十六进制。",
-          "invalid_ca_fingerprint": "CA 指纹不合法：应为 64 位十六进制。"
+          "invalid_ca_fingerprint": "CA 指纹不合法：应为 64 位十六进制。",
+          "setup_committed": "设置已提交，本机正在重启。请等待重启完成。",
+          "setup_in_progress": "另一项设置正在进行，请稍后重试。",
+          "relay": {
+            "join_failed": "中继拒绝了本次加入请求。",
+            "hub_unreachable": "无法连接到中继。请检查地址，并确认中继正在运行。",
+            "node_revoked": "本机已被中继移除。请先重置本机，再重新加入。",
+            "node_exists": "中继上已有另一台机器占用了本机的身份。"
+          },
+          "relay_password_invalid": "账号密码不对。请核对后重试。",
+          "relay_tenant_unknown": "中继上没有这个租户编号。请核对租户编号。",
+          "relay_pack_invalid": "中继上的加入材料无法使用。请在已加入的机器上重新登录以补上材料。",
+          "relay_unreachable": "无法连接到中继。请检查地址，并确认中继正在运行。",
+          "relay_not_authorized": "中继拒绝了本次加入请求：本机未获授权。",
+          "local_user_exists": "本机已存在同名用户。"
         },
         "becomeRelay": {
           "title": "本机作为中继",
@@ -1738,6 +1754,9 @@
           "description": "用中继地址、租户编号与账号密码接入已有租户，然后以节点身份重启 tmex。",
           "advanced": "高级选项",
           "hideAdvanced": "收起高级选项"
+        },
+        "transition": {
+          "blocked": "另一条设置路径已提交，请等待本机重启完成。"
         }
       },
       "uplinkOffline": "上级链路未连接，暂时不能生成加入码。"

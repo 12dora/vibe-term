@@ -38,6 +38,7 @@ import {
   useRestartGateway,
 } from './restart/use-restart-now';
 import { PureRelayConfirm } from './setup/pure-relay-confirm';
+import { useSetupCommitted } from './setup/setup-transition';
 import type { LocalUplinkController } from './uplink/local-uplink-controller';
 import { LocalUplinkTabs } from './uplink/local-uplink-tabs';
 import type { UplinkTab } from './uplink/uplink-tab-preference';
@@ -155,6 +156,8 @@ export function LocalMachineCard({
   const [directError, setDirectError] = useState<string | null>(null);
   const leave = useLeaveMesh({ mode, client });
   const role = useRoleSwitch(status, leave.busy, onSelectSetupPath);
+  // 某条设置路径已提交、正在等重启：换角色只会得到 409，锁上。
+  const setupCommitted = useSetupCommitted();
 
   // 动作的返回体就是权威结果，先盖在拉到的状态上：重新拉 `local-status` 是异步的，
   // 不盖的话开关会在这段时间里停在旧值。下一份状态到达（引用变了）即撤销。
@@ -208,7 +211,7 @@ export function LocalMachineCard({
           <>
             <RoleRow
               current={status.role}
-              disabled={leave.busy}
+              disabled={leave.busy || setupCommitted}
               onSelect={(next) => role.select(next)}
             />
 

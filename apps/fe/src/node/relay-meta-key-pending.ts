@@ -174,32 +174,70 @@ export const RELAY_PACK_DEBT_STORAGE_KEY = 'tmex.relay.packDebt';
  * 密封包没能重封（根轮换之后最典型：`rotate-root` 一落账全部会话即失效，这台浏览器连
  * `/api/mesh/relay/*` 都打不通；中继侧的根轮换 sidecar 还会把旧密封包清空）。
  *
- * 存的只是一个「还欠一次」的标记：重封要用根种子，而根种子绝不落任何存储，用户下次回来得
- * 重新输一遍密码。UX 与元数据密钥欠账同一套——页面挂告警 + 一个重试按钮。
+ * 欠账按中继地址记：多中继时后端会逐台转发，A 成功 B 离线是常态，只有 B 该留着欠账。
+ * 具体哪几台无从枚举时（根轮换、连材料都没取到）记 `all`，重试时整份重封。
+ *
+ * 存的只有地址：重封要用根种子，而根种子绝不落任何存储，用户下次回来得重新输一遍密码。
+ * UX 与元数据密钥欠账同一套——页面挂告警 + 一个重试按钮。
  */
-let packDebt = false;
+export interface RelayPackDebt {
+  /** 全部中继都欠着（具体哪几台无从枚举）。 */
+  all: boolean;
+  /** 明确欠着的中继地址。 */
+  urls: string[];
+}
+
+const NO_PACK_DEBT: RelayPackDebt = { all: false, urls: [] };
+
+let packDebt: RelayPackDebt = NO_PACK_DEBT;
 let packDebtLoaded = false;
 const packDebtListeners = new Set<() => void>();
+
+function parsePackDebt(raw: string | null): RelayPackDebt {
+  if (!raw) return NO_PACK_DEBT;
+  // 1.1.23 的布尔标记：升级上来的会话不该把欠账丢掉。
+  if (raw === '1') return { all: true, urls: [] };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return NO_PACK_DEBT;
+    const row = parsed as { all?: unknown; urls?: unknown };
+    const urls = Array.isArray(row.urls)
+      ? row.urls.filter((url): url is string => typeof url === 'string' && url !== '')
+      : [];
+    const all = row.all === true;
+    return all || urls.length > 0 ? { all, urls } : NO_PACK_DEBT;
+  } catch {
+    return NO_PACK_DEBT;
+  }
+}
 
 function loadPackDebt(): void {
   if (packDebtLoaded) return;
   packDebtLoaded = true;
   try {
-    packDebt = storage()?.getItem(RELAY_PACK_DEBT_STORAGE_KEY) === '1';
+    packDebt = parsePackDebt(storage()?.getItem(RELAY_PACK_DEBT_STORAGE_KEY) ?? null);
   } catch {
-    packDebt = false;
+    packDebt = NO_PACK_DEBT;
   }
 }
 
-function setPackDebt(next: boolean): void {
+function packDebtEquals(a: RelayPackDebt, b: RelayPackDebt): boolean {
+  return (
+    a.all === b.all &&
+    a.urls.length === b.urls.length &&
+    a.urls.every((url, i) => url === b.urls[i])
+  );
+}
+
+function setPackDebt(next: RelayPackDebt): void {
   loadPackDebt();
-  if (packDebt === next) return;
-  packDebt = next;
+  if (packDebtEquals(packDebt, next)) return;
+  packDebt = next.all || next.urls.length > 0 ? next : NO_PACK_DEBT;
   try {
     const store = storage();
     if (!store) return;
-    if (packDebt) store.setItem(RELAY_PACK_DEBT_STORAGE_KEY, '1');
-    else store.removeItem(RELAY_PACK_DEBT_STORAGE_KEY);
+    if (packDebt === NO_PACK_DEBT) store.removeItem(RELAY_PACK_DEBT_STORAGE_KEY);
+    else store.setItem(RELAY_PACK_DEBT_STORAGE_KEY, JSON.stringify(packDebt));
   } catch {
     // 隐私模式下 sessionStorage 会抛；内存态仍然有效。
   } finally {
@@ -208,6 +246,12 @@ function setPackDebt(next: boolean): void {
 }
 
 export function relayPackDebt(): boolean {
+  loadPackDebt();
+  return packDebt !== NO_PACK_DEBT;
+}
+
+/** 欠账明细；引用稳定，可直接喂 `useSyncExternalStore`。 */
+export function relayPackDebtDetail(): RelayPackDebt {
   loadPackDebt();
   return packDebt;
 }
@@ -219,17 +263,31 @@ export function subscribeRelayPackDebt(listener: () => void): () => void {
   };
 }
 
-export function rememberRelayPackDebt(): void {
-  setPackDebt(true);
+/** 记一笔欠账；不给地址 = 具体哪几台不明，整份重封。 */
+export function rememberRelayPackDebt(urls?: readonly string[]): void {
+  loadPackDebt();
+  if (!urls || urls.length === 0) {
+    setPackDebt({ all: true, urls: packDebt.urls });
+    return;
+  }
+  const merged = [...packDebt.urls];
+  for (const url of urls) if (!merged.includes(url)) merged.push(url);
+  setPackDebt({ all: packDebt.all, urls: merged });
 }
 
-export function forgetRelayPackDebt(): void {
-  setPackDebt(false);
+/** 销账；不给地址 = 全部销掉（含 `all` 标记）。 */
+export function forgetRelayPackDebt(urls?: readonly string[]): void {
+  loadPackDebt();
+  if (!urls || urls.length === 0) {
+    setPackDebt(NO_PACK_DEBT);
+    return;
+  }
+  setPackDebt({ all: packDebt.all, urls: packDebt.urls.filter((url) => !urls.includes(url)) });
 }
 
 export function clearRelayPackDebtForTest(): void {
   packDebtLoaded = true;
-  setPackDebt(false);
+  setPackDebt(NO_PACK_DEBT);
 }
 
 /** 依次重试全部欠账（key log 是一条链，必须串行）。返回仍然欠着的条数。 */

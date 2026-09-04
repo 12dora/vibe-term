@@ -15,6 +15,7 @@ import { LocalMachineCard } from './local-machine-card';
 import { NodesManagement } from './management/nodes-management';
 import { type SetupIntentRecord, takeSetupIntent } from './membership/intent';
 import { takeSelfRelayFollowUp } from './setup/self-relay-followup';
+import { SetupTransitionProvider } from './setup/setup-transition';
 import { StandaloneRelaySetup } from './setup/standalone-relay-setup';
 import { useLocalUplinkController } from './uplink/local-uplink-controller';
 import type { UplinkTab } from './uplink/uplink-tab-preference';
@@ -74,58 +75,61 @@ export function NodesTab() {
   if (!loaded) return <NodesTabSkeleton />;
 
   return (
-    <div className="flex w-full flex-col gap-4" data-testid="settings-nodes-tab">
-      {/* 三块区域按阅读顺序错开入场；延迟档位手写在这里，列表短到不需要 <Stagger>。 */}
-      <Reveal>
-        <LocalMachineCard
-          mode={mode}
-          status={local.status}
-          loading={local.loading}
-          loginRequired={local.loginRequired}
-          uplink={uplink}
-          onRefresh={local.refresh}
-          onSelectSetupPath={setIntent}
-          wizardPath={routing.wizardPath}
-          requestedUplinkTab={routing.requestedTab}
-          selfRelayFollowUp={selfRelayFollowUp}
-          relaySetup={
-            standalone && local.status ? (
-              <StandaloneRelaySetup localStatus={local.status} initialRole={routing.relayRole} />
-            ) : null
-          }
-        />
-      </Reveal>
-
-      {/* HTTPS 是安装态，与角色无关：standalone 下做 hub 需要一个 https 公开地址，多给一行提示。 */}
-      {standalone ? (
-        <Reveal delayMs={60}>
-          <HttpsSection showHubUrlHint />
+    // 设置路径与角色选择器共享一份「已提交」状态：后端只放行一条，界面必须同步锁上。
+    <SetupTransitionProvider>
+      <div className="flex w-full flex-col gap-4" data-testid="settings-nodes-tab">
+        {/* 三块区域按阅读顺序错开入场；延迟档位手写在这里，列表短到不需要 <Stagger>。 */}
+        <Reveal>
+          <LocalMachineCard
+            mode={mode}
+            status={local.status}
+            loading={local.loading}
+            loginRequired={local.loginRequired}
+            uplink={uplink}
+            onRefresh={local.refresh}
+            onSelectSetupPath={setIntent}
+            wizardPath={routing.wizardPath}
+            requestedUplinkTab={routing.requestedTab}
+            selfRelayFollowUp={selfRelayFollowUp}
+            relaySetup={
+              standalone && local.status ? (
+                <StandaloneRelaySetup localStatus={local.status} initialRole={routing.relayRole} />
+              ) : null
+            }
+          />
         </Reveal>
-      ) : (
-        <>
-          {/* 纯 node 不需要自己的 HTTPS：外部访问走 hub。
+
+        {/* HTTPS 是安装态，与角色无关：standalone 下做 hub 需要一个 https 公开地址，多给一行提示。 */}
+        {standalone ? (
+          <Reveal delayMs={60}>
+            <HttpsSection showHubUrlHint />
+          </Reveal>
+        ) : (
+          <>
+            {/* 纯 node 不需要自己的 HTTPS：外部访问走 hub。
               角色没读到之前**不能**先把区块摆出来——`status` 为 null 时 `role === 'node'` 也是 false，
               纯 node 会在这段时间里拿到一份可操作的 HTTPS 表单（TLS 查询还可能先于角色返回）。 */}
-          {local.status ? (
-            <Reveal delayMs={60}>
-              <HttpsSection disabled={local.status.role === 'node'} />
-            </Reveal>
-          ) : local.loginRequired ? null : (
-            <div
-              className="flex h-9 items-center px-1 text-muted-foreground"
-              data-testid="https-section-pending"
-            >
-              <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-            </div>
-          )}
-          {mode && (
-            <Reveal delayMs={120}>
-              <NodesManagement mode={mode} uplink={uplink} />
-            </Reveal>
-          )}
-        </>
-      )}
-    </div>
+            {local.status ? (
+              <Reveal delayMs={60}>
+                <HttpsSection disabled={local.status.role === 'node'} />
+              </Reveal>
+            ) : local.loginRequired ? null : (
+              <div
+                className="flex h-9 items-center px-1 text-muted-foreground"
+                data-testid="https-section-pending"
+              >
+                <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+              </div>
+            )}
+            {mode && (
+              <Reveal delayMs={120}>
+                <NodesManagement mode={mode} uplink={uplink} />
+              </Reveal>
+            )}
+          </>
+        )}
+      </div>
+    </SetupTransitionProvider>
   );
 }
 

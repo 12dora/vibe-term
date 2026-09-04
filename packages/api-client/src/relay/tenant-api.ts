@@ -127,8 +127,9 @@ export interface RelayJoinMaterialRelay {
 /**
  * `GET /api/mesh/relay/join-material`：拼 join 串 v3 的材料（`logKey` 即 `K_log`）。
  *
- * `relays` 只含**真正持有这条 enrollment** 的中继（即当前 attach 的那台）；完整的有序中继表
- * 由加入后下载到的 `set-relays` 记录给出。
+ * 默认（`scope:'attached'`）只含当前 attach 的那台——加入码只对它有效；`scope:'all'` 返回
+ * 全部已授权中继，密封包重封要按台各封一块。完整的有序中继表由加入后下载到的
+ * `set-relays` 记录给出。
  */
 export interface RelayJoinMaterial {
   /** base64url，32 字节。 */
@@ -270,15 +271,20 @@ export function normalizeRelayStatus(
 
 /** 材料不全就报错，绝不静默拼一个解不开的 join 串出去。 */
 const RELAY_TENANT_ID_HEX = /^[0-9a-f]{32}$/;
+/** 32 字节的 base64url（无填充）：`K_log` 与租户令牌都是这个长度。 */
+const RELAY_KEY_B64URL = /^[A-Za-z0-9_-]{43}$/;
 
 export function normalizeJoinMaterial(wire: Partial<RelayJoinMaterial>): RelayJoinMaterial {
   const relays = wire.relays ?? [];
+  // 长度在这里就卡掉：畸形值一路带到密封那一步才抛，K_log 已经解出来了。
   const usable =
-    Boolean(wire.logKey) &&
+    RELAY_KEY_B64URL.test(wire.logKey as string) &&
     relays.length > 0 &&
     relays.every(
       (relay) =>
-        Boolean(relay?.url) && Boolean(relay?.token) && RELAY_TENANT_ID_HEX.test(relay?.tenantId)
+        Boolean(relay?.url) &&
+        RELAY_KEY_B64URL.test(relay?.token) &&
+        RELAY_TENANT_ID_HEX.test(relay?.tenantId)
     );
   if (!usable) {
     throw new RelayApiError('RELAY_JOIN_MATERIAL_INVALID', 'incomplete join material', 200);

@@ -10,7 +10,7 @@ import {
   type PendingMetaKey,
   forgetRelayPackDebt,
   listPendingMetaKeys,
-  relayPackDebt,
+  relayPackDebtDetail,
   retryPendingMetaKeys,
   subscribePendingMetaKeys,
   subscribeRelayPackDebt,
@@ -73,15 +73,22 @@ export function useRelayPending(deps: RelayPendingDeps): RelayPendingController 
     }
   }, [flowDeps, onChanged, prompt, setBusy, t]);
 
-  const packPending = useSyncExternalStore(subscribeRelayPackDebt, relayPackDebt, relayPackDebt);
+  const packDebt = useSyncExternalStore(
+    subscribeRelayPackDebt,
+    relayPackDebtDetail,
+    relayPackDebtDetail
+  );
+  const packPending = packDebt.all || packDebt.urls.length > 0;
 
   const retryPack = useCallback(async () => {
     setBusy(true);
+    // 欠账明确到某几台就只重封那几台；`all` 是「哪几台不明」，整份重封。
+    const urls = packDebt.all ? undefined : packDebt.urls;
     try {
       const outcome = await prompt.withSigner<RelayPackRefreshOutcome | 'needs-password'>(
         (signer) =>
           signer.kind === 'root'
-            ? refreshRelayPackForSigner(signer, { api, relayApi })
+            ? refreshRelayPackForSigner(signer, { api, relayApi, ...(urls ? { urls } : {}) })
             : 'needs-password',
         { purpose: 'enroll' }
       );
@@ -101,7 +108,7 @@ export function useRelayPending(deps: RelayPendingDeps): RelayPendingController 
     } finally {
       setBusy(false);
     }
-  }, [api, onChanged, prompt, relayApi, setBusy, t]);
+  }, [api, onChanged, packDebt, prompt, relayApi, setBusy, t]);
 
   return { metaPending, retryMetaKey, packPending, retryPack };
 }

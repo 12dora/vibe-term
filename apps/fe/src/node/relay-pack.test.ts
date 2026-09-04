@@ -10,9 +10,14 @@ import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from './mesh-rel
 import {
   clearRelayPackDebtForTest,
   relayPackDebt,
+  relayPackDebtDetail,
   rememberRelayPackDebt,
 } from './relay-meta-key-pending';
-import { refreshRelayPack, refreshRelayPackForSigner } from './relay-pack';
+import {
+  refreshRelayPack,
+  refreshRelayPackForSigner,
+  resetRelayPackDedupeForTest,
+} from './relay-pack';
 
 const TENANT_A = 'ab'.repeat(16);
 const TENANT_B = 'cd'.repeat(16);
@@ -59,12 +64,13 @@ function relayApi(uploads: RelayPackUpload[], overrides: Record<string, unknown>
 describe('refreshRelayPack', () => {
   test('每台中继各一块密封包：租户编号 / 令牌 / AAD 都绑到那一台', async () => {
     const uploads: RelayPackUpload[] = [];
-    const ok = await refreshRelayPack({
+    const outcome = await refreshRelayPack({
       rootSeed: SEED,
       api: authApi(),
       relayApi: relayApi(uploads),
     });
-    expect(ok).toBe(true);
+    expect(outcome.ok).toBe(true);
+    expect(outcome.failed).toEqual([]);
     expect(uploads).toHaveLength(1);
     const body = uploads[0];
     expect(body.root_epoch).toBe(2);
@@ -136,15 +142,47 @@ describe('refreshRelayPack', () => {
     expect(uploads[0].packs.map((row) => row.url)).toEqual(['https://b.example']);
   });
 
-  test('任何一步失败都只返回 false，不抛给主流程', async () => {
-    const ok = await refreshRelayPack({
+  test('任何一步失败都只报 ok:false，不抛给主流程', async () => {
+    const outcome = await refreshRelayPack({
       rootSeed: SEED,
       api: authApi(),
       relayApi: relayApi([], {
         uploadPack: () => Promise.reject(new Error('RELAY_PACK_FORWARD_FAILED')),
       }),
     });
-    expect(ok).toBe(false);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.transportError).toBe(true);
+  });
+
+  test('逐台回执里有一台没成功就不算成功，只报那一台', async () => {
+    const outcome = await refreshRelayPack({
+      rootSeed: SEED,
+      api: authApi(),
+      relayApi: relayApi([], {
+        uploadPack: () =>
+          Promise.resolve({
+            ok: true as const,
+            results: [
+              { url: 'https://a.example', ok: true, status: 200 },
+              { url: 'https://b.example', ok: false, status: 502 },
+            ],
+          }),
+      }),
+    });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.transportError).toBe(false);
+    expect(outcome.requested).toEqual(['https://a.example', 'https://b.example']);
+    expect(outcome.failed).toEqual(['https://b.example']);
+  });
+
+  test('旧节点不下发 results：按全部成功算（一台都没成的话它回的是 502）', async () => {
+    const outcome = await refreshRelayPack({
+      rootSeed: SEED,
+      api: authApi(),
+      relayApi: relayApi([]),
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.failed).toEqual([]);
   });
 });
 
@@ -152,6 +190,7 @@ describe('refreshRelayPackForSigner', () => {
   beforeEach(() => {
     clearRelayPackDebtForTest();
     resetMeshRelayStateForTest();
+    resetRelayPackDedupeForTest();
   });
 
   function rootSigner(): RecordSigner {
@@ -193,20 +232,44 @@ describe('refreshRelayPackForSigner', () => {
     expect(uploads).toHaveLength(0);
   });
 
-  test('同一把根钥只刷一次（手动重试与 withSigner 钩子会先后拿到同一个签名者）', async () => {
+  test('同一个日志头只刷一次，头一变就再刷（去重按头，不按根钥对象）', async () => {
     setMeshRelayStateForTest({ mode: 'relay' });
     const uploads: RelayPackUpload[] = [];
     const signer = rootSigner();
-    expect(
-      await refreshRelayPackForSigner(signer, { api: authApi(), relayApi: relayApi(uploads) })
-    ).toBe('refreshed');
-    expect(
-      await refreshRelayPackForSigner(signer, { api: authApi(), relayApi: relayApi(uploads) })
-    ).toBe('skipped');
+    let seq = 7;
+    const api = authApi({
+      keyLogHead: () =>
+        Promise.resolve({ seq, hash: encodeBase64url(HEAD_HASH), rootEpoch: 2, uid: 'u1' }),
+    } as never);
+    expect(await refreshRelayPackForSigner(signer, { api, relayApi: relayApi(uploads) })).toBe(
+      'refreshed'
+    );
+    expect(await refreshRelayPackForSigner(signer, { api, relayApi: relayApi(uploads) })).toBe(
+      'skipped'
+    );
+    expect(uploads).toHaveLength(1);
+
+    // 又落了一条根签记录：头往前走，同一把根钥必须重封。
+    seq = 8;
+    expect(await refreshRelayPackForSigner(signer, { api, relayApi: relayApi(uploads) })).toBe(
+      'refreshed'
+    );
+    expect(uploads).toHaveLength(2);
+  });
+
+  test('在途的同一个头并到同一次重封，只上传一次', async () => {
+    setMeshRelayStateForTest({ mode: 'relay' });
+    const uploads: RelayPackUpload[] = [];
+    const signer = rootSigner();
+    const [first, second] = await Promise.all([
+      refreshRelayPackForSigner(signer, { api: authApi(), relayApi: relayApi(uploads) }),
+      refreshRelayPackForSigner(signer, { api: authApi(), relayApi: relayApi(uploads) }),
+    ]);
+    expect([first, second]).toEqual(['refreshed', 'refreshed']);
     expect(uploads).toHaveLength(1);
   });
 
-  test('刷失败只报 failed，不新记欠账', async () => {
+  test('请求没打通只报 failed，不新记欠账', async () => {
     setMeshRelayStateForTest({ mode: 'relay' });
     const outcome = await refreshRelayPackForSigner(rootSigner(), {
       api: authApi(),
@@ -214,5 +277,25 @@ describe('refreshRelayPackForSigner', () => {
     });
     expect(outcome).toBe('failed');
     expect(relayPackDebt()).toBe(false);
+  });
+
+  test('逐台回执里失败的那台留欠账，成功的那台销账', async () => {
+    setMeshRelayStateForTest({ mode: 'relay' });
+    rememberRelayPackDebt();
+    const outcome = await refreshRelayPackForSigner(rootSigner(), {
+      api: authApi(),
+      relayApi: relayApi([], {
+        uploadPack: () =>
+          Promise.resolve({
+            ok: true as const,
+            results: [
+              { url: 'https://a.example', ok: true, status: 200 },
+              { url: 'https://b.example', ok: false, status: 502 },
+            ],
+          }),
+      }),
+    });
+    expect(outcome).toBe('failed');
+    expect(relayPackDebtDetail()).toEqual({ all: false, urls: ['https://b.example'] });
   });
 });

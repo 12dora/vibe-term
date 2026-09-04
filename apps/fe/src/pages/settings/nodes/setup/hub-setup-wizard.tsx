@@ -16,6 +16,7 @@ import { BecomeHubForm } from './become-hub-form';
 import { BecomeRelayForm } from './become-relay-form';
 import { JoinHubForm } from './join-hub-form';
 import { JoinRelayForm } from './join-relay-form';
+import { useSetupCommitted } from './setup-transition';
 
 export type SetupPath = SetupIntent;
 
@@ -39,6 +40,8 @@ export function HubSetupWizard({
 }: HubSetupWizardProps) {
   const { t } = useTranslation();
   const [path, setPath] = useState<SetupPath | null>(initialPath);
+  // 已经有一路提交成功：换路径会把结果面板与重启进度一起卸掉，锁住不让换。
+  const committed = useSetupCommitted();
 
   if (!localStatus) {
     return (
@@ -71,6 +74,7 @@ export function HubSetupWizard({
               title={t('nodes.setup.path.becomeHub.title')}
               description={t('nodes.setup.path.becomeHub.description')}
               selected={path === 'become-hub'}
+              disabled={committed}
               onSelect={() => setPath('become-hub')}
             />
             <PathCard
@@ -79,6 +83,7 @@ export function HubSetupWizard({
               title={t('nodes.setup.path.joinHub.title')}
               description={t('nodes.setup.path.joinHub.description')}
               selected={path === 'join-hub'}
+              disabled={committed}
               onSelect={() => setPath('join-hub')}
             />
             <PathCard
@@ -87,6 +92,7 @@ export function HubSetupWizard({
               title={t('nodes.setup.path.joinRelay.title')}
               description={t('nodes.setup.path.joinRelay.description')}
               selected={path === 'join-relay'}
+              disabled={committed}
               onSelect={() => setPath('join-relay')}
             />
             <PathCard
@@ -95,6 +101,7 @@ export function HubSetupWizard({
               title={t('nodes.setup.path.becomeRelay.title')}
               description={t('nodes.setup.path.becomeRelay.description')}
               selected={path === 'become-relay'}
+              disabled={committed}
               onSelect={() => setPath('become-relay')}
             />
           </div>
@@ -145,6 +152,7 @@ function PathCard({
   title,
   description,
   selected,
+  disabled,
   onSelect,
 }: {
   testId: string;
@@ -152,21 +160,23 @@ function PathCard({
   title: string;
   description: string;
   selected: boolean;
+  disabled?: boolean;
   onSelect: () => void;
 }) {
   return (
     <label
       data-testid={testId}
       data-selected={selected ? 'true' : 'false'}
-      className={`flex cursor-pointer flex-col gap-1.5 rounded-xl p-3 text-left ring-1 transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
-        selected ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10 hover:bg-muted/50'
-      }`}
+      className={`flex flex-col gap-1.5 rounded-xl p-3 text-left ring-1 transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
+        disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+      } ${selected ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10 hover:bg-muted/50'}`}
     >
       <input
         type="radio"
         name="hub-setup-path"
         className="sr-only"
         checked={selected}
+        disabled={disabled}
         onChange={onSelect}
       />
       <span className="flex items-center gap-2 text-sm font-medium">

@@ -5,10 +5,8 @@
 
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { LocalStatusResponse, SetupRelayJoinResponse } from '@tmex/api-client/local/types';
-import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
-import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { currentHostname, navigateToLogin } from './browser-location';
@@ -17,6 +15,7 @@ import {
   RestartPanel,
   ResultRow,
   SetupNotice,
+  SetupSubmitRow,
   SwitchRow,
   directOutcomeLabel,
 } from './form-parts';
@@ -58,10 +57,11 @@ export function JoinRelayForm({
     directEnable: directSupported,
   }));
   const errors = validateJoinRelay(values, nodeEnv);
-  const { showErrors, submitting, submitError, result, waiter, handleSubmit } =
+  const { showErrors, submitting, submitError, result, waiter, blocked, handleSubmit } =
     useHubSetupSubmit<SetupRelayJoinResponse>({
       client,
       hasErrors: hasErrors(errors),
+      uplink: 'relay',
       submit: () => submitJoinRelay(values, client),
       successMessage: t('nodes.setup.toast.relayJoined'),
       onRestarted,
@@ -105,10 +105,12 @@ export function JoinRelayForm({
             </SetupNotice>
           )}
 
-          <Button type="submit" disabled={submitting} data-testid="setup-join-relay-submit">
-            {submitting && <Loader2 className="animate-spin" />}
-            {submitting ? t('nodes.setup.submit.pending') : t('nodes.setup.submit.joinRelay')}
-          </Button>
+          <SetupSubmitRow
+            testId="setup-join-relay"
+            label={t('nodes.setup.submit.joinRelay')}
+            submitting={submitting}
+            blocked={blocked}
+          />
         </form>
       </CardContent>
     </Card>

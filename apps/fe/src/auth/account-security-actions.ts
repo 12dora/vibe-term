@@ -255,15 +255,19 @@ async function refreshPackAfterRotate(input: {
     rememberRelayPackDebt();
     return;
   }
-  const ok = await refreshRelayPack({
+  const result = await refreshRelayPack({
     rootSeed: input.newRootKey.seed,
     api: input.api,
     relayApi: input.relayApi,
     kdfParams: kdfParamsToJson(input.newKdfParams),
     rootEpoch: input.nextRootEpoch,
   });
-  if (ok) forgetRelayPackDebt();
-  else rememberRelayPackDebt();
+  if (result.ok) {
+    forgetRelayPackDebt();
+    return;
+  }
+  // 逐台回执里失败的那几台精确留账；请求整个没打通时哪几台不明，整份留账。
+  rememberRelayPackDebt(result.transportError ? undefined : result.failed);
 }
 
 /** 改密这一段的锁内主体：取头 → 签 rotate → 预备 meta-key → 送 rotate → 送 meta-key。 */

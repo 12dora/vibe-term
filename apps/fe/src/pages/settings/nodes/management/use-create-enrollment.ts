@@ -12,7 +12,7 @@ import {
   requireRootPublicKey,
 } from '@/node/enrollment';
 import { type HubApi, defaultRelayEnrollmentApi } from '@/node/hub-api';
-import { useMeshRelay } from '@/node/mesh-relay';
+import { type UseMeshRelayResult, useMeshRelay } from '@/node/mesh-relay';
 import { createEnrollmentOnRelay } from '@/node/relay-join';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
@@ -35,6 +35,12 @@ export interface UseCreateEnrollmentInput {
   clearedIds?: string[];
   /** writer hub 的对外地址；hub 以 `HUB_NOT_WRITER` 拒写时靠它指路。 */
   writerPublicUrl?: string | null;
+  /**
+   * 已解析好的中继快照。调用方多半已经有一份（设置页的本机卡、侧滑面板的 `JoinSteps`），
+   * 传进来就少一份订阅；不传则自己订一份，**standalone 下一律不发请求**——
+   * `/api/mesh/relay/status` 在 standalone 上是全局 401，会把公网访客直接踢去登录页。
+   */
+  relay?: UseMeshRelayResult;
 }
 
 export interface CreateEnrollmentState {
@@ -53,9 +59,10 @@ export interface CreateEnrollmentState {
 
 export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnrollmentState {
   const { api, mode, hubApi, prompt, writerPublicUrl = null } = input;
-  // 中继模式下加入码走 `/api/mesh/relay/*` 并拼 join 串 v3：这里自己读上级形态，
-  // 设置页与「接入更多设备」面板都不必各传一遍。
-  const relay = useMeshRelay();
+  // 中继模式下加入码走 `/api/mesh/relay/*` 并拼 join 串 v3：调用方给了快照就用它，
+  // 否则自己订一份（只在 mesh 下才真的去问网关）。
+  const owned = useMeshRelay({ enabled: !input.relay && mode?.mode === 'mesh' });
+  const relay = input.relay ?? owned;
   const hubChannel = relay.relayMode ? null : hubApi;
   const clearedIds = input.clearedIds ?? NO_CLEARED_IDS;
   const { t } = useTranslation();

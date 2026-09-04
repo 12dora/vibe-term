@@ -3,6 +3,7 @@
 // 默认「保留」——改口令多数时候只是换一把新的，不该顺手把在线租户全踢下线。
 
 import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
+import type { RelayPasswordRequest } from '@tmex/api-client/relay/admin-api';
 import { Button } from '@tmex/ui/button';
 import {
   Dialog,
@@ -14,7 +15,7 @@ import {
 } from '@tmex/ui/dialog';
 import { Switch } from '@tmex/ui/switch';
 import { Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FormField, Notice } from '../components/form-primitives';
 import { type PasswordDraft, emptyPasswordDraft, parsePasswordDraft } from './relay-forms';
@@ -25,7 +26,8 @@ export interface PasswordDialogProps {
   /** 提交失败的原因；成功由调用方关框。 */
   error: string | null;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (draft: PasswordDraft) => void;
+  /** 收的是已解析好的请求体，不是草稿：明文口令不再多传一手。 */
+  onSubmit: (body: RelayPasswordRequest) => void;
 }
 
 /** 对话框正文。单独导出：Dialog 走 portal，静态渲染只看得到这一块。 */
@@ -152,13 +154,14 @@ export function PasswordDialog({ open, busy, error, onOpenChange, onSubmit }: Pa
   const [draft, setDraft] = useState<PasswordDraft>(emptyPasswordDraft);
   const [invalid, setInvalid] = useState<string | null>(null);
 
-  // 每次打开都从空草稿开始：口令框里绝不能留上一次输入的残值。
-  useEffect(() => {
-    if (open) {
-      setDraft(emptyPasswordDraft());
-      setInvalid(null);
-    }
-  }, [open]);
+  // 开与关都当场重置：关掉的对话框只是隐藏，草稿留着等于让一串明文口令长期挂在内存里。
+  // 用「prop 变化时调整 state」而不是 effect：effect 要等一帧，那一帧里明文还在。
+  const [lastOpen, setLastOpen] = useState(open);
+  if (lastOpen !== open) {
+    setLastOpen(open);
+    setDraft(emptyPasswordDraft());
+    setInvalid(null);
+  }
 
   const submit = () => {
     const parsed = parsePasswordDraft(draft);
@@ -167,7 +170,9 @@ export function PasswordDialog({ open, busy, error, onOpenChange, onSubmit }: Pa
       return;
     }
     setInvalid(null);
-    onSubmit(draft);
+    onSubmit(parsed.body);
+    // 交出去就立刻丢掉本地那份明文，不等对话框关闭。
+    setDraft(emptyPasswordDraft());
   };
 
   return (

@@ -6,10 +6,8 @@
 
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { LocalStatusResponse, SetupJoinResponse } from '@tmex/api-client/local/types';
-import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
-import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { currentHostname, navigateToLogin } from './browser-location';
@@ -18,6 +16,7 @@ import {
   RestartPanel,
   ResultRow,
   SetupNotice,
+  SetupSubmitRow,
   SwitchRow,
   directOutcomeLabel,
 } from './form-parts';
@@ -62,7 +61,7 @@ export function JoinHubForm({
     insecureLocal: false,
   }));
   const errors = validateJoinHub(values, nodeEnv);
-  const { showErrors, submitting, submitError, result, waiter, handleSubmit } =
+  const { showErrors, submitting, submitError, result, waiter, blocked, handleSubmit } =
     useHubSetupSubmit<SetupJoinResponse>({
       client,
       hasErrors: hasErrors(errors),
@@ -178,10 +177,12 @@ export function JoinHubForm({
             </SetupNotice>
           )}
 
-          <Button type="submit" disabled={submitting} data-testid="setup-join-hub-submit">
-            {submitting && <Loader2 className="animate-spin" />}
-            {submitting ? t('nodes.setup.submit.pending') : t('nodes.setup.submit.joinHub')}
-          </Button>
+          <SetupSubmitRow
+            testId="setup-join-hub"
+            label={t('nodes.setup.submit.joinHub')}
+            submitting={submitting}
+            blocked={blocked}
+          />
         </form>
       </CardContent>
     </Card>

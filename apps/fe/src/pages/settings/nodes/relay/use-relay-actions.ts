@@ -11,6 +11,7 @@ import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { RelayFlowDeps, RelayFlowMode, RelayFlowResult } from '@/node/relay-enroll';
 import { appendMetaKey, enrollRelay, leaveRelay, removeRelay } from '@/node/relay-enroll';
 import { forgetRelayPackDebt, rememberRelayPackDebt } from '@/node/relay-meta-key-pending';
+import type { RelayPackRefreshResult } from '@/node/relay-pack';
 import { refreshRelayPack } from '@/node/relay-pack';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
@@ -84,6 +85,19 @@ function report(t: Translate, result: RelayFlowResult, doneKey: string): boolean
   return false;
 }
 
+/**
+ * 接入后重封的结论落成欠账：逐台回执里失败的那几台精确留账，请求整个没打通时哪几台不明，
+ * 整份留账。返回是否全部封上（否则调用方挂一条非阻断告警）。
+ */
+function settlePackDebt(pack: RelayPackRefreshResult | null): boolean {
+  if (pack?.ok) {
+    forgetRelayPackDebt();
+    return true;
+  }
+  rememberRelayPackDebt(pack && !pack.transportError ? pack.failed : undefined);
+  return false;
+}
+
 export function useRelayActions(deps: RelayActionsDeps): RelayActionsController {
   const { t } = useTranslation();
   const relayApi = deps.relayApi ?? defaultRelayTenantApi;
@@ -126,13 +140,14 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
       try {
         // 接入成功那一刻手里还有根种子：顺手把密封包封给这台中继，否则它上面一份都没有，
         // 别的机器无法用「租户编号 + 密码」加入。失败不回滚接入，只记欠账并提示。
-        let packRefreshed = true;
+        // 用容器存：闭包里的赋值 TS 看不见，直接用 let 会被窄化成 null。
+        const packRef: { result: RelayPackRefreshResult | null } = { result: null };
         const result = await enrollRelay(flowDeps, {
           url: form.url.trim(),
           password: form.password ? form.password : null,
           rootPassword: form.rootPassword,
           afterEnroll: async (rootKey) => {
-            packRefreshed = await refreshRelayPack({
+            packRef.result = await refreshRelayPack({
               rootSeed: rootKey.seed,
               api: deps.api,
               relayApi,
@@ -143,11 +158,7 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
           setError(relayErrorText(t, result.code));
           return;
         }
-        if (packRefreshed) forgetRelayPackDebt();
-        else {
-          rememberRelayPackDebt();
-          toast.warning(t('relay.tenant.pack.staleWarning'));
-        }
+        if (!settlePackDebt(packRef.result)) toast.warning(t('relay.tenant.pack.staleWarning'));
         toast.success(t('relay.tenant.dialog.done'));
         setEnroll(null);
         onChanged();

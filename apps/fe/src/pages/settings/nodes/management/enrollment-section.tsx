@@ -7,6 +7,7 @@
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { type PendingEnrollment, joinCommand } from '@/node/enrollment';
 import type { HubApi } from '@/node/hub-api';
+import type { UseMeshRelayResult } from '@/node/mesh-relay';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
@@ -33,6 +34,7 @@ export function EnrollmentSection({
   busyIds,
   hubUnconfirmedIds,
   clearedIds,
+  relay,
 }: {
   api: AuthApi;
   mode: ResolvedMode;
@@ -55,9 +57,19 @@ export function EnrollmentSection({
   hubUnconfirmedIds: string[];
   /** 已 admit / 已过期的 pending id：对应的 join 串必须立刻从 DOM 里消失。 */
   clearedIds: string[];
+  /** 本机卡已经在轮询的那份中继快照：给了就不再自己订一份。 */
+  relay?: UseMeshRelayResult;
 }) {
   const { t } = useTranslation();
-  const create = useCreateEnrollment({ api, mode, hubApi, prompt, clearedIds, writerPublicUrl });
+  const create = useCreateEnrollment({
+    api,
+    mode,
+    hubApi,
+    prompt,
+    clearedIds,
+    writerPublicUrl,
+    ...(relay ? { relay } : {}),
+  });
   const { created, hubUrl, relayMode } = create;
 
   return (

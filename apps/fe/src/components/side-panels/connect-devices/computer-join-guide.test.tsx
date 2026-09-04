@@ -152,6 +152,19 @@ describe('JoinSteps', () => {
     expect(html).toContain(`tmex relay join &#x27;${RELAY_URL}&#x27; --tenant ${TENANT}`);
   });
 
+  test('中继模式下地址不可用：加入码那一步说的是中继，不是 Hub', () => {
+    setMeshNodesStateForTest({
+      mode: { ...MESH_MODE, hubPublicUrl: null },
+      modeLoaded: true,
+      entryNodeId: ENTRY,
+    });
+    setMeshRelayStateForTest({ mode: 'relay', tenantId: TENANT, relays: [], loadedAt: 1 });
+    const html = render(<JoinSteps />);
+    expect(html).toContain('data-testid="connect-join-no-url"');
+    expect(html).toContain('nodes.enrollment.missingRelayUrl');
+    expect(html).not.toContain('nodes.enrollment.missingHubUrl');
+  });
+
   test('未加入 mesh：接入信息这步只给说明与设置入口', () => {
     const html = render(<JoinSteps />);
     expect(html).toContain('connectDevices.computer.join.uplink.unknownDescription');

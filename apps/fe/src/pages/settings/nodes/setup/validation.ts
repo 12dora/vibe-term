@@ -4,6 +4,7 @@
 // 前端先拦一遍只是为了少一次往返，后端仍是权威。
 
 import type { LocalStatusResponse } from '@tmex/api-client/local/types';
+import { canonicalHubUrl } from '@tmex/shared/auth';
 import { normalizeRelayUrl } from '@tmex/shared/relay';
 
 export type NodeEnv = LocalStatusResponse['nodeEnv'];
@@ -36,7 +37,9 @@ export function classifyHubUrl(raw: string, nodeEnv: NodeEnv): UrlVerdict {
   if (!trimmed) return 'invalid';
   let url: URL;
   try {
-    url = new URL(trimmed);
+    // 与后端同一把尺子：`canonicalHubUrl` 还会拒掉用户名 / 密码、query 与 fragment。
+    // 只在前端判协议的话，带凭据的地址会先被发到本机网关，再由后端退回来。
+    url = new URL(canonicalHubUrl(trimmed));
   } catch {
     return 'invalid';
   }
@@ -102,7 +105,12 @@ export interface BecomeRelayValues {
   directEnable: boolean;
 }
 
-export type BecomeRelayField = 'relayPublicUrl' | 'username' | 'password' | 'confirmPassword';
+export type BecomeRelayField =
+  | 'relayPublicUrl'
+  | 'relayPassword'
+  | 'username'
+  | 'password'
+  | 'confirmPassword';
 export type BecomeRelayErrors = Partial<Record<BecomeRelayField, string>>;
 
 /**
@@ -129,6 +137,12 @@ export function validateBecomeRelay(
 
   if (classifyRelayUrl(values.relayPublicUrl, nodeEnv) === 'invalid') {
     errors.relayPublicUrl = `${ERROR_PREFIX}invalid_url`;
+  }
+
+  // 接入口令：留空 = 不设口令（任何人都能接入），设了就按服务端的下限卡。
+  const relayPassword = values.relayPassword.trim();
+  if (relayPassword && relayPassword.length < MIN_PASSWORD_LENGTH) {
+    errors.relayPassword = `${ERROR_PREFIX}weak_password`;
   }
 
   // 纯中继不建账号：没有网页，也就没有登录这回事。
@@ -283,6 +297,15 @@ const KNOWN_ERROR_CODES = new Set([
   'direct_unsupported',
   'direct_download_failed',
   'direct_failed',
+  'setup_committed',
+  'setup_in_progress',
+  // `POST /api/setup/relay-join` 的稳定错误码（中继路径专用，Hub 路径不会出现）。
+  'relay_password_invalid',
+  'relay_tenant_unknown',
+  'relay_pack_invalid',
+  'relay_unreachable',
+  'relay_not_authorized',
+  'local_user_exists',
 ]);
 
 /** 已知错误码返回 `nodes.setup.errors.<code>`；未知（含未列举的 `direct_*`）返回 null。 */

@@ -235,6 +235,7 @@ export function NodesManagement({
         <EnrollmentSection
           api={api}
           mode={mode}
+          relay={relay}
           hubApi={enrollChannel}
           writable={writable}
           blockedHint={blockedHint}

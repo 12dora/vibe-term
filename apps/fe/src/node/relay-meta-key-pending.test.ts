@@ -12,6 +12,7 @@ import {
   forgetRelayPackDebt,
   listPendingMetaKeys,
   relayPackDebt,
+  relayPackDebtDetail,
   rememberPendingMetaKey,
   rememberRelayPackDebt,
   retryPendingMetaKey,
@@ -125,11 +126,34 @@ describe('relay 密封包欠账', () => {
     stop();
   });
 
-  test('欠账只是一个布尔标记，不携带任何密钥材料', () => {
+  test('欠账只记地址，不携带任何密钥材料', () => {
     rememberRelayPackDebt();
     expect(relayPackDebt()).toBe(true);
     // 没有 sessionStorage 的环境（bun test）退化成内存态，语义不变。
     forgetRelayPackDebt();
     expect(relayPackDebt()).toBe(false);
+  });
+
+  test('按中继地址记账：只销掉成功的那几台，失败的留着', () => {
+    rememberRelayPackDebt(['https://a.example', 'https://b.example']);
+    expect(relayPackDebtDetail()).toEqual({
+      all: false,
+      urls: ['https://a.example', 'https://b.example'],
+    });
+    forgetRelayPackDebt(['https://a.example']);
+    expect(relayPackDebtDetail()).toEqual({ all: false, urls: ['https://b.example'] });
+    expect(relayPackDebt()).toBe(true);
+    forgetRelayPackDebt(['https://b.example']);
+    expect(relayPackDebt()).toBe(false);
+  });
+
+  test('同一地址重复记只留一份；不给地址即「全部中继」，不给地址销账清干净', () => {
+    rememberRelayPackDebt(['https://a.example']);
+    rememberRelayPackDebt(['https://a.example']);
+    expect(relayPackDebtDetail().urls).toEqual(['https://a.example']);
+    rememberRelayPackDebt();
+    expect(relayPackDebtDetail()).toEqual({ all: true, urls: ['https://a.example'] });
+    forgetRelayPackDebt();
+    expect(relayPackDebtDetail()).toEqual({ all: false, urls: [] });
   });
 });

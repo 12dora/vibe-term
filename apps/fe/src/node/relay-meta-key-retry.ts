@@ -42,9 +42,27 @@ export interface RelayMetaKeyRetryOptions {
   onSettled?: () => void;
 }
 
+/** 当前挂着哪条链路、它在不在线；没挂上为空串。 */
+function stampOf(): string {
+  const link = attachedRelay(getMeshRelayState());
+  return link === null ? '' : `${link.url}|${link.online ? 'on' : 'off'}`;
+}
+
 /**
- * 重发回路。挂上中继且**手上有已签字节**时才算「可自动重发」；这批欠账的 id 集合即
- * `armKey`，集合不变就不重开退避，避免每次 store 通知都把计时器往前拽。
+ * 武装键把链路也算进去：只按欠账 id 记的话，四档退避走完之后，同一条链路恢复在线或无缝
+ * 切到另一台中继都不会重开一轮，安全敏感的欠账只能等用户手动处理。
+ */
+function armOf(stamp: string): string {
+  if (stamp === '') return '';
+  const ids = listPendingMetaKeys()
+    .filter((row) => row.record)
+    .map((row) => row.id);
+  return ids.length > 0 ? `${stamp}|${ids.join(',')}` : '';
+}
+
+/**
+ * 重发回路。挂上中继且**手上有已签字节**时才算「可自动重发」；武装键不变就不重开退避，
+ * 避免每次 store 通知都把计时器往前拽。
  */
 export function startRelayMetaKeyRetry(options: RelayMetaKeyRetryOptions): () => void {
   const backoff = options.backoffMs ?? RELAY_META_KEY_RETRY_BACKOFF_MS;
@@ -55,6 +73,7 @@ export function startRelayMetaKeyRetry(options: RelayMetaKeyRetryOptions): () =>
   let releasePolling: (() => void) | null = null;
   let cancelTimer: (() => void) | null = null;
   let armKey = '';
+  let linkStamp = '';
   let step = 0;
   let running = false;
   let stopped = false;
@@ -62,14 +81,6 @@ export function startRelayMetaKeyRetry(options: RelayMetaKeyRetryOptions): () =>
   const clearTimer = () => {
     cancelTimer?.();
     cancelTimer = null;
-  };
-
-  const armOf = (): string => {
-    if (attachedRelay(getMeshRelayState()) === null) return '';
-    const ids = listPendingMetaKeys()
-      .filter((row) => row.record)
-      .map((row) => row.id);
-    return ids.length > 0 ? ids.join(',') : '';
   };
 
   const schedule = () => {
@@ -93,7 +104,9 @@ export function startRelayMetaKeyRetry(options: RelayMetaKeyRetryOptions): () =>
       running = false;
     }
     if (stopped) return;
-    const key = armOf();
+    const stamp = stampOf();
+    linkStamp = stamp;
+    const key = armOf(stamp);
     if (key === '') {
       armKey = '';
       step = 0;
@@ -119,7 +132,12 @@ export function startRelayMetaKeyRetry(options: RelayMetaKeyRetryOptions): () =>
     if (stopped) return;
     syncPolling();
     if (running) return;
-    const key = armOf();
+    const stamp = stampOf();
+    // 链路换了（offline→online、或无缝切到另一台中继）：退避从头来，并且立刻试一次，
+    // 不必再等第一档。首次挂上不算「换」，照常按退避起步。
+    const switched = stamp !== '' && linkStamp !== '' && stamp !== linkStamp;
+    linkStamp = stamp;
+    const key = armOf(stamp);
     if (key === '') {
       clearTimer();
       armKey = '';
@@ -130,7 +148,8 @@ export function startRelayMetaKeyRetry(options: RelayMetaKeyRetryOptions): () =>
     armKey = key;
     step = 0;
     clearTimer();
-    schedule();
+    if (switched) void attempt();
+    else schedule();
   };
 
   const stopRelay = subscribeMeshRelay(sync);

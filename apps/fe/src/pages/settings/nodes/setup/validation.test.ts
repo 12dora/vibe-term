@@ -412,3 +412,38 @@ describe('setupErrorKey 认识密码加入的错误码', () => {
     expect(setupErrorKey('invalid_body')).toBe('nodes.setup.errors.invalid_body');
   });
 });
+
+describe('classifyHubUrl 与后端同一把尺子', () => {
+  test('带凭据 / query / fragment 的地址一律不合法（后端 canonicalHubUrl 也会拒）', () => {
+    expect(classifyHubUrl('https://alice:secret@tmex.example.com', 'production')).toBe('invalid');
+    expect(classifyHubUrl('https://tmex.example.com/?token=x', 'production')).toBe('invalid');
+    expect(classifyHubUrl('https://tmex.example.com/#frag', 'production')).toBe('invalid');
+  });
+
+  test('普通地址与本机 http 判定不受影响', () => {
+    expect(classifyHubUrl('https://tmex.example.com/', 'production')).toBe('ok');
+    expect(classifyHubUrl('http://127.0.0.1:19883', 'development')).toBe('insecure');
+  });
+});
+
+describe('validateBecomeRelay 的接入口令规则', () => {
+  test('留空表示不设口令，放行', () => {
+    expect(validateBecomeRelay(relayValues({ relayPassword: '' }), 'production')).toEqual({});
+    expect(validateBecomeRelay(relayValues({ relayPassword: '   ' }), 'production')).toEqual({});
+  });
+
+  test('设了就至少 8 位，错误落在口令字段上', () => {
+    expect(
+      validateBecomeRelay(relayValues({ relayPassword: 'short' }), 'production').relayPassword
+    ).toBe('nodes.setup.errors.weak_password');
+  });
+
+  test('纯中继也要卡口令长度（那一档没有账号字段）', () => {
+    const errors = validateBecomeRelay(
+      relayValues({ alsoNode: false, relayPassword: 'abc' }),
+      'production'
+    );
+    expect(errors.relayPassword).toBe('nodes.setup.errors.weak_password');
+    expect(errors.username).toBeUndefined();
+  });
+});

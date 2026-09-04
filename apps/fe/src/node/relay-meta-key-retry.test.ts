@@ -30,14 +30,15 @@ function fakeDelay() {
   return { delay, queue, run };
 }
 
-function attach(): void {
+function attach(url = 'https://relay.example', online = false): void {
   setMeshRelayStateForTest({
     mode: 'relay',
     relays: [
       {
-        url: 'https://relay.example',
+        url,
         priority: 0,
         attached: true,
+        online,
       } as never,
     ],
   });
@@ -194,5 +195,61 @@ describe('startRelayMetaKeyRetry', () => {
     expect(timers.queue).toHaveLength(0);
     remember('revoke:b', true);
     expect(calls).toBe(0);
+  });
+  test('链路恢复在线：退避重开一轮并立刻重试一次', async () => {
+    const timers = fakeDelay();
+    let calls = 0;
+    attach();
+    remember('revoke:a', true);
+    const stop = startRelayMetaKeyRetry({
+      deps: DEPS,
+      backoffMs: [1],
+      delay: timers.delay,
+      acquirePolling: () => () => undefined,
+      retry: () => {
+        calls += 1;
+        return Promise.resolve(1);
+      },
+    });
+
+    // 一档退避走完就停手
+    while (await timers.run()) {
+      // 跑干
+    }
+    expect(calls).toBe(1);
+
+    attach('https://relay.example', true);
+    // 立刻重试，不必再等第一档
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toBe(2);
+    stop();
+  });
+
+  test('无缝切到另一台中继：同样重开一轮', async () => {
+    const timers = fakeDelay();
+    let calls = 0;
+    attach('https://a.example', true);
+    remember('revoke:a', true);
+    const stop = startRelayMetaKeyRetry({
+      deps: DEPS,
+      backoffMs: [1],
+      delay: timers.delay,
+      acquirePolling: () => () => undefined,
+      retry: () => {
+        calls += 1;
+        return Promise.resolve(1);
+      },
+    });
+    while (await timers.run()) {
+      // 跑干
+    }
+    expect(calls).toBe(1);
+
+    attach('https://b.example', true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toBe(2);
+    stop();
   });
 });

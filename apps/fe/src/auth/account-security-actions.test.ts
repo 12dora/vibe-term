@@ -94,7 +94,7 @@ function mockRelayApi(
         Response.json({ epoch: 2, payload: encodeBase64url(META_PAYLOAD), payloadHash: 'zz' })
       );
     }
-    if (url === '/api/mesh/relay/join-material') {
+    if (url.startsWith('/api/mesh/relay/join-material')) {
       return Promise.resolve(
         Response.json({
           logKey: encodeBase64url(new Uint8Array(32).fill(0x11)),

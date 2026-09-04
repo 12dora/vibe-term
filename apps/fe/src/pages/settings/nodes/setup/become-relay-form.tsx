@@ -10,14 +10,19 @@ import type {
   SetupRelayResponse,
   SetupRelayRole,
 } from '@tmex/api-client/local/types';
-import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
-import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { currentOrigin, navigateToLogin } from './browser-location';
-import { FormField, RestartPanel, ResultRow, SetupNotice, SwitchRow } from './form-parts';
+import {
+  FormField,
+  RestartPanel,
+  ResultRow,
+  SetupNotice,
+  SetupSubmitRow,
+  SwitchRow,
+} from './form-parts';
 import { writeSelfRelayFollowUp } from './self-relay-followup';
 import { submitBecomeRelay } from './submit';
 import { useHubSetupSubmit } from './use-hub-setup-submit';
@@ -40,6 +45,24 @@ export interface BecomeRelayFormProps {
   onRestarted?: () => void;
 }
 
+function initialValues(input: {
+  origin?: string | null;
+  nodeEnv: LocalStatusResponse['nodeEnv'];
+  initialRole: SetupRelayRole;
+  directSupported: boolean;
+}): BecomeRelayValues {
+  const origin = input.origin === undefined ? currentOrigin() : input.origin;
+  return {
+    relayPublicUrl: defaultRelayPublicUrl(origin, input.nodeEnv),
+    relayPassword: '',
+    alsoNode: input.initialRole === 'relay,node',
+    username: '',
+    password: '',
+    confirmPassword: '',
+    directEnable: input.directSupported,
+  };
+}
+
 export function BecomeRelayForm({
   localStatus,
   client = defaultApiClient,
@@ -51,21 +74,16 @@ export function BecomeRelayForm({
   const nodeEnv = localStatus.nodeEnv;
   const directSupported = localStatus.direct.supported;
 
-  const [values, setValues] = useState<BecomeRelayValues>(() => ({
-    relayPublicUrl: defaultRelayPublicUrl(origin === undefined ? currentOrigin() : origin, nodeEnv),
-    relayPassword: '',
-    alsoNode: initialRole === 'relay,node',
-    username: '',
-    password: '',
-    confirmPassword: '',
-    directEnable: directSupported,
-  }));
+  const [values, setValues] = useState<BecomeRelayValues>(() =>
+    initialValues({ origin, nodeEnv, initialRole, directSupported })
+  );
 
   const errors = validateBecomeRelay(values, nodeEnv);
-  const { showErrors, submitting, submitError, result, waiter, handleSubmit } =
+  const { showErrors, submitting, submitError, result, waiter, blocked, handleSubmit } =
     useHubSetupSubmit<SetupRelayResponse>({
       client,
       hasErrors: hasErrors(errors),
+      uplink: 'relay',
       submit: async () => {
         const outcome = await submitBecomeRelay(values, client);
         // 中继起来之后本机还要以租户身份接一次自己的中继：留个记号，重启后把入口顶到眼前。
@@ -112,6 +130,7 @@ export function BecomeRelayForm({
             id="setup-relay-password"
             label={t('nodes.setup.fields.relayPassword')}
             hint={t('nodes.setup.fields.relayPasswordHint')}
+            error={shown.relayPassword && t(shown.relayPassword)}
           >
             <PasswordFieldWithGenerate
               id="setup-relay-password"
@@ -149,10 +168,12 @@ export function BecomeRelayForm({
             </SetupNotice>
           )}
 
-          <Button type="submit" disabled={submitting} data-testid="setup-become-relay-submit">
-            {submitting && <Loader2 className="animate-spin" />}
-            {submitting ? t('nodes.setup.submit.pending') : t('nodes.setup.submit.becomeRelay')}
-          </Button>
+          <SetupSubmitRow
+            testId="setup-become-relay"
+            label={t('nodes.setup.submit.becomeRelay')}
+            submitting={submitting}
+            blocked={blocked}
+          />
         </form>
       </CardContent>
     </Card>
