@@ -30,6 +30,7 @@ function makeAccount(
     name: 'wx',
     enabled: true,
     allowAuthRequests: true,
+    allowCommands: false,
     loggedIn: false,
     weixinUin: null,
     botTokenEnc: null,

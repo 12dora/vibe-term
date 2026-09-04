@@ -20,6 +20,7 @@ export function createWeixinAccount(record: WeixinAccountConfigRecord): void {
       name: record.name,
       enabled: record.enabled,
       allowAuthRequests: record.allowAuthRequests,
+      allowCommands: record.allowCommands,
       weixinUin: record.weixinUin,
       botTokenEnc: record.botTokenEnc,
       baseUrl: record.baseUrl,
@@ -90,6 +91,7 @@ export function getWeixinAccountsWithStats(): WeixinAccountWithStats[] {
       name: account.name,
       enabled: account.enabled,
       allowAuthRequests: account.allowAuthRequests,
+      allowCommands: account.allowCommands,
       loggedIn: account.botTokenEnc != null,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
@@ -105,7 +107,14 @@ export function updateWeixinAccount(
   updates: Partial<
     Pick<
       WeixinAccountConfigRecord,
-      'name' | 'enabled' | 'allowAuthRequests' | 'weixinUin' | 'botTokenEnc' | 'baseUrl' | 'syncBuf'
+      | 'name'
+      | 'enabled'
+      | 'allowAuthRequests'
+      | 'allowCommands'
+      | 'weixinUin'
+      | 'botTokenEnc'
+      | 'baseUrl'
+      | 'syncBuf'
     >
   >
 ): WeixinAccountConfigRecord | null {
@@ -122,6 +131,9 @@ export function updateWeixinAccount(
   }
   if (updates.allowAuthRequests !== undefined) {
     setValues.allowAuthRequests = updates.allowAuthRequests;
+  }
+  if (updates.allowCommands !== undefined) {
+    setValues.allowCommands = updates.allowCommands;
   }
   if (updates.weixinUin !== undefined) {
     setValues.weixinUin = updates.weixinUin;

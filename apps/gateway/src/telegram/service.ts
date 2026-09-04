@@ -1,4 +1,3 @@
-import { toBCP47 } from '@tmex/shared';
 import { Bot } from 'gramio';
 import { decryptWithContext } from '../crypto';
 import {
@@ -9,6 +8,7 @@ import {
   updateTelegramBot,
 } from '../db';
 import { t } from '../i18n';
+import { createTelegramAdapter, processInboundCommand } from '../messaging';
 
 function normalizeChatType(
   raw: string | undefined
@@ -95,45 +95,22 @@ export class TelegramService {
       const bot = new Bot(token);
 
       bot.on('message', async (context) => {
-        const text = context.text?.trim();
-        if (text !== '/start') {
-          return;
-        }
-
-        const latest = getAllTelegramBots().find((item) => item.id === config.id);
-        if (!latest || !latest.allowAuthRequests) {
-          return;
-        }
-
         const chat = context.chat;
         const from = context.from;
-        const chatId = String(chat.id);
-        const displayName = buildChatDisplayName({
+        await this.handleIncomingText({
+          botId: config.id,
+          text: context.text?.trim() ?? '',
+          chatId: String(chat.id),
+          chatType: chat.type,
+          fromId: from?.id == null ? null : String(from.id),
           title: chat.title,
           username: chat.username,
           firstName: from?.firstName,
           lastName: from?.lastName,
-          fallback: chatId,
+          reply: async (body, parseMode) => {
+            await context.send(body, parseMode ? { parse_mode: parseMode } : undefined);
+          },
         });
-
-        try {
-          const result = createOrUpdatePendingTelegramChat({
-            botId: config.id,
-            chatId,
-            chatType: normalizeChatType(chat.type),
-            displayName,
-            appliedAt: new Date().toISOString(),
-          });
-
-          if (result.status === 'authorized') {
-            await context.send(t('telegram.authSuccess'));
-          } else {
-            await context.send(t('telegram.authPending'));
-          }
-        } catch (err) {
-          await context.send(t('telegram.authFailed'));
-          console.error('[telegram] failed to save pending chat:', err);
-        }
       });
 
       bot.onError((error) => {
@@ -163,6 +140,91 @@ export class TelegramService {
       updateTelegramBot(config.id, { lastUpdateId: started.pollOffset });
 
       console.log(`[telegram] bot started: ${config.name} (${config.id})`);
+    }
+  }
+
+  async handleIncomingText(params: {
+    botId: string;
+    text: string;
+    chatId: string;
+    chatType: string | undefined;
+    fromId: string | null;
+    title?: string;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+    reply: (text: string, parseMode?: 'HTML') => Promise<void>;
+  }): Promise<void> {
+    if (params.text === '/start') {
+      await this.handleStart(params);
+      return;
+    }
+    if (!params.text) return;
+    const outcome = await processInboundCommand({
+      rawText: params.text,
+      actor: {
+        platform: 'telegram',
+        accountId: params.botId,
+        conversationId: params.chatId,
+        userId: params.fromId,
+      },
+      adapter: createTelegramAdapter(),
+    });
+    if (outcome.silent) return;
+    for (const chunk of outcome.chunks) {
+      try {
+        await params.reply(chunk, 'HTML');
+      } catch (err) {
+        console.error(
+          `[telegram] failed sending command reply bot=${params.botId} chat=${params.chatId}:`,
+          err
+        );
+      }
+    }
+  }
+
+  private async handleStart(params: {
+    botId: string;
+    chatId: string;
+    chatType: string | undefined;
+    fromId: string | null;
+    title?: string;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+    reply: (text: string, parseMode?: 'HTML') => Promise<void>;
+  }): Promise<void> {
+    const latest = getAllTelegramBots().find((item) => item.id === params.botId);
+    if (!latest || !latest.allowAuthRequests) {
+      return;
+    }
+
+    const displayName = buildChatDisplayName({
+      title: params.title,
+      username: params.username,
+      firstName: params.firstName,
+      lastName: params.lastName,
+      fallback: params.chatId,
+    });
+
+    try {
+      const result = createOrUpdatePendingTelegramChat({
+        botId: params.botId,
+        chatId: params.chatId,
+        chatType: normalizeChatType(params.chatType),
+        displayName,
+        appliedAt: new Date().toISOString(),
+        userId: params.fromId,
+      });
+
+      if (result.status === 'authorized') {
+        await params.reply(t('telegram.authSuccess'));
+      } else {
+        await params.reply(t('telegram.authPending'));
+      }
+    } catch (err) {
+      await params.reply(t('telegram.authFailed'));
+      console.error('[telegram] failed to save pending chat:', err);
     }
   }
 

@@ -9,6 +9,7 @@ import {
   type WeixinAccountConfigRecord,
   getAllWeixinAccounts,
   getWeixinAccountById,
+  getWeixinUserByAccountAndUserId,
   getWeixinUserContextTokens,
   listAuthorizedWeixinUsersByAccount,
   setWeixinUserNeedsReactivation,
@@ -16,6 +17,7 @@ import {
   upsertWeixinUserOnInbound,
 } from '../db';
 import { t } from '../i18n';
+import { createWeixinAdapter, processInboundCommand } from '../messaging';
 import { WeixinClient, type WeixinClientOptions, WeixinSessionExpiredError } from './ilink/client';
 import type { WeixinCredentials, WeixinInboundMessage } from './ilink/types';
 
@@ -190,6 +192,45 @@ export class WeixinService {
       });
     } catch (err) {
       console.error('[weixin] failed to upsert user on inbound:', err);
+    }
+
+    const user = getWeixinUserByAccountAndUserId(accountId, userId);
+    const text = msg.text.trim();
+    if (!user || user.status !== 'authorized' || !text) {
+      return;
+    }
+    await this.dispatchCommand(accountId, userId, text, msg.contextToken);
+  }
+
+  private async dispatchCommand(
+    accountId: string,
+    userId: string,
+    text: string,
+    contextToken: string | null
+  ): Promise<void> {
+    const running = this.runningAccounts.get(accountId);
+    if (!running) return;
+    const outcome = await processInboundCommand({
+      rawText: text,
+      actor: {
+        platform: 'weixin',
+        accountId,
+        conversationId: userId,
+        userId,
+      },
+      adapter: createWeixinAdapter(),
+    });
+    if (outcome.silent) return;
+    for (const chunk of outcome.chunks) {
+      try {
+        await running.client.sendText(userId, chunk, contextToken ?? undefined);
+      } catch (err) {
+        if (err instanceof WeixinSessionExpiredError) {
+          this.handleSessionExpired(accountId);
+          return;
+        }
+        console.error(`[weixin] failed sending command reply to ${userId}:`, err);
+      }
     }
   }
 

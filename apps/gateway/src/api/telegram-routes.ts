@@ -47,6 +47,7 @@ type TelegramBotCreateDraft = {
   token: string;
   enabled: boolean;
   allowAuthRequests: boolean;
+  allowCommands: boolean;
 };
 
 type TelegramBotUpdateDraft = {
@@ -54,6 +55,7 @@ type TelegramBotUpdateDraft = {
   token?: string;
   enabled?: boolean;
   allowAuthRequests?: boolean;
+  allowCommands?: boolean;
 };
 
 const TELEGRAM_CREATE_FIELDS: ConfigFieldSpec<unknown>[] = [
@@ -66,6 +68,12 @@ const TELEGRAM_CREATE_FIELDS: ConfigFieldSpec<unknown>[] = [
     onAbsent: { default: true },
     nullIsAbsent: true,
   },
+  {
+    name: 'allowCommands',
+    parse: parseFlag,
+    onAbsent: { default: false },
+    nullIsAbsent: true,
+  },
 ];
 
 const TELEGRAM_UPDATE_FIELDS: ConfigFieldSpec<unknown>[] = [
@@ -73,6 +81,7 @@ const TELEGRAM_UPDATE_FIELDS: ConfigFieldSpec<unknown>[] = [
   { name: 'token', parse: parseBotToken },
   { name: 'enabled', parse: parseFlag },
   { name: 'allowAuthRequests', parse: parseFlag },
+  { name: 'allowCommands', parse: parseFlag },
 ];
 
 async function handleGetTelegramBots(): Promise<Response> {
@@ -98,6 +107,7 @@ async function handleCreateTelegramBot(req: Request): Promise<Response> {
     tokenEnc: await encrypt(parsed.fields.token),
     enabled: parsed.fields.enabled,
     allowAuthRequests: parsed.fields.allowAuthRequests,
+    allowCommands: parsed.fields.allowCommands,
     lastUpdateId: null,
     createdAt: now,
     updatedAt: now,
@@ -130,12 +140,16 @@ async function handleUpdateTelegramBot(req: Request, botId: string): Promise<Res
     tokenEnc: string;
     enabled: boolean;
     allowAuthRequests: boolean;
+    allowCommands: boolean;
   }> = {};
   if (parsed.fields.name !== undefined) updates.name = parsed.fields.name;
   if (parsed.fields.token !== undefined) updates.tokenEnc = await encrypt(parsed.fields.token);
   if (parsed.fields.enabled !== undefined) updates.enabled = parsed.fields.enabled;
   if (parsed.fields.allowAuthRequests !== undefined) {
     updates.allowAuthRequests = parsed.fields.allowAuthRequests;
+  }
+  if (parsed.fields.allowCommands !== undefined) {
+    updates.allowCommands = parsed.fields.allowCommands;
   }
 
   updateTelegramBot(botId, updates);

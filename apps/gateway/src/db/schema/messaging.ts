@@ -18,6 +18,7 @@ export const telegramBots = sqliteTable('telegram_bots', {
   tokenEnc: text('token_enc').notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   allowAuthRequests: integer('allow_auth_requests', { mode: 'boolean' }).notNull().default(true),
+  allowCommands: integer('allow_commands', { mode: 'boolean' }).notNull().default(false),
   lastUpdateId: integer('last_update_id'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
@@ -33,6 +34,7 @@ export const telegramBotChats = sqliteTable(
     chatId: text('chat_id').notNull(),
     chatType: text('chat_type').notNull(),
     displayName: text('display_name').notNull(),
+    userId: text('user_id'),
     status: text('status').notNull(),
     appliedAt: text('applied_at').notNull(),
     authorizedAt: text('authorized_at'),
@@ -54,6 +56,7 @@ export const weixinAccounts = sqliteTable('weixin_accounts', {
   name: text('name').notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   allowAuthRequests: integer('allow_auth_requests', { mode: 'boolean' }).notNull().default(true),
+  allowCommands: integer('allow_commands', { mode: 'boolean' }).notNull().default(false),
   // iLink 登录确认返回：账号自身标识（uin）/ bearer token / baseurl。
   weixinUin: text('weixin_uin'),
   botTokenEnc: text('bot_token_enc'),

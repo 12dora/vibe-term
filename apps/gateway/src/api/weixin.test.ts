@@ -173,6 +173,15 @@ describe('weixin account api routing', () => {
       error: t('apiError.invalidRequest'),
     });
 
+    const commandsType = await handleApiRequest(
+      req('PATCH', `/api/settings/weixin/accounts/${accountId}`, { allowCommands: 1 }),
+      fakeServer
+    );
+    expect(commandsType.status).toBe(400);
+    expect(await bodyOf<{ error: string }>(commandsType)).toEqual({
+      error: t('apiError.invalidRequest'),
+    });
+
     await handleApiRequest(req('DELETE', `/api/settings/weixin/accounts/${accountId}`), fakeServer);
   });
 });

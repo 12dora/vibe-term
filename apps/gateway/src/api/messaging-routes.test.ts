@@ -63,6 +63,7 @@ const fakeBot = {
   tokenEnc: 'enc',
   enabled: true,
   allowAuthRequests: true,
+  allowCommands: false,
   lastUpdateId: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
@@ -108,6 +109,13 @@ describe('telegram JSON body validation', () => {
       { name: 'bot', token: 'tok', allowAuthRequests: 1 },
       t('apiError.invalidRequest')
     );
+    await expectInvalid(
+      telegramRoutes,
+      'POST',
+      '/api/settings/telegram/bots',
+      { name: 'bot', token: 'tok', allowCommands: 1 },
+      t('apiError.invalidRequest')
+    );
   });
 
   test('PATCH /api/settings/telegram/bots/:botId rejects null body', async () => {
@@ -142,6 +150,13 @@ describe('telegram JSON body validation', () => {
       'PATCH',
       '/api/settings/telegram/bots/bot-body-guard',
       { enabled: 'yes' },
+      t('apiError.invalidRequest')
+    );
+    await expectInvalid(
+      telegramRoutes,
+      'PATCH',
+      '/api/settings/telegram/bots/bot-body-guard',
+      { allowCommands: 'yes' },
       t('apiError.invalidRequest')
     );
   });

@@ -49,6 +49,7 @@ const MIGRATIONS = [
   '0041_peer_cache_version.sql',
   '0042_rename_node_keylog.sql',
   '0043_relay_pack.sql',
+  '0044_messaging_commands.sql',
 ] as const;
 
 export interface MaterializedMigrations {

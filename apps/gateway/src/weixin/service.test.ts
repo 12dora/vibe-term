@@ -61,6 +61,7 @@ async function setupRunningAccount(opts: { withUser?: boolean } = {}): Promise<{
     name: 'svc',
     enabled: true,
     allowAuthRequests: true,
+    allowCommands: false,
     loggedIn: false,
     weixinUin: null,
     botTokenEnc: null,
@@ -170,6 +171,23 @@ describe('WeixinService send semantics', () => {
     });
     await (service as unknown as { runKeepaliveSweep(): Promise<void> }).runKeepaliveSweep();
     expect(fake.sentTexts.some((m) => m.to === 'u1')).toBe(true);
+    await service.stopAll();
+  });
+
+  test('authorized inbound with allowCommands replies to help', async () => {
+    const { service, fake, accountId } = await setupRunningAccount({ withUser: true });
+    updateWeixinAccount(accountId, { allowCommands: true });
+    const onMessage = fake.startOpts?.onMessage;
+    await onMessage?.({ fromUserId: 'u1', contextToken: 'ctx-u1', text: 'help', raw: {} });
+    expect(fake.sentTexts.some((m) => m.to === 'u1')).toBe(true);
+    await service.stopAll();
+  });
+
+  test('authorized inbound stays silent when allowCommands is false', async () => {
+    const { service, fake } = await setupRunningAccount({ withUser: true });
+    const onMessage = fake.startOpts?.onMessage;
+    await onMessage?.({ fromUserId: 'u1', contextToken: 'ctx-u1', text: 'help', raw: {} });
+    expect(fake.sentTexts).toEqual([]);
     await service.stopAll();
   });
 
