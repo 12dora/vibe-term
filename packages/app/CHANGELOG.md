@@ -1,3 +1,23 @@
+# 1.1.26
+
+_2026-09-04_
+
+## English
+
+### Fixes
+
+- **Relay migration after a root rotation.** A relay only ever knows the account's current root key, but the `admit-node` records of existing members were signed by older roots (every `rotate-root-keep` bumps the root epoch). Enrolling such an account to a relay left every member refused with `member-epoch_mismatch`. A new signed record, `readmit-node`, re-affirms an existing member under the current root: the relay enroll flow (web and `tmex relay enroll`) now signs one per stale member before switching, the relay status card shows how many members still need it with a “Re-affirm members” button, and `GET /api/mesh/relay/readmit/prepare` lists them. Requires all nodes on 1.1.26 (version-gated record).
+
+---
+
+## 中文
+
+### 修复
+
+- **根轮换之后接入中继。**中继只认账户当前的根钥，而既有成员的 `admit-node` 记录是旧根签的（每次 `rotate-root-keep` 都会推进根 epoch），这样的账户接入中继后所有成员都会被 `member-epoch_mismatch` 拒绝。新增签名记录 `readmit-node`，用当前根重新确认既有成员：接入中继流程（网页与 `tmex relay enroll`）在切换前会为每个过期成员签一条，中继状态卡片显示待确认数量并提供「重新确认成员」按钮，`GET /api/mesh/relay/readmit/prepare` 列出清单。该记录有版本门，需要全部节点升到 1.1.26。
+
+---
+
 # 1.1.25
 
 _2026-09-04_
