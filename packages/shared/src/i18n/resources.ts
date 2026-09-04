@@ -1738,6 +1738,7 @@ export const I18N_RESOURCES = {
       "self": "Current",
       "hub": "Hub",
       "loggedIn": "Signed in",
+      "hubConnecting": "Connecting to Hub…",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
       "hubLoginRejected": "The hub rejected this sign-in ({{code}}). Sign in again, then retry.",
       "hubs": {
@@ -4522,6 +4523,7 @@ export const I18N_RESOURCES = {
       "self": "当前",
       "hub": "Hub",
       "loggedIn": "已登录",
+      "hubConnecting": "正在连接 Hub…",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
       "hubLoginRejected": "Hub 拒绝了本次登录（{{code}}）：请重新登录后再试。",
       "hubs": {
@@ -7301,6 +7303,7 @@ export const I18N_RESOURCES = {
       "self": "現在",
       "hub": "ハブ",
       "loggedIn": "サインイン済み",
+      "hubConnecting": "ハブに接続しています…",
       "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
       "hubLoginRejected": "ハブがこのサインインを拒否しました（{{code}}）。サインインし直してからお試しください。",
       "hubs": {

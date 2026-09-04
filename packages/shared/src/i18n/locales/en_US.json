@@ -1732,6 +1732,7 @@
       "self": "Current",
       "hub": "Hub",
       "loggedIn": "Signed in",
+      "hubConnecting": "Connecting to Hub…",
       "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
       "hubLoginRejected": "The hub rejected this sign-in ({{code}}). Sign in again, then retry.",
       "hubs": {

@@ -994,6 +994,7 @@
       "self": "当前",
       "hub": "Hub",
       "loggedIn": "已登录",
+      "hubConnecting": "正在连接 Hub…",
       "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
       "hubLoginRejected": "Hub 拒绝了本次登录（{{code}}）：请重新登录后再试。",
       "hubs": {

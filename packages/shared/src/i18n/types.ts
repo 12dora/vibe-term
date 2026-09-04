@@ -1570,6 +1570,7 @@ export type TranslationKey =
   | 'nodes.self'
   | 'nodes.hub'
   | 'nodes.loggedIn'
+  | 'nodes.hubConnecting'
   | 'nodes.hubOffline'
   | 'nodes.hubLoginRejected'
   | 'nodes.hubs'
