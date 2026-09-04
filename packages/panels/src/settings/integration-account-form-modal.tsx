@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@tmex/ui/dialog';
 import { Input } from '@tmex/ui/input';
@@ -26,6 +27,8 @@ interface IntegrationFieldBase<TEntity> {
   inputId: string;
   testId: string;
   labelKey: string;
+  /** 补充说明，渲染在标签下方一行 */
+  descriptionKey?: string;
   initialValue: (entity: TEntity | undefined) => IntegrationFieldValue;
   validate?: (value: IntegrationFieldValue, ctx: IntegrationFormContext) => boolean;
 }
@@ -119,6 +122,41 @@ export function IntegrationFormFields<TEntity>({
   );
 }
 
+function renderToggleField<TEntity>(
+  field: IntegrationField<TEntity>,
+  value: IntegrationFieldValue,
+  setValue: (key: string, next: IntegrationFieldValue) => void,
+  t: TFunction
+) {
+  return (
+    <div
+      key={field.key}
+      className={cn(
+        'flex min-h-10 justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2.5',
+        field.descriptionKey ? 'items-start' : 'items-center'
+      )}
+    >
+      <div className="min-w-0">
+        <div className="text-sm font-medium">{t(field.labelKey)}</div>
+        {field.descriptionKey && (
+          <p
+            className="mt-1 text-xs leading-snug text-muted-foreground"
+            data-testid={`${field.testId}-help`}
+          >
+            {t(field.descriptionKey)}
+          </p>
+        )}
+      </div>
+      <Switch
+        checked={Boolean(value)}
+        data-testid={field.testId}
+        className={cn('shrink-0', field.descriptionKey && 'mt-0.5')}
+        onCheckedChange={(checked) => setValue(field.key, Boolean(checked))}
+      />
+    </div>
+  );
+}
+
 function renderField<TEntity>(
   field: IntegrationField<TEntity>,
   value: IntegrationFieldValue,
@@ -127,19 +165,7 @@ function renderField<TEntity>(
   t: TFunction
 ) {
   if (field.kind === 'toggle') {
-    return (
-      <div
-        key={field.key}
-        className="flex min-h-10 items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2.5"
-      >
-        <span className="text-sm font-medium">{t(field.labelKey)}</span>
-        <Switch
-          checked={Boolean(value)}
-          data-testid={field.testId}
-          onCheckedChange={(checked) => setValue(field.key, Boolean(checked))}
-        />
-      </div>
-    );
+    return renderToggleField(field, value, setValue, t);
   }
 
   return (

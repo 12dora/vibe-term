@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 
+import { ChatCommandsBadge } from './chat-commands-badge';
 import { TelegramBotChatsModal } from './telegram-bot-chats-modal';
 
 interface TelegramBotRowProps {
@@ -74,7 +75,14 @@ export function TelegramBotRow({ bot, onEdit }: TelegramBotRowProps) {
           data-testid={`telegram-bot-enabled-${bot.id}`}
         />
         <div className="min-w-0">
-          <div className="truncate font-medium">{bot.name}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate font-medium">{bot.name}</span>
+            <ChatCommandsBadge
+              namespace="telegram"
+              allowCommands={bot.allowCommands}
+              testId={`telegram-bot-commands-${bot.id}`}
+            />
+          </div>
           <div className="text-xs text-muted-foreground">
             {t('telegram.authCount', {
               authorized: bot.authorizedCount,

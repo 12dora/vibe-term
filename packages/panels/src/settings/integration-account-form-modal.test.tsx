@@ -132,6 +132,46 @@ describe('IntegrationFormFields', () => {
   });
 });
 
+describe('开关字段的补充说明', () => {
+  const toggleFields: IntegrationField<DemoEntity>[] = [
+    {
+      kind: 'toggle',
+      key: 'allowCommands',
+      inputId: 'demo-allow-commands',
+      testId: 'demo-allow-commands',
+      labelKey: 'telegram.allowCommands',
+      descriptionKey: 'telegram.allowCommandsHelp',
+      initialValue: () => false,
+    },
+  ];
+
+  test('配了 descriptionKey 才渲染说明行', () => {
+    const withHelp = renderToStaticMarkup(
+      <I18nextProvider i18n={i18n}>
+        <IntegrationFormFields
+          fields={toggleFields}
+          values={{ allowCommands: false }}
+          setValue={() => {}}
+          isEdit={false}
+        />
+      </I18nextProvider>
+    );
+    expect(withHelp).toContain('data-testid="demo-allow-commands-help"');
+    expect(renderFields(integrationInitialValues(demoFields, undefined), false)).not.toContain(
+      'data-testid="demo-enabled-help"'
+    );
+  });
+
+  test('两个渠道的「允许聊天指令」开关都带说明', () => {
+    for (const field of [...telegramBotFormConfig.fields, ...weixinAccountFormConfig.fields]) {
+      if (field.key === 'allowCommands') {
+        expect(field.kind).toBe('toggle');
+        expect(field.descriptionKey).toBeTruthy();
+      }
+    }
+  });
+});
+
 describe('integrationCanSubmit', () => {
   test('必填校验未通过时拦截提交', () => {
     const empty = integrationInitialValues(demoFields, undefined);
@@ -154,17 +194,29 @@ describe('integrationCanSubmit', () => {
 });
 
 describe('weixinAccountFormConfig', () => {
-  test('新增载荷带 allowAuthRequests，编辑载荷不带', () => {
-    const values = { name: '  我的微信  ', enabled: false };
+  test('新增载荷带 allowAuthRequests，编辑载荷不带；两者都带 allowCommands', () => {
+    const values = { name: '  我的微信  ', enabled: false, allowCommands: true };
     expect(weixinAccountFormConfig.buildPayload(values, { isEdit: false })).toEqual({
       name: '我的微信',
       enabled: false,
       allowAuthRequests: true,
+      allowCommands: true,
     });
     expect(weixinAccountFormConfig.buildPayload(values, { isEdit: true })).toEqual({
       name: '我的微信',
       enabled: false,
+      allowCommands: true,
     });
+  });
+
+  test('allowCommands 缺省关闭，编辑态回填账号既有值', () => {
+    expect(integrationInitialValues(weixinAccountFormConfig.fields, undefined).allowCommands).toBe(
+      false
+    );
+    const account = { id: 'a1', name: '我的微信', enabled: true, allowCommands: true } as never;
+    expect(integrationInitialValues(weixinAccountFormConfig.fields, account).allowCommands).toBe(
+      true
+    );
   });
 
   test('端点、查询键与校验规则', () => {
@@ -177,7 +229,7 @@ describe('weixinAccountFormConfig', () => {
     expect(
       integrationCanSubmit(
         weixinAccountFormConfig.fields,
-        { name: '', enabled: true },
+        { name: '', enabled: true, allowCommands: false },
         {
           isEdit: false,
         }
@@ -187,33 +239,52 @@ describe('weixinAccountFormConfig', () => {
 });
 
 describe('telegramBotFormConfig', () => {
-  test('新增载荷带 token 与 enabled', () => {
+  test('新增载荷带 token、enabled 与 allowCommands', () => {
     expect(
       telegramBotFormConfig.buildPayload(
-        { name: ' bot ', token: ' tk ', allowAuthRequests: true },
+        { name: ' bot ', token: ' tk ', allowAuthRequests: true, allowCommands: true },
         { isEdit: false }
       )
-    ).toEqual({ name: 'bot', token: 'tk', enabled: true, allowAuthRequests: true });
+    ).toEqual({
+      name: 'bot',
+      token: 'tk',
+      enabled: true,
+      allowAuthRequests: true,
+      allowCommands: true,
+    });
   });
 
-  test('编辑载荷仅在填写 token 时携带该字段', () => {
+  test('编辑载荷仅在填写 token 时携带该字段，allowCommands 始终提交', () => {
     expect(
       telegramBotFormConfig.buildPayload(
-        { name: 'bot', token: '   ', allowAuthRequests: false },
+        { name: 'bot', token: '   ', allowAuthRequests: false, allowCommands: false },
         { isEdit: true }
       )
-    ).toEqual({ name: 'bot', allowAuthRequests: false });
+    ).toEqual({ name: 'bot', allowAuthRequests: false, allowCommands: false });
     expect(
       telegramBotFormConfig.buildPayload(
-        { name: 'bot', token: 'new-token', allowAuthRequests: false },
+        { name: 'bot', token: 'new-token', allowAuthRequests: false, allowCommands: true },
         { isEdit: true }
       )
-    ).toEqual({ name: 'bot', allowAuthRequests: false, token: 'new-token' });
+    ).toEqual({
+      name: 'bot',
+      allowAuthRequests: false,
+      allowCommands: true,
+      token: 'new-token',
+    });
+  });
+
+  test('allowCommands 缺省关闭，编辑态回填 bot 既有值', () => {
+    expect(integrationInitialValues(telegramBotFormConfig.fields, undefined).allowCommands).toBe(
+      false
+    );
+    const bot = { id: 'b1', name: 'bot', allowAuthRequests: true, allowCommands: true } as never;
+    expect(integrationInitialValues(telegramBotFormConfig.fields, bot).allowCommands).toBe(true);
   });
 
   test('新增必须填 token，编辑可留空', () => {
     const fields = telegramBotFormConfig.fields;
-    const base = { name: 'bot', token: '', allowAuthRequests: true };
+    const base = { name: 'bot', token: '', allowAuthRequests: true, allowCommands: false };
     expect(integrationCanSubmit(fields, base, { isEdit: false })).toBe(false);
     expect(integrationCanSubmit(fields, base, { isEdit: true })).toBe(true);
     expect(integrationCanSubmit(fields, { ...base, token: 'tk' }, { isEdit: false })).toBe(true);

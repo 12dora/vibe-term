@@ -11,6 +11,8 @@ import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 
+import { ChatCommandsBadge } from './chat-commands-badge';
+
 // 扫码登录弹层带着 qrcode.react，而绑定是低频动作：切成独立 chunk，
 // 通知设置那一页的首屏不必为它买单。
 const WeixinAccountLoginModal = lazy(() =>
@@ -52,6 +54,20 @@ function WeixinLoginModalMount({
 interface WeixinAccountRowProps {
   account: WeixinAccountWithStats;
   onEdit: (account: WeixinAccountWithStats) => void;
+}
+
+function ReactivationBadge({ accountId }: { accountId: string }) {
+  const { t } = useTranslation();
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 text-xs font-medium text-destructive"
+      title={t('weixin.reactivationHint')}
+      data-testid={`weixin-account-needs-reactivation-${accountId}`}
+    >
+      <AlertTriangle className="h-3.5 w-3.5" />
+      {t('weixin.needsReactivation')}
+    </span>
+  );
 }
 
 export function WeixinAccountRow({ account, onEdit }: WeixinAccountRowProps) {
@@ -149,15 +165,13 @@ export function WeixinAccountRow({ account, onEdit }: WeixinAccountRowProps) {
             >
               {stateBadge.label}
             </span>
+            <ChatCommandsBadge
+              namespace="weixin"
+              allowCommands={account.allowCommands}
+              testId={`weixin-account-commands-${account.id}`}
+            />
             {bound && account.needsReactivationCount > 0 && (
-              <span
-                className="flex shrink-0 items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 text-xs font-medium text-destructive"
-                title={t('weixin.reactivationHint')}
-                data-testid={`weixin-account-needs-reactivation-${account.id}`}
-              >
-                <AlertTriangle className="h-3.5 w-3.5" />
-                {t('weixin.needsReactivation')}
-              </span>
+              <ReactivationBadge accountId={account.id} />
             )}
           </div>
           {bound && account.needsReactivationCount > 0 && (
