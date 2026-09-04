@@ -2,8 +2,8 @@ import { type NodeUnreachableReason, wsBorsh } from '@tmex/shared';
 import { LinkError } from '@tmex/shared/link';
 import { readJsonObjectBody } from '../api/http';
 import {
-  buildClearCookie,
-  buildSetCookie,
+  appendNodeSessionCookie,
+  clearNodeSessionCookie,
   nodeSessionCookieName,
   parseCookies,
 } from '../auth/cookies';
@@ -332,12 +332,7 @@ export class Forwarder {
     }
     const extra: Record<string, unknown> = {
       nodeId: input.nodeId,
-      reason:
-        lastError !== undefined
-          ? safeUnreachableReason(lastError)
-          : abort.aborted
-            ? 'timeout'
-            : 'no_link',
+      reason: classifyUnreachableReason(abort.aborted, lastError),
     };
     if (rawBody && lastError !== undefined) {
       extra.error = lastError instanceof Error ? lastError.message : String(lastError);
@@ -624,12 +619,7 @@ export class Forwarder {
     }
     return jsonError('NODE_UNREACHABLE', 503, {
       nodeId,
-      reason:
-        lastError !== undefined
-          ? safeUnreachableReason(lastError)
-          : signal.aborted
-            ? 'timeout'
-            : 'no_link',
+      reason: classifyUnreachableReason(signal.aborted, lastError),
     });
   }
 
@@ -870,20 +860,20 @@ async function applyAuthPolicy(
   skip401Rewrite = false
 ): Promise<Response | null> {
   const parsed = parseSetSessionHeader(upstream.headers.get(X_TMEX_SET_SESSION) ?? '');
-  if (parsed) appendNodeCookie(req, headers, nodeId, parsed.sid, parsed.maxAgeSec);
+  const secure = isHttps(req);
+  if (parsed) {
+    appendNodeSessionCookie(headers, nodeId, parsed.sid, { maxAgeSec: parsed.maxAgeSec, secure });
+  }
   const renewed = upstream.headers.get(X_TMEX_SESSION_RENEWED);
   if (renewed) {
     headers.set(X_TMEX_SESSION_RENEWED, renewed);
     const sid = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
     const expiresAt = Number(renewed);
     if (sid && Number.isFinite(expiresAt)) {
-      appendNodeCookie(
-        req,
-        headers,
-        nodeId,
-        sid,
-        Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
-      );
+      appendNodeSessionCookie(headers, nodeId, sid, {
+        maxAgeSec: Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)),
+        secure,
+      });
     }
   }
   if (upstream.status !== 401 || skip401Rewrite) return null;
@@ -899,34 +889,20 @@ async function applyAuthPolicy(
   }
   for (const name of DROP_ON_401_REWRITE) headers.delete(name);
   headers.set('content-type', 'application/json');
-  expireNodeCookie(req, headers, nodeId);
+  clearNodeSessionCookie(headers, nodeId, { secure });
   return new Response(JSON.stringify(body), { status: 401, headers });
-}
-
-function appendNodeCookie(
-  req: Request,
-  headers: Headers,
-  nodeId: string,
-  sid: string,
-  maxAgeSec: number
-): void {
-  headers.append(
-    'set-cookie',
-    buildSetCookie(nodeSessionCookieName(nodeId), sid, { maxAgeSec, secure: isHttps(req) })
-  );
-}
-
-function expireNodeCookie(req: Request, headers: Headers, nodeId: string): void {
-  headers.append(
-    'set-cookie',
-    buildClearCookie(nodeSessionCookieName(nodeId), { secure: isHttps(req) })
-  );
 }
 
 function expireNodeCookieOn(req: Request, nodeId: string, res: Response): Response {
   const headers = new Headers(res.headers);
-  expireNodeCookie(req, headers, nodeId);
+  clearNodeSessionCookie(headers, nodeId, { secure: isHttps(req) });
   return new Response(res.body, { status: res.status, headers });
+}
+
+function classifyUnreachableReason(aborted: boolean, lastError: unknown): NodeUnreachableReason {
+  if (aborted) return 'timeout';
+  if (lastError !== undefined) return safeUnreachableReason(lastError);
+  return 'no_link';
 }
 
 export function safeUnreachableReason(err: unknown): NodeUnreachableReason {

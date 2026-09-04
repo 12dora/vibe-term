@@ -7,6 +7,7 @@ import {
   type ServerSocketAdapter,
   type WebSocketTransportInput,
 } from '@tmex/shared/link';
+import { formatSafeErrorLog } from '../auth/cookies';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { WebSocketServer } from '../ws';
@@ -1129,14 +1130,7 @@ export class PeerManager extends PeerCollaboratorHost {
       this.rememberKeys(result.session, result.sendKey, result.recvKey);
       this.track(result.session, result.peerNodeId, 'relay', from || result.peerNodeId, gen);
     } catch (err) {
-      const reason =
-        err instanceof Error
-          ? err.message
-              .replace(/[\r\n\t]+/g, ' ')
-              .trim()
-              .slice(0, 240) || err.name
-          : 'unknown';
-      console.warn(stamp(`[mesh][relay] accept failed node=${from} reason=${reason}`));
+      console.warn(stamp(`[mesh][relay] accept failed node=${from} ${formatSafeErrorLog(err)}`));
       quiet(() => stream.reset('handshake-failed'));
     }
   }

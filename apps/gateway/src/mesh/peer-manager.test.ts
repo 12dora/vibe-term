@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { encodeBase64url, generateEd25519KeyPair, randomBytes } from '@tmex/shared/auth';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { type LinkStream, createInMemoryLinkPair } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
@@ -3772,6 +3772,68 @@ describe('PeerManager', () => {
     expect(second.directFailure?.ws).toMatch(/127\.0\.0\.1:2/);
     expect(second.directFailure?.at).toBeGreaterThanOrEqual(first.directFailure?.at ?? 0);
     expect(manager.transportOf(peer.nodeId)).toBe('relay');
+  });
+
+  test('relay accept failure log uses a whitelisted category and strips C0/C1', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const uplink = dummyUplink(self, store);
+    const captured: { fn: ((stream: LinkStream, from: string) => void) | null } = { fn: null };
+    const orig = uplink.setOnRelayStream.bind(uplink);
+    uplink.setOnRelayStream = (handler) => {
+      captured.fn = handler;
+      orig(handler);
+    };
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink,
+      peerPort: 0,
+      startServer: false,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const acceptInbound = captured.fn;
+    if (!acceptInbound) throw new Error('missing relay accept handler');
+
+    const [local, remote] = createInMemoryLinkPair();
+    const incoming = new Promise<LinkStream>((resolve) => local.onStream(resolve));
+    const attacker = await remote.openStream(
+      encodeJsonBytes({ to: self.nodeId, from: 'cc'.repeat(16) })
+    );
+    const stream = await incoming;
+    const poison = '\u001b[31mevil\u0007\u009b]0;pwned';
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      acceptInbound(stream, 'cc'.repeat(16));
+      await attacker.write(encodeJsonBytes({ t: poison }));
+      attacker.reset(poison);
+      await waitUntil(
+        () => warnings.some((line) => line.includes('[mesh][relay] accept failed')),
+        2_000
+      );
+    } finally {
+      console.warn = origWarn;
+    }
+    const line = warnings.find((entry) => entry.includes('[mesh][relay] accept failed')) ?? '';
+    expect(line).toMatch(/reason=(protocol|rst|timeout|unknown|bad_signature|revoked)\b/);
+    expect(line).toContain('summary=');
+    expect(
+      [...line].every((ch) => {
+        const c = ch.charCodeAt(0);
+        return c > 31 && (c < 127 || c > 159);
+      })
+    ).toBe(true);
+    expect(line.includes('\u001b')).toBe(false);
+    expect(line.includes('\u0007')).toBe(false);
+    const summary = line.split('summary=')[1] ?? '';
+    expect(summary.length).toBeLessThanOrEqual(120);
   });
 });
 

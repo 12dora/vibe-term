@@ -901,6 +901,30 @@ describe('forwarder', () => {
     }
   });
 
+  test('/n/:id/ws 4401 HTTP fallback does not emit Set-Cookie for non-canonical node ids', async () => {
+    const mesh = await bootMesh({ peers: new FakePeers() });
+    const refused = { upgrade: () => false };
+    try {
+      const cases = [
+        'http://localhost/n/self%3D/ws',
+        'http://localhost/n/aa%3Btmex_s_self/ws',
+        'http://localhost/n/aa%00bb/ws',
+        'http://localhost/n/aa%1bbb/ws',
+        `http://localhost/n/${OTHER.toUpperCase()}/ws`,
+        'http://localhost/n/deadbeef/ws',
+      ];
+      for (const url of cases) {
+        const res = asResponse(await mesh.runtime.handleRequest(new Request(url), refused));
+        expect(res.status).toBe(401);
+        expect(res.headers.get('set-cookie')).toBeNull();
+        const body = (await res.json()) as { code: string };
+        expect(body.code).toBe('NODE_LOGIN_REQUIRED');
+      }
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('401 augmentation reads at most 64 KiB and drops representation headers', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
@@ -1526,6 +1550,48 @@ describe('forwarder', () => {
       mesh.close();
     }
   });
+
+  test('abort during openHttpStream is classified as timeout, not lastError', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    let started = false;
+    streams.openHttpStream = async (_link, _open, _body, signal) => {
+      started = true;
+      await new Promise<void>((_, reject) => {
+        const fail = () => reject(new Error('link lost'));
+        if (signal.aborted) {
+          fail();
+          return;
+        }
+        signal.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const ac = new AbortController();
+      const pending = mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/api/ping`, {
+          method: 'POST',
+          body: 'x',
+          signal: ac.signal,
+        }),
+        dummyServer
+      );
+      await waitUntil(() => started);
+      ac.abort();
+      const res = asResponse(await pending);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        code: 'NODE_UNREACHABLE',
+        nodeId: OTHER,
+        reason: 'timeout',
+      });
+    } finally {
+      mesh.close();
+    }
+  });
 });
 
 describe('forwardAuthorizedHttp', () => {
@@ -1577,6 +1643,49 @@ describe('forwardAuthorizedHttp', () => {
       reason: 'no_link',
     });
     expect(opens).toBe(1);
+  });
+
+  test('abort during openHttpStream is classified as timeout, not lastError', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    let started = false;
+    streams.openHttpStream = async (_link, _open, _body, signal) => {
+      started = true;
+      await new Promise<void>((_, reject) => {
+        const fail = () => reject(new Error('link lost'));
+        if (signal.aborted) {
+          fail();
+          return;
+        }
+        signal.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams,
+      sleep: async () => {},
+    });
+    const ac = new AbortController();
+    const pending = forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+        method: 'POST',
+        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        signal: ac.signal,
+      }),
+      { nodeId: OTHER, method: 'POST', path: '/api/system/upgrade', body: { version: '9.9.9' } }
+    );
+    await waitUntil(() => started);
+    ac.abort();
+    const res = await pending;
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      code: 'NODE_UNREACHABLE',
+      nodeId: OTHER,
+      reason: 'timeout',
+    });
   });
 
   test('sends the stored target-node session as stream auth', async () => {
