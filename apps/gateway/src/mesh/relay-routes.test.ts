@@ -82,7 +82,7 @@ async function boot(
       attachedHub: () => null,
       reconfigure: async () => {},
       candidates: () => [],
-      switchTo: async () => {},
+      switchTo: async () => ({ ok: true as const }),
       ...opts.uplink,
     },
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
@@ -958,6 +958,7 @@ describe('POST /api/mesh/relay/switch', () => {
           switched.push(target);
           attached = { ...attached, publicUrl: target };
           live = { state: 'online' };
+          return { ok: true as const };
         },
       },
     });
@@ -1038,9 +1039,7 @@ describe('POST /api/mesh/relay/switch', () => {
   test('切换失败回 502 RELAY_SWITCH_FAILED 并带分类错误', async () => {
     const b = await boot({
       uplink: {
-        switchTo: async () => {
-          throw new Error('connect-timeout');
-        },
+        switchTo: async () => ({ ok: false, reason: 'connect-timeout' }),
       },
     });
     try {
@@ -1061,22 +1060,22 @@ describe('POST /api/mesh/relay/switch', () => {
     }
   });
 
-  test('超时后连接成功也不得写入首选', async () => {
-    const url2 = canonicalHubUrl(RELAY_URL_2);
-    let attached = {
+  test('超时未提交则 502 且不写入首选', async () => {
+    const original = canonicalHubUrl(RELAY_URL);
+    const attached = {
       hubNodeId: null as string | null,
-      publicUrl: canonicalHubUrl(RELAY_URL),
+      publicUrl: original,
       mode: 'active' as const,
       writerEpoch: 0,
       since: 1,
     };
-    let live: { state: 'online' | 'offline' } | null = { state: 'online' };
+    const live: { state: 'online' | 'offline' } | null = { state: 'online' };
     const b = await boot({
       switchTimeoutMs: 20,
       uplink: {
         attachedHub: () => attached,
         liveClient: () => live as never,
-        switchTo: async (target, signal) => {
+        switchTo: async (_target, signal) => {
           await new Promise<void>((resolve) => {
             const done = () => resolve();
             if (signal?.aborted) {
@@ -1085,8 +1084,7 @@ describe('POST /api/mesh/relay/switch', () => {
             }
             signal?.addEventListener('abort', done, { once: true });
           });
-          attached = { ...attached, publicUrl: target };
-          live = { state: 'online' };
+          return { ok: false, reason: 'connect-timeout' };
         },
       },
     });
@@ -1102,8 +1100,45 @@ describe('POST /api/mesh/relay/switch', () => {
         lastError: 'connect-timeout',
         lastErrorCode: 'connect-timeout',
       });
-      expect(attached.publicUrl).toBe(url2);
+      expect(attached.publicUrl).toBe(original);
       expect(b.secrets.preferredRelayUrl()).toBeNull();
+    } finally {
+      b.close();
+    }
+  });
+
+  test('提交成功后调用超时仍记首选', async () => {
+    const url2 = canonicalHubUrl(RELAY_URL_2);
+    let attached = {
+      hubNodeId: null as string | null,
+      publicUrl: canonicalHubUrl(RELAY_URL),
+      mode: 'active' as const,
+      writerEpoch: 0,
+      since: 1,
+    };
+    let live: { state: 'online' | 'offline' } | null = { state: 'online' };
+    const b = await boot({
+      switchTimeoutMs: 15,
+      uplink: {
+        attachedHub: () => attached,
+        liveClient: () => live as never,
+        switchTo: async (target) => {
+          attached = { ...attached, publicUrl: target };
+          live = { state: 'online' };
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          return { ok: true as const };
+        },
+      },
+    });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const res = await b.call('/api/mesh/relay/switch', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_2 }),
+      });
+      expect(res.status).toBe(200);
+      expect(attached.publicUrl).toBe(url2);
+      expect(b.secrets.preferredRelayUrl()).toBe(url2);
     } finally {
       b.close();
     }
@@ -1134,10 +1169,11 @@ describe('POST /api/mesh/relay/switch', () => {
           if (!firstStarted) {
             firstStarted = true;
             await firstGate;
-            throw new Error('superseded');
+            return { ok: false, reason: 'superseded' };
           }
           attachedUrl = target;
           live = { state: 'online' };
+          return { ok: true as const };
         },
       },
     });

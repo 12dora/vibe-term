@@ -36,7 +36,9 @@ import {
 } from './uplink-client';
 import { type UrlDiag, emptyUplinkDiag, mergeUplinkDiag } from './uplink-pool-diag';
 import { defaultFetchCaPem, defaultProbeHealthz } from './uplink-pool-http';
-import { runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
+import { type UplinkSwitchResult, runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
+
+export type { UplinkSwitchResult } from './uplink-pool-switch';
 
 export {
   CA_BOOTSTRAP_MAX_BYTES,
@@ -467,6 +469,7 @@ export class UplinkPool {
     { index: number; error: string | null; transport: string; at: number }
   >();
   private wrapSleepAbort: AbortController | null = null;
+  private readonly retiring = new Set<Promise<void>>();
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private readonly attachedListeners: Array<(hub: AttachedHub) => void> = [];
   private readonly detachedListeners: Array<() => void> = [];
@@ -622,6 +625,7 @@ export class UplinkPool {
     this.loop = null;
     await pending?.stop();
     await live?.stop();
+    await Promise.all([...this.retiring]);
     try {
       if (loop) await loop;
     } catch {
@@ -666,7 +670,7 @@ export class UplinkPool {
     this.scheduleProbe(this.probeNowDebounceMs);
   }
 
-  async switchTo(publicUrl: string, signal?: AbortSignal): Promise<void> {
+  async switchTo(publicUrl: string, signal?: AbortSignal): Promise<UplinkSwitchResult> {
     return runUplinkSwitch(this, publicUrl, signal);
   }
 
@@ -725,6 +729,9 @@ export class UplinkPool {
 
   beginSwitch(): number {
     this.switchToken += 1;
+    const stale = this.pending;
+    this.pending = null;
+    if (stale && stale !== this.live) void stale.stop();
     return this.switchToken;
   }
 
@@ -775,19 +782,13 @@ export class UplinkPool {
       while (failures < this.failLimit && !combined.aborted) {
         try {
           await this.connectCandidate(client, cand, combined);
-          if (!this.isSwitchCurrent(token)) {
-            if (this.live?.state === 'online') {
-              await this.waitActiveSession(this.live, signal);
-              return true;
-            }
-            return false;
-          }
+          if (!this.isSwitchCurrent(token)) return await this.followLiveSession(signal);
           deadline.abort();
           await this.promote(client, cand, token);
-          const reason = await this.waitActiveSession(this.live ?? client, signal);
-          if (reason) this.noteFailure(cand, reason);
+          await this.waitActiveSession(this.live ?? client, signal);
           return true;
         } catch (err) {
+          if (!this.isSwitchCurrent(token)) return await this.followLiveSession(signal);
           failures += 1;
           const msg = errMessage(err);
           this.lastConnectError = { reason: msg, at: this.scheduler.now() };
@@ -901,14 +902,17 @@ export class UplinkPool {
     client.sendStatusIfChanged();
     this.syncProbe();
     this.syncRttProbe();
-    if (old) {
-      old.setOnRelayStream(null);
-      try {
-        await old.stop();
-      } catch {
-        /* ignore */
-      }
-    }
+    if (old) this.retireClient(old);
+  }
+
+  private retireClient(client: PooledUplink): void {
+    client.setOnRelayStream(null);
+    const task = client.stop().then(
+      () => {},
+      () => {}
+    );
+    this.retiring.add(task);
+    void task.finally(() => this.retiring.delete(task));
   }
 
   private dispatchNodeList(
@@ -1019,19 +1023,29 @@ export class UplinkPool {
     }
   }
 
+  private async followLiveSession(signal: AbortSignal): Promise<boolean> {
+    if (this.live?.state !== 'online') return false;
+    await this.waitActiveSession(this.live, signal);
+    return true;
+  }
+
   private async waitActiveSession(
     origin: PooledUplink,
     signal: AbortSignal
-  ): Promise<string | null> {
+  ): Promise<{ publicUrl: string; reason: string } | null> {
     let current = origin;
-    let reason: string | null = null;
+    let ended: { publicUrl: string; reason: string } | null = null;
     while (this.live && !signal.aborted) {
       current = this.live;
       await this.waitWhileLive(current, signal);
-      reason = terminalErrorOf(current);
+      const reason = terminalErrorOf(current);
+      if (reason) {
+        this.persistTerminalError(current, current.hubUrl);
+        ended = { publicUrl: current.hubUrl, reason };
+      }
       if (this.live === current) break;
     }
-    return reason;
+    return ended;
   }
 
   private persistTerminalError(client: PooledUplink, publicUrl: string): void {
@@ -1177,13 +1191,10 @@ export class UplinkPool {
     if (!isWriter && !hubSupportsNearestAttach(best.version)) return;
     const ok = await this.probeHealthzTimed(best.publicUrl);
     if (!ok) return;
-    try {
-      await this.switchTo(best.publicUrl);
-      this.lastRttSwitchAt = this.scheduler.now();
-      this.logInfo(`[uplink] nearest → hub=${redactUrl(best.publicUrl)}`);
-    } catch {
-      /* keep current attachment */
-    }
+    const switched = await this.switchTo(best.publicUrl);
+    if (!switched.ok) return;
+    this.lastRttSwitchAt = this.scheduler.now();
+    this.logInfo(`[uplink] nearest → hub=${redactUrl(best.publicUrl)}`);
   }
 
   private captureHubView(list: UplinkNodeList): HubView {
@@ -1336,13 +1347,10 @@ export class UplinkPool {
           continue;
         }
         this.logInfo(`[uplink] probe ok hub=${redactUrl(pref.publicUrl)}`);
-        try {
-          await this.switchTo(pref.publicUrl);
-          const transport = this.isLocalTransport(pref) ? 'memory' : 'ws';
-          this.logCandidateEvent(pref, i, transport, this.lastErrorOf(pref), 'switch-back');
-        } catch {
-          /* keep current attachment */
-        }
+        const switched = await this.switchTo(pref.publicUrl);
+        if (!switched.ok) return;
+        const transport = this.isLocalTransport(pref) ? 'memory' : 'ws';
+        this.logCandidateEvent(pref, i, transport, this.lastErrorOf(pref), 'switch-back');
         return;
       }
     } finally {
