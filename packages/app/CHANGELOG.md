@@ -1,3 +1,25 @@
+# 1.1.27
+
+_2026-09-04_
+
+## English
+
+### Fixes
+
+- In relay mode the entry node was listed as “self” (sidebar and node list) because the site-name fallback only applied to Hub roles; the node name now follows node identity name → site name in every role, and the same name is sent to the relay.
+- Relay status rows that are not attached now carry the last connection failure reason and time (e.g. `member-epoch_mismatch`, `client-too-old`) instead of a bare “offline”.
+
+---
+
+## 中文
+
+### 修复
+
+- 中继模式下入口节点在侧栏与节点列表里显示为「self」（站点名回退只在 Hub 角色生效）；现在任何角色都按 节点身份名 → 站点名 取名，并把同一个名字发给中继。
+- 未挂载的中继行现在带最近一次连接失败的原因与时间（如 `member-epoch_mismatch`、`client-too-old`），不再只显示「离线」。
+
+---
+
 # 1.1.26
 
 _2026-09-04_

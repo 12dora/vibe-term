@@ -34,6 +34,7 @@ import {
   type UplinkWsFactory,
   uplinkWebSocketTls,
 } from './uplink-client';
+import { type UrlDiag, emptyUplinkDiag, mergeUplinkDiag } from './uplink-pool-diag';
 import { defaultFetchCaPem, defaultProbeHealthz } from './uplink-pool-http';
 
 export {
@@ -75,6 +76,7 @@ export type UplinkCandidate = {
   priority: number;
   caFingerprint: string | null;
   lastError?: string | null;
+  lastErrorAt?: number | null;
   lastAttemptAt?: number | null;
   rttMs?: number | null;
   rttAt?: number | null;
@@ -410,14 +412,6 @@ function fallbackCandidate(): UplinkCandidate {
   };
 }
 
-type UrlDiag = {
-  lastError: string | null;
-  lastAttemptAt: number | null;
-  rttMs: number | null;
-  rttAt: number | null;
-  rttSamples: number;
-};
-
 type HubView = {
   byUrl: Map<string, { online: boolean }>;
   writerHubId: string | null;
@@ -536,6 +530,7 @@ export class UplinkPool {
       return {
         ...row,
         lastError: diag?.lastError ?? row.lastError ?? null,
+        lastErrorAt: diag?.lastErrorAt ?? row.lastErrorAt ?? null,
         lastAttemptAt: diag?.lastAttemptAt ?? row.lastAttemptAt ?? null,
         rttMs: diag?.rttMs ?? row.rttMs ?? null,
         rttAt: diag?.rttAt ?? row.rttAt ?? null,
@@ -1404,24 +1399,13 @@ export class UplinkPool {
     return ok;
   }
 
-  private emptyDiag(): UrlDiag {
-    return { lastError: null, lastAttemptAt: null, rttMs: null, rttAt: null, rttSamples: 0 };
-  }
-
   private patchDiag(publicUrl: string, patch: Partial<UrlDiag>): void {
     const key = normalizeHubEndpointUrl(publicUrl);
-    const prev = this.diagByUrl.get(key) ?? this.emptyDiag();
-    this.diagByUrl.set(key, {
-      lastError: patch.lastError !== undefined ? patch.lastError : prev.lastError,
-      lastAttemptAt: patch.lastAttemptAt !== undefined ? patch.lastAttemptAt : prev.lastAttemptAt,
-      rttMs: patch.rttMs !== undefined ? patch.rttMs : prev.rttMs,
-      rttAt: patch.rttAt !== undefined ? patch.rttAt : prev.rttAt,
-      rttSamples: patch.rttSamples !== undefined ? patch.rttSamples : prev.rttSamples,
-    });
+    this.diagByUrl.set(key, mergeUplinkDiag(this.diagByUrl.get(key) ?? emptyUplinkDiag(), patch));
   }
 
   private noteRtt(publicUrl: string, rttMs: number): void {
-    const prev = this.diagByUrl.get(normalizeHubEndpointUrl(publicUrl)) ?? this.emptyDiag();
+    const prev = this.diagByUrl.get(normalizeHubEndpointUrl(publicUrl)) ?? emptyUplinkDiag();
     const samples = prev.rttSamples + 1;
     const ewma =
       samples === 1 || prev.rttMs == null
@@ -1435,10 +1419,8 @@ export class UplinkPool {
   }
 
   private noteFailure(cand: UplinkCandidate, msg: string): void {
-    this.patchDiag(cand.publicUrl, {
-      lastError: msg,
-      lastAttemptAt: this.scheduler.now(),
-    });
+    const at = this.scheduler.now();
+    this.patchDiag(cand.publicUrl, { lastError: msg, lastErrorAt: at, lastAttemptAt: at });
   }
 
   private lastErrorOf(cand: UplinkCandidate): string | null {

@@ -89,6 +89,27 @@ export function upsertById<T extends { id: string }>(nodes: T[], entry: T): void
   else nodes.push(entry);
 }
 
+function usableMeshName(name: string | null | undefined, id: string): string | null {
+  const t = name?.trim() ?? '';
+  return !t || t === id || t === 'self' ? null : t;
+}
+
+/** 本机展示名：listed → hub `nodes` 行 → `node_identity.name` → 站点名。占位 `self` / 节点 id 一律跳过。 */
+export function pickSelfDisplayName(input: {
+  id: string;
+  listedName?: string | null;
+  registryName?: string | null;
+  identityName?: string | null;
+  siteName?: string | null;
+}): string | null {
+  return (
+    usableMeshName(input.listedName, input.id) ??
+    usableMeshName(input.registryName, input.id) ??
+    usableMeshName(input.identityName, input.id) ??
+    usableMeshName(input.siteName, input.id)
+  );
+}
+
 export function pickMeshNodeName(input: {
   id: string;
   isSelf: boolean;
@@ -96,14 +117,10 @@ export function pickMeshNodeName(input: {
   registryName?: string | null;
   selfName?: string | null;
 }): string {
-  const usable = (name: string | null | undefined) => {
-    const t = name?.trim() ?? '';
-    return !t || t === input.id || t === 'self' ? null : t;
-  };
   return (
-    usable(input.listedName) ??
-    usable(input.registryName) ??
-    (input.isSelf ? usable(input.selfName) : null) ??
+    usableMeshName(input.listedName, input.id) ??
+    usableMeshName(input.registryName, input.id) ??
+    (input.isSelf ? usableMeshName(input.selfName, input.id) : null) ??
     (input.isSelf ? input.selfName?.trim() || 'self' : input.id)
   );
 }

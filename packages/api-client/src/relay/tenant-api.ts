@@ -24,6 +24,8 @@ export interface RelayLinkStatus {
   attached: boolean;
   rttMs?: number | null;
   lastError?: string | null;
+  /** 最近一次连接失败的时间戳（毫秒）。未失败为 `null`。 */
+  lastErrorAt?: number | null;
   /** 中继侧作废了本租户令牌（改密踢人 / 运营者手动踢）。 */
   kicked?: boolean;
 }
@@ -283,6 +285,7 @@ export function normalizeRelayStatus(
       attached: row.attached === true,
       rttMs: row.rttMs ?? null,
       lastError: row.lastError ?? null,
+      lastErrorAt: row.lastErrorAt ?? null,
       kicked: row.kicked === true,
     })),
     metaEpoch: payload.metaEpoch ?? 0,
