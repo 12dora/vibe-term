@@ -13,6 +13,10 @@ const { RelayTab } = await import('./relay-tab');
 const { resetRelayAdminStateForTest, setRelayAdminStateForTest } = await import(
   './relay-status-store'
 );
+const { resetRelayMetricsStateForTest, setRelayMetricsStateForTest } = await import(
+  './relay-metrics-store'
+);
+const { relayMetricsFixture: metrics } = await import('./relay-metrics-fixture');
 
 function tenant(patch: Partial<RelayTenantSummary> = {}): RelayTenantSummary {
   return {
@@ -59,6 +63,7 @@ function render(): string {
 
 afterEach(() => {
   resetRelayAdminStateForTest();
+  resetRelayMetricsStateForTest();
 });
 
 describe('RelayTab 的收尾状态', () => {
@@ -93,7 +98,7 @@ describe('RelayTab 的收尾状态', () => {
 });
 
 describe('RelayTab 的正文', () => {
-  test('三张头部卡 + 默认配额表单 + 租户卡都在', () => {
+  test('指标面板 + 口令卡 + 默认配额表单 + 租户卡都在', () => {
     setRelayAdminStateForTest({
       availability: 'available',
       status: status([tenant()]),
@@ -102,15 +107,25 @@ describe('RelayTab 的正文', () => {
     });
     const html = render();
     expect(html).toContain('data-testid="settings-relay-tab"');
-    expect(html).toContain('data-testid="relay-health-card"');
-    expect(html).toContain('data-testid="relay-totals-card"');
-    // 节点占用（配额口径）与在线节点各占一行
-    expect(html).toContain('data-testid="relay-totals-nodes-used"');
-    expect(html).toContain('data-testid="relay-totals-nodes"');
+    // 运行状态与总量已并入指标面板；指标还没拉到时那一块先摆骨架。
+    expect(html).toContain('data-testid="relay-metrics-panel-skeleton"');
+    expect(html).not.toContain('data-testid="relay-health-card"');
+    expect(html).not.toContain('data-testid="relay-totals-card"');
     expect(html).toContain('data-testid="relay-password-card"');
     expect(html).toContain('data-testid="relay-default-quota-card"');
     expect(html).toContain('data-testid="relay-tenants-card"');
     expect(html).toContain('data-testid="relay-tenants-table"');
+  });
+
+  test('指标拉到后：面板取代骨架，趋势与接入节点表都在', () => {
+    setRelayMetricsStateForTest({ data: metrics(), loadedAt: 1_700_000_600_000 });
+    setRelayAdminStateForTest({ availability: 'available', status: status([tenant()]) });
+    const html = render();
+    expect(html).toContain('data-testid="relay-metrics-panel"');
+    expect(html).not.toContain('data-testid="relay-metrics-panel-skeleton"');
+    expect(html).toContain('data-testid="relay-metrics-tiles"');
+    expect(html).toContain('data-testid="relay-metrics-trends"');
+    expect(html).toContain('data-testid="relay-members-card"');
   });
 
   test('没有口令时头部卡摆出警告', () => {

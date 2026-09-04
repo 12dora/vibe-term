@@ -1,6 +1,6 @@
 // 中继运营面的展示格式化：全是纯函数，文案一律经 `t` 出。
 
-import { formatBytes } from '@tmex/api-client/format';
+import { formatBytes, formatRate } from '@tmex/api-client/format';
 import type { RelayQuota } from '@tmex/api-client/relay/admin-api';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
@@ -95,4 +95,62 @@ export function trafficText(bytes: number): string {
 /** 代次一格：口令 / 令牌 / 元数据密钥统一说「第 N 代」。 */
 export function epochText(t: Translate, epoch: number): string {
   return t('relay.admin.epochValue', { epoch });
+}
+
+// ---------------------------------------------------------------------------
+// 运行指标（`GET /api/relay/metrics`）的展示格式化
+// ---------------------------------------------------------------------------
+
+/** 速率。非有限值按 0 计，负数同理——指标是差分算出来的，跨采样重启时可能为负。 */
+export function formatBytesPerSec(bytesPerSec: number): string {
+  return formatRate(Number.isFinite(bytesPerSec) && bytesPerSec > 0 ? bytesPerSec : 0);
+}
+
+/** 帧率。四位数以上收成 k，避免磁贴里的大数把标签挤掉。 */
+export function formatFramesPerSec(framesPerSec: number): string {
+  const value = Number.isFinite(framesPerSec) && framesPerSec > 0 ? framesPerSec : 0;
+  if (value >= 10_000) return `${(value / 1000).toFixed(1)}k`;
+  if (value >= 100) return String(Math.round(value));
+  return value.toFixed(1);
+}
+
+/** 紧凑时长：只出两级，最小到秒。用于磁贴里的「运行时长」。 */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '0s';
+  const total = Math.floor(ms / 1000);
+  const days = Math.floor(total / 86_400);
+  const hours = Math.floor((total % 86_400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+/** 毫秒量。`null` 出破折号；秒级以上换算成秒，免得摆出五位数。 */
+export function formatMs(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms)) return '—';
+  const value = Math.max(0, ms);
+  if (value >= 10_000) return `${(value / 1000).toFixed(0)} s`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)} s`;
+  if (value >= 100) return `${Math.round(value)} ms`;
+  return `${value.toFixed(1)} ms`;
+}
+
+/** 百分比。`null` 出破折号（采样窗口不足时 CPU 占用拿不到）。 */
+export function formatPercent(pct: number | null): string {
+  if (pct === null || !Number.isFinite(pct)) return '—';
+  const value = Math.min(100, Math.max(0, pct));
+  return value >= 10 ? `${Math.round(value)}%` : `${value.toFixed(1)}%`;
+}
+
+/** 中位数。空集合或全为 `null` 时回 `null`。 */
+export function median(values: readonly (number | null)[]): number | null {
+  const finite = values
+    .filter((value): value is number => value !== null && Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (finite.length === 0) return null;
+  const mid = Math.floor(finite.length / 2);
+  return finite.length % 2 === 1 ? finite[mid] : (finite[mid - 1] + finite[mid]) / 2;
 }

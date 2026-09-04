@@ -15,7 +15,8 @@ import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';
 import { DefaultQuotaCard } from './default-quota-card';
 import { PasswordDialog } from './password-dialog';
-import { RelayHealthCard, RelayPasswordCard, RelayTotalsCard } from './relay-cards';
+import { RelayPasswordCard } from './relay-cards';
+import { RelayMetricsPanel } from './relay-metrics-panel';
 import { DeleteTenantConfirm, KickTenantConfirm } from './tenant-confirms';
 import { TenantEditorDialog } from './tenant-editor-dialog';
 import { TenantTable } from './tenant-table';
@@ -118,13 +119,12 @@ function RelayTabBody({
 
   return (
     <>
-      <Reveal className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <RelayHealthCard health={relay.health} />
-        <RelayTotalsCard totals={status.totals} />
-        <RelayPasswordCard config={status.config} onChange={controller.openPassword} />
+      <Reveal>
+        <RelayMetricsPanel />
       </Reveal>
 
-      <Reveal delayMs={60}>
+      <Reveal delayMs={60} className="grid items-start gap-4 lg:grid-cols-2">
+        <RelayPasswordCard config={status.config} onChange={controller.openPassword} />
         <DefaultQuotaCard
           quota={status.config.defaultQuota}
           busy={quota.busy}
