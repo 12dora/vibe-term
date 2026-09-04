@@ -11,6 +11,7 @@ import { t } from '../i18n';
 import type { ParsedArgs } from '../types';
 import type { LocalAuthContext } from './local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from './password';
+import { uploadRelayPackFromLocal } from './relay-pack-upload';
 
 export type PasswdMode = 'keep' | 'full-reset';
 
@@ -132,6 +133,11 @@ export async function applyHubUserPasswd(
     if (!applied.ok) {
       throw new Error(mapPasswdApplyError(applied.error));
     }
+    await uploadRelayPackFromLocal({
+      ctx,
+      rootKey: newKey,
+      userId: user.id,
+    }).catch(() => false);
   } finally {
     oldKey.seed.fill(0);
     newKey.seed.fill(0);

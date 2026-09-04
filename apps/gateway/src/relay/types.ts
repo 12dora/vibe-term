@@ -60,6 +60,8 @@ export type RelayTenantRecord = {
   bytesIn: number;
   bytesOut: number;
   keyLogHeadSeq: bigint;
+  kdfParamsJson: string | null;
+  sealedPack: Uint8Array | null;
 };
 
 export type RelayNodeStatusValue = 'pending' | 'admitted' | 'revoked';

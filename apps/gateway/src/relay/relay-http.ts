@@ -20,6 +20,10 @@ export const RelayErrorCode = {
   nodeRevoked: 'RELAY_NODE_REVOKED',
   badQuota: 'RELAY_BAD_QUOTA',
   upgradeFailed: 'RELAY_UPGRADE_FAILED',
+  packMissing: 'RELAY_PACK_MISSING',
+  packEpoch: 'RELAY_PACK_EPOCH_MISMATCH',
+  packHeadAhead: 'RELAY_PACK_HEAD_AHEAD',
+  packTooLarge: 'RELAY_PACK_TOO_LARGE',
 } as const;
 
 export type RelayErrorCodeValue = (typeof RelayErrorCode)[keyof typeof RelayErrorCode];

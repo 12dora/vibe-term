@@ -20,6 +20,7 @@ export async function persistRelayUplink(
   input: {
     relays: readonly RelayTargetRow[];
     logKey: Uint8Array;
+    metaKey?: { epoch: number; key: Uint8Array };
     name?: string | null;
     now?: number;
   }
@@ -31,6 +32,9 @@ export async function persistRelayUplink(
   const now = input.now ?? Date.now();
   await store.replaceRelays(input.relays, now);
   await store.putSecret('log', RELAY_LOG_KEY_EPOCH, input.logKey, now);
+  if (input.metaKey) {
+    await store.putSecret('meta', input.metaKey.epoch, input.metaKey.key, now);
+  }
   store.setUplinkKind('relay');
   if (input.name) {
     store.setLocalName(input.name);

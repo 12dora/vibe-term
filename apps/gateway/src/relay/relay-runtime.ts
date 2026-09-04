@@ -1,3 +1,4 @@
+import { readJsonObjectBody } from '@tmex/shared/http';
 import { type ServerSocketAdapter, WebSocketLink } from '@tmex/shared/link';
 import { matchPath } from '../api/route';
 import type { AuthDb } from '../auth/types';
@@ -21,10 +22,17 @@ import { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError } from './relay-http';
 import { RelayKeyLogStore } from './relay-key-log-store';
 import { RelayMetering } from './relay-metering';
+import {
+  applyRelayKeyLogAppend,
+  applyRelayPackUpload,
+  handleRelayKeyLogPage,
+  handleRelayTenantKdf,
+} from './relay-pack-http';
 import type { RelaySleep } from './relay-quota';
 import { RelayRegistry } from './relay-registry';
 import {
   type RelayPublicRoutesDeps,
+  authenticateRelayTenant,
   handleRelayEnroll,
   handleRelayEnrollmentLookup,
   handleRelayRedeem,
@@ -213,6 +221,36 @@ export class RelayRuntime {
     if (matchPath(path, '/api/relay/enroll')) {
       if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
       return handleRelayEnroll(this.publicDeps, req);
+    }
+    const kdf = matchPath(path, '/api/relay/tenants/:tenantId/kdf');
+    if (kdf) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return relayError(RelayErrorCode.methodNotAllowed, 405);
+      }
+      return handleRelayTenantKdf(this.publicDeps, req, decodeURIComponent(kdf.tenantId));
+    }
+    const pack = matchPath(path, '/api/relay/tenants/:tenantId/pack');
+    if (pack) {
+      if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
+      const tenantId = decodeURIComponent(pack.tenantId);
+      const tenant = authenticateRelayTenant(this.publicDeps, req, tenantId);
+      if (tenant instanceof Response) return tenant;
+      const body = await readJsonObjectBody(req);
+      if (!body) return relayError(RelayErrorCode.invalidBody, 400);
+      return applyRelayPackUpload(this.publicDeps, tenant, body);
+    }
+    const keylog = matchPath(path, '/api/relay/tenants/:tenantId/keylog');
+    if (keylog) {
+      const tenantId = decodeURIComponent(keylog.tenantId);
+      const tenant = authenticateRelayTenant(this.publicDeps, req, tenantId);
+      if (tenant instanceof Response) return tenant;
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        return handleRelayKeyLogPage(this.publicDeps, tenant, req);
+      }
+      if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
+      const body = await readJsonObjectBody(req);
+      if (!body) return relayError(RelayErrorCode.invalidBody, 400);
+      return applyRelayKeyLogAppend(this.publicDeps, tenant, body);
     }
     const redeem = matchPath(path, '/api/relay/tenants/:tenantId/enrollments/redeem');
     if (redeem) {

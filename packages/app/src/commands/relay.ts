@@ -2,6 +2,7 @@ import { decodeBase64url, encodeBase64url } from '../../../shared/src/auth';
 import { normalizeRelayUrl, signRelayEnrollProof } from '../../../shared/src/relay';
 import { t } from '../i18n';
 import { promptPassword } from '../lib/prompt';
+import { uploadRelayPackFromLocal } from '../lib/relay-pack-upload';
 import {
   type RelayStatusResponse,
   type RelayTenantSession,
@@ -196,6 +197,12 @@ async function runRelayEnrollInternal(
         current.relays.some((item) => item.url === relayUrl && item.online)
     );
     reportRelayStatus(io, relayUrl, status);
+    await uploadRelayPackFromLocal({
+      ctx,
+      rootKey: session.rootKey,
+      userId: session.userId,
+      fetcher: io.fetcher,
+    }).catch(() => false);
     const row = status.relays.find((item) => item.url === relayUrl);
     return {
       tenantId: exchange.tenantId || (status.tenantId ?? ''),
