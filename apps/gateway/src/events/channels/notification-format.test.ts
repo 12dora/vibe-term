@@ -36,10 +36,10 @@ describe('notification-format raw views', () => {
     setNotificationNodeNameProvider(null);
   });
 
-  test('EVENT_EMOJI covers the 14 event types', () => {
+  test('EVENT_EMOJI covers the 15 event types', () => {
     expect(EVENT_EMOJI.terminal_bell).toBe('🔔');
     expect(EVENT_EMOJI.watch_triggered).toBe('👁️');
-    expect(Object.keys(EVENT_EMOJI)).toHaveLength(14);
+    expect(Object.keys(EVENT_EMOJI)).toHaveLength(15);
   });
 
   test('buildTerminalTopbarLabel uses window/pane index when present', () => {

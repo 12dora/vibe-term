@@ -371,7 +371,7 @@ describe('hub auth record compat gate', () => {
       expect(blocked.ok).toBe(false);
       if (!blocked.ok) {
         expect(blocked.minVersion).toBe('1.1.23');
-        expect(blocked.nodes.map((n) => n.id)).toEqual([PEER]);
+        expect(blocked.nodes.map((n) => n.id).sort()).toEqual([PEER, SELF].sort());
       }
     } finally {
       close();

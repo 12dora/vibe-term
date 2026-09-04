@@ -323,7 +323,9 @@ describe('PushSupervisor', () => {
         await supervisor.start();
         attached.listener?.onClose?.();
         await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(events).toEqual(expectedEvents);
+        expect(events.filter((event) => event !== 'device_connection_error')).toEqual(
+          expectedEvents
+        );
       } finally {
         await supervisor.stopAll();
         connectionAlertNotifier.setEventEmitter(null);

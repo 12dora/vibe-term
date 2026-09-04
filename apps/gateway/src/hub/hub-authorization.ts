@@ -216,7 +216,7 @@ export function nodesBlockingMinVersion(
   opts?: HubAuthCompatOptions
 ): UnsupportedKeyLogNode[] {
   const relayMode = opts?.relayMode === true;
-  const skipUncached = hasKnownMembers(userStore, relayMode);
+  const skipUncached = relayMode && listActivePeers(userStore).length > 0;
   const blocked: UnsupportedKeyLogNode[] = [];
   const certs = userId ? userStore.listCertsByUser(userId) : userStore.listCerts();
   for (const cert of certs) {
