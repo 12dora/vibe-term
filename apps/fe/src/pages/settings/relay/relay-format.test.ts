@@ -139,6 +139,14 @@ describe('formatBytesPerSec', () => {
     expect(formatBytesPerSec(-1)).toBe('0 B/s');
     expect(formatBytesPerSec(Number.NaN)).toBe('0 B/s');
   });
+
+  test('1 KB 以下最多两位小数（差分算出来的速率本身是浮点）', () => {
+    expect(formatBytesPerSec(12.345678)).toBe('12.35 B/s');
+    expect(formatBytesPerSec(0.004)).toBe('0 B/s');
+    expect(formatBytesPerSec(0.006)).toBe('0.01 B/s');
+    expect(formatBytesPerSec(12.1)).toBe('12.1 B/s');
+    expect(formatBytesPerSec(1023.999)).toBe('1.00 KB/s');
+  });
 });
 
 describe('formatFramesPerSec', () => {

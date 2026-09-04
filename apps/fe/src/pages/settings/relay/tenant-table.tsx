@@ -1,4 +1,5 @@
 // 租户表：一行一租户，编辑 / 踢出 / 删除三个动作。备注可在表里就地改，其余改动进编辑框。
+// 点行即选中，下方的接入节点卡只留该租户的节点；再点一次取消。
 
 import type { RelayQuota, RelayTenantSummary } from '@tmex/api-client/relay/admin-api';
 import { cn } from '@tmex/ui';
@@ -6,7 +7,7 @@ import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { Pencil, Trash2, Unplug } from 'lucide-react';
-import { type KeyboardEvent, useState } from 'react';
+import { type KeyboardEvent, type MouseEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WideTableScroll, stickyActionColumn } from '../components/wide-table';
 import { CopyButton } from '../nodes/copy-feedback';
@@ -29,6 +30,9 @@ export interface TenantTableProps {
   onKick: (tenant: RelayTenantSummary) => void;
   onRemove: (tenant: RelayTenantSummary) => void;
   onSaveLabel: (tenant: RelayTenantSummary, label: string | null) => void;
+  /** 选中的租户；`null` 即没有筛选。 */
+  selectedTenantId: string | null;
+  onSelect: (tenant: RelayTenantSummary) => void;
 }
 
 export function TenantTable(props: TenantTableProps) {
@@ -77,14 +81,37 @@ function TenantRow({
   onKick,
   onRemove,
   onSaveLabel,
+  selectedTenantId,
+  onSelect,
 }: { tenant: RelayTenantSummary } & TenantTableProps) {
   const { t } = useTranslation();
-  const quota = quotaSummary(t, tenant.quota, defaultQuota);
   const busy = busyTenantId === tenant.id;
+  const selected = selectedTenantId === tenant.id;
+
+  // 行内的控件（复制、备注编辑、三个动作）自成一体：点它们不该顺带切换选中。
+  const onClick = (event: MouseEvent<HTMLTableRowElement>) => {
+    if ((event.target as HTMLElement).closest('button, input, a')) return;
+    onSelect(tenant);
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLTableRowElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onSelect(tenant);
+  };
 
   return (
     <tr
-      className="border-b border-border/60 last:border-0"
+      className={cn(
+        'cursor-pointer border-b border-border/60 last:border-0 hover:bg-muted/40',
+        selected && 'bg-primary/5 ring-1 ring-primary/40 ring-inset hover:bg-primary/5'
+      )}
+      aria-selected={selected}
+      tabIndex={0}
+      title={t('relay.admin.tenants.selectHint')}
+      onClick={onClick}
+      onKeyDown={onKeyDown}
+      data-selected={selected ? '' : undefined}
       data-testid={`relay-tenant-row-${tenant.id}`}
     >
       <Td>
@@ -100,88 +127,138 @@ function TenantRow({
       </Td>
       <Td>{relativeTimeText(t, tenant.createdAt, now)}</Td>
       <Td>{relativeTimeText(t, tenant.lastSeenAt, now)}</Td>
-      <Td>
-        <span className="flex items-center gap-1">
-          <span data-testid={`relay-tenant-nodes-${tenant.id}`}>
-            {t('relay.admin.tenants.nodesValue', {
-              online: tenant.nodesOnline,
-              total: tenant.nodes,
-            })}
-          </span>
-          {tenant.nodesRevoked > 0 && (
-            <span
-              className="text-muted-foreground"
-              data-testid={`relay-tenant-nodes-revoked-${tenant.id}`}
-            >
-              {t('relay.admin.tenants.nodesRevoked', { count: tenant.nodesRevoked })}
-            </span>
-          )}
-        </span>
-      </Td>
+      <TenantNodesCell tenant={tenant} />
       <Td>{tenant.streams}</Td>
       <Td>
         <span data-testid={`relay-tenant-traffic-${tenant.id}`}>
           {trafficText(tenant.bytesOut)}
         </span>
       </Td>
-      <Td>
-        <span className="flex items-center gap-1">
-          <span data-testid={`relay-tenant-quota-${tenant.id}`}>{quota.text}</span>
-          {quota.inherited && (
-            <Badge variant="outline" data-testid={`relay-tenant-quota-default-${tenant.id}`}>
-              {t('relay.admin.quota.inheritBadge')}
-            </Badge>
-          )}
-        </span>
-      </Td>
-      <Td>
-        <span className="flex items-center gap-1">
-          {epochText(t, tenant.tokenEpoch)}
-          {tenant.kicked && (
-            <Badge variant="destructive" data-testid={`relay-tenant-kicked-${tenant.id}`}>
-              {t('relay.admin.tenants.kicked')}
-            </Badge>
-          )}
-        </span>
-      </Td>
-      <Td className={stickyActionColumn}>
-        <div className="flex items-center gap-1">
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            disabled={busy}
-            onClick={() => onEdit(tenant)}
-            data-testid={`relay-tenant-edit-${tenant.id}`}
-          >
-            <Pencil />
-            {t('relay.admin.tenants.edit')}
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => onKick(tenant)}
-            data-testid={`relay-tenant-kick-${tenant.id}`}
-          >
-            <Unplug />
-            {t('relay.admin.tenants.kick')}
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="destructive"
-            disabled={busy}
-            onClick={() => onRemove(tenant)}
-            data-testid={`relay-tenant-remove-${tenant.id}`}
-          >
-            <Trash2 />
-            {t('relay.admin.tenants.remove')}
-          </Button>
-        </div>
-      </Td>
+      <TenantQuotaCell tenant={tenant} defaultQuota={defaultQuota} />
+      <TenantEpochCell tenant={tenant} />
+      <TenantActionsCell
+        tenant={tenant}
+        busy={busy}
+        onEdit={onEdit}
+        onKick={onKick}
+        onRemove={onRemove}
+      />
     </tr>
+  );
+}
+
+function TenantNodesCell({ tenant }: { tenant: RelayTenantSummary }) {
+  const { t } = useTranslation();
+  return (
+    <Td>
+      <span className="flex items-center gap-1">
+        <span data-testid={`relay-tenant-nodes-${tenant.id}`}>
+          {t('relay.admin.tenants.nodesValue', {
+            online: tenant.nodesOnline,
+            total: tenant.nodes,
+          })}
+        </span>
+        {tenant.nodesRevoked > 0 && (
+          <span
+            className="text-muted-foreground"
+            data-testid={`relay-tenant-nodes-revoked-${tenant.id}`}
+          >
+            {t('relay.admin.tenants.nodesRevoked', { count: tenant.nodesRevoked })}
+          </span>
+        )}
+      </span>
+    </Td>
+  );
+}
+
+function TenantQuotaCell({
+  tenant,
+  defaultQuota,
+}: { tenant: RelayTenantSummary; defaultQuota: RelayQuota }) {
+  const { t } = useTranslation();
+  const quota = quotaSummary(t, tenant.quota, defaultQuota);
+  return (
+    <Td>
+      <span className="flex items-center gap-1">
+        <span data-testid={`relay-tenant-quota-${tenant.id}`}>{quota.text}</span>
+        {quota.inherited && (
+          <Badge variant="outline" data-testid={`relay-tenant-quota-default-${tenant.id}`}>
+            {t('relay.admin.quota.inheritBadge')}
+          </Badge>
+        )}
+      </span>
+    </Td>
+  );
+}
+
+function TenantEpochCell({ tenant }: { tenant: RelayTenantSummary }) {
+  const { t } = useTranslation();
+  return (
+    <Td>
+      <span className="flex items-center gap-1">
+        {epochText(t, tenant.tokenEpoch)}
+        {tenant.kicked && (
+          <Badge variant="destructive" data-testid={`relay-tenant-kicked-${tenant.id}`}>
+            {t('relay.admin.tenants.kicked')}
+          </Badge>
+        )}
+      </span>
+    </Td>
+  );
+}
+
+function TenantActionsCell({
+  tenant,
+  busy,
+  onEdit,
+  onKick,
+  onRemove,
+}: {
+  tenant: RelayTenantSummary;
+  busy: boolean;
+  onEdit: (tenant: RelayTenantSummary) => void;
+  onKick: (tenant: RelayTenantSummary) => void;
+  onRemove: (tenant: RelayTenantSummary) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Td className={stickyActionColumn}>
+      <div className="flex items-center gap-1">
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={busy}
+          onClick={() => onEdit(tenant)}
+          data-testid={`relay-tenant-edit-${tenant.id}`}
+        >
+          <Pencil />
+          {t('relay.admin.tenants.edit')}
+        </Button>
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          disabled={busy}
+          onClick={() => onKick(tenant)}
+          data-testid={`relay-tenant-kick-${tenant.id}`}
+        >
+          <Unplug />
+          {t('relay.admin.tenants.kick')}
+        </Button>
+        <Button
+          type="button"
+          size="xs"
+          variant="destructive"
+          disabled={busy}
+          onClick={() => onRemove(tenant)}
+          data-testid={`relay-tenant-remove-${tenant.id}`}
+        >
+          <Trash2 />
+          {t('relay.admin.tenants.remove')}
+        </Button>
+      </div>
+    </Td>
   );
 }
 

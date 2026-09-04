@@ -31,6 +31,7 @@ const {
   default: SettingsPage,
   settingsTabFromParam,
   chunkPreloadOrder,
+  settingsTabBarItems,
 } = await import('./SettingsPage');
 
 const TAB_IDS = [
@@ -104,6 +105,20 @@ describe('SettingsPage 标签栏', () => {
   test('`?tab=` 不是合法标签时退回「通用」', async () => {
     const html = await renderResolved('/settings?tab=bogus');
     expect(html).toContain('data-testid="general-settings-tab"');
+  });
+});
+
+// 中继标签只在本机带中继角色时挂上，门禁本身在 settings/relay/settings-tab-gating.test.tsx 里覆盖。
+describe('settingsTabBarItems', () => {
+  test('没有中继角色时就是七个常规标签', () => {
+    expect(settingsTabBarItems(false).map((item) => String(item.value))).toEqual(TAB_IDS);
+  });
+
+  test('有中继角色时插在「多节点互联」右侧、「通知」左侧', () => {
+    const values = settingsTabBarItems(true).map((item) => String(item.value));
+    expect(values).toHaveLength(TAB_IDS.length + 1);
+    expect(values[values.indexOf('nodes') + 1]).toBe('relay');
+    expect(values.indexOf('relay')).toBeLessThan(values.indexOf('notifications'));
   });
 });
 

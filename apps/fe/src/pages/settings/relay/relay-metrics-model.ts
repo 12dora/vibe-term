@@ -77,16 +77,6 @@ export function totalMemberReconnects(members: readonly RelayMetricsMember[]): n
   );
 }
 
-/** 在线优先，其次按流量降序，最后按名字稳定排序。 */
-export function sortMembers(members: readonly RelayMetricsMember[]): RelayMetricsMember[] {
-  return [...members].sort((a, b) => {
-    if (a.online !== b.online) return a.online ? -1 : 1;
-    const traffic = b.bytesInPerSec + b.bytesOutPerSec - (a.bytesInPerSec + a.bytesOutPerSec);
-    if (traffic !== 0) return traffic;
-    return memberTitle(a).localeCompare(memberTitle(b));
-  });
-}
-
 /** 成员标题：有名字用名字，否则用节点号前 8 位。 */
 export function memberTitle(member: RelayMetricsMember): string {
   const name = member.name?.trim();
@@ -117,4 +107,109 @@ const LEVEL_TONE = { ok: 'default', warn: 'warning', bad: 'destructive' } as con
 
 export function levelTone(level: MetricLevel): 'default' | 'warning' | 'destructive' {
   return LEVEL_TONE[level];
+}
+
+// ---------------------------------------------------------------------------
+// 接入节点表的检索 / 排序
+// ---------------------------------------------------------------------------
+
+export type MemberSortKey =
+  | 'node'
+  | 'state'
+  | 'rtt'
+  | 'streams'
+  | 'rate'
+  | 'reconnects'
+  | 'connected';
+
+export type SortDirection = 'asc' | 'desc';
+
+export interface MemberSort {
+  key: MemberSortKey;
+  direction: SortDirection;
+}
+
+export const DEFAULT_MEMBER_SORT: MemberSort = { key: 'node', direction: 'asc' };
+
+export type MemberStateFilter = 'all' | 'online' | 'offline';
+
+export interface MemberFilter {
+  /** 匹配节点名 / 节点号 / 租户号，大小写不敏感。 */
+  query: string;
+  state: MemberStateFilter;
+  /** 选中的租户；`null` 即不按租户过滤。 */
+  tenantId: string | null;
+}
+
+export const EMPTY_MEMBER_FILTER: MemberFilter = { query: '', state: 'all', tenantId: null };
+
+function matchesQuery(member: RelayMetricsMember, query: string): boolean {
+  return (
+    memberTitle(member).toLowerCase().includes(query) ||
+    member.nodeId.toLowerCase().includes(query) ||
+    member.tenantId.toLowerCase().includes(query)
+  );
+}
+
+function matchesState(member: RelayMetricsMember, state: MemberStateFilter): boolean {
+  if (state === 'online') return member.online;
+  if (state === 'offline') return !member.online;
+  return true;
+}
+
+export function filterMembers(
+  members: readonly RelayMetricsMember[],
+  filter: MemberFilter
+): RelayMetricsMember[] {
+  const query = filter.query.trim().toLowerCase();
+  return members.filter((member) => {
+    if (filter.tenantId !== null && member.tenantId !== filter.tenantId) return false;
+    if (!matchesState(member, filter.state)) return false;
+    return query === '' || matchesQuery(member, query);
+  });
+}
+
+/** 每个排序列取一个可比较的值；`null` 表示「没有这个量」，恒排在最后。 */
+const MEMBER_SORT_VALUE: Record<
+  MemberSortKey,
+  (member: RelayMetricsMember) => string | number | null
+> = {
+  node: (member) => memberTitle(member).toLowerCase(),
+  state: (member) => (member.online ? 0 : 1),
+  rtt: (member) => (member.online ? member.rttMs : null),
+  streams: (member) => member.activeStreams,
+  rate: (member) => member.bytesInPerSec + member.bytesOutPerSec,
+  reconnects: (member) => member.reconnects,
+  connected: (member) => member.connectedAt,
+};
+
+function compareValues(a: string | number, b: string | number): number {
+  if (typeof a === 'string' && typeof b === 'string') return a.localeCompare(b);
+  return Number(a) - Number(b);
+}
+
+export function sortMembersBy(
+  members: readonly RelayMetricsMember[],
+  sort: MemberSort
+): RelayMetricsMember[] {
+  const pick = MEMBER_SORT_VALUE[sort.key];
+  const factor = sort.direction === 'desc' ? -1 : 1;
+  return [...members].sort((a, b) => {
+    const left = pick(a);
+    const right = pick(b);
+    // 缺值不跟着方向翻面：升降序都摆在最后，免得一点降序整屏都是「—」。
+    if (left === null || right === null) {
+      if (left === right) return a.nodeId.localeCompare(b.nodeId);
+      return left === null ? 1 : -1;
+    }
+    const primary = compareValues(left, right);
+    if (primary !== 0) return primary * factor;
+    return a.nodeId.localeCompare(b.nodeId);
+  });
+}
+
+/** 点表头：换列即回到升序，同列再点一次翻面。 */
+export function toggleMemberSort(current: MemberSort, key: MemberSortKey): MemberSort {
+  if (current.key !== key) return { key, direction: 'asc' };
+  return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
 }

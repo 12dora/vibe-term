@@ -1,16 +1,15 @@
-// 中继运行指标面板：状态条 + 磁贴排 + 趋势卡 + 接入节点表。
-// 数据来自 5 秒一拍的 `relay-metrics-store`；本面板拥有那条回路（页面隐藏时自动跳拍）。
+// 中继运行指标面板：状态条 + 磁贴排 + 趋势卡。
+// 数据来自 5 秒一拍的 `relay-metrics-store`，由调用方（中继管理页）持有那条回路：
+// 接入节点卡与本面板读同一份采样，回路只该起一条。
 
 import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Reveal } from '@tmex/ui/motion';
 import { Skeleton } from '@tmex/ui/skeleton';
 import { RotateCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { formatDuration } from './relay-format';
-import { RelayMembersTable } from './relay-metrics-members';
 import { relayTrendSeries } from './relay-metrics-model';
-import { type RelayMetricsApi, useRelayMetrics } from './relay-metrics-store';
+import type { UseRelayMetricsResult } from './relay-metrics-store';
 import { RelayFullTiles, RelayTilesSkeleton } from './relay-metrics-tiles';
 import { RelayTrendsCard } from './relay-metrics-trends';
 
@@ -87,12 +86,11 @@ function RelayMetricsPanelSkeleton() {
 }
 
 export interface RelayMetricsPanelProps {
-  api?: RelayMetricsApi;
+  /** 采样回路由调用方持有，面板只读这一份快照。 */
+  metrics: UseRelayMetricsResult;
 }
 
-export function RelayMetricsPanel({ api }: RelayMetricsPanelProps = {}) {
-  const { t } = useTranslation();
-  const metrics = useRelayMetrics({ api });
+export function RelayMetricsPanel({ metrics }: RelayMetricsPanelProps) {
   const { data, lastError } = metrics;
 
   if (metrics.unavailable) return null;
@@ -110,7 +108,6 @@ export function RelayMetricsPanel({ api }: RelayMetricsPanelProps = {}) {
 
   const stale = lastError !== null;
   const trends = relayTrendSeries(data);
-  const now = metrics.loadedAt ?? data.sampledAt;
 
   return (
     <div className="flex flex-col gap-4" data-testid="relay-metrics-panel">
@@ -126,19 +123,6 @@ export function RelayMetricsPanel({ api }: RelayMetricsPanelProps = {}) {
       <RelayFullTiles data={data} trends={trends} stale={stale} />
       <Reveal delayMs={60}>
         <RelayTrendsCard trends={trends} />
-      </Reveal>
-      <Reveal delayMs={120}>
-        <Card data-testid="relay-members-card">
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
-            <CardTitle>{t('relay.metrics.members.title')}</CardTitle>
-            <span className="text-xs text-muted-foreground" data-testid="relay-members-total">
-              {t('relay.metrics.members.total', { n: data.members.length })}
-            </span>
-          </CardHeader>
-          <CardContent>
-            <RelayMembersTable members={data.members} now={now} />
-          </CardContent>
-        </Card>
       </Reveal>
     </div>
   );
