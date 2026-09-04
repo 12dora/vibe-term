@@ -1,10 +1,10 @@
 // 吊销之后那条 `meta-key` 换代：模式判定的权威来源、失败时的欠账与结论。
 
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { RecordSigner } from '@/auth/key-log-actions';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { setMeshRelayStateForTest } from '@/node/mesh-relay';
+import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
 import { clearPendingMetaKeysForTest, listPendingMetaKeys } from '@/node/relay-meta-key-pending';
 import { ApiClient } from '@tmex/api-client';
 import type { AuthApi } from '@tmex/api-client/auth/index';
@@ -78,6 +78,10 @@ const MODE = { uid: 'u1', rootEpoch: 3, kdfParams: KDF_JSON } as unknown as Reso
 function ctxOf(api: AuthApi, relayApi: RelayTenantApi) {
   return { api, mode: MODE, writerPublicUrl: null, t, relayApi };
 }
+
+afterEach(() => {
+  resetMeshRelayStateForTest();
+});
 
 describe('revokeNodeRecord 之后的 meta-key 换代', () => {
   beforeEach(() => clearPendingMetaKeysForTest());
