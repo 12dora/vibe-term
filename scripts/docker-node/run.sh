@@ -15,6 +15,8 @@ NAME="${TMEX_DOCKER_NAME:-tmex-node-docker}"
 IMAGE="${TMEX_DOCKER_IMAGE:-tmex-node}"
 TAG="${TMEX_DOCKER_TAG:-latest}"
 HTTP_PORT="${TMEX_HTTP_PORT:-29883}"
+# 网页/setup 接口默认只发布到宿主回环；要远程访问时显式设 TMEX_DOCKER_HTTP_BIND=0.0.0.0。
+HTTP_BIND="${TMEX_DOCKER_HTTP_BIND:-127.0.0.1}"
 PEER_PORT="${TMEX_PEER_HOST_PORT:-39001}"
 VOL_OPT="${NAME}-opt"
 VOL_DATA="${NAME}-data"
@@ -34,13 +36,13 @@ cmd_up() {
   local env_args=()
   [[ -n "${TMEX_SITE_NAME:-}" ]] && env_args+=(-e "TMEX_SITE_NAME=${TMEX_SITE_NAME}")
   [[ -n "${TMEX_BASE_URL:-}" ]] && env_args+=(-e "TMEX_BASE_URL=${TMEX_BASE_URL}")
-  log "creating ${NAME} from ${IMAGE}:${TAG} (http ${HTTP_PORT}, peer ${PEER_PORT})"
+  log "creating ${NAME} from ${IMAGE}:${TAG} (http ${HTTP_BIND}:${HTTP_PORT}, peer ${PEER_PORT})"
   docker run -d \
     --name "${NAME}" \
     --restart unless-stopped \
     -v "${VOL_OPT}:/opt/tmex" \
     -v "${VOL_DATA}:/var/lib/tmex" \
-    -p "${HTTP_PORT}:9883" \
+    -p "${HTTP_BIND}:${HTTP_PORT}:9883" \
     -p "${PEER_PORT}:39001" \
     ${env_args[@]+"${env_args[@]}"} \
     "${IMAGE}:${TAG}" >/dev/null
