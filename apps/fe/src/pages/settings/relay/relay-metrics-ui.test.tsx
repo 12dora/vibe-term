@@ -22,7 +22,9 @@ const {
 const { relayMetricsFixture, relayMetricsMember, relayMetricsSample } = await import(
   './relay-metrics-fixture'
 );
-const { RelayCompactTiles, RelayFullTiles } = await import('./relay-metrics-tiles');
+const { RelayCompactTiles, RelayFullTiles, RelayTilesSkeleton, ThroughputTile } = await import(
+  './relay-metrics-tiles'
+);
 const { RelayTrendsCard } = await import('./relay-metrics-trends');
 const { RelayMembersTable } = await import('./relay-metrics-members');
 const { RelayMetricsPanel, RelayMetricsHeaderStrip } = await import('./relay-metrics-panel');
@@ -140,7 +142,7 @@ describe('磁贴排', () => {
   const data = relayMetricsFixture();
   const trends = relayTrendSeries(data);
 
-  test('完整排把十二格都摆出来', () => {
+  test('完整排把十三格都摆出来', () => {
     const html = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
     for (const id of [
       'members-online',
@@ -148,6 +150,7 @@ describe('磁贴排', () => {
       'bytes-in',
       'bytes-out',
       'frames',
+      'traffic',
       'rtt',
       'event-loop',
       'memory',
@@ -167,6 +170,59 @@ describe('磁贴排', () => {
     expect(html).not.toContain('data-testid="relay-metric-heap"');
     expect(html).not.toContain('data-testid="relay-metric-sockets"');
     expect(html).toContain('data-slot="sparkline"');
+  });
+
+  test('累计中转流量：完整排单独一格，只出一个数（收发两侧同值）', () => {
+    const html = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
+    expect(html).toContain('data-testid="relay-metric-traffic"');
+    // totals.bytesOut = 10 MiB；in / out 逐字节相等，只摆一次
+    expect(html).toContain('10.0 MB');
+    expect(html).toContain('relay.metrics.tiles.trafficSub');
+    expect(html).toContain('title="relay.metrics.tiles.trafficHint"');
+  });
+
+  test('紧凑排没有单独的流量格，累计量挂在吞吐格副行上', () => {
+    const html = renderToStaticMarkup(<RelayCompactTiles data={data} trends={trends} />);
+    expect(html).not.toContain('data-testid="relay-metric-traffic"');
+    expect(html).toContain('relay.metrics.tiles.throughputTotal');
+    expect(html).not.toContain('relay.metrics.tiles.throughputSub');
+  });
+
+  test('完整排把进出速率拆成两格，不再摆合计吞吐格', () => {
+    const html = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
+    expect(html).toContain('data-testid="relay-metric-bytes-in"');
+    expect(html).toContain('data-testid="relay-metric-bytes-out"');
+    expect(html).not.toContain('data-testid="relay-metric-throughput"');
+  });
+
+  test('吞吐格默认副行是进出速率，showTotal 才换成累计量', () => {
+    const rates = renderToStaticMarkup(<ThroughputTile data={data} trends={trends} />);
+    expect(rates).toContain('relay.metrics.tiles.throughputSub');
+    expect(rates).not.toContain('relay.metrics.tiles.throughputTotal');
+
+    const total = renderToStaticMarkup(<ThroughputTile data={data} trends={trends} showTotal />);
+    expect(total).toContain('relay.metrics.tiles.throughputTotal');
+    expect(total).not.toContain('relay.metrics.tiles.throughputSub');
+  });
+
+  test('响应式栅格：窄屏不摆多列，免得读数被截断', () => {
+    const compact = renderToStaticMarkup(<RelayCompactTiles data={data} trends={trends} />);
+    // 主排：基础断点单列 → sm 两列 → lg 四列
+    expect(compact).toContain('grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4');
+    // 瘦排：基础断点两列（值都很短）→ sm 三列
+    expect(compact).toContain('grid grid-cols-2 gap-2 sm:grid-cols-3');
+    expect(compact).not.toContain('grid grid-cols-3 gap-2"');
+
+    const full = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
+    expect(full).toContain('grid-cols-1');
+    expect(full).toContain('sm:grid-cols-2');
+    expect(full).toContain('md:grid-cols-3');
+    expect(full).toContain('lg:grid-cols-4');
+    expect(full).toContain('xl:grid-cols-6');
+    expect(full).not.toContain('grid grid-cols-2 gap-3');
+
+    const skeleton = renderToStaticMarkup(<RelayTilesSkeleton count={4} />);
+    expect(skeleton).toContain('grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4');
   });
 
   test('数值走格式化后的读数而不是裸字节', () => {
@@ -248,7 +304,7 @@ describe('RelayMetricsPanel', () => {
   });
 
   test('角色缺席：整块不渲染', () => {
-    setRelayMetricsStateForTest({ unavailable: true });
+    setRelayMetricsStateForTest({ availability: 'unavailable' });
     expect(renderToStaticMarkup(<RelayMetricsPanel />)).toBe('');
   });
 

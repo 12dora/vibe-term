@@ -20,7 +20,7 @@ import { Ellipsis } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { type MachineStatusBadge, roleMenuTargets } from './machine-status';
-import { ROLE_LABEL_KEY } from './membership/role-transition';
+import { ROLE_LABEL_KEY, isMeshRole } from './membership/role-transition';
 
 const STATUS_VARIANT: Record<MachineStatusBadge['tone'], 'default' | 'destructive' | 'outline'> = {
   ok: 'default',
@@ -29,7 +29,8 @@ const STATUS_VARIANT: Record<MachineStatusBadge['tone'], 'default' | 'destructiv
 };
 
 export interface LocalMachineHeaderProps {
-  role: LocalRole;
+  /** `/api/local/status` 还没回来 / 失败时为 `null`：角色徽标与操作菜单一律不出。 */
+  role: LocalRole | null;
   status: MachineStatusBadge;
   /** mesh 下才有角色徽标与操作菜单。 */
   meshEnabled: boolean;
@@ -50,11 +51,15 @@ export function LocalMachineHeader({
   const { t } = useTranslation();
   // 账号安全改成右侧滑出面板，链接只换查询串，留在当前页面。
   const { hrefFor: panelHref } = useSidePanel();
+  // 菜单里每一项都要先知道当前角色才算得出目标；角色未知（状态没回来）或不可操作
+  // （纯中继没有网页、standalone 的下一步在向导里）时整个菜单不挂——摆一个点了没反应的菜单
+  // 比没有菜单更糟。
+  const menuRole = meshEnabled && role && isMeshRole(role) ? role : null;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
       <CardTitle className="mr-auto flex min-w-0 flex-wrap items-center gap-2">
         {t('nodes.machine.title')}
-        {meshEnabled && (
+        {meshEnabled && role && (
           <Badge
             variant="secondary"
             title={t('nodes.machine.role')}
@@ -71,7 +76,7 @@ export function LocalMachineHeader({
           {t(status.key, status.params)}
         </Badge>
       </CardTitle>
-      {meshEnabled && (
+      {menuRole && (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -89,7 +94,7 @@ export function LocalMachineHeader({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-44">
             <LocalMachineMenuList
-              roles={roleMenuTargets(role)}
+              roles={roleMenuTargets(menuRole)}
               roleLabel={(target) => t(ROLE_LABEL_KEY[target])}
               labels={{
                 changeRole: t('nodes.machine.menu.changeRole'),

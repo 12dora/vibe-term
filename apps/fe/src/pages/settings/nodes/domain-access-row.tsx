@@ -1,4 +1,4 @@
-// 通用设置 →「允许域名访问」：关掉后，经公开域名到达的请求只保留 Hub / 节点互联，网页与 API 停服。
+// 网络 →「允许域名访问」：关掉后，经公开域名到达的请求只保留 Hub / 节点互联，网页与 API 停服。
 //
 // 关闭是自锁操作——正经该域名访问本页时，保存的下一刻连接就会断，所以关闭必须二次确认，
 // 开启没有风险，直接写。状态放在可订阅的控制器里而不是组件 state，确认流程才能脱离 DOM 直接测。
@@ -155,8 +155,10 @@ export function DomainAccessRow({
   const allowed = applied ?? policy.allowed;
   return (
     <>
-      <Row label={t('nodes.machine.domainAccess.label')}>
-        <div className="flex min-w-0 flex-col gap-1">
+      {/* 开关与标签同一行（与直连插件那一行同一套版式），说明另起一行占满宽度：
+          窄屏下缩进到标签右侧只会把说明压成一列。 */}
+      <div className="flex min-w-0 flex-col gap-1">
+        <Row label={t('nodes.machine.domainAccess.label')}>
           <Switch
             size="sm"
             checked={allowed}
@@ -165,24 +167,24 @@ export function DomainAccessRow({
             data-testid="local-machine-domain-access-switch"
             aria-label={t('nodes.machine.domainAccess.label')}
           />
+        </Row>
+        <span
+          className="text-xs text-muted-foreground"
+          data-testid="local-machine-domain-access-hint"
+        >
+          {policy.hosts.length > 0
+            ? t('nodes.machine.domainAccess.description', { hosts })
+            : t('nodes.machine.domainAccess.noHosts')}
+        </span>
+        {state.error !== null && (
           <span
-            className="text-xs text-muted-foreground"
-            data-testid="local-machine-domain-access-hint"
+            className="text-xs text-destructive"
+            data-testid="local-machine-domain-access-error"
           >
-            {policy.hosts.length > 0
-              ? t('nodes.machine.domainAccess.description', { hosts })
-              : t('nodes.machine.domainAccess.noHosts')}
+            {describeDomainAccessError(t, state.error)}
           </span>
-          {state.error !== null && (
-            <span
-              className="text-xs text-destructive"
-              data-testid="local-machine-domain-access-error"
-            >
-              {describeDomainAccessError(t, state.error)}
-            </span>
-          )}
-        </div>
-      </Row>
+        )}
+      </div>
 
       <DomainAccessConfirm
         open={state.confirming}

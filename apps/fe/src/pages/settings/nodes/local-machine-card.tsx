@@ -164,6 +164,7 @@ export function LocalMachineCard({
   const domainApi = useMemo(() => domainAccessApi(client), [client]);
   const badge = machineStatusBadge({
     standalone: !meshEnabled,
+    roleKnown: status !== null,
     relayMode: uplink.relay.relayMode,
     relayAttached: uplink.relay.attached !== null,
     relayKicked: uplink.relay.kicked,
@@ -178,7 +179,7 @@ export function LocalMachineCard({
     <Card data-testid="local-machine-card">
       <CardHeader>
         <LocalMachineHeader
-          role={status?.role ?? 'standalone'}
+          role={status?.role ?? null}
           status={badge}
           meshEnabled={meshEnabled}
           roleLocked={leave.busy || setupCommitted}

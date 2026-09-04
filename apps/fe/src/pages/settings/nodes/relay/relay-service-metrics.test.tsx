@@ -37,7 +37,7 @@ describe('RelayServiceMetrics', () => {
   });
 
   test('角色缺席：整块不渲染', () => {
-    setRelayMetricsStateForTest({ unavailable: true });
+    setRelayMetricsStateForTest({ availability: 'unavailable' });
     expect(render()).toBe('');
   });
 
@@ -59,6 +59,21 @@ describe('RelayServiceMetrics', () => {
     expect(html).toContain('data-testid="relay-service-metrics-stale"');
     expect(html).toContain('data-stale=""');
     expect(html).toContain('data-testid="relay-metric-throughput"');
+  });
+
+  test('累计中转流量挂在吞吐格副行上，而不是单独占一格', () => {
+    setRelayMetricsStateForTest({ data: relayMetricsFixture() });
+    const html = render();
+    expect(html).toContain('relay.metrics.tiles.throughputTotal');
+    expect(html).not.toContain('relay.metrics.tiles.throughputSub');
+    expect(html).not.toContain('data-testid="relay-metric-traffic"');
+  });
+
+  test('窄屏栅格：主排单列起步，瘦排两列起步', () => {
+    setRelayMetricsStateForTest({ data: relayMetricsFixture() });
+    const html = render();
+    expect(html).toContain('grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4');
+    expect(html).toContain('grid grid-cols-2 gap-2 sm:grid-cols-3');
   });
 
   test('给了回调才出控制台链接', () => {

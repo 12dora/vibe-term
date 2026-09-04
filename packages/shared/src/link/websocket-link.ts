@@ -327,4 +327,8 @@ export class WebSocketLink implements LinkSession {
   close(reason?: string): void {
     this.mux.close(reason);
   }
+
+  stats(): ReturnType<LinkMux['stats']> {
+    return this.mux.stats();
+  }
 }

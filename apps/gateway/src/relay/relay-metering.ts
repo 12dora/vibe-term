@@ -87,13 +87,21 @@ export class RelayMetering {
     return copyDelta(this.liveMembers.get(memberKey(tenantId, nodeId)));
   }
 
-  forget(tenantId: string): void {
+  forgetMember(tenantId: string, nodeId: string): void {
+    this.liveMembers.delete(memberKey(tenantId, nodeId));
+  }
+
+  forgetTenant(tenantId: string): void {
     this.pending.delete(tenantId);
     this.liveTenants.delete(tenantId);
     const prefix = `${tenantId}\0`;
     for (const key of this.liveMembers.keys()) {
       if (key.startsWith(prefix)) this.liveMembers.delete(key);
     }
+  }
+
+  forget(tenantId: string): void {
+    this.forgetTenant(tenantId);
   }
 
   flush(): void {

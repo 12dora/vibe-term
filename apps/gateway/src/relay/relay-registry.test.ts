@@ -62,6 +62,39 @@ describe('RelayRegistry reconnects / RTT', () => {
     expect(live.pingAt).toBeNull();
   });
 
+  test('forgetMember 清掉 reconnects/seen，再接入从 0 计且幂等', () => {
+    const registry = new RelayRegistry();
+    const first = put(registry, { connectedAt: 1000 });
+    const second = put(registry, { connectedAt: 2000 });
+    expect(second.result.live.reconnects).toBe(1);
+    registry.removeLink(second.link);
+    expect(registry.reconnectsOf('tenant-a', 'node-1')).toBe(1);
+    registry.forgetMember('tenant-a', 'node-1');
+    registry.forgetMember('tenant-a', 'node-1');
+    expect(registry.reconnectsOf('tenant-a', 'node-1')).toBe(0);
+    const again = put(registry, { connectedAt: 3000 });
+    expect(again.result.replaced).toBeNull();
+    expect(again.result.live.reconnects).toBe(0);
+    first.link.close();
+  });
+
+  test('forgetTenant 清掉该租户全部 reconnect 状态，关闭回调后再 forget 仍安全', () => {
+    const registry = new RelayRegistry();
+    put(registry, { tenantId: 'tenant-a', nodeId: 'n1', connectedAt: 1 });
+    const liveA = put(registry, { tenantId: 'tenant-a', nodeId: 'n1', connectedAt: 2 });
+    put(registry, { tenantId: 'tenant-b', nodeId: 'n1', connectedAt: 3 });
+    put(registry, { tenantId: 'tenant-b', nodeId: 'n1', connectedAt: 4 });
+    expect(registry.reconnectsOf('tenant-a', 'n1')).toBe(1);
+    expect(registry.reconnectsOf('tenant-b', 'n1')).toBe(1);
+    registry.forgetTenant('tenant-a');
+    registry.forgetTenant('tenant-a');
+    expect(registry.reconnectsOf('tenant-a', 'n1')).toBe(0);
+    expect(registry.reconnectsOf('tenant-b', 'n1')).toBe(1);
+    registry.removeLink(liveA.link);
+    registry.forgetTenant('tenant-a');
+    expect(registry.reconnectsOf('tenant-a', 'n1')).toBe(0);
+  });
+
   test('成员流计数在源和目标上各 +1，释放后归零', () => {
     const registry = new RelayRegistry();
     expect(registry.reserveStream('t', 8)).toBe(true);

@@ -206,11 +206,49 @@ describe('relay key log', () => {
     await clientA.inbox.takeOf('auth.ok');
     const clientB = await tenant.connect(b);
     await clientB.inbox.takeOf('auth.ok');
+    relay.runtime.metering.recordMember(tenant.id, b.nodeId, { bytesIn: 99, bytesOut: 7 });
     const ack = await tenant.appendMember(clientA, 'revoke', tenant.revokeRecord(b.nodeId));
     expect(ack.ok).toBe(true);
     const kicked = await clientB.inbox.takeOf('relay.kicked');
     expect(kicked.t === 'relay.kicked' && kicked.reason).toBe('revoked');
     expect(relay.runtime.tenants.getNode(tenant.id, b.nodeId)?.status).toBe('revoked');
+    expect(relay.runtime.metering.liveMemberSnapshot(tenant.id, b.nodeId)).toEqual({
+      bytesIn: 0,
+      bytesOut: 0,
+    });
+    expect(relay.runtime.registry.reconnectsOf(tenant.id, b.nodeId)).toBe(0);
+    clientB.close();
+    relay.runtime.metering.recordMember(tenant.id, b.nodeId, { bytesIn: 1 });
+    relay.runtime.metering.forgetMember(tenant.id, b.nodeId);
+    relay.runtime.registry.forgetMember(tenant.id, b.nodeId);
+    expect(relay.runtime.metering.liveMemberSnapshot(tenant.id, b.nodeId)).toEqual({
+      bytesIn: 0,
+      bytesOut: 0,
+    });
+  });
+
+  test('pong 晚于后续心跳到达时 RTT 仍按原始 ping 计', async () => {
+    const relay = await boot({ heartbeatIntervalMs: 40, heartbeatMissLimit: 10 });
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    await client.inbox.takeOf('auth.ok');
+    await client.inbox.takeOf('relay.quota');
+    await client.inbox.takeOf('relay.list');
+    const ping = await client.inbox.takeOf('ping', 1_000);
+    expect(ping.t).toBe('ping');
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    expect(client.inbox.drain().filter((msg) => msg.t === 'ping')).toHaveLength(0);
+    relay.advance(77);
+    client.send({ t: 'pong' });
+    const deadline = Date.now() + 200;
+    let rtt: number | null | undefined;
+    while (Date.now() < deadline) {
+      rtt = relay.runtime.registry.get(tenant.id, node.nodeId)?.rttMs;
+      if (rtt != null) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(rtt).toBe(77);
   });
 
   test('ignores a passkey-signed revoke and says so in the ack', async () => {

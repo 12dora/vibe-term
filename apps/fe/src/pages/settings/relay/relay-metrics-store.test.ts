@@ -8,6 +8,8 @@ import {
   acquireRelayMetricsPolling,
   createRelayMetricsApi,
   getRelayMetricsState,
+  isRelayMetricsHalted,
+  probeRelayMetrics,
   refreshRelayMetrics,
   resetRelayMetricsStateForTest,
   setRelayMetricsStateForTest,
@@ -43,10 +45,10 @@ describe('refreshRelayMetrics', () => {
     await refreshRelayMetrics(api);
     const state = getRelayMetricsState();
     expect(paths).toEqual(['/api/relay/metrics']);
+    expect(state.availability).toBe('available');
     expect(state.data).toEqual(METRICS);
     expect(state.loading).toBe(false);
     expect(state.lastError).toBeNull();
-    expect(state.unavailable).toBe(false);
     expect(state.loadedAt).not.toBeNull();
   });
 
@@ -57,7 +59,7 @@ describe('refreshRelayMetrics', () => {
     const state = getRelayMetricsState();
     expect(state.data).toEqual(METRICS);
     expect(state.lastError).toBe('boom');
-    expect(state.unavailable).toBe(false);
+    expect(state.availability).toBe('unknown');
     expect(state.loading).toBe(false);
   });
 
@@ -67,7 +69,7 @@ describe('refreshRelayMetrics', () => {
     await refreshRelayMetrics(api);
     expect(getRelayMetricsState()).toMatchObject({
       data: null,
-      unavailable: true,
+      availability: 'unavailable',
       lastError: null,
     });
   });
@@ -75,7 +77,7 @@ describe('refreshRelayMetrics', () => {
   test('401：未登录同样按不可用处理，不当成加载失败', async () => {
     const { api } = apiWith(fails(401));
     await refreshRelayMetrics(api);
-    expect(getRelayMetricsState()).toMatchObject({ unavailable: true, lastError: null });
+    expect(getRelayMetricsState()).toMatchObject({ availability: 'unauthorized', lastError: null });
   });
 
   test('单飞：并发的两次刷新只打一次请求', async () => {
@@ -91,10 +93,51 @@ describe('refreshRelayMetrics', () => {
     expect(paths).toHaveLength(0);
     expect(getRelayMetricsState().data).toBeNull();
   });
+
+  test('落到终态之后不再发请求，直到重探', async () => {
+    setRelayMetricsStateForTest({ availability: 'unavailable' });
+    const { api, paths } = apiWith(ok());
+    await refreshRelayMetrics(api);
+    expect(paths).toHaveLength(0);
+
+    probeRelayMetrics();
+    expect(getRelayMetricsState().availability).toBe('unknown');
+    await refreshRelayMetrics(api);
+    expect(paths).toHaveLength(1);
+  });
+});
+
+describe('isRelayMetricsHalted / probeRelayMetrics', () => {
+  test('只有 404 与 401 算终态', () => {
+    expect(isRelayMetricsHalted('unknown')).toBe(false);
+    expect(isRelayMetricsHalted('available')).toBe(false);
+    expect(isRelayMetricsHalted('unavailable')).toBe(true);
+    expect(isRelayMetricsHalted('unauthorized')).toBe(true);
+  });
+
+  test('重探把终态清回 unknown，其余状态不动', () => {
+    for (const availability of ['unavailable', 'unauthorized'] as const) {
+      resetRelayMetricsStateForTest();
+      setRelayMetricsStateForTest({ availability });
+      probeRelayMetrics();
+      expect(getRelayMetricsState().availability).toBe('unknown');
+    }
+    resetRelayMetricsStateForTest();
+    setRelayMetricsStateForTest({ availability: 'available' });
+    probeRelayMetrics();
+    expect(getRelayMetricsState().availability).toBe('available');
+  });
 });
 
 describe('acquireRelayMetricsPolling', () => {
-  function harness(hidden = false) {
+  interface Harness {
+    calls: number[];
+    fire: () => void;
+    wake: () => void;
+  }
+
+  /** 回路是模块级单例：一次泄漏的引用计数会让后面每个用例都拿不到新回路，所以归还写在 finally 里。 */
+  function withPolling(hidden: () => boolean, run: (harness: Harness) => void): void {
     const calls: number[] = [];
     let tick: (() => void) | null = null;
     let onVisible: (() => void) | null = null;
@@ -112,7 +155,7 @@ describe('acquireRelayMetricsPolling', () => {
         return () => undefined;
       },
       visibility: {
-        hidden: () => hidden,
+        hidden,
         subscribe: (fn) => {
           onVisible = fn;
           return () => {
@@ -121,31 +164,72 @@ describe('acquireRelayMetricsPolling', () => {
         },
       },
     });
-    return { calls, fire: () => tick?.(), wake: () => onVisible?.(), release };
+    try {
+      run({ calls, fire: () => tick?.(), wake: () => onVisible?.() });
+    } finally {
+      release();
+    }
   }
 
+  const visible = () => false;
+
   test('取用即刷新一次，之后每 5 秒一拍', () => {
-    const { calls, fire, release } = harness();
-    expect(calls).toHaveLength(1);
-    fire();
-    fire();
-    expect(calls).toHaveLength(3);
-    release();
+    withPolling(visible, ({ calls, fire }) => {
+      expect(calls).toHaveLength(1);
+      fire();
+      fire();
+      expect(calls).toHaveLength(3);
+    });
   });
 
-  test('页面隐藏时跳拍', () => {
-    const { calls, fire, release } = harness(true);
-    expect(calls).toHaveLength(1);
-    fire();
-    fire();
-    expect(calls).toHaveLength(1);
-    release();
+  test('取用时页面已隐藏：首拍与兜底拍都不打', () => {
+    withPolling(
+      () => true,
+      ({ calls, fire }) => {
+        expect(calls).toHaveLength(0);
+        fire();
+        fire();
+        expect(calls).toHaveLength(0);
+      }
+    );
+  });
+
+  test('回到前台补一拍，之后恢复正常节奏', () => {
+    let hidden = true;
+    withPolling(
+      () => hidden,
+      ({ calls, fire, wake }) => {
+        expect(calls).toHaveLength(0);
+        hidden = false;
+        wake();
+        expect(calls).toHaveLength(1);
+        fire();
+        expect(calls).toHaveLength(2);
+      }
+    );
   });
 
   test('归还后定时器不再触发', () => {
-    const { calls, fire, release } = harness();
+    const calls: number[] = [];
+    const timer: { tick: (() => void) | null } = { tick: null };
+    const release = acquireRelayMetricsPolling({
+      intervalMs: 5_000,
+      refresh: () => calls.push(calls.length),
+      schedule: (fn) => {
+        timer.tick = fn;
+        return () => {
+          timer.tick = null;
+        };
+      },
+      delay: (fn) => {
+        fn();
+        return () => undefined;
+      },
+      visibility: { hidden: visible, subscribe: () => () => undefined },
+    });
+    expect(calls).toHaveLength(1);
     release();
-    fire();
+    timer.tick?.();
     expect(calls).toHaveLength(1);
   });
 });

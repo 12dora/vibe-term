@@ -22,6 +22,7 @@ export type RelayHarnessOptions = {
   now?: () => number;
   listDebounceMs?: number;
   heartbeatIntervalMs?: number;
+  heartbeatMissLimit?: number;
   authTimeoutMs?: number;
   meterFlushIntervalMs?: number;
   minClientVersion?: string;
@@ -121,6 +122,7 @@ export async function bootRelayHarness(opts: RelayHarnessOptions = {}): Promise<
     },
     listDebounceMs: opts.listDebounceMs ?? 0,
     heartbeatIntervalMs: opts.heartbeatIntervalMs ?? 0,
+    heartbeatMissLimit: opts.heartbeatMissLimit,
     authTimeoutMs: opts.authTimeoutMs ?? 60_000,
     meterFlushIntervalMs: opts.meterFlushIntervalMs ?? 0,
     minClientVersion: opts.minClientVersion,

@@ -232,6 +232,10 @@ export class RelayUplinkServer implements RelayUplinkHost {
   disconnectNode(tenantId: string, nodeId: string, reason: RelayKickReason): void {
     const live = this.registry.get(tenantId, nodeId);
     if (live) this.kickLink(live, reason);
+    if (reason === 'revoked') {
+      this.metering.forgetMember(tenantId, nodeId);
+      this.registry.forgetMember(tenantId, nodeId);
+    }
   }
 
   /** ctl 发送是异步排空的，立刻 close 会把 `relay.kicked` 丢掉，所以下一个宏任务再断。 */
@@ -452,9 +456,11 @@ export class RelayUplinkServer implements RelayUplinkHost {
       this.clearHeartbeat(live);
       return;
     }
-    if (live.awaitingPong) live.misses += 1;
-    if (live.misses >= this.heartbeatMissLimit) {
-      live.link.close('heartbeat-timeout');
+    if (live.awaitingPong) {
+      live.misses += 1;
+      if (live.misses >= this.heartbeatMissLimit) {
+        live.link.close('heartbeat-timeout');
+      }
       return;
     }
     live.awaitingPong = true;

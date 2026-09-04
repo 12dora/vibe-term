@@ -78,6 +78,11 @@ export interface PollingLoopSpec {
   tick?: (controls: PollingControls) => void;
   /** 页面重新可见时的动作；缺省走节流补拉。 */
   onVisible?: (controls: PollingControls) => void;
+  /**
+   * 取用时页面已隐藏就跳过首拍，等回到前台再补。
+   * 只对装了定时器的回路（`intervalMs > 0`）生效；缺省 false，既有 store 行为不变。
+   */
+  deferFirstRefreshWhenHidden?: boolean;
 }
 
 const intervalSchedule: CancelableSchedule = (fn, ms) => {
@@ -128,7 +133,10 @@ export function startPollingLoop(options: PollingTimingOptions, spec: PollingLoo
   const controls: PollingControls = { runRefresh, requestRefresh };
   const stopWire = spec.wire?.(controls);
 
-  runRefresh();
+  // 隐藏页跳首拍只在装了定时器时成立：纯事件驱动的回路没有可见性订阅来补这一拍。
+  const skipFirst =
+    spec.deferFirstRefreshWhenHidden === true && intervalMs > 0 && visibility.hidden();
+  if (!skipFirst) runRefresh();
 
   const stopEventHooks = () => {
     stopWire?.();

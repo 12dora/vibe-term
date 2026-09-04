@@ -1,3 +1,43 @@
+# 1.1.28
+
+_2026-09-04_
+
+## English
+
+### Fixes
+
+- Login page no longer prefills the username: nodes that joined a mesh stored the account uid as the username and showed a UUID. The field starts empty (browser autofill still works), an empty username signs in with the account uid, and `/api/auth/mode` no longer returns identifier-looking usernames.
+- Installed PWA on mobile: the automatically opened sidebar no longer moves focus to its close button on cold start; the close button only shows a focus ring for keyboard navigation.
+- First paint follows the saved site language (cached locally) or the browser languages instead of English; a failed site-settings request no longer switches the UI back to English.
+- Devices of remote nodes failed to load with a generic error when the entry site changed its node identity (e.g. a hub that became a relay): stale per-node session cookies made the target answer `via_mismatch` while the UI still considered the node signed in. The entry now expires the stale cookie, the UI re-signs-in once automatically, and the devices panel shows the actual reason (sign-in required / node unreachable with a safe reason) with a retry button.
+- Relay member lists no longer include pending or revoked members as reachable nodes; relay dial context is snapshotted explicitly.
+- CI: the relay hardening test left an unobserved stream rejection that failed every run; panels tests were polluted by a process-wide i18n mock; TypeScript baseline errors cleared.
+
+### Changes
+
+- Settings → Multi-node → This machine was rebuilt: a header with the role and a single status badge plus an overflow menu (change role / leave / account security), then three sections — Connection (setup wizard, relay or hub links, notices, actions, a collapsed “Connection details” for tenant id, key epochs, quota and node ids), Relay service (public address, password state, live metrics) and Network (direct-connection add-on, domain access). Duplicate wizards, the two uplink tabs and hub-era wording shown to relay nodes are gone.
+- Relay performance monitoring: `GET /api/relay/metrics` (relay admin) reports process memory / CPU / load / event-loop lag, online members, active streams, byte and frame rates, per-member RTT, reconnects and stream counts, with a 5-minute history. The Relay settings tab shows tiles, trends and a members table; relay nodes show compact tiles on the This machine card.
+
+---
+
+## 中文
+
+### 修复
+
+- 登录页不再预填用户名：加入 mesh 的节点把账号 uid 存成了用户名，登录框里显示一串 UUID。现在用户名默认为空（浏览器自动填充仍可用），留空即按账号 uid 登录，`/api/auth/mode` 也不再返回标识符形态的用户名。
+- 手机端安装的 PWA：冷启动自动展开的侧栏不再把焦点落到「关闭侧栏」按钮上；该按钮只在键盘导航时显示焦点环。
+- 首屏语言按已保存的站点语言（本地缓存）或浏览器语言渲染，不再先显示英文；站点设置请求失败也不会把界面切回英文。
+- 入口站点更换节点身份后（如 Hub 改为中继），远端节点的设备列表一直「加载失败」：浏览器里残留的按节点会话 cookie 让目标节点报 `via_mismatch`，而界面仍认为该节点已登录。现在入口会让过期 cookie 失效，界面自动重新登录一次，设备面板显示真实原因（需登录 / 节点不可达及安全的原因码）并提供重试。
+- 中继成员列表不再把待批准或已吊销的成员当作可达节点；中继拨号上下文改为显式快照。
+- CI：中继加固测试遗留了未观察的流拒绝导致每次运行失败；panels 测试被进程级 i18n mock 污染；TypeScript 基线错误清零。
+
+### 变更
+
+- 设置 → 多节点互联 → 本机 全面重排：卡头为角色与唯一状态徽标加溢出菜单（更改角色 / 离开 / 账号安全），下分「连接」（设置向导、中继或 Hub 链路、提醒、操作，以及默认收起的「连接详情」收纳租户编号、密钥代数、配额与节点编号）、「中继服务」（公网地址、口令状态、实时指标）与「网络」（直连插件、域名访问）三段。删除了重复的向导、两个上级 tab 和对中继节点显示的 Hub 时代文案。
+- 中继性能监控：新增 `GET /api/relay/metrics`（中继管理员），报告进程内存 / CPU / 负载 / 事件循环延迟、在线成员、活跃流、字节与帧速率、成员 RTT、重连与流数，并带 5 分钟历史。中继设置 tab 显示指标瓦片、趋势与成员表；中继角色的本机卡片显示精简瓦片。
+
+---
+
 # 1.1.27
 
 _2026-09-04_

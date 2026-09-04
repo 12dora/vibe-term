@@ -12,6 +12,7 @@ import {
   formatFramesPerSec,
   formatMs,
   formatPercent,
+  trafficText,
 } from './relay-format';
 import {
   type RelayTrendSeries,
@@ -71,17 +72,30 @@ export function ActiveStreamsTile({ data, trends, stale }: MetricsTileProps) {
   );
 }
 
-export function ThroughputTile({ data, trends, stale }: MetricsTileProps) {
+/**
+ * `showTotal` 是紧凑区的取法：那里没有单独的「中转流量」格子，
+ * 累计量就挂在吞吐格的副行上，免得只剩瞬时速率、看不出转了多少。
+ */
+export function ThroughputTile({
+  data,
+  trends,
+  stale,
+  showTotal = false,
+}: MetricsTileProps & { showTotal?: boolean }) {
   const { t } = useTranslation();
   const { totals } = data;
   return (
     <StatTile
       label={t('relay.metrics.tiles.throughput')}
       value={formatBytesPerSec(totals.bytesInPerSec + totals.bytesOutPerSec)}
-      sub={t('relay.metrics.tiles.throughputSub', {
-        out: formatBytesPerSec(totals.bytesOutPerSec),
-        in: formatBytesPerSec(totals.bytesInPerSec),
-      })}
+      sub={
+        showTotal
+          ? t('relay.metrics.tiles.throughputTotal', { total: trafficText(totals.bytesOut) })
+          : t('relay.metrics.tiles.throughputSub', {
+              out: formatBytesPerSec(totals.bytesOutPerSec),
+              in: formatBytesPerSec(totals.bytesInPerSec),
+            })
+      }
       stale={stale}
       sparkline={
         <Sparkline
@@ -249,6 +263,24 @@ export function CpuTile({ data, stale, className }: MetricsTileProps & { classNa
   );
 }
 
+/**
+ * 累计中转流量。中继每转发一帧都同时计进 `bytesIn` 与 `bytesOut`，两个计数逐字节相等，
+ * 摆两列只会让人以为统计坏了——沿用旧「总量」卡的口径，只出一个数（见 relay-format 的 trafficText）。
+ */
+export function TrafficTile({ data, stale }: MetricsTileProps) {
+  const { t } = useTranslation();
+  return (
+    <StatTile
+      label={t('relay.metrics.tiles.traffic')}
+      value={trafficText(data.totals.bytesOut)}
+      sub={t('relay.metrics.tiles.trafficSub')}
+      hint={t('relay.metrics.tiles.trafficHint')}
+      stale={stale}
+      data-testid="relay-metric-traffic"
+    />
+  );
+}
+
 export function SocketsTile({ data, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   const { openSockets, authenticatedLinks } = data.process;
@@ -280,13 +312,14 @@ export function UptimeTile({ data, stale, className }: MetricsTileProps & { clas
 export function RelayCompactTiles(props: MetricsTileProps) {
   return (
     <div className="flex flex-col gap-2" data-testid="relay-metrics-compact">
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      {/* 320–375px 下两列会把「16.0 KB/s」这类读数挤掉：基础断点单列，sm 两列，lg 四列。 */}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <MembersOnlineTile {...props} />
         <ActiveStreamsTile {...props} />
-        <ThroughputTile {...props} />
+        <ThroughputTile {...props} showTotal />
         <LatencyTile {...props} />
       </div>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <MemoryTile {...props} className={THIN_TILE} />
         <CpuTile {...props} className={THIN_TILE} />
         <UptimeTile {...props} className={THIN_TILE} />
@@ -299,7 +332,7 @@ export function RelayCompactTiles(props: MetricsTileProps) {
 export function RelayFullTiles(props: MetricsTileProps) {
   return (
     <div
-      className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"
+      className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"
       data-testid="relay-metrics-tiles"
     >
       <MembersOnlineTile {...props} />
@@ -307,6 +340,7 @@ export function RelayFullTiles(props: MetricsTileProps) {
       <BytesInTile {...props} />
       <BytesOutTile {...props} />
       <FramesTile {...props} />
+      <TrafficTile {...props} />
       <LatencyTile {...props} />
       <EventLoopTile {...props} />
       <MemoryTile {...props} />
@@ -322,7 +356,7 @@ export function RelayFullTiles(props: MetricsTileProps) {
 export function RelayTilesSkeleton({ count, testId }: { count: number; testId?: string }) {
   return (
     <div
-      className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
+      className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4"
       data-testid={testId ?? 'relay-metrics-skeleton'}
     >
       {Array.from({ length: count }, (_, index) => `tile-${index}`).map((key) => (

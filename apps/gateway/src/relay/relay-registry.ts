@@ -61,6 +61,7 @@ export class RelayRegistry {
   /** 进程内重连次数，断线后仍保留。 */
   private readonly reconnects = new Map<string, number>();
   private readonly seen = new Set<string>();
+  private readonly linkRemovedHandlers: Array<(live: RelayLiveNode) => void> = [];
 
   put(input: RelayRegisterInput): { live: RelayLiveNode; replaced: RelayLiveNode | null } {
     const previous = this.get(input.tenantId, input.nodeId) ?? null;
@@ -160,6 +161,34 @@ export class RelayRegistry {
     return this.reconnects.get(memberKey(tenantId, nodeId)) ?? 0;
   }
 
+  onLinkRemoved(handler: (live: RelayLiveNode) => void): void {
+    this.linkRemovedHandlers.push(handler);
+  }
+
+  forgetMember(tenantId: string, nodeId: string): void {
+    const key = memberKey(tenantId, nodeId);
+    this.reconnects.delete(key);
+    this.seen.delete(key);
+    this.memberStreams.delete(key);
+    const live = this.get(tenantId, nodeId);
+    if (live) live.reconnects = 0;
+  }
+
+  forgetTenant(tenantId: string): void {
+    const prefix = `${tenantId}\0`;
+    for (const key of this.reconnects.keys()) {
+      if (key.startsWith(prefix)) this.reconnects.delete(key);
+    }
+    for (const key of this.seen) {
+      if (key.startsWith(prefix)) this.seen.delete(key);
+    }
+    for (const key of this.memberStreams.keys()) {
+      if (key.startsWith(prefix)) this.memberStreams.delete(key);
+    }
+    this.tenantStreams.delete(tenantId);
+    for (const live of this.listTenant(tenantId)) live.reconnects = 0;
+  }
+
   removeLink(link: LinkSession): RelayLiveNode | undefined {
     const live = this.byLink.get(link);
     if (!live) return undefined;
@@ -169,6 +198,7 @@ export class RelayRegistry {
       tenant.delete(live.nodeId);
       if (tenant.size === 0) this.byTenant.delete(live.tenantId);
     }
+    for (const handler of this.linkRemovedHandlers) handler(live);
     return live;
   }
 
@@ -177,8 +207,7 @@ export class RelayRegistry {
   }
 
   clear(): void {
-    this.byTenant.clear();
-    this.byLink.clear();
+    for (const link of [...this.byLink.keys()]) this.removeLink(link);
     this.tenantStreams.clear();
     this.memberStreams.clear();
     this.reconnects.clear();

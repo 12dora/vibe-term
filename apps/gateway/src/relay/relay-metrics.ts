@@ -170,6 +170,10 @@ function perSec(delta: number, elapsedMs: number): number {
   return Math.max(0, delta) / (elapsedMs / 1000);
 }
 
+function counterDelta(curr: number, prev: number): number {
+  return curr < prev ? curr : curr - prev;
+}
+
 function cpuUtilizationPct(
   prev: NodeJS.CpuUsage,
   next: NodeJS.CpuUsage,
@@ -192,13 +196,18 @@ function asLoadAvg(values: number[]): [number, number, number] | null {
 function muxStatsOf(link: LinkSession): MuxCounters {
   const direct = (link as { stats?: () => MuxCounters }).stats;
   if (typeof direct === 'function') return direct.call(link);
-  const inner = (link as { mux?: { stats?: () => MuxCounters } }).mux;
-  if (inner && typeof inner.stats === 'function') return inner.stats();
   return EMPTY_MUX;
 }
 
-function aggregateMux(registry: RelayRegistry): MuxCounters {
-  const total = { ...EMPTY_MUX };
+function aggregateMux(registry: RelayRegistry, retired: MuxCounters): MuxCounters {
+  const total = {
+    framesIn: retired.framesIn,
+    framesOut: retired.framesOut,
+    bytesIn: retired.bytesIn,
+    bytesOut: retired.bytesOut,
+    openStreams: 0,
+    unacked: 0,
+  };
   for (const live of registry.all()) {
     const stats = muxStatsOf(live.link);
     total.framesIn += stats.framesIn;
@@ -218,10 +227,12 @@ function rateMap(
 ): Map<string, { bytesInPerSec: number; bytesOutPerSec: number }> {
   const out = new Map<string, { bytesInPerSec: number; bytesOutPerSec: number }>();
   for (const [key, curr] of current) {
-    const prev = previous.get(key) ?? curr;
+    const prev = previous.get(key);
+    const prevIn = prev?.bytesIn ?? 0;
+    const prevOut = prev?.bytesOut ?? 0;
     out.set(key, {
-      bytesInPerSec: perSec(curr.bytesIn - prev.bytesIn, elapsedMs),
-      bytesOutPerSec: perSec(curr.bytesOut - prev.bytesOut, elapsedMs),
+      bytesInPerSec: perSec(counterDelta(curr.bytesIn, prevIn), elapsedMs),
+      bytesOutPerSec: perSec(counterDelta(curr.bytesOut, prevOut), elapsedMs),
     });
   }
   return out;
@@ -249,11 +260,13 @@ export class RelayMetricsCollector {
   private prevLive: LiveCounters | null = null;
   private rates: RateSnapshot = EMPTY_RATES;
   private readonly samples: RelayMetricsSample[] = [];
+  private readonly retired: MuxCounters = { ...EMPTY_MUX };
 
   constructor(opts: RelayMetricsCollectorOptions) {
     this.tenants = opts.tenants;
     this.registry = opts.registry;
     this.metering = opts.metering;
+    this.registry.onLinkRemoved((live) => this.retireLink(live.link));
     this.openSockets = opts.openSockets;
     this.now = opts.now;
     this.startedAt = opts.startedAt;
@@ -293,12 +306,12 @@ export class RelayMetricsCollector {
       this.prevCpu && elapsedMs > 0 ? cpuUtilizationPct(this.prevCpu, cpu, elapsedMs) : null;
     const prev = this.prevLive;
     this.rates = {
-      bytesInPerSec: perSec(live.bytesIn - (prev?.bytesIn ?? live.bytesIn), elapsedMs),
-      bytesOutPerSec: perSec(live.bytesOut - (prev?.bytesOut ?? live.bytesOut), elapsedMs),
-      framesInPerSec: perSec(live.framesIn - (prev?.framesIn ?? live.framesIn), elapsedMs),
-      framesOutPerSec: perSec(live.framesOut - (prev?.framesOut ?? live.framesOut), elapsedMs),
-      tenants: rateMap(live.tenantBytes, prev?.tenantBytes ?? live.tenantBytes, elapsedMs),
-      members: rateMap(live.memberBytes, prev?.memberBytes ?? live.memberBytes, elapsedMs),
+      bytesInPerSec: perSec(counterDelta(live.bytesIn, prev?.bytesIn ?? 0), elapsedMs),
+      bytesOutPerSec: perSec(counterDelta(live.bytesOut, prev?.bytesOut ?? 0), elapsedMs),
+      framesInPerSec: perSec(counterDelta(live.framesIn, prev?.framesIn ?? 0), elapsedMs),
+      framesOutPerSec: perSec(counterDelta(live.framesOut, prev?.framesOut ?? 0), elapsedMs),
+      tenants: rateMap(live.tenantBytes, prev?.tenantBytes ?? new Map(), elapsedMs),
+      members: rateMap(live.memberBytes, prev?.memberBytes ?? new Map(), elapsedMs),
       cpuUtilizationPct: cpuPct,
     };
     this.prevAt = at;
@@ -345,8 +358,16 @@ export class RelayMetricsCollector {
     this.prevLive = this.readLive();
   }
 
+  private retireLink(link: LinkSession): void {
+    const stats = muxStatsOf(link);
+    this.retired.framesIn += stats.framesIn;
+    this.retired.framesOut += stats.framesOut;
+    this.retired.bytesIn += stats.bytesIn;
+    this.retired.bytesOut += stats.bytesOut;
+  }
+
   private readLive(): LiveCounters {
-    const mux = aggregateMux(this.registry);
+    const mux = aggregateMux(this.registry, this.retired);
     const live = this.metering.liveTotalsSnapshot();
     const tenantBytes = new Map<string, RelayUsageDelta>();
     const memberBytes = new Map<string, RelayUsageDelta>();

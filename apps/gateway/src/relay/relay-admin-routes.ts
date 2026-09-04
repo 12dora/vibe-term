@@ -162,7 +162,8 @@ export function handleRelayTenantKick(deps: RelayAdminDeps, tenantId: string): R
 export function handleRelayTenantDelete(deps: RelayAdminDeps, tenantId: string): Response {
   if (!deps.tenants.get(tenantId)) return relayError(RelayErrorCode.tenantNotFound, 404);
   deps.uplink.kickTenant(tenantId, 'kicked');
-  deps.metering.forget(tenantId);
+  deps.metering.forgetTenant(tenantId);
+  deps.registry.forgetTenant(tenantId);
   deps.keyLog.deleteAll(tenantId);
   deps.tenants.remove(tenantId);
   return relayJson({ ok: true });

@@ -248,8 +248,12 @@ describe('relay admin mutations', () => {
     const relay = await boot();
     const tenant = await relay.createTenant();
     const node = tenant.addNode();
+    const first = await tenant.connect(node);
+    await first.inbox.takeOf('auth.ok');
     const client = await tenant.connect(node);
     await client.inbox.takeOf('auth.ok');
+    expect(relay.runtime.registry.reconnectsOf(tenant.id, node.nodeId)).toBe(1);
+    relay.runtime.metering.record(tenant.id, { bytesIn: 11, bytesOut: 22 });
     client.send({
       t: 'relay.keylog.append',
       id: 'one',
@@ -261,6 +265,13 @@ describe('relay admin mutations', () => {
     expect(res.status).toBe(200);
     expect(relay.runtime.tenants.get(tenant.id)).toBeNull();
     expect(relay.runtime.keyLog.head(tenant.id)).toBe(0n);
+    expect(relay.runtime.registry.reconnectsOf(tenant.id, node.nodeId)).toBe(0);
+    expect(relay.runtime.metering.liveTenantSnapshot(tenant.id)).toEqual({
+      bytesIn: 0,
+      bytesOut: 0,
+    });
+    relay.runtime.registry.forgetTenant(tenant.id);
+    relay.runtime.metering.forgetTenant(tenant.id);
     const body = (await (await relay.adminFetch('/api/relay/status')).json()) as StatusBody;
     expect(body.tenants).toHaveLength(0);
   });

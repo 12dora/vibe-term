@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { LinkSession } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { RelayMetering } from './relay-metering';
 import { RelayMetricsCollector } from './relay-metrics';
@@ -54,6 +55,74 @@ function fakeCollector(opts?: {
   return { collector, metering, tenants, registry, clock, cpu, tick: () => tick(), close };
 }
 
+type StubCounters = {
+  framesIn: number;
+  framesOut: number;
+  bytesIn: number;
+  bytesOut: number;
+};
+
+function stubLink(counters: StubCounters): LinkSession {
+  return {
+    openStream: () => Promise.reject(new Error('stub')),
+    onStream() {},
+    ctl: { send() {}, onMessage() {} },
+    close() {},
+    closed: new Promise(() => {}),
+    stats() {
+      return {
+        framesIn: counters.framesIn,
+        framesOut: counters.framesOut,
+        bytesIn: counters.bytesIn,
+        bytesOut: counters.bytesOut,
+        openStreams: 0,
+        unacked: 0,
+      };
+    },
+  } as LinkSession;
+}
+
+function putStub(
+  registry: RelayRegistry,
+  opts: { tenantId: string; nodeId: string; counters: StubCounters }
+): LinkSession {
+  const link = stubLink(opts.counters);
+  registry.put({
+    tenantId: opts.tenantId,
+    nodeId: opts.nodeId,
+    link,
+    tokenEpoch: 1,
+    tokenHash: 'hash',
+    protoVersion: 1,
+    clientVersion: '1.1.23',
+    connectedAt: 1,
+  });
+  return link;
+}
+
+function seedTenant(tenants: RelayTenantStore, now: number, id = 'aa'.repeat(16)): string {
+  tenants.create({
+    id,
+    rootPublicKey: new Uint8Array(32),
+    rootEpoch: 0,
+    tokenHash: 'bb'.repeat(32),
+    tokenEpoch: 0,
+    now,
+  });
+  return id;
+}
+
+function seedNode(tenants: RelayTenantStore, tenantId: string, nodeId: string, now: number): void {
+  tenants.upsertNode({
+    tenantId,
+    nodeId,
+    edPk: new Uint8Array(32),
+    x25519Pk: new Uint8Array(32),
+    status: 'admitted',
+    now,
+  });
+}
+
 describe('RelayMetricsCollector', () => {
   test('按累计计数差计算速率，CPU 百分比，history 最多 60 条', () => {
     const fx = fakeCollector();
@@ -79,6 +148,127 @@ describe('RelayMetricsCollector', () => {
       expect(fx.collector.snapshot().history.samples).toHaveLength(60);
     } finally {
       fx.collector.stop();
+      fx.close();
+    }
+  });
+
+  test('链路在两次采样之间关闭时，frames 速率仍计入已下线链路的增量', () => {
+    const fx = fakeCollector();
+    try {
+      const aCounters = { framesIn: 1000, framesOut: 100, bytesIn: 0, bytesOut: 0 };
+      const bCounters = { framesIn: 1000, framesOut: 100, bytesIn: 0, bytesOut: 0 };
+      const linkA = putStub(fx.registry, { tenantId: 't', nodeId: 'a', counters: aCounters });
+      putStub(fx.registry, { tenantId: 't', nodeId: 'b', counters: bCounters });
+      fx.collector.start();
+      aCounters.framesIn = 1500;
+      aCounters.framesOut = 160;
+      bCounters.framesIn = 1500;
+      bCounters.framesOut = 160;
+      fx.registry.removeLink(linkA);
+      fx.clock.now += 5_000;
+      fx.tick();
+      const snap = fx.collector.snapshot();
+      expect(snap.totals.framesInPerSec).toBe(200);
+      expect(snap.totals.framesOutPerSec).toBe(24);
+    } finally {
+      fx.collector.stop();
+      fx.close();
+    }
+  });
+
+  test('链路在两次采样之间被替换时，旧链路计数折入 retired', () => {
+    const fx = fakeCollector();
+    try {
+      const oldCounters = { framesIn: 100, framesOut: 10, bytesIn: 0, bytesOut: 0 };
+      putStub(fx.registry, { tenantId: 't', nodeId: 'n', counters: oldCounters });
+      fx.collector.start();
+      oldCounters.framesIn = 250;
+      oldCounters.framesOut = 40;
+      const nextCounters = { framesIn: 40, framesOut: 5, bytesIn: 0, bytesOut: 0 };
+      putStub(fx.registry, { tenantId: 't', nodeId: 'n', counters: nextCounters });
+      fx.clock.now += 5_000;
+      fx.tick();
+      const snap = fx.collector.snapshot();
+      expect(snap.totals.framesInPerSec).toBe(38);
+      expect(snap.totals.framesOutPerSec).toBe(7);
+    } finally {
+      fx.collector.stop();
+      fx.close();
+    }
+  });
+
+  test('新租户第一个采样窗口按 prev=0 计算速率', () => {
+    const fx = fakeCollector();
+    try {
+      fx.collector.start();
+      const tenantId = seedTenant(fx.tenants, fx.clock.now);
+      fx.metering.record(tenantId, { bytesIn: 10_000, bytesOut: 5_000 });
+      fx.clock.now += 5_000;
+      fx.tick();
+      const tenant = fx.collector.snapshot().tenants.find((row) => row.id === tenantId);
+      expect(tenant?.bytesInPerSec).toBe(2_000);
+      expect(tenant?.bytesOutPerSec).toBe(1_000);
+    } finally {
+      fx.collector.stop();
+      fx.close();
+    }
+  });
+
+  test('新成员第一个采样窗口按 prev=0 计算速率', () => {
+    const fx = fakeCollector();
+    try {
+      const tenantId = seedTenant(fx.tenants, fx.clock.now);
+      fx.collector.start();
+      seedNode(fx.tenants, tenantId, 'node-1', fx.clock.now);
+      fx.metering.recordMember(tenantId, 'node-1', { bytesIn: 10_000, bytesOut: 5_000 });
+      fx.clock.now += 5_000;
+      fx.tick();
+      const member = fx.collector.snapshot().members.find((row) => row.nodeId === 'node-1');
+      expect(member?.bytesInPerSec).toBe(2_000);
+      expect(member?.bytesOutPerSec).toBe(1_000);
+    } finally {
+      fx.collector.stop();
+      fx.close();
+    }
+  });
+
+  test('成员计数器回绕时按从 0 起的新值计算速率', () => {
+    const fx = fakeCollector();
+    try {
+      const tenantId = seedTenant(fx.tenants, fx.clock.now);
+      seedNode(fx.tenants, tenantId, 'node-1', fx.clock.now);
+      fx.metering.recordMember(tenantId, 'node-1', { bytesIn: 10_000, bytesOut: 8_000 });
+      fx.collector.start();
+      fx.metering.forgetMember(tenantId, 'node-1');
+      fx.metering.recordMember(tenantId, 'node-1', { bytesIn: 400, bytesOut: 200 });
+      fx.clock.now += 5_000;
+      fx.tick();
+      const member = fx.collector.snapshot().members.find((row) => row.nodeId === 'node-1');
+      expect(member?.bytesInPerSec).toBe(80);
+      expect(member?.bytesOutPerSec).toBe(40);
+    } finally {
+      fx.collector.stop();
+      fx.close();
+    }
+  });
+
+  test('forgetMember / forgetTenant 幂等，关闭回调再记账后可再清', () => {
+    const fx = fakeCollector();
+    try {
+      const tenantId = seedTenant(fx.tenants, fx.clock.now);
+      fx.metering.record(tenantId, { bytesIn: 10, bytesOut: 20 });
+      fx.metering.recordMember(tenantId, 'n1', { bytesIn: 7, bytesOut: 3 });
+      fx.metering.forgetMember(tenantId, 'n1');
+      fx.metering.forgetMember(tenantId, 'n1');
+      expect(fx.metering.liveMemberSnapshot(tenantId, 'n1')).toEqual({ bytesIn: 0, bytesOut: 0 });
+      fx.metering.recordMember(tenantId, 'n1', { bytesIn: 1 });
+      fx.metering.forgetMember(tenantId, 'n1');
+      expect(fx.metering.liveMemberSnapshot(tenantId, 'n1')).toEqual({ bytesIn: 0, bytesOut: 0 });
+      fx.metering.forgetTenant(tenantId);
+      fx.metering.forgetTenant(tenantId);
+      expect(fx.metering.liveTenantSnapshot(tenantId)).toEqual({ bytesIn: 0, bytesOut: 0 });
+      expect(fx.metering.pendingFor(tenantId)).toEqual({ bytesIn: 0, bytesOut: 0 });
+    } finally {
       fx.close();
     }
   });

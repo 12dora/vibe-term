@@ -170,6 +170,8 @@ export class RelayAdminApi {
    * `GET /api/relay/metrics`：进程/吞吐/成员运营指标。
    * `members: false` 时请求 `?members=0`，响应省略 `members` 数组。
    */
+  metrics(opts: { members: false }): Promise<Omit<RelayMetricsResponse, 'members'>>;
+  metrics(opts?: { members?: boolean }): Promise<RelayMetricsResponse>;
   metrics(opts?: { members?: boolean }): Promise<RelayMetricsResponse> {
     const query = opts?.members === false ? '?members=0' : '';
     return this.json<RelayMetricsResponse>(`/api/relay/metrics${query}`, 'relay_metrics_failed');

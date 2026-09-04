@@ -1201,6 +1201,7 @@
         },
         "status": {
           "standalone": "スタンドアロン",
+          "unknown": "状態不明",
           "hubConnected": "Hub に接続済み",
           "hubConnectedRtt": "Hub に接続済み · {{ms}} ms",
           "hubDisconnected": "Hub に未接続",
@@ -1264,7 +1265,7 @@
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "domainAccess": {
           "label": "ドメインアクセスを許可",
-          "description": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され（LAN とこのマシンからのアクセスは影響なし）、ハブ / ノード連携サービスのみが利用できます。公開ドメイン：{{hosts}}",
+          "description": "オフにすると公開インターネットからのウェブと API アクセスを拒否します。LAN・本機・ノード間の通信は影響を受けません。公開ドメイン：{{hosts}}",
           "noHosts": "公開ドメインはまだ設定されていません。",
           "hostSeparator": "、",
           "failed": "ドメインアクセスの設定を保存できませんでした（{{detail}}）。",
@@ -2005,6 +2006,10 @@
           "sockets": "ソケット",
           "socketsSub": "認証済み {{authenticated}}",
           "uptime": "稼働時間",
+          "throughputTotal": "累計 {{total}}",
+          "traffic": "中継トラフィック",
+          "trafficSub": "起動からの累計",
+          "trafficHint": "転送フレームは送受信の両方に計上されるため、ここでは一度だけ数えます。",
           "tenants": "テナント"
         },
         "trends": {

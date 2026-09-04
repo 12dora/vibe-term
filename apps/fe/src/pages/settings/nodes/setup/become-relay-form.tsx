@@ -14,6 +14,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex
 import { Input } from '@tmex/ui/input';
 import { type FormEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import {
+  type BecomeRelayGateEvent,
+  becomeRelayGate,
+  pureRelaySubmitPlan,
+} from './become-relay-gate';
 import { currentOrigin, navigateToLogin } from './browser-location';
 import {
   FormField,
@@ -107,22 +112,18 @@ export function BecomeRelayForm({
     waitForRestart: values.alsoNode,
   });
   const shown = showErrors ? errors : {};
-  const pure = !values.alsoNode;
 
   function update(patch: Partial<BecomeRelayValues>): void {
     setValues((previous) => ({ ...previous, ...patch }));
   }
 
-  /** 纯中继先确认再提交；确认框里点「创建并重启」时没有真实表单事件，补一个空的。 */
-  function onSubmit(event: FormEvent): void {
-    if (!pure) {
-      void handleSubmit(event);
-      return;
-    }
-    event.preventDefault();
-    revealErrors();
-    if (hasErrors(errors)) return;
-    setConfirmingPure(true);
+  /** 闸门说提交就提交；说确认就先开确认框（`becomeRelayGate`）。 */
+  function step(event: BecomeRelayGateEvent, formEvent?: FormEvent): void {
+    const next = becomeRelayGate(event);
+    setConfirmingPure(next.confirming);
+    if (!next.submit) return;
+    // 确认框里点「创建并重启」时没有真实表单事件，补一个空的。
+    void handleSubmit(formEvent ?? ({ preventDefault: () => undefined } as FormEvent));
   }
 
   if (result) return <BecomeRelayResult result={result} waiter={waiter} />;
@@ -134,7 +135,14 @@ export function BecomeRelayForm({
         <CardDescription>{t('nodes.setup.becomeRelay.description')}</CardDescription>
       </CardHeader>
       <CardContent>
-        <form className="space-y-6" onSubmit={onSubmit}>
+        <form
+          className="space-y-6"
+          onSubmit={(event) => {
+            event.preventDefault();
+            revealErrors();
+            step({ kind: 'submit', plan: pureRelaySubmitPlan(values, nodeEnv) }, event);
+          }}
+        >
           <RelayServiceFields values={values} shown={shown} onChange={update} />
 
           {values.alsoNode ? (
@@ -168,11 +176,8 @@ export function BecomeRelayForm({
 
       <PureRelayConfirm
         open={confirmingPure}
-        onConfirm={() => {
-          setConfirmingPure(false);
-          void handleSubmit({ preventDefault: () => undefined } as FormEvent);
-        }}
-        onCancel={() => setConfirmingPure(false)}
+        onConfirm={() => step({ kind: 'confirm' })}
+        onCancel={() => step({ kind: 'cancel' })}
       />
     </Card>
   );

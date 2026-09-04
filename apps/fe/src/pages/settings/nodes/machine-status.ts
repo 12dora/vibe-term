@@ -9,6 +9,7 @@ export type MachineStatusTone = 'ok' | 'warn' | 'muted';
 
 export type MachineStatusState =
   | 'standalone'
+  | 'unknown'
   | 'hubConnected'
   | 'hubDisconnected'
   | 'connecting'
@@ -25,6 +26,12 @@ export interface MachineStatusBadge {
 
 export interface MachineStatusInput {
   standalone: boolean;
+  /**
+   * `/api/local/status` 已经回来了。没回来（或失败）时本机角色未知：除了 `/api/auth/mode`
+   * 直接给出的 standalone，其余一律不下结论——拿上级链路的快照去猜会说出「未连接 Hub」
+   * 这种看着像故障的话。
+   */
+  roleKnown: boolean;
   relayMode: boolean;
   /** 中继模式下挂上了某一条中继。 */
   relayAttached: boolean;
@@ -50,6 +57,9 @@ function connected(
 export function machineStatusBadge(input: MachineStatusInput): MachineStatusBadge {
   if (input.standalone) {
     return { state: 'standalone', tone: 'muted', key: 'nodes.machine.status.standalone' };
+  }
+  if (!input.roleKnown) {
+    return { state: 'unknown', tone: 'muted', key: 'nodes.machine.status.unknown' };
   }
   if (input.relayMode) {
     if (input.relayKicked) {

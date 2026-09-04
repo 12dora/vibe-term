@@ -1950,6 +1950,7 @@ export const I18N_RESOURCES = {
         },
         "status": {
           "standalone": "Standalone",
+          "unknown": "Status unknown",
           "hubConnected": "Connected to Hub",
           "hubConnectedRtt": "Connected to Hub · {{ms}} ms",
           "hubDisconnected": "Not connected to a Hub",
@@ -2013,7 +2014,7 @@ export const I18N_RESOURCES = {
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
         "domainAccess": {
           "label": "Allow Domain Access",
-          "description": "When off, web and API access from the public internet is refused (LAN and local access is unaffected); only hub/node mesh services stay reachable. Public domains: {{hosts}}",
+          "description": "When off, web and API access from the public internet is refused; LAN, local and node-mesh traffic is unaffected. Public domains: {{hosts}}",
           "noHosts": "No public domain configured yet.",
           "hostSeparator": ", ",
           "failed": "Could not save the domain access setting ({{detail}}).",
@@ -2759,6 +2760,10 @@ export const I18N_RESOURCES = {
           "sockets": "Sockets",
           "socketsSub": "{{authenticated}} authenticated",
           "uptime": "Uptime",
+          "throughputTotal": "{{total}} total",
+          "traffic": "Relayed Traffic",
+          "trafficSub": "since start",
+          "trafficHint": "Each forwarded frame counts on both sides; it is counted once here.",
           "tenants": "Tenants"
         },
         "trends": {
@@ -4965,6 +4970,7 @@ export const I18N_RESOURCES = {
         },
         "status": {
           "standalone": "独立运行",
+          "unknown": "状态未知",
           "hubConnected": "已连接 Hub",
           "hubConnectedRtt": "已连接 Hub · {{ms}} ms",
           "hubDisconnected": "未连接 Hub",
@@ -5028,7 +5034,7 @@ export const I18N_RESOURCES = {
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
         "domainAccess": {
           "label": "允许域名访问",
-          "description": "关闭后，来自公网的网页与 API 访问会被拒绝(局域网与本机的访问不受影响)，仅保留 Hub / 节点互联服务。公开域名：{{hosts}}",
+          "description": "关闭后拒绝来自公网的网页与 API 访问，局域网、本机与节点互联不受影响。公开域名：{{hosts}}",
           "noHosts": "尚未配置公开域名。",
           "hostSeparator": "、",
           "failed": "域名访问设置未能保存（{{detail}}）。",
@@ -5769,6 +5775,10 @@ export const I18N_RESOURCES = {
           "sockets": "连接数",
           "socketsSub": "已认证 {{authenticated}}",
           "uptime": "运行时长",
+          "throughputTotal": "累计 {{total}}",
+          "traffic": "中转流量",
+          "trafficSub": "自启动累计",
+          "trafficHint": "中继每转发一帧都同时计进收发两侧，此处只计一次。",
           "tenants": "租户"
         },
         "trends": {
@@ -7975,6 +7985,7 @@ export const I18N_RESOURCES = {
         },
         "status": {
           "standalone": "スタンドアロン",
+          "unknown": "状態不明",
           "hubConnected": "Hub に接続済み",
           "hubConnectedRtt": "Hub に接続済み · {{ms}} ms",
           "hubDisconnected": "Hub に未接続",
@@ -8038,7 +8049,7 @@ export const I18N_RESOURCES = {
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "domainAccess": {
           "label": "ドメインアクセスを許可",
-          "description": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され（LAN とこのマシンからのアクセスは影響なし）、ハブ / ノード連携サービスのみが利用できます。公開ドメイン：{{hosts}}",
+          "description": "オフにすると公開インターネットからのウェブと API アクセスを拒否します。LAN・本機・ノード間の通信は影響を受けません。公開ドメイン：{{hosts}}",
           "noHosts": "公開ドメインはまだ設定されていません。",
           "hostSeparator": "、",
           "failed": "ドメインアクセスの設定を保存できませんでした（{{detail}}）。",
@@ -8779,6 +8790,10 @@ export const I18N_RESOURCES = {
           "sockets": "ソケット",
           "socketsSub": "認証済み {{authenticated}}",
           "uptime": "稼働時間",
+          "throughputTotal": "累計 {{total}}",
+          "traffic": "中継トラフィック",
+          "trafficSub": "起動からの累計",
+          "trafficHint": "転送フレームは送受信の両方に計上されるため、ここでは一度だけ数えます。",
           "tenants": "テナント"
         },
         "trends": {

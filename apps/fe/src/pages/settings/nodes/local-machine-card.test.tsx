@@ -111,6 +111,30 @@ function render(
   );
 }
 
+/** 三条「角色还不知道」的分支：加载中、未登录、读取失败。 */
+function renderUnknownRole(branch: 'loading' | 'loginRequired' | 'error'): string {
+  function Unknown() {
+    const uplink = useLocalUplinkController({ mode: MESH_MODE });
+    return (
+      <LocalMachineCard
+        mode={MESH_MODE}
+        status={null}
+        loading={branch === 'loading'}
+        loginRequired={branch === 'loginRequired'}
+        error={branch === 'error' ? 'fetch failed' : null}
+        api={idleApi}
+        uplink={uplink}
+        onRefresh={() => undefined}
+      />
+    );
+  }
+  return renderToStaticMarkup(
+    <MemoryRouter>
+      <Unknown />
+    </MemoryRouter>
+  );
+}
+
 /** mesh 角色下的完整状态（hub 地址齐全）。 */
 function meshStatus(role: LocalRole): LocalStatusResponse {
   return {
@@ -364,6 +388,34 @@ describe('LocalMachineCard 的状态徽标', () => {
   });
 });
 
+describe('LocalMachineCard 在角色未知时的卡头', () => {
+  // mesh 下 `/api/local/status` 还没回来 / 401 / 失败：角色未知，菜单里每一项都算不出目标，
+  // `useRoleSwitch` 也会直接返回——摆一个点了没反应的菜单比没有菜单更糟。
+  for (const branch of ['loading', 'loginRequired', 'error'] as const) {
+    test(`${branch}：只给一枚「状态未知」徽标，没有角色徽标也没有菜单`, () => {
+      const html = renderUnknownRole(branch);
+      expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="unknown"');
+      expect(html).toContain('nodes.machine.status.unknown');
+      expect(html).not.toContain('data-testid="local-machine-role"');
+      expect(html).not.toContain('data-testid="local-machine-menu"');
+      expect(html).not.toContain('nodes.machine.roleStandalone');
+    });
+  }
+
+  test('状态回来之后角色徽标与菜单才出现', () => {
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-role"');
+    expect(html).toContain('data-testid="local-machine-menu"');
+    expect(tagOf(html, 'local-machine-status')).not.toContain('data-status-state="unknown"');
+  });
+
+  test('纯中继没有网页可操作：即便角色已知也不摆菜单', () => {
+    const html = render(meshStatus('relay'), MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-role"');
+    expect(html).not.toContain('data-testid="local-machine-menu"');
+  });
+});
+
 describe('LocalMachineCard 的读取失败', () => {
   test('非 401 失败：给出原因与重试，而不是空着一张卡', () => {
     const html = render(null, MESH_MODE, 'fetch failed');
@@ -592,7 +644,7 @@ describe('LocalMachineCard 的允许域名访问', () => {
     expect(html).toContain('data-testid="local-machine-network"');
   });
 
-  test('有公开域名：开关 + 说明，不再单起一个「通用设置」标题', () => {
+  test('有公开域名：开关与标签同一行，说明另起一行，不再单起「通用设置」标题', () => {
     const html = render(
       withDomainAccess({ allowed: true, viaDomain: false, hosts: ['tmex.example.com'] }),
       MESH_MODE
@@ -604,6 +656,21 @@ describe('LocalMachineCard 的允许域名访问', () => {
       disabled: false,
       checked: true,
     });
+    // 开关在标签行内（与直连插件同一套版式），说明落在该行之后
+    const label = html.indexOf('nodes.machine.domainAccess.label');
+    const toggle = html.indexOf('data-testid="local-machine-domain-access-switch"');
+    const hint = html.indexOf('data-testid="local-machine-domain-access-hint"');
+    expect(label).toBeLessThan(toggle);
+    expect(toggle).toBeLessThan(hint);
+  });
+
+  test('说明只有一句，不再是带括号的长句', () => {
+    const zh = zhCN.translation.nodes.machine.domainAccess.description;
+    expect(zh).toBe(
+      '关闭后拒绝来自公网的网页与 API 访问，局域网、本机与节点互联不受影响。公开域名：{{hosts}}'
+    );
+    expect(zh).not.toContain('（');
+    expect(zh).not.toContain('(');
   });
 
   test('没有公开域名：说清尚未配置并禁用开关', () => {

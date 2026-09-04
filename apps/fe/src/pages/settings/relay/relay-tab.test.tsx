@@ -3,7 +3,11 @@
 // 因此只断言结构与 testId，不驱动交互。
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { ApiClient } from '@tmex/api-client/client';
 import type { RelayStatusResponse, RelayTenantSummary } from '@tmex/api-client/relay/admin-api';
+import { RelayAdminApi } from '@tmex/api-client/relay/admin-api';
 import { installWindowStorage } from '@tmex/stores/test-utils';
 
 installWindowStorage();
@@ -13,9 +17,12 @@ const { RelayTab } = await import('./relay-tab');
 const { resetRelayAdminStateForTest, setRelayAdminStateForTest } = await import(
   './relay-status-store'
 );
-const { resetRelayMetricsStateForTest, setRelayMetricsStateForTest } = await import(
-  './relay-metrics-store'
-);
+const {
+  getRelayMetricsState,
+  refreshRelayMetrics,
+  resetRelayMetricsStateForTest,
+  setRelayMetricsStateForTest,
+} = await import('./relay-metrics-store');
 const { relayMetricsFixture: metrics } = await import('./relay-metrics-fixture');
 
 function tenant(patch: Partial<RelayTenantSummary> = {}): RelayTenantSummary {
@@ -188,5 +195,52 @@ describe('RelayTab 的正文', () => {
     const html = render();
     expect(html).toContain('data-testid="settings-relay-tab"');
     expect(html).toContain('data-testid="relay-refresh-error"');
+  });
+});
+
+describe('RelayTab 的 api 注入', () => {
+  test('注入的 api 上取指标只打注入的 transport，碰不到默认 client', async () => {
+    const paths: string[] = [];
+    const client = new ApiClient('', (url) => {
+      paths.push(url);
+      return Promise.resolve(new Response(JSON.stringify(metrics()), { status: 200 }));
+    });
+    const api = new RelayAdminApi(client);
+
+    const realFetch = globalThis.fetch;
+    let escaped = 0;
+    globalThis.fetch = (() => {
+      escaped += 1;
+      return Promise.reject(new Error('不该走默认 client'));
+    }) as unknown as typeof fetch;
+    try {
+      await refreshRelayMetrics(api);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    expect(paths).toEqual(['/api/relay/metrics']);
+    expect(escaped).toBe(0);
+    expect(getRelayMetricsState().data).not.toBeNull();
+  });
+
+  test('标签把自己的 api 传给指标面板，而不是让它回落到默认单例', () => {
+    // 无 DOM 测试环境跑不了 effect，拿不到面板真正发出的请求；
+    // 这条接线只能在源码层面钉住（做法同 i18n core-coverage 测试）。
+    const source = readFileSync(join(import.meta.dir, 'relay-tab.tsx'), 'utf8');
+    expect(source).toContain('<RelayMetricsPanel api={api} />');
+    expect(source).toContain(
+      '<RelayTabBody controller={controller} status={relay.status} api={api} />'
+    );
+  });
+
+  test('注入的 api 照旧驱动状态与写操作', async () => {
+    const paths: string[] = [];
+    const client = new ApiClient('', (url) => {
+      paths.push(url);
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    await new RelayAdminApi(client).metrics();
+    expect(paths).toEqual(['/api/relay/metrics']);
   });
 });

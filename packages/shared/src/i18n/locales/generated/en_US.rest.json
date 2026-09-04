@@ -1201,6 +1201,7 @@
         },
         "status": {
           "standalone": "Standalone",
+          "unknown": "Status unknown",
           "hubConnected": "Connected to Hub",
           "hubConnectedRtt": "Connected to Hub · {{ms}} ms",
           "hubDisconnected": "Not connected to a Hub",
@@ -1264,7 +1265,7 @@
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
         "domainAccess": {
           "label": "Allow Domain Access",
-          "description": "When off, web and API access from the public internet is refused (LAN and local access is unaffected); only hub/node mesh services stay reachable. Public domains: {{hosts}}",
+          "description": "When off, web and API access from the public internet is refused; LAN, local and node-mesh traffic is unaffected. Public domains: {{hosts}}",
           "noHosts": "No public domain configured yet.",
           "hostSeparator": ", ",
           "failed": "Could not save the domain access setting ({{detail}}).",
@@ -2010,6 +2011,10 @@
           "sockets": "Sockets",
           "socketsSub": "{{authenticated}} authenticated",
           "uptime": "Uptime",
+          "throughputTotal": "{{total}} total",
+          "traffic": "Relayed Traffic",
+          "trafficSub": "since start",
+          "trafficHint": "Each forwarded frame counts on both sides; it is counted once here.",
           "tenants": "Tenants"
         },
         "trends": {

@@ -5,6 +5,7 @@ import { SELECTABLE_ROLES, machineStatusBadge, roleMenuTargets } from './machine
 
 const BASE = {
   standalone: false,
+  roleKnown: true,
   relayMode: false,
   relayAttached: false,
   relayKicked: false,
@@ -21,6 +22,22 @@ describe('machineStatusBadge', () => {
       tone: 'muted',
       key: 'nodes.machine.status.standalone',
     });
+  });
+
+  test('mesh 但本机状态还没回来：只说未知，不拿链路快照猜「未连接」', () => {
+    expect(machineStatusBadge({ ...BASE, roleKnown: false })).toEqual({
+      state: 'unknown',
+      tone: 'muted',
+      key: 'nodes.machine.status.unknown',
+    });
+    // 上级链路已经有快照也一样：角色未知就没有结论
+    expect(
+      machineStatusBadge({ ...BASE, roleKnown: false, relayMode: true, relayAttached: true }).state
+    ).toBe('unknown');
+    // standalone 由 `/api/auth/mode` 直接给出，不受本机状态影响
+    expect(machineStatusBadge({ ...BASE, roleKnown: false, standalone: true }).state).toBe(
+      'standalone'
+    );
   });
 
   test('中继模式：挂上了就是已连接，有延迟时换成带延迟的那条', () => {

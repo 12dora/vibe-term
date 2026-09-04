@@ -8,6 +8,7 @@ import {
   isRelayNotEnabled,
   isRelayUnauthorized,
 } from './admin-api';
+import type { RelayMetricsResponse } from './metrics-types';
 
 type Call = { url: string; init?: RequestInit };
 
@@ -73,9 +74,9 @@ describe('RelayAdminApi 读接口', () => {
     expect(calls[0]?.url).toBe('/api/relay/health');
   });
 
-  test('GET /api/relay/metrics 原样返回，members:false 带 query', async () => {
-    const metrics = {
-      schemaVersion: 1 as const,
+  test('GET /api/relay/metrics 原样返回，members:false 带 query 且类型不含 members', async () => {
+    const metrics: RelayMetricsResponse = {
+      schemaVersion: 1,
       sampledAt: 1,
       intervalMs: 5000,
       uptimeMs: 10,
@@ -104,13 +105,20 @@ describe('RelayAdminApi 读接口', () => {
       members: [],
       history: { intervalMs: 5000, samples: [] },
     };
-    const { api, calls } = recorder([ok(metrics), ok(metrics)]);
+    const { members: _members, ...withoutMembers } = metrics;
+    const { api, calls } = recorder([ok(metrics), ok(withoutMembers)]);
     expect(await api.metrics()).toEqual(metrics);
     expect(calls[0]?.url).toBe('/api/relay/metrics');
-    await api.metrics({ members: false });
+    const slim = await api.metrics({ members: false });
     expect(calls[1]?.url).toBe('/api/relay/metrics?members=0');
+    expect('members' in slim).toBe(false);
+    expectSlimMetrics(slim);
   });
 });
+
+function expectSlimMetrics<T>(value: 'members' extends keyof T ? never : T): T {
+  return value;
+}
 
 describe('RelayAdminApi 写接口', () => {
   test('POST /api/relay/password 带 mode', async () => {
