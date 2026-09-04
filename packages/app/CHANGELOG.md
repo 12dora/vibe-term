@@ -1,3 +1,23 @@
+# 1.1.29
+
+_2026-09-04_
+
+## English
+
+### Fixes
+
+- Settings → Multi-node → This machine: opening the card's overflow menu crashed the page in 1.1.28 (the menu label was rendered outside a menu group, which Base UI rejects at runtime). Fixed and guarded by a test.
+
+---
+
+## 中文
+
+### 修复
+
+- 设置 → 多节点互联 → 本机：1.1.28 中点击卡片右上角的溢出菜单会整页崩溃（菜单小标题没有放在菜单分组内，Base UI 运行时拒绝渲染）。已修复并加回归测试。
+
+---
+
 # 1.1.28
 
 _2026-09-04_

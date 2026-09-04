@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { LocalRole } from '@tmex/api-client/local/types';
+import { DropdownMenuGroup, DropdownMenuLabel } from '@tmex/ui/dropdown-menu';
 import { Children, type ReactElement, type ReactNode } from 'react';
 import { LocalMachineMenuList } from './local-machine-header';
 import { roleMenuTargets } from './machine-status';
@@ -31,11 +32,26 @@ function renderList(role: LocalRole, roleLocked = false) {
       left += 1;
     },
   }) as ReactElement<{ children?: ReactNode }>;
-  const items = Children.toArray(list.props.children) as ReactElement<ItemProps>[];
-  return { items, picked, leftCount: () => left };
+  const top = Children.toArray(list.props.children) as ReactElement<{ children?: ReactNode }>[];
+  const items = top.flatMap((node) =>
+    node.type === DropdownMenuGroup
+      ? (Children.toArray(node.props.children) as ReactElement<ItemProps>[])
+      : [node as ReactElement<ItemProps>]
+  );
+  return { top, items, picked, leftCount: () => left };
 }
 
 describe('LocalMachineMenuList', () => {
+  // Base UI 的 Menu.GroupLabel 必须挂在 Menu.Group 里，否则打开菜单即抛错整页崩溃（1.1.28 事故）。
+  test('「更改角色」小标题与角色项一起包在 DropdownMenuGroup 里', () => {
+    const { top } = renderList('node');
+    const group = top[0];
+    expect(group?.type).toBe(DropdownMenuGroup);
+    const inner = Children.toArray(group?.props.children) as ReactElement[];
+    expect(inner[0]?.type).toBe(DropdownMenuLabel);
+    expect(top.some((node) => node.type === DropdownMenuLabel)).toBe(false);
+  });
+
   test('先是角色分组，再是离开与账号安全', () => {
     const { items } = renderList('node');
     const testIds = items.map((item) => item.props['data-testid']);
