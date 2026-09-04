@@ -381,7 +381,9 @@ export class RelayRoutes {
     const all = new URL(req.url).searchParams.get('scope') === 'all';
     const attached = rows.find((row) => row.url === attachedUrl) ?? rows[0];
     if (!attached) return jsonError('RELAY_NOT_CONFIGURED', 409);
-    const targets = all ? [attached, ...rows.filter((row) => row.url !== attached.url)] : [attached];
+    const targets = all
+      ? [attached, ...rows.filter((row) => row.url !== attached.url)]
+      : [attached];
     const logKey = await this.deps.secrets.logKey();
     if (!logKey) return jsonError('RELAY_KEY_MISSING', 409);
     const relays: Array<{ url: string; tenantId: string; token: string }> = [];
@@ -391,7 +393,11 @@ export class RelayRoutes {
         if (!all) return jsonError('RELAY_KEY_MISSING', 409);
         continue;
       }
-      relays.push({ url: target.url, tenantId: relay.tenantId, token: encodeBase64url(relay.token) });
+      relays.push({
+        url: target.url,
+        tenantId: relay.tenantId,
+        token: encodeBase64url(relay.token),
+      });
     }
     if (relays.length === 0) return jsonError('RELAY_KEY_MISSING', 409);
     return jsonBody({ logKey: encodeBase64url(logKey), relays });
