@@ -215,6 +215,8 @@ type RelayOptions = {
   /** redeem 回一个超大响应体。 */
   oversizeRedeem?: boolean;
   caPemByOrigin?: Record<string, string>;
+  /** 这些 origin 的 enrollment lookup 回 404：应换下一台。 */
+  unknownEnrollmentOrigins?: string[];
 };
 
 type RelayCall = {
@@ -301,6 +303,12 @@ function fakeRelay(tenant: Tenant, options: RelayOptions = {}) {
       );
     }
     if (url.pathname.includes('/enrollments/')) {
+      if (options.unknownEnrollmentOrigins?.includes(url.origin)) {
+        return new Response(JSON.stringify({ error: { code: 'RELAY_ENROLLMENT_UNKNOWN' } }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       if (options.lookupStatus) {
         return new Response(JSON.stringify({ error: { code: 'RELAY_NOT_FOUND' } }), {
           status: options.lookupStatus,
@@ -468,6 +476,24 @@ describe('hub join with an r3 token', () => {
       })
     ).rejects.toThrow('exceeds');
     expect(readRelayUplink(joiner).kind).toBe('hub');
+  });
+
+  test('lookup 404 RELAY_ENROLLMENT_UNKNOWN on the first relay continues to the next', async () => {
+    const tenant = await makeTenant([ENTRY_A, ENTRY_B]);
+    const joiner = await openAuth();
+    const { calls, fetcher } = fakeRelay(tenant, { unknownEnrollmentOrigins: [RELAY_A] });
+    const result = await runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+      auth: joiner,
+      fetcher,
+      skipRestart: true,
+      log: () => undefined,
+    });
+    expect(result.relayUrl).toBe(RELAY_B);
+    expect(result.tenantId).toBe(TENANT_B);
+    expect(calls.some((call) => call.origin === RELAY_A)).toBe(true);
+    expect(
+      calls.some((call) => call.origin === RELAY_B && call.path.endsWith('/enrollments/redeem'))
+    ).toBe(true);
   });
 
   test('a relay without the enrollment lookup route names the missing route', async () => {

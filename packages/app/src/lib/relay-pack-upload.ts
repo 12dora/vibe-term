@@ -162,7 +162,7 @@ export async function sealAndUploadRelayPack(input: {
   urls?: string[];
 }): Promise<void> {
   const material = await relayGatewayRequest(input.session, {
-    path: '/api/mesh/relay/join-material',
+    path: '/api/mesh/relay/join-material?scope=all',
     label: 'relay join material',
   });
   const relays = Array.isArray(material.relays) ? material.relays : [];

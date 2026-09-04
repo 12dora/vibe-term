@@ -18,6 +18,11 @@ import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { UserStore } from '../auth/user-store';
 import { isTrustedLocalClient } from './client-source';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
+import {
+  RELAY_ENROLLMENT_FANOUT_TIMEOUT_MS,
+  collectJoinMaterialRelays,
+  fanOutEnrollmentCreate,
+} from './relay-enrollment-fanout';
 import { handleMeshRelayPack } from './relay-pack-routes';
 import {
   buildMetaKeyPayload,
@@ -66,6 +71,7 @@ export type RelayRoutesDeps = {
   fetchImpl?: typeof fetch;
   now?: () => number;
   dial?: RelayDialContext;
+  enrollmentFanoutTimeoutMs?: number;
 };
 
 type PreparedPayload = { payload: string; payloadHash: string };
@@ -366,13 +372,8 @@ export class RelayRoutes {
   }
 
   /**
-   * `relay.enroll.create` 只落在当前 attach 的那台中继上，别的中继没有这条 enrollment，
-   * 新节点去那儿 redeem 只会 404。所以 join 串里的地址表只给这一台（带它自己的租户编号与令牌）；
-   * 完整的有序中继表由密钥日志里的 `set-relays` 记录在加入之后送达，failover 从那时起生效。
-   */
-  /**
-   * 默认只给当前 attach 的那一台（enrollment 只落在它上面，r3 串只能列它）；
-   * `?scope=all` 给全表——密封包要按每台中继各自的租户编号与令牌分别封装。
+   * 默认只给当前 attach 的那一台；`?scope=all` 给全表——密封包要按每台中继各自的租户编号与令牌分别封装。
+   * 加节点向导应优先用 `POST /enrollments` 响应里已接受中继的 token，不必再打一次本接口。
    */
   private async joinMaterial(req: Request): Promise<Response> {
     if (this.mode() !== 'relay') return jsonError('RELAY_NOT_CONFIGURED', 409);
@@ -386,32 +387,61 @@ export class RelayRoutes {
       : [attached];
     const logKey = await this.deps.secrets.logKey();
     if (!logKey) return jsonError('RELAY_KEY_MISSING', 409);
-    const relays: Array<{ url: string; tenantId: string; token: string }> = [];
-    for (const target of targets) {
-      const relay = await this.deps.secrets.store.getRelay(target.url);
-      if (!relay) {
-        if (!all) return jsonError('RELAY_KEY_MISSING', 409);
-        continue;
-      }
-      relays.push({
-        url: target.url,
-        tenantId: relay.tenantId,
-        token: encodeBase64url(relay.token),
-      });
-    }
+    const relays = await collectJoinMaterialRelays(this.deps.secrets, targets);
     if (relays.length === 0) return jsonError('RELAY_KEY_MISSING', 409);
     return jsonBody({ logKey: encodeBase64url(logKey), relays });
   }
 
   private async createEnrollment(req: Request, userId: string): Promise<Response> {
     if (this.mode() !== 'relay') return jsonError('RELAY_NOT_CONFIGURED', 409);
+    const rows = this.deps.secrets.relayRows();
+    if (rows.length === 0) return jsonError('RELAY_NOT_CONFIGURED', 409);
+    const prepared = await this.prepareLocalEnrollment(req, userId);
+    if (prepared instanceof Response) return prepared;
     const client = this.relayClient();
-    if (!client || client.state !== 'online') return jsonError('RELAY_OFFLINE', 503);
+    const attachedUrl = this.deps.uplink.attachedHub()?.publicUrl ?? null;
+    const relays = await fanOutEnrollmentCreate({
+      secrets: this.deps.secrets,
+      rows,
+      payload: prepared.payload,
+      fetchImpl: this.deps.fetchImpl ?? fetch,
+      dial: this.deps.dial ?? relayDialContextFromEnv(),
+      timeoutMs: this.deps.enrollmentFanoutTimeoutMs ?? RELAY_ENROLLMENT_FANOUT_TIMEOUT_MS,
+      attachedUrl,
+      uplinkCreate:
+        client?.state === 'online'
+          ? () => client.createEnrollment(prepared.payload, RELAY_ENROLLMENT_ACK_TIMEOUT_MS)
+          : undefined,
+    });
+    if (!relays.some((row) => row.accepted)) {
+      this.deps.userStore.invalidateUnusedEnrollmentTokens(userId, this.now());
+      return jsonError('RELAY_ENROLL_FANOUT_FAILED', 502, { relays });
+    }
+    return jsonBody(
+      { ok: true, id: prepared.payload.id, expiresAt: prepared.payload.exp, relays },
+      201
+    );
+  }
+
+  private async prepareLocalEnrollment(
+    req: Request,
+    userId: string
+  ): Promise<
+    | Response
+    | {
+        payload: {
+          id: string;
+          enrollPk: Uint8Array;
+          authorization: Uint8Array;
+          authorizationSig: Uint8Array;
+          exp: number;
+        };
+      }
+  > {
     const body = await readJsonObjectBody(req);
     const parsed = parseEnrollmentBody(body);
     if (!parsed) return jsonError('MALFORMED', 400);
-    const user = this.deps.userStore.getById(userId);
-    if (!user) return jsonError('UNKNOWN_USER', 404);
+    if (!this.deps.userStore.getById(userId)) return jsonError('UNKNOWN_USER', 404);
     const authErr = await this.verifyAuthorization(userId, parsed);
     if (authErr) return jsonError(authErr, 400);
     const now = this.now();
@@ -431,29 +461,15 @@ export class RelayRoutes {
       authorizationSig: parsed.authorizationSig,
       expiresAt,
     });
-    const ack = await client.createEnrollment(
-      {
+    return {
+      payload: {
         id: token.id,
         enrollPk: parsed.enrollPk,
         authorization: parsed.authorization,
         authorizationSig: parsed.authorizationSig,
         exp: expiresAt,
       },
-      RELAY_ENROLLMENT_ACK_TIMEOUT_MS
-    );
-    if (!ack.ok) {
-      this.deps.userStore.invalidateUnusedEnrollmentTokens(userId, expiresAt + 1);
-      return jsonError(ack.error ?? 'RELAY_REJECTED', 502);
-    }
-    return jsonBody(
-      {
-        ok: true,
-        id: token.id,
-        expiresAt,
-        relays: this.deps.secrets.relayRows().map((row) => row.url),
-      },
-      201
-    );
+    };
   }
 
   private getEnrollment(id: string, userId: string): Response {

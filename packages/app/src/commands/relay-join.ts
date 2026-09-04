@@ -71,14 +71,26 @@ export function orderRelayEntries(
   return [match, ...decoded.relays.filter((entry) => entry.url !== preferred)];
 }
 
+export const RELAY_ENROLLMENT_LOOKUP_MISSING =
+  'this relay does not expose GET /api/relay/tenants/:tenantId/enrollments/:enrollPk; upgrade the relay to 1.1.23 or newer';
+
 /** 只有传输层失败才换下一个中继：中继明确拒绝（4xx/5xx 契约错误）换一台也是同样的答案。 */
 function isRelayTransportError(error: unknown): boolean {
   if (error instanceof RelayCaError) return error.transport;
   return !(error instanceof RelayApiError) && !(error instanceof JoinError);
 }
 
-export const RELAY_ENROLLMENT_LOOKUP_MISSING =
-  'this relay does not expose GET /api/relay/tenants/:tenantId/enrollments/:enrollPk; upgrade the relay to 1.1.23 or newer';
+/** 这台中继没有这条 enrollment：fan-out 部分失败时 r3 里可能仍带着它，换下一台。CA 指纹不符仍直接失败。 */
+function isMissingEnrollmentError(error: unknown): boolean {
+  if (error instanceof RelayApiError) {
+    return error.code === 'RELAY_ENROLLMENT_UNKNOWN' || error.code === 'RELAY_NOT_FOUND';
+  }
+  return error instanceof JoinError && error.message === RELAY_ENROLLMENT_LOOKUP_MISSING;
+}
+
+function shouldTryNextRelay(error: unknown): boolean {
+  return isRelayTransportError(error) || isMissingEnrollmentError(error);
+}
 
 /** 每台中继的租户令牌都是它自己签发的，跨中继复用只会被拒。 */
 function relayHeaders(entry: RelayJoinTokenEntry): Record<string, string> {
@@ -283,7 +295,7 @@ async function redeemAgainstRelays(input: {
       return { prepared, redeemed, entry, pin };
     } catch (error) {
       lastError = error;
-      if (!isRelayTransportError(error)) break;
+      if (!shouldTryNextRelay(error)) break;
     }
   }
   const message = lastError instanceof Error ? lastError.message : String(lastError);
