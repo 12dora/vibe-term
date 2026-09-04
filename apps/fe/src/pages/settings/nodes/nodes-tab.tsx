@@ -1,99 +1,135 @@
 // 设置页「节点」标签：按运行模式分派。
 //
-// standalone → HTTPS 区块 + 开启 hub 向导（做 hub / 加入 hub）；mesh → 本机区块 + HTTPS 区块 + 完整节点管理。
+// 本机区块自带「接入 Hub / 接入中继」两个 tab：standalone 下 Hub tab 里就是开启 hub 的向导，
+// mesh 下是当前 Hub / 中继链路与对应的操作。standalone 另加 HTTPS 区块，mesh 再加节点管理。
 // 与站点设置表单完全无关：角色 / 直连 / TLS 都是运行态与安装态，不走 `/api/settings/site`。
 
 import { useSharedAuthMode } from '@/node/mesh-nodes';
+import type { SetupRelayRole } from '@tmex/api-client/local/types';
 import { Reveal } from '@tmex/ui/motion';
 import { Skeleton } from '@tmex/ui/skeleton';
 import { Loader2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { HttpsSection } from './https/https-section';
 import { LocalMachineCard } from './local-machine-card';
 import { NodesManagement } from './management/nodes-management';
-import { type SetupIntent, takeSetupIntent } from './membership/intent';
-import { HubSetupWizard } from './setup/hub-setup-wizard';
+import { type SetupIntentRecord, takeSetupIntent } from './membership/intent';
+import { takeSelfRelayFollowUp } from './setup/self-relay-followup';
+import { SetupTransitionProvider } from './setup/setup-transition';
+import { StandaloneRelaySetup } from './setup/standalone-relay-setup';
+import { useLocalUplinkController } from './uplink/local-uplink-controller';
+import type { UplinkTab } from './uplink/uplink-tab-preference';
 import { useLocalStatus } from './use-local-status';
+
+export interface SetupIntentRouting {
+  /** Hub 向导要预选的路径；中继那一档的表单住在中继 tab 里，不走向导。 */
+  wizardPath: 'become-hub' | 'join-hub' | null;
+  relayRole: SetupRelayRole;
+  /** 打开时强制切到的上级链路 tab。 */
+  requestedTab: UplinkTab | null;
+}
+
+/** 把跨重启记号翻成「预选哪条向导、开哪个 tab、中继表单预选哪个角色」。 */
+export function routeSetupIntent(
+  intent: SetupIntentRecord | null,
+  selfRelayFollowUp: boolean
+): SetupIntentRouting {
+  const becomeRelay = intent?.path === 'become-relay';
+  // 中继两条路径的表单都住在中继 tab 里，不进 Hub 向导。
+  const relayPath = becomeRelay || intent?.path === 'join-relay';
+  const wantsRelayTab = relayPath || selfRelayFollowUp;
+  return {
+    wizardPath: intent && !relayPath ? (intent.path as 'become-hub' | 'join-hub') : null,
+    relayRole: (becomeRelay ? intent.role : null) ?? 'relay,node',
+    requestedTab: wantsRelayTab ? 'relay' : intent ? 'hub' : null,
+  };
+}
 
 export function NodesTab() {
   const { mode, loaded } = useSharedAuthMode();
   const local = useLocalStatus();
-  const [wizardPath, setWizardPath] = useState<SetupIntent | null>(null);
-  const wizardRef = useRef<HTMLDivElement | null>(null);
+  const [intent, setIntent] = useState<SetupIntentRecord | null>(null);
+  const [selfRelayFollowUp, setSelfRelayFollowUp] = useState(false);
   const standalone = mode?.mode !== 'mesh';
+  // 上级链路的唯一 owner：本机卡与节点管理页共用同一份 hub 集合 / 中继链路 / 凭据对话框。
+  const uplink = useLocalUplinkController({ mode });
 
   // 退出 mesh 会重启网关并整页刷新回到本页：按退出前记下的意图直接展开对应向导。
   // 记号读一次就清掉，用户再刷新一次不该又被劫持到同一条路径。
   useEffect(() => {
     if (!loaded || !standalone) return;
-    const intent = takeSetupIntent();
-    if (intent) setWizardPath(intent);
+    const stored = takeSetupIntent();
+    if (stored) setIntent(stored);
   }, [loaded, standalone]);
 
-  // 角色选择器在页面上半部分，选完要把下面的向导带进视野，否则看着像什么都没发生。
+  // 中继兼节点刚设置完：重启后回到本页，把「接入本机中继」顶到眼前。
   useEffect(() => {
-    if (wizardPath) wizardRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-  }, [wizardPath]);
+    if (!loaded || standalone) return;
+    if (takeSelfRelayFollowUp()) setSelfRelayFollowUp(true);
+  }, [loaded, standalone]);
+
+  const routing = routeSetupIntent(intent, selfRelayFollowUp);
 
   // `/api/auth/mode` 要读 TLS 与证书，慢起来是几百毫秒起步：先按真实版式摆骨架，
   // 别让整页空着转圈。模式相关的区块一律等模式落定再挂（见下方 standalone 分支）。
   if (!loaded) return <NodesTabSkeleton />;
 
   return (
-    <div className="flex w-full flex-col gap-4" data-testid="settings-nodes-tab">
-      {/* 三块区域按阅读顺序错开入场；延迟档位手写在这里，列表短到不需要 <Stagger>。 */}
-      <Reveal>
-        <LocalMachineCard
-          mode={mode}
-          status={local.status}
-          loading={local.loading}
-          loginRequired={local.loginRequired}
-          onRefresh={local.refresh}
-          onSelectSetupPath={setWizardPath}
-        />
-      </Reveal>
+    // 设置路径与角色选择器共享一份「已提交」状态：后端只放行一条，界面必须同步锁上。
+    <SetupTransitionProvider>
+      <div className="flex w-full flex-col gap-4" data-testid="settings-nodes-tab">
+        {/* 三块区域按阅读顺序错开入场；延迟档位手写在这里，列表短到不需要 <Stagger>。 */}
+        <Reveal>
+          <LocalMachineCard
+            mode={mode}
+            status={local.status}
+            loading={local.loading}
+            loginRequired={local.loginRequired}
+            uplink={uplink}
+            onRefresh={local.refresh}
+            onSelectSetupPath={setIntent}
+            wizardPath={routing.wizardPath}
+            requestedUplinkTab={routing.requestedTab}
+            selfRelayFollowUp={selfRelayFollowUp}
+            relaySetup={
+              standalone && local.status ? (
+                <StandaloneRelaySetup localStatus={local.status} initialRole={routing.relayRole} />
+              ) : null
+            }
+          />
+        </Reveal>
 
-      {/* HTTPS 是安装态，与角色无关：standalone 摆在向导前面（做 hub 需要一个 https 公开地址），
-          mesh 下摆在本机区块后面。 */}
-      {standalone ? (
-        <>
+        {/* HTTPS 是安装态，与角色无关：standalone 下做 hub 需要一个 https 公开地址，多给一行提示。 */}
+        {standalone ? (
           <Reveal delayMs={60}>
             <HttpsSection showHubUrlHint />
           </Reveal>
-          {/* `initialPath` 只在首次挂载时生效，改路径必须换 key 重新挂一次。 */}
-          <div ref={wizardRef}>
-            <HubSetupWizard
-              key={wizardPath ?? 'default'}
-              localStatus={local.status}
-              initialPath={wizardPath}
-            />
-          </div>
-        </>
-      ) : (
-        <>
-          {/* 纯 node 不需要自己的 HTTPS：外部访问走 hub。
+        ) : (
+          <>
+            {/* 纯 node 不需要自己的 HTTPS：外部访问走 hub。
               角色没读到之前**不能**先把区块摆出来——`status` 为 null 时 `role === 'node'` 也是 false，
               纯 node 会在这段时间里拿到一份可操作的 HTTPS 表单（TLS 查询还可能先于角色返回）。 */}
-          {local.status ? (
-            <Reveal delayMs={60}>
-              <HttpsSection disabled={local.status.role === 'node'} />
-            </Reveal>
-          ) : local.loginRequired ? null : (
-            <div
-              className="flex h-9 items-center px-1 text-muted-foreground"
-              data-testid="https-section-pending"
-            >
-              <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-            </div>
-          )}
-          {mode && (
-            <Reveal delayMs={120}>
-              <NodesManagement mode={mode} />
-            </Reveal>
-          )}
-        </>
-      )}
-    </div>
+            {local.status ? (
+              <Reveal delayMs={60}>
+                <HttpsSection disabled={local.status.role === 'node'} />
+              </Reveal>
+            ) : local.loginRequired ? null : (
+              <div
+                className="flex h-9 items-center px-1 text-muted-foreground"
+                data-testid="https-section-pending"
+              >
+                <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+              </div>
+            )}
+            {mode && (
+              <Reveal delayMs={120}>
+                <NodesManagement mode={mode} uplink={uplink} />
+              </Reveal>
+            )}
+          </>
+        )}
+      </div>
+    </SetupTransitionProvider>
   );
 }
 

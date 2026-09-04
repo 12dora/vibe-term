@@ -38,6 +38,8 @@ const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
   'relay.quota': async (p, n) => await (await relayAdmin()).runRelayQuota(p, n.rest[0] ?? ''),
   'relay.label': async (p, n) => await (await relayAdmin()).runRelayLabel(p, n.rest),
   'relay.enroll': async (p, n) => await (await relay()).runRelayEnroll(p, n.rest[0] ?? ''),
+  'relay.join': async (p) =>
+    await (await import('./commands/relay-password-join')).runRelayPasswordJoin(p),
   'relay.reauth': async (p, n) => await (await relay()).runRelayReauth(p, n.rest[0] ?? ''),
   'relay.leave': async (p) => await (await relay()).runRelayLeave(p),
   'relay.list': async (p) => await (await relay()).runRelayList(p),

@@ -3,10 +3,9 @@
 // 列表 = `GET /api/mesh/nodes`（成员集权威）合并 `GET /n/<hub>/api/hub/nodes`（心跳 / 状态）。
 // 动作：新增节点（enrollment）、重命名、吊销。hub 不可达时全部管理动作禁用。
 //
-// 整体是设置页「节点」标签里的一张卡片：卡头放刷新与「添加」，卡体依次是 hub 离线提示、
-// 加入码表单、待确认列表与节点表——不再有第二层外框。
+// 整体是设置页「节点」标签里的一张卡片：卡头放刷新与「添加」，卡体依次是加入码表单、
+// 待确认列表与节点表。上级链路（接 Hub 还是接中继）与它的操作都在本机卡上，这里只读它的状态。
 
-import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/credential-prompt';
 import { listPendingEnrollments, subscribePendingEnrollments } from '@/node/enrollment';
 import {
   cancelPending,
@@ -14,77 +13,51 @@ import {
   useEnrollmentEngineState,
 } from '@/node/enrollment-engine';
 import { defaultRelayEnrollmentApi } from '@/node/hub-api';
-import type { HubFailureReason } from '@/node/hub-load-coordinator';
-import { useMeshHubs } from '@/node/mesh-hubs';
-import {
-  type NodeRow,
-  mergeNodes,
-  setEntryNodeId,
-  useHubNode,
-  useMeshNodes,
-} from '@/node/mesh-nodes';
-import { useMeshRelay } from '@/node/mesh-relay';
+import { mergeNodes, setEntryNodeId, useMeshNodes } from '@/node/mesh-nodes';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
-import { CircleArrowUp, Ellipsis, Plus, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { Plus, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
-import { RelayConfirmDialog, RelayEnrollDialog } from '../relay/relay-dialogs';
-import { UplinkSection, uplinkBlockedHint } from '../relay/uplink-section';
-import { useRelayActions } from '../relay/use-relay-actions';
 import { useRelayAdmitFollowUp } from '../relay/use-relay-admit-follow-up';
+import type { LocalUplinkController } from '../uplink/local-uplink-controller';
+import { uplinkBlockedHint } from '../uplink/relay-targets';
+import {
+  BulkActionsMenu,
+  pruneSelection,
+  selectableRows,
+  toggleAllSelection,
+  toggleSelection,
+} from './bulk-actions-menu';
 import { EnrollmentSection } from './enrollment-section';
 import { HubRoleDialog } from './hub-role-dialog';
 import { NodesTable } from './nodes-table';
-import {
-  type NodeSelection,
-  type NodeUninstallController,
-  type NodeUpgradeController,
-  PLACEHOLDER_KDF,
-  type ResolvedMode,
-} from './types';
+import type { NodeSelection, ResolvedMode } from './types';
 import { UninstallDialog } from './uninstall-dialog';
-import { isBatchEligible } from './upgrade-batch';
 import { useHubRoleSwitch } from './use-hub-role-switch';
 import { useBulkRevoke } from './use-node-row-actions';
-import { isUninstalling, useNodeUninstall } from './use-node-uninstall';
+import { useNodeUninstall } from './use-node-uninstall';
 import { useNodeUpgrade } from './use-node-upgrade';
+
+/** 上级链路的只读视图：本页不再自己轮询 hub 集合与中继，一律取本机卡建好的那一份。 */
+export type NodesManagementUplink = Pick<
+  LocalUplinkController,
+  'hubs' | 'hub' | 'relay' | 'prompt' | 'refreshAll'
+>;
 
 export interface NodesManagementProps {
   mode: AuthModeResponse;
+  uplink: NodesManagementUplink;
   api?: AuthApi;
 }
 
-export interface HubNoticeCopy {
-  testId: string;
-  key: string;
-  params?: Record<string, string>;
-}
-
-/**
- * hub 管理面不可用时那一行提示。hub 应答了、只是不认这次身份（通行密钥 / TOTP / 未登录）
- * 与 hub 根本打不通是两回事：前者要用户重新登录，说成「Hub 不可达」只会把人引向错误的排查。
- */
-export function hubFailureNotice(failure: HubFailureReason | null): HubNoticeCopy {
-  if (failure?.kind === 'auth') {
-    return {
-      testId: 'nodes-hub-login-rejected',
-      key: 'nodes.hubLoginRejected',
-      params: { code: failure.code },
-    };
-  }
-  return { testId: 'nodes-hub-offline', key: 'nodes.hubOffline' };
-}
-
-export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesManagementProps) {
+export function NodesManagement({
+  mode: rawMode,
+  uplink,
+  api = defaultAuthApi,
+}: NodesManagementProps) {
   const { t } = useTranslation();
   const { nodes, loading: nodesLoading, refresh: refreshNodes } = useMeshNodes();
   const entryNodeId = rawMode.nodeId || null;
@@ -99,10 +72,7 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
     refreshNodes();
   }, [refreshNodes]);
 
-  const hub = useHubNode(nodes, { hubNodeId: rawMode.hubNodeId ?? null });
-  // hub 集合与中继链路的轮询都归本页所有：整个宿主只有节点管理页要看上级链路的全貌。
-  const hubs = useMeshHubs({ owner: true });
-  const relay = useMeshRelay({ owner: true });
+  const { hub, hubs, relay, prompt } = uplink;
   const rows = useMemo(
     () => mergeNodes(nodes, hub.hubNodes, { entryNodeId, hubNodeId: hub.hubNodeId }),
     [nodes, hub.hubNodes, hub.hubNodeId, entryNodeId]
@@ -120,26 +90,8 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
     ? { ...rawMode, uid: rawMode.uid as string, kdfParams: rawMode.kdfParams as AuthKdfParamsJson }
     : null;
 
-  // 管理动作可以用密码，也可以用本入口已注册的 passkey（设计 §2「用户密钥」）。
-  const { passkeys } = usePasskeys(api, { enabled: hasCredentials && rawMode.passkeyAvailable });
-  const prompt = useCredentialPrompt({
-    kdfParams: mode?.kdfParams ?? PLACEHOLDER_KDF,
-    rootPublicKey: decodeRootPublicKey(rawMode.rootPublicKey),
-    passkeys,
-    passkeyAvailable: rawMode.passkeyAvailable,
-  });
-
-  const refreshHubs = hubs.refresh;
-  const refreshRelay = relay.refresh;
-  // 中继链路也要跟着重拉：hub → 中继迁移之后，状态条得当场翻成中继版式，不能等下一拍轮询。
-  const refreshAll = useCallback(() => {
-    refreshNodes();
-    hub.refresh();
-    refreshHubs();
-    refreshRelay();
-  }, [hub, refreshHubs, refreshNodes, refreshRelay]);
-
-  const relayActions = useRelayActions({ api, mode, prompt, onChanged: refreshAll });
+  // 节点列表 + hub 管理面 + hub 集合 + 中继链路一起重拉，由上级链路 owner 统一负责。
+  const refreshAll = uplink.refreshAll;
 
   // 升级状态机独立于 enrollment / rename / revoke：它走入口 → 目标的 peer link，hub 离线也能用。
   // 传 rows 是为了刷新后能按行回读升级状态——状态只活在 React 里，页面一刷新就得重新问一遍。
@@ -151,7 +103,6 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   // 中继模式下上级不是 hub：可写与否只看有没有挂上中继，hub 的主备 / writer 一概不适用。
   const writable = relay.relayMode ? relay.writable : hub.online && !hubs.writesBlocked;
   const blockedHint = uplinkBlockedHint(t, relay.relayMode, hubs.writesBlocked);
-  const hubNotice = useMemo(() => hubFailureNotice(hub.failure), [hub.failure]);
 
   const uninstall = useNodeUninstall(
     { api, mode, prompt, writerPublicUrl: hubs.writerPublicUrl, writable },
@@ -281,17 +232,10 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
       </CardHeader>
 
       <CardContent className="flex flex-col gap-3">
-        <UplinkSection
-          relay={relay}
-          hubs={hubs}
-          hubOnline={hub.online}
-          hubNotice={hubNotice}
-          actions={relayActions}
-        />
-
         <EnrollmentSection
           api={api}
           mode={mode}
+          relay={relay}
           hubApi={enrollChannel}
           writable={writable}
           blockedHint={blockedHint}
@@ -326,269 +270,7 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
 
         <UninstallDialog uninstall={uninstall} />
         <HubRoleDialog roleSwitch={roleSwitch} />
-        <RelayEnrollDialog actions={relayActions} />
-        <RelayConfirmDialog actions={relayActions} />
-        {prompt.dialog}
       </CardContent>
     </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// 多选
-// ---------------------------------------------------------------------------
-
-/** 可勾选的行：入口自身不能选（它自己既不能被移除也不能被卸载），正在卸载的行也锁住。 */
-export function selectableRows(rows: NodeRow[], scheduledIds: ReadonlySet<string>): NodeRow[] {
-  return rows.filter((row) => !row.isSelf && !isUninstalling(row, scheduledIds));
-}
-
-export function toggleSelection(ids: ReadonlySet<string>, nodeId: string): ReadonlySet<string> {
-  const next = new Set(ids);
-  if (!next.delete(nodeId)) next.add(nodeId);
-  return next;
-}
-
-/** 全选 / 全不选合成一个动作：没全选就全选，已全选就清空。 */
-export function toggleAllSelection(
-  ids: ReadonlySet<string>,
-  selectable: NodeRow[]
-): ReadonlySet<string> {
-  const all = selectable.every((row) => ids.has(row.id));
-  return all ? new Set<string>() : new Set(selectable.map((row) => row.id));
-}
-
-/** 摘掉已经不可选的 id；没有变化时返回原引用，避免白白重渲染。 */
-export function pruneSelection(
-  ids: ReadonlySet<string>,
-  selectable: NodeRow[]
-): ReadonlySet<string> {
-  const alive = new Set(selectable.map((row) => row.id));
-  const next = new Set([...ids].filter((id) => alive.has(id)));
-  return next.size === ids.size ? ids : next;
-}
-
-// ---------------------------------------------------------------------------
-// 卡头「更多」
-// ---------------------------------------------------------------------------
-
-export interface BulkItemState {
-  disabled: boolean;
-  /** 禁用原因；可点时为 `undefined`。 */
-  title?: string;
-}
-
-export interface BulkMenuInput {
-  selectedCount: number;
-  /** 这次批量真能升级的台数（含被追加进来的本机）。 */
-  eligibleUpgradeCount: number;
-  /** 本机会跟着这一批一起升级：升到最后一步时当前页面会断一下。 */
-  selfIncluded: boolean;
-  latestKnown: boolean;
-  /** 已有升级在跑（行内或批量）。 */
-  upgradeBusy: boolean;
-  /** 刷新后正在回读各节点升级状态。 */
-  restoring: boolean;
-  /** hub 当前接受管理写入。 */
-  writable: boolean;
-  blockedHint: string;
-  uninstallRunning: boolean;
-  revoking: boolean;
-}
-
-/**
- * 三个菜单项的可点性与禁用原因。共同的前置条件是「选中了东西」与「没有别的批量在跑」，
- * 各自再叠自己的条件：升级看 latest 与可升级台数，移除与卸载都要 hub 收得下写入。
- */
-export function bulkMenuStates(
-  input: BulkMenuInput,
-  t: (key: string, options?: Record<string, unknown>) => string
-): { upgrade: BulkItemState; revoke: BulkItemState; uninstall: BulkItemState } {
-  const empty: BulkItemState = { disabled: true, title: t('nodes.selection.none') };
-  const busyHint = input.uninstallRunning
-    ? t('nodes.uninstall.running')
-    : input.revoking
-      ? t('nodes.selection.busy')
-      : input.restoring
-        ? t('nodes.upgrade.restoring')
-        : t('nodes.upgrade.allBusy');
-  const busy: BulkItemState = { disabled: true, title: busyHint };
-  const anyBusy = input.upgradeBusy || input.restoring || input.uninstallRunning || input.revoking;
-
-  const upgrade = (): BulkItemState => {
-    if (input.selectedCount === 0) return empty;
-    if (anyBusy) return busy;
-    if (!input.latestKnown) return { disabled: true, title: t('nodes.upgrade.releaseUnavailable') };
-    if (input.eligibleUpgradeCount === 0)
-      return { disabled: true, title: t('nodes.upgrade.allNone') };
-    if (!input.selfIncluded) return { disabled: false };
-    return { disabled: false, title: t('nodes.selection.upgradeSelfNotice') };
-  };
-
-  const revoke = (): BulkItemState => {
-    if (input.selectedCount === 0) return empty;
-    if (!input.writable) return { disabled: true, title: input.blockedHint };
-    if (anyBusy) return busy;
-    return { disabled: false };
-  };
-
-  const uninstall = (): BulkItemState => {
-    if (input.selectedCount === 0) return empty;
-    // 卸载以一次签名 `revoke-node` 收尾：hub 不收写入时机器会被删干净，证书却撤不掉。
-    if (!input.writable) return { disabled: true, title: input.blockedHint };
-    if (anyBusy) return busy;
-    return { disabled: false };
-  };
-
-  return { upgrade: upgrade(), revoke: revoke(), uninstall: uninstall() };
-}
-
-export interface BulkActionsMenuListProps {
-  states: ReturnType<typeof bulkMenuStates>;
-  labels: { upgrade: string; revoke: string; uninstall: string };
-  onUpgrade: () => void;
-  onRevoke: () => void;
-  onUninstall: () => void;
-}
-
-/**
- * 下拉内容。单独导出且不自带 hook：Base UI 的菜单走 portal，静态渲染什么都不输出，
- * 单测只能直接对元素树做断言（与 `AddDeviceMenuList` 同一套做法）。
- */
-export function BulkActionsMenuList({
-  states,
-  labels,
-  onUpgrade,
-  onRevoke,
-  onUninstall,
-}: BulkActionsMenuListProps) {
-  return (
-    <>
-      <DropdownMenuItem
-        disabled={states.upgrade.disabled}
-        title={states.upgrade.title}
-        onClick={onUpgrade}
-        data-testid="nodes-bulk-upgrade"
-      >
-        <CircleArrowUp className="size-4" />
-        {labels.upgrade}
-      </DropdownMenuItem>
-      <DropdownMenuItem
-        disabled={states.revoke.disabled}
-        title={states.revoke.title}
-        onClick={onRevoke}
-        data-testid="nodes-bulk-revoke"
-      >
-        <ShieldAlert className="size-4" />
-        {labels.revoke}
-      </DropdownMenuItem>
-      <DropdownMenuItem
-        variant="destructive"
-        disabled={states.uninstall.disabled}
-        title={states.uninstall.title}
-        onClick={onUninstall}
-        data-testid="nodes-bulk-uninstall"
-      >
-        <Trash2 className="size-4" />
-        {labels.uninstall}
-      </DropdownMenuItem>
-    </>
-  );
-}
-
-/**
- * 批量升级的实际目标：勾选的行**再加上本机**。本机那一行不可勾选（移除 / 卸载都轮不到它），
- * 但升级必须带得上它——持久化的「普通节点 → hub → 本机」次序与入口重启后的续跑，只有本机
- * 真的进了批量才走得到。一个都没勾时不追加：菜单仍然停在「须先勾选节点」。
- */
-export function bulkUpgradeTargets(
-  selected: NodeRow[],
-  selfRow: NodeRow | null,
-  latestVersion: string | null
-): { rows: NodeRow[]; selfIncluded: boolean } {
-  if (selected.length === 0 || !selfRow) return { rows: selected, selfIncluded: false };
-  // 用批量自己的那把尺子（`upgradeBlockReason` 为空 + 版本可解析且低于 latest）：
-  // 换一把更松的只会让标签写着「含本机」而 `launchUpgradeBatch` 转头把它筛掉。
-  if (!isBatchEligible(selfRow, latestVersion)) return { rows: selected, selfIncluded: false };
-  return { rows: [...selected, selfRow], selfIncluded: true };
-}
-
-/**
- * 「更多」：对**选中的行**批量升级 / 移除 / 卸载。没有单独的「全部升级」了——
- * 全选再走这个菜单即可，两个入口做同一件事只会让人猜它们有什么区别。
- * 升级是唯一会自动带上本机的动作，标签里写明「含本机」。
- */
-export function BulkActionsMenu({
-  rows,
-  selfRow,
-  upgrade,
-  uninstall,
-  revoking,
-  onRevoke,
-  writable,
-  blockedHint,
-}: {
-  rows: NodeRow[];
-  selfRow: NodeRow | null;
-  upgrade: NodeUpgradeController;
-  uninstall: NodeUninstallController;
-  revoking: boolean;
-  onRevoke: () => void;
-  writable: boolean;
-  blockedHint: string;
-}) {
-  const { t } = useTranslation();
-  const latestVersion = upgrade.latest?.latestVersion ?? null;
-  const targets = bulkUpgradeTargets(rows, selfRow, latestVersion);
-  const upgradeCount = upgrade.eligibleCount(targets.rows);
-  const states = bulkMenuStates(
-    {
-      selectedCount: rows.length,
-      eligibleUpgradeCount: upgradeCount,
-      selfIncluded: targets.selfIncluded,
-      latestKnown: Boolean(latestVersion),
-      upgradeBusy: upgrade.anyRunning || upgrade.batch.running,
-      restoring: upgrade.restoring,
-      writable,
-      blockedHint,
-      uninstallRunning: uninstall.running,
-      revoking,
-    },
-    t
-  );
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t('nodes.selection.more')}
-            title={t('nodes.selection.more')}
-            data-testid="nodes-bulk-menu"
-          />
-        }
-      >
-        <Ellipsis />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-44">
-        <BulkActionsMenuList
-          states={states}
-          labels={{
-            upgrade: t(
-              targets.selfIncluded ? 'nodes.selection.upgradeWithSelf' : 'nodes.selection.upgrade',
-              { count: upgradeCount }
-            ),
-            revoke: t('nodes.selection.revoke'),
-            uninstall: t('nodes.selection.uninstall'),
-          }}
-          onUpgrade={() => upgrade.startAll(targets.rows)}
-          onRevoke={onRevoke}
-          onUninstall={() => uninstall.request(rows)}
-        />
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }

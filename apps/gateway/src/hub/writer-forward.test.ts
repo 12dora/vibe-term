@@ -122,6 +122,7 @@ describe('writer-forward', () => {
   test('经 uplink send/ack 回写者 status/body，响应带头，不含 cookie', async () => {
     const routes = [
       '/api/hub/enrollments',
+      '/api/hub/enrollments/by-password',
       '/api/hub/enrollments/redeem',
       '/api/hub/nodes/n1/rename',
       '/api/auth/keylog?hub=sync',

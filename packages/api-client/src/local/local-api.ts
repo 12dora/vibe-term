@@ -56,7 +56,7 @@ export class LocalApi {
     });
   }
 
-  /** `POST /api/local/leave`：退出 mesh，清空本机 membership 并重启为 standalone。 */
+  /** `POST /api/local/leave`：退出 mesh。默认 standalone；`targetRole:'relay'` 仅 `relay,node`。 */
   async leave(body: LocalLeaveRequest): Promise<LocalLeaveResponse> {
     return this.json<LocalLeaveResponse>('/api/local/leave', 'leave_failed', {
       method: 'POST',

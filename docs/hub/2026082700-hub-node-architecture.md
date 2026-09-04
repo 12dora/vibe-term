@@ -185,6 +185,18 @@ peer_cache          node_id, name, endpoints_json, inventory_json, direct_capabl
 4. 证书链（全部内嵌在 `admit-node` 记录里，其他 node 可独立验证）：`root_public_key`（join 串 / 已钉住）→ `authorization`（根签 `enroll_pk`）→ `certificate`（`enroll_sk` 签节点公钥）→ `admit-node`（根钥 / passkey 签，覆盖前两者）。hub 全程只搬运，无法伪造任何一环；hub 失陷时能做的只是拒绝服务。
 5. 重装换钥 = 重新 enroll + `revoke-node` 旧证书。
 
+### 密码加入
+
+新节点可以用 **Hub 地址 + mesh 账户密码** 加入，不必再输入加入码。
+
+1. 客户端 `GET <hub>/api/auth/mode`（无需登录）取得 `uid` 与 `kdfParams`，用密码派生根钥，本地 `createEnrollment(rootKey)` 得到 `enrollSk` 与根签 authorization。
+2. 用域 `tmex/hub-enroll/v1` 签名 proof：`domain ‖ hub_host ‖ uid ‖ root_public_key ‖ enroll_pk ‖ ts(u64)`，时间窗 ±5 分钟。
+3. `POST /api/hub/enrollments/by-password`（无 node-session）提交 `{ proof, enroll_pk, authorization, authorization_sig, exp }`。Hub 按 proof 内 uid 解析单用户根公钥、验 proof、再走既有 `verifyEnrollmentAuthorization`，随后与 `POST /api/hub/enrollments` 相同地创建 enrollment（含 writer 所有权、standby 转发、replication）。`enrollSk` 不经过 Hub。
+4. 响应带回 enrollment id、Hub URL、CA 指纹与 `key_log_head_hash`；客户端据此编码普通 join 串，后续 `performHubJoin()` / redeem 不变。
+5. 限流：`apps/gateway/src/hub/hub-enroll-limiter.ts`，滑动窗口，键为 `ip + uid`；累计 proof 失败，并限制每 uid 每小时成功创建次数。不记录 proof / 密码材料。
+
+CLI：`tmex hub join <https-url> --password [<p>]`（与 `--token` 互斥；无值时隐藏输入；尊重 `TMEX_PASSWORD`）。本机 setup：`POST /api/setup/join` 的 `method: 'password'`。
+
 ### 链路身份与握手
 
 - uplink 认证：node 连 `wss://hub/hub/uplink`，hub 在 `ctl` 流发 32 字节 nonce，node 回 `{node_id, sig}`，hub 用 `node_certs` 中的 `ed_pk` 验签；`revoked` 直接断开。

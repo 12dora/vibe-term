@@ -227,7 +227,11 @@
       "error": "WebSocket connection error",
       "checkGateway": "Please check Gateway status",
       "inputDropped": "Connection interrupted — your recent input could not be sent. Please type or paste it again once reconnected.",
-      "serverTooOld": "Terminal connection failed: the Gateway is too old, please upgrade it to {{minVersion}} or newer.",
+      "gatewayTooOld": "Terminal connection failed: Gateway {{version}} is too old, please upgrade it to {{minVersion}} or newer.",
+      "nodeTooOld": "Terminal connection failed: node {{name}} runs tmex {{version}}, please upgrade it to {{minVersion}} or newer.",
+      "nodeTooOldUnnamed": "Terminal connection failed: the node runs tmex {{version}}, please upgrade it to {{minVersion}} or newer.",
+      "clientTooOld": "Terminal connection failed: this page is too old, please reload it.",
+      "unknownVersion": "unknown",
       "reconnecting": "Reconnecting",
       "reconnect": "Reconnect"
     },

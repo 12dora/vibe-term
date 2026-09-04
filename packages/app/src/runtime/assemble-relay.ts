@@ -59,5 +59,8 @@ export function createAssembledRelay(input: {
     ...(readNodeEnv() === 'production' ? { patchEnv: patchRelayEnv } : {}),
     // 反代后面 socket IP 全是代理自己：限速必须按 trusted-proxy 解析出的真实客户端 IP
     clientIp: (req: Request) => clientIpFromRequest(req) ?? '',
+  }).then((runtime) => {
+    input.routeDeps.relayStatus = async () => runtime.snapshotForLocalStatus();
+    return runtime;
   });
 }

@@ -35,19 +35,19 @@ const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { resetMeshHubsStateForTest, setMeshHubsStateForTest } = await import('@/node/mesh-hubs');
 const { resetMeshRelayStateForTest } = await import('@/node/mesh-relay');
+const { useLocalUplinkController } = await import('../uplink/local-uplink-controller');
 const { actionErrorText } = await import('./errors');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
+const { NodesManagement } = await import('./nodes-management');
 const {
   BulkActionsMenuList,
-  NodesManagement,
   bulkMenuStates,
   bulkUpgradeTargets,
-  hubFailureNotice,
   pruneSelection,
   selectableRows,
   toggleAllSelection,
   toggleSelection,
-} = await import('./nodes-management');
+} = await import('./bulk-actions-menu');
 const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } = await import(
   '@/node/enrollment-engine'
 );
@@ -121,10 +121,16 @@ function elementTag(html: string, testId: string): string {
   return html.slice(html.lastIndexOf('<', at), html.indexOf('>', at) + 1);
 }
 
+/** 上级链路 owner 建在 `NodesTab` 里；管理页只收快照，测试里用同一个 hook 现搭一份。 */
+function ManagementHarness({ mode }: { mode: AuthModeResponse }): ReactElement {
+  const uplink = useLocalUplinkController({ mode });
+  return <NodesManagement mode={mode} uplink={uplink} />;
+}
+
 function render(mode: AuthModeResponse): string {
   return renderToStaticMarkup(
     <MemoryRouter>
-      <NodesManagement mode={mode} />
+      <ManagementHarness mode={mode} />
     </MemoryRouter>
   );
 }
@@ -185,13 +191,13 @@ describe('NodesManagement', () => {
     expect(html).not.toContain('data-testid="nodes-account-security"');
   });
 
-  test('hub 不可达时给出提示且管理动作禁用', () => {
+  test('hub 不可达时管理动作禁用（提示行已挪到本机卡）', () => {
     setMeshNodesStateForTest({
       entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
       nodes: [meshNode({ id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e', name: 'entry', loggedIn: true })],
     });
     const html = render(MODE);
-    expect(html).toContain('data-testid="nodes-hub-offline"');
+    expect(html).not.toContain('data-testid="nodes-hub-offline"');
     expect(html).toMatch(/data-testid="nodes-add"[^>]*disabled/);
     expect(html).toMatch(
       /data-testid="nodes-revoke-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"[^>]*disabled/
@@ -216,8 +222,7 @@ describe('NodesManagement', () => {
       ],
     });
     const html = render(MODE);
-    // hub 离线（提示已渲染），revoke 被禁用，但升级按钮照常可用
-    expect(html).toContain('data-testid="nodes-hub-offline"');
+    // hub 离线时 revoke 被禁用，但升级按钮照常可用
     expect(buttonTag(html, 'nodes-revoke-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d')).toContain(
       'disabled=""'
     );
@@ -305,27 +310,7 @@ describe('NodesManagement', () => {
   });
 });
 
-describe('hub 不可用时那一行提示', () => {
-  test('hub 拒绝了登录：换一条带错误码的提示，不再说「Hub 不可达」', () => {
-    expect(
-      hubFailureNotice({ kind: 'auth', code: 'PASSKEY_REQUIRED', message: 'PASSKEY_REQUIRED' })
-    ).toEqual({
-      testId: 'nodes-hub-login-rejected',
-      key: 'nodes.hubLoginRejected',
-      params: { code: 'PASSKEY_REQUIRED' },
-    });
-  });
-
-  test('打不通 / 还没失败过：保持原来的「Hub 不可达」', () => {
-    const offline = { testId: 'nodes-hub-offline', key: 'nodes.hubOffline' };
-    expect(hubFailureNotice(null)).toEqual(offline);
-    expect(
-      hubFailureNotice({ kind: 'unreachable', code: null, message: 'hub_unreachable' })
-    ).toEqual(offline);
-  });
-});
-
-describe('Hub 集群展示与 standby 拒写', () => {
+describe('standby 拒写与表内 hub 徽标', () => {
   const HUB_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
   const HUB_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
   const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
@@ -348,55 +333,7 @@ describe('Hub 集群展示与 standby 拒写', () => {
     });
   }
 
-  test('只有一台 hub 时不渲染集群条，也没有备用 hub 提示', () => {
-    withNodes();
-    setMeshHubsStateForTest({
-      hubs: [hubInfo({ nodeId: HUB_A })],
-      writerHubId: HUB_A,
-      attached: {
-        hubNodeId: HUB_A,
-        publicUrl: `https://${HUB_A}.example`,
-        mode: 'active',
-        writerEpoch: 1,
-        since: 1,
-      },
-      loadedAt: 1,
-    });
-    const html = render(MODE);
-    expect(html).not.toContain('data-testid="nodes-hub-strip"');
-    expect(html).not.toContain('data-testid="nodes-hub-standby"');
-  });
-
-  test('两台 hub：一台一枚 chip，挂载的那枚与 writer 那枚各自标出', () => {
-    withNodes();
-    setMeshHubsStateForTest({
-      hubs: [
-        hubInfo({ nodeId: HUB_A, name: 'tokyo' }),
-        hubInfo({ nodeId: HUB_B, name: 'osaka', mode: 'standby', priority: 1, writerEpoch: 0 }),
-      ],
-      writerHubId: HUB_A,
-      attached: {
-        hubNodeId: HUB_B,
-        publicUrl: `https://${HUB_B}.example`,
-        mode: 'standby',
-        writerEpoch: 0,
-        since: 1,
-      },
-      loadedAt: 1,
-    });
-    const html = render(MODE);
-    expect(html).toContain('data-testid="nodes-hub-strip"');
-    const chipA = html.slice(html.indexOf(`data-testid="nodes-hub-chip-${HUB_A}"`));
-    expect(chipA.slice(0, 200)).toContain('data-hub-writer="true"');
-    expect(chipA.slice(0, 200)).toContain('data-hub-attached="false"');
-    const chipB = html.slice(html.indexOf(`data-testid="nodes-hub-chip-${HUB_B}"`));
-    expect(chipB.slice(0, 200)).toContain('data-hub-attached="true"');
-    expect(chipB.slice(0, 200)).toContain('data-hub-mode="standby"');
-    expect(html).toContain('tokyo');
-    expect(html).toContain('osaka');
-  });
-
-  test('挂在备用 hub 上：给出一行说明并禁用加入 / 移除，升级不受影响', () => {
+  test('挂在备用 hub 上：禁用加入 / 移除，升级不受影响（说明行在本机卡）', () => {
     withNodes([meshNode({ id: HUB_B, name: 'osaka', isHub: true, hubMode: 'standby' })]);
     setMeshHubsStateForTest({
       hubs: [hubInfo({ nodeId: HUB_A }), hubInfo({ nodeId: HUB_B, mode: 'standby' })],
@@ -411,8 +348,8 @@ describe('Hub 集群展示与 standby 拒写', () => {
       loadedAt: 1,
     });
     const html = render(MODE);
-    expect(html).toContain('data-testid="nodes-hub-standby"');
-    // 「hub 不可达」说的是同一件事，不再重复一遍
+    // 上级链路的两条说明都搬到了本机卡，管理页只留「动作被禁用 + 原因写进 title」
+    expect(html).not.toContain('data-testid="nodes-hub-standby"');
     expect(html).not.toContain('data-testid="nodes-hub-offline"');
     expect(buttonTag(html, 'nodes-add')).toContain('disabled=""');
     expect(buttonTag(html, 'nodes-add')).toContain('title="nodes.hubs.standbyNotice"');

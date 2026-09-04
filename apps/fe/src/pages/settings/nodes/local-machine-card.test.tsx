@@ -4,6 +4,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-hubs';
+import { resetMeshRelayStateForTest } from '@/node/mesh-relay';
 import { ApiClient, type DomainAccessPolicy } from '@tmex/api-client';
 import type {
   AuthModeResponse,
@@ -34,7 +35,9 @@ import {
   domainAccessApi,
   domainAccessConfirmLines,
 } from './domain-access-row';
-import { LocalMachineCard } from './local-machine-card';
+import { LocalMachineCard, SELECTABLE_ROLES } from './local-machine-card';
+import { ROLE_LABEL_KEY } from './membership/role-transition';
+import { useLocalUplinkController } from './uplink/local-uplink-controller';
 
 const MESH_MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -64,6 +67,7 @@ function status(direct: Partial<LocalDirectStatus> = {}): LocalStatusResponse {
     },
     tls: { mode: 'none', listenerRunning: false, tlsPort: null },
     domainAccess: { allowed: true, viaDomain: false, hosts: [] },
+    relay: null,
   };
 }
 
@@ -73,19 +77,35 @@ const idleApi: DirectApi = {
 
 afterEach(() => {
   resetMeshHubsStateForTest();
+  resetMeshRelayStateForTest();
 });
+
+/** 上级链路 owner 现在建在 `NodesTab` 里，本机卡只收快照：测试里用同一个 hook 现搭一份。 */
+function Harness({
+  local,
+  mode,
+}: {
+  local: LocalStatusResponse | null;
+  mode: AuthModeResponse | null;
+}) {
+  const uplink = useLocalUplinkController({ mode });
+  return (
+    <LocalMachineCard
+      mode={mode}
+      status={local}
+      loading={false}
+      loginRequired={false}
+      api={idleApi}
+      uplink={uplink}
+      onRefresh={() => undefined}
+    />
+  );
+}
 
 function render(local: LocalStatusResponse | null, mode: AuthModeResponse | null = null): string {
   return renderToStaticMarkup(
     <MemoryRouter>
-      <LocalMachineCard
-        mode={mode}
-        status={local}
-        loading={false}
-        loginRequired={false}
-        api={idleApi}
-        onRefresh={() => undefined}
-      />
+      <Harness local={local} mode={mode} />
     </MemoryRouter>
   );
 }
@@ -393,6 +413,20 @@ describe('LocalMachineCard 角色与 Hub 归属', () => {
     expect(html).toContain('nodes.machine.roleNode');
     // 隐藏的原生 input 带着当前值，提交/回填都以它为准
     expect(html).toContain('value="node"');
+  });
+
+  test('角色下拉给全五个角色，纯中继写明没有网页', () => {
+    // Select 的选项只在展开时才渲染，静态版式里看不到：直接断言候选列表与文案。
+    expect(SELECTABLE_ROLES).toEqual(['standalone', 'node', 'hub,node', 'relay,node', 'relay']);
+    for (const role of SELECTABLE_ROLES) expect(ROLE_LABEL_KEY[role]).toBeString();
+    expect(zhCN.translation.nodes.machine.roleRelay).toContain('无网页');
+    expect(zhCN.translation.nodes.machine.roleRelayNode).toBe('中继兼节点');
+  });
+
+  test('中继兼节点：角色下拉照样显示当前角色', () => {
+    const html = render(meshStatus('relay,node'), MESH_MODE);
+    expect(html).toContain('value="relay,node"');
+    expect(html).toContain('nodes.machine.roleRelayNode');
   });
 
   test('纯 node：「当前 Hub」这一行带上「更换 Hub」，不再另起一行加入地址', () => {

@@ -107,7 +107,8 @@ function applyMemberInTx(
 export function appendRelayKeyLog(
   deps: RelayKeyLogDeps,
   tenant: RelayTenantRecord,
-  msg: Extract<RelayCtlMessage, { t: 'relay.keylog.append' }>
+  msg: Extract<RelayCtlMessage, { t: 'relay.keylog.append' }>,
+  writeAuth?: { tokenHash: string; minTokenEpoch: number }
 ): RelayAppendOutcome {
   const head = tenant.keyLogHeadSeq;
   let seq: bigint;
@@ -123,6 +124,7 @@ export function appendRelayKeyLog(
   const now = deps.now();
   let effects = { revokedNodeId: null as string | null, rootRotated: false, refused: false };
   let conflictHead: bigint | null = null;
+  let authError: 'TENANT_KICKED' | 'UNAUTHORIZED' | null = null;
   try {
     deps.db.transaction(() => {
       const current = deps.tenants.get(tenant.id);
@@ -130,11 +132,25 @@ export function appendRelayKeyLog(
         conflictHead = current?.keyLogHeadSeq ?? head;
         throw new Error('relay-keylog-head-conflict');
       }
+      if (writeAuth) {
+        if (current.kicked) {
+          authError = 'TENANT_KICKED';
+          throw new Error('relay-keylog-auth');
+        }
+        if (
+          current.tokenHash !== writeAuth.tokenHash ||
+          current.tokenEpoch < writeAuth.minTokenEpoch
+        ) {
+          authError = 'UNAUTHORIZED';
+          throw new Error('relay-keylog-auth');
+        }
+      }
       deps.keyLog.append({ tenantId: tenant.id, seq, envelope: msg.blob, now });
       deps.tenants.setKeyLogHead(tenant.id, seq);
       if (member.result) effects = applyMemberInTx(deps, tenant, member.result);
     });
   } catch (err) {
+    if (authError) return { ok: false, error: authError, head };
     if (conflictHead !== null) {
       return { ok: false, error: RELAY_KEYLOG_SEQ_MISMATCH, head: conflictHead };
     }

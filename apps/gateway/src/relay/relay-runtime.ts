@@ -21,15 +21,10 @@ import { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError } from './relay-http';
 import { RelayKeyLogStore } from './relay-key-log-store';
 import { RelayMetering } from './relay-metering';
+import { dispatchRelayPublic } from './relay-public-routes';
 import type { RelaySleep } from './relay-quota';
 import { RelayRegistry } from './relay-registry';
-import {
-  type RelayPublicRoutesDeps,
-  handleRelayEnroll,
-  handleRelayEnrollmentLookup,
-  handleRelayRedeem,
-  relayHealth,
-} from './relay-routes';
+import type { RelayPublicRoutesDeps } from './relay-routes';
 import { RelayTenantStore } from './relay-tenant-store';
 import { RelayUplinkServer } from './relay-uplink-server';
 import {
@@ -59,6 +54,8 @@ export type RelayRuntimeOptions = {
   authTimeoutMs?: number;
   listDebounceMs?: number;
   minClientVersion?: string;
+  /** 测试钩子：precondition 通过之后、注册 live 连接之前。 */
+  authBarrier?: () => Promise<void>;
   log?: (line: string) => void;
 };
 
@@ -125,6 +122,7 @@ export class RelayRuntime {
   private readonly now: () => number;
   private readonly startedAt: number;
   private readonly version: string;
+  private readonly publicUrl: string;
   private readonly publicDeps: RelayPublicRoutesDeps;
   private readonly adminDeps: RelayAdminDeps;
 
@@ -132,6 +130,7 @@ export class RelayRuntime {
     this.now = opts.now ?? Date.now;
     this.startedAt = opts.startedAt ?? this.now();
     this.version = opts.version ?? opts.config.version ?? 'unknown';
+    this.publicUrl = opts.config.publicUrl;
     this.tenants = new RelayTenantStore(opts.db);
     this.keyLog = new RelayKeyLogStore(opts.db);
     this.configStore = new RelayConfigStore(opts.db);
@@ -156,6 +155,7 @@ export class RelayRuntime {
       authTimeoutMs: opts.authTimeoutMs,
       listDebounceMs: opts.listDebounceMs,
       minClientVersion: opts.minClientVersion,
+      authBarrier: opts.authBarrier,
     });
     this.publicDeps = {
       tenants: this.tenants,
@@ -195,39 +195,19 @@ export class RelayRuntime {
     return (await this.routePublic(req, path)) ?? (await this.routeAdmin(req, path));
   }
 
-  private async routePublic(req: Request, path: string): Promise<Response | undefined> {
-    if (matchPath(path, '/api/relay/health')) {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        return relayError(RelayErrorCode.methodNotAllowed, 405);
-      }
-      return relayHealth({
+  private routePublic(req: Request, path: string): Promise<Response> | Response | undefined {
+    return dispatchRelayPublic(
+      {
+        deps: this.publicDeps,
         version: this.version,
-        tenants: this.tenants.count(),
-        nodesOnline: this.registry.onlineCount(),
         startedAt: this.startedAt,
-        now: this.now(),
-      });
-    }
-    if (matchPath(path, '/api/relay/enroll')) {
-      if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
-      return handleRelayEnroll(this.publicDeps, req);
-    }
-    const redeem = matchPath(path, '/api/relay/tenants/:tenantId/enrollments/redeem');
-    if (redeem) {
-      if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
-      return handleRelayRedeem(this.publicDeps, req, decodeURIComponent(redeem.tenantId));
-    }
-    const lookup = matchPath(path, '/api/relay/tenants/:tenantId/enrollments/:enrollPk');
-    if (lookup) {
-      if (req.method !== 'GET') return relayError(RelayErrorCode.methodNotAllowed, 405);
-      return handleRelayEnrollmentLookup(
-        this.publicDeps,
-        req,
-        decodeURIComponent(lookup.tenantId),
-        decodeURIComponent(lookup.enrollPk)
-      );
-    }
-    return undefined;
+        tenantCount: () => this.tenants.count(),
+        nodesOnline: () => this.registry.onlineCount(),
+        now: this.now,
+      },
+      req,
+      path
+    );
   }
 
   private async routeAdmin(req: Request, path: string): Promise<Response> {
@@ -251,6 +231,28 @@ export class RelayRuntime {
       case 'tenant-delete':
         return handleRelayTenantDelete(this.adminDeps, route.tenantId);
     }
+  }
+
+  snapshotForLocalStatus(): {
+    publicUrl: string | null;
+    hasPassword: boolean;
+    tenantCount: number;
+    nodesOnline: number;
+    currentNodes: number;
+  } {
+    const config = this.configStore.ensure(this.now());
+    let currentNodes = 0;
+    for (const tenant of this.tenants.list()) {
+      currentNodes += this.tenants.countActiveNodes(tenant.id);
+    }
+    const publicUrl = this.publicUrl.trim();
+    return {
+      publicUrl: publicUrl.length > 0 ? publicUrl : null,
+      hasPassword: config.passwordHash != null && config.passwordHash.length > 0,
+      tenantCount: this.tenants.count(),
+      nodesOnline: this.registry.onlineCount(),
+      currentNodes,
+    };
   }
 
   isUplinkSocket(ws: { data?: { kind?: string } }): boolean {

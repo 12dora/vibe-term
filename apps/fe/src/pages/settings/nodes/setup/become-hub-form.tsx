@@ -3,6 +3,7 @@
 // 对应 CLI 的 `init --role hub,node` + `hub user add`（见 docs/hub/2026082800-hub-node-operations.md
 // 「首次搭 hub」）。HTTPS 由反代 / Cloudflare Tunnel 提供，本批次不内建。
 
+import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import { SetupApi } from '@tmex/api-client/local/setup-api';
 import type {
@@ -23,11 +24,13 @@ import {
   RestartPanel,
   ResultRow,
   SetupNotice,
+  SetupSubmitRow,
   SwitchRow,
   directOutcomeLabel,
 } from './form-parts';
 import { submitBecomeHub } from './submit';
 import { useHubSetupSubmit } from './use-hub-setup-submit';
+import type { RestartWaiter } from './use-restart-waiter';
 import {
   type BecomeHubValues,
   defaultHubPublicUrl,
@@ -70,14 +73,22 @@ export function BecomeHubForm({
   const [precheck, setPrecheck] = useState<PrecheckState>({ phase: 'idle' });
 
   const errors = validateBecomeHub(values, nodeEnv);
-  const { showErrors, revealErrors, submitting, submitError, result, waiter, handleSubmit } =
-    useHubSetupSubmit<SetupHubResponse>({
-      client,
-      hasErrors: hasErrors(errors),
-      submit: () => submitBecomeHub(values, client),
-      successMessage: t('nodes.setup.toast.hubCreated'),
-      onRestarted,
-    });
+  const {
+    showErrors,
+    revealErrors,
+    submitting,
+    submitError,
+    result,
+    waiter,
+    blocked,
+    handleSubmit,
+  } = useHubSetupSubmit<SetupHubResponse>({
+    client,
+    hasErrors: hasErrors(errors),
+    submit: () => submitBecomeHub(values, client),
+    successMessage: t('nodes.setup.toast.hubCreated'),
+    onRestarted,
+  });
   const shown = showErrors ? errors : {};
 
   function update(patch: Partial<BecomeHubValues>): void {
@@ -98,29 +109,7 @@ export function BecomeHubForm({
     }
   }
 
-  if (result) {
-    return (
-      <Card className="border-0 ring-0 tmex-reveal" data-testid="setup-become-hub-result">
-        <CardHeader>
-          <CardTitle>{t('nodes.setup.result.title')}</CardTitle>
-          <CardDescription>{t('nodes.setup.result.becomeHubDescription')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <ResultRow label={t('nodes.setup.result.fingerprint')} value={result.fingerprint} />
-          <ResultRow
-            label={t('nodes.setup.result.hubPublicUrl')}
-            value={values.hubPublicUrl.trim()}
-          />
-          <ResultRow label={t('nodes.setup.result.username')} value={values.username.trim()} />
-          <ResultRow
-            label={t('nodes.setup.result.directLabel')}
-            value={directOutcomeLabel(t, result.direct, result.directError)}
-          />
-          <RestartPanel waiter={waiter} />
-        </CardContent>
-      </Card>
-    );
-  }
+  if (result) return <BecomeHubResult result={result} values={values} waiter={waiter} />;
 
   return (
     <Card className="border-0 ring-0" data-testid="setup-become-hub-form">
@@ -182,13 +171,10 @@ export function BecomeHubForm({
             hint={t('nodes.setup.fields.passwordHint')}
             error={shown.password && t(shown.password)}
           >
-            <Input
+            <PasswordFieldWithGenerate
               id="setup-password"
-              type="password"
               value={values.password}
-              onChange={(event) => update({ password: event.target.value })}
-              autoComplete="new-password"
-              className="min-h-10"
+              onChange={(next) => update({ password: next })}
             />
           </FormField>
 
@@ -228,11 +214,47 @@ export function BecomeHubForm({
             </SetupNotice>
           )}
 
-          <Button type="submit" disabled={submitting} data-testid="setup-become-hub-submit">
-            {submitting && <Loader2 className="animate-spin" />}
-            {submitting ? t('nodes.setup.submit.pending') : t('nodes.setup.submit.becomeHub')}
-          </Button>
+          <SetupSubmitRow
+            testId="setup-become-hub"
+            label={t('nodes.setup.submit.becomeHub')}
+            submitting={submitting}
+            blocked={blocked}
+          />
         </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** 提交成功：亮出指纹 / 地址 / 账号与直连结论，下面接重启进度。 */
+function BecomeHubResult({
+  result,
+  values,
+  waiter,
+}: {
+  result: SetupHubResponse;
+  values: BecomeHubValues;
+  waiter: RestartWaiter;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Card className="border-0 ring-0 tmex-reveal" data-testid="setup-become-hub-result">
+      <CardHeader>
+        <CardTitle>{t('nodes.setup.result.title')}</CardTitle>
+        <CardDescription>{t('nodes.setup.result.becomeHubDescription')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <ResultRow label={t('nodes.setup.result.fingerprint')} value={result.fingerprint} />
+        <ResultRow
+          label={t('nodes.setup.result.hubPublicUrl')}
+          value={values.hubPublicUrl.trim()}
+        />
+        <ResultRow label={t('nodes.setup.result.username')} value={values.username.trim()} />
+        <ResultRow
+          label={t('nodes.setup.result.directLabel')}
+          value={directOutcomeLabel(t, result.direct, result.directError)}
+        />
+        <RestartPanel waiter={waiter} />
       </CardContent>
     </Card>
   );

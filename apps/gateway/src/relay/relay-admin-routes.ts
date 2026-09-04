@@ -3,7 +3,7 @@ import type { RelayConfigStore } from './relay-config-store';
 import { RelayErrorCode, relayError, relayJson } from './relay-http';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import type { RelayMetering } from './relay-metering';
-import { hashRelayPassword } from './relay-password';
+import { hashRelayPassword, relayPasswordTooShort } from './relay-password';
 import { normalizeRelayQuota } from './relay-quota';
 import type { RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
@@ -23,7 +23,7 @@ export type RelayAdminDeps = {
 
 export function relayStatusPayload(deps: RelayAdminDeps): Response {
   const config = deps.configStore.ensure(deps.now());
-  const totals = { tenants: 0, nodesOnline: 0, streams: 0, bytesIn: 0, bytesOut: 0 };
+  const totals = { tenants: 0, nodes: 0, nodesOnline: 0, streams: 0, bytesIn: 0, bytesOut: 0 };
   const tenants = deps.tenants.list().map((tenant) => {
     const live = deps.registry.listTenant(tenant.id);
     const pending = deps.metering.pendingFor(tenant.id);
@@ -31,9 +31,11 @@ export function relayStatusPayload(deps: RelayAdminDeps): Response {
     // 与 countActiveNodes 同口径：revoked 是终态，既不占配额，也不该永远挂在「已知节点」里。
     const nodeRecords = deps.tenants.listNodes(tenant.id);
     const nodesRevoked = nodeRecords.filter((node) => node.status === 'revoked').length;
+    const nodes = deps.tenants.countActiveNodes(tenant.id);
     const bytesIn = tenant.bytesIn + pending.bytesIn;
     const bytesOut = tenant.bytesOut + pending.bytesOut;
     totals.tenants += 1;
+    totals.nodes += nodes;
     totals.nodesOnline += live.length;
     totals.streams += streams;
     totals.bytesIn += bytesIn;
@@ -43,7 +45,7 @@ export function relayStatusPayload(deps: RelayAdminDeps): Response {
       label: tenant.label,
       createdAt: tenant.createdAt,
       lastSeenAt: tenant.lastSeenAt,
-      nodes: nodeRecords.length - nodesRevoked,
+      nodes,
       nodesRevoked,
       nodesOnline: live.length,
       streams,
@@ -73,6 +75,9 @@ export async function handleRelayPassword(deps: RelayAdminDeps, req: Request): P
   if (mode !== 'kick' && mode !== 'keep') return relayError(RelayErrorCode.invalidBody, 400);
   const password = body.password;
   if (password !== null && (typeof password !== 'string' || password.length === 0)) {
+    return relayError(RelayErrorCode.invalidBody, 400);
+  }
+  if (typeof password === 'string' && relayPasswordTooShort(password)) {
     return relayError(RelayErrorCode.invalidBody, 400);
   }
   const passwordHash = password === null ? null : await hashRelayPassword(password);

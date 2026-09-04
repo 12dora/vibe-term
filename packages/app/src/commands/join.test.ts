@@ -91,6 +91,25 @@ describe('hub join url rules', () => {
       )
     ).rejects.toThrow(/https/);
   });
+
+  test('runHubJoin rejects --token together with --password', async () => {
+    await expect(
+      runHubJoin(
+        parseArgs(['hub', 'join', 'https://hub.example', '--token', 'abc', '--password', 'p']),
+        'https://hub.example',
+        { skipRestart: true, log: () => undefined }
+      )
+    ).rejects.toThrow(/mutually exclusive/);
+  });
+
+  test('runHubJoin requires --token or --password', async () => {
+    await expect(
+      runHubJoin(parseArgs(['hub', 'join', 'https://hub.example']), 'https://hub.example', {
+        skipRestart: true,
+        log: () => undefined,
+      })
+    ).rejects.toThrow(/--token or --password/);
+  });
 });
 
 describe('hub join against fake hub', () => {

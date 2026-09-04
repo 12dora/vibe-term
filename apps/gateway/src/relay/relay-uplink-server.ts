@@ -1,39 +1,29 @@
-import {
-  encodeBase64url,
-  hubHostFromUrl,
-  randomBytes,
-  uplinkAuthMessage,
-  verifyEd25519,
-} from '@tmex/shared/auth';
+import { encodeBase64url, hubHostFromUrl, randomBytes } from '@tmex/shared/auth';
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import {
   MIN_RELAY_CLIENT_VERSION,
   RELAY_CTL_MAX_BYTES,
-  RELAY_PROTO_VERSION,
   type RelayCtlMessage,
   type RelayKickReason,
   type RelayQuota,
   type RelayRtcConfig,
   decodeRelayCtl,
   encodeRelayCtl,
-  relaySeqToWire,
 } from '@tmex/shared/relay';
-import { decodeB64url } from '../api/route-input';
 import type { AuthDb } from '../auth/types';
-import { nodeVersionMeets } from '../hub/hub-authorization';
 import type { RelayConfigStore } from './relay-config-store';
 import { RelayCtlQueue } from './relay-ctl-queue';
 import { RelayEnrollCreateRate } from './relay-enroll-limiter';
 import { pageRelayKeyLog } from './relay-key-log-service';
 import type { RelayKeyLogStore } from './relay-key-log-store';
-import { verifyRelayMemberProof } from './relay-member';
 import type { RelayMetering } from './relay-metering';
 import { type RelayListDeps, encodeRelayList } from './relay-node-list';
-import { constantTimeEqual, sha256Hex } from './relay-password';
 import { type RelaySleep, RelayTokenBucket, effectiveRelayQuota } from './relay-quota';
+import { relayQuotaCtl } from './relay-quota-ctl';
 import type { RelayLiveNode, RelayRegistry } from './relay-registry';
 import { acceptRelayStream } from './relay-stream-router';
 import type { RelayTenantStore } from './relay-tenant-store';
+import { handleRelayAuth, liveAuthStillValid } from './relay-uplink-auth';
 import {
   type RelayUplinkHost,
   handleRelayEnrollCreate,
@@ -47,7 +37,6 @@ import {
   RELAY_HEARTBEAT_MISS_LIMIT,
   RELAY_LIST_DEBOUNCE_MS,
   type RelayRuntimeConfig,
-  type RelayTenantRecord,
 } from './types';
 
 type PendingAuth = { nonce: Uint8Array };
@@ -67,6 +56,8 @@ export type RelayUplinkServerOptions = {
   authTimeoutMs?: number;
   listDebounceMs?: number;
   minClientVersion?: string;
+  /** 测试钩子：precondition 通过之后、注册 live 连接之前。 */
+  authBarrier?: () => Promise<void>;
 };
 
 export class RelayUplinkServer implements RelayUplinkHost {
@@ -85,6 +76,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
   private readonly authTimeoutMs: number;
   private readonly listDebounceMs: number;
   private readonly minClientVersion: string;
+  private readonly authBarrier: (() => Promise<void>) | undefined;
   private readonly pending = new WeakMap<LinkSession, PendingAuth>();
   private readonly accepted = new Set<LinkSession>();
   private readonly authTimers = new Map<LinkSession, ReturnType<typeof setTimeout>>();
@@ -113,6 +105,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
     this.authTimeoutMs = opts.authTimeoutMs ?? RELAY_AUTH_TIMEOUT_MS;
     this.listDebounceMs = opts.listDebounceMs ?? RELAY_LIST_DEBOUNCE_MS;
     this.minClientVersion = opts.minClientVersion ?? MIN_RELAY_CLIENT_VERSION;
+    this.authBarrier = opts.authBarrier;
     this.relayHost = hubHostFromUrl(opts.config.publicUrl);
     this.listDeps = {
       tenants: this.tenants,
@@ -174,7 +167,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
   notifyQuota(tenantId: string): void {
     const quota = this.quotaFor(tenantId);
     this.buckets.get(tenantId)?.setRate(quota.bandwidthBytesPerSec);
-    this.broadcast(tenantId, { t: 'relay.quota', ...quota });
+    this.broadcast(tenantId, relayQuotaCtl(quota, this.tenants.countActiveNodes(tenantId)));
   }
 
   broadcast(tenantId: string, msg: RelayCtlMessage): void {
@@ -335,9 +328,12 @@ export class RelayUplinkServer implements RelayUplinkHost {
       live.link.close('relay-tenant-gone');
       return;
     }
-    // 令牌在链路存续期间可能被重新签发（reauth / 踢人）：每条消息都复查，别只在握手时看一眼
-    if (live.tokenHash !== tenant.tokenHash || tenant.kicked) {
-      this.kickLink(live, 'kicked');
+    const minTokenEpoch = this.configStore.ensure(this.now()).minTokenEpoch;
+    if (!liveAuthStillValid(live, tenant, minTokenEpoch)) {
+      this.kickLink(
+        live,
+        tenant.kicked || live.tokenHash !== tenant.tokenHash ? 'kicked' : 'password_rotated'
+      );
       return;
     }
     switch (msg.t) {
@@ -384,126 +380,29 @@ export class RelayUplinkServer implements RelayUplinkHost {
     const pending = this.pending.get(link);
     this.pending.delete(link);
     this.clearAuthTimer(link);
-    if (!pending) {
-      this.reject(link, 'auth-timeout');
-      return;
-    }
-    const tenant = this.checkAuthPreconditions(link, msg);
-    if (!tenant) return;
-    const admitted = this.admitNode(tenant, msg);
-    if (!admitted.ok) {
-      this.reject(link, admitted.reason);
-      return;
-    }
-    let sig: Uint8Array;
-    try {
-      sig = decodeB64url(msg.sig, 64);
-    } catch {
-      this.reject(link, 'bad-sig');
-      return;
-    }
-    if (!verifyEd25519(sig, uplinkAuthMessage(pending.nonce, this.relayHost), admitted.edPk)) {
-      this.reject(link, 'unauthorized');
-      return;
-    }
-    await Promise.resolve();
-    this.finishAuth(link, tenant, msg);
-  }
-
-  private checkAuthPreconditions(
-    link: LinkSession,
-    msg: Extract<RelayCtlMessage, { t: 'relay.auth' }>
-  ): RelayTenantRecord | null {
-    if (msg.proto !== RELAY_PROTO_VERSION) {
-      this.reject(link, 'proto-unsupported');
-      return null;
-    }
-    if (!nodeVersionMeets(msg.client_version, this.minClientVersion)) {
-      this.reject(link, 'client-too-old');
-      return null;
-    }
-    const tenant = this.tenants.get(msg.tenant_id);
-    if (!tenant || tenant.kicked) {
-      this.reject(link, tenant ? 'tenant-kicked' : 'unknown-tenant');
-      return null;
-    }
-    if (tenant.tokenEpoch < this.configStore.ensure(this.now()).minTokenEpoch) {
-      this.reject(link, 'token-epoch');
-      return null;
-    }
-    if (!constantTimeEqual(sha256Hex(msg.token), tenant.tokenHash)) {
-      this.reject(link, 'bad-token');
-      return null;
-    }
-    return tenant;
-  }
-
-  private admitNode(
-    tenant: RelayTenantRecord,
-    msg: Extract<RelayCtlMessage, { t: 'relay.auth' }>
-  ): { ok: true; edPk: Uint8Array } | { ok: false; reason: string } {
-    const node = this.tenants.getNode(tenant.id, msg.node_id);
-    if (node?.status === 'revoked') return { ok: false, reason: 'revoked' };
-    if (node?.status === 'admitted') return { ok: true, edPk: node.edPk };
-    if (!msg.member) return { ok: false, reason: 'member-required' };
-    const tolerantAdmit = this.tenants
-      .listNodes(tenant.id)
-      .some((row) => row.status === 'admitted');
-    const member = verifyRelayMemberProof({
-      proof: msg.member,
-      op: 'admit',
-      rootPublicKey: tenant.rootPublicKey,
-      rootEpoch: tenant.rootEpoch,
-      expectNodeId: msg.node_id,
-      tolerantAdmit,
-    });
-    if (!member.ok) return { ok: false, reason: `member-${member.error}` };
-    if (member.op !== 'admit') return { ok: false, reason: 'member-type_mismatch' };
-    const upserted = this.tenants.upsertNode({
-      tenantId: tenant.id,
-      nodeId: msg.node_id,
-      edPk: member.edPk,
-      x25519Pk: member.x25519Pk,
-      status: 'admitted',
-      admitSeq: Number(member.seq),
-      now: this.now(),
-    });
-    if (upserted.status !== 'admitted') return { ok: false, reason: 'revoked' };
-    return { ok: true, edPk: member.edPk };
-  }
-
-  private finishAuth(
-    link: LinkSession,
-    tenant: RelayTenantRecord,
-    msg: Extract<RelayCtlMessage, { t: 'relay.auth' }>
-  ): void {
-    if (this.stopped || !this.accepted.has(link)) return;
-    const now = this.now();
-    const { live, replaced } = this.registry.put({
-      tenantId: tenant.id,
-      nodeId: msg.node_id,
+    await handleRelayAuth(
+      {
+        tenants: this.tenants,
+        keyLog: this.keyLog,
+        registry: this.registry,
+        configStore: this.configStore,
+        now: this.now,
+        relayHost: this.relayHost,
+        minClientVersion: this.minClientVersion,
+        stopped: this.stopped,
+        accepted: this.accepted,
+        authBarrier: this.authBarrier,
+        reject: (target, reason) => this.reject(target, reason),
+        send: (target, ctl) => this.send(target, ctl),
+        startHeartbeat: (live) => this.startHeartbeat(live),
+        quotaFor: (tenantId) => this.quotaFor(tenantId),
+        scheduleList: (tenantId) => this.scheduleList(tenantId),
+        rtcConfig: () => this.rtcConfig(),
+      },
       link,
-      tokenEpoch: tenant.tokenEpoch,
-      tokenHash: tenant.tokenHash,
-      protoVersion: msg.proto,
-      clientVersion: msg.client_version,
-    });
-    if (replaced) replaced.link.close('relay-replaced');
-    this.tenants.patchNode(tenant.id, msg.node_id, {
-      lastSeenAt: now,
-      protoVersion: msg.proto,
-      clientVersion: msg.client_version,
-    });
-    this.tenants.touch(tenant.id, now);
-    this.startHeartbeat(live);
-    this.send(link, {
-      t: 'auth.ok',
-      tenant_id: tenant.id,
-      key_log_head_seq: relaySeqToWire(this.tenants.get(tenant.id)?.keyLogHeadSeq ?? 0n),
-      rtc: this.rtcConfig(),
-    });
-    this.send(link, { t: 'relay.quota', ...this.quotaFor(tenant.id) });
-    this.scheduleList(tenant.id);
+      msg,
+      pending
+    );
   }
 
   private async onIncomingStream(link: LinkSession, stream: LinkStream): Promise<void> {

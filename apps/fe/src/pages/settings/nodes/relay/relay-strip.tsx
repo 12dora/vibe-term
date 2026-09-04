@@ -1,10 +1,11 @@
 // 中继链路条：一条中继一枚 chip，正文只写主机名，在线态、挂载关系与最近错误分别落在
-// 状态点、图标与悬浮详情里——与 `HubStrip` 同一套版式，中继模式下顶替它出现。
+// 状态点、图标与悬浮详情里——与本机卡的 Hub 列表同一套版式，中继 tab 下顶替它出现。
 
 import type { RelayLinkStatus, RelayQuotaView } from '@tmex/api-client/relay/tenant-api';
 import { cn } from '@tmex/ui';
 import { Link2, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { CopyableValue, Row } from '../copy-feedback';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -43,37 +44,52 @@ export function RelayStrip({
   metaEpoch,
   nodesViaRelay,
   quota,
+  tenantId,
 }: {
   relays: RelayLinkStatus[];
   metaEpoch: number;
   nodesViaRelay: number;
   /** 中继下发的配额；旧中继或未接入时为 `null`，这一格就不出现。 */
   quota?: RelayQuotaView | null;
+  /** 中继签发的租户编号；另一台机器凭它加入同一个租户。未接入时为 `null`。 */
+  tenantId?: string | null;
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-wrap items-center gap-1.5" data-testid="nodes-relay-strip">
-      <span className="text-[11px] text-muted-foreground">{t('relay.tenant.strip.title')}</span>
-      {relays.length === 0 ? (
-        <span className="text-[11px] text-muted-foreground" data-testid="nodes-relay-empty">
-          {t('relay.tenant.strip.empty')}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5" data-testid="nodes-relay-strip">
+        <span className="text-[11px] text-muted-foreground">{t('relay.tenant.strip.title')}</span>
+        {relays.length === 0 ? (
+          <span className="text-[11px] text-muted-foreground" data-testid="nodes-relay-empty">
+            {t('relay.tenant.strip.empty')}
+          </span>
+        ) : (
+          relays.map((relay) => <RelayChip key={relay.url} relay={relay} />)
+        )}
+        <span className="text-[11px] text-muted-foreground" data-testid="nodes-relay-meta">
+          {t('relay.tenant.strip.meta', { epoch: metaEpoch })}
         </span>
-      ) : (
-        relays.map((relay) => <RelayChip key={relay.url} relay={relay} />)
-      )}
-      <span className="text-[11px] text-muted-foreground" data-testid="nodes-relay-meta">
-        {t('relay.tenant.strip.meta', { epoch: metaEpoch })}
-      </span>
-      <span className="text-[11px] text-muted-foreground" data-testid="nodes-relay-peers">
-        {t('relay.tenant.strip.nodes', { count: nodesViaRelay })}
-      </span>
-      {quota && (
-        <span className="text-[11px] text-muted-foreground" data-testid="nodes-relay-quota">
-          {t('relay.tenant.strip.quota', {
-            nodes: quota.maxNodes,
-            streams: quota.maxStreams,
-          })}
+        <span className="text-[11px] text-muted-foreground" data-testid="nodes-relay-peers">
+          {t('relay.tenant.strip.nodes', { count: nodesViaRelay })}
         </span>
+        {quota && (
+          <span className="text-[11px] text-muted-foreground" data-testid="nodes-relay-quota">
+            {t('relay.tenant.strip.quota', {
+              nodes: quota.maxNodes,
+              streams: quota.maxStreams,
+            })}
+          </span>
+        )}
+      </div>
+      {tenantId && (
+        <div className="flex flex-col gap-0.5">
+          <Row label={t('relay.tenant.strip.tenantId')}>
+            <CopyableValue value={tenantId} testId="nodes-relay-tenant-id" mono />
+          </Row>
+          <p className="text-[11px] text-muted-foreground">
+            {t('relay.tenant.strip.tenantIdHint')}
+          </p>
+        </div>
       )}
     </div>
   );

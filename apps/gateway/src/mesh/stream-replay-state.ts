@@ -29,7 +29,7 @@ export function rejectStaleNodeStream<P extends StaleNodeStreamPump>(
   }
 ): boolean {
   if (!unsupported) return false;
-  const message = peerNodeTooOldMessage(pump.replay.peerVersion);
+  const message = peerNodeTooOldMessage(pump.nodeId, pump.replay.peerVersion);
   io.log(`[mesh][stream] stream=${pump.id} node=${pump.nodeId} rejected: ${message}`);
   try {
     io.sendToBrowser(

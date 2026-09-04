@@ -1,13 +1,10 @@
-// Hub 集群条的候选诊断：连不上的那台 hub 要有警告图标，并把最近一次尝试与错误写进悬浮详情。
-// 无 DOM 测试环境，用 react-dom/server 静态渲染（与本目录其余测试同一套做法）。
+// Hub chip 的候选诊断与悬浮详情：连不上的那台要能被认出来，最近一次尝试与错误都写进 title。
 
 import { describe, expect, test } from 'bun:test';
 import type { MeshHubCandidate } from '@/node/mesh-hubs';
 import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
-import { renderToStaticMarkup } from 'react-dom/server';
 import {
   CANDIDATE_ERROR_MAX,
-  HubStrip,
   candidateFailure,
   hubChipTitle,
   indexCandidates,
@@ -27,12 +24,6 @@ function hub(overrides: Partial<MeshHubEndpoint> & { nodeId: string }): MeshHubE
     online: true,
     ...overrides,
   };
-}
-
-function chipTag(html: string, nodeId: string): string {
-  const at = html.indexOf(`data-testid="nodes-hub-chip-${nodeId}"`);
-  expect(at).toBeGreaterThan(-1);
-  return html.slice(html.lastIndexOf('<', at), html.indexOf('>', at) + 1);
 }
 
 describe('候选地址的归一与匹配', () => {
@@ -112,66 +103,5 @@ describe('chip 的悬浮详情', () => {
       lastAttemptAt: null,
     });
     expect(title).toContain('"time":"—"');
-  });
-});
-
-describe('HubStrip', () => {
-  const hubs = [hub({ nodeId: 'h1' }), hub({ nodeId: 'h2', mode: 'standby' })];
-
-  test('连不上的那台带警告图标，别的不带', () => {
-    const html = renderToStaticMarkup(
-      <HubStrip
-        hubs={hubs}
-        attachedHubId="h1"
-        writerHubId="h1"
-        candidates={[
-          { publicUrl: 'https://h2.example/', lastError: 'ECONNREFUSED', lastAttemptAt: 2 },
-        ]}
-      />
-    );
-    expect(html).toContain('data-testid="nodes-hub-warning-h2"');
-    expect(html).not.toContain('data-testid="nodes-hub-warning-h1"');
-    expect(chipTag(html, 'h2')).toContain('data-hub-failing="true"');
-    expect(chipTag(html, 'h2')).toContain('nodes.hubs.lastError');
-    expect(chipTag(html, 'h1')).toContain('data-hub-failing="false"');
-  });
-
-  test('旧后端不下发 candidates：与之前完全一致', () => {
-    const html = renderToStaticMarkup(<HubStrip hubs={hubs} attachedHubId="h1" writerHubId="h1" />);
-    expect(html).toContain('data-testid="nodes-hub-strip"');
-    expect(html).not.toContain('nodes-hub-warning');
-    expect(chipTag(html, 'h1')).toContain('data-hub-failing="false"');
-  });
-
-  test('授权来源进 chip 的悬浮详情', () => {
-    const html = renderToStaticMarkup(
-      <HubStrip
-        hubs={[hub({ nodeId: 'h1', authorization: 'self' }), hubs[1]]}
-        attachedHubId="h1"
-        writerHubId="h1"
-      />
-    );
-    // 静态渲染下 t 只回键名，插值看不到；有没有这一行才是这里要证的
-    expect(chipTag(html, 'h1')).toContain('nodes.hubs.authorization.label');
-    expect(chipTag(html, 'h2')).not.toContain('nodes.hubs.authorization');
-  });
-
-  test('chip 正文只有名字与主 / 备：写入不再单占一枚徽标', () => {
-    const html = renderToStaticMarkup(<HubStrip hubs={hubs} attachedHubId="h1" writerHubId="h1" />);
-    const open = chipTag(html, 'h1');
-    const bodyAt = html.indexOf(open) + open.length;
-    const body = html.slice(bodyAt, html.lastIndexOf('<', html.indexOf('nodes-hub-chip-h2')));
-    // 写入归属只剩开标签上的数据属性与 title 里那一行，chip 正文不再为它留位置
-    expect(open).toContain('data-hub-writer="true"');
-    expect(open).toContain('nodes.hubs.writer');
-    expect(body).not.toContain('nodes.hubs.writer');
-    expect(body).toContain('nodes.hubs.active');
-  });
-
-  test('只有一台 hub 时整条不渲染', () => {
-    const html = renderToStaticMarkup(
-      <HubStrip hubs={[hubs[0]]} attachedHubId="h1" writerHubId="h1" candidates={[]} />
-    );
-    expect(html).toBe('');
   });
 });

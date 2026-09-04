@@ -40,6 +40,7 @@ export const KeyLogType = {
   'rotate-root-keep': 'rotate-root-keep',
   'set-relays': 'set-relays',
   'meta-key': 'meta-key',
+  'rename-node': 'rename-node',
 } as const;
 export type KeyLogType = (typeof KeyLogType)[keyof typeof KeyLogType];
 
@@ -238,6 +239,16 @@ export const RetireHubPayloadSchema = b.struct({
 });
 export type RetireHubPayload = b.infer<typeof RetireHubPayloadSchema>;
 
+/** 与加入向导 / 前端 `MAX_NAME_LENGTH` 一致：trim 后 1–64 个 UTF-16 码元。 */
+export const MAX_NODE_NAME_LENGTH = 64;
+
+/** 字段顺序即 Borsh 编码顺序，改动等于换协议。 */
+export const RenameNodePayloadSchema = b.struct({
+  node_id: b.bytes(16),
+  name: b.string(),
+});
+export type RenameNodePayload = b.infer<typeof RenameNodePayloadSchema>;
+
 function assertDomain(actual: string, expected: string): void {
   if (actual !== expected) {
     throw new Error(`domain mismatch: expected ${expected}, got ${actual}`);
@@ -410,6 +421,29 @@ export function buildAdmitHubPayload(input: {
 
 export function buildRetireHubPayload(input: { hubNodeId: Uint8Array }): Uint8Array {
   return encodeRetireHubPayload({ hub_node_id: input.hubNodeId });
+}
+
+export function encodeRenameNodePayload(value: RenameNodePayload): Uint8Array {
+  return RenameNodePayloadSchema.serialize(value);
+}
+export function decodeRenameNodePayload(bytes: Uint8Array): RenameNodePayload {
+  return RenameNodePayloadSchema.deserialize(bytes);
+}
+
+export function buildRenameNodePayload(input: { nodeId: Uint8Array; name: string }): Uint8Array {
+  const name = normalizeNodeName(input.name);
+  if (!name) {
+    throw new Error('invalid node name');
+  }
+  return encodeRenameNodePayload({ node_id: input.nodeId, name });
+}
+
+/** 合法则返回 trim 后的名字；否则 null。UTF-8 合法性由 Borsh 解码保证。 */
+export function normalizeNodeName(name: string): string | null {
+  if (typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > MAX_NODE_NAME_LENGTH) return null;
+  return trimmed;
 }
 
 export function encodeKdfParams(value: KdfParams): Uint8Array {

@@ -31,7 +31,7 @@ import { Switch } from '@tmex/ui/switch';
 import { Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CopyButton } from '../copy-feedback';
-import { hubModeLabel } from './hub-strip';
+import { hubModeLabel } from '../uplink/hub-strip';
 import {
   type DomainAccessState,
   type NodeDetailIo,

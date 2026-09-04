@@ -5,13 +5,13 @@
 
 import type {
   RelayAdminApi,
+  RelayPasswordRequest,
   RelayQuota,
   RelayTenantPatch,
   RelayTenantSummary,
 } from '@tmex/api-client/relay/admin-api';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { type PasswordDraft, parsePasswordDraft } from './relay-forms';
 import { type UseRelayAdminResult, useRelayAdmin } from './relay-status-store';
 import { type RelayAction, useRelayAction } from './use-relay-action';
 
@@ -36,7 +36,7 @@ export interface RelayController {
   closeKick: () => void;
   openRemove: (tenant: RelayTenantSummary) => void;
   closeRemove: () => void;
-  submitPassword: (draft: PasswordDraft) => void;
+  submitPassword: (body: RelayPasswordRequest) => void;
   submitDefaultQuota: (quota: RelayQuota) => void;
   submitTenant: (patch: RelayTenantPatch) => void;
   saveLabel: (tenant: RelayTenantSummary, label: string | null) => void;
@@ -66,10 +66,7 @@ export function useRelayController(api: RelayAdminApi, t: Translate): RelayContr
     return ok;
   };
 
-  const submitPassword = async (draft: PasswordDraft) => {
-    const parsed = parsePasswordDraft(draft);
-    if (parsed.body === null) return;
-    const body = parsed.body;
+  const submitPassword = async (body: RelayPasswordRequest) => {
     if (await password.run(() => api.setPassword(body))) {
       setPasswordOpen(false);
       toast.success(t('relay.admin.password.saved'));
@@ -144,7 +141,7 @@ export function useRelayController(api: RelayAdminApi, t: Translate): RelayContr
       setRemoving(null);
       tenant.reset();
     },
-    submitPassword: (draft) => void submitPassword(draft),
+    submitPassword: (body) => void submitPassword(body),
     submitDefaultQuota: (next) => void submitDefaultQuota(next),
     submitTenant: (patch) => void submitTenant(patch),
     saveLabel: (row, label) => void saveLabel(row, label),

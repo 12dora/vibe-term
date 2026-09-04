@@ -23,6 +23,7 @@ import { MeshNodesResident } from '@/node/mesh-nodes-resident';
 import { NodeRouteGate, NodeRuntimeBoundary, useRouteNodeId } from '@/node/node-runtime-boundary';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { appNodeRuntimes, nodeQueryClient } from '@/node/node-runtimes';
+import { RelayMetaKeyResident } from '@/node/relay-meta-key-resident';
 import { PageWrapper } from '@/page-wrapper';
 import { installSessionInterceptor } from '@tmex/api-client/auth/index';
 import { ConnectionIndicator } from '@tmex/panels';
@@ -190,6 +191,7 @@ function RootLayout() {
         <StandaloneLanding />
         <FlowBridges />
         <MeshNodesResident />
+        <RelayMetaKeyResident />
         <NodeRuntimeScope nodeId={SELF_NODE_ID}>
           <AppSidebar />
           <SelfSettingsEventsInit />

@@ -101,6 +101,29 @@ describe('relay ctl 编解码', () => {
       from_seq: 5,
     });
   });
+
+  it('relay.quota.currentNodes 可选且向下兼容', () => {
+    const withCount: RelayCtlMessage = {
+      t: 'relay.quota',
+      maxNodes: 8,
+      maxStreams: 32,
+      bandwidthBytesPerSec: null,
+      currentNodes: 3,
+    };
+    expect(decodeRelayCtl(encodeRelayCtl(withCount))).toEqual(withCount);
+    const legacy = JSON.stringify({
+      t: 'relay.quota',
+      maxNodes: 8,
+      maxStreams: 32,
+      bandwidthBytesPerSec: null,
+    });
+    expect(decodeRelayCtl(legacy)).toEqual({
+      t: 'relay.quota',
+      maxNodes: 8,
+      maxStreams: 32,
+      bandwidthBytesPerSec: null,
+    });
+  });
 });
 
 describe('relay ctl 防御性校验', () => {

@@ -134,14 +134,24 @@ describe('decodeGatewayTransportMessage', () => {
     expect(event.error.message).toBe('boom');
   });
 
-  test('canonical v1.1 门槛拒绝的 ERROR 转成 server-too-old', () => {
-    const { handled, events } = collect(
+  function collectTooOld(message: string) {
+    return collect(
       wsBorsh.KIND_ERROR,
       wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
         refSeq: null,
         code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
-        message: `${wsBorsh.CANONICAL_V11_REQUIRED_ERROR_PREFIX}: node 1.1.21 < 1.1.22`,
+        message,
         retryable: false,
+      })
+    );
+  }
+
+  test('canonical v1.1 门槛拒绝的 ERROR 转成 server-too-old，并带上被拒节点与版本', () => {
+    const { handled, events } = collectTooOld(
+      wsBorsh.formatCanonicalV11RequiredError({
+        side: 'node',
+        nodeId: 'a1b2c3d4e5f6',
+        version: '1.1.22',
       })
     );
 
@@ -149,8 +159,40 @@ describe('decodeGatewayTransportMessage', () => {
     expect(events).toEqual([
       {
         type: 'server-too-old',
+        side: 'node',
         minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
-        serverVersion: null,
+        version: '1.1.22',
+        nodeId: 'a1b2c3d4e5f6',
+      },
+    ]);
+  });
+
+  test('本页面被拒时 side 为 client 且没有节点编号', () => {
+    const { events } = collectTooOld(
+      wsBorsh.formatCanonicalV11RequiredError({ side: 'client', version: '1.1.22' })
+    );
+    expect(events).toEqual([
+      {
+        type: 'server-too-old',
+        side: 'client',
+        minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
+        version: '1.1.22',
+        nodeId: null,
+      },
+    ]);
+  });
+
+  test('节点编号与版本都未知时归一成 null', () => {
+    const { events } = collectTooOld(
+      wsBorsh.formatCanonicalV11RequiredError({ side: 'node', nodeId: null, version: null })
+    );
+    expect(events).toEqual([
+      {
+        type: 'server-too-old',
+        side: 'node',
+        minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
+        version: null,
+        nodeId: null,
       },
     ]);
   });

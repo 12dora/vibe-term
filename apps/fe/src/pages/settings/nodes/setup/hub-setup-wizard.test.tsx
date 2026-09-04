@@ -9,7 +9,9 @@ installWindowStorage();
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { HubSetupWizard } = await import('./hub-setup-wizard');
 const { BecomeHubForm } = await import('./become-hub-form');
+const { BecomeRelayForm } = await import('./become-relay-form');
 const { JoinHubForm } = await import('./join-hub-form');
+const { JoinRelayForm } = await import('./join-relay-form');
 const { FormField } = await import('./form-parts');
 
 function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusResponse {
@@ -28,6 +30,7 @@ function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusRespon
     },
     tls: { mode: 'none', listenerRunning: false, tlsPort: null },
     domainAccess: { allowed: true, viaDomain: false, hosts: [] },
+    relay: null,
     ...overrides,
   };
 }
@@ -48,15 +51,34 @@ describe('HubSetupWizard', () => {
     );
   });
 
-  test('standalone 渲染两条路径且默认都未选中，不渲染任何表单', () => {
+  test('standalone 渲染四条路径且默认都未选中，不渲染任何表单', () => {
     const html = renderToStaticMarkup(<HubSetupWizard localStatus={status()} />);
     expect(html).toContain('data-testid="hub-setup-wizard"');
-    expect(html).toContain('data-testid="setup-path-become-hub"');
-    expect(html).toContain('data-testid="setup-path-join-hub"');
-    expect(html).toContain('data-testid="setup-path-become-hub" data-selected="false"');
-    expect(html).toContain('data-testid="setup-path-join-hub" data-selected="false"');
+    for (const path of ['become-hub', 'join-hub', 'join-relay', 'become-relay']) {
+      expect(html).toContain(`data-testid="setup-path-${path}" data-selected="false"`);
+    }
     expect(html).not.toContain('data-testid="setup-become-hub-form"');
     expect(html).not.toContain('data-testid="setup-join-hub-form"');
+    expect(html).not.toContain('data-testid="setup-become-relay-form"');
+    expect(html).not.toContain('data-testid="setup-join-relay-form"');
+  });
+
+  test('选中 join-relay 时渲染加入中继表单', () => {
+    const html = renderToStaticMarkup(
+      <HubSetupWizard localStatus={status()} initialPath="join-relay" hostname="studio" />
+    );
+    expect(html).toContain('data-testid="setup-join-relay-form"');
+    expect(html).not.toContain('data-testid="setup-become-relay-form"');
+    expect(html).toContain('data-testid="setup-path-join-relay" data-selected="true"');
+  });
+
+  test('选中 become-relay 时渲染中继表单', () => {
+    const html = renderToStaticMarkup(
+      <HubSetupWizard localStatus={status()} initialPath="become-relay" origin={null} />
+    );
+    expect(html).toContain('data-testid="setup-become-relay-form"');
+    expect(html).not.toContain('data-testid="setup-become-hub-form"');
+    expect(html).toContain('data-testid="setup-path-become-relay" data-selected="true"');
   });
 
   test('选中 become-hub 时渲染对应表单且该卡片高亮', () => {
@@ -135,6 +157,44 @@ describe('BecomeHubForm', () => {
   });
 });
 
+describe('BecomeRelayForm', () => {
+  test('默认中继兼节点：口令字段带生成按钮，账号三件与直连开关都在', () => {
+    const html = renderToStaticMarkup(<BecomeRelayForm localStatus={status()} origin={null} />);
+    expect(html).toContain('id="setup-relay-public-url"');
+    expect(html).toContain('data-testid="setup-relay-password-generate"');
+    expect(html).toContain('data-testid="setup-relay-also-node"');
+    expect(html).toContain('id="setup-relay-username"');
+    expect(html).toContain('data-testid="setup-relay-account-password-generate"');
+    expect(html).toContain('id="setup-relay-confirm-password"');
+    expect(html).toContain('data-testid="setup-relay-direct-enable"');
+    expect(html).toContain('data-testid="setup-become-relay-submit"');
+    expect(html).not.toContain('data-testid="setup-relay-pure-notice"');
+  });
+
+  test('纯中继：不建账号，改为提示网页会消失', () => {
+    const html = renderToStaticMarkup(
+      <BecomeRelayForm localStatus={status()} origin={null} initialRole="relay" />
+    );
+    expect(html).toContain('data-testid="setup-relay-pure-notice"');
+    expect(html).toContain('nodes.setup.becomeRelay.pureNotice');
+    expect(html).not.toContain('id="setup-relay-username"');
+    expect(html).not.toContain('id="setup-relay-confirm-password"');
+  });
+
+  test('https origin 预填公网地址；production 下 http origin 不预填', () => {
+    expect(
+      renderToStaticMarkup(
+        <BecomeRelayForm localStatus={status()} origin="https://relay.example.com" />
+      )
+    ).toContain('value="https://relay.example.com"');
+    expect(
+      renderToStaticMarkup(
+        <BecomeRelayForm localStatus={status()} origin="http://localhost:19663" />
+      )
+    ).not.toContain('value="http://localhost:19663"');
+  });
+});
+
 describe('JoinHubForm', () => {
   test('production 下不出现 insecureLocal 开关', () => {
     const html = renderToStaticMarkup(<JoinHubForm localStatus={status()} hostname="studio" />);
@@ -159,11 +219,34 @@ describe('JoinHubForm', () => {
     );
   });
 
-  test('token 用多行输入框', () => {
+  test('默认是密码方式：密码输入框 + 「改用加入码」入口，不渲染加入码输入', () => {
     const html = renderToStaticMarkup(<JoinHubForm localStatus={status()} hostname="studio" />);
-    expect(html).toContain('data-testid="setup-join-token-input"');
-    expect(html).toContain('<textarea');
+    expect(html).toContain('data-testid="setup-join-password-input"');
+    expect(html).toContain('type="password"');
+    expect(html).toContain('data-testid="setup-join-method-token"');
+    expect(html).toContain('nodes.setup.joinHub.passwordDescription');
+    expect(html).not.toContain('data-testid="setup-join-token-input"');
     expect(html).toContain('data-testid="setup-join-hub-submit"');
+  });
+});
+
+describe('JoinRelayForm', () => {
+  test('四个必填字段与提交按钮；CA 指纹收在高级里，默认不渲染', () => {
+    const html = renderToStaticMarkup(<JoinRelayForm localStatus={status()} hostname="studio" />);
+    expect(html).toContain('data-testid="setup-join-relay-form"');
+    expect(html).toContain('id="setup-relay-url"');
+    expect(html).toContain('data-testid="setup-relay-tenant-id-input"');
+    expect(html).toContain('data-testid="setup-relay-join-password-input"');
+    expect(html).toContain('value="studio"');
+    expect(html).toContain('data-testid="setup-relay-advanced-toggle"');
+    expect(html).not.toContain('data-testid="setup-relay-ca-fingerprint-input"');
+    expect(html).toContain('data-testid="setup-join-relay-submit"');
+  });
+
+  test('直连提示用中继版文案，不提 Hub 中转', () => {
+    const html = renderToStaticMarkup(<JoinRelayForm localStatus={status()} hostname="studio" />);
+    expect(html).toContain('nodes.setup.fields.directEnableRelayHint');
+    expect(html).not.toContain('nodes.setup.fields.directEnableHint');
   });
 });
 

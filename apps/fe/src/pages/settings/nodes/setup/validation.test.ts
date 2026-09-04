@@ -1,17 +1,37 @@
 import { describe, expect, test } from 'bun:test';
 import {
   type BecomeHubValues,
+  type BecomeRelayValues,
   type JoinHubValues,
+  type JoinRelayValues,
   classifyHubUrl,
+  classifyRelayUrl,
   defaultHubPublicUrl,
   defaultNodeName,
+  defaultRelayPublicUrl,
   hasErrors,
   isValidJoinToken,
+  normalizeTenantId,
   normalizeToken,
   setupErrorKey,
   validateBecomeHub,
+  validateBecomeRelay,
   validateJoinHub,
+  validateJoinRelay,
 } from './validation';
+
+function relayValues(overrides: Partial<BecomeRelayValues> = {}): BecomeRelayValues {
+  return {
+    relayPublicUrl: 'https://relay.example.com',
+    relayPassword: 'generated-password',
+    alsoNode: true,
+    username: 'alice',
+    password: 'hunter2hunter2',
+    confirmPassword: 'hunter2hunter2',
+    directEnable: true,
+    ...overrides,
+  };
+}
 
 function becomeValues(overrides: Partial<BecomeHubValues> = {}): BecomeHubValues {
   return {
@@ -26,8 +46,10 @@ function becomeValues(overrides: Partial<BecomeHubValues> = {}): BecomeHubValues
 
 function joinValues(overrides: Partial<JoinHubValues> = {}): JoinHubValues {
   return {
+    method: 'token',
     hubUrl: 'https://tmex.example.com',
     token: 'a'.repeat(128),
+    password: '',
     name: 'studio',
     directEnable: true,
     insecureLocal: false,
@@ -224,5 +246,204 @@ describe('isValidJoinToken', () => {
     expect(isValidJoinToken(`.${fingerprint}`)).toBe(false);
     expect(isValidJoinToken(`${base64url}.`)).toBe(false);
     expect(isValidJoinToken(`${base64url}.${'g'.repeat(64)}`)).toBe(false);
+  });
+});
+
+describe('classifyRelayUrl', () => {
+  test('https 永远可用，非法串一律 invalid', () => {
+    expect(classifyRelayUrl('https://relay.example.com', 'production')).toBe('ok');
+    expect(classifyRelayUrl('  https://relay.example.com/base/  ', 'production')).toBe('ok');
+    expect(classifyRelayUrl('', 'production')).toBe('invalid');
+    expect(classifyRelayUrl('relay.example.com', 'production')).toBe('invalid');
+    expect(classifyRelayUrl('ftp://relay.example.com', 'production')).toBe('invalid');
+  });
+
+  test('回环 http 只在非 production 下放行', () => {
+    expect(classifyRelayUrl('http://127.0.0.1:9663', 'development')).toBe('insecure');
+    expect(classifyRelayUrl('http://localhost:9663', 'test')).toBe('insecure');
+    expect(classifyRelayUrl('http://127.0.0.1:9663', 'production')).toBe('invalid');
+  });
+
+  test('非回环 http 任何环境都不行', () => {
+    expect(classifyRelayUrl('http://relay.example.com', 'development')).toBe('invalid');
+  });
+});
+
+describe('validateBecomeRelay', () => {
+  test('合法输入无错', () => {
+    expect(validateBecomeRelay(relayValues(), 'production')).toEqual({});
+  });
+
+  test('地址非法时报 invalid_url', () => {
+    expect(validateBecomeRelay(relayValues({ relayPublicUrl: 'nope' }), 'production')).toEqual({
+      relayPublicUrl: 'nodes.setup.errors.invalid_url',
+    });
+  });
+
+  test('接入口令留空不是错误：等于任何人都能接入', () => {
+    expect(validateBecomeRelay(relayValues({ relayPassword: '' }), 'production')).toEqual({});
+  });
+
+  test('中继兼节点：账号三件与 become-hub 同规则', () => {
+    expect(
+      validateBecomeRelay(
+        relayValues({ username: 'bad name', password: 'short', confirmPassword: 'other' }),
+        'production'
+      )
+    ).toEqual({
+      username: 'nodes.setup.errors.invalid_username',
+      password: 'nodes.setup.errors.weak_password',
+      confirmPassword: 'nodes.setup.errors.password_mismatch',
+    });
+  });
+
+  test('纯中继不建账号：账号字段全空也不报错', () => {
+    expect(
+      validateBecomeRelay(
+        relayValues({ alsoNode: false, username: '', password: '', confirmPassword: '' }),
+        'production'
+      )
+    ).toEqual({});
+  });
+});
+
+describe('defaultRelayPublicUrl', () => {
+  test('只有当前地址本身合法时才预填', () => {
+    expect(defaultRelayPublicUrl('https://relay.example.com', 'production')).toBe(
+      'https://relay.example.com'
+    );
+    expect(defaultRelayPublicUrl('http://localhost:19663', 'production')).toBe('');
+    expect(defaultRelayPublicUrl('http://localhost:19663', 'development')).toBe(
+      'http://localhost:19663'
+    );
+    expect(defaultRelayPublicUrl(null, 'production')).toBe('');
+  });
+});
+
+describe('setupErrorKey 认识中继角色错误码', () => {
+  test('invalid_role', () => {
+    expect(setupErrorKey('invalid_role')).toBe('nodes.setup.errors.invalid_role');
+  });
+});
+
+describe('validateJoinHub 的两种加入方式', () => {
+  test('密码方式只校验密码，加入码留空也放行', () => {
+    const errors = validateJoinHub(
+      joinValues({ method: 'password', token: '', password: 'p' }),
+      'production'
+    );
+    expect(hasErrors(errors)).toBe(false);
+  });
+
+  test('密码方式下密码为空要报错', () => {
+    const errors = validateJoinHub(
+      joinValues({ method: 'password', token: '', password: '' }),
+      'production'
+    );
+    expect(errors.password).toBe('nodes.setup.errors.invalid_password');
+    expect(errors.token).toBeUndefined();
+  });
+
+  test('加入码方式下密码为空不报错，加入码非法照旧报错', () => {
+    const errors = validateJoinHub(joinValues({ method: 'token', token: 'nope' }), 'production');
+    expect(errors.token).toBe('nodes.setup.errors.invalid_token');
+    expect(errors.password).toBeUndefined();
+  });
+});
+
+function joinRelayValues(overrides: Partial<JoinRelayValues> = {}): JoinRelayValues {
+  return {
+    relayUrl: 'https://relay.example.com',
+    tenantId: 'aabbccddeeff00112233445566778899',
+    password: 'hunter2hunter2',
+    name: 'studio',
+    caFingerprint: '',
+    directEnable: true,
+    ...overrides,
+  };
+}
+
+describe('validateJoinRelay', () => {
+  test('合法输入没有错误', () => {
+    expect(hasErrors(validateJoinRelay(joinRelayValues(), 'production'))).toBe(false);
+  });
+
+  test('租户编号必须是 32 位十六进制（大小写与空白都容忍）', () => {
+    expect(
+      validateJoinRelay(
+        joinRelayValues({ tenantId: ' AABBCCDDEEFF00112233445566778899 ' }),
+        'production'
+      ).tenantId
+    ).toBeUndefined();
+    expect(validateJoinRelay(joinRelayValues({ tenantId: 'abc' }), 'production').tenantId).toBe(
+      'nodes.setup.errors.invalid_tenant_id'
+    );
+  });
+
+  test('密码与名称必填，地址按中继规则判定', () => {
+    const errors = validateJoinRelay(
+      joinRelayValues({ password: '', name: '   ', relayUrl: 'ftp://relay' }),
+      'production'
+    );
+    expect(errors.password).toBe('nodes.setup.errors.invalid_password');
+    expect(errors.name).toBe('nodes.setup.errors.invalid_name');
+    expect(errors.relayUrl).toBe('nodes.setup.errors.invalid_url');
+  });
+
+  test('CA 指纹留空合法，填了就必须是 64 位十六进制', () => {
+    expect(
+      validateJoinRelay(joinRelayValues({ caFingerprint: 'f'.repeat(64) }), 'production')
+        .caFingerprint
+    ).toBeUndefined();
+    expect(
+      validateJoinRelay(joinRelayValues({ caFingerprint: 'f'.repeat(63) }), 'production')
+        .caFingerprint
+    ).toBe('nodes.setup.errors.invalid_ca_fingerprint');
+  });
+
+  test('normalizeTenantId 去空白并转小写', () => {
+    expect(normalizeTenantId(' AB CD ')).toBe('abcd');
+  });
+});
+
+describe('setupErrorKey 认识密码加入的错误码', () => {
+  test('invalid_password / invalid_body', () => {
+    expect(setupErrorKey('invalid_password')).toBe('nodes.setup.errors.invalid_password');
+    expect(setupErrorKey('invalid_body')).toBe('nodes.setup.errors.invalid_body');
+  });
+});
+
+describe('classifyHubUrl 与后端同一把尺子', () => {
+  test('带凭据 / query / fragment 的地址一律不合法（后端 canonicalHubUrl 也会拒）', () => {
+    expect(classifyHubUrl('https://alice:secret@tmex.example.com', 'production')).toBe('invalid');
+    expect(classifyHubUrl('https://tmex.example.com/?token=x', 'production')).toBe('invalid');
+    expect(classifyHubUrl('https://tmex.example.com/#frag', 'production')).toBe('invalid');
+  });
+
+  test('普通地址与本机 http 判定不受影响', () => {
+    expect(classifyHubUrl('https://tmex.example.com/', 'production')).toBe('ok');
+    expect(classifyHubUrl('http://127.0.0.1:19883', 'development')).toBe('insecure');
+  });
+});
+
+describe('validateBecomeRelay 的接入口令规则', () => {
+  test('留空表示不设口令，放行', () => {
+    expect(validateBecomeRelay(relayValues({ relayPassword: '' }), 'production')).toEqual({});
+    expect(validateBecomeRelay(relayValues({ relayPassword: '   ' }), 'production')).toEqual({});
+  });
+
+  test('设了就至少 8 位，错误落在口令字段上', () => {
+    expect(
+      validateBecomeRelay(relayValues({ relayPassword: 'short' }), 'production').relayPassword
+    ).toBe('nodes.setup.errors.weak_password');
+  });
+
+  test('纯中继也要卡口令长度（那一档没有账号字段）', () => {
+    const errors = validateBecomeRelay(
+      relayValues({ alsoNode: false, relayPassword: 'abc' }),
+      'production'
+    );
+    expect(errors.relayPassword).toBe('nodes.setup.errors.weak_password');
+    expect(errors.username).toBeUndefined();
   });
 });

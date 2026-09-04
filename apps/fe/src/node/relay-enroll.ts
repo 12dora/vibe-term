@@ -22,6 +22,7 @@ import type { AuthApi, AuthKdfParamsJson } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { relayErrorCode } from '@tmex/api-client/relay/tenant-api';
+import type { RootKey } from '@tmex/shared/auth';
 import { bytesEqual, decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
 import { signRelayEnrollProof } from '@tmex/shared/relay';
 import { classifyKeyLogFailure, requireRootPublicKey } from './enrollment';
@@ -186,6 +187,11 @@ export interface RelayEnrollInput {
   password?: string | null;
   /** 本地根密码：proof 只能由根钥签，passkey 给不出。 */
   rootPassword: string;
+  /**
+   * `set-relays` 落账之后、根钥清零之前的回调——刷新中继密封包**只有这一刻**手里还有根种子。
+   * 抛出的异常按接入失败处理，所以调用方必须自己把失败咽掉（见 `use-relay-actions.ts`）。
+   */
+  afterEnroll?: (rootKey: RootKey) => Promise<void> | void;
 }
 
 /**
@@ -195,7 +201,8 @@ export interface RelayEnrollInput {
  * 令牌被踢后重新输入口令——差别只在节点侧算出来的 `set-relays` payload 里，浏览器这边一模一样。
  *
  * 根公钥对拍放在**发出任何请求之前**：密码打错时若照签不误，中继会拿这把假根公钥开一个新租户。
- * 根钥 seed 在 `finally` 里清零：proof 与记录都签完之后它没有任何后续用途。
+ * 根钥 seed 在 `finally` 里清零：proof、记录与 `afterEnroll`（刷新密封包）都跑完之后它没有
+ * 任何后续用途。
  */
 export async function enrollRelay(
   deps: RelayFlowDeps,
@@ -219,11 +226,13 @@ export async function enrollRelay(
       password: input.password ?? null,
       proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
     });
-    return await appendRelayRecord(deps, {
+    const result = await appendRelayRecord(deps, {
       type: 'set-relays',
       payload: enrolled.payload,
       signer: { kind: 'root', rootKey },
     });
+    if (result.ok) await input.afterEnroll?.(rootKey);
+    return result;
   } catch (err) {
     return failure(err);
   } finally {

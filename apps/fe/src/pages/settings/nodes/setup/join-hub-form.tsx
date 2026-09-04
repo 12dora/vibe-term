@@ -1,14 +1,13 @@
-// 「加入已有 hub」表单：等价于 CLI `hub join <hubUrl> --token <token> --name <name>`
-//（见 docs/hub/2026082800-hub-node-operations.md「4. 各机加入」）。
+// 「加入已有 Hub」表单：默认用 mesh 账户密码加入（等价于 CLI `hub join <hubUrl> --password`），
+// 也可以切回加入码（`--token`，见 docs/hub/2026082800-hub-node-operations.md「4. 各机加入」）。
 //
-// join 串由 hub 侧 `tmex-cli enroll` 或任意已登录入口的 Nodes 页签发，默认 10 分钟有效。
+// 加入码由 hub 侧 `tmex-cli enroll` 或任意已登录入口的节点页签发，默认 10 分钟有效；
+// 密码路径不需要任何人在 Hub 上先操作一次，因此作为默认。
 
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { LocalStatusResponse, SetupJoinResponse } from '@tmex/api-client/local/types';
-import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
-import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { currentHostname, navigateToLogin } from './browser-location';
@@ -17,12 +16,20 @@ import {
   RestartPanel,
   ResultRow,
   SetupNotice,
+  SetupSubmitRow,
   SwitchRow,
   directOutcomeLabel,
 } from './form-parts';
 import { submitJoinHub } from './submit';
 import { useHubSetupSubmit } from './use-hub-setup-submit';
-import { type JoinHubValues, defaultNodeName, hasErrors, validateJoinHub } from './validation';
+import {
+  type JoinHubErrors,
+  type JoinHubValues,
+  type JoinMethod,
+  defaultNodeName,
+  hasErrors,
+  validateJoinHub,
+} from './validation';
 
 export interface JoinHubFormProps {
   localStatus: LocalStatusResponse;
@@ -45,14 +52,16 @@ export function JoinHubForm({
   const allowInsecureLocal = nodeEnv !== 'production';
 
   const [values, setValues] = useState<JoinHubValues>(() => ({
+    method: 'password',
     hubUrl: '',
     token: '',
+    password: '',
     name: defaultNodeName(hostname === undefined ? currentHostname() : hostname),
     directEnable: directSupported,
     insecureLocal: false,
   }));
   const errors = validateJoinHub(values, nodeEnv);
-  const { showErrors, submitting, submitError, result, waiter, handleSubmit } =
+  const { showErrors, submitting, submitError, result, waiter, blocked, handleSubmit } =
     useHubSetupSubmit<SetupJoinResponse>({
       client,
       hasErrors: hasErrors(errors),
@@ -90,7 +99,13 @@ export function JoinHubForm({
     <Card className="border-0 ring-0" data-testid="setup-join-hub-form">
       <CardHeader>
         <CardTitle>{t('nodes.setup.joinHub.title')}</CardTitle>
-        <CardDescription>{t('nodes.setup.joinHub.description')}</CardDescription>
+        <CardDescription>
+          {t(
+            values.method === 'password'
+              ? 'nodes.setup.joinHub.passwordDescription'
+              : 'nodes.setup.joinHub.description'
+          )}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form className="space-y-6" onSubmit={(event) => void handleSubmit(event)}>
@@ -110,23 +125,12 @@ export function JoinHubForm({
             />
           </FormField>
 
-          <FormField
-            id="setup-join-token"
-            label={t('nodes.setup.fields.token')}
-            hint={t('nodes.setup.fields.tokenHint')}
-            error={shown.token && t(shown.token)}
-          >
-            <textarea
-              id="setup-join-token"
-              value={values.token}
-              onChange={(event) => update({ token: event.target.value })}
-              rows={3}
-              spellCheck={false}
-              placeholder={t('nodes.setup.fields.tokenPlaceholder')}
-              className="w-full resize-y rounded-md bg-muted/40 p-2 font-mono text-xs outline-none ring-1 ring-foreground/10 focus-visible:ring-2 focus-visible:ring-ring"
-              data-testid="setup-join-token-input"
-            />
-          </FormField>
+          <JoinCredentialField
+            values={values}
+            shown={shown}
+            onChange={update}
+            onSwitch={(method) => update({ method })}
+          />
 
           <FormField
             id="setup-node-name"
@@ -173,12 +177,103 @@ export function JoinHubForm({
             </SetupNotice>
           )}
 
-          <Button type="submit" disabled={submitting} data-testid="setup-join-hub-submit">
-            {submitting && <Loader2 className="animate-spin" />}
-            {submitting ? t('nodes.setup.submit.pending') : t('nodes.setup.submit.joinHub')}
-          </Button>
+          <SetupSubmitRow
+            testId="setup-join-hub"
+            label={t('nodes.setup.submit.joinHub')}
+            submitting={submitting}
+            blocked={blocked}
+          />
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+/** 凭据这一格：密码与加入码互斥，切换按钮跟在字段下方。 */
+function JoinCredentialField({
+  values,
+  shown,
+  onChange,
+  onSwitch,
+}: {
+  values: JoinHubValues;
+  shown: JoinHubErrors;
+  onChange: (patch: Partial<JoinHubValues>) => void;
+  onSwitch: (method: JoinMethod) => void;
+}) {
+  const { t } = useTranslation();
+  if (values.method === 'password') {
+    return (
+      <div className="space-y-2">
+        <FormField
+          id="setup-join-password"
+          label={t('nodes.setup.fields.joinPassword')}
+          hint={t('nodes.setup.fields.joinPasswordHint')}
+          error={shown.password && t(shown.password)}
+        >
+          <Input
+            id="setup-join-password"
+            type="password"
+            value={values.password}
+            onChange={(event) => onChange({ password: event.target.value })}
+            autoComplete="current-password"
+            className="min-h-10"
+            data-testid="setup-join-password-input"
+          />
+        </FormField>
+        <MethodSwitch
+          testId="setup-join-method-token"
+          label={t('nodes.setup.joinHub.useToken')}
+          onClick={() => onSwitch('token')}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <FormField
+        id="setup-join-token"
+        label={t('nodes.setup.fields.token')}
+        hint={t('nodes.setup.fields.tokenHint')}
+        error={shown.token && t(shown.token)}
+      >
+        <textarea
+          id="setup-join-token"
+          value={values.token}
+          onChange={(event) => onChange({ token: event.target.value })}
+          rows={3}
+          spellCheck={false}
+          placeholder={t('nodes.setup.fields.tokenPlaceholder')}
+          className="w-full resize-y rounded-md bg-muted/40 p-2 font-mono text-xs outline-none ring-1 ring-foreground/10 focus-visible:ring-2 focus-visible:ring-ring"
+          data-testid="setup-join-token-input"
+        />
+      </FormField>
+      <MethodSwitch
+        testId="setup-join-method-password"
+        label={t('nodes.setup.joinHub.usePassword')}
+        onClick={() => onSwitch('password')}
+      />
+    </div>
+  );
+}
+
+function MethodSwitch({
+  testId,
+  label,
+  onClick,
+}: {
+  testId: string;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="text-xs text-primary underline underline-offset-2"
+      onClick={onClick}
+      data-testid={testId}
+    >
+      {label}
+    </button>
   );
 }

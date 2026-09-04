@@ -1,4 +1,3 @@
-import type { HubApi } from '@/node/hub-api';
 import { refreshMeshNodes } from '@/node/mesh-nodes';
 import { useMutation } from '@tanstack/react-query';
 import { parseApiError } from '@tmex/api-client';
@@ -14,6 +13,7 @@ import type {
   SiteSettingsSavePlan,
 } from './site-settings-form';
 import { refreshUntilRenamed } from './site-settings-form';
+import type { RenameNodeFn } from './use-node-rename-channel';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -21,7 +21,8 @@ function sleep(ms: number): Promise<void> {
 
 export interface SiteSettingsSaveOptions {
   plan: SiteSettingsSavePlan | null;
-  hubApi: HubApi | null;
+  /** 改名通道（hub 控制面或 `rename-node` 记录）；通道不通时它自己抛已本地化的原因。 */
+  renameNode: RenameNodeFn;
   linkage: SiteSettingsLinkage;
   languagePreview: LanguagePreviewController;
   draft: SiteSettingsDraft;
@@ -39,7 +40,7 @@ export interface SiteSettingsSave {
 
 export function useSiteSettingsSave({
   plan,
-  hubApi,
+  renameNode,
   linkage,
   languagePreview,
   draft,
@@ -59,8 +60,8 @@ export function useSiteSettingsSave({
       renamedInAttempt.current = null;
       if (!plan) return;
       if (plan.renameNodeTo) {
-        if (!hubApi || !linkage.nodeId) throw new Error(t('settings.general.nameLinkedLocked'));
-        await hubApi.rename(linkage.nodeId, plan.renameNodeTo);
+        if (!linkage.nodeId) throw new Error(t('settings.general.nameLinkedLocked'));
+        await renameNode(linkage.nodeId, plan.renameNodeTo);
         // 改名已经落地：立刻推进基线，后面的 PATCH 再失败，重试时也不会又改一次名
         renamedInAttempt.current = plan.renameNodeTo;
         setPinnedName(plan.renameNodeTo);
@@ -94,7 +95,7 @@ export function useSiteSettingsSave({
         if (!error) applySettings(await refreshSettings());
         return;
       }
-      // 改名落在 hub 上，mesh 列表与 hub 视图都要跟上
+      // 改名落在上级（hub 或中继）那侧，mesh 列表与 hub 视图都要跟上
       void refreshMeshNodes();
       refreshHub();
       const settled = await refreshUntilRenamed(renamed, {

@@ -28,6 +28,7 @@ export type RelayHarnessOptions = {
   isLocalUserAuthenticated?: (req: Request) => boolean | Promise<boolean>;
   clientIp?: (req: Request) => string;
   password?: string;
+  authBarrier?: () => Promise<void>;
 };
 
 export type RelayHarness = {
@@ -125,6 +126,7 @@ export async function bootRelayHarness(opts: RelayHarnessOptions = {}): Promise<
     minClientVersion: opts.minClientVersion,
     isLocalUserAuthenticated: opts.isLocalUserAuthenticated,
     clientIp: opts.clientIp ?? (() => '127.0.0.1'),
+    authBarrier: opts.authBarrier,
     sleep: () => Promise.resolve(),
     log: () => {},
   });

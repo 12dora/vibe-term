@@ -265,6 +265,7 @@ describe('RelayUplinkClient', () => {
     expect(cached?.endpointsJson).toBe(JSON.stringify(['ws://10.0.0.2:39001/peer']));
     // direct_capable 现在只在 K_meta 封里，明文清单不再带
     expect(cached?.directCapable).toBe(true);
+    expect(cached?.version).toBe('1.1.23');
     expect(lists[0]?.nodes[0]?.direct_capable).toBe(true);
     expect(client.nodesViaRelay).toBe(1);
 
@@ -370,6 +371,80 @@ describe('RelayUplinkClient', () => {
     expect(kicks[0]).toBe('password_rotated');
     expect(b.secrets.relayRows()[0]?.kicked).toBe(true);
     expect(client.state).not.toBe('online');
+  });
+
+  test('本机中继角色把公网 URL 改写成回环拨号，签名仍绑公网 host', async () => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const [clientWs, serverWs] = fakeSocketPair();
+    const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
+    const dialed: string[] = [];
+    const client = new RelayUplinkClient({
+      hubUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      dial: { roles: { relay: true }, relayPublicUrl: RELAY_URL, gatewayPort: 19993 },
+      wsFactory: (url) => {
+        dialed.push(url);
+        return clientWs;
+      },
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const connecting = client.attemptConnect();
+    await waitUntil(() => client.link !== null);
+    const nonce = randomBytes(32);
+    server.send({ t: 'auth.challenge', nonce: encodeBase64url(nonce) });
+    await connecting;
+    expect(dialed).toEqual(['ws://127.0.0.1:19993/relay/uplink']);
+    const auth = server.received.find((msg) => msg.t === 'relay.auth');
+    if (auth?.t !== 'relay.auth') throw new Error('missing relay.auth');
+    expect(
+      verifyEd25519(
+        decodeBase64url(auth.sig),
+        uplinkAuthMessage(nonce, hubHostFromUrl(RELAY_URL)),
+        b.identity.edPublicKey
+      )
+    ).toBe(true);
+  });
+
+  test('relay.quota.currentNodes 写入客户端', async () => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const [clientWs, serverWs] = fakeSocketPair();
+    const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
+    const client = new RelayUplinkClient({
+      hubUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const connecting = client.attemptConnect();
+    await waitUntil(() => client.link !== null);
+    server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+    await connecting;
+    server.send({
+      t: 'relay.quota',
+      maxNodes: 16,
+      maxStreams: 64,
+      bandwidthBytesPerSec: null,
+      currentNodes: 4,
+    });
+    await waitUntil(() => client.quota?.currentNodes === 4);
+    expect(client.quota).toEqual({
+      maxNodes: 16,
+      maxStreams: 64,
+      bandwidthBytesPerSec: null,
+      currentNodes: 4,
+    });
   });
 });
 

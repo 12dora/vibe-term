@@ -7,7 +7,9 @@ import {
   DOMAIN_LOGIN,
   DOMAIN_PEER,
   DelegationSchema,
+  MAX_NODE_NAME_LENGTH,
   buildAdmitHubPayload,
+  buildRenameNodePayload,
   buildRetireHubPayload,
   bytesEqual,
   bytesToHex,
@@ -26,6 +28,7 @@ import {
   decodePasskeyAssertion,
   decodePeerTranscript,
   decodeRemovePasskeyPayload,
+  decodeRenameNodePayload,
   decodeResetRootPayload,
   decodeRetireHubPayload,
   decodeRevokeNodePayload,
@@ -47,6 +50,7 @@ import {
   encodePasskeyAssertion,
   encodePeerTranscript,
   encodeRemovePasskeyPayload,
+  encodeRenameNodePayload,
   encodeResetRootPayload,
   encodeRetireHubPayload,
   encodeRevokeNodePayload,
@@ -55,6 +59,7 @@ import {
   encodeSetTotpPayload,
   encodeTotpAad,
   hexToBytes,
+  normalizeNodeName,
   randomBytes,
   sha256,
   u32ToLe,
@@ -199,6 +204,9 @@ describe('keyLogRecord schema', () => {
       'admit-hub',
       'retire-hub',
       'rotate-root-keep',
+      'set-relays',
+      'meta-key',
+      'rename-node',
     ] as const;
     for (let i = 0; i < types.length; i++) {
       const bytes = encodeKeyLogRecord({ ...value, type: types[i] });
@@ -601,5 +609,26 @@ describe('locked protocol bytes', () => {
         })
       )
     ).toBe(LOCKED.admitPasskey);
+  });
+});
+
+describe('rename-node payload', () => {
+  const nodeId = fill(16, 0xab);
+
+  it('round-trips node_id and name', () => {
+    const encoded = encodeRenameNodePayload({ node_id: nodeId, name: 'studio' });
+    const decoded = decodeRenameNodePayload(encoded);
+    expect(bytesEqual(decoded.node_id, nodeId)).toBe(true);
+    expect(decoded.name).toBe('studio');
+  });
+
+  it('buildRenameNodePayload trims and rejects empty / overlong names', () => {
+    const encoded = buildRenameNodePayload({ nodeId, name: '  home  ' });
+    expect(decodeRenameNodePayload(encoded).name).toBe('home');
+    expect(normalizeNodeName('  ')).toBeNull();
+    expect(normalizeNodeName('')).toBeNull();
+    expect(normalizeNodeName('x'.repeat(MAX_NODE_NAME_LENGTH))).toBe('x'.repeat(64));
+    expect(normalizeNodeName('x'.repeat(MAX_NODE_NAME_LENGTH + 1))).toBeNull();
+    expect(() => buildRenameNodePayload({ nodeId, name: '  ' })).toThrow(/invalid node name/);
   });
 });

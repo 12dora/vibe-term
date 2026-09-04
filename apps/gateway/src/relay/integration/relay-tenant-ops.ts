@@ -137,15 +137,35 @@ export async function submitRecord(
   });
 }
 
+type JoinMaterialWire = {
+  logKey?: string;
+  relays?: Array<{ url: string; tenantId: string; token: string }>;
+};
+
+export function primaryJoinRelay(material: JoinMaterialWire): {
+  tenantId: string;
+  token: string;
+  logKey: string;
+} {
+  const primary = material.relays?.[0];
+  if (!primary?.tenantId || !primary.token) {
+    throw new Error('join-material missing relays[0]');
+  }
+  return {
+    tenantId: primary.tenantId,
+    token: primary.token,
+    logKey: material.logKey ?? '',
+  };
+}
+
 /** 复刻 `packages/app/src/commands/relay-join.ts` 的 r3 加入路径（同一批 shared 助手）。 */
 export async function joinNode(
   harness: RelayMeshHarness,
   tenant: RelayTenant,
   label: string
 ): Promise<RelayMeshNode> {
-  const material = await tenant.owner.json<{ tenantId: string; token: string; logKey: string }>(
-    '/api/mesh/relay/join-material'
-  );
+  const wire = await tenant.owner.json<JoinMaterialWire>('/api/mesh/relay/join-material');
+  const material = primaryJoinRelay(wire);
   const now = Date.now();
   const enrollment = await createEnrollment(tenant.rootKey, {
     uid: tenant.userId,

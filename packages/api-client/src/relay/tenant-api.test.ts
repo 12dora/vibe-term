@@ -38,6 +38,10 @@ function bodyOf(call: Call): unknown {
   return JSON.parse(String(call.init?.body));
 }
 
+/** 32 字节 base64url（无填充）= 43 个字符。 */
+const LOG_KEY_B64 = 'A'.repeat(43);
+const TOKEN_B64 = 'B'.repeat(43);
+
 describe('RelayTenantApi 状态', () => {
   test('status 走 /api/mesh/relay/status 并补齐缺省字段', async () => {
     const { api, calls } = recorder([
@@ -68,6 +72,11 @@ describe('RelayTenantApi 状态', () => {
     expect(normalizeRelayStatus({ reauthRequired: true }).reauthRequired).toBe(true);
     const quota = { maxNodes: 8, maxStreams: 16, bandwidthBytesPerSec: null };
     expect(normalizeRelayStatus({ quota }).quota).toEqual(quota);
+    expect(
+      normalizeRelayStatus({
+        quota: { ...quota, currentNodes: 2 },
+      }).quota?.currentNodes
+    ).toBe(2);
   });
 
   test('路由不存在时抛 404，isRelayRoutesMissing 认得出来', async () => {
@@ -195,29 +204,45 @@ describe('RelayTenantApi enrollment 与 join 材料', () => {
   test('joinMaterial 直读节点侧的 camelCase 字段（每条中继自带凭据）', async () => {
     const { api, calls } = recorder([
       ok({
-        logKey: 'aw',
-        relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: 'dA' }],
+        logKey: LOG_KEY_B64,
+        relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: TOKEN_B64 }],
         tenantId: 'ab'.repeat(16),
-        token: 'dA',
+        token: TOKEN_B64,
       }),
     ]);
     expect(await api.joinMaterial()).toEqual({
-      logKey: 'aw',
-      relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: 'dA' }],
+      logKey: LOG_KEY_B64,
+      relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: TOKEN_B64 }],
     });
     expect(calls[0].url).toBe('/api/mesh/relay/join-material');
   });
 
   test('材料不全直接报错，不静默拼一个解不开的 join 串', () => {
-    expect(() => normalizeJoinMaterial({ logKey: 'aw', relays: [] })).toThrow(RelayApiError);
+    expect(() => normalizeJoinMaterial({ logKey: LOG_KEY_B64, relays: [] })).toThrow(RelayApiError);
     expect(() =>
       normalizeJoinMaterial({
-        logKey: 'aw',
-        relays: [{ url: 'https://r.example', tenantId: 'nope', token: 'dA' }],
+        logKey: LOG_KEY_B64,
+        relays: [{ url: 'https://r.example', tenantId: 'nope', token: TOKEN_B64 }],
       })
     ).toThrow(RelayApiError);
     expect(() =>
       normalizeJoinMaterial({
+        relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: TOKEN_B64 }],
+      })
+    ).toThrow(RelayApiError);
+  });
+
+  test('K_log 与令牌必须是 32 字节的 base64url：长度不对当场报错', () => {
+    // 畸形值放行的话，要一路带到密封那一步才抛，那时 K_log 已经解出来在堆里了。
+    expect(() =>
+      normalizeJoinMaterial({
+        logKey: 'aw',
+        relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: TOKEN_B64 }],
+      })
+    ).toThrow(RelayApiError);
+    expect(() =>
+      normalizeJoinMaterial({
+        logKey: LOG_KEY_B64,
         relays: [{ url: 'https://r.example', tenantId: 'ab'.repeat(16), token: 'dA' }],
       })
     ).toThrow(RelayApiError);
@@ -240,5 +265,36 @@ describe('RelayTenantApi enrollment 与 join 材料', () => {
     const status = await api.getEnrollment('enr 1');
     expect(calls[1].url).toBe('/api/mesh/relay/enrollments/enr%201');
     expect(status.status).toBe('redeemed');
+  });
+});
+
+describe('RelayTenantApi 密封包', () => {
+  test('uploadPack 一次把逐台密封的包送到 /pack', async () => {
+    const { api, calls } = recorder([ok({ ok: true, results: [] })]);
+    const body = {
+      packs: [
+        { url: 'https://a.example', sealed_pack: 'AAAA' },
+        { url: 'https://b.example', sealed_pack: 'CCCC' },
+      ],
+      kdf_params: { salt: 'BBBB', memory_kib: 65536, iterations: 3, parallelism: 1 },
+      root_epoch: 2,
+      head_seq: 7,
+    };
+    expect(await api.uploadPack(body)).toEqual({ ok: true, results: [] });
+    expect(calls[0].url).toBe('/api/mesh/relay/pack');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(bodyOf(calls[0])).toEqual(body);
+  });
+
+  test('一台中继都没转发成功时把 code 带出来', async () => {
+    const { api } = recorder([fail(502, 'RELAY_PACK_FORWARD_FAILED')]);
+    await expect(
+      api.uploadPack({
+        packs: [{ url: 'https://a.example', sealed_pack: 'AAAA' }],
+        kdf_params: { salt: 'BBBB', memory_kib: 65536, iterations: 3, parallelism: 1 },
+        root_epoch: 0,
+        head_seq: '0',
+      })
+    ).rejects.toMatchObject({ code: 'RELAY_PACK_FORWARD_FAILED' });
   });
 });

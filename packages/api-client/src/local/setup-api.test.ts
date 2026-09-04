@@ -137,6 +137,106 @@ describe('SetupApi.joinHub', () => {
       .catch((e) => e);
     expect((err as SetupApiError).code).toBe('node_revoked');
   });
+
+  test('password method 透传 method 与 password', async () => {
+    const { client, calls } = recorder([
+      Response.json({
+        ok: true,
+        hubUrl: 'https://hub.example.com',
+        username: 'alice',
+        direct: 'skipped',
+        directError: null,
+        restarting: true,
+      }),
+    ]);
+    await new SetupApi(client).joinHub({
+      hubUrl: 'https://hub.example.com',
+      method: 'password',
+      password: 'tmex-test-pass',
+      name: 'studio',
+      directEnable: false,
+    });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      hubUrl: 'https://hub.example.com',
+      method: 'password',
+      password: 'tmex-test-pass',
+      name: 'studio',
+      directEnable: false,
+    });
+  });
+});
+
+describe('SetupApi.setupRelay', () => {
+  test('POST /api/setup/relay 透传请求体', async () => {
+    const { client, calls } = recorder([
+      Response.json({
+        ok: true,
+        role: 'relay,node',
+        relayPublicUrl: 'https://relay.example',
+        hasPassword: true,
+        restarting: true,
+        fingerprint: 'abc123',
+      }),
+    ]);
+    const out = await new SetupApi(client).setupRelay({
+      role: 'relay,node',
+      relayPublicUrl: 'https://relay.example',
+      relayPassword: 'tenant-pass',
+      username: 'alice',
+      password: 'tmex-test-pass',
+      directEnable: false,
+    });
+    expect(out.role).toBe('relay,node');
+    expect(out.fingerprint).toBe('abc123');
+    expect(calls[0].url).toBe('/api/setup/relay');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      role: 'relay,node',
+      relayPublicUrl: 'https://relay.example',
+      relayPassword: 'tenant-pass',
+      username: 'alice',
+      password: 'tmex-test-pass',
+      directEnable: false,
+    });
+  });
+
+  test('409 not_standalone 映射成 code', async () => {
+    const { client } = recorder([errorBody('not_standalone', 'already in a mesh', 409)]);
+    const err = await new SetupApi(client)
+      .setupRelay({ role: 'relay', relayPublicUrl: 'https://relay.example' })
+      .catch((e) => e);
+    expect((err as SetupApiError).code).toBe('not_standalone');
+    expect((err as SetupApiError).status).toBe(409);
+  });
+});
+
+describe('SetupApi.relayJoin', () => {
+  test('POST /api/setup/relay-join 透传请求体', async () => {
+    const { client, calls } = recorder([
+      Response.json({
+        ok: true,
+        relayUrl: 'https://relay.example',
+        tenantId: 'tenant-1',
+        username: 'alice',
+        direct: 'skipped',
+        directError: null,
+        restarting: true,
+      }),
+    ]);
+    const out = await new SetupApi(client).relayJoin({
+      relayUrl: 'https://relay.example',
+      tenantId: 'tenant-1',
+      password: 'tmex-test-pass',
+      name: 'studio',
+    });
+    expect(out.tenantId).toBe('tenant-1');
+    expect(calls[0].url).toBe('/api/setup/relay-join');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      relayUrl: 'https://relay.example',
+      tenantId: 'tenant-1',
+      password: 'tmex-test-pass',
+      name: 'studio',
+    });
+  });
 });
 
 describe('probeHealth / readHealthStartedAt', () => {

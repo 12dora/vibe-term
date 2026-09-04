@@ -3,7 +3,12 @@
 // sk_sess 一概不参与——所以每个动作都会重新要一次密码或一次 passkey 交互。
 
 import { fetchRelayMode } from '@/node/mesh-relay';
-import { rememberPendingMetaKey } from '@/node/relay-meta-key-pending';
+import {
+  forgetRelayPackDebt,
+  rememberPendingMetaKey,
+  rememberRelayPackDebt,
+} from '@/node/relay-meta-key-pending';
+import { refreshRelayPack } from '@/node/relay-pack';
 import type {
   AuthApi,
   AuthKdfParamsJson,
@@ -229,6 +234,42 @@ async function submitMetaKeyAfterRotate(
 const META_KEY_AFTER_ROTATE_ID = 'rotate-root';
 const ROTATE_OP = { op: 'rotate' } as const;
 
+/**
+ * 改密之后重封中继密封包（docs/relay §5b）。
+ *
+ * root_epoch 一变，旧密封包的 AAD 就对不上（`rotate-root` 还会被中继侧的根轮换 sidecar 直接
+ * 清空），不重封则别的机器再也无法用「租户编号 + 密码」加入。
+ *
+ * 全量重置那一路**当场没得重封**：`rotate-root` 一落账全部会话即失效，之后每个请求都是 401。
+ * 根种子绝不落存储，因此只记一笔欠账，等用户重新登录后带密码补上。
+ */
+async function refreshPackAfterRotate(input: {
+  api: AuthApi;
+  relayApi: RelayTenantApi;
+  fullReset: boolean;
+  newRootKey: RootKey;
+  newKdfParams: KdfParams;
+  nextRootEpoch: number;
+}): Promise<void> {
+  if (input.fullReset) {
+    rememberRelayPackDebt();
+    return;
+  }
+  const result = await refreshRelayPack({
+    rootSeed: input.newRootKey.seed,
+    api: input.api,
+    relayApi: input.relayApi,
+    kdfParams: kdfParamsToJson(input.newKdfParams),
+    rootEpoch: input.nextRootEpoch,
+  });
+  if (result.ok) {
+    forgetRelayPackDebt();
+    return;
+  }
+  // 逐台回执里失败的那几台精确留账；请求整个没打通时哪几台不明，整份留账。
+  rememberRelayPackDebt(result.transportError ? undefined : result.failed);
+}
+
 /** 改密这一段的锁内主体：取头 → 签 rotate → 预备 meta-key → 送 rotate → 送 meta-key。 */
 async function runPasswordRotation(input: {
   api: AuthApi;
@@ -281,7 +322,16 @@ async function runPasswordRotation(input: {
     : null;
   const appended = await append(api, rotated);
   if (!appended.ok || !input.relayMode) return withSigned(appended, signed);
-  return withSigned(appended, signed, await submitMetaKeyAfterRotate(api, metaKeyRecord));
+  const metaKey = await submitMetaKeyAfterRotate(api, metaKeyRecord);
+  await refreshPackAfterRotate({
+    api,
+    relayApi: input.relayApi,
+    fullReset: request.fullReset === true,
+    newRootKey: input.newRootKey,
+    newKdfParams: input.newKdfParams,
+    nextRootEpoch: signed.nextRootEpoch,
+  });
+  return withSigned(appended, signed, metaKey);
 }
 
 /**

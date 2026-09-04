@@ -214,10 +214,22 @@ legacy 尺寸上报）在 1.1.23 整体下线，能力全部由 `CANONICAL_COMMA
 - `0x0401` SWITCH_ACK、`0x0402` LIVE_RESUME → canonical 订阅事务本身即屏障
   （`SubscriptionApplied` + 每 pane 的 `terminalSeq` 游标），不再需要独立的屏障帧。
 
-对端版本门槛：低于 `1.1.22` 的客户端/节点无法正确消费 canonical v1.1 语义，网关在 HELLO 阶段
+对端版本门槛：低于 `1.1.23` 的客户端/节点无法正确消费 canonical v1.1 语义（1.1.22 的网关只播报
+`canonical-state-v1`，1.1.22 的浏览器又把 `clientVersion` 硬编码成 `0.1.0`），网关在 HELLO 阶段
 **fail-closed** 拒绝——回一条 `ERROR_UNSUPPORTED_PROTOCOL`，message 以固定前缀
 `canonical-state-v1.1 required` 开头（常量 `wsBorsh.CANONICAL_V11_REQUIRED_ERROR_PREFIX`），随后关闭连接。
-客户端据此前缀把该 ERROR 翻成 `server-too-old` 并停止自动重连。
+
+message 有两种形态，由 `wsBorsh.formatCanonicalV11RequiredError` 统一拼装、
+`wsBorsh.parseCanonicalV11RequiredError` 解析，网关与客户端共用同一实现：
+
+```
+canonical-state-v1.1 required: client <clientVersion> < <minVersion>
+canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion>
+```
+
+节点编号写进 message 是必需的：入口网关拒掉的转发流对端未必是浏览器当前 runtime 的 node，
+浏览器只有靠它才知道该升级哪一台。客户端据此把该 ERROR 翻成
+`server-too-old`（带 `side` / `nodeId` / `version`）并停止自动重连。
 
 ## payload schemas（完整）
 
@@ -776,7 +788,7 @@ v1 小节冻结，本节只描述 v1.1 的增量。v1.1 不改 `protocolVersion`
 #### 能力与版本门槛
 
 - HELLO S2C `capabilities` 新增 `canonical-state-v1.1`（`packages/shared/src/capabilities.ts`）。
-- 最低对端版本 `1.1.22`（`CANONICAL_V11_MIN_PEER_VERSION`）。判定必须 **fail-closed**：
+- 最低对端版本 `1.1.23`（`CANONICAL_V11_MIN_PEER_VERSION`）。判定必须 **fail-closed**：
   版本为 null、空串或无法解析一律视为不支持；唯一例外是开发态自报的 `X.Y.Z_dev`，
   去掉 `_dev` 后按数字部分比较（`peerSupportsCanonicalV11`）。
 - `selectedVersion` 继续表示外层 WS Envelope 版本，不复用它表达 canonical 版本。

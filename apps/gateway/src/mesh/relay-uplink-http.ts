@@ -1,5 +1,11 @@
 import { type LinkSession, WebSocketLink, type WebSocketTransportInput } from '@tmex/shared/link';
 import { waitSocketOpen } from '@tmex/shared/net';
+import {
+  type RelayDialContext,
+  relayDialContextFromEnv,
+  relayTlsCaForDial,
+  resolveRelayDialUrl,
+} from './relay-dial';
 import { type UplinkWsFactory, uplinkWebSocketTls } from './uplink-client';
 import { closeTransport } from './uplink-reconnect';
 
@@ -16,18 +22,24 @@ export function relayUplinkWsUrl(relayUrl: string): string {
   return url.toString();
 }
 
+/**
+ * 健康探测。与拨号同一条改写：`relay,node` 机器探自己的中继时走回环，
+ * 否则 hairpin NAT 下这一探必然超时，池子会把本机中继判成不可用。
+ */
 export async function probeRelayHealth(
   publicUrl: string,
   tlsCa: string[] | null,
-  timeoutMs: number
+  timeoutMs: number,
+  dial: RelayDialContext = relayDialContextFromEnv()
 ): Promise<boolean> {
+  const dialUrl = resolveRelayDialUrl(publicUrl, dial);
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const init: RequestInit = { method: 'GET', signal: ac.signal, redirect: 'error' };
-    const tls = uplinkWebSocketTls(tlsCa);
+    const tls = uplinkWebSocketTls(relayTlsCaForDial(dialUrl, tlsCa));
     if (tls) Object.assign(init, tls);
-    const res = await fetch(`${publicUrl.replace(/\/+$/, '')}${RELAY_HEALTH_PATH}`, init);
+    const res = await fetch(`${dialUrl.replace(/\/+$/, '')}${RELAY_HEALTH_PATH}`, init);
     return res.ok;
   } catch {
     return false;

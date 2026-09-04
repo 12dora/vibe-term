@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { SELF_NODE_ID } from '@tmex/api-client';
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import type { GatewayTransportEvent } from '@tmex/ws-client';
@@ -57,6 +58,8 @@ const snapshot: StateSnapshotPayload = {
 
 interface HarnessOptions {
   mountedPanes?: Array<[string, string]>;
+  /** 本 runtime 服务的 node；缺省 self（entry 自身） */
+  nodeId?: string;
   clipboardResult?: Promise<void>;
   /** 按尝试次数返回结果：用于「先失败、手势里重试成功」的延迟写入路径 */
   clipboardAttempt?: (attempt: number) => Promise<void>;
@@ -100,6 +103,7 @@ function createHarness(options: HarnessOptions = {}) {
   };
 
   const core = {
+    nodeId: options.nodeId ?? SELF_NODE_ID,
     transport: {
       capabilities: { atomicScreen: true },
       send: (command: unknown) => {
@@ -115,7 +119,10 @@ function createHarness(options: HarnessOptions = {}) {
       error: (title: string) => record('notify:error', title),
     },
     bell: { play: () => record('bell') },
-    t: (key: string) => key,
+    t: (key: string, params?: Record<string, unknown>) => {
+      record('t', key, params);
+      return key;
+    },
     host: {
       navigate: (to: string) => record('navigate', to),
       writeClipboardText: (text: string) => {
@@ -442,14 +449,90 @@ describe('tmux transport event router', () => {
     expect(harness.namesOf('dispatchPaneTerminalData')).toHaveLength(2);
   });
 
-  test('server-too-old 弹一次错误提示，不改状态', () => {
+  test('server-too-old：入口网关太旧时报 Gateway 版本', () => {
     const harness = createHarness();
 
     expect(() =>
-      harness.route({ type: 'server-too-old', minVersion: '1.1.22', serverVersion: '1.1.21' })
+      harness.route({
+        type: 'server-too-old',
+        side: 'gateway',
+        minVersion: '1.1.23',
+        version: '1.1.22',
+      })
     ).not.toThrow();
     expect(harness.namesOf('notify:error').map((call) => call.args[0])).toEqual([
-      'websocket.serverTooOld',
+      'websocket.gatewayTooOld',
+    ]);
+    expect(harness.namesOf('t').at(-1)?.args).toEqual([
+      'websocket.gatewayTooOld',
+      { version: '1.1.22', minVersion: '1.1.23' },
+    ]);
+  });
+
+  test('server-too-old：优先点名 ERROR 里的被拒节点，而不是本 runtime 的 node', () => {
+    const harness = createHarness({ nodeId: 'ffffffff0000' });
+
+    harness.route({
+      type: 'server-too-old',
+      side: 'node',
+      minVersion: '1.1.23',
+      version: '1.1.22',
+      nodeId: 'abcdef0123456789',
+    });
+    expect(harness.namesOf('notify:error').map((call) => call.args[0])).toEqual([
+      'websocket.nodeTooOld',
+    ]);
+    expect(harness.namesOf('t').at(-1)?.args).toEqual([
+      'websocket.nodeTooOld',
+      { version: '1.1.22', minVersion: '1.1.23', name: 'abcdef01' },
+    ]);
+  });
+
+  test('server-too-old：ERROR 没点名时退回本 runtime 的 node', () => {
+    const harness = createHarness({ nodeId: 'abcdef0123456789' });
+
+    harness.route({
+      type: 'server-too-old',
+      side: 'node',
+      minVersion: '1.1.23',
+      version: '1.1.22',
+      nodeId: null,
+    });
+    expect(harness.namesOf('t').at(-1)?.args).toEqual([
+      'websocket.nodeTooOld',
+      { version: '1.1.22', minVersion: '1.1.23', name: 'abcdef01' },
+    ]);
+  });
+
+  test('server-too-old：self runtime 上的节点错误不点名，版本未知时兜底', () => {
+    const harness = createHarness();
+
+    harness.route({
+      type: 'server-too-old',
+      side: 'node',
+      minVersion: '1.1.23',
+      version: null,
+    });
+    expect(harness.namesOf('notify:error').map((call) => call.args[0])).toEqual([
+      'websocket.nodeTooOldUnnamed',
+    ]);
+    expect(harness.namesOf('t').at(-1)?.args).toEqual([
+      'websocket.nodeTooOldUnnamed',
+      { version: 'websocket.unknownVersion', minVersion: '1.1.23' },
+    ]);
+  });
+
+  test('server-too-old：本页面太旧时只提示刷新', () => {
+    const harness = createHarness();
+
+    harness.route({
+      type: 'server-too-old',
+      side: 'client',
+      minVersion: '1.1.23',
+      version: '1.1.22',
+    });
+    expect(harness.namesOf('notify:error').map((call) => call.args[0])).toEqual([
+      'websocket.clientTooOld',
     ]);
   });
 

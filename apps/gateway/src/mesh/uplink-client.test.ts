@@ -864,6 +864,7 @@ describe('UplinkClient', () => {
       .sort();
     expect(cached).toEqual([admittedId]);
     expect(userStore.listPeers().find((row) => row.nodeId === admittedId)?.name).toBe('admitted');
+    expect(userStore.listPeers().find((row) => row.nodeId === admittedId)?.version).toBe('1.0.0');
   });
 
   test('node.list persists hub display name under the hub nodeId when the hub cert is admitted', async () => {
@@ -915,6 +916,7 @@ describe('UplinkClient', () => {
     );
     await waitUntil(() => lists.length === 1);
     expect(userStore.listPeers().find((row) => row.nodeId === hubId)?.name).toBe('hub-site');
+    expect(userStore.listPeers().find((row) => row.nodeId === hubId)?.version).toBe('1.0.0');
     hub.ctl.send(
       encodeUplinkCtl({
         t: 'node.list',
@@ -1020,6 +1022,7 @@ describe('UplinkClient', () => {
     await waitUntil(() => userStore.listPeers().some((row) => row.nodeId === lateId));
     expect(userStore.getHubMeta()?.nodeId).toBe('ff'.repeat(16));
     expect(userStore.listPeers().find((row) => row.nodeId === lateId)?.name).toBe('late');
+    expect(userStore.listPeers().find((row) => row.nodeId === lateId)?.version).toBe('1.0.2');
     expect(lists).toHaveLength(1);
   });
 

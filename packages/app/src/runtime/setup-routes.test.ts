@@ -82,7 +82,13 @@ function post(path: string, body: unknown): Request {
 describe('setup routes gating', () => {
   test('mesh returns 404 not_standalone for all setup paths', async () => {
     const mesh = deps({ roles: { hub: true, node: true, relay: false } });
-    for (const path of ['/api/setup/precheck', '/api/setup/hub', '/api/setup/join']) {
+    for (const path of [
+      '/api/setup/precheck',
+      '/api/setup/hub',
+      '/api/setup/join',
+      '/api/setup/relay',
+      '/api/setup/relay-join',
+    ]) {
       const { status, body } = await jsonOf(
         await handleSetupRequest(post(path, { url: 'https://h.example' }), mesh)
       );
@@ -303,6 +309,143 @@ describe('POST /api/setup/join', () => {
     expect((body as { error: { code: string; message: string } }).error).toEqual({
       code: 'hub_unreachable',
       message: 'down',
+    });
+  });
+
+  test('password method exchanges then joins', async () => {
+    let issued = '';
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/join', {
+          hubUrl: 'https://hub.example.com',
+          method: 'password',
+          password: 'tmex-test-pass',
+          name: 'studio',
+          directEnable: false,
+        }),
+        deps({
+          requestEnrollmentByPassword: async () => ({
+            token: 'issued-token',
+            hubUrl: 'https://hub.example.com',
+            caFingerprint: null,
+          }),
+          performHubJoin: async (input) => {
+            issued = input.token;
+            return {
+              userId: 'uid',
+              username: 'alice',
+              hubUrl: 'https://hub.example.com',
+            };
+          },
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect(issued).toBe('issued-token');
+    expect((body as { ok: boolean; username: string }).username).toBe('alice');
+  });
+
+  test('token and password together are 400', async () => {
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/join', {
+          hubUrl: 'https://hub.example.com',
+          token: 'tok',
+          password: 'pw',
+          name: 'studio',
+          directEnable: false,
+        }),
+        deps()
+      )
+    );
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe('invalid_body');
+  });
+
+  test('token and password both empty are 400', async () => {
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/join', {
+          hubUrl: 'https://hub.example.com',
+          name: 'studio',
+          directEnable: false,
+        }),
+        deps()
+      )
+    );
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe('invalid_body');
+  });
+});
+
+describe('POST /api/setup/relay', () => {
+  test('standalone relay role returns contract body without admin token', async () => {
+    const auth = await openAuth();
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/relay', {
+          role: 'relay',
+          relayPublicUrl: 'https://relay.example',
+          relayPassword: 'tenant-pass',
+        }),
+        deps({ auth })
+      )
+    );
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      role: 'relay',
+      relayPublicUrl: 'https://relay.example',
+      hasPassword: true,
+      restarting: true,
+    });
+    expect(JSON.stringify(body)).not.toMatch(/admin/i);
+  });
+
+  test('invalid url is 400', async () => {
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/relay', { role: 'relay', relayPublicUrl: 'ftp://relay.example' }),
+        deps()
+      )
+    );
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe('invalid_url');
+  });
+});
+
+describe('POST /api/setup/relay-join', () => {
+  test('happy path with stubbed performRelayPasswordJoin', async () => {
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/relay-join', {
+          relayUrl: 'https://relay.example',
+          tenantId: 'tenant-1',
+          password: 'tmex-test-pass',
+          name: 'studio',
+          directEnable: false,
+        }),
+        {
+          ...deps(),
+          ...({
+            performRelayPasswordJoin: async () => ({
+              relayUrl: 'https://relay.example',
+              tenantId: 'tenant-1',
+              userId: 'alice',
+            }),
+          } as object),
+        } as SetupServiceDeps
+      )
+    );
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      relayUrl: 'https://relay.example',
+      tenantId: 'tenant-1',
+      username: 'alice',
+      direct: 'skipped',
+      directError: null,
+      restarting: true,
     });
   });
 });

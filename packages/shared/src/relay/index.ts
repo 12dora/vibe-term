@@ -117,3 +117,21 @@ export {
   sealRelayKeyLogRecord,
 } from './keylog-frame';
 export type { RelayKeyLogEntry } from './keylog-frame';
+
+export {
+  RELAY_PACK_HKDF_SALT,
+  RELAY_PACK_KEK_LENGTH,
+  RELAY_PACK_KDF_SALT_LENGTH,
+  RELAY_PACK_MAX_BYTES,
+  RELAY_PACK_NONCE_LENGTH,
+  RELAY_PACK_VERSION,
+  RelayPackError,
+  RelayPackPlaintextSchema,
+  kdfParamsFromWire,
+  kdfParamsToWire,
+  openRelayPack,
+  relayPackAad,
+  sealRelayPack,
+  tenantIdBytes,
+} from './relay-pack';
+export type { RelayPackKdfJson, RelayPackPlaintext, SealRelayPackInput } from './relay-pack';

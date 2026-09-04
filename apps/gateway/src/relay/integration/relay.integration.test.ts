@@ -211,11 +211,16 @@ describe('relay r3 join path', () => {
     const tenant = await h.createTenant('alpha');
     await tenant.enroll();
     const material = await tenant.owner.json<{
-      tenantId: string;
-      token: string;
       logKey: string;
+      relays: Array<{ url: string; tenantId: string; token: string }>;
+      tenantId?: string;
+      token?: string;
     }>('/api/mesh/relay/join-material');
-    expect(material.tenantId).toBe(tenant.tenantId());
+    const primary = material.relays[0];
+    if (!primary) throw new Error('join-material missing relays[0]');
+    expect(primary.tenantId).toBe(tenant.tenantId());
+    expect(material.tenantId).toBeUndefined();
+    expect(material.token).toBeUndefined();
     expect(decodeBase64url(material.logKey).byteLength).toBe(32);
 
     const now = Date.now();
@@ -239,10 +244,10 @@ describe('relay r3 join path', () => {
 
     // GET /api/relay/tenants/:id/enrollments/:enrollPk —— 加入方据此取 uid 再造证书
     const lookup = await h.relay.tenantFetch(
-      `/api/relay/tenants/${material.tenantId}/enrollments/${encodeURIComponent(
+      `/api/relay/tenants/${primary.tenantId}/enrollments/${encodeURIComponent(
         encodeBase64url(enrollment.enrollPk)
       )}`,
-      material.token
+      primary.token
     );
     expect(lookup.status).toBe(200);
     const lookupBody = (await lookup.json()) as { authorization: string; used_at: number | null };
@@ -251,7 +256,7 @@ describe('relay r3 join path', () => {
 
     // 令牌不对一律 404，不区分「不存在」与「不是你的」
     const denied = await h.relay.tenantFetch(
-      `/api/relay/tenants/${material.tenantId}/enrollments/${encodeURIComponent(
+      `/api/relay/tenants/${primary.tenantId}/enrollments/${encodeURIComponent(
         encodeBase64url(enrollment.enrollPk)
       )}`,
       encodeBase64url(new Uint8Array(32).fill(9))
@@ -269,7 +274,7 @@ describe('relay r3 join path', () => {
         now,
         nodeId: identity.nodeId,
       });
-      const redeemed = await redeemAtRelay(h, material, {
+      const redeemed = await redeemAtRelay(h, primary, {
         certificate: cert.certificateBytes,
         certSig: cert.certSig,
         pop: signEd25519(
@@ -287,13 +292,13 @@ describe('relay r3 join path', () => {
       const head = await tenant.owner.keys.head(tenant.userId);
       expect(BigInt(records.length)).toBe(head.seq);
       // 中继侧登记为 pending，等待主节点签 admit-node
-      expect(h.relay.runtime.tenants.getNode(material.tenantId, identity.nodeIdHex)?.status).toBe(
+      expect(h.relay.runtime.tenants.getNode(primary.tenantId, identity.nodeIdHex)?.status).toBe(
         'pending'
       );
       // redeem 只能用一次
       const replay = await h.relay.tenantFetch(
-        `/api/relay/tenants/${material.tenantId}/enrollments/redeem`,
-        material.token,
+        `/api/relay/tenants/${primary.tenantId}/enrollments/redeem`,
+        primary.token,
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },

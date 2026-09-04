@@ -4,6 +4,7 @@ import { asResponse, bootMesh, challengeAndLogin, dummyServer } from './auth-rou
 import {
   MESH_GATEWAY_WS_KIND,
   MESH_REJECT_4401_KIND,
+  MESH_VIA_SELF,
   MESH_WS_KIND,
   type MeshServerWebSocket,
   WS_CLOSE_LOGIN_REQUIRED,
@@ -56,6 +57,35 @@ describe('mesh-http', () => {
       expect(mesh.runtime.localUiGuard(new Request('http://localhost/favicon.ico'))).toBeNull();
       expect(mesh.runtime.localUiGuard(new Request('http://localhost/api/auth/mode'))).toBeNull();
       expect(mesh.runtime.localUiGuard(new Request('http://localhost/devices'))).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('localUiGuard 对可信本机 GET /api/mesh/relay/status 放行', async () => {
+    const mesh = await bootMesh();
+    try {
+      const local = new Request('http://localhost/api/mesh/relay/status');
+      setMeshRequestContext(local, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+      expect(mesh.runtime.localUiGuard(local)).toBeNull();
+
+      const publicIp = new Request('http://localhost/api/mesh/relay/status', {
+        headers: { 'x-tmex-client-source': 'local' },
+      });
+      setMeshRequestContext(publicIp, { via: MESH_VIA_SELF, clientIp: '203.0.113.10' });
+      expect(mesh.runtime.localUiGuard(publicIp)?.status).toBe(401);
+
+      const peer = new Request('http://localhost/api/mesh/relay/status', {
+        headers: { 'x-tmex-client-source': 'local' },
+      });
+      setMeshRequestContext(peer, { via: 'ab'.repeat(16), clientIp: 'peer:entry' });
+      expect(mesh.runtime.localUiGuard(peer)?.status).toBe(401);
+
+      const leave = new Request('http://localhost/api/mesh/relay/leave/prepare', {
+        method: 'POST',
+      });
+      setMeshRequestContext(leave, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+      expect(mesh.runtime.localUiGuard(leave)?.status).toBe(401);
     } finally {
       mesh.close();
     }

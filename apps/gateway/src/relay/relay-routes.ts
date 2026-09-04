@@ -19,6 +19,7 @@ import type { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError, relayJson } from './relay-http';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import { parseRelayEnvelopeJson } from './relay-key-log-store';
+import { handleRelayJoin } from './relay-pack-http';
 import {
   constantTimeEqual,
   generateRelayTenantId,
@@ -50,6 +51,8 @@ type ParsedEnroll = {
   proofBytes: Uint8Array;
   proofSig: Uint8Array;
   password: string | null;
+  mode: 'enroll' | 'join';
+  tenantId: string | null;
 };
 
 function parseEnrollBody(body: Record<string, unknown>): ParsedEnroll | null {
@@ -59,6 +62,10 @@ function parseEnrollBody(body: Record<string, unknown>): ParsedEnroll | null {
   if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
   const rec = proof as Record<string, unknown>;
   if (typeof rec.bytes !== 'string' || typeof rec.sig !== 'string') return null;
+  const modeRaw = body.mode;
+  const mode = modeRaw === 'join' ? 'join' : 'enroll';
+  const tenantId = typeof body.tenant_id === 'string' ? body.tenant_id : null;
+  if (mode === 'join' && !tenantId) return null;
   try {
     return {
       rootPublicKey: requireB64url(body, 'root_public_key', 32),
@@ -66,6 +73,8 @@ function parseEnrollBody(body: Record<string, unknown>): ParsedEnroll | null {
       proofBytes: decodeB64url(rec.bytes),
       proofSig: decodeB64url(rec.sig, 64),
       password: typeof body.password === 'string' ? body.password : null,
+      mode,
+      tenantId,
     };
   } catch {
     return null;
@@ -137,7 +146,21 @@ export async function handleRelayEnroll(
     now: deps.now(),
     maxSkewMs: RELAY_ENROLL_PROOF_MAX_SKEW_MS,
   });
-  if (!verified.ok) return relayError(RelayErrorCode.badProof, 401);
+  if (!verified.ok) {
+    if (parsed.mode === 'join') deps.limiter.recordFailure(ip, parsed.tenantId ?? undefined);
+    return relayError(RelayErrorCode.badProof, 401);
+  }
+  if (parsed.mode === 'join' && parsed.tenantId) {
+    return handleRelayJoin(
+      deps,
+      {
+        rootPublicKey: parsed.rootPublicKey,
+        rootEpoch: parsed.rootEpoch,
+        tenantId: parsed.tenantId,
+      },
+      ip
+    );
+  }
   const config = deps.configStore.ensure(deps.now());
   const rejected = await checkEnrollPassword(deps, parsed, config.passwordHash, ip);
   if (rejected) return rejected;
@@ -297,6 +320,7 @@ export async function handleRelayRedeem(
     node_id: nodeId,
   });
   deps.uplink.scheduleList(tenant.id);
+  deps.uplink.notifyQuota(tenant.id);
   return relayJson({
     tenant_id: tenant.id,
     relays: [deps.publicUrl],

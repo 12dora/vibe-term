@@ -33,6 +33,8 @@ export interface RelayQuotaView {
   maxNodes: number;
   maxStreams: number;
   bandwidthBytesPerSec: number | null;
+  /** 当前占用（pending + admitted）；旧中继不下发。 */
+  currentNodes?: number;
 }
 
 /** `GET /api/mesh/relay/status`。 */
@@ -125,13 +127,44 @@ export interface RelayJoinMaterialRelay {
 /**
  * `GET /api/mesh/relay/join-material`：拼 join 串 v3 的材料（`logKey` 即 `K_log`）。
  *
- * `relays` 只含**真正持有这条 enrollment** 的中继（即当前 attach 的那台）；完整的有序中继表
- * 由加入后下载到的 `set-relays` 记录给出。
+ * 默认（`scope:'attached'`）只含当前 attach 的那台——加入码只对它有效；`scope:'all'` 返回
+ * 全部已授权中继，密封包重封要按台各封一块。完整的有序中继表由加入后下载到的
+ * `set-relays` 记录给出。
  */
 export interface RelayJoinMaterial {
   /** base64url，32 字节。 */
   logKey: string;
   relays: RelayJoinMaterialRelay[];
+}
+
+/**
+ * 一台中继对应的一块密封包。
+ *
+ * 每台中继各自签发租户编号与令牌，密封包的 KEK（info = tenant_id）、明文里的令牌与 AAD
+ * 全都绑在**那一台**上，绝不能跨中继复用——所以是一台一块，不是一块广播。
+ */
+export interface RelayPackEntry {
+  url: string;
+  /** base64url(`nonce(12) ‖ AES-256-GCM(ct‖tag)`)。 */
+  sealed_pack: string;
+}
+
+/**
+ * `POST /api/mesh/relay/pack` 的请求体：密封包由**持有根种子的一方**（浏览器 / CLI）算好，
+ * 节点只负责带着各自的租户令牌逐台转发。
+ */
+export interface RelayPackUpload {
+  packs: RelayPackEntry[];
+  kdf_params: { salt: string; memory_kib: number; iterations: number; parallelism: number };
+  root_epoch: number;
+  /** 超出安全整数时用十进制字符串。 */
+  head_seq: number | string;
+}
+
+/** `POST /api/mesh/relay/pack` 的 200：逐台中继的转发结果（至少一台成功才算 200）。 */
+export interface RelayPackUploadResult {
+  ok: true;
+  results?: { url: string; ok: boolean; status: number; code?: string }[];
 }
 
 /** `POST /api/mesh/relay/enrollments` 的 201（字段与 hub 的 `/api/hub/enrollments` 对齐）。 */
@@ -238,15 +271,20 @@ export function normalizeRelayStatus(
 
 /** 材料不全就报错，绝不静默拼一个解不开的 join 串出去。 */
 const RELAY_TENANT_ID_HEX = /^[0-9a-f]{32}$/;
+/** 32 字节的 base64url（无填充）：`K_log` 与租户令牌都是这个长度。 */
+const RELAY_KEY_B64URL = /^[A-Za-z0-9_-]{43}$/;
 
 export function normalizeJoinMaterial(wire: Partial<RelayJoinMaterial>): RelayJoinMaterial {
   const relays = wire.relays ?? [];
+  // 长度在这里就卡掉：畸形值一路带到密封那一步才抛，K_log 已经解出来了。
   const usable =
-    Boolean(wire.logKey) &&
+    RELAY_KEY_B64URL.test(wire.logKey as string) &&
     relays.length > 0 &&
     relays.every(
       (relay) =>
-        Boolean(relay?.url) && Boolean(relay?.token) && RELAY_TENANT_ID_HEX.test(relay?.tenantId)
+        Boolean(relay?.url) &&
+        RELAY_KEY_B64URL.test(relay?.token) &&
+        RELAY_TENANT_ID_HEX.test(relay?.tenantId)
     );
   if (!usable) {
     throw new RelayApiError('RELAY_JOIN_MATERIAL_INVALID', 'incomplete join material', 200);
@@ -348,9 +386,10 @@ export class RelayTenantApi {
   }
 
   /** `GET /api/mesh/relay/join-material`：join 串 v3 的材料（仅中继模式）。 */
-  async joinMaterial(): Promise<RelayJoinMaterial> {
+  async joinMaterial(options: { scope?: 'attached' | 'all' } = {}): Promise<RelayJoinMaterial> {
+    const query = options.scope === 'all' ? '?scope=all' : '';
     const wire = await this.json<Partial<RelayJoinMaterial>>(
-      `${BASE}/join-material`,
+      `${BASE}/join-material${query}`,
       'relay_join_material_failed'
     );
     return normalizeJoinMaterial(wire);
@@ -364,6 +403,17 @@ export class RelayTenantApi {
     exp: number;
   }): Promise<RelayEnrollmentCreated> {
     return this.json<RelayEnrollmentCreated>(`${BASE}/enrollments`, 'relay_enrollment_failed', {
+      method: 'POST',
+      body,
+    });
+  }
+
+  /**
+   * `POST /api/mesh/relay/pack`：把密封包交给本机节点，由它转发到各中继。
+   * 一台都没转发成功时服务端回 502 `RELAY_PACK_FORWARD_FAILED`。
+   */
+  uploadPack(body: RelayPackUpload): Promise<RelayPackUploadResult> {
+    return this.json<RelayPackUploadResult>(`${BASE}/pack`, 'relay_pack_upload_failed', {
       method: 'POST',
       body,
     });

@@ -3,7 +3,11 @@ import type { HubEndpointInfo } from '@tmex/shared/uplink';
 import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
-import { type NodeListApplyDeps, reconcileHubStoreFromNodeList } from './node-list-apply';
+import {
+  type NodeListApplyDeps,
+  emitRenameNodeEvent,
+  reconcileHubStoreFromNodeList,
+} from './node-list-apply';
 import type { UplinkNodeList } from './uplink-protocol';
 
 const SELF = 'aa'.repeat(16);
@@ -135,6 +139,32 @@ describe('reconcileHubStoreFromNodeList', () => {
 
       expect(hubStore.get(PEER)?.mode).toBe('standby');
       expect(pickWriterHub(hubStore.list())).toBe('cc'.repeat(16));
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('emitRenameNodeEvent', () => {
+  test('emits name and syncs local site name for self', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const hubStore = new MeshHubStore(db);
+      const userStore = new UserStore(db);
+      const events: Array<{ nodeId: string; name?: string; status: string }> = [];
+      const names: string[] = [];
+      const d = applyDeps(hubStore, userStore);
+      d.identity = { nodeIdHex: SELF };
+      d.emitListNodeEvent = (event) => {
+        events.push({ nodeId: event.nodeId, name: event.name, status: event.status });
+      };
+      d.opts = { onLocalNodeName: (name) => names.push(name) };
+      emitRenameNodeEvent(d, SELF, 'studio');
+      expect(events).toEqual([{ nodeId: SELF, name: 'studio', status: 'online' }]);
+      expect(names).toEqual(['studio']);
+      emitRenameNodeEvent(d, PEER, 'peer');
+      expect(events[1]).toEqual({ nodeId: PEER, name: 'peer', status: 'offline' });
+      expect(names).toEqual(['studio']);
     } finally {
       close();
     }

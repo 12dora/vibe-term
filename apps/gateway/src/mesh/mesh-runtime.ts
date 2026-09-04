@@ -22,7 +22,6 @@ import { type TmexRoles, config as gatewayConfig } from '../config';
 import { getSiteSettings } from '../db/site-settings';
 import { HubRuntime, type HubTurnConfig } from '../hub';
 import {
-  applyKeyLogHubRuntime,
   envPeerSet,
   isAuthorizedHub,
   lookupSignedHubAuthorization,
@@ -41,6 +40,7 @@ import {
   parseIpv6Words,
 } from './address-class';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
+import { bindKeyLogProjection } from './key-log-projection';
 import { lookupRemoteNode, setMeshAgentBridge } from './mesh-agent-bridge';
 import {
   type CachedRtcConfig,
@@ -77,7 +77,6 @@ import {
 } from './node-list-apply';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
 import {
-  type RelayWiring,
   bindRelayReconcile,
   createRelayRoutes,
   createRelayWiring,
@@ -569,22 +568,6 @@ async function stopQuietly(parts: Array<[string, () => void | Promise<void>]>): 
   }
 }
 
-function keyLogProjection(d: {
-  hubStore: MeshHubStore;
-  hub: HubRuntime | null;
-  relay: RelayWiring;
-  selfId: string;
-}): NonNullable<UserKeyService['onApplied']> {
-  return (_userId, step) => {
-    applyKeyLogHubRuntime(d.hubStore, step.record, {
-      selfId: d.selfId,
-      now: Date.now(),
-      onRetireSelf: () => d.hub?.setMode('standby'),
-    });
-    d.relay.notifyIfRelayRecord(step.record.type);
-  };
-}
-
 async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
   const { db, gateway, config } = opts;
   const userStore = new UserStore(db);
@@ -687,7 +670,6 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
       }))
     : (opts.hub ?? null);
   const relay = createRelayWiring({ db, identity, userIdOf });
-  keyLogService.onApplied = keyLogProjection({ hubStore, hub, relay, selfId: identity.nodeIdHex });
   return {
     opts,
     db,
@@ -794,6 +776,18 @@ function createSessionBindings(s: Awaited<ReturnType<typeof createMeshStoresAndS
 
 async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
   const stores = await createMeshStoresAndServices(opts);
+  stores.keyLogService.onApplied = bindKeyLogProjection({
+    hubStore: stores.hubStore,
+    hub: stores.hub,
+    relay: stores.relay,
+    selfId: stores.identity.nodeIdHex,
+    userStore: stores.userStore,
+    state: stores.state,
+    peerHolder: stores.peerHolder,
+    emitListNodeEvent: stores.emitListNodeEvent,
+    onLocalNodeName: opts.onLocalNodeName,
+    userIdOf: stores.userIdOf,
+  });
   const bindings = createSessionBindings(stores);
   const scheduler = opts.scheduler ?? defaultScheduler();
   const refreshTls = async () => {

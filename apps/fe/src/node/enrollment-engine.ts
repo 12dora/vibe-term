@@ -50,6 +50,11 @@ import {
   unconfirmedRecord,
 } from './enrollment';
 import {
+  canAutoSignAdmit,
+  invalidCertificateKey,
+  uplinkNotConfirmedKey,
+} from './enrollment-policy';
+import {
   type CertificateOutcome,
   ENROLLMENT_POLL_INTERVAL_MS,
   collectRedeemedCertificates,
@@ -59,21 +64,7 @@ import {
 import type { HubApi } from './hub-api';
 import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
 
-/**
- * 证书一到就自动签 `admit-node`——只有根钥签名者可以这么干。
- *
- * passkey 每签一次都要一次认证器仪式，而仪式必须由用户手势触发（Safari 强制要求，
- * Chrome 也会因为缺少 user activation 拒掉）。后台自动发起注定失败，不如留在「待确认」：
- * 用户点按钮时复用窗口里的凭证还在，不必再选一次 passkey。
- */
-export function canAutoSignAdmit(signer: RecordSigner | null): boolean {
-  return signer?.kind === 'root';
-}
-
-/** 证书对不上时的提示：过期与验签失败要分开讲，其余情况一律按验签失败处理。 */
-export function invalidCertificateKey(reason: string): string {
-  return reason === 'expired' ? 'nodes.enrollment.expired' : 'nodes.enrollment.badCertSig';
-}
+export { canAutoSignAdmit, invalidCertificateKey } from './enrollment-policy';
 
 /** 一张确认可用的证书 + 它属于的那条 pending。 */
 type AdmitOutcome = Extract<CertificateOutcome, { kind: 'admit' }>;
@@ -597,8 +588,8 @@ async function submitAdmit(
   // 引擎被重置 / 槽位换了人：结果照常由 `submitAdmitRecord` 记账，但不再投影到新状态。
   if (!opAlive(op)) return;
   if (disposition.kind === 'unconfirmed') {
-    // hub 没确认就删 pending 会把 enroll 授权丢掉，而新 node 永远成不了 mesh 成员。
-    toast.warning(op.t('nodes.enrollment.hubNotConfirmed'));
+    // 上级没确认就删 pending 会把 enroll 授权丢掉，而新 node 永远成不了 mesh 成员。
+    toast.warning(op.t(uplinkNotConfirmedKey()));
     return;
   }
   if (disposition.kind === 'stale') {

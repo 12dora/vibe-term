@@ -1,5 +1,6 @@
 // become-hub / join-hub 两个表单共用的展示件：通用原语取自 settings/components。
 
+import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 import { Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -41,6 +42,38 @@ export function SwitchRow({
         data-testid={id}
       />
     </div>
+  );
+}
+
+/**
+ * 四个设置表单共用的提交行：提交中转圈，被别处的提交锁住时禁用并说明原因。
+ * 后端只放行一条设置路径，界面必须同步锁上，否则用户只会拿到一条 409。
+ */
+export function SetupSubmitRow({
+  testId,
+  label,
+  submitting,
+  blocked,
+}: {
+  /** 表单前缀，如 `setup-join-relay`；按钮与说明条各自补后缀。 */
+  testId: string;
+  label: string;
+  submitting: boolean;
+  blocked: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {blocked && (
+        <Notice tone="info" testId={`${testId}-blocked`}>
+          {t('nodes.setup.transition.blocked')}
+        </Notice>
+      )}
+      <Button type="submit" disabled={submitting || blocked} data-testid={`${testId}-submit`}>
+        {submitting && <Loader2 className="animate-spin" />}
+        {submitting ? t('nodes.setup.submit.pending') : label}
+      </Button>
+    </>
   );
 }
 

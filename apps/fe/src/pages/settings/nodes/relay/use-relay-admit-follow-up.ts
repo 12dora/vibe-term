@@ -12,6 +12,7 @@ import { admittedNodeIdFor, withKeyLogLock } from '@/node/enrollment-engine';
 import type { RelayFlowMode } from '@/node/relay-enroll';
 import { appendMetaKey } from '@/node/relay-enroll';
 import { forgetPendingMetaKey, rememberPendingMetaKey } from '@/node/relay-meta-key-pending';
+import { refreshRelayPackForSigner } from '@/node/relay-pack';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
@@ -93,6 +94,9 @@ async function distributeMetaKey(input: {
       op,
       signer
     );
+    // admit-node 与 meta-key 都是经 `prompt.request()` 的复用签名者落账的，`withSigner` 的
+    // 钩子罩不到这条路：日志头已经往前走了，密封包必须在这里显式跟上。
+    await refreshRelayPackForSigner(signer, { api: input.api, relayApi: input.relayApi });
     if (result.ok) {
       forgetPendingMetaKey(entryId);
       return;

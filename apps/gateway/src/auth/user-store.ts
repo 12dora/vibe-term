@@ -118,6 +118,7 @@ export interface PeerCacheRecord {
   directCapable: boolean;
   lastSeenAt: number | null;
   listVersion: number;
+  version: string | null;
 }
 
 export interface UpsertPeerCacheInput {
@@ -128,6 +129,7 @@ export interface UpsertPeerCacheInput {
   directCapable: boolean;
   lastSeenAt: number | null;
   listVersion: number;
+  version?: string | null;
 }
 
 export interface NodeRecord {
@@ -472,6 +474,7 @@ export class UserStore {
         directCapable: input.directCapable,
         lastSeenAt: input.lastSeenAt,
         listVersion: input.listVersion,
+        version: input.version ?? null,
       })
       .onConflictDoUpdate({
         target: peerCache.nodeId,
@@ -482,6 +485,7 @@ export class UserStore {
           directCapable: input.directCapable,
           lastSeenAt: input.lastSeenAt,
           listVersion: input.listVersion,
+          ...(input.version !== undefined ? { version: input.version } : {}),
         },
       })
       .run();
@@ -861,15 +865,8 @@ function toHubAuthorization(
 }
 
 function toPeer(row: typeof peerCache.$inferSelect): PeerCacheRecord {
-  return {
-    nodeId: row.nodeId,
-    name: row.name,
-    endpointsJson: row.endpointsJson,
-    inventoryJson: row.inventoryJson,
-    directCapable: row.directCapable,
-    lastSeenAt: row.lastSeenAt,
-    listVersion: row.listVersion,
-  };
+  const { version, ...rest } = row;
+  return { ...rest, version: version ?? null };
 }
 
 function toNode(row: typeof nodes.$inferSelect): NodeRecord {

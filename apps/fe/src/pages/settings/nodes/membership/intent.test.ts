@@ -42,36 +42,64 @@ const throwingStorage: IntentStorage = {
 describe('setup intent 记号', () => {
   test('写入后读到，并且读一次就清掉', () => {
     const storage = memoryStorage();
-    writeSetupIntent('join-hub', storage, 1000);
+    writeSetupIntent({ path: 'join-hub' }, storage, 1000);
     expect(JSON.parse(storage.map.get(SETUP_INTENT_KEY) as string)).toEqual({
       path: 'join-hub',
       at: 1000,
     });
-    expect(takeSetupIntent(storage, 1000)).toBe('join-hub');
+    expect(takeSetupIntent(storage, 1000)).toEqual({ path: 'join-hub' });
     expect(storage.map.has(SETUP_INTENT_KEY)).toBe(false);
     expect(takeSetupIntent(storage)).toBeNull();
   });
 
   test('become-hub 同样往返', () => {
     const storage = memoryStorage();
-    writeSetupIntent('become-hub', storage);
-    expect(takeSetupIntent(storage)).toBe('become-hub');
+    writeSetupIntent({ path: 'become-hub' }, storage);
+    expect(takeSetupIntent(storage)).toEqual({ path: 'become-hub' });
+  });
+
+  test('join-relay 往返', () => {
+    const storage = memoryStorage();
+    writeSetupIntent({ path: 'join-relay' }, storage);
+    expect(takeSetupIntent(storage)).toEqual({ path: 'join-relay' });
+  });
+
+  test('become-relay 连目标角色一起往返', () => {
+    for (const role of ['relay', 'relay,node'] as const) {
+      const storage = memoryStorage();
+      writeSetupIntent({ path: 'become-relay', role }, storage);
+      expect(takeSetupIntent(storage)).toEqual({ path: 'become-relay', role });
+    }
+  });
+
+  test('老记录没有 role 字段照样能读（向后兼容）', () => {
+    const storage = memoryStorage({
+      [SETUP_INTENT_KEY]: JSON.stringify({ path: 'become-hub', at: 1000 }),
+    });
+    expect(takeSetupIntent(storage, 1000)).toEqual({ path: 'become-hub' });
+  });
+
+  test('role 是脏值时只丢 role，路径照样生效', () => {
+    const storage = memoryStorage({
+      [SETUP_INTENT_KEY]: JSON.stringify({ path: 'become-relay', at: 1000, role: 'hub,node' }),
+    });
+    expect(takeSetupIntent(storage, 1000)).toEqual({ path: 'become-relay' });
   });
 
   test('保质期内读得到，过期就当没有（照样清掉）', () => {
     const fresh = memoryStorage();
-    writeSetupIntent('join-hub', fresh, 0);
-    expect(takeSetupIntent(fresh, SETUP_INTENT_TTL_MS)).toBe('join-hub');
+    writeSetupIntent({ path: 'join-hub' }, fresh, 0);
+    expect(takeSetupIntent(fresh, SETUP_INTENT_TTL_MS)).toEqual({ path: 'join-hub' });
 
     const stale = memoryStorage();
-    writeSetupIntent('join-hub', stale, 0);
+    writeSetupIntent({ path: 'join-hub' }, stale, 0);
     expect(takeSetupIntent(stale, SETUP_INTENT_TTL_MS + 1)).toBeNull();
     expect(stale.map.has(SETUP_INTENT_KEY)).toBe(false);
   });
 
   test('写入时刻在未来（时钟回拨）同样不可信', () => {
     const storage = memoryStorage();
-    writeSetupIntent('become-hub', storage, 10_000);
+    writeSetupIntent({ path: 'become-hub' }, storage, 10_000);
     expect(takeSetupIntent(storage, 9_000)).toBeNull();
   });
 
@@ -97,13 +125,13 @@ describe('setup intent 记号', () => {
   });
 
   test('没有 storage 时不抛', () => {
-    expect(() => writeSetupIntent('join-hub', null)).not.toThrow();
+    expect(() => writeSetupIntent({ path: 'join-hub' }, null)).not.toThrow();
     expect(takeSetupIntent(null)).toBeNull();
     expect(() => clearSetupIntent(null)).not.toThrow();
   });
 
   test('storage 抛异常时不影响调用方', () => {
-    expect(() => writeSetupIntent('join-hub', throwingStorage)).not.toThrow();
+    expect(() => writeSetupIntent({ path: 'join-hub' }, throwingStorage)).not.toThrow();
     expect(takeSetupIntent(throwingStorage)).toBeNull();
     expect(() => clearSetupIntent(throwingStorage)).not.toThrow();
   });

@@ -61,6 +61,7 @@ export const peerCache = sqliteTable(
     directCapable: integer('direct_capable', { mode: 'boolean' }).notNull().default(false),
     lastSeenAt: integer('last_seen_at'),
     listVersion: integer('list_version').notNull().default(0),
+    version: text('version'),
   },
   (table) => [uniqueIndex('peer_cache_node_id_unique').on(table.nodeId)]
 );

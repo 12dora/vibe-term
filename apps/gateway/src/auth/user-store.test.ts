@@ -164,6 +164,28 @@ describe('UserStore', () => {
       });
       expect(store.listPeers()[0]?.listVersion).toBe(4);
       expect(store.getPeer('node-b')?.listVersion).toBe(4);
+      expect(store.getPeer('node-b')?.version).toBeNull();
+      store.upsertPeer({
+        nodeId: 'node-b',
+        name: 'studio',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 21,
+        listVersion: 5,
+        version: '1.1.23',
+      });
+      expect(store.getPeer('node-b')?.version).toBe('1.1.23');
+      store.upsertPeer({
+        nodeId: 'node-b',
+        name: 'studio',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 22,
+        listVersion: 6,
+      });
+      expect(store.getPeer('node-b')?.version).toBe('1.1.23');
       expect(store.getPeer('missing')).toBeNull();
       store.deletePeer('node-b');
       expect(store.listPeers()).toHaveLength(0);

@@ -7,6 +7,31 @@ export const ARGON2ID_ITERATIONS = 3;
 export const ARGON2ID_PARALLELISM = 1;
 export const ARGON2ID_HASH_LENGTH = 32;
 export const KDF_SALT_LENGTH = 16;
+export const KDF_BUDGET_MEMORY_KIB_MAX = 262_144;
+export const KDF_BUDGET_ITERATIONS_MAX = 10;
+export const KDF_BUDGET_PARALLELISM_MAX = 4;
+
+export class KdfParamsBudgetError extends Error {
+  constructor(message = 'kdf params exceed client budget') {
+    super(message);
+    this.name = 'KdfParamsBudgetError';
+  }
+}
+
+/** Argon2 调用前的客户端资源预算：超限直接拒绝，避免匿名 KDF 响应迫使 OOM。 */
+export function assertKdfParamsWithinBudget(params: KdfParams): void {
+  if (
+    params.salt.byteLength !== KDF_SALT_LENGTH ||
+    params.memory_kib < 8 ||
+    params.memory_kib > KDF_BUDGET_MEMORY_KIB_MAX ||
+    params.iterations < 1 ||
+    params.iterations > KDF_BUDGET_ITERATIONS_MAX ||
+    params.parallelism < 1 ||
+    params.parallelism > KDF_BUDGET_PARALLELISM_MAX
+  ) {
+    throw new KdfParamsBudgetError();
+  }
+}
 
 export interface RootKey {
   readonly publicKey: Uint8Array;
@@ -34,6 +59,7 @@ export function generateKdfParams(): KdfParams {
 }
 
 export async function deriveSeed(password: string, kdfParams: KdfParams): Promise<Uint8Array> {
+  assertKdfParamsWithinBudget(kdfParams);
   const normalized = password.normalize('NFKC');
   const digest = await argon2id({
     password: new TextEncoder().encode(normalized),

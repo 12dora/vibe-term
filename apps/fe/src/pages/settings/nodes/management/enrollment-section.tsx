@@ -7,6 +7,7 @@
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { type PendingEnrollment, joinCommand } from '@/node/enrollment';
 import type { HubApi } from '@/node/hub-api';
+import type { UseMeshRelayResult } from '@/node/mesh-relay';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
@@ -33,6 +34,7 @@ export function EnrollmentSection({
   busyIds,
   hubUnconfirmedIds,
   clearedIds,
+  relay,
 }: {
   api: AuthApi;
   mode: ResolvedMode;
@@ -55,10 +57,20 @@ export function EnrollmentSection({
   hubUnconfirmedIds: string[];
   /** 已 admit / 已过期的 pending id：对应的 join 串必须立刻从 DOM 里消失。 */
   clearedIds: string[];
+  /** 本机卡已经在轮询的那份中继快照：给了就不再自己订一份。 */
+  relay?: UseMeshRelayResult;
 }) {
   const { t } = useTranslation();
-  const create = useCreateEnrollment({ api, mode, hubApi, prompt, clearedIds, writerPublicUrl });
-  const { created, hubUrl } = create;
+  const create = useCreateEnrollment({
+    api,
+    mode,
+    hubApi,
+    prompt,
+    clearedIds,
+    writerPublicUrl,
+    ...(relay ? { relay } : {}),
+  });
+  const { created, hubUrl, relayMode } = create;
 
   return (
     <>
@@ -108,64 +120,93 @@ export function EnrollmentSection({
             />
           </div>
         ) : (
-          // hub 没给出对外地址就不能编 join 命令：用入口 origin 会把新设备指到没有
+          // 上级没给出对外地址就不能编 join 命令：用入口 origin 会把新设备指到没有
           // HubRuntime 的机器，redeem 直接 404（见 F4-3 评审 Blocker）。
           <p className="text-xs text-destructive" data-testid="nodes-join-no-url">
-            {t('nodes.enrollment.missingHubUrl')}
+            {t(relayMode ? 'nodes.enrollment.missingRelayUrl' : 'nodes.enrollment.missingHubUrl')}
           </p>
         ))}
 
       {pendings.length > 0 && (
         <ul className="flex flex-col gap-1" data-testid="nodes-pending-list">
-          {pendings.map((pending) => {
-            const id = pending.hubEnrollmentId;
-            const unconfirmed = hubUnconfirmedIds.includes(id);
-            const busy = busyIds.includes(id);
-            return (
-              <li
-                key={id}
-                className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2 py-1.5 text-xs"
-                data-testid={`nodes-pending-${id}`}
-              >
-                <span className="truncate">
-                  {unconfirmed
-                    ? t('nodes.enrollment.hubNotConfirmed')
-                    : t('nodes.enrollment.pending')}
-                  <span className="ml-2 font-mono text-muted-foreground">
-                    {pending.name ?? pending.enrollPk.slice(0, 12)}
-                  </span>
-                </span>
-                <span className="flex shrink-0 items-center gap-1">
-                  <Button
-                    type="button"
-                    size="xs"
-                    disabled={busy || !writable}
-                    title={writable ? undefined : blockedHint}
-                    onClick={() => onConfirm(pending)}
-                    data-testid={`nodes-pending-confirm-${id}`}
-                  >
-                    {busy ? <Loader2 className="animate-spin" /> : <Check />}
-                    {unconfirmed
-                      ? t('nodes.enrollment.retryHub')
-                      : t('nodes.enrollment.confirmPending')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    disabled={busy}
-                    onClick={() => onCancel(pending)}
-                    data-testid={`nodes-pending-cancel-${id}`}
-                  >
-                    <X />
-                    {t('nodes.enrollment.cancelPending')}
-                  </Button>
-                </span>
-              </li>
-            );
-          })}
+          {pendings.map((pending) => (
+            <PendingRow
+              key={pending.hubEnrollmentId}
+              pending={pending}
+              relayMode={relayMode}
+              unconfirmed={hubUnconfirmedIds.includes(pending.hubEnrollmentId)}
+              busy={busyIds.includes(pending.hubEnrollmentId)}
+              writable={writable}
+              blockedHint={blockedHint}
+              onConfirm={onConfirm}
+              onCancel={onCancel}
+            />
+          ))}
         </ul>
       )}
     </>
+  );
+}
+
+/** 一条待确认记录。上级未确认时文案与按钮都换成「重试」口径。 */
+function PendingRow({
+  pending,
+  relayMode,
+  unconfirmed,
+  busy,
+  writable,
+  blockedHint,
+  onConfirm,
+  onCancel,
+}: {
+  pending: PendingEnrollment;
+  relayMode: boolean;
+  unconfirmed: boolean;
+  busy: boolean;
+  writable: boolean;
+  blockedHint: string;
+  onConfirm: (pending: PendingEnrollment) => void;
+  onCancel: (pending: PendingEnrollment) => void;
+}) {
+  const { t } = useTranslation();
+  const id = pending.hubEnrollmentId;
+  return (
+    <li
+      className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2 py-1.5 text-xs"
+      data-testid={`nodes-pending-${id}`}
+    >
+      <span className="truncate">
+        {unconfirmed
+          ? t(relayMode ? 'nodes.enrollment.relayNotConfirmed' : 'nodes.enrollment.hubNotConfirmed')
+          : t('nodes.enrollment.pending')}
+        <span className="ml-2 font-mono text-muted-foreground">
+          {pending.name ?? pending.enrollPk.slice(0, 12)}
+        </span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1">
+        <Button
+          type="button"
+          size="xs"
+          disabled={busy || !writable}
+          title={writable ? undefined : blockedHint}
+          onClick={() => onConfirm(pending)}
+          data-testid={`nodes-pending-confirm-${id}`}
+        >
+          {busy ? <Loader2 className="animate-spin" /> : <Check />}
+          {unconfirmed ? t('nodes.enrollment.retryHub') : t('nodes.enrollment.confirmPending')}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          disabled={busy}
+          onClick={() => onCancel(pending)}
+          data-testid={`nodes-pending-cancel-${id}`}
+        >
+          <X />
+          {t('nodes.enrollment.cancelPending')}
+        </Button>
+      </span>
+    </li>
   );
 }

@@ -297,7 +297,8 @@ export function useJoinEnrollment(): JoinEnrollment {
   const { t } = useTranslation();
   // 中继模式下 enrollment 建在中继上、证书从 `/api/mesh/relay/enrollments/:id` 回读：
   // 中继的 `enroll.redeemed` 没有 `entry_sid`，推不到浏览器，只能靠这条通道轮询。
-  const relay = useMeshRelay();
+  // standalone 下这族路由是全局 401：只在 mesh 里才问，否则 session 拦截器会把页面踢去登录页。
+  const relay = useMeshRelay({ enabled: meshEnabled });
   const enrollChannel = relay.relayMode ? defaultRelayEnrollmentApi : hub.hubApi;
   const { confirmManually } = useEnrollmentEngine({
     api,
@@ -321,6 +322,7 @@ export function useJoinEnrollment(): JoinEnrollment {
     hubApi: enrollChannel,
     prompt,
     clearedIds: engine.clearedIds,
+    relay,
   });
 
   const meshState = useSyncExternalStore(subscribeMeshNodes, getMeshNodesState, getMeshNodesState);
@@ -367,13 +369,15 @@ export function JoinTokenFields({ enrollment }: { enrollment: JoinEnrollment }) 
     );
   }
 
-  // hub 没给出对外地址就不能编 join 命令：用入口 origin 会把新机器指到没有 HubRuntime
-  // 的机器上，redeem 直接 404（与设置页同一条判定）。
+  // 上级没给出对外地址就不能编 join 命令：用入口 origin 会把新机器指到没有 HubRuntime
+  // 的机器上，redeem 直接 404（与设置页同一条判定）。中继模式下缺的是中继地址。
   if (!create.hubUrl) {
     return (
       <>
         <p className="text-xs text-destructive" data-testid="connect-join-no-url">
-          {t('nodes.enrollment.missingHubUrl')}
+          {t(
+            create.relayMode ? 'nodes.enrollment.missingRelayUrl' : 'nodes.enrollment.missingHubUrl'
+          )}
         </p>
         {settingsLink}
       </>

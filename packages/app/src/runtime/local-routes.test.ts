@@ -87,6 +87,7 @@ describe('GET /api/local/status', () => {
       },
       tls: { mode: 'none', listenerRunning: false, tlsPort: 9443 },
       domainAccess: { allowed: true, viaDomain: false, hosts: [] },
+      relay: null,
     });
   });
 
@@ -588,6 +589,33 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
     expect(allowed.status).toBe(200);
     expect((allowed.body as { role: string }).role).toBe('hub,node');
   });
+
+  test('relay roles include the relay status block', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/status'),
+        deps({
+          roles: { hub: false, node: true, relay: true },
+          authenticate: okAuth,
+          relayStatus: async () => ({
+            publicUrl: 'https://relay.example',
+            hasPassword: false,
+            tenantCount: 1,
+            nodesOnline: 0,
+            currentNodes: 2,
+          }),
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect((body as { relay: unknown }).relay).toEqual({
+      publicUrl: 'https://relay.example',
+      hasPassword: false,
+      tenantCount: 1,
+      nodesOnline: 0,
+      currentNodes: 2,
+    });
+  });
 });
 
 describe('POST /api/local/leave', () => {
@@ -688,7 +716,12 @@ describe('POST /api/local/leave', () => {
       )
     );
     expect(status).toBe(200);
-    expect(body).toEqual({ ok: true, fromRole: 'node', restarting: true });
+    expect(body).toEqual({
+      ok: true,
+      fromRole: 'node',
+      targetRole: 'standalone',
+      restarting: true,
+    });
     expect(restarts).toEqual([1]);
     expect(ctx.userStore.listUsers()).toHaveLength(0);
     expect(await ctx.identityStore.load()).toBeNull();
@@ -738,5 +771,16 @@ describe('POST /api/local/leave', () => {
     );
     expect(status).toBe(409);
     expect((body as { error: { code: string } }).error.code).toBe('role_mismatch');
+  });
+
+  test('targetRole relay from node is 400 invalid_target', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        leaveRequest({ expectedRole: 'node', targetRole: 'relay' }),
+        deps({ roles: { hub: false, node: true, relay: false }, authenticate: okAuth })
+      )
+    );
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe('invalid_target');
   });
 });

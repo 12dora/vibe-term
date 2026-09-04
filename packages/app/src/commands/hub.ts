@@ -12,6 +12,7 @@ import {
 import { HubRoleTransitionStore } from '../../../../apps/gateway/src/hub/hub-role-transitions';
 import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/hub/redeem-pop';
 import {
+  type RootKey,
   bytesEqual,
   canonicalHubUrl,
   createNodeCertificate,
@@ -41,6 +42,8 @@ import {
   isNetworkFetchError,
   redeemEnrollment,
 } from '../lib/hub-client';
+import { requestEnrollmentByPassword, wipeRootKey } from '../lib/hub-password-join';
+import { publishHubJoinSelfAdmit } from '../lib/hub-password-self-admit';
 import { applyHubUserPasswd, mapPasswdApplyError } from '../lib/hub-user-passwd';
 import { applyHubModeEnvKeys, parseHubPeerIds } from '../lib/install';
 import { createInstallLayout } from '../lib/install-layout';
@@ -575,13 +578,16 @@ export async function runHubJoin(
   userId: string;
   hubUrl: string;
 }> {
-  const token = asString(parsed.flags.token);
-  if (!token) {
-    throw new Error('hub join requires --token');
+  const tokenFlag = asString(parsed.flags.token);
+  if (tokenFlag && parsed.flags.password !== undefined) {
+    throw new Error('hub join --token and --password are mutually exclusive');
   }
-  if (isRelayJoinToken(token)) {
+  if (!tokenFlag && parsed.flags.password === undefined) {
+    throw new Error('hub join requires --token or --password');
+  }
+  if (tokenFlag && isRelayJoinToken(tokenFlag)) {
     const { runRelayJoin } = await import('./relay-join');
-    const relay = await runRelayJoin(parsed, urlRaw, token, io);
+    const relay = await runRelayJoin(parsed, urlRaw, tokenFlag, io);
     return { userId: relay.userId, hubUrl: relay.relayUrl };
   }
   if (!urlRaw) {
@@ -589,45 +595,78 @@ export async function runHubJoin(
   }
   const insecureLocal = parsed.flags['insecure-local'] === true || io.insecureLocal === true;
   const name = asString(parsed.flags.name) || 'node';
+  let token = tokenFlag;
+  let passwordRootKey: RootKey | undefined;
+  if (!token) {
+    const material = await requestEnrollmentByPassword({
+      hubUrl: urlRaw,
+      password: await resolvePassword({
+        password: asString(parsed.flags.password),
+      }),
+      fetcher: io.fetcher,
+      insecureLocal,
+      nodeEnv: io.nodeEnv ?? process.env.NODE_ENV,
+      now: io.now,
+    });
+    token = material.token;
+    passwordRootKey = material.rootKey;
+  }
+  if (!token) {
+    throw new Error('hub join requires --token or --password');
+  }
 
   return await withAuth(parsed, io, async (ctx) => {
-    const joined = await performHubJoin(
-      {
-        hubUrl: urlRaw,
-        token,
-        name,
-        insecureLocal,
-        nodeEnv: io.nodeEnv ?? process.env.NODE_ENV,
-      },
-      {
-        auth: ctx,
-        now: io.now,
-        fetcher: io.fetcher,
+    try {
+      const joined = await performHubJoin(
+        {
+          hubUrl: urlRaw,
+          token,
+          name,
+          insecureLocal,
+          nodeEnv: io.nodeEnv ?? process.env.NODE_ENV,
+        },
+        {
+          auth: ctx,
+          now: io.now,
+          fetcher: io.fetcher,
+        }
+      );
+      if (passwordRootKey) {
+        await publishHubJoinSelfAdmit({
+          auth: ctx,
+          hubUrl: joined.hubUrl,
+          userId: joined.userId,
+          rootKey: passwordRootKey,
+          fetcher: io.fetcher,
+          now: io.now,
+        });
       }
-    );
-    if (joined.replacedStaleUsername) {
-      log(io, t('hub.join.replacedStale', { username: joined.replacedStaleUsername }));
-    }
+      if (joined.replacedStaleUsername) {
+        log(io, t('hub.join.replacedStale', { username: joined.replacedStaleUsername }));
+      }
 
-    const currentRoles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
-    const nextRole = currentRoles.hub ? 'hub,node' : 'node';
-    if (ctx.envPath) {
-      await writeRolesAndHubUrl(ctx.envPath, nextRole, joined.hubUrl);
-    } else {
-      process.env.TMEX_ROLES = nextRole;
-      process.env.TMEX_HUB_URL = joined.hubUrl;
-      if (nextRole === 'node') {
-        process.env.TMEX_HUB_PUBLIC_URL = '';
+      const currentRoles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
+      const nextRole = currentRoles.hub ? 'hub,node' : 'node';
+      if (ctx.envPath) {
+        await writeRolesAndHubUrl(ctx.envPath, nextRole, joined.hubUrl);
+      } else {
+        process.env.TMEX_ROLES = nextRole;
+        process.env.TMEX_HUB_URL = joined.hubUrl;
+        if (nextRole === 'node') {
+          process.env.TMEX_HUB_PUBLIC_URL = '';
+        }
       }
+      if (ctx.installDir) {
+        await maybeRestart(parsed, io, ctx.installDir);
+      }
+      log(io, `joined hub ${joined.hubUrl}`);
+      const peerPort =
+        ctx.env.TMEX_PEER_PORT || process.env.TMEX_PEER_PORT || String(DEFAULT_PEER_PORT);
+      log(io, `allow inbound TMEX_PEER_PORT (${peerPort}) on the LAN firewall for direct links`);
+      return { userId: joined.userId, hubUrl: joined.hubUrl };
+    } finally {
+      wipeRootKey(passwordRootKey);
     }
-    if (ctx.installDir) {
-      await maybeRestart(parsed, io, ctx.installDir);
-    }
-    log(io, `joined hub ${joined.hubUrl}`);
-    const peerPort =
-      ctx.env.TMEX_PEER_PORT || process.env.TMEX_PEER_PORT || String(DEFAULT_PEER_PORT);
-    log(io, `allow inbound TMEX_PEER_PORT (${peerPort}) on the LAN firewall for direct links`);
-    return { userId: joined.userId, hubUrl: joined.hubUrl };
   });
 }
 

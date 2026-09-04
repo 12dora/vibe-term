@@ -10,6 +10,7 @@ import {
   type RelayMemberProof,
 } from '@tmex/shared/relay';
 import type { UserStore } from '../auth/user-store';
+import { selfAdmitMemberProof } from './relay-member';
 import type { RelaySecrets } from './relay-secrets';
 import type { KeyLogApplier, MeshIdentity } from './types';
 
@@ -65,7 +66,7 @@ export async function buildRelayAuth(
   const relay = await ctx.secrets.store.getRelay(ctx.relayUrl).catch(() => null);
   if (!relay) return { ok: false, error: 'relay-not-configured' };
   const sig = signEd25519(ctx.identity.edSecretKey, uplinkAuthMessage(nonce, ctx.relayHost));
-  const member = await relayMemberProof(ctx);
+  const member = (await relayMemberProof(ctx)) ?? (await selfAdmitMemberProof(ctx));
   return {
     ok: true,
     msg: {

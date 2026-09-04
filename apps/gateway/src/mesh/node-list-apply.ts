@@ -168,6 +168,35 @@ export function emitListedNodeEvents(
   }
 }
 
+export function emitRenameNodeEvent(d: NodeListApplyDeps, nodeId: string, name: string): void {
+  const listed = d.state.lastNodeList?.nodes.find((node) => node.id === nodeId);
+  const reach = d.peerHolder.manager?.listReach().get(nodeId) ?? null;
+  const online = listed
+    ? isRemoteNodePresent(listed.online, reach)
+    : nodeId === d.identity.nodeIdHex;
+  d.emitListNodeEvent({
+    nodeId,
+    status: online ? 'online' : 'offline',
+    reach,
+    transport: d.peerHolder.manager?.transportOf(nodeId) ?? null,
+    rttMs: d.peerHolder.manager?.rttOf(nodeId) ?? null,
+    inventory:
+      listed?.inventory == null
+        ? undefined
+        : typeof listed.inventory === 'string'
+          ? listed.inventory
+          : JSON.stringify(listed.inventory),
+    version: listed?.version,
+    direct_capable: listed?.direct_capable,
+    name,
+  });
+  if (nodeId === d.identity.nodeIdHex) {
+    try {
+      d.opts.onLocalNodeName?.(name);
+    } catch {}
+  }
+}
+
 export function emitUnlistedHubEvents(
   d: NodeListApplyDeps,
   list: UplinkNodeList,

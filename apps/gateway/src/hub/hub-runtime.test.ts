@@ -154,6 +154,15 @@ describe('HubRuntime HTTP', () => {
         dummyServer
       );
       expect(enroll?.status).toBe(401);
+      const byPassword = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/by-password', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        dummyServer
+      );
+      expect(byPassword?.status).not.toBe(401);
       hub.stop();
     } finally {
       close();

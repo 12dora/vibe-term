@@ -7,7 +7,7 @@ import {
 
 export const RELAY_ENROLL_LIMITER_MAX_KEYS = 4096;
 
-/** 按源 IP 记 enroll 失败次数（窗口内累计到上限即拒），与登录限速同思路。 */
+/** 按源 IP（及可选租户编号）记 enroll / kdf 失败次数，窗口内累计到上限即拒。 */
 export class RelayEnrollLimiter {
   private readonly failures = new Map<string, number[]>();
 
@@ -22,9 +22,10 @@ export class RelayEnrollLimiter {
     return this.failures.size;
   }
 
-  isLimited(ip: string): boolean {
-    if (!ip) return false;
-    return this.count(ip) >= this.limit;
+  isLimited(ip: string, tenantId?: string): boolean {
+    if (ip && this.count(ip) >= this.limit) return true;
+    if (tenantId && this.count(this.tenantKey(tenantId)) >= this.limit) return true;
+    return false;
   }
 
   count(ip: string): number {
@@ -35,25 +36,35 @@ export class RelayEnrollLimiter {
     return pruned.length;
   }
 
-  recordFailure(ip: string): void {
-    if (!ip) return;
-    const now = this.now();
-    const pruned = (this.failures.get(ip) ?? []).filter((at) => now - at < this.windowMs);
-    pruned.push(now);
-    this.failures.set(ip, pruned);
-    while (this.failures.size > this.maxKeys) {
-      const oldest = this.failures.keys().next().value;
-      if (oldest === undefined) break;
-      this.failures.delete(oldest);
-    }
+  recordFailure(ip: string, tenantId?: string): void {
+    if (ip) this.push(ip);
+    if (tenantId) this.push(this.tenantKey(tenantId));
   }
 
-  reset(ip: string): void {
+  reset(ip: string, tenantId?: string): void {
     this.failures.delete(ip);
+    if (tenantId) this.failures.delete(this.tenantKey(tenantId));
   }
 
   clear(): void {
     this.failures.clear();
+  }
+
+  private tenantKey(tenantId: string): string {
+    return `tenant:${tenantId}`;
+  }
+
+  private push(key: string): void {
+    const now = this.now();
+    const pruned = (this.failures.get(key) ?? []).filter((at) => now - at < this.windowMs);
+    pruned.push(now);
+    this.failures.set(key, pruned);
+    if (this.failures.size <= this.maxKeys) return;
+    for (const [bucket, times] of this.failures) {
+      const live = times.filter((at) => now - at < this.windowMs);
+      if (live.length === 0) this.failures.delete(bucket);
+      else this.failures.set(bucket, live);
+    }
   }
 }
 

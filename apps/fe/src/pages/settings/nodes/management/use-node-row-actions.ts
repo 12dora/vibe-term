@@ -12,6 +12,7 @@ import type { NodeRow } from '@/node/mesh-nodes';
 import { fetchRelayMode } from '@/node/mesh-relay';
 import { alreadyLocked, appendMetaKey } from '@/node/relay-enroll';
 import { rememberPendingMetaKey } from '@/node/relay-meta-key-pending';
+import { renameNodeViaKeyLog } from '@/node/rename-node';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
@@ -204,13 +205,27 @@ export function useNodeRowActions(
   /**
    * 重命名：**抛错不吞**。调用方是节点详情框，它要把这条错误与「域名访问」那条并排列出来，
    * 在这里弹 toast 只会变成两套互相打架的反馈。
+   *
+   * 中继模式下没有 hub 控制面，改名走 `rename-node` 记录（需要一次凭据）。
+   * 「本机是不是中继模式」当场问网关，与吊销同一条判据：那份轮询快照最长陈旧 30 秒。
    */
   const rename = useCallback(
     async (name: string) => {
+      if (await fetchRelayMode()) {
+        const result = await prompt.withSigner(
+          (signer) => renameNodeViaKeyLog({ api, mode }, { nodeIdHex: row.id, name }, signer),
+          { purpose: 'revoke' }
+        );
+        if (!result) throw new Error(t('nodes.rename.cancelled'));
+        if (!result.ok) {
+          throw new Error(actionErrorText(t, { code: result.code }, { writerPublicUrl }));
+        }
+        return;
+      }
       if (!hubApi) throw new Error(t('nodes.hubOffline'));
       await hubApi.rename(row.id, name);
     },
-    [hubApi, row.id, t]
+    [api, hubApi, mode, prompt, row.id, t, writerPublicUrl]
   );
 
   /**

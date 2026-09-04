@@ -1,15 +1,7 @@
-import { randomBytes } from 'node:crypto';
-import { rename as fsRename, rm as fsRm, writeFile as fsWriteFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
-import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { canonicalHubUrl } from '../../../../packages/shared/src/auth';
-import {
-  type EnvName,
-  readNodeEnv,
-  resolveEnvName,
-} from '../../../../packages/shared/src/env/load-env';
+import { type EnvName, resolveEnvName } from '../../../../packages/shared/src/env/load-env';
 import {
   type DirectEnableResult,
   type DisableDirectOptions,
@@ -25,35 +17,63 @@ import {
 } from '../commands/hub';
 import {
   readEnvFile as defaultReadEnvFile,
-  writeEnvFile as defaultWriteEnvFile,
   resolveEnvWriteTarget,
   stringifyEnv,
 } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
+import {
+  requestEnrollmentByPassword as defaultRequestEnrollmentByPassword,
+  wipeRootKey,
+} from '../lib/hub-password-join';
+import { publishHubJoinSelfAdmit } from '../lib/hub-password-self-admit';
 import { createInstallLayout } from '../lib/install-layout';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { readInstalledNativeManifest } from '../lib/native-datachannel';
 import { detectCurrentNativePin } from '../lib/native-manifest';
 import { type TmexRoleName, type TmexRoles, roleNameFromFlags } from '../lib/roles';
 import { fingerprintPublicKey } from '../lib/totp-uri';
+import {
+  type SetupEnvHost,
+  SetupError,
+  assertPassword,
+  assertSetupUrl,
+  assertStandalone,
+  assertUsername,
+  errorCause,
+  isUniqueConstraintFailure,
+  newStagedEnvPath,
+  parseJoinHubCredentials,
+  patchOwnedEnvKeys,
+  promoteStagedEnv,
+  readExistingEnv,
+  removeStagedEnv,
+  withSetupTransition,
+  wrapJoinEnvWriteError,
+  writeStagedEnv,
+} from './setup-shared';
 
 export const SETUP_RESTART_DELAY_MS = 300;
 export const DIRECT_ENABLE_TIMEOUT_MS = 60_000;
 export const PRECHECK_TIMEOUT_MS = 5_000;
+export const DIRECT_ENABLED_KEY = 'TMEX_DIRECT_ENABLED';
 
-const USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
-
-export class SetupError extends Error {
-  readonly code: string;
-  readonly httpStatus: number;
-
-  constructor(code: string, message: string, httpStatus: number) {
-    super(message);
-    this.name = 'SetupError';
-    this.code = code;
-    this.httpStatus = httpStatus;
-  }
-}
+export {
+  SetupError,
+  assertSetupUrl,
+  createSetupTransitionLock,
+  newStagedEnvPath,
+  patchOwnedEnvKeys,
+  promoteStagedEnv,
+  readExistingEnv,
+  removeStagedEnv,
+  resetProcessSetupLockForTests,
+  resolveRepoRoot,
+  resolveSetupEnvPath,
+  withSetupTransition,
+  wrapJoinEnvWriteError,
+  writeStagedEnv,
+} from './setup-shared';
+export type { SetupEnvHost, SetupTransitionLock } from './setup-shared';
 
 export type DirectStatus = {
   supported: boolean;
@@ -64,6 +84,22 @@ export type DirectStatus = {
   platform: string;
 };
 
+export type LocalRelayStatus = {
+  publicUrl: string | null;
+  hasPassword: boolean;
+  tenantCount: number;
+  nodesOnline: number;
+  currentNodes: number;
+};
+
+const EMPTY_RELAY_STATUS: LocalRelayStatus = {
+  publicUrl: null,
+  hasPassword: false,
+  tenantCount: 0,
+  nodesOnline: 0,
+  currentNodes: 0,
+};
+
 export type LocalStatus = {
   role: TmexRoleName;
   nodeEnv: EnvName;
@@ -71,6 +107,7 @@ export type LocalStatus = {
   hubPublicUrl: string | null;
   direct: DirectStatus;
   tls: { mode: 'none' };
+  relay: LocalRelayStatus | null;
 };
 
 export type DirectAction = 'install' | 'remove' | 'enable' | 'disable';
@@ -102,7 +139,9 @@ export type BecomeHubResult = {
 
 export type JoinHubInput = {
   hubUrl: string;
-  token: string;
+  token?: string;
+  password?: string;
+  method?: 'token' | 'password';
   name: string;
   directEnable: boolean;
   insecureLocal?: boolean;
@@ -124,11 +163,10 @@ export type PrecheckResult = {
   error: string | null;
 };
 
-export type SetupServiceDeps = {
+export type SetupServiceDeps = SetupEnvHost & {
   roles: TmexRoles;
   nodeEnv: string;
   auth: LocalAuthContext;
-  envPath: string;
   installDir: string;
   hubUrl?: string | null;
   hubPublicUrl?: string | null;
@@ -144,49 +182,13 @@ export type SetupServiceDeps = {
     input: PerformHubJoinInput,
     deps: PerformHubJoinDeps
   ) => ReturnType<typeof defaultPerformHubJoin>;
-  readEnvFile?: typeof defaultReadEnvFile;
-  writeEnvFile?: typeof defaultWriteEnvFile;
-  writeStagedEnvFile?: (path: string, content: string) => Promise<void>;
-  renameEnvFile?: (from: string, to: string) => Promise<void>;
-  removeStagedEnvFile?: (path: string) => Promise<void>;
+  requestEnrollmentByPassword?: typeof defaultRequestEnrollmentByPassword;
   now?: () => number;
   startedAt?: number;
-  scheduleRestart?: () => void;
   quiesceMesh?: () => Promise<void> | void;
   directTimeoutMs?: number;
-  setupLock?: SetupTransitionLock;
+  relayStatus?: () => Promise<LocalRelayStatus>;
 };
-
-export type SetupTransitionLock = {
-  begin(): void;
-  finish(committed: boolean): void;
-};
-
-export function createSetupTransitionLock(): SetupTransitionLock {
-  let inFlight = false;
-  let committed = false;
-  return {
-    begin() {
-      if (committed) {
-        throw new SetupError('setup_committed', 'setup already committed; restart is pending', 409);
-      }
-      if (inFlight) {
-        throw new SetupError('setup_in_progress', 'another setup transition is in progress', 409);
-      }
-      inFlight = true;
-    },
-    finish(didCommit: boolean) {
-      if (didCommit) committed = true;
-      inFlight = false;
-    },
-  };
-}
-
-let processSetupLock = createSetupTransitionLock();
-
-export function resetProcessSetupLockForTests(): void {
-  processSetupLock = createSetupTransitionLock();
-}
 
 function platformString(deps: SetupServiceDeps): string {
   return deps.platform ?? `${process.platform}-${process.arch}`;
@@ -200,87 +202,6 @@ function emptyToNull(value: string | null | undefined): string | null {
   if (value == null) return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function assertStandalone(deps: SetupServiceDeps): void {
-  if (deps.roles.hub || deps.roles.node) {
-    throw new SetupError('not_standalone', 'setup is only available in standalone mode', 409);
-  }
-}
-
-export function assertSetupUrl(raw: string, nodeEnv: string): URL {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new SetupError('invalid_url', `invalid url: ${raw}`, 400);
-  }
-  if (url.protocol === 'https:') return url;
-  const local = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
-  if (url.protocol === 'http:' && local && nodeEnv !== 'production') return url;
-  throw new SetupError(
-    'invalid_url',
-    'url must be https: (http://127.0.0.1 or http://localhost allowed when not production)',
-    400
-  );
-}
-
-function assertUsername(username: string): string {
-  if (!USERNAME_RE.test(username)) {
-    throw new SetupError(
-      'invalid_username',
-      'username must be 1–64 characters matching [A-Za-z0-9._-]',
-      400
-    );
-  }
-  return username;
-}
-
-function assertPassword(password: string): string {
-  if (password.length < 8) {
-    throw new SetupError('weak_password', 'password must be at least 8 characters', 400);
-  }
-  return password;
-}
-
-function errorCause(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function wrapEnvWriteError(error: unknown): SetupError {
-  return new SetupError(
-    'env_write_failed',
-    `failed to write environment (${errorCause(error)}); user record may already exist`,
-    500
-  );
-}
-
-export function wrapJoinEnvWriteError(error: unknown, joinedHubUrl?: string): SetupError {
-  if (joinedHubUrl) {
-    return new SetupError(
-      'env_write_failed',
-      `node has joined locally; only the env keys TMEX_ROLES=node, TMEX_HUB_URL=${joinedHubUrl} need to be written manually`,
-      500
-    );
-  }
-  return new SetupError(
-    'env_write_failed',
-    `failed to write environment (${errorCause(error)})`,
-    500
-  );
-}
-
-function isUniqueConstraintFailure(error: unknown): boolean {
-  const code = (error as { code?: string | number } | null)?.code;
-  if (
-    code === 'SQLITE_CONSTRAINT_UNIQUE' ||
-    code === 'SQLITE_CONSTRAINT' ||
-    code === 19 ||
-    code === 2067
-  ) {
-    return true;
-  }
-  return /UNIQUE constraint failed/i.test(errorCause(error));
 }
 
 export function mapDirectEnableFailure(
@@ -318,27 +239,6 @@ function asSetupJoinError(error: unknown): SetupError {
   return new SetupError('join_failed', message, 400);
 }
 
-function lockOf(deps: SetupServiceDeps): SetupTransitionLock {
-  return deps.setupLock ?? processSetupLock;
-}
-
-export async function withSetupTransition<T>(
-  deps: SetupServiceDeps,
-  fn: () => Promise<T>
-): Promise<T> {
-  const lock = lockOf(deps);
-  lock.begin();
-  let committed = false;
-  try {
-    const result = await fn();
-    deps.scheduleRestart?.();
-    committed = true;
-    return result;
-  } finally {
-    lock.finish(committed);
-  }
-}
-
 async function readManifest(deps: SetupServiceDeps): Promise<{ version: string } | null> {
   const reader = deps.readNativeManifest ?? readInstalledNativeManifest;
   return reader(nativeDirOf(deps));
@@ -354,7 +254,7 @@ async function runEnableDirect(deps: SetupServiceDeps): Promise<DirectEnableResu
   });
 }
 
-async function maybeEnableDirect(
+export async function maybeEnableDirect(
   directEnable: boolean,
   deps: SetupServiceDeps
 ): Promise<{ direct: SetupDirectOutcome; directError: string | null }> {
@@ -374,44 +274,6 @@ async function maybeEnableDirect(
     };
   }
 }
-
-export async function patchOwnedEnvKeys(
-  deps: SetupServiceDeps,
-  patch: Record<string, string>
-): Promise<void> {
-  await withEnvLock(async () => {
-    const read = deps.readEnvFile ?? defaultReadEnvFile;
-    const write = deps.writeEnvFile ?? defaultWriteEnvFile;
-    let existing: Record<string, string> = {};
-    try {
-      existing = await read(deps.envPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw wrapEnvWriteError(error);
-      }
-    }
-    try {
-      await write(deps.envPath, { ...existing, ...patch });
-    } catch (error) {
-      throw wrapEnvWriteError(error);
-    }
-  });
-}
-
-export function resolveRepoRoot(): string {
-  // Same hop count as packages/shared/src/env/load-env.ts defaultRepoRoot().
-  return resolve(import.meta.dir, '../../../..');
-}
-
-export function resolveSetupEnvPath(nodeEnv: string = readNodeEnv()): string {
-  if (nodeEnv === 'production') {
-    return join(resolveGatewayInstallDir(), 'app.env');
-  }
-  const name = nodeEnv === 'test' ? 'test' : 'development';
-  return join(resolveRepoRoot(), `${name}.env.local`);
-}
-
-const DIRECT_ENABLED_KEY = 'TMEX_DIRECT_ENABLED';
 
 function isDirectEnabledValue(value: string | undefined): boolean {
   return value !== 'false';
@@ -459,6 +321,11 @@ async function removeDirectAddon(deps: SetupServiceDeps): Promise<void> {
   }
 }
 
+async function resolveRelayBlock(deps: SetupServiceDeps): Promise<LocalRelayStatus | null> {
+  if (!deps.roles.relay) return null;
+  return deps.relayStatus ? await deps.relayStatus() : EMPTY_RELAY_STATUS;
+}
+
 export async function getLocalStatus(deps: SetupServiceDeps): Promise<LocalStatus> {
   const manifest = await readManifest(deps);
   const supported = (deps.isDirectSupported ?? (() => detectCurrentNativePin() != null))();
@@ -476,6 +343,7 @@ export async function getLocalStatus(deps: SetupServiceDeps): Promise<LocalStatu
       platform: platformString(deps),
     },
     tls: { mode: 'none' },
+    relay: await resolveRelayBlock(deps),
   };
 }
 
@@ -516,7 +384,7 @@ export async function setLocalDirect(
 }
 
 export async function precheckHubUrl(url: string, deps: SetupServiceDeps): Promise<PrecheckResult> {
-  assertStandalone(deps);
+  assertStandalone(deps.roles);
   const parsed = assertSetupUrl(url, deps.nodeEnv);
   const fetchImpl = deps.fetch ?? fetch;
   const startedAt = deps.startedAt ?? PROCESS_STARTED_AT;
@@ -557,61 +425,11 @@ export async function precheckHubUrl(url: string, deps: SetupServiceDeps): Promi
   }
 }
 
-export async function readExistingEnv(deps: SetupServiceDeps): Promise<Record<string, string>> {
-  const read = deps.readEnvFile ?? defaultReadEnvFile;
-  try {
-    return await read(deps.envPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw wrapEnvWriteError(error);
-    }
-    return {};
-  }
-}
-
-async function defaultWriteStagedEnvFile(path: string, content: string): Promise<void> {
-  await fsWriteFile(path, content, { encoding: 'utf8', mode: 0o600 });
-}
-
-export async function writeStagedEnv(
-  deps: SetupServiceDeps,
-  path: string,
-  content: string
-): Promise<void> {
-  const write = deps.writeStagedEnvFile ?? defaultWriteStagedEnvFile;
-  await write(path, content);
-}
-
-export async function promoteStagedEnv(
-  deps: SetupServiceDeps,
-  stagedPath: string,
-  destPath: string
-): Promise<void> {
-  const renameFn = deps.renameEnvFile ?? fsRename;
-  await renameFn(stagedPath, destPath);
-}
-
-export async function removeStagedEnv(
-  deps: SetupServiceDeps,
-  stagedPath: string | null
-): Promise<void> {
-  if (!stagedPath) return;
-  const remove = deps.removeStagedEnvFile ?? ((path: string) => fsRm(path, { force: true }));
-  await remove(stagedPath).catch(() => undefined);
-}
-
-export function newStagedEnvPath(envPath: string): string {
-  return join(
-    dirname(envPath),
-    `${basename(envPath)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
-  );
-}
-
 export async function becomeHub(
   input: BecomeHubInput,
   deps: SetupServiceDeps
 ): Promise<BecomeHubResult> {
-  assertStandalone(deps);
+  assertStandalone(deps.roles);
   const hubPublicUrl = assertSetupUrl(input.hubPublicUrl, deps.nodeEnv)
     .toString()
     .replace(/\/+$/, '');
@@ -653,10 +471,8 @@ export async function becomeHub(
 }
 
 export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Promise<JoinHubResult> {
-  assertStandalone(deps);
-  if (typeof input.token !== 'string' || input.token.length === 0) {
-    throw new SetupError('invalid_token', 'join token is required', 400);
-  }
+  assertStandalone(deps.roles);
+  const { method, token: tokenValue, password: passwordValue } = parseJoinHubCredentials(input);
   if (typeof input.name !== 'string' || input.name.trim().length === 0) {
     throw new SetupError('join_failed', 'node name is required', 400);
   }
@@ -698,12 +514,27 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
     }
 
     const perform = deps.performHubJoin ?? defaultPerformHubJoin;
+    let token = tokenValue;
+    let passwordRootKey: Parameters<typeof publishHubJoinSelfAdmit>[0]['rootKey'] | undefined;
     let joined: Awaited<ReturnType<typeof defaultPerformHubJoin>>;
     try {
+      if (method === 'password') {
+        const request = deps.requestEnrollmentByPassword ?? defaultRequestEnrollmentByPassword;
+        const material = await request({
+          hubUrl: input.hubUrl,
+          password: passwordValue,
+          fetcher: deps.fetch,
+          insecureLocal: input.insecureLocal,
+          nodeEnv: deps.nodeEnv,
+          now: deps.now,
+        });
+        token = material.token;
+        passwordRootKey = material.rootKey;
+      }
       joined = await perform(
         {
           hubUrl: input.hubUrl,
-          token: input.token,
+          token,
           name: input.name.trim(),
           insecureLocal: input.insecureLocal,
           nodeEnv: deps.nodeEnv,
@@ -714,9 +545,21 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
           fetcher: deps.fetch,
         }
       );
+      if (passwordRootKey) {
+        await publishHubJoinSelfAdmit({
+          auth: deps.auth,
+          hubUrl: joined.hubUrl,
+          userId: joined.userId,
+          rootKey: passwordRootKey,
+          fetcher: deps.fetch,
+          now: deps.now,
+        });
+      }
     } catch (error) {
       await removeStagedEnv(deps, stagedPath);
       throw asSetupJoinError(error);
+    } finally {
+      wipeRootKey(passwordRootKey);
     }
 
     try {

@@ -56,6 +56,19 @@ function hello(
   );
 }
 
+function nodeTooOld(nodeId: string, version: string): Uint8Array {
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_ERROR,
+    wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+      refSeq: null,
+      code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
+      message: wsBorsh.formatCanonicalV11RequiredError({ side: 'node', nodeId, version }),
+      retryable: false,
+    }),
+    2
+  );
+}
+
 function createHarness() {
   const socket = new FakeSocket();
   const client = new BorshWebSocketClient({
@@ -65,11 +78,21 @@ function createHarness() {
   });
   const transport = new WebSocketGatewayTransport(client);
   const events: string[] = [];
-  const tooOld: Array<{ minVersion: string; serverVersion: string | null }> = [];
+  const tooOld: Array<{
+    side: string;
+    minVersion: string;
+    version: string | null;
+    nodeId?: string | null;
+  }> = [];
   transport.onEvent((event) => {
     if (event.type === 'state-feed-mode') events.push(event.mode);
     if (event.type === 'server-too-old') {
-      tooOld.push({ minVersion: event.minVersion, serverVersion: event.serverVersion });
+      tooOld.push({
+        side: event.side,
+        minVersion: event.minVersion,
+        version: event.version,
+        nodeId: event.nodeId,
+      });
     }
   });
   transport.connect();
@@ -195,22 +218,148 @@ describe('canonical state capability gate', () => {
     expect(transport.capabilities.atomicScreen).toBe(false);
     expect(events).toEqual(['unsupported']);
     expect(tooOld).toEqual([
-      { minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION, serverVersion: '1.2.0' },
+      {
+        side: 'gateway',
+        minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
+        version: '1.2.0',
+        nodeId: null,
+      },
     ]);
     // legacy 订阅帧已下线：没有任何业务帧发出去
     expect(businessKinds(socket)).toEqual([]);
     transport.disconnect();
   });
 
-  test('服务端版本低于 1.1.22 时即使播报能力也拒建 canonical 会话', () => {
+  test('服务端版本低于 1.1.23 时即使播报能力也拒建 canonical 会话', () => {
     const { socket, client, transport, tooOld } = createHarness();
     socket.open();
-    socket.deliver(hello(CANONICAL, 1024 * 1024, '1.1.21'));
+    socket.deliver(hello(CANONICAL, 1024 * 1024, '1.1.22'));
 
     expect(client.stateFeedMode).toBe('unsupported');
     expect(tooOld).toEqual([
-      { minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION, serverVersion: '1.1.21' },
+      {
+        side: 'gateway',
+        minVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
+        version: '1.1.22',
+        nodeId: null,
+      },
     ]);
+    transport.disconnect();
+  });
+
+  test('同一网关重连后不再重复弹「版本过低」，升级到 canonical 后重新计数', () => {
+    const sockets = [new FakeSocket(), new FakeSocket(), new FakeSocket()];
+    let socketIndex = 0;
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => sockets[socketIndex++] as FakeSocket,
+      heartbeatIntervalMs: 60_000,
+    });
+    const transport = new WebSocketGatewayTransport(client);
+    const tooOld: Array<string | null> = [];
+    transport.onEvent((event) => {
+      if (event.type === 'server-too-old') tooOld.push(event.version);
+    });
+    transport.connect();
+    sockets[0]?.open();
+    sockets[0]?.deliver(hello([], 1024 * 1024, '1.1.22'));
+    client.reconnect();
+    sockets[1]?.open();
+    sockets[1]?.deliver(hello([], 1024 * 1024, '1.1.22'));
+    expect(tooOld).toEqual(['1.1.22']);
+
+    // 对端升级到位后重新协商成 canonical：去重记忆清空，之后再退化仍会提示
+    client.reconnect();
+    sockets[2]?.open();
+    sockets[2]?.deliver(hello(CANONICAL));
+    expect(tooOld).toEqual(['1.1.22']);
+    transport.disconnect();
+  });
+
+  test('ERROR 帧里的节点编号与版本原样上报，不被入口网关自身的版本覆盖', () => {
+    const { socket, transport } = createHarness();
+    const tooOld: Array<{ side: string; version: string | null; nodeId?: string | null }> = [];
+    transport.onEvent((event) => {
+      if (event.type === 'server-too-old') {
+        tooOld.push({ side: event.side, version: event.version, nodeId: event.nodeId });
+      }
+    });
+    socket.open();
+    socket.deliver(hello(CANONICAL));
+    socket.deliver(
+      wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_ERROR,
+        wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+          refSeq: null,
+          code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
+          message: wsBorsh.formatCanonicalV11RequiredError({
+            side: 'node',
+            nodeId: 'a1b2c3d4e5f6',
+            version: '1.1.22',
+          }),
+          retryable: false,
+        }),
+        2
+      )
+    );
+
+    expect(tooOld).toEqual([{ side: 'node', version: '1.1.22', nodeId: 'a1b2c3d4e5f6' }]);
+    transport.disconnect();
+  });
+
+  test('A、B 两个旧节点交替报错各弹一次，不会来回重复', () => {
+    const { socket, transport } = createHarness();
+    const tooOld: Array<{ nodeId?: string | null; version: string | null }> = [];
+    transport.onEvent((event) => {
+      if (event.type === 'server-too-old') {
+        tooOld.push({ nodeId: event.nodeId, version: event.version });
+      }
+    });
+    socket.open();
+    socket.deliver(hello(CANONICAL));
+    const report = (nodeId: string, version: string) => socket.deliver(nodeTooOld(nodeId, version));
+
+    report('aaaaaaaaaaaa', '1.1.22');
+    report('bbbbbbbbbbbb', '1.1.21');
+    report('aaaaaaaaaaaa', '1.1.22');
+    report('bbbbbbbbbbbb', '1.1.21');
+
+    expect(tooOld).toEqual([
+      { nodeId: 'aaaaaaaaaaaa', version: '1.1.22' },
+      { nodeId: 'bbbbbbbbbbbb', version: '1.1.21' },
+    ]);
+    transport.disconnect();
+  });
+
+  test('入口重新协商成 canonical 只清 gateway 那一条，节点记忆保留', () => {
+    const sockets = [new FakeSocket(), new FakeSocket()];
+    let socketIndex = 0;
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => sockets[socketIndex++] as FakeSocket,
+      heartbeatIntervalMs: 60_000,
+    });
+    const transport = new WebSocketGatewayTransport(client);
+    const tooOld: Array<{ side: string; nodeId?: string | null }> = [];
+    transport.onEvent((event) => {
+      if (event.type === 'server-too-old') tooOld.push({ side: event.side, nodeId: event.nodeId });
+    });
+    transport.connect();
+    sockets[0]?.open();
+    sockets[0]?.deliver(hello(CANONICAL));
+    sockets[0]?.deliver(nodeTooOld('aaaaaaaaaaaa', '1.1.22'));
+    expect(tooOld).toHaveLength(1);
+
+    // 入口网络抖了一下又回到 canonical：节点没变过，不该再弹一次。
+    client.reconnect();
+    sockets[1]?.open();
+    sockets[1]?.deliver(hello(CANONICAL));
+    sockets[1]?.deliver(nodeTooOld('aaaaaaaaaaaa', '1.1.22'));
+    expect(tooOld).toHaveLength(1);
+
+    // 同一节点报了另一个版本：旧记忆作废，重新提示。
+    sockets[1]?.deliver(nodeTooOld('aaaaaaaaaaaa', '1.1.20'));
+    expect(tooOld).toHaveLength(2);
     transport.disconnect();
   });
 

@@ -40,6 +40,7 @@ type StatusBody = {
   }>;
   totals: {
     tenants: number;
+    nodes: number;
     nodesOnline: number;
     streams: number;
     bytesIn: number;
@@ -136,6 +137,7 @@ describe('relay admin status', () => {
     expect(typeof row?.createdAt).toBe('number');
     expect(body.totals).toEqual({
       tenants: 1,
+      nodes: 1,
       nodesOnline: 1,
       streams: 0,
       bytesIn: 40,
@@ -282,6 +284,15 @@ describe('relay admin mutations', () => {
     expect(body.config.hasPassword).toBe(false);
     expect(body.config.passwordEpoch).toBe(2);
     expect(body.config.minTokenEpoch).toBe(2);
+  });
+
+  test('rejects a password shorter than 8 characters when non-empty', async () => {
+    const relay = await boot();
+    const res = await relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'short', mode: 'keep' }),
+    });
+    expect(res.status).toBe(400);
   });
 
   test('rejects a password body without a mode', async () => {

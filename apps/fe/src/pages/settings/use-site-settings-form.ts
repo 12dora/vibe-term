@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SiteSettings } from '@tmex/shared';
 import { useRuntime, useSiteStore } from '@tmex/stores/react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { SETTINGS_STALE_MS } from './data-prefetch';
 import {
@@ -27,8 +28,10 @@ export interface SiteSettingsForm {
   isSaving: boolean;
   /** 站点名称 / 访问地址与 mesh 节点的联动状态；未加载时按「不联动」处理。 */
   linkage: SiteSettingsLinkage;
-  /** 联动改名当前可用：有可写 hub，且知道要改哪个节点。 */
+  /** 联动改名当前可用：改名通道就绪，且知道要改哪个节点。 */
   canRenameNode: boolean;
+  /** 中继模式下改名要一次凭据；宿主必须把这个对话框挂进页面。 */
+  renameDialog: ReactElement | null;
   /** 相对已保存值有实际改动，保存按钮据此可点。 */
   canSave: boolean;
 }
@@ -97,7 +100,13 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
     [loadedSettings]
   );
 
-  const { hubApi, canRenameNode, refreshHub } = useNodeRenameChannel(linkage);
+  const { t } = useTranslation();
+  const {
+    renameNode,
+    canRenameNode,
+    refreshHub,
+    dialog: renameDialog,
+  } = useNodeRenameChannel(linkage, { t });
 
   // 已改成功、但站点设置还没回流的名字。ref 与 state 各有用途：ref 供注水效应读到最新值
   // （它不该因为钉住名字而重跑，否则会把用户其它未保存的改动一起冲掉），state 供基线重算。
@@ -138,7 +147,7 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
 
   const { save, isSaving } = useSiteSettingsSave({
     plan,
-    hubApi,
+    renameNode,
     linkage,
     languagePreview,
     draft,
@@ -165,6 +174,7 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
     isSaving,
     linkage,
     canRenameNode,
+    renameDialog,
     canSave: plan !== null && hasSiteSettingsChanges(plan),
   };
 }

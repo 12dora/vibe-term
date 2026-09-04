@@ -30,6 +30,8 @@ function toTenant(row: TenantRow): RelayTenantRecord {
     bytesIn: row.bytesIn,
     bytesOut: row.bytesOut,
     keyLogHeadSeq: BigInt(row.keyLogHeadSeq),
+    kdfParamsJson: row.kdfParamsJson,
+    sealedPack: row.sealedPack ? toBytes(row.sealedPack) : null,
   };
 }
 
@@ -153,7 +155,12 @@ export class RelayTenantStore {
     if (input.rootEpoch <= input.expectedRootEpoch) return false;
     const row = this.db
       .update(relayTenants)
-      .set({ rootPublicKey: toBuffer(input.rootPublicKey), rootEpoch: input.rootEpoch })
+      .set({
+        rootPublicKey: toBuffer(input.rootPublicKey),
+        rootEpoch: input.rootEpoch,
+        kdfParamsJson: null,
+        sealedPack: null,
+      })
       .where(
         and(
           eq(relayTenants.id, input.tenantId),
@@ -163,6 +170,59 @@ export class RelayTenantStore {
       .returning()
       .get();
     return row !== undefined && row !== null;
+  }
+
+  /**
+   * 写入密封包。`head_seq` 不得声称中继尚未持有的日志头；`root_epoch` 必须仍是验签时的那一代。
+   */
+  putPack(input: {
+    tenantId: string;
+    kdfParamsJson: string;
+    sealedPack: Uint8Array;
+    expectedRootEpoch: number;
+    headSeq: bigint;
+    tokenHash: string;
+    minTokenEpoch: number;
+  }): 'ok' | 'not_found' | 'epoch' | 'head_ahead' | 'kicked' | 'unauthorized' {
+    let result: 'ok' | 'not_found' | 'epoch' | 'head_ahead' | 'kicked' | 'unauthorized' =
+      'not_found';
+    this.db.transaction(() => {
+      const row = this.db
+        .select()
+        .from(relayTenants)
+        .where(eq(relayTenants.id, input.tenantId))
+        .get();
+      if (!row) {
+        result = 'not_found';
+        return;
+      }
+      if (row.kicked) {
+        result = 'kicked';
+        return;
+      }
+      if (row.tokenHash !== input.tokenHash || row.tokenEpoch < input.minTokenEpoch) {
+        result = 'unauthorized';
+        return;
+      }
+      if (row.rootEpoch !== input.expectedRootEpoch) {
+        result = 'epoch';
+        return;
+      }
+      if (input.headSeq > BigInt(row.keyLogHeadSeq)) {
+        result = 'head_ahead';
+        return;
+      }
+      this.db
+        .update(relayTenants)
+        .set({
+          kdfParamsJson: input.kdfParamsJson,
+          sealedPack: toBuffer(input.sealedPack),
+        })
+        .where(eq(relayTenants.id, input.tenantId))
+        .run();
+      result = 'ok';
+    });
+    return result;
   }
 
   setKicked(tenantId: string, kicked: boolean): void {

@@ -16,6 +16,12 @@ import { getDisplayVersion } from '../system/version';
 import { defaultScheduler, jsonStable } from './ctl';
 import { stamp } from './mesh-log';
 import { parseOpenPayload } from './peer-protocol';
+import {
+  type RelayDialContext,
+  relayDialContextFromEnv,
+  relayTlsCaForDial,
+  resolveRelayDialUrl,
+} from './relay-dial';
 import { RelayKeyLogSync, relayMemberFromRecord } from './relay-key-log-sync';
 import {
   acceptRelayEnrollRedeemed,
@@ -33,6 +39,7 @@ import {
   type RelayEnrollCreateInput,
   buildRelayAuth,
 } from './relay-uplink-auth';
+import { RelayUplinkHeartbeat } from './relay-uplink-heartbeat';
 import { defaultRelayWsFactory, openRelayLink } from './relay-uplink-http';
 import type {
   InboundRelayHandler,
@@ -73,6 +80,7 @@ export type RelayUplinkClientOptions = {
   connectTimeoutMs?: number;
   authTimeoutMs?: number;
   clientVersion?: string;
+  dial?: RelayDialContext;
 };
 
 type AuthPhase = 'idle' | 'awaiting-challenge' | 'challenge-accepted';
@@ -100,14 +108,12 @@ export class RelayUplinkClient {
   private readonly relayHost: string;
   private readonly userIdOf: () => string;
   private readonly scheduler: MeshScheduler;
-  private readonly wsFactory: UplinkWsFactory;
+  private readonly heartbeat: RelayUplinkHeartbeat;
   private readonly keyLog: RelayKeyLogSync;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private relayHandler: InboundRelayHandler | null = null;
   private loop: Promise<void> | null = null;
   private stopAbort: AbortController | null = null;
-  private heartbeat: { clear: () => void } | null = null;
-  private missedPongs = 0;
   private connectGeneration = 0;
   private authenticatedGeneration = 0;
   private authPhase: AuthPhase = 'idle';
@@ -123,7 +129,16 @@ export class RelayUplinkClient {
     const uid = opts.userId;
     this.userIdOf = typeof uid === 'function' ? uid : () => uid;
     this.scheduler = opts.scheduler ?? defaultScheduler();
-    this.wsFactory = opts.wsFactory ?? defaultRelayWsFactory(opts.tlsCa);
+    this.heartbeat = new RelayUplinkHeartbeat({
+      scheduler: this.scheduler,
+      intervalMs: opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS,
+      missedLimit: UPLINK_MISSED_PONG_LIMIT,
+      sendPing: (link) => {
+        link.ctl.send(encodeRelayCtl({ t: 'ping' }));
+      },
+      onTimeout: (reason) => this.tearDownLink(reason),
+      onTick: () => this.sendStatusIfChanged(),
+    });
     this.enroll = new RelayEnrollChannel((msg) => this.rawSend(msg));
     this.keyLog = new RelayKeyLogSync({
       host: {
@@ -150,6 +165,9 @@ export class RelayUplinkClient {
 
   get rtc(): RelayRtcConfig {
     return this.rtcConfig;
+  }
+  get rttMs(): number | null {
+    return this.heartbeat.rttMs;
   }
 
   onStateChange(cb: (state: UplinkState) => void): () => void {
@@ -196,7 +214,10 @@ export class RelayUplinkClient {
     if (effective.aborted || generation !== this.connectGeneration) throw new Error('aborted');
     this.setState('online');
     await this.sendStatusNow();
-    this.startHeartbeat(link, generation);
+    this.heartbeat.start(
+      link,
+      () => generation === this.connectGeneration && this.state === 'online'
+    );
   }
 
   waitUntilClosed(signal?: AbortSignal): Promise<void> {
@@ -216,7 +237,7 @@ export class RelayUplinkClient {
   async stop(): Promise<void> {
     this.stopAbort?.abort();
     this.stopAbort = null;
-    this.stopHeartbeat();
+    this.heartbeat.stop();
     this.tearDownLink('stopped');
     this.setState('offline');
     this.loop = null;
@@ -325,9 +346,12 @@ export class RelayUplinkClient {
   }
 
   private connectOnce(signal: AbortSignal): Promise<void> {
+    const dialUrl = resolveRelayDialUrl(this.hubUrl, this.opts.dial ?? relayDialContextFromEnv());
+    const wsFactory =
+      this.opts.wsFactory ?? defaultRelayWsFactory(relayTlsCaForDial(dialUrl, this.opts.tlsCa));
     return openRelayLink(
-      this.wsFactory,
-      this.hubUrl,
+      wsFactory,
+      dialUrl,
       this.opts.connectTimeoutMs ?? UPLINK_CONNECT_TIMEOUT_MS,
       signal,
       (link, linkSignal) => this.connectWithLink(link, linkSignal)
@@ -364,7 +388,7 @@ export class RelayUplinkClient {
       return;
     }
     if (msg.t === 'pong') {
-      this.missedPongs = 0;
+      this.heartbeat.onPong();
       return;
     }
     if (msg.t === 'ping') {
@@ -387,8 +411,13 @@ export class RelayUplinkClient {
     } else if (msg.t === 'relay.enroll.ack') this.enroll.settle(msg);
     else if (msg.t === 'enroll.redeemed') this.handleEnrollRedeemed(msg);
     else if (msg.t === 'relay.quota') {
-      const { maxNodes, maxStreams, bandwidthBytesPerSec } = msg;
-      this.quota = { maxNodes, maxStreams, bandwidthBytesPerSec };
+      const { maxNodes, maxStreams, bandwidthBytesPerSec, currentNodes } = msg;
+      this.quota = {
+        maxNodes,
+        maxStreams,
+        bandwidthBytesPerSec,
+        ...(currentNodes !== undefined ? { currentNodes } : {}),
+      };
       this.opts.onQuota?.(this.quota);
     } else if (msg.t === 'relay.kicked') {
       this.kickedReason = msg.reason;
@@ -539,36 +568,9 @@ export class RelayUplinkClient {
     return { skipped, blockedSeq: blockedSeq === null ? null : blockedSeq.toString(), caughtUp };
   }
 
-  private startHeartbeat(link: LinkSession, generation: number): void {
-    this.stopHeartbeat();
-    this.missedPongs = 0;
-    const intervalMs = this.opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS;
-    this.heartbeat = this.scheduler.interval(() => {
-      if (generation !== this.connectGeneration || this.state !== 'online') return;
-      if (this.missedPongs >= UPLINK_MISSED_PONG_LIMIT) {
-        this.tearDownLink('missed-pong');
-        return;
-      }
-      this.missedPongs += 1;
-      try {
-        link.ctl.send(encodeRelayCtl({ t: 'ping' }));
-      } catch {
-        this.tearDownLink('ping-failed');
-        return;
-      }
-      this.sendStatusIfChanged();
-    }, intervalMs);
-  }
-
-  private stopHeartbeat(): void {
-    this.heartbeat?.clear();
-    this.heartbeat = null;
-    this.missedPongs = 0;
-  }
-
   private resetConnectionState(reason = 'reconnect'): void {
     this.keyLog.reset(reason);
-    this.stopHeartbeat();
+    this.heartbeat.reset();
     this.authPhase = 'idle';
     this.authenticatedGeneration = 0;
     this.lastStatusJson = '';

@@ -24,7 +24,7 @@ const STATUS: RelayStatusResponse = {
     defaultQuota: { maxNodes: 8, maxStreams: 16, bandwidthBytesPerSec: null },
   },
   tenants: [],
-  totals: { tenants: 0, nodesOnline: 0, streams: 0, bytesIn: 0, bytesOut: 0 },
+  totals: { tenants: 0, nodes: 0, nodesOnline: 0, streams: 0, bytesIn: 0, bytesOut: 0 },
 };
 
 const HEALTH = { ok: true, version: '1.1.23', tenants: 0, nodesOnline: 0, uptimeMs: 1_000 };

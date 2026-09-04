@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { RelayConfigStore } from '../relay/relay-config-store';
+import { RelayTenantStore } from '../relay/relay-tenant-store';
 import { HubTrustStore } from './hub-trust-store';
 import { KeyLogStore } from './key-log-store';
 import { MeshHubStore } from './mesh-hub-store';
@@ -200,6 +202,93 @@ describe('MeshMembershipStore.clearAll', () => {
       expect(await identity.load()).toBeNull();
       expect(trust.get('https://hub.example')).toBeNull();
       expect(hubs.list()).toHaveLength(0);
+    } finally {
+      close();
+    }
+  });
+
+  test('clearMeshMembership keeps relay operator tables', async () => {
+    const { db, sqlite, close } = createMigratedAuthDb();
+    try {
+      const users = new UserStore(db);
+      users.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: ROOT_PK,
+        rootEpoch: 0,
+        kdfParamsJson: '{"kdf":"argon2id"}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: HEAD_HASH,
+        now: 1_000,
+      });
+      new RelayConfigStore(db).ensure(1_000);
+      new RelayTenantStore(db).create({
+        id: 'ab'.repeat(16),
+        rootPublicKey: Uint8Array.from({ length: 32 }, () => 3),
+        rootEpoch: 0,
+        tokenHash: 'aa'.repeat(32),
+        tokenEpoch: 0,
+        now: 1_000,
+      });
+      new MeshMembershipStore(db).clearMeshMembership();
+      expect(tableCount(sqlite, 'users')).toBe(0);
+      expect(tableCount(sqlite, 'relay_config')).toBe(1);
+      expect(tableCount(sqlite, 'relay_tenants')).toBe(1);
+    } finally {
+      close();
+    }
+  });
+
+  test('clearRelayOperatorState keeps mesh membership', async () => {
+    const { db, sqlite, close } = createMigratedAuthDb();
+    try {
+      const users = new UserStore(db);
+      users.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: ROOT_PK,
+        rootEpoch: 0,
+        kdfParamsJson: '{"kdf":"argon2id"}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: HEAD_HASH,
+        now: 1_000,
+      });
+      new RelayConfigStore(db).ensure(1_000);
+      new RelayTenantStore(db).create({
+        id: 'ab'.repeat(16),
+        rootPublicKey: Uint8Array.from({ length: 32 }, () => 3),
+        rootEpoch: 0,
+        tokenHash: 'aa'.repeat(32),
+        tokenEpoch: 0,
+        now: 1_000,
+      });
+      new MeshMembershipStore(db).clearRelayOperatorState();
+      expect(tableCount(sqlite, 'users')).toBe(1);
+      expect(tableCount(sqlite, 'relay_config')).toBe(0);
+      expect(tableCount(sqlite, 'relay_tenants')).toBe(0);
+    } finally {
+      close();
+    }
+  });
+
+  test('clearAll wipes both mesh membership and relay operator state', async () => {
+    const { db, sqlite, close } = createMigratedAuthDb();
+    try {
+      const users = new UserStore(db);
+      users.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: ROOT_PK,
+        rootEpoch: 0,
+        kdfParamsJson: '{"kdf":"argon2id"}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: HEAD_HASH,
+        now: 1_000,
+      });
+      new RelayConfigStore(db).ensure(1_000);
+      new MeshMembershipStore(db).clearAll();
+      expect(tableCount(sqlite, 'users')).toBe(0);
+      expect(tableCount(sqlite, 'relay_config')).toBe(0);
     } finally {
       close();
     }

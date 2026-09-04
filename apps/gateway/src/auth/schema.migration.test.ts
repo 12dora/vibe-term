@@ -140,4 +140,36 @@ describe('hub auth schema migration', () => {
       close();
     }
   });
+
+  test('0041 adds nullable version on peer_cache', () => {
+    const { sqlite, close } = createMigratedAuthDb();
+    try {
+      const columns = sqlite.query('PRAGMA table_info(peer_cache)').all() as Array<{
+        name: string;
+        notnull: number;
+      }>;
+      const version = columns.find((column) => column.name === 'version');
+      expect(version).toBeTruthy();
+      expect(version?.notnull).toBe(0);
+    } finally {
+      close();
+    }
+  });
+
+  test('0043 adds nullable kdf_params_json / sealed_pack on relay_tenants', () => {
+    const { sqlite, close } = createMigratedAuthDb();
+    try {
+      const columns = sqlite.query('PRAGMA table_info(relay_tenants)').all() as Array<{
+        name: string;
+        notnull: number;
+      }>;
+      for (const name of ['kdf_params_json', 'sealed_pack']) {
+        const column = columns.find((row) => row.name === name);
+        expect(column).toBeTruthy();
+        expect(column?.notnull).toBe(0);
+      }
+    } finally {
+      close();
+    }
+  });
 });

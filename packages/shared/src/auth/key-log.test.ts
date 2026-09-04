@@ -10,6 +10,7 @@ import {
   encodeKeyLogRecord,
   encodePasskeyAssertion,
   encodeRemovePasskeyPayload,
+  encodeRenameNodePayload,
   encodeRevokeNodePayload,
   encodeRotateRootKeepPayload,
   encodeRotateRootPayload,
@@ -21,6 +22,7 @@ import {
   KEYLOG_RECORD_COMPAT,
   KEY_LOG_SIGNER_MATRIX,
   MIN_HUB_AUTH_RECORD_VERSION,
+  MIN_RENAME_NODE_RECORD_VERSION,
   MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   applyKeyLogRecord,
   buildKeyLogRecord,
@@ -762,6 +764,7 @@ describe('signer matrix', () => {
     expect(KEY_LOG_SIGNER_MATRIX['admit-node']).toEqual(['root', 'passkey']);
     expect(KEY_LOG_SIGNER_MATRIX['admit-hub']).toEqual(['root', 'passkey']);
     expect(KEY_LOG_SIGNER_MATRIX['retire-hub']).toEqual(['root', 'passkey']);
+    expect(KEY_LOG_SIGNER_MATRIX['rename-node']).toEqual(['root', 'passkey']);
     expect(MIN_HUB_AUTH_RECORD_VERSION).toBe('1.1.13');
     expect(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION).toBe('1.1.16');
     expect(KEYLOG_RECORD_COMPAT['admit-hub']?.minVersion).toBe(MIN_HUB_AUTH_RECORD_VERSION);
@@ -771,6 +774,11 @@ describe('signer matrix', () => {
     );
     expect(KEYLOG_RECORD_COMPAT['rotate-root-keep']?.allowForce).toBe(false);
     expect(KEYLOG_RECORD_COMPAT['admit-hub']?.allowForce).toBe(true);
+    expect(KEYLOG_RECORD_COMPAT['rename-node']).toEqual({
+      minVersion: MIN_RENAME_NODE_RECORD_VERSION,
+      allowForce: false,
+    });
+    expect(MIN_RENAME_NODE_RECORD_VERSION).toBe('1.1.24');
   });
 
   it('rejects passkey-signed rotate-root before verifying the assertion', async () => {
@@ -1357,5 +1365,110 @@ describe('identicalKeyLog', () => {
     expect(matched).not.toBeNull();
     expect(matched?.seq).toBe(1n);
     expect(matched?.hash).toEqual(computeRecordHash(bytes, sig));
+  });
+});
+
+describe('rename-node', () => {
+  async function admit(state: UserKeyState, signer: ReturnType<typeof root>, nodeId: Uint8Array) {
+    const enroll = await createEnrollment(signer, { uid: UID, rootEpoch: state.rootEpoch, now: 1 });
+    const ed = generateEd25519KeyPair();
+    const x = generateX25519KeyPair();
+    const cert = createNodeCertificate(enroll.enrollSk, {
+      uid: UID,
+      edPk: ed.publicKey,
+      x25519Pk: x.publicKey,
+      enrollPk: enroll.enrollPk,
+      now: 1,
+      nodeId,
+    });
+    return (
+      await commit(
+        state,
+        signer,
+        'admit-node',
+        encodeAdmitNodePayload({
+          authorization_bytes: enroll.authorizationBytes,
+          authorization_sig: enroll.authorizationSig,
+          certificate_bytes: cert.certificateBytes,
+          cert_sig: cert.certSig,
+        })
+      )
+    ).state;
+  }
+
+  it('root 签名应用后写入 nodeNames 投影', async () => {
+    const r = root(1);
+    const nodeId = new Uint8Array(16).fill(7);
+    let state = emptyUserKeyState(r.publicKey);
+    state = await admit(state, r, nodeId);
+    const applied = await commit(
+      state,
+      r,
+      'rename-node',
+      encodeRenameNodePayload({ node_id: nodeId, name: '  studio  ' })
+    );
+    expect(applied.ok).toBe(true);
+    expect(applied.state.nodeNames?.get(nodeIdToHex(nodeId))).toBe('studio');
+    expect(state.nodeNames?.size).toBe(0);
+  });
+
+  it('passkey 签名可通过验签并应用', async () => {
+    const r = root(1);
+    const nodeId = new Uint8Array(16).fill(8);
+    let state = emptyUserKeyState(r.publicKey);
+    state = (await commit(state, r, 'add-passkey', ADD_PASSKEY)).state;
+    state = await admit(state, r, nodeId);
+    const record = buildKeyLogRecord(state.head, state.rootEpoch, {
+      uid: UID,
+      type: 'rename-node',
+      payload: encodeRenameNodePayload({ node_id: nodeId, name: 'laptop' }),
+      signer: 'passkey',
+      credential_id: 'cred-1',
+    });
+    const bytes = encodeKeyLogRecord(record);
+    const verified = await verifyKeyLogRecord(bytes, new Uint8Array(8), {
+      head: state.head,
+      rootEpoch: state.rootEpoch,
+      rootPublicKey: state.rootPublicKey,
+      resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
+      verifyPasskeyAssertion: async () => true,
+    });
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) return;
+    const applied = await applyKeyLogRecord(state, verified.record, verified.hash);
+    expect(applied.ok).toBe(true);
+    if (!applied.ok) return;
+    expect(applied.state.nodeNames?.get(nodeIdToHex(nodeId))).toBe('laptop');
+  });
+
+  it('空名、超长名与未知节点被拒绝', async () => {
+    const r = root(1);
+    const nodeId = new Uint8Array(16).fill(9);
+    let state = emptyUserKeyState(r.publicKey);
+    state = await admit(state, r, nodeId);
+    expect(
+      await commitFail(
+        state,
+        r,
+        'rename-node',
+        encodeRenameNodePayload({ node_id: nodeId, name: '  ' })
+      )
+    ).toEqual({ ok: false, error: 'malformed_payload' });
+    expect(
+      await commitFail(
+        state,
+        r,
+        'rename-node',
+        encodeRenameNodePayload({ node_id: nodeId, name: 'x'.repeat(65) })
+      )
+    ).toEqual({ ok: false, error: 'malformed_payload' });
+    expect(
+      await commitFail(
+        state,
+        r,
+        'rename-node',
+        encodeRenameNodePayload({ node_id: new Uint8Array(16).fill(1), name: 'ghost' })
+      )
+    ).toEqual({ ok: false, error: 'unknown_node' });
   });
 });

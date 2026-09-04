@@ -138,6 +138,18 @@ describe('relay enroll limiter', () => {
     limiter.clear();
     expect(limiter.size).toBe(0);
   });
+
+  test('failures are also counted per tenant id', () => {
+    const limiter = new RelayEnrollLimiter(() => 0, 5, 1_000);
+    const tenantA = 'a'.repeat(32);
+    const tenantB = 'b'.repeat(32);
+    for (let i = 0; i < 5; i++) limiter.recordFailure('1.1.1.1', tenantA);
+    expect(limiter.isLimited('9.9.9.9', tenantA)).toBe(true);
+    expect(limiter.isLimited('9.9.9.9', tenantB)).toBe(false);
+    expect(limiter.isLimited('9.9.9.9')).toBe(false);
+    limiter.reset('1.1.1.1', tenantA);
+    expect(limiter.isLimited('9.9.9.9', tenantA)).toBe(false);
+  });
 });
 
 describe('relay key log paging', () => {

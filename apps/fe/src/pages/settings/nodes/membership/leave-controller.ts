@@ -11,7 +11,8 @@
 //      401，全局拦截器的 `/login` 跳转会把还在等重启的这段编排一起卸掉。这个标记一直保持到
 //      整页硬跳转（换掉整个 JS 环境），只有退出被明确拒绝时才撤销。
 
-import type { SetupIntent } from './intent';
+import type { LocalLeaveTargetRole } from '@tmex/api-client/local/types';
+import type { SetupIntentRecord } from './intent';
 import type { MeshRole } from './role-transition';
 import type { SelfRevokeOutcome } from './self-revoke';
 
@@ -32,8 +33,10 @@ export type LeaveOutcome = LeaveRestartOutcome | 'failed';
 export interface LeaveRequest {
   /** 当前角色，作为 `expectedRole` 发给后端做一致性校验。 */
   from: MeshRole;
+  /** 退到哪：省略即 standalone；`relay` 保留中继运营状态。 */
+  targetRole?: LocalLeaveTargetRole;
   /** 重启回 standalone 后要展开的向导路径；纯粹退出时为 null。 */
-  intent: SetupIntent | null;
+  intent: SetupIntentRecord | null;
 }
 
 export interface LeaveWorkflowDeps {
@@ -41,11 +44,11 @@ export interface LeaveWorkflowDeps {
   revoke: (() => Promise<SelfRevokeOutcome>) | null;
   /** 重启基线：读 `/healthz.startedAt`，读不到给 null。必须自带超时。 */
   readStartedAt: () => Promise<number | null>;
-  leave: (body: { expectedRole: MeshRole }) => Promise<unknown>;
+  leave: (body: { expectedRole: MeshRole; targetRole?: LocalLeaveTargetRole }) => Promise<unknown>;
   waitForRestart: (previousStartedAt: number | null) => Promise<LeaveRestartOutcome>;
   /** 整页硬跳转回设置页。 */
   navigate: () => void;
-  writeIntent: (intent: SetupIntent) => void;
+  writeIntent: (intent: SetupIntentRecord) => void;
   clearIntent: () => void;
   beginAuthTransition: () => void;
   endAuthTransition: () => void;
@@ -129,7 +132,12 @@ export async function runLeaveWorkflow(
 
   deps.beginAuthTransition();
   try {
-    await deps.leave({ expectedRole: request.from });
+    // `targetRole` 只在保留中继时发出去：standalone 是后端默认值，多发一个字段只会让日志更难读。
+    await deps.leave(
+      request.targetRole === 'relay'
+        ? { expectedRole: request.from, targetRole: 'relay' }
+        : { expectedRole: request.from }
+    );
   } catch (error) {
     // 明确被拒 = 什么都没发生：记号必须撤掉，鉴权也没有切换，页面回到可重试的状态。
     deps.clearIntent();

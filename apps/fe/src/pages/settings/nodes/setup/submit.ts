@@ -5,11 +5,19 @@
 
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import { SetupApi, readHealthStartedAt } from '@tmex/api-client/local/setup-api';
-import type { SetupHubResponse, SetupJoinResponse } from '@tmex/api-client/local/types';
+import type {
+  SetupHubResponse,
+  SetupJoinResponse,
+  SetupRelayJoinResponse,
+  SetupRelayResponse,
+} from '@tmex/api-client/local/types';
 import {
   type BecomeHubValues,
+  type BecomeRelayValues,
   type JoinHubValues,
+  type JoinRelayValues,
   type NodeEnv,
+  normalizeTenantId,
   normalizeToken,
 } from './validation';
 
@@ -41,11 +49,54 @@ export async function submitJoinHub(
   const previousStartedAt = await readHealthStartedAt(client);
   const result = await new SetupApi(client).joinHub({
     hubUrl: values.hubUrl.trim(),
-    token: normalizeToken(values.token),
+    method: values.method,
+    // 两者互斥：后端见到同时带 token 与 password 会直接 400，只发当前方式那一个。
+    ...(values.method === 'password'
+      ? { password: values.password }
+      : { token: normalizeToken(values.token) }),
     name: values.name.trim(),
     directEnable: values.directEnable,
     // production 下后端会忽略该字段，索性不发，避免日志里出现误导性的 true。
     ...(nodeEnv === 'production' ? {} : { insecureLocal: values.insecureLocal }),
+  });
+  return { previousStartedAt, result };
+}
+
+export async function submitJoinRelay(
+  values: JoinRelayValues,
+  client: ApiClient = defaultApiClient
+): Promise<SubmitOutcome<SetupRelayJoinResponse>> {
+  const previousStartedAt = await readHealthStartedAt(client);
+  const caFingerprint = values.caFingerprint.trim().toLowerCase();
+  const result = await new SetupApi(client).relayJoin({
+    relayUrl: values.relayUrl.trim(),
+    tenantId: normalizeTenantId(values.tenantId),
+    password: values.password,
+    name: values.name.trim(),
+    ...(caFingerprint ? { caFingerprint } : {}),
+    directEnable: values.directEnable,
+  });
+  return { previousStartedAt, result };
+}
+
+export async function submitBecomeRelay(
+  values: BecomeRelayValues,
+  client: ApiClient = defaultApiClient
+): Promise<SubmitOutcome<SetupRelayResponse>> {
+  const previousStartedAt = await readHealthStartedAt(client);
+  const password = values.relayPassword.trim();
+  const result = await new SetupApi(client).setupRelay({
+    role: values.alsoNode ? 'relay,node' : 'relay',
+    relayPublicUrl: values.relayPublicUrl.trim(),
+    // 空串是「不设口令」，与「没填这个字段」是同一件事：统一发 null，别让后端猜。
+    relayPassword: password === '' ? null : password,
+    ...(values.alsoNode
+      ? {
+          username: values.username.trim(),
+          password: values.password,
+          directEnable: values.directEnable,
+        }
+      : {}),
   });
   return { previousStartedAt, result };
 }

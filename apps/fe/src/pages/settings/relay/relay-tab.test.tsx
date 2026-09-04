@@ -42,7 +42,14 @@ function status(tenants: RelayTenantSummary[]): RelayStatusResponse {
       defaultQuota: { maxNodes: 8, maxStreams: 16, bandwidthBytesPerSec: 524_288 },
     },
     tenants,
-    totals: { tenants: tenants.length, nodesOnline: 2, streams: 1, bytesIn: 1024, bytesOut: 2048 },
+    totals: {
+      tenants: tenants.length,
+      nodes: 5,
+      nodesOnline: 2,
+      streams: 1,
+      bytesIn: 1024,
+      bytesOut: 2048,
+    },
   };
 }
 
@@ -97,6 +104,9 @@ describe('RelayTab 的正文', () => {
     expect(html).toContain('data-testid="settings-relay-tab"');
     expect(html).toContain('data-testid="relay-health-card"');
     expect(html).toContain('data-testid="relay-totals-card"');
+    // 节点占用（配额口径）与在线节点各占一行
+    expect(html).toContain('data-testid="relay-totals-nodes-used"');
+    expect(html).toContain('data-testid="relay-totals-nodes"');
     expect(html).toContain('data-testid="relay-password-card"');
     expect(html).toContain('data-testid="relay-default-quota-card"');
     expect(html).toContain('data-testid="relay-tenants-card"');

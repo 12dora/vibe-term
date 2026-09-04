@@ -15,7 +15,6 @@ import { waitSocketOpen } from '@tmex/shared/net';
 import type { HubAdvertisement, HubWriteForwardMessage } from '@tmex/shared/uplink';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler, jsonStable } from './ctl';
-import { jsonText } from './json-text';
 import { stamp } from './mesh-log';
 import { parseOpenPayload } from './peer-protocol';
 import type {
@@ -28,6 +27,7 @@ import type {
   UplinkStatus,
 } from './types';
 import { UplinkKeyLogSync } from './uplink-key-log-sync';
+import { persistUplinkPeerCache } from './uplink-peer-persist';
 import {
   type UplinkCtlMessage,
   type UplinkEnrollRedeemed,
@@ -576,47 +576,14 @@ export class UplinkClient {
   }
 
   private emitNodeList(list: UplinkNodeList): void {
-    this.persistAdmittedPeers(list);
-    this.onNodeListCb?.(list);
-  }
-
-  private persistAdmittedPeers(list: UplinkNodeList): void {
-    const now = this.scheduler.now();
-    for (const node of list.nodes) {
-      if (node.id === this.identity.nodeId) continue;
-      const cert = this.userStore.getCert(node.id);
-      if (!cert || cert.userId !== this.userId || cert.revokedLogSeq != null) continue;
-      this.userStore.upsertPeer({
-        nodeId: node.id,
-        name: node.name,
-        endpointsJson: jsonText(node.endpoints),
-        inventoryJson: jsonText(node.inventory),
-        directCapable: node.direct_capable,
-        lastSeenAt: now,
-        listVersion: list.version,
-      });
-    }
-    this.persistHubPeer(list, now);
-  }
-
-  private persistHubPeer(list: UplinkNodeList, now: number): void {
-    const hub = list.hub;
-    if (!hub || hub.nodeId === this.identity.nodeId) return;
-    const fromNodes = list.nodes.find((node) => node.id === hub.nodeId)?.name;
-    const name = usablePeerName(fromNodes, hub.nodeId) ?? usablePeerName(hub.name, hub.nodeId);
-    if (!name) return;
-    const cert = this.userStore.getCert(hub.nodeId);
-    if (!cert || cert.userId !== this.userId || cert.revokedLogSeq != null) return;
-    const existing = this.userStore.listPeers().find((row) => row.nodeId === hub.nodeId);
-    this.userStore.upsertPeer({
-      nodeId: hub.nodeId,
-      name,
-      endpointsJson: existing?.endpointsJson ?? '[]',
-      inventoryJson: existing?.inventoryJson ?? '{}',
-      directCapable: existing?.directCapable ?? false,
-      lastSeenAt: now,
-      listVersion: list.version,
+    persistUplinkPeerCache({
+      userStore: this.userStore,
+      userId: this.userId,
+      selfNodeId: this.identity.nodeId,
+      list,
+      now: this.scheduler.now(),
     });
+    this.onNodeListCb?.(list);
   }
 
   async queryHubHead() {
@@ -710,10 +677,4 @@ export class UplinkClient {
       });
     });
   }
-}
-
-function usablePeerName(name: string | null | undefined, nodeId: string): string | null {
-  const trimmed = name?.trim() ?? '';
-  if (!trimmed || trimmed === nodeId) return null;
-  return trimmed;
 }

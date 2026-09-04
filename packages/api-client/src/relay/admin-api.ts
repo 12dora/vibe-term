@@ -55,6 +55,8 @@ export interface RelayTenantSummary {
 
 export interface RelayTotals {
   tenants: number;
+  /** 所有租户 pending+admitted 节点数之和（与配额占用同口径）。 */
+  nodes: number;
   nodesOnline: number;
   streams: number;
   bytesIn: number;
