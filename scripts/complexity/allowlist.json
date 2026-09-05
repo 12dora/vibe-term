@@ -1,9 +1,9 @@
 {
-  "apps/fe/src/components/side-panels/account-security-panel.tsx:PasskeySection": {
+  "apps/fe/src/components/side-panels/account-security/passkey-section.tsx:PasskeySection": {
     "lines": 166,
     "reason": "同上，纯条件 JSX 表单区（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）"
   },
-  "apps/fe/src/components/side-panels/account-security-panel.tsx:TotpSection": {
+  "apps/fe/src/components/side-panels/account-security/totp-section.tsx:TotpSection": {
     "lines": 191,
     "reason": "纯条件 JSX 表单区，单一职责；1.1.16/1.1.18/1.1.20 的 TOTP/passkey 增量把行数推高，拆分只会把同一段条件渲染搬到另一个文件（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）"
   },
@@ -45,7 +45,7 @@
     "fileLines": 1343,
     "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）"
   },
-  "apps/fe/src/pages/settings/nodes/management/use-hub-role-switch.ts:awaitHubRoleSwitch": {
+  "apps/fe/src/pages/settings/nodes/management/hub-role-switch-run.ts:awaitHubRoleSwitch": {
     "cc": 16,
     "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）"
   },
