@@ -48,7 +48,7 @@ import {
   readLogTail,
 } from './connector-health';
 import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
-import { TunnelEdgeRecovery } from './edge-recovery';
+import { type EdgeRecoveryToken, TunnelEdgeRecovery } from './edge-recovery';
 import { resolveEdge } from './edge-resolver';
 import {
   EXPOSURE_ACK_MESSAGE,
@@ -275,7 +275,7 @@ export class TunnelManager {
       resolveEdge: () => this.resolveEdgeFn(),
       currentEdge: () => this.currentEdge(),
       canRestart: () => Boolean(this.lastStartOpts) && this.isManagedProcessActive(),
-      restart: (edge) => this.restartWithEdge(edge),
+      restart: (edge, token) => this.restartWithEdge(edge, token),
       warn: (message) => this.warn(message),
     });
     const spawner: Spawner = opts.spawner ?? bunSpawner;
@@ -893,6 +893,7 @@ export class TunnelManager {
   private async jobRemove(step: (name: string) => void): Promise<void> {
     step('stop');
     this.resetConnector();
+    this.resetEdge();
     await this.supervisor.stop();
     const persisted = this.store.get();
     await rm(configYmlPath(this.tunnelDir), { force: true }).catch(() => {});
@@ -1198,6 +1199,7 @@ export class TunnelManager {
     }
     const bin = this.requireBinary();
     this.resetConnector();
+    this.edgeRecovery.reset();
     if (this.isManagedProcessActive()) {
       await this.supervisor.stop();
     }
@@ -1209,7 +1211,6 @@ export class TunnelManager {
     };
     this.logs.clear();
     this.supervisor.publicUrl = null;
-    this.edgeRecovery.reset();
     await this.supervisor.start(this.lastStartOpts);
     this.lastEdge = this.supervisor.edge;
     await this.waitUntilRunning();
@@ -1301,7 +1302,7 @@ export class TunnelManager {
       if (!this.shouldProbeConnector()) break;
       const connector = await this.probeAndStoreConnector();
       if (gen !== this.connectorPollGen) break;
-      await this.maybeRecoverEdge(connector);
+      if (!this.safePersisted().externallyManaged) await this.edgeRecovery.maybeRecover(connector);
     }
   }
 
@@ -1320,17 +1321,17 @@ export class TunnelManager {
     this.edgeRecovery.reset();
   }
 
-  private async restartWithEdge(edge: TunnelEdgeResolution): Promise<void> {
+  private async restartWithEdge(
+    edge: TunnelEdgeResolution,
+    token: EdgeRecoveryToken
+  ): Promise<void> {
     const opts = this.lastStartOpts;
-    if (!opts) return;
+    if (!opts || token.cancelled) return;
     this.lastEdge = edge;
     await this.supervisor.stop();
-    await this.supervisor.start(opts);
-  }
-
-  private async maybeRecoverEdge(connector: TunnelConnectorStatus): Promise<void> {
-    if (this.safePersisted().externallyManaged) return;
-    await this.edgeRecovery.maybeRecover(connector);
+    // 停旧进程期间用户可能已手动停止 / 重启：作废的自愈不得把隧道再开回来
+    if (token.cancelled || this.lastStartOpts !== opts) return;
+    await this.supervisor.start(opts, edge);
   }
 
   private async connectorLogLines(): Promise<string[]> {

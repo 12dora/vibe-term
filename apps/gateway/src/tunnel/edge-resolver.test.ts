@@ -163,6 +163,31 @@ describe('resolveEdgeViaDoh', () => {
     expect(addrs.length).toBeGreaterThan(0);
   });
 
+  test('skips the endpoint that timed out and reuses the one that answered', async () => {
+    const hosts: string[] = [];
+    let clock = 1_000;
+    const fetchImpl: EdgeFetch = async (input, init) => {
+      const url = new URL(String(input));
+      hosts.push(`${url.host}/${url.searchParams.get('type')}`);
+      if (url.host === 'cloudflare-dns.com') {
+        // 黑洞：只等自己的超时信号，并按真实开销推进预算时钟
+        await new Promise<void>((resolve) => {
+          init?.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        clock += 5_000;
+        throw new Error('aborted');
+      }
+      const name = url.searchParams.get('name') ?? '';
+      return HAPPY_ROUTE(name, url.searchParams.get('type') ?? '');
+    };
+    const { addrs } = await resolveEdgeViaDoh(fetchImpl, undefined, () => clock, {
+      requestTimeoutMs: 20,
+    });
+    expect(addrs.length).toBeGreaterThan(0);
+    expect(hosts.filter((h) => h.startsWith('cloudflare-dns.com')).length).toBe(1);
+    expect(hosts.filter((h) => h === 'dns.google/1').length).toBe(2);
+  });
+
   test('throws when every answer is a fake ip', async () => {
     const { fetchImpl } = dohFetch((name, type) => {
       if (type === '33')

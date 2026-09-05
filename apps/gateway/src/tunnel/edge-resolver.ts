@@ -85,12 +85,15 @@ async function defaultLookup(hostname: string): Promise<string[]> {
   return entries.map((entry) => entry.address);
 }
 
-function requestSignal(
-  outer: AbortSignal | undefined,
-  ms: number
-): { signal: AbortSignal; done: () => void } {
+type ScopedSignal = { signal: AbortSignal; readonly timedOut: boolean; done: () => void };
+
+function requestSignal(outer: AbortSignal | undefined, ms: number): ScopedSignal {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error(`timed out after ${ms}ms`)), ms);
+  const state = { timedOut: false };
+  const timer = setTimeout(() => {
+    state.timedOut = true;
+    controller.abort(new Error(`timed out after ${ms}ms`));
+  }, ms);
   const onAbort = (): void => controller.abort(outer?.reason);
   if (outer) {
     if (outer.aborted) controller.abort(outer.reason);
@@ -98,11 +101,36 @@ function requestSignal(
   }
   return {
     signal: controller.signal,
+    get timedOut(): boolean {
+      return state.timedOut;
+    },
     done: () => {
       clearTimeout(timer);
       outer?.removeEventListener('abort', onAbort);
     },
   };
+}
+
+/** 端点超时要单独认出来：同一次解析里不再拿剩余预算去撞同一个黑洞。 */
+class DohTimeoutError extends Error {}
+
+/**
+ * 一次 `resolveEdgeViaDoh` 内的端点状态：记住成功过的端点优先复用，
+ * 超时过的端点直接跳过，避免首选端点被黑洞时耗光后续查询的预算。
+ */
+type DohRunState = { preferred: string | null; timedOut: Set<string> };
+
+function newDohRunState(): DohRunState {
+  return { preferred: null, timedOut: new Set() };
+}
+
+function endpointOrder(state: DohRunState): string[] {
+  const all: string[] = [...DOH_ENDPOINTS];
+  const usable = all.filter((endpoint) => !state.timedOut.has(endpoint));
+  const list = usable.length > 0 ? usable : all;
+  const preferred = state.preferred;
+  if (!preferred || !list.includes(preferred)) return list;
+  return [preferred, ...list.filter((endpoint) => endpoint !== preferred)];
 }
 
 type DohAnswer = { type: number; data: string };
@@ -129,9 +157,10 @@ async function dohQuery(
   name: string,
   type: number,
   signal: AbortSignal | undefined,
-  budgetMs: number
+  budgetMs: number,
+  requestTimeoutMs: number
 ): Promise<string[]> {
-  const timeout = Math.max(1, Math.min(DOH_REQUEST_TIMEOUT_MS, budgetMs));
+  const timeout = Math.max(1, Math.min(requestTimeoutMs, budgetMs));
   const scoped = requestSignal(signal, timeout);
   try {
     const url = `${endpoint}?name=${encodeURIComponent(name)}&type=${type}`;
@@ -141,27 +170,43 @@ async function dohQuery(
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return parseDohAnswers(await res.json(), type);
+  } catch (error) {
+    if (scoped.timedOut) throw new DohTimeoutError(`timed out after ${timeout}ms`);
+    throw error;
   } finally {
     scoped.done();
   }
 }
 
-async function dohQueryAny(
-  fetchImpl: EdgeFetch,
-  name: string,
-  type: number,
-  signal: AbortSignal | undefined,
-  deadline: number,
-  now: () => number
-): Promise<string[]> {
+type DohQueryCtx = {
+  fetchImpl: EdgeFetch;
+  signal: AbortSignal | undefined;
+  deadline: number;
+  now: () => number;
+  state: DohRunState;
+  requestTimeoutMs: number;
+};
+
+async function dohQueryAny(ctx: DohQueryCtx, name: string, type: number): Promise<string[]> {
   let lastError: unknown = new Error('no DoH endpoint attempted');
-  for (const endpoint of DOH_ENDPOINTS) {
-    const budget = deadline - now();
+  for (const endpoint of endpointOrder(ctx.state)) {
+    const budget = ctx.deadline - ctx.now();
     if (budget <= 0) break;
     try {
-      return await dohQuery(fetchImpl, endpoint, name, type, signal, budget);
+      const answers = await dohQuery(
+        ctx.fetchImpl,
+        endpoint,
+        name,
+        type,
+        ctx.signal,
+        budget,
+        ctx.requestTimeoutMs
+      );
+      ctx.state.preferred = endpoint;
+      return answers;
     } catch (error) {
       lastError = error;
+      if (error instanceof DohTimeoutError) ctx.state.timedOut.add(endpoint);
     }
   }
   throw new Error(`${name}/${type}: ${shortError(lastError)}`);
@@ -182,21 +227,9 @@ function wellKnownTargets(): EdgeTarget[] {
   return WELL_KNOWN_EDGE_HOSTS.map((target) => ({ target, port: DEFAULT_EDGE_PORT }));
 }
 
-async function resolveSrvTargets(
-  fetchImpl: EdgeFetch,
-  signal: AbortSignal | undefined,
-  deadline: number,
-  now: () => number
-): Promise<EdgeTarget[]> {
+async function resolveSrvTargets(ctx: DohQueryCtx): Promise<EdgeTarget[]> {
   try {
-    const answers = await dohQueryAny(
-      fetchImpl,
-      EDGE_SRV_NAME,
-      DNS_TYPE_SRV,
-      signal,
-      deadline,
-      now
-    );
+    const answers = await dohQueryAny(ctx, EDGE_SRV_NAME, DNS_TYPE_SRV);
     const targets: EdgeTarget[] = [];
     const seen = new Set<string>();
     for (const answer of answers) {
@@ -230,23 +263,24 @@ function interleave(lists: string[][]): string[] {
 export async function resolveEdgeViaDoh(
   fetchImpl: EdgeFetch,
   signal?: AbortSignal,
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  opts: { requestTimeoutMs?: number } = {}
 ): Promise<{ addrs: string[] }> {
-  const deadline = now() + DOH_TOTAL_BUDGET_MS;
-  const targets = await resolveSrvTargets(fetchImpl, signal, deadline, now);
+  const ctx: DohQueryCtx = {
+    fetchImpl,
+    signal,
+    deadline: now() + DOH_TOTAL_BUDGET_MS,
+    now,
+    state: newDohRunState(),
+    requestTimeoutMs: opts.requestTimeoutMs ?? DOH_REQUEST_TIMEOUT_MS,
+  };
+  const targets = await resolveSrvTargets(ctx);
   const lists: string[][] = [];
   let lastError: unknown = null;
   for (const target of targets) {
-    if (now() >= deadline) break;
+    if (now() >= ctx.deadline) break;
     try {
-      const answers = await dohQueryAny(
-        fetchImpl,
-        target.target,
-        DNS_TYPE_A,
-        signal,
-        deadline,
-        now
-      );
+      const answers = await dohQueryAny(ctx, target.target, DNS_TYPE_A);
       lists.push(
         answers
           .map((ip) => ip.trim())

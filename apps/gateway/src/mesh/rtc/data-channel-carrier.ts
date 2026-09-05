@@ -2,9 +2,10 @@ import type { Carrier, CarrierSendResult } from '../../ws/carrier';
 import { FANOUT_MAX_PENDING_BYTES } from './channel-fanout';
 import {
   FragmentProtocolError,
+  type FragmentSizing,
   FrameReassembler,
   fragmentFrame,
-  fragmentPayloadSize,
+  fragmentSizing,
 } from './fragmenter';
 import { encodeLivenessChunk, parseLivenessChunk } from './liveness';
 import type { DataChannelLike } from './native';
@@ -24,7 +25,7 @@ type OutboundFrame = {
 export class DataChannelCarrier implements Carrier {
   readonly channel: DataChannelLike;
   private readonly reassembler: FrameReassembler;
-  private readonly payloadSize: number;
+  private readonly sizing: FragmentSizing;
   private readonly drainCbs: Array<() => void> = [];
   private readonly messageCbs: Array<(bytes: Uint8Array) => void> = [];
   private readonly closeCbs: Array<() => void> = [];
@@ -41,7 +42,7 @@ export class DataChannelCarrier implements Carrier {
     this.channel = channel;
     this.peer = opts?.peer;
     try {
-      this.payloadSize = fragmentPayloadSize(channel.maxMessageSize());
+      this.sizing = fragmentSizing(channel.maxMessageSize());
     } catch (err) {
       try {
         channel.close();
@@ -120,14 +121,14 @@ export class DataChannelCarrier implements Carrier {
     if (this.remainder || this.channel.bufferedAmount() > DC_HIGH_WATER_BYTES) {
       if (this.queuedRegular) return 'rejected';
       this.queuedRegular = {
-        parts: fragmentFrame(this.allocFrameId(), bytes, this.payloadSize),
+        parts: fragmentFrame(this.allocFrameId(), bytes, this.sizing.preferred, this.sizing.max),
         index: 0,
       };
       return 'backpressure';
     }
     const frameId = this.allocFrameId();
     this.remainder = {
-      parts: fragmentFrame(frameId, bytes, this.payloadSize),
+      parts: fragmentFrame(frameId, bytes, this.sizing.preferred, this.sizing.max),
       index: 0,
     };
     this.flushOutbound();
@@ -141,7 +142,12 @@ export class DataChannelCarrier implements Carrier {
     if (this.closed || !this.channel.isOpen()) return 'closed';
     if (this.priorityQueue.length >= DC_PRIORITY_QUEUE_CAP) return 'rejected';
     this.priorityQueue.push({
-      parts: fragmentFrame(this.allocFrameId(), copyBytes(bytes), this.payloadSize),
+      parts: fragmentFrame(
+        this.allocFrameId(),
+        copyBytes(bytes),
+        this.sizing.preferred,
+        this.sizing.max
+      ),
       index: 0,
     });
     this.flushOutbound();

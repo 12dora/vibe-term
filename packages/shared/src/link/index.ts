@@ -50,6 +50,8 @@ export {
   FragmentAssembler,
   fragmentBytes,
   type FragmentFail,
+  pickFragmentPayloadSize,
+  RECEIVER_MAX_FRAGMENTS,
 } from './fragment-core';
 export {
   FRAME_HEADER_SIZE,

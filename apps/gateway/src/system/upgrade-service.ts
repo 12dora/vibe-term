@@ -35,6 +35,8 @@ export type AuthorizedUpgradeForwardInput = {
   signal?: AbortSignal;
   /** 显式授权重试（非幂等方法默认不重试）；带 rawBody 时无效。 */
   retry?: { attempts: number };
+  /** rawBody 的上行进度（累计已读字节），已节流。 */
+  onProgress?: (uploadedBytes: number) => void;
 };
 
 export type AuthorizedUpgradeForward = {

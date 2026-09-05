@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { FragmentAssembler, fragmentBytes } from '@tmex/shared/link';
 import {
   DC_MAX_MESSAGE_BYTES,
   FRAGMENT_HEADER_SIZE,
@@ -8,8 +9,10 @@ import {
   FragmentProtocolError,
   FrameReassembler,
   MAX_REASSEMBLED_FRAME_BYTES,
+  RECEIVER_MAX_FRAGMENTS,
   fragmentFrame,
   fragmentPayloadSize,
+  fragmentSizing,
 } from './fragmenter';
 
 function makeFrag(frameId: number, idx: number, total: number, payloadLen: number): Uint8Array {
@@ -162,7 +165,7 @@ describe('FrameReassembler', () => {
 
   test('rejects a fragment whose payload exceeds payloadMax', () => {
     const reassembler = new FrameReassembler();
-    const oversized = fragmentFrame(
+    const oversized = fragmentBytes(
       1,
       new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1),
       FRAGMENT_PAYLOAD_SIZE + 1
@@ -208,5 +211,73 @@ describe('FrameReassembler', () => {
     expect(reassembler.push(parts[0] as Uint8Array)).toBeNull();
     reassembler.dispose();
     expect(reassembler.push(parts[1] as Uint8Array)).toBeNull();
+  });
+});
+
+// packages/ws-client/src/direct/fragmenter.ts 的接收端配置（含现网旧浏览器）。
+function browserReassembler() {
+  return new FragmentAssembler({
+    maxFrameBytes: 1024 * 1024,
+    maxTotal: RECEIVER_MAX_FRAGMENTS,
+    maxMessageBytes: DC_MAX_MESSAGE_BYTES,
+    refreshDeadline: false,
+  });
+}
+
+describe('browser fragment count cap', () => {
+  test('a 301,581-byte watch notification stays within the browser 17-fragment limit', () => {
+    const payload = new Uint8Array(301_581);
+    for (let i = 0; i < payload.length; i++) payload[i] = (i * 7) & 0xff;
+    const sizing = fragmentSizing(DC_MAX_MESSAGE_BYTES);
+    const parts = fragmentFrame(11, payload, sizing.preferred, sizing.max);
+    expect(parts.length).toBeLessThanOrEqual(RECEIVER_MAX_FRAGMENTS);
+    for (const part of parts) expect(part.byteLength).toBeLessThanOrEqual(DC_MAX_MESSAGE_BYTES);
+
+    const browser = browserReassembler();
+    let browserOut: Uint8Array | null = null;
+    for (const part of parts) {
+      browserOut = browser.push(part, (kind, message) => {
+        throw new Error(`${kind}: ${message}`);
+      });
+    }
+    expect(browserOut).toEqual(payload);
+
+    const gateway = new FrameReassembler();
+    let gatewayOut: Uint8Array | null = null;
+    for (const part of parts) gatewayOut = gateway.push(part);
+    expect(gatewayOut).toEqual(payload);
+  });
+
+  test('every frame up to the mux maximum fits the browser limit', () => {
+    const sizing = fragmentSizing(DC_MAX_MESSAGE_BYTES);
+    for (const len of [
+      0,
+      1,
+      FRAGMENT_SEND_PAYLOAD_SIZE * RECEIVER_MAX_FRAGMENTS,
+      FRAGMENT_SEND_PAYLOAD_SIZE * RECEIVER_MAX_FRAGMENTS + 1,
+      512 * 1024,
+      MAX_REASSEMBLED_FRAME_BYTES,
+    ]) {
+      const parts = fragmentFrame(1, new Uint8Array(len), sizing.preferred, sizing.max);
+      expect(parts.length).toBeLessThanOrEqual(RECEIVER_MAX_FRAGMENTS);
+    }
+  });
+
+  test('small frames keep 16 KiB messages', () => {
+    const sizing = fragmentSizing(DC_MAX_MESSAGE_BYTES);
+    expect(sizing).toEqual({ preferred: FRAGMENT_SEND_PAYLOAD_SIZE, max: FRAGMENT_PAYLOAD_SIZE });
+    const parts = fragmentFrame(2, new Uint8Array(64 * 1024), sizing.preferred, sizing.max);
+    expect(parts[0]?.byteLength).toBe(FRAGMENT_SEND_MESSAGE_BYTES);
+    expect(parts).toHaveLength(5);
+  });
+
+  test('a channel with a smaller maxMessageSize keeps its own ceiling', () => {
+    const sizing = fragmentSizing(8 * 1024);
+    expect(sizing).toEqual({
+      preferred: 8 * 1024 - FRAGMENT_HEADER_SIZE,
+      max: 8 * 1024 - FRAGMENT_HEADER_SIZE,
+    });
+    const parts = fragmentFrame(3, new Uint8Array(301_581), sizing.preferred, sizing.max);
+    for (const part of parts) expect(part.byteLength).toBeLessThanOrEqual(8 * 1024);
   });
 });

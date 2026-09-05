@@ -5,6 +5,20 @@ export const FRAGMENT_SEND_MESSAGE_BYTES = 16 * 1024;
 export const FRAGMENT_SEND_PAYLOAD_SIZE = FRAGMENT_SEND_MESSAGE_BYTES - FRAGMENT_HEADER_SIZE;
 export const DEFAULT_FRAME_TIMEOUT_MS = 15_000;
 export const DEFAULT_MAX_IN_FLIGHT = 32;
+// 浏览器接收端（含现网旧版本）每帧最多接受 17 片，发送端必须自行收敛到这个上限。
+export const RECEIVER_MAX_FRAGMENTS = 17;
+
+/** 小帧沿用 preferred（16 KiB）降低队头阻塞；大帧放大分片，保证片数不超过接收端上限。 */
+export function pickFragmentPayloadSize(
+  payloadLen: number,
+  preferredSize: number,
+  maxSize: number
+): number {
+  const upper = Math.max(1, Math.min(maxSize, FRAGMENT_PAYLOAD_SIZE));
+  const preferred = Math.max(1, Math.min(preferredSize, upper));
+  if (payloadLen <= preferred * RECEIVER_MAX_FRAGMENTS) return preferred;
+  return Math.min(upper, Math.ceil(payloadLen / RECEIVER_MAX_FRAGMENTS));
+}
 
 export type FragmentFail =
   | 'short'

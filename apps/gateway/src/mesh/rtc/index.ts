@@ -42,8 +42,10 @@ export {
   FragmentProtocolError,
   FrameReassembler,
   MAX_REASSEMBLED_FRAME_BYTES,
+  RECEIVER_MAX_FRAGMENTS,
   fragmentFrame,
   fragmentPayloadSize,
+  fragmentSizing,
 } from './fragmenter';
 export {
   type CandidateSignal,

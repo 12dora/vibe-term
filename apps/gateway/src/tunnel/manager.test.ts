@@ -2067,4 +2067,94 @@ describe('TunnelManager edge resolution', () => {
     expect(ctx.spawner.calls.filter((c) => argsInclude(c, '--edge')).length).toBe(1);
     await ctx.manager.stop();
   });
+
+  test('reuses the recovery resolution even when the provider cannot resolve again', async () => {
+    let resolved = 0;
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      connectorPollMs: 30_000,
+      edgeRecoveryDelayMs: 0,
+      sleep: async (ms) => {
+        await Bun.sleep(Math.min(ms, 1));
+      },
+      resolveEdge: async () => {
+        resolved += 1;
+        if (resolved === 1) return systemEdge(null);
+        if (resolved === 2) return staticEdge;
+        throw new Error('DoH flapped');
+      },
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          return Response.json({ readyConnections: 0, connectorId: 'c' });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://edge-reuse.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+
+    const start = Date.now();
+    while (Date.now() - start < 2_000) {
+      if (ctx.spawner.calls.some((c) => argsInclude(c, '--edge'))) break;
+      await Bun.sleep(5);
+    }
+    const withEdge = ctx.spawner.calls.filter((c) => argsInclude(c, '--edge'));
+    expect(withEdge.length).toBe(1);
+    expect(withEdge[0]?.args).toContain('198.41.192.7:7844');
+    expect(ctx.manager.status().edge).toMatchObject({ mode: 'static' });
+    await ctx.manager.stop();
+  });
+
+  test('a stop while the recovery resolution is pending does not restart the tunnel', async () => {
+    const gate: { release: (() => void) | null } = { release: null };
+    let resolved = 0;
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      connectorPollMs: 30_000,
+      edgeRecoveryDelayMs: 0,
+      sleep: async (ms) => {
+        await Bun.sleep(Math.min(ms, 1));
+      },
+      resolveEdge: async () => {
+        resolved += 1;
+        if (resolved === 1) return systemEdge(null);
+        if (resolved === 2) {
+          await new Promise<void>((resolve) => {
+            gate.release = resolve;
+          });
+        }
+        return staticEdge;
+      },
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          return Response.json({ readyConnections: 0, connectorId: 'c' });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://edge-stop.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+
+    const start = Date.now();
+    while (Date.now() - start < 2_000 && !gate.release) await Bun.sleep(5);
+    expect(gate.release).not.toBeNull();
+
+    const runsBefore = ctx.spawner.calls.filter((c) => argsInclude(c, '--url')).length;
+    await ctx.manager.stop();
+    gate.release?.();
+    await Bun.sleep(80);
+    expect(ctx.spawner.calls.filter((c) => argsInclude(c, '--url')).length).toBe(runsBefore);
+    expect(ctx.spawner.calls.some((c) => argsInclude(c, '--edge'))).toBe(false);
+    expect(ctx.manager.status().process.state).not.toBe('running');
+  });
 });

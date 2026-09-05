@@ -133,7 +133,14 @@ export class CloudflaredProvider {
     this.log = opts.log ?? ((message) => console.log(message));
   }
 
-  private async resolveEdgeForSpawn(): Promise<TunnelEdgeResolution | null> {
+  /** `override` 来自自愈流程刚解析出的结果：直接用于本次 spawn，不再重新解析。 */
+  private async resolveEdgeForSpawn(
+    override?: TunnelEdgeResolution | null
+  ): Promise<TunnelEdgeResolution | null> {
+    if (override) {
+      this.log(describeEdge(override));
+      return override;
+    }
     try {
       const edge = await this.resolveEdgeFn();
       if (edge) this.log(describeEdge(edge));
@@ -227,10 +234,14 @@ export class CloudflaredProvider {
     await collectOutput(handle);
   }
 
-  async spawnNamedRun(bin: string, configPath: string): Promise<SpawnHandle> {
+  async spawnNamedRun(
+    bin: string,
+    configPath: string,
+    edgeOverride?: TunnelEdgeResolution | null
+  ): Promise<SpawnHandle> {
     const cert = originCertPath(this.tunnelDir);
     const metrics = await this.metricsArgs();
-    const edge = await this.resolveEdgeForSpawn();
+    const edge = await this.resolveEdgeForSpawn(edgeOverride);
     const handle = this.spawn(
       bin,
       [...tunnelBaseArgs(cert), ...metrics.args, ...edgeArgs(edge), '--config', configPath, 'run'],
@@ -241,9 +252,13 @@ export class CloudflaredProvider {
     return handle;
   }
 
-  async spawnQuickRun(bin: string, originUrl: string): Promise<SpawnHandle> {
+  async spawnQuickRun(
+    bin: string,
+    originUrl: string,
+    edgeOverride?: TunnelEdgeResolution | null
+  ): Promise<SpawnHandle> {
     const metrics = await this.metricsArgs();
-    const edge = await this.resolveEdgeForSpawn();
+    const edge = await this.resolveEdgeForSpawn(edgeOverride);
     const handle = this.spawn(bin, [
       'tunnel',
       '--no-autoupdate',

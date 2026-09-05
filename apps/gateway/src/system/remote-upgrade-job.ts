@@ -346,14 +346,17 @@ async function runPushPhase(
   const maxAttempts = resume ? PUSH_MAX_ATTEMPTS : LEGACY_PUSH_MAX_ATTEMPTS;
   const deadline = deps.nowFn() + deps.timeouts.pushMs;
   let lastError = 'push failed: push timeout';
+  let fullReupload = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     job.attempt = attempt;
-    const offset = resume ? await readPushedOffset(job, deps, downloaded) : 0;
-    if (offset >= downloaded.bytes) {
+    const status =
+      resume && !fullReupload ? await readPushedOffset(job, deps, downloaded) : NO_STAGED_OFFSET;
+    if (status.complete) {
       job.pushed = true;
       job.pushedBytes = downloaded.bytes;
       return { done: false };
     }
+    const offset = Math.min(status.offset, downloaded.bytes);
     job.pushedBytes = offset;
     const result = await attemptPush(job, deps, downloaded, offset, deadline);
     if (result.kind === 'landed') {
@@ -362,8 +365,12 @@ async function runPushPhase(
       return { done: false };
     }
     if (result.kind === 'cancelled') return { done: true, snapshot: result.snapshot };
-    if (result.kind === 'fail')
-      return { done: true, snapshot: fail(job, result.error, deps.nowFn) };
+    if (result.kind === 'fail') {
+      if (!shouldReuploadFromZero(result.error, offset, fullReupload)) {
+        return { done: true, snapshot: fail(job, result.error, deps.nowFn) };
+      }
+      fullReupload = true;
+    }
     lastError = result.error;
     if (attempt >= maxAttempts || deps.nowFn() >= deadline) break;
     if (!(await backoff(job, deps, attempt))) {
@@ -372,6 +379,11 @@ async function runPushPhase(
     if (deps.nowFn() >= deadline) break;
   }
   return { done: true, snapshot: fail(job, lastError, deps.nowFn) };
+}
+
+/** 盘上的半成品与 sha 对不上：续传救不回来，整包重传一次（只退一次，避免来回刷带宽）。 */
+function shouldReuploadFromZero(error: string, offset: number, alreadyRetried: boolean): boolean {
+  return !alreadyRetried && offset > 0 && error.includes('PACKAGE_SHA256_MISMATCH');
 }
 
 async function backoff(job: Job, deps: JobDeps, attempt: number): Promise<boolean> {
@@ -389,12 +401,21 @@ async function cancelPush(job: Job, deps: JobDeps): Promise<RemoteUpgradeJobSnap
   return markCancelled(job, deps.nowFn);
 }
 
-/** 查目标已收到多少字节；查不动就当 0（从头重传，最坏也只是多花一次带宽）。 */
+/** 目标那边的暂存进度。`complete` 只在正式暂存包已落位时为真。 */
+type StagedOffset = { offset: number; complete: boolean };
+
+const NO_STAGED_OFFSET: StagedOffset = { offset: 0, complete: false };
+
+/**
+ * 查目标已收到多少字节；查不动就当 0（从头重传，最坏也只是多花一次带宽）。
+ * `receivedBytes === totalBytes` 但 `complete === false` 表示 `.part` 写满了却没提交：
+ * 仍要发一次零长度 PUT 让目标校验 sha256 并提交，不能当成已推完直接启动升级。
+ */
 async function readPushedOffset(
   job: Job,
   deps: JobDeps,
   downloaded: DownloadedRelease
-): Promise<number> {
+): Promise<StagedOffset> {
   try {
     const res = await withTimeout(
       deps.forward.forwardAuthorizedHttp(deps.req, {
@@ -408,16 +429,16 @@ async function readPushedOffset(
       'offset timeout'
     );
     const text = await res.text().catch(() => '');
-    if (res.status < 200 || res.status >= 300) return 0;
+    if (res.status < 200 || res.status >= 300) return NO_STAGED_OFFSET;
     const parsed: unknown = JSON.parse(text);
-    if (!parsed || typeof parsed !== 'object') return 0;
+    if (!parsed || typeof parsed !== 'object') return NO_STAGED_OFFSET;
     const row = parsed as { receivedBytes?: unknown; complete?: unknown };
-    if (row.complete === true) return downloaded.bytes;
+    if (row.complete === true) return { offset: downloaded.bytes, complete: true };
     const received = typeof row.receivedBytes === 'number' ? row.receivedBytes : 0;
-    if (!Number.isFinite(received) || received < 0) return 0;
-    return Math.min(Math.trunc(received), downloaded.bytes);
+    if (!Number.isFinite(received) || received < 0) return NO_STAGED_OFFSET;
+    return { offset: Math.min(Math.trunc(received), downloaded.bytes), complete: false };
   } catch {
-    return 0;
+    return NO_STAGED_OFFSET;
   }
 }
 
@@ -445,6 +466,9 @@ async function attemptPush(
         'content-length': String(downloaded.bytes - offset),
       },
       signal: combineAbortSignals(AbortSignal.timeout(remaining), job.abort.signal),
+      onProgress: (uploaded) => {
+        job.pushedBytes = Math.min(offset + uploaded, downloaded.bytes);
+      },
     });
     job.pushPromise = pushReq;
     const pushed = await withTimeout(pushReq, remaining, 'push timeout');

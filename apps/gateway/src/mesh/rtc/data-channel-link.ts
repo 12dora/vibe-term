@@ -4,9 +4,10 @@ import { DC_HIGH_WATER_BYTES, DC_LOW_WATER_BYTES } from './data-channel-carrier'
 import { isDcHandshakeWire } from './dc-handshake';
 import {
   FragmentProtocolError,
+  type FragmentSizing,
   FrameReassembler,
   fragmentFrame,
-  fragmentPayloadSize,
+  fragmentSizing,
 } from './fragmenter';
 import {
   ChannelLiveness,
@@ -61,7 +62,7 @@ function defaultSetTimeout(fn: () => void, ms: number): ReturnType<typeof setTim
 export class DataChannelLink implements ByteTransport {
   readonly channel: DataChannelLike;
   private readonly reassembler: FrameReassembler;
-  private readonly payloadSize: number;
+  private readonly sizing: FragmentSizing;
   private readonly dataCbs: Array<(bytes: Uint8Array) => void> = [];
   private readonly closeCbs: Array<(reason?: string) => void> = [];
   private readonly pendingFrames: Uint8Array[] = [];
@@ -91,7 +92,7 @@ export class DataChannelLink implements ByteTransport {
     this.clearTimeoutFn =
       opts?.clearTimeoutFn ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
     try {
-      this.payloadSize = fragmentPayloadSize(channel.maxMessageSize());
+      this.sizing = fragmentSizing(channel.maxMessageSize());
     } catch (err) {
       try {
         channel.close();
@@ -170,7 +171,7 @@ export class DataChannelLink implements ByteTransport {
       return Promise.reject(new Error(this.closeReason));
     }
     const frameId = this.allocFrameId();
-    const parts = fragmentFrame(frameId, copyBytes(bytes), this.payloadSize);
+    const parts = fragmentFrame(frameId, copyBytes(bytes), this.sizing.preferred, this.sizing.max);
     const urgent = isUrgentMuxFrame(bytes);
     return new Promise((resolve, reject) => {
       const item: QueueItem = { parts, index: 0, resolve, reject };

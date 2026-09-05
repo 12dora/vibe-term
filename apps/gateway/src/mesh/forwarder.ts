@@ -246,6 +246,8 @@ export class Forwarder {
        * 带 rawBody 的请求一律不重试——流只能读一次，重发要由调用方按偏移重建。
        */
       retry?: { attempts: number };
+      /** rawBody 的上行进度（累计已读字节），节流后回调，用于长传的进度展示。 */
+      onProgress?: (uploadedBytes: number) => void;
     },
     signal?: AbortSignal
   ): Promise<Response> {
@@ -260,15 +262,20 @@ export class Forwarder {
     const headers: Record<string, string> = { ...(input.headers ?? {}) };
     let uploaded = 0;
     const rawBody = idempotent ? null : (input.rawBody ?? null);
-    const body = idempotent
-      ? null
-      : rawBody
-        ? countStreamBytes(rawBody, (n) => {
-            uploaded += n;
-          })
-        : buildJsonStreamBody(input.body, headers);
+    const progress = input.onProgress ? throttledProgress(input.onProgress) : null;
+    const countedRaw = rawBody
+      ? countStreamBytes(rawBody, (n) => {
+          uploaded += n;
+          progress?.(uploaded);
+        })
+      : null;
     const attempts = rawBody ? 1 : forwardAttempts(idempotent, input.retry);
     const retryable = attempts > 1;
+    // JSON 体每次尝试重建：ReadableStream 只能读一次，复用会让第二次 open 抛 locked。
+    const nextBody = (): ReadableStream<Uint8Array> | null => {
+      if (idempotent) return null;
+      return countedRaw ?? buildJsonStreamBody(input.body, headers);
+    };
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (abort.aborted) break;
@@ -280,7 +287,13 @@ export class Forwarder {
         }
       }
       try {
-        return await this.openAuthorizedAttempt(req, input, { method, headers, auth, body, abort });
+        return await this.openAuthorizedAttempt(req, input, {
+          method,
+          headers,
+          auth,
+          body: nextBody(),
+          abort,
+        });
       } catch (err) {
         lastError = err;
         if (rawBody) {
@@ -785,6 +798,22 @@ async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+/** 上行进度节流：至少 1 s 或 256 KiB 才回调一次，别把小块 IO 变成刷屏。 */
+const PROGRESS_MIN_INTERVAL_MS = 1_000;
+const PROGRESS_MIN_BYTES = 256 * 1024;
+
+function throttledProgress(onProgress: (bytes: number) => void): (bytes: number) => void {
+  let lastAt = 0;
+  let lastBytes = 0;
+  return (bytes) => {
+    const at = Date.now();
+    if (at - lastAt < PROGRESS_MIN_INTERVAL_MS && bytes - lastBytes < PROGRESS_MIN_BYTES) return;
+    lastAt = at;
+    lastBytes = bytes;
+    onProgress(bytes);
+  };
 }
 
 function countStreamBytes(

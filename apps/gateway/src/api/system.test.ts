@@ -323,6 +323,54 @@ describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
     }
   });
 
+  test('整长度 .part 未提交：无请求体的收尾 PUT 校验 sha 并落正式包与 sidecar', async () => {
+    const dir = installDir();
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const bytes = new Uint8Array(64).fill(7);
+      const hex = sha256Hex(bytes);
+      // 声明 65 字节却只收到 64：`.part` 写满但没提交
+      const partial = await handleSystemApiRequest(
+        put('1.2.3', hex, bytes, { declared: 65 }),
+        '/api/system/upgrade/package'
+      );
+      expect(partial?.status).toBe(500);
+      expect(await partial?.json()).toEqual({ code: 'PACKAGE_INCOMPLETE', receivedBytes: 64 });
+      const stale = await handleSystemApiRequest(
+        statusRequest('1.2.3', hex),
+        '/api/system/upgrade/package'
+      );
+      expect(await stale?.json()).toMatchObject({ receivedBytes: 64, complete: false });
+
+      const finalize = await handleSystemApiRequest(
+        withMeshAuth(
+          new Request(
+            `http://localhost/api/system/upgrade/package?version=1.2.3&sha256=${hex}&offset=64`,
+            {
+              method: 'PUT',
+              headers: {
+                'content-type': 'application/octet-stream',
+                'content-length': '0',
+              },
+            }
+          )
+        ),
+        '/api/system/upgrade/package'
+      );
+      expect(finalize?.status).toBe(200);
+      expect(await finalize?.json()).toEqual({ version: '1.2.3', sha256: hex, bytes: 64 });
+      const done = await handleSystemApiRequest(
+        statusRequest('1.2.3', hex),
+        '/api/system/upgrade/package'
+      );
+      expect(await done?.json()).toMatchObject({ receivedBytes: 64, complete: true });
+      expect(existsSync(join(dir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz'))).toBe(true);
+      expect(existsSync(join(dir, 'staging', 'staged', 'tmex-cli-1.2.3.json'))).toBe(true);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
   test('offset 对不上是 409 UPGRADE_OFFSET_MISMATCH，回包带真实偏移', async () => {
     installDir();
     const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());

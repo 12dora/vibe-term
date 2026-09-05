@@ -39,6 +39,10 @@ export type LivePeer = {
 
 const DRAIN_DROP_REASONS = new Set(['missed-pong', 'idle']);
 
+export function isDrainRetireReason(reason: string): boolean {
+  return DRAIN_DROP_REASONS.has(reason);
+}
+
 export type PeerDropPlan = {
   drain: boolean;
   terminal: boolean;

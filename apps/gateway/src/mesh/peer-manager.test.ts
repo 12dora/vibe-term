@@ -403,6 +403,67 @@ describe('PeerManager', () => {
     expect((await localClosed).reason).toBe('missed-pong');
   });
 
+  test('missed-pong retire hits the hard deadline even while a stream never ends', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [local, remote] = createInMemoryLinkPair();
+    expect(manager.adoptLink(peer.nodeId, local, 'relay', self.nodeId)).toBe(local);
+    const incoming = new Promise<LinkStream>((resolve) => remote.onStream(resolve));
+    const outbound = await local.openStream(new TextEncoder().encode('{"type":"keep"}'));
+    await incoming;
+
+    const localClosed = local.closed;
+    let closed = false;
+    void localClosed.then(() => {
+      closed = true;
+    });
+    let streamClosed = false;
+    void outbound.closed.then(() => {
+      streamClosed = true;
+    });
+
+    for (let i = 0; i < PEER_MISSED_PONG_LIMIT + 2 && manager.transportOf(peer.nodeId); i++) {
+      scheduler.advance(PEER_PING_INTERVAL_MS);
+    }
+    expect(manager.transportOf(peer.nodeId)).toBeNull();
+    const retiredAt = scheduler.nowMs;
+    await Promise.resolve();
+    expect(closed).toBe(false);
+
+    scheduler.advance(PEER_RETIRE_MAX_MS - 1);
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    expect(scheduler.nowMs - retiredAt).toBe(PEER_RETIRE_MAX_MS - 1);
+
+    scheduler.advance(1);
+    expect((await localClosed).reason).toBe('missed-pong');
+    await outbound.closed;
+    expect(streamClosed).toBe(true);
+  });
+
   test('throws NodeUnreachableError when LAN and relay fail', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

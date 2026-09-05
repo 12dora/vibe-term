@@ -255,6 +255,14 @@ function parseStagedPackageOffset(req: Request): number {
   return Math.trunc(n);
 }
 
+function emptyBodyStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.close();
+    },
+  });
+}
+
 function rejectStagedPackageRequest(req: Request): Response | null {
   if (!requestIsStagedAuthenticated(req)) return stagedRequiresAuth();
   if (!getSystemInfo().canSelfUpdate) {
@@ -290,8 +298,10 @@ async function handleStagePackageOpen(req: Request): Promise<Response> {
   if (hasLength && declared + offset > STAGED_PACKAGE_MAX_BYTES) {
     return json({ code: 'PACKAGE_TOO_LARGE' }, 413);
   }
+  // offset > 0 且没有请求体：整长度 `.part` 的收尾校验，走空流让它照常校验 sha256 并提交
+  const body = req.body ?? (offset > 0 ? emptyBodyStream() : null);
   const { upgradeController } = await import('../system/upgrade');
-  const result = await upgradeController.stagePackage(parsed.version, parsed.sha256, req.body, {
+  const result = await upgradeController.stagePackage(parsed.version, parsed.sha256, body, {
     offset,
     expectedBytes: hasLength ? offset + declared : undefined,
   });

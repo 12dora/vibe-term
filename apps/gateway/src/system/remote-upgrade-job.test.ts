@@ -297,6 +297,140 @@ describe('RemoteUpgradeJob', () => {
     expect(calls).toEqual(['GET /api/system/upgrade/package', 'POST /api/system/upgrade']);
   });
 
+  test('.part 写满但未提交：发一次零长度 PUT 让目标校验并提交', async () => {
+    const nodeId = '77'.repeat(16);
+    const bytes = new Uint8Array(128).fill(9);
+    const path = tempFile(bytes);
+    const calls: string[] = [];
+    const puts: Array<{ query: string; sent: number; length?: string }> = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          calls.push(`${input.method} ${input.path}`);
+          if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+            return offsetResponse(bytes.byteLength, false);
+          }
+          if (input.method === 'PUT') {
+            const raw = input.rawBody
+              ? await new Response(input.rawBody).bytes()
+              : new Uint8Array();
+            puts.push({
+              query: input.query ?? '',
+              sent: raw.byteLength,
+              length: input.headers?.['content-length'],
+            });
+            return new Response('{}', { status: 200 });
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      upgradeCapabilities: RESUME_CAPS,
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(calls).toEqual([
+      'GET /api/system/upgrade/package',
+      'PUT /api/system/upgrade/package',
+      'POST /api/system/upgrade',
+    ]);
+    expect(puts).toHaveLength(1);
+    expect(puts[0]?.query).toContain(`offset=${bytes.byteLength}`);
+    expect(puts[0]?.sent).toBe(0);
+    expect(puts[0]?.length).toBe('0');
+  });
+
+  test('零长度收尾被判 sha 不符：退回整包重传一次', async () => {
+    const nodeId = '88'.repeat(16);
+    const bytes = new Uint8Array(96).fill(4);
+    const path = tempFile(bytes);
+    const puts: Array<{ query: string; sent: number }> = [];
+    let offsetQueries = 0;
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+            offsetQueries += 1;
+            return offsetResponse(bytes.byteLength, false);
+          }
+          if (input.method === 'PUT') {
+            const raw = input.rawBody
+              ? await new Response(input.rawBody).bytes()
+              : new Uint8Array();
+            puts.push({ query: input.query ?? '', sent: raw.byteLength });
+            if (puts.length === 1) {
+              return new Response(JSON.stringify({ code: 'PACKAGE_SHA256_MISMATCH' }), {
+                status: 400,
+                headers: { 'content-type': 'application/json' },
+              });
+            }
+            return new Response('{}', { status: 200 });
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      upgradeCapabilities: RESUME_CAPS,
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(offsetQueries).toBe(1);
+    expect(puts).toHaveLength(2);
+    expect(puts[0]?.sent).toBe(0);
+    expect(puts[1]?.query).not.toContain('offset=');
+    expect(puts[1]?.sent).toBe(bytes.byteLength);
+  });
+
+  test('长传过程中快照的 pushedBytes 随上行进度增长', async () => {
+    const nodeId = '99'.repeat(16);
+    const bytes = new Uint8Array(192 * 1024).fill(6);
+    const path = tempFile(bytes);
+    const observed: number[] = [];
+    let sawCallback = false;
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method !== 'PUT' || !input.rawBody) return new Response('{}', { status: 200 });
+          sawCallback = typeof input.onProgress === 'function';
+          const reader = input.rawBody.getReader();
+          let uploaded = 0;
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            uploaded += value.byteLength;
+            input.onProgress?.(uploaded);
+            observed.push(getRemoteUpgradeJob(nodeId)?.pushedBytes ?? -1);
+            await Bun.sleep(1);
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(sawCallback).toBe(true);
+    expect(observed.length).toBeGreaterThanOrEqual(3);
+    expect(observed[0]).toBeGreaterThan(0);
+    expect(observed[0]).toBeLessThan(bytes.byteLength);
+    for (let i = 1; i < observed.length; i += 1) {
+      expect(observed[i] as number).toBeGreaterThan(observed[i - 1] as number);
+    }
+    expect(observed[observed.length - 1]).toBe(bytes.byteLength);
+  });
+
   test('重试次数用尽：按最后一次失败原因收尾，快照带上进度', async () => {
     const nodeId = '55'.repeat(16);
     const bytes = new Uint8Array(256).fill(2);

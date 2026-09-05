@@ -1,12 +1,15 @@
 import type { TunnelConnectorStatus, TunnelEdgeResolution } from '@tmex/shared';
 
+/** 本次自愈是否仍然有效：手动停止 / 重启会作废在途的恢复。 */
+export type EdgeRecoveryToken = { readonly cancelled: boolean };
+
 export type EdgeRecoveryDeps = {
   now: () => number;
   delayMs: number;
   resolveEdge: () => Promise<TunnelEdgeResolution | null>;
   currentEdge: () => TunnelEdgeResolution | null;
   canRestart: () => boolean;
-  restart: (edge: TunnelEdgeResolution) => Promise<void>;
+  restart: (edge: TunnelEdgeResolution, token: EdgeRecoveryToken) => Promise<void>;
   warn: (message: string) => void;
 };
 
@@ -18,12 +21,24 @@ export class TunnelEdgeRecovery {
   private degradedSince: number | null = null;
   private done = false;
   private inFlight = false;
+  private generation = 0;
 
   constructor(private readonly deps: EdgeRecoveryDeps) {}
 
+  /** 同时兼作取消点：手动停止 / 重启后，在途的解析结果不再用于重启。 */
   reset(): void {
     this.degradedSince = null;
     this.done = false;
+    this.generation += 1;
+  }
+
+  private token(generation: number): EdgeRecoveryToken {
+    const self = this;
+    return {
+      get cancelled(): boolean {
+        return generation !== self.generation;
+      },
+    };
   }
 
   private ready(connector: TunnelConnectorStatus): boolean {
@@ -45,22 +60,25 @@ export class TunnelEdgeRecovery {
     return Math.round((now - (this.degradedSince ?? now)) / 1000);
   }
 
-  private async restartWithStaticEdge(): Promise<void> {
+  private async restartWithStaticEdge(token: EdgeRecoveryToken): Promise<void> {
     const edge = await this.deps.resolveEdge();
+    if (token.cancelled) return;
     if (!edge || edge.mode !== 'static' || edge.edgeAddrs.length === 0) return;
     this.done = true;
     this.deps.warn(
       `[tunnel] restarting cloudflared with static edge after ${this.degradedSeconds()}s without edge connections: ${edge.edgeAddrs.join(',')}`
     );
-    await this.deps.restart(edge);
+    await this.deps.restart(edge, token);
+    if (token.cancelled) return;
     this.degradedSince = null;
   }
 
   async maybeRecover(connector: TunnelConnectorStatus): Promise<void> {
     if (!this.ready(connector)) return;
     this.inFlight = true;
+    const token = this.token(this.generation);
     try {
-      await this.restartWithStaticEdge();
+      await this.restartWithStaticEdge(token);
     } catch (error) {
       this.deps.warn(`[tunnel] edge recovery failed: ${String(error)}`);
     } finally {

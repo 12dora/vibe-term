@@ -951,6 +951,50 @@ describe('staged package', () => {
     });
   });
 
+  test('整长度 .part 未提交：零长度续传 PUT 校验 sha 并落正式包与 sidecar', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    // 写满 .part 但不提交：声明比实际多一字节，收尾判定为「传到一半断了」
+    const partial = await controller.stagePackage('1.2.3', hex, bytesStream(bytes), {
+      expectedBytes: bytes.byteLength + 1,
+    });
+    expect(partial).toEqual({
+      ok: false,
+      status: 500,
+      code: 'PACKAGE_INCOMPLETE',
+      receivedBytes: bytes.byteLength,
+    });
+    expect(await controller.stagedPackageStatus('1.2.3', hex)).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      receivedBytes: bytes.byteLength,
+      complete: false,
+    });
+
+    const finalize = await controller.stagePackage('1.2.3', hex, bytesStream(new Uint8Array(0)), {
+      offset: bytes.byteLength,
+    });
+    expect(finalize).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      bytes: bytes.byteLength,
+    });
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    expect(readFileSync(join(stagedDir, 'tmex-cli-1.2.3.tgz'))).toEqual(Buffer.from(bytes));
+    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.json'))).toBe(true);
+    expect(await controller.stagedPackageStatus('1.2.3', hex)).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      receivedBytes: bytes.byteLength,
+      complete: true,
+    });
+  });
+
   test('offset 与盘上长度对不上：409 UPGRADE_OFFSET_MISMATCH 并回报真实偏移', async () => {
     const install = makeInstall();
     const controller = new UpgradeController({ getInstallInfo: () => install });

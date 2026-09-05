@@ -54,6 +54,8 @@ export class TunnelSupervisor {
 
   private readonly edgeConnIndexes = new Set<number>();
   private child: SpawnHandle | null = null;
+  /** 自愈拿到的静态边缘地址：本次 enabled 期间（含崩溃重启）都沿用，stop 时清掉。 */
+  private edgeOverride: TunnelEdgeResolution | null = null;
   private enabled = false;
   private generation = 0;
   private backoffMs = MIN_BACKOFF_MS;
@@ -72,13 +74,17 @@ export class TunnelSupervisor {
     return this.edgeConnIndexes.size;
   }
 
-  async start(opts: {
-    bin: string;
-    mode: SupervisorMode;
-    originUrl: string;
-    configPath: string;
-  }): Promise<void> {
+  async start(
+    opts: {
+      bin: string;
+      mode: SupervisorMode;
+      originUrl: string;
+      configPath: string;
+    },
+    edgeOverride: TunnelEdgeResolution | null = null
+  ): Promise<void> {
     this.enabled = true;
+    this.edgeOverride = edgeOverride;
     this.generation += 1;
     this.lastError = null;
     this.publicUrl = null;
@@ -88,6 +94,7 @@ export class TunnelSupervisor {
 
   async stop(): Promise<void> {
     this.enabled = false;
+    this.edgeOverride = null;
     this.generation += 1;
     const child = this.child;
     this.child = null;
@@ -121,8 +128,8 @@ export class TunnelSupervisor {
     this.edgeConnIndexes.clear();
     const child =
       opts.mode === 'named'
-        ? await this.deps.provider.spawnNamedRun(opts.bin, opts.configPath)
-        : await this.deps.provider.spawnQuickRun(opts.bin, opts.originUrl);
+        ? await this.deps.provider.spawnNamedRun(opts.bin, opts.configPath, this.edgeOverride)
+        : await this.deps.provider.spawnQuickRun(opts.bin, opts.originUrl, this.edgeOverride);
     this.child = child;
     this.pid = child.pid;
     this.startedAt = new Date().toISOString();

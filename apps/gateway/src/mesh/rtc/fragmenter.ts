@@ -10,7 +10,9 @@ import {
   FragmentAssembler,
   type FragmentFail,
   MAX_FRAME_PAYLOAD,
+  RECEIVER_MAX_FRAGMENTS,
   fragmentBytes,
+  pickFragmentPayloadSize,
 } from '@tmex/shared/link';
 
 export {
@@ -21,7 +23,10 @@ export {
   FRAGMENT_PAYLOAD_SIZE,
   FRAGMENT_SEND_MESSAGE_BYTES,
   FRAGMENT_SEND_PAYLOAD_SIZE,
+  RECEIVER_MAX_FRAGMENTS,
 };
+
+export type FragmentSizing = { preferred: number; max: number };
 
 export const MAX_REASSEMBLED_FRAME_BYTES = MAX_FRAME_PAYLOAD + FRAME_HEADER_SIZE;
 
@@ -43,18 +48,25 @@ export type ReassemblerOptions = {
 };
 
 export function fragmentPayloadSize(maxMessageSize: number): number {
+  return fragmentSizing(maxMessageSize).preferred;
+}
+
+export function fragmentSizing(maxMessageSize: number): FragmentSizing {
   if (!(maxMessageSize >= FRAGMENT_HEADER_SIZE)) {
     throw new FragmentProtocolError('datachannel maxMessageSize cannot fit fragment header');
   }
-  return Math.min(FRAGMENT_SEND_PAYLOAD_SIZE, maxMessageSize - FRAGMENT_HEADER_SIZE);
+  const max = Math.min(FRAGMENT_PAYLOAD_SIZE, maxMessageSize - FRAGMENT_HEADER_SIZE);
+  return { preferred: Math.min(FRAGMENT_SEND_PAYLOAD_SIZE, max), max };
 }
 
 export function fragmentFrame(
   frameId: number,
   payload: Uint8Array,
-  payloadSize = FRAGMENT_SEND_PAYLOAD_SIZE
+  payloadSize = FRAGMENT_SEND_PAYLOAD_SIZE,
+  maxPayloadSize = FRAGMENT_PAYLOAD_SIZE
 ): Uint8Array[] {
-  return fragmentBytes(frameId, payload, payloadSize);
+  const size = pickFragmentPayloadSize(payload.byteLength, payloadSize, maxPayloadSize);
+  return fragmentBytes(frameId, payload, size);
 }
 
 export class FrameReassembler {

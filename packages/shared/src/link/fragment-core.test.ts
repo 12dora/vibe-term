@@ -7,7 +7,9 @@ import {
   FRAGMENT_SEND_PAYLOAD_SIZE,
   FragmentAssembler,
   type FragmentFail,
+  RECEIVER_MAX_FRAGMENTS,
   fragmentBytes,
+  pickFragmentPayloadSize,
 } from './fragment-core';
 
 function assembler(opts?: Partial<ConstructorParameters<typeof FragmentAssembler>[0]>) {
@@ -173,5 +175,38 @@ describe('FragmentAssembler micro-bench', () => {
     );
     expect(keystrokeNs).toBeLessThan(5_000);
     expect(frame16kNs).toBeLessThan(20_000);
+  });
+});
+
+describe('pickFragmentPayloadSize', () => {
+  // 浏览器接收端 maxTotal = ceil(1 MiB / FRAGMENT_PAYLOAD_SIZE)，与旧版本一致。
+  test('receiver cap matches the browser reassembler derivation', () => {
+    expect(RECEIVER_MAX_FRAGMENTS).toBe(Math.ceil((1024 * 1024) / FRAGMENT_PAYLOAD_SIZE));
+    expect(RECEIVER_MAX_FRAGMENTS).toBe(17);
+  });
+
+  test('small frames keep the preferred 16 KiB fragment', () => {
+    const preferred = FRAGMENT_SEND_PAYLOAD_SIZE;
+    expect(pickFragmentPayloadSize(0, preferred, FRAGMENT_PAYLOAD_SIZE)).toBe(preferred);
+    expect(pickFragmentPayloadSize(1, preferred, FRAGMENT_PAYLOAD_SIZE)).toBe(preferred);
+    expect(
+      pickFragmentPayloadSize(preferred * RECEIVER_MAX_FRAGMENTS, preferred, FRAGMENT_PAYLOAD_SIZE)
+    ).toBe(preferred);
+  });
+
+  test('large frames grow the fragment so the count stays at or under the receiver cap', () => {
+    const preferred = FRAGMENT_SEND_PAYLOAD_SIZE;
+    for (const len of [301_581, preferred * RECEIVER_MAX_FRAGMENTS + 1, 1024 * 1024 + 10]) {
+      const size = pickFragmentPayloadSize(len, preferred, FRAGMENT_PAYLOAD_SIZE);
+      expect(size).toBeGreaterThan(preferred);
+      expect(size).toBeLessThanOrEqual(FRAGMENT_PAYLOAD_SIZE);
+      expect(Math.ceil(len / size)).toBeLessThanOrEqual(RECEIVER_MAX_FRAGMENTS);
+    }
+  });
+
+  test('never exceeds the channel maximum message size', () => {
+    const max = 8000;
+    expect(pickFragmentPayloadSize(10 * 1024 * 1024, FRAGMENT_SEND_PAYLOAD_SIZE, max)).toBe(max);
+    expect(pickFragmentPayloadSize(4, FRAGMENT_SEND_PAYLOAD_SIZE, max)).toBe(max);
   });
 });

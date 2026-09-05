@@ -57,7 +57,12 @@ import type {
   TransportWaiter,
 } from './peer-manager-types';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
-import { type LivePeer, PeerReconnectWake, peerDropPlan } from './peer-reconnect-wake';
+import {
+  type LivePeer,
+  PeerReconnectWake,
+  isDrainRetireReason,
+  peerDropPlan,
+} from './peer-reconnect-wake';
 import {
   PEER_RTC_WAKE_COOLDOWN_MS,
   type RtcSignalInboxEntry,
@@ -1785,9 +1790,14 @@ export class PeerManager extends PeerCollaboratorHost {
 
   private maybeFinishRetire(live: LivePeer, reason = live.retireReason): void {
     if (!live.retiring || live.finishRetired) return;
-    if (live.streams > 0) return;
     const now = this.scheduler.now();
     const elapsed = now - live.retiredAt;
+    // 心跳失活/闲置退役的连接已经不再收发心跳，在途流不能无限期挂着，硬截止先于流数判断。
+    if (isDrainRetireReason(live.retireReason) && elapsed >= PEER_RETIRE_MAX_MS) {
+      this.finishRetire(live, reason);
+      return;
+    }
+    if (live.streams > 0) return;
     const quietFor = live.zeroStreamsSince > 0 ? now - live.zeroStreamsSince : 0;
     if (
       (live.gotQuiesceAck && live.gotPeerQuiesce) ||

@@ -1591,6 +1591,84 @@ describe('forwarder', () => {
     expect(opens).toBe(1);
   });
 
+  test('显式重试逐次重建 JSON 体：首次尝试锁住流后第二次仍能成功', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams, sleep: async () => {} });
+    const sent: string[] = [];
+    let opens = 0;
+    streams.openHttpStream = async (_link, _open, body) => {
+      opens += 1;
+      if (body?.locked) throw new Error('ReadableStream is locked');
+      if (opens === 1) {
+        // 第一次尝试已经开始读，链路随后断掉：这条流永远处于 locked
+        await body?.getReader().read();
+        throw new Error('link lost');
+      }
+      sent.push(body ? await new Response(body).text() : '');
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const res = await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+      }),
+      {
+        nodeId: OTHER,
+        method: 'DELETE',
+        path: '/api/system/upgrade/package',
+        retry: { attempts: 2 },
+      }
+    );
+    expect(opens).toBe(2);
+    expect(res.status).toBe(200);
+    expect(sent).toEqual(['{}']);
+  });
+
+  test('rawBody 上行进度按节流回调，累计字节单调递增', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.openHttpStream = async (_link, _open, body) => {
+      if (body) await new Response(body).arrayBuffer();
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams });
+    const chunkBytes = 256 * 1024;
+    const chunks = 4;
+    const rawBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < chunks; i += 1) controller.enqueue(new Uint8Array(chunkBytes));
+        controller.close();
+      },
+    });
+    const seen: number[] = [];
+    const res = await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+        method: 'PUT',
+        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+      }),
+      {
+        nodeId: OTHER,
+        method: 'PUT',
+        path: '/api/system/upgrade/package',
+        rawBody,
+        headers: { 'content-type': 'application/octet-stream' },
+        onProgress: (bytes) => seen.push(bytes),
+      }
+    );
+    expect(res.status).toBe(200);
+    expect(seen.length).toBeGreaterThanOrEqual(3);
+    expect(seen[0]).toBeLessThan(chunkBytes * chunks);
+    expect(seen[seen.length - 1]).toBe(chunkBytes * chunks);
+    for (let i = 1; i < seen.length; i += 1) {
+      expect(seen[i] as number).toBeGreaterThan(seen[i - 1] as number);
+    }
+  });
+
   test('abort during openHttpStream is classified as timeout, not lastError', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
