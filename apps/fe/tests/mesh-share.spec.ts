@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { type Browser, type Page, expect, test } from '@playwright/test';
 import {
   type MeshState,
@@ -155,5 +156,72 @@ test('mesh: a shared window is reachable through the hub with only that window v
     await recipient?.context().close();
     if (deviceId) await deleteDeviceOnNode(page, state, nodeId, deviceId);
     killRemoteTmuxSession(state, sessionName);
+  }
+});
+
+test('mesh: a window on the entry node itself is shared over the direct path', async ({
+  page,
+  browser,
+}) => {
+  const sessionName = `tmex-self-share-${Date.now()}`;
+  const marker = `TMEX_SELF_SHARE_${Date.now()}`;
+  spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
+    stdio: 'ignore',
+  });
+  meshTmux(state.hubTmuxSocket, `new-session -d -s ${sessionName} "sh -lc 'exec sh'"`);
+  let deviceId: string | undefined;
+  let recipient: Page | undefined;
+
+  try {
+    await loginWithPassword(page, state);
+    const created = await page.request.post(meshUrl(state, '/api/devices'), {
+      data: { name: sessionName, type: 'local', session: sessionName, authMode: 'auto' },
+    });
+    expect(created.ok(), await created.text()).toBeTruthy();
+    deviceId = ((await created.json()) as { device: { id: string } }).device.id;
+    const settings = await page.request.put(meshUrl(state, '/api/share/settings'), {
+      data: { defaultOrigin: state.baseUrl },
+    });
+    expect(settings.ok(), await settings.text()).toBeTruthy();
+
+    await page.goto(meshUrl(state, `/devices/${deviceId}`), { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
+    await page.getByTestId('share-open-button').click();
+    await expect(page.getByTestId('share-create-form')).toBeVisible({ timeout: 15_000 });
+    const password = await page.getByTestId('share-password').inputValue();
+    await page.getByTestId('share-create-submit').click();
+    await expect(page.getByTestId('share-active-view')).toBeVisible({ timeout: 15_000 });
+
+    const listed = await page.request.get(meshUrl(state, '/api/share'));
+    const share = ((await listed.json()) as ShareListBody).active[0];
+    expect(share.url).toBe(`${state.baseUrl}/s/${share.id}`);
+
+    recipient = await openRecipient(browser, share.url);
+    await recipient.getByTestId('share-password-input').fill(password);
+    await recipient.getByTestId('share-password-submit').click();
+    await expect(recipient.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
+    await recipient.locator('.xterm').first().click();
+    await recipient.keyboard.type(`echo ${marker}`);
+    await recipient.keyboard.press('Enter');
+    await expect
+      .poll(() => readTerminalBuffer(recipient as Page), { timeout: 30_000 })
+      .toContain(marker);
+    expect(meshTmux(state.hubTmuxSocket, `capture-pane -p -t ${sessionName}`)).toContain(marker);
+
+    const status = await recipient.evaluate(() =>
+      fetch('/api/devices', { credentials: 'include' }).then((res) => res.status)
+    );
+    expect(status).toBe(401);
+
+    const revoke = await page.request.post(meshUrl(state, `/api/share/${share.id}/revoke`));
+    expect(revoke.ok(), await revoke.text()).toBeTruthy();
+    await expect(recipient.getByTestId('share-ended')).toBeVisible({ timeout: 10_000 });
+  } finally {
+    await recipient?.context().close();
+    if (deviceId)
+      await page.request.delete(meshUrl(state, `/api/devices/${deviceId}`)).catch(() => undefined);
+    spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
+      stdio: 'ignore',
+    });
   }
 });

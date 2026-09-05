@@ -149,13 +149,13 @@ export function buildShareOriginContext(
   const localNodeId = sources.localNodeId();
   const nodePrefix = localNodeId ? nodeSharePrefix(localNodeId) : null;
   if (customOrigin) {
-    const hubHost = new Set(
-      raw.filter((item) => item.kind === 'hub').map((item) => labelOf(item.url))
+    const hubPrefixes = new Map(
+      raw.filter((item) => item.kind === 'hub').map((item) => [labelOf(item.url), item.prefix])
     );
     raw.unshift({
       url: customOrigin,
       kind: 'custom',
-      prefix: hubHost.has(labelOf(customOrigin)) ? nodePrefix : null,
+      prefix: hubPrefixes.get(labelOf(customOrigin)) ?? null,
     });
   }
 
