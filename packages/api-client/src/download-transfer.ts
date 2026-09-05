@@ -5,7 +5,7 @@
 import type { FileErrorCode } from '@tmex/shared';
 import { type ApiClient, defaultApiClient } from './client';
 import { FileApiError, parseError } from './file-errors';
-import { formatBytes, formatRate } from './format';
+import { formatBytes, formatBytesPair, formatRate } from './format';
 import { readNdjsonStream } from './ndjson-stream';
 import type { TransferOpts } from './transfer-types';
 
@@ -54,7 +54,7 @@ export async function downloadFileWithProgress(
 
     // leg2：tmex → 客户端（接收 blob，不触发宿主保存）
     const size = prepared.size;
-    const bytes = (n: number) => `${formatBytes(n)} / ${formatBytes(size)}`;
+    const bytes = (n: number) => formatBytesPair(n, size);
     onLeg?.(2, { pct: 0, detail: bytes(0) });
     const res = await client.fetch(`/api/files/download/${downloadId}/content`, { signal });
     if (!res.ok || !res.body) throw await parseError(res);
@@ -72,7 +72,7 @@ export async function downloadFileWithProgress(
       onLeg?.(2, {
         pct: total > 0 ? Math.round((received / total) * 100) : 0,
         rate: elapsed > 0 ? formatRate(received / elapsed) : undefined,
-        detail: `${formatBytes(received)} / ${formatBytes(total)}`,
+        detail: formatBytesPair(received, total),
       });
     }
     const blob = new Blob(chunks as BlobPart[]);

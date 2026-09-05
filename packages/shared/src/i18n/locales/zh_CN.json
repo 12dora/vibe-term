@@ -500,6 +500,14 @@
         },
         "degradedNotice": "隧道进程运行中，但无边缘连接，公网地址当前不可达。",
         "degradedHint": "cloudflared 连不上 Cloudflare 边缘（TCP/UDP 7844）。请检查代理或防火墙是否放行 *.argotunnel.com 与 *.cftunnel.com。",
+        "edge": {
+          "label": "边缘地址",
+          "staticActive": "已绕开 fake-IP，直连真实边缘地址",
+          "bypassed": "本机代理把 Cloudflare 边缘域名解析成 fake-IP（198.18.x），隧道已改用真实边缘地址直连。",
+          "bypassFailed": "本机代理把 Cloudflare 边缘域名解析成 fake-IP（198.18.x），边缘 7844 端口不可达，自动绕开未成功。",
+          "bypassFailedFix": "请在代理（如 Surge）中把 *.argotunnel.com 加入 always-real-ip，并为 argotunnel.com、cftunnel.com 添加 DIRECT 规则。",
+          "bypassFailedRetry": "改完清空代理 DNS 缓存或重启代理，再重启隧道。"
+        },
         "connector": {
           "label": "连接器",
           "connected": "{{n}} 条边缘连接",
@@ -2036,6 +2044,7 @@
           "quotaBandwidth": "带宽",
           "quotaValue": "{{used}} / {{total}}",
           "quotaUnlimited": "不限",
+          "quotaUnlimitedValue": "{{used}}（不限）",
           "nodeId": "本机编号",
           "hubs": "Hub 明细"
         },

@@ -97,14 +97,9 @@ function RelayDetails({ relay }: { relay: UseMeshRelayResult }) {
 
 function QuotaValue({ row }: { row: RelayQuotaRow }) {
   const { t } = useTranslation();
-  const limit = row.limitKey ? t(row.limitKey) : (row.limitText ?? '');
   return (
     <span className="flex min-w-0 flex-1 items-center gap-2">
-      <span data-testid={row.testId}>
-        {row.usedText === null
-          ? limit
-          : t('nodes.machine.details.quotaValue', { used: row.usedText, total: limit })}
-      </span>
+      <span data-testid={row.testId}>{quotaValueText(t, row)}</span>
       {row.percent !== null && (
         <span className="max-w-40 flex-1" data-testid={`${row.testId}-bar`}>
           <Progress value={row.percent} />
@@ -112,6 +107,24 @@ function QuotaValue({ row }: { row: RelayQuotaRow }) {
       )}
     </span>
   );
+}
+
+/**
+ * 「已用 / 上限」。无上限那一档不能套 `{{used}} / {{total}}`：
+ * 「不限」本身不是个数，摆出来就成了「4.00 KB/s / 不限」两道斜杠。
+ */
+function quotaValueText(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  row: RelayQuotaRow
+): string {
+  if (row.usedText === null) return row.limitKey ? t(row.limitKey) : (row.limitText ?? '');
+  if (row.limitKey) {
+    return t('nodes.machine.details.quotaUnlimitedValue', { used: row.usedText });
+  }
+  return t('nodes.machine.details.quotaValue', {
+    used: row.usedText,
+    total: row.limitText ?? '',
+  });
 }
 
 function HubDetails({ hubs }: { hubs: MeshHubsState }) {

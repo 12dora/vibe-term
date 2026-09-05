@@ -1,12 +1,13 @@
 // 接入节点表：一行一个成员。租户表管「谁被允许接入」，这张表管「此刻谁在转发」。
 // 排序与筛选由调用方（members-card）持有，本文件只摆版式并把表头点击回传。
 
+import { formatRate } from '@tmex/api-client/format';
 import type { RelayMetricsMember } from '@tmex/api-client/relay/metrics-types';
 import { Badge } from '@tmex/ui/badge';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { WideTableScroll } from '../components/wide-table';
-import { formatBytesPerSec, formatMs, relativeTimeText } from './relay-format';
+import { formatMs, relativeTimeText } from './relay-format';
 import {
   type MemberSort,
   type MemberSortKey,
@@ -113,8 +114,8 @@ function MemberRow({ member, now }: { member: RelayMetricsMember; now: number })
       <Td align="right">
         <span className="whitespace-nowrap">
           {t('relay.metrics.tiles.throughputSub', {
-            out: formatBytesPerSec(member.bytesOutPerSec),
-            in: formatBytesPerSec(member.bytesInPerSec),
+            out: formatRate(member.bytesOutPerSec),
+            in: formatRate(member.bytesInPerSec),
           })}
         </span>
       </Td>

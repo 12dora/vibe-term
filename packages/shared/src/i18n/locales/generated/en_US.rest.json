@@ -296,6 +296,14 @@
         },
         "degradedNotice": "The tunnel process is running but has no edge connections; the public URL is unreachable.",
         "degradedHint": "cloudflared cannot reach the Cloudflare edge (TCP/UDP 7844). Check that the proxy or firewall allows *.argotunnel.com and *.cftunnel.com.",
+        "edge": {
+          "label": "Edge address",
+          "staticActive": "Fake-IP bypassed, connecting to real edge addresses",
+          "bypassed": "A local proxy resolves the Cloudflare edge hostnames to fake IPs (198.18.x); the tunnel now connects to the real edge addresses instead.",
+          "bypassFailed": "A local proxy resolves the Cloudflare edge hostnames to fake IPs (198.18.x), edge port 7844 is unreachable, and the automatic bypass failed.",
+          "bypassFailedFix": "In the proxy (e.g. Surge), add *.argotunnel.com to always-real-ip and add DIRECT rules for argotunnel.com and cftunnel.com.",
+          "bypassFailedRetry": "Then flush the proxy DNS cache or restart the proxy, and restart the tunnel."
+        },
         "connector": {
           "label": "Connector",
           "connected": "Edge connections: {{n}}",
@@ -1293,6 +1301,7 @@
           "quotaBandwidth": "Bandwidth",
           "quotaValue": "{{used}} / {{total}}",
           "quotaUnlimited": "Unlimited",
+          "quotaUnlimitedValue": "{{used}} (Unlimited)",
           "nodeId": "This machine's ID",
           "hubs": "Hub details"
         },
@@ -2063,7 +2072,7 @@
           "eventLoopHint": "Event loop lag; above 100 ms forwarding is queueing.",
           "memory": "Memory",
           "memorySub": "heap {{heap}}",
-          "memoryHeapSub": "heap {{heap}} of {{total}}",
+          "memoryHeapSub": "heap {{heap}} / {{total}}",
           "cpu": "CPU",
           "sockets": "Sockets",
           "socketsSub": "{{authenticated}} authenticated",

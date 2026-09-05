@@ -60,6 +60,10 @@ export {
 
 export { type DateInput, formatDate, formatDateTime } from './format-date';
 
+// ==================== 字节 / 速率格式化 ====================
+
+export { formatBytes, formatBytesPair, formatRate } from './format-bytes';
+
 // ==================== 领域契约 ====================
 
 export * from './contracts/system';

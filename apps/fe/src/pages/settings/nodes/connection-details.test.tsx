@@ -40,6 +40,24 @@ const RELAY_MODE = {
   quota: { maxNodes: 8, maxStreams: 16, bandwidthBytesPerSec: null, currentNodes: 5 },
 } satisfies UseMeshRelayResult;
 
+/** 带宽不限但有实时用量：不能套「{{used}} / {{total}}」，否则出两道斜杠。 */
+const RELAY_UNLIMITED_BANDWIDTH = {
+  ...RELAY_MODE,
+  quota: {
+    maxNodes: 8,
+    maxStreams: 16,
+    bandwidthBytesPerSec: null,
+    currentNodes: 5,
+    usage: {
+      currentNodes: 6,
+      currentStreams: 4,
+      bytesInPerSec: 2048,
+      bytesOutPerSec: 4096,
+      sampledAt: 1,
+    },
+  },
+} satisfies UseMeshRelayResult;
+
 /** 新中继：实时用量与带宽上限都下发。 */
 const RELAY_WITH_USAGE = {
   ...RELAY_MODE,
@@ -133,6 +151,14 @@ describe('连接详情', () => {
     expect(html).toContain('data-testid="nodes-relay-quota-bar"');
     expect(html).toContain('data-testid="nodes-relay-streams-bar"');
     expect(html).toContain('data-testid="nodes-relay-bandwidth-bar"');
+  });
+
+  test('带宽不限又有用量：走「不限」那条合并文案，不套 used / total', () => {
+    const html = render(RELAY_UNLIMITED_BANDWIDTH);
+    expect(html).toContain('nodes.machine.details.quotaUnlimitedValue');
+    expect(html).not.toContain('data-testid="nodes-relay-bandwidth-bar"');
+    const bandwidth = html.slice(html.indexOf('data-testid="nodes-relay-bandwidth"'));
+    expect(bandwidth).not.toContain('nodes.machine.details.quotaValue');
   });
 
   test('旧中继不下发用量：并发流与带宽只剩上限，不摆进度条', () => {

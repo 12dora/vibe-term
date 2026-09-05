@@ -4,7 +4,6 @@ import {
   bandwidthText,
   bytesToKb,
   epochText,
-  formatBytesPerSec,
   formatDuration,
   formatFramesPerSec,
   formatMs,
@@ -126,26 +125,6 @@ describe('trafficText', () => {
 describe('epochText', () => {
   test('代次统一走「第 N 代」', () => {
     expect(epochText(t, 3)).toBe('relay.admin.epochValue({"epoch":3})');
-  });
-});
-
-describe('formatBytesPerSec', () => {
-  test('按字节量级换算并补 /s', () => {
-    expect(formatBytesPerSec(512)).toBe('512 B/s');
-    expect(formatBytesPerSec(2048)).toBe('2.00 KB/s');
-  });
-
-  test('负数与非有限值按 0 计（差分跨重启会变负）', () => {
-    expect(formatBytesPerSec(-1)).toBe('0 B/s');
-    expect(formatBytesPerSec(Number.NaN)).toBe('0 B/s');
-  });
-
-  test('1 KB 以下最多两位小数（差分算出来的速率本身是浮点）', () => {
-    expect(formatBytesPerSec(12.345678)).toBe('12.35 B/s');
-    expect(formatBytesPerSec(0.004)).toBe('0 B/s');
-    expect(formatBytesPerSec(0.006)).toBe('0.01 B/s');
-    expect(formatBytesPerSec(12.1)).toBe('12.1 B/s');
-    expect(formatBytesPerSec(1023.999)).toBe('1.00 KB/s');
   });
 });
 

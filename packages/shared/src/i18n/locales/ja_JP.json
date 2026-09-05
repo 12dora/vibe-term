@@ -500,6 +500,14 @@
         },
         "degradedNotice": "トンネルのプロセスは稼働中ですが、エッジ接続がなく、公開アドレスに到達できません。",
         "degradedHint": "cloudflared が Cloudflare エッジ（TCP/UDP 7844）に到達できません。プロキシまたはファイアウォールが *.argotunnel.com と *.cftunnel.com を許可しているか確認してください。",
+        "edge": {
+          "label": "エッジアドレス",
+          "staticActive": "fake-IP を回避し、実際のエッジアドレスに直接接続",
+          "bypassed": "ローカルのプロキシが Cloudflare のエッジドメインを fake-IP（198.18.x）に解決しているため、トンネルは実際のエッジアドレスへ直接接続しています。",
+          "bypassFailed": "ローカルのプロキシが Cloudflare のエッジドメインを fake-IP（198.18.x）に解決しており、エッジの 7844 ポートに到達できません。自動回避も失敗しました。",
+          "bypassFailedFix": "プロキシ（Surge など）で *.argotunnel.com を always-real-ip に追加し、argotunnel.com と cftunnel.com に DIRECT ルールを設定してください。",
+          "bypassFailedRetry": "その後、プロキシの DNS キャッシュを消去するかプロキシを再起動し、トンネルを再起動してください。"
+        },
         "connector": {
           "label": "コネクタ",
           "connected": "エッジ接続 {{n}} 本",
@@ -2036,6 +2044,7 @@
           "quotaBandwidth": "帯域",
           "quotaValue": "{{used}} / {{total}}",
           "quotaUnlimited": "無制限",
+          "quotaUnlimitedValue": "{{used}}（無制限）",
           "nodeId": "本機の ID",
           "hubs": "Hub の詳細"
         },

@@ -21,6 +21,7 @@ import {
   defaultApiClient,
   downloadFileWithProgress,
   formatBytes,
+  formatBytesPair,
   formatRate,
   uploadFileChunked,
 } from '@tmex/api-client';
@@ -147,7 +148,7 @@ async function uploadViaBulk(
 ): Promise<void> {
   const { onLeg, signal } = opts;
   const total = file.size;
-  const detail = (n: number) => `${formatBytes(n)} / ${formatBytes(total)}`;
+  const detail = (n: number) => formatBytesPair(n, total);
   let uploadId = '';
 
   try {
@@ -274,7 +275,7 @@ async function drainBulkDownload(
   opts: TransferPathOpts
 ): Promise<Blob> {
   const { onLeg, signal } = opts;
-  const detail = (n: number) => `${formatBytes(n)} / ${formatBytes(size)}`;
+  const detail = (n: number) => formatBytesPair(n, size);
   onLeg?.(2, { pct: 0, detail: detail(0) });
   const startedAt = performance.now();
   const stream = bulk.download({

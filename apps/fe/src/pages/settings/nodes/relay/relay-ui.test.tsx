@@ -231,6 +231,20 @@ describe('三档配额', () => {
     expect(rows[2]?.usedText).toBe('6.00 KB/s');
   });
 
+  test('带宽用量是浮点时最多两位小数', () => {
+    const rows = relayQuotaRows({
+      ...quota,
+      usage: {
+        currentNodes: 1,
+        currentStreams: 1,
+        bytesInPerSec: 237.51937984496124,
+        bytesOutPerSec: 0,
+        sampledAt: 1,
+      },
+    });
+    expect(rows[2]?.usedText).toBe('237.52 B/s');
+  });
+
   test('旧中继不下发用量：只剩上限，也没有进度条', () => {
     const rows = relayQuotaRows({ ...quota, usage: null });
     expect(rows[0]?.usedText).toBe('5');

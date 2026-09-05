@@ -1,6 +1,6 @@
 // 指标磁贴：紧凑排（本机卡片）与完整排（中继标签）共用同一批格子，差别只在摆哪几个。
 
-import { formatBytes } from '@tmex/api-client/format';
+import { formatBytes, formatRate } from '@tmex/api-client/format';
 import type { RelayMetricsResponse } from '@tmex/api-client/relay/metrics-types';
 import { Skeleton } from '@tmex/ui/skeleton';
 import { Sparkline } from '@tmex/ui/sparkline';
@@ -8,7 +8,6 @@ import { StatTile } from '@tmex/ui/stat-tile';
 import type * as React from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  formatBytesPerSec,
   formatDuration,
   formatFramesPerSec,
   formatMs,
@@ -89,13 +88,13 @@ export function ThroughputTile({
   return (
     <StatTile
       label={t('relay.metrics.tiles.throughput')}
-      value={formatBytesPerSec(totals.bytesInPerSec + totals.bytesOutPerSec)}
+      value={formatRate(totals.bytesInPerSec + totals.bytesOutPerSec)}
       sub={
         showTotal
           ? t('relay.metrics.tiles.throughputTotal', { total: trafficText(totals.bytesOut) })
           : t('relay.metrics.tiles.throughputSub', {
-              out: formatBytesPerSec(totals.bytesOutPerSec),
-              in: formatBytesPerSec(totals.bytesInPerSec),
+              out: formatRate(totals.bytesOutPerSec),
+              in: formatRate(totals.bytesInPerSec),
             })
       }
       stale={stale}
@@ -119,7 +118,7 @@ export function BytesInTile({ data, trends, stale }: MetricsTileProps) {
   return (
     <StatTile
       label={t('relay.metrics.tiles.bytesIn')}
-      value={formatBytesPerSec(data.totals.bytesInPerSec)}
+      value={formatRate(data.totals.bytesInPerSec)}
       stale={stale}
       sparkline={
         <Sparkline
@@ -140,7 +139,7 @@ export function BytesOutTile({ data, trends, stale }: MetricsTileProps) {
   return (
     <StatTile
       label={t('relay.metrics.tiles.bytesOut')}
-      value={formatBytesPerSec(data.totals.bytesOutPerSec)}
+      value={formatRate(data.totals.bytesOutPerSec)}
       stale={stale}
       sparkline={
         <Sparkline

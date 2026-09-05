@@ -3,7 +3,7 @@
 import type { UploadCommitEvent, UploadInitRequest, UploadInitResponse } from '@tmex/shared';
 import { type ApiClient, defaultApiClient } from './client';
 import { FileApiError, parseError } from './file-errors';
-import { formatBytes, formatRate } from './format';
+import { formatBytesPair, formatRate } from './format';
 import { readNdjsonStream } from './ndjson-stream';
 import type { TransferOpts } from './transfer-types';
 
@@ -21,7 +21,7 @@ export async function uploadFileChunked(
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   };
   const total = file.size;
-  const bytes = (n: number) => `${formatBytes(n)} / ${formatBytes(total)}`;
+  const bytes = (n: number) => formatBytesPair(n, total);
   const initBody: UploadInitRequest = { rootId, path: destDir, name: file.name, size: total };
   const initRes = await client.fetch('/api/files/upload/init', {
     method: 'POST',

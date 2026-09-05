@@ -506,6 +506,14 @@ export const I18N_RESOURCES = {
         },
         "degradedNotice": "The tunnel process is running but has no edge connections; the public URL is unreachable.",
         "degradedHint": "cloudflared cannot reach the Cloudflare edge (TCP/UDP 7844). Check that the proxy or firewall allows *.argotunnel.com and *.cftunnel.com.",
+        "edge": {
+          "label": "Edge address",
+          "staticActive": "Fake-IP bypassed, connecting to real edge addresses",
+          "bypassed": "A local proxy resolves the Cloudflare edge hostnames to fake IPs (198.18.x); the tunnel now connects to the real edge addresses instead.",
+          "bypassFailed": "A local proxy resolves the Cloudflare edge hostnames to fake IPs (198.18.x), edge port 7844 is unreachable, and the automatic bypass failed.",
+          "bypassFailedFix": "In the proxy (e.g. Surge), add *.argotunnel.com to always-real-ip and add DIRECT rules for argotunnel.com and cftunnel.com.",
+          "bypassFailedRetry": "Then flush the proxy DNS cache or restart the proxy, and restart the tunnel."
+        },
         "connector": {
           "label": "Connector",
           "connected": "Edge connections: {{n}}",
@@ -2042,6 +2050,7 @@ export const I18N_RESOURCES = {
           "quotaBandwidth": "Bandwidth",
           "quotaValue": "{{used}} / {{total}}",
           "quotaUnlimited": "Unlimited",
+          "quotaUnlimitedValue": "{{used}} (Unlimited)",
           "nodeId": "This machine's ID",
           "hubs": "Hub details"
         },
@@ -2812,7 +2821,7 @@ export const I18N_RESOURCES = {
           "eventLoopHint": "Event loop lag; above 100 ms forwarding is queueing.",
           "memory": "Memory",
           "memorySub": "heap {{heap}}",
-          "memoryHeapSub": "heap {{heap}} of {{total}}",
+          "memoryHeapSub": "heap {{heap}} / {{total}}",
           "cpu": "CPU",
           "sockets": "Sockets",
           "socketsSub": "{{authenticated}} authenticated",
@@ -3614,6 +3623,14 @@ export const I18N_RESOURCES = {
         },
         "degradedNotice": "隧道进程运行中，但无边缘连接，公网地址当前不可达。",
         "degradedHint": "cloudflared 连不上 Cloudflare 边缘（TCP/UDP 7844）。请检查代理或防火墙是否放行 *.argotunnel.com 与 *.cftunnel.com。",
+        "edge": {
+          "label": "边缘地址",
+          "staticActive": "已绕开 fake-IP，直连真实边缘地址",
+          "bypassed": "本机代理把 Cloudflare 边缘域名解析成 fake-IP（198.18.x），隧道已改用真实边缘地址直连。",
+          "bypassFailed": "本机代理把 Cloudflare 边缘域名解析成 fake-IP（198.18.x），边缘 7844 端口不可达，自动绕开未成功。",
+          "bypassFailedFix": "请在代理（如 Surge）中把 *.argotunnel.com 加入 always-real-ip，并为 argotunnel.com、cftunnel.com 添加 DIRECT 规则。",
+          "bypassFailedRetry": "改完清空代理 DNS 缓存或重启代理，再重启隧道。"
+        },
         "connector": {
           "label": "连接器",
           "connected": "{{n}} 条边缘连接",
@@ -5150,6 +5167,7 @@ export const I18N_RESOURCES = {
           "quotaBandwidth": "带宽",
           "quotaValue": "{{used}} / {{total}}",
           "quotaUnlimited": "不限",
+          "quotaUnlimitedValue": "{{used}}（不限）",
           "nodeId": "本机编号",
           "hubs": "Hub 明细"
         },
@@ -6717,6 +6735,14 @@ export const I18N_RESOURCES = {
         },
         "degradedNotice": "トンネルのプロセスは稼働中ですが、エッジ接続がなく、公開アドレスに到達できません。",
         "degradedHint": "cloudflared が Cloudflare エッジ（TCP/UDP 7844）に到達できません。プロキシまたはファイアウォールが *.argotunnel.com と *.cftunnel.com を許可しているか確認してください。",
+        "edge": {
+          "label": "エッジアドレス",
+          "staticActive": "fake-IP を回避し、実際のエッジアドレスに直接接続",
+          "bypassed": "ローカルのプロキシが Cloudflare のエッジドメインを fake-IP（198.18.x）に解決しているため、トンネルは実際のエッジアドレスへ直接接続しています。",
+          "bypassFailed": "ローカルのプロキシが Cloudflare のエッジドメインを fake-IP（198.18.x）に解決しており、エッジの 7844 ポートに到達できません。自動回避も失敗しました。",
+          "bypassFailedFix": "プロキシ（Surge など）で *.argotunnel.com を always-real-ip に追加し、argotunnel.com と cftunnel.com に DIRECT ルールを設定してください。",
+          "bypassFailedRetry": "その後、プロキシの DNS キャッシュを消去するかプロキシを再起動し、トンネルを再起動してください。"
+        },
         "connector": {
           "label": "コネクタ",
           "connected": "エッジ接続 {{n}} 本",
@@ -8253,6 +8279,7 @@ export const I18N_RESOURCES = {
           "quotaBandwidth": "帯域",
           "quotaValue": "{{used}} / {{total}}",
           "quotaUnlimited": "無制限",
+          "quotaUnlimitedValue": "{{used}}（無制限）",
           "nodeId": "本機の ID",
           "hubs": "Hub の詳細"
         },
