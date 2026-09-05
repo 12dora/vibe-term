@@ -38,11 +38,6 @@ export interface RelayAdmitFollowUpInput {
  */
 const handledAdmits = new Set<string>();
 
-/** 仅测试使用。 */
-export function resetRelayAdmitFollowUpForTest(): void {
-  handledAdmits.clear();
-}
-
 export function useRelayAdmitFollowUp(input: RelayAdmitFollowUpInput): void {
   const { t } = useTranslation();
   const { admittedIds, api, enabled, mode } = input;

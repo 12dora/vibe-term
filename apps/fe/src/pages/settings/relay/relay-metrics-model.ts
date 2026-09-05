@@ -141,8 +141,6 @@ export interface MemberFilter {
   tenantId: string | null;
 }
 
-export const EMPTY_MEMBER_FILTER: MemberFilter = { query: '', state: 'all', tenantId: null };
-
 function matchesQuery(member: RelayMetricsMember, query: string): boolean {
   return (
     memberTitle(member).toLowerCase().includes(query) ||

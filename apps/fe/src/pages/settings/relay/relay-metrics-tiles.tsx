@@ -38,7 +38,7 @@ const THIN_TILE = '[&_[data-slot=stat-tile-value]]:text-base';
 const SPARK_WIDTH = 72;
 const SPARK_HEIGHT = 24;
 
-export function MembersOnlineTile({ data, stale }: MetricsTileProps) {
+function MembersOnlineTile({ data, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   const { totals } = data;
   return (
@@ -53,7 +53,7 @@ export function MembersOnlineTile({ data, stale }: MetricsTileProps) {
   );
 }
 
-export function ActiveStreamsTile({ data, trends, stale }: MetricsTileProps) {
+function ActiveStreamsTile({ data, trends, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   return (
     <StatTile
@@ -113,7 +113,7 @@ export function ThroughputTile({
   );
 }
 
-export function BytesInTile({ data, trends, stale }: MetricsTileProps) {
+function BytesInTile({ data, trends, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   return (
     <StatTile
@@ -134,7 +134,7 @@ export function BytesInTile({ data, trends, stale }: MetricsTileProps) {
   );
 }
 
-export function BytesOutTile({ data, trends, stale }: MetricsTileProps) {
+function BytesOutTile({ data, trends, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   return (
     <StatTile
@@ -155,7 +155,7 @@ export function BytesOutTile({ data, trends, stale }: MetricsTileProps) {
   );
 }
 
-export function FramesTile({ data, stale }: MetricsTileProps) {
+function FramesTile({ data, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   const { totals } = data;
   return (
@@ -173,7 +173,7 @@ export function FramesTile({ data, stale }: MetricsTileProps) {
   );
 }
 
-export function LatencyTile({ data, stale }: MetricsTileProps) {
+function LatencyTile({ data, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   const median = medianMemberRttMs(data.members);
   const max = maxMemberRttMs(data.members);
@@ -196,7 +196,7 @@ export function LatencyTile({ data, stale }: MetricsTileProps) {
   );
 }
 
-export function EventLoopTile({ data, trends, stale }: MetricsTileProps) {
+function EventLoopTile({ data, trends, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   const { eventLoop } = data.process;
   return (
@@ -224,7 +224,7 @@ export function EventLoopTile({ data, trends, stale }: MetricsTileProps) {
  * 常驻内存（RSS）。`showHeapTotal` 是完整排的取法：那里没有单独的堆格子，
  * 堆的已用 / 总量一并挂在副行上；紧凑排位置窄，只留已用量。
  */
-export function MemoryTile({
+function MemoryTile({
   data,
   stale,
   className,
@@ -252,7 +252,7 @@ export function MemoryTile({
   );
 }
 
-export function CpuTile({ data, stale, className }: MetricsTileProps & { className?: string }) {
+function CpuTile({ data, stale, className }: MetricsTileProps & { className?: string }) {
   const { t } = useTranslation();
   const pct = data.process.cpu.utilizationPct;
   return (
@@ -271,7 +271,7 @@ export function CpuTile({ data, stale, className }: MetricsTileProps & { classNa
  * 累计转发流量。中继每转发一帧都同时计进 `bytesIn` 与 `bytesOut`，两个计数逐字节相等，
  * 摆两列只会让人以为统计坏了——沿用旧「总量」卡的口径，只出一个数（见 relay-format 的 trafficText）。
  */
-export function TrafficTile({ data, stale }: MetricsTileProps) {
+function TrafficTile({ data, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   return (
     <StatTile
@@ -285,7 +285,7 @@ export function TrafficTile({ data, stale }: MetricsTileProps) {
   );
 }
 
-export function SocketsTile({ data, stale }: MetricsTileProps) {
+function SocketsTile({ data, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   const { openSockets, authenticatedLinks } = data.process;
   return (
@@ -300,7 +300,7 @@ export function SocketsTile({ data, stale }: MetricsTileProps) {
 }
 
 /** 各成员重连次数之和：单看在线数看不出链路在反复抖动，这一格才看得出来。 */
-export function ReconnectsTile({ data, stale }: MetricsTileProps) {
+function ReconnectsTile({ data, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   const total = totalMemberReconnects(data.members);
   return (
@@ -316,7 +316,7 @@ export function ReconnectsTile({ data, stale }: MetricsTileProps) {
   );
 }
 
-export function UptimeTile({ data, stale, className }: MetricsTileProps & { className?: string }) {
+function UptimeTile({ data, stale, className }: MetricsTileProps & { className?: string }) {
   const { t } = useTranslation();
   return (
     <StatTile

@@ -1,15 +1,6 @@
 // 选「纯中继」前的确认：这一档重启后网页整个消失，只剩 CLI，选错了没法在网页里改回来。
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
+import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
 import { useTranslation } from 'react-i18next';
 
 export function PureRelayConfirm({
@@ -23,29 +14,20 @@ export function PureRelayConfirm({
 }) {
   const { t } = useTranslation();
   return (
-    <AlertDialog
+    <ConfirmDialog
       open={open}
-      onOpenChange={(next) => {
-        if (!next) onCancel();
-      }}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      variant="default"
+      title={t('nodes.setup.pureRelayConfirm.title')}
+      cancelLabel={t('nodes.membership.cancel')}
+      confirmLabel={t('nodes.setup.pureRelayConfirm.confirm')}
+      testId="setup-pure-relay-confirm"
+      cancelTestId="setup-pure-relay-cancel"
+      confirmTestId="setup-pure-relay-confirm-ok"
     >
-      <AlertDialogContent data-testid="setup-pure-relay-confirm">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t('nodes.setup.pureRelayConfirm.title')}</AlertDialogTitle>
-          <AlertDialogDescription>
-            <span className="block">{t('nodes.setup.pureRelayConfirm.description')}</span>
-            <span className="mt-2 block font-mono">tmex relay status</span>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel onClick={onCancel} data-testid="setup-pure-relay-cancel">
-            {t('nodes.membership.cancel')}
-          </AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} data-testid="setup-pure-relay-confirm-ok">
-            {t('nodes.setup.pureRelayConfirm.confirm')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      <span className="block">{t('nodes.setup.pureRelayConfirm.description')}</span>
+      <span className="mt-2 block font-mono">tmex relay status</span>
+    </ConfirmDialog>
   );
 }

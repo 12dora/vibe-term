@@ -282,10 +282,6 @@ export function unpublishKeepAlivePool(owner: KeepAlivePoolOwner): void {
   publishedPool = createKeepAlivePool();
 }
 
-export function readKeepAlivePool(): KeepAlivePool {
-  return publishedPool;
-}
-
 export function isWarmSelectTarget(deviceId: string, paneId: string): boolean {
   return isKeepAliveWarmTarget(publishedPool, deviceId, paneId);
 }
