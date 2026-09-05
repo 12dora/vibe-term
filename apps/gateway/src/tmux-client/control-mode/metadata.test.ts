@@ -54,3 +54,48 @@ describe('ControlModeMetadataBridge', () => {
     });
   });
 });
+
+describe('parking window events never reach the frontend', () => {
+  function bridgeWithParking(windowId = '@9'): ControlModeMetadataBridge {
+    const bridge = new ControlModeMetadataBridge();
+    bridge.noteParkingWindow(windowId);
+    return bridge;
+  }
+
+  test('activating the parking window is not reported', () => {
+    const bridge = bridgeWithParking();
+    expect(bridge.parse({ type: 'session-window-changed', args: '$0 @9', raw: '' })).toBeNull();
+    expect(bridge.parse({ type: 'session-window-changed', args: '$0 @1', raw: '' })).toEqual({
+      type: 'session-window-changed',
+      sessionId: '$0',
+      windowId: '@1',
+    });
+  });
+
+  test('closing the parking window is not reported and forgets its id', () => {
+    const bridge = bridgeWithParking();
+    expect(bridge.isParkingWindow('@9')).toBe(true);
+    expect(bridge.parse({ type: 'window-close', args: '@9', raw: '' })).toBeNull();
+    expect(bridge.isParkingWindow('@9')).toBe(false);
+    expect(bridge.parse({ type: 'window-close', args: '@1', raw: '' })).toEqual({
+      type: 'window-close',
+      windowId: '@1',
+    });
+  });
+
+  test('a rename to the parking name is swallowed and learns the id', () => {
+    const bridge = new ControlModeMetadataBridge();
+    expect(bridge.parse({ type: 'window-renamed', args: '@7 tmex-park', raw: '' })).toBeNull();
+    expect(bridge.isParkingWindow('@7')).toBe(true);
+    expect(bridge.parse({ type: 'window-renamed', args: '@7 zsh', raw: '' })).toBeNull();
+  });
+
+  test('only the most recent parking ids are remembered', () => {
+    const bridge = new ControlModeMetadataBridge();
+    for (const id of ['@1', '@2', '@3', '@4', '@5']) bridge.noteParkingWindow(id);
+    expect(bridge.isParkingWindow('@1')).toBe(false);
+    expect(bridge.isParkingWindow('@5')).toBe(true);
+    bridge.noteParkingWindow(null);
+    expect(bridge.isParkingWindow('@5')).toBe(true);
+  });
+});

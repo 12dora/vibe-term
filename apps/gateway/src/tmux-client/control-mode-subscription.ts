@@ -43,6 +43,8 @@ export interface ControlModeSubscription {
   push(chunk: Uint8Array): void;
   end(): void;
   prunePanes(validPaneIds: ReadonlySet<string>): void;
+  /** 登记本次 attach 的 `tmex-park` 窗口，使其元数据事件不外泄。 */
+  noteParkingWindow(windowId: string | null): void;
   dispose(): void;
 }
 
@@ -159,6 +161,9 @@ export function createControlModeSubscription(
     },
     prunePanes(validPaneIds) {
       paneParsers.prune(validPaneIds);
+    },
+    noteParkingWindow(windowId) {
+      metadata.noteParkingWindow(windowId);
     },
     dispose() {
       disposed = true;

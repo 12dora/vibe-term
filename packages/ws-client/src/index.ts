@@ -26,6 +26,8 @@ export {
   setDefaultClientVersion,
 } from './client';
 
+export type { PendingDropReason } from './pending-send-queue';
+
 export {
   TERM_VIEWPORT_MIN_SERVER_VERSION,
   serverSupportsTermViewport,

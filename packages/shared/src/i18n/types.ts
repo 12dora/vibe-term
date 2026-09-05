@@ -327,6 +327,7 @@ export type TranslationKey =
   | 'terminal.clear'
   | 'terminal.windowClosed'
   | 'terminal.paneClosed'
+  | 'terminal.staleInputDropped'
   | 'terminal.bellDescriptionWithTitle'
   | 'terminal.notificationFallbackTitle'
   | 'terminal.notificationSourceLabel'

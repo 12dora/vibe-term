@@ -157,6 +157,7 @@
       "clear": "清空",
       "windowClosed": "当前窗口已关闭，请在侧边栏重新选择窗口。",
       "paneClosed": "当前终端已关闭，请在侧边栏重新选择。",
+      "staleInputDropped": "断线期间的输入已丢弃",
       "bellDescriptionWithTitle": "窗口 {{window}} · {{paneLabel}}",
       "notificationFallbackTitle": "终端通知",
       "notificationSourceLabel": "来自 {{source}}",

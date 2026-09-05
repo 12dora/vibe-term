@@ -85,6 +85,10 @@ export async function reconnectControlChannel(
     console.warn(`${host.logPrefix} control client restart failed on ${host.deviceId}:`, error);
     return;
   }
+  // 每次重挂都会建/删一次聚焦护盾窗口：留痕才能把 %window-close 与重连对上
+  console.info(
+    `${host.logPrefix} control client reattached device=${host.deviceId} attempt=${host.controlRestartCount} session=${host.sessionName}`
+  );
   host.requestSnapshot();
   if (host.activePaneId) void host.capturePaneHistory(host.activePaneId).catch(() => undefined);
 }

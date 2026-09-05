@@ -4,6 +4,7 @@
 import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@tmex/shared';
 import type { ClientSendResult, ConnectionState, StateFeedMode } from './client';
 import type { MovePanePosition } from './message-builder';
+import type { PendingDropReason } from './pending-send-queue';
 
 export type ServerTooOldSide = 'gateway' | 'node' | 'client';
 
@@ -118,6 +119,8 @@ export type GatewayTransportEvent =
   | { type: 'transport-error'; error: Error }
   | {
       type: 'pending-overflow';
+      /** overflow = 待发预算耗尽；stale = 断线期间缓冲的输入过期被丢弃。 */
+      reason?: PendingDropReason;
       kind: number;
       pendingFrames: number;
       pendingBytes: number;

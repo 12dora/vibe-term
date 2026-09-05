@@ -363,6 +363,7 @@
       "clear": "Clear",
       "windowClosed": "Current window has been closed, please select a window from the sidebar.",
       "paneClosed": "The current terminal has been closed. Select another one from the sidebar.",
+      "staleInputDropped": "Input typed while disconnected was discarded",
       "bellDescriptionWithTitle": "Window {{window}} · {{paneLabel}}",
       "notificationFallbackTitle": "Terminal Notification",
       "notificationSourceLabel": "From {{source}}",

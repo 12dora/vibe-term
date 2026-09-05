@@ -45,6 +45,7 @@ export interface ControlModeHost {
 
 export class ControlModeLifecycle {
   private lastTerminalOutputAt = 0;
+  private attachedOnce = false;
 
   constructor(private readonly host: ControlModeHost) {}
 
@@ -56,19 +57,33 @@ export class ControlModeLifecycle {
       attachReadyResolve = resolve;
     });
 
+    const reattach = this.attachedOnce;
+    this.attachedOnce = true;
     const parkingWindowId = await this.host.createParkingWindow();
+    console.debug(
+      `${this.host.logPrefix} parking window created id=${parkingWindowId ?? 'none'} reason=${
+        reattach ? 'reattach' : 'attach'
+      } device=${this.host.deviceId}`
+    );
     let transport: ExternalControlHandle;
     try {
       transport = await this.host.attachControlTransport(() => {
         attachReadyResolve?.();
         attachReadyResolve = null;
       });
+      // attach 之后订阅才存在：先登记护盾窗口 id，再删窗口，%window-close 才会被过滤掉
+      this.host.controlSubscription?.noteParkingWindow(parkingWindowId);
       await Promise.race([
         attachReady,
         new Promise<void>((resolve) => setTimeout(resolve, CONTROL_ATTACH_READY_TIMEOUT_MS)),
       ]);
     } finally {
       await this.host.removeParkingWindow(parkingWindowId);
+      console.debug(
+        `${this.host.logPrefix} parking window removed id=${parkingWindowId ?? 'none'} reason=${
+          reattach ? 'reattach' : 'attach'
+        } device=${this.host.deviceId}`
+      );
     }
 
     if (!this.host.isAttachedControlTransport(transport)) {

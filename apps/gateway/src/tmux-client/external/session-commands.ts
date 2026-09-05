@@ -23,8 +23,9 @@ import {
 import { SNAPSHOT_FIELD_SEPARATOR, isTmuxPaneId, isTmuxWindowId } from '../snapshot-format';
 import { TmuxTargetMissingError, isTargetMissingMessage } from '../target-missing';
 import { resolveTmuxWindowStyle } from '../window-style';
-import { PARKING_WINDOW_NAME } from './constants';
+import { logTmuxDestroy } from './destroy-log';
 import { hasRenderableTerminalContent, isTmuxServerGoneMessage } from './helpers';
+import { createParkingWindow, removeParkingWindow } from './parking-window';
 import type { CommandResult } from './types';
 
 export interface SessionCommandHost {
@@ -168,6 +169,7 @@ export class SessionCommands {
   }
 
   closePane(paneId: string): void {
+    logTmuxDestroy(this.host, 'kill-pane', paneId);
     this.fire(() => this.runAndRefresh(['kill-pane', '-t', paneId], true));
   }
 
@@ -475,32 +477,11 @@ export class SessionCommands {
   }
 
   async createParkingWindow(): Promise<string | null> {
-    const result = await this.host.runTmuxAllowFailure([
-      'new-window',
-      '-t',
-      this.host.sessionName,
-      '-n',
-      PARKING_WINDOW_NAME,
-      '-P',
-      '-F',
-      '#{window_id}',
-      this.host.getParkingCommand(),
-    ]);
-    if (result.exitCode !== 0) {
-      console.warn(
-        `${this.host.logPrefix} failed to create parking window on ${this.host.deviceId}, attaching without focus shield`
-      );
-      return null;
-    }
-    return result.stdout.trim() || null;
+    return createParkingWindow(this.host);
   }
 
   async removeParkingWindow(windowId: string | null): Promise<void> {
-    if (!windowId) {
-      return;
-    }
-    await this.host.runTmuxAllowFailure(['last-window', '-t', this.host.sessionName]);
-    await this.host.runTmuxAllowFailure(['kill-window', '-t', windowId]);
+    return removeParkingWindow(this.host, windowId);
   }
 
   async runAndRefresh(argv: string[], allowTargetMissing = false): Promise<void> {
@@ -533,6 +514,7 @@ export class SessionCommands {
       ]);
     }
 
+    logTmuxDestroy(this.host, 'kill-window', windowId);
     await this.runAndRefresh(['kill-window', '-t', windowId], true);
   }
 

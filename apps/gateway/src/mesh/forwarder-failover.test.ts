@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import { wsBorsh } from '@tmex/shared';
 import type { LinkSession } from '@tmex/shared/link';
-import { type ForwardPump, type StreamFailoverHost, runStreamFailover } from './forwarder-failover';
+import {
+  type ForwardPump,
+  STREAM_STALE_INPUT_TTL_MS,
+  type StreamFailoverHost,
+  dropStaleQueuedInput,
+  runStreamFailover,
+} from './forwarder-failover';
 import {
   type OpenedWsStream,
   STREAM_FAILOVER_BACKOFF_MS,
@@ -115,6 +122,7 @@ function makePump(): ForwardPump {
     failingOver: false,
     failoverAbort: null,
     queue: [new Uint8Array([1, 2, 3])],
+    queuedAt: [Date.now()],
     helloWait: null,
     resumeWait: null,
     streamAlive: true,
@@ -222,5 +230,87 @@ describe('runStreamFailover 终止路径不留上游流', () => {
     expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-error' }]);
     expect(pump.inflight).toBeNull();
     expect(pump.browserClosed).toBe(true);
+  });
+});
+
+describe('dropStaleQueuedInput', () => {
+  const inputFrame = (): Uint8Array =>
+    wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_INPUT, new Uint8Array([1, 2, 3]), 1);
+  const structuralFrame = (): Uint8Array =>
+    wsBorsh.encodeEnvelope(wsBorsh.KIND_DEVICE_CONNECT, new Uint8Array([7]), 2);
+
+  test('超过 TTL 的输入帧被丢弃，结构帧与新鲜输入保留', () => {
+    const now = 100_000;
+    const stale = inputFrame();
+    const fresh = inputFrame();
+    const structural = structuralFrame();
+    const pump = {
+      queue: [stale, structural, fresh],
+      queuedAt: [
+        now - STREAM_STALE_INPUT_TTL_MS - 1,
+        now - STREAM_STALE_INPUT_TTL_MS - 1,
+        now - 10,
+      ],
+      queueBytes: stale.byteLength + structural.byteLength + fresh.byteLength,
+    };
+
+    const result = dropStaleQueuedInput(pump, now);
+
+    expect(result.droppedFrames).toBe(1);
+    expect(result.droppedBytes).toBe(stale.byteLength);
+    expect(result.oldestAgeMs).toBe(STREAM_STALE_INPUT_TTL_MS + 1);
+    expect(pump.queue).toEqual([structural, fresh]);
+    expect(pump.queueBytes).toBe(structural.byteLength + fresh.byteLength);
+  });
+
+  test('TTL 内不丢帧', () => {
+    const now = 100_000;
+    const frame = inputFrame();
+    const pump = {
+      queue: [frame],
+      queuedAt: [now - STREAM_STALE_INPUT_TTL_MS],
+      queueBytes: frame.byteLength,
+    };
+    expect(dropStaleQueuedInput(pump, now).droppedFrames).toBe(0);
+    expect(pump.queue).toHaveLength(1);
+  });
+
+  test('解不出信封的裸帧一律保留', () => {
+    const now = 100_000;
+    const opaque = new Uint8Array([0, 1, 2, 3]);
+    const pump = {
+      queue: [opaque],
+      queuedAt: [now - 60_000],
+      queueBytes: opaque.byteLength,
+    };
+    expect(dropStaleQueuedInput(pump, now).droppedFrames).toBe(0);
+    expect(pump.queue).toEqual([opaque]);
+  });
+});
+
+describe('runStreamFailover 丢弃过期排队输入', () => {
+  test('恢复后不补发过期输入，并打一行日志', async () => {
+    const pump = makePump();
+    const stale = wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_INPUT, new Uint8Array([1]), 1);
+    pump.queue = [stale];
+    pump.queuedAt = [Date.now() - STREAM_STALE_INPUT_TTL_MS - 500];
+    pump.queueBytes = stale.byteLength;
+    const lines: string[] = [];
+    const tracked = trackingHost({ log: (line) => lines.push(line) });
+
+    await runStreamFailover(tracked.host, pump, { code: 1011, reason: 'reset' });
+
+    expect(pump.queue).toHaveLength(0);
+    expect(pump.queueBytes).toBe(0);
+    const dropLines = lines.filter((line) =>
+      line.startsWith('[mesh][stream] dropped stale queued input')
+    );
+    expect(dropLines).toHaveLength(1);
+    expect(dropLines[0]).toMatch(
+      new RegExp(
+        `^\\[mesh\\]\\[stream\\] dropped stale queued input bytes=${stale.byteLength} age_ms=\\d+$`
+      )
+    );
+    expect(tracked.flushed).toBe(1);
   });
 });

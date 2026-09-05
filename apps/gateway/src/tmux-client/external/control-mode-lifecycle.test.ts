@@ -49,6 +49,7 @@ describe('ControlModeLifecycle', () => {
         push: () => {},
         end: () => {},
         prunePanes: () => {},
+        noteParkingWindow: () => {},
       },
       callbacks: createCallbacks(),
       async createParkingWindow() {

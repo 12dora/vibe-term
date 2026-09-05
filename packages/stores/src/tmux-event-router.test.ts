@@ -833,4 +833,21 @@ describe('tmux transport event router', () => {
       'websocket.inputDropped'
     );
   });
+
+  test('stale pending input drop shows its own notice', () => {
+    const harness = createHarness();
+
+    harness.route({
+      type: 'pending-overflow',
+      reason: 'stale',
+      kind: 0x0301,
+      pendingFrames: 1,
+      pendingBytes: 8,
+      droppedFrames: 3,
+    } as GatewayTransportEvent);
+
+    const notices = harness.namesOf('notify:error').map((call) => call.args[0]);
+    expect(notices).toContain('terminal.staleInputDropped');
+    expect(notices).not.toContain('websocket.inputDropped');
+  });
 });

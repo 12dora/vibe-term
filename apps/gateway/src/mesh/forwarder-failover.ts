@@ -1,3 +1,4 @@
+import { wsBorsh } from '@tmex/shared';
 import { gatewayEventLoopLag } from '../ws/event-loop-lag';
 import {
   failoverCauseOf,
@@ -31,6 +32,8 @@ export type ForwardPump = {
   failingOver: boolean;
   failoverAbort: AbortController | null;
   queue: Uint8Array[];
+  /** 与 queue 一一对应的入队时刻，用于 failover 恢复时丢弃过期输入。 */
+  queuedAt: number[];
   helloWait: (() => void) | null;
   resumeWait: (() => void) | null;
   streamAlive: boolean;
@@ -52,6 +55,64 @@ export type StreamFailoverHost = {
   sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void;
   flushQueue(pump: ForwardPump): void;
 };
+
+/** 与前端 `STALE_INPUT_TTL_MS` 同值：failover 期间排队超过它的终端输入不再补发。 */
+export const STREAM_STALE_INPUT_TTL_MS = 10_000;
+
+/** 队列里是不透明的 mux 帧，只能解信封判定；解不出的一律当结构帧保留。 */
+function isOrderedInputFrame(bytes: Uint8Array): boolean {
+  let env: wsBorsh.Envelope;
+  try {
+    env = wsBorsh.decodeEnvelopeView(bytes);
+  } catch {
+    return false;
+  }
+  if (env.kind === wsBorsh.KIND_TERM_INPUT || env.kind === wsBorsh.KIND_TERM_PASTE) return true;
+  if (env.kind !== wsBorsh.KIND_CANONICAL_COMMAND) return false;
+  try {
+    return 'TerminalInput' in wsBorsh.decodeCanonicalCommandPayload(env.payload).command;
+  } catch {
+    return false;
+  }
+}
+
+export type StaleQueueDrop = { droppedFrames: number; droppedBytes: number; oldestAgeMs: number };
+
+/**
+ * failover 恢复后不再补发排队过久的终端输入：用户对着卡住的终端敲的 `exit` / Ctrl-D
+ * 几十秒后落到已恢复的 pane 会杀掉里面的进程。只丢输入帧，结构帧（订阅、连接、resize）照旧。
+ */
+export function dropStaleQueuedInput(
+  pump: Pick<ForwardPump, 'queue' | 'queuedAt' | 'queueBytes'>,
+  now: number,
+  ttlMs: number = STREAM_STALE_INPUT_TTL_MS
+): StaleQueueDrop {
+  const keptFrames: Uint8Array[] = [];
+  const keptAt: number[] = [];
+  let droppedFrames = 0;
+  let droppedBytes = 0;
+  let oldestAgeMs = 0;
+  for (let index = 0; index < pump.queue.length; index += 1) {
+    const bytes = pump.queue[index];
+    const age = now - (pump.queuedAt[index] ?? now);
+    if (age > ttlMs && isOrderedInputFrame(bytes)) {
+      droppedFrames += 1;
+      droppedBytes += bytes.byteLength;
+      oldestAgeMs = Math.max(oldestAgeMs, age);
+      continue;
+    }
+    keptFrames.push(bytes);
+    keptAt.push(pump.queuedAt[index] ?? now);
+  }
+  if (droppedFrames > 0) {
+    pump.queue.length = 0;
+    pump.queue.push(...keptFrames);
+    pump.queuedAt.length = 0;
+    pump.queuedAt.push(...keptAt);
+    pump.queueBytes = Math.max(0, pump.queueBytes - droppedBytes);
+  }
+  return { droppedFrames, droppedBytes, oldestAgeMs };
+}
 
 function safeLog(host: StreamFailoverHost, line: string): void {
   try {
@@ -276,6 +337,13 @@ async function completeFailover(
   );
   pump.failingOver = false;
   pump.failoverAbort = null;
+  const stale = dropStaleQueuedInput(pump, Date.now());
+  if (stale.droppedFrames > 0) {
+    safeLog(
+      host,
+      `[mesh][stream] dropped stale queued input bytes=${stale.droppedBytes} age_ms=${stale.oldestAgeMs}`
+    );
+  }
   host.flushQueue(pump);
   for (const frame of pump.replay.browserSignalFrames()) {
     host.sendToBrowser(pump, frame);

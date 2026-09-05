@@ -14,7 +14,11 @@ import type {
   ConnectionState,
   StateFeedMode,
 } from './client';
-import { DEFAULT_MAX_PENDING_BYTES, DEFAULT_MAX_PENDING_FRAMES } from './pending-send-queue';
+import {
+  DEFAULT_MAX_PENDING_BYTES,
+  DEFAULT_MAX_PENDING_FRAMES,
+  STALE_INPUT_TTL_MS,
+} from './pending-send-queue';
 import { encodeGatewayTransportCommand } from './transport-command-encoder';
 import { decodeGatewayTransportMessage } from './transport-message-decoder';
 import type {
@@ -29,6 +33,7 @@ import type {
 interface PendingTransportCommand {
   command: GatewayTransportCommand;
   bytes: number;
+  enqueuedAt: number;
 }
 
 function onDocumentVisible(resume: () => void): () => void {
@@ -72,7 +77,10 @@ export class WebSocketGatewayTransport implements GatewayTransport {
   private pendingInputAborted = false;
   private lastFeedMode: StateFeedMode = 'pending';
 
-  constructor(readonly client: BorshWebSocketClient) {
+  constructor(
+    readonly client: BorshWebSocketClient,
+    private readonly now: () => number = Date.now
+  ) {
     const limits = client.pendingCommandLimits ?? {
       maxBytes: DEFAULT_MAX_PENDING_BYTES,
       maxFrames: DEFAULT_MAX_PENDING_FRAMES,
@@ -292,7 +300,11 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       this.pendingBytes + bytes <= limits.maxBytes
     ) {
       this.canonical.stageCommand(command);
-      this.pendingCommands.push({ command: clonePendingCommand(command), bytes });
+      this.pendingCommands.push({
+        command: clonePendingCommand(command),
+        bytes,
+        enqueuedAt: this.now(),
+      });
       this.pendingBytes += bytes;
       return 'queued';
     }
@@ -315,6 +327,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       this.pendingOverflowOpen = true;
       this.emit({
         type: 'pending-overflow',
+        reason: 'overflow',
         kind: measured.kind,
         pendingFrames: this.pendingCommands.length,
         pendingBytes: this.pendingBytes,
@@ -336,7 +349,27 @@ export class WebSocketGatewayTransport implements GatewayTransport {
   private flushPendingCommands(): void {
     const pending = this.pendingCommands;
     this.clearPendingCommands();
-    for (const item of pending) this.sendReadyCommand(item.command);
+    const now = this.now();
+    const fresh: PendingTransportCommand[] = [];
+    let droppedFrames = 0;
+    for (const item of pending) {
+      if (isOrderedInput(item.command) && now - item.enqueuedAt > STALE_INPUT_TTL_MS) {
+        droppedFrames += 1;
+        continue;
+      }
+      fresh.push(item);
+    }
+    if (droppedFrames > 0) {
+      this.emit({
+        type: 'pending-overflow',
+        reason: 'stale',
+        kind: wsBorsh.KIND_TERM_INPUT,
+        pendingFrames: fresh.length,
+        pendingBytes: fresh.reduce((sum, item) => sum + item.bytes, 0),
+        droppedFrames,
+      });
+    }
+    for (const item of fresh) this.sendReadyCommand(item.command);
   }
 
   private clearPendingCommands(): void {

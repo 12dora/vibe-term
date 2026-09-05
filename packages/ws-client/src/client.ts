@@ -616,7 +616,7 @@ export class BorshWebSocketClient {
   }
 
   private emitPendingOverflow(info: PendingOverflowInfo): void {
-    console.warn('[borsh-client] Pending send overflow', info);
+    console.warn(`[borsh-client] pending send ${info.reason ?? 'overflow'}`, info);
     for (const handler of this.pendingOverflowHandlers) {
       try {
         handler(info);
@@ -627,10 +627,9 @@ export class BorshWebSocketClient {
   }
 
   private flushPendingMessages(): void {
-    const queued = this.pending.drain();
-    for (const msg of queued) {
-      this.send(msg.kind, msg.payload);
-    }
+    const stale = this.pending.dropStaleOrderedInput();
+    if (stale) this.emitPendingOverflow(stale);
+    for (const msg of this.pending.drain()) this.send(msg.kind, msg.payload);
   }
 
   // ========== 直连载体（设计 §3「载体切换屏障」） ==========

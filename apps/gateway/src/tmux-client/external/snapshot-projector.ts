@@ -13,6 +13,7 @@ import {
   parseWindowSnapshotRow,
   splitSnapshotFields,
 } from '../snapshot-format';
+import { PARKING_WINDOW_NAME } from './constants';
 import { isTmuxServerGoneMessage } from './helpers';
 import type { CommandResult } from './types';
 
@@ -95,6 +96,11 @@ export function parseSnapshotWindows(
       );
       continue;
     }
+    // 聚焦护盾窗口只在控制客户端 attach 的那几秒存在，前端不该看见它，
+    // 更不该被「跟随活动窗口」拉进去再随它被杀。
+    if (row.name === PARKING_WINDOW_NAME) {
+      continue;
+    }
     if (row.active) {
       activeWindowId = row.id;
     }
@@ -148,15 +154,16 @@ export function parseSnapshotPanes(
       top: row.top,
     };
 
+    const window = windows.get(row.windowId);
+    if (!window) {
+      continue;
+    }
+
     if (pane.active && row.windowActive) {
       activePaneId = row.id;
       activeWindowId = row.windowId;
     }
 
-    const window = windows.get(row.windowId);
-    if (!window) {
-      continue;
-    }
     window.panes.push(pane);
   }
 

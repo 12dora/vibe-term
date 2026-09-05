@@ -11,6 +11,7 @@ import {
   meshShutdownNeeded,
 } from './assemble';
 import { handlePreflightHttp, readRuntimeMode } from './mode';
+import { warnOnStaleSystemdUnit } from './service-selfcheck';
 
 function resolveStaticRoot(): string {
   if (process.env.TMEX_FE_DIST_DIR) {
@@ -22,6 +23,7 @@ function resolveStaticRoot(): string {
 
 async function main(): Promise<void> {
   console.log(`[tmex] version ${getDisplayVersion()}`);
+  await warnOnStaleSystemdUnit();
   const host = process.env.TMEX_BIND_HOST || '127.0.0.1';
   const port = Number(process.env.GATEWAY_PORT || '9883');
   const staticRoot = resolveStaticRoot();

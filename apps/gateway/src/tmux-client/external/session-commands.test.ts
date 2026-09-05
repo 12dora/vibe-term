@@ -7,6 +7,7 @@ import { ControlModeCommandQueue } from '../control-mode-capture';
 import { SNAPSHOT_FIELD_SEPARATOR } from '../snapshot-format';
 import { TmuxTargetMissingError } from '../target-missing';
 import { PARKING_WINDOW_NAME } from './constants';
+import { formatTmuxDestroyLog } from './destroy-log';
 import {
   type SessionCommandHost,
   SessionCommands,
@@ -556,5 +557,31 @@ describe('SessionCommands', () => {
     const [stale, fresh] = await Promise.all([first, second]);
     expect(stale?.data.startsWith('stale')).toBe(true);
     expect(fresh?.data.startsWith('fresh')).toBe(true);
+  });
+});
+
+describe('formatTmuxDestroyLog', () => {
+  test('renders the window destruction line with its reason', () => {
+    expect(
+      formatTmuxDestroyLog({
+        command: 'kill-window',
+        id: '@3',
+        name: 'claude',
+        reason: 'user',
+        session: 'tmex',
+      })
+    ).toBe('[tmux] kill-window id=@3 name=claude reason=user session=tmex');
+  });
+
+  test('renders the pane destruction line and falls back to unknown', () => {
+    expect(
+      formatTmuxDestroyLog({
+        command: 'kill-pane',
+        id: '%7',
+        name: '',
+        reason: 'parking',
+        session: 'tmex',
+      })
+    ).toBe('[tmux] kill-pane id=%7 name=unknown reason=parking session=tmex');
   });
 });

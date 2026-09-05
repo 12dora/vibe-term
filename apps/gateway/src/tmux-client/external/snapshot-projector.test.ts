@@ -6,6 +6,7 @@ import {
   SNAPSHOT_FIELD_SEPARATOR,
   WINDOW_SNAPSHOT_FORMAT,
 } from '../snapshot-format';
+import { PARKING_WINDOW_NAME } from './constants';
 import {
   SnapshotProjector,
   type SnapshotProjectorHost,
@@ -693,5 +694,63 @@ describe('SnapshotProjector.performSnapshot', () => {
     });
     expect(JSON.stringify(host.snapshots[0]?.payload)).not.toContain('@0_0_bash_1');
     expect(host.snapshotSession).toBeNull();
+  });
+
+  test('an active parking window keeps the previously active real window', async () => {
+    const host = createHost();
+    host.activeWindowId = '@1';
+    host.activePaneId = '%1';
+    host.setResponse(
+      `display-message -p -t tmex #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
+      ok('$1|tmex\n')
+    );
+    host.setResponse(
+      `list-windows -t tmex -F ${WINDOW_SNAPSHOT_FORMAT}`,
+      ok(`@1|0|0|ba9d,80x24,0,0,1|main\n@9|1|1|ba9d,80x24,0,0,2|${PARKING_WINDOW_NAME}\n`)
+    );
+    host.setResponse(
+      `list-panes -s -t tmex -F ${PANE_SNAPSHOT_FORMAT}`,
+      ok('%1|@1|0|1|80|24|0|0|0|bash|node|/home/user\n%9|@9|0|1|80|24|0|0|1|park|sleep|/tmp\n')
+    );
+
+    await new SnapshotProjector(host).performSnapshot();
+
+    expect(host.activeWindowId).toBe('@1');
+    expect(host.activePaneId).toBe('%1');
+    expect(host.snapshots.at(-1)?.payload.session?.windows.map((window) => window.id)).toEqual([
+      '@1',
+    ]);
+  });
+});
+
+describe('parking window is invisible to the frontend', () => {
+  test('parseSnapshotWindows drops the parking window and never makes it active', () => {
+    const { windows, activeWindowId } = parseSnapshotWindows(
+      [
+        '@1|0|0|ba9d,80x24,0,0,1|main',
+        `@9|1|1|ba9d,80x24,0,0,2|${PARKING_WINDOW_NAME}`,
+        '@3|2|0|ba9d,80x24,0,0,3|zsh',
+      ],
+      ctx
+    );
+
+    expect(Array.from(windows.keys())).toEqual(['@1', '@3']);
+    expect(activeWindowId).toBeUndefined();
+  });
+
+  test('parseSnapshotPanes ignores panes of the filtered parking window', () => {
+    const { windows } = parseSnapshotWindows(
+      ['@1|0|0|ba9d,80x24,0,0,1|main', `@9|1|1|ba9d,80x24,0,0,2|${PARKING_WINDOW_NAME}`],
+      ctx
+    );
+    const update = parseSnapshotPanes(
+      ['%1|@1|0|1|80|24|0|0|0|bash|node|/home/user', '%9|@9|0|1|80|24|0|0|1|park|sleep|/tmp'],
+      windows,
+      ctx
+    );
+
+    expect(update.activePaneId).toBeUndefined();
+    expect(update.activeWindowId).toBeUndefined();
+    expect(getExpectedPaneIds(windows)).toEqual(['%1']);
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 
 import type { TmuxSourceMetadataEvent } from '../events';
-import { MetadataEventApplier } from './event-applier';
+import { MetadataEventApplier, formatWindowCloseObserved } from './event-applier';
 import {
   type MetadataValue,
   type PaneFieldHints,
@@ -198,5 +198,51 @@ describe('MetadataEventApplier', () => {
     for (const event of events) {
       expect(applier.collect(event, 2n)).toEqual([]);
     }
+  });
+});
+
+describe('formatWindowCloseObserved', () => {
+  test('records the last known window name and active pane command', () => {
+    const records = new Map<string, ProjectedRecord>();
+    const window = windowRecord('@1');
+    const pane = createRecord(
+      {
+        key: {
+          deviceId: 'device-a',
+          serverEpoch: SERVER_EPOCH,
+          entityKind: wsBorsh.SOURCE_ENTITY_PANE,
+          nativeId: '%1',
+        },
+        parent: {
+          deviceId: 'device-a',
+          serverEpoch: SERVER_EPOCH,
+          entityKind: wsBorsh.SOURCE_ENTITY_WINDOW,
+          nativeId: '@1',
+        },
+        fields: new Map<number, MetadataValue>([
+          [wsBorsh.SOURCE_FIELD_CURRENT_COMMAND, stringValue('claude')],
+          [wsBorsh.SOURCE_FIELD_ACTIVE, { Bool: true }],
+        ]),
+      },
+      1n
+    );
+    records.set(keyId(window.key), window);
+    records.set(keyId(pane.key), pane);
+
+    expect(formatWindowCloseObserved('@1', window, records)).toBe(
+      '[tmux] window-close observed id=@1 name=@1 pane_current_command=claude exit_status=unavailable tracked=yes'
+    );
+  });
+
+  test('renders a supplied exit status when one is available', () => {
+    expect(formatWindowCloseObserved('@9', undefined, new Map(), '137')).toContain(
+      'exit_status=137'
+    );
+  });
+
+  test('falls back to unknown for a window the projection never saw', () => {
+    expect(formatWindowCloseObserved('@9', undefined, new Map())).toBe(
+      '[tmux] window-close observed id=@9 name=unknown pane_current_command=unknown exit_status=unavailable tracked=no'
+    );
   });
 });

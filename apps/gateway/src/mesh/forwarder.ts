@@ -219,6 +219,7 @@ export class Forwarder {
       failingOver: false,
       failoverAbort: null,
       queue: [],
+      queuedAt: [],
       helloWait: null,
       resumeWait: null,
       streamAlive: true,
@@ -488,6 +489,7 @@ export class Forwarder {
 
   private flushQueue(pump: ForwardPump): void {
     const queued = pump.queue.splice(0);
+    pump.queuedAt.length = 0;
     pump.queueBytes = 0;
     const stream = pump.stream;
     if (!stream) return;
@@ -876,6 +878,7 @@ function enqueueFrame(pump: ForwardPump, bytes: Uint8Array): boolean {
     return false;
   }
   pump.queue.push(bytes.slice());
+  pump.queuedAt.push(Date.now());
   pump.queueBytes += bytes.byteLength;
   return true;
 }

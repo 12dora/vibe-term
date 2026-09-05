@@ -363,6 +363,7 @@
       "clear": "クリア",
       "windowClosed": "現在のウィンドウは閉じられました。サイドバーからウィンドウを選択してください。",
       "paneClosed": "現在のターミナルは閉じられました。サイドバーから選択してください。",
+      "staleInputDropped": "切断中に入力された内容は破棄されました",
       "bellDescriptionWithTitle": "ウィンドウ {{window}} · {{paneLabel}}",
       "notificationFallbackTitle": "ターミナル通知",
       "notificationSourceLabel": "{{source}} から",

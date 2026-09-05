@@ -272,6 +272,11 @@ const handlers: TmuxEventHandlers = {
   },
 
   'pending-overflow': (event, ctx) => {
+    if (event.reason === 'stale') {
+      console.warn('[tmux] dropped stale pending input:', event);
+      ctx.core.notifications.error(ctx.core.t('terminal.staleInputDropped'));
+      return;
+    }
     console.warn('[tmux] pending send overflow:', event);
     ctx.core.notifications.error(ctx.core.t('websocket.inputDropped'));
   },
