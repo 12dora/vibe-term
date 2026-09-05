@@ -4,12 +4,13 @@
 import type { ShareLogEntry } from '@tmex/shared/share';
 import { useRuntime } from '@tmex/stores/react';
 import { useEffect, useState } from 'react';
-import { fetchShareLogPage } from './share-api';
+import { fetchShareLogPage, shareErrorKey } from './share-api';
 
 export interface ReplayLogState {
   entries: ShareLogEntry[];
   loading: boolean;
-  error: string | null;
+  /** 失败原因的 i18n key（`share.error.*`）；无错为 null。 */
+  errorKey: string | null;
   /** 服务端记下的总条数；用于展示加载进度。 */
   total: number;
   /** 该分享的日志曾达到上限而停止记录。 */
@@ -19,7 +20,7 @@ export interface ReplayLogState {
 const IDLE: ReplayLogState = {
   entries: [],
   loading: false,
-  error: null,
+  errorKey: null,
   total: 0,
   truncated: false,
 };
@@ -53,7 +54,7 @@ export function useReplayLog(shareId: string | null): ReplayLogState {
           setState({
             entries: [...entries],
             loading: !done,
-            error: null,
+            errorKey: null,
             total: page.total,
             truncated: page.truncated,
           });
@@ -65,7 +66,7 @@ export function useReplayLog(shareId: string | null): ReplayLogState {
         setState({
           entries,
           loading: false,
-          error: error instanceof Error ? error.message : String(error),
+          errorKey: shareErrorKey(error),
           total: entries.length,
           truncated: false,
         });

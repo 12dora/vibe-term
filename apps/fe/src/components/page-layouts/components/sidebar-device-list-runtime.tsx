@@ -128,16 +128,20 @@ export function isNodeSectionVisible(
   return stats.failed || !shouldHideSidebarNodeSection(stats, keepWhenNoDevices);
 }
 
-/** 真实列表落地后把它交回宿主（写本地快照），占位数据不回传。 */
+/**
+ * 真实列表落地后把它交回宿主（写本地快照）。只认**成功**的返回：占位数据不回传，
+ * 失败态同样不回传——那一刻的空数组不是事实，写进快照会把上次成功的设备名冲掉，
+ * 之后离线首屏与 inventory 兜底都拿不到东西。成功返回的空列表照常保存。
+ */
 function useDevicesLoaded(
   devices: Device[],
-  pending: boolean,
+  succeeded: boolean,
   onDevicesLoaded?: (devices: Device[]) => void
 ): void {
   useEffect(() => {
-    if (pending || !onDevicesLoaded) return;
+    if (!succeeded || !onDevicesLoaded) return;
     onDevicesLoaded(devices);
-  }, [devices, pending, onDevicesLoaded]);
+  }, [devices, succeeded, onDevicesLoaded]);
 }
 
 function NodeSection({
@@ -146,7 +150,7 @@ function NodeSection({
 }: SideBarDeviceListForRuntimeProps & { section: SidebarNodeSectionShell }) {
   const { nodeId } = useRuntime();
   const stats = useSidebarDeviceStats({ placeholderDevices: section.placeholderDevices });
-  useDevicesLoaded(stats.devices, stats.pending === true, section.onDevicesLoaded);
+  useDevicesLoaded(stats.devices, stats.succeeded, section.onDevicesLoaded);
   const visible = isNodeSectionVisible(stats, section.keepWhenNoDevices ?? false);
   // 切 node 会让「选中的那台无条件保留」失效，整节可能就此隐藏：淡出后再卸载，别硬切；
   // 退场期间把上一帧的可见设备集合钉住，否则设备行先消失、只剩分节头在淡

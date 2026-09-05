@@ -1205,6 +1205,7 @@ export type TranslationKey =
   | 'wsError'
   | 'wsError.checkGateway'
   | 'apiError'
+  | 'apiError.shareAuthRequired'
   | 'apiError.siteNameRequired'
   | 'apiError.siteUrlInvalid'
   | 'apiError.bellThrottleInvalid'
@@ -2355,6 +2356,7 @@ export type TranslationKey =
   | 'nodes.badge.failure.rtc_unavailable'
   | 'nodes.badge.failure.not_direct_capable'
   | 'nodes.badge.failure.breaker_cooling'
+  | 'nodes.badge.failure.breaker_paused'
   | 'nodes.badge.failure.aborted'
   | 'nodes.badge.failure.other'
   | 'nodes.badge.ice'
@@ -2937,4 +2939,11 @@ export type TranslationKey =
   | 'share.error.nameRequired'
   | 'share.error.passwordTooShort'
   | 'share.error.noOrigin'
-  | 'share.error.invalidDuration';
+  | 'share.error.invalidDuration'
+  | 'share.error.generic'
+  | 'share.error.SHARE_NOT_FOUND'
+  | 'share.error.SHARE_WINDOW_NOT_FOUND'
+  | 'share.error.SHARE_PASSWORD_TOO_SHORT'
+  | 'share.error.SHARE_ORIGIN_INVALID'
+  | 'share.error.SHARE_ENDED'
+  | 'share.error.SHARE_AUTH_REQUIRED';

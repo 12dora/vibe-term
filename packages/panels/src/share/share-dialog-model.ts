@@ -123,6 +123,40 @@ export function pickActiveShare(
   return picked;
 }
 
+export interface CreatedShareRef {
+  share: ShareRecord;
+  /** 创建时刻（epoch 毫秒）。 */
+  at: number;
+}
+
+export interface ResolveActiveShareInput {
+  /** 列表查询挑出来的进行中分享。 */
+  fromQuery: ShareRecord | null;
+  /** 本次会话刚创建出来的分享；列表还没转过来时先顶上。 */
+  created: CreatedShareRef | null;
+  /** 列表最近一次成功落地的时刻（epoch 毫秒），从未成功为 0。 */
+  dataUpdatedAt: number;
+  /** 刚终止的分享 id：列表缓存还没刷新，按 id 挡掉免得闪回「进行中」。 */
+  revokedId: string | null;
+}
+
+/**
+ * 弹窗显示哪条进行中的分享。
+ *
+ * 创建结果只兜底到列表同步为止：之后一律以服务端为准，否则分享到期或被另一个页面终止时，
+ * 弹窗还挂着一条已经失效的链接、在线人数和「终止」按钮，也没法直接新建。
+ */
+export function resolveActiveShare({
+  fromQuery,
+  created,
+  dataUpdatedAt,
+  revokedId,
+}: ResolveActiveShareInput): ShareRecord | null {
+  const synced = created !== null && dataUpdatedAt > created.at;
+  const latest = fromQuery ?? (synced ? null : (created?.share ?? null));
+  return latest && latest.id === revokedId ? null : latest;
+}
+
 export type ShareRemainingUnit = 'days' | 'hours' | 'minutes' | 'expired';
 
 export interface ShareRemaining {

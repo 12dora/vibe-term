@@ -1363,6 +1363,7 @@ export const I18N_RESOURCES = {
       "checkGateway": "Please check Gateway status"
     },
     "apiError": {
+      "shareAuthRequired": "Enable login before creating a share.",
       "siteNameRequired": "Site name cannot be empty",
       "siteUrlInvalid": "Site URL must start with http:// or https://",
       "bellThrottleInvalid": "Bell notification throttle seconds must be between 0-300",
@@ -2624,6 +2625,7 @@ export const I18N_RESOURCES = {
           "rtc_unavailable": "WebRTC unavailable on this node",
           "not_direct_capable": "Peer does not support direct links",
           "breaker_cooling": "Paused until {{until}}",
+          "breaker_paused": "Direct link paused",
           "aborted": "Attempt cancelled",
           "other": "Connection failed"
         },
@@ -3272,7 +3274,14 @@ export const I18N_RESOURCES = {
         "nameRequired": "Enter a name.",
         "passwordTooShort": "Password must be at least {{min}} characters.",
         "noOrigin": "Select an address.",
-        "invalidDuration": "Duration must be a whole number of days up to 365."
+        "invalidDuration": "Duration must be a whole number of days up to 365.",
+        "generic": "Something went wrong. Try again.",
+        "SHARE_NOT_FOUND": "Share not found.",
+        "SHARE_WINDOW_NOT_FOUND": "The window is closed and cannot be shared.",
+        "SHARE_PASSWORD_TOO_SHORT": "Password is too short.",
+        "SHARE_ORIGIN_INVALID": "Invalid share address.",
+        "SHARE_ENDED": "Sharing has ended.",
+        "SHARE_AUTH_REQUIRED": "Enable login protection before sharing."
       }
     }
   }
@@ -4636,6 +4645,7 @@ export const I18N_RESOURCES = {
       "checkGateway": "请检查 Gateway 状态"
     },
     "apiError": {
+      "shareAuthRequired": "创建分享前需先开启登录。",
       "siteNameRequired": "站点名称不能为空",
       "siteUrlInvalid": "站点 URL 必须以 http:// 或 https:// 开头",
       "bellThrottleInvalid": "响铃通知频控秒数需在 0-300 之间",
@@ -5893,6 +5903,7 @@ export const I18N_RESOURCES = {
           "rtc_unavailable": "本机不支持 WebRTC",
           "not_direct_capable": "对端不支持直连",
           "breaker_cooling": "暂停至 {{until}}",
+          "breaker_paused": "直连已暂停",
           "aborted": "尝试已取消",
           "other": "连接失败"
         },
@@ -6540,7 +6551,14 @@ export const I18N_RESOURCES = {
         "nameRequired": "请填写名称。",
         "passwordTooShort": "密码至少 {{min}} 位。",
         "noOrigin": "请选择地址。",
-        "invalidDuration": "有效期需为 365 天以内的整数。"
+        "invalidDuration": "有效期需为 365 天以内的整数。",
+        "generic": "操作失败，请重试。",
+        "SHARE_NOT_FOUND": "分享不存在。",
+        "SHARE_WINDOW_NOT_FOUND": "窗口已关闭，无法分享。",
+        "SHARE_PASSWORD_TOO_SHORT": "密码太短。",
+        "SHARE_ORIGIN_INVALID": "分享地址无效。",
+        "SHARE_ENDED": "分享已结束。",
+        "SHARE_AUTH_REQUIRED": "须先启用登录保护才能分享。"
       }
     }
   }
@@ -7904,6 +7922,7 @@ export const I18N_RESOURCES = {
       "checkGateway": "Gateway 状態を確認してください"
     },
     "apiError": {
+      "shareAuthRequired": "共有を作成する前にログインを有効にしてください。",
       "siteNameRequired": "サイト名は空にできません",
       "siteUrlInvalid": "サイト URL は http:// または https:// で始まる必要があります",
       "bellThrottleInvalid": "ベル通知の制限秒数は 0-300 の間である必要があります",
@@ -9161,6 +9180,7 @@ export const I18N_RESOURCES = {
           "rtc_unavailable": "このマシンで WebRTC 利用不可",
           "not_direct_capable": "対向がダイレクト接続に非対応",
           "breaker_cooling": "{{until}} まで停止中",
+          "breaker_paused": "直接接続は停止中",
           "aborted": "試行を中止",
           "other": "接続失敗"
         },
@@ -9808,7 +9828,14 @@ export const I18N_RESOURCES = {
         "nameRequired": "名前を入力してください。",
         "passwordTooShort": "パスワードは {{min}} 文字以上で入力してください。",
         "noOrigin": "アドレスを選択してください。",
-        "invalidDuration": "有効期限は 365 日以内の整数で入力してください。"
+        "invalidDuration": "有効期限は 365 日以内の整数で入力してください。",
+        "generic": "操作に失敗しました。再試行してください。",
+        "SHARE_NOT_FOUND": "共有が見つかりません。",
+        "SHARE_WINDOW_NOT_FOUND": "ウィンドウが閉じているため共有できません。",
+        "SHARE_PASSWORD_TOO_SHORT": "パスワードが短すぎます。",
+        "SHARE_ORIGIN_INVALID": "共有アドレスが無効です。",
+        "SHARE_ENDED": "共有は終了しました。",
+        "SHARE_AUTH_REQUIRED": "共有する前にログイン保護を有効にしてください。"
       }
     }
   }

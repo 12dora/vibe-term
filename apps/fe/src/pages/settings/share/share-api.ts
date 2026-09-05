@@ -4,7 +4,7 @@
 // 这里只补上设置页独有的三族：设置读写、历史删除、日志分页。查询键一并放在这里，
 // 悬停预取与面板挂载共用同一份，避免同一个键里写进形状不同的数据。
 
-import type { ApiClient } from '@tmex/api-client';
+import { type ApiClient, toApiError } from '@tmex/api-client';
 import { requestJson, requestOk } from '@tmex/api-client/json-mutation';
 import type { ShareLogPage, ShareSettings } from '@tmex/shared/share';
 
@@ -15,10 +15,16 @@ export {
   shareListPath,
   shareQueryKey,
 } from '@tmex/api-client/share';
+export { shareErrorKey } from '@tmex/api-client/share-errors';
 export type {
   ShareListResponse,
   ShareOriginsResponse,
 } from '@tmex/api-client/share';
+
+/** 契约错误码要留到 UI 层才好翻译，四条端点一律抛带 code 的 `ApiError`。 */
+function shareError(fallback: string) {
+  return (res: Response) => toApiError(res, fallback);
+}
 
 export const SHARE_SETTINGS_PATH = '/api/share/settings';
 export const SHARE_ORIGINS_PATH = '/api/share/origins';
@@ -56,7 +62,7 @@ export function fetchShareSettings(
 ): Promise<ShareSettings> {
   return requestJson<ShareSettings>(client, SHARE_SETTINGS_PATH, {
     signal,
-    errorFallback: 'Failed to load share settings',
+    toError: shareError('Failed to load share settings'),
   });
 }
 
@@ -67,7 +73,7 @@ export function saveShareSettings(
   return requestJson<ShareSettings>(client, SHARE_SETTINGS_PATH, {
     method: 'PUT',
     body: patch,
-    errorFallback: 'Failed to save share settings',
+    toError: shareError('Failed to save share settings'),
   });
 }
 
@@ -75,7 +81,7 @@ export function saveShareSettings(
 export async function deleteShare(client: ApiClient, shareId: string): Promise<void> {
   await requestOk(client, shareResourcePath(shareId), {
     method: 'DELETE',
-    errorFallback: 'Failed to delete share',
+    toError: shareError('Failed to delete share'),
   });
 }
 
@@ -87,6 +93,6 @@ export function fetchShareLogPage(
 ): Promise<ShareLogPage> {
   return requestJson<ShareLogPage>(client, shareLogPath(shareId, query), {
     signal,
-    errorFallback: 'Failed to load share log',
+    toError: shareError('Failed to load share log'),
   });
 }

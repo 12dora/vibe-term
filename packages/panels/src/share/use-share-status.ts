@@ -13,6 +13,8 @@ export interface ShareStatusModel {
   viewers: number;
   isLoading: boolean;
   isError: boolean;
+  /** 列表最近一次成功落地的时刻（epoch 毫秒），从未成功为 0。 */
+  dataUpdatedAt: number;
   refresh: () => void;
 }
 
@@ -47,6 +49,7 @@ export function useShareStatus(
     viewers: activeShare?.viewers ?? 0,
     isLoading: query.isLoading,
     isError: query.isError && query.data === undefined,
+    dataUpdatedAt: query.dataUpdatedAt,
     refresh,
   };
 }

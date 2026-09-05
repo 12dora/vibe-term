@@ -9,6 +9,7 @@ import {
   createShareDraft,
   pickActiveShare,
   pickDefaultShareOrigin,
+  resolveActiveShare,
   resolveShareExpiresInMs,
   shareRefetchIntervalMs,
   shareRemaining,
@@ -215,5 +216,59 @@ describe('shareRefetchIntervalMs', () => {
     expect(shareRefetchIntervalMs(true)).toBe(SHARE_ACTIVE_POLL_MS);
     expect(shareRefetchIntervalMs(false)).toBe(SHARE_IDLE_POLL_MS);
     expect(SHARE_ACTIVE_POLL_MS).toBeLessThan(SHARE_IDLE_POLL_MS);
+  });
+});
+
+describe('resolveActiveShare', () => {
+  const record = (id: string, createdAt = 1_000): ShareRecord => ({ id, createdAt }) as ShareRecord;
+
+  test('列表还没转过来时先用创建结果兜底', () => {
+    expect(
+      resolveActiveShare({
+        fromQuery: null,
+        created: { share: record('s1'), at: 500 },
+        dataUpdatedAt: 400,
+        revokedId: null,
+      })?.id
+    ).toBe('s1');
+  });
+
+  test('列表同步后一律以服务端为准：已结束的分享不再显示为进行中', () => {
+    expect(
+      resolveActiveShare({
+        fromQuery: null,
+        created: { share: record('s1'), at: 500 },
+        dataUpdatedAt: 600,
+        revokedId: null,
+      })
+    ).toBeNull();
+  });
+
+  test('列表给了进行中的分享就用它', () => {
+    expect(
+      resolveActiveShare({
+        fromQuery: record('s2'),
+        created: { share: record('s1'), at: 500 },
+        dataUpdatedAt: 600,
+        revokedId: null,
+      })?.id
+    ).toBe('s2');
+  });
+
+  test('刚终止的那条按 id 挡掉，不闪回进行中', () => {
+    expect(
+      resolveActiveShare({
+        fromQuery: record('s2'),
+        created: null,
+        dataUpdatedAt: 600,
+        revokedId: 's2',
+      })
+    ).toBeNull();
+  });
+
+  test('从未创建过时列表说了算', () => {
+    expect(
+      resolveActiveShare({ fromQuery: null, created: null, dataUpdatedAt: 0, revokedId: null })
+    ).toBeNull();
   });
 });

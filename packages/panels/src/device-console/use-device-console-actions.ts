@@ -38,6 +38,11 @@ export interface DeviceConsoleActionsModel extends ConsoleCommands {
   hasEnabledWatchRule: boolean;
   /** 分享入口是否可见：被分享人视角的 runtime 里一律关掉 */
   shareUi: boolean;
+  /**
+   * 结构性操作（分屏、关窗格、标题栏拖动重排）是否可用。
+   * 被分享人只有输入 / 滚动 / 尺寸仲裁的权限，服务端也会拒掉对应帧，界面不该再给入口。
+   */
+  structureUi: boolean;
   hasActiveShare: boolean;
   shareViewers: number;
   onToggleInputMode: () => void;
@@ -161,6 +166,7 @@ export function useDeviceConsoleActions({
   const hasWatchRule = useWatchRuleIndicator(deviceId, resolvedPaneId, watchUi);
   // 被分享人视角的 runtime 不给分享入口：他自己就是被分享的那一方
   const shareUi = !runtime.features.shareViewer;
+  const structureUi = shareUi;
   const shareStatus = useShareStatus(deviceId, windowId, shareUi);
 
   return {
@@ -175,6 +181,7 @@ export function useDeviceConsoleActions({
     watchUi,
     hasEnabledWatchRule: hasWatchRule,
     shareUi,
+    structureUi,
     hasActiveShare: shareStatus.activeShare !== null,
     shareViewers: shareStatus.viewers,
     onToggleInputMode,

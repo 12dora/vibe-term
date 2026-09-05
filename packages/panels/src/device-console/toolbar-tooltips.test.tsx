@@ -35,6 +35,7 @@ function toolbarInput(overrides: Partial<DeviceConsoleActionsModel> = {}): Toolb
       watchUi: true,
       hasEnabledWatchRule: false,
       shareUi: true,
+      structureUi: true,
       hasActiveShare: false,
       shareViewers: 0,
       onSwitchPane: () => {},

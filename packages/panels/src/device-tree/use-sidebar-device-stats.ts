@@ -17,6 +17,11 @@ import { type SidebarDeviceStats, selectSidebarVisibleDevices } from './device-t
 export interface SidebarDeviceStatsResult extends SidebarDeviceStats {
   /** 设备列表请求失败：此时不能按「零设备」隐藏分节，要把加载失败/重试 UI 留给设备树。 */
   failed: boolean;
+  /**
+   * 本次查询确实成功了（且不是占位数据）。请求失败时 `pending` 与 `failed` 之外还有一层
+   * 区别：失败态的空数组不是事实，不能拿去覆盖宿主的历史快照。成功返回的空列表算成功。
+   */
+  succeeded: boolean;
   /** 侧边栏实际会渲染的设备 id（分节退场时供宿主锁存） */
   visibleIds: string[];
   /** 当前这份统计所依据的设备列表（`pending` 时即占位数据） */
@@ -31,6 +36,35 @@ function toPlaceholderDevice(device: Device): DeviceWithRuntime {
     lastError: null,
     lastErrorType: null,
     tmuxAvailable: false,
+  };
+}
+
+export interface DeviceQueryStatus {
+  isPending: boolean;
+  isError: boolean;
+  isSuccess: boolean;
+  isPlaceholderData: boolean;
+}
+
+export interface DeviceQueryFlags {
+  pending: boolean;
+  failed: boolean;
+  succeeded: boolean;
+}
+
+/**
+ * 查询状态 → 分节要的三个判断。
+ *
+ * - `pending`：占位数据也算「还没落地」，真实列表回来之前不能按它做隐藏 / 连接决策；
+ * - `failed`：失败时不能按「零设备」隐藏分节，重试 UI 留给设备树；
+ * - `succeeded`：只有真正成功（且非占位）才允许回写本地快照——失败态的空数组不是事实，
+ *   写进去会把上次成功的设备名冲掉。成功返回的空列表算成功。
+ */
+export function deviceQueryFlags(query: DeviceQueryStatus): DeviceQueryFlags {
+  return {
+    pending: query.isPending || query.isPlaceholderData,
+    failed: query.isError,
+    succeeded: query.isSuccess && !query.isPlaceholderData,
   };
 }
 
@@ -67,9 +101,7 @@ export function useSidebarDeviceStats(
     placeholderData,
   });
   const devices = devicesQuery.data?.devices;
-  const failed = devicesQuery.isError;
-  // 占位数据也算「还没落地」：真实列表回来之前分节不能按它做隐藏 / 连接决策。
-  const pending = devicesQuery.isPending || devicesQuery.isPlaceholderData;
+  const { pending, failed, succeeded } = deviceQueryFlags(devicesQuery);
 
   const { nodeId } = runtime;
   return useMemo(() => {
@@ -85,8 +117,9 @@ export function useSidebarDeviceStats(
       visible: visible.length,
       pending,
       failed,
+      succeeded,
       visibleIds: visible.map((device) => device.id),
       devices: list,
     };
-  }, [devices, failed, pending, sidebarDeviceVisibility, nodeId, selectedDeviceId]);
+  }, [devices, failed, pending, succeeded, sidebarDeviceVisibility, nodeId, selectedDeviceId]);
 }

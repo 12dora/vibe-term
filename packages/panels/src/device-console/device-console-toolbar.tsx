@@ -123,7 +123,7 @@ function terminalSettingsButton({ t, onOpenTerminalSettings }: ToolbarButtonsInp
 
 export function buildToolbarButtons(input: ToolbarButtonsInput): ToolbarButton[] {
   return [
-    ...(input.model.isMobileViewport ? [] : splitButtons(input)),
+    ...(input.model.isMobileViewport || !input.model.structureUi ? [] : splitButtons(input)),
     ...coreButtons(input),
     ...(input.model.shareUi ? [shareButton(input)] : []),
     ...(input.model.watchUi ? [watchButton(input)] : []),

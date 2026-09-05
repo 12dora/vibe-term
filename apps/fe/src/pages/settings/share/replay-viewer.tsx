@@ -52,13 +52,13 @@ function ReplayBody({ shareId }: { shareId: string }) {
   const timeline = useMemo(() => buildReplayTimeline(log.entries), [log.entries]);
   const player = useReplayPlayer(timeline, terminal.handle, terminal.ready);
 
-  const empty = !log.loading && log.error === null && log.entries.length === 0;
+  const empty = !log.loading && log.errorKey === null && log.entries.length === 0;
 
   return (
     <div className="flex flex-col gap-2" data-testid="share-replay-body">
-      {log.error && (
+      {log.errorKey && (
         <Notice tone="error" testId="share-replay-error">
-          {t('settings.share.replay.loadFailed', { message: log.error })}
+          {t('settings.share.replay.loadFailed', { message: t(log.errorKey) })}
         </Notice>
       )}
       {log.truncated && (

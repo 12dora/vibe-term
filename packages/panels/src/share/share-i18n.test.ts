@@ -49,6 +49,14 @@ const SHARE_KEYS: readonly string[] = [
   'share.error.passwordTooShort',
   'share.error.noOrigin',
   'share.error.invalidDuration',
+  // 服务端契约错误码（`shareErrorKey` 直接拼 `share.error.<code>`）与通用兜底
+  'share.error.generic',
+  'share.error.SHARE_NOT_FOUND',
+  'share.error.SHARE_WINDOW_NOT_FOUND',
+  'share.error.SHARE_PASSWORD_TOO_SHORT',
+  'share.error.SHARE_ORIGIN_INVALID',
+  'share.error.SHARE_ENDED',
+  'share.error.SHARE_AUTH_REQUIRED',
 ];
 
 const localesDir = path.resolve(

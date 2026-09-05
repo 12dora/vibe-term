@@ -30,6 +30,22 @@ import { createShareAppPath, sharePagePath } from './share-route';
 export const SHARE_WS_ENDED_CODE = 4410;
 export const SHARE_WS_LOGIN_REQUIRED_CODE = 4401;
 
+/**
+ * 握手上声明本页绑定的分享：`/ws?cid=<nonce>&share=<shareId>`。
+ *
+ * 浏览器给不了自定义请求头，cookie 又是按 `tmex_sh_<via>` 单槽存的——同一个 node 上打开
+ * 两个分享，后登录的那个会覆盖前一个的 cookie。不在握手里点名 shareId，服务端就只能
+ * 「有什么凭证用什么」：已登录的浏览器会拿常规会话直接进（拿到全量设备元数据、撤销
+ * 分享也踢不掉），两个分享互串时旧页面还会悄悄绑到新分享的权限与生命周期上。
+ * 带上这个参数后服务端必须校验凭证与之匹配，不匹配即 4401。
+ */
+export const SHARE_WS_QUERY_PARAM = 'share';
+
+/** 给 ws URL 追加分享参数；`createNodeWsUrlSource` 已经拼了 `?cid=`，这里只补一段。 */
+export function withShareWsParam(url: string, shareId: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}${SHARE_WS_QUERY_PARAM}=${encodeURIComponent(shareId)}`;
+}
+
 export interface ShareRuntimeOptions {
   nodeId: string;
   shareId: string;
@@ -84,8 +100,9 @@ export function createShareRuntime(options: ShareRuntimeOptions): ShareRuntimeHa
   // 卸载再停就已经排上了一次重连（与 NodeConnectionManager 处理 4401 的做法一致）。
   let socket: GatewayConnection | null = null;
   const connection = createGatewayConnection({
-    wsUrl: nodeWsUrl(options.nodeId),
-    wsUrlFactory: () => wsUrls.nextUrl(),
+    wsUrl: withShareWsParam(nodeWsUrl(options.nodeId), options.shareId),
+    // 初次连接与每一次重连都走这里，分享参数因此不会在重连后掉。
+    wsUrlFactory: () => withShareWsParam(wsUrls.nextUrl(), options.shareId),
     onClose: (code) => {
       if (isShareTerminalCloseCode(code)) socket?.client.disconnect();
       options.onClose(code);

@@ -73,10 +73,12 @@ function renderStage(options: {
   selection: DevicePaneSelection;
   resolvedPaneId?: string;
   selectedWindow?: TmuxWindow;
+  structureUi?: boolean;
 }): string {
   const runtime = createAppRuntime({
     nodeId: 'self',
     storagePrefix: `terminal-stage-test-${storageSeq++}:`,
+    features: { shareViewer: options.structureUi === false },
   });
   return renderToStaticMarkup(
     <MemoryRouter>
@@ -149,6 +151,27 @@ describe('TerminalStage', () => {
     });
     expect(html).toContain('split-terminal-area');
     expect(html).not.toContain('terminal-keep-alive-pane');
+  });
+
+  // 被分享人不能改分屏结构：关闭按钮与标题栏拖动都要收起，尺寸相关的行为照旧
+  test('the split view drops pane close buttons and title-bar dragging for share viewers', () => {
+    const shared = renderStage({
+      selectedPane: pane('%1'),
+      selection: selection({ isSplitView: true }),
+      selectedWindow: splitWindow,
+      structureUi: false,
+    });
+    expect(shared).toContain('split-pane-titlebar');
+    expect(shared).not.toContain('split-pane-close-');
+    expect(shared).not.toContain('cursor-grab');
+
+    const owner = renderStage({
+      selectedPane: pane('%1'),
+      selection: selection({ isSplitView: true }),
+      selectedWindow: splitWindow,
+    });
+    expect(owner).toContain('split-pane-close-%1');
+    expect(owner).toContain('cursor-grab');
   });
 });
 

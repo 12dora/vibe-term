@@ -40,6 +40,33 @@ export interface SplitTerminalAreaProps {
   onWindowResize: (cols: number, rows: number) => void;
   onWindowResizeSettled?: (cols: number, rows: number) => void;
   prepareResources?: () => Promise<void> | void;
+  /**
+   * 结构性操作（关闭 pane、标题栏拖动重排）是否开放；缺省开放。
+   * 被分享人只能输入 / 滚动 / 参与尺寸仲裁，splitter 拖拽（resize-pane）不受此开关影响。
+   */
+  structureActions?: boolean;
+}
+
+type PaneDragState = NonNullable<ReturnType<typeof useSplitDragInteractions>['paneDrag']>;
+
+/** 拖拽中跟随指针的浮动标签：pane 名 + 落点动作。 */
+function PaneDragLabel({ drag, name }: { drag: PaneDragState; name: string }) {
+  const { t } = useTranslation();
+  const action =
+    drag.target?.type === 'window'
+      ? t('window.moveToWindow')
+      : drag.target?.type === 'break'
+        ? t('window.breakToWindow')
+        : null;
+  return (
+    <div
+      className="pointer-events-none fixed z-50 rounded border border-primary/40 bg-popover/95 px-2 py-1 font-mono text-[10.5px] text-popover-foreground shadow-md"
+      style={{ left: drag.pointerX + 12, top: drag.pointerY + 12 }}
+    >
+      <div>{name}</div>
+      {action && <div className="text-[9.5px] text-muted-foreground">{action}</div>}
+    </div>
+  );
 }
 
 export function SplitTerminalArea({
@@ -55,9 +82,9 @@ export function SplitTerminalArea({
   onWindowResize,
   onWindowResizeSettled,
   prepareResources,
+  structureActions = true,
 }: SplitTerminalAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { t } = useTranslation();
 
   const {
     layoutRoot,
@@ -141,6 +168,7 @@ export function SplitTerminalArea({
           onUserSelectPane={onUserSelectPane}
           onClosePane={onClosePane}
           onTitleBarPointerDown={handleTitleBarPointerDown}
+          structureActions={structureActions}
         />
       ))}
 
@@ -176,18 +204,10 @@ export function SplitTerminalArea({
 
       {/* 拖拽中的浮动标签：跟随指针提示正在移动的 pane 与动作 */}
       {paneDrag?.active && (
-        <div
-          className="pointer-events-none fixed z-50 rounded border border-primary/40 bg-popover/95 px-2 py-1 font-mono text-[10.5px] text-popover-foreground shadow-md"
-          style={{ left: paneDrag.pointerX + 12, top: paneDrag.pointerY + 12 }}
-        >
-          <div>{paneDisplayName(paneInfoById.get(paneDrag.srcPaneId))}</div>
-          {paneDrag.target?.type === 'window' && (
-            <div className="text-[9.5px] text-muted-foreground">{t('window.moveToWindow')}</div>
-          )}
-          {paneDrag.target?.type === 'break' && (
-            <div className="text-[9.5px] text-muted-foreground">{t('window.breakToWindow')}</div>
-          )}
-        </div>
+        <PaneDragLabel
+          drag={paneDrag}
+          name={paneDisplayName(paneInfoById.get(paneDrag.srcPaneId))}
+        />
       )}
 
       {geometry.gutters.map((gutter, index) => {

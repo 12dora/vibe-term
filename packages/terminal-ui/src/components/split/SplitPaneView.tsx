@@ -72,6 +72,30 @@ export interface SplitPaneViewProps {
   /** 关闭 pane 交给宿主：关掉 URL 点名的 pane 需要先回落路由再发命令 */
   onClosePane: (windowId: string, paneId: string) => void;
   onTitleBarPointerDown: (paneId: string, event: React.PointerEvent<HTMLDivElement>) => void;
+  /** 结构性操作（关闭 pane、标题栏拖动重排）是否开放；缺省开放 */
+  structureActions?: boolean;
+}
+
+function PaneCloseButton({ paneId, onClose }: { paneId: string; onClose: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      data-testid={`split-pane-close-${paneId}`}
+      // 与 paneCloseTarget.ts 的 PANE_CLOSE_ATTR 对应：pane 根元素据此放过这次点击。
+      data-pane-close=""
+      aria-label={t('window.closePane')}
+      title={t('window.closePane')}
+      className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/50 opacity-70 transition-[opacity,color,background-color] duration-(--tmex-motion-fast) ease-out hover:bg-foreground/10 hover:text-foreground hover:opacity-100 group-hover/pane-titlebar:opacity-100 motion-reduce:transition-none"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClose();
+      }}
+    >
+      <span className="text-xs leading-none">×</span>
+    </button>
+  );
 }
 
 function SplitPaneView({
@@ -92,14 +116,18 @@ function SplitPaneView({
   onUserSelectPane,
   onClosePane,
   onTitleBarPointerDown,
+  structureActions = true,
 }: SplitPaneViewProps) {
-  const { t } = useTranslation();
   const paneId = pane.paneId;
   const meta = paneMetaText(paneInfo);
 
   const bindTerminalRef = useCallback(
     (ref: TerminalRef | null) => registerTerminal(paneId, ref),
     [registerTerminal, paneId]
+  );
+  const closePane = useCallback(
+    () => onClosePane(windowId, paneId),
+    [onClosePane, windowId, paneId]
   );
 
   return (
@@ -128,10 +156,12 @@ function SplitPaneView({
         <div
           data-testid="split-pane-titlebar"
           data-active={isFocused || undefined}
-          className={`group/pane-titlebar flex h-6 cursor-grab touch-none select-none items-center gap-1.5 rounded-md px-2.5 transition-colors duration-(--tmex-motion-standard) ease-out active:cursor-grabbing motion-reduce:transition-none ${
-            isFocused ? 'bg-foreground/10' : 'bg-foreground/[0.04]'
-          }`}
-          onPointerDown={(event) => onTitleBarPointerDown(paneId, event)}
+          className={`group/pane-titlebar flex h-6 select-none items-center gap-1.5 rounded-md px-2.5 transition-colors duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none ${
+            structureActions ? 'cursor-grab touch-none active:cursor-grabbing' : ''
+          } ${isFocused ? 'bg-foreground/10' : 'bg-foreground/[0.04]'}`}
+          onPointerDown={
+            structureActions ? (event) => onTitleBarPointerDown(paneId, event) : undefined
+          }
         >
           <PaneBellIcon paneId={paneId} />
           <PaneAgentBadge deviceId={deviceId} paneId={paneId} />
@@ -151,22 +181,7 @@ function SplitPaneView({
               {meta}
             </span>
           )}
-          <button
-            type="button"
-            data-testid={`split-pane-close-${paneId}`}
-            // 与 paneCloseTarget.ts 的 PANE_CLOSE_ATTR 对应：pane 根元素据此放过这次点击。
-            data-pane-close=""
-            aria-label={t('window.closePane')}
-            title={t('window.closePane')}
-            className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/50 opacity-70 transition-[opacity,color,background-color] duration-(--tmex-motion-fast) ease-out hover:bg-foreground/10 hover:text-foreground hover:opacity-100 group-hover/pane-titlebar:opacity-100 motion-reduce:transition-none"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              onClosePane(windowId, paneId);
-            }}
-          >
-            <span className="text-xs leading-none">×</span>
-          </button>
+          {structureActions && <PaneCloseButton paneId={paneId} onClose={closePane} />}
         </div>
       </div>
       <div

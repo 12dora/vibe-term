@@ -6,6 +6,7 @@ import { devicesQueryKey, fetchDevices } from '@tmex/api-client';
 import type { ShareRecord, ShareSettings } from '@tmex/shared/share';
 import { useRuntime } from '@tmex/stores/react';
 import { useCallback, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { SETTINGS_STALE_MS } from '../data-prefetch';
 import {
   type ShareListResponse,
@@ -16,6 +17,7 @@ import {
   listShares,
   revokeShare,
   saveShareSettings,
+  shareErrorKey,
   shareOriginsQueryKey,
   shareQueryKey,
   shareSettingsQueryKey,
@@ -26,9 +28,11 @@ export const SHARE_POLL_MS = 10_000;
 
 const EMPTY_LIST: ShareListResponse = { active: [], history: [] };
 
-function errorText(error: unknown): string | null {
-  if (!error) return null;
-  return error instanceof Error ? error.message : String(error);
+/** 服务端 message 是英文，界面只认契约错误码；没有码的失败走通用兜底。 */
+type Translate = (key: string) => string;
+
+function errorText(t: Translate, error: unknown): string | null {
+  return error ? t(shareErrorKey(error)) : null;
 }
 
 export interface ShareTabModel {
@@ -54,6 +58,7 @@ export interface ShareTabModel {
 }
 
 export function useShareTab(): ShareTabModel {
+  const { t } = useTranslation();
   const { apiClient } = useRuntime();
   const queryClient = useQueryClient();
   const [busyShareId, setBusyShareId] = useState<string | null>(null);
@@ -95,7 +100,7 @@ export function useShareTab(): ShareTabModel {
         await action();
         await queryClient.invalidateQueries({ queryKey: shareQueryKey() });
       } catch (error) {
-        setActionError(errorText(error));
+        setActionError(shareErrorKey(error));
       } finally {
         setBusyShareId(null);
       }
@@ -122,15 +127,15 @@ export function useShareTab(): ShareTabModel {
     history: list.history,
     now: listQuery.dataUpdatedAt || Date.now(),
     loading: listQuery.isPending,
-    loadError: errorText(listQuery.error),
+    loadError: errorText(t, listQuery.error),
     deviceName: (deviceId: string) => deviceNames.get(deviceId) ?? null,
     origins: originsQuery.data ?? null,
     settings: settingsQuery.data ?? null,
-    settingsError: errorText(settingsQuery.error),
+    settingsError: errorText(t, settingsQuery.error),
     busyShareId,
-    actionError,
+    actionError: actionError === null ? null : t(actionError),
     savingSettings: settingsMutation.isPending,
-    saveError: errorText(settingsMutation.error),
+    saveError: errorText(t, settingsMutation.error),
     refresh,
     revoke: (record) => void runAction(record, () => revokeShare(apiClient, record.id)),
     remove: (record) => void runAction(record, () => deleteShare(apiClient, record.id)),

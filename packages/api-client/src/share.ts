@@ -3,8 +3,15 @@
 // 设置 / 日志 / 删除历史三族端点由设置页自带客户端消费，不在此文件。
 
 import type { ShareOriginCandidate, ShareRecord } from '@tmex/shared/share';
-import type { ApiClient } from './client';
+import { type ApiClient, toApiError } from './client';
 import { requestJson } from './json-mutation';
+
+/** 契约错误码 → i18n key 的映射在 `./share-errors`：`share.*` 属 rest 语言包，
+ *  不能从入口静态图（本文件经 index 被 main.tsx 拉进）里引用，否则首屏守卫会要求它进 core。 */
+
+function shareError(fallback: string) {
+  return (res: Response) => toApiError(res, fallback);
+}
 
 export interface ShareListFilter {
   deviceId?: string;
@@ -58,7 +65,7 @@ export function listShares(
 ): Promise<ShareListResponse> {
   return requestJson<ShareListResponse>(client, shareListPath(filter), {
     signal,
-    errorFallback: 'Failed to load shares',
+    toError: shareError('Failed to load shares'),
   });
 }
 
@@ -69,7 +76,7 @@ export function createShare(
   return requestJson<CreateShareResponse>(client, '/api/share', {
     method: 'POST',
     body: input,
-    errorFallback: 'Failed to create share',
+    toError: shareError('Failed to create share'),
   });
 }
 
@@ -79,7 +86,7 @@ export function revokeShare(client: ApiClient, id: string): Promise<ShareRecord>
     `/api/share/${encodeURIComponent(id)}/revoke`,
     {
       method: 'POST',
-      errorFallback: 'Failed to stop share',
+      toError: shareError('Failed to stop share'),
       pick: (payload) => payload.share,
     }
   );
@@ -87,6 +94,6 @@ export function revokeShare(client: ApiClient, id: string): Promise<ShareRecord>
 
 export function getShareOrigins(client: ApiClient): Promise<ShareOriginsResponse> {
   return requestJson<ShareOriginsResponse>(client, '/api/share/origins', {
-    errorFallback: 'Failed to load share addresses',
+    toError: shareError('Failed to load share addresses'),
   });
 }

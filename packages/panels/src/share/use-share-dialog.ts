@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { createShare, getShareOrigins, revokeShare } from '@tmex/api-client';
-import { errorMessage } from '@tmex/shared';
+import { shareErrorKey } from '@tmex/api-client/share-errors';
 import {
   type ShareOriginCandidate,
   type ShareRecord,
@@ -18,6 +18,7 @@ import {
   buildCreateShareInput,
   createShareDraft,
   pickDefaultShareOrigin,
+  resolveActiveShare,
   validateShareDraft,
 } from './share-dialog-model';
 import { useShareStatus } from './use-share-status';
@@ -49,6 +50,8 @@ export interface ShareDialogModel {
 interface CreatedShare {
   share: ShareRecord;
   password: string;
+  /** 创建时刻：列表查询晚于它落地后，进行中态一律以列表为准。 */
+  at: number;
 }
 
 export function useShareDialog({
@@ -85,14 +88,16 @@ export function useShareDialog({
     setRevokedId(null);
   }, [open]);
 
+  // 也依赖 open：弹窗关了不卸载，重开时草稿被重置成空地址，而 react-query 对同一份响应
+  // 保持引用不变，只认 origins 的 effect 不会再跑一次，创建就卡在「请选择地址」。
   useEffect(() => {
-    if (!origins?.candidates.length) return;
+    if (!open || !origins?.candidates.length) return;
     setDraft((prev) =>
       prev.origin
         ? prev
         : { ...prev, origin: pickDefaultShareOrigin(origins.candidates, origins.recommended) }
     );
-  }, [origins]);
+  }, [open, origins]);
 
   const setField = useCallback<SetShareDraftField>((key, value) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -109,12 +114,12 @@ export function useShareDialog({
       return createShare(apiClient, input);
     },
     onSuccess: (result) => {
-      setCreated({ share: result.share, password: result.password });
+      setCreated({ share: result.share, password: result.password, at: Date.now() });
       setRevokedId(null);
       toast.success(t('share.dialog.created'));
       status.refresh();
     },
-    onError: (error) => toast.error(errorMessage(error)),
+    onError: (error) => toast.error(t(shareErrorKey(error))),
   });
 
   const stopMutation = useMutation({
@@ -125,12 +130,15 @@ export function useShareDialog({
       toast.success(t('share.dialog.stopped'));
       status.refresh();
     },
-    onError: (error) => toast.error(errorMessage(error)),
+    onError: (error) => toast.error(t(shareErrorKey(error))),
   });
 
-  const latest = status.activeShare ?? created?.share ?? null;
-  // 终止后到下一次列表回来之前，旧记录还在缓存里，按 id 挡掉免得闪回「进行中」
-  const activeShare = latest && latest.id === revokedId ? null : latest;
+  const activeShare = resolveActiveShare({
+    fromQuery: status.activeShare,
+    created,
+    dataUpdatedAt: status.dataUpdatedAt,
+    revokedId,
+  });
 
   const submit = useCallback(() => {
     const error = validateShareDraft(draft);

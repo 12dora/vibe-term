@@ -48,6 +48,7 @@ function model(overrides: Partial<DeviceConsoleActionsModel> = {}): DeviceConsol
     watchUi: true,
     hasEnabledWatchRule: false,
     shareUi: true,
+    structureUi: true,
     hasActiveShare: false,
     shareViewers: 0,
     onSwitchPane: () => {},
@@ -159,6 +160,15 @@ describe('buildToolbarButtons', () => {
     expect(
       findButton(buildToolbarButtons(toolbarInput({ shareUi: false })), 'share')
     ).toBeUndefined();
+  });
+
+  // 被分享人不能改分屏结构，服务端也会拒掉 SPLIT_PANE：入口不该还留着
+  test('drops the split buttons when structural actions are off', () => {
+    const buttons = buildToolbarButtons(toolbarInput({ structureUi: false }));
+    expect(findButton(buttons, 'split-right')).toBeUndefined();
+    expect(findButton(buttons, 'split-down')).toBeUndefined();
+    expect(findButton(buttons, 'input-mode')).toBeDefined();
+    expect(findButton(buttons, 'terminal-settings')).toBeDefined();
   });
 
   test('disables share without a device or window', () => {

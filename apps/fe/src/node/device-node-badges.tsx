@@ -249,7 +249,8 @@ export function directFailureRows(failure: MeshNodeDirectFailure | null): Diagno
       failureRow(
         'nodes.badge.directFailureDc',
         failure.dc,
-        failure.dcCode,
+        // 旧网关在永久禁拨时也发 breaker_cooling 却不带 until，照译会把 `{{until}}` 原样显示
+        until == null && failure.dcCode === 'breaker_cooling' ? 'breaker_paused' : failure.dcCode,
         until == null ? {} : { until: formatUntil(until) }
       )
     );

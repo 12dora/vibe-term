@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ApiClient } from './client';
+import { ApiClient, ApiError } from './client';
 import {
   createShare,
   getShareOrigins,
@@ -8,6 +8,7 @@ import {
   shareListPath,
   shareQueryKey,
 } from './share';
+import { shareErrorKey } from './share-errors';
 
 class StubApiClient extends ApiClient {
   calls: Array<{ path: string; init?: RequestInit }> = [];
@@ -127,6 +128,20 @@ describe('createShare', () => {
       jsonResponse({ error: 'password too short', code: 'SHARE_PASSWORD_TOO_SHORT' }, 400),
     ]);
     await expect(createShare(client, input)).rejects.toThrow('password too short');
+  });
+
+  // 服务端 message 是英文，界面必须能按码翻译，所以错误里要留住 code
+  test('抛出的是带 code 的 ApiError，可直接映射到 i18n key', async () => {
+    const client = new StubApiClient([
+      jsonResponse({ error: 'window closed', code: 'SHARE_WINDOW_NOT_FOUND' }, 404),
+    ]);
+
+    const error = await createShare(client, input).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe('SHARE_WINDOW_NOT_FOUND');
+    expect((error as ApiError).status).toBe(404);
+    expect(shareErrorKey(error)).toBe('share.error.SHARE_WINDOW_NOT_FOUND');
   });
 });
 

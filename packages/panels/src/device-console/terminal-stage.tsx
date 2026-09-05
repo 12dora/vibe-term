@@ -7,7 +7,7 @@
 
 import type { TerminalShortcutItem, TerminalThemeColors, TmuxPane, TmuxWindow } from '@tmex/shared';
 import { selectPaneViewportOwner } from '@tmex/stores';
-import { useTmuxStore } from '@tmex/stores/react';
+import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import {
   SplitTerminalArea,
   Terminal as TerminalComponent,
@@ -440,6 +440,8 @@ function StageContent(props: TerminalStageProps) {
     onActivateShortcut,
   } = props;
   const { isSelectionInvalid, isPaneConfirmedClosed, isSplitView, canInteractWithPane } = selection;
+  // 被分享人只有输入 / 滚动 / 尺寸仲裁的权限：关窗格与标题栏拖动重排一律不给入口
+  const structureActions = !useRuntime().features.shareViewer;
 
   const shortcutsSlot = (
     <TerminalShortcutsSlot
@@ -490,6 +492,7 @@ function StageContent(props: TerminalStageProps) {
             onWindowResize={selection.handleResize}
             onWindowResizeSettled={selection.handleResizeSettled}
             prepareResources={prepareResources}
+            structureActions={structureActions}
           />
         </div>
         {shortcutsSlot}

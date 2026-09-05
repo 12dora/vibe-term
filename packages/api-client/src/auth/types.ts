@@ -230,6 +230,8 @@ export const DIRECT_FAILURE_CODES = [
   'rtc_unavailable',
   'not_direct_capable',
   'breaker_cooling',
+  /** 熔断生效但没有解除时刻（永久禁拨）：`breaker_cooling` 的模板要 `{{until}}`，不能复用。 */
+  'breaker_paused',
   'aborted',
   'other',
 ] as const;

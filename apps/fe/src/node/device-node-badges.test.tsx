@@ -367,6 +367,27 @@ describe('directFailureRows', () => {
     );
   });
 
+  // 永久禁拨没有解除时刻，breaker_cooling 的模板要 {{until}}，照译会把占位符原样显示
+  test('熔断无解除时刻时换用 breaker_paused，不带 until', () => {
+    const rows = directFailureRows({
+      at: NOW,
+      dc: 'dial breaker paused',
+      dcCode: 'breaker_cooling',
+      dcParams: {},
+    });
+    expect(rows[0]?.valueKey).toBe('nodes.badge.failure.breaker_paused');
+    expect(rows[0]?.valueParams).toEqual({});
+  });
+
+  test('网关直接下发 breaker_paused 时按码翻译', () => {
+    const rows = directFailureRows({
+      at: NOW,
+      dc: 'dial breaker paused',
+      dcCode: 'breaker_paused',
+    });
+    expect(rows[0]?.valueKey).toBe('nodes.badge.failure.breaker_paused');
+  });
+
   test('旧网关没有失败码时保留等宽原文', () => {
     expect(
       directFailureRows({ at: NOW, ws: 'timeout ws://10.0.0.7:39001/peer', dc: null })
