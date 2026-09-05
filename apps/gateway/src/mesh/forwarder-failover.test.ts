@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { LinkSession } from '@tmex/shared/link';
 import { type ForwardPump, type StreamFailoverHost, runStreamFailover } from './forwarder-failover';
-import { type OpenedWsStream, STREAM_FAILOVER_MAX_ATTEMPTS } from './mesh-deps';
+import {
+  type OpenedWsStream,
+  STREAM_FAILOVER_BACKOFF_MS,
+  STREAM_FAILOVER_MAX_ATTEMPTS,
+} from './mesh-deps';
 import { StreamReplayState } from './stream-replay-state';
 
 function fakeStream(): OpenedWsStream {
@@ -172,6 +176,11 @@ describe('runStreamFailover logging isolation', () => {
 });
 
 describe('runStreamFailover 终止路径不留上游流', () => {
+  test('弱网重连退避预算接近 15 秒', () => {
+    expect(STREAM_FAILOVER_BACKOFF_MS).toEqual([0, 50, 100, 200, 400, 800, 1600, 3200, 6400]);
+    expect(STREAM_FAILOVER_BACKOFF_MS.reduce<number>((sum, delay) => sum + delay, 0)).toBe(12_750);
+  });
+
   test('重试用尽：每一轮开出来的流都被关掉，浏览器也一起断', async () => {
     const pump = makePump();
     pump.stream = null;

@@ -35,6 +35,7 @@ export type LinkMuxOptions = {
   maxFramePayload?: number;
   maxLinkUnacked?: number;
   logContext?: LinkMuxLogContext;
+  now?: () => number;
 };
 
 type Waiter = {
@@ -376,9 +377,13 @@ export class LinkMux implements LinkSession {
   readonly maxLinkUnacked: number;
   readonly ctl: LinkCtl;
   readonly closed: Promise<LinkCloseInfo>;
+  get lastFrameAt(): number {
+    return this.lastInboundFrameAt;
+  }
 
   private readonly transport: ByteTransport;
   private readonly decoder: FrameDecoder;
+  private readonly now: () => number;
   private readonly streams = new Map<number, MuxStream>();
   private readonly streamListeners: Array<(stream: LinkStream) => void> = [];
   private readonly pendingIncoming: LinkStream[] = [];
@@ -396,9 +401,12 @@ export class LinkMux implements LinkSession {
   private ctlFlushing = false;
   private closeReason = 'closed';
   private readonly logContext: LinkMuxLogContext;
+  private lastInboundFrameAt: number;
 
   constructor(transport: ByteTransport, opts: LinkMuxOptions) {
     this.transport = transport;
+    this.now = opts.now ?? Date.now;
+    this.lastInboundFrameAt = this.now();
     this.role = opts.role;
     this.streamWindow = opts.streamWindow ?? INITIAL_STREAM_WINDOW;
     this.maxFramePayload = opts.maxFramePayload ?? MAX_FRAME_PAYLOAD;
@@ -651,6 +659,7 @@ export class LinkMux implements LinkSession {
   }
 
   private handleFrame(frame: Frame): void {
+    this.lastInboundFrameAt = Math.max(this.lastInboundFrameAt + 1, this.now());
     this.io.framesIn += 1;
     this.io.bytesIn += frame.payload.byteLength;
     const { streamId, op } = frame;

@@ -12,7 +12,9 @@ export type LivePeer = {
   idleTimer: { clear: () => void } | null;
   pingTimer: { clear: () => void } | null;
   missedPongs: number;
+  lastInboundFrameAt: number;
   retiring: boolean;
+  retireReason: string;
   retiredAt: number;
   zeroStreamsSince: number;
   gotQuiesceAck: boolean;
@@ -34,6 +36,33 @@ export type LivePeer = {
   linkSinceAt: number;
   dcAttemptId: string | null;
 };
+
+const DRAIN_DROP_REASONS = new Set(['missed-pong', 'idle']);
+
+export type PeerDropPlan = {
+  drain: boolean;
+  terminal: boolean;
+  revoked: boolean;
+  wasDc: boolean;
+  countDcFailure: boolean;
+};
+
+export function peerDropPlan(
+  live: LivePeer | undefined,
+  reason: string,
+  stopped: boolean,
+  intentionalDcLoss: boolean
+): PeerDropPlan {
+  const wasDc = live?.transport === 'dc';
+  const revoked = reason === 'revoked';
+  return {
+    drain: Boolean(live && live.streams > 0 && DRAIN_DROP_REASONS.has(reason)),
+    terminal: stopped || revoked,
+    revoked,
+    wasDc,
+    countDcFailure: wasDc && !intentionalDcLoss,
+  };
+}
 
 export class PeerReconnectWake {
   private readonly disconnected = new Set<string>();

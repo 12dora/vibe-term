@@ -1016,9 +1016,9 @@ describe('UplinkServer', () => {
         new TextEncoder().encode(JSON.stringify({ to: b.nodeId }))
       );
       const inB2 = await incomingB2;
-      const aborted = new Promise<void>((resolve) => inB2.onAbort(resolve));
+      const closedB2 = inB2.closed;
       outA2.reset('boom');
-      await aborted;
+      expect(await closedB2).toEqual({ reason: 'rst', message: 'relay-rst:peer-abort' });
 
       const incomingC = new Promise<LinkStream>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('should not open on C')), 200);

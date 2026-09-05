@@ -4,7 +4,8 @@ import type { DataChannelLike } from './native';
 import { copyBytes, sendBinary, toUint8Array } from './native';
 
 export const BULK_CHANNEL_PREFIX = 'bulk:';
-export const BULK_FRAME_SIZE = 64 * 1024;
+export const BULK_FRAME_SIZE = 16 * 1024;
+export const BULK_MAX_RECEIVED_FRAME_SIZE = 64 * 1024;
 export const BULK_IDLE_TIMEOUT_MS = 30_000;
 export const BULK_CONTROL_MAX_BYTES = 4096;
 export const BULK_UPLOAD_QUEUE_BUDGET_BYTES = 8 * 1024 * 1024;
@@ -170,7 +171,10 @@ export class BulkTransferService {
       this.onControl(ch, control);
       return;
     }
-    if (bytes.byteLength > maxMessageSize(ch.dc) || bytes.byteLength > BULK_FRAME_SIZE) {
+    if (
+      bytes.byteLength > maxMessageSize(ch.dc) ||
+      bytes.byteLength > BULK_MAX_RECEIVED_FRAME_SIZE
+    ) {
       this.fail(ch, 'too_large', { cleanup: ch.state === 'put' || ch.state === 'get' });
       return;
     }

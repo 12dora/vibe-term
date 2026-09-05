@@ -30,7 +30,7 @@ import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import { parseJson, projectNode, upsertById } from '../mesh/node-list-projection';
 import { RtcHubRouteTable } from '../mesh/rtc/signaling';
-import { pumpLink } from '../mesh/stream-pump';
+import { pumpHubRelay } from '../relay/hub-relay-pump';
 import { ATTACHMENT_KEEPALIVE_MS, AttachmentRouter } from './attachment-router';
 import { AttachmentSnapshotAssembler, paginateHubAttachments } from './hub-attachments';
 import {
@@ -959,7 +959,7 @@ export class UplinkServer {
       stream.reset('open-failed');
       return;
     }
-    pumpRelay(stream, outbound);
+    pumpHubRelay(stream, outbound);
   }
 
   private async openAndPumpHubRelay(
@@ -984,7 +984,7 @@ export class UplinkServer {
       return;
     }
     this.trackCrossHub(destHubId, stream, outbound);
-    pumpRelay(stream, outbound);
+    pumpHubRelay(stream, outbound);
   }
 
   private trackCrossHub(hubId: string, a: LinkStream, b: LinkStream): void {
@@ -1756,7 +1756,7 @@ export class UplinkServer {
         stream.reset('open-failed');
         return;
       }
-      pumpRelay(stream, outbound);
+      pumpHubRelay(stream, outbound);
       return;
     }
     const self = this.hubNodeId();
@@ -2208,28 +2208,6 @@ function parseRelayOpen(payload: Uint8Array): { to: string; raw: Record<string, 
   } catch {
     return null;
   }
-}
-
-function pumpRelay(a: LinkStream, b: LinkStream): void {
-  let finished = false;
-  const abortBoth = (): void => {
-    if (finished) return;
-    finished = true;
-    try {
-      a.reset('relay-rst');
-    } catch {
-      // already closed
-    }
-    try {
-      b.reset('relay-rst');
-    } catch {
-      // already closed
-    }
-  };
-  a.onAbort(abortBoth);
-  b.onAbort(abortBoth);
-  void pumpLink(a, b, abortBoth);
-  void pumpLink(b, a, abortBoth);
 }
 
 function parseDcPeerSession(rtcSession: string): { a: string; b: string } | null {

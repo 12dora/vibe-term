@@ -9,6 +9,8 @@ import {
   PEER_CONNECT_TIMEOUT_MS,
   PEER_DC_UPGRADE_RETRY_DELAYS_MS,
   PEER_DC_UPGRADE_RETRY_TAIL_MS,
+  PEER_MISSED_PONG_LIMIT,
+  PEER_PING_INTERVAL_MS,
   PEER_RETIRE_MAX_MS,
   PEER_RETIRE_MIN_MS,
   PEER_RETIRE_QUIET_MS,
@@ -25,7 +27,12 @@ import {
 import { handshakeRelay, handshakeWsDirect } from './peer-protocol';
 import { dummyUplink, echoQuiesceCaps } from './peer-test-fixtures';
 import type { RtcPeerManager } from './rtc';
-import { encodeRtcWakeSdp, peerRtcSession } from './rtc/ice';
+import {
+  encodeCandidateSignal,
+  encodeRtcWakeSdp,
+  encodeSdpSignal,
+  peerRtcSession,
+} from './rtc/ice';
 import type { RtcLivenessOptions } from './rtc/rtc-peer-manager';
 import { FakeClock } from './rtc/test-fakes';
 import {
@@ -337,6 +344,63 @@ describe('PeerManager', () => {
     scheduler.nowMs += 100;
     scheduler.tickIntervals();
     await waitUntil(() => managerB.listReach().get(self.nodeId) !== 'lan');
+  });
+
+  test('inbound stream traffic keeps relay alive and missed-pong drains an in-flight stream', async () => {
+    expect(PEER_PING_INTERVAL_MS * PEER_MISSED_PONG_LIMIT).toBe(15_000);
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [local, remote] = createInMemoryLinkPair();
+    expect(manager.adoptLink(peer.nodeId, local, 'relay', self.nodeId)).toBe(local);
+    const incoming = new Promise<LinkStream>((resolve) => remote.onStream(resolve));
+    const outbound = await local.openStream(new TextEncoder().encode('{"type":"keep"}'));
+    const remoteStream = await incoming;
+
+    for (let i = 0; i < PEER_MISSED_PONG_LIMIT + 1; i++) {
+      await remoteStream.write(new Uint8Array([i]));
+      scheduler.advance(PEER_PING_INTERVAL_MS);
+      expect(manager.transportOf(peer.nodeId)).toBe('relay');
+    }
+
+    const localClosed = local.closed;
+    let closed = false;
+    void localClosed.then(() => {
+      closed = true;
+    });
+    for (let i = 0; i < PEER_MISSED_PONG_LIMIT; i++) {
+      scheduler.advance(PEER_PING_INTERVAL_MS);
+    }
+    expect(manager.transportOf(peer.nodeId)).toBeNull();
+    await Promise.resolve();
+    expect(closed).toBe(false);
+
+    outbound.reset('done');
+    await outbound.closed;
+    scheduler.advance(PEER_RETIRE_MIN_MS);
+    expect((await localClosed).reason).toBe('missed-pong');
   });
 
   test('throws NodeUnreachableError when LAN and relay fail', async () => {
@@ -1316,6 +1380,27 @@ describe('PeerManager', () => {
     await Bun.sleep(30);
     expect(fake.connections).toHaveLength(0);
     expect(managerLarge.transportOf(small.nodeId)).toBeNull();
+  });
+
+  test('offerer does not queue stale answers or candidates without an RTC attempt', async () => {
+    const { small, large, managerSmall } = await setupDirectRtcPair(fixtures);
+    const session = peerRtcSession(small.nodeId, large.nodeId);
+    managerSmall.receiveRtcSignal(large.nodeId, {
+      rtcSession: session,
+      from: 'node',
+      to: small.nodeId,
+      sdp: encodeSdpSignal({ type: 'answer', sdp: 'v=0' }),
+    });
+    managerSmall.receiveRtcSignal(large.nodeId, {
+      rtcSession: session,
+      from: 'node',
+      to: small.nodeId,
+      candidate: encodeCandidateSignal('candidate:1', '0'),
+    });
+    const inbox = (
+      managerSmall as unknown as { rtcInbox: Map<string, Array<{ receivedAt: number }>> }
+    ).rtcInbox;
+    expect(inbox.get(large.nodeId)).toBeUndefined();
   });
 
   test('a forged wake does not commit cooldown so a legitimate wake can still dial', async () => {
@@ -2743,7 +2828,7 @@ describe('PeerManager', () => {
     const self = seedNodeIdentity(store, 'user-1');
     const peer = seedNodeIdentity(store, 'user-1');
     const scheduler = new ImmediateScheduler();
-    const idleMs = 5_000;
+    const idleMs = 5_123;
     const manager = new PeerManager({
       identity: self,
       userStore: store,
@@ -2876,11 +2961,14 @@ describe('PeerManager', () => {
     fixtures.push({ close: () => nextB.close('test') });
     echoQuiesceCaps(nextB);
     const retired = liveA.closed;
+    const timersBeforeRetire = scheduler.intervals.filter(
+      (row) => !row.cleared && row.ms === PEER_RETIRE_MIN_MS
+    ).length;
     expect(manager.adoptLink(peer.nodeId, nextA, 'dc', self.nodeId, '10.0.0.8')).toBe(nextA);
     const retireTimers = scheduler.intervals.filter(
       (row) => !row.cleared && row.ms === PEER_RETIRE_MIN_MS
     );
-    expect(retireTimers).toHaveLength(1);
+    expect(retireTimers).toHaveLength(timersBeforeRetire + 1);
     scheduler.advance(PEER_RETIRE_MIN_MS - 1);
     let done = false;
     void retired.then(() => {

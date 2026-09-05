@@ -13,6 +13,7 @@ import {
   verifyRelayPassword,
 } from './relay-password';
 import {
+  RELAY_TOKEN_BUCKET_BYPASS_BYTES,
   RelayTokenBucket,
   defaultRelayQuota,
   effectiveRelayQuota,
@@ -85,17 +86,115 @@ describe('relay quota', () => {
     let clock = 0;
     let slept = 0;
     const bucket = new RelayTokenBucket(
-      100,
+      8_192,
       () => clock,
       async (ms) => {
         slept += ms;
         clock += ms;
       }
     );
-    await bucket.take(100);
+    await bucket.take(8_192);
     expect(slept).toBe(0);
-    await bucket.take(100);
+    await bucket.take(8_192);
     expect(slept).toBeGreaterThan(0);
+  });
+
+  test('token bucket rotates grants across relay streams', async () => {
+    let clock = 0;
+    const bucket = new RelayTokenBucket(
+      8_192,
+      () => clock,
+      async (ms) => {
+        clock += ms;
+        await Promise.resolve();
+      }
+    );
+    const first = bucket.createStream();
+    const second = bucket.createStream();
+    const completed: string[] = [];
+    const large = first
+      .take(RELAY_TOKEN_BUCKET_BYPASS_BYTES * 5)
+      .then(() => completed.push('large'));
+    const smaller = second
+      .take(RELAY_TOKEN_BUCKET_BYPASS_BYTES * 2)
+      .then(() => completed.push('smaller'));
+    await Promise.all([large, smaller]);
+    expect(completed).toEqual(['smaller', 'large']);
+  });
+
+  test('frames up to 4 KiB bypass an occupied bandwidth queue', async () => {
+    let clock = 0;
+    const sleepers: Array<() => void> = [];
+    const bucket = new RelayTokenBucket(
+      4_096,
+      () => clock,
+      () =>
+        new Promise<void>((resolve) => {
+          sleepers.push(resolve);
+        })
+    );
+    let largeDone = false;
+    const large = bucket
+      .createStream()
+      .take(8_192)
+      .then(() => {
+        largeDone = true;
+      });
+    const small = bucket.createStream().take(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+    expect(sleepers).toHaveLength(1);
+    clock += 1_000;
+    sleepers[0]?.();
+    await small;
+    expect(largeDone).toBe(false);
+    clock += 1_000;
+    sleepers[1]?.();
+    await large;
+  });
+
+  test('sustained small frames cannot starve an already queued stream', async () => {
+    let clock = 0;
+    const bucket = new RelayTokenBucket(
+      8_192,
+      () => clock,
+      async (ms) => {
+        clock += ms;
+        await Promise.resolve();
+      }
+    );
+    const largeStream = bucket.createStream();
+    const smallStream = bucket.createStream();
+    const completed: string[] = [];
+    const large = largeStream
+      .take(RELAY_TOKEN_BUCKET_BYPASS_BYTES * 6)
+      .then(() => completed.push('large'));
+    const small = (async () => {
+      for (let i = 0; i < 6; i++) {
+        await smallStream.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+      }
+      completed.push('small');
+    })();
+    await Promise.all([large, small]);
+    expect(completed).toEqual(['large', 'small']);
+  });
+
+  test('closing a stream limiter removes and rejects its queued take', async () => {
+    let clock = 0;
+    let wake: (() => void) | undefined;
+    const bucket = new RelayTokenBucket(
+      4_096,
+      () => clock,
+      () =>
+        new Promise<void>((resolve) => {
+          wake = resolve;
+        })
+    );
+    const stream = bucket.createStream();
+    const pending = stream.take(8_192);
+    stream.close();
+    await expect(pending).rejects.toThrow('relay token stream closed');
+    clock += 1_000;
+    wake?.();
+    await Promise.resolve();
   });
 
   test('unlimited rate never sleeps', async () => {

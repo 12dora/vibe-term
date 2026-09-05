@@ -3,7 +3,8 @@ export const MAX_FRAME_PAYLOAD = 1024 * 1024;
 /** Sender-side DATA payload cap. Receivers still accept frames up to MAX_FRAME_PAYLOAD. */
 export const MAX_DATA_SEND_PAYLOAD = 256 * 1024;
 export const INITIAL_STREAM_WINDOW = 1024 * 1024;
-export const MAX_LINK_UNACKED = 32 * 1024 * 1024;
+// Cover 64 default relay streams plus the control stream at a full window each.
+export const MAX_LINK_UNACKED = 65 * INITIAL_STREAM_WINDOW;
 export const CTL_STREAM_ID = 0;
 export const FLAG_HEAD = 1 << 0;
 export const GCM_TAG_LENGTH = 16;
@@ -74,6 +75,7 @@ export interface LinkSession {
   openStream(openPayload: Uint8Array): Promise<LinkStream>;
   onStream(cb: (stream: LinkStream) => void): void;
   readonly ctl: LinkCtl;
+  readonly lastFrameAt?: number;
   close(reason?: string): void;
   readonly closed: Promise<LinkCloseInfo>;
 }

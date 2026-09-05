@@ -1,12 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import { WebSocketSendGuard } from '../../ws/websocket-send-guard';
+import { FANOUT_MAX_PENDING_BYTES } from './channel-fanout';
 import {
   DC_HIGH_WATER_BYTES,
   DC_PRIORITY_QUEUE_CAP,
   DC_REGULAR_QUEUE_CAP,
   DataChannelCarrier,
 } from './data-channel-carrier';
-import { FRAGMENT_HEADER_SIZE, FRAGMENT_PAYLOAD_SIZE, fragmentFrame } from './fragmenter';
+import {
+  FRAGMENT_HEADER_SIZE,
+  FRAGMENT_SEND_PAYLOAD_SIZE,
+  MAX_REASSEMBLED_FRAME_BYTES,
+  fragmentFrame,
+} from './fragmenter';
 import { encodeLivenessChunk, parseLivenessChunk } from './liveness';
 import { pairDataChannels } from './test-fakes';
 
@@ -24,11 +30,12 @@ describe('DataChannelCarrier', () => {
     expect(left.send(small)).toBe('sent');
     expect(got).toEqual([small]);
 
-    const large = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 20).fill(3);
+    const large = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 20).fill(3);
     expect(left.send(large)).toBe('sent');
     expect(got[1]).toEqual(large);
     expect(a.sent[0]?.byteLength).toBe(FRAGMENT_HEADER_SIZE + 3);
-    expect(a.sent[1]?.byteLength).toBe(FRAGMENT_HEADER_SIZE + FRAGMENT_PAYLOAD_SIZE);
+    expect(a.sent[1]?.byteLength).toBe(FRAGMENT_HEADER_SIZE + FRAGMENT_SEND_PAYLOAD_SIZE);
+    expect(a.sent[1]?.byteLength).toBe(16 * 1024);
   });
 
   test('queues the backpressured frame above 4 MiB and fires onDrain after delivery', () => {
@@ -74,7 +81,7 @@ describe('DataChannelCarrier', () => {
       got.push(bytes);
     });
     a.succeedsBeforeBlock = 1;
-    const large = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 20).fill(3);
+    const large = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 20).fill(3);
     expect(left.send(large)).toBe('sent');
     expect(a.sent).toHaveLength(1);
     expect(got).toEqual([]);
@@ -120,7 +127,7 @@ describe('DataChannelCarrier', () => {
     });
     a.succeedsBeforeBlock = 1;
     a.closeOnBlockedSend = true;
-    const large = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 20).fill(9);
+    const large = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 20).fill(9);
     expect(carrier.send(large)).toBe('closed');
     expect(closed).toBe(1);
     expect(carrier.send(new Uint8Array([1]))).toBe('closed');
@@ -141,7 +148,9 @@ describe('DataChannelCarrier', () => {
       closed += 1;
     });
     const bad = new Uint8Array(FRAGMENT_HEADER_SIZE + 1);
-    bad[6] = 18;
+    const maxTotal = Math.ceil(MAX_REASSEMBLED_FRAME_BYTES / FRAGMENT_SEND_PAYLOAD_SIZE) + 1;
+    bad[6] = maxTotal & 0xff;
+    bad[7] = (maxTotal >>> 8) & 0xff;
     a.sendMessageBinary(Buffer.from(bad));
     expect(closed).toBe(1);
     expect(b.closed).toBe(true);
@@ -198,7 +207,7 @@ describe('DataChannelCarrier', () => {
       got.push(bytes);
     });
     a.succeedsBeforeBlock = 1;
-    const large = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 20).fill(3);
+    const large = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 20).fill(3);
     expect(left.send(large)).toBe('sent');
     expect(got).toEqual([]);
     expect(left.hasPendingWrites()).toBe(true);
@@ -267,7 +276,7 @@ describe('DataChannelCarrier', () => {
     });
     left.onDrain(() => guard.handleDrain(left));
     a.succeedsBeforeBlock = 1;
-    const first = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 20).fill(3);
+    const first = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 20).fill(3);
     const second = new Uint8Array([9, 8, 7]);
 
     expect(guard.sendFramesStatus(left, [first])).toBe('sent');
@@ -288,7 +297,7 @@ describe('DataChannelCarrier', () => {
       got.push(bytes);
     });
     a.succeedsBeforeBlock = 1;
-    const large = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 20).fill(4);
+    const large = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 20).fill(4);
     expect(left.send(large)).toBe('sent');
 
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
@@ -310,11 +319,8 @@ describe('DataChannelCarrier', () => {
       lines.push(args.map(String).join(' '));
     };
     try {
-      const chunk = new Uint8Array(1024 * 1024).fill(1);
-      for (let i = 0; i < 32; i++) {
-        expect(left.send(chunk)).toBe('sent');
-      }
-      left.send(chunk);
+      (right as unknown as { pendingBytes: number }).pendingBytes = FANOUT_MAX_PENDING_BYTES;
+      left.send(new Uint8Array([1]));
       expect(b.closed).toBe(true);
       expect(
         lines.some(

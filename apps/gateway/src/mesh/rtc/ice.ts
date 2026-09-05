@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import {
   decodeBase64url,
   encodeBase64url,
@@ -5,11 +6,25 @@ import {
   signEd25519,
   verifyEd25519,
 } from '@tmex/shared/auth';
+import { type RtcPortRange, config } from '../../config';
 import type { RtcSignalMessage } from '../mesh-deps';
 import type { IceRelayType, IceServer, IceServerConfig, RtcIceConfig } from './native';
 
-export type SdpSignal = { type: string; sdp: string };
-export type CandidateSignal = { candidate: string; mid: string };
+export type SdpSignal = { type: string; sdp: string; epoch?: number };
+export type CandidateSignal = { candidate: string; mid: string; epoch?: number };
+
+export type RtcIceRuntimeConfig = {
+  peerBindHost: readonly string[];
+  rtcPortRange: RtcPortRange | null;
+};
+
+export type BuiltRtcIceConfig = RtcIceConfig & {
+  enableIceTcp: true;
+  enableIceUdpMux: true;
+  mtu: 1200;
+  portRangeBegin?: number;
+  portRangeEnd?: number;
+};
 
 const DEFAULT_TURN_PORT = 3478;
 const DEFAULT_TURNS_PORT = 5349;
@@ -140,8 +155,32 @@ export function collectIceServers(cfg: IceServerConfig): Array<string | IceServe
   return servers;
 }
 
-export function buildRtcIceConfig(cfg: IceServerConfig): RtcIceConfig {
-  return { iceServers: collectIceServers(cfg) };
+function concreteBindAddress(hosts: readonly string[]): string | undefined {
+  if (hosts.length !== 1) return undefined;
+  const raw = hosts[0]?.trim();
+  if (!raw) return undefined;
+  const host = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+  if (isIP(host) === 0 || host === '0.0.0.0' || host === '::') return undefined;
+  return host;
+}
+
+export function buildRtcIceConfig(
+  cfg: IceServerConfig,
+  runtime: RtcIceRuntimeConfig = {
+    peerBindHost: config.peerBindHost,
+    rtcPortRange: config.rtcPortRange,
+  }
+): BuiltRtcIceConfig {
+  const bindAddress = concreteBindAddress(runtime.peerBindHost);
+  const portRange = runtime.rtcPortRange;
+  return {
+    iceServers: collectIceServers(cfg),
+    enableIceTcp: true,
+    enableIceUdpMux: true,
+    mtu: 1200,
+    ...(bindAddress ? { bindAddress } : {}),
+    ...(portRange ? { portRangeBegin: portRange.begin, portRangeEnd: portRange.end } : {}),
+  };
 }
 
 export function encodeSdpSignal(desc: SdpSignal): string {
@@ -152,9 +191,14 @@ export function decodeSdpSignal(raw: string): SdpSignal | null {
   const trimmed = raw.trim();
   if (trimmed.startsWith('{')) {
     try {
-      const parsed = JSON.parse(trimmed) as { type?: unknown; sdp?: unknown };
+      const parsed = JSON.parse(trimmed) as { type?: unknown; sdp?: unknown; epoch?: unknown };
       if (typeof parsed.type === 'string' && typeof parsed.sdp === 'string') {
-        return { type: parsed.type, sdp: parsed.sdp };
+        if (!isValidOptionalEpoch(parsed.epoch)) return null;
+        return {
+          type: parsed.type,
+          sdp: parsed.sdp,
+          ...(parsed.epoch === undefined ? {} : { epoch: parsed.epoch }),
+        };
       }
     } catch {
       return null;
@@ -164,17 +208,19 @@ export function decodeSdpSignal(raw: string): SdpSignal | null {
   return null;
 }
 
-export function encodeCandidateSignal(candidate: string, mid: string): string {
-  return JSON.stringify({ candidate, mid });
+export function encodeCandidateSignal(candidate: string, mid: string, epoch?: number): string {
+  return JSON.stringify({ candidate, mid, ...(epoch === undefined ? {} : { epoch }) });
 }
 
 export function decodeCandidateSignal(raw: string): CandidateSignal | null {
   try {
-    const parsed = JSON.parse(raw) as { candidate?: unknown; mid?: unknown };
+    const parsed = JSON.parse(raw) as { candidate?: unknown; mid?: unknown; epoch?: unknown };
     if (typeof parsed.candidate === 'string') {
+      if (!isValidOptionalEpoch(parsed.epoch)) return null;
       return {
         candidate: parsed.candidate,
         mid: typeof parsed.mid === 'string' ? parsed.mid : '0',
+        ...(parsed.epoch === undefined ? {} : { epoch: parsed.epoch }),
       };
     }
   } catch {
@@ -183,6 +229,10 @@ export function decodeCandidateSignal(raw: string): CandidateSignal | null {
     if (raw) return { candidate: raw, mid: '0' };
   }
   return null;
+}
+
+function isValidOptionalEpoch(epoch: unknown): epoch is number | undefined {
+  return epoch === undefined || (Number.isSafeInteger(epoch) && (epoch as number) >= 0);
 }
 
 export function peerRtcSession(a: string, b: string): string {

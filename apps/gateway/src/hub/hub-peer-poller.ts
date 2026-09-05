@@ -4,6 +4,7 @@
  * 2. 返回的 32-hex hubNodeId 在本机 TMEX_HUB_PEERS allowlist 中，且与 mesh_hubs 行 id 一致。
  * 未授权的 URL / id 不能 fencing 本机。
  */
+import { errorMessage } from '@tmex/shared';
 import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
 import type { HubTrustStore } from '../auth/hub-trust-store';
 import { type MeshHubRecord, type MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
@@ -724,7 +725,7 @@ export class HubPeerPoller {
       );
       await this.onAutoPromote(operationId);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       console.error(`[hub] auto-promote failed operationId=${operationId} err=${msg}`);
     } finally {
       this.autoPromoteInFlight = false;
@@ -736,8 +737,7 @@ export class HubPeerPoller {
     const prev = this.lastTlsLogAt.get(publicUrl);
     if (prev !== undefined && now - prev < HUB_PEER_TLS_LOG_INTERVAL_MS) return;
     this.lastTlsLogAt.set(publicUrl, now);
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[hub] peer status TLS failed url=${publicUrl} err=${msg}`);
+    console.warn(`[hub] peer status TLS failed url=${publicUrl} err=${errorMessage(err)}`);
   }
 }
 
@@ -792,7 +792,7 @@ function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
 }
 
 function isTlsError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
+  const msg = errorMessage(err);
   const code =
     err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : '';
   const text = `${msg} ${code}`.toLowerCase();

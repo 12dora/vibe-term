@@ -4,6 +4,8 @@ import {
   DEFAULT_MAX_IN_FLIGHT,
   FRAGMENT_HEADER_SIZE,
   FRAGMENT_PAYLOAD_SIZE,
+  FRAGMENT_SEND_MESSAGE_BYTES,
+  FRAGMENT_SEND_PAYLOAD_SIZE,
   FRAME_HEADER_SIZE,
   FragmentAssembler,
   type FragmentFail,
@@ -17,6 +19,8 @@ export {
   DEFAULT_MAX_IN_FLIGHT,
   FRAGMENT_HEADER_SIZE,
   FRAGMENT_PAYLOAD_SIZE,
+  FRAGMENT_SEND_MESSAGE_BYTES,
+  FRAGMENT_SEND_PAYLOAD_SIZE,
 };
 
 export const MAX_REASSEMBLED_FRAME_BYTES = MAX_FRAME_PAYLOAD + FRAME_HEADER_SIZE;
@@ -42,13 +46,13 @@ export function fragmentPayloadSize(maxMessageSize: number): number {
   if (!(maxMessageSize >= FRAGMENT_HEADER_SIZE)) {
     throw new FragmentProtocolError('datachannel maxMessageSize cannot fit fragment header');
   }
-  return Math.min(FRAGMENT_PAYLOAD_SIZE, maxMessageSize - FRAGMENT_HEADER_SIZE);
+  return Math.min(FRAGMENT_SEND_PAYLOAD_SIZE, maxMessageSize - FRAGMENT_HEADER_SIZE);
 }
 
 export function fragmentFrame(
   frameId: number,
   payload: Uint8Array,
-  payloadSize = FRAGMENT_PAYLOAD_SIZE
+  payloadSize = FRAGMENT_SEND_PAYLOAD_SIZE
 ): Uint8Array[] {
   return fragmentBytes(frameId, payload, payloadSize);
 }
@@ -63,7 +67,7 @@ export class FrameReassembler {
       ...opts,
       maxFrameBytes,
       payloadMax,
-      maxTotal: Math.max(1, Math.ceil(maxFrameBytes / payloadMax)),
+      maxTotal: Math.max(1, Math.ceil(maxFrameBytes / FRAGMENT_SEND_PAYLOAD_SIZE)),
       refreshDeadline: true,
       setTimeoutFn: opts.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms)),
       clearTimeoutFn:

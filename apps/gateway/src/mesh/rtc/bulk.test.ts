@@ -6,6 +6,7 @@ import type { FilesBulkHooks } from '../../api/files';
 import {
   BULK_FRAME_SIZE,
   BULK_IDLE_TIMEOUT_MS,
+  BULK_MAX_RECEIVED_FRAME_SIZE,
   BULK_UPLOAD_QUEUE_BUDGET_BYTES,
   BulkTransferService,
 } from './bulk';
@@ -253,7 +254,8 @@ describe('BulkTransferService', () => {
 
   test('happy upload accepts a 64 KiB frame plus a tail', async () => {
     const id = 'tx-up-64k';
-    const payload = new Uint8Array(BULK_FRAME_SIZE + 11).fill(4);
+    expect(BULK_MAX_RECEIVED_FRAME_SIZE).toBe(64 * 1024);
+    const payload = new Uint8Array(BULK_MAX_RECEIVED_FRAME_SIZE + 11).fill(4);
     payload[0] = 1;
     payload[payload.byteLength - 1] = 2;
     const { harness, service, browser, node } = setup(`bulk:${id}`);
@@ -261,8 +263,8 @@ describe('BulkTransferService', () => {
     service.attachChannel(node, { uid: 'user-1' });
 
     browser.sendMessage(JSON.stringify({ op: 'put', transferId: id, size: payload.byteLength }));
-    browser.sendMessageBinary(Buffer.from(payload.subarray(0, BULK_FRAME_SIZE)));
-    browser.sendMessageBinary(Buffer.from(payload.subarray(BULK_FRAME_SIZE)));
+    browser.sendMessageBinary(Buffer.from(payload.subarray(0, BULK_MAX_RECEIVED_FRAME_SIZE)));
+    browser.sendMessageBinary(Buffer.from(payload.subarray(BULK_MAX_RECEIVED_FRAME_SIZE)));
     browser.sendMessage(JSON.stringify({ op: 'done' }));
 
     await waitFor(() => jsonFromSent(node).some((m) => m.ok === true), 'ok reply');
@@ -318,8 +320,9 @@ describe('BulkTransferService', () => {
     expect(harness.uploads.has(id)).toBe(false);
   });
 
-  test('download streams 64 KiB frames then {op:eof}', async () => {
+  test('download streams 16 KiB frames then {op:eof}', async () => {
     const id = 'tx-dl';
+    expect(BULK_FRAME_SIZE).toBe(16 * 1024);
     const payload = new Uint8Array(BULK_FRAME_SIZE + 5).fill(6);
     payload[0] = 11;
     payload[payload.byteLength - 1] = 12;
@@ -381,16 +384,17 @@ describe('BulkTransferService', () => {
     expect(jsonFromSent(node)[0]?.code).toBe('not_found');
   });
 
-  test('oversize message is rejected', async () => {
+  test('message above the 64 KiB receive cap is rejected', async () => {
     const id = 'tx-oversize';
     const { harness, service, browser, node } = setup(`bulk:${id}`);
-    harness.addUpload(id, 'user-1', 100);
-    node.maxSize = 16;
-    browser.maxSize = 16;
+    const size = BULK_MAX_RECEIVED_FRAME_SIZE + 1;
+    harness.addUpload(id, 'user-1', size);
+    node.maxSize = 128 * 1024;
+    browser.maxSize = 128 * 1024;
     service.attachChannel(node, { uid: 'user-1' });
 
-    browser.sendMessage(JSON.stringify({ op: 'put', transferId: id, size: 100 }));
-    browser.sendMessageBinary(Buffer.from(new Uint8Array(32).fill(1)));
+    browser.sendMessage(JSON.stringify({ op: 'put', transferId: id, size }));
+    browser.sendMessageBinary(Buffer.from(new Uint8Array(size).fill(1)));
 
     await waitFor(
       () => jsonFromSent(node).some((m) => m.ok === false && m.code === 'too_large'),

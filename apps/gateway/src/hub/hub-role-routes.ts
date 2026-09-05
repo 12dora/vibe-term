@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type { HubRoleError, HubRoleTransition } from '@tmex/shared';
 import type { HubMode } from '@tmex/shared/uplink';
 import { json, readJsonObjectBody } from '../api/http';
@@ -87,7 +88,7 @@ export async function executeHubRoleTransition(
     if (!row) throw new Error('hub role transition vanished');
     return row;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     store.update(input.operationId, { phase: 'failed', error: message }, ctx.now());
     throw err;
   }
@@ -180,7 +181,7 @@ export async function handlePostHubRole(req: Request, ctx: HubRoleRouteContext):
     return json(row, 202);
   } catch (err) {
     const failed = store.get(operationId);
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return json(failed ?? { code: 'INVALID_REQUEST', message }, 500);
   }
 }

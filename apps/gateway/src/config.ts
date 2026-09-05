@@ -136,6 +136,31 @@ export function parsePeerBindHost(raw: string | undefined): string[] {
   return hosts.length > 0 ? hosts : [...DEFAULT_PEER_BIND_HOSTS];
 }
 
+export type RtcPortRange = {
+  begin: number;
+  end: number;
+};
+
+export function parseRtcPortRange(raw: string | undefined): RtcPortRange | null {
+  if (raw === undefined || raw.trim() === '') return null;
+  const match = /^(\d+)\s*-\s*(\d+)$/.exec(raw.trim());
+  if (!match?.[1] || !match[2]) {
+    throw new Error('TMEX_RTC_PORT_RANGE must use begin-end format');
+  }
+  const begin = Number(match[1]);
+  const end = Number(match[2]);
+  if (
+    !Number.isInteger(begin) ||
+    !Number.isInteger(end) ||
+    begin < 1 ||
+    end > 65535 ||
+    begin > end
+  ) {
+    throw new Error('TMEX_RTC_PORT_RANGE must be an ordered range within 1..65535');
+  }
+  return { begin, end };
+}
+
 export function originUrlFromBindHost(bindHost: string, port: number): string {
   const unwrapped =
     bindHost.startsWith('[') && bindHost.endsWith(']') && bindHost.includes(':')
@@ -330,6 +355,7 @@ export const config = {
   peerPort: parsePeerPort(process.env.TMEX_PEER_PORT),
   stunServers: parseStunServers(process.env.TMEX_STUN_SERVERS),
   peerBindHost: parsePeerBindHost(process.env.TMEX_PEER_BIND_HOST),
+  rtcPortRange: parseRtcPortRange(process.env.TMEX_RTC_PORT_RANGE),
   turnUrl: getOptionalEnv('TMEX_TURN_URL'),
   turnUsername: getOptionalEnv('TMEX_TURN_USERNAME'),
   turnCredential: getOptionalEnv('TMEX_TURN_CREDENTIAL'),

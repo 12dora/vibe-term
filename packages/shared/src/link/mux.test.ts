@@ -146,11 +146,23 @@ describe('link mux', () => {
     expect(info.reason).toContain('exceeds');
   });
 
-  it('closes the link when unacked outbound exceeds 32 MiB', async () => {
-    const [a, b] = createInMemoryLinkPair();
+  it('covers 64 relay stream windows and closes when the configured unacked cap is exceeded', async () => {
+    expect(MAX_LINK_UNACKED).toBe(65 * INITIAL_STREAM_WINDOW);
+    const window = 8;
+    const [t1, t2] = createBytePipe();
+    const a = new LinkMux(t1, {
+      role: 'initiator',
+      streamWindow: window,
+      maxLinkUnacked: 2 * window,
+    });
+    const b = new LinkMux(t2, {
+      role: 'acceptor',
+      streamWindow: window,
+      maxLinkUnacked: 2 * window,
+    });
     b.onStream(() => undefined);
-    const chunk = new Uint8Array(INITIAL_STREAM_WINDOW).fill(3);
-    for (let i = 0; i < 32; i++) {
+    const chunk = new Uint8Array(window).fill(3);
+    for (let i = 0; i < 2; i++) {
       const stream = await a.openStream(new Uint8Array([i]));
       await stream.write(chunk);
     }
@@ -159,7 +171,22 @@ describe('link mux', () => {
     const info = await a.closed;
     expect(info.reason).toContain('unacked');
     await expect(writeP).rejects.toBeInstanceOf(Error);
-    expect(MAX_LINK_UNACKED).toBe(32 * 1024 * 1024);
+  });
+
+  it('exposes the timestamp of every decoded inbound frame', () => {
+    let now = 1_000;
+    const [t1, t2] = createBytePipe();
+    const mux = new LinkMux(t1, { role: 'initiator', now: () => now });
+    expect(mux.lastFrameAt).toBe(1_000);
+
+    now = 1_250;
+    t2.send(encodeFrame({ streamId: 0, op: FrameOp.DATA, payload: new Uint8Array([1]) }));
+    expect(mux.lastFrameAt).toBe(1_250);
+
+    now = 1_500;
+    t2.send(encodeFrame({ streamId: 0, op: FrameOp.WINDOW, payload: encodeWindowPayload(1) }));
+    expect(mux.lastFrameAt).toBe(1_500);
+    mux.close();
   });
 
   it('half-closes each direction independently and finishes on bilateral END', async () => {

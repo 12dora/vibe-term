@@ -3,6 +3,8 @@ import {
   DC_MAX_MESSAGE_BYTES,
   FRAGMENT_HEADER_SIZE,
   FRAGMENT_PAYLOAD_SIZE,
+  FRAGMENT_SEND_MESSAGE_BYTES,
+  FRAGMENT_SEND_PAYLOAD_SIZE,
   FragmentProtocolError,
   FrameReassembler,
   MAX_REASSEMBLED_FRAME_BYTES,
@@ -41,32 +43,45 @@ describe('fragmentFrame', () => {
     expect(assembled.push(parts[0] as Uint8Array)).toEqual(payload);
   });
 
-  test('64 KiB is the total DataChannel message cap including the 8-byte header', () => {
+  test('sends 16 KiB messages while retaining the 64 KiB receive cap', () => {
     expect(DC_MAX_MESSAGE_BYTES).toBe(64 * 1024);
     expect(FRAGMENT_PAYLOAD_SIZE).toBe(DC_MAX_MESSAGE_BYTES - FRAGMENT_HEADER_SIZE);
-    const exact = fragmentFrame(1, new Uint8Array(FRAGMENT_PAYLOAD_SIZE).fill(1));
+    expect(FRAGMENT_SEND_MESSAGE_BYTES).toBe(16 * 1024);
+    expect(FRAGMENT_HEADER_SIZE + FRAGMENT_SEND_PAYLOAD_SIZE).toBe(FRAGMENT_SEND_MESSAGE_BYTES);
+    const exact = fragmentFrame(1, new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE).fill(1));
     expect(exact).toHaveLength(1);
-    expect(exact[0]?.byteLength).toBe(DC_MAX_MESSAGE_BYTES);
-    const over = fragmentFrame(2, new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1).fill(2));
+    expect(exact[0]?.byteLength).toBe(16 * 1024);
+    const over = fragmentFrame(2, new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 1).fill(2));
     expect(over).toHaveLength(2);
-    expect(over[0]?.byteLength).toBe(DC_MAX_MESSAGE_BYTES);
+    expect(over[0]?.byteLength).toBe(16 * 1024);
     expect(over[1]?.byteLength).toBe(FRAGMENT_HEADER_SIZE + 1);
   });
 
   test('effective payload is min(protocol cap, channel.maxMessageSize - 8)', () => {
-    expect(fragmentPayloadSize(DC_MAX_MESSAGE_BYTES)).toBe(FRAGMENT_PAYLOAD_SIZE);
-    expect(fragmentPayloadSize(32 * 1024)).toBe(32 * 1024 - FRAGMENT_HEADER_SIZE);
+    expect(fragmentPayloadSize(DC_MAX_MESSAGE_BYTES)).toBe(FRAGMENT_SEND_PAYLOAD_SIZE);
+    expect(fragmentPayloadSize(32 * 1024)).toBe(FRAGMENT_SEND_PAYLOAD_SIZE);
+    expect(fragmentPayloadSize(8 * 1024)).toBe(8 * 1024 - FRAGMENT_HEADER_SIZE);
     expect(() => fragmentPayloadSize(FRAGMENT_HEADER_SIZE - 1)).toThrow(FragmentProtocolError);
   });
 
-  test('payload larger than the protocol payload cap is split with idx/total', () => {
-    const payload = new Uint8Array(FRAGMENT_PAYLOAD_SIZE * 2 + 10);
+  test('reassembles legacy 64 KiB fragments', () => {
+    const payload = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1).fill(7);
+    const parts = fragmentFrame(3, payload, FRAGMENT_PAYLOAD_SIZE);
+    expect(parts).toHaveLength(2);
+    expect(parts[0]?.byteLength).toBe(DC_MAX_MESSAGE_BYTES);
+    const reassembler = new FrameReassembler();
+    expect(reassembler.push(parts[0] as Uint8Array)).toBeNull();
+    expect(reassembler.push(parts[1] as Uint8Array)).toEqual(payload);
+  });
+
+  test('payload larger than the send target is split with idx/total', () => {
+    const payload = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE * 2 + 10);
     payload[0] = 9;
-    payload[FRAGMENT_PAYLOAD_SIZE] = 8;
+    payload[FRAGMENT_SEND_PAYLOAD_SIZE] = 8;
     payload[payload.byteLength - 1] = 7;
     const parts = fragmentFrame(42, payload);
     expect(parts).toHaveLength(3);
-    expect(parts[0]?.byteLength).toBe(FRAGMENT_HEADER_SIZE + FRAGMENT_PAYLOAD_SIZE);
+    expect(parts[0]?.byteLength).toBe(FRAGMENT_SEND_MESSAGE_BYTES);
     expect(parts[2]?.byteLength).toBe(FRAGMENT_HEADER_SIZE + 10);
 
     const assembled = new FrameReassembler();
@@ -79,7 +94,7 @@ describe('fragmentFrame', () => {
 describe('FrameReassembler', () => {
   test('reassembles out-of-order fragments of concurrent frames', () => {
     const a = fragmentFrame(1, new Uint8Array([1, 1, 1]));
-    const bPayload = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1).fill(2);
+    const bPayload = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 1).fill(2);
     const b = fragmentFrame(2, bPayload);
     const reassembler = new FrameReassembler();
     expect(reassembler.push(b[1] as Uint8Array)).toBeNull();
@@ -90,7 +105,7 @@ describe('FrameReassembler', () => {
   test('drops a frame that exceeds the per-frame timeout', () => {
     let now = 1_000;
     const reassembler = new FrameReassembler({ now: () => now, timeoutMs: 50, maxInFlight: 8 });
-    const parts = fragmentFrame(3, new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1));
+    const parts = fragmentFrame(3, new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 1));
     expect(reassembler.push(parts[0] as Uint8Array)).toBeNull();
     now = 1_060;
     expect(reassembler.push(parts[1] as Uint8Array)).toBeNull();
@@ -99,7 +114,7 @@ describe('FrameReassembler', () => {
   test('a slow trickle of fragments does not drop an in-progress frame', () => {
     let now = 0;
     const reassembler = new FrameReassembler({ now: () => now, timeoutMs: 50, maxInFlight: 8 });
-    const payload = new Uint8Array(FRAGMENT_PAYLOAD_SIZE * 2 + 4).fill(6);
+    const payload = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE * 2 + 4).fill(6);
     const parts = fragmentFrame(5, payload);
     expect(parts).toHaveLength(3);
     expect(reassembler.push(parts[0] as Uint8Array)).toBeNull();
@@ -111,15 +126,15 @@ describe('FrameReassembler', () => {
 
   test('evicts the oldest in-flight frame when the cap is hit', () => {
     const reassembler = new FrameReassembler({ maxInFlight: 2, timeoutMs: 60_000 });
-    const a = fragmentFrame(1, new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1).fill(1));
-    const b = fragmentFrame(2, new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1).fill(2));
-    const c = fragmentFrame(3, new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1).fill(3));
+    const a = fragmentFrame(1, new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 1).fill(1));
+    const b = fragmentFrame(2, new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 1).fill(2));
+    const c = fragmentFrame(3, new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 1).fill(3));
     expect(reassembler.push(a[0] as Uint8Array)).toBeNull();
     expect(reassembler.push(b[0] as Uint8Array)).toBeNull();
     expect(reassembler.push(c[0] as Uint8Array)).toBeNull();
     expect(reassembler.push(a[1] as Uint8Array)).toBeNull();
     expect(reassembler.push(c[1] as Uint8Array)).toEqual(
-      new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1).fill(3)
+      new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 1).fill(3)
     );
   });
 
@@ -136,7 +151,7 @@ describe('FrameReassembler', () => {
 
   test('rejects total above ceil(1 MiB / payloadMax)', () => {
     const reassembler = new FrameReassembler();
-    const maxTotal = Math.ceil(MAX_REASSEMBLED_FRAME_BYTES / FRAGMENT_PAYLOAD_SIZE);
+    const maxTotal = Math.ceil(MAX_REASSEMBLED_FRAME_BYTES / FRAGMENT_SEND_PAYLOAD_SIZE);
     const chunk = fragmentFrame(1, new Uint8Array([1]))[0] as Uint8Array;
     const over = chunk.slice();
     const total = maxTotal + 1;
@@ -149,8 +164,8 @@ describe('FrameReassembler', () => {
     const reassembler = new FrameReassembler();
     const oversized = fragmentFrame(
       1,
-      new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 8),
-      FRAGMENT_PAYLOAD_SIZE + 8
+      new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1),
+      FRAGMENT_PAYLOAD_SIZE + 1
     );
     expect(() => reassembler.push(oversized[0] as Uint8Array)).toThrow(FragmentProtocolError);
   });
@@ -168,12 +183,12 @@ describe('FrameReassembler', () => {
 
   test('rejects a frame whose cumulative payload exceeds 1 MiB', () => {
     const reassembler = new FrameReassembler();
-    const maxTotal = Math.ceil(MAX_REASSEMBLED_FRAME_BYTES / FRAGMENT_PAYLOAD_SIZE);
+    const maxTotal = Math.ceil(MAX_REASSEMBLED_FRAME_BYTES / FRAGMENT_SEND_PAYLOAD_SIZE);
     const full = maxTotal - 1;
     for (let idx = 0; idx < full; idx++) {
-      expect(reassembler.push(makeFrag(1, idx, maxTotal, FRAGMENT_PAYLOAD_SIZE))).toBeNull();
+      expect(reassembler.push(makeFrag(1, idx, maxTotal, FRAGMENT_SEND_PAYLOAD_SIZE))).toBeNull();
     }
-    const remaining = MAX_REASSEMBLED_FRAME_BYTES - full * FRAGMENT_PAYLOAD_SIZE;
+    const remaining = MAX_REASSEMBLED_FRAME_BYTES - full * FRAGMENT_SEND_PAYLOAD_SIZE;
     expect(() => reassembler.push(makeFrag(1, full, maxTotal, remaining + 1))).toThrow(
       FragmentProtocolError
     );
@@ -181,7 +196,7 @@ describe('FrameReassembler', () => {
 
   test('sweeps expired partial frames on a timer without waiting for push', async () => {
     const reassembler = new FrameReassembler({ timeoutMs: 20 });
-    const parts = fragmentFrame(3, new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1));
+    const parts = fragmentFrame(3, new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 1));
     expect(reassembler.push(parts[0] as Uint8Array)).toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(reassembler.push(parts[1] as Uint8Array)).toBeNull();
@@ -189,7 +204,7 @@ describe('FrameReassembler', () => {
 
   test('dispose clears pending frames so a later fragment cannot complete them', () => {
     const reassembler = new FrameReassembler();
-    const parts = fragmentFrame(4, new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1).fill(4));
+    const parts = fragmentFrame(4, new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 1).fill(4));
     expect(reassembler.push(parts[0] as Uint8Array)).toBeNull();
     reassembler.dispose();
     expect(reassembler.push(parts[1] as Uint8Array)).toBeNull();

@@ -12,9 +12,14 @@ import { seedNodeIdentity, seedUser } from '../test-support';
 import { PeerHandshakeError } from '../types';
 import { DataChannelCarrier } from './data-channel-carrier';
 import { fragmentFrame } from './fragmenter';
-import type { RtcSignaling } from './ice';
+import { type RtcSignaling, encodeSdpSignal } from './ice';
 import { RtcDialBreaker } from './rtc-dial-breaker';
-import { RTC_AUTHORIZE_MAX, RtcPeerManager, SESS_CHANNEL_LABEL } from './rtc-peer-manager';
+import {
+  RTC_AUTHORIZE_MAX,
+  RTC_SUMMARY_INTERVAL_MS,
+  RtcPeerManager,
+  SESS_CHANNEL_LABEL,
+} from './rtc-peer-manager';
 import { loopbackSignaling } from './rtc-test-fixtures';
 import { type FakePeerConnection, createFakeNativeModule, pairDataChannels } from './test-fakes';
 
@@ -24,7 +29,7 @@ describeRtc('RtcPeerManager', () => {
     while (fixtures.length) fixtures.pop()?.close();
   });
 
-  function setup(opts?: { mismatch?: boolean }) {
+  function setup(opts?: { mismatch?: boolean; handshakeTimeoutMs?: number; now?: () => number }) {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });
     const store = new UserStore(db);
@@ -42,14 +47,16 @@ describeRtc('RtcPeerManager', () => {
       iceConfigProvider: ice,
       identity: a,
       userStore: store,
-      handshakeTimeoutMs: 2_000,
+      now: opts?.now,
+      handshakeTimeoutMs: opts?.handshakeTimeoutMs ?? 2_000,
     });
     const right = new RtcPeerManager({
       loadNative: async () => fake.module,
       iceConfigProvider: ice,
       identity: b,
       userStore: store,
-      handshakeTimeoutMs: 2_000,
+      now: opts?.now,
+      handshakeTimeoutMs: opts?.handshakeTimeoutMs ?? 2_000,
     });
     fixtures.push({ close: () => left.close() });
     fixtures.push({ close: () => right.close() });
@@ -134,6 +141,130 @@ describeRtc('RtcPeerManager', () => {
     expect(created.fingerprint.value.length).toBeGreaterThan(8);
     expect(created.channel).not.toBeNull();
     created.pc.close();
+  });
+
+  test('stale inbox answer replay after cooldown is dropped without PC or listener leaks', async () => {
+    const { left, right, a, b, fake } = setup({ handshakeTimeoutMs: 30 });
+    const manager = a.nodeId.toLowerCase() < b.nodeId.toLowerCase() ? left : right;
+    const self = manager === left ? a : b;
+    const peer = manager === left ? b : a;
+    const rtcListeners = new Set<(msg: import('../mesh-deps').RtcSignalMessage) => void>();
+    const staleAnswer = {
+      rtcSession: `dc:${a.nodeId}:${b.nodeId}`,
+      from: 'node' as const,
+      to: self.nodeId,
+      sdp: encodeSdpSignal({ type: 'answer', sdp: 'v=0\r\na=ice-ufrag:stale' }),
+    };
+    const signaling: RtcSignaling = {
+      send() {},
+      onMessage(cb) {
+        rtcListeners.add(cb);
+        cb(staleAnswer);
+        return () => rtcListeners.delete(cb);
+      },
+    };
+
+    await expect(manager.connectToPeer(peer.nodeId, signaling)).rejects.toBeInstanceOf(
+      PeerHandshakeError
+    );
+    const livePcs = (manager as unknown as { livePcs: Set<FakePeerConnection> }).livePcs;
+    expect(livePcs.size).toBe(0);
+    expect(rtcListeners.size).toBe(0);
+    expect(fake.connections.at(-1)?.closed).toBe(true);
+  });
+
+  test('duplicate answers during one attempt are dropped without PC or listener leaks', async () => {
+    const { left, right, a, b, fake } = setup({ handshakeTimeoutMs: 30 });
+    const manager = a.nodeId.toLowerCase() < b.nodeId.toLowerCase() ? left : right;
+    const self = manager === left ? a : b;
+    const peer = manager === left ? b : a;
+    const rtcListeners = new Set<(msg: import('../mesh-deps').RtcSignalMessage) => void>();
+    let answered = false;
+    const signaling: RtcSignaling = {
+      send(msg) {
+        if (answered || !msg.sdp) return;
+        const sent = JSON.parse(msg.sdp) as { type?: string; epoch?: number };
+        if (sent.type !== 'offer') return;
+        answered = true;
+        const answer = {
+          rtcSession: `dc:${a.nodeId}:${b.nodeId}`,
+          from: 'node' as const,
+          to: self.nodeId,
+          sdp: encodeSdpSignal({
+            type: 'answer',
+            sdp: 'v=0\r\na=ice-ufrag:current',
+            ...(sent.epoch !== undefined ? { epoch: sent.epoch } : {}),
+          }),
+        };
+        for (const cb of rtcListeners) {
+          cb({
+            ...answer,
+            sdp: encodeSdpSignal({
+              type: 'answer',
+              sdp: 'v=0\r\na=ice-ufrag:stale-epoch',
+              epoch: (sent.epoch ?? 0) + 1,
+            }),
+          });
+          cb(answer);
+          cb(answer);
+        }
+      },
+      onMessage(cb) {
+        rtcListeners.add(cb);
+        return () => rtcListeners.delete(cb);
+      },
+    };
+
+    await expect(manager.connectToPeer(peer.nodeId, signaling)).rejects.toBeInstanceOf(
+      PeerHandshakeError
+    );
+    const livePcs = (manager as unknown as { livePcs: Set<FakePeerConnection> }).livePcs;
+    expect(livePcs.size).toBe(0);
+    expect(rtcListeners.size).toBe(0);
+    expect(fake.connections.at(-1)?.closed).toBe(true);
+  });
+
+  test('datachannel open and handshake share one connect deadline', async () => {
+    const { left, right, a, b, fake } = setup({ handshakeTimeoutMs: 100 });
+    const manager = a.nodeId.toLowerCase() < b.nodeId.toLowerCase() ? left : right;
+    const self = manager === left ? a : b;
+    const peer = manager === left ? b : a;
+    const listeners = new Set<(msg: import('../mesh-deps').RtcSignalMessage) => void>();
+    let answered = false;
+    const signaling: RtcSignaling = {
+      send(msg) {
+        if (answered || !msg.sdp) return;
+        const sent = JSON.parse(msg.sdp) as { type?: string; epoch?: number };
+        if (sent.type !== 'offer') return;
+        answered = true;
+        for (const cb of listeners) {
+          cb({
+            rtcSession: `dc:${a.nodeId}:${b.nodeId}`,
+            from: 'node',
+            to: self.nodeId,
+            sdp: encodeSdpSignal({
+              type: 'answer',
+              sdp: 'v=0\r\na=ice-ufrag:deadline',
+              ...(sent.epoch !== undefined ? { epoch: sent.epoch } : {}),
+            }),
+          });
+        }
+        setTimeout(() => fake.connections.at(-1)?.created[0]?.markOpen(), 70);
+      },
+      onMessage(cb) {
+        listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+    };
+
+    const startedAt = performance.now();
+    await expect(manager.connectToPeer(peer.nodeId, signaling)).rejects.toBeInstanceOf(
+      PeerHandshakeError
+    );
+    const elapsed = performance.now() - startedAt;
+    expect(elapsed).toBeGreaterThanOrEqual(90);
+    expect(elapsed).toBeLessThan(145);
+    expect(listeners.size).toBe(0);
   });
 
   test('node↔node DataChannelLink + LinkMux round-trip', async () => {
@@ -633,6 +764,9 @@ describeRtc('RtcPeerManager', () => {
     expect(
       rtc.some((line) => line.includes('role=offerer') || line.includes('role=answerer'))
     ).toBe(true);
+    expect(rtc.some((line) => line.includes('ice_tcp=true'))).toBe(true);
+    expect(rtc.some((line) => line.includes('ice_udp_mux=true'))).toBe(true);
+    expect(rtc.some((line) => line.includes('mtu=1200'))).toBe(true);
     expect(rtc.some((line) => line.includes('signal send') && line.includes('kind=sdp'))).toBe(
       true
     );
@@ -681,5 +815,42 @@ describeRtc('RtcPeerManager', () => {
     expect(summary).toMatch(/local_types=\[.*host.*\]/);
     expect(summary).toMatch(/remote_types=\[.*srflx.*\]/);
     expect(summary).not.toContain('203.0.113.44');
+  });
+
+  test('dial summary aggregates candidate-pair outcomes at most once per minute per peer', async () => {
+    let now = 1_000;
+    const { left, right, a, b } = setup({ handshakeTimeoutMs: 10, now: () => now });
+    const manager = a.nodeId.toLowerCase() < b.nodeId.toLowerCase() ? left : right;
+    const peer = manager === left ? b : a;
+    const listeners = new Set<(msg: import('../mesh-deps').RtcSignalMessage) => void>();
+    const signaling: RtcSignaling = {
+      send() {},
+      onMessage(cb) {
+        listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+    };
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await expect(manager.connectToPeer(peer.nodeId, signaling)).rejects.toBeInstanceOf(
+          PeerHandshakeError
+        );
+      }
+      now += RTC_SUMMARY_INTERVAL_MS;
+      await expect(manager.connectToPeer(peer.nodeId, signaling)).rejects.toBeInstanceOf(
+        PeerHandshakeError
+      );
+    } finally {
+      console.log = original;
+    }
+    const summaries = lines.filter((line) => line.includes('[mesh][rtc] summary'));
+    expect(summaries).toHaveLength(2);
+    expect(summaries[0]).toContain('failure_by_pair=[unknown:1]');
+    expect(summaries[1]).toContain('failure_by_pair=[unknown:3]');
+    expect(summaries[1]).toContain('attempts=3');
+    expect(listeners.size).toBe(0);
   });
 });

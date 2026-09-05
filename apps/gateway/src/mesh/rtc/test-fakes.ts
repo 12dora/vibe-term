@@ -201,6 +201,7 @@ export class FakePeerConnection implements PeerConnectionLike {
   pcState = 'new';
   ice = 'new';
   gathering = 'new';
+  signaling = 'stable';
   private localDescCb: ((sdp: string, type: string) => void) | null = null;
   private localCandCb: ((candidate: string, mid: string) => void) | null = null;
   private dataChannelCb: ((dc: DataChannelLike) => void) | null = null;
@@ -229,12 +230,20 @@ export class FakePeerConnection implements PeerConnectionLike {
     const descType = type && type !== 'unspec' ? type : (this.localSdp?.type ?? 'offer');
     if (descType === 'rollback') {
       this.localSdp = null;
+      this.signaling = 'stable';
       return;
     }
     this.emitLocal(descType);
   }
 
   setRemoteDescription(sdp: string, type: string): void {
+    const descType = type === 'unspec' ? 'offer' : type;
+    if (descType === 'answer' && this.signaling !== 'have-local-offer') {
+      throw new Error(`Unexpected remote answer description in signaling state ${this.signaling}`);
+    }
+    if (descType === 'offer' && this.signaling !== 'stable') {
+      throw new Error(`Unexpected remote offer description in signaling state ${this.signaling}`);
+    }
     const remoteId = parseSdpField(sdp, 'fake-id');
     const remote = remoteId ? (fakePcs.get(remoteId) ?? null) : null;
     this.remote = remote;
@@ -242,8 +251,11 @@ export class FakePeerConnection implements PeerConnectionLike {
     if (fpMatch?.[1] && fpMatch[2]) {
       this.remoteFp = { algorithm: fpMatch[1].toLowerCase(), value: fpMatch[2] };
     }
-    if (type === 'offer' || type === 'unspec') {
+    if (descType === 'offer') {
+      this.signaling = 'have-remote-offer';
       this.emitLocal('answer');
+    } else if (descType === 'answer') {
+      this.signaling = 'stable';
     }
     this.tryOpen();
     remote?.tryOpen();
@@ -270,6 +282,10 @@ export class FakePeerConnection implements PeerConnectionLike {
 
   gatheringState(): string {
     return this.gathering;
+  }
+
+  signalingState(): string {
+    return this.signaling;
   }
 
   onStateChange(cb: (state: string) => void): void {
@@ -364,6 +380,8 @@ export class FakePeerConnection implements PeerConnectionLike {
   }
 
   private emitLocal(type: string): void {
+    if (type === 'offer') this.signaling = 'have-local-offer';
+    else if (type === 'answer') this.signaling = 'stable';
     const sdp = this.fingerprintSdp();
     this.localSdp = { type, sdp };
     this.localDescCb?.(sdp, type);

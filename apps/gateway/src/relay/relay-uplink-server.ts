@@ -487,6 +487,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
         metering: this.metering,
         quotaFor: (tenantId) => this.quotaFor(tenantId),
         bucketFor: (tenantId) => this.bucketFor(tenantId),
+        now: this.now,
         isStopped: () => this.stopped,
       },
       live,
@@ -514,6 +515,11 @@ export class RelayUplinkServer implements RelayUplinkHost {
       return;
     }
     if (live.awaitingPong) {
+      if (live.byteFlowSeq !== live.pingByteFlowSeq) {
+        live.misses = 0;
+        live.pingByteFlowSeq = live.byteFlowSeq;
+        return;
+      }
       live.misses += 1;
       if (live.misses >= this.heartbeatMissLimit) {
         live.link.close('heartbeat-timeout');

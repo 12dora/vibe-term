@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
 import type { LinkStream } from '@tmex/shared/link';
 import { type RelayEnvelope, relaySeqToWire } from '@tmex/shared/relay';
+import type { RelayLiveNode } from './relay-registry';
 import {
   type RelayHarness,
   type RelayNodeClient,
@@ -540,9 +541,69 @@ describe('relay streams', () => {
     });
     await out.write(new TextEncoder().encode('hello'));
     expect(new TextDecoder().decode(await collect(inbound, 5))).toBe('hello');
+    for (
+      let i = 0;
+      i < 20 && relay.runtime.registry.get(tenant.id, b.nodeId)?.lastByteAt == null;
+      i++
+    ) {
+      await Promise.resolve();
+    }
+    expect(relay.runtime.registry.get(tenant.id, a.nodeId)?.lastByteAt).toBe(relay.now());
+    expect(relay.runtime.registry.get(tenant.id, b.nodeId)?.lastByteAt).toBe(relay.now());
     const usage = relay.runtime.metering.pendingFor(tenant.id);
     expect(usage.bytesIn).toBe(5);
     expect(usage.bytesOut).toBe(5);
+  });
+
+  test('propagates peer aborts with an attributable relay-rst reason', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const a = tenant.addNode();
+    const b = tenant.addNode();
+    const clientA = await tenant.connect(a);
+    await clientA.inbox.takeOf('auth.ok');
+    const clientB = await tenant.connect(b);
+    await clientB.inbox.takeOf('auth.ok');
+    const incoming = new Promise<LinkStream>((resolve) => clientB.onStream(resolve));
+    const out = await clientA.openRelay(b.nodeId);
+    const inbound = await incoming;
+    const closed = inbound.closed;
+    out.reset('caller-cancelled');
+    expect(await closed).toEqual({ reason: 'rst', message: 'relay-rst:peer-abort' });
+  });
+
+  test('byte flow after a ping resets heartbeat misses', async () => {
+    const relay = await boot({ heartbeatMissLimit: 2 });
+    const tenant = await relay.createTenant();
+    const a = tenant.addNode();
+    const b = tenant.addNode();
+    const clientA = await tenant.connect(a);
+    await clientA.inbox.takeOf('auth.ok');
+    const clientB = await tenant.connect(b);
+    await clientB.inbox.takeOf('auth.ok');
+    const live = relay.runtime.registry.get(tenant.id, a.nodeId);
+    if (!live) throw new Error('missing relay live node');
+    const beat = (relay.runtime.uplink as unknown as { beat(live: RelayLiveNode): void }).beat.bind(
+      relay.runtime.uplink
+    );
+    beat(live);
+    const incoming = new Promise<LinkStream>((resolve) => clientB.onStream(resolve));
+    const out = await clientA.openRelay(b.nodeId);
+    const inbound = await incoming;
+    await out.write(new Uint8Array([1]));
+    expect(await collect(inbound, 1)).toEqual(new Uint8Array([1]));
+    expect(live.lastByteAt).toBe(relay.now());
+    const pingAt = live.pingAt;
+    beat(live);
+    expect(live.misses).toBe(0);
+    expect(live.awaitingPong).toBe(true);
+    expect(live.pingAt).toBe(pingAt);
+    relay.advance(1);
+    beat(live);
+    expect(live.misses).toBe(1);
+    relay.advance(1);
+    beat(live);
+    expect((await clientA.link.closed).reason).toBe('heartbeat-timeout');
   });
 
   test('resets a relay open aimed at another tenant', async () => {

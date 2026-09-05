@@ -37,6 +37,7 @@ type RelayBinding = {
 };
 
 const RELAY_BINDINGS = new WeakMap<RelayWiring, RelayBinding>();
+const UPLINK_RECONFIGURES = new WeakMap<UplinkPool, Promise<void>>();
 
 export function createRelayWiring(input: {
   db: AuthDb;
@@ -74,10 +75,21 @@ async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise
   }
 }
 
-/** 停掉当前会话再按新的 `candidates()` / `createClient()` 重开；池对象本身不换。 */
-export async function reconfigureUplinkPool(uplink: UplinkPool): Promise<void> {
-  await uplink.stop();
-  uplink.start();
+/** 等中继隧道排空后按新的 `candidates()` / `createClient()` 重开；池对象本身不换。 */
+export function reconfigureUplinkPool(uplink: UplinkPool): Promise<void> {
+  const active = UPLINK_RECONFIGURES.get(uplink);
+  if (active) return active;
+  const task = (async () => {
+    await uplink.waitForRelayStreamsToDrain();
+    await uplink.stop();
+    uplink.start();
+  })();
+  UPLINK_RECONFIGURES.set(uplink, task);
+  const clear = () => {
+    if (UPLINK_RECONFIGURES.get(uplink) === task) UPLINK_RECONFIGURES.delete(uplink);
+  };
+  void task.then(clear, clear);
+  return task;
 }
 
 /** mesh-runtime 暴露的手动重建入口：先落库再重开连接循环。 */

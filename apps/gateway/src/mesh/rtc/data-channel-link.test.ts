@@ -1,9 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { FrameOp, LinkMux, encodeFrame, encodeWindowPayload } from '@tmex/shared/link';
-import { fanoutDataChannel } from './channel-fanout';
+import { FANOUT_MAX_PENDING_BYTES, fanoutDataChannel } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES } from './data-channel-carrier';
 import { DC_FLUSH_RETRY_MS, DataChannelLink } from './data-channel-link';
-import { FRAGMENT_HEADER_SIZE, FRAGMENT_PAYLOAD_SIZE } from './fragmenter';
+import {
+  FRAGMENT_HEADER_SIZE,
+  FRAGMENT_SEND_PAYLOAD_SIZE,
+  MAX_REASSEMBLED_FRAME_BYTES,
+} from './fragmenter';
 import { parseLivenessChunk } from './liveness';
 import { FakeClock, pairDataChannels } from './test-fakes';
 
@@ -29,9 +33,10 @@ describe('DataChannelLink', () => {
     const left = new DataChannelLink(a);
     const right = new DataChannelLink(b);
     const got = new Promise<Uint8Array>((resolve) => right.onData(resolve));
-    const payload = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 4).fill(11);
+    const payload = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(11);
     left.send(payload);
     expect(await got).toEqual(payload);
+    expect(a.sent.map((part) => part.byteLength)).toEqual([16 * 1024, FRAGMENT_HEADER_SIZE + 4]);
   });
 
   test('carries LinkMux streams', async () => {
@@ -68,7 +73,7 @@ describe('DataChannelLink', () => {
     const right = new DataChannelLink(b);
     const got = new Promise<Uint8Array>((resolve) => right.onData(resolve));
     a.succeedsBeforeBlock = 1;
-    const payload = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 4).fill(11);
+    const payload = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(11);
     let resolved = false;
     const sent = left.send(payload).then(() => {
       resolved = true;
@@ -150,7 +155,7 @@ describe('DataChannelLink', () => {
     right.onClose(() => {
       closed += 1;
     });
-    const maxTotal = 18;
+    const maxTotal = Math.ceil(MAX_REASSEMBLED_FRAME_BYTES / FRAGMENT_SEND_PAYLOAD_SIZE) + 1;
     const bad = new Uint8Array(8 + 1);
     bad[6] = maxTotal & 0xff;
     bad[7] = (maxTotal >>> 8) & 0xff;
@@ -240,7 +245,7 @@ describe('DataChannelLink', () => {
     }
   });
 
-  test('round-trips a 1 MiB mux DATA frame over 64 KiB fragments', async () => {
+  test('round-trips a 1 MiB mux DATA frame over 16 KiB fragments', async () => {
     const [a, b] = pairDataChannels('peer');
     a.maxSize = 64 * 1024;
     b.maxSize = 64 * 1024;
@@ -301,10 +306,8 @@ describe('DataChannelLink', () => {
     };
     try {
       const sends: Array<Promise<void>> = [];
-      const chunk = new Uint8Array(1024 * 1024).fill(1);
-      for (let i = 0; i < 33; i++) {
-        sends.push(left.send(chunk).catch(() => undefined));
-      }
+      (right as unknown as { pendingBytes: number }).pendingBytes = FANOUT_MAX_PENDING_BYTES;
+      sends.push(left.send(new Uint8Array([1])).catch(() => undefined));
       await Promise.all(sends);
       expect(b.closed).toBe(true);
       expect(
@@ -329,7 +332,7 @@ describe('DataChannelLink', () => {
     a.buffered = DC_HIGH_WATER_BYTES + 1;
 
     let dataResolved = false;
-    const dataSent = left.send(new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 4).fill(1)).then(() => {
+    const dataSent = left.send(new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(1)).then(() => {
       dataResolved = true;
     });
     await Promise.resolve();
@@ -363,7 +366,7 @@ describe('DataChannelLink', () => {
     const right = new DataChannelLink(b, { liveness: false });
     a.succeedsBeforeBlock = 1;
 
-    const dataSent = left.send(new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 4).fill(9));
+    const dataSent = left.send(new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(9));
     await Promise.resolve();
     expect(a.sent).toHaveLength(1);
     expect(muxOpFromChunk(a.sent[0] as Uint8Array)).not.toBe(FrameOp.WINDOW);
@@ -451,7 +454,7 @@ describe('DataChannelLink', () => {
     a.acceptButReturnFalse = true;
     const left = new DataChannelLink(a, { liveness: false });
     const right = new DataChannelLink(b, { liveness: false });
-    const payload = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 4).fill(3);
+    const payload = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(3);
     await left.send(payload);
     expect(a.sent.length).toBe(2);
     expect(a.buffered).toBe(payload.byteLength + 2 * FRAGMENT_HEADER_SIZE);

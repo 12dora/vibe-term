@@ -18,8 +18,11 @@ export const RTC_DIAL_BREAKER_BASE_MS_DEFAULT = DIAL_BREAKER_BASE_MS;
 export const RTC_DIAL_BREAKER_MAX_MS = DIAL_BREAKER_MAX_MS;
 export const RTC_DIAL_BREAKER_HEALTHY_MS = DIAL_BREAKER_HEALTHY_MS;
 export const RTC_DIAL_DISABLE_AFTER_DEFAULT = 10;
+export const RTC_DIAL_FORCE_PROBE_MS = 10 * 60 * 1000;
 
 export const RTC_DIAL_BREAKER_MS_DEFAULT = RTC_DIAL_BREAKER_BASE_MS_DEFAULT;
+
+export const RTC_DIAL_BREAKER_SKIP_KINDS = new Set(['signaling-state', 'signal-dropped']);
 
 export const DC_REARM_SOURCES = [
   'local-fingerprint',
@@ -54,6 +57,7 @@ export type RtcDialBreakerOptions = {
   healthyMs?: number;
   maxMs?: number;
   disableAfter?: number;
+  forceProbeMs?: number;
   onTrip?: (event: RtcDialBreakerTripEvent) => void;
   onReset?: (event: RtcDialBreakerResetEvent) => void;
   onDisable?: (event: RtcDialBreakerDisableEvent) => void;
@@ -71,6 +75,21 @@ const INTENTIONAL_DC_LOSS = new Set([
   'simultaneous-dial',
 ]);
 
+const RTC_DIAL_FAILURE_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^(?=[\s\S]*unexpected remote)(?=[\s\S]*signaling state)/, 'signaling-state'],
+  [/signal dropped/, 'signal-dropped'],
+  [/liveness/, 'liveness-timeout'],
+  [/missed-pong|missed pong/, 'missed-pong'],
+  [/timeout|timed out/, 'timeout'],
+  [/ice/, 'ice'],
+  [/abort/, 'abort'],
+  [/fingerprint|protocol|handshake|fragment/, 'protocol'],
+  [/channel-error|datachannel error/, 'channel-error'],
+  [/channel-closed|datachannel closed|channel closed/, 'channel-closed'],
+  [/transport/, 'transport-lost'],
+  [/^closed$/, 'channel-closed'],
+];
+
 export function isIntentionalDcLoss(reason: string | null | undefined): boolean {
   if (!reason) return false;
   return INTENTIONAL_DC_LOSS.has(reason);
@@ -79,46 +98,32 @@ export function isIntentionalDcLoss(reason: string | null | undefined): boolean 
 export function classifyRtcDialFailure(reason: string | null | undefined): string {
   if (!reason) return 'unknown';
   const r = reason.toLowerCase();
-  if (r.includes('liveness')) return 'liveness-timeout';
-  if (r.includes('missed-pong') || r.includes('missed pong')) return 'missed-pong';
-  if (r.includes('timeout') || r.includes('timed out')) return 'timeout';
-  if (r.includes('ice')) return 'ice';
-  if (r.includes('abort')) return 'abort';
-  if (
-    r.includes('fingerprint') ||
-    r.includes('protocol') ||
-    r.includes('handshake') ||
-    r.includes('fragment')
-  ) {
-    return 'protocol';
-  }
-  if (r.includes('channel-error') || r.includes('datachannel error')) return 'channel-error';
-  if (
-    r.includes('channel-closed') ||
-    r.includes('datachannel closed') ||
-    r.includes('channel closed')
-  ) {
-    return 'channel-closed';
-  }
-  if (r.includes('transport')) return 'transport-lost';
-  if (r === 'closed') return 'channel-closed';
+  const match = RTC_DIAL_FAILURE_RULES.find(([pattern]) => pattern.test(r));
+  if (match) return match[1];
   return reason.length > 64 ? reason.slice(0, 64) : reason;
 }
 
 export class RtcDialBreaker {
   private readonly inner: DialBreaker;
+  private readonly now: () => number;
   private readonly disableAfter: number;
+  private readonly forceProbeMs: number;
   private readonly onDisable?: (event: RtcDialBreakerDisableEvent) => void;
   private readonly onRearm?: (event: RtcDialBreakerRearmEvent) => void;
-  private readonly disabled = new Set<string>();
+  private readonly disabled = new Map<
+    string,
+    { lastProbeAt: number; probeArmedAt: number | null }
+  >();
 
   constructor(opts: RtcDialBreakerOptions = {}) {
+    this.now = opts.now ?? Date.now;
     this.disableAfter =
       opts.disableAfter ?? envInt('TMEX_RTC_DIAL_DISABLE_AFTER', RTC_DIAL_DISABLE_AFTER_DEFAULT, 1);
+    this.forceProbeMs = opts.forceProbeMs ?? RTC_DIAL_FORCE_PROBE_MS;
     this.onDisable = opts.onDisable;
     this.onRearm = opts.onRearm;
     this.inner = new DialBreaker({
-      now: opts.now,
+      now: this.now,
       breakerMs:
         opts.breakerMs ?? envInt('TMEX_RTC_DIAL_BREAKER_MS', RTC_DIAL_BREAKER_BASE_MS_DEFAULT, 1),
       failLimit: opts.failLimit ?? RTC_DIAL_BREAKER_FAILS,
@@ -126,13 +131,25 @@ export class RtcDialBreaker {
       maxMs: opts.maxMs ?? RTC_DIAL_BREAKER_MAX_MS,
       onTrip: opts.onTrip,
       onReset: opts.onReset,
+      skipKinds: RTC_DIAL_BREAKER_SKIP_KINDS,
       trackAttempts: true,
     });
   }
 
-  shouldTry(peer: string, now?: number): RtcDialBreakerDecision {
-    const inner = this.inner.shouldTry(peer, now);
-    const disabled = this.disabled.has(peer);
+  shouldTry(peer: string, now = this.now()): RtcDialBreakerDecision {
+    let inner = this.inner.shouldTry(peer, now);
+    const disabled = this.disabled.get(peer);
+    if (
+      disabled &&
+      (disabled.probeArmedAt !== null || now - disabled.lastProbeAt >= this.forceProbeMs)
+    ) {
+      if (disabled.probeArmedAt === null) {
+        disabled.probeArmedAt = now;
+        this.inner.forceProbe(peer);
+      }
+      inner = this.inner.shouldTry(peer, now);
+      return { ...inner, disabled: true };
+    }
     if (disabled) {
       return { ...inner, allow: false, disabled: true };
     }
@@ -149,10 +166,15 @@ export class RtcDialBreaker {
   }
 
   disabledPeers(): string[] {
-    return [...this.disabled];
+    return [...this.disabled.keys()];
   }
 
   beginAttempt(peer: string, attemptId: string): void {
+    const disabled = this.disabled.get(peer);
+    if (disabled) {
+      disabled.lastProbeAt = disabled.probeArmedAt ?? this.now();
+      disabled.probeArmedAt = null;
+    }
     this.inner.beginAttempt(peer, attemptId);
   }
 
@@ -167,7 +189,9 @@ export class RtcDialBreaker {
     attemptId?: string,
     now?: number
   ): RtcDialFailureResult {
-    const result = this.inner.noteFailure(peer, kind, attemptId, now);
+    const classified = classifyRtcDialFailure(kind);
+    const breakerKind = RTC_DIAL_BREAKER_SKIP_KINDS.has(classified) ? classified : kind;
+    const result = this.inner.noteFailure(peer, breakerKind, attemptId, now);
     if (result.counted) this.maybeDisable(peer, now);
     return result;
   }
@@ -213,7 +237,7 @@ export class RtcDialBreaker {
     if (this.disabled.has(peer)) return;
     const failures = this.inner.snapshot(peer, now).failures;
     if (failures < this.disableAfter) return;
-    this.disabled.add(peer);
+    this.disabled.set(peer, { lastProbeAt: now ?? this.now(), probeArmedAt: null });
     this.onDisable?.({ peer, fails: failures, disableAfter: this.disableAfter });
   }
 }

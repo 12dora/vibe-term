@@ -8,6 +8,8 @@
  * 所以所有定时器统一登记在这里：回调里的异常只记日志不外抛；`dispose()` 一次清干净、
  * 之后再也挂不上新的；`size` 让测试可以直接断言「停机后没有残留」。
  */
+import { errorMessage } from '@tmex/shared';
+
 export interface UplinkTimer {
   clear(): void;
 }
@@ -96,9 +98,7 @@ function guard(label: string, fn: () => void): () => void {
     try {
       fn();
     } catch (err) {
-      console.warn(
-        `[hub] timer ${label} failed: ${err instanceof Error ? err.message : String(err)}`
-      );
+      console.warn(`[hub] timer ${label} failed: ${errorMessage(err)}`);
     }
   };
 }

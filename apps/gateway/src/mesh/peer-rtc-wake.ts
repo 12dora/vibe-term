@@ -6,6 +6,7 @@ import {
   RTC_WAKE_MAX_SKEW_MS,
   type RtcSignaling,
   type RtcWakeFields,
+  decodeSdpSignal,
   encodeRtcWakeSdp,
   isCanonicalRtcWakeNonce,
   parseRtcWakeSdp,
@@ -20,6 +21,49 @@ export const PEER_RTC_WAKE_COOLDOWN_MS = 5_000;
 export const PEER_RTC_WAKE_NONCE_CACHE = 256;
 export const PEER_RTC_WAKE_VERIFY_BURST = 5;
 export const PEER_RTC_WAKE_VERIFY_WINDOW_MS = 5_000;
+export const RTC_SIGNAL_INBOX_TTL_MS = 30_000;
+
+export type RtcSignalInboxEntry = {
+  message: RtcSignalMessage;
+  receivedAt: number;
+};
+
+export function deliverRtcSignal(
+  listeners: Set<(message: RtcSignalMessage) => void> | undefined,
+  message: RtcSignalMessage
+): boolean {
+  if (!listeners || listeners.size === 0) return false;
+  for (const listener of listeners) {
+    try {
+      listener(message);
+    } catch {
+      // listener errors must not break signaling
+    }
+  }
+  return true;
+}
+
+export function shouldDropUnboundRtcSignal(input: {
+  selfNodeId: string;
+  fromNodeId: string;
+  message: RtcSignalMessage;
+  attemptExists: boolean;
+}): boolean {
+  const decoded = input.message.sdp ? decodeSdpSignal(input.message.sdp) : null;
+  const answerToOfferer =
+    decoded?.type === 'answer' && input.selfNodeId.toLowerCase() < input.fromNodeId.toLowerCase();
+  return answerToOfferer || Boolean(input.message.candidate && !input.attemptExists);
+}
+
+export function shouldStartRtcAttempt(input: {
+  allow: boolean;
+  pending: boolean;
+  upgrading: boolean;
+  live: boolean;
+  wantsUpgrade: boolean;
+}): boolean {
+  return input.allow && !input.pending && !input.upgrading && (!input.live || input.wantsUpgrade);
+}
 
 export type WakeGate = {
   inflight: boolean;
@@ -54,7 +98,7 @@ export type RtcWakePorts = {
   wantsUpgrade: (live: RtcWakeLivePeer) => boolean;
   getLink: (nodeId: string) => Promise<unknown>;
   rtcListeners: () => Map<string, Set<(msg: RtcSignalMessage) => void>>;
-  rtcInbox: () => Map<string, RtcSignalMessage[]>;
+  rtcInbox: () => Map<string, RtcSignalInboxEntry[]>;
   sendPeerCtl: (live: RtcWakeLivePeer, payload: Record<string, unknown>) => void;
   ensureDcSession: ((peerNodeId: string, rtcSession: string) => void) | null;
   uplinkSendCtl: (payload: UplinkRtcSignal) => void;
@@ -99,7 +143,12 @@ export class RtcWakeGate {
         const queued = inbox.get(peerNodeId);
         if (queued && queued.length > 0) {
           inbox.delete(peerNodeId);
-          for (const msg of queued) cb(msg);
+          const cutoff = this.ports.scheduler.now() - RTC_SIGNAL_INBOX_TTL_MS;
+          const fresh = queued.filter((entry) => entry.receivedAt >= cutoff);
+          queueMicrotask(() => {
+            if (!set?.has(cb)) return;
+            for (const entry of fresh) cb(entry.message);
+          });
         }
         return () => {
           set?.delete(cb);

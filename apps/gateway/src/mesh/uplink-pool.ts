@@ -13,7 +13,6 @@ import type { HubTrustStore } from '../auth/hub-trust-store';
 import type { MeshHubRecord } from '../auth/mesh-hub-store';
 import { hubListToRecords, pickWriterHub } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
-import { nodeVersionSupportsHubAuthRecords } from '../hub/hub-authorization';
 import { backoffDelayMs, defaultScheduler } from './ctl';
 import { stamp } from './mesh-log';
 import type {
@@ -34,11 +33,27 @@ import {
   type UplinkWsFactory,
   uplinkWebSocketTls,
 } from './uplink-client';
+import {
+  UPLINK_RTT_MIN_SAMPLES,
+  hubSupportsNearestAttach,
+  isCurrentUplinkSession,
+  selectNearestUplink,
+  writerHubIdOf,
+} from './uplink-nearest-switch';
 import { type UrlDiag, emptyUplinkDiag, mergeUplinkDiag } from './uplink-pool-diag';
 import { defaultFetchCaPem, defaultProbeHealthz } from './uplink-pool-http';
 import { type UplinkSwitchResult, runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
+import { UplinkRelayDrain } from './uplink-relay-drain';
 
 export type { UplinkSwitchResult } from './uplink-pool-switch';
+export {
+  UPLINK_RTT_MIN_SAMPLES,
+  UPLINK_RTT_SWITCH_MIN_MS,
+  UPLINK_RTT_SWITCH_MIN_RATIO,
+  hubSupportsNearestAttach,
+  isRttSwitchWorth,
+  writerHubIdOf,
+} from './uplink-nearest-switch';
 
 export {
   CA_BOOTSTRAP_MAX_BYTES,
@@ -63,9 +78,6 @@ export const UPLINK_POOL_PROBE_JITTER = 0.2;
 export const UPLINK_POOL_FAILBACK_DEBOUNCE_MS = 5_000;
 export const UPLINK_POOL_RTT_PROBE_INTERVAL_MS = 300_000;
 export const UPLINK_RTT_EWMA_ALPHA = 0.3;
-export const UPLINK_RTT_MIN_SAMPLES = 2;
-export const UPLINK_RTT_SWITCH_MIN_RATIO = 0.3;
-export const UPLINK_RTT_SWITCH_MIN_MS = 15;
 export const UPLINK_RTT_SWITCH_DWELL_MS = 10 * 60 * 1000;
 export const UPLINK_SEED_PRIORITY_BASE = 1_000;
 export const UPLINK_POOL_PROBE_NOW_DEBOUNCE_MS = 2_000;
@@ -145,6 +157,8 @@ export type UplinkPoolOptions = {
   authDeadlineMs?: number;
   probeIntervalMs?: number;
   probeTimeoutMs?: number;
+  relayDrainRecheckMs?: number;
+  relayDrainTimeoutMs?: number;
 };
 
 export function redactUrl(raw: string): string {
@@ -309,30 +323,6 @@ function compareUplinkCandidates(a: UplinkCandidate, b: UplinkCandidate): number
   return 0;
 }
 
-export function isRttSwitchWorth(currentMs: number, bestMs: number): boolean {
-  if (!(currentMs > 0) || !(bestMs >= 0)) return false;
-  const delta = currentMs - bestMs;
-  if (delta < UPLINK_RTT_SWITCH_MIN_MS) return false;
-  return delta / currentMs >= UPLINK_RTT_SWITCH_MIN_RATIO;
-}
-
-export function hubSupportsNearestAttach(version: string | null | undefined): boolean {
-  return nodeVersionSupportsHubAuthRecords(version);
-}
-
-export function writerHubIdOf(cands: UplinkCandidate[]): string | null {
-  return pickWriterHub(
-    cands
-      .filter((row): row is UplinkCandidate & { hubNodeId: string } => Boolean(row.hubNodeId))
-      .map((row) => ({
-        hubNodeId: row.hubNodeId,
-        mode: row.mode,
-        writerEpoch: row.writerEpoch,
-        priority: row.priority,
-      }))
-  );
-}
-
 export function orderCandidatesByNearest(
   cands: UplinkCandidate[],
   opts: {
@@ -441,6 +431,7 @@ export class UplinkPool {
   private readonly rttProbeIntervalMs: number;
   private readonly preferNearestSetting: boolean | null;
   private readonly rttSwitchDwellMs: number;
+  private readonly relayDrain: UplinkRelayDrain;
   private lastRttSwitchAt = 0;
 
   private live: PooledUplink | null = null;
@@ -461,7 +452,6 @@ export class UplinkPool {
   private lastFailbackProbeAt = 0;
   private lastHubView: HubView | null = null;
   private wrapAttempt = 0;
-  private relayHandler: InboundRelayHandler | null = null;
   private readonly caBootstraps = new Map<string, Promise<void>>();
   private readonly diagByUrl = new Map<string, UrlDiag>();
   private readonly candLogAt = new Map<
@@ -469,7 +459,6 @@ export class UplinkPool {
     { index: number; error: string | null; transport: string; at: number }
   >();
   private wrapSleepAbort: AbortController | null = null;
-  private readonly retiring = new Set<Promise<void>>();
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private readonly attachedListeners: Array<(hub: AttachedHub) => void> = [];
   private readonly detachedListeners: Array<() => void> = [];
@@ -496,6 +485,12 @@ export class UplinkPool {
     this.rttProbeIntervalMs = opts.rttProbeIntervalMs ?? UPLINK_POOL_RTT_PROBE_INTERVAL_MS;
     this.preferNearestSetting = opts.preferNearest === undefined ? null : opts.preferNearest;
     this.rttSwitchDwellMs = opts.rttSwitchDwellMs ?? UPLINK_RTT_SWITCH_DWELL_MS;
+    this.relayDrain = new UplinkRelayDrain({
+      scheduler: this.scheduler,
+      recheckMs: opts.relayDrainRecheckMs,
+      timeoutMs: opts.relayDrainTimeoutMs,
+      log: (line) => this.logInfo(line),
+    });
   }
 
   get userId(): string {
@@ -590,8 +585,9 @@ export class UplinkPool {
   }
 
   setOnRelayStream(handler: InboundRelayHandler | null): void {
-    this.relayHandler = handler;
-    this.live?.setOnRelayStream(handler);
+    this.relayDrain.setHandler(handler);
+    const live = this.live;
+    if (live) this.relayDrain.bind(live, () => this.live === live);
   }
 
   start(_connectOnce?: (signal: AbortSignal) => Promise<void>): void {
@@ -625,7 +621,7 @@ export class UplinkPool {
     this.loop = null;
     await pending?.stop();
     await live?.stop();
-    await Promise.all([...this.retiring]);
+    await this.relayDrain.waitForRetiring();
     try {
       if (loop) await loop;
     } catch {
@@ -646,8 +642,17 @@ export class UplinkPool {
     return this.live?.sendStatusIfChanged() ?? false;
   }
 
-  openRelay(toNodeId: string) {
-    return this.requireLive().openRelay(toNodeId);
+  async openRelay(toNodeId: string): Promise<LinkStream> {
+    const client = this.requireLive();
+    return this.relayDrain.open(client, toNodeId, () => this.live === client);
+  }
+
+  relayStreamsInFlight(): number {
+    return this.relayDrain.total(this.live);
+  }
+
+  waitForRelayStreamsToDrain(): Promise<void> {
+    return this.relayDrain.waitForAll(() => this.live, this.stopAbort?.signal);
   }
 
   queryHubHead() {
@@ -871,7 +876,7 @@ export class UplinkPool {
           stream.reset('stale');
           return;
         }
-        this.opts.onHubRelayStream?.(stream, sourceOf());
+        this.opts.onHubRelayStream?.(this.relayDrain.track(slot.client, stream), sourceOf());
       },
     });
     slot.client = client;
@@ -888,7 +893,7 @@ export class UplinkPool {
     this.pending = null;
     this.live = client;
     this.bindLiveState(client);
-    client.setOnRelayStream(this.relayHandler);
+    this.relayDrain.bind(client, () => this.live === client);
     this.attached = {
       hubNodeId: cand.hubNodeId,
       publicUrl: cand.publicUrl,
@@ -906,13 +911,7 @@ export class UplinkPool {
   }
 
   private retireClient(client: PooledUplink): void {
-    client.setOnRelayStream(null);
-    const task = client.stop().then(
-      () => {},
-      () => {}
-    );
-    this.retiring.add(task);
-    void task.finally(() => this.retiring.delete(task));
+    this.relayDrain.retire(client, this.stopAbort?.signal);
   }
 
   private dispatchNodeList(
@@ -1173,28 +1172,26 @@ export class UplinkPool {
   }
 
   private async considerNearestSwitch(): Promise<void> {
-    if (!this.preferNearestActive()) return;
-    const attached = this.attached;
-    if (!attached || this.live?.state !== 'online') return;
-    const now = this.scheduler.now();
-    if (this.lastRttSwitchAt > 0 && now - this.lastRttSwitchAt < this.rttSwitchDwellMs) return;
-    const currentRtt = this.rttState(attached.publicUrl);
-    if (!currentRtt || currentRtt.samples < UPLINK_RTT_MIN_SAMPLES) return;
-    const ordered = this.candidates();
-    const best = ordered[0];
-    if (!best || sameHubUrl(best.publicUrl, attached.publicUrl)) return;
-    const bestRtt = this.rttState(best.publicUrl);
-    if (!bestRtt || bestRtt.samples < UPLINK_RTT_MIN_SAMPLES) return;
-    if (!isRttSwitchWorth(currentRtt.ewma, bestRtt.ewma)) return;
-    const writerId = writerHubIdOf(ordered);
-    const isWriter = Boolean(best.hubNodeId) && best.hubNodeId === writerId;
-    if (!isWriter && !hubSupportsNearestAttach(best.version)) return;
-    const ok = await this.probeHealthzTimed(best.publicUrl);
+    const plan = selectNearestUplink({
+      enabled: this.preferNearestActive(),
+      attached: this.attached,
+      live: this.live,
+      now: this.scheduler.now(),
+      lastSwitchAt: this.lastRttSwitchAt,
+      dwellMs: this.rttSwitchDwellMs,
+      candidates: this.candidates(),
+      rttOf: (url) => this.rttState(url),
+      sameUrl: sameHubUrl,
+    });
+    if (!plan) return;
+    await this.relayDrain.waitForClient(plan.live, 'nearest', this.stopAbort?.signal);
+    if (!isCurrentUplinkSession(this.live, this.attached, plan, sameHubUrl)) return;
+    const ok = await this.probeHealthzTimed(plan.best.publicUrl);
     if (!ok) return;
-    const switched = await this.switchTo(best.publicUrl);
+    const switched = await this.switchTo(plan.best.publicUrl);
     if (!switched.ok) return;
     this.lastRttSwitchAt = this.scheduler.now();
-    this.logInfo(`[uplink] nearest → hub=${redactUrl(best.publicUrl)}`);
+    this.logInfo(`[uplink] nearest → hub=${redactUrl(plan.best.publicUrl)}`);
   }
 
   private captureHubView(list: UplinkNodeList): HubView {
@@ -1331,11 +1328,21 @@ export class UplinkPool {
     this.probeInFlight = true;
     try {
       const attached = this.attached;
-      if (!attached) return;
+      const live = this.live;
+      if (!attached || live?.state !== 'online') return;
       const cands = this.candidates();
       const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
       if (idx <= 0) {
         this.stopProbe();
+        return;
+      }
+      await this.relayDrain.waitForClient(live, 'switch-back', this.stopAbort?.signal);
+      if (
+        this.live !== live ||
+        live.state !== 'online' ||
+        !this.attached ||
+        !sameHubUrl(this.attached.publicUrl, attached.publicUrl)
+      ) {
         return;
       }
       for (let i = 0; i < idx; i += 1) {

@@ -1,8 +1,8 @@
-import type { LinkStream } from '@tmex/shared/link';
+import type { LinkStream, StreamChunk } from '@tmex/shared/link';
 import { type RelayQuota, decodeRelayOpenStream } from '@tmex/shared/relay';
 import type { RelayMetering } from './relay-metering';
-import type { RelayTokenBucket } from './relay-quota';
-import type { RelayLiveNode, RelayRegistry } from './relay-registry';
+import type { RelayTokenBucket, RelayTokenStream } from './relay-quota';
+import { type RelayLiveNode, type RelayRegistry, noteRelayByteFlow } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
 
 const te = new TextEncoder();
@@ -13,8 +13,11 @@ export type RelayStreamContext = {
   metering: RelayMetering;
   quotaFor(tenantId: string): RelayQuota;
   bucketFor(tenantId: string): RelayTokenBucket;
+  now(): number;
   isStopped(): boolean;
 };
+
+type RelayRstReason = 'relay-rst:src-read' | 'relay-rst:dst-write' | 'relay-rst:peer-abort';
 
 /**
  * relay 流首帧只带 `{to}`；中继校验同租户 + 双方 admitted + 并发流配额后，
@@ -69,81 +72,125 @@ export async function acceptRelayStream(
     stream.reset('open-failed');
     return;
   }
-  pumpRelayPair(ctx, live.tenantId, sourceId, to, stream, outbound, release);
+  pumpRelayPair(ctx, live.tenantId, live, target, stream, outbound, release);
 }
 
 function pumpRelayPair(
   ctx: RelayStreamContext,
   tenantId: string,
-  sourceId: string,
-  targetId: string,
+  source: RelayLiveNode,
+  target: RelayLiveNode,
   a: LinkStream,
   b: LinkStream,
   release: () => void
 ): void {
   let finished = false;
-  const abortBoth = (): void => {
+  const limiter = ctx.bucketFor(tenantId).createStream();
+  const abortBoth = (reason: RelayRstReason): void => {
     if (finished) return;
     finished = true;
+    limiter.close();
     release();
     try {
-      a.reset('relay-rst');
+      a.reset(reason);
     } catch {
       // already closed
     }
     try {
-      b.reset('relay-rst');
+      b.reset(reason);
     } catch {
       // already closed
     }
   };
-  a.onAbort(abortBoth);
-  b.onAbort(abortBoth);
+  a.onAbort(() => abortBoth('relay-rst:peer-abort'));
+  b.onAbort(() => abortBoth('relay-rst:peer-abort'));
+  const finish = (): void => {
+    if (finished) return;
+    finished = true;
+    limiter.close();
+    release();
+  };
   void Promise.all([
-    pumpMetered(ctx, tenantId, sourceId, targetId, a, b, abortBoth),
-    pumpMetered(ctx, tenantId, targetId, sourceId, b, a, abortBoth),
-  ]).then(release, release);
+    pumpMetered(ctx, tenantId, source, target, a, b, limiter, abortBoth),
+    pumpMetered(ctx, tenantId, target, source, b, a, limiter, abortBoth),
+  ]).then(finish, finish);
 }
 
 async function pumpMetered(
   ctx: RelayStreamContext,
   tenantId: string,
-  fromNodeId: string,
-  toNodeId: string,
+  from: RelayLiveNode,
+  to: RelayLiveNode,
   src: LinkStream,
   dst: LinkStream,
-  onError: () => void
+  limiter: RelayTokenStream,
+  onError: (reason: RelayRstReason) => void
 ): Promise<void> {
   const reader = src.readable.getReader();
   try {
     while (!ctx.isStopped()) {
-      const { done, value } = await reader.read();
+      let chunk: { done: boolean; value?: StreamChunk };
+      try {
+        chunk = await reader.read();
+      } catch {
+        await halfCloseOrAbort(dst, onError, 'relay-rst:src-read');
+        return;
+      }
+      const { done, value } = chunk;
       if (done) break;
       if (!value) continue;
       const bytes = value.bytes;
       if (bytes.byteLength > 0) {
+        noteRelayByteFlow(from, ctx.now());
         // 读到即记账（转发前）。租户 in/out 各记一次；成员按方向：源 bytesIn、目标 bytesOut。
         ctx.metering.record(tenantId, {
           bytesIn: bytes.byteLength,
           bytesOut: bytes.byteLength,
         });
-        ctx.metering.recordMember(tenantId, fromNodeId, { bytesIn: bytes.byteLength });
-        ctx.metering.recordMember(tenantId, toNodeId, { bytesOut: bytes.byteLength });
-        await ctx.bucketFor(tenantId).take(bytes.byteLength);
-        ctx.metering.recordAdmitted(tenantId, bytes.byteLength);
+        ctx.metering.recordMember(tenantId, from.nodeId, { bytesIn: bytes.byteLength });
+        ctx.metering.recordMember(tenantId, to.nodeId, { bytesOut: bytes.byteLength });
+        try {
+          await limiter.take(bytes.byteLength);
+          ctx.metering.recordAdmitted(tenantId, bytes.byteLength);
+        } catch {
+          await halfCloseOrAbort(dst, onError, 'relay-rst:dst-write');
+          return;
+        }
       }
       if (bytes.byteLength > 0 || value.head) {
-        await dst.write(bytes, value.head ? { head: true } : undefined);
+        try {
+          await dst.write(bytes, value.head ? { head: true } : undefined);
+          if (bytes.byteLength > 0) noteRelayByteFlow(to, ctx.now());
+        } catch {
+          await halfCloseOrAbort(dst, onError, 'relay-rst:dst-write');
+          return;
+        }
       }
     }
-    if (!ctx.isStopped()) await dst.end();
-  } catch {
-    onError();
+    if (!ctx.isStopped()) {
+      try {
+        await dst.end();
+      } catch {
+        onError('relay-rst:dst-write');
+      }
+    }
   } finally {
     try {
       reader.releaseLock();
     } catch {
       // already released
     }
+  }
+}
+
+async function halfCloseOrAbort(
+  dst: LinkStream,
+  onError: (reason: RelayRstReason) => void,
+  reason: RelayRstReason
+): Promise<void> {
+  try {
+    await dst.end();
+  } catch {
+    onError(reason);
   }
 }

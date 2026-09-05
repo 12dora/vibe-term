@@ -6,6 +6,7 @@ import type { RtcSignaling, RtcWakeFields } from './rtc/ice';
 import {
   type DcRearmSource,
   RTC_DIAL_BREAKER_HEALTHY_MS,
+  RTC_DIAL_FORCE_PROBE_MS,
   type RtcDialBreaker,
   createGatewayRtcDialBreaker,
 } from './rtc/rtc-dial-breaker';
@@ -318,28 +319,17 @@ export class DcUpgradeCoordinator {
   }
 
   armDcUpgradeRetry(nodeId: string): void {
-    if (this.ports.stopped()) return;
-    if (!this.ports.dcCapable(nodeId)) {
-      this.ports.lostDirect().delete(nodeId);
-      this.cancelDcUpgradeRetry(nodeId);
-      return;
-    }
+    const live = this.liveForDcRetry(nodeId);
+    if (!live) return;
     const decision = this.dcBreaker.shouldTry(nodeId);
-    if (decision.disabled) {
-      this.cancelDcUpgradeRetry(nodeId);
+    if (decision.disabled && !decision.allow) {
+      this.scheduleDcBreakerProbe(nodeId, this.ports.scheduler.now() + RTC_DIAL_FORCE_PROBE_MS);
       return;
     }
     if (!decision.allow) {
       this.scheduleDcBreakerProbe(nodeId, decision.until);
       return;
     }
-    const live = this.ports.live().get(nodeId);
-    if (live?.transport === 'dc') {
-      this.ports.lostDirect().delete(nodeId);
-      this.cancelDcUpgradeRetry(nodeId);
-      return;
-    }
-    if (!live) return;
     if (!live.quiesceCapable) return;
     let rec = this.dcUpgradeRetry.get(nodeId);
     if (!rec) {
@@ -359,13 +349,11 @@ export class DcUpgradeCoordinator {
         this.ports.stopSignal().removeEventListener('abort', onStop);
         if (rec.abort === abort) rec.abort = null;
         rec.attempt = attempt;
-        if (this.ports.stopped()) return;
-        if (this.ports.live().get(nodeId)?.transport === 'dc') {
-          this.ports.lostDirect().delete(nodeId);
-          this.cancelDcUpgradeRetry(nodeId);
+        if (!this.liveForDcRetry(nodeId)) return;
+        if (!this.ports.shouldTryDc(nodeId)) {
+          this.armDcUpgradeRetry(nodeId);
           return;
         }
-        if (!this.ports.shouldTryDc(nodeId) || !this.ports.live().get(nodeId)) return;
         this.maybeUpgrade(nodeId, { cooldown: true });
         const pending = this.ports.upgrading().get(nodeId) ?? this.ports.pending().get(nodeId);
         if (pending) {
@@ -391,17 +379,9 @@ export class DcUpgradeCoordinator {
   }
 
   scheduleDcBreakerProbe(nodeId: string, until: number | null): void {
-    if (this.dcBreaker.isDisabled(nodeId)) {
-      this.cancelDcUpgradeRetry(nodeId);
-      return;
-    }
-    const live = this.ports.live().get(nodeId);
-    if (live?.transport === 'dc') {
-      this.ports.lostDirect().delete(nodeId);
-      this.cancelDcUpgradeRetry(nodeId);
-      return;
-    }
-    if (!live || !live.quiesceCapable) return;
+    const live = this.liveForDcRetry(nodeId);
+    if (!live) return;
+    if (!live.quiesceCapable) return;
     let rec = this.dcUpgradeRetry.get(nodeId);
     if (!rec) {
       rec = { attempt: 0, abort: null };
@@ -413,7 +393,7 @@ export class DcUpgradeCoordinator {
       peer: nodeId,
       attempt: rec.attempt + 1,
       in_ms: inMs,
-      cause: 'breaker_cooling',
+      cause: this.dcBreaker.isDisabled(nodeId) ? 'breaker_disabled' : 'breaker_cooling',
     });
     const abort = new AbortController();
     rec.abort = abort;
@@ -423,16 +403,16 @@ export class DcUpgradeCoordinator {
       () => {
         this.ports.stopSignal().removeEventListener('abort', onStop);
         if (rec.abort === abort) rec.abort = null;
-        if (this.ports.stopped()) return;
-        if (this.ports.live().get(nodeId)?.transport === 'dc') {
-          this.ports.lostDirect().delete(nodeId);
-          this.cancelDcUpgradeRetry(nodeId);
-          return;
-        }
-        if (!this.ports.live().get(nodeId)) return;
+        if (!this.liveForDcRetry(nodeId)) return;
         if (!this.ports.shouldTryDc(nodeId)) {
           const next = this.dcBreaker.shouldTry(nodeId);
-          if (next.disabled) return;
+          if (next.disabled) {
+            this.scheduleDcBreakerProbe(
+              nodeId,
+              this.ports.scheduler.now() + RTC_DIAL_FORCE_PROBE_MS
+            );
+            return;
+          }
           if (next.cooling) this.scheduleDcBreakerProbe(nodeId, next.until);
           return;
         }
@@ -458,6 +438,29 @@ export class DcUpgradeCoordinator {
         if (rec.abort === abort) rec.abort = null;
       }
     );
+  }
+
+  private liveForDcRetry(nodeId: string): DcUpgradeLivePeer | null {
+    if (this.ports.stopped()) {
+      this.cancelDcUpgradeRetry(nodeId);
+      return null;
+    }
+    if (!this.ports.dcCapable(nodeId)) {
+      this.ports.lostDirect().delete(nodeId);
+      this.cancelDcUpgradeRetry(nodeId);
+      return null;
+    }
+    const live = this.ports.live().get(nodeId);
+    if (!live || live.retiring) {
+      this.cancelDcUpgradeRetry(nodeId);
+      return null;
+    }
+    if (live.transport === 'dc') {
+      this.ports.lostDirect().delete(nodeId);
+      this.cancelDcUpgradeRetry(nodeId);
+      return null;
+    }
+    return live;
   }
 }
 
@@ -602,9 +605,6 @@ export abstract class PeerCollaboratorHost {
   }
   protected dcUpgradeRetryDelayMs(attempt: number): number {
     return this.dcUpgrade.dcUpgradeRetryDelayMs(attempt);
-  }
-  protected scheduleDcBreakerProbe(nodeId: string, until: number | null): void {
-    this.dcUpgrade.scheduleDcBreakerProbe(nodeId, until);
   }
   protected ensureWakeGate(peerNodeId: string): WakeGate {
     return this.rtcWake.ensureWakeGate(peerNodeId);

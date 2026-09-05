@@ -13,6 +13,7 @@ import {
   RTC_DIAL_BREAKER_HEALTHY_MS,
   RTC_DIAL_BREAKER_MAX_MS,
   RTC_DIAL_DISABLE_AFTER_DEFAULT,
+  RTC_DIAL_FORCE_PROBE_MS,
   RtcDialBreaker,
   classifyRtcDialFailure,
   isIntentionalDcLoss,
@@ -163,6 +164,10 @@ describe('RtcDialBreaker', () => {
     expect(classifyRtcDialFailure('missed-pong')).toBe('missed-pong');
     expect(classifyRtcDialFailure('channel-closed')).toBe('channel-closed');
     expect(classifyRtcDialFailure('fragment-protocol')).toBe('protocol');
+    expect(
+      classifyRtcDialFailure('Unexpected remote answer description in signaling state stable')
+    ).toBe('signaling-state');
+    expect(classifyRtcDialFailure('signal dropped: duplicate answer')).toBe('signal-dropped');
     expect(isIntentionalDcLoss('stopped')).toBe(true);
     expect(isIntentionalDcLoss('revoked')).toBe(true);
     expect(isIntentionalDcLoss('idle')).toBe(true);
@@ -170,6 +175,25 @@ describe('RtcDialBreaker', () => {
     expect(isIntentionalDcLoss('liveness-timeout')).toBe(false);
     expect(RTC_DIAL_BREAKER_BASE_MS_DEFAULT).toBe(30_000);
     expect(RTC_DIAL_DISABLE_AFTER_DEFAULT).toBe(10);
+    expect(RTC_DIAL_FORCE_PROBE_MS).toBe(600_000);
+  });
+
+  test('does not count local signaling-state failures', () => {
+    const breaker = new RtcDialBreaker({ now: () => 0, disableAfter: 1 });
+    const peer = 'p';
+    expect(
+      breaker.noteFailure(
+        peer,
+        'Unexpected remote answer description in signaling state stable',
+        'a1'
+      )
+    ).toEqual({ counted: false, opened: false, open: false });
+    expect(breaker.noteFailure(peer, 'signal dropped', 'a2')).toEqual({
+      counted: false,
+      opened: false,
+      open: false,
+    });
+    expect(breaker.snapshot(peer)).toMatchObject({ failures: 0, disabled: false });
   });
 
   test('enters disabled after N consecutive fully-failed rounds', () => {
@@ -248,6 +272,33 @@ describe('RtcDialBreaker', () => {
     breaker.forceProbe(peer);
     expect(breaker.isDisabled(peer)).toBe(false);
     expect(breaker.shouldTry(peer).allow).toBe(true);
+  });
+
+  test('allows one automatic force probe every 10 minutes while disabled', () => {
+    let now = 0;
+    const breaker = new RtcDialBreaker({
+      now: () => now,
+      disableAfter: 1,
+      breakerMs: 30_000,
+    });
+    const peer = 'p';
+    breaker.noteFailure(peer, 'timeout', 'f1');
+    expect(breaker.shouldTry(peer)).toMatchObject({ allow: false, disabled: true });
+
+    now = RTC_DIAL_FORCE_PROBE_MS - 1;
+    expect(breaker.shouldTry(peer)).toMatchObject({ allow: false, disabled: true });
+    now += 1;
+    expect(breaker.shouldTry(peer)).toMatchObject({ allow: true, disabled: true });
+    expect(breaker.shouldTry(peer)).toMatchObject({ allow: true, disabled: true });
+    expect(breaker.isDisabled(peer)).toBe(true);
+
+    breaker.beginAttempt(peer, 'probe-1');
+    expect(breaker.shouldTry(peer)).toMatchObject({ allow: false, disabled: true });
+    breaker.noteFailure(peer, 'ice', 'probe-1');
+    now += RTC_DIAL_FORCE_PROBE_MS - 1;
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+    now += 1;
+    expect(breaker.shouldTry(peer)).toMatchObject({ allow: true, disabled: true });
   });
 });
 

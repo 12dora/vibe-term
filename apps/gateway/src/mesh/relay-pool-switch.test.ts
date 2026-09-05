@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import type { LinkSession, LinkStream, StreamCloseInfo } from '@tmex/shared/link';
 import { HubTrustStore } from '../auth/hub-trust-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
@@ -36,6 +36,7 @@ class FakePooledClient implements PooledUplink {
   link: LinkSession | null = null;
   lastConnectError: { reason: string; at: number } | null = null;
   stopped = 0;
+  relayStreams: LinkStream[] = [];
 
   private readonly listeners: Array<(state: UplinkState) => void> = [];
   private closeWaiters: Array<() => void> = [];
@@ -51,9 +52,11 @@ class FakePooledClient implements PooledUplink {
   }
   setOnRelayStream(): void {}
   async attemptConnect(): Promise<void> {
+    this.link = {} as LinkSession;
     this.setState('online');
   }
   async connectWithLink(): Promise<void> {
+    this.link = {} as LinkSession;
     this.setState('online');
   }
   waitUntilClosed(signal?: AbortSignal): Promise<void> {
@@ -65,6 +68,7 @@ class FakePooledClient implements PooledUplink {
   }
   async stop(): Promise<void> {
     this.stopped += 1;
+    this.link = null;
     this.setState('offline');
     const waiters = this.closeWaiters;
     this.closeWaiters = [];
@@ -76,7 +80,8 @@ class FakePooledClient implements PooledUplink {
     return false;
   }
   openRelay(): Promise<LinkStream> {
-    return Promise.reject(new Error('not supported'));
+    const stream = this.relayStreams.shift();
+    return stream ? Promise.resolve(stream) : Promise.reject(new Error('not supported'));
   }
   async queryHubHead(): Promise<null> {
     return null;
@@ -94,6 +99,28 @@ class FakePooledClient implements PooledUplink {
     this.state = state;
     for (const cb of this.listeners) cb(state);
   }
+}
+
+function controlledRelayStream(): { stream: LinkStream; finish: () => void } {
+  let resolveClosed!: (info: StreamCloseInfo) => void;
+  const closed = new Promise<StreamCloseInfo>((resolve) => {
+    resolveClosed = resolve;
+  });
+  return {
+    stream: {
+      id: 1,
+      openPayload: new Uint8Array(0),
+      readable: new ReadableStream(),
+      async write() {},
+      async end() {},
+      reset(reason) {
+        resolveClosed({ reason: 'rst', ...(reason ? { message: reason } : {}) });
+      },
+      closed,
+      onAbort() {},
+    },
+    finish: () => resolveClosed({ reason: 'end' }),
+  };
 }
 
 function candidate(publicUrl: string): UplinkCandidate {
@@ -123,6 +150,8 @@ describe('UplinkPool 上级种类切换', () => {
         statusProvider: status,
         hubTrust: new HubTrustStore(db),
         enablePeriodicRttProbe: false,
+        relayDrainRecheckMs: 5,
+        relayDrainTimeoutMs: 50,
         candidates: () =>
           kind === 'relay'
             ? [candidate('https://relay.example')]
@@ -145,6 +174,95 @@ describe('UplinkPool 上级种类切换', () => {
 
       await waitUntil(() => pool.attachedHub()?.publicUrl === 'https://relay.example', 5_000);
       expect(created.at(-1)?.hubUrl).toBe('https://relay.example');
+      await pool.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('reconfigure waits for current relay streams and then rebuilds the pool', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      seedUser(userStore);
+      let kind: 'hub' | 'relay' = 'hub';
+      const created: FakePooledClient[] = [];
+      const pool = new UplinkPool({
+        identity: { nodeId: 'ab'.repeat(16), edSecretKey: new Uint8Array(32) },
+        userId: 'user-1',
+        keyLogApplier: applier,
+        userStore,
+        statusProvider: status,
+        hubTrust: new HubTrustStore(db),
+        enablePeriodicRttProbe: false,
+        relayDrainRecheckMs: 5,
+        relayDrainTimeoutMs: 100,
+        candidates: () => [candidate(`https://${kind}.example`)],
+        createClient: (opts) => {
+          const client = new FakePooledClient(opts.hubUrl);
+          created.push(client);
+          return client;
+        },
+      });
+      pool.start();
+      await waitUntil(() => pool.attachedHub() !== null);
+      const old = created[0];
+      const active = controlledRelayStream();
+      old?.relayStreams.push(active.stream);
+      await pool.openRelay('cd'.repeat(16));
+      kind = 'relay';
+
+      let reconfigured = false;
+      const pending = reconfigureUplinkPool(pool).then(() => {
+        reconfigured = true;
+      });
+      await Bun.sleep(20);
+      expect(reconfigured).toBe(false);
+      expect(old?.stopped).toBe(0);
+
+      active.finish();
+      await pending;
+      expect(old?.stopped).toBeGreaterThan(0);
+      await waitUntil(() => pool.attachedHub()?.publicUrl === 'https://relay.example');
+      await pool.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('reconfigure enforces the relay drain hard cap', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      seedUser(userStore);
+      const created: FakePooledClient[] = [];
+      const pool = new UplinkPool({
+        identity: { nodeId: 'ab'.repeat(16), edSecretKey: new Uint8Array(32) },
+        userId: 'user-1',
+        keyLogApplier: applier,
+        userStore,
+        statusProvider: status,
+        hubTrust: new HubTrustStore(db),
+        enablePeriodicRttProbe: false,
+        relayDrainRecheckMs: 5,
+        relayDrainTimeoutMs: 20,
+        candidates: () => [candidate('https://relay.example')],
+        createClient: (opts) => {
+          const client = new FakePooledClient(opts.hubUrl);
+          created.push(client);
+          return client;
+        },
+      });
+      pool.start();
+      await waitUntil(() => pool.attachedHub() !== null);
+      const active = controlledRelayStream();
+      created[0]?.relayStreams.push(active.stream);
+      await pool.openRelay('cd'.repeat(16));
+
+      const startedAt = performance.now();
+      await reconfigureUplinkPool(pool);
+      expect(performance.now() - startedAt).toBeGreaterThanOrEqual(15);
+      expect(created[0]?.stopped).toBeGreaterThan(0);
       await pool.stop();
     } finally {
       close();

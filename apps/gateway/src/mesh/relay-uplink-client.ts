@@ -1,5 +1,11 @@
 import { hubHostFromUrl } from '@tmex/shared/auth';
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import {
+  type LinkSession,
+  type LinkStream,
+  WebSocketLink,
+  type WebSocketTransportInput,
+} from '@tmex/shared/link';
+import { waitSocketOpen } from '@tmex/shared/net';
 import {
   type RelayCtlMessage,
   type RelayKickReason,
@@ -38,7 +44,7 @@ import {
   sendRelayStatusNow,
 } from './relay-uplink-ctl';
 import { RelayUplinkHeartbeat } from './relay-uplink-heartbeat';
-import { defaultRelayWsFactory, openRelayLink } from './relay-uplink-http';
+import { defaultRelayWsFactory, relayUplinkWsUrl } from './relay-uplink-http';
 import type {
   InboundRelayHandler,
   KeyLogApplier,
@@ -56,6 +62,7 @@ import {
   type UplinkWsFactory,
 } from './uplink-client';
 import type { UplinkCtlMessage, UplinkEnrollRedeemed, UplinkNodeList } from './uplink-protocol';
+import { closeTransport } from './uplink-reconnect';
 
 export type RelayUplinkClientOptions = {
   hubUrl: string;
@@ -108,6 +115,8 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   readonly keyLog: RelayKeyLogSync;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private relayHandler: InboundRelayHandler | null = null;
+  private readonly relayStreams = new Set<LinkStream>();
+  private acceptingRelayStreams = true;
   private loop: Promise<void> | null = null;
   private stopAbort: AbortController | null = null;
   connectGeneration = 0;
@@ -199,6 +208,10 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     return this.opts.onKicked;
   }
 
+  get inFlightRelayStreams(): number {
+    return this.relayStreams.size;
+  }
+
   nodeName(): string {
     return this.opts.nameProvider?.() ?? '';
   }
@@ -223,14 +236,21 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     this.relayHandler = handler;
   }
 
+  beginRelayDrain(): void {
+    this.acceptingRelayStreams = false;
+    this.relayHandler = null;
+  }
+
   start(): void {
     if (this.loop) return;
+    this.acceptingRelayStreams = true;
     this.stopAbort = new AbortController();
     this.loop = Promise.resolve();
   }
 
   async attemptConnect(signal?: AbortSignal): Promise<void> {
     if (!this.stopAbort) this.stopAbort = new AbortController();
+    this.acceptingRelayStreams = true;
     const effective = signal ?? this.stopAbort.signal;
     if (effective.aborted) throw new Error('aborted');
     this.setState('connecting');
@@ -245,6 +265,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
 
   async connectWithLink(link: LinkSession, signal?: AbortSignal): Promise<void> {
     if (!this.stopAbort) this.stopAbort = new AbortController();
+    this.acceptingRelayStreams = true;
     if (this.state === 'offline') this.setState('connecting');
     const effective = signal ?? this.stopAbort.signal;
     this.resetConnectionState();
@@ -277,6 +298,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   }
 
   async stop(): Promise<void> {
+    this.acceptingRelayStreams = false;
     this.stopAbort?.abort();
     this.stopAbort = null;
     this.heartbeat.stop();
@@ -316,10 +338,25 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
 
   async openRelay(toNodeId: string): Promise<LinkStream> {
     const link = this.link;
-    if (!link || this.state !== 'online' || !this.isAuthenticated()) {
+    if (
+      !this.acceptingRelayStreams ||
+      !link ||
+      this.state !== 'online' ||
+      !this.isAuthenticated()
+    ) {
       throw new Error('uplink is not online');
     }
-    return link.openStream(encodeRelayOpenStream({ to: toNodeId }));
+    const generation = this.connectGeneration;
+    const stream = await link.openStream(encodeRelayOpenStream({ to: toNodeId }));
+    if (
+      !this.acceptingRelayStreams ||
+      this.link !== link ||
+      generation !== this.connectGeneration
+    ) {
+      stream.reset('uplink-retiring');
+      throw new Error('uplink is not online');
+    }
+    return this.trackRelayStream(stream);
   }
 
   async queryHubHead(): Promise<{ seq: bigint; hash: Uint8Array } | null> {
@@ -387,17 +424,38 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     }
   }
 
-  private connectOnce(signal: AbortSignal): Promise<void> {
+  private async connectOnce(signal: AbortSignal): Promise<void> {
     const dialUrl = resolveRelayDialUrl(this.hubUrl, this.opts.dial ?? relayDialContextFromEnv());
     const wsFactory =
       this.opts.wsFactory ?? defaultRelayWsFactory(relayTlsCaForDial(dialUrl, this.opts.tlsCa));
-    return openRelayLink(
-      wsFactory,
-      dialUrl,
-      this.opts.connectTimeoutMs ?? UPLINK_CONNECT_TIMEOUT_MS,
-      signal,
-      (link, linkSignal) => this.connectWithLink(link, linkSignal)
-    );
+    const timeoutMs = this.opts.connectTimeoutMs ?? UPLINK_CONNECT_TIMEOUT_MS;
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(new Error('connect-timeout')), timeoutMs);
+    const onParentAbort = () => {
+      if (!timeout.signal.aborted) timeout.abort(signal.reason);
+    };
+    if (signal.aborted) onParentAbort();
+    else signal.addEventListener('abort', onParentAbort, { once: true });
+    let ws: WebSocketTransportInput | null = null;
+    try {
+      ws = await wsFactory(relayUplinkWsUrl(dialUrl));
+      if (timeout.signal.aborted) {
+        closeTransport(ws);
+        throw new Error('connect-timeout');
+      }
+      await waitSocketOpen(ws, timeoutMs, timeout.signal);
+      const logContext = { transport: 'relay-uplink', url: this.hubUrl };
+      await this.connectWithLink(
+        new WebSocketLink(ws, { role: 'initiator', logContext }),
+        timeout.signal
+      );
+    } catch (err) {
+      if (timeout.signal.aborted && !signal.aborted) throw new Error('connect-timeout');
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onParentAbort);
+    }
   }
 
   private bindLink(link: LinkSession, generation: number): void {
@@ -414,9 +472,19 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
         stream.reset('unauthenticated');
         return;
       }
+      if (!this.acceptingRelayStreams) {
+        stream.reset('uplink-retiring');
+        return;
+      }
       const open = parseOpenPayload(stream.openPayload);
       const from = typeof open?.from === 'string' ? open.from : '';
-      if (open?.to === this.identity.nodeId && from) this.relayHandler?.(stream, from);
+      if (open?.to !== this.identity.nodeId || !from) return;
+      const handler = this.relayHandler;
+      if (!handler) {
+        stream.reset('relay-unhandled');
+        return;
+      }
+      handler(this.trackRelayStream(stream), from);
     });
     void link.closed.then((info) => {
       if (generation !== this.connectGeneration) return;
@@ -461,6 +529,14 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     this.lastStatusJson = '';
     this.enroll.reset('RELAY_OFFLINE');
     if (this.state === 'online') this.setState('connecting');
+  }
+
+  private trackRelayStream(stream: LinkStream): LinkStream {
+    if (this.relayStreams.has(stream)) return stream;
+    this.relayStreams.add(stream);
+    const remove = () => this.relayStreams.delete(stream);
+    void stream.closed.then(remove, remove);
+    return stream;
   }
 
   tearDownLink(reason: string): void {

@@ -3,6 +3,8 @@ import {
   DC_MAX_MESSAGE_BYTES,
   FRAGMENT_HEADER_SIZE,
   FRAGMENT_PAYLOAD_SIZE,
+  FRAGMENT_SEND_MESSAGE_BYTES,
+  FRAGMENT_SEND_PAYLOAD_SIZE,
   FragmentAssembler,
   type FragmentFail,
   fragmentBytes,
@@ -49,6 +51,12 @@ describe('fragmentBytes wire format', () => {
     expect(over[0]?.byteLength).toBe(DC_MAX_MESSAGE_BYTES);
     expect(Array.from((over[0] as Uint8Array).subarray(4, 8))).toEqual([0, 0, 2, 0]);
     expect(Array.from((over[1] as Uint8Array).subarray(4, 8))).toEqual([1, 0, 2, 0]);
+  });
+
+  test('defines a 16 KiB send target without lowering the 64 KiB receive cap', () => {
+    expect(FRAGMENT_SEND_MESSAGE_BYTES).toBe(16 * 1024);
+    expect(FRAGMENT_HEADER_SIZE + FRAGMENT_SEND_PAYLOAD_SIZE).toBe(FRAGMENT_SEND_MESSAGE_BYTES);
+    expect(FRAGMENT_HEADER_SIZE + FRAGMENT_PAYLOAD_SIZE).toBe(DC_MAX_MESSAGE_BYTES);
   });
 });
 
@@ -120,19 +128,23 @@ describe('FragmentAssembler', () => {
 });
 
 describe('FragmentAssembler micro-bench', () => {
-  test('reports ns/op for 70 B keystroke and 32 KiB single-fragment frames', () => {
+  test('reports ns/op for 70 B keystroke and 16 KiB single-fragment frames', () => {
     const core = assembler();
     const keystroke = fragmentBytes(
       1,
       new Uint8Array(70).fill(0x61),
       FRAGMENT_PAYLOAD_SIZE
     )[0] as Uint8Array;
-    const frame32k = fragmentBytes(
+    const frame16k = fragmentBytes(
       2,
-      new Uint8Array(32 * 1024).fill(0x62),
-      FRAGMENT_PAYLOAD_SIZE
+      new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE).fill(0x62),
+      FRAGMENT_SEND_PAYLOAD_SIZE
     )[0] as Uint8Array;
-    const multi = fragmentBytes(3, payload(FRAGMENT_PAYLOAD_SIZE + 100, 3), FRAGMENT_PAYLOAD_SIZE);
+    const multi = fragmentBytes(
+      3,
+      payload(FRAGMENT_SEND_PAYLOAD_SIZE + 100, 3),
+      FRAGMENT_SEND_PAYLOAD_SIZE
+    );
 
     const timeNs = (iters: number, run: () => void): number => {
       for (let i = 0; i < Math.min(iters, 2000); i++) run();
@@ -149,17 +161,17 @@ describe('FragmentAssembler micro-bench', () => {
     const keystrokeNs = timeNs(80_000, () => {
       core.push(keystroke, fail);
     });
-    const frame32kNs = timeNs(20_000, () => {
-      core.push(frame32k, fail);
+    const frame16kNs = timeNs(20_000, () => {
+      core.push(frame16k, fail);
     });
     const multiNs = timeNs(8_000, () => {
       core.push(multi[0] as Uint8Array, fail);
       core.push(multi[1] as Uint8Array, fail);
     });
     console.log(
-      `assemble 70B=${keystrokeNs.toFixed(1)}ns  32KiB=${frame32kNs.toFixed(1)}ns  2-piece=${multiNs.toFixed(1)}ns`
+      `assemble 70B=${keystrokeNs.toFixed(1)}ns  16KiB=${frame16kNs.toFixed(1)}ns  2-piece=${multiNs.toFixed(1)}ns`
     );
     expect(keystrokeNs).toBeLessThan(5_000);
-    expect(frame32kNs).toBeLessThan(20_000);
+    expect(frame16kNs).toBeLessThan(20_000);
   });
 });

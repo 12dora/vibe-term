@@ -7,6 +7,7 @@ import {
   parseHubAutoPromoteTimeoutMs,
   parsePeerBindHost,
   parsePeerPort,
+  parseRtcPortRange,
   parseStunServers,
   parseTmexRoles,
   parseUplinkPreferNearest,
@@ -33,6 +34,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   peerPort: number;
   stunServers: string[];
   peerBindHost: string[];
+  rtcPortRange: { begin: number; end: number } | null;
   turnUrl: string | null;
   turnUsername: string | null;
   turnCredential: string | null;
@@ -67,6 +69,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         peerPort: number;
         stunServers: string[];
         peerBindHost: string[];
+        rtcPortRange: { begin: number; end: number } | null;
         turnUrl: string | null;
         turnUsername: string | null;
         turnCredential: string | null;
@@ -272,6 +275,21 @@ describe('parsePeerPort / parseStunServers', () => {
   });
 });
 
+describe('parseRtcPortRange', () => {
+  test('accepts an ordered UDP port range and treats empty input as disabled', () => {
+    expect(parseRtcPortRange(undefined)).toBeNull();
+    expect(parseRtcPortRange('')).toBeNull();
+    expect(parseRtcPortRange(' 40000 - 40100 ')).toEqual({ begin: 40000, end: 40100 });
+    expect(parseRtcPortRange('443-443')).toEqual({ begin: 443, end: 443 });
+  });
+
+  test('rejects malformed, reversed, and out-of-range values', () => {
+    for (const value of ['40000', '1.5-2', '200-100', '0-100', '1-65536']) {
+      expect(() => parseRtcPortRange(value)).toThrow('TMEX_RTC_PORT_RANGE');
+    }
+  });
+});
+
 describe('config hub/node env', () => {
   test('defaults roles to standalone and peerPort to 39001', async () => {
     const config = await loadConfigWith({
@@ -279,17 +297,24 @@ describe('config hub/node env', () => {
       TMEX_PEER_PORT: undefined,
       TMEX_HUB_URL: undefined,
       TMEX_STUN_SERVERS: undefined,
+      TMEX_RTC_PORT_RANGE: undefined,
     });
     expect(config.roles).toEqual({ hub: false, node: false, relay: false });
     expect(config.peerPort).toBe(39001);
     expect(config.hubUrl).toBeNull();
     expect(config.stunServers).toEqual([]);
     expect(config.peerBindHost).toEqual(['::', '0.0.0.0']);
+    expect(config.rtcPortRange).toBeNull();
   });
 
   test('parses TMEX_PEER_BIND_HOST comma-separated list', async () => {
     const config = await loadConfigWith({ TMEX_PEER_BIND_HOST: '127.0.0.1,::1' });
     expect(config.peerBindHost).toEqual(['127.0.0.1', '::1']);
+  });
+
+  test('parses TMEX_RTC_PORT_RANGE', async () => {
+    const config = await loadConfigWith({ TMEX_RTC_PORT_RANGE: '42000-42100' });
+    expect(config.rtcPortRange).toEqual({ begin: 42000, end: 42100 });
   });
 
   test('parses hub,node role and related URLs', async () => {

@@ -17,7 +17,10 @@ export type RelayLiveNode = {
   awaitingPong: boolean;
   heartbeat: ReturnType<typeof setInterval> | null;
   connectedAt: number;
+  lastByteAt: number | null;
+  byteFlowSeq: number;
   pingAt: number | null;
+  pingByteFlowSeq: number;
   rttMs: number | null;
   reconnects: number;
 };
@@ -39,6 +42,12 @@ export function memberKey(tenantId: string, nodeId: string): string {
 
 export function noteRelayPing(live: RelayLiveNode, now: number): void {
   live.pingAt = now;
+  live.pingByteFlowSeq = live.byteFlowSeq;
+}
+
+export function noteRelayByteFlow(live: RelayLiveNode, now: number): void {
+  live.lastByteAt = now;
+  live.byteFlowSeq += 1;
 }
 
 export function noteRelayPong(live: RelayLiveNode, now: number): void {
@@ -47,6 +56,7 @@ export function noteRelayPong(live: RelayLiveNode, now: number): void {
   if (live.pingAt == null) return;
   live.rttMs = Math.max(0, now - live.pingAt);
   live.pingAt = null;
+  live.pingByteFlowSeq = live.byteFlowSeq;
 }
 
 /** 内存注册表：租户 → 节点 → 活链路。持久化的成员关系在 `relay_nodes`。 */
@@ -84,7 +94,10 @@ export class RelayRegistry {
       awaitingPong: false,
       heartbeat: null,
       connectedAt: input.connectedAt ?? Date.now(),
+      lastByteAt: null,
+      byteFlowSeq: 0,
       pingAt: null,
+      pingByteFlowSeq: 0,
       rttMs: null,
       reconnects,
     };

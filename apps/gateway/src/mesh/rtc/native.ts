@@ -20,8 +20,12 @@ export type IceServerConfig = {
 
 export type RtcIceConfig = {
   iceServers: Array<string | IceServer>;
+  enableIceTcp?: boolean;
   enableIceUdpMux?: boolean;
   bindAddress?: string;
+  portRangeBegin?: number;
+  portRangeEnd?: number;
+  mtu?: number;
   certificatePemFile?: string;
   keyPemFile?: string;
   keyPemPass?: string;

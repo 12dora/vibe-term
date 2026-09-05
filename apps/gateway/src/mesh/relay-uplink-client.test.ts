@@ -11,7 +11,7 @@ import {
   uplinkAuthMessage,
   verifyEd25519,
 } from '@tmex/shared/auth';
-import { WebSocketLink } from '@tmex/shared/link';
+import { type LinkStream, WebSocketLink } from '@tmex/shared/link';
 import {
   type RelayCtlMessage,
   decodeRelayCtl,
@@ -119,12 +119,12 @@ async function bootRelayNode() {
 type Harness = {
   received: RelayCtlMessage[];
   send: (msg: RelayCtlMessage) => void;
-  streams: unknown[];
+  streams: LinkStream[];
 };
 
 function fakeRelayServer(link: WebSocketLink, headSeq: number): Harness {
   const received: RelayCtlMessage[] = [];
-  const streams: unknown[] = [];
+  const streams: LinkStream[] = [];
   const send = (msg: RelayCtlMessage) => link.ctl.send(encodeRelayCtl(msg));
   link.ctl.onMessage((bytes) => {
     const msg = decodeRelayCtl(bytes);
@@ -336,10 +336,53 @@ describe('RelayUplinkClient', () => {
 
     const stream = await client.openRelay(b.peer.nodeIdHex);
     await waitUntil(() => server.streams.length > 0);
-    expect((server.streams[0] as { openPayload: Uint8Array }).openPayload).toEqual(
+    expect(server.streams[0]?.openPayload).toEqual(
       new TextEncoder().encode(JSON.stringify({ to: b.peer.nodeIdHex }))
     );
-    stream.end();
+    expect(client.inFlightRelayStreams).toBe(1);
+    client.beginRelayDrain();
+    await expect(client.openRelay(b.peer.nodeIdHex)).rejects.toThrow(/not online/);
+    await Promise.all([stream.end(), server.streams[0]?.end()]);
+    await stream.closed;
+    expect(client.inFlightRelayStreams).toBe(0);
+  });
+
+  test('外层 relay WebSocketLink 的 RST 日志带 transport 与 URL', async () => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const [clientWs, serverWs] = fakeSocketPair();
+    const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
+    const client = new RelayUplinkClient({
+      hubUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const connecting = client.attemptConnect();
+    await waitUntil(() => client.link !== null);
+    server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+    await connecting;
+
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '));
+    try {
+      await client.openRelay(b.peer.nodeIdHex);
+      await waitUntil(() => server.streams.length > 0);
+      server.streams[0]?.reset('diagnostic-rst');
+      await waitUntil(() => warnings.some((line) => line.includes('rst recv')));
+      const received = warnings.find((line) => line.includes('rst recv')) ?? '';
+      expect(received).toContain('transport=relay-uplink');
+      expect(received).toContain(`url=${RELAY_URL}`);
+      expect(received).toContain('reason=diagnostic-rst');
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   test('relay.kicked 标记中继行并断开', async () => {

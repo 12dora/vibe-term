@@ -29,6 +29,7 @@ describe('RelayRegistry reconnects / RTT', () => {
     expect(first.result.replaced).toBeNull();
     expect(first.result.live.reconnects).toBe(0);
     expect(first.result.live.connectedAt).toBe(1000);
+    expect(first.result.live.lastByteAt).toBeNull();
     expect(first.result.live.rttMs).toBeNull();
 
     const second = put(registry, { connectedAt: 2000 });

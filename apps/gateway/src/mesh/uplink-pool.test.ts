@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { LinkStream, StreamCloseInfo } from '@tmex/shared/link';
 import type { HubMode } from '@tmex/shared/uplink';
 import { HubTrustStore } from '../auth/hub-trust-store';
 import { createMigratedAuthDb } from '../auth/test-db';
@@ -174,6 +175,41 @@ type FakeBehavior = {
   error?: string;
 };
 
+function controlledRelayStream(id = 1): {
+  stream: LinkStream;
+  finish: (info?: StreamCloseInfo) => void;
+} {
+  let resolveClosed!: (info: StreamCloseInfo) => void;
+  let settled = false;
+  const abortListeners: Array<() => void> = [];
+  const closed = new Promise<StreamCloseInfo>((resolve) => {
+    resolveClosed = resolve;
+  });
+  const finish = (info: StreamCloseInfo = { reason: 'end' }) => {
+    if (settled) return;
+    settled = true;
+    resolveClosed(info);
+    if (info.reason !== 'end') {
+      for (const listener of abortListeners) listener();
+    }
+  };
+  const stream: LinkStream = {
+    id,
+    openPayload: new Uint8Array(0),
+    readable: new ReadableStream(),
+    async write() {},
+    async end() {},
+    reset(reason) {
+      finish({ reason: 'rst', ...(reason ? { message: reason } : {}) });
+    },
+    closed,
+    onAbort(cb) {
+      abortListeners.push(cb);
+    },
+  };
+  return { stream, finish };
+}
+
 class FakeUplink {
   state: UplinkState = 'offline';
   link: { closed: Promise<{ reason?: string }> } | null = null;
@@ -189,6 +225,8 @@ class FakeUplink {
   failTimes: number;
   hang: boolean;
   relayHandler: InboundRelayHandler | null = null;
+  relayStreams: LinkStream[] = [];
+  relayOpenGate: Promise<void> | null = null;
   private readonly sharedFail: FakeBehavior;
   lastConnectError: { reason: string; at: number } | null = null;
   lastKeyLogHead = null;
@@ -224,6 +262,10 @@ class FakeUplink {
 
   emitRelay(fromNodeId = ID.c): void {
     this.relayHandler?.({} as never, fromNodeId);
+  }
+
+  queueRelayStream(stream: LinkStream): void {
+    this.relayStreams.push(stream);
   }
 
   emitFork(event?: Partial<KeyLogForkEvent>): void {
@@ -357,8 +399,11 @@ class FakeUplink {
     this.sendStatus();
     return true;
   }
-  async openRelay(): Promise<never> {
-    throw new Error('no relay');
+  async openRelay(): Promise<LinkStream> {
+    const stream = this.relayStreams.shift();
+    if (!stream) throw new Error('no relay');
+    await this.relayOpenGate;
+    return stream;
   }
   async queryHubHead() {
     return null;
@@ -535,6 +580,8 @@ describe('UplinkPool', () => {
     preferNearest?: boolean | null;
     localRoles?: { hub?: boolean; node?: boolean; relay?: boolean };
     rttSwitchDwellMs?: number;
+    relayDrainRecheckMs?: number;
+    relayDrainTimeoutMs?: number;
     versions?: Record<string, string>;
     onHubTokens?: (msg: import('@tmex/shared/uplink').HubTokensMessage) => void;
   }) {
@@ -581,6 +628,8 @@ describe('UplinkPool', () => {
       preferNearest: input.preferNearest,
       localRoles: input.localRoles,
       rttSwitchDwellMs: input.rttSwitchDwellMs,
+      relayDrainRecheckMs: input.relayDrainRecheckMs,
+      relayDrainTimeoutMs: input.relayDrainTimeoutMs,
       onHubTokens: input.onHubTokens
         ? (msg) => {
             input.onHubTokens?.(msg);
@@ -693,6 +742,83 @@ describe('UplinkPool', () => {
     expect(standby?.stopped).toBe(true);
   });
 
+  test('switchTo retires the old client only after its relay streams drain', async () => {
+    const { pool, created } = boot({ urls: ['https://a.example', 'https://b.example'] });
+    pool.start();
+    await waitMicro();
+    const old = created[0];
+    const active = controlledRelayStream();
+    old?.queueRelayStream(active.stream);
+    await pool.openRelay(ID.c);
+    expect(pool.relayStreamsInFlight()).toBe(1);
+
+    expect(await pool.switchTo('https://b.example')).toEqual({ ok: true });
+    expect(old?.stopped).toBe(false);
+    expect(pool.relayStreamsInFlight()).toBe(1);
+
+    active.finish();
+    await waitMicro();
+    expect(old?.stopped).toBe(true);
+    expect(pool.relayStreamsInFlight()).toBe(0);
+  });
+
+  test('a relay stream that opens during promotion is reset on the retired client', async () => {
+    const { pool, created } = boot({ urls: ['https://a.example', 'https://b.example'] });
+    pool.start();
+    await waitMicro();
+    const old = created[0];
+    const raced = controlledRelayStream();
+    let release!: () => void;
+    old?.queueRelayStream(raced.stream);
+    if (old) {
+      old.relayOpenGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+    const opening = pool.openRelay(ID.c);
+
+    expect(await pool.switchTo('https://b.example')).toEqual({ ok: true });
+    release();
+    await expect(opening).rejects.toThrow(/not online/);
+    expect(await raced.stream.closed).toEqual({ reason: 'rst', message: 'uplink-retiring' });
+  });
+
+  test('retiring a client has a bounded drain timeout and dead links stop immediately', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      relayDrainRecheckMs: 3_000,
+      relayDrainTimeoutMs: 6_000,
+    });
+    pool.start();
+    await waitMicro();
+    const old = created[0];
+    const active = controlledRelayStream();
+    old?.queueRelayStream(active.stream);
+    await pool.openRelay(ID.c);
+    expect(await pool.switchTo('https://b.example')).toEqual({ ok: true });
+    expect(old?.stopped).toBe(false);
+    await scheduler.advance(3_000);
+    await waitMicro();
+    expect(old?.stopped).toBe(false);
+    await scheduler.advance(3_000);
+    await waitMicro();
+    expect(old?.stopped).toBe(true);
+
+    const current = created.at(-1);
+    const deadStream = controlledRelayStream(3);
+    current?.queueRelayStream(deadStream.stream);
+    await pool.openRelay(ID.c);
+    if (current) {
+      current.state = 'offline';
+      current.link = null;
+    }
+    expect(await pool.switchTo('https://a.example')).toEqual({ ok: true });
+    await waitMicro();
+    expect(current?.stopped).toBe(true);
+  });
+
   test('promote 成功后清掉该 URL 的 lastError', async () => {
     const { pool } = boot({
       urls: ['https://a.example', 'https://b.example'],
@@ -786,6 +912,33 @@ describe('UplinkPool', () => {
     await waitMicro();
     expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
     expect(created.filter((row) => row.hubUrl === 'https://a.example').length).toBeGreaterThan(1);
+  });
+
+  test('switch-back waits for relay streams on the current uplink', async () => {
+    const scheduler = new ManualScheduler();
+    let aHealthy = false;
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { failTimes: 3 } },
+      scheduler,
+      probe: async (url) => url === 'https://a.example' && aHealthy,
+    });
+    pool.start();
+    await waitMicro();
+    const current = created.find((client) => client.hubUrl === 'https://b.example');
+    const active = controlledRelayStream();
+    current?.queueRelayStream(active.stream);
+    await pool.openRelay(ID.c);
+    aHealthy = true;
+
+    await scheduler.advance(60_000);
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(created.filter((client) => client.hubUrl === 'https://a.example')).toHaveLength(1);
+
+    active.finish();
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
   });
 
   test('fresh standby with own stored row plus hub seed dials the seed first and self only as fallback', async () => {
@@ -2385,6 +2538,37 @@ describe('UplinkPool', () => {
     await Bun.sleep(120);
     await scheduler.advance(1_000);
     await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+  });
+
+  test('prefer-nearest defers its switch while a relay stream is in flight', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      scheduler,
+      preferNearest: true,
+      enablePeriodicRttProbe: true,
+      rttProbeIntervalMs: 1_000,
+      probe: async (url) => {
+        await Bun.sleep(url === 'https://a.example' ? 40 : 5);
+        return true;
+      },
+    });
+    pool.start();
+    await waitMicro();
+    const current = created[0];
+    const active = controlledRelayStream();
+    current?.queueRelayStream(active.stream);
+    await pool.openRelay(ID.c);
+
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    await scheduler.advance(1_000);
+    await Bun.sleep(120);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+
+    active.finish();
+    await Bun.sleep(80);
     expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
   });
 

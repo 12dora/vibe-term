@@ -80,17 +80,99 @@ describe('ice helpers', () => {
       'stun:a:1',
       { hostname: 'kept.example', port: 3478, username: 'u', password: 'p', relayType: 'TurnUdp' },
     ]);
-    expect(buildRtcIceConfig({ stun: ['stun:a:1'], turn: null }).iceServers).toEqual(['stun:a:1']);
+    expect(
+      buildRtcIceConfig(
+        { stun: ['stun:a:1'], turn: null },
+        { peerBindHost: ['::', '0.0.0.0'], rtcPortRange: null }
+      )
+    ).toEqual({
+      iceServers: ['stun:a:1'],
+      enableIceTcp: true,
+      enableIceUdpMux: true,
+      mtu: 1200,
+    });
+  });
+
+  test('binds RTC to one concrete peer address and applies an optional port range', () => {
+    expect(
+      buildRtcIceConfig(
+        { stun: [], turn: null },
+        {
+          peerBindHost: ['127.0.0.1'],
+          rtcPortRange: { begin: 42000, end: 42100 },
+        }
+      )
+    ).toMatchObject({
+      bindAddress: '127.0.0.1',
+      portRangeBegin: 42000,
+      portRangeEnd: 42100,
+    });
+    expect(
+      buildRtcIceConfig({ stun: [], turn: null }, { peerBindHost: ['[::1]'], rtcPortRange: null })
+        .bindAddress
+    ).toBe('::1');
+    expect(
+      buildRtcIceConfig({ stun: [], turn: null }, { peerBindHost: ['0.0.0.0'], rtcPortRange: null })
+        .bindAddress
+    ).toBeUndefined();
+    expect(
+      buildRtcIceConfig({ stun: [], turn: null }, { peerBindHost: ['::'], rtcPortRange: null })
+        .bindAddress
+    ).toBeUndefined();
+    expect(
+      buildRtcIceConfig(
+        { stun: [], turn: null },
+        { peerBindHost: ['localhost'], rtcPortRange: null }
+      ).bindAddress
+    ).toBeUndefined();
+    expect(
+      buildRtcIceConfig(
+        { stun: [], turn: null },
+        { peerBindHost: ['127.0.0.1', '::1'], rtcPortRange: null }
+      ).bindAddress
+    ).toBeUndefined();
   });
 
   test('encodes and decodes sdp / candidate signals', () => {
-    const sdp = encodeSdpSignal({ type: 'offer', sdp: 'v=0' });
-    expect(decodeSdpSignal(sdp)).toEqual({ type: 'offer', sdp: 'v=0' });
+    const sdp = encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch: 7 });
+    expect(decodeSdpSignal(sdp)).toEqual({ type: 'offer', sdp: 'v=0', epoch: 7 });
+    expect(decodeSdpSignal(encodeSdpSignal({ type: 'answer', sdp: 'v=0' }))).toEqual({
+      type: 'answer',
+      sdp: 'v=0',
+    });
     expect(decodeSdpSignal('v=0\na=x')).toEqual({ type: 'offer', sdp: 'v=0\na=x' });
-    const cand = encodeCandidateSignal('candidate:1', '0');
-    expect(decodeCandidateSignal(cand)).toEqual({ candidate: 'candidate:1', mid: '0' });
+    const cand = encodeCandidateSignal('candidate:1', '0', 7);
+    expect(decodeCandidateSignal(cand)).toEqual({ candidate: 'candidate:1', mid: '0', epoch: 7 });
+    expect(decodeCandidateSignal(encodeCandidateSignal('candidate:2', '1'))).toEqual({
+      candidate: 'candidate:2',
+      mid: '1',
+    });
     expect(isEmptyCandidate('')).toBe(true);
     expect(isEmptyCandidate('candidate:1')).toBe(false);
+  });
+
+  test('rejects invalid epochs without breaking legacy signaling', () => {
+    for (const epoch of [
+      -1,
+      1.5,
+      Number.MAX_SAFE_INTEGER + 1,
+      Number.POSITIVE_INFINITY,
+      '7',
+      true,
+      null,
+    ]) {
+      expect(decodeSdpSignal(JSON.stringify({ type: 'answer', sdp: 'v=0', epoch }))).toBeNull();
+      expect(
+        decodeCandidateSignal(JSON.stringify({ candidate: 'candidate:1', mid: '0', epoch }))
+      ).toBeNull();
+    }
+    expect(decodeCandidateSignal('0\ncandidate:legacy')).toEqual({
+      candidate: 'candidate:legacy',
+      mid: '0',
+    });
+    expect(
+      decodeSdpSignal(JSON.stringify({ type: 'offer', sdp: 'v=0', epoch: Number.MAX_SAFE_INTEGER }))
+    ).toMatchObject({ epoch: Number.MAX_SAFE_INTEGER });
   });
 
   test('peerRtcSession is stable regardless of argument order', () => {

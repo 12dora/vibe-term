@@ -45,6 +45,8 @@ export {
   DEFAULT_MAX_IN_FLIGHT,
   FRAGMENT_HEADER_SIZE,
   FRAGMENT_PAYLOAD_SIZE,
+  FRAGMENT_SEND_MESSAGE_BYTES,
+  FRAGMENT_SEND_PAYLOAD_SIZE,
   FragmentAssembler,
   fragmentBytes,
   type FragmentFail,
