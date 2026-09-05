@@ -35,7 +35,11 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 1. 推包途中重启中继 / 让节点顶号，确认 `.part` 保留、只补发剩余字节、最终升级成功。
 2. 直连的 ICE-TCP 与 `TMEX_RTC_PORT_RANGE` 目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。
 
-## KI-7：两处上帝类待独立立项
+## KI-7：`peer-manager.ts` 上帝类待拆
 
-`apps/gateway/src/hub/uplink-server.ts` 与 `apps/gateway/src/mesh/peer-manager.ts` 的拆分、以及两个 ctl switch 的合并，
-在第二十八轮被判定为「值得做但不该混在网络修复里」，尚未立项。
+第二十九轮已完成两项：两条线的 ctl switch 合并为 `packages/shared/src/uplink/codec-decode.ts` 的参数化
+`decodeUplinkCtl`，编码侧 mesh 归一到 hub 线上表示后复用 hub 实现；`apps/gateway/src/hub/uplink-server.ts`
+（2224 行）拆为会话 / 联邦 / 节点表 / key log / RTC 五个协作者，`UplinkServer` 只剩装配与 `onCtl` 分派。
+
+余下 `apps/gateway/src/mesh/peer-manager.ts`（1907 行 81 成员）的拆分（`peer-dialer.ts` /
+`peer-live-registry.ts`）尚未立项。

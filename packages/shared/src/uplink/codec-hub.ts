@@ -1,23 +1,16 @@
+import { type CtlDecodeProfile, decodeUplinkCtl } from './codec-decode';
 import {
   type EncodeUplinkCtlOptions,
-  KEY_LOG_PAGE_MAX_LIMIT,
   type RtcSignalFrom,
-  TYPE_SET,
   UPLINK_CTL_MAX_BYTES,
-  UPLINK_CTL_MAX_CERT_BYTES,
   UPLINK_CTL_MAX_ENDPOINTS,
   UplinkCtlError,
-  type UplinkCtlType,
-  assertCtlBounds,
   b64urlToBytes,
   bytesToB64url,
   ctlRead,
-  decodeUtf8,
   encodeJsonBytes,
   hubRead,
   isRecord,
-  skipsCtlBounds,
-  utf8ByteLength,
 } from './codec-fields';
 import {
   type HubAdvertisement,
@@ -29,10 +22,6 @@ import {
   applyNodeListExtras,
   encodeHubWriteForwardMessage,
   parseHubAdvertisement,
-  parseHubAttachmentsMessage,
-  parseHubForwardMessage,
-  parseHubTokensMessage,
-  parseHubWriteForwardMessage,
   parseHubs,
   stripAttachedHubId,
 } from './codec-hub-frames';
@@ -226,197 +215,57 @@ function decodeHubNodeList(obj: Record<string, unknown>): NodeListMessage {
   return applyNodeListExtras(msg, obj);
 }
 
-function decodeHubKeyLogRes(parsed: Record<string, unknown>): KeyLogResMessage {
-  if (!Array.isArray(parsed.records)) throw new UplinkCtlError('invalid records');
-  const records = parsed.records.map((item) => {
-    if (!isRecord(item)) throw new UplinkCtlError('invalid record');
-    return {
-      seq: hubRead.seqWire(item.seq, 'seq'),
-      bytes: bytesToB64url(b64urlToBytes(hubRead.str(item.bytes, 'bytes'))),
-      sig: bytesToB64url(b64urlToBytes(hubRead.str(item.sig, 'sig'), 64)),
+const hubProfile: CtlDecodeProfile<
+  string,
+  number | string,
+  NodeListMessage,
+  EnrollRedeemedMessage
+> = {
+  readers: hubRead,
+  fail: (message) => new UplinkCtlError(message),
+  hardMaxBytes: UPLINK_CTL_MAX_BYTES,
+  onJsonError: () => new UplinkCtlError('invalid json'),
+  notObject: 'invalid ctl',
+  unknownType: (t) => new UplinkCtlError(`unknown t: ${t}`),
+  bytes(value, field, expectedLen, maxLen) {
+    const raw = b64urlToBytes(hubRead.str(value, field), expectedLen);
+    if (maxLen !== undefined && raw.byteLength > maxLen) {
+      throw new UplinkCtlError(`${field} too large`);
+    }
+    return bytesToB64url(raw);
+  },
+  text: (value, field, expectedLen) =>
+    bytesToB64url(b64urlToBytes(hubRead.str(value, field), expectedLen)),
+  nodeIdText: (value, field) => hubRead.nodeId(value, field),
+  optText: (value, field) =>
+    value === undefined || value === null ? undefined : hubRead.nonEmptyStr(value, field),
+  reqText: (value, field) => hubRead.nonEmptyStr(value, field),
+  seq: (value, field) => hubRead.seqWire(value, field),
+  inventory: (value) => value ?? null,
+  endpoints: hEndpoints,
+  keyLogSigLen: 64,
+  keepAlreadyAdmitted: true,
+  nodeList: decodeHubNodeList,
+  enrollRedeemed(fields) {
+    const msg: EnrollRedeemedMessage = {
+      t: 'enroll.redeemed',
+      certificate: fields.certificate,
+      cert_sig: fields.certSig,
+      enroll_pk: fields.enrollPk,
+      node_id: fields.nodeId,
     };
-  });
-  if (records.length > KEY_LOG_PAGE_MAX_LIMIT) {
-    throw new UplinkCtlError('key.log.res too many records');
-  }
-  const res: KeyLogResMessage = { t: 'key.log.res', records };
-  if (parsed.id !== undefined && parsed.id !== null) res.id = hubRead.nonEmptyStr(parsed.id, 'id');
-  if (parsed.error !== undefined && parsed.error !== null) {
-    res.error = hubRead.nonEmptyStr(parsed.error, 'error');
-  }
-  if (parsed.has_more !== undefined && parsed.has_more !== null) {
-    res.has_more = hubRead.bool(parsed.has_more, 'has_more');
-  }
-  if (parsed.retry_after_ms !== undefined && parsed.retry_after_ms !== null) {
-    res.retry_after_ms = hubRead.int(parsed.retry_after_ms, 'retry_after_ms');
-    if (res.retry_after_ms < 0) throw new UplinkCtlError('invalid retry_after_ms');
-  }
-  return res;
-}
-
-function decodeHubRtcSignal(parsed: Record<string, unknown>): RtcSignalMessage {
-  const from = parsed.from;
-  if (from !== 'browser' && from !== 'node') throw new UplinkCtlError('invalid rtc.from');
-  if (parsed.sdp !== undefined && parsed.sdp !== null && typeof parsed.sdp !== 'string') {
-    throw new UplinkCtlError('invalid rtc.sdp');
-  }
-  if (
-    parsed.candidate !== undefined &&
-    parsed.candidate !== null &&
-    typeof parsed.candidate !== 'string'
-  ) {
-    throw new UplinkCtlError('invalid rtc.candidate');
-  }
-  const msg: RtcSignalMessage = {
-    t: 'rtc.signal',
-    rtcSession: hubRead.nonEmptyStr(parsed.rtcSession, 'rtcSession'),
-    from,
-    to: hubRead.nonEmptyStr(parsed.to, 'to'),
-  };
-  if (typeof parsed.sdp === 'string') msg.sdp = parsed.sdp;
-  if (typeof parsed.candidate === 'string') msg.candidate = parsed.candidate;
-  return msg;
-}
-
-function decodeHubEnrollRedeemed(parsed: Record<string, unknown>): EnrollRedeemedMessage {
-  const certBytes = b64urlToBytes(hubRead.str(parsed.certificate, 'certificate'));
-  if (certBytes.byteLength > UPLINK_CTL_MAX_CERT_BYTES) {
-    throw new UplinkCtlError('certificate too large');
-  }
-  const msg: EnrollRedeemedMessage = {
-    t: 'enroll.redeemed',
-    certificate: bytesToB64url(certBytes),
-    cert_sig: bytesToB64url(b64urlToBytes(hubRead.str(parsed.cert_sig, 'cert_sig'), 64)),
-    enroll_pk: bytesToB64url(b64urlToBytes(hubRead.str(parsed.enroll_pk, 'enroll_pk'), 32)),
-    node_id: hubRead.nodeId(parsed.node_id, 'node_id'),
-  };
-  if (parsed.entry_sid !== undefined && parsed.entry_sid !== null) {
-    msg.entry_sid = hubRead.nonEmptyStr(parsed.entry_sid, 'entry_sid');
-  }
-  if (parsed.already_admitted !== undefined && parsed.already_admitted !== null) {
-    msg.already_admitted = hubRead.bool(parsed.already_admitted, 'already_admitted');
-  }
-  return msg;
-}
-
-function decodeHubInner(
-  input: Uint8Array | string,
-  opts?: { allowKeyLogRes?: boolean }
-): HubUplinkCtlMessage {
-  const byteLength = typeof input === 'string' ? utf8ByteLength(input) : input.byteLength;
-  if (byteLength > UPLINK_CTL_MAX_BYTES) throw new UplinkCtlError('ctl too large');
-  const text = typeof input === 'string' ? input : decodeUtf8(input);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new UplinkCtlError('invalid json');
-  }
-  const parsedT = isRecord(parsed) ? parsed.t : undefined;
-  if (parsedT === 'key.log.res' && !opts?.allowKeyLogRes) {
-    throw new UplinkCtlError('unexpected key.log.res');
-  }
-  if (!skipsCtlBounds(parsedT)) assertCtlBounds(parsed, 0);
-  if (!isRecord(parsed)) throw new UplinkCtlError('invalid ctl');
-  const t = parsed.t;
-  if (typeof t !== 'string' || !TYPE_SET.has(t))
-    throw new UplinkCtlError(`unknown t: ${String(t)}`);
-  switch (t as UplinkCtlType) {
-    case 'auth.challenge':
-      return {
-        t: 'auth.challenge',
-        nonce: bytesToB64url(b64urlToBytes(hubRead.str(parsed.nonce, 'nonce'), 32)),
-      };
-    case 'auth.response':
-      return {
-        t: 'auth.response',
-        node_id: hubRead.nodeId(parsed.node_id, 'node_id'),
-        sig: bytesToB64url(b64urlToBytes(hubRead.str(parsed.sig, 'sig'), 64)),
-      };
-    case 'auth.ok':
-      return { t: 'auth.ok' };
-    case 'ping':
-      return { t: 'ping' };
-    case 'pong':
-      return { t: 'pong' };
-    case 'node.status': {
-      const status: NodeStatusMessage = {
-        t: 'node.status',
-        version: hubRead.str(parsed.version, 'version'),
-        tmux: hubRead.bool(parsed.tmux, 'tmux'),
-        direct_capable: hubRead.bool(parsed.direct_capable, 'direct_capable'),
-        inventory: parsed.inventory ?? null,
-        endpoints: hEndpoints(parsed.endpoints),
-      };
-      if (parsed.hub !== undefined && parsed.hub !== null) {
-        status.hub = parseHubAdvertisement(parsed.hub);
-      }
-      return status;
-    }
-    case 'node.list':
-      return decodeHubNodeList(parsed);
-    case 'key.log.req': {
-      const req: KeyLogReqMessage = {
-        t: 'key.log.req',
-        from_seq: hubRead.seqWire(parsed.from_seq, 'from_seq'),
-      };
-      if (parsed.id !== undefined && parsed.id !== null) {
-        req.id = hubRead.nonEmptyStr(parsed.id, 'id');
-      }
-      if (parsed.limit !== undefined && parsed.limit !== null) {
-        req.limit = hubRead.int(parsed.limit, 'limit');
-        if (req.limit < 1) throw new UplinkCtlError('invalid limit');
-      }
-      return req;
-    }
-    case 'key.log.res':
-      return decodeHubKeyLogRes(parsed);
-    case 'key.log.append': {
-      const msg: KeyLogAppendMessage = {
-        t: 'key.log.append',
-        bytes: bytesToB64url(b64urlToBytes(hubRead.str(parsed.bytes, 'bytes'))),
-        sig: bytesToB64url(b64urlToBytes(hubRead.str(parsed.sig, 'sig'), 64)),
-      };
-      if (parsed.id !== undefined && parsed.id !== null) {
-        msg.id = hubRead.nonEmptyStr(parsed.id, 'id');
-      }
-      if (parsed.force !== undefined && parsed.force !== null) {
-        msg.force = hubRead.bool(parsed.force, 'force');
-      }
-      return msg;
-    }
-    case 'key.log.ack': {
-      const ok = hubRead.bool(parsed.ok, 'ok');
-      const msg: KeyLogAckMessage = {
-        t: 'key.log.ack',
-        id: hubRead.nonEmptyStr(parsed.id, 'id'),
-        ok,
-      };
-      if (ok) msg.seq = hubRead.seqWire(parsed.seq, 'seq');
-      else msg.error = hubRead.nonEmptyStr(parsed.error, 'error');
-      return msg;
-    }
-    case 'rtc.signal':
-      return decodeHubRtcSignal(parsed);
-    case 'enroll.redeemed':
-      return decodeHubEnrollRedeemed(parsed);
-    case 'hub.tokens':
-      return wrapFrame('invalid hub.tokens', () => parseHubTokensMessage(parsed));
-    case 'hub.attachments':
-      return wrapFrame('invalid hub.attachments', () => parseHubAttachmentsMessage(parsed));
-    case 'hub.forward':
-      return wrapFrame('invalid hub.forward', () => parseHubForwardMessage(parsed));
-    case 'hub.write-forward':
-      return wrapFrame('invalid hub.write-forward', () => parseHubWriteForwardMessage(parsed));
-  }
-  throw new UplinkCtlError(`unknown t: ${t}`);
-}
+    if (fields.entrySid !== undefined) msg.entry_sid = fields.entrySid;
+    if (fields.alreadyAdmitted !== undefined) msg.already_admitted = fields.alreadyAdmitted;
+    return msg;
+  },
+  frame: wrapFrame,
+};
 
 export function decodeHubUplinkCtl(
   input: Uint8Array | string,
   opts?: { allowKeyLogRes?: boolean }
 ): HubUplinkCtlMessage {
-  return wrapHub(() => decodeHubInner(input, opts));
+  return wrapHub(() => decodeUplinkCtl(input, hubProfile, opts));
 }
 
 function encodeHubLegacy(msg: HubUplinkCtlMessage): Uint8Array | null {

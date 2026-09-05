@@ -138,21 +138,17 @@
     "fileLines": 1317,
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
   },
-  "apps/gateway/src/hub/uplink-server.ts": {
-    "fileLines": 2247,
-    "reason": "hub 协议服务端：限流已拆出，余下为协议处理内聚体"
-  },
-  "apps/gateway/src/hub/uplink-server.ts:buildNodeList": {
+  "apps/gateway/src/hub/uplink-node-list.ts:buildNodeList": {
     "cc": 21,
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
+    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定；第二十九轮 UplinkServer 拆分后随方法迁至本文件）"
   },
-  "apps/gateway/src/hub/uplink-server.ts:handleHubWriteForward": {
+  "apps/gateway/src/hub/hub-federation.ts:handleHubWriteForward": {
     "cc": 16,
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
+    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定；第二十九轮 UplinkServer 拆分后随方法迁至本文件）"
   },
-  "apps/gateway/src/hub/uplink-server.ts:handleKeyLogAppend": {
+  "apps/gateway/src/hub/uplink-key-log.ts:handleKeyLogAppend": {
     "cc": 22,
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
+    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定；第二十九轮 UplinkServer 拆分后随方法迁至本文件）"
   },
   "apps/gateway/src/hub/uplink-server.ts:onCtl": {
     "cc": 20,
@@ -476,18 +472,6 @@
   "packages/shared/src/link/websocket-link.ts:pump": {
     "cc": 20,
     "reason": "队列/背压泵状态机，抽取已试并回退（历轮保留）"
-  },
-  "packages/shared/src/uplink/codec-hub.ts:decodeHubInner": {
-    "cc": 42,
-    "reason": "协议扁平分派：hub 线 ctl 穷举 switch，表驱动只会掩盖顺序语义（历轮保留）"
-  },
-  "packages/shared/src/uplink/codec-mesh.ts:decodeMeshUplinkCtl": {
-    "cc": 32,
-    "reason": "协议扁平分派：mesh 线 ctl 穷举 switch，表驱动只会掩盖顺序语义（历轮保留）"
-  },
-  "packages/shared/src/uplink/codec-mesh.ts:encodeMeshUplinkCtl": {
-    "cc": 49,
-    "reason": "协议扁平分派：mesh 线 ctl 编码穷举 switch，一分支一帧类型（历轮保留）"
   },
   "packages/shared/src/ws-borsh/test-fakes.ts:referenceApply": {
     "cc": 24,

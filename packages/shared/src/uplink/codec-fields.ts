@@ -147,6 +147,7 @@ type CtlFailKind =
   | 'number'
   | 'integer'
   | 'nonNegInt'
+  | 'posInt'
   | 'seq'
   | 'nodeId'
   | 'bytes'
@@ -165,6 +166,7 @@ const CTL_EXPECT: Record<CtlFailKind, string> = {
   number: 'must be a number',
   integer: 'must be an integer',
   nonNegInt: 'must be a non-negative integer',
+  posInt: 'must be a positive integer',
   seq: 'must be a seq',
   nodeId: 'must be 32-hex',
   bytes: 'has an unexpected byte length',
@@ -197,6 +199,7 @@ export type CtlReaders = {
   num(value: unknown, field: string): number;
   int(value: unknown, field: string): number;
   nonNegInt(value: unknown, field: string): number;
+  posInt(value: unknown, field: string): number;
   /** mesh 线上 seq 用 bigint 表示。 */
   seq(value: unknown, field: string): bigint;
   /** hub 线上 seq 保留 number|string 原始表示，只做合法性校验。 */
@@ -247,6 +250,11 @@ export function createCtlReaders(fail: CtlFail): CtlReaders {
     nonNegInt(value, field) {
       const n = num(value, field);
       if (!Number.isInteger(n) || n < 0) throw fail(field, 'nonNegInt');
+      return n;
+    },
+    posInt(value, field) {
+      const n = num(value, field);
+      if (!Number.isInteger(n) || n < 1) throw fail(field, 'posInt');
       return n;
     },
     seq(value, field) {

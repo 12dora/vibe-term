@@ -1,102 +1,46 @@
-import os from 'node:os';
-import {
-  KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
-  computeRecordHash,
-  decodeCertificate,
-  decodeKeyLogRecord,
-  encodeBase64url,
-  hubHostFromUrl,
-  nodeIdToHex,
-  randomBytes,
-  uplinkAuthMessage,
-  verifyEd25519,
-} from '@tmex/shared/auth';
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import {
   HUB_NOT_WRITER,
   type HubAdvertisement,
   type HubAttachmentsMessage,
-  type HubEndpointInfo,
   type HubForwardMessage,
   type HubMode,
   type HubNotWriterError,
   type HubWriteForwardMessage,
-  UPLINK_CTL_MAX_HUBS,
 } from '@tmex/shared/uplink';
-import { decodeB64url } from '../../../../packages/shared/src/auth/b64url';
-import { identicalKeyLog } from '../../../../packages/shared/src/auth/key-log';
 import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
-import { parseJson, projectNode, upsertById } from '../mesh/node-list-projection';
-import { RtcHubRouteTable } from '../mesh/rtc/signaling';
-import { pumpHubRelay } from '../relay/hub-relay-pump';
 import { ATTACHMENT_KEEPALIVE_MS, AttachmentRouter } from './attachment-router';
-import { AttachmentSnapshotAssembler, paginateHubAttachments } from './hub-attachments';
 import {
-  applyForcedKeyLogCompat,
   applyKeyLogHubRuntime,
-  inspectHubAuthRecordCompat,
   lookupSignedHubAuthorization,
   isAuthorizedHub as mergeAuthorizedHub,
   resolveMeshUserId,
 } from './hub-authorization';
-import {
-  HUB_RELAY_KIND,
-  type HubRelayOpen,
-  encodeHubRelayOpen,
-  nextHubRelayHop,
-  parseHubRelayOpen,
-  validateHubRelay,
-} from './hub-relay';
-import {
-  HUB_TOKENS_ACK_WAIT_MS,
-  applyHubTokensMessage,
-  assertHubTokensEncodedSize,
-  hubTokensAck,
-  peerSupportsHubTokens,
-  snapshotHubTokensMessages,
-} from './hub-tokens';
-import { trimKeyLogPageToByteLimit } from './key-log-page';
-import { patchNode } from './node-persistence';
+import { HubFederation, type HubFederationOptions, resolveStartMode } from './hub-federation';
+import { HubRelayStreams } from './hub-relay-streams';
 import type { NodeRegistry } from './node-registry';
 import {
   HUB_AUTH_TIMEOUT_MS,
   HUB_HEARTBEAT_INTERVAL_MS,
   HUB_HEARTBEAT_MISS_LIMIT,
   HUB_RTC_MAX_SESSIONS,
-  HUB_RTC_TTL_MS,
   type HubKeyLogAppendSuccess,
   type HubKeyLogSource,
   type HubRuntimeConfig,
 } from './types';
+import { UplinkAuthSession } from './uplink-auth-session';
+import { UplinkKeyLog, type UplinkKeyLogOptions } from './uplink-key-log';
+import { UplinkNodeList } from './uplink-node-list';
+import { type HubTokensMessage, type UplinkCtlMessage, decodeUplinkCtl } from './uplink-protocol';
+import { HUB_KEY_LOG_REQ_IDLE_TTL_MS, HUB_KEY_LOG_REQ_STATE_MAX } from './uplink-rate-limit';
+import { type RegisterRtcSessionInput, UplinkRtcSessions } from './uplink-rtc-sessions';
 import {
-  type HubTokensMessage,
-  KEY_LOG_PAGE_DEFAULT_LIMIT,
-  KEY_LOG_PAGE_MAX_LIMIT,
-  type NodeListMessage,
-  type RtcSignalMessage,
-  UPLINK_CTL_MAX_BYTES,
-  type UplinkCtlMessage,
-  bytesToB64url,
-  decodeUplinkCtl,
-  encodeUplinkCtl,
-  seqToWire,
-} from './uplink-protocol';
-import {
-  HUB_KEY_LOG_REQ_IDLE_TTL_MS,
-  HUB_KEY_LOG_REQ_STATE_MAX,
-  IdleLruMap,
-  KeyLogReqLimiter,
-  WindowedLogBudget,
-} from './uplink-rate-limit';
-import {
-  WRITE_FORWARD_OVERSIZED_ERROR,
-  WriteForwardIdempotencyCache,
-  assertWriteForwardEncodedSize,
-  chunkWriteForwardAck,
-  writeForwardDigest,
-} from './writer-forward';
+  type OwnHubSnapshot,
+  type UplinkServerState,
+  createUplinkServerState,
+} from './uplink-server-state';
 
 export {
   HUB_KEY_LOG_REQ_BURST,
@@ -108,24 +52,23 @@ export {
   HUB_KEY_LOG_REQ_STATE_MAX,
   KeyLogReqLimiter,
 } from './uplink-rate-limit';
-import { type UplinkTimer, UplinkTimerSet, drainWithTimeout } from './uplink-server-timers';
-
-export type RegisterRtcSessionInput = {
-  userId: string;
-  browserSessionId: string;
-  fromNodeId: string;
-  toNodeId: string;
-  ttlMs?: number;
-};
-
-export type RtcSessionRegistration = {
-  rtcSession: string;
-  userId: string;
-  browserSessionId: string;
-  fromNodeId: string;
-  toNodeId: string;
-  expiresAt: number;
-};
+export {
+  HUB_CTL_QUEUE_MAX,
+  HUB_CTL_QUEUE_MAX_BYTES,
+  HUB_STOP_DRAIN_TIMEOUT_MS,
+  HUB_UPLINK_AUTH_REJECT_LOG_ADDR_MAX,
+  HUB_UPLINK_AUTH_REJECT_LOG_GLOBAL_MAX,
+  HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS,
+} from './uplink-auth-session';
+export { HUB_KEY_LOG_REQ_LOG_INTERVAL_MS } from './uplink-key-log';
+export {
+  HUB_SPLIT_BRAIN_LOG_INTERVAL_MS,
+  HUB_UNAUTHORIZED_HUB_AD_LOG_INTERVAL_MS,
+} from './hub-federation';
+export type {
+  RegisterRtcSessionInput,
+  RtcSessionRegistration,
+} from './uplink-rtc-sessions';
 
 export type UplinkServerOptions = {
   db: AuthDb;
@@ -144,80 +87,17 @@ export type UplinkServerOptions = {
   meshHubs?: MeshHubStore;
   onModeChange?: () => void;
   onNewAuthorizedHub?: (hubNodeId: string) => void;
-  forwardAppend?: (record: { bytes: Uint8Array; sig: Uint8Array; force?: boolean }) => Promise<{
-    ok: boolean;
-    seq?: bigint | number;
-    error?: string;
-  } | null>;
+  forwardAppend?: UplinkKeyLogOptions['forwardAppend'];
   onForwardedWrite?: () => void;
   openHubStream?: (hubId: string, payload: Uint8Array) => Promise<LinkStream | null>;
   forwardHubCtl?: (msg: HubAttachmentsMessage | HubForwardMessage) => void;
-  onWriteForward?: (
-    fromHubId: string,
-    msg: HubWriteForwardMessage
-  ) => Promise<HubWriteForwardMessage>;
+  onWriteForward?: HubFederationOptions['onWriteForward'];
 };
 
-type PendingAuth = {
-  nonce: Uint8Array;
-};
-
-type CtlQueueState = {
-  depth: number;
-  bytes: number;
-  tail: Promise<void>;
-};
-
-// 按消息数与累计字节双重上限：合法突发（并发 rtc.signal + key.log.req）远超 8 条，但都是小帧
-export const HUB_CTL_QUEUE_MAX = 256;
-export const HUB_CTL_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
-export const HUB_STOP_DRAIN_TIMEOUT_MS = 5_000;
-
-type LiveConnection = {
-  nodeId: string;
-  userId: string;
-  link: LinkSession;
-  generation: number;
-  misses: number;
-  awaitingPong: boolean;
-  heartbeat: UplinkTimer | null;
-};
-
-const textDecoder = new TextDecoder();
-const textEncoder = new TextEncoder();
-
-export const HUB_KEY_LOG_REQ_LOG_INTERVAL_MS = 10_000;
-export const HUB_SPLIT_BRAIN_LOG_INTERVAL_MS = 60_000;
-export const HUB_UNAUTHORIZED_HUB_AD_LOG_INTERVAL_MS = 10 * 60 * 1000;
-export const HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS = 10_000;
-export const HUB_UPLINK_AUTH_REJECT_LOG_GLOBAL_MAX = 20;
-export const HUB_UPLINK_AUTH_REJECT_LOG_ADDR_MAX = 20;
-const AUTH_REJECT_ADDR_BUDGET_MAX = 256;
 const HUB_NODE_ID_HEX = /^[0-9a-f]{32}$/i;
 
-function sanitizeLogField(value: string): string {
-  let out = '';
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if (code === 10) {
-      out += '\\n';
-    } else if (code === 13) {
-      out += '\\r';
-    } else if (code === 9) {
-      out += '\\t';
-    } else if (code < 32 || code === 127) {
-      out += `\\x${code.toString(16).padStart(2, '0')}`;
-    } else {
-      out += value[i];
-    }
-  }
-  return out;
-}
-
 export class UplinkServer {
-  private readonly db: AuthDb;
   private readonly userStore: UserStore;
-  private readonly keyLogSource: HubKeyLogSource;
   readonly registry: NodeRegistry;
   readonly meshHubs: MeshHubStore;
   private readonly config: HubRuntimeConfig;
@@ -226,67 +106,21 @@ export class UplinkServer {
   private hubWriterEpoch: number;
   private readonly authorizedHubIdSet: Set<string>;
   private selfCaFingerprint: string | null = null;
-  private lastSplitBrainLogAt: number | null = null;
-  private readonly lastUnauthorizedHubAdLog = new Map<string, number>();
   private readonly onModeChange?: () => void;
-  private readonly onNewAuthorizedHub?: (hubNodeId: string) => void;
-  private readonly forwardAppend?: UplinkServerOptions['forwardAppend'];
-  private readonly onForwardedWrite?: () => void;
-  private readonly openHubStream?: (
-    hubId: string,
-    payload: Uint8Array
-  ) => Promise<LinkStream | null>;
-  private readonly forwardHubCtl?: (msg: HubAttachmentsMessage | HubForwardMessage) => void;
-  private readonly onWriteForward?: (
-    fromHubId: string,
-    msg: HubWriteForwardMessage
-  ) => Promise<HubWriteForwardMessage>;
   readonly attachments: AttachmentRouter;
-  private readonly rtcHubRoutes: RtcHubRouteTable;
-  private attachmentRevision = 0;
-  private readonly attachmentAssembler = new AttachmentSnapshotAssembler();
-  private readonly writeForwardCache = new WriteForwardIdempotencyCache();
-  private readonly timers = new UplinkTimerSet();
-  private attachmentKeepalive: UplinkTimer | null = null;
-  private readonly attachmentKeepaliveMs: number;
-  private readonly crossHubStreams = new Map<string, Set<LinkStream>>();
-  private readonly tokenAckWaiters = new Map<
-    string,
-    { acked: Set<string>; pending: Set<string> }
-  >();
-  private readonly tokenSnapshots = new Set<string>();
   private readonly now: () => number;
-  private readonly heartbeatIntervalMs: number;
-  private readonly heartbeatMissLimit: number;
-  private readonly authTimeoutMs: number;
-  private readonly rtcMaxSessions: number;
-  private readonly pending = new WeakMap<LinkSession, PendingAuth>();
-  private readonly live = new Map<LinkSession, LiveConnection>();
-  private readonly accepted = new Set<LinkSession>();
-  private readonly authTimers = new Map<LinkSession, UplinkTimer>();
-  private readonly ctlQueues = new WeakMap<LinkSession, CtlQueueState>();
-  private readonly rtcSessions = new Map<string, RtcSessionRegistration>();
-  private listVersion = 0;
-  private readonly lastNodeListFp = new Map<string, string>();
-  private readonly lastNodeListSent = new Map<string, Uint8Array>();
-  private readonly nodeListLatestGen = new Map<string, number>();
-  private readonly nodeListInflight = new Map<string, Promise<'sent' | 'unchanged' | 'failed'>>();
-  private stopped = false;
-  private readonly inflightCtl = new Set<Promise<void>>();
-  private readonly keyLogReqLimiter: KeyLogReqLimiter;
-  private readonly keyLogReqLogs: IdleLruMap<{ lastAt: number; suppressed: number }>;
-  private readonly authRejectLogs: IdleLruMap<{ lastAt: number; suppressed: number }>;
-  private readonly authRejectGlobal = new WindowedLogBudget(
-    HUB_UPLINK_AUTH_REJECT_LOG_GLOBAL_MAX,
-    HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS
-  );
-  private readonly authRejectByAddr = new Map<string, WindowedLogBudget>();
-  private readonly linkRemoteAddress = new WeakMap<LinkSession, string>();
+  private readonly state: UplinkServerState;
+  private readonly authSession: UplinkAuthSession;
+  private readonly rtc: UplinkRtcSessions;
+  private readonly relayStreams: HubRelayStreams;
+  private readonly federation: HubFederation;
+  private readonly nodeList: UplinkNodeList;
+  private readonly keyLog: UplinkKeyLog;
+  private readonly lastNodeListFp: Map<string, string>;
+  private readonly lastNodeListSent: Map<string, Uint8Array>;
 
   constructor(opts: UplinkServerOptions) {
-    this.db = opts.db;
     this.userStore = opts.userStore;
-    this.keyLogSource = opts.keyLogSource;
     this.registry = opts.registry;
     this.meshHubs = opts.meshHubs ?? new MeshHubStore(opts.db);
     this.config = opts.config;
@@ -303,38 +137,133 @@ export class UplinkServer {
     this.selfCaFingerprint = existingOwn?.caFingerprint ?? null;
     this.currentMode = this.effectiveStartMode(configMode);
     this.onModeChange = opts.onModeChange;
-    this.onNewAuthorizedHub = opts.onNewAuthorizedHub;
-    this.forwardAppend = opts.forwardAppend;
-    this.onForwardedWrite = opts.onForwardedWrite;
-    this.openHubStream = opts.openHubStream;
-    this.forwardHubCtl = opts.forwardHubCtl;
-    this.onWriteForward = opts.onWriteForward;
     this.now = opts.now ?? Date.now;
     this.attachments = new AttachmentRouter({
       selfHubId: () => this.hubNodeId(),
       now: this.now,
     });
-    this.rtcHubRoutes = new RtcHubRouteTable({ now: this.now });
-    this.attachmentKeepaliveMs =
-      opts.attachmentKeepaliveMs === undefined
-        ? ATTACHMENT_KEEPALIVE_MS
-        : opts.attachmentKeepaliveMs;
-    this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS;
-    this.heartbeatMissLimit = opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT;
-    this.authTimeoutMs = opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS;
-    this.rtcMaxSessions = opts.rtcMaxSessions ?? HUB_RTC_MAX_SESSIONS;
-    this.keyLogReqLimiter = new KeyLogReqLimiter({
-      max: opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX,
-      ttlMs: opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS,
+    const logStateMax = opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX;
+    const logIdleTtlMs = opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS;
+    this.state = createUplinkServerState({
+      attachments: this.attachments,
+      logStateMax,
+      logIdleTtlMs,
     });
-    this.keyLogReqLogs = new IdleLruMap(
-      opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX,
-      opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS
-    );
-    this.authRejectLogs = new IdleLruMap(
-      opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX,
-      opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS
-    );
+    this.lastNodeListFp = this.state.lastNodeListFp;
+    this.lastNodeListSent = this.state.lastNodeListSent;
+    this.authSession = new UplinkAuthSession({
+      state: this.state,
+      db: opts.db,
+      userStore: opts.userStore,
+      registry: opts.registry,
+      meshHubs: this.meshHubs,
+      config: opts.config,
+      now: this.now,
+      heartbeatIntervalMs: opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS,
+      heartbeatMissLimit: opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT,
+      authTimeoutMs: opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS,
+      logStateMax,
+      logIdleTtlMs,
+      deps: {
+        hubNodeId: () => this.hubNodeId(),
+        isAuthorizedHub: (id, userId) => this.isAuthorizedHub(id, userId),
+        onCtl: (link, bytes) => this.onCtl(link, bytes),
+        onIncomingStream: (link, stream) => this.onIncomingStream(link, stream),
+        broadcastNodeList: (userId) => this.nodeList.broadcastNodeList(userId),
+        noteLocalAttach: (nodeId) => this.federation.noteLocalAttach(nodeId),
+        noteLocalDetach: (nodeId, dropAsHub) => this.federation.noteLocalDetach(nodeId, dropAsHub),
+        dropRtcForNode: (nodeId) => this.rtc.dropRtcForNode(nodeId),
+      },
+    });
+    this.rtc = new UplinkRtcSessions({
+      userStore: opts.userStore,
+      registry: opts.registry,
+      now: this.now,
+      rtcMaxSessions: opts.rtcMaxSessions ?? HUB_RTC_MAX_SESSIONS,
+      deps: {
+        send: (link, msg) => this.authSession.send(link, msg),
+        forwardRtcAcrossHubs: (live, msg) => this.federation.forwardRtcAcrossHubs(live, msg),
+      },
+    });
+    this.relayStreams = new HubRelayStreams({
+      state: this.state,
+      userStore: opts.userStore,
+      registry: opts.registry,
+      openHubStream: opts.openHubStream,
+      deps: {
+        hubNodeId: () => this.hubNodeId(),
+        isWriter: () => this.isWriter(),
+        isAuthorizedHub: (id, userId) => this.isAuthorizedHub(id, userId),
+      },
+    });
+    this.federation = new HubFederation({
+      state: this.state,
+      userStore: opts.userStore,
+      registry: opts.registry,
+      meshHubs: this.meshHubs,
+      now: this.now,
+      attachmentKeepaliveMs:
+        opts.attachmentKeepaliveMs === undefined
+          ? ATTACHMENT_KEEPALIVE_MS
+          : opts.attachmentKeepaliveMs,
+      forwardHubCtl: opts.forwardHubCtl,
+      onWriteForward: opts.onWriteForward,
+      deps: {
+        hubNodeId: () => this.hubNodeId(),
+        isWriter: () => this.isWriter(),
+        isAuthorizedHub: (id, userId) => this.isAuthorizedHub(id, userId),
+        mode: () => this.currentMode,
+        writerEpoch: () => this.hubWriterEpoch,
+        setMode: (mode) => this.setMode(mode),
+        notWriterError: () => this.notWriterError(),
+        authorizedHubRecords: () => this.authorizedHubRecords(),
+        send: (link, msg) => this.authSession.send(link, msg),
+        broadcastAllNodeLists: () => this.nodeList.broadcastAllNodeLists(),
+        resetCrossHubRelays: (hubId) => this.relayStreams.resetCrossHubRelays(hubId),
+        onNewAuthorizedHub: opts.onNewAuthorizedHub,
+      },
+    });
+    this.nodeList = new UplinkNodeList({
+      state: this.state,
+      db: opts.db,
+      userStore: opts.userStore,
+      registry: opts.registry,
+      meshHubs: this.meshHubs,
+      keyLogSource: opts.keyLogSource,
+      config: opts.config,
+      now: this.now,
+      deps: {
+        hubNodeId: () => this.hubNodeId(),
+        isWriter: () => this.isWriter(),
+        isAuthorizedHub: (id, userId) => this.isAuthorizedHub(id, userId),
+        authorizedHubRecords: () => this.authorizedHubRecords(),
+        sendBytes: (link, bytes) => this.authSession.sendBytes(link, bytes),
+        assertLiveCert: (live) => this.authSession.assertLiveCert(live),
+        applyAuthorizedHubAdvertisement: (hubNodeId, ad, source) =>
+          this.federation.applyAuthorizedHubAdvertisement(hubNodeId, ad, source),
+        sendTokenSnapshotOnce: (live) => this.federation.sendTokenSnapshotOnce(live),
+      },
+    });
+    this.keyLog = new UplinkKeyLog({
+      state: this.state,
+      userStore: opts.userStore,
+      registry: opts.registry,
+      keyLogSource: opts.keyLogSource,
+      now: this.now,
+      forwardAppend: opts.forwardAppend,
+      onForwardedWrite: opts.onForwardedWrite,
+      deps: {
+        hubNodeId: () => this.hubNodeId(),
+        isWriter: () => this.isWriter(),
+        notWriterError: () => this.notWriterError(),
+        send: (link, msg) => this.authSession.send(link, msg),
+        broadcastNodeList: (userId) => this.nodeList.broadcastNodeList(userId),
+        certIsRevoked: (nodeId) => this.authSession.certIsRevoked(nodeId),
+        evictRevokedNode: (nodeId) => this.authSession.evictRevokedNode(nodeId),
+        applyHubAuthorizationRecord: (userId, record) =>
+          this.applyHubAuthorizationRecord(userId, record),
+      },
+    });
     if (opts.config.nodeId) {
       this.userStore.upsertHubMeta({
         nodeId: opts.config.nodeId,
@@ -343,7 +272,7 @@ export class UplinkServer {
       });
     }
     this.upsertSelfHub();
-    this.startAttachmentKeepalive();
+    this.federation.startAttachmentKeepalive();
   }
 
   mode(): HubMode {
@@ -367,23 +296,13 @@ export class UplinkServer {
     return writer === own;
   }
 
-  ownHubSnapshot(): {
-    hubNodeId: string;
-    publicUrl: string;
-    name: string | null;
-    mode: HubMode;
-    priority: number;
-    writerEpoch: number;
-    caFingerprint: string | null;
-    online: boolean;
-    lastSeenAt: number | null;
-  } | null {
+  ownHubSnapshot(): OwnHubSnapshot | null {
     const hubNodeId = this.hubNodeId();
     if (!hubNodeId) return null;
     return {
       hubNodeId,
       publicUrl: this.config.publicUrl,
-      name: this.nodeDisplayName(hubNodeId),
+      name: this.nodeList.nodeDisplayName(hubNodeId),
       mode: this.currentMode,
       priority: this.hubPriority,
       writerEpoch: this.hubWriterEpoch,
@@ -429,1591 +348,6 @@ export class UplinkServer {
     };
   }
 
-  broadcastAllNodeLists(): void {
-    const seen = new Set<string>();
-    for (const entry of this.registry.listAuthenticated()) {
-      if (seen.has(entry.userId)) continue;
-      seen.add(entry.userId);
-      void this.broadcastNodeList(entry.userId);
-    }
-  }
-
-  accept(link: LinkSession, opts?: { remoteAddress?: string }): void {
-    if (this.stopped) {
-      link.close('hub-stop');
-      return;
-    }
-    const nonce = randomBytes(32);
-    this.accepted.add(link);
-    if (opts?.remoteAddress) {
-      this.linkRemoteAddress.set(link, opts.remoteAddress);
-    }
-    this.pending.set(link, { nonce });
-    this.armAuthTimer(link);
-    this.send(link, { t: 'auth.challenge', nonce: encodeBase64url(nonce) });
-    link.ctl.onMessage((bytes) => this.enqueueCtl(link, bytes));
-    link.onStream((stream) => {
-      void this.onIncomingStream(link, stream);
-    });
-    void link.closed.then(() => {
-      this.onLinkClosed(link);
-    });
-  }
-
-  registerRtcSession(input: RegisterRtcSessionInput): string | null {
-    this.sweepRtcSessions();
-    if (this.rtcSessions.size >= this.rtcMaxSessions) {
-      return null;
-    }
-    if (!this.rtcNodesOwnedBy(input.userId, input.fromNodeId, input.toNodeId)) {
-      return null;
-    }
-    const rtcSession = encodeBase64url(randomBytes(16));
-    const ttlMs = input.ttlMs ?? HUB_RTC_TTL_MS;
-    this.rtcSessions.set(rtcSession, {
-      rtcSession,
-      userId: input.userId,
-      browserSessionId: input.browserSessionId,
-      fromNodeId: input.fromNodeId,
-      toNodeId: input.toNodeId,
-      expiresAt: this.now() + ttlMs,
-    });
-    return rtcSession;
-  }
-
-  unregisterRtcSession(rtcSession: string): void {
-    this.rtcSessions.delete(rtcSession);
-  }
-
-  ensureDcSession(userId: string, nodeA: string, nodeB: string): boolean {
-    const a = nodeA.toLowerCase();
-    const b = nodeB.toLowerCase();
-    if (!a || !b || a === b) return false;
-    if (!this.rtcNodesOwnedBy(userId, a, b)) return false;
-    this.sweepRtcSessions();
-    const lo = a < b ? a : b;
-    const hi = a < b ? b : a;
-    const rtcSession = `dc:${lo}:${hi}`;
-    const existing = this.rtcSessions.get(rtcSession);
-    if (existing) {
-      existing.expiresAt = this.now() + HUB_RTC_TTL_MS;
-      return true;
-    }
-    if (this.rtcSessions.size >= this.rtcMaxSessions) return false;
-    this.rtcSessions.set(rtcSession, {
-      rtcSession,
-      userId,
-      browserSessionId: '',
-      fromNodeId: lo,
-      toNodeId: hi,
-      expiresAt: this.now() + HUB_RTC_TTL_MS,
-    });
-    return true;
-  }
-
-  sendTo(nodeId: string, msg: UplinkCtlMessage): boolean {
-    const entry = this.registry.get(nodeId);
-    if (!entry?.authenticated) return false;
-    this.send(entry.link, msg);
-    return true;
-  }
-
-  async replicateEnrollmentTokens(
-    msg: HubTokensMessage,
-    waitMs = HUB_TOKENS_ACK_WAIT_MS
-  ): Promise<string[]> {
-    if (!this.isWriter()) return [];
-    const targets = this.tokenReplicationTargets();
-    if (targets.length === 0) return [];
-    const id = msg.id ?? crypto.randomUUID();
-    const framed: HubTokensMessage = { ...msg, id };
-    const pending = new Set(targets.map((row) => row.nodeId));
-    this.tokenAckWaiters.set(id, { acked: new Set(), pending });
-    for (const row of targets) {
-      this.send(row.link, framed);
-    }
-    if (waitMs <= 0) return [];
-    const deadline = this.now() + waitMs;
-    while (!this.stopped && this.now() < deadline) {
-      const waiter = this.tokenAckWaiters.get(id);
-      if (!waiter || waiter.pending.size === 0) break;
-      await this.timers.sleep(20);
-    }
-    const waiter = this.tokenAckWaiters.get(id);
-    this.tokenAckWaiters.delete(id);
-    return waiter ? [...waiter.acked] : [];
-  }
-
-  private tokenReplicationTargets(): Array<{ nodeId: string; link: LinkSession }> {
-    const out: Array<{ nodeId: string; link: LinkSession }> = [];
-    for (const entry of this.registry.listAuthenticated()) {
-      if (entry.nodeId === this.hubNodeId()) continue;
-      if (!this.isAuthorizedHub(entry.nodeId, entry.userId)) continue;
-      if (
-        !peerSupportsHubTokens(entry.meta.version ?? this.userStore.getNode(entry.nodeId)?.version)
-      ) {
-        continue;
-      }
-      out.push({ nodeId: entry.nodeId, link: entry.link });
-    }
-    return out;
-  }
-
-  private sendTokenSnapshot(live: LiveConnection): void {
-    const version =
-      this.registry.get(live.nodeId)?.meta.version ?? this.userStore.getNode(live.nodeId)?.version;
-    if (!peerSupportsHubTokens(version)) return;
-    if (!this.isAuthorizedHub(live.nodeId, live.userId)) return;
-    const revision = this.userStore.nextEnrollmentTokenRevision(this.hubWriterEpoch);
-    const id = crypto.randomUUID();
-    const pages = snapshotHubTokensMessages(this.userStore, revision, id, live.userId);
-    for (const page of pages) {
-      assertHubTokensEncodedSize(page);
-      this.send(live.link, page);
-    }
-  }
-
-  private knownMaxWriterEpoch(): number {
-    let max = this.hubWriterEpoch;
-    for (const row of this.meshHubs.list()) {
-      if (row.writerEpoch > max) max = row.writerEpoch;
-    }
-    return max;
-  }
-
-  private handleHubTokens(live: LiveConnection, msg: HubTokensMessage): void {
-    if (!this.isAuthorizedHub(live.nodeId, live.userId)) {
-      console.warn(`[hub] hub.tokens rejected from unauthorized node=${live.nodeId}`);
-      return;
-    }
-    if (msg.ack) {
-      const waiter = msg.id ? this.tokenAckWaiters.get(msg.id) : undefined;
-      if (waiter) {
-        waiter.acked.add(live.nodeId);
-        waiter.pending.delete(live.nodeId);
-      }
-      return;
-    }
-    const writerId = pickWriterHub(this.authorizedHubRecords());
-    if (live.nodeId !== writerId) {
-      console.warn(
-        `[hub] hub.tokens upsert/tombstone dropped: sender=${live.nodeId} is not current writer=${writerId}`
-      );
-      return;
-    }
-    const senderEpoch = this.meshHubs.get(live.nodeId)?.writerEpoch ?? 0;
-    const localMax = this.knownMaxWriterEpoch();
-    if (senderEpoch < localMax) {
-      console.warn(
-        `[hub] hub.tokens upsert/tombstone dropped: senderEpoch=${senderEpoch} < localMax=${localMax} from=${live.nodeId}`
-      );
-      return;
-    }
-    applyHubTokensMessage(this.userStore, msg, live.userId);
-    if (msg.id) this.send(live.link, hubTokensAck(msg));
-  }
-
-  private async handleHubWriteForward(
-    live: LiveConnection,
-    msg: HubWriteForwardMessage
-  ): Promise<void> {
-    if (msg.ack) return;
-    if (!this.isAuthorizedHub(live.nodeId, live.userId)) {
-      console.warn(`[hub] hub.write-forward rejected from unauthorized node=${live.nodeId}`);
-      return;
-    }
-    if (!msg.id) return;
-    const ownId = this.hubNodeId();
-    const epoch = this.writerEpoch();
-    const writerMismatch =
-      !this.isWriter() ||
-      (msg.writerHubId !== undefined && ownId !== undefined && msg.writerHubId !== ownId) ||
-      (msg.writerEpoch !== undefined && msg.writerEpoch !== epoch);
-    if (writerMismatch) {
-      this.sendWriteForwardAck(live.link, {
-        t: 'hub.write-forward',
-        id: msg.id,
-        ack: true,
-        status: 409,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(this.notWriterError()),
-      });
-      return;
-    }
-    try {
-      assertWriteForwardEncodedSize(msg);
-    } catch {
-      this.sendWriteForwardAck(live.link, {
-        t: 'hub.write-forward',
-        id: msg.id,
-        ack: true,
-        status: 413,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ error: WRITE_FORWARD_OVERSIZED_ERROR }),
-      });
-      return;
-    }
-    const digest = writeForwardDigest(msg);
-    const cached = this.writeForwardCache.get(live.nodeId, msg.id);
-    if (cached) {
-      if (cached.digest === digest) {
-        this.sendWriteForwardAck(live.link, cached.ack);
-        return;
-      }
-      this.sendWriteForwardAck(live.link, {
-        t: 'hub.write-forward',
-        id: msg.id,
-        ack: true,
-        status: 409,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ error: 'idempotency_conflict' }),
-      });
-      return;
-    }
-    if (!this.onWriteForward) return;
-    try {
-      const ack = await this.onWriteForward(live.nodeId, msg);
-      this.writeForwardCache.set(live.nodeId, msg.id, digest, ack);
-      this.sendWriteForwardAck(live.link, ack);
-    } catch (err) {
-      console.warn(
-        `[hub] hub.write-forward failed from=${live.nodeId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-      this.sendWriteForwardAck(live.link, {
-        t: 'hub.write-forward',
-        id: msg.id,
-        ack: true,
-        status: 500,
-        body: JSON.stringify({ error: 'forward_failed' }),
-      });
-    }
-  }
-
-  private sendWriteForwardAck(link: LinkSession, ack: HubWriteForwardMessage): void {
-    for (const part of chunkWriteForwardAck(ack)) {
-      this.send(link, part);
-    }
-  }
-
-  publishLocalAttachments(): void {
-    const self = this.hubNodeId();
-    if (!self) return;
-    this.attachments.expire();
-    for (const entry of this.registry.listAuthenticated()) {
-      if (entry.nodeId === self) continue;
-      this.attachments.attachLocal(entry.nodeId);
-    }
-    this.emitAttachments(
-      this.registry
-        .listAuthenticated()
-        .filter((entry) => entry.nodeId !== self)
-        .map((entry) => ({ nodeId: entry.nodeId, attached: true })),
-      true
-    );
-  }
-
-  ingestHubAttachments(fromHubId: string, msg: HubAttachmentsMessage): void {
-    if (!this.isAuthorizedHub(fromHubId)) {
-      console.warn(`[hub] hub.attachments rejected from unauthorized node=${fromHubId}`);
-      return;
-    }
-    const assembled = this.attachmentAssembler.push(fromHubId, msg);
-    if (!assembled) return;
-    const result = this.attachments.applyFromHub(fromHubId, assembled.entries, {
-      revision: assembled.revision,
-      full: assembled.full,
-    });
-    if (result !== 'applied') return;
-    if (this.isWriter()) this.broadcastAttachmentUnion();
-    this.broadcastAllNodeLists();
-  }
-
-  ingestHubForward(fromHubId: string, msg: HubForwardMessage): void {
-    if (!this.isAuthorizedHub(fromHubId) || !this.isAuthorizedHub(msg.originHubId)) {
-      console.warn(`[hub] hub.forward rejected from unauthorized node=${fromHubId}`);
-      return;
-    }
-    this.dispatchHubForward(fromHubId, msg);
-  }
-
-  ingestHubRelay(fromHubId: string, stream: LinkStream): void {
-    const open = parseHubRelayOpen(stream.openPayload);
-    if (!open) {
-      stream.reset('invalid-relay');
-      return;
-    }
-    void this.acceptHubRelay(fromHubId, stream, open);
-  }
-
-  resetCrossHubRelays(hubId?: string): void {
-    const ids = hubId ? [hubId] : [...this.crossHubStreams.keys()];
-    for (const id of ids) {
-      const set = this.crossHubStreams.get(id);
-      this.crossHubStreams.delete(id);
-      if (!set) continue;
-      for (const stream of set) {
-        try {
-          stream.reset('hub-down');
-        } catch {
-          /* already closed */
-        }
-      }
-    }
-  }
-
-  private handleHubAttachments(live: LiveConnection, msg: HubAttachmentsMessage): void {
-    this.ingestHubAttachments(live.nodeId, msg);
-  }
-
-  private handleHubForward(live: LiveConnection, msg: HubForwardMessage): void {
-    this.ingestHubForward(live.nodeId, msg);
-  }
-
-  private emitAttachments(entries: HubAttachmentsMessage['entries'], full = false): void {
-    const revision = ++this.attachmentRevision;
-    const pages = paginateHubAttachments(entries, {
-      revision,
-      snapshotId: crypto.randomUUID(),
-      full,
-    });
-    if (this.isWriter()) {
-      for (const msg of pages) this.broadcastHubCtl(msg);
-      return;
-    }
-    for (const msg of pages) this.forwardHubCtl?.(msg);
-  }
-
-  private broadcastAttachmentUnion(): void {
-    if (!this.isWriter()) return;
-    this.attachments.expire();
-    this.emitAttachments(this.attachments.snapshotEntries(), true);
-  }
-
-  private broadcastHubCtl(msg: HubAttachmentsMessage | HubForwardMessage): void {
-    for (const row of this.hubCtlTargets()) {
-      this.send(row.link, msg);
-    }
-  }
-
-  private hubCtlTargets(): Array<{ nodeId: string; link: LinkSession }> {
-    return this.tokenReplicationTargets();
-  }
-
-  private noteLocalAttach(nodeId: string): void {
-    const self = this.hubNodeId();
-    if (!self || nodeId === self) return;
-    this.attachments.attachLocal(nodeId);
-    if (this.isWriter()) this.broadcastAttachmentUnion();
-    else this.emitAttachments([{ nodeId, attached: true }]);
-  }
-
-  private noteLocalDetach(nodeId: string, dropAsHub: boolean): void {
-    this.attachments.detachLocal(nodeId);
-    if (dropAsHub) {
-      this.attachments.dropHub(nodeId);
-      this.resetCrossHubRelays(nodeId);
-    }
-    if (this.isWriter()) this.broadcastAttachmentUnion();
-    else this.emitAttachments([{ nodeId, attached: false }]);
-  }
-
-  private dispatchHubForward(fromHubId: string, msg: HubForwardMessage): void {
-    const self = this.hubNodeId();
-    if (!self) return;
-    if (msg.visitedHubIds.includes(self)) return;
-    if (msg.visitedHubIds.length > 2) return;
-    this.rtcHubRoutes.remember(msg.signal.rtcSession, msg.returnHubId);
-    const inner: RtcSignalMessage = {
-      t: 'rtc.signal',
-      rtcSession: msg.signal.rtcSession,
-      from: msg.signal.from,
-      to: msg.signal.to,
-      ...(msg.signal.sdp !== undefined ? { sdp: msg.signal.sdp } : {}),
-      ...(msg.signal.candidate !== undefined ? { candidate: msg.signal.candidate } : {}),
-    };
-    const target = this.registry.get(inner.to);
-    if (target?.authenticated) {
-      this.send(target.link, inner);
-      return;
-    }
-    const dest = this.attachments.attachedHubId(inner.to);
-    if (!dest || dest === self || dest === fromHubId) return;
-    if (msg.visitedHubIds.length >= 2) return;
-    if (!this.isAuthorizedHub(dest)) return;
-    this.sendHubForward(dest, {
-      ...msg,
-      visitedHubIds: [...msg.visitedHubIds, self],
-    });
-  }
-
-  private sendHubForward(destHubId: string, msg: HubForwardMessage): void {
-    if (this.isWriter()) {
-      const entry = this.registry.get(destHubId);
-      if (
-        entry?.authenticated &&
-        this.isAuthorizedHub(destHubId, entry.userId) &&
-        peerSupportsHubTokens(entry.meta.version ?? this.userStore.getNode(destHubId)?.version)
-      ) {
-        this.send(entry.link, msg);
-      }
-      return;
-    }
-    this.forwardHubCtl?.(msg);
-  }
-
-  private forwardRtcAcrossHubs(live: LiveConnection, msg: RtcSignalMessage): void {
-    const self = this.hubNodeId();
-    if (!self) return;
-    const dest = this.rtcHubRoutes.lookup(msg.rtcSession) ?? this.attachments.attachedHubId(msg.to);
-    if (!dest || dest === self) return;
-    if (!this.isAuthorizedHub(dest, live.userId)) return;
-    this.sendHubForward(dest, {
-      t: 'hub.forward',
-      kind: 'rtc.signal',
-      originHubId: self,
-      returnHubId: self,
-      visitedHubIds: [self],
-      signal: {
-        rtcSession: msg.rtcSession,
-        from: msg.from,
-        to: msg.to,
-        ...(msg.sdp !== undefined ? { sdp: msg.sdp } : {}),
-        ...(msg.candidate !== undefined ? { candidate: msg.candidate } : {}),
-      },
-    });
-  }
-
-  private async acceptHubRelay(
-    fromHubId: string,
-    stream: LinkStream,
-    open: HubRelayOpen
-  ): Promise<void> {
-    const targetCert = this.userStore.getCert(open.to);
-    const sourceCert = this.userStore.getCert(open.from);
-    const targetEntry = this.registry.get(open.to);
-    const sameUser = Boolean(
-      targetCert &&
-        sourceCert &&
-        targetCert.userId === sourceCert.userId &&
-        this.userStore.getCert(fromHubId)?.userId === targetCert.userId
-    );
-    const verdict = validateHubRelay({
-      to: open.to,
-      from: open.from,
-      originHubId: open.originHubId,
-      visitedHubIds: open.visitedHubIds,
-      hop: open.hop,
-      peerHubId: fromHubId,
-      isAuthorizedHub: (id) => this.isAuthorizedHub(id),
-      targetLocal: Boolean(targetEntry?.authenticated),
-      sameUser,
-      sourceRevoked: !sourceCert || sourceCert.revokedLogSeq !== null,
-      targetKnown: targetCert != null && targetCert.revokedLogSeq === null,
-    });
-    if (verdict.ok) {
-      await this.pumpToLocalNode(stream, open.to, open.from);
-      return;
-    }
-    if (
-      verdict.reason === 'offline' &&
-      sameUser &&
-      targetCert &&
-      targetCert.revokedLogSeq === null
-    ) {
-      await this.forwardHubRelay(stream, open);
-      return;
-    }
-    stream.reset(verdict.reason);
-  }
-
-  private async forwardHubRelay(stream: LinkStream, open: HubRelayOpen): Promise<void> {
-    const self = this.hubNodeId();
-    if (!self) {
-      stream.reset('offline');
-      return;
-    }
-    const next = nextHubRelayHop(open, self);
-    if (!next.ok) {
-      stream.reset(next.reason);
-      return;
-    }
-    const dest = this.attachments.attachedHubId(open.to);
-    if (!dest || dest === self) {
-      stream.reset('offline');
-      return;
-    }
-    await this.openAndPumpHubRelay(stream, dest, next.open);
-  }
-
-  private async pumpToLocalNode(stream: LinkStream, to: string, from: string): Promise<void> {
-    const targetEntry = this.registry.get(to);
-    if (!targetEntry?.authenticated) {
-      stream.reset('offline');
-      return;
-    }
-    const outboundPayload = textEncoder.encode(JSON.stringify({ to, from }));
-    let outbound: LinkStream;
-    try {
-      outbound = await targetEntry.link.openStream(outboundPayload);
-    } catch {
-      stream.reset('open-failed');
-      return;
-    }
-    pumpHubRelay(stream, outbound);
-  }
-
-  private async openAndPumpHubRelay(
-    stream: LinkStream,
-    destHubId: string,
-    open: HubRelayOpen
-  ): Promise<void> {
-    if (!this.openHubStream) {
-      stream.reset('offline');
-      return;
-    }
-    let outbound: LinkStream;
-    try {
-      const opened = await this.openHubStream(destHubId, encodeHubRelayOpen(open));
-      if (!opened) {
-        stream.reset('offline');
-        return;
-      }
-      outbound = opened;
-    } catch {
-      stream.reset('open-failed');
-      return;
-    }
-    this.trackCrossHub(destHubId, stream, outbound);
-    pumpHubRelay(stream, outbound);
-  }
-
-  private trackCrossHub(hubId: string, a: LinkStream, b: LinkStream): void {
-    let set = this.crossHubStreams.get(hubId);
-    if (!set) {
-      set = new Set();
-      this.crossHubStreams.set(hubId, set);
-    }
-    set.add(a);
-    set.add(b);
-    const untrack = (): void => {
-      const current = this.crossHubStreams.get(hubId);
-      if (!current) return;
-      current.delete(a);
-      current.delete(b);
-      if (current.size === 0) this.crossHubStreams.delete(hubId);
-    };
-    a.onAbort(untrack);
-    b.onAbort(untrack);
-    void a.closed.then(untrack);
-    void b.closed.then(untrack);
-  }
-
-  async broadcastNodeList(userId: string): Promise<'sent' | 'unchanged' | 'failed'> {
-    if (this.stopped) return 'failed';
-    this.nodeListLatestGen.set(userId, (this.nodeListLatestGen.get(userId) ?? 0) + 1);
-    const existing = this.nodeListInflight.get(userId);
-    if (existing) return existing;
-    const run = this.pumpNodeListBroadcast(userId);
-    this.nodeListInflight.set(userId, run);
-    return run;
-  }
-
-  private async pumpNodeListBroadcast(userId: string): Promise<'sent' | 'unchanged' | 'failed'> {
-    try {
-      let result: 'sent' | 'unchanged' | 'failed' = 'unchanged';
-      while (!this.stopped) {
-        const gen = this.nodeListLatestGen.get(userId) ?? 0;
-        result = await this.publishNodeList(userId, gen);
-        if (this.stopped) {
-          this.nodeListInflight.delete(userId);
-          return 'failed';
-        }
-        // 必须与 gen 比较同一同步段内摘掉 inflight，await 后再删会丢掉其间到达的 trigger
-        if (gen === (this.nodeListLatestGen.get(userId) ?? 0)) {
-          this.nodeListInflight.delete(userId);
-          return result;
-        }
-      }
-      this.nodeListInflight.delete(userId);
-      return 'failed';
-    } catch (err) {
-      this.nodeListInflight.delete(userId);
-      throw err;
-    }
-  }
-
-  private async publishNodeList(
-    userId: string,
-    gen: number
-  ): Promise<'sent' | 'unchanged' | 'failed'> {
-    if (this.registry.listForBroadcast(userId).length === 0) {
-      if (gen !== (this.nodeListLatestGen.get(userId) ?? 0)) return 'unchanged';
-      this.lastNodeListFp.delete(userId);
-      this.lastNodeListSent.delete(userId);
-      return 'unchanged';
-    }
-    try {
-      const msg = await this.buildNodeList(userId);
-      if (this.stopped) return 'failed';
-      if (gen !== (this.nodeListLatestGen.get(userId) ?? 0)) return 'unchanged';
-      const fingerprint = nodeListFingerprint(msg);
-      const prev = this.lastNodeListFp.get(userId);
-      if (prev === fingerprint) return 'unchanged';
-      this.listVersion += 1;
-      msg.version = this.listVersion;
-      const bytes = encodeUplinkCtl(msg);
-      this.lastNodeListFp.set(userId, fingerprint);
-      this.lastNodeListSent.set(userId, bytes);
-      for (const entry of this.registry.listForBroadcast(userId)) {
-        this.sendBytes(entry.link, bytes);
-      }
-      return 'sent';
-    } catch {
-      return 'failed';
-    }
-  }
-
-  disconnect(nodeId: string, reason = 'disconnected'): boolean {
-    const entry = this.registry.get(nodeId);
-    if (!entry) return false;
-    entry.link.close(reason);
-    return true;
-  }
-
-  async applyAppendEffects(userId: string, result: HubKeyLogAppendSuccess): Promise<void> {
-    if (
-      result.record.type === 'rotate-root' ||
-      result.record.type === 'reset-root' ||
-      result.record.type === 'rotate-root-keep'
-    ) {
-      this.userStore.invalidateUnusedEnrollmentTokens(userId, this.now());
-    }
-    if (
-      result.record.type === 'admit-hub' ||
-      result.record.type === 'retire-hub' ||
-      result.record.type === 'revoke-node'
-    ) {
-      this.applyHubAuthorizationRecord(userId, result.record);
-    }
-    for (const effect of result.effects) {
-      if (effect.type === 'revokeSessionsVia') {
-        this.evictRevokedNode(nodeIdToHex(effect.nodeId));
-      }
-    }
-    for (const entry of this.registry.listForBroadcast(userId)) {
-      if (this.certIsRevoked(entry.nodeId)) {
-        this.evictRevokedNode(entry.nodeId);
-      }
-    }
-    await this.broadcastNodeList(userId);
-  }
-
-  async stop(): Promise<void> {
-    this.stopped = true;
-    this.clearAttachmentKeepalive();
-    const links = [...this.accepted];
-    for (const live of this.live.values()) {
-      this.clearHeartbeat(live);
-    }
-    this.live.clear();
-    for (const link of links) {
-      this.clearAuthTimer(link);
-      link.close('hub-stop');
-    }
-    this.accepted.clear();
-    this.authTimers.clear();
-    this.rtcSessions.clear();
-    this.resetCrossHubRelays();
-    this.lastNodeListFp.clear();
-    this.lastNodeListSent.clear();
-    this.keyLogReqLimiter.clear();
-    this.keyLogReqLogs.clear();
-    this.authRejectLogs.clear();
-    this.authRejectGlobal.clear();
-    this.authRejectByAddr.clear();
-    this.registry.closeAll('hub-stop');
-    await this.drainInflight();
-    this.timers.dispose(); // 兜底：登记过的定时器一次清干净，之后再也挂不上新的
-  }
-
-  get pendingTimerCount(): number {
-    return this.timers.size;
-  }
-
-  private trackCtl(work: Promise<void>): void {
-    this.inflightCtl.add(work);
-    void work.finally(() => {
-      this.inflightCtl.delete(work);
-    });
-  }
-
-  private async drainInflight(): Promise<void> {
-    const pending = [...this.inflightCtl];
-    if (pending.length === 0) return;
-    const drained = await drainWithTimeout(pending, this.timers, HUB_STOP_DRAIN_TIMEOUT_MS);
-    if (!drained) console.warn('[hub] uplink stop drain timed out; continuing');
-  }
-
-  get keyLogReqBucketCount(): number {
-    return this.keyLogReqLimiter.primarySize;
-  }
-
-  private send(link: LinkSession, msg: UplinkCtlMessage): void {
-    this.sendBytes(link, encodeUplinkCtl(msg));
-  }
-
-  private sendBytes(link: LinkSession, bytes: Uint8Array): void {
-    try {
-      link.ctl.send(bytes);
-    } catch {
-      // a dead uplink must never throw out of persist/ack
-    }
-  }
-
-  private enqueueCtl(link: LinkSession, bytes: Uint8Array): Promise<void> {
-    if (this.stopped || !this.accepted.has(link)) return Promise.resolve();
-    if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
-      link.close('protocol_error');
-      return Promise.resolve();
-    }
-    let q = this.ctlQueues.get(link);
-    if (!q) {
-      q = { depth: 0, bytes: 0, tail: Promise.resolve() };
-      this.ctlQueues.set(link, q);
-    }
-    if (q.depth >= HUB_CTL_QUEUE_MAX || q.bytes + bytes.byteLength > HUB_CTL_QUEUE_MAX_BYTES) {
-      link.close('ctl-overflow');
-      return Promise.resolve();
-    }
-    q.depth += 1;
-    q.bytes += bytes.byteLength;
-    const run = q.tail.catch(() => undefined).then(() => this.onCtl(link, bytes));
-    const settled = run.then(
-      () => undefined,
-      () => undefined
-    );
-    this.trackCtl(settled);
-    q.tail = run
-      .catch(() => {
-        if (this.accepted.has(link)) {
-          link.close('ctl-error');
-        }
-      })
-      .finally(() => {
-        q.depth = Math.max(0, q.depth - 1);
-        q.bytes = Math.max(0, q.bytes - bytes.byteLength);
-      });
-    return settled;
-  }
-
-  private async onCtl(link: LinkSession, bytes: Uint8Array): Promise<void> {
-    if (this.stopped || !this.accepted.has(link)) return;
-    let msg: UplinkCtlMessage;
-    try {
-      msg = decodeUplinkCtl(bytes);
-    } catch {
-      link.close('protocol_error');
-      return;
-    }
-    const live = this.live.get(link);
-    if (!live) {
-      if (msg.t !== 'auth.response') {
-        this.rejectAuth(link, undefined, 'unauthenticated', 'unauthenticated');
-        return;
-      }
-      await this.handleAuthResponse(link, msg.node_id, msg.sig);
-      return;
-    }
-    if (!this.assertLiveCert(live)) return;
-    this.registry.touch(live.nodeId, this.now());
-    switch (msg.t) {
-      case 'ping':
-        this.send(link, { t: 'pong' });
-        return;
-      case 'pong':
-        if (live.awaitingPong) {
-          live.awaitingPong = false;
-          live.misses = 0;
-        }
-        if (this.isAuthorizedHub(live.nodeId, live.userId)) {
-          this.attachments.refreshHub(live.nodeId);
-        }
-        return;
-      case 'node.status':
-        await this.handleNodeStatus(live, msg);
-        return;
-      case 'key.log.req':
-        await this.handleKeyLogReq(live, msg);
-        return;
-      case 'key.log.append':
-        await this.handleKeyLogAppend(live, msg.bytes, msg.sig, msg.id, msg.force === true);
-        return;
-      case 'rtc.signal':
-        this.handleRtcSignal(live, msg);
-        return;
-      case 'hub.tokens':
-        this.handleHubTokens(live, msg);
-        return;
-      case 'hub.attachments':
-        this.handleHubAttachments(live, msg);
-        return;
-      case 'hub.forward':
-        this.handleHubForward(live, msg);
-        return;
-      case 'hub.write-forward':
-        await this.handleHubWriteForward(live, msg);
-        return;
-      case 'key.log.res':
-        link.close('protocol_error');
-        return;
-      default:
-        return;
-    }
-  }
-
-  private async handleAuthResponse(
-    link: LinkSession,
-    nodeId: string,
-    sigB64: string
-  ): Promise<void> {
-    const pending = this.pending.get(link);
-    this.pending.delete(link);
-    this.clearAuthTimer(link);
-    if (!pending) {
-      this.rejectAuth(link, nodeId, 'timeout', 'auth-timeout');
-      return;
-    }
-    const cert = this.userStore.getCert(nodeId);
-    if (!cert) {
-      this.rejectAuth(link, nodeId, 'cert_not_admitted', 'unknown-cert');
-      return;
-    }
-    if (cert.revokedLogSeq !== null) {
-      this.rejectAuth(link, nodeId, 'revoked', 'revoked');
-      return;
-    }
-    const nodeRow = this.userStore.getNode(nodeId);
-    if (nodeRow?.status === 'revoked') {
-      this.rejectAuth(link, nodeId, 'revoked', 'revoked');
-      return;
-    }
-    let edPk: Uint8Array;
-    try {
-      edPk = decodeCertificate(cert.certificateBytes).ed_pk;
-    } catch {
-      this.rejectAuth(link, nodeId, 'bad_cert', 'bad-cert');
-      return;
-    }
-    let sig: Uint8Array;
-    try {
-      sig = decodeB64url(sigB64, 64);
-    } catch {
-      this.rejectAuth(link, nodeId, 'bad_sig', 'bad-sig');
-      return;
-    }
-    if (
-      !verifyEd25519(
-        sig,
-        uplinkAuthMessage(pending.nonce, hubHostFromUrl(this.config.publicUrl)),
-        edPk
-      )
-    ) {
-      this.rejectAuth(link, nodeId, 'bad_sig', 'unauthorized');
-      return;
-    }
-    const userId = cert.userId;
-    const name = nodeRow?.name ?? nodeId;
-    const registered = this.registry.put({
-      nodeId,
-      userId,
-      link,
-      meta: this.registry.emptyMeta(name),
-      lastSeen: this.now(),
-      authenticated: true,
-    });
-    const live: LiveConnection = {
-      nodeId,
-      userId,
-      link,
-      generation: registered.generation,
-      misses: 0,
-      awaitingPong: false,
-      heartbeat: null,
-    };
-    this.live.set(link, live);
-    this.startHeartbeat(live);
-    this.noteLocalAttach(nodeId);
-    this.send(link, { t: 'auth.ok' });
-    if ((await this.broadcastNodeList(userId)) === 'unchanged') {
-      const cached = this.lastNodeListSent.get(userId);
-      if (cached) this.sendBytes(link, cached);
-    }
-  }
-
-  private async handleNodeStatus(
-    live: LiveConnection,
-    msg: Extract<UplinkCtlMessage, { t: 'node.status' }>
-  ): Promise<void> {
-    if (this.stopped || !this.assertLiveCert(live)) return;
-    const now = this.now();
-    const inventoryJson = stringifyJson(msg.inventory);
-    const endpointsJson = stringifyJson(msg.endpoints);
-    try {
-      const existing = this.userStore.getNode(live.nodeId);
-      if (!existing) {
-        this.userStore.createNode({
-          id: live.nodeId,
-          userId: live.userId,
-          name:
-            this.config.nodeId && live.nodeId === this.config.nodeId
-              ? this.nodeDisplayName(live.nodeId)
-              : live.nodeId,
-          status: 'enrolled',
-          lastSeenAt: now,
-          version: msg.version,
-          directCapable: msg.direct_capable,
-          inventoryJson,
-          inventoryVersion: 1,
-          endpointsJson,
-          now,
-        });
-      } else {
-        patchNode(this.db, live.nodeId, {
-          lastSeenAt: now,
-          version: msg.version,
-          directCapable: msg.direct_capable,
-          inventoryJson,
-          inventoryVersion: existing.inventoryVersion + 1,
-          endpointsJson,
-        });
-      }
-      this.registry.updateMeta(
-        live.nodeId,
-        {
-          version: msg.version,
-          tmux: msg.tmux,
-          directCapable: msg.direct_capable,
-          inventory: msg.inventory,
-          endpoints: msg.endpoints,
-        },
-        now
-      );
-      this.attachments.refreshLocal(live.nodeId);
-      if (msg.hub) this.applyAuthorizedHubAdvertisement(live.nodeId, msg.hub, 'uplink');
-      if (this.isWriter() && this.isAuthorizedHub(live.nodeId, live.userId)) {
-        const snapKey = `${live.nodeId}:${live.generation}`;
-        if (!this.tokenSnapshots.has(snapKey)) {
-          this.tokenSnapshots.add(snapKey);
-          this.sendTokenSnapshot(live);
-        }
-      }
-      await this.broadcastNodeList(live.userId);
-    } catch {
-      if (!this.stopped) throw new Error('node_status_failed');
-    }
-  }
-
-  private async handleKeyLogReq(
-    live: LiveConnection,
-    msg: Extract<UplinkCtlMessage, { t: 'key.log.req' }>
-  ): Promise<void> {
-    const now = this.now();
-    const fromSeq = BigInt(msg.from_seq);
-    if (!this.keyLogReqLimiter.take(live.nodeId, live.userId, now)) {
-      this.warnKeyLogReq(live.nodeId, fromSeq, 0, true);
-      this.send(live.link, {
-        t: 'key.log.res',
-        records: [],
-        error: 'rate_limited',
-        retry_after_ms: this.keyLogReqLimiter.retryAfterMs,
-        ...(msg.id ? { id: msg.id } : {}),
-      });
-      return;
-    }
-    const requested = msg.limit ?? KEY_LOG_PAGE_DEFAULT_LIMIT;
-    const limit = Math.min(KEY_LOG_PAGE_MAX_LIMIT, Math.max(1, requested));
-    const fetched = await this.keyLogSource.list(live.userId, fromSeq, limit + 1);
-    const hasMore = fetched.length > limit;
-    const page = hasMore ? fetched.slice(0, limit) : fetched;
-    const trimmed = trimKeyLogPageToByteLimit(page, hasMore, msg.id ? { id: msg.id } : undefined);
-    this.warnKeyLogReq(live.nodeId, fromSeq, trimmed.records.length, false);
-    this.send(live.link, {
-      t: 'key.log.res',
-      records: trimmed.records,
-      has_more: trimmed.hasMore,
-      ...(msg.id ? { id: msg.id } : {}),
-    });
-  }
-
-  private rejectAuth(
-    link: LinkSession,
-    nodeId: string | undefined,
-    reason: string,
-    closeReason: string
-  ): void {
-    this.logAuthRejected(nodeId, reason, this.linkRemoteAddress.get(link));
-    link.close(closeReason);
-  }
-
-  private logAuthRejected(
-    nodeId: string | undefined,
-    reason: string,
-    remoteAddress?: string
-  ): void {
-    const now = this.now();
-    const safeNode = sanitizeLogField(nodeId ?? '-');
-    const safeReason = sanitizeLogField(reason);
-    const key = `${safeNode}|${safeReason}`;
-    const budgets = [this.authRejectGlobal];
-    if (remoteAddress) {
-      budgets.push(this.authRejectAddrBudget(remoteAddress));
-    }
-    const prev = this.authRejectLogs.get(key, now);
-    const keyBlocked = Boolean(prev && now - prev.lastAt < HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS);
-    const budgetBlocked = budgets.some((budget) => !budget.wouldAllow(now));
-    if (keyBlocked || budgetBlocked) {
-      if (keyBlocked && prev) {
-        prev.suppressed += 1;
-      }
-      if (budgetBlocked) {
-        for (const budget of budgets) {
-          if (!budget.wouldAllow(now)) budget.suppress();
-        }
-      }
-      return;
-    }
-    let suppressed = prev?.suppressed ?? 0;
-    for (const budget of budgets) {
-      suppressed += budget.take(now);
-    }
-    const extra = suppressed > 0 ? ` suppressed=${suppressed}` : '';
-    console.warn(`[hub][uplink] auth rejected node=${safeNode} reason=${safeReason}${extra}`);
-    this.authRejectLogs.set(key, { lastAt: now, suppressed: 0 }, now);
-  }
-
-  private authRejectAddrBudget(remoteAddress: string): WindowedLogBudget {
-    const key = sanitizeLogField(remoteAddress);
-    let budget = this.authRejectByAddr.get(key);
-    if (!budget) {
-      while (this.authRejectByAddr.size >= AUTH_REJECT_ADDR_BUDGET_MAX) {
-        const oldest = this.authRejectByAddr.keys().next().value;
-        if (oldest === undefined) break;
-        this.authRejectByAddr.delete(oldest);
-      }
-      budget = new WindowedLogBudget(
-        HUB_UPLINK_AUTH_REJECT_LOG_ADDR_MAX,
-        HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS
-      );
-      this.authRejectByAddr.set(key, budget);
-    }
-    return budget;
-  }
-
-  private warnKeyLogReq(nodeId: string, fromSeq: bigint, records: number, limited: boolean): void {
-    const now = this.now();
-    const prev = this.keyLogReqLogs.get(nodeId, now);
-    if (prev && now - prev.lastAt < HUB_KEY_LOG_REQ_LOG_INTERVAL_MS) {
-      prev.suppressed += 1;
-      return;
-    }
-    const suppressed = prev?.suppressed ?? 0;
-    const extra = [suppressed > 0 ? `suppressed=${suppressed}` : '', limited ? 'limited=1' : '']
-      .filter(Boolean)
-      .join(' ');
-    console.warn(
-      `[hub] key.log.req node=${nodeId} from_seq=${fromSeq.toString()} records=${records}${extra ? ` ${extra}` : ''}`
-    );
-    this.keyLogReqLogs.set(nodeId, { lastAt: now, suppressed: 0 }, now);
-  }
-
-  private async handleKeyLogAppend(
-    live: LiveConnection,
-    bytesB64: string,
-    sigB64: string,
-    id?: string,
-    force = false
-  ): Promise<void> {
-    let bytes: Uint8Array;
-    let sig: Uint8Array;
-    try {
-      bytes = decodeB64url(bytesB64);
-      sig = decodeB64url(sigB64, 64);
-    } catch {
-      live.link.close('protocol_error');
-      return;
-    }
-    if (!this.isWriter()) {
-      const replayed = await this.identicalListed(live.userId, bytes, sig);
-      if (replayed) {
-        if (id) {
-          this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(replayed.seq) });
-        }
-        const replayedOk = this.replayedAppendSuccess(bytes, sig, replayed.seq);
-        await this.runAppendEffects(live.userId, replayedOk);
-        return;
-      }
-      const forwarded = this.forwardAppend ? await this.forwardAppend({ bytes, sig, force }) : null;
-      if (forwarded) {
-        if (id) {
-          if (forwarded.ok) {
-            this.send(live.link, {
-              t: 'key.log.ack',
-              id,
-              ok: true,
-              seq: seqToWire(forwarded.seq ?? 0),
-            });
-          } else {
-            this.send(live.link, {
-              t: 'key.log.ack',
-              id,
-              ok: false,
-              error: forwarded.error ?? 'error',
-            });
-          }
-        }
-        if (forwarded.ok) this.onForwardedWrite?.();
-        return;
-      }
-      if (id) {
-        const err = this.notWriterError();
-        this.send(live.link, {
-          t: 'key.log.ack',
-          id,
-          ok: false,
-          error: HUB_NOT_WRITER,
-          writerHubId: err.writerHubId,
-          writerPublicUrl: err.writerPublicUrl,
-          writerEpoch: err.writerEpoch,
-        } as UplinkCtlMessage);
-      }
-      return;
-    }
-    const already = await this.identicalListed(live.userId, bytes, sig);
-    if (already) {
-      if (id) {
-        this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(already.seq) });
-      }
-      await this.runAppendEffects(live.userId, this.replayedAppendSuccess(bytes, sig, already.seq));
-      return;
-    }
-    const compat = applyForcedKeyLogCompat(
-      inspectHubAuthRecordCompat(this.userStore, bytes, live.userId, {
-        localNodeId: this.hubNodeId(),
-      }),
-      force
-    );
-    if (!compat.ok) {
-      if (id) {
-        this.send(live.link, {
-          t: 'key.log.ack',
-          id,
-          ok: false,
-          error: KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
-        });
-      }
-      return;
-    }
-    const result = await this.keyLogSource.append(live.userId, { bytes, sig });
-    if (result.ok) {
-      if (id) {
-        this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(result.seq) });
-      }
-      await this.runAppendEffects(live.userId, result);
-      return;
-    }
-    const replayed = await this.identicalListed(live.userId, bytes, sig);
-    if (replayed) {
-      if (id) {
-        this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(replayed.seq) });
-      }
-      await this.runAppendEffects(
-        live.userId,
-        this.replayedAppendSuccess(bytes, sig, replayed.seq)
-      );
-      return;
-    }
-    if (id) {
-      this.send(live.link, { t: 'key.log.ack', id, ok: false, error: result.error });
-    }
-  }
-
-  private identicalListed(userId: string, bytes: Uint8Array, sig: Uint8Array) {
-    return identicalKeyLog((seq) => this.keyLogSource.list(userId, seq), bytes, sig);
-  }
-
-  private replayedAppendSuccess(
-    bytes: Uint8Array,
-    sig: Uint8Array,
-    seq: bigint
-  ): HubKeyLogAppendSuccess {
-    const record = decodeKeyLogRecord(bytes);
-    return {
-      ok: true,
-      seq,
-      hash: computeRecordHash(bytes, sig),
-      effects: [],
-      record: { type: record.type, payload: record.payload },
-    };
-  }
-
-  private async runAppendEffects(userId: string, result: HubKeyLogAppendSuccess): Promise<void> {
-    try {
-      await this.applyAppendEffects(userId, result);
-    } catch {
-      // effects are retried on identical-record replay
-    }
-  }
-
-  private handleRtcSignal(live: LiveConnection, msg: RtcSignalMessage): void {
-    this.sweepRtcSessions();
-    const dc = parseDcPeerSession(msg.rtcSession);
-    if (dc) {
-      this.forwardDcSignal(live, msg, dc);
-      return;
-    }
-    const reg = this.rtcSessions.get(msg.rtcSession);
-    if (reg) {
-      if (reg.userId !== live.userId) return;
-      if (!this.rtcNodesOwnedBy(reg.userId, reg.fromNodeId, reg.toNodeId)) {
-        this.rtcSessions.delete(msg.rtcSession);
-        return;
-      }
-      if (msg.from === 'browser') {
-        if (live.nodeId !== reg.fromNodeId || msg.to !== reg.toNodeId) return;
-      } else if (msg.from === 'node') {
-        if (live.nodeId !== reg.toNodeId || msg.to !== reg.fromNodeId) return;
-      } else {
-        return;
-      }
-      const target = this.registry.get(msg.to);
-      if (target?.authenticated && target.userId === reg.userId) {
-        this.send(target.link, msg);
-        return;
-      }
-      this.forwardRtcAcrossHubs(live, msg);
-      return;
-    }
-    this.forwardRtcAcrossHubs(live, msg);
-  }
-
-  private forwardDcSignal(
-    live: LiveConnection,
-    msg: RtcSignalMessage,
-    dc: { a: string; b: string }
-  ): void {
-    if (!this.rtcNodesOwnedBy(live.userId, dc.a, dc.b)) return;
-    if (live.nodeId !== dc.a && live.nodeId !== dc.b) return;
-    const other = live.nodeId === dc.a ? dc.b : dc.a;
-    if (msg.to !== other) return;
-    if (msg.from !== 'node') return;
-    this.ensureDcSession(live.userId, dc.a, dc.b);
-    const target = this.registry.get(msg.to);
-    if (target?.authenticated && target.userId === live.userId) {
-      this.send(target.link, msg);
-      return;
-    }
-    this.forwardRtcAcrossHubs(live, msg);
-  }
-
-  private async onIncomingStream(link: LinkSession, stream: LinkStream): Promise<void> {
-    const live = this.live.get(link);
-    if (!live) {
-      stream.reset('unauthenticated');
-      return;
-    }
-    if (!this.assertLiveCert(live)) {
-      stream.reset('revoked');
-      return;
-    }
-    const hubOpen = parseHubRelayOpen(stream.openPayload);
-    if (hubOpen) {
-      await this.acceptHubRelay(live.nodeId, stream, hubOpen);
-      return;
-    }
-    const open = parseRelayOpen(stream.openPayload);
-    if (!open) {
-      stream.reset('invalid-relay');
-      return;
-    }
-    const targetCert = this.userStore.getCert(open.to);
-    if (!targetCert || targetCert.revokedLogSeq !== null) {
-      stream.reset(targetCert ? 'revoked' : 'unknown-cert');
-      return;
-    }
-    if (targetCert.userId !== live.userId) {
-      stream.reset('cross-user');
-      return;
-    }
-    const targetEntry = this.registry.get(open.to);
-    if (targetEntry?.authenticated) {
-      const outboundPayload = textEncoder.encode(
-        JSON.stringify({ ...open.raw, from: live.nodeId })
-      );
-      let outbound: LinkStream;
-      try {
-        outbound = await targetEntry.link.openStream(outboundPayload);
-      } catch {
-        stream.reset('open-failed');
-        return;
-      }
-      pumpHubRelay(stream, outbound);
-      return;
-    }
-    const self = this.hubNodeId();
-    const dest = this.attachments.attachedHubId(open.to);
-    if (!self || !dest || dest === self) {
-      stream.reset('offline');
-      return;
-    }
-    await this.openAndPumpHubRelay(stream, dest, {
-      kind: HUB_RELAY_KIND,
-      to: open.to,
-      from: live.nodeId,
-      originHubId: self,
-      visitedHubIds: [self],
-      hop: 1,
-    });
-  }
-
-  private startHeartbeat(live: LiveConnection): void {
-    this.clearHeartbeat(live);
-    live.heartbeat = this.timers.interval(
-      'heartbeat',
-      () => this.beat(live),
-      this.heartbeatIntervalMs
-    );
-  }
-
-  private startAttachmentKeepalive(): void {
-    this.clearAttachmentKeepalive();
-    if (this.attachmentKeepaliveMs <= 0) return;
-    this.attachmentKeepalive = this.timers.interval(
-      'attachment keepalive',
-      () => {
-        if (this.stopped) return;
-        this.publishLocalAttachments();
-      },
-      this.attachmentKeepaliveMs
-    );
-  }
-
-  private clearAttachmentKeepalive(): void {
-    this.attachmentKeepalive?.clear();
-    this.attachmentKeepalive = null;
-  }
-
-  private beat(live: LiveConnection): void {
-    if (this.live.get(live.link) !== live) {
-      this.clearHeartbeat(live);
-      return;
-    }
-    if (live.awaitingPong) {
-      live.misses += 1;
-    }
-    if (live.misses >= this.heartbeatMissLimit) {
-      live.link.close('heartbeat-timeout');
-      return;
-    }
-    live.awaitingPong = true;
-    this.attachments.refreshLocal(live.nodeId);
-    this.send(live.link, { t: 'ping' });
-  }
-
-  private clearHeartbeat(live: LiveConnection): void {
-    live.heartbeat?.clear();
-    live.heartbeat = null;
-  }
-
-  private armAuthTimer(link: LinkSession): void {
-    this.clearAuthTimer(link);
-    const timer = this.timers.timeout(
-      'auth timeout',
-      () => {
-        this.authTimers.delete(link);
-        if (!this.live.has(link) && this.accepted.has(link)) {
-          this.pending.delete(link);
-          this.rejectAuth(link, undefined, 'timeout', 'auth-timeout');
-        }
-      },
-      this.authTimeoutMs
-    );
-    if (timer) this.authTimers.set(link, timer);
-  }
-
-  private clearAuthTimer(link: LinkSession): void {
-    const timer = this.authTimers.get(link);
-    if (timer !== undefined) {
-      timer.clear();
-      this.authTimers.delete(link);
-    }
-  }
-
-  private onLinkClosed(link: LinkSession): void {
-    this.pending.delete(link);
-    this.clearAuthTimer(link);
-    this.accepted.delete(link);
-    const live = this.live.get(link);
-    this.live.delete(link);
-    if (!live) return;
-    this.clearHeartbeat(live);
-    this.dropRtcForNode(live.nodeId);
-    const dropAsHub = this.isAuthorizedHub(live.nodeId, live.userId);
-    const removed = this.registry.remove(live.nodeId, live.generation);
-    if (!removed || this.stopped) return;
-    this.noteLocalDetach(live.nodeId, dropAsHub);
-    const now = this.now();
-    patchNode(this.db, live.nodeId, { lastSeenAt: now });
-    const ownId = this.hubNodeId();
-    if (live.nodeId !== ownId) {
-      const rec = this.meshHubs.get(live.nodeId);
-      if (rec) {
-        this.meshHubs.upsert({ ...rec, online: false, lastSeenAt: now }, now);
-      }
-    }
-    void this.broadcastNodeList(live.userId);
-  }
-
-  private assertLiveCert(live: LiveConnection): boolean {
-    if (this.certIsRevoked(live.nodeId)) {
-      this.evictRevokedNode(live.nodeId);
-      return false;
-    }
-    return true;
-  }
-
-  private certIsRevoked(nodeId: string): boolean {
-    const cert = this.userStore.getCert(nodeId);
-    return !cert || cert.revokedLogSeq !== null;
-  }
-
-  private evictRevokedNode(nodeId: string): void {
-    patchNode(this.db, nodeId, { status: 'revoked' });
-    this.keyLogReqLimiter.delete(nodeId);
-    this.keyLogReqLogs.delete(nodeId);
-    this.dropRtcForNode(nodeId);
-    const entry = this.registry.get(nodeId);
-    if (!entry) return;
-    const live = this.live.get(entry.link);
-    if (live) {
-      this.clearHeartbeat(live);
-      this.live.delete(entry.link);
-    }
-    this.registry.remove(nodeId, entry.generation);
-    entry.link.close('revoked');
-  }
-
-  private dropRtcForNode(nodeId: string): void {
-    for (const [id, reg] of this.rtcSessions) {
-      if (reg.fromNodeId === nodeId || reg.toNodeId === nodeId) {
-        this.rtcSessions.delete(id);
-      }
-    }
-  }
-
-  private sweepRtcSessions(): void {
-    const now = this.now();
-    for (const [id, reg] of this.rtcSessions) {
-      if (reg.expiresAt <= now) {
-        this.rtcSessions.delete(id);
-      }
-    }
-  }
-
-  private rtcNodesOwnedBy(userId: string, fromNodeId: string, toNodeId: string): boolean {
-    const fromCert = this.userStore.getCert(fromNodeId);
-    const toCert = this.userStore.getCert(toNodeId);
-    if (!fromCert || !toCert) return false;
-    if (fromCert.revokedLogSeq !== null || toCert.revokedLogSeq !== null) return false;
-    return fromCert.userId === userId && toCert.userId === userId;
-  }
-
-  private async buildNodeList(userId: string): Promise<NodeListMessage> {
-    const version = Math.max(1, this.listVersion);
-    const head = await this.keyLogSource.head(userId);
-    this.attachments.expire();
-    const online = new Map(
-      this.registry.listForBroadcast(userId).map((n) => [n.nodeId, n] as const)
-    );
-    const nodes = this.userStore
-      .listNodes()
-      .filter((n) => n.userId === userId && n.status === 'enrolled')
-      .map((n) => {
-        const live = online.get(n.id);
-        const attached = this.attachments.attachedHubId(n.id);
-        return projectNode(
-          n.id,
-          n.name,
-          Boolean(live) || Boolean(attached),
-          {
-            endpoints: parseJson(n.endpointsJson, []),
-            inventory: parseJson(n.inventoryJson, {}),
-            directCapable: n.directCapable,
-            version: n.version ?? '',
-          },
-          live?.meta,
-          attached
-        );
-      });
-    const hubNodeId = this.hubNodeId() ?? this.config.nodeId ?? this.userStore.getHubMeta()?.nodeId;
-    const hubName = hubNodeId ? this.nodeDisplayName(hubNodeId) : null;
-    if (hubNodeId) {
-      this.userStore.upsertHubMeta({
-        nodeId: hubNodeId,
-        publicUrl: this.config.publicUrl,
-        now: this.now(),
-        listVersion: version,
-      });
-      const existing = nodes.find((n) => n.id === hubNodeId);
-      upsertById(
-        nodes,
-        projectNode(
-          hubNodeId,
-          hubName ?? hubNodeId,
-          true,
-          {
-            endpoints: existing?.endpoints ?? [],
-            inventory: existing?.inventory ?? {},
-            directCapable: existing?.direct_capable ?? false,
-            version: existing?.version ?? '',
-          },
-          online.get(hubNodeId)?.meta,
-          this.attachments.attachedHubId(hubNodeId) ?? hubNodeId
-        )
-      );
-    }
-    const hubRecords = this.authorizedHubRecords();
-    const ownId = this.hubNodeId();
-    const hubs = hubRecords
-      .slice(0, UPLINK_CTL_MAX_HUBS)
-      .map((row) => this.toHubEndpoint(row, ownId));
-    const writerId = pickWriterHub(hubRecords);
-    const writer = writerId ? this.meshHubs.get(writerId) : null;
-    const writerName = writer?.name?.trim() || null;
-    const legacyHub = writer
-      ? {
-          nodeId: writer.hubNodeId,
-          publicUrl: writer.publicUrl,
-          ...(writerName ? { name: writerName } : {}),
-        }
-      : hubNodeId
-        ? {
-            nodeId: hubNodeId,
-            publicUrl: this.config.publicUrl,
-            ...(hubName ? { name: hubName } : {}),
-          }
-        : undefined;
-    return {
-      t: 'node.list',
-      version,
-      key_log_head: { seq: seqToWire(head.seq), hash: bytesToB64url(head.hash) },
-      rtc: { stun: this.config.stun, turn: this.config.turn ?? null },
-      nodes,
-      ...(legacyHub ? { hub: legacyHub } : {}),
-      ...(hubs.length > 0 ? { hubs } : {}),
-      ...(writerId ? { writerHubId: writerId, writerEpoch: writer?.writerEpoch } : {}),
-    };
-  }
-
   private upsertSelfHub(): void {
     const snapshot = this.ownHubSnapshot();
     if (!snapshot) return;
@@ -2056,169 +390,193 @@ export class UplinkServer {
     this.broadcastAllNodeLists();
   }
 
+  private effectiveStartMode(configMode: HubMode): HubMode {
+    return resolveStartMode({
+      configMode,
+      ownId: this.hubNodeId(),
+      writerEpoch: this.hubWriterEpoch,
+      hubs: this.meshHubs.list(),
+      isAuthorizedHub: (id) => this.isAuthorizedHub(id),
+    });
+  }
+
+  private async onCtl(link: LinkSession, bytes: Uint8Array): Promise<void> {
+    if (this.state.stopped || !this.state.accepted.has(link)) return;
+    let msg: UplinkCtlMessage;
+    try {
+      msg = decodeUplinkCtl(bytes);
+    } catch {
+      link.close('protocol_error');
+      return;
+    }
+    const live = this.state.live.get(link);
+    if (!live) {
+      if (msg.t !== 'auth.response') {
+        this.authSession.rejectAuth(link, undefined, 'unauthenticated', 'unauthenticated');
+        return;
+      }
+      await this.authSession.handleAuthResponse(link, msg.node_id, msg.sig);
+      return;
+    }
+    if (!this.authSession.assertLiveCert(live)) return;
+    this.registry.touch(live.nodeId, this.now());
+    switch (msg.t) {
+      case 'ping':
+        this.authSession.send(link, { t: 'pong' });
+        return;
+      case 'pong':
+        if (live.awaitingPong) {
+          live.awaitingPong = false;
+          live.misses = 0;
+        }
+        if (this.isAuthorizedHub(live.nodeId, live.userId)) {
+          this.attachments.refreshHub(live.nodeId);
+        }
+        return;
+      case 'node.status':
+        await this.nodeList.handleNodeStatus(live, msg);
+        return;
+      case 'key.log.req':
+        await this.keyLog.handleKeyLogReq(live, msg);
+        return;
+      case 'key.log.append':
+        await this.keyLog.handleKeyLogAppend(live, msg.bytes, msg.sig, msg.id, msg.force === true);
+        return;
+      case 'rtc.signal':
+        this.rtc.handleRtcSignal(live, msg);
+        return;
+      case 'hub.tokens':
+        this.federation.handleHubTokens(live, msg);
+        return;
+      case 'hub.attachments':
+        this.federation.handleHubAttachments(live, msg);
+        return;
+      case 'hub.forward':
+        this.federation.handleHubForward(live, msg);
+        return;
+      case 'hub.write-forward':
+        await this.federation.handleHubWriteForward(live, msg);
+        return;
+      case 'key.log.res':
+        link.close('protocol_error');
+        return;
+      default:
+        return;
+    }
+  }
+
+  private async onIncomingStream(link: LinkSession, stream: LinkStream): Promise<void> {
+    const live = this.state.live.get(link);
+    if (!live) {
+      stream.reset('unauthenticated');
+      return;
+    }
+    if (!this.authSession.assertLiveCert(live)) {
+      stream.reset('revoked');
+      return;
+    }
+    await this.relayStreams.routeNodeStream(live, stream);
+  }
+
+  async stop(): Promise<void> {
+    this.state.stopped = true;
+    this.federation.clearAttachmentKeepalive();
+    const links = [...this.state.accepted];
+    for (const live of this.state.live.values()) {
+      this.authSession.clearHeartbeat(live);
+    }
+    this.state.live.clear();
+    for (const link of links) {
+      this.authSession.clearAuthTimer(link);
+      link.close('hub-stop');
+    }
+    this.state.accepted.clear();
+    this.state.authTimers.clear();
+    this.rtc.clear();
+    this.relayStreams.resetCrossHubRelays();
+    this.lastNodeListFp.clear();
+    this.lastNodeListSent.clear();
+    this.state.keyLogReqLimiter.clear();
+    this.state.keyLogReqLogs.clear();
+    this.authSession.clearAuthRejectLogs();
+    this.registry.closeAll('hub-stop');
+    await this.authSession.drainInflight();
+    this.state.timers.dispose(); // 兜底：登记过的定时器一次清干净，之后再也挂不上新的
+  }
+
+  get pendingTimerCount(): number {
+    return this.state.timers.size;
+  }
+
+  get keyLogReqBucketCount(): number {
+    return this.state.keyLogReqLimiter.primarySize;
+  }
+
+  accept(link: LinkSession, opts?: { remoteAddress?: string }): void {
+    this.authSession.accept(link, opts);
+  }
+
+  sendTo(nodeId: string, msg: UplinkCtlMessage): boolean {
+    return this.authSession.sendTo(nodeId, msg);
+  }
+
+  disconnect(nodeId: string, reason = 'disconnected'): boolean {
+    return this.authSession.disconnect(nodeId, reason);
+  }
+
+  broadcastAllNodeLists(): void {
+    this.nodeList.broadcastAllNodeLists();
+  }
+
+  broadcastNodeList(userId: string): Promise<'sent' | 'unchanged' | 'failed'> {
+    return this.nodeList.broadcastNodeList(userId);
+  }
+
+  registerRtcSession(input: RegisterRtcSessionInput): string | null {
+    return this.rtc.registerRtcSession(input);
+  }
+
+  unregisterRtcSession(rtcSession: string): void {
+    this.rtc.unregisterRtcSession(rtcSession);
+  }
+
+  ensureDcSession(userId: string, nodeA: string, nodeB: string): boolean {
+    return this.rtc.ensureDcSession(userId, nodeA, nodeB);
+  }
+
+  applyAppendEffects(userId: string, result: HubKeyLogAppendSuccess): Promise<void> {
+    return this.keyLog.applyAppendEffects(userId, result);
+  }
+
+  replicateEnrollmentTokens(msg: HubTokensMessage, waitMs?: number): Promise<string[]> {
+    return this.federation.replicateEnrollmentTokens(msg, waitMs);
+  }
+
+  publishLocalAttachments(): void {
+    this.federation.publishLocalAttachments();
+  }
+
+  ingestHubAttachments(fromHubId: string, msg: HubAttachmentsMessage): void {
+    this.federation.ingestHubAttachments(fromHubId, msg);
+  }
+
+  ingestHubForward(fromHubId: string, msg: HubForwardMessage): void {
+    this.federation.ingestHubForward(fromHubId, msg);
+  }
+
+  ingestHubRelay(fromHubId: string, stream: LinkStream): void {
+    this.relayStreams.ingestHubRelay(fromHubId, stream);
+  }
+
+  resetCrossHubRelays(hubId?: string): void {
+    this.relayStreams.resetCrossHubRelays(hubId);
+  }
+
   applyAuthorizedHubAdvertisement(
     hubNodeId: string,
     ad: HubAdvertisement,
     source: 'uplink' | 'peer-status' = 'uplink'
   ): void {
-    const id = hubNodeId.toLowerCase();
-    if (!this.isAuthorizedHub(id)) {
-      this.warnUnauthorizedHubAd(id);
-      return;
-    }
-    const now = this.now();
-    const existing = this.meshHubs.get(id);
-    const liveName = this.registry.get(id)?.meta.name?.trim();
-    this.meshHubs.upsert(
-      {
-        hubNodeId: id,
-        publicUrl: ad.publicUrl,
-        name: liveName && liveName !== id ? liveName : (existing?.name ?? null),
-        mode: ad.mode,
-        priority: ad.priority,
-        writerEpoch: ad.writerEpoch,
-        caFingerprint:
-          ad.caFingerprint === undefined ? (existing?.caFingerprint ?? null) : ad.caFingerprint,
-        online: true,
-        lastSeenAt: now,
-      },
-      now
-    );
-    if (!existing && source === 'uplink' && id !== this.hubNodeId()) {
-      this.onNewAuthorizedHub?.(id);
-    }
-    this.maybeFenceFromPeer(id, ad, source);
+    this.federation.applyAuthorizedHubAdvertisement(hubNodeId, ad, source);
   }
-
-  private effectiveStartMode(configMode: HubMode): HubMode {
-    const ownId = this.hubNodeId();
-    const higher = this.meshHubs
-      .list()
-      .find(
-        (row) =>
-          this.isAuthorizedHub(row.hubNodeId) &&
-          row.mode === 'active' &&
-          row.writerEpoch > this.hubWriterEpoch &&
-          row.hubNodeId !== ownId
-      );
-    if (!higher) return configMode;
-    console.error(
-      `[hub] starting fenced: higher writerEpoch=${higher.writerEpoch} from hub=${higher.hubNodeId}`
-    );
-    return 'standby';
-  }
-
-  private warnUnauthorizedHubAd(nodeId: string): void {
-    const now = this.now();
-    const prev = this.lastUnauthorizedHubAdLog.get(nodeId);
-    if (prev !== undefined && now - prev < HUB_UNAUTHORIZED_HUB_AD_LOG_INTERVAL_MS) return;
-    this.lastUnauthorizedHubAdLog.set(nodeId, now);
-    console.warn(`[hub] ignored hub advertisement from unauthorized node=${nodeId}`);
-  }
-
-  private maybeFenceFromPeer(
-    hubNodeId: string,
-    ad: HubAdvertisement,
-    source: 'uplink' | 'peer-status'
-  ): void {
-    const ownId = this.hubNodeId();
-    if (ad.mode !== 'active' || hubNodeId === ownId || this.currentMode !== 'active') return;
-    if (ad.writerEpoch > this.hubWriterEpoch) {
-      const prefix = source === 'peer-status' ? '[hub] fenced by peer status' : '[hub] fenced';
-      console.error(`${prefix}: higher writerEpoch=${ad.writerEpoch} from hub=${hubNodeId}`);
-      this.setMode('standby');
-      return;
-    }
-    if (ad.writerEpoch === this.hubWriterEpoch) {
-      const now = this.now();
-      if (
-        this.lastSplitBrainLogAt === null ||
-        now - this.lastSplitBrainLogAt >= HUB_SPLIT_BRAIN_LOG_INTERVAL_MS
-      ) {
-        this.lastSplitBrainLogAt = now;
-        console.warn(
-          `[hub] split-brain: equal writerEpoch=${ad.writerEpoch} from hub=${hubNodeId}`
-        );
-      }
-    }
-  }
-
-  private toHubEndpoint(
-    row: {
-      hubNodeId: string;
-      publicUrl: string;
-      name: string | null;
-      mode: HubMode;
-      priority: number;
-      writerEpoch: number;
-      caFingerprint: string | null;
-      lastSeenAt: number | null;
-    },
-    ownId: string | undefined
-  ): HubEndpointInfo {
-    const info: HubEndpointInfo = {
-      nodeId: row.hubNodeId,
-      publicUrl: row.publicUrl,
-      mode: row.mode,
-      priority: row.priority,
-      writerEpoch: row.writerEpoch,
-      online: row.hubNodeId === ownId || Boolean(this.registry.get(row.hubNodeId)?.authenticated),
-      lastSeenAt: row.lastSeenAt,
-    };
-    if (row.name) info.name = row.name;
-    if (row.caFingerprint !== undefined) info.caFingerprint = row.caFingerprint;
-    return info;
-  }
-
-  private nodeDisplayName(nodeId: string): string {
-    const registry = this.userStore.getNode(nodeId)?.name?.trim();
-    if (registry && registry !== nodeId) return registry;
-    return this.config.siteName?.trim() || os.hostname().trim() || nodeId;
-  }
-}
-
-function nodeListFingerprint(msg: NodeListMessage): string {
-  return JSON.stringify({ ...msg, version: 0 });
-}
-
-function stringifyJson(value: unknown): string {
-  if (typeof value === 'string') {
-    try {
-      JSON.parse(value);
-      return value;
-    } catch {
-      return JSON.stringify(value);
-    }
-  }
-  try {
-    return JSON.stringify(value ?? null);
-  } catch {
-    return 'null';
-  }
-}
-
-function parseRelayOpen(payload: Uint8Array): { to: string; raw: Record<string, unknown> } | null {
-  try {
-    const parsed: unknown = JSON.parse(textDecoder.decode(payload));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const obj = parsed as Record<string, unknown>;
-    if (typeof obj.to !== 'string' || obj.to.length === 0) return null;
-    if (typeof obj.method === 'string') return null;
-    return { to: obj.to, raw: obj };
-  } catch {
-    return null;
-  }
-}
-
-function parseDcPeerSession(rtcSession: string): { a: string; b: string } | null {
-  if (!rtcSession.startsWith('dc:')) return null;
-  const rest = rtcSession.slice(3);
-  const idx = rest.indexOf(':');
-  if (idx <= 0) return null;
-  const first = rest.slice(0, idx).toLowerCase();
-  const second = rest.slice(idx + 1).toLowerCase();
-  if (!first || !second || first === second) return null;
-  const a = first < second ? first : second;
-  const b = first < second ? second : first;
-  return { a, b };
 }
