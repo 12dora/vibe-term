@@ -408,6 +408,68 @@ describe('无边缘连接（degraded）', () => {
     expect(unknown).not.toContain('data-testid="remote-access-degraded-hint"');
   });
 
+  test('fake-IP 劫持已绕开：警示改说走的是真实边缘地址，不再给通用的 7844 指引', () => {
+    status = configured('named', 'degraded', {
+      connector: connector({ readyConnections: 0 }),
+      edge: {
+        mode: 'static',
+        fakeIpDetected: true,
+        edgeAddrs: ['198.41.192.7:7844'],
+        checkedAt: '2026-09-05T00:00:00.000Z',
+        lastError: null,
+      },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-edge-bypassed"');
+    expect(html).toContain('settings.remoteAccess.edge.bypassed');
+    expect(html).not.toContain('data-testid="remote-access-degraded-hint"');
+    // 连接器旁多一行，说明当前用的是静态边缘地址。
+    expect(html).toContain('data-testid="remote-access-edge"');
+    expect(html).toContain('settings.remoteAccess.edge.staticActive');
+  });
+
+  test('检测到 fake-IP 但绕不开：给代理侧的具体改法，并带上解析错误', () => {
+    status = configured('named', 'degraded', {
+      connector: connector({ readyConnections: 0 }),
+      edge: {
+        mode: 'system',
+        fakeIpDetected: true,
+        edgeAddrs: [],
+        checkedAt: '2026-09-05T00:00:00.000Z',
+        lastError: 'DoH query failed',
+      },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-edge-fakeip"');
+    expect(html).toContain('settings.remoteAccess.edge.bypassFailed');
+    expect(html).toContain('data-testid="remote-access-edge-fix"');
+    expect(html).toContain('settings.remoteAccess.edge.bypassFailedFix');
+    expect(html).toContain('settings.remoteAccess.edge.bypassFailedRetry');
+    expect(html).toContain('data-testid="remote-access-degraded-error"');
+    expect(html).toContain('DoH query failed');
+    expect(html).not.toContain('data-testid="remote-access-degraded-hint"');
+    // 没绕开就不该说自己在走真实边缘地址。
+    expect(html).not.toContain('settings.remoteAccess.edge.staticActive');
+  });
+
+  test('解析正常：沿用通用指引，连接器旁不多这一行', () => {
+    status = configured('named', 'running', {
+      connector: connector({ readyConnections: 0 }),
+      edge: {
+        mode: 'system',
+        fakeIpDetected: false,
+        edgeAddrs: [],
+        checkedAt: '2026-09-05T00:00:00.000Z',
+        lastError: null,
+      },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-degraded-hint"');
+    expect(html).not.toContain('data-testid="remote-access-edge-bypassed"');
+    expect(html).not.toContain('data-testid="remote-access-edge-fakeip"');
+    expect(html).not.toContain('data-testid="remote-access-edge"');
+  });
+
   test('接管来的隧道零连接时也降级', () => {
     status = configured('named', 'stopped', {
       external: { ...tunnel().external, detected: true, running: true, source: 'launchd' },

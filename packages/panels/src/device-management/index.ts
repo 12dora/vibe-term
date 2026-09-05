@@ -18,4 +18,8 @@ export {
   deviceKindLabel,
   isRemoteDeviceKind,
 } from './device-node-context';
-export { OPEN_ADD_DEVICE_EVENT } from './events';
+export {
+  type AddDevicePreset,
+  OPEN_ADD_DEVICE_EVENT,
+  addDevicePresetFromEvent,
+} from './events';

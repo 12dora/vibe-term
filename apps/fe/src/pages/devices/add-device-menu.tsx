@@ -60,7 +60,7 @@ export function AddDeviceMenuList({
             key={target.runtimeNodeId}
             data-testid={`devices-add-to-${target.runtimeNodeId}`}
             title={itemTitle(target)}
-            onClick={target.open}
+            onClick={() => target.open()}
           >
             <span className="min-w-0 truncate">{target.name}</span>
             {target.isSelf && (

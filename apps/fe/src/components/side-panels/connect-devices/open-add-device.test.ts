@@ -3,8 +3,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { AddDeviceTarget } from '@/pages/devices/add-device-targets';
+import type { AddDevicePreset } from '@tmex/panels/device-management';
 import { type AddDeviceTargetSource, openSelfAddDevice } from './open-add-device';
-import { startAddDeviceFlow } from './ssh-steps';
+import { SSH_ADD_DEVICE_PRESET, startAddDeviceFlow } from './ssh-steps';
 
 function target(over: Partial<AddDeviceTarget> = {}): AddDeviceTarget {
   return {
@@ -96,6 +97,24 @@ describe('openSelfAddDevice', () => {
     expect(opened).toBe(1);
   });
 
+  test('预选类型原样交给目标：SSH 引导路径开出来就是 SSH', async () => {
+    const store = source();
+    const presets: (AddDevicePreset | undefined)[] = [];
+    store.publish([target({ open: (preset) => presets.push(preset) })]);
+    openSelfAddDevice({ source: store, preset: { type: 'ssh' } });
+    await tick();
+    expect(presets).toEqual([{ type: 'ssh' }]);
+  });
+
+  test('没给预选就什么都不传，对话框用自己的默认类型', async () => {
+    const store = source();
+    const presets: (AddDevicePreset | undefined)[] = [];
+    store.publish([target({ open: (preset) => presets.push(preset) })]);
+    openSelfAddDevice({ source: store });
+    await tick();
+    expect(presets).toEqual([undefined]);
+  });
+
   test('等不到就放弃，不把订阅留在后面', async () => {
     const store = source();
     let opened = 0;
@@ -127,5 +146,15 @@ describe('startAddDeviceFlow', () => {
     store.publish([target({ open: () => opened++ })]);
     expect(opened).toBe(1);
     expect(store.subscribers).toBe(0);
+  });
+
+  test('SSH 引导按钮带的预选是 SSH，一路传到目标', async () => {
+    const store = source();
+    const presets: (AddDevicePreset | undefined)[] = [];
+    expect(SSH_ADD_DEVICE_PRESET).toEqual({ type: 'ssh' });
+    startAddDeviceFlow(() => undefined, { source: store, preset: SSH_ADD_DEVICE_PRESET });
+    store.publish([target({ open: (preset) => presets.push(preset) })]);
+    await tick();
+    expect(presets).toEqual([{ type: 'ssh' }]);
   });
 });

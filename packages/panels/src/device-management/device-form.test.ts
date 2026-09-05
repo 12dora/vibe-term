@@ -90,6 +90,16 @@ describe('createDefaultFormValues', () => {
     expect(createDefaultFormValues(BASE_DEVICE).authMode).toBe('auto');
     expect(createDefaultFormValues({ ...BASE_DEVICE, authMode: 'password' }).authMode).toBe('auto');
   });
+
+  test('新建时按预选类型开局：SSH 引导路径不用再手动选一次', () => {
+    const values = createDefaultFormValues(undefined, 'ssh');
+    expect(values.type).toBe('ssh');
+    expect(createDefaultFormValues(undefined, 'local').type).toBe('local');
+  });
+
+  test('编辑态忽略预选类型：类型建后不可改', () => {
+    expect(createDefaultFormValues(BASE_DEVICE, 'ssh').type).toBe('local');
+  });
 });
 
 describe('buildCreatePayload', () => {

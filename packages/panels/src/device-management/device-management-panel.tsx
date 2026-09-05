@@ -7,37 +7,40 @@
 // 宽度与内边距由页面级容器统一负责，本面板只是 `w-full`。
 
 import { devicesQueryKey as defaultDevicesQueryKey } from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
+import type { Device, DeviceType } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent } from '@tmex/ui/card';
 import { Monitor, Plus } from 'lucide-react';
-import { type Ref, useEffect, useImperativeHandle, useMemo, useState } from 'react';
+import { type Ref, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceConnectionAdapter } from '../device-connection';
 import { DeviceDialog } from './device-dialog';
 import { DeviceGrid } from './device-grid';
 import { describeDeviceLoadError, deviceLoadErrorMessageKey } from './device-load-error';
 import type { DeviceNodeContext } from './device-node-context';
-import { OPEN_ADD_DEVICE_EVENT } from './events';
+import { type AddDevicePreset, OPEN_ADD_DEVICE_EVENT, addDevicePresetFromEvent } from './events';
 import { useDeviceManagementState } from './use-device-management-state';
 
 export interface DeviceManagementPanelHandle {
-  openAddDevice(): void;
+  /** `preset` 预选设备类型（如 SSH 引导路径）；不给就用对话框默认值。 */
+  openAddDevice(preset?: AddDevicePreset): void;
 }
 
 /**
  * 全局「添加设备」事件的订阅；`enabled` 为 false 时**不注册任何监听**，
  * 供聚合宿主（每个 node 一个面板）避免一次事件同时弹开所有面板的对话框。
+ * 事件 detail 里的预选类型一并透出，standalone 兜底路径与 ref 路径行为一致。
  */
 export function subscribeOpenAddDevice(
   enabled: boolean,
-  onOpen: () => void
+  onOpen: (preset?: AddDevicePreset) => void
 ): (() => void) | undefined {
   if (!enabled) return undefined;
-  window.addEventListener(OPEN_ADD_DEVICE_EVENT, onOpen);
-  return () => window.removeEventListener(OPEN_ADD_DEVICE_EVENT, onOpen);
+  const listener = (event: Event) => onOpen(addDevicePresetFromEvent(event));
+  window.addEventListener(OPEN_ADD_DEVICE_EVENT, listener);
+  return () => window.removeEventListener(OPEN_ADD_DEVICE_EVENT, listener);
 }
 
 export interface DeviceManagementPanelProps {
@@ -122,20 +125,25 @@ export function DeviceManagementPanel({
 }: DeviceManagementPanelProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
-  const [showAddModal, setShowAddModal] = useState(false);
+  // null = 未打开；对象里带本次打开的预选类型（对话框每次都是新挂载，预选自然跟着重置）。
+  const [addDialog, setAddDialog] = useState<{ initialType?: DeviceType } | null>(null);
+  const openAddDevice = useCallback(
+    (preset?: AddDevicePreset) => setAddDialog({ initialType: preset?.type }),
+    []
+  );
 
   const resolvedNodeContext = useMemo<DeviceNodeContext>(
     () => nodeContext ?? { runtimeNodeId: runtime.nodeId, name: '', isSelf: true },
     [nodeContext, runtime.nodeId]
   );
 
-  useImperativeHandle(ref, () => ({ openAddDevice: () => setShowAddModal(true) }), []);
+  useImperativeHandle(ref, () => ({ openAddDevice }), [openAddDevice]);
   useEffect(
-    () => subscribeOpenAddDevice(listenOpenAddDeviceEvent, () => setShowAddModal(true)),
-    [listenOpenAddDeviceEvent]
+    () => subscribeOpenAddDevice(listenOpenAddDeviceEvent, openAddDevice),
+    [listenOpenAddDeviceEvent, openAddDevice]
   );
   useEffect(() => {
-    if (offline) setShowAddModal(false);
+    if (offline) setAddDialog(null);
   }, [offline]);
 
   const state = useDeviceManagementState({
@@ -176,16 +184,17 @@ export function DeviceManagementPanel({
           {t('devices.nodes.noKnownDevices')}
         </div>
       ) : (
-        <EmptyState onAdd={() => setShowAddModal(true)} />
+        <EmptyState onAdd={() => openAddDevice()} />
       )}
 
-      {showAddModal && !offline && (
+      {addDialog && !offline && (
         <DeviceDialog
           mode="create"
+          initialType={addDialog.initialType}
           nodeContext={resolvedNodeContext}
           queryKey={devicesQueryKey}
           offline={offline}
-          onClose={() => setShowAddModal(false)}
+          onClose={() => setAddDialog(null)}
         />
       )}
     </div>

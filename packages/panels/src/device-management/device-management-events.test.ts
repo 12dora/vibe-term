@@ -4,24 +4,40 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { requestAddDevice } from './device-management-actions';
 import { subscribeOpenAddDevice } from './device-management-panel';
-import { OPEN_ADD_DEVICE_EVENT } from './events';
+import { type AddDevicePreset, OPEN_ADD_DEVICE_EVENT, addDevicePresetFromEvent } from './events';
 
 interface WindowProbe {
   added: string[];
   removed: string[];
   dispatched: string[];
+  listeners: Map<string, (event: Event) => void>;
+  emit: (type: string, detail?: unknown) => void;
 }
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
 
 function installWindowProbe(): WindowProbe {
-  const probe: WindowProbe = { added: [], removed: [], dispatched: [] };
+  const listeners = new Map<string, (event: Event) => void>();
+  const probe: WindowProbe = {
+    added: [],
+    removed: [],
+    dispatched: [],
+    listeners,
+    emit: (type, detail) => listeners.get(type)?.({ type, detail } as unknown as Event),
+  };
   Object.defineProperty(globalThis, 'window', {
     value: {
-      addEventListener: (type: string) => probe.added.push(type),
-      removeEventListener: (type: string) => probe.removed.push(type),
+      addEventListener: (type: string, listener: (event: Event) => void) => {
+        probe.added.push(type);
+        listeners.set(type, listener);
+      },
+      removeEventListener: (type: string) => {
+        probe.removed.push(type);
+        listeners.delete(type);
+      },
       dispatchEvent: (event: Event) => {
         probe.dispatched.push(event.type);
+        listeners.get(event.type)?.(event);
         return true;
       },
     },
@@ -74,5 +90,43 @@ describe('requestAddDevice', () => {
     });
     expect(called).toBe(1);
     expect(probe.dispatched).toEqual([]);
+  });
+
+  test('预选类型随回调与全局事件一起走', () => {
+    installWindowProbe();
+    let viaCallback: AddDevicePreset | undefined;
+    requestAddDevice(
+      (preset) => {
+        viaCallback = preset;
+      },
+      { type: 'ssh' }
+    );
+    expect(viaCallback).toEqual({ type: 'ssh' });
+
+    const probe = installWindowProbe();
+    let viaEvent: AddDevicePreset | undefined;
+    subscribeOpenAddDevice(true, (preset) => {
+      viaEvent = preset;
+    });
+    requestAddDevice(undefined, { type: 'ssh' });
+    expect(viaEvent).toEqual({ type: 'ssh' });
+    expect(probe.dispatched).toEqual([OPEN_ADD_DEVICE_EVENT]);
+  });
+});
+
+describe('addDevicePresetFromEvent', () => {
+  test('认约定里的类型', () => {
+    expect(addDevicePresetFromEvent({ detail: { type: 'ssh' } } as unknown as Event)).toEqual({
+      type: 'ssh',
+    });
+    expect(addDevicePresetFromEvent({ detail: { type: 'local' } } as unknown as Event)).toEqual({
+      type: 'local',
+    });
+  });
+
+  test('detail 不是约定形状时当作没有预选：旧派发方与外部事件都不能把对话框带偏', () => {
+    for (const detail of [null, undefined, 'ssh', 42, {}, { type: 'serial' }]) {
+      expect(addDevicePresetFromEvent({ detail } as unknown as Event)).toBeUndefined();
+    }
   });
 });

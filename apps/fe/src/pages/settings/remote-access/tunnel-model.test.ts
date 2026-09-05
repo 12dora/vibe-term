@@ -12,6 +12,7 @@ import {
   connectorState,
   degradedError,
   describeTunnelError,
+  edgeDiagnosis,
   effectiveMode,
   effectivePath,
   isAuthRequiredError,
@@ -200,6 +201,46 @@ describe('connectorState', () => {
   });
 });
 
+describe('edgeDiagnosis', () => {
+  function edge(
+    overrides: Partial<NonNullable<TunnelStatusResponse['edge']>> = {}
+  ): NonNullable<TunnelStatusResponse['edge']> {
+    return {
+      mode: 'system',
+      fakeIpDetected: false,
+      edgeAddrs: [],
+      checkedAt: '2026-09-05T00:00:00.000Z',
+      lastError: null,
+      ...overrides,
+    };
+  }
+
+  test('旧后端没有 edge 字段：不给任何 fake-IP 结论', () => {
+    expect(edgeDiagnosis(status())).toBe('none');
+    expect(edgeDiagnosis(status({ edge: null }))).toBe('none');
+  });
+
+  test('系统解析正常：none', () => {
+    expect(edgeDiagnosis(status({ edge: edge() }))).toBe('none');
+  });
+
+  test('已用真实边缘地址启动：bypassed', () => {
+    expect(
+      edgeDiagnosis(
+        status({
+          edge: edge({ mode: 'static', fakeIpDetected: true, edgeAddrs: ['198.41.192.7:7844'] }),
+        })
+      )
+    ).toBe('bypassed');
+  });
+
+  test('检测到 fake-IP 但仍走系统解析：bypassFailed', () => {
+    expect(
+      edgeDiagnosis(status({ edge: edge({ fakeIpDetected: true, lastError: 'DoH query failed' }) }))
+    ).toBe('bypassFailed');
+  });
+});
+
 describe('degradedError', () => {
   test('进程错误优先于连接器错误，都没有时为 null', () => {
     expect(degradedError(status())).toBeNull();
@@ -231,6 +272,22 @@ describe('degradedError', () => {
     const long = 'x'.repeat(400);
     const truncated = degradedError(status({ process: { ...status().process, lastError: long } }));
     expect(truncated).toBe(`${'x'.repeat(200)}…`);
+  });
+
+  test('进程与连接器都没话说时，退到边缘解析的错误', () => {
+    expect(
+      degradedError(
+        status({
+          edge: {
+            mode: 'system',
+            fakeIpDetected: true,
+            edgeAddrs: [],
+            checkedAt: '2026-09-05T00:00:00.000Z',
+            lastError: 'DoH query failed',
+          },
+        })
+      )
+    ).toBe('DoH query failed');
   });
 });
 

@@ -9,6 +9,7 @@ import {
   getAddDeviceTargets,
   subscribeAddDeviceTargets,
 } from '@/pages/devices/add-device-targets';
+import type { AddDevicePreset } from '@tmex/panels/device-management';
 
 export interface AddDeviceTargetSource {
   get: () => readonly AddDeviceTarget[];
@@ -26,6 +27,8 @@ export const ADD_DEVICE_WAIT_MS = 15_000;
 export interface OpenAddDeviceOptions {
   source?: AddDeviceTargetSource;
   timeoutMs?: number;
+  /** 对话框里预选的设备类型；SSH 引导路径带 `{ type: 'ssh' }`，省得用户再选一次。 */
+  preset?: AddDevicePreset;
 }
 
 /**
@@ -39,6 +42,7 @@ export function openSelfAddDevice(options: OpenAddDeviceOptions = {}): () => voi
   pending?.();
   const source = options.source ?? defaultSource;
   const timeoutMs = options.timeoutMs ?? ADD_DEVICE_WAIT_MS;
+  const preset = options.preset;
   let settled = false;
   let unsubscribe: (() => void) | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -57,7 +61,7 @@ export function openSelfAddDevice(options: OpenAddDeviceOptions = {}): () => voi
     const target = source.get().find((row) => row.isSelf);
     if (!target) return;
     stop();
-    target.open();
+    target.open(preset);
   };
 
   unsubscribe = source.subscribe(attempt);

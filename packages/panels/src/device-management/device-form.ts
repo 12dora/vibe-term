@@ -1,10 +1,16 @@
 // 设备表单纯逻辑：默认值、payload 构造与校验（local/ssh 四种 authMode）。
 
-import type { AuthMode, CreateDeviceRequest, Device, UpdateDeviceRequest } from '@tmex/shared';
+import type {
+  AuthMode,
+  CreateDeviceRequest,
+  Device,
+  DeviceType,
+  UpdateDeviceRequest,
+} from '@tmex/shared';
 
 export type DeviceFormValues = {
   name: string;
-  type: 'local' | 'ssh';
+  type: DeviceType;
   host: string;
   port: number;
   username: string;
@@ -28,11 +34,15 @@ function normalizeText(value: string): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-export function createDefaultFormValues(device?: Device): DeviceFormValues {
+/** `initialType` 只对新建生效：编辑态的类型永远取自设备本身。 */
+export function createDefaultFormValues(
+  device?: Device,
+  initialType?: DeviceType
+): DeviceFormValues {
   if (!device) {
     return {
       name: '',
-      type: 'local',
+      type: initialType ?? 'local',
       host: '',
       port: 22,
       // SSH 字段预填预期默认值（与 placeholder 一致），减少新建 SSH 设备时的手填负担；

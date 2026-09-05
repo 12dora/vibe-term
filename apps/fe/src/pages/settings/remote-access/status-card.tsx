@@ -25,6 +25,7 @@ import {
   connectorState,
   degradedError,
   describeTunnelError,
+  edgeDiagnosis,
   isExposureAckError,
   logTail,
   protectionPill,
@@ -110,45 +111,7 @@ export function TunnelStatusCard({
 
         {pill === 'degraded' && <DegradedNotice status={status} />}
 
-        {configured && (
-          <div className="space-y-0.5 rounded-lg bg-muted/40 p-3">
-            <DetailRow label={t('settings.remoteAccess.modeLabel')} testId="remote-access-mode">
-              {t(`settings.remoteAccess.mode.${status.config.mode}.title`)}
-            </DetailRow>
-            {status.process.publicUrl && (
-              <DetailRow label={t('settings.remoteAccess.publicUrl')}>
-                <span className="flex flex-wrap items-center gap-1">
-                  <code
-                    className="-ml-1.5 min-w-0 break-all rounded bg-background px-1.5 py-0.5 font-mono text-[11px]"
-                    data-testid="remote-access-public-url"
-                  >
-                    {status.process.publicUrl}
-                  </code>
-                  <CopyButton value={status.process.publicUrl} testId="remote-access-public-url" />
-                  <a
-                    className={buttonVariants({ size: 'xs', variant: 'ghost' })}
-                    href={status.process.publicUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    data-testid="remote-access-open"
-                  >
-                    <ExternalLink />
-                    {t('settings.remoteAccess.actions.open')}
-                  </a>
-                </span>
-              </DetailRow>
-            )}
-            <ConnectorRow status={status} />
-            {status.process.restarts > 0 && (
-              <DetailRow
-                label={t('settings.remoteAccess.restartsLabel')}
-                testId="remote-access-restarts"
-              >
-                {t('settings.remoteAccess.restarts', { times: status.process.restarts })}
-              </DetailRow>
-            )}
-          </div>
-        )}
+        {configured && <TunnelDetails status={status} />}
 
         {adopted && (
           <SetupNotice tone="info" testId="remote-access-managed-notice">
@@ -256,6 +219,48 @@ export function TunnelStatusCard({
   );
 }
 
+/** 已配置隧道时的明细块：方式、公网地址、连接器、边缘解析与重启次数。 */
+function TunnelDetails({ status }: { status: TunnelStatusResponse }) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-0.5 rounded-lg bg-muted/40 p-3">
+      <DetailRow label={t('settings.remoteAccess.modeLabel')} testId="remote-access-mode">
+        {t(`settings.remoteAccess.mode.${status.config.mode}.title`)}
+      </DetailRow>
+      {status.process.publicUrl && (
+        <DetailRow label={t('settings.remoteAccess.publicUrl')}>
+          <span className="flex flex-wrap items-center gap-1">
+            <code
+              className="-ml-1.5 min-w-0 break-all rounded bg-background px-1.5 py-0.5 font-mono text-[11px]"
+              data-testid="remote-access-public-url"
+            >
+              {status.process.publicUrl}
+            </code>
+            <CopyButton value={status.process.publicUrl} testId="remote-access-public-url" />
+            <a
+              className={buttonVariants({ size: 'xs', variant: 'ghost' })}
+              href={status.process.publicUrl}
+              target="_blank"
+              rel="noreferrer"
+              data-testid="remote-access-open"
+            >
+              <ExternalLink />
+              {t('settings.remoteAccess.actions.open')}
+            </a>
+          </span>
+        </DetailRow>
+      )}
+      <ConnectorRow status={status} />
+      <EdgeRow status={status} />
+      {status.process.restarts > 0 && (
+        <DetailRow label={t('settings.remoteAccess.restartsLabel')} testId="remote-access-restarts">
+          {t('settings.remoteAccess.restarts', { times: status.process.restarts })}
+        </DetailRow>
+      )}
+    </div>
+  );
+}
+
 /** 卡片标题上的三枚徽标：隧道状态、访问保护、是否由系统服务托管。 */
 function StatusHeader({
   status,
@@ -292,8 +297,8 @@ function StatusHeader({
 }
 
 /**
- * 进程在跑但没有边缘连接：公网地址此时是断的。确证零连接时补一条排查指引——本机代理 / 防火墙
- * 挡掉 7844 是最常见的成因；进程与连接器各自的最近一条错误接在末尾，作为直接线索。
+ * 进程在跑但没有边缘连接：公网地址此时是断的。排查指引按诊断结果分档（见 `DegradedHint`），
+ * 进程 / 连接器 / 边缘解析各自的最近一条错误接在末尾，作为直接线索。
  */
 function DegradedNotice({ status }: { status: TunnelStatusResponse }) {
   const { t } = useTranslation();
@@ -301,9 +306,7 @@ function DegradedNotice({ status }: { status: TunnelStatusResponse }) {
   return (
     <SetupNotice tone="warning" testId="remote-access-degraded">
       <p>{t('settings.remoteAccess.degradedNotice')}</p>
-      {connectorState(status) === 'noConnections' && (
-        <p data-testid="remote-access-degraded-hint">{t('settings.remoteAccess.degradedHint')}</p>
-      )}
+      <DegradedHint status={status} />
       {detail && (
         <p
           className="break-all font-mono text-muted-foreground"
@@ -313,6 +316,47 @@ function DegradedNotice({ status }: { status: TunnelStatusResponse }) {
         </p>
       )}
     </SetupNotice>
+  );
+}
+
+/**
+ * 排查指引三档：解析被 fake-IP 劫持且没绕开时给出代理侧的具体改法；已绕开则只说明当前走的是
+ * 真实边缘地址（问题另有原因）；其余情况沿用通用的 7844 指引，且只在确证零连接时才给。
+ */
+function DegradedHint({ status }: { status: TunnelStatusResponse }) {
+  const { t } = useTranslation();
+  const diagnosis = edgeDiagnosis(status);
+
+  if (diagnosis === 'bypassFailed') {
+    return (
+      <>
+        <p data-testid="remote-access-edge-fakeip">
+          {t('settings.remoteAccess.edge.bypassFailed')}
+        </p>
+        <p data-testid="remote-access-edge-fix">
+          {t('settings.remoteAccess.edge.bypassFailedFix')}
+        </p>
+        <p>{t('settings.remoteAccess.edge.bypassFailedRetry')}</p>
+      </>
+    );
+  }
+  if (diagnosis === 'bypassed') {
+    return (
+      <p data-testid="remote-access-edge-bypassed">{t('settings.remoteAccess.edge.bypassed')}</p>
+    );
+  }
+  if (connectorState(status) !== 'noConnections') return null;
+  return <p data-testid="remote-access-degraded-hint">{t('settings.remoteAccess.degradedHint')}</p>;
+}
+
+/** 已绕开 fake-IP 劫持时在连接器旁多一行，交代当前用的是静态边缘地址而非系统解析结果。 */
+function EdgeRow({ status }: { status: TunnelStatusResponse }) {
+  const { t } = useTranslation();
+  if (edgeDiagnosis(status) !== 'bypassed') return null;
+  return (
+    <DetailRow label={t('settings.remoteAccess.edge.label')} testId="remote-access-edge">
+      {t('settings.remoteAccess.edge.staticActive')}
+    </DetailRow>
   );
 }
 

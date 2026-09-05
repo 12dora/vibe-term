@@ -1,7 +1,7 @@
 // 设备增改对话框：按设备种类（local / ssh / 远端节点上的 local / ssh）组合区块，
 // 成功后按注入的 queryKey 失效缓存。类型创建后不可改（编辑态下拉禁用，update payload 也不含 type）。
 
-import type { Device } from '@tmex/shared';
+import type { Device, DeviceType } from '@tmex/shared';
 import { Button } from '@tmex/ui/button';
 import {
   Dialog,
@@ -31,6 +31,8 @@ export interface DeviceDialogProps {
   device?: Device;
   /** 目标节点上下文：决定种类展示、远端只读信息块与新建时的描述文案 */
   nodeContext: DeviceNodeContext;
+  /** 新建时预选的设备类型（如 SSH 引导路径直接落到 SSH）；编辑态忽略 */
+  initialType?: DeviceType;
   onClose: () => void;
   queryKey: readonly unknown[];
   /** 所属节点离线：宿主会关掉对话框，这里再在提交时兜一次 */
@@ -41,12 +43,15 @@ export function DeviceDialog({
   mode,
   device,
   nodeContext,
+  initialType,
   onClose,
   queryKey,
   offline,
 }: DeviceDialogProps) {
   const { t } = useTranslation();
-  const [values, setValues] = useState<DeviceFormValues>(createDefaultFormValues(device));
+  const [values, setValues] = useState<DeviceFormValues>(
+    createDefaultFormValues(device, initialType)
+  );
   const { attempted, isSubmitting, handleSubmit } = useDeviceDialogSubmit({
     mode,
     device,

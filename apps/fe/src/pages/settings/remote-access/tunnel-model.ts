@@ -46,11 +46,27 @@ export function connectorState(status: TunnelStatusResponse): ConnectorState {
   return ready > 0 ? 'connected' : 'noConnections';
 }
 
+/**
+ * 边缘地址解析的诊断。系统解析器把 cloudflared 的边缘域名解析成 198.18.0.0/15（本机代理的
+ * fake-IP）时，7844 端口被代理吞掉，进程活着却永远 0 连接：
+ * `bypassed` = 网关已改用真实边缘地址启动，劫持已绕开；
+ * `bypassFailed` = 检测到劫持但绕不开（DoH 也失败），要用户去代理里放行。
+ * 旧后端没有 `edge` 字段，一律 `none`。
+ */
+export type EdgeDiagnosis = 'none' | 'bypassed' | 'bypassFailed';
+
+export function edgeDiagnosis(status: TunnelStatusResponse): EdgeDiagnosis {
+  const edge = status.edge;
+  if (!edge) return 'none';
+  if (edge.mode === 'static') return 'bypassed';
+  return edge.fakeIpDetected ? 'bypassFailed' : 'none';
+}
+
 /** 降级警示里的错误明细：日志行可能很长，卡片上只留够定位问题的开头。 */
 const DEGRADED_ERROR_MAX = 200;
 
 export function degradedError(status: TunnelStatusResponse): string | null {
-  const text = [status.process.lastError, status.connector?.lastError]
+  const text = [status.process.lastError, status.connector?.lastError, status.edge?.lastError]
     .map((value) => (value ?? '').trim())
     .find((value) => value !== '');
   if (!text) return null;

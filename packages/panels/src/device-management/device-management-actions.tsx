@@ -3,19 +3,22 @@
 import { Button } from '@tmex/ui/button';
 import { Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { OPEN_ADD_DEVICE_EVENT } from './events';
+import { type AddDevicePreset, OPEN_ADD_DEVICE_EVENT } from './events';
 
 export interface DeviceManagementActionsProps {
-  onAddDevice?: () => void;
+  onAddDevice?: (preset?: AddDevicePreset) => void;
 }
 
-/** 有显式回调就走回调；否则派发全局事件（单面板宿主的既有行为）。 */
-export function requestAddDevice(onAddDevice?: () => void): void {
+/** 有显式回调就走回调；否则派发全局事件（单面板宿主的既有行为），预选项随 detail 一起走。 */
+export function requestAddDevice(
+  onAddDevice?: (preset?: AddDevicePreset) => void,
+  preset?: AddDevicePreset
+): void {
   if (onAddDevice) {
-    onAddDevice();
+    onAddDevice(preset);
     return;
   }
-  window.dispatchEvent(new CustomEvent(OPEN_ADD_DEVICE_EVENT));
+  window.dispatchEvent(new CustomEvent(OPEN_ADD_DEVICE_EVENT, { detail: preset ?? null }));
 }
 
 export function DeviceManagementActions({ onAddDevice }: DeviceManagementActionsProps) {

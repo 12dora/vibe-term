@@ -5,6 +5,7 @@
 // 挂载时登记自己的 `openAddDevice`，顶栏按 useSyncExternalStore 订阅当前可添加的节点。
 // 空注册表 = standalone / 单面板形态，顶栏退回派发全局事件（旧行为不变）。
 
+import type { AddDevicePreset } from '@tmex/panels/device-management';
 import { useSyncExternalStore } from 'react';
 
 export interface AddDeviceTarget {
@@ -12,8 +13,8 @@ export interface AddDeviceTarget {
   runtimeNodeId: string;
   name: string;
   isSelf: boolean;
-  /** 打开该 node 面板的新建设备对话框。 */
-  open: () => void;
+  /** 打开该 node 面板的新建设备对话框；`preset` 预选设备类型。 */
+  open: (preset?: AddDevicePreset) => void;
 }
 
 /** self 排最前，其余按名称排序，与设备页分组顺序一致。 */

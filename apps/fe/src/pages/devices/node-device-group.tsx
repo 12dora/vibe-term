@@ -22,6 +22,7 @@ import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { SELF_NODE_ID } from '@tmex/api-client';
 import type { MeshNode } from '@tmex/api-client/auth/index';
 import {
+  type AddDevicePreset,
   DeviceManagementPanel,
   type DeviceManagementPanelHandle,
   type DeviceNodeContext,
@@ -270,7 +271,10 @@ export interface NodeDeviceGroupProps {
 export function NodeDeviceGroup({ node, showHeader = true, dragControls }: NodeDeviceGroupProps) {
   const panelRef = useRef<DeviceManagementPanelHandle>(null);
   const state = nodeDeviceGroupState(node);
-  const openAddDevice = useCallback(() => panelRef.current?.openAddDevice(), []);
+  const openAddDevice = useCallback(
+    (preset?: AddDevicePreset) => panelRef.current?.openAddDevice(preset),
+    []
+  );
 
   // ready 的分组才登记：离线 / 未登录的 node 没有可用面板，顶栏也不该把它列成目标。
   useEffect(() => {
