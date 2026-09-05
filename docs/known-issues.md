@@ -1,7 +1,7 @@
 # 已知问题（Known Issues）
 
 本文件登记**尚未解决**的已知问题。解决后从本文件移除（背景留在对应模块文档里）。
-最近核对：2026-09-05（1.1.32）。
+最近核对：2026-09-05（1.1.34）。
 
 ## KI-1：e2e / 单测的负载抖动基线
 
@@ -37,9 +37,19 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 
 ## KI-7：`peer-manager.ts` 上帝类待拆
 
-第二十九轮已完成两项：两条线的 ctl switch 合并为 `packages/shared/src/uplink/codec-decode.ts` 的参数化
-`decodeUplinkCtl`，编码侧 mesh 归一到 hub 线上表示后复用 hub 实现；`apps/gateway/src/hub/uplink-server.ts`
-（2224 行）拆为会话 / 联邦 / 节点表 / key log / RTC 五个协作者，`UplinkServer` 只剩装配与 `onCtl` 分派。
+`apps/gateway/src/mesh/peer-manager.ts`（约 1900 行 81 成员）的拆分（`peer-dialer.ts` /
+`peer-live-registry.ts`）尚未立项。同批的 ctl switch 合并与 `uplink-server.ts` 拆分已于第二十九轮完成。
 
-余下 `apps/gateway/src/mesh/peer-manager.ts`（1907 行 81 成员）的拆分（`peer-dialer.ts` /
-`peer-live-registry.ts`）尚未立项。
+## KI-8：Hub 转发不把浏览器来源 IP 带给节点
+
+节点侧看到的 clientIp 恒为 `peer:<hubNodeId>`（`dispatchInboundHttp` 写入），`x-forwarded-*` 两端都被剥。
+因此节点自己的分享登录限速在 Hub 路径上会把所有访客算成同一个来源。当前由 Hub 侧按（真实来源 IP, shareId）
+的配额兜住（`apps/gateway/src/mesh/share-login-quota.ts`），实际不会误锁别人；但节点端限速在这条路径上
+仍是空转。彻底解法是给 peer 上下文加一条 Hub 可信填写、浏览器不可覆盖的来源 IP 元数据。
+见[终端分享](./share/2026090503-terminal-share.md)。
+
+## KI-9：本机自升级没有下载字节进度
+
+远程升级的下载进度已在 1.1.34 补齐（原 KI-2），本机自升级仍只有阶段名：`UpgradeStatus` 的 `progress`
+面按合约只服务远程升级，`stageGithubRelease` 没有上报出口，且 `apps/gateway/src/system/upgrade.ts`
+贴着 allowlist 的行数上限，新开一条进度通道要先拆文件。

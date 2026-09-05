@@ -28,6 +28,7 @@
 | `hub/2026090305-peer-endpoint-backoff.md` | 直连地址负向缓存与退避、LAN 预算、拨号并发、广播端网卡过滤 |
 | `hub/2026090306-rtc-dial-breaker.md` | WebRTC DataChannel 熔断：阈值、冷却阶梯、强制探测、`dcBreaker` 字段 |
 | `hub/2026090502-rtc-signaling-epoch-link-liveness.md` | 直连信令代次、ICE 配置、链路活性与在途流保护（1.1.31） |
+| `hub/2026090505-direct-failure-codes.md` | 直连失败码（ws / DataChannel）、链路信息窗按码 i18n 与原文兜底 |
 | `hub/2026082801-hub-docker-e2e.md` | Docker 多容器 hub/node 实测 harness（单机 compose 与远端分体拓扑） |
 | `hub/2026090402-docker-node.md` | 可升级的 tmex 节点容器：容器内自装、事务式升级、看护循环 |
 | `relay/2026090304-relay-role.md` | 公共中继（relay）角色实现参考：盲中继协议、租户密钥、接口、CLI 与运维 |
@@ -73,7 +74,14 @@
 | `messaging/2026090402-messaging-command-template.md` | 平台无关的消息命令层（Telegram / 微信）：解析、授权、命令表与新平台适配 |
 | `frontend/2026070800-workspace-packages.md` | workspace 包清单与出口、依赖方向、Connection / Runtime 两层工厂与嵌入用法 |
 | `frontend/2026090307-app-error-boundary.md` | 路由 `errorElement` / 面板级错误边界 / 懒加载 chunk 重试 |
+| `frontend/2026090504-sidebar-node-first-paint.md` | 侧栏节点首屏：设备列表 pending 占位、mesh 节点缓存与有界重试、前台拨号竞速与 hub presence 陈旧窗口 |
 | `fonts/2026061501-font-pipeline.md` | Nerd Fonts 精选清单、woff2 构建工具链、动态 manifest 与运行时懒加载 |
+
+## 功能模块：终端分享
+
+| 路径 | 用途 |
+| --- | --- |
+| `share/2026090503-terminal-share.md` | 终端分享：数据模型、owner / share-access 接口、分享凭证与 ws 作用域隔离、录屏日志与回放、安全边界 |
 
 ## 运维排障
 
