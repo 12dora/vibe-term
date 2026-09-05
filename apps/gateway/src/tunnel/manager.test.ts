@@ -2157,4 +2157,97 @@ describe('TunnelManager edge resolution', () => {
     expect(ctx.spawner.calls.some((c) => argsInclude(c, '--edge'))).toBe(false);
     expect(ctx.manager.status().process.state).not.toBe('running');
   });
+
+  test('auto-start at boot polls the connector even when cloudflared never registers', async () => {
+    const readyAt: number[] = [];
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      connectorPollMs: 30_000,
+      runningWaitMs: 20,
+      // 轮询间隔要比注册超时慢：先让启动失败落定，再看轮询是否仍然继续
+      sleep: async (ms) => {
+        await Bun.sleep(ms >= 30_000 ? 40 : 1);
+      },
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          readyAt.push(Date.now());
+          return Response.json({ readyConnections: 0, connectorId: 'c' });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({ mode: 'named', hostname: 'remote.example.com', autoStart: true });
+    // 没有 Registered 行：fake-IP 环境下 cloudflared 起来了却永远 0 连接
+    ctx.spawner.on((s) => argsInclude(s, 'run'), { hold: true });
+    await ctx.manager.start();
+    expect(ctx.spawner.calls.some((c) => argsInclude(c, 'run'))).toBe(true);
+    expect(ctx.manager.status().process.state).toBe('error');
+
+    const before = readyAt.length;
+    const start = Date.now();
+    while (Date.now() - start < 1_500 && readyAt.length < before + 3) await Bun.sleep(5);
+    expect(readyAt.length).toBeGreaterThanOrEqual(before + 3);
+    await ctx.manager.stop();
+  });
+
+  test('an auto-started tunnel that never registers is recovered with a static edge', async () => {
+    const warnings: string[] = [];
+    const resolutions = [
+      systemEdge(null),
+      systemEdge('DoH edge resolution failed: HTTP 500'),
+      staticEdge,
+    ];
+    let resolved = 0;
+    let clock = Date.parse('2026-09-05T00:00:00.000Z');
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      connectorPollMs: 30_000,
+      edgeRecoveryDelayMs: 90_000,
+      runningWaitMs: 20,
+      now: () => {
+        clock += 1;
+        return clock;
+      },
+      sleep: async (ms) => {
+        clock += ms;
+        await Bun.sleep(ms >= 30_000 ? 40 : 1);
+      },
+      warn: (message) => warnings.push(message),
+      resolveEdge: async () => resolutions[Math.min(resolved++, resolutions.length - 1)] ?? null,
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          return Response.json({ readyConnections: 0, connectorId: 'c' });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({ mode: 'named', hostname: 'remote.example.com', autoStart: true });
+    ctx.spawner.on((s) => argsInclude(s, 'run'), { hold: true });
+    await ctx.manager.start();
+    expect(ctx.spawner.calls.filter((c) => argsInclude(c, 'run')).length).toBe(1);
+    expect(ctx.spawner.calls.some((c) => argsInclude(c, '--edge'))).toBe(false);
+    expect(ctx.manager.status().process.state).toBe('error');
+
+    const start = Date.now();
+    while (Date.now() - start < 3_000) {
+      if (ctx.spawner.calls.some((c) => argsInclude(c, '--edge'))) break;
+      await Bun.sleep(5);
+    }
+    const withEdge = ctx.spawner.calls.filter((c) => argsInclude(c, '--edge'));
+    expect(withEdge.length).toBe(1);
+    expect(withEdge[0]?.args).toContain('198.41.192.7:7844');
+    expect(withEdge[0]?.args.join(' ')).toContain('--protocol http2');
+    expect(ctx.manager.status().edge).toMatchObject({ mode: 'static' });
+
+    await Bun.sleep(150);
+    expect(ctx.spawner.calls.filter((c) => argsInclude(c, '--edge')).length).toBe(1);
+    const recoveryLogs = warnings.filter((w) => w.includes('edge recovery attempt='));
+    expect(recoveryLogs.length).toBeGreaterThanOrEqual(2);
+    expect(recoveryLogs[0]).toContain('attempt=1 result=system');
+    expect(recoveryLogs[0]).toContain('error=DoH edge resolution failed: HTTP 500');
+    expect(recoveryLogs[1]).toContain('attempt=2 result=static');
+    await ctx.manager.stop();
+  });
 });

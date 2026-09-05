@@ -173,7 +173,8 @@ export class TunnelSupervisor {
     if (isRegisteredLine(line)) {
       const connIndex = parseConnIndex(line);
       this.edgeConnIndexes.add(connIndex ?? 0);
-      if (this.state === 'starting' || this.state === 'degraded') {
+      // error 也要能翻回来：注册超时会把状态钉在 error，但进程还活着，晚到的注册就是恢复
+      if (this.enabled && this.state !== 'running' && this.state !== 'stopped') {
         this.state = 'running';
         this.backoffMs = MIN_BACKOFF_MS;
       }

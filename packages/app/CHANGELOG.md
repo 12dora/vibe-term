@@ -1,3 +1,23 @@
+# 1.1.33
+
+_2026-09-05_
+
+## English
+
+### Fixes
+
+- Remote access: the fake-IP bypass now survives a transient DoH failure at start-up. The edge resolution retries DoH (3 × 1.5 s), falls back to the last successful static edge list cached for 7 days, and — the actual reason 1.1.32 stayed at zero edge connections — the connector poll now starts even when cloudflared never registers within 30 s, so the automatic re-resolve + restart really runs (logged as `edge recovery attempt=N`).
+
+---
+
+## 中文
+
+### 修复
+
+- 远程访问：fake-IP 绕行在启动瞬间 DoH 失败后也能恢复。边缘解析会重试 DoH（3 × 1.5 s）、回落到缓存 7 天的上次成功静态边缘列表；并修正 1.1.32 仍 0 边缘连接的真因——cloudflared 30 秒内未注册时连接器轮询根本没启动，自动重解析 + 重启从未执行（现每次尝试记 `edge recovery attempt=N` 日志）。
+
+---
+
 # 1.1.32
 
 _2026-09-05_

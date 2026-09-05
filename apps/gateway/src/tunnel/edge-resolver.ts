@@ -17,6 +17,12 @@ export const DOH_ENDPOINTS = [
 
 const DOH_REQUEST_TIMEOUT_MS = 5_000;
 const DOH_TOTAL_BUDGET_MS = 10_000;
+const DOH_RETRY_ATTEMPTS = 3;
+const DOH_RETRY_SPACING_MS = 1_500;
+/** 重试期整体预算：首轮沿用 10 s，另给后两次重试 5 s（含间隔），启动最多多等 5 s。 */
+const DOH_RETRY_TOTAL_BUDGET_MS = DOH_TOTAL_BUDGET_MS + 5_000;
+/** 缓存的静态边缘可用期：Cloudflare 边缘 IP 数周不变，过期才判定不可用。 */
+export const LAST_STATIC_EDGE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const DNS_TYPE_A = 1;
 const DNS_TYPE_SRV = 33;
 const MAX_ERROR_LEN = 160;
@@ -24,12 +30,26 @@ const MAX_ERROR_LEN = 160;
 export type EdgeFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export type EdgeLookup = (hostname: string) => Promise<string[]>;
 
+/** 静态边缘的来源：环境变量覆盖 / 本次 DoH 解析 / 上次成功结果的持久化缓存。 */
+export type EdgeSource = 'env' | 'doh' | 'cache';
+
+export type CachedEdge = { edgeAddrs: string[]; resolvedAt: string };
+
+export type EdgeCache = {
+  read: () => Promise<CachedEdge | null>;
+  write: (value: CachedEdge) => Promise<void>;
+};
+
+export type EdgeResolution = TunnelEdgeResolution & { source?: EdgeSource };
+
 export interface ResolveEdgeOptions {
   fetchImpl: EdgeFetch;
   lookup?: EdgeLookup;
   now?: () => number;
   env?: Record<string, string | undefined>;
   signal?: AbortSignal;
+  cache?: EdgeCache;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const OCTET_RE = /^\d{1,3}$/;
@@ -264,12 +284,12 @@ export async function resolveEdgeViaDoh(
   fetchImpl: EdgeFetch,
   signal?: AbortSignal,
   now: () => number = Date.now,
-  opts: { requestTimeoutMs?: number } = {}
+  opts: { requestTimeoutMs?: number; budgetMs?: number } = {}
 ): Promise<{ addrs: string[] }> {
   const ctx: DohQueryCtx = {
     fetchImpl,
     signal,
-    deadline: now() + DOH_TOTAL_BUDGET_MS,
+    deadline: now() + (opts.budgetMs ?? DOH_TOTAL_BUDGET_MS),
     now,
     state: newDohRunState(),
     requestTimeoutMs: opts.requestTimeoutMs ?? DOH_REQUEST_TIMEOUT_MS,
@@ -314,28 +334,125 @@ export function parseEdgeAddrsEnv(raw: string | undefined): string[] {
   return out;
 }
 
-/** 永不抛错：解析失败一律回落到 mode=system，原因写进 lastError */
-export async function resolveEdge(opts: ResolveEdgeOptions): Promise<TunnelEdgeResolution> {
-  const now = opts.now ?? Date.now;
-  const lookup = opts.lookup ?? defaultLookup;
-  const checkedAt = new Date(now()).toISOString();
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * fake-IP 环境下 DoH 常在开机瞬间失败（代理刚起、网络未就绪），重试几次即可成功；
+ * 整个重试期共用一个预算，避免把 spawn 卡在黑洞上。
+ */
+async function resolveEdgeViaDohWithRetry(
+  opts: ResolveEdgeOptions,
+  now: () => number
+): Promise<{ addrs: string[] }> {
+  const sleep = opts.sleep ?? defaultSleep;
+  const deadline = now() + DOH_RETRY_TOTAL_BUDGET_MS;
+  let lastError: unknown = new Error('DoH edge resolution was not attempted');
+  for (let attempt = 1; attempt <= DOH_RETRY_ATTEMPTS; attempt += 1) {
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    try {
+      return await resolveEdgeViaDoh(opts.fetchImpl, opts.signal, now, {
+        budgetMs: Math.min(DOH_TOTAL_BUDGET_MS, remaining),
+      });
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt === DOH_RETRY_ATTEMPTS || deadline - now() <= DOH_RETRY_SPACING_MS) break;
+    await sleep(DOH_RETRY_SPACING_MS);
+  }
+  throw lastError;
+}
+
+async function readFreshEdgeCache(
+  cache: EdgeCache | undefined,
+  nowMs: number
+): Promise<CachedEdge | null> {
+  if (!cache) return null;
   try {
-    const results = await Promise.all(
-      WELL_KNOWN_EDGE_HOSTS.map(async (host) => {
-        try {
-          return { addrs: await lookup(host), error: null as string | null };
-        } catch (error) {
-          return { addrs: [] as string[], error: shortError(error) };
-        }
-      })
-    );
-    const fakeIpDetected = results.some((result) => result.addrs.some((ip) => isFakeIp(ip)));
-    const errors = results.map((result) => result.error).filter((e): e is string => Boolean(e));
-    const lookupError =
+    const value = await cache.read();
+    if (!value || value.edgeAddrs.length === 0) return null;
+    const at = Date.parse(value.resolvedAt);
+    if (!Number.isFinite(at) || nowMs - at > LAST_STATIC_EDGE_MAX_AGE_MS) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+async function writeEdgeCache(cache: EdgeCache | undefined, value: CachedEdge): Promise<void> {
+  if (!cache) return;
+  try {
+    await cache.write(value);
+  } catch {}
+}
+
+/** DoH（含重试）→ 上次成功的静态列表 → 系统解析。永不抛错。 */
+async function staticEdgeOrFallback(
+  opts: ResolveEdgeOptions,
+  now: () => number,
+  checkedAt: string
+): Promise<EdgeResolution> {
+  try {
+    const { addrs } = await resolveEdgeViaDohWithRetry(opts, now);
+    await writeEdgeCache(opts.cache, {
+      edgeAddrs: addrs,
+      resolvedAt: new Date(now()).toISOString(),
+    });
+    return {
+      mode: 'static',
+      fakeIpDetected: true,
+      edgeAddrs: addrs,
+      checkedAt,
+      lastError: null,
+      source: 'doh',
+    };
+  } catch (error) {
+    const lastError = `DoH edge resolution failed: ${shortError(error)}`;
+    const cached = await readFreshEdgeCache(opts.cache, now());
+    if (cached) {
+      return {
+        mode: 'static',
+        fakeIpDetected: true,
+        edgeAddrs: cached.edgeAddrs,
+        checkedAt,
+        lastError,
+        source: 'cache',
+      };
+    }
+    return { mode: 'system', fakeIpDetected: true, edgeAddrs: [], checkedAt, lastError };
+  }
+}
+
+type SystemLookupResult = { fakeIpDetected: boolean; lookupError: string | null };
+
+async function systemLookup(lookup: EdgeLookup): Promise<SystemLookupResult> {
+  const results = await Promise.all(
+    WELL_KNOWN_EDGE_HOSTS.map(async (host) => {
+      try {
+        return { addrs: await lookup(host), error: null as string | null };
+      } catch (error) {
+        return { addrs: [] as string[], error: shortError(error) };
+      }
+    })
+  );
+  const errors = results.map((result) => result.error).filter((e): e is string => Boolean(e));
+  return {
+    fakeIpDetected: results.some((result) => result.addrs.some((ip) => isFakeIp(ip))),
+    lookupError:
       errors.length === results.length && errors.length > 0
         ? `system DNS lookup failed: ${errors[0]}`
-        : null;
+        : null,
+  };
+}
 
+/** 永不抛错：解析失败一律回落到 mode=system，原因写进 lastError */
+export async function resolveEdge(opts: ResolveEdgeOptions): Promise<EdgeResolution> {
+  const now = opts.now ?? Date.now;
+  const checkedAt = new Date(now()).toISOString();
+  try {
+    const { fakeIpDetected, lookupError } = await systemLookup(opts.lookup ?? defaultLookup);
     const override = parseEdgeAddrsEnv((opts.env ?? process.env)[EDGE_ADDRS_ENV]);
     if (override.length > 0) {
       return {
@@ -344,6 +461,7 @@ export async function resolveEdge(opts: ResolveEdgeOptions): Promise<TunnelEdgeR
         edgeAddrs: override,
         checkedAt,
         lastError: lookupError,
+        source: 'env',
       };
     }
     if (!fakeIpDetected) {
@@ -355,18 +473,7 @@ export async function resolveEdge(opts: ResolveEdgeOptions): Promise<TunnelEdgeR
         lastError: lookupError,
       };
     }
-    try {
-      const { addrs } = await resolveEdgeViaDoh(opts.fetchImpl, opts.signal, now);
-      return { mode: 'static', fakeIpDetected: true, edgeAddrs: addrs, checkedAt, lastError: null };
-    } catch (error) {
-      return {
-        mode: 'system',
-        fakeIpDetected: true,
-        edgeAddrs: [],
-        checkedAt,
-        lastError: `DoH edge resolution failed: ${shortError(error)}`,
-      };
-    }
+    return await staticEdgeOrFallback(opts, now, checkedAt);
   } catch (error) {
     return {
       mode: 'system',
@@ -378,8 +485,8 @@ export async function resolveEdge(opts: ResolveEdgeOptions): Promise<TunnelEdgeR
   }
 }
 
-export function describeEdge(edge: TunnelEdgeResolution): string {
+export function describeEdge(edge: EdgeResolution): string {
   return `[tunnel] edge resolution mode=${edge.mode} fakeIp=${edge.fakeIpDetected} addrs=${
     edge.edgeAddrs.length > 0 ? edge.edgeAddrs.join(',') : '-'
-  }${edge.lastError ? ` error=${edge.lastError}` : ''}`;
+  }${edge.source ? ` source=${edge.source}` : ''}${edge.lastError ? ` error=${edge.lastError}` : ''}`;
 }

@@ -2,9 +2,13 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseCachedEdge } from './edge-cache';
 import {
+  type CachedEdge,
   EDGE_ADDRS_ENV,
+  type EdgeCache,
   type EdgeFetch,
+  describeEdge,
   isFakeIp,
   isUnusableEdgeIp,
   parseEdgeAddrsEnv,
@@ -242,14 +246,133 @@ describe('resolveEdge', () => {
   });
 
   test('DoH failure degrades to system mode with a reason', async () => {
+    const sleeps: number[] = [];
     const fetchImpl: EdgeFetch = async () => {
       throw new Error('network is unreachable');
     };
-    const edge = await resolveEdge({ fetchImpl, lookup: fakeLookup, env: {} });
+    const edge = await resolveEdge({
+      fetchImpl,
+      lookup: fakeLookup,
+      env: {},
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
     expect(edge.mode).toBe('system');
     expect(edge.fakeIpDetected).toBe(true);
     expect(edge.edgeAddrs).toEqual([]);
     expect(edge.lastError).toContain('DoH edge resolution failed');
+    expect(sleeps).toEqual([1_500, 1_500]);
+  });
+
+  test('a transient DoH failure is retried up to three times before giving up', async () => {
+    let round = 1;
+    const sleeps: number[] = [];
+    const fetchImpl: EdgeFetch = async (input) => {
+      if (round < 3) throw new Error('network is unreachable');
+      const url = new URL(String(input));
+      return HAPPY_ROUTE(url.searchParams.get('name') ?? '', url.searchParams.get('type') ?? '');
+    };
+    const edge = await resolveEdge({
+      fetchImpl,
+      lookup: fakeLookup,
+      env: {},
+      now: () => 1_000,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        round += 1;
+      },
+    });
+    expect(sleeps).toEqual([1_500, 1_500]);
+    expect(edge.mode).toBe('static');
+    expect(edge.source).toBe('doh');
+    expect(edge.edgeAddrs[0]).toBe('198.41.192.7:7844');
+    expect(edge.lastError).toBeNull();
+  });
+
+  test('a successful static resolution is persisted and reused when DoH later fails', async () => {
+    const now = Date.parse('2026-09-05T00:00:00.000Z');
+    const writes: CachedEdge[] = [];
+    const cache: EdgeCache = {
+      read: async () => writes[writes.length - 1] ?? null,
+      write: async (value) => {
+        writes.push(value);
+      },
+    };
+    const { fetchImpl } = dohFetch(HAPPY_ROUTE);
+    const fresh = await resolveEdge({
+      fetchImpl,
+      lookup: fakeLookup,
+      env: {},
+      now: () => now,
+      cache,
+    });
+    expect(fresh.source).toBe('doh');
+    expect(writes).toEqual([
+      { edgeAddrs: fresh.edgeAddrs, resolvedAt: new Date(now).toISOString() },
+    ]);
+
+    const later = now + 3 * 24 * 60 * 60 * 1_000;
+    const cached = await resolveEdge({
+      fetchImpl: async () => {
+        throw new Error('network is unreachable');
+      },
+      lookup: fakeLookup,
+      env: {},
+      now: () => later,
+      cache,
+      sleep: async () => {},
+    });
+    expect(cached.mode).toBe('static');
+    expect(cached.source).toBe('cache');
+    expect(cached.edgeAddrs).toEqual(fresh.edgeAddrs);
+    expect(cached.lastError).toContain('DoH edge resolution failed');
+    expect(describeEdge(cached)).toContain('source=cache');
+    expect(writes.length).toBe(1);
+  });
+
+  test('a persisted static edge older than seven days is not reused', async () => {
+    const now = Date.parse('2026-09-05T00:00:00.000Z');
+    const cache: EdgeCache = {
+      read: async () => ({
+        edgeAddrs: ['198.41.192.7:7844'],
+        resolvedAt: new Date(now - 8 * 24 * 60 * 60 * 1_000).toISOString(),
+      }),
+      write: async () => {},
+    };
+    const edge = await resolveEdge({
+      fetchImpl: async () => {
+        throw new Error('network is unreachable');
+      },
+      lookup: fakeLookup,
+      env: {},
+      now: () => now,
+      cache,
+      sleep: async () => {},
+    });
+    expect(edge.mode).toBe('system');
+    expect(edge.edgeAddrs).toEqual([]);
+    expect(edge.lastError).toContain('DoH edge resolution failed');
+  });
+
+  test('a broken cache never breaks the resolution', async () => {
+    const edge = await resolveEdge({
+      fetchImpl: async () => {
+        throw new Error('network is unreachable');
+      },
+      lookup: fakeLookup,
+      env: {},
+      sleep: async () => {},
+      cache: {
+        read: async () => {
+          throw new Error('db is gone');
+        },
+        write: async () => {
+          throw new Error('db is gone');
+        },
+      },
+    });
+    expect(edge.mode).toBe('system');
   });
 
   test('system lookup failure is not a fake ip and never throws', async () => {
@@ -376,5 +499,27 @@ describe('provider --edge args', () => {
     const handle = await provider.spawnQuickRun('/usr/bin/cloudflared', 'http://127.0.0.1:1');
     expect(handle.edge).toBeNull();
     expect(spawner.calls[0]?.args).not.toContain('--edge');
+  });
+});
+
+describe('parseCachedEdge', () => {
+  test('accepts a well-formed record and rejects the rest', () => {
+    expect(
+      parseCachedEdge(
+        JSON.stringify({
+          edgeAddrs: ['198.41.192.7:7844', 'x'],
+          resolvedAt: '2026-09-05T00:00:00.000Z',
+        })
+      )
+    ).toEqual({ edgeAddrs: ['198.41.192.7:7844'], resolvedAt: '2026-09-05T00:00:00.000Z' });
+    expect(parseCachedEdge(null)).toBeNull();
+    expect(parseCachedEdge('not json')).toBeNull();
+    expect(
+      parseCachedEdge(JSON.stringify({ edgeAddrs: [], resolvedAt: '2026-09-05T00:00:00.000Z' }))
+    ).toBeNull();
+    expect(
+      parseCachedEdge(JSON.stringify({ edgeAddrs: ['198.41.192.7:7844'], resolvedAt: 'nope' }))
+    ).toBeNull();
+    expect(parseCachedEdge(JSON.stringify({ resolvedAt: '2026-09-05T00:00:00.000Z' }))).toBeNull();
   });
 });

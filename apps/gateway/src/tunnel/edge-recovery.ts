@@ -17,11 +17,14 @@ export type EdgeRecoveryDeps = {
  * 托管进程连续 delayMs 内 0 连接且当前用系统解析：重新解析一次，若识别到 fake-IP 且拿到
  * DoH 地址，就带 --edge 静态列表重启一次；连接恢复前不再重复。
  */
+export type EdgeRecoveryResult = 'static' | 'system' | 'cancelled';
+
 export class TunnelEdgeRecovery {
   private degradedSince: number | null = null;
   private done = false;
   private inFlight = false;
   private generation = 0;
+  private attempts = 0;
 
   constructor(private readonly deps: EdgeRecoveryDeps) {}
 
@@ -29,6 +32,7 @@ export class TunnelEdgeRecovery {
   reset(): void {
     this.degradedSince = null;
     this.done = false;
+    this.attempts = 0;
     this.generation += 1;
   }
 
@@ -60,27 +64,45 @@ export class TunnelEdgeRecovery {
     return Math.round((now - (this.degradedSince ?? now)) / 1000);
   }
 
-  private async restartWithStaticEdge(token: EdgeRecoveryToken): Promise<void> {
+  private async restartWithStaticEdge(
+    token: EdgeRecoveryToken,
+    attempt: number
+  ): Promise<EdgeRecoveryResult> {
     const edge = await this.deps.resolveEdge();
-    if (token.cancelled) return;
-    if (!edge || edge.mode !== 'static' || edge.edgeAddrs.length === 0) return;
+    if (token.cancelled) return 'cancelled';
+    if (!edge || edge.mode !== 'static' || edge.edgeAddrs.length === 0) {
+      this.log(attempt, `result=system degraded=${this.degradedSeconds()}s`, edge?.lastError);
+      return 'system';
+    }
     this.done = true;
-    this.deps.warn(
-      `[tunnel] restarting cloudflared with static edge after ${this.degradedSeconds()}s without edge connections: ${edge.edgeAddrs.join(',')}`
+    this.log(
+      attempt,
+      `result=static degraded=${this.degradedSeconds()}s edge=${edge.edgeAddrs.join(',')}`
     );
     await this.deps.restart(edge, token);
-    if (token.cancelled) return;
+    if (token.cancelled) return 'cancelled';
     this.degradedSince = null;
+    return 'static';
   }
 
+  private log(attempt: number, detail: string, error?: string | null): void {
+    this.deps.warn(
+      `[tunnel] edge recovery attempt=${attempt} ${detail}${error ? ` error=${error}` : ''}`
+    );
+  }
+
+  /** 每次轮询只要仍处于降级就再试一次，并且每次都留一行日志（成功、失败、被取消都算）。 */
   async maybeRecover(connector: TunnelConnectorStatus): Promise<void> {
     if (!this.ready(connector)) return;
     this.inFlight = true;
+    this.attempts += 1;
+    const attempt = this.attempts;
     const token = this.token(this.generation);
     try {
-      await this.restartWithStaticEdge(token);
+      const result = await this.restartWithStaticEdge(token, attempt);
+      if (result === 'cancelled') this.log(attempt, 'result=cancelled');
     } catch (error) {
-      this.deps.warn(`[tunnel] edge recovery failed: ${String(error)}`);
+      this.log(attempt, 'result=error', String(error));
     } finally {
       this.inFlight = false;
     }

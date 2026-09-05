@@ -47,7 +47,9 @@ import {
   probeConnector,
   readLogTail,
 } from './connector-health';
+import { ConnectorPollLoop } from './connector-poll';
 import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
+import { gatewayKvEdgeCache } from './edge-cache';
 import { type EdgeRecoveryToken, TunnelEdgeRecovery } from './edge-recovery';
 import { resolveEdge } from './edge-resolver';
 import {
@@ -187,8 +189,7 @@ export class TunnelManager {
   private readonly edgeRecovery: TunnelEdgeRecovery;
   private readonly connectorPollMs: number;
   private readonly scanDefaultMetrics: boolean;
-  private connectorPollGen = 0;
-  private connectorPolling = false;
+  private readonly connectorPoll: ConnectorPollLoop;
   private connectorProbeInFlight: Promise<TunnelConnectorStatus> | null = null;
   private logTailCache: { at: number; path: string; lines: string[] } | null = null;
   private loginEnforcedFn: () => boolean;
@@ -268,7 +269,12 @@ export class TunnelManager {
       opts.resolveEdge ??
       (config.isTest
         ? async () => null
-        : () => resolveEdge({ fetchImpl: this.fetchImpl, now: this.now }));
+        : () =>
+            resolveEdge({
+              fetchImpl: this.fetchImpl,
+              now: this.now,
+              cache: gatewayKvEdgeCache(),
+            }));
     this.edgeRecovery = new TunnelEdgeRecovery({
       now: () => this.now(),
       delayMs: opts.edgeRecoveryDelayMs ?? EDGE_RECOVERY_DELAY_MS,
@@ -277,6 +283,16 @@ export class TunnelManager {
       canRestart: () => Boolean(this.lastStartOpts) && this.isManagedProcessActive(),
       restart: (edge, token) => this.restartWithEdge(edge, token),
       warn: (message) => this.warn(message),
+    });
+    this.connectorPoll = new ConnectorPollLoop({
+      intervalMs: this.connectorPollMs,
+      sleep: (ms) => this.sleep(ms),
+      shouldProbe: () => this.shouldProbeConnector(),
+      probe: () => this.probeAndStoreConnector(),
+      onSample: async (connector) => {
+        if (this.safePersisted().externallyManaged) return;
+        await this.edgeRecovery.maybeRecover(connector);
+      },
     });
     const spawner: Spawner = opts.spawner ?? bunSpawner;
     this.provider = new CloudflaredProvider(
@@ -626,7 +642,7 @@ export class TunnelManager {
       this.lastExternal = await this.externalDetector.detect(opts);
       await this.refreshExternalLogTail();
       if (opts?.force) await this.probeAndStoreConnector();
-      this.syncConnectorPoll();
+      this.connectorPoll.sync();
     } catch (error) {
       if (opts?.force) throw error;
       this.lastExternal = { ...EMPTY_EXTERNAL };
@@ -1213,9 +1229,13 @@ export class TunnelManager {
     this.supervisor.publicUrl = null;
     await this.supervisor.start(this.lastStartOpts);
     this.lastEdge = this.supervisor.edge;
-    await this.waitUntilRunning();
-    await this.probeAndStoreConnector();
-    this.syncConnectorPoll();
+    try {
+      await this.waitUntilRunning();
+    } finally {
+      // 起不来（fake-IP 下永远 0 连接）也要开轮询，否则边缘自愈永远不会被触发
+      await this.probeAndStoreConnector().catch(() => {});
+      this.connectorPoll.sync();
+    }
   }
 
   private processState(persisted: TunnelPersisted): TunnelProcessState {
@@ -1258,7 +1278,8 @@ export class TunnelManager {
   private shouldProbeConnector(): boolean {
     const persisted = this.safePersisted();
     if (persisted.externallyManaged) return this.lastExternal.running;
-    return processUp(this.supervisor.state) || this.supervisor.state === 'starting';
+    // 进程活着就该探：注册超时后 state 会停在 starting / error，但 cloudflared 仍在跑
+    return this.isManagedProcessActive() || this.supervisor.state === 'starting';
   }
 
   private isConnectorStale(): boolean {
@@ -1270,40 +1291,10 @@ export class TunnelManager {
     return this.now() - at >= this.connectorPollMs;
   }
 
-  private stopConnectorPoll(): void {
-    this.connectorPollGen += 1;
-    this.connectorPolling = false;
-  }
-
   private resetConnector(): void {
-    this.stopConnectorPoll();
+    this.connectorPoll.stop();
     this.connectorProbeInFlight = null;
     this.lastConnector = { ...EMPTY_CONNECTOR };
-  }
-
-  private syncConnectorPoll(): void {
-    if (this.connectorPollMs <= 0 || !this.shouldProbeConnector()) {
-      this.stopConnectorPoll();
-      return;
-    }
-    if (this.connectorPolling) return;
-    this.connectorPolling = true;
-    this.connectorPollGen += 1;
-    const gen = this.connectorPollGen;
-    void this.connectorPollLoop(gen).finally(() => {
-      if (this.connectorPollGen === gen) this.connectorPolling = false;
-    });
-  }
-
-  private async connectorPollLoop(gen: number): Promise<void> {
-    while (gen === this.connectorPollGen) {
-      await this.sleep(this.connectorPollMs);
-      if (gen !== this.connectorPollGen) break;
-      if (!this.shouldProbeConnector()) break;
-      const connector = await this.probeAndStoreConnector();
-      if (gen !== this.connectorPollGen) break;
-      if (!this.safePersisted().externallyManaged) await this.edgeRecovery.maybeRecover(connector);
-    }
   }
 
   private connectorHint(connector: TunnelConnectorStatus = this.lastConnector): string {
@@ -1354,11 +1345,11 @@ export class TunnelManager {
   }
 
   private async runConnectorProbe(): Promise<TunnelConnectorStatus> {
-    const gen = this.connectorPollGen;
+    const gen = this.connectorPoll.generation;
     const pid = this.supervisor.pid;
     const startedAt = this.supervisor.startedAt;
     const commit = (next: TunnelConnectorStatus): TunnelConnectorStatus => {
-      if (gen !== this.connectorPollGen) return this.lastConnector;
+      if (gen !== this.connectorPoll.generation) return this.lastConnector;
       if (pid !== this.supervisor.pid || startedAt !== this.supervisor.startedAt) {
         return this.lastConnector;
       }
