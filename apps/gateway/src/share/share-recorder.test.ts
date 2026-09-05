@@ -235,19 +235,19 @@ describe('ShareRecorder', () => {
     await harness.recorder.stop();
   });
 
-  test('recordInput / recordResize 只记 window 内 pane', async () => {
+  test('recordInput / recordResize 不因 pane 尚未同步而丢失（作用域由 ws 层保证）', async () => {
     const harness = makeHarness(snapshot({ '@1': ['%1'] }));
     await harness.recorder.start();
     harness.recorder.recordInput('%1', new TextEncoder().encode('ls\r'));
-    harness.recorder.recordInput('%9', new TextEncoder().encode('nope'));
     harness.recorder.recordInput('%1', new Uint8Array(0));
+    harness.recorder.recordInput('%9', new TextEncoder().encode('late'));
     harness.recorder.recordResize('%1', 120, 40);
-    harness.recorder.recordResize('%9', 10, 10);
     harness.recorder.flush();
     const kinds = harness.entries.map((entry) => entry.kind);
-    expect(kinds).toEqual(['checkpoint', 'in', 'resize']);
+    expect(kinds).toEqual(['checkpoint', 'in', 'in', 'resize']);
     expect(decode(harness.entries[1])).toBe('ls\r');
-    expect(harness.entries[2]).toMatchObject({ cols: 120, rows: 40 });
+    expect(harness.entries[2]).toMatchObject({ paneId: '%9' });
+    expect(harness.entries[3]).toMatchObject({ cols: 120, rows: 40 });
     await harness.recorder.stop();
   });
 

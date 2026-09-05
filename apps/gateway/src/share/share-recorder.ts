@@ -129,12 +129,14 @@ export class ShareRecorder {
   }
 
   recordInput(paneId: string, bytes: Uint8Array): void {
-    if (this.stopped || !this.panes.has(paneId) || bytes.byteLength === 0) return;
+    if (this.stopped || bytes.byteLength === 0) return;
+    this.trackPane(paneId);
     this.queue.push({ at: this.deps.now(), kind: 'in', paneId, data: new Uint8Array(bytes) });
   }
 
   recordResize(paneId: string, cols: number, rows: number): void {
-    if (this.stopped || !this.panes.has(paneId)) return;
+    if (this.stopped) return;
+    this.trackPane(paneId);
     this.queue.push({
       at: this.deps.now(),
       kind: 'resize',
@@ -143,6 +145,11 @@ export class ShareRecorder {
       cols,
       rows,
     });
+  }
+
+  private trackPane(paneId: string): void {
+    if (this.panes.has(paneId)) return;
+    void this.sync();
   }
 
   flush(): void {

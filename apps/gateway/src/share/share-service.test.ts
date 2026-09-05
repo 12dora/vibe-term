@@ -108,7 +108,7 @@ describe('create', () => {
     expect(result.share.url).toBe(`https://hub.example.com/n/node-1/s/${result.share.id}`);
   });
 
-  test('口令过短 / 窗口不存在 / 地址非公网都被拒', async () => {
+  test('口令过短 / 窗口不存在 / 地址非法都被拒', async () => {
     const service = makeService();
     await expect(
       service.create({
@@ -132,7 +132,7 @@ describe('create', () => {
         windowId: '@1',
         password: 'secret123',
         expiresInMs: null,
-        origin: 'http://192.168.1.9:9663',
+        origin: 'not a url',
       })
     ).resolves.toEqual({ ok: false, code: 'SHARE_ORIGIN_INVALID' });
   });
@@ -353,7 +353,7 @@ describe('设置与地址', () => {
     const service = makeService();
     expect(service.updateSettings({ logRetentionDays: -5 }).logRetentionDays).toBe(0);
     expect(service.updateSettings({ logMaxBytes: 1 }).logMaxBytes).toBe(1024);
-    expect(service.updateSettings({ defaultOrigin: 'http://localhost' }).defaultOrigin).toBeNull();
+    expect(service.updateSettings({ defaultOrigin: 'not a url' }).defaultOrigin).toBeNull();
     const saved = service.updateSettings({
       recordLogs: false,
       defaultOrigin: 'https://custom.example.com/',

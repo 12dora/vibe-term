@@ -8,7 +8,6 @@ import {
   type ShareScope,
   type ShareSettings,
   buildShareUrl,
-  isPublicShareOrigin,
   normalizeShareOrigin,
 } from '@tmex/shared/share';
 import { getDeviceById } from '../db';
@@ -141,10 +140,10 @@ class ShareServiceImpl implements ShareService {
     if (!window) return { ok: false, code: 'SHARE_WINDOW_NOT_FOUND' };
 
     const context = this.originContext();
-    const origin = normalizeShareOrigin(input.origin ?? '') ?? context.candidates[0]?.url ?? null;
-    if (!origin || !isPublicShareOrigin(origin)) {
-      return { ok: false, code: 'SHARE_ORIGIN_INVALID' };
-    }
+    const origin = input.origin
+      ? normalizeShareOrigin(input.origin)
+      : (context.candidates[0]?.url ?? null);
+    if (!origin) return { ok: false, code: 'SHARE_ORIGIN_INVALID' };
 
     const settings = this.store.getSettings();
     const now = this.now();

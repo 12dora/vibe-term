@@ -1,4 +1,4 @@
-import { isPublicShareOrigin, normalizeShareOrigin } from '@tmex/shared/share';
+import { normalizeShareOrigin } from '@tmex/shared/share';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import type { ShareRecorderRuntime } from './share-recorder';
 import { SHARE_ACCESS_TTL_MS } from './share-token';
@@ -15,8 +15,7 @@ export function clampInt(value: number, min: number, max: number, fallback: numb
 
 export function normalizeDefaultOrigin(value: string | null): string | null {
   if (!value) return null;
-  const normalized = normalizeShareOrigin(value);
-  return normalized && isPublicShareOrigin(normalized) ? normalized : null;
+  return normalizeShareOrigin(value);
 }
 
 export function defaultAcquireRuntime(deviceId: string): Promise<ShareRecorderRuntime> {

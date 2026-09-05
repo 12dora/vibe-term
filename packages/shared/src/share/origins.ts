@@ -123,13 +123,14 @@ export function normalizeShareOrigin(url: string): string | null {
   return `${parsed.origin}${path}`;
 }
 
-/** 按 kind 预设优先级排序并过滤掉非公网地址；同 kind 保持传入顺序，重复地址去重。 */
+/** 按 kind 预设优先级排序并过滤掉非公网地址（用户显式指定的 custom 地址不过滤）；同 kind 保持传入顺序，重复地址去重。 */
 export function rankShareOrigins(candidates: ShareOriginCandidate[]): ShareOriginCandidate[] {
   const seen = new Set<string>();
   const kept: Array<{ candidate: ShareOriginCandidate; index: number }> = [];
   candidates.forEach((candidate, index) => {
     const normalized = normalizeShareOrigin(candidate.url);
-    if (!normalized || !isPublicShareOrigin(normalized)) return;
+    if (!normalized) return;
+    if (candidate.kind !== 'custom' && !isPublicShareOrigin(normalized)) return;
     if (seen.has(normalized)) return;
     seen.add(normalized);
     kept.push({ candidate: { ...candidate, url: normalized }, index });
