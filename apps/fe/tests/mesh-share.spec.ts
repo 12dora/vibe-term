@@ -96,9 +96,9 @@ test('mesh: a shared window is reachable through the hub with only that window v
     await recipient.locator('.xterm').first().click();
     await recipient.keyboard.type(`echo ${marker}`);
     await recipient.keyboard.press('Enter');
-    await expect.poll(() => readTerminalBuffer(recipient as Page), { timeout: 30_000 }).toContain(
-      marker
-    );
+    await expect
+      .poll(() => readTerminalBuffer(recipient as Page), { timeout: 30_000 })
+      .toContain(marker);
     expect(meshTmux(state.nodeTmuxSocket, `capture-pane -p -t ${sessionName}`)).toContain(marker);
     await expect.poll(() => readTerminalBuffer(page), { timeout: 30_000 }).toContain(marker);
 
@@ -115,7 +115,9 @@ test('mesh: a shared window is reachable through the hub with only that window v
       .poll(async () => (await listShares(page, nodeId)).active[0]?.viewers, { timeout: 15_000 })
       .toBe(1);
 
-    const revoke = await page.request.post(meshUrl(state, `/n/${nodeId}/api/share/${share.id}/revoke`));
+    const revoke = await page.request.post(
+      meshUrl(state, `/n/${nodeId}/api/share/${share.id}/revoke`)
+    );
     expect(revoke.ok(), await revoke.text()).toBeTruthy();
     await expect(recipient.getByTestId('share-ended')).toBeVisible({ timeout: 10_000 });
 
@@ -145,7 +147,9 @@ test('mesh: a shared window is reachable through the hub with only that window v
     await reopened.goto(share.url, { waitUntil: 'domcontentloaded' });
     await expect(reopened.getByTestId('share-ended')).toBeVisible({ timeout: 30_000 });
     await reopened.context().close();
-    const info = await page.request.get(meshUrl(state, `/n/${nodeId}/api/share-access/${share.id}`));
+    const info = await page.request.get(
+      meshUrl(state, `/n/${nodeId}/api/share-access/${share.id}`)
+    );
     expect(((await info.json()) as { state: string }).state).toBe('ended');
   } finally {
     await recipient?.context().close();
