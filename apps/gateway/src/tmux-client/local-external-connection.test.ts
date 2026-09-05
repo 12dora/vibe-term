@@ -2126,3 +2126,114 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     expect((connection as any).snapshotWindows.size).toBe(0);
   });
 });
+
+describe('控制模式下的输入流水线', () => {
+  async function connectControlMode(session: string) {
+    const fake = createFakeControlProcess();
+    const errors: Error[] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: (error) => {
+          errors.push(error);
+        },
+        onClose: () => {},
+      },
+      {
+        enableSubscription: true,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice(session),
+        run: createRunStub(session),
+        spawnControlClient: () => {
+          fake.pushStdout(`%begin 1 1 0\n%end 1 1 0\n%session-changed $1 ${session}\n`);
+          return fake.proc;
+        },
+      }
+    );
+    await connection.connect();
+
+    let blockId = 1000;
+    const sendKeys = () => fake.writtenData.filter((line) => line.startsWith('send-keys '));
+    const answer = (count: number, kind: 'end' | 'error' = 'end') => {
+      for (let i = 0; i < count; i += 1) {
+        const id = blockId++;
+        const flag = kind === 'error' ? 1 : 0;
+        fake.pushStdout(
+          kind === 'error'
+            ? `%begin 1 ${id} ${flag}\nno such pane\n%error 1 ${id} ${flag}\n`
+            : `%begin 1 ${id} ${flag}\n%end 1 ${id} ${flag}\n`
+        );
+      }
+    };
+    return { connection, fake, errors, sendKeys, answer };
+  }
+
+  test('32 KiB 粘贴一次写完全部 send-keys，只等一次回执', async () => {
+    const harness = await connectControlMode('tmex-paste');
+    const before = harness.sendKeys().length;
+
+    const paste = harness.connection.sendInput('%1', 'x'.repeat(32 * 1024));
+    const expected = (32 * 1024) / 256;
+    const written = await waitFor(() => {
+      const count = harness.sendKeys().length - before;
+      return count >= expected ? count : null;
+    });
+
+    // 一条回执都还没回，整段命令已经全部写出（逐块串行时这里只会有 1 条）
+    expect(written).toBe(expected);
+
+    harness.answer(expected);
+    await paste;
+    expect(harness.errors).toEqual([]);
+    harness.connection.disconnect();
+  });
+
+  test('粘贴与按键交错时保持写入顺序', async () => {
+    const harness = await connectControlMode('tmex-paste-order');
+    const before = harness.sendKeys().length;
+    const hexOf = () => harness.sendKeys().map((line) => line.trim().split(' ').slice(4).join(''));
+
+    const first = harness.connection.sendInput('%1', 'A');
+    const paste = harness.connection.sendInput('%1', 'BC'.repeat(300));
+    const last = harness.connection.sendInput('%1', 'Z');
+
+    await waitFor(() => (harness.sendKeys().length - before === 1 ? true : null));
+    harness.answer(1);
+    await first;
+
+    const pasteChunks = Math.ceil(600 / 256);
+    await waitFor(() => (harness.sendKeys().length - before === 1 + pasteChunks ? true : null));
+    harness.answer(pasteChunks);
+    await paste;
+
+    await waitFor(() => (harness.sendKeys().length - before === 2 + pasteChunks ? true : null));
+    harness.answer(1);
+    await last;
+
+    const written = hexOf().slice(before);
+    const bytes = Buffer.from(written.join(''), 'hex').toString();
+    expect(bytes).toBe(`A${'BC'.repeat(300)}Z`);
+    expect(harness.errors).toEqual([]);
+    harness.connection.disconnect();
+  });
+
+  test('中间一块失败时整段粘贴报错', async () => {
+    const harness = await connectControlMode('tmex-paste-fail');
+    const before = harness.sendKeys().length;
+
+    const paste = harness.connection.sendInput('%1', 'y'.repeat(768));
+    await waitFor(() => (harness.sendKeys().length - before === 3 ? true : null));
+
+    harness.answer(1);
+    harness.answer(1, 'error');
+    harness.answer(1);
+
+    await expect(paste).rejects.toThrow(/no such pane/);
+    expect(harness.errors.map((error) => error.message)).toContain('no such pane');
+    harness.connection.disconnect();
+  });
+});

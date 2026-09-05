@@ -1,16 +1,33 @@
-// 重连退避：指数退避 + 尝试次数上限，定时器与计数集中在此。
+// 重连退避：指数退避 + ±50% 抖动，定时器与计数集中在此。
+// 缺省不设尝试次数上限：弱网下客户端应一直以封顶间隔重试，只有协议级 fatal、
+// 会话失效（4401）或宿主显式关闭才停。
 
 export interface ReconnectControllerOptions {
-  /** 首次退避基数；第 n 次退避为 delayMs * 2^(n-1) */
+  /** 首次退避基数；第 n 次退避为 delayMs * 2^(n-1) 再乘抖动 */
   delayMs: number;
-  maxAttempts: number;
+  /** 尝试次数上限，缺省无上限 */
+  maxAttempts?: number;
   /** 退避上限，缺省 30s */
   maxDelayMs?: number;
   onReconnect: () => void;
   onSchedule?: (info: { attempt: number; delayMs: number }) => void;
+  /** 抖动随机源（仅测试注入），缺省 Math.random */
+  random?: () => number;
 }
 
 const DEFAULT_MAX_DELAY_MS = 30000;
+
+/** 指数退避 + [0.5, 1) 抖动；`attempt` 从 1 起算。 */
+export function reconnectDelayMs(
+  attempt: number,
+  minMs: number,
+  maxMs: number,
+  random: () => number = Math.random
+): number {
+  const exp = Math.min(maxMs, minMs * 2 ** Math.max(0, attempt - 1));
+  const jitter = 0.5 + random() * 0.5;
+  return Math.min(maxMs, Math.floor(exp * jitter));
+}
 
 export class ReconnectController {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -23,7 +40,7 @@ export class ReconnectController {
   }
 
   canRetry(): boolean {
-    return this.attempts < this.options.maxAttempts;
+    return this.attempts < (this.options.maxAttempts ?? Number.POSITIVE_INFINITY);
   }
 
   isPending(): boolean {
@@ -35,9 +52,11 @@ export class ReconnectController {
     if (this.timer) return false;
 
     this.attempts += 1;
-    const delayMs = Math.min(
-      this.options.delayMs * 2 ** (this.attempts - 1),
-      this.options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS
+    const delayMs = reconnectDelayMs(
+      this.attempts,
+      this.options.delayMs,
+      this.options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS,
+      this.options.random
     );
     this.options.onSchedule?.({ attempt: this.attempts, delayMs });
 

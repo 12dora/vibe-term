@@ -1,60 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@tmex/shared';
-import { BorshWebSocketClient, type WebSocketLike } from './client';
+import { BorshWebSocketClient } from './client';
+import { type BinaryFakeSocket, createFakeSocket, helloFrame } from './test-fakes';
 import { WebSocketGatewayTransport } from './websocket-transport';
 
-class FakeSocket implements WebSocketLike {
-  readyState = 0;
-  binaryType: 'blob' | 'arraybuffer' = 'blob';
-  onopen: ((event?: unknown) => void) | null = null;
-  onmessage: ((event: { data: ArrayBuffer | string }) => void) | null = null;
-  onclose: ((event?: unknown) => void) | null = null;
-  onerror: ((event?: unknown) => void) | null = null;
-  readonly sent: Uint8Array[] = [];
-
-  send(data: ArrayBufferLike | ArrayBufferView | string): void {
-    if (typeof data === 'string') throw new Error('unexpected text frame');
-    this.sent.push(
-      ArrayBuffer.isView(data)
-        ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice()
-        : new Uint8Array(data).slice()
-    );
-  }
-
-  close(): void {
-    this.readyState = 3;
-  }
-
-  open(): void {
-    this.readyState = 1;
-    this.onopen?.();
-  }
-
-  deliver(frame: Uint8Array): void {
-    this.onmessage?.({ data: frame.slice().buffer });
-  }
-}
-
 const CANONICAL = [GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1];
-
-function hello(
-  capabilities: string[],
-  maxFrameBytes = 1024 * 1024,
-  serverVersion = '1.2.0'
-): Uint8Array {
-  return wsBorsh.encodeEnvelope(
-    wsBorsh.KIND_HELLO_S2C,
-    wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
-      serverImpl: 'tmex-gateway',
-      serverVersion,
-      selectedVersion: 1,
-      maxFrameBytes,
-      heartbeatIntervalMs: 60_000,
-      capabilities,
-    }),
-    1
-  );
-}
+/** 本套用例统一的 HELLO 基线：新版网关 + 60s 心跳。 */
+const HELLO_BASE = { serverVersion: '1.2.0', heartbeatIntervalMs: 60_000 } as const;
 
 function nodeTooOld(nodeId: string, version: string): Uint8Array {
   return wsBorsh.encodeEnvelope(
@@ -70,7 +22,7 @@ function nodeTooOld(nodeId: string, version: string): Uint8Array {
 }
 
 function createHarness() {
-  const socket = new FakeSocket();
+  const socket = createFakeSocket({ binary: true });
   const client = new BorshWebSocketClient({
     url: 'ws://example.test/ws',
     socketFactory: () => socket,
@@ -137,7 +89,7 @@ function stubDocument(): {
   };
 }
 
-function businessKinds(socket: FakeSocket): number[] {
+function businessKinds(socket: BinaryFakeSocket): number[] {
   return socket.sent
     .map((frame) => wsBorsh.decodeEnvelope(frame).kind)
     .filter((kind) => kind !== wsBorsh.KIND_HELLO_C2S && kind !== wsBorsh.KIND_PING);
@@ -183,7 +135,7 @@ describe('canonical state capability gate', () => {
       })
     ).toBe('queued');
     socket.open();
-    socket.deliver(hello(CANONICAL));
+    socket.deliver(helloFrame({ ...HELLO_BASE, capabilities: CANONICAL }));
 
     expect(client.stateFeedMode).toBe('canonical');
     expect(transport.stateFeedMode).toBe('canonical');
@@ -212,7 +164,7 @@ describe('canonical state capability gate', () => {
       paneIds: ['%1'],
     });
     socket.open();
-    socket.deliver(hello([]));
+    socket.deliver(helloFrame(HELLO_BASE));
 
     expect(client.stateFeedMode).toBe('unsupported');
     expect(transport.capabilities.atomicScreen).toBe(false);
@@ -233,7 +185,14 @@ describe('canonical state capability gate', () => {
   test('服务端版本低于 1.1.23 时即使播报能力也拒建 canonical 会话', () => {
     const { socket, client, transport, tooOld } = createHarness();
     socket.open();
-    socket.deliver(hello(CANONICAL, 1024 * 1024, '1.1.22'));
+    socket.deliver(
+      helloFrame({
+        ...HELLO_BASE,
+        capabilities: CANONICAL,
+        maxFrameBytes: 1024 * 1024,
+        serverVersion: '1.1.22',
+      })
+    );
 
     expect(client.stateFeedMode).toBe('unsupported');
     expect(tooOld).toEqual([
@@ -248,11 +207,15 @@ describe('canonical state capability gate', () => {
   });
 
   test('同一网关重连后不再重复弹「版本过低」，升级到 canonical 后重新计数', () => {
-    const sockets = [new FakeSocket(), new FakeSocket(), new FakeSocket()];
+    const sockets = [
+      createFakeSocket({ binary: true }),
+      createFakeSocket({ binary: true }),
+      createFakeSocket({ binary: true }),
+    ];
     let socketIndex = 0;
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
-      socketFactory: () => sockets[socketIndex++] as FakeSocket,
+      socketFactory: () => sockets[socketIndex++] as BinaryFakeSocket,
       heartbeatIntervalMs: 60_000,
     });
     const transport = new WebSocketGatewayTransport(client);
@@ -262,16 +225,20 @@ describe('canonical state capability gate', () => {
     });
     transport.connect();
     sockets[0]?.open();
-    sockets[0]?.deliver(hello([], 1024 * 1024, '1.1.22'));
+    sockets[0]?.deliver(
+      helloFrame({ ...HELLO_BASE, maxFrameBytes: 1024 * 1024, serverVersion: '1.1.22' })
+    );
     client.reconnect();
     sockets[1]?.open();
-    sockets[1]?.deliver(hello([], 1024 * 1024, '1.1.22'));
+    sockets[1]?.deliver(
+      helloFrame({ ...HELLO_BASE, maxFrameBytes: 1024 * 1024, serverVersion: '1.1.22' })
+    );
     expect(tooOld).toEqual(['1.1.22']);
 
     // 对端升级到位后重新协商成 canonical：去重记忆清空，之后再退化仍会提示
     client.reconnect();
     sockets[2]?.open();
-    sockets[2]?.deliver(hello(CANONICAL));
+    sockets[2]?.deliver(helloFrame({ ...HELLO_BASE, capabilities: CANONICAL }));
     expect(tooOld).toEqual(['1.1.22']);
     transport.disconnect();
   });
@@ -285,7 +252,7 @@ describe('canonical state capability gate', () => {
       }
     });
     socket.open();
-    socket.deliver(hello(CANONICAL));
+    socket.deliver(helloFrame({ ...HELLO_BASE, capabilities: CANONICAL }));
     socket.deliver(
       wsBorsh.encodeEnvelope(
         wsBorsh.KIND_ERROR,
@@ -316,7 +283,7 @@ describe('canonical state capability gate', () => {
       }
     });
     socket.open();
-    socket.deliver(hello(CANONICAL));
+    socket.deliver(helloFrame({ ...HELLO_BASE, capabilities: CANONICAL }));
     const report = (nodeId: string, version: string) => socket.deliver(nodeTooOld(nodeId, version));
 
     report('aaaaaaaaaaaa', '1.1.22');
@@ -332,11 +299,11 @@ describe('canonical state capability gate', () => {
   });
 
   test('入口重新协商成 canonical 只清 gateway 那一条，节点记忆保留', () => {
-    const sockets = [new FakeSocket(), new FakeSocket()];
+    const sockets = [createFakeSocket({ binary: true }), createFakeSocket({ binary: true })];
     let socketIndex = 0;
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
-      socketFactory: () => sockets[socketIndex++] as FakeSocket,
+      socketFactory: () => sockets[socketIndex++] as BinaryFakeSocket,
       heartbeatIntervalMs: 60_000,
     });
     const transport = new WebSocketGatewayTransport(client);
@@ -346,14 +313,14 @@ describe('canonical state capability gate', () => {
     });
     transport.connect();
     sockets[0]?.open();
-    sockets[0]?.deliver(hello(CANONICAL));
+    sockets[0]?.deliver(helloFrame({ ...HELLO_BASE, capabilities: CANONICAL }));
     sockets[0]?.deliver(nodeTooOld('aaaaaaaaaaaa', '1.1.22'));
     expect(tooOld).toHaveLength(1);
 
     // 入口网络抖了一下又回到 canonical：节点没变过，不该再弹一次。
     client.reconnect();
     sockets[1]?.open();
-    sockets[1]?.deliver(hello(CANONICAL));
+    sockets[1]?.deliver(helloFrame({ ...HELLO_BASE, capabilities: CANONICAL }));
     sockets[1]?.deliver(nodeTooOld('aaaaaaaaaaaa', '1.1.22'));
     expect(tooOld).toHaveLength(1);
 
@@ -364,17 +331,17 @@ describe('canonical state capability gate', () => {
   });
 
   test('重连升级到 canonical 时沿用最近一次订阅意图', () => {
-    const sockets = [new FakeSocket(), new FakeSocket()];
+    const sockets = [createFakeSocket({ binary: true }), createFakeSocket({ binary: true })];
     let socketIndex = 0;
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
-      socketFactory: () => sockets[socketIndex++] as FakeSocket,
+      socketFactory: () => sockets[socketIndex++] as BinaryFakeSocket,
       heartbeatIntervalMs: 60_000,
     });
     const transport = new WebSocketGatewayTransport(client);
     transport.connect();
     sockets[0]?.open();
-    sockets[0]?.deliver(hello([]));
+    sockets[0]?.deliver(helloFrame(HELLO_BASE));
     transport.send({
       type: 'set-pane-subscriptions',
       deviceId: 'device-a',
@@ -390,7 +357,7 @@ describe('canonical state capability gate', () => {
 
     client.reconnect();
     sockets[1]?.open();
-    sockets[1]?.deliver(hello(CANONICAL));
+    sockets[1]?.deliver(helloFrame({ ...HELLO_BASE, capabilities: CANONICAL }));
 
     const canonicalFrame = sockets[1]?.sent
       .map((frame) => wsBorsh.decodeEnvelope(frame))
@@ -403,7 +370,7 @@ describe('canonical state capability gate', () => {
   });
 
   test('does not apply a pre-ready subscription that overflowed the typed queue', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket({ binary: true });
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => socket,
@@ -422,7 +389,7 @@ describe('canonical state capability gate', () => {
       })
     ).toBe('overflow');
     socket.open();
-    socket.deliver(hello(CANONICAL));
+    socket.deliver(helloFrame({ ...HELLO_BASE, capabilities: CANONICAL }));
 
     const canonicalFrame = socket.sent
       .map((frame) => wsBorsh.decodeEnvelope(frame))
@@ -437,7 +404,13 @@ describe('canonical state capability gate', () => {
   test('canonical frames use the effective max directly and never generic CHUNK', () => {
     const { socket, client, transport } = createHarness();
     socket.open();
-    socket.deliver(hello(CANONICAL, wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES));
+    socket.deliver(
+      helloFrame({
+        ...HELLO_BASE,
+        capabilities: CANONICAL,
+        maxFrameBytes: wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+      })
+    );
     const small = wsBorsh.encodeCanonicalCommandPayload({
       SetPaneSubscriptions: { generation: 9n, activePanes: [], hotPanes: [] },
     });
@@ -457,7 +430,7 @@ describe('canonical state capability gate', () => {
   test('尺寸命令不再走 legacy kind：没有 metadata 时排队等 canonical 目标', () => {
     const { socket, client, transport } = createHarness();
     socket.open();
-    socket.deliver(hello(CANONICAL));
+    socket.deliver(helloFrame({ ...HELLO_BASE, capabilities: CANONICAL }));
     expect(client.stateFeedMode).toBe('canonical');
 
     // 还没收到该设备的 canonical metadata：两条尺寸命令都进 canonical 待发队列
@@ -487,7 +460,13 @@ describe('canonical state capability gate', () => {
   test('协商到的帧上限撑不起 canonical feed 时同样判定为 unsupported', () => {
     const { socket, client, transport, tooOld } = createHarness();
     socket.open();
-    socket.deliver(hello(CANONICAL, wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES - 1));
+    socket.deliver(
+      helloFrame({
+        ...HELLO_BASE,
+        capabilities: CANONICAL,
+        maxFrameBytes: wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES - 1,
+      })
+    );
 
     expect(client.stateFeedMode).toBe('unsupported');
     expect(transport.capabilities.atomicScreen).toBe(false);

@@ -25,7 +25,7 @@ import {
   ExternalTmuxConnectionCore,
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
-import { encodeBytesToHexChunks } from './input-encoder';
+import { buildSendKeysCommands, pipelineSendKeys } from './input-encoder';
 import {
   CONTROL_RECONNECT_POLICY,
   type ControlReconnectHost,
@@ -455,19 +455,19 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
       return Promise.resolve();
     }
 
+    const commands = buildSendKeysCommands(paneId, data);
     const task = async () => {
-      for (const chunk of encodeBytesToHexChunks(data)) {
-        const control = this.controlProcess;
-        if (control) {
-          await this.controlCommands.execute(
-            (command) => control.write(command),
-            ['send-keys', '-H', '-t', paneId, ...chunk].join(' '),
-            { transform: () => undefined }
-          );
-        } else {
-          await this.runTmux(['send-keys', '-H', '-t', paneId, ...chunk]);
-        }
+      const control = this.controlProcess;
+      if (!control) {
+        for (const argv of commands) await this.runTmux(argv);
+        return;
       }
+      await pipelineSendKeys(commands, (command, timeoutMs) =>
+        this.controlCommands.execute((value) => control.write(value), command, {
+          transform: () => undefined,
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        })
+      );
     };
 
     const next = this.inputTransition.catch(() => undefined).then(task);

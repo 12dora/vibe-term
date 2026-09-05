@@ -1,51 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import { BorshWebSocketClient, type WebSocketLike } from './client';
+import { BorshWebSocketClient } from './client';
+import { type FakeSocket, createFakeSocket, helloFrame } from './test-fakes';
 import { WebSocketGatewayTransport } from './websocket-transport';
-
-class FakeSocket implements WebSocketLike {
-  readyState = 0;
-  binaryType: 'blob' | 'arraybuffer' = 'blob';
-  onopen: ((event?: unknown) => void) | null = null;
-  onmessage: ((event: { data: ArrayBuffer | string }) => void) | null = null;
-  onclose: ((event?: unknown) => void) | null = null;
-  onerror: ((event?: unknown) => void) | null = null;
-  readonly sent: Array<ArrayBufferLike | ArrayBufferView | string> = [];
-
-  send(data: ArrayBufferLike | ArrayBufferView | string): void {
-    this.sent.push(data);
-  }
-
-  close(): void {
-    this.readyState = 3;
-  }
-
-  open(): void {
-    this.readyState = 1;
-    this.onopen?.();
-  }
-
-  deliver(frame: Uint8Array): void {
-    this.onmessage?.({
-      data: frame.buffer.slice(
-        frame.byteOffset,
-        frame.byteOffset + frame.byteLength
-      ) as ArrayBuffer,
-    });
-  }
-}
-
-function helloS2CFrame(): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
-    serverImpl: 'tmex-gateway',
-    serverVersion: '0.1.0',
-    selectedVersion: 1,
-    maxFrameBytes: 1048576,
-    heartbeatIntervalMs: 5000,
-    capabilities: [],
-  });
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, payload, 1);
-}
 
 function connectingClient(
   socket: FakeSocket,
@@ -63,7 +20,7 @@ function connectingClient(
 
 function becomeReady(socket: FakeSocket): void {
   socket.open();
-  socket.deliver(helloS2CFrame());
+  socket.deliver(helloFrame());
 }
 
 function payloadKinds(socket: FakeSocket): number[] {
@@ -77,7 +34,7 @@ function payloadKinds(socket: FakeSocket): number[] {
 
 describe('未就绪待发队列', () => {
   test('小队列按入队顺序在 READY 时 flush，send 返回 queued', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = connectingClient(socket);
 
     expect(client.send(wsBorsh.KIND_TERM_INPUT, new Uint8Array([1]))).toBe('queued');
@@ -100,7 +57,7 @@ describe('未就绪待发队列', () => {
   });
 
   test('超过旧的 100 帧上限仍可排队（默认 2048）', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = connectingClient(socket);
     for (let i = 0; i < 101; i++) {
       expect(client.send(wsBorsh.KIND_TERM_INPUT, new Uint8Array([i & 0xff]))).toBe('queued');
@@ -112,7 +69,7 @@ describe('未就绪待发队列', () => {
   });
 
   test('字节预算溢出返回 overflow，并只派发一次 pending-overflow', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = connectingClient(socket, { maxPendingBytes: 16, maxPendingFrames: 32 });
     const overflows: Array<{ kind: number; droppedFrames: number }> = [];
     client.onPendingOverflow((info) => overflows.push(info));
@@ -129,7 +86,7 @@ describe('未就绪待发队列', () => {
   });
 
   test('有序输入 overflow 丢掉整段输入，控制帧仍会 flush', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = connectingClient(socket, { maxPendingBytes: 16, maxPendingFrames: 32 });
 
     expect(client.send(wsBorsh.KIND_DEVICE_CONNECT, new Uint8Array(4))).toBe('queued');
@@ -145,7 +102,7 @@ describe('未就绪待发队列', () => {
   });
 
   test('READY 后小帧 send 仍返回 sent', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = connectingClient(socket);
     becomeReady(socket);
     expect(client.send(wsBorsh.KIND_TERM_INPUT, new Uint8Array([9]))).toBe('sent');
@@ -153,7 +110,7 @@ describe('未就绪待发队列', () => {
   });
 
   test('transport.send 透出 overflow，并转发 pending-overflow 事件', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = connectingClient(socket, { maxPendingFrames: 1, maxPendingBytes: 4096 });
     const transport = new WebSocketGatewayTransport(client);
     const events: string[] = [];

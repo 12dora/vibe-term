@@ -15,7 +15,7 @@ import {
   ExternalTmuxConnectionCore,
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
-import { encodeBytesToHexChunks } from './input-encoder';
+import { buildSendKeysCommands, pipelineSendKeys } from './input-encoder';
 import { appendRollingTail, decodeRollingTail } from './local-external-connection';
 import {
   CONTROL_RECONNECT_POLICY,
@@ -112,30 +112,22 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
       return Promise.resolve();
     }
 
-    const writes: Promise<void>[] = [];
-    for (const chunk of encodeBytesToHexChunks(data)) {
-      const control = this.controlChannel;
-      if (control) {
-        writes.push(
-          this.controlCommands
-            .execute(
-              (command) => control.write(command),
-              ['send-keys', '-H', '-t', paneId, ...chunk].join(' '),
-              { transform: () => undefined, timeoutMs: 30_000 }
-            )
-            .then(() => undefined)
-            .catch((error) => {
-              this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
-              throw error;
-            })
-        );
-      } else {
-        writes.push(
-          this.runTmux(['send-keys', '-H', '-t', paneId, ...chunk]).then(() => undefined)
-        );
-      }
+    const commands = buildSendKeysCommands(paneId, data);
+    const control = this.controlChannel;
+    if (!control) {
+      return Promise.all(commands.map((argv) => this.runTmux(argv))).then(() => undefined);
     }
-    return Promise.all(writes).then(() => undefined);
+    return pipelineSendKeys(commands, (command) =>
+      this.controlCommands
+        .execute((value) => control.write(value), command, {
+          transform: () => undefined,
+          timeoutMs: this.getControlCommandTimeoutMs(),
+        })
+        .catch((error) => {
+          this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+          throw error;
+        })
+    );
   }
 
   protected resolveDefaultWorkingDir(): string {

@@ -12,6 +12,7 @@ import { getDefaultClientVersion, setDefaultClientVersion } from './client-versi
 import { notifyHandlers } from './handler-fanout';
 import { resolveHeartbeatCadence } from './heartbeat-cadence';
 import { type HeartbeatCadence, HeartbeatController } from './heartbeat-controller';
+import { NetworkWakeListeners } from './network-wake';
 import {
   DEFAULT_MAX_PENDING_BYTES,
   DEFAULT_MAX_PENDING_FRAMES,
@@ -94,7 +95,9 @@ const DEFAULT_OPTIONS: BorshClientOptions = {
   clientVersion: getDefaultClientVersion(),
   maxFrameBytes: 1048576, // 1MB
   reconnectDelayMs: 1000,
-  maxReconnectAttempts: 5,
+  // 弱网下不设上限：断网期间一直以封顶间隔（30s）重试，只有协议级 fatal、
+  // 会话失效（4401，宿主调 disconnect）或调用方显式关闭才停。
+  maxReconnectAttempts: Number.POSITIVE_INFINITY,
   heartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
   pongTimeoutMs: DEFAULT_PONG_TIMEOUT_MS,
   hiddenHeartbeatIntervalMs: DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS,
@@ -111,6 +114,7 @@ export interface BorshClientOptions {
   clientVersion: string;
   maxFrameBytes: number;
   reconnectDelayMs: number;
+  /** 自动重连尝试次数上限；缺省无上限（`Infinity`），仅测试需要收敛时才传 */
   maxReconnectAttempts: number;
   heartbeatIntervalMs: number;
   /** PING 之后等待 PONG 的上限，超时则关闭连接触发重连 */
@@ -186,6 +190,9 @@ export class BorshWebSocketClient {
   // visibilitychange
   private visibilityHandler: (() => void) | null = null;
   private lastVisibilityReconnectAt = 0;
+
+  // online / navigator.connection change
+  private readonly networkWake = new NetworkWakeListeners(() => this.wakeReconnect());
 
   // 协议级不可重试错误（对端版本低于 canonical v1.1 门槛）：重连只会原样再被拒一次，
   // 只有宿主升级或调用方显式 connect()/reconnect() 才有意义，故就地熄火。
@@ -332,6 +339,7 @@ export class BorshWebSocketClient {
   connect(): void {
     this.protocolFatal = false;
     this.setupVisibilityListener();
+    this.networkWake.install();
 
     if (this.ws?.readyState === WS_OPEN || this.ws?.readyState === WS_CONNECTING) {
       return;
@@ -401,6 +409,8 @@ export class BorshWebSocketClient {
       document.removeEventListener('visibilitychange', this.visibilityHandler);
       this.visibilityHandler = null;
     }
+
+    this.networkWake.dispose();
   }
 
   // ========== 消息处理 ==========
@@ -736,23 +746,34 @@ export class BorshWebSocketClient {
 
       this.heartbeat.clearPongTimeout();
 
-      if (this.state === 'CLOSED') {
-        if (this.protocolFatal) return;
-        const now = Date.now();
-        if (now - this.lastVisibilityReconnectAt < VISIBILITY_RECONNECT_THROTTLE_MS) return;
-        this.lastVisibilityReconnectAt = now;
-        this.reconnector.reset();
-        this.connect();
-      } else if (this.state === 'RECONNECT_BACKOFF') {
-        this.reconnector.reset();
-        this.connect();
-      } else if (this.state === 'READY') {
+      if (this.state === 'READY') {
         this.heartbeat.ping();
+        return;
       }
+      this.wakeReconnect();
     };
 
     document.addEventListener('visibilitychange', handler);
     this.visibilityHandler = handler;
+  }
+
+  /** 立即重连：清空退避计数后直接建连；CLOSED 态按节流放行。 */
+  private wakeReconnect(): void {
+    if (this.protocolFatal) return;
+
+    if (this.state === 'CLOSED') {
+      const now = Date.now();
+      if (now - this.lastVisibilityReconnectAt < VISIBILITY_RECONNECT_THROTTLE_MS) return;
+      this.lastVisibilityReconnectAt = now;
+      this.reconnector.reset();
+      this.connect();
+      return;
+    }
+
+    if (this.state === 'RECONNECT_BACKOFF') {
+      this.reconnector.reset();
+      this.connect();
+    }
   }
 
   // ========== 端点切换 ==========

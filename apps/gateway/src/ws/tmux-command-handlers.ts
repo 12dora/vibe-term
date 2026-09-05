@@ -59,11 +59,9 @@ export function handleTermPaste(
   const entry = host.connections.get(deviceId);
   if (!entry) return;
 
-  const chunkSize = 1024;
-  for (let i = 0; i < data.length; i += chunkSize) {
-    const chunk = data.slice(i, i + chunkSize);
-    entry.runtime.sendInput(paneId, chunk);
-  }
+  // 整段交给连接：tmux 命令仍按 send-keys 块切（见 buildSendKeysCommands），
+  // 但一段粘贴只等一次控制口往返，不再按 1024 字符逐块串行等回执。
+  entry.runtime.sendInput(paneId, data);
 }
 
 export function handleCreateWindow(

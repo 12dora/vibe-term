@@ -3,7 +3,7 @@ import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import { sessionStateStore } from './borsh/session-state';
 import { createGatewaySession, setupConnectionEntry } from './test-helpers';
-import type { TmuxCommandHost } from './tmux-command-handlers';
+import { type TmuxCommandHost, handleTermInput, handleTermPaste } from './tmux-command-handlers';
 import { handleCanonicalResize } from './tmux-geometry-handlers';
 import { handleTmuxSelect } from './tmux-selection-handlers';
 
@@ -224,5 +224,52 @@ describe('handleTmuxSelect wantHistory', () => {
     expect(fixture.resizePaneCalls).toEqual([]);
     expect(fixture.focusPaneCalls).toEqual([]);
     sessionStateStore.delete(ws);
+  });
+});
+
+describe('handleTermInput / handleTermPaste', () => {
+  function inputFixture() {
+    const inputs: Array<{ paneId: string; data: string }> = [];
+    const fixture = createHost();
+    const ws = createGatewaySession({ session: true });
+    setupConnectionEntry(
+      { connections: fixture.connections },
+      {
+        ws,
+        runtime: {
+          ...fixture.runtime,
+          sendInput(paneId: string, data: string) {
+            inputs.push({ paneId, data });
+          },
+        },
+        lastSnapshot: makeSnapshot(),
+      }
+    );
+    return { host: fixture.host, ws, inputs };
+  }
+
+  test('按键逐条透传', () => {
+    const { host, ws, inputs } = inputFixture();
+    handleTermInput(host, 'device-a', '%1', 'a');
+    handleTermInput(host, 'device-a', '%1', 'b');
+    expect(inputs).toEqual([
+      { paneId: '%1', data: 'a' },
+      { paneId: '%1', data: 'b' },
+    ]);
+    sessionStateStore.delete(ws);
+  });
+
+  test('粘贴整段一次交给连接，不再按 1024 字符切块', () => {
+    const { host, ws, inputs } = inputFixture();
+    const payload = 'p'.repeat(32 * 1024);
+    handleTermPaste(host, 'device-a', '%1', payload);
+    expect(inputs).toEqual([{ paneId: '%1', data: payload }]);
+    sessionStateStore.delete(ws);
+  });
+
+  test('设备不存在时不发输入', () => {
+    const fixture = createHost();
+    handleTermPaste(fixture.host, 'device-missing', '%1', 'x');
+    expect(fixture.flushCalls).toEqual([]);
   });
 });

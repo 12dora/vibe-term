@@ -1,5 +1,5 @@
 import { wsBorsh } from '@tmex/shared';
-import type { Carrier } from './carrier';
+import type { Carrier, CarrierSendResult } from './carrier';
 import { carrierKindOf, logGuardEvent } from './ws-backpressure-log';
 
 export const GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES = 1_048_576;
@@ -66,6 +66,80 @@ function toUint8Array(frame: string | BufferSource): Uint8Array {
     return new Uint8Array(frame);
   }
   return new Uint8Array(frame.buffer, frame.byteOffset, frame.byteLength);
+}
+
+type FrameStatus = CarrierSendResult | 'error' | 'unsent';
+
+interface BatchResult {
+  results: FrameStatus[];
+  bufferedAmount: number | null;
+}
+
+/** 去掉空洞并转成字节，保留每帧在原数组里的下标。 */
+function collectPayloads(frames: readonly (string | BufferSource)[]): {
+  indexes: number[];
+  payloads: Uint8Array[];
+} {
+  const indexes: number[] = [];
+  const payloads: Uint8Array[] = [];
+  for (let index = 0; index < frames.length; index += 1) {
+    const frame = frames[index];
+    if (frame === undefined) continue;
+    indexes.push(index);
+    payloads.push(toUint8Array(frame));
+  }
+  return { indexes, payloads };
+}
+
+function corkedBatch(
+  carrier: Carrier,
+  results: FrameStatus[],
+  indexes: readonly number[],
+  payloads: readonly Uint8Array[],
+  stopOnBackpressure: boolean
+): BatchResult {
+  try {
+    const batch = (carrier.sendMany as NonNullable<Carrier['sendMany']>).call(carrier, payloads, {
+      stopOnBackpressure,
+    });
+    for (let i = 0; i < batch.statuses.length; i += 1) {
+      const index = indexes[i];
+      const status = batch.statuses[i];
+      if (index !== undefined && status !== undefined) results[index] = status;
+    }
+    return { results, bufferedAmount: batch.bufferedAmount };
+  } catch {
+    const first = indexes[0];
+    if (first !== undefined) results[first] = 'error';
+    return { results, bufferedAmount: null };
+  }
+}
+
+function sequentialBatch(
+  carrier: Carrier,
+  results: FrameStatus[],
+  indexes: readonly number[],
+  payloads: readonly Uint8Array[],
+  priority: boolean,
+  stopOnBackpressure: boolean
+): BatchResult {
+  for (let i = 0; i < payloads.length; i += 1) {
+    const index = indexes[i] as number;
+    const bytes = payloads[i] as Uint8Array;
+    let status: CarrierSendResult;
+    try {
+      status = priority
+        ? (carrier.sendPriority as NonNullable<Carrier['sendPriority']>).call(carrier, bytes)
+        : carrier.send(bytes);
+    } catch {
+      results[index] = 'error';
+      break;
+    }
+    results[index] = status;
+    if (status === 'sent') continue;
+    if (stopOnBackpressure || status === 'closed' || status === 'rejected') break;
+  }
+  return { results, bufferedAmount: null };
 }
 
 export class WebSocketSendGuard {
@@ -141,36 +215,57 @@ export class WebSocketSendGuard {
       return 'dropped';
     }
 
+    const batch = this.deliver(carrier, frames, 'stream');
+    return this.settleStreamBatch(carrier, frames, batch);
+  }
+
+  /** 扫描批结果：第一个非 sent 的帧决定整批的去向（终止 / 进背压 / 全部送达）。 */
+  private settleStreamBatch(
+    carrier: Carrier,
+    frames: readonly (string | BufferSource)[],
+    batch: BatchResult
+  ): WebSocketSendStatus {
     for (let index = 0; index < frames.length; index += 1) {
       const frame = frames[index];
-      if (frame === undefined) {
-        continue;
-      }
+      if (frame === undefined) continue;
 
-      let status: ReturnType<Carrier['send']>;
-      try {
-        status = carrier.send(toUint8Array(frame));
-      } catch {
-        this.terminate(carrier, 'dropped_frame');
-        return 'dropped';
-      }
+      const status = batch.results[index];
+      if (status === undefined || status === 'unsent') break;
+      if (status === 'sent') continue;
 
       if (status === 'backpressure' || status === 'rejected') {
-        this.enterBackpressure(
-          carrier,
-          frame,
-          frames.slice(status === 'rejected' ? index : index + 1)
-        );
+        const skipped = frames.slice(status === 'rejected' ? index : index + 1);
+        this.enterBackpressure(carrier, frame, skipped, batch.bufferedAmount);
         return 'backpressured';
       }
 
-      if (status === 'closed') {
-        this.terminate(carrier, 'dropped_frame');
-        return 'dropped';
-      }
+      this.terminate(carrier, 'dropped_frame');
+      return 'dropped';
     }
 
     return 'sent';
+  }
+
+  /**
+   * 把一批帧交给载体：多帧且载体支持 `sendMany` 时整批走 cork（一次写出），
+   * 否则逐帧发。返回与 `frames` 等长的结果数组（未发出的位置为 `unsent`）。
+   * `stream` 模式首帧非 `sent` 即停发余下帧，与逐帧循环的丢帧语义一致；
+   * `priority` 模式只在 `closed`/`rejected` 时停。
+   */
+  private deliver(
+    carrier: Carrier,
+    frames: readonly (string | BufferSource)[],
+    mode: 'stream' | 'priority'
+  ): BatchResult {
+    const results: FrameStatus[] = frames.map(() => 'unsent');
+    const { indexes, payloads } = collectPayloads(frames);
+    const priority = mode === 'priority' && typeof carrier.sendPriority === 'function';
+    const stopOnBackpressure = mode === 'stream';
+
+    if (payloads.length > 1 && !priority && typeof carrier.sendMany === 'function') {
+      return corkedBatch(carrier, results, indexes, payloads, stopOnBackpressure);
+    }
+    return sequentialBatch(carrier, results, indexes, payloads, priority, stopOnBackpressure);
   }
 
   /**
@@ -187,30 +282,14 @@ export class WebSocketSendGuard {
       return 'dropped';
     }
 
-    const send = (bytes: Uint8Array) => {
-      if (typeof carrier.sendPriority === 'function') return carrier.sendPriority(bytes);
-      return carrier.send(bytes);
-    };
+    const { results } = this.deliver(carrier, frames, 'priority');
 
     for (let index = 0; index < frames.length; index += 1) {
-      const frame = frames[index];
-      if (frame === undefined) {
-        continue;
-      }
-
-      let status: ReturnType<Carrier['send']>;
-      try {
-        status = send(toUint8Array(frame));
-      } catch {
-        return 'dropped';
-      }
-
-      if (status === 'closed') {
-        return 'dropped';
-      }
-      if (status === 'rejected') {
-        return 'backpressured';
-      }
+      if (frames[index] === undefined) continue;
+      const status = results[index];
+      if (status === undefined || status === 'unsent') break;
+      if (status === 'error' || status === 'closed') return 'dropped';
+      if (status === 'rejected') return 'backpressured';
     }
 
     return 'sent';
@@ -292,10 +371,11 @@ export class WebSocketSendGuard {
   private enterBackpressure(
     carrier: Carrier,
     frame: string | BufferSource,
-    skipped: readonly (string | BufferSource)[]
+    skipped: readonly (string | BufferSource)[],
+    bufferedAfterBatch: number | null = null
   ): BackpressureState {
     const frameBytes = frameByteLength(frame);
-    const bufferedBefore = this.bufferedAmountOf(carrier);
+    const bufferedBefore = bufferedAfterBatch ?? this.bufferedAmountOf(carrier);
     const skippedBytes = skipped.reduce((sum, item) => sum + frameByteLength(item), 0);
     const state: BackpressureState = {
       skippedFrame: skipped.length > 0,

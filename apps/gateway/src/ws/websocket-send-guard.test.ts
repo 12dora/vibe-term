@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import type { CarrierSendResult } from './carrier';
+import type { Carrier, CarrierSendResult } from './carrier';
 import { createFakeCarrier } from './test-helpers';
 import {
   GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES,
@@ -429,5 +429,162 @@ describe('WebSocketSendGuard', () => {
     expect(target.terminateCalls()).toBe(1);
     expect(reasons).toEqual(['backpressure_gap']);
     expect(guard.sendPriorityFrames(target.carrier, [new Uint8Array([9])])).toBe('dropped');
+  });
+});
+
+/** 支持 cork 批发送的载体：批内逐帧记录，遇到非 sent 按 stopOnBackpressure 停发。 */
+function createCorkCarrier(statuses: Array<CarrierSendResult | 'throw'>, bufferedAmount = 37) {
+  const base = createCarrier(statuses, bufferedAmount);
+  let batches = 0;
+  const carrier: Carrier = Object.assign(base.carrier, {
+    sendMany(frames: readonly Uint8Array[], options?: { stopOnBackpressure?: boolean }) {
+      batches += 1;
+      const stop = options?.stopOnBackpressure ?? true;
+      const out: CarrierSendResult[] = [];
+      for (const bytes of frames) {
+        const status = base.carrier.send(bytes);
+        out.push(status);
+        if (status === 'sent') continue;
+        if (stop || status === 'closed' || status === 'rejected') break;
+      }
+      return { statuses: out, bufferedAmount };
+    },
+  });
+  return { ...base, carrier, batches: () => batches };
+}
+
+describe('WebSocketSendGuard 批量 cork 路径', () => {
+  test('多帧走一次 sendMany，单帧仍走逐帧 send', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const target = createCorkCarrier(['sent']);
+
+    expect(
+      guard.sendFramesStatus(target.carrier, [
+        new Uint8Array([1]),
+        new Uint8Array([2]),
+        new Uint8Array([3]),
+      ])
+    ).toBe('sent');
+    expect(target.batches()).toBe(1);
+    expect(target.sendCalls()).toBe(3);
+    expect(target.sent.map((frame) => frame[0])).toEqual([1, 2, 3]);
+
+    expect(guard.sendFramesStatus(target.carrier, [new Uint8Array([4])])).toBe('sent');
+    expect(target.batches()).toBe(1);
+    expect(target.sendCalls()).toBe(4);
+  });
+
+  test('批内背压：后续帧不发出，drain 后按 skipped 语义补 SourceGap', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const target = createCorkCarrier(['sent', 'backpressure', 'sent']);
+
+    expect(
+      guard.sendFramesStatus(target.carrier, [paneDataFrame(1), paneDataFrame(2), paneDataFrame(3)])
+    ).toBe('backpressured');
+    expect(target.sendCalls()).toBe(2);
+    expect(guard.isBackpressured(target.carrier)).toBe(true);
+
+    guard.handleDrain(target.carrier);
+    expect(target.terminateCalls()).toBe(0);
+    expect(target.sent.filter(isStreamPaneGap)).toHaveLength(1);
+  });
+
+  test('批内 rejected 时该帧本身也算未送达（丢帧不可重建则终止）', () => {
+    const reasons: string[] = [];
+    const guard = new WebSocketSendGuard({
+      timeoutMs: 1000,
+      onTerminate: (reason) => reasons.push(reason),
+    });
+    const target = createCorkCarrier(['sent', 'rejected', 'sent']);
+
+    expect(
+      guard.sendFramesStatus(target.carrier, [
+        new Uint8Array([1]),
+        new Uint8Array([2]),
+        new Uint8Array([3]),
+      ])
+    ).toBe('backpressured');
+
+    guard.handleDrain(target.carrier);
+    expect(reasons).toEqual(['backpressure_gap']);
+  });
+
+  test('批内 closed 与逐帧路径一样立即终止', () => {
+    const reasons: string[] = [];
+    const guard = new WebSocketSendGuard({
+      timeoutMs: 1000,
+      onTerminate: (reason) => reasons.push(reason),
+    });
+    const target = createCorkCarrier(['sent', 'closed']);
+
+    expect(guard.sendFramesStatus(target.carrier, [new Uint8Array([1]), new Uint8Array([2])])).toBe(
+      'dropped'
+    );
+    expect(reasons).toEqual(['dropped_frame']);
+    expect(target.terminateCalls()).toBe(1);
+  });
+
+  test('缓冲已经越过硬上限时整批一帧不发，直接终止', () => {
+    const reasons: string[] = [];
+    const guard = new WebSocketSendGuard({
+      timeoutMs: 1000,
+      onTerminate: (reason) => reasons.push(reason),
+    });
+    const target = createCorkCarrier(['sent'], GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES);
+
+    expect(guard.sendFramesStatus(target.carrier, [new Uint8Array([1]), new Uint8Array([2])])).toBe(
+      'dropped'
+    );
+    expect(target.batches()).toBe(0);
+    expect(target.sendCalls()).toBe(0);
+    expect(reasons).toEqual(['backpressure_gap']);
+  });
+
+  test('sendMany 抛出时按 dropped_frame 终止', () => {
+    const reasons: string[] = [];
+    const guard = new WebSocketSendGuard({
+      timeoutMs: 1000,
+      onTerminate: (reason) => reasons.push(reason),
+    });
+    const base = createCarrier(['sent']);
+    const carrier: Carrier = Object.assign(base.carrier, {
+      sendMany(): never {
+        throw new Error('cork failed');
+      },
+    });
+
+    expect(guard.sendFramesStatus(carrier, [new Uint8Array([1]), new Uint8Array([2])])).toBe(
+      'dropped'
+    );
+    expect(reasons).toEqual(['dropped_frame']);
+  });
+
+  test('优先帧在有 sendPriority 的载体上不走批路径', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const target = createCorkCarrier(['sent']);
+    const priority: Uint8Array[] = [];
+    const carrier: Carrier = Object.assign(target.carrier, {
+      sendPriority(bytes: Uint8Array): CarrierSendResult {
+        priority.push(bytes);
+        return 'sent';
+      },
+    });
+
+    expect(guard.sendPriorityFrames(carrier, [new Uint8Array([1]), new Uint8Array([2])])).toBe(
+      'sent'
+    );
+    expect(target.batches()).toBe(0);
+    expect(priority).toHaveLength(2);
+  });
+
+  test('没有 sendPriority 的载体上，优先帧整批 cork 且背压后继续发', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const target = createCorkCarrier(['backpressure', 'sent']);
+
+    expect(
+      guard.sendPriorityFrames(target.carrier, [new Uint8Array([1]), new Uint8Array([2])])
+    ).toBe('sent');
+    expect(target.batches()).toBe(1);
+    expect(target.sendCalls()).toBe(2);
   });
 });

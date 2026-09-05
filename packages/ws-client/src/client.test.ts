@@ -13,65 +13,7 @@ import {
   normalizeNegotiatedHeartbeatIntervalMs,
 } from './client';
 import { createGatewayConnection } from './connection';
-
-/** 可手工驱动的假 transport，遵循 WHATWG 的 readyState 取值。 */
-class FakeSocket implements WebSocketLike {
-  readyState = 0;
-  binaryType: 'blob' | 'arraybuffer' = 'blob';
-  onopen: ((event?: unknown) => void) | null = null;
-  onmessage: ((event: { data: ArrayBuffer | string }) => void) | null = null;
-  onclose: ((event?: unknown) => void) | null = null;
-  onerror: ((event?: unknown) => void) | null = null;
-
-  readonly sent: Array<ArrayBufferLike | ArrayBufferView | string> = [];
-  closeCount = 0;
-
-  send(data: ArrayBufferLike | ArrayBufferView | string): void {
-    this.sent.push(data);
-  }
-
-  close(): void {
-    this.closeCount += 1;
-    this.readyState = 3;
-  }
-
-  /** 模拟连接建立：先转 OPEN，再回调，顺序与浏览器一致。 */
-  open(): void {
-    this.readyState = 1;
-    this.onopen?.();
-  }
-
-  /** 模拟对端断开：先落 CLOSED，再派发 onclose。 */
-  simulateClose(): void {
-    this.readyState = 3;
-    this.onclose?.();
-  }
-
-  /** 把一帧二进制投递给 onmessage。 */
-  deliver(frame: Uint8Array): void {
-    this.onmessage?.({ data: toArrayBuffer(frame) });
-  }
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-}
-
-function helloS2CFrame(
-  capabilities: string[] = [],
-  serverVersion = '0.1.0',
-  heartbeatIntervalMs = 5000
-): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
-    serverImpl: 'tmex-gateway',
-    serverVersion,
-    selectedVersion: 1,
-    maxFrameBytes: 1048576,
-    heartbeatIntervalMs,
-    capabilities,
-  });
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, payload, 1);
-}
+import { type FakeSocket, createFakeSocket, helloFrame } from './test-fakes';
 
 function pongFrame(nonce = 7): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, {
@@ -163,6 +105,56 @@ function stubDocument(): {
   };
 }
 
+/** 注入最小 window / navigator.connection 替身，用于驱动 online 与链路变化分支。 */
+function stubWindow(): {
+  dispatch: (type: 'online' | 'change') => void;
+  listenerCount: () => number;
+  restore: () => void;
+} {
+  const listeners = new Map<string, Set<() => void>>();
+  const target = (type: string) => {
+    const existing = listeners.get(type);
+    if (existing) return existing;
+    const created = new Set<() => void>();
+    listeners.set(type, created);
+    return created;
+  };
+  const source = {
+    addEventListener(type: string, handler: () => void) {
+      target(type).add(handler);
+    },
+    removeEventListener(type: string, handler: () => void) {
+      target(type).delete(handler);
+    },
+  };
+  const previousWindow = Reflect.get(globalThis, 'window');
+  const hadWindow = 'window' in globalThis;
+  const previousNavigator = Reflect.get(globalThis, 'navigator');
+  const hadNavigator = 'navigator' in globalThis;
+  const define = (key: string, value: unknown) => {
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  };
+  define('window', source);
+  define('navigator', { connection: source });
+
+  return {
+    dispatch: (type) => {
+      for (const handler of [...target(type)]) handler();
+    },
+    listenerCount: () => {
+      let total = 0;
+      for (const set of listeners.values()) total += set.size;
+      return total;
+    },
+    restore: () => {
+      if (hadWindow) define('window', previousWindow);
+      else Reflect.deleteProperty(globalThis, 'window');
+      if (hadNavigator) define('navigator', previousNavigator);
+      else Reflect.deleteProperty(globalThis, 'navigator');
+    },
+  };
+}
+
 /** 临时替换全局 WebSocket，返回还原函数。 */
 function stubGlobalWebSocket(impl: unknown): () => void {
   const original = Reflect.get(globalThis, 'WebSocket');
@@ -173,7 +165,7 @@ function stubGlobalWebSocket(impl: unknown): () => void {
 describe('socketFactory', () => {
   test('注入的工厂被调用一次，并拿到解析后的 URL', () => {
     const urls: string[] = [];
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: (url) => {
@@ -195,7 +187,7 @@ describe('socketFactory', () => {
     const client = new BorshWebSocketClient({
       socketFactory: (url) => {
         urls.push(url);
-        return new FakeSocket();
+        return createFakeSocket();
       },
     });
 
@@ -206,7 +198,7 @@ describe('socketFactory', () => {
   });
 
   test('注入 socket 的 open 事件驱动握手并发出 Hello', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => socket,
@@ -225,7 +217,7 @@ describe('socketFactory', () => {
 
   test('socket 已 OPEN 时 connect() 幂等，不重复建连', () => {
     let created = 0;
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => {
@@ -243,7 +235,7 @@ describe('socketFactory', () => {
   });
 
   test('disconnect() 关闭注入的 socket', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => socket,
@@ -259,13 +251,13 @@ describe('socketFactory', () => {
 
   test('缺省时使用全局 WebSocket 构造器，URL 原样传入', () => {
     const constructedWith: string[] = [];
-    class SpySocket extends FakeSocket {
-      constructor(url: string) {
-        super();
-        constructedWith.push(url);
-      }
-    }
-    const restore = stubGlobalWebSocket(SpySocket);
+    const spySocket = function SpySocket(url: string) {
+      constructedWith.push(url);
+      return createFakeSocket();
+    } as unknown as new (
+      url: string
+    ) => WebSocketLike;
+    const restore = stubGlobalWebSocket(spySocket);
     try {
       const client = new BorshWebSocketClient({ url: 'ws://default.test/ws' });
       client.connect();
@@ -283,7 +275,7 @@ describe('socketFactory', () => {
   test('全局 WebSocket 不存在时，注入的 transport 仍然可用', () => {
     const restore = stubGlobalWebSocket(undefined);
     try {
-      const socket = new FakeSocket();
+      const socket = createFakeSocket();
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
         socketFactory: () => socket,
@@ -303,7 +295,7 @@ describe('socketFactory', () => {
   });
 
   test('createGatewayConnection 把 socketFactory 透传给客户端', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const urls: string[] = [];
     const conn = createGatewayConnection({
       wsUrl: 'ws://tunnel.test/ws',
@@ -321,7 +313,7 @@ describe('socketFactory', () => {
   });
 
   test('createGatewayConnection 顶层 maxFrameBytes 进入 HELLO 协商', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const conn = createGatewayConnection({
       wsUrl: 'ws://tunnel.test/ws',
       socketFactory: () => socket,
@@ -344,7 +336,7 @@ describe('socketFactory', () => {
   });
 
   test('每个合法 chunk 都报告进展，供上层刷新无进展 deadline', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => socket,
@@ -383,7 +375,7 @@ describe('陈旧 socket 的事件隔离', () => {
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => {
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sockets.push(socket);
         return socket;
       },
@@ -437,7 +429,7 @@ describe('陈旧 socket 的事件隔离', () => {
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => {
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sockets.push(socket);
         return socket;
       },
@@ -452,14 +444,14 @@ describe('陈旧 socket 的事件隔离', () => {
     const fresh = sockets[1] as FakeSocket;
     fresh.open();
 
-    stale.deliver(helloS2CFrame(['stale-cap']));
+    stale.deliver(helloFrame({ capabilities: ['stale-cap'] }));
     stale.onerror?.();
 
     expect(client.getState()).toBe('HELLO_NEGOTIATING');
     expect(client.serverCapabilities).toEqual([]);
     expect(errors).toEqual([]);
 
-    fresh.deliver(helloS2CFrame(['fresh-cap']));
+    fresh.deliver(helloFrame({ capabilities: ['fresh-cap'] }));
     expect(client.getState()).toBe('READY');
     expect(client.serverCapabilities).toEqual(['fresh-cap']);
     client.disconnect();
@@ -473,7 +465,7 @@ describe('重连接线', () => {
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => {
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sockets.push(socket);
         return socket;
       },
@@ -494,7 +486,7 @@ describe('重连接线', () => {
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => {
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sockets.push(socket);
         return socket;
       },
@@ -534,7 +526,7 @@ describe('重连接线', () => {
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => {
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sockets.push(socket);
         return socket;
       },
@@ -563,12 +555,178 @@ describe('重连接线', () => {
     await until(() => sockets.length === 2);
     client.disconnect();
   });
+
+  test('缺省无重连上限：连续失败 5 次以上仍继续排程', async () => {
+    const sockets: FakeSocket[] = [];
+    const errors: string[] = [];
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => {
+        const socket = createFakeSocket();
+        sockets.push(socket);
+        queueMicrotask(() => socket.simulateClose());
+        return socket;
+      },
+      reconnectDelayMs: 1,
+    });
+    client.onError((error) => errors.push(error.message));
+
+    client.connect();
+    await until(() => sockets.length >= 8, 5000);
+
+    expect(client.getState()).toBe('RECONNECT_BACKOFF');
+    expect(errors).not.toContain('Max reconnection attempts reached');
+    client.disconnect();
+    expect(client.getState()).toBe('CLOSED');
+  });
+
+  test('显式 maxReconnectAttempts 仍然收敛到 CLOSED', async () => {
+    const sockets: FakeSocket[] = [];
+    const errors: string[] = [];
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => {
+        const socket = createFakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 1,
+      maxReconnectAttempts: 1,
+    });
+    client.onError((error) => errors.push(error.message));
+
+    client.connect();
+    sockets[0]?.simulateClose();
+    await until(() => sockets.length === 2);
+    sockets[1]?.simulateClose();
+
+    expect(client.getState()).toBe('CLOSED');
+    expect(errors).toContain('Max reconnection attempts reached');
+    client.disconnect();
+  });
+});
+
+describe('网络恢复（online / connection change）', () => {
+  test('online 事件让退避中的重连立即执行', () => {
+    const net = stubWindow();
+    try {
+      const sockets: FakeSocket[] = [];
+      const client = new BorshWebSocketClient({
+        url: 'ws://example.test/ws',
+        socketFactory: () => {
+          const socket = createFakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+        reconnectDelayMs: 60_000,
+      });
+
+      client.connect();
+      sockets[0]?.simulateClose();
+      expect(client.getState()).toBe('RECONNECT_BACKOFF');
+
+      net.dispatch('online');
+      expect(sockets.length).toBe(2);
+      expect(client.getState()).toBe('WS_CONNECTING');
+
+      client.disconnect();
+      expect(net.listenerCount()).toBe(0);
+    } finally {
+      net.restore();
+    }
+  });
+
+  test('navigator.connection 的 change 去抖 800ms 后重连', async () => {
+    const net = stubWindow();
+    try {
+      const sockets: FakeSocket[] = [];
+      const client = new BorshWebSocketClient({
+        url: 'ws://example.test/ws',
+        socketFactory: () => {
+          const socket = createFakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+        reconnectDelayMs: 60_000,
+      });
+
+      client.connect();
+      sockets[0]?.simulateClose();
+
+      net.dispatch('change');
+      net.dispatch('change');
+      expect(sockets.length).toBe(1);
+
+      await until(() => sockets.length === 2, 3000);
+      expect(client.getState()).toBe('WS_CONNECTING');
+
+      client.disconnect();
+      expect(net.listenerCount()).toBe(0);
+    } finally {
+      net.restore();
+    }
+  });
+
+  test('协议级 fatal 之后 online 不再重连', () => {
+    const net = stubWindow();
+    try {
+      const sockets: FakeSocket[] = [];
+      const client = new BorshWebSocketClient({
+        url: 'ws://example.test/ws',
+        socketFactory: () => {
+          const socket = createFakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+        reconnectDelayMs: 60_000,
+      });
+
+      client.connect();
+      const socket = sockets[0] as FakeSocket;
+      socket.open();
+      socket.deliver(
+        wsBorsh.encodeEnvelope(
+          wsBorsh.KIND_ERROR,
+          wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, {
+            refSeq: 1,
+            code: wsBorsh.ERROR_UNSUPPORTED_PROTOCOL,
+            message: wsBorsh.formatCanonicalV11RequiredError({ side: 'client', version: '1.1.21' }),
+            retryable: false,
+          }),
+          2
+        )
+      );
+      socket.simulateClose();
+      expect(client.getState()).toBe('CLOSED');
+
+      net.dispatch('online');
+      expect(sockets).toHaveLength(1);
+
+      client.disconnect();
+    } finally {
+      net.restore();
+    }
+  });
+
+  test('非浏览器宿主（无 window / navigator.connection）不装监听器也不报错', () => {
+    const socket = createFakeSocket();
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => socket,
+    });
+
+    expect('window' in globalThis).toBe(false);
+    client.connect();
+    socket.open();
+    client.disconnect();
+    expect(socket.closeCount).toBe(1);
+  });
 });
 
 // PING 节奏、PONG 超时与 RTT 计算的细节在 heartbeat-controller.test.ts
 describe('心跳接线', () => {
   test('READY 后发出 PING，收到 PONG 上报 latency', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const latencies: number[] = [];
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
@@ -582,7 +740,7 @@ describe('心跳接线', () => {
     socket.open();
     expect(socket.sent.length).toBe(1);
 
-    socket.deliver(helloS2CFrame());
+    socket.deliver(helloFrame());
     expect(client.getState()).toBe('READY');
     expect(socket.sent.length).toBe(2);
 
@@ -603,7 +761,7 @@ describe('心跳接线', () => {
   });
 
   test('在途 PONG 时间隔 tick 不再发新的 PING', async () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => socket,
@@ -613,7 +771,7 @@ describe('心跳接线', () => {
 
     client.connect();
     socket.open();
-    socket.deliver(helloS2CFrame());
+    socket.deliver(helloFrame());
     expect(socket.sent.length).toBe(2);
 
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -631,7 +789,7 @@ describe('visibilitychange', () => {
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
         socketFactory: () => {
-          const socket = new FakeSocket();
+          const socket = createFakeSocket();
           sockets.push(socket);
           return socket;
         },
@@ -661,7 +819,7 @@ describe('visibilitychange', () => {
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
         socketFactory: () => {
-          const socket = new FakeSocket();
+          const socket = createFakeSocket();
           sockets.push(socket);
           return socket;
         },
@@ -688,7 +846,7 @@ describe('visibilitychange', () => {
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
         socketFactory: () => {
-          const socket = new FakeSocket();
+          const socket = createFakeSocket();
           sockets.push(socket);
           return socket;
         },
@@ -716,7 +874,7 @@ describe('visibilitychange', () => {
   test('READY 状态下补发一次 PING', () => {
     const doc = stubDocument();
     try {
-      const socket = new FakeSocket();
+      const socket = createFakeSocket();
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
         socketFactory: () => socket,
@@ -726,7 +884,7 @@ describe('visibilitychange', () => {
 
       client.connect();
       socket.open();
-      socket.deliver(helloS2CFrame());
+      socket.deliver(helloFrame());
       expect(socket.sent.length).toBe(2);
 
       doc.dispatch();
@@ -750,7 +908,7 @@ describe('心跳节奏随可见性切换', () => {
   test('转入后台：不补发 PING，并按缺省的 30s 慢节奏停止发包', async () => {
     const doc = stubDocument();
     try {
-      const socket = new FakeSocket();
+      const socket = createFakeSocket();
       enableAutoPong(socket);
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
@@ -761,7 +919,7 @@ describe('心跳节奏随可见性切换', () => {
 
       client.connect();
       socket.open();
-      socket.deliver(helloS2CFrame());
+      socket.deliver(helloFrame());
       await until(() => socket.sent.length >= 4);
 
       doc.setVisibility('hidden');
@@ -781,7 +939,7 @@ describe('心跳节奏随可见性切换', () => {
   test('后台 -> 前台：立即补发一次 PING 并恢复快节奏', async () => {
     const doc = stubDocument();
     try {
-      const socket = new FakeSocket();
+      const socket = createFakeSocket();
       enableAutoPong(socket);
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
@@ -794,7 +952,7 @@ describe('心跳节奏随可见性切换', () => {
 
       client.connect();
       socket.open();
-      socket.deliver(helloS2CFrame());
+      socket.deliver(helloFrame());
 
       doc.setVisibility('hidden');
       doc.dispatch();
@@ -815,7 +973,7 @@ describe('心跳节奏随可见性切换', () => {
   test('后台自定义节奏下 PONG 超时仍关闭连接并走重连', async () => {
     const doc = stubDocument();
     try {
-      const socket = new FakeSocket();
+      const socket = createFakeSocket();
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
         socketFactory: () => socket,
@@ -829,7 +987,7 @@ describe('心跳节奏随可见性切换', () => {
 
       client.connect();
       socket.open();
-      socket.deliver(helloS2CFrame());
+      socket.deliver(helloFrame());
       expect(client.getState()).toBe('READY');
       socket.deliver(pongFrame(decodePingNonce(socket.sent[1] as ArrayBufferView)));
 
@@ -851,7 +1009,7 @@ describe('心跳节奏随可见性切换', () => {
     const previous = Reflect.get(globalThis, 'document');
     Reflect.deleteProperty(globalThis, 'document');
     try {
-      const socket = new FakeSocket();
+      const socket = createFakeSocket();
       enableAutoPong(socket);
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
@@ -862,7 +1020,7 @@ describe('心跳节奏随可见性切换', () => {
 
       client.connect();
       socket.open();
-      socket.deliver(helloS2CFrame());
+      socket.deliver(helloFrame());
 
       await until(() => socket.sent.length >= 5);
       client.disconnect();
@@ -933,7 +1091,7 @@ describe('建连同步失败', () => {
       url: 'ws://example.test/ws',
       socketFactory: () => {
         if (fail) throw new Error('factory boom');
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sockets.push(socket);
         return socket;
       },
@@ -1014,7 +1172,7 @@ function readyClient(socket: FakeSocket): BorshWebSocketClient {
   });
   client.connect();
   socket.open();
-  socket.deliver(helloS2CFrame());
+  socket.deliver(helloFrame());
   return client;
 }
 
@@ -1031,7 +1189,7 @@ function sentAckEpochs(socket: FakeSocket): number[] {
 
 describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
   test('未挂直连时 activeCarrier 恒为 primary，收发路径不变', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = readyClient(socket);
     expect(client.activeCarrier).toBe('primary');
 
@@ -1044,7 +1202,7 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
   });
 
   test('CARRIER_SWITCH 到达后切到直连：ACK 走 primary，出站改走直连，入站缓冲被排空', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = readyClient(socket);
     const carrier = new FakeDirectCarrier();
     const changes: string[] = [];
@@ -1073,7 +1231,7 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
   });
 
   test('直连背压：send() 返回 backpressure（帧已排进直连队列），不改走 primary 也不重复发', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = readyClient(socket);
     const carrier = new FakeDirectCarrier();
     client.attachDirectCarrier(carrier);
@@ -1093,7 +1251,7 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
   });
 
   test('切回 primary 触发 resumeSubscribedPanes 钩子', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = readyClient(socket);
     let resumes = 0;
     client.setResumeSubscribedPanes(() => {
@@ -1110,7 +1268,7 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
   });
 
   test('primary 断开 → 直连随之关闭并回落 primary', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = readyClient(socket);
     const carrier = new FakeDirectCarrier();
     client.attachDirectCarrier(carrier);
@@ -1125,7 +1283,7 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
   });
 
   test('detachDirectCarrier() 主动回落 primary', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = readyClient(socket);
     const carrier = new FakeDirectCarrier();
     client.attachDirectCarrier(carrier);
@@ -1140,7 +1298,7 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
   });
 
   test('attachDirectCarrier 登记 rtcSession：别的 attempt 的切换帧不生效', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = readyClient(socket);
     const carrier = new FakeDirectCarrier();
     client.attachDirectCarrier(carrier, { rtcSession: 'br:b' });
@@ -1157,7 +1315,7 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
   });
 
   test('createGatewayConnection 透出 activeCarrier / onCarrierChange / directDiagnostics', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const connection = createGatewayConnection({
       wsUrl: 'ws://example.test/ws',
       socketFactory: () => socket,
@@ -1165,7 +1323,7 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
     });
     connection.client.connect();
     socket.open();
-    socket.deliver(helloS2CFrame());
+    socket.deliver(helloFrame());
 
     expect(connection.activeCarrier).toBe('primary');
     expect(connection.directDiagnostics).toBeNull();
@@ -1212,7 +1370,7 @@ function sendViewport(client: BorshWebSocketClient): ReturnType<BorshWebSocketCl
 
 describe('TERM_VIEWPORT 版本闸门', () => {
   test('serverVersion 低于 1.1.7 时静默丢弃，其它 kind 照发且不报错', () => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const errors: string[] = [];
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
@@ -1223,7 +1381,7 @@ describe('TERM_VIEWPORT 版本闸门', () => {
 
     client.connect();
     socket.open();
-    socket.deliver(helloS2CFrame([], '1.1.6'));
+    socket.deliver(helloFrame({ serverVersion: '1.1.6' }));
     expect(client.supportsTermViewport).toBe(false);
 
     expect(sendViewport(client)).toBe('sent');
@@ -1237,7 +1395,7 @@ describe('TERM_VIEWPORT 版本闸门', () => {
   });
 
   test.each(['1.1.7', '1.1.9', '1.2.0', '2.0.0'])('serverVersion %s 正常下发', (version) => {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => socket,
@@ -1246,7 +1404,7 @@ describe('TERM_VIEWPORT 版本闸门', () => {
 
     client.connect();
     socket.open();
-    socket.deliver(helloS2CFrame([], version));
+    socket.deliver(helloFrame({ serverVersion: version }));
     expect(client.supportsTermViewport).toBe(true);
 
     expect(sendViewport(client)).toBe('sent');
@@ -1259,7 +1417,7 @@ describe('TERM_VIEWPORT 版本闸门', () => {
   test.each(['', 'dev', '1.1.9_dev', '1.1.6_dev'])(
     'serverVersion %p 无法解析时按新版下发',
     (version) => {
-      const socket = new FakeSocket();
+      const socket = createFakeSocket();
       const client = new BorshWebSocketClient({
         url: 'ws://example.test/ws',
         socketFactory: () => socket,
@@ -1268,7 +1426,7 @@ describe('TERM_VIEWPORT 版本闸门', () => {
 
       client.connect();
       socket.open();
-      socket.deliver(helloS2CFrame([], version));
+      socket.deliver(helloFrame({ serverVersion: version }));
       expect(client.supportsTermViewport).toBe(true);
 
       expect(sendViewport(client)).toBe('sent');
@@ -1279,7 +1437,7 @@ describe('TERM_VIEWPORT 版本闸门', () => {
   );
 
   test('HELLO 之前入队的帧在 flush 时按本连接版本重新判定', () => {
-    const oldSocket = new FakeSocket();
+    const oldSocket = createFakeSocket();
     const oldClient = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => oldSocket,
@@ -1288,11 +1446,11 @@ describe('TERM_VIEWPORT 版本闸门', () => {
     oldClient.connect();
     oldSocket.open();
     expect(sendViewport(oldClient)).toBe('queued');
-    oldSocket.deliver(helloS2CFrame([], '1.1.6'));
+    oldSocket.deliver(helloFrame({ serverVersion: '1.1.6' }));
     expect(sentKinds(oldSocket)).not.toContain(wsBorsh.KIND_TERM_VIEWPORT);
     oldClient.disconnect();
 
-    const newSocket = new FakeSocket();
+    const newSocket = createFakeSocket();
     const newClient = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => newSocket,
@@ -1301,7 +1459,7 @@ describe('TERM_VIEWPORT 版本闸门', () => {
     newClient.connect();
     newSocket.open();
     expect(sendViewport(newClient)).toBe('queued');
-    newSocket.deliver(helloS2CFrame([], '1.1.7'));
+    newSocket.deliver(helloFrame({ serverVersion: '1.1.7' }));
     expect(sentKinds(newSocket)).toContain(wsBorsh.KIND_TERM_VIEWPORT);
     newClient.disconnect();
   });
@@ -1311,7 +1469,7 @@ describe('TERM_VIEWPORT 版本闸门', () => {
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => {
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sockets.push(socket);
         return socket;
       },
@@ -1323,7 +1481,7 @@ describe('TERM_VIEWPORT 版本闸门', () => {
     client.connect();
     const stale = sockets[0] as FakeSocket;
     stale.open();
-    stale.deliver(helloS2CFrame([], '1.1.6'));
+    stale.deliver(helloFrame({ serverVersion: '1.1.6' }));
     expect(sendViewport(client)).toBe('sent');
     expect(sentKinds(stale)).not.toContain(wsBorsh.KIND_TERM_VIEWPORT);
 
@@ -1334,7 +1492,7 @@ describe('TERM_VIEWPORT 版本闸门', () => {
     await until(() => sockets.length === 2);
     const fresh = sockets[1] as FakeSocket;
     fresh.open();
-    fresh.deliver(helloS2CFrame([], '1.1.8'));
+    fresh.deliver(helloFrame({ serverVersion: '1.1.8' }));
 
     expect(sendViewport(client)).toBe('sent');
     expect(sentKinds(fresh)).toContain(wsBorsh.KIND_TERM_VIEWPORT);
@@ -1349,7 +1507,7 @@ describe('心跳间隔协商', () => {
     heartbeatIntervalMs: number,
     clientOptions: Record<string, unknown> = {}
   ): { client: BorshWebSocketClient; socket: FakeSocket } {
-    const socket = new FakeSocket();
+    const socket = createFakeSocket();
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => socket,
@@ -1357,7 +1515,7 @@ describe('心跳间隔协商', () => {
     });
     client.connect();
     socket.open();
-    socket.deliver(helloS2CFrame([], '0.1.0', heartbeatIntervalMs));
+    socket.deliver(helloFrame({ heartbeatIntervalMs }));
     return { client, socket };
   }
 
