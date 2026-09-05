@@ -16,7 +16,7 @@ import {
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
 import { X_TMEX_MESH_PEER } from './peer-request-marker';
-import { setShareAccessVerifier } from './share-credential';
+import { setShareAccessVerifier, setShareEndedReader } from './share-credential';
 
 const LOGIN_PUBLIC = [
   '/api/auth/mode',
@@ -61,6 +61,7 @@ function acceptOnly(tokens: Set<string>): void {
 describe('mesh-http share access', () => {
   afterEach(() => {
     setShareAccessVerifier(null);
+    setShareEndedReader(null);
   });
 
   test('localUiGuard 放行 /api/share-access/*，其余 /api/* 仍 401', async () => {
@@ -179,6 +180,147 @@ describe('mesh-http share access', () => {
       now += 2;
       expect(mesh.runtime.touchSocket(ws)).toBe(false);
       expect(closes[0]).toEqual({ code: SHARE_WS_CLOSE_ENDED, reason: 'SHARE_ENDED' });
+    } finally {
+      mesh.close();
+    }
+  });
+});
+
+describe('mesh-http share ws binding', () => {
+  afterEach(() => {
+    setShareAccessVerifier(null);
+    setShareEndedReader(null);
+  });
+
+  test('?share=<id> 与 cookie 绑定同一分享 → 作用域升级', async () => {
+    acceptOnly(new Set([SHARE_TOKEN]));
+    const mesh = await bootMesh();
+    try {
+      const spy = shareSpy();
+      const res = mesh.runtime.guardGatewayWebSocket(
+        new Request('http://localhost/ws?cid=c1&share=sh-1', {
+          headers: { cookie: `tmex_sh_self=${SHARE_TOKEN}` },
+        }),
+        spy.server
+      );
+      expect(res).toBeUndefined();
+      expect(spy.dataOf()?.kind).toBe(MESH_SHARE_WS_KIND);
+      expect(spy.dataOf()?.scope).toEqual(SHARE_SCOPE);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('?share=<id> 与 cookie 绑定的分享不一致 → 4401', async () => {
+    acceptOnly(new Set([SHARE_TOKEN]));
+    const mesh = await bootMesh();
+    try {
+      const spy = shareSpy();
+      mesh.runtime.guardGatewayWebSocket(
+        new Request('http://localhost/ws?share=sh-2', {
+          headers: { cookie: `tmex_sh_self=${SHARE_TOKEN}` },
+        }),
+        spy.server
+      );
+      expect(spy.dataOf()?.kind).toBe(MESH_REJECT_4401_KIND);
+      expect(spy.dataOf()?.closeReason).toBe('SHARE_LOGIN_REQUIRED');
+      expect(spy.dataOf()?.closeCode).toBe(WS_CLOSE_LOGIN_REQUIRED);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('?share=<id> 时常规会话一律不认，缺分享 cookie 即 4401', async () => {
+    acceptOnly(new Set([SHARE_TOKEN]));
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const spy = shareSpy();
+      mesh.runtime.guardGatewayWebSocket(
+        new Request('http://localhost/ws?share=sh-1', {
+          headers: { cookie: `tmex_s_self=${sid}` },
+        }),
+        spy.server
+      );
+      expect(spy.dataOf()?.kind).toBe(MESH_REJECT_4401_KIND);
+      expect(spy.dataOf()?.closeReason).toBe('SHARE_LOGIN_REQUIRED');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('分享已结束时 ?share=<id> 回 4410 SHARE_ENDED', async () => {
+    acceptOnly(new Set());
+    setShareEndedReader((shareId) => shareId === 'sh-1');
+    const mesh = await bootMesh();
+    try {
+      const spy = shareSpy();
+      mesh.runtime.guardGatewayWebSocket(
+        new Request('http://localhost/ws?share=sh-1', {
+          headers: { cookie: 'tmex_sh_self=sh-1.stale' },
+        }),
+        spy.server
+      );
+      expect(spy.dataOf()?.closeCode).toBe(SHARE_WS_CLOSE_ENDED);
+      expect(spy.dataOf()?.closeReason).toBe('SHARE_ENDED');
+      const closes: Array<{ code?: number; reason?: string }> = [];
+      mesh.runtime.handleWebSocket.open({
+        data: spy.dataOf(),
+        close(code?: number, reason?: string) {
+          closes.push({ code, reason });
+        },
+        send: () => 0,
+      } as unknown as MeshServerWebSocket);
+      expect(closes[0]).toEqual({ code: SHARE_WS_CLOSE_ENDED, reason: 'SHARE_ENDED' });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('免登录 standalone：有效分享 cookie 仍以作用域升级，不是全权限连接', async () => {
+    acceptOnly(new Set([SHARE_TOKEN]));
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
+    try {
+      const spy = shareSpy();
+      const res = mesh.runtime.guardGatewayWebSocket(
+        new Request('http://localhost/ws', {
+          headers: { cookie: `tmex_sh_self=${SHARE_TOKEN}` },
+        }),
+        spy.server
+      );
+      expect(res).toBeUndefined();
+      expect(spy.dataOf()?.kind).toBe(MESH_SHARE_WS_KIND);
+      expect(spy.dataOf()?.scope).toEqual(SHARE_SCOPE);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('免登录 standalone：无分享 cookie 照旧直接放行', async () => {
+    acceptOnly(new Set());
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
+    try {
+      const spy = shareSpy();
+      expect(
+        mesh.runtime.guardGatewayWebSocket(new Request('http://localhost/ws'), spy.server)
+      ).toBeNull();
+      expect(spy.dataOf()).toBeUndefined();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('免登录 standalone：失效分享 cookie 不锁死普通页面', async () => {
+    acceptOnly(new Set());
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
+    try {
+      const spy = shareSpy();
+      expect(
+        mesh.runtime.guardGatewayWebSocket(
+          new Request('http://localhost/ws', { headers: { cookie: 'tmex_sh_self=sh-9.dead' } }),
+          spy.server
+        )
+      ).toBeNull();
     } finally {
       mesh.close();
     }

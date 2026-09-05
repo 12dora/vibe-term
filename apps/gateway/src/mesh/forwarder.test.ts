@@ -2669,6 +2669,53 @@ describe('forwarder 分享凭证', () => {
     }
   });
 
+  test('/n/:id/ws?share= 时只送分享凭证，常规 sid 不再遮蔽', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const upgrade = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws?share=sh-1`, {
+          headers: { cookie: `tmex_s_${OTHER}=stale-sid; tmex_sh_${OTHER}=${SHARE_TOKEN}` },
+        }),
+        dummyServer
+      );
+      expect(upgrade).toBeUndefined();
+      expect(streams.wsAuth).toBe(`share:${SHARE_TOKEN}`);
+      expect(streams.wsShare).toBe('sh-1');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('/n/:id/ws?share= 缺分享 cookie 时回 SHARE_LOGIN_REQUIRED，不用常规 sid', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      let data: { kind?: string; auth?: string | null; closeReason?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws?share=sh-1`, {
+          headers: { cookie: `tmex_s_${OTHER}=stale-sid` },
+        }),
+        server
+      );
+      expect(data?.kind).toBe(MESH_REJECT_4401_KIND);
+      expect(data?.closeReason).toBe('SHARE_LOGIN_REQUIRED');
+      expect(streams.wsAuth).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('节点端终止性关闭码直接透给浏览器，不再 failover', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);

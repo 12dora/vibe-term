@@ -16,6 +16,7 @@ import {
 import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
+import { type ShareService, setShareServiceForTests } from '../../../../apps/gateway/src/share';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import {
   resetAccessGuardForTests,
@@ -920,6 +921,51 @@ describe('assembleTmex role matrix', () => {
     effective = false;
     const restored = await assembled.fetch(new Request('http://127.0.0.1/api/tls'), dummyServer);
     expect(restored?.status).toBe(200);
+  });
+
+  test('免登录 standalone 下禁止创建分享；开启登录后放开', async () => {
+    process.env.TMEX_ROLES = 'standalone';
+    const captured: Array<(() => boolean) | null> = [];
+    setShareServiceForTests({
+      setAuthRequiredResolver: (fn: (() => boolean) | null) => captured.push(fn),
+      startSweeper: () => {},
+    } as unknown as ShareService);
+    try {
+      let effective = false;
+      await assembleTmex({
+        roles: { hub: false, node: false, relay: false },
+        localAuthEffective: () => effective,
+        createGatewayRuntime: async () => fakeGateway(),
+        createMeshRuntime: async () => {
+          throw new Error('no mesh');
+        },
+      });
+      expect(captured.length).toBe(1);
+      expect(captured[0]?.()).toBe(false);
+      effective = true;
+      expect(captured[0]?.()).toBe(true);
+    } finally {
+      setShareServiceForTests(null);
+    }
+  });
+
+  test('node 角色始终要求登录，分享不受本机开关影响', async () => {
+    const captured: Array<(() => boolean) | null> = [];
+    setShareServiceForTests({
+      setAuthRequiredResolver: (fn: (() => boolean) | null) => captured.push(fn),
+      startSweeper: () => {},
+    } as unknown as ShareService);
+    try {
+      await assembleTmex({
+        roles: { hub: false, node: true, relay: false },
+        localAuthEffective: () => false,
+        createGatewayRuntime: async () => fakeGateway(),
+        createMeshRuntime: async () => fakeMesh(),
+      });
+      expect(captured[0]?.()).toBe(true);
+    } finally {
+      setShareServiceForTests(null);
+    }
   });
 
   test('node GET /api/tls 不因 localAuthEffective=false 而放行', async () => {

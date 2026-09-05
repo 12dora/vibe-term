@@ -1382,6 +1382,50 @@ describe('mesh phase-2 integration', () => {
     }
   }, 30_000);
 
+  test('分享连接：凭证绑定的分享与页面不符时，浏览器收到 4401 而不是 failover', async () => {
+    const a = await bootHubA();
+    const b = await enrollNodeB(a);
+    const scope = { shareId: 'sh-1', deviceId: 'dev-b', windowId: 'win-1' };
+    setShareAccessVerifier((token) =>
+      token === 'sh-1.secret' ? { scope, accessId: 'acc-1', expiresAt: 9e12 } : null
+    );
+    try {
+      const upgraded: { data?: Record<string, unknown> } = {};
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          upgraded.data = (opts?.data ?? {}) as Record<string, unknown>;
+          return true;
+        },
+      };
+      const req = new Request(`http://entry/n/${b.mesh.nodeId}/ws?share=sh-2`, {
+        headers: {
+          cookie: `tmex_sh_${b.mesh.nodeId}=sh-1.secret`,
+          upgrade: 'websocket',
+          connection: 'Upgrade',
+        },
+      });
+      setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+      expect(await a.mesh.handleRequest(req, server)).toBeUndefined();
+      expect(upgraded.data?.auth).toBe('share:sh-1.secret');
+
+      const closes: Array<{ code?: number; reason?: string }> = [];
+      const ws = {
+        data: upgraded.data,
+        send: (bytes: Uint8Array | string) =>
+          typeof bytes === 'string' ? bytes.length : bytes.byteLength,
+        close(code?: number, reason?: string) {
+          closes.push({ code, reason });
+        },
+      };
+      a.mesh.websocket.open(ws as never);
+      await waitUntil(() => closes.length > 0, 5_000);
+      expect(closes[0]).toEqual({ code: 4401, reason: 'SHARE_LOGIN_REQUIRED' });
+      expect(b.wsServer.countShareSessions('sh-1')).toBe(0);
+    } finally {
+      setShareAccessVerifier(null);
+    }
+  }, 30_000);
+
   test('redeem-before-admit node catch-up applies own cert without explicit userId', async () => {
     const hub = await bootHubA({ linkFactory: false });
     const node = await enrollNodeB(hub, {

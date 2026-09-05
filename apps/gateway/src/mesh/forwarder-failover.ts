@@ -22,6 +22,8 @@ export type ForwardPump = {
   nodeId: string;
   auth: string;
   cid?: string;
+  /** 分享页握手的 shareId：failover 重开流时必须原样带上。 */
+  share?: string;
   stream: OpenedWsStream | null;
   boundTransport: PeerTransportKind | null;
   replay: StreamReplayState;
@@ -163,7 +165,7 @@ async function openFailoverStream(
   }
   const transport = host.peers.transportOf?.(pump.nodeId) ?? null;
   const opened = await elapsed(() =>
-    host.streams.openWsStream(link, pump.auth, pump.cid).catch(() => null)
+    host.streams.openWsStream(link, pump.auth, pump.cid, pump.share).catch(() => null)
   );
   const stream = opened.value;
   if (!stream) {

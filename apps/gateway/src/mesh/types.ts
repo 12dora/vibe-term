@@ -107,6 +107,8 @@ export type WsStreamOpenPayload = {
   auth: string;
   cid?: string;
   connectionId?: string;
+  /** 分享页握手的 `?share=<shareId>`：节点端据此强制凭证与页面同一个分享。 */
+  share?: string;
 };
 
 export type InboundRelayHandler = (stream: LinkStream, fromNodeId: string) => void;

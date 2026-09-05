@@ -129,7 +129,12 @@ export type StreamOpener = {
     body: ReadableStream<Uint8Array> | null,
     signal: AbortSignal
   ): Promise<Response>;
-  openWsStream(link: LinkSession, auth: string, cid?: string): Promise<OpenedWsStream>;
+  openWsStream(
+    link: LinkSession,
+    auth: string,
+    cid?: string,
+    share?: string
+  ): Promise<OpenedWsStream>;
 };
 
 export type KeyLogHubAck = { ok: true; seq: bigint | number } | { ok: false; error: string };
@@ -288,6 +293,8 @@ export type MeshSocketData = {
   cid?: string;
   /** 4401 拒绝连接的关闭原因；缺省 NODE_LOGIN_REQUIRED。 */
   closeReason?: string;
+  /** 拒绝连接的关闭码；缺省 WS_CLOSE_LOGIN_REQUIRED（分享已结束时为 4410）。 */
+  closeCode?: number;
   /** 分享连接：作用域、访问记录 id、原始 token 与上次复验时刻。 */
   scope?: ShareScope;
   accessId?: string;

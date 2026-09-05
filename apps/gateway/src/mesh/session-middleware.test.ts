@@ -9,7 +9,12 @@ import {
   publicRequestUrl,
   requireSession,
 } from './session-middleware';
-import { X_TMEX_CLEAR_SHARE, X_TMEX_SET_SHARE, X_TMEX_SET_SHARE_MAX_AGE } from './share-credential';
+import {
+  X_TMEX_CLEAR_SHARE,
+  X_TMEX_SET_SHARE,
+  X_TMEX_SET_SHARE_MAX_AGE,
+  setShareAccessVerifier,
+} from './share-credential';
 
 describe('session-middleware', () => {
   test('standalone bypasses with uid=null', async () => {
@@ -253,6 +258,58 @@ describe('session-middleware', () => {
     expect(cookie).toContain('tmex_sh_self=;');
     expect(cookie).toContain('Max-Age=0');
     expect(cleared.headers.get(X_TMEX_CLEAR_SHARE)).toBeNull();
+  });
+
+  test('本机分享公开面上的死 cookie 被顺手清掉', () => {
+    setShareAccessVerifier(() => null);
+    try {
+      const req = new Request('http://localhost/api/share-access/abc', {
+        headers: { cookie: 'tmex_sh_self=abc.dead' },
+      });
+      const out = consumeSetSessionForBrowser(req, new Response('{}'));
+      expect(out.headers.get('set-cookie')).toContain('tmex_sh_self=;');
+    } finally {
+      setShareAccessVerifier(null);
+    }
+  });
+
+  test('凭证仍有效 / 本次刚下发新凭证时不清 cookie', () => {
+    setShareAccessVerifier(() => ({
+      scope: { shareId: 'abc', deviceId: 'd', windowId: 'w' },
+      accessId: 'a',
+      expiresAt: 9e12,
+    }));
+    try {
+      const live = new Request('http://localhost/api/share-access/abc', {
+        headers: { cookie: 'tmex_sh_self=abc.live' },
+      });
+      expect(consumeSetSessionForBrowser(live, new Response('{}')).headers.get('set-cookie')).toBe(
+        null
+      );
+      const other = new Request('http://localhost/api/devices', {
+        headers: { cookie: 'tmex_sh_self=abc.live' },
+      });
+      expect(consumeSetSessionForBrowser(other, new Response('{}')).headers.get('set-cookie')).toBe(
+        null
+      );
+    } finally {
+      setShareAccessVerifier(null);
+    }
+  });
+
+  test('登录响应下发新凭证时不会被 clear 覆盖', () => {
+    setShareAccessVerifier(() => null);
+    try {
+      const req = new Request('http://localhost/api/share-access/abc/login', { method: 'POST' });
+      const upstream = new Response('{}', {
+        headers: { [X_TMEX_SET_SHARE]: 'abc.fresh', [X_TMEX_SET_SHARE_MAX_AGE]: '60' },
+      });
+      const cookies = consumeSetSessionForBrowser(req, upstream).headers.getSetCookie();
+      expect(cookies.length).toBe(1);
+      expect(cookies[0]).toContain('tmex_sh_self=abc.fresh');
+    } finally {
+      setShareAccessVerifier(null);
+    }
   });
 
   test('非 self via 不翻译分享头（留给 Hub 的 forwarder）', () => {

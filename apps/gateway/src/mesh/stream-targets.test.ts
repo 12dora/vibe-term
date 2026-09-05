@@ -16,7 +16,8 @@ import {
 } from './client-source';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { setMeshRequestContext } from './mesh-deps';
-import { setShareAccessVerifier } from './share-credential';
+import { setShareAccessVerifier, setShareEndedReader } from './share-credential';
+import { decodeTerminalStreamClose } from './stream-close-code';
 import {
   acceptHttpStream,
   acceptWsStream,
@@ -1163,6 +1164,7 @@ describe('分享凭证的 mesh 流', () => {
 
   afterEach(() => {
     setShareAccessVerifier(null);
+    setShareEndedReader(null);
   });
 
   test('share: 凭证的 ws 流以分享作用域挂会话，不登记常规会话', async () => {
@@ -1189,23 +1191,138 @@ describe('分享凭证的 mesh 流', () => {
     opened.close();
   });
 
-  test('无效 share: 凭证的 ws 流被 RST', async () => {
-    setShareAccessVerifier(() => null);
-    const server = new WebSocketServer();
-    const [a, b] = createInMemoryLinkPair();
-    let reason = '';
-    b.onStream((stream) => {
+  const acceptShareWs =
+    (server: WebSocketServer) => (stream: import('@tmex/shared/link').LinkStream) => {
       void acceptWsStream(stream, {
         peerNodeId: 'entry-1',
         sessionStore: denyAll,
         wsServer: server,
       });
-    });
-    const opened = await openWsStream(a, 'share:bad.token');
+    };
+
+  test('无效 share: 凭证的 ws 流用 4401 终止码 RST（Hub 不再 failover）', async () => {
+    setShareAccessVerifier(() => null);
+    const server = new WebSocketServer();
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream(acceptShareWs(server));
+    const opened = await openWsStream(a, 'share:sh-1.bad');
     const info = await opened.stream.closed;
-    reason = info.message ?? '';
     expect(info.reason).toBe('rst');
-    expect(reason).toBe('share_invalid');
+    expect(decodeTerminalStreamClose(info.message)).toEqual({
+      code: 4401,
+      reason: 'SHARE_LOGIN_REQUIRED',
+    });
+  });
+
+  test('分享已结束时初次握手回 4410 终止码', async () => {
+    setShareAccessVerifier(() => null);
+    setShareEndedReader((shareId) => shareId === 'sh-1');
+    const server = new WebSocketServer();
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream(acceptShareWs(server));
+    const opened = await openWsStream(a, 'share:sh-1.stale', undefined, 'sh-1');
+    const info = await opened.stream.closed;
+    expect(decodeTerminalStreamClose(info.message)).toEqual({
+      code: 4410,
+      reason: 'SHARE_ENDED',
+    });
+  });
+
+  test('OPEN 的 share 参数与凭证绑定的分享不符即 4401', async () => {
+    setShareAccessVerifier((token) =>
+      token === SHARE_TOKEN ? { scope: SHARE_SCOPE, accessId: 'acc-1', expiresAt: 9e12 } : null
+    );
+    const server = new WebSocketServer();
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream(acceptShareWs(server));
+    const opened = await openWsStream(a, `share:${SHARE_TOKEN}`, undefined, 'sh-2');
+    const info = await opened.stream.closed;
+    expect(decodeTerminalStreamClose(info.message)).toEqual({
+      code: 4401,
+      reason: 'SHARE_LOGIN_REQUIRED',
+    });
+    expect(server.countShareSessions('sh-1')).toBe(0);
+  });
+
+  test('带 share 参数时常规会话凭证一律不认', async () => {
+    const server = new WebSocketServer();
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      void acceptWsStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: {
+          verify: () => ({ ok: true, session: { userId: 'u1' } }),
+        } as unknown as NodeSessionStore,
+        wsServer: server,
+      });
+    });
+    const opened = await openWsStream(a, 'sid-1', undefined, 'sh-1');
+    const info = await opened.stream.closed;
+    expect(decodeTerminalStreamClose(info.message)).toEqual({
+      code: 4401,
+      reason: 'SHARE_LOGIN_REQUIRED',
+    });
+  });
+
+  test('share 参数一致时正常挂上分享会话', async () => {
+    setShareAccessVerifier((token) =>
+      token === SHARE_TOKEN ? { scope: SHARE_SCOPE, accessId: 'acc-1', expiresAt: 9e12 } : null
+    );
+    const server = new WebSocketServer();
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream(acceptShareWs(server));
+    const opened = await openWsStream(a, `share:${SHARE_TOKEN}`, undefined, 'sh-1');
+    await waitUntil(() => server.countShareSessions('sh-1') === 1);
+    opened.close();
+  });
+
+  test('失效分享凭证落在分享公开面时降级匿名，并回 x-tmex-clear-share', async () => {
+    setShareAccessVerifier(() => null);
+    const [a, b] = createInMemoryLinkPair();
+    const seen: Array<string | null> = [];
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: denyAll,
+        dispatchHttp: async (req) => {
+          seen.push(req.headers.get('cookie'));
+          return new Response('{}');
+        },
+      });
+    });
+    const res = await openHttpStream(a, {
+      method: 'GET',
+      path: '/api/share-access/sh-1',
+      origin: 'http://localhost',
+      auth: 'share:sh-1.dead',
+    });
+    expect(res.status).toBe(200);
+    expect(seen[0]).toBeNull();
+    expect(res.headers.get('x-tmex-clear-share')).toBe('1');
+  });
+
+  test('分享公开面外的同前缀路径不再匿名开放', async () => {
+    setShareAccessVerifier(() => null);
+    const [a, b] = createInMemoryLinkPair();
+    let dispatched = 0;
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: denyAll,
+        dispatchHttp: async () => {
+          dispatched += 1;
+          return new Response('{}');
+        },
+      });
+    });
+    const res = await openHttpStream(a, {
+      method: 'GET',
+      path: '/api/share-access/sh-1/admin',
+      origin: 'http://localhost',
+      auth: null,
+    });
+    expect(res.status).toBe(401);
+    expect(dispatched).toBe(0);
   });
 
   test('share: 凭证的 http 流只放行 /api/share-access/*，并合成 cookie', async () => {

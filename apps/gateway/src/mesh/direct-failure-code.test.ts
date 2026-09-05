@@ -131,10 +131,12 @@ describe('dcFailureReason', () => {
       code: 'breaker_cooling',
       params: { until: 1_700_000_000_000 },
     });
+  });
+
+  test('无解除时刻时用 breaker_paused，不下发缺 until 的 breaker_cooling', () => {
     expect(dcFailureReason('peer', null, { ...base, coolingUntil: null })).toEqual({
-      text: 'dial breaker cooling',
-      code: 'breaker_cooling',
-      params: undefined,
+      text: 'dial breaker paused',
+      code: 'breaker_paused',
     });
   });
 

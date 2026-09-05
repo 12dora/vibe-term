@@ -10,6 +10,14 @@ import type { LocalAuthStoreLike } from '../db/local-auth-settings';
 import { type AuthKeyLogPublisher, AuthRoutes, isAuthPublicPath } from './auth-routes';
 import { Forwarder, rewriteSelf, takePendingForwardStream } from './forwarder';
 import {
+  connectionIdOf,
+  isGatewayWsPath,
+  rejectGatewayWs,
+  upgradeBoundShareSocket,
+  upgradeSessionSocket,
+  upgradeShareSocket,
+} from './gateway-ws-upgrade';
+import {
   type ConnectionLookup,
   MESH_FORWARD_WS_KIND,
   MESH_GATEWAY_WS_KIND,
@@ -27,7 +35,6 @@ import {
   type StreamOpener,
   WS_CLOSE_LOGIN_REQUIRED,
   WS_SESSION_VERIFY_MS,
-  X_TMEX_CONNECTION,
   isStandaloneRoles,
 } from './mesh-deps';
 import { handleMeshInternalTmuxRequest, isMeshInternalPath } from './mesh-internal-tmux-routes';
@@ -42,7 +49,13 @@ import {
   jsonBody,
   jsonError,
 } from './session-middleware';
-import { readShareCookie, verifyShareAccessToken } from './share-credential';
+import {
+  readShareCookie,
+  shareIdOfToken,
+  shareWsCloseFor,
+  shareWsParam,
+  verifyShareAccessToken,
+} from './share-credential';
 import type { UplinkStatus } from './types';
 import type { AttachedHub, UplinkCandidate } from './uplink-pool';
 
@@ -224,66 +237,33 @@ export class MeshHttpRuntime {
     return this.finalizeHandle(safeReq, await this.dispatchLocal(safeReq, server));
   }
 
+  /**
+   * 鉴权优先级：`?share=<id>` 存在时只认绑定该分享的凭证（不回退常规会话）；
+   * 否则常规会话优先，其次有效的分享 cookie，最后才是 standalone 开放短路——
+   * 分享凭证必须在开放短路之前判定，否则免登录部署会把分享连接升级成全权限连接。
+   */
   guardGatewayWebSocket(req: Request, server: MeshUpgradeServer): Response | null | undefined {
-    const path = new URL(req.url).pathname;
-    if (path !== '/ws' && path !== '/n/self/ws' && path !== `/n/${this.nodeId}/ws`) {
+    const url = new URL(req.url);
+    if (!isGatewayWsPath(url.pathname, this.nodeId)) {
       return null;
     }
+    const token = readShareCookie(req, MESH_VIA_SELF);
+    const boundShareId = shareWsParam(url);
+    if (boundShareId) {
+      return upgradeBoundShareSocket(req, server, token, boundShareId, this.now());
+    }
     const auth = authenticateRequest(req, this.sessionDeps);
+    if (auth.ok && auth.sid && auth.userId) {
+      return upgradeSessionSocket(req, server, { sid: auth.sid, uid: auth.userId });
+    }
+    const verified = verifyShareAccessToken(token, this.now());
+    if (token && verified) {
+      return upgradeShareSocket(req, server, token, verified, this.now());
+    }
     if (isStandaloneOpenAuth(auth)) {
       return null;
     }
-    if (!auth.ok || !auth.sid || !auth.userId) {
-      return this.upgradeShareWebSocket(req, server);
-    }
-    const upgraded = server.upgrade(req, {
-      data: {
-        kind: MESH_GATEWAY_WS_KIND,
-        sid: auth.sid,
-        uid: auth.userId,
-        via: MESH_VIA_SELF,
-        ...(connectionIdOf(req) ? { cid: connectionIdOf(req) } : {}),
-      },
-    });
-    if (!upgraded) {
-      return jsonError('upgrade_failed', 500);
-    }
-    return undefined;
-  }
-
-  /** 无常规会话时的分享通道：`tmex_sh_self` 有效即以分享作用域升级，无效回 4401。 */
-  private upgradeShareWebSocket(
-    req: Request,
-    server: MeshUpgradeServer
-  ): Response | null | undefined {
-    const token = readShareCookie(req, MESH_VIA_SELF);
-    const verified = verifyShareAccessToken(token, this.now());
-    if (token && verified) {
-      const cid = connectionIdOf(req);
-      const upgraded = server.upgrade(req, {
-        data: {
-          kind: MESH_SHARE_WS_KIND,
-          scope: verified.scope,
-          accessId: verified.accessId,
-          shareToken: token,
-          shareVerifiedAt: this.now(),
-          via: MESH_VIA_SELF,
-          ...(cid ? { cid } : {}),
-        },
-      });
-      return upgraded ? undefined : jsonError('upgrade_failed', 500);
-    }
-    const upgraded = server.upgrade(req, {
-      data: {
-        kind: MESH_REJECT_4401_KIND,
-        via: MESH_VIA_SELF,
-        ...(token ? { closeReason: 'SHARE_LOGIN_REQUIRED' } : {}),
-      },
-    });
-    if (!upgraded) {
-      return jsonError('UNAUTHORIZED', 401);
-    }
-    return undefined;
+    return rejectGatewayWs(req, server, token ? shareWsCloseFor(shareIdOfToken(token)) : null);
   }
 
   closeSocketsForUser(uid: string): void {
@@ -354,7 +334,10 @@ export class MeshHttpRuntime {
     open: (ws: MeshServerWebSocket): void => {
       if (ws.data?.kind === MESH_REJECT_4401_KIND) {
         try {
-          ws.close(WS_CLOSE_LOGIN_REQUIRED, ws.data.closeReason ?? 'NODE_LOGIN_REQUIRED');
+          ws.close(
+            ws.data.closeCode ?? WS_CLOSE_LOGIN_REQUIRED,
+            ws.data.closeReason ?? 'NODE_LOGIN_REQUIRED'
+          );
         } catch {
           // ignore
         }
@@ -438,6 +421,7 @@ export class MeshHttpRuntime {
       isAuthPublicPath(path, {
         standalone: isStandaloneRoles(this.roles),
         localAuthEffective: this.sessionDeps.localAuthEffective?.() ?? false,
+        method: req.method,
       })
     ) {
       return null;
@@ -553,14 +537,6 @@ export class MeshHttpRuntime {
       }
     }
   }
-}
-
-function connectionIdOf(req: Request): string {
-  return (
-    new URL(req.url).searchParams.get('cid')?.trim() ||
-    req.headers.get(X_TMEX_CONNECTION)?.trim() ||
-    ''
-  );
 }
 
 function isStaticAsset(path: string): boolean {

@@ -24,13 +24,14 @@ import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
 import type { RelayRuntime } from '../../../../apps/gateway/src/relay';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { broadcastSettingsUpdate } from '../../../../apps/gateway/src/settings/broadcaster';
+import { getShareService } from '../../../../apps/gateway/src/share';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { type LocalAuthContext, createAuthContextFromDb } from '../lib/local-auth';
 import { loadNodeDatachannel } from '../lib/native-datachannel';
-import { type TmexRoles, parseTmexRoles } from '../lib/roles';
+import { type TmexRoles, isStandaloneRoles, parseTmexRoles } from '../lib/roles';
 import { HttpsListener } from '../tls/https-listener';
 import type { TlsService } from '../tls/tls-service';
 import { createAssembledRelay } from './assemble-relay';
@@ -403,6 +404,10 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
   });
   applySiteSettingsLink(roles, mesh, meshHubStore);
   const localAuthEffective = resolveLocalAuthEffective(opts.localAuthEffective, authHttp);
+  // 免登录（standalone 未开启本机登录）部署无法兑现分享隔离：直接禁止创建对外分享。
+  getShareService().setAuthRequiredResolver(
+    () => !isStandaloneRoles(roles) || localAuthEffective()
+  );
   if (roles.hub) {
     console.log(
       `[hub] mode=${gatewayConfig.hubMode} priority=${gatewayConfig.hubPriority} writerEpoch=${gatewayConfig.hubWriterEpoch} publicUrl=${gatewayConfig.hubPublicUrl ?? ''}`

@@ -55,8 +55,9 @@ export type DcFailureDetail = {
 };
 
 /**
- * `coolingUntil` 传了（哪怕是 `null`）就表示这轮压根没拨号——熔断还在冷却。
+ * `coolingUntil` 传了（哪怕是 `null`）就表示这轮压根没拨号——熔断把直连挡下了。
  * 不单独记一行，浮层里 DataChannel 那半边会整个消失，用户只会以为没试过。
+ * 有截止时间才是冷却（`breaker_cooling` 需要 `{{until}}`），没有就是无限期暂停（`breaker_paused`）。
  */
 export function dcFailureReason(
   _nodeId: string,
@@ -71,12 +72,15 @@ export function dcFailureReason(
     return { text: 'direct_capable=false', code: 'not_direct_capable' };
   }
   if (!opts.rtcAvailable) return { text: 'datachannel unavailable', code: 'rtc_unavailable' };
-  if (opts.coolingUntil !== undefined) {
+  if (opts.coolingUntil != null) {
     return {
       text: 'dial breaker cooling',
       code: 'breaker_cooling',
-      params: opts.coolingUntil == null ? undefined : { until: opts.coolingUntil },
+      params: { until: opts.coolingUntil },
     };
+  }
+  if (opts.coolingUntil !== undefined) {
+    return { text: 'dial breaker paused', code: 'breaker_paused' };
   }
   if (dcError == null) return null;
   const text = dcError instanceof Error ? dcError.message : String(dcError);

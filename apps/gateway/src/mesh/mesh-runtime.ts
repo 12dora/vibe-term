@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { canonicalHubUrl, encodeBase64url } from '@tmex/shared/auth';
-import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
+import { createInMemoryLinkPair } from '@tmex/shared/link';
 import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { filesBulkHooks } from '../api/files';
@@ -34,6 +34,7 @@ import { setMessagingMeshRuntime } from '../messaging/runtime-hooks';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
 import type { GatewaySession } from '../ws/gateway-session';
+import { openAdaptedWsStream } from './adapted-ws-stream';
 import {
   hasLocalCgnatAddress,
   isCgnatIpv4,
@@ -52,7 +53,6 @@ import {
   type MeshServerWebSocket,
   type MeshUpgradeServer,
   type NodeEventPayload,
-  type OpenedWsStream,
   type RtcFingerprintProvider,
   type RtcSignalMessage,
   type StreamOpener,
@@ -94,8 +94,7 @@ import {
 } from './rtc';
 import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
 import { authenticateRequest } from './session-middleware';
-import { decodeTerminalStreamClose } from './stream-close-code';
-import { openHttpStream, openWsStream } from './stream-targets';
+import { openHttpStream } from './stream-targets';
 import type {
   DispatchContext,
   KeyLogApplier,
@@ -407,71 +406,6 @@ export function createKeyLogPublisher(
     },
     queryHubHead: () => uplink.queryHubHead(),
     queryKeyLogAt: (seq) => uplink.queryKeyLogAt(seq),
-  };
-}
-
-async function openAdaptedWsStream(
-  link: LinkSession,
-  auth: string,
-  cid?: string
-): Promise<OpenedWsStream> {
-  const opened = await openWsStream(link, auth, cid);
-  const messageCbs: Array<(bytes: Uint8Array) => void> = [];
-  const closeCbs: Array<(info: { code?: number; reason?: string }) => void> = [];
-  let closed = false;
-  const notifyClose = (info: { code?: number; reason?: string }) => {
-    if (closed) return;
-    closed = true;
-    for (const cb of closeCbs) {
-      try {
-        cb(info);
-      } catch {}
-    }
-  };
-  // RST 的 reason 会随帧到达；只有它能区分「节点端主动终止」和链路抖动。
-  const settledTerminalClose = async (): Promise<{ code: number; reason: string } | null> => {
-    const info = await Promise.race([
-      opened.stream.closed.catch(() => null),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 0)),
-    ]);
-    if (!info || info.reason !== 'rst') return null;
-    return decodeTerminalStreamClose(info.message);
-  };
-  const reader = opened.readable.getReader();
-  void (async () => {
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) for (const cb of messageCbs) cb(value);
-      }
-      notifyClose({});
-    } catch {
-      notifyClose((await settledTerminalClose()) ?? { code: 1011, reason: 'stream-error' });
-    }
-  })();
-  opened.stream.onAbort(() => {
-    void (async () => {
-      notifyClose((await settledTerminalClose()) ?? { code: 1011, reason: 'reset' });
-    })();
-  });
-  return {
-    muxStreamId: opened.stream.id,
-    send(bytes) {
-      return opened.send(bytes);
-    },
-    onMessage(cb) {
-      messageCbs.push(cb);
-    },
-    onClose(cb) {
-      closeCbs.push(cb);
-    },
-    close(_code, reason) {
-      try {
-        opened.close();
-      } catch {}
-      notifyClose({ reason });
-    },
   };
 }
 
@@ -1317,7 +1251,7 @@ function wireMeshHttp(
   const streams: StreamOpener = {
     openHttpStream: (link, open, body, signal) =>
       openHttpStream(link, { type: 'http', ...open }, body, signal),
-    openWsStream: (link, auth, cid) => openAdaptedWsStream(link, auth, cid),
+    openWsStream: (link, auth, cid, share) => openAdaptedWsStream(link, auth, cid, share),
   };
   const publisher = createKeyLogPublisher(uplink, () =>
     d.peerHolder.manager?.notifyKeyLogHeadChanged()

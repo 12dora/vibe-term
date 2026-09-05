@@ -101,6 +101,7 @@ export type DirectFailureCode =
   | 'rtc_unavailable'
   | 'not_direct_capable'
   | 'breaker_cooling'
+  | 'breaker_paused'
   | 'aborted'
   | 'other';
 

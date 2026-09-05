@@ -4,11 +4,11 @@ import type { WebSocketServer } from '../ws';
 import type { GatewaySession } from '../ws/gateway-session';
 import { encodeJsonBytes, isRecord } from './ctl';
 import { LinkStreamCarrier } from './link-stream-carrier';
-import { X_TMEX_SESSION_RENEWED } from './mesh-deps';
 import { parseOpenPayload } from './peer-protocol';
 import { X_TMEX_MESH_PEER, attachMeshPeerMarker } from './peer-request-marker';
 import {
   type StreamAuthContext,
+  authResponseHeaders,
   authorizeHttpStream,
   createStreamRecheck,
   verifyStreamAuth,
@@ -171,7 +171,7 @@ export async function acceptHttpStream(
     );
     return;
   }
-  const verified = authorizeHttpStream(auth, url.pathname, opts, headers);
+  const verified = authorizeHttpStream(auth, method, url.pathname, opts, headers);
   if (!verified.ok) {
     await writeHttpResponse(
       stream,
@@ -222,10 +222,7 @@ export async function acceptHttpStream(
     return;
   }
 
-  const responseHeaders = headerRecord(response.headers);
-  if (verified.renewedExpiresAt !== undefined) {
-    responseHeaders[X_TMEX_SESSION_RENEWED] = String(verified.renewedExpiresAt);
-  }
+  const responseHeaders = authResponseHeaders(headerRecord(response.headers), verified);
 
   try {
     await stream.write(encodeJsonBytes({ status: response.status, headers: responseHeaders }), {
@@ -455,9 +452,10 @@ export async function acceptWsStream(
 ): Promise<void> {
   const open = parseOpenPayload(stream.openPayload) ?? {};
   const auth = str(open.auth);
-  const verified = verifyStreamAuth(auth, '/ws', opts);
+  const boundShareId = str(open.share).trim() || null;
+  const verified = verifyStreamAuth(auth, '/ws', opts, boundShareId);
   if (!verified.ok) {
-    stream.reset(verified.reason);
+    stream.reset(verified.wsClose ?? verified.reason);
     return;
   }
   const cid = (str(open.cid) || str(open.connectionId)).trim();
@@ -551,7 +549,8 @@ async function pumpWsStreamFrames(
 export async function openWsStream(
   link: LinkSession,
   auth: string,
-  cid?: string
+  cid?: string,
+  share?: string
 ): Promise<{
   stream: LinkStream;
   send: (bytes: Uint8Array) => Promise<void>;
@@ -562,6 +561,7 @@ export async function openWsStream(
     type: 'ws',
     auth,
     ...(cid ? { cid } : {}),
+    ...(share ? { share } : {}),
   };
   const stream = await link.openStream(encodeJsonBytes(payload));
   return {

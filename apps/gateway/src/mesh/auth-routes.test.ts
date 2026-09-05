@@ -149,7 +149,14 @@ export class FakeStreams implements StreamOpener {
   lastWs: FakeWs | null = null;
   wsAuth: string | null = null;
   wsCid: string | undefined;
-  readonly wsOpens: Array<{ link: LinkSession; auth: string; cid?: string; ws: FakeWs }> = [];
+  wsShare: string | undefined;
+  readonly wsOpens: Array<{
+    link: LinkSession;
+    auth: string;
+    cid?: string;
+    share?: string;
+    ws: FakeWs;
+  }> = [];
   wsOpenError: Error | null = null;
 
   async openHttpStream(
@@ -181,7 +188,12 @@ export class FakeStreams implements StreamOpener {
     return this.nextResponse;
   }
 
-  async openWsStream(link: LinkSession, auth: string, cid?: string): Promise<OpenedWsStream> {
+  async openWsStream(
+    link: LinkSession,
+    auth: string,
+    cid?: string,
+    share?: string
+  ): Promise<OpenedWsStream> {
     if (this.wsOpenError) {
       const err = this.wsOpenError;
       this.wsOpenError = null;
@@ -189,8 +201,9 @@ export class FakeStreams implements StreamOpener {
     }
     this.wsAuth = auth;
     this.wsCid = cid;
+    this.wsShare = share;
     this.lastWs = new FakeWs();
-    this.wsOpens.push({ link, auth, cid, ws: this.lastWs });
+    this.wsOpens.push({ link, auth, cid, share, ws: this.lastWs });
     return this.lastWs;
   }
 }

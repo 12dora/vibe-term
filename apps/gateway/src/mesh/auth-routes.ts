@@ -150,9 +150,9 @@ export const AUTH_LOCAL_PRESESSION_PATHS = new Set([
 
 export function isAuthPublicPath(
   path: string,
-  opts: { standalone: boolean; localAuthEffective: boolean }
+  opts: { standalone: boolean; localAuthEffective: boolean; method?: string }
 ): boolean {
-  if (isAuthLoginPublicPath(path)) return true;
+  if (isAuthLoginPublicPath(path, opts.method)) return true;
   return opts.standalone && !opts.localAuthEffective && AUTH_LOCAL_PRESESSION_PATHS.has(path);
 }
 

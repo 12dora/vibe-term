@@ -15,6 +15,7 @@ import { type ForwardPump as FailoverPump, runStreamFailover } from './forwarder
 import { copyUpstreamHeaders, filterRequestHeaders } from './forwarder-headers';
 import { parseNodePrefix } from './forwarder-path';
 import { nodeUnreachableResponse } from './forwarder-unreachable';
+import { rejectRemoteWs, remoteWsAuthFor } from './forwarder-ws-auth';
 import { buildJsonStreamBody } from './json-stream-body';
 import {
   HTTP_FAILOVER_MAX_ATTEMPTS,
@@ -37,7 +38,7 @@ import {
 } from './mesh-deps';
 import { stamp } from './mesh-log';
 import { jsonError } from './session-middleware';
-import { readShareCookie, shareAuthValue } from './share-credential';
+import { readShareCookie, shareAuthValue, shareWsParam } from './share-credential';
 import { ShareLoginQuota, shareLoginShareId } from './share-login-quota';
 import { isTerminalStreamClose } from './stream-close-code';
 import { StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
@@ -55,6 +56,7 @@ type ForwardMeta = {
   nodeId: string;
   auth: string;
   cid?: string;
+  share?: string;
   transport: PeerTransportKind | null;
 };
 
@@ -98,20 +100,12 @@ function forwardAttempts(idempotent: boolean, retry?: { attempts: number }): num
  * 登录前公开面不带凭证，其余用节点会话 cookie。
  */
 function forwardedAuthFor(req: Request, nodeId: string, rest: string): string | null {
-  if (isShareAccessPath(rest)) {
+  if (isShareAccessPath(rest, req.method)) {
     const token = readShareCookie(req, nodeId);
     return token ? shareAuthValue(token) : null;
   }
   if (AUTH_SKIP.has(rest)) return null;
   return parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null;
-}
-
-/** `/n/<N>/ws`：优先常规会话，其次分享凭证。 */
-function remoteWsAuthFor(req: Request, nodeId: string): string | null {
-  const session = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
-  if (session) return session;
-  const token = readShareCookie(req, nodeId);
-  return token ? shareAuthValue(token) : null;
 }
 
 export function getSelfRewrite(req: Request): string | null {
@@ -216,6 +210,7 @@ export class Forwarder {
       nodeId: meta?.nodeId ?? ws.data.nodeId ?? '',
       auth: meta?.auth ?? ws.data.auth ?? '',
       cid: meta?.cid ?? ws.data.cid,
+      ...(meta?.share ? { share: meta.share } : {}),
       stream: null,
       boundTransport: meta?.transport ?? null,
       replay: new StreamReplayState(),
@@ -738,14 +733,11 @@ export class Forwarder {
     server: MeshUpgradeServer,
     nodeId: string
   ): Promise<Response | undefined> {
-    const auth = remoteWsAuthFor(req, nodeId);
+    const url = new URL(req.url);
+    const boundShareId = shareWsParam(url);
+    const auth = remoteWsAuthFor(req, nodeId, boundShareId);
     if (!auth) {
-      const upgraded = server.upgrade(req, {
-        data: { kind: MESH_REJECT_4401_KIND, nodeId, auth: null },
-      });
-      return upgraded
-        ? undefined
-        : jsonError('UNAUTHORIZED', 401, { code: 'NODE_LOGIN_REQUIRED', nodeId });
+      return rejectRemoteWs(req, server, nodeId, boundShareId);
     }
     if (req.signal.aborted) {
       return nodeUnreachableResponse(nodeId, true);
@@ -758,9 +750,10 @@ export class Forwarder {
     if (!link || req.signal.aborted) {
       return nodeUnreachableResponse(nodeId, req.signal.aborted, linkError);
     }
-    const cid = new URL(req.url).searchParams.get('cid')?.trim() || undefined;
+    const cid = url.searchParams.get('cid')?.trim() || undefined;
     let streamError: unknown;
-    const stream = await this.deps.streams.openWsStream(link, auth, cid).catch((err) => {
+    const share = boundShareId ?? undefined;
+    const stream = await this.deps.streams.openWsStream(link, auth, cid, share).catch((err) => {
       streamError = err;
       return null;
     });
@@ -777,6 +770,7 @@ export class Forwarder {
       nodeId,
       auth,
       cid,
+      ...(share ? { share } : {}),
       transport: this.deps.peers.transportOf?.(nodeId) ?? null,
     });
     const ok = server.upgrade(req, {
@@ -800,7 +794,7 @@ export class Forwarder {
         headers,
         upstream,
         nodeId,
-        AUTH_SKIP.has(rest) || isShareAccessPath(rest)
+        AUTH_SKIP.has(rest) || isShareAccessPath(rest, req.method)
       )) ?? new Response(upstream.body, { status: upstream.status, headers })
     );
   }
