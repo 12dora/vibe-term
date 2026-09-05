@@ -1,4 +1,5 @@
 import { createServer } from 'node:net';
+import type { TunnelEdgeResolution } from '@tmex/shared';
 
 export type SpawnSpec = {
   command: string;
@@ -14,6 +15,7 @@ export type SpawnHandle = {
   exited: Promise<number>;
   kill: (signal?: NodeJS.Signals) => void;
   metricsAddr?: string | null;
+  edge?: TunnelEdgeResolution | null;
 };
 
 export type Spawner = (spec: SpawnSpec) => SpawnHandle;

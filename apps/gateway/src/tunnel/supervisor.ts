@@ -1,4 +1,4 @@
-import type { TunnelProcessState } from '@tmex/shared';
+import type { TunnelEdgeResolution, TunnelProcessState } from '@tmex/shared';
 import { extractLastError } from './connector-health';
 import type { LogRingBuffer } from './log-buffer';
 import { type CloudflaredProvider, isRegisteredLine, parseQuickUrl } from './provider';
@@ -50,6 +50,7 @@ export class TunnelSupervisor {
   lastError: string | null = null;
   restarts = 0;
   metricsAddr: string | null = null;
+  edge: TunnelEdgeResolution | null = null;
 
   private readonly edgeConnIndexes = new Set<number>();
   private child: SpawnHandle | null = null;
@@ -92,6 +93,7 @@ export class TunnelSupervisor {
     this.child = null;
     this.publicUrl = null;
     this.metricsAddr = null;
+    this.edge = null;
     this.edgeConnIndexes.clear();
     if (!child) {
       this.state = 'stopped';
@@ -125,6 +127,7 @@ export class TunnelSupervisor {
     this.pid = child.pid;
     this.startedAt = new Date().toISOString();
     this.metricsAddr = child.metricsAddr ?? null;
+    this.edge = child.edge ?? null;
 
     const onLine = (line: string): void => {
       this.handleLine(line);

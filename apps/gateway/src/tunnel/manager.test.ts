@@ -1977,3 +1977,94 @@ describe('TunnelManager', () => {
     });
   });
 });
+
+describe('TunnelManager edge resolution', () => {
+  const systemEdge = (lastError: string | null) => ({
+    mode: 'system' as const,
+    fakeIpDetected: true,
+    edgeAddrs: [] as string[],
+    checkedAt: '2026-09-05T00:00:00.000Z',
+    lastError,
+  });
+  const staticEdge = {
+    mode: 'static' as const,
+    fakeIpDetected: true,
+    edgeAddrs: ['198.41.192.7:7844'],
+    checkedAt: '2026-09-05T00:01:00.000Z',
+    lastError: null,
+  };
+
+  test('status exposes the edge resolution and check reports the fake-IP hijack', async () => {
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      resolveEdge: async () => systemEdge('DoH edge resolution failed: HTTP 500'),
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          return Response.json({ readyConnections: 0, connectorId: 'c' });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://edge-cloud.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    const status = ctx.manager.status();
+    expect(status.edge).toMatchObject({ mode: 'system', fakeIpDetected: true });
+    expect(status.process.state).toBe('degraded');
+
+    await ctx.manager.handleAction({ action: 'check' });
+    const job = await waitJob(ctx.manager);
+    expect(job?.error?.code).toBe('connector_down');
+    expect(job?.error?.message).toContain('fake-IP 198.18.x');
+    expect(job?.error?.message).toContain('static edge override failed');
+    await ctx.manager.stop();
+    expect(ctx.manager.status().edge).toBeNull();
+  });
+
+  test('restarts once with a static edge list after staying at zero connections', async () => {
+    const resolutions = [systemEdge(null), systemEdge(null), staticEdge, staticEdge];
+    let resolved = 0;
+    const ctx = await setup({
+      pickPort: async () => 41234,
+      connectorPollMs: 30_000,
+      edgeRecoveryDelayMs: 0,
+      sleep: async (ms) => {
+        await Bun.sleep(Math.min(ms, 1));
+      },
+      resolveEdge: async () => resolutions[Math.min(resolved++, resolutions.length - 1)] ?? null,
+      fetchImpl: async (input) => {
+        if (String(input).includes('/ready')) {
+          return Response.json({ readyConnections: 0, connectorId: 'c' });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://edge-restart.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    const firstRun = ctx.spawner.calls.find((c) => argsInclude(c, '--url'));
+    expect(firstRun?.args).not.toContain('--edge');
+
+    const start = Date.now();
+    while (Date.now() - start < 2_000) {
+      if (ctx.spawner.calls.some((c) => argsInclude(c, '--edge'))) break;
+      await Bun.sleep(5);
+    }
+    const withEdge = ctx.spawner.calls.filter((c) => argsInclude(c, '--edge'));
+    expect(withEdge.length).toBe(1);
+    expect(withEdge[0]?.args).toContain('198.41.192.7:7844');
+    expect(ctx.manager.status().edge).toMatchObject({ mode: 'static' });
+
+    await Bun.sleep(60);
+    expect(ctx.spawner.calls.filter((c) => argsInclude(c, '--edge')).length).toBe(1);
+    await ctx.manager.stop();
+  });
+});

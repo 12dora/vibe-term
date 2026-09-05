@@ -1,4 +1,6 @@
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import type { TunnelEdgeResolution } from '@tmex/shared';
+import { describeEdge } from './edge-resolver';
 import { TunnelError } from './errors';
 import {
   type PickPort,
@@ -101,12 +103,45 @@ function tunnelBaseArgs(originCert: string): string[] {
   return ['tunnel', '--origincert', originCert, '--no-autoupdate'];
 }
 
+export type EdgeResolver = () => Promise<TunnelEdgeResolution | null>;
+
+export type CloudflaredProviderOptions = {
+  resolveEdge?: EdgeResolver;
+  log?: (message: string) => void;
+};
+
+export function edgeArgs(edge: TunnelEdgeResolution | null): string[] {
+  if (!edge || edge.mode !== 'static') return [];
+  const args: string[] = [];
+  for (const addr of edge.edgeAddrs) {
+    args.push('--edge', addr);
+  }
+  return args;
+}
+
 export class CloudflaredProvider {
+  private readonly resolveEdgeFn: EdgeResolver;
+  private readonly log: (message: string) => void;
+
   constructor(
     private readonly spawner: Spawner,
     private readonly tunnelDir: string,
-    private readonly pickPort: PickPort = pickFreePort
-  ) {}
+    private readonly pickPort: PickPort = pickFreePort,
+    opts: CloudflaredProviderOptions = {}
+  ) {
+    this.resolveEdgeFn = opts.resolveEdge ?? (async () => null);
+    this.log = opts.log ?? ((message) => console.log(message));
+  }
+
+  private async resolveEdgeForSpawn(): Promise<TunnelEdgeResolution | null> {
+    try {
+      const edge = await this.resolveEdgeFn();
+      if (edge) this.log(describeEdge(edge));
+      return edge;
+    } catch {
+      return null;
+    }
+  }
 
   spawn(command: string, args: string[], env?: Record<string, string>): SpawnHandle {
     return this.spawner({ command, args, env, cwd: this.tunnelDir });
@@ -195,25 +230,30 @@ export class CloudflaredProvider {
   async spawnNamedRun(bin: string, configPath: string): Promise<SpawnHandle> {
     const cert = originCertPath(this.tunnelDir);
     const metrics = await this.metricsArgs();
+    const edge = await this.resolveEdgeForSpawn();
     const handle = this.spawn(
       bin,
-      [...tunnelBaseArgs(cert), ...metrics.args, '--config', configPath, 'run'],
+      [...tunnelBaseArgs(cert), ...metrics.args, ...edgeArgs(edge), '--config', configPath, 'run'],
       tunnelEnv(cert)
     );
     handle.metricsAddr = metrics.addr;
+    handle.edge = edge;
     return handle;
   }
 
   async spawnQuickRun(bin: string, originUrl: string): Promise<SpawnHandle> {
     const metrics = await this.metricsArgs();
+    const edge = await this.resolveEdgeForSpawn();
     const handle = this.spawn(bin, [
       'tunnel',
       '--no-autoupdate',
       ...metrics.args,
+      ...edgeArgs(edge),
       '--url',
       originUrl,
     ]);
     handle.metricsAddr = metrics.addr;
+    handle.edge = edge;
     return handle;
   }
 

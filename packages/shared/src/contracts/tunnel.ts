@@ -171,6 +171,25 @@ export interface TunnelConnectorStatus {
   lastError: string | null;
 }
 
+/**
+ * cloudflared 边缘地址解析方式。系统解析器把 `*.argotunnel.com` 解析到 198.18.0.0/15
+ * （本机代理的 fake-IP）时，边缘 7844 端口会被代理吞掉，进程存活但永远 0 连接；
+ * 此时网关改用 DoH 解析出真实边缘 IP，以 `--edge` 静态列表启动 cloudflared 绕开劫持。
+ */
+export type TunnelEdgeMode = 'system' | 'static';
+
+export interface TunnelEdgeResolution {
+  mode: TunnelEdgeMode;
+  /** 系统解析器返回了 fake-IP（198.18.0.0/15） */
+  fakeIpDetected: boolean;
+  /** mode=static 时传给 cloudflared 的 `--edge` 地址（host:port） */
+  edgeAddrs: string[];
+  /** 最近一次解析时间（ISO） */
+  checkedAt: string | null;
+  /** DoH 解析失败等原因（已脱敏）；成功为 null */
+  lastError: string | null;
+}
+
 export interface TunnelProcessStatus {
   state: TunnelProcessState;
   pid: number | null;
@@ -206,6 +225,8 @@ export interface TunnelStatusResponse {
   process: TunnelProcessStatus;
   /** 连接器（边缘连接）健康；托管与外部 cloudflared 都填 */
   connector: TunnelConnectorStatus;
+  /** 边缘地址解析诊断；只有托管模式启动过 cloudflared 才有值，旧后端无此字段 */
+  edge?: TunnelEdgeResolution | null;
   access: TunnelAccessStatus;
   external: TunnelExternalStatus;
   /** 本机是否启用了登录（mesh 角色下的用户名/密码/2FA） */

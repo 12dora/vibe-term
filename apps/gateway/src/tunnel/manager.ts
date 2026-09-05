@@ -9,6 +9,7 @@ import type {
   TunnelActionResponse,
   TunnelBinaryStatus,
   TunnelConnectorStatus,
+  TunnelEdgeResolution,
   TunnelErrorResponse,
   TunnelJobKind,
   TunnelJobStatus,
@@ -47,6 +48,7 @@ import {
   readLogTail,
 } from './connector-health';
 import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
+import { resolveEdge } from './edge-resolver';
 import {
   EXPOSURE_ACK_MESSAGE,
   EXTERNAL_MANAGED_MESSAGE,
@@ -123,6 +125,8 @@ export type TunnelManagerOptions = {
   connectorPollMs?: number;
   /** 无已知 metrics 地址时是否扫描 127.0.0.1:20241–20245；测试默认关闭以免碰到本机生产 cloudflared */
   scanDefaultMetrics?: boolean;
+  resolveEdge?: () => Promise<TunnelEdgeResolution | null>;
+  edgeRecoveryDelayMs?: number;
 };
 
 type BinaryCache = {
@@ -133,6 +137,8 @@ type BinaryCache = {
 
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const LOGIN_POLL_MS = 500;
+const EDGE_RECOVERY_DELAY_MS = 90_000;
+const FAKE_IP_HINT = 'edge DNS resolved to fake-IP 198.18.x (local proxy); static edge override';
 
 export class TunnelManager {
   private readonly tunnelDir: string;
@@ -164,6 +170,12 @@ export class TunnelManager {
   private readonly ackDetectMs: number;
   private lastExternal: ExternalDetection = { ...EMPTY_EXTERNAL };
   private lastConnector: TunnelConnectorStatus = { ...EMPTY_CONNECTOR };
+  private lastEdge: TunnelEdgeResolution | null = null;
+  private readonly resolveEdgeFn: () => Promise<TunnelEdgeResolution | null>;
+  private readonly edgeRecoveryDelayMs: number;
+  private degradedSince: number | null = null;
+  private edgeRecoveryDone = false;
+  private edgeRecoveryInFlight = false;
   private readonly connectorPollMs: number;
   private readonly scanDefaultMetrics: boolean;
   private connectorPollGen = 0;
@@ -243,8 +255,22 @@ export class TunnelManager {
       setAccessGuardSource(() => this.accessGuardState());
       setAccessJwtVerifier(this.jwtVerifier);
     }
+    this.edgeRecoveryDelayMs = opts.edgeRecoveryDelayMs ?? EDGE_RECOVERY_DELAY_MS;
+    this.resolveEdgeFn =
+      opts.resolveEdge ??
+      (config.isTest
+        ? async () => null
+        : () => resolveEdge({ fetchImpl: this.fetchImpl, now: this.now }));
     const spawner: Spawner = opts.spawner ?? bunSpawner;
-    this.provider = new CloudflaredProvider(spawner, this.tunnelDir, opts.pickPort ?? pickFreePort);
+    this.provider = new CloudflaredProvider(
+      spawner,
+      this.tunnelDir,
+      opts.pickPort ?? pickFreePort,
+      {
+        resolveEdge: () => this.resolveEdgeFn(),
+        log: (message) => this.warn(message),
+      }
+    );
     this.supervisor = new TunnelSupervisor({
       provider: this.provider,
       logs: this.logs,
@@ -294,6 +320,7 @@ export class TunnelManager {
     this.loginHandle?.kill();
     this.loginHandle = null;
     this.resetConnector();
+    this.resetEdge();
     await this.supervisor.stop();
   }
 
@@ -351,6 +378,7 @@ export class TunnelManager {
         restarts: persisted.externallyManaged ? 0 : this.supervisor.restarts,
       },
       connector: { ...this.lastConnector },
+      edge: persisted.externallyManaged ? null : this.currentEdge(),
       access,
       external,
       loginEnforced,
@@ -877,6 +905,7 @@ export class TunnelManager {
   private async jobStop(step: (name: string) => void): Promise<void> {
     step('stop');
     this.resetConnector();
+    this.resetEdge();
     await this.supervisor.stop();
   }
 
@@ -937,7 +966,7 @@ export class TunnelManager {
     if (connector.reachable === true && connector.readyConnections === 0) {
       throw new TunnelError(
         'connector_down',
-        connector.lastError ?? 'cloudflared has no edge connections'
+        `${connector.lastError ?? 'cloudflared has no edge connections'}${this.edgeHint()}`
       );
     }
     const url = `${target.replace(/\/$/, '')}/healthz`;
@@ -1225,7 +1254,10 @@ export class TunnelManager {
     };
     this.logs.clear();
     this.supervisor.publicUrl = null;
+    this.degradedSince = null;
+    this.edgeRecoveryDone = false;
     await this.supervisor.start(this.lastStartOpts);
+    this.lastEdge = this.supervisor.edge;
     await this.waitUntilRunning();
     await this.probeAndStoreConnector();
     this.syncConnectorPoll();
@@ -1322,16 +1354,78 @@ export class TunnelManager {
       await this.sleep(this.connectorPollMs);
       if (gen !== this.connectorPollGen) break;
       if (!this.shouldProbeConnector()) break;
-      await this.probeAndStoreConnector();
+      const connector = await this.probeAndStoreConnector();
+      if (gen !== this.connectorPollGen) break;
+      await this.maybeRecoverEdge(connector);
     }
   }
 
   private connectorHint(connector: TunnelConnectorStatus = this.lastConnector): string {
     if (connector.reachable === true && connector.readyConnections != null) {
-      return ` (connector: ${connector.readyConnections} edge connections)`;
+      const edgeHint = connector.readyConnections === 0 ? this.edgeHint() : '';
+      return ` (connector: ${connector.readyConnections} edge connections)${edgeHint}`;
     }
     if (connector.reachable === false) return ' (connector: metrics unreachable)';
     return '';
+  }
+
+  private currentEdge(): TunnelEdgeResolution | null {
+    const edge = this.supervisor.edge;
+    if (edge) this.lastEdge = edge;
+    return this.lastEdge ? { ...this.lastEdge } : null;
+  }
+
+  private resetEdge(): void {
+    this.lastEdge = null;
+    this.degradedSince = null;
+    this.edgeRecoveryDone = false;
+  }
+
+  /** 0 连接且系统解析器返回 fake-IP 时给出可操作提示 */
+  private edgeHint(): string {
+    const edge = this.currentEdge();
+    if (!edge?.fakeIpDetected) return '';
+    const state = edge.mode === 'static' ? 'active' : `failed: ${edge.lastError ?? 'unknown'}`;
+    return ` — ${FAKE_IP_HINT} ${state}`;
+  }
+
+  /**
+   * 托管进程连续 90s 0 连接且当前用系统解析：重新解析一次，若识别到 fake-IP 且拿到
+   * DoH 地址，就带 --edge 静态列表重启一次；连接恢复前不再重复。
+   */
+  private async maybeRecoverEdge(connector: TunnelConnectorStatus): Promise<void> {
+    if (this.safePersisted().externallyManaged) return;
+    const degraded = connector.reachable === true && connector.readyConnections === 0;
+    if (!degraded) {
+      this.degradedSince = null;
+      if ((connector.readyConnections ?? 0) > 0) this.edgeRecoveryDone = false;
+      return;
+    }
+    if (this.degradedSince == null) this.degradedSince = this.now();
+    if (this.edgeRecoveryDone || this.edgeRecoveryInFlight) return;
+    if (this.now() - this.degradedSince < this.edgeRecoveryDelayMs) return;
+    if (this.currentEdge()?.mode === 'static') return;
+    if (!this.lastStartOpts || !this.isManagedProcessActive()) return;
+    this.edgeRecoveryInFlight = true;
+    try {
+      const edge = await this.resolveEdgeFn();
+      if (!edge || edge.mode !== 'static' || edge.edgeAddrs.length === 0) return;
+      this.edgeRecoveryDone = true;
+      this.lastEdge = edge;
+      this.warn(
+        `[tunnel] restarting cloudflared with static edge after ${Math.round(
+          (this.now() - (this.degradedSince ?? this.now())) / 1000
+        )}s without edge connections: ${edge.edgeAddrs.join(',')}`
+      );
+      const opts = this.lastStartOpts;
+      await this.supervisor.stop();
+      await this.supervisor.start(opts);
+      this.degradedSince = null;
+    } catch (error) {
+      this.warn(`[tunnel] edge recovery failed: ${String(error)}`);
+    } finally {
+      this.edgeRecoveryInFlight = false;
+    }
   }
 
   private async connectorLogLines(): Promise<string[]> {
