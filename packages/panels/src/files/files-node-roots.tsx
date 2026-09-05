@@ -15,7 +15,7 @@ import { useFileTreeStore, useRuntime, useTmuxStore, useUIStore } from '@tmex/st
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Loader2, TriangleAlert } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo } from 'react';
+import { type CSSProperties, memo, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { SortableVerticalList, useSortableRow } from '../device-tree/device-tree-dnd';
@@ -41,6 +41,15 @@ const INDENT_STEP = 12;
 
 // 单个目录一次最多渲染多少行：后端每目录上限 2000，全量挂载会造出上千个 DOM 行
 const DISPLAY_CAP = 500;
+
+/** 超过这个条数才给子行加 content-visibility：小目录加了只是白白多一层跳渲判定 */
+export const FILE_ROW_SKIP_RENDER_THRESHOLD = 100;
+
+/** 与 settings/directory-picker-modal 同法：视口外的行只保留占位高度，不做布局与绘制 */
+const SKIPPED_ROW_STYLE: CSSProperties = {
+  contentVisibility: 'auto',
+  containIntrinsicSize: 'auto 26px',
+};
 
 interface TreeContext {
   llmConfigured: boolean;
@@ -224,6 +233,7 @@ const DirNode = memo(function DirNode({
   isRoot,
   ctx,
   drag,
+  rowStyle,
 }: {
   root: FileRootDto;
   rootId: string;
@@ -232,6 +242,7 @@ const DirNode = memo(function DirNode({
   isRoot: boolean;
   ctx: TreeContext;
   drag?: DirectoryDragHandle;
+  rowStyle?: CSSProperties;
 }) {
   const { t } = useTranslation();
   const { nodeKey, expanded, toggle, query, entries, errCode } = useDirectoryListing(rootId, path);
@@ -261,6 +272,9 @@ const DirNode = memo(function DirNode({
       : DISPLAY_CAP;
   const hidden = !showAll && entries ? Math.max(entries.length - cap, 0) : 0;
   const visible = hidden > 0 && entries ? entries.slice(0, cap) : entries;
+  // 只加在**子行**上：根行是 SortableVerticalList 的可排序项，拖拽要实测它的几何。
+  const childRowStyle =
+    (visible?.length ?? 0) > FILE_ROW_SKIP_RENDER_THRESHOLD ? SKIPPED_ROW_STYLE : undefined;
 
   return (
     <DirectoryNodeView
@@ -277,6 +291,7 @@ const DirNode = memo(function DirNode({
       onPickFiles={upload.openFilePicker}
       onFileInputChange={upload.handleFileInputChange}
       drag={drag}
+      rowStyle={rowStyle}
     >
       {/* 这两个属性是共享右键菜单回查 entry 的唯一线索（见 file-leaf-target 的常量）：
           行只留自己的路径，根 id 与所在目录由容器带 */}
@@ -303,6 +318,7 @@ const DirNode = memo(function DirNode({
               depth={depth + 1}
               isRoot={false}
               ctx={ctx}
+              rowStyle={childRowStyle}
             />
           ) : (
             <FileLeaf
@@ -311,6 +327,7 @@ const DirNode = memo(function DirNode({
               rootId={rootId}
               indent={leafIndent}
               symlinkTitle={symlinkTitle}
+              rowStyle={childRowStyle}
             />
           )
         )}
@@ -353,7 +370,14 @@ const FileLeaf = memo(function FileLeaf({
   rootId,
   indent,
   symlinkTitle,
-}: { entry: FileEntryDto; rootId: string; indent: number; symlinkTitle: string }) {
+  rowStyle,
+}: {
+  entry: FileEntryDto;
+  rootId: string;
+  indent: number;
+  symlinkTitle: string;
+  rowStyle?: CSSProperties;
+}) {
   const isSelected = useIsFileSelected(rootId, entry.path);
   const Icon = fileIconFor(entry);
 
@@ -364,7 +388,7 @@ const FileLeaf = memo(function FileLeaf({
       data-file-leaf-path={entry.path}
       data-testid={`file-item-${rootId}-${entry.path}`}
       title={entry.name}
-      style={{ paddingLeft: indent }}
+      style={rowStyle ? { paddingLeft: indent, ...rowStyle } : { paddingLeft: indent }}
       className={cn(
         'flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 pr-2 text-left transition-colors data-[pressed]:bg-sidebar-accent [@media(any-pointer:coarse)]:py-1.5',
         isSelected

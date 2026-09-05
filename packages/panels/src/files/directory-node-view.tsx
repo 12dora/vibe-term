@@ -10,7 +10,7 @@ import {
   ContextMenuTrigger,
 } from '@tmex/ui/context-menu';
 import { ChevronRight, ChevronsUpDown, GripVertical, Upload } from 'lucide-react';
-import type { ChangeEvent, ReactNode, RefObject } from 'react';
+import type { CSSProperties, ChangeEvent, ReactNode, RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SortableRow } from '../device-tree/device-tree-dnd';
 import { fileIconColor, fileIconFor } from './file-icon';
@@ -42,6 +42,8 @@ export interface DirectoryNodeViewProps {
   onFileInputChange: (e: ChangeEvent<HTMLInputElement>) => void;
   /** 仅根行传：整节（根行 + 子树）作为一个可排序项。 */
   drag?: DirectoryDragHandle;
+  /** 大目录里给子节点加的 `content-visibility` 跳渲样式；根行不传（见 files-node-roots）。 */
+  rowStyle?: CSSProperties;
   children: ReactNode;
 }
 
@@ -59,6 +61,7 @@ export function DirectoryNodeView({
   onPickFiles,
   onFileInputChange,
   drag,
+  rowStyle,
   children,
 }: DirectoryNodeViewProps) {
   const { t } = useTranslation();
@@ -69,7 +72,7 @@ export function DirectoryNodeView({
   return (
     <div
       ref={drag?.sortable.setNodeRef}
-      style={drag?.sortable.style}
+      style={rowStyle ? { ...drag?.sortable.style, ...rowStyle } : drag?.sortable.style}
       className={cn(drag && 'relative pl-3.5', drag?.sortable.isDragging && 'opacity-60')}
     >
       {drag && (

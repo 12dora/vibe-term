@@ -26,6 +26,7 @@ const { FilesTab } = await import('./files-tab');
 const { FILE_LEAF_PATH_ATTR, FILE_LIST_DIR_ATTR, FILE_LIST_ROOT_ATTR } = await import(
   './file-leaf-target'
 );
+const { FILE_ROW_SKIP_RENDER_THRESHOLD } = await import('./files-node-roots');
 
 const i18n = i18next.createInstance();
 await i18n.init({
@@ -152,5 +153,34 @@ describe('文件树的共享右键菜单', () => {
     const html = renderExpandedRoot([fileEntry(0)]);
     // depth=1 的文件行：1*12 + 4 + 18 = 34
     expect(html).toContain('padding-left:34px');
+  });
+});
+
+describe('大目录的 content-visibility 跳渲', () => {
+  const skip = 'content-visibility:auto';
+
+  test('超过阈值时每个文件行都带跳渲样式（缩进保留）', () => {
+    const rows = FILE_ROW_SKIP_RENDER_THRESHOLD + 20;
+    const html = renderExpandedRoot(Array.from({ length: rows }, (_, i) => fileEntry(i)));
+
+    expect(count(html, skip)).toBe(rows);
+    expect(html).toContain('contain-intrinsic-size:auto 26px');
+    expect(html).toContain('padding-left:34px;content-visibility:auto');
+  });
+
+  test('阈值以内不加：小目录白白多一层跳渲判定', () => {
+    const html = renderExpandedRoot(
+      Array.from({ length: FILE_ROW_SKIP_RENDER_THRESHOLD }, (_, i) => fileEntry(i))
+    );
+    expect(count(html, skip)).toBe(0);
+  });
+
+  test('根行（可排序项）自己永远不跳渲', () => {
+    const rows = FILE_ROW_SKIP_RENDER_THRESHOLD + 1;
+    const html = renderExpandedRoot(Array.from({ length: rows }, (_, i) => fileEntry(i)));
+    // 只有文件行带，根行那一层（含拖拽手柄的容器）不带
+    expect(count(html, skip)).toBe(rows);
+    const rootRowTag = html.slice(0, html.indexOf(`data-testid="file-dir-${ROOT.id}`));
+    expect(rootRowTag).not.toContain(skip);
   });
 });

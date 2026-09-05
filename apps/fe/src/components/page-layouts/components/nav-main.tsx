@@ -1,3 +1,4 @@
+import type { ChunkPreloadTarget } from '@/lib/chunk-preload';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
 import {
   SidebarGroup,
@@ -42,6 +43,8 @@ export interface NavMainItem {
   /** 面板入口这类只带查询串的目标（`?panel=…`）走这里带上 history state 与测试锚点。 */
   testId?: string;
   linkState?: unknown;
+  /** 指向懒加载路由页时带上它的模块 loader，悬停即预热该 chunk。 */
+  preload?: ChunkPreloadTarget;
   items?: {
     title: string;
     url: string;
@@ -76,7 +79,7 @@ export function NavMain({ items }: { items: NavMainItem[] }) {
                 // 两个入口并排时只有半宽，字号收一档才放得下英文标签。
                 className="justify-center gap-1.5 px-1.5 py-1 text-xs"
                 data-testid={item.testId}
-                render={<NavLink to={item.url} state={item.linkState} />}
+                render={<NavLink to={item.url} state={item.linkState} preload={item.preload} />}
               >
                 <item.icon />
                 <span>{t(item.shortTitle ?? item.title)}</span>

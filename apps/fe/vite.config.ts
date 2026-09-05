@@ -31,6 +31,35 @@ function katexWoff2Only(): Plugin {
   };
 }
 
+// 与业务代码分开缓存的运行时框架：这几个包每次发版都不变，业务改动不该把它们一起作废。
+// 刻意只列这几个，不做「node_modules 一刀切」——那会把懒加载边界（base-ui 弹层、hljs、
+// 直连栈、sonner）全部拽回首屏。
+const VENDOR_REACT_PACKAGES = new Set([
+  'react',
+  'react-dom',
+  'scheduler',
+  'react-router',
+  '@tanstack/react-query',
+  'i18next',
+  'react-i18next',
+  'zustand',
+]);
+
+/** 取模块 id 里最后一段 node_modules 后的包名（bun 的 `.bun/<pkg>@<ver>/node_modules/<pkg>` 布局也吃得下）。 */
+export function packageNameOfModuleId(id: string): string | null {
+  const marker = 'node_modules/';
+  const at = id.lastIndexOf(marker);
+  if (at < 0) return null;
+  const [scopeOrName = '', nested = ''] = id.slice(at + marker.length).split('/');
+  if (!scopeOrName) return null;
+  return scopeOrName.startsWith('@') ? `${scopeOrName}/${nested}` : scopeOrName;
+}
+
+export function vendorChunkOf(id: string): string | undefined {
+  const name = packageNameOfModuleId(id);
+  return name && VENDOR_REACT_PACKAGES.has(name) ? 'vendor-react' : undefined;
+}
+
 export default defineConfig(({ mode }) => {
   // 前端只需要两个非密钥的接线值：网关地址与前端端口。
   // 这两者由 launcher 经 process.env 提供（dev-supervisor source development.env；
@@ -92,6 +121,11 @@ export default defineConfig(({ mode }) => {
       // 生产构建默认不出 source map：~18MB 的 .map 会进 resources/fe-dist 随包分发，纯属负担
       // （浏览器正常不下载，但撑大安装/升级体积）。需要线上排障时 BUILD_SOURCEMAP=1 显式开启；dev 构建保留。
       sourcemap: process.env.BUILD_SOURCEMAP === '1' || !isProd,
+      rollupOptions: {
+        output: {
+          manualChunks: (id) => vendorChunkOf(id),
+        },
+      },
     },
     define: {
       // 将关键配置暴露给前端代码

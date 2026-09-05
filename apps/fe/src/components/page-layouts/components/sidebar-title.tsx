@@ -1,4 +1,5 @@
 import { Brand } from '@/components/brand';
+import { settingsPageModule } from '@/page-modules';
 import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
 import { ICON_TOOLTIP_DELAY_MS, IconTooltip } from '@tmex/ui/icon-tooltip';
 import { useSidebar } from '@tmex/ui/sidebar';
@@ -48,6 +49,7 @@ export function SidebarTitle() {
         <IconTooltip label={t('sidebar.settings')}>
           <NavLink
             to="/settings"
+            preload={settingsPageModule}
             className={ACTION_BUTTON_CLASS}
             data-testid="sidebar-settings"
             aria-label={t('sidebar.settings')}

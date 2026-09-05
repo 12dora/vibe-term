@@ -31,8 +31,9 @@ function ScrollArea({ className, children, axis = 'both', ...props }: ScrollArea
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
+      {/* 不渲染 Corner：本仓从不挂横向 ScrollBar，两条滚动条的交点恒不存在，
+          base-ui 的 Corner 在 `scrollbarXHidden || scrollbarYHidden` 时本就返回 null。 */}
       <ScrollBar />
-      <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   );
 }

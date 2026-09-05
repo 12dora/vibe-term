@@ -17,6 +17,7 @@ import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
 import { lazyChunk } from '@/lazy-chunk';
+import { type ChunkPreloadTarget, preloadChunk, startIdleChunkPreload } from '@/lib/chunk-preload';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
 import { nodeQueryClient } from '@/node/node-runtimes';
 import { parseApiError } from '@tmex/api-client';
@@ -35,11 +36,6 @@ import {
 import { Button } from '@tmex/ui/button';
 import { Reveal } from '@tmex/ui/motion';
 import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/tabs';
-import {
-  type ChunkPreloadTarget,
-  preloadChunk,
-  startIdleChunkPreload,
-} from './settings/chunk-preload';
 import { prefetchTabData } from './settings/data-prefetch';
 import { useRelayAvailability } from './settings/relay/relay-status-store';
 import { useSiteSettingsForm } from './settings/use-site-settings-form';

@@ -139,7 +139,7 @@ describe('settingsTabFromParam', () => {
   });
 });
 
-// 空闲预热的排队顺序（调度本身在 settings/chunk-preload.test.ts 里覆盖）。
+// 空闲预热的排队顺序（调度本身在 lib/chunk-preload.test.ts 里覆盖）。
 describe('chunkPreloadOrder', () => {
   test('排除当前标签，其余按标签定义顺序各出现一次', () => {
     for (const tab of TAB_IDS) {

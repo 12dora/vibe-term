@@ -9,7 +9,17 @@ import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';
 import { buildBlocksWithConfirmations } from './agent-thread-blocks';
-import { ChatThread, isPinnedToBottom, threadRows, windowStartIndex } from './chat-thread';
+import {
+  CHAT_ROW_SKIP_RENDER_THRESHOLD,
+  ChatThread,
+  bottomAnchor,
+  createScrollCoalescer,
+  isPinnedToBottom,
+  restoreBottomAnchor,
+  stickToBottom,
+  threadRows,
+  windowStartIndex,
+} from './chat-thread';
 
 const i18n = i18next.createInstance();
 await i18n.init({
@@ -157,5 +167,145 @@ describe('isPinnedToBottom', () => {
     expect(isPinnedToBottom({ scrollHeight: 1000, scrollTop: 953, clientHeight: 0 })).toBe(true);
     expect(isPinnedToBottom({ scrollHeight: 1000, scrollTop: 900, clientHeight: 53 })).toBe(true);
     expect(isPinnedToBottom({ scrollHeight: 1000, scrollTop: 800, clientHeight: 100 })).toBe(false);
+  });
+});
+
+/** 手控的帧调度：`run()` 走一帧，用来断言合帧确实只测一次。 */
+function fakeFrames() {
+  const queue = new Map<number, () => void>();
+  let next = 1;
+  return {
+    host: {
+      requestAnimationFrame: (callback: () => void) => {
+        const handle = next++;
+        queue.set(handle, callback);
+        return handle;
+      },
+      cancelAnimationFrame: (handle: number) => void queue.delete(handle),
+    },
+    pending: () => queue.size,
+    run: () => {
+      const callbacks = [...queue.values()];
+      queue.clear();
+      for (const callback of callbacks) callback();
+    },
+  };
+}
+
+describe('createScrollCoalescer', () => {
+  test('一帧里来多少次 scroll 都只测量一次', () => {
+    const frames = fakeFrames();
+    let measured = 0;
+    const coalescer = createScrollCoalescer(() => {
+      measured += 1;
+    }, frames.host);
+
+    for (let i = 0; i < 12; i++) coalescer.onScroll();
+    expect(measured).toBe(0);
+    expect(frames.pending()).toBe(1);
+
+    frames.run();
+    expect(measured).toBe(1);
+
+    // 下一帧再滚，还能再测一次
+    coalescer.onScroll();
+    frames.run();
+    expect(measured).toBe(2);
+  });
+
+  test('flush 立刻结算压着的那次测量，并且不会重复测', () => {
+    const frames = fakeFrames();
+    let measured = 0;
+    const coalescer = createScrollCoalescer(() => {
+      measured += 1;
+    }, frames.host);
+
+    coalescer.onScroll();
+    coalescer.flush();
+    expect(measured).toBe(1);
+    frames.run();
+    expect(measured).toBe(1);
+
+    // 没有压着的测量时 flush 是空操作
+    coalescer.flush();
+    expect(measured).toBe(1);
+  });
+
+  test('dispose 之后压着的那一帧不再测量', () => {
+    const frames = fakeFrames();
+    let measured = 0;
+    const coalescer = createScrollCoalescer(() => {
+      measured += 1;
+    }, frames.host);
+
+    coalescer.onScroll();
+    coalescer.dispose();
+    frames.run();
+    expect(measured).toBe(0);
+  });
+});
+
+describe('吸底与锚点回写', () => {
+  test('流式追加内容后吸底仍然贴着底部', () => {
+    const el = { scrollHeight: 1000, scrollTop: 1000, clientHeight: 400 };
+    expect(isPinnedToBottom(el)).toBe(true);
+
+    // 追加一段流式文本：内容变高，吸底把 scrollTop 补上去
+    el.scrollHeight = 1240;
+    stickToBottom(el);
+    expect(el.scrollTop).toBe(1240);
+    expect(isPinnedToBottom(el)).toBe(true);
+  });
+
+  test('用户上滚后不再吸底（超过 48px 阈值）', () => {
+    const el = { scrollHeight: 1000, scrollTop: 500, clientHeight: 400 };
+    expect(isPinnedToBottom(el)).toBe(false);
+  });
+
+  test('显示更早：视口按高度增量原地钉住', () => {
+    const el = { scrollHeight: 2000, scrollTop: 1200 };
+    const anchor = bottomAnchor(el);
+    expect(anchor).toBe(800);
+
+    // 往前补 200 条，内容整体长高 5000px
+    el.scrollHeight = 7000;
+    restoreBottomAnchor(el, anchor);
+    // scrollTop 恰好按高度增量上移，视口里看到的还是原来那一段
+    expect(el.scrollTop).toBe(1200 + 5000);
+    expect(bottomAnchor(el)).toBe(anchor);
+  });
+});
+
+describe('行级 content-visibility', () => {
+  function renderRows(blocks: number): string {
+    return renderToStaticMarkup(
+      <I18nextProvider i18n={i18n}>
+        <ChatThread
+          blocks={buildBlocksWithConfirmations(history(blocks), undefined, undefined)}
+          running={false}
+          emptyText="empty"
+          confirmationByToolCallId={NO_CONFIRMATIONS}
+          onDecide={onDecide}
+        />
+      </I18nextProvider>
+    );
+  }
+
+  test('长会话给每个块的外层加跳渲样式', () => {
+    const rows = CHAT_ROW_SKIP_RENDER_THRESHOLD + 5;
+    const html = renderRows(rows);
+    expect(html.split('content-visibility:auto').length - 1).toBe(rows);
+    expect(html).toContain('contain-intrinsic-size:auto 64px');
+  });
+
+  test('短会话不加', () => {
+    const html = renderRows(CHAT_ROW_SKIP_RENDER_THRESHOLD);
+    expect(html).not.toContain('content-visibility:auto');
+  });
+
+  test('外层包一层 flex 列，块自己的 self-end 对齐不受影响', () => {
+    const html = renderRows(1);
+    expect(html).toContain('<div class="flex flex-col">');
+    expect(html).toContain('self-end');
   });
 });

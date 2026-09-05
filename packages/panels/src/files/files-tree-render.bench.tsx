@@ -132,5 +132,8 @@ function bench(label: string, rows: number, iterations = 20): void {
 }
 
 bench('500 rows', 500);
+// 跨过 content-visibility 阈值（100 行）的那一档：SSR 只多写两个内联样式，
+// 跳渲的收益在浏览器里才体现，这里只兜住「样式没把渲染成本抬起来」。
+bench('120 rows', 120);
 bench('50 rows', 50);
 process.exit(0);

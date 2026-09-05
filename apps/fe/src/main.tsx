@@ -18,12 +18,21 @@ import { FlowBridges } from '@/components/flow-bridges';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { SidePanelHost } from '@/components/side-panels/side-panel-host';
 import { StandaloneLanding } from '@/components/standalone-landing';
+import { startIdleChunkPreload } from '@/lib/chunk-preload';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { MeshNodesResident } from '@/node/mesh-nodes-resident';
 import { NodeRouteGate, NodeRuntimeBoundary, useRouteNodeId } from '@/node/node-runtime-boundary';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { appNodeRuntimes, nodeQueryClient } from '@/node/node-runtimes';
 import { RelayMetaKeyResident } from '@/node/relay-meta-key-resident';
+import {
+  IDLE_PRELOAD_PAGE_MODULES,
+  devicePageModule,
+  devicesPageModule,
+  filePageModule,
+  loginPageModule,
+  settingsPageModule,
+} from '@/page-modules';
 import { PageWrapper } from '@/page-wrapper';
 import { installSessionInterceptor } from '@tmex/api-client/auth/index';
 import { ConnectionIndicator } from '@tmex/panels';
@@ -279,13 +288,6 @@ function MainInset() {
   );
 }
 
-// Lazy load page modules
-const settingsModule = () => import('./pages/SettingsPage');
-const devicesModule = () => import('./pages/DevicesPage');
-const deviceModule = () => import('./pages/DevicePage');
-const fileModule = () => import('./pages/FilePage');
-const loginModule = () => import('./pages/LoginPage');
-
 // 页面路由在 `self`（旧路由）与 `/n/:nodeId` 两处各挂一份；路由对象不可共享，逐次新建。
 // 两份都是**同一棵** RootLayout 路由的子级：外壳的元素身份必须跨 node 保持不变，
 // 分成两棵顶层路由的话 React Router 会在切换分支时把外壳整个卸载重建（侧边栏闪烁）。
@@ -293,29 +295,29 @@ function pageRoutes() {
   return [
     {
       index: true,
-      element: <PageWrapper moduleLoader={devicesModule} />,
+      element: <PageWrapper moduleLoader={devicesPageModule} />,
     },
     {
       path: 'devices',
-      element: <PageWrapper moduleLoader={devicesModule} />,
+      element: <PageWrapper moduleLoader={devicesPageModule} />,
     },
     // 终端页不做内容入场动画：入场 transform 会成为 xterm 里 fixed 后代的 containing
     // block，且会扰动终端首帧的几何测量。
     {
       path: 'devices/:deviceId',
-      element: <PageWrapper moduleLoader={deviceModule} animateContent={false} />,
+      element: <PageWrapper moduleLoader={devicePageModule} animateContent={false} />,
     },
     {
       path: 'devices/:deviceId/windows/:windowId/panes/:paneId',
-      element: <PageWrapper moduleLoader={deviceModule} animateContent={false} />,
+      element: <PageWrapper moduleLoader={devicePageModule} animateContent={false} />,
     },
     {
       path: 'settings',
-      element: <PageWrapper moduleLoader={settingsModule} />,
+      element: <PageWrapper moduleLoader={settingsPageModule} />,
     },
     {
       path: 'file/:ref',
-      element: <PageWrapper moduleLoader={fileModule} />,
+      element: <PageWrapper moduleLoader={filePageModule} />,
     },
   ];
 }
@@ -327,7 +329,10 @@ const router = createBrowserRouter([
   {
     errorElement: <RouteErrorElement />,
     children: [
-      { path: '/login', element: <PageWrapper moduleLoader={loginModule} withSidebar={false} /> },
+      {
+        path: '/login',
+        element: <PageWrapper moduleLoader={loginPageModule} withSidebar={false} />,
+      },
       // 独立的 /nodes、/account/security 两页已并入设置页与右侧滑出面板；老书签重定向过去，
       // 不要变成 404。
       { path: '/nodes', element: <Navigate to="/settings?tab=nodes" replace /> },
@@ -391,4 +396,6 @@ void i18nReady
     if (typeof requestIdleCallback === 'function')
       requestIdleCallback(prefetchRest, { timeout: 1000 });
     else setTimeout(prefetchRest, 0);
+    // 侧栏两个顶层入口的 chunk 也趁空闲逐个拉下来：点过去时只剩数据请求那一段。
+    startIdleChunkPreload(IDLE_PRELOAD_PAGE_MODULES);
   });

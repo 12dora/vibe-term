@@ -11,6 +11,7 @@ import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { nodeQueryClient } from '@/node/node-runtimes';
 import { selfAgentStore } from '@/node/self-agent-store';
 import { sidebarSectionExpanded, useSidebarSectionExpanded } from '@/node/sidebar-node-expansion';
+import { devicesPageModule } from '@/page-modules';
 import { SELF_NODE_ID } from '@tmex/api-client';
 import { SortableVerticalList, useSortableRow } from '@tmex/panels/device-tree';
 import type { FilesNodeInfo } from '@tmex/panels/files';
@@ -176,6 +177,7 @@ const manageDevicesItem: NavMainItem = {
   title: 'nav.manageDevices',
   url: '/devices',
   icon: Monitor,
+  preload: devicesPageModule,
 };
 
 export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {

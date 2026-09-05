@@ -18,6 +18,7 @@ const { MemoryRouter } = await import('react-router');
 const { SidebarProvider } = await import('@tmex/ui/sidebar');
 const { BRAND_LOGO_SRC } = await import('@/components/brand');
 const { PageWrapper } = await import('./page-wrapper');
+const { clearPageModuleCache, requestPageModule } = await import('./use-page-module');
 
 const moduleLoader = async () => ({});
 
@@ -55,5 +56,40 @@ describe('PageWrapper', () => {
     );
     expect(html).toContain('aria-label="nav.sidebarCollapse"');
     expect(html).toContain('data-slot="tooltip-trigger"');
+  });
+});
+
+describe('PageWrapper 的重访', () => {
+  const Page = () => <p data-testid="cached-page">page</p>;
+  const PageTitle = () => <span>cached title</span>;
+  const cachedLoader = async () => ({ default: Page, PageTitle });
+
+  function render(): string {
+    return renderToStaticMarkup(
+      <MemoryRouter>
+        <SidebarProvider>
+          <PageWrapper moduleLoader={cachedLoader} />
+        </SidebarProvider>
+      </MemoryRouter>
+    );
+  }
+
+  test('首访的第一帧仍是空的（模块还没落地）', () => {
+    clearPageModuleCache();
+    expect(render()).not.toContain('data-testid="cached-page"');
+  });
+
+  test('模块加载过之后，重挂的第一帧就是 ready，不再闪一帧 loading', async () => {
+    clearPageModuleCache();
+    await new Promise<void>((resolve) => {
+      requestPageModule(cachedLoader, (state) => {
+        if (state.status === 'ready') resolve();
+      });
+    });
+
+    const html = render();
+    expect(html).toContain('data-testid="cached-page"');
+    expect(html).toContain('cached title');
+    clearPageModuleCache();
   });
 });

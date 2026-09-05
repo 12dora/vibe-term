@@ -6,6 +6,9 @@ import {
   PAGE_MODULE_LOADING,
   type PageModule,
   type PageModuleState,
+  cachedPageModule,
+  clearPageModuleCache,
+  initialPageModuleState,
   requestPageModule,
   setPageModulePrerequisite,
   toPageModuleError,
@@ -102,6 +105,52 @@ describe('requestPageModule', () => {
     await stale.promise;
 
     expect(states).toEqual([{ status: 'ready', module: currentModule, error: null }]);
+  });
+});
+
+describe('已解析模块的缓存', () => {
+  afterEach(() => clearPageModuleCache());
+
+  test('没加载过的 loader 起点仍是 loading', () => {
+    const loader = () => Promise.resolve(pageModule);
+    expect(cachedPageModule(loader)).toBeNull();
+    expect(initialPageModuleState(loader)).toEqual(PAGE_MODULE_LOADING);
+  });
+
+  test('加载成功后同一个 loader 的起点直接是 ready', async () => {
+    const { apply } = recorder();
+    const loader = () => Promise.resolve(pageModule);
+
+    requestPageModule(loader, apply);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(cachedPageModule(loader)).toBe(pageModule);
+    expect(initialPageModuleState(loader)).toEqual({
+      status: 'ready',
+      module: pageModule,
+      error: null,
+    });
+  });
+
+  test('失败的 loader 不进缓存', async () => {
+    const { apply } = recorder();
+    const loader = () => Promise.reject(new Error('chunk load failed'));
+
+    requestPageModule(loader, apply);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(cachedPageModule(loader)).toBeNull();
+  });
+
+  test('缓存按 loader 区分，别的路由拿不到', async () => {
+    const { apply } = recorder();
+    const loader = () => Promise.resolve(pageModule);
+    const other = () => Promise.resolve({});
+
+    requestPageModule(loader, apply);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(cachedPageModule(other)).toBeNull();
   });
 });
 
